@@ -88,7 +88,7 @@ use crate::tile::TileBounds;
 pub use rvp9_core::coef_ctx::{MAX_MB_PLANE, TileCoefCtx, combine_entropy_contexts};
 
 /// Non-overlapping mutable view into a rectangular sub-region of the
-/// frame-wide MI grid. Analogous to `TileFrameView` for pixels.
+/// frame-wide MI grid.
 ///
 /// # Safety invariants (construction-time)
 ///

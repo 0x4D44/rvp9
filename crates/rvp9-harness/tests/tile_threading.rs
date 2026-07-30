@@ -298,21 +298,19 @@ fn multi_tile_dispatch_uses_worker_pool() {
     );
 }
 
-/// G5.2 successor oracle: the direct-to-frame parallel tile path does
-/// not regress to the retired per-tile scratch-pool path.
+/// Parallel tile workers use isolated scratch frames and recycle them.
 ///
 /// Pattern: decode the SAME multi-tile vector (tile_1x8 — 8 tiles)
-/// frame-by-frame through a single `Decoder` instance. The current
-/// implementation writes each tile directly through `TileFrameView`;
-/// it should still fire worker-pool jobs, but the decoder-owned
-/// scratch pool should remain empty for every decoded frame.
+/// frame-by-frame through a single `Decoder` instance. Every worker
+/// must receive a separate frame allocation, and frames after warmup
+/// must reuse those allocations.
 ///
 /// Vector choice: `tile_1x8.webm` has the largest tile count in the
 /// conformance corpus that we have hands-on multi-tile parallel-
-/// dispatch eligibility for, so this catches both fallback-to-inline
-/// and accidental scratch-pool reuse.
+/// dispatch eligibility for, so this catches fallback-to-inline,
+/// missing isolation, and lost scratch reuse.
 #[test]
-fn direct_tile_decode_keeps_scratch_pool_empty() {
+fn parallel_tile_decode_reuses_isolated_scratch_buffers() {
     use std::sync::atomic::Ordering;
     let dir = vectors_dir();
     let path = dir.join("vp90-2-08-tile_1x8.webm");
@@ -376,20 +374,27 @@ fn direct_tile_decode_keeps_scratch_pool_empty() {
         frame_idx,
     );
 
-    // The direct-to-frame path should not borrow from or return to
-    // the retired scratch pool. Any non-zero post-frame count means
-    // this decoder hit the old scratch-buffer path.
+    // tile_1x8 uses eight worker-owned scratch frames. All eight must
+    // return to the pool after every frame.
     for (i, &count) in pool_count_by_frame.iter().enumerate() {
         assert_eq!(
-            count, 0,
-            "G5.2: frame {} left {} retired scratch buffers in the pool. \
+            count, 8,
+            "frame {} returned {} scratch buffers instead of one per tile. \
              Per-frame pool counts: {:?}",
             i, count, pool_count_by_frame,
         );
     }
+    assert_eq!(
+        alloc_delta_by_frame[0], 8,
+        "first frame should allocate one isolated scratch frame per tile"
+    );
+    assert!(
+        alloc_delta_by_frame[1..].iter().all(|&delta| delta == 0),
+        "scratch allocations continued after warmup: {alloc_delta_by_frame:?}"
+    );
 
     eprintln!(
-        "G5.2: direct-to-frame decode kept retired scratch pool empty across {} frames. \
+        "isolated scratch decode reused eight frames across {} frames. \
          Parallel jobs delta: {}. Scratch allocation counter deltas: {:?}.",
         pool_count_by_frame.len(),
         parallel_job_delta,

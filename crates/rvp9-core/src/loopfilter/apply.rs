@@ -456,6 +456,16 @@ pub unsafe fn run_split_edge_lf_worker(
     num_workers: usize,
     dispatch: &SimdDispatch,
 ) {
+    // `SharedFrame` reconstructs mutable plane slices for the duration
+    // of a worker row. More than one worker would therefore create
+    // overlapping references even when the wavefront prevents
+    // simultaneous access to the same pixels. Keep this path serial
+    // until it uses strictly row-bounded slices.
+    assert_eq!(
+        num_workers, 1,
+        "split-edge loop filtering currently supports one alias-safe worker"
+    );
+
     // Per-worker scratch, allocated once per invocation and reused
     // across every row the worker claims (HLD §10 #6).
     let mut row_lfm: Vec<LoopFilterMask> = vec![LoopFilterMask::default(); state.sb_cols];

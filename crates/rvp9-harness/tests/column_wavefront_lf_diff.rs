@@ -3,14 +3,12 @@
 //! after C3).
 //!
 //! Each vector decodes once with `threads=1` (serial LF path) and
-//! once with `threads=4` (column-wavefront). The per-frame YV12 MD5s
-//! MUST match — proof that the new wavefront worker is
-//! bitwise-identical to serial.
+//! once with `threads=4` (the wavefront dispatcher with its current
+//! alias-safe one-worker cap). The per-frame YV12 MD5s MUST match.
 //!
-//! Covers both multi-tile fixtures (where the wavefront fires on
-//! multiple SB rows concurrently) and single-tile fixtures (where
-//! the dispatcher's `num_tile_cols == 1` cap reduces `num_lf_workers`
-//! to 1, exercising the cap-fallback path).
+//! Covers both multi-tile and single-tile fixtures while the
+//! dispatcher stays serial until row-bounded plane slices replace
+//! whole-plane mutable references.
 
 use rvp9_decoder::Decoder;
 use rvp9_harness::container::read_packets;
@@ -72,12 +70,7 @@ const MULTI_TILE_VECTORS: &[&str] = &[
     "vp90-2-08-tile_1x8.webm",
 ];
 
-/// Single-tile vectors that exercise the dispatcher's fallback
-/// behaviour. With `num_tile_cols == 1`, the wavefront has no
-/// horizontal parallelism — but the worker count is still > 1, so the
-/// `cur_sb_col` allocation and the per-row mask-build still run. This
-/// catches the "single-tile path crashed because num_lf_workers was
-/// 1" failure mode HLD §3.6 documents.
+/// Single-tile vectors exercise the same capped dispatcher.
 const SINGLE_TILE_LF_VECTORS: &[&str] = &["vp90-2-00-quantizer-26.webm", "vp90-2-09-aq2.webm"];
 
 #[test]

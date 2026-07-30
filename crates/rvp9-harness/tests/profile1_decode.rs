@@ -109,7 +109,7 @@ fn profile1_vector(name: &str) -> PathBuf {
 /// first; only then is our decoder compared). Returns `(shown_frames,
 /// mismatches)` after asserting the zero-mismatch + full-coverage
 /// invariants.
-fn decode_and_gate(name: &str) -> (usize, usize) {
+fn decode_and_gate_with_threads(name: &str, threads: usize) -> (usize, usize) {
     let vector = profile1_vector(name);
 
     // Fail loudly — never skip. (M1 lesson: missing coverage that
@@ -129,8 +129,8 @@ fn decode_and_gate(name: &str) -> (usize, usize) {
     // ffmpeg as the suspect, NOT our decoder.
     let entries = read_triangulated_ledger(&vector);
 
-    // Pin to one worker — deterministic, no thread amplification.
-    let mut decoder = Decoder::with_threads(NonZeroUsize::new(1).expect("1 is non-zero"));
+    let mut decoder =
+        Decoder::with_threads(NonZeroUsize::new(threads).expect("thread count is non-zero"));
     let mut shown_idx: usize = 0;
     let mut mismatched: usize = 0;
 
@@ -196,6 +196,10 @@ fn decode_and_gate(name: &str) -> (usize, usize) {
     (shown_idx, mismatched)
 }
 
+fn decode_and_gate(name: &str) -> (usize, usize) {
+    decode_and_gate_with_threads(name, 1)
+}
+
 #[test]
 fn profile1_vectors_decode_bit_exact() {
     let mut total_frames = 0usize;
@@ -207,6 +211,21 @@ fn profile1_vectors_decode_bit_exact() {
     assert!(
         total_frames > 0,
         "no shown frames decoded across the Profile-1 corpus",
+    );
+}
+
+#[test]
+fn profile1_tile2_parallel_scratch_decodes_bit_exact() {
+    let jobs_before =
+        rvp9_decoder::RVP9_G5_1_PARALLEL_JOBS.load(std::sync::atomic::Ordering::Relaxed);
+    let (frames, mismatched) = decode_and_gate_with_threads("testsrc_c422_720p_tile2.ivf", 2);
+    let jobs_after =
+        rvp9_decoder::RVP9_G5_1_PARALLEL_JOBS.load(std::sync::atomic::Ordering::Relaxed);
+    assert!(frames > 0, "parallel tile fixture produced no shown frames");
+    assert_eq!(mismatched, 0, "parallel scratch decode diverged");
+    assert!(
+        jobs_after.wrapping_sub(jobs_before) >= 2 * frames as u32,
+        "two-tile fixture did not exercise parallel worker dispatch"
     );
 }
 

@@ -78,8 +78,7 @@ use rvp9_core::block::BlockSize;
 use rvp9_core::entropy::{FRAME_CONTEXTS, FrameContext};
 use rvp9_core::frame::extend_frame_borders;
 use rvp9_core::frame::{
-    BorderUsage, ByteAlignment, DecoderFramePool, FrameBuf, TileFrameView, Yv12Buffer,
-    Yv12ScratchPool,
+    BorderUsage, ByteAlignment, DecoderFramePool, FrameBuf, Yv12Buffer, Yv12ScratchPool,
 };
 use rvp9_core::inter::mode_info::{InterModeReadParams, setup_compound_reference_mode};
 use rvp9_core::inter::mv_ref::sign_bias_from_header;
@@ -96,6 +95,9 @@ use crate::tile::{
 };
 use crate::tile_ctx::TileDecodeCtx;
 use std::sync::Mutex;
+
+const MI_BLOCK_PIXELS: usize = 8;
+const OUTPUT_FRAME_LF_OVERLAP_ALIAS_SAFE: bool = false;
 
 /// D.20 — write the visible-region Y plane of a freshly-decoded
 /// frame to `path` (raw bytes, row-major, no padding). Used by the
@@ -1825,12 +1827,8 @@ impl Decoder {
             // completion" handoff. After scope joins, the main
             // thread `.take()`s each slot.
             //
-            // Phase 1 — direct-to-frame tile decode. Each worker
-            // writes pixels directly into a non-overlapping
-            // TileFrameView of the output yv12, eliminating the
-            // scratch-allocate and pixel-merge phases entirely.
             struct TileSlot {
-                view: Mutex<Option<TileFrameView>>,
+                scratch: Mutex<Option<Yv12Buffer>>,
                 mi_view: Mutex<Option<crate::tile_ctx::TileMiView>>,
                 seg_ids: Mutex<Option<Vec<u8>>>,
                 counts: Mutex<Option<Box<rvp9_core::entropy::adapt::CoefCountsBank>>>,
@@ -1842,22 +1840,10 @@ impl Decoder {
                 #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
                 timing: Mutex<profile::PerTileTiming>,
             }
-            // Construct one TileFrameView per tile from &mut yv12.
-            // SAFETY: tile bounds are non-overlapping (VP9 spec —
-            // tile boundaries are SB-aligned and disjoint). The yv12
-            // lives through the scope (borrowed by the closure). No
-            // other &mut to yv12.buffer_alloc exists between view
-            // construction and scope.join().
-            let tile_views: Vec<TileFrameView> = per_tile_bounds
-                .iter()
-                .map(|_bounds| {
-                    // SAFETY: see block comment above. Each view
-                    // covers the full plane origins so frame-absolute
-                    // indexing works; tiles write to disjoint pixel
-                    // rectangles by VP9 spec guarantee.
-                    unsafe { TileFrameView::from_yv12(&mut yv12) }
-                })
-                .collect();
+            let scratch_buffers = self
+                .tile_scratch_pool
+                .take(num_tiles, &yv12)
+                .expect("scratch Yv12Buffer allocation");
             // Phase 2: construct per-tile TileMiViews from frame_mi_grid.
             // SAFETY: bounds are non-overlapping by VP9 spec (tile
             // boundaries are SB-aligned); frame_mi_grid lives through
@@ -1894,12 +1880,12 @@ impl Decoder {
                 }
                 tile_seg_ids.push(v);
             }
-            let slots: Vec<TileSlot> = tile_views
+            let slots: Vec<TileSlot> = scratch_buffers
                 .into_iter()
                 .zip(mi_views)
                 .zip(tile_seg_ids)
-                .map(|((view, mi_v), seg)| TileSlot {
-                    view: Mutex::new(Some(view)),
+                .map(|((scratch, mi_v), seg)| TileSlot {
+                    scratch: Mutex::new(Some(scratch)),
                     mi_view: Mutex::new(Some(mi_v)),
                     seg_ids: Mutex::new(Some(seg)),
                     counts: Mutex::new(Some(Box::new(
@@ -1932,7 +1918,11 @@ impl Decoder {
                 self.lf_worker_pool.as_ref();
             let trace_flags_ref = crate::trace_flags::trace_flags();
             let row_mt_disabled = trace_flags_ref.disable_row_mt;
-            let lf_overlap_pool_eligible = trace_flags_ref.lf_overlap_pool
+            // Tile workers decode into private scratch frames. Filtering
+            // `yv12` before those pixels are merged would process stale
+            // output, so the output-frame overlap path is ineligible.
+            let lf_overlap_pool_eligible = OUTPUT_FRAME_LF_OVERLAP_ALIAS_SAFE
+                && trace_flags_ref.lf_overlap_pool
                 && lf_pool_ref.is_some()
                 && self.num_threads.get() >= 2
                 && tile_rows == 1
@@ -2071,12 +2061,12 @@ impl Decoder {
                         RVP9_G5_1_PARALLEL_JOBS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
                         let t_lock_in = profile::now_cycles();
-                        let mut view = slot
-                            .view
+                        let mut scratch = slot
+                            .scratch
                             .lock()
-                            .expect("view mutex")
+                            .expect("scratch mutex")
                             .take()
-                            .expect("view present at job start");
+                            .expect("scratch present at job start");
                         let mi_v = slot
                             .mi_view
                             .lock()
@@ -2102,7 +2092,7 @@ impl Decoder {
                             bounds,
                             params_ref,
                             fc,
-                            &mut view,
+                            &mut scratch,
                             Some(counts.as_mut()),
                             &mut seg_ids,
                             simd_dispatch,
@@ -2111,9 +2101,7 @@ impl Decoder {
                         );
                         #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
                         let t_decode_end = profile::now_cycles();
-                        // View is consumed — no need to put it back
-                        // (it holds no owned allocation, just raw
-                        // pointers that are now logically invalid).
+                        *slot.scratch.lock().expect("scratch mutex") = Some(scratch);
                         *slot.seg_ids.lock().expect("seg_ids mutex") = Some(seg_ids);
                         *slot.counts.lock().expect("counts mutex") = Some(counts);
                         *slot.result.lock().expect("result mutex") = Some(res);
@@ -2137,18 +2125,22 @@ impl Decoder {
             let t_scope_end = profile::now_cycles();
             #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
             let t_merge_start = profile::now_cycles();
-            // Post-scope merge: in submission order, collect
-            // TileDecodeCtx, merge per-tile counts into
-            // `self.coef_counts`, and merge per-tile seg_ids.
-            // Pixel merge is NO LONGER needed — workers wrote
-            // directly into the output yv12 via TileFrameView.
+            // Post-scope merge: collect worker results and copy each
+            // disjoint tile rectangle from its private scratch frame.
             let mut merge_err: Option<DecodeError> = None;
+            let mut recovered_scratch: Vec<Yv12Buffer> = Vec::with_capacity(slots.len());
             #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
             let num_tiles_local = slots.len();
             #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
             let mut per_tile_timings: Vec<profile::PerTileTiming> =
                 Vec::with_capacity(num_tiles_local);
             for (tile_idx, slot) in slots.into_iter().enumerate() {
+                let scratch = slot
+                    .scratch
+                    .into_inner()
+                    .expect("scratch mutex")
+                    .expect("scratch present after job");
+                recovered_scratch.push(scratch);
                 #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
                 {
                     let pt = *slot.timing.lock().expect("timing mutex");
@@ -2186,8 +2178,22 @@ impl Decoder {
                 // 1. Merge counts into the decoder's running coef_counts.
                 self.coef_counts.add(&counts);
 
-                // 2. Pixel merge REMOVED — tiles wrote directly into
-                //    the output yv12 via TileFrameView.
+                // 2. Merge only this tile's pixel rectangle. Each
+                // worker owned a separate allocation, so no mutable
+                // frame references overlapped during decode.
+                let luma_row_start = bounds.mi_row_start * MI_BLOCK_PIXELS;
+                let luma_row_end = bounds.mi_row_end * MI_BLOCK_PIXELS;
+                let luma_col_start = bounds.mi_col_start * MI_BLOCK_PIXELS;
+                let luma_col_end = bounds.mi_col_end * MI_BLOCK_PIXELS;
+                yv12.merge_tile_rect_from(
+                    recovered_scratch
+                        .last()
+                        .expect("scratch was recovered above"),
+                    luma_row_start,
+                    luma_row_end,
+                    luma_col_start,
+                    luma_col_end,
+                );
 
                 // 3. Merge seg_id rectangle — each tile only writes
                 //    its own (mi_row_start..mi_row_end,
@@ -2208,6 +2214,7 @@ impl Decoder {
 
                 tile_decode_ctxs.push((bounds, decode_ctx));
             }
+            self.tile_scratch_pool.put(recovered_scratch);
             #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
             {
                 let t_merge_end = profile::now_cycles();
@@ -3145,9 +3152,8 @@ impl Decoder {
                 ));
             }
 
-            // Phase 1 — direct-to-frame tile decode for inter frames.
             struct InterTileSlot {
-                view: Mutex<Option<TileFrameView>>,
+                scratch: Mutex<Option<Yv12Buffer>>,
                 mi_view: Mutex<Option<crate::tile_ctx::TileMiView>>,
                 seg_ids: Mutex<Option<Vec<u8>>>,
                 mv_grid: Mutex<Option<Vec<rvp9_core::inter::mv_ref::PrevFrameMvRef>>>,
@@ -3160,24 +3166,16 @@ impl Decoder {
                 #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
                 timing: Mutex<profile::PerTileTiming>,
             }
-            // Construct one TileFrameView per tile from &mut yv12.
-            // SAFETY: tile bounds are non-overlapping (VP9 spec —
-            // tile boundaries are SB-aligned and disjoint). The yv12
-            // lives through the scope. No other &mut to
-            // yv12.buffer_alloc exists between view construction and
-            // scope.join().
-            let tile_views: Vec<TileFrameView> = per_tile_bounds
-                .iter()
-                .map(|_bounds| {
-                    // SAFETY: see block comment above.
-                    unsafe { TileFrameView::from_yv12(&mut yv12) }
-                })
-                .collect();
+            let scratch_buffers = self
+                .tile_scratch_pool
+                .take(num_tiles, &yv12)
+                .expect("scratch Yv12Buffer allocation");
             // Phase 2: construct per-tile TileMiViews (inter path).
             let mi_views: Vec<crate::tile_ctx::TileMiView> = per_tile_bounds
                 .iter()
                 .map(|bounds| {
-                    // SAFETY: see TileFrameView comment above.
+                    // SAFETY: tile bounds are disjoint and the frame MI
+                    // grid outlives every scoped worker.
                     unsafe {
                         crate::tile_ctx::TileMiView::new(
                             frame_mi_grid.as_mut_ptr(),
@@ -3221,13 +3219,13 @@ impl Decoder {
                 }
                 tile_mv_grids.push(m);
             }
-            let slots: Vec<InterTileSlot> = tile_views
+            let slots: Vec<InterTileSlot> = scratch_buffers
                 .into_iter()
                 .zip(mi_views)
                 .zip(tile_seg_ids)
                 .zip(tile_mv_grids)
-                .map(|(((view, mi_v), seg), mv)| InterTileSlot {
-                    view: Mutex::new(Some(view)),
+                .map(|(((scratch, mi_v), seg), mv)| InterTileSlot {
+                    scratch: Mutex::new(Some(scratch)),
                     mi_view: Mutex::new(Some(mi_v)),
                     seg_ids: Mutex::new(Some(seg)),
                     mv_grid: Mutex::new(Some(mv)),
@@ -3272,7 +3270,11 @@ impl Decoder {
                 self.lf_worker_pool.as_ref();
             let trace_flags_ref = crate::trace_flags::trace_flags();
             let row_mt_disabled = trace_flags_ref.disable_row_mt;
-            let lf_overlap_pool_eligible = trace_flags_ref.lf_overlap_pool
+            // Tile workers decode into private scratch frames. The output
+            // frame is incomplete until the post-scope merge, so it cannot
+            // be filtered concurrently with those workers.
+            let lf_overlap_pool_eligible = OUTPUT_FRAME_LF_OVERLAP_ALIAS_SAFE
+                && trace_flags_ref.lf_overlap_pool
                 && lf_pool_ref.is_some()
                 && self.num_threads.get() >= 2
                 && tile_rows == 1
@@ -3314,12 +3316,9 @@ impl Decoder {
                 };
             let lf_info_overlap =
                 rvp9_core::loopfilter::LoopFilterInfo::new(tail.loop_filter.sharpness_level);
-            // Build the SB-major LF state. SAFETY: `SharedFrame`
-            // raw-ptr access into `yv12` coexists with decode workers'
-            // `TileFrameView` raw-ptr access; the L1 + L2 wavefront
-            // gates provide the temporal-exclusion edge that makes the
-            // aliasing sound. See HLD §6.2 SAFETY chain and the
-            // module-adjacent `tile_threading/SAFETY.md`.
+            // Build the SB-major LF state only when the output frame can
+            // be filtered directly. Scratch-backed tile decode disables
+            // this path above.
             let lf_state_overlap: Option<rvp9_core::loopfilter::apply::ColumnWavefrontLfState<'_>> =
                 if lf_overlap_pool_eligible {
                     let shared = rvp9_core::loopfilter::apply::SharedFrame::from_yv12(&mut yv12);
@@ -3432,12 +3431,12 @@ impl Decoder {
                         RVP9_G5_1_PARALLEL_JOBS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
                         let t_lock_in = profile::now_cycles();
-                        let mut view = slot
-                            .view
+                        let mut scratch = slot
+                            .scratch
                             .lock()
-                            .expect("view mutex")
+                            .expect("scratch mutex")
                             .take()
-                            .expect("view present at job start");
+                            .expect("scratch present at job start");
                         let mi_v = slot
                             .mi_view
                             .lock()
@@ -3481,7 +3480,7 @@ impl Decoder {
                             bounds,
                             params_ref,
                             fc,
-                            &mut view,
+                            &mut scratch,
                             Some(mv_counts.as_mut()),
                             Some(coef_counts.as_mut()),
                             Some(mode_counts.as_mut()),
@@ -3495,7 +3494,7 @@ impl Decoder {
                         );
                         #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
                         let t_decode_end = profile::now_cycles();
-                        // View is consumed — no need to put it back.
+                        *slot.scratch.lock().expect("scratch mutex") = Some(scratch);
                         *slot.seg_ids.lock().expect("seg_ids mutex") = Some(seg_ids);
                         *slot.mv_grid.lock().expect("mv_grid mutex") = Some(mv_grid);
                         *slot.mv_counts.lock().expect("mv_counts mutex") = Some(mv_counts);
@@ -3522,13 +3521,19 @@ impl Decoder {
             let t_scope_end = profile::now_cycles();
             #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
             let t_merge_start = profile::now_cycles();
-            // Post-scope merge in submission order. Pixel merge is
-            // NO LONGER needed — workers wrote directly into the
-            // output yv12 via TileFrameView.
+            // Post-scope merge in submission order. Worker pixel writes
+            // came from separate scratch allocations.
             let mut merge_err: Option<DecodeError> = None;
+            let mut recovered_scratch: Vec<Yv12Buffer> = Vec::with_capacity(slots.len());
             #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
             let mut per_tile_timings: Vec<profile::PerTileTiming> = Vec::with_capacity(slots.len());
             for (tile_idx, slot) in slots.into_iter().enumerate() {
+                let scratch = slot
+                    .scratch
+                    .into_inner()
+                    .expect("scratch mutex")
+                    .expect("scratch present after job");
+                recovered_scratch.push(scratch);
                 #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
                 {
                     let pt = *slot.timing.lock().expect("timing mutex");
@@ -3582,8 +3587,19 @@ impl Decoder {
                 self.coef_counts.add(&coef_counts);
                 self.mode_counts.add(&mode_counts);
 
-                // Pixel merge REMOVED — tiles wrote directly into
-                // the output yv12 via TileFrameView.
+                let luma_row_start = bounds.mi_row_start * MI_BLOCK_PIXELS;
+                let luma_row_end = bounds.mi_row_end * MI_BLOCK_PIXELS;
+                let luma_col_start = bounds.mi_col_start * MI_BLOCK_PIXELS;
+                let luma_col_end = bounds.mi_col_end * MI_BLOCK_PIXELS;
+                yv12.merge_tile_rect_from(
+                    recovered_scratch
+                        .last()
+                        .expect("scratch was recovered above"),
+                    luma_row_start,
+                    luma_row_end,
+                    luma_col_start,
+                    luma_col_end,
+                );
 
                 // Merge seg_ids + mv_grid rectangles. G5.3: restrict
                 // the row loop to the tile's row range to support
@@ -3605,6 +3621,7 @@ impl Decoder {
 
                 tile_decode_ctxs.push((bounds, decode_ctx));
             }
+            self.tile_scratch_pool.put(recovered_scratch);
             #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
             {
                 let t_merge_end = profile::now_cycles();
@@ -4387,7 +4404,7 @@ fn apply_loop_filter_to_frame_column_wavefront_dispatch(
     sharpness_level: u8,
     lf_deltas: ResolvedLfDeltas,
     seg_view: SegmentationLfView,
-    num_workers: usize,
+    _num_workers: usize,
     num_tile_cols: usize,
 ) {
     use rvp9_core::loopfilter::apply::{
@@ -4412,13 +4429,10 @@ fn apply_loop_filter_to_frame_column_wavefront_dispatch(
     // `cur_sb_col[r-1] >= c + nsync - 1`.
     let cur_sb_col: Vec<AtomicI32> = (0..sb_rows).map(|_| AtomicI32::new(-1)).collect();
 
-    // HLD §3.6 cap: `min(num_workers, max(1, num_tile_cols), sb_rows)`.
-    // Mirrors libvpx vp9_thread_common.c:165-170. Capping at
-    // num_tile_cols is critical because the column-wavefront's
-    // effective parallelism is bounded by the number of independent
-    // rows in flight — beyond num_tile_cols, adding workers just
-    // adds contention.
-    let num_lf_workers = num_workers.min(num_tile_cols.max(1)).min(sb_rows).max(1);
+    // `SharedFrame` currently reconstructs whole-plane mutable slices.
+    // Multiple LF workers would create overlapping references even
+    // though the wavefront serializes conflicting pixel access.
+    let num_lf_workers = 1;
 
     let chroma = yv12.chroma();
     let chroma_is_asymmetric = matches!(

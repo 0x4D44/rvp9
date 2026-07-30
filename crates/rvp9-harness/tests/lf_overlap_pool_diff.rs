@@ -1,15 +1,13 @@
-//! Phase 1 separate-LF-pool overlap differential test (HLD
-//! `2026.05.27 - HLD - Separate LF thread pool.md` §7.1).
+//! Scratch-backed tile decode and loop-filter differential test.
 //!
 //! Each vector decodes once with `threads=1` (serial decode + serial
-//! LF — the golden reference) and once with `threads=4` (the overlap
-//! path, default ON after the +8.14% mean PGO win on testsrc t=4). The
-//! per-frame YV12 MD5s MUST match — proof that the new LF pool's L1
-//! gate produces bitwise-identical output to the legacy two-scope path.
+//! LF — the golden reference) and once with `threads=4` (isolated
+//! per-tile scratch frames followed by merge + LF). Per-frame YV12
+//! MD5s MUST match.
 //!
-//! Failure mode this catches: L1 off-by-one — LF starting one SB-row
-//! too early and filtering pixels that a future intra-prediction read
-//! still needs unfiltered (HLD §4.3 Invariant L1).
+//! The old output-frame overlap path remains disabled while tile
+//! workers use scratch frames: filtering the output before merge would
+//! process stale pixels and its whole-plane references could alias.
 //!
 //! Run via:
 //! ```text
@@ -69,33 +67,24 @@ fn decode_vector_md5s(path: &Path, threads: usize) -> Vec<[u8; 16]> {
     out
 }
 
-/// Multi-tile vectors — exercise the overlap path's primary target
-/// (column-wavefront LF gated on `decode_progress[r+1] >=
-/// num_tile_cols`). Mirrors the legacy `column_wavefront_lf_diff.rs`
-/// vector list so the two tests catch any drift between paths.
+/// Multi-tile vectors exercise scratch decode, merge, then LF.
 const MULTI_TILE_VECTORS: &[&str] = &[
     "vp90-2-08-tile_1x2.webm",
     "vp90-2-08-tile_1x4.webm",
     "vp90-2-08-tile_1x8.webm",
 ];
 
-/// Single-tile vectors — eligibility check ineligibility (since
-/// `tile_rows == 1` AND `tile_cols >= 1` both hold; single-tile is
-/// covered with `num_tile_cols = 1`). The L1 gate trivially passes
-/// since each row only has one tile bumping it. Confirms the overlap
-/// path doesn't divergently corrupt single-tile output.
+/// Single-tile vectors keep the serial baseline represented.
 const SINGLE_TILE_LF_VECTORS: &[&str] = &["vp90-2-00-quantizer-26.webm", "vp90-2-09-aq2.webm"];
 
 #[test]
-fn lf_overlap_pool_matches_serial() {
+fn scratch_tile_decode_and_lf_match_serial() {
     let dir = vectors_dir();
     if !dir.exists() {
         eprintln!("vectors dir missing — skip");
         return;
     }
-    // Snapshot the overlap-engaged counter so we can later assert the
-    // overlap path actually ran (i.e. the test wasn't silently
-    // pass-through on the legacy path because the env var was unset).
+    // The unsafe output-frame overlap path must remain dormant.
     let overlap_frames_pre =
         rvp9_decoder::RVP9_LF_OVERLAP_POOL_FRAMES.load(std::sync::atomic::Ordering::Relaxed);
 
@@ -122,34 +111,24 @@ fn lf_overlap_pool_matches_serial() {
             assert_eq!(
                 s, p,
                 "{name} frame {i}: MD5 mismatch between threads=1 \
-                 (serial baseline) and threads=4 overlap path \
-                 (serial={s:02x?} vs overlap={p:02x?})",
+                 (serial baseline) and threads=4 scratch path \
+                 (serial={s:02x?} vs scratch={p:02x?})",
             );
         }
         checked += 1;
     }
     if checked == 0 {
         eprintln!(
-            "no LF-overlap vectors present — \
+            "no scratch/LF vectors present — \
              run scripts/fetch-vectors.sh to exercise this optional oracle"
         );
         return;
     }
 
-    // The overlap path is default ON; the threads=4 decode of any
-    // multi-tile fixture above MUST have engaged it — verifies the
-    // test is actually exercising the new code, not silently passing
-    // on the legacy two-scope path. Skip the check only when the
-    // operator explicitly disabled it.
     let overlap_frames_post =
         rvp9_decoder::RVP9_LF_OVERLAP_POOL_FRAMES.load(std::sync::atomic::Ordering::Relaxed);
-    if std::env::var("RVP9_DISABLE_LF_OVERLAP_POOL").is_err() {
-        assert!(
-            overlap_frames_post > overlap_frames_pre,
-            "overlap path is default ON but never engaged \
-             (counter: pre={overlap_frames_pre} post={overlap_frames_post}). \
-             Either the LF pool construction skipped (cores-available \
-             math), or the eligibility check rejected every vector.",
-        );
-    }
+    assert_eq!(
+        overlap_frames_post, overlap_frames_pre,
+        "output-frame LF overlap engaged during scratch-backed tile decode"
+    );
 }

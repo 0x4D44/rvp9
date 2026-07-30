@@ -205,6 +205,23 @@ pub struct Yv12Buffer {
 }
 
 impl Yv12Buffer {
+    #[inline]
+    fn y_data_len(&self) -> usize {
+        let stride = self.y_stride as usize;
+        let border = self.border as usize;
+        (self.y_height as usize + border) * stride - border
+    }
+
+    #[inline]
+    fn uv_data_len(&self) -> usize {
+        let ss_x = u32::from(self.chroma.subsampling_x());
+        let ss_y = u32::from(self.chroma.subsampling_y());
+        let stride = self.uv_stride as usize;
+        let border_w = (self.border >> ss_x) as usize;
+        let border_h = (self.border >> ss_y) as usize;
+        (self.uv_height as usize + border_h) * stride - border_w
+    }
+
     /// Allocate a fresh YV12 buffer. Mirrors `vpx_alloc_frame_buffer`
     /// (`yv12config.c:152-290`) for the internal-allocation,
     /// 8-bit-only path.
@@ -505,8 +522,9 @@ impl Yv12Buffer {
     #[inline]
     #[must_use]
     pub fn y_plane(&self) -> PlaneRef<'_> {
+        let len = self.y_data_len();
         PlaneRef {
-            data: &self.buffer_alloc[self.y_offset..],
+            data: &self.buffer_alloc[self.y_offset..self.y_offset + len],
             stride: self.y_stride as usize,
             width: self.y_width as usize,
             height: self.y_height as usize,
@@ -517,8 +535,9 @@ impl Yv12Buffer {
     #[inline]
     #[must_use]
     pub fn u_plane(&self) -> PlaneRef<'_> {
+        let len = self.uv_data_len();
         PlaneRef {
-            data: &self.buffer_alloc[self.u_offset..],
+            data: &self.buffer_alloc[self.u_offset..self.u_offset + len],
             stride: self.uv_stride as usize,
             width: self.uv_width as usize,
             height: self.uv_height as usize,
@@ -529,8 +548,9 @@ impl Yv12Buffer {
     #[inline]
     #[must_use]
     pub fn v_plane(&self) -> PlaneRef<'_> {
+        let len = self.uv_data_len();
         PlaneRef {
-            data: &self.buffer_alloc[self.v_offset..],
+            data: &self.buffer_alloc[self.v_offset..self.v_offset + len],
             stride: self.uv_stride as usize,
             width: self.uv_width as usize,
             height: self.uv_height as usize,
@@ -601,8 +621,10 @@ impl Yv12Buffer {
         let stride = self.y_stride as usize;
         let width = self.y_width as usize;
         let height = self.y_height as usize;
+        let offset = self.y_offset;
+        let len = self.y_data_len();
         PlaneMut {
-            data: &mut self.buffer_alloc[self.y_offset..],
+            data: &mut self.buffer_alloc[offset..offset + len],
             stride,
             width,
             height,
@@ -615,8 +637,10 @@ impl Yv12Buffer {
         let stride = self.uv_stride as usize;
         let width = self.uv_width as usize;
         let height = self.uv_height as usize;
+        let offset = self.u_offset;
+        let len = self.uv_data_len();
         PlaneMut {
-            data: &mut self.buffer_alloc[self.u_offset..],
+            data: &mut self.buffer_alloc[offset..offset + len],
             stride,
             width,
             height,
@@ -629,8 +653,10 @@ impl Yv12Buffer {
         let stride = self.uv_stride as usize;
         let width = self.uv_width as usize;
         let height = self.uv_height as usize;
+        let offset = self.v_offset;
+        let len = self.uv_data_len();
         PlaneMut {
-            data: &mut self.buffer_alloc[self.v_offset..],
+            data: &mut self.buffer_alloc[offset..offset + len],
             stride,
             width,
             height,
@@ -1575,10 +1601,8 @@ impl<'a> PlaneMut<'a> {
 
 /// Trait abstracting mutable plane access for tile decode functions.
 ///
-/// Both [`Yv12Buffer`] (serial decode path) and [`TileFrameView`]
-/// (parallel direct-to-frame path) implement this, so the tile decode
-/// entry points (`decode_tile_intra` / `decode_tile_inter`) can be
-/// generic over the destination type without runtime branching.
+/// [`Yv12Buffer`] implements this for the serial path and for each
+/// worker-owned scratch frame in the parallel tile path.
 pub trait TileFrameDst {
     /// Mutable view of the Y plane.
     fn y_plane_mut(&mut self) -> PlaneMut<'_>;
@@ -1606,155 +1630,6 @@ impl TileFrameDst for Yv12Buffer {
     #[inline]
     fn chroma(&self) -> ChromaFormat {
         self.chroma()
-    }
-}
-
-// ============================================================================
-// TileFrameView — non-overlapping mutable view into a Yv12Buffer
-// ============================================================================
-
-/// A non-overlapping mutable view into a rectangular sub-region of a
-/// [`Yv12Buffer`]. Semantically equivalent to `&mut` over the pixel
-/// rectangle `[row_start..row_end, col_start..col_end]` across all
-/// three planes, but implemented via raw pointers to avoid Rust's
-/// single-`&mut`-to-the-whole-buffer restriction.
-///
-/// # Safety invariants (construction-time)
-///
-/// 1. The parent [`Yv12Buffer`] must outlive all `TileFrameView`s.
-/// 2. No two `TileFrameView`s may cover overlapping byte ranges in
-///    any plane.
-/// 3. No other `&mut` reference to the parent buffer's `buffer_alloc`
-///    may exist while any `TileFrameView` is alive.
-pub struct TileFrameView {
-    // Per-plane raw pointers to the plane origin (row 0, col 0 of the
-    // visible region — same position as Yv12Buffer::y_plane_mut().data).
-    y_ptr: *mut u8,
-    u_ptr: *mut u8,
-    v_ptr: *mut u8,
-
-    // Byte lengths of the raw pointer slices (from plane origin to end
-    // of buffer_alloc).
-    y_len: usize,
-    u_len: usize,
-    v_len: usize,
-
-    // Strides (bytes per row) — same as the parent buffer's.
-    y_stride: usize,
-    uv_stride: usize,
-
-    // Aligned plane dimensions (for PlaneMut width/height).
-    y_width: usize,
-    y_height: usize,
-    uv_width: usize,
-    uv_height: usize,
-
-    // Chroma format (needed by downstream callers).
-    chroma_fmt: ChromaFormat,
-}
-
-impl TileFrameView {
-    /// Construct a `TileFrameView` that covers the full visible region
-    /// of `yv12`. The returned view provides frame-absolute indexing
-    /// (plane pointers start at the plane origin, not at a tile offset),
-    /// so tile workers can use `mi_col * 8` / `mi_row * 8` directly.
-    ///
-    /// # Safety
-    ///
-    /// Caller must guarantee:
-    /// - `yv12` lives at least as long as the returned view.
-    /// - No two views constructed from the same `yv12` overlap in
-    ///   their tile pixel rectangles (enforced by VP9 spec — tile
-    ///   boundaries are SB-aligned and disjoint).
-    /// - No other `&mut` to `yv12.buffer_alloc` exists concurrently.
-    pub unsafe fn from_yv12(yv12: &mut Yv12Buffer) -> Self {
-        let alloc_ptr = yv12.buffer_alloc.as_mut_ptr();
-        let alloc_len = yv12.buffer_alloc.len();
-
-        // SAFETY: y_offset / u_offset / v_offset are valid offsets into
-        // buffer_alloc (established at allocation time in Yv12Buffer::alloc).
-        // The resulting pointers remain within the allocation.
-        let (y_ptr, u_ptr, v_ptr) = unsafe {
-            (
-                alloc_ptr.add(yv12.y_offset),
-                alloc_ptr.add(yv12.u_offset),
-                alloc_ptr.add(yv12.v_offset),
-            )
-        };
-
-        let y_len = alloc_len - yv12.y_offset;
-        let u_len = alloc_len - yv12.u_offset;
-        let v_len = alloc_len - yv12.v_offset;
-
-        Self {
-            y_ptr,
-            u_ptr,
-            v_ptr,
-            y_len,
-            u_len,
-            v_len,
-            y_stride: yv12.y_stride as usize,
-            uv_stride: yv12.uv_stride as usize,
-            y_width: yv12.y_width as usize,
-            y_height: yv12.y_height as usize,
-            uv_width: yv12.uv_width as usize,
-            uv_height: yv12.uv_height as usize,
-            chroma_fmt: yv12.chroma,
-        }
-    }
-}
-
-// SAFETY: TileFrameView is Send because:
-// 1. It holds raw pointers into a single Box<[u8]> allocation.
-// 2. The construction contract guarantees non-overlapping ranges,
-//    so sending different views to different threads cannot produce
-//    data races — each thread writes only to its own disjoint byte set.
-// 3. The parent Yv12Buffer's lifetime is guaranteed by the scoped
-//    thread pool (the scope borrows the parent, preventing drop).
-unsafe impl Send for TileFrameView {}
-
-impl TileFrameDst for TileFrameView {
-    #[inline]
-    fn y_plane_mut(&mut self) -> PlaneMut<'_> {
-        // SAFETY: the raw pointer is valid for `y_len` bytes and the
-        // parent Yv12Buffer is alive (construction contract). No other
-        // &mut to this byte range exists (non-overlapping tile views).
-        let data = unsafe { std::slice::from_raw_parts_mut(self.y_ptr, self.y_len) };
-        PlaneMut {
-            data,
-            stride: self.y_stride,
-            width: self.y_width,
-            height: self.y_height,
-        }
-    }
-
-    #[inline]
-    fn u_plane_mut(&mut self) -> PlaneMut<'_> {
-        // SAFETY: see y_plane_mut.
-        let data = unsafe { std::slice::from_raw_parts_mut(self.u_ptr, self.u_len) };
-        PlaneMut {
-            data,
-            stride: self.uv_stride,
-            width: self.uv_width,
-            height: self.uv_height,
-        }
-    }
-
-    #[inline]
-    fn v_plane_mut(&mut self) -> PlaneMut<'_> {
-        // SAFETY: see y_plane_mut.
-        let data = unsafe { std::slice::from_raw_parts_mut(self.v_ptr, self.v_len) };
-        PlaneMut {
-            data,
-            stride: self.uv_stride,
-            width: self.uv_width,
-            height: self.uv_height,
-        }
-    }
-
-    #[inline]
-    fn chroma(&self) -> ChromaFormat {
-        self.chroma_fmt
     }
 }
 
@@ -1966,6 +1841,46 @@ mod tests {
         assert_eq!(y.row(63)[31], 0x80);
         // Sanity: stride is at least width.
         assert!(y.stride() >= y.width());
+    }
+
+    #[test]
+    fn mutable_plane_views_stop_before_the_next_plane() {
+        for chroma in [
+            ChromaFormat::Yuv420,
+            ChromaFormat::Yuv422,
+            ChromaFormat::Yuv440,
+            ChromaFormat::Yuv444,
+        ] {
+            let mut buffer =
+                Yv12Buffer::alloc(64, 48, chroma, BorderUsage::Decoder, ByteAlignment::V32)
+                    .expect("alloc");
+
+            let (y_start, y_end) = {
+                let mut plane = buffer.y_plane_mut();
+                let data = plane.data_mut();
+                (
+                    data.as_mut_ptr() as usize,
+                    data.as_mut_ptr() as usize + data.len(),
+                )
+            };
+            let (u_start, u_end) = {
+                let mut plane = buffer.u_plane_mut();
+                let data = plane.data_mut();
+                (
+                    data.as_mut_ptr() as usize,
+                    data.as_mut_ptr() as usize + data.len(),
+                )
+            };
+            let v_start = {
+                let mut plane = buffer.v_plane_mut();
+                plane.data_mut().as_mut_ptr() as usize
+            };
+
+            assert!(y_start < y_end);
+            assert!(y_end <= u_start, "{chroma:?}: Y overlaps U");
+            assert!(u_start < u_end);
+            assert!(u_end <= v_start, "{chroma:?}: U overlaps V");
+        }
     }
 
     #[test]
