@@ -1,24 +1,24 @@
 # RVP9-BUG-KILN-00035 - F.0.2 block oracle never compares the libvpx and rvp9 legs
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** High
 - **Area:** harness/f02-block-oracle
 - **Raised:** 2026-07-07
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260730T230244Z-p58756-n105437000-c1
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KILN-00035-run-fix-20260730T230244Z-p58756-n105437000-c1
-- **Owner base:** 1b5d1683759ededc745d7751c12f5c59201f7c87
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-07-30T23:02:44Z
-- **Owner until:** 2026-07-31T01:02:44Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-harness/` at `cfabd55`)
+- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-harness/` at `cfabd55`) -> Fixed (2026-07-31, deltic:auto role=fix run=fix-20260730T230244Z-p58756-n105437000-c1 branch=task/bug-RVP9-BUG-KILN-00035-run-fix-20260730T230244Z-p58756-n105437000-c1 code=048d412dc6e2ed4c488a9ac11c72ee2667374b4a gate=manual)
 
 ## Observation
 
