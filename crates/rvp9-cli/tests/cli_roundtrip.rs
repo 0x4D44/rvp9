@@ -12,8 +12,12 @@
 //! - `--md5` is deterministic and emits one digest per displayed frame.
 //! - Unsupported flags fail loudly ("not supported yet"), never silently.
 
+mod common;
+
 use std::path::PathBuf;
 use std::process::Command;
+
+use common::CommandExt;
 
 const W: usize = 64;
 const H: usize = 64;
@@ -80,7 +84,7 @@ fn encode_decode_roundtrip_raw_input() {
         ])
         .arg(&ivf)
         .arg(&raw)
-        .status()
+        .bounded_status()
         .expect("run rvp9enc");
     assert!(status.success(), "rvp9enc failed");
 
@@ -97,7 +101,7 @@ fn encode_decode_roundtrip_raw_input() {
         .args(["--i420", "-o"])
         .arg(&yuv)
         .arg(&ivf)
-        .status()
+        .bounded_status()
         .expect("run rvp9dec");
     assert!(status.success(), "rvp9dec failed");
     let dec_len = std::fs::metadata(&yuv).expect("stat dec.yuv").len() as usize;
@@ -128,7 +132,7 @@ fn md5_is_deterministic_and_per_frame() {
         ])
         .arg(&ivf)
         .arg(&raw)
-        .status()
+        .bounded_status()
         .expect("run rvp9enc");
     assert!(enc.success());
 
@@ -136,7 +140,7 @@ fn md5_is_deterministic_and_per_frame() {
         let out = Command::new(dec_bin())
             .arg("--md5")
             .arg(&ivf)
-            .output()
+            .bounded_output()
             .expect("run rvp9dec --md5");
         assert!(out.status.success());
         String::from_utf8(out.stdout).expect("utf8")
@@ -168,7 +172,7 @@ fn md5_is_deterministic_and_per_frame() {
 fn unsupported_flag_fails_loudly() {
     let out = Command::new(enc_bin())
         .args(["--no-such-flag-xyz", "-o", "x.ivf", "in.y4m"])
-        .output()
+        .bounded_output()
         .expect("run rvp9enc");
     assert!(!out.status.success(), "must exit non-zero");
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -195,7 +199,7 @@ fn non_multiple_of_64_rejected_clearly() {
             "x.ivf",
         ])
         .arg(&raw)
-        .output()
+        .bounded_output()
         .expect("run rvp9enc");
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -221,7 +225,7 @@ fn help_lists_supported_and_not_yet_tags() {
     for bin in [enc_bin(), dec_bin()] {
         let out = Command::new(&bin)
             .arg("--help")
-            .output()
+            .bounded_output()
             .expect("run --help");
         assert!(out.status.success());
         let text = String::from_utf8_lossy(&out.stdout);
@@ -259,7 +263,7 @@ fn encode_synthetic_ivf(tag: &str) -> PathBuf {
         ])
         .arg(&ivf)
         .arg(&raw)
-        .status()
+        .bounded_status()
         .expect("run rvp9enc");
     assert!(status.success(), "rvp9enc failed for tag {tag}");
     let _ = std::fs::remove_file(&raw);
@@ -274,7 +278,11 @@ fn decode_md5_with(ivf: &std::path::Path, extra: &[&str]) -> String {
     for a in extra {
         cmd.arg(a);
     }
-    let out = cmd.arg("--md5").arg(ivf).output().expect("run rvp9dec");
+    let out = cmd
+        .arg("--md5")
+        .arg(ivf)
+        .bounded_output()
+        .expect("run rvp9dec");
     assert!(
         out.status.success(),
         "rvp9dec failed with {extra:?}: {}",
@@ -328,7 +336,7 @@ fn threads_unallocatable_count_returns_error_without_panicking() {
         .args(["--noblit", "--threads"])
         .arg(usize::MAX.to_string())
         .arg(&ivf)
-        .output()
+        .bounded_output()
         .expect("run rvp9dec");
 
     assert!(
@@ -363,7 +371,7 @@ fn threads_invalid_rejected() {
             cmd.arg(t);
         }
         cmd.arg(&ivf);
-        let out = cmd.output().expect("run rvp9dec");
+        let out = cmd.bounded_output().expect("run rvp9dec");
         assert!(
             !out.status.success(),
             "{label}: must exit non-zero, stderr=`{}`",
@@ -386,7 +394,7 @@ fn threads_invalid_rejected() {
     // missing-value case is `--threads` as the *last* token.
     let out = Command::new(dec_bin())
         .arg("--threads")
-        .output()
+        .bounded_output()
         .expect("run rvp9dec");
     assert!(!out.status.success(), "missing-value: must exit non-zero");
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -403,7 +411,7 @@ fn threads_invalid_rejected() {
 fn threads_help_tag_supported() {
     let out = Command::new(dec_bin())
         .arg("--help")
-        .output()
+        .bounded_output()
         .expect("run rvp9dec --help");
     assert!(out.status.success());
     let text = String::from_utf8_lossy(&out.stdout);

@@ -20,8 +20,12 @@
 //! there so the contract surface is browsable in one file as the CLIs
 //! grow.
 
+mod common;
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+use common::CommandExt;
 
 // ---- shared fixtures ----------------------------------------------------
 
@@ -86,7 +90,7 @@ fn encode_synthetic_ivf(tag: &str) -> PathBuf {
         ])
         .arg(&ivf)
         .arg(&raw)
-        .status()
+        .bounded_status()
         .expect("run rvp9enc");
     assert!(status.success(), "rvp9enc failed for tag {tag}");
     let _ = std::fs::remove_file(&raw);
@@ -104,7 +108,7 @@ fn encode_synthetic_ivf(tag: &str) -> PathBuf {
 fn dec_unknown_long_flag_rejected() {
     let out = Command::new(dec_bin())
         .args(["--bogus-flag-xyz", "irrelevant.ivf"])
-        .output()
+        .bounded_output()
         .expect("run rvp9dec");
     assert!(!out.status.success(), "must exit non-zero");
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -119,7 +123,7 @@ fn dec_unknown_long_flag_rejected() {
 fn enc_unknown_long_flag_rejected() {
     let out = Command::new(enc_bin())
         .args(["--bogus-flag-xyz", "in.y4m"])
-        .output()
+        .bounded_output()
         .expect("run rvp9enc");
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -134,7 +138,7 @@ fn enc_unknown_long_flag_rejected() {
 fn enc_unknown_short_flag_rejected() {
     let out = Command::new(enc_bin())
         .args(["-z"])
-        .output()
+        .bounded_output()
         .expect("run rvp9enc");
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -154,7 +158,7 @@ fn enc_webm_rejected_before_creating_ivf_output() {
         .args(["--webm", "-w", "64", "-h", "64", "-o"])
         .arg(&output)
         .arg(&raw)
-        .output()
+        .bounded_output()
         .expect("run rvp9enc");
 
     let _ = std::fs::remove_file(&raw);
@@ -187,7 +191,7 @@ fn enc_webm_rejected_before_creating_ivf_output() {
 fn enc_codec_vp8_rejected() {
     let out = Command::new(enc_bin())
         .args(["--codec", "vp8", "in.y4m"])
-        .output()
+        .bounded_output()
         .expect("run rvp9enc");
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -202,7 +206,7 @@ fn enc_codec_vp8_rejected() {
 fn dec_codec_vp8_rejected() {
     let out = Command::new(dec_bin())
         .args(["--codec", "vp8", "in.ivf"])
-        .output()
+        .bounded_output()
         .expect("run rvp9dec");
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -223,7 +227,7 @@ fn dec_codec_vp8_rejected() {
 fn enc_end_usage_unknown_rejected() {
     let out = Command::new(enc_bin())
         .args(["--end-usage", "bogus", "in.y4m"])
-        .output()
+        .bounded_output()
         .expect("run rvp9enc");
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -243,7 +247,7 @@ fn enc_end_usage_unknown_rejected() {
 fn enc_passes_two_accepted_at_parse_time() {
     let out = Command::new(enc_bin())
         .args(["--passes", "2", "in.y4m"])
-        .output()
+        .bounded_output()
         .expect("run rvp9enc");
     // Run still fails (no -o / missing file), but NOT because --passes
     // was rejected.
@@ -261,7 +265,7 @@ fn enc_passes_two_accepted_at_parse_time() {
 fn enc_passes_three_rejected() {
     let out = Command::new(enc_bin())
         .args(["--passes", "3", "in.y4m"])
-        .output()
+        .bounded_output()
         .expect("run rvp9enc");
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -277,7 +281,7 @@ fn enc_passes_three_rejected() {
 fn enc_aq_mode_unsupported_value_rejected() {
     let out = Command::new(enc_bin())
         .args(["--aq-mode", "2", "in.y4m"])
-        .output()
+        .bounded_output()
         .expect("run rvp9enc");
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -292,7 +296,7 @@ fn enc_aq_mode_unsupported_value_rejected() {
 fn enc_aq_mode_missing_value_rejected() {
     let out = Command::new(enc_bin())
         .args(["--aq-mode"])
-        .output()
+        .bounded_output()
         .expect("run rvp9enc");
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -324,7 +328,7 @@ fn enc_aq_mode_three_accepted_and_encodes() {
         ])
         .arg(&ivf)
         .arg(&raw)
-        .output()
+        .bounded_output()
         .expect("run rvp9enc");
     assert!(
         out.status.success(),
@@ -362,7 +366,7 @@ fn enc_fps_single_integer_accepted() {
         ])
         .arg(&ivf)
         .arg(&raw)
-        .output()
+        .bounded_output()
         .expect("run rvp9enc");
     assert!(
         out.status.success(),
@@ -383,7 +387,7 @@ fn enc_fps_single_integer_accepted() {
 fn enc_fps_bad_single_value_rejected() {
     let out = Command::new(enc_bin())
         .args(["--fps", "abc", "in.y4m"])
-        .output()
+        .bounded_output()
         .expect("run rvp9enc");
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -398,7 +402,7 @@ fn enc_fps_bad_single_value_rejected() {
 fn enc_fps_bad_numerator_rejected() {
     let out = Command::new(enc_bin())
         .args(["--fps", "abc/1", "in.y4m"])
-        .output()
+        .bounded_output()
         .expect("run rvp9enc");
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -413,7 +417,7 @@ fn enc_fps_bad_numerator_rejected() {
 fn enc_fps_bad_denominator_rejected() {
     let out = Command::new(enc_bin())
         .args(["--fps", "30/abc", "in.y4m"])
-        .output()
+        .bounded_output()
         .expect("run rvp9enc");
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -428,7 +432,7 @@ fn enc_fps_bad_denominator_rejected() {
 fn enc_fps_zero_denominator_rejected() {
     let out = Command::new(enc_bin())
         .args(["--fps", "30/0", "in.y4m"])
-        .output()
+        .bounded_output()
         .expect("run rvp9enc");
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -446,7 +450,7 @@ fn enc_fps_zero_denominator_rejected() {
 fn enc_no_input_with_flags_errors() {
     let out = Command::new(enc_bin())
         .args(["-w", "64", "-h", "64", "-o", "x.ivf"])
-        .output()
+        .bounded_output()
         .expect("run rvp9enc");
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -460,7 +464,7 @@ fn enc_no_input_with_flags_errors() {
 fn enc_two_inputs_errors() {
     let out = Command::new(enc_bin())
         .args(["-w", "64", "-h", "64", "-o", "x.ivf", "a.yuv", "b.yuv"])
-        .output()
+        .bounded_output()
         .expect("run rvp9enc");
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -477,7 +481,7 @@ fn enc_missing_output_errors() {
     let out = Command::new(enc_bin())
         .args(["-w", "64", "-h", "64"])
         .arg(&raw)
-        .output()
+        .bounded_output()
         .expect("run rvp9enc");
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -492,7 +496,7 @@ fn enc_missing_output_errors() {
 fn dec_two_inputs_errors() {
     let out = Command::new(dec_bin())
         .args(["a.ivf", "b.ivf"])
-        .output()
+        .bounded_output()
         .expect("run rvp9dec");
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -513,7 +517,7 @@ fn enc_raw_input_requires_width() {
     let out = Command::new(enc_bin())
         .args(["-o", "x.ivf"])
         .arg(&raw)
-        .output()
+        .bounded_output()
         .expect("run rvp9enc");
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -531,7 +535,7 @@ fn enc_raw_input_requires_height() {
     let out = Command::new(enc_bin())
         .args(["-w", "64", "-o", "x.ivf"])
         .arg(&raw)
-        .output()
+        .bounded_output()
         .expect("run rvp9enc");
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -550,7 +554,7 @@ fn enc_raw_partial_frame_rejected() {
     let out = Command::new(enc_bin())
         .args(["-w", "64", "-h", "64", "-o", "x.ivf"])
         .arg(&raw)
-        .output()
+        .bounded_output()
         .expect("run rvp9enc");
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -570,7 +574,7 @@ fn enc_raw_empty_input_rejected() {
         .args(["-w", "64", "-h", "64", "-o"])
         .arg(&ivf)
         .arg(&raw)
-        .output()
+        .bounded_output()
         .expect("run rvp9enc");
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -607,7 +611,7 @@ fn enc_verbose_emits_summary_line() {
         ])
         .arg(&ivf)
         .arg(&raw)
-        .output()
+        .bounded_output()
         .expect("run rvp9enc");
     assert!(out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -644,7 +648,7 @@ fn enc_limit_truncates_output() {
         ])
         .arg(&ivf)
         .arg(&raw)
-        .output()
+        .bounded_output()
         .expect("run rvp9enc");
     assert!(
         out.status.success(),
@@ -684,7 +688,7 @@ fn enc_explicit_ivf_flag_is_noop() {
         ])
         .arg(&ivf)
         .arg(&raw)
-        .output()
+        .bounded_output()
         .expect("run rvp9enc");
     assert!(
         out.status.success(),
@@ -722,7 +726,7 @@ fn enc_kf_max_dist_accepted() {
         ])
         .arg(&ivf)
         .arg(&raw)
-        .output()
+        .bounded_output()
         .expect("run rvp9enc");
     assert!(
         out.status.success(),
@@ -743,7 +747,7 @@ fn enc_kf_max_dist_accepted() {
 fn enc_version_prints_and_exits() {
     let out = Command::new(enc_bin())
         .arg("--version")
-        .output()
+        .bounded_output()
         .expect("run rvp9enc --version");
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -755,7 +759,9 @@ fn enc_version_prints_and_exits() {
 
 #[test]
 fn enc_no_args_emits_usage() {
-    let out = Command::new(enc_bin()).output().expect("run rvp9enc");
+    let out = Command::new(enc_bin())
+        .bounded_output()
+        .expect("run rvp9enc");
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
@@ -766,7 +772,9 @@ fn enc_no_args_emits_usage() {
 
 #[test]
 fn dec_no_args_emits_usage() {
-    let out = Command::new(dec_bin()).output().expect("run rvp9dec");
+    let out = Command::new(dec_bin())
+        .bounded_output()
+        .expect("run rvp9dec");
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
@@ -779,7 +787,7 @@ fn dec_no_args_emits_usage() {
 fn dec_version_prints_and_exits() {
     let out = Command::new(dec_bin())
         .arg("--version")
-        .output()
+        .bounded_output()
         .expect("run rvp9dec --version");
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -803,7 +811,7 @@ fn dec_y4m_output_has_yuv4mpeg2_magic() {
         .args(["--y4m", "-o"])
         .arg(&out_path)
         .arg(&ivf)
-        .output()
+        .bounded_output()
         .expect("run rvp9dec");
     assert!(
         out.status.success(),
@@ -832,7 +840,7 @@ fn dec_y4m_inferred_from_extension() {
         .arg("-o")
         .arg(&out_path)
         .arg(&ivf)
-        .output()
+        .bounded_output()
         .expect("run rvp9dec");
     assert!(
         out.status.success(),
@@ -858,7 +866,7 @@ fn dec_i420_output_has_no_container() {
         .args(["--i420", "-o"])
         .arg(&out_path)
         .arg(&ivf)
-        .output()
+        .bounded_output()
         .expect("run rvp9dec");
     assert!(
         out.status.success(),
@@ -892,7 +900,7 @@ fn dec_rawvideo_equivalent_to_i420() {
         .args(["--rawvideo", "-o"])
         .arg(&raw_path)
         .arg(&ivf)
-        .output()
+        .bounded_output()
         .expect("run rvp9dec --rawvideo");
     assert!(
         out_raw.status.success(),
@@ -904,7 +912,7 @@ fn dec_rawvideo_equivalent_to_i420() {
         .args(["--i420", "-o"])
         .arg(&i420_path)
         .arg(&ivf)
-        .output()
+        .bounded_output()
         .expect("run rvp9dec --i420");
     assert!(out_i.status.success());
 
@@ -932,14 +940,14 @@ fn dec_yv12_swaps_u_and_v_vs_i420() {
         .args(["--i420", "-o"])
         .arg(&i_path)
         .arg(&ivf)
-        .status()
+        .bounded_status()
         .expect("run --i420");
     assert!(s1.success());
     let s2 = Command::new(dec_bin())
         .args(["--yv12", "-o"])
         .arg(&yv_path)
         .arg(&ivf)
-        .status()
+        .bounded_status()
         .expect("run --yv12");
     assert!(s2.success());
 
@@ -988,7 +996,7 @@ fn dec_format_flags_last_wins() {
         .args(["--y4m", "--i420", "-o"])
         .arg(&out_path)
         .arg(&ivf)
-        .output()
+        .bounded_output()
         .expect("run rvp9dec");
     assert!(
         out.status.success(),
@@ -1017,7 +1025,7 @@ fn dec_framemd5_indexed_lines() {
     let out = Command::new(dec_bin())
         .arg("--framemd5")
         .arg(&ivf)
-        .output()
+        .bounded_output()
         .expect("run rvp9dec --framemd5");
     assert!(
         out.status.success(),
@@ -1051,7 +1059,7 @@ fn dec_noblit_emits_no_output() {
     let out = Command::new(dec_bin())
         .arg("--noblit")
         .arg(&ivf)
-        .output()
+        .bounded_output()
         .expect("run rvp9dec --noblit");
     assert!(
         out.status.success(),
@@ -1078,7 +1086,7 @@ fn dec_limit_caps_output_frame_count() {
     let out = Command::new(dec_bin())
         .args(["--md5", "--limit", "2"])
         .arg(&ivf)
-        .output()
+        .bounded_output()
         .expect("run rvp9dec --limit");
     assert!(
         out.status.success(),
@@ -1099,7 +1107,7 @@ fn dec_skip_drops_leading_frames() {
     let out = Command::new(dec_bin())
         .args(["--md5", "--skip", "4"])
         .arg(&ivf)
-        .output()
+        .bounded_output()
         .expect("run rvp9dec --skip");
     assert!(
         out.status.success(),
@@ -1124,7 +1132,7 @@ fn dec_skip_then_limit_combines() {
     let out = Command::new(dec_bin())
         .args(["--md5", "--skip", "2", "--limit", "2"])
         .arg(&ivf)
-        .output()
+        .bounded_output()
         .expect("run rvp9dec --skip --limit");
     assert!(
         out.status.success(),
@@ -1143,7 +1151,7 @@ fn dec_skip_then_limit_combines() {
     let full = Command::new(dec_bin())
         .arg("--framemd5")
         .arg(&ivf)
-        .output()
+        .bounded_output()
         .expect("run rvp9dec --framemd5");
     assert!(full.status.success());
     let full_text = String::from_utf8_lossy(&full.stdout);
@@ -1170,7 +1178,7 @@ fn dec_skip_more_than_available_yields_empty() {
     let out = Command::new(dec_bin())
         .args(["--md5", "--skip", "100"])
         .arg(&ivf)
-        .output()
+        .bounded_output()
         .expect("run rvp9dec");
     assert!(out.status.success());
     assert!(
@@ -1191,7 +1199,7 @@ fn dec_summary_emits_summary_line() {
     let out = Command::new(dec_bin())
         .args(["--noblit", "--summary"])
         .arg(&ivf)
-        .output()
+        .bounded_output()
         .expect("run rvp9dec --summary");
     assert!(
         out.status.success(),
@@ -1215,7 +1223,7 @@ fn dec_progress_emits_per_frame_marker() {
     let out = Command::new(dec_bin())
         .args(["--noblit", "--progress"])
         .arg(&ivf)
-        .output()
+        .bounded_output()
         .expect("run rvp9dec --progress");
     assert!(
         out.status.success(),
@@ -1243,7 +1251,7 @@ fn dec_scale_accepted_with_warning() {
     let out = Command::new(dec_bin())
         .args(["--noblit", "--scale"])
         .arg(&ivf)
-        .output()
+        .bounded_output()
         .expect("run rvp9dec --scale");
     assert!(
         out.status.success(),
@@ -1265,7 +1273,7 @@ fn dec_scale_short_form_accepted() {
     let out = Command::new(dec_bin())
         .args(["--noblit", "-S"])
         .arg(&ivf)
-        .output()
+        .bounded_output()
         .expect("run rvp9dec -S");
     assert!(
         out.status.success(),
@@ -1287,7 +1295,7 @@ fn dec_output_bit_depth_eight_silent() {
     let out = Command::new(dec_bin())
         .args(["--noblit", "--output-bit-depth", "8"])
         .arg(&ivf)
-        .output()
+        .bounded_output()
         .expect("run rvp9dec --output-bit-depth 8");
     assert!(
         out.status.success(),
@@ -1311,7 +1319,7 @@ fn dec_output_bit_depth_ten_warns() {
     let out = Command::new(dec_bin())
         .args(["--noblit", "--output-bit-depth", "10"])
         .arg(&ivf)
-        .output()
+        .bounded_output()
         .expect("run rvp9dec --output-bit-depth 10");
     assert!(
         out.status.success(),
@@ -1331,7 +1339,7 @@ fn dec_output_bit_depth_ten_warns() {
 fn dec_output_bit_depth_missing_value_rejected() {
     let out = Command::new(dec_bin())
         .arg("--output-bit-depth")
-        .output()
+        .bounded_output()
         .expect("run rvp9dec");
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -1348,7 +1356,7 @@ fn dec_error_concealment_accepted_with_warning() {
     let out = Command::new(dec_bin())
         .args(["--noblit", "--error-concealment"])
         .arg(&ivf)
-        .output()
+        .bounded_output()
         .expect("run rvp9dec --error-concealment");
     assert!(
         out.status.success(),
@@ -1370,7 +1378,7 @@ fn dec_frame_buffers_accepted_with_warning() {
     let out = Command::new(dec_bin())
         .args(["--noblit", "--frame-buffers", "4"])
         .arg(&ivf)
-        .output()
+        .bounded_output()
         .expect("run rvp9dec --frame-buffers");
     assert!(
         out.status.success(),
@@ -1390,7 +1398,7 @@ fn dec_frame_buffers_accepted_with_warning() {
 fn dec_frame_buffers_missing_value_rejected() {
     let out = Command::new(dec_bin())
         .arg("--frame-buffers")
-        .output()
+        .bounded_output()
         .expect("run rvp9dec");
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -1410,7 +1418,7 @@ fn dec_postproc_silent_noop() {
         let o = Command::new(dec_bin())
             .args(["--noblit"])
             .arg(&ivf)
-            .output()
+            .bounded_output()
             .expect("run rvp9dec");
         assert!(o.status.success());
         String::from_utf8_lossy(&o.stderr).into_owned()
@@ -1424,7 +1432,7 @@ fn dec_postproc_silent_noop() {
             "--mfqe",
         ])
         .arg(&ivf)
-        .output()
+        .bounded_output()
         .expect("run rvp9dec");
     assert!(
         out.status.success(),
@@ -1451,7 +1459,7 @@ fn dec_truncated_ivf_header_rejected() {
     std::fs::write(&path, b"DKIF\x00\x00").expect("write");
     let out = Command::new(dec_bin())
         .arg(&path)
-        .output()
+        .bounded_output()
         .expect("run rvp9dec");
     assert!(!out.status.success(), "must exit non-zero");
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -1472,7 +1480,7 @@ fn dec_bad_ivf_magic_rejected() {
     std::fs::write(&path, &bytes).expect("write");
     let out = Command::new(dec_bin())
         .arg(&path)
-        .output()
+        .bounded_output()
         .expect("run rvp9dec");
     assert!(!out.status.success(), "must exit non-zero");
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -1506,7 +1514,7 @@ fn dec_ivf_frame_size_past_eof_rejected() {
     std::fs::write(&path, &bytes).expect("write");
     let out = Command::new(dec_bin())
         .arg(&path)
-        .output()
+        .bounded_output()
         .expect("run rvp9dec");
     assert!(!out.status.success(), "must exit non-zero");
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -1540,7 +1548,7 @@ fn dec_invalid_vp9_preserves_existing_output_file() {
         .args(["-o"])
         .arg(&output)
         .arg(&input)
-        .output()
+        .bounded_output()
         .expect("run rvp9dec");
 
     let preserved = std::fs::read(&output).expect("read preserved output");
@@ -1570,7 +1578,7 @@ fn dec_i420_and_yv12_reject_profile1_444() {
             .args([flag, "-o"])
             .arg(&output)
             .arg(&input)
-            .output()
+            .bounded_output()
             .expect("run rvp9dec");
         let _ = std::fs::remove_file(&output);
 
@@ -1591,7 +1599,7 @@ fn dec_unknown_extension_rejected() {
     std::fs::write(&path, b"X").expect("write");
     let out = Command::new(dec_bin())
         .arg(&path)
-        .output()
+        .bounded_output()
         .expect("run rvp9dec");
     assert!(!out.status.success(), "must exit non-zero");
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -1614,7 +1622,7 @@ fn dec_missing_input_rejected() {
     let _ = std::fs::remove_file(&path);
     let out = Command::new(dec_bin())
         .arg(&path)
-        .output()
+        .bounded_output()
         .expect("run rvp9dec");
     assert!(!out.status.success(), "must exit non-zero");
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -1632,7 +1640,7 @@ fn dec_missing_input_rejected() {
 fn dec_limit_non_numeric_rejected() {
     let out = Command::new(dec_bin())
         .args(["--limit", "abc"])
-        .output()
+        .bounded_output()
         .expect("run rvp9dec");
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -1647,7 +1655,7 @@ fn dec_skip_negative_rejected() {
     // --skip parses as `usize`, so '-1' is rejected by parse_value.
     let out = Command::new(dec_bin())
         .args(["--skip", "-1"])
-        .output()
+        .bounded_output()
         .expect("run rvp9dec");
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -1665,7 +1673,7 @@ fn dec_skip_negative_rejected() {
 fn enc_help_lists_every_wired_flag() {
     let out = Command::new(enc_bin())
         .arg("--help")
-        .output()
+        .bounded_output()
         .expect("run rvp9enc --help");
     assert!(out.status.success());
     let text = String::from_utf8_lossy(&out.stdout);
@@ -1735,7 +1743,7 @@ fn enc_y4m_input_encodes_successfully() {
         .args(["--target-bitrate", "500", "-o"])
         .arg(&ivf)
         .arg(&y4m)
-        .output()
+        .bounded_output()
         .expect("run rvp9enc on y4m");
     assert!(
         out.status.success(),
@@ -1767,7 +1775,7 @@ fn enc_y4m_fps_override_wins() {
         .args(["--target-bitrate", "500", "--fps", "60/1", "-o"])
         .arg(&ivf)
         .arg(&y4m)
-        .output()
+        .bounded_output()
         .expect("run rvp9enc");
     assert!(
         out.status.success(),
@@ -1793,7 +1801,7 @@ fn enc_y4m_limit_truncates() {
         .args(["--target-bitrate", "500", "--limit", "2", "-o"])
         .arg(&ivf)
         .arg(&y4m)
-        .output()
+        .bounded_output()
         .expect("run rvp9enc");
     assert!(
         out.status.success(),
@@ -1824,7 +1832,7 @@ fn enc_y4m_coded_larger_than_source_rejected() {
             "x.ivf",
         ])
         .arg(&y4m)
-        .output()
+        .bounded_output()
         .expect("run rvp9enc");
     assert!(!out.status.success(), "must reject oversized coded dims");
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -1846,7 +1854,7 @@ fn dec_codec_vp9_accepted() {
     let out = Command::new(dec_bin())
         .args(["--noblit", "--codec", "vp9"])
         .arg(&ivf)
-        .output()
+        .bounded_output()
         .expect("run rvp9dec --codec vp9");
     assert!(
         out.status.success(),
@@ -1861,7 +1869,7 @@ fn dec_codec_vp9_accepted() {
 fn dec_codec_missing_value_rejected() {
     let out = Command::new(dec_bin())
         .arg("--codec")
-        .output()
+        .bounded_output()
         .expect("run rvp9dec");
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -1876,7 +1884,7 @@ fn dec_codec_missing_value_rejected() {
 fn enc_codec_missing_value_rejected() {
     let out = Command::new(enc_bin())
         .arg("--codec")
-        .output()
+        .bounded_output()
         .expect("run rvp9enc");
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -1897,7 +1905,7 @@ fn dec_y4m_single_header_then_per_frame_tags() {
         .args(["--y4m", "-o"])
         .arg(&out_path)
         .arg(&ivf)
-        .output()
+        .bounded_output()
         .expect("run rvp9dec --y4m");
     assert!(
         out.status.success(),
@@ -1927,7 +1935,7 @@ fn dec_no_output_uses_stdout() {
     let out = Command::new(dec_bin())
         .args(["--i420"])
         .arg(&ivf)
-        .output()
+        .bounded_output()
         .expect("run rvp9dec --i420 (stdout)");
     assert!(
         out.status.success(),
@@ -1953,7 +1961,7 @@ fn dec_default_format_for_unknown_extension() {
         .arg("-o")
         .arg(&out_path)
         .arg(&ivf)
-        .output()
+        .bounded_output()
         .expect("run rvp9dec");
     assert!(
         out.status.success(),
@@ -1990,7 +1998,7 @@ fn dec_ivf_zero_framerate_uses_default() {
     let out = Command::new(dec_bin())
         .args(["--noblit", "--summary"])
         .arg(&path)
-        .output()
+        .bounded_output()
         .expect("run rvp9dec");
     assert!(
         out.status.success(),
@@ -2015,7 +2023,7 @@ fn dec_summary_reports_skipped_and_emitted_counts() {
     let out = Command::new(dec_bin())
         .args(["--noblit", "--summary", "--skip", "1", "--limit", "2"])
         .arg(&ivf)
-        .output()
+        .bounded_output()
         .expect("run rvp9dec");
     assert!(
         out.status.success(),
@@ -2047,7 +2055,7 @@ fn enc_help_short_circuits_before_validation() {
     // Pass deliberately bogus positionals: --help must still succeed.
     let out = Command::new(enc_bin())
         .args(["--help", "--bogus", "extra"])
-        .output()
+        .bounded_output()
         .expect("run rvp9enc --help");
     assert!(out.status.success(), "--help must short-circuit");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -2059,7 +2067,7 @@ fn enc_help_short_circuits_before_validation() {
 fn dec_help_short_circuits_before_validation() {
     let out = Command::new(dec_bin())
         .args(["--help", "--bogus", "extra"])
-        .output()
+        .bounded_output()
         .expect("run rvp9dec --help");
     assert!(out.status.success(), "--help must short-circuit");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -2084,7 +2092,7 @@ fn dec_ivf_zero_den_uses_default_framerate() {
     let out = Command::new(dec_bin())
         .args(["--noblit", "--summary"])
         .arg(&path)
-        .output()
+        .bounded_output()
         .expect("run rvp9dec");
     assert!(
         out.status.success(),
@@ -2132,7 +2140,7 @@ fn dec_webm_large_non_ivf_data_uses_default_framerate() {
     let out = Command::new(dec_bin())
         .args(["--noblit", "--summary"])
         .arg(&path)
-        .output()
+        .bounded_output()
         .expect("run rvp9dec on webm");
     assert!(
         out.status.success(),
@@ -2157,7 +2165,7 @@ fn dec_empty_webm_decodes_zero_frames() {
     let out = Command::new(dec_bin())
         .args(["--noblit", "--summary"])
         .arg(&path)
-        .output()
+        .bounded_output()
         .expect("run rvp9dec on empty webm");
     assert!(
         out.status.success(),
@@ -2183,7 +2191,7 @@ fn dec_output_path_is_directory_rejected() {
         .args(["--i420", "-o"])
         .arg(&dir)
         .arg(&ivf)
-        .output()
+        .bounded_output()
         .expect("run rvp9dec");
     assert!(
         !out.status.success(),
@@ -2216,7 +2224,7 @@ fn enc_y4m_height_larger_than_source_rejected() {
             "x.ivf",
         ])
         .arg(&y4m)
-        .output()
+        .bounded_output()
         .expect("run rvp9enc");
     assert!(
         !out.status.success(),
@@ -2234,7 +2242,7 @@ fn enc_y4m_height_larger_than_source_rejected() {
 fn dec_help_lists_every_wired_flag() {
     let out = Command::new(dec_bin())
         .arg("--help")
-        .output()
+        .bounded_output()
         .expect("run rvp9dec --help");
     assert!(out.status.success());
     let text = String::from_utf8_lossy(&out.stdout);
