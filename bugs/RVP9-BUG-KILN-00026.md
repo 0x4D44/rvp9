@@ -5,15 +5,15 @@
 - **Severity:** High
 - **Area:** decoder/tile entropy
 - **Raised:** 2026-07-07
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
+- **Owner:** deltic:manual
+- **Owner role:** fix
+- **Owner run:** fix-20260730T162528Z-p98885-n775251000-c1
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KILN-00026-run-fix-20260730T162528Z-p98885-n775251000-c1
+- **Owner base:** dc76dede3939839efdac78c30323c1b4bd232b3a
 - **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner since:** 2026-07-30T16:25:28Z
+- **Owner until:** 2026-07-30T18:25:28Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
