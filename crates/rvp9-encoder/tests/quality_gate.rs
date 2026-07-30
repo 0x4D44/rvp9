@@ -28,7 +28,7 @@
 //!    operating point.
 //! 4. Forms the rvp9 RD curve from those points.
 //!
-//! If `vpxenc.exe` is available (at the path probed by
+//! If `vpxenc` is available (at the path probed by
 //! [`libvpx_stock_available`]), the harness also encodes the same
 //! source through libvpx-stock at matched configs.
 //!
@@ -79,17 +79,23 @@ const TRACK_F_PSNR_DELTA_THRESHOLD_DB: f64 = 9.1;
 /// metric lives on foreman.
 const TRACK_F_PSNR_DELTA_THRESHOLD_TESTSRC_DB: f64 = 50.0;
 
-/// Probe for libvpx-stock's `vpxenc.exe` at a known path.
+/// Probe for libvpx-stock's `vpxenc` at a known path.
 ///
 /// Returns `Some(path)` if the binary exists and is executable on this
 /// host; `None` otherwise. The harness short-circuits the libvpx side
 /// of the comparison if `None`.
 fn libvpx_stock_available() -> Option<PathBuf> {
-    // Try the canonical sibling-tree location first.
-    let canonical = PathBuf::from(r"D:\language\libvpx-stock\vpxenc.exe");
-    if canonical.is_file() {
-        return Some(canonical);
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let candidates = [
+        root.join("build/libvpx/vpxenc"),
+        root.join("build/libvpx/vpxenc.exe"),
+        root.join("build/libvpx-win-tools-nodeps/vpxenc.exe"),
+        PathBuf::from(r"D:\language\libvpx-stock\vpxenc.exe"),
+    ];
+    if let Some(candidate) = candidates.into_iter().find(|candidate| candidate.is_file()) {
+        return Some(candidate);
     }
+
     // Fall back to `vpxenc` on PATH.
     let path = std::env::var_os("PATH")?;
     for dir in std::env::split_paths(&path) {
@@ -105,6 +111,30 @@ fn libvpx_stock_available() -> Option<PathBuf> {
         }
     }
     None
+}
+
+fn sibling_vpxdec_path(vpxenc: &Path) -> PathBuf {
+    let filename = if vpxenc
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("exe"))
+    {
+        "vpxdec.exe"
+    } else {
+        "vpxdec"
+    };
+    vpxenc.with_file_name(filename)
+}
+
+#[test]
+fn sibling_vpxdec_path_matches_vpxenc_suffix() {
+    assert_eq!(
+        sibling_vpxdec_path(Path::new("/tmp/vpxenc")),
+        PathBuf::from("/tmp/vpxdec")
+    );
+    assert_eq!(
+        sibling_vpxdec_path(Path::new("/tmp/vpxenc.exe")),
+        PathBuf::from("/tmp/vpxdec.exe")
+    );
 }
 
 /// Build a strided YUV view over tight-stride backing buffers.
@@ -351,10 +381,10 @@ fn measure_libvpx_point(
     // But for the libvpx-leg of the BD-rate curve we should decode WITH
     // libvpx-stock too (so any decoder asymmetry doesn't pollute the
     // comparison). Use vpxdec at the same path tree.
-    let vpxdec = vpxenc.with_file_name("vpxdec.exe");
+    let vpxdec = sibling_vpxdec_path(vpxenc);
     if !vpxdec.is_file() {
         eprintln!(
-            "    [libvpx skipped] vpxdec.exe missing at {}",
+            "    [libvpx skipped] vpxdec missing at {}",
             vpxdec.display()
         );
         return None;
