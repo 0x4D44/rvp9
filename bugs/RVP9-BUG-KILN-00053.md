@@ -5,15 +5,15 @@
 - **Severity:** Medium
 - **Area:** cli/rvp9enc boundedness
 - **Raised:** 2026-07-07
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
+- **Owner:** deltic:manual
+- **Owner role:** fix
+- **Owner run:** fix-20260730T202432Z-p93542-n623704000-c1
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KILN-00053-run-fix-20260730T202432Z-p93542-n623704000-c1
+- **Owner base:** c0357664a96c41d055393783faf566dfb3d0906e
 - **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner since:** 2026-07-30T20:24:32Z
+- **Owner until:** 2026-07-30T22:24:32Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
