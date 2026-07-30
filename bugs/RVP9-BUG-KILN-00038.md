@@ -1,24 +1,24 @@
 # RVP9-BUG-KILN-00038 - e1_block_stats IVF reports can use a wrong frame denominator
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** harness/e1-block-stats
 - **Raised:** 2026-07-07
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260730T193024Z-p23523-n700722000-c1
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KILN-00038-run-fix-20260730T193024Z-p23523-n700722000-c1
-- **Owner base:** 4f8c70f210f76dd2527ab6814ead12ea4e80dd47
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-07-30T19:30:24Z
-- **Owner until:** 2026-07-30T21:30:24Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-harness/` at `cfabd55`)
+- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-harness/` at `cfabd55`) -> Fixed (2026-07-30, deltic:auto role=fix run=fix-20260730T193024Z-p23523-n700722000-c1 branch=task/bug-RVP9-BUG-KILN-00038-run-fix-20260730T193024Z-p23523-n700722000-c1 code=a0db45c3762859996ffd2db7c9ae267f35c3e59d gate=manual)
 
 ## Observation
 
