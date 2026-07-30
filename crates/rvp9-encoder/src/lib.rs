@@ -2416,16 +2416,35 @@ fn p8_vbr_qmax_enabled(
     !rt_large_recovery && matches!(rc_mode, crate::rate_control::RcMode::Vbr) && base_qindex <= qmax
 }
 
-fn mv_in_strict_limits_or_zero(mv: Mv, limits: rvp9_core::mv_search::MvLimits) -> bool {
-    if mv == Mv::ZERO {
-        return true;
-    }
+fn mv_in_strict_limits_or_visible_full_chroma_pel(
+    mv: Mv,
+    limits: rvp9_core::mv_search::MvLimits,
+    block_origin: (usize, usize),
+    block_size: (usize, usize),
+    frame_size: (usize, usize),
+) -> bool {
     let col_fp = i32::from(mv.col) >> 3;
     let row_fp = i32::from(mv.row) >> 3;
-    col_fp >= limits.col_min
+    if col_fp >= limits.col_min
         && col_fp <= limits.col_max
         && row_fp >= limits.row_min
         && row_fp <= limits.row_max
+    {
+        return true;
+    }
+    // A Q3 vector must be a multiple of 16 to land on an integer sample
+    // after 4:2:0 chroma subsampling. Odd whole-luma-pel vectors still
+    // require a half-pel chroma filter halo.
+    if (mv.row | mv.col) & 15 != 0 {
+        return false;
+    }
+
+    let ref_x = block_origin.0 as i64 + i64::from(col_fp);
+    let ref_y = block_origin.1 as i64 + i64::from(row_fp);
+    ref_x >= 0
+        && ref_y >= 0
+        && ref_x + block_size.0 as i64 <= frame_size.0 as i64
+        && ref_y + block_size.1 as i64 <= frame_size.1 as i64
 }
 
 fn stage4a_block16_split_admission(
@@ -3494,8 +3513,15 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         return None;
                     }
                     let mv_limits = MvLimits::new(col_min, col_max, row_min, row_max);
-                    let mv_in_bounds =
-                        |m: Mv| -> bool { mv_in_strict_limits_or_zero(m, mv_limits) };
+                    let mv_in_bounds = |m: Mv| -> bool {
+                        mv_in_strict_limits_or_visible_full_chroma_pel(
+                            m,
+                            mv_limits,
+                            (leaf_px_x, leaf_px_y),
+                            (bw_px, bh_px),
+                            (w, h),
+                        )
+                    };
 
                     // mi-grid neighbour lookup for find_mv_refs and
                     // context predicates. The descent runs BEFORE
@@ -4176,10 +4202,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 //         border-extend; see its caller-invariant
                 //         comment).
                 //
-                // Exact ZEROMV needs no interpolation halo and is always
-                // safe for a visible leaf. Candidate-bound checks below
-                // therefore admit only that one vector outside this strict
-                // search envelope.
+                // Candidates that are integer-pel on both luma and 4:2:0
+                // chroma need no interpolation halo and are safe whenever
+                // their visible block stays inside the frame. Candidate-bound
+                // checks below admit those vectors outside this envelope.
                 //
                 // If the resulting envelope is degenerate (col_min >
                 // col_max) the leaf is too close to a frame edge for
@@ -4392,8 +4418,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 // `mv_limits`, a filtered candidate can over-read the
                 // reference plane. Exact ZEROMV is the narrow exception:
                 // it is integer-pel, reads only the visible block, and is
-                // safe even when the conservative halo envelope excludes
-                // zero at a frame edge.
+                // safe even when the conservative halo envelope excludes it
+                // at a frame edge. The same holds for any vector that remains
+                // integer-pel after chroma subsampling and whose visible block
+                // remains in frame.
                 //
                 // To preserve bit-exact encoder<->decoder agreement
                 // AND avoid the panic, when a non-zero `mvc.nearest` is OOB we
@@ -4408,7 +4436,15 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 // and for the NEAREST mode it would propagate the
                 // un-clamped value through the decoder's
                 // border-extend path.
-                let mv_in_bounds = |m: Mv| -> bool { mv_in_strict_limits_or_zero(m, mv_limits) };
+                let mv_in_bounds = |m: Mv| -> bool {
+                    mv_in_strict_limits_or_visible_full_chroma_pel(
+                        m,
+                        mv_limits,
+                        (leaf_px_x, leaf_px_y),
+                        (bw, bh),
+                        (w, h),
+                    )
+                };
                 // Phase 2a — unified dual-ref interleaved picker.
                 // Replaces the old dual-`pick_inter_mode_luma` +
                 // argmin pattern with a single call to
@@ -7669,21 +7705,25 @@ mod tests {
     }
 
     #[test]
-    fn exact_zero_mv_is_safe_outside_subpel_halo_limits() {
+    fn visible_full_chroma_pel_mv_is_safe_outside_subpel_halo_limits() {
         let edge_limits = rvp9_core::mv_search::MvLimits::new(6, 20, 6, 20);
-        assert!(mv_in_strict_limits_or_zero(Mv::ZERO, edge_limits));
-        assert!(!mv_in_strict_limits_or_zero(
-            Mv { row: 1, col: 0 },
-            edge_limits
-        ));
-        assert!(!mv_in_strict_limits_or_zero(
-            Mv { row: 8, col: 8 },
-            edge_limits
-        ));
-        assert!(mv_in_strict_limits_or_zero(
-            Mv { row: 48, col: 48 },
-            edge_limits
-        ));
+        let is_safe = |mv, origin, size| {
+            mv_in_strict_limits_or_visible_full_chroma_pel(
+                mv,
+                edge_limits,
+                origin,
+                size,
+                (256, 256),
+            )
+        };
+
+        assert!(is_safe(Mv::ZERO, (0, 0), (16, 16)));
+        assert!(is_safe(Mv { row: -16, col: -16 }, (16, 16), (16, 16)));
+        assert!(!is_safe(Mv { row: -16, col: -16 }, (0, 0), (16, 16)));
+        assert!(!is_safe(Mv { row: -8, col: -8 }, (16, 16), (16, 16)));
+        assert!(!is_safe(Mv { row: 1, col: 0 }, (0, 0), (16, 16)));
+        assert!(!is_safe(Mv::ZERO, (248, 248), (16, 16)));
+        assert!(is_safe(Mv { row: 48, col: 48 }, (0, 0), (16, 16)));
     }
 
     #[test]
