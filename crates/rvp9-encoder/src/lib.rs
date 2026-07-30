@@ -3190,7 +3190,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         |key: &str, default: bool| std::env::var_os(key).map_or(default, |v| v != "0");
     let rt_emit_max_tx = env_flag_default("RVP9_RT_EMIT_MAX_TX", rt_large_recovery);
     let rt_emit_tx_rd = env_flag_default("RVP9_RT_EMIT_TX_RD", true);
-    let rt_quant_fp = env_flag_default("RVP9_RT_QUANT_FP", false);
+    // libvpx speed >= 4 uses `quant_fp` for every inter frame. Preserve
+    // `=0` as the regular-quantizer diagnostic without making the slower
+    // good-quality quantizer the realtime default.
+    let rt_quant_fp = env_flag_default("RVP9_RT_QUANT_FP", true);
     let rt_reuse_descent_pick = env_flag_default("RVP9_RT_REUSE_DESCENT_PICK", rt_large_recovery);
     let a4_descent_cb_filter_search =
         env_flag_default("RVP9_A4_DESCENT_CB_FILTER", rt_large_recovery);
