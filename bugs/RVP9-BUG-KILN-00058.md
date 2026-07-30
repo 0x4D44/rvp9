@@ -1,24 +1,24 @@
 # RVP9-BUG-KILN-00058 - bench-compare passes empty or one-sided comparisons
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** bench/compare
 - **Raised:** 2026-07-07
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260730T185058Z-p85362-n070097000-c1
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KILN-00058-run-fix-20260730T185058Z-p85362-n070097000-c1
-- **Owner base:** 25cd83b9107392ce8c15b7123d2066c7120e6638
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-07-30T18:50:58Z
-- **Owner until:** 2026-07-30T20:50:58Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-bench/` at `f7e477d`)
+- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-bench/` at `f7e477d`) -> Fixed (2026-07-30, deltic:auto role=fix run=fix-20260730T185058Z-p85362-n070097000-c1 branch=task/bug-RVP9-BUG-KILN-00058-run-fix-20260730T185058Z-p85362-n070097000-c1 code=7b3b6d9b209922889caacbd66f63929bce0a75c3 gate=manual)
 
 ## Observation
 
