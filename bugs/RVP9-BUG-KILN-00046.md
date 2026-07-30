@@ -1,24 +1,24 @@
 # RVP9-BUG-KILN-00046 - IVF reader ignores trailing partial frame records
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** io/ivf packet reader
 - **Raised:** 2026-07-07
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260730T181227Z-p28158-n891950000-c1
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KILN-00046-run-fix-20260730T181227Z-p28158-n891950000-c1
-- **Owner base:** a66427bb838926d80bde9f7a2170bd37875431cf
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-07-30T18:12:27Z
-- **Owner until:** 2026-07-30T20:12:27Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-io/` at `6128772`)
+- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-io/` at `6128772`) -> Fixed (2026-07-30, deltic:auto role=fix run=fix-20260730T181227Z-p28158-n891950000-c1 branch=task/bug-RVP9-BUG-KILN-00046-run-fix-20260730T181227Z-p28158-n891950000-c1 code=152103f9e282e1a3f5c377bf4d7c49c53c203cbf gate=manual)
 
 ## Observation
 
