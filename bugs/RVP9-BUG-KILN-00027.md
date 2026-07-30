@@ -5,15 +5,15 @@
 - **Severity:** High
 - **Area:** decoder/loopfilter overlap threading
 - **Raised:** 2026-07-07
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
+- **Owner:** deltic:manual
+- **Owner role:** fix
+- **Owner run:** fix-20260730T163259Z-p90498-n570963000-c1
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KILN-00027-run-fix-20260730T163259Z-p90498-n570963000-c1
+- **Owner base:** 10fc9b863da80cf178a05325db9a485d95ff5468
 - **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner since:** 2026-07-30T16:32:59Z
+- **Owner until:** 2026-07-30T18:32:59Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
