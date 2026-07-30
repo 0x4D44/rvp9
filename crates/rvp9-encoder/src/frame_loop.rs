@@ -1072,6 +1072,10 @@ pub struct StreamEncoder {
     /// (`tests/w_altref_real_coding.rs`) via
     /// [`Self::diag_last_arf_real_coded`]. `None` until the first ARF.
     last_arf_real_coded: Option<bool>,
+    /// Diagnostic witness for the ARF previous-MV salvage regression.
+    /// `Some(true)` means the last emitted ARF's picker and writer received
+    /// the previous shown frame's MV grid.
+    last_arf_used_prev_mv_grid: Option<bool>,
     /// W-ALTREF picker — `true` once a real ARF has been emitted in the
     /// current GOP (set in [`Self::encode_altref_internal`], reset on
     /// every keyframe). This is the gate the show-frame inter picker
@@ -1439,6 +1443,7 @@ impl StreamEncoder {
             // LAST/GOLDEN-only until the first ARF emission.
             altref_slot_emitted: false,
             last_arf_real_coded: None,
+            last_arf_used_prev_mv_grid: None,
             pending_arf_packet: None,
             inter_frames_since_arf: 0,
             frames_since_golden_refresh: 0,
@@ -3355,10 +3360,20 @@ impl StreamEncoder {
         let mut arf_recon_v = vec![0u8; uvw * uvh];
 
         // Local per-leaf MV grid (discarded — the ARF must not become
-        // the next show frame's `prev_mv_grid`). The ARF disables the
-        // `use_prev_frame_mvs` salvage (`prev_mv_grid = None`) so its
-        // writer-side `find_mv_refs` matches the decoder's.
+        // the next show frame's `prev_mv_grid`). The ARF still reads the
+        // preceding shown frame's grid when the decoder's structural gate
+        // is open. Its following show frame cannot read this local grid
+        // because decoding the non-show ARF closes `last_show_frame`.
         let mut arf_mv_grid = vec![PrevFrameMvRef::default(); mi_rows_us * mi_cols_us];
+        let use_arf_prev_mv_grid = !self.last_frame_was_key
+            && self.last_show_frame
+            && self.prev_mv_grid_dims == (mi_rows_us, mi_cols_us);
+        self.last_arf_used_prev_mv_grid = Some(use_arf_prev_mv_grid);
+        let arf_prev_mv_grid = if use_arf_prev_mv_grid {
+            self.prev_mv_grid.as_deref()
+        } else {
+            None
+        };
         let seg_q_deltas: [Option<i16>; 8] = [None; 8];
 
         // Clone the RD-threshold table so the picker's
@@ -3397,10 +3412,7 @@ impl StreamEncoder {
             None,
             (&mut arf_recon_y, &mut arf_recon_u, &mut arf_recon_v),
             &mut sb_partitions,
-            // ARF disables prev-frame-MV salvage (libvpx never feeds the
-            // ARF the show stream's prev MVs); keeps writer/decoder
-            // `find_mv_refs` in lock-step.
-            None,
+            arf_prev_mv_grid,
             &mut arf_mv_grid,
             &self.frame_context,
             &mut arf_rd_thresh,
@@ -3508,7 +3520,7 @@ impl StreamEncoder {
             // rationale.
             /* ref_frame_indices = */
             [0, 1, 2],
-            /* prev_mv_grid = */ None,
+            /* prev_mv_grid = */ arf_prev_mv_grid,
             Some(&mut frame_counts),
             Some(&self.frame_context),
             &mut decoder_fc,
@@ -3630,6 +3642,12 @@ impl StreamEncoder {
     #[must_use]
     pub fn diag_last_arf_real_coded(&self) -> Option<bool> {
         self.last_arf_real_coded
+    }
+
+    /// Diagnostic witness for the ARF previous-MV salvage path.
+    #[must_use]
+    pub fn diag_last_arf_used_prev_mv_grid(&self) -> Option<bool> {
+        self.last_arf_used_prev_mv_grid
     }
 
     /// W8 — build the filtered ALTREF source via the temporal filter

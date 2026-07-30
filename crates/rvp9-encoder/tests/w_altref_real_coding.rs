@@ -38,6 +38,7 @@
 //! - `vp9/encoder/vp9_encoder.c:5034-5049` `set_ref_sign_bias` — the
 //!   sign-bias rule wired into the header.
 
+use rvp9_core::mode_info::{BlockMode, InterMode};
 use rvp9_decoder::{Decoder, ParsedFrame};
 use rvp9_encoder::{AqMode, EncoderConfig, RcMode, StreamEncoder, YuvFrameRef};
 use rvp9_harness::container::{IvfHeader, write_ivf};
@@ -247,6 +248,95 @@ fn altref_slot2_differs_from_last_recon() {
     assert!(
         slot2.iter().any(|&p| p != 0),
         "slot 2 reconstruction must hold real pixels, not all-zero"
+    );
+}
+
+/// A non-show ARF decoded after a shown inter frame inherits that frame's
+/// MV grid. The encoder's ARF reconstruction must therefore use the same
+/// previous-MV salvage as the decoder.
+#[test]
+fn altref_reconstruction_matches_decoder_with_prev_mv_salvage() {
+    let n_frames: u32 = 16;
+    let (frames, framerate) = synthetic_motion_frames(n_frames);
+    let cfg = EncoderConfig {
+        width: W,
+        height: H,
+        framerate,
+        target_bitrate_bps: 1_000_000,
+        gop_length: 16,
+        aq_mode: AqMode::Off,
+        use_prev_frame_mvs: false,
+        speed: 7,
+        deadline: rvp9_encoder::Deadline::Realtime,
+        noise_sensitivity: 0,
+        bit_depth: rvp9_core::BitDepth::Bd8,
+        lag_in_frames: 9,
+        enable_alt_ref: true,
+        rc_mode: RcMode::Cbr,
+        cq_level: 0,
+        temporal_layers: 1,
+        enable_tpl: false,
+        stage4a_product_split_override: Default::default(),
+        min_qindex: 4,
+        max_qindex: 255,
+    };
+    let mut enc = StreamEncoder::new(cfg).expect("StreamEncoder::new");
+    let mut packets = Vec::new();
+    for (y, u, v) in &frames {
+        if let Some(pkt) = enc
+            .encode_frame_delayed(&yuv_view(y, u, v, W as usize))
+            .expect("encode_frame_delayed")
+        {
+            packets.push(pkt.data);
+        }
+    }
+    for result in enc.flush() {
+        packets.push(result.expect("flush ok").data);
+    }
+
+    assert_eq!(
+        enc.diag_last_arf_used_prev_mv_grid(),
+        Some(true),
+        "the ARF follows a shown inter frame and must inherit its MV grid"
+    );
+    let encoder_arf = enc.diag_altref_recon_y().to_vec();
+    let mut decoder = Decoder::new();
+    let mut decoded_arf = None;
+    for packet in &packets {
+        for parsed in decode_packet(&mut decoder, packet) {
+            let show_frame = parsed.header.show_frame;
+            let buffer = decoder.decode_frame(&parsed).expect("decode_frame");
+            if !show_frame {
+                assert!(
+                    decoder.last_frame_mi_grid().iter().flatten().any(|mi| {
+                        matches!(
+                            mi.mode,
+                            BlockMode::Inter {
+                                mode: InterMode::NewMv,
+                                ..
+                            }
+                        )
+                    }),
+                    "the ARF regression stream must exercise NEWMV coding"
+                );
+                let plane = buffer.y_plane();
+                let mut tight = Vec::with_capacity((W * H) as usize);
+                for row in 0..H as usize {
+                    let offset = row * plane.stride();
+                    tight.extend_from_slice(&plane.data()[offset..offset + W as usize]);
+                }
+                assert!(
+                    decoded_arf.replace(tight).is_none(),
+                    "test stream must contain exactly one ARF"
+                );
+            }
+        }
+    }
+
+    assert_eq!(
+        decoded_arf.as_deref(),
+        Some(encoder_arf.as_slice()),
+        "encoder and decoder must derive the same ARF reconstruction"
     );
 }
 
