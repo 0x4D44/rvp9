@@ -1,24 +1,24 @@
 # RVP9-BUG-KILN-00034 - Parallel harness oracles can pass on dropped or sentinel failures
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** harness/threaded-test-oracles
 - **Raised:** 2026-07-07
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260730T191322Z-p9226-n944487000-c1
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KILN-00034-run-fix-20260730T191322Z-p9226-n944487000-c1
-- **Owner base:** dbb6960a68cb3ac3c8e15c871fcf504102b2d1b6
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-07-30T19:13:22Z
-- **Owner until:** 2026-07-30T21:13:22Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-harness/` at `cfabd55`)
+- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-harness/` at `cfabd55`) -> Fixed (2026-07-30, deltic:auto role=fix run=fix-20260730T191322Z-p9226-n944487000-c1 branch=task/bug-RVP9-BUG-KILN-00034-run-fix-20260730T191322Z-p9226-n944487000-c1 code=465a6b5273c4ad78d6621ebbebb179fee8514323 gate=manual)
 
 ## Observation
 
