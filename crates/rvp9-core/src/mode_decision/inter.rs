@@ -2471,7 +2471,17 @@ fn evaluate_intra_fallback(
             .saturating_add(intra_cost_penalty)
             .saturating_add(effective_coef_rate);
 
-        let this_rd = rd_cost(lambda, rate, u64::from(dist));
+        // libvpx ranks realtime intra candidates with the coefficient-domain
+        // distortion produced by `block_yrd` (`vp9_pickmode.c:2608-2633`),
+        // not the post-reconstruction pixel SSE used for diagnostics. When
+        // model-RD takes the all-zero shortcut there is no transform result,
+        // so use the equivalent VP9 distortion scale (`pixel SSE << 4`).
+        let dist_rd = if by.skippable {
+            u64::from(dist) << 4
+        } else {
+            by.coef_dist.max(0) as u64
+        };
+        let this_rd = rd_cost(lambda, rate, dist_rd);
 
         let is_new_best = match best_intra.as_ref() {
             None => true,
@@ -8767,11 +8777,19 @@ mod tests {
         // Control: max_intra_bsize = Block32x32 → Block32x32 <=
         // Block32x32 → intra fallback runs.
         params.max_intra_bsize = BlockSize::Block32x32;
-        let res_control = evaluate_intra_fallback(&params, lambda, cp);
-        assert!(
-            res_control.is_some(),
+        let res_control = evaluate_intra_fallback(&params, lambda, cp).expect(
             "§11 max_intra_bsize CONTROL: Block32x32 <= Block32x32 must \
              permit intra fallback",
+        );
+        let expected_dist_rd = if res_control.skip_txfm == SkipTxfm::AcDc {
+            u64::from(res_control.best_distortion) << 4
+        } else {
+            res_control.coef_dist.max(0) as u64
+        };
+        assert_eq!(
+            res_control.best_rd_cost,
+            rd_cost(lambda, res_control.best_rate, expected_dist_rd),
+            "realtime intra ranking must use libvpx's block_yrd distortion domain",
         );
     }
 

@@ -4907,7 +4907,11 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     last_near_in_bounds: mv_in_bounds(mvc.near),
                     golden_nearest_in_bounds: mv_in_bounds(mvc_golden.nearest),
                     golden_near_in_bounds: mv_in_bounds(mvc_golden.near),
-                    enable_intra_fallback: false,
+                    // Final-leaf intra fallback is safe now that the causal
+                    // and loop-filter grids preserve intra winners. Keep it
+                    // out of the speculative descent above; libvpx evaluates
+                    // it after the inter-mode search on the selected leaf.
+                    enable_intra_fallback: true,
                     intra_above_pixels: intra_above,
                     intra_left_pixels: intra_left,
                     intra_top_left_pixel: intra_top_left,
