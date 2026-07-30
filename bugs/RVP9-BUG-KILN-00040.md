@@ -5,15 +5,15 @@
 - **Severity:** Medium
 - **Area:** harness/md5-ledger
 - **Raised:** 2026-07-07
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
+- **Owner:** deltic:manual
+- **Owner role:** fix
+- **Owner run:** fix-20260730T193818Z-p32779-n183602000-c1
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KILN-00040-run-fix-20260730T193818Z-p32779-n183602000-c1
+- **Owner base:** 0cc40c3595d5d3c85543768158a9bf384db129d7
 - **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner since:** 2026-07-30T19:38:18Z
+- **Owner until:** 2026-07-30T21:38:18Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
