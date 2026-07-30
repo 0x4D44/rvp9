@@ -130,6 +130,22 @@ pub struct Y4mHeader {
     pub fps_den: u32,
 }
 
+/// Incremental centre-cropping Y4M reader.
+///
+/// The reader retains one source-sized frame buffer and returns one owned
+/// cropped frame at a time, so callers need not keep the full sequence in
+/// memory.
+pub struct Y4mReader {
+    file: std::fs::File,
+    header: Y4mHeader,
+    source: Yuv420Layout,
+    crop: Yuv420Layout,
+    off_x: usize,
+    off_y: usize,
+    body: Vec<u8>,
+    remaining: usize,
+}
+
 impl Y4mHeader {
     /// Framerate as a float (`fps_num / fps_den`).
     #[inline]
@@ -246,6 +262,135 @@ pub fn parse_header(f: &mut std::fs::File) -> std::io::Result<Y4mHeader> {
     }
 }
 
+impl Y4mReader {
+    /// Open a Y4M input and prepare to return at most `frame_limit` frames,
+    /// centre-cropped to `crop_w` × `crop_h`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`io::Error`] for invalid headers or crop geometry,
+    /// allocation failures, and filesystem errors.
+    pub fn open(path: &Path, crop_w: u32, crop_h: u32, frame_limit: usize) -> io::Result<Self> {
+        let mut file = std::fs::File::open(path)?;
+        let header = parse_header(&mut file)?;
+        if crop_w > header.w || crop_h > header.h {
+            return Err(y4m_error(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "crop {crop_w}x{crop_h} exceeds y4m {}x{}",
+                    header.w, header.h
+                ),
+            ));
+        }
+        if crop_w == 0 || crop_h == 0 {
+            return Err(y4m_error(
+                io::ErrorKind::InvalidInput,
+                "crop dims must be non-zero",
+            ));
+        }
+        if !crop_w.is_multiple_of(2) || !crop_h.is_multiple_of(2) {
+            return Err(y4m_error(
+                io::ErrorKind::InvalidInput,
+                "crop dims must be even",
+            ));
+        }
+        let source =
+            checked_yuv420_layout(header.w, header.h, io::ErrorKind::InvalidData, "y4m source")?;
+        let crop = checked_yuv420_layout(crop_w, crop_h, io::ErrorKind::InvalidInput, "y4m crop")?;
+        let off_x = (source.width - crop.width) / 2;
+        let off_y = (source.height - crop.height) / 2;
+        let body = zeroed_buffer(source.frame_bytes, "y4m frame body")?;
+        Ok(Self {
+            file,
+            header,
+            source,
+            crop,
+            off_x,
+            off_y,
+            body,
+            remaining: frame_limit,
+        })
+    }
+
+    /// Parsed source header.
+    #[must_use]
+    pub const fn header(&self) -> Y4mHeader {
+        self.header
+    }
+
+    /// Read and crop the next frame, or return `None` at EOF or the limit.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`io::Error`] for malformed frame tags, truncated frame
+    /// payloads, allocation failures, and filesystem errors.
+    pub fn next_frame(&mut self) -> io::Result<Option<YuvFrameBuf>> {
+        if self.remaining == 0 {
+            return Ok(None);
+        }
+
+        let mut hdr_buf = [0u8; 6];
+        let mut header_len = 0;
+        while header_len < hdr_buf.len() {
+            let read = self.file.read(&mut hdr_buf[header_len..])?;
+            if read == 0 {
+                if header_len == 0 {
+                    return Ok(None);
+                }
+                return Err(y4m_error(
+                    io::ErrorKind::UnexpectedEof,
+                    "EOF in FRAME header",
+                ));
+            }
+            header_len += read;
+        }
+        if &hdr_buf[..5] != b"FRAME" {
+            return Err(y4m_error(io::ErrorKind::InvalidData, "missing FRAME tag"));
+        }
+        if hdr_buf[5] != b'\n' {
+            let mut byte = [0u8; 1];
+            loop {
+                self.file.read_exact(&mut byte).map_err(|error| {
+                    if error.kind() == io::ErrorKind::UnexpectedEof {
+                        y4m_error(io::ErrorKind::UnexpectedEof, "EOF in FRAME params")
+                    } else {
+                        error
+                    }
+                })?;
+                if byte[0] == b'\n' {
+                    break;
+                }
+            }
+        }
+        self.file.read_exact(&mut self.body)?;
+
+        let mut y_crop = zeroed_buffer(self.crop.y_bytes, "cropped luma plane")?;
+        for row in 0..self.crop.height {
+            let start = (self.off_y + row) * self.source.width + self.off_x;
+            y_crop[row * self.crop.width..(row + 1) * self.crop.width]
+                .copy_from_slice(&self.body[start..start + self.crop.width]);
+        }
+        let chroma_off_x = self.off_x / 2;
+        let chroma_off_y = self.off_y / 2;
+        let chroma_src_w = self.source.width / 2;
+        let chroma_crop_w = self.crop.width / 2;
+        let chroma_crop_h = self.crop.height / 2;
+        let mut u_crop = zeroed_buffer(self.crop.uv_bytes, "cropped U plane")?;
+        let mut v_crop = zeroed_buffer(self.crop.uv_bytes, "cropped V plane")?;
+        for row in 0..chroma_crop_h {
+            let source_offset = (chroma_off_y + row) * chroma_src_w + chroma_off_x;
+            let target = row * chroma_crop_w..(row + 1) * chroma_crop_w;
+            let u_start = self.source.y_bytes + source_offset;
+            u_crop[target.clone()].copy_from_slice(&self.body[u_start..u_start + chroma_crop_w]);
+            let v_start = self.source.y_bytes + self.source.uv_bytes + source_offset;
+            v_crop[target].copy_from_slice(&self.body[v_start..v_start + chroma_crop_w]);
+        }
+
+        self.remaining -= 1;
+        Ok(Some((y_crop, u_crop, v_crop)))
+    }
+}
+
 /// Read up to `n` frames from a y4m file, cropping each frame's centre
 /// to `(crop_w, crop_h)`. `crop_w` and `crop_h` MUST be even (chroma).
 /// Returns `(frames, framerate)`.
@@ -265,42 +410,8 @@ pub fn read_cropped(
     crop_h: u32,
     n: usize,
 ) -> std::io::Result<(Vec<YuvFrameBuf>, f64)> {
-    let mut f = std::fs::File::open(path)?;
-    let hdr = parse_header(&mut f)?;
-
-    if crop_w > hdr.w || crop_h > hdr.h {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            format!("crop {crop_w}x{crop_h} exceeds y4m {}x{}", hdr.w, hdr.h),
-        ));
-    }
-    if crop_w == 0 || crop_h == 0 {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "crop dims must be non-zero",
-        ));
-    }
-    if !crop_w.is_multiple_of(2) || !crop_h.is_multiple_of(2) {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "crop dims must be even",
-        ));
-    }
-
-    let source = checked_yuv420_layout(hdr.w, hdr.h, io::ErrorKind::InvalidData, "y4m source")?;
-    let crop = checked_yuv420_layout(crop_w, crop_h, io::ErrorKind::InvalidInput, "y4m crop")?;
-    let src_w = source.width;
-    let src_h = source.height;
-    let cw = crop.width;
-    let ch = crop.height;
-    let off_x = (src_w - cw) / 2;
-    let off_y = (src_h - ch) / 2;
-    let chroma_off_x = off_x / 2;
-    let chroma_off_y = off_y / 2;
-
-    let y_size = source.y_bytes;
-    let uv_size = source.uv_bytes;
-
+    let mut reader = Y4mReader::open(path, crop_w, crop_h, n)?;
+    let framerate = reader.header().framerate();
     let mut frames = Vec::new();
     frames.try_reserve(n).map_err(|error| {
         y4m_error(
@@ -308,71 +419,11 @@ pub fn read_cropped(
             format!("cannot reserve space for {n} y4m frames: {error}"),
         )
     })?;
-    let mut hdr_buf = [0u8; 6];
-    let mut body = zeroed_buffer(source.frame_bytes, "y4m frame body")?;
-
-    'frames: for _ in 0..n {
-        let mut header_len = 0;
-        while header_len < hdr_buf.len() {
-            let read = f.read(&mut hdr_buf[header_len..])?;
-            if read == 0 {
-                if header_len == 0 {
-                    break 'frames;
-                }
-                return Err(y4m_error(
-                    io::ErrorKind::UnexpectedEof,
-                    "EOF in FRAME header",
-                ));
-            }
-            header_len += read;
-        }
-        if &hdr_buf[..5] != b"FRAME" {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "missing FRAME tag",
-            ));
-        }
-        if hdr_buf[5] != b'\n' {
-            let mut b = [0u8; 1];
-            loop {
-                if f.read_exact(&mut b).is_err() {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::UnexpectedEof,
-                        "EOF in FRAME params",
-                    ));
-                }
-                if b[0] == b'\n' {
-                    break;
-                }
-            }
-        }
-        f.read_exact(&mut body)?;
-
-        let mut y_crop = zeroed_buffer(crop.y_bytes, "cropped luma plane")?;
-        for r in 0..ch {
-            let src_row = &body[(off_y + r) * src_w + off_x..(off_y + r) * src_w + off_x + cw];
-            y_crop[r * cw..(r + 1) * cw].copy_from_slice(src_row);
-        }
-        let u_off = y_size;
-        let v_off = y_size + uv_size;
-        let chroma_src_w = src_w / 2;
-        let chroma_cw = cw / 2;
-        let chroma_ch = ch / 2;
-        let mut u_crop = zeroed_buffer(crop.uv_bytes, "cropped U plane")?;
-        let mut v_crop = zeroed_buffer(crop.uv_bytes, "cropped V plane")?;
-        for r in 0..chroma_ch {
-            let u_row_off = u_off + (chroma_off_y + r) * chroma_src_w + chroma_off_x;
-            u_crop[r * chroma_cw..(r + 1) * chroma_cw]
-                .copy_from_slice(&body[u_row_off..u_row_off + chroma_cw]);
-            let v_row_off = v_off + (chroma_off_y + r) * chroma_src_w + chroma_off_x;
-            v_crop[r * chroma_cw..(r + 1) * chroma_cw]
-                .copy_from_slice(&body[v_row_off..v_row_off + chroma_cw]);
-        }
-
-        frames.push((y_crop, u_crop, v_crop));
+    while let Some(frame) = reader.next_frame()? {
+        frames.push(frame);
     }
 
-    Ok((frames, hdr.framerate()))
+    Ok((frames, framerate))
 }
 
 // ============================================================================
@@ -694,6 +745,26 @@ mod tests {
         let _ = std::fs::remove_file(&path);
         assert!(frames.is_empty(), "n=0 returned {} frames", frames.len());
         assert!((fr - 30.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn incremental_reader_stops_before_unread_bad_frame_tag() {
+        let mut bytes = b"YUV4MPEG2 W16 H16 F30:1 C420\nFRAME\n".to_vec();
+        bytes.extend(std::iter::repeat_n(128, 16 * 16 * 3 / 2));
+        bytes.extend_from_slice(b"BROKEN\n");
+        let path = write_temp(&bytes, "stream_limit");
+
+        let mut limited = Y4mReader::open(&path, 16, 16, 1).expect("open limited reader");
+        assert!(limited.next_frame().expect("read first frame").is_some());
+        assert!(limited.next_frame().expect("honor limit").is_none());
+
+        let mut unlimited =
+            Y4mReader::open(&path, 16, 16, usize::MAX).expect("open unlimited reader");
+        assert!(unlimited.next_frame().expect("read first frame").is_some());
+        let error = unlimited.next_frame().expect_err("bad tail accepted");
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert!(error.to_string().contains("FRAME tag"));
     }
 
     #[test]

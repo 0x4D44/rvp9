@@ -433,6 +433,89 @@ impl IvfHeader {
     }
 }
 
+/// Incremental IVF muxer that patches the packet count when finished.
+pub struct IvfStreamWriter<W: Write + Seek> {
+    out: W,
+    packet_count: u32,
+}
+
+impl<W: Write + Seek> IvfStreamWriter<W> {
+    /// Write an IVF header with a provisional zero packet count.
+    ///
+    /// # Errors
+    ///
+    /// Forwards any [`io::Error`] from the writer.
+    pub fn new(mut out: W, header: &IvfHeader) -> io::Result<Self> {
+        write_ivf_header(&mut out, header, 0)?;
+        Ok(Self {
+            out,
+            packet_count: 0,
+        })
+    }
+
+    /// Append one packet record and payload.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`io::ErrorKind::InvalidInput`] if the packet length or
+    /// resulting packet count cannot fit IVF. Otherwise forwards writer
+    /// errors.
+    pub fn write_packet(&mut self, packet: &[u8]) -> io::Result<()> {
+        let size = u32::try_from(packet.len()).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "packet too large for IVF (size must fit in u32)",
+            )
+        })?;
+        let next_count = self.packet_count.checked_add(1).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "too many packets for IVF (must fit in u32)",
+            )
+        })?;
+        let mut record = [0u8; 12];
+        record[0..4].copy_from_slice(&size.to_le_bytes());
+        record[4..12].copy_from_slice(&u64::from(self.packet_count).to_le_bytes());
+        self.out.write_all(&record)?;
+        self.out.write_all(packet)?;
+        self.packet_count = next_count;
+        Ok(())
+    }
+
+    /// Patch the header packet count, flush, and return the writer.
+    ///
+    /// # Errors
+    ///
+    /// Forwards any seek, write, or flush error.
+    pub fn finish(mut self) -> io::Result<W> {
+        self.out.seek(SeekFrom::Start(24))?;
+        self.out.write_all(&self.packet_count.to_le_bytes())?;
+        self.out.seek(SeekFrom::End(0))?;
+        self.out.flush()?;
+        Ok(self.out)
+    }
+
+    /// Number of packets written so far.
+    #[must_use]
+    pub const fn packet_count(&self) -> u32 {
+        self.packet_count
+    }
+}
+
+fn write_ivf_header<W: Write>(out: &mut W, header: &IvfHeader, num_frames: u32) -> io::Result<()> {
+    let mut bytes = [0u8; 32];
+    bytes[0..4].copy_from_slice(b"DKIF");
+    bytes[4..6].copy_from_slice(&0u16.to_le_bytes());
+    bytes[6..8].copy_from_slice(&32u16.to_le_bytes());
+    bytes[8..12].copy_from_slice(&header.codec_fourcc);
+    bytes[12..14].copy_from_slice(&header.width.to_le_bytes());
+    bytes[14..16].copy_from_slice(&header.height.to_le_bytes());
+    bytes[16..20].copy_from_slice(&header.framerate_num.to_le_bytes());
+    bytes[20..24].copy_from_slice(&header.framerate_den.to_le_bytes());
+    bytes[24..28].copy_from_slice(&num_frames.to_le_bytes());
+    out.write_all(&bytes)
+}
+
 /// Write an IVF file containing `packets`.
 ///
 /// The file is laid out as:
@@ -455,20 +538,7 @@ pub fn write_ivf<W: Write>(out: &mut W, header: &IvfHeader, packets: &[&[u8]]) -
         )
     })?;
 
-    // 32-byte file header.
-    let mut hdr = [0u8; 32];
-    hdr[0..4].copy_from_slice(b"DKIF");
-    // version_le_u16 = 0; header_size_le_u16 = 32.
-    hdr[4..6].copy_from_slice(&0u16.to_le_bytes());
-    hdr[6..8].copy_from_slice(&32u16.to_le_bytes());
-    hdr[8..12].copy_from_slice(&header.codec_fourcc);
-    hdr[12..14].copy_from_slice(&header.width.to_le_bytes());
-    hdr[14..16].copy_from_slice(&header.height.to_le_bytes());
-    hdr[16..20].copy_from_slice(&header.framerate_num.to_le_bytes());
-    hdr[20..24].copy_from_slice(&header.framerate_den.to_le_bytes());
-    hdr[24..28].copy_from_slice(&num_frames.to_le_bytes());
-    // hdr[28..32] = unused (zero).
-    out.write_all(&hdr)?;
+    write_ivf_header(out, header, num_frames)?;
 
     // Per-packet record.
     for (idx, packet) in packets.iter().enumerate() {
@@ -1430,6 +1500,24 @@ mod tests {
         assert_eq!(packets.len(), 2);
         assert!(packets[0].is_empty());
         assert!(packets[1].is_empty());
+    }
+
+    #[test]
+    fn stream_writer_patches_count_and_preserves_packets() {
+        let header = IvfHeader::vp9(64, 64, 30, 1);
+        let cursor = std::io::Cursor::new(Vec::new());
+        let mut writer = IvfStreamWriter::new(cursor, &header).expect("open stream writer");
+        writer.write_packet(b"first").expect("write first");
+        writer.write_packet(b"second").expect("write second");
+        assert_eq!(writer.packet_count(), 2);
+        let bytes = writer.finish().expect("finish writer").into_inner();
+        assert_eq!(
+            u32::from_le_bytes(bytes[24..28].try_into().expect("frame count")),
+            2
+        );
+        let packets = read_ivf_packets(&bytes).expect("parse streamed IVF");
+        assert_eq!(packets[0].slice(&bytes), b"first");
+        assert_eq!(packets[1].slice(&bytes), b"second");
     }
 
     #[test]

@@ -260,6 +260,41 @@ fn enc_passes_two_accepted_at_parse_time() {
     );
 }
 
+#[test]
+fn enc_passes_two_still_writes_complete_ivf() {
+    let raw = tmp("two_pass_in.yuv");
+    let ivf = tmp("two_pass_out.ivf");
+    write_synthetic_raw(&raw);
+    let out = Command::new(enc_bin())
+        .args([
+            "--passes",
+            "2",
+            "-w",
+            "64",
+            "-h",
+            "64",
+            "--target-bitrate",
+            "500",
+            "-o",
+        ])
+        .arg(&ivf)
+        .arg(&raw)
+        .bounded_output()
+        .expect("run two-pass rvp9enc");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let bytes = std::fs::read(&ivf).expect("read two-pass IVF");
+    assert_eq!(
+        u32::from_le_bytes(bytes[24..28].try_into().expect("frame count")) as usize,
+        N_FRAMES
+    );
+    let _ = std::fs::remove_file(&raw);
+    let _ = std::fs::remove_file(&ivf);
+}
+
 /// `--passes 3` is rejected — only 1 or 2 passes are valid.
 #[test]
 fn enc_passes_three_rejected() {

@@ -18,9 +18,9 @@ use rvp9_encoder::lookahead::MAX_LAG_BUFFERS;
 use rvp9_encoder::{
     AqMode, Deadline, EncoderConfig, RcMode, StreamEncoder, YuvFrameRef, encode_two_pass,
 };
-use rvp9_io::container::{IvfHeader, write_ivf};
+use rvp9_io::container::{IvfHeader, IvfStreamWriter, write_ivf};
 use rvp9_io::y4m;
-use std::io::Read;
+use std::io::{BufReader, BufWriter, Read};
 use std::path::Path;
 use std::process::ExitCode;
 
@@ -838,21 +838,10 @@ fn run(opts: &EncOpts, positionals: &[String]) -> Result<(), String> {
         .as_deref()
         .ok_or_else(|| "no output file (-o <out.ivf>)".to_string())?;
 
-    // Read source frames + source framerate.
-    let is_y4m = input
-        .extension()
-        .and_then(|e| e.to_str())
-        .is_some_and(|e| e.eq_ignore_ascii_case("y4m"));
-
-    let (frames, (fps_num, fps_den), coded_w, coded_h) = if is_y4m {
-        read_y4m_input(input, opts)?
-    } else {
-        read_raw_input(input, opts)?
-    };
-
-    if frames.is_empty() {
+    let (mut frames, info) = open_input(input, opts)?;
+    let Some(first_frame) = frames.next_frame()? else {
         return Err("input contained no frames".to_string());
-    }
+    };
 
     // Build and validate the encoder config via the shared
     // `build_encoder_config` mapping (the single CLI→encoder source of
@@ -861,9 +850,9 @@ fn run(opts: &EncOpts, positionals: &[String]) -> Result<(), String> {
     // surfaced clearly by `StreamEncoder::new` below.
     let config = build_encoder_config(
         opts,
-        coded_w,
-        coded_h,
-        f64::from(fps_num) / f64::from(fps_den),
+        info.coded_w,
+        info.coded_h,
+        f64::from(info.fps_num) / f64::from(info.fps_den),
         opts.target_bitrate_kbps.saturating_mul(1000),
     );
     // Two-pass VBR (`--passes 2`): run the per-sequence two-pass driver.
@@ -873,8 +862,22 @@ fn run(opts: &EncOpts, positionals: &[String]) -> Result<(), String> {
     // `rvp9_encoder::encode_two_pass`. Kept entirely separate from the
     // one-pass synchronous path below so that path stays byte-identical.
     if opts.passes == 2 {
+        let mut all_frames = vec![first_frame];
+        while let Some(frame) = frames.next_frame()? {
+            all_frames
+                .try_reserve(1)
+                .map_err(|_| "cannot allocate input frame list for two-pass encode".to_string())?;
+            all_frames.push(frame);
+        }
         return run_two_pass(
-            opts, &config, &frames, coded_w, coded_h, fps_num, fps_den, output,
+            opts,
+            &config,
+            &all_frames,
+            info.coded_w,
+            info.coded_h,
+            info.fps_num,
+            info.fps_den,
+            output,
         );
     }
 
@@ -885,7 +888,9 @@ fn run(opts: &EncOpts, positionals: &[String]) -> Result<(), String> {
         )
     })?;
 
-    // Encode every frame; collect the per-frame VP9 packets.
+    // Encode one source frame at a time and write each available packet
+    // immediately. The source frame and encoded packet are dropped before
+    // the next iteration, keeping one-pass memory independent of duration.
     //
     // libvpx `vp9_encoder.c::vp9_get_compressed_data` splits the
     // pipeline so the encoder may return no packet on the first
@@ -895,25 +900,45 @@ fn run(opts: &EncOpts, positionals: &[String]) -> Result<(), String> {
     // steady-state) + [`StreamEncoder::flush`] (drains the tail at
     // end-of-stream — libvpx's `vpxenc.c::main` flush loop passing
     // a NULL frame).
-    let mut packets: Vec<Vec<u8>> = Vec::with_capacity(frames.len());
+    let header = IvfHeader::vp9(
+        info.coded_w as u16,
+        info.coded_h as u16,
+        info.fps_num,
+        info.fps_den,
+    );
+    let out = std::fs::File::create(output).map_err(|e| format!("creating {output}: {e}"))?;
+    let mut writer = IvfStreamWriter::new(BufWriter::new(out), &header)
+        .map_err(|e| format!("writing IVF header: {e}"))?;
     let mut total_bits: u64 = 0;
-    for (y, u, v) in &frames {
-        let view = YuvFrameRef {
-            y,
-            u,
-            v,
-            y_stride: coded_w as usize,
-            u_stride: (coded_w / 2) as usize,
-            v_stride: (coded_w / 2) as usize,
+    let mut frame_count: usize = 0;
+    {
+        let mut encode_frame = |(y, u, v): y4m::YuvFrameBuf| -> Result<(), String> {
+            let view = YuvFrameRef {
+                y: &y,
+                u: &u,
+                v: &v,
+                y_stride: info.coded_w as usize,
+                u_stride: (info.coded_w / 2) as usize,
+                v_stride: (info.coded_w / 2) as usize,
+            };
+            if let Some(enc) = encoder
+                .encode_frame_delayed(&view)
+                .map_err(|e| format!("encode_frame: {e}"))?
+            {
+                total_bits += u64::from(enc.actual_bits);
+                writer
+                    .write_packet(&enc.data)
+                    .map_err(|e| format!("writing IVF packet: {e}"))?;
+            }
+            frame_count += 1;
+            Ok(())
         };
-        if let Some(enc) = encoder
-            .encode_frame_delayed(&view)
-            .map_err(|e| format!("encode_frame: {e}"))?
-        {
-            total_bits += u64::from(enc.actual_bits);
-            packets.push(enc.data);
+        encode_frame(first_frame)?;
+        while let Some(frame) = frames.next_frame()? {
+            encode_frame(frame)?;
         }
     }
+
     // End-of-stream: drain any frames still buffered in the
     // lookahead. With `lag_in_frames == 0` this is a no-op (the
     // ring is empty after the synchronous push/pop in
@@ -921,14 +946,13 @@ fn run(opts: &EncOpts, positionals: &[String]) -> Result<(), String> {
     for r in encoder.flush() {
         let enc = r.map_err(|e| format!("encode_frame (flush): {e}"))?;
         total_bits += u64::from(enc.actual_bits);
-        packets.push(enc.data);
+        writer
+            .write_packet(&enc.data)
+            .map_err(|e| format!("writing IVF packet: {e}"))?;
     }
-
-    // Mux into IVF.
-    let packet_refs: Vec<&[u8]> = packets.iter().map(Vec::as_slice).collect();
-    let header = IvfHeader::vp9(coded_w as u16, coded_h as u16, fps_num, fps_den);
-    let mut out = std::fs::File::create(output).map_err(|e| format!("creating {output}: {e}"))?;
-    write_ivf(&mut out, &header, &packet_refs).map_err(|e| format!("writing IVF: {e}"))?;
+    writer
+        .finish()
+        .map_err(|e| format!("finalizing IVF: {e}"))?;
 
     // C2-β — measurement-only fire-rate of the size-gated ML-partition
     // breakout. Reads the global counter exposed by the encoder; off
@@ -937,11 +961,14 @@ fn run(opts: &EncOpts, positionals: &[String]) -> Result<(), String> {
     if std::env::var_os("RVP9_C2B_STATS").is_some() {
         let fired = rvp9_encoder::rdo::inter_dispatch::ML_PARTITION_BREAKOUT_FIRED
             .load(std::sync::atomic::Ordering::Relaxed);
-        eprintln!("rvp9enc: C2B ml-breakout fired {fired} times ({coded_w}x{coded_h})");
+        eprintln!(
+            "rvp9enc: C2B ml-breakout fired {fired} times ({}x{})",
+            info.coded_w, info.coded_h
+        );
     }
 
     if opts.verbose {
-        let secs = frames.len() as f64 * f64::from(fps_den) / f64::from(fps_num);
+        let secs = frame_count as f64 * f64::from(info.fps_den) / f64::from(info.fps_num);
         let kbps = if secs > 0.0 {
             (total_bits as f64 / secs) / 1000.0
         } else {
@@ -949,10 +976,7 @@ fn run(opts: &EncOpts, positionals: &[String]) -> Result<(), String> {
         };
         eprintln!(
             "rvp9enc: encoded {} frame(s) at {}x{}, ~{:.1} kbps -> {output}",
-            frames.len(),
-            coded_w,
-            coded_h,
-            kbps
+            frame_count, info.coded_w, info.coded_h, kbps
         );
     }
     Ok(())
@@ -1019,113 +1043,189 @@ fn run_two_pass(
     Ok(())
 }
 
-/// Read a Y4M input, centre-cropping to the coded dimensions
-/// (`-w`/`-h` if given, else the source size). Returns
-/// `(frames, (fps_num, fps_den), coded_w, coded_h)`.
-type FramesAndDims = (Vec<y4m::YuvFrameBuf>, (u32, u32), u32, u32);
-
-fn read_y4m_input(input: &Path, opts: &EncOpts) -> Result<FramesAndDims, String> {
-    let mut f =
-        std::fs::File::open(input).map_err(|e| format!("opening {}: {e}", input.display()))?;
-    let hdr = y4m::parse_header(&mut f).map_err(|e| format!("parsing y4m header: {e}"))?;
-    drop(f);
-
-    let coded_w = opts.width.unwrap_or(hdr.w);
-    let coded_h = opts.height.unwrap_or(hdr.h);
-    if coded_w > hdr.w || coded_h > hdr.h {
-        return Err(format!(
-            "coded size {coded_w}x{coded_h} exceeds source {}x{}",
-            hdr.w, hdr.h
-        ));
-    }
-
-    // Frame count: limit if set, else estimate from the file size so
-    // read_cropped reads to EOF without over-allocating wildly.
-    let n = match opts.limit {
-        Some(l) => l,
-        None => {
-            let fsize = std::fs::metadata(input).map(|m| m.len()).unwrap_or(0) as usize;
-            let body = (hdr.w as usize) * (hdr.h as usize) * 3 / 2;
-            fsize / (body + 6) + 1
-        }
-    };
-
-    let (frames, _fr) = y4m::read_cropped(input, coded_w, coded_h, n)
-        .map_err(|e| format!("reading y4m frames: {e}"))?;
-
-    let fps = match (opts.fps_num, opts.fps_den) {
-        (Some(n), Some(d)) => (n, d),
-        _ => (hdr.fps_num, hdr.fps_den),
-    };
-    Ok((frames, fps, coded_w, coded_h))
+#[derive(Clone, Copy)]
+struct InputInfo {
+    fps_num: u32,
+    fps_den: u32,
+    coded_w: u32,
+    coded_h: u32,
 }
 
-/// Read a raw I420 (planar 4:2:0) input. Requires `-w`/`-h`; framerate
-/// defaults to 30/1 unless `--fps` is given.
-fn read_raw_input(input: &Path, opts: &EncOpts) -> Result<FramesAndDims, String> {
-    let coded_w = opts
-        .width
-        .ok_or_else(|| "raw input requires -w/--width".to_string())?;
-    let coded_h = opts
-        .height
-        .ok_or_else(|| "raw input requires -h/--height".to_string())?;
-    let fps = (opts.fps_num.unwrap_or(30), opts.fps_den.unwrap_or(1));
+enum FrameSource {
+    Y4m(y4m::Y4mReader),
+    Raw(RawFrameReader),
+}
 
-    let w = coded_w as usize;
-    let h = coded_h as usize;
-    let y_size = w
-        .checked_mul(h)
-        .ok_or_else(|| format!("raw input geometry {coded_w}x{coded_h} is too large"))?;
-    let uv_size = (w / 2)
-        .checked_mul(h / 2)
-        .ok_or_else(|| format!("raw input geometry {coded_w}x{coded_h} is too large"))?;
-    let frame_size = y_size
-        .checked_add(
-            uv_size
-                .checked_mul(2)
-                .ok_or_else(|| format!("raw input geometry {coded_w}x{coded_h} is too large"))?,
-        )
-        .ok_or_else(|| format!("raw input geometry {coded_w}x{coded_h} is too large"))?;
-
-    let file =
-        std::fs::File::open(input).map_err(|e| format!("opening {}: {e}", input.display()))?;
-    let file_len = file
-        .metadata()
-        .map_err(|e| format!("reading metadata for {}: {e}", input.display()))?
-        .len();
-    let bytes_to_read = match opts.limit {
-        Some(limit) => {
-            let limit_bytes = frame_size
-                .checked_mul(limit)
-                .ok_or_else(|| "--limit byte count is too large".to_string())?;
-            file_len.min(u64::try_from(limit_bytes).unwrap_or(u64::MAX))
+impl FrameSource {
+    fn next_frame(&mut self) -> Result<Option<y4m::YuvFrameBuf>, String> {
+        match self {
+            Self::Y4m(reader) => reader
+                .next_frame()
+                .map_err(|e| format!("reading y4m frame: {e}")),
+            Self::Raw(reader) => reader.next_frame(),
         }
-        None => file_len,
-    };
-    let expected_len = usize::try_from(bytes_to_read)
-        .map_err(|_| format!("raw input read is too large: {bytes_to_read} bytes"))?;
-    let mut data = Vec::new();
-    data.try_reserve_exact(expected_len)
-        .map_err(|_| format!("cannot allocate {expected_len} bytes for raw input"))?;
-    file.take(bytes_to_read)
-        .read_to_end(&mut data)
-        .map_err(|e| format!("reading {}: {e}", input.display()))?;
-    if frame_size == 0 || data.len() % frame_size != 0 {
-        return Err(format!(
-            "raw input length {} is not a whole number of {coded_w}x{coded_h} I420 frames ({frame_size} bytes each)",
-            data.len()
-        ));
+    }
+}
+
+struct RawFrameReader {
+    file: BufReader<std::fs::File>,
+    y_size: usize,
+    uv_size: usize,
+    remaining: usize,
+}
+
+impl RawFrameReader {
+    fn open(
+        input: &Path,
+        coded_w: u32,
+        coded_h: u32,
+        limit: Option<usize>,
+    ) -> Result<Self, String> {
+        let width = coded_w as usize;
+        let height = coded_h as usize;
+        let y_size = width
+            .checked_mul(height)
+            .ok_or_else(|| format!("raw input geometry {coded_w}x{coded_h} is too large"))?;
+        let uv_size = (width / 2)
+            .checked_mul(height / 2)
+            .ok_or_else(|| format!("raw input geometry {coded_w}x{coded_h} is too large"))?;
+        let frame_size =
+            y_size
+                .checked_add(uv_size.checked_mul(2).ok_or_else(|| {
+                    format!("raw input geometry {coded_w}x{coded_h} is too large")
+                })?)
+                .ok_or_else(|| format!("raw input geometry {coded_w}x{coded_h} is too large"))?;
+        if frame_size == 0 {
+            return Err(format!(
+                "raw input geometry {coded_w}x{coded_h} has a zero-sized frame"
+            ));
+        }
+        let file =
+            std::fs::File::open(input).map_err(|e| format!("opening {}: {e}", input.display()))?;
+        let file_len = file
+            .metadata()
+            .map_err(|e| format!("reading metadata for {}: {e}", input.display()))?
+            .len();
+        let frame_size_u64 =
+            u64::try_from(frame_size).map_err(|_| "raw frame size is too large".to_string())?;
+        let available_frames = file_len / frame_size_u64;
+        let remaining = match limit {
+            Some(limit) => {
+                let limit_bytes = frame_size
+                    .checked_mul(limit)
+                    .ok_or_else(|| "--limit byte count is too large".to_string())?;
+                if file_len < u64::try_from(limit_bytes).unwrap_or(u64::MAX)
+                    && !file_len.is_multiple_of(frame_size_u64)
+                {
+                    return Err(format!(
+                        "raw input length {file_len} is not a whole number of \
+                         {coded_w}x{coded_h} I420 frames ({frame_size} bytes each)"
+                    ));
+                }
+                usize::try_from(available_frames)
+                    .unwrap_or(usize::MAX)
+                    .min(limit)
+            }
+            None => {
+                if !file_len.is_multiple_of(frame_size_u64) {
+                    return Err(format!(
+                        "raw input length {file_len} is not a whole number of \
+                         {coded_w}x{coded_h} I420 frames ({frame_size} bytes each)"
+                    ));
+                }
+                usize::try_from(available_frames).map_err(|_| {
+                    format!("raw input contains too many frames: {available_frames}")
+                })?
+            }
+        };
+        Ok(Self {
+            file: BufReader::new(file),
+            y_size,
+            uv_size,
+            remaining,
+        })
     }
 
-    let mut frames = Vec::new();
-    let max = opts.limit.unwrap_or(usize::MAX);
-    for chunk in data.chunks_exact(frame_size).take(max) {
-        let y = chunk[..y_size].to_vec();
-        let u = chunk[y_size..y_size + uv_size].to_vec();
-        let v = chunk[y_size + uv_size..].to_vec();
-        frames.push((y, u, v));
+    fn next_frame(&mut self) -> Result<Option<y4m::YuvFrameBuf>, String> {
+        if self.remaining == 0 {
+            return Ok(None);
+        }
+        let y = read_raw_plane(&mut self.file, self.y_size, "luma")?;
+        let u = read_raw_plane(&mut self.file, self.uv_size, "U chroma")?;
+        let v = read_raw_plane(&mut self.file, self.uv_size, "V chroma")?;
+        self.remaining -= 1;
+        Ok(Some((y, u, v)))
     }
-    Ok((frames, fps, coded_w, coded_h))
+}
+
+fn read_raw_plane(
+    input: &mut BufReader<std::fs::File>,
+    len: usize,
+    label: &str,
+) -> Result<Vec<u8>, String> {
+    let mut plane = Vec::new();
+    plane
+        .try_reserve_exact(len)
+        .map_err(|_| format!("cannot allocate {len} bytes for raw {label} plane"))?;
+    plane.resize(len, 0);
+    input
+        .read_exact(&mut plane)
+        .map_err(|e| format!("reading raw {label} plane: {e}"))?;
+    Ok(plane)
+}
+
+fn open_input(input: &Path, opts: &EncOpts) -> Result<(FrameSource, InputInfo), String> {
+    let is_y4m = input
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("y4m"));
+    if is_y4m {
+        let mut file =
+            std::fs::File::open(input).map_err(|e| format!("opening {}: {e}", input.display()))?;
+        let header =
+            y4m::parse_header(&mut file).map_err(|e| format!("parsing y4m header: {e}"))?;
+        let coded_w = opts.width.unwrap_or(header.w);
+        let coded_h = opts.height.unwrap_or(header.h);
+        if coded_w > header.w || coded_h > header.h {
+            return Err(format!(
+                "coded size {coded_w}x{coded_h} exceeds source {}x{}",
+                header.w, header.h
+            ));
+        }
+        let reader =
+            y4m::Y4mReader::open(input, coded_w, coded_h, opts.limit.unwrap_or(usize::MAX))
+                .map_err(|e| format!("opening y4m frames: {e}"))?;
+        let (fps_num, fps_den) = match (opts.fps_num, opts.fps_den) {
+            (Some(num), Some(den)) => (num, den),
+            _ => (header.fps_num, header.fps_den),
+        };
+        Ok((
+            FrameSource::Y4m(reader),
+            InputInfo {
+                fps_num,
+                fps_den,
+                coded_w,
+                coded_h,
+            },
+        ))
+    } else {
+        let coded_w = opts
+            .width
+            .ok_or_else(|| "raw input requires -w/--width".to_string())?;
+        let coded_h = opts
+            .height
+            .ok_or_else(|| "raw input requires -h/--height".to_string())?;
+        let reader = RawFrameReader::open(input, coded_w, coded_h, opts.limit)?;
+        Ok((
+            FrameSource::Raw(reader),
+            InputInfo {
+                fps_num: opts.fps_num.unwrap_or(30),
+                fps_den: opts.fps_den.unwrap_or(1),
+                coded_w,
+                coded_h,
+            },
+        ))
+    }
 }
 
 /// Build the [`EncoderConfig`] from the parsed [`EncOpts`] plus the
