@@ -100,7 +100,6 @@ fn ivf_frame_payload_running_past_eof_is_bad_frame_size() {
     data.extend_from_slice(&100u32.to_le_bytes()); // declared size
     data.extend_from_slice(&0u64.to_le_bytes()); // pts
     data.extend_from_slice(&[0u8; 5]); // only 5 bytes available
-    let total_len = data.len();
     match read_ivf_packets(&data).unwrap_err() {
         ContainerError::BadFrameSize {
             packet_index,
@@ -108,8 +107,8 @@ fn ivf_frame_payload_running_past_eof_is_bad_frame_size() {
             available,
         } => {
             assert_eq!(packet_index, 1, "first frame is packet index 1");
-            assert_eq!(declared, 32 + 12 + 100, "declared = payload_end offset");
-            assert_eq!(available, total_len);
+            assert_eq!(declared, 100, "declared frame payload size");
+            assert_eq!(available, 5, "available frame payload bytes");
         }
         other => panic!("expected BadFrameSize, got {other:?}"),
     }

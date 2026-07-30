@@ -185,14 +185,14 @@ pub fn read_ivf_packets(data: &[u8]) -> Result<Vec<PacketRange>, ContainerError>
             .checked_add(size)
             .ok_or(ContainerError::BadFrameSize {
                 packet_index: idx,
-                declared: usize::MAX,
-                available: data.len(),
+                declared: size,
+                available: data.len() - payload_start,
             })?;
         if payload_end > data.len() {
             return Err(ContainerError::BadFrameSize {
                 packet_index: idx,
-                declared: payload_end,
-                available: data.len(),
+                declared: size,
+                available: data.len() - payload_start,
             });
         }
         packets.push(PacketRange {
