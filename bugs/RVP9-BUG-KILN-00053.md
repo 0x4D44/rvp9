@@ -1,24 +1,24 @@
 # RVP9-BUG-KILN-00053 - rvp9enc one-pass mode buffers the full input and output
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** cli/rvp9enc boundedness
 - **Raised:** 2026-07-07
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260730T202432Z-p93542-n623704000-c1
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KILN-00053-run-fix-20260730T202432Z-p93542-n623704000-c1
-- **Owner base:** c0357664a96c41d055393783faf566dfb3d0906e
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-07-30T20:24:32Z
-- **Owner until:** 2026-07-30T22:24:32Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-cli/` at `8d66f33`)
+- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-cli/` at `8d66f33`) -> Fixed (2026-07-30, deltic:auto role=fix run=fix-20260730T202432Z-p93542-n623704000-c1 branch=task/bug-RVP9-BUG-KILN-00053-run-fix-20260730T202432Z-p93542-n623704000-c1 code=ab172a3e648c74774106d18417d146249d3ee370 gate=manual)
 
 ## Observation
 
