@@ -1,24 +1,24 @@
 # RVP9-BUG-KILN-00032 - Decoder-facing corpus tests can pass without required oracle data
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** decoder/test-oracles
 - **Raised:** 2026-07-07
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260730T190851Z-p5148-n949635000-c1
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KILN-00032-run-fix-20260730T190851Z-p5148-n949635000-c1
-- **Owner base:** 236498ab4d7c2ae2e40b5eccf365178ca8aada03
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-07-30T19:08:51Z
-- **Owner until:** 2026-07-30T21:08:51Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-decoder/` at `ceb57b6`)
+- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-decoder/` at `ceb57b6`) -> Fixed (2026-07-30, deltic:auto role=fix run=fix-20260730T190851Z-p5148-n949635000-c1 branch=task/bug-RVP9-BUG-KILN-00032-run-fix-20260730T190851Z-p5148-n949635000-c1 code=d494313d7626e957521132ffa558d9f60b0f23b0 gate=manual)
 
 ## Observation
 
