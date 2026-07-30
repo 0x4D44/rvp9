@@ -436,6 +436,18 @@ fn fmt_bytes(b: usize) -> String {
 
 fn main() {
     let args = Args::parse();
+    let cross_decode_path = if args.cross_decode {
+        if !args.vpxdec_path.is_file() {
+            eprintln!(
+                "error: --cross-decode requires vpxdec at {}",
+                args.vpxdec_path.display()
+            );
+            std::process::exit(2);
+        }
+        Some(args.vpxdec_path.clone())
+    } else {
+        None
+    };
     let sources = build_source_list();
 
     eprintln!("=== rvp9 soak harness (D3) ===");
@@ -449,19 +461,6 @@ fn main() {
     for s in &sources {
         eprintln!("  - {}", s.label());
     }
-    let cross_decode_path: Option<PathBuf> = if args.cross_decode {
-        if args.vpxdec_path.is_file() {
-            Some(args.vpxdec_path.clone())
-        } else {
-            eprintln!(
-                "WARN: --cross-decode requested but vpxdec not at {}; skipping cross-decode leg.",
-                args.vpxdec_path.display()
-            );
-            None
-        }
-    } else {
-        None
-    };
     eprintln!();
 
     let start = Instant::now();
