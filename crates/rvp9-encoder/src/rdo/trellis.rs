@@ -70,7 +70,7 @@ pub fn vp9_xform_quant_fp(
                 qcoeff,
                 dqcoeff,
                 &qp.dequant,
-                scan.scan,
+                scan.scan(),
             )
         }
         TxSize::Tx8x8 => {
@@ -86,7 +86,7 @@ pub fn vp9_xform_quant_fp(
                 qcoeff,
                 dqcoeff,
                 &qp.dequant,
-                scan.scan,
+                scan.scan(),
             )
         }
         TxSize::Tx16x16 => {
@@ -107,7 +107,7 @@ pub fn vp9_xform_quant_fp(
                 qcoeff,
                 dqcoeff,
                 &qp.dequant,
-                scan.scan,
+                scan.scan(),
             )
         }
         TxSize::Tx32x32 => {
@@ -122,7 +122,7 @@ pub fn vp9_xform_quant_fp(
                 qcoeff,
                 dqcoeff,
                 &qp.dequant,
-                scan.scan,
+                scan.scan(),
             )
         }
     }
@@ -292,13 +292,13 @@ pub fn vp9_optimize_b(
 
     let shift = u32::from(matches!(tx_size, TxSize::Tx32x32));
     let band_translate = band_translate(tx_size);
-    let scan_arr = scan.scan;
+    let scan_arr = scan.scan();
     // libvpx `so->neighbors` — the {top, left} raster-position pairs
     // used by `get_coef_context`. Length is `(n + 1) * 2` (the trailing
     // pair is the EOB sentinel). This is the look-ahead's load-bearing
     // input: it is what makes the next position's context depend on the
     // CURRENT candidate's energy class.
-    let nb = scan.neighbors;
+    let nb = scan.neighbors();
     // libvpx `default_eob = 16 << (tx_size << 1)` (the full transform
     // coefficient count). The look-ahead guard `i < default_eob - 1`
     // (line 210) is `i < n - 1` here.

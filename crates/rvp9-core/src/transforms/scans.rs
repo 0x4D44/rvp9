@@ -38,18 +38,54 @@
 /// module. `ScanOrder` is `Copy`.
 ///
 /// Mirrors libvpx `struct scan_order` (`vp9_scan.h:26-30`).
+///
+/// Safe callers cannot construct arbitrary scan orders:
+///
+/// ```compile_fail
+/// use rvp9_core::transforms::scans::ScanOrder;
+///
+/// static MALFORMED: [i16; 1] = [i16::MAX];
+/// let _scan = ScanOrder {
+///     scan: &MALFORMED,
+///     iscan: &MALFORMED,
+///     neighbors: &MALFORMED,
+/// };
+/// ```
 #[derive(Copy, Clone, Debug)]
 pub struct ScanOrder {
     /// `scan[k]` = raster index of the k-th coefficient. Length is
     /// `TxSize::n_coeffs()`.
-    pub scan: &'static [i16],
+    scan: &'static [i16],
     /// `iscan[p]` = scan index of position `p` plus 1. Length is
     /// `TxSize::n_coeffs()`.
-    pub iscan: &'static [i16],
+    iscan: &'static [i16],
     /// {top, left} neighbour raster positions per coefficient, then a
     /// trailing EOB sentinel pair. Length is
     /// `(TxSize::n_coeffs() + 1) * MAX_NEIGHBORS`.
-    pub neighbors: &'static [i16],
+    neighbors: &'static [i16],
+}
+
+impl ScanOrder {
+    /// Return the scan-position-to-raster-index table.
+    #[inline]
+    #[must_use]
+    pub const fn scan(&self) -> &'static [i16] {
+        self.scan
+    }
+
+    /// Return the raster-index-to-scan-position table.
+    #[inline]
+    #[must_use]
+    pub const fn iscan(&self) -> &'static [i16] {
+        self.iscan
+    }
+
+    /// Return the coefficient-context neighbour table.
+    #[inline]
+    #[must_use]
+    pub const fn neighbors(&self) -> &'static [i16] {
+        self.neighbors
+    }
 }
 
 /// 4×4 default scan (zig-zag-ish from top-left). 16 entries verbatim
@@ -1105,9 +1141,9 @@ mod tests {
     #[test]
     fn default_scan_4x4_wires_to_statics() {
         let s = default_scan_4x4();
-        assert_eq!(s.scan.as_ptr(), DEFAULT_SCAN_4X4.as_ptr());
-        assert_eq!(s.iscan.as_ptr(), DEFAULT_ISCAN_4X4.as_ptr());
-        assert_eq!(s.neighbors.as_ptr(), DEFAULT_SCAN_4X4_NEIGHBORS.as_ptr());
+        assert_eq!(s.scan().as_ptr(), DEFAULT_SCAN_4X4.as_ptr());
+        assert_eq!(s.iscan().as_ptr(), DEFAULT_ISCAN_4X4.as_ptr());
+        assert_eq!(s.neighbors().as_ptr(), DEFAULT_SCAN_4X4_NEIGHBORS.as_ptr());
     }
 
     // ---- 4x4 col + row scans ----
@@ -1177,17 +1213,17 @@ mod tests {
         use crate::transforms::types::TxType;
 
         let dct = scan_order_4x4(TxType::DctDct);
-        assert_eq!(dct.scan.as_ptr(), DEFAULT_SCAN_4X4.as_ptr());
+        assert_eq!(dct.scan().as_ptr(), DEFAULT_SCAN_4X4.as_ptr());
 
         let adst_dct = scan_order_4x4(TxType::AdstDct);
-        assert_eq!(adst_dct.scan.as_ptr(), ROW_SCAN_4X4.as_ptr());
+        assert_eq!(adst_dct.scan().as_ptr(), ROW_SCAN_4X4.as_ptr());
 
         let dct_adst = scan_order_4x4(TxType::DctAdst);
-        assert_eq!(dct_adst.scan.as_ptr(), COL_SCAN_4X4.as_ptr());
+        assert_eq!(dct_adst.scan().as_ptr(), COL_SCAN_4X4.as_ptr());
 
         // ADST_ADST falls back to default (libvpx :703).
         let adst_adst = scan_order_4x4(TxType::AdstAdst);
-        assert_eq!(adst_adst.scan.as_ptr(), DEFAULT_SCAN_4X4.as_ptr());
+        assert_eq!(adst_adst.scan().as_ptr(), DEFAULT_SCAN_4X4.as_ptr());
     }
 
     // ---- 8x8 family ----
@@ -1267,19 +1303,19 @@ mod tests {
         use crate::transforms::types::TxType;
 
         assert_eq!(
-            scan_order_8x8(TxType::DctDct).scan.as_ptr(),
+            scan_order_8x8(TxType::DctDct).scan().as_ptr(),
             DEFAULT_SCAN_8X8.as_ptr()
         );
         assert_eq!(
-            scan_order_8x8(TxType::AdstDct).scan.as_ptr(),
+            scan_order_8x8(TxType::AdstDct).scan().as_ptr(),
             ROW_SCAN_8X8.as_ptr()
         );
         assert_eq!(
-            scan_order_8x8(TxType::DctAdst).scan.as_ptr(),
+            scan_order_8x8(TxType::DctAdst).scan().as_ptr(),
             COL_SCAN_8X8.as_ptr()
         );
         assert_eq!(
-            scan_order_8x8(TxType::AdstAdst).scan.as_ptr(),
+            scan_order_8x8(TxType::AdstAdst).scan().as_ptr(),
             DEFAULT_SCAN_8X8.as_ptr()
         );
     }
@@ -1345,19 +1381,19 @@ mod tests {
         use crate::transforms::types::TxType;
 
         assert_eq!(
-            scan_order_16x16(TxType::DctDct).scan.as_ptr(),
+            scan_order_16x16(TxType::DctDct).scan().as_ptr(),
             DEFAULT_SCAN_16X16.as_ptr()
         );
         assert_eq!(
-            scan_order_16x16(TxType::AdstDct).scan.as_ptr(),
+            scan_order_16x16(TxType::AdstDct).scan().as_ptr(),
             ROW_SCAN_16X16.as_ptr()
         );
         assert_eq!(
-            scan_order_16x16(TxType::DctAdst).scan.as_ptr(),
+            scan_order_16x16(TxType::DctAdst).scan().as_ptr(),
             COL_SCAN_16X16.as_ptr()
         );
         assert_eq!(
-            scan_order_16x16(TxType::AdstAdst).scan.as_ptr(),
+            scan_order_16x16(TxType::AdstAdst).scan().as_ptr(),
             DEFAULT_SCAN_16X16.as_ptr()
         );
     }
@@ -1400,7 +1436,7 @@ mod tests {
             TxType::AdstAdst,
         ] {
             assert_eq!(
-                scan_order_32x32(tx_type).scan.as_ptr(),
+                scan_order_32x32(tx_type).scan().as_ptr(),
                 DEFAULT_SCAN_32X32.as_ptr()
             );
         }
@@ -1421,19 +1457,19 @@ mod tests {
             TxType::AdstAdst,
         ] {
             assert_eq!(
-                scan_for(TxSize::Tx4x4, tx_type).scan.as_ptr(),
-                scan_order_4x4(tx_type).scan.as_ptr()
+                scan_for(TxSize::Tx4x4, tx_type).scan().as_ptr(),
+                scan_order_4x4(tx_type).scan().as_ptr()
             );
             assert_eq!(
-                scan_for(TxSize::Tx8x8, tx_type).scan.as_ptr(),
-                scan_order_8x8(tx_type).scan.as_ptr()
+                scan_for(TxSize::Tx8x8, tx_type).scan().as_ptr(),
+                scan_order_8x8(tx_type).scan().as_ptr()
             );
             assert_eq!(
-                scan_for(TxSize::Tx16x16, tx_type).scan.as_ptr(),
-                scan_order_16x16(tx_type).scan.as_ptr()
+                scan_for(TxSize::Tx16x16, tx_type).scan().as_ptr(),
+                scan_order_16x16(tx_type).scan().as_ptr()
             );
             assert_eq!(
-                scan_for(TxSize::Tx32x32, tx_type).scan.as_ptr(),
+                scan_for(TxSize::Tx32x32, tx_type).scan().as_ptr(),
                 DEFAULT_SCAN_32X32.as_ptr()
             );
         }
@@ -1444,19 +1480,19 @@ mod tests {
     fn default_scan_returns_per_size_default() {
         use crate::transforms::types::TxSize;
         assert_eq!(
-            default_scan(TxSize::Tx4x4).scan.as_ptr(),
+            default_scan(TxSize::Tx4x4).scan().as_ptr(),
             DEFAULT_SCAN_4X4.as_ptr()
         );
         assert_eq!(
-            default_scan(TxSize::Tx8x8).scan.as_ptr(),
+            default_scan(TxSize::Tx8x8).scan().as_ptr(),
             DEFAULT_SCAN_8X8.as_ptr()
         );
         assert_eq!(
-            default_scan(TxSize::Tx16x16).scan.as_ptr(),
+            default_scan(TxSize::Tx16x16).scan().as_ptr(),
             DEFAULT_SCAN_16X16.as_ptr()
         );
         assert_eq!(
-            default_scan(TxSize::Tx32x32).scan.as_ptr(),
+            default_scan(TxSize::Tx32x32).scan().as_ptr(),
             DEFAULT_SCAN_32X32.as_ptr()
         );
     }

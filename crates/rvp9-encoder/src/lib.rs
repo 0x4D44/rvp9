@@ -6997,7 +6997,7 @@ fn choose_intra_luma_tx_size(
                 let coeff_ctx = rvp9_core::coef_ctx::combine_entropy_contexts(above, left);
                 total_rate = total_rate.saturating_add(crate::rdo::cost_coeffs::cost_coeffs(
                     &qcoeff_i16,
-                    scan.scan,
+                    scan.scan(),
                     eob as u16,
                     tx_size,
                     /* plane_type = */ 0,
@@ -7357,7 +7357,7 @@ fn choose_inter_luma_tx_size(input: InterLumaTxInput<'_>) -> TxSize {
                 let coeff_ctx = rvp9_core::coef_ctx::combine_entropy_contexts(above, left);
                 total_rate = total_rate.saturating_add(crate::rdo::cost_coeffs::cost_coeffs(
                     &qcoeff_i16[..ncoef],
-                    scan.scan,
+                    scan.scan(),
                     eob as u16,
                     tx_size,
                     /* plane_type = */ 0,

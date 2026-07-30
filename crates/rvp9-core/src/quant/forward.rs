@@ -576,7 +576,7 @@ pub const fn n_coeffs_for(tx_size: TxSize) -> usize {
 #[inline]
 #[must_use]
 pub fn scan_for_forward(order: &ScanOrder) -> &[i16] {
-    order.scan
+    order.scan()
 }
 
 #[cfg(test)]
@@ -616,7 +616,7 @@ mod tests {
             &mut qcoeff,
             &mut dqcoeff,
             &dequant,
-            scan.scan,
+            scan.scan(),
         );
         (qcoeff, dqcoeff, eob)
     }
@@ -731,7 +731,7 @@ mod tests {
         let scan = default_scan_4x4();
         for i in 0..16 {
             let band = usize::from(i != 0);
-            let raster = scan.scan[i] as usize;
+            let raster = scan.scan()[i] as usize;
             let expected = i32::from(qcoeff[raster]) * i32::from(qp.dequant[band]);
             assert_eq!(
                 i32::from(dqcoeff[raster]),
@@ -764,7 +764,7 @@ mod tests {
         // Find the highest scan-position with a non-zero qcoeff.
         let mut last_nonzero_scan_pos: Option<usize> = None;
         for i in 0..16 {
-            let raster = scan.scan[i] as usize;
+            let raster = scan.scan()[i] as usize;
             if qcoeff[raster] != 0 {
                 last_nonzero_scan_pos = Some(i);
             }
@@ -931,7 +931,7 @@ mod tests {
             &mut qcoeff,
             &mut dqcoeff,
             &qp.dequant,
-            scan.scan,
+            scan.scan(),
         );
         assert_ne!(
             qcoeff[0], 0,
@@ -995,7 +995,7 @@ mod tests {
                 &mut qcoeff,
                 &mut dqcoeff,
                 &qp.dequant,
-                scan.scan,
+                scan.scan(),
             );
             // dqcoeff is the reconstructed (decoder-equivalent) value.
             let recovered = i32::from(dqcoeff[0]);
@@ -1045,7 +1045,7 @@ mod tests {
             &mut qcoeff_i16,
             &mut dqcoeff_i16,
             &qp.dequant,
-            scan.scan,
+            scan.scan(),
         );
         assert!(
             eob >= 1,
@@ -1209,7 +1209,7 @@ mod tests {
             &mut qcoeff,
             &mut dqcoeff,
             &[8, 8],
-            scan.scan,
+            scan.scan(),
         );
         assert_eq!(eob, 0);
         assert!(qcoeff.iter().all(|&v| v == 0));
@@ -1401,7 +1401,7 @@ mod tests {
     fn scan_for_forward_returns_scan_slice() {
         let scan = default_scan_4x4();
         let forward = scan_for_forward(&scan);
-        assert_eq!(forward, scan.scan);
+        assert_eq!(forward, scan.scan());
     }
 
     /// Hand-verified: `invert_quant(8)` should yield the libvpx values

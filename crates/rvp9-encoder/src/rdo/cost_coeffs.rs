@@ -395,7 +395,7 @@ mod tests {
         // EOB token cost at (band 0, ctx 0, plane 0, ref 0, tx 0).
         let cost = cost_coeffs(
             &qcoeff,
-            scan.scan,
+            scan.scan(),
             0,
             TxSize::Tx4x4,
             0, // Y plane
@@ -430,12 +430,12 @@ mod tests {
         let costs = build_coef_cost_table(&fc);
         let scan = default_scan_4x4();
 
-        let zero_cost = cost_coeffs(&[0i16; 16], scan.scan, 0, TxSize::Tx4x4, 0, 0, 0, &costs);
+        let zero_cost = cost_coeffs(&[0i16; 16], scan.scan(), 0, TxSize::Tx4x4, 0, 0, 0, &costs);
 
         // Block with a single DC = 1 → ONE_TOKEN at scan[0].
         let mut q = vec![0i16; 16];
-        q[scan.scan[0] as usize] = 1;
-        let one_cost = cost_coeffs(&q, scan.scan, 1, TxSize::Tx4x4, 0, 0, 0, &costs);
+        q[scan.scan()[0] as usize] = 1;
+        let one_cost = cost_coeffs(&q, scan.scan(), 1, TxSize::Tx4x4, 0, 0, 0, &costs);
         assert!(
             one_cost > zero_cost,
             "single-coeff cost ({one_cost}) must exceed all-zero cost ({zero_cost})",

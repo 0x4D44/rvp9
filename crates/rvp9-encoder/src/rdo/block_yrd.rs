@@ -335,7 +335,14 @@ fn compute_tx_size_rd(
     );
 
     let rate = cost_coeffs(
-        &qcoeff, scan.scan, eob, tx_size, plane_type, ref_type, coeff_ctx, costs,
+        &qcoeff,
+        scan.scan(),
+        eob,
+        tx_size,
+        plane_type,
+        ref_type,
+        coeff_ctx,
+        costs,
     );
 
     let (dist, sse) = dist_block_pixel_domain(

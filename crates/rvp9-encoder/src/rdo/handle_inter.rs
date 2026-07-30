@@ -1205,9 +1205,14 @@ fn plane_tx_search_yrd(
                 let left = left_ctx[ty4];
                 let coeff_ctx = rvp9_core::coef_ctx::combine_entropy_contexts(above, left);
                 total_rate = total_rate.saturating_add(cost_coeffs(
-                    &qcoeff, scan.scan, eob, tx_size, 0, // plane_type: Y
+                    &qcoeff,
+                    scan.scan(),
+                    eob,
+                    tx_size,
+                    0, // plane_type: Y
                     1, // ref_type: inter (matches the emit walk)
-                    coeff_ctx, coef_costs,
+                    coeff_ctx,
+                    coef_costs,
                 ));
 
                 let nz = u8::from(eob > 0);

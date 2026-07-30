@@ -543,12 +543,12 @@ pub fn decode_coefs(
     //    returns `(1 + a + b) >> 1` with `a, b ∈ {0..=5}` from the
     //    token-tree, so `ctx ∈ 0..=5 < COEFF_CONTEXTS=6`). So
     //    `coef_probs[band][ctx]` is in bounds.
-    // 4. `scan.scan.len() == tx_size.n_coeffs() >= seg_eob`, and
-    //    `scan.scan[c] < n_coeffs` (raster index into the same TX block).
+    // 4. `scan.scan().len() == tx_size.n_coeffs() >= seg_eob`, and
+    //    `scan.scan()[c] < n_coeffs` (raster index into the same TX block).
     //    `token_cache.len() == DECODE_COEFS_SCRATCH_CAP = 1024 ≥
-    //    n_coeffs`, so `token_cache[scan.scan[c]]` is in bounds.
+    //    n_coeffs`, so `token_cache[scan.scan()[c]]` is in bounds.
     debug_assert!(band_translate.len() >= seg_eob);
-    debug_assert!(scan.scan.len() >= seg_eob);
+    debug_assert!(scan.scan().len() >= seg_eob);
 
     'outer: while c < seg_eob {
         // SAFETY: invariant (2) above — `c < seg_eob ≤ band_translate.len()`.
@@ -593,10 +593,10 @@ pub fn decode_coefs(
             }
             // dqv switches to AC once we leave scan position 0.
             dqv = ac_dq;
-            // SAFETY: invariant (4) — `c < seg_eob ≤ scan.scan.len()`
-            // and `scan.scan[c]` is a raster index into the same TX
+            // SAFETY: invariant (4) — `c < seg_eob ≤ scan.scan().len()`
+            // and `scan.scan()[c]` is a raster index into the same TX
             // block (< n_coeffs ≤ token_cache.len()).
-            let scan_c = unsafe { *scan.scan.get_unchecked(c) } as usize;
+            let scan_c = unsafe { *scan.scan().get_unchecked(c) } as usize;
             debug_assert!(scan_c < token_cache.len());
             // SAFETY: see above; `scan_c < n_coeffs ≤ token_cache.len()`.
             unsafe { *token_cache.get_unchecked_mut(scan_c) = 0; }
@@ -607,7 +607,7 @@ pub fn decode_coefs(
                 // gate at the function tail still runs.
                 break 'outer;
             }
-            ctx = get_coef_context(scan.neighbors, token_cache, c);
+            ctx = get_coef_context(scan.neighbors(), token_cache, c);
             // SAFETY: invariant (2) — `c < seg_eob ≤ band_translate.len()`.
             band_local = unsafe { *band_translate.get_unchecked(c) } as usize;
             debug_assert!(band_local < COEF_BANDS);
@@ -625,10 +625,10 @@ pub fn decode_coefs(
         // updates `counts`, and computes the integer multiplier `val`.
         // The dequant multiply + writeback happen inline immediately
         // after the sign read (below), exactly as libvpx does.
-        // SAFETY: invariant (4) — `c < seg_eob ≤ scan.scan.len()`.
-        let raster_idx = unsafe { *scan.scan.get_unchecked(c) } as usize;
+        // SAFETY: invariant (4) — `c < seg_eob ≤ scan.scan().len()`.
+        let raster_idx = unsafe { *scan.scan().get_unchecked(c) } as usize;
         debug_assert!(raster_idx < token_cache.len());
-        // SAFETY: invariant (4) — `raster_idx = scan.scan[c]` is a
+        // SAFETY: invariant (4) — `raster_idx = scan.scan()[c]` is a
         // raster position in this TX block (< n_coeffs ≤ token_cache.len()).
         // Capture an aliased mut pointer to the cell we'll update once
         // per non-zero-token branch, so we don't re-bounds-check on
@@ -707,7 +707,7 @@ pub fn decode_coefs(
         let signed_v = if sign_bit != 0 { -v } else { v };
         // Checked write (mirrors `decode_coefs_libvpx_ref` and the old
         // `plane_dequant_finisher` scatter, both of which indexed
-        // `dq_coefs_out[raster_idx]` checked). `raster_idx = scan.scan[c]`
+        // `dq_coefs_out[raster_idx]` checked). `raster_idx = scan.scan()[c]`
         // is a raster position in `0..n_coeffs`; production always passes
         // `dq_coefs_out.len() >= n_coeffs` (every recon caller uses
         // `seg_eob = tx_size.n_coeffs()`), so this never panics on real
@@ -727,7 +727,7 @@ pub fn decode_coefs(
 
         c += 1;
         if c < seg_eob {
-            ctx = get_coef_context(scan.neighbors, token_cache, c);
+            ctx = get_coef_context(scan.neighbors(), token_cache, c);
         }
         dqv = ac_dq;
     }
@@ -748,7 +748,7 @@ pub fn decode_coefs(
                  pre=(r={r_range},v=0x{r_value:016x},c={r_count},p={r_pos}) \
                  probs[b=0][ctx={initial_pt}]={probs_b0:?} \
                  eob={c} dq={:?}",
-                &scan.scan[..6.min(scan.scan.len())],
+                &scan.scan()[..6.min(scan.scan().len())],
                 &dq_coefs_out[..seg_eob],
             );
             // Stage 3 stretch M.8 — bitstream-bytes dump for the C oracle.
@@ -800,8 +800,8 @@ pub fn decode_coefs(
             tx_size,
             dequant,
             initial_pt,
-            scan.scan,
-            scan.neighbors,
+            scan.scan(),
+            scan.neighbors(),
             &mut ref_dq,
             seg_eob,
         );
@@ -816,7 +816,7 @@ pub fn decode_coefs(
                  scan[0..6]={:?}\n  \
                  production: eob={prod_eob} dq_coefs={prod_dq:?}\n  \
                  ref-port:   eob={ref_eob} dq_coefs={ref_dq:?}",
-                &scan.scan[..6.min(scan.scan.len())]
+                &scan.scan()[..6.min(scan.scan().len())]
             );
             panic!(
                 "decode_coefs production diverges from libvpx ref port \
@@ -1015,7 +1015,7 @@ fn full_token_from_abs(abs_val: i32) -> usize {
 /// the `decode_coefs` state machine in
 /// `vp9/decoder/vp9_detokenize.c:115-261`. Walks the scan in order,
 /// emitting `(EOB, ZERO, ONE, value-tree)` + extension bits + sign for
-/// each raw quantized coefficient indexed by `scan.scan[c]`.
+/// each raw quantized coefficient indexed by `scan.scan()[c]`.
 ///
 /// ## Round-trip contract
 ///
@@ -1114,7 +1114,7 @@ pub fn encode_coefs(
         // inner loop.
         let mut local_prob = prob;
         loop {
-            let raster_idx = scan.scan[c] as usize;
+            let raster_idx = scan.scan()[c] as usize;
             let coef = raw_coefs[raster_idx];
             if coef != 0 {
                 // Break out — emit NOT-ZERO and proceed to the value
@@ -1147,17 +1147,17 @@ pub fn encode_coefs(
                 // outer loop, the next outer iteration recomputes
                 // (band, ctx) from the updated token_cache.
                 if c < seg_eob {
-                    ctx = get_coef_context(scan.neighbors, &token_cache, c);
+                    ctx = get_coef_context(scan.neighbors(), &token_cache, c);
                 }
                 break 'outer;
             }
-            ctx = get_coef_context(scan.neighbors, &token_cache, c);
+            ctx = get_coef_context(scan.neighbors(), &token_cache, c);
             let band_local = band_translate[c] as usize;
             local_prob = &coef_probs[band_local][ctx];
         }
 
         // Non-zero coefficient — emit the value tree.
-        let raster_idx = scan.scan[c] as usize;
+        let raster_idx = scan.scan()[c] as usize;
         let coef = raw_coefs[raster_idx];
         let abs_val = coef.unsigned_abs() as i32;
         let sign_neg = coef < 0;
@@ -1274,7 +1274,7 @@ pub fn encode_coefs(
         // emit (c < eob) OR the terminal EOB emission below
         // (eob < seg_eob, in which case we need ctx for position `eob`).
         if c < seg_eob {
-            ctx = get_coef_context(scan.neighbors, &token_cache, c);
+            ctx = get_coef_context(scan.neighbors(), &token_cache, c);
         }
     }
 
@@ -1537,9 +1537,9 @@ mod tests {
         );
         assert_eq!(eob, 1);
         // scan[0] == 0 (DC); value = +1 * dc_dq.
-        assert_eq!(dqc[scan.scan[0] as usize], dc_dq);
+        assert_eq!(dqc[scan.scan()[0] as usize], dc_dq);
         for (i, &v) in dqc.iter().enumerate() {
-            if i == scan.scan[0] as usize {
+            if i == scan.scan()[0] as usize {
                 continue;
             }
             assert_eq!(v, 0, "non-DC slot {i}");
@@ -1604,10 +1604,10 @@ mod tests {
         );
         assert_eq!(eob, 6, "eob is the scan position past the last non-zero");
         // The non-zero value sits at raster position `scan[5]`.
-        assert_eq!(dqc[scan.scan[5] as usize], -2 * ac_dq);
+        assert_eq!(dqc[scan.scan()[5] as usize], -2 * ac_dq);
         // Every other slot is zero.
         for (i, &v) in dqc.iter().enumerate() {
-            if i == scan.scan[5] as usize {
+            if i == scan.scan()[5] as usize {
                 continue;
             }
             assert_eq!(v, 0, "slot {i}");
@@ -1662,7 +1662,7 @@ mod tests {
         assert_eq!(eob, 1);
         // CAT1 value with extension = 1: val = CAT1_MIN_VAL + 1 = 6.
         // dqv = dc_dq for the first position; dq_shift = 0 for Tx4x4.
-        assert_eq!(dqc[scan.scan[0] as usize], 6 * dc_dq);
+        assert_eq!(dqc[scan.scan()[0] as usize], 6 * dc_dq);
     }
 
     /// CAT6 token (max category for 8-bit) — exercises the longest
@@ -1730,7 +1730,7 @@ mod tests {
         // CAT6_MIN_VAL + 0x0ABC = 67 + 2748 = 2815. Multiplied by
         // AC dequant; dq_shift = 0 for Tx8x8.
         let expected: i32 = (CAT6_MIN_VAL + 0x0ABC) * ac_dq;
-        assert_eq!(dqc[scan.scan[2] as usize], expected);
+        assert_eq!(dqc[scan.scan()[2] as usize], expected);
     }
 
     /// Block that runs to `seg_eob` without an EOB token: every scan
@@ -1843,7 +1843,7 @@ mod tests {
             &mut dqc,
         );
         assert_eq!(eob, 1, "EOB at pos 1 after ONE_TOKEN at pos 0");
-        assert_eq!(dqc[scan.scan[0] as usize], 3, "+1 * dc_dq=3");
+        assert_eq!(dqc[scan.scan()[0] as usize], 3, "+1 * dc_dq=3");
     }
 
     /// Counts wiring: when `Some(counts)` is passed, the relevant
@@ -2014,10 +2014,10 @@ mod tests {
         );
         assert_eq!(eob, 2);
         // scan[0] = 0 (raster DC), gets dc_dq.
-        assert_eq!(scan.scan[0], 0);
+        assert_eq!(scan.scan()[0], 0);
         assert_eq!(dqc[0], dc_dq, "DC at raster 0 should be dc_dq");
         // scan[1] = 4 (raster row 1 col 0), gets ac_dq.
-        assert_eq!(scan.scan[1], 4);
+        assert_eq!(scan.scan()[1], 4);
         assert_eq!(dqc[4], ac_dq, "second coef at raster 4 should be ac_dq");
         // Everything else zero.
         for (i, &v) in dqc.iter().enumerate() {
@@ -2069,8 +2069,8 @@ mod tests {
         assert_eq!(eob, 2);
         // row_scan_4x4: scan = [0, 1, 4, ...]. scan[0]=0 (DC), scan[1]=1
         // (row 0 col 1 — horizontal neighbour of DC).
-        assert_eq!(scan.scan[0], 0);
-        assert_eq!(scan.scan[1], 1);
+        assert_eq!(scan.scan()[0], 0);
+        assert_eq!(scan.scan()[1], 1);
         assert_eq!(dqc[0], dc_dq, "DC at raster 0 should be dc_dq");
         assert_eq!(dqc[1], ac_dq, "second coef at raster 1 should be ac_dq");
         for (i, &v) in dqc.iter().enumerate() {
@@ -2468,8 +2468,8 @@ mod tests {
                     *tx_size,
                     (dq_dc, dq_ac),
                     initial_pt,
-                    scan_order.scan,
-                    scan_order.neighbors,
+                    scan_order.scan(),
+                    scan_order.neighbors(),
                 );
                 let n = tx_size.n_coeffs();
 
@@ -2483,8 +2483,8 @@ mod tests {
                     *tx_size,
                     (dq_dc, dq_ac),
                     initial_pt,
-                    scan_order.scan,
-                    scan_order.neighbors,
+                    scan_order.scan(),
+                    scan_order.neighbors(),
                     &mut dq_ref,
                     n,
                 );
@@ -2557,7 +2557,7 @@ mod tests {
             &mut dqc,
         );
         assert_eq!(eob, 1);
-        assert_eq!(dqc[scan.scan[0] as usize], 4, "1 * 8 >> 1");
+        assert_eq!(dqc[scan.scan()[0] as usize], 4, "1 * 8 >> 1");
     }
 
     // ===================================================================
@@ -2655,7 +2655,7 @@ mod tests {
         let probs = flat_coef_probs(64, 64, 64);
         let scan = default_scan_4x4();
         let mut raw = vec![0i32; 16];
-        raw[scan.scan[0] as usize] = 1;
+        raw[scan.scan()[0] as usize] = 1;
         let bytes = enc_block(&probs, &scan, 0, TxSize::Tx4x4, 16, &raw, 1);
         assert_round_trip(&bytes, &probs, &scan, 0, TxSize::Tx4x4, 16, &raw, 1);
     }
@@ -2665,7 +2665,7 @@ mod tests {
         let probs = flat_coef_probs(64, 64, 64);
         let scan = default_scan_4x4();
         let mut raw = vec![0i32; 16];
-        raw[scan.scan[0] as usize] = -1;
+        raw[scan.scan()[0] as usize] = -1;
         let bytes = enc_block(&probs, &scan, 0, TxSize::Tx4x4, 16, &raw, 1);
         assert_round_trip(&bytes, &probs, &scan, 0, TxSize::Tx4x4, 16, &raw, 1);
     }
@@ -2675,7 +2675,7 @@ mod tests {
         let probs = flat_coef_probs(64, 64, 64);
         let scan = default_scan_4x4();
         let mut raw = vec![0i32; 16];
-        raw[scan.scan[0] as usize] = 2;
+        raw[scan.scan()[0] as usize] = 2;
         let bytes = enc_block(&probs, &scan, 0, TxSize::Tx4x4, 16, &raw, 1);
         assert_round_trip(&bytes, &probs, &scan, 0, TxSize::Tx4x4, 16, &raw, 1);
     }
@@ -2685,7 +2685,7 @@ mod tests {
         let probs = flat_coef_probs(64, 64, 64);
         let scan = default_scan_4x4();
         let mut raw = vec![0i32; 16];
-        raw[scan.scan[0] as usize] = 3;
+        raw[scan.scan()[0] as usize] = 3;
         let bytes = enc_block(&probs, &scan, 0, TxSize::Tx4x4, 16, &raw, 1);
         assert_round_trip(&bytes, &probs, &scan, 0, TxSize::Tx4x4, 16, &raw, 1);
     }
@@ -2695,7 +2695,7 @@ mod tests {
         let probs = flat_coef_probs(64, 64, 64);
         let scan = default_scan_4x4();
         let mut raw = vec![0i32; 16];
-        raw[scan.scan[0] as usize] = 4;
+        raw[scan.scan()[0] as usize] = 4;
         let bytes = enc_block(&probs, &scan, 0, TxSize::Tx4x4, 16, &raw, 1);
         assert_round_trip(&bytes, &probs, &scan, 0, TxSize::Tx4x4, 16, &raw, 1);
     }
@@ -2707,7 +2707,7 @@ mod tests {
             let probs = flat_coef_probs(64, 64, 100);
             let scan = default_scan_4x4();
             let mut raw = vec![0i32; 16];
-            raw[scan.scan[0] as usize] = v;
+            raw[scan.scan()[0] as usize] = v;
             let bytes = enc_block(&probs, &scan, 0, TxSize::Tx4x4, 16, &raw, 1);
             assert_round_trip(&bytes, &probs, &scan, 0, TxSize::Tx4x4, 16, &raw, 1);
         }
@@ -2720,7 +2720,7 @@ mod tests {
             let probs = flat_coef_probs(64, 64, 100);
             let scan = default_scan_4x4();
             let mut raw = vec![0i32; 16];
-            raw[scan.scan[0] as usize] = v;
+            raw[scan.scan()[0] as usize] = v;
             let bytes = enc_block(&probs, &scan, 0, TxSize::Tx4x4, 16, &raw, 1);
             assert_round_trip(&bytes, &probs, &scan, 0, TxSize::Tx4x4, 16, &raw, 1);
         }
@@ -2733,7 +2733,7 @@ mod tests {
             let probs = flat_coef_probs(64, 64, 100);
             let scan = default_scan_4x4();
             let mut raw = vec![0i32; 16];
-            raw[scan.scan[0] as usize] = v;
+            raw[scan.scan()[0] as usize] = v;
             let bytes = enc_block(&probs, &scan, 0, TxSize::Tx4x4, 16, &raw, 1);
             assert_round_trip(&bytes, &probs, &scan, 0, TxSize::Tx4x4, 16, &raw, 1);
         }
@@ -2746,7 +2746,7 @@ mod tests {
             let probs = flat_coef_probs(64, 64, 100);
             let scan = default_scan_4x4();
             let mut raw = vec![0i32; 16];
-            raw[scan.scan[0] as usize] = v;
+            raw[scan.scan()[0] as usize] = v;
             let bytes = enc_block(&probs, &scan, 0, TxSize::Tx4x4, 16, &raw, 1);
             assert_round_trip(&bytes, &probs, &scan, 0, TxSize::Tx4x4, 16, &raw, 1);
         }
@@ -2759,7 +2759,7 @@ mod tests {
             let probs = flat_coef_probs(64, 64, 100);
             let scan = default_scan_4x4();
             let mut raw = vec![0i32; 16];
-            raw[scan.scan[0] as usize] = v;
+            raw[scan.scan()[0] as usize] = v;
             let bytes = enc_block(&probs, &scan, 0, TxSize::Tx4x4, 16, &raw, 1);
             assert_round_trip(&bytes, &probs, &scan, 0, TxSize::Tx4x4, 16, &raw, 1);
         }
@@ -2773,7 +2773,7 @@ mod tests {
             let probs = flat_coef_probs(64, 64, 200);
             let scan = default_scan_4x4();
             let mut raw = vec![0i32; 16];
-            raw[scan.scan[0] as usize] = v;
+            raw[scan.scan()[0] as usize] = v;
             let bytes = enc_block(&probs, &scan, 0, TxSize::Tx4x4, 16, &raw, 1);
             assert_round_trip(&bytes, &probs, &scan, 0, TxSize::Tx4x4, 16, &raw, 1);
         }
@@ -2786,7 +2786,7 @@ mod tests {
         let probs = flat_coef_probs(64, 64, 64);
         let scan = default_scan_4x4();
         let mut raw = vec![0i32; 16];
-        raw[scan.scan[5] as usize] = -2;
+        raw[scan.scan()[5] as usize] = -2;
         let bytes = enc_block(&probs, &scan, 0, TxSize::Tx4x4, 16, &raw, 6);
         assert_round_trip(&bytes, &probs, &scan, 0, TxSize::Tx4x4, 16, &raw, 6);
     }
@@ -2829,13 +2829,13 @@ mod tests {
                 } else {
                     let mag = 1 + (rng.next_range(200) as i32);
                     let sign = if rng.next_range(2) == 0 { 1 } else { -1 };
-                    raw[scan.scan[c] as usize] = mag * sign;
+                    raw[scan.scan()[c] as usize] = mag * sign;
                 }
             }
             // Compute effective eob = last-non-zero scan position + 1.
             let mut effective_eob = 0usize;
             for c in 0..target_eob {
-                if raw[scan.scan[c] as usize] != 0 {
+                if raw[scan.scan()[c] as usize] != 0 {
                     effective_eob = c + 1;
                 }
             }
@@ -2909,7 +2909,7 @@ mod tests {
             &mut dqc,
         );
         assert_eq!(eob, 1);
-        assert_eq!(dqc[scan.scan[0] as usize], 3);
+        assert_eq!(dqc[scan.scan()[0] as usize], 3);
     }
 
     /// `decode_coefs` with `counts = Some(&mut ...)` AND a zero-run
@@ -2988,7 +2988,7 @@ mod tests {
         let scan = default_scan_4x4();
         let mut raw = vec![0i32; 16];
         // Last scan position non-zero — forces eob = 16 == seg_eob.
-        raw[scan.scan[15] as usize] = 1;
+        raw[scan.scan()[15] as usize] = 1;
         let bytes = enc_block(&probs, &scan, 0, TxSize::Tx4x4, 16, &raw, 16);
         assert_round_trip(&bytes, &probs, &scan, 0, TxSize::Tx4x4, 16, &raw, 16);
     }
@@ -3002,7 +3002,7 @@ mod tests {
             let probs = flat_coef_probs(64, 64, 100);
             let scan = default_scan_4x4();
             let mut raw = vec![0i32; 16];
-            raw[scan.scan[0] as usize] = v;
+            raw[scan.scan()[0] as usize] = v;
             let bytes = enc_block(&probs, &scan, 0, TxSize::Tx4x4, 16, &raw, 1);
             assert_round_trip(&bytes, &probs, &scan, 0, TxSize::Tx4x4, 16, &raw, 1);
         }
@@ -3032,13 +3032,13 @@ mod tests {
 
             // Case 2: single ONE_TOKEN at scan[0], positive.
             let mut raw = vec![0i32; n];
-            raw[scan.scan[0] as usize] = 1;
+            raw[scan.scan()[0] as usize] = 1;
             let bytes = enc_block(&probs, &scan, 0, tx_size, n, &raw, 1);
             assert_round_trip(&bytes, &probs, &scan, 0, tx_size, n, &raw, 1);
 
             // Case 3: zero run of 5 then a TWO_TOKEN at scan[5].
             let mut raw = vec![0i32; n];
-            raw[scan.scan[5] as usize] = 2;
+            raw[scan.scan()[5] as usize] = 2;
             let bytes = enc_block(&probs, &scan, 0, tx_size, n, &raw, 6);
             assert_round_trip(&bytes, &probs, &scan, 0, tx_size, n, &raw, 6);
         }
@@ -3251,9 +3251,9 @@ mod tests {
     fn write_block_tokens_y_intra_tx4x4_three_nonzero() {
         let scan = scan_for(TxSize::Tx4x4, TxType::DctDct);
         let mut raw = vec![0i32; 16];
-        raw[scan.scan[0] as usize] = 1; // ONE_TOKEN, positive
-        raw[scan.scan[1] as usize] = -2; // TWO_TOKEN, negative
-        raw[scan.scan[2] as usize] = 7; // CAT2 (7..=10), positive
+        raw[scan.scan()[0] as usize] = 1; // ONE_TOKEN, positive
+        raw[scan.scan()[1] as usize] = -2; // TWO_TOKEN, negative
+        raw[scan.scan()[2] as usize] = 7; // CAT2 (7..=10), positive
         let ctx = round_trip_block_tokens(
             0,
             0,
@@ -3285,7 +3285,7 @@ mod tests {
             } else {
                 -(1 + c as i32)
             };
-            raw[scan.scan[c] as usize] = v;
+            raw[scan.scan()[c] as usize] = v;
         }
         let ctx = round_trip_block_tokens(
             0,
@@ -3320,7 +3320,7 @@ mod tests {
                 3 => -11, // CAT3 (11..=18)
                 _ => 3,
             };
-            raw[scan.scan[c] as usize] = v;
+            raw[scan.scan()[c] as usize] = v;
         }
         let ctx = round_trip_block_tokens(
             1,
@@ -3368,13 +3368,13 @@ mod tests {
                 5 => 3,
                 _ => -1,
             };
-            raw[scan.scan[c] as usize] = v;
+            raw[scan.scan()[c] as usize] = v;
         }
         // Effective eob = last-non-zero scan position + 1; if scan[63]
         // landed on a zero slot, scan back. For our mod-7 pattern
         // c=63 → 63 % 7 = 0 ⇒ zero. Force a non-zero at scan[63] so
         // eob=64 is well-defined.
-        raw[scan.scan[63] as usize] = 1;
+        raw[scan.scan()[63] as usize] = 1;
 
         let ctx = round_trip_block_tokens(
             0,
@@ -3407,11 +3407,11 @@ mod tests {
         let fc = FrameContext::new_default();
         let scan = scan_for(TxSize::Tx4x4, TxType::DctDct);
         let mut raw_a = vec![0i32; 16];
-        raw_a[scan.scan[0] as usize] = 1; // ONE_TOKEN, positive
+        raw_a[scan.scan()[0] as usize] = 1; // ONE_TOKEN, positive
         let eob_a = 1;
 
         let mut raw_b = vec![0i32; 16];
-        raw_b[scan.scan[0] as usize] = -3; // THREE_TOKEN, negative
+        raw_b[scan.scan()[0] as usize] = -3; // THREE_TOKEN, negative
         let eob_b = 1;
 
         // Encode both blocks into a SHARED enc_ctx + buffer.
@@ -3531,9 +3531,9 @@ mod tests {
     fn write_block_tokens_seg_eob_shortened() {
         let scan = scan_for(TxSize::Tx4x4, TxType::DctDct);
         let mut raw = vec![0i32; 16];
-        raw[scan.scan[0] as usize] = 1;
-        raw[scan.scan[1] as usize] = -2;
-        raw[scan.scan[2] as usize] = 3;
+        raw[scan.scan()[0] as usize] = 1;
+        raw[scan.scan()[1] as usize] = -2;
+        raw[scan.scan()[2] as usize] = 3;
         // seg_eob=5 (< n_coeffs=16), eob=3.
         round_trip_block_tokens(
             0,
@@ -3557,7 +3557,7 @@ mod tests {
     fn write_block_tokens_initial_pt_two_via_seeded_context() {
         let scan = scan_for(TxSize::Tx4x4, TxType::DctDct);
         let mut raw = vec![0i32; 16];
-        raw[scan.scan[0] as usize] = 1;
+        raw[scan.scan()[0] as usize] = 1;
         round_trip_block_tokens(
             0,
             2,
@@ -3593,7 +3593,7 @@ mod tests {
         let probs = flat_coef_probs(64, 64, 64);
         let scan = default_scan_4x4();
         let mut raw = vec![0i32; 16];
-        raw[scan.scan[0] as usize] = 1; // single ONE_TOKEN at DC
+        raw[scan.scan()[0] as usize] = 1; // single ONE_TOKEN at DC
 
         let mut coef_counts: CoefCountsBlock =
             [[[0u32; UNCONSTRAINED_NODES + 1]; COEFF_CONTEXTS]; COEF_BANDS];
@@ -3667,7 +3667,7 @@ mod tests {
         let probs = flat_coef_probs(64, 64, 64);
         let scan = default_scan_4x4();
         let mut raw = vec![0i32; 16];
-        raw[scan.scan[0] as usize] = 2; // TWO_TOKEN
+        raw[scan.scan()[0] as usize] = 2; // TWO_TOKEN
 
         let mut buf = vec![0u8; 256];
         let _ = {
@@ -3713,7 +3713,7 @@ mod tests {
             for (positions, eob) in cases {
                 let mut raw = vec![0i32; ncoef];
                 for &(p, v) in positions.iter() {
-                    raw[scan.scan[p] as usize] = v;
+                    raw[scan.scan()[p] as usize] = v;
                 }
                 let mut enc_coef: CoefCountsBlock =
                     [[[0u32; UNCONSTRAINED_NODES + 1]; COEFF_CONTEXTS]; COEF_BANDS];

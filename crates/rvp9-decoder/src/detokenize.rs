@@ -235,7 +235,7 @@ pub fn decode_block_tokens(
              a_any={a_any} l_any={l_any} above[{x4}]={a0} left[{y4_in_sb}]={l0} \
              initial_pt={initial_pt} dequant={dequant:?} \
              scan[0..6]={:?} probs[b=0][ctx={initial_pt}]={prob_b0:?}",
-            &scan.scan[..6.min(scan.scan.len())]
+            &scan.scan()[..6.min(scan.scan().len())]
         );
     }
     if plane == 0
@@ -299,7 +299,7 @@ pub fn decode_block_tokens(
                 TxType::DctAdst => "col_scan_8x8",
                 TxType::AdstAdst => "default_scan_8x8",
             },
-            &scan.scan[..8],
+            &scan.scan()[..8],
         );
         // Dump the entire tile buffer to a file so the oracle can re-create
         // the reader. Path is taken from `RVP9_DEBUG_BUFFER_DUMP`
