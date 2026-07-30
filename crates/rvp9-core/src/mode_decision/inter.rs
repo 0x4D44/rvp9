@@ -108,7 +108,9 @@ use crate::mode_decision::model_rd::{
 };
 use crate::mode_decision::rd_cost;
 use crate::mode_info::{InterMode, Mv, RefFrame};
-use crate::mv_search::full_pixel::{FullPixelSearchParams, PlaneRef, diamond_search_sad};
+use crate::mv_search::full_pixel::{
+    FullPixelSearchParams, PlaneRef, diamond_search_sad, fast_diamond_search_sad,
+};
 use crate::mv_search::mv_limits::MvLimits;
 use crate::mv_search::search_site::SearchSiteConfig;
 use crate::mv_search::sub_pixel::{
@@ -484,6 +486,13 @@ const DEFAULT_SAD_PER_BIT: i32 = 16;
 /// minimum-variance position without being drowned out by MV cost.
 const DEFAULT_ERROR_PER_BIT: i32 = 16;
 
+#[inline]
+fn fast_diamond_diagnostic_override() -> Option<bool> {
+    use std::sync::OnceLock;
+    static OVERRIDE: OnceLock<Option<bool>> = OnceLock::new();
+    *OVERRIDE.get_or_init(|| std::env::var_os("RVP9_FAST_DIAMOND").map(|v| v != "0"))
+}
+
 /// MV candidate pair fed to [`pick_inter_mode_luma`].
 ///
 /// Mirrors libvpx's `MV_REFERENCE_FRAME`-indexed `nearest_mv` /
@@ -505,6 +514,16 @@ pub struct MvCandidates {
     /// cheaper mode. The decoder will still read `find_mv_refs(NEARMV,
     /// ...)` for byte-exact reconstruction.
     pub near: Mv,
+}
+
+/// Full-pel NEWMV search selected by the encoder speed policy.
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
+pub enum FullPixelSearchMethod {
+    /// libvpx `NSTEP` search used by cpu-used 6 and SVC base-layer overrides.
+    #[default]
+    Nstep,
+    /// libvpx `FAST_DIAMOND` search used by cpu-used 7/8 realtime encoding.
+    FastDiamond,
 }
 
 /// Inputs to [`pick_inter_mode_luma`].
@@ -551,6 +570,8 @@ pub struct InterModeSearchParams<'a> {
     /// [`crate::mv_search::init_dsmotion_compensation`], computed
     /// per-stride at the caller).
     pub site_config: &'a SearchSiteConfig,
+    /// Speed-policy full-pel search method.
+    pub full_pixel_search_method: FullPixelSearchMethod,
     /// MV-bit-cost LUT (from F6.1 `build_nmv_cost_table`).
     pub mv_costs: &'a MvCosts,
     /// Inter-mode rate-cost table from
@@ -879,6 +900,8 @@ pub struct PickInterModeParams<'a> {
     pub mv_limits: MvLimits,
     /// 4-site diamond config.
     pub site_config: &'a SearchSiteConfig,
+    /// Speed-policy full-pel search method.
+    pub full_pixel_search_method: FullPixelSearchMethod,
     /// MV-bit-cost LUT.
     pub mv_costs: &'a MvCosts,
     /// Inter-mode rate-cost table.
@@ -1807,6 +1830,7 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
                         mv_candidates: mvc_safe,
                         mv_limits: params.mv_limits,
                         site_config: params.site_config,
+                        full_pixel_search_method: params.full_pixel_search_method,
                         mv_costs: params.mv_costs,
                         inter_mode_costs: params.inter_mode_costs,
                         inter_mode_ctx: params.inter_mode_ctx,
@@ -1964,6 +1988,7 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
             mv_candidates: mvc_safe,
             mv_limits: params.mv_limits,
             site_config: params.site_config,
+            full_pixel_search_method: params.full_pixel_search_method,
             mv_costs: params.mv_costs,
             inter_mode_costs: params.inter_mode_costs,
             inter_mode_ctx: params.inter_mode_ctx,
@@ -2407,6 +2432,7 @@ fn evaluate_intra_fallback(
                 mv_candidates: params.last_mv_candidates,
                 mv_limits: params.mv_limits,
                 site_config: params.site_config,
+                full_pixel_search_method: params.full_pixel_search_method,
                 mv_costs: params.mv_costs,
                 inter_mode_costs: params.inter_mode_costs,
                 inter_mode_ctx: params.inter_mode_ctx,
@@ -2626,7 +2652,7 @@ fn run_newmv_search(params: &InterModeSearchParams<'_>) -> Mv {
     let max_iters = rt_newmv_max_iters_override()
         .map(|v| v.min(default_max_iters))
         .unwrap_or(default_max_iters);
-    let full = diamond_search_sad(&FullPixelSearchParams {
+    let full_params = FullPixelSearchParams {
         block_size: params.block_size,
         src_plane: params.src_plane,
         src_offset: params.src_offset,
@@ -2638,7 +2664,16 @@ fn run_newmv_search(params: &InterModeSearchParams<'_>) -> Mv {
         mv_costs: params.mv_costs,
         max_iters,
         site_config: params.site_config,
-    });
+    };
+    let use_fast_diamond = fast_diamond_diagnostic_override().unwrap_or(matches!(
+        params.full_pixel_search_method,
+        FullPixelSearchMethod::FastDiamond
+    ));
+    let full = if use_fast_diamond {
+        fast_diamond_search_sad(&full_params)
+    } else {
+        diamond_search_sad(&full_params)
+    };
     let center_mv_fp = Mv {
         row: full.best_mv_row,
         col: full.best_mv_col,
@@ -4226,6 +4261,7 @@ mod tests {
             mv_candidates,
             mv_limits,
             site_config: &harness.cfg,
+            full_pixel_search_method: Default::default(),
             mv_costs: &harness.costs,
             inter_mode_costs: &harness.inter_costs,
             inter_mode_ctx: 0,
@@ -4685,6 +4721,7 @@ mod tests {
             mv_candidates: &mvc,
             mv_limits: MvLimits::new(-4, 4, -4, 4),
             site_config: &harness.cfg,
+            full_pixel_search_method: Default::default(),
             mv_costs: &harness.costs,
             inter_mode_costs: &harness.inter_costs,
             inter_mode_ctx: 0,
@@ -5026,6 +5063,7 @@ mod tests {
             golden_mv_candidates: golden_mvc,
             mv_limits,
             site_config: &harness.cfg,
+            full_pixel_search_method: Default::default(),
             mv_costs: &harness.costs,
             inter_mode_costs: &harness.inter_costs,
             inter_mode_ctx: 0,

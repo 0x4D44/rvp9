@@ -2517,6 +2517,21 @@ fn inter_rd_calibration_for_mode(
     }
 }
 
+fn full_pixel_search_method_for_mode(
+    speed: i32,
+    deadline: rvp9_core::mode_decision::speed_features::Deadline,
+) -> rvp9_core::mode_decision::inter::FullPixelSearchMethod {
+    if matches!(
+        deadline,
+        rvp9_core::mode_decision::speed_features::Deadline::Realtime
+    ) && speed.unsigned_abs() >= 7
+    {
+        rvp9_core::mode_decision::inter::FullPixelSearchMethod::FastDiamond
+    } else {
+        rvp9_core::mode_decision::inter::FullPixelSearchMethod::Nstep
+    }
+}
+
 fn a4_descent_independent_mv_default(
     rc_mode: crate::rate_control::RcMode,
     speed: i32,
@@ -2801,6 +2816,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         && matches!(content_tier, sf_mod::ContentTier::Default)
         && u64::from(width) * u64::from(height) >= 700_000;
     let inter_rd_calibration = inter_rd_calibration_for_mode(rc_mode, speed, deadline);
+    let full_pixel_search_method = full_pixel_search_method_for_mode(speed, deadline);
 
     let sb_cols = w / 64;
     let sb_rows = h / 64;
@@ -3717,6 +3733,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         golden_mv_candidates: &descent_mvc_golden,
                         mv_limits,
                         site_config: &site_config,
+                        full_pixel_search_method,
                         mv_costs: &mv_costs,
                         inter_mode_costs: &inter_costs,
                         inter_mode_ctx,
@@ -4830,6 +4847,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     golden_mv_candidates: &mvc_golden,
                     mv_limits,
                     site_config: &site_config,
+                    full_pixel_search_method,
                     mv_costs: &mv_costs,
                     inter_mode_costs: &inter_costs,
                     inter_mode_ctx,
@@ -5123,6 +5141,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             mv_candidates: &last_mvc_safe,
                             mv_limits,
                             site_config: &site_config,
+                            full_pixel_search_method,
                             mv_costs: &mv_costs,
                             inter_mode_costs: &inter_costs,
                             inter_mode_ctx,
@@ -5184,6 +5203,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         mv_candidates: &mvc_safe,
                         mv_limits,
                         site_config: &site_config,
+                        full_pixel_search_method,
                         mv_costs: &mv_costs,
                         inter_mode_costs: &inter_costs,
                         inter_mode_ctx,
@@ -7922,6 +7942,29 @@ mod tests {
         assert_eq!(
             inter_rd_calibration_for_mode(RcMode::Cbr, 7, Deadline::Realtime),
             InterRdCalibration::default()
+        );
+    }
+
+    #[test]
+    fn full_pixel_search_matches_realtime_speed_policy() {
+        use rvp9_core::mode_decision::inter::FullPixelSearchMethod;
+        use rvp9_core::mode_decision::speed_features::Deadline;
+
+        assert_eq!(
+            full_pixel_search_method_for_mode(6, Deadline::Realtime),
+            FullPixelSearchMethod::Nstep
+        );
+        assert_eq!(
+            full_pixel_search_method_for_mode(7, Deadline::Realtime),
+            FullPixelSearchMethod::FastDiamond
+        );
+        assert_eq!(
+            full_pixel_search_method_for_mode(8, Deadline::Realtime),
+            FullPixelSearchMethod::FastDiamond
+        );
+        assert_eq!(
+            full_pixel_search_method_for_mode(8, Deadline::Good),
+            FullPixelSearchMethod::Nstep
         );
     }
 

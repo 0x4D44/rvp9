@@ -92,6 +92,7 @@ fn picker_finds_motion_on_shifted_block() {
         mv_candidates: &mvc,
         mv_limits,
         site_config: &site_config,
+        full_pixel_search_method: Default::default(),
         mv_costs: &mv_costs,
         inter_mode_costs: &inter_costs,
         inter_mode_ctx: 0,

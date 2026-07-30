@@ -661,6 +661,118 @@ pub fn diamond_search_sad(params: &FullPixelSearchParams<'_>) -> FullPixelSearch
     }
 }
 
+/// libvpx `FAST_DIAMOND` full-pel search at `step_param = 10`.
+///
+/// This is the cpu-used 7/8 realtime search selected by
+/// `vp9_speed_features.c:699-703`. It dispatches through
+/// `fast_dia_search` to the scale-zero `bigdia` pattern with
+/// `do_init_search = 0`: evaluate the four unit neighbours once, move to
+/// the best, then continue with the previous direction and its two adjacent
+/// directions until none improves the augmented SAD.
+#[must_use]
+pub fn fast_diamond_search_sad(params: &FullPixelSearchParams<'_>) -> FullPixelSearchResult {
+    const DIRECTIONS: [(i16, i16); 4] = [(0, -1), (1, 0), (0, 1), (-1, 0)];
+
+    let sad_fn = sad_for(params.block_size);
+    let fcenter_row = params.center_mv.row >> 3;
+    let fcenter_col = params.center_mv.col >> 3;
+    let start_mv = params.start_mv.unwrap_or(params.center_mv);
+    let mut best_row = (i32::from(start_mv.row >> 3))
+        .clamp(params.mv_limits.row_min, params.mv_limits.row_max) as i16;
+    let mut best_col = (i32::from(start_mv.col >> 3))
+        .clamp(params.mv_limits.col_min, params.mv_limits.col_max) as i16;
+    let mut best_sad = sad_at(
+        params.block_size,
+        sad_fn,
+        params.src_plane,
+        params.src_offset,
+        params.ref_plane,
+        best_row,
+        best_col,
+    )
+    .map_or(u32::MAX, |sad| {
+        sad.saturating_add(mvsad_err_cost(
+            best_row,
+            best_col,
+            fcenter_row,
+            fcenter_col,
+            params.sad_per_bit,
+            params.mv_costs,
+        ))
+    });
+    let mut rounds = 0;
+
+    let mut evaluate = |indices: &[usize], row: i16, col: i16| {
+        let mut best_direction = None;
+        for &index in indices {
+            let (delta_row, delta_col) = DIRECTIONS[index];
+            let candidate_row = i32::from(row) + i32::from(delta_row);
+            let candidate_col = i32::from(col) + i32::from(delta_col);
+            if !is_mv_in(&params.mv_limits, candidate_row, candidate_col) {
+                continue;
+            }
+            let candidate_row = candidate_row as i16;
+            let candidate_col = candidate_col as i16;
+            if let Some(raw_sad) = sad_at(
+                params.block_size,
+                sad_fn,
+                params.src_plane,
+                params.src_offset,
+                params.ref_plane,
+                candidate_row,
+                candidate_col,
+            ) && raw_sad < best_sad
+            {
+                let augmented = raw_sad.saturating_add(mvsad_err_cost(
+                    candidate_row,
+                    candidate_col,
+                    fcenter_row,
+                    fcenter_col,
+                    params.sad_per_bit,
+                    params.mv_costs,
+                ));
+                if augmented < best_sad {
+                    best_sad = augmented;
+                    best_direction = Some(index);
+                }
+            }
+        }
+        best_direction
+    };
+
+    let Some(mut direction) = evaluate(&[0, 1, 2, 3], best_row, best_col) else {
+        return FullPixelSearchResult {
+            best_mv_row: best_row,
+            best_mv_col: best_col,
+            best_sad,
+            iters_used: rounds,
+        };
+    };
+    let (delta_row, delta_col) = DIRECTIONS[direction];
+    best_row += delta_row;
+    best_col += delta_col;
+    rounds += 1;
+
+    loop {
+        let adjacent = [(direction + 3) % 4, direction, (direction + 1) % 4];
+        let Some(next_direction) = evaluate(&adjacent, best_row, best_col) else {
+            break;
+        };
+        direction = next_direction;
+        let (delta_row, delta_col) = DIRECTIONS[direction];
+        best_row += delta_row;
+        best_col += delta_col;
+        rounds += 1;
+    }
+
+    FullPixelSearchResult {
+        best_mv_row: best_row,
+        best_mv_col: best_col,
+        best_sad,
+        iters_used: rounds,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -793,6 +905,17 @@ mod tests {
             "expected MV ({shift_row}, {shift_col}), got ({}, {})",
             r.best_mv_row,
             r.best_mv_col
+        );
+
+        let fast_params = FullPixelSearchParams {
+            start_mv: Some(Mv { row: 0, col: 16 }),
+            ..params
+        };
+        let fast = fast_diamond_search_sad(&fast_params);
+        assert_eq!(
+            (fast.best_mv_row, fast.best_mv_col),
+            (shift_row, shift_col),
+            "FAST_DIAMOND should refine a nearby seed to ({shift_row}, {shift_col})"
         );
     }
 

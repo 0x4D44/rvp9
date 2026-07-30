@@ -6329,6 +6329,7 @@ mod tests {
             mv_candidates: &mvc,
             mv_limits: MvLimits::new(-16, 16, -16, 16),
             site_config: &site_config,
+            full_pixel_search_method: Default::default(),
             mv_costs: &costs,
             inter_mode_costs: &inter_costs,
             inter_mode_ctx: 0,
