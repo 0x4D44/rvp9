@@ -5,15 +5,15 @@
 - **Severity:** Medium
 - **Area:** harness/e1-block-stats
 - **Raised:** 2026-07-07
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
+- **Owner:** deltic:manual
+- **Owner role:** fix
+- **Owner run:** fix-20260730T193024Z-p23523-n700722000-c1
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KILN-00038-run-fix-20260730T193024Z-p23523-n700722000-c1
+- **Owner base:** 4f8c70f210f76dd2527ab6814ead12ea4e80dd47
 - **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner since:** 2026-07-30T19:30:24Z
+- **Owner until:** 2026-07-30T21:30:24Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
