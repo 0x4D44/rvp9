@@ -5,15 +5,15 @@
 - **Severity:** High
 - **Area:** encoder/temporal-SVC prev-MV state
 - **Raised:** 2026-07-05
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
+- **Owner:** deltic:manual
+- **Owner role:** fix
+- **Owner run:** fix-20260730T224959Z-p22973-n531556000-c1
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KILN-00014-run-fix-20260730T224959Z-p22973-n531556000-c1
+- **Owner base:** 6c137fed2dee2d3b63628b681931c0363acb0c19
 - **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner since:** 2026-07-30T22:49:59Z
+- **Owner until:** 2026-07-31T00:49:59Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
