@@ -5,15 +5,15 @@
 - **Severity:** High
 - **Area:** decoder/profile1 segmentation
 - **Raised:** 2026-07-07
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
+- **Owner:** deltic:manual
+- **Owner role:** fix
+- **Owner run:** fix-20260730T163444Z-p94241-n760521000-c1
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KILN-00031-run-fix-20260730T163444Z-p94241-n760521000-c1
+- **Owner base:** 16c1a72e6e670e80112d815c6ec994876bbba8de
 - **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner since:** 2026-07-30T16:34:44Z
+- **Owner until:** 2026-07-30T18:34:44Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
