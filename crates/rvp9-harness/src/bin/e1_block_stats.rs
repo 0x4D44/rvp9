@@ -23,8 +23,8 @@
 //! Usage:
 //! ```text
 //! cargo run --release --bin e1_block_stats -- \
-//!     --foreman D:\language\rvp9-2\tests\corpus\foreman_cif.y4m \
-//!     --vpxenc  D:\language\libvpx-stock\vpxenc.exe \
+//!     --foreman tests/corpus/foreman_cif.y4m \
+//!     --vpxenc /path/to/vpxenc \
 //!     --frames 64 --out wrk_docs\E1_encoder_gap_analysis.md
 //!
 //! cargo run --release --bin e1_block_stats -- \
@@ -41,7 +41,7 @@ use rvp9_core::mode_info::{BlockMode, InterMode, ModeInfo, RefFrame};
 use rvp9_decoder::{Decoder, ParsedFrame};
 use rvp9_encoder::{AqMode, EncoderConfig, RcMode, StreamEncoder, YuvFrameRef};
 use rvp9_harness::container::read_packets;
-use rvp9_harness::y4m::{YuvFrameBuf, read_cropped};
+use rvp9_harness::y4m::{YuvFrameBuf, read_cropped, workspace_corpus_file};
 use serde::Serialize;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -1047,6 +1047,10 @@ fn arg(argv: &[String], flag: &str) -> Option<String> {
         .and_then(|i| argv.get(i + 1).cloned())
 }
 
+fn vpxenc_arg(argv: &[String]) -> Option<PathBuf> {
+    arg(argv, "--vpxenc").map(PathBuf::from)
+}
+
 fn report_frame_count(
     rvp9: &Aggregate,
     libvpx: Option<&Aggregate>,
@@ -1168,13 +1172,10 @@ fn main() {
         return;
     }
 
-    let foreman = PathBuf::from(
-        arg(&argv, "--foreman")
-            .unwrap_or_else(|| r"D:\language\rvp9-2\tests\corpus\foreman_cif.y4m".into()),
-    );
-    let vpxenc = PathBuf::from(
-        arg(&argv, "--vpxenc").unwrap_or_else(|| r"D:\language\libvpx-stock\vpxenc.exe".into()),
-    );
+    let foreman = arg(&argv, "--foreman")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| workspace_corpus_file("foreman_cif.y4m"));
+    let vpxenc = vpxenc_arg(&argv);
     let n_frames: usize = arg(&argv, "--frames")
         .and_then(|s| s.parse().ok())
         .unwrap_or(64);
@@ -1193,12 +1194,14 @@ fn main() {
         foreman.display()
     );
 
-    let vpx_avail = vpxenc.is_file();
-    if !vpx_avail {
-        eprintln!(
+    let vpx_avail = vpxenc.as_ref().is_some_and(|path| path.is_file());
+    match vpxenc.as_deref() {
+        None => eprintln!("[warn] --vpxenc not supplied — libvpx leg skipped"),
+        Some(path) if !vpx_avail => eprintln!(
             "[warn] vpxenc not found at {} — libvpx leg skipped",
-            vpxenc.display()
-        );
+            path.display()
+        ),
+        Some(path) => eprintln!("Using vpxenc at {}", path.display()),
     }
 
     let targets: [u32; 4] = [25_000, 50_000, 100_000, 250_000];
@@ -1230,7 +1233,12 @@ fn main() {
         eprintln!("--- {} kbps ---", t / 1000);
         let r = run_rvp9(t, framerate, &frames);
         let l = if vpx_avail {
-            run_libvpx(&vpxenc, t, framerate, &frames)
+            run_libvpx(
+                vpxenc.as_deref().expect("available vpxenc has a path"),
+                t,
+                framerate,
+                &frames,
+            )
         } else {
             None
         };
@@ -1326,6 +1334,19 @@ mod tests {
         assert_eq!(
             report_frame_count(&rvp9, Some(&libvpx), Some(1)).unwrap(),
             1
+        );
+    }
+
+    #[test]
+    fn vpxenc_requires_an_explicit_path() {
+        assert_eq!(vpxenc_arg(&["e1_block_stats".into()]), None);
+        assert_eq!(
+            vpxenc_arg(&[
+                "e1_block_stats".into(),
+                "--vpxenc".into(),
+                "tools/vpxenc".into(),
+            ]),
+            Some(PathBuf::from("tools/vpxenc"))
         );
     }
 }

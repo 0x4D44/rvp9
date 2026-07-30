@@ -7,33 +7,39 @@
 
 pub use rvp9_io::y4m::*;
 
-fn workspace_corpus_file(name: &str) -> std::path::PathBuf {
+fn workspace_corpus_dir() -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join("..")
         .join("tests")
         .join("corpus")
-        .join(name)
 }
 
-/// Probe whether a known testsrc y4m corpus file is available at one of
-/// the canonical paths. Returns `Some(path)` for the first hit.
+/// Return a corpus path anchored to the workspace that built this harness.
+#[must_use]
+pub fn workspace_corpus_file(name: &str) -> std::path::PathBuf {
+    workspace_corpus_dir().join(name)
+}
+
+fn corpus_candidates(name: &str) -> [std::path::PathBuf; 1] {
+    [workspace_corpus_file(name)]
+}
+
+/// Probe whether a known testsrc y4m corpus file is available in this
+/// workspace. Returns `Some(path)` when present.
 ///
 /// Used by harness tests to opt into real-content runs without making
 /// the path-finding logic the test's concern.
 #[must_use]
 pub fn probe_testsrc_720p() -> Option<std::path::PathBuf> {
-    let candidates = [
-        std::path::PathBuf::from("tests/corpus/testsrc_720p30.y4m"),
-        workspace_corpus_file("testsrc_720p30.y4m"),
-        std::path::PathBuf::from(r"D:\language\rvp9-2\tests\corpus\testsrc_720p30.y4m"),
-    ];
-    candidates.into_iter().find(|p| p.is_file())
+    corpus_candidates("testsrc_720p30.y4m")
+        .into_iter()
+        .find(|path| path.is_file())
 }
 
 /// Probe whether the classic Foreman CIF (352×288, ~30 fps, 300 frames)
-/// y4m corpus file is available at one of the canonical paths. Returns
-/// `Some(path)` for the first hit.
+/// y4m corpus file is available in this workspace. Returns `Some(path)`
+/// when present.
 ///
 /// Foreman is a real-content clip with substantial motion (head turn,
 /// camera pan to construction site) and texture that stresses every
@@ -42,14 +48,9 @@ pub fn probe_testsrc_720p() -> Option<std::path::PathBuf> {
 /// acquisition steps.
 #[must_use]
 pub fn probe_foreman_cif() -> Option<std::path::PathBuf> {
-    let candidates = [
-        std::path::PathBuf::from("tests/corpus/foreman_cif.y4m"),
-        workspace_corpus_file("foreman_cif.y4m"),
-        std::path::PathBuf::from(r"D:\language\rvp9-2\tests\corpus\foreman_cif.y4m"),
-        // Sibling-tree cache populated by the legacy rvp9 repo's fixtures.
-        std::path::PathBuf::from(r"D:\language\rvp9\crates\rvp9\tests\data\cache\foreman_cif.y4m"),
-    ];
-    candidates.into_iter().find(|p| p.is_file())
+    corpus_candidates("foreman_cif.y4m")
+        .into_iter()
+        .find(|path| path.is_file())
 }
 
 #[cfg(test)]
@@ -97,5 +98,14 @@ mod tests {
         };
         let err = read_cropped(&p, 511, 511, 1).unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn corpus_candidates_stay_inside_this_workspace() {
+        let workspace = workspace_corpus_dir();
+        let candidates = corpus_candidates("foreman_cif.y4m");
+
+        assert_eq!(candidates.len(), 1);
+        assert!(candidates.iter().all(|path| path.starts_with(&workspace)));
     }
 }
