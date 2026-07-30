@@ -1,24 +1,24 @@
 # RVP9-BUG-KILN-00024 - Direct-to-frame tile and LF workers materialize overlapping full-plane mutable slices
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** High
 - **Area:** core/frame and loopfilter threading aliasing
 - **Raised:** 2026-07-07
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260730T160421Z-p4438-n970866000-c1
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KILN-00024-run-fix-20260730T160421Z-p4438-n970866000-c1
-- **Owner base:** 0dc86dac34d685b22a09be8381d8d49d505baba6
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-07-30T16:04:21Z
-- **Owner until:** 2026-07-30T18:04:21Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-core/` at `af4c7a2d7533`)
+- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-core/` at `af4c7a2d7533`) -> Fixed (2026-07-30, deltic:auto role=fix run=fix-20260730T160421Z-p4438-n970866000-c1 branch=task/bug-RVP9-BUG-KILN-00024-run-fix-20260730T160421Z-p4438-n970866000-c1 code=a915c7ff8c204c3527d9c9f38361fa0d96a5edae gate=manual)
 
 ## Observation
 
