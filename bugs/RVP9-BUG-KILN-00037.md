@@ -1,24 +1,24 @@
 # RVP9-BUG-KILN-00037 - e1_block_stats shares temp files and waits unbounded for vpxenc
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** harness/e1-block-stats
 - **Raised:** 2026-07-07
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260730T192602Z-p19018-n380158000-c1
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KILN-00037-run-fix-20260730T192602Z-p19018-n380158000-c1
-- **Owner base:** 6b72abcb8658f59514253f0dab00c1890882dd3e
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-07-30T19:26:02Z
-- **Owner until:** 2026-07-30T21:26:02Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-harness/` at `cfabd55`)
+- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-harness/` at `cfabd55`) -> Fixed (2026-07-30, deltic:auto role=fix run=fix-20260730T192602Z-p19018-n380158000-c1 branch=task/bug-RVP9-BUG-KILN-00037-run-fix-20260730T192602Z-p19018-n380158000-c1 code=068c152a83709c98d86f542490a8cb52b7271c60 gate=manual)
 
 ## Observation
 
