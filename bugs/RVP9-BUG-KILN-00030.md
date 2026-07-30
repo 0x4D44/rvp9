@@ -5,15 +5,15 @@
 - **Severity:** Medium
 - **Area:** decoder/frame pool public API
 - **Raised:** 2026-07-07
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
+- **Owner:** deltic:manual
+- **Owner role:** fix
+- **Owner run:** fix-20260730T180902Z-p19587-n303409000-c1
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KILN-00030-run-fix-20260730T180902Z-p19587-n303409000-c1
+- **Owner base:** 53f6ff2613cc70dd5cd296998878005f6061b4c5
 - **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner since:** 2026-07-30T18:09:02Z
+- **Owner until:** 2026-07-30T20:09:02Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
