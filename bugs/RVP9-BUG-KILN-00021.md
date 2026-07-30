@@ -1,24 +1,24 @@
 # RVP9-BUG-KILN-00021 - Public ScanOrder can drive safe coefficient decoding into unchecked out-of-bounds access
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** High
 - **Area:** core/entropy detokenize API
 - **Raised:** 2026-07-07
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260730T155756Z-p26129-n246270000-c1
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KILN-00021-run-fix-20260730T155756Z-p26129-n246270000-c1
-- **Owner base:** 4bf33ee7ba1b1fc0776cd3fbd85449e2425b7307
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-07-30T15:57:56Z
-- **Owner until:** 2026-07-30T17:57:56Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-core/` at `af4c7a2d7533`)
+- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-core/` at `af4c7a2d7533`) -> Fixed (2026-07-30, deltic:auto role=fix run=fix-20260730T155756Z-p26129-n246270000-c1 branch=task/bug-RVP9-BUG-KILN-00021-run-fix-20260730T155756Z-p26129-n246270000-c1 code=d1a7146aab047c49cdfb0e2cabf3f159984ab398 gate=manual)
 
 ## Observation
 
