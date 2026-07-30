@@ -1,24 +1,24 @@
 # RVP9-BUG-KILN-00040 - MD5 ledger parser ignores filename frame indices
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** harness/md5-ledger
 - **Raised:** 2026-07-07
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260730T193818Z-p32779-n183602000-c1
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KILN-00040-run-fix-20260730T193818Z-p32779-n183602000-c1
-- **Owner base:** 0cc40c3595d5d3c85543768158a9bf384db129d7
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-07-30T19:38:18Z
-- **Owner until:** 2026-07-30T21:38:18Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-harness/` at `cfabd55`)
+- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-harness/` at `cfabd55`) -> Fixed (2026-07-30, deltic:auto role=fix run=fix-20260730T193818Z-p32779-n183602000-c1 branch=task/bug-RVP9-BUG-KILN-00040-run-fix-20260730T193818Z-p32779-n183602000-c1 code=2a445fbedbcac4c204a13fec0559f6a0fa0f6bb6 gate=manual)
 
 ## Observation
 
