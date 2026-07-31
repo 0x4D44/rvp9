@@ -75,7 +75,7 @@ use crate::intra_pred::{
 use crate::mode_decision::rd_cost;
 use crate::mv_search::PlaneRef;
 use crate::quant::forward::{
-    PlaneQuantizers, scan_for_forward, vp9_quantize_b_32x32, vp9_quantize_b_with_order,
+    PlaneQuantizers, vp9_quantize_b_32x32_with_order, vp9_quantize_b_with_order,
 };
 use crate::transforms::forward::{fdct32x32, fht4x4, fht8x8, fht16x16};
 use crate::transforms::inverse::{
@@ -377,7 +377,6 @@ pub fn pick_intra_mode_luma(params: &IntraModeSearchParams<'_>) -> IntraModeSear
                 tx_type
             },
         );
-        let scan_slice = scan_for_forward(&scan);
         for q in qcoeff[..n].iter_mut() {
             *q = 0;
         }
@@ -386,7 +385,7 @@ pub fn pick_intra_mode_luma(params: &IntraModeSearchParams<'_>) -> IntraModeSear
         }
         let dequant_pair = [params.quantizer.dequant[0], params.quantizer.dequant[1]];
         let eob = if tx_size == TxSize::Tx32x32 {
-            vp9_quantize_b_32x32(
+            vp9_quantize_b_32x32_with_order(
                 &coefs[..1024],
                 false,
                 &params.quantizer.zbin,
@@ -396,7 +395,7 @@ pub fn pick_intra_mode_luma(params: &IntraModeSearchParams<'_>) -> IntraModeSear
                 &mut qcoeff[..1024],
                 &mut dqcoeff[..1024],
                 &dequant_pair,
-                scan_slice,
+                &scan,
             )
         } else {
             vp9_quantize_b_with_order(
@@ -647,7 +646,6 @@ pub fn pick_intra_mode_uv(params: &UvIntraModeSearchParams<'_>) -> IntraModeSear
     // Chroma always uses DctDct → scan_for is DctDct-keyed regardless
     // of mode. Compute once outside the mode loop.
     let scan = scan_for(tx_size, TxType::DctDct);
-    let scan_slice = scan_for_forward(&scan);
 
     for raw_mode in 0u8..NUM_INTRA_MODES as u8 {
         let mode = IntraMode::from_u8(raw_mode).expect("0..10 valid");
@@ -731,7 +729,7 @@ pub fn pick_intra_mode_uv(params: &UvIntraModeSearchParams<'_>) -> IntraModeSear
                 *d = 0;
             }
             let _eob = if tx_size == TxSize::Tx32x32 {
-                vp9_quantize_b_32x32(
+                vp9_quantize_b_32x32_with_order(
                     &coefs[..1024],
                     false,
                     &params.quantizer.zbin,
@@ -741,7 +739,7 @@ pub fn pick_intra_mode_uv(params: &UvIntraModeSearchParams<'_>) -> IntraModeSear
                     &mut qcoeff[..1024],
                     &mut dqcoeff[..1024],
                     &dequant_pair,
-                    scan_slice,
+                    &scan,
                 )
             } else {
                 vp9_quantize_b_with_order(
@@ -1351,7 +1349,6 @@ mod tests {
                     tx_type
                 },
             );
-            let scan_slice = scan_for_forward(&scan);
             for q in qcoeff[..n].iter_mut() {
                 *q = 0;
             }
@@ -1360,7 +1357,7 @@ mod tests {
             }
             let dequant_pair = [params.quantizer.dequant[0], params.quantizer.dequant[1]];
             let eob = if tx_size == TxSize::Tx32x32 {
-                vp9_quantize_b_32x32(
+                vp9_quantize_b_32x32_with_order(
                     &coefs[..1024],
                     false,
                     &params.quantizer.zbin,
@@ -1370,7 +1367,7 @@ mod tests {
                     &mut qcoeff[..1024],
                     &mut dqcoeff[..1024],
                     &dequant_pair,
-                    scan_slice,
+                    &scan,
                 )
             } else {
                 vp9_quantize_b_with_order(

@@ -338,6 +338,56 @@ pub fn vp9_quantize_b_32x32(
     (eob + 1) as u16
 }
 
+/// 32x32 zbin quantizer with a complete scan order.
+///
+/// AArch64 uses the byte-exact NEON raster-order kernel and `iscan` EOB
+/// reduction. Other targets retain [`vp9_quantize_b_32x32`].
+#[allow(clippy::too_many_arguments)]
+#[must_use]
+pub fn vp9_quantize_b_32x32_with_order(
+    coeff_ptr: &[i32],
+    skip_block: bool,
+    zbin_ptr: &[i16; 2],
+    round_ptr: &[i16; 2],
+    quant_ptr: &[i16; 2],
+    quant_shift_ptr: &[i16; 2],
+    qcoeff_ptr: &mut [i16],
+    dqcoeff_ptr: &mut [i16],
+    dequant_ptr: &[i16; 2],
+    order: &ScanOrder,
+) -> u16 {
+    #[cfg(target_arch = "aarch64")]
+    {
+        crate::dsp::aarch64::vp9_quantize_b_32x32_neon(
+            coeff_ptr,
+            skip_block,
+            zbin_ptr,
+            round_ptr,
+            quant_ptr,
+            quant_shift_ptr,
+            qcoeff_ptr,
+            dqcoeff_ptr,
+            dequant_ptr,
+            order.iscan,
+        )
+    }
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        vp9_quantize_b_32x32(
+            coeff_ptr,
+            skip_block,
+            zbin_ptr,
+            round_ptr,
+            quant_ptr,
+            quant_shift_ptr,
+            qcoeff_ptr,
+            dqcoeff_ptr,
+            dequant_ptr,
+            order.scan,
+        )
+    }
+}
+
 /// Fast-path forward quantizer (skips the zbin gate, uses simpler
 /// rounding) for 4×4, 8×8, and 16×16 blocks.
 ///

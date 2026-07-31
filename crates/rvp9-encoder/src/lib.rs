@@ -1567,7 +1567,7 @@ fn simulate_dc_intra_encode_partitions_no_zero_with_tiles(
         DcAvailability, EdgeBuffers, build_intra_predictors, intra_predict,
     };
     use rvp9_core::quant::forward::{
-        QuantizerDeltas, init_plane_quantizers, scan_for_forward, vp9_quantize_b_32x32,
+        QuantizerDeltas, init_plane_quantizers, vp9_quantize_b_32x32_with_order,
         vp9_quantize_b_with_order,
     };
     use rvp9_core::transforms::TxType;
@@ -1850,11 +1850,10 @@ fn simulate_dc_intra_encode_partitions_no_zero_with_tiles(
                             //    Tx32x32 → DctDct scan; smaller sizes use
                             //    `scan_for(plane_tx, tx_type)`.
                             let scan = scan_for(plane_tx, tx_type);
-                            let scan_slice = scan_for_forward(&scan);
                             let mut qcoeff_i16 = vec![0i16; n];
                             let mut dqcoeff_i16 = vec![0i16; n];
                             let eob = match plane_tx {
-                                TxSize::Tx32x32 => vp9_quantize_b_32x32(
+                                TxSize::Tx32x32 => vp9_quantize_b_32x32_with_order(
                                     &coefs_i32,
                                     /* skip_block = */ false,
                                     &zbin,
@@ -1864,7 +1863,7 @@ fn simulate_dc_intra_encode_partitions_no_zero_with_tiles(
                                     &mut qcoeff_i16,
                                     &mut dqcoeff_i16,
                                     &dequant_pair,
-                                    scan_slice,
+                                    &scan,
                                 ),
                                 _ => vp9_quantize_b_with_order(
                                     &coefs_i32,
@@ -7839,7 +7838,7 @@ fn inter_forward_quant_one_tx(
     quant_fp: bool,
 ) -> (Vec<i32>, Vec<i32>, usize) {
     use rvp9_core::quant::forward::{
-        scan_for_forward, vp9_quantize_b_32x32, vp9_quantize_b_with_order,
+        vp9_quantize_b_32x32_with_order, vp9_quantize_b_with_order,
         vp9_quantize_fp_32x32_with_order, vp9_quantize_fp_with_order,
     };
     use rvp9_core::transforms::TxType;
@@ -7874,7 +7873,6 @@ fn inter_forward_quant_one_tx(
     }
 
     let scan = scan_for(plane_tx, TxType::DctDct);
-    let scan_slice = scan_for_forward(&scan);
     let dequant_pair = [quantizer.dequant[0], quantizer.dequant[1]];
     let mut qcoeff_i16 = [0i16; 1024];
     let mut dqcoeff_i16 = [0i16; 1024];
@@ -7904,7 +7902,7 @@ fn inter_forward_quant_one_tx(
         }
     } else {
         match plane_tx {
-            TxSize::Tx32x32 => vp9_quantize_b_32x32(
+            TxSize::Tx32x32 => vp9_quantize_b_32x32_with_order(
                 &coefs,
                 /* skip_block = */ false,
                 &quantizer.zbin,
@@ -7914,7 +7912,7 @@ fn inter_forward_quant_one_tx(
                 &mut qcoeff_i16[..n],
                 &mut dqcoeff_i16[..n],
                 &dequant_pair,
-                scan_slice,
+                &scan,
             ),
             _ => vp9_quantize_b_with_order(
                 &coefs,
@@ -8304,18 +8302,15 @@ fn intra_quant_one_tx(
     tx_type: rvp9_core::transforms::TxType,
     quantizer: &rvp9_core::quant::forward::PlaneQuantizers,
 ) -> (Vec<i16>, Vec<i32>, usize) {
-    use rvp9_core::quant::forward::{
-        scan_for_forward, vp9_quantize_b_32x32, vp9_quantize_b_with_order,
-    };
+    use rvp9_core::quant::forward::{vp9_quantize_b_32x32_with_order, vp9_quantize_b_with_order};
     use rvp9_core::transforms::scans::scan_for;
     let n = plane_tx.n_coeffs();
     let scan = scan_for(plane_tx, tx_type);
-    let scan_slice = scan_for_forward(&scan);
     let dequant_pair = [quantizer.dequant[0], quantizer.dequant[1]];
     let mut qcoeff_i16 = vec![0i16; n];
     let mut dqcoeff_i16 = vec![0i16; n];
     let eob = match plane_tx {
-        TxSize::Tx32x32 => vp9_quantize_b_32x32(
+        TxSize::Tx32x32 => vp9_quantize_b_32x32_with_order(
             coefs,
             /* skip_block = */ false,
             &quantizer.zbin,
@@ -8325,7 +8320,7 @@ fn intra_quant_one_tx(
             &mut qcoeff_i16,
             &mut dqcoeff_i16,
             &dequant_pair,
-            scan_slice,
+            &scan,
         ),
         _ => vp9_quantize_b_with_order(
             coefs,
@@ -8385,7 +8380,7 @@ struct InterLumaTxInput<'a> {
 
 fn choose_inter_luma_tx_size(input: InterLumaTxInput<'_>) -> TxSize {
     use rvp9_core::quant::forward::{
-        scan_for_forward, vp9_quantize_b_32x32, vp9_quantize_b_with_order,
+        vp9_quantize_b_32x32_with_order, vp9_quantize_b_with_order,
         vp9_quantize_fp_32x32_with_order, vp9_quantize_fp_with_order,
     };
     use rvp9_core::transforms::TxType;
@@ -8449,7 +8444,6 @@ fn choose_inter_luma_tx_size(input: InterLumaTxInput<'_>) -> TxSize {
         let tx_step_4x4 = 1usize << (tx_size as usize);
         let ncoef = tx_size.n_coeffs();
         let scan = scan_for(tx_size, TxType::DctDct);
-        let scan_slice = scan_for_forward(&scan);
         let shift = if matches!(tx_size, TxSize::Tx32x32) {
             0
         } else {
@@ -8521,7 +8515,7 @@ fn choose_inter_luma_tx_size(input: InterLumaTxInput<'_>) -> TxSize {
                     }
                 } else {
                     match tx_size {
-                        TxSize::Tx32x32 => vp9_quantize_b_32x32(
+                        TxSize::Tx32x32 => vp9_quantize_b_32x32_with_order(
                             &coefs,
                             false,
                             &quantizer.zbin,
@@ -8531,7 +8525,7 @@ fn choose_inter_luma_tx_size(input: InterLumaTxInput<'_>) -> TxSize {
                             &mut qcoeff_i16[..ncoef],
                             &mut dqcoeff_i16[..ncoef],
                             &dequant_pair,
-                            scan_slice,
+                            &scan,
                         ),
                         _ => vp9_quantize_b_with_order(
                             &coefs,
@@ -8754,9 +8748,7 @@ fn intra_forward_quant_one_tx(
     plane_type: usize,
     trellis: Option<TrellisCtx<'_>>,
 ) -> (Vec<i32>, Vec<i32>, usize) {
-    use rvp9_core::quant::forward::{
-        scan_for_forward, vp9_quantize_b_32x32, vp9_quantize_b_with_order,
-    };
+    use rvp9_core::quant::forward::{vp9_quantize_b_32x32_with_order, vp9_quantize_b_with_order};
     use rvp9_core::transforms::forward::{fdct32x32, fht4x4, fht8x8, fht16x16};
     use rvp9_core::transforms::scans::scan_for;
 
@@ -8787,12 +8779,11 @@ fn intra_forward_quant_one_tx(
     }
 
     let scan = scan_for(plane_tx, tx_type);
-    let scan_slice = scan_for_forward(&scan);
     let dequant_pair = [quantizer.dequant[0], quantizer.dequant[1]];
     let mut qcoeff_i16 = vec![0i16; n];
     let mut dqcoeff_i16 = vec![0i16; n];
     let eob = match plane_tx {
-        TxSize::Tx32x32 => vp9_quantize_b_32x32(
+        TxSize::Tx32x32 => vp9_quantize_b_32x32_with_order(
             &coefs,
             /* skip_block = */ false,
             &quantizer.zbin,
@@ -8802,7 +8793,7 @@ fn intra_forward_quant_one_tx(
             &mut qcoeff_i16,
             &mut dqcoeff_i16,
             &dequant_pair,
-            scan_slice,
+            &scan,
         ),
         _ => vp9_quantize_b_with_order(
             &coefs,
