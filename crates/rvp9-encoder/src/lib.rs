@@ -7640,8 +7640,8 @@ fn inter_forward_quant_one_tx(
     quant_fp: bool,
 ) -> (Vec<i32>, Vec<i32>, usize) {
     use rvp9_core::quant::forward::{
-        scan_for_forward, vp9_quantize_b_32x32, vp9_quantize_b_with_order, vp9_quantize_fp_32x32,
-        vp9_quantize_fp_with_order,
+        scan_for_forward, vp9_quantize_b_32x32, vp9_quantize_b_with_order,
+        vp9_quantize_fp_32x32_with_order, vp9_quantize_fp_with_order,
     };
     use rvp9_core::transforms::TxType;
     use rvp9_core::transforms::forward::{fdct8x8, fdct16x16, fdct32x32, fht4x4};
@@ -7681,7 +7681,7 @@ fn inter_forward_quant_one_tx(
     let mut dqcoeff_i16 = [0i16; 1024];
     let eob = if quant_fp {
         match plane_tx {
-            TxSize::Tx32x32 => vp9_quantize_fp_32x32(
+            TxSize::Tx32x32 => vp9_quantize_fp_32x32_with_order(
                 &coefs,
                 /* skip_block = */ false,
                 &quantizer.round_fp,
@@ -7689,7 +7689,7 @@ fn inter_forward_quant_one_tx(
                 &mut qcoeff_i16[..n],
                 &mut dqcoeff_i16[..n],
                 &dequant_pair,
-                scan_slice,
+                &scan,
             ),
             _ => vp9_quantize_fp_with_order(
                 &coefs,
@@ -8186,8 +8186,8 @@ struct InterLumaTxInput<'a> {
 
 fn choose_inter_luma_tx_size(input: InterLumaTxInput<'_>) -> TxSize {
     use rvp9_core::quant::forward::{
-        scan_for_forward, vp9_quantize_b_32x32, vp9_quantize_b_with_order, vp9_quantize_fp_32x32,
-        vp9_quantize_fp_with_order,
+        scan_for_forward, vp9_quantize_b_32x32, vp9_quantize_b_with_order,
+        vp9_quantize_fp_32x32_with_order, vp9_quantize_fp_with_order,
     };
     use rvp9_core::transforms::TxType;
     use rvp9_core::transforms::forward::{fdct8x8, fdct16x16, fdct32x32, fht4x4};
@@ -8298,7 +8298,7 @@ fn choose_inter_luma_tx_size(input: InterLumaTxInput<'_>) -> TxSize {
                 }
                 let eob = if quant_fp {
                     match tx_size {
-                        TxSize::Tx32x32 => vp9_quantize_fp_32x32(
+                        TxSize::Tx32x32 => vp9_quantize_fp_32x32_with_order(
                             &coefs,
                             false,
                             &quantizer.round_fp,
@@ -8306,7 +8306,7 @@ fn choose_inter_luma_tx_size(input: InterLumaTxInput<'_>) -> TxSize {
                             &mut qcoeff_i16[..ncoef],
                             &mut dqcoeff_i16[..ncoef],
                             &dequant_pair,
-                            scan_slice,
+                            &scan,
                         ),
                         _ => vp9_quantize_fp_with_order(
                             &coefs,

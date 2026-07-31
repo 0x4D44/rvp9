@@ -2652,3 +2652,41 @@ requires the clean-host corpus matrix.
 **Future plan:** retain the widened-lane kernel while it remains byte-exact.
 Vectorize the four-byte pixel add only if a fresh profile isolates it as a
 material leaf.
+
+### 2026-07-31 — AArch64 fast 32x32 quantization keeps widened lanes
+
+**Where:** `rvp9_core::dsp::aarch64::quantize_neon::
+vp9_quantize_fp_32x32_neon`, dispatched through
+`vp9_quantize_fp_32x32_with_order`.
+
+**What libvpx does:** `vp9/encoder/arm/neon/vp9_quantize_neon.c` loads eight
+i16 transform coefficients, quantizes them in i16/i32 lanes, applies the
+32x32 dequant threshold and halving rule, and reduces EOB through inverse
+scan positions.
+
+**What rvp9 does:** loads the same eight raster-order coefficients as two
+i32 vectors, matching rvp9's widened transform-coefficient API. It applies
+the same rounded fast quantization, `dequant >> 2` gate, signed `/ 2`
+dequantization, and inverse-scan EOB reduction.
+
+**Why:** widened input lanes avoid changing the established coefficient API
+or adding a narrowing pass across 1,024 coefficients. The arithmetic stays
+within i32 for valid 8-bit VP9 transforms and directly matches the scalar
+oracle's signed division semantics.
+
+**Byte-parity impact:** none. Differential coverage spans q indices
+`0/1/20/80/160/255`, random full-i16 coefficient blocks, gate boundaries,
+sparse EOB positions, and skip handling. The 120-frame cpu-used 7 stream is
+byte-identical before and after dispatch.
+
+**Compression-efficiency impact:** none; the product stream is unchanged.
+
+**Speed impact:** paired child CPU improved `-1.270%` at one thread (16/16
+wins) and `-0.721%` at four threads (17/20 wins). A fresh profile reduced
+fast 32x32 quantizer self samples from 148 to 32. Unrelated host benchmarks
+made four-thread wall time noisy, so final acceptance still requires the
+clean-host corpus matrix.
+
+**Future plan:** retain the widened-lane kernel while it remains byte-exact.
+The non-fast 32x32 zbin quantizer is separate and should only be vectorized
+if a required configuration profile makes it material.

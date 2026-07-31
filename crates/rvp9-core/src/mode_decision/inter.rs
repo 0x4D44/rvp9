@@ -118,7 +118,7 @@ use crate::mv_search::sub_pixel::{
 };
 use crate::quant::forward::{
     PlaneQuantizers, scan_for_forward, vp9_quantize_b_32x32, vp9_quantize_b_with_order,
-    vp9_quantize_fp_32x32, vp9_quantize_fp_with_order,
+    vp9_quantize_fp_32x32_with_order, vp9_quantize_fp_with_order,
 };
 use crate::transforms::forward::{fdct8x8, fdct16x16, fdct32x32};
 use crate::transforms::inverse::{idct8x8_64_add, idct16x16_256_add, idct32x32_1024_add};
@@ -3845,7 +3845,7 @@ fn reconstruct_via_round_trip(
             let mut had_qcoeff = [0i16; $n];
             let mut had_dqcoeff = [0i16; $n];
             let had_eob = if $is_32x32 {
-                vp9_quantize_fp_32x32(
+                vp9_quantize_fp_32x32_with_order(
                     &had_coeff,
                     false,
                     &params.quantizer.round_fp,
@@ -3853,7 +3853,7 @@ fn reconstruct_via_round_trip(
                     &mut had_qcoeff,
                     &mut had_dqcoeff,
                     &dequant_pair,
-                    scan_slice,
+                    &scan,
                 )
             } else {
                 vp9_quantize_fp_with_order(

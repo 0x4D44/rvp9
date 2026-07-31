@@ -513,6 +513,50 @@ pub fn vp9_quantize_fp_32x32(
     (eob + 1) as u16
 }
 
+/// Fast 32x32 quantizer with a complete scan order.
+///
+/// AArch64 uses the byte-exact NEON raster-order kernel and `iscan` EOB
+/// reduction. Other targets retain [`vp9_quantize_fp_32x32`].
+#[allow(clippy::too_many_arguments)]
+#[must_use]
+pub fn vp9_quantize_fp_32x32_with_order(
+    coeff_ptr: &[i32],
+    skip_block: bool,
+    round_ptr: &[i16; 2],
+    quant_ptr: &[i16; 2],
+    qcoeff_ptr: &mut [i16],
+    dqcoeff_ptr: &mut [i16],
+    dequant_ptr: &[i16; 2],
+    order: &ScanOrder,
+) -> u16 {
+    #[cfg(target_arch = "aarch64")]
+    {
+        crate::dsp::aarch64::vp9_quantize_fp_32x32_neon(
+            coeff_ptr,
+            skip_block,
+            round_ptr,
+            quant_ptr,
+            qcoeff_ptr,
+            dqcoeff_ptr,
+            dequant_ptr,
+            order.iscan,
+        )
+    }
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        vp9_quantize_fp_32x32(
+            coeff_ptr,
+            skip_block,
+            round_ptr,
+            quant_ptr,
+            qcoeff_ptr,
+            dqcoeff_ptr,
+            dequant_ptr,
+            order.scan,
+        )
+    }
+}
+
 /// Per-plane forward-quantizer parameter pack. Mirrors the eight slots
 /// libvpx populates per (q_index, [DC, AC]) pair in `vp9_init_quantizer`
 /// (`vp9/encoder/vp9_quantize.c:184-244`).

@@ -23,7 +23,7 @@ pub mod tables;
 
 pub use forward::{
     PlaneQuantizers, QuantizerDeltas, init_plane_quantizers, plane_dequant_pair, vp9_quantize_b,
-    vp9_quantize_b_32x32, vp9_quantize_fp, vp9_quantize_fp_32x32,
+    vp9_quantize_b_32x32, vp9_quantize_fp, vp9_quantize_fp_32x32, vp9_quantize_fp_32x32_with_order,
 };
 pub use tables::{
     AC_QLOOKUP, AC_QLOOKUP_10, AC_QLOOKUP_12, DC_QLOOKUP, DC_QLOOKUP_10, DC_QLOOKUP_12,

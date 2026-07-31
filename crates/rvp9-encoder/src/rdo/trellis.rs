@@ -22,7 +22,7 @@
 //!   per-size scale derivation.
 
 use rvp9_core::quant::forward::{
-    PlaneQuantizers, vp9_quantize_fp_32x32, vp9_quantize_fp_with_order,
+    PlaneQuantizers, vp9_quantize_fp_32x32_with_order, vp9_quantize_fp_with_order,
 };
 use rvp9_core::transforms::TxSize;
 use rvp9_core::transforms::forward::{fdct4x4, fdct8x8, fdct16x16, fdct32x32};
@@ -116,7 +116,7 @@ pub fn vp9_xform_quant_fp(
             let mut c_arr: Box<[i32; 1024]> = Box::new([0; 1024]);
             fdct32x32(src_diff, c_arr.as_mut(), diff_stride);
             coeff[..1024].copy_from_slice(c_arr.as_ref());
-            vp9_quantize_fp_32x32(
+            vp9_quantize_fp_32x32_with_order(
                 c_arr.as_ref(),
                 false,
                 &qp.round_fp,
@@ -124,7 +124,7 @@ pub fn vp9_xform_quant_fp(
                 qcoeff,
                 dqcoeff,
                 &qp.dequant,
-                scan.scan(),
+                scan,
             )
         }
     }
