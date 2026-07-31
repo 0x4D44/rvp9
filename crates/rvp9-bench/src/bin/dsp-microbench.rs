@@ -716,8 +716,9 @@ fn run_vs_libvpx() {
         batches,
     );
 
-    // Full-precision 32x32 forward DCT used by the encoder's final leaf
-    // path. The residual generator and hashes mirror the C harness.
+    // Full-precision forward DCTs used by the encoder's final leaf path.
+    // The residual generator and hashes mirror the C harness.
+    bench_fdct16x16_case(0xAE10, 8000, batches);
     bench_fdct32x32_case(0xAE20, 2000, batches);
 
     // Convolve8 family. mode: 0 = 2D, 1 = horiz-only, 2 = vert-only.
@@ -868,6 +869,22 @@ fn bench_fdct32x32_case(seed: u32, iters: u32, batches: u32) {
         rvp9_core::transforms::forward::fdct32x32(black_box(&input), black_box(&mut output), 32);
     });
     println!("rvp9,fdct32x32,32x32,{ns:.2},{in_hash:016x},{out_hash:016x}");
+}
+
+fn bench_fdct16x16_case(seed: u32, iters: u32, batches: u32) {
+    let mut input = [0i16; 256];
+    fill_fdct_input_seeded(&mut input, seed);
+    let in_hash = fnv1a64_i16(&input);
+    let mut output = [0i32; 256];
+
+    rvp9_core::transforms::forward::fdct16x16(&input, &mut output, 16);
+    let out_hash = fnv1a64_i32(&output);
+
+    output.fill(0);
+    let ns = bench_min_ns(batches, iters, || {
+        rvp9_core::transforms::forward::fdct16x16(black_box(&input), black_box(&mut output), 16);
+    });
+    println!("rvp9,fdct16x16,16x16,{ns:.2},{in_hash:016x},{out_hash:016x}");
 }
 
 /// Bench one convolve8 case against its libvpx twin. `mode`: 0 = 2D,

@@ -1,10 +1,10 @@
 //! AArch64 NEON 16x16 and 32x32 forward DCTs.
 //!
 //! The 16x16 and 32x32 first passes apply the scalar VP9 schedules to eight
-//! i16 lanes. Their second passes widen to four i32 lanes before the
-//! overflow-sensitive stages. Cosine products widen one level before the
-//! exact `+8192 >> 14` reduction, preserving the scalar transforms'
-//! valid-residual results.
+//! i16 lanes. Their second passes retain bounded opening stages before
+//! widening to four i32 lanes ahead of overflow-sensitive work. Cosine
+//! products widen one level before the exact `+8192 >> 14` reduction,
+//! preserving the scalar transforms' valid-residual results.
 
 #![allow(unsafe_op_in_unsafe_fn)]
 
@@ -89,7 +89,7 @@ unsafe fn mul_add_round16(a: V16, ac: i32, b: V16, bc: i32) -> V16 {
 unsafe fn fdct16_body<T, Add, Sub, Mul, MulAdd, Wrap>(
     input: &[T; 16],
     output: &mut [T; 16],
-    zero_and_wrap: (T, Wrap),
+    zero_wrap_and_input: (T, Wrap, bool),
     add: Add,
     sub: Sub,
     mul_round: Mul,
@@ -102,12 +102,17 @@ unsafe fn fdct16_body<T, Add, Sub, Mul, MulAdd, Wrap>(
     MulAdd: Fn(T, i32, T, i32) -> T,
     Wrap: Fn(T) -> T,
 {
-    let (zero, wrap16) = zero_and_wrap;
+    let (zero, wrap16, input_is_crossed) = zero_wrap_and_input;
     let mut in_half = [zero; 8];
     let mut step1 = [zero; 8];
     for index in 0..8 {
-        in_half[index] = add(input[index], input[15 - index]);
-        step1[index] = sub(input[7 - index], input[8 + index]);
+        if input_is_crossed {
+            in_half[index] = input[index];
+            step1[index] = input[index + 8];
+        } else {
+            in_half[index] = add(input[index], input[15 - index]);
+            step1[index] = sub(input[7 - index], input[8 + index]);
+        }
     }
 
     // Even coefficients: the fdct8 sub-block.
@@ -179,14 +184,14 @@ unsafe fn fdct16_body<T, Add, Sub, Mul, MulAdd, Wrap>(
     output[15] = wrap16(mul_add_round(step1_0, -COSPI_2_64, step1_7, COSPI_30_64));
 }
 
-/// Four independent, overflow-safe 1-D 16-point DCTs.
+/// Four independent 1-D 16-point DCTs after their bounded cross-input stage.
 #[inline]
 #[target_feature(enable = "neon")]
-unsafe fn fdct16x4(input: &[V; 16], output: &mut [V; 16]) {
+unsafe fn fdct16x4_from_cross(input: &[V; 16], output: &mut [V; 16]) {
     fdct16_body(
         input,
         output,
-        (vdupq_n_s32(0), |value| wrap16(value)),
+        (vdupq_n_s32(0), |value| wrap16(value), true),
         |a, b| add(a, b),
         |a, b| sub(a, b),
         |a, constant| mul_round(a, constant),
@@ -194,14 +199,14 @@ unsafe fn fdct16x4(input: &[V; 16], output: &mut [V; 16]) {
     );
 }
 
-/// Eight independent first-pass 1-D 16-point DCTs.
+/// Eight independent bounded 1-D 16-point DCTs.
 #[inline]
 #[target_feature(enable = "neon")]
-unsafe fn fdct16x8_first_pass(input: &[V16; 16], output: &mut [V16; 16]) {
+unsafe fn fdct16x8(input: &[V16; 16], output: &mut [V16; 16]) {
     fdct16_body(
         input,
         output,
-        (vdupq_n_s16(0), |value| value),
+        (vdupq_n_s16(0), |value| value, false),
         |a, b| add16(a, b),
         |a, b| sub16(a, b),
         |a, constant| mul_round16(a, constant),
@@ -719,7 +724,7 @@ unsafe fn fdct16x16_inner(input: *const i16, output: *mut i32, stride: usize) {
             *values = vshlq_n_s16::<2>(vld1q_s16(input.add(row * stride + column)));
         }
         let mut lane_out = [zero16; 16];
-        fdct16x8_first_pass(&lane_in, &mut lane_out);
+        fdct16x8(&lane_in, &mut lane_out);
         for (coefficient, &values) in lane_out.iter().enumerate() {
             vst1q_s16(
                 intermediate.as_mut_ptr().add(coefficient * 16 + column),
@@ -729,7 +734,8 @@ unsafe fn fdct16x16_inner(input: *const i16, output: *mut i32, stride: usize) {
     }
 
     // Transpose eight coefficient rows at a time, apply the exact
-    // `(x + 1) >> 2` reduction, then widen into the audited i32 second pass.
+    // `(x + 1) >> 2` reduction, and perform the bounded cross-input stage in
+    // eight i16 lanes before widening the remaining transform to i32.
     for row in (0..16).step_by(8) {
         let mut lane_in16 = [zero16; 16];
         for column in (0..16).step_by(8) {
@@ -748,29 +754,63 @@ unsafe fn fdct16x16_inner(input: *const i16, output: *mut i32, stride: usize) {
             }
         }
 
-        for half in 0..2 {
-            let mut lane_in = [zero; 16];
-            for (source, destination) in lane_in16.iter().zip(lane_in.iter_mut()) {
-                *destination = if half == 0 {
-                    vmovl_s16(vget_low_s16(*source))
-                } else {
-                    vmovl_high_s16(*source)
-                };
+        let max_abs = lane_in16.iter().fold(zero16, |maximum, &values| {
+            vmaxq_s16(maximum, vqabsq_s16(values))
+        });
+        if vmaxvq_s16(max_abs) <= 2047 {
+            // A coefficient-bound audit puts the schedule's peak at 16x its
+            // input. This limit therefore keeps every add, subtract, and
+            // rounded rotation inside signed i16 (16 * 2047 = 32752).
+            let mut lane_out16 = [zero16; 16];
+            fdct16x8(&lane_in16, &mut lane_out16);
+            for coefficient in (0..16).step_by(8) {
+                let rows = transpose8([
+                    lane_out16[coefficient],
+                    lane_out16[coefficient + 1],
+                    lane_out16[coefficient + 2],
+                    lane_out16[coefficient + 3],
+                    lane_out16[coefficient + 4],
+                    lane_out16[coefficient + 5],
+                    lane_out16[coefficient + 6],
+                    lane_out16[coefficient + 7],
+                ]);
+                for (lane, values) in rows.into_iter().enumerate() {
+                    let destination = output.add((row + lane) * 16 + coefficient);
+                    vst1q_s32(destination, vmovl_s16(vget_low_s16(values)));
+                    vst1q_s32(destination.add(4), vmovl_high_s16(values));
+                }
             }
-            let mut lane_out = [zero; 16];
-            fdct16x4(&lane_in, &mut lane_out);
-            for coefficient in (0..16).step_by(4) {
-                let rows = transpose4(
-                    lane_out[coefficient],
-                    lane_out[coefficient + 1],
-                    lane_out[coefficient + 2],
-                    lane_out[coefficient + 3],
-                );
-                for (lane, &values) in rows.iter().enumerate() {
-                    vst1q_s32(
-                        output.add((row + half * 4 + lane) * 16 + coefficient),
-                        values,
+        } else {
+            let mut crossed = [zero16; 16];
+            for index in 0..8 {
+                crossed[index] = add16(lane_in16[index], lane_in16[15 - index]);
+                crossed[index + 8] = sub16(lane_in16[7 - index], lane_in16[8 + index]);
+            }
+
+            for half in 0..2 {
+                let mut lane_in = [zero; 16];
+                for (source, destination) in crossed.iter().zip(lane_in.iter_mut()) {
+                    *destination = if half == 0 {
+                        vmovl_s16(vget_low_s16(*source))
+                    } else {
+                        vmovl_high_s16(*source)
+                    };
+                }
+                let mut lane_out = [zero; 16];
+                fdct16x4_from_cross(&lane_in, &mut lane_out);
+                for coefficient in (0..16).step_by(4) {
+                    let rows = transpose4(
+                        lane_out[coefficient],
+                        lane_out[coefficient + 1],
+                        lane_out[coefficient + 2],
+                        lane_out[coefficient + 3],
                     );
+                    for (lane, &values) in rows.iter().enumerate() {
+                        vst1q_s32(
+                            output.add((row + half * 4 + lane) * 16 + coefficient),
+                            values,
+                        );
+                    }
                 }
             }
         }

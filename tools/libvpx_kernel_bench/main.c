@@ -145,6 +145,7 @@ typedef struct {
     fdct_fn fn;
     const int16_t *input;
     tran_low_t *output;
+    int stride;
 } fdct_ctx;
 
 static void fill_fdct_input(int16_t *out, size_t n, uint32_t seed) {
@@ -158,25 +159,27 @@ static void fill_fdct_input(int16_t *out, size_t n, uint32_t seed) {
 
 static void fdct_thunk(void *v) {
     fdct_ctx *c = (fdct_ctx *)v;
-    c->fn(c->input, c->output, 32);
+    c->fn(c->input, c->output, c->stride);
 }
 
-static void run_fdct32x32(fdct_fn fn, uint32_t seed, uint32_t iters) {
+static void run_fdct(fdct_fn fn, const char *name, const char *size,
+                     size_t samples, int stride, uint32_t seed,
+                     uint32_t iters) {
     static int16_t input[1024];
     static tran_low_t output[1024];
 
-    fill_fdct_input(input, 1024, seed);
-    uint64_t in_hash = fnv1a64(input, sizeof input);
+    fill_fdct_input(input, samples, seed);
+    uint64_t in_hash = fnv1a64(input, samples * sizeof input[0]);
 
-    memset(output, 0, sizeof output);
-    fn(input, output, 32);
-    uint64_t out_hash = fnv1a64(output, sizeof output);
+    memset(output, 0, samples * sizeof output[0]);
+    fn(input, output, stride);
+    uint64_t out_hash = fnv1a64(output, samples * sizeof output[0]);
 
-    memset(output, 0, sizeof output);
-    fdct_ctx ctx = { fn, input, output };
+    memset(output, 0, samples * sizeof output[0]);
+    fdct_ctx ctx = { fn, input, output, stride };
     double ns = bench_min_ns(BATCHES, iters, fdct_thunk, &ctx);
     printf("libvpx,%s,%s,%.2f,%016llx,%016llx\n",
-           "fdct32x32", "32x32", ns,
+           name, size, ns,
            (unsigned long long)in_hash, (unsigned long long)out_hash);
     fflush(stdout);
 }
@@ -430,7 +433,10 @@ int main(int argc, char **argv) {
     run_idct(vpx_idct32x32_1024_add,"idct32x32_1024_add", "32x32", 1024, 32, 0xAA15u,  2000u);
     run_idct(vpx_idct32x32_34_add,  "idct32x32_34_add",   "32x32", 1024, 32, 0xAA16u,  2000u);
     run_idct(vpx_idct32x32_135_add, "idct32x32_135_add",  "32x32", 1024, 32, 0xAA02u,  2000u);
-    run_fdct32x32(vpx_fdct32x32, 0xAE20u, 2000u);
+    run_fdct(vpx_fdct16x16, "fdct16x16", "16x16", 256, 16,
+             0xAE10u, 8000u);
+    run_fdct(vpx_fdct32x32, "fdct32x32", "32x32", 1024, 32,
+             0xAE20u, 2000u);
 
     for (size_t i = 0; i < sizeof kConvCases / sizeof kConvCases[0]; ++i)
         run_conv_case(&kConvCases[i]);

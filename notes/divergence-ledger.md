@@ -258,30 +258,34 @@ the repeat improved child CPU `-0.522%`.
 libvpx-style retained token arena would be a separate measured architecture
 decision, not an implicit extension of this change.
 
-### 2026-07-31 — Widen the complete second 16-point DCT pass
+### 2026-07-31 — Bound the eight-lane second 16-point DCT pass
 **Where:** `rvp9-core::transforms::forward_neon`; libvpx counterpart:
 `vpx_dsp/arm/fdct16x16_neon.c`.
 **What libvpx does:** processes both 16x16 passes in eight i16 NEON lanes.
-**What rvp9 does:** matches the eight-wide i16 first pass, then widens each
-row group into two four-lane i32 second passes using the shared audited
-16-point schedule.
-**Why:** pass-boundary widening reuses the existing overflow-safe i32
-implementation and one width-generic schedule while still halving first-pass
-lane groups and intermediate storage.
+**What rvp9 does:** matches the eight-wide i16 first pass. The second pass
+also stays eight-wide when every input magnitude is at most 2047. Larger
+inputs perform the bounded cross-input stage eight-wide, then widen into two
+four-lane i32 groups for the remaining schedule.
+**Why:** a coefficient-bound audit proves the 16-point schedule peaks at
+16 times its input, so `16 * 2047 = 32752` fits i16. Unconditionally matching
+libvpx's all-i16 path broke rvp9's scalar oracle on the valid constant
+residual `-255` (`13701` instead of `-32639`). The magnitude gate retains the
+common fast path and the established exact behavior for extreme residuals.
 **Byte-parity impact:** none. Differential coverage compares 128 randomized
 valid residual blocks with stride jitter plus constant and alternating
 residual extremes. The 120-frame product stream remained byte-identical.
 **Compression-efficiency impact:** none because every coefficient and emitted
 stream is unchanged.
-**Speed impact:** sixteen warmed alternating one-thread pairs on the final
-machine text improved wall time `1.050828 -> 1.040561 s` (`-0.951%` paired)
-and child CPU `1.011124 -> 1.001498 s` (`-0.971%`), with fourteen wins.
-Across two independent twenty-pair four-thread runs, the combined median
-paired wall delta was `-0.365%` with 26/40 wins; child CPU improved in both
-runs (`-0.819%` and `-0.397%`).
-**Future plan:** retain while exact and Pareto-positive. Consider libvpx's
-all-i16 second pass only if a fresh profile still makes this transform
-material.
+**Speed impact:** the deterministic 16x16 kernel improved from `127.17 ns`
+to `84.95 ns`; pinned libvpx measured `92.48..95.64 ns`, with matching input
+and output hashes. Two independent twenty-pair four-thread product runs
+improved child CPU by `-0.720%` and `-1.029%` and paired wall time by
+`-1.021%` and `-0.985%`. One-thread trials were noisier on a host above load
+18: three direct comparisons changed child CPU by `-0.554%`, `+0.614%`, and
+`-1.029%`; an intermediate 1023-bound build improved twice, and raising the
+bound to 2047 improved a direct twenty-pair comparison by another `-0.908%`.
+**Future plan:** retain while the scalar differential, 2047 bound, and exact
+stream remain green. Recheck corpus timing on the clean pinned host.
 
 ### 2026-07-31 — Reuse prediction scratch per tile worker
 **Where:** `rvp9-core::mode_decision::inter::evaluate_candidate_for_filter`;
