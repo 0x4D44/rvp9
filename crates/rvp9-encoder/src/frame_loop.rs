@@ -1184,15 +1184,17 @@ pub struct StreamEncoder {
     /// banks, and the only inter-frame writer is
     /// [`Self::encode_altref_internal`].
     decoder_fc_state_arf: FrameContext,
-    /// P20 — adaptive RD-threshold table (libvpx
+    /// P20 — adaptive RD-threshold tables (libvpx
     /// `vp9_pickmode.c:2241-2247` gate state). One per stream;
     /// re-initialised to libvpx's `RD_THRESH_INIT_FACT = 32` every
     /// keyframe (mirrors `vp9_encodeframe.c:5874-5875`,
     /// `vp9_setup_past_independence`'s implicit reset path for
-    /// tile-state). After each inter pick the encoder calls
+    /// tile-state). Each column tile owns an independent table so
+    /// parallel tile decisions cannot race or influence one another.
+    /// After each inter pick the encoder calls
     /// [`rvp9_core::mode_decision::rd_thresh::update_thresh_freq_fact`]
     /// to decay the winner's fact and increment the losers.
-    rd_thresh_table: rvp9_core::mode_decision::rd_thresh::RdThreshTable,
+    rd_thresh_tables: Vec<rvp9_core::mode_decision::rd_thresh::RdThreshTable>,
     /// Previous realtime variance-partition tree and low-temporal-variance
     /// flags for each 64x64 superblock. The pinned libvpx cpu-used 7 path
     /// may copy this state for a quiet superblock on at most two consecutive
@@ -1399,6 +1401,7 @@ impl StreamEncoder {
         let h = config.height as usize;
         let uvw = w / 2;
         let uvh = h / 2;
+        let tile_count = 1usize << parallelism.effective_log2_tile_cols(config.width);
 
         let cyclic_refresh = match config.aq_mode {
             AqMode::Off => None,
@@ -1536,8 +1539,12 @@ impl StreamEncoder {
             frame_context: FrameContext::new_default(),
             decoder_fc_state: FrameContext::new_default(),
             decoder_fc_state_arf: FrameContext::new_default(),
-            // P20 — fresh adaptive-RD-threshold table at INIT_FACT.
-            rd_thresh_table: rvp9_core::mode_decision::rd_thresh::RdThreshTable::new(),
+            // P20 / tile-MT — one fresh adaptive-RD-threshold table at
+            // INIT_FACT per logical column tile.
+            rd_thresh_tables: vec![
+                rvp9_core::mode_decision::rd_thresh::RdThreshTable::new();
+                tile_count
+            ],
             vbp_partition_history: vec![
                 rvp9_core::mode_decision::partition::FixedTreeHistoryEntry::default();
                 (w / 64) * (h / 64)
@@ -2957,8 +2964,9 @@ impl StreamEncoder {
             prev_grid_slice,
             &mut cur_mv_grid,
             &self.frame_context,
-            // P20 — adaptive RD-threshold state, owned by the stream.
-            &mut self.rd_thresh_table,
+            // P20 / tile-MT — independent adaptive RD-threshold state
+            // for each logical column tile.
+            &mut self.rd_thresh_tables,
             // §11 — `bias_golden` input (frames since GOLDEN was last
             // refreshed) and `cb_pred_filter_search` input
             // (chessboard index = video-frame-index & 1; the stream's
@@ -3502,10 +3510,10 @@ impl StreamEncoder {
         };
         let seg_q_deltas: [Option<i16>; 8] = [None; 8];
 
-        // Clone the RD-threshold table so the picker's
+        // Clone the per-tile RD-threshold tables so the picker's
         // `update_thresh_freq_fact` decay does not leak into the show
         // frames' adaptive thresholds (state isolation).
-        let mut arf_rd_thresh = self.rd_thresh_table.clone();
+        let mut arf_rd_thresh = self.rd_thresh_tables.clone();
 
         // The same real-RD picker + simulator the show-frame path runs
         // (`encode_inter_internal`). Reads the filtered source, predicts
@@ -6464,16 +6472,22 @@ mod tests {
             .expect("construct one-worker encoder");
         let mut threaded = StreamEncoder::new_with_parallelism(cfg, tile_layout(4))
             .expect("construct four-worker encoder");
+        assert_eq!(serial.rd_thresh_tables.len(), 2);
+        assert_eq!(threaded.rd_thresh_tables.len(), 2);
         let mut decoder = Decoder::new();
 
         for frame_idx in 0..3usize {
             let mut y = vec![0u8; w * h];
             for row in 0..h {
                 for col in 0..w {
-                    let moving_bar = ((col + frame_idx * 13) / 32) & 1;
-                    y[row * w + col] = ((col * 3 + row * 5 + frame_idx * 17) & 0xff) as u8;
-                    if moving_bar == 0 {
-                        y[row * w + col] = y[row * w + col].saturating_add(31);
+                    if col < w / 2 {
+                        y[row * w + col] = 96;
+                    } else {
+                        let moving_bar = ((col + frame_idx * 13) / 32) & 1;
+                        y[row * w + col] = ((col * 3 + row * 5 + frame_idx * 17) & 0xff) as u8;
+                        if moving_bar == 0 {
+                            y[row * w + col] = y[row * w + col].saturating_add(31);
+                        }
                     }
                 }
             }
@@ -6516,6 +6530,14 @@ mod tests {
                 }
             }
         }
+        assert_ne!(
+            serial.rd_thresh_tables[0], serial.rd_thresh_tables[1],
+            "flat and moving tiles must adapt independent RD thresholds",
+        );
+        assert_eq!(
+            serial.rd_thresh_tables, threaded.rd_thresh_tables,
+            "fixed tile layout must leave identical per-tile state",
+        );
     }
 
     /// F10.1b regression — Flat KF content keeps DC_PRED dominant. The

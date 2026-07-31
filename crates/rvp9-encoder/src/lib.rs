@@ -2888,7 +2888,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // each candidate's effective threshold; mutated after each pick
     // via `update_thresh_freq_fact` to decay the winner and
     // increment losers. Persists across frames.
-    rd_thresh_table: &mut rvp9_core::mode_decision::rd_thresh::RdThreshTable,
+    rd_thresh_tables: &mut [rvp9_core::mode_decision::rd_thresh::RdThreshTable],
     // §11 — frames since the last GOLDEN refresh
     // (libvpx `cpi->rc.frames_since_golden`). Feeds the `bias_golden`
     // gate's `frames_since_golden > 4` predicate
@@ -3434,6 +3434,11 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     let mi_rows_us = h / 8;
     let mi_cols_us = w / 8;
     let tile_bounds_by_col = column_tile_bounds(mi_rows_us, mi_cols_us, log2_tile_cols);
+    assert_eq!(
+        rd_thresh_tables.len(),
+        tile_bounds_by_col.len(),
+        "one adaptive RD-threshold table is required per column tile",
+    );
     let mut mi_grid: Vec<Option<rvp9_core::mode_info::ModeInfo>> =
         vec![None; mi_rows_us * mi_cols_us];
     let sign_bias = sign_bias_from_header(&[false, false, altref_available]);
@@ -3523,6 +3528,11 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     for sb_row in 0..sb_rows {
         for sb_col in 0..sb_cols {
             let current_tile = tile_for_mi_col(&tile_bounds_by_col, sb_col * 8);
+            let tile_col = tile_bounds_by_col
+                .iter()
+                .position(|&bounds| bounds == current_tile)
+                .expect("current tile came from tile_bounds_by_col");
+            let rd_thresh_table = &mut rd_thresh_tables[tile_col];
             let sb_idx = sb_row * sb_cols + sb_col;
 
             // A23 — per-64x64-SB TPL `cb_rdmult` (libvpx

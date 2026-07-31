@@ -193,7 +193,7 @@ fn compute_rd_thresh_factor(qindex: u8) -> i32 {
 /// per-`(bsize, thr_mode)` `thresh_freq_fact` (mutable across frames)
 /// alongside an immutable `qindex` snapshot the `effective_thresh`
 /// lookup uses to derive `rd_thresh_base[bsize][thr_mode]`.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RdThreshTable {
     /// `thresh_freq_fact[bsize][thr_mode]` — the per-mode fact. Both
     /// read by the gate and mutated by [`update_thresh_freq_fact`].
