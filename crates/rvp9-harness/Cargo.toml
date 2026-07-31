@@ -52,6 +52,10 @@ path = "src/bin/f02_block_oracle.rs"
 name = "vbp-tree-oracle"
 path = "src/bin/vbp_tree_oracle.rs"
 
+[[bin]]
+name = "model-rd-oracle"
+path = "src/bin/model_rd_oracle.rs"
+
 [dependencies]
 rvp9-core = { path = "../rvp9-core" }
 rvp9-io = { path = "../rvp9-io" }

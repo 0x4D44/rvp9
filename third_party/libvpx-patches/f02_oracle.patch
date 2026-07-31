@@ -4,7 +4,9 @@
 # Adds output-only instrumentation to `vp9_pick_inter_mode`, gated by
 # `VPX_F02_ORACLE_OUT`. It emits the shared JSONL schema declared in
 # `crates/rvp9-encoder/src/f02_oracle.rs`, including live LAST-reference
-# candidate costs in `[ZERO, NEAREST, NEAR, NEW]` order.
+# candidate costs in `[ZERO, NEAREST, NEAR, NEW]` order. The independent
+# `VPX_F02_MODEL_ORACLE_OUT` path captures a bounded sample of exact inputs
+# and outputs for the regular luma model-RD function.
 #
 # The shared schema numbers skip-transform states as None=0, AcOnly=1,
 # AcDc=2. libvpx's internal constants use None=0, AcDc=1, AcOnly=2, so
@@ -304,4 +306,101 @@ index 6f2524b36..357fe98b9 100644
 +    }
 +  }
 +  /* F.0.2 ORACLE END */
+ }
+diff --git a/vp9/encoder/vp9_pickmode.c b/vp9/encoder/vp9_pickmode.c
+index 357fe98b9..424961a6a 100644
+--- a/vp9/encoder/vp9_pickmode.c
++++ b/vp9/encoder/vp9_pickmode.c
+@@ -430,3 +430,78 @@ static void model_rd_for_sb_y_large(VP9_COMP *cpi, BLOCK_SIZE bsize,
++static void f02_model_rd_oracle(VP9_COMP *cpi, BLOCK_SIZE bsize,
++                                MACROBLOCK *x, MACROBLOCKD *xd, int rate,
++                                int64_t dist, unsigned int var,
++                                unsigned int sse, int is_intra) {
++  static FILE *fp = NULL;
++  static int state = 0; /* 0=not-tried, 1=open-ok, 2=disabled/failed */
++  static long limit = 256;
++  static long count = 0;
++  const MODE_INFO *const mi = xd->mi[0];
++  int row;
++  int col;
++  int bw;
++  int bh;
++
++  if (state == 0) {
++    const char *const out_path = getenv("VPX_F02_MODEL_ORACLE_OUT");
++    const char *const limit_text = getenv("VPX_F02_MODEL_ORACLE_LIMIT");
++    if (limit_text != NULL && limit_text[0] != '\0') {
++      char *end = NULL;
++      const long parsed = strtol(limit_text, &end, 10);
++      if (end != limit_text && *end == '\0' && parsed > 0) limit = parsed;
++    }
++    if (out_path != NULL && out_path[0] != '\0') {
++      fp = fopen(out_path, "w");
++      if (fp != NULL) {
++        setvbuf(fp, NULL, _IOLBF, 0);
++        state = 1;
++      } else {
++        state = 2;
++      }
++    } else {
++      state = 2;
++    }
++  }
++
++  if (state != 1 || fp == NULL || count >= limit || is_intra ||
++      mi->ref_frame[0] != LAST_FRAME) {
++    return;
++  }
++
++  bw = 4 << b_width_log2_lookup[bsize];
++  bh = 4 << b_height_log2_lookup[bsize];
++  fprintf(fp,
++          "{\"sample\":%ld,\"frame_idx\":%u,\"bsize\":%d,"
++          "\"mode\":%d,\"mv_row\":%d,\"mv_col\":%d,"
++          "\"bw\":%d,\"bh\":%d,\"dc_quant\":%u,\"ac_quant\":%u,"
++          "\"dc_thr\":%lld,\"ac_thr\":%lld,\"tx_mode\":%d,"
++          "\"source_variance\":%u,\"rate\":%d,\"dist\":%lld,"
++          "\"var_y\":%u,\"sse_y\":%u,\"tx_size\":%d,"
++          "\"skip_txfm\":%d,\"src_hex\":\"",
++          count, (unsigned int)cpi->common.current_video_frame, bsize,
++          mi->mode, mi->mv[0].as_mv.row, mi->mv[0].as_mv.col, bw, bh,
++          xd->plane[0].dequant[0], xd->plane[0].dequant[1],
++          (long long)(x->plane[0].quant_thred[0] >> 6),
++          (long long)(x->plane[0].quant_thred[1] >> 6),
++          cpi->common.tx_mode, x->source_variance, rate, (long long)dist,
++          var, sse, mi->tx_size,
++          x->skip_txfm[0] == SKIP_TXFM_AC_ONLY
++              ? 1
++              : (x->skip_txfm[0] == SKIP_TXFM_AC_DC ? 2 : 0));
++  for (row = 0; row < bh; ++row) {
++    const uint8_t *const src =
++        x->plane[0].src.buf + row * x->plane[0].src.stride;
++    for (col = 0; col < bw; ++col) fprintf(fp, "%02x", src[col]);
++  }
++  fprintf(fp, "\",\"pred_hex\":\"");
++  for (row = 0; row < bh; ++row) {
++    const uint8_t *const pred =
++        xd->plane[0].dst.buf + row * xd->plane[0].dst.stride;
++    for (col = 0; col < bw; ++col) fprintf(fp, "%02x", pred[col]);
++  }
++  fprintf(fp, "\"}\n");
++  ++count;
++}
++
+ static void model_rd_for_sb_y_large(VP9_COMP *cpi, BLOCK_SIZE bsize,
+                                     MACROBLOCK *x, MACROBLOCKD *xd,
+                                     int *out_rate_sum, int64_t *out_dist_sum,
+@@ -683,5 +758,7 @@ static void model_rd_for_sb_y(VP9_COMP *cpi, BLOCK_SIZE bsize, MACROBLOCK *x,
+   if (x->skip_txfm[0] == SKIP_TXFM_AC_DC) {
+     *out_rate_sum = 0;
+     *out_dist_sum = sse << 4;
++    f02_model_rd_oracle(cpi, bsize, x, xd, *out_rate_sum, *out_dist_sum, var,
++                        sse, is_intra);
+     return;
+   }
+@@ -715,3 +792,5 @@ static void model_rd_for_sb_y(VP9_COMP *cpi, BLOCK_SIZE bsize, MACROBLOCK *x,
+   *out_rate_sum += rate;
+   *out_dist_sum += dist << 4;
++  f02_model_rd_oracle(cpi, bsize, x, xd, *out_rate_sum, *out_dist_sum, var,
++                      sse, is_intra);
  }
