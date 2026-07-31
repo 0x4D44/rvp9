@@ -2690,3 +2690,40 @@ clean-host corpus matrix.
 **Future plan:** retain the widened-lane kernel while it remains byte-exact.
 The non-fast 32x32 zbin quantizer is separate and should only be vectorized
 if a required configuration profile makes it material.
+
+### 2026-07-31 — AArch64 horizontal interpolation uses a row-at-a-time dot-product kernel
+
+**Where:** `rvp9_core::dsp::aarch64::convolve8_neon::
+convolve8_horiz_dotprod_inner`, used by the horizontal and separable 2-D
+unscaled eight-tap interpolation paths on dot-product-capable AArch64 hosts.
+
+**What libvpx does:** `vpx_dsp/arm/vpx_convolve8_neon_dotprod.c` loads four
+source rows at a time, permutes each shared 16-byte load into eight overlapping
+tap windows, and evaluates those windows with four signed dot products.
+
+**What rvp9 does:** applies the same range shift, correction term, permutation
+tables, signed dot products, rounding, and saturation to one row at a time.
+The safe wrapper checks the runtime dot-product capability and falls back to
+the existing widened-i16 NEON path for filters containing the full-pel
+coefficient `128`, which cannot be represented as an i8 dot-product tap.
+
+**Why:** the row-at-a-time loop fits rvp9's existing arbitrary-height safe
+API without adding libvpx's four-row height contract. It still collapses eight
+overlapping loads and sixteen multiply-accumulates per output group into one
+shared load, three table permutations, and four dot products.
+
+**Byte-parity impact:** none. All supported block shapes and every phase of
+the four VP9 filter families match the scalar oracle. The 120-frame cpu-used 7
+product stream remains byte-identical, and rvp9-decoder, pinned vpxdec, and
+ffmpeg produce identical I420 output.
+
+**Compression-efficiency impact:** none; the production stream is unchanged.
+
+**Speed impact:** sixteen warmed alternating one-thread pairs improved child
+CPU by `-3.007%` with sixteen wins. Twenty four-thread pairs improved child
+CPU by `-2.665%` with twenty wins; paired wall time improved `-1.958%` with
+nineteen wins.
+
+**Future plan:** retain the row-at-a-time kernel while it remains byte-exact.
+Treat vertical dot-product interpolation and an i8mm horizontal kernel as
+separate measured units.

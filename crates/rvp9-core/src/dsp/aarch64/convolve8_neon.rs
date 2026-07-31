@@ -6,11 +6,16 @@
 //! passes through a reusable per-thread u8 intermediate.
 
 use core::arch::aarch64::*;
+use core::arch::asm;
 
 use crate::inter::filter::{convolve8, convolve8_horiz, convolve8_vert};
 
 const INTER_STRIDE: usize = 64;
 const INTER_ROWS: usize = 72;
+const DOTPROD_PERMUTE: [u8; 48] = [
+    0, 1, 2, 3, 1, 2, 3, 4, 2, 3, 4, 5, 3, 4, 5, 6, 4, 5, 6, 7, 5, 6, 7, 8, 6, 7, 8, 9, 7, 8, 9,
+    10, 8, 9, 10, 11, 9, 10, 11, 12, 10, 11, 12, 13, 11, 12, 13, 14,
+];
 
 std::thread_local! {
     static CONV8_INTERMEDIATE: std::cell::RefCell<[u8; INTER_STRIDE * INTER_ROWS]> =
@@ -29,6 +34,73 @@ unsafe fn filter_eight(samples: [uint8x8_t; 8], filter: &[i16; 8]) -> uint8x8_t 
     }
     let rounded = vcombine_s16(vshrn_n_s32::<7>(sum_lo), vshrn_n_s32::<7>(sum_hi));
     vqmovun_s16(rounded)
+}
+
+#[inline]
+#[target_feature(enable = "dotprod")]
+unsafe fn dot_lane<const LANE: usize>(
+    mut sum: int32x4_t,
+    samples: int8x16_t,
+    filters: int8x16_t,
+) -> int32x4_t {
+    // SAFETY: `dotprod` is enabled for this function, every operand uses the
+    // matching 128-bit SIMD register class, and `LANE` is instantiated only
+    // as 0 or 1 below.
+    unsafe {
+        asm!(
+            "sdot {sum:v}.4s, {samples:v}.16b, {filters:v}.4b[{lane}]",
+            sum = inout(vreg) sum,
+            samples = in(vreg) samples,
+            filters = in(vreg) filters,
+            lane = const LANE,
+            options(pure, nomem, nostack),
+        );
+    }
+    sum
+}
+
+#[inline]
+#[target_feature(enable = "dotprod")]
+unsafe fn filter_eight_dotprod(
+    samples: uint8x16_t,
+    filters: int8x8_t,
+    correction: int32x4_t,
+) -> uint8x8_t {
+    let clamped = vreinterpretq_s8_u8(vsubq_u8(samples, vdupq_n_u8(128)));
+    let p0 = vqtbl1q_s8(clamped, vld1q_u8(DOTPROD_PERMUTE.as_ptr()));
+    let p1 = vqtbl1q_s8(clamped, vld1q_u8(DOTPROD_PERMUTE.as_ptr().add(16)));
+    let p2 = vqtbl1q_s8(clamped, vld1q_u8(DOTPROD_PERMUTE.as_ptr().add(32)));
+    let filters = vcombine_s8(filters, filters);
+    let sum0 = dot_lane::<0>(correction, p0, filters);
+    let sum0 = dot_lane::<1>(sum0, p1, filters);
+    let sum1 = dot_lane::<0>(correction, p1, filters);
+    let sum1 = dot_lane::<1>(sum1, p2, filters);
+    vqrshrun_n_s16::<7>(vcombine_s16(vqmovn_s32(sum0), vqmovn_s32(sum1)))
+}
+
+#[target_feature(enable = "dotprod")]
+unsafe fn convolve8_horiz_dotprod_inner(
+    src: *const u8,
+    src_stride: usize,
+    dst: *mut u8,
+    dst_stride: usize,
+    filter: &[i16; 8],
+    w: usize,
+    h: usize,
+) {
+    let filters = vmovn_s16(vld1q_s16(filter.as_ptr()));
+    let correction = vdupq_n_s32(filter.iter().map(|&tap| i32::from(tap)).sum::<i32>() * 128);
+    for y in 0..h {
+        let src_row = src.add(y * src_stride);
+        let dst_row = dst.add(y * dst_stride);
+        for x in (0..w).step_by(8) {
+            let samples = vld1q_u8(src_row.add(x));
+            vst1_u8(
+                dst_row.add(x),
+                filter_eight_dotprod(samples, filters, correction),
+            );
+        }
+    }
 }
 
 #[target_feature(enable = "neon")]
@@ -109,18 +181,33 @@ pub fn convolve8_horiz_neon(
         return;
     }
     let simd_w = w & !7;
-    // SAFETY: Validation proves every eight-byte load and store is in-bounds.
+    // SAFETY: Validation proves every eight- or sixteen-byte load and
+    // eight-byte store is in-bounds.
     // SimdDispatch installs this wrapper only on NEON-capable AArch64 hosts.
     unsafe {
-        convolve8_horiz_inner(
-            src.as_ptr(),
-            src_stride,
-            dst.as_mut_ptr(),
-            dst_stride,
-            filter,
-            simd_w,
-            h,
-        );
+        if std::arch::is_aarch64_feature_detected!("dotprod")
+            && filter.iter().all(|&tap| i8::try_from(tap).is_ok())
+        {
+            convolve8_horiz_dotprod_inner(
+                src.as_ptr(),
+                src_stride,
+                dst.as_mut_ptr(),
+                dst_stride,
+                filter,
+                simd_w,
+                h,
+            );
+        } else {
+            convolve8_horiz_inner(
+                src.as_ptr(),
+                src_stride,
+                dst.as_mut_ptr(),
+                dst_stride,
+                filter,
+                simd_w,
+                h,
+            );
+        }
     }
     if simd_w != w {
         convolve8_horiz(
