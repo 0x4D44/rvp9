@@ -2727,3 +2727,38 @@ nineteen wins.
 **Future plan:** retain the row-at-a-time kernel while it remains byte-exact.
 Treat vertical dot-product interpolation and an i8mm horizontal kernel as
 separate measured units.
+
+### 2026-07-31 — AArch64 vertical interpolation reloads four-row dot-product windows
+
+**Where:** `rvp9_core::dsp::aarch64::convolve8_neon::
+convolve8_vert_dotprod_inner`, used by the vertical and separable 2-D
+unscaled eight-tap interpolation paths on dot-product-capable AArch64 hosts.
+
+**What libvpx does:** `vpx_dsp/arm/vpx_convolve8_neon_dotprod.c` keeps seven
+transposed rows live, loads four new rows, merges their columns through three
+table lookups, and advances four output rows at a time.
+
+**What rvp9 does:** loads the complete eleven-row window for each four-output
+group, transposes its eight overlapping four-row groups directly, and applies
+the same corrected signed dot-product arithmetic. One scalar-NEON tail handles
+arbitrary heights, and the existing widened-i16 path handles full-pel filters.
+
+**Why:** reloading seven overlapping rows makes the kernel substantially
+smaller and avoids a large live SIMD state. The pinned Apple M5 Max cache
+absorbs those reloads, while shared loads, transposition, and dot products
+still remove most of the original multiply-accumulate work.
+
+**Byte-parity impact:** none. Differential coverage includes every VP9 filter
+phase, all codec block shapes, and irregular `7x3`, `12x5`, and `63x9` tails.
+The product stream and all three decoders' I420 output remain byte-identical.
+
+**Compression-efficiency impact:** none; the production stream is unchanged.
+
+**Speed impact:** sixteen warmed alternating one-thread pairs improved child
+CPU by `-1.799%` with sixteen wins. Twenty four-thread pairs improved child
+CPU by `-1.717%` with twenty wins; paired wall time improved `-1.633%` with
+twenty wins.
+
+**Future plan:** retain the reload-based kernel while it remains byte-exact.
+Only adopt libvpx's rolling transpose state if a direct product comparison
+shows an additional reproducible improvement worth the extra live state.
