@@ -983,10 +983,6 @@ impl Encoder {
 // tx_x4_local, tx_y4_local) tuple the writer hands to
 // `IntraCoefSource::get_block_coefs`.
 
-/// Key into [`VecBackedIntraCoefSource::blocks`].
-/// `(mi_row, mi_col, plane, tx_x4_local, tx_y4_local)`.
-type IntraCoefBlockKey = (usize, usize, usize, usize, usize);
-
 /// Stored block payload: `(qcoeff buffer, eob)`.
 type IntraCoefBlockValue = (Vec<i32>, usize);
 
@@ -999,22 +995,13 @@ static INTER_ZERO_COEFS: [i32; 1024] = [0; 1024];
 /// Empty marker in [`VecBackedInterCoefSource::slots`].
 const INTER_COEF_SLOT_EMPTY: u32 = u32::MAX;
 
-/// Encoder simulator output: a Vec-backed [`IntraCoefSource`].
+/// Encoder simulator output: a direct-slot [`IntraCoefSource`].
 ///
-/// Stores one qcoeff buffer per (plane, mi_row, mi_col, tx_local_x,
-/// tx_local_y, TX size) tuple. The writer iterates these in the same
-/// order the simulator produced them, so positional lookup is direct.
+/// Intra and inter writers address coefficients with the same physical
+/// transform position tuple. Reuse the inter source's dense slot map so the
+/// keyframe path does not hash every transform on insertion and emission.
 pub struct VecBackedIntraCoefSource {
-    /// Frame width in pixels (must match the encoder's config).
-    width: u32,
-    /// Frame height in pixels.
-    height: u32,
-    /// One entry per stored TX block (plane, mi_row, mi_col,
-    /// tx_x4_local, tx_y4_local) → (qcoeff buffer, eob).
-    ///
-    /// We use a flat `HashMap` keyed by the 6-tuple rather than a 5-D
-    /// `Vec` to keep the data structure compact and easy to debug.
-    blocks: std::collections::HashMap<IntraCoefBlockKey, IntraCoefBlockValue>,
+    inner: VecBackedInterCoefSource,
 }
 
 impl VecBackedIntraCoefSource {
@@ -1022,9 +1009,7 @@ impl VecBackedIntraCoefSource {
     #[must_use]
     pub fn new(width: u32, height: u32) -> Self {
         Self {
-            width,
-            height,
-            blocks: std::collections::HashMap::new(),
+            inner: VecBackedInterCoefSource::new(width, height),
         }
     }
 
@@ -1043,22 +1028,20 @@ impl VecBackedIntraCoefSource {
         qcoefs: Vec<i32>,
         eob: usize,
     ) {
-        self.blocks.insert(
-            (mi_row, mi_col, plane, tx_x4_local, tx_y4_local),
-            (qcoefs, eob),
-        );
+        self.inner
+            .insert(mi_row, mi_col, plane, tx_x4_local, tx_y4_local, qcoefs, eob);
     }
 
     /// Frame width in pixels.
     #[must_use]
     pub fn width(&self) -> u32 {
-        self.width
+        self.inner.width()
     }
 
     /// Frame height in pixels.
     #[must_use]
     pub fn height(&self) -> u32 {
-        self.height
+        self.inner.height()
     }
 }
 
@@ -1072,13 +1055,15 @@ impl rvp9_core::bitstream::IntraCoefSource for VecBackedIntraCoefSource {
         tx_y4_local: usize,
         tx_size: TxSize,
     ) -> (&[i32], usize) {
-        let entry = self
-            .blocks
-            .get(&(mi_row, mi_col, plane, tx_x4_local, tx_y4_local))
-            .expect("VecBackedIntraCoefSource: missing TX block");
-        let n = tx_size.n_coeffs();
-        debug_assert!(entry.0.len() >= n);
-        (&entry.0[..n], entry.1)
+        rvp9_core::bitstream::InterCoefSource::get_block_coefs(
+            &self.inner,
+            mi_row,
+            mi_col,
+            plane,
+            tx_x4_local,
+            tx_y4_local,
+            tx_size,
+        )
     }
 }
 
@@ -1539,9 +1524,7 @@ fn tile_for_mi_col(bounds: &[ModesTileBounds], mi_col: usize) -> ModesTileBounds
         .expect("every frame MI column belongs to exactly one VP9 tile")
 }
 
-/// `simulate_dc_intra_encode_partitions` without the up-front recon
-/// zeroing — the F10.1b picker path calls this once per leaf and needs
-/// the recon buffer from earlier leaves preserved across calls.
+/// `simulate_dc_intra_encode_partitions` without the up-front recon zeroing.
 pub(crate) fn simulate_dc_intra_encode_partitions_no_zero(
     width: u32,
     height: u32,
@@ -1551,6 +1534,7 @@ pub(crate) fn simulate_dc_intra_encode_partitions_no_zero(
     recon_yuv_out: (&mut [u8], &mut [u8], &mut [u8]),
     sb_partitions: &[Vec<PartitionLeafDesc>],
 ) -> VecBackedIntraCoefSource {
+    let mut out = VecBackedIntraCoefSource::new(width, height);
     simulate_dc_intra_encode_partitions_no_zero_with_tiles(
         width,
         height,
@@ -1560,7 +1544,10 @@ pub(crate) fn simulate_dc_intra_encode_partitions_no_zero(
         recon_yuv_out,
         sb_partitions,
         0,
-    )
+        None,
+        &mut out,
+    );
+    out
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1573,7 +1560,9 @@ fn simulate_dc_intra_encode_partitions_no_zero_with_tiles(
     recon_yuv_out: (&mut [u8], &mut [u8], &mut [u8]),
     sb_partitions: &[Vec<PartitionLeafDesc>],
     log2_tile_cols: u8,
-) -> VecBackedIntraCoefSource {
+    active_leaf: Option<(usize, usize)>,
+    out: &mut VecBackedIntraCoefSource,
+) {
     use rvp9_core::intra_pred::{
         DcAvailability, EdgeBuffers, build_intra_predictors, intra_predict,
     };
@@ -1595,8 +1584,6 @@ fn simulate_dc_intra_encode_partitions_no_zero_with_tiles(
     let uvw = w / 2;
     let uvh = h / 2;
 
-    let mut out = VecBackedIntraCoefSource::new(width, height);
-
     let sb_cols = w / 64;
     let sb_rows = h / 64;
     let tile_bounds_by_col = column_tile_bounds(h / 8, w / 8, log2_tile_cols);
@@ -1608,11 +1595,23 @@ fn simulate_dc_intra_encode_partitions_no_zero_with_tiles(
         sb_cols,
     );
 
-    for sb_row in 0..sb_rows {
-        for sb_col in 0..sb_cols {
+    let active_sb = active_leaf.map(|(sb_idx, _)| sb_idx);
+    assert!(
+        active_sb.is_none_or(|sb_idx| sb_idx < sb_rows * sb_cols),
+        "active intra leaf must be inside the frame"
+    );
+    let sb_row_start = active_sb.map_or(0, |sb_idx| sb_idx / sb_cols);
+    let sb_row_end = active_sb.map_or(sb_rows, |sb_idx| sb_idx / sb_cols + 1);
+    for sb_row in sb_row_start..sb_row_end {
+        let sb_col_start = active_sb.map_or(0, |sb_idx| sb_idx % sb_cols);
+        let sb_col_end = active_sb.map_or(sb_cols, |sb_idx| sb_idx % sb_cols + 1);
+        for sb_col in sb_col_start..sb_col_end {
             let current_tile = tile_for_mi_col(&tile_bounds_by_col, sb_col * 8);
             let leaves = &sb_partitions[sb_row * sb_cols + sb_col];
-            for leaf in leaves {
+            let leaf_start = active_leaf.map_or(0, |(_, leaf_idx)| leaf_idx);
+            let leaf_end = active_leaf.map_or(leaves.len(), |(_, leaf_idx)| leaf_idx + 1);
+            assert!(leaf_end <= leaves.len(), "active intra leaf must exist");
+            for leaf in &leaves[leaf_start..leaf_end] {
                 let leaf_bsize = leaf.leaf_bsize;
                 let leaf_mi_row = sb_row * 8 + leaf.mi_row_in_sb;
                 let leaf_mi_col = sb_col * 8 + leaf.mi_col_in_sb;
@@ -1930,8 +1929,6 @@ fn simulate_dc_intra_encode_partitions_no_zero_with_tiles(
             }
         }
     }
-
-    out
 }
 
 /// F10.1b — pick the Y intra mode per leaf via
@@ -2355,22 +2352,10 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
                     });
                 }
 
-                // Encode this one leaf via the simulator. We construct
-                // a per-SB layout containing only this leaf so the
-                // simulator's outer loop walks exactly one element.
-                // Recon buffer state from earlier leaves is preserved
-                // (the simulator no longer zeros recon — we relocated
-                // that to up-front, see below).
-                let single_leaf_layout: Vec<Vec<PartitionLeafDesc>> = (0..(sb_rows * sb_cols))
-                    .map(|i| {
-                        if i == sb_idx {
-                            vec![sb_partitions[sb_idx][leaf_idx]]
-                        } else {
-                            Vec::new()
-                        }
-                    })
-                    .collect();
-                let leaf_coefs = simulate_dc_intra_encode_partitions_no_zero_with_tiles(
+                // Encode this leaf directly into the running coefficient
+                // source. Recon state from earlier leaves is preserved and
+                // remains the causal neighbour input for the next pick.
+                simulate_dc_intra_encode_partitions_no_zero_with_tiles(
                     width,
                     height,
                     base_qindex,
@@ -2381,15 +2366,11 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
                         &mut *recon_yuv_out.1,
                         &mut *recon_yuv_out.2,
                     ),
-                    &single_leaf_layout,
+                    sb_partitions,
                     log2_tile_cols,
+                    Some((sb_idx, leaf_idx)),
+                    &mut coef_source,
                 );
-                // Merge `leaf_coefs` into the running `coef_source`.
-                for ((mi_row, mi_col, plane, tx_x, tx_y), (qc, eob)) in
-                    leaf_coefs.blocks.into_iter()
-                {
-                    coef_source.insert(mi_row, mi_col, plane, tx_x, tx_y, qc, eob);
-                }
             }
         }
     }
@@ -10827,6 +10808,7 @@ mod tests {
     /// the dq path is wired live, not a no-op).
     #[test]
     fn encode_kf_with_per_segment_q_delta_quantizes_differently_per_segment() {
+        use rvp9_core::bitstream::IntraCoefSource;
         use rvp9_core::quant::forward::{QuantizerDeltas, init_plane_quantizers};
 
         // (a) Helper-level proof: two qindices yield different
@@ -10942,15 +10924,9 @@ mod tests {
 
         // Pull the Y qcoeff vector for the seg-1 leaf
         // (mi_row=4, mi_col=0; plane 0; tx_x4_local=0, tx_y4_local=0).
-        let key_seg1 = (4usize, 0usize, 0usize, 0usize, 0usize);
-        let (base_qc_seg1, base_eob_seg1) = base_coefs
-            .blocks
-            .get(&key_seg1)
-            .expect("seg1 leaf coefs missing in baseline");
-        let (aq_qc_seg1, aq_eob_seg1) = aq_coefs
-            .blocks
-            .get(&key_seg1)
-            .expect("seg1 leaf coefs missing in AQ run");
+        let (base_qc_seg1, base_eob_seg1) =
+            base_coefs.get_block_coefs(4, 0, 0, 0, 0, TxSize::Tx8x8);
+        let (aq_qc_seg1, aq_eob_seg1) = aq_coefs.get_block_coefs(4, 0, 0, 0, 0, TxSize::Tx8x8);
         // The two runs must produce DIFFERENT qcoeffs for the seg 1
         // leaf — that's the smoking gun that per-segment Q-delta
         // reaches the forward-quant init.
@@ -10965,15 +10941,9 @@ mod tests {
 
         // The seg-0 leaf at (0, 0) must produce IDENTICAL qcoeffs
         // across the two runs — its qindex doesn't change.
-        let key_seg0 = (0usize, 0usize, 0usize, 0usize, 0usize);
-        let (base_qc_seg0, base_eob_seg0) = base_coefs
-            .blocks
-            .get(&key_seg0)
-            .expect("seg0 leaf coefs missing in baseline");
-        let (aq_qc_seg0, aq_eob_seg0) = aq_coefs
-            .blocks
-            .get(&key_seg0)
-            .expect("seg0 leaf coefs missing in AQ run");
+        let (base_qc_seg0, base_eob_seg0) =
+            base_coefs.get_block_coefs(0, 0, 0, 0, 0, TxSize::Tx8x8);
+        let (aq_qc_seg0, aq_eob_seg0) = aq_coefs.get_block_coefs(0, 0, 0, 0, 0, TxSize::Tx8x8);
         assert_eq!(
             base_qc_seg0, aq_qc_seg0,
             "seg 0 leaf qcoeffs must be IDENTICAL across the two runs \
