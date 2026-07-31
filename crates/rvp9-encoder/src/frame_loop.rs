@@ -60,9 +60,8 @@ use rvp9_core::bitstream::sub_parsers::{
 use rvp9_core::bitstream::{
     BitDepth as WireBitDepth, BitstreamError, ChromaFormat, ColorRange, ColorSpace,
     CompressedHeaderOptions, CompressedHeaderResult, FrameKind as WireFrameKind, InterCoefSource,
-    InterpFilter, ModesTileBounds, Profile, RawBitWriter, UncompressedHeader,
-    write_compressed_header, write_tile_inter, write_tile_intra_keyframe,
-    write_uncompressed_header,
+    InterpFilter, Profile, RawBitWriter, UncompressedHeader, tile_bounds, write_compressed_header,
+    write_tile_buffers, write_tile_inter, write_tile_intra_keyframe, write_uncompressed_header,
 };
 // W6.2(vpxenc parity, HBD scaffold) — pixel-pipeline bit-depth. **Not**
 // the same as the wire-format `WireBitDepth` (`Eight`/`Ten`/`Twelve`)
@@ -3190,6 +3189,8 @@ impl StreamEncoder {
             // `frame_context_idx = refresh_alt_ref_frame = 0`).
             /* frame_context_idx = */
             0,
+            /* log2_tile_cols = */
+            0,
         )?;
 
         // W0.5(vpxenc parity, A2 P0 / A1 P5): with `refresh_frame_
@@ -3645,6 +3646,8 @@ impl StreamEncoder {
             // `frame_context_idx = refresh_alt_ref_frame = 1`).
             /* frame_context_idx = */
             1,
+            /* log2_tile_cols = */
+            0,
         )?;
 
         // W-ALTREF — the ARF emits `refresh_frame_context = true`
@@ -4444,6 +4447,27 @@ fn build_keyframe_packet(
     coef_source: &dyn rvp9_core::bitstream::IntraCoefSource,
     sb_partitions: &[Vec<PartitionLeafDesc>],
 ) -> Result<Vec<u8>, EncodeError> {
+    build_keyframe_packet_with_tiles(
+        width,
+        height,
+        base_qindex,
+        filter_level,
+        coef_source,
+        sb_partitions,
+        0,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_keyframe_packet_with_tiles(
+    width: u32,
+    height: u32,
+    base_qindex: u8,
+    filter_level: u8,
+    coef_source: &dyn rvp9_core::bitstream::IntraCoefSource,
+    sb_partitions: &[Vec<PartitionLeafDesc>],
+    log2_tile_cols: u8,
+) -> Result<Vec<u8>, EncodeError> {
     let mi_rows = height / 8;
     let mi_cols = width / 8;
     let mi_grid = build_kf_mi_grid(mi_rows, mi_cols, sb_partitions);
@@ -4480,33 +4504,41 @@ fn build_keyframe_packet(
     };
     compressed_buf.truncate(compressed_len);
 
-    let tile_bounds = ModesTileBounds {
-        mi_row_start: 0,
-        mi_row_end: mi_rows as usize,
-        mi_col_start: 0,
-        mi_col_end: mi_cols as usize,
-    };
-    let mut tile_buf = vec![0u8; (mi_rows as usize) * (mi_cols as usize) * 64 + 16 * 1024];
-    let tile_len = {
-        let mut bw = BoolWriter::start_encode(&mut tile_buf);
-        let tile_mi_cols = (tile_bounds.mi_col_end - tile_bounds.mi_col_start).max(1);
-        let mut coef_ctx = TileCoefCtx::new(tile_mi_cols);
-        write_tile_intra_keyframe(
-            &mut bw,
-            &mi_grid,
-            mi_rows,
-            mi_cols,
-            tile_bounds,
-            &post_fc,
-            target.tx_mode,
-            /* seg = */ None,
-            &mut coef_ctx,
-            coef_source,
-        )?;
-        bw.stop_encode()
-            .map_err(|_| EncodeError::Bitstream(BitstreamError::CompressedHeaderTooLarge))?
-    };
-    tile_buf.truncate(tile_len);
+    let tile_cols = 1usize << log2_tile_cols;
+    let mut tile_bufs = Vec::with_capacity(tile_cols);
+    for tile_col in 0..tile_cols {
+        let bounds = tile_bounds(
+            mi_rows as usize,
+            mi_cols as usize,
+            0,
+            log2_tile_cols,
+            0,
+            tile_col as u32,
+        );
+        let mut tile_buf = vec![0u8; (mi_rows as usize) * (mi_cols as usize) * 64 + 16 * 1024];
+        let tile_len = {
+            let mut bw = BoolWriter::start_encode(&mut tile_buf);
+            let mut coef_ctx = TileCoefCtx::new(bounds.mi_col_end - bounds.mi_col_start);
+            write_tile_intra_keyframe(
+                &mut bw,
+                &mi_grid,
+                mi_rows,
+                mi_cols,
+                bounds,
+                &post_fc,
+                target.tx_mode,
+                /* seg = */ None,
+                &mut coef_ctx,
+                coef_source,
+            )?;
+            bw.stop_encode()
+                .map_err(|_| EncodeError::Bitstream(BitstreamError::CompressedHeaderTooLarge))?
+        };
+        tile_buf.truncate(tile_len);
+        tile_bufs.push(tile_buf);
+    }
+    let tile_refs: Vec<&[u8]> = tile_bufs.iter().map(Vec::as_slice).collect();
+    let tile_buf = write_tile_buffers(&tile_refs, tile_cols as u32, 1)?;
 
     let tail = HeaderTail {
         // Keep FC bank 0 at default so subsequent inter frames can use
@@ -4543,7 +4575,7 @@ fn build_keyframe_packet(
             feature_data: Default::default(),
         },
         tile_info: TileInfo {
-            log2_tile_cols: 0,
+            log2_tile_cols,
             log2_tile_rows: 0,
         },
         first_partition_size: compressed_len as u16,
@@ -4572,7 +4604,7 @@ fn build_keyframe_packet(
     };
     hdr_buf.truncate(hdr_len);
 
-    let mut packet = Vec::with_capacity(hdr_len + compressed_len + tile_len);
+    let mut packet = Vec::with_capacity(hdr_len + compressed_len + tile_buf.len());
     packet.extend_from_slice(&hdr_buf);
     packet.extend_from_slice(&compressed_buf);
     packet.extend_from_slice(&tile_buf);
@@ -4655,7 +4687,7 @@ fn build_inter_packet_with_residuals(
     // best_ref_mv + delta).
     prev_mv_grid: Option<&[PrevFrameMvRef]>,
     // P0b — optional output slot for backward-adaptation counts.
-    counts: Option<&mut FrameCounts>,
+    mut counts: Option<&mut FrameCounts>,
     // P0b — frame context to use for encoding (replaces
     // `FrameContext::new_default()` when backward adaptation is active).
     fc_override: Option<&FrameContext>,
@@ -4675,6 +4707,9 @@ fn build_inter_packet_with_residuals(
     // SAME bank. Routing the ARF to bank 1 keeps the show frames' bank
     // 0 pristine across the non-show ARF.
     frame_context_idx: u8,
+    // Product callers remain at zero until the mode-decision and
+    // reconstruction loop applies the same tile-edge semantics.
+    log2_tile_cols: u8,
 ) -> Result<Vec<u8>, EncodeError> {
     use rvp9_core::bitstream::SegmentationWriteParams;
     let mi_rows = height / 8;
@@ -4740,12 +4775,7 @@ fn build_inter_packet_with_residuals(
         reference_mode: reference_mode_frame,
     };
 
-    let tile_bounds = ModesTileBounds {
-        mi_row_start: 0,
-        mi_row_end: mi_rows as usize,
-        mi_col_start: 0,
-        mi_col_end: mi_cols as usize,
-    };
+    let tile_cols = 1usize << log2_tile_cols;
 
     // W-ALTREF — derive the 4-entry per-RefFrame sign-bias array from
     // the caller's 3-entry `[LAST, GOLDEN, ALTREF]` header bias.
@@ -4809,29 +4839,38 @@ fn build_inter_packet_with_residuals(
         ..FrameCounts::default()
     };
     rvp9_core::entropy::bitacct::with_suppressed(|| -> Result<(), EncodeError> {
-        let mut scratch = vec![0u8; (mi_rows as usize) * (mi_cols as usize) * 64 + 16 * 1024];
-        let mut bw = BoolWriter::start_encode(&mut scratch);
-        let tile_mi_cols = (tile_bounds.mi_col_end - tile_bounds.mi_col_start).max(1);
-        let mut coef_ctx = TileCoefCtx::new(tile_mi_cols);
-        write_tile_inter(
-            &mut bw,
-            &count_fc,
-            &params,
-            // Track-F iter7 — the count pass must use the same `tx_mode` as
-            // the real tile pass so the per-block tx_size derivation (and
-            // thus the coef tile sizes read from `coef_source`) match.
-            target.tx_mode,
-            &mi_grid,
-            mi_rows,
-            mi_cols,
-            tile_bounds,
-            seg_write,
-            prev_mv_grid,
-            &mut coef_ctx,
-            coef_source,
-            Some(&mut count_counts),
-        )?;
-        // We discard `scratch` — only the gathered counts matter.
+        for tile_col in 0..tile_cols {
+            let bounds = tile_bounds(
+                mi_rows as usize,
+                mi_cols as usize,
+                0,
+                log2_tile_cols,
+                0,
+                tile_col as u32,
+            );
+            let mut scratch = vec![0u8; (mi_rows as usize) * (mi_cols as usize) * 64 + 16 * 1024];
+            let mut bw = BoolWriter::start_encode(&mut scratch);
+            let mut coef_ctx = TileCoefCtx::new(bounds.mi_col_end - bounds.mi_col_start);
+            write_tile_inter(
+                &mut bw,
+                &count_fc,
+                &params,
+                // Track-F iter7 — the count pass must use the same `tx_mode` as
+                // the real tile pass so the per-block tx_size derivation (and
+                // thus the coef tile sizes read from `coef_source`) match.
+                target.tx_mode,
+                &mi_grid,
+                mi_rows,
+                mi_cols,
+                bounds,
+                seg_write,
+                prev_mv_grid,
+                &mut coef_ctx,
+                coef_source,
+                Some(&mut count_counts),
+            )?;
+            // We discard `scratch` — only the gathered counts matter.
+        }
         Ok(())
     })?;
 
@@ -4873,39 +4912,45 @@ fn build_inter_packet_with_residuals(
 
     // F10.1c — sized generously (per-pixel × 4) since real residuals
     // can dominate the bit budget at higher Q indices.
-    let mut tile_buf = vec![0u8; (mi_rows as usize) * (mi_cols as usize) * 64 + 16 * 1024];
-    let tile_len = {
-        let mut bw = BoolWriter::start_encode(&mut tile_buf);
-        let tile_mi_cols = (tile_bounds.mi_col_end - tile_bounds.mi_col_start).max(1);
-        let mut coef_ctx = TileCoefCtx::new(tile_mi_cols);
-        // P0b — use `decoder_fc` (the actual FC after compressed-header
-        // diff-updates) rather than `post_fc` (the target). After
-        // `write_compressed_header`, `decoder_fc` holds exactly the FC
-        // the decoder will reconstruct from the same diff bits. Using
-        // `post_fc` would desync whenever a diff-update was skipped
-        // by `cond_prob_diff_update`.
-        write_tile_inter(
-            &mut bw,
-            decoder_fc,
-            &params,
-            // Track-F iter7 — must match the compressed-header `tx_mode` so
-            // the writer emits per-block tx_size bits and the decoder reads
-            // them (both `TxModeSelect`).
-            target.tx_mode,
-            &mi_grid,
-            mi_rows,
-            mi_cols,
-            tile_bounds,
-            seg_write,
-            prev_mv_grid,
-            &mut coef_ctx,
-            coef_source,
-            counts,
-        )?;
-        bw.stop_encode()
-            .map_err(|_| EncodeError::Bitstream(BitstreamError::CompressedHeaderTooLarge))?
-    };
-    tile_buf.truncate(tile_len);
+    let mut tile_bufs = Vec::with_capacity(tile_cols);
+    for tile_col in 0..tile_cols {
+        let bounds = tile_bounds(
+            mi_rows as usize,
+            mi_cols as usize,
+            0,
+            log2_tile_cols,
+            0,
+            tile_col as u32,
+        );
+        let mut tile_buf = vec![0u8; (mi_rows as usize) * (mi_cols as usize) * 64 + 16 * 1024];
+        let tile_len = {
+            let mut bw = BoolWriter::start_encode(&mut tile_buf);
+            let mut coef_ctx = TileCoefCtx::new(bounds.mi_col_end - bounds.mi_col_start);
+            // P0b — use `decoder_fc` (the actual FC after compressed-header
+            // diff-updates) rather than `post_fc` (the target).
+            write_tile_inter(
+                &mut bw,
+                decoder_fc,
+                &params,
+                target.tx_mode,
+                &mi_grid,
+                mi_rows,
+                mi_cols,
+                bounds,
+                seg_write,
+                prev_mv_grid,
+                &mut coef_ctx,
+                coef_source,
+                counts.as_deref_mut(),
+            )?;
+            bw.stop_encode()
+                .map_err(|_| EncodeError::Bitstream(BitstreamError::CompressedHeaderTooLarge))?
+        };
+        tile_buf.truncate(tile_len);
+        tile_bufs.push(tile_buf);
+    }
+    let tile_refs: Vec<&[u8]> = tile_bufs.iter().map(Vec::as_slice).collect();
+    let tile_buf = write_tile_buffers(&tile_refs, tile_cols as u32, 1)?;
 
     // A11 (b9b4e93) — refresh_frame_flags = 0x01: every inter frame
     // refreshes ref slot 0 (LASTFRAME). Pre-A11 set this to 0x00,
@@ -4959,7 +5004,7 @@ fn build_inter_packet_with_residuals(
         // per-segment Q delta encoded in `feature_data[seg][AltQ]`.
         segmentation: segmentation.clone(),
         tile_info: TileInfo {
-            log2_tile_cols: 0,
+            log2_tile_cols,
             log2_tile_rows: 0,
         },
         first_partition_size: compressed_len as u16,
@@ -5016,7 +5061,7 @@ fn build_inter_packet_with_residuals(
     };
     hdr_buf.truncate(hdr_len);
 
-    let mut packet = Vec::with_capacity(hdr_len + compressed_len + tile_len);
+    let mut packet = Vec::with_capacity(hdr_len + compressed_len + tile_buf.len());
     packet.extend_from_slice(&hdr_buf);
     packet.extend_from_slice(&compressed_buf);
     packet.extend_from_slice(&tile_buf);
@@ -6172,6 +6217,225 @@ mod tests {
             v_count, 64,
             "all 64 cells should round-trip as V_PRED (forced) — got {v_count}",
         );
+    }
+
+    #[test]
+    fn sequential_two_tile_keyframe_has_valid_header_prefixes_and_decode() {
+        use crate::{PartitionLeafDesc, simulate_dc_intra_encode_partitions};
+        use rvp9_core::bitstream::{parse_tile_buffers, parse_uncompressed_header};
+
+        let w = 640u32;
+        let h = 64u32;
+        let leaf = PartitionLeafDesc {
+            mi_row_in_sb: 0,
+            mi_col_in_sb: 0,
+            leaf_bsize: BlockSize::Block64x64,
+            predicted_y_mode: IntraMode::Dc,
+            predicted_uv_mode: IntraMode::Dc,
+            segment_id: 0,
+            picked_tx_size: max_txsize(BlockSize::Block64x64),
+        };
+        let sb_partitions = vec![vec![leaf]; (w / 64) as usize];
+        let y = vec![128u8; (w * h) as usize];
+        let u = vec![128u8; ((w / 2) * (h / 2)) as usize];
+        let v = u.clone();
+        let mut recon_y = vec![0u8; y.len()];
+        let mut recon_u = vec![0u8; u.len()];
+        let mut recon_v = vec![0u8; v.len()];
+        let coef_source = simulate_dc_intra_encode_partitions(
+            w,
+            h,
+            80,
+            &[None; 8],
+            (&y, &u, &v),
+            (&mut recon_y, &mut recon_u, &mut recon_v),
+            &sb_partitions,
+        );
+
+        let packet = build_keyframe_packet_with_tiles(w, h, 80, 0, &coef_source, &sb_partitions, 1)
+            .expect("two-tile keyframe assembly");
+
+        const NO_REFS: [Option<(u32, u32)>; 8] = [None; 8];
+        let (header, header_end) =
+            parse_uncompressed_header(&packet, &NO_REFS).expect("parse keyframe header");
+        let tail = header.tail.as_ref().expect("keyframe tail");
+        assert_eq!(tail.tile_info.log2_tile_cols, 1);
+        assert_eq!(tail.tile_info.log2_tile_rows, 0);
+        let tile_start = header_end + usize::from(tail.first_partition_size);
+        let tiles =
+            parse_tile_buffers(&packet[tile_start..], 2, 1).expect("parse tile size prefixes");
+        assert_eq!(tiles.len(), 2);
+        assert!(tiles.iter().all(|tile| !tile.data.is_empty()));
+
+        let mut decoder = Decoder::new();
+        let frames = decode_packet(&mut decoder, &packet);
+        let decoded = decoder
+            .decode_frame(&frames[0])
+            .expect("rvp9 decoder accepts the two-tile keyframe");
+        let y_plane = decoded.y_plane();
+        for row in 0..h as usize {
+            let decoded_row = &y_plane.data()[row * y_plane.stride()..][..w as usize];
+            let source_row = &y[row * w as usize..][..w as usize];
+            assert_eq!(decoded_row, source_row);
+        }
+    }
+
+    #[test]
+    fn sequential_two_tile_inter_frame_decodes_after_two_tile_keyframe() {
+        use crate::{PartitionLeafDesc, simulate_dc_intra_encode_partitions};
+
+        let w = 640u32;
+        let h = 64u32;
+        let kf_leaf = PartitionLeafDesc {
+            mi_row_in_sb: 0,
+            mi_col_in_sb: 0,
+            leaf_bsize: BlockSize::Block64x64,
+            predicted_y_mode: IntraMode::Dc,
+            predicted_uv_mode: IntraMode::Dc,
+            segment_id: 0,
+            picked_tx_size: max_txsize(BlockSize::Block64x64),
+        };
+        let kf_partitions = vec![vec![kf_leaf]; (w / 64) as usize];
+        let y = vec![128u8; (w * h) as usize];
+        let u = vec![128u8; ((w / 2) * (h / 2)) as usize];
+        let v = u.clone();
+        let mut recon_y = vec![0u8; y.len()];
+        let mut recon_u = vec![0u8; u.len()];
+        let mut recon_v = vec![0u8; v.len()];
+        let kf_coef_source = simulate_dc_intra_encode_partitions(
+            w,
+            h,
+            80,
+            &[None; 8],
+            (&y, &u, &v),
+            (&mut recon_y, &mut recon_u, &mut recon_v),
+            &kf_partitions,
+        );
+        let keyframe =
+            build_keyframe_packet_with_tiles(w, h, 80, 0, &kf_coef_source, &kf_partitions, 1)
+                .expect("two-tile keyframe");
+
+        let inter_leaf = InterPartitionLeafDesc {
+            mi_row_in_sb: 0,
+            mi_col_in_sb: 0,
+            leaf_bsize: BlockSize::Block64x64,
+            picked_mode: InterMode::ZeroMv,
+            picked_mv: Mv::ZERO,
+            skip: true,
+            segment_id: 0,
+            picked_ref_frame: RefFrame::LastFrame,
+            picked_interp_filter: InterpFilter::EightTap,
+            picked_intra_mode: None,
+            picked_ref_frame2: RefFrame::NoRefFrame,
+            picked_mv2: Mv::ZERO,
+            picked_tx_size: max_txsize(BlockSize::Block64x64),
+        };
+        let inter_partitions = vec![vec![inter_leaf]; (w / 64) as usize];
+        let segmentation = build_segmentation_params(false, &[None; 8]);
+        let coef_source = rvp9_core::bitstream::AllZeroCoefSource::new();
+        let mut frame_counts = FrameCounts::default();
+        let frame_context = FrameContext::new_default();
+        let mut decoder_fc = frame_context.clone();
+        let inter = build_inter_packet_with_residuals(
+            w,
+            h,
+            80,
+            0,
+            &coef_source,
+            &inter_partitions,
+            &segmentation,
+            0x01,
+            true,
+            [false; 3],
+            [0, 1, 2],
+            None,
+            Some(&mut frame_counts),
+            Some(&frame_context),
+            &mut decoder_fc,
+            0,
+            1,
+        )
+        .expect("two-tile inter packet");
+
+        let mut decoder = Decoder::new();
+        let key_frames = decode_packet(&mut decoder, &keyframe);
+        decoder
+            .decode_frame(&key_frames[0])
+            .expect("decode two-tile keyframe");
+        let inter_frames = decode_packet(&mut decoder, &inter);
+        let decoded = decoder
+            .decode_frame(&inter_frames[0])
+            .expect("decode two-tile inter frame");
+        let y_plane = decoded.y_plane();
+        for row in 0..h as usize {
+            let decoded_row = &y_plane.data()[row * y_plane.stride()..][..w as usize];
+            assert_eq!(decoded_row, &y[row * w as usize..][..w as usize]);
+        }
+
+        if std::env::var_os("RVP9_CROSS_DECODER_GATE").is_some() {
+            use std::process::Command;
+
+            let packets = [&keyframe[..], &inter[..]];
+            let mut ivf = vec![0u8; 32];
+            ivf[0..4].copy_from_slice(b"DKIF");
+            ivf[6..8].copy_from_slice(&32u16.to_le_bytes());
+            ivf[8..12].copy_from_slice(b"VP90");
+            ivf[12..14].copy_from_slice(&(w as u16).to_le_bytes());
+            ivf[14..16].copy_from_slice(&(h as u16).to_le_bytes());
+            ivf[16..20].copy_from_slice(&30u32.to_le_bytes());
+            ivf[20..24].copy_from_slice(&1u32.to_le_bytes());
+            ivf[24..28].copy_from_slice(&(packets.len() as u32).to_le_bytes());
+            for (pts, packet) in packets.iter().enumerate() {
+                ivf.extend_from_slice(&(packet.len() as u32).to_le_bytes());
+                ivf.extend_from_slice(&(pts as u64).to_le_bytes());
+                ivf.extend_from_slice(packet);
+            }
+
+            let stem = format!("rvp9-two-tile-{}", std::process::id());
+            let temp = std::env::temp_dir();
+            let ivf_path = temp.join(format!("{stem}.ivf"));
+            let vpx_out = temp.join(format!("{stem}.vpx.yuv"));
+            let ffmpeg_out = temp.join(format!("{stem}.ffmpeg.yuv"));
+            std::fs::write(&ivf_path, ivf).expect("write temporary two-tile IVF");
+
+            let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .and_then(std::path::Path::parent)
+                .expect("workspace root");
+            let vpxdec = std::env::var_os("RVP9_VPXDEC")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| repo_root.join("build/libvpx/vpxdec"));
+            let ffmpeg = std::env::var_os("RVP9_FFMPEG").unwrap_or_else(|| "ffmpeg".into());
+
+            let vpx_status = Command::new(vpxdec)
+                .arg("--i420")
+                .arg("-o")
+                .arg(&vpx_out)
+                .arg(&ivf_path)
+                .status()
+                .expect("run pinned vpxdec");
+            let ffmpeg_status = Command::new(ffmpeg)
+                .args(["-v", "error", "-i"])
+                .arg(&ivf_path)
+                .args(["-pix_fmt", "yuv420p", "-f", "rawvideo", "-y"])
+                .arg(&ffmpeg_out)
+                .status()
+                .expect("run ffmpeg VP9 decoder");
+
+            let vpx_yuv = std::fs::read(&vpx_out).expect("read vpxdec output");
+            let ffmpeg_yuv = std::fs::read(&ffmpeg_out).expect("read ffmpeg output");
+            let _ = std::fs::remove_file(&ivf_path);
+            let _ = std::fs::remove_file(&vpx_out);
+            let _ = std::fs::remove_file(&ffmpeg_out);
+
+            assert!(vpx_status.success(), "pinned vpxdec rejected two-tile IVF");
+            assert!(ffmpeg_status.success(), "ffmpeg rejected the two-tile IVF");
+            assert_eq!(vpx_yuv, ffmpeg_yuv, "external decoders must agree");
+            assert!(
+                vpx_yuv.iter().all(|&sample| sample == 128),
+                "flat source must decode bit-exactly through both external decoders"
+            );
+        }
     }
 
     /// F10.1b regression — Flat KF content keeps DC_PRED dominant. The
