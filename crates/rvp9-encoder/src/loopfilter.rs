@@ -48,8 +48,8 @@
 //!   shape. F11.1+ may revisit if/when segmentation is wired.
 //! - **No sharpness control.** `sharpness_level = 0` always.
 
+use rvp9_core::bitstream::BitDepth;
 use rvp9_core::bitstream::ChromaFormat;
-use rvp9_core::bitstream::{BitDepth, InterpFilter};
 use rvp9_core::block::{BlockSize, max_txsize};
 use rvp9_core::frame::{BorderUsage, ByteAlignment, Yv12Buffer};
 use rvp9_core::intra_pred::IntraMode;
@@ -57,11 +57,11 @@ use rvp9_core::loopfilter::{
     LoopFilterInfo, LoopFilterMask, MAX_LOOP_FILTER, ResolvedLfDeltas, SegmentationLfView,
     adjust_mask, loop_filter_frame, resolve_filter_levels, setup_mask,
 };
-use rvp9_core::mode_info::{BlockMode, ModeInfo, Mv, RefFrame};
+use rvp9_core::mode_info::{BlockMode, ModeInfo};
 use rvp9_core::quant::ac_quant;
 use std::borrow::Cow;
 
-use crate::{InterPartitionLeafDesc, PartitionLeafDesc};
+use crate::PartitionLeafDesc;
 
 /// MI-grid side length of a 64×64 superblock (in 8×8 units).
 const SB_MI_SIZE: usize = 8;
@@ -458,75 +458,6 @@ pub(crate) fn build_kf_mi_grid_for_lf(
     mi_grid
 }
 
-/// Inter-shape equivalent of [`build_kf_mi_grid_for_lf`].
-pub(crate) fn build_inter_mi_grid_for_lf(
-    mi_rows: u32,
-    mi_cols: u32,
-    sb_partitions: &[Vec<InterPartitionLeafDesc>],
-) -> Vec<Option<ModeInfo>> {
-    let mi_rows_us = mi_rows as usize;
-    let mi_cols_us = mi_cols as usize;
-    let mut mi_grid: Vec<Option<ModeInfo>> = vec![None; mi_rows_us * mi_cols_us];
-
-    let sb_cols = mi_cols_us / 8;
-    let sb_rows = mi_rows_us / 8;
-    for sb_row in 0..sb_rows {
-        for sb_col in 0..sb_cols {
-            let leaves = &sb_partitions[sb_row * sb_cols + sb_col];
-            for leaf in leaves {
-                let leaf_mi_row = sb_row * 8 + leaf.mi_row_in_sb;
-                let leaf_mi_col = sb_col * 8 + leaf.mi_col_in_sb;
-                let cell = ModeInfo {
-                    block_size: leaf.leaf_bsize,
-                    // Track-F iter7 — use the RD-chosen tx_size so the LF
-                    // transform-edge mask matches the coded tx boundaries
-                    // (the deblocker filters on TX edges; a mismatch with
-                    // the decoder's mask would re-introduce drift). For a
-                    // SKIP inter leaf the decoder derives `tx_size = max_tx`
-                    // (`allow_select` false), so report that here too.
-                    tx_size: if leaf.skip {
-                        max_txsize(leaf.leaf_bsize)
-                    } else {
-                        leaf.picked_tx_size
-                    },
-                    skip: leaf.skip,
-                    segment_id: 0,
-                    seg_id_predicted: false,
-                    mode: match leaf.picked_intra_mode {
-                        Some(y_mode) => BlockMode::Intra {
-                            y_mode,
-                            uv_mode: IntraMode::Dc,
-                        },
-                        None => BlockMode::Inter {
-                            mode: leaf.picked_mode,
-                            // A15 Phase B Step 4 — carry `picked_ref_frame`
-                            // into the LF mi_grid so `get_filter_level`
-                            // (`loopfilter::setup_mask::ref0_idx`) reads
-                            // the right ref slot. The decoder looks up
-                            // `lfi->lvl[seg][ref0][mode_lf]`; a GOLDEN-
-                            // picked leaf must use the GOLDEN row, not
-                            // LAST, to stay byte-exact with the decoder.
-                            ref_frames: [leaf.picked_ref_frame, RefFrame::NoRefFrame],
-                            mvs: [leaf.picked_mv, Mv::ZERO],
-                            interp_filter: InterpFilter::EightTap,
-                        },
-                    },
-                    bmi: Default::default(),
-                };
-                splat_leaf(
-                    &mut mi_grid,
-                    mi_cols_us,
-                    leaf_mi_row,
-                    leaf_mi_col,
-                    leaf.leaf_bsize,
-                    cell,
-                );
-            }
-        }
-    }
-    mi_grid
-}
-
 fn splat_leaf(
     mi_grid: &mut [Option<ModeInfo>],
     mi_cols: usize,
@@ -781,34 +712,6 @@ mod w7_4_tests {
         let completed_empty = complete_mi_grid_for_lf(&empty);
         assert!(matches!(completed_empty, Cow::Owned(_)));
         assert!(completed_empty.iter().all(Option::is_some));
-    }
-
-    #[test]
-    fn inter_frame_lf_grid_preserves_intra_winner() {
-        let leaf = InterPartitionLeafDesc {
-            mi_row_in_sb: 0,
-            mi_col_in_sb: 0,
-            leaf_bsize: BlockSize::Block64x64,
-            picked_mode: rvp9_core::mode_info::InterMode::ZeroMv,
-            picked_mv: Mv::ZERO,
-            skip: false,
-            segment_id: 0,
-            picked_ref_frame: RefFrame::IntraFrame,
-            picked_interp_filter: InterpFilter::EightTap,
-            picked_intra_mode: Some(IntraMode::H),
-            picked_ref_frame2: RefFrame::NoRefFrame,
-            picked_mv2: Mv::ZERO,
-            picked_tx_size: max_txsize(BlockSize::Block64x64),
-        };
-
-        let grid = build_inter_mi_grid_for_lf(8, 8, &[vec![leaf]]);
-        assert!(grid.iter().all(|cell| matches!(
-            cell.expect("64x64 leaf must cover every cell").mode,
-            BlockMode::Intra {
-                y_mode: IntraMode::H,
-                uv_mode: IntraMode::Dc,
-            }
-        )));
     }
 
     /// Build a contiguous block of frame data and a paired mi_grid

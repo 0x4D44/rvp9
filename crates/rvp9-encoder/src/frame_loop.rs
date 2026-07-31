@@ -88,8 +88,7 @@ use rvp9_core::transforms::TxMode;
 use crate::aq_cyclic_refresh::{CyclicRefresh, CyclicRefreshConfig};
 use crate::denoiser::{Denoiser, DenoiserLevel, INTRA_FRAME_IDX, vp9_denoiser_filter};
 use crate::loopfilter::{
-    apply_loop_filter_to_tight_recon_parallel, build_inter_mi_grid_for_lf, build_kf_mi_grid_for_lf,
-    pick_filter_level,
+    apply_loop_filter_to_tight_recon_parallel, build_kf_mi_grid_for_lf, pick_filter_level,
 };
 use crate::rate_control::{
     FirstPassStats, FrameKind as RcFrameKind, RateControl, RateControlConfig, RcMode, TwoPassState,
@@ -3189,7 +3188,7 @@ impl StreamEncoder {
         // libvpx's RT speed-feature default
         // (`vp9_speed_features.c::set_rt_speed_feature_framesize_
         // independent` `lpf_pick = LPF_PICK_FROM_Q`).
-        let mi_grid = build_inter_mi_grid_for_lf(h / 8, w / 8, &sb_partitions);
+        let mi_grid = build_inter_mi_grid_from_picker(h / 8, w / 8, &sb_partitions);
         let filter_level = if self.config.speed.unsigned_abs() <= 4 {
             // libvpx `vp9_picklpf.c:46-157` search.
             crate::loopfilter::search_filter_level(&crate::loopfilter::SearchFilterLevelParams {
@@ -3317,7 +3316,7 @@ impl StreamEncoder {
             q_index,
             filter_level,
             &coef_source,
-            &sb_partitions,
+            &mi_grid,
             &segmentation_params,
             refresh_flags,
             // W8 — normal inter frames are show frames; the ALTREF
@@ -3759,7 +3758,7 @@ impl StreamEncoder {
         // the same `filter_level` after IT-add, so the
         // encoder↔decoder bit-exact invariant survives LF. Mirrors the
         // show-frame path's LF block in `encode_inter_internal`.
-        let mi_grid = build_inter_mi_grid_for_lf(h / 8, w / 8, &sb_partitions);
+        let mi_grid = build_inter_mi_grid_from_picker(h / 8, w / 8, &sb_partitions);
         let filter_level = if self.config.speed.unsigned_abs() <= 4 {
             crate::loopfilter::search_filter_level(&crate::loopfilter::SearchFilterLevelParams {
                 width: w,
@@ -3826,7 +3825,7 @@ impl StreamEncoder {
             q_index,
             filter_level,
             &coef_source,
-            &sb_partitions,
+            &mi_grid,
             &segmentation_params,
             /* refresh_frame_flags = */ 0x04,
             /* show_frame = */ false,
@@ -4833,7 +4832,7 @@ fn build_keyframe_packet_with_tiles(
 /// simulator's output).
 ///
 /// Mirror of [`build_keyframe_packet`] for the inter path: builds the
-/// mi-grid from `sb_partitions`, runs the wire-format compressed +
+/// supplied canonical mi-grid, runs the wire-format compressed +
 /// uncompressed header writers, and threads the coef source through
 /// `write_tile_inter`.
 ///
@@ -4850,7 +4849,7 @@ fn build_inter_packet_with_residuals(
     base_qindex: u8,
     filter_level: u8,
     coef_source: &dyn InterCoefSource,
-    sb_partitions: &[Vec<InterPartitionLeafDesc>],
+    mi_grid: &[Option<ModeInfo>],
     segmentation: &SegmentationParams,
     refresh_frame_flags: u8,
     // W8 — Frame visibility. `true` for normal inter frames (the
@@ -4939,7 +4938,7 @@ fn build_inter_packet_with_residuals(
     use rvp9_core::bitstream::SegmentationWriteParams;
     let mi_rows = height / 8;
     let mi_cols = width / 8;
-    let mi_grid = build_inter_mi_grid_from_picker(mi_rows, mi_cols, sb_partitions);
+    debug_assert_eq!(mi_grid.len(), (mi_rows * mi_cols) as usize);
 
     // P0b — `decoder_fc` is the decoder's current FC bank state,
     // mirrored by the caller. The compressed header diff-encodes
@@ -5087,7 +5086,7 @@ fn build_inter_packet_with_residuals(
                 // the real tile pass so the per-block tx_size derivation (and
                 // thus the coef tile sizes read from `coef_source`) match.
                 target.tx_mode,
-                &mi_grid,
+                mi_grid,
                 mi_rows,
                 mi_cols,
                 bounds,
@@ -5167,7 +5166,7 @@ fn build_inter_packet_with_residuals(
                 tile_fc,
                 &params,
                 tx_mode,
-                &mi_grid,
+                mi_grid,
                 mi_rows,
                 mi_cols,
                 bounds,
@@ -6675,6 +6674,7 @@ mod tests {
         let inter_partitions = vec![vec![inter_leaf]; (w / 64) as usize];
         let segmentation = build_segmentation_params(false, &[None; 8]);
         let coef_source = rvp9_core::bitstream::AllZeroCoefSource::new();
+        let inter_mi_grid = build_inter_mi_grid_from_picker(h / 8, w / 8, &inter_partitions);
         let mut frame_counts = FrameCounts::default();
         let frame_context = FrameContext::new_default();
         let mut decoder_fc = frame_context.clone();
@@ -6684,7 +6684,7 @@ mod tests {
             80,
             0,
             &coef_source,
-            &inter_partitions,
+            &inter_mi_grid,
             &segmentation,
             0x01,
             true,
