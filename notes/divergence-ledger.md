@@ -3385,3 +3385,36 @@ persistent workers per process.
 cannot overlap. If row-MT or overlapped filtering later requires concurrent
 phase execution, split the pool only with an explicit ownership and thread-
 budget design rather than oversubscribing the configured thread count.
+
+### 2026-07-31 — Dormant color-sensitivity scaffold is not precomputed
+
+**Where:** `rvp9_encoder::frame_loop::StreamEncoder::try_encode_one_popped`
+and `rvp9_encoder::pre_analysis::PreAnalysisState::{
+compute_color_sensitivity_frame,color_sensitivity_sb}`.
+
+**What libvpx does:** `chroma_check` computes `x->color_sensitivity[]` beside
+the variance-partition or chroma-RD decision which consumes it.
+
+**What rvp9 does:** the ported producer and focused oracles remain, but the
+realtime frame loop does not invoke the batch producer while no encoder path
+reads `color_sensitivity_sb`. The state remains at its reset default.
+
+**Why:** the former batch pass recomputed a 64x64 luma SAD plus two 32x32
+chroma mean/SAD walks for every superblock, then discarded all results. A
+repository-wide use search confirms there is no consumer. Deferring it to
+the eventual use site matches libvpx's work placement and avoids a
+speculative full-frame cost.
+
+**Byte-parity impact:** none. The cpu-used 7 product stream is byte-identical
+to Unit 141, and rvp9-decoder, pinned vpxdec, and ffmpeg produce byte-exact
+I420 output.
+
+**Compression-efficiency impact:** none; the strict Stage 4a curve remains
+`-8.585847331540%` PSNR BD-rate versus pinned libvpx v1.14.1.
+
+**Speed impact:** two saturated-host alternating four-thread series improve
+paired wall time by `5.350%` and `4.731%`, and total child CPU by `2.239%`
+and `2.607%`.
+
+**Future plan:** wire the producer at the actual partition/chroma-RD use site
+when that consumer lands. Do not restore an unconditional frame-level pass.

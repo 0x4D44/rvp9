@@ -2007,15 +2007,11 @@ impl StreamEncoder {
             self.pre_analysis
                 .compute_skin_map(y_tight, u_tight, v_tight);
         }
-        // W2.6(vpxenc parity, A4 P6): per-SB color-sensitivity flags
-        // (libvpx `chroma_check` at `vp9_encodeframe.c:1173-1207`).
-        // Updates `pre_analysis.color_sensitivity_sb[]`. Same RT gate
-        // and Last_Source dependency as W2.2/W2.3; the call is safe
-        // unconditionally (no-op when Last_Source is None).
-        if self.pre_analysis.compute_source_sad_onepass {
-            self.pre_analysis
-                .compute_color_sensitivity_frame(y_tight, u_tight, v_tight);
-        }
+        // W2.6 color-sensitivity remains a tested scaffold until an
+        // encoder path consumes it. Libvpx computes `chroma_check` at
+        // its variance-partition / chroma-RD use site; running rvp9's
+        // batch producer here would repeat three full-SB pixel passes
+        // and then discard every result.
 
         // Lever-3b / 3D content-discriminator measurement (env-gated).
         // Dumps candidate FRAME-LEVEL content signals computed purely
@@ -5481,6 +5477,46 @@ mod tests {
         ] {
             assert!(StreamEncoder::new_with_parallelism(cfg, parallelism).is_err());
         }
+    }
+
+    /// Unit 142 — the color-sensitivity producer remains available for
+    /// its future consumer, but realtime stream encoding must not pay for
+    /// the unused batch pass.
+    #[test]
+    fn unused_color_sensitivity_prepass_stays_cold() {
+        const W: usize = 64;
+        const H: usize = 64;
+        let y = vec![128u8; W * H];
+        let mut u = vec![0u8; (W / 2) * (H / 2)];
+        let mut v = vec![0u8; u.len()];
+        for (index, sample) in u.iter_mut().enumerate() {
+            *sample = if index.is_multiple_of(2) { 0 } else { 255 };
+        }
+        for (index, sample) in v.iter_mut().enumerate() {
+            *sample = if index.is_multiple_of(2) { 255 } else { 0 };
+        }
+
+        let mut control = crate::pre_analysis::PreAnalysisState::new(W as u32, H as u32);
+        control.capture_last_source(&y);
+        control.compute_color_sensitivity_frame(&y, &u, &v);
+        assert_eq!(
+            control.color_sensitivity_sb,
+            vec![[true, true]],
+            "fixture must exercise the removed producer"
+        );
+
+        let mut encoder = StreamEncoder::new(baseline_config()).unwrap();
+        let _ = encoder
+            .encode_frame(&yuv_view(&y, &u, &v, W))
+            .expect("encode keyframe");
+        let _ = encoder
+            .encode_frame(&yuv_view(&y, &u, &v, W))
+            .expect("encode inter frame");
+        assert_eq!(
+            encoder.pre_analysis.color_sensitivity_sb,
+            vec![[false, false]],
+            "unused color-sensitivity batch pass must stay dormant"
+        );
     }
 
     /// Build a strided YUV view over tight-stride backing buffers.
