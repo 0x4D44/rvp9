@@ -3340,6 +3340,7 @@ impl StreamEncoder {
             /* frame_context_idx = */
             0,
             log2_tile_cols,
+            self.parallelism.max_threads,
         )?;
 
         // W0.5(vpxenc parity, A2 P0 / A1 P5): with `refresh_frame_
@@ -3799,6 +3800,7 @@ impl StreamEncoder {
             /* frame_context_idx = */
             1,
             log2_tile_cols,
+            self.parallelism.max_threads,
         )?;
 
         // W-ALTREF — the ARF emits `refresh_frame_context = true`
@@ -4862,6 +4864,11 @@ fn build_inter_packet_with_residuals(
     // Product callers remain at zero until the mode-decision and
     // reconstruction loop applies the same tile-edge semantics.
     log2_tile_cols: u8,
+    // Tile arithmetic writers are independent after the compressed header
+    // fixes the frame context. Cap their worker count at the configured
+    // encoder parallelism so packet assembly shares the product thread
+    // contract used by mode decision.
+    max_threads: u32,
 ) -> Result<Vec<u8>, EncodeError> {
     use rvp9_core::bitstream::SegmentationWriteParams;
     let mi_rows = height / 8;
@@ -5063,10 +5070,10 @@ fn build_inter_packet_with_residuals(
     };
     compressed_buf.truncate(compressed_len);
 
-    // F10.1c — sized generously (per-pixel × 4) since real residuals
-    // can dominate the bit budget at higher Q indices.
-    let mut tile_bufs = Vec::with_capacity(tile_cols);
-    for tile_col in 0..tile_cols {
+    let collect_counts = counts.is_some();
+    let tile_fc: &FrameContext = decoder_fc;
+    let tx_mode = target.tx_mode;
+    let encode_tile = |tile_col: usize| -> Result<(Vec<u8>, Option<FrameCounts>), EncodeError> {
         let bounds = tile_bounds(
             mi_rows as usize,
             mi_cols as usize,
@@ -5075,17 +5082,21 @@ fn build_inter_packet_with_residuals(
             0,
             tile_col as u32,
         );
+        // F10.1c — sized generously (per-pixel × 4) since real
+        // residuals can dominate the bit budget at higher Q indices.
         let mut tile_buf = vec![0u8; (mi_rows as usize) * (mi_cols as usize) * 64 + 16 * 1024];
+        let mut tile_counts = collect_counts.then(FrameCounts::default);
         let tile_len = {
             let mut bw = BoolWriter::start_encode(&mut tile_buf);
             let mut coef_ctx = TileCoefCtx::new(bounds.mi_col_end - bounds.mi_col_start);
-            // P0b — use `decoder_fc` (the actual FC after compressed-header
-            // diff-updates) rather than `post_fc` (the target).
+            // P0b — use `decoder_fc` (the actual FC after
+            // compressed-header diff-updates) rather than `post_fc`
+            // (the target).
             write_tile_inter(
                 &mut bw,
-                decoder_fc,
+                tile_fc,
                 &params,
-                target.tx_mode,
+                tx_mode,
                 &mi_grid,
                 mi_rows,
                 mi_cols,
@@ -5094,13 +5105,51 @@ fn build_inter_packet_with_residuals(
                 prev_mv_grid,
                 &mut coef_ctx,
                 coef_source,
-                counts.as_deref_mut(),
+                tile_counts.as_mut(),
             )?;
             bw.stop_encode()
                 .map_err(|_| EncodeError::Bitstream(BitstreamError::CompressedHeaderTooLarge))?
         };
         tile_buf.truncate(tile_len);
-        tile_bufs.push(tile_buf);
+        Ok((tile_buf, tile_counts))
+    };
+
+    // Bit-accounting diagnostics are thread-local and intentionally observe
+    // the caller thread. Keep that opt-in path serial; production encoding
+    // runs independent tile arithmetic writers concurrently.
+    let run_parallel = tile_cols > 1 && max_threads > 1 && !rvp9_core::entropy::bitacct::enabled();
+    let mut tile_bufs = Vec::with_capacity(tile_cols);
+    if run_parallel {
+        let worker_count = usize::min(max_threads as usize, tile_cols);
+        std::thread::scope(|scope| -> Result<(), EncodeError> {
+            for batch_start in (0..tile_cols).step_by(worker_count) {
+                let batch_end = usize::min(batch_start + worker_count, tile_cols);
+                let mut handles = Vec::with_capacity(batch_end - batch_start);
+                let encode_tile = &encode_tile;
+                for tile_col in batch_start..batch_end {
+                    handles.push(scope.spawn(move || encode_tile(tile_col)));
+                }
+                // Join and merge in tile-column order so FrameCounts and
+                // output assembly remain deterministic across thread counts.
+                for handle in handles {
+                    let (tile_buf, tile_counts) =
+                        handle.join().expect("inter tile writer worker panicked")?;
+                    if let (Some(dst), Some(src)) = (counts.as_deref_mut(), tile_counts.as_ref()) {
+                        dst.add(src);
+                    }
+                    tile_bufs.push(tile_buf);
+                }
+            }
+            Ok(())
+        })?;
+    } else {
+        for tile_col in 0..tile_cols {
+            let (tile_buf, tile_counts) = encode_tile(tile_col)?;
+            if let (Some(dst), Some(src)) = (counts.as_deref_mut(), tile_counts.as_ref()) {
+                dst.add(src);
+            }
+            tile_bufs.push(tile_buf);
+        }
     }
     let tile_refs: Vec<&[u8]> = tile_bufs.iter().map(Vec::as_slice).collect();
     let tile_buf = write_tile_buffers(&tile_refs, tile_cols as u32, 1)?;
@@ -6507,6 +6556,7 @@ mod tests {
             &mut decoder_fc,
             0,
             1,
+            4,
         )
         .expect("two-tile inter packet");
 

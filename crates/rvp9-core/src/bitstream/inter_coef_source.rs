@@ -34,7 +34,7 @@ use crate::transforms::TxSize;
 /// the `eob` for one transform block. The writer iterates planes 0/1/2
 /// and TX positions inside each plane; the implementation is queried
 /// once per TX block.
-pub trait InterCoefSource {
+pub trait InterCoefSource: Sync {
     /// Coefficients and `eob` for one transform block.
     ///
     /// - `mi_row`, `mi_col`: tile-absolute 8×8 mi-units of the leaf's
