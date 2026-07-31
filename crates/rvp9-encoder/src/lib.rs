@@ -2555,6 +2555,10 @@ fn inter_rd_calibration_for_mode(
     }
 }
 
+fn newmv_diff_bias_for_mode(rc_mode: crate::rate_control::RcMode, env_enabled: bool) -> bool {
+    env_enabled && matches!(rc_mode, crate::rate_control::RcMode::Cbr)
+}
+
 fn full_pixel_search_method_for_mode(
     speed: i32,
     deadline: rvp9_core::mode_decision::speed_features::Deadline,
@@ -3332,7 +3336,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         env_flag_default("RVP9_A4_DESCENT_CB_FILTER", rt_large_recovery);
     let rt_skip_integer_mv_filter_search =
         env_flag_default("RVP9_RT_SKIP_INTMV_FILTER_SEARCH", rt_large_recovery);
-    let newmv_diff_bias_enabled = env_flag_default("RVP9_NEWMV_DIFF_BIAS", true);
+    let newmv_diff_bias_enabled =
+        newmv_diff_bias_for_mode(rc_mode, env_flag_default("RVP9_NEWMV_DIFF_BIAS", true));
     // Large-frame recovery: skip the A4 descent's 16x16 picker layer.
     // This removes the dominant 720p timing work while leaving the
     // small-frame quality gates untouched. `=0` restores the full descent.
@@ -8544,6 +8549,15 @@ mod tests {
             inter_rd_calibration_for_mode(RcMode::Cbr, 7, Deadline::Realtime),
             InterRdCalibration::default()
         );
+    }
+
+    #[test]
+    fn newmv_diff_bias_matches_libvpx_cbr_caller_gate() {
+        assert!(newmv_diff_bias_for_mode(RcMode::Cbr, true));
+        assert!(!newmv_diff_bias_for_mode(RcMode::Vbr, true));
+        assert!(!newmv_diff_bias_for_mode(RcMode::Cq, true));
+        assert!(!newmv_diff_bias_for_mode(RcMode::Q, true));
+        assert!(!newmv_diff_bias_for_mode(RcMode::Cbr, false));
     }
 
     #[test]
