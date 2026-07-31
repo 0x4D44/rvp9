@@ -24,6 +24,33 @@ Each entry:
 
 ## Entries
 
+### 2026-07-31 — Reuse product-picker model SSE
+**Where:** `rvp9-core::mode_decision::inter::evaluate_candidate_for_filter_with_pred`;
+libvpx counterpart: `vp9/encoder/vp9_pickmode.c::model_rd_for_sb_y`.
+**What libvpx does:** returns source/prediction SSE from model-RD and carries
+that result into the realtime picker.
+**What rvp9 does:** likewise reuses `ModelRdYOutput::sse_y` as pixel
+distortion when its product Hadamard-only calibration leaves reconstruction
+equal to prediction. The compatibility calibration still scans the
+post-inverse-transform reconstruction.
+**Why:** the old product path scanned the complete source/prediction block a
+second time even though model-RD had already produced the exact reduction.
+**Byte-parity impact:** none. A focused oracle compares direct SSE, model
+SSE, and surfaced candidate distortion for 8x8 through 64x64 blocks. The
+120-frame product stream remained byte-identical and all three decoders
+produced identical I420 output.
+**Compression-efficiency impact:** none because the reused value is exact
+and every emitted byte is unchanged.
+**Speed impact:** two independent sixteen-pair one-thread trials improved
+paired wall time by `-6.478%` and `-9.656%`; child CPU improved `-6.818%`
+and `-8.620%`, with every pair winning. Two twenty-pair four-thread trials
+improved paired wall time by `-4.051%` and `-3.599%`; child CPU improved
+`-6.598%` and `-5.710%`. The second-scan evaluator loop accounted for 460
+self samples before the change and is absent afterward.
+**Future plan:** retain while the direct/model equality oracle and exact
+stream stay green. Keep the compatibility scan until that path stops
+reconstructing pixels.
+
 ### 2026-07-31 — Exact eight-lane AArch64 16-tap loop filter
 **Where:** `rvp9-core::dsp::aarch64::lpf16_neon`; libvpx counterparts:
 `vpx_dsp/arm/loopfilter_neon.c` and

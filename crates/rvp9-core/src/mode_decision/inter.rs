@@ -3248,14 +3248,22 @@ fn evaluate_candidate_for_filter_with_pred(
     // cost, so even with a q-cap the encoder runs 10x the target
     // bitrate AND still can't make MC stick). Reverted. Notes in
     // the 2026-05-22 A9 entry of `notes/divergence-ledger.md`.
-    let sse = sse_block(
-        params.src_plane,
-        params.src_offset,
-        recon_pixels,
-        bw,
-        bw,
-        bh,
-    );
+    // Hadamard-only picking leaves `recon_pixels` equal to `pred`, and
+    // model-RD has already reduced that complete source/pred block into
+    // `mrd.sse_y`. The compatibility path reconstructs pixels, so it still
+    // needs the post-reconstruction scan.
+    let sse = if hadamard_only {
+        u64::from(mrd.sse_y)
+    } else {
+        sse_block(
+            params.src_plane,
+            params.src_offset,
+            recon_pixels,
+            bw,
+            bw,
+            bh,
+        )
+    };
     let dist = sse.min(u32::MAX as u64) as u32;
     // A0 diagnostic 2: dump full 16-pixel sample comparison for an
     // arbitrary leaf when RVP9_DIAG_EVAL_FULL is set.
@@ -4848,6 +4856,89 @@ mod tests {
             assert_eq!(first.dct_eob_total, 0);
             assert!(first.coef_rate > 0);
             assert!(first.coef_dist >= 0);
+        }
+    }
+
+    #[test]
+    fn hadamard_only_candidate_reuses_exact_model_sse_for_each_block_size() {
+        let pw = 64;
+        let ph = 64;
+        let src_data = make_plane(pw, ph, 17);
+        let ref_data = make_plane(pw, ph, 91);
+        let src_plane = PlaneRef {
+            data: &src_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let ref_plane = PlaneRef {
+            data: &ref_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let harness = TestHarness::new(pw, 50);
+        let mvc = MvCandidates::default();
+        let mut calibration = InterRdCalibration::off();
+        calibration.hadamard_only = true;
+
+        for block_size in [
+            BlockSize::Block8x8,
+            BlockSize::Block16x16,
+            BlockSize::Block32x32,
+            BlockSize::Block64x64,
+        ] {
+            let offset = if block_size == BlockSize::Block64x64 {
+                (0, 0)
+            } else {
+                (16, 16)
+            };
+            let base = make_params(
+                &harness,
+                block_size,
+                &src_plane,
+                &ref_plane,
+                offset,
+                &mvc,
+                MvLimits::new(-32, 32, -32, 32),
+                50,
+            );
+            let params = InterModeSearchParams {
+                rd_calibration: calibration,
+                ..base
+            };
+            let bw = usize::from(block_size.width());
+            let bh = usize::from(block_size.height());
+            let mut pred = [0u8; 64 * 64];
+            build_inter_prediction(
+                crate::dsp::get_ref(),
+                &ref_plane,
+                offset.0,
+                offset.1,
+                Mv::ZERO,
+                bw,
+                bh,
+                &mut pred,
+                bw,
+                InterpFilter::EightTap,
+            );
+            let direct_sse = sse_block(&src_plane, offset, &pred, bw, bw, bh);
+            let lambda = compute_rd_mult(50, frame_type_for_rd(params.frame_kind));
+            let result = evaluate_candidate_for_filter(
+                &params,
+                InterMode::ZeroMv,
+                Mv::ZERO,
+                Mv::ZERO,
+                lambda,
+                InterpFilter::EightTap,
+            );
+
+            assert_eq!(u64::from(result.sse_y), direct_sse, "{block_size:?}");
+            assert_eq!(
+                u64::from(result.best_distortion),
+                direct_sse,
+                "{block_size:?}"
+            );
         }
     }
 
