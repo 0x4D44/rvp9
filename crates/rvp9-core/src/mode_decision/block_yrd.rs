@@ -253,6 +253,18 @@ pub(crate) fn block_error_fp_i32(coeff: &[i32], dqcoeff: &[i16]) -> i64 {
     error
 }
 
+/// Coefficient error for an already-narrowed 8-bit VP9 transform.
+#[must_use]
+pub(crate) fn block_error_fp_i16(coeff: &[i16], dqcoeff: &[i16]) -> i64 {
+    debug_assert_eq!(coeff.len(), dqcoeff.len());
+    let mut error: i64 = 0;
+    for (&c, &dq) in coeff.iter().zip(dqcoeff.iter()) {
+        let diff = i32::from(c) - i32::from(dq);
+        error += i64::from(diff) * i64::from(diff);
+    }
+    error
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -261,6 +273,17 @@ mod tests {
     /// filled with zero. Convenience for the small-block unit tests.
     fn zero_tile(n: usize) -> (Vec<i32>, Vec<i16>, Vec<i16>) {
         (vec![0i32; n], vec![0i16; n], vec![0i16; n])
+    }
+
+    #[test]
+    fn narrowed_block_error_matches_widened_oracle() {
+        let coeff = [i16::MIN, -20_000, -1, 0, 1, 20_000, i16::MAX];
+        let dqcoeff = [i16::MAX, -19_999, 1, 0, -1, 19_999, i16::MIN];
+        let widened: Vec<i32> = coeff.iter().map(|&value| i32::from(value)).collect();
+        assert_eq!(
+            block_error_fp_i16(&coeff, &dqcoeff),
+            block_error_fp_i32(&widened, &dqcoeff)
+        );
     }
 
     /// All-zero residual: every tile has `eob == 0`. The libvpx code

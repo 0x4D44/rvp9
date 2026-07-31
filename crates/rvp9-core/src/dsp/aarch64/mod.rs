@@ -16,7 +16,10 @@ pub mod variance_neon;
 
 pub use convolve8_neon::{convolve8_horiz_neon, convolve8_neon, convolve8_vert_neon};
 pub use int_pro_neon::vpx_int_pro_row_neon;
-pub use quantize_neon::{vp9_quantize_b_neon, vp9_quantize_fp_32x32_neon, vp9_quantize_fp_neon};
+pub use quantize_neon::{
+    vp9_quantize_b_neon, vp9_quantize_fp_32x32_i16_neon, vp9_quantize_fp_32x32_neon,
+    vp9_quantize_fp_i16_neon, vp9_quantize_fp_neon,
+};
 pub use sad_neon::{
     vpx_sad4x4_neon, vpx_sad4x8_neon, vpx_sad8x4_neon, vpx_sad8x8_neon, vpx_sad8x16_neon,
     vpx_sad16x8_neon, vpx_sad16x16_neon, vpx_sad16x32_neon, vpx_sad32x16_neon, vpx_sad32x32_neon,

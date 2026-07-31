@@ -166,6 +166,149 @@ pub fn vp9_quantize_fp_neon(
 #[inline]
 #[target_feature(enable = "neon")]
 #[allow(clippy::too_many_arguments)]
+unsafe fn quantize_i16_8(
+    coeff: *const i16,
+    qcoeff: *mut i16,
+    dqcoeff: *mut i16,
+    iscan: *const i16,
+    round_lo: int32x4_t,
+    round_hi: int32x4_t,
+    quant_lo: int32x4_t,
+    quant_hi: int32x4_t,
+    dequant: int16x8_t,
+    eob_max: &mut int16x8_t,
+) {
+    let coeff = vld1q_s16(coeff);
+    let coeff_lo = vmovl_s16(vget_low_s16(coeff));
+    let coeff_hi = vmovl_s16(vget_high_s16(coeff));
+    let sign_lo = vshrq_n_s32::<31>(coeff_lo);
+    let sign_hi = vshrq_n_s32::<31>(coeff_hi);
+    let max = vdupq_n_s32(i16::MAX as i32);
+
+    let rounded_lo = vminq_s32(vaddq_s32(vabsq_s32(coeff_lo), round_lo), max);
+    let rounded_hi = vminq_s32(vaddq_s32(vabsq_s32(coeff_hi), round_hi), max);
+    let abs_q_lo = vshrq_n_s32::<16>(vmulq_s32(rounded_lo, quant_lo));
+    let abs_q_hi = vshrq_n_s32::<16>(vmulq_s32(rounded_hi, quant_hi));
+    let signed_lo = vsubq_s32(veorq_s32(abs_q_lo, sign_lo), sign_lo);
+    let signed_hi = vsubq_s32(veorq_s32(abs_q_hi, sign_hi), sign_hi);
+    let q = vcombine_s16(vmovn_s32(signed_lo), vmovn_s32(signed_hi));
+    vst1q_s16(qcoeff, q);
+
+    let dq_lo = vmull_s16(vget_low_s16(q), vget_low_s16(dequant));
+    let dq_hi = vmull_s16(vget_high_s16(q), vget_high_s16(dequant));
+    vst1q_s16(dqcoeff, vcombine_s16(vmovn_s32(dq_lo), vmovn_s32(dq_hi)));
+
+    let nonzero = vmvnq_u16(vceqq_s16(q, vdupq_n_s16(0)));
+    let eob = vbslq_s16(nonzero, vld1q_s16(iscan), vdupq_n_s16(0));
+    *eob_max = vmaxq_s16(*eob_max, eob);
+}
+
+#[target_feature(enable = "neon")]
+#[allow(clippy::too_many_arguments)]
+unsafe fn vp9_quantize_fp_i16_neon_inner(
+    coeff: *const i16,
+    n_coeffs: usize,
+    round: &[i16; 2],
+    quant: &[i16; 2],
+    qcoeff: *mut i16,
+    dqcoeff: *mut i16,
+    dequant: &[i16; 2],
+    iscan: *const i16,
+) -> u16 {
+    let dc_ac_i32 = |values: &[i16; 2]| {
+        vld1q_s32(
+            [
+                i32::from(values[0]),
+                i32::from(values[1]),
+                i32::from(values[1]),
+                i32::from(values[1]),
+            ]
+            .as_ptr(),
+        )
+    };
+    let ac_i32 = |value: i16| vdupq_n_s32(i32::from(value));
+    let dequant_dc_ac = vld1q_s16(
+        [
+            dequant[0], dequant[1], dequant[1], dequant[1], dequant[1], dequant[1], dequant[1],
+            dequant[1],
+        ]
+        .as_ptr(),
+    );
+    let dequant_ac = vdupq_n_s16(dequant[1]);
+    let mut eob_max = vdupq_n_s16(0);
+
+    quantize_i16_8(
+        coeff,
+        qcoeff,
+        dqcoeff,
+        iscan,
+        dc_ac_i32(round),
+        ac_i32(round[1]),
+        dc_ac_i32(quant),
+        ac_i32(quant[1]),
+        dequant_dc_ac,
+        &mut eob_max,
+    );
+    let round_ac = ac_i32(round[1]);
+    let quant_ac = ac_i32(quant[1]);
+    let mut i = 8;
+    while i < n_coeffs {
+        quantize_i16_8(
+            coeff.add(i),
+            qcoeff.add(i),
+            dqcoeff.add(i),
+            iscan.add(i),
+            round_ac,
+            round_ac,
+            quant_ac,
+            quant_ac,
+            dequant_ac,
+            &mut eob_max,
+        );
+        i += 8;
+    }
+
+    vmaxvq_s16(eob_max) as u16
+}
+
+/// Quantize 64 or 256 already-narrowed Hadamard coefficients.
+#[allow(clippy::too_many_arguments)]
+pub fn vp9_quantize_fp_i16_neon(
+    coeff: &[i16],
+    n_coeffs: usize,
+    round: &[i16; 2],
+    quant: &[i16; 2],
+    qcoeff: &mut [i16],
+    dqcoeff: &mut [i16],
+    dequant: &[i16; 2],
+    iscan: &[i16],
+) -> u16 {
+    assert!(matches!(n_coeffs, 64 | 256));
+    assert!(coeff.len() >= n_coeffs);
+    assert!(qcoeff.len() >= n_coeffs);
+    assert!(dqcoeff.len() >= n_coeffs);
+    assert!(iscan.len() >= n_coeffs);
+
+    // SAFETY: NEON is mandatory on AArch64. The slice assertions prove
+    // every eight-lane load and store; coefficients widen to i32 before
+    // absolute value, preserving the i16::MIN behavior of the i32 oracle.
+    unsafe {
+        vp9_quantize_fp_i16_neon_inner(
+            coeff.as_ptr(),
+            n_coeffs,
+            round,
+            quant,
+            qcoeff.as_mut_ptr(),
+            dqcoeff.as_mut_ptr(),
+            dequant,
+            iscan.as_ptr(),
+        )
+    }
+}
+
+#[inline]
+#[target_feature(enable = "neon")]
+#[allow(clippy::too_many_arguments)]
 unsafe fn quantize_fp_32x32_8(
     coeff: *const i32,
     qcoeff: *mut i16,
@@ -319,6 +462,166 @@ pub fn vp9_quantize_fp_32x32_neon(
     // i16-bounded, so all widened arithmetic remains within i32.
     unsafe {
         vp9_quantize_fp_32x32_neon_inner(
+            coeff.as_ptr(),
+            round,
+            quant,
+            qcoeff.as_mut_ptr(),
+            dqcoeff.as_mut_ptr(),
+            dequant,
+            iscan.as_ptr(),
+        )
+    }
+}
+
+#[inline]
+#[target_feature(enable = "neon")]
+#[allow(clippy::too_many_arguments)]
+unsafe fn quantize_fp_32x32_i16_8(
+    coeff: *const i16,
+    qcoeff: *mut i16,
+    dqcoeff: *mut i16,
+    iscan: *const i16,
+    round_lo: int32x4_t,
+    round_hi: int32x4_t,
+    quant_lo: int32x4_t,
+    quant_hi: int32x4_t,
+    dequant_lo: int32x4_t,
+    dequant_hi: int32x4_t,
+    gate_lo: int32x4_t,
+    gate_hi: int32x4_t,
+    eob_max: &mut int16x8_t,
+) {
+    let coeff = vld1q_s16(coeff);
+    let coeff_lo = vmovl_s16(vget_low_s16(coeff));
+    let coeff_hi = vmovl_s16(vget_high_s16(coeff));
+    let sign_lo = vshrq_n_s32::<31>(coeff_lo);
+    let sign_hi = vshrq_n_s32::<31>(coeff_hi);
+    let abs_lo = vabsq_s32(coeff_lo);
+    let abs_hi = vabsq_s32(coeff_hi);
+    let keep_lo = vcgeq_s32(abs_lo, gate_lo);
+    let keep_hi = vcgeq_s32(abs_hi, gate_hi);
+    let max = vdupq_n_s32(i16::MAX as i32);
+
+    let rounded_lo = vminq_s32(vaddq_s32(abs_lo, round_lo), max);
+    let rounded_hi = vminq_s32(vaddq_s32(abs_hi, round_hi), max);
+    let abs_q_lo = vshrq_n_s32::<15>(vmulq_s32(rounded_lo, quant_lo));
+    let abs_q_hi = vshrq_n_s32::<15>(vmulq_s32(rounded_hi, quant_hi));
+    let signed_lo = vandq_s32(
+        vsubq_s32(veorq_s32(abs_q_lo, sign_lo), sign_lo),
+        vreinterpretq_s32_u32(keep_lo),
+    );
+    let signed_hi = vandq_s32(
+        vsubq_s32(veorq_s32(abs_q_hi, sign_hi), sign_hi),
+        vreinterpretq_s32_u32(keep_hi),
+    );
+    let q = vcombine_s16(vmovn_s32(signed_lo), vmovn_s32(signed_hi));
+    vst1q_s16(qcoeff, q);
+
+    let dq_lo = vmulq_s32(signed_lo, dequant_lo);
+    let dq_hi = vmulq_s32(signed_hi, dequant_hi);
+    let negative_lo = vreinterpretq_s32_u32(vshrq_n_u32::<31>(vreinterpretq_u32_s32(dq_lo)));
+    let negative_hi = vreinterpretq_s32_u32(vshrq_n_u32::<31>(vreinterpretq_u32_s32(dq_hi)));
+    let dq_lo = vshrq_n_s32::<1>(vaddq_s32(dq_lo, negative_lo));
+    let dq_hi = vshrq_n_s32::<1>(vaddq_s32(dq_hi, negative_hi));
+    vst1q_s16(dqcoeff, vcombine_s16(vmovn_s32(dq_lo), vmovn_s32(dq_hi)));
+
+    let nonzero = vmvnq_u16(vceqq_s16(q, vdupq_n_s16(0)));
+    let eob = vbslq_s16(nonzero, vld1q_s16(iscan), vdupq_n_s16(0));
+    *eob_max = vmaxq_s16(*eob_max, eob);
+}
+
+#[target_feature(enable = "neon")]
+#[allow(clippy::too_many_arguments)]
+unsafe fn vp9_quantize_fp_32x32_i16_neon_inner(
+    coeff: *const i16,
+    round: &[i16; 2],
+    quant: &[i16; 2],
+    qcoeff: *mut i16,
+    dqcoeff: *mut i16,
+    dequant: &[i16; 2],
+    iscan: *const i16,
+) -> u16 {
+    let dc_ac = |values: &[i16; 2]| {
+        vld1q_s32(
+            [
+                i32::from(values[0]),
+                i32::from(values[1]),
+                i32::from(values[1]),
+                i32::from(values[1]),
+            ]
+            .as_ptr(),
+        )
+    };
+    let ac = |value: i16| vdupq_n_s32(i32::from(value));
+    let round_dc_ac = vshrq_n_s32::<1>(vaddq_s32(dc_ac(round), vdupq_n_s32(1)));
+    let round_ac = vdupq_n_s32((i32::from(round[1]) + 1) >> 1);
+    let quant_dc_ac = dc_ac(quant);
+    let quant_ac = ac(quant[1]);
+    let dequant_dc_ac = dc_ac(dequant);
+    let dequant_ac = ac(dequant[1]);
+    let gate_dc_ac = vshrq_n_s32::<2>(dequant_dc_ac);
+    let gate_ac = vdupq_n_s32(i32::from(dequant[1]) >> 2);
+    let mut eob_max = vdupq_n_s16(0);
+
+    quantize_fp_32x32_i16_8(
+        coeff,
+        qcoeff,
+        dqcoeff,
+        iscan,
+        round_dc_ac,
+        round_ac,
+        quant_dc_ac,
+        quant_ac,
+        dequant_dc_ac,
+        dequant_ac,
+        gate_dc_ac,
+        gate_ac,
+        &mut eob_max,
+    );
+    let mut i = 8;
+    while i < 1024 {
+        quantize_fp_32x32_i16_8(
+            coeff.add(i),
+            qcoeff.add(i),
+            dqcoeff.add(i),
+            iscan.add(i),
+            round_ac,
+            round_ac,
+            quant_ac,
+            quant_ac,
+            dequant_ac,
+            dequant_ac,
+            gate_ac,
+            gate_ac,
+            &mut eob_max,
+        );
+        i += 8;
+    }
+
+    vmaxvq_s16(eob_max) as u16
+}
+
+/// Quantize already-narrowed 32x32 Hadamard coefficients.
+#[allow(clippy::too_many_arguments)]
+pub fn vp9_quantize_fp_32x32_i16_neon(
+    coeff: &[i16],
+    round: &[i16; 2],
+    quant: &[i16; 2],
+    qcoeff: &mut [i16],
+    dqcoeff: &mut [i16],
+    dequant: &[i16; 2],
+    iscan: &[i16],
+) -> u16 {
+    const N_COEFFS: usize = 1024;
+    assert!(coeff.len() >= N_COEFFS);
+    assert!(qcoeff.len() >= N_COEFFS);
+    assert!(dqcoeff.len() >= N_COEFFS);
+    assert!(iscan.len() >= N_COEFFS);
+
+    // SAFETY: see `vp9_quantize_fp_i16_neon`; the 32x32 arithmetic also
+    // widens each input lane before absolute value and multiplication.
+    unsafe {
+        vp9_quantize_fp_32x32_i16_neon_inner(
             coeff.as_ptr(),
             round,
             quant,
@@ -730,6 +1033,77 @@ mod tests {
         );
         assert_eq!(qcoeff, [0; 1024]);
         assert_eq!(dqcoeff, [0; 1024]);
+    }
+
+    #[test]
+    fn narrowed_hadamard_inputs_match_widened_fast_quantizers() {
+        let mut rng = Lcg32(0x1616_3232);
+        for tx_size in [TxSize::Tx8x8, TxSize::Tx16x16, TxSize::Tx32x32] {
+            let n = tx_size.n_coeffs();
+            let order = scan_for(tx_size, TxType::DctDct);
+            for q_index in [0, 1, 20, 80, 160, 255] {
+                let qp = init_plane_quantizers(q_index, QuantizerDeltas::Y);
+                let mut coeff_i16: Vec<i16> = (0..n).map(|_| rng.coeff() as i16).collect();
+                coeff_i16[0] = i16::MIN;
+                coeff_i16[n / 2] = i16::MAX;
+                let coeff_i32: Vec<i32> = coeff_i16.iter().map(|&value| i32::from(value)).collect();
+                let mut wide_q = vec![7; n];
+                let mut wide_dq = vec![9; n];
+                let mut narrow_q = vec![11; n];
+                let mut narrow_dq = vec![13; n];
+
+                let wide_eob = if tx_size == TxSize::Tx32x32 {
+                    vp9_quantize_fp_32x32_neon(
+                        &coeff_i32,
+                        false,
+                        &qp.round_fp,
+                        &qp.quant_fp,
+                        &mut wide_q,
+                        &mut wide_dq,
+                        &qp.dequant,
+                        order.iscan,
+                    )
+                } else {
+                    vp9_quantize_fp_neon(
+                        &coeff_i32,
+                        n,
+                        false,
+                        &qp.round_fp,
+                        &qp.quant_fp,
+                        &mut wide_q,
+                        &mut wide_dq,
+                        &qp.dequant,
+                        order.iscan,
+                    )
+                };
+                let narrow_eob = if tx_size == TxSize::Tx32x32 {
+                    vp9_quantize_fp_32x32_i16_neon(
+                        &coeff_i16,
+                        &qp.round_fp,
+                        &qp.quant_fp,
+                        &mut narrow_q,
+                        &mut narrow_dq,
+                        &qp.dequant,
+                        order.iscan,
+                    )
+                } else {
+                    vp9_quantize_fp_i16_neon(
+                        &coeff_i16,
+                        n,
+                        &qp.round_fp,
+                        &qp.quant_fp,
+                        &mut narrow_q,
+                        &mut narrow_dq,
+                        &qp.dequant,
+                        order.iscan,
+                    )
+                };
+
+                assert_eq!(narrow_eob, wide_eob, "{tx_size:?}/q{q_index}");
+                assert_eq!(narrow_q, wide_q, "{tx_size:?}/q{q_index}");
+                assert_eq!(narrow_dq, wide_dq, "{tx_size:?}/q{q_index}");
+            }
+        }
     }
 
     #[test]

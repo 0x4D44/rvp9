@@ -2762,3 +2762,39 @@ twenty wins.
 **Future plan:** retain the reload-based kernel while it remains byte-exact.
 Only adopt libvpx's rolling transpose state if a direct product comparison
 shows an additional reproducible improvement worth the extra live state.
+
+### 2026-07-31 — Hadamard picker quantization accepts narrowed coefficients
+
+**Where:** `rvp9_core::dsp::aarch64::quantize_neon::{
+vp9_quantize_fp_i16_neon,vp9_quantize_fp_32x32_i16_neon}`, used only by
+`mode_decision::inter::reconstruct_via_round_trip`'s Hadamard metrics.
+
+**What libvpx does:** the 8-bit encoder keeps Hadamard `tran_low_t`
+coefficients in i16 and feeds them directly to its NEON fast quantizer.
+
+**What rvp9 does:** the general transform API remains i32, but the
+Hadamard-only picker now retains its native i16 coefficients through the
+quantizer boundary. Each eight-lane load widens to i32 registers before
+absolute value and multiplication, preserving rvp9's exact handling of
+`i16::MIN`. The coefficient-error reduction also widens directly from i16.
+
+**Why:** the previous picker copied 64, 256, or 1,024 coefficients into a
+separate i32 array for every filter candidate, even though the source
+Hadamard and quantized/dequantized outputs are all i16.
+
+**Byte-parity impact:** none. Differential tests cover all realtime
+transform sizes, six q indices, random full-i16 coefficients, `i16::MIN`,
+`i16::MAX`, qcoeff, dqcoeff, EOB, and coefficient error. The product stream
+and all three decoders' output remain byte-identical.
+
+**Compression-efficiency impact:** none; the production stream is unchanged.
+
+**Speed impact:** sixteen one-thread pairs improved child CPU by `-0.252%`
+with thirteen wins. Twenty four-thread pairs improved child CPU by `-0.214%`
+with thirteen wins. This small reproducible improvement is also the measured
+prerequisite for fusing the picker-only SATD and coefficient-error reductions
+into the quantizer.
+
+**Future plan:** keep this narrowed boundary only if the follow-up fused
+metrics kernel produces a material aggregate gain. The general transform and
+emit quantizer APIs remain widened.
