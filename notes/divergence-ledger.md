@@ -24,6 +24,33 @@ Each entry:
 
 ## Entries
 
+### 2026-07-31 — Full-width Hadamard dequant multiply
+**Where:** `rvp9-core::dsp::aarch64::quantize_neon::quantize_i16_8`;
+libvpx counterpart: `vp9/encoder/arm/neon/vp9_quantize_neon.c`.
+**What libvpx does:** produces eight quantized/dequantized coefficients per
+NEON group for realtime Hadamard rate-distortion metrics.
+**What rvp9 does:** computes the observable low 16 bits of all eight
+`qcoeff * dequant` products with one `vmulq_s16`, then widens the result for
+its fused distortion accumulator.
+**Why:** the prior two four-lane widening multiplies were narrowed
+immediately. The scalar contract casts the product to `i16`, making the
+single full-width low-half multiply exactly equivalent.
+**Byte-parity impact:** none. Random, zero, DC-only, final-scan, and signed
+extreme coefficients across every realtime transform size and qindex match
+the widened quantizer oracle. The product stream remained byte-identical.
+**Compression-efficiency impact:** none because quantized values and fused
+metrics are unchanged.
+**Speed impact:** machine code replaces two `mul.4h` instructions per eight
+coefficients with one `mul.8h`. Two one-thread trials improved paired child
+CPU by `-0.886%` and `-1.697%`; a four-thread trial improved child CPU by
+`-0.369%`. Wall results were `-0.673%`, `-0.484%`, and `+0.148%`
+respectively under external host load averaging above 40, so the retained
+claim is the reproducible instruction/child-CPU reduction, not a resolved
+wall-time win.
+**Future plan:** retain while the exact metrics oracle stays green. Recheck
+wall impact in the next uncontended cumulative baseline; revert if that
+baseline finds a repeatable regression.
+
 ### 2026-07-31 — Reuse product-picker model SSE
 **Where:** `rvp9-core::mode_decision::inter::evaluate_candidate_for_filter_with_pred`;
 libvpx counterpart: `vp9/encoder/vp9_pickmode.c::model_rd_for_sb_y`.

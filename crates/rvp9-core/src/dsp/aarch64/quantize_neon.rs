@@ -268,9 +268,9 @@ unsafe fn quantize_i16_8(
     let signed_hi = vsubq_s32(veorq_s32(abs_q_hi, sign_hi), sign_hi);
     let q = vcombine_s16(vmovn_s32(signed_lo), vmovn_s32(signed_hi));
 
-    let dq_lo = vmull_s16(vget_low_s16(q), vget_low_s16(dequant));
-    let dq_hi = vmull_s16(vget_high_s16(q), vget_high_s16(dequant));
-    let dq = vcombine_s16(vmovn_s32(dq_lo), vmovn_s32(dq_hi));
+    // The scalar result casts `q * dequant` back to i16, so only the low
+    // product half is observable. Multiply all eight lanes directly.
+    let dq = vmulq_s16(q, dequant);
     metrics.add(coeff_lo, coeff_hi, q, dq, iscan);
 }
 
