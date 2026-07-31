@@ -1,20 +1,22 @@
-# libvpx commit: 12f3a2ac603e8f10742105519e0cd03c3b8f71dd (v1.14.1)
-# Realtime variance-tree capture oracle.
-#
-# Adds output-only instrumentation to choose_partitioning. Set
-# VPX_VBP_ORACLE_OUT to a sidecar path to capture one JSONL record for every
-# inter superblock that reaches the full variance-tree path. With the variable
-# unset, the patched encoder is behavior-identical to stock.
-#
-# Each record contains the materialized source and selected predictor, exact
-# thresholds and control flags, raw Var accumulators plus derived variances for
-# vt/vt2, force bits, and the final parent symbols and ordered leaves.
-#
-# Applying:
-#   cd third_party/libvpx
-#   git apply ../libvpx-patches/vbp_oracle.patch
+// libvpx commit: 12f3a2ac603e8f10742105519e0cd03c3b8f71dd (v1.14.1)
+// Realtime variance-tree and partition-history capture oracle.
+//
+// Adds output-only instrumentation to choose_partitioning. Set
+// VPX_VBP_ORACLE_OUT to a sidecar path to capture one JSONL record for every
+// inter superblock, including the low-source-SAD copy, low selected-SAD
+// 64x64, and low-LAST-SAD copy exits. With the variable unset, the patched
+// encoder is behavior-identical to stock.
+//
+// Full-tree records contain materialized source/predictor bytes, thresholds,
+// raw accumulators, variances, force bits, and the final coding-order tree.
+// Every record also carries the per-SB partition history before and after the
+// decision so rvp9 can replay the bounded copy state machine exactly.
+//
+// Applying:
+//   cd third_party/libvpx
+//   git apply ../libvpx-patches/vbp_oracle.patch
 diff --git a/vp9/encoder/vp9_encodeframe.c b/vp9/encoder/vp9_encodeframe.c
-index e8f29d5d2..cefcba370 100644
+index e8f29d5d2..f9ec7993a 100644
 --- a/vp9/encoder/vp9_encodeframe.c
 +++ b/vp9/encoder/vp9_encodeframe.c
 @@ -12,6 +12,7 @@
@@ -25,7 +27,7 @@ index e8f29d5d2..cefcba370 100644
  
  #include "./vp9_rtcd.h"
  #include "./vpx_dsp_rtcd.h"
-@@ -469,6 +470,129 @@ static void fill_variance_tree(void *data, BLOCK_SIZE bsize) {
+@@ -469,6 +470,188 @@ static void fill_variance_tree(void *data, BLOCK_SIZE bsize) {
                    &node.part_variances->none);
  }
  
@@ -152,10 +154,69 @@ index e8f29d5d2..cefcba370 100644
 +  fputc(']', file);
 +}
 +
++static void vbp_oracle_write_history_record(
++    VP9_COMP *cpi, MACROBLOCK *x, int mi_row, int mi_col, int segment_id,
++    int sb_offset, int previous_segment_before, int copied_before,
++    const char *early_exit) {
++  const VP9_COMMON *cm = &cpi->common;
++  FILE *oracle = vbp_oracle_file();
++  VbpOracleTree partition_trace;
++  int index;
++  int first;
++  int previous_segment_after = 0;
++  int copied_after = 0;
++  if (oracle == NULL) return;
++  if (cpi->sf.copy_partition_flag && cpi->prev_partition != NULL) {
++    previous_segment_after = cpi->prev_segment_id[sb_offset];
++    copied_after = cpi->copied_frame_cnt[sb_offset];
++  }
++
++  memset(&partition_trace, 0, sizeof(partition_trace));
++  vbp_oracle_collect_tree(cm, mi_row, mi_col, 0, 0, BLOCK_64X64,
++                          &partition_trace);
++  fprintf(oracle,
++          "{\"kind\":\"history\",\"early_exit\":\"%s\","
++          "\"frame\":%d,\"mi_row\":%d,\"mi_col\":%d,"
++          "\"frames_since_key\":%d,\"segment_id\":%d,"
++          "\"previous_segment_before\":%d,\"previous_segment_after\":%d,"
++          "\"copied_before\":%d,\"copied_after\":%d,"
++          "\"max_copied_frame\":%d,\"variance_low\":[",
++          early_exit, cm->current_video_frame, mi_row, mi_col,
++          cpi->rc.frames_since_key, segment_id, previous_segment_before,
++          previous_segment_after, copied_before, copied_after,
++          cpi->max_copied_frame);
++  for (index = 0; index < 25; ++index)
++    fprintf(oracle, "%s%d", index == 0 ? "" : ",", x->variance_low[index]);
++  fputs("],\"history_variance_low\":[", oracle);
++  for (index = 0; index < 25; ++index)
++    fprintf(oracle, "%s%d", index == 0 ? "" : ",",
++            cpi->prev_variance_low != NULL
++                ? cpi->prev_variance_low[sb_offset * 25 + index]
++                : 0);
++
++  fputs("],\"nodes\":[", oracle);
++  first = 1;
++  for (index = 0; index < partition_trace.node_count; ++index) {
++    const VbpOracleNode *node = &partition_trace.nodes[index];
++    fprintf(oracle, "%s[%d,%d,%d,%d]", first ? "" : ",", node->row,
++            node->col, (int)node->parent, (int)node->partition);
++    first = 0;
++  }
++  fputs("],\"leaves\":[", oracle);
++  first = 1;
++  for (index = 0; index < partition_trace.leaf_count; ++index) {
++    const VbpOracleLeaf *leaf = &partition_trace.leaves[index];
++    fprintf(oracle, "%s[%d,%d,%d]", first ? "" : ",", leaf->row, leaf->col,
++            (int)leaf->bsize);
++    first = 0;
++  }
++  fputs("]}\n", oracle);
++}
++
  static int set_vt_partitioning(VP9_COMP *cpi, MACROBLOCK *const x,
                                 MACROBLOCKD *const xd, void *data,
                                 BLOCK_SIZE bsize, int mi_row, int mi_col,
-@@ -1313,7 +1437,10 @@ static int choose_partitioning(VP9_COMP *cpi, const TileInfo *const tile,
+@@ -1313,8 +1496,13 @@ static int choose_partitioning(VP9_COMP *cpi, const TileInfo *const tile,
    const int use_4x4_partition = frame_is_intra_only(cm);
    const int low_res = (cm->width <= 352 && cm->height <= 288);
    int variance4x4downsample[16];
@@ -164,9 +225,21 @@ index e8f29d5d2..cefcba370 100644
    int segment_id;
 +  int vbp_q = cm->base_qindex;
    int sb_offset = (cm->mi_stride >> 3) * (mi_row >> 3) + (mi_col >> 3);
++  int oracle_previous_segment_before = 0;
++  int oracle_copied_before = 0;
  
    // For SVC: check if LAST frame is NULL or if the resolution of LAST is
-@@ -1337,6 +1464,7 @@ static int choose_partitioning(VP9_COMP *cpi, const TileInfo *const tile,
+   // different than the current frame resolution, and if so, treat this frame
+@@ -1332,11 +1520,15 @@ static int choose_partitioning(VP9_COMP *cpi, const TileInfo *const tile,
+   set_offsets(cpi, tile, x, mi_row, mi_col, BLOCK_64X64);
+   set_segment_index(cpi, x, mi_row, mi_col, BLOCK_64X64, 0);
+   segment_id = xd->mi[0]->segment_id;
+-
++  if (cpi->sf.copy_partition_flag && cpi->prev_partition != NULL) {
++    oracle_previous_segment_before = cpi->prev_segment_id[sb_offset];
++    oracle_copied_before = cpi->copied_frame_cnt[sb_offset];
++  }
+   if (cpi->oxcf.speed >= 8 || (cpi->use_svc && cpi->svc.non_reference_frame))
      compute_minmax_variance = 0;
  
    memset(x->variance_low, 0, sizeof(x->variance_low));
@@ -174,7 +247,21 @@ index e8f29d5d2..cefcba370 100644
  
    if (cpi->sf.use_source_sad && !is_key_frame) {
      int sb_offset2 = ((cm->mi_cols + 7) >> 3) * (mi_row >> 3) + (mi_col >> 3);
-@@ -1377,9 +1505,9 @@ static int choose_partitioning(VP9_COMP *cpi, const TileInfo *const tile,
+@@ -1367,19 +1559,22 @@ static int choose_partitioning(VP9_COMP *cpi, const TileInfo *const tile,
+         !force_64_split &&
+         copy_partitioning(cpi, x, xd, mi_row, mi_col, segment_id, sb_offset)) {
+       x->sb_use_mv_part = 1;
++      vbp_oracle_write_history_record(
++          cpi, x, mi_row, mi_col, segment_id, sb_offset,
++          oracle_previous_segment_before, oracle_copied_before,
++          "low_source_sad_copy");
+       if (cpi->sf.svc_use_lowres_part &&
+           cpi->svc.spatial_layer_id == cpi->svc.number_spatial_layers - 2)
+         update_partition_svc(cpi, BLOCK_64X64, mi_row, mi_col);
+       return 0;
+     }
+   }
+-
    if (cpi->oxcf.aq_mode == CYCLIC_REFRESH_AQ && cm->seg.enabled &&
        cyclic_refresh_segment_id_boosted(segment_id)) {
 -    int q = vp9_get_qindex(&cm->seg, segment_id, cm->base_qindex);
@@ -187,7 +274,29 @@ index e8f29d5d2..cefcba370 100644
    }
    // Decrease 32x32 split threshold for screen on base layer, for scene
    // change/high motion frames.
-@@ -1602,6 +1730,7 @@ static int choose_partitioning(VP9_COMP *cpi, const TileInfo *const tile,
+@@ -1521,6 +1716,10 @@ static int choose_partitioning(VP9_COMP *cpi, const TileInfo *const tile,
+         if (cpi->sf.copy_partition_flag) {
+           update_prev_partition(cpi, x, segment_id, mi_row, mi_col, sb_offset);
+         }
++        vbp_oracle_write_history_record(
++            cpi, x, mi_row, mi_col, segment_id, sb_offset,
++            oracle_previous_segment_before, oracle_copied_before,
++            "low_selected_sad_64x64");
+         return 0;
+       }
+     }
+@@ -1531,6 +1730,10 @@ static int choose_partitioning(VP9_COMP *cpi, const TileInfo *const tile,
+     // TODO(jianj) : tune the threshold.
+     if (cpi->sf.copy_partition_flag && y_sad_last < cpi->vbp_threshold_copy &&
+         copy_partitioning(cpi, x, xd, mi_row, mi_col, segment_id, sb_offset)) {
++      vbp_oracle_write_history_record(
++          cpi, x, mi_row, mi_col, segment_id, sb_offset,
++          oracle_previous_segment_before, oracle_copied_before,
++          "low_last_sad_copy");
+       chroma_check(cpi, x, bsize, y_sad, is_key_frame, scene_change_detected);
+       if (cpi->sf.svc_use_lowres_part &&
+           cpi->svc.spatial_layer_id == cpi->svc.number_spatial_layers - 2)
+@@ -1602,6 +1805,7 @@ static int choose_partitioning(VP9_COMP *cpi, const TileInfo *const tile,
                                            xd->cur_buf->flags,
  #endif
                                            pixels_wide, pixels_high);
@@ -195,7 +304,7 @@ index e8f29d5d2..cefcba370 100644
            int thresh_minmax = (int)cpi->vbp_threshold_minmax;
            if (x->content_state_sb == kVeryHighSad)
              thresh_minmax = thresh_minmax << 1;
-@@ -1678,6 +1807,7 @@ static int choose_partitioning(VP9_COMP *cpi, const TileInfo *const tile,
+@@ -1678,6 +1882,7 @@ static int choose_partitioning(VP9_COMP *cpi, const TileInfo *const tile,
      }
    }
    if (!force_split[0]) {
@@ -203,7 +312,7 @@ index e8f29d5d2..cefcba370 100644
      fill_variance_tree(&vt, BLOCK_64X64);
      get_variance(&vt.part_variances.none);
      // If variance of this 64x64 block is above (some threshold of) the average
-@@ -1761,6 +1891,121 @@ static int choose_partitioning(VP9_COMP *cpi, const TileInfo *const tile,
+@@ -1761,6 +1966,146 @@ static int choose_partitioning(VP9_COMP *cpi, const TileInfo *const tile,
    }
  
    chroma_check(cpi, x, bsize, y_sad, is_key_frame, scene_change_detected);
@@ -220,7 +329,7 @@ index e8f29d5d2..cefcba370 100644
 +                              &partition_trace);
 +
 +      fprintf(oracle,
-+              "{\"frame\":%d,\"mi_row\":%d,\"mi_col\":%d,"
++              "{\"kind\":\"tree\",\"frame\":%d,\"mi_row\":%d,\"mi_col\":%d,"
 +              "\"visible_width\":%d,\"visible_height\":%d,"
 +              "\"frame_width\":%d,\"frame_height\":%d,"
 +              "\"frame_height_le_360\":%s,\"low_resolution\":%s,"
@@ -233,7 +342,12 @@ index e8f29d5d2..cefcba370 100644
 +              "\"noise_level\":%d,"
 +              "\"content_state\":%d,\"source_sad\":%u,"
 +              "\"zero_temp_sad_source\":%s,\"partition_ref\":%d,"
-+              "\"partition_mv_row\":%d,\"partition_mv_col\":%d,",
++              "\"partition_mv_row\":%d,\"partition_mv_col\":%d,"
++              "\"frames_since_key\":%d,\"segment_id\":%d,"
++              "\"previous_segment_before\":%d,"
++              "\"previous_segment_after\":%d,"
++              "\"copied_before\":%d,\"copied_after\":%d,"
++              "\"max_copied_frame\":%d,",
 +              cm->current_video_frame, mi_row, mi_col, pixels_wide, pixels_high,
 +              cm->width, cm->height,
 +              cm->height <= 360 ? "true" : "false",
@@ -251,7 +365,17 @@ index e8f29d5d2..cefcba370 100644
 +              cpi->noise_estimate.enabled ? "true" : "false",
 +              (int)noise_level, content_state, y_sad,
 +              x->zero_temp_sad_source ? "true" : "false",
-+              (int)ref_frame_partition, x->sb_mvrow_part, x->sb_mvcol_part);
++              (int)ref_frame_partition, x->sb_mvrow_part, x->sb_mvcol_part,
++              cpi->rc.frames_since_key, segment_id,
++              oracle_previous_segment_before,
++              cpi->sf.copy_partition_flag && cpi->prev_partition != NULL
++                  ? cpi->prev_segment_id[sb_offset]
++                  : 0,
++              oracle_copied_before,
++              cpi->sf.copy_partition_flag && cpi->prev_partition != NULL
++                  ? cpi->copied_frame_cnt[sb_offset]
++                  : 0,
++              cpi->max_copied_frame);
 +
 +      fputs("\"source\":\"", oracle);
 +      for (row = 0; row < 64; ++row)
@@ -262,7 +386,17 @@ index e8f29d5d2..cefcba370 100644
 +        for (col = 0; col < 64; ++col)
 +          fprintf(oracle, "%02x", d[row * dp + col]);
 +
-+      fputs("\",\"force_split\":[", oracle);
++      fputs("\",\"variance_low\":[", oracle);
++      for (index = 0; index < 25; ++index)
++        fprintf(oracle, "%s%d", index == 0 ? "" : ",",
++                x->variance_low[index]);
++      fputs("],\"history_variance_low\":[", oracle);
++      for (index = 0; index < 25; ++index)
++        fprintf(oracle, "%s%d", index == 0 ? "" : ",",
++                cpi->prev_variance_low != NULL
++                    ? cpi->prev_variance_low[sb_offset * 25 + index]
++                    : 0);
++      fputs("],\"force_split\":[", oracle);
 +      for (index = 0; index < 21; ++index)
 +        fprintf(oracle, "%s%d", index == 0 ? "" : ",", force_split[index]);
 +      fputs("],\"used_4x4_averages\":[", oracle);

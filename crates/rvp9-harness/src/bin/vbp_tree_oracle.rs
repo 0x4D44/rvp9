@@ -5,14 +5,16 @@
 //! mismatch identifies tree arithmetic or control-flow drift rather than
 //! divergent reconstructed references.
 
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 
 use rvp9_core::mode_decision::inter::{ContentStateSb, NoiseEstimate, NoiseLevel};
 use rvp9_core::mode_decision::partition::{
-    Cpu7InterVbpThresholdInput, FixedTreeAccumulatorTrace, FixedTreeInterInput,
-    FixedTreeNodeAccumulatorTrace, FixedTreePartitionSymbol, FixedTreeVarianceTrace,
+    Cpu7InterVbpThresholdInput, FixedTreeAccumulatorTrace, FixedTreeCopyConditions,
+    FixedTreeHistoryEntry, FixedTreeInterInput, FixedTreeNodeAccumulatorTrace,
+    FixedTreePartitionSymbol, FixedTreePartitionTrace, FixedTreeVarianceTrace, PartitionDecision,
     choose_fixed_tree_inter, cpu7_inter_vbp_thresholds,
 };
 use serde::Deserialize;
@@ -41,8 +43,14 @@ struct OracleRecord {
     noise_estimate_enabled: bool,
     noise_level: u8,
     content_state: u8,
+    segment_id: u8,
+    previous_segment_before: u8,
+    previous_segment_after: u8,
+    copied_before: u8,
+    copied_after: u8,
     source: String,
     predictor: String,
+    history_variance_low: Vec<u8>,
     force_split: Vec<u8>,
     used_4x4_averages: Vec<u8>,
     minmax_16x16: Vec<i32>,
@@ -51,6 +59,32 @@ struct OracleRecord {
     alternate_4x4_variances: Vec<Option<OraclePartitionVariance>>,
     nodes: Vec<[i32; 4]>,
     leaves: Vec<[i32; 3]>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OracleHistoryRecord {
+    early_exit: String,
+    frame: u64,
+    mi_row: usize,
+    mi_col: usize,
+    frames_since_key: u32,
+    segment_id: u8,
+    previous_segment_before: u8,
+    previous_segment_after: u8,
+    copied_before: u8,
+    copied_after: u8,
+    max_copied_frame: u8,
+    variance_low: Vec<u8>,
+    history_variance_low: Vec<u8>,
+    nodes: Vec<[i32; 4]>,
+    leaves: Vec<[i32; 3]>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum OracleLine {
+    Tree(Box<OracleRecord>),
+    History(OracleHistoryRecord),
 }
 
 fn decode_hex_4096(value: &str) -> Result<Vec<u8>, String> {
@@ -153,7 +187,7 @@ fn symbol_number(symbol: FixedTreePartitionSymbol) -> i32 {
     }
 }
 
-fn compare_record(record: &OracleRecord) -> Result<(), String> {
+fn compare_record(record: &OracleRecord) -> Result<FixedTreePartitionTrace, String> {
     if record.force_split.len() != 21
         || record.variance_valid.len() != 21
         || record.variances.len() != 21
@@ -264,18 +298,7 @@ fn compare_record(record: &OracleRecord) -> Result<(), String> {
         }
     }
 
-    let actual_nodes: Vec<[i32; 4]> = actual
-        .nodes
-        .iter()
-        .map(|node| {
-            [
-                node.row_8x8 as i32,
-                node.col_8x8 as i32,
-                node.parent_size as i32,
-                symbol_number(node.symbol),
-            ]
-        })
-        .collect();
+    let actual_nodes = numeric_nodes(&actual.nodes);
     if actual_nodes != record.nodes {
         return Err(format!(
             "parent symbols differ: expected {:?}, got {:?}",
@@ -283,17 +306,7 @@ fn compare_record(record: &OracleRecord) -> Result<(), String> {
         ));
     }
 
-    let actual_leaves: Vec<[i32; 3]> = actual
-        .leaves
-        .iter()
-        .map(|leaf| {
-            [
-                leaf.row_8x8 as i32,
-                leaf.col_8x8 as i32,
-                leaf.block_size as i32,
-            ]
-        })
-        .collect();
+    let actual_leaves = numeric_leaves(&actual.leaves);
     if actual_leaves != record.leaves {
         return Err(format!(
             "ordered leaves differ: expected {:?}, got {:?}",
@@ -303,26 +316,188 @@ fn compare_record(record: &OracleRecord) -> Result<(), String> {
     if !actual.decision.is_valid_partition() {
         return Err("rvp9 returned an invalid partition tree".into());
     }
+    Ok(actual)
+}
+
+fn bool_array_25(values: &[u8], label: &str) -> Result<[bool; 25], String> {
+    if values.len() != 25 || values.iter().any(|&value| value > 1) {
+        return Err(format!("{label}: expected 25 zero/one entries"));
+    }
+    let mut result = [false; 25];
+    for (index, &value) in values.iter().enumerate() {
+        result[index] = value != 0;
+    }
+    Ok(result)
+}
+
+fn numeric_nodes(
+    nodes: &[rvp9_core::mode_decision::partition::FixedTreeNodeDecision],
+) -> Vec<[i32; 4]> {
+    nodes
+        .iter()
+        .map(|node| {
+            [
+                node.row_8x8 as i32,
+                node.col_8x8 as i32,
+                node.parent_size as i32,
+                symbol_number(node.symbol),
+            ]
+        })
+        .collect()
+}
+
+fn numeric_leaves(leaves: &[rvp9_core::mode_decision::partition::FixedTreeLeaf]) -> Vec<[i32; 3]> {
+    leaves
+        .iter()
+        .map(|leaf| {
+            [
+                leaf.row_8x8 as i32,
+                leaf.col_8x8 as i32,
+                leaf.block_size as i32,
+            ]
+        })
+        .collect()
+}
+
+fn check_history_before(
+    history: &FixedTreeHistoryEntry,
+    previous_segment: u8,
+    copied_count: u8,
+) -> Result<(), String> {
+    if history.previous_segment_id() != previous_segment {
+        return Err(format!(
+            "previous segment before: expected {previous_segment}, got {}",
+            history.previous_segment_id()
+        ));
+    }
+    if history.copied_frame_count() != copied_count {
+        return Err(format!(
+            "copied count before: expected {copied_count}, got {}",
+            history.copied_frame_count()
+        ));
+    }
     Ok(())
+}
+
+fn check_history_after(
+    history: &FixedTreeHistoryEntry,
+    previous_segment: u8,
+    copied_count: u8,
+) -> Result<(), String> {
+    if history.previous_segment_id() != previous_segment {
+        return Err(format!(
+            "previous segment after: expected {previous_segment}, got {}",
+            history.previous_segment_id()
+        ));
+    }
+    if history.copied_frame_count() != copied_count {
+        return Err(format!(
+            "copied count after: expected {copied_count}, got {}",
+            history.copied_frame_count()
+        ));
+    }
+    Ok(())
+}
+
+fn compare_history_record(
+    record: &OracleHistoryRecord,
+    history: &mut FixedTreeHistoryEntry,
+) -> Result<(), String> {
+    check_history_before(
+        history,
+        record.previous_segment_before,
+        record.copied_before,
+    )?;
+    let history_variance_low = bool_array_25(&record.history_variance_low, "history_variance_low")?;
+    match record.early_exit.as_str() {
+        "low_source_sad_copy" | "low_last_sad_copy" => {
+            let copied = history
+                .try_copy(FixedTreeCopyConditions {
+                    frames_since_key: record.frames_since_key,
+                    segment_id: record.segment_id,
+                    max_copied_frames: record.max_copied_frame,
+                    resize_pending: false,
+                    svc_copy_allowed: true,
+                })
+                .ok_or_else(|| format!("{} was not eligible to copy", record.early_exit))?;
+            if numeric_nodes(&copied.nodes) != record.nodes {
+                return Err(format!("{} parent symbols differ", record.early_exit));
+            }
+            if numeric_leaves(&copied.leaves) != record.leaves {
+                return Err(format!("{} ordered leaves differ", record.early_exit));
+            }
+            let current_variance_low = bool_array_25(&record.variance_low, "variance_low")?;
+            if copied.variance_low != current_variance_low
+                || copied.variance_low != history_variance_low
+            {
+                return Err(format!("{} variance history differs", record.early_exit));
+            }
+        }
+        "low_selected_sad_64x64" => {
+            let expected_nodes = vec![[
+                0,
+                0,
+                rvp9_core::block::BlockSize::Block64x64 as i32,
+                symbol_number(FixedTreePartitionSymbol::None),
+            ]];
+            let expected_leaves = vec![[0, 0, rvp9_core::block::BlockSize::Block64x64 as i32]];
+            if record.nodes != expected_nodes || record.leaves != expected_leaves {
+                return Err("low selected-SAD exit did not select one 64x64 leaf".into());
+            }
+            history.update(
+                PartitionDecision::all_64x64(),
+                record.segment_id,
+                history_variance_low,
+            );
+        }
+        other => return Err(format!("unsupported early exit {other:?}")),
+    }
+    check_history_after(history, record.previous_segment_after, record.copied_after)
 }
 
 fn replay_file(path: &Path) -> Result<usize, Box<dyn std::error::Error>> {
     let reader = BufReader::new(File::open(path)?);
+    let mut histories = HashMap::<(usize, usize), FixedTreeHistoryEntry>::new();
     let mut count = 0usize;
     for (line_index, line) in reader.lines().enumerate() {
         let line = line?;
         if line.trim().is_empty() {
             continue;
         }
-        let record: OracleRecord = serde_json::from_str(&line)?;
-        compare_record(&record).map_err(|message| {
+        let record: OracleLine = serde_json::from_str(&line)?;
+        let result = match &record {
+            OracleLine::Tree(record) => {
+                let history = histories.entry((record.mi_row, record.mi_col)).or_default();
+                check_history_before(
+                    history,
+                    record.previous_segment_before,
+                    record.copied_before,
+                )
+                .and_then(|()| compare_record(record))
+                .and_then(|trace| {
+                    let history_variance_low =
+                        bool_array_25(&record.history_variance_low, "history_variance_low")?;
+                    history.update(trace.decision, record.segment_id, history_variance_low);
+                    check_history_after(history, record.previous_segment_after, record.copied_after)
+                })
+            }
+            OracleLine::History(record) => {
+                let history = histories.entry((record.mi_row, record.mi_col)).or_default();
+                compare_history_record(record, history)
+            }
+        };
+        result.map_err(|message| {
+            let (frame, mi_row, mi_col) = match &record {
+                OracleLine::Tree(record) => (record.frame, record.mi_row, record.mi_col),
+                OracleLine::History(record) => (record.frame, record.mi_row, record.mi_col),
+            };
             format!(
                 "{}:{} frame={} mi=({},{}): {message}",
                 path.display(),
                 line_index + 1,
-                record.frame,
-                record.mi_row,
-                record.mi_col,
+                frame,
+                mi_row,
+                mi_col,
             )
         })?;
         count += 1;
@@ -348,6 +523,38 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 mod tests {
     use super::*;
 
+    fn history_record(
+        early_exit: &str,
+        frame: u64,
+        copied_before: u8,
+        copied_after: u8,
+    ) -> OracleHistoryRecord {
+        let mut variance_low = vec![0; 25];
+        variance_low[0] = 1;
+        OracleHistoryRecord {
+            early_exit: early_exit.into(),
+            frame,
+            mi_row: 0,
+            mi_col: 0,
+            frames_since_key: frame as u32,
+            segment_id: 0,
+            previous_segment_before: 0,
+            previous_segment_after: 0,
+            copied_before,
+            copied_after,
+            max_copied_frame: 2,
+            variance_low: variance_low.clone(),
+            history_variance_low: variance_low,
+            nodes: vec![[
+                0,
+                0,
+                rvp9_core::block::BlockSize::Block64x64 as i32,
+                symbol_number(FixedTreePartitionSymbol::None),
+            ]],
+            leaves: vec![[0, 0, rvp9_core::block::BlockSize::Block64x64 as i32]],
+        }
+    }
+
     #[test]
     fn hex_decoder_accepts_both_cases() {
         let mut encoded = String::with_capacity(8192);
@@ -357,5 +564,20 @@ mod tests {
         assert_eq!(decoded.len(), 4096);
         assert_eq!(decoded[0], 0xaf);
         assert!(decoded[1..].iter().all(|&value| value == 0));
+    }
+
+    #[test]
+    fn history_replay_updates_then_copies_the_pinned_tree() {
+        let mut history = FixedTreeHistoryEntry::default();
+        compare_history_record(
+            &history_record("low_selected_sad_64x64", 1, 0, 0),
+            &mut history,
+        )
+        .expect("selected-SAD exit stores its tree");
+        compare_history_record(
+            &history_record("low_source_sad_copy", 2, 0, 1),
+            &mut history,
+        )
+        .expect("next quiet frame copies the stored tree");
     }
 }
