@@ -210,7 +210,10 @@ pub(crate) fn satd_i16(qcoeff: &[i16]) -> u32 {
     let mut satd: u32 = 0;
     for &q in qcoeff {
         // `i16::abs()` overflows on `i16::MIN`; promote to i32 first.
-        satd = satd.saturating_add(i32::from(q).unsigned_abs());
+        // Even 1,024 `i16::MIN` values sum to only 33,554,432, so the
+        // accumulator cannot overflow. Plain addition lets LLVM vectorize
+        // this coefficient reduction.
+        satd += i32::from(q).unsigned_abs();
     }
     satd
 }
@@ -242,7 +245,10 @@ pub(crate) fn block_error_fp_i32(coeff: &[i32], dqcoeff: &[i16]) -> i64 {
     let mut error: i64 = 0;
     for (&c, &dq) in coeff.iter().zip(dqcoeff.iter()) {
         let diff = c - i32::from(dq);
-        error = error.saturating_add(i64::from(diff) * i64::from(diff));
+        // Valid 8-bit VP9 transform coefficients keep the complete
+        // 1,024-value error sum far below i64::MAX. Avoiding saturating
+        // arithmetic exposes this hot reduction to LLVM's vectorizer.
+        error += i64::from(diff) * i64::from(diff);
     }
     error
 }
@@ -461,5 +467,22 @@ mod tests {
             "single-call rate must match summed-per-tile rate",
         );
         assert_eq!(r_all.coef_dist, sum_dist);
+    }
+
+    #[test]
+    fn satd_full_block_extreme_fits_u32_without_saturation() {
+        let qcoeff = [i16::MIN; 1024];
+        assert_eq!(satd_i16(&qcoeff), 1024 * 32_768);
+    }
+
+    #[test]
+    fn block_error_full_block_i16_domain_fits_i64_without_saturation() {
+        let coeff = [i32::from(i16::MAX); 1024];
+        let dqcoeff = [i16::MIN; 1024];
+        let max_diff = i64::from(u16::MAX);
+        assert_eq!(
+            block_error_fp_i32(&coeff, &dqcoeff),
+            max_diff * max_diff * 1024,
+        );
     }
 }
