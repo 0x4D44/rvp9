@@ -285,27 +285,21 @@ pub fn vp9_quantize_fp_neon(
 unsafe fn quantize_i16_8(
     coeff: *const i16,
     iscan: *const i16,
-    round_lo: int32x4_t,
-    round_hi: int32x4_t,
-    quant_lo: int32x4_t,
-    quant_hi: int32x4_t,
+    round: int16x8_t,
+    quant: int16x8_t,
     dequant: int16x8_t,
     metrics: &mut HadamardMetricAccumulator,
 ) {
     let coeff = vld1q_s16(coeff);
+    let sign = vshrq_n_s16::<15>(coeff);
+    let rounded = vqaddq_s16(vqabsq_s16(coeff), round);
+    // vqdmulh computes floor(rounded * quant / 2^15). Halving that
+    // non-negative result exactly matches floor(rounded * quant / 2^16).
+    let abs_q = vshrq_n_s16::<1>(vqdmulhq_s16(rounded, quant));
+    let q = vsubq_s16(veorq_s16(abs_q, sign), sign);
+
     let coeff_lo = vmovl_s16(vget_low_s16(coeff));
     let coeff_hi = vmovl_s16(vget_high_s16(coeff));
-    let sign_lo = vshrq_n_s32::<31>(coeff_lo);
-    let sign_hi = vshrq_n_s32::<31>(coeff_hi);
-    let max = vdupq_n_s32(i16::MAX as i32);
-
-    let rounded_lo = vminq_s32(vaddq_s32(vabsq_s32(coeff_lo), round_lo), max);
-    let rounded_hi = vminq_s32(vaddq_s32(vabsq_s32(coeff_hi), round_hi), max);
-    let abs_q_lo = vshrq_n_s32::<16>(vmulq_s32(rounded_lo, quant_lo));
-    let abs_q_hi = vshrq_n_s32::<16>(vmulq_s32(rounded_hi, quant_hi));
-    let signed_lo = vsubq_s32(veorq_s32(abs_q_lo, sign_lo), sign_lo);
-    let signed_hi = vsubq_s32(veorq_s32(abs_q_hi, sign_hi), sign_hi);
-    let q = vcombine_s16(vmovn_s32(signed_lo), vmovn_s32(signed_hi));
 
     // The scalar result casts `q * dequant` back to i16, so only the low
     // product half is observable. Multiply all eight lanes directly.
@@ -319,26 +313,15 @@ unsafe fn quantize_i16_8(
 unsafe fn quantize_i16_8_rate(
     coeff: *const i16,
     iscan: *const i16,
-    round_lo: int32x4_t,
-    round_hi: int32x4_t,
-    quant_lo: int32x4_t,
-    quant_hi: int32x4_t,
+    round: int16x8_t,
+    quant: int16x8_t,
     metrics: &mut HadamardRateAccumulator,
 ) {
     let coeff = vld1q_s16(coeff);
-    let coeff_lo = vmovl_s16(vget_low_s16(coeff));
-    let coeff_hi = vmovl_s16(vget_high_s16(coeff));
-    let sign_lo = vshrq_n_s32::<31>(coeff_lo);
-    let sign_hi = vshrq_n_s32::<31>(coeff_hi);
-    let max = vdupq_n_s32(i16::MAX as i32);
-
-    let rounded_lo = vminq_s32(vaddq_s32(vabsq_s32(coeff_lo), round_lo), max);
-    let rounded_hi = vminq_s32(vaddq_s32(vabsq_s32(coeff_hi), round_hi), max);
-    let abs_q_lo = vshrq_n_s32::<16>(vmulq_s32(rounded_lo, quant_lo));
-    let abs_q_hi = vshrq_n_s32::<16>(vmulq_s32(rounded_hi, quant_hi));
-    let signed_lo = vsubq_s32(veorq_s32(abs_q_lo, sign_lo), sign_lo);
-    let signed_hi = vsubq_s32(veorq_s32(abs_q_hi, sign_hi), sign_hi);
-    let q = vcombine_s16(vmovn_s32(signed_lo), vmovn_s32(signed_hi));
+    let sign = vshrq_n_s16::<15>(coeff);
+    let rounded = vqaddq_s16(vqabsq_s16(coeff), round);
+    let abs_q = vshrq_n_s16::<1>(vqdmulhq_s16(rounded, quant));
+    let q = vsubq_s16(veorq_s16(abs_q, sign), sign);
     metrics.add(q, iscan);
 }
 
@@ -352,18 +335,16 @@ unsafe fn vp9_quantize_fp_i16_metrics_neon_inner(
     dequant: &[i16; 2],
     iscan: *const i16,
 ) -> HadamardQuantMetrics {
-    let dc_ac_i32 = |values: &[i16; 2]| {
-        vld1q_s32(
+    let dc_ac_i16 = |values: &[i16; 2]| {
+        vld1q_s16(
             [
-                i32::from(values[0]),
-                i32::from(values[1]),
-                i32::from(values[1]),
-                i32::from(values[1]),
+                values[0], values[1], values[1], values[1], values[1], values[1], values[1],
+                values[1],
             ]
             .as_ptr(),
         )
     };
-    let ac_i32 = |value: i16| vdupq_n_s32(i32::from(value));
+    let ac_i16 = |value: i16| vdupq_n_s16(value);
     let dequant_dc_ac = vld1q_s16(
         [
             dequant[0], dequant[1], dequant[1], dequant[1], dequant[1], dequant[1], dequant[1],
@@ -377,23 +358,19 @@ unsafe fn vp9_quantize_fp_i16_metrics_neon_inner(
     quantize_i16_8(
         coeff,
         iscan,
-        dc_ac_i32(round),
-        ac_i32(round[1]),
-        dc_ac_i32(quant),
-        ac_i32(quant[1]),
+        dc_ac_i16(round),
+        dc_ac_i16(quant),
         dequant_dc_ac,
         &mut metrics,
     );
-    let round_ac = ac_i32(round[1]);
-    let quant_ac = ac_i32(quant[1]);
+    let round_ac = ac_i16(round[1]);
+    let quant_ac = ac_i16(quant[1]);
     let mut i = 8;
     while i < n_coeffs {
         quantize_i16_8(
             coeff.add(i),
             iscan.add(i),
             round_ac,
-            round_ac,
-            quant_ac,
             quant_ac,
             dequant_ac,
             &mut metrics,
@@ -413,42 +390,30 @@ unsafe fn vp9_quantize_fp_i16_rate_metrics_neon_inner(
     quant: &[i16; 2],
     iscan: *const i16,
 ) -> HadamardQuantRateMetrics {
-    let dc_ac_i32 = |values: &[i16; 2]| {
-        vld1q_s32(
+    let dc_ac_i16 = |values: &[i16; 2]| {
+        vld1q_s16(
             [
-                i32::from(values[0]),
-                i32::from(values[1]),
-                i32::from(values[1]),
-                i32::from(values[1]),
+                values[0], values[1], values[1], values[1], values[1], values[1], values[1],
+                values[1],
             ]
             .as_ptr(),
         )
     };
-    let ac_i32 = |value: i16| vdupq_n_s32(i32::from(value));
+    let ac_i16 = |value: i16| vdupq_n_s16(value);
     let mut metrics = HadamardRateAccumulator::new();
 
     quantize_i16_8_rate(
         coeff,
         iscan,
-        dc_ac_i32(round),
-        ac_i32(round[1]),
-        dc_ac_i32(quant),
-        ac_i32(quant[1]),
+        dc_ac_i16(round),
+        dc_ac_i16(quant),
         &mut metrics,
     );
-    let round_ac = ac_i32(round[1]);
-    let quant_ac = ac_i32(quant[1]);
+    let round_ac = ac_i16(round[1]);
+    let quant_ac = ac_i16(quant[1]);
     let mut i = 8;
     while i < n_coeffs {
-        quantize_i16_8_rate(
-            coeff.add(i),
-            iscan.add(i),
-            round_ac,
-            round_ac,
-            quant_ac,
-            quant_ac,
-            &mut metrics,
-        );
+        quantize_i16_8_rate(coeff.add(i), iscan.add(i), round_ac, quant_ac, &mut metrics);
         i += 8;
     }
 
