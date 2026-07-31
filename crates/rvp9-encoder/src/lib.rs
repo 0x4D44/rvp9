@@ -1798,7 +1798,7 @@ fn simulate_dc_intra_encode_partitions_no_zero_with_tiles(
                             // (`source − intra prediction`, before transform/quant).
                             if plane == 0 {
                                 crate::predstat::record_y_residual(
-                                    &residual,
+                                    residual,
                                     tx_side,
                                     plane_tx as usize,
                                 );
@@ -1876,7 +1876,7 @@ fn simulate_dc_intra_encode_partitions_no_zero_with_tiles(
                             let dqcoeff_i16 = &mut dqcoeff_i16[..n];
                             let eob = match plane_tx {
                                 TxSize::Tx32x32 => vp9_quantize_b_32x32_with_order(
-                                    &coefs_i32,
+                                    coefs_i32,
                                     /* skip_block = */ false,
                                     &zbin,
                                     &round,
@@ -1888,7 +1888,7 @@ fn simulate_dc_intra_encode_partitions_no_zero_with_tiles(
                                     &scan,
                                 ),
                                 _ => vp9_quantize_b_with_order(
-                                    &coefs_i32,
+                                    coefs_i32,
                                     n,
                                     /* skip_block = */ false,
                                     &zbin,
@@ -1920,7 +1920,7 @@ fn simulate_dc_intra_encode_partitions_no_zero_with_tiles(
                                 intra_inverse_transform_add(
                                     plane_tx,
                                     tx_type,
-                                    &dq_i32,
+                                    dq_i32,
                                     eob_usize,
                                     &mut recon_plane[dst_off..],
                                     plane_stride,
@@ -8097,11 +8097,31 @@ fn choose_intra_luma_tx_size(
     let mut best_tx = max_tx;
     let mut best_rd = i64::MAX;
 
-    // Per-candidate scratch recon — cloned fresh each candidate so the
-    // causal recon of this leaf doesn't pollute the next candidate's
-    // neighbour reads, and so the committed neighbour pixels (outside the
-    // leaf footprint) are always present.
-    let mut scratch = recon_plane.to_vec();
+    // Per-candidate scratch recon. Intra prediction reads only the leaf plus
+    // its one-pixel causal above/left halo; cloning the entire frame for every
+    // leaf made keyframe TX selection scale with frame area squared. Keep a
+    // compact local plane instead, with the leaf at (1, 1).
+    let leaf_w = plane_bw_4x4 * 4;
+    let leaf_h = plane_bh_4x4 * 4;
+    debug_assert!(plane_px_x + leaf_w <= plane_w);
+    debug_assert!(plane_px_y + leaf_h <= plane_h);
+    let scratch_stride = leaf_w + 1;
+    let scratch_h = leaf_h + 1;
+    let mut scratch = vec![0u8; scratch_stride * scratch_h];
+    if have_above_block {
+        let src_row = (plane_px_y - 1) * plane_stride + plane_px_x;
+        scratch[1..1 + leaf_w].copy_from_slice(&recon_plane[src_row..src_row + leaf_w]);
+    }
+    if have_left_block {
+        let src_col = plane_px_x - 1;
+        for r in 0..leaf_h {
+            scratch[(r + 1) * scratch_stride] =
+                recon_plane[(plane_px_y + r) * plane_stride + src_col];
+        }
+    }
+    if have_above_block && have_left_block {
+        scratch[0] = recon_plane[(plane_px_y - 1) * plane_stride + plane_px_x - 1];
+    }
 
     for n in (0..=(max_tx as usize)).rev() {
         let tx_size = match n {
@@ -8131,10 +8151,11 @@ fn choose_intra_luma_tx_size(
         // Refresh the leaf footprint in the scratch buffer from the
         // committed recon so each candidate starts from the same
         // neighbour state (the prior candidate overwrote the footprint).
-        for r in 0..(plane_bh_4x4 * 4) {
-            let row = (plane_px_y + r) * plane_stride + plane_px_x;
-            scratch[row..row + plane_bw_4x4 * 4]
-                .copy_from_slice(&recon_plane[row..row + plane_bw_4x4 * 4]);
+        for r in 0..leaf_h {
+            let src_row = (plane_px_y + r) * plane_stride + plane_px_x;
+            let dst_row = (r + 1) * scratch_stride + 1;
+            scratch[dst_row..dst_row + leaf_w]
+                .copy_from_slice(&recon_plane[src_row..src_row + leaf_w]);
         }
 
         let mut total_dist: i64 = 0;
@@ -8149,9 +8170,9 @@ fn choose_intra_luma_tx_size(
         while ty4 < plane_bh_4x4 {
             let mut tx4 = 0usize;
             while tx4 < plane_bw_4x4 {
-                let tx_px_x = plane_px_x + tx4 * 4;
-                let tx_px_y = plane_px_y + ty4 * 4;
-                let dst_off = tx_px_y * plane_stride + tx_px_x;
+                let tx_px_x = 1 + tx4 * 4;
+                let tx_px_y = 1 + ty4 * 4;
+                let dst_off = tx_px_y * scratch_stride + tx_px_x;
 
                 // Causal intra prediction into the scratch recon — reads
                 // already-reconstructed sub-blocks of this leaf (and the
@@ -8163,11 +8184,11 @@ fn choose_intra_luma_tx_size(
                 let mut edges = EdgeBuffers::new();
                 build_intra_predictors(
                     &scratch,
-                    plane_stride,
+                    scratch_stride,
                     tx_px_x,
                     tx_px_y,
-                    plane_w,
-                    plane_h,
+                    scratch_stride,
+                    scratch_h,
                     tx_size,
                     intra_mode,
                     have_top,
@@ -8183,7 +8204,7 @@ fn choose_intra_luma_tx_size(
                 intra_predict(
                     intra_mode,
                     &mut scratch[dst_off..],
-                    plane_stride,
+                    scratch_stride,
                     tx_side,
                     pred_ctx,
                     dc_avail,
@@ -8192,10 +8213,11 @@ fn choose_intra_luma_tx_size(
 
                 // Residual = source − prediction.
                 for r in 0..tx_side {
-                    let row = (tx_px_y + r) * plane_stride + tx_px_x;
+                    let src_row = (plane_px_y + ty4 * 4 + r) * plane_stride + plane_px_x + tx4 * 4;
+                    let pred_row = (tx_px_y + r) * scratch_stride + tx_px_x;
                     for c in 0..tx_side {
-                        let s = i16::from(input_plane[row + c]);
-                        let p = i16::from(scratch[row + c]);
+                        let s = i16::from(input_plane[src_row + c]);
+                        let p = i16::from(scratch[pred_row + c]);
                         residual[r * tx_side + c] = s - p;
                     }
                 }
@@ -8238,7 +8260,7 @@ fn choose_intra_luma_tx_size(
                         &dqcoeff_i32,
                         eob,
                         &mut scratch[dst_off..],
-                        plane_stride,
+                        scratch_stride,
                     );
                 }
 
@@ -8870,6 +8892,73 @@ fn intra_inverse_transform_add(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn intra_tx_size_pick_ignores_pixels_outside_causal_leaf_halo() {
+        use rvp9_core::cost::{FrameTypeForRd, coef_cost::build_coef_cost_table};
+        use rvp9_core::quant::forward::{QuantizerDeltas, init_plane_quantizers};
+
+        const W: usize = 128;
+        const H: usize = 128;
+        const X: usize = 64;
+        const Y: usize = 64;
+        const SIDE: usize = 32;
+
+        let input_a: Vec<u8> = (0..W * H)
+            .map(|i| ((i * 29 + i / W * 17 + 31) & 0xff) as u8)
+            .collect();
+        let mut input_b: Vec<u8> = (0..W * H)
+            .map(|i| ((i * 7 + i / W * 43 + 193) & 0xff) as u8)
+            .collect();
+        let recon_a: Vec<u8> = (0..W * H)
+            .map(|i| ((i * 11 + i / W * 23 + 71) & 0xff) as u8)
+            .collect();
+        let mut recon_b: Vec<u8> = (0..W * H)
+            .map(|i| ((i * 47 + i / W * 5 + 13) & 0xff) as u8)
+            .collect();
+
+        // The source footprint and the reconstruction's leaf plus causal
+        // above/left halo are identical. Every other pixel deliberately
+        // differs and must not affect this leaf's transform-size decision.
+        for r in 0..SIDE {
+            let row = (Y + r) * W + X;
+            input_b[row..row + SIDE].copy_from_slice(&input_a[row..row + SIDE]);
+            recon_b[row..row + SIDE].copy_from_slice(&recon_a[row..row + SIDE]);
+            recon_b[(Y + r) * W + X - 1] = recon_a[(Y + r) * W + X - 1];
+        }
+        let above = (Y - 1) * W + X - 1;
+        recon_b[above..above + SIDE + 1].copy_from_slice(&recon_a[above..above + SIDE + 1]);
+        assert_ne!(input_a[0], input_b[0]);
+        assert_ne!(recon_a[0], recon_b[0]);
+
+        let q_index = 80;
+        let quantizer = init_plane_quantizers(q_index, QuantizerDeltas::Y);
+        let coef_costs = build_coef_cost_table(&FrameContext::new_default());
+        let rdmult = i64::from(rvp9_core::cost::compute_rd_mult(
+            q_index,
+            FrameTypeForRd::Key,
+        ));
+        let pick = |input: &[u8], recon: &[u8]| {
+            choose_intra_luma_tx_size(
+                input,
+                recon,
+                W,
+                W,
+                H,
+                X,
+                Y,
+                BlockSize::Block32x32,
+                IntraMode::V,
+                true,
+                true,
+                &quantizer,
+                &coef_costs,
+                rdmult,
+            )
+        };
+
+        assert_eq!(pick(&input_a, &recon_a), pick(&input_b, &recon_b));
+    }
 
     #[test]
     fn descent_pick_cache_covers_complete_superblock_key_space() {
