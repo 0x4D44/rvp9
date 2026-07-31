@@ -24,6 +24,34 @@ Each entry:
 
 ## Entries
 
+### 2026-07-31 — Retain the duplicate picker DCT outside Stage 4a VBR
+**Where:** `rvp9-core::mode_decision::inter::evaluate_candidate_for_filter`
+and `InterRdCalibration`; libvpx counterpart:
+`vp9/encoder/vp9_pickmode.c:block_yrd`.
+**What libvpx does:** realtime candidate RD uses one Hadamard transform,
+`quantize_fp`, its coefficient rate/distortion, and its skippable result.
+The selected leaf is transformed and reconstructed later by the encode path.
+**What rvp9 does:** the Stage 4a realtime VBR calibration now matches that
+single Hadamard pipeline. Other calibration policies still run a second DCT,
+`quantize_b`, inverse DCT, and pixel-SSE pass inside every candidate before
+the selected leaf is transformed again during emit.
+**Why:** removing the duplicate pipeline is a measured Pareto improvement for
+the validated cpu-used 7 VBR path, but CBR and the remaining cpu-used presets
+have not yet passed their feature-specific quality gates. Keeping the old
+path there avoids silently generalising from one configuration.
+**Byte-parity impact:** structural for Stage 4a VBR because the Hadamard
+skippable predicate can differ from the former DCT-EOB predicate. Exercised
+streams remain deterministic and decoder-valid.
+**Compression-efficiency impact:** on the 64-frame fixed-Q Foreman screen,
+inter payload moved `25,166 -> 25,085`, `12,788 -> 12,624`, and
+`5,856 -> 5,770` bits/frame at q80/q120/q160 while PSNR improved by
+`0.05/0.07/0.13 dB`.
+**Speed impact:** on 120 frames of 1280x704 testsrc2, the same policy reduced
+cpu-used 7 CBR diagnostic wall time from `1.90 s` to a `1.82 s` median
+(`4.2%`). The CBR default remains unchanged pending its own quality gate.
+**Future plan:** enable the single Hadamard pipeline for CBR and cpu-used 6/8
+only after their matched product matrices preserve the Pareto frontier.
+
 ### 2026-07-30 — Keep both UV planes in the realtime picker model
 **Where:** `rvp9-core::mode_decision::inter::evaluate_candidate_for_filter`
 and `rvp9-core::mode_decision::model_rd::model_rd_for_sb_uv`; libvpx

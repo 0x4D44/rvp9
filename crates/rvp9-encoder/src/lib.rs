@@ -4352,14 +4352,15 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     // Translate to the descent's PartitionRdCandidate.
                     // `best_rate` is already in `vp9_prob_cost` units
                     // (1/512-bit) — same family as the descent's
-                    // `partition_cost` adds. `best_distortion` is
-                    // pixel-SSE-of-recon — same as the proxy used.
+                    // `partition_cost` adds. The compatibility path carries
+                    // pixel-SSE-of-recon; the Hadamard-only experiment
+                    // carries the picker's coefficient-domain distortion.
                     // `ref_frame` discriminant matches the encoder's
                     // `RefFrame as u8` convention (see proxy site for
                     // the existing encoding).
                     Some(PartitionRdCandidate {
                         rate: result.best_rate,
-                        dist: result.best_distortion,
+                        dist: result.partition_distortion,
                         mv: result.best_mv,
                         mode: result.best_mode as u8,
                         ref_frame: result.picked_ref_frame as u8,
@@ -5301,6 +5302,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                 // internal RD is not surfaced here.
                                 best_rd_cost: 0,
                                 best_distortion: 0,
+                                partition_distortion: 0,
                                 best_rate: 0,
                                 coef_rate: 0,
                                 coef_dist: 0,
@@ -8821,6 +8823,10 @@ mod tests {
             "libvpx block_yrd compares against prediction SSE << 4"
         );
         assert!(active.skip_modecost);
+        assert!(
+            active.hadamard_only,
+            "Stage 4a uses libvpx's single Hadamard block_yrd pipeline"
+        );
         assert_eq!(
             (active.lambda_num, active.lambda_den),
             (3, 2),

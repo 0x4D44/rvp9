@@ -240,6 +240,21 @@ fn s2_acdc_roundtrip_enabled() -> bool {
     })
 }
 
+/// Source-faithful fast path for the realtime picker.
+///
+/// Pinned libvpx's `block_yrd` ranks candidates from Hadamard coefficients
+/// and uses that quantizer's `skippable` result. Rvp9 currently also runs a
+/// DCT, `quantize_b`, inverse DCT, and pixel-SSE pass for every candidate so
+/// its picker can predict the emit-side luma EOB and expose decoded-pixel
+/// distortion. Stage 4a VBR omits that duplicate transform pipeline;
+/// `RVP9_PICKER_HADAMARD_ONLY=0/1` remains a diagnostic override. The emitted
+/// winner still runs the normal DCT/reconstruction path.
+#[inline]
+fn picker_hadamard_only_enabled(calibration: InterRdCalibration) -> bool {
+    std::env::var_os("RVP9_PICKER_HADAMARD_ONLY")
+        .map_or(calibration.hadamard_only, |value| value != "0")
+}
+
 /// LA (Track A6, 2026-05-30) — HF-gated natural-content lambda calibration.
 ///
 /// Default ON (`m = 2` for legacy policies, `m = 1.5` for Stage 4a VBR);
@@ -331,6 +346,8 @@ pub struct InterRdCalibration {
     pub lambda_num: u64,
     /// Natural-content lambda multiplier denominator.
     pub lambda_den: u64,
+    /// Use libvpx's Hadamard-only `block_yrd` candidate pipeline.
+    pub hadamard_only: bool,
 }
 
 impl InterRdCalibration {
@@ -342,6 +359,7 @@ impl InterRdCalibration {
             skip_modecost: false,
             lambda_num: 2,
             lambda_den: 1,
+            hadamard_only: false,
         }
     }
 
@@ -354,6 +372,7 @@ impl InterRdCalibration {
             skip_modecost: true,
             lambda_num: 3,
             lambda_den: 2,
+            hadamard_only: true,
         }
     }
 }
@@ -1339,6 +1358,13 @@ pub struct PickInterModeResult {
     pub best_rd_cost: i64,
     /// Distortion (SSE between source and reconstruction).
     pub best_distortion: u32,
+    /// Distortion consumed by the speculative partition descent.
+    ///
+    /// This normally equals [`Self::best_distortion`]. The diagnostic
+    /// Hadamard-only picker instead carries the coefficient-domain ranking
+    /// distortion so the partition comparison stays in the same domain as
+    /// the candidate comparison without requiring an inverse transform.
+    pub partition_distortion: u32,
     /// Rate cost in `vp9_prob_cost` units.
     pub best_rate: u32,
     /// F.1 — coefficient-bit estimate.
@@ -2240,6 +2266,11 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
                 // the same penalty libvpx applied (vp9_pickmode.c:2406).
                 best_rd_cost: biased_rd_cost,
                 best_distortion: candidate.best_distortion,
+                partition_distortion: if picker_hadamard_only_enabled(params.rd_calibration) {
+                    candidate.ranking_distortion.min(u64::from(u32::MAX)) as u32
+                } else {
+                    candidate.best_distortion
+                },
                 best_rate: candidate.best_rate,
                 coef_rate: candidate.coef_rate,
                 coef_dist: candidate.coef_dist,
@@ -2579,7 +2610,15 @@ fn evaluate_intra_fallback(
                 uv_dc_quant: params.uv_dc_quant,
                 uv_ac_quant: params.uv_ac_quant,
             };
-            reconstruct_via_round_trip(&single_params, &pred, &mut recon, bw, bh, picked_tx_size)
+            reconstruct_via_round_trip(
+                &single_params,
+                &pred,
+                &mut recon,
+                bw,
+                bh,
+                picked_tx_size,
+                true,
+            )
         };
 
         // 4. Distortion = SSE(src, recon).
@@ -2617,6 +2656,7 @@ fn evaluate_intra_fallback(
                 best_mv: Mv::ZERO,
                 best_rd_cost: this_rd,
                 best_distortion: dist,
+                partition_distortion: dist,
                 best_rate: rate,
                 coef_rate: by.coef_rate,
                 coef_dist: by.coef_dist,
@@ -3105,7 +3145,8 @@ fn evaluate_candidate_for_filter(
     // `lib.rs:5263`), so `cross_decoder_gate` stays 4/4 — this only makes
     // the *picker* honest. Speed cost: one DCT+quantize per former-AcDc
     // leaf on the picker hot path; measured against `realtime_gate_720p30`.
-    let by = if mrd.skip_txfm == SkipTxfm::AcDc && !s2_acdc_roundtrip_enabled() {
+    let hadamard_only = picker_hadamard_only_enabled(params.rd_calibration);
+    let by = if mrd.skip_txfm == SkipTxfm::AcDc && !s2_acdc_roundtrip_enabled() && !hadamard_only {
         // A/B only: restore the HEAD AcDc short-circuit (no DCT round-trip,
         // no real eob). Used to isolate the AcDc-option-(i) contribution.
         BlockYrdResult {
@@ -3115,7 +3156,7 @@ fn evaluate_candidate_for_filter(
             dct_eob_total: 0,
         }
     } else {
-        reconstruct_via_round_trip(params, &pred, &mut recon, bw, bh, tx_size)
+        reconstruct_via_round_trip(params, &pred, &mut recon, bw, bh, tx_size, !hadamard_only)
     };
 
     // Distortion = SSE(src, recon). For block sizes ≤ 64×64 the SSE
@@ -3449,7 +3490,12 @@ fn evaluate_candidate_for_filter(
     // residual path honestly.
     // With the gate disabled (A/B), `y_skippable` is forced true so the
     // tie-break alone decides — the HEAD behaviour.
-    let y_skippable = !s2_gate_enabled() || by.dct_eob_total == 0;
+    let y_skippable = !s2_gate_enabled()
+        || if hadamard_only {
+            by.skippable
+        } else {
+            by.dct_eob_total == 0
+        };
 
     // **S3 — RD-domain alignment (`dist → coef_dist`).**
     //
@@ -3714,6 +3760,7 @@ fn reconstruct_via_round_trip(
     bw: usize,
     bh: usize,
     tx_size: TxSize,
+    reconstruct: bool,
 ) -> BlockYrdResult {
     let tx_side = tx_size.side();
     let n = tx_size.n_coeffs();
@@ -3777,66 +3824,67 @@ fn reconstruct_via_round_trip(
                 }
             }
 
-            // 2. Forward DCT — inter blocks always use DCT_DCT
-            //    (libvpx convention; ADST is intra-only).
-            match tx_size {
-                TxSize::Tx8x8 => {
-                    let mut buf = [0i32; 64];
-                    fdct8x8(&residual[..64], &mut buf, tx_side);
-                    coefs[..64].copy_from_slice(&buf);
+            // 2. The compatibility path runs the DCT/quantize pipeline used
+            // to predict the eventual emitted luma EOB. The Hadamard-only
+            // experiment omits it: `block_yrd` below already supplies the
+            // candidate rate, distortion, and skippable result used by
+            // pinned libvpx's realtime picker.
+            let eob = if reconstruct {
+                // Inter blocks always use DCT_DCT (ADST is intra-only).
+                match tx_size {
+                    TxSize::Tx8x8 => {
+                        let mut buf = [0i32; 64];
+                        fdct8x8(&residual[..64], &mut buf, tx_side);
+                        coefs[..64].copy_from_slice(&buf);
+                    }
+                    TxSize::Tx16x16 => {
+                        let mut buf = [0i32; 256];
+                        fdct16x16(&residual[..256], &mut buf, tx_side);
+                        coefs[..256].copy_from_slice(&buf);
+                    }
+                    TxSize::Tx32x32 => {
+                        let mut buf = [0i32; 1024];
+                        fdct32x32(&residual[..1024], &mut buf, tx_side);
+                        coefs[..1024].copy_from_slice(&buf);
+                    }
+                    TxSize::Tx4x4 => {
+                        debug_assert!(false, "F8.1 v1 doesn't support Tx4x4 tiles");
+                        return BlockYrdResult::default();
+                    }
                 }
-                TxSize::Tx16x16 => {
-                    let mut buf = [0i32; 256];
-                    fdct16x16(&residual[..256], &mut buf, tx_side);
-                    coefs[..256].copy_from_slice(&buf);
-                }
-                TxSize::Tx32x32 => {
-                    let mut buf = [0i32; 1024];
-                    fdct32x32(&residual[..1024], &mut buf, tx_side);
-                    coefs[..1024].copy_from_slice(&buf);
-                }
-                TxSize::Tx4x4 => {
-                    // F8.1 v1 doesn't cover sub-8 blocks; would need
-                    // fdct4x4 + idct4x4_16_add. Defer until needed.
-                    debug_assert!(false, "F8.1 v1 doesn't support Tx4x4 tiles");
-                    return BlockYrdResult::default();
-                }
-            }
 
-            // 3. Forward quant.
-            for q in qcoeff[..n].iter_mut() {
-                *q = 0;
-            }
-            for d in dqcoeff[..n].iter_mut() {
-                *d = 0;
-            }
-            let eob = if tx_size == TxSize::Tx32x32 {
-                vp9_quantize_b_32x32(
-                    &coefs[..1024],
-                    false,
-                    &params.quantizer.zbin,
-                    &params.quantizer.round,
-                    &params.quantizer.quant,
-                    &params.quantizer.quant_shift,
-                    &mut qcoeff[..1024],
-                    &mut dqcoeff[..1024],
-                    &dequant_pair,
-                    scan_slice,
-                )
+                qcoeff[..n].fill(0);
+                dqcoeff[..n].fill(0);
+                if tx_size == TxSize::Tx32x32 {
+                    vp9_quantize_b_32x32(
+                        &coefs[..1024],
+                        false,
+                        &params.quantizer.zbin,
+                        &params.quantizer.round,
+                        &params.quantizer.quant,
+                        &params.quantizer.quant_shift,
+                        &mut qcoeff[..1024],
+                        &mut dqcoeff[..1024],
+                        &dequant_pair,
+                        scan_slice,
+                    )
+                } else {
+                    vp9_quantize_b_with_order(
+                        &coefs[..n],
+                        n,
+                        false,
+                        &params.quantizer.zbin,
+                        &params.quantizer.round,
+                        &params.quantizer.quant,
+                        &params.quantizer.quant_shift,
+                        &mut qcoeff[..n],
+                        &mut dqcoeff[..n],
+                        &dequant_pair,
+                        &scan,
+                    )
+                }
             } else {
-                vp9_quantize_b_with_order(
-                    &coefs[..n],
-                    n,
-                    false,
-                    &params.quantizer.zbin,
-                    &params.quantizer.round,
-                    &params.quantizer.quant,
-                    &params.quantizer.quant_shift,
-                    &mut qcoeff[..n],
-                    &mut dqcoeff[..n],
-                    &dequant_pair,
-                    &scan,
-                )
+                0
             };
             // S2 — accumulate the DCT/quant_b reconstruction eob. This
             // mirrors, for Y, the emit's `leaf_total_eob` summation
@@ -3908,7 +3956,7 @@ fn reconstruct_via_round_trip(
             // block. The inverse kernels accept an arbitrary destination
             // stride, so a 32x32 tile inside a 64x64 block does not need a
             // contiguous staging buffer or a copy back into `recon`.
-            if eob > 0 {
+            if reconstruct && eob > 0 {
                 let recon_start = off_y * bw + off_x;
                 match tx_size {
                     TxSize::Tx8x8 => {
@@ -4497,6 +4545,73 @@ mod tests {
             res.best_distortion, 0,
             "zero-MV winner on identical ref should have zero distortion",
         );
+    }
+
+    #[test]
+    fn hadamard_only_picker_omits_duplicate_dct_pipeline() {
+        let pw = 64;
+        let ph = 64;
+        let src_data = make_plane(pw, ph, 17);
+        let ref_data = make_plane(pw, ph, 91);
+        let src_plane = PlaneRef {
+            data: &src_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let ref_plane = PlaneRef {
+            data: &ref_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let harness = TestHarness::new(pw, 50);
+        let mvc = MvCandidates::default();
+        let control = make_params(
+            &harness,
+            BlockSize::Block16x16,
+            &src_plane,
+            &ref_plane,
+            (16, 16),
+            &mvc,
+            MvLimits::new(-32, 32, -32, 32),
+            50,
+        );
+        let mut fast_calibration = InterRdCalibration::off();
+        fast_calibration.hadamard_only = true;
+        let fast = InterModeSearchParams {
+            rd_calibration: fast_calibration,
+            ..control
+        };
+
+        let lambda = compute_rd_mult(50, frame_type_for_rd(control.frame_kind));
+        let control_result = evaluate_candidate_for_filter(
+            &control,
+            InterMode::ZeroMv,
+            Mv::ZERO,
+            Mv::ZERO,
+            lambda,
+            InterpFilter::EightTap,
+        );
+        let fast_result = evaluate_candidate_for_filter(
+            &fast,
+            InterMode::ZeroMv,
+            Mv::ZERO,
+            Mv::ZERO,
+            lambda,
+            InterpFilter::EightTap,
+        );
+
+        assert!(
+            control_result.dct_eob_total > 0,
+            "control must exercise the DCT/quantize path"
+        );
+        assert_eq!(
+            fast_result.dct_eob_total, 0,
+            "Hadamard-only mode must not run the duplicate DCT pipeline"
+        );
+        assert_eq!(fast_result.coef_rate, control_result.coef_rate);
+        assert_eq!(fast_result.coef_dist, control_result.coef_dist);
     }
 
     /// Source block at (20, 20) holds the reference's content
