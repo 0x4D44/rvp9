@@ -10,7 +10,7 @@ pub mod quantize_neon;
 pub mod subpel_variance_neon;
 pub mod variance_neon;
 
-pub use quantize_neon::vp9_quantize_fp_neon;
+pub use quantize_neon::{vp9_quantize_b_neon, vp9_quantize_fp_neon};
 pub use subpel_variance_neon::{
     vpx_sub_pixel_variance16x8_neon, vpx_sub_pixel_variance16x16_neon,
     vpx_sub_pixel_variance16x32_neon, vpx_sub_pixel_variance32x16_neon,

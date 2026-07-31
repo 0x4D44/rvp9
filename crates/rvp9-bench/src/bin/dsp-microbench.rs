@@ -18,6 +18,7 @@
 //!   cargo run -p rvp9-bench --release --bin dsp-microbench -- subpel_variance
 //!   cargo run -p rvp9-bench --release --bin dsp-microbench -- variance
 //!   cargo run -p rvp9-bench --release --bin dsp-microbench -- quantize_fp
+//!   cargo run -p rvp9-bench --release --bin dsp-microbench -- quantize_b
 //!
 //! The optional positional case-selector runs only the named case:
 //!   - (no arg)      → DSP kernel suite (default — scalar vs AVX2).
@@ -365,16 +366,84 @@ fn main() {
         Some("subpel_variance") => run_subpel_variance(),
         Some("variance") => run_variance(),
         Some("quantize_fp") => run_quantize_fp(),
+        Some("quantize_b") => run_quantize_b(),
         Some("vs_libvpx") => run_vs_libvpx(),
         Some(other) => {
             eprintln!(
                 "unknown case '{other}' — valid: bool_reader, subpel_variance, variance, \
-                 quantize_fp, vs_libvpx \
+                 quantize_fp, quantize_b, vs_libvpx \
                  (no arg = DSP suite)"
             );
             std::process::exit(2);
         }
         None => run(),
+    }
+}
+
+/// Production-dispatch ruler for the zbin quantizer.
+fn run_quantize_b() {
+    use rvp9_core::quant::forward::{
+        QuantizerDeltas, init_plane_quantizers, vp9_quantize_b, vp9_quantize_b_with_order,
+    };
+    use rvp9_core::transforms::scans::scan_for;
+    use rvp9_core::transforms::{TxSize, TxType};
+
+    let qp = init_plane_quantizers(120, QuantizerDeltas::Y);
+    let batches = 50;
+
+    println!("== Zbin quantizer ==");
+    for &(tx_size, iters) in &[
+        (TxSize::Tx4x4, 20_000),
+        (TxSize::Tx8x8, 10_000),
+        (TxSize::Tx16x16, 4_000),
+    ] {
+        let n = tx_size.n_coeffs();
+        let order = scan_for(tx_size, TxType::DctDct);
+        let coeff: Vec<i32> = filled(n, 0x2B1A ^ n as u32)
+            .into_iter()
+            .map(|value| i32::from(value) - 128)
+            .collect();
+        let mut scalar_q = vec![0i16; n];
+        let mut scalar_dq = vec![0i16; n];
+        let mut dispatch_q = vec![0i16; n];
+        let mut dispatch_dq = vec![0i16; n];
+
+        let scalar_ns = bench_min_ns(batches, iters, || {
+            black_box(vp9_quantize_b(
+                black_box(&coeff),
+                n,
+                false,
+                &qp.zbin,
+                &qp.round,
+                &qp.quant,
+                &qp.quant_shift,
+                black_box(&mut scalar_q),
+                black_box(&mut scalar_dq),
+                &qp.dequant,
+                order.scan,
+            ));
+        });
+        let dispatch_ns = bench_min_ns(batches, iters, || {
+            black_box(vp9_quantize_b_with_order(
+                black_box(&coeff),
+                n,
+                false,
+                &qp.zbin,
+                &qp.round,
+                &qp.quant,
+                &qp.quant_shift,
+                black_box(&mut dispatch_q),
+                black_box(&mut dispatch_dq),
+                &qp.dequant,
+                &order,
+            ));
+        });
+        println!(
+            "{:>2}x{:<2} scalar {scalar_ns:8.1} ns   dispatch {dispatch_ns:8.1} ns   {:5.2}x",
+            tx_size.side(),
+            tx_size.side(),
+            scalar_ns / dispatch_ns
+        );
     }
 }
 

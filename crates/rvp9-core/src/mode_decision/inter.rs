@@ -117,8 +117,8 @@ use crate::mv_search::sub_pixel::{
     SubPixelSearchParams, adaptive_subpel_force_stop, find_best_sub_pixel_tree,
 };
 use crate::quant::forward::{
-    PlaneQuantizers, scan_for_forward, vp9_quantize_b, vp9_quantize_b_32x32, vp9_quantize_fp_32x32,
-    vp9_quantize_fp_with_order,
+    PlaneQuantizers, scan_for_forward, vp9_quantize_b_32x32, vp9_quantize_b_with_order,
+    vp9_quantize_fp_32x32, vp9_quantize_fp_with_order,
 };
 use crate::transforms::forward::{fdct8x8, fdct16x16, fdct32x32};
 use crate::transforms::inverse::{idct8x8_64_add, idct16x16_256_add, idct32x32_1024_add};
@@ -3824,7 +3824,7 @@ fn reconstruct_via_round_trip(
                     scan_slice,
                 )
             } else {
-                vp9_quantize_b(
+                vp9_quantize_b_with_order(
                     &coefs[..n],
                     n,
                     false,
@@ -3835,7 +3835,7 @@ fn reconstruct_via_round_trip(
                     &mut qcoeff[..n],
                     &mut dqcoeff[..n],
                     &dequant_pair,
-                    scan_slice,
+                    &scan,
                 )
             };
             // S2 — accumulate the DCT/quant_b reconstruction eob. This

@@ -181,6 +181,59 @@ pub fn vp9_quantize_b(
     (eob + 1) as u16
 }
 
+/// Zbin quantizer with a complete scan order.
+///
+/// AArch64 uses the byte-exact NEON raster-order kernel and `iscan` EOB
+/// reduction. Other targets retain [`vp9_quantize_b`].
+#[allow(clippy::too_many_arguments)]
+#[must_use]
+pub fn vp9_quantize_b_with_order(
+    coeff_ptr: &[i32],
+    n_coeffs: usize,
+    skip_block: bool,
+    zbin_ptr: &[i16; 2],
+    round_ptr: &[i16; 2],
+    quant_ptr: &[i16; 2],
+    quant_shift_ptr: &[i16; 2],
+    qcoeff_ptr: &mut [i16],
+    dqcoeff_ptr: &mut [i16],
+    dequant_ptr: &[i16; 2],
+    order: &ScanOrder,
+) -> u16 {
+    #[cfg(target_arch = "aarch64")]
+    {
+        crate::dsp::aarch64::vp9_quantize_b_neon(
+            coeff_ptr,
+            n_coeffs,
+            skip_block,
+            zbin_ptr,
+            round_ptr,
+            quant_ptr,
+            quant_shift_ptr,
+            qcoeff_ptr,
+            dqcoeff_ptr,
+            dequant_ptr,
+            order.iscan,
+        )
+    }
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        vp9_quantize_b(
+            coeff_ptr,
+            n_coeffs,
+            skip_block,
+            zbin_ptr,
+            round_ptr,
+            quant_ptr,
+            quant_shift_ptr,
+            qcoeff_ptr,
+            dqcoeff_ptr,
+            dequant_ptr,
+            order.scan,
+        )
+    }
+}
+
 /// Forward quantizer for 32×32 transform blocks.
 ///
 /// Mirrors libvpx `vpx_quantize_b_32x32_c` (`vpx_dsp/quantize.c:216-275`).
