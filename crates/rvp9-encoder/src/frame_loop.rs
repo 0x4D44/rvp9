@@ -969,9 +969,10 @@ impl From<FrameKind> for RcFrameKind {
 pub struct StreamEncoder {
     config: EncoderConfig,
     parallelism: EncoderParallelism,
-    /// Long-lived workers for the post-reconstruction split-edge loop
-    /// filter. The pool is absent for the single-worker path.
-    lf_worker_pool: Option<rvp9_core::tile_threading::WorkerPool>,
+    /// Long-lived workers shared sequentially by inter tile picking,
+    /// post-reconstruction loop filtering, and final tile writing. The
+    /// pool is absent for the single-worker path.
+    frame_worker_pool: Option<rvp9_core::tile_threading::WorkerPool>,
     rate_control: RateControl,
     frame_idx: u32,
     /// GOP topology — the libvpx-faithful golden-frame-group schedule
@@ -1426,13 +1427,11 @@ impl StreamEncoder {
         let uvw = w / 2;
         let uvh = h / 2;
         let tile_count = 1usize << parallelism.effective_log2_tile_cols(config.width);
-        let lf_worker_count = (parallelism.max_threads as usize)
-            .min(tile_count)
-            .min((h / 64).max(1));
-        let lf_worker_pool = (lf_worker_count >= 2).then(|| {
+        let frame_worker_count = (parallelism.max_threads as usize).min(tile_count);
+        let frame_worker_pool = (frame_worker_count >= 2).then(|| {
             rvp9_core::tile_threading::WorkerPool::new(
-                std::num::NonZeroUsize::new(lf_worker_count)
-                    .expect("loop-filter worker count is nonzero"),
+                std::num::NonZeroUsize::new(frame_worker_count)
+                    .expect("frame worker count is nonzero"),
             )
         });
 
@@ -1514,7 +1513,7 @@ impl StreamEncoder {
         Ok(Self {
             config,
             parallelism,
-            lf_worker_pool,
+            frame_worker_pool,
             rate_control,
             frame_idx: 0,
             gf_group,
@@ -2337,7 +2336,7 @@ impl StreamEncoder {
             let mi_grid = build_kf_mi_grid_for_lf(h / 8, w / 8, &sb_partitions);
             let max_threads = self.parallelism.max_threads as usize;
             let num_tile_cols = 1usize << log2_tile_cols;
-            let worker_pool = self.lf_worker_pool.as_mut();
+            let worker_pool = self.frame_worker_pool.as_mut();
             let (ry, ru, rv) = self.ref_pool.new_frame_planes_mut();
             apply_loop_filter_to_tight_recon_parallel(
                 w,
@@ -3047,27 +3046,28 @@ impl StreamEncoder {
 
         let tile_count = 1usize << log2_tile_cols;
         let coef_source = if tile_count > 1 && self.parallelism.max_threads > 1 {
-            // Tile-MT: execute independent full-height column jobs
-            // concurrently, capped by the configured worker count. Each
-            // job owns every mutable object it touches. Results are joined
-            // and merged in column order, so scheduling cannot affect the
-            // packet or persistent encoder state.
+            // Tile-MT: execute independent full-height column jobs on the
+            // stream-owned worker pool. Each job owns every mutable object
+            // it touches. Results are collected and merged in column order,
+            // so scheduling cannot affect the packet or persistent encoder
+            // state.
             let initial_partitions = sb_partitions.clone();
             let initial_rd_tables = self.rd_thresh_tables.clone();
             let initial_history = self.vbp_partition_history.clone();
             let mut merged_coefs = VecBackedInterCoefSource::new(w, h);
-            let worker_count = usize::min(self.parallelism.max_threads as usize, tile_count);
             let s2_frame_gate = rvp9_core::mode_decision::inter::frame_s2_gate();
-            let tile_results: Vec<InterTileJobResult> = std::thread::scope(|scope| {
-                let mut results = Vec::with_capacity(tile_count);
-                for batch_start in (0..tile_count).step_by(worker_count) {
-                    let batch_end = usize::min(batch_start + worker_count, tile_count);
-                    let mut handles = Vec::with_capacity(batch_end - batch_start);
-                    for tile_col in batch_start..batch_end {
+            let result_slots: Vec<std::sync::Mutex<Option<InterTileJobResult>>> = (0..tile_count)
+                .map(|_| std::sync::Mutex::new(None))
+                .collect();
+            self.frame_worker_pool
+                .as_mut()
+                .expect("parallel tile picking requires the frame worker pool")
+                .scope(|scope| {
+                    for (tile_col, result_slot) in result_slots.iter().enumerate() {
                         let mut tile_partitions = initial_partitions.clone();
                         let mut tile_rd_tables = initial_rd_tables.clone();
                         let mut tile_history = initial_history.clone();
-                        handles.push(scope.spawn(move || {
+                        scope.submit(move || {
                             rvp9_core::mode_decision::inter::set_frame_s2_gate(s2_frame_gate);
                             let mut tile_recon_y = vec![0u8; w as usize * h as usize];
                             let mut tile_recon_u = vec![0u8; (w as usize / 2) * (h as usize / 2)];
@@ -3086,7 +3086,7 @@ impl StreamEncoder {
                                 &mut tile_split_stats,
                                 Some(tile_col)
                             );
-                            InterTileJobResult {
+                            let result = InterTileJobResult {
                                 tile_col,
                                 recon_y: tile_recon_y,
                                 recon_u: tile_recon_u,
@@ -3097,15 +3097,23 @@ impl StreamEncoder {
                                 history: tile_history,
                                 split_stats: tile_split_stats,
                                 coefs: tile_coefs,
-                            }
-                        }));
+                            };
+                            *result_slot
+                                .lock()
+                                .expect("inter tile result slot mutex poisoned") = Some(result);
+                        });
                     }
-                    for handle in handles {
-                        results.push(handle.join().expect("inter tile worker panicked"));
-                    }
-                }
-                results
-            });
+                });
+            let tile_results: Vec<InterTileJobResult> = result_slots
+                .into_iter()
+                .enumerate()
+                .map(|(tile_col, result_slot)| {
+                    result_slot
+                        .into_inner()
+                        .expect("inter tile result slot mutex poisoned")
+                        .unwrap_or_else(|| panic!("inter tile {tile_col} produced no result"))
+                })
+                .collect();
 
             for result in tile_results {
                 let tile_col = result.tile_col;
@@ -3218,7 +3226,7 @@ impl StreamEncoder {
                 &mut new_recon_y,
                 &mut new_recon_u,
                 &mut new_recon_v,
-                self.lf_worker_pool.as_mut(),
+                self.frame_worker_pool.as_mut(),
                 self.parallelism.max_threads as usize,
                 1usize << log2_tile_cols,
             );
@@ -3372,6 +3380,7 @@ impl StreamEncoder {
             /* frame_context_idx = */
             0,
             log2_tile_cols,
+            self.frame_worker_pool.as_mut(),
             self.parallelism.max_threads,
         )?;
 
@@ -3769,7 +3778,7 @@ impl StreamEncoder {
                 &mut arf_recon_y,
                 &mut arf_recon_u,
                 &mut arf_recon_v,
-                self.lf_worker_pool.as_mut(),
+                self.frame_worker_pool.as_mut(),
                 self.parallelism.max_threads as usize,
                 1usize << log2_tile_cols,
             );
@@ -3835,6 +3844,7 @@ impl StreamEncoder {
             /* frame_context_idx = */
             1,
             log2_tile_cols,
+            self.frame_worker_pool.as_mut(),
             self.parallelism.max_threads,
         )?;
 
@@ -4909,6 +4919,10 @@ fn build_inter_packet_with_residuals(
     // Product callers remain at zero until the mode-decision and
     // reconstruction loop applies the same tile-edge semantics.
     log2_tile_cols: u8,
+    // Stream-owned persistent workers. Parallel product callers provide
+    // the same pool used by tile picking and loop filtering; serial tests
+    // and one-thread encodes pass `None`.
+    worker_pool: Option<&mut rvp9_core::tile_threading::WorkerPool>,
     // Tile arithmetic writers are independent after the compressed header
     // fixes the frame context. Cap their worker count at the configured
     // encoder parallelism so packet assembly shares the product thread
@@ -5171,26 +5185,37 @@ fn build_inter_packet_with_residuals(
     // Bit-accounting diagnostics are thread-local and intentionally observe
     // the caller thread. Keep that opt-in path serial; production encoding
     // runs independent tile arithmetic writers concurrently.
-    let run_parallel = tile_cols > 1 && max_threads > 1 && !rvp9_core::entropy::bitacct::enabled();
+    let run_parallel = tile_cols > 1
+        && max_threads > 1
+        && worker_pool.is_some()
+        && !rvp9_core::entropy::bitacct::enabled();
     let mut tile_bufs = Vec::with_capacity(tile_cols);
     if run_parallel {
-        let worker_count = usize::min(max_threads as usize, tile_cols);
-        std::thread::scope(|scope| -> Result<(), EncodeError> {
-            for batch_start in (0..tile_cols).step_by(worker_count) {
-                let batch_end = usize::min(batch_start + worker_count, tile_cols);
-                let mut handles = Vec::with_capacity(batch_end - batch_start);
-                let encode_tile = &encode_tile;
-                for tile_col in batch_start..batch_end {
-                    handles.push(scope.spawn(move || encode_tile(tile_col)));
+        type TileWriteResultSlot = std::sync::Mutex<Option<Result<Vec<u8>, EncodeError>>>;
+        let result_slots: Vec<TileWriteResultSlot> = (0..tile_cols)
+            .map(|_| std::sync::Mutex::new(None))
+            .collect();
+        worker_pool
+            .expect("parallel tile writing requires the frame worker pool")
+            .scope(|scope| {
+                for (tile_col, result_slot) in result_slots.iter().enumerate() {
+                    let encode_tile = &encode_tile;
+                    scope.submit(move || {
+                        let result = encode_tile(tile_col);
+                        *result_slot
+                            .lock()
+                            .expect("inter tile writer result slot mutex poisoned") = Some(result);
+                    });
                 }
-                // Join in tile-column order so output assembly remains
-                // deterministic across thread counts.
-                for handle in handles {
-                    tile_bufs.push(handle.join().expect("inter tile writer worker panicked")?);
-                }
-            }
-            Ok(())
-        })?;
+            });
+        for (tile_col, result_slot) in result_slots.into_iter().enumerate() {
+            tile_bufs.push(
+                result_slot
+                    .into_inner()
+                    .expect("inter tile writer result slot mutex poisoned")
+                    .unwrap_or_else(|| panic!("inter tile writer {tile_col} produced no result"))?,
+            );
+        }
     } else {
         for tile_col in 0..tile_cols {
             tile_bufs.push(encode_tile(tile_col)?);
@@ -6624,6 +6649,7 @@ mod tests {
             &mut decoder_fc,
             0,
             1,
+            None,
             4,
         )
         .expect("two-tile inter packet");

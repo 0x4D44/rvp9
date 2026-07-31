@@ -3344,3 +3344,44 @@ profile reduces inclusive luma-model samples from 131 to 95.
 **Future plan:** retain the two-buffer ownership while the filter set remains
 the scoped two-filter realtime range. A broader filter set must extend the
 scratch contract explicitly rather than alias or silently rebuild a winner.
+
+### 2026-07-31 — Encoder phases share one persistent frame-worker pool
+
+**Where:** `rvp9_encoder::frame_loop::{
+StreamEncoder,build_inter_packet_with_residuals}` and
+`rvp9_core::tile_threading::WorkerPool`.
+
+**What libvpx does:** `VP9_COMP` owns persistent encoder workers. Tile encode
+jobs and loop-filter jobs reuse those workers across frames; `vpxenc
+--threads=4` does not create a new OS-thread group for every tile pass.
+
+**What rvp9 does:** one stream-owned `WorkerPool` is reused sequentially for
+inter tile picking, split-edge loop filtering, and final tile arithmetic
+writing. This differs from libvpx's worker-interface implementation but
+matches its persistent lifetime and configured concurrency. Per-tile mutex
+slots return owned results for deterministic tile-order merge.
+
+**Why:** the former picker and writer each used a fresh
+`std::thread::scope` on every inter frame. A matched profile observed 478–524
+sampled threads per 120-frame process versus exactly four in pinned vpxenc.
+The existing lifetime-checked pool already supplies panic propagation and
+borrowed frame scopes, so sharing it removes construction churn without a
+new dependency or unsafe block.
+
+**Byte-parity impact:** none. The cpu-used 7 product stream is byte-identical
+to Unit 140, and rvp9-decoder, pinned vpxdec, and ffmpeg produce byte-exact
+I420 output.
+
+**Compression-efficiency impact:** none; the strict Stage 4a curve remains
+`-8.585847331540%` PSNR BD-rate versus pinned libvpx v1.14.1.
+
+**Speed impact:** three saturated-host alternating four-thread series improve
+paired wall time by `0.452%`, `3.019%`, and `1.555%`. The series measuring
+both user and system time improves total child CPU by `3.094%` and system CPU
+by `18.947%`. A five-encode profile now has only the main thread plus four
+persistent workers per process.
+
+**Future plan:** keep a single sequentially borrowed pool while these phases
+cannot overlap. If row-MT or overlapped filtering later requires concurrent
+phase execution, split the pool only with an explicit ownership and thread-
+budget design rather than oversubscribing the configured thread count.

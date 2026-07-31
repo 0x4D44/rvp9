@@ -389,6 +389,27 @@ mod tests {
         assert_eq!(counter.load(Ordering::SeqCst), 12);
     }
 
+    /// A persistent pool keeps its OS worker alive between frame scopes.
+    /// One worker makes the identity assertion deterministic rather than
+    /// depending on which worker wins a multi-consumer channel race.
+    #[test]
+    fn worker_thread_is_reused_across_scopes() {
+        let mut pool = WorkerPool::new(nz(1));
+        let caller = std::thread::current().id();
+        let worker_ids = Mutex::new(Vec::new());
+        for _ in 0..2 {
+            pool.scope(|scope| {
+                scope.submit(|| {
+                    worker_ids.lock().unwrap().push(std::thread::current().id());
+                });
+            });
+        }
+        let worker_ids = worker_ids.into_inner().unwrap();
+        assert_eq!(worker_ids.len(), 2);
+        assert_ne!(worker_ids[0], caller);
+        assert_eq!(worker_ids[0], worker_ids[1]);
+    }
+
     /// Submitting zero jobs is a valid no-op scope.
     #[test]
     fn empty_scope() {
