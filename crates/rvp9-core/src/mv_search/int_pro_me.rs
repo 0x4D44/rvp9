@@ -83,6 +83,7 @@ use crate::mv_search::full_pixel::PlaneRef;
 /// plane clamps to the nearest edge pixel. This is the faithful
 /// equivalent of an extended-border frame and lets every SB — including
 /// the frame-edge SBs — get a valid motion seed instead of bailing.
+#[cfg(test)]
 #[inline]
 fn clamp_px(plane: &PlaneRef<'_>, y: i32, x: i32) -> u8 {
     let cy = y.clamp(0, plane.height as i32 - 1) as usize;
@@ -156,7 +157,7 @@ fn vpx_int_pro_col(ref_row: &[u8], width: usize) -> i32 {
 /// Edge-clamped variant of [`vpx_int_pro_row`]: same as
 /// `vpx_int_pro_row_c` but the reference window base is an absolute
 /// (possibly out-of-plane) `(base_y, base_x)` and every pixel read
-/// clamps to the visible-plane border (see [`clamp_px`]). This is what
+/// clamps to the visible-plane border. This is what
 /// libvpx's extended-border frame supplies for free at frame edges.
 #[inline]
 fn int_pro_row_clamped(
@@ -169,10 +170,20 @@ fn int_pro_row_clamped(
     debug_assert_eq!(hbuf.len(), 16);
     debug_assert!(height >= 2);
     let norm_factor = (height >> 1) as i32;
+    let direct_y = base_y >= 0 && base_y as usize + height <= plane.height;
     for (idx, slot) in hbuf.iter_mut().enumerate() {
+        let x = (base_x + idx as i32).clamp(0, plane.width as i32 - 1) as usize;
         let mut sum: i32 = 0;
-        for i in 0..height {
-            sum += i32::from(clamp_px(plane, base_y + i as i32, base_x + idx as i32));
+        if direct_y {
+            let y = base_y as usize;
+            for row in 0..height {
+                sum += i32::from(plane.data[(y + row) * plane.stride + x]);
+            }
+        } else {
+            for row in 0..height {
+                let y = (base_y + row as i32).clamp(0, plane.height as i32 - 1) as usize;
+                sum += i32::from(plane.data[y * plane.stride + x]);
+            }
         }
         *slot = (sum / norm_factor) as i16;
     }
@@ -183,9 +194,19 @@ fn int_pro_row_clamped(
 /// read to the visible-plane border.
 #[inline]
 fn int_pro_col_clamped(plane: &PlaneRef<'_>, base_y: i32, base_x: i32, width: usize) -> i32 {
-    let mut sum: i32 = 0;
-    for c in 0..width {
-        sum += i32::from(clamp_px(plane, base_y, base_x + c as i32));
+    let y = base_y.clamp(0, plane.height as i32 - 1) as usize;
+    let row_start = y * plane.stride;
+    let row = &plane.data[row_start..row_start + plane.width];
+    let window_end = base_x + width as i32;
+    let visible_start = base_x.clamp(0, plane.width as i32);
+    let visible_end = window_end.clamp(0, plane.width as i32);
+    let middle = visible_end.saturating_sub(visible_start) as usize;
+    let left = (-base_x).clamp(0, width as i32) as usize;
+    let right = width - left - middle;
+
+    let mut sum = left as i32 * i32::from(row[0]) + right as i32 * i32::from(row[plane.width - 1]);
+    if middle != 0 {
+        sum += vpx_int_pro_col(&row[visible_start as usize..], middle);
     }
     sum
 }
@@ -198,14 +219,15 @@ fn fill_int_pro_rows(
     height: usize,
 ) {
     debug_assert_eq!(output.len() % 16, 0);
-    let direct = base_y >= 0
-        && base_x >= 0
-        && base_y as usize + height <= plane.height
-        && base_x as usize + output.len() <= plane.width;
 
     for idx in (0..output.len()).step_by(16) {
+        let chunk_x = base_x + idx as i32;
+        let direct = base_y >= 0
+            && chunk_x >= 0
+            && base_y as usize + height <= plane.height
+            && chunk_x as usize + 16 <= plane.width;
         if direct {
-            let start = base_y as usize * plane.stride + base_x as usize + idx;
+            let start = base_y as usize * plane.stride + chunk_x as usize;
             vpx_int_pro_row(
                 &mut output[idx..idx + 16],
                 &plane.data[start..],
@@ -213,13 +235,7 @@ fn fill_int_pro_rows(
                 height,
             );
         } else {
-            int_pro_row_clamped(
-                &mut output[idx..idx + 16],
-                plane,
-                base_y,
-                base_x + idx as i32,
-                height,
-            );
+            int_pro_row_clamped(&mut output[idx..idx + 16], plane, base_y, chunk_x, height);
         }
     }
 }
@@ -232,17 +248,17 @@ fn fill_int_pro_cols(
     width: usize,
     norm_shift: usize,
 ) {
-    let direct = base_y >= 0
-        && base_x >= 0
-        && base_y as usize + output.len() <= plane.height
-        && base_x as usize + width <= plane.width;
-
     for (idx, slot) in output.iter_mut().enumerate() {
+        let row_y = base_y + idx as i32;
+        let direct = row_y >= 0
+            && base_x >= 0
+            && (row_y as usize) < plane.height
+            && base_x as usize + width <= plane.width;
         let sum = if direct {
-            let start = (base_y as usize + idx) * plane.stride + base_x as usize;
+            let start = row_y as usize * plane.stride + base_x as usize;
             vpx_int_pro_col(&plane.data[start..], width)
         } else {
-            int_pro_col_clamped(plane, base_y + idx as i32, base_x, width)
+            int_pro_col_clamped(plane, row_y, base_x, width)
         };
         *slot = (sum >> norm_shift) as i16;
     }
@@ -390,9 +406,9 @@ fn sad_block(
 
 /// Gather one visible-or-replicated block a row at a time.
 ///
-/// Unlike [`clamp_px`], this computes the horizontal edge spans once per
-/// block and the vertical clamp once per row. The middle of every row remains
-/// a contiguous copy from the visible plane.
+/// This computes the horizontal edge spans once per block and the vertical
+/// clamp once per row. The middle of every row remains a contiguous copy from
+/// the visible plane.
 fn gather_clamped_block(
     plane: &PlaneRef<'_>,
     abs_y: i32,
@@ -545,8 +561,8 @@ pub fn int_pro_motion_estimation(
     // (`vpx_extend_frame_borders`), so the projection window and the
     // 2D-SAD halo near a frame edge read the replicated border and the
     // search always produces a seed. rvp9's `PlaneRef` is the bare
-    // visible plane, so every reference read goes through [`clamp_px`]
-    // (edge-clamp == border replication). The SOURCE reads stay inside
+    // visible plane, so every reference read uses edge-clamp border
+    // replication. The SOURCE reads stay inside
     // the visible plane: an SB top-left is always inside the frame, and
     // libvpx never reads source pixels outside the SB extent. The only
     // source-OOB case is a partial right/bottom edge SB; we guard those
@@ -821,6 +837,86 @@ mod tests {
         assert_eq!(actual_cols, expected_cols);
     }
 
+    #[test]
+    fn mixed_edge_projection_paths_match_pixel_oracle() {
+        let width = 97usize;
+        let height = 83usize;
+        let stride = 104usize;
+        let mut pixels = vec![0u8; stride * height];
+        for row in 0..height {
+            for col in 0..width {
+                pixels[row * stride + col] = ((row * 37 + col * 19 + (row ^ col) * 7) & 0xff) as u8;
+            }
+        }
+        let plane = PlaneRef {
+            data: &pixels,
+            stride,
+            width,
+            height,
+        };
+
+        for projection_height in [16usize, 32, 64] {
+            for base_y in [-70, -3, 0, 31, 80, 100] {
+                for base_x in [-140, -19, 0, 31, 90, 130] {
+                    let mut actual = [0i16; 128];
+                    fill_int_pro_rows(&mut actual, &plane, base_y, base_x, projection_height);
+                    let norm = (projection_height >> 1) as i32;
+                    let mut expected = [0i16; 128];
+                    for (col, slot) in expected.iter_mut().enumerate() {
+                        let sum: i32 = (0..projection_height)
+                            .map(|row| {
+                                i32::from(clamp_px(
+                                    &plane,
+                                    base_y + row as i32,
+                                    base_x + col as i32,
+                                ))
+                            })
+                            .sum();
+                        *slot = (sum / norm) as i16;
+                    }
+                    assert_eq!(
+                        actual, expected,
+                        "rows height={projection_height} y={base_y} x={base_x}"
+                    );
+                }
+            }
+        }
+
+        for projection_width in [16usize, 32, 64] {
+            let norm_shift = 3 + (projection_width >> 5);
+            for base_y in [-140, -7, 0, 31, 80, 130] {
+                for base_x in [-70, -3, 0, 31, 90, 130] {
+                    let mut actual = [0i16; 128];
+                    fill_int_pro_cols(
+                        &mut actual,
+                        &plane,
+                        base_y,
+                        base_x,
+                        projection_width,
+                        norm_shift,
+                    );
+                    let mut expected = [0i16; 128];
+                    for (row, slot) in expected.iter_mut().enumerate() {
+                        let sum: i32 = (0..projection_width)
+                            .map(|col| {
+                                i32::from(clamp_px(
+                                    &plane,
+                                    base_y + row as i32,
+                                    base_x + col as i32,
+                                ))
+                            })
+                            .sum();
+                        *slot = (sum >> norm_shift) as i16;
+                    }
+                    assert_eq!(
+                        actual, expected,
+                        "cols width={projection_width} y={base_y} x={base_x}"
+                    );
+                }
+            }
+        }
+    }
+
     fn direct_path_probe(
         _src: &[u8],
         _src_stride: usize,
@@ -1044,7 +1140,7 @@ mod tests {
 
     /// E10 — SB at a frame edge no longer bails. libvpx runs the
     /// projection against an edge-replicated extended border, and we
-    /// mirror that with [`clamp_px`], so even the top-left (0, 0) SB —
+    /// mirror that with edge-clamped reads, so even the top-left (0, 0) SB —
     /// which has no real left/top padding — produces a valid seed
     /// (real `best_sad`, not the `u32::MAX` sentinel).
     #[test]

@@ -24,6 +24,36 @@ Each entry:
 
 ## Entries
 
+### 2026-07-31 — Mixed direct/clamped integer projections
+**Where:** `rvp9-core::mv_search::int_pro_me::{fill_int_pro_rows,fill_int_pro_cols}`;
+libvpx counterparts: `vp9/encoder/vp9_mcomp.c::vp9_int_pro_motion_estimation`
+and physically extended reference borders.
+**What libvpx does:** reads every projection from a frame buffer whose
+replicated border is already materialized, so visible chunks use the normal
+SIMD projection kernels even when the full search window crosses an edge.
+**What rvp9 does:** represents only visible pixels. It selects the direct
+NEON row kernel independently for each visible 16-column chunk, hoists fixed
+clamped coordinates out of inner loops, and represents a replicated row as
+left-edge, visible-middle, and right-edge spans.
+**Why:** the previous all-or-nothing gate sent an entire 128-column/row
+projection through scalar per-pixel clamping when any part crossed the
+visible frame edge.
+**Byte-parity impact:** none. A pixel oracle covers partial and fully
+outside windows in both dimensions, every 16/32/64 projection size, and
+nontrivial stride. The product stream remained byte-identical and all three
+decoders produced identical I420 output.
+**Compression-efficiency impact:** none because every projection, selected
+MV, SAD, partition, and emitted byte is unchanged.
+**Speed impact:** two independent sixteen-pair one-thread trials improved
+paired wall time by `-2.510%` and `-2.426%`; child CPU improved `-2.582%`
+and `-2.428%`. Two twenty-pair four-thread trials improved paired wall time
+by `-1.344%` and `-0.747%`; child CPU improved `-2.161%` and `-2.467%`.
+The sampled inter-partition wrapper fell from 375 to 264 self samples, and
+its former scalar clamped-loop cluster disappeared.
+**Future plan:** retain while the edge oracle and exact stream stay green.
+If rvp9 later materializes extended borders, replace these spans with direct
+reads from that buffer instead of keeping two border representations.
+
 ### 2026-07-31 — Full-width Hadamard dequant multiply
 **Where:** `rvp9-core::dsp::aarch64::quantize_neon::quantize_i16_8`;
 libvpx counterpart: `vp9/encoder/arm/neon/vp9_quantize_neon.c`.
@@ -41,15 +71,12 @@ the widened quantizer oracle. The product stream remained byte-identical.
 **Compression-efficiency impact:** none because quantized values and fused
 metrics are unchanged.
 **Speed impact:** machine code replaces two `mul.4h` instructions per eight
-coefficients with one `mul.8h`. Two one-thread trials improved paired child
-CPU by `-0.886%` and `-1.697%`; a four-thread trial improved child CPU by
-`-0.369%`. Wall results were `-0.673%`, `-0.484%`, and `+0.148%`
-respectively under external host load averaging above 40, so the retained
-claim is the reproducible instruction/child-CPU reduction, not a resolved
-wall-time win.
-**Future plan:** retain while the exact metrics oracle stays green. Recheck
-wall impact in the next uncontended cumulative baseline; revert if that
-baseline finds a repeatable regression.
+coefficients with one `mul.8h`. After external load cleared, sixteen
+one-thread pairs improved paired wall/child CPU by `-0.619%`/`-0.732%`;
+twenty four-thread pairs improved them by `-0.825%`/`-1.165%`. Earlier
+contended trials also reduced child CPU in all three runs.
+**Future plan:** retain while the exact metrics oracle and cumulative speed
+baseline stay green.
 
 ### 2026-07-31 — Reuse product-picker model SSE
 **Where:** `rvp9-core::mode_decision::inter::evaluate_candidate_for_filter_with_pred`;
