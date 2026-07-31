@@ -43,6 +43,11 @@ struct OracleRecord {
     noise_estimate_enabled: bool,
     noise_level: u8,
     content_state: u8,
+    partition_ref: u8,
+    partition_mv_row: i16,
+    partition_mv_col: i16,
+    #[serde(default)]
+    low_temp_var_mode: u8,
     segment_id: u8,
     previous_segment_before: u8,
     previous_segment_after: u8,
@@ -50,6 +55,7 @@ struct OracleRecord {
     copied_after: u8,
     source: String,
     predictor: String,
+    variance_low: Vec<u8>,
     history_variance_low: Vec<u8>,
     force_split: Vec<u8>,
     used_4x4_averages: Vec<u8>,
@@ -212,7 +218,9 @@ fn compare_record(record: &OracleRecord) -> Result<FixedTreePartitionTrace, Stri
         },
         content_state,
     });
-    if expected_thresholds.thresholds != record.thresholds {
+    // Slot 3 is a keyframe-only 8x8 threshold retained from the most recent
+    // frame-level setup; the inter helper rewrites only slots 0..=2.
+    if expected_thresholds.thresholds[..3] != record.thresholds[..3] {
         return Err(format!(
             "thresholds: expected {:?}, got {:?}",
             record.thresholds, expected_thresholds.thresholds
@@ -229,11 +237,16 @@ fn compare_record(record: &OracleRecord) -> Result<FixedTreePartitionTrace, Stri
         predictor: &predictor,
         visible_width: record.visible_width,
         visible_height: record.visible_height,
+        frame_width: record.frame_width,
         thresholds: record.thresholds,
         minmax_threshold: record.minmax_threshold,
         force_64x64_split: record.force_64x64_split,
         compute_minmax_variance: record.compute_minmax_variance,
         segment_is_boosted: record.segment_is_boosted,
+        partition_ref_is_last: record.partition_ref == 1,
+        partition_mv_row: record.partition_mv_row,
+        partition_mv_col: record.partition_mv_col,
+        low_temp_var_mode: record.low_temp_var_mode,
         noise_level,
         low_resolution: record.low_resolution,
         frame_height_le_360: record.frame_height_le_360,
@@ -315,6 +328,13 @@ fn compare_record(record: &OracleRecord) -> Result<FixedTreePartitionTrace, Stri
     }
     if !actual.decision.is_valid_partition() {
         return Err("rvp9 returned an invalid partition tree".into());
+    }
+    let expected_variance_low = bool_array_25(&record.variance_low, "variance_low")?;
+    if actual.variance_low != expected_variance_low {
+        return Err(format!(
+            "low-temporal-variance flags differ: expected {:?}, got {:?}",
+            expected_variance_low, actual.variance_low
+        ));
     }
     Ok(actual)
 }

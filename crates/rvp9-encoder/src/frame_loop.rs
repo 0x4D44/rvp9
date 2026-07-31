@@ -1193,6 +1193,12 @@ pub struct StreamEncoder {
     /// [`rvp9_core::mode_decision::rd_thresh::update_thresh_freq_fact`]
     /// to decay the winner's fact and increment the losers.
     rd_thresh_table: rvp9_core::mode_decision::rd_thresh::RdThreshTable,
+    /// Previous realtime variance-partition tree and low-temporal-variance
+    /// flags for each 64x64 superblock. The pinned libvpx cpu-used 7 path
+    /// may copy this state for a quiet superblock on at most two consecutive
+    /// show frames. Non-show ALTREF coding has separate encoder state in
+    /// libvpx and therefore never reads or mutates this show-frame history.
+    vbp_partition_history: Vec<rvp9_core::mode_decision::partition::FixedTreeHistoryEntry>,
     /// Stage 4a product diagnostics accumulated across inter-pick descents.
     stage4a_split_stats: NonRdSplitStats,
     /// W5.5 — VP9 temporal denoiser state. `Some(..)` iff
@@ -1467,6 +1473,10 @@ impl StreamEncoder {
             decoder_fc_state_arf: FrameContext::new_default(),
             // P20 — fresh adaptive-RD-threshold table at INIT_FACT.
             rd_thresh_table: rvp9_core::mode_decision::rd_thresh::RdThreshTable::new(),
+            vbp_partition_history: vec![
+                rvp9_core::mode_decision::partition::FixedTreeHistoryEntry::default();
+                (w / 64) * (h / 64)
+            ],
             stage4a_split_stats: NonRdSplitStats::default(),
             // W5.5 — temporal denoiser (libvpx
             // `vp9_denoiser.c:606-696` `vp9_denoiser_alloc`). Allocated
@@ -2137,6 +2147,8 @@ impl StreamEncoder {
                 CyclicRefreshConfig::default(),
             ));
         }
+        self.vbp_partition_history
+            .fill(rvp9_core::mode_decision::partition::FixedTreeHistoryEntry::default());
 
         // F10.1a — pick the per-SB partition via the F8.2 variance
         // picker. For KF the ref plane is unused (the picker substitutes
@@ -2892,6 +2904,8 @@ impl StreamEncoder {
             self.pre_analysis.high_source_sad,
             &self.pre_analysis.content_state_sb,
             &self.pre_analysis.skin_map,
+            self.rate_control.frames_since_key,
+            Some(&mut self.vbp_partition_history),
             // A23 — TPL rdmult adjustment (opt-in). `None` unless
             // `enable_tpl` produced a valid forward-propagated grid.
             tpl_rdmult_arg,
@@ -3454,6 +3468,8 @@ impl StreamEncoder {
             self.pre_analysis.high_source_sad,
             &self.pre_analysis.content_state_sb,
             &self.pre_analysis.skin_map,
+            0,
+            None,
             // A23 — TPL is not wired into the non-show ARF's own coding in
             // this bounded increment (documented follow-up: the ARF is a
             // TPL `gf_picture[1]` frame in libvpx). Pass `None` — the ARF
@@ -8513,6 +8529,34 @@ mod tests {
         assert!(
             enc.cyclic_refresh.is_some(),
             "AQ CyclicRefresh ⇒ CR state present"
+        );
+    }
+
+    #[test]
+    fn keyframe_resets_exact_vbp_partition_history() {
+        let cfg = EncoderConfig {
+            width: 128,
+            height: 64,
+            ..baseline_config()
+        };
+        let mut enc = StreamEncoder::new(cfg).unwrap();
+        assert_eq!(enc.vbp_partition_history.len(), 2);
+        enc.vbp_partition_history[0].update(
+            rvp9_core::mode_decision::partition::PartitionDecision::all_64x64(),
+            0,
+            [true; 25],
+        );
+        assert!(enc.vbp_partition_history[0].is_initialized());
+
+        let y = vec![128; 128 * 64];
+        let u = vec![128; 64 * 32];
+        let v = vec![128; 64 * 32];
+        enc.encode_keyframe_internal(80, (&y, &u, &v)).unwrap();
+
+        assert!(
+            enc.vbp_partition_history
+                .iter()
+                .all(|entry| !entry.is_initialized())
         );
     }
 

@@ -2877,6 +2877,13 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     content_state_sb_grid: &[rvp9_core::mode_decision::inter::ContentStateSb],
     // Per-mi `skin_map[mi_rows * mi_cols]` from W2.5 (0 = non-skin).
     skin_map: &[u8],
+    // Exact pinned-libvpx VBP copy eligibility and persistent show-frame
+    // history. `None` isolates non-show ALTREF coding and disables the exact
+    // adapter even if its diagnostic environment flag is set.
+    frames_since_key: u32,
+    mut exact_vbp_history: Option<
+        &mut [rvp9_core::mode_decision::partition::FixedTreeHistoryEntry],
+    >,
     // A23 — opt-in TPL rdmult adjustment. `Some((tpl_frame, r0))` only
     // when `config.enable_tpl` is set AND the single-GOP forward TPL pass
     // produced a valid frame grid for this frame; `None` otherwise (the
@@ -3398,9 +3405,17 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // product adapter supplies its source, selected LAST/GOLDEN predictor,
     // thresholds, and causal leaf list.
     let exact_vbp_tree_enabled = env_flag_default("RVP9_EXACT_VBP_TREE", false)
+        && exact_vbp_history.is_some()
         && speed == 7
         && deadline == rvp9_core::mode_decision::speed_features::Deadline::Realtime
         && content_tier == rvp9_core::mode_decision::speed_features::ContentTier::Default;
+    if exact_vbp_tree_enabled {
+        assert_eq!(
+            exact_vbp_history.as_deref().map(|history| history.len()),
+            Some((w / 64) * (h / 64)),
+            "exact VBP history must have one entry per superblock"
+        );
+    }
     let live_ref_costs_enabled =
         exact_vbp_tree_enabled && env_flag_default("RVP9_LIVE_REF_COSTS", true);
     let rt_emit_max_tx = env_flag_default("RVP9_RT_EMIT_MAX_TX", rt_large_recovery);
@@ -3578,10 +3593,12 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
             };
 
             let mut used_exact_vbp_tree = false;
+            let mut exact_variance_low = [false; 25];
             if exact_vbp_tree_enabled {
                 use rvp9_core::bitstream::frame::InterpFilter;
                 use rvp9_core::mode_decision::partition::{
-                    Cpu7InterVbpThresholdInput, FixedTreeInterInput, choose_fixed_tree_inter,
+                    Cpu7InterVbpThresholdInput, FixedTreeCopyConditions, FixedTreeInterInput,
+                    FixedTreeLeaf, PartitionDecision, choose_fixed_tree_inter,
                     cpu7_inter_vbp_thresholds,
                 };
                 use rvp9_core::mv_search::set_subpel_mv_search_range;
@@ -3601,114 +3618,174 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     noise_estimate: noise_estimate_frame,
                     content_state,
                 });
-
-                // `set_offsets(..., BLOCK_64X64)` defines this full-pel
-                // UMV envelope. int-pro returns Q3, then libvpx derives a
-                // Q3 subpel envelope around the zero reference MV and clamps.
-                let fullpel_limits = MvLimits::new(
-                    -(((sb_col * 8 + 8) * 8) as i32 + VP9_INTERP_EXTEND),
-                    ((mi_cols_us - sb_col * 8) * 8) as i32 + VP9_INTERP_EXTEND,
-                    -(((sb_row * 8 + 8) * 8) as i32 + VP9_INTERP_EXTEND),
-                    ((mi_rows_us - sb_row * 8) * 8) as i32 + VP9_INTERP_EXTEND,
+                let history = &mut exact_vbp_history
+                    .as_deref_mut()
+                    .expect("exact VBP history checked above")[sb_idx];
+                let copy_conditions = FixedTreeCopyConditions {
+                    frames_since_key,
+                    segment_id,
+                    max_copied_frames: 2,
+                    resize_pending: false,
+                    svc_copy_allowed: true,
+                };
+                let low_source_sad = matches!(
+                    content_state,
+                    rvp9_core::mode_decision::inter::ContentStateSb::LowSadLowSumdiff
+                        | rvp9_core::mode_decision::inter::ContentStateSb::LowSadHighSumdiff
                 );
-                let mut subpel_limits = MvLimits::default();
-                set_subpel_mv_search_range(&mut subpel_limits, &fullpel_limits, 0, 0);
-                let partition_mv = Mv {
-                    row: i32::from(int_pro.mv.row)
-                        .clamp(subpel_limits.row_min, subpel_limits.row_max)
-                        as i16,
-                    col: i32::from(int_pro.mv.col)
-                        .clamp(subpel_limits.col_min, subpel_limits.col_max)
-                        as i16,
+                let low_source_copy = if low_source_sad && !scene_change_detected_frame {
+                    history.try_copy(copy_conditions)
+                } else {
+                    None
                 };
 
-                // cpu7 considers GOLDEN at zero MV and keeps LAST unless
-                // GOLDEN is strictly better than 7/8 of int-pro LAST SAD
-                // (the CBR short-circuit bias; VBR uses the unbiased SAD).
-                let src_offset = sb_px_y * w + sb_px_x;
-                let sad64 = rvp9_core::dsp::get_ref().sad(BlockSize::Block64x64);
-                let golden_distinct = golden_recon_yuv.0.as_ptr() != last_recon_yuv.0.as_ptr();
-                let golden_sad = if !rt_disable_golden_ref && golden_distinct {
-                    sad64(
-                        &input_yuv.0[src_offset..],
-                        w,
-                        &golden_recon_yuv.0[src_offset..],
-                        w,
-                    )
+                let (exact_leaves, variance_low) = if let Some(copy) = low_source_copy {
+                    (copy.leaves, copy.variance_low)
                 } else {
-                    u32::MAX
-                };
-                let last_bias_num = if rc_mode == crate::rate_control::RcMode::Cbr {
-                    7
-                } else {
-                    8
-                };
-                let use_golden =
-                    u64::from(golden_sad) < (u64::from(int_pro.best_sad) * last_bias_num) >> 3;
-                let (partition_ref, partition_mv, selected_sad) = if use_golden {
-                    (golden_recon_yuv.0, Mv::ZERO, golden_sad)
-                } else {
-                    (last_recon_yuv.0, partition_mv, int_pro.best_sad)
-                };
-
-                let mut source_block = [0u8; 64 * 64];
-                for row in 0..64 {
-                    source_block[row * 64..row * 64 + 64].copy_from_slice(
-                        &input_yuv.0
-                            [(sb_px_y + row) * w + sb_px_x..(sb_px_y + row) * w + sb_px_x + 64],
+                    // `set_offsets(..., BLOCK_64X64)` defines this full-pel
+                    // UMV envelope. int-pro returns Q3, then libvpx derives a
+                    // Q3 subpel envelope around the zero reference MV and clamps.
+                    let fullpel_limits = MvLimits::new(
+                        -(((sb_col * 8 + 8) * 8) as i32 + VP9_INTERP_EXTEND),
+                        ((mi_cols_us - sb_col * 8) * 8) as i32 + VP9_INTERP_EXTEND,
+                        -(((sb_row * 8 + 8) * 8) as i32 + VP9_INTERP_EXTEND),
+                        ((mi_rows_us - sb_row * 8) * 8) as i32 + VP9_INTERP_EXTEND,
                     );
-                }
-                let mut predictor_block = [0u8; 64 * 64];
-                build_inter_pred_block_unscaled(
-                    partition_ref,
-                    w,
-                    w,
-                    h,
-                    sb_px_x,
-                    sb_px_y,
-                    64,
-                    64,
-                    i32::from(partition_mv.col) * 2,
-                    i32::from(partition_mv.row) * 2,
-                    &mut predictor_block,
-                    64,
-                    InterpFilter::Bilinear,
-                );
+                    let mut subpel_limits = MvLimits::default();
+                    set_subpel_mv_search_range(&mut subpel_limits, &fullpel_limits, 0, 0);
+                    let partition_mv = Mv {
+                        row: i32::from(int_pro.mv.row)
+                            .clamp(subpel_limits.row_min, subpel_limits.row_max)
+                            as i16,
+                        col: i32::from(int_pro.mv.col)
+                            .clamp(subpel_limits.col_min, subpel_limits.col_max)
+                            as i16,
+                    };
 
-                // libvpx's low-SAD shortcut selects one 64x64 leaf before
-                // materializing the variance tree. Copy-partition exits are
-                // deliberately excluded from this first adapter increment;
-                // they require persistent prior-tree state.
-                let (_, ac) = plane_dequant_pair(i32::from(effective_qindex), QuantizerDeltas::Y);
-                let vbp_threshold_sad = if scene_change_detected_frame {
-                    0
-                } else {
-                    (i32::from(ac) << 1).max(1000) as u32
+                    // cpu7 considers GOLDEN at zero MV and keeps LAST unless
+                    // GOLDEN is strictly better than 7/8 of int-pro LAST SAD
+                    // (the CBR short-circuit bias; VBR uses the unbiased SAD).
+                    let src_offset = sb_px_y * w + sb_px_x;
+                    let sad64 = rvp9_core::dsp::get_ref().sad(BlockSize::Block64x64);
+                    let golden_distinct = golden_recon_yuv.0.as_ptr() != last_recon_yuv.0.as_ptr();
+                    let golden_sad = if !rt_disable_golden_ref && golden_distinct {
+                        sad64(
+                            &input_yuv.0[src_offset..],
+                            w,
+                            &golden_recon_yuv.0[src_offset..],
+                            w,
+                        )
+                    } else {
+                        u32::MAX
+                    };
+                    let last_bias_num = if rc_mode == crate::rate_control::RcMode::Cbr {
+                        7
+                    } else {
+                        8
+                    };
+                    let use_golden =
+                        u64::from(golden_sad) < (u64::from(int_pro.best_sad) * last_bias_num) >> 3;
+                    let (partition_ref, partition_mv, selected_sad) = if use_golden {
+                        (golden_recon_yuv.0, Mv::ZERO, golden_sad)
+                    } else {
+                        (last_recon_yuv.0, partition_mv, int_pro.best_sad)
+                    };
+
+                    let mut predictor_block = [0u8; 64 * 64];
+                    build_inter_pred_block_unscaled(
+                        partition_ref,
+                        w,
+                        w,
+                        h,
+                        sb_px_x,
+                        sb_px_y,
+                        64,
+                        64,
+                        i32::from(partition_mv.col) * 2,
+                        i32::from(partition_mv.row) * 2,
+                        &mut predictor_block,
+                        64,
+                        InterpFilter::Bilinear,
+                    );
+
+                    let (_, ac) =
+                        plane_dequant_pair(i32::from(effective_qindex), QuantizerDeltas::Y);
+                    let vbp_threshold_sad = if scene_change_detected_frame {
+                        0
+                    } else if w <= 352 && h <= 288 {
+                        10
+                    } else {
+                        (i32::from(ac) << 1).max(1000) as u32
+                    };
+                    let vbp_threshold_copy = if scene_change_detected_frame {
+                        0
+                    } else if w <= 352 && h <= 288 {
+                        4000
+                    } else if w <= 640 && h <= 360 {
+                        8000
+                    } else {
+                        (i32::from(ac) << 3).max(8000) as u32
+                    };
+                    let choose_fresh_tree = || {
+                        let mut source_block = [0u8; 64 * 64];
+                        for row in 0..64 {
+                            source_block[row * 64..row * 64 + 64].copy_from_slice(
+                                &input_yuv.0[(sb_px_y + row) * w + sb_px_x
+                                    ..(sb_px_y + row) * w + sb_px_x + 64],
+                            );
+                        }
+                        choose_fixed_tree_inter(&FixedTreeInterInput {
+                            source: &source_block,
+                            predictor: &predictor_block,
+                            visible_width: 64,
+                            visible_height: 64,
+                            frame_width: w,
+                            thresholds: thresholds.thresholds,
+                            minmax_threshold: thresholds.minmax_threshold,
+                            force_64x64_split: scene_change_detected_frame,
+                            compute_minmax_variance: true,
+                            segment_is_boosted: segment_id != 0
+                                && seg_q_deltas[usize::from(segment_id)].is_some(),
+                            partition_ref_is_last: !use_golden,
+                            partition_mv_row: partition_mv.row,
+                            partition_mv_col: partition_mv.col,
+                            low_temp_var_mode: u8::from(
+                                rc_mode == crate::rate_control::RcMode::Cbr,
+                            ),
+                            noise_level: noise_estimate_frame.level,
+                            low_resolution: w <= 352 && h <= 288,
+                            frame_height_le_360: h <= 360,
+                        })
+                    };
+
+                    if segment_id == 0 && selected_sad < vbp_threshold_sad {
+                        let decision = PartitionDecision::all_64x64();
+                        let mut variance_low = [false; 25];
+                        variance_low[0] = true;
+                        history.update(decision, segment_id, variance_low);
+                        (
+                            vec![FixedTreeLeaf {
+                                row_8x8: 0,
+                                col_8x8: 0,
+                                block_size: BlockSize::Block64x64,
+                            }],
+                            variance_low,
+                        )
+                    } else if int_pro.best_sad < vbp_threshold_copy {
+                        if let Some(copy) = history.try_copy(copy_conditions) {
+                            (copy.leaves, copy.variance_low)
+                        } else {
+                            let trace = choose_fresh_tree();
+                            history.update(trace.decision.clone(), segment_id, trace.variance_low);
+                            (trace.leaves, trace.variance_low)
+                        }
+                    } else {
+                        let trace = choose_fresh_tree();
+                        history.update(trace.decision.clone(), segment_id, trace.variance_low);
+                        (trace.leaves, trace.variance_low)
+                    }
                 };
-                let exact_leaves = if segment_id == 0 && selected_sad < vbp_threshold_sad {
-                    vec![rvp9_core::mode_decision::partition::FixedTreeLeaf {
-                        row_8x8: 0,
-                        col_8x8: 0,
-                        block_size: BlockSize::Block64x64,
-                    }]
-                } else {
-                    choose_fixed_tree_inter(&FixedTreeInterInput {
-                        source: &source_block,
-                        predictor: &predictor_block,
-                        visible_width: 64,
-                        visible_height: 64,
-                        thresholds: thresholds.thresholds,
-                        minmax_threshold: thresholds.minmax_threshold,
-                        force_64x64_split: scene_change_detected_frame,
-                        compute_minmax_variance: true,
-                        segment_is_boosted: segment_id != 0
-                            && seg_q_deltas[usize::from(segment_id)].is_some(),
-                        noise_level: noise_estimate_frame.level,
-                        low_resolution: w <= 352 && h <= 288,
-                        frame_height_le_360: h <= 360,
-                    })
-                    .leaves
-                };
+                exact_variance_low = variance_low;
                 sb_partitions[sb_idx] = exact_leaves
                     .into_iter()
                     .map(|leaf| InterPartitionLeafDesc {
@@ -4199,7 +4276,13 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         short_circuit_flat_blocks: false,
                         source_variance:
                             rvp9_core::mode_decision::inter::SOURCE_VARIANCE_UNCOMPUTED,
-                        force_skip_low_temp_var: false,
+                        force_skip_low_temp_var: exact_vbp_tree_enabled
+                            && rvp9_core::mode_decision::partition::fixed_tree_force_skip_low_temp_var(
+                                &exact_variance_low,
+                                leaf_mi_row,
+                                leaf_mi_col,
+                                bs,
+                            ),
                         // PHASE-3 integration: per-SB content_state
                         // from W2.2 avg_source_sad pass. Index via
                         // (leaf_mi_row/8, leaf_mi_col/8) — the SB
@@ -5422,7 +5505,13 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     //     sad pre-init 0.
                     short_circuit_flat_blocks: false,
                     source_variance: rvp9_core::mode_decision::inter::SOURCE_VARIANCE_UNCOMPUTED,
-                    force_skip_low_temp_var: false,
+                    force_skip_low_temp_var: exact_vbp_tree_enabled
+                        && rvp9_core::mode_decision::partition::fixed_tree_force_skip_low_temp_var(
+                            &exact_variance_low,
+                            leaf_mi_row,
+                            leaf_mi_col,
+                            leaf_bsize,
+                        ),
                     // PHASE-3 integration: per-SB content_state from
                     // W2.2 avg_source_sad pass. Look up by SB grid.
                     content_state_sb: {

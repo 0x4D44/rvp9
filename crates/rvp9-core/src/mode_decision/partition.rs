@@ -253,6 +253,8 @@ pub struct FixedTreeInterInput<'a> {
     pub visible_width: usize,
     /// Visible height inside this superblock, in pixels (`1..=64`).
     pub visible_height: usize,
+    /// Full coded frame width, used by the low-temporal-variance MV gate.
+    pub frame_width: usize,
     /// Exact libvpx VBP thresholds, in its 256x variance units.
     pub thresholds: [i64; 4],
     /// Exact effective min/max threshold, including content-state scaling.
@@ -263,6 +265,14 @@ pub struct FixedTreeInterInput<'a> {
     pub compute_minmax_variance: bool,
     /// Whether cyclic-refresh selected a boosted segment.
     pub segment_is_boosted: bool,
+    /// Whether partition prediction selected LAST rather than GOLDEN.
+    pub partition_ref_is_last: bool,
+    /// Selected partition MV row in Q3 units.
+    pub partition_mv_row: i16,
+    /// Selected partition MV column in Q3 units.
+    pub partition_mv_col: i16,
+    /// libvpx `short_circuit_low_temp_var` speed-feature level.
+    pub low_temp_var_mode: u8,
     /// Noise tier used by the 32x32/64x64 spread rules.
     pub noise_level: NoiseLevel,
     /// Whether the frame is in libvpx's `width<=352 && height<=288` tier.
@@ -430,6 +440,8 @@ pub struct FixedTreePartitionTrace {
     pub variance_valid: [bool; 21],
     /// Whether each 16x16 node switched from 8x8 to 4x4 averages.
     pub used_4x4_averages: [bool; 16],
+    /// Low-temporal-variance flags retained with the selected tree.
+    pub variance_low: [bool; 25],
     /// Per-16x16 8x8-spread result, or `-1` when that check did not run.
     pub minmax_16x16: [i32; 16],
     /// Alternate 4x4-average 16x16 nodes (`vt2`) used only for local decisions.
@@ -550,6 +562,52 @@ impl FixedTreeHistoryEntry {
     #[must_use]
     pub const fn is_initialized(&self) -> bool {
         self.decision.is_some()
+    }
+}
+
+/// Map libvpx's per-superblock low-temporal-variance state to one coded leaf.
+///
+/// Mirrors `vp9_pickmode.c::get_force_skip_low_temp_var`. The 25 slots are
+/// laid out as one 64x64 flag, two 64x32 flags, two 32x64 flags, four 32x32
+/// flags, and sixteen 16x16 flags in raster order within the superblock.
+#[must_use]
+pub fn fixed_tree_force_skip_low_temp_var(
+    variance_low: &[bool; 25],
+    mi_row: usize,
+    mi_col: usize,
+    block_size: BlockSize,
+) -> bool {
+    const POS_SHIFT_16X16: [[usize; 4]; 4] = [
+        [9, 10, 13, 14],
+        [11, 12, 15, 16],
+        [17, 18, 21, 22],
+        [19, 20, 23, 24],
+    ];
+
+    let local_row = mi_row & 7;
+    let local_col = mi_col & 7;
+    let i = local_row >> 1;
+    let j = local_col >> 1;
+    match block_size {
+        BlockSize::Block64x64 => variance_low[0],
+        BlockSize::Block64x32 if local_col == 0 && local_row == 0 => variance_low[1],
+        BlockSize::Block64x32 if local_col == 0 && local_row != 0 => variance_low[2],
+        BlockSize::Block32x64 if local_col == 0 && local_row == 0 => variance_low[3],
+        BlockSize::Block32x64 if local_col != 0 && local_row == 0 => variance_low[4],
+        BlockSize::Block32x32 => {
+            let index = 5 + usize::from(local_row != 0) * 2 + usize::from(local_col != 0);
+            variance_low[index]
+        }
+        BlockSize::Block16x16 => variance_low[POS_SHIFT_16X16[i][j]],
+        BlockSize::Block32x16 => {
+            let j2 = ((mi_col + 2) & 7) >> 1;
+            variance_low[POS_SHIFT_16X16[i][j]] && variance_low[POS_SHIFT_16X16[i][j2]]
+        }
+        BlockSize::Block16x32 => {
+            let i2 = ((mi_row + 2) & 7) >> 1;
+            variance_low[POS_SHIFT_16X16[i][j]] && variance_low[POS_SHIFT_16X16[i2][j]]
+        }
+        _ => false,
     }
 }
 
@@ -1071,6 +1129,7 @@ pub fn choose_fixed_tree_inter(input: &FixedTreeInterInput<'_>) -> FixedTreePart
     }
 
     debug_assert!(decision.is_valid_partition());
+    let variance_low = fixed_tree_variance_low(input, &decision, &tree);
     let (nodes, leaves) = trace_fixed_decision(&decision);
     let mut variances = [FixedTreeVarianceTrace::default(); 21];
     let mut accumulators = [FixedTreeNodeAccumulatorTrace::default(); 21];
@@ -1093,12 +1152,76 @@ pub fn choose_fixed_tree_inter(input: &FixedTreeInterInput<'_>) -> FixedTreePart
         accumulators,
         variance_valid,
         used_4x4_averages,
+        variance_low,
         minmax_16x16,
         alternate_4x4_variances,
         alternate_4x4_accumulators,
         nodes,
         leaves,
     }
+}
+
+fn fixed_tree_variance_low(
+    input: &FixedTreeInterInput<'_>,
+    decision: &PartitionDecision,
+    tree: &[FixedPartitionVariance; 21],
+) -> [bool; 25] {
+    let mut variance_low = [false; 25];
+    let mv_threshold = if input.frame_width > 640 { 8 } else { 4 };
+    let small_partition_mv = i32::from(input.partition_mv_col).abs() < mv_threshold
+        && i32::from(input.partition_mv_row).abs() < mv_threshold;
+    if input.low_temp_var_mode == 0
+        || !input.partition_ref_is_last
+        || (input.low_temp_var_mode != 1 && !small_partition_mv)
+    {
+        return variance_low;
+    }
+
+    match decision.cells[0][0] {
+        BlockSize::Block64x64 => {
+            variance_low[0] = i64::from(tree[0].none.variance()) < (input.thresholds[0] >> 1);
+        }
+        BlockSize::Block64x32 => {
+            for index in 0..2 {
+                variance_low[1 + index] =
+                    i64::from(tree[0].horizontal[index].variance()) < (input.thresholds[0] >> 2);
+            }
+        }
+        BlockSize::Block32x64 => {
+            for index in 0..2 {
+                variance_low[3 + index] =
+                    i64::from(tree[0].vertical[index].variance()) < (input.thresholds[0] >> 2);
+            }
+        }
+        _ => {
+            for quadrant in 0..4 {
+                let row = (quadrant >> 1) * 4;
+                let col = (quadrant & 1) * 4;
+                match decision.cells[row][col] {
+                    BlockSize::Block32x32 => {
+                        let threshold = if matches!(input.low_temp_var_mode, 1 | 3) {
+                            (5 * input.thresholds[1]) >> 3
+                        } else {
+                            input.thresholds[1] >> 1
+                        };
+                        variance_low[5 + quadrant] =
+                            i64::from(tree[1 + quadrant].none.variance()) < threshold;
+                    }
+                    BlockSize::Block16x16 | BlockSize::Block32x16 | BlockSize::Block16x32
+                        if input.low_temp_var_mode >= 2 =>
+                    {
+                        for child in 0..4 {
+                            variance_low[9 + quadrant * 4 + child] =
+                                i64::from(tree[5 + quadrant * 4 + child].none.variance())
+                                    < (input.thresholds[2] >> 8);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    variance_low
 }
 
 impl VbpThresholds {
@@ -1570,11 +1693,16 @@ mod tests {
             predictor,
             visible_width: 64,
             visible_height: 64,
+            frame_width: 64,
             thresholds: [1, 1, 1, 1],
             minmax_threshold: 27,
             force_64x64_split: false,
             compute_minmax_variance: true,
             segment_is_boosted: false,
+            partition_ref_is_last: true,
+            partition_mv_row: 0,
+            partition_mv_col: 0,
+            low_temp_var_mode: 0,
             noise_level: NoiseLevel::Low,
             low_resolution: false,
             frame_height_le_360: true,
@@ -1655,6 +1783,69 @@ mod tests {
         fresh.update(PartitionDecision::all_64x64(), 1, [false; 25]);
         assert_eq!(fresh.previous_segment_id(), 1);
         assert_eq!(fresh.try_copy(base), None, "previous segment must be base");
+    }
+
+    #[test]
+    fn fixed_tree_low_temp_flags_map_to_libvpx_leaf_slots() {
+        let mut flags = [false; 25];
+        flags[0] = true;
+        flags[2] = true;
+        flags[4] = true;
+        flags[8] = true;
+        flags[9] = true;
+        flags[10] = true;
+        flags[11] = true;
+
+        assert!(fixed_tree_force_skip_low_temp_var(
+            &flags,
+            0,
+            0,
+            BlockSize::Block64x64
+        ));
+        assert!(!fixed_tree_force_skip_low_temp_var(
+            &flags,
+            0,
+            0,
+            BlockSize::Block64x32
+        ));
+        assert!(fixed_tree_force_skip_low_temp_var(
+            &flags,
+            4,
+            0,
+            BlockSize::Block64x32
+        ));
+        assert!(fixed_tree_force_skip_low_temp_var(
+            &flags,
+            0,
+            4,
+            BlockSize::Block32x64
+        ));
+        assert!(fixed_tree_force_skip_low_temp_var(
+            &flags,
+            4,
+            4,
+            BlockSize::Block32x32
+        ));
+        assert!(fixed_tree_force_skip_low_temp_var(
+            &flags,
+            0,
+            0,
+            BlockSize::Block16x16
+        ));
+        assert!(
+            fixed_tree_force_skip_low_temp_var(&flags, 0, 0, BlockSize::Block32x16),
+            "top 32x16 requires flags 9 and 10"
+        );
+        assert!(
+            fixed_tree_force_skip_low_temp_var(&flags, 0, 0, BlockSize::Block16x32),
+            "left 16x32 requires flags 9 and 11"
+        );
+        assert!(!fixed_tree_force_skip_low_temp_var(
+            &flags,
+            0,
+            2,
+            BlockSize::Block16x32
+        ));
     }
 
     #[test]

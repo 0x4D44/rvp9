@@ -16,7 +16,7 @@
 //   cd third_party/libvpx
 //   git apply ../libvpx-patches/vbp_oracle.patch
 diff --git a/vp9/encoder/vp9_encodeframe.c b/vp9/encoder/vp9_encodeframe.c
-index e8f29d5d2..f9ec7993a 100644
+index e8f29d5d2..ae487ec81 100644
 --- a/vp9/encoder/vp9_encodeframe.c
 +++ b/vp9/encoder/vp9_encodeframe.c
 @@ -12,6 +12,7 @@
@@ -312,7 +312,7 @@ index e8f29d5d2..f9ec7993a 100644
      fill_variance_tree(&vt, BLOCK_64X64);
      get_variance(&vt.part_variances.none);
      // If variance of this 64x64 block is above (some threshold of) the average
-@@ -1761,6 +1966,146 @@ static int choose_partitioning(VP9_COMP *cpi, const TileInfo *const tile,
+@@ -1761,6 +1966,148 @@ static int choose_partitioning(VP9_COMP *cpi, const TileInfo *const tile,
    }
  
    chroma_check(cpi, x, bsize, y_sad, is_key_frame, scene_change_detected);
@@ -343,6 +343,7 @@ index e8f29d5d2..f9ec7993a 100644
 +              "\"content_state\":%d,\"source_sad\":%u,"
 +              "\"zero_temp_sad_source\":%s,\"partition_ref\":%d,"
 +              "\"partition_mv_row\":%d,\"partition_mv_col\":%d,"
++              "\"low_temp_var_mode\":%d,"
 +              "\"frames_since_key\":%d,\"segment_id\":%d,"
 +              "\"previous_segment_before\":%d,"
 +              "\"previous_segment_after\":%d,"
@@ -366,6 +367,7 @@ index e8f29d5d2..f9ec7993a 100644
 +              (int)noise_level, content_state, y_sad,
 +              x->zero_temp_sad_source ? "true" : "false",
 +              (int)ref_frame_partition, x->sb_mvrow_part, x->sb_mvcol_part,
++              cpi->sf.short_circuit_low_temp_var,
 +              cpi->rc.frames_since_key, segment_id,
 +              oracle_previous_segment_before,
 +              cpi->sf.copy_partition_flag && cpi->prev_partition != NULL
