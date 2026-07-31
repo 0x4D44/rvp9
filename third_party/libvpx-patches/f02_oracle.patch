@@ -18,12 +18,10 @@
 # from the harness driver, avoiding the partial-flush interleaving
 # Windows stdio default `_IOFBF` produces.
 #
-# Forward-looking fields (HLD §3.4.1): `mode_bits_est`, `mv_bits_est`,
-# `coef_bits_est` are emitted as `0` until a Track F milestone wires
-# up the per-rate-component breakdown in libvpx's RT picker. The
-# schema field is present (so the diff binary's parser doesn't
-# need a v2 schema), but the diff report's markdown header must
-# explicitly flag these as "0 on both legs at F.0.2".
+# Rate-component fields report the winning candidate's live mode, MV,
+# selected-reference, switchable-filter, and skip syntax costs. The raw luma
+# and UV model fields remain separate so analysis never has to infer one
+# component by subtracting from the final rate.
 #
 # Reference-cost diagnostics append the neighbour-selected contexts, active
 # probabilities, and four `init_ref_frame_cost` outputs. The existing parser
@@ -115,7 +113,7 @@ diff --git a/vp9/encoder/vp9_pickmode.c b/vp9/encoder/vp9_pickmode.c
          best_pickmode.best_mode = this_mode;
          best_pickmode.best_intra_tx_size = mi->tx_size;
          best_pickmode.best_ref_frame = INTRA_FRAME;
-@@ -2735,8 +2766,142 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
+@@ -2735,8 +2766,169 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
        }
      }
    }
@@ -189,6 +187,29 @@ diff --git a/vp9/encoder/vp9_pickmode.c b/vp9/encoder/vp9_pickmode.c
 +                                               : (int)mi->mv[0].as_mv.row;
 +      int mv_col = (picked_ref == INTRA_FRAME) ? 0
 +                                               : (int)mi->mv[0].as_mv.col;
++      int mode_bits_est = picked_ref == INTRA_FRAME
++                               ? 0
++                               : cpi->inter_mode_cost
++                                     [x->mbmi_ext->mode_context[picked_ref]]
++                                     [INTER_OFFSET(picked_mode)];
++      int mv_bits_est = 0;
++      if (picked_ref != INTRA_FRAME && picked_mode == NEWMV) {
++        mv_bits_est = vp9_mv_bit_cost(
++            &mi->mv[0].as_mv, &x->mbmi_ext->ref_mvs[picked_ref][0].as_mv,
++            x->nmvjointcost, x->mvcost, MV_COST_WEIGHT);
++      }
++      int ref_bits_est =
++          picked_ref == INTRA_FRAME ? 0 : ref_frame_cost[picked_ref];
++      int filter_bits_est =
++          picked_ref != INTRA_FRAME && cm->interp_filter == SWITCHABLE &&
++                  ((mi->mv[0].as_mv.row | mi->mv[0].as_mv.col) & 0x07)
++              ? vp9_get_switchable_rate(cpi, xd)
++              : 0;
++      int skip_bits_est =
++          picked_ref == INTRA_FRAME
++              ? 0
++              : vp9_cost_bit(vp9_get_skip_prob(cm, xd),
++                             x->skip_txfm[0] != SKIP_TXFM_NONE);
 +      /* Winning candidate's pre-quant source-vs-prediction SSE. */
 +      unsigned long long sse_after_pred =
 +          picked_ref == INTRA_FRAME ? 0 : (unsigned long long)best_pred_sse_f02;
@@ -215,7 +236,9 @@ diff --git a/vp9/encoder/vp9_pickmode.c b/vp9/encoder/vp9_pickmode.c
 +              "{\"frame_idx\":%u,\"mi_row\":%d,\"mi_col\":%d,"
 +              "\"bsize\":\"%s\",\"mode\":\"%s\",\"ref_frame\":\"%s\","
 +              "\"mv_row\":%d,\"mv_col\":%d,"
-+              "\"mode_bits_est\":0,\"mv_bits_est\":0,\"coef_bits_est\":0,"
++              "\"mode_bits_est\":%d,\"mv_bits_est\":%d,"
++              "\"ref_bits_est\":%d,\"filter_bits_est\":%d,"
++              "\"skip_bits_est\":%d,\"coef_bits_est\":0,"
 +              "\"picker_rate\":%d,\"picker_dist\":%lld,"
 +              "\"picker_rd_cost\":%lld,\"model_var_y\":%u,"
 +              "\"model_tx_size\":\"%s\",\"model_skip_txfm\":%d,"
@@ -233,6 +256,8 @@ diff --git a/vp9/encoder/vp9_pickmode.c b/vp9/encoder/vp9_pickmode.c
 +              frame_idx, mi_row, mi_col,
 +              bsize_str, mode_str, ref_str,
 +              mv_row, mv_col,
++              mode_bits_est, mv_bits_est, ref_bits_est, filter_bits_est,
++              skip_bits_est,
 +              best_rdc.rate, (long long)best_rdc.dist,
 +              (long long)best_rdc.rdcost,
 +              picked_ref == INTRA_FRAME ? 0 : best_model_var_f02,

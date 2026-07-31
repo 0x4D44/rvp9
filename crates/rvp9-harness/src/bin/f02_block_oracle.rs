@@ -256,7 +256,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )?;
         writeln!(
             sf,
-            "- Diagnostic-only fields: `mode_bits_est`, `mv_bits_est`, and `coef_bits_est`; they are live on rvp9 and the pinned libvpx patch emits zero placeholders."
+            "- `coef_bits_est`: live on rvp9, **0 on libvpx** (the libvpx-side split remains diagnostic follow-up)."
+        )?;
+        writeln!(
+            sf,
+            "- `mode_bits_est`, `mv_bits_est`, `ref_bits_est`, `filter_bits_est`, `skip_bits_est`: live on both legs."
         )?;
         writeln!(
             sf,

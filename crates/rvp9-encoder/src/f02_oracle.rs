@@ -106,6 +106,13 @@ pub struct BlockDecision {
     /// Picker's MV-rate estimate (`vp9_prob_cost` units). `0` for
     /// non-NEW modes.
     pub mv_bits_est: u32,
+    /// Selected reference-frame syntax cost (`vp9_prob_cost` units).
+    pub ref_bits_est: u32,
+    /// Switchable-filter syntax cost (`vp9_prob_cost` units). Zero for
+    /// integer-pel MVs, which do not signal a filter.
+    pub filter_bits_est: u32,
+    /// Skip-flag syntax cost (`vp9_prob_cost` units).
+    pub skip_bits_est: u32,
     /// Picker's coefficient-bit estimate in plain bits.
     pub coef_bits_est: u32,
     /// Winning candidate's total picker rate in `vp9_prob_cost` units.
@@ -176,7 +183,8 @@ impl BlockDecision {
             "{{\"frame_idx\":{},\"mi_row\":{},\"mi_col\":{},\
              \"bsize\":\"{}\",\"mode\":\"{}\",\"ref_frame\":\"{}\",\
              \"mv_row\":{},\"mv_col\":{},\
-             \"mode_bits_est\":{},\"mv_bits_est\":{},\"coef_bits_est\":{},\
+             \"mode_bits_est\":{},\"mv_bits_est\":{},\"ref_bits_est\":{},\
+             \"filter_bits_est\":{},\"skip_bits_est\":{},\"coef_bits_est\":{},\
              \"picker_rate\":{},\"picker_dist\":{},\"picker_rd_cost\":{},\
              \"model_var_y\":{},\"model_tx_size\":\"{}\",\
              \"model_skip_txfm\":{},\
@@ -195,6 +203,9 @@ impl BlockDecision {
             self.mv_col,
             self.mode_bits_est,
             self.mv_bits_est,
+            self.ref_bits_est,
+            self.filter_bits_est,
+            self.skip_bits_est,
             self.coef_bits_est,
             self.picker_rate,
             self.picker_dist,
@@ -371,6 +382,9 @@ mod tests {
             mv_col: -8,
             mode_bits_est: 150,
             mv_bits_est: 320,
+            ref_bits_est: 461,
+            filter_bits_est: 200,
+            skip_bits_est: 512,
             coef_bits_est: 0,
             picker_rate: 7_500,
             picker_dist: 12_345,
@@ -405,6 +419,9 @@ mod tests {
             mv_col: 0,
             mode_bits_est: 90,
             mv_bits_est: 0,
+            ref_bits_est: 2_473,
+            filter_bits_est: 0,
+            skip_bits_est: 0,
             coef_bits_est: 0,
             picker_rate: 900,
             picker_dist: 1_234,

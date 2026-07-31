@@ -2111,6 +2111,9 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
                         // shape.
                         mode_bits_est: 0,
                         mv_bits_est: 0,
+                        ref_bits_est: 0,
+                        filter_bits_est: 0,
+                        skip_bits_est: 0,
                         // Forward-looking per HLD §3.4.1 — `0`
                         // until F.1 lands the coef-bit estimator.
                         coef_bits_est: 0,
@@ -4482,6 +4485,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             mv_col: 0,
                             mode_bits_est: 0,
                             mv_bits_est: 0,
+                            ref_bits_est: 0,
+                            filter_bits_est: 0,
+                            skip_bits_est: 0,
                             coef_bits_est: 0,
                             picker_rate: 0,
                             picker_dist: 0,
@@ -4607,6 +4613,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             mv_col: 0,
                             mode_bits_est: 0,
                             mv_bits_est: 0,
+                            ref_bits_est: 0,
+                            filter_bits_est: 0,
+                            skip_bits_est: 0,
                             coef_bits_est: 0,
                             picker_rate: 0,
                             picker_dist: 0,
@@ -6451,18 +6460,31 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     } else {
                         0
                     };
-                    // mode_bits_est = total picker rate minus the
-                    // ref-frame cost and the MV cost — what's left
-                    // is the inter-mode cost.
                     let ref_cost = match final_ref {
                         RefFrame::GoldenFrame => ref_frame_cost_golden,
                         RefFrame::AltrefFrame => ref_frame_cost_altref,
-                        _ => ref_frame_cost_last,
+                        RefFrame::LastFrame => ref_frame_cost_last,
+                        _ => 0,
                     };
-                    let mode_bits_est = pick
-                        .best_rate
-                        .saturating_sub(mv_bits_est)
-                        .saturating_sub(ref_cost);
+                    let mode_bits_est = if final_ref == RefFrame::IntraFrame {
+                        0
+                    } else {
+                        inter_costs[inter_mode_ctx][final_mode.idx()].max(0) as u32
+                    };
+                    let filter_bits_est = if final_ref != RefFrame::IntraFrame
+                        && (final_mv.row | final_mv.col) & 0x07 != 0
+                    {
+                        sic[switchable_interp_ctx][pick.picked_interp_filter as usize].max(0) as u32
+                    } else {
+                        0
+                    };
+                    let skip_bits_est = if final_ref == RefFrame::IntraFrame {
+                        0
+                    } else {
+                        let skip_prob =
+                            rvp9_core::entropy::default_probs::DEFAULT_SKIP_PROBS[skip_ctx];
+                        rvp9_core::cost::vp9_cost_bit(skip_prob, pick.picker_skip)
+                    };
                     // F.1 — `coef_bits_est` now live. The picker's
                     // `coef_rate` is in `vp9_prob_cost` units
                     // (1/512-bit, libvpx `VP9_PROB_COST_SHIFT = 9`); the
@@ -6497,6 +6519,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         },
                         mode_bits_est,
                         mv_bits_est,
+                        ref_bits_est: ref_cost,
+                        filter_bits_est,
+                        skip_bits_est,
                         coef_bits_est,
                         picker_rate: pick.best_rate,
                         picker_dist: i64::from(pick.best_distortion),

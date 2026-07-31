@@ -85,6 +85,9 @@ pub fn parse_jsonl_line(line: &str) -> Result<BlockDecision, ParseError> {
     let mut mv_col: Option<i16> = None;
     let mut mode_bits_est: Option<u32> = None;
     let mut mv_bits_est: Option<u32> = None;
+    let mut ref_bits_est: Option<u32> = None;
+    let mut filter_bits_est: Option<u32> = None;
+    let mut skip_bits_est: Option<u32> = None;
     let mut coef_bits_est: Option<u32> = None;
     let mut picker_rate: Option<u32> = None;
     let mut picker_dist: Option<i64> = None;
@@ -124,6 +127,9 @@ pub fn parse_jsonl_line(line: &str) -> Result<BlockDecision, ParseError> {
             "mv_col" => mv_col = Some(parse_num(v, "mv_col")?),
             "mode_bits_est" => mode_bits_est = Some(parse_num(v, "mode_bits_est")?),
             "mv_bits_est" => mv_bits_est = Some(parse_num(v, "mv_bits_est")?),
+            "ref_bits_est" => ref_bits_est = Some(parse_num(v, "ref_bits_est")?),
+            "filter_bits_est" => filter_bits_est = Some(parse_num(v, "filter_bits_est")?),
+            "skip_bits_est" => skip_bits_est = Some(parse_num(v, "skip_bits_est")?),
             "coef_bits_est" => coef_bits_est = Some(parse_num(v, "coef_bits_est")?),
             "picker_rate" => picker_rate = Some(parse_num(v, "picker_rate")?),
             "picker_dist" => picker_dist = Some(parse_num(v, "picker_dist")?),
@@ -192,6 +198,9 @@ pub fn parse_jsonl_line(line: &str) -> Result<BlockDecision, ParseError> {
         mv_col: mv_col.ok_or(ParseError::MissingField("mv_col"))?,
         mode_bits_est: mode_bits_est.ok_or(ParseError::MissingField("mode_bits_est"))?,
         mv_bits_est: mv_bits_est.ok_or(ParseError::MissingField("mv_bits_est"))?,
+        ref_bits_est: ref_bits_est.ok_or(ParseError::MissingField("ref_bits_est"))?,
+        filter_bits_est: filter_bits_est.ok_or(ParseError::MissingField("filter_bits_est"))?,
+        skip_bits_est: skip_bits_est.ok_or(ParseError::MissingField("skip_bits_est"))?,
         coef_bits_est: coef_bits_est.ok_or(ParseError::MissingField("coef_bits_est"))?,
         picker_rate: picker_rate.ok_or(ParseError::MissingField("picker_rate"))?,
         picker_dist: picker_dist.ok_or(ParseError::MissingField("picker_dist"))?,
@@ -682,6 +691,9 @@ mod tests {
             mv_col: -8,
             mode_bits_est: 150,
             mv_bits_est: 320,
+            ref_bits_est: 461,
+            filter_bits_est: 200,
+            skip_bits_est: 512,
             coef_bits_est: 0,
             picker_rate: 7_500,
             picker_dist: 12_345,
@@ -716,6 +728,9 @@ mod tests {
             mv_col: 0,
             mode_bits_est: 90,
             mv_bits_est: 0,
+            ref_bits_est: 2_473,
+            filter_bits_est: 0,
+            skip_bits_est: 0,
             coef_bits_est: 0,
             picker_rate: 900,
             picker_dist: 1_234,
@@ -779,7 +794,8 @@ mod tests {
         let line = "{\"frame_idx\":0,\"mi_row\":0,\"mi_col\":0,\
                     \"bsize\":\"8x8\",\"mode\":\"DC\",\"ref_frame\":\"INTRA\",\
                     \"mv_row\":0,\"mv_col\":0,\
-                    \"mode_bits_est\":0,\"mv_bits_est\":0,\"coef_bits_est\":0,\
+                    \"mode_bits_est\":0,\"mv_bits_est\":0,\"ref_bits_est\":0,\
+                    \"filter_bits_est\":0,\"skip_bits_est\":0,\"coef_bits_est\":0,\
                     \"picker_rate\":0,\"picker_dist\":0,\"picker_rd_cost\":0,\
                     \"model_var_y\":0,\"model_tx_size\":\"8x8\",\
                     \"model_skip_txfm\":0,\
@@ -830,7 +846,8 @@ mod tests {
         let line = "{\"frame_idx\":1,\"mi_row\":2,\"mi_col\":3,\
                     \"bsize\":\"8x8\",\"mode\":\"DC\",\"ref_frame\":\"INTRA\",\
                     \"mv_row\":0,\"mv_col\":0,\
-                    \"mode_bits_est\":1,\"mv_bits_est\":0,\"coef_bits_est\":0,\
+                    \"mode_bits_est\":1,\"mv_bits_est\":0,\"ref_bits_est\":0,\
+                    \"filter_bits_est\":0,\"skip_bits_est\":0,\"coef_bits_est\":0,\
                     \"picker_rate\":0,\"picker_dist\":0,\"picker_rd_cost\":0,\
                     \"model_var_y\":0,\"model_tx_size\":\"8x8\",\
                     \"model_skip_txfm\":0,\
