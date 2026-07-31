@@ -24,6 +24,32 @@ Each entry:
 
 ## Entries
 
+### 2026-07-31 — Retained replay specializes the common ONE token
+**Where:** `rvp9-core::entropy::detokenize::replay_retained_coefs`;
+libvpx counterpart: `vp9/encoder/vp9_bitstream.c::pack_mb_tokens`.
+**What libvpx does:** recognizes `ONE_TOKEN` in its retained token stream and
+writes the one-node decision plus sign directly. Larger magnitudes enter the
+coefficient tree and category-bit path.
+**What rvp9 does:** retains raw signed coefficients rather than libvpx token
+identifiers. Replay now recognizes `+1` and `-1` and emits those same two
+decisions directly; every other nonzero coefficient retains the shared
+general writer.
+**Why:** a temporary product-workload counter found that 680,337 of 804,738
+replayed nonzero coefficients (`84.54%`) were `+1` or `-1`. Avoiding the
+large category writer's call on that dominant case restores libvpx's packing
+shape without enlarging the four-byte retained record.
+**Byte-parity impact:** none. Direct-versus-retained tests cover both signs,
+zero runs, every coefficient category, and changed post-header probability
+tables. The 120-frame product stream remains byte-identical.
+**Compression-efficiency impact:** none because the arithmetic decisions and
+emitted stream are unchanged.
+**Speed impact:** two twenty-pair one-thread trials improve total child CPU
+by `-0.554%` and `-0.116%`; two twenty-pair four-thread trials improve it by
+`-0.559%` and `-0.401%`. All four paired wall results also improve.
+**Future plan:** retain while the direct/replay oracle and exact product
+stream remain green. Keep category encoding centralized in
+`write_nonzero_coef`; do not duplicate the larger tree in replay.
+
 ### 2026-07-31 — Mixed direct/clamped integer projections
 **Where:** `rvp9-core::mv_search::int_pro_me::{fill_int_pro_rows,fill_int_pro_cols}`;
 libvpx counterparts: `vp9/encoder/vp9_mcomp.c::vp9_int_pro_motion_estimation`

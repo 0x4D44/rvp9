@@ -1543,7 +1543,14 @@ fn replay_retained_coefs(
                 }
                 coef => {
                     bw.write(1, local_prob[ZERO_CONTEXT_NODE]);
-                    let _ = write_nonzero_coef(bw, local_prob, i32::from(coef));
+                    // Match libvpx's ONE_TOKEN packing path here rather than
+                    // entering the much larger category-token writer.
+                    if coef == 1 || coef == -1 {
+                        bw.write(0, local_prob[ONE_CONTEXT_NODE]);
+                        bw.write_bit(u8::from(coef < 0));
+                    } else {
+                        let _ = write_nonzero_coef(bw, local_prob, i32::from(coef));
+                    }
                     i += 1;
                     break;
                 }
@@ -1843,6 +1850,7 @@ mod tests {
             ([0i32; 16], 0usize),
             (mixed, 12usize),
             ([1i32; 16], 16usize),
+            ([-1i32; 16], 16usize),
         ];
 
         for (coefs, eob) in cases {
