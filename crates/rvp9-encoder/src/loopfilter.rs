@@ -59,6 +59,7 @@ use rvp9_core::loopfilter::{
 };
 use rvp9_core::mode_info::{BlockMode, ModeInfo, Mv, RefFrame};
 use rvp9_core::quant::ac_quant;
+use std::borrow::Cow;
 
 use crate::{InterPartitionLeafDesc, PartitionLeafDesc};
 
@@ -253,23 +254,11 @@ pub(crate) fn apply_loop_filter_to_tight_recon_parallel(
     let sb_rows = mi_rows.div_ceil(SB_MI_SIZE);
     let sb_cols = mi_cols.div_ceil(SB_MI_SIZE);
 
-    // Wave 7 C1 — `setup_mask` now takes `&[Option<ModeInfo>]`
-    // directly, mirroring the decoder's frame_mi_grid layout. The
-    // encoder's partition picker may leave sub-leaf MI cells `None`
-    // (those cells are never read by the partition walker because
-    // libvpx's "MI pointer duplication" only matters for the
-    // top-left cell of each leaf). For safety we back-fill any
-    // remaining `None`s with a cloned placeholder before calling
-    // setup_mask, so the LF reader's `.expect()` never trips even on
-    // adversarial picker output.
-    let placeholder = mi_grid
-        .iter()
-        .find_map(|c| c.as_ref().cloned())
-        .unwrap_or_else(default_placeholder_mode_info);
-    let mut frame_mi_opt: Vec<Option<ModeInfo>> = Vec::with_capacity(mi_grid.len().max(1));
-    for cell in mi_grid {
-        frame_mi_opt.push(Some(cell.unwrap_or(placeholder)));
-    }
+    // The encoder's product grid builders splat every leaf across its full
+    // footprint, so complete frames can go straight to the mask walker.
+    // Retain the old placeholder completion only for incomplete/adversarial
+    // grids instead of allocating and copying a second full grid every frame.
+    let frame_mi_opt = complete_mi_grid_for_lf(mi_grid);
 
     let num_lf_workers = max_threads.min(num_tile_cols.max(1)).min(sb_rows).max(1);
     if let Some(worker_pool) = worker_pool.filter(|_| num_lf_workers >= 2) {
@@ -399,6 +388,23 @@ fn default_placeholder_mode_info() -> ModeInfo {
         },
         bmi: Default::default(),
     }
+}
+
+fn complete_mi_grid_for_lf(mi_grid: &[Option<ModeInfo>]) -> Cow<'_, [Option<ModeInfo>]> {
+    if mi_grid.iter().all(Option::is_some) {
+        return Cow::Borrowed(mi_grid);
+    }
+
+    let placeholder = mi_grid
+        .iter()
+        .find_map(|cell| *cell)
+        .unwrap_or_else(default_placeholder_mode_info);
+    Cow::Owned(
+        mi_grid
+            .iter()
+            .map(|cell| Some(cell.unwrap_or(placeholder)))
+            .collect(),
+    )
 }
 
 /// Build a frame-wide `Option<ModeInfo>` grid from intra (keyframe)
@@ -753,6 +759,29 @@ pub fn search_filter_level(params: &SearchFilterLevelParams<'_>) -> u8 {
 #[cfg(test)]
 mod w7_4_tests {
     use super::*;
+
+    #[test]
+    fn complete_filter_grid_borrows_populated_input_and_repairs_holes() {
+        let populated = build_intra_mi_grid(8, 8);
+        assert!(matches!(
+            complete_mi_grid_for_lf(&populated),
+            Cow::Borrowed(_)
+        ));
+
+        let expected = populated[0];
+        let mut incomplete = populated;
+        incomplete[7] = None;
+        incomplete[63] = None;
+        let completed = complete_mi_grid_for_lf(&incomplete);
+        assert!(matches!(completed, Cow::Owned(_)));
+        assert_eq!(completed[7], expected);
+        assert_eq!(completed[63], expected);
+
+        let empty = vec![None; 4];
+        let completed_empty = complete_mi_grid_for_lf(&empty);
+        assert!(matches!(completed_empty, Cow::Owned(_)));
+        assert!(completed_empty.iter().all(Option::is_some));
+    }
 
     #[test]
     fn inter_frame_lf_grid_preserves_intra_winner() {
