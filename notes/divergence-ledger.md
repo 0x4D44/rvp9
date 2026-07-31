@@ -2502,3 +2502,39 @@ Apple M5 Max host.
 **Future plan:** retain the fused implementation while it remains
 byte-exact. Add 4/8-wide NEON kernels only if a fresh whole-encoder profile
 shows those scalar slots are material.
+
+### 2026-07-31 — AArch64 fast quantization keeps rvp9's widened coefficient API
+
+**Where:** `rvp9_core::dsp::aarch64::quantize_neon::vp9_quantize_fp_neon`,
+used by `rvp9_core::quant::forward::vp9_quantize_fp_with_order` for 4x4,
+8x8, and 16x16 transforms.
+
+**What libvpx does:** the 8-bit build's
+`vp9/encoder/arm/neon/vp9_quantize_neon.c` loads eight `tran_low_t` i16
+coefficients, quantizes them in i16/i32 lanes, and finds EOB by masking the
+inverse scan.
+
+**What rvp9 does:** loads the same eight raster-order coefficients as two
+i32 vectors, matching rvp9's existing transform/quantizer API. It then
+applies the same rounded multiply, narrows qcoeff/dqcoeff to i16, and finds
+EOB from the same one-based inverse scan tables.
+
+**Why:** rvp9 deliberately keeps forward-transform coefficients as i32 even
+though valid 8-bit VP9 transform output is i16-bounded. Widened input lanes
+avoid changing that established API or adding a pre-quantization narrowing
+copy while retaining libvpx's raster-order SIMD algorithm.
+
+**Byte-parity impact:** none. Differential coverage spans all four scan
+types, q indices `0/1/20/80/160/255`, and every supported transform size.
+Three alternating 120-frame cpu-used 7 before/after pairs remained
+byte-identical.
+
+**Compression-efficiency impact:** none; the production stream is unchanged.
+
+**Speed impact:** microbenchmarks improved 4x4/8x8/16x16 fast quantization by
+`6.98x/6.21x/6.39x`. The 120-frame cpu-used 7 median improved from `2.07 s`
+to `1.98 s` (`4.35%`) on the pinned Apple M5 Max host.
+
+**Future plan:** retain the widened-lane kernel while it remains byte-exact.
+Treat the separately measured 32x32 fast quantizer and zbin quantizer as
+independent future units.

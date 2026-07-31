@@ -3,8 +3,8 @@
 //!
 //! Mirror of the inverse-quant path that lives in [`super`]
 //! (`dc_quant`/`ac_quant` + the [`super::DC_QLOOKUP`]/[`super::AC_QLOOKUP`]
-//! tables). Pure scalar; the eventual SIMD path will dispatch through
-//! [`crate::dsp::SimdDispatch`].
+//! tables). Scalar functions remain the cross-platform oracle; AArch64
+//! realtime callers use a byte-exact NEON fast-quantizer wrapper.
 //!
 //! ## Source mapping
 //!
@@ -349,6 +349,53 @@ pub fn vp9_quantize_fp(
     (eob + 1) as u16
 }
 
+/// Fast-path quantizer with a complete scan order.
+///
+/// AArch64 uses the byte-exact NEON raster-order kernel and `iscan` EOB
+/// reduction. Other targets retain [`vp9_quantize_fp`].
+#[allow(clippy::too_many_arguments)]
+#[must_use]
+pub fn vp9_quantize_fp_with_order(
+    coeff_ptr: &[i32],
+    n_coeffs: usize,
+    skip_block: bool,
+    round_ptr: &[i16; 2],
+    quant_ptr: &[i16; 2],
+    qcoeff_ptr: &mut [i16],
+    dqcoeff_ptr: &mut [i16],
+    dequant_ptr: &[i16; 2],
+    order: &ScanOrder,
+) -> u16 {
+    #[cfg(target_arch = "aarch64")]
+    {
+        crate::dsp::aarch64::vp9_quantize_fp_neon(
+            coeff_ptr,
+            n_coeffs,
+            skip_block,
+            round_ptr,
+            quant_ptr,
+            qcoeff_ptr,
+            dqcoeff_ptr,
+            dequant_ptr,
+            order.iscan,
+        )
+    }
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        vp9_quantize_fp(
+            coeff_ptr,
+            n_coeffs,
+            skip_block,
+            round_ptr,
+            quant_ptr,
+            qcoeff_ptr,
+            dqcoeff_ptr,
+            dequant_ptr,
+            order.scan,
+        )
+    }
+}
+
 /// Fast-path forward quantizer for 32×32 transform blocks.
 ///
 /// Mirrors libvpx `vp9_quantize_fp_32x32_c`
@@ -570,9 +617,9 @@ pub const fn n_coeffs_for(tx_size: TxSize) -> usize {
 }
 
 /// Convenience: extract the forward `scan` slice from a [`ScanOrder`].
-/// libvpx forward quantizers take only `scan` (not `iscan`); this helper
-/// makes the call-site narrowing explicit so future readers don't expect
-/// `iscan` to be used here.
+/// The scalar and 32x32 quantizers take `scan`; the AArch64 non-32x32 fast
+/// wrapper instead takes the complete order so it can derive EOB from
+/// `iscan`, like libvpx's NEON kernel.
 #[inline]
 #[must_use]
 pub fn scan_for_forward(order: &ScanOrder) -> &[i16] {

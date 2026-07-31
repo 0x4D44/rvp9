@@ -21,7 +21,9 @@
 //!   `vpx_fdct{4x4,8x8,16x16,32x32}_1`. See [`fdct_dc_scale`] for the
 //!   per-size scale derivation.
 
-use rvp9_core::quant::forward::{PlaneQuantizers, vp9_quantize_fp, vp9_quantize_fp_32x32};
+use rvp9_core::quant::forward::{
+    PlaneQuantizers, vp9_quantize_fp_32x32, vp9_quantize_fp_with_order,
+};
 use rvp9_core::transforms::TxSize;
 use rvp9_core::transforms::forward::{fdct4x4, fdct8x8, fdct16x16, fdct32x32};
 pub use rvp9_core::transforms::scans::ScanOrder;
@@ -61,7 +63,7 @@ pub fn vp9_xform_quant_fp(
             let mut c = [0i32; 16];
             fdct4x4(src_diff, &mut c, diff_stride);
             coeff[..16].copy_from_slice(&c);
-            vp9_quantize_fp(
+            vp9_quantize_fp_with_order(
                 &c,
                 16,
                 false,
@@ -70,14 +72,14 @@ pub fn vp9_xform_quant_fp(
                 qcoeff,
                 dqcoeff,
                 &qp.dequant,
-                scan.scan(),
+                scan,
             )
         }
         TxSize::Tx8x8 => {
             let mut c = [0i32; 64];
             fdct8x8(src_diff, &mut c, diff_stride);
             coeff[..64].copy_from_slice(&c);
-            vp9_quantize_fp(
+            vp9_quantize_fp_with_order(
                 &c,
                 64,
                 false,
@@ -86,7 +88,7 @@ pub fn vp9_xform_quant_fp(
                 qcoeff,
                 dqcoeff,
                 &qp.dequant,
-                scan.scan(),
+                scan,
             )
         }
         TxSize::Tx16x16 => {
@@ -98,7 +100,7 @@ pub fn vp9_xform_quant_fp(
             fdct16x16(src_diff, c_arr.as_mut(), diff_stride);
             c.copy_from_slice(c_arr.as_ref());
             coeff[..256].copy_from_slice(&c);
-            vp9_quantize_fp(
+            vp9_quantize_fp_with_order(
                 &c,
                 256,
                 false,
@@ -107,7 +109,7 @@ pub fn vp9_xform_quant_fp(
                 qcoeff,
                 dqcoeff,
                 &qp.dequant,
-                scan.scan(),
+                scan,
             )
         }
         TxSize::Tx32x32 => {

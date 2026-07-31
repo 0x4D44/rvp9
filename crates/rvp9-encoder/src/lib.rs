@@ -7529,8 +7529,8 @@ fn inter_forward_quant_one_tx(
     quant_fp: bool,
 ) -> (Vec<i32>, Vec<i32>, usize) {
     use rvp9_core::quant::forward::{
-        scan_for_forward, vp9_quantize_b, vp9_quantize_b_32x32, vp9_quantize_fp,
-        vp9_quantize_fp_32x32,
+        scan_for_forward, vp9_quantize_b, vp9_quantize_b_32x32, vp9_quantize_fp_32x32,
+        vp9_quantize_fp_with_order,
     };
     use rvp9_core::transforms::TxType;
     use rvp9_core::transforms::forward::{fdct8x8, fdct16x16, fdct32x32, fht4x4};
@@ -7580,7 +7580,7 @@ fn inter_forward_quant_one_tx(
                 &dequant_pair,
                 scan_slice,
             ),
-            _ => vp9_quantize_fp(
+            _ => vp9_quantize_fp_with_order(
                 &coefs,
                 n,
                 /* skip_block = */ false,
@@ -7589,7 +7589,7 @@ fn inter_forward_quant_one_tx(
                 &mut qcoeff_i16,
                 &mut dqcoeff_i16,
                 &dequant_pair,
-                scan_slice,
+                &scan,
             ),
         }
     } else {
@@ -8073,8 +8073,8 @@ struct InterLumaTxInput<'a> {
 
 fn choose_inter_luma_tx_size(input: InterLumaTxInput<'_>) -> TxSize {
     use rvp9_core::quant::forward::{
-        scan_for_forward, vp9_quantize_b, vp9_quantize_b_32x32, vp9_quantize_fp,
-        vp9_quantize_fp_32x32,
+        scan_for_forward, vp9_quantize_b, vp9_quantize_b_32x32, vp9_quantize_fp_32x32,
+        vp9_quantize_fp_with_order,
     };
     use rvp9_core::transforms::TxType;
     use rvp9_core::transforms::forward::{fdct8x8, fdct16x16, fdct32x32, fht4x4};
@@ -8195,7 +8195,7 @@ fn choose_inter_luma_tx_size(input: InterLumaTxInput<'_>) -> TxSize {
                             &dequant_pair,
                             scan_slice,
                         ),
-                        _ => vp9_quantize_fp(
+                        _ => vp9_quantize_fp_with_order(
                             &coefs,
                             ncoef,
                             false,
@@ -8204,7 +8204,7 @@ fn choose_inter_luma_tx_size(input: InterLumaTxInput<'_>) -> TxSize {
                             &mut qcoeff_i16,
                             &mut dqcoeff_i16,
                             &dequant_pair,
-                            scan_slice,
+                            &scan,
                         ),
                     }
                 } else {
