@@ -125,8 +125,9 @@ pub mod temporal_filter;
 pub mod tpl;
 
 pub use frame_loop::{
-    AqMode, Deadline, EncodedFrame, EncoderConfig, FrameKind as StreamFrameKind,
-    Stage4aProductSplitOverride, StreamEncoder, YuvFrameRef, encode_two_pass,
+    AqMode, Deadline, EncodedFrame, EncoderConfig, EncoderParallelism,
+    FrameKind as StreamFrameKind, Stage4aProductSplitOverride, StreamEncoder, YuvFrameRef,
+    encode_two_pass,
 };
 // Re-audit pass 3: `EncoderConfig::rc_mode` is a public field of type
 // `rate_control::RcMode`, so the discriminator must be reachable from

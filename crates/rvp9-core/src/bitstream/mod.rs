@@ -64,9 +64,9 @@ pub use modes_writer::{
 pub use raw::{RawBitReader, RawBitWriter};
 pub use sub_parsers::{
     LoopFilterParams, MAX_SEGMENTS, PREDICTION_PROBS, QuantizationParams, SEG_LVL_MAX,
-    SEG_TREE_PROBS, SegFeature, SegmentationParams, TileInfo, parse_loopfilter, parse_quantization,
-    parse_segmentation, parse_tile_info, write_loopfilter, write_quantization, write_segmentation,
-    write_tile_info,
+    SEG_TREE_PROBS, SegFeature, SegmentationParams, TileInfo, get_tile_n_bits, parse_loopfilter,
+    parse_quantization, parse_segmentation, parse_tile_info, write_loopfilter, write_quantization,
+    write_segmentation, write_tile_info,
 };
 pub use superframe::{
     MAX_SIZE_FIELD_BYTES, MAX_SUPERFRAME_FRAMES, Superframe, SuperframeBuilder,

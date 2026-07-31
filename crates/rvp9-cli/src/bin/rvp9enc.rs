@@ -16,7 +16,8 @@
 use rvp9_cli::args::{self, Arg, Flag};
 use rvp9_encoder::lookahead::MAX_LAG_BUFFERS;
 use rvp9_encoder::{
-    AqMode, Deadline, EncoderConfig, RcMode, StreamEncoder, YuvFrameRef, encode_two_pass,
+    AqMode, Deadline, EncoderConfig, EncoderParallelism, RcMode, StreamEncoder, YuvFrameRef,
+    encode_two_pass,
 };
 use rvp9_io::container::{IvfHeader, IvfStreamWriter, write_ivf};
 use rvp9_io::y4m;
@@ -881,7 +882,12 @@ fn run(opts: &EncOpts, positionals: &[String]) -> Result<(), String> {
         );
     }
 
-    let mut encoder = StreamEncoder::new(config).map_err(|e| {
+    // libvpx's VP9 codec defaults are g_threads=8 and a requested
+    // log2_tile_columns=6. The latter is clamped to the legal range for
+    // the coded width by the encoder. Explicit `--threads=0` is treated
+    // as one worker, matching the no-extra-worker interpretation.
+    let parallelism = build_encoder_parallelism(opts);
+    let mut encoder = StreamEncoder::new_with_parallelism(config, parallelism).map_err(|e| {
         format!(
             "{e} (note: the Stage 4a encoder requires coded dimensions \
              that are multiples of 64 — use -w/-h to crop)"
@@ -1307,6 +1313,15 @@ fn build_encoder_config(
     }
 }
 
+/// Map vpxenc's worker/tile CLI controls onto the encoder-side runtime
+/// configuration.
+fn build_encoder_parallelism(opts: &EncOpts) -> EncoderParallelism {
+    EncoderParallelism {
+        max_threads: opts.threads.unwrap_or(8).max(1),
+        requested_log2_tile_cols: opts.tile_columns.unwrap_or(6),
+    }
+}
+
 /// Test-only thin wrapper over [`build_encoder_config`] pinning a
 /// minimal 64×64 / 30 fps geometry so the PROOF tests can drive the
 /// real production mapping with just an [`EncOpts`].
@@ -1329,6 +1344,109 @@ mod tests {
 
     fn s(parts: &[&str]) -> Vec<String> {
         parts.iter().map(|s| (*s).to_string()).collect()
+    }
+
+    #[test]
+    fn threads_and_tile_columns_reach_encoder_parallelism() {
+        let table = flag_table();
+        let mut opts = EncOpts::default();
+        args::parse(
+            &table,
+            &mut opts,
+            &s(&["--threads=4", "--tile-columns=2"]),
+            "rvp9enc",
+        )
+        .unwrap();
+        let parallelism = build_encoder_parallelism(&opts);
+        assert_eq!(
+            parallelism,
+            EncoderParallelism {
+                max_threads: 4,
+                requested_log2_tile_cols: 2,
+            }
+        );
+
+        let defaults = build_encoder_parallelism(&EncOpts::default());
+        assert_eq!(defaults.max_threads, 8);
+        assert_eq!(defaults.requested_log2_tile_cols, 6);
+
+        let mut zero_threads = EncOpts::default();
+        args::parse(&table, &mut zero_threads, &s(&["--threads=0"]), "rvp9enc").unwrap();
+        assert_eq!(build_encoder_parallelism(&zero_threads).max_threads, 1);
+    }
+
+    /// W0.1 PROOF — every formerly-rejected vpxenc flag is now parsed
+    /// and stored on `EncOpts`. If any `apply` slot regresses to `None`,
+    /// `args::parse` rejects the flag with "not supported yet" and this
+    /// test fails. Citations: libvpx `vpxenc.c:125-130, 198-200, 218,
+    /// 271-279, 358-368, 385, 434-450, 492, 500-508`.
+    #[test]
+    fn w0_1_all_formerly_rejected_flags_are_now_stored() {
+        let table = flag_table();
+        let argv = s(&[
+            "--profile=2",
+            "--rt",
+            "--cpu-used=5",
+            "--threads=4",
+            "--tile-columns=2",
+            "--tile-rows=1",
+            "--kf-min-dist=8",
+            "--disable-kf",
+            "--min-q=2",
+            "--max-q=63",
+            "--cq-level=32",
+            "--buf-sz=6000",
+            "--buf-initial-sz=4000",
+            "--buf-optimal-sz=5000",
+            "--undershoot-pct=25",
+            "--overshoot-pct=50",
+            "--lossless=0",
+            "--frame-parallel=1",
+            "--error-resilient=1",
+            "--tune=psnr",
+            "--tune-content=screen",
+            "--noise-sensitivity=2",
+            "--svc",
+            "--bit-depth=10",
+            "--psnr",
+            "--webm",
+        ]);
+        let mut opts = EncOpts::default();
+        let pos = args::parse(&table, &mut opts, &argv, "rvp9enc").unwrap_or_else(|e| {
+            panic!(
+                "W0.1 PROOF: parse() rejected a formerly-wired flag — \
+                 has any `apply: Some(_)` regressed to `None`? err={e}"
+            )
+        });
+        assert!(pos.is_empty(), "no positionals expected, got {pos:?}");
+        // Per-flag pinning — fails if the apply callback no longer
+        // writes to the corresponding EncOpts slot.
+        assert_eq!(opts.profile, Some(2));
+        assert_eq!(opts.deadline, Some(Deadline::Realtime));
+        assert_eq!(opts.cpu_used, Some(5));
+        assert_eq!(opts.threads, Some(4));
+        assert_eq!(opts.tile_columns, Some(2));
+        assert_eq!(opts.tile_rows, Some(1));
+        assert_eq!(opts.kf_min_dist, Some(8));
+        assert!(opts.disable_kf);
+        assert_eq!(opts.min_q, Some(2));
+        assert_eq!(opts.max_q, Some(63));
+        assert_eq!(opts.cq_level, Some(32));
+        assert_eq!(opts.buf_sz_ms, Some(6000));
+        assert_eq!(opts.buf_initial_sz_ms, Some(4000));
+        assert_eq!(opts.buf_optimal_sz_ms, Some(5000));
+        assert_eq!(opts.undershoot_pct, Some(25));
+        assert_eq!(opts.overshoot_pct, Some(50));
+        assert_eq!(opts.lossless, Some(false));
+        assert_eq!(opts.frame_parallel, Some(true));
+        assert_eq!(opts.error_resilient, Some(1));
+        assert_eq!(opts.tune, Some(TuneMetric::Psnr));
+        assert_eq!(opts.tune_content, Some(TuneContent::Screen));
+        assert_eq!(opts.noise_sensitivity, Some(2));
+        assert!(opts.svc);
+        assert_eq!(opts.bit_depth, Some(10));
+        assert!(opts.psnr);
+        assert!(opts.webm);
     }
 
     /// `--good` and `--best` are mutually exclusive with `--rt` (the

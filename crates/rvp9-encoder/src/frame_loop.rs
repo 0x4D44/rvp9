@@ -968,6 +968,7 @@ impl From<FrameKind> for RcFrameKind {
 /// frames through [`StreamEncoder::encode_frame`].
 pub struct StreamEncoder {
     config: EncoderConfig,
+    parallelism: EncoderParallelism,
     rate_control: RateControl,
     frame_idx: u32,
     /// GOP topology — the libvpx-faithful golden-frame-group schedule
@@ -1274,6 +1275,50 @@ const W5_DENOISE_TILE: usize = 16;
 // authority). The frame loop now reads the refresh disposition from
 // `gf_group.schedule(frame_idx)` rather than a local counter+constant.
 
+/// Encoder worker and tile-column configuration.
+///
+/// This is separate from [`EncoderConfig`] so existing library callers
+/// that construct that public struct with literals retain source
+/// compatibility. [`StreamEncoder::new`] uses the single-thread,
+/// single-tile default; command-line callers use
+/// [`StreamEncoder::new_with_parallelism`] to mirror vpxenc's
+/// `--threads` and `--tile-columns` controls.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct EncoderParallelism {
+    /// Maximum active encoder workers. Tile-MT additionally caps this
+    /// to the number of tile columns.
+    pub max_threads: u32,
+    /// Requested log2 tile-column count (`0..=6`). The effective value
+    /// is clamped to the legal range for the coded frame width.
+    pub requested_log2_tile_cols: u8,
+}
+
+impl EncoderParallelism {
+    /// Single-threaded, single-tile library default.
+    pub const SINGLE_THREADED: Self = Self {
+        max_threads: 1,
+        requested_log2_tile_cols: 0,
+    };
+
+    /// Return the legal VP9 tile-column value after applying libvpx's
+    /// frame-width clamp.
+    #[must_use]
+    pub fn effective_log2_tile_cols(self, width: u32) -> u8 {
+        let mi_cols = i32::try_from(width / 8).expect("encoder width must fit i32 mi units");
+        let (min_log2, max_log2) = rvp9_core::bitstream::get_tile_n_bits(mi_cols);
+        i32::from(self.requested_log2_tile_cols)
+            .clamp(min_log2, max_log2)
+            .try_into()
+            .expect("legal VP9 log2 tile columns fit u8")
+    }
+}
+
+impl Default for EncoderParallelism {
+    fn default() -> Self {
+        Self::SINGLE_THREADED
+    }
+}
+
 impl StreamEncoder {
     /// Construct a streaming encoder from `config`.
     ///
@@ -1283,6 +1328,26 @@ impl StreamEncoder {
     /// rejected (width/height not multiples of 64, framerate ≤ 0,
     /// gop_length == 0, etc.).
     pub fn new(config: EncoderConfig) -> Result<Self, EncodeError> {
+        Self::new_with_parallelism(config, EncoderParallelism::default())
+    }
+
+    /// Construct a streaming encoder with explicit worker and tile
+    /// limits.
+    ///
+    /// Existing library callers should use [`Self::new`] unless they
+    /// need vpxenc-compatible tile-MT configuration.
+    pub fn new_with_parallelism(
+        config: EncoderConfig,
+        parallelism: EncoderParallelism,
+    ) -> Result<Self, EncodeError> {
+        if parallelism.max_threads == 0 || parallelism.max_threads > 64 {
+            return Err(EncodeError::InvalidConfig("max_threads must be in 1..=64"));
+        }
+        if parallelism.requested_log2_tile_cols > 6 {
+            return Err(EncodeError::InvalidConfig(
+                "requested_log2_tile_cols must be in 0..=6",
+            ));
+        }
         if !config.width.is_multiple_of(64) || config.width == 0 {
             return Err(EncodeError::InvalidConfig(
                 "width must be a positive multiple of 64",
@@ -1413,6 +1478,7 @@ impl StreamEncoder {
 
         Ok(Self {
             config,
+            parallelism,
             rate_control,
             frame_idx: 0,
             gf_group,
@@ -1507,6 +1573,12 @@ impl StreamEncoder {
     #[must_use]
     pub fn config(&self) -> &EncoderConfig {
         &self.config
+    }
+
+    /// Read-only view of this stream's worker and tile configuration.
+    #[must_use]
+    pub const fn parallelism(&self) -> EncoderParallelism {
+        self.parallelism
     }
 
     /// Stage 4a product diagnostic hook.
@@ -5032,6 +5104,44 @@ fn gather_coded_segments_and_skip(
 mod tests {
     use super::*;
     use rvp9_decoder::{Decoder, ParsedFrame};
+
+    #[test]
+    fn encoder_parallelism_clamps_tile_columns_like_libvpx() {
+        let requested_max = EncoderParallelism {
+            max_threads: 8,
+            requested_log2_tile_cols: 6,
+        };
+        assert_eq!(requested_max.effective_log2_tile_cols(64), 0);
+        assert_eq!(requested_max.effective_log2_tile_cols(1280), 2);
+        assert_eq!(requested_max.effective_log2_tile_cols(1920), 2);
+
+        let requested_one = EncoderParallelism {
+            max_threads: 1,
+            requested_log2_tile_cols: 0,
+        };
+        assert_eq!(requested_one.effective_log2_tile_cols(1280), 0);
+    }
+
+    #[test]
+    fn stream_encoder_rejects_invalid_parallelism() {
+        let cfg = EncoderConfig::new(64, 64);
+        for parallelism in [
+            EncoderParallelism {
+                max_threads: 0,
+                requested_log2_tile_cols: 0,
+            },
+            EncoderParallelism {
+                max_threads: 65,
+                requested_log2_tile_cols: 0,
+            },
+            EncoderParallelism {
+                max_threads: 1,
+                requested_log2_tile_cols: 7,
+            },
+        ] {
+            assert!(StreamEncoder::new_with_parallelism(cfg, parallelism).is_err());
+        }
+    }
 
     /// Build a strided YUV view over tight-stride backing buffers.
     fn yuv_view<'a>(y: &'a [u8], u: &'a [u8], v: &'a [u8], w: usize) -> YuvFrameRef<'a> {
