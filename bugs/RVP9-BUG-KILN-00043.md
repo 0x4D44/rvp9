@@ -1,6 +1,6 @@
 # RVP9-BUG-KILN-00043 - Y4M writer labels Yuv440 output as C420jpeg
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Could
 - **Severity:** Medium
 - **Area:** io/y4m writer
@@ -18,7 +18,7 @@
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-io/` at `6128772`) -> Fixed (2026-07-30, deltic:auto role=fix run=fix-20260730T181630Z-p36913-n108202000-c1 branch=task/bug-RVP9-BUG-KILN-00043-run-fix-20260730T181630Z-p36913-n108202000-c1 code=c61248417f9a696342e23430e53214f4a87138ae gate=manual)
+- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-io/` at `6128772`) -> Fixed (2026-07-30, deltic:auto role=fix run=fix-20260730T181630Z-p36913-n108202000-c1 branch=task/bug-RVP9-BUG-KILN-00043-run-fix-20260730T181630Z-p36913-n108202000-c1 code=c61248417f9a696342e23430e53214f4a87138ae gate=manual) -> Closed (2026-07-31, independently verified and closed by a two-eyes pass (Claude Opus 5))
 
 ## Observation
 
@@ -35,3 +35,27 @@ Open. Return `io::ErrorKind::InvalidInput` from `write_header` for `ChromaFormat
 ## Notes
 
 Confirmed by all three skeptic passes in the 2026-07-07 IO review. Priority is `Could` because the current CLI has a caller-side guard, but the public API behavior is still wrong.
+
+## Verification (2026-07-31, independent two-eyes closure)
+
+Verifier: Claude Opus 5, not the fixer of this bug.
+
+The `debug_assert!(false)` plus `"C420jpeg"` release fallback is gone, replaced by an
+unconditional `Err(InvalidInput)` returned before any byte is written, and the doc comment now
+states the rejection as contract (`crates/rvp9-io/src/y4m.rs:467-472`). Explicitly checked that
+no `debug_assert` remains in this path -- the rejection fires in RELEASE, which was the whole
+point of the report.
+`y4m::tests::write_header_rejects_unrepresentable_yuv440_without_output` observed passing; it
+asserts both the error kind and that the output buffer stayed empty.
+Over-strict-guard check: every `Yuv440` reference across rvp9-cli / rvp9-io / rvp9-harness /
+rvp9-bench was grepped; the only writer-side caller is `rvp9dec.rs:482`, which already rejects
+4:4:0 for `--y4m`, so no in-tree caller expected success.
+
+**Gate state on this tree** (trunk `4abe0d8` + docs commit `3a7aba2`, Windows x86_64
+AVX2 host, conformance vectors fetched via `scripts/fetch-vectors.sh`):
+`cargo fmt --all -- --check` green; `cargo clippy --workspace --all-targets --locked`
+green, zero warnings; `cargo test --workspace --locked --no-fail-fast` 3092 passed,
+47 ignored, 3 failed. All three failures are attributed and tracked, and none touches
+this bug: two are `w_tpl` panics from the reopened RVP9-BUG-KILN-00020, and one is
+`parallel_tile_decode_reuses_isolated_scratch_buffers`, split out as
+RVP9-BUG-KILN-00062. The tree is NOT green and is not claimed to be.

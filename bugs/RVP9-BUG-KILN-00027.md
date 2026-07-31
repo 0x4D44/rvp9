@@ -1,6 +1,6 @@
 # RVP9-BUG-KILN-00027 - LF-overlap reads an immutable MI-grid slice while tile workers mutate the same grid
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Should
 - **Severity:** High
 - **Area:** decoder/loopfilter overlap threading
@@ -18,7 +18,7 @@
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-decoder/` at `ceb57b6`) -> Fixed (2026-07-30, deltic:auto role=fix run=fix-20260730T163259Z-p90498-n570963000-c1 branch=task/bug-RVP9-BUG-KILN-00027-run-fix-20260730T163259Z-p90498-n570963000-c1 code=a915c7ff8c204c3527d9c9f38361fa0d96a5edae gate=manual)
+- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-decoder/` at `ceb57b6`) -> Fixed (2026-07-30, deltic:auto role=fix run=fix-20260730T163259Z-p90498-n570963000-c1 branch=task/bug-RVP9-BUG-KILN-00027-run-fix-20260730T163259Z-p90498-n570963000-c1 code=a915c7ff8c204c3527d9c9f38361fa0d96a5edae gate=manual) -> Closed (2026-07-31, independently verified and closed by a two-eyes pass (Claude Opus 5); residual split to RVP9-BUG-KILN-00067)
 
 ## Observation
 
@@ -35,3 +35,33 @@ Open. Do not keep `&[Option<ModeInfo>]` over an in-flight mutable MI grid. Eithe
 ## Notes
 
 Confirmed by three skeptic passes in the 2026-07-07 decoder review. Cross-link: `RVP9-BUG-KILN-00024` covers the adjacent pixel-plane aliasing problem, but not this MI-grid shared-reference/raw-mutation alias.
+
+## Verification (2026-07-31, independent two-eyes closure)
+
+Verifier: Claude Opus 5, not the fixer of this bug.
+
+Resolved by DISABLING the path rather than repairing it -- which this record's own Fix section
+listed as an acceptable option. `crates/rvp9-decoder/src/lib.rs:100` sets
+`OUTPUT_FRAME_LF_OVERLAP_ALIAS_SAFE = false`, and the `RowMaskInputs { mi_grid: ... }`
+constructions at `:2032/:2046` and `:3416/:3430` now sit inside a compile-time-false
+conjunction, so at runtime no immutable MI-grid slice is ever created while tile workers hold
+`TileMiView` raw pointers. The defect cannot fire.
+Evidence: `scratch_tile_decode_and_lf_match_serial` is
+`#[cfg_attr(not(rvp9_conformance_vectors), ignore)]` and does not run in a vectorless worktree --
+so for this verification the conformance vectors were fetched and the test ran and PASSED, along
+with `column_wavefront_lf_matches_serial_on_multi_tile_vectors` and the full `tile_threading`
+suite under `--test-threads=1`.
+Residual split to RVP9-BUG-KILN-00067: the unsound construction is retained verbatim and one
+const flip re-arms it, with no guard tying the const to the aliasing precondition; the test's
+assertion is only "the overlap counter did not move", a proxy for "the feature is off" rather
+than a proof of soundness. Also noted: the fix commit names only RVP9-BUG-KILN-00024, so this
+closure is an inferred side effect of the same commit.
+
+**Gate state on this tree** (trunk `4abe0d8` + docs commit `3a7aba2`, Windows x86_64
+AVX2 host, conformance vectors fetched via `scripts/fetch-vectors.sh`):
+`cargo fmt --all -- --check` green; `cargo clippy --workspace --all-targets --locked`
+green, zero warnings; `cargo test --workspace --locked --no-fail-fast` 3092 passed,
+47 ignored, 3 failed. All three failures are attributed and tracked, and none touches
+this bug: two are `w_tpl` panics from the reopened RVP9-BUG-KILN-00020, and one is
+`parallel_tile_decode_reuses_isolated_scratch_buffers`, split out as
+RVP9-BUG-KILN-00062. The tree is NOT green and is not claimed to be.

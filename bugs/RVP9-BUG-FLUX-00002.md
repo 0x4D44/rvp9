@@ -1,6 +1,6 @@
 # RVP9-BUG-FLUX-00002 — Captured-vector tests fail clean worktrees when optional conformance data is absent
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** core/bitstream tests
@@ -18,7 +18,7 @@
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=1, doubt=0, indeterminate=0
-- **State history:** Open (2026-07-30, raised via `deltic bugs new`) → Fixed (2026-07-30, `ecb6d88`, fixed by OpenAI Codex)
+- **State history:** Open (2026-07-30, raised via `deltic bugs new`) → Fixed (2026-07-30, `ecb6d88`, fixed by OpenAI Codex) -> Closed (2026-07-31, independently verified and closed by a two-eyes pass (Claude Opus 5); residual split to RVP9-BUG-KILN-00063)
 
 ## Observation
 
@@ -34,3 +34,25 @@ pass without the vector and pass again with the official
 checkout state.
 
 ## Notes
+
+## Verification (2026-07-31, independent two-eyes closure)
+
+Verifier: Claude Opus 5, not the fixer of this bug.
+
+The reported symptom is gone: `captured_header_round_trip` and
+`write_compressed_header_captured_frame_round_trip` both pass in a clean worktree, and only
+`ErrorKind::NotFound` returns early -- every other read error still panics and all assertions
+remain live when the vector is present (verified with vectors fetched: both still pass).
+Residual split to RVP9-BUG-KILN-00063: the chosen remedy is a SILENT skip, so both tests
+report green having asserted nothing when vectors are absent. That is the pattern
+RVP9-BUG-KILN-00019 was raised to eliminate, and the harness crate solved it visibly with a
+`build.rs`-driven ignore. The original defect is fixed; the inconsistency is now tracked.
+
+**Gate state on this tree** (trunk `4abe0d8` + docs commit `3a7aba2`, Windows x86_64
+AVX2 host, conformance vectors fetched via `scripts/fetch-vectors.sh`):
+`cargo fmt --all -- --check` green; `cargo clippy --workspace --all-targets --locked`
+green, zero warnings; `cargo test --workspace --locked --no-fail-fast` 3092 passed,
+47 ignored, 3 failed. All three failures are attributed and tracked, and none touches
+this bug: two are `w_tpl` panics from the reopened RVP9-BUG-KILN-00020, and one is
+`parallel_tile_decode_reuses_isolated_scratch_buffers`, split out as
+RVP9-BUG-KILN-00062. The tree is NOT green and is not claimed to be.

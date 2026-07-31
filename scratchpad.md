@@ -166,3 +166,40 @@ Out-of-scope observations parked for a separate, human-invoked review. Dated
   pay back because the inters don't capitalize. **Reference allocation (A) is a dead end
   until inter-prediction efficiency (B) improves — do B first.** Cross-decoder stayed
   byte-exact throughout.
+
+<!-- Added 2026-07-31 by the independent two-eyes verify/closure pass over the
+     Fixed-awaiting-closure queue (52 bugs). Each item is an out-of-scope
+     observation surfaced while verifying someone else's fix; none of them
+     blocked a closure, and none is a tracked bug. -->
+
+- [ ] 2026-07-31: **Three missing `notes/divergence-ledger.md` entries.** CLAUDE.md
+  requires every deliberate departure from libvpx behaviour to be recorded there.
+  Three landed fixes departed without an entry: (a) `crates/rvp9-encoder/src/denoiser.rs:786`
+  and `:836` widened `sse_diff` to `i64` and the bias-to-LAST comparison to `u64` where
+  libvpx uses `int`/`unsigned int` (RVP9-BUG-KILN-00018); (b) `crates/rvp9-io/src/y4m.rs`
+  now refuses odd-dimension 4:2:0 y4m that libvpx's `y4minput.c` accepts with ceil chroma,
+  and this reaches the shipped `rvp9enc` (RVP9-BUG-KILN-00042); (c) `crates/rvp9-io/src/container.rs`
+  now hard-errors on a WebM with no `Tracks` element instead of yielding zero packets
+  (RVP9-BUG-KILN-00044). All three are paperwork, not correctness — the values in (a)
+  cannot reach the divergent range for any real block size.
+- [ ] 2026-07-31: `crates/rvp9-bench/src/bin/bdrate.rs` carries the same defects
+  RVP9-BUG-KILN-00061 fixed in `soak.rs`, untracked: `encode_one` (~`:106-111`) uses
+  `.status().expect()` plus `assert!` (panic, exit 101, not a clean error), and
+  `decode_and_psnr` (~`:123-128`) writes a shared temp Y4M `{stem}.dec.y4m` under
+  `temp_dir()` and waits on the decoder with no timeout.
+- [ ] 2026-07-31: `crates/rvp9-encoder/tests/phase2_reuse_positive_control.rs`
+  (`phase2_newmv_reuse_fires`) and `crates/rvp9-encoder/tests/w_ml_partition.rs`
+  (`a21_ml_partition_breakout_fires_and_decodes`) were correctly changed from silent
+  false-green to `#[ignore]` by RVP9-BUG-KILN-00019, which means neither proof now runs
+  in the normal gate. Giving each a synthetic fixture would restore coverage without a
+  corpus dependency.
+- [ ] 2026-07-31: `crates/rvp9-harness/src/bin/diff_bitstream.rs` — two follow-ups from
+  the RVP9-BUG-KILN-00036 closure. `--exit-on-diff` stops at LEVEL granularity, so a level
+  emitting 500 records still emits all 500; and `tests::exit_on_diff_stops_after_first_level_zero_record`
+  may be non-discriminating, because its fixture's 4-byte payloads are not valid VP9 so
+  L1-L4 likely produce no records either way. Cheapest check: revert the four `should_stop()`
+  call sites and re-run — if it still passes, it is not a gate.
+- [ ] 2026-07-31: `crates/rvp9-encoder/src/frame_loop.rs` — `EncoderConfig::use_prev_frame_mvs`
+  is dead public API. An earlier DRIFT-FIX (~`:2716`) made it vestigial; it no longer gates
+  anything, but callers can still set it and reasonably expect it to matter. Deprecate or
+  remove.

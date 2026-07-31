@@ -1,6 +1,6 @@
 # RVP9-BUG-KILN-00053 - rvp9enc one-pass mode buffers the full input and output
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** cli/rvp9enc boundedness
@@ -18,7 +18,7 @@
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-cli/` at `8d66f33`) -> Fixed (2026-07-30, deltic:auto role=fix run=fix-20260730T202432Z-p93542-n623704000-c1 branch=task/bug-RVP9-BUG-KILN-00053-run-fix-20260730T202432Z-p93542-n623704000-c1 code=ab172a3e648c74774106d18417d146249d3ee370 gate=manual)
+- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-cli/` at `8d66f33`) -> Fixed (2026-07-30, deltic:auto role=fix run=fix-20260730T202432Z-p93542-n623704000-c1 branch=task/bug-RVP9-BUG-KILN-00053-run-fix-20260730T202432Z-p93542-n623704000-c1 code=ab172a3e648c74774106d18417d146249d3ee370 gate=manual) -> Closed (2026-07-31, independently verified and closed by a two-eyes pass (Claude Opus 5); residual split to RVP9-BUG-KILN-00065)
 
 ## Observation
 
@@ -37,3 +37,32 @@ Stream one-pass input frames into `StreamEncoder`, and add an IVF writer that wr
 ## Notes
 
 `RVP9-BUG-KILN-00048` covers raw whole-file reads and decode `--limit` behavior, and explicitly excludes the bounded Y4M path. This bug covers one-pass encode residency for Y4M frames and encoded packets.
+
+## Verification (2026-07-31, independent two-eyes closure)
+
+Verifier: Claude Opus 5, not the fixer of this bug.
+
+Genuine streaming, not a cap. Both residency limbs the observation named are gone: no
+`Vec<YuvFrameBuf>` of the sequence and no `Vec<Vec<u8>>` of packets in one-pass
+(`crates/rvp9-cli/src/bin/rvp9enc.rs:841-950`, `:1051-1230`;
+`crates/rvp9-io/src/container.rs:437-500`; `crates/rvp9-io/src/y4m.rs:138-390`). Two-pass keeps
+whole-sequence residency exactly as this record permitted. Binary path traced from `run()` --
+`open_input`, `IvfStreamWriter` over a `BufWriter<File>`, and a per-frame pull; the shipped path
+changed, not just a helper.
+`y4m::tests::incremental_reader_stops_before_unread_bad_frame_tag`,
+`container::tests::stream_writer_patches_count_and_preserves_packets` and
+`enc_passes_two_still_writes_complete_ivf` all observed passing.
+Residual split to RVP9-BUG-KILN-00065: the one-pass output file is now created and
+header-written BEFORE encoding starts, so a mid-encode failure leaves a partial IVF where
+previously nothing was written -- the inverse of what RVP9-BUG-KILN-00051 fixed for `rvp9dec`.
+Second residual noted, not blocking: no test pins the streaming property itself, so a revert to
+full buffering would leave the CLI suite green.
+
+**Gate state on this tree** (trunk `4abe0d8` + docs commit `3a7aba2`, Windows x86_64
+AVX2 host, conformance vectors fetched via `scripts/fetch-vectors.sh`):
+`cargo fmt --all -- --check` green; `cargo clippy --workspace --all-targets --locked`
+green, zero warnings; `cargo test --workspace --locked --no-fail-fast` 3092 passed,
+47 ignored, 3 failed. All three failures are attributed and tracked, and none touches
+this bug: two are `w_tpl` panics from the reopened RVP9-BUG-KILN-00020, and one is
+`parallel_tile_decode_reuses_isolated_scratch_buffers`, split out as
+RVP9-BUG-KILN-00062. The tree is NOT green and is not claimed to be.

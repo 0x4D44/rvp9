@@ -1,6 +1,6 @@
 # RVP9-BUG-KILN-00049 - rvp9enc --webm writes an IVF file
 
-- **State:** Fixed
+- **State:** Closed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** cli/rvp9enc container output
@@ -18,7 +18,7 @@
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-cli/` at `8d66f33`) -> Fixed (2026-07-30, deltic:auto role=fix run=fix-20260730T182426Z-p49376-n915512000-c1 branch=task/bug-RVP9-BUG-KILN-00049-run-fix-20260730T182426Z-p49376-n915512000-c1 code=3730bba2422b226ac8670be8016f628719b0b4e4 gate=manual)
+- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-cli/` at `8d66f33`) -> Fixed (2026-07-30, deltic:auto role=fix run=fix-20260730T182426Z-p49376-n915512000-c1 branch=task/bug-RVP9-BUG-KILN-00049-run-fix-20260730T182426Z-p49376-n915512000-c1 code=3730bba2422b226ac8670be8016f628719b0b4e4 gate=manual) -> Closed (2026-07-31, independently verified and closed by a two-eyes pass (Claude Opus 5))
 
 ## Observation
 
@@ -35,3 +35,27 @@ Reject `--webm` until a WebM muxer exists, or add a WebM writer and route the ou
 ## Notes
 
 This is not a duplicate of `RVP9-BUG-KILN-00044`, which tracks WebM input demuxing.
+
+## Verification (2026-07-31, independent two-eyes closure)
+
+Verifier: Claude Opus 5, not the fixer of this bug.
+
+This record allowed either a real muxer or a loud failure; the loud-failure branch was taken.
+`--webm` is now `apply: None` with help text "WebM output (not supported yet)"
+(`crates/rvp9-cli/src/bin/rvp9enc.rs:495-500`), and the `webm` field and its setter are deleted.
+`args::apply` turns `None` into "rvp9enc: --webm is recognised but not supported yet", and
+`render_help` derives `[not yet]` from the same field, so the silent-IVF outcome is structurally
+gone.
+Binary path: the rejection happens in `args::parse` before `run()`, i.e. before any input read or
+`File::create`.
+`enc_webm_rejected_before_creating_ivf_output` observed passing; it spawns the real binary via
+`env!("CARGO_BIN_EXE_rvp9enc")` and asserts the `.webm` output file was never created.
+
+**Gate state on this tree** (trunk `4abe0d8` + docs commit `3a7aba2`, Windows x86_64
+AVX2 host, conformance vectors fetched via `scripts/fetch-vectors.sh`):
+`cargo fmt --all -- --check` green; `cargo clippy --workspace --all-targets --locked`
+green, zero warnings; `cargo test --workspace --locked --no-fail-fast` 3092 passed,
+47 ignored, 3 failed. All three failures are attributed and tracked, and none touches
+this bug: two are `w_tpl` panics from the reopened RVP9-BUG-KILN-00020, and one is
+`parallel_tile_decode_reuses_isolated_scratch_buffers`, split out as
+RVP9-BUG-KILN-00062. The tree is NOT green and is not claimed to be.
