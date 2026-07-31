@@ -3121,9 +3121,6 @@ fn evaluate_candidate_for_filter(
     // [`BlockYrdResult`] (coef-rate / coef-dist / skippable). The
     // `coef_rate` term is added to the rate sum below; `skippable`
     // feeds the libvpx skip-flag tie-break further down.
-    let mut recon = [0u8; 64 * 64];
-    recon[..bw * bh].copy_from_slice(&pred[..bw * bh]);
-
     // **S2 AcDc resolution — option (i): always run the DCT round-trip.**
     //
     // The previous code took the libvpx `skip_txfm` short-circuit
@@ -3146,6 +3143,18 @@ fn evaluate_candidate_for_filter(
     // the *picker* honest. Speed cost: one DCT+quantize per former-AcDc
     // leaf on the picker hot path; measured against `realtime_gate_720p30`.
     let hadamard_only = picker_hadamard_only_enabled(params.rd_calibration);
+    // The product calibration uses the Hadamard result directly, so its
+    // distortion pixels are exactly `pred`. Keep reconstruction scratch
+    // absent on that path: eagerly creating `[0; 4096]` and then copying
+    // `pred` into it accounted for measurable candidate-level memset time
+    // even though no inverse transform could write the buffer.
+    let mut recon = if hadamard_only {
+        None
+    } else {
+        let mut pixels = [0u8; 64 * 64];
+        pixels[..bw * bh].copy_from_slice(&pred[..bw * bh]);
+        Some(pixels)
+    };
     let by = if mrd.skip_txfm == SkipTxfm::AcDc && !s2_acdc_roundtrip_enabled() && !hadamard_only {
         // A/B only: restore the HEAD AcDc short-circuit (no DCT round-trip,
         // no real eob). Used to isolate the AcDc-option-(i) contribution.
@@ -3156,8 +3165,10 @@ fn evaluate_candidate_for_filter(
             dct_eob_total: 0,
         }
     } else {
-        reconstruct_via_round_trip(params, &pred, &mut recon, bw, bh, tx_size, !hadamard_only)
+        let recon_pixels = recon.as_mut().map_or(&mut [][..], |pixels| &mut pixels[..]);
+        reconstruct_via_round_trip(params, &pred, recon_pixels, bw, bh, tx_size, !hadamard_only)
     };
+    let recon_pixels = recon.as_ref().map_or(&pred[..], |pixels| &pixels[..]);
 
     // Distortion = SSE(src, recon). For block sizes ≤ 64×64 the SSE
     // fits in u32 (max 64*64*255^2 = 266_342_400 < 2^32).
@@ -3187,7 +3198,14 @@ fn evaluate_candidate_for_filter(
     // cost, so even with a q-cap the encoder runs 10x the target
     // bitrate AND still can't make MC stick). Reverted. Notes in
     // the 2026-05-22 A9 entry of `notes/divergence-ledger.md`.
-    let sse = sse_block(params.src_plane, params.src_offset, &recon, bw, bw, bh);
+    let sse = sse_block(
+        params.src_plane,
+        params.src_offset,
+        recon_pixels,
+        bw,
+        bw,
+        bh,
+    );
     let dist = sse.min(u32::MAX as u64) as u32;
     // A0 diagnostic 2: dump full 16-pixel sample comparison for an
     // arbitrary leaf when RVP9_DIAG_EVAL_FULL is set.
@@ -3198,7 +3216,7 @@ fn evaluate_candidate_for_filter(
             // Print src row 0 cols 0..16 vs recon row 0 cols 0..16.
             let row_off = sy * params.src_plane.stride + sx;
             let src_row = &params.src_plane.data[row_off..row_off + 16];
-            let recon_row = &recon[..16];
+            let recon_row = &recon_pixels[..16];
             eprintln!(
                 "      FULL mode={:?} mv=({},{}) src_row0={:?} recon_row0={:?} bw={} sse={}",
                 mode, mv.row, mv.col, src_row, recon_row, bw, sse
@@ -3206,7 +3224,7 @@ fn evaluate_candidate_for_filter(
             // Also row 5 (middle of small block).
             let row5_off = (sy + 5) * params.src_plane.stride + sx;
             let src_row5 = &params.src_plane.data[row5_off..row5_off + 16];
-            let recon_row5 = &recon[5 * bw..5 * bw + 16];
+            let recon_row5 = &recon_pixels[5 * bw..5 * bw + 16];
             eprintln!(
                 "           src_row5={:?} recon_row5={:?}",
                 src_row5, recon_row5
@@ -3222,8 +3240,8 @@ fn evaluate_candidate_for_filter(
             let src1 = params.src_plane.data[sy * params.src_plane.stride + sx + 1];
             let pred0 = pred[0];
             let pred1 = pred[1];
-            let recon0 = recon[0];
-            let recon1 = recon[1];
+            let recon0 = recon_pixels[0];
+            let recon1 = recon_pixels[1];
             let ref_x = (sx as i32) + (i32::from(mv.col) >> 3);
             let ref_y = (sy as i32) + (i32::from(mv.row) >> 3);
             let ref0 = if ref_x >= 0 && ref_y >= 0 {
@@ -3794,10 +3812,6 @@ fn reconstruct_via_round_trip(
 
     // Scratch buffers — sized for one transform.
     let mut residual = [0i16; 32 * 32];
-    let mut coefs = [0i32; 1024];
-    let mut qcoeff = [0i16; 1024];
-    let mut dqcoeff = [0i16; 1024];
-
     // Hadamard + quantize_fp scratch for block_yrd rate/dist (Phase 4c).
     // The Hadamard transform produces i16; vp9_quantize_fp needs i32 input.
     let mut had_coeff_i16 = [0i16; 1024];
@@ -3824,75 +3838,7 @@ fn reconstruct_via_round_trip(
                 }
             }
 
-            // 2. The compatibility path runs the DCT/quantize pipeline used
-            // to predict the eventual emitted luma EOB. The Hadamard-only
-            // experiment omits it: `block_yrd` below already supplies the
-            // candidate rate, distortion, and skippable result used by
-            // pinned libvpx's realtime picker.
-            let eob = if reconstruct {
-                // Inter blocks always use DCT_DCT (ADST is intra-only).
-                match tx_size {
-                    TxSize::Tx8x8 => {
-                        let mut buf = [0i32; 64];
-                        fdct8x8(&residual[..64], &mut buf, tx_side);
-                        coefs[..64].copy_from_slice(&buf);
-                    }
-                    TxSize::Tx16x16 => {
-                        let mut buf = [0i32; 256];
-                        fdct16x16(&residual[..256], &mut buf, tx_side);
-                        coefs[..256].copy_from_slice(&buf);
-                    }
-                    TxSize::Tx32x32 => {
-                        let mut buf = [0i32; 1024];
-                        fdct32x32(&residual[..1024], &mut buf, tx_side);
-                        coefs[..1024].copy_from_slice(&buf);
-                    }
-                    TxSize::Tx4x4 => {
-                        debug_assert!(false, "F8.1 v1 doesn't support Tx4x4 tiles");
-                        return BlockYrdResult::default();
-                    }
-                }
-
-                qcoeff[..n].fill(0);
-                dqcoeff[..n].fill(0);
-                if tx_size == TxSize::Tx32x32 {
-                    vp9_quantize_b_32x32(
-                        &coefs[..1024],
-                        false,
-                        &params.quantizer.zbin,
-                        &params.quantizer.round,
-                        &params.quantizer.quant,
-                        &params.quantizer.quant_shift,
-                        &mut qcoeff[..1024],
-                        &mut dqcoeff[..1024],
-                        &dequant_pair,
-                        scan_slice,
-                    )
-                } else {
-                    vp9_quantize_b_with_order(
-                        &coefs[..n],
-                        n,
-                        false,
-                        &params.quantizer.zbin,
-                        &params.quantizer.round,
-                        &params.quantizer.quant,
-                        &params.quantizer.quant_shift,
-                        &mut qcoeff[..n],
-                        &mut dqcoeff[..n],
-                        &dequant_pair,
-                        &scan,
-                    )
-                }
-            } else {
-                0
-            };
-            // S2 — accumulate the DCT/quant_b reconstruction eob. This
-            // mirrors, for Y, the emit's `leaf_total_eob` summation
-            // (`lib.rs:5241`), so the picker can predict the emit's
-            // residual-vs-skip decision on the Y plane.
-            by_dct_eob = by_dct_eob.saturating_add(u64::from(eob));
-
-            // F.1 / Phase 4c — per-tile block_yrd accumulators via
+            // 2. F.1 / Phase 4c — per-tile block_yrd accumulators via
             // Hadamard + quantize_fp (libvpx vp9_pickmode.c:768,
             // 804-805, 818-835). The Hadamard path produces the
             // rate/dist metrics; the DCT pipeline above stays for
@@ -3952,36 +3898,104 @@ fn reconstruct_via_round_trip(
             by_dist =
                 by_dist.saturating_add(block_error_fp_i32(&had_coeff[..n], &had_dqcoeff[..n]) >> 2);
 
-            // 4. Reconstruct directly into the caller's prediction-initialised
-            // block. The inverse kernels accept an arbitrary destination
-            // stride, so a 32x32 tile inside a 64x64 block does not need a
-            // contiguous staging buffer or a copy back into `recon`.
-            if reconstruct && eob > 0 {
-                let recon_start = off_y * bw + off_x;
+            // 4. The compatibility path additionally runs the
+            // DCT/quantize/reconstruction pipeline used to predict the
+            // eventual emitted luma EOB. Keep its large scratch buffers
+            // inside this branch so Hadamard-only product candidates never
+            // initialize memory they cannot read.
+            if reconstruct {
+                let mut coefs = [0i32; 1024];
+                let mut qcoeff = [0i16; 1024];
+                let mut dqcoeff = [0i16; 1024];
+
+                // Inter blocks always use DCT_DCT (ADST is intra-only).
                 match tx_size {
                     TxSize::Tx8x8 => {
                         let mut buf = [0i32; 64];
-                        for (dst, &src) in buf.iter_mut().zip(&dqcoeff[..64]) {
-                            *dst = i32::from(src);
-                        }
-                        // TODO(G4.2): route through SimdDispatch::idct8x8_add() once mode_decision threads &SimdDispatch.
-                        idct8x8_64_add(&buf, &mut recon[recon_start..], bw);
+                        fdct8x8(&residual[..64], &mut buf, tx_side);
+                        coefs[..64].copy_from_slice(&buf);
                     }
                     TxSize::Tx16x16 => {
                         let mut buf = [0i32; 256];
-                        for (dst, &src) in buf.iter_mut().zip(&dqcoeff[..256]) {
-                            *dst = i32::from(src);
-                        }
-                        idct16x16_256_add(&buf, &mut recon[recon_start..], bw);
+                        fdct16x16(&residual[..256], &mut buf, tx_side);
+                        coefs[..256].copy_from_slice(&buf);
                     }
                     TxSize::Tx32x32 => {
                         let mut buf = [0i32; 1024];
-                        for (dst, &src) in buf.iter_mut().zip(&dqcoeff[..1024]) {
-                            *dst = i32::from(src);
-                        }
-                        idct32x32_1024_add(&buf, &mut recon[recon_start..], bw);
+                        fdct32x32(&residual[..1024], &mut buf, tx_side);
+                        coefs[..1024].copy_from_slice(&buf);
                     }
-                    TxSize::Tx4x4 => unreachable!(),
+                    TxSize::Tx4x4 => {
+                        debug_assert!(false, "F8.1 v1 doesn't support Tx4x4 tiles");
+                        return BlockYrdResult::default();
+                    }
+                }
+
+                let eob = if tx_size == TxSize::Tx32x32 {
+                    vp9_quantize_b_32x32(
+                        &coefs[..1024],
+                        false,
+                        &params.quantizer.zbin,
+                        &params.quantizer.round,
+                        &params.quantizer.quant,
+                        &params.quantizer.quant_shift,
+                        &mut qcoeff[..1024],
+                        &mut dqcoeff[..1024],
+                        &dequant_pair,
+                        scan_slice,
+                    )
+                } else {
+                    vp9_quantize_b_with_order(
+                        &coefs[..n],
+                        n,
+                        false,
+                        &params.quantizer.zbin,
+                        &params.quantizer.round,
+                        &params.quantizer.quant,
+                        &params.quantizer.quant_shift,
+                        &mut qcoeff[..n],
+                        &mut dqcoeff[..n],
+                        &dequant_pair,
+                        &scan,
+                    )
+                };
+                // S2 — accumulate the DCT/quant_b reconstruction eob. This
+                // mirrors, for Y, the emit's `leaf_total_eob` summation
+                // (`lib.rs:5241`), so the picker can predict the emit's
+                // residual-vs-skip decision on the Y plane.
+                by_dct_eob = by_dct_eob.saturating_add(u64::from(eob));
+
+                // Reconstruct directly into the caller's
+                // prediction-initialised block. The inverse kernels accept
+                // an arbitrary destination stride, so a 32x32 tile inside
+                // a 64x64 block needs no contiguous staging copy.
+                if eob > 0 {
+                    let recon_start = off_y * bw + off_x;
+                    match tx_size {
+                        TxSize::Tx8x8 => {
+                            let mut buf = [0i32; 64];
+                            for (dst, &src) in buf.iter_mut().zip(&dqcoeff[..64]) {
+                                *dst = i32::from(src);
+                            }
+                            // TODO(G4.2): route through SimdDispatch::idct8x8_add() once mode_decision threads &SimdDispatch.
+                            idct8x8_64_add(&buf, &mut recon[recon_start..], bw);
+                        }
+                        TxSize::Tx16x16 => {
+                            let mut buf = [0i32; 256];
+                            for (dst, &src) in buf.iter_mut().zip(&dqcoeff[..256]) {
+                                *dst = i32::from(src);
+                            }
+                            idct16x16_256_add(&buf, &mut recon[recon_start..], bw);
+                        }
+                        TxSize::Tx32x32 => {
+                            let mut buf = [0i32; 1024];
+                            for (dst, &src) in buf.iter_mut().zip(&dqcoeff[..1024]) {
+                                *dst = i32::from(src);
+                            }
+                            idct32x32_1024_add(&buf, &mut recon[recon_start..], bw);
+                        }
+                        TxSize::Tx4x4 => unreachable!(),
+                    }
                 }
             }
         }
