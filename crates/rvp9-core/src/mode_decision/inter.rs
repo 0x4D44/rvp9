@@ -132,6 +132,7 @@ use crate::transforms::{TxMode, TxSize, TxType};
 struct CandidatePredScratch {
     primary: [u8; 64 * 64],
     alternate: [u8; 64 * 64],
+    residual: [i16; 32 * 32],
 }
 
 thread_local! {
@@ -143,6 +144,7 @@ thread_local! {
             std::cell::RefCell::new(CandidatePredScratch {
                 primary: [0; 64 * 64],
                 alternate: [0; 64 * 64],
+                residual: [0; 32 * 32],
             })
         };
 }
@@ -2648,10 +2650,14 @@ fn evaluate_intra_fallback(
                 uv_dc_quant: params.uv_dc_quant,
                 uv_ac_quant: params.uv_ac_quant,
             };
+            let mut residual = [0i16; 32 * 32];
             reconstruct_via_round_trip(
                 &single_params,
-                &pred,
-                &mut recon,
+                RoundTripBuffers {
+                    pred: &pred,
+                    recon: &mut recon,
+                    residual: &mut residual,
+                },
                 bw,
                 bh,
                 picked_tx_size,
@@ -3134,7 +3140,11 @@ fn evaluate_candidate_with_filter_set(
         evaluate_candidate_for_filter(params, mode, mv, ref_mv, lambda, filter_set[0])
     } else {
         CANDIDATE_PRED_SCRATCH.with_borrow_mut(|scratch| {
-            let CandidatePredScratch { primary, alternate } = &mut *scratch;
+            let CandidatePredScratch {
+                primary,
+                alternate,
+                residual,
+            } = &mut *scratch;
             let filters: &[InterpFilter; 2] = filter_set
                 .try_into()
                 .expect("VP9 realtime filter search has exactly two filters");
@@ -3152,6 +3162,7 @@ fn evaluate_candidate_with_filter_set(
                 lambda,
                 filter,
                 winner_pred,
+                residual,
                 Some(model),
             )
         })
@@ -3171,15 +3182,11 @@ fn evaluate_candidate_for_filter(
     filter: InterpFilter,
 ) -> InterModeSearchResult {
     CANDIDATE_PRED_SCRATCH.with_borrow_mut(|scratch| {
+        let CandidatePredScratch {
+            primary, residual, ..
+        } = &mut *scratch;
         evaluate_candidate_for_filter_with_pred(
-            params,
-            mode,
-            mv,
-            ref_mv,
-            lambda,
-            filter,
-            &mut scratch.primary,
-            None,
+            params, mode, mv, ref_mv, lambda, filter, primary, residual, None,
         )
     })
 }
@@ -3193,6 +3200,7 @@ fn evaluate_candidate_for_filter_with_pred(
     lambda: u32,
     filter: InterpFilter,
     pred: &mut [u8; 64 * 64],
+    residual: &mut [i16; 32 * 32],
     precomputed_model: Option<ModelRdResult>,
 ) -> InterModeSearchResult {
     let bw = usize::from(params.block_size.width());
@@ -3297,8 +3305,11 @@ fn evaluate_candidate_for_filter_with_pred(
             || candidate_trace::is_enabled();
         reconstruct_via_round_trip(
             params,
-            &pred[..],
-            recon_pixels,
+            RoundTripBuffers {
+                pred: &pred[..],
+                recon: recon_pixels,
+                residual,
+            },
             bw,
             bh,
             tx_size,
@@ -3922,6 +3933,15 @@ fn build_inter_prediction(
 /// `options.collect_coef_dist = false` selects an EOB/SATD-only SIMD path and returns
 /// zero coefficient distortion. The normal pixel-domain product picker uses
 /// that path; S3 and candidate tracing request the full metric.
+///
+/// `residual` is caller-owned reusable scratch. Each tile overwrites the
+/// complete transform-sized prefix before the Hadamard or DCT reads it.
+struct RoundTripBuffers<'a> {
+    pred: &'a [u8],
+    recon: &'a mut [u8],
+    residual: &'a mut [i16; 32 * 32],
+}
+
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 struct RoundTripOptions {
     reconstruct: bool,
@@ -3930,13 +3950,17 @@ struct RoundTripOptions {
 
 fn reconstruct_via_round_trip(
     params: &InterModeSearchParams<'_>,
-    pred: &[u8],
-    recon: &mut [u8],
+    buffers: RoundTripBuffers<'_>,
     bw: usize,
     bh: usize,
     tx_size: TxSize,
     options: RoundTripOptions,
 ) -> BlockYrdResult {
+    let RoundTripBuffers {
+        pred,
+        recon,
+        residual,
+    } = buffers;
     let RoundTripOptions {
         reconstruct,
         collect_coef_dist,
@@ -3971,8 +3995,6 @@ fn reconstruct_via_round_trip(
         "block height {bh} not a multiple of tx_side {tx_side}",
     );
 
-    // Scratch buffers — sized for one transform.
-    let mut residual = [0i16; 32 * 32];
     let scan = scan_for(tx_size, TxType::DctDct);
     let scan_slice = scan_for_forward(&scan);
     let dequant_pair = [params.quantizer.dequant[0], params.quantizer.dequant[1]];
@@ -4090,7 +4112,7 @@ fn reconstruct_via_round_trip(
                 src.stride,
                 &pred[off_y * bw + off_x..],
                 bw,
-                &mut residual,
+                residual,
                 tx_side,
             );
             #[cfg(not(target_arch = "aarch64"))]
@@ -4956,14 +4978,18 @@ mod tests {
             50,
         );
 
+        let mut residual = [0i16; 32 * 32];
         for tx_size in [TxSize::Tx8x8, TxSize::Tx16x16, TxSize::Tx32x32] {
             let side = tx_size.side();
             let pred = vec![91u8; side * side];
             let mut no_recon = [];
             let first = reconstruct_via_round_trip(
                 &params,
-                &pred,
-                &mut no_recon,
+                RoundTripBuffers {
+                    pred: &pred,
+                    recon: &mut no_recon,
+                    residual: &mut residual,
+                },
                 side,
                 side,
                 tx_size,
@@ -4974,8 +5000,11 @@ mod tests {
             );
             let second = reconstruct_via_round_trip(
                 &params,
-                &pred,
-                &mut no_recon,
+                RoundTripBuffers {
+                    pred: &pred,
+                    recon: &mut no_recon,
+                    residual: &mut residual,
+                },
                 side,
                 side,
                 tx_size,
@@ -4986,8 +5015,11 @@ mod tests {
             );
             let rate_only = reconstruct_via_round_trip(
                 &params,
-                &pred,
-                &mut no_recon,
+                RoundTripBuffers {
+                    pred: &pred,
+                    recon: &mut no_recon,
+                    residual: &mut residual,
+                },
                 side,
                 side,
                 tx_size,
