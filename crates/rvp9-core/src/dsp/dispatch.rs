@@ -1796,7 +1796,13 @@ impl SimdDispatch {
             } else {
                 scalar_lpf_vertical_16
             };
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(target_arch = "aarch64")]
+        let lpf_vertical_16: fn(&mut [u8], usize, usize, u8, u8, u8) = if caps.neon {
+            crate::dsp::aarch64::lpf_vertical_16_neon
+        } else {
+            scalar_lpf_vertical_16
+        };
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         let lpf_vertical_16: fn(&mut [u8], usize, usize, u8, u8, u8) = scalar_lpf_vertical_16;
 
         // ---- Wave G G6 — 16-tap horizontal edge loopfilter (AVX2 gated). ----
@@ -1807,7 +1813,13 @@ impl SimdDispatch {
             } else {
                 scalar_lpf_horizontal_16
             };
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(target_arch = "aarch64")]
+        let lpf_horizontal_16: fn(&mut [u8], usize, usize, u8, u8, u8) = if caps.neon {
+            crate::dsp::aarch64::lpf_horizontal_16_neon
+        } else {
+            scalar_lpf_horizontal_16
+        };
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         let lpf_horizontal_16: fn(&mut [u8], usize, usize, u8, u8, u8) = scalar_lpf_horizontal_16;
 
         // ---- Wave H H2 + H3 — dual-variant 4/8-tap loopfilter slots
@@ -1864,8 +1876,15 @@ impl SimdDispatch {
             scalar_lpf_vertical_16_dual
         };
         #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(target_arch = "aarch64"))]
         let lpf_vertical_16_dual: fn(&mut [u8], usize, usize, u8, u8, u8) =
             scalar_lpf_vertical_16_dual;
+        #[cfg(target_arch = "aarch64")]
+        let lpf_vertical_16_dual: fn(&mut [u8], usize, usize, u8, u8, u8) = if caps.neon {
+            crate::dsp::aarch64::lpf_vertical_16_dual_neon
+        } else {
+            scalar_lpf_vertical_16_dual
+        };
 
         #[cfg(target_arch = "x86_64")]
         let lpf_horizontal_16_dual: fn(&mut [u8], usize, usize, u8, u8, u8) = if caps.avx2 {
@@ -1874,8 +1893,15 @@ impl SimdDispatch {
             scalar_lpf_horizontal_16_dual
         };
         #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(target_arch = "aarch64"))]
         let lpf_horizontal_16_dual: fn(&mut [u8], usize, usize, u8, u8, u8) =
             scalar_lpf_horizontal_16_dual;
+        #[cfg(target_arch = "aarch64")]
+        let lpf_horizontal_16_dual: fn(&mut [u8], usize, usize, u8, u8, u8) = if caps.neon {
+            crate::dsp::aarch64::lpf_horizontal_16_dual_neon
+        } else {
+            scalar_lpf_horizontal_16_dual
+        };
 
         // ---- Wave H H6 — pass-2 dequant finisher (AVX2 on x86_64). ----
         // Pass 2 of the Wave H H5 split detokenize loop. Bit-exact
@@ -4147,6 +4173,45 @@ mod tests {
         assert_eq!(d.lpf_horizontal_8() as usize, h8 as usize);
         assert_eq!(d.lpf_vertical_16() as usize, v16 as usize);
         assert_eq!(d.lpf_horizontal_16() as usize, h16 as usize);
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    #[test]
+    fn loopfilter_16_dispatches_to_neon() {
+        type Lpf = fn(&mut [u8], usize, usize, u8, u8, u8);
+
+        let mut scalar_caps = detect();
+        scalar_caps.neon = false;
+        let scalar = SimdDispatch::build(scalar_caps);
+        let scalar_v16: Lpf = super::scalar_lpf_vertical_16;
+        let scalar_h16: Lpf = super::scalar_lpf_horizontal_16;
+        let scalar_v16_dual: Lpf = super::scalar_lpf_vertical_16_dual;
+        let scalar_h16_dual: Lpf = super::scalar_lpf_horizontal_16_dual;
+        assert_eq!(scalar.lpf_vertical_16() as usize, scalar_v16 as usize);
+        assert_eq!(scalar.lpf_horizontal_16() as usize, scalar_h16 as usize);
+        assert_eq!(
+            scalar.lpf_vertical_16_dual() as usize,
+            scalar_v16_dual as usize
+        );
+        assert_eq!(
+            scalar.lpf_horizontal_16_dual() as usize,
+            scalar_h16_dual as usize
+        );
+
+        let mut neon_caps = detect();
+        neon_caps.neon = true;
+        let neon = SimdDispatch::build(neon_caps);
+        let neon_v16: Lpf = crate::dsp::aarch64::lpf_vertical_16_neon;
+        let neon_h16: Lpf = crate::dsp::aarch64::lpf_horizontal_16_neon;
+        let neon_v16_dual: Lpf = crate::dsp::aarch64::lpf_vertical_16_dual_neon;
+        let neon_h16_dual: Lpf = crate::dsp::aarch64::lpf_horizontal_16_dual_neon;
+        assert_eq!(neon.lpf_vertical_16() as usize, neon_v16 as usize);
+        assert_eq!(neon.lpf_horizontal_16() as usize, neon_h16 as usize);
+        assert_eq!(neon.lpf_vertical_16_dual() as usize, neon_v16_dual as usize);
+        assert_eq!(
+            neon.lpf_horizontal_16_dual() as usize,
+            neon_h16_dual as usize
+        );
     }
 
     /// Wave H H1 + H7 — `parse_lpf_avx2_mask` grammar regression test.

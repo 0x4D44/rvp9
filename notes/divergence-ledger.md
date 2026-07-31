@@ -24,6 +24,42 @@ Each entry:
 
 ## Entries
 
+### 2026-07-31 — Exact eight-lane AArch64 16-tap loop filter
+**Where:** `rvp9-core::dsp::aarch64::lpf16_neon`; libvpx counterparts:
+`vpx_dsp/arm/loopfilter_neon.c` and
+`vpx_dsp/arm/loopfilter_16_neon.asm`.
+**What libvpx does:** filters eight edge lanes together with NEON, using
+specialized horizontal and vertical 16-tap kernels plus dual-edge wrappers.
+Its byte-vector boundary mask uses saturating arithmetic.
+**What rvp9 does:** also filters eight lanes together, but widens
+`2 * abs(p0 - q0) + abs(p1 - q1) / 2` to `u16` before comparing it with
+`blimit`. It applies the 4-, 8-, and 16-tap results through per-lane vector
+selects, so mixed flatness masks remain exactly equivalent to rvp9's scalar
+oracle. The vertical kernel transposes a 16-by-8 neighborhood before
+filtering.
+**Why:** rvp9 accepts the complete `u8` threshold domain in its public DSP
+slot. Widening preserves scalar semantics when `blimit` is 255 rather than
+copying libvpx's saturating-byte approximation. Per-lane selects avoid
+libvpx's aggregate flatness shortcuts and give one exact kernel for random
+and adversarial inputs.
+**Byte-parity impact:** none. Randomized single/dual, horizontal/vertical
+differentials cover varied strides and thresholds, including all-255
+thresholds. The complete reconstructed-plane oracle passed. The 120-frame
+product stream remained byte-identical and all three decoders produced
+identical I420 output.
+**Compression-efficiency impact:** none because every filtered sample and
+emitted byte is unchanged.
+**Speed impact:** two independent sixteen-pair one-thread trials improved
+paired wall time by `-10.108%` and `-9.932%`; child CPU improved `-10.298%`
+and `-10.244%`. Two twenty-pair four-thread trials improved paired wall time
+by `-4.004%` and `-6.618%`; child CPU improved `-9.327%` and `-10.204%`.
+The post-change profile contains no scalar `filter16` leaf. The new vertical
+and horizontal NEON kernels account for `2.07%` and `1.09%` of rvp9 self
+samples.
+**Future plan:** retain while the randomized scalar differential and exact
+stream stay green. Profile before extending NEON coverage to the distinct
+4- and 8-tap slots.
+
 ### 2026-07-31 — Direct-index inter coefficient payloads
 **Where:** `rvp9-encoder::VecBackedInterCoefSource`; libvpx counterparts:
 macroblock coefficient storage and `vp9/encoder/vp9_tokenize.c`.
