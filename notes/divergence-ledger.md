@@ -2825,6 +2825,9 @@ probes still pass a direct plane slice. An edge probe gathers one contiguous
 scratch block, but computes the left and right replicated spans once per
 block, clamps the source row once per output row, copies the visible middle
 span, and fills only the two border spans.
+Each projection search carries the scratch as an `Option<[u8; 4096]>`:
+interior-only searches leave its payload inactive and uninitialized, while
+the first edge probe initializes it once and all later probes reuse it.
 
 **Why:** physically extending every reference plane would widen storage and
 ownership contracts across the encoder. The previous equivalent gather
@@ -2834,15 +2837,19 @@ bounds-check operations for each 64x64 edge probe.
 **Byte-parity impact:** none. A focused oracle covers 8x8 through 64x64
 blocks, interior spans, partial crossings on every edge, and blocks wholly
 beyond each edge. The cpu-used 7 product stream and all three decoders'
-162,201,600-byte I420 outputs remain byte-identical.
+162,201,600-byte I420 outputs remain byte-identical. Focused scratch tests
+also prove that interior probes never activate the buffer and a later small
+edge probe does not reinitialize untouched bytes.
 
 **Compression-efficiency impact:** none; the production stream is unchanged.
 
 **Speed impact:** sixteen warmed one-thread pairs improved paired child CPU
 by `-2.415%`, with sixteen wins. Twenty four-thread pairs improved child CPU
 by `-1.899%`, with nineteen wins; paired wall time improved `-0.669%`, with
-eighteen wins.
+eighteen wins. Reusing the scratch then improved another `-0.095%` paired
+child CPU at one thread and `-0.545%` at four threads in the final exact-code
+run; paired wall time improved `-0.141%` and `-0.630%`, respectively.
 
 **Future plan:** retain the span gather while rvp9 stores visible-only
-references. The scratch array is still zero-initialized before every edge
-gather; removing that write is a separate safety-reviewed and measured unit.
+references. Preserve the safe lazy `Option` payload rather than introducing
+raw uninitialized memory; a committed profile must select the next hotspot.

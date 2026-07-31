@@ -440,9 +440,10 @@ fn sad_block_clamped(
     src: &[u8],
     src_stride: usize,
     ref_plane: &PlaneRef<'_>,
-    abs_y: i32,
-    abs_x: i32,
+    abs_pos: (i32, i32),
+    edge_scratch: &mut Option<[u8; 64 * 64]>,
 ) -> u32 {
+    let (abs_y, abs_x) = abs_pos;
     let bw = usize::from(bsize.width());
     let bh = usize::from(bsize.height());
 
@@ -470,8 +471,10 @@ fn sad_block_clamped(
         }
     }
 
-    // Scratch holds at most 64×64.
-    let mut scratch = [0u8; 64 * 64];
+    // The inactive Option payload needs no initialization. The first edge
+    // probe initializes it once; later probes in this search overwrite and
+    // reuse the same active block instead of zeroing another 4 KiB array.
+    let scratch = edge_scratch.get_or_insert([0u8; 64 * 64]);
     gather_clamped_block(ref_plane, abs_y, abs_x, bw, bh, &mut scratch[..bh * bw]);
     sad_block(bsize, sad_fn, src, src_stride, &scratch[..bh * bw], bw)
 }
@@ -653,11 +656,18 @@ pub fn int_pro_motion_estimation(
     // probe below instead of paid per probe. `sad_block` keeps its own
     // fail-soft `match` so an unsupported `bsize` still returns `u32::MAX`.
     let sad_fn = crate::dsp::get_ref().sad(bsize);
-    let try_sad = |row: i32, col: i32| -> u32 {
+    let mut edge_scratch = None;
+    let mut try_sad = |row: i32, col: i32| -> u32 {
         let abs_x = sb_px_x as i32 + col;
         let abs_y = sb_px_y as i32 + row;
         sad_block_clamped(
-            bsize, sad_fn, src_slice, src_stride, ref_plane, abs_y, abs_x,
+            bsize,
+            sad_fn,
+            src_slice,
+            src_stride,
+            ref_plane,
+            (abs_y, abs_x),
+            &mut edge_scratch,
         )
     };
 
@@ -836,6 +846,7 @@ mod tests {
             height: 96,
         };
         let source = [0u8; 8 * 8];
+        let mut edge_scratch = None;
         assert_eq!(
             sad_block_clamped(
                 BlockSize::Block8x8,
@@ -843,10 +854,55 @@ mod tests {
                 &source,
                 8,
                 &plane,
-                17,
-                19,
+                (17, 19),
+                &mut edge_scratch,
             ),
             0x51AD
+        );
+        assert!(
+            edge_scratch.is_none(),
+            "interior probes must not initialize edge scratch"
+        );
+    }
+
+    #[test]
+    fn edge_clamped_sad_reuses_one_lazily_initialized_scratch() {
+        let reference: Vec<u8> = (0..16 * 16)
+            .map(|index| ((index * 37 + 11) & 0xff) as u8)
+            .collect();
+        let plane = PlaneRef {
+            data: &reference,
+            stride: 16,
+            width: 16,
+            height: 16,
+        };
+        let source = [17u8; 8 * 8];
+        let sad_fn = crate::dsp::get_ref().sad(BlockSize::Block8x8);
+        let mut edge_scratch = None;
+
+        let _ = sad_block_clamped(
+            BlockSize::Block8x8,
+            sad_fn,
+            &source,
+            8,
+            &plane,
+            (-2, -3),
+            &mut edge_scratch,
+        );
+        edge_scratch.as_mut().expect("edge initializes scratch")[4095] = 0xA5;
+        let _ = sad_block_clamped(
+            BlockSize::Block8x8,
+            sad_fn,
+            &source,
+            8,
+            &plane,
+            (12, 13),
+            &mut edge_scratch,
+        );
+        assert_eq!(
+            edge_scratch.as_ref().expect("scratch remains active")[4095],
+            0xA5,
+            "a later small edge probe must not reinitialize the whole scratch"
         );
     }
 
