@@ -7,6 +7,8 @@
 # candidate costs in `[ZERO, NEAREST, NEAR, NEW]` order. The independent
 # `VPX_F02_MODEL_ORACLE_OUT` path captures a bounded sample of exact inputs
 # and outputs for the regular luma model-RD function.
+# `VPX_F02_BLOCK_YRD_ORACLE_OUT` captures bounded, non-skippable per-tile
+# coefficient arrays and the corresponding `block_yrd` aggregate.
 #
 # The shared schema numbers skip-transform states as None=0, AcOnly=1,
 # AcDc=2. libvpx's internal constants use None=0, AcDc=1, AcOnly=2, so
@@ -403,4 +405,143 @@ index 357fe98b9..424961a6a 100644
    *out_dist_sum += dist << 4;
 +  f02_model_rd_oracle(cpi, bsize, x, xd, *out_rate_sum, *out_dist_sum, var,
 +                      sse, is_intra);
+ }
+diff --git a/vp9/encoder/vp9_pickmode.c b/vp9/encoder/vp9_pickmode.c
+index 3d381166b..65ff1942d 100644
+--- a/vp9/encoder/vp9_pickmode.c
++++ b/vp9/encoder/vp9_pickmode.c
+@@ -798,3 +798,128 @@ static void model_rd_for_sb_y(VP9_COMP *cpi, BLOCK_SIZE bsize, MACROBLOCK *x,
++static void f02_block_yrd_oracle(VP9_COMP *cpi, MACROBLOCK *x,
++                                 BLOCK_SIZE bsize, TX_SIZE tx_size,
++                                 const RD_COST *rdc, int skippable) {
++  static FILE *fp = NULL;
++  static int state = 0; /* 0=not-tried, 1=open-ok, 2=disabled/failed */
++  static long limit = 64;
++  static long count = 0;
++  MACROBLOCKD *const xd = &x->e_mbd;
++  struct macroblock_plane *const p = &x->plane[0];
++  const struct macroblockd_plane *const pd = &xd->plane[0];
++  const int num_4x4_w = num_4x4_blocks_wide_lookup[bsize];
++  const int num_4x4_h = num_4x4_blocks_high_lookup[bsize];
++  const int block_step = 1 << tx_size;
++  const int step = 1 << (tx_size << 1);
++  const int max_blocks_wide =
++      num_4x4_w + (xd->mb_to_right_edge >= 0 ? 0 : xd->mb_to_right_edge >> 5);
++  const int max_blocks_high =
++      num_4x4_h + (xd->mb_to_bottom_edge >= 0
++                       ? 0
++                       : xd->mb_to_bottom_edge >> 5);
++  int block;
++  int r;
++  int c;
++  int i;
++  int tile_count = 0;
++  int first;
++
++  if (state == 0) {
++    const char *const out_path = getenv("VPX_F02_BLOCK_YRD_ORACLE_OUT");
++    const char *const limit_text = getenv("VPX_F02_BLOCK_YRD_ORACLE_LIMIT");
++    if (limit_text != NULL && limit_text[0] != '\0') {
++      char *end = NULL;
++      const long parsed = strtol(limit_text, &end, 10);
++      if (end != limit_text && *end == '\0' && parsed > 0) limit = parsed;
++    }
++    if (out_path != NULL && out_path[0] != '\0') {
++      fp = fopen(out_path, "w");
++      if (fp != NULL) {
++        setvbuf(fp, NULL, _IOLBF, 0);
++        state = 1;
++      } else {
++        state = 2;
++      }
++    } else {
++      state = 2;
++    }
++  }
++
++  if (state != 1 || fp == NULL || count >= limit || skippable ||
++      xd->mi[0]->ref_frame[0] != LAST_FRAME) {
++    return;
++  }
++
++  for (r = 0; r < max_blocks_high; r += block_step) {
++    for (c = 0; c < num_4x4_w; c += block_step) {
++      if (c < max_blocks_wide) ++tile_count;
++    }
++  }
++
++  fprintf(fp,
++          "{\"sample\":%ld,\"frame_idx\":%u,\"bsize\":%d,"
++          "\"tx_size\":%d,\"tile_count\":%d,\"rate\":%d,\"dist\":%lld,"
++          "\"skippable\":false,\"coeff\":[",
++          count, (unsigned int)cpi->common.current_video_frame, bsize,
++          tx_size, tile_count, rdc->rate, (long long)rdc->dist);
++  first = 1;
++  block = 0;
++  for (r = 0; r < max_blocks_high; r += block_step) {
++    for (c = 0; c < num_4x4_w; c += block_step) {
++      if (c < max_blocks_wide) {
++        const tran_low_t *const coeff = BLOCK_OFFSET(p->coeff, block);
++        for (i = 0; i < (step << 4); ++i) {
++          fprintf(fp, "%s%d", first ? "" : ",", (int)coeff[i]);
++          first = 0;
++        }
++      }
++      block += step;
++    }
++  }
++  fprintf(fp, "],\"qcoeff\":[");
++  first = 1;
++  block = 0;
++  for (r = 0; r < max_blocks_high; r += block_step) {
++    for (c = 0; c < num_4x4_w; c += block_step) {
++      if (c < max_blocks_wide) {
++        const tran_low_t *const qcoeff = BLOCK_OFFSET(p->qcoeff, block);
++        for (i = 0; i < (step << 4); ++i) {
++          fprintf(fp, "%s%d", first ? "" : ",", (int)qcoeff[i]);
++          first = 0;
++        }
++      }
++      block += step;
++    }
++  }
++  fprintf(fp, "],\"dqcoeff\":[");
++  first = 1;
++  block = 0;
++  for (r = 0; r < max_blocks_high; r += block_step) {
++    for (c = 0; c < num_4x4_w; c += block_step) {
++      if (c < max_blocks_wide) {
++        const tran_low_t *const dqcoeff = BLOCK_OFFSET(pd->dqcoeff, block);
++        for (i = 0; i < (step << 4); ++i) {
++          fprintf(fp, "%s%d", first ? "" : ",", (int)dqcoeff[i]);
++          first = 0;
++        }
++      }
++      block += step;
++    }
++  }
++  fprintf(fp, "],\"eobs\":[");
++  first = 1;
++  block = 0;
++  for (r = 0; r < max_blocks_high; r += block_step) {
++    for (c = 0; c < num_4x4_w; c += block_step) {
++      if (c < max_blocks_wide) {
++        fprintf(fp, "%s%u", first ? "" : ",", p->eobs[block]);
++        first = 0;
++      }
++      block += step;
++    }
++  }
++  fprintf(fp, "]}\n");
++  ++count;
++}
++
+ static void block_yrd(VP9_COMP *cpi, MACROBLOCK *x, RD_COST *this_rdc,
+                       int *skippable, int64_t *sse, BLOCK_SIZE bsize,
+                       TX_SIZE tx_size, int rd_computed, int is_intra) {
+@@ -921,4 +1046,5 @@ static void block_yrd(VP9_COMP *cpi, MACROBLOCK *x, RD_COST *this_rdc,
+   // If skippable is set, rate gets clobbered later.
+   this_rdc->rate <<= (2 + VP9_PROB_COST_SHIFT);
+   this_rdc->rate += (eob_cost << VP9_PROB_COST_SHIFT);
++  f02_block_yrd_oracle(cpi, x, bsize, tx_size, this_rdc, *skippable);
  }
