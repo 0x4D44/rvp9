@@ -1018,6 +1018,169 @@ fn full_token_from_abs(abs_val: i32) -> usize {
     }
 }
 
+/// One probability-independent coefficient token retained between the
+/// pre-header count pass and final tile packing.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct RetainedCoefToken {
+    value: i16,
+    band: u8,
+    ctx: u8,
+}
+
+const _: () = assert!(core::mem::size_of::<RetainedCoefToken>() == 4);
+const RETAINED_EOB: i16 = i16::MIN;
+
+/// Per-tile coefficient tokens grouped by transform-block boundary.
+///
+/// The records intentionally retain probability-table coordinates rather
+/// than probability values. Replay therefore uses the coefficient
+/// probabilities committed by the compressed header.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct RetainedCoefTokens {
+    tokens: Vec<RetainedCoefToken>,
+    block_ends: Vec<u32>,
+    block_nonzero: Vec<bool>,
+}
+
+/// Record or replay state for [`write_block_tokens_with_retained`].
+#[derive(Debug)]
+pub enum CoefTokenPass<'a> {
+    /// Append each transform block's symbolic tokens.
+    Record(&'a mut RetainedCoefTokens),
+    /// Replay previously retained blocks in syntax traversal order.
+    Replay {
+        /// The immutable recorded tile token stream.
+        retained: &'a RetainedCoefTokens,
+        /// Index of the next transform block.
+        next_block: usize,
+        /// First token index of the next transform block.
+        token_start: usize,
+        /// Whether replay found malformed or missing block boundaries.
+        mismatch: bool,
+    },
+}
+
+impl<'a> CoefTokenPass<'a> {
+    /// Create a recording pass.
+    #[must_use]
+    pub fn record(retained: &'a mut RetainedCoefTokens) -> Self {
+        Self::Record(retained)
+    }
+
+    /// Create a replay pass.
+    #[must_use]
+    pub fn replay(retained: &'a RetainedCoefTokens) -> Self {
+        Self::Replay {
+            retained,
+            next_block: 0,
+            token_start: 0,
+            mismatch: false,
+        }
+    }
+
+    /// Whether replay consumed exactly every retained block.
+    #[must_use]
+    pub fn finished(&self) -> bool {
+        match self {
+            Self::Record(_) => true,
+            Self::Replay {
+                retained,
+                next_block,
+                token_start,
+                mismatch,
+            } => {
+                !mismatch
+                    && *next_block == retained.block_ends.len()
+                    && *next_block == retained.block_nonzero.len()
+                    && *token_start == retained.tokens.len()
+            }
+        }
+    }
+}
+
+#[inline]
+fn write_nonzero_coef(bw: &mut BoolWriter<'_>, local_prob: &[u8; 3], coef: i32) -> u8 {
+    let abs_val = coef.unsigned_abs() as i32;
+    let sign_neg = coef < 0;
+    let token_cache_value;
+
+    if abs_val == 1 {
+        bw.write(0, local_prob[ONE_CONTEXT_NODE]);
+        token_cache_value = 1;
+    } else {
+        bw.write(1, local_prob[ONE_CONTEXT_NODE]);
+        let p = &VP9_PARETO8_FULL[(local_prob[PIVOT_NODE] - 1) as usize];
+        if abs_val <= 4 {
+            bw.write(0, p[0]);
+            match abs_val {
+                2 => {
+                    bw.write(0, p[1]);
+                    token_cache_value = 2;
+                }
+                3 => {
+                    bw.write(1, p[1]);
+                    bw.write(0, p[2]);
+                    token_cache_value = 3;
+                }
+                4 => {
+                    bw.write(1, p[1]);
+                    bw.write(1, p[2]);
+                    token_cache_value = 3;
+                }
+                _ => unreachable!(),
+            }
+        } else {
+            bw.write(1, p[0]);
+            if abs_val <= 10 {
+                bw.write(0, p[3]);
+                token_cache_value = 4;
+                if abs_val <= 6 {
+                    bw.write(0, p[4]);
+                    write_coeff_bits(bw, abs_val - CAT1_MIN_VAL, &VP9_CAT1_PROB);
+                } else {
+                    bw.write(1, p[4]);
+                    write_coeff_bits(bw, abs_val - CAT2_MIN_VAL, &VP9_CAT2_PROB);
+                }
+            } else {
+                bw.write(1, p[3]);
+                token_cache_value = 5;
+                if abs_val <= 34 {
+                    bw.write(0, p[5]);
+                    if abs_val <= 18 {
+                        bw.write(0, p[6]);
+                        write_coeff_bits(bw, abs_val - CAT3_MIN_VAL, &VP9_CAT3_PROB);
+                    } else {
+                        bw.write(1, p[6]);
+                        write_coeff_bits(bw, abs_val - CAT4_MIN_VAL, &VP9_CAT4_PROB);
+                    }
+                } else {
+                    bw.write(1, p[5]);
+                    if abs_val <= 66 {
+                        bw.write(0, p[7]);
+                        write_coeff_bits(bw, abs_val - CAT5_MIN_VAL, &VP9_CAT5_PROB);
+                    } else {
+                        bw.write(1, p[7]);
+                        write_coeff_bits(bw, abs_val - CAT6_MIN_VAL, &VP9_CAT6_PROB);
+                    }
+                }
+            }
+        }
+    }
+    bw.write_bit(u8::from(sign_neg));
+    token_cache_value
+}
+
+#[inline]
+fn token_cache_value(abs_val: i32) -> u8 {
+    match abs_val {
+        1 => 1,
+        2 => 2,
+        3..=4 => 3,
+        5..=10 => 4,
+        _ => 5,
+    }
+}
+
 /// Encode one transform block's coefficients — the encoder-side mirror
 /// of [`decode_coefs`].
 ///
@@ -1077,7 +1240,26 @@ pub fn encode_coefs(
     seg_eob: usize,
     raw_coefs: &[i32],
     eob: usize,
+    counts: Option<&mut DecodeCoefCounts<'_>>,
+) {
+    encode_coefs_impl(
+        bw, coef_probs, scan, initial_pt, tx_size, seg_eob, raw_coefs, eob, counts, None, true,
+    );
+}
+
+#[allow(clippy::too_many_arguments)] // retained-token variant of encode_coefs
+fn encode_coefs_impl(
+    bw: &mut BoolWriter<'_>,
+    coef_probs: &CoefBandCtxProbs,
+    scan: &ScanOrder,
+    initial_pt: usize,
+    tx_size: TxSize,
+    seg_eob: usize,
+    raw_coefs: &[i32],
+    eob: usize,
     mut counts: Option<&mut DecodeCoefCounts<'_>>,
+    mut retained: Option<&mut Vec<RetainedCoefToken>>,
+    emit_bits: bool,
 ) {
     assert!(
         seg_eob <= tx_size.n_coeffs(),
@@ -1113,7 +1295,16 @@ pub fn encode_coefs(
                     full[band][initial_pt][ENTROPY_TOKENS - 1] += 1;
                 }
             }
-            bw.write(0, coef_probs[band][initial_pt][EOB_CONTEXT_NODE]);
+            if let Some(tokens) = retained.as_deref_mut() {
+                tokens.push(RetainedCoefToken {
+                    value: RETAINED_EOB,
+                    band: band as u8,
+                    ctx: initial_pt as u8,
+                });
+            }
+            if emit_bits {
+                bw.write(0, coef_probs[band][initial_pt][EOB_CONTEXT_NODE]);
+            }
         }
         return;
     }
@@ -1129,6 +1320,8 @@ pub fn encode_coefs(
             raw_coefs,
             eob,
             counts,
+            retained,
+            emit_bits,
             scratch.as_mut_slice(),
         );
     });
@@ -1145,6 +1338,8 @@ fn encode_coefs_with_token_cache(
     raw_coefs: &[i32],
     eob: usize,
     mut counts: Option<&mut DecodeCoefCounts<'_>>,
+    mut retained: Option<&mut Vec<RetainedCoefToken>>,
+    emit_bits: bool,
     token_cache: &mut [u8],
 ) {
     let band_translate = get_band_translate(tx_size);
@@ -1165,7 +1360,9 @@ fn encode_coefs_with_token_cache(
         }
 
         // Outer-loop EOB decision — we are NOT at EOB, emit '1'.
-        bw.write(1, prob[EOB_CONTEXT_NODE]);
+        if emit_bits {
+            bw.write(1, prob[EOB_CONTEXT_NODE]);
+        }
 
         // Inner zero-run loop. Each iteration here emits ONE ZERO bit
         // ('0' at the ZERO node) and DOES NOT re-read EOB. Mirrors the
@@ -1178,11 +1375,22 @@ fn encode_coefs_with_token_cache(
             if coef != 0 {
                 // Break out — emit NOT-ZERO and proceed to the value
                 // tree below.
-                bw.write(1, local_prob[ZERO_CONTEXT_NODE]);
+                if emit_bits {
+                    bw.write(1, local_prob[ZERO_CONTEXT_NODE]);
+                }
                 break;
             }
             // ZERO_TOKEN at this position.
-            bw.write(0, local_prob[ZERO_CONTEXT_NODE]);
+            if emit_bits {
+                bw.write(0, local_prob[ZERO_CONTEXT_NODE]);
+            }
+            if let Some(tokens) = retained.as_deref_mut() {
+                tokens.push(RetainedCoefToken {
+                    value: 0,
+                    band: band_translate[c],
+                    ctx: ctx as u8,
+                });
+            }
             // (B) G3 — count ZERO_TOKEN.
             if let Some(ref mut ct) = counts {
                 let b = band_translate[c] as usize;
@@ -1219,11 +1427,16 @@ fn encode_coefs_with_token_cache(
         let raster_idx = scan.scan()[c] as usize;
         let coef = raw_coefs[raster_idx];
         let abs_val = coef.unsigned_abs() as i32;
-        let sign_neg = coef < 0;
+        if let Some(tokens) = retained.as_deref_mut() {
+            debug_assert!(i16::try_from(coef).is_ok());
+            tokens.push(RetainedCoefToken {
+                value: coef as i16,
+                band: band_translate[c],
+                ctx: ctx as u8,
+            });
+        }
 
         if abs_val == 1 {
-            // ONE_TOKEN — emit '0' at the ONE node.
-            bw.write(0, local_prob[ONE_CONTEXT_NODE]);
             // (C) G3 — count ONE_TOKEN.
             if let Some(ref mut ct) = counts {
                 let b = band_translate[c] as usize;
@@ -1232,10 +1445,7 @@ fn encode_coefs_with_token_cache(
                     full[b][ctx][ONE_TOKEN] += 1;
                 }
             }
-            token_cache[raster_idx] = 1;
         } else {
-            // TWO-or-higher branch.
-            bw.write(1, local_prob[ONE_CONTEXT_NODE]);
             // (D) G3 — count TWO_TOKEN (absorbs TWO through CAT6) for the
             // 4-token model histogram, AND the EXACT 12-token bucket for
             // the encoder-only TWO_LOOP histogram. `full_token_from_abs`
@@ -1247,85 +1457,13 @@ fn encode_coefs_with_token_cache(
                     full[b][ctx][full_token_from_abs(abs_val)] += 1;
                 }
             }
-            let p = &VP9_PARETO8_FULL[(local_prob[PIVOT_NODE] - 1) as usize];
-            if abs_val <= 4 {
-                // Low branch — TWO / THREE / FOUR.
-                bw.write(0, p[0]);
-                match abs_val {
-                    2 => {
-                        bw.write(0, p[1]);
-                        token_cache[raster_idx] = 2;
-                    }
-                    3 => {
-                        bw.write(1, p[1]);
-                        bw.write(0, p[2]);
-                        token_cache[raster_idx] = 3;
-                    }
-                    4 => {
-                        bw.write(1, p[1]);
-                        bw.write(1, p[2]);
-                        token_cache[raster_idx] = 3;
-                    }
-                    _ => unreachable!(),
-                }
-            } else {
-                // High branch — CAT1..CAT6.
-                bw.write(1, p[0]);
-                if abs_val <= 10 {
-                    // p[3] = 0 → low-cat side.
-                    bw.write(0, p[3]);
-                    token_cache[raster_idx] = 4;
-                    if abs_val <= 6 {
-                        // CAT1 (1 ext bit; values 5..=6).
-                        bw.write(0, p[4]);
-                        let extra = abs_val - CAT1_MIN_VAL;
-                        write_coeff_bits(bw, extra, &VP9_CAT1_PROB);
-                    } else {
-                        // CAT2 (2 ext bits; values 7..=10).
-                        bw.write(1, p[4]);
-                        let extra = abs_val - CAT2_MIN_VAL;
-                        write_coeff_bits(bw, extra, &VP9_CAT2_PROB);
-                    }
-                } else {
-                    // p[3] = 1 → high-cat side.
-                    bw.write(1, p[3]);
-                    token_cache[raster_idx] = 5;
-                    if abs_val <= 34 {
-                        // p[5] = 0 → CAT3 / CAT4.
-                        bw.write(0, p[5]);
-                        if abs_val <= 18 {
-                            // CAT3 (3 ext bits; values 11..=18).
-                            bw.write(0, p[6]);
-                            let extra = abs_val - CAT3_MIN_VAL;
-                            write_coeff_bits(bw, extra, &VP9_CAT3_PROB);
-                        } else {
-                            // CAT4 (4 ext bits; values 19..=34).
-                            bw.write(1, p[6]);
-                            let extra = abs_val - CAT4_MIN_VAL;
-                            write_coeff_bits(bw, extra, &VP9_CAT4_PROB);
-                        }
-                    } else {
-                        // p[5] = 1 → CAT5 / CAT6.
-                        bw.write(1, p[5]);
-                        if abs_val <= 66 {
-                            // CAT5 (5 ext bits; values 35..=66).
-                            bw.write(0, p[7]);
-                            let extra = abs_val - CAT5_MIN_VAL;
-                            write_coeff_bits(bw, extra, &VP9_CAT5_PROB);
-                        } else {
-                            // CAT6 (14 ext bits on 8-bit Profile 0;
-                            // values 67..=67 + 2^14 - 1 = 16450).
-                            bw.write(1, p[7]);
-                            let extra = abs_val - CAT6_MIN_VAL;
-                            write_coeff_bits(bw, extra, &VP9_CAT6_PROB);
-                        }
-                    }
-                }
-            }
         }
 
-        // Sign bit — raw, prob 128 (`write_bit`).
-        bw.write_bit(u8::from(sign_neg));
+        token_cache[raster_idx] = if emit_bits {
+            write_nonzero_coef(bw, local_prob, coef)
+        } else {
+            token_cache_value(abs_val)
+        };
 
         c += 1;
         // Update ctx for the next iteration. We update whenever there's
@@ -1358,7 +1496,59 @@ fn encode_coefs_with_token_cache(
             }
         }
         let prob = &coef_probs[band][ctx];
-        bw.write(0, prob[EOB_CONTEXT_NODE]);
+        if let Some(tokens) = retained {
+            tokens.push(RetainedCoefToken {
+                value: RETAINED_EOB,
+                band: band as u8,
+                ctx: ctx as u8,
+            });
+        }
+        if emit_bits {
+            bw.write(0, prob[EOB_CONTEXT_NODE]);
+        }
+    }
+}
+
+fn replay_retained_coefs(
+    bw: &mut BoolWriter<'_>,
+    coef_probs: &CoefBandCtxProbs,
+    tokens: &[RetainedCoefToken],
+) {
+    let mut i = 0usize;
+    while i < tokens.len() {
+        let token = tokens[i];
+        let prob = &coef_probs[token.band as usize][token.ctx as usize];
+        if token.value == RETAINED_EOB {
+            bw.write(0, prob[EOB_CONTEXT_NODE]);
+            i += 1;
+            continue;
+        }
+
+        // One outer-loop NOT-EOB decision precedes a zero run and its
+        // terminating non-zero value. Subsequent zeros do not repeat EOB.
+        bw.write(1, prob[EOB_CONTEXT_NODE]);
+        loop {
+            let token = tokens[i];
+            if token.value == RETAINED_EOB {
+                break;
+            }
+            let local_prob = &coef_probs[token.band as usize][token.ctx as usize];
+            match token.value {
+                0 => {
+                    bw.write(0, local_prob[ZERO_CONTEXT_NODE]);
+                    i += 1;
+                    if i == tokens.len() {
+                        return;
+                    }
+                }
+                coef => {
+                    bw.write(1, local_prob[ZERO_CONTEXT_NODE]);
+                    let _ = write_nonzero_coef(bw, local_prob, i32::from(coef));
+                    i += 1;
+                    break;
+                }
+            }
+        }
     }
 }
 
@@ -1426,6 +1616,45 @@ pub fn write_block_tokens(
     // decoder/keyframe paths; threaded in parallel with `counts`.
     full_counts: Option<&mut crate::entropy::adapt::Coef12Bank>,
 ) {
+    write_block_tokens_with_retained(
+        bw,
+        fc,
+        coef_ctx,
+        plane,
+        x4,
+        y4_in_sb,
+        tx_size,
+        tx_type,
+        ref_type,
+        seg_eob,
+        raw_coefs,
+        eob,
+        counts,
+        full_counts,
+        None,
+    );
+}
+
+/// [`write_block_tokens`] with an optional coefficient-token record/replay
+/// pass for two-loop encoders.
+#[allow(clippy::too_many_arguments)] // mirrors decode_block_tokens 1:1
+pub fn write_block_tokens_with_retained(
+    bw: &mut BoolWriter<'_>,
+    fc: &FrameContext,
+    coef_ctx: &mut TileCoefCtx,
+    plane: usize,
+    x4: usize,
+    y4_in_sb: usize,
+    tx_size: TxSize,
+    tx_type: TxType,
+    ref_type: usize,
+    seg_eob: usize,
+    raw_coefs: &[i32],
+    eob: usize,
+    counts: Option<&mut CoefCountsBank>,
+    full_counts: Option<&mut crate::entropy::adapt::Coef12Bank>,
+    mut retained_pass: Option<&mut CoefTokenPass<'_>>,
+) {
     // libvpx `get_plane_type`: Y → 0, UV → 1
     // (`vp9_blockd.h:210-212`).
     let plane_type = usize::from(plane > 0);
@@ -1433,6 +1662,35 @@ pub fn write_block_tokens(
     // libvpx `cm->fc->coef_probs[tx_size][plane_type][ref_type]`
     // (`vp9_detokenize.c:159-161`).
     let coef_probs: &CoefBandCtxProbs = &fc.coef_probs[tx_size as usize][plane_type][ref_type];
+
+    let n = 1usize << (tx_size as usize); // 1 / 2 / 4 / 8
+    if let Some(CoefTokenPass::Replay {
+        retained,
+        next_block,
+        token_start,
+        mismatch,
+    }) = retained_pass.as_deref_mut()
+    {
+        let token_end = retained
+            .block_ends
+            .get(*next_block)
+            .copied()
+            .map(|end| end as usize);
+        let nonzero = retained.block_nonzero.get(*next_block).copied();
+        if let (Some(token_end), Some(nonzero)) = (token_end, nonzero)
+            && let Some(tokens) = retained.tokens.get(*token_start..token_end)
+        {
+            replay_retained_coefs(bw, coef_probs, tokens);
+            *token_start = token_end;
+            *next_block += 1;
+            coef_ctx.set_coef_flags(plane, x4, y4_in_sb, n, n, nonzero);
+            return;
+        }
+        // Fall back to direct tokenization so malformed internal state
+        // cannot produce a partial tile. The tile wrapper returns the
+        // mismatch after the syntax walk and the caller discards it.
+        *mismatch = true;
+    }
 
     // libvpx `vp9_scan_orders[tx_size][tx_type]`
     // (`vp9_decodeframe.c:326-328`).
@@ -1443,7 +1701,6 @@ pub fn write_block_tokens(
     // these as `uintN_t` and uses `!!*` to collapse to 0/1; we walk
     // cells. Mirrors the decoder-side `fold_any_nonzero` helper in
     // `rvp9_decoder::detokenize`.
-    let n = 1usize << (tx_size as usize); // 1 / 2 / 4 / 8
     let mut a_any: u8 = 0;
     for i in 0..n {
         if coef_ctx.above_coef(plane, x4 + i) != 0 {
@@ -1476,17 +1733,44 @@ pub fn write_block_tokens(
         }
         (None, _) => None,
     };
-    encode_coefs(
-        bw,
-        coef_probs,
-        &scan,
-        initial_pt,
-        tx_size,
-        seg_eob,
-        raw_coefs,
-        eob,
-        block_counts.as_mut(),
-    );
+    let recorded = match retained_pass {
+        Some(CoefTokenPass::Record(retained)) => {
+            let emit_bits = !bw.is_count_only();
+            encode_coefs_impl(
+                bw,
+                coef_probs,
+                &scan,
+                initial_pt,
+                tx_size,
+                seg_eob,
+                raw_coefs,
+                eob,
+                block_counts.as_mut(),
+                Some(&mut retained.tokens),
+                emit_bits,
+            );
+            let token_end = retained.tokens.len();
+            retained.block_ends.push(
+                u32::try_from(token_end).expect("retained coefficient token count exceeds u32"),
+            );
+            retained.block_nonzero.push(eob > 0);
+            true
+        }
+        Some(CoefTokenPass::Replay { .. }) | None => false,
+    };
+    if !recorded {
+        encode_coefs(
+            bw,
+            coef_probs,
+            &scan,
+            initial_pt,
+            tx_size,
+            seg_eob,
+            raw_coefs,
+            eob,
+            block_counts.as_mut(),
+        );
+    }
 
     // Writeback: splat `(eob > 0)` across the (n × n) sub-block
     // region. libvpx `vp9_detokenize.c:294/302/311/323`.
@@ -1533,6 +1817,170 @@ mod tests {
         };
         buf.truncate(n);
         buf
+    }
+
+    #[test]
+    fn retained_tokens_match_direct_encode_with_new_probabilities() {
+        let scan = default_scan_4x4();
+        let pre_probs = flat_coef_probs(71, 93, 117);
+        let mut post_probs = flat_coef_probs(128, 128, 128);
+        for (band, contexts) in post_probs.iter_mut().enumerate() {
+            for (ctx, nodes) in contexts.iter_mut().enumerate() {
+                for (node, prob) in nodes.iter_mut().enumerate() {
+                    *prob = 1 + ((band * 37 + ctx * 53 + node * 71) % 254) as u8;
+                }
+            }
+        }
+
+        let mut mixed = [0i32; 16];
+        for (scan_pos, value) in [0, 0, -1, 2, -3, 4, -5, 7, -11, 19, -35, 67]
+            .into_iter()
+            .enumerate()
+        {
+            mixed[scan.scan[scan_pos] as usize] = value;
+        }
+        let cases = [
+            ([0i32; 16], 0usize),
+            (mixed, 12usize),
+            ([1i32; 16], 16usize),
+        ];
+
+        for (coefs, eob) in cases {
+            let mut retained = Vec::new();
+            let mut count_sink = [];
+            let mut count_writer = BoolWriter::start_count_only(&mut count_sink);
+            encode_coefs_impl(
+                &mut count_writer,
+                &pre_probs,
+                &scan,
+                0,
+                TxSize::Tx4x4,
+                16,
+                &coefs,
+                eob,
+                None,
+                Some(&mut retained),
+                false,
+            );
+
+            let direct = encode(|w| {
+                encode_coefs(
+                    w,
+                    &post_probs,
+                    &scan,
+                    0,
+                    TxSize::Tx4x4,
+                    16,
+                    &coefs,
+                    eob,
+                    None,
+                );
+            });
+            let replay = encode(|w| replay_retained_coefs(w, &post_probs, &retained));
+            assert_eq!(replay, direct, "retained replay diverged for eob={eob}");
+        }
+    }
+
+    #[test]
+    fn retained_block_pass_replays_and_detects_extra_block() {
+        let pre_fc = FrameContext::new_default();
+        let mut post_fc = pre_fc.clone();
+        post_fc.coef_probs[TxSize::Tx4x4 as usize][0][1][0][0] = [37, 149, 211];
+        let mut coefs = [0i32; 16];
+        coefs[0] = 3;
+        coefs[1] = -7;
+
+        let mut retained = RetainedCoefTokens::default();
+        let mut record_pass = CoefTokenPass::record(&mut retained);
+        let mut record_ctx = TileCoefCtx::new(8);
+        let mut sink = [];
+        let mut count_writer = BoolWriter::start_count_only(&mut sink);
+        write_block_tokens_with_retained(
+            &mut count_writer,
+            &pre_fc,
+            &mut record_ctx,
+            0,
+            0,
+            0,
+            TxSize::Tx4x4,
+            TxType::DctDct,
+            1,
+            16,
+            &coefs,
+            2,
+            None,
+            None,
+            Some(&mut record_pass),
+        );
+        assert!(record_pass.finished());
+
+        let mut direct_ctx = TileCoefCtx::new(8);
+        let direct = encode(|w| {
+            write_block_tokens(
+                w,
+                &post_fc,
+                &mut direct_ctx,
+                0,
+                0,
+                0,
+                TxSize::Tx4x4,
+                TxType::DctDct,
+                1,
+                16,
+                &coefs,
+                2,
+                None,
+                None,
+            );
+        });
+        let mut replay_ctx = TileCoefCtx::new(8);
+        let mut replay_pass = CoefTokenPass::replay(&retained);
+        let replay = encode(|w| {
+            write_block_tokens_with_retained(
+                w,
+                &post_fc,
+                &mut replay_ctx,
+                0,
+                0,
+                0,
+                TxSize::Tx4x4,
+                TxType::DctDct,
+                1,
+                16,
+                &coefs,
+                2,
+                None,
+                None,
+                Some(&mut replay_pass),
+            );
+        });
+        assert_eq!(replay, direct);
+        assert!(replay_pass.finished());
+
+        let mut mismatch_ctx = TileCoefCtx::new(8);
+        let mut mismatch_pass = CoefTokenPass::replay(&retained);
+        let mut mismatch_sink = [];
+        let mut mismatch_writer = BoolWriter::start_count_only(&mut mismatch_sink);
+        for _ in 0..2 {
+            write_block_tokens_with_retained(
+                &mut mismatch_writer,
+                &post_fc,
+                &mut mismatch_ctx,
+                0,
+                0,
+                0,
+                TxSize::Tx4x4,
+                TxType::DctDct,
+                1,
+                16,
+                &coefs,
+                2,
+                None,
+                None,
+                Some(&mut mismatch_pass),
+            );
+        }
+        assert!(!mismatch_pass.finished());
     }
 
     /// EOB at position 0 ⇒ no coefficients decoded.

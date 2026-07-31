@@ -3217,3 +3217,47 @@ call removal.
 **Future plan:** retain forced inlining while the exact stream and focused
 writer tests remain green. Use the committed post-change profile to ensure
 the removed standalone leaf did not merely move equal work into callers.
+
+### 2026-07-31 — Inter tiles retain probability-independent coefficient tokens
+
+**Where:** `rvp9_core::entropy::detokenize::CoefTokenPass`,
+`rvp9_core::bitstream::modes_writer::write_tile_inter_with_retained`, and
+`rvp9_encoder::frame_loop::build_inter_packet_with_residuals`.
+
+**What libvpx does:** `vp9_tokenize.c::tokenize_b` creates `TOKENEXTRA`
+records before the compressed header. `vp9_bitstream.c::pack_mb_tokens`
+replays those records after coefficient-probability updates.
+
+**What rvp9 does:** the canonical pre-header count traversal stores compact
+four-byte `(value, band, context)` tokens and transform-block boundaries per
+tile. Final tile workers replay those immutable records against the
+post-header probability tables. Replay still updates the tile coefficient
+flags and rejects a tile when its block traversal does not consume exactly
+the retained stream. The original tile-writer API remains the direct path.
+
+**Why:** rvp9 previously scanned, classified, and context-modelled every
+coefficient in both the count and final arithmetic passes. Token values,
+scan bands, and neighbour-derived contexts are probability-independent.
+Retaining them removes the duplicate work and establishes libvpx's packing
+boundary for later whole-tile syntax work.
+
+**Byte-parity impact:** none. A focused oracle records under one coefficient
+probability table and proves byte identity with direct encoding under a
+different table across empty, zero-run, low-token, category-token, and full
+blocks. The 120-frame cpu-used 7 stream remains byte-identical, and
+rvp9-decoder, pinned vpxdec, and ffmpeg produce the same 162,201,600-byte
+I420 SHA-256.
+
+**Compression-efficiency impact:** none; the production stream is unchanged.
+
+**Speed impact:** the matched five-encode profiles reduce the inclusive
+coefficient packing path from 427 baseline samples to 359 retained-token
+samples. The host was saturated by unrelated `mddosem`, indexing, compiler,
+and git work during repeated timing, so the alternating wall/CPU samples
+were not stable enough for a final small-effect timing claim. This is a
+measured architectural prerequisite; the clean-host cumulative matrix must
+quantify its corpus effect.
+
+**Future plan:** retain the libvpx-shaped token boundary while exact-stream
+and replay-consumption gates stay green. Reuse the retained representation
+when removing the remaining duplicate final tile syntax work.

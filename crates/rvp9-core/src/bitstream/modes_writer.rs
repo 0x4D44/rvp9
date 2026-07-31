@@ -88,8 +88,8 @@ use crate::coef_ctx::TileCoefCtx;
 use crate::entropy::adapt::CoefCountsBank;
 use crate::entropy::bitacct::{BitCategory, set_category};
 use crate::entropy::{
-    BoolWriter, FrameContext, FrameCounts, VP9_KF_PARTITION_PROBS, VP9_KF_UV_MODE_PROB,
-    VP9_KF_Y_MODE_PROB, write_block_tokens,
+    BoolWriter, CoefTokenPass, FrameContext, FrameCounts, VP9_KF_PARTITION_PROBS,
+    VP9_KF_UV_MODE_PROB, VP9_KF_Y_MODE_PROB, write_block_tokens, write_block_tokens_with_retained,
 };
 use crate::inter::mode_info::{
     InterModeReadParams, InterModeWriteError, get_intra_inter_context, write_inter_block_mode_info,
@@ -305,6 +305,8 @@ pub enum ModesWriterError {
     InvalidTileBounds,
     /// The [`BoolWriter`] overflowed its destination buffer.
     BufferOverflow,
+    /// Retained coefficient blocks did not match the final syntax walk.
+    RetainedCoefMismatch,
     /// An inter-frame leaf carried `BlockMode::Intra`. The inter-frame
     /// writer's v1 scope is "pure inter leaves only" — the
     /// intra-in-inter path is deferred until the encoder's intra
@@ -369,6 +371,9 @@ impl core::fmt::Display for ModesWriterError {
             ),
             Self::InvalidTileBounds => f.write_str("modes_writer v1: tile bounds outside frame"),
             Self::BufferOverflow => f.write_str("modes_writer v1: BoolWriter overflowed"),
+            Self::RetainedCoefMismatch => {
+                f.write_str("modes_writer: retained coefficient tokens did not match tile syntax")
+            }
             Self::UnsupportedIntraInInter { mi_row, mi_col } => write!(
                 f,
                 "modes_writer v1: inter-frame leaf ({mi_row}, {mi_col}) is intra-in-inter; v1 only emits pure inter leaves"
@@ -1685,7 +1690,44 @@ pub fn write_tile_inter(
     prev_mv_grid: Option<&[PrevFrameMvRef]>,
     coef_ctx: &mut TileCoefCtx,
     coef_source: &dyn InterCoefSource,
+    counts: Option<&mut FrameCounts>,
+) -> Result<(), ModesWriterError> {
+    write_tile_inter_with_retained(
+        bw,
+        fc,
+        params,
+        tx_mode,
+        mi_grid,
+        mi_rows,
+        mi_cols,
+        tile_bounds,
+        seg,
+        prev_mv_grid,
+        coef_ctx,
+        coef_source,
+        counts,
+        None,
+    )
+}
+
+/// [`write_tile_inter`] with an optional coefficient-token record/replay
+/// pass for a two-loop encoder.
+#[allow(clippy::too_many_arguments)]
+pub fn write_tile_inter_with_retained(
+    bw: &mut BoolWriter<'_>,
+    fc: &FrameContext,
+    params: &InterModeReadParams,
+    tx_mode: TxMode,
+    mi_grid: &[Option<ModeInfo>],
+    mi_rows: u32,
+    mi_cols: u32,
+    tile_bounds: TileBounds,
+    seg: Option<SegmentationWriteParams<'_>>,
+    prev_mv_grid: Option<&[PrevFrameMvRef]>,
+    coef_ctx: &mut TileCoefCtx,
+    coef_source: &dyn InterCoefSource,
     mut counts: Option<&mut FrameCounts>,
+    mut retained_pass: Option<&mut CoefTokenPass<'_>>,
 ) -> Result<(), ModesWriterError> {
     if !mi_rows.is_multiple_of(MI_BLOCK_SIZE as u32)
         || !mi_cols.is_multiple_of(MI_BLOCK_SIZE as u32)
@@ -1740,6 +1782,7 @@ pub fn write_tile_inter(
                 coef_ctx,
                 coef_source,
                 counts.as_deref_mut(),
+                retained_pass.as_deref_mut(),
             )?;
             mi_col += MI_BLOCK_SIZE;
         }
@@ -1748,6 +1791,9 @@ pub fn write_tile_inter(
 
     if bw.has_error() {
         return Err(ModesWriterError::BufferOverflow);
+    }
+    if retained_pass.is_some_and(|pass| !pass.finished()) {
+        return Err(ModesWriterError::RetainedCoefMismatch);
     }
     Ok(())
 }
@@ -1778,6 +1824,7 @@ fn write_inter_partition_tree(
     coef_ctx: &mut TileCoefCtx,
     coef_source: &dyn InterCoefSource,
     mut counts: Option<&mut FrameCounts>,
+    mut retained_pass: Option<&mut CoefTokenPass<'_>>,
 ) -> Result<(), ModesWriterError> {
     debug_assert!(mi_row < bounds.mi_row_end && mi_col < bounds.mi_col_end);
 
@@ -1826,6 +1873,7 @@ fn write_inter_partition_tree(
             coef_ctx,
             coef_source,
             counts.as_deref_mut(),
+            retained_pass.as_deref_mut(),
         )?;
         if (bsize as u8) >= (BlockSize::Block8x8 as u8) {
             // Always fires for BLOCK_8x8 — the gate `bsize ==
@@ -1869,6 +1917,7 @@ fn write_inter_partition_tree(
                 coef_ctx,
                 coef_source,
                 counts.as_deref_mut(),
+                retained_pass.as_deref_mut(),
             )?;
         }
         PartitionType::Horz => {
@@ -1892,6 +1941,7 @@ fn write_inter_partition_tree(
                 coef_ctx,
                 coef_source,
                 counts.as_deref_mut(),
+                retained_pass.as_deref_mut(),
             )?;
             let mi_row_b = mi_row + hbs;
             let bot = mi_grid_get(mi_grid, mi_cols, mi_row_b, mi_col).ok_or(
@@ -1918,6 +1968,7 @@ fn write_inter_partition_tree(
                 coef_ctx,
                 coef_source,
                 counts.as_deref_mut(),
+                retained_pass.as_deref_mut(),
             )?;
         }
         PartitionType::Vert => {
@@ -1941,6 +1992,7 @@ fn write_inter_partition_tree(
                 coef_ctx,
                 coef_source,
                 counts.as_deref_mut(),
+                retained_pass.as_deref_mut(),
             )?;
             let mi_col_r = mi_col + hbs;
             let right = mi_grid_get(mi_grid, mi_cols, mi_row, mi_col_r).ok_or(
@@ -1967,6 +2019,7 @@ fn write_inter_partition_tree(
                 coef_ctx,
                 coef_source,
                 counts.as_deref_mut(),
+                retained_pass.as_deref_mut(),
             )?;
         }
         PartitionType::Split => {
@@ -1989,6 +2042,7 @@ fn write_inter_partition_tree(
                 coef_ctx,
                 coef_source,
                 counts.as_deref_mut(),
+                retained_pass.as_deref_mut(),
             )?;
             write_inter_partition_tree(
                 bw,
@@ -2009,6 +2063,7 @@ fn write_inter_partition_tree(
                 coef_ctx,
                 coef_source,
                 counts.as_deref_mut(),
+                retained_pass.as_deref_mut(),
             )?;
             write_inter_partition_tree(
                 bw,
@@ -2029,6 +2084,7 @@ fn write_inter_partition_tree(
                 coef_ctx,
                 coef_source,
                 counts.as_deref_mut(),
+                retained_pass.as_deref_mut(),
             )?;
             write_inter_partition_tree(
                 bw,
@@ -2049,6 +2105,7 @@ fn write_inter_partition_tree(
                 coef_ctx,
                 coef_source,
                 counts,
+                retained_pass,
             )?;
         }
     }
@@ -2101,6 +2158,7 @@ fn write_inter_block_leaf(
     coef_ctx: &mut TileCoefCtx,
     coef_source: &dyn InterCoefSource,
     mut counts: Option<&mut FrameCounts>,
+    retained_pass: Option<&mut CoefTokenPass<'_>>,
 ) -> Result<(), ModesWriterError> {
     // Scope validation: the leaf cell's block_size must match the
     // partition-tree-derived expected subsize at this level.
@@ -2357,6 +2415,7 @@ fn write_inter_block_leaf(
             residual_y_mode,
             coef_bank,
             coef_full_bank,
+            retained_pass,
         );
     } else {
         // RC.X1 — mirror libvpx's `dec_reset_skip_context`
@@ -2521,6 +2580,7 @@ fn write_inter_block_residual(
     mut counts: Option<&mut CoefCountsBank>,
     // A6 TWO_LOOP -- encoder-only full 12-token histogram (count pass).
     mut full_counts: Option<&mut crate::entropy::adapt::Coef12Bank>,
+    mut retained_pass: Option<&mut CoefTokenPass<'_>>,
 ) {
     let mi_col_in_tile = mi_col - tile_mi_col_start;
     let mi_row_in_sb = mi_row & MI_MASK;
@@ -2607,7 +2667,7 @@ fn write_inter_block_residual(
                     plane,
                     plane_tx,
                 );
-                write_block_tokens(
+                write_block_tokens_with_retained(
                     bw,
                     fc,
                     coef_ctx,
@@ -2622,6 +2682,7 @@ fn write_inter_block_residual(
                     eob,
                     counts.as_deref_mut(),
                     full_counts.as_deref_mut(),
+                    retained_pass.as_deref_mut(),
                 );
                 tx_x4_local += tx_step_4x4;
             }
@@ -2818,6 +2879,7 @@ mod tests {
             TxSize::Tx32x32,
             true,
             IntraMode::Dc,
+            None,
             None,
             None,
         );
@@ -7212,6 +7274,7 @@ mod tests {
             &mut coef_ctx,
             &coef_source,
             None,
+            None,
         )
         .expect_err("expected UnsupportedBlockSize");
         assert!(matches!(err, ModesWriterError::UnsupportedBlockSize { .. }));
@@ -8897,6 +8960,7 @@ mod tests {
             None,
             &mut coef_ctx,
             &coef_source,
+            None,
             None,
         )
         .expect_err("expected UnsupportedSegmentation");

@@ -61,7 +61,8 @@ use rvp9_core::bitstream::{
     BitDepth as WireBitDepth, BitstreamError, ChromaFormat, ColorRange, ColorSpace,
     CompressedHeaderOptions, CompressedHeaderResult, FrameKind as WireFrameKind, InterCoefSource,
     InterpFilter, Profile, RawBitWriter, UncompressedHeader, tile_bounds, write_compressed_header,
-    write_tile_buffers, write_tile_inter, write_tile_intra_keyframe, write_uncompressed_header,
+    write_tile_buffers, write_tile_inter_with_retained, write_tile_intra_keyframe,
+    write_uncompressed_header,
 };
 // W6.2(vpxenc parity, HBD scaffold) — pixel-pipeline bit-depth. **Not**
 // the same as the wire-format `WireBitDepth` (`Eight`/`Ten`/`Twelve`)
@@ -70,8 +71,8 @@ use rvp9_core::BitDepth;
 use rvp9_core::block::{BlockSize, max_txsize};
 use rvp9_core::coef_ctx::TileCoefCtx;
 use rvp9_core::entropy::{
-    BoolWriter, FrameContext, FrameCounts, adapt_coef_probs, adapt_mode_probs, adapt_mv_probs,
-    coef_adapt_params,
+    BoolWriter, CoefTokenPass, FrameContext, FrameCounts, RetainedCoefTokens, adapt_coef_probs,
+    adapt_mode_probs, adapt_mv_probs, coef_adapt_params,
 };
 use rvp9_core::inter::mode_info::{InterModeReadParams, setup_compound_reference_mode};
 use rvp9_core::inter::mv_ref::{PrevFrameMvRef, sign_bias_from_header};
@@ -5041,6 +5042,7 @@ fn build_inter_packet_with_residuals(
         coef_full: Some(rvp9_core::entropy::new_coef12_bank()),
         ..FrameCounts::default()
     };
+    let mut retained_coef_tiles = Vec::with_capacity(tile_cols);
     rvp9_core::entropy::bitacct::with_suppressed(|| -> Result<(), EncodeError> {
         for tile_col in 0..tile_cols {
             let bounds = tile_bounds(
@@ -5054,7 +5056,9 @@ fn build_inter_packet_with_residuals(
             let mut count_sink = [];
             let mut bw = BoolWriter::start_count_only(&mut count_sink);
             let mut coef_ctx = TileCoefCtx::new(bounds.mi_col_end - bounds.mi_col_start);
-            write_tile_inter(
+            let mut retained = RetainedCoefTokens::default();
+            let mut token_pass = CoefTokenPass::record(&mut retained);
+            write_tile_inter_with_retained(
                 &mut bw,
                 &count_fc,
                 &params,
@@ -5071,7 +5075,9 @@ fn build_inter_packet_with_residuals(
                 &mut coef_ctx,
                 coef_source,
                 Some(&mut count_counts),
+                Some(&mut token_pass),
             )?;
+            retained_coef_tiles.push(retained);
             // The writer deliberately emits no bytes — only the explicit
             // FrameCounts updates from the identical syntax walk matter.
         }
@@ -5131,10 +5137,11 @@ fn build_inter_packet_with_residuals(
         let tile_len = {
             let mut bw = BoolWriter::start_encode(&mut tile_buf);
             let mut coef_ctx = TileCoefCtx::new(bounds.mi_col_end - bounds.mi_col_start);
+            let mut token_pass = CoefTokenPass::replay(&retained_coef_tiles[tile_col]);
             // P0b — use `decoder_fc` (the actual FC after
             // compressed-header diff-updates) rather than `post_fc`
             // (the target).
-            write_tile_inter(
+            write_tile_inter_with_retained(
                 &mut bw,
                 tile_fc,
                 &params,
@@ -5152,6 +5159,7 @@ fn build_inter_packet_with_residuals(
                 // those updates here only recreates the same adaptation
                 // input while emitting the arithmetic-coded bytes.
                 None,
+                Some(&mut token_pass),
             )?;
             bw.stop_encode()
                 .map_err(|_| EncodeError::Bitstream(BitstreamError::CompressedHeaderTooLarge))?

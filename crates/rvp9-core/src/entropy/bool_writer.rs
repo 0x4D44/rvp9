@@ -97,6 +97,13 @@ impl<'a> BoolWriter<'a> {
         }
     }
 
+    /// Whether this writer is traversing syntax only to collect counts.
+    #[inline]
+    #[must_use]
+    pub fn is_count_only(&self) -> bool {
+        self.count_only
+    }
+
     /// Encode a single bit `bit` (0 or 1) using the given 8-bit
     /// probability `probability` that the bit is `0`.
     ///
