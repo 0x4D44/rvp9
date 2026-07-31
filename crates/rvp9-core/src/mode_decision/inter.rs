@@ -1484,6 +1484,10 @@ pub mod candidate_trace {
         });
     }
 
+    pub(super) fn is_enabled() -> bool {
+        STATE.with(|state| state.borrow().enabled)
+    }
+
     pub(super) fn record(candidates: [Option<InterModeSearchResult>; 4]) -> u64 {
         STATE.with(|state| {
             let mut state = state.borrow_mut();
@@ -2651,7 +2655,10 @@ fn evaluate_intra_fallback(
                 bw,
                 bh,
                 picked_tx_size,
-                true,
+                RoundTripOptions {
+                    reconstruct: true,
+                    collect_coef_dist: true,
+                },
             )
         };
 
@@ -3286,6 +3293,8 @@ fn evaluate_candidate_for_filter_with_pred(
         }
     } else {
         let recon_pixels = recon.as_mut().map_or(&mut [][..], |pixels| &mut pixels[..]);
+        let collect_coef_dist = s3_domain_enabled_for_q(params.q_index, params.rd_calibration)
+            || candidate_trace::is_enabled();
         reconstruct_via_round_trip(
             params,
             &pred[..],
@@ -3293,7 +3302,10 @@ fn evaluate_candidate_for_filter_with_pred(
             bw,
             bh,
             tx_size,
-            !hadamard_only,
+            RoundTripOptions {
+                reconstruct: !hadamard_only,
+                collect_coef_dist,
+            },
         )
     };
     let recon_pixels = recon.as_ref().map_or(&pred[..], |pixels| &pixels[..]);
@@ -3906,6 +3918,16 @@ fn build_inter_prediction(
 /// distortion term (DV-F1-3). Mirrors libvpx `block_yrd` at
 /// `vp9_pickmode.c:718-844` v1.14.1 (`12f3a2ac6`). See
 /// [`crate::mode_decision::block_yrd`] for the module-level reference.
+///
+/// `options.collect_coef_dist = false` selects an EOB/SATD-only SIMD path and returns
+/// zero coefficient distortion. The normal pixel-domain product picker uses
+/// that path; S3 and candidate tracing request the full metric.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+struct RoundTripOptions {
+    reconstruct: bool,
+    collect_coef_dist: bool,
+}
+
 fn reconstruct_via_round_trip(
     params: &InterModeSearchParams<'_>,
     pred: &[u8],
@@ -3913,8 +3935,12 @@ fn reconstruct_via_round_trip(
     bw: usize,
     bh: usize,
     tx_size: TxSize,
-    reconstruct: bool,
+    options: RoundTripOptions,
 ) -> BlockYrdResult {
+    let RoundTripOptions {
+        reconstruct,
+        collect_coef_dist,
+    } = options;
     let tx_side = tx_size.side();
     let n = tx_size.n_coeffs();
     let src = params.src_plane;
@@ -3961,23 +3987,45 @@ fn reconstruct_via_round_trip(
             $transform(&residual[..$n], tx_side, &mut had_coeff_i16);
 
             #[cfg(target_arch = "aarch64")]
-            let metrics = if $is_32x32 {
-                crate::dsp::aarch64::vp9_quantize_fp_32x32_i16_metrics_neon(
-                    &had_coeff_i16,
-                    &params.quantizer.round_fp,
-                    &params.quantizer.quant_fp,
-                    &dequant_pair,
-                    scan.iscan,
-                )
+            let (had_eob, rate_satd, dist) = if collect_coef_dist {
+                let metrics = if $is_32x32 {
+                    crate::dsp::aarch64::vp9_quantize_fp_32x32_i16_metrics_neon(
+                        &had_coeff_i16,
+                        &params.quantizer.round_fp,
+                        &params.quantizer.quant_fp,
+                        &dequant_pair,
+                        scan.iscan,
+                    )
+                } else {
+                    crate::dsp::aarch64::vp9_quantize_fp_i16_metrics_neon(
+                        &had_coeff_i16,
+                        $n,
+                        &params.quantizer.round_fp,
+                        &params.quantizer.quant_fp,
+                        &dequant_pair,
+                        scan.iscan,
+                    )
+                };
+                (metrics.eob, metrics.satd, metrics.error >> 2)
             } else {
-                crate::dsp::aarch64::vp9_quantize_fp_i16_metrics_neon(
-                    &had_coeff_i16,
-                    $n,
-                    &params.quantizer.round_fp,
-                    &params.quantizer.quant_fp,
-                    &dequant_pair,
-                    scan.iscan,
-                )
+                let metrics = if $is_32x32 {
+                    crate::dsp::aarch64::vp9_quantize_fp_32x32_i16_rate_metrics_neon(
+                        &had_coeff_i16,
+                        &params.quantizer.round_fp,
+                        &params.quantizer.quant_fp,
+                        &dequant_pair,
+                        scan.iscan,
+                    )
+                } else {
+                    crate::dsp::aarch64::vp9_quantize_fp_i16_rate_metrics_neon(
+                        &had_coeff_i16,
+                        $n,
+                        &params.quantizer.round_fp,
+                        &params.quantizer.quant_fp,
+                        scan.iscan,
+                    )
+                };
+                (metrics.eob, metrics.satd, 0)
             };
             #[cfg(not(target_arch = "aarch64"))]
             let (had_eob, rate_satd, dist) = {
@@ -4018,11 +4066,13 @@ fn reconstruct_via_round_trip(
                 } else {
                     0
                 };
-                let dist = block_error_fp_i32(&had_coeff, &had_dqcoeff) >> 2;
+                let dist = if collect_coef_dist {
+                    block_error_fp_i32(&had_coeff, &had_dqcoeff) >> 2
+                } else {
+                    0
+                };
                 (eob, rate_satd, dist)
             };
-            #[cfg(target_arch = "aarch64")]
-            let (had_eob, rate_satd, dist) = (metrics.eob, metrics.satd, metrics.error >> 2);
             (had_eob, rate_satd, dist)
         }};
     }
@@ -4917,7 +4967,10 @@ mod tests {
                 side,
                 side,
                 tx_size,
-                false,
+                RoundTripOptions {
+                    reconstruct: false,
+                    collect_coef_dist: true,
+                },
             );
             let second = reconstruct_via_round_trip(
                 &params,
@@ -4926,7 +4979,22 @@ mod tests {
                 side,
                 side,
                 tx_size,
-                false,
+                RoundTripOptions {
+                    reconstruct: false,
+                    collect_coef_dist: true,
+                },
+            );
+            let rate_only = reconstruct_via_round_trip(
+                &params,
+                &pred,
+                &mut no_recon,
+                side,
+                side,
+                tx_size,
+                RoundTripOptions {
+                    reconstruct: false,
+                    collect_coef_dist: false,
+                },
             );
             assert_eq!(first.coef_rate, second.coef_rate);
             assert_eq!(first.coef_dist, second.coef_dist);
@@ -4934,6 +5002,10 @@ mod tests {
             assert_eq!(first.dct_eob_total, 0);
             assert!(first.coef_rate > 0);
             assert!(first.coef_dist >= 0);
+            assert_eq!(rate_only.coef_rate, first.coef_rate);
+            assert_eq!(rate_only.skippable, first.skippable);
+            assert_eq!(rate_only.dct_eob_total, first.dct_eob_total);
+            assert_eq!(rate_only.coef_dist, 0);
         }
     }
 

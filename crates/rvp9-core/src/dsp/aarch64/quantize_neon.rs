@@ -18,6 +18,15 @@ pub struct HadamardQuantMetrics {
     pub error: i64,
 }
 
+/// Fused outputs needed by the normal pixel-domain realtime Hadamard model.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct HadamardQuantRateMetrics {
+    /// One-based final nonzero scan position.
+    pub eob: u16,
+    /// Sum of absolute quantized coefficients.
+    pub satd: u32,
+}
+
 struct HadamardMetricAccumulator {
     eob_max: int16x8_t,
     satd_lo: uint32x4_t,
@@ -26,6 +35,46 @@ struct HadamardMetricAccumulator {
     error_1: int64x2_t,
     error_2: int64x2_t,
     error_3: int64x2_t,
+}
+
+struct HadamardRateAccumulator {
+    eob_max: int16x8_t,
+    satd_lo: uint32x4_t,
+    satd_hi: uint32x4_t,
+}
+
+impl HadamardRateAccumulator {
+    #[inline]
+    #[target_feature(enable = "neon")]
+    unsafe fn new() -> Self {
+        Self {
+            eob_max: vdupq_n_s16(0),
+            satd_lo: vdupq_n_u32(0),
+            satd_hi: vdupq_n_u32(0),
+        }
+    }
+
+    #[inline]
+    #[target_feature(enable = "neon")]
+    unsafe fn add(&mut self, q: int16x8_t, iscan: *const i16) {
+        let q_lo = vmovl_s16(vget_low_s16(q));
+        let q_hi = vmovl_s16(vget_high_s16(q));
+        self.satd_lo = vaddq_u32(self.satd_lo, vreinterpretq_u32_s32(vabsq_s32(q_lo)));
+        self.satd_hi = vaddq_u32(self.satd_hi, vreinterpretq_u32_s32(vabsq_s32(q_hi)));
+
+        let nonzero = vmvnq_u16(vceqq_s16(q, vdupq_n_s16(0)));
+        let eob = vbslq_s16(nonzero, vld1q_s16(iscan), vdupq_n_s16(0));
+        self.eob_max = vmaxq_s16(self.eob_max, eob);
+    }
+
+    #[inline]
+    #[target_feature(enable = "neon")]
+    unsafe fn finish(self) -> HadamardQuantRateMetrics {
+        HadamardQuantRateMetrics {
+            eob: vmaxvq_s16(self.eob_max) as u16,
+            satd: vaddvq_u32(vaddq_u32(self.satd_lo, self.satd_hi)),
+        }
+    }
 }
 
 impl HadamardMetricAccumulator {
@@ -274,6 +323,35 @@ unsafe fn quantize_i16_8(
     metrics.add(coeff_lo, coeff_hi, q, dq, iscan);
 }
 
+#[inline]
+#[target_feature(enable = "neon")]
+#[allow(clippy::too_many_arguments)]
+unsafe fn quantize_i16_8_rate(
+    coeff: *const i16,
+    iscan: *const i16,
+    round_lo: int32x4_t,
+    round_hi: int32x4_t,
+    quant_lo: int32x4_t,
+    quant_hi: int32x4_t,
+    metrics: &mut HadamardRateAccumulator,
+) {
+    let coeff = vld1q_s16(coeff);
+    let coeff_lo = vmovl_s16(vget_low_s16(coeff));
+    let coeff_hi = vmovl_s16(vget_high_s16(coeff));
+    let sign_lo = vshrq_n_s32::<31>(coeff_lo);
+    let sign_hi = vshrq_n_s32::<31>(coeff_hi);
+    let max = vdupq_n_s32(i16::MAX as i32);
+
+    let rounded_lo = vminq_s32(vaddq_s32(vabsq_s32(coeff_lo), round_lo), max);
+    let rounded_hi = vminq_s32(vaddq_s32(vabsq_s32(coeff_hi), round_hi), max);
+    let abs_q_lo = vshrq_n_s32::<16>(vmulq_s32(rounded_lo, quant_lo));
+    let abs_q_hi = vshrq_n_s32::<16>(vmulq_s32(rounded_hi, quant_hi));
+    let signed_lo = vsubq_s32(veorq_s32(abs_q_lo, sign_lo), sign_lo);
+    let signed_hi = vsubq_s32(veorq_s32(abs_q_hi, sign_hi), sign_hi);
+    let q = vcombine_s16(vmovn_s32(signed_lo), vmovn_s32(signed_hi));
+    metrics.add(q, iscan);
+}
+
 #[target_feature(enable = "neon")]
 #[allow(clippy::too_many_arguments)]
 unsafe fn vp9_quantize_fp_i16_metrics_neon_inner(
@@ -336,6 +414,57 @@ unsafe fn vp9_quantize_fp_i16_metrics_neon_inner(
     metrics.finish()
 }
 
+#[target_feature(enable = "neon")]
+#[allow(clippy::too_many_arguments)]
+unsafe fn vp9_quantize_fp_i16_rate_metrics_neon_inner(
+    coeff: *const i16,
+    n_coeffs: usize,
+    round: &[i16; 2],
+    quant: &[i16; 2],
+    iscan: *const i16,
+) -> HadamardQuantRateMetrics {
+    let dc_ac_i32 = |values: &[i16; 2]| {
+        vld1q_s32(
+            [
+                i32::from(values[0]),
+                i32::from(values[1]),
+                i32::from(values[1]),
+                i32::from(values[1]),
+            ]
+            .as_ptr(),
+        )
+    };
+    let ac_i32 = |value: i16| vdupq_n_s32(i32::from(value));
+    let mut metrics = HadamardRateAccumulator::new();
+
+    quantize_i16_8_rate(
+        coeff,
+        iscan,
+        dc_ac_i32(round),
+        ac_i32(round[1]),
+        dc_ac_i32(quant),
+        ac_i32(quant[1]),
+        &mut metrics,
+    );
+    let round_ac = ac_i32(round[1]);
+    let quant_ac = ac_i32(quant[1]);
+    let mut i = 8;
+    while i < n_coeffs {
+        quantize_i16_8_rate(
+            coeff.add(i),
+            iscan.add(i),
+            round_ac,
+            round_ac,
+            quant_ac,
+            quant_ac,
+            &mut metrics,
+        );
+        i += 8;
+    }
+
+    metrics.finish()
+}
+
 /// Quantize 64 or 256 Hadamard coefficients and return fused RD metrics.
 #[allow(clippy::too_many_arguments)]
 pub fn vp9_quantize_fp_i16_metrics_neon(
@@ -360,6 +489,32 @@ pub fn vp9_quantize_fp_i16_metrics_neon(
             round,
             quant,
             dequant,
+            iscan.as_ptr(),
+        )
+    }
+}
+
+/// Quantize 64 or 256 Hadamard coefficients and return EOB/rate metrics.
+pub fn vp9_quantize_fp_i16_rate_metrics_neon(
+    coeff: &[i16],
+    n_coeffs: usize,
+    round: &[i16; 2],
+    quant: &[i16; 2],
+    iscan: &[i16],
+) -> HadamardQuantRateMetrics {
+    assert!(matches!(n_coeffs, 64 | 256));
+    assert!(coeff.len() >= n_coeffs);
+    assert!(iscan.len() >= n_coeffs);
+
+    // SAFETY: NEON is mandatory on AArch64. The slice assertions prove
+    // every eight-lane load; coefficients widen to i32 before absolute
+    // value, preserving the i16::MIN behavior of the full-metrics oracle.
+    unsafe {
+        vp9_quantize_fp_i16_rate_metrics_neon_inner(
+            coeff.as_ptr(),
+            n_coeffs,
+            round,
+            quant,
             iscan.as_ptr(),
         )
     }
@@ -583,6 +738,47 @@ unsafe fn quantize_fp_32x32_i16_8(
     metrics.add(coeff_lo, coeff_hi, q, dq, iscan);
 }
 
+#[inline]
+#[target_feature(enable = "neon")]
+#[allow(clippy::too_many_arguments)]
+unsafe fn quantize_fp_32x32_i16_8_rate(
+    coeff: *const i16,
+    iscan: *const i16,
+    round_lo: int32x4_t,
+    round_hi: int32x4_t,
+    quant_lo: int32x4_t,
+    quant_hi: int32x4_t,
+    gate_lo: int32x4_t,
+    gate_hi: int32x4_t,
+    metrics: &mut HadamardRateAccumulator,
+) {
+    let coeff = vld1q_s16(coeff);
+    let coeff_lo = vmovl_s16(vget_low_s16(coeff));
+    let coeff_hi = vmovl_s16(vget_high_s16(coeff));
+    let sign_lo = vshrq_n_s32::<31>(coeff_lo);
+    let sign_hi = vshrq_n_s32::<31>(coeff_hi);
+    let abs_lo = vabsq_s32(coeff_lo);
+    let abs_hi = vabsq_s32(coeff_hi);
+    let keep_lo = vcgeq_s32(abs_lo, gate_lo);
+    let keep_hi = vcgeq_s32(abs_hi, gate_hi);
+    let max = vdupq_n_s32(i16::MAX as i32);
+
+    let rounded_lo = vminq_s32(vaddq_s32(abs_lo, round_lo), max);
+    let rounded_hi = vminq_s32(vaddq_s32(abs_hi, round_hi), max);
+    let abs_q_lo = vshrq_n_s32::<15>(vmulq_s32(rounded_lo, quant_lo));
+    let abs_q_hi = vshrq_n_s32::<15>(vmulq_s32(rounded_hi, quant_hi));
+    let signed_lo = vandq_s32(
+        vsubq_s32(veorq_s32(abs_q_lo, sign_lo), sign_lo),
+        vreinterpretq_s32_u32(keep_lo),
+    );
+    let signed_hi = vandq_s32(
+        vsubq_s32(veorq_s32(abs_q_hi, sign_hi), sign_hi),
+        vreinterpretq_s32_u32(keep_hi),
+    );
+    let q = vcombine_s16(vmovn_s32(signed_lo), vmovn_s32(signed_hi));
+    metrics.add(q, iscan);
+}
+
 #[target_feature(enable = "neon")]
 #[allow(clippy::too_many_arguments)]
 unsafe fn vp9_quantize_fp_32x32_i16_metrics_neon_inner(
@@ -648,6 +844,65 @@ unsafe fn vp9_quantize_fp_32x32_i16_metrics_neon_inner(
     metrics.finish()
 }
 
+#[target_feature(enable = "neon")]
+#[allow(clippy::too_many_arguments)]
+unsafe fn vp9_quantize_fp_32x32_i16_rate_metrics_neon_inner(
+    coeff: *const i16,
+    round: &[i16; 2],
+    quant: &[i16; 2],
+    dequant: &[i16; 2],
+    iscan: *const i16,
+) -> HadamardQuantRateMetrics {
+    let dc_ac = |values: &[i16; 2]| {
+        vld1q_s32(
+            [
+                i32::from(values[0]),
+                i32::from(values[1]),
+                i32::from(values[1]),
+                i32::from(values[1]),
+            ]
+            .as_ptr(),
+        )
+    };
+    let ac = |value: i16| vdupq_n_s32(i32::from(value));
+    let round_dc_ac = vshrq_n_s32::<1>(vaddq_s32(dc_ac(round), vdupq_n_s32(1)));
+    let round_ac = vdupq_n_s32((i32::from(round[1]) + 1) >> 1);
+    let quant_dc_ac = dc_ac(quant);
+    let quant_ac = ac(quant[1]);
+    let gate_dc_ac = vshrq_n_s32::<2>(dc_ac(dequant));
+    let gate_ac = vdupq_n_s32(i32::from(dequant[1]) >> 2);
+    let mut metrics = HadamardRateAccumulator::new();
+
+    quantize_fp_32x32_i16_8_rate(
+        coeff,
+        iscan,
+        round_dc_ac,
+        round_ac,
+        quant_dc_ac,
+        quant_ac,
+        gate_dc_ac,
+        gate_ac,
+        &mut metrics,
+    );
+    let mut i = 8;
+    while i < 1024 {
+        quantize_fp_32x32_i16_8_rate(
+            coeff.add(i),
+            iscan.add(i),
+            round_ac,
+            round_ac,
+            quant_ac,
+            quant_ac,
+            gate_ac,
+            gate_ac,
+            &mut metrics,
+        );
+        i += 8;
+    }
+
+    metrics.finish()
+}
+
 /// Quantize 32x32 Hadamard coefficients and return fused RD metrics.
 #[allow(clippy::too_many_arguments)]
 pub fn vp9_quantize_fp_32x32_i16_metrics_neon(
@@ -665,6 +920,32 @@ pub fn vp9_quantize_fp_32x32_i16_metrics_neon(
     // widens each input lane before absolute value and multiplication.
     unsafe {
         vp9_quantize_fp_32x32_i16_metrics_neon_inner(
+            coeff.as_ptr(),
+            round,
+            quant,
+            dequant,
+            iscan.as_ptr(),
+        )
+    }
+}
+
+/// Quantize 32x32 Hadamard coefficients and return EOB/rate metrics.
+pub fn vp9_quantize_fp_32x32_i16_rate_metrics_neon(
+    coeff: &[i16],
+    round: &[i16; 2],
+    quant: &[i16; 2],
+    dequant: &[i16; 2],
+    iscan: &[i16],
+) -> HadamardQuantRateMetrics {
+    const N_COEFFS: usize = 1024;
+    assert!(coeff.len() >= N_COEFFS);
+    assert!(iscan.len() >= N_COEFFS);
+
+    // SAFETY: see `vp9_quantize_fp_i16_rate_metrics_neon`; the 32x32
+    // arithmetic uses the same widened quantization and threshold gates as
+    // the full-metrics oracle.
+    unsafe {
+        vp9_quantize_fp_32x32_i16_rate_metrics_neon_inner(
             coeff.as_ptr(),
             round,
             quant,
@@ -1099,9 +1380,16 @@ mod tests {
                     .expect("inverse scan includes the final position");
                 final_scan_only[final_scan_index] = i16::MIN;
 
-                for (case, coeff_i16) in [random, vec![0; n], dc_only, final_scan_only]
-                    .into_iter()
-                    .enumerate()
+                for (case, coeff_i16) in [
+                    random,
+                    vec![0; n],
+                    dc_only,
+                    final_scan_only,
+                    vec![i16::MIN; n],
+                    vec![i16::MAX; n],
+                ]
+                .into_iter()
+                .enumerate()
                 {
                     let label = format!("{tx_size:?}/q{q_index}/case{case}");
                     let coeff_i32: Vec<i32> =
@@ -1151,6 +1439,23 @@ mod tests {
                             order.iscan,
                         )
                     };
+                    let rate_metrics = if tx_size == TxSize::Tx32x32 {
+                        vp9_quantize_fp_32x32_i16_rate_metrics_neon(
+                            &coeff_i16,
+                            &qp.round_fp,
+                            &qp.quant_fp,
+                            &qp.dequant,
+                            order.iscan,
+                        )
+                    } else {
+                        vp9_quantize_fp_i16_rate_metrics_neon(
+                            &coeff_i16,
+                            n,
+                            &qp.round_fp,
+                            &qp.quant_fp,
+                            order.iscan,
+                        )
+                    };
 
                     assert_eq!(metrics.eob, wide_eob, "{label}");
                     assert_eq!(metrics.satd, satd_i16(&wide_q), "{label}");
@@ -1159,6 +1464,8 @@ mod tests {
                         block_error_fp_i32(&coeff_i32, &wide_dq),
                         "{label}"
                     );
+                    assert_eq!(rate_metrics.eob, metrics.eob, "{label}/rate-eob");
+                    assert_eq!(rate_metrics.satd, metrics.satd, "{label}/rate-satd");
                 }
             }
         }
