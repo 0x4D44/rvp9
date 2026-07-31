@@ -180,8 +180,10 @@ overflow-sensitive second pass widens selected stages to paired i32 vectors.
 **What rvp9 does:** its first pass also uses eight i16 lanes. The second pass
 keeps eight i16 lanes through stages 1 and 2, then widens into two four-lane
 i32 groups at stage 3, where the libvpx overflow audit identifies the first
-extreme-input overflow. First-pass and early second-pass cosine products
-widen to i32; later second-pass products widen to i64.
+extreme-input overflow. Those low/high groups advance together through one
+paired width-generic schedule, matching libvpx's `c_lo`/`c_hi` structure.
+First-pass and early second-pass cosine products widen to i32; later
+second-pass products widen to i64.
 **Why:** the earlier pass-boundary widening preserved rvp9's i32 coefficient
 API but repeated bounded stages 1 and 2 in two four-lane groups. Moving the
 widening to the measured overflow boundary matches libvpx's lane width while
@@ -197,7 +199,12 @@ overflow-boundary unit reduces the full 32x32 transform from `747.10 ns` to
 `717.04..725.94 ns` against pinned libvpx's `501.31 ns`. Two twenty-pair
 one-thread product trials improve total child CPU by `-0.934%` and `-0.250%`;
 one twenty-pair four-thread trial improves it by `-0.500%`. A later
-one-thread trial under worse load was neutral at `+0.009%`.
+one-thread trial under worse load was neutral at `+0.009%`. Advancing the
+widened low/high halves together reduces the kernel again to
+`687.23..708.00 ns`.
+Two twenty-pair one-thread product trials improve total child CPU by
+`-0.739%` and `-0.697%`; two four-thread trials improve it by `-1.491%` and
+`-0.261%`. The standard stream remains byte-identical.
 **Future plan:** retain the overflow-boundary widening while it stays exact
 and Pareto-positive. Profile before changing the remaining later-stage
 schedule or transpose/storage layout.

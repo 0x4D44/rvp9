@@ -14,6 +14,7 @@ use crate::transforms::constants::*;
 
 type V = int32x4_t;
 type V16 = int16x8_t;
+type VPair = [V; 2];
 
 #[inline(always)]
 unsafe fn add(a: V, b: V) -> V {
@@ -499,19 +500,26 @@ unsafe fn fdct32x8_first_pass(input: &[V16; 32], output: &mut [V16; 32]) {
     );
 }
 
-/// Four overflow-safe second-pass transforms whose first two stages were
-/// already evaluated in eight i16 lanes.
+/// Eight overflow-safe second-pass transforms whose first two stages were
+/// already evaluated in i16. The paired low/high vectors mirror libvpx's
+/// `c_lo`/`c_hi` schedule so both four-lane groups advance together.
 #[inline]
 #[target_feature(enable = "neon")]
-unsafe fn fdct32x4_from_stage2(input: &[V; 32], output: &mut [V; 32]) {
+unsafe fn fdct32x8_from_stage2(input: &[VPair; 32], output: &mut [VPair; 32]) {
+    let zero = vdupq_n_s32(0);
     fdct32_body(
         input,
         output,
-        (vdupq_n_s32(0), Some(input)),
-        |a, b| add(a, b),
-        |a, b| sub(a, b),
-        |a, constant| mul_round(a, constant),
-        |a, ac, b, bc| mul_add_round(a, ac, b, bc),
+        ([zero; 2], Some(input)),
+        |a, b| [add(a[0], b[0]), add(a[1], b[1])],
+        |a, b| [sub(a[0], b[0]), sub(a[1], b[1])],
+        |a, constant| [mul_round(a[0], constant), mul_round(a[1], constant)],
+        |a, ac, b, bc| {
+            [
+                mul_add_round(a[0], ac, b[0], bc),
+                mul_add_round(a[1], ac, b[1], bc),
+            ]
+        },
     );
 }
 
@@ -661,9 +669,9 @@ unsafe fn fdct32x32_inner(input: *const i16, output: *mut i32, stride: usize) {
         }
     }
 
-    // Transpose eight intermediate rows at a time. The second pass widens
-    // into two four-lane groups before stage 1, preserving the scalar
-    // transform's overflow behavior.
+    // Transpose eight intermediate rows at a time. The second pass evaluates
+    // stages 1 and 2 in i16, then advances paired four-lane i32 groups
+    // through the overflow-sensitive remainder.
     for row in (0..32).step_by(8) {
         let mut lane_in16 = [zero16; 32];
         for column in (0..32).step_by(8) {
@@ -682,23 +690,19 @@ unsafe fn fdct32x32_inner(input: *const i16, output: *mut i32, stride: usize) {
 
         let mut stage2 = [zero16; 32];
         fdct32x8_second_pass_stage2(&lane_in16, &mut stage2);
-        for half in 0..2 {
-            let mut lane_in = [zero; 32];
-            for (source, destination) in stage2.iter().zip(lane_in.iter_mut()) {
-                *destination = if half == 0 {
-                    vmovl_s16(vget_low_s16(*source))
-                } else {
-                    vmovl_high_s16(*source)
-                };
-            }
-            let mut lane_out = [zero; 32];
-            fdct32x4_from_stage2(&lane_in, &mut lane_out);
+        let mut lane_in = [[zero; 2]; 32];
+        for (source, destination) in stage2.iter().zip(lane_in.iter_mut()) {
+            *destination = [vmovl_s16(vget_low_s16(*source)), vmovl_high_s16(*source)];
+        }
+        let mut lane_out = [[zero; 2]; 32];
+        fdct32x8_from_stage2(&lane_in, &mut lane_out);
+        for half in [0, 1] {
             for coefficient in (0..32).step_by(4) {
                 let rows = transpose4(
-                    pass1_round_and_wrap(lane_out[coefficient]),
-                    pass1_round_and_wrap(lane_out[coefficient + 1]),
-                    pass1_round_and_wrap(lane_out[coefficient + 2]),
-                    pass1_round_and_wrap(lane_out[coefficient + 3]),
+                    pass1_round_and_wrap(lane_out[coefficient][half]),
+                    pass1_round_and_wrap(lane_out[coefficient + 1][half]),
+                    pass1_round_and_wrap(lane_out[coefficient + 2][half]),
+                    pass1_round_and_wrap(lane_out[coefficient + 3][half]),
                 );
                 for (lane, &values) in rows.iter().enumerate() {
                     vst1q_s32(
