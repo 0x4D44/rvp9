@@ -34,6 +34,7 @@
 
 use crate::frame_loop::Deadline;
 use rvp9_core::mode_decision::inter::{ContentStateSb, NoiseEstimate, NoiseLevel};
+use std::sync::Arc;
 
 /// W2.1(vpxenc parity, A5 P0) — per-frame pre-analysis state owned
 /// by `StreamEncoder`. Allocated once at encoder construction and
@@ -58,7 +59,7 @@ pub struct PreAnalysisState {
     /// source so the next frame's avg-source-SAD pass has a
     /// reference. `None` before the first encoded frame (which is
     /// always a keyframe — the avg-SAD pass is meaningless for KFs).
-    pub last_source_y: Option<Vec<u8>>,
+    pub last_source_y: Option<Arc<[u8]>>,
     /// W2.2(vpxenc parity, A5 P1): libvpx
     /// `vp9_encodeframe.c:1209-1257` `tmp_sad` per SB64. Indexed
     /// `[sb_row * sb_cols + sb_col]`; sized `sb_rows * sb_cols`.
@@ -347,10 +348,24 @@ impl PreAnalysisState {
             w * h,
             "capture_last_source: src plane size mismatch"
         );
-        match &mut self.last_source_y {
-            Some(buf) => buf.copy_from_slice(src_y_tight),
-            None => self.last_source_y = Some(src_y_tight.to_vec()),
+        if let Some(last) = &mut self.last_source_y
+            && let Some(buf) = Arc::get_mut(last)
+        {
+            buf.copy_from_slice(src_y_tight);
+        } else {
+            self.last_source_y = Some(Arc::from(src_y_tight));
         }
+    }
+
+    /// Retain the just-encoded reference-counted source plane without a
+    /// full-frame copy. The lookahead owns the same immutable allocation.
+    pub fn capture_last_source_shared(&mut self, src_y_tight: &Arc<[u8]>) {
+        debug_assert_eq!(
+            src_y_tight.len(),
+            self.width as usize * self.height as usize,
+            "capture_last_source_shared: src plane size mismatch"
+        );
+        self.last_source_y = Some(Arc::clone(src_y_tight));
     }
 
     /// W2.3(vpxenc parity, A5 P2): one-pass scene detection.
@@ -1215,7 +1230,7 @@ mod tests {
         for c in &mut st.consec_zero_mv {
             *c = 7;
         }
-        st.last_source_y = Some(vec![42u8; 64 * 64]);
+        st.last_source_y = Some(vec![42u8; 64 * 64].into());
         st.keyframe_reset();
         for c in &st.consec_zero_mv {
             assert_eq!(*c, 0);
@@ -1224,16 +1239,28 @@ mod tests {
     }
 
     /// W2.1 PROOF — `capture_last_source` populates the Last_Source
-    /// view; re-capture overwrites without reallocating.
+    /// view and reuses its allocation while it is uniquely owned.
     #[test]
     fn w2_1_capture_last_source_round_trips() {
         let mut st = PreAnalysisState::new(64, 64);
         let src1: Vec<u8> = (0..64 * 64).map(|i| i as u8).collect();
         st.capture_last_source(&src1);
         assert_eq!(st.last_source_y.as_deref(), Some(src1.as_slice()));
+        let allocation = st.last_source_y.as_ref().unwrap().as_ptr();
         let src2 = vec![99u8; 64 * 64];
         st.capture_last_source(&src2);
         assert_eq!(st.last_source_y.as_deref(), Some(src2.as_slice()));
+        assert_eq!(st.last_source_y.as_ref().unwrap().as_ptr(), allocation);
+    }
+
+    #[test]
+    fn capture_shared_last_source_reuses_the_lookahead_allocation() {
+        let mut st = PreAnalysisState::new(64, 64);
+        let source: Arc<[u8]> = vec![73u8; 64 * 64].into();
+        st.capture_last_source_shared(&source);
+        let retained = st.last_source_y.as_ref().expect("source must be retained");
+        assert_eq!(retained.as_ptr(), source.as_ptr());
+        assert_eq!(retained.as_ref(), source.as_ref());
     }
 
     /// W2.2 PROOF — `compute_avg_source_sad` is a no-op when

@@ -1856,14 +1856,15 @@ impl StreamEncoder {
     /// keyframe vs inter dispatch, post-encode bookkeeping — lives
     /// here.
     fn try_encode_one_popped(&mut self, drain: bool) -> Result<Option<EncodedFrame>, EncodeError> {
-        // The lookahead borrow can't outlive the encode call (it
-        // mutates `self` via the rate controller / encode paths), so
-        // copy the popped planes into owned Vecs and release the
-        // borrow before doing any other work.
-        let (y_tight, u_tight, v_tight) = match self.lookahead.pop(drain) {
-            Some(entry) => (entry.y.clone(), entry.u.clone(), entry.v.clone()),
+        // Clone the popped entry's reference-counted source planes so the
+        // lookahead borrow does not overlap the mutable encoder borrow. The
+        // pixels stay in the ring's allocation for backward peek; this only
+        // increments three reference counts.
+        let popped = match self.lookahead.pop(drain) {
+            Some(entry) => entry.clone(),
             None => return Ok(None),
         };
+        let (y_tight, u_tight, v_tight) = (&popped.y, &popped.u, &popped.v);
 
         // F.0.2 oracle — stamp the current frame index on the thread-
         // local sink so picker-hook BlockDecisions carry the right
@@ -1963,7 +1964,7 @@ impl StreamEncoder {
         // `pre_analysis.content_state_sb[]` for every SB64.
         if self.pre_analysis.compute_source_sad_onepass {
             self.pre_analysis
-                .compute_avg_source_sad(&y_tight, matches!(self.config.rc_mode, RcMode::Cbr));
+                .compute_avg_source_sad(y_tight, matches!(self.config.rc_mode, RcMode::Cbr));
         }
         // W2.3(vpxenc parity, A5 P2): one-pass scene detection
         // (libvpx `vp9_ratectrl.c:3034-3216`). Updates
@@ -1973,7 +1974,7 @@ impl StreamEncoder {
         // `rate_control.frames_since_key` for the post-KF gate.
         if self.pre_analysis.compute_source_sad_onepass {
             self.pre_analysis
-                .compute_scene_detection(&y_tight, self.rate_control.frames_since_key);
+                .compute_scene_detection(y_tight, self.rate_control.frames_since_key);
         }
         // W2.4(vpxenc parity, A5 P3): noise estimator
         // (libvpx `vp9_noise_estimate.c:109-302`). Updates
@@ -1987,7 +1988,7 @@ impl StreamEncoder {
         // the call, so it's safe to invoke unconditionally on RT.
         if self.pre_analysis.compute_source_sad_onepass {
             self.pre_analysis.compute_noise_estimate(
-                &y_tight,
+                y_tight,
                 self.rate_control.frames_since_key,
                 // PHASE-3 integration: gate noise estimator on
                 // `noise_sensitivity > 0` (libvpx
@@ -2004,7 +2005,7 @@ impl StreamEncoder {
         // picker once the consumer side is wired.
         if self.pre_analysis.compute_source_sad_onepass {
             self.pre_analysis
-                .compute_skin_map(&y_tight, &u_tight, &v_tight);
+                .compute_skin_map(y_tight, u_tight, v_tight);
         }
         // W2.6(vpxenc parity, A4 P6): per-SB color-sensitivity flags
         // (libvpx `chroma_check` at `vp9_encodeframe.c:1173-1207`).
@@ -2013,7 +2014,7 @@ impl StreamEncoder {
         // unconditionally (no-op when Last_Source is None).
         if self.pre_analysis.compute_source_sad_onepass {
             self.pre_analysis
-                .compute_color_sensitivity_frame(&y_tight, &u_tight, &v_tight);
+                .compute_color_sensitivity_frame(y_tight, u_tight, v_tight);
         }
 
         // Lever-3b / 3D content-discriminator measurement (env-gated).
@@ -2026,7 +2027,7 @@ impl StreamEncoder {
             let w = self.pre_analysis.width as usize;
             let h = self.pre_analysis.height as usize;
             let sig =
-                frame_content_signals(&y_tight, self.pre_analysis.last_source_y.as_deref(), w, h);
+                frame_content_signals(y_tight, self.pre_analysis.last_source_y.as_deref(), w, h);
             #[allow(clippy::print_stderr)]
             {
                 eprintln!(
@@ -2064,7 +2065,7 @@ impl StreamEncoder {
         let s2_frame_override = if three_d_enabled() {
             let w = self.pre_analysis.width as usize;
             let h = self.pre_analysis.height as usize;
-            let hf_energy = frame_hf_energy(&y_tight, w, h);
+            let hf_energy = frame_hf_energy(y_tight, w, h);
             Some(hf_energy >= three_d_thresh())
         } else {
             None
@@ -2108,7 +2109,7 @@ impl StreamEncoder {
             if frame_sched.arf_before
                 && peek_avail >= 1
                 && let Some(arf_packet) =
-                    self.try_build_arf_packet(q_index, (&y_tight, &u_tight, &v_tight))?
+                    self.try_build_arf_packet(q_index, (y_tight, u_tight, v_tight))?
             {
                 self.pending_arf_packet = Some(arf_packet);
                 self.inter_frames_since_arf = 0;
@@ -2117,11 +2118,9 @@ impl StreamEncoder {
 
         let mut packet = match frame_kind {
             FrameKind::Key => {
-                self.encode_keyframe_internal(q_index, (&y_tight, &u_tight, &v_tight))?
+                self.encode_keyframe_internal(q_index, (y_tight, u_tight, v_tight))?
             }
-            FrameKind::Inter => {
-                self.encode_inter_internal(q_index, (&y_tight, &u_tight, &v_tight))?
-            }
+            FrameKind::Inter => self.encode_inter_internal(q_index, (y_tight, u_tight, v_tight))?,
         };
 
         // W8 — Inter frames advance the inter-frames-since-ARF
@@ -2207,10 +2206,9 @@ impl StreamEncoder {
         // the next frame's Last_Source. libvpx
         // `vp9_encoder.c::encode_frame_to_data_rate` does this via
         // the `cpi->Last_Source = cpi->Source` swap after the encode
-        // completes; we mirror it explicitly with a copy because
-        // rvp9 doesn't keep the source frame around as a ref-counted
-        // buffer (Wave 1's BufferPool tracks recon, not source).
-        self.pre_analysis.capture_last_source(&y_tight);
+        // completes; the lookahead owns immutable reference-counted
+        // planes, so Last_Source retains the luma allocation directly.
+        self.pre_analysis.capture_last_source_shared(y_tight);
 
         // A18 (SVC) — tag the frame's temporal layer. The decision was
         // computed by `svc_assign_layer` before the encode; keyframes
@@ -2906,7 +2904,7 @@ impl StreamEncoder {
         // its downstream dependents; the picker then substitutes the
         // TPL-derived per-SB `cb_rdmult` for the base rdmult.
         //
-        // The forward peeks are CLONED into owned Vecs so the lookahead
+        // The forward peeks clone reference-counted planes so the lookahead
         // borrow is released before the `ref_pool` borrow below (the
         // driver also needs the committed LAST recon for the window's
         // first frame). When `enable_tpl` is off, OR no forward frame is
@@ -2914,7 +2912,7 @@ impl StreamEncoder {
         // a single frame, no propagation occurs, and TPL is `None` (the
         // byte-identical path). libvpx `vp9_tpl_model.c:1138-1255`
         // (`mc_flow_dispenser`), `vp9_encodeframe.c:6151-6162` (r0).
-        let tpl_window_fwd: Vec<Vec<u8>> = if self.config.enable_tpl {
+        let tpl_window_fwd: Vec<std::sync::Arc<[u8]>> = if self.config.enable_tpl {
             // ARF cadence bounds the linear chain (libvpx walks the GF
             // group up to `gf_group_size`); we cap the forward window at
             // `gf_interval` downstream frames, limited by availability.

@@ -33,6 +33,7 @@
 //! omitted — libvpx itself ships it disabled.
 
 use crate::{YuvFrameRef, frame_loop::strided_plane_covers};
+use std::sync::Arc;
 
 /// Maximum lookahead depth supported by libvpx
 /// (`vp9_lookahead.h:21`). Caller-requested `depth` is clamped to
@@ -49,11 +50,11 @@ pub const MAX_PRE_FRAMES: usize = 1;
 #[derive(Clone, Debug)]
 pub struct LookaheadEntry {
     /// Luma plane (`width * height` samples).
-    pub y: Vec<u8>,
+    pub y: Arc<[u8]>,
     /// Cb plane (`(width/2) * (height/2)` samples, 4:2:0).
-    pub u: Vec<u8>,
+    pub u: Arc<[u8]>,
     /// Cr plane (`(width/2) * (height/2)` samples, 4:2:0).
-    pub v: Vec<u8>,
+    pub v: Arc<[u8]>,
     /// Coded luma width in pixels. Matches the lookahead context's
     /// configured width — partial-resolution sources fall outside
     /// v1 scope (libvpx `vp9_lookahead.c:135` `USE_PARTIAL_COPY 0`).
@@ -236,9 +237,9 @@ impl LookaheadCtx {
                 .copy_from_slice(&src.v[row * src.v_stride..row * src.v_stride + uvw]);
         }
         let entry = LookaheadEntry {
-            y,
-            u,
-            v,
+            y: y.into(),
+            u: u.into(),
+            v: v.into(),
             width: self.width,
             height: self.height,
             ts_start,
@@ -435,6 +436,27 @@ mod tests {
         assert_eq!(prev.show_idx, 0);
         // peek(-2) is beyond MAX_PRE_FRAMES.
         assert!(ctx.peek(-2).is_none());
+    }
+
+    #[test]
+    fn cloned_entry_shares_source_plane_allocations() {
+        let mut ctx = LookaheadCtx::new(64, 64, 1);
+        let (y, u, v) = make_frame(64, 64, 37);
+        ctx.push(&yview(&y, &u, &v, 64), 0, 1, 0).unwrap();
+
+        let popped = ctx.pop(false).expect("filled ring must pop");
+        let cloned = popped.clone();
+        assert_eq!(cloned.show_idx, 0);
+        assert_eq!(&*cloned.y, y);
+        assert_eq!(&*cloned.u, u);
+        assert_eq!(&*cloned.v, v);
+        assert_eq!(cloned.y.as_ptr(), popped.y.as_ptr());
+        assert_eq!(cloned.u.as_ptr(), popped.u.as_ptr());
+        assert_eq!(cloned.v.as_ptr(), popped.v.as_ptr());
+        assert!(
+            ctx.peek(-1).is_some(),
+            "clone must leave backward peek intact"
+        );
     }
 
     /// W1.4 PROOF — forward `peek(0)` returns the next-to-pop entry;
