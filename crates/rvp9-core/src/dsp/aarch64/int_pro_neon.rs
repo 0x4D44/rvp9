@@ -64,6 +64,27 @@ pub fn vpx_int_pro_row_neon(
 }
 
 #[target_feature(enable = "neon")]
+unsafe fn vpx_int_pro_col_neon_inner(reference: *const u8, width: usize) -> i32 {
+    let mut sum = vpaddlq_u8(vld1q_u8(reference));
+    let mut offset = 16usize;
+    while offset < width {
+        sum = vpadalq_u8(sum, vld1q_u8(reference.add(offset)));
+        offset += 16;
+    }
+    i32::from(vaddvq_u16(sum))
+}
+
+/// Sums a 16-byte-multiple reference row for integer-projection motion search.
+pub fn vpx_int_pro_col_neon(reference: &[u8], width: usize) -> i32 {
+    assert!(width >= 16 && width.is_multiple_of(16));
+    assert!(reference.len() >= width);
+
+    // SAFETY: The assertions prove every 16-byte load. At the largest product
+    // width, 64 * 255 = 16,320, so the u16 accumulator cannot overflow.
+    unsafe { vpx_int_pro_col_neon_inner(reference.as_ptr(), width) }
+}
+
+#[target_feature(enable = "neon")]
 unsafe fn vpx_vector_var_neon_inner(
     reference: *const i16,
     source: *const i16,
@@ -156,6 +177,29 @@ mod tests {
                 scalar(&mut expected, &input, 16, height);
                 vpx_int_pro_row_neon(&mut actual, &input, 16, height);
                 assert_eq!(actual, expected);
+            }
+        }
+    }
+
+    #[test]
+    fn int_pro_col_matches_scalar_random_unaligned_and_extreme_rows() {
+        let mut rng = Lcg32(0x1c01_5eed);
+        for width in [16, 32, 64] {
+            for offset in 0..17 {
+                let input: Vec<u8> = (0..width + offset).map(|_| rng.byte()).collect();
+                let reference = &input[offset..];
+                let expected: i32 = reference
+                    .iter()
+                    .take(width)
+                    .map(|&value| i32::from(value))
+                    .sum();
+                assert_eq!(vpx_int_pro_col_neon(reference, width), expected);
+            }
+            for value in [0, u8::MAX] {
+                assert_eq!(
+                    vpx_int_pro_col_neon(&vec![value; width], width),
+                    width as i32 * i32::from(value)
+                );
             }
         }
     }

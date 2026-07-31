@@ -145,13 +145,22 @@ fn vpx_int_pro_row(hbuf: &mut [i16], ref_plane: &[u8], ref_stride: usize, height
 /// of the next `width` columns of `ref`. Caller divides by the
 /// matching `norm_factor`.
 #[inline]
-fn vpx_int_pro_col(ref_row: &[u8], width: usize) -> i32 {
+fn vpx_int_pro_col_scalar(ref_row: &[u8], width: usize) -> i32 {
     debug_assert!(ref_row.len() >= width);
     let mut sum: i32 = 0;
     for &b in ref_row.iter().take(width) {
         sum += i32::from(b);
     }
     sum
+}
+
+#[inline]
+fn vpx_int_pro_col(ref_row: &[u8], width: usize) -> i32 {
+    #[cfg(target_arch = "aarch64")]
+    if width >= 16 && width.is_multiple_of(16) {
+        return crate::dsp::aarch64::vpx_int_pro_col_neon(ref_row, width);
+    }
+    vpx_int_pro_col_scalar(ref_row, width)
 }
 
 /// Edge-clamped variant of [`vpx_int_pro_row`]: same as
