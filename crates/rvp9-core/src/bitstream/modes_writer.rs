@@ -1114,7 +1114,7 @@ fn write_block_intra_keyframe(
     nbr_ctx: &mut NeighbourCtx,
     bounds: &TileBounds,
     mi_grid: &[Option<ModeInfo>],
-    mi_rows: usize,
+    _mi_rows: usize,
     mi_cols: usize,
     mi_row: usize,
     mi_col: usize,
@@ -1186,7 +1186,7 @@ fn write_block_intra_keyframe(
     //    skip) — the same `MiGridNeighbourLookup` the inter writer uses.
     let allow_select = !mi.skip; // intra: `!is_inter = true`, so == !skip
     let max_tx = max_txsize(leaf_bsize);
-    let tx_neighbours = MiGridNeighbourLookup::new(mi_grid, mi_cols, mi_row, mi_col, mi_rows);
+    let tx_neighbours = MiGridNeighbourLookup::new(mi_grid, mi_cols, mi_row, mi_col, *bounds);
     let tx_above = tx_neighbours.get(Position { row: -1, col: 0 });
     let tx_left = tx_neighbours.get(Position { row: 0, col: -1 });
     let tx_ctx = if max_tx >= TxSize::Tx8x8 {
@@ -1247,6 +1247,7 @@ fn write_block_intra_keyframe(
             coef_source,
             mi_row,
             mi_col,
+            bounds.mi_col_start,
             leaf_bsize,
             // Residual TX walk uses the size actually signalled (==
             // mi.tx_size in the KF select path; the derived cap
@@ -1303,13 +1304,13 @@ fn write_intra_block_residual(
     coef_source: &dyn IntraCoefSource,
     mi_row: usize,
     mi_col: usize,
+    tile_mi_col_start: usize,
     leaf_bsize: BlockSize,
     luma_tx: TxSize,
     y_mode: IntraMode,
     _uv_mode: IntraMode,
 ) {
-    // Single-tile scope (see `write_inter_block_residual` doc).
-    let mi_col_in_tile = mi_col;
+    let mi_col_in_tile = mi_col - tile_mi_col_start;
     let mi_row_in_sb = mi_row & MI_MASK;
 
     for plane in 0..3 {
@@ -1530,10 +1531,10 @@ struct MiGridNeighbourLookup<'a> {
     base_mi_row: i32,
     /// Absolute mi-col of the current block's top-left cell.
     base_mi_col: i32,
-    /// Frame mi-rows (inclusive bound).
-    mi_rows: i32,
-    /// Frame mi-cols (inclusive bound).
-    mi_cols_frame: i32,
+    /// Tile bounds. VP9 resets spatial mode contexts at every tile
+    /// edge, so neighbours outside this rectangle are unavailable even
+    /// when the frame-sized grid contains them.
+    tile_bounds: TileBounds,
 }
 
 impl<'a> MiGridNeighbourLookup<'a> {
@@ -1542,15 +1543,14 @@ impl<'a> MiGridNeighbourLookup<'a> {
         mi_cols: usize,
         base_mi_row: usize,
         base_mi_col: usize,
-        mi_rows: usize,
+        tile_bounds: TileBounds,
     ) -> Self {
         Self {
             mi_grid,
             mi_cols,
             base_mi_row: base_mi_row as i32,
             base_mi_col: base_mi_col as i32,
-            mi_rows: mi_rows as i32,
-            mi_cols_frame: mi_cols as i32,
+            tile_bounds,
         }
     }
 }
@@ -1559,7 +1559,11 @@ impl NeighbourLookup for MiGridNeighbourLookup<'_> {
     fn get(&self, pos: Position) -> Option<&ModeInfo> {
         let row = self.base_mi_row.checked_add(i32::from(pos.row))?;
         let col = self.base_mi_col.checked_add(i32::from(pos.col))?;
-        if row < 0 || col < 0 || row >= self.mi_rows || col >= self.mi_cols_frame {
+        if row < self.tile_bounds.mi_row_start as i32
+            || col < self.tile_bounds.mi_col_start as i32
+            || row >= self.tile_bounds.mi_row_end as i32
+            || col >= self.tile_bounds.mi_col_end as i32
+        {
             return None;
         }
         let idx = (row as usize) * self.mi_cols + (col as usize);
@@ -1769,6 +1773,7 @@ fn write_inter_partition_tree(
             mi_grid,
             mi_rows,
             mi_cols,
+            *bounds,
             mi_row,
             mi_col,
             sub,
@@ -1811,6 +1816,7 @@ fn write_inter_partition_tree(
                 mi_grid,
                 mi_rows,
                 mi_cols,
+                *bounds,
                 mi_row,
                 mi_col,
                 sub,
@@ -1833,6 +1839,7 @@ fn write_inter_partition_tree(
                 mi_grid,
                 mi_rows,
                 mi_cols,
+                *bounds,
                 mi_row,
                 mi_col,
                 sub,
@@ -1858,6 +1865,7 @@ fn write_inter_partition_tree(
                 mi_grid,
                 mi_rows,
                 mi_cols,
+                *bounds,
                 mi_row_b,
                 mi_col,
                 sub,
@@ -1880,6 +1888,7 @@ fn write_inter_partition_tree(
                 mi_grid,
                 mi_rows,
                 mi_cols,
+                *bounds,
                 mi_row,
                 mi_col,
                 sub,
@@ -1905,6 +1914,7 @@ fn write_inter_partition_tree(
                 mi_grid,
                 mi_rows,
                 mi_cols,
+                *bounds,
                 mi_row,
                 mi_col_r,
                 sub,
@@ -2038,6 +2048,7 @@ fn write_inter_block_leaf(
     mi_grid: &[Option<ModeInfo>],
     mi_rows: usize,
     mi_cols: usize,
+    tile_bounds: TileBounds,
     mi_row: usize,
     mi_col: usize,
     leaf_bsize: BlockSize,
@@ -2083,7 +2094,7 @@ fn write_inter_block_leaf(
     // Build the neighbour lookup adapter for this leaf. The decoder
     // builds the equivalent `TileNeighbourLookup` rooted at the
     // current block's top-left.
-    let neighbours = MiGridNeighbourLookup::new(mi_grid, mi_cols, mi_row, mi_col, mi_rows);
+    let neighbours = MiGridNeighbourLookup::new(mi_grid, mi_cols, mi_row, mi_col, tile_bounds);
     let above = neighbours.get(Position { row: -1, col: 0 });
     let left = neighbours.get(Position { row: 0, col: -1 });
 
@@ -2296,6 +2307,7 @@ fn write_inter_block_leaf(
             coef_source,
             mi_row,
             mi_col,
+            tile_bounds.mi_col_start,
             leaf_bsize,
             effective_tx_size,
             is_inter,
@@ -2312,7 +2324,13 @@ fn write_inter_block_leaf(
         // coder stays in sync — otherwise our `initial_pt` for the
         // next leaf's coef tokens differs from the decoder's, the
         // EOB prob differs, and the bit stream desyncs.
-        reset_skip_coef_context(coef_ctx, leaf_bsize, mi_row, mi_col);
+        reset_skip_coef_context(
+            coef_ctx,
+            leaf_bsize,
+            mi_row,
+            mi_col,
+            tile_bounds.mi_col_start,
+        );
     }
 
     Ok(())
@@ -2329,8 +2347,9 @@ fn reset_skip_coef_context(
     leaf_bsize: BlockSize,
     mi_row: usize,
     mi_col: usize,
+    tile_mi_col_start: usize,
 ) {
-    let mi_col_in_tile = mi_col; // single-tile scope (matches write_inter_block_residual).
+    let mi_col_in_tile = mi_col - tile_mi_col_start;
     let mi_row_in_sb = mi_row & MI_MASK;
     for plane in 0..3 {
         let ss_x = SUBSAMPLING_X[plane];
@@ -2431,11 +2450,9 @@ fn uv_plane_tx_size(bsize: BlockSize, luma_tx: TxSize) -> TxSize {
 /// `plane_x4_base = (mi_col_in_tile * 2) >> ss_x` /
 /// `plane_y4_in_sb_base = (mi_row_in_sb * 2) >> ss_y`.
 ///
-/// Note: today's writer scope assumes full-frame tiles (single tile
-/// covering the whole frame), so `mi_col_in_tile == mi_col` and
-/// `mi_row_in_sb == mi_row & MI_MASK`. Multi-tile support will need
-/// the tile origin threaded through; that's deferred until the wider
-/// tile-bounds work lands.
+/// `tile_mi_col_start` converts the frame-relative block column to the
+/// tile-relative coefficient-context column. `mi_row_in_sb` remains
+/// `mi_row & MI_MASK` because tile rows are superblock-aligned.
 ///
 /// The frame-edge clamping the decoder applies (libvpx
 /// `predict_recon_inter`) is intentionally omitted here: the writer's
@@ -2449,6 +2466,7 @@ fn write_inter_block_residual(
     coef_source: &dyn InterCoefSource,
     mi_row: usize,
     mi_col: usize,
+    tile_mi_col_start: usize,
     leaf_bsize: BlockSize,
     luma_tx: TxSize,
     // G5 -- intra-in-inter blocks use non-DctDct tx_type and intra
@@ -2461,7 +2479,7 @@ fn write_inter_block_residual(
     // A6 TWO_LOOP -- encoder-only full 12-token histogram (count pass).
     mut full_counts: Option<&mut crate::entropy::adapt::Coef12Bank>,
 ) {
-    let mi_col_in_tile = mi_col; // single-tile scope (see fn doc).
+    let mi_col_in_tile = mi_col - tile_mi_col_start;
     let mi_row_in_sb = mi_row & MI_MASK;
     let ref_type = usize::from(is_inter);
 
@@ -2678,6 +2696,87 @@ mod tests {
                 *slot = left_v;
             }
         }
+    }
+
+    #[test]
+    fn tile_neighbour_lookup_hides_frame_neighbour_across_column_boundary() {
+        let grid = make_dc_grid(8, 16);
+        let bounds = TileBounds {
+            mi_row_start: 0,
+            mi_row_end: 8,
+            mi_col_start: 8,
+            mi_col_end: 16,
+        };
+        let lookup = MiGridNeighbourLookup::new(&grid, 16, 1, 8, bounds);
+
+        assert!(
+            lookup.get(Position { row: 0, col: -1 }).is_none(),
+            "the previous frame column belongs to another tile"
+        );
+        assert!(
+            lookup.get(Position { row: -1, col: 0 }).is_some(),
+            "the above cell remains available inside this tile"
+        );
+    }
+
+    #[test]
+    fn inter_residual_uses_tile_local_coefficient_columns() {
+        let mut buf = vec![0u8; 16 * 1024];
+        let mut bw = BoolWriter::start_encode(&mut buf);
+        let fc = FrameContext::new_default();
+        let mut coef_ctx = TileCoefCtx::new(8);
+        coef_ctx.set_coef_flags(0, 0, 0, 8, 8, true);
+        let coef_source = crate::bitstream::AllZeroCoefSource::new();
+
+        write_inter_block_residual(
+            &mut bw,
+            &fc,
+            &mut coef_ctx,
+            &coef_source,
+            0,
+            8,
+            8,
+            BlockSize::Block64x64,
+            TxSize::Tx32x32,
+            true,
+            IntraMode::Dc,
+            None,
+            None,
+        );
+
+        assert!(
+            (0..8).all(|x4| coef_ctx.above_coef(0, x4) == 0),
+            "the second tile's first block must update local columns 0..8"
+        );
+    }
+
+    #[test]
+    fn keyframe_residual_uses_tile_local_coefficient_columns() {
+        let mut buf = vec![0u8; 16 * 1024];
+        let mut bw = BoolWriter::start_encode(&mut buf);
+        let fc = FrameContext::new_default();
+        let mut coef_ctx = TileCoefCtx::new(8);
+        coef_ctx.set_coef_flags(0, 0, 0, 8, 8, true);
+        let coef_source = crate::bitstream::AllZeroIntraCoefSource::new();
+
+        write_intra_block_residual(
+            &mut bw,
+            &fc,
+            &mut coef_ctx,
+            &coef_source,
+            0,
+            8,
+            8,
+            BlockSize::Block64x64,
+            TxSize::Tx32x32,
+            IntraMode::Dc,
+            IntraMode::Dc,
+        );
+
+        assert!(
+            (0..8).all(|x4| coef_ctx.above_coef(0, x4) == 0),
+            "the second tile's first block must update local columns 0..8"
+        );
     }
 
     /// Writer produces the canonical `PARTITION_NONE` 1-bit emission
@@ -3787,7 +3886,7 @@ mod tests {
                          mi_col: usize,
                          leaf_bsize: BlockSize| {
             // Build the neighbour lookup the writer used.
-            let nb = MiGridNeighbourLookup::new(mi_grid, mi_cols, mi_row, mi_col, mi_rows);
+            let nb = MiGridNeighbourLookup::new(mi_grid, mi_cols, mi_row, mi_col, bounds);
             let above = nb.get(Position { row: -1, col: 0 }).copied();
             let left = nb.get(Position { row: 0, col: -1 }).copied();
             let skip_ctx = usize::from(above.is_some_and(|m| m.skip))
@@ -4244,7 +4343,7 @@ mod tests {
                          mi_row: usize,
                          mi_col: usize,
                          leaf_bsize: BlockSize| {
-            let nb = MiGridNeighbourLookup::new(mi_grid, mi_cols, mi_row, mi_col, mi_rows);
+            let nb = MiGridNeighbourLookup::new(mi_grid, mi_cols, mi_row, mi_col, bounds);
             let above = nb.get(Position { row: -1, col: 0 }).copied();
             let left = nb.get(Position { row: 0, col: -1 }).copied();
             let skip_ctx = usize::from(above.is_some_and(|m| m.skip))
@@ -6972,6 +7071,12 @@ mod tests {
             &grid,
             8,
             8,
+            TileBounds {
+                mi_row_start: 0,
+                mi_row_end: 8,
+                mi_col_start: 0,
+                mi_col_end: 8,
+            },
             0,
             0,
             BlockSize::Block64x64, // leaf_bsize expected
@@ -8652,6 +8757,12 @@ mod tests {
             &grid,
             8,
             8,
+            TileBounds {
+                mi_row_start: 0,
+                mi_row_end: 8,
+                mi_col_start: 0,
+                mi_col_end: 8,
+            },
             0,
             0,
             BlockSize::Block64x64,
