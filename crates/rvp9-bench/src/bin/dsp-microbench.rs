@@ -613,7 +613,7 @@ fn run_subpel_variance() {
     }
 }
 
-/// Head-to-head DSP kernel bench against libvpx (decoder kernel audit,
+/// Head-to-head DSP kernel bench against libvpx (codec kernel audit,
 /// 2026-05-26).
 ///
 /// Companion to `tools/libvpx_kernel_bench/main.c`. Generates identical
@@ -715,6 +715,10 @@ fn run_vs_libvpx() {
         2000,
         batches,
     );
+
+    // Full-precision 32x32 forward DCT used by the encoder's final leaf
+    // path. The residual generator and hashes mirror the C harness.
+    bench_fdct32x32_case(0xAE20, 2000, batches);
 
     // Convolve8 family. mode: 0 = 2D, 1 = horiz-only, 2 = vert-only.
     bench_conv_case(ConvCase {
@@ -848,6 +852,22 @@ fn bench_idct_case<const N: usize>(
         f(black_box(&input), black_box(&mut dest), stride);
     });
     println!("rvp9,{name},{size},{ns:.2},{in_hash:016x},{out_hash:016x}");
+}
+
+fn bench_fdct32x32_case(seed: u32, iters: u32, batches: u32) {
+    let mut input = [0i16; 1024];
+    fill_fdct_input_seeded(&mut input, seed);
+    let in_hash = fnv1a64_i16(&input);
+    let mut output = [0i32; 1024];
+
+    rvp9_core::transforms::forward::fdct32x32(&input, &mut output, 32);
+    let out_hash = fnv1a64_i32(&output);
+
+    output.fill(0);
+    let ns = bench_min_ns(batches, iters, || {
+        rvp9_core::transforms::forward::fdct32x32(black_box(&input), black_box(&mut output), 32);
+    });
+    println!("rvp9,fdct32x32,32x32,{ns:.2},{in_hash:016x},{out_hash:016x}");
 }
 
 /// Bench one convolve8 case against its libvpx twin. `mode`: 0 = 2D,
@@ -1053,6 +1073,15 @@ fn fill_idct_input_seeded(out: &mut [i32], seed: u32) {
     }
 }
 
+fn fill_fdct_input_seeded(out: &mut [i16], seed: u32) {
+    let mut s = seed;
+    for value in out {
+        let lo = u32::from(lcg_step_byte(&mut s));
+        let hi = u32::from(lcg_step_byte(&mut s));
+        *value = ((lo | (hi << 8)) % 511) as i16 - 255;
+    }
+}
+
 fn fill_bytes_seeded(out: &mut [u8], seed: u32) {
     let mut s = seed;
     for b in out.iter_mut() {
@@ -1093,4 +1122,13 @@ fn fnv1a64_i32(buf: &[i32]) -> u64 {
         }
     }
     h
+}
+
+fn fnv1a64_i16(buf: &[i16]) -> u64 {
+    let bytes = unsafe {
+        // SAFETY: i16 has no padding, and the slice remains borrowed for the
+        // byte view's complete lifetime.
+        std::slice::from_raw_parts(buf.as_ptr().cast::<u8>(), std::mem::size_of_val(buf))
+    };
+    fnv1a64_bytes(bytes)
 }

@@ -222,7 +222,7 @@ unsafe fn fdct16_interpass_round16(value: V16) -> V16 {
 unsafe fn fdct32_body<T, Add, Sub, Mul, MulAdd>(
     input: &[T; 32],
     output: &mut [T; 32],
-    zero: T,
+    zero_and_stage2: (T, Option<&[T; 32]>),
     add: Add,
     sub: Sub,
     mul_round: Mul,
@@ -234,40 +234,45 @@ unsafe fn fdct32_body<T, Add, Sub, Mul, MulAdd>(
     Mul: Fn(T, i32) -> T,
     MulAdd: Fn(T, i32, T, i32) -> T,
 {
+    let (zero, stage2_input) = zero_and_stage2;
     let mut step = [zero; 32];
     let mut out = [zero; 32];
 
-    // Stage 1.
-    for k in 0..16 {
-        step[k] = add(input[k], input[31 - k]);
-    }
-    for k in 16..32 {
-        step[k] = sub(input[31 - k], input[k]);
-    }
+    if let Some(stage2) = stage2_input {
+        out.copy_from_slice(stage2);
+    } else {
+        // Stage 1.
+        for k in 0..16 {
+            step[k] = add(input[k], input[31 - k]);
+        }
+        for k in 16..32 {
+            step[k] = sub(input[31 - k], input[k]);
+        }
 
-    // Stage 2.
-    for k in 0..8 {
-        out[k] = add(step[k], step[15 - k]);
+        // Stage 2.
+        for k in 0..8 {
+            out[k] = add(step[k], step[15 - k]);
+        }
+        for k in 8..16 {
+            out[k] = sub(step[15 - k], step[k]);
+        }
+        out[16] = step[16];
+        out[17] = step[17];
+        out[18] = step[18];
+        out[19] = step[19];
+        out[20] = mul_round(sub(step[27], step[20]), COSPI_16_64);
+        out[21] = mul_round(sub(step[26], step[21]), COSPI_16_64);
+        out[22] = mul_round(sub(step[25], step[22]), COSPI_16_64);
+        out[23] = mul_round(sub(step[24], step[23]), COSPI_16_64);
+        out[24] = mul_round(add(step[24], step[23]), COSPI_16_64);
+        out[25] = mul_round(add(step[25], step[22]), COSPI_16_64);
+        out[26] = mul_round(add(step[26], step[21]), COSPI_16_64);
+        out[27] = mul_round(add(step[27], step[20]), COSPI_16_64);
+        out[28] = step[28];
+        out[29] = step[29];
+        out[30] = step[30];
+        out[31] = step[31];
     }
-    for k in 8..16 {
-        out[k] = sub(step[15 - k], step[k]);
-    }
-    out[16] = step[16];
-    out[17] = step[17];
-    out[18] = step[18];
-    out[19] = step[19];
-    out[20] = mul_round(sub(step[27], step[20]), COSPI_16_64);
-    out[21] = mul_round(sub(step[26], step[21]), COSPI_16_64);
-    out[22] = mul_round(sub(step[25], step[22]), COSPI_16_64);
-    out[23] = mul_round(sub(step[24], step[23]), COSPI_16_64);
-    out[24] = mul_round(add(step[24], step[23]), COSPI_16_64);
-    out[25] = mul_round(add(step[25], step[22]), COSPI_16_64);
-    out[26] = mul_round(add(step[26], step[21]), COSPI_16_64);
-    out[27] = mul_round(add(step[27], step[20]), COSPI_16_64);
-    out[28] = step[28];
-    out[29] = step[29];
-    out[30] = step[30];
-    out[31] = step[31];
 
     // Stage 3.
     step[0] = add(out[0], out[7]);
@@ -474,21 +479,6 @@ unsafe fn fdct32_body<T, Add, Sub, Mul, MulAdd>(
     output[31] = mul_add_round(step[31], COSPI_31_64, step[16], -COSPI_1_64);
 }
 
-/// Four independent, overflow-safe 1-D 32-point DCTs.
-#[inline]
-#[target_feature(enable = "neon")]
-unsafe fn fdct32x4(input: &[V; 32], output: &mut [V; 32]) {
-    fdct32_body(
-        input,
-        output,
-        vdupq_n_s32(0),
-        |a, b| add(a, b),
-        |a, b| sub(a, b),
-        |a, constant| mul_round(a, constant),
-        |a, ac, b, bc| mul_add_round(a, ac, b, bc),
-    );
-}
-
 /// Eight independent first-pass 1-D 32-point DCTs.
 #[inline]
 #[target_feature(enable = "neon")]
@@ -496,12 +486,67 @@ unsafe fn fdct32x8_first_pass(input: &[V16; 32], output: &mut [V16; 32]) {
     fdct32_body(
         input,
         output,
-        vdupq_n_s16(0),
+        (vdupq_n_s16(0), None),
         |a, b| add16(a, b),
         |a, b| sub16(a, b),
         |a, constant| mul_round16(a, constant),
         |a, ac, b, bc| mul_add_round16(a, ac, b, bc),
     );
+}
+
+/// Four overflow-safe second-pass transforms whose first two stages were
+/// already evaluated in eight i16 lanes.
+#[inline]
+#[target_feature(enable = "neon")]
+unsafe fn fdct32x4_from_stage2(input: &[V; 32], output: &mut [V; 32]) {
+    fdct32_body(
+        input,
+        output,
+        (vdupq_n_s32(0), Some(input)),
+        |a, b| add(a, b),
+        |a, b| sub(a, b),
+        |a, constant| mul_round(a, constant),
+        |a, ac, b, bc| mul_add_round(a, ac, b, bc),
+    );
+}
+
+/// Evaluate stages 1 and 2 for eight second-pass transforms while their
+/// values remain bounded to i16, matching libvpx's overflow boundary.
+#[inline]
+#[target_feature(enable = "neon")]
+unsafe fn fdct32x8_second_pass_stage2(input: &[V16; 32], output: &mut [V16; 32]) {
+    let zero = vdupq_n_s16(0);
+    let mut step = [zero; 32];
+
+    for k in 0..16 {
+        step[k] = add16(input[k], input[31 - k]);
+    }
+    for k in 16..32 {
+        step[k] = sub16(input[31 - k], input[k]);
+    }
+
+    for k in 0..8 {
+        output[k] = add16(step[k], step[15 - k]);
+    }
+    for k in 8..16 {
+        output[k] = sub16(step[15 - k], step[k]);
+    }
+    output[16] = step[16];
+    output[17] = step[17];
+    output[18] = step[18];
+    output[19] = step[19];
+    output[20] = mul_round16(sub16(step[27], step[20]), COSPI_16_64);
+    output[21] = mul_round16(sub16(step[26], step[21]), COSPI_16_64);
+    output[22] = mul_round16(sub16(step[25], step[22]), COSPI_16_64);
+    output[23] = mul_round16(sub16(step[24], step[23]), COSPI_16_64);
+    output[24] = mul_round16(add16(step[24], step[23]), COSPI_16_64);
+    output[25] = mul_round16(add16(step[25], step[22]), COSPI_16_64);
+    output[26] = mul_round16(add16(step[26], step[21]), COSPI_16_64);
+    output[27] = mul_round16(add16(step[27], step[20]), COSPI_16_64);
+    output[28] = step[28];
+    output[29] = step[29];
+    output[30] = step[30];
+    output[31] = step[31];
 }
 
 #[inline(always)]
@@ -630,9 +675,11 @@ unsafe fn fdct32x32_inner(input: *const i16, output: *mut i32, stride: usize) {
             lane_in16[column..column + 8].copy_from_slice(&rows);
         }
 
+        let mut stage2 = [zero16; 32];
+        fdct32x8_second_pass_stage2(&lane_in16, &mut stage2);
         for half in 0..2 {
             let mut lane_in = [zero; 32];
-            for (source, destination) in lane_in16.iter().zip(lane_in.iter_mut()) {
+            for (source, destination) in stage2.iter().zip(lane_in.iter_mut()) {
                 *destination = if half == 0 {
                     vmovl_s16(vget_low_s16(*source))
                 } else {
@@ -640,7 +687,7 @@ unsafe fn fdct32x32_inner(input: *const i16, output: *mut i32, stride: usize) {
                 };
             }
             let mut lane_out = [zero; 32];
-            fdct32x4(&lane_in, &mut lane_out);
+            fdct32x4_from_stage2(&lane_in, &mut lane_out);
             for coefficient in (0..32).step_by(4) {
                 let rows = transpose4(
                     pass1_round_and_wrap(lane_out[coefficient]),

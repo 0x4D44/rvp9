@@ -172,32 +172,35 @@ source.
 green. Optimize the one-frame intra source only if a fresh profile makes it
 material; do not conflate it with the removed inter hot path.
 
-### 2026-07-31 — Widen the complete second 32-point DCT pass
+### 2026-07-31 — Widen the 32-point DCT at its overflow boundary
 **Where:** `rvp9-core::transforms::forward_neon`; libvpx counterparts:
 `vpx_dsp/arm/fdct32x32_neon.c` and `vpx_dsp/arm/fdct32x32_neon.h`.
 **What libvpx does:** its first 32x32 pass uses eight i16 NEON lanes and its
 overflow-sensitive second pass widens selected stages to paired i32 vectors.
-**What rvp9 does:** its first pass now also uses eight i16 lanes. Before the
-second pass it widens all eight lanes into two four-lane i32 groups, then runs
-the same audited scalar schedule. First-pass cosine products widen to i32;
-second-pass products widen to i64.
-**Why:** widening at the pass boundary keeps one width-generic seven-stage
-schedule and preserves rvp9's i32 coefficient API. It removes half the
-first-pass lane groups and halves intermediate storage without duplicating
-libvpx's macro-heavy mixed-width second-pass implementation.
+**What rvp9 does:** its first pass also uses eight i16 lanes. The second pass
+keeps eight i16 lanes through stages 1 and 2, then widens into two four-lane
+i32 groups at stage 3, where the libvpx overflow audit identifies the first
+extreme-input overflow. First-pass and early second-pass cosine products
+widen to i32; later second-pass products widen to i64.
+**Why:** the earlier pass-boundary widening preserved rvp9's i32 coefficient
+API but repeated bounded stages 1 and 2 in two four-lane groups. Moving the
+widening to the measured overflow boundary matches libvpx's lane width while
+retaining the shared later-stage schedule and i32 output API.
 **Byte-parity impact:** none. Differential coverage compares 128 randomized
 valid residual blocks with stride jitter plus constant and alternating
 residual extremes. The 120-frame product stream remained byte-identical.
 **Compression-efficiency impact:** none because every transform coefficient
 and emitted stream is unchanged.
-**Speed impact:** sixteen warmed alternating one-thread pairs improved median
-wall time `1.081781 -> 1.061569 s` (`-1.408%` paired) and child CPU
-`1.043518 -> 1.025352 s` (`-1.424%`). Twenty four-thread pairs improved
-wall time `0.679587 -> 0.678864 s` (`-0.767%`) and child CPU
-`1.251782 -> 1.237006 s` (`-1.022%`).
-**Future plan:** retain the pass-boundary widening while it stays exact and
-Pareto-positive. Revisit libvpx's selective second-pass widening only if a
-fresh profile still makes the transform material.
+**Speed impact:** the original eight-lane first pass improved one-thread
+child CPU by `-1.424%` and four-thread child CPU by `-1.022%`. The later
+overflow-boundary unit reduces the full 32x32 transform from `747.10 ns` to
+`717.04..725.94 ns` against pinned libvpx's `501.31 ns`. Two twenty-pair
+one-thread product trials improve total child CPU by `-0.934%` and `-0.250%`;
+one twenty-pair four-thread trial improves it by `-0.500%`. A later
+one-thread trial under worse load was neutral at `+0.009%`.
+**Future plan:** retain the overflow-boundary widening while it stays exact
+and Pareto-positive. Profile before changing the remaining later-stage
+schedule or transpose/storage layout.
 
 ### 2026-07-31 — Direct-index the superblock descent-result cache
 **Where:** `rvp9-encoder::DescentPickCache`; libvpx counterpart:

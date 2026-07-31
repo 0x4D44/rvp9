@@ -1,4 +1,4 @@
-/* libvpx kernel head-to-head bench (rvp9 decoder kernel audit).
+/* libvpx kernel head-to-head bench (rvp9 codec kernel audit).
  *
  * Times a fixed set of libvpx DSP kernels on deterministic, LCG-generated
  * inputs that the rvp9 side reproduces byte-for-byte from the same seed.
@@ -133,6 +133,50 @@ static void run_idct(idct_fn fn, const char *name, const char *size,
     double ns = bench_min_ns(BATCHES, iters, idct_thunk, &ctx);
     printf("libvpx,%s,%s,%.2f,%016llx,%016llx\n",
            name, size, ns,
+           (unsigned long long)in_hash, (unsigned long long)out_hash);
+    fflush(stdout);
+}
+
+/* ---------------------------- forward DCT ----------------------------- */
+
+typedef void (*fdct_fn)(const int16_t *, tran_low_t *, int);
+
+typedef struct {
+    fdct_fn fn;
+    const int16_t *input;
+    tran_low_t *output;
+} fdct_ctx;
+
+static void fill_fdct_input(int16_t *out, size_t n, uint32_t seed) {
+    uint32_t s = seed;
+    for (size_t i = 0; i < n; ++i) {
+        uint32_t lo = lcg_step(&s);
+        uint32_t hi = lcg_step(&s);
+        out[i] = (int16_t)((lo | (hi << 8)) % 511u) - 255;
+    }
+}
+
+static void fdct_thunk(void *v) {
+    fdct_ctx *c = (fdct_ctx *)v;
+    c->fn(c->input, c->output, 32);
+}
+
+static void run_fdct32x32(fdct_fn fn, uint32_t seed, uint32_t iters) {
+    static int16_t input[1024];
+    static tran_low_t output[1024];
+
+    fill_fdct_input(input, 1024, seed);
+    uint64_t in_hash = fnv1a64(input, sizeof input);
+
+    memset(output, 0, sizeof output);
+    fn(input, output, 32);
+    uint64_t out_hash = fnv1a64(output, sizeof output);
+
+    memset(output, 0, sizeof output);
+    fdct_ctx ctx = { fn, input, output };
+    double ns = bench_min_ns(BATCHES, iters, fdct_thunk, &ctx);
+    printf("libvpx,%s,%s,%.2f,%016llx,%016llx\n",
+           "fdct32x32", "32x32", ns,
            (unsigned long long)in_hash, (unsigned long long)out_hash);
     fflush(stdout);
 }
@@ -386,6 +430,7 @@ int main(int argc, char **argv) {
     run_idct(vpx_idct32x32_1024_add,"idct32x32_1024_add", "32x32", 1024, 32, 0xAA15u,  2000u);
     run_idct(vpx_idct32x32_34_add,  "idct32x32_34_add",   "32x32", 1024, 32, 0xAA16u,  2000u);
     run_idct(vpx_idct32x32_135_add, "idct32x32_135_add",  "32x32", 1024, 32, 0xAA02u,  2000u);
+    run_fdct32x32(vpx_fdct32x32, 0xAE20u, 2000u);
 
     for (size_t i = 0; i < sizeof kConvCases / sizeof kConvCases[0]; ++i)
         run_conv_case(&kConvCases[i]);
