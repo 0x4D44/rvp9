@@ -2553,12 +2553,16 @@ result to a second block, then calls the matching NEON variance kernel.
 **What rvp9 does:** keeps two rolling 64-byte horizontal rows and feeds each
 vertical-filter vector directly into the `(sum, sse)` reduction. Offset-zero
 paths fuse the remaining one-dimensional filter and reduction without an
-intermediate block.
+intermediate block. Two sum vectors and four squared-error vectors carry
+independent quarter-block lanes, then combine only once at the end.
 
 **Why:** rvp9 previously had no AArch64 sub-pixel-variance dispatch and ran
 two heap allocations plus three scalar pixel walks for every sub-pel probe.
 The fused layout removes both allocations and the final temporary-block walk
 while preserving libvpx's exact bilinear rounding and variance finisher.
+Independent accumulators also remove the two serial widening additions and
+two serial multiply-accumulates that the first fused kernel issued per
+16-pixel group.
 
 **Byte-parity impact:** none. Random differential coverage exercises all 64
 offset pairs across eight block shapes; edge-value and forced-dispatch tests
@@ -2570,7 +2574,9 @@ byte-identical before and after the dispatch change.
 **Speed impact:** the 32x32 mixed-offset kernel improved from `797.1 ns` to
 `85.8 ns` (`9.30x`). Three alternating 120-frame 1280x704 cpu-used 7 runs
 improved median wall time from `2.74 s` to `2.45 s` (`10.6%`) on the pinned
-Apple M5 Max host.
+Apple M5 Max host. Splitting the reduction dependencies later improved paired
+child CPU by another `-1.029%` at one thread with fifteen of sixteen wins and
+`-0.947%` at four threads with seventeen of twenty wins.
 
 **Future plan:** retain the fused implementation while it remains
 byte-exact. Add 4/8-wide NEON kernels only if a fresh whole-encoder profile

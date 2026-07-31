@@ -43,23 +43,57 @@ unsafe fn horizontal_row(src: *const u8, dst: *mut u8, width: usize, xoffset: us
 
 #[inline]
 #[target_feature(enable = "neon")]
-unsafe fn accumulate_16(
-    pred: uint8x16_t,
-    reference: *const u8,
-    sum: &mut int32x4_t,
-    sse_lo: &mut int32x4_t,
-    sse_hi: &mut int32x4_t,
-) {
-    let r = vld1q_u8(reference);
-    let diff_lo = vreinterpretq_s16_u16(vsubl_u8(vget_low_u8(pred), vget_low_u8(r)));
-    let diff_hi = vreinterpretq_s16_u16(vsubl_u8(vget_high_u8(pred), vget_high_u8(r)));
+unsafe fn accumulate_16(pred: uint8x16_t, reference: *const u8, accum: &mut VarianceAccumulator) {
+    accum.add(pred, vld1q_u8(reference));
+}
 
-    *sum = vpadalq_s16(*sum, diff_lo);
-    *sum = vpadalq_s16(*sum, diff_hi);
-    *sse_lo = vmlal_s16(*sse_lo, vget_low_s16(diff_lo), vget_low_s16(diff_lo));
-    *sse_hi = vmlal_s16(*sse_hi, vget_high_s16(diff_lo), vget_high_s16(diff_lo));
-    *sse_lo = vmlal_s16(*sse_lo, vget_low_s16(diff_hi), vget_low_s16(diff_hi));
-    *sse_hi = vmlal_s16(*sse_hi, vget_high_s16(diff_hi), vget_high_s16(diff_hi));
+struct VarianceAccumulator {
+    sum_lo: int32x4_t,
+    sum_hi: int32x4_t,
+    sse_0: int32x4_t,
+    sse_1: int32x4_t,
+    sse_2: int32x4_t,
+    sse_3: int32x4_t,
+}
+
+impl VarianceAccumulator {
+    #[inline]
+    #[target_feature(enable = "neon")]
+    unsafe fn new() -> Self {
+        Self {
+            sum_lo: vdupq_n_s32(0),
+            sum_hi: vdupq_n_s32(0),
+            sse_0: vdupq_n_s32(0),
+            sse_1: vdupq_n_s32(0),
+            sse_2: vdupq_n_s32(0),
+            sse_3: vdupq_n_s32(0),
+        }
+    }
+
+    #[inline]
+    #[target_feature(enable = "neon")]
+    unsafe fn add(&mut self, pred: uint8x16_t, reference: uint8x16_t) {
+        let diff_lo = vreinterpretq_s16_u16(vsubl_u8(vget_low_u8(pred), vget_low_u8(reference)));
+        let diff_hi = vreinterpretq_s16_u16(vsubl_u8(vget_high_u8(pred), vget_high_u8(reference)));
+
+        self.sum_lo = vpadalq_s16(self.sum_lo, diff_lo);
+        self.sum_hi = vpadalq_s16(self.sum_hi, diff_hi);
+        self.sse_0 = vmlal_s16(self.sse_0, vget_low_s16(diff_lo), vget_low_s16(diff_lo));
+        self.sse_1 = vmlal_s16(self.sse_1, vget_high_s16(diff_lo), vget_high_s16(diff_lo));
+        self.sse_2 = vmlal_s16(self.sse_2, vget_low_s16(diff_hi), vget_low_s16(diff_hi));
+        self.sse_3 = vmlal_s16(self.sse_3, vget_high_s16(diff_hi), vget_high_s16(diff_hi));
+    }
+
+    #[inline]
+    #[target_feature(enable = "neon")]
+    unsafe fn finish(self) -> (i64, i64) {
+        let sum = vaddvq_s32(vaddq_s32(self.sum_lo, self.sum_hi));
+        let sse = vaddvq_s32(vaddq_s32(
+            vaddq_s32(self.sse_0, self.sse_1),
+            vaddq_s32(self.sse_2, self.sse_3),
+        ));
+        (i64::from(sum), i64::from(sse))
+    }
 }
 
 #[target_feature(enable = "neon")]
@@ -74,9 +108,7 @@ unsafe fn sub_pixel_variance_neon_inner(
     width: usize,
     height: usize,
 ) -> (u32, u32) {
-    let mut sum = vdupq_n_s32(0);
-    let mut sse_lo = vdupq_n_s32(0);
-    let mut sse_hi = vdupq_n_s32(0);
+    let mut accum = VarianceAccumulator::new();
 
     if xoffset == 0 {
         for row in 0..height {
@@ -86,7 +118,7 @@ unsafe fn sub_pixel_variance_neon_inner(
             let mut col = 0;
             while col < width {
                 let pred = filter_16(top.add(col), bottom.add(col), yoffset);
-                accumulate_16(pred, ref_row.add(col), &mut sum, &mut sse_lo, &mut sse_hi);
+                accumulate_16(pred, ref_row.add(col), &mut accum);
                 col += 16;
             }
         }
@@ -97,7 +129,7 @@ unsafe fn sub_pixel_variance_neon_inner(
             let mut col = 0;
             while col < width {
                 let pred = filter_16(src_row.add(col), src_row.add(col + 1), xoffset);
-                accumulate_16(pred, ref_row.add(col), &mut sum, &mut sse_lo, &mut sse_hi);
+                accumulate_16(pred, ref_row.add(col), &mut accum);
                 col += 16;
             }
         }
@@ -117,15 +149,14 @@ unsafe fn sub_pixel_variance_neon_inner(
             let mut col = 0;
             while col < width {
                 let pred = filter_16(row_a.as_ptr().add(col), row_b.as_ptr().add(col), yoffset);
-                accumulate_16(pred, ref_row.add(col), &mut sum, &mut sse_lo, &mut sse_hi);
+                accumulate_16(pred, ref_row.add(col), &mut accum);
                 col += 16;
             }
             core::mem::swap(&mut row_a, &mut row_b);
         }
     }
 
-    let sum = i64::from(vaddvq_s32(sum));
-    let sse = i64::from(vaddvq_s32(vaddq_s32(sse_lo, sse_hi)));
+    let (sum, sse) = accum.finish();
     let variance = (sse - sum * sum / (width * height) as i64).max(0) as u32;
     (variance, sse as u32)
 }
