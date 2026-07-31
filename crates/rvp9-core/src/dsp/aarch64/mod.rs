@@ -1,8 +1,8 @@
 //! AArch64-specific SIMD kernel implementations.
 //!
 //! Safe wrappers are installed only when [`crate::dsp::caps::AArch64Caps`]
-//! reports NEON. Each wrapper validates its slice footprint before entering
-//! a `#[target_feature]` inner loop.
+//! reports the required NEON tier. Each wrapper validates its slice footprint
+//! before entering a `#[target_feature]` inner loop.
 
 #![allow(unsafe_op_in_unsafe_fn)]
 
@@ -40,7 +40,12 @@ pub use subpel_variance_neon::{
 };
 pub use subtract_neon::subtract_square_neon;
 pub use variance_neon::{
-    get_var_sse_8x8_neon, var_sum_sse_8x4_neon, var_sum_sse_8x8_neon, var_sum_sse_8x16_neon,
-    var_sum_sse_16x8_neon, var_sum_sse_16x16_neon, var_sum_sse_16x32_neon, var_sum_sse_32x16_neon,
-    var_sum_sse_32x32_neon, var_sum_sse_32x64_neon, var_sum_sse_64x32_neon, var_sum_sse_64x64_neon,
+    get_var_sse_8x8_dotprod, get_var_sse_8x8_neon, var_sum_sse_8x4_dotprod, var_sum_sse_8x4_neon,
+    var_sum_sse_8x8_dotprod, var_sum_sse_8x8_neon, var_sum_sse_8x16_dotprod, var_sum_sse_8x16_neon,
+    var_sum_sse_16x8_dotprod, var_sum_sse_16x8_neon, var_sum_sse_16x16_dotprod,
+    var_sum_sse_16x16_neon, var_sum_sse_16x32_dotprod, var_sum_sse_16x32_neon,
+    var_sum_sse_32x16_dotprod, var_sum_sse_32x16_neon, var_sum_sse_32x32_dotprod,
+    var_sum_sse_32x32_neon, var_sum_sse_32x64_dotprod, var_sum_sse_32x64_neon,
+    var_sum_sse_64x32_dotprod, var_sum_sse_64x32_neon, var_sum_sse_64x64_dotprod,
+    var_sum_sse_64x64_neon,
 };

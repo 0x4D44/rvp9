@@ -724,8 +724,9 @@ pub type CellVarFn = fn(&[u8], usize, &[u8], usize) -> (i32, u32);
 /// `compute_variance` (`crate::mode_decision::model_rd`), whose scalar
 /// `saturating_sub` finisher consumes the reduction unchanged. Each entry is
 /// selected by ISA capability in [`SimdDispatch::build`] — AVX2 on x86_64,
-/// NEON for widths 8–64 on AArch64, and scalar otherwise. All arms are
-/// byte-exact (integer-exact reduction, no overflow for any VP9 size).
+/// dot-product or base NEON for widths 8–64 on AArch64, and scalar otherwise.
+/// All arms are byte-exact (integer-exact reduction, no overflow for any VP9
+/// size).
 #[derive(Debug, Clone)]
 pub struct VarTable {
     /// Indexed by `BlockSize::idx()` (`0..=12`).
@@ -2232,8 +2233,10 @@ impl SimdDispatch {
             use crate::dsp::aarch64 as neon;
             use crate::dsp::distortion as sc;
             macro_rules! var_slot {
-                ($scalar:path, $neon:path) => {
-                    if caps.neon {
+                ($scalar:path, $neon:path, $dotprod:path) => {
+                    if caps.dotprod {
+                        $dotprod as VarFn
+                    } else if caps.neon {
                         $neon as VarFn
                     } else {
                         $scalar as VarFn
@@ -2244,17 +2247,61 @@ impl SimdDispatch {
                 fns: [
                     sc::var_sum_sse_4x4 as VarFn,
                     sc::var_sum_sse_4x8,
-                    var_slot!(sc::var_sum_sse_8x4, neon::var_sum_sse_8x4_neon),
-                    var_slot!(sc::var_sum_sse_8x8, neon::var_sum_sse_8x8_neon),
-                    var_slot!(sc::var_sum_sse_8x16, neon::var_sum_sse_8x16_neon),
-                    var_slot!(sc::var_sum_sse_16x8, neon::var_sum_sse_16x8_neon),
-                    var_slot!(sc::var_sum_sse_16x16, neon::var_sum_sse_16x16_neon),
-                    var_slot!(sc::var_sum_sse_16x32, neon::var_sum_sse_16x32_neon),
-                    var_slot!(sc::var_sum_sse_32x16, neon::var_sum_sse_32x16_neon),
-                    var_slot!(sc::var_sum_sse_32x32, neon::var_sum_sse_32x32_neon),
-                    var_slot!(sc::var_sum_sse_32x64, neon::var_sum_sse_32x64_neon),
-                    var_slot!(sc::var_sum_sse_64x32, neon::var_sum_sse_64x32_neon),
-                    var_slot!(sc::var_sum_sse_64x64, neon::var_sum_sse_64x64_neon),
+                    var_slot!(
+                        sc::var_sum_sse_8x4,
+                        neon::var_sum_sse_8x4_neon,
+                        neon::var_sum_sse_8x4_dotprod
+                    ),
+                    var_slot!(
+                        sc::var_sum_sse_8x8,
+                        neon::var_sum_sse_8x8_neon,
+                        neon::var_sum_sse_8x8_dotprod
+                    ),
+                    var_slot!(
+                        sc::var_sum_sse_8x16,
+                        neon::var_sum_sse_8x16_neon,
+                        neon::var_sum_sse_8x16_dotprod
+                    ),
+                    var_slot!(
+                        sc::var_sum_sse_16x8,
+                        neon::var_sum_sse_16x8_neon,
+                        neon::var_sum_sse_16x8_dotprod
+                    ),
+                    var_slot!(
+                        sc::var_sum_sse_16x16,
+                        neon::var_sum_sse_16x16_neon,
+                        neon::var_sum_sse_16x16_dotprod
+                    ),
+                    var_slot!(
+                        sc::var_sum_sse_16x32,
+                        neon::var_sum_sse_16x32_neon,
+                        neon::var_sum_sse_16x32_dotprod
+                    ),
+                    var_slot!(
+                        sc::var_sum_sse_32x16,
+                        neon::var_sum_sse_32x16_neon,
+                        neon::var_sum_sse_32x16_dotprod
+                    ),
+                    var_slot!(
+                        sc::var_sum_sse_32x32,
+                        neon::var_sum_sse_32x32_neon,
+                        neon::var_sum_sse_32x32_dotprod
+                    ),
+                    var_slot!(
+                        sc::var_sum_sse_32x64,
+                        neon::var_sum_sse_32x64_neon,
+                        neon::var_sum_sse_32x64_dotprod
+                    ),
+                    var_slot!(
+                        sc::var_sum_sse_64x32,
+                        neon::var_sum_sse_64x32_neon,
+                        neon::var_sum_sse_64x32_dotprod
+                    ),
+                    var_slot!(
+                        sc::var_sum_sse_64x64,
+                        neon::var_sum_sse_64x64_neon,
+                        neon::var_sum_sse_64x64_dotprod
+                    ),
                 ],
             }
         };
@@ -2289,7 +2336,9 @@ impl SimdDispatch {
             crate::dsp::distortion::get_var_sse_8x8
         };
         #[cfg(target_arch = "aarch64")]
-        let get_var_sse_8x8: CellVarFn = if caps.neon {
+        let get_var_sse_8x8: CellVarFn = if caps.dotprod {
+            crate::dsp::aarch64::get_var_sse_8x8_dotprod
+        } else if caps.neon {
             crate::dsp::aarch64::get_var_sse_8x8_neon
         } else {
             crate::dsp::distortion::get_var_sse_8x8
@@ -3025,9 +3074,9 @@ impl SimdDispatch {
     }
 
     /// Resolve the per-size block `(sum, sse)` reduction kernel for `bsize`
-    /// (PR4). Returns AVX2 on x86_64, NEON for widths 8–64 on AArch64, and
-    /// the scalar `var_sum_sse_{W}x{H}` reference otherwise; all are
-    /// byte-exact. The
+    /// (PR4). Returns AVX2 on x86_64, dot-product or base NEON for widths 8–64
+    /// on AArch64, and the scalar `var_sum_sse_{W}x{H}` reference otherwise;
+    /// all are byte-exact. The
     /// caller (the inter RD model) applies its own scalar variance finisher.
     /// Resolve once and reuse across the RD-model call so the `OnceLock` load
     /// in `get_ref()` is amortized.
@@ -3038,8 +3087,8 @@ impl SimdDispatch {
     }
 
     /// Resolve the per-8×8-cell `(sum, sse)` reduction kernel (PR4). Returns the
-    /// AVX2 wrapper on x86_64, NEON on AArch64, and the scalar
-    /// `get_var_sse_8x8` reference otherwise; all are byte-exact. The caller
+    /// AVX2 wrapper on x86_64, dot-product or base NEON on AArch64, and the
+    /// scalar `get_var_sse_8x8` reference otherwise; all are byte-exact. The caller
     /// (the large-block RD model)
     /// applies its own scalar abs-diff `>>6` finisher per cell. Resolve once and
     /// reuse across the cell grid.

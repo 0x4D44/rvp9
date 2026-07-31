@@ -9,7 +9,7 @@
 //! ## v1 ISA scope
 //!
 //! - **x86_64**: scalar, SSE2, SSSE3, SSE4.1, AVX2.
-//! - **aarch64**: scalar, NEON. (NEON-dotprod deferred to v2.)
+//! - **aarch64**: scalar, NEON, NEON dot-product.
 //! - **other** (wasm32, riscv64, etc.): scalar only.
 //!
 //! Per HLD-simd §2.2 (R-09 init invariant): caps are detected exactly once
@@ -98,6 +98,8 @@ fn force_scalar_env() -> bool {
 pub struct AArch64Caps {
     /// NEON SIMD. Effectively always true on aarch64.
     pub neon: bool,
+    /// Armv8.2-A integer dot-product instructions.
+    pub dotprod: bool,
 }
 
 #[cfg(target_arch = "aarch64")]
@@ -106,6 +108,7 @@ impl AArch64Caps {
     pub fn detect() -> Self {
         Self {
             neon: std::arch::is_aarch64_feature_detected!("neon"),
+            dotprod: std::arch::is_aarch64_feature_detected!("dotprod"),
         }
     }
 }

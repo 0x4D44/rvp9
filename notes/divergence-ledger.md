@@ -2887,6 +2887,45 @@ child CPU by another `-1.029%` at one thread with fifteen of sixteen wins and
 byte-exact. Add 4/8-wide NEON kernels only if a fresh whole-encoder profile
 shows those scalar slots are material.
 
+### 2026-07-31 — AArch64 variance dispatch selects dot-product kernels
+
+**Where:** `rvp9_core::dsp::{caps,dispatch}` and
+`dsp::aarch64::variance_neon`, for every 8/16/32/64-wide `(sum, sse)` slot
+and the dedicated 8x8-cell slot.
+
+**What libvpx does:** its AArch64 runtime dispatch selects
+`vpx_dsp/arm/variance_neon_dotprod.c` when Armv8.2-A dot-product instructions
+are present. Those kernels accumulate source sum, reference sum, and squared
+absolute differences with three `udot` operations per 16 pixels.
+
+**What rvp9 does:** detects `dotprod` once with the existing process-wide
+capability table and pre-resolves the same variance slots to an integer-exact
+Rust/inline-assembly port. Older AArch64 hosts retain the established base
+NEON path; 4-pixel-wide blocks remain scalar. The generic rvp9 interface
+still returns widened `(i64, u64)` values.
+
+**Why:** the base NEON kernel widened each eight-pixel difference before
+separate sum and squared-error multiply-accumulates. The pinned Apple host
+supports dotprod, and the fresh product profile attributed 94 self samples
+directly to the 64x64 base-NEON reduction.
+
+**Byte-parity impact:** none. Random differential coverage spans every
+promoted block shape, stride jitter `0..16`, and equality/worst-case signed
+difference extremes. Forced dispatch checks the scalar, base-NEON, and
+dotprod tiers. The standard cpu-used 7 stream remains exactly 716,330 bytes
+with SHA-256
+`8144dcf9d104119634855cf2ed0554f14e206137ad33689f5b0f871b95c2acb3`.
+
+**Compression-efficiency impact:** none; the production stream is unchanged.
+
+**Speed impact:** twenty-pair comparisons improve total child CPU by
+`-2.198%` at one thread with 20/20 wins and `-2.049%` at four threads with
+19/20 wins. Paired wall time improves `-2.219%` and `-2.730%`, respectively,
+with 20/20 wins in both trials.
+
+**Future plan:** retain runtime dotprod dispatch while all three tiers remain
+integer-exact. Profile the committed unit before selecting another kernel.
+
 ### 2026-07-31 — AArch64 fast quantization keeps rvp9's widened coefficient API
 
 **Where:** `rvp9_core::dsp::aarch64::quantize_neon` fast and zbin kernels,

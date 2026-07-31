@@ -313,8 +313,14 @@ mod tests {
 
     #[test]
     fn dispatch_round_trip() {
-        let neon = SimdDispatch::build(AArch64Caps { neon: true });
-        let scalar = SimdDispatch::build(AArch64Caps { neon: false });
+        let neon = SimdDispatch::build(AArch64Caps {
+            neon: true,
+            dotprod: false,
+        });
+        let scalar = SimdDispatch::build(AArch64Caps {
+            neon: false,
+            dotprod: false,
+        });
         let mut rng = Lcg32(0x0D15_A7C4);
 
         for &(bsize, width, height) in SHAPES {

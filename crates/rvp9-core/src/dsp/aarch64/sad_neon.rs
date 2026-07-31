@@ -216,8 +216,14 @@ mod tests {
 
     #[test]
     fn dispatch_routes_every_shape() {
-        let neon = SimdDispatch::build(AArch64Caps { neon: true });
-        let scalar = SimdDispatch::build(AArch64Caps { neon: false });
+        let neon = SimdDispatch::build(AArch64Caps {
+            neon: true,
+            dotprod: false,
+        });
+        let scalar = SimdDispatch::build(AArch64Caps {
+            neon: false,
+            dotprod: false,
+        });
         for &(bsize, _, _, simd) in SHAPES {
             assert_eq!(neon.sad(bsize) as usize, simd as usize);
             assert_ne!(scalar.sad(bsize) as usize, simd as usize);

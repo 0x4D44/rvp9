@@ -779,7 +779,10 @@ mod tests {
         use crate::dsp::caps::AArch64Caps;
         use crate::dsp::dispatch::{Convolve8OneAxisFn, Convolve8TwoAxisFn};
 
-        let neon = SimdDispatch::build(AArch64Caps { neon: true });
+        let neon = SimdDispatch::build(AArch64Caps {
+            neon: true,
+            dotprod: false,
+        });
         let neon_horiz: Convolve8OneAxisFn = convolve8_horiz_neon;
         let neon_vert: Convolve8OneAxisFn = convolve8_vert_neon;
         let neon_2d: Convolve8TwoAxisFn = convolve8_neon;
@@ -787,7 +790,10 @@ mod tests {
         assert_eq!(neon.convolve8_vert() as usize, neon_vert as usize);
         assert_eq!(neon.convolve8() as usize, neon_2d as usize);
 
-        let scalar = SimdDispatch::build(AArch64Caps { neon: false });
+        let scalar = SimdDispatch::build(AArch64Caps {
+            neon: false,
+            dotprod: false,
+        });
         let scalar_horiz: Convolve8OneAxisFn = convolve8_horiz;
         let scalar_vert: Convolve8OneAxisFn = convolve8_vert;
         let scalar_2d: Convolve8TwoAxisFn = convolve8;
