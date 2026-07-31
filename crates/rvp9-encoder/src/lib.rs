@@ -8818,6 +8818,11 @@ mod tests {
         );
         assert!(active.skip_modecost);
         assert_eq!(
+            (active.lambda_num, active.lambda_den),
+            (3, 2),
+            "Stage 4a's measured natural-content lambda optimum is 1.5x"
+        );
+        assert_eq!(
             inter_rd_calibration_for_mode(RcMode::Vbr, 6, Deadline::Realtime),
             InterRdCalibration::default()
         );
