@@ -388,6 +388,45 @@ fn sad_block(
     }
 }
 
+/// Gather one visible-or-replicated block a row at a time.
+///
+/// Unlike [`clamp_px`], this computes the horizontal edge spans once per
+/// block and the vertical clamp once per row. The middle of every row remains
+/// a contiguous copy from the visible plane.
+fn gather_clamped_block(
+    plane: &PlaneRef<'_>,
+    abs_y: i32,
+    abs_x: i32,
+    width: usize,
+    height: usize,
+    dst: &mut [u8],
+) {
+    debug_assert_eq!(dst.len(), width * height);
+    let plane_width = plane.width as i32;
+    let plane_height = plane.height as i32;
+    let block_width = width as i32;
+    let left = (-abs_x).clamp(0, block_width) as usize;
+    let right = (abs_x + block_width - plane_width).clamp(0, block_width) as usize;
+    let middle = width - left - right;
+    let src_x = abs_x.max(0) as usize;
+
+    for (row_index, dst_row) in dst.chunks_exact_mut(width).enumerate() {
+        let src_y = (abs_y + row_index as i32).clamp(0, plane_height - 1) as usize;
+        let row_start = src_y * plane.stride;
+        let src_row = &plane.data[row_start..row_start + plane.width];
+
+        if left != 0 {
+            dst_row[..left].fill(src_row[0]);
+        }
+        if middle != 0 {
+            dst_row[left..left + middle].copy_from_slice(&src_row[src_x..src_x + middle]);
+        }
+        if right != 0 {
+            dst_row[width - right..].fill(src_row[plane.width - 1]);
+        }
+    }
+}
+
 /// Edge-clamped 2D SAD: gather a `bw×bh` reference block whose top-left
 /// is at absolute `(abs_y, abs_x)` into a contiguous scratch buffer
 /// (clamping every read to the visible-plane border, replicating
@@ -433,11 +472,7 @@ fn sad_block_clamped(
 
     // Scratch holds at most 64×64.
     let mut scratch = [0u8; 64 * 64];
-    for r in 0..bh {
-        for c in 0..bw {
-            scratch[r * bw + c] = clamp_px(ref_plane, abs_y + r as i32, abs_x + c as i32);
-        }
-    }
+    gather_clamped_block(ref_plane, abs_y, abs_x, bw, bh, &mut scratch[..bh * bw]);
     sad_block(bsize, sad_fn, src, src_stride, &scratch[..bh * bw], bw)
 }
 
@@ -692,6 +727,48 @@ pub fn int_pro_motion_estimation(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rowwise_clamped_block_gather_matches_pixel_oracle() {
+        let width = 97usize;
+        let height = 83usize;
+        let stride = 104usize;
+        let mut pixels = vec![0u8; stride * height];
+        for row in 0..height {
+            for col in 0..width {
+                pixels[row * stride + col] = ((row * 37 + col * 19 + (row ^ col) * 7) & 0xff) as u8;
+            }
+        }
+        let plane = PlaneRef {
+            data: &pixels,
+            stride,
+            width,
+            height,
+        };
+
+        for side in [8usize, 16, 32, 64] {
+            let side_i32 = side as i32;
+            for (abs_y, abs_x) in [
+                (-side_i32 - 3, -side_i32 - 5),
+                (-2, 3),
+                (3, -2),
+                (height as i32 - 2, width as i32 - 2),
+                (height as i32 + 2, width as i32 + 3),
+                (7, 11),
+            ] {
+                let mut actual = vec![0xA5; side * side];
+                gather_clamped_block(&plane, abs_y, abs_x, side, side, &mut actual);
+                let mut expected = vec![0; side * side];
+                for row in 0..side {
+                    for col in 0..side {
+                        expected[row * side + col] =
+                            clamp_px(&plane, abs_y + row as i32, abs_x + col as i32);
+                    }
+                }
+                assert_eq!(actual, expected, "side={side} y={abs_y} x={abs_x}");
+            }
+        }
+    }
 
     #[test]
     fn interior_projection_fast_paths_match_clamped_oracles() {

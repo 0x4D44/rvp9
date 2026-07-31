@@ -2808,3 +2808,41 @@ requires the clean-host corpus matrix.
 **Future plan:** retain this picker-only fusion while it stays exact. The
 general transform and emitted-coefficient quantizer APIs remain widened and
 continue to materialize coefficient arrays.
+
+### 2026-07-31 — Edge motion-refinement blocks are gathered by replicated spans
+
+**Where:** `rvp9_core::mv_search::int_pro_me::{
+gather_clamped_block,sad_block_clamped}`, used by the integral-projection
+motion seed's six post-projection SAD probes.
+
+**What libvpx does:** reference frames carry a physically extended replicated
+border, so each SAD probe can pass a direct pointer and stride to its
+architecture-specific SAD kernel even when the logical block crosses a
+visible edge.
+
+**What rvp9 does:** reference planes contain visible pixels only. Interior
+probes still pass a direct plane slice. An edge probe gathers one contiguous
+scratch block, but computes the left and right replicated spans once per
+block, clamps the source row once per output row, copies the visible middle
+span, and fills only the two border spans.
+
+**Why:** physically extending every reference plane would widen storage and
+ownership contracts across the encoder. The previous equivalent gather
+instead clamped both coordinates for every pixel, repeating 4,096 clamp and
+bounds-check operations for each 64x64 edge probe.
+
+**Byte-parity impact:** none. A focused oracle covers 8x8 through 64x64
+blocks, interior spans, partial crossings on every edge, and blocks wholly
+beyond each edge. The cpu-used 7 product stream and all three decoders'
+162,201,600-byte I420 outputs remain byte-identical.
+
+**Compression-efficiency impact:** none; the production stream is unchanged.
+
+**Speed impact:** sixteen warmed one-thread pairs improved paired child CPU
+by `-2.415%`, with sixteen wins. Twenty four-thread pairs improved child CPU
+by `-1.899%`, with nineteen wins; paired wall time improved `-0.669%`, with
+eighteen wins.
+
+**Future plan:** retain the span gather while rvp9 stores visible-only
+references. The scratch array is still zero-initialized before every edge
+gather; removing that write is a separate safety-reviewed and measured unit.
