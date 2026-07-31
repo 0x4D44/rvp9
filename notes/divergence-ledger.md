@@ -2983,26 +2983,26 @@ clean-host corpus matrix.
 The non-fast 32x32 zbin quantizer is separate and should only be vectorized
 if a required configuration profile makes it material.
 
-### 2026-07-31 — AArch64 horizontal interpolation uses a row-at-a-time dot-product kernel
+### 2026-07-31 — AArch64 horizontal interpolation keeps a signed-dot fallback
 
 **Where:** `rvp9_core::dsp::aarch64::convolve8_neon::
-convolve8_horiz_dotprod_inner`, used by the horizontal and separable 2-D
-unscaled eight-tap interpolation paths on dot-product-capable AArch64 hosts.
+convolve8_horiz_{i8mm,dotprod}_inner`, used by the horizontal and separable
+2-D unscaled eight-tap interpolation paths on AArch64 hosts.
 
-**What libvpx does:** `vpx_dsp/arm/vpx_convolve8_neon_dotprod.c` loads four
-source rows at a time, permutes each shared 16-byte load into eight overlapping
-tap windows, and evaluates those windows with four signed dot products.
+**What libvpx does:** `vpx_dsp/arm/vpx_convolve8_neon_i8mm.c` loads four
+source rows at a time, permutes each 16-byte load into eight overlapping tap
+windows, and evaluates them with unsigned-by-signed dot products. It retains
+separate signed-dot and widened-i16 kernels for older AArch64 tiers.
 
-**What rvp9 does:** applies the same range shift, correction term, permutation
-tables, signed dot products, rounding, and saturation to one row at a time.
-The safe wrapper checks the runtime dot-product capability and falls back to
-the existing widened-i16 NEON path for filters containing the full-pel
-coefficient `128`, which cannot be represented as an i8 dot-product tap.
+**What rvp9 does:** uses the same four-row unsigned-by-signed i8mm arithmetic
+when the host supports it. The arbitrary-height tail uses the same kernel one
+row at a time. Older dot-product hosts retain rvp9's row-at-a-time signed-dot
+kernel. Both tiers fall back to widened i16 for filters containing the
+full-pel coefficient `128`, which cannot be represented as an i8 tap.
 
-**Why:** the row-at-a-time loop fits rvp9's existing arbitrary-height safe
-API without adding libvpx's four-row height contract. It still collapses eight
-overlapping loads and sixteen multiply-accumulates per output group into one
-shared load, three table permutations, and four dot products.
+**Why:** matching libvpx's i8mm arithmetic closes the measured kernel gap on
+modern AArch64 without dropping rvp9's arbitrary-height safe API or its older
+hardware fallback.
 
 **Byte-parity impact:** none. All supported block shapes and every phase of
 the four VP9 filter families match the scalar oracle. The 120-frame cpu-used 7
@@ -3011,14 +3011,15 @@ ffmpeg produce identical I420 output.
 
 **Compression-efficiency impact:** none; the production stream is unchanged.
 
-**Speed impact:** sixteen warmed alternating one-thread pairs improved child
-CPU by `-3.007%` with sixteen wins. Twenty four-thread pairs improved child
-CPU by `-2.665%` with twenty wins; paired wall time improved `-1.958%` with
-nineteen wins.
+**Speed impact:** the original signed-dot unit improved four-thread child CPU
+by `-2.665%`. The later i8mm tier matches pinned libvpx's horizontal
+microkernel at 16x16 (`19.08 ns` versus `19.28 ns`) and 64x64 (`303.12 ns`
+versus `304.62 ns`). Three twenty-pair four-thread product trials improve
+total child CPU by `-0.455%`, `-0.610%`, and `-0.822%`.
 
-**Future plan:** retain the row-at-a-time kernel while it remains byte-exact.
-Treat vertical dot-product interpolation and an i8mm horizontal kernel as
-separate measured units.
+**Future plan:** retain all three runtime tiers while their scalar
+differential and exact-stream checks remain green. Treat the still
+reload-based vertical i8mm kernel as a separate measured unit.
 
 ### 2026-07-31 — AArch64 vertical interpolation reloads four-row dot-product windows
 

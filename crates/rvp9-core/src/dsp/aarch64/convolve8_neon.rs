@@ -64,6 +64,48 @@ unsafe fn dot_lane<const LANE: usize>(
 }
 
 #[inline]
+#[target_feature(enable = "i8mm")]
+unsafe fn unsigned_dot_lane<const LANE: usize>(
+    mut sum: int32x4_t,
+    samples: uint8x16_t,
+    filters: int8x16_t,
+) -> int32x4_t {
+    // SAFETY: `i8mm` is enabled for this function, every operand uses the
+    // matching 128-bit SIMD register class, and `LANE` is instantiated only
+    // as 0 or 1 below.
+    unsafe {
+        asm!(
+            "usdot {sum:v}.4s, {samples:v}.16b, {filters:v}.4b[{lane}]",
+            sum = inout(vreg) sum,
+            samples = in(vreg) samples,
+            filters = in(vreg) filters,
+            lane = const LANE,
+            options(pure, nomem, nostack),
+        );
+    }
+    sum
+}
+
+#[inline]
+#[target_feature(enable = "i8mm")]
+unsafe fn filter_eight_i8mm(
+    samples: uint8x16_t,
+    filters: int8x16_t,
+    permute_0: uint8x16_t,
+    permute_1: uint8x16_t,
+    permute_2: uint8x16_t,
+) -> uint8x8_t {
+    let p0 = vqtbl1q_u8(samples, permute_0);
+    let p1 = vqtbl1q_u8(samples, permute_1);
+    let p2 = vqtbl1q_u8(samples, permute_2);
+    let sum0 = unsigned_dot_lane::<0>(vdupq_n_s32(0), p0, filters);
+    let sum0 = unsigned_dot_lane::<1>(sum0, p1, filters);
+    let sum1 = unsigned_dot_lane::<0>(vdupq_n_s32(0), p1, filters);
+    let sum1 = unsigned_dot_lane::<1>(sum1, p2, filters);
+    vqrshrun_n_s16::<7>(vcombine_s16(vqmovn_s32(sum0), vqmovn_s32(sum1)))
+}
+
+#[inline]
 #[target_feature(enable = "dotprod")]
 unsafe fn filter_eight_dotprod(
     samples: uint8x16_t,
@@ -112,6 +154,83 @@ unsafe fn filter_four_rows_dotprod(
     let sum_hi = dot_lane::<0>(correction, first_hi, filters);
     let sum_hi = dot_lane::<1>(sum_hi, second_hi, filters);
     vqrshrun_n_s16::<7>(vcombine_s16(vqmovn_s32(sum_lo), vqmovn_s32(sum_hi)))
+}
+
+#[target_feature(enable = "i8mm")]
+unsafe fn convolve8_horiz_i8mm_inner(
+    src: *const u8,
+    src_stride: usize,
+    dst: *mut u8,
+    dst_stride: usize,
+    filter: &[i16; 8],
+    w: usize,
+    h: usize,
+) {
+    let filters8 = vmovn_s16(vld1q_s16(filter.as_ptr()));
+    let filters = vcombine_s8(filters8, filters8);
+    let permute_0 = vld1q_u8(DOTPROD_PERMUTE.as_ptr());
+    let permute_1 = vld1q_u8(DOTPROD_PERMUTE.as_ptr().add(16));
+    let permute_2 = vld1q_u8(DOTPROD_PERMUTE.as_ptr().add(32));
+    let vector_h = h & !3;
+
+    for y in (0..vector_h).step_by(4) {
+        let src_0 = src.add(y * src_stride);
+        let src_1 = src_0.add(src_stride);
+        let src_2 = src_1.add(src_stride);
+        let src_3 = src_2.add(src_stride);
+        let dst_0 = dst.add(y * dst_stride);
+        let dst_1 = dst_0.add(dst_stride);
+        let dst_2 = dst_1.add(dst_stride);
+        let dst_3 = dst_2.add(dst_stride);
+        for x in (0..w).step_by(8) {
+            let d0 = filter_eight_i8mm(
+                vld1q_u8(src_0.add(x)),
+                filters,
+                permute_0,
+                permute_1,
+                permute_2,
+            );
+            let d1 = filter_eight_i8mm(
+                vld1q_u8(src_1.add(x)),
+                filters,
+                permute_0,
+                permute_1,
+                permute_2,
+            );
+            let d2 = filter_eight_i8mm(
+                vld1q_u8(src_2.add(x)),
+                filters,
+                permute_0,
+                permute_1,
+                permute_2,
+            );
+            let d3 = filter_eight_i8mm(
+                vld1q_u8(src_3.add(x)),
+                filters,
+                permute_0,
+                permute_1,
+                permute_2,
+            );
+            vst1_u8(dst_0.add(x), d0);
+            vst1_u8(dst_1.add(x), d1);
+            vst1_u8(dst_2.add(x), d2);
+            vst1_u8(dst_3.add(x), d3);
+        }
+    }
+    for y in vector_h..h {
+        let src_row = src.add(y * src_stride);
+        let dst_row = dst.add(y * dst_stride);
+        for x in (0..w).step_by(8) {
+            let value = filter_eight_i8mm(
+                vld1q_u8(src_row.add(x)),
+                filters,
+                permute_0,
+                permute_1,
+                permute_2,
+            );
+            vst1_u8(dst_row.add(x), value);
+        }
+    }
 }
 
 #[target_feature(enable = "dotprod")]
@@ -272,9 +391,18 @@ pub fn convolve8_horiz_neon(
     // eight-byte store is in-bounds.
     // SimdDispatch installs this wrapper only on NEON-capable AArch64 hosts.
     unsafe {
-        if std::arch::is_aarch64_feature_detected!("dotprod")
-            && filter.iter().all(|&tap| i8::try_from(tap).is_ok())
-        {
+        let narrow_filter = filter.iter().all(|&tap| i8::try_from(tap).is_ok());
+        if std::arch::is_aarch64_feature_detected!("i8mm") && narrow_filter {
+            convolve8_horiz_i8mm_inner(
+                src.as_ptr(),
+                src_stride,
+                dst.as_mut_ptr(),
+                dst_stride,
+                filter,
+                simd_w,
+                h,
+            );
+        } else if std::arch::is_aarch64_feature_detected!("dotprod") && narrow_filter {
             convolve8_horiz_dotprod_inner(
                 src.as_ptr(),
                 src_stride,

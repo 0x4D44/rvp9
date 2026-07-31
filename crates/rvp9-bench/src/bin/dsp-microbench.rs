@@ -889,26 +889,16 @@ fn bench_conv_case(case: ConvCase<'_>) {
     let filt = &EIGHTTAP_KERNEL[8];
     let mut dst = vec![0u8; 64 * 64];
 
-    let do_conv = |dst: &mut [u8]| {
-        #[cfg(target_arch = "x86_64")]
-        {
-            use rvp9_core::dsp::x86_64::{
-                convolve8_avx2, convolve8_horiz_avx2, convolve8_vert_avx2,
-            };
-            match mode {
-                1 => convolve8_horiz_avx2(&src_buf, src_stride, dst, dst_stride, filt, w, h),
-                2 => convolve8_vert_avx2(&src_buf, src_stride, dst, dst_stride, filt, w, h),
-                _ => convolve8_avx2(&src_buf, src_stride, dst, dst_stride, filt, filt, w, h),
-            }
+    let dsp = rvp9_core::dsp::get_ref();
+    let do_conv = |dst: &mut [u8]| match mode {
+        1 => {
+            (dsp.convolve8_horiz())(&src_buf, src_stride, dst, dst_stride, filt, w, h);
         }
-        #[cfg(not(target_arch = "x86_64"))]
-        {
-            use rvp9_core::inter::filter::{convolve8, convolve8_horiz, convolve8_vert};
-            match mode {
-                1 => convolve8_horiz(&src_buf, src_stride, dst, dst_stride, filt, w, h),
-                2 => convolve8_vert(&src_buf, src_stride, dst, dst_stride, filt, w, h),
-                _ => convolve8(&src_buf, src_stride, dst, dst_stride, filt, filt, w, h),
-            }
+        2 => {
+            (dsp.convolve8_vert())(&src_buf, src_stride, dst, dst_stride, filt, w, h);
+        }
+        _ => {
+            (dsp.convolve8())(&src_buf, src_stride, dst, dst_stride, filt, filt, w, h);
         }
     };
 
