@@ -1,4 +1,4 @@
-//! AArch64 NEON 16x16 and 32x32 forward DCTs.
+//! AArch64 NEON 8x8, 16x16, and 32x32 forward DCTs.
 //!
 //! The 16x16 and 32x32 first passes apply the scalar VP9 schedules to eight
 //! i16 lanes. Their second passes retain bounded opening stages before
@@ -652,6 +652,70 @@ unsafe fn transpose8(mut rows: [V16; 8]) -> [V16; 8] {
 }
 
 #[inline(always)]
+unsafe fn fdct8x8_pass(input: [V16; 8]) -> [V16; 8] {
+    let s0 = add16(input[0], input[7]);
+    let s1 = add16(input[1], input[6]);
+    let s2 = add16(input[2], input[5]);
+    let s3 = add16(input[3], input[4]);
+    let s4 = sub16(input[3], input[4]);
+    let s5 = sub16(input[2], input[5]);
+    let s6 = sub16(input[1], input[6]);
+    let s7 = sub16(input[0], input[7]);
+
+    let x0 = add16(s0, s3);
+    let x1 = add16(s1, s2);
+    let x2 = sub16(s1, s2);
+    let x3 = sub16(s0, s3);
+    let mut output = [vdupq_n_s16(0); 8];
+    output[0] = mul_round16(add16(x0, x1), COSPI_16_64);
+    output[2] = mul_add_round16(x3, COSPI_8_64, x2, COSPI_24_64);
+    output[4] = mul_round16(sub16(x0, x1), COSPI_16_64);
+    output[6] = mul_add_round16(x3, COSPI_24_64, x2, -COSPI_8_64);
+
+    let t2 = mul_round16(sub16(s6, s5), COSPI_16_64);
+    let t3 = mul_round16(add16(s6, s5), COSPI_16_64);
+    let x0 = add16(s4, t2);
+    let x1 = sub16(s4, t2);
+    let x2 = sub16(s7, t3);
+    let x3 = add16(s7, t3);
+    output[1] = mul_add_round16(x0, COSPI_28_64, x3, COSPI_4_64);
+    output[3] = mul_add_round16(x2, COSPI_12_64, x1, -COSPI_20_64);
+    output[5] = mul_add_round16(x1, COSPI_12_64, x2, COSPI_20_64);
+    output[7] = mul_add_round16(x3, COSPI_28_64, x0, -COSPI_4_64);
+    transpose8(output)
+}
+
+#[target_feature(enable = "neon")]
+unsafe fn fdct8x8_inner(input: *const i16, output: *mut i32, stride: usize) -> bool {
+    let mut rows = [vdupq_n_s16(0); 8];
+    for (row, values) in rows.iter_mut().enumerate() {
+        *values = vshlq_n_s16::<2>(vld1q_s16(input.add(row * stride)));
+    }
+    rows = fdct8x8_pass(rows);
+    let max_abs = rows.iter().fold(vdupq_n_s16(0), |maximum, &values| {
+        vmaxq_s16(maximum, vqabsq_s16(values))
+    });
+    if vmaxvq_s16(max_abs) > 4095 {
+        // The second pass can add as many as eight input magnitudes before
+        // narrowing. Keep those rare high-energy blocks on the i32 scalar
+        // path rather than accepting the non-HBD libvpx kernel's i16 wrap.
+        return false;
+    }
+    rows = fdct8x8_pass(rows);
+
+    for (row, values) in rows.into_iter().enumerate() {
+        // C integer division truncates toward zero. For negative values,
+        // subtracting the -1 sign before the halving shift implements it.
+        let sign = vshrq_n_s16::<15>(values);
+        let reduced = vhsubq_s16(values, sign);
+        let destination = output.add(row * 8);
+        vst1q_s32(destination, vmovl_s16(vget_low_s16(reduced)));
+        vst1q_s32(destination.add(4), vmovl_high_s16(reduced));
+    }
+    true
+}
+
+#[inline(always)]
 unsafe fn pass0_round16(value: V16) -> V16 {
     let one = vdupq_n_s16(1);
     let positive = vreinterpretq_s16_u16(vshrq_n_u16::<15>(vcgtq_s16(value, vdupq_n_s16(0))));
@@ -882,6 +946,16 @@ pub(super) fn fdct16x16(input: &[i16], output: &mut [i32; 256], stride: usize) {
     // SAFETY: The bounds above prove every 4-value input load. `output`
     // provides all 256 destinations, and NEON is mandatory on AArch64.
     unsafe { fdct16x16_inner(input.as_ptr(), output.as_mut_ptr(), stride) };
+}
+
+pub(super) fn fdct8x8(input: &[i16], output: &mut [i32; 64], stride: usize) {
+    assert!(stride >= 8);
+    assert!(input.len() >= 7 * stride + 8);
+    // SAFETY: The bounds above prove every eight-value input load. `output`
+    // provides all 64 destinations, and NEON is mandatory on AArch64.
+    if !unsafe { fdct8x8_inner(input.as_ptr(), output.as_mut_ptr(), stride) } {
+        super::fdct8x8_scalar(input, output, stride);
+    }
 }
 
 pub(super) fn fdct32x32(input: &[i16], output: &mut [i32; 1024], stride: usize) {

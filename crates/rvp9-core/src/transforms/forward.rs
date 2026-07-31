@@ -416,7 +416,7 @@ pub fn fadst8(input: &[i32; 8], output: &mut [i32; 8]) {
 /// which is semantically identical to `/ 2` for `i32`.
 ///
 /// Mirrors libvpx `vpx_fdct8x8_c` (`vpx_dsp/fwd_txfm.c:90-172`).
-pub fn fdct8x8(input: &[i16], output: &mut [i32; 64], stride: usize) {
+fn fdct8x8_scalar(input: &[i16], output: &mut [i32; 64], stride: usize) {
     debug_assert!(
         input.len() >= 7 * stride + 8,
         "input slice too small for 8x8 at stride {stride}"
@@ -455,6 +455,19 @@ pub fn fdct8x8(input: &[i16], output: &mut [i32; 64], stride: usize) {
     // Final reduction: `output /= 2` (truncation toward zero).
     for slot in output.iter_mut() {
         *slot = wraplow(*slot / 2);
+    }
+}
+
+/// Dispatch the 8x8 forward DCT to the exact AArch64 vector kernel when
+/// available, retaining [`fdct8x8_scalar`] as the portable oracle.
+pub fn fdct8x8(input: &[i16], output: &mut [i32; 64], stride: usize) {
+    #[cfg(target_arch = "aarch64")]
+    {
+        neon::fdct8x8(input, output, stride);
+    }
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        fdct8x8_scalar(input, output, stride);
     }
 }
 
@@ -2202,6 +2215,49 @@ mod tests {
         for (k, (&t, &w)) in out_tight.iter().zip(out_wide.iter()).enumerate() {
             assert_eq!(t, w, "pos {k}");
         }
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    #[test]
+    fn fdct8x8_neon_matches_scalar_valid_residuals() {
+        let mut state = 0x8d31_e74a_25c6_09bf_u64;
+        for case in 0..256 {
+            let stride = 8 + case % 17;
+            let mut residual = vec![0i16; 7 * stride + 8];
+            for row in 0..8 {
+                for column in 0..8 {
+                    state = state
+                        .wrapping_mul(6_364_136_223_846_793_005)
+                        .wrapping_add(1_442_695_040_888_963_407);
+                    residual[row * stride + column] = (((state >> 32) % 511) as i16) - 255;
+                }
+            }
+            let mut scalar = [0i32; 64];
+            let mut vector = [0i32; 64];
+            fdct8x8_scalar(&residual, &mut scalar, stride);
+            neon::fdct8x8(&residual, &mut vector, stride);
+            assert_eq!(
+                vector, scalar,
+                "random residual case {case}, stride {stride}"
+            );
+        }
+
+        for &value in &[-255i16, 0, 255] {
+            let residual = [value; 64];
+            let mut scalar = [0i32; 64];
+            let mut vector = [0i32; 64];
+            fdct8x8_scalar(&residual, &mut scalar, 8);
+            neon::fdct8x8(&residual, &mut vector, 8);
+            assert_eq!(vector, scalar, "constant residual {value}");
+        }
+
+        let alternating: [i16; 64] =
+            std::array::from_fn(|index| if index & 1 == 0 { -255 } else { 255 });
+        let mut scalar = [0i32; 64];
+        let mut vector = [0i32; 64];
+        fdct8x8_scalar(&alternating, &mut scalar, 8);
+        neon::fdct8x8(&alternating, &mut vector, 8);
+        assert_eq!(vector, scalar, "alternating residual extremes");
     }
 
     #[cfg(target_arch = "aarch64")]
