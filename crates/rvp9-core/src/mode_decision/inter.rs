@@ -3750,7 +3750,6 @@ fn reconstruct_via_round_trip(
     let mut coefs = [0i32; 1024];
     let mut qcoeff = [0i16; 1024];
     let mut dqcoeff = [0i16; 1024];
-    let mut tx_recon = [0u8; 32 * 32];
 
     // Hadamard + quantize_fp scratch for block_yrd rate/dist (Phase 4c).
     // The Hadamard transform produces i16; vp9_quantize_fp needs i32 input.
@@ -3905,42 +3904,36 @@ fn reconstruct_via_round_trip(
             by_dist =
                 by_dist.saturating_add(block_error_fp_i32(&had_coeff[..n], &had_dqcoeff[..n]) >> 2);
 
-            // 4. Reconstruct tile: tx_recon = pred + idct(dq).
-            for r in 0..tx_side {
-                for c in 0..tx_side {
-                    tx_recon[r * tx_side + c] = pred[(off_y + r) * bw + (off_x + c)];
-                }
-            }
+            // 4. Reconstruct directly into the caller's prediction-initialised
+            // block. The inverse kernels accept an arbitrary destination
+            // stride, so a 32x32 tile inside a 64x64 block does not need a
+            // contiguous staging buffer or a copy back into `recon`.
             if eob > 0 {
-                let mut dq32 = [0i32; 1024];
-                for (i, &v) in dqcoeff[..n].iter().enumerate() {
-                    dq32[i] = v as i32;
-                }
+                let recon_start = off_y * bw + off_x;
                 match tx_size {
                     TxSize::Tx8x8 => {
                         let mut buf = [0i32; 64];
-                        buf.copy_from_slice(&dq32[..64]);
+                        for (dst, &src) in buf.iter_mut().zip(&dqcoeff[..64]) {
+                            *dst = i32::from(src);
+                        }
                         // TODO(G4.2): route through SimdDispatch::idct8x8_add() once mode_decision threads &SimdDispatch.
-                        idct8x8_64_add(&buf, &mut tx_recon[..64], tx_side);
+                        idct8x8_64_add(&buf, &mut recon[recon_start..], bw);
                     }
                     TxSize::Tx16x16 => {
                         let mut buf = [0i32; 256];
-                        buf.copy_from_slice(&dq32[..256]);
-                        idct16x16_256_add(&buf, &mut tx_recon[..256], tx_side);
+                        for (dst, &src) in buf.iter_mut().zip(&dqcoeff[..256]) {
+                            *dst = i32::from(src);
+                        }
+                        idct16x16_256_add(&buf, &mut recon[recon_start..], bw);
                     }
                     TxSize::Tx32x32 => {
                         let mut buf = [0i32; 1024];
-                        buf.copy_from_slice(&dq32[..1024]);
-                        idct32x32_1024_add(&buf, &mut tx_recon[..1024], tx_side);
+                        for (dst, &src) in buf.iter_mut().zip(&dqcoeff[..1024]) {
+                            *dst = i32::from(src);
+                        }
+                        idct32x32_1024_add(&buf, &mut recon[recon_start..], bw);
                     }
                     TxSize::Tx4x4 => unreachable!(),
-                }
-            }
-
-            // 5. Copy the tile back into `recon` at the right offset.
-            for r in 0..tx_side {
-                for c in 0..tx_side {
-                    recon[(off_y + r) * bw + (off_x + c)] = tx_recon[r * tx_side + c];
                 }
             }
         }
