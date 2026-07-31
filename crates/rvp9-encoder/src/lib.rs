@@ -2348,9 +2348,38 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
 /// `ModeInfo` into the grid right after picking, so all neighbour
 /// positions queried by `find_mv_refs` resolve to either already-picked
 /// cells or out-of-frame `None`).
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+struct InterPickerMiGridLayout {
+    mi_col_start: usize,
+    mi_cols: usize,
+}
+
+impl InterPickerMiGridLayout {
+    fn new(mi_col_start: usize, mi_cols: usize) -> Self {
+        Self {
+            mi_col_start,
+            mi_cols,
+        }
+    }
+
+    fn index(self, mi_row: usize, mi_col: usize) -> Option<usize> {
+        let local_col = mi_col.checked_sub(self.mi_col_start)?;
+        (local_col < self.mi_cols).then_some(mi_row * self.mi_cols + local_col)
+    }
+
+    fn get(
+        self,
+        mi_grid: &[Option<rvp9_core::mode_info::ModeInfo>],
+        mi_row: usize,
+        mi_col: usize,
+    ) -> Option<&rvp9_core::mode_info::ModeInfo> {
+        mi_grid.get(self.index(mi_row, mi_col)?)?.as_ref()
+    }
+}
+
 struct InterPickerMiGridLookup<'a> {
     mi_grid: &'a [Option<rvp9_core::mode_info::ModeInfo>],
-    mi_cols: usize,
+    layout: InterPickerMiGridLayout,
     base_mi_row: i32,
     base_mi_col: i32,
     tile_bounds: ModesTileBounds,
@@ -2359,14 +2388,14 @@ struct InterPickerMiGridLookup<'a> {
 impl<'a> InterPickerMiGridLookup<'a> {
     fn new(
         mi_grid: &'a [Option<rvp9_core::mode_info::ModeInfo>],
-        mi_cols: usize,
+        layout: InterPickerMiGridLayout,
         base_mi_row: usize,
         base_mi_col: usize,
         tile_bounds: ModesTileBounds,
     ) -> Self {
         Self {
             mi_grid,
-            mi_cols,
+            layout,
             base_mi_row: base_mi_row as i32,
             base_mi_col: base_mi_col as i32,
             tile_bounds,
@@ -2388,8 +2417,7 @@ impl rvp9_core::inter::mv_ref::NeighbourLookup for InterPickerMiGridLookup<'_> {
         {
             return None;
         }
-        let idx = (row as usize) * self.mi_cols + (col as usize);
-        self.mi_grid.get(idx)?.as_ref()
+        self.layout.get(self.mi_grid, row as usize, col as usize)
     }
 }
 
@@ -2401,7 +2429,7 @@ impl rvp9_core::inter::mv_ref::NeighbourLookup for InterPickerMiGridLookup<'_> {
 #[allow(clippy::too_many_arguments)]
 fn splat_inter_leaf_into_mi_grid(
     mi_grid: &mut [Option<rvp9_core::mode_info::ModeInfo>],
-    mi_cols: usize,
+    layout: InterPickerMiGridLayout,
     leaf_mi_row: usize,
     leaf_mi_col: usize,
     leaf_bsize: BlockSize,
@@ -2451,7 +2479,10 @@ fn splat_inter_leaf_into_mi_grid(
         for dc in 0..n_8x8_wide {
             let mi_row = leaf_mi_row + dr;
             let mi_col = leaf_mi_col + dc;
-            mi_grid[mi_row * mi_cols + mi_col] = Some(cell);
+            let idx = layout
+                .index(mi_row, mi_col)
+                .expect("inter leaf must stay inside its causal MI grid");
+            mi_grid[idx] = Some(cell);
         }
     }
 }
@@ -3597,8 +3628,16 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         tile_bounds_by_col.len(),
         "one adaptive RD-threshold table is required per column tile",
     );
+    let mi_grid_layout = if let Some(tile_col) = active_tile_col {
+        let bounds = tile_bounds_by_col
+            .get(tile_col)
+            .expect("active tile column must have frame bounds");
+        InterPickerMiGridLayout::new(bounds.mi_col_start, bounds.mi_col_end - bounds.mi_col_start)
+    } else {
+        InterPickerMiGridLayout::new(0, mi_cols_us)
+    };
     let mut mi_grid: Vec<Option<rvp9_core::mode_info::ModeInfo>> =
-        vec![None; mi_rows_us * mi_cols_us];
+        vec![None; mi_rows_us * mi_grid_layout.mi_cols];
     let sign_bias = sign_bias_from_header(&[false, false, altref_available]);
 
     let rt_profile_enabled = std::env::var_os("RVP9_RT_PROFILE").is_some();
@@ -4256,7 +4295,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     );
                     let neighbours = InterPickerMiGridLookup::new(
                         mi_grid_ro,
-                        mi_cols_us,
+                        mi_grid_layout,
                         leaf_mi_row,
                         leaf_mi_col,
                         current_tile,
@@ -4361,12 +4400,12 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
 
                     // Neighbour mi-grid context predicates.
                     let nb_above = if leaf_mi_row > 0 {
-                        mi_grid_ro[(leaf_mi_row - 1) * mi_cols_us + leaf_mi_col].as_ref()
+                        mi_grid_layout.get(mi_grid_ro, leaf_mi_row - 1, leaf_mi_col)
                     } else {
                         None
                     };
                     let nb_left = if leaf_mi_col > current_tile.mi_col_start {
-                        mi_grid_ro[leaf_mi_row * mi_cols_us + (leaf_mi_col - 1)].as_ref()
+                        mi_grid_layout.get(mi_grid_ro, leaf_mi_row, leaf_mi_col - 1)
                     } else {
                         None
                     };
@@ -4942,7 +4981,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     }
                     splat_inter_leaf_into_mi_grid(
                         &mut mi_grid,
-                        mi_cols_us,
+                        mi_grid_layout,
                         leaf_mi_row,
                         leaf_mi_col,
                         leaf_bsize,
@@ -5073,7 +5112,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     }
                     splat_inter_leaf_into_mi_grid(
                         &mut mi_grid,
-                        mi_cols_us,
+                        mi_grid_layout,
                         leaf_mi_row,
                         leaf_mi_col,
                         leaf_bsize,
@@ -5126,7 +5165,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 );
                 let neighbours = InterPickerMiGridLookup::new(
                     &mi_grid,
-                    mi_cols_us,
+                    mi_grid_layout,
                     leaf_mi_row,
                     leaf_mi_col,
                     current_tile,
@@ -5312,12 +5351,12 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 // G2 — switchable-filter context from above/left
                 // neighbours in the in-progress mi_grid.
                 let nb_above = if leaf_mi_row > 0 {
-                    mi_grid[(leaf_mi_row - 1) * mi_cols_us + leaf_mi_col].as_ref()
+                    mi_grid_layout.get(&mi_grid, leaf_mi_row - 1, leaf_mi_col)
                 } else {
                     None
                 };
                 let nb_left = if leaf_mi_col > current_tile.mi_col_start {
-                    mi_grid[leaf_mi_row * mi_cols_us + (leaf_mi_col - 1)].as_ref()
+                    mi_grid_layout.get(&mi_grid, leaf_mi_row, leaf_mi_col - 1)
                 } else {
                     None
                 };
@@ -7062,7 +7101,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 // ref-aware).
                 splat_inter_leaf_into_mi_grid(
                     &mut mi_grid,
-                    mi_cols_us,
+                    mi_grid_layout,
                     leaf_mi_row,
                     leaf_mi_col,
                     leaf_bsize,
@@ -8951,7 +8990,7 @@ mod tests {
         let mut grid = vec![None; 8 * 8];
         splat_inter_leaf_into_mi_grid(
             &mut grid,
-            8,
+            InterPickerMiGridLayout::new(0, 8),
             0,
             0,
             BlockSize::Block16x16,
@@ -8974,6 +9013,60 @@ mod tests {
                 }
             ));
         }
+    }
+
+    #[test]
+    fn tile_local_causal_grid_matches_full_grid_lookup_and_splat() {
+        use rvp9_core::inter::mv_ref::{NeighbourLookup, Position};
+
+        const MI_ROWS: usize = 4;
+        const MI_COLS: usize = 64;
+        let tile = tile_bounds(MI_ROWS, MI_COLS, 0, 2, 0, 2);
+        let local_layout =
+            InterPickerMiGridLayout::new(tile.mi_col_start, tile.mi_col_end - tile.mi_col_start);
+        let full_layout = InterPickerMiGridLayout::new(0, MI_COLS);
+        let mut local_grid = vec![None; MI_ROWS * local_layout.mi_cols];
+        let mut full_grid = vec![None; MI_ROWS * MI_COLS];
+
+        for (grid, layout) in [
+            (&mut local_grid[..], local_layout),
+            (&mut full_grid[..], full_layout),
+        ] {
+            splat_inter_leaf_into_mi_grid(
+                grid,
+                layout,
+                0,
+                tile.mi_col_start,
+                BlockSize::Block16x16,
+                InterMode::NewMv,
+                Mv { row: 8, col: -16 },
+                0,
+                false,
+                RefFrame::LastFrame,
+                None,
+                InterpFilter::EightTap,
+            );
+        }
+
+        let local_lookup =
+            InterPickerMiGridLookup::new(&local_grid, local_layout, 1, tile.mi_col_start + 1, tile);
+        let full_lookup =
+            InterPickerMiGridLookup::new(&full_grid, full_layout, 1, tile.mi_col_start + 1, tile);
+        for position in [
+            Position { row: -1, col: 0 },
+            Position { row: 0, col: -1 },
+            Position { row: 0, col: 0 },
+        ] {
+            assert_eq!(local_lookup.get(position), full_lookup.get(position));
+        }
+        assert_eq!(local_grid.len() * 4, full_grid.len());
+
+        let tile_edge_lookup =
+            InterPickerMiGridLookup::new(&local_grid, local_layout, 0, tile.mi_col_start, tile);
+        assert!(
+            tile_edge_lookup.get(Position { row: 0, col: -1 }).is_none(),
+            "tile-local storage must preserve the VP9 tile-edge barrier"
+        );
     }
 
     #[test]
