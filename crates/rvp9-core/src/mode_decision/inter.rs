@@ -339,11 +339,12 @@ impl InterRdCalibration {
         }
     }
 
-    /// Stage 4a one-pass VBR recovery policy.
+    /// Stage 4a one-pass VBR policy. The skip-side `<< 4` matches
+    /// libvpx's `block_yrd` rescale before the skip-vs-encode RD test.
     pub const fn stage4a_vbr() -> Self {
         Self {
             s3_domain: true,
-            s3_skip_shift: 2,
+            s3_skip_shift: 4,
             skip_modecost: true,
         }
     }

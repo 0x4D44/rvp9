@@ -8809,10 +8809,14 @@ mod tests {
         use rvp9_core::mode_decision::inter::InterRdCalibration;
         use rvp9_core::mode_decision::speed_features::Deadline;
 
+        let active = inter_rd_calibration_for_mode(RcMode::Vbr, 7, Deadline::Realtime);
+        assert_eq!(active, InterRdCalibration::stage4a_vbr());
+        assert!(active.s3_domain);
         assert_eq!(
-            inter_rd_calibration_for_mode(RcMode::Vbr, 7, Deadline::Realtime),
-            InterRdCalibration::stage4a_vbr()
+            active.s3_skip_shift, 4,
+            "libvpx block_yrd compares against prediction SSE << 4"
         );
+        assert!(active.skip_modecost);
         assert_eq!(
             inter_rd_calibration_for_mode(RcMode::Vbr, 6, Deadline::Realtime),
             InterRdCalibration::default()
