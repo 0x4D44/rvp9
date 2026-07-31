@@ -27,6 +27,10 @@ pub(crate) struct TraceFlags {
     pub debug_refcoefs: Option<String>,
     /// `RVP9_DEBUG_SCAN_WRITE=1` — M.17 scan-write trace for Tx8x8.
     pub debug_scan_write: bool,
+    /// `RVP9_DIAG_EVAL_FULL` — full picker-candidate sample dump.
+    pub diag_eval_full: bool,
+    /// `RVP9_DIAG_EVAL` — compact picker-candidate sample dump.
+    pub diag_eval: bool,
 }
 
 impl TraceFlags {
@@ -35,6 +39,8 @@ impl TraceFlags {
             intra: std::env::var("RVP9_TRACE_INTRA").ok(),
             debug_refcoefs: std::env::var("RVP9_DEBUG_REFCOEFS").ok(),
             debug_scan_write: std::env::var("RVP9_DEBUG_SCAN_WRITE").is_ok_and(|v| v == "1"),
+            diag_eval_full: std::env::var_os("RVP9_DIAG_EVAL_FULL").is_some(),
+            diag_eval: std::env::var_os("RVP9_DIAG_EVAL").is_some(),
         }
     }
 }

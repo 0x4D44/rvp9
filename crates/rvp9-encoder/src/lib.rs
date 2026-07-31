@@ -3372,6 +3372,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     let mut diag_golden_picks: usize = 0;
     let mut diag_last_picks: usize = 0;
     let diag_golden_enabled = std::env::var("RVP9_DIAG_GOLDEN_PICKS").is_ok();
+    // This diagnostic gate is consulted several times per leaf. Snapshot it
+    // once per tile job instead of entering the process environment lock in
+    // the mode-decision hot path.
+    let diag_picker_enabled = std::env::var_os("RVP9_DIAG_PICKER").is_some();
 
     // E3 (2026-05-22) — NEWMV diagnosis. Env-gated (`RVP9_E3_MVDIAG`).
     // For every picker-supported leaf we compute the LAST-ref
@@ -4817,7 +4821,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         /* picked_interp_filter = */
                         rvp9_core::bitstream::frame::InterpFilter::EightTap,
                     );
-                    if std::env::var("RVP9_DIAG_PICKER").is_ok() {
+                    if diag_picker_enabled {
                         #[allow(clippy::print_stderr)]
                         {
                             eprintln!(
@@ -6040,7 +6044,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
 
                 // A0 diagnostic: dump per-leaf picker decision when
                 // `RVP9_DIAG_PICKER` is set in the environment.
-                if std::env::var("RVP9_DIAG_PICKER").is_ok() {
+                if diag_picker_enabled {
                     #[allow(clippy::print_stderr)]
                     {
                         eprintln!(
@@ -6733,7 +6737,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         );
                     }
                 }
-                if std::env::var("RVP9_DIAG_PICKER").is_ok() {
+                if diag_picker_enabled {
                     #[allow(clippy::print_stderr)]
                     {
                         eprintln!(

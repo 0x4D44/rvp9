@@ -260,8 +260,11 @@ fn s2_acdc_roundtrip_enabled() -> bool {
 /// winner still runs the normal DCT/reconstruction path.
 #[inline]
 fn picker_hadamard_only_enabled(calibration: InterRdCalibration) -> bool {
-    std::env::var_os("RVP9_PICKER_HADAMARD_ONLY")
-        .map_or(calibration.hadamard_only, |value| value != "0")
+    use std::sync::OnceLock;
+    static OVERRIDE: OnceLock<Option<bool>> = OnceLock::new();
+    OVERRIDE
+        .get_or_init(|| std::env::var_os("RVP9_PICKER_HADAMARD_ONLY").map(|value| value != "0"))
+        .unwrap_or(calibration.hadamard_only)
 }
 
 /// LA (Track A6, 2026-05-30) — HF-gated natural-content lambda calibration.
@@ -2957,7 +2960,9 @@ fn run_newmv_search(params: &InterModeSearchParams<'_>) -> Mv {
 /// per-block filter bits go on the wire; the picker's RD comparison
 /// decides per-block which filter wins.
 fn f5_filter_search_set() -> &'static [InterpFilter] {
-    if std::env::var_os("RVP9_RT_EIGHTTAP_ONLY").is_some() {
+    use std::sync::OnceLock;
+    static EIGHTTAP_ONLY: OnceLock<bool> = OnceLock::new();
+    if *EIGHTTAP_ONLY.get_or_init(|| std::env::var_os("RVP9_RT_EIGHTTAP_ONLY").is_some()) {
         &[InterpFilter::EightTap]
     } else {
         &[InterpFilter::EightTap, InterpFilter::EightTapSmooth]
@@ -3218,7 +3223,7 @@ fn evaluate_candidate_for_filter(
     let dist = sse.min(u32::MAX as u64) as u32;
     // A0 diagnostic 2: dump full 16-pixel sample comparison for an
     // arbitrary leaf when RVP9_DIAG_EVAL_FULL is set.
-    if std::env::var("RVP9_DIAG_EVAL_FULL").is_ok() {
+    if crate::trace_flags::trace_flags().diag_eval_full {
         #[allow(clippy::print_stderr)]
         {
             let (sx, sy) = params.src_offset;
@@ -3241,7 +3246,7 @@ fn evaluate_candidate_for_filter(
         }
     }
     // A0 diagnostic — print per-candidate src/pred/recon comparison.
-    if std::env::var("RVP9_DIAG_EVAL").is_ok() {
+    if crate::trace_flags::trace_flags().diag_eval {
         #[allow(clippy::print_stderr)]
         {
             let (sx, sy) = params.src_offset;
