@@ -36,11 +36,10 @@
 //! - **No compound prediction**: single-ref blocks only. libvpx's
 //!   `vp9_pickmode.c` realtime path also skips compound (it's an RDO
 //!   speed feature gated by `usable_ref_frame > 1`).
-//! - **No interpolation-filter search**: we always pick `EightTap`
-//!   (libvpx's `INTERP_FILTER` default `EIGHTTAP = 0`). The decoder
-//!   will read `interp_filter = EightTap` from the per-block header
-//!   bits the encoder writes; switchable filter selection is an
-//!   F8.x-deferred feature.
+//! - **Interpolation-filter search**: fractional candidates search
+//!   `EightTap` and `EightTapSmooth` under the libvpx realtime gates.
+//!   The luma variance model ranks filters; full coefficient and chroma
+//!   RD runs only for the winner.
 //! - **Realtime TX-size selection**: the variance model's
 //!   `calculate_tx_size` chooses the candidate `tx_size`, matching the
 //!   `vp9_pickmode.c` speed 6+ path.
@@ -107,7 +106,7 @@ use crate::mode_decision::block_yrd::block_error_fp_i32;
 use crate::mode_decision::block_yrd::satd_i16;
 use crate::mode_decision::hadamard::{hadamard_8x8, hadamard_16x16, hadamard_32x32};
 use crate::mode_decision::model_rd::{
-    ModelRdUvInput, ModelRdYInput, SkipTxfm, model_rd_for_sb_uv, model_rd_for_sb_y,
+    ModelRdResult, ModelRdUvInput, ModelRdYInput, SkipTxfm, model_rd_for_sb_uv, model_rd_for_sb_y,
     model_rd_for_sb_y_large,
 };
 use crate::mode_decision::rd_cost;
@@ -2986,11 +2985,9 @@ fn f5_filter_search_set() -> &'static [InterpFilter] {
 /// compute SSE + rate cost + RD cost.
 ///
 /// **F.5** — runs the per-block filter search loop (libvpx
-/// `search_filter_ref`, `vp9_pickmode.c:1488-1573`). For each filter
-/// in [`f5_filter_search_set`] (`[EightTap, EightTapSmooth]`) the
-/// prediction is rebuilt and the full `block_yrd` + RD evaluation
-/// runs; the lowest-RD winner is returned with
-/// `picked_interp_filter` set accordingly.
+/// `search_filter_ref`, `vp9_pickmode.c:1488-1573`). The luma model ranks
+/// [`f5_filter_search_set`] (`[EightTap, EightTapSmooth]`), then the full
+/// `block_yrd` + chroma RD evaluation runs once for the winner.
 ///
 /// `ref_mv` is the reference MV used for the NEWMV rate-cost
 /// calculation (only relevant when `mode == InterMode::NewMv`).
@@ -3002,6 +2999,83 @@ fn evaluate_candidate(
     lambda: u32,
 ) -> InterModeSearchResult {
     evaluate_candidate_with_filter_set(params, mode, mv, ref_mv, lambda, f5_filter_search_set())
+}
+
+fn luma_model_rd(
+    params: &InterModeSearchParams<'_>,
+    pred: &[u8],
+    bw: usize,
+    bh: usize,
+) -> ModelRdResult {
+    let dc_zbin = i64::from(params.quantizer.zbin[0]);
+    let ac_zbin = i64::from(params.quantizer.zbin[1]);
+    let dc_thr = (dc_zbin * dc_zbin) >> 6;
+    let ac_thr = (ac_zbin * ac_zbin) >> 6;
+    let src = params.src_plane;
+    let (sx, sy) = params.src_offset;
+    let src_start = sy * src.stride + sx;
+    let input = ModelRdYInput {
+        src: &src.data[src_start..],
+        src_stride: src.stride,
+        pred,
+        pred_stride: bw,
+        bw,
+        bh,
+        bsize: params.block_size,
+        dc_quant: params.quantizer.dequant[0] as u32,
+        ac_quant: params.quantizer.dequant[1] as u32,
+        dc_thr,
+        ac_thr,
+        tx_mode: TxMode::TxModeSelect,
+    };
+    if params.block_size >= BlockSize::Block32x32 {
+        model_rd_for_sb_y_large(input)
+    } else {
+        model_rd_for_sb_y(input)
+    }
+}
+
+fn select_interp_filter_by_luma_model(
+    params: &InterModeSearchParams<'_>,
+    mv: Mv,
+    lambda: u32,
+    filter_set: &[InterpFilter],
+) -> InterpFilter {
+    let bw = usize::from(params.block_size.width());
+    let bh = usize::from(params.block_size.height());
+    let dsp = crate::dsp::get_ref();
+    CANDIDATE_PRED_SCRATCH.with_borrow_mut(|pred| {
+        let mut best_filter = filter_set[0];
+        let mut best_cost = i64::MAX;
+        for &filter in filter_set {
+            build_inter_prediction(
+                dsp,
+                params.ref_plane,
+                params.src_offset.0,
+                params.src_offset.1,
+                mv,
+                bw,
+                bh,
+                pred,
+                bw,
+                filter,
+            );
+            let model = luma_model_rd(params, &pred[..bw * bh], bw, bh);
+            let filter_rate = if (mv.row | mv.col) & 0x07 != 0 {
+                params.switchable_interp_costs[params.switchable_interp_ctx][filter as usize].max(0)
+                    as u32
+            } else {
+                0
+            };
+            let rate = (model.rate.max(0) as u32).saturating_add(filter_rate);
+            let cost = rd_cost(lambda, rate, model.dist.max(0) as u64);
+            if cost < best_cost {
+                best_cost = cost;
+                best_filter = filter;
+            }
+        }
+        best_filter
+    })
 }
 
 /// §11 — `cb_pred_filter_search` variant of [`evaluate_candidate`].
@@ -3019,24 +3093,12 @@ fn evaluate_candidate_with_filter_set(
     lambda: u32,
     filter_set: &[InterpFilter],
 ) -> InterModeSearchResult {
-    // F.5 — per-block filter search. Each filter rebuilds prediction +
-    // residual + DCT + quant + idct + SSE; the picker takes the
-    // lowest-RD winner. The MV is fixed for the duration of the loop
-    // (mirror of libvpx's realtime `search_filter_ref`, which also
-    // does MV search once outside the filter loop).
-    let mut best: Option<InterModeSearchResult> = None;
-    for &filter in filter_set {
-        let candidate = evaluate_candidate_for_filter(params, mode, mv, ref_mv, lambda, filter);
-        match best.as_ref() {
-            Some(prev) if candidate.best_rd_cost >= prev.best_rd_cost => {}
-            _ => best = Some(candidate),
-        }
-    }
-    // The loop iterates the caller-supplied filter set (default
-    // `[EightTap, EightTapSmooth]`; §11 `cb_pred_filter_search`
-    // collapses to `[EightTap]` on non-chessboard blocks). Callers are
-    // contractually required to pass a non-empty slice.
-    best.expect("filter search set is non-empty")
+    let filter = if filter_set.len() == 1 {
+        filter_set[0]
+    } else {
+        select_interp_filter_by_luma_model(params, mv, lambda, filter_set)
+    };
+    evaluate_candidate_for_filter(params, mode, mv, ref_mv, lambda, filter)
 }
 
 /// F.5 — evaluate one `(mode, mv, filter)` triplet. The original
@@ -3101,55 +3163,8 @@ fn evaluate_candidate_for_filter_with_pred(
     // distortion is `sse << 4` (libvpx convention) and the rate
     // component from coefficients is zero.
     //
-    // quant_thred = zbin^2; model_rd thresholds = quant_thred >> 6.
-    let dc_zbin = params.quantizer.zbin[0] as i64;
-    let ac_zbin = params.quantizer.zbin[1] as i64;
-    let dc_thr = (dc_zbin * dc_zbin) >> 6;
-    let ac_thr = (ac_zbin * ac_zbin) >> 6;
-    let dc_quant = params.quantizer.dequant[0] as u32;
-    let ac_quant = params.quantizer.dequant[1] as u32;
-
-    // TxModeSelect lets `calculate_tx_size` pick between TX_8X8 and
-    // `max_txsize(bsize)` based on the variance / SSE ratio, matching
-    // libvpx's realtime path at cpu-used 6-8 (`vp9_pickmode.c`).
-    let tx_mode = TxMode::TxModeSelect;
-
-    let src_slice = &params.src_plane.data;
-    let (sx, sy) = params.src_offset;
-    let src_start = sy * params.src_plane.stride + sx;
-    // G6: dispatch to the per-sub-block variant for blocks >= 32x32.
     let use_large = params.block_size >= BlockSize::Block32x32;
-    let mrd = if use_large {
-        model_rd_for_sb_y_large(ModelRdYInput {
-            src: &src_slice[src_start..],
-            src_stride: params.src_plane.stride,
-            pred: &pred[..],
-            pred_stride: bw,
-            bw,
-            bh,
-            bsize: params.block_size,
-            dc_quant,
-            ac_quant,
-            dc_thr,
-            ac_thr,
-            tx_mode,
-        })
-    } else {
-        model_rd_for_sb_y(ModelRdYInput {
-            src: &src_slice[src_start..],
-            src_stride: params.src_plane.stride,
-            pred: &pred[..],
-            pred_stride: bw,
-            bw,
-            bh,
-            bsize: params.block_size,
-            dc_quant,
-            ac_quant,
-            dc_thr,
-            ac_thr,
-            tx_mode,
-        })
-    };
+    let mrd = luma_model_rd(params, &pred[..bw * bh], bw, bh);
 
     // Use the model_rd TX size for the round-trip (replaces the
     // previous hard-coded `max_txsize(block_size)`).
@@ -5555,6 +5570,51 @@ mod tests {
         // Picker-side filter is correctly tagged on each result.
         assert_eq!(eight.picked_interp_filter, InterpFilter::EightTap);
         assert_eq!(smooth.picked_interp_filter, InterpFilter::EightTapSmooth);
+
+        // Pinned libvpx ranks filters in the luma model domain, then runs
+        // block_yrd only for that winner. Compute that argmin independently
+        // and require the multi-filter entry point to return the complete
+        // evaluation of exactly that filter.
+        let dsp = crate::dsp::get_ref();
+        let model_cost = |filter| {
+            let mut pred = [0u8; 64 * 64];
+            build_inter_prediction(
+                dsp,
+                params.ref_plane,
+                params.src_offset.0,
+                params.src_offset.1,
+                mvc.nearest,
+                bw,
+                bh,
+                &mut pred,
+                bw,
+                filter,
+            );
+            let model = luma_model_rd(&params, &pred[..bw * bh], bw, bh);
+            let filter_rate = params.switchable_interp_costs[params.switchable_interp_ctx]
+                [filter as usize]
+                .max(0) as u32;
+            rd_cost(
+                lambda,
+                (model.rate.max(0) as u32).saturating_add(filter_rate),
+                model.dist.max(0) as u64,
+            )
+        };
+        let expected =
+            if model_cost(InterpFilter::EightTap) <= model_cost(InterpFilter::EightTapSmooth) {
+                eight
+            } else {
+                smooth
+            };
+        let searched = evaluate_candidate_with_filter_set(
+            &params,
+            InterMode::NearestMv,
+            mvc.nearest,
+            mvc.nearest,
+            lambda,
+            &[InterpFilter::EightTap, InterpFilter::EightTapSmooth],
+        );
+        assert_eq!(searched, expected);
     }
 
     /// Argmin: NEAR wins when its MV points at the correct shift but
