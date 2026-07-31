@@ -3480,9 +3480,8 @@ fn evaluate_candidate_for_filter(
     //
     // `this_sse` here is libvpx's caller-supplied `sse_y` from
     // `model_rd_for_sb_y` — pixel-domain `sum((src - pred)^2)`
-    // (NOT post-recon). The picker uses pixel-SSE-of-recon as
-    // its dist term (Q3), so we mirror libvpx's tie-break with
-    // a freshly computed `sse_after_pred = sum((src - pred)^2)`.
+    // (NOT post-recon). `mrd.sse_y` already contains that exact full-block
+    // reduction, so reuse it instead of scanning source and prediction again.
     //
     // `skip_prob` — libvpx looks this up from the per-block
     // `skip_ctx` against `cm->fc->skip_probs[skip_ctx]`. The
@@ -3491,8 +3490,8 @@ fn evaluate_candidate_for_filter(
     // neutral 50/50 — `vp9_cost_bit(128, 0) ==
     // vp9_cost_bit(128, 1) == 512` = 1 bit in 1/512 units).
     // Threading the real per-block skip context is a follow-up.
-    let sse_after_pred = sse_block(params.src_plane, params.src_offset, &pred, bw, bw, bh);
-    let sse_after_pred_u32 = sse_after_pred.min(u32::MAX as u64) as u32;
+    let sse_after_pred_u32 = mrd.sse_y;
+    let sse_after_pred = u64::from(sse_after_pred_u32);
     // P19 — use the caller-supplied per-block skip context when
     // present (computed via `vp9_get_pred_context_skip(above_skip +
     // left_skip)`, libvpx `vp9_pred_common.h:55-61`). Falls back to
