@@ -1133,6 +1133,10 @@ pub struct PickInterModeParams<'a> {
     /// rvp9 has no per-SB variance tracker → encoder default `false`,
     /// matching libvpx's pre-init `force_skip_low_temp_var = 0`.
     pub force_skip_low_temp_var: bool,
+    /// libvpx `sf.short_circuit_low_temp_var` level controlling whether
+    /// [`force_skip_low_temp_var`] may suppress LAST+NEWMV. Level 1 applies
+    /// only to 64x64 leaves; levels 2 and 3 apply to every leaf.
+    pub short_circuit_low_temp_var: u8,
 
     /// libvpx `x->content_state_sb` (`vp9_encoder.h:312-316`,
     /// `vp9_pickmode.c:1964, 2030, 2177`). Set by the source-SAD pass to
@@ -1537,6 +1541,22 @@ const RT_INTER_MODES: [(RefFrame, InterMode); 8] = [
     (RefFrame::GoldenFrame, InterMode::NewMv),
 ];
 
+const fn suppress_last_newmv_for_low_temp_var(
+    force_skip_low_temp_var: bool,
+    short_circuit_low_temp_var: u8,
+    block_size: BlockSize,
+    content_state_sb: ContentStateSb,
+    ref_frame: RefFrame,
+    mode: InterMode,
+) -> bool {
+    force_skip_low_temp_var
+        && (short_circuit_low_temp_var >= 2
+            || (short_circuit_low_temp_var == 1 && matches!(block_size, BlockSize::Block64x64)))
+        && matches!(ref_frame, RefFrame::LastFrame)
+        && matches!(mode, InterMode::NewMv)
+        && !matches!(content_state_sb, ContentStateSb::VeryHighSad)
+}
+
 /// Run the unified dual-ref inter-mode RD search for one luma block.
 ///
 /// Iterates candidates in libvpx's `RT_INTER_MODES` interleaved order
@@ -1874,17 +1894,17 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
         //
         // Skips LAST + NEWMV when the SB is low-temporal-variance AND
         // not a very-high-SAD block. The `short_circuit_low_temp_var`
-        // speed-feature variants 2/3 OR variant 1 + Block64x64 enable
-        // it; lower speeds keep NEWMV. rvp9 collapses to the active
-        // case (variant >= 2 = NEWMV-on-LAST suppression for any
-        // bsize) when `force_skip_low_temp_var` fires — matching
-        // libvpx's behaviour at cpu-used >= 7
-        // (`vp9_speed_features.c:597`).
-        if params.force_skip_low_temp_var
-            && ref_frame == RefFrame::LastFrame
-            && mode == InterMode::NewMv
-            && params.content_state_sb != ContentStateSb::VeryHighSad
-        {
+        // speed-feature variants 2/3 enable this for every block size;
+        // variant 1 enables it only for 64x64. Cpu-used 7 CBR uses variant
+        // 1, while cpu-used 8 uses variants 2/3.
+        if suppress_last_newmv_for_low_temp_var(
+            params.force_skip_low_temp_var,
+            params.short_circuit_low_temp_var,
+            params.block_size,
+            params.content_state_sb,
+            ref_frame,
+            mode,
+        ) {
             continue;
         }
 
@@ -5268,6 +5288,7 @@ mod tests {
             short_circuit_flat_blocks: false,
             source_variance: SOURCE_VARIANCE_UNCOMPUTED,
             force_skip_low_temp_var: false,
+            short_circuit_low_temp_var: 0,
             content_state_sb: ContentStateSb::Normal,
             is_screen_content: false,
             zero_temp_sad_source: None,
@@ -7908,21 +7929,49 @@ mod tests {
         );
     }
 
+    /// Cpu-used 7's level 1 applies only to 64x64; cpu-used 8's levels
+    /// 2/3 apply to every supported leaf size.
+    #[test]
+    fn s10_low_temp_var_level_one_is_64x64_only() {
+        let suppressed = |level, block_size, content_state| {
+            suppress_last_newmv_for_low_temp_var(
+                true,
+                level,
+                block_size,
+                content_state,
+                RefFrame::LastFrame,
+                InterMode::NewMv,
+            )
+        };
+
+        assert!(suppressed(1, BlockSize::Block64x64, ContentStateSb::Normal));
+        assert!(!suppressed(
+            1,
+            BlockSize::Block32x32,
+            ContentStateSb::Normal
+        ));
+        assert!(suppressed(2, BlockSize::Block16x16, ContentStateSb::Normal));
+        assert!(!suppressed(
+            3,
+            BlockSize::Block64x64,
+            ContentStateSb::VeryHighSad
+        ));
+        assert!(!suppress_last_newmv_for_low_temp_var(
+            false,
+            3,
+            BlockSize::Block64x64,
+            ContentStateSb::Normal,
+            RefFrame::LastFrame,
+            InterMode::NewMv,
+        ));
+    }
+
     /// **§10.D — `force_skip_low_temp_var` + LAST + NEWMV +
     /// content_state_sb != VeryHighSad blocks LAST NEWMV.**
     ///
-    /// libvpx `vp9_pickmode.c:2177-2183`. With the flag set AND
-    /// content_state_sb == Normal, LAST+NEWMV is skipped. Direct
-    /// observable check: with NEAREST/NEAR/ZERO clamped to MV ZERO
-    /// AND identical src/ref, the only non-zero-MV LAST candidate is
-    /// NEWMV. The gate-ON branch's `frame_mv` for LAST NEWMV must
-    /// never receive `mode_checked[LAST][NewMv] = true` — which we
-    /// observe by checking that the picker's best winning mode is NOT
-    /// LAST+NEWMV when the gate fires.
-    ///
-    /// Use a strongly-shifted LAST so NEWMV could win on RD but the
-    /// gate suppresses it; the picker falls back to a zero-MV
-    /// (LAST/GOLDEN) winner.
+    /// libvpx `vp9_pickmode.c:2177-2183`. With level 2 and the flag set,
+    /// a normal-content LAST+NEWMV candidate is skipped on this 16x16
+    /// leaf. A strongly shifted LAST makes NEWMV the control winner.
     #[test]
     fn s10_force_skip_low_temp_var_blocks_last_newmv() {
         let pw = 64;
@@ -7963,7 +8012,7 @@ mod tests {
         let intra_costs = crate::cost::symbol_costs::intra_y_mode_costs_inter(&fc);
         let intra_y_costs: [i32; 10] = intra_costs[0];
         let mvc = MvCandidates::default();
-        let make_p = |flag_on: bool, csb: ContentStateSb| -> PickInterModeParams<'_> {
+        let make_p = |flag_on: bool, level: u8, csb: ContentStateSb| -> PickInterModeParams<'_> {
             let mut p = make_dual_ref_params(
                 &harness,
                 &intra_y_costs,
@@ -7977,6 +8026,7 @@ mod tests {
                 50,
             );
             p.force_skip_low_temp_var = flag_on;
+            p.short_circuit_low_temp_var = level;
             p.content_state_sb = csb;
             p.encode_breakout = 0;
             p.reference_masking = false;
@@ -7986,7 +8036,7 @@ mod tests {
         // Baseline: flag OFF — NEWMV finds the shift (proves the
         // oracle setup is correct and LAST+NEWMV is genuinely the
         // RD-optimal winner here).
-        let baseline = pick_inter_mode(&make_p(false, ContentStateSb::Normal));
+        let baseline = pick_inter_mode(&make_p(false, 0, ContentStateSb::Normal));
         assert_eq!(
             baseline.best_mode,
             InterMode::NewMv,
@@ -8002,9 +8052,12 @@ mod tests {
         );
 
         // Flag ON + Normal: LAST NEWMV must be skipped.
-        let res_skipped = pick_inter_mode(&make_p(true, ContentStateSb::Normal));
+        let res_skipped = pick_inter_mode(&make_p(true, 2, ContentStateSb::Normal));
+        // Cpu-used 7 CBR level 1 only suppresses NEWMV on 64x64. This
+        // 16x16 leaf must therefore keep the shifted NEWMV candidate.
+        let res_level_one_16x16 = pick_inter_mode(&make_p(true, 1, ContentStateSb::Normal));
         // Flag ON + VeryHighSad: gate doesn't fire, LAST NEWMV reachable.
-        let res_allowed = pick_inter_mode(&make_p(true, ContentStateSb::VeryHighSad));
+        let res_allowed = pick_inter_mode(&make_p(true, 2, ContentStateSb::VeryHighSad));
 
         // Positive assertion (1) — with the gate firing, the picker
         // must NOT produce a (LAST, NewMv) winner.
@@ -8019,6 +8072,16 @@ mod tests {
             res_skipped.best_mode,
             res_skipped.best_mv.col,
             res_skipped.best_mv.row,
+        );
+        assert_eq!(
+            res_level_one_16x16.best_mode,
+            InterMode::NewMv,
+            "§10 level 1 only suppresses LAST+NewMv on Block64x64"
+        );
+        assert_eq!(
+            res_level_one_16x16.picked_ref_frame,
+            RefFrame::LastFrame,
+            "§10 level 1 keeps the LAST+NewMv winner on Block16x16"
         );
 
         // Positive assertion (2) — with content_state_sb=VeryHighSad,

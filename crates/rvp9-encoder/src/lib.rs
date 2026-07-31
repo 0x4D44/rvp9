@@ -4283,6 +4283,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                 leaf_mi_col,
                                 bs,
                             ),
+                        short_circuit_low_temp_var: u8::from(
+                            exact_vbp_tree_enabled
+                                && rc_mode == crate::rate_control::RcMode::Cbr,
+                        ),
                         // PHASE-3 integration: per-SB content_state
                         // from W2.2 avg_source_sad pass. Index via
                         // (leaf_mi_row/8, leaf_mi_col/8) — the SB
@@ -5512,6 +5516,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             leaf_mi_col,
                             leaf_bsize,
                         ),
+                    short_circuit_low_temp_var: u8::from(
+                        exact_vbp_tree_enabled && rc_mode == crate::rate_control::RcMode::Cbr,
+                    ),
                     // PHASE-3 integration: per-SB content_state from
                     // W2.2 avg_source_sad pass. Look up by SB grid.
                     content_state_sb: {
