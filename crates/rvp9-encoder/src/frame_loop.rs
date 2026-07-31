@@ -1148,10 +1148,12 @@ pub struct StreamEncoder {
     /// `use_prev_frame_mvs` gate is closed — exactly as the decoder
     /// computes it. Seeded `false` (no frame emitted yet).
     last_show_frame: bool,
-    /// DRIFT-DIAG — snapshot of the most-recent frame's reconstruction
-    /// BEFORE the in-loop loop filter was applied. Lets a diagnostic
-    /// test isolate residual/MC divergence (pre-LF) from loop-filter
-    /// divergence (post-LF) against the true decode. Tight-stride Y/U/V.
+    /// DRIFT-DIAG — optional snapshot of the most-recent frame's
+    /// reconstruction BEFORE the in-loop loop filter was applied. Captured
+    /// only while [`crate::predstat`] diagnostics are enabled. Lets a
+    /// diagnostic test isolate residual/MC divergence (pre-LF) from
+    /// loop-filter divergence (post-LF) against the true decode.
+    /// Tight-stride Y/U/V.
     diag_prelf_recon: Option<(Vec<u8>, Vec<u8>, Vec<u8>)>,
     /// STAGE-SSE DIAG — snapshot of the most-recent frame's whole-frame
     /// Y PREDICTION (motion-compensated / intra, before any residual).
@@ -2320,9 +2322,11 @@ impl StreamEncoder {
         // encoder↔decoder bit-exact invariant survives LF.
         let filter_level = pick_filter_level(q_index, true);
         {
-            // DRIFT-DIAG — snapshot pre-LF KF recon.
+            // DRIFT-DIAG — snapshot pre-LF KF recon only when the
+            // prediction-stage diagnostics are explicitly enabled.
             let (ry, ru, rv) = self.ref_pool.new_frame_planes_mut();
-            self.diag_prelf_recon = Some((ry.to_vec(), ru.to_vec(), rv.to_vec()));
+            self.diag_prelf_recon =
+                capture_diag_prelf_recon(crate::predstat::enabled(), (ry, ru, rv));
         }
         // STAGE-SSE DIAG — pull the whole-frame Y prediction the predstat
         // taps captured during the picker pass (no-op / empty unless the
@@ -3195,13 +3199,12 @@ impl StreamEncoder {
         } else {
             pick_filter_level(q_index, false)
         };
-        // DRIFT-DIAG — capture the pre-LF reconstruction so a diagnostic
-        // test can separate residual/MC divergence from LF divergence.
-        self.diag_prelf_recon = Some((
-            new_recon_y.clone(),
-            new_recon_u.clone(),
-            new_recon_v.clone(),
-        ));
+        // DRIFT-DIAG — capture the pre-LF reconstruction only when the
+        // prediction-stage diagnostics are explicitly enabled.
+        self.diag_prelf_recon = capture_diag_prelf_recon(
+            crate::predstat::enabled(),
+            (&new_recon_y, &new_recon_u, &new_recon_v),
+        );
         // STAGE-SSE DIAG — pull the whole-frame Y prediction snapshot the
         // predstat taps captured during the inter picker pass (empty
         // unless the `RVP9_E9_PREDSTAT` gate is on). See the KF site for
@@ -4127,9 +4130,10 @@ impl StreamEncoder {
 
     /// DRIFT-DIAG — read access to the most-recent frame's reconstruction
     /// BEFORE the in-loop loop filter. `(Y, U, V)` tight-stride planes.
-    /// `None` before the first encoded frame. Lets a diagnostic separate
-    /// residual/MC divergence (pre-LF) from loop-filter divergence
-    /// (post-LF). See [`Self::diag_last_recon_y`] for the post-LF view.
+    /// `None` unless [`crate::predstat`] diagnostics are enabled. Lets a
+    /// diagnostic separate residual/MC divergence (pre-LF) from loop-filter
+    /// divergence (post-LF). See [`Self::diag_last_recon_y`] for the post-LF
+    /// view.
     #[must_use]
     pub fn diag_prelf_recon(&self) -> Option<(&[u8], &[u8], &[u8])> {
         self.diag_prelf_recon
@@ -4201,6 +4205,15 @@ impl StreamEncoder {
     pub(crate) fn me_ref_v(&self) -> &[u8] {
         &self.me_ref_v
     }
+}
+
+/// Copy the pre-loopfilter reconstruction only for explicit prediction-stage
+/// diagnostics. Production encoding must not clone three full-frame planes.
+fn capture_diag_prelf_recon(
+    enabled: bool,
+    planes: (&[u8], &[u8], &[u8]),
+) -> Option<(Vec<u8>, Vec<u8>, Vec<u8>)> {
+    enabled.then(|| (planes.0.to_vec(), planes.1.to_vec(), planes.2.to_vec()))
 }
 
 // ---------------------------------------------------------------------------
@@ -5384,6 +5397,19 @@ fn gather_coded_segments_and_skip(
 mod tests {
     use super::*;
     use rvp9_decoder::{Decoder, ParsedFrame};
+
+    #[test]
+    fn prelf_snapshot_is_absent_unless_diagnostics_are_enabled() {
+        let y = [1, 2, 3, 4];
+        let u = [5];
+        let v = [6];
+
+        assert!(capture_diag_prelf_recon(false, (&y, &u, &v)).is_none());
+        assert_eq!(
+            capture_diag_prelf_recon(true, (&y, &u, &v)),
+            Some((y.to_vec(), u.to_vec(), v.to_vec())),
+        );
+    }
 
     #[test]
     fn encoder_parallelism_clamps_tile_columns_like_libvpx() {

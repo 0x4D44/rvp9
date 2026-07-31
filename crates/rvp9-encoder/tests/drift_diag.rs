@@ -20,7 +20,7 @@
 //! ```
 
 use rvp9_decoder::{Decoder, ParsedFrame};
-use rvp9_encoder::{AqMode, EncoderConfig, RcMode, StreamEncoder, YuvFrameRef};
+use rvp9_encoder::{AqMode, EncoderConfig, RcMode, StreamEncoder, YuvFrameRef, predstat};
 use rvp9_harness::y4m::read_cropped as y4m_read_cropped;
 use std::path::PathBuf;
 
@@ -199,6 +199,12 @@ fn drift_diag_foreman() {
         eprintln!("[SKIPPED] foreman_320x256_60f.y4m corpus not available.");
         return;
     };
+    // SAFETY: this ignored diagnostic owns the process environment for its
+    // dedicated test-binary invocation.
+    unsafe {
+        std::env::set_var("RVP9_E9_PREDSTAT", "1");
+    }
+    predstat::init_from_env();
     let (frames, framerate) =
         y4m_read_cropped(&path, W, H, N_FRAMES).expect("y4m_read_cropped foreman");
     assert_eq!(frames.len(), N_FRAMES);
