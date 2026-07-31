@@ -50,6 +50,7 @@ pub struct BoolWriter<'a> {
     size: u32,
     buffer: &'a mut [u8],
     error: bool,
+    count_only: bool,
 }
 
 impl<'a> BoolWriter<'a> {
@@ -67,11 +68,33 @@ impl<'a> BoolWriter<'a> {
             size,
             buffer,
             error: false,
+            count_only: false,
         };
         // Per libvpx: emit a `0` at probability 128 as a marker bit so
         // the reader's `vpx_reader_init` can verify the start of stream.
         w.write_bit(0);
         w
+    }
+
+    /// Create a writer for a syntax/count traversal that deliberately emits
+    /// no arithmetic-coded bytes.
+    ///
+    /// The caller must still execute the normal modes/token walk so its
+    /// explicit [`super::FrameCounts`] updates remain exact. Calls to
+    /// [`Self::write`] become no-ops and [`Self::has_error`] stays false.
+    /// This is used by the encoder's VP9 two-loop coefficient-probability
+    /// pass, whose first traversal needs symbol counts but discards bytes.
+    pub fn start_count_only(buffer: &'a mut [u8]) -> Self {
+        Self {
+            low_value: 0,
+            range: 255,
+            count: -24,
+            pos: 0,
+            size: u32::try_from(buffer.len()).unwrap_or(i32::MAX as u32),
+            buffer,
+            error: false,
+            count_only: true,
+        }
     }
 
     /// Encode a single bit `bit` (0 or 1) using the given 8-bit
@@ -81,6 +104,9 @@ impl<'a> BoolWriter<'a> {
     /// carry-back trick at the `0x80000000` check is preserved exactly.
     #[inline]
     pub fn write(&mut self, bit: u8, probability: u8) {
+        if self.count_only {
+            return;
+        }
         // E4 diagnostic: env-gated per-category bit accounting. No-op
         // (one relaxed atomic load) unless RVP9_E4_BITACCT is set. Does
         // NOT alter coding state.
@@ -191,6 +217,9 @@ impl<'a> BoolWriter<'a> {
     /// (`bitwriter.c:33-55`). Returns the number of bytes written, or
     /// [`StopEncodeError`] if the buffer overflowed at any point.
     pub fn stop_encode(mut self) -> Result<usize, StopEncodeError> {
+        if self.count_only {
+            return Ok(0);
+        }
         super::bitacct::set_category(super::bitacct::BitCategory::Other);
         // Flush 32 trailing zero bits to drain the range register.
         for _ in 0..32 {
@@ -519,6 +548,18 @@ mod tests {
         };
         assert_eq!(pos_a, pos_b, "same content → same length");
         assert_eq!(buf_a[..pos_a], buf_b[..pos_b], "byte-identical output");
+    }
+
+    #[test]
+    fn count_only_writer_accepts_symbols_without_emitting_bytes() {
+        let mut sink = [];
+        let mut w = BoolWriter::start_count_only(&mut sink);
+        for i in 0..1024 {
+            w.write((i & 1) as u8, (i as u8).max(1));
+        }
+        assert_eq!(w.pos(), 0);
+        assert!(!w.has_error());
+        assert_eq!(w.stop_encode(), Ok(0));
     }
 
     /// Empty stream (zero user bits) still round-trips: stop_encode

@@ -5000,8 +5000,8 @@ fn build_inter_packet_with_residuals(
                 0,
                 tile_col as u32,
             );
-            let mut scratch = vec![0u8; (mi_rows as usize) * (mi_cols as usize) * 64 + 16 * 1024];
-            let mut bw = BoolWriter::start_encode(&mut scratch);
+            let mut count_sink = [];
+            let mut bw = BoolWriter::start_count_only(&mut count_sink);
             let mut coef_ctx = TileCoefCtx::new(bounds.mi_col_end - bounds.mi_col_start);
             write_tile_inter(
                 &mut bw,
@@ -5021,7 +5021,8 @@ fn build_inter_packet_with_residuals(
                 coef_source,
                 Some(&mut count_counts),
             )?;
-            // We discard `scratch` — only the gathered counts matter.
+            // The writer deliberately emits no bytes — only the explicit
+            // FrameCounts updates from the identical syntax walk matter.
         }
         Ok(())
     })?;

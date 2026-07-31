@@ -6676,6 +6676,30 @@ mod tests {
             Some(&mut counts),
         )
         .expect("ok");
+        let mut count_only_counts = FrameCounts::default();
+        let mut count_sink = [];
+        let mut count_only_bw = BoolWriter::start_count_only(&mut count_sink);
+        let mut count_only_coef_ctx = TileCoefCtx::new(mi_cols as usize);
+        write_tile_inter(
+            &mut count_only_bw,
+            &fc,
+            &params,
+            TxMode::AllowTx32x32,
+            &grid,
+            mi_rows,
+            mi_cols,
+            bounds,
+            None,
+            None,
+            &mut count_only_coef_ctx,
+            &coef_source,
+            Some(&mut count_only_counts),
+        )
+        .expect("count-only traversal");
+        assert_eq!(
+            count_only_counts, counts,
+            "count-only and arithmetic writers must gather identical counts"
+        );
         // Single 64x64 leaf → one entry in partition, skip,
         // intra_inter, single_ref, inter_mode, tx.
         let total_partition: u32 = counts.partition.iter().map(|c| c.iter().sum::<u32>()).sum();
