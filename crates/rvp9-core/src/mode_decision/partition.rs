@@ -444,6 +444,115 @@ pub struct FixedTreePartitionTrace {
     pub leaves: Vec<FixedTreeLeaf>,
 }
 
+/// Per-superblock state retained by libvpx's realtime partition-copy path.
+///
+/// `choose_partitioning` may reuse the previous canonical tree for a quiet
+/// superblock instead of rebuilding its variance tree. The copy is allowed
+/// only for a bounded number of consecutive frames and carries the previous
+/// low-temporal-variance flags with it.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct FixedTreeHistoryEntry {
+    decision: Option<PartitionDecision>,
+    previous_segment_id: u8,
+    copied_frame_count: u8,
+    variance_low: [bool; 25],
+}
+
+/// Stream conditions shared by both libvpx partition-copy exits.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FixedTreeCopyConditions {
+    /// Frames elapsed since the last keyframe.
+    pub frames_since_key: u32,
+    /// Current superblock segment.
+    pub segment_id: u8,
+    /// Maximum number of consecutive copies for this speed/layer.
+    pub max_copied_frames: u8,
+    /// A pending resize forbids reuse of the old grid.
+    pub resize_pending: bool,
+    /// SVC may forbid copy on reference/base-layer frames.
+    pub svc_copy_allowed: bool,
+}
+
+/// A successful partition-history copy.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FixedTreeCopy {
+    /// Reused legal partition decision.
+    pub decision: PartitionDecision,
+    /// Parent symbols in coding order.
+    pub nodes: Vec<FixedTreeNodeDecision>,
+    /// Leaves in coding order.
+    pub leaves: Vec<FixedTreeLeaf>,
+    /// Low-temporal-variance flags carried from the source decision.
+    pub variance_low: [bool; 25],
+    /// Consecutive-copy count after this reuse.
+    pub copied_frame_count: u8,
+}
+
+impl FixedTreeHistoryEntry {
+    /// Try libvpx's common `copy_partitioning` eligibility checks.
+    ///
+    /// The caller owns the two trigger predicates: low source SAD before
+    /// prediction, and low selected-LAST SAD after prediction. A successful
+    /// copy increments the consecutive count but does not replace the source
+    /// tree or its variance flags.
+    pub fn try_copy(&mut self, conditions: FixedTreeCopyConditions) -> Option<FixedTreeCopy> {
+        if conditions.frames_since_key <= 1
+            || !conditions.svc_copy_allowed
+            || conditions.resize_pending
+            || conditions.segment_id != 0
+            || self.previous_segment_id != 0
+            || self.copied_frame_count >= conditions.max_copied_frames
+        {
+            return None;
+        }
+        let decision = self.decision.clone()?;
+        self.copied_frame_count = self.copied_frame_count.saturating_add(1);
+        let (nodes, leaves) = trace_fixed_decision(&decision);
+        Some(FixedTreeCopy {
+            decision,
+            nodes,
+            leaves,
+            variance_low: self.variance_low,
+            copied_frame_count: self.copied_frame_count,
+        })
+    }
+
+    /// Store a freshly selected tree and reset its consecutive-copy count.
+    pub fn update(
+        &mut self,
+        decision: PartitionDecision,
+        segment_id: u8,
+        variance_low: [bool; 25],
+    ) {
+        assert!(
+            decision.is_valid_partition(),
+            "fixed-tree history requires a legal VP9 partition"
+        );
+        self.decision = Some(decision);
+        self.previous_segment_id = segment_id;
+        self.copied_frame_count = 0;
+        self.variance_low = variance_low;
+    }
+
+    /// Segment retained with the source tree.
+    #[must_use]
+    pub const fn previous_segment_id(&self) -> u8 {
+        self.previous_segment_id
+    }
+
+    /// Number of consecutive copies since the source tree was refreshed.
+    #[must_use]
+    pub const fn copied_frame_count(&self) -> u8 {
+        self.copied_frame_count
+    }
+
+    /// Whether a source tree has been stored.
+    #[must_use]
+    pub const fn is_initialized(&self) -> bool {
+        self.decision.is_some()
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 struct FixedVar {
     sum_square_error: u64,
@@ -1470,6 +1579,82 @@ mod tests {
             low_resolution: false,
             frame_height_le_360: true,
         }
+    }
+
+    #[test]
+    fn fixed_tree_history_copies_twice_then_requires_refresh() {
+        let source = xorshift_plane(17);
+        let predictor = flat_plane(128);
+        let trace = choose_fixed_tree_inter(&fixed_tree_input(&source, &predictor));
+        let mut history = FixedTreeHistoryEntry::default();
+        let mut variance_low = [false; 25];
+        variance_low[7] = true;
+        history.update(trace.decision.clone(), 0, variance_low);
+
+        let conditions = FixedTreeCopyConditions {
+            frames_since_key: 2,
+            segment_id: 0,
+            max_copied_frames: 2,
+            resize_pending: false,
+            svc_copy_allowed: true,
+        };
+        let first = history.try_copy(conditions).expect("first copy");
+        assert_eq!(first.decision, trace.decision);
+        assert_eq!(first.nodes, trace.nodes);
+        assert_eq!(first.leaves, trace.leaves);
+        assert_eq!(first.variance_low, variance_low);
+        assert_eq!(first.copied_frame_count, 1);
+
+        let second = history.try_copy(conditions).expect("second copy");
+        assert_eq!(second.copied_frame_count, 2);
+        assert_eq!(history.try_copy(conditions), None);
+
+        history.update(PartitionDecision::all_64x64(), 0, [false; 25]);
+        assert_eq!(history.copied_frame_count(), 0);
+        assert!(history.try_copy(conditions).is_some());
+    }
+
+    #[test]
+    fn fixed_tree_history_enforces_stream_and_segment_guards() {
+        let base = FixedTreeCopyConditions {
+            frames_since_key: 2,
+            segment_id: 0,
+            max_copied_frames: 2,
+            resize_pending: false,
+            svc_copy_allowed: true,
+        };
+        let mut fresh = FixedTreeHistoryEntry::default();
+        assert_eq!(fresh.try_copy(base), None, "no source tree");
+
+        fresh.update(PartitionDecision::all_64x64(), 0, [false; 25]);
+        for rejected in [
+            FixedTreeCopyConditions {
+                frames_since_key: 1,
+                ..base
+            },
+            FixedTreeCopyConditions {
+                segment_id: 1,
+                ..base
+            },
+            FixedTreeCopyConditions {
+                resize_pending: true,
+                ..base
+            },
+            FixedTreeCopyConditions {
+                svc_copy_allowed: false,
+                ..base
+            },
+            FixedTreeCopyConditions {
+                max_copied_frames: 0,
+                ..base
+            },
+        ] {
+            assert_eq!(fresh.try_copy(rejected), None);
+        }
+
+        fresh.update(PartitionDecision::all_64x64(), 1, [false; 25]);
+        assert_eq!(fresh.previous_segment_id(), 1);
+        assert_eq!(fresh.try_copy(base), None, "previous segment must be base");
     }
 
     #[test]
