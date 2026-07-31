@@ -51,6 +51,34 @@ wall time `0.679587 -> 0.678864 s` (`-0.767%`) and child CPU
 Pareto-positive. Revisit libvpx's selective second-pass widening only if a
 fresh profile still makes the transform material.
 
+### 2026-07-31 — Reuse prediction scratch per tile worker
+**Where:** `rvp9-core::mode_decision::inter::evaluate_candidate_for_filter`;
+libvpx counterpart: `vp9/encoder/vp9_pickmode.c:search_filter_ref`.
+**What libvpx does:** reuses prediction storage owned by the current
+macroblock while evaluating realtime mode and interpolation-filter
+candidates.
+**What rvp9 does:** reuses one 4,096-byte thread-local prediction buffer
+across serial candidate evaluations on each tile worker. Every prediction
+builder overwrites its complete active block prefix before any consumer runs.
+**Why:** the previous stack array called memset for 4,096 bytes before every
+candidate, even though active blocks can be much smaller and the builder
+immediately overwrites every consumed pixel. Thread locality preserves
+parallel isolation without changing picker APIs.
+**Byte-parity impact:** none. A causal regression evaluates a 16x16 block,
+overwrites the scratch through a 64x64 evaluation, and requires the repeated
+16x16 result to match in every field. The 120-frame product stream remained
+byte-identical and all three decoders produced identical I420 output.
+**Compression-efficiency impact:** none because predictions, mode decisions,
+coefficients, and emitted bytes are unchanged.
+**Speed impact:** sixteen warmed alternating one-thread pairs improved median
+wall time `1.065253 -> 1.059120 s` (`-0.481%` paired) and child CPU
+`1.024843 -> 1.018660 s` (`-0.463%`). Twenty four-thread pairs improved
+wall time `0.668599 -> 0.666289 s` (`-0.522%`) and child CPU
+`1.219596 -> 1.212353 s` (`-0.381%`).
+**Future plan:** retain while causal differential coverage and byte identity
+remain green. Apply the same lifecycle only to independently measured scratch
+buffers; do not create a shared cross-thread pool.
+
 ### 2026-07-31 — Use a generic eight-lane NEON interpolation kernel
 **Where:** `rvp9-core::dsp::aarch64::convolve8_neon`; libvpx counterpart:
 `vpx_dsp/arm/vpx_convolve8_neon.c`.

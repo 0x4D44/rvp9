@@ -130,6 +130,13 @@ use crate::transforms::inverse::{idct8x8_64_add, idct16x16_256_add, idct32x32_10
 use crate::transforms::scans::scan_for;
 use crate::transforms::{TxMode, TxSize, TxType};
 
+thread_local! {
+    /// Prediction pixels reused across serial candidate evaluations on one
+    /// tile worker. Each builder overwrites its complete active prefix.
+    static CANDIDATE_PRED_SCRATCH: std::cell::RefCell<[u8; 64 * 64]> =
+        const { std::cell::RefCell::new([0; 64 * 64]) };
+}
+
 // ---------------------------------------------------------------------
 // S2/S3 measurement toggles (env-read once, cached). These exist ONLY
 // to let one binary produce the before/after A/B the HLD's test plan
@@ -3044,6 +3051,21 @@ fn evaluate_candidate_for_filter(
     lambda: u32,
     filter: InterpFilter,
 ) -> InterModeSearchResult {
+    CANDIDATE_PRED_SCRATCH.with_borrow_mut(|pred| {
+        evaluate_candidate_for_filter_with_pred(params, mode, mv, ref_mv, lambda, filter, pred)
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn evaluate_candidate_for_filter_with_pred(
+    params: &InterModeSearchParams<'_>,
+    mode: InterMode,
+    mv: Mv,
+    ref_mv: Mv,
+    lambda: u32,
+    filter: InterpFilter,
+    pred: &mut [u8; 64 * 64],
+) -> InterModeSearchResult {
     let bw = usize::from(params.block_size.width());
     let bh = usize::from(params.block_size.height());
 
@@ -3054,8 +3076,9 @@ fn evaluate_candidate_for_filter(
     // (`dispatch.rs:2539`).
     let dsp = crate::dsp::get_ref();
 
-    // Build the prediction in a per-block scratch buffer.
-    let mut pred = [0u8; 64 * 64];
+    // Build the prediction in per-thread scratch. The predictor writes every
+    // pixel subsequently consumed for this block, so stale suffix bytes from
+    // a wider prior candidate remain unreachable.
     build_inter_prediction(
         dsp,
         params.ref_plane,
@@ -3064,7 +3087,7 @@ fn evaluate_candidate_for_filter(
         mv,
         bw,
         bh,
-        &mut pred,
+        pred,
         bw, // pred_stride
         filter,
     );
@@ -3100,7 +3123,7 @@ fn evaluate_candidate_for_filter(
         model_rd_for_sb_y_large(ModelRdYInput {
             src: &src_slice[src_start..],
             src_stride: params.src_plane.stride,
-            pred: &pred,
+            pred: &pred[..],
             pred_stride: bw,
             bw,
             bh,
@@ -3115,7 +3138,7 @@ fn evaluate_candidate_for_filter(
         model_rd_for_sb_y(ModelRdYInput {
             src: &src_slice[src_start..],
             src_stride: params.src_plane.stride,
-            pred: &pred,
+            pred: &pred[..],
             pred_stride: bw,
             bw,
             bh,
@@ -3185,7 +3208,15 @@ fn evaluate_candidate_for_filter(
         }
     } else {
         let recon_pixels = recon.as_mut().map_or(&mut [][..], |pixels| &mut pixels[..]);
-        reconstruct_via_round_trip(params, &pred, recon_pixels, bw, bh, tx_size, !hadamard_only)
+        reconstruct_via_round_trip(
+            params,
+            &pred[..],
+            recon_pixels,
+            bw,
+            bh,
+            tx_size,
+            !hadamard_only,
+        )
     };
     let recon_pixels = recon.as_ref().map_or(&pred[..], |pixels| &pixels[..]);
 
@@ -4683,6 +4714,79 @@ mod tests {
         );
         assert_eq!(fast_result.coef_rate, control_result.coef_rate);
         assert_eq!(fast_result.coef_dist, control_result.coef_dist);
+    }
+
+    #[test]
+    fn candidate_prediction_scratch_is_independent_of_previous_block() {
+        let pw = 64;
+        let ph = 64;
+        let src_data = make_plane(pw, ph, 17);
+        let ref_data = make_plane(pw, ph, 91);
+        let src_plane = PlaneRef {
+            data: &src_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let ref_plane = PlaneRef {
+            data: &ref_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let harness = TestHarness::new(pw, 50);
+        let mvc = MvCandidates::default();
+        let small = make_params(
+            &harness,
+            BlockSize::Block16x16,
+            &src_plane,
+            &ref_plane,
+            (16, 16),
+            &mvc,
+            MvLimits::new(-32, 32, -32, 32),
+            50,
+        );
+        let large = make_params(
+            &harness,
+            BlockSize::Block64x64,
+            &src_plane,
+            &ref_plane,
+            (0, 0),
+            &mvc,
+            MvLimits::new(-32, 32, -32, 32),
+            50,
+        );
+        let lambda = compute_rd_mult(50, frame_type_for_rd(small.frame_kind));
+
+        let before = evaluate_candidate_for_filter(
+            &small,
+            InterMode::ZeroMv,
+            Mv::ZERO,
+            Mv::ZERO,
+            lambda,
+            InterpFilter::EightTap,
+        );
+        let _ = evaluate_candidate_for_filter(
+            &large,
+            InterMode::ZeroMv,
+            Mv::ZERO,
+            Mv::ZERO,
+            lambda,
+            InterpFilter::EightTap,
+        );
+        let after = evaluate_candidate_for_filter(
+            &small,
+            InterMode::ZeroMv,
+            Mv::ZERO,
+            Mv::ZERO,
+            lambda,
+            InterpFilter::EightTap,
+        );
+
+        assert_eq!(
+            after, before,
+            "reused prediction scratch must not expose pixels from a prior wider block"
+        );
     }
 
     #[test]
