@@ -775,6 +775,35 @@ pub fn find_best_ref_mvs(list: &RefMvList, allow_hp: bool) -> (Mv, Mv) {
     )
 }
 
+/// Resolve the encoder's `(nearest, near)` pair with one complete
+/// [`InterMode::NearMv`] neighbour walk.
+///
+/// The complete walk's first candidate is identical to the early-breaking
+/// [`InterMode::NewMv`] walk; its second candidate is the NEARMV value.
+/// libvpx likewise builds one reference-MV list and reuses both entries.
+#[allow(clippy::too_many_arguments)]
+#[must_use]
+pub fn find_nearest_near_mvs<N: NeighbourLookup>(
+    block_size: BlockSize,
+    ref_frame: RefFrame,
+    neighbours: &N,
+    sign_bias: &[bool; 4],
+    bounds: &BlockBounds,
+    prev_frame_mv: Option<PrevFrameMvRef>,
+    allow_hp: bool,
+) -> (Mv, Mv) {
+    let list = find_mv_refs(
+        InterMode::NearMv,
+        block_size,
+        ref_frame,
+        neighbours,
+        sign_bias,
+        bounds,
+        prev_frame_mv,
+    );
+    find_best_ref_mvs(&list, allow_hp)
+}
+
 /// Sub-8 driver. Mirrors libvpx `append_sub8x8_mvs_for_idx`
 /// (`vp9_decodemv.c:609-668`). For sub-8 partitions, each 4×4 sub-
 /// block (`j ∈ {0..3}`) gets its own "best sub-8 ref MV" derived
@@ -1103,6 +1132,83 @@ mod tests {
         assert_eq!(list.mvs[0], above_mv, "nearest = above");
         assert_eq!(list.mvs[1], left_mv, "near = left");
         assert_eq!(list.count, 2);
+    }
+
+    #[test]
+    fn complete_near_scan_matches_paired_new_and_near_scans() {
+        let above = inter_mi(
+            BlockSize::Block16x16,
+            RefFrame::LastFrame,
+            Mv { row: 13, col: -7 },
+        );
+        let left = inter_mi(
+            BlockSize::Block16x16,
+            RefFrame::LastFrame,
+            Mv { row: -9, col: 19 },
+        );
+        let different_ref = inter_mi(
+            BlockSize::Block16x16,
+            RefFrame::GoldenFrame,
+            Mv { row: 21, col: -11 },
+        );
+        let same_ref_neighbours = ListNeighbours::new()
+            .with(Position { row: -1, col: 0 }, &above)
+            .with(Position { row: 0, col: -1 }, &left);
+        let different_ref_neighbours =
+            ListNeighbours::new().with(Position { row: -1, col: 0 }, &different_ref);
+        let empty_neighbours = ListNeighbours::new();
+        let previous = PrevFrameMvRef {
+            mvs: [Mv { row: -15, col: 23 }, Mv::ZERO],
+            ref_frames: [RefFrame::LastFrame, RefFrame::NoRefFrame],
+        };
+        let bounds = loose_bounds();
+        let mut sign_bias = [false; 4];
+        sign_bias[RefFrame::GoldenFrame as usize] = true;
+
+        let assert_equivalent =
+            |neighbours: &ListNeighbours<'_>, prev_frame_mv: Option<PrevFrameMvRef>| {
+                for allow_hp in [false, true] {
+                    let first = find_mv_refs(
+                        InterMode::NewMv,
+                        BlockSize::Block16x16,
+                        RefFrame::LastFrame,
+                        neighbours,
+                        &sign_bias,
+                        &bounds,
+                        prev_frame_mv,
+                    );
+                    let complete = find_mv_refs(
+                        InterMode::NearMv,
+                        BlockSize::Block16x16,
+                        RefFrame::LastFrame,
+                        neighbours,
+                        &sign_bias,
+                        &bounds,
+                        prev_frame_mv,
+                    );
+                    let expected = (
+                        lower_mv_precision(first.mvs[0], allow_hp),
+                        lower_mv_precision(complete.mvs[complete.count - 1], allow_hp),
+                    );
+                    assert_eq!(
+                        find_nearest_near_mvs(
+                            BlockSize::Block16x16,
+                            RefFrame::LastFrame,
+                            neighbours,
+                            &sign_bias,
+                            &bounds,
+                            prev_frame_mv,
+                            allow_hp,
+                        ),
+                        expected,
+                    );
+                }
+            };
+
+        assert_equivalent(&same_ref_neighbours, None);
+        assert_equivalent(&different_ref_neighbours, None);
+        assert_equivalent(&empty_neighbours, Some(previous));
+        assert_equivalent(&empty_neighbours, None);
     }
 
     /// Sign-bias mismatch: candidate's ref has opposite sign bias

@@ -3139,7 +3139,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     use rvp9_core::cost::symbol_costs::{
         inter_mode_costs, partition_costs, switchable_interp_costs,
     };
-    use rvp9_core::inter::mv_ref::{BlockBounds, PrevFrameMvRef, find_mv_refs, lower_mv_precision};
+    use rvp9_core::inter::mv_ref::{BlockBounds, PrevFrameMvRef, find_nearest_near_mvs};
     use rvp9_core::inter::{get_mode_context, get_pred_context_switchable_interp};
     use rvp9_core::mode_decision::inter::{
         InterModeSearchParams, MvCandidates, PickInterModeParams, pick_inter_mode,
@@ -4306,30 +4306,15 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     let leaf_prev_mv: Option<PrevFrameMvRef> = prev_mv_grid
                         .and_then(|g| g.get(leaf_mi_row * mi_cols_us + leaf_mi_col).copied());
                     let build_mvc = |rf: RefFrame| -> MvCandidates {
-                        let list_nearest = find_mv_refs(
-                            InterMode::NewMv,
+                        let (nearest, near) = find_nearest_near_mvs(
                             bs,
                             rf,
                             &neighbours,
                             &sign_bias,
                             &bounds,
                             leaf_prev_mv,
+                            allow_hp,
                         );
-                        let nearest = lower_mv_precision(list_nearest.mvs[0], allow_hp);
-                        let list_near = find_mv_refs(
-                            InterMode::NearMv,
-                            bs,
-                            rf,
-                            &neighbours,
-                            &sign_bias,
-                            &bounds,
-                            leaf_prev_mv,
-                        );
-                        let near_idx = list_near
-                            .count
-                            .saturating_sub(1)
-                            .min(list_near.mvs.len() - 1);
-                        let near = lower_mv_precision(list_near.mvs[near_idx], allow_hp);
                         MvCandidates { nearest, near }
                     };
                     let mvc = build_mvc(RefFrame::LastFrame);
@@ -5194,42 +5179,18 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 let leaf_prev_mv: Option<PrevFrameMvRef> = prev_mv_grid
                     .and_then(|g| g.get(leaf_mi_row * mi_cols_us + leaf_mi_col).copied());
                 let build_mvc = |ref_frame: RefFrame| -> MvCandidates {
-                    // Use `InterMode::NewMv` so `find_mv_refs` runs the
-                    // early-break path (refmv_count == 1; mvs[0] is the
-                    // best ref MV - libvpx `tmp_mvs[refmv_count - 1]`
-                    // with `refmv_count == 1`). Apply
-                    // `lower_mv_precision` to mirror the writer's
-                    // exact `best_ref_mv` derivation (mode_info.rs
-                    // line 1098-1109).
-                    let list_nearest = find_mv_refs(
-                        InterMode::NewMv,
+                    // One complete NEARMV walk returns the same first
+                    // candidate as NEWMV's early-break walk plus the second
+                    // NEARMV candidate. Apply precision lowering to both.
+                    let (nearest, near) = find_nearest_near_mvs(
                         leaf_bsize,
                         ref_frame,
                         &neighbours,
                         &sign_bias,
                         &bounds,
-                        /* prev_frame_mv = */ leaf_prev_mv,
+                        leaf_prev_mv,
+                        allow_hp,
                     );
-                    let nearest =
-                        lower_mv_precision(list_nearest.mvs[0], /* allow_hp = */ allow_hp);
-                    // A12 — `find_mv_refs(NEARMV)` separately so the
-                    // search continues past the first candidate
-                    // (`early_break` is gated on NEARMV).
-                    let list_near = find_mv_refs(
-                        InterMode::NearMv,
-                        leaf_bsize,
-                        ref_frame,
-                        &neighbours,
-                        &sign_bias,
-                        &bounds,
-                        /* prev_frame_mv = */ leaf_prev_mv,
-                    );
-                    let near_idx = list_near
-                        .count
-                        .saturating_sub(1)
-                        .min(list_near.mvs.len() - 1);
-                    let near =
-                        lower_mv_precision(list_near.mvs[near_idx], /* allow_hp = */ allow_hp);
                     MvCandidates { nearest, near }
                 };
                 let mvc = build_mvc(RefFrame::LastFrame);
