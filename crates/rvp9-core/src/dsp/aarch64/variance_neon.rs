@@ -10,7 +10,11 @@ use core::arch::asm;
 
 #[inline]
 #[target_feature(enable = "dotprod")]
-unsafe fn unsigned_dot(mut sum: uint32x4_t, first: uint8x16_t, second: uint8x16_t) -> uint32x4_t {
+pub(super) unsafe fn unsigned_dot(
+    mut sum: uint32x4_t,
+    first: uint8x16_t,
+    second: uint8x16_t,
+) -> uint32x4_t {
     // SAFETY: `dotprod` is enabled and every operand uses a 128-bit SIMD
     // register. The instruction has no memory or control-flow effects.
     unsafe {

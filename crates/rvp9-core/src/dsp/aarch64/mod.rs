@@ -33,10 +33,14 @@ pub use sad_neon::{
     vpx_sad32x64_neon, vpx_sad64x32_neon, vpx_sad64x64_neon,
 };
 pub use subpel_variance_neon::{
-    vpx_sub_pixel_variance16x8_neon, vpx_sub_pixel_variance16x16_neon,
-    vpx_sub_pixel_variance16x32_neon, vpx_sub_pixel_variance32x16_neon,
-    vpx_sub_pixel_variance32x32_neon, vpx_sub_pixel_variance32x64_neon,
-    vpx_sub_pixel_variance64x32_neon, vpx_sub_pixel_variance64x64_neon,
+    vpx_sub_pixel_variance16x8_dotprod, vpx_sub_pixel_variance16x8_neon,
+    vpx_sub_pixel_variance16x16_dotprod, vpx_sub_pixel_variance16x16_neon,
+    vpx_sub_pixel_variance16x32_dotprod, vpx_sub_pixel_variance16x32_neon,
+    vpx_sub_pixel_variance32x16_dotprod, vpx_sub_pixel_variance32x16_neon,
+    vpx_sub_pixel_variance32x32_dotprod, vpx_sub_pixel_variance32x32_neon,
+    vpx_sub_pixel_variance32x64_dotprod, vpx_sub_pixel_variance32x64_neon,
+    vpx_sub_pixel_variance64x32_dotprod, vpx_sub_pixel_variance64x32_neon,
+    vpx_sub_pixel_variance64x64_dotprod, vpx_sub_pixel_variance64x64_neon,
 };
 pub use subtract_neon::subtract_square_neon;
 pub use variance_neon::{

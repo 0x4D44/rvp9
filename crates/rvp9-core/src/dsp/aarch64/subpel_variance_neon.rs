@@ -7,6 +7,8 @@
 
 use core::arch::aarch64::*;
 
+use super::variance_neon::unsigned_dot;
+
 /// Apply one VP9 two-tap bilinear filter to 16 byte lanes.
 ///
 /// libvpx stores taps scaled by 128. Every tap is a multiple of 16, so this
@@ -41,12 +43,6 @@ unsafe fn horizontal_row(src: *const u8, dst: *mut u8, width: usize, xoffset: us
     }
 }
 
-#[inline]
-#[target_feature(enable = "neon")]
-unsafe fn accumulate_16(pred: uint8x16_t, reference: *const u8, accum: &mut VarianceAccumulator) {
-    accum.add(pred, vld1q_u8(reference));
-}
-
 struct VarianceAccumulator {
     sum_lo: int32x4_t,
     sum_hi: int32x4_t,
@@ -54,6 +50,46 @@ struct VarianceAccumulator {
     sse_1: int32x4_t,
     sse_2: int32x4_t,
     sse_3: int32x4_t,
+}
+
+struct DotprodVarianceAccumulator {
+    pred_sum: uint32x4_t,
+    ref_sum: uint32x4_t,
+    sse: uint32x4_t,
+    ones: uint8x16_t,
+}
+
+impl DotprodVarianceAccumulator {
+    #[inline]
+    #[target_feature(enable = "dotprod")]
+    unsafe fn new() -> Self {
+        Self {
+            pred_sum: vdupq_n_u32(0),
+            ref_sum: vdupq_n_u32(0),
+            sse: vdupq_n_u32(0),
+            ones: vdupq_n_u8(1),
+        }
+    }
+
+    #[inline]
+    #[target_feature(enable = "dotprod")]
+    unsafe fn add(&mut self, pred: uint8x16_t, reference: uint8x16_t) {
+        let diff = vabdq_u8(pred, reference);
+        self.pred_sum = unsigned_dot(self.pred_sum, pred, self.ones);
+        self.ref_sum = unsigned_dot(self.ref_sum, reference, self.ones);
+        self.sse = unsigned_dot(self.sse, diff, diff);
+    }
+
+    #[inline]
+    #[target_feature(enable = "dotprod")]
+    unsafe fn finish(self) -> (i64, i64) {
+        let sum = vaddvq_s32(vreinterpretq_s32_u32(vsubq_u32(
+            self.pred_sum,
+            self.ref_sum,
+        )));
+        let sse = vaddvq_u32(self.sse);
+        (i64::from(sum), i64::from(sse))
+    }
 }
 
 impl VarianceAccumulator {
@@ -96,6 +132,61 @@ impl VarianceAccumulator {
     }
 }
 
+macro_rules! sub_pixel_variance_body {
+    ($accum:ident, $src:ident, $src_stride:ident, $reference:ident, $ref_stride:ident, $xoffset:ident, $yoffset:ident, $width:ident, $height:ident) => {{
+        if $xoffset == 0 {
+            for row in 0..$height {
+                let top = $src.add(row * $src_stride);
+                let bottom = top.add($src_stride);
+                let ref_row = $reference.add(row * $ref_stride);
+                let mut col = 0;
+                while col < $width {
+                    let pred = filter_16(top.add(col), bottom.add(col), $yoffset);
+                    $accum.add(pred, vld1q_u8(ref_row.add(col)));
+                    col += 16;
+                }
+            }
+        } else if $yoffset == 0 {
+            for row in 0..$height {
+                let src_row = $src.add(row * $src_stride);
+                let ref_row = $reference.add(row * $ref_stride);
+                let mut col = 0;
+                while col < $width {
+                    let pred = filter_16(src_row.add(col), src_row.add(col + 1), $xoffset);
+                    $accum.add(pred, vld1q_u8(ref_row.add(col)));
+                    col += 16;
+                }
+            }
+        } else {
+            let mut row_a = [0u8; 64];
+            let mut row_b = [0u8; 64];
+            horizontal_row($src, row_a.as_mut_ptr(), $width, $xoffset);
+
+            for row in 0..$height {
+                horizontal_row(
+                    $src.add((row + 1) * $src_stride),
+                    row_b.as_mut_ptr(),
+                    $width,
+                    $xoffset,
+                );
+                let ref_row = $reference.add(row * $ref_stride);
+                let mut col = 0;
+                while col < $width {
+                    let pred =
+                        filter_16(row_a.as_ptr().add(col), row_b.as_ptr().add(col), $yoffset);
+                    $accum.add(pred, vld1q_u8(ref_row.add(col)));
+                    col += 16;
+                }
+                core::mem::swap(&mut row_a, &mut row_b);
+            }
+        }
+
+        let (sum, sse) = $accum.finish();
+        let variance = (sse - sum * sum / ($width * $height) as i64).max(0) as u32;
+        (variance, sse as u32)
+    }};
+}
+
 #[target_feature(enable = "neon")]
 #[allow(clippy::too_many_arguments)]
 unsafe fn sub_pixel_variance_neon_inner(
@@ -109,56 +200,27 @@ unsafe fn sub_pixel_variance_neon_inner(
     height: usize,
 ) -> (u32, u32) {
     let mut accum = VarianceAccumulator::new();
+    sub_pixel_variance_body!(
+        accum, src, src_stride, reference, ref_stride, xoffset, yoffset, width, height
+    )
+}
 
-    if xoffset == 0 {
-        for row in 0..height {
-            let top = src.add(row * src_stride);
-            let bottom = top.add(src_stride);
-            let ref_row = reference.add(row * ref_stride);
-            let mut col = 0;
-            while col < width {
-                let pred = filter_16(top.add(col), bottom.add(col), yoffset);
-                accumulate_16(pred, ref_row.add(col), &mut accum);
-                col += 16;
-            }
-        }
-    } else if yoffset == 0 {
-        for row in 0..height {
-            let src_row = src.add(row * src_stride);
-            let ref_row = reference.add(row * ref_stride);
-            let mut col = 0;
-            while col < width {
-                let pred = filter_16(src_row.add(col), src_row.add(col + 1), xoffset);
-                accumulate_16(pred, ref_row.add(col), &mut accum);
-                col += 16;
-            }
-        }
-    } else {
-        let mut row_a = [0u8; 64];
-        let mut row_b = [0u8; 64];
-        horizontal_row(src, row_a.as_mut_ptr(), width, xoffset);
-
-        for row in 0..height {
-            horizontal_row(
-                src.add((row + 1) * src_stride),
-                row_b.as_mut_ptr(),
-                width,
-                xoffset,
-            );
-            let ref_row = reference.add(row * ref_stride);
-            let mut col = 0;
-            while col < width {
-                let pred = filter_16(row_a.as_ptr().add(col), row_b.as_ptr().add(col), yoffset);
-                accumulate_16(pred, ref_row.add(col), &mut accum);
-                col += 16;
-            }
-            core::mem::swap(&mut row_a, &mut row_b);
-        }
-    }
-
-    let (sum, sse) = accum.finish();
-    let variance = (sse - sum * sum / (width * height) as i64).max(0) as u32;
-    (variance, sse as u32)
+#[target_feature(enable = "dotprod")]
+#[allow(clippy::too_many_arguments)]
+unsafe fn sub_pixel_variance_dotprod_inner(
+    src: *const u8,
+    src_stride: usize,
+    reference: *const u8,
+    ref_stride: usize,
+    xoffset: usize,
+    yoffset: usize,
+    width: usize,
+    height: usize,
+) -> (u32, u32) {
+    let mut accum = DotprodVarianceAccumulator::new();
+    sub_pixel_variance_body!(
+        accum, src, src_stride, reference, ref_stride, xoffset, yoffset, width, height
+    )
 }
 
 /// Generic safe NEON entry point used by the per-size wrappers.
@@ -200,6 +262,42 @@ pub fn sub_pixel_variance_neon(
     }
 }
 
+/// Generic safe dot-product sub-pixel variance entry point.
+#[allow(clippy::too_many_arguments)]
+pub fn sub_pixel_variance_dotprod(
+    src: &[u8],
+    src_stride: usize,
+    reference: &[u8],
+    ref_stride: usize,
+    xoffset: usize,
+    yoffset: usize,
+    width: usize,
+    height: usize,
+) -> (u32, u32) {
+    assert!(xoffset < 8 && yoffset < 8);
+    assert!(matches!(width, 16 | 32 | 64));
+    assert!(matches!(height, 8 | 16 | 32 | 64));
+    assert!(src_stride >= width + usize::from(xoffset != 0));
+    assert!(ref_stride >= width);
+    assert!(src.len() >= height * src_stride + width + usize::from(xoffset != 0));
+    assert!(reference.len() >= (height - 1) * ref_stride + width);
+
+    // SAFETY: Dispatch selects this wrapper only when dotprod is present.
+    // The slice bounds are identical to the NEON entry point above.
+    unsafe {
+        sub_pixel_variance_dotprod_inner(
+            src.as_ptr(),
+            src_stride,
+            reference.as_ptr(),
+            ref_stride,
+            xoffset,
+            yoffset,
+            width,
+            height,
+        )
+    }
+}
+
 macro_rules! subpel_var_neon_fn {
     ($name:ident, $w:expr, $h:expr) => {
         #[doc = concat!("NEON sub-pixel variance ", stringify!($w), "x", stringify!($h), ".")]
@@ -218,6 +316,24 @@ macro_rules! subpel_var_neon_fn {
     };
 }
 
+macro_rules! subpel_var_dotprod_fn {
+    ($name:ident, $w:expr, $h:expr) => {
+        #[doc = concat!("Dot-product sub-pixel variance ", stringify!($w), "x", stringify!($h), ".")]
+        pub fn $name(
+            src: &[u8],
+            src_stride: usize,
+            xoffset: usize,
+            yoffset: usize,
+            reference: &[u8],
+            ref_stride: usize,
+        ) -> (u32, u32) {
+            sub_pixel_variance_dotprod(
+                src, src_stride, reference, ref_stride, xoffset, yoffset, $w, $h,
+            )
+        }
+    };
+}
+
 subpel_var_neon_fn!(vpx_sub_pixel_variance16x8_neon, 16, 8);
 subpel_var_neon_fn!(vpx_sub_pixel_variance16x16_neon, 16, 16);
 subpel_var_neon_fn!(vpx_sub_pixel_variance16x32_neon, 16, 32);
@@ -226,6 +342,15 @@ subpel_var_neon_fn!(vpx_sub_pixel_variance32x32_neon, 32, 32);
 subpel_var_neon_fn!(vpx_sub_pixel_variance32x64_neon, 32, 64);
 subpel_var_neon_fn!(vpx_sub_pixel_variance64x32_neon, 64, 32);
 subpel_var_neon_fn!(vpx_sub_pixel_variance64x64_neon, 64, 64);
+
+subpel_var_dotprod_fn!(vpx_sub_pixel_variance16x8_dotprod, 16, 8);
+subpel_var_dotprod_fn!(vpx_sub_pixel_variance16x16_dotprod, 16, 16);
+subpel_var_dotprod_fn!(vpx_sub_pixel_variance16x32_dotprod, 16, 32);
+subpel_var_dotprod_fn!(vpx_sub_pixel_variance32x16_dotprod, 32, 16);
+subpel_var_dotprod_fn!(vpx_sub_pixel_variance32x32_dotprod, 32, 32);
+subpel_var_dotprod_fn!(vpx_sub_pixel_variance32x64_dotprod, 32, 64);
+subpel_var_dotprod_fn!(vpx_sub_pixel_variance64x32_dotprod, 64, 32);
+subpel_var_dotprod_fn!(vpx_sub_pixel_variance64x64_dotprod, 64, 64);
 
 #[cfg(test)]
 mod tests {
@@ -275,9 +400,16 @@ mod tests {
                     let neon = sub_pixel_variance_neon(
                         &src, src_stride, &reference, ref_stride, xoffset, yoffset, width, height,
                     );
+                    let dotprod = sub_pixel_variance_dotprod(
+                        &src, src_stride, &reference, ref_stride, xoffset, yoffset, width, height,
+                    );
                     assert_eq!(
                         scalar, neon,
                         "mismatch at {width}x{height}, offset ({xoffset},{yoffset})"
+                    );
+                    assert_eq!(
+                        scalar, dotprod,
+                        "dotprod mismatch at {width}x{height}, offset ({xoffset},{yoffset})"
                     );
                 }
             }
@@ -317,6 +449,10 @@ mod tests {
             neon: true,
             dotprod: false,
         });
+        let dotprod = SimdDispatch::build(AArch64Caps {
+            neon: true,
+            dotprod: true,
+        });
         let scalar = SimdDispatch::build(AArch64Caps {
             neon: false,
             dotprod: false,
@@ -333,12 +469,18 @@ mod tests {
                 .map(|_| rng.byte())
                 .collect();
             let neon_fn = neon.subpel_variance(bsize).unwrap();
+            let dotprod_fn = dotprod.subpel_variance(bsize).unwrap();
             let scalar_fn = scalar.subpel_variance(bsize).unwrap();
             for &(xoffset, yoffset) in &[(0, 0), (4, 4), (3, 5)] {
                 assert_eq!(
                     neon_fn(&src, src_stride, xoffset, yoffset, &reference, ref_stride,),
                     scalar_fn(&src, src_stride, xoffset, yoffset, &reference, ref_stride,),
                     "dispatch mismatch at {bsize:?}, offset ({xoffset},{yoffset})"
+                );
+                assert_eq!(
+                    dotprod_fn(&src, src_stride, xoffset, yoffset, &reference, ref_stride,),
+                    scalar_fn(&src, src_stride, xoffset, yoffset, &reference, ref_stride,),
+                    "dotprod dispatch mismatch at {bsize:?}, offset ({xoffset},{yoffset})"
                 );
             }
         }

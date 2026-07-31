@@ -2425,8 +2425,10 @@ impl SimdDispatch {
             use crate::dsp::aarch64 as neon;
             use crate::dsp::distortion as sc;
             macro_rules! subpel_slot {
-                ($scalar:path, $neon:path) => {
-                    Some(if caps.neon {
+                ($scalar:path, $neon:path, $dotprod:path) => {
+                    Some(if caps.dotprod {
+                        $dotprod as SubpelVarFn
+                    } else if caps.neon {
                         $neon as SubpelVarFn
                     } else {
                         $scalar as SubpelVarFn
@@ -2442,35 +2444,43 @@ impl SimdDispatch {
                     Some(sc::vpx_sub_pixel_variance8x16),
                     subpel_slot!(
                         sc::vpx_sub_pixel_variance16x8,
-                        neon::vpx_sub_pixel_variance16x8_neon
+                        neon::vpx_sub_pixel_variance16x8_neon,
+                        neon::vpx_sub_pixel_variance16x8_dotprod
                     ),
                     subpel_slot!(
                         sc::vpx_sub_pixel_variance16x16,
-                        neon::vpx_sub_pixel_variance16x16_neon
+                        neon::vpx_sub_pixel_variance16x16_neon,
+                        neon::vpx_sub_pixel_variance16x16_dotprod
                     ),
                     subpel_slot!(
                         sc::vpx_sub_pixel_variance16x32,
-                        neon::vpx_sub_pixel_variance16x32_neon
+                        neon::vpx_sub_pixel_variance16x32_neon,
+                        neon::vpx_sub_pixel_variance16x32_dotprod
                     ),
                     subpel_slot!(
                         sc::vpx_sub_pixel_variance32x16,
-                        neon::vpx_sub_pixel_variance32x16_neon
+                        neon::vpx_sub_pixel_variance32x16_neon,
+                        neon::vpx_sub_pixel_variance32x16_dotprod
                     ),
                     subpel_slot!(
                         sc::vpx_sub_pixel_variance32x32,
-                        neon::vpx_sub_pixel_variance32x32_neon
+                        neon::vpx_sub_pixel_variance32x32_neon,
+                        neon::vpx_sub_pixel_variance32x32_dotprod
                     ),
                     subpel_slot!(
                         sc::vpx_sub_pixel_variance32x64,
-                        neon::vpx_sub_pixel_variance32x64_neon
+                        neon::vpx_sub_pixel_variance32x64_neon,
+                        neon::vpx_sub_pixel_variance32x64_dotprod
                     ),
                     subpel_slot!(
                         sc::vpx_sub_pixel_variance64x32,
-                        neon::vpx_sub_pixel_variance64x32_neon
+                        neon::vpx_sub_pixel_variance64x32_neon,
+                        neon::vpx_sub_pixel_variance64x32_dotprod
                     ),
                     subpel_slot!(
                         sc::vpx_sub_pixel_variance64x64,
-                        neon::vpx_sub_pixel_variance64x64_neon
+                        neon::vpx_sub_pixel_variance64x64_neon,
+                        neon::vpx_sub_pixel_variance64x64_dotprod
                     ),
                 ],
             }

@@ -2862,8 +2862,11 @@ result to a second block, then calls the matching NEON variance kernel.
 **What rvp9 does:** keeps two rolling 64-byte horizontal rows and feeds each
 vertical-filter vector directly into the `(sum, sse)` reduction. Offset-zero
 paths fuse the remaining one-dimensional filter and reduction without an
-intermediate block. Two sum vectors and four squared-error vectors carry
-independent quarter-block lanes, then combine only once at the end.
+intermediate block. Runtime dispatch pre-resolves the reduction to either a
+base-NEON tier, whose independent quarter-block lanes combine once at the
+end, or an Armv8.2-A dot-product tier, which accumulates prediction sum,
+reference sum, and squared absolute differences with three `udot`
+instructions per filtered 16-byte vector.
 
 **Why:** rvp9 previously had no AArch64 sub-pixel-variance dispatch and ran
 two heap allocations plus three scalar pixel walks for every sub-pel probe.
@@ -2874,9 +2877,10 @@ two serial multiply-accumulates that the first fused kernel issued per
 16-pixel group.
 
 **Byte-parity impact:** none. Random differential coverage exercises all 64
-offset pairs across eight block shapes; edge-value and forced-dispatch tests
-also match the scalar oracle exactly. A 120-frame cpu-used 7 encode remained
-byte-identical before and after the dispatch change.
+offset pairs across eight block shapes for both SIMD tiers; edge-value and
+forced-dispatch tests also match the scalar oracle exactly. A 120-frame
+cpu-used 7 encode remained exactly 716,330 bytes with SHA-256
+`8144dcf9d104119634855cf2ed0554f14e206137ad33689f5b0f871b95c2acb3`.
 
 **Compression-efficiency impact:** none; the production stream is unchanged.
 
@@ -2885,11 +2889,16 @@ byte-identical before and after the dispatch change.
 improved median wall time from `2.74 s` to `2.45 s` (`10.6%`) on the pinned
 Apple M5 Max host. Splitting the reduction dependencies later improved paired
 child CPU by another `-1.029%` at one thread with fifteen of sixteen wins and
-`-0.947%` at four threads with seventeen of twenty wins.
+`-0.947%` at four threads with seventeen of twenty wins. Replacing that
+reduction with the pre-resolved dot-product tier then improved paired child
+CPU by `-0.494%` and `-0.483%` in two one-thread trials. Three four-thread
+trials ranged from `-0.737%` through `+0.056%` to `-0.207%`, so the
+multi-thread effect is neutral to favorable rather than a claimed stable
+win.
 
-**Future plan:** retain the fused implementation while it remains
-byte-exact. Add 4/8-wide NEON kernels only if a fresh whole-encoder profile
-shows those scalar slots are material.
+**Future plan:** retain the fused implementation and pre-resolved dot-product
+tier while both remain byte-exact. Add 4/8-wide NEON kernels only if a fresh
+whole-encoder profile shows those scalar slots are material.
 
 ### 2026-07-31 — AArch64 variance dispatch selects dot-product kernels
 
