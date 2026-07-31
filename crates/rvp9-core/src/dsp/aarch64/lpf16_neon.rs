@@ -224,6 +224,9 @@ unsafe fn filter16_lanes(
     output[9] = narrow[3];
 
     let wide7_mask = vand_u8(mask, flat);
+    if vmaxv_u8(wide7_mask) == 0 {
+        return output;
+    }
     let wide7 = filter7(&values);
     for index in 0..6 {
         output[index + 5] = vbsl_u8(wide7_mask, wide7[index], output[index + 5]);

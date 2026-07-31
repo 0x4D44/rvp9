@@ -116,14 +116,16 @@ Its byte-vector boundary mask uses saturating arithmetic.
 `2 * abs(p0 - q0) + abs(p1 - q1) / 2` to `u16` before comparing it with
 `blimit`. It applies the 4-, 8-, and 16-tap results through per-lane vector
 selects, so mixed flatness masks remain exactly equivalent to rvp9's scalar
-oracle. The vertical kernel transposes a 16-by-8 neighborhood before
+oracle. When no lane can use the 7-tap result, an aggregate all-zero check
+skips both wide candidates; mixed and flat edge groups retain the per-lane
+selects. The vertical kernel transposes a 16-by-8 neighborhood before
 filtering, then uses libvpx's inverse NEON transpose shape to store all eight
 16-byte result rows without a scalar scatter.
 **Why:** rvp9 accepts the complete `u8` threshold domain in its public DSP
 slot. Widening preserves scalar semantics when `blimit` is 255 rather than
-copying libvpx's saturating-byte approximation. Per-lane selects avoid
-libvpx's aggregate flatness shortcuts and give one exact kernel for random
-and adversarial inputs.
+copying libvpx's saturating-byte approximation. The aggregate early exit is
+exact only for an all-zero wide mask; per-lane selects still cover every
+mixed flatness case.
 **Byte-parity impact:** none. Randomized single/dual, horizontal/vertical
 differentials cover varied strides and thresholds, including all-255
 thresholds. The complete reconstructed-plane oracle passed. The 120-frame
@@ -141,6 +143,10 @@ samples. Replacing the vertical kernel's temporary 14-by-8 byte slab and
 scalar scatter with the exact inverse transpose improved a further twenty
 paired runs by `-1.094%` child CPU and `-1.097%` wall at one thread, and by
 `-1.154%` child CPU and `-0.375%` wall at four threads.
+Skipping both wide candidates for all-nonflat lane groups improves two
+twenty-pair one-thread child-CPU trials by `-0.165%` and `-0.096%`; paired
+wall improves `-0.213%` and `-0.426%`. Two four-thread trials are favorable
+at `-0.423%` and neutral at `+0.012%` child CPU.
 **Future plan:** retain while the randomized scalar differential and exact
 stream stay green. Profile before extending NEON coverage to the distinct
 4- and 8-tap slots.
