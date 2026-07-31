@@ -49,6 +49,11 @@ unsafe fn mul_add_round(a: V, ac: i32, b: V, bc: i32) -> V {
 }
 
 #[inline(always)]
+unsafe fn mul_add_round_fast32(a: V, ac: i32, b: V, bc: i32) -> V {
+    vrshrq_n_s32::<14>(vmlaq_n_s32(vmulq_n_s32(a, ac), b, bc))
+}
+
+#[inline(always)]
 unsafe fn wrap16(value: V) -> V {
     vmovl_s16(vmovn_s32(value))
 }
@@ -516,8 +521,8 @@ unsafe fn fdct32x8_from_stage2(input: &[VPair; 32], output: &mut [VPair; 32]) {
         |a, constant| [mul_round(a[0], constant), mul_round(a[1], constant)],
         |a, ac, b, bc| {
             [
-                mul_add_round(a[0], ac, b[0], bc),
-                mul_add_round(a[1], ac, b[1], bc),
+                mul_add_round_fast32(a[0], ac, b[0], bc),
+                mul_add_round_fast32(a[1], ac, b[1], bc),
             ]
         },
     );
