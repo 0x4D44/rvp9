@@ -7,10 +7,16 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 
 pub mod subpel_variance_neon;
+pub mod variance_neon;
 
 pub use subpel_variance_neon::{
     vpx_sub_pixel_variance16x8_neon, vpx_sub_pixel_variance16x16_neon,
     vpx_sub_pixel_variance16x32_neon, vpx_sub_pixel_variance32x16_neon,
     vpx_sub_pixel_variance32x32_neon, vpx_sub_pixel_variance32x64_neon,
     vpx_sub_pixel_variance64x32_neon, vpx_sub_pixel_variance64x64_neon,
+};
+pub use variance_neon::{
+    get_var_sse_8x8_neon, var_sum_sse_8x4_neon, var_sum_sse_8x8_neon, var_sum_sse_8x16_neon,
+    var_sum_sse_16x8_neon, var_sum_sse_16x16_neon, var_sum_sse_16x32_neon, var_sum_sse_32x16_neon,
+    var_sum_sse_32x32_neon, var_sum_sse_32x64_neon, var_sum_sse_64x32_neon, var_sum_sse_64x64_neon,
 };

@@ -16,6 +16,7 @@
 //!   cargo run -p rvp9-bench --release --bin dsp-microbench
 //!   cargo run -p rvp9-bench --release --bin dsp-microbench -- bool_reader
 //!   cargo run -p rvp9-bench --release --bin dsp-microbench -- subpel_variance
+//!   cargo run -p rvp9-bench --release --bin dsp-microbench -- variance
 //!
 //! The optional positional case-selector runs only the named case:
 //!   - (no arg)      → DSP kernel suite (default — scalar vs AVX2).
@@ -361,15 +362,63 @@ fn main() {
     match arg.as_deref() {
         Some("bool_reader") => run_bool_reader(),
         Some("subpel_variance") => run_subpel_variance(),
+        Some("variance") => run_variance(),
         Some("vs_libvpx") => run_vs_libvpx(),
         Some(other) => {
             eprintln!(
-                "unknown case '{other}' — valid: bool_reader, subpel_variance, vs_libvpx \
+                "unknown case '{other}' — valid: bool_reader, subpel_variance, variance, vs_libvpx \
                  (no arg = DSP suite)"
             );
             std::process::exit(2);
         }
         None => run(),
+    }
+}
+
+/// Production-dispatch ruler for the variance reductions in inter RD.
+fn run_variance() {
+    use rvp9_core::block::BlockSize;
+    use rvp9_core::dsp::distortion::var_sum_sse;
+
+    let dsp = rvp9_core::dsp::init();
+    let batches = 50;
+
+    println!("== Variance reduction ==");
+    for &(bsize, width, height, iters) in &[
+        (BlockSize::Block8x8, 8usize, 8usize, 20_000),
+        (BlockSize::Block16x16, 16, 16, 10_000),
+        (BlockSize::Block32x32, 32, 32, 4_000),
+        (BlockSize::Block64x64, 64, 64, 1_000),
+    ] {
+        let src_stride = width + 17;
+        let pred_stride = width + 11;
+        let src = filled((height - 1) * src_stride + width, 0x5EED ^ width as u32);
+        let pred = filled((height - 1) * pred_stride + width, 0xC0DE ^ height as u32);
+        let dispatched = dsp.variance(bsize);
+
+        let scalar_ns = bench_min_ns(batches, iters, || {
+            black_box(var_sum_sse(
+                black_box(&src),
+                src_stride,
+                black_box(&pred),
+                pred_stride,
+                width,
+                height,
+            ));
+        });
+        let dispatch_ns = bench_min_ns(batches, iters, || {
+            black_box(dispatched(
+                black_box(&src),
+                src_stride,
+                black_box(&pred),
+                pred_stride,
+            ));
+        });
+        println!(
+            "{width:>2}x{height:<2} scalar {scalar_ns:8.1} ns   \
+             dispatch {dispatch_ns:8.1} ns   {:5.2}x",
+            scalar_ns / dispatch_ns
+        );
     }
 }
 
