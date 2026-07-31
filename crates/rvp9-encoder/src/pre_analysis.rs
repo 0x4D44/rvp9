@@ -402,10 +402,6 @@ impl PreAnalysisState {
         debug_assert_eq!(last.len(), w * h);
         let sb_cols = (w / 64).max(1);
         let sb_rows = (h / 64).max(1);
-        // libvpx `vp9_ratectrl.c:3076-3079` default thresholds.
-        const MIN_THRESH: u64 = 65_000;
-        const THRESH: u64 = 8;
-        const THRESH_KEY: u64 = 140_000;
 
         // Checkerboard sample, skipping the boundary SBs (libvpx
         // `vp9_ratectrl.c:3146-3148`).
@@ -428,6 +424,69 @@ impl PreAnalysisState {
                 }
             }
         }
+        self.apply_scene_detection_summary(
+            total_sad,
+            num_samples,
+            num_zero_temp_sad,
+            frames_since_key,
+        );
+    }
+
+    /// Scene detection from the immediately preceding
+    /// [`Self::compute_avg_source_sad`] results.
+    ///
+    /// The avg-SAD pass stores the same 64x64 SAD values that
+    /// [`Self::compute_scene_detection`] otherwise recomputes for its
+    /// interior checkerboard subset. Product encoding calls this entry
+    /// point only after the avg-SAD pass for the same source frame.
+    pub fn compute_scene_detection_from_cached_sad(&mut self, frames_since_key: u32) {
+        if self.last_source_y.is_none() {
+            self.high_source_sad = false;
+            self.scene_cut_force_key_frame = false;
+            return;
+        }
+        let w = self.width as usize;
+        let h = self.height as usize;
+        let sb_cols = (w / 64).max(1);
+        let sb_rows = (h / 64).max(1);
+
+        let mut total_sad: u64 = 0;
+        let mut num_samples: u32 = 0;
+        let mut num_zero_temp_sad: u32 = 0;
+        for sb_r in 0..sb_rows {
+            for sb_c in 0..sb_cols {
+                let interior = sb_r > 0 && sb_c > 0 && sb_r + 1 < sb_rows && sb_c + 1 < sb_cols;
+                let checkerboard =
+                    (sb_r % 2 == 0 && sb_c % 2 == 0) || (sb_r % 2 == 1 && sb_c % 2 == 1);
+                if interior && checkerboard {
+                    let sad = self.avg_source_sad[sb_r * sb_cols + sb_c];
+                    total_sad += sad;
+                    num_samples += 1;
+                    if sad == 0 {
+                        num_zero_temp_sad += 1;
+                    }
+                }
+            }
+        }
+        self.apply_scene_detection_summary(
+            total_sad,
+            num_samples,
+            num_zero_temp_sad,
+            frames_since_key,
+        );
+    }
+
+    fn apply_scene_detection_summary(
+        &mut self,
+        total_sad: u64,
+        num_samples: u32,
+        num_zero_temp_sad: u32,
+        frames_since_key: u32,
+    ) {
+        // libvpx `vp9_ratectrl.c:3076-3079` default thresholds.
+        const MIN_THRESH: u64 = 65_000;
+        const THRESH: u64 = 8;
+        const THRESH_KEY: u64 = 140_000;
         let avg_sad = if num_samples > 0 {
             total_sad / num_samples as u64
         } else {
@@ -1387,6 +1446,52 @@ mod tests {
              prev_avg_source_sad={}",
             st.prev_avg_source_sad
         );
+    }
+
+    /// Unit 143 — cached per-SB SADs must be an exact oracle for the
+    /// scene detector's former duplicate pixel walk.
+    #[test]
+    fn w2_3_cached_scene_detection_matches_pixel_oracle() {
+        const W: usize = 384;
+        const H: usize = 384;
+        let calm = vec![100u8; W * H];
+        let cut = vec![230u8; W * H];
+        let mut boundary_only = calm.clone();
+        for row in 0..H {
+            for col in 0..W {
+                if row < 64 || col < 64 || row >= H - 64 || col >= W - 64 {
+                    boundary_only[row * W + col] = 230;
+                }
+            }
+        }
+
+        let mut direct = PreAnalysisState::new(W as u32, H as u32);
+        let mut cached = direct.clone();
+        for (source, frames_since_key) in [
+            (&calm[..], 1u32),
+            (&boundary_only[..], 5u32),
+            (&cut[..], 6u32),
+            (&calm[..], 7u32),
+        ] {
+            direct.capture_last_source(&calm);
+            cached.capture_last_source(&calm);
+            cached.compute_avg_source_sad(source, false);
+            direct.compute_scene_detection(source, frames_since_key);
+            cached.compute_scene_detection_from_cached_sad(frames_since_key);
+            assert_eq!(
+                (
+                    cached.high_source_sad,
+                    cached.scene_cut_force_key_frame,
+                    cached.prev_avg_source_sad,
+                ),
+                (
+                    direct.high_source_sad,
+                    direct.scene_cut_force_key_frame,
+                    direct.prev_avg_source_sad,
+                ),
+                "cached scene summary diverged at frames_since_key={frames_since_key}"
+            );
+        }
     }
 
     /// W2.3 PROOF — `frames_since_key <= 1` gate suppresses

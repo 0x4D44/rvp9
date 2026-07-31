@@ -1974,7 +1974,7 @@ impl StreamEncoder {
         // `rate_control.frames_since_key` for the post-KF gate.
         if self.pre_analysis.compute_source_sad_onepass {
             self.pre_analysis
-                .compute_scene_detection(y_tight, self.rate_control.frames_since_key);
+                .compute_scene_detection_from_cached_sad(self.rate_control.frames_since_key);
         }
         // W2.4(vpxenc parity, A5 P3): noise estimator
         // (libvpx `vp9_noise_estimate.c:109-302`). Updates

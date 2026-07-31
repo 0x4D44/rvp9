@@ -3418,3 +3418,38 @@ and `2.607%`.
 
 **Future plan:** wire the producer at the actual partition/chroma-RD use site
 when that consumer lands. Do not restore an unconditional frame-level pass.
+
+### 2026-07-31 — Scene detection reuses cached per-superblock source SAD
+
+**Where:** `rvp9_encoder::pre_analysis::PreAnalysisState::{
+compute_avg_source_sad,compute_scene_detection_from_cached_sad,
+compute_scene_detection}` and
+`rvp9_encoder::frame_loop::StreamEncoder::try_encode_one_popped`.
+
+**What libvpx does:** its one-pass pre-analysis shares source-SAD state among
+the content-state and scene-detection decisions.
+
+**What rvp9 does:** the product frame loop computes every 64x64 source SAD
+once, stores it in `avg_source_sad[]`, and aggregates the scene detector's
+interior checkerboard subset from those exact values. The standalone
+pixel-based method remains as a differential oracle.
+
+**Why:** both former passes called the same `sb_sad_and_var` helper against
+the same current and previous source planes. Reusing the stored values
+removes a duplicate subset pixel walk while preserving the checkerboard,
+zero-SAD, threshold, forced-keyframe, and recursive-mean rules.
+
+**Byte-parity impact:** none. The cpu-used 7 product stream is byte-identical
+to Unit 142, and rvp9-decoder, pinned vpxdec, and ffmpeg produce byte-exact
+I420 output.
+
+**Compression-efficiency impact:** none; the strict Stage 4a curve remains
+`-8.585847331540%` PSNR BD-rate versus pinned libvpx v1.14.1.
+
+**Speed impact:** three saturated-host alternating four-thread series improve
+total child CPU by `0.392%`, `0.826%`, and `0.715%`. The fresh profile cuts
+the broad source-analysis self samples from 308 to 254.
+
+**Future plan:** keep the cached entry point adjacent to the avg-SAD call.
+Any call site that has not populated `avg_source_sad[]` for the same frame
+must use the independent pixel-based method.
