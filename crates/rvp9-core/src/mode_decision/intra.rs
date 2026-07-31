@@ -75,7 +75,7 @@ use crate::intra_pred::{
 use crate::mode_decision::rd_cost;
 use crate::mv_search::PlaneRef;
 use crate::quant::forward::{
-    PlaneQuantizers, scan_for_forward, vp9_quantize_b, vp9_quantize_b_32x32,
+    PlaneQuantizers, scan_for_forward, vp9_quantize_b_32x32, vp9_quantize_b_with_order,
 };
 use crate::transforms::forward::{fdct32x32, fht4x4, fht8x8, fht16x16};
 use crate::transforms::inverse::{
@@ -399,7 +399,7 @@ pub fn pick_intra_mode_luma(params: &IntraModeSearchParams<'_>) -> IntraModeSear
                 scan_slice,
             )
         } else {
-            vp9_quantize_b(
+            vp9_quantize_b_with_order(
                 &coefs[..n],
                 n,
                 false,
@@ -410,7 +410,7 @@ pub fn pick_intra_mode_luma(params: &IntraModeSearchParams<'_>) -> IntraModeSear
                 &mut qcoeff[..n],
                 &mut dqcoeff[..n],
                 &dequant_pair,
-                scan_slice,
+                &scan,
             )
         };
         let eob_usize = eob as usize;
@@ -744,7 +744,7 @@ pub fn pick_intra_mode_uv(params: &UvIntraModeSearchParams<'_>) -> IntraModeSear
                     scan_slice,
                 )
             } else {
-                vp9_quantize_b(
+                vp9_quantize_b_with_order(
                     &coefs[..n],
                     n,
                     false,
@@ -755,7 +755,7 @@ pub fn pick_intra_mode_uv(params: &UvIntraModeSearchParams<'_>) -> IntraModeSear
                     &mut qcoeff[..n],
                     &mut dqcoeff[..n],
                     &dequant_pair,
-                    scan_slice,
+                    &scan,
                 )
             };
 
@@ -1373,7 +1373,7 @@ mod tests {
                     scan_slice,
                 )
             } else {
-                vp9_quantize_b(
+                vp9_quantize_b_with_order(
                     &coefs[..n],
                     n,
                     false,
@@ -1384,7 +1384,7 @@ mod tests {
                     &mut qcoeff[..n],
                     &mut dqcoeff[..n],
                     &dequant_pair,
-                    scan_slice,
+                    &scan,
                 )
             };
             let eob_usize = eob as usize;
