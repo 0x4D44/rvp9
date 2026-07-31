@@ -102,7 +102,7 @@ impl<'a> BoolWriter<'a> {
     ///
     /// Mirrors `vpx_write` (`vpx_dsp/bitwriter.h:46-116`) verbatim — the
     /// carry-back trick at the `0x80000000` check is preserved exactly.
-    #[inline]
+    #[inline(always)]
     pub fn write(&mut self, bit: u8, probability: u8) {
         if self.count_only {
             return;

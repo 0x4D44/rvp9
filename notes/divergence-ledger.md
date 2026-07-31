@@ -2897,3 +2897,37 @@ acceptance still requires the clean-host corpus matrix.
 **Future plan:** retain the reusable encoder cache while the causal-neighbour
 test and exact stream gate remain green. Re-profile the committed encoder
 before selecting another token-path change.
+
+### 2026-07-31 — Arithmetic bit writes are forced inline
+
+**Where:** `rvp9_core::entropy::bool_writer::BoolWriter::write`, called for
+every probability-coded syntax and coefficient bit.
+
+**What libvpx does:** `vpx_write` is a `static INLINE` function in
+`vpx_dsp/bitwriter.h`, so its interval update is expanded into each caller.
+
+**What rvp9 does:** marks the equivalent Rust method `#[inline(always)]`.
+Ordinary `#[inline]` left one standalone function and a call for every coded
+bit in the release binary.
+
+**Why:** the committed Unit 124 profile still attributed 157 tile-worker self
+samples (`4.61%`) to the call boundary and arithmetic writer. Forced inlining
+lets the optimizer carry writer state and constant bit values through the
+surrounding token grammar.
+
+**Byte-parity impact:** none. All fifteen focused bool-writer tests pass. The
+120-frame cpu-used 7 product stream remains byte-identical, and rvp9-decoder,
+pinned vpxdec, and ffmpeg produce identical 162,201,600-byte I420 output.
+
+**Compression-efficiency impact:** none; the production stream is unchanged.
+
+**Speed impact:** sixteen warmed alternating one-thread pairs improved paired
+child CPU by `-1.721%` and wall time by `-1.680%`, with fifteen wins. Twenty
+four-thread pairs improved child CPU by `-1.154%` with eighteen wins and wall
+time by `-1.309%` with seventeen wins. Mach-O text grew 16 KiB, from
+1,163,264 to 1,179,648 bytes (`1.41%`), a measured trade for the repeated hot
+call removal.
+
+**Future plan:** retain forced inlining while the exact stream and focused
+writer tests remain green. Use the committed post-change profile to ensure
+the removed standalone leaf did not merely move equal work into callers.
