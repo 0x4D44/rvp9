@@ -63,6 +63,46 @@ pub fn vpx_int_pro_row_neon(
     }
 }
 
+#[target_feature(enable = "neon")]
+unsafe fn vpx_vector_var_neon_inner(
+    reference: *const i16,
+    source: *const i16,
+    width: usize,
+    shift: u32,
+) -> i32 {
+    let mut sse = vdupq_n_s32(0);
+    let mut total = vdupq_n_s16(0);
+    let mut offset = 0usize;
+    while offset < width {
+        let reference_values = vld1q_s16(reference.add(offset));
+        let source_values = vld1q_s16(source.add(offset));
+        let diff = vsubq_s16(reference_values, source_values);
+        let diff_lo = vget_low_s16(diff);
+        let diff_hi = vget_high_s16(diff);
+        sse = vmlal_s16(sse, diff_lo, diff_lo);
+        sse = vmlal_s16(sse, diff_hi, diff_hi);
+        total = vaddq_s16(total, diff);
+        offset += 8;
+    }
+
+    let mean = i32::from(vaddvq_s16(total));
+    vaddvq_s32(sse) - ((mean * mean) >> shift)
+}
+
+/// Computes projection-vector variance for 16-, 32-, or 64-wide motion
+/// search vectors.
+pub fn vpx_vector_var_neon(reference: &[i16], source: &[i16], bwl: u32) -> i32 {
+    let width = 4usize << bwl;
+    assert!(matches!(width, 16 | 32 | 64));
+    assert!(reference.len() >= width);
+    assert!(source.len() >= width);
+
+    // SAFETY: The assertions prove each eight-lane load. Projection values
+    // are in [0, 510], so every i16 lane sum and i32 squared sum stays in
+    // range for the supported widths.
+    unsafe { vpx_vector_var_neon_inner(reference.as_ptr(), source.as_ptr(), width, bwl + 2) }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -116,6 +156,42 @@ mod tests {
                 scalar(&mut expected, &input, 16, height);
                 vpx_int_pro_row_neon(&mut actual, &input, 16, height);
                 assert_eq!(actual, expected);
+            }
+        }
+    }
+
+    fn scalar_vector_var(reference: &[i16], source: &[i16], bwl: u32) -> i32 {
+        let width = 4usize << bwl;
+        let mut sse = 0i32;
+        let mut mean = 0i32;
+        for index in 0..width {
+            let diff = i32::from(reference[index]) - i32::from(source[index]);
+            mean += diff;
+            sse += diff * diff;
+        }
+        sse - ((mean * mean) >> (bwl + 2))
+    }
+
+    #[test]
+    fn vector_var_matches_scalar_random_and_extreme_projections() {
+        let mut rng = Lcg32(0x5ec7_0a11);
+        for bwl in [2, 3, 4] {
+            let width = 4usize << bwl;
+            for _ in 0..256 {
+                let reference: Vec<i16> = (0..width).map(|_| i16::from(rng.byte()) * 2).collect();
+                let source: Vec<i16> = (0..width).map(|_| i16::from(rng.byte()) * 2).collect();
+                assert_eq!(
+                    vpx_vector_var_neon(&reference, &source, bwl),
+                    scalar_vector_var(&reference, &source, bwl)
+                );
+            }
+            for (reference_value, source_value) in [(0, 0), (0, 510), (510, 0), (510, 510)] {
+                let reference = vec![reference_value; width];
+                let source = vec![source_value; width];
+                assert_eq!(
+                    vpx_vector_var_neon(&reference, &source, bwl),
+                    scalar_vector_var(&reference, &source, bwl)
+                );
             }
         }
     }

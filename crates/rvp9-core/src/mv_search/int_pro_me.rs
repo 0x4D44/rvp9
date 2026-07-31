@@ -273,11 +273,12 @@ fn fill_int_pro_cols(
 /// var = sse - ((mean * mean) >> (bwl + 2))
 /// ```
 ///
-/// `bwl` ranges over `{1, 2, 3, 4}` (16, 32, 64 vs the 16/32/64
+/// `bwl` ranges over `{2, 3, 4}` (16, 32, 64 vs the 16/32/64
 /// SB widths we care about). The result fits in i32 with margin
 /// (sse: 26 bits dynamic range per libvpx comment).
+#[cfg(not(target_arch = "aarch64"))]
 #[inline]
-fn vpx_vector_var(ref_vec: &[i16], src_vec: &[i16], bwl: u32) -> i32 {
+fn vpx_vector_var_scalar(ref_vec: &[i16], src_vec: &[i16], bwl: u32) -> i32 {
     let width = 4usize << bwl;
     debug_assert!(ref_vec.len() >= width);
     debug_assert!(src_vec.len() >= width);
@@ -289,6 +290,18 @@ fn vpx_vector_var(ref_vec: &[i16], src_vec: &[i16], bwl: u32) -> i32 {
         sse += diff * diff;
     }
     sse - ((mean * mean) >> (bwl + 2))
+}
+
+#[inline]
+fn vpx_vector_var(ref_vec: &[i16], src_vec: &[i16], bwl: u32) -> i32 {
+    #[cfg(target_arch = "aarch64")]
+    {
+        crate::dsp::aarch64::vpx_vector_var_neon(ref_vec, src_vec, bwl)
+    }
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        vpx_vector_var_scalar(ref_vec, src_vec, bwl)
+    }
 }
 
 /// `vector_match` (`vp9_mcomp.c:2192-2255`). Find the best 1D
