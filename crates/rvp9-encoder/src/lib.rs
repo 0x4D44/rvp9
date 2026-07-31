@@ -6573,12 +6573,31 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                 };
                                 let residual_len = tx_side * tx_side;
                                 let mut residual = [0i16; 1024];
+                                #[cfg(target_arch = "aarch64")]
+                                if matches!(tx_side, 8 | 16 | 32) {
+                                    rvp9_core::dsp::aarch64::subtract_square_neon(
+                                        &input_plane[dst_off..],
+                                        plane_stride,
+                                        &recon_plane[dst_off..],
+                                        plane_stride,
+                                        &mut residual,
+                                        tx_side,
+                                    );
+                                } else {
+                                    for r in 0..tx_side {
+                                        for c in 0..tx_side {
+                                            let off = (tx_px_y + r) * plane_stride + (tx_px_x + c);
+                                            residual[r * tx_side + c] =
+                                                input_plane[off] as i16 - recon_plane[off] as i16;
+                                        }
+                                    }
+                                }
+                                #[cfg(not(target_arch = "aarch64"))]
                                 for r in 0..tx_side {
                                     for c in 0..tx_side {
                                         let off = (tx_px_y + r) * plane_stride + (tx_px_x + c);
-                                        let s = input_plane[off] as i16;
-                                        let p = recon_plane[off] as i16;
-                                        residual[r * tx_side + c] = s - p;
+                                        residual[r * tx_side + c] =
+                                            input_plane[off] as i16 - recon_plane[off] as i16;
                                     }
                                 }
                                 if let Some(t0) = emit_residual_start {
