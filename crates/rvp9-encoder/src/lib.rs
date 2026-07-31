@@ -1652,6 +1652,17 @@ fn simulate_dc_intra_encode_partitions_no_zero_with_tiles(
                 let qp_y = init_plane_quantizers(leaf_qindex, QuantizerDeltas::Y);
                 let qp_uv = init_plane_quantizers(leaf_qindex, QuantizerDeltas::Y);
 
+                // Reuse one set of maximum-size transform buffers for every
+                // TX block in this leaf. The prior path allocated five Vecs
+                // per block and copied each transform's stack output into a
+                // second heap buffer. Only the final qcoeff buffer escapes
+                // into `out`; all other storage is scratch.
+                let mut residual = [0i16; 1024];
+                let mut coefs_i32 = [0i32; 1024];
+                let mut qcoeff_i16 = [0i16; 1024];
+                let mut dqcoeff_i16 = [0i16; 1024];
+                let mut dq_i32 = [0i32; 1024];
+
                 // Iterate planes: 0=Y, 1=U, 2=V.
                 for plane in 0..3 {
                     let ss_x = F5_SUBSAMPLING_X[plane];
@@ -1771,7 +1782,7 @@ fn simulate_dc_intra_encode_partitions_no_zero_with_tiles(
                             );
 
                             // 3. Residual = input - pred.
-                            let mut residual = vec![0i16; tx_side * tx_side];
+                            let residual = &mut residual[..tx_side * tx_side];
                             for r in 0..tx_side {
                                 for c in 0..tx_side {
                                     let px_x = tx_px_x + c;
@@ -1822,27 +1833,38 @@ fn simulate_dc_intra_encode_partitions_no_zero_with_tiles(
                             //    sizes use the hybrid `fht*` family with
                             //    `tx_type`.
                             let n = plane_tx.n_coeffs();
-                            let mut coefs_i32 = vec![0i32; n];
+                            let coefs_i32 = &mut coefs_i32[..n];
                             match plane_tx {
                                 TxSize::Tx32x32 => {
-                                    let mut buf = [0i32; 1024];
-                                    fdct32x32(&residual, &mut buf, tx_side);
-                                    coefs_i32.copy_from_slice(&buf[..]);
+                                    fdct32x32(
+                                        residual,
+                                        coefs_i32.try_into().expect("Tx32 coefficient extent"),
+                                        tx_side,
+                                    );
                                 }
                                 TxSize::Tx16x16 => {
-                                    let mut buf = [0i32; 256];
-                                    fht16x16(&residual, &mut buf, tx_side, tx_type);
-                                    coefs_i32.copy_from_slice(&buf[..]);
+                                    fht16x16(
+                                        residual,
+                                        coefs_i32.try_into().expect("Tx16 coefficient extent"),
+                                        tx_side,
+                                        tx_type,
+                                    );
                                 }
                                 TxSize::Tx8x8 => {
-                                    let mut buf = [0i32; 64];
-                                    fht8x8(&residual, &mut buf, tx_side, tx_type);
-                                    coefs_i32.copy_from_slice(&buf[..]);
+                                    fht8x8(
+                                        residual,
+                                        coefs_i32.try_into().expect("Tx8 coefficient extent"),
+                                        tx_side,
+                                        tx_type,
+                                    );
                                 }
                                 TxSize::Tx4x4 => {
-                                    let mut buf = [0i32; 16];
-                                    fht4x4(&residual, &mut buf, tx_side, tx_type);
-                                    coefs_i32.copy_from_slice(&buf[..]);
+                                    fht4x4(
+                                        residual,
+                                        coefs_i32.try_into().expect("Tx4 coefficient extent"),
+                                        tx_side,
+                                        tx_type,
+                                    );
                                 }
                             }
 
@@ -1850,8 +1872,8 @@ fn simulate_dc_intra_encode_partitions_no_zero_with_tiles(
                             //    Tx32x32 → DctDct scan; smaller sizes use
                             //    `scan_for(plane_tx, tx_type)`.
                             let scan = scan_for(plane_tx, tx_type);
-                            let mut qcoeff_i16 = vec![0i16; n];
-                            let mut dqcoeff_i16 = vec![0i16; n];
+                            let qcoeff_i16 = &mut qcoeff_i16[..n];
+                            let dqcoeff_i16 = &mut dqcoeff_i16[..n];
                             let eob = match plane_tx {
                                 TxSize::Tx32x32 => vp9_quantize_b_32x32_with_order(
                                     &coefs_i32,
@@ -1860,8 +1882,8 @@ fn simulate_dc_intra_encode_partitions_no_zero_with_tiles(
                                     &round,
                                     &quant,
                                     &quant_shift,
-                                    &mut qcoeff_i16,
-                                    &mut dqcoeff_i16,
+                                    qcoeff_i16,
+                                    dqcoeff_i16,
                                     &dequant_pair,
                                     &scan,
                                 ),
@@ -1873,8 +1895,8 @@ fn simulate_dc_intra_encode_partitions_no_zero_with_tiles(
                                     &round,
                                     &quant,
                                     &quant_shift,
-                                    &mut qcoeff_i16,
-                                    &mut dqcoeff_i16,
+                                    qcoeff_i16,
+                                    dqcoeff_i16,
                                     &dequant_pair,
                                     &scan,
                                 ),
@@ -1890,7 +1912,7 @@ fn simulate_dc_intra_encode_partitions_no_zero_with_tiles(
                             //    kernel only, which diverged ±1 from the
                             //    decoder's sparse/SIMD kernels and seeded
                             //    the keyframe intra-prediction cascade).
-                            let mut dq_i32 = vec![0i32; n];
+                            let dq_i32 = &mut dq_i32[..n];
                             for i in 0..n {
                                 dq_i32[i] = dqcoeff_i16[i] as i32;
                             }
@@ -1909,7 +1931,7 @@ fn simulate_dc_intra_encode_partitions_no_zero_with_tiles(
                             //    leaf top-left (mi_row, mi_col) so the
                             //    writer's `IntraCoefSource` lookup hits.
                             let qcoeff_i32: Vec<i32> =
-                                qcoeff_i16.into_iter().map(i32::from).collect();
+                                qcoeff_i16.iter().copied().map(i32::from).collect();
                             out.insert(
                                 leaf_mi_row,
                                 leaf_mi_col,
