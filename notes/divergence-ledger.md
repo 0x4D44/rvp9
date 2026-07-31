@@ -24,6 +24,28 @@ Each entry:
 
 ## Entries
 
+### 2026-07-31 — Use a generic eight-lane NEON interpolation kernel
+**Where:** `rvp9-core::dsp::aarch64::convolve8_neon`; libvpx counterpart:
+`vpx_dsp/arm/vpx_convolve8_neon.c`.
+**What libvpx does:** dispatches among width-specific NEON kernels with
+paired taps, row-pair sliding windows, and special 4-pixel paths.
+**What rvp9 does:** computes eight adjacent pixels per vector with widened
+i32 multiply-accumulates and uses the scalar oracle for sub-eight-pixel
+widths and non-vector tails. The 2-D path composes these exact single-axis
+kernels through a reusable thread-local intermediate.
+**Why:** this is the smallest safe architecture that removes the measured
+scalar bottleneck while retaining one easy-to-audit arithmetic path. It
+also preserves the scalar API's non-standard odd-width behavior.
+**Byte-parity impact:** none. Differential tests cover all four filter
+families, every phase, the VP9 block-shape matrix, odd widths, and stride
+jitter. The 120-frame product stream remained byte-identical.
+**Compression-efficiency impact:** none because mode decisions and emitted
+streams are unchanged.
+**Speed impact:** warmed 1280x704 Stage 4a VBR cpu-used 7 median wall time
+fell from `1.80 s` to `1.64 s` (`8.9%`).
+**Future plan:** consider libvpx's paired-tap or dot-product kernels only if
+another profile shows interpolation remains material.
+
 ### 2026-07-31 — Retain the duplicate picker DCT outside Stage 4a VBR
 **Where:** `rvp9-core::mode_decision::inter::evaluate_candidate_for_filter`
 and `InterRdCalibration`; libvpx counterpart:

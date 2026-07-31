@@ -1928,7 +1928,13 @@ impl SimdDispatch {
         } else {
             crate::inter::filter::convolve8_horiz
         };
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(target_arch = "aarch64")]
+        let convolve8_horiz: Convolve8OneAxisFn = if caps.neon {
+            crate::dsp::aarch64::convolve8_horiz_neon
+        } else {
+            crate::inter::filter::convolve8_horiz
+        };
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         let convolve8_horiz: Convolve8OneAxisFn = crate::inter::filter::convolve8_horiz;
         // ---- Wave J J4 — AVX2 convolve8_vert promotion. ----
         #[cfg(target_arch = "x86_64")]
@@ -1937,7 +1943,13 @@ impl SimdDispatch {
         } else {
             crate::inter::filter::convolve8_vert
         };
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(target_arch = "aarch64")]
+        let convolve8_vert: Convolve8OneAxisFn = if caps.neon {
+            crate::dsp::aarch64::convolve8_vert_neon
+        } else {
+            crate::inter::filter::convolve8_vert
+        };
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         let convolve8_vert: Convolve8OneAxisFn = crate::inter::filter::convolve8_vert;
         // ---- Wave J J5 — AVX2 convolve8 (full 2-D) promotion. ----
         #[cfg(target_arch = "x86_64")]
@@ -1946,7 +1958,13 @@ impl SimdDispatch {
         } else {
             crate::inter::filter::convolve8
         };
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(target_arch = "aarch64")]
+        let convolve8: Convolve8TwoAxisFn = if caps.neon {
+            crate::dsp::aarch64::convolve8_neon
+        } else {
+            crate::inter::filter::convolve8
+        };
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         let convolve8: Convolve8TwoAxisFn = crate::inter::filter::convolve8;
         // ---- Wave J J6 — AVX2 convolve8_avg_horiz promotion. ----
         #[cfg(target_arch = "x86_64")]
