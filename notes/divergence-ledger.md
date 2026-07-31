@@ -24,6 +24,29 @@ Each entry:
 
 ## Entries
 
+### 2026-07-31 — Vectorize four exact 32-point DCTs in parallel
+**Where:** `rvp9-core::transforms::forward_neon`; libvpx counterparts:
+`vpx_dsp/arm/fdct32x32_neon.c` and `vpx_dsp/arm/fdct32x32_neon.h`.
+**What libvpx does:** its first 32x32 pass uses eight i16 NEON lanes and its
+overflow-sensitive second pass widens selected stages to paired i32 vectors.
+**What rvp9 does:** applies the existing scalar seven-stage 32-point DCT to
+four independent rows or columns in parallel i32 lanes. Every cosine product
+widens to i64 before the exact `+8192 >> 14` reduction.
+**Why:** rvp9's transform API stores forward coefficients as i32. Four-wide
+i32 lanes preserve that API and mirror the already-audited scalar equations,
+while avoiding a second mixed-width transform implementation.
+**Byte-parity impact:** none. Differential coverage compares 128 randomized
+valid residual blocks with stride jitter plus constant and alternating
+residual extremes. The 120-frame product stream remained byte-identical.
+**Compression-efficiency impact:** none because every transform coefficient
+and emitted stream is unchanged.
+**Speed impact:** two order-reversed ten-encode aggregates improved
+`15.91 -> 15.56 s` and `15.67 -> 15.36 s` (`2.0-2.2%`) on the 1280x704
+Stage 4a VBR cpu-used 7 input.
+**Future plan:** retain the four-wide exact kernel while it remains
+byte-identical. Revisit libvpx's eight-wide mixed-width layout only if a
+future profile still makes the transform material.
+
 ### 2026-07-31 — Use a generic eight-lane NEON interpolation kernel
 **Where:** `rvp9-core::dsp::aarch64::convolve8_neon`; libvpx counterpart:
 `vpx_dsp/arm/vpx_convolve8_neon.c`.

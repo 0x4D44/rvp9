@@ -36,6 +36,10 @@ use super::constants::{
 };
 use super::types::TxType;
 
+#[cfg(target_arch = "aarch64")]
+#[path = "forward_neon.rs"]
+mod neon;
+
 /// Function pointer for a 1D 4-point forward transform — either
 /// [`fdct4`] or [`fadst4`]. Used by the [`fht4x4`] dispatcher to pick
 /// per-axis kernels via the FHT_4 table.
@@ -1356,7 +1360,8 @@ pub fn fdct32(input: &[i32; 32], output: &mut [i32; 32], round: bool) {
 ///
 /// Note: 32×32 has no `fht32x32` hybrid variant — libvpx never emits
 /// ADST at 32×32 (intra at 32×32 always selects `tx_type=DCT_DCT`).
-pub fn fdct32x32(input: &[i16], output: &mut [i32; 1024], stride: usize) {
+#[cfg(any(not(target_arch = "aarch64"), test))]
+fn fdct32x32_scalar(input: &[i16], output: &mut [i32; 1024], stride: usize) {
     debug_assert!(
         input.len() >= 31 * stride + 32,
         "input slice too small for 32x32 at stride {stride}"
@@ -1395,6 +1400,19 @@ pub fn fdct32x32(input: &[i16], output: &mut [i32; 1024], stride: usize) {
             let v = temp_out[j];
             output[j + row_base] = wraplow((v + 1 + i32::from(v < 0)) >> 2);
         }
+    }
+}
+
+/// Dispatch the 32x32 forward DCT to the exact AArch64 vector kernel when
+/// available, retaining [`fdct32x32_scalar`] as the portable oracle.
+pub fn fdct32x32(input: &[i16], output: &mut [i32; 1024], stride: usize) {
+    #[cfg(target_arch = "aarch64")]
+    {
+        neon::fdct32x32(input, output, stride);
+    }
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        fdct32x32_scalar(input, output, stride);
     }
 }
 
@@ -2170,5 +2188,48 @@ mod tests {
         for (k, (&t, &w)) in out_tight.iter().zip(out_wide.iter()).enumerate() {
             assert_eq!(t, w, "pos {k}");
         }
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    #[test]
+    fn fdct32x32_neon_matches_scalar_valid_residuals() {
+        let mut state = 0x6d5a_56da_3c91_7f29_u64;
+        for case in 0..128 {
+            let stride = 32 + case % 17;
+            let mut residual = vec![0i16; 31 * stride + 32];
+            for row in 0..32 {
+                for column in 0..32 {
+                    state = state
+                        .wrapping_mul(6_364_136_223_846_793_005)
+                        .wrapping_add(1_442_695_040_888_963_407);
+                    residual[row * stride + column] = (((state >> 32) % 511) as i16) - 255;
+                }
+            }
+            let mut scalar = [0i32; 1024];
+            let mut vector = [0i32; 1024];
+            fdct32x32_scalar(&residual, &mut scalar, stride);
+            neon::fdct32x32(&residual, &mut vector, stride);
+            assert_eq!(
+                vector, scalar,
+                "random residual case {case}, stride {stride}"
+            );
+        }
+
+        for &value in &[-255i16, 0, 255] {
+            let residual = [value; 1024];
+            let mut scalar = [0i32; 1024];
+            let mut vector = [0i32; 1024];
+            fdct32x32_scalar(&residual, &mut scalar, 32);
+            neon::fdct32x32(&residual, &mut vector, 32);
+            assert_eq!(vector, scalar, "constant residual {value}");
+        }
+
+        let alternating: [i16; 1024] =
+            std::array::from_fn(|index| if index & 1 == 0 { -255 } else { 255 });
+        let mut scalar = [0i32; 1024];
+        let mut vector = [0i32; 1024];
+        fdct32x32_scalar(&alternating, &mut scalar, 32);
+        neon::fdct32x32(&alternating, &mut vector, 32);
+        assert_eq!(vector, scalar, "alternating residual extremes");
     }
 }
