@@ -3251,6 +3251,9 @@ fn evaluate_candidate_for_filter_with_pred(
     // Use the model_rd TX size for the round-trip (replaces the
     // previous hard-coded `max_txsize(block_size)`).
     let tx_size = mrd.tx_size;
+    let yuv_early_term = use_large
+        && mrd.skip_txfm == SkipTxfm::AcDc
+        && chroma_planes_skippable(params, dsp, mv, bw, bh, tx_size, filter);
 
     // Compute the reconstruction. For Block16x16 / Block32x32 the
     // block matches its max_txsize and we do one big transform.
@@ -3294,7 +3297,14 @@ fn evaluate_candidate_for_filter_with_pred(
         pixels[..bw * bh].copy_from_slice(&pred[..bw * bh]);
         Some(pixels)
     };
-    let by = if mrd.skip_txfm == SkipTxfm::AcDc && !s2_acdc_roundtrip_enabled() && !hadamard_only {
+    let by = if yuv_early_term {
+        BlockYrdResult {
+            coef_rate: 0,
+            coef_dist: mrd.dist,
+            skippable: true,
+            dct_eob_total: 0,
+        }
+    } else if mrd.skip_txfm == SkipTxfm::AcDc && !s2_acdc_roundtrip_enabled() && !hadamard_only {
         // A/B only: restore the HEAD AcDc short-circuit (no DCT round-trip,
         // no real eob). Used to isolate the AcDc-option-(i) contribution.
         BlockYrdResult {
@@ -3516,92 +3526,95 @@ fn evaluate_candidate_for_filter_with_pred(
     //
     // Only runs when UV planes are provided (non-empty src_u). Test
     // harnesses pass empty slices to skip this path.
-    let (uv_rate, uv_dist): (u32, i64) =
-        if !params.src_u.is_empty() && !params.ref_u.is_empty() && params.uv_stride > 0 {
-            let uv_bw = bw >> 1;
-            let uv_bh = bh >> 1;
-            // Chroma offset = luma offset >> 1 (4:2:0).
-            let uv_x = params.src_offset.0 >> 1;
-            let uv_y = params.src_offset.1 >> 1;
+    let (uv_rate, uv_dist): (u32, i64) = if !yuv_early_term
+        && !params.src_u.is_empty()
+        && !params.ref_u.is_empty()
+        && params.uv_stride > 0
+    {
+        let uv_bw = bw >> 1;
+        let uv_bh = bh >> 1;
+        // Chroma offset = luma offset >> 1 (4:2:0).
+        let uv_x = params.src_offset.0 >> 1;
+        let uv_y = params.src_offset.1 >> 1;
 
-            // Chroma MV: VP9 4:2:0 scales the luma Q3 MV by halving for
-            // the half-resolution chroma plane. `build_inter_prediction`
-            // interprets its MV in Q3 of the plane's native pixel grid,
-            // so we pass `mv / 2` to get the correct integer + sub-pel
-            // displacement on the chroma plane.
-            let uv_mv = Mv {
-                row: mv.row / 2,
-                col: mv.col / 2,
-            };
-
-            // Build UV MC predictions into scratch buffers.
-            let mut pred_u = [0u8; 32 * 32];
-            let mut pred_v = [0u8; 32 * 32];
-            {
-                let ref_u_plane = PlaneRef {
-                    data: params.ref_u,
-                    stride: params.uv_stride,
-                    width: params.uv_stride, // full chroma width
-                    height: params.ref_u.len() / params.uv_stride,
-                };
-                build_inter_prediction(
-                    dsp,
-                    &ref_u_plane,
-                    uv_x,
-                    uv_y,
-                    uv_mv,
-                    uv_bw,
-                    uv_bh,
-                    &mut pred_u,
-                    uv_bw,
-                    filter,
-                );
-            }
-            {
-                let ref_v_plane = PlaneRef {
-                    data: params.ref_v,
-                    stride: params.uv_stride,
-                    width: params.uv_stride,
-                    height: params.ref_v.len() / params.uv_stride,
-                };
-                build_inter_prediction(
-                    dsp,
-                    &ref_v_plane,
-                    uv_x,
-                    uv_y,
-                    uv_mv,
-                    uv_bw,
-                    uv_bh,
-                    &mut pred_v,
-                    uv_bw,
-                    filter,
-                );
-            }
-
-            // Source UV at the chroma offset.
-            let src_u_start = uv_y * params.uv_stride + uv_x;
-            let src_v_start = uv_y * params.uv_stride + uv_x;
-
-            let uv_rd = model_rd_for_sb_uv(ModelRdUvInput {
-                src_u: &params.src_u[src_u_start..],
-                src_u_stride: params.uv_stride,
-                pred_u: &pred_u,
-                pred_u_stride: uv_bw,
-                src_v: &params.src_v[src_v_start..],
-                src_v_stride: params.uv_stride,
-                pred_v: &pred_v,
-                pred_v_stride: uv_bw,
-                bw,
-                bh, // luma dimensions — halved internally
-                bsize: params.block_size,
-                dc_quant: params.uv_dc_quant,
-                ac_quant: params.uv_ac_quant,
-            });
-
-            (uv_rd.rate.max(0) as u32, uv_rd.dist)
-        } else {
-            (0, 0)
+        // Chroma MV: VP9 4:2:0 scales the luma Q3 MV by halving for
+        // the half-resolution chroma plane. `build_inter_prediction`
+        // interprets its MV in Q3 of the plane's native pixel grid,
+        // so we pass `mv / 2` to get the correct integer + sub-pel
+        // displacement on the chroma plane.
+        let uv_mv = Mv {
+            row: mv.row / 2,
+            col: mv.col / 2,
         };
+
+        // Build UV MC predictions into scratch buffers.
+        let mut pred_u = [0u8; 32 * 32];
+        let mut pred_v = [0u8; 32 * 32];
+        {
+            let ref_u_plane = PlaneRef {
+                data: params.ref_u,
+                stride: params.uv_stride,
+                width: params.uv_stride, // full chroma width
+                height: params.ref_u.len() / params.uv_stride,
+            };
+            build_inter_prediction(
+                dsp,
+                &ref_u_plane,
+                uv_x,
+                uv_y,
+                uv_mv,
+                uv_bw,
+                uv_bh,
+                &mut pred_u,
+                uv_bw,
+                filter,
+            );
+        }
+        {
+            let ref_v_plane = PlaneRef {
+                data: params.ref_v,
+                stride: params.uv_stride,
+                width: params.uv_stride,
+                height: params.ref_v.len() / params.uv_stride,
+            };
+            build_inter_prediction(
+                dsp,
+                &ref_v_plane,
+                uv_x,
+                uv_y,
+                uv_mv,
+                uv_bw,
+                uv_bh,
+                &mut pred_v,
+                uv_bw,
+                filter,
+            );
+        }
+
+        // Source UV at the chroma offset.
+        let src_u_start = uv_y * params.uv_stride + uv_x;
+        let src_v_start = uv_y * params.uv_stride + uv_x;
+
+        let uv_rd = model_rd_for_sb_uv(ModelRdUvInput {
+            src_u: &params.src_u[src_u_start..],
+            src_u_stride: params.uv_stride,
+            pred_u: &pred_u,
+            pred_u_stride: uv_bw,
+            src_v: &params.src_v[src_v_start..],
+            src_v_stride: params.uv_stride,
+            pred_v: &pred_v,
+            pred_v_stride: uv_bw,
+            bw,
+            bh, // luma dimensions — halved internally
+            bsize: params.block_size,
+            dc_quant: params.uv_dc_quant,
+            ac_quant: params.uv_ac_quant,
+        });
+
+        (uv_rd.rate.max(0) as u32, uv_rd.dist)
+    } else {
+        (0, 0)
+    };
 
     // Add UV dist to luma dist (libvpx `vp9_pickmode.c:2390-2393`).
     let dist = (dist as i64 + uv_dist).clamp(0, u32::MAX as i64) as u32;
@@ -3912,6 +3925,73 @@ fn build_inter_prediction(
             );
         }
     }
+}
+
+/// Test both chroma planes for libvpx's large-block transform-skip early exit.
+///
+/// This is the `skip_uv[2]` loop in `model_rd_for_sb_y_large`: predict each
+/// complete 4:2:0 plane block, compute its variance/SSE, and compare AC/DC
+/// energy against thresholds scaled by the number of UV transform units.
+#[allow(clippy::too_many_arguments)]
+fn chroma_planes_skippable(
+    params: &InterModeSearchParams<'_>,
+    dsp: &crate::dsp::SimdDispatch,
+    mv: Mv,
+    bw: usize,
+    bh: usize,
+    tx_size: TxSize,
+    filter: InterpFilter,
+) -> bool {
+    if params.src_u.is_empty()
+        || params.src_v.is_empty()
+        || params.ref_u.is_empty()
+        || params.ref_v.is_empty()
+        || params.uv_stride == 0
+    {
+        return false;
+    }
+
+    let uv_bw = bw >> 1;
+    let uv_bh = bh >> 1;
+    let uv_x = params.src_offset.0 >> 1;
+    let uv_y = params.src_offset.1 >> 1;
+    let uv_mv = Mv {
+        row: mv.row / 2,
+        col: mv.col / 2,
+    };
+    let uv_tx_side = tx_size.side().min(uv_bw).min(uv_bh);
+    let scale = (uv_bw / uv_tx_side).ilog2() + (uv_bh / uv_tx_side).ilog2();
+    debug_assert!(scale <= 6);
+    let threshold_shift = 6 - scale;
+    let dc_threshold = u64::from(params.uv_dc_quant).saturating_mul(u64::from(params.uv_dc_quant))
+        >> threshold_shift;
+    let ac_threshold = u64::from(params.uv_ac_quant).saturating_mul(u64::from(params.uv_ac_quant))
+        >> threshold_shift;
+    let uv_bsize = crate::block::uv_plane_block_size(params.block_size, 1, 1);
+    let variance = dsp.variance(uv_bsize);
+    let mut pred = [0u8; 32 * 32];
+
+    for (src, reference) in [(params.src_u, params.ref_u), (params.src_v, params.ref_v)] {
+        let ref_plane = PlaneRef {
+            data: reference,
+            stride: params.uv_stride,
+            width: params.uv_stride,
+            height: reference.len() / params.uv_stride,
+        };
+        build_inter_prediction(
+            dsp, &ref_plane, uv_x, uv_y, uv_mv, uv_bw, uv_bh, &mut pred, uv_bw, filter,
+        );
+        let src = &src[uv_y * params.uv_stride + uv_x..];
+        let (sum, sse) = variance(src, params.uv_stride, &pred, uv_bw);
+        let mean_square = (sum * sum) as u64 / (uv_bw * uv_bh) as u64;
+        let var = sse.saturating_sub(mean_square);
+        let dc_energy = sse.saturating_sub(var);
+        if !((var < ac_threshold || var == 0) && (dc_energy < dc_threshold || sse == var)) {
+            return false;
+        }
+    }
+
+    true
 }
 
 /// Run the forward/inverse-transform round-trip on `residual = src -
@@ -6486,6 +6566,67 @@ mod tests {
     // ====================================================================
     // UV-RD path (G1) tests
     // ====================================================================
+
+    #[test]
+    fn large_block_chroma_early_term_requires_both_planes_skippable() {
+        let pw = 96;
+        let ph = 96;
+        let data = make_plane(pw, ph, 17);
+        let plane = PlaneRef {
+            data: &data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let harness = TestHarness::new(pw, 50);
+        let mvc = MvCandidates::default();
+        let uv_stride = pw / 2;
+        let uv_len = uv_stride * (ph / 2);
+        let uv_zero = vec![0u8; uv_len];
+        let uv_shifted = vec![255u8; uv_len];
+        for (bsize, side) in [
+            (BlockSize::Block32x32, 32usize),
+            (BlockSize::Block64x64, 64usize),
+        ] {
+            let mut params = make_params(
+                &harness,
+                bsize,
+                &plane,
+                &plane,
+                (16, 16),
+                &mvc,
+                MvLimits::new(-4, 4, -4, 4),
+                50,
+            );
+            params.src_u = &uv_zero;
+            params.src_v = &uv_zero;
+            params.ref_u = &uv_zero;
+            params.ref_v = &uv_zero;
+            params.uv_stride = uv_stride;
+            params.uv_dc_quant = 96;
+            params.uv_ac_quant = 80;
+
+            assert!(chroma_planes_skippable(
+                &params,
+                crate::dsp::get_ref(),
+                Mv::ZERO,
+                side,
+                side,
+                TxSize::Tx8x8,
+                InterpFilter::EightTap,
+            ));
+            params.src_v = &uv_shifted;
+            assert!(!chroma_planes_skippable(
+                &params,
+                crate::dsp::get_ref(),
+                Mv::ZERO,
+                side,
+                side,
+                TxSize::Tx8x8,
+                InterpFilter::EightTap,
+            ));
+        }
+    }
 
     /// `evaluate_candidate_for_filter` with non-empty UV planes: the
     /// chroma RD model runs and contributes to the rate sum. We

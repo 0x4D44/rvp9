@@ -24,6 +24,35 @@ Each entry:
 
 ## Entries
 
+### 2026-08-01 — Large-block work bypass requires YUV skip; mode-loop stop remains Y-only
+**Where:** `rvp9-core::mode_decision::inter::{evaluate_candidate_for_filter_with_pred,chroma_planes_skippable}`;
+libvpx counterpart: `vp9/encoder/vp9_pickmode.c::model_rd_for_sb_y_large`.
+**What libvpx does:** bypasses `block_yrd`, chroma model RD, later inter
+candidates, and intra fallback only after Y, U, and V all pass their
+transform-skip tests.
+**What rvp9 does:** now applies the expensive-work bypass only after the same
+YUV test, but retains its existing Y-only `early_term` flag for stopping the
+remaining mode loop.
+**Why:** making the loop-stop condition YUV-faithful reduced the standard
+120-frame stream from 716,330 to 713,096 bytes and regressed average PSNR by
+0.457 dB (31.935 to 31.478). Retaining the historical Y-only stop preserves
+the established Stage 4a quality curve, while requiring YUV agreement before
+the work bypass guarantees that skipped Hadamard and chroma calculations
+cannot affect the selected candidate's cost.
+**Byte-parity impact:** none from the new work bypass. The standard and
+natural-motion focused streams remain byte-identical to Unit 227, and the
+focused test covers 32x32 and 64x64 YUV skip decisions. The retained Y-only
+mode-loop stop is a structural decision divergence from libvpx.
+**Compression-efficiency impact:** none from the bypass because emitted
+streams are unchanged. The retained loop-stop divergence is quality-positive
+on the standard gate relative to the direct canonicalization experiment.
+**Speed impact:** three twenty-pair four-thread comparisons improve total
+child CPU by 2.90%, 3.58%, and 2.97%; the pre-registered Y-only upper bound
+was 4.62-4.63%.
+**Future plan:** keep the YUV work-bypass oracle. Revisit the Y-only loop stop
+only with a rate-distortion calibration that recovers the measured 0.457 dB;
+do not canonicalize it as a source-parity cleanup.
+
 ### 2026-07-31 — Retained replay specializes the common ONE token
 **Where:** `rvp9-core::entropy::detokenize::replay_retained_coefs`;
 libvpx counterpart: `vp9/encoder/vp9_bitstream.c::pack_mb_tokens`.
