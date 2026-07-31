@@ -101,6 +101,8 @@ pub fn parse_jsonl_line(line: &str) -> Result<BlockDecision, ParseError> {
     let mut uv_model_dist: Option<i64> = None;
     let mut uv_u_sensitive: Option<bool> = None;
     let mut uv_v_sensitive: Option<bool> = None;
+    let mut partition_u_sensitive: Option<bool> = None;
+    let mut partition_v_sensitive: Option<bool> = None;
     let mut sse_after_pred: Option<u64> = None;
     let mut interp_filter: Option<Option<InterpFilter>> = None;
     let mut skip_flag: Option<bool> = None;
@@ -149,6 +151,12 @@ pub fn parse_jsonl_line(line: &str) -> Result<BlockDecision, ParseError> {
             "uv_model_dist" => uv_model_dist = Some(parse_num(v, "uv_model_dist")?),
             "uv_u_sensitive" => uv_u_sensitive = Some(parse_bool(v, "uv_u_sensitive")?),
             "uv_v_sensitive" => uv_v_sensitive = Some(parse_bool(v, "uv_v_sensitive")?),
+            "partition_u_sensitive" => {
+                partition_u_sensitive = Some(parse_bool(v, "partition_u_sensitive")?);
+            }
+            "partition_v_sensitive" => {
+                partition_v_sensitive = Some(parse_bool(v, "partition_v_sensitive")?);
+            }
             "sse_after_pred" => sse_after_pred = Some(parse_num(v, "sse_after_pred")?),
             "interp_filter" => {
                 let raw = parse_string(v, "interp_filter")?;
@@ -214,6 +222,10 @@ pub fn parse_jsonl_line(line: &str) -> Result<BlockDecision, ParseError> {
         uv_model_dist: uv_model_dist.ok_or(ParseError::MissingField("uv_model_dist"))?,
         uv_u_sensitive: uv_u_sensitive.ok_or(ParseError::MissingField("uv_u_sensitive"))?,
         uv_v_sensitive: uv_v_sensitive.ok_or(ParseError::MissingField("uv_v_sensitive"))?,
+        partition_u_sensitive: partition_u_sensitive
+            .ok_or(ParseError::MissingField("partition_u_sensitive"))?,
+        partition_v_sensitive: partition_v_sensitive
+            .ok_or(ParseError::MissingField("partition_v_sensitive"))?,
         sse_after_pred: sse_after_pred.ok_or(ParseError::MissingField("sse_after_pred"))?,
         interp_filter: interp_filter.ok_or(ParseError::MissingField("interp_filter"))?,
         skip_flag: skip_flag.ok_or(ParseError::MissingField("skip_flag"))?,
@@ -707,6 +719,8 @@ mod tests {
             uv_model_dist: 1_234,
             uv_u_sensitive: true,
             uv_v_sensitive: false,
+            partition_u_sensitive: false,
+            partition_v_sensitive: true,
             sse_after_pred: 1_234_567,
             interp_filter: Some(InterpFilter::EightTapSmooth),
             skip_flag: false,
@@ -744,6 +758,8 @@ mod tests {
             uv_model_dist: 0,
             uv_u_sensitive: false,
             uv_v_sensitive: false,
+            partition_u_sensitive: false,
+            partition_v_sensitive: false,
             sse_after_pred: 0,
             interp_filter: None,
             skip_flag: true,
@@ -802,6 +818,7 @@ mod tests {
                     \"luma_coef_rate\":0,\"luma_coef_dist\":0,\
                     \"uv_model_rate\":0,\"uv_model_dist\":0,\
                     \"uv_u_sensitive\":false,\"uv_v_sensitive\":false,\
+                    \"partition_u_sensitive\":false,\"partition_v_sensitive\":false,\
                     \"sse_after_pred\":0,\"interp_filter\":\"NONE\"}";
         let err = parse_jsonl_line(line).unwrap_err();
         match err {
@@ -854,6 +871,7 @@ mod tests {
                     \"luma_coef_rate\":0,\"luma_coef_dist\":0,\
                     \"uv_model_rate\":0,\"uv_model_dist\":0,\
                     \"uv_u_sensitive\":false,\"uv_v_sensitive\":false,\
+                    \"partition_u_sensitive\":false,\"partition_v_sensitive\":false,\
                     \"sse_after_pred\":0,\"interp_filter\":\"NONE\",\"skip_flag\":true,\
                     \"q_index\":65,\"tx_size\":\"8x8\",\"luma_eob_nonzero\":false,\
                     \"future_field\":\"ignored\"}";

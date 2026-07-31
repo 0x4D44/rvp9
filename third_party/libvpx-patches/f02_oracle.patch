@@ -113,7 +113,7 @@ diff --git a/vp9/encoder/vp9_pickmode.c b/vp9/encoder/vp9_pickmode.c
          best_pickmode.best_mode = this_mode;
          best_pickmode.best_intra_tx_size = mi->tx_size;
          best_pickmode.best_ref_frame = INTRA_FRAME;
-@@ -2735,8 +2766,169 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
+@@ -2735,8 +2766,172 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
        }
      }
    }
@@ -245,6 +245,7 @@ diff --git a/vp9/encoder/vp9_pickmode.c b/vp9/encoder/vp9_pickmode.c
 +              "\"luma_coef_rate\":%d,\"luma_coef_dist\":%lld,"
 +              "\"uv_model_rate\":%d,\"uv_model_dist\":%lld,"
 +              "\"uv_u_sensitive\":%s,\"uv_v_sensitive\":%s,"
++              "\"partition_u_sensitive\":%s,\"partition_v_sensitive\":%s,"
 +              "\"sse_after_pred\":%llu,\"interp_filter\":\"%s\","
 +              "\"skip_flag\":%s,\"q_index\":%d,\"tx_size\":\"%s\","
 +              "\"luma_eob_nonzero\":%s,"
@@ -264,6 +265,8 @@ diff --git a/vp9/encoder/vp9_pickmode.c b/vp9/encoder/vp9_pickmode.c
 +              tx_size_str, x->skip_txfm[0],
 +              best_luma_rate_f02, (long long)best_luma_dist_f02,
 +              best_uv_rate_f02, (long long)best_uv_dist_f02,
++              x->color_sensitivity[0] ? "true" : "false",
++              x->color_sensitivity[1] ? "true" : "false",
 +              x->color_sensitivity[0] ? "true" : "false",
 +              x->color_sensitivity[1] ? "true" : "false",
 +              sse_after_pred,

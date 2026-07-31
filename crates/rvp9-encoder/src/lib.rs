@@ -2129,6 +2129,8 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
                         uv_model_dist: 0,
                         uv_u_sensitive: false,
                         uv_v_sensitive: false,
+                        partition_u_sensitive: false,
+                        partition_v_sensitive: false,
                         sse_after_pred: 0,
                         interp_filter: None,
                         // Intra leaves in the F5.1 path always
@@ -2560,6 +2562,77 @@ fn inter_rd_calibration_for_mode(
 
 fn newmv_diff_bias_for_mode(rc_mode: crate::rate_control::RcMode, env_enabled: bool) -> bool {
     env_enabled && matches!(rc_mode, crate::rate_control::RcMode::Cbr)
+}
+
+fn partition_color_sensitivity(
+    src_uv: (&[u8], &[u8]),
+    ref_uv: (&[u8], &[u8]),
+    frame_size: (usize, usize),
+    sb_origin: (usize, usize),
+    partition_mv: Mv,
+    y_sad: u32,
+) -> [bool; 2] {
+    let (width, height) = frame_size;
+    let uv_width = width / 2;
+    let uv_height = height / 2;
+    let uv_x = sb_origin.0 / 2;
+    let uv_y = sb_origin.1 / 2;
+    let mut sensitivity = [false; 2];
+
+    for (plane, (src, reference)) in [src_uv.0, src_uv.1]
+        .into_iter()
+        .zip([ref_uv.0, ref_uv.1])
+        .enumerate()
+    {
+        let mut source_block = [0u8; 32 * 32];
+        for row in 0..32 {
+            let src_y = (uv_y + row).min(uv_height - 1);
+            for col in 0..32 {
+                let src_x = (uv_x + col).min(uv_width - 1);
+                source_block[row * 32 + col] = src[src_y * uv_width + src_x];
+            }
+        }
+        let mut predictor = [0u8; 32 * 32];
+        build_inter_pred_block_unscaled(
+            reference,
+            uv_width,
+            uv_width,
+            uv_height,
+            uv_x,
+            uv_y,
+            32,
+            32,
+            i32::from(partition_mv.col),
+            i32::from(partition_mv.row),
+            &mut predictor,
+            32,
+            InterpFilter::Bilinear,
+        );
+        let uv_sad =
+            rvp9_core::dsp::get_ref().sad(BlockSize::Block32x32)(&source_block, 32, &predictor, 32);
+        sensitivity[plane] = uv_sad > (y_sad >> 2);
+    }
+
+    sensitivity
+}
+
+fn zero_mv_sad64_edge_clamped(
+    src: &[u8],
+    reference: &[u8],
+    frame_size: (usize, usize),
+    sb_origin: (usize, usize),
+) -> u32 {
+    let (width, height) = frame_size;
+    let mut sad = 0u32;
+    for row in 0..64 {
+        let y = (sb_origin.1 + row).min(height - 1);
+        for col in 0..64 {
+            let x = (sb_origin.0 + col).min(width - 1);
+            let offset = y * width + x;
+            sad += u32::from(src[offset].abs_diff(reference[offset]));
+        }
+    }
+    sad
 }
 
 fn full_pixel_search_method_for_mode(
@@ -3457,6 +3530,49 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 None
             } else {
                 Some(int_pro.mv)
+            };
+            let sb_partition_color_sensitivity = if f02_oracle_enabled {
+                let golden_distinct = golden_recon_yuv.0.as_ptr() != last_recon_yuv.0.as_ptr();
+                let golden_sad = if !rt_disable_golden_ref && golden_distinct {
+                    zero_mv_sad64_edge_clamped(
+                        input_yuv.0,
+                        golden_recon_yuv.0,
+                        (w, h),
+                        (sb_px_x, sb_px_y),
+                    )
+                } else {
+                    u32::MAX
+                };
+                let last_bias_num = if rc_mode == crate::rate_control::RcMode::Cbr {
+                    7
+                } else {
+                    8
+                };
+                let use_golden =
+                    u64::from(golden_sad) < (u64::from(int_pro.best_sad) * last_bias_num) >> 3;
+                let (partition_ref_uv, partition_mv, selected_sad) = if use_golden {
+                    (
+                        (golden_recon_yuv.1, golden_recon_yuv.2),
+                        Mv::ZERO,
+                        golden_sad,
+                    )
+                } else {
+                    (
+                        (last_recon_yuv.1, last_recon_yuv.2),
+                        int_pro.mv,
+                        int_pro.best_sad,
+                    )
+                };
+                partition_color_sensitivity(
+                    (input_yuv.1, input_yuv.2),
+                    partition_ref_uv,
+                    (w, h),
+                    (sb_px_x, sb_px_y),
+                    partition_mv,
+                    selected_sad,
+                )
+            } else {
+                [false; 2]
             };
 
             let mut used_exact_vbp_tree = false;
@@ -4501,6 +4617,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             uv_model_dist: 0,
                             uv_u_sensitive: false,
                             uv_v_sensitive: false,
+                            partition_u_sensitive: false,
+                            partition_v_sensitive: false,
                             sse_after_pred: 0,
                             interp_filter: Some(
                                 rvp9_core::bitstream::frame::InterpFilter::EightTap,
@@ -4629,6 +4747,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             uv_model_dist: 0,
                             uv_u_sensitive: false,
                             uv_v_sensitive: false,
+                            partition_u_sensitive: false,
+                            partition_v_sensitive: false,
                             sse_after_pred: 0,
                             interp_filter: Some(
                                 rvp9_core::bitstream::frame::InterpFilter::EightTap,
@@ -6543,6 +6663,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             && !input_yuv.1.is_empty(),
                         uv_v_sensitive: final_ref != RefFrame::IntraFrame
                             && !input_yuv.2.is_empty(),
+                        partition_u_sensitive: sb_partition_color_sensitivity[0],
+                        partition_v_sensitive: sb_partition_color_sensitivity[1],
                         sse_after_pred: u64::from(pick.sse_y),
                         interp_filter: if final_ref == RefFrame::IntraFrame {
                             None
@@ -8583,6 +8705,36 @@ mod tests {
         assert!(!newmv_diff_bias_for_mode(RcMode::Cq, true));
         assert!(!newmv_diff_bias_for_mode(RcMode::Q, true));
         assert!(!newmv_diff_bias_for_mode(RcMode::Cbr, false));
+    }
+
+    #[test]
+    fn partition_color_sensitivity_uses_real_uv_prediction_sad() {
+        let src_u = vec![80u8; 32 * 24];
+        let src_v = vec![120u8; 32 * 24];
+        let ref_u = src_u.clone();
+        let ref_v = vec![80u8; 32 * 24];
+
+        assert_eq!(
+            partition_color_sensitivity(
+                (&src_u, &src_v),
+                (&ref_u, &ref_v),
+                (64, 48),
+                (0, 0),
+                Mv::ZERO,
+                4_000,
+            ),
+            [false, true],
+        );
+    }
+
+    #[test]
+    fn zero_mv_sad64_replicates_partial_frame_edges() {
+        let src = vec![80u8; 80 * 72];
+        let reference = vec![79u8; 80 * 72];
+        assert_eq!(
+            zero_mv_sad64_edge_clamped(&src, &reference, (80, 72), (64, 64)),
+            64 * 64,
+        );
     }
 
     #[test]

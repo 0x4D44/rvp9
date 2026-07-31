@@ -24,6 +24,32 @@ Each entry:
 
 ## Entries
 
+### 2026-07-30 — Keep both UV planes in the realtime picker model
+**Where:** `rvp9-core::mode_decision::inter::evaluate_candidate_for_filter`
+and `rvp9-core::mode_decision::model_rd::model_rd_for_sb_uv`; libvpx
+counterpart: `vp9/encoder/vp9_pickmode.c:2381-2395`.
+**What libvpx does:** computes SB-level `x->color_sensitivity[U,V]` from the
+selected partition predictor and includes only sensitive chroma planes in
+realtime mode RD.
+**What rvp9 does:** includes both chroma planes whenever UV buffers are
+available. The F.0.2 diagnostic now computes and records the source-faithful
+partition flags, but they do not change picker behavior.
+**Why:** the exact rvp9 producer matched pinned libvpx on all 112 comparable
+Foreman superblocks in the eight-frame q120 fixed-tree oracle. Wiring those
+flags into descent and final picker calls still raised inter payload at
+q80/q120/q160 from `25,196/12,792/5,853` to
+`25,309/12,862/5,861` bits per frame for only `0.00-0.01 dB`. The UV term is
+currently compensating another mode-ranking difference, so the isolated
+source-faithful behavior is not a Pareto improvement.
+**Byte-parity impact:** structural encoder-output difference only; emitted
+streams remain VP9-conformant and cross-decoder correctness is unaffected.
+**Compression-efficiency impact:** retaining both planes preserves the
+accepted Stage 4a baseline. Enabling the libvpx gate in isolation costs about
+`0.1-0.6%` inter payload at matched qindex.
+**Future plan:** revisit only after the causal fixed-tree candidate ranking
+matches libvpx. The retained F.0.2 fields provide the identical-input oracle
+for that integration.
+
 ### 2026-07-30 — Keep realtime encode breakout as a luma early exit
 **Where:** `rvp9-core::mode_decision::model_rd::encode_breakout_test`,
 `rvp9-core::mode_decision::inter::pick_inter_mode`, and

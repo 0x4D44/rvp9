@@ -272,6 +272,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )?;
         writeln!(
             sf,
+            "- `partition_u_sensitive`, `partition_v_sensitive`: SB partition-predictor color-sensitivity oracle on both legs."
+        )?;
+        writeln!(
+            sf,
             "- `picker_dist`: rvp9 reports decoded-pixel SSE; libvpx reports its coefficient/model-RD ranking distortion."
         )?;
         writeln!(sf)?;

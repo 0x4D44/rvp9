@@ -145,6 +145,10 @@ pub struct BlockDecision {
     pub uv_u_sensitive: bool,
     /// Whether the V plane participated in the UV model.
     pub uv_v_sensitive: bool,
+    /// SB partition predictor's U-plane color-sensitivity result.
+    pub partition_u_sensitive: bool,
+    /// SB partition predictor's V-plane color-sensitivity result.
+    pub partition_v_sensitive: bool,
     /// `SSE(source − prediction)` over the Y plane, pre-quant.
     pub sse_after_pred: u64,
     /// Winning inter-prediction filter. `None` for intra leaves.
@@ -191,6 +195,7 @@ impl BlockDecision {
              \"luma_coef_rate\":{},\"luma_coef_dist\":{},\
              \"uv_model_rate\":{},\"uv_model_dist\":{},\
              \"uv_u_sensitive\":{},\"uv_v_sensitive\":{},\
+             \"partition_u_sensitive\":{},\"partition_v_sensitive\":{},\
              \"sse_after_pred\":{},\"interp_filter\":\"{}\",\"skip_flag\":{},\
              \"q_index\":{},\"tx_size\":\"{}\",\"luma_eob_nonzero\":{}}}",
             self.frame_idx,
@@ -219,6 +224,8 @@ impl BlockDecision {
             self.uv_model_dist,
             self.uv_u_sensitive,
             self.uv_v_sensitive,
+            self.partition_u_sensitive,
+            self.partition_v_sensitive,
             self.sse_after_pred,
             interp_filter_tag(self.interp_filter),
             self.skip_flag,
@@ -398,6 +405,8 @@ mod tests {
             uv_model_dist: 1_234,
             uv_u_sensitive: true,
             uv_v_sensitive: false,
+            partition_u_sensitive: false,
+            partition_v_sensitive: true,
             sse_after_pred: 1_234_567,
             interp_filter: Some(InterpFilter::EightTapSmooth),
             skip_flag: false,
@@ -435,6 +444,8 @@ mod tests {
             uv_model_dist: 0,
             uv_u_sensitive: false,
             uv_v_sensitive: false,
+            partition_u_sensitive: false,
+            partition_v_sensitive: false,
             sse_after_pred: 0,
             interp_filter: None,
             skip_flag: true,
