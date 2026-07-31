@@ -1256,7 +1256,7 @@ struct InterTileJobResult {
     tile_col: usize,
     partitions: Vec<Vec<InterPartitionLeafDesc>>,
     rd_tables: Vec<rvp9_core::mode_decision::rd_thresh::RdThreshTable>,
-    history: Vec<rvp9_core::mode_decision::partition::FixedTreeHistoryEntry>,
+    history: Option<Vec<rvp9_core::mode_decision::partition::FixedTreeHistoryEntry>>,
     split_stats: NonRdSplitStats,
     coefs: VecBackedInterCoefSource,
 }
@@ -3073,9 +3073,11 @@ impl StreamEncoder {
             // it touches. Results are collected and merged in column order,
             // so scheduling cannot affect the packet or persistent encoder
             // state.
-            let initial_partitions = sb_partitions.clone();
+            let initial_partitions = &sb_partitions;
             let initial_rd_tables = self.rd_thresh_tables.clone();
-            let initial_history = self.vbp_partition_history.clone();
+            let initial_history = std::env::var_os("RVP9_EXACT_VBP_TREE")
+                .is_some_and(|value| value != "0")
+                .then(|| self.vbp_partition_history.clone());
             let mut merged_coefs = VecBackedInterCoefSource::new(w, h);
             let s2_frame_gate = rvp9_core::mode_decision::inter::frame_s2_gate();
             let result_slots: Vec<std::sync::Mutex<Option<InterTileJobResult>>> = (0..tile_count)
@@ -3089,7 +3091,24 @@ impl StreamEncoder {
                     for (tile_col, (result_slot, scratch)) in
                         result_slots.iter().zip(tile_scratch.iter_mut()).enumerate()
                     {
-                        let mut tile_partitions = initial_partitions.clone();
+                        let bounds = tile_bounds(
+                            mi_rows_us,
+                            mi_cols_us,
+                            0,
+                            log2_tile_cols,
+                            0,
+                            tile_col as u32,
+                        );
+                        let sb_col_start = bounds.mi_col_start / 8;
+                        let sb_col_end = bounds.mi_col_end / 8;
+                        let mut tile_partitions: Vec<Vec<InterPartitionLeafDesc>> =
+                            (0..initial_partitions.len()).map(|_| Vec::new()).collect();
+                        for sb_row in 0..h as usize / 64 {
+                            for sb_col in sb_col_start..sb_col_end {
+                                let sb_idx = sb_row * sb_cols + sb_col;
+                                tile_partitions[sb_idx] = initial_partitions[sb_idx].clone();
+                            }
+                        }
                         let mut tile_rd_tables = initial_rd_tables.clone();
                         let mut tile_history = initial_history.clone();
                         scope.submit(move || {
@@ -3102,7 +3121,7 @@ impl StreamEncoder {
                                 &mut tile_partitions,
                                 &mut scratch.mv_grid,
                                 &mut tile_rd_tables,
-                                Some(&mut tile_history),
+                                tile_history.as_deref_mut(),
                                 &mut tile_split_stats,
                                 Some(tile_col)
                             );
@@ -3148,7 +3167,9 @@ impl StreamEncoder {
                     for sb_col in sb_col_start..sb_col_end {
                         let sb_idx = sb_row * (w as usize / 64) + sb_col;
                         sb_partitions[sb_idx] = result.partitions[sb_idx].clone();
-                        self.vbp_partition_history[sb_idx] = result.history[sb_idx].clone();
+                        if let Some(history) = &result.history {
+                            self.vbp_partition_history[sb_idx] = history[sb_idx].clone();
+                        }
                     }
                 }
                 for row in 0..h as usize {
@@ -6805,6 +6826,25 @@ mod tests {
         // throughout three encoders, so it must share their serialization
         // guard or a parallel override can make only one encoder diverge.
         let _guard = env_test_mutex();
+        assert_four_tile_output_is_thread_count_independent_and_bit_exact();
+    }
+
+    #[test]
+    fn stream_encoder_four_tile_exact_vbp_history_is_thread_count_independent() {
+        let _guard = env_test_mutex();
+        let key = "RVP9_EXACT_VBP_TREE";
+        // SAFETY: the mutex above serialises all env_test_mutex callers.
+        unsafe {
+            std::env::set_var(key, "1");
+        }
+        assert_four_tile_output_is_thread_count_independent_and_bit_exact();
+        // SAFETY: the mutex above serialises all env_test_mutex callers.
+        unsafe {
+            std::env::remove_var(key);
+        }
+    }
+
+    fn assert_four_tile_output_is_thread_count_independent_and_bit_exact() {
         let w = 1280usize;
         let h = 64usize;
         let cfg = EncoderConfig::new(w as u32, h as u32);
