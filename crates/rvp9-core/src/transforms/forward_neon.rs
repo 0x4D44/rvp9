@@ -1,9 +1,10 @@
 //! AArch64 NEON 16x16 and 32x32 forward DCTs.
 //!
-//! The 32x32 first pass applies the scalar VP9 schedule to eight i16 lanes;
-//! its second pass widens to four i32 lanes before the overflow-sensitive
-//! stages. Cosine products widen one level before the exact `+8192 >> 14`
-//! reduction, preserving the scalar transform's valid-residual result.
+//! The 16x16 and 32x32 first passes apply the scalar VP9 schedules to eight
+//! i16 lanes. Their second passes widen to four i32 lanes before the
+//! overflow-sensitive stages. Cosine products widen one level before the
+//! exact `+8192 >> 14` reduction, preserving the scalar transforms'
+//! valid-residual results.
 
 #![allow(unsafe_op_in_unsafe_fn)]
 
@@ -83,12 +84,27 @@ unsafe fn mul_add_round16(a: V16, ac: i32, b: V16, bc: i32) -> V16 {
     vcombine_s16(vshrn_n_s32::<14>(lo), vshrn_n_s32::<14>(hi))
 }
 
-/// Four independent 1-D 16-point DCTs.
-#[inline]
-#[target_feature(enable = "neon")]
-unsafe fn fdct16x4(input: &[V; 16], output: &mut [V; 16]) {
-    let mut in_half = [vdupq_n_s32(0); 8];
-    let mut step1 = [vdupq_n_s32(0); 8];
+/// Width-generic 1-D 16-point DCT schedule.
+#[inline(always)]
+unsafe fn fdct16_body<T, Add, Sub, Mul, MulAdd, Wrap>(
+    input: &[T; 16],
+    output: &mut [T; 16],
+    zero_and_wrap: (T, Wrap),
+    add: Add,
+    sub: Sub,
+    mul_round: Mul,
+    mul_add_round: MulAdd,
+) where
+    T: Copy,
+    Add: Fn(T, T) -> T,
+    Sub: Fn(T, T) -> T,
+    Mul: Fn(T, i32) -> T,
+    MulAdd: Fn(T, i32, T, i32) -> T,
+    Wrap: Fn(T) -> T,
+{
+    let (zero, wrap16) = zero_and_wrap;
+    let mut in_half = [zero; 8];
+    let mut step1 = [zero; 8];
     for index in 0..8 {
         in_half[index] = add(input[index], input[15 - index]);
         step1[index] = sub(input[7 - index], input[8 + index]);
@@ -163,9 +179,39 @@ unsafe fn fdct16x4(input: &[V; 16], output: &mut [V; 16]) {
     output[15] = wrap16(mul_add_round(step1_0, -COSPI_2_64, step1_7, COSPI_30_64));
 }
 
+/// Four independent, overflow-safe 1-D 16-point DCTs.
+#[inline]
+#[target_feature(enable = "neon")]
+unsafe fn fdct16x4(input: &[V; 16], output: &mut [V; 16]) {
+    fdct16_body(
+        input,
+        output,
+        (vdupq_n_s32(0), |value| wrap16(value)),
+        |a, b| add(a, b),
+        |a, b| sub(a, b),
+        |a, constant| mul_round(a, constant),
+        |a, ac, b, bc| mul_add_round(a, ac, b, bc),
+    );
+}
+
+/// Eight independent first-pass 1-D 16-point DCTs.
+#[inline]
+#[target_feature(enable = "neon")]
+unsafe fn fdct16x8_first_pass(input: &[V16; 16], output: &mut [V16; 16]) {
+    fdct16_body(
+        input,
+        output,
+        (vdupq_n_s16(0), |value| value),
+        |a, b| add16(a, b),
+        |a, b| sub16(a, b),
+        |a, constant| mul_round16(a, constant),
+        |a, ac, b, bc| mul_add_round16(a, ac, b, bc),
+    );
+}
+
 #[inline(always)]
-unsafe fn fdct16_interpass_round(value: V) -> V {
-    vshrq_n_s32::<2>(add(value, vdupq_n_s32(1)))
+unsafe fn fdct16_interpass_round16(value: V16) -> V16 {
+    vshrq_n_s16::<2>(add16(value, vdupq_n_s16(1)))
 }
 
 /// Width-generic, non-RD 1-D 32-point DCT schedule.
@@ -616,51 +662,69 @@ unsafe fn fdct32x32_inner(input: *const i16, output: *mut i32, stride: usize) {
 #[target_feature(enable = "neon")]
 unsafe fn fdct16x16_inner(input: *const i16, output: *mut i32, stride: usize) {
     let zero = vdupq_n_s32(0);
-    let mut intermediate = [0i32; 256];
+    let zero16 = vdupq_n_s16(0);
+    let mut intermediate = [0i16; 256];
 
-    // First pass: four source columns per vector lane, with x4 input
-    // scaling and natural coefficient-row storage.
-    for column in (0..16).step_by(4) {
-        let mut lane_in = [zero; 16];
+    // The bounded first pass processes eight source columns per vector.
+    for column in (0..16).step_by(8) {
+        let mut lane_in = [zero16; 16];
         for (row, values) in lane_in.iter_mut().enumerate() {
-            *values = vshlq_n_s32::<2>(vmovl_s16(vld1_s16(input.add(row * stride + column))));
+            *values = vshlq_n_s16::<2>(vld1q_s16(input.add(row * stride + column)));
         }
-        let mut lane_out = [zero; 16];
-        fdct16x4(&lane_in, &mut lane_out);
+        let mut lane_out = [zero16; 16];
+        fdct16x8_first_pass(&lane_in, &mut lane_out);
         for (coefficient, &values) in lane_out.iter().enumerate() {
-            vst1q_s32(
+            vst1q_s16(
                 intermediate.as_mut_ptr().add(coefficient * 16 + column),
                 values,
             );
         }
     }
 
-    // Second pass: transpose four coefficient rows into four independent
-    // transforms and apply the exact `(x + 1) >> 2` inter-pass reduction.
-    for row in (0..16).step_by(4) {
-        let mut lane_in = [zero; 16];
-        for column in (0..16).step_by(4) {
-            let rows = transpose4(
-                vld1q_s32(intermediate.as_ptr().add(row * 16 + column)),
-                vld1q_s32(intermediate.as_ptr().add((row + 1) * 16 + column)),
-                vld1q_s32(intermediate.as_ptr().add((row + 2) * 16 + column)),
-                vld1q_s32(intermediate.as_ptr().add((row + 3) * 16 + column)),
-            );
+    // Transpose eight coefficient rows at a time, apply the exact
+    // `(x + 1) >> 2` reduction, then widen into the audited i32 second pass.
+    for row in (0..16).step_by(8) {
+        let mut lane_in16 = [zero16; 16];
+        for column in (0..16).step_by(8) {
+            let rows = transpose8([
+                vld1q_s16(intermediate.as_ptr().add(row * 16 + column)),
+                vld1q_s16(intermediate.as_ptr().add((row + 1) * 16 + column)),
+                vld1q_s16(intermediate.as_ptr().add((row + 2) * 16 + column)),
+                vld1q_s16(intermediate.as_ptr().add((row + 3) * 16 + column)),
+                vld1q_s16(intermediate.as_ptr().add((row + 4) * 16 + column)),
+                vld1q_s16(intermediate.as_ptr().add((row + 5) * 16 + column)),
+                vld1q_s16(intermediate.as_ptr().add((row + 6) * 16 + column)),
+                vld1q_s16(intermediate.as_ptr().add((row + 7) * 16 + column)),
+            ]);
             for (offset, values) in rows.into_iter().enumerate() {
-                lane_in[column + offset] = fdct16_interpass_round(values);
+                lane_in16[column + offset] = fdct16_interpass_round16(values);
             }
         }
-        let mut lane_out = [zero; 16];
-        fdct16x4(&lane_in, &mut lane_out);
-        for coefficient in (0..16).step_by(4) {
-            let rows = transpose4(
-                lane_out[coefficient],
-                lane_out[coefficient + 1],
-                lane_out[coefficient + 2],
-                lane_out[coefficient + 3],
-            );
-            for (lane, &values) in rows.iter().enumerate() {
-                vst1q_s32(output.add((row + lane) * 16 + coefficient), values);
+
+        for half in 0..2 {
+            let mut lane_in = [zero; 16];
+            for (source, destination) in lane_in16.iter().zip(lane_in.iter_mut()) {
+                *destination = if half == 0 {
+                    vmovl_s16(vget_low_s16(*source))
+                } else {
+                    vmovl_high_s16(*source)
+                };
+            }
+            let mut lane_out = [zero; 16];
+            fdct16x4(&lane_in, &mut lane_out);
+            for coefficient in (0..16).step_by(4) {
+                let rows = transpose4(
+                    lane_out[coefficient],
+                    lane_out[coefficient + 1],
+                    lane_out[coefficient + 2],
+                    lane_out[coefficient + 3],
+                );
+                for (lane, &values) in rows.iter().enumerate() {
+                    vst1q_s32(
+                        output.add((row + half * 4 + lane) * 16 + coefficient),
+                        values,
+                    );
+                }
             }
         }
     }
