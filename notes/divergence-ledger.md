@@ -2763,38 +2763,48 @@ twenty wins.
 Only adopt libvpx's rolling transpose state if a direct product comparison
 shows an additional reproducible improvement worth the extra live state.
 
-### 2026-07-31 — Hadamard picker quantization accepts narrowed coefficients
+### 2026-07-31 — Hadamard picker quantization returns fused RD metrics
 
 **Where:** `rvp9_core::dsp::aarch64::quantize_neon::{
-vp9_quantize_fp_i16_neon,vp9_quantize_fp_32x32_i16_neon}`, used only by
-`mode_decision::inter::reconstruct_via_round_trip`'s Hadamard metrics.
+vp9_quantize_fp_i16_metrics_neon,
+vp9_quantize_fp_32x32_i16_metrics_neon}`, used only by
+`mode_decision::inter::reconstruct_via_round_trip`'s Hadamard RD model.
 
 **What libvpx does:** the 8-bit encoder keeps Hadamard `tran_low_t`
 coefficients in i16 and feeds them directly to its NEON fast quantizer.
+That general-purpose quantizer writes qcoeff and dqcoeff arrays; later code
+reduces the arrays for rate and distortion.
 
 **What rvp9 does:** the general transform API remains i32, but the
-Hadamard-only picker now retains its native i16 coefficients through the
-quantizer boundary. Each eight-lane load widens to i32 registers before
-absolute value and multiplication, preserving rvp9's exact handling of
-`i16::MIN`. The coefficient-error reduction also widens directly from i16.
+Hadamard-only picker retains its native i16 coefficients through a
+picker-specific quantizer. Each eight-lane load widens to i32 registers before
+absolute value and multiplication, preserving exact `i16::MIN` handling.
+While qcoeff and dqcoeff lanes remain live, the kernel accumulates EOB, qcoeff
+SATD, and squared coefficient error into independent SIMD lanes. It returns
+only those three RD metrics and never materializes qcoeff or dqcoeff arrays.
 
 **Why:** the previous picker copied 64, 256, or 1,024 coefficients into a
 separate i32 array for every filter candidate, even though the source
-Hadamard and quantized/dequantized outputs are all i16.
+Hadamard and quantized/dequantized outputs are all i16. Its first narrowed
+implementation then wrote two arrays solely to scan each one again for rate
+and distortion.
 
 **Byte-parity impact:** none. Differential tests cover all realtime
 transform sizes, six q indices, random full-i16 coefficients, `i16::MIN`,
-`i16::MAX`, qcoeff, dqcoeff, EOB, and coefficient error. The product stream
+`i16::MAX`, all-zero, DC-only, and final-scan-position blocks. Fused EOB,
+SATD, and error exactly match the widened quantizer oracle. The product stream
 and all three decoders' output remain byte-identical.
 
 **Compression-efficiency impact:** none; the production stream is unchanged.
 
-**Speed impact:** sixteen one-thread pairs improved child CPU by `-0.252%`
-with thirteen wins. Twenty four-thread pairs improved child CPU by `-0.214%`
-with thirteen wins. This small reproducible improvement is also the measured
-prerequisite for fusing the picker-only SATD and coefficient-error reductions
-into the quantizer.
+**Speed impact:** retaining narrowed coefficients first improved paired child
+CPU by `-0.252%` at one thread and `-0.214%` at four threads. Fusing the
+metrics then improved another `-0.317%` at one thread with fourteen of
+sixteen wins and `-0.297%` at four threads with twelve of twenty wins.
+Unrelated host builds made absolute wall medians noisy; paired wall deltas
+still improved `-0.362%` and `-0.371%`, respectively. Final acceptance
+requires the clean-host corpus matrix.
 
-**Future plan:** keep this narrowed boundary only if the follow-up fused
-metrics kernel produces a material aggregate gain. The general transform and
-emit quantizer APIs remain widened.
+**Future plan:** retain this picker-only fusion while it stays exact. The
+general transform and emitted-coefficient quantizer APIs remain widened and
+continue to materialize coefficient arrays.

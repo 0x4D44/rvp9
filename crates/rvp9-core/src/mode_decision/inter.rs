@@ -100,11 +100,11 @@ use crate::intra_pred::{
     ABOVE_UNAVAILABLE_FILL, DcAvailability, IntraMode, LEFT_UNAVAILABLE_FILL, PredCtx,
     intra_predict,
 };
-#[cfg(target_arch = "aarch64")]
-use crate::mode_decision::block_yrd::block_error_fp_i16;
+use crate::mode_decision::block_yrd::BlockYrdResult;
 #[cfg(not(target_arch = "aarch64"))]
 use crate::mode_decision::block_yrd::block_error_fp_i32;
-use crate::mode_decision::block_yrd::{BlockYrdResult, satd_i16};
+#[cfg(not(target_arch = "aarch64"))]
+use crate::mode_decision::block_yrd::satd_i16;
 use crate::mode_decision::hadamard::{hadamard_8x8, hadamard_16x16, hadamard_32x32};
 use crate::mode_decision::model_rd::{
     ModelRdUvInput, ModelRdYInput, SkipTxfm, model_rd_for_sb_uv, model_rd_for_sb_y,
@@ -3843,37 +3843,33 @@ fn reconstruct_via_round_trip(
             let mut had_coeff_i16 = [0i16; $n];
             $transform(&residual[..$n], tx_side, &mut had_coeff_i16);
 
-            let mut had_qcoeff = [0i16; $n];
-            let mut had_dqcoeff = [0i16; $n];
             #[cfg(target_arch = "aarch64")]
-            let had_eob = if $is_32x32 {
-                crate::dsp::aarch64::vp9_quantize_fp_32x32_i16_neon(
+            let metrics = if $is_32x32 {
+                crate::dsp::aarch64::vp9_quantize_fp_32x32_i16_metrics_neon(
                     &had_coeff_i16,
                     &params.quantizer.round_fp,
                     &params.quantizer.quant_fp,
-                    &mut had_qcoeff,
-                    &mut had_dqcoeff,
                     &dequant_pair,
                     scan.iscan,
                 )
             } else {
-                crate::dsp::aarch64::vp9_quantize_fp_i16_neon(
+                crate::dsp::aarch64::vp9_quantize_fp_i16_metrics_neon(
                     &had_coeff_i16,
                     $n,
                     &params.quantizer.round_fp,
                     &params.quantizer.quant_fp,
-                    &mut had_qcoeff,
-                    &mut had_dqcoeff,
                     &dequant_pair,
                     scan.iscan,
                 )
             };
             #[cfg(not(target_arch = "aarch64"))]
-            let (had_eob, had_coeff) = {
+            let (had_eob, rate_satd, dist) = {
                 let mut had_coeff = [0i32; $n];
                 for (dst, &src) in had_coeff.iter_mut().zip(&had_coeff_i16) {
                     *dst = i32::from(src);
                 }
+                let mut had_qcoeff = [0i16; $n];
+                let mut had_dqcoeff = [0i16; $n];
                 let eob = if $is_32x32 {
                     vp9_quantize_fp_32x32_with_order(
                         &had_coeff,
@@ -3898,19 +3894,18 @@ fn reconstruct_via_round_trip(
                         &scan,
                     )
                 };
-                (eob, had_coeff)
-            };
-            let rate_satd = if had_eob == 1 {
-                i32::from(had_qcoeff[0]).unsigned_abs()
-            } else if had_eob > 1 {
-                satd_i16(&had_qcoeff)
-            } else {
-                0
+                let rate_satd = if eob == 1 {
+                    i32::from(had_qcoeff[0]).unsigned_abs()
+                } else if eob > 1 {
+                    satd_i16(&had_qcoeff)
+                } else {
+                    0
+                };
+                let dist = block_error_fp_i32(&had_coeff, &had_dqcoeff) >> 2;
+                (eob, rate_satd, dist)
             };
             #[cfg(target_arch = "aarch64")]
-            let dist = block_error_fp_i16(&had_coeff_i16, &had_dqcoeff) >> 2;
-            #[cfg(not(target_arch = "aarch64"))]
-            let dist = block_error_fp_i32(&had_coeff, &had_dqcoeff) >> 2;
+            let (had_eob, rate_satd, dist) = (metrics.eob, metrics.satd, metrics.error >> 2);
             (had_eob, rate_satd, dist)
         }};
     }
