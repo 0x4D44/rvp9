@@ -124,7 +124,7 @@ use crate::mv_search::sub_pixel::{
     SubPixelSearchParams, adaptive_subpel_force_stop, find_best_sub_pixel_tree,
 };
 use crate::quant::forward::{
-    PlaneQuantizers, scan_for_forward, vp9_quantize_b_32x32, vp9_quantize_b_with_order,
+    PlaneQuantizers, vp9_quantize_b_32x32_with_order, vp9_quantize_b_with_order,
 };
 #[cfg(not(target_arch = "aarch64"))]
 use crate::quant::forward::{vp9_quantize_fp_32x32_with_order, vp9_quantize_fp_with_order};
@@ -4000,7 +4000,6 @@ fn reconstruct_via_round_trip(
     );
 
     let scan = scan_for(tx_size, TxType::DctDct);
-    let scan_slice = scan_for_forward(&scan);
     let dequant_pair = [params.quantizer.dequant[0], params.quantizer.dequant[1]];
 
     // Run one Hadamard + quantize_fp tile with scratch sized to the actual
@@ -4218,7 +4217,7 @@ fn reconstruct_via_round_trip(
                 }
 
                 let eob = if tx_size == TxSize::Tx32x32 {
-                    vp9_quantize_b_32x32(
+                    vp9_quantize_b_32x32_with_order(
                         &coefs[..1024],
                         false,
                         &params.quantizer.zbin,
@@ -4228,7 +4227,7 @@ fn reconstruct_via_round_trip(
                         &mut qcoeff[..1024],
                         &mut dqcoeff[..1024],
                         &dequant_pair,
-                        scan_slice,
+                        &scan,
                     )
                 } else {
                     vp9_quantize_b_with_order(
