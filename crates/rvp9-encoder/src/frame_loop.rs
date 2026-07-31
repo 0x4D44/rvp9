@@ -94,7 +94,7 @@ use crate::rate_control::{
     FirstPassStats, FrameKind as RcFrameKind, RateControl, RateControlConfig, RcMode, TwoPassState,
 };
 use crate::{
-    EncodeError, InterPartitionLeafDesc, PartitionLeafDesc,
+    EncodeError, InterPartitionLeafDesc, PartitionLeafDesc, VecBackedInterCoefSource,
     pick_and_simulate_inter_encode_partitions, pick_and_simulate_intra_encode_partitions,
 };
 
@@ -2931,78 +2931,147 @@ impl StreamEncoder {
         };
 
         let mut stage4a_frame_split_stats = NonRdSplitStats::default();
-        let coef_source = pick_and_simulate_inter_encode_partitions(
-            w,
-            h,
-            q_index,
-            self.rate_control.avg_frame_qindex_inter,
-            &seg_q_deltas,
-            input_yuv,
-            // Reference-buffer split — the picker consumes TWO LAST-slot
-            // reference views. `me_ref_*` is the ME-side reference used
-            // for motion search, `find_mv_refs`, and candidate SSE/RD.
-            // The pool's LAST slot is the residual-coding reference: the
-            // bit-exact decoded pool the final MC prediction reads from
-            // before the residual IT-add. Until the denoiser /
-            // filtered-ALTREF wave wires a real filter, both buffers
-            // are byte-identical (verified by
-            // `reference_split_me_and_pred_identical_initially`), so
-            // the bitstream is unchanged. libvpx parity:
-            // `vp9_denoiser.c:294-304` me_ref vs `cm->frame_refs[]`.
-            (&self.me_ref_y, &self.me_ref_u, &self.me_ref_v),
-            (last_y, last_u, last_v),
-            // A15 Phase B — GOLDEN ref planes for the widened picker
-            // (Step 2: feeds the second `find_mv_refs` walk for
-            // GOLDEN; Step 3: drives candidate SSE on GOLDEN picks).
-            (gld_y, gld_u, gld_v),
-            // W-ALTREF — ALTREF (slot 2) planes for the single-ref ALTREF
-            // candidate. `Some(..)` only when an ARF has fired this GOP
-            // and `enable_alt_ref` is set; `None` otherwise (gate config).
-            altref_planes_for_picker,
-            (&mut new_recon_y, &mut new_recon_u, &mut new_recon_v),
-            &mut sb_partitions,
-            prev_grid_slice,
-            &mut cur_mv_grid,
-            &self.frame_context,
-            // P20 / tile-MT — independent adaptive RD-threshold state
-            // for each logical column tile.
-            &mut self.rd_thresh_tables,
-            // §11 — `bias_golden` input (frames since GOLDEN was last
-            // refreshed) and `cb_pred_filter_search` input
-            // (chessboard index = video-frame-index & 1; the stream's
-            // GOLDEN counter toggles each inter frame, giving us the
-            // same per-frame parity libvpx derives from
-            // `current_video_frame & 1`).
-            self.frames_since_golden_refresh,
-            self.frames_since_golden_refresh & 1,
-            // W0.4(vpxenc parity, A7 P1+P2) — per-frame
-            // speed-feature dispatcher inputs from `EncoderConfig`.
-            // `--tune-content` is parsed by the CLI (W0.1) but not
-            // plumbed onto `EncoderConfig` yet; default to
-            // `ContentTier::Default` until a content-tier field is
-            // added in a later wave (no encoder consumer yet).
-            self.config.speed,
-            self.config.deadline,
-            rvp9_core::mode_decision::speed_features::ContentTier::Default,
-            self.config.rc_mode,
-            // PHASE-3 integration: thread W2.x pre-analysis producer
-            // outputs into the per-leaf picker. Closes the re-audit's
-            // "producer runs but no consumer reads it" finding for
-            // noise_estimate, scene_change_detected, content_state_sb,
-            // and is_skin.
-            self.pre_analysis.noise_estimate,
-            self.pre_analysis.high_source_sad,
-            &self.pre_analysis.content_state_sb,
-            &self.pre_analysis.skin_map,
-            self.rate_control.frames_since_key,
-            Some(&mut self.vbp_partition_history),
-            // A23 — TPL rdmult adjustment (opt-in). `None` unless
-            // `enable_tpl` produced a valid forward-propagated grid.
-            tpl_rdmult_arg,
-            self.config.stage4a_product_split_override,
-            &mut stage4a_frame_split_stats,
-            log2_tile_cols,
-        );
+        macro_rules! run_inter_picker {
+            (
+                $recon_y:expr,
+                $recon_u:expr,
+                $recon_v:expr,
+                $partitions:expr,
+                $mv_grid:expr,
+                $rd_tables:expr,
+                $history:expr,
+                $split_stats:expr,
+                $active_tile_col:expr
+            ) => {
+                pick_and_simulate_inter_encode_partitions(
+                    w,
+                    h,
+                    q_index,
+                    self.rate_control.avg_frame_qindex_inter,
+                    &seg_q_deltas,
+                    input_yuv,
+                    // Reference-buffer split — ME analysis reads the
+                    // filtered view while residual coding reads the
+                    // decoder-equivalent LAST slot.
+                    (&self.me_ref_y, &self.me_ref_u, &self.me_ref_v),
+                    (last_y, last_u, last_v),
+                    (gld_y, gld_u, gld_v),
+                    altref_planes_for_picker,
+                    ($recon_y, $recon_u, $recon_v),
+                    $partitions,
+                    prev_grid_slice,
+                    $mv_grid,
+                    &self.frame_context,
+                    $rd_tables,
+                    self.frames_since_golden_refresh,
+                    self.frames_since_golden_refresh & 1,
+                    self.config.speed,
+                    self.config.deadline,
+                    rvp9_core::mode_decision::speed_features::ContentTier::Default,
+                    self.config.rc_mode,
+                    self.pre_analysis.noise_estimate,
+                    self.pre_analysis.high_source_sad,
+                    &self.pre_analysis.content_state_sb,
+                    &self.pre_analysis.skin_map,
+                    self.rate_control.frames_since_key,
+                    $history,
+                    tpl_rdmult_arg,
+                    self.config.stage4a_product_split_override,
+                    $split_stats,
+                    log2_tile_cols,
+                    $active_tile_col,
+                )
+            };
+        }
+
+        let tile_count = 1usize << log2_tile_cols;
+        let coef_source = if tile_count > 1 && self.parallelism.max_threads > 1 {
+            // Tile-MT preparation: execute each independent tile job
+            // against owned mutable state, then merge in column order.
+            // This first implementation deliberately dispatches the jobs
+            // sequentially; the result shape is the exact interface the
+            // bounded worker set consumes in the next unit.
+            let initial_partitions = sb_partitions.clone();
+            let initial_rd_tables = self.rd_thresh_tables.clone();
+            let initial_history = self.vbp_partition_history.clone();
+            let mut merged_coefs = VecBackedInterCoefSource::new(w, h);
+
+            for tile_col in 0..tile_count {
+                let mut tile_recon_y = vec![0u8; w as usize * h as usize];
+                let mut tile_recon_u = vec![0u8; (w as usize / 2) * (h as usize / 2)];
+                let mut tile_recon_v = vec![0u8; tile_recon_u.len()];
+                let mut tile_partitions = initial_partitions.clone();
+                let mut tile_mv_grid = vec![PrevFrameMvRef::default(); mi_rows_us * mi_cols_us];
+                let mut tile_rd_tables = initial_rd_tables.clone();
+                let mut tile_history = initial_history.clone();
+                let mut tile_split_stats = NonRdSplitStats::default();
+
+                let tile_coefs = run_inter_picker!(
+                    &mut tile_recon_y,
+                    &mut tile_recon_u,
+                    &mut tile_recon_v,
+                    &mut tile_partitions,
+                    &mut tile_mv_grid,
+                    &mut tile_rd_tables,
+                    Some(&mut tile_history),
+                    &mut tile_split_stats,
+                    Some(tile_col)
+                );
+
+                let bounds = tile_bounds(
+                    mi_rows_us,
+                    mi_cols_us,
+                    0,
+                    log2_tile_cols,
+                    0,
+                    tile_col as u32,
+                );
+                let sb_col_start = bounds.mi_col_start / 8;
+                let sb_col_end = bounds.mi_col_end / 8;
+                for sb_row in 0..h as usize / 64 {
+                    for sb_col in sb_col_start..sb_col_end {
+                        let sb_idx = sb_row * (w as usize / 64) + sb_col;
+                        sb_partitions[sb_idx] = tile_partitions[sb_idx].clone();
+                        self.vbp_partition_history[sb_idx] = tile_history[sb_idx].clone();
+                    }
+                }
+                for row in 0..h as usize {
+                    let start = row * w as usize + bounds.mi_col_start * 8;
+                    let end = row * w as usize + bounds.mi_col_end * 8;
+                    new_recon_y[start..end].copy_from_slice(&tile_recon_y[start..end]);
+                }
+                let uv_width = w as usize / 2;
+                let uv_col_start = bounds.mi_col_start * 4;
+                let uv_col_end = bounds.mi_col_end * 4;
+                for row in 0..h as usize / 2 {
+                    let start = row * uv_width + uv_col_start;
+                    let end = row * uv_width + uv_col_end;
+                    new_recon_u[start..end].copy_from_slice(&tile_recon_u[start..end]);
+                    new_recon_v[start..end].copy_from_slice(&tile_recon_v[start..end]);
+                }
+                for row in 0..mi_rows_us {
+                    let start = row * mi_cols_us + bounds.mi_col_start;
+                    let end = row * mi_cols_us + bounds.mi_col_end;
+                    cur_mv_grid[start..end].copy_from_slice(&tile_mv_grid[start..end]);
+                }
+                self.rd_thresh_tables[tile_col] = tile_rd_tables[tile_col].clone();
+                stage4a_frame_split_stats.accumulate(&tile_split_stats);
+                merged_coefs.merge_from(tile_coefs);
+            }
+            merged_coefs
+        } else {
+            run_inter_picker!(
+                &mut new_recon_y,
+                &mut new_recon_u,
+                &mut new_recon_v,
+                &mut sb_partitions,
+                &mut cur_mv_grid,
+                &mut self.rd_thresh_tables,
+                Some(&mut self.vbp_partition_history),
+                &mut stage4a_frame_split_stats,
+                None
+            )
+        };
         self.stage4a_split_stats
             .accumulate(&stage4a_frame_split_stats);
 
@@ -3571,6 +3640,7 @@ impl StreamEncoder {
             self.config.stage4a_product_split_override,
             &mut stage4a_frame_split_stats,
             log2_tile_cols,
+            None,
         );
         self.stage4a_split_stats
             .accumulate(&stage4a_frame_split_stats);

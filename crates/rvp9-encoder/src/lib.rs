@@ -1122,6 +1122,20 @@ impl VecBackedInterCoefSource {
     pub fn height(&self) -> u32 {
         self.height
     }
+
+    /// Merge disjoint tile-owned coefficient blocks into this frame
+    /// source. Tile jobs use global MI coordinates, so no key rebasing
+    /// is required.
+    pub(crate) fn merge_from(&mut self, other: Self) {
+        assert_eq!(self.width, other.width);
+        assert_eq!(self.height, other.height);
+        for (key, value) in other.blocks {
+            assert!(
+                self.blocks.insert(key, value).is_none(),
+                "column tile coefficient sources must have disjoint keys",
+            );
+        }
+    }
 }
 
 impl rvp9_core::bitstream::InterCoefSource for VecBackedInterCoefSource {
@@ -2944,6 +2958,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // Typed split-admission stats sink for product reports.
     stage4a_split_stats_out: &mut rvp9_core::mode_decision::nonrd_partition::NonRdSplitStats,
     log2_tile_cols: u8,
+    active_tile_col: Option<usize>,
 ) -> VecBackedInterCoefSource {
     use rvp9_core::bitstream::frame::{InterpFilter as WireInterpFilter, MAX_INTER_REFS};
     use rvp9_core::bitstream::header::FrameKind as WireFrameKind;
@@ -3532,6 +3547,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 .iter()
                 .position(|&bounds| bounds == current_tile)
                 .expect("current tile came from tile_bounds_by_col");
+            if active_tile_col.is_some_and(|active| active != tile_col) {
+                continue;
+            }
             let rd_thresh_table = &mut rd_thresh_tables[tile_col];
             let sb_idx = sb_row * sb_cols + sb_col;
 
@@ -7195,6 +7213,14 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     }
     for sb_row in 0..sb_rows {
         for sb_col in 0..sb_cols {
+            let current_tile = tile_for_mi_col(&tile_bounds_by_col, sb_col * 8);
+            let tile_col = tile_bounds_by_col
+                .iter()
+                .position(|&bounds| bounds == current_tile)
+                .expect("current tile came from tile_bounds_by_col");
+            if active_tile_col.is_some_and(|active| active != tile_col) {
+                continue;
+            }
             let sb_idx = sb_row * sb_cols + sb_col;
             for leaf in &sb_partitions[sb_idx] {
                 let leaf_mi_row = sb_row * 8 + leaf.mi_row_in_sb;
