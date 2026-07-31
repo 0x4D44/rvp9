@@ -2288,5 +2288,13 @@ mod tests {
         fdct32x32_scalar(&alternating, &mut scalar, 32);
         neon::fdct32x32(&alternating, &mut vector, 32);
         assert_eq!(vector, scalar, "alternating residual extremes");
+
+        // This low-amplitude pattern keeps every second-pass stage-2 lane
+        // below the 2047 bound, exercising the all-i16 continuation.
+        let small: [i16; 1024] =
+            std::array::from_fn(|index| ((index * 13 + index / 7) % 17) as i16 - 8);
+        fdct32x32_scalar(&small, &mut scalar, 32);
+        neon::fdct32x32(&small, &mut vector, 32);
+        assert_eq!(vector, scalar, "bounded all-i16 residual pattern");
     }
 }

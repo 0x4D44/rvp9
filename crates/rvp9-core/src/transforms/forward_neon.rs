@@ -528,6 +528,21 @@ unsafe fn fdct32x8_from_stage2(input: &[VPair; 32], output: &mut [VPair; 32]) {
     );
 }
 
+/// Eight bounded second-pass transforms after their first two stages.
+#[inline]
+#[target_feature(enable = "neon")]
+unsafe fn fdct32x8_from_stage2_i16(input: &[V16; 32], output: &mut [V16; 32]) {
+    fdct32_body(
+        input,
+        output,
+        (vdupq_n_s16(0), Some(input)),
+        |a, b| add16(a, b),
+        |a, b| sub16(a, b),
+        |a, constant| mul_round16(a, constant),
+        |a, ac, b, bc| mul_add_round16(a, ac, b, bc),
+    );
+}
+
 /// Evaluate stages 1 and 2 for eight second-pass transforms while their
 /// values remain bounded to i16, matching libvpx's overflow boundary.
 #[inline]
@@ -651,6 +666,13 @@ unsafe fn pass1_round_and_wrap(value: V) -> V {
     vmovl_s16(vmovn_s32(rounded))
 }
 
+#[inline(always)]
+unsafe fn pass1_round16(value: V16) -> V16 {
+    let one = vdupq_n_s16(1);
+    let negative = vreinterpretq_s16_u16(vshrq_n_u16::<15>(vcltq_s16(value, vdupq_n_s16(0))));
+    vshrq_n_s16::<2>(add16(add16(value, one), negative))
+}
+
 #[target_feature(enable = "neon")]
 unsafe fn fdct32x32_inner(input: *const i16, output: *mut i32, stride: usize) {
     let zero = vdupq_n_s32(0);
@@ -695,25 +717,53 @@ unsafe fn fdct32x32_inner(input: *const i16, output: *mut i32, stride: usize) {
 
         let mut stage2 = [zero16; 32];
         fdct32x8_second_pass_stage2(&lane_in16, &mut stage2);
-        let mut lane_in = [[zero; 2]; 32];
-        for (source, destination) in stage2.iter().zip(lane_in.iter_mut()) {
-            *destination = [vmovl_s16(vget_low_s16(*source)), vmovl_high_s16(*source)];
-        }
-        let mut lane_out = [[zero; 2]; 32];
-        fdct32x8_from_stage2(&lane_in, &mut lane_out);
-        for half in [0, 1] {
-            for coefficient in (0..32).step_by(4) {
-                let rows = transpose4(
-                    pass1_round_and_wrap(lane_out[coefficient][half]),
-                    pass1_round_and_wrap(lane_out[coefficient + 1][half]),
-                    pass1_round_and_wrap(lane_out[coefficient + 2][half]),
-                    pass1_round_and_wrap(lane_out[coefficient + 3][half]),
-                );
-                for (lane, &values) in rows.iter().enumerate() {
-                    vst1q_s32(
-                        output.add((row + half * 4 + lane) * 32 + coefficient),
-                        values,
+        let max_abs = stage2.iter().fold(zero16, |maximum, &values| {
+            vmaxq_s16(maximum, vqabsq_s16(values))
+        });
+        if vmaxvq_s16(max_abs) <= 2047 {
+            // Conservative interval propagation through stages 3..7 peaks
+            // below 15.407x the stage-2 input. Thus 2047 stays below 31537,
+            // leaving every add, subtract, and rounded rotation in i16.
+            let mut lane_out16 = [zero16; 32];
+            fdct32x8_from_stage2_i16(&stage2, &mut lane_out16);
+            for coefficient in (0..32).step_by(8) {
+                let rows = transpose8([
+                    pass1_round16(lane_out16[coefficient]),
+                    pass1_round16(lane_out16[coefficient + 1]),
+                    pass1_round16(lane_out16[coefficient + 2]),
+                    pass1_round16(lane_out16[coefficient + 3]),
+                    pass1_round16(lane_out16[coefficient + 4]),
+                    pass1_round16(lane_out16[coefficient + 5]),
+                    pass1_round16(lane_out16[coefficient + 6]),
+                    pass1_round16(lane_out16[coefficient + 7]),
+                ]);
+                for (lane, values) in rows.into_iter().enumerate() {
+                    let destination = output.add((row + lane) * 32 + coefficient);
+                    vst1q_s32(destination, vmovl_s16(vget_low_s16(values)));
+                    vst1q_s32(destination.add(4), vmovl_high_s16(values));
+                }
+            }
+        } else {
+            let mut lane_in = [[zero; 2]; 32];
+            for (source, destination) in stage2.iter().zip(lane_in.iter_mut()) {
+                *destination = [vmovl_s16(vget_low_s16(*source)), vmovl_high_s16(*source)];
+            }
+            let mut lane_out = [[zero; 2]; 32];
+            fdct32x8_from_stage2(&lane_in, &mut lane_out);
+            for half in [0, 1] {
+                for coefficient in (0..32).step_by(4) {
+                    let rows = transpose4(
+                        pass1_round_and_wrap(lane_out[coefficient][half]),
+                        pass1_round_and_wrap(lane_out[coefficient + 1][half]),
+                        pass1_round_and_wrap(lane_out[coefficient + 2][half]),
+                        pass1_round_and_wrap(lane_out[coefficient + 3][half]),
                     );
+                    for (lane, &values) in rows.iter().enumerate() {
+                        vst1q_s32(
+                            output.add((row + half * 4 + lane) * 32 + coefficient),
+                            values,
+                        );
+                    }
                 }
             }
         }

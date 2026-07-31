@@ -186,6 +186,10 @@ keeps eight i16 lanes through stages 1 and 2, then widens into two four-lane
 i32 groups at stage 3, where the libvpx overflow audit identifies the first
 extreme-input overflow. Those low/high groups advance together through one
 paired width-generic schedule, matching libvpx's `c_lo`/`c_hi` structure.
+Before widening, rvp9 checks the actual stage-2 peak. Groups at or below
+2047 remain in eight i16 lanes through the final stage; a conservative
+interval audit bounds their peak below 31,537. Larger groups retain the
+widened exact path.
 First-pass and early second-pass cosine products widen to i32. Later
 two-coefficient second-pass products use the same i32 multiply-accumulate and
 rounded shift as libvpx; one-coefficient products retain rvp9's i64 reduction
@@ -214,6 +218,10 @@ Two twenty-pair one-thread product trials improve total child CPU by
 the kernel further to `521.75..532.54 ns`. Two one-thread product trials
 improve child CPU by `-1.455%` and `-1.352%`; two four-thread trials improve
 it by `-0.152%` and `-0.885%`. The standard stream remains byte-identical.
+The bounded late-stage path reduces the deterministic kernel again to
+`518.67 ns`. Two twenty-pair one-thread product trials are neutral at
+`-0.024%` and favorable at `-0.709%`; two four-thread trials improve child
+CPU by `-0.517%` and `-0.336%`.
 **Future plan:** retain the overflow-boundary widening while it stays exact
 and Pareto-positive. Profile before changing the remaining later-stage
 schedule or transpose/storage layout.
