@@ -2629,6 +2629,37 @@ fn should_skip_realtime_luma_transform(
         )
 }
 
+fn active_single_ref_frame_costs(
+    frame_context: &FrameContext,
+    above: Option<&ModeInfo>,
+    left: Option<&ModeInfo>,
+) -> [u32; 4] {
+    use crate::rdo::ref_costs::{
+        RefFrameProbabilities, ReferenceMode as CostReferenceMode,
+        estimate_ref_frame_costs_from_probs,
+    };
+    use rvp9_core::inter::{
+        get_intra_inter_context, get_pred_context_single_ref_p1, get_pred_context_single_ref_p2,
+    };
+
+    let intra_inter_ctx = get_intra_inter_context(above, left);
+    let single_ref_p1_ctx = get_pred_context_single_ref_p1(above, left);
+    let single_ref_p2_ctx = get_pred_context_single_ref_p2(above, left);
+    estimate_ref_frame_costs_from_probs(
+        false,
+        CostReferenceMode::SingleReference,
+        RefFrameProbabilities {
+            intra_inter: frame_context.intra_inter_prob[intra_inter_ctx],
+            single_ref_p1: frame_context.single_ref_prob[single_ref_p1_ctx][0],
+            single_ref_p2: frame_context.single_ref_prob[single_ref_p2_ctx][1],
+            // Unused in single-reference mode.
+            comp_ref: 128,
+            comp_inter: 128,
+        },
+    )
+    .single
+}
+
 #[allow(clippy::too_many_arguments)] // AQ.1 added `seg_q_deltas`; the
 // remaining args are all load-bearing per-frame inputs that don't
 // reduce to a meaningful struct yet — revisit when AQ.3 lands.
@@ -3276,6 +3307,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         && speed == 7
         && deadline == rvp9_core::mode_decision::speed_features::Deadline::Realtime
         && content_tier == rvp9_core::mode_decision::speed_features::ContentTier::Default;
+    let live_ref_costs_enabled =
+        exact_vbp_tree_enabled && env_flag_default("RVP9_LIVE_REF_COSTS", true);
     let rt_emit_max_tx = env_flag_default("RVP9_RT_EMIT_MAX_TX", rt_large_recovery);
     let rt_emit_tx_rd = env_flag_default("RVP9_RT_EMIT_TX_RD", true);
     // libvpx speed >= 4 uses `quant_fp` for every inter frame. Preserve
@@ -3907,6 +3940,22 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         mi_grid_ro[leaf_mi_row * mi_cols_us + (leaf_mi_col - 1)].as_ref()
                     } else {
                         None
+                    };
+                    let (
+                        ref_frame_cost_intra,
+                        ref_frame_cost_last,
+                        ref_frame_cost_golden,
+                        _ref_frame_cost_altref,
+                    ) = if live_ref_costs_enabled {
+                        let costs = active_single_ref_frame_costs(frame_context, nb_above, nb_left);
+                        (costs[0], costs[1], costs[2], costs[3])
+                    } else {
+                        (
+                            ref_frame_cost_intra,
+                            ref_frame_cost_last,
+                            ref_frame_cost_golden,
+                            ref_frame_cost_altref,
+                        )
                     };
                     let switchable_interp_ctx =
                         get_pred_context_switchable_interp(nb_above, nb_left);
@@ -4793,6 +4842,22 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     mi_grid[leaf_mi_row * mi_cols_us + (leaf_mi_col - 1)].as_ref()
                 } else {
                     None
+                };
+                let (
+                    ref_frame_cost_intra,
+                    ref_frame_cost_last,
+                    ref_frame_cost_golden,
+                    ref_frame_cost_altref,
+                ) = if live_ref_costs_enabled {
+                    let costs = active_single_ref_frame_costs(frame_context, nb_above, nb_left);
+                    (costs[0], costs[1], costs[2], costs[3])
+                } else {
+                    (
+                        ref_frame_cost_intra,
+                        ref_frame_cost_last,
+                        ref_frame_cost_golden,
+                        ref_frame_cost_altref,
+                    )
                 };
                 let switchable_interp_ctx = get_pred_context_switchable_interp(nb_above, nb_left);
                 // P19 — per-block skip-prob context, libvpx
@@ -8139,6 +8204,19 @@ fn intra_inverse_transform_add(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn active_ref_costs_use_neighbour_selected_frame_context_bank() {
+        let mut fc = FrameContext::new_default();
+        // No neighbours selects intra-inter ctx 0 and single-ref ctx 2.
+        // These values are a pinned-libvpx q120 oracle row.
+        fc.intra_inter_prob[0] = 9;
+        fc.single_ref_prob[2] = [238, 142];
+        assert_eq!(
+            active_single_ref_frame_costs(&fc, None, None),
+            [2473, 80, 2422, 2585],
+        );
+    }
 
     #[test]
     fn compact_partition_predictor_matches_full_frame_destination() {

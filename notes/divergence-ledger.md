@@ -1146,6 +1146,18 @@ selector for tuning runs. The `RVP9_DIAG_GOLDEN_PICKS=1` env-
 var emits per-frame `last=N golden=M total=K golden_pct=P`
 diagnostics.
 
+**2026-07-30 update:** the causal fixed-tree experiment now derives exact
+above/left contexts and prices the active adapted probabilities. A pinned
+libvpx oracle captured 11 distinct cost vectors in eight q120 Foreman frames;
+95.2% of leaves selected p1 context 4 rather than the fixed middle context.
+Applying those costs to the legacy speculative A4 descent regressed the strict
+Stage 4a BD-rate from `+4.9246%` to `+7.0553%`, so the production-default A4
+path deliberately retains the approximation. The exact fixed-tree path uses
+active costs by default because its partition tree is already fixed and the
+costs affect only the causal leaf picker. This restriction lives at
+`crates/rvp9-encoder/src/lib.rs:active_single_ref_frame_costs` and remains
+until the fixed-tree path replaces A4.
+
 **Byte-parity impact:** none on the default path
 (`pick_golden_enabled = false`); cross-decoder gate (vpxdec +
 ffmpeg, 8-frame 256×256 testsrc) remains BYTE-EXACT vs both

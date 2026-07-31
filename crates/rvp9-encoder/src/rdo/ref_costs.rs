@@ -103,6 +103,26 @@ pub struct RefFrameCosts {
     pub comp_mode_p: u8,
 }
 
+/// Active probabilities selected by the current block's neighbour contexts.
+///
+/// This is the value-level input to libvpx's `estimate_ref_frame_costs`.
+/// Keeping it separate from [`RefFrameContext`] lets the realtime picker use
+/// the adapted [`rvp9_core::entropy::FrameContext`] bank rather than the
+/// default tables.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct RefFrameProbabilities {
+    /// `vp9_get_intra_inter_prob(cm, xd)`.
+    pub intra_inter: u8,
+    /// `vp9_get_pred_prob_single_ref_p1(cm, xd)`.
+    pub single_ref_p1: u8,
+    /// `vp9_get_pred_prob_single_ref_p2(cm, xd)`.
+    pub single_ref_p2: u8,
+    /// `vp9_get_pred_prob_comp_ref_p(cm, xd)`.
+    pub comp_ref: u8,
+    /// `vp9_get_reference_mode_prob(cm, xd)`.
+    pub comp_inter: u8,
+}
+
 /// libvpx `estimate_ref_frame_costs` (`vp9_rdopt.c:2430-2488`).
 ///
 /// `seg_ref_active` mirrors `segfeature_active(&cm->seg, segment_id,
@@ -116,6 +136,30 @@ pub fn estimate_ref_frame_costs(
     reference_mode: ReferenceMode,
     ctx: RefFrameContext,
 ) -> RefFrameCosts {
+    estimate_ref_frame_costs_from_probs(
+        seg_ref_active,
+        reference_mode,
+        RefFrameProbabilities {
+            intra_inter: DEFAULT_INTRA_INTER_PROB[ctx.intra_inter_ctx as usize],
+            single_ref_p1: DEFAULT_SINGLE_REF_PROB[ctx.single_ref_p1_ctx as usize][0],
+            single_ref_p2: DEFAULT_SINGLE_REF_PROB[ctx.single_ref_p2_ctx as usize][1],
+            comp_ref: DEFAULT_COMP_REF_PROB[ctx.comp_ref_ctx as usize],
+            comp_inter: DEFAULT_COMP_INTER_PROB[ctx.comp_inter_ctx as usize],
+        },
+    )
+}
+
+/// Value-level form of [`estimate_ref_frame_costs`].
+///
+/// The arithmetic is identical, but the caller supplies the probabilities
+/// selected from the active frame context. This matches the realtime
+/// `init_ref_frame_cost` path in libvpx `vp9_pickmode.c:1215-1230`.
+#[must_use]
+pub fn estimate_ref_frame_costs_from_probs(
+    seg_ref_active: bool,
+    reference_mode: ReferenceMode,
+    probs: RefFrameProbabilities,
+) -> RefFrameCosts {
     let mut out = RefFrameCosts::default();
     if seg_ref_active {
         // libvpx lines 2437-2440: all-zero costs, neutral comp_mode_p.
@@ -124,11 +168,11 @@ pub fn estimate_ref_frame_costs(
     }
 
     // libvpx line 2442: `intra_inter_p = vp9_get_intra_inter_prob`.
-    let intra_inter_p = DEFAULT_INTRA_INTER_PROB[ctx.intra_inter_ctx as usize];
+    let intra_inter_p = probs.intra_inter;
 
     // libvpx lines 2443-2450: comp_inter_p / comp_mode_p selection.
     let comp_inter_p = match reference_mode {
-        ReferenceMode::ReferenceModeSelect => DEFAULT_COMP_INTER_PROB[ctx.comp_inter_ctx as usize],
+        ReferenceMode::ReferenceModeSelect => probs.comp_inter,
         _ => 128,
     };
     out.comp_mode_p = if matches!(reference_mode, ReferenceMode::ReferenceModeSelect) {
@@ -142,8 +186,8 @@ pub fn estimate_ref_frame_costs(
 
     // libvpx lines 2454-2473: single-ref subtree.
     if !matches!(reference_mode, ReferenceMode::CompoundReference) {
-        let ref_single_p1 = DEFAULT_SINGLE_REF_PROB[ctx.single_ref_p1_ctx as usize][0];
-        let ref_single_p2 = DEFAULT_SINGLE_REF_PROB[ctx.single_ref_p2_ctx as usize][1];
+        let ref_single_p1 = probs.single_ref_p1;
+        let ref_single_p2 = probs.single_ref_p2;
 
         // libvpx line 2457: base_cost = cost_bit(intra_inter_p, 1).
         let mut base_cost = vp9_cost_bit(intra_inter_p, true);
@@ -173,7 +217,7 @@ pub fn estimate_ref_frame_costs(
 
     // libvpx lines 2474-2486: compound-ref subtree.
     if !matches!(reference_mode, ReferenceMode::SingleReference) {
-        let ref_comp_p = DEFAULT_COMP_REF_PROB[ctx.comp_ref_ctx as usize];
+        let ref_comp_p = probs.comp_ref;
         let mut base_cost = vp9_cost_bit(intra_inter_p, true);
         if matches!(reference_mode, ReferenceMode::ReferenceModeSelect) {
             base_cost += vp9_cost_bit(comp_inter_p, true);
@@ -288,5 +332,36 @@ mod tests {
             out.single[RefFrame::IntraFrame as usize],
             vp9_cost_bit(intra_inter_p, false),
         );
+    }
+
+    /// Identical-input oracle captured from pinned libvpx v1.14.1
+    /// `init_ref_frame_cost` on Foreman frame 1, qindex 120.
+    #[test]
+    fn active_probability_costs_match_pinned_realtime_oracle() {
+        let middle = estimate_ref_frame_costs_from_probs(
+            false,
+            ReferenceMode::SingleReference,
+            RefFrameProbabilities {
+                intra_inter: 9,
+                single_ref_p1: 142,
+                single_ref_p2: 142,
+                comp_ref: 128,
+                comp_inter: 128,
+            },
+        );
+        assert_eq!(middle.single, [2473, 461, 1059, 1222]);
+
+        let last_biased = estimate_ref_frame_costs_from_probs(
+            false,
+            ReferenceMode::SingleReference,
+            RefFrameProbabilities {
+                intra_inter: 9,
+                single_ref_p1: 238,
+                single_ref_p2: 142,
+                comp_ref: 128,
+                comp_inter: 128,
+            },
+        );
+        assert_eq!(last_biased.single, [2473, 80, 2422, 2585]);
     }
 }
