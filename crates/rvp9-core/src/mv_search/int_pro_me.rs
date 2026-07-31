@@ -184,6 +184,64 @@ fn int_pro_col_clamped(plane: &PlaneRef<'_>, base_y: i32, base_x: i32, width: us
     sum
 }
 
+fn fill_int_pro_rows(
+    output: &mut [i16],
+    plane: &PlaneRef<'_>,
+    base_y: i32,
+    base_x: i32,
+    height: usize,
+) {
+    debug_assert_eq!(output.len() % 16, 0);
+    let direct = base_y >= 0
+        && base_x >= 0
+        && base_y as usize + height <= plane.height
+        && base_x as usize + output.len() <= plane.width;
+
+    for idx in (0..output.len()).step_by(16) {
+        if direct {
+            let start = base_y as usize * plane.stride + base_x as usize + idx;
+            vpx_int_pro_row(
+                &mut output[idx..idx + 16],
+                &plane.data[start..],
+                plane.stride,
+                height,
+            );
+        } else {
+            int_pro_row_clamped(
+                &mut output[idx..idx + 16],
+                plane,
+                base_y,
+                base_x + idx as i32,
+                height,
+            );
+        }
+    }
+}
+
+fn fill_int_pro_cols(
+    output: &mut [i16],
+    plane: &PlaneRef<'_>,
+    base_y: i32,
+    base_x: i32,
+    width: usize,
+    norm_shift: usize,
+) {
+    let direct = base_y >= 0
+        && base_x >= 0
+        && base_y as usize + output.len() <= plane.height
+        && base_x as usize + width <= plane.width;
+
+    for (idx, slot) in output.iter_mut().enumerate() {
+        let sum = if direct {
+            let start = (base_y as usize + idx) * plane.stride + base_x as usize;
+            vpx_int_pro_col(&plane.data[start..], width)
+        } else {
+            int_pro_col_clamped(plane, base_y + idx as i32, base_x, width)
+        };
+        *slot = (sum >> norm_shift) as i16;
+    }
+}
+
 /// `vpx_vector_var_c` (`vpx_dsp/avg.c:373-387`). Compute the
 /// "variance" between two `4 << bwl`-length int16 vectors:
 ///
@@ -472,30 +530,26 @@ pub fn int_pro_motion_estimation(
     // leftmost (bw>>1) columns of an edge SB replicate the border.
     let base_x_row = sb_px_x as i32 - (bw >> 1) as i32;
     let mut hbuf = [0i16; 128];
-    {
-        let mut idx = 0;
-        while idx < search_width {
-            int_pro_row_clamped(
-                &mut hbuf[idx..idx + 16],
-                ref_plane,
-                sb_px_y as i32,
-                base_x_row + idx as i32,
-                bh,
-            );
-            idx += 16;
-        }
-    }
+    fill_int_pro_rows(
+        &mut hbuf[..search_width],
+        ref_plane,
+        sb_px_y as i32,
+        base_x_row,
+        bh,
+    );
 
     // vbuf: row-sums of ref, starting (bh>>1) rows ABOVE the SB.
     let mut vbuf = [0i16; 128];
-    {
-        let norm_factor = 3 + (bw >> 5);
-        let base_y_col = sb_px_y as i32 - (bh >> 1) as i32;
-        for idx in 0..search_height {
-            let sum = int_pro_col_clamped(ref_plane, base_y_col + idx as i32, sb_px_x as i32, bw);
-            vbuf[idx] = (sum >> norm_factor) as i16;
-        }
-    }
+    let norm_factor = 3 + (bw >> 5);
+    let base_y_col = sb_px_y as i32 - (bh >> 1) as i32;
+    fill_int_pro_cols(
+        &mut vbuf[..search_height],
+        ref_plane,
+        base_y_col,
+        sb_px_x as i32,
+        bw,
+        norm_factor,
+    );
 
     // src_hbuf: column-sums of src SB. libvpx loops idx 0..bw step
     // 16 (Block16x16 → 1 iter, Block64x64 → 4 iters).
@@ -632,6 +686,47 @@ pub fn int_pro_motion_estimation(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn interior_projection_fast_paths_match_clamped_oracles() {
+        let width = 256usize;
+        let height = 256usize;
+        let pixels: Vec<u8> = (0..width * height)
+            .map(|index| {
+                let row = index / width;
+                let col = index % width;
+                ((row * 37 + col * 19 + (row ^ col) * 7) & 0xff) as u8
+            })
+            .collect();
+        let plane = PlaneRef {
+            data: &pixels,
+            stride: width,
+            width,
+            height,
+        };
+
+        let mut actual_rows = [0i16; 128];
+        fill_int_pro_rows(&mut actual_rows, &plane, 64, 32, 64);
+        let mut expected_rows = [0i16; 128];
+        for idx in (0..expected_rows.len()).step_by(16) {
+            int_pro_row_clamped(
+                &mut expected_rows[idx..idx + 16],
+                &plane,
+                64,
+                32 + idx as i32,
+                64,
+            );
+        }
+        assert_eq!(actual_rows, expected_rows);
+
+        let mut actual_cols = [0i16; 128];
+        fill_int_pro_cols(&mut actual_cols, &plane, 32, 64, 64, 5);
+        let mut expected_cols = [0i16; 128];
+        for (idx, slot) in expected_cols.iter_mut().enumerate() {
+            *slot = (int_pro_col_clamped(&plane, 32 + idx as i32, 64, 64) >> 5) as i16;
+        }
+        assert_eq!(actual_cols, expected_cols);
+    }
 
     fn direct_path_probe(
         _src: &[u8],
