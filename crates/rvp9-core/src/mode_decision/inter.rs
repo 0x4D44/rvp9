@@ -3161,14 +3161,15 @@ fn evaluate_candidate_for_filter(
     // the `u32` rate sum.
     let effective_coef_rate: u32 = by.coef_rate.min(u32::MAX as u64) as u32;
 
-    // G2 — per-context switchable-filter signalling cost. Replaces
-    // the flat `F5_SWITCHABLE_FILTER_RATE = 2048` constant with the
-    // true per-context cost from `switchable_interp_costs[ctx][filter]`.
-    // ALL filters (including EightTap) get their true cost; the old
-    // `EightTap == 0` special-case is gone — the table already encodes
-    // EightTap's cost (low in ctx=0 but nonzero).
-    let filter_rate: u32 =
-        params.switchable_interp_costs[params.switchable_interp_ctx][filter as usize].max(0) as u32;
+    // G2 — per-context switchable-filter signalling cost. VP9 emits
+    // this symbol only when the chosen MV has a fractional-pel
+    // component; integer-pel prediction does not signal a filter
+    // (`vp9_pickmode.c:2365-2370`).
+    let filter_rate: u32 = if (mv.row | mv.col) & 0x07 != 0 {
+        params.switchable_interp_costs[params.switchable_interp_ctx][filter as usize].max(0) as u32
+    } else {
+        0
+    };
 
     // G1 — UV model-RD (libvpx `vp9_pickmode.c:2378-2393`).
     //
@@ -5826,8 +5827,53 @@ mod tests {
         assert_eq!(
             res.picked_interp_filter,
             InterpFilter::EightTap,
-            "identical src/ref must select EightTap (Smooth penalized by switchable rate)",
+            "identical src/ref must keep the first filter on the integer-MV tie",
         );
+    }
+
+    #[test]
+    fn integer_mv_does_not_pay_switchable_filter_rate() {
+        let pw = 64;
+        let ph = 64;
+        let data = make_plane(pw, ph, 99);
+        let plane = PlaneRef {
+            data: &data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let harness = TestHarness::new(pw, 50);
+        let mvc = MvCandidates::default();
+        let params = make_params(
+            &harness,
+            BlockSize::Block16x16,
+            &plane,
+            &plane,
+            (16, 16),
+            &mvc,
+            MvLimits::new(-4, 4, -4, 4),
+            50,
+        );
+        let lambda = compute_rd_mult(50, frame_type_for_rd(synthetic_inter_frame_kind()));
+        let eight = evaluate_candidate_for_filter(
+            &params,
+            InterMode::NearestMv,
+            Mv::ZERO,
+            Mv::ZERO,
+            lambda,
+            InterpFilter::EightTap,
+        );
+        let smooth = evaluate_candidate_for_filter(
+            &params,
+            InterMode::NearestMv,
+            Mv::ZERO,
+            Mv::ZERO,
+            lambda,
+            InterpFilter::EightTapSmooth,
+        );
+
+        assert_eq!(eight.best_rate, smooth.best_rate);
+        assert_eq!(eight.best_rd_cost, smooth.best_rd_cost);
     }
 
     // ====================================================================
