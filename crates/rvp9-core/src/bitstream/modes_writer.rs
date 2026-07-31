@@ -170,6 +170,49 @@ pub struct TileBounds {
     pub mi_col_end: usize,
 }
 
+/// Return one VP9 tile edge in 8×8 mode-info units.
+///
+/// Mirrors libvpx `get_tile_offset` in `vp9_tile_common.c`: tile
+/// boundaries divide the superblock count, then convert back to MI
+/// units. This is deliberately not pixel- or MI-width division when
+/// the number of 64×64 columns is not divisible by the tile count.
+///
+/// # Panics
+///
+/// Panics when `log2_tile_dim` exceeds VP9's maximum of six.
+#[inline]
+#[must_use]
+pub fn tile_mi_offset(idx: u32, mi_dim: usize, log2_tile_dim: u8) -> usize {
+    assert!(
+        log2_tile_dim <= 6,
+        "VP9 log2 tile dimension must be in 0..=6"
+    );
+    let sb_dim = mi_dim.div_ceil(MI_BLOCK_SIZE);
+    let raw = ((idx as usize) * sb_dim) >> log2_tile_dim;
+    (raw * MI_BLOCK_SIZE).min(mi_dim)
+}
+
+/// Build the MI bounds for one VP9 tile.
+///
+/// Tile rows are included for bitstream completeness. The v1
+/// real-time encoder currently requests column tiles only.
+#[must_use]
+pub fn tile_bounds(
+    mi_rows: usize,
+    mi_cols: usize,
+    log2_tile_rows: u8,
+    log2_tile_cols: u8,
+    tile_row: u32,
+    tile_col: u32,
+) -> TileBounds {
+    TileBounds {
+        mi_row_start: tile_mi_offset(tile_row, mi_rows, log2_tile_rows),
+        mi_row_end: tile_mi_offset(tile_row + 1, mi_rows, log2_tile_rows),
+        mi_col_start: tile_mi_offset(tile_col, mi_cols, log2_tile_cols),
+        mi_col_end: tile_mi_offset(tile_col + 1, mi_cols, log2_tile_cols),
+    }
+}
+
 /// Errors surfaced by the v1 mode-info writer.
 ///
 /// Most variants signal "your input grid wants a feature this v1
@@ -2716,6 +2759,41 @@ mod tests {
         assert!(
             lookup.get(Position { row: -1, col: 0 }).is_some(),
             "the above cell remains available inside this tile"
+        );
+    }
+
+    #[test]
+    fn tile_bounds_follow_superblock_aligned_libvpx_geometry() {
+        let two_cols_320 = [
+            tile_bounds(30, 40, 0, 1, 0, 0),
+            tile_bounds(30, 40, 0, 1, 0, 1),
+        ];
+        assert_eq!(
+            two_cols_320.map(|b| (b.mi_col_start, b.mi_col_end)),
+            [(0, 16), (16, 40)]
+        );
+
+        let two_cols_640 = [
+            tile_bounds(45, 80, 0, 1, 0, 0),
+            tile_bounds(45, 80, 0, 1, 0, 1),
+        ];
+        assert_eq!(
+            two_cols_640.map(|b| (b.mi_col_start, b.mi_col_end)),
+            [(0, 40), (40, 80)]
+        );
+
+        let four_cols_1280 =
+            core::array::from_fn::<_, 4, _>(|col| tile_bounds(88, 160, 0, 2, 0, col as u32));
+        assert_eq!(
+            four_cols_1280.map(|b| (b.mi_col_start, b.mi_col_end)),
+            [(0, 40), (40, 80), (80, 120), (120, 160)]
+        );
+
+        let four_cols_1920 =
+            core::array::from_fn::<_, 4, _>(|col| tile_bounds(135, 240, 0, 2, 0, col as u32));
+        assert_eq!(
+            four_cols_1920.map(|b| (b.mi_col_start, b.mi_col_end)),
+            [(0, 56), (56, 120), (120, 176), (176, 240)]
         );
     }
 
