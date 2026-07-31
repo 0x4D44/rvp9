@@ -29,8 +29,7 @@ pub struct HadamardQuantRateMetrics {
 
 struct HadamardMetricAccumulator {
     eob_max: int16x8_t,
-    satd_lo: uint32x4_t,
-    satd_hi: uint32x4_t,
+    satd: uint32x4_t,
     error_0: int64x2_t,
     error_1: int64x2_t,
     error_2: int64x2_t,
@@ -39,8 +38,7 @@ struct HadamardMetricAccumulator {
 
 struct HadamardRateAccumulator {
     eob_max: int16x8_t,
-    satd_lo: uint32x4_t,
-    satd_hi: uint32x4_t,
+    satd: uint32x4_t,
 }
 
 impl HadamardRateAccumulator {
@@ -49,18 +47,14 @@ impl HadamardRateAccumulator {
     unsafe fn new() -> Self {
         Self {
             eob_max: vdupq_n_s16(0),
-            satd_lo: vdupq_n_u32(0),
-            satd_hi: vdupq_n_u32(0),
+            satd: vdupq_n_u32(0),
         }
     }
 
     #[inline]
     #[target_feature(enable = "neon")]
     unsafe fn add(&mut self, q: int16x8_t, iscan: *const i16) {
-        let q_lo = vmovl_s16(vget_low_s16(q));
-        let q_hi = vmovl_s16(vget_high_s16(q));
-        self.satd_lo = vaddq_u32(self.satd_lo, vreinterpretq_u32_s32(vabsq_s32(q_lo)));
-        self.satd_hi = vaddq_u32(self.satd_hi, vreinterpretq_u32_s32(vabsq_s32(q_hi)));
+        self.satd = vpadalq_u16(self.satd, vreinterpretq_u16_s16(vabsq_s16(q)));
 
         let nonzero = vmvnq_u16(vceqq_s16(q, vdupq_n_s16(0)));
         let eob = vbslq_s16(nonzero, vld1q_s16(iscan), vdupq_n_s16(0));
@@ -72,7 +66,7 @@ impl HadamardRateAccumulator {
     unsafe fn finish(self) -> HadamardQuantRateMetrics {
         HadamardQuantRateMetrics {
             eob: vmaxvq_s16(self.eob_max) as u16,
-            satd: vaddvq_u32(vaddq_u32(self.satd_lo, self.satd_hi)),
+            satd: vaddvq_u32(self.satd),
         }
     }
 }
@@ -83,8 +77,7 @@ impl HadamardMetricAccumulator {
     unsafe fn new() -> Self {
         Self {
             eob_max: vdupq_n_s16(0),
-            satd_lo: vdupq_n_u32(0),
-            satd_hi: vdupq_n_u32(0),
+            satd: vdupq_n_u32(0),
             error_0: vdupq_n_s64(0),
             error_1: vdupq_n_s64(0),
             error_2: vdupq_n_s64(0),
@@ -102,10 +95,7 @@ impl HadamardMetricAccumulator {
         dq: int16x8_t,
         iscan: *const i16,
     ) {
-        let q_lo = vmovl_s16(vget_low_s16(q));
-        let q_hi = vmovl_s16(vget_high_s16(q));
-        self.satd_lo = vaddq_u32(self.satd_lo, vreinterpretq_u32_s32(vabsq_s32(q_lo)));
-        self.satd_hi = vaddq_u32(self.satd_hi, vreinterpretq_u32_s32(vabsq_s32(q_hi)));
+        self.satd = vpadalq_u16(self.satd, vreinterpretq_u16_s16(vabsq_s16(q)));
 
         let diff_lo = vsubq_s32(coeff_lo, vmovl_s16(vget_low_s16(dq)));
         let diff_hi = vsubq_s32(coeff_hi, vmovl_s16(vget_high_s16(dq)));
@@ -124,7 +114,7 @@ impl HadamardMetricAccumulator {
     unsafe fn finish(self) -> HadamardQuantMetrics {
         HadamardQuantMetrics {
             eob: vmaxvq_s16(self.eob_max) as u16,
-            satd: vaddvq_u32(vaddq_u32(self.satd_lo, self.satd_hi)),
+            satd: vaddvq_u32(self.satd),
             error: vaddvq_s64(vaddq_s64(
                 vaddq_s64(self.error_0, self.error_1),
                 vaddq_s64(self.error_2, self.error_3),

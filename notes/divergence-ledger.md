@@ -3099,6 +3099,8 @@ absolute value and multiplication, preserving exact `i16::MIN` handling.
 While qcoeff and dqcoeff lanes remain live, the kernel accumulates EOB, qcoeff
 SATD, and squared coefficient error into independent SIMD lanes. It returns
 only those three RD metrics and never materializes qcoeff or dqcoeff arrays.
+Its SATD reduction uses one unsigned pairwise-widening accumulator for the
+absolute i16 qcoeff lanes instead of widening low/high halves separately.
 
 **Why:** the previous picker copied 64, 256, or 1,024 coefficients into a
 separate i32 array for every filter candidate, even though the source
@@ -3120,7 +3122,10 @@ metrics then improved another `-0.317%` at one thread with fourteen of
 sixteen wins and `-0.297%` at four threads with twelve of twenty wins.
 Unrelated host builds made absolute wall medians noisy; paired wall deltas
 still improved `-0.362%` and `-0.371%`, respectively. Final acceptance
-requires the clean-host corpus matrix.
+requires the clean-host corpus matrix. Replacing the two SATD accumulators
+with the exact pairwise-widening reduction improved three twenty-pair
+one-thread/four-thread child-CPU trials by `-0.162%`, `-0.215%`, and
+`-0.292%`; a second four-thread trial improved by `-0.163%`.
 
 **Future plan:** retain this picker-only fusion while it stays exact. The
 general transform and emitted-coefficient quantizer APIs remain widened and
