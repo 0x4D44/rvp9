@@ -58,8 +58,8 @@ use rvp9_core::bitstream::{
     AllZeroCoefSource, AllZeroIntraCoefSource, BitDepth, BitstreamError, ChromaFormat, ColorRange,
     ColorSpace, CompressedHeaderOptions, CompressedHeaderResult, FrameKind, InterpFilter,
     ModesTileBounds, ModesWriterError, Profile, RawBitWriter, SuperframeBuilder,
-    UncompressedHeader, write_compressed_header, write_tile_inter, write_tile_intra_keyframe,
-    write_uncompressed_header,
+    UncompressedHeader, tile_bounds, write_compressed_header, write_tile_inter,
+    write_tile_intra_keyframe, write_uncompressed_header,
 };
 use rvp9_core::block::BlockSize;
 use rvp9_core::coef_ctx::TileCoefCtx;
@@ -1359,6 +1359,20 @@ pub(crate) fn simulate_dc_intra_encode_partitions(
     )
 }
 
+fn column_tile_bounds(mi_rows: usize, mi_cols: usize, log2_tile_cols: u8) -> Vec<ModesTileBounds> {
+    (0..(1u32 << log2_tile_cols))
+        .map(|tile_col| tile_bounds(mi_rows, mi_cols, 0, log2_tile_cols, 0, tile_col))
+        .collect()
+}
+
+fn tile_for_mi_col(bounds: &[ModesTileBounds], mi_col: usize) -> ModesTileBounds {
+    bounds
+        .iter()
+        .copied()
+        .find(|tile| mi_col >= tile.mi_col_start && mi_col < tile.mi_col_end)
+        .expect("every frame MI column belongs to exactly one VP9 tile")
+}
+
 /// `simulate_dc_intra_encode_partitions` without the up-front recon
 /// zeroing — the F10.1b picker path calls this once per leaf and needs
 /// the recon buffer from earlier leaves preserved across calls.
@@ -1370,6 +1384,29 @@ pub(crate) fn simulate_dc_intra_encode_partitions_no_zero(
     input_yuv: (&[u8], &[u8], &[u8]),
     recon_yuv_out: (&mut [u8], &mut [u8], &mut [u8]),
     sb_partitions: &[Vec<PartitionLeafDesc>],
+) -> VecBackedIntraCoefSource {
+    simulate_dc_intra_encode_partitions_no_zero_with_tiles(
+        width,
+        height,
+        base_qindex,
+        seg_q_deltas,
+        input_yuv,
+        recon_yuv_out,
+        sb_partitions,
+        0,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn simulate_dc_intra_encode_partitions_no_zero_with_tiles(
+    width: u32,
+    height: u32,
+    base_qindex: u8,
+    seg_q_deltas: &[Option<i16>; 8],
+    input_yuv: (&[u8], &[u8], &[u8]),
+    recon_yuv_out: (&mut [u8], &mut [u8], &mut [u8]),
+    sb_partitions: &[Vec<PartitionLeafDesc>],
+    log2_tile_cols: u8,
 ) -> VecBackedIntraCoefSource {
     use rvp9_core::intra_pred::{
         DcAvailability, EdgeBuffers, build_intra_predictors, intra_predict,
@@ -1396,6 +1433,7 @@ pub(crate) fn simulate_dc_intra_encode_partitions_no_zero(
 
     let sb_cols = w / 64;
     let sb_rows = h / 64;
+    let tile_bounds_by_col = column_tile_bounds(h / 8, w / 8, log2_tile_cols);
     assert_eq!(
         sb_partitions.len(),
         sb_rows * sb_cols,
@@ -1406,6 +1444,7 @@ pub(crate) fn simulate_dc_intra_encode_partitions_no_zero(
 
     for sb_row in 0..sb_rows {
         for sb_col in 0..sb_cols {
+            let current_tile = tile_for_mi_col(&tile_bounds_by_col, sb_col * 8);
             let leaves = &sb_partitions[sb_row * sb_cols + sb_col];
             for leaf in leaves {
                 let leaf_bsize = leaf.leaf_bsize;
@@ -1507,7 +1546,7 @@ pub(crate) fn simulate_dc_intra_encode_partitions_no_zero(
                     // single-slice frame, so it reduces to "the leaf
                     // is not at the top-left of the frame".
                     let have_above_block = leaf_mi_row > 0;
-                    let have_left_block = leaf_mi_col > 0;
+                    let have_left_block = leaf_mi_col > current_tile.mi_col_start;
 
                     // Walk TX positions inside this plane's coding
                     // block. `loff` / `aoff` are in 4×4 units; the per-
@@ -1768,6 +1807,7 @@ pub(crate) fn simulate_dc_intra_encode_partitions_no_zero(
 /// per-leaf sub-mode picking is on the F8.x roadmap); both Y and UV
 /// fall back to DC on those leaves. Every smaller-leaf size gets both
 /// the luma and chroma picker treatment.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn pick_and_simulate_intra_encode_partitions(
     width: u32,
     height: u32,
@@ -1776,6 +1816,7 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
     input_yuv: (&[u8], &[u8], &[u8]),
     recon_yuv_out: (&mut [u8], &mut [u8], &mut [u8]),
     sb_partitions: &mut [Vec<PartitionLeafDesc>],
+    log2_tile_cols: u8,
 ) -> VecBackedIntraCoefSource {
     use rvp9_core::cost::{intra_uv_mode_costs_kf, intra_y_mode_costs_kf_table};
     use rvp9_core::mode_decision::intra::{
@@ -1798,6 +1839,7 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
 
     let mi_cols = w / 8;
     let mi_rows = h / 8;
+    let tile_bounds_by_col = column_tile_bounds(mi_rows, mi_cols, log2_tile_cols);
     let mut picked_y_mode_grid: Vec<Option<IntraMode>> = vec![None; mi_rows * mi_cols];
 
     // First pass: walk SBs/leaves in raster, run the simulator one
@@ -1842,6 +1884,7 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
 
     for sb_row in 0..sb_rows {
         for sb_col in 0..sb_cols {
+            let current_tile = tile_for_mi_col(&tile_bounds_by_col, sb_col * 8);
             let sb_idx = sb_row * sb_cols + sb_col;
             for leaf_idx in 0..sb_partitions[sb_idx].len() {
                 let (leaf_mi_row, leaf_mi_col, leaf_bsize) = {
@@ -1862,7 +1905,7 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
                 let leaf_px_y = leaf_mi_row * 8;
 
                 let have_above = leaf_px_y > 0;
-                let have_left = leaf_px_x > 0;
+                let have_left = leaf_mi_col > current_tile.mi_col_start;
                 let mut above_pixels = vec![0u8; bs_pixels];
                 let mut left_pixels = vec![0u8; bs_pixels];
                 if have_above {
@@ -1888,7 +1931,7 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
                 } else {
                     IntraMode::Dc
                 };
-                let left_mode_ctx = if leaf_mi_col > 0 {
+                let left_mode_ctx = if leaf_mi_col > current_tile.mi_col_start {
                     picked_y_mode_grid[leaf_mi_row * mi_cols + (leaf_mi_col - 1)]
                         .unwrap_or(IntraMode::Dc)
                 } else {
@@ -2024,7 +2067,7 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
                     let leaf_uv_x = leaf_px_x / 2;
                     let leaf_uv_y = leaf_px_y / 2;
                     let have_above_uv = leaf_uv_y > 0;
-                    let have_left_uv = leaf_uv_x > 0;
+                    let have_left_uv = leaf_mi_col > current_tile.mi_col_start;
                     let mut u_above = vec![0u8; bs_uv];
                     let mut u_left = vec![0u8; bs_uv];
                     let mut v_above = vec![0u8; bs_uv];
@@ -2161,7 +2204,7 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
                         }
                     })
                     .collect();
-                let leaf_coefs = simulate_dc_intra_encode_partitions_no_zero(
+                let leaf_coefs = simulate_dc_intra_encode_partitions_no_zero_with_tiles(
                     width,
                     height,
                     base_qindex,
@@ -2173,6 +2216,7 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
                         &mut *recon_yuv_out.2,
                     ),
                     &single_leaf_layout,
+                    log2_tile_cols,
                 );
                 // Merge `leaf_coefs` into the running `coef_source`.
                 for ((mi_row, mi_col, plane, tx_x, tx_y), (qc, eob)) in
@@ -2209,8 +2253,7 @@ struct InterPickerMiGridLookup<'a> {
     mi_cols: usize,
     base_mi_row: i32,
     base_mi_col: i32,
-    mi_rows: i32,
-    mi_cols_frame: i32,
+    tile_bounds: ModesTileBounds,
 }
 
 impl<'a> InterPickerMiGridLookup<'a> {
@@ -2219,15 +2262,14 @@ impl<'a> InterPickerMiGridLookup<'a> {
         mi_cols: usize,
         base_mi_row: usize,
         base_mi_col: usize,
-        mi_rows: usize,
+        tile_bounds: ModesTileBounds,
     ) -> Self {
         Self {
             mi_grid,
             mi_cols,
             base_mi_row: base_mi_row as i32,
             base_mi_col: base_mi_col as i32,
-            mi_rows: mi_rows as i32,
-            mi_cols_frame: mi_cols as i32,
+            tile_bounds,
         }
     }
 }
@@ -2239,7 +2281,11 @@ impl rvp9_core::inter::mv_ref::NeighbourLookup for InterPickerMiGridLookup<'_> {
     ) -> Option<&rvp9_core::mode_info::ModeInfo> {
         let row = self.base_mi_row.checked_add(i32::from(pos.row))?;
         let col = self.base_mi_col.checked_add(i32::from(pos.col))?;
-        if row < 0 || col < 0 || row >= self.mi_rows || col >= self.mi_cols_frame {
+        if row < self.tile_bounds.mi_row_start as i32
+            || col < self.tile_bounds.mi_col_start as i32
+            || row >= self.tile_bounds.mi_row_end as i32
+            || col >= self.tile_bounds.mi_col_end as i32
+        {
             return None;
         }
         let idx = (row as usize) * self.mi_cols + (col as usize);
@@ -2897,6 +2943,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     stage4a_product_split_override: crate::frame_loop::Stage4aProductSplitOverride,
     // Typed split-admission stats sink for product reports.
     stage4a_split_stats_out: &mut rvp9_core::mode_decision::nonrd_partition::NonRdSplitStats,
+    log2_tile_cols: u8,
 ) -> VecBackedInterCoefSource {
     use rvp9_core::bitstream::frame::{InterpFilter as WireInterpFilter, MAX_INTER_REFS};
     use rvp9_core::bitstream::header::FrameKind as WireFrameKind;
@@ -3386,6 +3433,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // off — so the LAST/GOLDEN scans are unaffected regardless.
     let mi_rows_us = h / 8;
     let mi_cols_us = w / 8;
+    let tile_bounds_by_col = column_tile_bounds(mi_rows_us, mi_cols_us, log2_tile_cols);
     let mut mi_grid: Vec<Option<rvp9_core::mode_info::ModeInfo>> =
         vec![None; mi_rows_us * mi_cols_us];
     let sign_bias = sign_bias_from_header(&[false, false, altref_available]);
@@ -3474,6 +3522,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
 
     for sb_row in 0..sb_rows {
         for sb_col in 0..sb_cols {
+            let current_tile = tile_for_mi_col(&tile_bounds_by_col, sb_col * 8);
             let sb_idx = sb_row * sb_cols + sb_col;
 
             // A23 — per-64x64-SB TPL `cb_rdmult` (libvpx
@@ -4046,7 +4095,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         mi_cols_us,
                         leaf_mi_row,
                         leaf_mi_col,
-                        mi_rows_us,
+                        current_tile,
                     );
                     let inter_mode_ctx = get_mode_context(bs, &neighbours);
                     let leaf_prev_mv: Option<PrevFrameMvRef> = prev_mv_grid
@@ -4120,7 +4169,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     // so for the first SB this is identical to the
                     // reference plane).
                     let intra_have_above = leaf_px_y > 0;
-                    let intra_have_left = leaf_px_x > 0;
+                    let intra_have_left = leaf_mi_col > current_tile.mi_col_start;
                     let mut intra_above_buf = [0u8; 64];
                     let mut intra_left_buf = [0u8; 64];
                     let intra_above: Option<&[u8]> = if intra_have_above {
@@ -4152,7 +4201,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     } else {
                         None
                     };
-                    let nb_left = if leaf_mi_col > 0 {
+                    let nb_left = if leaf_mi_col > current_tile.mi_col_start {
                         mi_grid_ro[leaf_mi_row * mi_cols_us + (leaf_mi_col - 1)].as_ref()
                     } else {
                         None
@@ -4914,7 +4963,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     mi_cols_us,
                     leaf_mi_row,
                     leaf_mi_col,
-                    mi_rows_us,
+                    current_tile,
                 );
                 // Phase 0a — inter-mode context from spatial neighbours.
                 // Matches libvpx `x->mbmi_ext->mode_context[ref_frame]`
@@ -5063,7 +5112,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 // from the Y recon plane. The blocks above and left of
                 // the current leaf are already reconstructed.
                 let intra_have_above = leaf_px_y > 0;
-                let intra_have_left = leaf_px_x > 0;
+                let intra_have_left = leaf_mi_col > current_tile.mi_col_start;
                 let mut intra_above_buf = [0u8; 64];
                 let mut intra_left_buf = [0u8; 64];
                 let intra_above: Option<&[u8]>;
@@ -5101,7 +5150,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 } else {
                     None
                 };
-                let nb_left = if leaf_mi_col > 0 {
+                let nb_left = if leaf_mi_col > current_tile.mi_col_start {
                     mi_grid[leaf_mi_row * mi_cols_us + (leaf_mi_col - 1)].as_ref()
                 } else {
                     None
@@ -6055,7 +6104,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         };
 
                         let have_above_block = leaf_mi_row > 0;
-                        let have_left_block = leaf_mi_col > 0;
+                        let have_left_block = leaf_mi_col > current_tile.mi_col_start;
 
                         let plane_mode = if plane == 0 {
                             intra_y_mode

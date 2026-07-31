@@ -2200,6 +2200,7 @@ impl StreamEncoder {
     ) -> Result<Vec<u8>, EncodeError> {
         let w = self.config.width;
         let h = self.config.height;
+        let log2_tile_cols = self.parallelism.effective_log2_tile_cols(w);
 
         // AQ.3 — Reset cyclic-refresh state on every keyframe. The
         // ref pool / mode-info history is discarded at the KF
@@ -2271,6 +2272,7 @@ impl StreamEncoder {
                 input_yuv,
                 (ry, ru, rv),
                 &mut sb_partitions,
+                log2_tile_cols,
             )
         };
 
@@ -2377,7 +2379,15 @@ impl StreamEncoder {
         self.decoder_fc_state = FrameContext::new_default();
         self.decoder_fc_state_arf = FrameContext::new_default();
 
-        build_keyframe_packet(w, h, q_index, filter_level, &coef_source, &sb_partitions)
+        build_keyframe_packet_with_tiles(
+            w,
+            h,
+            q_index,
+            filter_level,
+            &coef_source,
+            &sb_partitions,
+            log2_tile_cols,
+        )
     }
 
     /// W5.5 — apply the VP9 temporal denoiser to the just-mirrored
@@ -2637,6 +2647,7 @@ impl StreamEncoder {
     ) -> Result<Vec<u8>, EncodeError> {
         let w = self.config.width;
         let h = self.config.height;
+        let log2_tile_cols = self.parallelism.effective_log2_tile_cols(w);
         let mi_rows_us = (h as usize) / 8;
         let mi_cols_us = (w as usize) / 8;
         // RVP9-BUG-KILN-00014 — this encoder has one temporal-SVC
@@ -2982,6 +2993,7 @@ impl StreamEncoder {
             tpl_rdmult_arg,
             self.config.stage4a_product_split_override,
             &mut stage4a_frame_split_stats,
+            log2_tile_cols,
         );
         self.stage4a_split_stats
             .accumulate(&stage4a_frame_split_stats);
@@ -3189,8 +3201,7 @@ impl StreamEncoder {
             // `frame_context_idx = refresh_alt_ref_frame = 0`).
             /* frame_context_idx = */
             0,
-            /* log2_tile_cols = */
-            0,
+            log2_tile_cols,
         )?;
 
         // W0.5(vpxenc parity, A2 P0 / A1 P5): with `refresh_frame_
@@ -3415,6 +3426,7 @@ impl StreamEncoder {
     ) -> Result<Vec<u8>, EncodeError> {
         let w = self.config.width;
         let h = self.config.height;
+        let log2_tile_cols = self.parallelism.effective_log2_tile_cols(w);
         let w_us = w as usize;
         let h_us = h as usize;
         let mi_rows_us = h_us / 8;
@@ -3550,6 +3562,7 @@ impl StreamEncoder {
             None,
             self.config.stage4a_product_split_override,
             &mut stage4a_frame_split_stats,
+            log2_tile_cols,
         );
         self.stage4a_split_stats
             .accumulate(&stage4a_frame_split_stats);
@@ -3646,8 +3659,7 @@ impl StreamEncoder {
             // `frame_context_idx = refresh_alt_ref_frame = 1`).
             /* frame_context_idx = */
             1,
-            /* log2_tile_cols = */
-            0,
+            log2_tile_cols,
         )?;
 
         // W-ALTREF — the ARF emits `refresh_frame_context = true`
@@ -4439,6 +4451,7 @@ fn build_inter_mi_grid_from_picker(
 /// `lib.rs` but with `refresh_frame_context = false` always, so the
 /// decoder's FC bank 0 stays at default and subsequent inter frames
 /// can use the default FC as their `pre_fc`.
+#[cfg(test)]
 fn build_keyframe_packet(
     width: u32,
     height: u32,
@@ -6435,6 +6448,73 @@ mod tests {
                 vpx_yuv.iter().all(|&sample| sample == 128),
                 "flat source must decode bit-exactly through both external decoders"
             );
+        }
+    }
+
+    #[test]
+    fn stream_encoder_two_tile_output_is_thread_count_independent_and_bit_exact() {
+        let w = 640usize;
+        let h = 64usize;
+        let cfg = EncoderConfig::new(w as u32, h as u32);
+        let tile_layout = |max_threads| EncoderParallelism {
+            max_threads,
+            requested_log2_tile_cols: 1,
+        };
+        let mut serial = StreamEncoder::new_with_parallelism(cfg, tile_layout(1))
+            .expect("construct one-worker encoder");
+        let mut threaded = StreamEncoder::new_with_parallelism(cfg, tile_layout(4))
+            .expect("construct four-worker encoder");
+        let mut decoder = Decoder::new();
+
+        for frame_idx in 0..3usize {
+            let mut y = vec![0u8; w * h];
+            for row in 0..h {
+                for col in 0..w {
+                    let moving_bar = ((col + frame_idx * 13) / 32) & 1;
+                    y[row * w + col] = ((col * 3 + row * 5 + frame_idx * 17) & 0xff) as u8;
+                    if moving_bar == 0 {
+                        y[row * w + col] = y[row * w + col].saturating_add(31);
+                    }
+                }
+            }
+            let mut u = vec![0u8; (w / 2) * (h / 2)];
+            let mut v = vec![0u8; u.len()];
+            for row in 0..h / 2 {
+                for col in 0..w / 2 {
+                    u[row * (w / 2) + col] = ((col * 7 + frame_idx * 11) & 0xff) as u8;
+                    v[row * (w / 2) + col] = ((row * 9 + col * 2 + frame_idx * 19) & 0xff) as u8;
+                }
+            }
+            let view = yuv_view(&y, &u, &v, w);
+            let serial_packet = serial.encode_frame(&view).expect("serial encode");
+            let threaded_packet = threaded.encode_frame(&view).expect("threaded encode");
+            assert_eq!(
+                serial_packet.data, threaded_packet.data,
+                "fixed tile layout must not depend on max_threads at frame {frame_idx}",
+            );
+
+            let parsed = decode_packet(&mut decoder, &serial_packet.data);
+            assert_eq!(parsed.len(), 1);
+            let tail = parsed[0].header.tail.as_ref().expect("coded frame tail");
+            assert_eq!(tail.tile_info.log2_tile_cols, 1);
+            assert_eq!(tail.tile_info.log2_tile_rows, 0);
+            let decoded = decoder
+                .decode_frame(&parsed[0])
+                .expect("rvp9 decoder accepts product two-tile frame");
+
+            for (plane, expected, width, height) in [
+                (decoded.y_plane(), serial.last_recon_y(), w, h),
+                (decoded.u_plane(), serial.last_recon_u(), w / 2, h / 2),
+                (decoded.v_plane(), serial.last_recon_v(), w / 2, h / 2),
+            ] {
+                for row in 0..height {
+                    assert_eq!(
+                        &plane.data()[row * plane.stride()..][..width],
+                        &expected[row * width..][..width],
+                        "encoder reconstruction diverged at frame {frame_idx}, row {row}",
+                    );
+                }
+            }
         }
     }
 
