@@ -87,7 +87,7 @@ use rvp9_core::transforms::TxMode;
 use crate::aq_cyclic_refresh::{CyclicRefresh, CyclicRefreshConfig};
 use crate::denoiser::{Denoiser, DenoiserLevel, INTRA_FRAME_IDX, vp9_denoiser_filter};
 use crate::loopfilter::{
-    apply_loop_filter_to_tight_recon, build_inter_mi_grid_for_lf, build_kf_mi_grid_for_lf,
+    apply_loop_filter_to_tight_recon_parallel, build_inter_mi_grid_for_lf, build_kf_mi_grid_for_lf,
     pick_filter_level,
 };
 use crate::rate_control::{
@@ -968,6 +968,9 @@ impl From<FrameKind> for RcFrameKind {
 pub struct StreamEncoder {
     config: EncoderConfig,
     parallelism: EncoderParallelism,
+    /// Long-lived workers for the post-reconstruction split-edge loop
+    /// filter. The pool is absent for the single-worker path.
+    lf_worker_pool: Option<rvp9_core::tile_threading::WorkerPool>,
     rate_control: RateControl,
     frame_idx: u32,
     /// GOP topology — the libvpx-faithful golden-frame-group schedule
@@ -1420,6 +1423,15 @@ impl StreamEncoder {
         let uvw = w / 2;
         let uvh = h / 2;
         let tile_count = 1usize << parallelism.effective_log2_tile_cols(config.width);
+        let lf_worker_count = (parallelism.max_threads as usize)
+            .min(tile_count)
+            .min((h / 64).max(1));
+        let lf_worker_pool = (lf_worker_count >= 2).then(|| {
+            rvp9_core::tile_threading::WorkerPool::new(
+                std::num::NonZeroUsize::new(lf_worker_count)
+                    .expect("loop-filter worker count is nonzero"),
+            )
+        });
 
         let cyclic_refresh = match config.aq_mode {
             AqMode::Off => None,
@@ -1499,6 +1511,7 @@ impl StreamEncoder {
         Ok(Self {
             config,
             parallelism,
+            lf_worker_pool,
             rate_control,
             frame_idx: 0,
             gf_group,
@@ -2319,8 +2332,22 @@ impl StreamEncoder {
         self.diag_pred = Some(crate::predstat::take_pred_frame());
         if filter_level > 0 {
             let mi_grid = build_kf_mi_grid_for_lf(h / 8, w / 8, &sb_partitions);
+            let max_threads = self.parallelism.max_threads as usize;
+            let num_tile_cols = 1usize << log2_tile_cols;
+            let worker_pool = self.lf_worker_pool.as_mut();
             let (ry, ru, rv) = self.ref_pool.new_frame_planes_mut();
-            apply_loop_filter_to_tight_recon(w, h, filter_level, &mi_grid, ry, ru, rv);
+            apply_loop_filter_to_tight_recon_parallel(
+                w,
+                h,
+                filter_level,
+                &mi_grid,
+                ry,
+                ru,
+                rv,
+                worker_pool,
+                max_threads,
+                num_tile_cols,
+            );
         }
 
         // A10 / A14 (Phase A) — keyframes refresh every ref-pool slot via
@@ -3181,7 +3208,7 @@ impl StreamEncoder {
         // the accumulator-reset note.
         self.diag_pred = Some(crate::predstat::take_pred_frame());
         if filter_level > 0 {
-            apply_loop_filter_to_tight_recon(
+            apply_loop_filter_to_tight_recon_parallel(
                 w,
                 h,
                 filter_level,
@@ -3189,6 +3216,9 @@ impl StreamEncoder {
                 &mut new_recon_y,
                 &mut new_recon_u,
                 &mut new_recon_v,
+                self.lf_worker_pool.as_mut(),
+                self.parallelism.max_threads as usize,
+                1usize << log2_tile_cols,
             );
         }
 
@@ -3729,7 +3759,7 @@ impl StreamEncoder {
             pick_filter_level(q_index, false)
         };
         if filter_level > 0 {
-            apply_loop_filter_to_tight_recon(
+            apply_loop_filter_to_tight_recon_parallel(
                 w,
                 h,
                 filter_level,
@@ -3737,6 +3767,9 @@ impl StreamEncoder {
                 &mut arf_recon_y,
                 &mut arf_recon_u,
                 &mut arf_recon_v,
+                self.lf_worker_pool.as_mut(),
+                self.parallelism.max_threads as usize,
+                1usize << log2_tile_cols,
             );
         }
 

@@ -154,6 +154,38 @@ pub(crate) fn apply_loop_filter_to_tight_recon(
     recon_u: &mut [u8],
     recon_v: &mut [u8],
 ) {
+    apply_loop_filter_to_tight_recon_parallel(
+        width,
+        height,
+        filter_level,
+        mi_grid,
+        recon_y,
+        recon_u,
+        recon_v,
+        None,
+        1,
+        1,
+    );
+}
+
+/// Parallel product variant of [`apply_loop_filter_to_tight_recon`].
+///
+/// The supplied pool is long-lived and owned by the stream encoder. When at
+/// least two workers and two superblock rows are available, this dispatches
+/// the core split-edge column wavefront. Otherwise it uses the serial path.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn apply_loop_filter_to_tight_recon_parallel(
+    width: u32,
+    height: u32,
+    filter_level: u8,
+    mi_grid: &[Option<ModeInfo>],
+    recon_y: &mut [u8],
+    recon_u: &mut [u8],
+    recon_v: &mut [u8],
+    worker_pool: Option<&mut rvp9_core::tile_threading::WorkerPool>,
+    max_threads: usize,
+    num_tile_cols: usize,
+) {
     assert!(
         filter_level > 0,
         "callers must skip the LF pass at filter_level == 0"
@@ -239,36 +271,87 @@ pub(crate) fn apply_loop_filter_to_tight_recon(
         frame_mi_opt.push(Some(cell.unwrap_or(placeholder)));
     }
 
-    // Build per-SB masks, then dispatch the apply driver.
-    let mut lfm_grid: Vec<LoopFilterMask> = vec![LoopFilterMask::default(); sb_rows * sb_cols];
-    for sb_row in 0..sb_rows {
-        for sb_col in 0..sb_cols {
-            let mi_row = sb_row * SB_MI_SIZE;
-            let mi_col = sb_col * SB_MI_SIZE;
-            let lfm = &mut lfm_grid[sb_row * sb_cols + sb_col];
-            setup_mask(
-                mi_row as u32,
-                mi_col as u32,
-                &frame_mi_opt,
-                mi_cols,
-                mi_rows as u32,
-                mi_cols as u32,
-                &levels,
-                lfm,
-            );
-            adjust_mask(
-                mi_row as u32,
-                mi_col as u32,
-                mi_rows as u32,
-                mi_cols as u32,
-                lfm,
-            );
-        }
-    }
+    let num_lf_workers = max_threads.min(num_tile_cols.max(1)).min(sb_rows).max(1);
+    if let Some(worker_pool) = worker_pool.filter(|_| num_lf_workers >= 2) {
+        use rvp9_core::loopfilter::apply::{ColumnWavefrontLfState, RowMaskInputs, SharedFrame};
+        use std::sync::atomic::AtomicI32;
 
-    loop_filter_frame(
-        &mut yv12, &lfm_grid, sb_cols, sb_rows, sb_cols, mi_rows, mi_cols, &info, 0, mi_rows,
-    );
+        let cur_sb_col: Vec<AtomicI32> = (0..sb_rows).map(|_| AtomicI32::new(-1)).collect();
+        let shared = SharedFrame::from_yv12(&mut yv12);
+        let state = ColumnWavefrontLfState {
+            shared,
+            info: &info,
+            row_inputs: RowMaskInputs {
+                mi_grid: &frame_mi_opt,
+                mi_stride: mi_cols,
+                mi_rows,
+                mi_cols,
+                levels: &levels,
+            },
+            non420: None,
+            sb_rows,
+            sb_cols,
+            cur_sb_col: &cur_sb_col,
+            nsync: rvp9_core::loopfilter::apply::nsync_for_width(width),
+            // Reconstruction has completed before the encoder enters LF.
+            decode_progress: None,
+            num_tile_cols: num_tile_cols as i32,
+            lf_delay: 1,
+            abort: None,
+        };
+        let simd_dispatch = rvp9_core::dsp::get();
+        worker_pool.scope(|scope| {
+            for worker_id in 0..num_lf_workers {
+                let state = &state;
+                let dispatch = simd_dispatch.clone();
+                scope.submit(move || {
+                    // SAFETY: `WorkerPool::scope` joins every job before
+                    // `state` or `yv12` can expire. The core worker's
+                    // Acquire/Release column wavefront prevents overlapping
+                    // writes between the independently owned SB rows.
+                    unsafe {
+                        rvp9_core::loopfilter::apply::run_split_edge_lf_worker(
+                            state,
+                            worker_id,
+                            num_lf_workers,
+                            &dispatch,
+                        );
+                    }
+                });
+            }
+        });
+    } else {
+        // Build per-SB masks, then dispatch the serial apply driver.
+        let mut lfm_grid: Vec<LoopFilterMask> = vec![LoopFilterMask::default(); sb_rows * sb_cols];
+        for sb_row in 0..sb_rows {
+            for sb_col in 0..sb_cols {
+                let mi_row = sb_row * SB_MI_SIZE;
+                let mi_col = sb_col * SB_MI_SIZE;
+                let lfm = &mut lfm_grid[sb_row * sb_cols + sb_col];
+                setup_mask(
+                    mi_row as u32,
+                    mi_col as u32,
+                    &frame_mi_opt,
+                    mi_cols,
+                    mi_rows as u32,
+                    mi_cols as u32,
+                    &levels,
+                    lfm,
+                );
+                adjust_mask(
+                    mi_row as u32,
+                    mi_col as u32,
+                    mi_rows as u32,
+                    mi_cols as u32,
+                    lfm,
+                );
+            }
+        }
+
+        loop_filter_frame(
+            &mut yv12, &lfm_grid, sb_cols, sb_rows, sb_cols, mi_rows, mi_cols, &info, 0, mi_rows,
+        );
+    }
 
     // Copy filtered pixels back into the encoder's tight-stride
     // reconstruction.
@@ -748,6 +831,58 @@ mod w7_4_tests {
         // recon closer to source.
         let source_y = vec![120u8; w * h];
         (recon_y, recon_u, recon_v, source_y)
+    }
+
+    #[test]
+    fn split_edge_parallel_filter_matches_serial_planes_bit_exact() {
+        const W: usize = 256;
+        const H: usize = 256;
+        let mi_grid = build_intra_mi_grid(H / 8, W / 8);
+        let mut source_y = vec![0u8; W * H];
+        for r in 0..H {
+            for c in 0..W {
+                source_y[r * W + c] = 120 + (((r / 8 + c / 8) & 1) as u8) * 10;
+            }
+        }
+        let source_u = vec![118u8; (W / 2) * (H / 2)];
+        let source_v = vec![122u8; (W / 2) * (H / 2)];
+
+        let mut serial_y = source_y.clone();
+        let mut serial_u = source_u.clone();
+        let mut serial_v = source_v.clone();
+        apply_loop_filter_to_tight_recon(
+            W as u32,
+            H as u32,
+            30,
+            &mi_grid,
+            &mut serial_y,
+            &mut serial_u,
+            &mut serial_v,
+        );
+
+        let mut parallel_y = source_y.clone();
+        let mut parallel_u = source_u.clone();
+        let mut parallel_v = source_v.clone();
+        let mut pool = rvp9_core::tile_threading::WorkerPool::new(
+            std::num::NonZeroUsize::new(4).expect("four is nonzero"),
+        );
+        apply_loop_filter_to_tight_recon_parallel(
+            W as u32,
+            H as u32,
+            30,
+            &mi_grid,
+            &mut parallel_y,
+            &mut parallel_u,
+            &mut parallel_v,
+            Some(&mut pool),
+            4,
+            4,
+        );
+
+        assert_ne!(serial_y, source_y, "fixture must exercise luma filtering");
+        assert_eq!(parallel_y, serial_y);
+        assert_eq!(parallel_u, serial_u);
+        assert_eq!(parallel_v, serial_v);
     }
 
     /// W7.4 PROOF — `search_filter_level` (`vp9_picklpf.c:78-157`).
