@@ -77,6 +77,22 @@ use rvp9_core::transforms::{TxMode, TxSize};
 pub static TRELLIS_CHANGED_COEFFS: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(0);
 
+thread_local! {
+    /// Residual coefficients reused across serial emitted transforms on one
+    /// tile worker. Callers receive only the active transform prefix.
+    static INTER_EMIT_RESIDUAL_SCRATCH: std::cell::RefCell<[i16; 32 * 32]> =
+        const { std::cell::RefCell::new([0; 32 * 32]) };
+}
+
+#[inline]
+fn with_inter_emit_residual_scratch<R>(len: usize, operation: impl FnOnce(&mut [i16]) -> R) -> R {
+    assert!(
+        len <= 32 * 32,
+        "inter emit residual length {len} exceeds 32x32 scratch"
+    );
+    INTER_EMIT_RESIDUAL_SCRATCH.with_borrow_mut(|scratch| operation(&mut scratch[..len]))
+}
+
 /// Read the running total of coefficients changed by the `RVP9_TRELLIS`
 /// trellis (positive control). See [`TRELLIS_CHANGED_COEFFS`].
 #[must_use]
@@ -6566,74 +6582,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                     emit_profile_tx_blocks += 1;
                                     emit_profile_plane_tx_blocks[plane] += 1;
                                 }
-                                let emit_residual_start = if emit_profile_enabled {
-                                    Some(std::time::Instant::now())
-                                } else {
-                                    None
-                                };
                                 let residual_len = tx_side * tx_side;
-                                let mut residual = [0i16; 1024];
-                                #[cfg(target_arch = "aarch64")]
-                                if matches!(tx_side, 8 | 16 | 32) {
-                                    rvp9_core::dsp::aarch64::subtract_square_neon(
-                                        &input_plane[dst_off..],
-                                        plane_stride,
-                                        &recon_plane[dst_off..],
-                                        plane_stride,
-                                        &mut residual,
-                                        tx_side,
-                                    );
-                                } else {
-                                    for r in 0..tx_side {
-                                        for c in 0..tx_side {
-                                            let off = (tx_px_y + r) * plane_stride + (tx_px_x + c);
-                                            residual[r * tx_side + c] =
-                                                input_plane[off] as i16 - recon_plane[off] as i16;
-                                        }
-                                    }
-                                }
-                                #[cfg(not(target_arch = "aarch64"))]
-                                for r in 0..tx_side {
-                                    for c in 0..tx_side {
-                                        let off = (tx_px_y + r) * plane_stride + (tx_px_x + c);
-                                        residual[r * tx_side + c] =
-                                            input_plane[off] as i16 - recon_plane[off] as i16;
-                                    }
-                                }
-                                if let Some(t0) = emit_residual_start {
-                                    emit_profile_residual_time += t0.elapsed();
-                                }
-
-                                // E9 DIAG — tap the Y-plane prediction residual
-                                // (`source − MC prediction`, before transform/quant).
-                                if plane == 0 {
-                                    crate::predstat::record_y_residual(
-                                        &residual[..residual_len],
-                                        tx_side,
-                                        plane_tx as usize,
-                                    );
-                                    // E9/stage-SSE DIAG — capture Y MC
-                                    // prediction pixels into `diag_pred`.
-                                    // `recon_plane` holds pure MC prediction
-                                    // for this TX (residual not yet added).
-                                    crate::predstat::record_y_pred_block(
-                                        recon_plane,
-                                        plane_stride,
-                                        tx_px_x,
-                                        tx_px_y,
-                                        tx_side,
-                                        plane_w,
-                                        plane_h,
-                                    );
-                                }
-
-                                // RVP9_TRELLIS — inter emit path.
-                                // ref_type = 1 (inter).
-                                let emit_quant_start = if emit_profile_enabled {
-                                    Some(std::time::Instant::now())
-                                } else {
-                                    None
-                                };
                                 let trellis_ctx = if trellis_enabled {
                                     Some(TrellisCtx {
                                         costs: &rdo_coef_costs,
@@ -6644,18 +6593,90 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                     None
                                 };
                                 let (qcoeff_i32, dqcoeff_i32, eob_usize) =
-                                    inter_forward_quant_one_tx(
-                                        &residual[..residual_len],
-                                        tx_side,
-                                        plane_tx,
-                                        &quantizer,
-                                        usize::from(plane != 0),
-                                        trellis_ctx,
-                                        rt_quant_fp,
-                                    );
-                                if let Some(t0) = emit_quant_start {
-                                    emit_profile_quant_time += t0.elapsed();
-                                }
+                                    with_inter_emit_residual_scratch(residual_len, |residual| {
+                                        let emit_residual_start = if emit_profile_enabled {
+                                            Some(std::time::Instant::now())
+                                        } else {
+                                            None
+                                        };
+                                        #[cfg(target_arch = "aarch64")]
+                                        if matches!(tx_side, 8 | 16 | 32) {
+                                            rvp9_core::dsp::aarch64::subtract_square_neon(
+                                                &input_plane[dst_off..],
+                                                plane_stride,
+                                                &recon_plane[dst_off..],
+                                                plane_stride,
+                                                residual,
+                                                tx_side,
+                                            );
+                                        } else {
+                                            for r in 0..tx_side {
+                                                for c in 0..tx_side {
+                                                    let off = (tx_px_y + r) * plane_stride
+                                                        + (tx_px_x + c);
+                                                    residual[r * tx_side + c] = input_plane[off]
+                                                        as i16
+                                                        - recon_plane[off] as i16;
+                                                }
+                                            }
+                                        }
+                                        #[cfg(not(target_arch = "aarch64"))]
+                                        for r in 0..tx_side {
+                                            for c in 0..tx_side {
+                                                let off =
+                                                    (tx_px_y + r) * plane_stride + (tx_px_x + c);
+                                                residual[r * tx_side + c] = input_plane[off] as i16
+                                                    - recon_plane[off] as i16;
+                                            }
+                                        }
+                                        if let Some(t0) = emit_residual_start {
+                                            emit_profile_residual_time += t0.elapsed();
+                                        }
+
+                                        // E9 DIAG — tap the Y-plane prediction residual
+                                        // (`source − MC prediction`, before transform/quant).
+                                        if plane == 0 {
+                                            crate::predstat::record_y_residual(
+                                                residual,
+                                                tx_side,
+                                                plane_tx as usize,
+                                            );
+                                            // E9/stage-SSE DIAG — capture Y MC
+                                            // prediction pixels into `diag_pred`.
+                                            // `recon_plane` holds pure MC prediction
+                                            // for this TX (residual not yet added).
+                                            crate::predstat::record_y_pred_block(
+                                                recon_plane,
+                                                plane_stride,
+                                                tx_px_x,
+                                                tx_px_y,
+                                                tx_side,
+                                                plane_w,
+                                                plane_h,
+                                            );
+                                        }
+
+                                        // RVP9_TRELLIS — inter emit path.
+                                        // ref_type = 1 (inter).
+                                        let emit_quant_start = if emit_profile_enabled {
+                                            Some(std::time::Instant::now())
+                                        } else {
+                                            None
+                                        };
+                                        let result = inter_forward_quant_one_tx(
+                                            residual,
+                                            tx_side,
+                                            plane_tx,
+                                            &quantizer,
+                                            usize::from(plane != 0),
+                                            trellis_ctx,
+                                            rt_quant_fp,
+                                        );
+                                        if let Some(t0) = emit_quant_start {
+                                            emit_profile_quant_time += t0.elapsed();
+                                        }
+                                        result
+                                    });
                                 if emit_profile_enabled {
                                     emit_profile_eob_sum += eob_usize;
                                     if eob_usize > 0 {
@@ -8658,6 +8679,29 @@ fn intra_inverse_transform_add(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inter_emit_residual_scratch_is_prefix_bounded_and_causal() {
+        let run_small = || {
+            with_inter_emit_residual_scratch(8 * 8, |residual| {
+                assert_eq!(residual.len(), 8 * 8);
+                for (index, value) in residual.iter_mut().enumerate() {
+                    *value = index as i16 - 31;
+                }
+                residual.to_vec()
+            })
+        };
+
+        with_inter_emit_residual_scratch(32 * 32, |residual| residual.fill(i16::MAX));
+        let after_positive = run_small();
+        with_inter_emit_residual_scratch(32 * 32, |residual| residual.fill(i16::MIN));
+        let after_negative = run_small();
+
+        assert_eq!(
+            after_negative, after_positive,
+            "active residual prefix must be independent of wider prior transforms"
+        );
+    }
 
     #[test]
     fn active_ref_costs_use_neighbour_selected_frame_context_bank() {

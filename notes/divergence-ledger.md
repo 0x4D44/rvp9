@@ -79,6 +79,31 @@ wall time `0.668599 -> 0.666289 s` (`-0.522%`) and child CPU
 remain green. Apply the same lifecycle only to independently measured scratch
 buffers; do not create a shared cross-thread pool.
 
+### 2026-07-31 — Reuse emitted-transform residual scratch
+**Where:** `rvp9-encoder::with_inter_emit_residual_scratch`; libvpx
+counterpart: `vp9/encoder/vp9_encodemb.c:vp9_xform_quant_fp`.
+**What libvpx does:** reuses macroblock-owned residual and coefficient buffers
+while transforming and quantizing emitted blocks.
+**What rvp9 does:** reuses one 1,024-value i16 residual buffer per tile worker
+and lends each transform only its active `tx_side * tx_side` prefix.
+**Why:** the previous loop zeroed a full 32x32 stack array for every 8x8,
+16x16, or 32x32 transform even though subtraction immediately overwrote every
+active value. A prefix-bounded borrow makes stale suffix data unreachable.
+**Byte-parity impact:** none. Focused coverage contaminates the full scratch
+with opposite extremes around repeated 8x8 writes and requires identical
+active results. The 120-frame product stream remained byte-identical and all
+three decoders produced identical I420 output.
+**Compression-efficiency impact:** none because residuals, quantized
+coefficients, reconstruction, and emitted bytes are unchanged.
+**Speed impact:** twenty warmed alternating four-thread pairs improved wall
+time `0.665288 -> 0.660069 s` (`-0.890%` paired) and child CPU
+`1.213885 -> 1.202704 s` (`-0.961%`). Two independent sixteen-pair
+one-thread runs combined to a neutral `-0.067%` paired wall delta with 16/32
+wins; the second run improved wall/CPU by `-0.230%/-0.227%`.
+**Future plan:** retain for the required tile-threaded product path while
+one-thread behavior stays neutral. Do not generalize beyond independently
+measured, prefix-bounded scratch.
+
 ### 2026-07-31 — Use a generic eight-lane NEON interpolation kernel
 **Where:** `rvp9-core::dsp::aarch64::convolve8_neon`; libvpx counterpart:
 `vpx_dsp/arm/vpx_convolve8_neon.c`.
