@@ -342,6 +342,31 @@ fn sad_block_clamped(
 ) -> u32 {
     let bw = usize::from(bsize.width());
     let bh = usize::from(bsize.height());
+
+    // The common case is wholly inside the visible plane. Its bytes are
+    // already laid out exactly as the SAD kernel expects, so call it directly
+    // with the plane stride. Only probes crossing a visible edge need the
+    // replicated-border gather below. This mirrors libvpx's direct reads from
+    // its physically extended reference frame.
+    if abs_y >= 0 && abs_x >= 0 {
+        let y = abs_y as usize;
+        let x = abs_x as usize;
+        if y + bh <= ref_plane.height && x + bw <= ref_plane.width {
+            let start = y * ref_plane.stride + x;
+            let end = (y + bh - 1) * ref_plane.stride + x + bw;
+            if end <= ref_plane.data.len() {
+                return sad_block(
+                    bsize,
+                    sad_fn,
+                    src,
+                    src_stride,
+                    &ref_plane.data[start..],
+                    ref_plane.stride,
+                );
+            }
+        }
+    }
+
     // Scratch holds at most 64×64.
     let mut scratch = [0u8; 64 * 64];
     for r in 0..bh {
@@ -607,6 +632,45 @@ pub fn int_pro_motion_estimation(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn direct_path_probe(
+        _src: &[u8],
+        _src_stride: usize,
+        reference: &[u8],
+        ref_stride: usize,
+    ) -> u32 {
+        assert_eq!(ref_stride, 96, "interior path must retain plane stride");
+        assert_eq!(
+            reference[0], 0xA7,
+            "interior path must start at the requested reference pixel"
+        );
+        0x51AD
+    }
+
+    #[test]
+    fn interior_clamped_sad_reads_directly_from_plane() {
+        let mut reference = vec![0u8; 96 * 96];
+        reference[17 * 96 + 19] = 0xA7;
+        let plane = PlaneRef {
+            data: &reference,
+            stride: 96,
+            width: 96,
+            height: 96,
+        };
+        let source = [0u8; 8 * 8];
+        assert_eq!(
+            sad_block_clamped(
+                BlockSize::Block8x8,
+                direct_path_probe,
+                &source,
+                8,
+                &plane,
+                17,
+                19,
+            ),
+            0x51AD
+        );
+    }
 
     /// Constant-content src and ref: libvpx's `vector_match`
     /// returns `0 - bw/2 = -bw/2` for both axes (the strict-`<`
