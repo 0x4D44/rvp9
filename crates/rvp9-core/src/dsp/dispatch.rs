@@ -2049,7 +2049,38 @@ impl SimdDispatch {
                 ],
             }
         };
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(target_arch = "aarch64")]
+        let sad: SadTable = {
+            use crate::dsp::aarch64 as neon;
+            use crate::dsp::distortion as sc;
+            macro_rules! sad_slot {
+                ($scalar:path, $neon:path) => {
+                    if caps.neon {
+                        $neon as SadFn
+                    } else {
+                        $scalar as SadFn
+                    }
+                };
+            }
+            SadTable {
+                fns: [
+                    sad_slot!(sc::vpx_sad4x4, neon::vpx_sad4x4_neon),
+                    sad_slot!(sc::vpx_sad4x8, neon::vpx_sad4x8_neon),
+                    sad_slot!(sc::vpx_sad8x4, neon::vpx_sad8x4_neon),
+                    sad_slot!(sc::vpx_sad8x8, neon::vpx_sad8x8_neon),
+                    sad_slot!(sc::vpx_sad8x16, neon::vpx_sad8x16_neon),
+                    sad_slot!(sc::vpx_sad16x8, neon::vpx_sad16x8_neon),
+                    sad_slot!(sc::vpx_sad16x16, neon::vpx_sad16x16_neon),
+                    sad_slot!(sc::vpx_sad16x32, neon::vpx_sad16x32_neon),
+                    sad_slot!(sc::vpx_sad32x16, neon::vpx_sad32x16_neon),
+                    sad_slot!(sc::vpx_sad32x32, neon::vpx_sad32x32_neon),
+                    sad_slot!(sc::vpx_sad32x64, neon::vpx_sad32x64_neon),
+                    sad_slot!(sc::vpx_sad64x32, neon::vpx_sad64x32_neon),
+                    sad_slot!(sc::vpx_sad64x64, neon::vpx_sad64x64_neon),
+                ],
+            }
+        };
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         let sad: SadTable = {
             let _ = caps;
             use crate::dsp::distortion as sc;
