@@ -10,6 +10,7 @@ pub mod convolve8_neon;
 pub mod quantize_neon;
 pub mod sad_neon;
 pub mod subpel_variance_neon;
+pub mod subtract_neon;
 pub mod variance_neon;
 
 pub use convolve8_neon::{convolve8_horiz_neon, convolve8_neon, convolve8_vert_neon};
@@ -25,6 +26,7 @@ pub use subpel_variance_neon::{
     vpx_sub_pixel_variance32x32_neon, vpx_sub_pixel_variance32x64_neon,
     vpx_sub_pixel_variance64x32_neon, vpx_sub_pixel_variance64x64_neon,
 };
+pub use subtract_neon::subtract_square_neon;
 pub use variance_neon::{
     get_var_sse_8x8_neon, var_sum_sse_8x4_neon, var_sum_sse_8x8_neon, var_sum_sse_8x16_neon,
     var_sum_sse_16x8_neon, var_sum_sse_16x16_neon, var_sum_sse_16x32_neon, var_sum_sse_32x16_neon,

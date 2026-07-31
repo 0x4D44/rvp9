@@ -3843,6 +3843,16 @@ fn reconstruct_via_round_trip(
             let off_x = tx * tx_side;
             let off_y = ty * tx_side;
             // 1. Build residual = src - pred for this tile.
+            #[cfg(target_arch = "aarch64")]
+            crate::dsp::aarch64::subtract_square_neon(
+                &src.data[(sy + off_y) * src.stride + sx + off_x..],
+                src.stride,
+                &pred[off_y * bw + off_x..],
+                bw,
+                &mut residual,
+                tx_side,
+            );
+            #[cfg(not(target_arch = "aarch64"))]
             for r in 0..tx_side {
                 for c in 0..tx_side {
                     let s = src.data[(sy + off_y + r) * src.stride + (sx + off_x + c)] as i16;
