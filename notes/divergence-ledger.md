@@ -3021,7 +3021,7 @@ total child CPU by `-0.455%`, `-0.610%`, and `-0.822%`.
 differential and exact-stream checks remain green. Treat the still
 reload-based vertical i8mm kernel as a separate measured unit.
 
-### 2026-07-31 — AArch64 vertical interpolation reloads four-row dot-product windows
+### 2026-07-31 — AArch64 vertical interpolation keeps two dot-product tiers
 
 **Where:** `rvp9_core::dsp::aarch64::convolve8_neon::
 convolve8_vert_dotprod_inner`, used by the vertical and separable 2-D
@@ -3031,15 +3031,16 @@ unscaled eight-tap interpolation paths on dot-product-capable AArch64 hosts.
 transposed rows live, loads four new rows, merges their columns through three
 table lookups, and advances four output rows at a time.
 
-**What rvp9 does:** loads the complete eleven-row window for each four-output
-group, transposes its eight overlapping four-row groups directly, and applies
-the same corrected signed dot-product arithmetic. One scalar-NEON tail handles
-arbitrary heights, and the existing widened-i16 path handles full-pel filters.
+**What rvp9 does:** on i8mm hosts, keeps the same rolling seven-row transpose
+state as libvpx and uses unsigned-by-signed dot products. Older dot-product
+hosts retain rvp9's simpler signed-dot kernel, which reloads the complete
+eleven-row window for each four-output group. One scalar-NEON tail handles
+arbitrary heights, and the widened-i16 path handles full-pel filters.
 
-**Why:** reloading seven overlapping rows makes the kernel substantially
-smaller and avoids a large live SIMD state. The pinned Apple M5 Max cache
-absorbs those reloads, while shared loads, transposition, and dot products
-still remove most of the original multiply-accumulate work.
+**Why:** the rolling i8mm tier closes the remaining measured vertical-kernel
+gap on modern AArch64. Retaining the smaller reload-based signed-dot tier
+avoids imposing the larger live SIMD state on older hosts without evidence
+that it helps them.
 
 **Byte-parity impact:** none. Differential coverage includes every VP9 filter
 phase, all codec block shapes, and irregular `7x3`, `12x5`, and `63x9` tails.
@@ -3047,14 +3048,18 @@ The product stream and all three decoders' I420 output remain byte-identical.
 
 **Compression-efficiency impact:** none; the production stream is unchanged.
 
-**Speed impact:** sixteen warmed alternating one-thread pairs improved child
-CPU by `-1.799%` with sixteen wins. Twenty four-thread pairs improved child
-CPU by `-1.717%` with twenty wins; paired wall time improved `-1.633%` with
-twenty wins.
+**Speed impact:** the original signed-dot unit improved four-thread child CPU
+by `-1.717%`. The rolling i8mm tier reduces the 16x16 vertical microkernel
+from `32.52 ns` to `21.19 ns` against libvpx's `20.18 ns`, and 64x64 from
+`493.35 ns` to `311.68 ns` against `300.10 ns`. Product comparisons on a
+host with load average above 20 were neutral within noise: three twenty-pair
+four-thread trials changed total child CPU by `-0.680%`, `+0.140%`, and
+`-0.077%`; a one-thread trial changed it by `+0.047%`.
 
-**Future plan:** retain the reload-based kernel while it remains byte-exact.
-Only adopt libvpx's rolling transpose state if a direct product comparison
-shows an additional reproducible improvement worth the extra live state.
+**Future plan:** retain the rolling i8mm tier as a measured kernel-parity
+prerequisite while it remains byte-exact, and rerun corpus product timing on
+the required clean pinned host. Keep the reload-based signed-dot fallback
+until that hardware tier has separate evidence.
 
 ### 2026-07-31 — Hadamard picker quantization returns fused RD metrics
 

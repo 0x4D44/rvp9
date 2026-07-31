@@ -20,6 +20,10 @@ const DOTPROD_TRANSPOSE: [u8; 32] = [
     0, 8, 16, 24, 1, 9, 17, 25, 2, 10, 18, 26, 3, 11, 19, 27, 4, 12, 20, 28, 5, 13, 21, 29, 6, 14,
     22, 30, 7, 15, 23, 31,
 ];
+const DOTPROD_MERGE_BLOCK: [u8; 48] = [
+    1, 2, 3, 16, 5, 6, 7, 20, 9, 10, 11, 24, 13, 14, 15, 28, 2, 3, 16, 17, 6, 7, 20, 21, 10, 11,
+    24, 25, 14, 15, 28, 29, 3, 16, 17, 18, 7, 20, 21, 22, 11, 24, 25, 26, 15, 28, 29, 30,
+];
 
 std::thread_local! {
     static CONV8_INTERMEDIATE: std::cell::RefCell<[u8; INTER_STRIDE * INTER_ROWS]> =
@@ -140,6 +144,39 @@ unsafe fn transpose_concat_8x4(
 }
 
 #[inline]
+#[target_feature(enable = "i8mm")]
+unsafe fn transpose_concat_8x4_i8mm(
+    a0: uint8x8_t,
+    a1: uint8x8_t,
+    a2: uint8x8_t,
+    a3: uint8x8_t,
+    transpose_0: uint8x16_t,
+    transpose_1: uint8x16_t,
+) -> (uint8x16_t, uint8x16_t) {
+    let samples = uint8x16x2_t(vcombine_u8(a0, a1), vcombine_u8(a2, a3));
+    (
+        vqtbl2q_u8(samples, transpose_0),
+        vqtbl2q_u8(samples, transpose_1),
+    )
+}
+
+#[inline]
+#[target_feature(enable = "i8mm")]
+unsafe fn filter_four_rows_i8mm(
+    first_lo: uint8x16_t,
+    second_lo: uint8x16_t,
+    first_hi: uint8x16_t,
+    second_hi: uint8x16_t,
+    filters: int8x16_t,
+) -> uint8x8_t {
+    let sum_lo = unsigned_dot_lane::<0>(vdupq_n_s32(0), first_lo, filters);
+    let sum_lo = unsigned_dot_lane::<1>(sum_lo, second_lo, filters);
+    let sum_hi = unsigned_dot_lane::<0>(vdupq_n_s32(0), first_hi, filters);
+    let sum_hi = unsigned_dot_lane::<1>(sum_hi, second_hi, filters);
+    vqrshrun_n_s16::<7>(vcombine_s16(vqmovn_s32(sum_lo), vqmovn_s32(sum_hi)))
+}
+
+#[inline]
 #[target_feature(enable = "dotprod")]
 unsafe fn filter_four_rows_dotprod(
     first_lo: int8x16_t,
@@ -254,6 +291,83 @@ unsafe fn convolve8_horiz_dotprod_inner(
                 dst_row.add(x),
                 filter_eight_dotprod(samples, filters, correction),
             );
+        }
+    }
+}
+
+#[target_feature(enable = "i8mm")]
+unsafe fn convolve8_vert_i8mm_inner(
+    src: *const u8,
+    src_stride: usize,
+    dst: *mut u8,
+    dst_stride: usize,
+    filter: &[i16; 8],
+    w: usize,
+    h: usize,
+) {
+    let filters8 = vmovn_s16(vld1q_s16(filter.as_ptr()));
+    let filters = vcombine_s8(filters8, filters8);
+    let transpose_0 = vld1q_u8(DOTPROD_TRANSPOSE.as_ptr());
+    let transpose_1 = vld1q_u8(DOTPROD_TRANSPOSE.as_ptr().add(16));
+    let merge_0 = vld1q_u8(DOTPROD_MERGE_BLOCK.as_ptr());
+    let merge_1 = vld1q_u8(DOTPROD_MERGE_BLOCK.as_ptr().add(16));
+    let merge_2 = vld1q_u8(DOTPROD_MERGE_BLOCK.as_ptr().add(32));
+    let vector_h = h & !3;
+
+    for x in (0..w).step_by(8) {
+        if vector_h != 0 {
+            let s0 = vld1_u8(src.add(x));
+            let s1 = vld1_u8(src.add(src_stride + x));
+            let s2 = vld1_u8(src.add(2 * src_stride + x));
+            let s3 = vld1_u8(src.add(3 * src_stride + x));
+            let s4 = vld1_u8(src.add(4 * src_stride + x));
+            let s5 = vld1_u8(src.add(5 * src_stride + x));
+            let s6 = vld1_u8(src.add(6 * src_stride + x));
+            let zero = vdup_n_u8(0);
+
+            let mut t0 = transpose_concat_8x4_i8mm(s0, s1, s2, s3, transpose_0, transpose_1);
+            let mut t1 = transpose_concat_8x4_i8mm(s1, s2, s3, s4, transpose_0, transpose_1);
+            let mut t2 = transpose_concat_8x4_i8mm(s2, s3, s4, s5, transpose_0, transpose_1);
+            let mut t3 = transpose_concat_8x4_i8mm(s3, s4, s5, s6, transpose_0, transpose_1);
+            let mut t4 = transpose_concat_8x4_i8mm(s4, s5, s6, zero, transpose_0, transpose_1);
+            let mut t5 = transpose_concat_8x4_i8mm(s5, s6, zero, zero, transpose_0, transpose_1);
+            let mut t6 = transpose_concat_8x4_i8mm(s6, zero, zero, zero, transpose_0, transpose_1);
+
+            for y in (0..vector_h).step_by(4) {
+                let s7 = vld1_u8(src.add((y + 7) * src_stride + x));
+                let s8 = vld1_u8(src.add((y + 8) * src_stride + x));
+                let s9 = vld1_u8(src.add((y + 9) * src_stride + x));
+                let s10 = vld1_u8(src.add((y + 10) * src_stride + x));
+                let t7 = transpose_concat_8x4_i8mm(s7, s8, s9, s10, transpose_0, transpose_1);
+
+                let lo = uint8x16x2_t(t3.0, t7.0);
+                t4.0 = vqtbl2q_u8(lo, merge_0);
+                t5.0 = vqtbl2q_u8(lo, merge_1);
+                t6.0 = vqtbl2q_u8(lo, merge_2);
+                let hi = uint8x16x2_t(t3.1, t7.1);
+                t4.1 = vqtbl2q_u8(hi, merge_0);
+                t5.1 = vqtbl2q_u8(hi, merge_1);
+                t6.1 = vqtbl2q_u8(hi, merge_2);
+
+                let d0 = filter_four_rows_i8mm(t0.0, t4.0, t0.1, t4.1, filters);
+                let d1 = filter_four_rows_i8mm(t1.0, t5.0, t1.1, t5.1, filters);
+                let d2 = filter_four_rows_i8mm(t2.0, t6.0, t2.1, t6.1, filters);
+                let d3 = filter_four_rows_i8mm(t3.0, t7.0, t3.1, t7.1, filters);
+                vst1_u8(dst.add(y * dst_stride + x), d0);
+                vst1_u8(dst.add((y + 1) * dst_stride + x), d1);
+                vst1_u8(dst.add((y + 2) * dst_stride + x), d2);
+                vst1_u8(dst.add((y + 3) * dst_stride + x), d3);
+
+                t0 = t4;
+                t1 = t5;
+                t2 = t6;
+                t3 = t7;
+            }
+        }
+
+        for y in vector_h..h {
+            let samples = core::array::from_fn(|tap| vld1_u8(src.add((y + tap) * src_stride + x)));
+            vst1_u8(dst.add(y * dst_stride + x), filter_eight(samples, filter));
         }
     }
 }
@@ -456,9 +570,18 @@ pub fn convolve8_vert_neon(
     // SAFETY: Validation proves every eight-byte load and store is in-bounds.
     // SimdDispatch installs this wrapper only on NEON-capable AArch64 hosts.
     unsafe {
-        if std::arch::is_aarch64_feature_detected!("dotprod")
-            && filter.iter().all(|&tap| i8::try_from(tap).is_ok())
-        {
+        let narrow_filter = filter.iter().all(|&tap| i8::try_from(tap).is_ok());
+        if std::arch::is_aarch64_feature_detected!("i8mm") && narrow_filter {
+            convolve8_vert_i8mm_inner(
+                src.as_ptr(),
+                src_stride,
+                dst.as_mut_ptr(),
+                dst_stride,
+                filter,
+                simd_w,
+                h,
+            );
+        } else if std::arch::is_aarch64_feature_detected!("dotprod") && narrow_filter {
             convolve8_vert_dotprod_inner(
                 src.as_ptr(),
                 src_stride,
