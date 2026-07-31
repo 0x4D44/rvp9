@@ -972,6 +972,11 @@ pub struct StreamEncoder {
     /// post-reconstruction loop filtering, and final tile writing. The
     /// pool is absent for the single-worker path.
     frame_worker_pool: Option<rvp9_core::tile_threading::WorkerPool>,
+    /// Frame-shaped per-column scratch retained across inter frames. The
+    /// active tile rectangle is overwritten completely before it is merged;
+    /// retaining these buffers avoids allocating and zeroing four complete
+    /// reconstructions and MV grids on every frame.
+    inter_tile_scratch: Vec<InterTileScratch>,
     rate_control: RateControl,
     frame_idx: u32,
     /// GOP topology — the libvpx-faithful golden-frame-group schedule
@@ -1249,15 +1254,18 @@ pub struct StreamEncoder {
 /// disjoint rectangles and SB records into the frame result.
 struct InterTileJobResult {
     tile_col: usize,
-    recon_y: Vec<u8>,
-    recon_u: Vec<u8>,
-    recon_v: Vec<u8>,
     partitions: Vec<Vec<InterPartitionLeafDesc>>,
-    mv_grid: Vec<PrevFrameMvRef>,
     rd_tables: Vec<rvp9_core::mode_decision::rd_thresh::RdThreshTable>,
     history: Vec<rvp9_core::mode_decision::partition::FixedTreeHistoryEntry>,
     split_stats: NonRdSplitStats,
     coefs: VecBackedInterCoefSource,
+}
+
+struct InterTileScratch {
+    recon_y: Vec<u8>,
+    recon_u: Vec<u8>,
+    recon_v: Vec<u8>,
+    mv_grid: Vec<PrevFrameMvRef>,
 }
 
 /// A18 (SVC) — the per-frame temporal-layer decision for one inter
@@ -1433,6 +1441,18 @@ impl StreamEncoder {
                     .expect("frame worker count is nonzero"),
             )
         });
+        let inter_tile_scratch = if frame_worker_pool.is_some() {
+            (0..tile_count)
+                .map(|_| InterTileScratch {
+                    recon_y: vec![0; w * h],
+                    recon_u: vec![0; uvw * uvh],
+                    recon_v: vec![0; uvw * uvh],
+                    mv_grid: vec![PrevFrameMvRef::default(); (h / 8) * (w / 8)],
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
 
         let cyclic_refresh = match config.aq_mode {
             AqMode::Off => None,
@@ -1513,6 +1533,7 @@ impl StreamEncoder {
             config,
             parallelism,
             frame_worker_pool,
+            inter_tile_scratch,
             rate_control,
             frame_idx: 0,
             gf_group,
@@ -3060,28 +3081,26 @@ impl StreamEncoder {
             let result_slots: Vec<std::sync::Mutex<Option<InterTileJobResult>>> = (0..tile_count)
                 .map(|_| std::sync::Mutex::new(None))
                 .collect();
+            let tile_scratch = &mut self.inter_tile_scratch;
             self.frame_worker_pool
                 .as_mut()
                 .expect("parallel tile picking requires the frame worker pool")
                 .scope(|scope| {
-                    for (tile_col, result_slot) in result_slots.iter().enumerate() {
+                    for (tile_col, (result_slot, scratch)) in
+                        result_slots.iter().zip(tile_scratch.iter_mut()).enumerate()
+                    {
                         let mut tile_partitions = initial_partitions.clone();
                         let mut tile_rd_tables = initial_rd_tables.clone();
                         let mut tile_history = initial_history.clone();
                         scope.submit(move || {
                             rvp9_core::mode_decision::inter::set_frame_s2_gate(s2_frame_gate);
-                            let mut tile_recon_y = vec![0u8; w as usize * h as usize];
-                            let mut tile_recon_u = vec![0u8; (w as usize / 2) * (h as usize / 2)];
-                            let mut tile_recon_v = vec![0u8; tile_recon_u.len()];
-                            let mut tile_mv_grid =
-                                vec![PrevFrameMvRef::default(); mi_rows_us * mi_cols_us];
                             let mut tile_split_stats = NonRdSplitStats::default();
                             let tile_coefs = run_inter_picker!(
-                                &mut tile_recon_y,
-                                &mut tile_recon_u,
-                                &mut tile_recon_v,
+                                &mut scratch.recon_y,
+                                &mut scratch.recon_u,
+                                &mut scratch.recon_v,
                                 &mut tile_partitions,
-                                &mut tile_mv_grid,
+                                &mut scratch.mv_grid,
                                 &mut tile_rd_tables,
                                 Some(&mut tile_history),
                                 &mut tile_split_stats,
@@ -3089,11 +3108,7 @@ impl StreamEncoder {
                             );
                             let result = InterTileJobResult {
                                 tile_col,
-                                recon_y: tile_recon_y,
-                                recon_u: tile_recon_u,
-                                recon_v: tile_recon_v,
                                 partitions: tile_partitions,
-                                mv_grid: tile_mv_grid,
                                 rd_tables: tile_rd_tables,
                                 history: tile_history,
                                 split_stats: tile_split_stats,
@@ -3118,6 +3133,7 @@ impl StreamEncoder {
 
             for result in tile_results {
                 let tile_col = result.tile_col;
+                let scratch = &self.inter_tile_scratch[tile_col];
                 let bounds = tile_bounds(
                     mi_rows_us,
                     mi_cols_us,
@@ -3138,7 +3154,7 @@ impl StreamEncoder {
                 for row in 0..h as usize {
                     let start = row * w as usize + bounds.mi_col_start * 8;
                     let end = row * w as usize + bounds.mi_col_end * 8;
-                    new_recon_y[start..end].copy_from_slice(&result.recon_y[start..end]);
+                    new_recon_y[start..end].copy_from_slice(&scratch.recon_y[start..end]);
                 }
                 let uv_width = w as usize / 2;
                 let uv_col_start = bounds.mi_col_start * 4;
@@ -3146,13 +3162,13 @@ impl StreamEncoder {
                 for row in 0..h as usize / 2 {
                     let start = row * uv_width + uv_col_start;
                     let end = row * uv_width + uv_col_end;
-                    new_recon_u[start..end].copy_from_slice(&result.recon_u[start..end]);
-                    new_recon_v[start..end].copy_from_slice(&result.recon_v[start..end]);
+                    new_recon_u[start..end].copy_from_slice(&scratch.recon_u[start..end]);
+                    new_recon_v[start..end].copy_from_slice(&scratch.recon_v[start..end]);
                 }
                 for row in 0..mi_rows_us {
                     let start = row * mi_cols_us + bounds.mi_col_start;
                     let end = row * mi_cols_us + bounds.mi_col_end;
-                    cur_mv_grid[start..end].copy_from_slice(&result.mv_grid[start..end]);
+                    cur_mv_grid[start..end].copy_from_slice(&scratch.mv_grid[start..end]);
                 }
                 self.rd_thresh_tables[tile_col] = result.rd_tables[tile_col].clone();
                 stage4a_frame_split_stats.accumulate(&result.split_stats);
@@ -6805,6 +6821,19 @@ mod tests {
         assert_eq!(serial.rd_thresh_tables.len(), 4);
         assert_eq!(two_workers.rd_thresh_tables.len(), 4);
         assert_eq!(threaded.rd_thresh_tables.len(), 4);
+        assert_eq!(threaded.inter_tile_scratch.len(), 4);
+        let scratch_allocations: Vec<_> = threaded
+            .inter_tile_scratch
+            .iter()
+            .map(|scratch| {
+                (
+                    scratch.recon_y.as_ptr(),
+                    scratch.recon_u.as_ptr(),
+                    scratch.recon_v.as_ptr(),
+                    scratch.mv_grid.as_ptr(),
+                )
+            })
+            .collect();
         let mut decoder = Decoder::new();
 
         for frame_idx in 0..3usize {
@@ -6866,6 +6895,22 @@ mod tests {
                 }
             }
         }
+        let retained_allocations: Vec<_> = threaded
+            .inter_tile_scratch
+            .iter()
+            .map(|scratch| {
+                (
+                    scratch.recon_y.as_ptr(),
+                    scratch.recon_u.as_ptr(),
+                    scratch.recon_v.as_ptr(),
+                    scratch.mv_grid.as_ptr(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            retained_allocations, scratch_allocations,
+            "tile recon and MV scratch allocations must survive consecutive inter frames",
+        );
         assert_ne!(
             serial.rd_thresh_tables[0], serial.rd_thresh_tables[3],
             "flat and moving tiles must adapt independent RD thresholds",
