@@ -3261,3 +3261,47 @@ quantify its corpus effect.
 **Future plan:** retain the libvpx-shaped token boundary while exact-stream
 and replay-consumption gates stay green. Reuse the retained representation
 when removing the remaining duplicate final tile syntax work.
+
+### 2026-07-31 — Interpolation filters are ranked with returned luma-model results
+
+**Where:** `rvp9_core::mode_decision::inter::{
+luma_model_rd,select_interp_filter_by_luma_model,
+evaluate_candidate_with_filter_set}`.
+
+**What libvpx does:** `vp9_pickmode.c::search_filter_ref` constructs the luma
+predictor for each allowed interpolation filter, calls
+`model_rd_for_sb_y{_large}`, adds the switchable-filter signalling rate, and
+retains the best filter. The outer non-RD picker then calls `block_yrd` and
+the UV model only for that winner.
+
+**What rvp9 does:** the shared prediction/model helper returns a typed
+`ModelRdResult` for each filter. A small selector compares its model RD plus
+the existing filter cost, then the full Hadamard coefficient, skip, and UV
+evaluation runs once for the selected filter. Single-filter call sites keep
+their direct full-evaluation path.
+
+**Why:** the previous port ran the complete coefficient and chroma evaluation
+for both EightTap and EightTapSmooth. That was slower than libvpx and selected
+filters in a different metric domain. Returning the already-computed model
+result keeps the Rust data flow explicit without reproducing libvpx's mutable
+macroblock scratch.
+
+**Byte-parity impact:** intentional stream change. A focused oracle builds
+both predictors independently, computes both model costs, and requires the
+multi-filter result to equal a direct full evaluation of the model-domain
+winner. Every changed stream decodes under rvp9-decoder, pinned vpxdec, and
+ffmpeg; all three decoded I420 outputs are byte-exact.
+
+**Compression-efficiency impact:** the clean strict cpu-used 7 Stage 4a
+seven-point Foreman curve improves from `+0.156544919758%` to
+`-8.585847331540%` PSNR BD-rate versus pinned libvpx v1.14.1. An independent
+cubic fit reproduced the result within `2.70e-10` percentage points.
+
+**Speed impact:** sixteen warmed one-thread alternating pairs improved wall
+time by `-2.144%` and child CPU by `-1.857%`, with eleven wins. Four-thread
+wall/CPU measurements were contaminated by unrelated host saturation and
+are not acceptance evidence.
+
+**Future plan:** retain libvpx's two-stage metric boundary. Re-run the
+four-thread corpus timing matrix on the pinned idle host, and preserve the
+focused winner-domain oracle when changing model-RD or coefficient-RD code.
