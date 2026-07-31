@@ -129,11 +129,22 @@ use crate::transforms::inverse::{idct8x8_64_add, idct16x16_256_add, idct32x32_10
 use crate::transforms::scans::scan_for;
 use crate::transforms::{TxMode, TxSize, TxType};
 
+struct CandidatePredScratch {
+    primary: [u8; 64 * 64],
+    alternate: [u8; 64 * 64],
+}
+
 thread_local! {
-    /// Prediction pixels reused across serial candidate evaluations on one
-    /// tile worker. Each builder overwrites its complete active prefix.
-    static CANDIDATE_PRED_SCRATCH: std::cell::RefCell<[u8; 64 * 64]> =
-        const { std::cell::RefCell::new([0; 64 * 64]) };
+    /// Two prediction buffers reused across serial candidate evaluations on
+    /// one tile worker. Each builder overwrites its complete active prefix;
+    /// the alternate retains the second filter without another TLS lookup.
+    static CANDIDATE_PRED_SCRATCH: std::cell::RefCell<CandidatePredScratch> =
+        const {
+            std::cell::RefCell::new(CandidatePredScratch {
+                primary: [0; 64 * 64],
+                alternate: [0; 64 * 64],
+            })
+        };
 }
 
 // ---------------------------------------------------------------------
@@ -3035,47 +3046,66 @@ fn luma_model_rd(
     }
 }
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+enum FilterPredictionSlot {
+    Candidate,
+    Alternate,
+}
+
 fn select_interp_filter_by_luma_model(
     params: &InterModeSearchParams<'_>,
     mv: Mv,
     lambda: u32,
-    filter_set: &[InterpFilter],
-) -> InterpFilter {
+    filter_set: &[InterpFilter; 2],
+    candidate_pred: &mut [u8; 64 * 64],
+    alternate_pred: &mut [u8; 64 * 64],
+) -> (InterpFilter, ModelRdResult, FilterPredictionSlot) {
     let bw = usize::from(params.block_size.width());
     let bh = usize::from(params.block_size.height());
     let dsp = crate::dsp::get_ref();
-    CANDIDATE_PRED_SCRATCH.with_borrow_mut(|pred| {
-        let mut best_filter = filter_set[0];
-        let mut best_cost = i64::MAX;
-        for &filter in filter_set {
-            build_inter_prediction(
-                dsp,
-                params.ref_plane,
-                params.src_offset.0,
-                params.src_offset.1,
-                mv,
-                bw,
-                bh,
-                pred,
-                bw,
-                filter,
-            );
-            let model = luma_model_rd(params, &pred[..bw * bh], bw, bh);
-            let filter_rate = if (mv.row | mv.col) & 0x07 != 0 {
-                params.switchable_interp_costs[params.switchable_interp_ctx][filter as usize].max(0)
-                    as u32
-            } else {
-                0
-            };
-            let rate = (model.rate.max(0) as u32).saturating_add(filter_rate);
-            let cost = rd_cost(lambda, rate, model.dist.max(0) as u64);
-            if cost < best_cost {
-                best_cost = cost;
-                best_filter = filter;
-            }
+    let mut best_filter = filter_set[0];
+    let mut best_cost = i64::MAX;
+    let mut best_model = None;
+    let mut best_slot = FilterPredictionSlot::Candidate;
+    for (index, &filter) in filter_set.iter().enumerate() {
+        let (pred, slot) = if index == 0 {
+            (&mut *candidate_pred, FilterPredictionSlot::Candidate)
+        } else {
+            (&mut *alternate_pred, FilterPredictionSlot::Alternate)
+        };
+        build_inter_prediction(
+            dsp,
+            params.ref_plane,
+            params.src_offset.0,
+            params.src_offset.1,
+            mv,
+            bw,
+            bh,
+            pred,
+            bw,
+            filter,
+        );
+        let model = luma_model_rd(params, &pred[..bw * bh], bw, bh);
+        let filter_rate = if (mv.row | mv.col) & 0x07 != 0 {
+            params.switchable_interp_costs[params.switchable_interp_ctx][filter as usize].max(0)
+                as u32
+        } else {
+            0
+        };
+        let rate = (model.rate.max(0) as u32).saturating_add(filter_rate);
+        let cost = rd_cost(lambda, rate, model.dist.max(0) as u64);
+        if index == 0 || cost < best_cost {
+            best_cost = cost;
+            best_filter = filter;
+            best_model = Some(model);
+            best_slot = slot;
         }
-        best_filter
-    })
+    }
+    (
+        best_filter,
+        best_model.expect("filter search set is non-empty"),
+        best_slot,
+    )
 }
 
 /// §11 — `cb_pred_filter_search` variant of [`evaluate_candidate`].
@@ -3093,12 +3123,32 @@ fn evaluate_candidate_with_filter_set(
     lambda: u32,
     filter_set: &[InterpFilter],
 ) -> InterModeSearchResult {
-    let filter = if filter_set.len() == 1 {
-        filter_set[0]
+    if filter_set.len() == 1 {
+        evaluate_candidate_for_filter(params, mode, mv, ref_mv, lambda, filter_set[0])
     } else {
-        select_interp_filter_by_luma_model(params, mv, lambda, filter_set)
-    };
-    evaluate_candidate_for_filter(params, mode, mv, ref_mv, lambda, filter)
+        CANDIDATE_PRED_SCRATCH.with_borrow_mut(|scratch| {
+            let CandidatePredScratch { primary, alternate } = &mut *scratch;
+            let filters: &[InterpFilter; 2] = filter_set
+                .try_into()
+                .expect("VP9 realtime filter search has exactly two filters");
+            let (filter, model, slot) =
+                select_interp_filter_by_luma_model(params, mv, lambda, filters, primary, alternate);
+            let winner_pred = match slot {
+                FilterPredictionSlot::Candidate => primary,
+                FilterPredictionSlot::Alternate => alternate,
+            };
+            evaluate_candidate_for_filter_with_pred(
+                params,
+                mode,
+                mv,
+                ref_mv,
+                lambda,
+                filter,
+                winner_pred,
+                Some(model),
+            )
+        })
+    }
 }
 
 /// F.5 — evaluate one `(mode, mv, filter)` triplet. The original
@@ -3113,8 +3163,17 @@ fn evaluate_candidate_for_filter(
     lambda: u32,
     filter: InterpFilter,
 ) -> InterModeSearchResult {
-    CANDIDATE_PRED_SCRATCH.with_borrow_mut(|pred| {
-        evaluate_candidate_for_filter_with_pred(params, mode, mv, ref_mv, lambda, filter, pred)
+    CANDIDATE_PRED_SCRATCH.with_borrow_mut(|scratch| {
+        evaluate_candidate_for_filter_with_pred(
+            params,
+            mode,
+            mv,
+            ref_mv,
+            lambda,
+            filter,
+            &mut scratch.primary,
+            None,
+        )
     })
 }
 
@@ -3127,6 +3186,7 @@ fn evaluate_candidate_for_filter_with_pred(
     lambda: u32,
     filter: InterpFilter,
     pred: &mut [u8; 64 * 64],
+    precomputed_model: Option<ModelRdResult>,
 ) -> InterModeSearchResult {
     let bw = usize::from(params.block_size.width());
     let bh = usize::from(params.block_size.height());
@@ -3138,22 +3198,6 @@ fn evaluate_candidate_for_filter_with_pred(
     // (`dispatch.rs:2539`).
     let dsp = crate::dsp::get_ref();
 
-    // Build the prediction in per-thread scratch. The predictor writes every
-    // pixel subsequently consumed for this block, so stale suffix bytes from
-    // a wider prior candidate remain unreachable.
-    build_inter_prediction(
-        dsp,
-        params.ref_plane,
-        params.src_offset.0,
-        params.src_offset.1,
-        mv,
-        bw,
-        bh,
-        pred,
-        bw, // pred_stride
-        filter,
-    );
-
     // --- Variance-domain RD model (model_rd_for_sb_y port) ---
     //
     // Before the expensive DCT round-trip, run the Laplacian–Gaussian
@@ -3164,7 +3208,26 @@ fn evaluate_candidate_for_filter_with_pred(
     // component from coefficients is zero.
     //
     let use_large = params.block_size >= BlockSize::Block32x32;
-    let mrd = luma_model_rd(params, &pred[..bw * bh], bw, bh);
+    let mrd = if let Some(model) = precomputed_model {
+        model
+    } else {
+        // Build the prediction in per-thread scratch. The predictor writes
+        // every pixel subsequently consumed for this block, so stale suffix
+        // bytes from a wider prior candidate remain unreachable.
+        build_inter_prediction(
+            dsp,
+            params.ref_plane,
+            params.src_offset.0,
+            params.src_offset.1,
+            mv,
+            bw,
+            bh,
+            pred,
+            bw, // pred_stride
+            filter,
+        );
+        luma_model_rd(params, &pred[..bw * bh], bw, bh)
+    };
 
     // Use the model_rd TX size for the round-trip (replaces the
     // previous hard-coded `max_txsize(block_size)`).
@@ -5600,12 +5663,61 @@ mod tests {
                 model.dist.max(0) as u64,
             )
         };
-        let expected =
+        let expected_filter =
             if model_cost(InterpFilter::EightTap) <= model_cost(InterpFilter::EightTapSmooth) {
-                eight
+                InterpFilter::EightTap
             } else {
-                smooth
+                InterpFilter::EightTapSmooth
             };
+        let expected = if expected_filter == InterpFilter::EightTap {
+            eight
+        } else {
+            smooth
+        };
+
+        // The selector retains the winning predictor and model instead of
+        // rebuilding them in the complete evaluation. Compare both against
+        // an independent reconstruction, and prove inactive scratch bytes
+        // remain outside the ownership contract.
+        let mut candidate_pred = [37u8; 64 * 64];
+        let mut alternate_pred = [53u8; 64 * 64];
+        let (retained_filter, retained_model, retained_slot) = select_interp_filter_by_luma_model(
+            &params,
+            mvc.nearest,
+            lambda,
+            &[InterpFilter::EightTap, InterpFilter::EightTapSmooth],
+            &mut candidate_pred,
+            &mut alternate_pred,
+        );
+        assert_eq!(retained_filter, expected_filter);
+        let mut expected_pred = [0u8; 64 * 64];
+        build_inter_prediction(
+            dsp,
+            params.ref_plane,
+            params.src_offset.0,
+            params.src_offset.1,
+            mvc.nearest,
+            bw,
+            bh,
+            &mut expected_pred,
+            bw,
+            expected_filter,
+        );
+        let retained_pred = match retained_slot {
+            FilterPredictionSlot::Candidate => &candidate_pred,
+            FilterPredictionSlot::Alternate => &alternate_pred,
+        };
+        assert_eq!(&retained_pred[..bw * bh], &expected_pred[..bw * bh]);
+        assert!(candidate_pred[bw * bh..].iter().all(|&pixel| pixel == 37));
+        assert!(alternate_pred[bw * bh..].iter().all(|&pixel| pixel == 53));
+        let expected_model = luma_model_rd(&params, &expected_pred[..bw * bh], bw, bh);
+        assert_eq!(retained_model.rate, expected_model.rate);
+        assert_eq!(retained_model.dist, expected_model.dist);
+        assert_eq!(retained_model.var_y, expected_model.var_y);
+        assert_eq!(retained_model.sse_y, expected_model.sse_y);
+        assert_eq!(retained_model.tx_size, expected_model.tx_size);
+        assert_eq!(retained_model.skip_txfm, expected_model.skip_txfm);
+
         let searched = evaluate_candidate_with_filter_set(
             &params,
             InterMode::NearestMv,

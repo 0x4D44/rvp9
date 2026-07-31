@@ -3305,3 +3305,42 @@ are not acceptance evidence.
 **Future plan:** retain libvpx's two-stage metric boundary. Re-run the
 four-thread corpus timing matrix on the pinned idle host, and preserve the
 focused winner-domain oracle when changing model-RD or coefficient-RD code.
+
+### 2026-07-31 — Filter search retains two thread-local prediction buffers
+
+**Where:** `rvp9_core::mode_decision::inter::{
+CandidatePredScratch,select_interp_filter_by_luma_model,
+evaluate_candidate_with_filter_set}`.
+
+**What libvpx does:** `search_filter_ref` obtains predictions from a
+four-entry `PRED_BUFFER` pool. It retains the winning buffer plus its
+`pf_rate`, `pf_dist`, `pf_var`, `pf_sse`, and `pf_tx_size`, then the caller
+invokes `block_yrd` with `rd_computed=1`.
+
+**What rvp9 does:** each tile worker has one safe thread-local scratch object
+containing primary and alternate 64x64 prediction arrays. The two realtime
+filters write separate arrays. The selector returns the winning array slot
+and its owned `ModelRdResult`, so the complete evaluation reuses both without
+a second prediction or model pass.
+
+**Why:** Rust does not expose libvpx's mutable macroblock predictor pool, and
+candidate evaluation is serial within each tile worker. Two fixed arrays
+cover the scoped EightTap/EightTapSmooth search while keeping aliasing and
+active-prefix ownership explicit.
+
+**Byte-parity impact:** none. A focused oracle independently rebuilds the
+winning prediction and model, compares every active pixel and model field,
+and checks both inactive scratch suffixes. The cpu-used 7 product stream and
+all three decoders' I420 output remain byte-identical to Unit 139.
+
+**Compression-efficiency impact:** none; the strict Stage 4a curve remains
+`-8.585847331540%` PSNR BD-rate versus pinned libvpx v1.14.1.
+
+**Speed impact:** two sixteen-pair one-thread runs improve paired child CPU
+by `-1.118%` and `-0.377%`. A twenty-pair four-thread run is neutral at
+`-0.006%`; loaded-host wall time is not acceptance evidence. The matched
+profile reduces inclusive luma-model samples from 131 to 95.
+
+**Future plan:** retain the two-buffer ownership while the filter set remains
+the scoped two-filter realtime range. A broader filter set must extend the
+scratch contract explicitly rather than alias or silently rebuild a winner.
