@@ -3825,16 +3825,60 @@ fn reconstruct_via_round_trip(
 
     // Scratch buffers — sized for one transform.
     let mut residual = [0i16; 32 * 32];
-    // Hadamard + quantize_fp scratch for block_yrd rate/dist (Phase 4c).
-    // The Hadamard transform produces i16; vp9_quantize_fp needs i32 input.
-    let mut had_coeff_i16 = [0i16; 1024];
-    let mut had_coeff = [0i32; 1024];
-    let mut had_qcoeff = [0i16; 1024];
-    let mut had_dqcoeff = [0i16; 1024];
-
     let scan = scan_for(tx_size, TxType::DctDct);
     let scan_slice = scan_for_forward(&scan);
     let dequant_pair = [params.quantizer.dequant[0], params.quantizer.dequant[1]];
+
+    // Run one Hadamard + quantize_fp tile with scratch sized to the actual
+    // transform. Most realtime leaves use Tx8x8/Tx16x16; allocating 1024
+    // elements for every size made their stack zeroing as expensive as a
+    // Tx32x32 tile even though only the prefix could be read.
+    macro_rules! hadamard_metrics {
+        ($n:literal, $transform:path, $is_32x32:literal) => {{
+            let mut had_coeff_i16 = [0i16; $n];
+            $transform(&residual[..$n], tx_side, &mut had_coeff_i16);
+
+            let mut had_coeff = [0i32; $n];
+            for (dst, &src) in had_coeff.iter_mut().zip(&had_coeff_i16) {
+                *dst = i32::from(src);
+            }
+            let mut had_qcoeff = [0i16; $n];
+            let mut had_dqcoeff = [0i16; $n];
+            let had_eob = if $is_32x32 {
+                vp9_quantize_fp_32x32(
+                    &had_coeff,
+                    false,
+                    &params.quantizer.round_fp,
+                    &params.quantizer.quant_fp,
+                    &mut had_qcoeff,
+                    &mut had_dqcoeff,
+                    &dequant_pair,
+                    scan_slice,
+                )
+            } else {
+                vp9_quantize_fp_with_order(
+                    &had_coeff,
+                    $n,
+                    false,
+                    &params.quantizer.round_fp,
+                    &params.quantizer.quant_fp,
+                    &mut had_qcoeff,
+                    &mut had_dqcoeff,
+                    &dequant_pair,
+                    &scan,
+                )
+            };
+            let rate_satd = if had_eob == 1 {
+                i32::from(had_qcoeff[0]).unsigned_abs()
+            } else if had_eob > 1 {
+                satd_i16(&had_qcoeff)
+            } else {
+                0
+            };
+            let dist = block_error_fp_i32(&had_coeff, &had_dqcoeff) >> 2;
+            (had_eob, rate_satd, dist)
+        }};
+    }
 
     let n_tiles_x = bw / tx_side;
     let n_tiles_y = bh / tx_side;
@@ -3867,59 +3911,19 @@ fn reconstruct_via_round_trip(
             // rate/dist metrics; the DCT pipeline above stays for
             // reconstruction.
             //
-            // 1. Hadamard transform on the residual.
-            match tx_size {
-                TxSize::Tx8x8 => {
-                    hadamard_8x8(&residual[..64], tx_side, &mut had_coeff_i16[..64]);
-                }
-                TxSize::Tx16x16 => {
-                    hadamard_16x16(&residual[..256], tx_side, &mut had_coeff_i16[..256]);
-                }
-                TxSize::Tx32x32 => {
-                    hadamard_32x32(&residual[..1024], tx_side, &mut had_coeff_i16[..1024]);
-                }
+            // 1-3. Hadamard transform, quantize_fp, and tile metrics.
+            let (had_eob, tile_rate_satd, tile_dist) = match tx_size {
+                TxSize::Tx8x8 => hadamard_metrics!(64, hadamard_8x8, false),
+                TxSize::Tx16x16 => hadamard_metrics!(256, hadamard_16x16, false),
+                TxSize::Tx32x32 => hadamard_metrics!(1024, hadamard_32x32, true),
                 TxSize::Tx4x4 => unreachable!(),
-            }
-            // Widen Hadamard i16 → i32 for quantize_fp input.
-            for i in 0..n {
-                had_coeff[i] = i32::from(had_coeff_i16[i]);
-            }
-            // 2. quantize_fp on Hadamard coefficients.
-            let had_eob = if tx_size == TxSize::Tx32x32 {
-                vp9_quantize_fp_32x32(
-                    &had_coeff[..1024],
-                    false,
-                    &params.quantizer.round_fp,
-                    &params.quantizer.quant_fp,
-                    &mut had_qcoeff[..1024],
-                    &mut had_dqcoeff[..1024],
-                    &dequant_pair,
-                    scan_slice,
-                )
-            } else {
-                vp9_quantize_fp_with_order(
-                    &had_coeff[..n],
-                    n,
-                    false,
-                    &params.quantizer.round_fp,
-                    &params.quantizer.quant_fp,
-                    &mut had_qcoeff[..n],
-                    &mut had_dqcoeff[..n],
-                    &dequant_pair,
-                    &scan,
-                )
             };
-            // 3. Accumulate block_yrd metrics from Hadamard-quantized
+            // Accumulate block_yrd metrics from Hadamard-quantized
             //    coefficients (libvpx vp9_pickmode.c:804, 830-835).
             by_skippable &= had_eob == 0;
             by_eob_cost = by_eob_cost.saturating_add(1);
-            if had_eob == 1 {
-                by_rate_satd = by_rate_satd.saturating_add(i32::from(had_qcoeff[0]).unsigned_abs());
-            } else if had_eob > 1 {
-                by_rate_satd = by_rate_satd.saturating_add(satd_i16(&had_qcoeff[..n]));
-            }
-            by_dist =
-                by_dist.saturating_add(block_error_fp_i32(&had_coeff[..n], &had_dqcoeff[..n]) >> 2);
+            by_rate_satd = by_rate_satd.saturating_add(tile_rate_satd);
+            by_dist = by_dist.saturating_add(tile_dist);
 
             // 4. The compatibility path additionally runs the
             // DCT/quantize/reconstruction pipeline used to predict the
@@ -4649,6 +4653,68 @@ mod tests {
         );
         assert_eq!(fast_result.coef_rate, control_result.coef_rate);
         assert_eq!(fast_result.coef_dist, control_result.coef_dist);
+    }
+
+    #[test]
+    fn hadamard_only_round_trip_covers_each_realtime_tx_size() {
+        let pw = 64;
+        let ph = 64;
+        let src_data = make_plane(pw, ph, 17);
+        let ref_data = make_plane(pw, ph, 91);
+        let src_plane = PlaneRef {
+            data: &src_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let ref_plane = PlaneRef {
+            data: &ref_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let harness = TestHarness::new(pw, 50);
+        let mvc = MvCandidates::default();
+        let params = make_params(
+            &harness,
+            BlockSize::Block64x64,
+            &src_plane,
+            &ref_plane,
+            (0, 0),
+            &mvc,
+            MvLimits::new(-32, 32, -32, 32),
+            50,
+        );
+
+        for tx_size in [TxSize::Tx8x8, TxSize::Tx16x16, TxSize::Tx32x32] {
+            let side = tx_size.side();
+            let pred = vec![91u8; side * side];
+            let mut no_recon = [];
+            let first = reconstruct_via_round_trip(
+                &params,
+                &pred,
+                &mut no_recon,
+                side,
+                side,
+                tx_size,
+                false,
+            );
+            let second = reconstruct_via_round_trip(
+                &params,
+                &pred,
+                &mut no_recon,
+                side,
+                side,
+                tx_size,
+                false,
+            );
+            assert_eq!(first.coef_rate, second.coef_rate);
+            assert_eq!(first.coef_dist, second.coef_dist);
+            assert_eq!(first.skippable, second.skippable);
+            assert_eq!(first.dct_eob_total, 0);
+            assert!(first.coef_rate > 0);
+            assert!(first.coef_dist >= 0);
+        }
     }
 
     /// Source block at (20, 20) holds the reference's content
