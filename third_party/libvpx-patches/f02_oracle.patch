@@ -1,50 +1,27 @@
 # libvpx commit: 12f3a2ac603e8f10742105519e0cd03c3b8f71dd (v1.14.1)
 # F.0.2 — per-block picker-decision oracle (HLD §3.3).
 #
-# Adds additive, output-only instrumentation to `vp9_pick_inter_mode` in
-# vp9/encoder/vp9_pickmode.c (the per-block picker that runs once per
-# coded block in libvpx's real-time path). The fprintf is gated on the
-# `VPX_F02_ORACLE_OUT` environment variable so unpatched / non-F.0.2
-# runs of the patched binary are byte-identical to stock. No behaviour
-# change: no early-returns, no mutations to the picker's locals.
+# Adds output-only instrumentation to `vp9_pick_inter_mode`, gated by
+# `VPX_F02_ORACLE_OUT`. It emits the shared JSONL schema declared in
+# `crates/rvp9-encoder/src/f02_oracle.rs`, including live LAST-reference
+# candidate costs in `[ZERO, NEAREST, NEAR, NEW]` order.
 #
-# Output format: one JSONL object per line, matching the schema in
-# `crates/rvp9-encoder/src/f02_oracle.rs` (HLD §3.4). Both legs
-# serialise the same shape so the diff binary can pair records by
-# (frame_idx, mi_row, mi_col).
+# The shared schema numbers skip-transform states as None=0, AcOnly=1,
+# AcDc=2. libvpx's internal constants use None=0, AcDc=1, AcOnly=2, so
+# this instrumentation normalises them before serialisation.
 #
-# Output buffering: `setvbuf(_IOLBF)` (HLD §3.3 revision 6) — each
-# fprintf line lands atomically when the patched vpxenc is invoked
-# from the harness driver, avoiding the partial-flush interleaving
-# Windows stdio default `_IOFBF` produces.
+# Apply from `third_party/libvpx`:
+#   git apply ../../third_party/libvpx-patches/f02_oracle.patch
 #
-# Rate-component fields report the winning candidate's live mode, MV,
-# selected-reference, switchable-filter, and skip syntax costs. The raw luma
-# and UV model fields remain separate so analysis never has to infer one
-# component by subtracting from the final rate.
-#
-# Reference-cost diagnostics append the neighbour-selected contexts, active
-# probabilities, and four `init_ref_frame_cost` outputs. The existing parser
-# deliberately ignores unknown fields, preserving the base F.0.2 schema.
-#
-# Applying:
-#   cd third_party/libvpx
-#   git apply ../libvpx-patches/f02_oracle.patch
-# Build via `scripts/build_f02_libvpx.ps1` (HLD §3.3 revision 5).
 diff --git a/vp9/encoder/vp9_pickmode.c b/vp9/encoder/vp9_pickmode.c
+index 6f2524b36..357fe98b9 100644
 --- a/vp9/encoder/vp9_pickmode.c
 +++ b/vp9/encoder/vp9_pickmode.c
-@@ -10,6 +10,7 @@
-
- #include <assert.h>
+@@ -12,2 +12,3 @@
  #include <limits.h>
 +#include <stdlib.h>
  #include <math.h>
- #include <stdio.h>
-
-@@ -1746,6 +1747,16 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
-   int skip_ref_find_pred[4] = { 0 };
-   unsigned int sse_zeromv_normalized = UINT_MAX;
+@@ -1748,2 +1749,23 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
    unsigned int best_sse_sofar = UINT_MAX;
 +  unsigned int best_pred_sse_f02 = UINT_MAX;
 +  unsigned int best_model_var_f02 = UINT_MAX;
@@ -56,43 +33,69 @@ diff --git a/vp9/encoder/vp9_pickmode.c b/vp9/encoder/vp9_pickmode.c
 +  int64_t current_luma_dist_f02 = 0;
 +  int current_uv_rate_f02 = 0;
 +  int64_t current_uv_dist_f02 = 0;
++  int candidate_available_f02[4] = { 0 };
++  int candidate_mv_row_f02[4] = { 0 };
++  int candidate_mv_col_f02[4] = { 0 };
++  int candidate_rate_f02[4] = { 0 };
++  int64_t candidate_dist_f02[4] = { 0 };
++  int64_t candidate_rd_f02[4] = { 0 };
++  int candidate_luma_rate_f02[4] = { 0 };
++  int64_t candidate_luma_dist_f02[4] = { 0 };
++  int candidate_uv_rate_f02[4] = { 0 };
++  int64_t candidate_uv_dist_f02[4] = { 0 };
++  int candidate_skip_f02[4] = { 0 };
    int gf_temporal_ref = 0;
-   int force_test_gf_zeromv = 0;
- #if CONFIG_VP9_TEMPORAL_DENOISING
-@@ -2347,6 +2358,8 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
-       this_sse = (int64_t)sse_y;
-       block_yrd(cpi, x, &this_rdc, &is_skippable, &this_sse, bsize,
+@@ -2350,2 +2372,4 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
                  VPXMIN(mi->tx_size, TX_16X16), rd_computed, 0);
 +      current_luma_rate_f02 = this_rdc.rate;
 +      current_luma_dist_f02 = this_rdc.dist;
        x->skip_txfm[0] = is_skippable;
-       if (is_skippable) {
-         this_rdc.rate = vp9_cost_bit(vp9_get_skip_prob(cm, xd), 1);
-@@ -2374,6 +2387,12 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
-       }
+@@ -2374,4 +2398,9 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
        this_rdc.rate += vp9_cost_bit(vp9_get_skip_prob(cm, xd), 1);
      }
+-
 +    if (this_early_term) {
 +      current_luma_rate_f02 = this_rdc.rate;
 +      current_luma_dist_f02 = this_rdc.dist;
 +    }
 +    current_uv_rate_f02 = 0;
 +    current_uv_dist_f02 = 0;
--
-+
      if (!this_early_term &&
-         (x->color_sensitivity[0] || x->color_sensitivity[1])) {
-@@ -2391,5 +2410,7 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
-       }
+@@ -2389,2 +2419,4 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
        model_rd_for_sb_uv(cpi, uv_bsize, x, xd, &rdc_uv, &var_y, &sse_y, 1, 2);
 +      current_uv_rate_f02 = rdc_uv.rate;
 +      current_uv_dist_f02 = rdc_uv.dist;
        this_rdc.rate += rdc_uv.rate;
-       this_rdc.dist += rdc_uv.dist;
-     }
-@@ -2448,6 +2469,12 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
-
-     if (this_rdc.rdcost < best_rdc.rdcost || x->skip) {
+@@ -2445,3 +2477,27 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
+ #endif
+-
++    if (ref_frame == LAST_FRAME && second_ref_frame == NO_REF_FRAME) {
++      int candidate_idx_f02 = -1;
++      if (this_mode == ZEROMV) candidate_idx_f02 = 0;
++      if (this_mode == NEARESTMV) candidate_idx_f02 = 1;
++      if (this_mode == NEARMV) candidate_idx_f02 = 2;
++      if (this_mode == NEWMV) candidate_idx_f02 = 3;
++      if (candidate_idx_f02 >= 0) {
++        candidate_available_f02[candidate_idx_f02] = 1;
++        candidate_mv_row_f02[candidate_idx_f02] = mi->mv[0].as_mv.row;
++        candidate_mv_col_f02[candidate_idx_f02] = mi->mv[0].as_mv.col;
++        candidate_rate_f02[candidate_idx_f02] = this_rdc.rate;
++        candidate_dist_f02[candidate_idx_f02] = this_rdc.dist;
++        candidate_rd_f02[candidate_idx_f02] = this_rdc.rdcost;
++        candidate_luma_rate_f02[candidate_idx_f02] =
++            current_luma_rate_f02;
++        candidate_luma_dist_f02[candidate_idx_f02] =
++            current_luma_dist_f02;
++        candidate_uv_rate_f02[candidate_idx_f02] = current_uv_rate_f02;
++        candidate_uv_dist_f02[candidate_idx_f02] = current_uv_dist_f02;
++        candidate_skip_f02[candidate_idx_f02] =
++            x->skip_txfm[0] == SKIP_TXFM_AC_ONLY
++                ? 1
++                : (x->skip_txfm[0] == SKIP_TXFM_AC_DC ? 2 : 0);
++      }
++    }
+     mode_checked[this_mode][ref_frame] = 1;
+@@ -2450,2 +2507,8 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
        best_rdc = this_rdc;
 +      best_pred_sse_f02 = sse_y;
 +      best_model_var_f02 = var_y;
@@ -101,23 +104,14 @@ diff --git a/vp9/encoder/vp9_pickmode.c b/vp9/encoder/vp9_pickmode.c
 +      best_uv_rate_f02 = current_uv_rate_f02;
 +      best_uv_dist_f02 = current_uv_dist_f02;
        best_early_term = this_early_term;
-       best_pickmode.best_mode = this_mode;
-       best_pickmode.best_pred_filter = mi->interp_filter;
-@@ -2626,5 +2653,9 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
-       if (this_rdc.rdcost < best_rdc.rdcost) {
+@@ -2627,2 +2690,6 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
          best_rdc = this_rdc;
 +        best_luma_rate_f02 = 0;
 +        best_luma_dist_f02 = 0;
 +        best_uv_rate_f02 = 0;
 +        best_uv_dist_f02 = 0;
          best_pickmode.best_mode = this_mode;
-         best_pickmode.best_intra_tx_size = mi->tx_size;
-         best_pickmode.best_ref_frame = INTRA_FRAME;
-@@ -2735,8 +2766,172 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
-       }
-     }
-   }
-
+@@ -2741,2 +2808,193 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
    *rd_cost = best_rdc;
 +
 +  /* F.0.2 ORACLE BEGIN — additive instrumentation only; no behaviour
@@ -232,6 +226,28 @@ diff --git a/vp9/encoder/vp9_pickmode.c b/vp9/encoder/vp9_pickmode.c
 +      /* `frame_idx` mirrors the harness binary's IVF-presentation-
 +       * order counter; libvpx tracks it as `cm->current_video_frame`. */
 +      unsigned int frame_idx = (unsigned int)cm->current_video_frame;
++      char last_candidates_f02[1024];
++      size_t candidate_offset_f02 = 0;
++      int candidate_idx_f02;
++      for (candidate_idx_f02 = 0; candidate_idx_f02 < 4;
++           ++candidate_idx_f02) {
++        candidate_offset_f02 += snprintf(
++            last_candidates_f02 + candidate_offset_f02,
++            sizeof(last_candidates_f02) - candidate_offset_f02,
++            "%s%d:%d:%d:%d:%lld:%lld:%d:%lld:%d:%lld:%d",
++            candidate_idx_f02 ? "|" : "",
++            candidate_available_f02[candidate_idx_f02],
++            candidate_mv_row_f02[candidate_idx_f02],
++            candidate_mv_col_f02[candidate_idx_f02],
++            candidate_rate_f02[candidate_idx_f02],
++            (long long)candidate_dist_f02[candidate_idx_f02],
++            (long long)candidate_rd_f02[candidate_idx_f02],
++            candidate_luma_rate_f02[candidate_idx_f02],
++            (long long)candidate_luma_dist_f02[candidate_idx_f02],
++            candidate_uv_rate_f02[candidate_idx_f02],
++            (long long)candidate_uv_dist_f02[candidate_idx_f02],
++            candidate_skip_f02[candidate_idx_f02]);
++      }
 +      fprintf(vpx_f02_fp,
 +              "{\"frame_idx\":%u,\"mi_row\":%d,\"mi_col\":%d,"
 +              "\"bsize\":\"%s\",\"mode\":\"%s\",\"ref_frame\":\"%s\","
@@ -246,6 +262,7 @@ diff --git a/vp9/encoder/vp9_pickmode.c b/vp9/encoder/vp9_pickmode.c
 +              "\"uv_model_rate\":%d,\"uv_model_dist\":%lld,"
 +              "\"uv_u_sensitive\":%s,\"uv_v_sensitive\":%s,"
 +              "\"partition_u_sensitive\":%s,\"partition_v_sensitive\":%s,"
++              "\"last_candidates\":\"%s\","
 +              "\"sse_after_pred\":%llu,\"interp_filter\":\"%s\","
 +              "\"skip_flag\":%s,\"q_index\":%d,\"tx_size\":\"%s\","
 +              "\"luma_eob_nonzero\":%s,"
@@ -262,13 +279,17 @@ diff --git a/vp9/encoder/vp9_pickmode.c b/vp9/encoder/vp9_pickmode.c
 +              best_rdc.rate, (long long)best_rdc.dist,
 +              (long long)best_rdc.rdcost,
 +              picked_ref == INTRA_FRAME ? 0 : best_model_var_f02,
-+              tx_size_str, x->skip_txfm[0],
++              tx_size_str,
++              x->skip_txfm[0] == SKIP_TXFM_AC_ONLY
++                  ? 1
++                  : (x->skip_txfm[0] == SKIP_TXFM_AC_DC ? 2 : 0),
 +              best_luma_rate_f02, (long long)best_luma_dist_f02,
 +              best_uv_rate_f02, (long long)best_uv_dist_f02,
 +              x->color_sensitivity[0] ? "true" : "false",
 +              x->color_sensitivity[1] ? "true" : "false",
 +              x->color_sensitivity[0] ? "true" : "false",
 +              x->color_sensitivity[1] ? "true" : "false",
++              last_candidates_f02,
 +              sse_after_pred,
 +              filter_str,
 +              skip_flag ? "true" : "false",
@@ -284,7 +305,3 @@ diff --git a/vp9/encoder/vp9_pickmode.c b/vp9/encoder/vp9_pickmode.c
 +  }
 +  /* F.0.2 ORACLE END */
  }
-
- void vp9_pick_inter_mode_sub8x8(VP9_COMP *cpi, MACROBLOCK *x, int mi_row,
-                                 int mi_col, RD_COST *rd_cost, BLOCK_SIZE bsize,
-                                 PICK_MODE_CONTEXT *ctx) {

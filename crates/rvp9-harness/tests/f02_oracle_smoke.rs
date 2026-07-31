@@ -350,6 +350,7 @@ fn block_decision_mode_variant_shape_is_stable() {
         uv_v_sensitive: false,
         partition_u_sensitive: false,
         partition_v_sensitive: false,
+        last_candidates: [Default::default(); 4],
         sse_after_pred: 0,
         interp_filter: Some(rvp9_core::bitstream::frame::InterpFilter::EightTap),
         skip_flag: true,

@@ -682,6 +682,11 @@ pub struct InterModeSearchResult {
     /// this is overridden with `sse_after_pred = sum((src - pred)^2)`
     /// to match the distortion the decoder will see.
     pub best_distortion: u32,
+    /// Distortion used in this candidate's final RD ranking. This is
+    /// coefficient-domain distortion under the Stage 4a calibration and
+    /// prediction SSE on the skip branch; it can therefore differ from
+    /// [`Self::best_distortion`], which always describes decoded pixels.
+    pub ranking_distortion: u64,
     /// Rate cost (mode + MV bits + ref-frame bits + F.1 coef-bit
     /// estimate, in `vp9_prob_cost` units). When the libvpx skip-flag
     /// tie-break picks `skip = true` this collapses to
@@ -702,9 +707,10 @@ pub struct InterModeSearchResult {
     /// F.1 — coefficient-domain squared error from
     /// [`crate::mode_decision::block_yrd::BlockYrdResult::coef_dist`].
     /// `i64` per HLD Q7 to avoid overflow on saturated 32×32
-    /// quant-error blocks. **Not consumed by `rd_cost` in F.1** (Q3
-    /// keeps pixel-SSE-of-recon as the RD distortion term, DV-F1-3).
-    /// Surfaced for F.4 A/B experiments.
+    /// quant-error blocks. Stage 4a consumes this value when
+    /// `rd_calibration.s3_domain` is active; otherwise the picker keeps
+    /// pixel-SSE-of-recon as its RD distortion term. Also surfaced to
+    /// the F.0.2 block oracle.
     pub coef_dist: i64,
     /// G1 diagnostic — UV variance-model rate added for this candidate.
     pub uv_rate: u32,
@@ -1367,6 +1373,66 @@ pub struct PickInterModeResult {
     /// **Phase-2 option-A** — the GOLDEN-ref NEWMV search result. See
     /// [`newmv_search_last`].
     pub newmv_search_golden: Option<Mv>,
+    /// Diagnostic handle for the actually evaluated LAST candidates.
+    /// Zero when tracing is disabled. The encoder consumes non-zero handles
+    /// through [`candidate_trace::take`]; this keeps the production result
+    /// compact and avoids allocating on the normal picker path.
+    pub candidate_trace_id: u64,
+}
+
+/// Diagnostic storage for candidates evaluated by the real interleaved
+/// picker. Records exist only when explicitly enabled by the encoder's F.0.2
+/// oracle and remain thread-local, so normal encoding does not allocate or
+/// synchronise.
+pub mod candidate_trace {
+    use super::InterModeSearchResult;
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+
+    #[derive(Default)]
+    struct State {
+        enabled: bool,
+        next_id: u64,
+        records: HashMap<u64, [Option<InterModeSearchResult>; 4]>,
+    }
+
+    thread_local! {
+        static STATE: RefCell<State> = RefCell::new(State::default());
+    }
+
+    /// Enable or disable candidate tracing for the current thread and clear
+    /// records left by the previous frame.
+    pub fn reset(enabled: bool) {
+        STATE.with(|state| {
+            let mut state = state.borrow_mut();
+            state.enabled = enabled;
+            state.next_id = 1;
+            state.records.clear();
+        });
+    }
+
+    pub(super) fn record(candidates: [Option<InterModeSearchResult>; 4]) -> u64 {
+        STATE.with(|state| {
+            let mut state = state.borrow_mut();
+            if !state.enabled {
+                return 0;
+            }
+            let id = state.next_id;
+            state.next_id = state.next_id.saturating_add(1).max(1);
+            state.records.insert(id, candidates);
+            id
+        })
+    }
+
+    /// Take one recorded candidate set. Missing/disabled handles return an
+    /// all-unavailable set so diagnostic callers can remain branch-free.
+    #[must_use]
+    pub fn take(id: u64) -> [Option<InterModeSearchResult>; 4] {
+        if id == 0 {
+            return [None; 4];
+        }
+        STATE.with(|state| state.borrow_mut().records.remove(&id).unwrap_or([None; 4]))
+    }
 }
 
 /// libvpx `INTER_*` inter-mode bitmask presets
@@ -1626,6 +1692,10 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
     let mut newmv_golden: Option<Mv> = params.newmv_override_golden;
 
     let mut best: Option<PickInterModeResult> = None;
+    // F.0.2 diagnostic slots use the shared order
+    // `[ZERO, NEAREST, NEAR, NEW]`. Only candidates that survive the real
+    // production gates below are recorded.
+    let mut last_candidates: [Option<InterModeSearchResult>; 4] = [None; 4];
 
     for &(ref_frame, mode) in &RT_INTER_MODES {
         let ref_idx: usize = match ref_frame {
@@ -2116,6 +2186,18 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
             biased_rd_cost = biased_rd_cost.saturating_mul(4);
         }
 
+        if ref_frame == RefFrame::LastFrame {
+            let slot = match mode {
+                InterMode::ZeroMv => 0,
+                InterMode::NearestMv => 1,
+                InterMode::NearMv => 2,
+                InterMode::NewMv => 3,
+            };
+            let mut traced = candidate;
+            traced.best_rd_cost = biased_rd_cost;
+            last_candidates[slot] = Some(traced);
+        }
+
         let is_new_best = match best.as_ref() {
             None => true,
             Some(prev) => biased_rd_cost < prev.best_rd_cost,
@@ -2147,6 +2229,7 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
                 // the accumulated per-ref NEWMV search caches.
                 newmv_search_last: None,
                 newmv_search_golden: None,
+                candidate_trace_id: 0,
             });
         }
 
@@ -2251,6 +2334,7 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
     // when the intra fallback replaced `best`.
     best.newmv_search_last = newmv_last;
     best.newmv_search_golden = newmv_golden;
+    best.candidate_trace_id = candidate_trace::record(last_candidates);
 
     best
 }
@@ -2528,6 +2612,7 @@ fn evaluate_intra_fallback(
                 // caller (pick_inter_mode) before return anyway.
                 newmv_search_last: None,
                 newmv_search_golden: None,
+                candidate_trace_id: 0,
             });
         }
     }
@@ -3407,6 +3492,7 @@ fn evaluate_candidate_for_filter(
         best_mv: mv,
         best_rd_cost: this_rd,
         best_distortion: final_dist,
+        ranking_distortion: final_dist_rd,
         best_rate: final_rate,
         coef_rate: by.coef_rate,
         coef_dist: by.coef_dist,
@@ -5269,6 +5355,79 @@ mod tests {
             "expected ZERO/NEAR/NEW with OOB-vetoed NEAREST, got {:?}",
             res.best_mode,
         );
+    }
+
+    #[test]
+    fn candidate_trace_reports_the_real_last_argmin_and_is_take_once() {
+        let pw = 64;
+        let ph = 64;
+        let src_data = make_plane(pw, ph, 73);
+        let ref_data = make_plane(pw, ph, 41);
+        let src_plane = PlaneRef {
+            data: &src_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let ref_plane = PlaneRef {
+            data: &ref_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let harness = TestHarness::new(pw, 80);
+        let fc = FrameContext::new_default();
+        let intra_costs = crate::cost::symbol_costs::intra_y_mode_costs_inter(&fc);
+        let mvc = MvCandidates {
+            nearest: Mv { row: 0, col: 8 },
+            near: Mv { row: 8, col: 0 },
+        };
+        let mut params = make_dual_ref_params(
+            &harness,
+            &intra_costs[0],
+            BlockSize::Block16x16,
+            &src_plane,
+            &ref_plane,
+            (16, 16),
+            &mvc,
+            &mvc,
+            MvLimits::new(-4, 4, -4, 4),
+            80,
+        );
+        params.disable_golden_ref = true;
+        params.enable_intra_fallback = false;
+
+        candidate_trace::reset(true);
+        let result = pick_inter_mode(&params);
+        assert_eq!(result.picked_ref_frame, RefFrame::LastFrame);
+        assert_ne!(result.candidate_trace_id, 0);
+
+        let candidates = candidate_trace::take(result.candidate_trace_id);
+        let slot = match result.best_mode {
+            InterMode::ZeroMv => 0,
+            InterMode::NearestMv => 1,
+            InterMode::NearMv => 2,
+            InterMode::NewMv => 3,
+        };
+        let winner = candidates[slot].expect("winning LAST candidate must be traced");
+        assert_eq!(winner.best_mv, result.best_mv);
+        assert_eq!(winner.best_rd_cost, result.best_rd_cost);
+        assert!(
+            candidates
+                .iter()
+                .flatten()
+                .all(|candidate| candidate.best_rd_cost >= result.best_rd_cost),
+            "the traced production candidates must preserve the returned argmin"
+        );
+        assert_eq!(
+            candidate_trace::take(result.candidate_trace_id),
+            [None; 4],
+            "candidate traces are consumed exactly once"
+        );
+
+        candidate_trace::reset(false);
+        let untraced = pick_inter_mode(&params);
+        assert_eq!(untraced.candidate_trace_id, 0);
     }
 
     /// `pick_inter_mode`: when `intra_above_pixels` is `Some` and a

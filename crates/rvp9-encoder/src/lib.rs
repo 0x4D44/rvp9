@@ -2131,6 +2131,7 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
                         uv_v_sensitive: false,
                         partition_u_sensitive: false,
                         partition_v_sensitive: false,
+                        last_candidates: [Default::default(); 4],
                         sse_after_pred: 0,
                         interp_filter: None,
                         // Intra leaves in the F5.1 path always
@@ -3322,6 +3323,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // when both are disabled (the default).
     let s2_xtab_enabled = std::env::var("RVP9_S2_XTAB").is_ok();
     let f02_oracle_enabled = crate::f02_oracle::is_enabled();
+    rvp9_core::mode_decision::inter::candidate_trace::reset(f02_oracle_enabled);
     // win counts indexed [ZERO, NEAREST, NEAR, NEW].
     let mut e3_win_counts = [0usize; 4];
     let mut e3_total_leaves: usize = 0;
@@ -4619,6 +4621,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             uv_v_sensitive: false,
                             partition_u_sensitive: false,
                             partition_v_sensitive: false,
+                            last_candidates: [Default::default(); 4],
                             sse_after_pred: 0,
                             interp_filter: Some(
                                 rvp9_core::bitstream::frame::InterpFilter::EightTap,
@@ -4749,6 +4752,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             uv_v_sensitive: false,
                             partition_u_sensitive: false,
                             partition_v_sensitive: false,
+                            last_candidates: [Default::default(); 4],
                             sse_after_pred: 0,
                             interp_filter: Some(
                                 rvp9_core::bitstream::frame::InterpFilter::EightTap,
@@ -5231,6 +5235,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                 // doesn't surface per-ref NEWMV searches.
                                 newmv_search_last: None,
                                 newmv_search_golden: None,
+                                candidate_trace_id: 0,
                             }
                         })
                     } else {
@@ -5600,6 +5605,33 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         _ => causal.near,
                     };
                 }
+
+                let f02_last_candidates = if f02_oracle_enabled {
+                    rvp9_core::mode_decision::inter::candidate_trace::take(pick.candidate_trace_id)
+                        .map(|candidate| {
+                            candidate.map_or_else(Default::default, |candidate| {
+                                crate::f02_oracle::CandidateProbe {
+                                    available: true,
+                                    mv_row: candidate.best_mv.row,
+                                    mv_col: candidate.best_mv.col,
+                                    rate: candidate.best_rate,
+                                    dist: candidate.ranking_distortion.min(i64::MAX as u64) as i64,
+                                    rd_cost: candidate.best_rd_cost,
+                                    luma_rate: candidate.coef_rate,
+                                    luma_dist: candidate.coef_dist,
+                                    uv_rate: candidate.uv_rate,
+                                    uv_dist: candidate.uv_dist,
+                                    skip_txfm: match candidate.skip_txfm {
+                                        rvp9_core::mode_decision::model_rd::SkipTxfm::None => 0,
+                                        rvp9_core::mode_decision::model_rd::SkipTxfm::AcOnly => 1,
+                                        rvp9_core::mode_decision::model_rd::SkipTxfm::AcDc => 2,
+                                    },
+                                }
+                            })
+                        })
+                } else {
+                    [Default::default(); 4]
+                };
 
                 // E12 (2026-05-22) — search-failure-vs-prediction-ceiling
                 // oracle. Read-only diagnostic, env-gated
@@ -6665,6 +6697,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             && !input_yuv.2.is_empty(),
                         partition_u_sensitive: sb_partition_color_sensitivity[0],
                         partition_v_sensitive: sb_partition_color_sensitivity[1],
+                        last_candidates: f02_last_candidates,
                         sse_after_pred: u64::from(pick.sse_y),
                         interp_filter: if final_ref == RefFrame::IntraFrame {
                             None

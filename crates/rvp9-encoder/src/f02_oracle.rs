@@ -77,6 +77,34 @@ impl BlockDecisionMode {
     }
 }
 
+/// One LAST-reference candidate in the diagnostic mode-order
+/// `[ZERO, NEAREST, NEAR, NEW]`.
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
+pub struct CandidateProbe {
+    /// Whether the encoder evaluated this candidate.
+    pub available: bool,
+    /// Candidate MV row in 1/8-pel units.
+    pub mv_row: i16,
+    /// Candidate MV column in 1/8-pel units.
+    pub mv_col: i16,
+    /// Total candidate rate in `vp9_prob_cost` units.
+    pub rate: u32,
+    /// Candidate ranking distortion.
+    pub dist: i64,
+    /// Final candidate RD cost.
+    pub rd_cost: i64,
+    /// Raw luma coefficient-model rate.
+    pub luma_rate: u64,
+    /// Raw luma coefficient-model distortion.
+    pub luma_dist: i64,
+    /// UV model rate.
+    pub uv_rate: u32,
+    /// UV model distortion.
+    pub uv_dist: i64,
+    /// `SKIP_TXFM_*` state (`0=None`, `1=AcOnly`, `2=AcDc`).
+    pub skip_txfm: u8,
+}
+
 /// One picker-decision record. HLD §3.4 schema.
 ///
 /// The original F.0.2 fields and the F.1 coefficient estimate are live.
@@ -149,6 +177,9 @@ pub struct BlockDecision {
     pub partition_u_sensitive: bool,
     /// SB partition predictor's V-plane color-sensitivity result.
     pub partition_v_sensitive: bool,
+    /// LAST-reference candidates in `[ZERO, NEAREST, NEAR, NEW]` order.
+    /// Unavailable entries have `available == false`.
+    pub last_candidates: [CandidateProbe; 4],
     /// `SSE(source − prediction)` over the Y plane, pre-quant.
     pub sse_after_pred: u64,
     /// Winning inter-prediction filter. `None` for intra leaves.
@@ -196,6 +227,7 @@ impl BlockDecision {
              \"uv_model_rate\":{},\"uv_model_dist\":{},\
              \"uv_u_sensitive\":{},\"uv_v_sensitive\":{},\
              \"partition_u_sensitive\":{},\"partition_v_sensitive\":{},\
+             \"last_candidates\":\"{}\",\
              \"sse_after_pred\":{},\"interp_filter\":\"{}\",\"skip_flag\":{},\
              \"q_index\":{},\"tx_size\":\"{}\",\"luma_eob_nonzero\":{}}}",
             self.frame_idx,
@@ -226,6 +258,7 @@ impl BlockDecision {
             self.uv_v_sensitive,
             self.partition_u_sensitive,
             self.partition_v_sensitive,
+            candidate_probes_tag(&self.last_candidates),
             self.sse_after_pred,
             interp_filter_tag(self.interp_filter),
             self.skip_flag,
@@ -236,6 +269,29 @@ impl BlockDecision {
         .expect("String fmt cannot fail");
         w.write_all(s.as_bytes())
     }
+}
+
+fn candidate_probes_tag(probes: &[CandidateProbe; 4]) -> String {
+    probes
+        .iter()
+        .map(|p| {
+            format!(
+                "{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}",
+                u8::from(p.available),
+                p.mv_row,
+                p.mv_col,
+                p.rate,
+                p.dist,
+                p.rd_cost,
+                p.luma_rate,
+                p.luma_dist,
+                p.uv_rate,
+                p.uv_dist,
+                p.skip_txfm,
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("|")
 }
 
 /// Stable transform-size tag shared with the libvpx patch.
@@ -407,6 +463,7 @@ mod tests {
             uv_v_sensitive: false,
             partition_u_sensitive: false,
             partition_v_sensitive: true,
+            last_candidates: [CandidateProbe::default(); 4],
             sse_after_pred: 1_234_567,
             interp_filter: Some(InterpFilter::EightTapSmooth),
             skip_flag: false,
@@ -446,6 +503,7 @@ mod tests {
             uv_v_sensitive: false,
             partition_u_sensitive: false,
             partition_v_sensitive: false,
+            last_candidates: [CandidateProbe::default(); 4],
             sse_after_pred: 0,
             interp_filter: None,
             skip_flag: true,

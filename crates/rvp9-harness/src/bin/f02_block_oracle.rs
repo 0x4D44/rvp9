@@ -276,6 +276,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )?;
         writeln!(
             sf,
+            "- `last_candidates`: live LAST-reference `[ZERO, NEAREST, NEAR, NEW]` candidate costs on both legs; skip-transform states use the shared `None=0, AcOnly=1, AcDc=2` numbering."
+        )?;
+        writeln!(
+            sf,
             "- `picker_dist`: rvp9 reports decoded-pixel SSE; libvpx reports its coefficient/model-RD ranking distortion."
         )?;
         writeln!(sf)?;

@@ -17,7 +17,8 @@ use std::collections::BTreeMap;
 use std::io::{self, BufRead, Write};
 
 pub use rvp9_encoder::f02_oracle::{
-    BlockDecision, BlockDecisionMode, bsize_tag, interp_filter_tag, ref_frame_tag, tx_size_tag,
+    BlockDecision, BlockDecisionMode, CandidateProbe, bsize_tag, interp_filter_tag, ref_frame_tag,
+    tx_size_tag,
 };
 
 use rvp9_core::bitstream::frame::InterpFilter;
@@ -103,6 +104,7 @@ pub fn parse_jsonl_line(line: &str) -> Result<BlockDecision, ParseError> {
     let mut uv_v_sensitive: Option<bool> = None;
     let mut partition_u_sensitive: Option<bool> = None;
     let mut partition_v_sensitive: Option<bool> = None;
+    let mut last_candidates: Option<[CandidateProbe; 4]> = None;
     let mut sse_after_pred: Option<u64> = None;
     let mut interp_filter: Option<Option<InterpFilter>> = None;
     let mut skip_flag: Option<bool> = None;
@@ -157,6 +159,7 @@ pub fn parse_jsonl_line(line: &str) -> Result<BlockDecision, ParseError> {
             "partition_v_sensitive" => {
                 partition_v_sensitive = Some(parse_bool(v, "partition_v_sensitive")?);
             }
+            "last_candidates" => last_candidates = Some(parse_candidate_probes(v)?),
             "sse_after_pred" => sse_after_pred = Some(parse_num(v, "sse_after_pred")?),
             "interp_filter" => {
                 let raw = parse_string(v, "interp_filter")?;
@@ -226,6 +229,7 @@ pub fn parse_jsonl_line(line: &str) -> Result<BlockDecision, ParseError> {
             .ok_or(ParseError::MissingField("partition_u_sensitive"))?,
         partition_v_sensitive: partition_v_sensitive
             .ok_or(ParseError::MissingField("partition_v_sensitive"))?,
+        last_candidates: last_candidates.ok_or(ParseError::MissingField("last_candidates"))?,
         sse_after_pred: sse_after_pred.ok_or(ParseError::MissingField("sse_after_pred"))?,
         interp_filter: interp_filter.ok_or(ParseError::MissingField("interp_filter"))?,
         skip_flag: skip_flag.ok_or(ParseError::MissingField("skip_flag"))?,
@@ -608,6 +612,47 @@ fn parse_bool(v: &str, field: &'static str) -> Result<bool, ParseError> {
     }
 }
 
+fn parse_candidate_probes(v: &str) -> Result<[CandidateProbe; 4], ParseError> {
+    let raw = parse_string(v, "last_candidates")?;
+    let mut probes = Vec::with_capacity(4);
+    for encoded in raw.split('|') {
+        let fields = encoded.split(':').collect::<Vec<_>>();
+        if fields.len() != 11 {
+            return Err(ParseError::BadValue {
+                field: "last_candidates",
+                raw,
+            });
+        }
+        let available = match fields[0] {
+            "0" => false,
+            "1" => true,
+            _ => {
+                return Err(ParseError::BadValue {
+                    field: "last_candidates",
+                    raw,
+                });
+            }
+        };
+        probes.push(CandidateProbe {
+            available,
+            mv_row: parse_num(fields[1], "last_candidates")?,
+            mv_col: parse_num(fields[2], "last_candidates")?,
+            rate: parse_num(fields[3], "last_candidates")?,
+            dist: parse_num(fields[4], "last_candidates")?,
+            rd_cost: parse_num(fields[5], "last_candidates")?,
+            luma_rate: parse_num(fields[6], "last_candidates")?,
+            luma_dist: parse_num(fields[7], "last_candidates")?,
+            uv_rate: parse_num(fields[8], "last_candidates")?,
+            uv_dist: parse_num(fields[9], "last_candidates")?,
+            skip_txfm: parse_num(fields[10], "last_candidates")?,
+        });
+    }
+    probes.try_into().map_err(|_| ParseError::BadValue {
+        field: "last_candidates",
+        raw,
+    })
+}
+
 /// Inverse of [`bsize_tag`]. Returns `None` for unknown tags.
 #[must_use]
 pub fn bsize_from_tag(s: &str) -> Option<BlockSize> {
@@ -721,6 +766,24 @@ mod tests {
             uv_v_sensitive: false,
             partition_u_sensitive: false,
             partition_v_sensitive: true,
+            last_candidates: [
+                CandidateProbe {
+                    available: true,
+                    mv_row: -8,
+                    mv_col: 16,
+                    rate: 7_000,
+                    dist: 12_000,
+                    rd_cost: 99_000,
+                    luma_rate: 6_000,
+                    luma_dist: 11_000,
+                    uv_rate: 500,
+                    uv_dist: 1_000,
+                    skip_txfm: 1,
+                },
+                CandidateProbe::default(),
+                CandidateProbe::default(),
+                CandidateProbe::default(),
+            ],
             sse_after_pred: 1_234_567,
             interp_filter: Some(InterpFilter::EightTapSmooth),
             skip_flag: false,
@@ -760,6 +823,7 @@ mod tests {
             uv_v_sensitive: false,
             partition_u_sensitive: false,
             partition_v_sensitive: false,
+            last_candidates: [CandidateProbe::default(); 4],
             sse_after_pred: 0,
             interp_filter: None,
             skip_flag: true,
@@ -819,6 +883,7 @@ mod tests {
                     \"uv_model_rate\":0,\"uv_model_dist\":0,\
                     \"uv_u_sensitive\":false,\"uv_v_sensitive\":false,\
                     \"partition_u_sensitive\":false,\"partition_v_sensitive\":false,\
+                    \"last_candidates\":\"0:0:0:0:0:0:0:0:0:0:0|0:0:0:0:0:0:0:0:0:0:0|0:0:0:0:0:0:0:0:0:0:0|0:0:0:0:0:0:0:0:0:0:0\",\
                     \"sse_after_pred\":0,\"interp_filter\":\"NONE\"}";
         let err = parse_jsonl_line(line).unwrap_err();
         match err {
@@ -872,6 +937,7 @@ mod tests {
                     \"uv_model_rate\":0,\"uv_model_dist\":0,\
                     \"uv_u_sensitive\":false,\"uv_v_sensitive\":false,\
                     \"partition_u_sensitive\":false,\"partition_v_sensitive\":false,\
+                    \"last_candidates\":\"0:0:0:0:0:0:0:0:0:0:0|0:0:0:0:0:0:0:0:0:0:0|0:0:0:0:0:0:0:0:0:0:0|0:0:0:0:0:0:0:0:0:0:0\",\
                     \"sse_after_pred\":0,\"interp_filter\":\"NONE\",\"skip_flag\":true,\
                     \"q_index\":65,\"tx_size\":\"8x8\",\"luma_eob_nonzero\":false,\
                     \"future_field\":\"ignored\"}";
