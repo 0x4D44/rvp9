@@ -24,6 +24,37 @@ Each entry:
 
 ## Entries
 
+### 2026-07-31 — Direct-index inter coefficient payloads
+**Where:** `rvp9-encoder::VecBackedInterCoefSource`; libvpx counterparts:
+macroblock coefficient storage and `vp9/encoder/vp9_tokenize.c`.
+**What libvpx does:** stores quantized coefficient payloads in encoder block
+state and later tokenizes them through structurally addressed plane/block
+arrays.
+**What rvp9 does:** maps each physical luma/U/V 4x4 position through a dense
+`u32` slot table into an insertion-order coefficient vector. Luma positions
+derive from two 4x4 cells per MI; Profile-0 chroma positions derive from one.
+Column-tile sources merge by rebasing their value indices.
+**Why:** rvp9's simulator and writer remain separate traversals, but their
+six-field tuple key reduces exactly to the bounded physical TX coordinate.
+The previous `HashMap` hashed that tuple during simulation inserts, tile
+merges, the pre-header count pass, and final arithmetic writing.
+**Byte-parity impact:** none. Focused coverage exhausts every slot for odd
+frame dimensions, verifies replacement and disjoint tile merge behavior, and
+rejects overlapping merges. The 120-frame product stream remained
+byte-identical and all three decoders produced identical I420 output.
+**Compression-efficiency impact:** none because every coefficient payload,
+lookup result, and emitted byte is unchanged.
+**Speed impact:** two independent sixteen-pair one-thread runs improved wall
+time by `-1.464%` and `-1.225%`, with 31/32 wins; child CPU improved
+`-1.482%` and `-1.331%`. Two twenty-pair four-thread runs improved wall time
+by `-0.847%` and `-2.623%`, with 35/40 wins; child CPU improved `-1.048%`
+and `-1.919%`. A five-encode post-change profile contains no inter-source
+hash path; the remaining hash samples belong only to the keyframe intra
+source.
+**Future plan:** retain while the physical-slot oracle and exact stream stay
+green. Optimize the one-frame intra source only if a fresh profile makes it
+material; do not conflate it with the removed inter hot path.
+
 ### 2026-07-31 — Widen the complete second 32-point DCT pass
 **Where:** `rvp9-core::transforms::forward_neon`; libvpx counterparts:
 `vpx_dsp/arm/fdct32x32_neon.c` and `vpx_dsp/arm/fdct32x32_neon.h`.

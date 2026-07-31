@@ -996,6 +996,9 @@ type IntraCoefBlockValue = (Vec<i32>, usize);
 /// allocate in the hottest emit path for no information.
 static INTER_ZERO_COEFS: [i32; 1024] = [0; 1024];
 
+/// Empty marker in [`VecBackedInterCoefSource::slots`].
+const INTER_COEF_SLOT_EMPTY: u32 = u32::MAX;
+
 /// Encoder simulator output: a Vec-backed [`IntraCoefSource`].
 ///
 /// Stores one qcoeff buffer per (plane, mi_row, mi_col, tx_local_x,
@@ -1093,20 +1096,70 @@ pub struct VecBackedInterCoefSource {
     width: u32,
     /// Frame height in pixels.
     height: u32,
-    /// One entry per stored TX block. Same key shape as
-    /// [`VecBackedIntraCoefSource`].
-    blocks: std::collections::HashMap<IntraCoefBlockKey, IntraCoefBlockValue>,
+    /// Per-plane offsets into `slots`.
+    plane_offsets: [usize; 3],
+    /// Per-plane widths in plane-relative 4x4 units.
+    plane_strides: [usize; 3],
+    /// Per-plane heights in plane-relative 4x4 units.
+    plane_rows: [usize; 3],
+    /// Dense physical-TX-position to `blocks` index mapping. Luma uses one
+    /// slot per 4x4 luma cell; U and V use one per 4x4 chroma cell.
+    slots: Vec<u32>,
+    /// Coefficient payloads in insertion order.
+    blocks: Vec<IntraCoefBlockValue>,
 }
 
 impl VecBackedInterCoefSource {
     /// Build an empty source for the given frame dimensions.
     #[must_use]
     pub fn new(width: u32, height: u32) -> Self {
+        let width = width as usize;
+        let height = height as usize;
+        let luma_cols = width.div_ceil(4);
+        let luma_rows = height.div_ceil(4);
+        let chroma_cols = width.div_ceil(8);
+        let chroma_rows = height.div_ceil(8);
+        let luma_slots = luma_cols * luma_rows;
+        let chroma_slots = chroma_cols * chroma_rows;
+        let total_slots = luma_slots + 2 * chroma_slots;
         Self {
-            width,
-            height,
-            blocks: std::collections::HashMap::new(),
+            width: width as u32,
+            height: height as u32,
+            plane_offsets: [0, luma_slots, luma_slots + chroma_slots],
+            plane_strides: [luma_cols, chroma_cols, chroma_cols],
+            plane_rows: [luma_rows, chroma_rows, chroma_rows],
+            slots: vec![INTER_COEF_SLOT_EMPTY; total_slots],
+            blocks: Vec::new(),
         }
+    }
+
+    /// Map a leaf-local TX coordinate to its unique physical plane slot.
+    fn slot_index(
+        &self,
+        mi_row: usize,
+        mi_col: usize,
+        plane: usize,
+        tx_x4_local: usize,
+        tx_y4_local: usize,
+    ) -> usize {
+        assert!(plane < 3, "coefficient plane must be 0, 1, or 2");
+        // One 8x8 luma MI spans two luma 4x4 cells, or one chroma 4x4
+        // cell under Profile-0 4:2:0 subsampling.
+        let mi_scale = if plane == 0 { 2 } else { 1 };
+        let x4 = mi_col
+            .checked_mul(mi_scale)
+            .and_then(|x| x.checked_add(tx_x4_local))
+            .expect("inter coefficient x coordinate overflow");
+        let y4 = mi_row
+            .checked_mul(mi_scale)
+            .and_then(|y| y.checked_add(tx_y4_local))
+            .expect("inter coefficient y coordinate overflow");
+        assert!(
+            x4 < self.plane_strides[plane] && y4 < self.plane_rows[plane],
+            "inter coefficient coordinate outside plane: \
+             mi=({mi_row},{mi_col}) plane={plane} local=({tx_x4_local},{tx_y4_local})",
+        );
+        self.plane_offsets[plane] + y4 * self.plane_strides[plane] + x4
     }
 
     /// Record one TX block's quantized coefficients + eob.
@@ -1121,10 +1174,16 @@ impl VecBackedInterCoefSource {
         qcoefs: Vec<i32>,
         eob: usize,
     ) {
-        self.blocks.insert(
-            (mi_row, mi_col, plane, tx_x4_local, tx_y4_local),
-            (qcoefs, eob),
-        );
+        let slot = self.slot_index(mi_row, mi_col, plane, tx_x4_local, tx_y4_local);
+        let block_index = self.slots[slot];
+        if block_index == INTER_COEF_SLOT_EMPTY {
+            let block_index = u32::try_from(self.blocks.len())
+                .expect("inter coefficient source exceeds u32 block capacity");
+            self.blocks.push((qcoefs, eob));
+            self.slots[slot] = block_index;
+        } else {
+            self.blocks[block_index as usize] = (qcoefs, eob);
+        }
     }
 
     /// Frame width in pixels.
@@ -1145,11 +1204,23 @@ impl VecBackedInterCoefSource {
     pub(crate) fn merge_from(&mut self, other: Self) {
         assert_eq!(self.width, other.width);
         assert_eq!(self.height, other.height);
-        for (key, value) in other.blocks {
-            assert!(
-                self.blocks.insert(key, value).is_none(),
-                "column tile coefficient sources must have disjoint keys",
+        assert_eq!(self.plane_offsets, other.plane_offsets);
+        assert_eq!(self.plane_strides, other.plane_strides);
+        assert_eq!(self.plane_rows, other.plane_rows);
+        let block_base = u32::try_from(self.blocks.len())
+            .expect("inter coefficient source exceeds u32 block capacity");
+        self.blocks.extend(other.blocks);
+        for (slot, other_slot) in self.slots.iter_mut().zip(other.slots) {
+            if other_slot == INTER_COEF_SLOT_EMPTY {
+                continue;
+            }
+            assert_eq!(
+                *slot, INTER_COEF_SLOT_EMPTY,
+                "column tile coefficient sources must have disjoint physical TX slots",
             );
+            *slot = block_base
+                .checked_add(other_slot)
+                .expect("inter coefficient source exceeds u32 block capacity");
         }
     }
 }
@@ -1164,16 +1235,15 @@ impl rvp9_core::bitstream::InterCoefSource for VecBackedInterCoefSource {
         tx_y4_local: usize,
         tx_size: TxSize,
     ) -> (&[i32], usize) {
-        let entry = self
-            .blocks
-            .get(&(mi_row, mi_col, plane, tx_x4_local, tx_y4_local))
-            .unwrap_or_else(|| {
-                panic!(
-                    "VecBackedInterCoefSource: missing TX block at \
-                     (mi_row={mi_row}, mi_col={mi_col}, plane={plane}, \
-                     tx_x4_local={tx_x4_local}, tx_y4_local={tx_y4_local})"
-                )
-            });
+        let slot = self.slot_index(mi_row, mi_col, plane, tx_x4_local, tx_y4_local);
+        let block_index = self.slots[slot];
+        assert_ne!(
+            block_index, INTER_COEF_SLOT_EMPTY,
+            "VecBackedInterCoefSource: missing TX block at \
+             (mi_row={mi_row}, mi_col={mi_col}, plane={plane}, \
+             tx_x4_local={tx_x4_local}, tx_y4_local={tx_y4_local})",
+        );
+        let entry = &self.blocks[block_index as usize];
         let n = tx_size.n_coeffs();
         if entry.1 == 0 && entry.0.is_empty() {
             return (&INTER_ZERO_COEFS[..n], 0);
@@ -9436,6 +9506,66 @@ mod tests {
             assert_eq!(got_coefs.len(), tx_size.n_coeffs());
             assert!(got_coefs.iter().all(|&c| c == 0));
         }
+    }
+
+    #[test]
+    fn inter_coef_direct_slots_cover_every_plane_position_once() {
+        let src = VecBackedInterCoefSource::new(68, 36);
+        let mut observed = std::collections::HashSet::new();
+
+        for plane in 0..3 {
+            let mi_scale = if plane == 0 { 2 } else { 1 };
+            for y4 in 0..src.plane_rows[plane] {
+                for x4 in 0..src.plane_strides[plane] {
+                    let slot = src.slot_index(
+                        y4 / mi_scale,
+                        x4 / mi_scale,
+                        plane,
+                        x4 % mi_scale,
+                        y4 % mi_scale,
+                    );
+                    assert!(observed.insert(slot), "slot {slot} aliases");
+                }
+            }
+        }
+
+        assert_eq!(observed.len(), src.slots.len());
+        assert!((0..src.slots.len()).all(|slot| observed.contains(&slot)));
+    }
+
+    #[test]
+    fn inter_coef_direct_slots_replace_and_merge() {
+        use rvp9_core::bitstream::InterCoefSource;
+
+        let mut left = VecBackedInterCoefSource::new(128, 64);
+        left.insert(1, 2, 0, 0, 0, vec![1; 16], 1);
+        left.insert(1, 2, 0, 0, 0, vec![7; 16], 7);
+
+        let mut right = VecBackedInterCoefSource::new(128, 64);
+        right.insert(1, 12, 2, 0, 0, vec![9; 16], 9);
+        left.merge_from(right);
+
+        let (left_coefs, left_eob) = left.get_block_coefs(1, 2, 0, 0, 0, TxSize::Tx4x4);
+        assert_eq!(left_coefs, &[7; 16]);
+        assert_eq!(left_eob, 7);
+        let (right_coefs, right_eob) = left.get_block_coefs(1, 12, 2, 0, 0, TxSize::Tx4x4);
+        assert_eq!(right_coefs, &[9; 16]);
+        assert_eq!(right_eob, 9);
+        assert_eq!(
+            left.blocks.len(),
+            2,
+            "replacement must reuse its value slot"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "disjoint physical TX slots")]
+    fn inter_coef_direct_slot_merge_rejects_overlap() {
+        let mut left = VecBackedInterCoefSource::new(128, 64);
+        left.insert(1, 2, 0, 0, 0, vec![1; 16], 1);
+        let mut overlapping = VecBackedInterCoefSource::new(128, 64);
+        overlapping.insert(1, 2, 0, 0, 0, vec![2; 16], 2);
+        left.merge_from(overlapping);
     }
 
     /// Serial guard for env-mutating tests that touch the global
