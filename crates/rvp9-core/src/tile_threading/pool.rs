@@ -34,6 +34,9 @@ pub(crate) type WorkerJob = Box<dyn FnOnce() + Send + 'static>;
 pub struct WorkerPool {
     /// Worker thread handles. Joined in [`Drop`].
     workers: Vec<JoinHandle<()>>,
+    /// Whether one job from each scope is reserved for the thread
+    /// calling [`WorkerPool::scope`].
+    caller_participates: bool,
     /// Job sender. `Option` so [`Drop`] can drop it (closing the
     /// channel; workers' `recv()` returns `Err` and they exit).
     job_tx: Option<Sender<WorkerJob>>,
@@ -43,6 +46,7 @@ impl std::fmt::Debug for WorkerPool {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("WorkerPool")
             .field("num_workers", &self.workers.len())
+            .field("caller_participates", &self.caller_participates)
             .field("alive", &self.job_tx.is_some())
             .finish()
     }
@@ -81,24 +85,72 @@ impl WorkerPool {
     /// Returns an error if handle storage cannot be reserved or the operating
     /// system refuses to spawn a worker.
     pub fn try_new(n: NonZeroUsize) -> std::io::Result<Self> {
-        Self::try_new_with_spawner(n, |worker_id, rx| {
+        Self::try_new_with_spawner_and_caller(n.get(), false, |worker_id, rx| {
             thread::Builder::new()
                 .name(format!("rvp9-worker-{worker_id}"))
                 .spawn(move || worker_loop(rx))
         })
     }
 
-    fn try_new_with_spawner<F>(n: NonZeroUsize, mut spawn_worker: F) -> std::io::Result<Self>
+    /// Construct a pool whose total execution budget is `n` threads,
+    /// including the thread calling [`WorkerPool::scope`].
+    ///
+    /// The pool owns `n - 1` long-lived workers. One job from each
+    /// non-empty scope remains on the caller, so a four-thread codec
+    /// uses the caller plus three workers rather than five OS threads.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `n == 1` or the operating system refuses to create a
+    /// worker thread. Callers with a one-thread budget should run their
+    /// serial path without constructing a worker pool.
+    #[must_use]
+    pub fn new_with_caller(n: NonZeroUsize) -> Self {
+        let total_threads = n.get();
+        assert!(
+            total_threads >= 2,
+            "caller-participating WorkerPool requires at least two threads"
+        );
+        Self::try_new_with_worker_count(total_threads - 1, true)
+            .expect("rvp9 worker thread spawn failed")
+    }
+
+    fn try_new_with_worker_count(
+        worker_count: usize,
+        caller_participates: bool,
+    ) -> std::io::Result<Self> {
+        Self::try_new_with_spawner_and_caller(
+            worker_count,
+            caller_participates,
+            |worker_id, rx| {
+                thread::Builder::new()
+                    .name(format!("rvp9-worker-{worker_id}"))
+                    .spawn(move || worker_loop(rx))
+            },
+        )
+    }
+
+    fn try_new_with_spawner<F>(n: NonZeroUsize, spawn_worker: F) -> std::io::Result<Self>
     where
         F: FnMut(usize, Receiver<WorkerJob>) -> std::io::Result<JoinHandle<()>>,
     {
-        let n = n.get();
+        Self::try_new_with_spawner_and_caller(n.get(), false, spawn_worker)
+    }
+
+    fn try_new_with_spawner_and_caller<F>(
+        worker_count: usize,
+        caller_participates: bool,
+        mut spawn_worker: F,
+    ) -> std::io::Result<Self>
+    where
+        F: FnMut(usize, Receiver<WorkerJob>) -> std::io::Result<JoinHandle<()>>,
+    {
         let (job_tx, job_rx) = unbounded::<WorkerJob>();
         let mut workers = Vec::new();
         workers
-            .try_reserve_exact(n)
+            .try_reserve_exact(worker_count)
             .map_err(|error| std::io::Error::other(format!("reserving worker handles: {error}")))?;
-        for worker_id in 0..n {
+        for worker_id in 0..worker_count {
             let rx: Receiver<WorkerJob> = job_rx.clone();
             match spawn_worker(worker_id, rx) {
                 Ok(handle) => workers.push(handle),
@@ -118,6 +170,7 @@ impl WorkerPool {
         drop(job_rx);
         Ok(Self {
             workers,
+            caller_participates,
             job_tx: Some(job_tx),
         })
     }
@@ -166,11 +219,26 @@ impl WorkerPool {
         let pending = AtomicUsize::new(0);
         let panics: Mutex<Vec<(usize, Box<dyn std::any::Any + Send + 'static>)>> =
             Mutex::new(Vec::new());
-        let scope = FrameScope::new(self, &pending, &done_tx, &panics);
+        let caller_job = Mutex::new(None);
+        let scope = FrameScope::new(
+            self,
+            &pending,
+            &done_tx,
+            &panics,
+            self.caller_participates.then_some(&caller_job),
+        );
 
         // Run the closure under catch_unwind so we can join cleanly
         // even on panic.
         let closure_result = catch_unwind(AssertUnwindSafe(|| f(&scope)));
+
+        // In caller-participating mode, `FrameScope::submit` reserves the
+        // first job here instead of sending it to an OS worker. Run it even
+        // when the scope closure panicked: borrowed captures still require
+        // the same unconditional completion guarantee as queued jobs.
+        if let Some(job) = caller_job.into_inner().expect("caller-job mutex poisoned") {
+            job();
+        }
 
         // Drop the local `done_tx` clone so once all workers have
         // their per-job senders dropped (post-job), the channel
@@ -236,6 +304,11 @@ impl WorkerPool {
         self.job_tx
             .as_ref()
             .expect("WorkerPool::scope called after Drop began")
+    }
+
+    #[cfg(test)]
+    pub(crate) fn worker_thread_count(&self) -> usize {
+        self.workers.len()
     }
 }
 

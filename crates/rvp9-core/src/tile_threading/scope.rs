@@ -31,6 +31,10 @@ pub struct FrameScope<'scope, 'frame> {
     pending: &'scope AtomicUsize,
     done_tx: &'scope Sender<WorkerOutcome>,
     panics: &'scope Mutex<Vec<(usize, Box<dyn Any + Send + 'static>)>>,
+    /// Optional slot for one job executed by the scope caller after
+    /// submission closes. Present only for pools constructed with
+    /// `WorkerPool::new_with_caller`.
+    caller_job: Option<&'scope Mutex<Option<WorkerJob>>>,
     /// Monotonic per-job index used for "first-panic-by-submission-
     /// order" sorting in the panic-priority protocol.
     next_submission_idx: AtomicUsize,
@@ -52,12 +56,14 @@ impl<'scope, 'frame> FrameScope<'scope, 'frame> {
         pending: &'scope AtomicUsize,
         done_tx: &'scope Sender<WorkerOutcome>,
         panics: &'scope Mutex<Vec<(usize, Box<dyn Any + Send + 'static>)>>,
+        caller_job: Option<&'scope Mutex<Option<WorkerJob>>>,
     ) -> Self {
         Self {
             pool,
             pending,
             done_tx,
             panics,
+            caller_job,
             next_submission_idx: AtomicUsize::new(0),
             _frame: PhantomData,
         }
@@ -180,6 +186,16 @@ impl<'scope, 'frame> FrameScope<'scope, 'frame> {
         //     Sync; we move owned values into the closure).
         let boxed_static: Box<dyn FnOnce() + Send + 'static> =
             unsafe { std::mem::transmute(boxed_frame) };
+
+        if let Some(caller_job) = self.caller_job {
+            let mut slot = caller_job
+                .lock()
+                .expect("rvp9 WorkerPool: caller-job mutex poisoned");
+            if slot.is_none() {
+                *slot = Some(boxed_static as WorkerJob);
+                return;
+            }
+        }
 
         self.pool
             .job_sender()
@@ -437,5 +453,57 @@ mod tests {
         });
         assert_eq!(r, "ok");
         assert_eq!(sum.load(Ordering::SeqCst), 45);
+    }
+
+    /// A caller-participating four-thread budget owns three workers and
+    /// executes exactly one of four submitted jobs on the scope caller.
+    #[test]
+    fn caller_participating_pool_honors_total_thread_budget() {
+        let mut pool = WorkerPool::new_with_caller(nz(4));
+        assert_eq!(pool.worker_thread_count(), 3);
+
+        let caller = std::thread::current().id();
+        let thread_ids = Mutex::new(Vec::new());
+        pool.scope(|scope| {
+            let thread_ids = &thread_ids;
+            for job_index in 0..4 {
+                scope.submit(move || {
+                    thread_ids
+                        .lock()
+                        .unwrap()
+                        .push((job_index, std::thread::current().id()));
+                });
+            }
+        });
+
+        let thread_ids = thread_ids.into_inner().unwrap();
+        assert_eq!(thread_ids.len(), 4);
+        assert_eq!(
+            thread_ids.iter().filter(|&&(_, id)| id == caller).count(),
+            1
+        );
+        assert!(
+            thread_ids.contains(&(0, caller)),
+            "the first job should stay on the caller, matching libvpx's main-worker lane"
+        );
+    }
+
+    /// The caller-reserved job still runs when the submission closure
+    /// panics, preserving the lifetime-erasure join contract.
+    #[test]
+    fn caller_participating_scope_panic_still_runs_reserved_job() {
+        let mut pool = WorkerPool::new_with_caller(nz(2));
+        let counter = AtomicUsize::new(0);
+        let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            pool.scope(|scope| {
+                scope.submit(|| {
+                    counter.fetch_add(1, Ordering::SeqCst);
+                });
+                panic!("closure boom");
+            });
+        }));
+
+        assert!(result.is_err(), "closure panic must propagate");
+        assert_eq!(counter.load(Ordering::SeqCst), 1);
     }
 }

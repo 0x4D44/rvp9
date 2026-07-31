@@ -1429,7 +1429,7 @@ impl StreamEncoder {
         let tile_count = 1usize << parallelism.effective_log2_tile_cols(config.width);
         let frame_worker_count = (parallelism.max_threads as usize).min(tile_count);
         let frame_worker_pool = (frame_worker_count >= 2).then(|| {
-            rvp9_core::tile_threading::WorkerPool::new(
+            rvp9_core::tile_threading::WorkerPool::new_with_caller(
                 std::num::NonZeroUsize::new(frame_worker_count)
                     .expect("frame worker count is nonzero"),
             )

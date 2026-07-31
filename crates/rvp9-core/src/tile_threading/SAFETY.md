@@ -73,8 +73,9 @@ Links:
   }
   ```
 
-  Each `FrameScope::submit` does `pending.fetch_add(1)` BEFORE
-  enqueuing the job; the worker's wrapper does
+  Each `FrameScope::submit` does `pending.fetch_add(1)` BEFORE either
+  enqueuing the job or reserving it for a caller-participating scope;
+  the job wrapper does
   `done_tx.send(WorkerOutcome)` AFTER executing the user closure,
   which causes the next iteration of the drain loop to decrement
   `pending`. By induction, the drain loop only terminates when
@@ -112,7 +113,15 @@ Links:
   The Mutex's `Sync` bound makes the `&Mutex<...>` reference
   `Send`-able into the worker closure.
 
-- **(f) Channel ordering.** The job-queue `Sender` and per-scope
+- **(f) Caller participation.** `WorkerPool::new_with_caller`
+  reserves one submitted job in a scope-local Mutex. After the scope
+  closure returns or unwinds, `WorkerPool::scope` executes that job
+  on the caller before entering the same completion drain. The
+  reserved closure therefore finishes before its captured `'frame`
+  data can expire, under the same unconditional join rule as queued
+  worker jobs.
+
+- **(g) Channel ordering.** The job-queue `Sender` and per-scope
   `done_tx` both use `crossbeam_channel`. Sends are observable to
   recipients via cross-thread happens-before edges; the SeqCst
   pending counter cooperates with these to give a total order over
