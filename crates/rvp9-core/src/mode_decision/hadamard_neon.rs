@@ -120,6 +120,34 @@ unsafe fn hadamard_8x8_inner(src: *const i16, src_stride: usize, coeff: *mut i16
 }
 
 #[target_feature(enable = "neon")]
+unsafe fn hadamard_8x8_subtract_inner(
+    src: *const u8,
+    src_stride: usize,
+    pred: *const u8,
+    pred_stride: usize,
+    coeff: *mut i16,
+) {
+    // SAFETY: The safe wrapper proves that each source row has eight
+    // readable bytes and the output has 64 writable coefficients. The
+    // transform helpers operate only on local NEON registers.
+    unsafe {
+        let mut a = [vdupq_n_s16(0); 8];
+        for (row, values) in a.iter_mut().enumerate() {
+            *values = vreinterpretq_s16_u16(vsubl_u8(
+                vld1_u8(src.add(row * src_stride)),
+                vld1_u8(pred.add(row * pred_stride)),
+            ));
+        }
+        one_pass(&mut a);
+        transpose_8x8(&mut a);
+        one_pass(&mut a);
+        for (row, values) in a.into_iter().enumerate() {
+            vst1q_s16(coeff.add(row * 8), values);
+        }
+    }
+}
+
+#[target_feature(enable = "neon")]
 unsafe fn hadamard_16x16_inner(src: *const i16, src_stride: usize, coeff: *mut i16) {
     // SAFETY: The caller proves a complete 16x16 source and 256-value output.
     unsafe {
@@ -145,6 +173,57 @@ unsafe fn hadamard_16x16_inner(src: *const i16, src_stride: usize, coeff: *mut i
         let b3 = vhsubq_s16(a2, a3);
         // SAFETY: Each vector stays within the 256-value output.
         unsafe {
+            vst1q_s16(coeff.add(idx), vaddq_s16(b0, b2));
+            vst1q_s16(coeff.add(64 + idx), vaddq_s16(b1, b3));
+            vst1q_s16(coeff.add(128 + idx), vsubq_s16(b0, b2));
+            vst1q_s16(coeff.add(192 + idx), vsubq_s16(b1, b3));
+        }
+    }
+}
+
+#[target_feature(enable = "neon")]
+unsafe fn hadamard_16x16_subtract_inner(
+    src: *const u8,
+    src_stride: usize,
+    pred: *const u8,
+    pred_stride: usize,
+    coeff: *mut i16,
+) {
+    // SAFETY: The safe wrapper proves complete 16x16 inputs and a
+    // 256-coefficient output. Each sub-block and vector stays in range.
+    unsafe {
+        hadamard_8x8_subtract_inner(src, src_stride, pred, pred_stride, coeff);
+        hadamard_8x8_subtract_inner(
+            src.add(8),
+            src_stride,
+            pred.add(8),
+            pred_stride,
+            coeff.add(64),
+        );
+        hadamard_8x8_subtract_inner(
+            src.add(8 * src_stride),
+            src_stride,
+            pred.add(8 * pred_stride),
+            pred_stride,
+            coeff.add(128),
+        );
+        hadamard_8x8_subtract_inner(
+            src.add(8 * src_stride + 8),
+            src_stride,
+            pred.add(8 * pred_stride + 8),
+            pred_stride,
+            coeff.add(192),
+        );
+
+        for idx in (0..64).step_by(8) {
+            let a0 = vld1q_s16(coeff.add(idx));
+            let a1 = vld1q_s16(coeff.add(64 + idx));
+            let a2 = vld1q_s16(coeff.add(128 + idx));
+            let a3 = vld1q_s16(coeff.add(192 + idx));
+            let b0 = vhaddq_s16(a0, a1);
+            let b1 = vhsubq_s16(a0, a1);
+            let b2 = vhaddq_s16(a2, a3);
+            let b3 = vhsubq_s16(a2, a3);
             vst1q_s16(coeff.add(idx), vaddq_s16(b0, b2));
             vst1q_s16(coeff.add(64 + idx), vaddq_s16(b1, b3));
             vst1q_s16(coeff.add(128 + idx), vsubq_s16(b0, b2));
@@ -187,6 +266,57 @@ unsafe fn hadamard_32x32_inner(src: *const i16, src_stride: usize, coeff: *mut i
     }
 }
 
+#[target_feature(enable = "neon")]
+unsafe fn hadamard_32x32_subtract_inner(
+    src: *const u8,
+    src_stride: usize,
+    pred: *const u8,
+    pred_stride: usize,
+    coeff: *mut i16,
+) {
+    // SAFETY: The safe wrapper proves complete 32x32 inputs and a
+    // 1024-coefficient output. Each sub-block and vector stays in range.
+    unsafe {
+        hadamard_16x16_subtract_inner(src, src_stride, pred, pred_stride, coeff);
+        hadamard_16x16_subtract_inner(
+            src.add(16),
+            src_stride,
+            pred.add(16),
+            pred_stride,
+            coeff.add(256),
+        );
+        hadamard_16x16_subtract_inner(
+            src.add(16 * src_stride),
+            src_stride,
+            pred.add(16 * pred_stride),
+            pred_stride,
+            coeff.add(512),
+        );
+        hadamard_16x16_subtract_inner(
+            src.add(16 * src_stride + 16),
+            src_stride,
+            pred.add(16 * pred_stride + 16),
+            pred_stride,
+            coeff.add(768),
+        );
+
+        for idx in (0..256).step_by(8) {
+            let a0 = vld1q_s16(coeff.add(idx));
+            let a1 = vld1q_s16(coeff.add(256 + idx));
+            let a2 = vld1q_s16(coeff.add(512 + idx));
+            let a3 = vld1q_s16(coeff.add(768 + idx));
+            let b0 = vshrq_n_s16::<1>(vhaddq_s16(a0, a1));
+            let b1 = vshrq_n_s16::<1>(vhsubq_s16(a0, a1));
+            let b2 = vshrq_n_s16::<1>(vhaddq_s16(a2, a3));
+            let b3 = vshrq_n_s16::<1>(vhsubq_s16(a2, a3));
+            vst1q_s16(coeff.add(idx), vaddq_s16(b0, b2));
+            vst1q_s16(coeff.add(256 + idx), vaddq_s16(b1, b3));
+            vst1q_s16(coeff.add(512 + idx), vsubq_s16(b0, b2));
+            vst1q_s16(coeff.add(768 + idx), vsubq_s16(b1, b3));
+        }
+    }
+}
+
 #[inline]
 fn validate(src: &[i16], src_stride: usize, coeff: &[i16], size: usize) {
     assert!(src_stride >= size);
@@ -206,8 +336,83 @@ pub(super) fn hadamard_16x16(src: &[i16], src_stride: usize, coeff: &mut [i16]) 
     unsafe { hadamard_16x16_inner(src.as_ptr(), src_stride, coeff.as_mut_ptr()) };
 }
 
+pub(super) fn hadamard_8x8_subtract(
+    src: &[u8],
+    src_stride: usize,
+    pred: &[u8],
+    pred_stride: usize,
+    coeff: &mut [i16],
+) {
+    validate_subtract(src, src_stride, pred, pred_stride, coeff, 8);
+    // SAFETY: validation proves every byte load and coefficient store.
+    unsafe {
+        hadamard_8x8_subtract_inner(
+            src.as_ptr(),
+            src_stride,
+            pred.as_ptr(),
+            pred_stride,
+            coeff.as_mut_ptr(),
+        )
+    };
+}
+
+pub(super) fn hadamard_16x16_subtract(
+    src: &[u8],
+    src_stride: usize,
+    pred: &[u8],
+    pred_stride: usize,
+    coeff: &mut [i16],
+) {
+    validate_subtract(src, src_stride, pred, pred_stride, coeff, 16);
+    // SAFETY: validation proves every byte load and coefficient store.
+    unsafe {
+        hadamard_16x16_subtract_inner(
+            src.as_ptr(),
+            src_stride,
+            pred.as_ptr(),
+            pred_stride,
+            coeff.as_mut_ptr(),
+        )
+    };
+}
+
+pub(super) fn hadamard_32x32_subtract(
+    src: &[u8],
+    src_stride: usize,
+    pred: &[u8],
+    pred_stride: usize,
+    coeff: &mut [i16],
+) {
+    validate_subtract(src, src_stride, pred, pred_stride, coeff, 32);
+    // SAFETY: validation proves every byte load and coefficient store.
+    unsafe {
+        hadamard_32x32_subtract_inner(
+            src.as_ptr(),
+            src_stride,
+            pred.as_ptr(),
+            pred_stride,
+            coeff.as_mut_ptr(),
+        )
+    };
+}
+
 pub(super) fn hadamard_32x32(src: &[i16], src_stride: usize, coeff: &mut [i16]) {
     validate(src, src_stride, coeff, 32);
     // SAFETY: validate proves all pointer ranges; NEON is mandatory on AArch64.
     unsafe { hadamard_32x32_inner(src.as_ptr(), src_stride, coeff.as_mut_ptr()) };
+}
+
+fn validate_subtract(
+    src: &[u8],
+    src_stride: usize,
+    pred: &[u8],
+    pred_stride: usize,
+    coeff: &[i16],
+    size: usize,
+) {
+    assert!(src_stride >= size);
+    assert!(pred_stride >= size);
+    assert!(src.len() >= (size - 1) * src_stride + size);
+    assert!(pred.len() >= (size - 1) * pred_stride + size);
+    assert!(coeff.len() >= size * size);
 }

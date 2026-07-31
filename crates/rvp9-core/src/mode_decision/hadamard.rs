@@ -214,6 +214,42 @@ pub fn hadamard_16x16(src: &[i16], src_stride: usize, coeff: &mut [i16]) {
     }
 }
 
+/// Fused AArch64 `src - pred` and 8×8 Walsh-Hadamard transform.
+#[cfg(target_arch = "aarch64")]
+pub fn hadamard_8x8_subtract(
+    src: &[u8],
+    src_stride: usize,
+    pred: &[u8],
+    pred_stride: usize,
+    coeff: &mut [i16],
+) {
+    neon::hadamard_8x8_subtract(src, src_stride, pred, pred_stride, coeff);
+}
+
+/// Fused AArch64 `src - pred` and 16×16 Walsh-Hadamard transform.
+#[cfg(target_arch = "aarch64")]
+pub fn hadamard_16x16_subtract(
+    src: &[u8],
+    src_stride: usize,
+    pred: &[u8],
+    pred_stride: usize,
+    coeff: &mut [i16],
+) {
+    neon::hadamard_16x16_subtract(src, src_stride, pred, pred_stride, coeff);
+}
+
+/// Fused AArch64 `src - pred` and 32×32 Walsh-Hadamard transform.
+#[cfg(target_arch = "aarch64")]
+pub fn hadamard_32x32_subtract(
+    src: &[u8],
+    src_stride: usize,
+    pred: &[u8],
+    pred_stride: usize,
+    coeff: &mut [i16],
+) {
+    neon::hadamard_32x32_subtract(src, src_stride, pred, pred_stride, coeff);
+}
+
 /// 2-D Walsh-Hadamard transform of a 32×32 block.
 pub fn hadamard_32x32(src: &[i16], src_stride: usize, coeff: &mut [i16]) {
     #[cfg(target_arch = "aarch64")]
@@ -388,6 +424,58 @@ mod tests {
                 assert_eq!(
                     actual, expected,
                     "NEON mismatch for {size}x{size}, stride jitter {jitter}"
+                );
+            }
+        }
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    #[test]
+    fn fused_subtract_matches_staged_hadamard_for_all_sizes_and_strides() {
+        type Transform = fn(&[i16], usize, &mut [i16]);
+        type FusedTransform = fn(&[u8], usize, &[u8], usize, &mut [i16]);
+
+        for (size, staged, fused) in [
+            (
+                8usize,
+                hadamard_8x8 as Transform,
+                hadamard_8x8_subtract as FusedTransform,
+            ),
+            (16, hadamard_16x16, hadamard_16x16_subtract),
+            (32, hadamard_32x32, hadamard_32x32_subtract),
+        ] {
+            for jitter in [0usize, 1, 5] {
+                let src_stride = size + jitter;
+                let pred_stride = size + 5 - jitter;
+                let mut src = vec![0u8; (size - 1) * src_stride + size];
+                let mut pred = vec![0u8; (size - 1) * pred_stride + size];
+                for row in 0..size {
+                    for col in 0..size {
+                        src[row * src_stride + col] =
+                            ((row * 73 + col * 151 + jitter * 29) & 255) as u8;
+                        pred[row * pred_stride + col] =
+                            ((row * 197 + col * 41 + jitter * 113 + 255) & 255) as u8;
+                    }
+                }
+                src[0] = 0;
+                pred[0] = 255;
+                src[(size - 1) * src_stride + size - 1] = 255;
+                pred[(size - 1) * pred_stride + size - 1] = 0;
+
+                let mut residual = vec![0i16; size * size];
+                for row in 0..size {
+                    for col in 0..size {
+                        residual[row * size + col] = i16::from(src[row * src_stride + col])
+                            - i16::from(pred[row * pred_stride + col]);
+                    }
+                }
+                let mut expected = vec![0i16; size * size];
+                let mut actual = vec![0i16; size * size];
+                staged(&residual, size, &mut expected);
+                fused(&src, src_stride, &pred, pred_stride, &mut actual);
+                assert_eq!(
+                    actual, expected,
+                    "fused subtract mismatch for {size}x{size}, stride jitter {jitter}"
                 );
             }
         }

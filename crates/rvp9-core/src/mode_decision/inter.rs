@@ -105,6 +105,10 @@ use crate::mode_decision::block_yrd::block_error_fp_i32;
 #[cfg(not(target_arch = "aarch64"))]
 use crate::mode_decision::block_yrd::satd_i16;
 use crate::mode_decision::hadamard::{hadamard_8x8, hadamard_16x16, hadamard_32x32};
+#[cfg(target_arch = "aarch64")]
+use crate::mode_decision::hadamard::{
+    hadamard_8x8_subtract, hadamard_16x16_subtract, hadamard_32x32_subtract,
+};
 use crate::mode_decision::model_rd::{
     ModelRdResult, ModelRdUvInput, ModelRdYInput, SkipTxfm, model_rd_for_sb_uv, model_rd_for_sb_y,
     model_rd_for_sb_y_large,
@@ -4004,8 +4008,21 @@ fn reconstruct_via_round_trip(
     // elements for every size made their stack zeroing as expensive as a
     // Tx32x32 tile even though only the prefix could be read.
     macro_rules! hadamard_metrics {
-        ($n:literal, $transform:path, $is_32x32:literal) => {{
+        ($n:literal, $transform:path, $subtract:path, $is_32x32:literal, $off_x:expr, $off_y:expr) => {{
             let mut had_coeff_i16 = [0i16; $n];
+            #[cfg(target_arch = "aarch64")]
+            if reconstruct {
+                $transform(&residual[..$n], tx_side, &mut had_coeff_i16);
+            } else {
+                $subtract(
+                    &src.data[(sy + $off_y) * src.stride + sx + $off_x..],
+                    src.stride,
+                    &pred[$off_y * bw + $off_x..],
+                    bw,
+                    &mut had_coeff_i16,
+                );
+            }
+            #[cfg(not(target_arch = "aarch64"))]
             $transform(&residual[..$n], tx_side, &mut had_coeff_i16);
 
             #[cfg(target_arch = "aarch64")]
@@ -4105,16 +4122,19 @@ fn reconstruct_via_round_trip(
         for tx in 0..n_tiles_x {
             let off_x = tx * tx_side;
             let off_y = ty * tx_side;
-            // 1. Build residual = src - pred for this tile.
+            // 1. Build residual = src - pred for reconstruction. The
+            // AArch64 Hadamard-only path fuses these loads into its transform.
             #[cfg(target_arch = "aarch64")]
-            crate::dsp::aarch64::subtract_square_neon(
-                &src.data[(sy + off_y) * src.stride + sx + off_x..],
-                src.stride,
-                &pred[off_y * bw + off_x..],
-                bw,
-                residual,
-                tx_side,
-            );
+            if reconstruct {
+                crate::dsp::aarch64::subtract_square_neon(
+                    &src.data[(sy + off_y) * src.stride + sx + off_x..],
+                    src.stride,
+                    &pred[off_y * bw + off_x..],
+                    bw,
+                    residual,
+                    tx_side,
+                );
+            }
             #[cfg(not(target_arch = "aarch64"))]
             for r in 0..tx_side {
                 for c in 0..tx_side {
@@ -4132,9 +4152,29 @@ fn reconstruct_via_round_trip(
             //
             // 1-3. Hadamard transform, quantize_fp, and tile metrics.
             let (had_eob, tile_rate_satd, tile_dist) = match tx_size {
-                TxSize::Tx8x8 => hadamard_metrics!(64, hadamard_8x8, false),
-                TxSize::Tx16x16 => hadamard_metrics!(256, hadamard_16x16, false),
-                TxSize::Tx32x32 => hadamard_metrics!(1024, hadamard_32x32, true),
+                TxSize::Tx8x8 => {
+                    hadamard_metrics!(64, hadamard_8x8, hadamard_8x8_subtract, false, off_x, off_y)
+                }
+                TxSize::Tx16x16 => {
+                    hadamard_metrics!(
+                        256,
+                        hadamard_16x16,
+                        hadamard_16x16_subtract,
+                        false,
+                        off_x,
+                        off_y
+                    )
+                }
+                TxSize::Tx32x32 => {
+                    hadamard_metrics!(
+                        1024,
+                        hadamard_32x32,
+                        hadamard_32x32_subtract,
+                        true,
+                        off_x,
+                        off_y
+                    )
+                }
                 TxSize::Tx4x4 => unreachable!(),
             };
             // Accumulate block_yrd metrics from Hadamard-quantized

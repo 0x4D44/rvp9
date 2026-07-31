@@ -3100,7 +3100,10 @@ While qcoeff and dqcoeff lanes remain live, the kernel accumulates EOB, qcoeff
 SATD, and squared coefficient error into independent SIMD lanes. It returns
 only those three RD metrics and never materializes qcoeff or dqcoeff arrays.
 Its SATD reduction uses one unsigned pairwise-widening accumulator for the
-absolute i16 qcoeff lanes instead of widening low/high halves separately.
+absolute i16 qcoeff lanes instead of widening low/high halves separately. On
+AArch64, the Hadamard-only path also subtracts source and prediction bytes in
+the transform's first NEON load, rather than writing and rereading a separate
+signed-residual slab. The reconstruction-compatible path remains staged.
 
 **Why:** the previous picker copied 64, 256, or 1,024 coefficients into a
 separate i32 array for every filter candidate, even though the source
@@ -3126,6 +3129,9 @@ requires the clean-host corpus matrix. Replacing the two SATD accumulators
 with the exact pairwise-widening reduction improved three twenty-pair
 one-thread/four-thread child-CPU trials by `-0.162%`, `-0.215%`, and
 `-0.292%`; a second four-thread trial improved by `-0.163%`.
+Fusing source subtraction into the Hadamard transform then improved another
+`-0.572%` at one thread and `-0.331%` at four threads across twenty pairs,
+with 14/20 wins in both trials.
 
 **Future plan:** retain this picker-only fusion while it stays exact. The
 general transform and emitted-coefficient quantizer APIs remain widened and
