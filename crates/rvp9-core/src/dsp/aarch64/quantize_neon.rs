@@ -465,43 +465,28 @@ unsafe fn quantize_fp_32x32_8(
     qcoeff: *mut i16,
     dqcoeff: *mut i16,
     iscan: *const i16,
-    round_lo: int32x4_t,
-    round_hi: int32x4_t,
-    quant_lo: int32x4_t,
-    quant_hi: int32x4_t,
-    dequant_lo: int32x4_t,
-    dequant_hi: int32x4_t,
-    gate_lo: int32x4_t,
-    gate_hi: int32x4_t,
+    round: int16x8_t,
+    quant: int16x8_t,
+    dequant: int16x8_t,
+    gate: int16x8_t,
     eob_max: &mut int16x8_t,
 ) {
     let coeff_lo = vld1q_s32(coeff);
     let coeff_hi = vld1q_s32(coeff.add(4));
-    let sign_lo = vshrq_n_s32::<31>(coeff_lo);
-    let sign_hi = vshrq_n_s32::<31>(coeff_hi);
-    let abs_lo = vabsq_s32(coeff_lo);
-    let abs_hi = vabsq_s32(coeff_hi);
-    let keep_lo = vcgeq_s32(abs_lo, gate_lo);
-    let keep_hi = vcgeq_s32(abs_hi, gate_hi);
-    let max = vdupq_n_s32(i16::MAX as i32);
-
-    let rounded_lo = vminq_s32(vaddq_s32(abs_lo, round_lo), max);
-    let rounded_hi = vminq_s32(vaddq_s32(abs_hi, round_hi), max);
-    let abs_q_lo = vshrq_n_s32::<15>(vmulq_s32(rounded_lo, quant_lo));
-    let abs_q_hi = vshrq_n_s32::<15>(vmulq_s32(rounded_hi, quant_hi));
-    let signed_lo = vandq_s32(
-        vsubq_s32(veorq_s32(abs_q_lo, sign_lo), sign_lo),
-        vreinterpretq_s32_u32(keep_lo),
+    let coeff = vcombine_s16(vmovn_s32(coeff_lo), vmovn_s32(coeff_hi));
+    let sign = vshrq_n_s16::<15>(coeff);
+    let abs = vqabsq_s16(coeff);
+    let keep = vcgeq_s16(abs, gate);
+    let rounded = vqaddq_s16(abs, round);
+    let abs_q = vqdmulhq_s16(rounded, quant);
+    let q = vandq_s16(
+        vsubq_s16(veorq_s16(abs_q, sign), sign),
+        vreinterpretq_s16_u16(keep),
     );
-    let signed_hi = vandq_s32(
-        vsubq_s32(veorq_s32(abs_q_hi, sign_hi), sign_hi),
-        vreinterpretq_s32_u32(keep_hi),
-    );
-    let q = vcombine_s16(vmovn_s32(signed_lo), vmovn_s32(signed_hi));
     vst1q_s16(qcoeff, q);
 
-    let dq_lo = vmulq_s32(signed_lo, dequant_lo);
-    let dq_hi = vmulq_s32(signed_hi, dequant_hi);
+    let dq_lo = vmull_s16(vget_low_s16(q), vget_low_s16(dequant));
+    let dq_hi = vmull_s16(vget_high_s16(q), vget_high_s16(dequant));
     let negative_lo = vreinterpretq_s32_u32(vshrq_n_u32::<31>(vreinterpretq_u32_s32(dq_lo)));
     let negative_hi = vreinterpretq_s32_u32(vshrq_n_u32::<31>(vreinterpretq_u32_s32(dq_hi)));
     let dq_lo = vshrq_n_s32::<1>(vaddq_s32(dq_lo, negative_lo));
@@ -525,25 +510,23 @@ unsafe fn vp9_quantize_fp_32x32_neon_inner(
     iscan: *const i16,
 ) -> u16 {
     let dc_ac = |values: &[i16; 2]| {
-        vld1q_s32(
+        vld1q_s16(
             [
-                i32::from(values[0]),
-                i32::from(values[1]),
-                i32::from(values[1]),
-                i32::from(values[1]),
+                values[0], values[1], values[1], values[1], values[1], values[1], values[1],
+                values[1],
             ]
             .as_ptr(),
         )
     };
-    let ac = |value: i16| vdupq_n_s32(i32::from(value));
-    let round_dc_ac = vshrq_n_s32::<1>(vaddq_s32(dc_ac(round), vdupq_n_s32(1)));
-    let round_ac = vdupq_n_s32((i32::from(round[1]) + 1) >> 1);
+    let ac = |value: i16| vdupq_n_s16(value);
+    let round_dc_ac = vshrq_n_s16::<1>(vaddq_s16(dc_ac(round), vdupq_n_s16(1)));
+    let round_ac = vdupq_n_s16((round[1] + 1) >> 1);
     let quant_dc_ac = dc_ac(quant);
     let quant_ac = ac(quant[1]);
     let dequant_dc_ac = dc_ac(dequant);
     let dequant_ac = ac(dequant[1]);
-    let gate_dc_ac = vshrq_n_s32::<2>(dequant_dc_ac);
-    let gate_ac = vdupq_n_s32(i32::from(dequant[1]) >> 2);
+    let gate_dc_ac = vshrq_n_s16::<2>(dequant_dc_ac);
+    let gate_ac = vdupq_n_s16(dequant[1] >> 2);
     let mut eob_max = vdupq_n_s16(0);
 
     quantize_fp_32x32_8(
@@ -552,13 +535,9 @@ unsafe fn vp9_quantize_fp_32x32_neon_inner(
         dqcoeff,
         iscan,
         round_dc_ac,
-        round_ac,
         quant_dc_ac,
-        quant_ac,
         dequant_dc_ac,
-        dequant_ac,
         gate_dc_ac,
-        gate_ac,
         &mut eob_max,
     );
     let mut i = 8;
@@ -569,12 +548,8 @@ unsafe fn vp9_quantize_fp_32x32_neon_inner(
             dqcoeff.add(i),
             iscan.add(i),
             round_ac,
-            round_ac,
-            quant_ac,
             quant_ac,
             dequant_ac,
-            dequant_ac,
-            gate_ac,
             gate_ac,
             &mut eob_max,
         );
@@ -610,7 +585,7 @@ pub fn vp9_quantize_fp_32x32_neon(
 
     // SAFETY: NEON is mandatory on AArch64. The slice assertions prove
     // every 8-lane load and store. Valid 8-bit transform coefficients are
-    // i16-bounded, so all widened arithmetic remains within i32.
+    // i16-bounded, matching the low-bitdepth libvpx kernel's narrowing.
     unsafe {
         vp9_quantize_fp_32x32_neon_inner(
             coeff.as_ptr(),
