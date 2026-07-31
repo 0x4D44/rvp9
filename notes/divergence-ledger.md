@@ -24,28 +24,32 @@ Each entry:
 
 ## Entries
 
-### 2026-07-31 — Vectorize four exact 32-point DCTs in parallel
+### 2026-07-31 — Widen the complete second 32-point DCT pass
 **Where:** `rvp9-core::transforms::forward_neon`; libvpx counterparts:
 `vpx_dsp/arm/fdct32x32_neon.c` and `vpx_dsp/arm/fdct32x32_neon.h`.
 **What libvpx does:** its first 32x32 pass uses eight i16 NEON lanes and its
 overflow-sensitive second pass widens selected stages to paired i32 vectors.
-**What rvp9 does:** applies the existing scalar seven-stage 32-point DCT to
-four independent rows or columns in parallel i32 lanes. Every cosine product
-widens to i64 before the exact `+8192 >> 14` reduction.
-**Why:** rvp9's transform API stores forward coefficients as i32. Four-wide
-i32 lanes preserve that API and mirror the already-audited scalar equations,
-while avoiding a second mixed-width transform implementation.
+**What rvp9 does:** its first pass now also uses eight i16 lanes. Before the
+second pass it widens all eight lanes into two four-lane i32 groups, then runs
+the same audited scalar schedule. First-pass cosine products widen to i32;
+second-pass products widen to i64.
+**Why:** widening at the pass boundary keeps one width-generic seven-stage
+schedule and preserves rvp9's i32 coefficient API. It removes half the
+first-pass lane groups and halves intermediate storage without duplicating
+libvpx's macro-heavy mixed-width second-pass implementation.
 **Byte-parity impact:** none. Differential coverage compares 128 randomized
 valid residual blocks with stride jitter plus constant and alternating
 residual extremes. The 120-frame product stream remained byte-identical.
 **Compression-efficiency impact:** none because every transform coefficient
 and emitted stream is unchanged.
-**Speed impact:** two order-reversed ten-encode aggregates improved
-`15.91 -> 15.56 s` and `15.67 -> 15.36 s` (`2.0-2.2%`) on the 1280x704
-Stage 4a VBR cpu-used 7 input.
-**Future plan:** retain the four-wide exact kernel while it remains
-byte-identical. Revisit libvpx's eight-wide mixed-width layout only if a
-future profile still makes the transform material.
+**Speed impact:** sixteen warmed alternating one-thread pairs improved median
+wall time `1.081781 -> 1.061569 s` (`-1.408%` paired) and child CPU
+`1.043518 -> 1.025352 s` (`-1.424%`). Twenty four-thread pairs improved
+wall time `0.679587 -> 0.678864 s` (`-0.767%`) and child CPU
+`1.251782 -> 1.237006 s` (`-1.022%`).
+**Future plan:** retain the pass-boundary widening while it stays exact and
+Pareto-positive. Revisit libvpx's selective second-pass widening only if a
+fresh profile still makes the transform material.
 
 ### 2026-07-31 — Use a generic eight-lane NEON interpolation kernel
 **Where:** `rvp9-core::dsp::aarch64::convolve8_neon`; libvpx counterpart:

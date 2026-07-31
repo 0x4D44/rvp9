@@ -1,7 +1,8 @@
 //! AArch64 NEON 16x16 and 32x32 forward DCTs.
 //!
-//! The scalar VP9 transform is applied to four independent rows or columns
-//! in parallel. Products widen to i64 before the exact `+8192 >> 14`
+//! The 32x32 first pass applies the scalar VP9 schedule to eight i16 lanes;
+//! its second pass widens to four i32 lanes before the overflow-sensitive
+//! stages. Cosine products widen one level before the exact `+8192 >> 14`
 //! reduction, preserving the scalar transform's valid-residual result.
 
 #![allow(unsafe_op_in_unsafe_fn)]
@@ -11,6 +12,7 @@ use core::arch::aarch64::*;
 use crate::transforms::constants::*;
 
 type V = int32x4_t;
+type V16 = int16x8_t;
 
 #[inline(always)]
 unsafe fn add(a: V, b: V) -> V {
@@ -47,6 +49,38 @@ unsafe fn mul_add_round(a: V, ac: i32, b: V, bc: i32) -> V {
 #[inline(always)]
 unsafe fn wrap16(value: V) -> V {
     vmovl_s16(vmovn_s32(value))
+}
+
+#[inline(always)]
+unsafe fn add16(a: V16, b: V16) -> V16 {
+    vaddq_s16(a, b)
+}
+
+#[inline(always)]
+unsafe fn sub16(a: V16, b: V16) -> V16 {
+    vsubq_s16(a, b)
+}
+
+#[inline(always)]
+unsafe fn mul_round16(a: V16, constant: i32) -> V16 {
+    let constant = constant as i16;
+    let bias = vdupq_n_s32(1 << 13);
+    let lo = vaddq_s32(vmull_n_s16(vget_low_s16(a), constant), bias);
+    let hi = vaddq_s32(vmull_high_n_s16(a, constant), bias);
+    vcombine_s16(vshrn_n_s32::<14>(lo), vshrn_n_s32::<14>(hi))
+}
+
+#[inline(always)]
+unsafe fn mul_add_round16(a: V16, ac: i32, b: V16, bc: i32) -> V16 {
+    let ac = ac as i16;
+    let bc = bc as i16;
+    let bias = vdupq_n_s32(1 << 13);
+    let lo = vaddq_s32(
+        vmlal_n_s16(vmull_n_s16(vget_low_s16(a), ac), vget_low_s16(b), bc),
+        bias,
+    );
+    let hi = vaddq_s32(vmlal_high_n_s16(vmull_high_n_s16(a, ac), b, bc), bias);
+    vcombine_s16(vshrn_n_s32::<14>(lo), vshrn_n_s32::<14>(hi))
 }
 
 /// Four independent 1-D 16-point DCTs.
@@ -134,11 +168,26 @@ unsafe fn fdct16_interpass_round(value: V) -> V {
     vshrq_n_s32::<2>(add(value, vdupq_n_s32(1)))
 }
 
-/// Four independent, non-RD 1-D 32-point DCTs.
-#[inline]
-#[target_feature(enable = "neon")]
-unsafe fn fdct32x4(input: &[V; 32], output: &mut [V; 32]) {
-    let zero = vdupq_n_s32(0);
+/// Width-generic, non-RD 1-D 32-point DCT schedule.
+///
+/// The operation closures select either four i32 lanes for the overflow-safe
+/// second pass or eight i16 lanes for the bounded first pass.
+#[inline(always)]
+unsafe fn fdct32_body<T, Add, Sub, Mul, MulAdd>(
+    input: &[T; 32],
+    output: &mut [T; 32],
+    zero: T,
+    add: Add,
+    sub: Sub,
+    mul_round: Mul,
+    mul_add_round: MulAdd,
+) where
+    T: Copy,
+    Add: Fn(T, T) -> T,
+    Sub: Fn(T, T) -> T,
+    Mul: Fn(T, i32) -> T,
+    MulAdd: Fn(T, i32, T, i32) -> T,
+{
     let mut step = [zero; 32];
     let mut out = [zero; 32];
 
@@ -379,6 +428,36 @@ unsafe fn fdct32x4(input: &[V; 32], output: &mut [V; 32]) {
     output[31] = mul_add_round(step[31], COSPI_31_64, step[16], -COSPI_1_64);
 }
 
+/// Four independent, overflow-safe 1-D 32-point DCTs.
+#[inline]
+#[target_feature(enable = "neon")]
+unsafe fn fdct32x4(input: &[V; 32], output: &mut [V; 32]) {
+    fdct32_body(
+        input,
+        output,
+        vdupq_n_s32(0),
+        |a, b| add(a, b),
+        |a, b| sub(a, b),
+        |a, constant| mul_round(a, constant),
+        |a, ac, b, bc| mul_add_round(a, ac, b, bc),
+    );
+}
+
+/// Eight independent first-pass 1-D 32-point DCTs.
+#[inline]
+#[target_feature(enable = "neon")]
+unsafe fn fdct32x8_first_pass(input: &[V16; 32], output: &mut [V16; 32]) {
+    fdct32_body(
+        input,
+        output,
+        vdupq_n_s16(0),
+        |a, b| add16(a, b),
+        |a, b| sub16(a, b),
+        |a, constant| mul_round16(a, constant),
+        |a, ac, b, bc| mul_add_round16(a, ac, b, bc),
+    );
+}
+
 #[inline(always)]
 unsafe fn transpose4(a: V, b: V, c: V, d: V) -> [V; 4] {
     let ab0 = vtrn1q_s32(a, b);
@@ -394,10 +473,65 @@ unsafe fn transpose4(a: V, b: V, c: V, d: V) -> [V; 4] {
 }
 
 #[inline(always)]
-unsafe fn pass0_round(value: V) -> V {
-    let one = vdupq_n_s32(1);
-    let positive = vreinterpretq_s32_u32(vshrq_n_u32::<31>(vcgtq_s32(value, vdupq_n_s32(0))));
-    vshrq_n_s32::<2>(add(add(value, one), positive))
+unsafe fn transpose8(mut rows: [V16; 8]) -> [V16; 8] {
+    let ab0 = vtrn1q_s16(rows[0], rows[1]);
+    let ab1 = vtrn2q_s16(rows[0], rows[1]);
+    let cd0 = vtrn1q_s16(rows[2], rows[3]);
+    let cd1 = vtrn2q_s16(rows[2], rows[3]);
+    let ef0 = vtrn1q_s16(rows[4], rows[5]);
+    let ef1 = vtrn2q_s16(rows[4], rows[5]);
+    let gh0 = vtrn1q_s16(rows[6], rows[7]);
+    let gh1 = vtrn2q_s16(rows[6], rows[7]);
+
+    let abcd0 = vtrn1q_s32(vreinterpretq_s32_s16(ab0), vreinterpretq_s32_s16(cd0));
+    let abcd1 = vtrn1q_s32(vreinterpretq_s32_s16(ab1), vreinterpretq_s32_s16(cd1));
+    let abcd2 = vtrn2q_s32(vreinterpretq_s32_s16(ab0), vreinterpretq_s32_s16(cd0));
+    let abcd3 = vtrn2q_s32(vreinterpretq_s32_s16(ab1), vreinterpretq_s32_s16(cd1));
+    let efgh0 = vtrn1q_s32(vreinterpretq_s32_s16(ef0), vreinterpretq_s32_s16(gh0));
+    let efgh1 = vtrn1q_s32(vreinterpretq_s32_s16(ef1), vreinterpretq_s32_s16(gh1));
+    let efgh2 = vtrn2q_s32(vreinterpretq_s32_s16(ef0), vreinterpretq_s32_s16(gh0));
+    let efgh3 = vtrn2q_s32(vreinterpretq_s32_s16(ef1), vreinterpretq_s32_s16(gh1));
+
+    rows[0] = vreinterpretq_s16_s64(vtrn1q_s64(
+        vreinterpretq_s64_s32(abcd0),
+        vreinterpretq_s64_s32(efgh0),
+    ));
+    rows[1] = vreinterpretq_s16_s64(vtrn1q_s64(
+        vreinterpretq_s64_s32(abcd1),
+        vreinterpretq_s64_s32(efgh1),
+    ));
+    rows[2] = vreinterpretq_s16_s64(vtrn1q_s64(
+        vreinterpretq_s64_s32(abcd2),
+        vreinterpretq_s64_s32(efgh2),
+    ));
+    rows[3] = vreinterpretq_s16_s64(vtrn1q_s64(
+        vreinterpretq_s64_s32(abcd3),
+        vreinterpretq_s64_s32(efgh3),
+    ));
+    rows[4] = vreinterpretq_s16_s64(vtrn2q_s64(
+        vreinterpretq_s64_s32(abcd0),
+        vreinterpretq_s64_s32(efgh0),
+    ));
+    rows[5] = vreinterpretq_s16_s64(vtrn2q_s64(
+        vreinterpretq_s64_s32(abcd1),
+        vreinterpretq_s64_s32(efgh1),
+    ));
+    rows[6] = vreinterpretq_s16_s64(vtrn2q_s64(
+        vreinterpretq_s64_s32(abcd2),
+        vreinterpretq_s64_s32(efgh2),
+    ));
+    rows[7] = vreinterpretq_s16_s64(vtrn2q_s64(
+        vreinterpretq_s64_s32(abcd3),
+        vreinterpretq_s64_s32(efgh3),
+    ));
+    rows
+}
+
+#[inline(always)]
+unsafe fn pass0_round16(value: V16) -> V16 {
+    let one = vdupq_n_s16(1);
+    let positive = vreinterpretq_s16_u16(vshrq_n_u16::<15>(vcgtq_s16(value, vdupq_n_s16(0))));
+    vshrq_n_s16::<2>(add16(add16(value, one), positive))
 }
 
 #[inline(always)]
@@ -411,48 +545,69 @@ unsafe fn pass1_round_and_wrap(value: V) -> V {
 #[target_feature(enable = "neon")]
 unsafe fn fdct32x32_inner(input: *const i16, output: *mut i32, stride: usize) {
     let zero = vdupq_n_s32(0);
-    let mut intermediate = [0i32; 1024];
+    let zero16 = vdupq_n_s16(0);
+    let mut intermediate = [0i16; 1024];
 
-    // First pass: four source columns per vector lane.
-    for column in (0..32).step_by(4) {
-        let mut lane_in = [zero; 32];
+    // The first pass stays within i16 for valid 8-bit residuals, matching
+    // libvpx's eight-wide NEON kernel and halving the number of lane groups.
+    for column in (0..32).step_by(8) {
+        let mut lane_in = [zero16; 32];
         for (row, values) in lane_in.iter_mut().enumerate() {
-            *values = vshlq_n_s32::<2>(vmovl_s16(vld1_s16(input.add(row * stride + column))));
+            *values = vshlq_n_s16::<2>(vld1q_s16(input.add(row * stride + column)));
         }
-        let mut lane_out = [zero; 32];
-        fdct32x4(&lane_in, &mut lane_out);
+        let mut lane_out = [zero16; 32];
+        fdct32x8_first_pass(&lane_in, &mut lane_out);
         for (coefficient, &values) in lane_out.iter().enumerate() {
-            vst1q_s32(
+            vst1q_s16(
                 intermediate.as_mut_ptr().add(coefficient * 32 + column),
-                pass0_round(values),
+                pass0_round16(values),
             );
         }
     }
 
-    // Second pass: transpose four intermediate rows into four independent
-    // transforms, then transpose each four-coefficient output group back.
-    for row in (0..32).step_by(4) {
-        let mut lane_in = [zero; 32];
-        for column in (0..32).step_by(4) {
-            let rows = transpose4(
-                vld1q_s32(intermediate.as_ptr().add(row * 32 + column)),
-                vld1q_s32(intermediate.as_ptr().add((row + 1) * 32 + column)),
-                vld1q_s32(intermediate.as_ptr().add((row + 2) * 32 + column)),
-                vld1q_s32(intermediate.as_ptr().add((row + 3) * 32 + column)),
-            );
-            lane_in[column..column + 4].copy_from_slice(&rows);
+    // Transpose eight intermediate rows at a time. The second pass widens
+    // into two four-lane groups before stage 1, preserving the scalar
+    // transform's overflow behavior.
+    for row in (0..32).step_by(8) {
+        let mut lane_in16 = [zero16; 32];
+        for column in (0..32).step_by(8) {
+            let rows = transpose8([
+                vld1q_s16(intermediate.as_ptr().add(row * 32 + column)),
+                vld1q_s16(intermediate.as_ptr().add((row + 1) * 32 + column)),
+                vld1q_s16(intermediate.as_ptr().add((row + 2) * 32 + column)),
+                vld1q_s16(intermediate.as_ptr().add((row + 3) * 32 + column)),
+                vld1q_s16(intermediate.as_ptr().add((row + 4) * 32 + column)),
+                vld1q_s16(intermediate.as_ptr().add((row + 5) * 32 + column)),
+                vld1q_s16(intermediate.as_ptr().add((row + 6) * 32 + column)),
+                vld1q_s16(intermediate.as_ptr().add((row + 7) * 32 + column)),
+            ]);
+            lane_in16[column..column + 8].copy_from_slice(&rows);
         }
-        let mut lane_out = [zero; 32];
-        fdct32x4(&lane_in, &mut lane_out);
-        for coefficient in (0..32).step_by(4) {
-            let rows = transpose4(
-                pass1_round_and_wrap(lane_out[coefficient]),
-                pass1_round_and_wrap(lane_out[coefficient + 1]),
-                pass1_round_and_wrap(lane_out[coefficient + 2]),
-                pass1_round_and_wrap(lane_out[coefficient + 3]),
-            );
-            for (lane, &values) in rows.iter().enumerate() {
-                vst1q_s32(output.add((row + lane) * 32 + coefficient), values);
+
+        for half in 0..2 {
+            let mut lane_in = [zero; 32];
+            for (source, destination) in lane_in16.iter().zip(lane_in.iter_mut()) {
+                *destination = if half == 0 {
+                    vmovl_s16(vget_low_s16(*source))
+                } else {
+                    vmovl_high_s16(*source)
+                };
+            }
+            let mut lane_out = [zero; 32];
+            fdct32x4(&lane_in, &mut lane_out);
+            for coefficient in (0..32).step_by(4) {
+                let rows = transpose4(
+                    pass1_round_and_wrap(lane_out[coefficient]),
+                    pass1_round_and_wrap(lane_out[coefficient + 1]),
+                    pass1_round_and_wrap(lane_out[coefficient + 2]),
+                    pass1_round_and_wrap(lane_out[coefficient + 3]),
+                );
+                for (lane, &values) in rows.iter().enumerate() {
+                    vst1q_s32(
+                        output.add((row + half * 4 + lane) * 32 + coefficient),
+                        values,
+                    );
+                }
             }
         }
     }
