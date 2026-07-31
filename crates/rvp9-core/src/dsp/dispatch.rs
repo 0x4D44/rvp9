@@ -745,11 +745,9 @@ impl VarTable {
 /// Per-size sub-pixel-variance fn type (PR4):
 /// `(src, src_stride, xoffset, yoffset, ref, ref_stride) -> (var, sse)`.
 /// Mirrors the scalar `crate::dsp::distortion::vpx_sub_pixel_variance{W}x{H}`
-/// shims and the AVX2 `crate::dsp::x86_64::vpx_sub_pixel_variance{W}x{H}_avx2`
-/// wrappers — both share this signature (identical to
-/// `crate::mv_search::sub_pixel::SvfFn`). The AVX2 path interpolates a
-/// byte-identical `u8` bilinear temp then applies the same scalar variance
-/// finisher, so a slot may hold either with no caller-visible change.
+/// shims, AVX2 `crate::dsp::x86_64::vpx_sub_pixel_variance{W}x{H}_avx2`
+/// wrappers, and AArch64 NEON wrappers. All share this signature (identical
+/// to `crate::mv_search::sub_pixel::SvfFn`) and return byte-exact results.
 pub type SubpelVarFn = fn(&[u8], usize, usize, usize, &[u8], usize) -> (u32, u32);
 
 /// Per-size sub-pixel-variance dispatch table, indexed by `BlockSize::idx()`
@@ -757,8 +755,9 @@ pub type SubpelVarFn = fn(&[u8], usize, usize, usize, &[u8], usize) -> (u32, u32
 /// rectangular) carry a kernel; the two sub-8 rect sizes (4×8, 8×4) hold
 /// `None`, preserving the fail-soft `svf_for` semantics
 /// (`crate::mv_search::sub_pixel`). Each populated entry is selected by one
-/// `if caps.avx2` clause in [`SimdDispatch::build`] — the AVX2 wrapper on AVX2
-/// hosts, the scalar reference otherwise. Byte-exact across the two arms.
+/// ISA clause in [`SimdDispatch::build`] — AVX2 on x86_64, NEON for widths
+/// 16–64 on AArch64, and the scalar reference otherwise. Byte-exact across
+/// all arms.
 #[derive(Debug, Clone)]
 pub struct SubpelVarTable {
     /// Indexed by `BlockSize::idx()` (`0..=12`); `None` for unsupported sizes.
@@ -1307,13 +1306,13 @@ pub struct SimdDispatch {
 
     /// PR4 — per-size sub-pixel variance for the sub-pel MV search. Mirrors the
     /// scalar `crate::dsp::distortion::vpx_sub_pixel_variance{W}x{H}` shims; on
-    /// x86_64 AVX2 hosts each populated entry points at the safe wrapper
-    /// `crate::dsp::x86_64::vpx_sub_pixel_variance{W}x{H}_avx2`, otherwise at
-    /// the scalar reference. The two sub-8 rect sizes (4×8, 8×4) hold `None`
-    /// (fail-soft, preserving `svf_for`). Byte-exact across the two arms (the
-    /// AVX2 path interpolates a byte-identical `u8` temp then applies the same
-    /// scalar variance finisher). Resolved via [`SimdDispatch::subpel_variance`];
-    /// consumed by `crate::mv_search::sub_pixel`.
+    /// x86_64 AVX2 hosts each populated entry points at the AVX2 wrapper; on
+    /// AArch64 NEON hosts the 16/32/64-wide entries point at fused NEON
+    /// filter-and-reduction wrappers. Other entries use the scalar reference.
+    /// The two sub-8 rect sizes (4×8, 8×4) hold `None` (fail-soft, preserving
+    /// `svf_for`). All implementations are byte-exact. Resolved via
+    /// [`SimdDispatch::subpel_variance`]; consumed by
+    /// `crate::mv_search::sub_pixel`.
     pub(crate) subpel_variance: SubpelVarTable,
 
     /// G4.4b — frame-border edge replication. Signature mirrors
@@ -2260,7 +2259,62 @@ impl SimdDispatch {
                 ],
             }
         };
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(target_arch = "aarch64")]
+        let subpel_variance: SubpelVarTable = {
+            use crate::dsp::aarch64 as neon;
+            use crate::dsp::distortion as sc;
+            macro_rules! subpel_slot {
+                ($scalar:path, $neon:path) => {
+                    Some(if caps.neon {
+                        $neon as SubpelVarFn
+                    } else {
+                        $scalar as SubpelVarFn
+                    })
+                };
+            }
+            SubpelVarTable {
+                fns: [
+                    Some(sc::vpx_sub_pixel_variance4x4 as SubpelVarFn),
+                    None,
+                    None,
+                    Some(sc::vpx_sub_pixel_variance8x8),
+                    Some(sc::vpx_sub_pixel_variance8x16),
+                    subpel_slot!(
+                        sc::vpx_sub_pixel_variance16x8,
+                        neon::vpx_sub_pixel_variance16x8_neon
+                    ),
+                    subpel_slot!(
+                        sc::vpx_sub_pixel_variance16x16,
+                        neon::vpx_sub_pixel_variance16x16_neon
+                    ),
+                    subpel_slot!(
+                        sc::vpx_sub_pixel_variance16x32,
+                        neon::vpx_sub_pixel_variance16x32_neon
+                    ),
+                    subpel_slot!(
+                        sc::vpx_sub_pixel_variance32x16,
+                        neon::vpx_sub_pixel_variance32x16_neon
+                    ),
+                    subpel_slot!(
+                        sc::vpx_sub_pixel_variance32x32,
+                        neon::vpx_sub_pixel_variance32x32_neon
+                    ),
+                    subpel_slot!(
+                        sc::vpx_sub_pixel_variance32x64,
+                        neon::vpx_sub_pixel_variance32x64_neon
+                    ),
+                    subpel_slot!(
+                        sc::vpx_sub_pixel_variance64x32,
+                        neon::vpx_sub_pixel_variance64x32_neon
+                    ),
+                    subpel_slot!(
+                        sc::vpx_sub_pixel_variance64x64,
+                        neon::vpx_sub_pixel_variance64x64_neon
+                    ),
+                ],
+            }
+        };
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         let subpel_variance: SubpelVarTable = {
             let _ = caps;
             use crate::dsp::distortion as sc;
@@ -2883,9 +2937,10 @@ impl SimdDispatch {
 
     /// Resolve the per-size sub-pixel-variance kernel for `bsize` (PR4), or
     /// `None` for the two unsupported sub-8 rect sizes (4×8, 8×4). Returns the
-    /// AVX2 wrapper on AVX2 hosts and the scalar `vpx_sub_pixel_variance{W}x{H}`
-    /// reference otherwise; both are byte-exact. Resolve once per sub-pel search
-    /// and reuse so the `OnceLock` load in `get_ref()` is amortized.
+    /// best available ISA wrapper (AVX2 or NEON) and the scalar
+    /// `vpx_sub_pixel_variance{W}x{H}` reference otherwise; all are
+    /// byte-exact. Resolve once per sub-pel search and reuse so the `OnceLock`
+    /// load in `get_ref()` is amortized.
     #[inline]
     #[must_use]
     pub fn subpel_variance(&self, bsize: crate::block::BlockSize) -> Option<SubpelVarFn> {

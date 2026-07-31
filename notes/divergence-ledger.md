@@ -2467,3 +2467,38 @@ ecosystem.
 **Future plan:** none — faithful and correct. Revisit only if a future
 sub-strategy (`sparse_12`/`eob_38`, still on arbitrary low-density i12) ever
 flakes, in which case give it the same in-domain treatment.
+
+### 2026-07-30 — AArch64 sub-pixel variance fuses filtering and reduction
+
+**Where:** `rvp9_core::dsp::aarch64::subpel_variance_neon`, installed for
+VP9's 16/32/64-wide sub-pixel-variance dispatch slots.
+
+**What libvpx does:** `vpx_dsp/arm/subpel_variance_neon.c` writes the
+horizontal bilinear result to a full intermediate block, writes the vertical
+result to a second block, then calls the matching NEON variance kernel.
+
+**What rvp9 does:** keeps two rolling 64-byte horizontal rows and feeds each
+vertical-filter vector directly into the `(sum, sse)` reduction. Offset-zero
+paths fuse the remaining one-dimensional filter and reduction without an
+intermediate block.
+
+**Why:** rvp9 previously had no AArch64 sub-pixel-variance dispatch and ran
+two heap allocations plus three scalar pixel walks for every sub-pel probe.
+The fused layout removes both allocations and the final temporary-block walk
+while preserving libvpx's exact bilinear rounding and variance finisher.
+
+**Byte-parity impact:** none. Random differential coverage exercises all 64
+offset pairs across eight block shapes; edge-value and forced-dispatch tests
+also match the scalar oracle exactly. A 120-frame cpu-used 7 encode remained
+byte-identical before and after the dispatch change.
+
+**Compression-efficiency impact:** none; the production stream is unchanged.
+
+**Speed impact:** the 32x32 mixed-offset kernel improved from `797.1 ns` to
+`85.8 ns` (`9.30x`). Three alternating 120-frame 1280x704 cpu-used 7 runs
+improved median wall time from `2.74 s` to `2.45 s` (`10.6%`) on the pinned
+Apple M5 Max host.
+
+**Future plan:** retain the fused implementation while it remains
+byte-exact. Add 4/8-wide NEON kernels only if a fresh whole-encoder profile
+shows those scalar slots are material.

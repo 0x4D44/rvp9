@@ -15,6 +15,7 @@
 //! Usage:
 //!   cargo run -p rvp9-bench --release --bin dsp-microbench
 //!   cargo run -p rvp9-bench --release --bin dsp-microbench -- bool_reader
+//!   cargo run -p rvp9-bench --release --bin dsp-microbench -- subpel_variance
 //!
 //! The optional positional case-selector runs only the named case:
 //!   - (no arg)      → DSP kernel suite (default — scalar vs AVX2).
@@ -58,6 +59,7 @@ fn filled(len: usize, seed: u32) -> Vec<u8> {
     (0..len).map(|_| lcg(&mut s)).collect()
 }
 
+#[cfg(target_arch = "x86_64")]
 fn report(name: &str, scalar_ns: f64, avx2_ns: f64) {
     let speedup = scalar_ns / avx2_ns;
     println!("{name:<34} scalar {scalar_ns:8.1} ns   avx2 {avx2_ns:8.1} ns   {speedup:5.2}x");
@@ -358,14 +360,72 @@ fn main() {
     let arg = std::env::args().nth(1);
     match arg.as_deref() {
         Some("bool_reader") => run_bool_reader(),
+        Some("subpel_variance") => run_subpel_variance(),
         Some("vs_libvpx") => run_vs_libvpx(),
         Some(other) => {
             eprintln!(
-                "unknown case '{other}' — valid: bool_reader, vs_libvpx (no arg = DSP suite)"
+                "unknown case '{other}' — valid: bool_reader, subpel_variance, vs_libvpx \
+                 (no arg = DSP suite)"
             );
             std::process::exit(2);
         }
         None => run(),
+    }
+}
+
+/// Production-dispatch ruler for the sub-pixel-variance kernel that drives
+/// sub-pel MV refinement. The scalar result is timed separately so an ISA
+/// implementation can be compared on the same deterministic buffers.
+fn run_subpel_variance() {
+    use rvp9_core::block::BlockSize;
+    use rvp9_core::dsp::distortion::sub_pixel_variance;
+
+    let dsp = rvp9_core::dsp::init();
+    let batches = 50;
+
+    println!("== Sub-pixel variance ==");
+    for &(bsize, w, h, iters) in &[
+        (BlockSize::Block16x16, 16usize, 16usize, 8_000),
+        (BlockSize::Block32x32, 32, 32, 3_000),
+        (BlockSize::Block64x64, 64, 64, 1_000),
+    ] {
+        let src_stride = w + 17;
+        let ref_stride = w + 11;
+        let src = filled((h + 1) * src_stride + w + 17, 0x5A17 ^ w as u32);
+        let reference = filled((h - 1) * ref_stride + w, 0xC0DE ^ h as u32);
+        let dispatched = dsp
+            .subpel_variance(bsize)
+            .expect("bench shape has a sub-pixel-variance kernel");
+
+        for &(xoff, yoff) in &[(0usize, 0usize), (4, 4), (3, 5)] {
+            let scalar_ns = bench_min_ns(batches, iters, || {
+                black_box(sub_pixel_variance(
+                    black_box(&src),
+                    src_stride,
+                    black_box(&reference),
+                    ref_stride,
+                    xoff,
+                    yoff,
+                    w,
+                    h,
+                ));
+            });
+            let dispatch_ns = bench_min_ns(batches, iters, || {
+                black_box(dispatched(
+                    black_box(&src),
+                    src_stride,
+                    xoff,
+                    yoff,
+                    black_box(&reference),
+                    ref_stride,
+                ));
+            });
+            println!(
+                "{w:>2}x{h:<2} ({xoff},{yoff}) scalar {scalar_ns:8.1} ns   \
+                 dispatch {dispatch_ns:8.1} ns   {:5.2}x",
+                scalar_ns / dispatch_ns
+            );
+        }
     }
 }
 
