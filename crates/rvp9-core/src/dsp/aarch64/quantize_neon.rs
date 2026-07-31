@@ -131,26 +131,18 @@ unsafe fn quantize_8(
     qcoeff: *mut i16,
     dqcoeff: *mut i16,
     iscan: *const i16,
-    round_lo: int32x4_t,
-    round_hi: int32x4_t,
-    quant_lo: int32x4_t,
-    quant_hi: int32x4_t,
+    round: int16x8_t,
+    quant: int16x8_t,
     dequant: int16x8_t,
     eob_max: &mut int16x8_t,
 ) {
     let coeff_lo = vld1q_s32(coeff);
     let coeff_hi = vld1q_s32(coeff.add(4));
-    let sign_lo = vshrq_n_s32::<31>(coeff_lo);
-    let sign_hi = vshrq_n_s32::<31>(coeff_hi);
-    let max = vdupq_n_s32(i16::MAX as i32);
-
-    let rounded_lo = vminq_s32(vaddq_s32(vabsq_s32(coeff_lo), round_lo), max);
-    let rounded_hi = vminq_s32(vaddq_s32(vabsq_s32(coeff_hi), round_hi), max);
-    let abs_q_lo = vshrq_n_s32::<16>(vmulq_s32(rounded_lo, quant_lo));
-    let abs_q_hi = vshrq_n_s32::<16>(vmulq_s32(rounded_hi, quant_hi));
-    let signed_lo = vsubq_s32(veorq_s32(abs_q_lo, sign_lo), sign_lo);
-    let signed_hi = vsubq_s32(veorq_s32(abs_q_hi, sign_hi), sign_hi);
-    let q = vcombine_s16(vmovn_s32(signed_lo), vmovn_s32(signed_hi));
+    let coeff = vcombine_s16(vmovn_s32(coeff_lo), vmovn_s32(coeff_hi));
+    let sign = vshrq_n_s16::<15>(coeff);
+    let rounded = vqaddq_s16(vqabsq_s16(coeff), round);
+    let abs_q = vshrq_n_s16::<1>(vqdmulhq_s16(rounded, quant));
+    let q = vsubq_s16(veorq_s16(abs_q, sign), sign);
     vst1q_s16(qcoeff, q);
 
     let dq_lo = vmull_s16(vget_low_s16(q), vget_low_s16(dequant));
@@ -174,26 +166,20 @@ unsafe fn vp9_quantize_fp_neon_inner(
     dequant: &[i16; 2],
     iscan: *const i16,
 ) -> u16 {
-    let round_dc_ac = vld1q_s32(
+    let round_dc_ac = vld1q_s16(
         [
-            i32::from(round[0]),
-            i32::from(round[1]),
-            i32::from(round[1]),
-            i32::from(round[1]),
+            round[0], round[1], round[1], round[1], round[1], round[1], round[1], round[1],
         ]
         .as_ptr(),
     );
-    let round_ac = vdupq_n_s32(i32::from(round[1]));
-    let quant_dc_ac = vld1q_s32(
+    let round_ac = vdupq_n_s16(round[1]);
+    let quant_dc_ac = vld1q_s16(
         [
-            i32::from(quant[0]),
-            i32::from(quant[1]),
-            i32::from(quant[1]),
-            i32::from(quant[1]),
+            quant[0], quant[1], quant[1], quant[1], quant[1], quant[1], quant[1], quant[1],
         ]
         .as_ptr(),
     );
-    let quant_ac = vdupq_n_s32(i32::from(quant[1]));
+    let quant_ac = vdupq_n_s16(quant[1]);
     let dequant_dc_ac = vld1q_s16(
         [
             dequant[0], dequant[1], dequant[1], dequant[1], dequant[1], dequant[1], dequant[1],
@@ -210,9 +196,7 @@ unsafe fn vp9_quantize_fp_neon_inner(
         dqcoeff,
         iscan,
         round_dc_ac,
-        round_ac,
         quant_dc_ac,
-        quant_ac,
         dequant_dc_ac,
         &mut eob_max,
     );
@@ -224,8 +208,6 @@ unsafe fn vp9_quantize_fp_neon_inner(
             dqcoeff.add(i),
             iscan.add(i),
             round_ac,
-            round_ac,
-            quant_ac,
             quant_ac,
             dequant_ac,
             &mut eob_max,
