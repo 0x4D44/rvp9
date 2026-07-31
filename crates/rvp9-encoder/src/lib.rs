@@ -3067,6 +3067,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // this is still `FrameContext::new_default()` (matching libvpx's
     // frame-N-adapts-frame-N+1 convention).
     frame_context: &FrameContext,
+    // Frame-context-derived NMV costs shared by every tile job. The caller
+    // builds this once per frame because `frame_context`, `base_qindex`, and
+    // the high-precision-MV gate are identical across tiles.
+    mv_costs: &rvp9_core::cost::mv_cost::MvCosts,
     // P20 — adaptive RD-threshold state (libvpx
     // `vp9_pickmode.c:2241-2247` gate state). Read by the picker for
     // each candidate's effective threshold; mutated after each pick
@@ -3132,7 +3136,6 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
 ) -> VecBackedInterCoefSource {
     use rvp9_core::bitstream::frame::{InterpFilter as WireInterpFilter, MAX_INTER_REFS};
     use rvp9_core::bitstream::header::FrameKind as WireFrameKind;
-    use rvp9_core::cost::mv_cost::build_nmv_cost_table;
     use rvp9_core::cost::symbol_costs::{
         inter_mode_costs, partition_costs, switchable_interp_costs,
     };
@@ -3292,7 +3295,6 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     let inter_costs = inter_mode_costs(frame_context);
     let sic = switchable_interp_costs(frame_context);
     let allow_hp = crate::frame_allow_hp(base_qindex);
-    let mv_costs = build_nmv_cost_table(&frame_context.nmvc, allow_hp);
     let site_config = init_dsmotion_compensation(w as i32);
 
     // W4 RDO dispatch — speed≤4 routes the per-leaf mode decision through
@@ -4460,7 +4462,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         mv_limits,
                         site_config: &site_config,
                         full_pixel_search_method,
-                        mv_costs: &mv_costs,
+                        mv_costs,
                         inter_mode_costs: &inter_costs,
                         inter_mode_ctx,
                         quantizer: &quantizer,
@@ -5520,7 +5522,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             compound_enabled: altref_available,
                             mv_limits,
                             site_config: &site_config,
-                            mv_costs: &mv_costs,
+                            mv_costs,
                             newmv_seed: sb_newmv_seed,
                             // UV uses zero quant deltas (matches the RT path's
                             // `plane_dequant_pair` call with zero deltas), so
@@ -5659,7 +5661,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     mv_limits,
                     site_config: &site_config,
                     full_pixel_search_method,
-                    mv_costs: &mv_costs,
+                    mv_costs,
                     inter_mode_costs: &inter_costs,
                     inter_mode_ctx,
                     quantizer: &quantizer,
@@ -6012,7 +6014,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             mv_limits,
                             site_config: &site_config,
                             full_pixel_search_method,
-                            mv_costs: &mv_costs,
+                            mv_costs,
                             inter_mode_costs: &inter_costs,
                             inter_mode_ctx,
                             quantizer: &quantizer,
@@ -6074,7 +6076,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         mv_limits,
                         site_config: &site_config,
                         full_pixel_search_method,
-                        mv_costs: &mv_costs,
+                        mv_costs,
                         inter_mode_costs: &inter_costs,
                         inter_mode_ctx,
                         quantizer: &quantizer,
@@ -6139,7 +6141,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             let diff_row = new.best_mv.row.wrapping_sub(mvc_safe.nearest.row);
                             let diff_col = new.best_mv.col.wrapping_sub(mvc_safe.nearest.col);
                             let raw =
-                                rvp9_core::cost::mv_cost::mv_cost(diff_row, diff_col, &mv_costs)
+                                rvp9_core::cost::mv_cost::mv_cost(diff_row, diff_col, mv_costs)
                                     .max(0) as u64;
                             let mv_rate = (raw * 108 + 64) >> 7;
                             e3_lost_mv_rate_sum += mv_rate;
@@ -6980,7 +6982,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         };
                         let diff_row = final_mv.row.wrapping_sub(ref_mv.row);
                         let diff_col = final_mv.col.wrapping_sub(ref_mv.col);
-                        let raw = rvp9_core::cost::mv_cost::mv_cost(diff_row, diff_col, &mv_costs)
+                        let raw = rvp9_core::cost::mv_cost::mv_cost(diff_row, diff_col, mv_costs)
                             .max(0) as u64;
                         // ROUND_POWER_OF_TWO(raw * 108, 7) — same
                         // `MV_COST_WEIGHT = 108` scaling the picker

@@ -2979,6 +2979,11 @@ impl StreamEncoder {
         let frames_since_golden = self.frames_since_golden_refresh;
         let me_ref_yuv = (&self.me_ref_y[..], &self.me_ref_u[..], &self.me_ref_v[..]);
         let frame_context = &self.frame_context;
+        let frame_mv_costs = rvp9_core::cost::mv_cost::build_nmv_cost_table(
+            &frame_context.nmvc,
+            crate::frame_allow_hp(q_index),
+        );
+        let frame_mv_costs_ref = &frame_mv_costs;
         let speed = self.config.speed;
         let deadline = self.config.deadline;
         let rc_mode = self.config.rc_mode;
@@ -3018,6 +3023,7 @@ impl StreamEncoder {
                     prev_grid_slice,
                     $mv_grid,
                     frame_context,
+                    frame_mv_costs_ref,
                     $rd_tables,
                     frames_since_golden,
                     frames_since_golden & 1,
@@ -3682,6 +3688,10 @@ impl StreamEncoder {
         // `update_thresh_freq_fact` decay does not leak into the show
         // frames' adaptive thresholds (state isolation).
         let mut arf_rd_thresh = self.rd_thresh_tables.clone();
+        let arf_mv_costs = rvp9_core::cost::mv_cost::build_nmv_cost_table(
+            &self.frame_context.nmvc,
+            crate::frame_allow_hp(q_index),
+        );
 
         // The same real-RD picker + simulator the show-frame path runs
         // (`encode_inter_internal`). Reads the filtered source, predicts
@@ -3718,6 +3728,7 @@ impl StreamEncoder {
             arf_prev_mv_grid,
             &mut arf_mv_grid,
             &self.frame_context,
+            &arf_mv_costs,
             &mut arf_rd_thresh,
             self.frames_since_golden_refresh,
             self.frames_since_golden_refresh & 1,
