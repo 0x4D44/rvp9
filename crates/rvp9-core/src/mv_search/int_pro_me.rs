@@ -124,6 +124,12 @@ impl IntProMeResult {
 fn vpx_int_pro_row(hbuf: &mut [i16], ref_plane: &[u8], ref_stride: usize, height: usize) {
     debug_assert_eq!(hbuf.len(), 16);
     debug_assert!(height >= 2);
+    #[cfg(target_arch = "aarch64")]
+    if matches!(height, 16 | 32 | 64) {
+        crate::dsp::aarch64::vpx_int_pro_row_neon(hbuf, ref_plane, ref_stride, height);
+        return;
+    }
+
     let norm_factor = (height >> 1) as i32;
     for idx in 0..16 {
         let mut sum: i32 = 0;

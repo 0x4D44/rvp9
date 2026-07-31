@@ -7,6 +7,7 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 
 pub mod convolve8_neon;
+pub mod int_pro_neon;
 pub mod quantize_neon;
 pub mod sad_neon;
 pub mod subpel_variance_neon;
@@ -14,6 +15,7 @@ pub mod subtract_neon;
 pub mod variance_neon;
 
 pub use convolve8_neon::{convolve8_horiz_neon, convolve8_neon, convolve8_vert_neon};
+pub use int_pro_neon::vpx_int_pro_row_neon;
 pub use quantize_neon::{vp9_quantize_b_neon, vp9_quantize_fp_neon};
 pub use sad_neon::{
     vpx_sad4x4_neon, vpx_sad4x8_neon, vpx_sad8x4_neon, vpx_sad8x8_neon, vpx_sad8x16_neon,
