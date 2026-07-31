@@ -2120,6 +2120,12 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
                         model_var_y: 0,
                         model_tx_size: rvp9_core::block::max_txsize(leaf_bsize),
                         model_skip_txfm: 0,
+                        luma_coef_rate: 0,
+                        luma_coef_dist: 0,
+                        uv_model_rate: 0,
+                        uv_model_dist: 0,
+                        uv_u_sensitive: false,
+                        uv_v_sensitive: false,
                         sse_after_pred: 0,
                         interp_filter: None,
                         // Intra leaves in the F5.1 path always
@@ -4478,6 +4484,12 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             model_var_y: 0,
                             model_tx_size: rvp9_core::transforms::TxSize::Tx4x4,
                             model_skip_txfm: 2,
+                            luma_coef_rate: 0,
+                            luma_coef_dist: 0,
+                            uv_model_rate: 0,
+                            uv_model_dist: 0,
+                            uv_u_sensitive: false,
+                            uv_v_sensitive: false,
                             sse_after_pred: 0,
                             interp_filter: Some(
                                 rvp9_core::bitstream::frame::InterpFilter::EightTap,
@@ -4597,6 +4609,12 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             model_var_y: 0,
                             model_tx_size: rvp9_core::transforms::TxSize::Tx4x4,
                             model_skip_txfm: 2,
+                            luma_coef_rate: 0,
+                            luma_coef_dist: 0,
+                            uv_model_rate: 0,
+                            uv_model_dist: 0,
+                            uv_u_sensitive: false,
+                            uv_v_sensitive: false,
                             sse_after_pred: 0,
                             interp_filter: Some(
                                 rvp9_core::bitstream::frame::InterpFilter::EightTap,
@@ -5061,6 +5079,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                 best_rate: 0,
                                 coef_rate: 0,
                                 coef_dist: 0,
+                                uv_rate: 0,
+                                uv_dist: 0,
                                 picked_interp_filter: r.interp_filter,
                                 picked_tx_size: rvp9_core::block::max_txsize(leaf_bsize),
                                 skip_txfm: rvp9_core::mode_decision::model_rd::SkipTxfm::None,
@@ -6483,6 +6503,16 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             rvp9_core::mode_decision::model_rd::SkipTxfm::AcOnly => 1,
                             rvp9_core::mode_decision::model_rd::SkipTxfm::AcDc => 2,
                         },
+                        luma_coef_rate: pick.coef_rate,
+                        luma_coef_dist: pick.coef_dist,
+                        uv_model_rate: pick.uv_rate,
+                        uv_model_dist: pick.uv_dist,
+                        // The current rvp9 realtime picker always evaluates
+                        // both chroma planes when their buffers are present.
+                        uv_u_sensitive: final_ref != RefFrame::IntraFrame
+                            && !input_yuv.1.is_empty(),
+                        uv_v_sensitive: final_ref != RefFrame::IntraFrame
+                            && !input_yuv.2.is_empty(),
                         sse_after_pred: u64::from(pick.sse_y),
                         interp_filter: if final_ref == RefFrame::IntraFrame {
                             None

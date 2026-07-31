@@ -44,25 +44,78 @@ diff --git a/vp9/encoder/vp9_pickmode.c b/vp9/encoder/vp9_pickmode.c
  #include <math.h>
  #include <stdio.h>
 
-@@ -1746,6 +1747,8 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
+@@ -1746,6 +1747,16 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
    int skip_ref_find_pred[4] = { 0 };
    unsigned int sse_zeromv_normalized = UINT_MAX;
    unsigned int best_sse_sofar = UINT_MAX;
 +  unsigned int best_pred_sse_f02 = UINT_MAX;
 +  unsigned int best_model_var_f02 = UINT_MAX;
++  int best_luma_rate_f02 = 0;
++  int64_t best_luma_dist_f02 = 0;
++  int best_uv_rate_f02 = 0;
++  int64_t best_uv_dist_f02 = 0;
++  int current_luma_rate_f02 = 0;
++  int64_t current_luma_dist_f02 = 0;
++  int current_uv_rate_f02 = 0;
++  int64_t current_uv_dist_f02 = 0;
    int gf_temporal_ref = 0;
    int force_test_gf_zeromv = 0;
  #if CONFIG_VP9_TEMPORAL_DENOISING
-@@ -2448,6 +2451,8 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
+@@ -2347,6 +2358,8 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
+       this_sse = (int64_t)sse_y;
+       block_yrd(cpi, x, &this_rdc, &is_skippable, &this_sse, bsize,
+                 VPXMIN(mi->tx_size, TX_16X16), rd_computed, 0);
++      current_luma_rate_f02 = this_rdc.rate;
++      current_luma_dist_f02 = this_rdc.dist;
+       x->skip_txfm[0] = is_skippable;
+       if (is_skippable) {
+         this_rdc.rate = vp9_cost_bit(vp9_get_skip_prob(cm, xd), 1);
+@@ -2374,6 +2387,12 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
+       }
+       this_rdc.rate += vp9_cost_bit(vp9_get_skip_prob(cm, xd), 1);
+     }
++    if (this_early_term) {
++      current_luma_rate_f02 = this_rdc.rate;
++      current_luma_dist_f02 = this_rdc.dist;
++    }
++    current_uv_rate_f02 = 0;
++    current_uv_dist_f02 = 0;
+-
++
+     if (!this_early_term &&
+         (x->color_sensitivity[0] || x->color_sensitivity[1])) {
+@@ -2391,5 +2410,7 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
+       }
+       model_rd_for_sb_uv(cpi, uv_bsize, x, xd, &rdc_uv, &var_y, &sse_y, 1, 2);
++      current_uv_rate_f02 = rdc_uv.rate;
++      current_uv_dist_f02 = rdc_uv.dist;
+       this_rdc.rate += rdc_uv.rate;
+       this_rdc.dist += rdc_uv.dist;
+     }
+@@ -2448,6 +2469,12 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
 
      if (this_rdc.rdcost < best_rdc.rdcost || x->skip) {
        best_rdc = this_rdc;
 +      best_pred_sse_f02 = sse_y;
 +      best_model_var_f02 = var_y;
++      best_luma_rate_f02 = current_luma_rate_f02;
++      best_luma_dist_f02 = current_luma_dist_f02;
++      best_uv_rate_f02 = current_uv_rate_f02;
++      best_uv_dist_f02 = current_uv_dist_f02;
        best_early_term = this_early_term;
        best_pickmode.best_mode = this_mode;
        best_pickmode.best_pred_filter = mi->interp_filter;
-@@ -2735,8 +2740,135 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
+@@ -2626,5 +2653,9 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
+       if (this_rdc.rdcost < best_rdc.rdcost) {
+         best_rdc = this_rdc;
++        best_luma_rate_f02 = 0;
++        best_luma_dist_f02 = 0;
++        best_uv_rate_f02 = 0;
++        best_uv_dist_f02 = 0;
+         best_pickmode.best_mode = this_mode;
+         best_pickmode.best_intra_tx_size = mi->tx_size;
+         best_pickmode.best_ref_frame = INTRA_FRAME;
+@@ -2735,8 +2766,142 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
        }
      }
    }
@@ -166,6 +219,9 @@ diff --git a/vp9/encoder/vp9_pickmode.c b/vp9/encoder/vp9_pickmode.c
 +              "\"picker_rate\":%d,\"picker_dist\":%lld,"
 +              "\"picker_rd_cost\":%lld,\"model_var_y\":%u,"
 +              "\"model_tx_size\":\"%s\",\"model_skip_txfm\":%d,"
++              "\"luma_coef_rate\":%d,\"luma_coef_dist\":%lld,"
++              "\"uv_model_rate\":%d,\"uv_model_dist\":%lld,"
++              "\"uv_u_sensitive\":%s,\"uv_v_sensitive\":%s,"
 +              "\"sse_after_pred\":%llu,\"interp_filter\":\"%s\","
 +              "\"skip_flag\":%s,\"q_index\":%d,\"tx_size\":\"%s\","
 +              "\"luma_eob_nonzero\":%s,"
@@ -181,6 +237,10 @@ diff --git a/vp9/encoder/vp9_pickmode.c b/vp9/encoder/vp9_pickmode.c
 +              (long long)best_rdc.rdcost,
 +              picked_ref == INTRA_FRAME ? 0 : best_model_var_f02,
 +              tx_size_str, x->skip_txfm[0],
++              best_luma_rate_f02, (long long)best_luma_dist_f02,
++              best_uv_rate_f02, (long long)best_uv_dist_f02,
++              x->color_sensitivity[0] ? "true" : "false",
++              x->color_sensitivity[1] ? "true" : "false",
 +              sse_after_pred,
 +              filter_str,
 +              skip_flag ? "true" : "false",

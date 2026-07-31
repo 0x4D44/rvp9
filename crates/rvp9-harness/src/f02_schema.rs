@@ -92,6 +92,12 @@ pub fn parse_jsonl_line(line: &str) -> Result<BlockDecision, ParseError> {
     let mut model_var_y: Option<u32> = None;
     let mut model_tx_size: Option<TxSize> = None;
     let mut model_skip_txfm: Option<u8> = None;
+    let mut luma_coef_rate: Option<u64> = None;
+    let mut luma_coef_dist: Option<i64> = None;
+    let mut uv_model_rate: Option<u32> = None;
+    let mut uv_model_dist: Option<i64> = None;
+    let mut uv_u_sensitive: Option<bool> = None;
+    let mut uv_v_sensitive: Option<bool> = None;
     let mut sse_after_pred: Option<u64> = None;
     let mut interp_filter: Option<Option<InterpFilter>> = None;
     let mut skip_flag: Option<bool> = None;
@@ -131,6 +137,12 @@ pub fn parse_jsonl_line(line: &str) -> Result<BlockDecision, ParseError> {
                 })?);
             }
             "model_skip_txfm" => model_skip_txfm = Some(parse_num(v, "model_skip_txfm")?),
+            "luma_coef_rate" => luma_coef_rate = Some(parse_num(v, "luma_coef_rate")?),
+            "luma_coef_dist" => luma_coef_dist = Some(parse_num(v, "luma_coef_dist")?),
+            "uv_model_rate" => uv_model_rate = Some(parse_num(v, "uv_model_rate")?),
+            "uv_model_dist" => uv_model_dist = Some(parse_num(v, "uv_model_dist")?),
+            "uv_u_sensitive" => uv_u_sensitive = Some(parse_bool(v, "uv_u_sensitive")?),
+            "uv_v_sensitive" => uv_v_sensitive = Some(parse_bool(v, "uv_v_sensitive")?),
             "sse_after_pred" => sse_after_pred = Some(parse_num(v, "sse_after_pred")?),
             "interp_filter" => {
                 let raw = parse_string(v, "interp_filter")?;
@@ -187,6 +199,12 @@ pub fn parse_jsonl_line(line: &str) -> Result<BlockDecision, ParseError> {
         model_var_y: model_var_y.ok_or(ParseError::MissingField("model_var_y"))?,
         model_tx_size: model_tx_size.ok_or(ParseError::MissingField("model_tx_size"))?,
         model_skip_txfm: model_skip_txfm.ok_or(ParseError::MissingField("model_skip_txfm"))?,
+        luma_coef_rate: luma_coef_rate.ok_or(ParseError::MissingField("luma_coef_rate"))?,
+        luma_coef_dist: luma_coef_dist.ok_or(ParseError::MissingField("luma_coef_dist"))?,
+        uv_model_rate: uv_model_rate.ok_or(ParseError::MissingField("uv_model_rate"))?,
+        uv_model_dist: uv_model_dist.ok_or(ParseError::MissingField("uv_model_dist"))?,
+        uv_u_sensitive: uv_u_sensitive.ok_or(ParseError::MissingField("uv_u_sensitive"))?,
+        uv_v_sensitive: uv_v_sensitive.ok_or(ParseError::MissingField("uv_v_sensitive"))?,
         sse_after_pred: sse_after_pred.ok_or(ParseError::MissingField("sse_after_pred"))?,
         interp_filter: interp_filter.ok_or(ParseError::MissingField("interp_filter"))?,
         skip_flag: skip_flag.ok_or(ParseError::MissingField("skip_flag"))?,
@@ -671,6 +689,12 @@ mod tests {
             model_var_y: 4_321,
             model_tx_size: TxSize::Tx8x8,
             model_skip_txfm: 0,
+            luma_coef_rate: 6_400,
+            luma_coef_dist: 9_876,
+            uv_model_rate: 700,
+            uv_model_dist: 1_234,
+            uv_u_sensitive: true,
+            uv_v_sensitive: false,
             sse_after_pred: 1_234_567,
             interp_filter: Some(InterpFilter::EightTapSmooth),
             skip_flag: false,
@@ -699,6 +723,12 @@ mod tests {
             model_var_y: 0,
             model_tx_size: TxSize::Tx8x8,
             model_skip_txfm: 2,
+            luma_coef_rate: 0,
+            luma_coef_dist: 0,
+            uv_model_rate: 0,
+            uv_model_dist: 0,
+            uv_u_sensitive: false,
+            uv_v_sensitive: false,
             sse_after_pred: 0,
             interp_filter: None,
             skip_flag: true,
@@ -753,6 +783,9 @@ mod tests {
                     \"picker_rate\":0,\"picker_dist\":0,\"picker_rd_cost\":0,\
                     \"model_var_y\":0,\"model_tx_size\":\"8x8\",\
                     \"model_skip_txfm\":0,\
+                    \"luma_coef_rate\":0,\"luma_coef_dist\":0,\
+                    \"uv_model_rate\":0,\"uv_model_dist\":0,\
+                    \"uv_u_sensitive\":false,\"uv_v_sensitive\":false,\
                     \"sse_after_pred\":0,\"interp_filter\":\"NONE\"}";
         let err = parse_jsonl_line(line).unwrap_err();
         match err {
@@ -801,6 +834,9 @@ mod tests {
                     \"picker_rate\":0,\"picker_dist\":0,\"picker_rd_cost\":0,\
                     \"model_var_y\":0,\"model_tx_size\":\"8x8\",\
                     \"model_skip_txfm\":0,\
+                    \"luma_coef_rate\":0,\"luma_coef_dist\":0,\
+                    \"uv_model_rate\":0,\"uv_model_dist\":0,\
+                    \"uv_u_sensitive\":false,\"uv_v_sensitive\":false,\
                     \"sse_after_pred\":0,\"interp_filter\":\"NONE\",\"skip_flag\":true,\
                     \"q_index\":65,\"tx_size\":\"8x8\",\"luma_eob_nonzero\":false,\
                     \"future_field\":\"ignored\"}";

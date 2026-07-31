@@ -706,6 +706,11 @@ pub struct InterModeSearchResult {
     /// keeps pixel-SSE-of-recon as the RD distortion term, DV-F1-3).
     /// Surfaced for F.4 A/B experiments.
     pub coef_dist: i64,
+    /// G1 diagnostic — UV variance-model rate added for this candidate.
+    pub uv_rate: u32,
+    /// G1 diagnostic — UV variance-model distortion added for this
+    /// candidate.
+    pub uv_dist: i64,
     /// F.5 — interpolation filter chosen by the per-block filter
     /// search. One of `{EightTap, EightTapSmooth}` (libvpx-realtime
     /// 2-filter range). Defaults to `EightTap` for callers that don't
@@ -1321,6 +1326,10 @@ pub struct PickInterModeResult {
     pub coef_rate: u64,
     /// F.1 — coefficient-domain squared error.
     pub coef_dist: i64,
+    /// G1 diagnostic — UV variance-model rate carried by the winner.
+    pub uv_rate: u32,
+    /// G1 diagnostic — UV variance-model distortion carried by the winner.
+    pub uv_dist: i64,
     /// F.5 — interpolation filter chosen by per-block filter search.
     pub picked_interp_filter: InterpFilter,
     /// Realtime model-RD transform size chosen by the winning candidate.
@@ -2123,6 +2132,8 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
                 best_rate: candidate.best_rate,
                 coef_rate: candidate.coef_rate,
                 coef_dist: candidate.coef_dist,
+                uv_rate: candidate.uv_rate,
+                uv_dist: candidate.uv_dist,
                 picked_interp_filter: candidate.picked_interp_filter,
                 picked_tx_size: candidate.picked_tx_size,
                 skip_txfm: candidate.skip_txfm,
@@ -2496,6 +2507,8 @@ fn evaluate_intra_fallback(
                 best_rate: rate,
                 coef_rate: by.coef_rate,
                 coef_dist: by.coef_dist,
+                uv_rate: 0,
+                uv_dist: 0,
                 picked_interp_filter: InterpFilter::EightTap,
                 picked_tx_size,
                 skip_txfm: if by.skippable {
@@ -3396,6 +3409,8 @@ fn evaluate_candidate_for_filter(
         best_rate: final_rate,
         coef_rate: by.coef_rate,
         coef_dist: by.coef_dist,
+        uv_rate,
+        uv_dist,
         picked_interp_filter: filter,
         picked_tx_size: tx_size,
         skip_txfm,

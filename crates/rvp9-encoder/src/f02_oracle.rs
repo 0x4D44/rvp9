@@ -124,6 +124,20 @@ pub struct BlockDecision {
     /// Picker model-RD `SKIP_TXFM_*` state (`0=None`, `1=AcOnly`,
     /// `2=AcDc`).
     pub model_skip_txfm: u8,
+    /// Raw luma `block_yrd` coefficient-rate proxy in
+    /// `vp9_prob_cost` units, before the skip tie-break.
+    pub luma_coef_rate: u64,
+    /// Raw luma `block_yrd` coefficient-domain distortion, before the
+    /// skip tie-break.
+    pub luma_coef_dist: i64,
+    /// UV variance-model rate added to the winning candidate.
+    pub uv_model_rate: u32,
+    /// UV variance-model distortion added to the winning candidate.
+    pub uv_model_dist: i64,
+    /// Whether the U plane participated in the UV model.
+    pub uv_u_sensitive: bool,
+    /// Whether the V plane participated in the UV model.
+    pub uv_v_sensitive: bool,
     /// `SSE(source − prediction)` over the Y plane, pre-quant.
     pub sse_after_pred: u64,
     /// Winning inter-prediction filter. `None` for intra leaves.
@@ -166,6 +180,9 @@ impl BlockDecision {
              \"picker_rate\":{},\"picker_dist\":{},\"picker_rd_cost\":{},\
              \"model_var_y\":{},\"model_tx_size\":\"{}\",\
              \"model_skip_txfm\":{},\
+             \"luma_coef_rate\":{},\"luma_coef_dist\":{},\
+             \"uv_model_rate\":{},\"uv_model_dist\":{},\
+             \"uv_u_sensitive\":{},\"uv_v_sensitive\":{},\
              \"sse_after_pred\":{},\"interp_filter\":\"{}\",\"skip_flag\":{},\
              \"q_index\":{},\"tx_size\":\"{}\",\"luma_eob_nonzero\":{}}}",
             self.frame_idx,
@@ -185,6 +202,12 @@ impl BlockDecision {
             self.model_var_y,
             tx_size_tag(self.model_tx_size),
             self.model_skip_txfm,
+            self.luma_coef_rate,
+            self.luma_coef_dist,
+            self.uv_model_rate,
+            self.uv_model_dist,
+            self.uv_u_sensitive,
+            self.uv_v_sensitive,
             self.sse_after_pred,
             interp_filter_tag(self.interp_filter),
             self.skip_flag,
@@ -355,6 +378,12 @@ mod tests {
             model_var_y: 4_321,
             model_tx_size: TxSize::Tx8x8,
             model_skip_txfm: 0,
+            luma_coef_rate: 6_400,
+            luma_coef_dist: 9_876,
+            uv_model_rate: 700,
+            uv_model_dist: 1_234,
+            uv_u_sensitive: true,
+            uv_v_sensitive: false,
             sse_after_pred: 1_234_567,
             interp_filter: Some(InterpFilter::EightTapSmooth),
             skip_flag: false,
@@ -383,6 +412,12 @@ mod tests {
             model_var_y: 0,
             model_tx_size: TxSize::Tx8x8,
             model_skip_txfm: 2,
+            luma_coef_rate: 0,
+            luma_coef_dist: 0,
+            uv_model_rate: 0,
+            uv_model_dist: 0,
+            uv_u_sensitive: false,
+            uv_v_sensitive: false,
             sse_after_pred: 0,
             interp_filter: None,
             skip_flag: true,

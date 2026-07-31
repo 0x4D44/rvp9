@@ -264,6 +264,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )?;
         writeln!(
             sf,
+            "- `luma_coef_rate`, `luma_coef_dist`, `uv_model_rate`, `uv_model_dist`, `uv_u_sensitive`, `uv_v_sensitive`: live on both legs."
+        )?;
+        writeln!(
+            sf,
             "- `picker_dist`: rvp9 reports decoded-pixel SSE; libvpx reports its coefficient/model-RD ranking distortion."
         )?;
         writeln!(sf)?;
