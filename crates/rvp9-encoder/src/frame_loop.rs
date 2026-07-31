@@ -6773,6 +6773,11 @@ mod tests {
 
     #[test]
     fn stream_encoder_four_tile_output_is_thread_count_independent_and_bit_exact() {
+        // Several encoder tests temporarily change process-wide RVP9_*
+        // diagnostic and partition overrides. This test reads those knobs
+        // throughout three encoders, so it must share their serialization
+        // guard or a parallel override can make only one encoder diverge.
+        let _guard = env_test_mutex();
         let w = 1280usize;
         let h = 64usize;
         let cfg = EncoderConfig::new(w as u32, h as u32);
