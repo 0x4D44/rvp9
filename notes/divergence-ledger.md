@@ -2613,3 +2613,42 @@ pinned Apple M5 Max host.
 **Future plan:** retain the widened-lane kernel while it remains byte-exact.
 Treat the separately measured 32x32 fast and zbin quantizers as independent
 future units.
+
+### 2026-07-31 — AArch64 inverse 16x16 DCT keeps widened lanes
+
+**Where:** `rvp9_core::transforms::inverse::neon::idct16x16_add`, used by
+the 10-, 38-, and 256-coefficient inverse 16x16 DCT paths.
+
+**What libvpx does:** `vpx_dsp/arm/idct16x16_add_neon.c` processes eight
+transforms in parallel in i16 lanes, with i32 multiply accumulators. Its
+two half-width passes transpose through a 256-element i16 intermediate and
+the second pass performs a vector pixel add.
+
+**What rvp9 does:** processes four transforms in parallel in i32 lanes,
+matching rvp9's existing `i32` coefficient and scalar-oracle API. Every
+butterfly result explicitly narrows through i16 to preserve `wraplow`.
+The second pass returns four residuals at a time, then uses a scalar
+saturating pixel add for those four bytes.
+
+**Why:** retaining widened lanes avoids an input-narrowing copy and makes
+the vector stages map directly to the established scalar oracle. Four-way
+lanes also reuse the exact transpose and widened multiply approach already
+validated by rvp9's AArch64 forward DCT.
+
+**Byte-parity impact:** none. The vector kernel matches the scalar oracle
+over all three EOB buckets, strides 16/19/32, and 576 deterministic random
+coefficient/destination cases. The 120-frame cpu-used 7 product stream is
+byte-identical before and after the dispatch.
+
+**Compression-efficiency impact:** none; the product stream is unchanged.
+
+**Speed impact:** on the 120-frame 1280x704 cpu-used 7 product workload,
+paired child CPU improved `-1.198%` at one thread (15/16 wins) and `-1.574%`
+at four threads (19/20 wins). A fresh profile reduced inverse 16x16
+transform self samples from 91 to 41 across the vector core and wrapper.
+These unit timings ran during unrelated host load, so final acceptance still
+requires the clean-host corpus matrix.
+
+**Future plan:** retain the widened-lane kernel while it remains byte-exact.
+Vectorize the four-byte pixel add only if a fresh profile isolates it as a
+material leaf.

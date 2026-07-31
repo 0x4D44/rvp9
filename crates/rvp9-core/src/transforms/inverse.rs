@@ -48,6 +48,10 @@ use super::constants::{
 };
 use super::types::TxType;
 
+#[cfg(target_arch = "aarch64")]
+#[path = "inverse_neon.rs"]
+mod neon;
+
 /// 1D 4-point inverse DCT. Output values are stored as `i32` but each
 /// step and output assignment is `wraplow`-truncated to mirror the
 /// implicit `int16_t step[]` storage in libvpx.
@@ -561,16 +565,18 @@ pub fn idct16(input: &[i32; 16], output: &mut [i32; 16]) {
 /// `dest` and saturated to `[0, 255]`. The column-pass uses
 /// `ROUND_POWER_OF_TWO(_, 6)` per `vpx_idct16x16_256_add_c`
 /// (`vpx_dsp/inv_txfm.c:722-745`).
-pub fn idct16x16_256_add(input: &[i32; 256], dest: &mut [u8], stride: usize) {
+#[cfg(any(not(target_arch = "aarch64"), test))]
+fn idct16x16_add_scalar(input: &[i32; 256], dest: &mut [u8], stride: usize, active_rows: usize) {
     debug_assert!(
         dest.len() >= stride * 15 + 16,
         "dest too small for 16x16 add"
     );
+    debug_assert!(matches!(active_rows, 4 | 8 | 16));
 
     let mut intermediate = [0i32; 256];
 
-    // Row pass.
-    for r in 0..16 {
+    // Rows outside the active EOB bucket remain zero.
+    for r in 0..active_rows {
         let row_in: &[i32; 16] = input[r * 16..r * 16 + 16].try_into().unwrap();
         let row_out_mut: &mut [i32; 16] =
             (&mut intermediate[r * 16..r * 16 + 16]).try_into().unwrap();
@@ -592,6 +598,20 @@ pub fn idct16x16_256_add(input: &[i32; 256], dest: &mut [u8], stride: usize) {
     }
 }
 
+/// Dispatch the full inverse 16×16 DCT to the exact AArch64 vector
+/// kernel when available, retaining [`idct16x16_add_scalar`] as the
+/// portable oracle.
+pub fn idct16x16_256_add(input: &[i32; 256], dest: &mut [u8], stride: usize) {
+    #[cfg(target_arch = "aarch64")]
+    {
+        neon::idct16x16_add(input, dest, stride, 16);
+    }
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        idct16x16_add_scalar(input, dest, stride, 16);
+    }
+}
+
 /// 2D 10-coefficient inverse 16×16 DCT — sparse-block fast path.
 ///
 /// Mirrors `vpx_idct16x16_10_add_c` (`vpx_dsp/inv_txfm.c`). When the
@@ -608,35 +628,13 @@ pub fn idct16x16_256_add(input: &[i32; 256], dest: &mut [u8], stride: usize) {
 /// ignored and the output diverges from the full kernel. Callers are
 /// responsible for the eob bucket gate.
 pub fn idct16x16_10_add(input: &[i32; 256], dest: &mut [u8], stride: usize) {
-    debug_assert!(
-        dest.len() >= stride * 15 + 16,
-        "dest too small for 16x16 add"
-    );
-
-    // Intermediate buffer — rows 4..16 stay zero because the
-    // corresponding input rows are assumed zero (caller contract).
-    let mut intermediate = [0i32; 256];
-
-    // Row pass — first 4 rows only.
-    for r in 0..4 {
-        let row_in: &[i32; 16] = input[r * 16..r * 16 + 16].try_into().unwrap();
-        let row_out_mut: &mut [i32; 16] =
-            (&mut intermediate[r * 16..r * 16 + 16]).try_into().unwrap();
-        idct16(row_in, row_out_mut);
+    #[cfg(target_arch = "aarch64")]
+    {
+        neon::idct16x16_add(input, dest, stride, 4);
     }
-
-    // Column pass + residual add (full 16 cols, identical to _256_add).
-    let mut col_in = [0i32; 16];
-    let mut col_out = [0i32; 16];
-    for c in 0..16 {
-        for r in 0..16 {
-            col_in[r] = intermediate[r * 16 + c];
-        }
-        idct16(&col_in, &mut col_out);
-        for r in 0..16 {
-            let shifted = (col_out[r] as i64 + 32) >> 6;
-            dest[r * stride + c] = clip_pixel_add(dest[r * stride + c], shifted);
-        }
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        idct16x16_add_scalar(input, dest, stride, 4);
     }
 }
 
@@ -654,33 +652,13 @@ pub fn idct16x16_10_add(input: &[i32; 256], dest: &mut [u8], stride: usize) {
 /// ignored and the output diverges from the full kernel. Callers are
 /// responsible for the eob bucket gate.
 pub fn idct16x16_38_add(input: &[i32; 256], dest: &mut [u8], stride: usize) {
-    debug_assert!(
-        dest.len() >= stride * 15 + 16,
-        "dest too small for 16x16 add"
-    );
-
-    let mut intermediate = [0i32; 256];
-
-    // Row pass — first 8 rows only.
-    for r in 0..8 {
-        let row_in: &[i32; 16] = input[r * 16..r * 16 + 16].try_into().unwrap();
-        let row_out_mut: &mut [i32; 16] =
-            (&mut intermediate[r * 16..r * 16 + 16]).try_into().unwrap();
-        idct16(row_in, row_out_mut);
+    #[cfg(target_arch = "aarch64")]
+    {
+        neon::idct16x16_add(input, dest, stride, 8);
     }
-
-    // Column pass + residual add (full 16 cols, identical to _256_add).
-    let mut col_in = [0i32; 16];
-    let mut col_out = [0i32; 16];
-    for c in 0..16 {
-        for r in 0..16 {
-            col_in[r] = intermediate[r * 16 + c];
-        }
-        idct16(&col_in, &mut col_out);
-        for r in 0..16 {
-            let shifted = (col_out[r] as i64 + 32) >> 6;
-            dest[r * stride + c] = clip_pixel_add(dest[r * stride + c], shifted);
-        }
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        idct16x16_add_scalar(input, dest, stride, 8);
     }
 }
 
@@ -2321,6 +2299,43 @@ mod tests {
         let any_above = dest.iter().any(|&v| v > 128);
         let any_below = dest.iter().any(|&v| v < 128);
         assert!(any_above && any_below, "AC should produce both signs");
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    #[test]
+    fn idct16x16_neon_matches_scalar_for_all_eob_buckets() {
+        for &active_rows in &[4usize, 8, 16] {
+            for &stride in &[16usize, 19, 32] {
+                for seed in 0..64u64 {
+                    let mut state = seed.wrapping_add(1).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+                    let mut input = [0i32; 256];
+                    for row in 0..active_rows {
+                        for value in &mut input[row * 16..row * 16 + 16] {
+                            state ^= state << 13;
+                            state ^= state >> 7;
+                            state ^= state << 17;
+                            *value = state as i16 as i32;
+                        }
+                    }
+
+                    let mut scalar = vec![0u8; stride * 16];
+                    for value in &mut scalar {
+                        state ^= state << 13;
+                        state ^= state >> 7;
+                        state ^= state << 17;
+                        *value = state as u8;
+                    }
+                    let mut vector = scalar.clone();
+
+                    idct16x16_add_scalar(&input, &mut scalar, stride, active_rows);
+                    neon::idct16x16_add(&input, &mut vector, stride, active_rows);
+                    assert_eq!(
+                        vector, scalar,
+                        "NEON mismatch for active_rows={active_rows}, stride={stride}, seed={seed}"
+                    );
+                }
+            }
+        }
     }
 
     // ---- 16x16 EOB-bucket fast paths (G4-δ) ----
