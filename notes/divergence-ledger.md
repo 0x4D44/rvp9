@@ -51,6 +51,32 @@ wall time `0.679587 -> 0.678864 s` (`-0.767%`) and child CPU
 Pareto-positive. Revisit libvpx's selective second-pass widening only if a
 fresh profile still makes the transform material.
 
+### 2026-07-31 — Direct-index the superblock descent-result cache
+**Where:** `rvp9-encoder::DescentPickCache`; libvpx counterpart:
+`vp9/encoder/vp9_context_tree.h::PC_TREE`.
+**What libvpx does:** retains per-partition picker state in a preallocated
+superblock context tree addressed structurally.
+**What rvp9 does:** maps the complete 64-local-cell × 13-block-size key space
+through a fixed slot table into an insertion-order value vector.
+**Why:** rvp9's partition descent and causal final pass are separate walks,
+so they do not share libvpx's `PC_TREE` shape. Direct indexing preserves that
+separation while removing randomized hashing from the bounded trusted key
+space.
+**Byte-parity impact:** none. A focused oracle exhausts all 832 keys,
+replacement semantics, and per-superblock scoping. The 120-frame product
+stream remained byte-identical and all three decoders produced identical
+I420 output.
+**Compression-efficiency impact:** none because every cached picker result,
+partition decision, and emitted stream is unchanged.
+**Speed impact:** sixteen warmed alternating one-thread pairs improved wall
+time `1.008414 -> 1.004468 s` (`-0.521%` paired) and child CPU
+`0.976270 -> 0.972855 s` (`-0.446%`), with eleven wins. Twenty four-thread
+pairs improved wall time `0.625460 -> 0.620181 s` (`-0.657%`) with fourteen
+wins and child CPU `1.141023 -> 1.127910 s` (`-0.652%`) with sixteen wins.
+**Future plan:** retain while exact and Pareto-positive. The separate
+coefficient map remains hashed; Unit 106 already rejected packing that map's
+keys under the default hasher.
+
 ### 2026-07-31 — Reuse pre-header count-pass results during tile emission
 **Where:** `rvp9-encoder::frame_loop::build_inter_packet_with_residuals`;
 libvpx counterparts: `vp9/encoder/vp9_tokenize.c` and

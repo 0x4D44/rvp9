@@ -2830,6 +2830,59 @@ fn active_single_ref_frame_costs(
     .single
 }
 
+const DESCENT_CACHE_SLOTS: usize = 8 * 8 * rvp9_core::block::BLOCK_SIZES;
+const DESCENT_CACHE_EMPTY: u16 = u16::MAX;
+
+/// Per-superblock direct-index cache for partition-descent picker results.
+///
+/// The fixed slot table maps the complete 64-cell × 13-block-size key space
+/// to an insertion-order value index, avoiding randomized hashing for this
+/// bounded trusted domain.
+struct DescentPickCache<T> {
+    slots: [u16; DESCENT_CACHE_SLOTS],
+    values: Vec<T>,
+}
+
+impl<T> DescentPickCache<T> {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            slots: [DESCENT_CACHE_EMPTY; DESCENT_CACHE_SLOTS],
+            values: Vec::with_capacity(128),
+        }
+    }
+
+    #[inline(always)]
+    fn slot(mi_row: usize, mi_col: usize, bsize: BlockSize) -> usize {
+        (((mi_row & 7) * 8 + (mi_col & 7)) * rvp9_core::block::BLOCK_SIZES) + bsize.idx()
+    }
+
+    #[inline]
+    fn insert(&mut self, mi_row: usize, mi_col: usize, bsize: BlockSize, value: T) {
+        let slot = Self::slot(mi_row, mi_col, bsize);
+        let value_index = self.slots[slot];
+        if value_index != DESCENT_CACHE_EMPTY {
+            self.values[value_index as usize] = value;
+            return;
+        }
+
+        debug_assert!(self.values.len() < DESCENT_CACHE_SLOTS);
+        let value_index = self.values.len() as u16;
+        self.values.push(value);
+        self.slots[slot] = value_index;
+    }
+
+    #[inline]
+    fn get(&self, mi_row: usize, mi_col: usize, bsize: BlockSize) -> Option<&T> {
+        let value_index = self.slots[Self::slot(mi_row, mi_col, bsize)];
+        if value_index == DESCENT_CACHE_EMPTY {
+            None
+        } else {
+            self.values.get(value_index as usize)
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)] // AQ.1 added `seg_q_deltas`; the
 // remaining args are all load-bearing per-frame inputs that don't
 // reduce to a meaningful struct yet — revisit when AQ.3 lands.
@@ -3926,14 +3979,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
             // {nearest, near} and the rate cost is priced against nearest,
             // so a full match means the fresh search would land on the
             // same MV (faithful reuse). Any mismatch -> re-search (R2).
-            let mut descent_pick_cache: std::collections::HashMap<
-                (usize, usize, rvp9_core::block::BlockSize),
-                (
-                    rvp9_core::mode_decision::inter::PickInterModeResult,
-                    MvCandidates,
-                    MvCandidates,
-                ),
-            > = std::collections::HashMap::new();
+            let mut descent_pick_cache = DescentPickCache::new();
 
             // A3'-int-pro diagnostic — per-SB seed activity. Set
             // RVP9_DIAG_INTPRO_SB=1 to enable (off by default to
@@ -4443,7 +4489,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     // the descent never queries the same key twice.
                     if phase2_reuse_enabled {
                         descent_pick_cache.insert(
-                            (leaf_mi_row, leaf_mi_col, bs),
+                            leaf_mi_row,
+                            leaf_mi_col,
+                            bs,
                             (result, descent_mvc, descent_mvc_golden),
                         );
                     }
@@ -5446,7 +5494,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 // overrides; the cpu<=4 RDO path runs its own search.
                 let (phase2_override_last, phase2_override_golden) =
                     if phase2_reuse_enabled && rdo_unified.is_none() {
-                        match descent_pick_cache.get(&(leaf_mi_row, leaf_mi_col, leaf_bsize)) {
+                        match descent_pick_cache.get(leaf_mi_row, leaf_mi_col, leaf_bsize) {
                             Some((cached, desc_mvc_last, desc_mvc_golden)) => {
                                 // MATCH GUARD (R2): only reuse the descent's
                                 // NEWMV when the final pass's CAUSAL
@@ -5685,7 +5733,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 // would be the forbidden cheat.
                 let cached_descent_pick = if rt_reuse_descent_pick && rdo_unified.is_none() {
                     descent_pick_cache
-                        .get(&(leaf_mi_row, leaf_mi_col, leaf_bsize))
+                        .get(leaf_mi_row, leaf_mi_col, leaf_bsize)
                         .map(|(cached, _, _)| *cached)
                 } else {
                     None
@@ -5708,7 +5756,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 }
                 if a4_profile_enabled
                     && let Some((cached, _, _)) =
-                        descent_pick_cache.get(&(leaf_mi_row, leaf_mi_col, leaf_bsize))
+                        descent_pick_cache.get(leaf_mi_row, leaf_mi_col, leaf_bsize)
                 {
                     let idx = leaf_bsize.idx();
                     a4_profile_committed[idx] += 1;
@@ -8679,6 +8727,58 @@ fn intra_inverse_transform_add(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn descent_pick_cache_covers_complete_superblock_key_space() {
+        let block_sizes = [
+            BlockSize::Block4x4,
+            BlockSize::Block4x8,
+            BlockSize::Block8x4,
+            BlockSize::Block8x8,
+            BlockSize::Block8x16,
+            BlockSize::Block16x8,
+            BlockSize::Block16x16,
+            BlockSize::Block16x32,
+            BlockSize::Block32x16,
+            BlockSize::Block32x32,
+            BlockSize::Block32x64,
+            BlockSize::Block64x32,
+            BlockSize::Block64x64,
+        ];
+        let mut keys = Vec::new();
+        for bsize in block_sizes {
+            for row in 0..8 {
+                for col in 0..8 {
+                    keys.push((row, col, bsize));
+                }
+            }
+        }
+        assert_eq!(keys.len(), DESCENT_CACHE_SLOTS);
+
+        let mut cache = DescentPickCache::new();
+        for (value, &(row, col, bsize)) in keys.iter().enumerate() {
+            cache.insert(16 + row, 24 + col, bsize, value);
+        }
+        for (expected, &(row, col, bsize)) in keys.iter().enumerate() {
+            assert_eq!(cache.get(16 + row, 24 + col, bsize), Some(&expected));
+        }
+
+        cache.insert(16, 24, BlockSize::Block64x64, usize::MAX);
+        assert_eq!(cache.values.len(), DESCENT_CACHE_SLOTS);
+        assert_eq!(
+            cache.get(16, 24, BlockSize::Block64x64),
+            Some(&usize::MAX),
+            "repeated keys preserve HashMap replacement semantics"
+        );
+
+        let mut next_superblock = DescentPickCache::new();
+        next_superblock.insert(24, 32, BlockSize::Block64x64, 7usize);
+        assert_eq!(
+            next_superblock.get(24, 32, BlockSize::Block64x64),
+            Some(&7),
+            "local-slot aliases are isolated by per-superblock cache scope"
+        );
+    }
 
     #[test]
     fn inter_emit_residual_scratch_is_prefix_bounded_and_causal() {
