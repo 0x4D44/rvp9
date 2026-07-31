@@ -108,6 +108,22 @@ pub struct BlockDecision {
     pub mv_bits_est: u32,
     /// Picker's coefficient-bit estimate in plain bits.
     pub coef_bits_est: u32,
+    /// Winning candidate's total picker rate in `vp9_prob_cost` units.
+    pub picker_rate: u32,
+    /// Winning candidate's surfaced picker distortion. On rvp9 this is
+    /// decoded-pixel SSE; pinned libvpx surfaces `best_rdc.dist`, its
+    /// coefficient/model-RD ranking distortion. Compare
+    /// [`Self::picker_rd_cost`] when the ranking domain matters.
+    pub picker_dist: i64,
+    /// Winning candidate's final RD cost.
+    pub picker_rd_cost: i64,
+    /// Luma variance returned by `model_rd_for_sb_y`.
+    pub model_var_y: u32,
+    /// Picker model-RD transform size before any emit-side redecision.
+    pub model_tx_size: TxSize,
+    /// Picker model-RD `SKIP_TXFM_*` state (`0=None`, `1=AcOnly`,
+    /// `2=AcDc`).
+    pub model_skip_txfm: u8,
     /// `SSE(source − prediction)` over the Y plane, pre-quant.
     pub sse_after_pred: u64,
     /// Winning inter-prediction filter. `None` for intra leaves.
@@ -147,6 +163,9 @@ impl BlockDecision {
              \"bsize\":\"{}\",\"mode\":\"{}\",\"ref_frame\":\"{}\",\
              \"mv_row\":{},\"mv_col\":{},\
              \"mode_bits_est\":{},\"mv_bits_est\":{},\"coef_bits_est\":{},\
+             \"picker_rate\":{},\"picker_dist\":{},\"picker_rd_cost\":{},\
+             \"model_var_y\":{},\"model_tx_size\":\"{}\",\
+             \"model_skip_txfm\":{},\
              \"sse_after_pred\":{},\"interp_filter\":\"{}\",\"skip_flag\":{},\
              \"q_index\":{},\"tx_size\":\"{}\",\"luma_eob_nonzero\":{}}}",
             self.frame_idx,
@@ -160,6 +179,12 @@ impl BlockDecision {
             self.mode_bits_est,
             self.mv_bits_est,
             self.coef_bits_est,
+            self.picker_rate,
+            self.picker_dist,
+            self.picker_rd_cost,
+            self.model_var_y,
+            tx_size_tag(self.model_tx_size),
+            self.model_skip_txfm,
             self.sse_after_pred,
             interp_filter_tag(self.interp_filter),
             self.skip_flag,
@@ -324,6 +349,12 @@ mod tests {
             mode_bits_est: 150,
             mv_bits_est: 320,
             coef_bits_est: 0,
+            picker_rate: 7_500,
+            picker_dist: 12_345,
+            picker_rd_cost: 98_765,
+            model_var_y: 4_321,
+            model_tx_size: TxSize::Tx8x8,
+            model_skip_txfm: 0,
             sse_after_pred: 1_234_567,
             interp_filter: Some(InterpFilter::EightTapSmooth),
             skip_flag: false,
@@ -346,6 +377,12 @@ mod tests {
             mode_bits_est: 90,
             mv_bits_est: 0,
             coef_bits_est: 0,
+            picker_rate: 900,
+            picker_dist: 1_234,
+            picker_rd_cost: 5_678,
+            model_var_y: 0,
+            model_tx_size: TxSize::Tx8x8,
+            model_skip_txfm: 2,
             sse_after_pred: 0,
             interp_filter: None,
             skip_flag: true,

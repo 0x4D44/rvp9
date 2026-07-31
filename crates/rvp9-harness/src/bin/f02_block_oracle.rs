@@ -258,6 +258,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             sf,
             "- Diagnostic-only fields: `mode_bits_est`, `mv_bits_est`, and `coef_bits_est`; they are live on rvp9 and the pinned libvpx patch emits zero placeholders."
         )?;
+        writeln!(
+            sf,
+            "- `picker_rate`, `picker_rd_cost`, `model_var_y`, `model_tx_size`, `model_skip_txfm`, `sse_after_pred`: live on both legs."
+        )?;
+        writeln!(
+            sf,
+            "- `picker_dist`: rvp9 reports decoded-pixel SSE; libvpx reports its coefficient/model-RD ranking distortion."
+        )?;
         writeln!(sf)?;
         writeln!(
             sf,

@@ -86,6 +86,12 @@ pub fn parse_jsonl_line(line: &str) -> Result<BlockDecision, ParseError> {
     let mut mode_bits_est: Option<u32> = None;
     let mut mv_bits_est: Option<u32> = None;
     let mut coef_bits_est: Option<u32> = None;
+    let mut picker_rate: Option<u32> = None;
+    let mut picker_dist: Option<i64> = None;
+    let mut picker_rd_cost: Option<i64> = None;
+    let mut model_var_y: Option<u32> = None;
+    let mut model_tx_size: Option<TxSize> = None;
+    let mut model_skip_txfm: Option<u8> = None;
     let mut sse_after_pred: Option<u64> = None;
     let mut interp_filter: Option<Option<InterpFilter>> = None;
     let mut skip_flag: Option<bool> = None;
@@ -113,6 +119,18 @@ pub fn parse_jsonl_line(line: &str) -> Result<BlockDecision, ParseError> {
             "mode_bits_est" => mode_bits_est = Some(parse_num(v, "mode_bits_est")?),
             "mv_bits_est" => mv_bits_est = Some(parse_num(v, "mv_bits_est")?),
             "coef_bits_est" => coef_bits_est = Some(parse_num(v, "coef_bits_est")?),
+            "picker_rate" => picker_rate = Some(parse_num(v, "picker_rate")?),
+            "picker_dist" => picker_dist = Some(parse_num(v, "picker_dist")?),
+            "picker_rd_cost" => picker_rd_cost = Some(parse_num(v, "picker_rd_cost")?),
+            "model_var_y" => model_var_y = Some(parse_num(v, "model_var_y")?),
+            "model_tx_size" => {
+                let raw = parse_string(v, "model_tx_size")?;
+                model_tx_size = Some(tx_size_from_tag(&raw).ok_or(ParseError::BadValue {
+                    field: "model_tx_size",
+                    raw,
+                })?);
+            }
+            "model_skip_txfm" => model_skip_txfm = Some(parse_num(v, "model_skip_txfm")?),
             "sse_after_pred" => sse_after_pred = Some(parse_num(v, "sse_after_pred")?),
             "interp_filter" => {
                 let raw = parse_string(v, "interp_filter")?;
@@ -163,6 +181,12 @@ pub fn parse_jsonl_line(line: &str) -> Result<BlockDecision, ParseError> {
         mode_bits_est: mode_bits_est.ok_or(ParseError::MissingField("mode_bits_est"))?,
         mv_bits_est: mv_bits_est.ok_or(ParseError::MissingField("mv_bits_est"))?,
         coef_bits_est: coef_bits_est.ok_or(ParseError::MissingField("coef_bits_est"))?,
+        picker_rate: picker_rate.ok_or(ParseError::MissingField("picker_rate"))?,
+        picker_dist: picker_dist.ok_or(ParseError::MissingField("picker_dist"))?,
+        picker_rd_cost: picker_rd_cost.ok_or(ParseError::MissingField("picker_rd_cost"))?,
+        model_var_y: model_var_y.ok_or(ParseError::MissingField("model_var_y"))?,
+        model_tx_size: model_tx_size.ok_or(ParseError::MissingField("model_tx_size"))?,
+        model_skip_txfm: model_skip_txfm.ok_or(ParseError::MissingField("model_skip_txfm"))?,
         sse_after_pred: sse_after_pred.ok_or(ParseError::MissingField("sse_after_pred"))?,
         interp_filter: interp_filter.ok_or(ParseError::MissingField("interp_filter"))?,
         skip_flag: skip_flag.ok_or(ParseError::MissingField("skip_flag"))?,
@@ -641,6 +665,12 @@ mod tests {
             mode_bits_est: 150,
             mv_bits_est: 320,
             coef_bits_est: 0,
+            picker_rate: 7_500,
+            picker_dist: 12_345,
+            picker_rd_cost: 98_765,
+            model_var_y: 4_321,
+            model_tx_size: TxSize::Tx8x8,
+            model_skip_txfm: 0,
             sse_after_pred: 1_234_567,
             interp_filter: Some(InterpFilter::EightTapSmooth),
             skip_flag: false,
@@ -663,6 +693,12 @@ mod tests {
             mode_bits_est: 90,
             mv_bits_est: 0,
             coef_bits_est: 0,
+            picker_rate: 900,
+            picker_dist: 1_234,
+            picker_rd_cost: 5_678,
+            model_var_y: 0,
+            model_tx_size: TxSize::Tx8x8,
+            model_skip_txfm: 2,
             sse_after_pred: 0,
             interp_filter: None,
             skip_flag: true,
@@ -714,6 +750,9 @@ mod tests {
                     \"bsize\":\"8x8\",\"mode\":\"DC\",\"ref_frame\":\"INTRA\",\
                     \"mv_row\":0,\"mv_col\":0,\
                     \"mode_bits_est\":0,\"mv_bits_est\":0,\"coef_bits_est\":0,\
+                    \"picker_rate\":0,\"picker_dist\":0,\"picker_rd_cost\":0,\
+                    \"model_var_y\":0,\"model_tx_size\":\"8x8\",\
+                    \"model_skip_txfm\":0,\
                     \"sse_after_pred\":0,\"interp_filter\":\"NONE\"}";
         let err = parse_jsonl_line(line).unwrap_err();
         match err {
@@ -759,6 +798,9 @@ mod tests {
                     \"bsize\":\"8x8\",\"mode\":\"DC\",\"ref_frame\":\"INTRA\",\
                     \"mv_row\":0,\"mv_col\":0,\
                     \"mode_bits_est\":1,\"mv_bits_est\":0,\"coef_bits_est\":0,\
+                    \"picker_rate\":0,\"picker_dist\":0,\"picker_rd_cost\":0,\
+                    \"model_var_y\":0,\"model_tx_size\":\"8x8\",\
+                    \"model_skip_txfm\":0,\
                     \"sse_after_pred\":0,\"interp_filter\":\"NONE\",\"skip_flag\":true,\
                     \"q_index\":65,\"tx_size\":\"8x8\",\"luma_eob_nonzero\":false,\
                     \"future_field\":\"ignored\"}";

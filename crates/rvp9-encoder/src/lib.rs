@@ -2114,6 +2114,12 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
                         // Forward-looking per HLD §3.4.1 — `0`
                         // until F.1 lands the coef-bit estimator.
                         coef_bits_est: 0,
+                        picker_rate: 0,
+                        picker_dist: 0,
+                        picker_rd_cost: 0,
+                        model_var_y: 0,
+                        model_tx_size: rvp9_core::block::max_txsize(leaf_bsize),
+                        model_skip_txfm: 0,
                         sse_after_pred: 0,
                         interp_filter: None,
                         // Intra leaves in the F5.1 path always
@@ -4466,6 +4472,12 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             mode_bits_est: 0,
                             mv_bits_est: 0,
                             coef_bits_est: 0,
+                            picker_rate: 0,
+                            picker_dist: 0,
+                            picker_rd_cost: 0,
+                            model_var_y: 0,
+                            model_tx_size: rvp9_core::transforms::TxSize::Tx4x4,
+                            model_skip_txfm: 2,
                             sse_after_pred: 0,
                             interp_filter: Some(
                                 rvp9_core::bitstream::frame::InterpFilter::EightTap,
@@ -4579,6 +4591,12 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             mode_bits_est: 0,
                             mv_bits_est: 0,
                             coef_bits_est: 0,
+                            picker_rate: 0,
+                            picker_dist: 0,
+                            picker_rd_cost: 0,
+                            model_var_y: 0,
+                            model_tx_size: rvp9_core::transforms::TxSize::Tx4x4,
+                            model_skip_txfm: 2,
                             sse_after_pred: 0,
                             interp_filter: Some(
                                 rvp9_core::bitstream::frame::InterpFilter::EightTap,
@@ -6455,6 +6473,16 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         mode_bits_est,
                         mv_bits_est,
                         coef_bits_est,
+                        picker_rate: pick.best_rate,
+                        picker_dist: i64::from(pick.best_distortion),
+                        picker_rd_cost: pick.best_rd_cost,
+                        model_var_y: pick.var_y,
+                        model_tx_size: pick.picked_tx_size,
+                        model_skip_txfm: match pick.skip_txfm {
+                            rvp9_core::mode_decision::model_rd::SkipTxfm::None => 0,
+                            rvp9_core::mode_decision::model_rd::SkipTxfm::AcOnly => 1,
+                            rvp9_core::mode_decision::model_rd::SkipTxfm::AcDc => 2,
+                        },
                         sse_after_pred: u64::from(pick.sse_y),
                         interp_filter: if final_ref == RefFrame::IntraFrame {
                             None
