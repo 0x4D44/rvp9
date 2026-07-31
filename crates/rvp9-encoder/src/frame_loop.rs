@@ -4885,7 +4885,7 @@ fn build_inter_packet_with_residuals(
     // best_ref_mv + delta).
     prev_mv_grid: Option<&[PrevFrameMvRef]>,
     // P0b — optional output slot for backward-adaptation counts.
-    mut counts: Option<&mut FrameCounts>,
+    counts: Option<&mut FrameCounts>,
     // P0b — frame context to use for encoding (replaces
     // `FrameContext::new_default()` when backward adaptation is active).
     fc_override: Option<&FrameContext>,
@@ -5114,10 +5114,9 @@ fn build_inter_packet_with_residuals(
     };
     compressed_buf.truncate(compressed_len);
 
-    let collect_counts = counts.is_some();
     let tile_fc: &FrameContext = decoder_fc;
     let tx_mode = target.tx_mode;
-    let encode_tile = |tile_col: usize| -> Result<(Vec<u8>, Option<FrameCounts>), EncodeError> {
+    let encode_tile = |tile_col: usize| -> Result<Vec<u8>, EncodeError> {
         let bounds = tile_bounds(
             mi_rows as usize,
             mi_cols as usize,
@@ -5129,7 +5128,6 @@ fn build_inter_packet_with_residuals(
         // F10.1c — sized generously (per-pixel × 4) since real
         // residuals can dominate the bit budget at higher Q indices.
         let mut tile_buf = vec![0u8; (mi_rows as usize) * (mi_cols as usize) * 64 + 16 * 1024];
-        let mut tile_counts = collect_counts.then(FrameCounts::default);
         let tile_len = {
             let mut bw = BoolWriter::start_encode(&mut tile_buf);
             let mut coef_ctx = TileCoefCtx::new(bounds.mi_col_end - bounds.mi_col_start);
@@ -5149,13 +5147,17 @@ fn build_inter_packet_with_residuals(
                 prev_mv_grid,
                 &mut coef_ctx,
                 coef_source,
-                tile_counts.as_mut(),
+                // The count-only traversal above already gathered the
+                // complete probability-independent FrameCounts. Repeating
+                // those updates here only recreates the same adaptation
+                // input while emitting the arithmetic-coded bytes.
+                None,
             )?;
             bw.stop_encode()
                 .map_err(|_| EncodeError::Bitstream(BitstreamError::CompressedHeaderTooLarge))?
         };
         tile_buf.truncate(tile_len);
-        Ok((tile_buf, tile_counts))
+        Ok(tile_buf)
     };
 
     // Bit-accounting diagnostics are thread-local and intentionally observe
@@ -5173,30 +5175,31 @@ fn build_inter_packet_with_residuals(
                 for tile_col in batch_start..batch_end {
                     handles.push(scope.spawn(move || encode_tile(tile_col)));
                 }
-                // Join and merge in tile-column order so FrameCounts and
-                // output assembly remain deterministic across thread counts.
+                // Join in tile-column order so output assembly remains
+                // deterministic across thread counts.
                 for handle in handles {
-                    let (tile_buf, tile_counts) =
-                        handle.join().expect("inter tile writer worker panicked")?;
-                    if let (Some(dst), Some(src)) = (counts.as_deref_mut(), tile_counts.as_ref()) {
-                        dst.add(src);
-                    }
-                    tile_bufs.push(tile_buf);
+                    tile_bufs.push(handle.join().expect("inter tile writer worker panicked")?);
                 }
             }
             Ok(())
         })?;
     } else {
         for tile_col in 0..tile_cols {
-            let (tile_buf, tile_counts) = encode_tile(tile_col)?;
-            if let (Some(dst), Some(src)) = (counts.as_deref_mut(), tile_counts.as_ref()) {
-                dst.add(src);
-            }
-            tile_bufs.push(tile_buf);
+            tile_bufs.push(encode_tile(tile_col)?);
         }
     }
     let tile_refs: Vec<&[u8]> = tile_bufs.iter().map(Vec::as_slice).collect();
     let tile_buf = write_tile_buffers(&tile_refs, tile_cols as u32, 1)?;
+
+    // The count-only traversal is the canonical source for backward
+    // adaptation as well as the coefficient update plan. Its encoder-only
+    // 12-token bank is no longer needed after plan construction; exclude it
+    // from the decoder-shaped output counts and preserve the prior additive
+    // output-slot contract.
+    count_counts.coef_full = None;
+    if let Some(dst) = counts {
+        dst.add(&count_counts);
+    }
 
     // A11 (b9b4e93) — refresh_frame_flags = 0x01: every inter frame
     // refreshes ref slot 0 (LASTFRAME). Pre-A11 set this to 0x00,

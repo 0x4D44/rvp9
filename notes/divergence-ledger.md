@@ -51,6 +51,36 @@ wall time `0.679587 -> 0.678864 s` (`-0.767%`) and child CPU
 Pareto-positive. Revisit libvpx's selective second-pass widening only if a
 fresh profile still makes the transform material.
 
+### 2026-07-31 — Reuse pre-header count-pass results during tile emission
+**Where:** `rvp9-encoder::frame_loop::build_inter_packet_with_residuals`;
+libvpx counterparts: `vp9/encoder/vp9_tokenize.c` and
+`vp9/encoder/vp9_bitstream.c::pack_mb_tokens`.
+**What libvpx does:** tokenizes once before the compressed header, retaining
+token records and frame counts, then packs the retained tokens without
+recounting them.
+**What rvp9 does:** its pre-header count-only syntax traversal retains the
+complete probability-independent `FrameCounts`; its later arithmetic
+traversal regenerates tokens from coefficients but no longer allocates,
+updates, or merges duplicate per-tile count banks.
+**Why:** rvp9 does not retain a libvpx-style `TOKENEXTRA` stream, but its
+mandatory count pass already computes the exact backward-adaptation input.
+Reusing that result removes duplicate count work without introducing a
+frame-sized token arena.
+**Byte-parity impact:** none. A focused oracle compares count-only and
+arithmetic traversals, including coefficient EOBs, under different
+probability tables. The 120-frame product stream remained byte-identical and
+all three decoders produced identical I420 output.
+**Compression-efficiency impact:** none because the emitted stream and
+backward-adaptation counts are unchanged.
+**Speed impact:** sixteen warmed alternating one-thread pairs were neutral
+(`+0.021%` wall, `-0.021%` child CPU). Across two independent twenty-pair
+four-thread runs, combined median paired wall time improved `-0.834%` with
+28/40 wins; the individual wall results were `-0.551%` and `-0.992%`, and
+the repeat improved child CPU `-0.522%`.
+**Future plan:** retain while count equality and byte identity hold. A
+libvpx-style retained token arena would be a separate measured architecture
+decision, not an implicit extension of this change.
+
 ### 2026-07-31 — Widen the complete second 16-point DCT pass
 **Where:** `rvp9-core::transforms::forward_neon`; libvpx counterpart:
 `vpx_dsp/arm/fdct16x16_neon.c`.

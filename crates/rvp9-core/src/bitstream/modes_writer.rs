@@ -6632,22 +6632,22 @@ mod tests {
         assert!(matches!(err, ModesWriterError::InvalidTileBounds));
     }
 
-    /// `write_tile_inter` with FrameCounts populated: confirms the
-    /// per-leaf counts plumbing (skip, intra_inter, tx, inter_mode,
-    /// single_ref, partition).
+    /// Count-only and arithmetic traversals gather identical complete counts
+    /// even when their probability tables differ.
     #[test]
-    fn s5_tile_inter_accumulates_frame_counts() {
+    fn s5_tile_inter_count_only_matches_emit_across_probability_updates() {
         let fc = FrameContext::new_default();
         let params = s4c_default_params();
         let mi_rows = 8u32;
         let mi_cols = 8u32;
-        let cell = make_inter_cell(
+        let mut cell = make_inter_cell(
             BlockSize::Block64x64,
             InterMode::ZeroMv,
             [RefFrame::LastFrame, RefFrame::NoRefFrame],
             [Mv::ZERO; 2],
             InterpFilter::EightTap,
         );
+        cell.skip = false;
         let grid: Vec<Option<ModeInfo>> = vec![Some(cell); (mi_rows * mi_cols) as usize];
         let bounds = TileBounds {
             mi_row_start: 0,
@@ -6680,9 +6680,22 @@ mod tests {
         let mut count_sink = [];
         let mut count_only_bw = BoolWriter::start_count_only(&mut count_sink);
         let mut count_only_coef_ctx = TileCoefCtx::new(mi_cols as usize);
+        let mut count_fc = fc.clone();
+        count_fc.skip_probs.fill(17);
+        for tx_probs in &mut count_fc.coef_probs {
+            for plane_probs in tx_probs {
+                for ref_probs in plane_probs {
+                    for band_probs in ref_probs {
+                        for ctx_probs in band_probs {
+                            *ctx_probs = [19, 37, 73];
+                        }
+                    }
+                }
+            }
+        }
         write_tile_inter(
             &mut count_only_bw,
-            &fc,
+            &count_fc,
             &params,
             TxMode::AllowTx32x32,
             &grid,
@@ -6700,8 +6713,8 @@ mod tests {
             count_only_counts, counts,
             "count-only and arithmetic writers must gather identical counts"
         );
-        // Single 64x64 leaf → one entry in partition, skip,
-        // intra_inter, single_ref, inter_mode, tx.
+        // Single non-skip 64x64 leaf → one entry in partition, skip,
+        // intra_inter, single_ref, inter_mode, tx, plus coefficient EOBs.
         let total_partition: u32 = counts.partition.iter().map(|c| c.iter().sum::<u32>()).sum();
         assert_eq!(total_partition, 1, "partition counted once");
         let total_skip: u32 = counts.skip.iter().map(|c| c[0] + c[1]).sum();
@@ -6714,6 +6727,17 @@ mod tests {
             .map(|c| c.iter().sum::<u32>())
             .sum();
         assert_eq!(total_inter_mode, 1);
+        let total_coef_eob: u32 = counts
+            .coef
+            .coef
+            .iter()
+            .flat_map(|tx| tx.iter())
+            .flat_map(|plane| plane.iter())
+            .flat_map(|reference| reference.iter())
+            .flat_map(|band| band.iter())
+            .map(|ctx| ctx[crate::entropy::EOB_MODEL_TOKEN])
+            .sum();
+        assert!(total_coef_eob > 0, "non-skip residuals must count EOBs");
     }
 
     /// ModesWriterError Display impl coverage — each variant.
