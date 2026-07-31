@@ -591,6 +591,7 @@ pub fn fht8x8(input: &[i16], output: &mut [i32; 64], stride: usize, tx_type: TxT
 
 /// Function pointer for a 1D 16-point forward transform — either
 /// [`fdct16`] or [`fadst16`]. Used by [`fht16x16`] via the FHT_16 table.
+#[cfg(any(not(target_arch = "aarch64"), test))]
 type Fwd1d16 = fn(&[i32; 16], &mut [i32; 16]);
 
 /// 1D 16-point forward DCT. Computes the 8 even-indexed outputs via a
@@ -1034,7 +1035,8 @@ pub fn fdct16x16(input: &[i16], output: &mut [i32; 256], stride: usize) {
 /// fdct16x16` semantics.
 ///
 /// Mirrors libvpx `vp9_fht16x16_c` (`vp9/encoder/vp9_dct.c:640-665`).
-pub fn fht16x16(input: &[i16], output: &mut [i32; 256], stride: usize, tx_type: TxType) {
+#[cfg(any(not(target_arch = "aarch64"), test))]
+fn fht16x16_scalar(input: &[i16], output: &mut [i32; 256], stride: usize, tx_type: TxType) {
     if matches!(tx_type, TxType::DctDct) {
         fdct16x16(input, output, stride);
         return;
@@ -1083,6 +1085,24 @@ pub fn fht16x16(input: &[i16], output: &mut [i32; 256], stride: usize, tx_type: 
         for j in 0..16 {
             output[j + i * 16] = wraplow(row_out[j]);
         }
+    }
+}
+
+/// Dispatch the 16x16 hybrid forward transform to the exact AArch64 vector
+/// kernel when available, retaining [`fht16x16_scalar`] as the portable
+/// oracle.
+pub fn fht16x16(input: &[i16], output: &mut [i32; 256], stride: usize, tx_type: TxType) {
+    if matches!(tx_type, TxType::DctDct) {
+        fdct16x16(input, output, stride);
+        return;
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        neon::fht16x16(input, output, stride, tx_type);
+    }
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        fht16x16_scalar(input, output, stride, tx_type);
     }
 }
 
@@ -2258,6 +2278,43 @@ mod tests {
         fdct8x8_scalar(&alternating, &mut scalar, 8);
         neon::fdct8x8(&alternating, &mut vector, 8);
         assert_eq!(vector, scalar, "alternating residual extremes");
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    #[test]
+    fn fht16x16_neon_matches_scalar_valid_residuals() {
+        let mut state = 0xfad5_16a4_72ce_903b_u64;
+        for tx_type in [TxType::AdstDct, TxType::DctAdst, TxType::AdstAdst] {
+            for case in 0..128 {
+                let stride = 16 + case % 17;
+                let mut residual = vec![0i16; 15 * stride + 16];
+                for row in 0..16 {
+                    for column in 0..16 {
+                        state = state
+                            .wrapping_mul(6_364_136_223_846_793_005)
+                            .wrapping_add(1_442_695_040_888_963_407);
+                        residual[row * stride + column] = (((state >> 32) % 511) as i16) - 255;
+                    }
+                }
+                let mut scalar = [0i32; 256];
+                let mut vector = [0i32; 256];
+                fht16x16_scalar(&residual, &mut scalar, stride, tx_type);
+                neon::fht16x16(&residual, &mut vector, stride, tx_type);
+                assert_eq!(
+                    vector, scalar,
+                    "{tx_type:?} random residual case {case}, stride {stride}"
+                );
+            }
+
+            for &value in &[-255i16, 0, 255] {
+                let residual = [value; 256];
+                let mut scalar = [0i32; 256];
+                let mut vector = [0i32; 256];
+                fht16x16_scalar(&residual, &mut scalar, 16, tx_type);
+                neon::fht16x16(&residual, &mut vector, 16, tx_type);
+                assert_eq!(vector, scalar, "{tx_type:?} constant residual {value}");
+            }
+        }
     }
 
     #[cfg(target_arch = "aarch64")]

@@ -10,6 +10,7 @@
 
 use core::arch::aarch64::*;
 
+use crate::transforms::TxType;
 use crate::transforms::constants::*;
 
 type V = int32x4_t;
@@ -51,6 +52,16 @@ unsafe fn mul_add_round(a: V, ac: i32, b: V, bc: i32) -> V {
 #[inline(always)]
 unsafe fn mul_add_round_fast32(a: V, ac: i32, b: V, bc: i32) -> V {
     vrshrq_n_s32::<14>(vmlaq_n_s32(vmulq_n_s32(a, ac), b, bc))
+}
+
+#[inline(always)]
+unsafe fn mul_add_noround(a: V, ac: i32, b: V, bc: i32) -> V {
+    vmlaq_n_s32(vmulq_n_s32(a, ac), b, bc)
+}
+
+#[inline(always)]
+unsafe fn round14(value: V) -> V {
+    vrshrq_n_s32::<14>(value)
 }
 
 #[inline(always)]
@@ -203,6 +214,145 @@ unsafe fn fdct16x4_from_cross(input: &[V; 16], output: &mut [V; 16]) {
         |a, constant| mul_round(a, constant),
         |a, ac, b, bc| mul_add_round(a, ac, b, bc),
     );
+}
+
+/// Four independent bounded 1-D 16-point DCTs.
+#[inline]
+#[target_feature(enable = "neon")]
+unsafe fn fdct16x4(input: &[V; 16], output: &mut [V; 16]) {
+    fdct16_body(
+        input,
+        output,
+        (vdupq_n_s32(0), |value| wrap16(value), false),
+        |a, b| add(a, b),
+        |a, b| sub(a, b),
+        |a, constant| mul_round(a, constant),
+        |a, ac, b, bc| mul_add_round(a, ac, b, bc),
+    );
+}
+
+/// Four independent 1-D 16-point ADSTs.
+#[inline]
+#[target_feature(enable = "neon")]
+unsafe fn fadst16x4(input: &[V; 16], output: &mut [V; 16]) {
+    let zero = vdupq_n_s32(0);
+    let x = [
+        input[15], input[0], input[13], input[2], input[11], input[4], input[9], input[6],
+        input[7], input[8], input[5], input[10], input[3], input[12], input[1], input[14],
+    ];
+
+    let mut s = [zero; 16];
+    s[0] = mul_add_noround(x[0], COSPI_1_64, x[1], COSPI_31_64);
+    s[1] = mul_add_noround(x[0], COSPI_31_64, x[1], -COSPI_1_64);
+    s[2] = mul_add_noround(x[2], COSPI_5_64, x[3], COSPI_27_64);
+    s[3] = mul_add_noround(x[2], COSPI_27_64, x[3], -COSPI_5_64);
+    s[4] = mul_add_noround(x[4], COSPI_9_64, x[5], COSPI_23_64);
+    s[5] = mul_add_noround(x[4], COSPI_23_64, x[5], -COSPI_9_64);
+    s[6] = mul_add_noround(x[6], COSPI_13_64, x[7], COSPI_19_64);
+    s[7] = mul_add_noround(x[6], COSPI_19_64, x[7], -COSPI_13_64);
+    s[8] = mul_add_noround(x[8], COSPI_17_64, x[9], COSPI_15_64);
+    s[9] = mul_add_noround(x[8], COSPI_15_64, x[9], -COSPI_17_64);
+    s[10] = mul_add_noround(x[10], COSPI_21_64, x[11], COSPI_11_64);
+    s[11] = mul_add_noround(x[10], COSPI_11_64, x[11], -COSPI_21_64);
+    s[12] = mul_add_noround(x[12], COSPI_25_64, x[13], COSPI_7_64);
+    s[13] = mul_add_noround(x[12], COSPI_7_64, x[13], -COSPI_25_64);
+    s[14] = mul_add_noround(x[14], COSPI_29_64, x[15], COSPI_3_64);
+    s[15] = mul_add_noround(x[14], COSPI_3_64, x[15], -COSPI_29_64);
+
+    let mut x = [zero; 16];
+    for index in 0..8 {
+        x[index] = round14(add(s[index], s[index + 8]));
+        x[index + 8] = round14(sub(s[index], s[index + 8]));
+    }
+
+    s[..8].copy_from_slice(&x[..8]);
+    s[8] = mul_add_noround(x[8], COSPI_4_64, x[9], COSPI_28_64);
+    s[9] = mul_add_noround(x[8], COSPI_28_64, x[9], -COSPI_4_64);
+    s[10] = mul_add_noround(x[10], COSPI_20_64, x[11], COSPI_12_64);
+    s[11] = mul_add_noround(x[10], COSPI_12_64, x[11], -COSPI_20_64);
+    s[12] = mul_add_noround(x[12], -COSPI_28_64, x[13], COSPI_4_64);
+    s[13] = mul_add_noround(x[12], COSPI_4_64, x[13], COSPI_28_64);
+    s[14] = mul_add_noround(x[14], -COSPI_12_64, x[15], COSPI_20_64);
+    s[15] = mul_add_noround(x[14], COSPI_20_64, x[15], COSPI_12_64);
+
+    x[0] = add(s[0], s[4]);
+    x[1] = add(s[1], s[5]);
+    x[2] = add(s[2], s[6]);
+    x[3] = add(s[3], s[7]);
+    x[4] = sub(s[0], s[4]);
+    x[5] = sub(s[1], s[5]);
+    x[6] = sub(s[2], s[6]);
+    x[7] = sub(s[3], s[7]);
+    for index in 8..12 {
+        x[index] = round14(add(s[index], s[index + 4]));
+        x[index + 4] = round14(sub(s[index], s[index + 4]));
+    }
+
+    s[0] = x[0];
+    s[1] = x[1];
+    s[2] = x[2];
+    s[3] = x[3];
+    s[4] = mul_add_noround(x[4], COSPI_8_64, x[5], COSPI_24_64);
+    s[5] = mul_add_noround(x[4], COSPI_24_64, x[5], -COSPI_8_64);
+    s[6] = mul_add_noround(x[6], -COSPI_24_64, x[7], COSPI_8_64);
+    s[7] = mul_add_noround(x[6], COSPI_8_64, x[7], COSPI_24_64);
+    s[8] = x[8];
+    s[9] = x[9];
+    s[10] = x[10];
+    s[11] = x[11];
+    s[12] = mul_add_noround(x[12], COSPI_8_64, x[13], COSPI_24_64);
+    s[13] = mul_add_noround(x[12], COSPI_24_64, x[13], -COSPI_8_64);
+    s[14] = mul_add_noround(x[14], -COSPI_24_64, x[15], COSPI_8_64);
+    s[15] = mul_add_noround(x[14], COSPI_8_64, x[15], COSPI_24_64);
+
+    x[0] = add(s[0], s[2]);
+    x[1] = add(s[1], s[3]);
+    x[2] = sub(s[0], s[2]);
+    x[3] = sub(s[1], s[3]);
+    x[4] = round14(add(s[4], s[6]));
+    x[5] = round14(add(s[5], s[7]));
+    x[6] = round14(sub(s[4], s[6]));
+    x[7] = round14(sub(s[5], s[7]));
+    x[8] = add(s[8], s[10]);
+    x[9] = add(s[9], s[11]);
+    x[10] = sub(s[8], s[10]);
+    x[11] = sub(s[9], s[11]);
+    x[12] = round14(add(s[12], s[14]));
+    x[13] = round14(add(s[13], s[15]));
+    x[14] = round14(sub(s[12], s[14]));
+    x[15] = round14(sub(s[13], s[15]));
+
+    let stage4 = x;
+    x[2] = mul_round(add(stage4[2], stage4[3]), -COSPI_16_64);
+    x[3] = mul_round(sub(stage4[2], stage4[3]), COSPI_16_64);
+    x[6] = mul_round(add(stage4[6], stage4[7]), COSPI_16_64);
+    x[7] = mul_round(sub(stage4[7], stage4[6]), COSPI_16_64);
+    x[10] = mul_round(add(stage4[10], stage4[11]), COSPI_16_64);
+    x[11] = mul_round(sub(stage4[11], stage4[10]), COSPI_16_64);
+    x[14] = mul_round(add(stage4[14], stage4[15]), -COSPI_16_64);
+    x[15] = mul_round(sub(stage4[14], stage4[15]), COSPI_16_64);
+
+    let final_values = [
+        x[0],
+        vnegq_s32(x[8]),
+        x[12],
+        vnegq_s32(x[4]),
+        x[6],
+        x[14],
+        x[10],
+        x[2],
+        x[3],
+        x[11],
+        x[15],
+        x[7],
+        x[5],
+        vnegq_s32(x[13]),
+        x[9],
+        vnegq_s32(x[1]),
+    ];
+    for (destination, value) in output.iter_mut().zip(final_values) {
+        *destination = wrap16(value);
+    }
 }
 
 /// Eight independent bounded 1-D 16-point DCTs.
@@ -737,6 +887,75 @@ unsafe fn pass1_round16(value: V16) -> V16 {
     vshrq_n_s16::<2>(add16(add16(value, one), negative))
 }
 
+#[inline(always)]
+unsafe fn hybrid_interpass_round(value: V) -> V {
+    let one = vdupq_n_s32(1);
+    let negative = vreinterpretq_s32_u32(vshrq_n_u32::<31>(vcltq_s32(value, vdupq_n_s32(0))));
+    wrap16(vshrq_n_s32::<2>(add(add(value, one), negative)))
+}
+
+#[inline(always)]
+unsafe fn hybrid_transform16x4(input: &[V; 16], output: &mut [V; 16], adst: bool) {
+    if adst {
+        fadst16x4(input, output);
+    } else {
+        fdct16x4(input, output);
+    }
+}
+
+#[target_feature(enable = "neon")]
+unsafe fn fht16x16_inner(input: *const i16, output: *mut i32, stride: usize, tx_type: TxType) {
+    let zero = vdupq_n_s32(0);
+    let (column_adst, row_adst) = match tx_type {
+        TxType::DctDct => (false, false),
+        TxType::AdstDct => (true, false),
+        TxType::DctAdst => (false, true),
+        TxType::AdstAdst => (true, true),
+    };
+    let mut intermediate = [0i32; 256];
+
+    for column in (0..16).step_by(4) {
+        let mut lane_in = [zero; 16];
+        for (row, values) in lane_in.iter_mut().enumerate() {
+            *values = vshlq_n_s32::<2>(vmovl_s16(vld1_s16(input.add(row * stride + column))));
+        }
+        let mut lane_out = [zero; 16];
+        hybrid_transform16x4(&lane_in, &mut lane_out, column_adst);
+        for (coefficient, value) in lane_out.into_iter().enumerate() {
+            vst1q_s32(
+                intermediate.as_mut_ptr().add(coefficient * 16 + column),
+                hybrid_interpass_round(value),
+            );
+        }
+    }
+
+    for row in (0..16).step_by(4) {
+        let mut lane_in = [zero; 16];
+        for column in (0..16).step_by(4) {
+            let columns = transpose4(
+                vld1q_s32(intermediate.as_ptr().add(row * 16 + column)),
+                vld1q_s32(intermediate.as_ptr().add((row + 1) * 16 + column)),
+                vld1q_s32(intermediate.as_ptr().add((row + 2) * 16 + column)),
+                vld1q_s32(intermediate.as_ptr().add((row + 3) * 16 + column)),
+            );
+            lane_in[column..column + 4].copy_from_slice(&columns);
+        }
+        let mut lane_out = [zero; 16];
+        hybrid_transform16x4(&lane_in, &mut lane_out, row_adst);
+        for coefficient in (0..16).step_by(4) {
+            let rows = transpose4(
+                lane_out[coefficient],
+                lane_out[coefficient + 1],
+                lane_out[coefficient + 2],
+                lane_out[coefficient + 3],
+            );
+            for (lane, values) in rows.into_iter().enumerate() {
+                vst1q_s32(output.add((row + lane) * 16 + coefficient), values);
+            }
+        }
+    }
+}
+
 #[target_feature(enable = "neon")]
 unsafe fn fdct32x32_inner(input: *const i16, output: *mut i32, stride: usize) {
     let zero = vdupq_n_s32(0);
@@ -956,6 +1175,14 @@ pub(super) fn fdct8x8(input: &[i16], output: &mut [i32; 64], stride: usize) {
     if !unsafe { fdct8x8_inner(input.as_ptr(), output.as_mut_ptr(), stride) } {
         super::fdct8x8_scalar(input, output, stride);
     }
+}
+
+pub(super) fn fht16x16(input: &[i16], output: &mut [i32; 256], stride: usize, tx_type: TxType) {
+    assert!(stride >= 16);
+    assert!(input.len() >= 15 * stride + 16);
+    // SAFETY: The bounds above prove every four-value input load. `output`
+    // provides all 256 destinations, and NEON is mandatory on AArch64.
+    unsafe { fht16x16_inner(input.as_ptr(), output.as_mut_ptr(), stride, tx_type) };
 }
 
 pub(super) fn fdct32x32(input: &[i16], output: &mut [i32; 1024], stride: usize) {
