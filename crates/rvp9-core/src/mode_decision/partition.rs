@@ -72,7 +72,6 @@
 //! divide the threshold by 256 (i.e. `>> 8`) to match.
 
 use crate::block::BlockSize;
-use crate::dsp::distortion::variance;
 use crate::mode_decision::inter::{ContentStateSb, NoiseEstimate, NoiseLevel};
 use crate::mv_search::PlaneRef;
 use crate::quant::forward::{QuantizerDeltas, plane_dequant_pair};
@@ -1536,16 +1535,16 @@ fn block_per_pixel_variance(
     let block_x = sb_x + col_8x8 * 8;
     let block_y = sb_y + row_8x8 * 8;
     let ref_off = row_8x8 * 8 * 64 + col_8x8 * 8;
-    let (var_total, _sse) = variance(
+    let reduce = crate::dsp::get_ref().variance(bs);
+    let (sum, sum_sq) = reduce(
         &sp.data[block_y * sp.stride + block_x..],
         sp.stride,
         &ref_buf[ref_off..],
         64,
-        bs_pixels,
-        bs_pixels,
     );
-    let n = (bs_pixels * bs_pixels) as u64;
-    u64::from(var_total) / n.max(1)
+    let n = (bs_pixels * bs_pixels) as i64;
+    let var_total = (sum_sq as i64 - (sum * sum) / n).max(0) as u64;
+    var_total / n as u64
 }
 
 /// Recursive descent helper. `origin` is the top-left of the current
@@ -2145,6 +2144,49 @@ mod tests {
             // arithmetic untouched (the pre-analysis helper returns 1
             // when its noise estimator is disabled).
             noise_threshold_scale: 1,
+        }
+    }
+
+    #[test]
+    fn dispatched_block_variance_matches_scalar_for_partition_sizes_and_origins() {
+        for seed in 1..=16 {
+            let src_buf = xorshift_plane(0x9E37_79B9u32.wrapping_mul(seed));
+            let ref_vec = xorshift_plane(0x85EB_CA6Bu32.wrapping_mul(seed));
+            let ref_buf: [u8; 64 * 64] = ref_vec.try_into().expect("64x64 reference");
+            let src = plane_ref(&src_buf);
+            let reference = plane_ref(&ref_buf);
+            let params = make_params(&src, &reference, 100, false);
+
+            for bs in [
+                BlockSize::Block8x8,
+                BlockSize::Block16x16,
+                BlockSize::Block32x32,
+                BlockSize::Block64x64,
+            ] {
+                let bs_pixels = bs.width() as usize;
+                let bs_8x8 = bs_pixels / 8;
+                for row_8x8 in 0..=SB_8X8_GRID - bs_8x8 {
+                    for col_8x8 in 0..=SB_8X8_GRID - bs_8x8 {
+                        let src_off = row_8x8 * 8 * 64 + col_8x8 * 8;
+                        let (expected, _) = crate::dsp::distortion::variance(
+                            &src_buf[src_off..],
+                            64,
+                            &ref_buf[src_off..],
+                            64,
+                            bs_pixels,
+                            bs_pixels,
+                        );
+                        let actual =
+                            block_per_pixel_variance(&params, &ref_buf, (row_8x8, col_8x8), bs);
+                        let n = (bs_pixels * bs_pixels) as u64;
+                        assert_eq!(
+                            actual,
+                            u64::from(expected) / n,
+                            "seed={seed} bs={bs:?} origin=({row_8x8}, {col_8x8})",
+                        );
+                    }
+                }
+            }
         }
     }
 
