@@ -117,7 +117,8 @@ Its byte-vector boundary mask uses saturating arithmetic.
 `blimit`. It applies the 4-, 8-, and 16-tap results through per-lane vector
 selects, so mixed flatness masks remain exactly equivalent to rvp9's scalar
 oracle. The vertical kernel transposes a 16-by-8 neighborhood before
-filtering.
+filtering, then uses libvpx's inverse NEON transpose shape to store all eight
+16-byte result rows without a scalar scatter.
 **Why:** rvp9 accepts the complete `u8` threshold domain in its public DSP
 slot. Widening preserves scalar semantics when `blimit` is 255 rather than
 copying libvpx's saturating-byte approximation. Per-lane selects avoid
@@ -136,7 +137,10 @@ and `-10.244%`. Two twenty-pair four-thread trials improved paired wall time
 by `-4.004%` and `-6.618%`; child CPU improved `-9.327%` and `-10.204%`.
 The post-change profile contains no scalar `filter16` leaf. The new vertical
 and horizontal NEON kernels account for `2.07%` and `1.09%` of rvp9 self
-samples.
+samples. Replacing the vertical kernel's temporary 14-by-8 byte slab and
+scalar scatter with the exact inverse transpose improved a further twenty
+paired runs by `-1.094%` child CPU and `-1.097%` wall at one thread, and by
+`-1.154%` child CPU and `-0.375%` wall at four threads.
 **Future plan:** retain while the randomized scalar differential and exact
 stream stay green. Profile before extending NEON coverage to the distinct
 4- and 8-tap slots.

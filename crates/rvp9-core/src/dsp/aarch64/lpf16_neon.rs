@@ -310,6 +310,71 @@ unsafe fn transpose_16x8(rows: [uint8x16_t; 8]) -> [uint8x8_t; 16] {
     ]
 }
 
+#[inline(always)]
+unsafe fn transpose_8x16(columns: [uint8x8_t; 16]) -> [uint8x16_t; 8] {
+    let a0 = vcombine_u8(columns[0], columns[8]);
+    let a1 = vcombine_u8(columns[1], columns[9]);
+    let a2 = vcombine_u8(columns[2], columns[10]);
+    let a3 = vcombine_u8(columns[3], columns[11]);
+    let a4 = vcombine_u8(columns[4], columns[12]);
+    let a5 = vcombine_u8(columns[5], columns[13]);
+    let a6 = vcombine_u8(columns[6], columns[14]);
+    let a7 = vcombine_u8(columns[7], columns[15]);
+
+    let b00 = vtrn1q_u8(a0, a1);
+    let b01 = vtrn2q_u8(a0, a1);
+    let b10 = vtrn1q_u8(a2, a3);
+    let b11 = vtrn2q_u8(a2, a3);
+    let b20 = vtrn1q_u8(a4, a5);
+    let b21 = vtrn2q_u8(a4, a5);
+    let b30 = vtrn1q_u8(a6, a7);
+    let b31 = vtrn2q_u8(a6, a7);
+
+    let c00 = vtrn1q_u16(vreinterpretq_u16_u8(b00), vreinterpretq_u16_u8(b10));
+    let c01 = vtrn2q_u16(vreinterpretq_u16_u8(b00), vreinterpretq_u16_u8(b10));
+    let c10 = vtrn1q_u16(vreinterpretq_u16_u8(b01), vreinterpretq_u16_u8(b11));
+    let c11 = vtrn2q_u16(vreinterpretq_u16_u8(b01), vreinterpretq_u16_u8(b11));
+    let c20 = vtrn1q_u16(vreinterpretq_u16_u8(b20), vreinterpretq_u16_u8(b30));
+    let c21 = vtrn2q_u16(vreinterpretq_u16_u8(b20), vreinterpretq_u16_u8(b30));
+    let c30 = vtrn1q_u16(vreinterpretq_u16_u8(b21), vreinterpretq_u16_u8(b31));
+    let c31 = vtrn2q_u16(vreinterpretq_u16_u8(b21), vreinterpretq_u16_u8(b31));
+
+    let d00 = vreinterpretq_u8_u32(vtrn1q_u32(
+        vreinterpretq_u32_u16(c00),
+        vreinterpretq_u32_u16(c20),
+    ));
+    let d01 = vreinterpretq_u8_u32(vtrn2q_u32(
+        vreinterpretq_u32_u16(c00),
+        vreinterpretq_u32_u16(c20),
+    ));
+    let d10 = vreinterpretq_u8_u32(vtrn1q_u32(
+        vreinterpretq_u32_u16(c01),
+        vreinterpretq_u32_u16(c21),
+    ));
+    let d11 = vreinterpretq_u8_u32(vtrn2q_u32(
+        vreinterpretq_u32_u16(c01),
+        vreinterpretq_u32_u16(c21),
+    ));
+    let d20 = vreinterpretq_u8_u32(vtrn1q_u32(
+        vreinterpretq_u32_u16(c10),
+        vreinterpretq_u32_u16(c30),
+    ));
+    let d21 = vreinterpretq_u8_u32(vtrn2q_u32(
+        vreinterpretq_u32_u16(c10),
+        vreinterpretq_u32_u16(c30),
+    ));
+    let d30 = vreinterpretq_u8_u32(vtrn1q_u32(
+        vreinterpretq_u32_u16(c11),
+        vreinterpretq_u32_u16(c31),
+    ));
+    let d31 = vreinterpretq_u8_u32(vtrn2q_u32(
+        vreinterpretq_u32_u16(c11),
+        vreinterpretq_u32_u16(c31),
+    ));
+
+    [d00, d20, d10, d30, d01, d21, d11, d31]
+}
+
 #[target_feature(enable = "neon")]
 unsafe fn horizontal_inner(
     pixels: *mut u8,
@@ -344,15 +409,9 @@ unsafe fn vertical_inner(
     for (row, value) in rows.iter_mut().enumerate() {
         *value = vld1q_u8(start.add(row * pitch));
     }
-    let output = filter16_lanes(transpose_16x8(rows), limit, blimit, thresh);
-    let mut lanes = [[0u8; 8]; 14];
-    for (tap, values) in lanes.iter_mut().enumerate() {
-        vst1_u8(values.as_mut_ptr(), output[tap + 1]);
-    }
-    for (tap, values) in lanes.iter().enumerate() {
-        for (row, &value) in values.iter().enumerate() {
-            *start.add(row * pitch + tap + 1) = value;
-        }
+    let output = transpose_8x16(filter16_lanes(transpose_16x8(rows), limit, blimit, thresh));
+    for (row, value) in output.iter().enumerate() {
+        vst1q_u8(start.add(row * pitch), *value);
     }
 }
 
@@ -430,6 +489,28 @@ mod tests {
             self.0 = self.0.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
             (self.0 >> 24) as u8
         }
+    }
+
+    #[test]
+    fn transpose_roundtrip_preserves_every_position() {
+        let input = core::array::from_fn::<_, 8, _>(|row| {
+            core::array::from_fn::<_, 16, _>(|column| (row * 16 + column) as u8)
+        });
+        // SAFETY: AArch64 always provides NEON, and every load and store uses
+        // one complete 16-byte array row.
+        let actual = unsafe {
+            let mut rows = [vdupq_n_u8(0); 8];
+            for (row, value) in rows.iter_mut().enumerate() {
+                *value = vld1q_u8(input[row].as_ptr());
+            }
+            let output = transpose_8x16(transpose_16x8(rows));
+            let mut actual = [[0u8; 16]; 8];
+            for (row, value) in output.iter().enumerate() {
+                vst1q_u8(actual[row].as_mut_ptr(), *value);
+            }
+            actual
+        };
+        assert_eq!(actual, input);
     }
 
     #[test]
