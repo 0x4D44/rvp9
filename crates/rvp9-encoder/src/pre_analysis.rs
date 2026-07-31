@@ -33,6 +33,8 @@
 //! consumers (W2.6) plug into these slots over the rest of Wave 2.
 
 use crate::frame_loop::Deadline;
+use rvp9_core::block::BlockSize;
+use rvp9_core::dsp::dispatch::{SadFn, VarFn};
 use rvp9_core::mode_decision::inter::{ContentStateSb, NoiseEstimate, NoiseLevel};
 use std::sync::Arc;
 
@@ -303,36 +305,25 @@ impl PreAnalysisState {
         let h = self.height as usize;
         debug_assert_eq!(src_y_tight.len(), w * h);
         debug_assert_eq!(last.len(), w * h);
-        // libvpx threshold (`vp9_encodeframe.c:1219`).
-        const AVG_SOURCE_SAD_THRESHOLD: u64 = 10_000;
         let sb_cols = (w / 64).max(1);
         let sb_rows = (h / 64).max(1);
+        let dispatch = rvp9_core::dsp::get_ref();
+        let sad64 = dispatch.sad(BlockSize::Block64x64);
+        let variance64 = dispatch.variance(BlockSize::Block64x64);
         for sb_r in 0..sb_rows {
             for sb_c in 0..sb_cols {
-                let (sad, sse, sum) = sb_sad_and_var(src_y_tight, last, w, sb_r * 64, sb_c * 64);
-                // libvpx: variance = sse - ((sum * sum) >> 12), so
-                // `sse - variance` is the squared mean-difference signal.
-                let var = sse.saturating_sub((sum * sum) >> 12);
-                let sumdiff = sse - var;
+                let (sad, sse, sum) = sb_sad_and_var_dispatched(
+                    src_y_tight,
+                    last,
+                    w,
+                    sb_r * 64,
+                    sb_c * 64,
+                    sad64,
+                    variance64,
+                );
                 let idx = sb_r * sb_cols + sb_c;
                 self.avg_source_sad[idx] = sad;
-                let mut state = if sad < AVG_SOURCE_SAD_THRESHOLD {
-                    if sumdiff < 25 {
-                        ContentStateSb::LowSadLowSumdiff
-                    } else {
-                        ContentStateSb::LowSadHighSumdiff
-                    }
-                } else if sumdiff < 25 {
-                    ContentStateSb::HighSadLowSumdiff
-                } else {
-                    ContentStateSb::HighSadHighSumdiff
-                };
-                if cbr_mode && var < (sse >> 3) && sumdiff > 10_000 {
-                    state = ContentStateSb::LowVarHighSumdiff;
-                } else if sad > (AVG_SOURCE_SAD_THRESHOLD << 1) {
-                    state = ContentStateSb::VeryHighSad;
-                }
-                self.content_state_sb[idx] = state;
+                self.content_state_sb[idx] = classify_source_sad(sad, sse, sum, cbr_mode);
             }
         }
     }
@@ -1000,9 +991,9 @@ impl PreAnalysisState {
 /// `(sb_r_pix, sb_c_pix)` on tight-stride source planes. Mirrors
 /// libvpx's `vpx_sad64x64` + `vpx_variance64x64`
 /// (`vp9_encodeframe.c:1226-1229`) scalar reference. Returns
-/// `(sad, sse, |sum|)`. Used only by [`PreAnalysisState::compute_avg_source_sad`];
-/// SIMD parity lands when the encoder hot path consumes this (Wave
-/// 4+).
+/// `(sad, sse, |sum|)`. Product encoding uses the dispatched helper
+/// below; this independent scalar implementation remains the test and
+/// standalone scene-detection oracle.
 fn sb_sad_and_var(
     src: &[u8],
     last: &[u8],
@@ -1025,6 +1016,50 @@ fn sb_sad_and_var(
         }
     }
     (sad, sse, sum.unsigned_abs())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn sb_sad_and_var_dispatched(
+    src: &[u8],
+    last: &[u8],
+    stride: usize,
+    sb_r_pix: usize,
+    sb_c_pix: usize,
+    sad64: SadFn,
+    variance64: VarFn,
+) -> (u64, u64, u64) {
+    let offset = sb_r_pix * stride + sb_c_pix;
+    let src = &src[offset..];
+    let last = &last[offset..];
+    let sad = u64::from(sad64(src, stride, last, stride));
+    let (sum, sse) = variance64(src, stride, last, stride);
+    (sad, sse, sum.unsigned_abs())
+}
+
+fn classify_source_sad(sad: u64, sse: u64, sum: u64, cbr_mode: bool) -> ContentStateSb {
+    // libvpx threshold (`vp9_encodeframe.c:1219`).
+    const AVG_SOURCE_SAD_THRESHOLD: u64 = 10_000;
+    // libvpx: variance = sse - ((sum * sum) >> 12), so
+    // `sse - variance` is the squared mean-difference signal.
+    let var = sse.saturating_sub((sum * sum) >> 12);
+    let sumdiff = sse - var;
+    let mut state = if sad < AVG_SOURCE_SAD_THRESHOLD {
+        if sumdiff < 25 {
+            ContentStateSb::LowSadLowSumdiff
+        } else {
+            ContentStateSb::LowSadHighSumdiff
+        }
+    } else if sumdiff < 25 {
+        ContentStateSb::HighSadLowSumdiff
+    } else {
+        ContentStateSb::HighSadHighSumdiff
+    };
+    if cbr_mode && var < (sse >> 3) && sumdiff > 10_000 {
+        state = ContentStateSb::LowVarHighSumdiff;
+    } else if sad > (AVG_SOURCE_SAD_THRESHOLD << 1) {
+        state = ContentStateSb::VeryHighSad;
+    }
+    state
 }
 
 /// W2.4 helper: libvpx `vp9_noise_estimate_init`
@@ -1405,6 +1440,110 @@ mod tests {
             classify(vec![131u8; 64 * 64], reference, true),
             ContentStateSb::LowVarHighSumdiff,
         );
+    }
+
+    /// Unit 144 — the production dispatch path must preserve every scalar
+    /// source-analysis result, including non-zero SB offsets and scene state.
+    #[test]
+    fn w2_2_dispatched_source_analysis_matches_scalar_oracle() {
+        const W: usize = 384;
+        const H: usize = 384;
+        let mut source = vec![0u8; W * H];
+        let mut reference = vec![0u8; W * H];
+        let mut seed = 0xBADC_0FFEu32;
+        for (src, last) in source.iter_mut().zip(reference.iter_mut()) {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            *src = seed as u8;
+            *last = (seed >> 16) as u8;
+        }
+        // Exercise both maximum-magnitude uniform differences and a
+        // zero-sum alternating block in addition to the pseudo-random grid.
+        for row in 0..64 {
+            for col in 0..64 {
+                source[row * W + col] = 255;
+                reference[row * W + col] = 0;
+                source[row * W + 64 + col] = if (row + col) & 1 == 0 { 255 } else { 0 };
+                reference[row * W + 64 + col] = 128;
+            }
+        }
+
+        let dispatch = rvp9_core::dsp::get_ref();
+        let sad64 = dispatch.sad(BlockSize::Block64x64);
+        let variance64 = dispatch.variance(BlockSize::Block64x64);
+        let sb_cols = W / 64;
+        let sb_rows = H / 64;
+        for sb_r in 0..sb_rows {
+            for sb_c in 0..sb_cols {
+                let scalar = sb_sad_and_var(&source, &reference, W, sb_r * 64, sb_c * 64);
+                let dispatched = sb_sad_and_var_dispatched(
+                    &source,
+                    &reference,
+                    W,
+                    sb_r * 64,
+                    sb_c * 64,
+                    sad64,
+                    variance64,
+                );
+                assert_eq!(
+                    dispatched, scalar,
+                    "SAD/sum/SSE mismatch at SB ({sb_r}, {sb_c})"
+                );
+                let offset = sb_r * 64 * W + sb_c * 64;
+                let (signed_sum, kernel_sse) =
+                    variance64(&source[offset..], W, &reference[offset..], W);
+                let mut scalar_signed_sum = 0i64;
+                for row in 0..64 {
+                    for col in 0..64 {
+                        let index = offset + row * W + col;
+                        scalar_signed_sum += i64::from(source[index]) - i64::from(reference[index]);
+                    }
+                }
+                assert_eq!(
+                    (signed_sum, kernel_sse),
+                    (scalar_signed_sum, scalar.1),
+                    "signed sum/SSE mismatch at SB ({sb_r}, {sb_c})"
+                );
+            }
+        }
+
+        for cbr_mode in [false, true] {
+            let mut production = PreAnalysisState::new(W as u32, H as u32);
+            production.capture_last_source(&reference);
+            production.compute_avg_source_sad(&source, cbr_mode);
+
+            let mut scalar = PreAnalysisState::new(W as u32, H as u32);
+            scalar.capture_last_source(&reference);
+            for sb_r in 0..sb_rows {
+                for sb_c in 0..sb_cols {
+                    let idx = sb_r * sb_cols + sb_c;
+                    let (sad, sse, sum) =
+                        sb_sad_and_var(&source, &reference, W, sb_r * 64, sb_c * 64);
+                    scalar.avg_source_sad[idx] = sad;
+                    scalar.content_state_sb[idx] = classify_source_sad(sad, sse, sum, cbr_mode);
+                }
+            }
+            assert_eq!(production.avg_source_sad, scalar.avg_source_sad);
+            assert_eq!(production.content_state_sb, scalar.content_state_sb);
+
+            production.prev_avg_source_sad = 777;
+            scalar.prev_avg_source_sad = 777;
+            production.compute_scene_detection_from_cached_sad(6);
+            scalar.compute_scene_detection_from_cached_sad(6);
+            assert_eq!(
+                (
+                    production.high_source_sad,
+                    production.scene_cut_force_key_frame,
+                    production.prev_avg_source_sad,
+                ),
+                (
+                    scalar.high_source_sad,
+                    scalar.scene_cut_force_key_frame,
+                    scalar.prev_avg_source_sad,
+                )
+            );
+        }
     }
 
     /// W2.2 PROOF — SB-grid sizing matches the encoder's

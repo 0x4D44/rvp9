@@ -3453,3 +3453,37 @@ the broad source-analysis self samples from 308 to 254.
 **Future plan:** keep the cached entry point adjacent to the avg-SAD call.
 Any call site that has not populated `avg_source_sad[]` for the same frame
 must use the independent pixel-based method.
+
+### 2026-07-31 — Source analysis uses the shared SIMD dispatch
+
+**Where:** `rvp9_encoder::pre_analysis::PreAnalysisState::
+compute_avg_source_sad` and `sb_sad_and_var_dispatched`.
+
+**What libvpx does:** `vp9_avg_source_sad` calls the encoder function table's
+64x64 SAD and variance kernels for each superblock.
+
+**What rvp9 does:** the frame-level source-analysis pass resolves the
+existing byte-exact Block64x64 SAD and variance dispatch slots once, then
+reuses their safe function pointers across the superblock grid. The scalar
+pixel walk remains as a differential and standalone scene-detection oracle.
+
+**Why:** the former product path recomputed SAD, signed sum, and SSE in a
+scalar Rust loop even though AArch64 NEON, x86-64 AVX2, and scalar fallback
+kernels already implement the same integer reductions. Shared dispatch
+matches libvpx's work placement without new unsafe code or dependencies.
+
+**Byte-parity impact:** none. A focused oracle covers random and extreme
+blocks, non-zero offsets, both rate-control classifications, and cached scene
+state. The cpu-used 7 product stream and all three decoders' I420 output
+remain byte-identical to Unit 143.
+
+**Compression-efficiency impact:** none; the strict Stage 4a curve remains
+`-8.585847331540%` PSNR BD-rate versus pinned libvpx v1.14.1.
+
+**Speed impact:** two twenty-pair four-thread runs improve paired total child
+CPU by `2.097%` and `1.096%`, and wall time by `3.421%` and `0.958%`. The
+matched profile cuts broad frame pre-analysis self samples from 254 to 56.
+
+**Future plan:** keep the scalar oracle independent and resolve dispatch
+pointers outside the superblock loop. Any new architecture kernel must pass
+the same integer-exact reduction oracle before entering this path.
