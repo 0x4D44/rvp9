@@ -186,6 +186,15 @@ pub fn set_frame_s2_gate(value: Option<bool>) {
     frame_gate_override::set(value);
 }
 
+/// Return the current thread's content-adaptive S2 frame decision.
+///
+/// Tile-MT callers copy this value onto each worker before mode
+/// decision so thread-local policy stays identical to serial encoding.
+#[must_use]
+pub fn frame_s2_gate() -> Option<bool> {
+    frame_gate_override::get()
+}
+
 /// S2.1 Y DCT-eob skip gate. **Default OFF.**
 ///
 /// Helps foreman ~+3 dB but content-dependently regresses other clips

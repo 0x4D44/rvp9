@@ -1236,6 +1236,24 @@ pub struct StreamEncoder {
     svc_frame: Option<SvcFrameDecision>,
 }
 
+/// Owned output from one independent full-height column-tile encode.
+///
+/// The current kernel keeps frame-shaped scratch buffers so its mature
+/// global-coordinate code stays unchanged. Merge copies only this tile's
+/// disjoint rectangles and SB records into the frame result.
+struct InterTileJobResult {
+    tile_col: usize,
+    recon_y: Vec<u8>,
+    recon_u: Vec<u8>,
+    recon_v: Vec<u8>,
+    partitions: Vec<Vec<InterPartitionLeafDesc>>,
+    mv_grid: Vec<PrevFrameMvRef>,
+    rd_tables: Vec<rvp9_core::mode_decision::rd_thresh::RdThreshTable>,
+    history: Vec<rvp9_core::mode_decision::partition::FixedTreeHistoryEntry>,
+    split_stats: NonRdSplitStats,
+    coefs: VecBackedInterCoefSource,
+}
+
 /// A18 (SVC) — the per-frame temporal-layer decision for one inter
 /// frame. Derived from the [`crate::svc::Svc`] scaffold's temporal
 /// setter (`vp9_svc_layercontext.c:517-720`) and the encoder's
@@ -2931,6 +2949,19 @@ impl StreamEncoder {
         };
 
         let mut stage4a_frame_split_stats = NonRdSplitStats::default();
+        let avg_inter_qindex = self.rate_control.avg_frame_qindex_inter;
+        let frames_since_key = self.rate_control.frames_since_key;
+        let frames_since_golden = self.frames_since_golden_refresh;
+        let me_ref_yuv = (&self.me_ref_y[..], &self.me_ref_u[..], &self.me_ref_v[..]);
+        let frame_context = &self.frame_context;
+        let speed = self.config.speed;
+        let deadline = self.config.deadline;
+        let rc_mode = self.config.rc_mode;
+        let split_override = self.config.stage4a_product_split_override;
+        let noise_estimate = self.pre_analysis.noise_estimate;
+        let high_source_sad = self.pre_analysis.high_source_sad;
+        let content_state_sb = &self.pre_analysis.content_state_sb;
+        let skin_map = &self.pre_analysis.skin_map;
         macro_rules! run_inter_picker {
             (
                 $recon_y:expr,
@@ -2947,13 +2978,13 @@ impl StreamEncoder {
                     w,
                     h,
                     q_index,
-                    self.rate_control.avg_frame_qindex_inter,
+                    avg_inter_qindex,
                     &seg_q_deltas,
                     input_yuv,
                     // Reference-buffer split — ME analysis reads the
                     // filtered view while residual coding reads the
                     // decoder-equivalent LAST slot.
-                    (&self.me_ref_y, &self.me_ref_u, &self.me_ref_v),
+                    me_ref_yuv,
                     (last_y, last_u, last_v),
                     (gld_y, gld_u, gld_v),
                     altref_planes_for_picker,
@@ -2961,22 +2992,22 @@ impl StreamEncoder {
                     $partitions,
                     prev_grid_slice,
                     $mv_grid,
-                    &self.frame_context,
+                    frame_context,
                     $rd_tables,
-                    self.frames_since_golden_refresh,
-                    self.frames_since_golden_refresh & 1,
-                    self.config.speed,
-                    self.config.deadline,
+                    frames_since_golden,
+                    frames_since_golden & 1,
+                    speed,
+                    deadline,
                     rvp9_core::mode_decision::speed_features::ContentTier::Default,
-                    self.config.rc_mode,
-                    self.pre_analysis.noise_estimate,
-                    self.pre_analysis.high_source_sad,
-                    &self.pre_analysis.content_state_sb,
-                    &self.pre_analysis.skin_map,
-                    self.rate_control.frames_since_key,
+                    rc_mode,
+                    noise_estimate,
+                    high_source_sad,
+                    content_state_sb,
+                    skin_map,
+                    frames_since_key,
                     $history,
                     tpl_rdmult_arg,
-                    self.config.stage4a_product_split_override,
+                    split_override,
                     $split_stats,
                     log2_tile_cols,
                     $active_tile_col,
@@ -2986,38 +3017,68 @@ impl StreamEncoder {
 
         let tile_count = 1usize << log2_tile_cols;
         let coef_source = if tile_count > 1 && self.parallelism.max_threads > 1 {
-            // Tile-MT preparation: execute each independent tile job
-            // against owned mutable state, then merge in column order.
-            // This first implementation deliberately dispatches the jobs
-            // sequentially; the result shape is the exact interface the
-            // bounded worker set consumes in the next unit.
+            // Tile-MT: execute independent full-height column jobs
+            // concurrently, capped by the configured worker count. Each
+            // job owns every mutable object it touches. Results are joined
+            // and merged in column order, so scheduling cannot affect the
+            // packet or persistent encoder state.
             let initial_partitions = sb_partitions.clone();
             let initial_rd_tables = self.rd_thresh_tables.clone();
             let initial_history = self.vbp_partition_history.clone();
             let mut merged_coefs = VecBackedInterCoefSource::new(w, h);
+            let worker_count = usize::min(self.parallelism.max_threads as usize, tile_count);
+            let s2_frame_gate = rvp9_core::mode_decision::inter::frame_s2_gate();
+            let tile_results: Vec<InterTileJobResult> = std::thread::scope(|scope| {
+                let mut results = Vec::with_capacity(tile_count);
+                for batch_start in (0..tile_count).step_by(worker_count) {
+                    let batch_end = usize::min(batch_start + worker_count, tile_count);
+                    let mut handles = Vec::with_capacity(batch_end - batch_start);
+                    for tile_col in batch_start..batch_end {
+                        let mut tile_partitions = initial_partitions.clone();
+                        let mut tile_rd_tables = initial_rd_tables.clone();
+                        let mut tile_history = initial_history.clone();
+                        handles.push(scope.spawn(move || {
+                            rvp9_core::mode_decision::inter::set_frame_s2_gate(s2_frame_gate);
+                            let mut tile_recon_y = vec![0u8; w as usize * h as usize];
+                            let mut tile_recon_u = vec![0u8; (w as usize / 2) * (h as usize / 2)];
+                            let mut tile_recon_v = vec![0u8; tile_recon_u.len()];
+                            let mut tile_mv_grid =
+                                vec![PrevFrameMvRef::default(); mi_rows_us * mi_cols_us];
+                            let mut tile_split_stats = NonRdSplitStats::default();
+                            let tile_coefs = run_inter_picker!(
+                                &mut tile_recon_y,
+                                &mut tile_recon_u,
+                                &mut tile_recon_v,
+                                &mut tile_partitions,
+                                &mut tile_mv_grid,
+                                &mut tile_rd_tables,
+                                Some(&mut tile_history),
+                                &mut tile_split_stats,
+                                Some(tile_col)
+                            );
+                            InterTileJobResult {
+                                tile_col,
+                                recon_y: tile_recon_y,
+                                recon_u: tile_recon_u,
+                                recon_v: tile_recon_v,
+                                partitions: tile_partitions,
+                                mv_grid: tile_mv_grid,
+                                rd_tables: tile_rd_tables,
+                                history: tile_history,
+                                split_stats: tile_split_stats,
+                                coefs: tile_coefs,
+                            }
+                        }));
+                    }
+                    for handle in handles {
+                        results.push(handle.join().expect("inter tile worker panicked"));
+                    }
+                }
+                results
+            });
 
-            for tile_col in 0..tile_count {
-                let mut tile_recon_y = vec![0u8; w as usize * h as usize];
-                let mut tile_recon_u = vec![0u8; (w as usize / 2) * (h as usize / 2)];
-                let mut tile_recon_v = vec![0u8; tile_recon_u.len()];
-                let mut tile_partitions = initial_partitions.clone();
-                let mut tile_mv_grid = vec![PrevFrameMvRef::default(); mi_rows_us * mi_cols_us];
-                let mut tile_rd_tables = initial_rd_tables.clone();
-                let mut tile_history = initial_history.clone();
-                let mut tile_split_stats = NonRdSplitStats::default();
-
-                let tile_coefs = run_inter_picker!(
-                    &mut tile_recon_y,
-                    &mut tile_recon_u,
-                    &mut tile_recon_v,
-                    &mut tile_partitions,
-                    &mut tile_mv_grid,
-                    &mut tile_rd_tables,
-                    Some(&mut tile_history),
-                    &mut tile_split_stats,
-                    Some(tile_col)
-                );
-
+            for result in tile_results {
+                let tile_col = result.tile_col;
                 let bounds = tile_bounds(
                     mi_rows_us,
                     mi_cols_us,
@@ -3031,14 +3092,14 @@ impl StreamEncoder {
                 for sb_row in 0..h as usize / 64 {
                     for sb_col in sb_col_start..sb_col_end {
                         let sb_idx = sb_row * (w as usize / 64) + sb_col;
-                        sb_partitions[sb_idx] = tile_partitions[sb_idx].clone();
-                        self.vbp_partition_history[sb_idx] = tile_history[sb_idx].clone();
+                        sb_partitions[sb_idx] = result.partitions[sb_idx].clone();
+                        self.vbp_partition_history[sb_idx] = result.history[sb_idx].clone();
                     }
                 }
                 for row in 0..h as usize {
                     let start = row * w as usize + bounds.mi_col_start * 8;
                     let end = row * w as usize + bounds.mi_col_end * 8;
-                    new_recon_y[start..end].copy_from_slice(&tile_recon_y[start..end]);
+                    new_recon_y[start..end].copy_from_slice(&result.recon_y[start..end]);
                 }
                 let uv_width = w as usize / 2;
                 let uv_col_start = bounds.mi_col_start * 4;
@@ -3046,17 +3107,17 @@ impl StreamEncoder {
                 for row in 0..h as usize / 2 {
                     let start = row * uv_width + uv_col_start;
                     let end = row * uv_width + uv_col_end;
-                    new_recon_u[start..end].copy_from_slice(&tile_recon_u[start..end]);
-                    new_recon_v[start..end].copy_from_slice(&tile_recon_v[start..end]);
+                    new_recon_u[start..end].copy_from_slice(&result.recon_u[start..end]);
+                    new_recon_v[start..end].copy_from_slice(&result.recon_v[start..end]);
                 }
                 for row in 0..mi_rows_us {
                     let start = row * mi_cols_us + bounds.mi_col_start;
                     let end = row * mi_cols_us + bounds.mi_col_end;
-                    cur_mv_grid[start..end].copy_from_slice(&tile_mv_grid[start..end]);
+                    cur_mv_grid[start..end].copy_from_slice(&result.mv_grid[start..end]);
                 }
-                self.rd_thresh_tables[tile_col] = tile_rd_tables[tile_col].clone();
-                stage4a_frame_split_stats.accumulate(&tile_split_stats);
-                merged_coefs.merge_from(tile_coefs);
+                self.rd_thresh_tables[tile_col] = result.rd_tables[tile_col].clone();
+                stage4a_frame_split_stats.accumulate(&result.split_stats);
+                merged_coefs.merge_from(result.coefs);
             }
             merged_coefs
         } else {
@@ -6530,20 +6591,23 @@ mod tests {
     }
 
     #[test]
-    fn stream_encoder_two_tile_output_is_thread_count_independent_and_bit_exact() {
-        let w = 640usize;
+    fn stream_encoder_four_tile_output_is_thread_count_independent_and_bit_exact() {
+        let w = 1280usize;
         let h = 64usize;
         let cfg = EncoderConfig::new(w as u32, h as u32);
         let tile_layout = |max_threads| EncoderParallelism {
             max_threads,
-            requested_log2_tile_cols: 1,
+            requested_log2_tile_cols: 2,
         };
         let mut serial = StreamEncoder::new_with_parallelism(cfg, tile_layout(1))
             .expect("construct one-worker encoder");
+        let mut two_workers = StreamEncoder::new_with_parallelism(cfg, tile_layout(2))
+            .expect("construct two-worker encoder");
         let mut threaded = StreamEncoder::new_with_parallelism(cfg, tile_layout(4))
             .expect("construct four-worker encoder");
-        assert_eq!(serial.rd_thresh_tables.len(), 2);
-        assert_eq!(threaded.rd_thresh_tables.len(), 2);
+        assert_eq!(serial.rd_thresh_tables.len(), 4);
+        assert_eq!(two_workers.rd_thresh_tables.len(), 4);
+        assert_eq!(threaded.rd_thresh_tables.len(), 4);
         let mut decoder = Decoder::new();
 
         for frame_idx in 0..3usize {
@@ -6571,7 +6635,12 @@ mod tests {
             }
             let view = yuv_view(&y, &u, &v, w);
             let serial_packet = serial.encode_frame(&view).expect("serial encode");
+            let two_worker_packet = two_workers.encode_frame(&view).expect("two-worker encode");
             let threaded_packet = threaded.encode_frame(&view).expect("threaded encode");
+            assert_eq!(
+                serial_packet.data, two_worker_packet.data,
+                "fixed tile layout must be identical with two workers at frame {frame_idx}",
+            );
             assert_eq!(
                 serial_packet.data, threaded_packet.data,
                 "fixed tile layout must not depend on max_threads at frame {frame_idx}",
@@ -6580,7 +6649,7 @@ mod tests {
             let parsed = decode_packet(&mut decoder, &serial_packet.data);
             assert_eq!(parsed.len(), 1);
             let tail = parsed[0].header.tail.as_ref().expect("coded frame tail");
-            assert_eq!(tail.tile_info.log2_tile_cols, 1);
+            assert_eq!(tail.tile_info.log2_tile_cols, 2);
             assert_eq!(tail.tile_info.log2_tile_rows, 0);
             let decoded = decoder
                 .decode_frame(&parsed[0])
@@ -6601,8 +6670,12 @@ mod tests {
             }
         }
         assert_ne!(
-            serial.rd_thresh_tables[0], serial.rd_thresh_tables[1],
+            serial.rd_thresh_tables[0], serial.rd_thresh_tables[3],
             "flat and moving tiles must adapt independent RD thresholds",
+        );
+        assert_eq!(
+            serial.rd_thresh_tables, two_workers.rd_thresh_tables,
+            "two-worker execution must leave identical per-tile state",
         );
         assert_eq!(
             serial.rd_thresh_tables, threaded.rd_thresh_tables,
