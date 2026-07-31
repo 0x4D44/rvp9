@@ -2859,3 +2859,41 @@ run; paired wall time improved `-0.141%` and `-0.630%`, respectively.
 **Future plan:** retain the span gather while rvp9 stores visible-only
 references. Preserve the safe lazy `Option` payload rather than introducing
 raw uninitialized memory; a committed profile must select the next hotspot.
+
+### 2026-07-31 — Encoder coefficient context reuses causal thread-local scratch
+
+**Where:** `rvp9_core::entropy::detokenize::encode_coefs`, used by the final
+tile token writer for every selected transform block.
+
+**What libvpx does:** tokenization stores each block's token context in
+encoder-owned block state before the final pack loop. Its pack loop consumes
+that state without allocating a new coefficient cache per transform block.
+
+**What rvp9 does:** non-empty blocks borrow one 1,024-byte token cache owned by
+the current thread. Each scan position writes its cache entry before the next
+context lookup, and VP9's neighbour table refers only to causal positions, so
+stale bytes from earlier blocks are never observed. Empty blocks emit their
+single EOB decision before borrowing the cache.
+
+**Why:** the previous encoder allocated and zeroed a `Vec<u8>` sized to the
+transform for every block, although the cache is scratch and every readable
+entry is overwritten by the current scan. The decoder already relies on the
+same causal-neighbour invariant.
+
+**Byte-parity impact:** none. A focused history-independence test dirties the
+entire cache with a dense 32x32 block before re-encoding a sparse 4x4 block.
+All coefficient round-trip tests pass. The 120-frame cpu-used 7 product stream
+and all three decoders' 162,201,600-byte I420 outputs remain byte-identical.
+
+**Compression-efficiency impact:** none; the production stream is unchanged.
+
+**Speed impact:** the final exact-code run's sixteen warmed alternating
+one-thread pairs were neutral-positive: paired child CPU `-0.015%` and wall
+time `-0.066%`, with nine wins. Twenty four-thread pairs improved child CPU
+by `-1.966%` with fifteen wins and wall time by `-1.208%` with twelve wins.
+Unrelated max-performance and link jobs made absolute medians noisy; final
+acceptance still requires the clean-host corpus matrix.
+
+**Future plan:** retain the reusable encoder cache while the causal-neighbour
+test and exact stream gate remain green. Re-profile the committed encoder
+before selecting another token-path change.

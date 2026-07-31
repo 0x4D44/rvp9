@@ -69,6 +69,11 @@ use crate::transforms::types::{MAX_NEIGHBORS, TxSize, TxType};
 /// allocations.
 const DECODE_COEFS_SCRATCH_CAP: usize = 1024;
 
+/// Capacity of the per-thread encoder token cache. The encoder and decoder
+/// share the same maximum transform size, but keep independent scratch so a
+/// diagnostic path cannot re-enter one side while the other holds its borrow.
+const ENCODE_COEFS_SCRATCH_CAP: usize = DECODE_COEFS_SCRATCH_CAP;
+
 /// Per-thread reusable scratch for [`decode_coefs`]. R.2 (2026-05-23):
 /// hoists the `token_cache` allocation that previously happened on
 /// EVERY `decode_coefs` call (~30k-60k calls per 1080p frame) into a
@@ -104,6 +109,12 @@ impl DecodeCoefsScratch {
 thread_local! {
     static DECODE_COEFS_SCRATCH: RefCell<DecodeCoefsScratch> =
         RefCell::new(DecodeCoefsScratch::new());
+
+    /// Per-thread reusable scratch for [`encode_coefs`]. Every context lookup
+    /// reads only causal neighbours that the current call has already written,
+    /// so stale bytes need neither clearing nor initialization between blocks.
+    static ENCODE_COEFS_SCRATCH: RefCell<Vec<u8>> =
+        RefCell::new(vec![0u8; ENCODE_COEFS_SCRATCH_CAP]);
 }
 
 /// `vp9_coefband_trans_4x4` (`vp9_entropy.c:91-93`). Maps the 16 scan
@@ -1089,7 +1100,55 @@ pub fn encode_coefs(
     );
 
     let band_translate = get_band_translate(tx_size);
-    let mut token_cache = vec![0u8; tx_size.n_coeffs()];
+
+    // Empty blocks need no token cache. This is the common case in real-time
+    // inter frames, so keep it ahead of the thread-local scratch borrow.
+    if eob == 0 {
+        if seg_eob > 0 {
+            let band = band_translate[0] as usize;
+            if let Some(ref mut ct) = counts {
+                ct.eob_branch_counts[band][initial_pt] += 1;
+                ct.coef_counts[band][initial_pt][EOB_MODEL_TOKEN] += 1;
+                if let Some(full) = ct.full_counts.as_deref_mut() {
+                    full[band][initial_pt][ENTROPY_TOKENS - 1] += 1;
+                }
+            }
+            bw.write(0, coef_probs[band][initial_pt][EOB_CONTEXT_NODE]);
+        }
+        return;
+    }
+
+    ENCODE_COEFS_SCRATCH.with_borrow_mut(|scratch| {
+        encode_coefs_with_token_cache(
+            bw,
+            coef_probs,
+            scan,
+            initial_pt,
+            tx_size,
+            seg_eob,
+            raw_coefs,
+            eob,
+            counts,
+            scratch.as_mut_slice(),
+        );
+    });
+}
+
+#[allow(clippy::too_many_arguments)] // scratch-bearing encode_coefs hot loop
+fn encode_coefs_with_token_cache(
+    bw: &mut BoolWriter<'_>,
+    coef_probs: &CoefBandCtxProbs,
+    scan: &ScanOrder,
+    initial_pt: usize,
+    tx_size: TxSize,
+    seg_eob: usize,
+    raw_coefs: &[i32],
+    eob: usize,
+    mut counts: Option<&mut DecodeCoefCounts<'_>>,
+    token_cache: &mut [u8],
+) {
+    let band_translate = get_band_translate(tx_size);
+    debug_assert!(token_cache.len() >= tx_size.n_coeffs());
     let mut ctx = initial_pt;
 
     // Outer loop — one iteration per (NOT-EOB, zero-run, non-zero token,
@@ -1147,11 +1206,11 @@ pub fn encode_coefs(
                 // outer loop, the next outer iteration recomputes
                 // (band, ctx) from the updated token_cache.
                 if c < seg_eob {
-                    ctx = get_coef_context(scan.neighbors(), &token_cache, c);
+                    ctx = get_coef_context(scan.neighbors(), token_cache, c);
                 }
                 break 'outer;
             }
-            ctx = get_coef_context(scan.neighbors(), &token_cache, c);
+            ctx = get_coef_context(scan.neighbors(), token_cache, c);
             let band_local = band_translate[c] as usize;
             local_prob = &coef_probs[band_local][ctx];
         }
@@ -1274,7 +1333,7 @@ pub fn encode_coefs(
         // emit (c < eob) OR the terminal EOB emission below
         // (eob < seg_eob, in which case we need ctx for position `eob`).
         if c < seg_eob {
-            ctx = get_coef_context(scan.neighbors(), &token_cache, c);
+            ctx = get_coef_context(scan.neighbors(), token_cache, c);
         }
     }
 
@@ -2648,6 +2707,33 @@ mod tests {
         let raw = vec![0i32; 16];
         let bytes = enc_block(&probs, &scan, 0, TxSize::Tx4x4, 16, &raw, 0);
         assert_round_trip(&bytes, &probs, &scan, 0, TxSize::Tx4x4, 16, &raw, 0);
+    }
+
+    #[test]
+    fn encode_coefs_reused_scratch_is_independent_of_previous_block() {
+        let probs = flat_coef_probs(64, 64, 64);
+        let scan4 = default_scan_4x4();
+        let mut sparse = vec![0i32; 16];
+        sparse[scan4.scan[5] as usize] = -2;
+        let expected = enc_block(&probs, &scan4, 2, TxSize::Tx4x4, 16, &sparse, 6);
+
+        // Dirty every byte the reusable cache can expose, including bytes
+        // beyond a later 4x4 call's active transform. The causal-neighbour
+        // invariant requires the second sparse encode to remain identical.
+        let scan32 = scan_for(TxSize::Tx32x32, TxType::DctDct);
+        let dense = vec![4i32; TxSize::Tx32x32.n_coeffs()];
+        let _ = enc_block(
+            &probs,
+            &scan32,
+            1,
+            TxSize::Tx32x32,
+            TxSize::Tx32x32.n_coeffs(),
+            &dense,
+            TxSize::Tx32x32.n_coeffs(),
+        );
+
+        let actual = enc_block(&probs, &scan4, 2, TxSize::Tx4x4, 16, &sparse, 6);
+        assert_eq!(actual, expected);
     }
 
     #[test]
