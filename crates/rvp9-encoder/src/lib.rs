@@ -3200,7 +3200,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         nonrd_pick_partition_with_pruners, variance_hint_bounds,
     };
     use rvp9_core::mode_decision::speed_features::{self as sf_mod};
-    use rvp9_core::mv_search::int_pro_me::{IntProMeResult, int_pro_motion_estimation};
+    use rvp9_core::mv_search::int_pro_me::int_pro_motion_estimation;
     use rvp9_core::mv_search::mv_limits::MvLimits;
     use rvp9_core::mv_search::{PlaneRef, init_dsmotion_compensation};
     use rvp9_core::quant::forward::{QuantizerDeltas, init_plane_quantizers, plane_dequant_pair};
@@ -3856,19 +3856,36 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 }
             });
 
-            // Stage 4a's full-pixel NEWMV search is seeded causally from the
-            // neighbouring MV candidates. The older per-SB projection seed
-            // duplicates motion-estimation work without improving the current
-            // product curve, so production starts from the causal seed alone.
-            // Keep the exact projection result for the opt-in F02 diagnostic,
-            // which records its SAD and partition-reference classification.
+            // A3'-int-pro - SB-level coarse ME (libvpx
+            // `vp9_int_pro_motion_estimation`,
+            // `vp9_mcomp.c:2264-2400`). Produces a starter
+            // integer-pel MV per 64×64 SB by comparing 1D
+            // row/column projections of source vs LASTFRAME ref.
+            // The per-leaf picker uses this MV as the diamond-
+            // search center for NEWMV (mirror of libvpx's
+            // `x->pred_mv[LAST_FRAME]` plumbing at
+            // `vp9_encodeframe.c:1495`). Without this seed the
+            // per-leaf NEWMV diamond starts at (0,0) and the
+            // MV-bit cost dominates over the SSE gain → picker
+            // never picks NEWMV → spatial MV-ref propagation
+            // (A2.foreman) never chains.
+            //
+            // Cheap: 1D projections (not full 2D SAD). Result is
+            // an unclamped Q3 MV; per-leaf clamping happens
+            // inside [`pick_inter_mode_luma`] via the picker's
+            // own MvLimits envelope before the diamond search.
+            //
+            // E10 — every SB (including frame-edge SBs) now produces a
+            // seed: the projection window and 2D-SAD halo read through
+            // an edge-clamped border (libvpx's extended-border frame
+            // equivalent) instead of bailing. A literal zero-MV result
+            // is still treated as "no seed" (the picker's existing
+            // NEAREST/ZERO-at-(0,0) candidates cover it); previously
+            // 12 of 16 SBs on a 256×256 frame bailed outright.
             let sb_px_x = sb_col * 64;
             let sb_px_y = sb_row * 64;
-            let int_pro = if f02_oracle_enabled {
-                int_pro_motion_estimation(&src_y, &ref_y, sb_px_x, sb_px_y, BlockSize::Block64x64)
-            } else {
-                IntProMeResult::ZERO
-            };
+            let int_pro =
+                int_pro_motion_estimation(&src_y, &ref_y, sb_px_x, sb_px_y, BlockSize::Block64x64);
             // Treat a literal zero MV as "no useful seed" — the
             // picker's existing NEAREST/ZERO-at-(0,0) candidates
             // already cover that case.
