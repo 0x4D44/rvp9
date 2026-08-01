@@ -1360,6 +1360,46 @@ fn f5_uv_plane_block_size(bsize: BlockSize) -> BlockSize {
     }
 }
 
+/// Materialize the zero-motion LAST prediction for a leaf that bypasses the
+/// normal picker and reconstruction path.
+fn copy_last_ref_leaf_to_recon(
+    width: usize,
+    height: usize,
+    mi_row: usize,
+    mi_col: usize,
+    bsize: BlockSize,
+    last_recon_yuv: (&[u8], &[u8], &[u8]),
+    recon_yuv_out: (&mut [u8], &mut [u8], &mut [u8]),
+) {
+    for plane in 0..3 {
+        let ss_x = F5_SUBSAMPLING_X[plane];
+        let ss_y = F5_SUBSAMPLING_Y[plane];
+        let plane_width = width >> ss_x;
+        let plane_height = height >> ss_y;
+        let plane_bsize = if plane == 0 {
+            bsize
+        } else {
+            f5_uv_plane_block_size(bsize)
+        };
+        let block_width = usize::from(plane_bsize.width());
+        let block_height = usize::from(plane_bsize.height());
+        let pixel_x = (mi_col * 8) >> ss_x;
+        let pixel_y = (mi_row * 8) >> ss_y;
+        debug_assert!(pixel_x + block_width <= plane_width);
+        debug_assert!(pixel_y + block_height <= plane_height);
+        let (src, dst) = match plane {
+            0 => (last_recon_yuv.0, &mut *recon_yuv_out.0),
+            1 => (last_recon_yuv.1, &mut *recon_yuv_out.1),
+            _ => (last_recon_yuv.2, &mut *recon_yuv_out.2),
+        };
+        for row in pixel_y..pixel_y + block_height {
+            let start = row * plane_width + pixel_x;
+            let end = start + block_width;
+            dst[start..end].copy_from_slice(&src[start..end]);
+        }
+    }
+}
+
 /// Largest transform allowed by libvpx's realtime keyframe policy.
 ///
 /// Speed 4+ combines `USE_LARGESTALL` with frame `tx_mode = ALLOW_16X16`,
@@ -3695,35 +3735,6 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     let mut e3_lost_total_rate_sum: u64 = 0;
     let mut e3_lost_rd_gap_sum: i128 = 0;
 
-    // Initialise the recon planes from the LAST ref. ZERO-MV / skip
-    // leaves get this as their final recon (no residual added); the
-    // picker-driven leaves overwrite their region via the per-TX
-    // IT-add. Mirrors the decoder's "MC writes into dst, then residual
-    // IT-add applies on top" sequence.
-    if let Some(tile_col) = active_tile_col {
-        let bounds = column_tile_bounds(h / 8, w / 8, log2_tile_cols)[tile_col];
-        let y_col_start = bounds.mi_col_start * 8;
-        let y_col_end = bounds.mi_col_end * 8;
-        for row in 0..h {
-            let start = row * w + y_col_start;
-            let end = row * w + y_col_end;
-            recon_yuv_out.0[start..end].copy_from_slice(&last_recon_yuv.0[start..end]);
-        }
-        let uv_width = w / 2;
-        let uv_col_start = bounds.mi_col_start * 4;
-        let uv_col_end = bounds.mi_col_end * 4;
-        for row in 0..h / 2 {
-            let start = row * uv_width + uv_col_start;
-            let end = row * uv_width + uv_col_end;
-            recon_yuv_out.1[start..end].copy_from_slice(&last_recon_yuv.1[start..end]);
-            recon_yuv_out.2[start..end].copy_from_slice(&last_recon_yuv.2[start..end]);
-        }
-    } else {
-        recon_yuv_out.0.copy_from_slice(last_recon_yuv.0);
-        recon_yuv_out.1.copy_from_slice(last_recon_yuv.1);
-        recon_yuv_out.2.copy_from_slice(last_recon_yuv.2);
-    }
-
     // A2.foreman - In-progress mi_grid for spatial MV-ref propagation
     // (H3' fix). The encoder walks leaves in raster order; right after
     // a leaf is picked we splat its `ModeInfo` (carrying the picked
@@ -5091,6 +5102,19 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     sb_partitions[sb_idx][leaf_idx].picked_mv = Mv::ZERO;
                     sb_partitions[sb_idx][leaf_idx].skip = true;
                     sb_partitions[sb_idx][leaf_idx].picked_ref_frame = RefFrame::LastFrame;
+                    copy_last_ref_leaf_to_recon(
+                        w,
+                        h,
+                        leaf_mi_row,
+                        leaf_mi_col,
+                        leaf_bsize,
+                        last_recon_yuv,
+                        (
+                            &mut *recon_yuv_out.0,
+                            &mut *recon_yuv_out.1,
+                            &mut *recon_yuv_out.2,
+                        ),
+                    );
                     // F.0.2 oracle — record the skip-fallback decision
                     // too (otherwise sub-8 leaves are missing from the
                     // sink and the libvpx-side patch would emit an
@@ -5233,6 +5257,19 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     sb_partitions[sb_idx][leaf_idx].picked_mv = Mv::ZERO;
                     sb_partitions[sb_idx][leaf_idx].skip = true;
                     sb_partitions[sb_idx][leaf_idx].picked_ref_frame = RefFrame::LastFrame;
+                    copy_last_ref_leaf_to_recon(
+                        w,
+                        h,
+                        leaf_mi_row,
+                        leaf_mi_col,
+                        leaf_bsize,
+                        last_recon_yuv,
+                        (
+                            &mut *recon_yuv_out.0,
+                            &mut *recon_yuv_out.1,
+                            &mut *recon_yuv_out.2,
+                        ),
+                    );
                     // F.0.2 oracle — also record this degenerate-MV-
                     // envelope fallback so frame-edge leaves aren't
                     // silently missing from the sink (and the libvpx-
@@ -8998,6 +9035,56 @@ fn intra_inverse_transform_add(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn zero_motion_fallback_copies_only_the_leaf_footprint() {
+        const W: usize = 128;
+        const H: usize = 64;
+        const SENTINEL: u8 = 0xee;
+        let y: Vec<u8> = (0..W * H).map(|index| index as u8).collect();
+        let u: Vec<u8> = (0..W * H / 4)
+            .map(|index| (index as u8).wrapping_mul(3))
+            .collect();
+        let v: Vec<u8> = (0..W * H / 4)
+            .map(|index| (index as u8).wrapping_mul(5))
+            .collect();
+        let mut recon_y = vec![SENTINEL; y.len()];
+        let mut recon_u = vec![SENTINEL; u.len()];
+        let mut recon_v = vec![SENTINEL; v.len()];
+
+        copy_last_ref_leaf_to_recon(
+            W,
+            H,
+            2,
+            6,
+            BlockSize::Block32x16,
+            (&y, &u, &v),
+            (&mut recon_y, &mut recon_u, &mut recon_v),
+        );
+
+        for (plane, (src, recon)) in [(&y, &recon_y), (&u, &recon_u), (&v, &recon_v)]
+            .into_iter()
+            .enumerate()
+        {
+            let ss = usize::from(plane != 0);
+            let stride = W >> ss;
+            let plane_height = H >> ss;
+            let x = 48 >> ss;
+            let y = 16 >> ss;
+            let block_width = 32 >> ss;
+            let block_height = 16 >> ss;
+            for row in 0..plane_height {
+                for col in 0..stride {
+                    let index = row * stride + col;
+                    if (y..y + block_height).contains(&row) && (x..x + block_width).contains(&col) {
+                        assert_eq!(recon[index], src[index]);
+                    } else {
+                        assert_eq!(recon[index], SENTINEL);
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn intra_tx_size_pick_ignores_pixels_outside_causal_leaf_halo() {
