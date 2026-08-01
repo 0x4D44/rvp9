@@ -22,7 +22,7 @@
 //! cannot follow" (use `vp9_cost_tokens_skip`). We carry both halves
 //! here too.
 
-use super::tree_cost::{vp9_cost_tokens, vp9_cost_tokens_skip};
+use super::prob_cost::{vp9_cost_one, vp9_cost_zero};
 use crate::entropy::coef_probs::{COEF_BANDS, COEFF_CONTEXTS, PLANE_TYPES, REF_TYPES};
 use crate::entropy::frame_context::{FrameContext, TX_SIZES};
 use crate::entropy::pareto::{MODEL_NODES, VP9_PARETO8_FULL};
@@ -116,6 +116,51 @@ fn model_to_full_probs(model: &[u8; 3]) -> [u8; ENTROPY_NODES] {
     full
 }
 
+/// Fill both coefficient-token cost slabs for VP9's fixed coefficient tree.
+///
+/// `vp9_cost_tokens` is intentionally generic, but this table is rebuilt once
+/// per frame for 528 live probability contexts. Spell out the fixed paths so
+/// each node's zero/one cost is loaded once rather than recursively walking the
+/// same tree twice (with-EOB and skip-EOB).
+#[inline]
+fn fill_coef_token_costs(costs: &mut CoefTokenCosts, probs: &[u8; ENTROPY_NODES]) {
+    let zero = probs.map(|prob| vp9_cost_zero(prob) as i32);
+    let one = probs.map(|prob| vp9_cost_one(prob) as i32);
+    let [with_eob, skip_eob] = costs;
+
+    // The skip-EOB slab starts at coefficient-tree node 1, after the root's
+    // NOT-EOB branch. Token indices match ZERO..CAT6, EOB.
+    skip_eob[0] = zero[1];
+    let past_zero = one[1];
+    skip_eob[1] = past_zero + zero[2];
+    let past_one = past_zero + one[2];
+    let low_value = past_one + zero[3];
+    skip_eob[2] = low_value + zero[4];
+    let past_two = low_value + one[4];
+    skip_eob[3] = past_two + zero[5];
+    skip_eob[4] = past_two + one[5];
+
+    let categories = past_one + one[3];
+    let short_categories = categories + zero[6];
+    skip_eob[5] = short_categories + zero[7];
+    skip_eob[6] = short_categories + one[7];
+    let long_categories = categories + one[6];
+    let medium_categories = long_categories + zero[8];
+    skip_eob[7] = medium_categories + zero[9];
+    skip_eob[8] = medium_categories + one[9];
+    let largest_categories = long_categories + one[8];
+    skip_eob[9] = largest_categories + zero[10];
+    skip_eob[10] = largest_categories + one[10];
+
+    let not_eob = one[0];
+    for token in 0..11 {
+        with_eob[token] = skip_eob[token] + not_eob;
+    }
+    let eob = zero[0];
+    with_eob[11] = eob;
+    skip_eob[11] = eob;
+}
+
 /// Build the per-`(tx, plane, ref, band, ctx, token)` cost table from
 /// a `FrameContext`'s coefficient model. Mirrors libvpx
 /// `fill_token_costs` (`vp9_rd.c:135-152`).
@@ -136,12 +181,7 @@ pub fn build_coef_cost_table(fc: &FrameContext) -> CoefCostTable {
                             continue;
                         }
                         let full = model_to_full_probs(ctx_model);
-                        vp9_cost_tokens(&mut table.data[t][i][j][k][l][0], &VP9_COEF_TREE, &full);
-                        vp9_cost_tokens_skip(
-                            &mut table.data[t][i][j][k][l][1],
-                            &VP9_COEF_TREE,
-                            &full,
-                        );
+                        fill_coef_token_costs(&mut table.data[t][i][j][k][l], &full);
                         debug_assert_eq!(
                             table.data[t][i][j][k][l][0][11], // EOB token index
                             table.data[t][i][j][k][l][1][11]
@@ -187,6 +227,27 @@ pub fn coef_token_cost(table: &CoefCostTable, idx: CoefCostIndex) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cost::tree_cost::{vp9_cost_tokens, vp9_cost_tokens_skip};
+
+    #[test]
+    fn fixed_coef_paths_match_generic_tree_walk() {
+        for varied_node in 0..ENTROPY_NODES {
+            for probability in 1..=u8::MAX {
+                let mut probs = [128; ENTROPY_NODES];
+                probs[varied_node] = probability;
+                let mut expected = [[0; ENTROPY_TOKENS]; 2];
+                vp9_cost_tokens(&mut expected[0], &VP9_COEF_TREE, &probs);
+                vp9_cost_tokens_skip(&mut expected[1], &VP9_COEF_TREE, &probs);
+
+                let mut actual = [[0; ENTROPY_TOKENS]; 2];
+                fill_coef_token_costs(&mut actual, &probs);
+                assert_eq!(
+                    actual, expected,
+                    "node={varied_node}, probability={probability}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn table_built_from_default_fc_is_finite_and_nonzero() {
