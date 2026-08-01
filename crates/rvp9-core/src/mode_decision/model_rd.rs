@@ -626,19 +626,18 @@ pub fn encode_breakout_test(
 
 /// Compute per-8x8 variance/SSE grid for a `bw × bh` block.
 ///
-/// Returns `(total_sse, total_sum, sse8x8, sum8x8, var8x8)` where
-/// `sse8x8`, `sum8x8`, `var8x8` are arrays indexed by sub-block index
+/// Returns `(total_sse, total_sum, sse8x8, sum8x8)` where
+/// `sse8x8` and `sum8x8` are arrays indexed by sub-block index
 /// `k = (row/8) * (bw/8) + (col/8)`.
 ///
 /// Port of the `vpx_get8x8var` loop at `vp9_pickmode.c:442-476`.
 ///
 /// The integer-exact per-cell `(sum, sse)` reduction over each 8×8 cell is
 /// delegated to `reduce` (the `SimdDispatch::get_var_sse_8x8` slot, resolved
-/// once by the caller and hoisted out of the cell grid). The scalar abs-diff
-/// `>>6` finisher (`var8x8`) and the `total_sse` / `total_sum` accumulation
-/// below stay byte-for-byte regardless of whether the AVX2 or scalar reduction
-/// was used — both are byte-exact, so each cell sees identical `(cell_sum,
-/// cell_sse)`.
+/// once by the caller and hoisted out of the cell grid). The `total_sse` and
+/// `total_sum` accumulation below stays byte-for-byte regardless of whether
+/// the AVX2 or scalar reduction was used — both are byte-exact, so each cell
+/// sees identical `(cell_sum, cell_sse)`.
 fn compute_variance_8x8(
     reduce: VarianceReduceFn,
     src: &[u8],
@@ -647,14 +646,13 @@ fn compute_variance_8x8(
     pred_stride: usize,
     bw: usize,
     bh: usize,
-) -> (u64, i64, [u32; 64], [i32; 64], [u32; 64]) {
+) -> (u64, i64, [u32; 64], [i32; 64]) {
     let nw = bw / 8;
     let nh = bh / 8;
     debug_assert!(nw * nh <= 64, "8x8 grid exceeds 64 cells");
 
     let mut sse8x8 = [0u32; 64];
     let mut sum8x8 = [0i32; 64];
-    let mut var8x8 = [0u32; 64];
     let mut total_sse: u64 = 0;
     let mut total_sum: i64 = 0;
 
@@ -668,16 +666,12 @@ fn compute_variance_8x8(
 
             sse8x8[k] = cell_sse;
             sum8x8[k] = cell_sum;
-            // var = |sse - (sum*sum >> 6)|
-            let k_sqr = ((cell_sum as i64 * cell_sum as i64) >> 6) as u32;
-            var8x8[k] = cell_sse.abs_diff(k_sqr);
-
             total_sse += cell_sse as u64;
             total_sum += cell_sum as i64;
         }
     }
 
-    (total_sse, total_sum, sse8x8, sum8x8, var8x8)
+    (total_sse, total_sum, sse8x8, sum8x8)
 }
 
 /// Aggregate a grid of sub-block statistics by grouping 2x2 cells.
@@ -691,6 +685,7 @@ fn compute_variance_8x8(
 /// number of output cells.
 ///
 /// Port of libvpx `calculate_variance` (`vp9_pickmode.c:317-340`).
+#[cfg(test)]
 fn aggregate_to_tx_size(
     sse_in: &[u32],
     sum_in: &[i32],
@@ -759,10 +754,9 @@ pub fn model_rd_for_sb_y_large(input: ModelRdYInput<'_>) -> ModelRdResult {
 
     // Step 1: compute per-8x8 variance grid + totals. The per-cell
     // `(sum, sse)` reduction is dispatched (AVX2 / scalar, byte-exact); the
-    // scalar abs-diff `>>6` finisher inside `compute_variance_8x8` stays
-    // untouched, as does `aggregate_to_tx_size` below.
+    // scalar variance finishers below stay untouched.
     let reduce_8x8 = crate::dsp::get_ref().get_var_sse_8x8();
-    let (total_sse, total_sum, sse8x8, sum8x8, var8x8) =
+    let (total_sse, total_sum, sse8x8, sum8x8) =
         compute_variance_8x8(reduce_8x8, src, src_stride, pred, pred_stride, bw, bh);
 
     // Step 2: whole-block variance from totals.
@@ -779,64 +773,41 @@ pub fn model_rd_for_sb_y_large(input: ModelRdYInput<'_>) -> ModelRdResult {
         tx_size_raw
     };
 
-    // Step 4-5: aggregate to TX-size granularity.
+    // Step 4-5: visit the 8x8 grid at TX-size granularity.
     let nw = bw / 8;
     let nh = bh / 8;
-
-    // The arrays + count at the TX-size level.
-    // For Tx8x8 we use the 8x8 grid directly.
-    // For Tx16x16 we aggregate 8x8 -> 16x16.
-    // For Tx32x32 we aggregate 8x8 -> 16x16 -> 32x32.
-    //
-    // We store the TX-level data in stack arrays sized for the
-    // largest case (64x64 block / Tx8x8 = 64 cells).
-    let (sse_tx, var_tx, num_tx): ([u32; 64], [u32; 64], usize) = match tx_size {
-        TxSize::Tx8x8 => {
-            let num = nw * nh;
-            (sse8x8, var8x8, num)
-        }
-        TxSize::Tx16x16 => {
-            let (sse16, _sum16, var16, count) =
-                aggregate_to_tx_size(&sse8x8[..nw * nh], &sum8x8[..nw * nh], nw, nh, 8);
-            let mut sse_arr = [0u32; 64];
-            let mut var_arr = [0u32; 64];
-            sse_arr[..count].copy_from_slice(&sse16[..count]);
-            var_arr[..count].copy_from_slice(&var16[..count]);
-            (sse_arr, var_arr, count)
-        }
-        TxSize::Tx32x32 => {
-            // 8x8 -> 16x16
-            let (sse16, sum16, _var16, count16) =
-                aggregate_to_tx_size(&sse8x8[..nw * nh], &sum8x8[..nw * nh], nw, nh, 8);
-            let nw16 = nw / 2;
-            let nh16 = nh / 2;
-            debug_assert_eq!(count16, nw16 * nh16);
-            // 16x16 -> 32x32
-            let (sse32, _sum32, var32, count32) =
-                aggregate_to_tx_size(&sse16[..count16], &sum16[..count16], nw16, nh16, 10);
-            let mut sse_arr = [0u32; 64];
-            let mut var_arr = [0u32; 64];
-            sse_arr[..count32].copy_from_slice(&sse32[..count32]);
-            var_arr[..count32].copy_from_slice(&var32[..count32]);
-            (sse_arr, var_arr, count32)
-        }
-        TxSize::Tx4x4 => {
-            // Should not happen due to clamp above, but handle gracefully.
-            let num = nw * nh;
-            (sse8x8, var8x8, num)
-        }
+    let (cell_span, tx_pixels_log2) = match tx_size {
+        TxSize::Tx4x4 | TxSize::Tx8x8 => (1, 6),
+        TxSize::Tx16x16 => (2, 8),
+        TxSize::Tx32x32 => (4, 10),
     };
 
-    // Step 6: per-sub-block skip test (libvpx pickmode.c:536-557).
+    // Step 6: per-sub-block skip test (libvpx pickmode.c:536-557). Only the
+    // two accumulated test results escape this loop, so reduce each TX cell
+    // directly instead of zeroing and copying two 64-entry temporary arrays.
     let mut ac_test = true;
     let mut dc_test = true;
-    for k in 0..num_tx {
-        if (var_tx[k] as i64) >= ac_thr && var != 0 {
-            ac_test = false;
-        }
-        let dc_energy = sse_tx[k].saturating_sub(var_tx[k]);
-        if (dc_energy as i64) >= dc_thr && sse != var {
-            dc_test = false;
+    for tx_row in (0..nh).step_by(cell_span) {
+        for tx_col in (0..nw).step_by(cell_span) {
+            let mut cell_sse = 0u32;
+            let mut cell_sum = 0i32;
+            for row in tx_row..tx_row + cell_span {
+                let start = row * nw + tx_col;
+                for column in 0..cell_span {
+                    cell_sse += sse8x8[start + column];
+                    cell_sum += sum8x8[start + column];
+                }
+            }
+            let sum = i64::from(cell_sum);
+            let mean_sq = ((sum * sum) >> tx_pixels_log2) as u32;
+            let cell_var = cell_sse.abs_diff(mean_sq);
+            if i64::from(cell_var) >= ac_thr && var != 0 {
+                ac_test = false;
+            }
+            let dc_energy = cell_sse.saturating_sub(cell_var);
+            if i64::from(dc_energy) >= dc_thr && sse != var {
+                dc_test = false;
+            }
         }
     }
 
@@ -1667,14 +1638,14 @@ mod tests {
         let src = [128u8; 32 * 32];
         let pred = [128u8; 32 * 32];
         let reduce = crate::dsp::distortion::get_var_sse_8x8;
-        let (total_sse, total_sum, sse8x8, _sum8x8, var8x8) =
+        let (total_sse, total_sum, sse8x8, sum8x8) =
             compute_variance_8x8(reduce, &src, 32, &pred, 32, 32, 32);
         assert_eq!(total_sse, 0);
         assert_eq!(total_sum, 0);
         let num_cells = (32 / 8) * (32 / 8); // = 16
         for k in 0..num_cells {
             assert_eq!(sse8x8[k], 0, "sse8x8[{k}] should be 0");
-            assert_eq!(var8x8[k], 0, "var8x8[{k}] should be 0");
+            assert_eq!(sum8x8[k], 0, "sum8x8[{k}] should be 0");
         }
     }
 
@@ -1686,7 +1657,7 @@ mod tests {
         let src = [130u8; 32 * 32];
         let pred = [128u8; 32 * 32];
         let reduce = crate::dsp::distortion::get_var_sse_8x8;
-        let (total_sse, total_sum, sse8x8, sum8x8, var8x8) =
+        let (total_sse, total_sum, sse8x8, sum8x8) =
             compute_variance_8x8(reduce, &src, 32, &pred, 32, 32, 32);
         let num_cells = 16;
         assert_eq!(total_sse, 256 * 16);
@@ -1694,7 +1665,12 @@ mod tests {
         for k in 0..num_cells {
             assert_eq!(sse8x8[k], 256, "sse8x8[{k}]");
             assert_eq!(sum8x8[k], 128, "sum8x8[{k}]");
-            assert_eq!(var8x8[k], 0, "uniform offset -> zero variance per cell");
+            let mean_sq = ((i64::from(sum8x8[k]) * i64::from(sum8x8[k])) >> 6) as u32;
+            assert_eq!(
+                sse8x8[k].abs_diff(mean_sq),
+                0,
+                "uniform offset -> zero variance per cell"
+            );
         }
     }
 
