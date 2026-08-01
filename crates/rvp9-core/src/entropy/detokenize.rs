@@ -1023,12 +1023,18 @@ fn full_token_from_abs(abs_val: i32) -> usize {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct RetainedCoefToken {
     value: i16,
-    band: u8,
-    ctx: u8,
+    prob_ctx: u8,
 }
 
 const _: () = assert!(core::mem::size_of::<RetainedCoefToken>() == 4);
 const RETAINED_EOB: i16 = i16::MIN;
+
+#[inline]
+fn retained_prob_ctx(band: usize, ctx: usize) -> u8 {
+    debug_assert!(band < COEF_BANDS);
+    debug_assert!(ctx < COEFF_CONTEXTS);
+    (band * COEFF_CONTEXTS + ctx) as u8
+}
 
 /// Per-tile coefficient tokens grouped by transform-block boundary.
 ///
@@ -1298,8 +1304,7 @@ fn encode_coefs_impl(
             if let Some(tokens) = retained.as_deref_mut() {
                 tokens.push(RetainedCoefToken {
                     value: RETAINED_EOB,
-                    band: band as u8,
-                    ctx: initial_pt as u8,
+                    prob_ctx: retained_prob_ctx(band, initial_pt),
                 });
             }
             if emit_bits {
@@ -1387,8 +1392,7 @@ fn encode_coefs_with_token_cache(
             if let Some(tokens) = retained.as_deref_mut() {
                 tokens.push(RetainedCoefToken {
                     value: 0,
-                    band: band_translate[c],
-                    ctx: ctx as u8,
+                    prob_ctx: retained_prob_ctx(band_translate[c] as usize, ctx),
                 });
             }
             // (B) G3 — count ZERO_TOKEN.
@@ -1431,8 +1435,7 @@ fn encode_coefs_with_token_cache(
             debug_assert!(i16::try_from(coef).is_ok());
             tokens.push(RetainedCoefToken {
                 value: coef as i16,
-                band: band_translate[c],
-                ctx: ctx as u8,
+                prob_ctx: retained_prob_ctx(band_translate[c] as usize, ctx),
             });
         }
 
@@ -1499,8 +1502,7 @@ fn encode_coefs_with_token_cache(
         if let Some(tokens) = retained {
             tokens.push(RetainedCoefToken {
                 value: RETAINED_EOB,
-                band: band as u8,
-                ctx: ctx as u8,
+                prob_ctx: retained_prob_ctx(band, ctx),
             });
         }
         if emit_bits {
@@ -1514,10 +1516,11 @@ fn replay_retained_coefs(
     coef_probs: &CoefBandCtxProbs,
     tokens: &[RetainedCoefToken],
 ) {
+    let coef_probs = coef_probs.as_flattened();
     let mut i = 0usize;
     while i < tokens.len() {
         let token = tokens[i];
-        let prob = &coef_probs[token.band as usize][token.ctx as usize];
+        let prob = &coef_probs[token.prob_ctx as usize];
         if token.value == RETAINED_EOB {
             bw.write(0, prob[EOB_CONTEXT_NODE]);
             i += 1;
@@ -1532,7 +1535,7 @@ fn replay_retained_coefs(
             if token.value == RETAINED_EOB {
                 break;
             }
-            let local_prob = &coef_probs[token.band as usize][token.ctx as usize];
+            let local_prob = &coef_probs[token.prob_ctx as usize];
             match token.value {
                 0 => {
                     bw.write(0, local_prob[ZERO_CONTEXT_NODE]);
@@ -1824,6 +1827,25 @@ mod tests {
         };
         buf.truncate(n);
         buf
+    }
+
+    #[test]
+    fn retained_probability_context_indexes_every_flattened_row() {
+        let mut probs = flat_coef_probs(0, 0, 0);
+        for (band, contexts) in probs.iter_mut().enumerate() {
+            for (ctx, nodes) in contexts.iter_mut().enumerate() {
+                nodes[0] = retained_prob_ctx(band, ctx);
+            }
+        }
+
+        let flat = probs.as_flattened();
+        for (band, contexts) in probs.iter().enumerate() {
+            for (ctx, nodes) in contexts.iter().enumerate() {
+                let index = retained_prob_ctx(band, ctx) as usize;
+                assert_eq!(flat[index], *nodes);
+                assert_eq!(index, band * COEFF_CONTEXTS + ctx);
+            }
+        }
     }
 
     #[test]
