@@ -392,6 +392,8 @@ pub struct InterRdCalibration {
     pub lambda_den: u64,
     /// Use libvpx's Hadamard-only `block_yrd` candidate pipeline.
     pub hadamard_only: bool,
+    /// Rank the Hadamard-only path with the luma model's distortion estimate.
+    pub model_dist: bool,
 }
 
 impl InterRdCalibration {
@@ -404,6 +406,7 @@ impl InterRdCalibration {
             lambda_num: 2,
             lambda_den: 1,
             hadamard_only: false,
+            model_dist: false,
         }
     }
 
@@ -417,6 +420,7 @@ impl InterRdCalibration {
             lambda_num: 3,
             lambda_den: 2,
             hadamard_only: true,
+            model_dist: true,
         }
     }
 }
@@ -3329,9 +3333,13 @@ fn evaluate_candidate_for_filter_with_pred(
         }
     } else {
         let recon_pixels = recon.as_mut().map_or(&mut [][..], |pixels| &mut pixels[..]);
-        let collect_coef_dist = s3_domain_enabled_for_q(params.q_index, params.rd_calibration)
+        let use_model_dist = hadamard_only
+            && params.rd_calibration.model_dist
+            && s3_domain_enabled_for_q(params.q_index, params.rd_calibration);
+        let collect_coef_dist = (!use_model_dist
+            && s3_domain_enabled_for_q(params.q_index, params.rd_calibration))
             || candidate_trace::is_enabled();
-        reconstruct_via_round_trip(
+        let mut result = reconstruct_via_round_trip(
             params,
             RoundTripBuffers {
                 pred: &pred[..],
@@ -3345,7 +3353,11 @@ fn evaluate_candidate_for_filter_with_pred(
                 reconstruct: !hadamard_only,
                 collect_coef_dist,
             },
-        )
+        );
+        if use_model_dist {
+            result.coef_dist = mrd.dist;
+        }
+        result
     };
     let recon_pixels = recon.as_ref().map_or(&pred[..], |pixels| &pixels[..]);
 
@@ -3709,11 +3721,14 @@ fn evaluate_candidate_for_filter_with_pred(
     // `rate`) is a coefficient-domain quantity (SATD-of-qcoeff). HEAD
     // paired it with a *pixel*-domain dist (SSE-of-recon), mixing
     // domains so the libvpx-tuned `<< 2` SATD-to-bits scale overpriced
-    // residual candidates. S3 feeds the coefficient-domain `coef_dist`
-    // (`block_error_fp >> 2`, the same domain as `coef_rate`, matching
-    // libvpx's `block_yrd`), and rescales the skip-side *pixel* SSE
-    // `<< 4` to sit in that domain (libvpx `vp9_pickmode.c` skip
-    // tie-break). `lambda` / `compute_rd_mult` are UNCHANGED.
+    // residual candidates. S3 feeds a transform-domain distortion estimate
+    // alongside `coef_rate`. The Stage 4a realtime calibration uses the
+    // already-computed luma model distortion, matching libvpx's
+    // `use_simple_block_yrd` seam and avoiding a second 64-bit
+    // coefficient-error reduction. Other calibrations retain exact
+    // `block_error_fp >> 2`. The skip-side *pixel* SSE is rescaled by `<< 4`
+    // to sit in that domain (libvpx `vp9_pickmode.c` skip tie-break).
+    // `lambda` / `compute_rd_mult` are UNCHANGED.
     //
     // `dist_encode` is the dist used for the encode (non-skip) RD;
     // `dist_skip` for the skip RD. `RVP9_S3_DOMAIN=1` forces both to the
@@ -5004,6 +5019,66 @@ mod tests {
         );
         assert_eq!(fast_result.coef_rate, control_result.coef_rate);
         assert_eq!(fast_result.coef_dist, control_result.coef_dist);
+    }
+
+    #[test]
+    fn stage4a_picker_reuses_luma_model_distortion() {
+        let pw = 64;
+        let ph = 64;
+        let src_data = make_plane(pw, ph, 17);
+        let ref_data = make_plane(pw, ph, 91);
+        let src_plane = PlaneRef {
+            data: &src_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let ref_plane = PlaneRef {
+            data: &ref_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let harness = TestHarness::new(pw, 50);
+        let mvc = MvCandidates::default();
+        let control = make_params(
+            &harness,
+            BlockSize::Block16x16,
+            &src_plane,
+            &ref_plane,
+            (16, 16),
+            &mvc,
+            MvLimits::new(-32, 32, -32, 32),
+            50,
+        );
+        let params = InterModeSearchParams {
+            rd_calibration: InterRdCalibration::stage4a_vbr(),
+            ..control
+        };
+        let mut pred = [0u8; 64 * 64];
+        build_inter_prediction(
+            crate::dsp::get_ref(),
+            params.ref_plane,
+            params.src_offset.0,
+            params.src_offset.1,
+            Mv::ZERO,
+            16,
+            16,
+            &mut pred,
+            16,
+            InterpFilter::EightTap,
+        );
+        let expected = luma_model_rd(&params, &pred[..16 * 16], 16, 16);
+        let result = evaluate_candidate_for_filter(
+            &params,
+            InterMode::ZeroMv,
+            Mv::ZERO,
+            Mv::ZERO,
+            compute_rd_mult(50, frame_type_for_rd(params.frame_kind)),
+            InterpFilter::EightTap,
+        );
+
+        assert_eq!(result.coef_dist, expected.dist);
     }
 
     #[test]
