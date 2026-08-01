@@ -79,14 +79,14 @@ pub static TRELLIS_CHANGED_COEFFS: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(0);
 
 struct InterEmitScratch {
-    residual: [i16; 32 * 32],
+    residual: [i16; 64 * 64],
     quant: InterEmitQuantScratch,
 }
 
 impl InterEmitScratch {
     const fn new() -> Self {
         Self {
-            residual: [0; 32 * 32],
+            residual: [0; 64 * 64],
             quant: InterEmitQuantScratch {
                 coefs: [0; 32 * 32],
                 qcoeff: [0; 32 * 32],
@@ -6994,6 +6994,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                 rdmult: tx_rd_rdmult,
                                 tx_size_cost: rdo_tx_size_cost,
                                 quant_fp: rt_quant_fp,
+                                scratch: &mut inter_emit_scratch,
                             });
                             if let Some(t0) = emit_tx_select_start {
                                 emit_profile_tx_select_time += t0.elapsed();
@@ -8685,6 +8686,7 @@ struct InterLumaTxInput<'a> {
     rdmult: i64,
     tx_size_cost: [u32; 4],
     quant_fp: bool,
+    scratch: &'a mut InterEmitScratch,
 }
 
 fn choose_inter_luma_tx_size(input: InterLumaTxInput<'_>) -> TxSize {
@@ -8708,6 +8710,7 @@ fn choose_inter_luma_tx_size(input: InterLumaTxInput<'_>) -> TxSize {
         rdmult,
         tx_size_cost,
         quant_fp,
+        scratch,
     } = input;
 
     let max_tx = rvp9_core::block::max_txsize(leaf_bsize);
@@ -8721,7 +8724,8 @@ fn choose_inter_luma_tx_size(input: InterLumaTxInput<'_>) -> TxSize {
     let dequant_pair = [quantizer.dequant[0], quantizer.dequant[1]];
     let block_w_px = plane_bw_4x4 * 4;
     let block_h_px = plane_bh_4x4 * 4;
-    let mut leaf_residual = [0i16; 4096];
+    let InterEmitScratch { residual, quant } = scratch;
+    let leaf_residual = &mut residual[..block_w_px * block_h_px];
     for r in 0..block_h_px {
         let src_row = (plane_px_y + r) * plane_stride + plane_px_x;
         let dst_row = r * block_w_px;
@@ -8765,9 +8769,11 @@ fn choose_inter_luma_tx_size(input: InterLumaTxInput<'_>) -> TxSize {
         let mut above_ctx = [0u8; 16];
         let mut left_ctx = [0u8; 16];
 
-        let mut coefs = [0i32; 1024];
-        let mut qcoeff_i16 = [0i16; 1024];
-        let mut dqcoeff_i16 = [0i16; 1024];
+        let InterEmitQuantScratch {
+            coefs,
+            qcoeff,
+            dqcoeff,
+        } = quant;
 
         let mut ty4 = 0usize;
         while ty4 < plane_bh_4x4 {
@@ -8778,46 +8784,57 @@ fn choose_inter_luma_tx_size(input: InterLumaTxInput<'_>) -> TxSize {
                 // Forward transform (inter = DctDct).
                 match tx_size {
                     TxSize::Tx4x4 => {
-                        let mut buf = [0i32; 16];
-                        fht4x4(residual_tile, &mut buf, block_w_px, TxType::DctDct);
-                        coefs[..ncoef].copy_from_slice(&buf[..]);
+                        fht4x4(
+                            residual_tile,
+                            (&mut coefs[..16])
+                                .try_into()
+                                .expect("4x4 transform prefix has 16 coefficients"),
+                            block_w_px,
+                            TxType::DctDct,
+                        );
                     }
                     TxSize::Tx8x8 => {
-                        let mut buf = [0i32; 64];
-                        fdct8x8(residual_tile, &mut buf, block_w_px);
-                        coefs[..ncoef].copy_from_slice(&buf[..]);
+                        fdct8x8(
+                            residual_tile,
+                            (&mut coefs[..64])
+                                .try_into()
+                                .expect("8x8 transform prefix has 64 coefficients"),
+                            block_w_px,
+                        );
                     }
                     TxSize::Tx16x16 => {
-                        let mut buf = [0i32; 256];
-                        fdct16x16(residual_tile, &mut buf, block_w_px);
-                        coefs[..ncoef].copy_from_slice(&buf[..]);
+                        fdct16x16(
+                            residual_tile,
+                            (&mut coefs[..256])
+                                .try_into()
+                                .expect("16x16 transform prefix has 256 coefficients"),
+                            block_w_px,
+                        );
                     }
                     TxSize::Tx32x32 => {
-                        let mut buf = [0i32; 1024];
-                        fdct32x32(residual_tile, &mut buf, block_w_px);
-                        coefs.copy_from_slice(&buf[..]);
+                        fdct32x32(residual_tile, coefs, block_w_px);
                     }
                 }
                 let eob = if quant_fp {
                     match tx_size {
                         TxSize::Tx32x32 => vp9_quantize_fp_32x32_with_order(
-                            &coefs,
+                            &coefs[..ncoef],
                             false,
                             &quantizer.round_fp,
                             &quantizer.quant_fp,
-                            &mut qcoeff_i16[..ncoef],
-                            &mut dqcoeff_i16[..ncoef],
+                            &mut qcoeff[..ncoef],
+                            &mut dqcoeff[..ncoef],
                             &dequant_pair,
                             &scan,
                         ),
                         _ => vp9_quantize_fp_with_order(
-                            &coefs,
+                            &coefs[..ncoef],
                             ncoef,
                             false,
                             &quantizer.round_fp,
                             &quantizer.quant_fp,
-                            &mut qcoeff_i16,
-                            &mut dqcoeff_i16,
+                            &mut qcoeff[..ncoef],
+                            &mut dqcoeff[..ncoef],
                             &dequant_pair,
                             &scan,
                         ),
@@ -8825,37 +8842,35 @@ fn choose_inter_luma_tx_size(input: InterLumaTxInput<'_>) -> TxSize {
                 } else {
                     match tx_size {
                         TxSize::Tx32x32 => vp9_quantize_b_32x32_with_order(
-                            &coefs,
+                            &coefs[..ncoef],
                             false,
                             &quantizer.zbin,
                             &quantizer.round,
                             &quantizer.quant,
                             &quantizer.quant_shift,
-                            &mut qcoeff_i16[..ncoef],
-                            &mut dqcoeff_i16[..ncoef],
+                            &mut qcoeff[..ncoef],
+                            &mut dqcoeff[..ncoef],
                             &dequant_pair,
                             &scan,
                         ),
                         _ => vp9_quantize_b_with_order(
-                            &coefs,
+                            &coefs[..ncoef],
                             ncoef,
                             false,
                             &quantizer.zbin,
                             &quantizer.round,
                             &quantizer.quant,
                             &quantizer.quant_shift,
-                            &mut qcoeff_i16,
-                            &mut dqcoeff_i16,
+                            &mut qcoeff[..ncoef],
+                            &mut dqcoeff[..ncoef],
                             &dequant_pair,
                             &scan,
                         ),
                     }
                 };
                 // Transform-domain distortion: vp9_block_error >> shift.
-                let (err, _ssz) = crate::rdo::block_error::vp9_block_error(
-                    &coefs[..ncoef],
-                    &dqcoeff_i16[..ncoef],
-                );
+                let (err, _ssz) =
+                    crate::rdo::block_error::vp9_block_error(&coefs[..ncoef], &dqcoeff[..ncoef]);
                 total_dist += err >> shift;
 
                 // Coefficient rate via cost_coeffs with the leaf-local
@@ -8864,7 +8879,7 @@ fn choose_inter_luma_tx_size(input: InterLumaTxInput<'_>) -> TxSize {
                 let left = left_ctx[ty4];
                 let coeff_ctx = rvp9_core::coef_ctx::combine_entropy_contexts(above, left);
                 total_rate = total_rate.saturating_add(crate::rdo::cost_coeffs::cost_coeffs(
-                    &qcoeff_i16[..ncoef],
+                    &qcoeff[..ncoef],
                     scan.scan(),
                     eob as u16,
                     tx_size,
@@ -9471,6 +9486,58 @@ mod tests {
             assert_eq!(
                 after, before,
                 "{tx_size:?} result must not depend on the prior scratch contents"
+            );
+        }
+    }
+
+    #[test]
+    fn inter_tx_size_pick_is_independent_of_prior_scratch_contents() {
+        use rvp9_core::cost::{FrameTypeForRd, coef_cost::build_coef_cost_table};
+        use rvp9_core::quant::forward::{QuantizerDeltas, init_plane_quantizers};
+
+        const SIDE: usize = 64;
+        const BLOCK_X: usize = 16;
+        const BLOCK_Y: usize = 16;
+        let input: Vec<u8> = (0..SIDE * SIDE)
+            .map(|index| ((index * 29 + index / SIDE * 17 + 31) & 0xff) as u8)
+            .collect();
+        let recon: Vec<u8> = (0..SIDE * SIDE)
+            .map(|index| ((index * 11 + index / SIDE * 23 + 71) & 0xff) as u8)
+            .collect();
+        let q_index = 96;
+        let quantizer = init_plane_quantizers(q_index, QuantizerDeltas::Y);
+        let coef_costs = build_coef_cost_table(&FrameContext::new_default());
+        let rdmult = i64::from(rvp9_core::cost::compute_rd_mult(
+            q_index,
+            FrameTypeForRd::Inter,
+        ));
+        let mut scratch = InterEmitScratch::new();
+        let run = |scratch: &mut InterEmitScratch, poison: i16, quant_fp: bool| {
+            scratch.residual.fill(poison);
+            scratch.quant.coefs.fill(i32::from(poison));
+            scratch.quant.qcoeff.fill(poison);
+            scratch.quant.dqcoeff.fill(poison);
+            choose_inter_luma_tx_size(InterLumaTxInput {
+                input_plane: &input,
+                recon_plane: &recon,
+                plane_stride: SIDE,
+                plane_px_x: BLOCK_X,
+                plane_px_y: BLOCK_Y,
+                leaf_bsize: BlockSize::Block32x32,
+                quantizer: &quantizer,
+                coef_costs: &coef_costs,
+                rdmult,
+                tx_size_cost: [0, 17, 31, 47],
+                quant_fp,
+                scratch,
+            })
+        };
+
+        for quant_fp in [false, true] {
+            assert_eq!(
+                run(&mut scratch, i16::MIN, quant_fp),
+                run(&mut scratch, i16::MAX, quant_fp),
+                "TX choice must not depend on prior scratch contents (quant_fp={quant_fp})"
             );
         }
     }
