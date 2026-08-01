@@ -2508,6 +2508,24 @@ fn evaluate_intra_fallback(
     intra_cost_penalty: u32,
     best_inter_rd: i64,
 ) -> Option<PickInterModeResult> {
+    CANDIDATE_PRED_SCRATCH.with_borrow_mut(|scratch| {
+        evaluate_intra_fallback_with_scratch(
+            params,
+            lambda,
+            intra_cost_penalty,
+            best_inter_rd,
+            scratch,
+        )
+    })
+}
+
+fn evaluate_intra_fallback_with_scratch(
+    params: &PickInterModeParams<'_>,
+    lambda: u32,
+    intra_cost_penalty: u32,
+    best_inter_rd: i64,
+    scratch: &mut CandidatePredScratch,
+) -> Option<PickInterModeResult> {
     let intra_costs = params.intra_y_mode_costs;
 
     // §11 — `max_intra_bsize` gate (libvpx `vp9_pickmode.c:2523`):
@@ -2636,120 +2654,126 @@ fn evaluate_intra_fallback(
             continue;
         }
 
-        // 1. Build prediction.
-        let mut recon = [0u8; 64 * 64];
-        let ctx = PredCtx {
-            above: &above_row[..2 * bw],
-            left: &left_col[..bh],
-            above_left,
-        };
-        // intra_predict needs stride == bw for contiguous layout.
-        intra_predict(
-            mode,
-            &mut recon[..bw * bh],
-            bw,
-            bw,
-            ctx,
-            dc_avail,
-            &dispatch,
-        );
+        let (mrd, by, dist) = {
+            let CandidatePredScratch {
+                primary: recon,
+                round_trip,
+                ..
+            } = &mut *scratch;
 
-        // 2. Variance-domain RD model.
-        let mrd = model_rd_for_sb_y(ModelRdYInput {
-            src: &src_slice[src_start..],
-            src_stride: params.src_plane.stride,
-            pred: &recon,
-            pred_stride: bw,
-            bw,
-            bh,
-            bsize: params.block_size,
-            dc_quant,
-            ac_quant,
-            dc_thr,
-            ac_thr,
-            tx_mode,
-        });
-
-        let picked_tx_size = mrd.tx_size;
-
-        // 3. DCT round-trip (or skip).
-        let by = if mrd.skip_txfm == SkipTxfm::AcDc {
-            // Intra path is out of S2/S3 scope (HLD §5): keep the AcDc
-            // short-circuit and its all-zero result. `dct_eob_total` is
-            // 0 here, but no intra skip gate reads it (S2.1 is inter-only).
-            BlockYrdResult {
-                coef_rate: 0,
-                coef_dist: 0,
-                skippable: true,
-                dct_eob_total: 0,
-            }
-        } else {
-            // We need an InterModeSearchParams to call
-            // `reconstruct_via_round_trip`. Build one using LAST ref
-            // (arbitrary — the ref plane is not read for intra, but
-            // the struct is needed for the quantizer/src fields).
-            let single_params = InterModeSearchParams {
-                block_size: params.block_size,
-                src_plane: params.src_plane,
-                src_offset: params.src_offset,
-                ref_plane: params.last_ref_plane, // unused for intra
-                mv_candidates: params.last_mv_candidates,
-                mv_limits: params.mv_limits,
-                site_config: params.site_config,
-                full_pixel_search_method: params.full_pixel_search_method,
-                mv_costs: params.mv_costs,
-                inter_mode_costs: params.inter_mode_costs,
-                inter_mode_ctx: params.inter_mode_ctx,
-                quantizer: params.quantizer,
-                q_index: params.q_index,
-                allow_hp: params.allow_hp,
-                frame_kind: params.frame_kind,
-                newmv_seed: params.newmv_seed,
-                ref_frame_rate_cost: 0,
-                switchable_interp_costs: params.switchable_interp_costs,
-                switchable_interp_ctx: params.switchable_interp_ctx,
-                skip_ctx: Some(params.skip_ctx),
-                rd_calibration: params.rd_calibration,
-                // G1: UV fields unused for intra fallback.
-                src_u: params.src_u,
-                src_v: params.src_v,
-                ref_u: params.last_ref_u,
-                ref_v: params.last_ref_v,
-                uv_stride: params.uv_stride,
-                uv_dc_quant: params.uv_dc_quant,
-                uv_ac_quant: params.uv_ac_quant,
+            // 1. Build prediction. The predictor overwrites the complete
+            // active prefix, so pixels from a prior wider candidate cannot
+            // be observed.
+            let ctx = PredCtx {
+                above: &above_row[..2 * bw],
+                left: &left_col[..bh],
+                above_left,
             };
-            CANDIDATE_PRED_SCRATCH.with_borrow_mut(|scratch| {
+            intra_predict(
+                mode,
+                &mut recon[..bw * bh],
+                bw,
+                bw,
+                ctx,
+                dc_avail,
+                &dispatch,
+            );
+
+            // 2. Variance-domain RD model.
+            let mrd = model_rd_for_sb_y(ModelRdYInput {
+                src: &src_slice[src_start..],
+                src_stride: params.src_plane.stride,
+                pred: recon,
+                pred_stride: bw,
+                bw,
+                bh,
+                bsize: params.block_size,
+                dc_quant,
+                ac_quant,
+                dc_thr,
+                ac_thr,
+                tx_mode,
+            });
+
+            // 3. DCT round-trip (or skip).
+            let by = if mrd.skip_txfm == SkipTxfm::AcDc {
+                // Intra path is out of S2/S3 scope (HLD §5): keep the AcDc
+                // short-circuit and its all-zero result. `dct_eob_total` is
+                // 0 here, but no intra skip gate reads it (S2.1 is inter-only).
+                BlockYrdResult {
+                    coef_rate: 0,
+                    coef_dist: 0,
+                    skippable: true,
+                    dct_eob_total: 0,
+                }
+            } else {
+                // We need an InterModeSearchParams to call
+                // `reconstruct_via_round_trip`. Build one using LAST ref
+                // (arbitrary — the ref plane is not read for intra, but
+                // the struct is needed for the quantizer/src fields).
+                let single_params = InterModeSearchParams {
+                    block_size: params.block_size,
+                    src_plane: params.src_plane,
+                    src_offset: params.src_offset,
+                    ref_plane: params.last_ref_plane, // unused for intra
+                    mv_candidates: params.last_mv_candidates,
+                    mv_limits: params.mv_limits,
+                    site_config: params.site_config,
+                    full_pixel_search_method: params.full_pixel_search_method,
+                    mv_costs: params.mv_costs,
+                    inter_mode_costs: params.inter_mode_costs,
+                    inter_mode_ctx: params.inter_mode_ctx,
+                    quantizer: params.quantizer,
+                    q_index: params.q_index,
+                    allow_hp: params.allow_hp,
+                    frame_kind: params.frame_kind,
+                    newmv_seed: params.newmv_seed,
+                    ref_frame_rate_cost: 0,
+                    switchable_interp_costs: params.switchable_interp_costs,
+                    switchable_interp_ctx: params.switchable_interp_ctx,
+                    skip_ctx: Some(params.skip_ctx),
+                    rd_calibration: params.rd_calibration,
+                    // G1: UV fields unused for intra fallback.
+                    src_u: params.src_u,
+                    src_v: params.src_v,
+                    ref_u: params.last_ref_u,
+                    ref_v: params.last_ref_v,
+                    uv_stride: params.uv_stride,
+                    uv_dc_quant: params.uv_dc_quant,
+                    uv_ac_quant: params.uv_ac_quant,
+                };
                 reconstruct_via_round_trip(
                     &single_params,
                     RoundTripBuffers {
                         pred: &[],
-                        recon: &mut recon,
-                        scratch: &mut scratch.round_trip,
+                        recon,
+                        scratch: round_trip,
                     },
                     bw,
                     bh,
-                    picked_tx_size,
+                    mrd.tx_size,
                     RoundTripOptions {
                         reconstruct: true,
                         collect_coef_dist: true,
                     },
                 )
-            })
-        };
+            };
 
-        // 4. Distortion = SSE(src, recon).
-        let dist = if mrd.skip_txfm == SkipTxfm::AcDc {
-            mrd.sse_y
-        } else {
-            let (_, sse) = (dispatch.variance(params.block_size))(
-                &params.src_plane.data[src_start..],
-                params.src_plane.stride,
-                &recon,
-                bw,
-            );
-            sse.min(u32::MAX as u64) as u32
+            // 4. Distortion = SSE(src, recon).
+            let dist = if mrd.skip_txfm == SkipTxfm::AcDc {
+                mrd.sse_y
+            } else {
+                let (_, sse) = (dispatch.variance(params.block_size))(
+                    &params.src_plane.data[src_start..],
+                    params.src_plane.stride,
+                    recon,
+                    bw,
+                );
+                sse.min(u32::MAX as u64) as u32
+            };
+            (mrd, by, dist)
         };
+        let picked_tx_size = mrd.tx_size;
 
         // 5. Rate = mbmode_cost + ref_frame_cost[INTRA] +
         //           intra_cost_penalty + coef_rate.
@@ -6765,6 +6789,20 @@ mod tests {
         );
         params.intra_above_pixels = Some(&above);
         params.intra_left_pixels = Some(&left);
+
+        let lambda = compute_rd_mult(
+            i32::from(params.q_index),
+            frame_type_for_rd(params.frame_kind),
+        );
+        let penalty = get_intra_cost_penalty(params.q_index, params.block_size);
+        CANDIDATE_PRED_SCRATCH.with_borrow_mut(|scratch| scratch.primary.fill(0));
+        let clean = evaluate_intra_fallback(&params, lambda, penalty, i64::MAX);
+        CANDIDATE_PRED_SCRATCH.with_borrow_mut(|scratch| scratch.primary.fill(255));
+        let poisoned = evaluate_intra_fallback(&params, lambda, penalty, i64::MAX);
+        assert_eq!(
+            poisoned, clean,
+            "reused intra prediction scratch must overwrite every active pixel",
+        );
 
         let res = pick_inter_mode(&params);
         // The intra-fallback wiring executes when above/left are
