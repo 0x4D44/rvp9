@@ -45,6 +45,36 @@ unsafe fn filter_eight(samples: [uint8x8_t; 8], filter: &[i16; 8]) -> uint8x8_t 
 }
 
 #[inline]
+#[target_feature(enable = "neon")]
+unsafe fn load_four_repeated(src: *const u8) -> uint8x8_t {
+    // SAFETY: callers guarantee four readable bytes at `src`; unaligned
+    // access is deliberate because frame rows need not be word-aligned.
+    let packed = unsafe { src.cast::<u32>().read_unaligned() };
+    vreinterpret_u8_u32(vdup_n_u32(packed))
+}
+
+#[inline]
+#[target_feature(enable = "neon")]
+unsafe fn store_four(dst: *mut u8, value: uint8x8_t) {
+    let packed = vget_lane_u32::<0>(vreinterpret_u32_u8(value));
+    // SAFETY: callers guarantee four writable bytes at `dst`; unaligned
+    // access is deliberate because destination rows need not be word-aligned.
+    unsafe { dst.cast::<u32>().write_unaligned(packed) };
+}
+
+#[inline]
+#[target_feature(enable = "neon")]
+unsafe fn filter_four_columns(samples: [uint8x8_t; 8], filter: &[i16; 8]) -> uint8x8_t {
+    let mut sum = vdupq_n_s32(64);
+    for tap in 0..8 {
+        let widened = vreinterpretq_s16_u16(vmovl_u8(samples[tap]));
+        sum = vmlal_n_s16(sum, vget_low_s16(widened), filter[tap]);
+    }
+    let rounded = vshrn_n_s32::<7>(sum);
+    vqmovun_s16(vcombine_s16(rounded, rounded))
+}
+
+#[inline]
 #[target_feature(enable = "dotprod")]
 unsafe fn dot_lane<const LANE: usize>(
     mut sum: int32x4_t,
@@ -270,6 +300,28 @@ unsafe fn convolve8_horiz_i8mm_inner(
     }
 }
 
+#[target_feature(enable = "i8mm")]
+unsafe fn convolve8_horiz_i8mm_4_inner(
+    src: *const u8,
+    src_stride: usize,
+    dst: *mut u8,
+    dst_stride: usize,
+    filter: &[i16; 8],
+    h: usize,
+) {
+    let filters8 = vmovn_s16(vld1q_s16(filter.as_ptr()));
+    let filters = vcombine_s8(filters8, filters8);
+    let permute_0 = vld1q_u8(DOTPROD_PERMUTE.as_ptr());
+    let permute_1 = vld1q_u8(DOTPROD_PERMUTE.as_ptr().add(16));
+    let permute_2 = vld1q_u8(DOTPROD_PERMUTE.as_ptr().add(32));
+    for y in 0..h {
+        let src_row = src.add(y * src_stride);
+        let samples = vcombine_u8(vld1_u8(src_row), load_four_repeated(src_row.add(8)));
+        let value = filter_eight_i8mm(samples, filters, permute_0, permute_1, permute_2);
+        store_four(dst.add(y * dst_stride), value);
+    }
+}
+
 #[target_feature(enable = "dotprod")]
 unsafe fn convolve8_horiz_dotprod_inner(
     src: *const u8,
@@ -369,6 +421,25 @@ unsafe fn convolve8_vert_i8mm_inner(
             let samples = core::array::from_fn(|tap| vld1_u8(src.add((y + tap) * src_stride + x)));
             vst1_u8(dst.add(y * dst_stride + x), filter_eight(samples, filter));
         }
+    }
+}
+
+#[target_feature(enable = "neon")]
+unsafe fn convolve8_vert_neon_4_inner(
+    src: *const u8,
+    src_stride: usize,
+    dst: *mut u8,
+    dst_stride: usize,
+    filter: &[i16; 8],
+    h: usize,
+) {
+    for y in 0..h {
+        let samples =
+            core::array::from_fn(|tap| load_four_repeated(src.add((y + tap) * src_stride)));
+        store_four(
+            dst.add(y * dst_stride),
+            filter_four_columns(samples, filter),
+        );
     }
 }
 
@@ -496,6 +567,24 @@ pub fn convolve8_horiz_neon(
     h: usize,
 ) {
     validate_horiz(src, src_stride, dst, dst_stride, w, h);
+    if w == 4 {
+        let narrow_filter = filter.iter().all(|&tap| i8::try_from(tap).is_ok());
+        if std::arch::is_aarch64_feature_detected!("i8mm") && narrow_filter {
+            // SAFETY: horizontal validation guarantees 11 readable bytes per
+            // row, while the narrow loader reads exactly 8 + 4 bytes.
+            unsafe {
+                convolve8_horiz_i8mm_4_inner(
+                    src.as_ptr(),
+                    src_stride,
+                    dst.as_mut_ptr(),
+                    dst_stride,
+                    filter,
+                    h,
+                );
+            }
+            return;
+        }
+    }
     if w < 8 {
         convolve8_horiz(src, src_stride, dst, dst_stride, filter, w, h);
         return;
@@ -562,6 +651,21 @@ pub fn convolve8_vert_neon(
     h: usize,
 ) {
     validate_vert(src, src_stride, dst, dst_stride, w, h);
+    if w == 4 {
+        // SAFETY: vertical validation guarantees four readable source bytes
+        // for each of the h + 7 rows and four writable destination bytes.
+        unsafe {
+            convolve8_vert_neon_4_inner(
+                src.as_ptr(),
+                src_stride,
+                dst.as_mut_ptr(),
+                dst_stride,
+                filter,
+                h,
+            );
+        }
+        return;
+    }
     if w < 8 {
         convolve8_vert(src, src_stride, dst, dst_stride, filter, w, h);
         return;
