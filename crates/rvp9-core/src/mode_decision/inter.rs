@@ -136,9 +136,27 @@ use crate::transforms::{TxMode, TxSize, TxType};
 struct CandidatePredScratch {
     primary: [u8; 64 * 64],
     alternate: [u8; 64 * 64],
-    residual: [i16; 32 * 32],
     chroma_u: [u8; 32 * 32],
     chroma_v: [u8; 32 * 32],
+    round_trip: RoundTripScratch,
+}
+
+struct RoundTripScratch {
+    residual: [i16; 32 * 32],
+    coefs: [i32; 32 * 32],
+    qcoeff: [i16; 32 * 32],
+    dqcoeff: [i16; 32 * 32],
+}
+
+impl RoundTripScratch {
+    const fn new() -> Self {
+        Self {
+            residual: [0; 32 * 32],
+            coefs: [0; 32 * 32],
+            qcoeff: [0; 32 * 32],
+            dqcoeff: [0; 32 * 32],
+        }
+    }
 }
 
 thread_local! {
@@ -150,9 +168,9 @@ thread_local! {
             std::cell::RefCell::new(CandidatePredScratch {
                 primary: [0; 64 * 64],
                 alternate: [0; 64 * 64],
-                residual: [0; 32 * 32],
                 chroma_u: [0; 32 * 32],
                 chroma_v: [0; 32 * 32],
+                round_trip: RoundTripScratch::new(),
             })
         };
 }
@@ -2701,22 +2719,23 @@ fn evaluate_intra_fallback(
                 uv_dc_quant: params.uv_dc_quant,
                 uv_ac_quant: params.uv_ac_quant,
             };
-            let mut residual = [0i16; 32 * 32];
-            reconstruct_via_round_trip(
-                &single_params,
-                RoundTripBuffers {
-                    pred: &[],
-                    recon: &mut recon,
-                    residual: &mut residual,
-                },
-                bw,
-                bh,
-                picked_tx_size,
-                RoundTripOptions {
-                    reconstruct: true,
-                    collect_coef_dist: true,
-                },
-            )
+            CANDIDATE_PRED_SCRATCH.with_borrow_mut(|scratch| {
+                reconstruct_via_round_trip(
+                    &single_params,
+                    RoundTripBuffers {
+                        pred: &[],
+                        recon: &mut recon,
+                        scratch: &mut scratch.round_trip,
+                    },
+                    bw,
+                    bh,
+                    picked_tx_size,
+                    RoundTripOptions {
+                        reconstruct: true,
+                        collect_coef_dist: true,
+                    },
+                )
+            })
         };
 
         // 4. Distortion = SSE(src, recon).
@@ -3204,9 +3223,9 @@ fn evaluate_candidate_with_filter_set(
             let CandidatePredScratch {
                 primary,
                 alternate,
-                residual,
                 chroma_u,
                 chroma_v,
+                round_trip,
             } = &mut *scratch;
             let filters: &[InterpFilter; 2] = filter_set
                 .try_into()
@@ -3225,7 +3244,7 @@ fn evaluate_candidate_with_filter_set(
                 lambda,
                 filter,
                 winner_pred,
-                residual,
+                round_trip,
                 chroma_u,
                 chroma_v,
                 Some(model),
@@ -3249,13 +3268,13 @@ fn evaluate_candidate_for_filter(
     CANDIDATE_PRED_SCRATCH.with_borrow_mut(|scratch| {
         let CandidatePredScratch {
             primary,
-            residual,
             chroma_u,
             chroma_v,
+            round_trip,
             ..
         } = &mut *scratch;
         evaluate_candidate_for_filter_with_pred(
-            params, mode, mv, ref_mv, lambda, filter, primary, residual, chroma_u, chroma_v, None,
+            params, mode, mv, ref_mv, lambda, filter, primary, round_trip, chroma_u, chroma_v, None,
         )
     })
 }
@@ -3269,7 +3288,7 @@ fn evaluate_candidate_for_filter_with_pred(
     lambda: u32,
     filter: InterpFilter,
     pred: &mut [u8; 64 * 64],
-    residual: &mut [i16; 32 * 32],
+    round_trip: &mut RoundTripScratch,
     pred_u: &mut [u8; 32 * 32],
     pred_v: &mut [u8; 32 * 32],
     precomputed_model: Option<ModelRdResult>,
@@ -3401,7 +3420,7 @@ fn evaluate_candidate_for_filter_with_pred(
             RoundTripBuffers {
                 pred: &pred[..],
                 recon: recon_pixels,
-                residual,
+                scratch: round_trip,
             },
             bw,
             bh,
@@ -4138,14 +4157,14 @@ fn chroma_planes_skippable(
 /// zero coefficient distortion. The normal pixel-domain product picker uses
 /// that path; S3 and candidate tracing request the full metric.
 ///
-/// `residual` is caller-owned reusable scratch. Each tile overwrites the
-/// complete transform-sized prefix before the Hadamard or DCT reads it.
+/// `scratch` is caller-owned reusable storage. Each transform and quantizer
+/// overwrites every active element before it is read.
 struct RoundTripBuffers<'a> {
     // Prediction source for non-reconstructing diagnostic calls. Product
     // reconstruction reads the identical initial prediction from `recon`.
     pred: &'a [u8],
     recon: &'a mut [u8],
-    residual: &'a mut [i16; 32 * 32],
+    scratch: &'a mut RoundTripScratch,
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -4166,8 +4185,14 @@ fn reconstruct_via_round_trip(
     let RoundTripBuffers {
         pred,
         recon,
-        residual,
+        scratch,
     } = buffers;
+    let RoundTripScratch {
+        residual,
+        coefs,
+        qcoeff,
+        dqcoeff,
+    } = scratch;
     let RoundTripOptions {
         reconstruct,
         collect_coef_dist,
@@ -4408,30 +4433,26 @@ fn reconstruct_via_round_trip(
 
             // 4. The compatibility path additionally runs the
             // DCT/quantize/reconstruction pipeline used to predict the
-            // eventual emitted luma EOB. Keep its large scratch buffers
-            // inside this branch so Hadamard-only product candidates never
-            // initialize memory they cannot read.
+            // eventual emitted luma EOB. Touch the reusable coefficient
+            // scratch only inside this branch; Hadamard-only candidates do
+            // not read or rewrite it.
             if reconstruct {
-                let mut coefs = [0i32; 1024];
-                let mut qcoeff = [0i16; 1024];
-                let mut dqcoeff = [0i16; 1024];
-
                 // Inter blocks always use DCT_DCT (ADST is intra-only).
                 match tx_size {
                     TxSize::Tx8x8 => {
-                        let mut buf = [0i32; 64];
-                        fdct8x8(&residual[..64], &mut buf, tx_side);
-                        coefs[..64].copy_from_slice(&buf);
+                        let output: &mut [i32; 64] = (&mut coefs[..64])
+                            .try_into()
+                            .expect("8x8 coefficient prefix has 64 elements");
+                        fdct8x8(&residual[..64], output, tx_side);
                     }
                     TxSize::Tx16x16 => {
-                        let mut buf = [0i32; 256];
-                        fdct16x16(&residual[..256], &mut buf, tx_side);
-                        coefs[..256].copy_from_slice(&buf);
+                        let output: &mut [i32; 256] = (&mut coefs[..256])
+                            .try_into()
+                            .expect("16x16 coefficient prefix has 256 elements");
+                        fdct16x16(&residual[..256], output, tx_side);
                     }
                     TxSize::Tx32x32 => {
-                        let mut buf = [0i32; 1024];
-                        fdct32x32(&residual[..1024], &mut buf, tx_side);
-                        coefs[..1024].copy_from_slice(&buf);
+                        fdct32x32(&residual[..1024], coefs, tx_side);
                     }
                     TxSize::Tx4x4 => {
                         debug_assert!(false, "F8.1 v1 doesn't support Tx4x4 tiles");
@@ -4481,25 +4502,28 @@ fn reconstruct_via_round_trip(
                     let recon_start = off_y * bw + off_x;
                     match tx_size {
                         TxSize::Tx8x8 => {
-                            let mut buf = [0i32; 64];
-                            for (dst, &src) in buf.iter_mut().zip(&dqcoeff[..64]) {
+                            for (dst, &src) in coefs[..64].iter_mut().zip(&dqcoeff[..64]) {
                                 *dst = i32::from(src);
                             }
-                            (dsp.idct8x8_add())(&buf, &mut recon[recon_start..], bw);
+                            let input: &[i32; 64] = (&coefs[..64])
+                                .try_into()
+                                .expect("8x8 coefficient prefix has 64 elements");
+                            (dsp.idct8x8_add())(input, &mut recon[recon_start..], bw);
                         }
                         TxSize::Tx16x16 => {
-                            let mut buf = [0i32; 256];
-                            for (dst, &src) in buf.iter_mut().zip(&dqcoeff[..256]) {
+                            for (dst, &src) in coefs[..256].iter_mut().zip(&dqcoeff[..256]) {
                                 *dst = i32::from(src);
                             }
-                            idct16x16_256_add(&buf, &mut recon[recon_start..], bw);
+                            let input: &[i32; 256] = (&coefs[..256])
+                                .try_into()
+                                .expect("16x16 coefficient prefix has 256 elements");
+                            idct16x16_256_add(input, &mut recon[recon_start..], bw);
                         }
                         TxSize::Tx32x32 => {
-                            let mut buf = [0i32; 1024];
-                            for (dst, &src) in buf.iter_mut().zip(&dqcoeff[..1024]) {
+                            for (dst, &src) in coefs[..1024].iter_mut().zip(&dqcoeff[..1024]) {
                                 *dst = i32::from(src);
                             }
-                            idct32x32_1024_add(&buf, &mut recon[recon_start..], bw);
+                            idct32x32_1024_add(coefs, &mut recon[recon_start..], bw);
                         }
                         TxSize::Tx4x4 => unreachable!(),
                     }
@@ -5365,7 +5389,7 @@ mod tests {
             50,
         );
 
-        let mut residual = [0i16; 32 * 32];
+        let mut scratch = RoundTripScratch::new();
         for tx_size in [TxSize::Tx8x8, TxSize::Tx16x16, TxSize::Tx32x32] {
             let side = tx_size.side();
             let pred = vec![91u8; side * side];
@@ -5375,7 +5399,7 @@ mod tests {
                 RoundTripBuffers {
                     pred: &pred,
                     recon: &mut no_recon,
-                    residual: &mut residual,
+                    scratch: &mut scratch,
                 },
                 side,
                 side,
@@ -5390,7 +5414,7 @@ mod tests {
                 RoundTripBuffers {
                     pred: &pred,
                     recon: &mut no_recon,
-                    residual: &mut residual,
+                    scratch: &mut scratch,
                 },
                 side,
                 side,
@@ -5405,7 +5429,7 @@ mod tests {
                 RoundTripBuffers {
                     pred: &pred,
                     recon: &mut no_recon,
-                    residual: &mut residual,
+                    scratch: &mut scratch,
                 },
                 side,
                 side,
@@ -5459,7 +5483,8 @@ mod tests {
             50,
         );
 
-        let mut residual = [i16::MAX; 32 * 32];
+        let mut scratch = RoundTripScratch::new();
+        scratch.residual.fill(i16::MAX);
         for tx_size in [TxSize::Tx8x8, TxSize::Tx16x16, TxSize::Tx32x32] {
             let side = tx_size.side();
             let pred = vec![91u8; side * side];
@@ -5469,7 +5494,7 @@ mod tests {
                 RoundTripBuffers {
                     pred: &pred,
                     recon: &mut recon,
-                    residual: &mut residual,
+                    scratch: &mut scratch,
                 },
                 side,
                 side,
@@ -5522,8 +5547,11 @@ mod tests {
         let poison = vec![0u8; 16 * 16];
         let mut expected_recon = prediction.clone();
         let mut actual_recon = prediction.clone();
-        let mut expected_residual = [0i16; 32 * 32];
-        let mut actual_residual = [0i16; 32 * 32];
+        let mut expected_scratch = RoundTripScratch::new();
+        let mut actual_scratch = RoundTripScratch::new();
+        actual_scratch.coefs.fill(i32::MIN);
+        actual_scratch.qcoeff.fill(i16::MIN);
+        actual_scratch.dqcoeff.fill(i16::MIN);
         let options = RoundTripOptions {
             reconstruct: true,
             collect_coef_dist: true,
@@ -5534,7 +5562,7 @@ mod tests {
             RoundTripBuffers {
                 pred: &prediction,
                 recon: &mut expected_recon,
-                residual: &mut expected_residual,
+                scratch: &mut expected_scratch,
             },
             16,
             16,
@@ -5546,7 +5574,7 @@ mod tests {
             RoundTripBuffers {
                 pred: &poison,
                 recon: &mut actual_recon,
-                residual: &mut actual_residual,
+                scratch: &mut actual_scratch,
             },
             16,
             16,
