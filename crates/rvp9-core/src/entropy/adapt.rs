@@ -289,6 +289,16 @@ impl FrameCounts {
     /// `vp9_decode_tiles_mt`.
     pub fn add(&mut self, other: &Self) {
         self.add_non_coef(other);
+        self.add_coef(other);
+    }
+
+    /// Merge only coefficient histograms from a tile-local count bank.
+    ///
+    /// Encoders that record coefficient tokens during tile-local block
+    /// encoding use this before the compressed header is written. Their
+    /// mode/MV banks are still empty, so walking those banks would be wasted
+    /// work.
+    pub fn add_coef(&mut self, other: &Self) {
         self.coef.add(&other.coef);
         // ENCODER-ONLY: fold the full 12-token histogram when present on
         // both sides (per-tile-worker merge). The decoder leaves this

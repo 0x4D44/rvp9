@@ -58,12 +58,12 @@ use rvp9_core::bitstream::{
     AllZeroCoefSource, AllZeroIntraCoefSource, BitDepth, BitstreamError, ChromaFormat, ColorRange,
     ColorSpace, CompressedHeaderOptions, CompressedHeaderResult, FrameKind, InterpFilter,
     ModesTileBounds, ModesWriterError, Profile, RawBitWriter, SuperframeBuilder,
-    UncompressedHeader, tile_bounds, write_compressed_header, write_tile_inter,
-    write_tile_intra_keyframe, write_uncompressed_header,
+    UncompressedHeader, record_inter_leaf_coefficients, tile_bounds, write_compressed_header,
+    write_tile_inter, write_tile_intra_keyframe, write_uncompressed_header,
 };
 use rvp9_core::block::BlockSize;
 use rvp9_core::coef_ctx::TileCoefCtx;
-use rvp9_core::entropy::{BoolWriter, FrameContext};
+use rvp9_core::entropy::{BoolWriter, FrameContext, FrameCounts, RetainedCoefTokens};
 use rvp9_core::inter::mode_info::{InterModeReadParams, setup_compound_reference_mode};
 use rvp9_core::inter::mv_ref::sign_bias_from_header;
 use rvp9_core::intra_pred::IntraMode;
@@ -2535,6 +2535,85 @@ pub(crate) struct InterPartitionLeafDesc {
     pub picked_tx_size: TxSize,
 }
 
+impl InterPartitionLeafDesc {
+    pub(crate) fn mode_info(self) -> rvp9_core::mode_info::ModeInfo {
+        use rvp9_core::mode_info::{BlockMode, ModeInfo};
+
+        ModeInfo {
+            block_size: self.leaf_bsize,
+            tx_size: if self.skip {
+                rvp9_core::block::max_txsize(self.leaf_bsize)
+            } else {
+                self.picked_tx_size
+            },
+            skip: self.skip,
+            segment_id: self.segment_id,
+            seg_id_predicted: false,
+            mode: if let Some(y_mode) = self.picked_intra_mode {
+                BlockMode::Intra {
+                    y_mode,
+                    uv_mode: IntraMode::Dc,
+                }
+            } else {
+                BlockMode::Inter {
+                    mode: self.picked_mode,
+                    ref_frames: [self.picked_ref_frame, self.picked_ref_frame2],
+                    mvs: [self.picked_mv, self.picked_mv2],
+                    interp_filter: self.picked_interp_filter,
+                }
+            },
+            bmi: Default::default(),
+        }
+    }
+}
+
+pub(crate) struct RecordedCoefTile {
+    pub(crate) tile_col: usize,
+    pub(crate) retained: RetainedCoefTokens,
+    pub(crate) counts: FrameCounts,
+    coef_ctx: TileCoefCtx,
+    last_sb_row: Option<usize>,
+    mi_col_start: usize,
+    mi_col_end: usize,
+}
+
+pub(crate) struct InterSimulationResult {
+    pub(crate) coefs: VecBackedInterCoefSource,
+    pub(crate) recorded_coef_tile: Option<RecordedCoefTile>,
+}
+
+fn record_encoded_inter_leaf(
+    tile: &mut RecordedCoefTile,
+    bw: &mut BoolWriter<'_>,
+    frame_context: &FrameContext,
+    coef_source: &VecBackedInterCoefSource,
+    mi_row: usize,
+    mi_col: usize,
+    leaf: InterPartitionLeafDesc,
+) {
+    debug_assert!(mi_col >= tile.mi_col_start && mi_col < tile.mi_col_end);
+    let sb_row = mi_row / 8;
+    if tile.last_sb_row != Some(sb_row) {
+        tile.coef_ctx.reset_left_coef();
+        tile.last_sb_row = Some(sb_row);
+    }
+    let mi = leaf.mode_info();
+    record_inter_leaf_coefficients(
+        bw,
+        frame_context,
+        TxMode::TxModeSelect,
+        &mut tile.coef_ctx,
+        coef_source,
+        mi_row,
+        mi_col,
+        tile.mi_col_start,
+        leaf.leaf_bsize,
+        &mi,
+        &mut tile.counts,
+        &mut tile.retained,
+    );
+}
+
 fn segment_id_for_hint_cell(
     hints: &[InterPartitionLeafDesc],
     mi_row_in_sb: usize,
@@ -3102,9 +3181,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     stage4a_product_split_override: crate::frame_loop::Stage4aProductSplitOverride,
     // Typed split-admission stats sink for product reports.
     stage4a_split_stats_out: &mut rvp9_core::mode_decision::nonrd_partition::NonRdSplitStats,
+    record_coef_tokens: bool,
     log2_tile_cols: u8,
     active_tile_col: Option<usize>,
-) -> VecBackedInterCoefSource {
+) -> InterSimulationResult {
     use rvp9_core::bitstream::frame::{InterpFilter as WireInterpFilter, MAX_INTER_REFS};
     use rvp9_core::bitstream::header::FrameKind as WireFrameKind;
     use rvp9_core::cost::symbol_costs::{
@@ -3624,6 +3704,24 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     } else {
         VecBackedInterCoefSource::new(width, height)
     };
+    let mut recorded_coef_tile = record_coef_tokens.then(|| {
+        let tile_col = active_tile_col.expect("coefficient recording requires one active tile");
+        let bounds = tile_bounds_by_col[tile_col];
+        RecordedCoefTile {
+            tile_col,
+            retained: RetainedCoefTokens::default(),
+            counts: FrameCounts {
+                coef_full: Some(rvp9_core::entropy::new_coef12_bank()),
+                ..FrameCounts::default()
+            },
+            coef_ctx: TileCoefCtx::new(bounds.mi_col_end - bounds.mi_col_start),
+            last_sb_row: None,
+            mi_col_start: bounds.mi_col_start,
+            mi_col_end: bounds.mi_col_end,
+        }
+    });
+    let mut coef_record_sink = [];
+    let mut coef_record_bw = BoolWriter::start_count_only(&mut coef_record_sink);
     let mut mi_grid: Vec<Option<rvp9_core::mode_info::ModeInfo>> =
         vec![None; mi_rows_us * mi_grid_layout.mi_cols];
     let sign_bias = sign_bias_from_header(&[false, false, altref_available]);
@@ -4976,6 +5074,17 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             );
                         }
                     }
+                    if let Some(recorded) = recorded_coef_tile.as_mut() {
+                        record_encoded_inter_leaf(
+                            recorded,
+                            &mut coef_record_bw,
+                            frame_context,
+                            &coef_source,
+                            leaf_mi_row,
+                            leaf_mi_col,
+                            sb_partitions[sb_idx][leaf_idx],
+                        );
+                    }
                     continue;
                 }
 
@@ -5098,6 +5207,17 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         /* picked_interp_filter = */
                         rvp9_core::bitstream::frame::InterpFilter::EightTap,
                     );
+                    if let Some(recorded) = recorded_coef_tile.as_mut() {
+                        record_encoded_inter_leaf(
+                            recorded,
+                            &mut coef_record_bw,
+                            frame_context,
+                            &coef_source,
+                            leaf_mi_row,
+                            leaf_mi_col,
+                            sb_partitions[sb_idx][leaf_idx],
+                        );
+                    }
                     continue;
                 }
                 let mv_limits = MvLimits::new(col_min, col_max, row_min, row_max);
@@ -6891,6 +7011,17 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         );
                     }
                 }
+                if let Some(recorded) = recorded_coef_tile.as_mut() {
+                    record_encoded_inter_leaf(
+                        recorded,
+                        &mut coef_record_bw,
+                        frame_context,
+                        &coef_source,
+                        leaf_mi_row,
+                        leaf_mi_col,
+                        sb_partitions[sb_idx][leaf_idx],
+                    );
+                }
                 // F.0.2 oracle — record one BlockDecision per coded
                 // inter leaf, AFTER the RC.X1 skip-on-zero-eob override
                 // (so `skip_flag` matches what lands in the bitstream).
@@ -7413,7 +7544,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         }
     }
 
-    coef_source
+    InterSimulationResult {
+        coefs: coef_source,
+        recorded_coef_tile,
+    }
 }
 
 /// Build a `bw × bh` inter prediction at `(plane_px_x + mv)` into

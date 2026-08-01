@@ -94,8 +94,9 @@ use crate::rate_control::{
     FirstPassStats, FrameKind as RcFrameKind, RateControl, RateControlConfig, RcMode, TwoPassState,
 };
 use crate::{
-    EncodeError, InterPartitionLeafDesc, PartitionLeafDesc, VecBackedInterCoefSource,
-    pick_and_simulate_inter_encode_partitions, pick_and_simulate_intra_encode_partitions,
+    EncodeError, InterPartitionLeafDesc, PartitionLeafDesc, RecordedCoefTile,
+    VecBackedInterCoefSource, pick_and_simulate_inter_encode_partitions,
+    pick_and_simulate_intra_encode_partitions,
 };
 
 /// Adaptive-quantization mode. Selects whether the encoder runs an
@@ -1352,6 +1353,7 @@ struct InterTileJobResult {
     history: Option<Vec<rvp9_core::mode_decision::partition::FixedTreeHistoryEntry>>,
     split_stats: NonRdSplitStats,
     coefs: VecBackedInterCoefSource,
+    recorded_coef_tile: RecordedCoefTile,
 }
 
 struct InterTileScratch {
@@ -3115,6 +3117,7 @@ impl StreamEncoder {
                 $rd_tables:expr,
                 $history:expr,
                 $split_stats:expr,
+                $record_coef_tokens:expr,
                 $active_tile_col:expr
             ) => {
                 pick_and_simulate_inter_encode_partitions(
@@ -3153,6 +3156,7 @@ impl StreamEncoder {
                     tpl_rdmult_arg,
                     split_override,
                     $split_stats,
+                    $record_coef_tokens,
                     log2_tile_cols,
                     $active_tile_col,
                 )
@@ -3160,7 +3164,9 @@ impl StreamEncoder {
         }
 
         let tile_count = 1usize << log2_tile_cols;
-        let coef_source = if tile_count > 1 && self.parallelism.max_threads > 1 {
+        let (coef_source, recorded_coef_tiles) = if tile_count > 1
+            && self.parallelism.max_threads > 1
+        {
             // Tile-MT: execute independent full-height column jobs on the
             // stream-owned worker pool. Each job owns every mutable object
             // it touches. Results are collected and merged in column order,
@@ -3207,7 +3213,7 @@ impl StreamEncoder {
                         scope.submit(move || {
                             rvp9_core::mode_decision::inter::set_frame_s2_gate(s2_frame_gate);
                             let mut tile_split_stats = NonRdSplitStats::default();
-                            let tile_coefs = run_inter_picker!(
+                            let tile_encode = run_inter_picker!(
                                 &mut scratch.recon_y,
                                 &mut scratch.recon_u,
                                 &mut scratch.recon_v,
@@ -3216,15 +3222,20 @@ impl StreamEncoder {
                                 &mut tile_rd_tables,
                                 tile_history.as_deref_mut(),
                                 &mut tile_split_stats,
+                                true,
                                 Some(tile_col)
                             );
+                            let recorded_coef_tile = tile_encode
+                                .recorded_coef_tile
+                                .expect("one coefficient-token result per tile job");
                             let result = InterTileJobResult {
                                 tile_col,
                                 partitions: tile_partitions,
                                 rd_tables: tile_rd_tables,
                                 history: tile_history,
                                 split_stats: tile_split_stats,
-                                coefs: tile_coefs,
+                                coefs: tile_encode.coefs,
+                                recorded_coef_tile,
                             };
                             *result_slot
                                 .lock()
@@ -3243,6 +3254,7 @@ impl StreamEncoder {
                 })
                 .collect();
 
+            let mut recorded_coef_tiles = Vec::with_capacity(tile_count);
             for result in tile_results {
                 let tile_col = result.tile_col;
                 let scratch = &self.inter_tile_scratch[tile_col];
@@ -3287,10 +3299,11 @@ impl StreamEncoder {
                 self.rd_thresh_tables[tile_col] = result.rd_tables[tile_col].clone();
                 stage4a_frame_split_stats.accumulate(&result.split_stats);
                 merged_coefs.merge_from(result.coefs);
+                recorded_coef_tiles.push(result.recorded_coef_tile);
             }
-            merged_coefs
+            (merged_coefs, recorded_coef_tiles)
         } else {
-            run_inter_picker!(
+            let encoded = run_inter_picker!(
                 &mut new_recon_y,
                 &mut new_recon_u,
                 &mut new_recon_v,
@@ -3299,8 +3312,11 @@ impl StreamEncoder {
                 &mut self.rd_thresh_tables,
                 Some(&mut self.vbp_partition_history),
                 &mut stage4a_frame_split_stats,
+                false,
                 None
-            )
+            );
+            debug_assert!(encoded.recorded_coef_tile.is_none());
+            (encoded.coefs, Vec::new())
         };
         self.stage4a_split_stats
             .accumulate(&stage4a_frame_split_stats);
@@ -3362,7 +3378,6 @@ impl StreamEncoder {
                 1usize << log2_tile_cols,
             );
         }
-
         // AQ.3 — build the segmentation header + per-leaf write params.
         // `Off` produces `None` (segmentation disabled in the header,
         // no per-leaf bits emitted by the modes_writer — Stage 4a
@@ -3446,6 +3461,7 @@ impl StreamEncoder {
             q_index,
             filter_level,
             &coef_source,
+            (!recorded_coef_tiles.is_empty()).then_some(recorded_coef_tiles.as_slice()),
             &mi_grid,
             &segmentation_params,
             refresh_flags,
@@ -3837,7 +3853,7 @@ impl StreamEncoder {
             .ref_pool
             .named_ref_planes(crate::buffer_pool::GOLDEN_REF);
         let mut stage4a_frame_split_stats = NonRdSplitStats::default();
-        let coef_source = pick_and_simulate_inter_encode_partitions(
+        let encoded = pick_and_simulate_inter_encode_partitions(
             w,
             h,
             q_index,
@@ -3878,9 +3894,11 @@ impl StreamEncoder {
             None,
             self.config.stage4a_product_split_override,
             &mut stage4a_frame_split_stats,
+            false,
             log2_tile_cols,
             None,
         );
+        let coef_source = encoded.coefs;
         self.stage4a_split_stats
             .accumulate(&stage4a_frame_split_stats);
 
@@ -3955,6 +3973,7 @@ impl StreamEncoder {
             q_index,
             filter_level,
             &coef_source,
+            None,
             &mi_grid,
             &segmentation_params,
             /* refresh_frame_flags = */ 0x04,
@@ -4972,6 +4991,7 @@ fn build_inter_packet_with_residuals(
     base_qindex: u8,
     filter_level: u8,
     coef_source: &dyn InterCoefSource,
+    recorded_coef_tiles: Option<&[RecordedCoefTile]>,
     mi_grid: &[Option<ModeInfo>],
     segmentation: &SegmentationParams,
     refresh_frame_flags: u8,
@@ -5187,45 +5207,61 @@ fn build_inter_packet_with_residuals(
         ..FrameCounts::default()
     };
     let mut retained_coef_tiles = Vec::with_capacity(tile_cols);
-    rvp9_core::entropy::bitacct::with_suppressed(|| -> Result<(), EncodeError> {
-        for tile_col in 0..tile_cols {
-            let bounds = tile_bounds(
-                mi_rows as usize,
-                mi_cols as usize,
-                0,
-                log2_tile_cols,
-                0,
-                tile_col as u32,
-            );
-            let mut count_sink = [];
-            let mut bw = BoolWriter::start_count_only(&mut count_sink);
-            let mut coef_ctx = TileCoefCtx::new(bounds.mi_col_end - bounds.mi_col_start);
-            let mut retained = RetainedCoefTokens::default();
-            let mut token_pass = CoefTokenPass::record(&mut retained);
-            write_tile_inter_with_retained(
-                &mut bw,
-                &count_fc,
-                &params,
-                // Track-F iter7 — the count pass must use the same `tx_mode` as
-                // the real tile pass so the per-block tx_size derivation (and
-                // thus the coef tile sizes read from `coef_source`) match.
-                target.tx_mode,
-                mi_grid,
-                mi_rows,
-                mi_cols,
-                bounds,
-                seg_write,
-                prev_mv_grid,
-                &mut coef_ctx,
-                coef_source,
-                Some(&mut count_counts),
-                Some(&mut token_pass),
-            )?;
-            retained_coef_tiles.push(retained);
-            // The writer deliberately emits no bytes and no mode syntax.
+    if let Some(recorded) = recorded_coef_tiles {
+        if recorded.len() != tile_cols
+            || recorded
+                .iter()
+                .enumerate()
+                .any(|(tile_col, tile)| tile.tile_col != tile_col)
+        {
+            return Err(EncodeError::InvalidConfig(
+                "recorded coefficient tiles must cover every tile column in order",
+            ));
         }
-        Ok(())
-    })?;
+        for tile in recorded {
+            count_counts.add_coef(&tile.counts);
+        }
+    } else {
+        rvp9_core::entropy::bitacct::with_suppressed(|| -> Result<(), EncodeError> {
+            for tile_col in 0..tile_cols {
+                let bounds = tile_bounds(
+                    mi_rows as usize,
+                    mi_cols as usize,
+                    0,
+                    log2_tile_cols,
+                    0,
+                    tile_col as u32,
+                );
+                let mut count_sink = [];
+                let mut bw = BoolWriter::start_count_only(&mut count_sink);
+                let mut coef_ctx = TileCoefCtx::new(bounds.mi_col_end - bounds.mi_col_start);
+                let mut retained = RetainedCoefTokens::default();
+                let mut token_pass = CoefTokenPass::record(&mut retained);
+                write_tile_inter_with_retained(
+                    &mut bw,
+                    &count_fc,
+                    &params,
+                    // Track-F iter7 — the count pass must use the same `tx_mode` as
+                    // the real tile pass so the per-block tx_size derivation (and
+                    // thus the coef tile sizes read from `coef_source`) match.
+                    target.tx_mode,
+                    mi_grid,
+                    mi_rows,
+                    mi_cols,
+                    bounds,
+                    seg_write,
+                    prev_mv_grid,
+                    &mut coef_ctx,
+                    coef_source,
+                    Some(&mut count_counts),
+                    Some(&mut token_pass),
+                )?;
+                retained_coef_tiles.push(retained);
+                // The writer deliberately emits no bytes and no mode syntax.
+            }
+            Ok(())
+        })?;
+    }
 
     // A6 — build the live TWO_LOOP coef-prob update plan from THIS
     // frame's full 12-token counts, scored against the PRE-frame FC
@@ -5281,7 +5317,11 @@ fn build_inter_packet_with_residuals(
         let tile_len = {
             let mut bw = BoolWriter::start_encode(&mut tile_buf);
             let mut coef_ctx = TileCoefCtx::new(bounds.mi_col_end - bounds.mi_col_start);
-            let mut token_pass = CoefTokenPass::replay(&retained_coef_tiles[tile_col]);
+            let retained = match recorded_coef_tiles {
+                Some(recorded) => &recorded[tile_col].retained,
+                None => &retained_coef_tiles[tile_col],
+            };
+            let mut token_pass = CoefTokenPass::replay(retained);
             // P0b — use `decoder_fc` (the actual FC after
             // compressed-header diff-updates) rather than `post_fc`
             // (the target).
@@ -6843,6 +6883,7 @@ mod tests {
             80,
             0,
             &coef_source,
+            None,
             &inter_mi_grid,
             &segmentation,
             0x01,

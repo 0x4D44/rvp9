@@ -88,8 +88,9 @@ use crate::coef_ctx::TileCoefCtx;
 use crate::entropy::adapt::CoefCountsBank;
 use crate::entropy::bitacct::{BitCategory, set_category};
 use crate::entropy::{
-    BoolWriter, CoefTokenPass, FrameContext, FrameCounts, VP9_KF_PARTITION_PROBS,
-    VP9_KF_UV_MODE_PROB, VP9_KF_Y_MODE_PROB, write_block_tokens, write_block_tokens_with_retained,
+    BoolWriter, CoefTokenPass, FrameContext, FrameCounts, RetainedCoefTokens,
+    VP9_KF_PARTITION_PROBS, VP9_KF_UV_MODE_PROB, VP9_KF_Y_MODE_PROB, write_block_tokens,
+    write_block_tokens_with_retained,
 };
 use crate::inter::mode_info::{
     InterModeReadParams, InterModeWriteError, get_intra_inter_context, write_inter_block_mode_info,
@@ -2493,6 +2494,62 @@ fn write_or_reset_inter_residual(
         // non-skip leaf derives the same initial coefficient context.
         reset_skip_coef_context(coef_ctx, leaf_bsize, mi_row, mi_col, tile_mi_col_start);
     }
+}
+
+/// Record one fully encoded inter-frame leaf's coefficient tokens.
+///
+/// This is the coefficient-only portion of [`write_inter_block_leaf`]. It
+/// lets a realtime encoder tokenize a leaf immediately after transform and
+/// quantization, while the owning tile job is already active. The caller must
+/// invoke leaves in the same per-tile syntax order as [`write_tile_inter`].
+/// Skip leaves update coefficient contexts without recording EOB symbols,
+/// matching the decoder's `dec_reset_skip_context` path.
+#[allow(clippy::too_many_arguments)]
+pub fn record_inter_leaf_coefficients(
+    bw: &mut BoolWriter<'_>,
+    fc: &FrameContext,
+    tx_mode: TxMode,
+    coef_ctx: &mut TileCoefCtx,
+    coef_source: &dyn InterCoefSource,
+    mi_row: usize,
+    mi_col: usize,
+    tile_mi_col_start: usize,
+    leaf_bsize: BlockSize,
+    mi: &ModeInfo,
+    counts: &mut FrameCounts,
+    retained: &mut RetainedCoefTokens,
+) {
+    debug_assert_eq!(mi.block_size, leaf_bsize);
+    let is_inter = matches!(mi.mode, BlockMode::Inter { .. });
+    let effective_tx_size = effective_inter_tx_size(mi, leaf_bsize, tx_mode, is_inter);
+    if mi.skip {
+        reset_skip_coef_context(coef_ctx, leaf_bsize, mi_row, mi_col, tile_mi_col_start);
+        return;
+    }
+
+    let y_mode = match mi.mode {
+        BlockMode::Intra { y_mode, .. } => y_mode,
+        _ => IntraMode::Dc,
+    };
+    debug_assert!(bw.is_count_only());
+    let mut token_pass = CoefTokenPass::record(retained);
+    let coef_full = counts.coef_full.as_deref_mut();
+    write_inter_block_residual(
+        bw,
+        fc,
+        coef_ctx,
+        coef_source,
+        mi_row,
+        mi_col,
+        tile_mi_col_start,
+        leaf_bsize,
+        effective_tx_size,
+        is_inter,
+        y_mode,
+        Some(&mut counts.coef),
+        coef_full,
+        Some(&mut token_pass),
+    );
 }
 
 /// RC.X1 — encoder-side mirror of libvpx's `dec_reset_skip_context`
@@ -6884,6 +6941,28 @@ mod tests {
         assert_eq!(split_counts.coef, counts.coef);
         assert_eq!(split_counts.partition, FrameCounts::default().partition);
         assert_eq!(split_counts.skip, FrameCounts::default().skip);
+
+        let mut leaf_counts = FrameCounts::default();
+        let mut leaf_retained = crate::entropy::RetainedCoefTokens::default();
+        let mut leaf_coef_ctx = TileCoefCtx::new(mi_cols as usize);
+        let mut leaf_sink = [];
+        let mut leaf_bw = BoolWriter::start_count_only(&mut leaf_sink);
+        record_inter_leaf_coefficients(
+            &mut leaf_bw,
+            &count_fc,
+            TxMode::AllowTx32x32,
+            &mut leaf_coef_ctx,
+            &coef_source,
+            0,
+            0,
+            0,
+            BlockSize::Block64x64,
+            &cell,
+            &mut leaf_counts,
+            &mut leaf_retained,
+        );
+        assert_eq!(leaf_counts.coef, split_counts.coef);
+        assert_eq!(leaf_retained, retained);
 
         let mut replay_counts = FrameCounts::default();
         let mut replay_pass = CoefTokenPass::replay(&retained);
