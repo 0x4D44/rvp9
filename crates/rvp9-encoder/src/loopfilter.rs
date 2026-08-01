@@ -172,8 +172,10 @@ pub(crate) fn apply_loop_filter_to_tight_recon(
 /// Parallel product variant of [`apply_loop_filter_to_tight_recon`].
 ///
 /// The supplied pool is long-lived and owned by the stream encoder. When at
-/// least two workers and two superblock rows are available, this dispatches
-/// the core split-edge column wavefront. Otherwise it uses the serial path.
+/// least two work opportunities and two superblock rows are available, this
+/// dispatches the core split-edge pass as one alias-safe scoped job. The core
+/// path remains limited to one worker until it uses row-bounded plane slices.
+/// Otherwise this uses the serial path.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn apply_loop_filter_to_tight_recon_parallel(
     width: u32,
@@ -199,11 +201,11 @@ pub(crate) fn apply_loop_filter_to_tight_recon_parallel(
     let mi_rows = h / 8;
     let mi_cols = w / 8;
 
-    let num_lf_workers = max_threads
+    let available_lf_workers = max_threads
         .min(num_tile_cols.max(1))
         .min(mi_rows.div_ceil(SB_MI_SIZE))
         .max(1);
-    if num_lf_workers >= 2
+    if available_lf_workers >= 2
         && let Some(worker_pool) = worker_pool
     {
         use rvp9_core::loopfilter::apply::{ColumnWavefrontLfState, RowMaskInputs, SharedFrame};
@@ -241,14 +243,15 @@ pub(crate) fn apply_loop_filter_to_tight_recon_parallel(
             abort: None,
         };
         let simd_dispatch = rvp9_core::dsp::get();
+        let num_lf_workers = 1;
         worker_pool.scope(|scope| {
             for worker_id in 0..num_lf_workers {
                 let state = &state;
                 let dispatch = simd_dispatch.clone();
                 scope.submit(move || {
                     // SAFETY: the scope joins every job before the tight
-                    // plane borrows can be used again. The column
-                    // wavefront prevents overlapping worker writes.
+                    // plane borrows can be used again, and this path submits
+                    // only one alias-safe loop-filter worker.
                     unsafe {
                         rvp9_core::loopfilter::apply::run_split_edge_lf_worker(
                             state,
