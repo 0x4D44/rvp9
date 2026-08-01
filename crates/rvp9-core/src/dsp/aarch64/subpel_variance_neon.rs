@@ -1,4 +1,4 @@
-//! NEON sub-pixel variance for VP9's 16/32/64-wide block shapes.
+//! NEON sub-pixel variance for VP9's 8/16/32/64-wide block shapes.
 //!
 //! This follows libvpx `vpx_dsp/arm/subpel_variance_neon.c`, with one
 //! deliberate fusion: the second bilinear pass feeds the `(sum, sse)`
@@ -8,6 +8,27 @@
 use core::arch::aarch64::*;
 
 use super::variance_neon::unsigned_dot;
+
+/// Apply one VP9 two-tap bilinear filter to eight byte lanes.
+///
+/// Eight-wide blocks need exact-width loads because callers are allowed to
+/// provide only the live block footprint.
+#[inline]
+#[target_feature(enable = "neon")]
+unsafe fn filter_8(a: *const u8, b: *const u8, offset: usize) -> uint8x8_t {
+    let av = vld1_u8(a);
+    if offset == 0 {
+        return av;
+    }
+    let bv = vld1_u8(b);
+    if offset == 4 {
+        return vrhadd_u8(av, bv);
+    }
+
+    let f0 = vdup_n_u8((8 - offset) as u8);
+    let f1 = vdup_n_u8(offset as u8);
+    vrshrn_n_u16::<3>(vmlal_u8(vmull_u8(av, f0), bv, f1))
+}
 
 /// Apply one VP9 two-tap bilinear filter to 16 byte lanes.
 ///
@@ -41,6 +62,18 @@ unsafe fn horizontal_row(src: *const u8, dst: *mut u8, width: usize, xoffset: us
         vst1q_u8(dst.add(col), filtered);
         col += 16;
     }
+}
+
+#[inline]
+#[target_feature(enable = "neon")]
+unsafe fn horizontal_row_8(src: *const u8, dst: *mut u8, xoffset: usize) {
+    vst1_u8(dst, filter_8(src, src.add(1), xoffset));
+}
+
+#[inline]
+#[target_feature(enable = "neon")]
+unsafe fn widen_8(value: uint8x8_t) -> uint8x16_t {
+    vcombine_u8(value, vdup_n_u8(0))
 }
 
 struct VarianceAccumulator {
@@ -185,6 +218,81 @@ macro_rules! sub_pixel_variance_body {
         let variance = (sse - sum * sum / ($width * $height) as i64).max(0) as u32;
         (variance, sse as u32)
     }};
+}
+
+macro_rules! sub_pixel_variance_8_body {
+    ($accum:ident, $src:ident, $src_stride:ident, $reference:ident, $ref_stride:ident, $xoffset:ident, $yoffset:ident, $height:expr) => {{
+        if $xoffset == 0 {
+            for row in 0..$height {
+                let top = $src.add(row * $src_stride);
+                let bottom = top.add($src_stride);
+                let ref_row = $reference.add(row * $ref_stride);
+                let pred = widen_8(filter_8(top, bottom, $yoffset));
+                $accum.add(pred, widen_8(vld1_u8(ref_row)));
+            }
+        } else if $yoffset == 0 {
+            for row in 0..$height {
+                let src_row = $src.add(row * $src_stride);
+                let ref_row = $reference.add(row * $ref_stride);
+                let pred = widen_8(filter_8(src_row, src_row.add(1), $xoffset));
+                $accum.add(pred, widen_8(vld1_u8(ref_row)));
+            }
+        } else {
+            let mut row_a = [0u8; 8];
+            let mut row_b = [0u8; 8];
+            horizontal_row_8($src, row_a.as_mut_ptr(), $xoffset);
+
+            for row in 0..$height {
+                horizontal_row_8(
+                    $src.add((row + 1) * $src_stride),
+                    row_b.as_mut_ptr(),
+                    $xoffset,
+                );
+                let pred = widen_8(filter_8(row_a.as_ptr(), row_b.as_ptr(), $yoffset));
+                let ref_row = $reference.add(row * $ref_stride);
+                $accum.add(pred, widen_8(vld1_u8(ref_row)));
+                core::mem::swap(&mut row_a, &mut row_b);
+            }
+        }
+
+        let (sum, sse) = $accum.finish();
+        let variance = (sse - sum * sum / (8 * $height) as i64).max(0) as u32;
+        (variance, sse as u32)
+    }};
+}
+
+#[target_feature(enable = "neon")]
+#[allow(clippy::too_many_arguments)]
+unsafe fn sub_pixel_variance_8_neon_inner(
+    src: *const u8,
+    src_stride: usize,
+    reference: *const u8,
+    ref_stride: usize,
+    xoffset: usize,
+    yoffset: usize,
+    height: usize,
+) -> (u32, u32) {
+    let mut accum = VarianceAccumulator::new();
+    sub_pixel_variance_8_body!(
+        accum, src, src_stride, reference, ref_stride, xoffset, yoffset, height
+    )
+}
+
+#[target_feature(enable = "dotprod")]
+#[allow(clippy::too_many_arguments)]
+unsafe fn sub_pixel_variance_8_dotprod_inner(
+    src: *const u8,
+    src_stride: usize,
+    reference: *const u8,
+    ref_stride: usize,
+    xoffset: usize,
+    yoffset: usize,
+    height: usize,
+) -> (u32, u32) {
+    let mut accum = DotprodVarianceAccumulator::new();
+    sub_pixel_variance_8_body!(
+        accum, src, src_stride, reference, ref_stride, xoffset, yoffset, height
+    )
 }
 
 #[target_feature(enable = "neon")]
@@ -350,6 +458,36 @@ macro_rules! subpel_var_dotprod_fn {
     };
 }
 
+/// NEON sub-pixel variance 8x8.
+pub fn vpx_sub_pixel_variance8x8_neon(
+    src: &[u8],
+    src_stride: usize,
+    xoffset: usize,
+    yoffset: usize,
+    reference: &[u8],
+    ref_stride: usize,
+) -> (u32, u32) {
+    assert!(xoffset < 8 && yoffset < 8);
+    assert!(src_stride >= 8 + usize::from(xoffset != 0));
+    assert!(ref_stride >= 8);
+    assert!(src.len() >= 8 * src_stride + 8 + usize::from(xoffset != 0));
+    assert!(reference.len() >= 7 * ref_stride + 8);
+
+    // SAFETY: AArch64 dispatch selects this wrapper only when NEON is
+    // present. The assertions prove every exact-width load, the optional
+    // horizontal neighbour, and the vertical source row are live.
+    unsafe {
+        sub_pixel_variance_8_neon_inner(
+            src.as_ptr(),
+            src_stride,
+            reference.as_ptr(),
+            ref_stride,
+            xoffset,
+            yoffset,
+            8,
+        )
+    }
+}
 subpel_var_neon_fn!(vpx_sub_pixel_variance16x8_neon, 16, 8);
 subpel_var_neon_fn!(vpx_sub_pixel_variance16x16_neon, 16, 16);
 subpel_var_neon_fn!(vpx_sub_pixel_variance16x32_neon, 16, 32);
@@ -359,6 +497,35 @@ subpel_var_neon_fn!(vpx_sub_pixel_variance32x64_neon, 32, 64);
 subpel_var_neon_fn!(vpx_sub_pixel_variance64x32_neon, 64, 32);
 subpel_var_neon_fn!(vpx_sub_pixel_variance64x64_neon, 64, 64);
 
+/// Dot-product sub-pixel variance 8x8.
+pub fn vpx_sub_pixel_variance8x8_dotprod(
+    src: &[u8],
+    src_stride: usize,
+    xoffset: usize,
+    yoffset: usize,
+    reference: &[u8],
+    ref_stride: usize,
+) -> (u32, u32) {
+    assert!(xoffset < 8 && yoffset < 8);
+    assert!(src_stride >= 8 + usize::from(xoffset != 0));
+    assert!(ref_stride >= 8);
+    assert!(src.len() >= 8 * src_stride + 8 + usize::from(xoffset != 0));
+    assert!(reference.len() >= 7 * ref_stride + 8);
+
+    // SAFETY: Dispatch selects this wrapper only when dotprod is present.
+    // The assertions prove the complete eight-wide source footprint.
+    unsafe {
+        sub_pixel_variance_8_dotprod_inner(
+            src.as_ptr(),
+            src_stride,
+            reference.as_ptr(),
+            ref_stride,
+            xoffset,
+            yoffset,
+            8,
+        )
+    }
+}
 subpel_var_dotprod_fn!(vpx_sub_pixel_variance16x8_dotprod, 16, 8);
 subpel_var_dotprod_fn!(vpx_sub_pixel_variance16x16_dotprod, 16, 16);
 subpel_var_dotprod_fn!(vpx_sub_pixel_variance16x32_dotprod, 16, 32);
@@ -404,6 +571,7 @@ mod tests {
     use crate::dsp::distortion::sub_pixel_variance as scalar_svf;
 
     const SHAPES: &[(BlockSize, usize, usize)] = &[
+        (BlockSize::Block8x8, 8, 8),
         (BlockSize::Block16x8, 16, 8),
         (BlockSize::Block16x16, 16, 16),
         (BlockSize::Block16x32, 16, 32),
@@ -420,6 +588,46 @@ mod tests {
         fn byte(&mut self) -> u8 {
             self.0 = self.0.wrapping_mul(1_103_515_245).wrapping_add(12_345);
             (self.0 >> 16) as u8
+        }
+    }
+
+    fn neon_for_shape(
+        src: &[u8],
+        src_stride: usize,
+        reference: &[u8],
+        ref_stride: usize,
+        offsets: (usize, usize),
+        shape: (usize, usize),
+    ) -> (u32, u32) {
+        let (xoffset, yoffset) = offsets;
+        let (width, height) = shape;
+        if width == 8 {
+            vpx_sub_pixel_variance8x8_neon(src, src_stride, xoffset, yoffset, reference, ref_stride)
+        } else {
+            sub_pixel_variance_neon(
+                src, src_stride, reference, ref_stride, xoffset, yoffset, width, height,
+            )
+        }
+    }
+
+    fn dotprod_for_shape(
+        src: &[u8],
+        src_stride: usize,
+        reference: &[u8],
+        ref_stride: usize,
+        offsets: (usize, usize),
+        shape: (usize, usize),
+    ) -> (u32, u32) {
+        let (xoffset, yoffset) = offsets;
+        let (width, height) = shape;
+        if width == 8 {
+            vpx_sub_pixel_variance8x8_dotprod(
+                src, src_stride, xoffset, yoffset, reference, ref_stride,
+            )
+        } else {
+            sub_pixel_variance_dotprod(
+                src, src_stride, reference, ref_stride, xoffset, yoffset, width, height,
+            )
         }
     }
 
@@ -440,11 +648,21 @@ mod tests {
                     let scalar = scalar_svf(
                         &src, src_stride, &reference, ref_stride, xoffset, yoffset, width, height,
                     );
-                    let neon = sub_pixel_variance_neon(
-                        &src, src_stride, &reference, ref_stride, xoffset, yoffset, width, height,
+                    let neon = neon_for_shape(
+                        &src,
+                        src_stride,
+                        &reference,
+                        ref_stride,
+                        (xoffset, yoffset),
+                        (width, height),
                     );
-                    let dotprod = sub_pixel_variance_dotprod(
-                        &src, src_stride, &reference, ref_stride, xoffset, yoffset, width, height,
+                    let dotprod = dotprod_for_shape(
+                        &src,
+                        src_stride,
+                        &reference,
+                        ref_stride,
+                        (xoffset, yoffset),
+                        (width, height),
                     );
                     assert_eq!(
                         scalar, neon,
@@ -474,9 +692,13 @@ mod tests {
                             &src, src_stride, &reference, ref_stride, xoffset, yoffset, width,
                             height,
                         ),
-                        sub_pixel_variance_neon(
-                            &src, src_stride, &reference, ref_stride, xoffset, yoffset, width,
-                            height,
+                        neon_for_shape(
+                            &src,
+                            src_stride,
+                            &reference,
+                            ref_stride,
+                            (xoffset, yoffset),
+                            (width, height),
                         ),
                         "edge mismatch at {width}x{height}, values \
                          ({src_value},{ref_value}), offset ({xoffset},{yoffset})"
