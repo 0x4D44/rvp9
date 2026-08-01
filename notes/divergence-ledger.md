@@ -3766,3 +3766,45 @@ with 40/40 wins for every metric.
 **Future plan:** retain full chroma in the committed-leaf picker. Validate the
 luma proxy across cpu-used 6-8 and the representative corpus; revert or narrow
 it if any important clip exceeds the 2% unexplained-regression tolerance.
+
+### 2026-08-01 — Speculative partition descent prefers LAST
+
+**Where:** `rvp9_encoder::InterEncodeEnv::descent_disable_golden` and the A4
+descent's `PickInterModeParams` construction.
+
+**What libvpx does:** the cpu-used 7 realtime partition chooser does not run
+the full reference-and-mode search used to encode committed leaves. GOLDEN is
+still available to the later block-mode picker according to its speed-feature
+and source-state gates.
+
+**What rvp9 does:** the speculative A4 partition proxy sets the existing
+`disable_golden_ref` speed feature for ordinary content. The core picker's
+VeryHighSad exception still searches GOLDEN at scene transitions. The final
+committed-leaf picker keeps its configured LAST/GOLDEN search. Setting
+`RVP9_A4_DESCENT_DISABLE_GOLDEN=0` restores full-reference speculative search
+for differential diagnosis.
+
+**Why:** NEWMV search remains the largest self-time hotspot after the
+luma-only proxy change. Running it against GOLDEN for every speculative shape
+duplicates reference selection that the final causal picker performs again.
+
+**Byte-parity impact:** partition choices can change. At the canonical
+250 kbps Foreman CBR point the stream changes from 68,743 to 68,834 bytes and
+has SHA-256
+`3551c82586b3fb96ed57f233441b6b9311d8473e8304610fd9bcd788806d9547`.
+The stream decodes to identical I420 under rvp9-decoder, pinned vpxdec, and
+ffmpeg; all three outputs have SHA-256
+`d1c43cf9920b1e37dcdb26bf4db9c8c3b3e38d6b663e22d052eb2a02312ac3a8`.
+
+**Compression-efficiency impact:** the canonical seven-point CBR curve is
+`-10.399102%` luma BD-rate and `-9.914415%` average-YUV BD-rate versus pinned
+libvpx v1.14.1. The VBR curve is `-9.120814%` luma and `-7.938657%`
+average-YUV BD-rate. Both retain a large margin over the final parity gate.
+
+**Speed impact:** forty alternating one-thread CBR pairs against the luma-only
+Unit 422 baseline improve median total child CPU by `9.938%`, user CPU by
+`9.914%`, and wall time by `12.062%`, with 40/40 wins for every metric.
+
+**Future plan:** keep GOLDEN enabled in the final picker and preserve the
+VeryHighSad exception. Validate the proxy across cpu-used 6-8 and the full
+corpus; narrow it if GOLDEN-dependent content breaches the per-clip gate.

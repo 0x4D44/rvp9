@@ -3177,6 +3177,7 @@ pub(crate) struct InterEncodeEnv {
     rt_quant_fp: Option<bool>,
     rt_reuse_descent_pick: Option<bool>,
     a4_descent_cb_filter: Option<bool>,
+    a4_descent_disable_golden: Option<bool>,
     rt_skip_intmv_filter_search: Option<bool>,
     newmv_diff_bias: Option<bool>,
     rt_min_partition32: Option<bool>,
@@ -3222,6 +3223,7 @@ impl InterEncodeEnv {
             rt_quant_fp: bool_override("RVP9_RT_QUANT_FP"),
             rt_reuse_descent_pick: bool_override("RVP9_RT_REUSE_DESCENT_PICK"),
             a4_descent_cb_filter: bool_override("RVP9_A4_DESCENT_CB_FILTER"),
+            a4_descent_disable_golden: bool_override("RVP9_A4_DESCENT_DISABLE_GOLDEN"),
             rt_skip_intmv_filter_search: bool_override("RVP9_RT_SKIP_INTMV_FILTER_SEARCH"),
             newmv_diff_bias: bool_override("RVP9_NEWMV_DIFF_BIAS"),
             rt_min_partition32: bool_override("RVP9_RT_MIN_PARTITION32"),
@@ -3252,6 +3254,13 @@ impl InterEncodeEnv {
     /// because the final emitted picker still performs the full search.
     fn descent_cb_filter_search(&self) -> bool {
         self.flag_or(self.a4_descent_cb_filter, true)
+    }
+
+    /// Keep the speculative partition proxy on LAST for ordinary content.
+    /// The final emitted picker still evaluates GOLDEN, and the core picker's
+    /// very-high-SAD exception keeps GOLDEN available to scene transitions.
+    fn descent_disable_golden(&self) -> bool {
+        self.flag_or(self.a4_descent_disable_golden, true)
     }
 }
 
@@ -3970,6 +3979,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     let rt_quant_fp = env.flag_or(env.rt_quant_fp, true);
     let rt_reuse_descent_pick = env.flag_or(env.rt_reuse_descent_pick, rt_large_recovery);
     let a4_descent_cb_filter_search = env.descent_cb_filter_search();
+    let a4_descent_disable_golden = env.descent_disable_golden();
     let rt_skip_integer_mv_filter_search = env.skip_integer_mv_filter_search();
     let newmv_diff_bias_enabled =
         newmv_diff_bias_for_mode(rc_mode, env.flag_or(env.newmv_diff_bias, true));
@@ -4828,7 +4838,11 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         mi_row: leaf_mi_row as u32,
                         mi_col: leaf_mi_col as u32,
                         chessboard_index,
-                        disable_golden_ref: rt_disable_golden_ref,
+                        // The speculative partition proxy uses LAST only for
+                        // ordinary content. The final picker below retains the
+                        // configured GOLDEN search, and VeryHighSad bypasses
+                        // this core speed feature for scene transitions.
+                        disable_golden_ref: rt_disable_golden_ref || a4_descent_disable_golden,
                         max_intra_bsize: sf.max_intra_bsize,
                         rt_intra_dc_only_low_content: sf.rt_intra_dc_only_low_content,
                         // Phase-2 option-A: the descent computes the
@@ -10065,6 +10079,23 @@ mod tests {
         // SAFETY: the mutex above serialises all encoder environment tests.
         unsafe { std::env::set_var(key, "0") };
         assert!(!InterEncodeEnv::capture().descent_cb_filter_search());
+        // SAFETY: the mutex above serialises all encoder environment tests.
+        unsafe { std::env::remove_var(key) };
+    }
+
+    #[test]
+    fn realtime_descent_disables_golden_by_default() {
+        let _guard = env_test_mutex();
+        let key = "RVP9_A4_DESCENT_DISABLE_GOLDEN";
+        // SAFETY: the mutex above serialises all encoder environment tests.
+        unsafe { std::env::remove_var(key) };
+        assert!(InterEncodeEnv::capture().descent_disable_golden());
+
+        // Preserve a full-reference differential escape hatch. This changes
+        // only the speculative descent; the final picker remains untouched.
+        // SAFETY: the mutex above serialises all encoder environment tests.
+        unsafe { std::env::set_var(key, "0") };
+        assert!(!InterEncodeEnv::capture().descent_disable_golden());
         // SAFETY: the mutex above serialises all encoder environment tests.
         unsafe { std::env::remove_var(key) };
     }
