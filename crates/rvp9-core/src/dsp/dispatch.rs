@@ -1774,7 +1774,13 @@ impl SimdDispatch {
             } else {
                 scalar_lpf_vertical_8
             };
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(target_arch = "aarch64")]
+        let lpf_vertical_8: fn(&mut [u8], usize, usize, u8, u8, u8) = if caps.neon {
+            crate::dsp::aarch64::lpf_vertical_8_neon
+        } else {
+            scalar_lpf_vertical_8
+        };
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         let lpf_vertical_8: fn(&mut [u8], usize, usize, u8, u8, u8) = scalar_lpf_vertical_8;
 
         // ---- Wave G G5 — 8-tap horizontal loopfilter (AVX2 gated). ----
@@ -1785,7 +1791,13 @@ impl SimdDispatch {
             } else {
                 scalar_lpf_horizontal_8
             };
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(target_arch = "aarch64")]
+        let lpf_horizontal_8: fn(&mut [u8], usize, usize, u8, u8, u8) = if caps.neon {
+            crate::dsp::aarch64::lpf_horizontal_8_neon
+        } else {
+            scalar_lpf_horizontal_8
+        };
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         let lpf_horizontal_8: fn(&mut [u8], usize, usize, u8, u8, u8) = scalar_lpf_horizontal_8;
 
         // ---- Wave G G6 — 16-tap vertical edge loopfilter (AVX2 gated). ----
@@ -1853,7 +1865,13 @@ impl SimdDispatch {
         } else {
             scalar_lpf_vertical_8_dual
         };
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(target_arch = "aarch64")]
+        let lpf_vertical_8_dual: LpfDualFn = if caps.neon {
+            crate::dsp::aarch64::lpf_vertical_8_dual_neon
+        } else {
+            scalar_lpf_vertical_8_dual
+        };
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         let lpf_vertical_8_dual: LpfDualFn = scalar_lpf_vertical_8_dual;
 
         #[cfg(target_arch = "x86_64")]
@@ -1862,7 +1880,13 @@ impl SimdDispatch {
         } else {
             scalar_lpf_horizontal_8_dual
         };
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(target_arch = "aarch64")]
+        let lpf_horizontal_8_dual: LpfDualFn = if caps.neon {
+            crate::dsp::aarch64::lpf_horizontal_8_dual_neon
+        } else {
+            scalar_lpf_horizontal_8_dual
+        };
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         let lpf_horizontal_8_dual: LpfDualFn = scalar_lpf_horizontal_8_dual;
 
         // 16-tap duals share a single threshold set (libvpx convention).
@@ -4333,16 +4357,30 @@ mod tests {
 
     #[cfg(target_arch = "aarch64")]
     #[test]
-    fn loopfilter_16_dispatches_to_neon() {
+    fn loopfilter_8_and_16_dispatch_to_neon() {
         type Lpf = fn(&mut [u8], usize, usize, u8, u8, u8);
 
         let mut scalar_caps = detect();
         scalar_caps.neon = false;
         let scalar = SimdDispatch::build(scalar_caps);
+        let scalar_v8: Lpf = super::scalar_lpf_vertical_8;
+        let scalar_h8: Lpf = super::scalar_lpf_horizontal_8;
+        let scalar_v8_dual: LpfDualFn = super::scalar_lpf_vertical_8_dual;
+        let scalar_h8_dual: LpfDualFn = super::scalar_lpf_horizontal_8_dual;
         let scalar_v16: Lpf = super::scalar_lpf_vertical_16;
         let scalar_h16: Lpf = super::scalar_lpf_horizontal_16;
         let scalar_v16_dual: Lpf = super::scalar_lpf_vertical_16_dual;
         let scalar_h16_dual: Lpf = super::scalar_lpf_horizontal_16_dual;
+        assert_eq!(scalar.lpf_vertical_8() as usize, scalar_v8 as usize);
+        assert_eq!(scalar.lpf_horizontal_8() as usize, scalar_h8 as usize);
+        assert_eq!(
+            scalar.lpf_vertical_8_dual() as usize,
+            scalar_v8_dual as usize
+        );
+        assert_eq!(
+            scalar.lpf_horizontal_8_dual() as usize,
+            scalar_h8_dual as usize
+        );
         assert_eq!(scalar.lpf_vertical_16() as usize, scalar_v16 as usize);
         assert_eq!(scalar.lpf_horizontal_16() as usize, scalar_h16 as usize);
         assert_eq!(
@@ -4357,10 +4395,18 @@ mod tests {
         let mut neon_caps = detect();
         neon_caps.neon = true;
         let neon = SimdDispatch::build(neon_caps);
+        let neon_v8: Lpf = crate::dsp::aarch64::lpf_vertical_8_neon;
+        let neon_h8: Lpf = crate::dsp::aarch64::lpf_horizontal_8_neon;
+        let neon_v8_dual: LpfDualFn = crate::dsp::aarch64::lpf_vertical_8_dual_neon;
+        let neon_h8_dual: LpfDualFn = crate::dsp::aarch64::lpf_horizontal_8_dual_neon;
         let neon_v16: Lpf = crate::dsp::aarch64::lpf_vertical_16_neon;
         let neon_h16: Lpf = crate::dsp::aarch64::lpf_horizontal_16_neon;
         let neon_v16_dual: Lpf = crate::dsp::aarch64::lpf_vertical_16_dual_neon;
         let neon_h16_dual: Lpf = crate::dsp::aarch64::lpf_horizontal_16_dual_neon;
+        assert_eq!(neon.lpf_vertical_8() as usize, neon_v8 as usize);
+        assert_eq!(neon.lpf_horizontal_8() as usize, neon_h8 as usize);
+        assert_eq!(neon.lpf_vertical_8_dual() as usize, neon_v8_dual as usize);
+        assert_eq!(neon.lpf_horizontal_8_dual() as usize, neon_h8_dual as usize);
         assert_eq!(neon.lpf_vertical_16() as usize, neon_v16 as usize);
         assert_eq!(neon.lpf_horizontal_16() as usize, neon_h16 as usize);
         assert_eq!(neon.lpf_vertical_16_dual() as usize, neon_v16_dual as usize);

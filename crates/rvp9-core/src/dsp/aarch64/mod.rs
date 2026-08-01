@@ -23,8 +23,9 @@ pub use convolve8_neon::{convolve8_horiz_neon, convolve8_neon, convolve8_vert_ne
 pub use idct8x8_neon::idct8x8_add_neon;
 pub use int_pro_neon::{vpx_int_pro_col_neon, vpx_int_pro_row_neon, vpx_vector_var_neon};
 pub use lpf16_neon::{
-    lpf_horizontal_16_dual_neon, lpf_horizontal_16_neon, lpf_vertical_16_dual_neon,
-    lpf_vertical_16_neon,
+    lpf_horizontal_8_dual_neon, lpf_horizontal_8_neon, lpf_horizontal_16_dual_neon,
+    lpf_horizontal_16_neon, lpf_vertical_8_dual_neon, lpf_vertical_8_neon,
+    lpf_vertical_16_dual_neon, lpf_vertical_16_neon,
 };
 pub use quantize_neon::{
     HadamardQuantMetrics, HadamardQuantRateMetrics, vp9_quantize_b_32x32_neon, vp9_quantize_b_neon,
