@@ -117,6 +117,19 @@ fn zeroed_buffer(len: usize, label: &str) -> io::Result<Vec<u8>> {
     Ok(buffer)
 }
 
+fn resize_zeroed_buffer(buffer: &mut Vec<u8>, len: usize, label: &str) -> io::Result<()> {
+    if len > buffer.len() {
+        buffer.try_reserve_exact(len - buffer.len()).map_err(|error| {
+            y4m_error(
+                io::ErrorKind::OutOfMemory,
+                format!("cannot allocate {label} ({len} bytes): {error}"),
+            )
+        })?;
+    }
+    buffer.resize(len, 0);
+    Ok(())
+}
+
 /// Y4M header fields (only what we use).
 #[derive(Debug, Clone, Copy)]
 pub struct Y4mHeader {
@@ -325,8 +338,23 @@ impl Y4mReader {
     /// Returns [`io::Error`] for malformed frame tags, truncated frame
     /// payloads, allocation failures, and filesystem errors.
     pub fn next_frame(&mut self) -> io::Result<Option<YuvFrameBuf>> {
+        let mut frame = YuvFrameBuf::default();
+        self.next_frame_into(&mut frame)
+            .map(|has_frame| has_frame.then_some(frame))
+    }
+
+    /// Read and crop the next frame into reusable plane buffers.
+    ///
+    /// Existing allocations in `frame` are retained when large enough for
+    /// the configured crop. Returns `false` at EOF or the frame limit.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`io::Error`] for malformed frame tags, truncated frame
+    /// payloads, allocation failures, and filesystem errors.
+    pub fn next_frame_into(&mut self, frame: &mut YuvFrameBuf) -> io::Result<bool> {
         if self.remaining == 0 {
-            return Ok(None);
+            return Ok(false);
         }
 
         let mut hdr_buf = [0u8; 6];
@@ -335,7 +363,7 @@ impl Y4mReader {
             let read = self.file.read(&mut hdr_buf[header_len..])?;
             if read == 0 {
                 if header_len == 0 {
-                    return Ok(None);
+                    return Ok(false);
                 }
                 return Err(y4m_error(
                     io::ErrorKind::UnexpectedEof,
@@ -364,7 +392,8 @@ impl Y4mReader {
         }
         self.file.read_exact(&mut self.body)?;
 
-        let mut y_crop = zeroed_buffer(self.crop.y_bytes, "cropped luma plane")?;
+        let (y_crop, u_crop, v_crop) = frame;
+        resize_zeroed_buffer(y_crop, self.crop.y_bytes, "cropped luma plane")?;
         for row in 0..self.crop.height {
             let start = (self.off_y + row) * self.source.width + self.off_x;
             y_crop[row * self.crop.width..(row + 1) * self.crop.width]
@@ -375,8 +404,8 @@ impl Y4mReader {
         let chroma_src_w = self.source.width / 2;
         let chroma_crop_w = self.crop.width / 2;
         let chroma_crop_h = self.crop.height / 2;
-        let mut u_crop = zeroed_buffer(self.crop.uv_bytes, "cropped U plane")?;
-        let mut v_crop = zeroed_buffer(self.crop.uv_bytes, "cropped V plane")?;
+        resize_zeroed_buffer(u_crop, self.crop.uv_bytes, "cropped U plane")?;
+        resize_zeroed_buffer(v_crop, self.crop.uv_bytes, "cropped V plane")?;
         for row in 0..chroma_crop_h {
             let source_offset = (chroma_off_y + row) * chroma_src_w + chroma_off_x;
             let target = row * chroma_crop_w..(row + 1) * chroma_crop_w;
@@ -387,7 +416,7 @@ impl Y4mReader {
         }
 
         self.remaining -= 1;
-        Ok(Some((y_crop, u_crop, v_crop)))
+        Ok(true)
     }
 }
 
@@ -535,6 +564,27 @@ mod tests {
         let hdr = parse_header(&mut file).expect("parse header");
         assert_eq!((hdr.w, hdr.h, hdr.fps_num, hdr.fps_den), (w, h, 30, 1));
 
+        let mut streaming =
+            Y4mReader::open(&path, w, h, usize::MAX).expect("open streaming reader");
+        assert_eq!(streaming.header().framerate(), 30.0);
+        assert_eq!(streaming.next_frame().expect("read f0"), Some(f0.clone()));
+        assert_eq!(streaming.next_frame().expect("read f1"), Some(f1.clone()));
+        assert_eq!(streaming.next_frame().expect("read EOF"), None);
+
+        let mut reusable =
+            Y4mReader::open(&path, w, h, usize::MAX).expect("open reusable reader");
+        let mut frame = YuvFrameBuf::default();
+        assert!(reusable.next_frame_into(&mut frame).expect("reuse f0"));
+        assert_eq!(frame, f0);
+        let plane_ptrs = (frame.0.as_ptr(), frame.1.as_ptr(), frame.2.as_ptr());
+        assert!(reusable.next_frame_into(&mut frame).expect("reuse f1"));
+        assert_eq!(frame, f1);
+        assert_eq!(
+            (frame.0.as_ptr(), frame.1.as_ptr(), frame.2.as_ptr()),
+            plane_ptrs,
+            "equal-sized frames must retain their plane allocations"
+        );
+        assert!(!reusable.next_frame_into(&mut frame).expect("reuse EOF"));
         let (frames, fr) = read_cropped(&path, w, h, 8).expect("read");
         let _ = std::fs::remove_file(&path);
 

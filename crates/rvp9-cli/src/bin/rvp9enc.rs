@@ -918,11 +918,11 @@ fn run(opts: &EncOpts, positionals: &[String]) -> Result<(), String> {
     let mut total_bits: u64 = 0;
     let mut frame_count: usize = 0;
     {
-        let mut encode_frame = |(y, u, v): y4m::YuvFrameBuf| -> Result<(), String> {
+        let mut encode_frame = |(y, u, v): &y4m::YuvFrameBuf| -> Result<(), String> {
             let view = YuvFrameRef {
-                y: &y,
-                u: &u,
-                v: &v,
+                y,
+                u,
+                v,
                 y_stride: info.coded_w as usize,
                 u_stride: (info.coded_w / 2) as usize,
                 v_stride: (info.coded_w / 2) as usize,
@@ -939,9 +939,10 @@ fn run(opts: &EncOpts, positionals: &[String]) -> Result<(), String> {
             frame_count += 1;
             Ok(())
         };
-        encode_frame(first_frame)?;
-        while let Some(frame) = frames.next_frame()? {
-            encode_frame(frame)?;
+        encode_frame(&first_frame)?;
+        let mut frame = y4m::YuvFrameBuf::default();
+        while frames.next_frame_into(&mut frame)? {
+            encode_frame(&frame)?;
         }
     }
 
@@ -1069,6 +1070,21 @@ impl FrameSource {
                 .next_frame()
                 .map_err(|e| format!("reading y4m frame: {e}")),
             Self::Raw(reader) => reader.next_frame(),
+        }
+    }
+
+    fn next_frame_into(&mut self, frame: &mut y4m::YuvFrameBuf) -> Result<bool, String> {
+        match self {
+            Self::Y4m(reader) => reader
+                .next_frame_into(frame)
+                .map_err(|e| format!("reading y4m frame: {e}")),
+            Self::Raw(reader) => match reader.next_frame()? {
+                Some(next) => {
+                    *frame = next;
+                    Ok(true)
+                }
+                None => Ok(false),
+            },
         }
     }
 }
