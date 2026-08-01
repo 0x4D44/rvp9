@@ -21,6 +21,7 @@ members = [
     "crates/rvp9-cli",
     "crates/rvp9-bench",
     "crates/rvp9-harness",
+    "crates/rvp9",
 ]
 # Note: `crates/rvp9-fuzz` is NOT a workspace member. cargo-fuzz uses
 # `#![no_main]` (libFuzzer convention); building it via plain
