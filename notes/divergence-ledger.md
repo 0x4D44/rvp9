@@ -3808,3 +3808,43 @@ Unit 422 baseline improve median total child CPU by `9.938%`, user CPU by
 **Future plan:** keep GOLDEN enabled in the final picker and preserve the
 VeryHighSad exception. Validate the proxy across cpu-used 6-8 and the full
 corpus; narrow it if GOLDEN-dependent content breaches the per-clip gate.
+
+### 2026-08-01 — Rectangular partition proxies reuse inherited motion
+
+**Where:** `rvp9_encoder::InterEncodeEnv::descent_disable_rect_newmv` and the
+A4 descent's rectangular `inter_mode_mask` entries.
+
+**What libvpx does:** cpu-used 7 realtime uses non-RD partition heuristics
+rather than performing an independent full motion search for every horizontal
+and vertical partition arm.
+
+**What rvp9 does:** speculative 8x16, 16x8, 16x32, and 32x16 arms rank ZERO,
+NEAREST, and NEAR motion but omit NEWMV. Every square NONE/SPLIT candidate and
+every committed final leaf retains NEWMV. Setting
+`RVP9_A4_DESCENT_DISABLE_RECT_NEWMV=0` restores full rectangular motion search
+for differential diagnosis.
+
+**Why:** after the LAST-led proxy change, NEWMV search remains the largest
+self-time hotspot. Rectangular arms account for a large share of speculative
+picker calls, while adjacent square candidates already provide independently
+searched motion evidence for the partition decision.
+
+**Byte-parity impact:** partition choices can change. At the canonical
+250 kbps Foreman CBR point the stream is 68,738 bytes with SHA-256
+`d893b844154db16537ebedf3cd7d85ea4c0b711da70938e098ec88d41db0e1fd`.
+The stream decodes to identical I420 under rvp9-decoder, pinned vpxdec, and
+ffmpeg; all three outputs have SHA-256
+`7b97b33385e72befdaf50f4322c5faad9b9b613342cb242f587934397e87c7ab`.
+
+**Compression-efficiency impact:** the canonical seven-point CBR curve is
+`-8.618636%` luma BD-rate and `-8.021811%` average-YUV BD-rate versus pinned
+libvpx v1.14.1. The VBR curve is `-7.869126%` luma and `-6.568133%`
+average-YUV BD-rate. Both remain far inside the final parity gate.
+
+**Speed impact:** forty alternating one-thread CBR pairs against Unit 423
+improve median total child CPU by `12.696%`, user CPU by `12.653%`, and wall
+time by `12.484%`; CPU wins 40/40 pairs and wall wins 39/40.
+
+**Future plan:** do not extend this policy to square candidates: the measured
+all-shape variant lost 7.321397 luma BD-rate points on VBR. Validate the
+rectangular-only proxy across cpu-used 6-8 and the complete corpus.

@@ -3178,6 +3178,7 @@ pub(crate) struct InterEncodeEnv {
     rt_reuse_descent_pick: Option<bool>,
     a4_descent_cb_filter: Option<bool>,
     a4_descent_disable_golden: Option<bool>,
+    a4_descent_disable_rect_newmv: Option<bool>,
     rt_skip_intmv_filter_search: Option<bool>,
     newmv_diff_bias: Option<bool>,
     rt_min_partition32: Option<bool>,
@@ -3224,6 +3225,7 @@ impl InterEncodeEnv {
             rt_reuse_descent_pick: bool_override("RVP9_RT_REUSE_DESCENT_PICK"),
             a4_descent_cb_filter: bool_override("RVP9_A4_DESCENT_CB_FILTER"),
             a4_descent_disable_golden: bool_override("RVP9_A4_DESCENT_DISABLE_GOLDEN"),
+            a4_descent_disable_rect_newmv: bool_override("RVP9_A4_DESCENT_DISABLE_RECT_NEWMV"),
             rt_skip_intmv_filter_search: bool_override("RVP9_RT_SKIP_INTMV_FILTER_SEARCH"),
             newmv_diff_bias: bool_override("RVP9_NEWMV_DIFF_BIAS"),
             rt_min_partition32: bool_override("RVP9_RT_MIN_PARTITION32"),
@@ -3261,6 +3263,12 @@ impl InterEncodeEnv {
     /// very-high-SAD exception keeps GOLDEN available to scene transitions.
     fn descent_disable_golden(&self) -> bool {
         self.flag_or(self.a4_descent_disable_golden, true)
+    }
+
+    /// Rank rectangular partition arms with inherited/zero motion while
+    /// retaining NEWMV on every square NONE/SPLIT candidate and final leaf.
+    fn descent_disable_rect_newmv(&self) -> bool {
+        self.flag_or(self.a4_descent_disable_rect_newmv, true)
     }
 }
 
@@ -3484,6 +3492,18 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         let nearmv_bit = 1u8 << InterMode::NearMv.idx();
         for mask in &mut rt_inter_mode_mask {
             *mask &= !nearmv_bit;
+        }
+    }
+    let mut a4_descent_inter_mode_mask = rt_inter_mode_mask;
+    if env.descent_disable_rect_newmv() {
+        let newmv_bit = 1u8 << InterMode::NewMv.idx();
+        for bsize in [
+            BlockSize::Block8x16,
+            BlockSize::Block16x8,
+            BlockSize::Block16x32,
+            BlockSize::Block32x16,
+        ] {
+            a4_descent_inter_mode_mask[bsize.idx()] &= !newmv_bit;
         }
     }
     // A4 evaluates every candidate before the current SB has populated the
@@ -4820,7 +4840,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         is_screen_content: false,
                         zero_temp_sad_source: None,
                         scene_change_detected: scene_change_detected_frame,
-                        inter_mode_mask: rt_inter_mode_mask,
+                        inter_mode_mask: a4_descent_inter_mode_mask,
                         // W0.4: SF fields now flow from the
                         // dispatcher computed at the top of this
                         // function; the literal previously
@@ -10096,6 +10116,26 @@ mod tests {
         // SAFETY: the mutex above serialises all encoder environment tests.
         unsafe { std::env::set_var(key, "0") };
         assert!(!InterEncodeEnv::capture().descent_disable_golden());
+        // SAFETY: the mutex above serialises all encoder environment tests.
+        unsafe { std::env::remove_var(key) };
+    }
+
+    #[test]
+    fn realtime_descent_disables_rectangular_newmv_by_default() {
+        let _guard = env_test_mutex();
+        let key = "RVP9_A4_DESCENT_DISABLE_RECT_NEWMV";
+        // SAFETY: the mutex above serialises all encoder environment tests.
+        unsafe { std::env::remove_var(key) };
+        assert!(
+            InterEncodeEnv::capture().descent_disable_rect_newmv(),
+            "rectangular proxy candidates should avoid independent motion search",
+        );
+
+        // Preserve a full-motion differential escape hatch. Square proxy
+        // candidates and the final picker are unaffected by either state.
+        // SAFETY: the mutex above serialises all encoder environment tests.
+        unsafe { std::env::set_var(key, "0") };
+        assert!(!InterEncodeEnv::capture().descent_disable_rect_newmv());
         // SAFETY: the mutex above serialises all encoder environment tests.
         unsafe { std::env::remove_var(key) };
     }
