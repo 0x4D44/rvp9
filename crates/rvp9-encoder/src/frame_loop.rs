@@ -3206,7 +3206,23 @@ impl StreamEncoder {
                     .collect();
 
                 let mut recorded_coef_tiles = Vec::with_capacity(tile_count);
-                let mut merged_mi_grid = vec![None; mi_rows_us * mi_cols_us];
+                // Tile grids cover disjoint, ordered column spans. Append one
+                // row span from each tile rather than first filling a full
+                // frame with `None` and immediately overwriting every cell.
+                let mut merged_mi_grid = Vec::with_capacity(mi_rows_us * mi_cols_us);
+                for row in 0..mi_rows_us {
+                    let mut expected_col_start = 0usize;
+                    for result in &tile_results {
+                        debug_assert_eq!(result.mi_grid.mi_col_start, expected_col_start);
+                        let local_start = row * result.mi_grid.mi_cols;
+                        let local_end = local_start + result.mi_grid.mi_cols;
+                        merged_mi_grid
+                            .extend_from_slice(&result.mi_grid.cells[local_start..local_end]);
+                        expected_col_start += result.mi_grid.mi_cols;
+                    }
+                    debug_assert_eq!(expected_col_start, mi_cols_us);
+                }
+                debug_assert_eq!(merged_mi_grid.len(), mi_rows_us * mi_cols_us);
                 for result in tile_results {
                     let tile_col = result.tile_col;
                     let scratch = &self.inter_tile_scratch[tile_col];
@@ -3247,15 +3263,6 @@ impl StreamEncoder {
                         let start = row * mi_cols_us + bounds.mi_col_start;
                         let end = row * mi_cols_us + bounds.mi_col_end;
                         cur_mv_grid[start..end].copy_from_slice(&scratch.mv_grid[start..end]);
-                        debug_assert_eq!(result.mi_grid.mi_col_start, bounds.mi_col_start);
-                        debug_assert_eq!(
-                            result.mi_grid.mi_cols,
-                            bounds.mi_col_end - bounds.mi_col_start
-                        );
-                        let local_start = row * result.mi_grid.mi_cols;
-                        let local_end = local_start + result.mi_grid.mi_cols;
-                        merged_mi_grid[start..end]
-                            .clone_from_slice(&result.mi_grid.cells[local_start..local_end]);
                     }
                     self.rd_thresh_tables[tile_col] = result.rd_tables[tile_col].clone();
                     stage4a_frame_split_stats.accumulate(&result.split_stats);
