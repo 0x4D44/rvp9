@@ -79,20 +79,23 @@ pub static TRELLIS_CHANGED_COEFFS: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(0);
 
 thread_local! {
-    /// Residual coefficients reused across serial emitted transforms on one
-    /// tile worker. Callers receive only the active transform prefix.
-    static INTER_EMIT_RESIDUAL_SCRATCH: std::cell::RefCell<[i16; 32 * 32]> =
-        const { std::cell::RefCell::new([0; 32 * 32]) };
-    /// Forward-transform and quantization storage reused by emitted inter
-    /// blocks on one tile worker. Every kernel overwrites its active prefix,
-    /// so retaining the inactive tail avoids repeatedly clearing three
-    /// maximum-sized arrays for smaller chroma transforms.
-    static INTER_EMIT_QUANT_SCRATCH: std::cell::RefCell<InterEmitQuantScratch> =
-        const { std::cell::RefCell::new(InterEmitQuantScratch {
-            coefs: [0; 32 * 32],
-            qcoeff: [0; 32 * 32],
-            dqcoeff: [0; 32 * 32],
+    /// Residual, transform, and quantization storage reused by emitted inter
+    /// blocks on one tile worker. Keeping the fields under one TLS borrow
+    /// avoids entering two independent `RefCell`s for every non-zero block.
+    static INTER_EMIT_SCRATCH: std::cell::RefCell<InterEmitScratch> =
+        const { std::cell::RefCell::new(InterEmitScratch {
+            residual: [0; 32 * 32],
+            quant: InterEmitQuantScratch {
+                coefs: [0; 32 * 32],
+                qcoeff: [0; 32 * 32],
+                dqcoeff: [0; 32 * 32],
+            },
         }) };
+}
+
+struct InterEmitScratch {
+    residual: [i16; 32 * 32],
+    quant: InterEmitQuantScratch,
 }
 
 struct InterEmitQuantScratch {
@@ -102,17 +105,18 @@ struct InterEmitQuantScratch {
 }
 
 #[inline]
-fn with_inter_emit_residual_scratch<R>(len: usize, operation: impl FnOnce(&mut [i16]) -> R) -> R {
+fn with_inter_emit_scratch<R>(
+    len: usize,
+    operation: impl FnOnce(&mut [i16], &mut InterEmitQuantScratch) -> R,
+) -> R {
     assert!(
         len <= 32 * 32,
         "inter emit residual length {len} exceeds 32x32 scratch"
     );
-    INTER_EMIT_RESIDUAL_SCRATCH.with_borrow_mut(|scratch| operation(&mut scratch[..len]))
-}
-
-#[inline]
-fn with_inter_emit_quant_scratch<R>(operation: impl FnOnce(&mut InterEmitQuantScratch) -> R) -> R {
-    INTER_EMIT_QUANT_SCRATCH.with_borrow_mut(operation)
+    INTER_EMIT_SCRATCH.with_borrow_mut(|scratch| {
+        let InterEmitScratch { residual, quant } = &mut *scratch;
+        operation(&mut residual[..len], quant)
+    })
 }
 
 /// Read the running total of coefficients changed by the `RVP9_TRELLIS`
@@ -7039,9 +7043,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                 } else {
                                     None
                                 };
-                                let (qcoeff_i32, eob_usize) = with_inter_emit_residual_scratch(
+                                let (qcoeff_i32, eob_usize) = with_inter_emit_scratch(
                                     residual_len,
-                                    |residual| {
+                                    |residual, quant_scratch| {
                                         let emit_residual_start = if emit_profile_enabled {
                                             Some(std::time::Instant::now())
                                         } else {
@@ -7127,7 +7131,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                         } else {
                                             None
                                         };
-                                        with_inter_forward_quant_one_tx(
+                                        inter_forward_quant_one_tx_with_scratch(
+                                            quant_scratch,
                                             residual,
                                             tx_side,
                                             plane_tx,
@@ -8067,7 +8072,8 @@ struct TrellisCtx<'a> {
 /// returned (so both the serialised qcoeff AND the recon-driving dqcoeff
 /// are the trellis-adjusted values).
 #[allow(clippy::too_many_arguments)] // transform/quant inputs plus the scoped output callback
-fn with_inter_forward_quant_one_tx<R>(
+fn inter_forward_quant_one_tx_with_scratch<R>(
+    scratch: &mut InterEmitQuantScratch,
     residual: &[i16],
     tx_side: usize,
     plane_tx: TxSize,
@@ -8085,7 +8091,7 @@ fn with_inter_forward_quant_one_tx<R>(
     use rvp9_core::transforms::forward::{fdct8x8, fdct16x16, fdct32x32, fht4x4};
     use rvp9_core::transforms::scans::scan_for;
 
-    with_inter_emit_quant_scratch(|scratch| {
+    {
         let n = plane_tx.n_coeffs();
         match plane_tx {
             TxSize::Tx4x4 => {
@@ -8182,6 +8188,33 @@ fn with_inter_forward_quant_one_tx<R>(
             *output = i32::from(value);
         }
         operation(qcoeff, &scratch.coefs[..n], eob)
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
+fn with_inter_forward_quant_one_tx<R>(
+    residual: &[i16],
+    tx_side: usize,
+    plane_tx: TxSize,
+    quantizer: &rvp9_core::quant::forward::PlaneQuantizers,
+    plane_type: usize,
+    trellis: Option<TrellisCtx<'_>>,
+    quant_fp: bool,
+    operation: impl FnOnce(&[i16], &[i32], usize) -> R,
+) -> R {
+    INTER_EMIT_SCRATCH.with_borrow_mut(|scratch| {
+        inter_forward_quant_one_tx_with_scratch(
+            &mut scratch.quant,
+            residual,
+            tx_side,
+            plane_tx,
+            quantizer,
+            plane_type,
+            trellis,
+            quant_fp,
+            operation,
+        )
     })
 }
 
@@ -9390,7 +9423,7 @@ mod tests {
     #[test]
     fn inter_emit_residual_scratch_is_prefix_bounded_and_causal() {
         let run_small = || {
-            with_inter_emit_residual_scratch(8 * 8, |residual| {
+            with_inter_emit_scratch(8 * 8, |residual, _| {
                 assert_eq!(residual.len(), 8 * 8);
                 for (index, value) in residual.iter_mut().enumerate() {
                     *value = index as i16 - 31;
@@ -9399,9 +9432,9 @@ mod tests {
             })
         };
 
-        with_inter_emit_residual_scratch(32 * 32, |residual| residual.fill(i16::MAX));
+        with_inter_emit_scratch(32 * 32, |residual, _| residual.fill(i16::MAX));
         let after_positive = run_small();
-        with_inter_emit_residual_scratch(32 * 32, |residual| residual.fill(i16::MIN));
+        with_inter_emit_scratch(32 * 32, |residual, _| residual.fill(i16::MIN));
         let after_negative = run_small();
 
         assert_eq!(
