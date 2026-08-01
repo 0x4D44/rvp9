@@ -202,6 +202,20 @@ fn int_pro_row_clamped(
     let right = (base_x + chunk_width - plane_width).clamp(0, chunk_width) as usize;
     let middle_end = hbuf.len() - right;
 
+    #[cfg(target_arch = "aarch64")]
+    if left == 0 && right == 0 && !direct_y && matches!(height, 16 | 32 | 64) {
+        let start = base_x as usize;
+        crate::dsp::aarch64::vpx_int_pro_row_clamped_neon(
+            hbuf,
+            &plane.data[start..],
+            plane.stride,
+            plane.height,
+            base_y,
+            height,
+        );
+        return;
+    }
+
     if left != 0 {
         hbuf[..left].fill(sum_column(0));
     }

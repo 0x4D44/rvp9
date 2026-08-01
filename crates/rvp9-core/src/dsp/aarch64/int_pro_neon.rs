@@ -64,6 +64,67 @@ pub fn vpx_int_pro_row_neon(
 }
 
 #[target_feature(enable = "neon")]
+unsafe fn vpx_int_pro_row_clamped_neon_inner(
+    output: *mut i16,
+    reference: *const u8,
+    reference_stride: usize,
+    frame_height: usize,
+    base_y: i32,
+    height: usize,
+) {
+    let mut sum_lo_0 = vdupq_n_u16(0);
+    let mut sum_lo_1 = vdupq_n_u16(0);
+    let mut sum_hi_0 = vdupq_n_u16(0);
+    let mut sum_hi_1 = vdupq_n_u16(0);
+    for row in (0..height).step_by(4) {
+        let clamped_row = |offset: usize| {
+            (base_y + (row + offset) as i32).clamp(0, frame_height as i32 - 1) as usize
+        };
+        let row_0 = vld1q_u8(reference.add(clamped_row(0) * reference_stride));
+        let row_1 = vld1q_u8(reference.add(clamped_row(1) * reference_stride));
+        let row_2 = vld1q_u8(reference.add(clamped_row(2) * reference_stride));
+        let row_3 = vld1q_u8(reference.add(clamped_row(3) * reference_stride));
+        sum_lo_0 = vaddq_u16(sum_lo_0, vaddl_u8(vget_low_u8(row_0), vget_low_u8(row_1)));
+        sum_hi_0 = vaddq_u16(sum_hi_0, vaddl_u8(vget_high_u8(row_0), vget_high_u8(row_1)));
+        sum_lo_1 = vaddq_u16(sum_lo_1, vaddl_u8(vget_low_u8(row_2), vget_low_u8(row_3)));
+        sum_hi_1 = vaddq_u16(sum_hi_1, vaddl_u8(vget_high_u8(row_2), vget_high_u8(row_3)));
+    }
+    let shift = vdupq_n_s16(-((height >> 5) as i16 + 3));
+    let average_lo = vshlq_s16(vreinterpretq_s16_u16(vaddq_u16(sum_lo_0, sum_lo_1)), shift);
+    let average_hi = vshlq_s16(vreinterpretq_s16_u16(vaddq_u16(sum_hi_0, sum_hi_1)), shift);
+    vst1q_s16(output, average_lo);
+    vst1q_s16(output.add(8), average_hi);
+}
+
+/// Reduces 16 columns while replicating rows outside the visible frame.
+pub fn vpx_int_pro_row_clamped_neon(
+    output: &mut [i16],
+    reference: &[u8],
+    reference_stride: usize,
+    frame_height: usize,
+    base_y: i32,
+    height: usize,
+) {
+    assert_eq!(output.len(), 16);
+    assert!(matches!(height, 16 | 32 | 64));
+    assert!(frame_height > 0);
+    assert!(reference_stride >= 16);
+    assert!(reference.len() >= (frame_height - 1) * reference_stride + 16);
+    // SAFETY: the assertions prove every clamped 16-byte row load and both
+    // output stores. Lane sums remain below 64 * 255.
+    unsafe {
+        vpx_int_pro_row_clamped_neon_inner(
+            output.as_mut_ptr(),
+            reference.as_ptr(),
+            reference_stride,
+            frame_height,
+            base_y,
+            height,
+        );
+    }
+}
+
+#[target_feature(enable = "neon")]
 unsafe fn vpx_int_pro_col_neon_inner(reference: *const u8, width: usize) -> i32 {
     let mut sum = vpaddlq_u8(vld1q_u8(reference));
     let mut offset = 16usize;
