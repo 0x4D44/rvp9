@@ -63,6 +63,8 @@ pub const FRAME_BUFFERS: usize = REF_FRAMES + 1 + REFS_PER_FRAME;
 /// empty / freed buffer-pool slot.
 pub const INVALID_IDX: i32 = -1;
 
+pub(crate) type OwnedYuv420 = (Vec<u8>, Vec<u8>, Vec<u8>);
+
 /// One refcounted slot in the buffer pool. Mirrors libvpx's
 /// `RefCntBuffer` (`vp9_onyxc_int.h:64-91`) at field granularity that
 /// the encoder hot path actually reads — frame data, slot metadata,
@@ -514,6 +516,33 @@ impl RefFramePool {
         new_idx
     }
 
+    /// Exchange owned tight-stride reconstruction planes with a fresh slot.
+    ///
+    /// The returned vectors are the displaced unreferenced slot storage and
+    /// can be reused as next-frame scratch, so neither side is copied or
+    /// deallocated.
+    ///
+    /// # Panics
+    ///
+    /// Panics if any plane length differs from the configured 4:2:0 size.
+    pub(crate) fn exchange_new_frame(&mut self, recon: OwnedYuv420) -> (usize, OwnedYuv420) {
+        let expected_y = self.width * self.height;
+        let expected_uv = (self.width / 2) * (self.height / 2);
+        assert_eq!(recon.0.len(), expected_y, "owned Y plane size mismatch");
+        assert_eq!(recon.1.len(), expected_uv, "owned U plane size mismatch");
+        assert_eq!(recon.2.len(), expected_uv, "owned V plane size mismatch");
+
+        let new_idx = self.get_free_slot();
+        self.new_fb_idx = new_idx;
+        let p = &mut self.slots[new_idx];
+        let displaced = (
+            std::mem::replace(&mut p.y, recon.0),
+            std::mem::replace(&mut p.u, recon.1),
+            std::mem::replace(&mut p.v, recon.2),
+        );
+        (new_idx, displaced)
+    }
+
     /// libvpx `get_free_fb` analogue (`vp9_onyxc_int.h:332-347`): the
     /// first slot not currently held by any `ref_frame_map[]` entry.
     /// Falls back to `(new_fb_idx + 1) % REF_FRAMES` if every slot is
@@ -779,6 +808,31 @@ mod tests {
         // GOLDEN still holds the KF slot's pixels (0s — never written).
         let (gy, _, _) = pool.named_ref_planes(GOLDEN_REF);
         assert!(gy.iter().all(|&p| p == 0));
+    }
+
+    #[test]
+    fn exchange_commit_reuses_both_plane_allocations() {
+        let mut pool = RefFramePool::new(64, 64);
+        let y = vec![1u8; 64 * 64];
+        let u = vec![2u8; 32 * 32];
+        let v = vec![3u8; 32 * 32];
+        let input_pointers = (y.as_ptr(), u.as_ptr(), v.as_ptr());
+        let slot = pool.get_free_slot();
+        let displaced_pointers = (
+            pool.slots[slot].y.as_ptr(),
+            pool.slots[slot].u.as_ptr(),
+            pool.slots[slot].v.as_ptr(),
+        );
+
+        let (committed, displaced) = pool.exchange_new_frame((y, u, v));
+
+        assert_eq!(committed, slot);
+        assert_eq!(pool.slots[slot].y.as_ptr(), input_pointers.0);
+        assert_eq!(pool.slots[slot].u.as_ptr(), input_pointers.1);
+        assert_eq!(pool.slots[slot].v.as_ptr(), input_pointers.2);
+        assert_eq!(displaced.0.as_ptr(), displaced_pointers.0);
+        assert_eq!(displaced.1.as_ptr(), displaced_pointers.1);
+        assert_eq!(displaced.2.as_ptr(), displaced_pointers.2);
     }
 
     /// A10 PROOF — `0x03` (LAST + GOLDEN) refresh rotates both

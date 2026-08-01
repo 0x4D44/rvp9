@@ -1071,6 +1071,10 @@ pub struct StreamEncoder {
     /// retaining these buffers avoids allocating and zeroing four complete
     /// reconstructions and MV grids on every frame.
     inter_tile_scratch: Vec<InterTileScratch>,
+    /// Whole-frame reconstruction storage exchanged with each newly committed
+    /// reference-pool slot. `None` only after an interrupted encode; the next
+    /// attempt then allocates a replacement and restores the reuse cycle.
+    inter_recon_scratch: Option<crate::buffer_pool::OwnedYuv420>,
     rate_control: RateControl,
     frame_idx: u32,
     /// GOP topology — the libvpx-faithful golden-frame-group schedule
@@ -1625,6 +1629,11 @@ impl StreamEncoder {
             parallelism,
             frame_worker_pool,
             inter_tile_scratch,
+            inter_recon_scratch: Some((
+                vec![0u8; w * h],
+                vec![0u8; uvw * uvh],
+                vec![0u8; uvw * uvh],
+            )),
             rate_control,
             frame_idx: 0,
             gf_group,
@@ -2953,14 +2962,21 @@ impl StreamEncoder {
 
         // Save the previous reference for the simulator — the simulator
         // reads `last_recon_*` and writes the new recon into
-        // `recon_yuv_out`. We swap buffers via a scratch allocation.
+        // `recon_yuv_out`. Successful frames exchange this scratch with the
+        // pool's fresh slot. After an earlier encode error the scratch is
+        // absent, so allocate one replacement and restore the cycle.
         let w_us = w as usize;
         let h_us = h as usize;
         let uvw = w_us / 2;
         let uvh = h_us / 2;
-        let mut new_recon_y = vec![0u8; w_us * h_us];
-        let mut new_recon_u = vec![0u8; uvw * uvh];
-        let mut new_recon_v = vec![0u8; uvw * uvh];
+        let (mut new_recon_y, mut new_recon_u, mut new_recon_v) =
+            self.inter_recon_scratch.take().unwrap_or_else(|| {
+                (
+                    vec![0u8; w_us * h_us],
+                    vec![0u8; uvw * uvh],
+                    vec![0u8; uvw * uvh],
+                )
+            });
 
         // A18 — Evaluate libvpx's `use_prev_frame_mvs` gate
         // (`vp9_decodeframe.c:2983-2986`):
@@ -3620,16 +3636,19 @@ impl StreamEncoder {
         // A10 — commit the new reconstruction into a fresh pool slot and
         // rotate `ref_frame_map` per `refresh_flags` (libvpx
         // `update_reference_frames`, `vp9_encoder.c:3297-3349`).
-        // `commit_new_frame` picks a free slot (one not currently in the
-        // map), copies the reconstruction in, and sets `new_fb_idx`;
+        // `exchange_new_frame` picks a free slot (one not currently in the
+        // map), swaps in the reconstruction, and returns that slot's storage
+        // as next-frame scratch;
         // `update_reference_frames` then points every map entry whose
         // refresh bit is set (`0x01` LAST-only, or `0x03` LAST+GOLDEN) at
         // the new slot. This subsumes the prior explicit
         // `golden_recon.copy_from_slice(&last_recon)` GOLDEN-refresh
         // mirror — the map rotation does it by re-pointing
         // `ref_frame_map[GOLDEN_REF's idx]` at the committed slot.
-        self.ref_pool
-            .commit_new_frame((&new_recon_y, &new_recon_u, &new_recon_v));
+        let (_, displaced_recon) =
+            self.ref_pool
+                .exchange_new_frame((new_recon_y, new_recon_u, new_recon_v));
+        self.inter_recon_scratch = Some(displaced_recon);
         self.ref_pool.update_reference_frames(refresh_flags);
 
         // Reference-buffer split — mirror the just-committed post-LF
