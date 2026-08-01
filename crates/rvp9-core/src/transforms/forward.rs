@@ -135,7 +135,8 @@ pub fn fadst4(input: &[i32; 4], output: &mut [i32; 4]) {
 /// and final `(x + 1) >> 2` step mirror libvpx `vpx_fdct4x4_c`
 /// (`vpx_dsp/fwd_txfm.c:15-79`). The DC bump (`if i == 0 &&
 /// in_high[0] { ++in_high[0]; }`) is preserved verbatim.
-pub fn fdct4x4(input: &[i16], output: &mut [i32; 16], stride: usize) {
+#[cfg(any(not(target_arch = "aarch64"), test))]
+fn fdct4x4_scalar(input: &[i16], output: &mut [i32; 16], stride: usize) {
     debug_assert!(
         input.len() >= 3 * stride + 4,
         "input slice too small for 4x4 at stride {stride}"
@@ -200,6 +201,19 @@ pub fn fdct4x4(input: &[i16], output: &mut [i32; 16], stride: usize) {
     // Final scale-down: `(x + 1) >> 2` per `vpx_fdct4x4_c:73-78`.
     for slot in output.iter_mut() {
         *slot = wraplow((*slot + 1) >> 2);
+    }
+}
+
+/// Dispatch the 4x4 forward DCT to the exact AArch64 vector kernel when
+/// available, retaining [`fdct4x4_scalar`] as the portable oracle.
+pub fn fdct4x4(input: &[i16], output: &mut [i32; 16], stride: usize) {
+    #[cfg(target_arch = "aarch64")]
+    {
+        neon::fdct4x4(input, output, stride);
+    }
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        fdct4x4_scalar(input, output, stride);
     }
 }
 
@@ -2235,6 +2249,49 @@ mod tests {
         for (k, (&t, &w)) in out_tight.iter().zip(out_wide.iter()).enumerate() {
             assert_eq!(t, w, "pos {k}");
         }
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    #[test]
+    fn fdct4x4_neon_matches_scalar_valid_residuals() {
+        let mut state = 0x4d44_31a7_25c6_09bf_u64;
+        for case in 0..512 {
+            let stride = 4 + case % 17;
+            let mut residual = vec![0i16; 3 * stride + 4];
+            for row in 0..4 {
+                for column in 0..4 {
+                    state = state
+                        .wrapping_mul(6_364_136_223_846_793_005)
+                        .wrapping_add(1_442_695_040_888_963_407);
+                    residual[row * stride + column] = (((state >> 32) % 511) as i16) - 255;
+                }
+            }
+            let mut scalar = [0i32; 16];
+            let mut vector = [0i32; 16];
+            fdct4x4_scalar(&residual, &mut scalar, stride);
+            neon::fdct4x4(&residual, &mut vector, stride);
+            assert_eq!(
+                vector, scalar,
+                "random residual case {case}, stride {stride}"
+            );
+        }
+
+        for &value in &[-255i16, 0, 255] {
+            let residual = [value; 16];
+            let mut scalar = [0i32; 16];
+            let mut vector = [0i32; 16];
+            fdct4x4_scalar(&residual, &mut scalar, 4);
+            neon::fdct4x4(&residual, &mut vector, 4);
+            assert_eq!(vector, scalar, "constant residual {value}");
+        }
+
+        let alternating: [i16; 16] =
+            std::array::from_fn(|index| if index & 1 == 0 { -255 } else { 255 });
+        let mut scalar = [0i32; 16];
+        let mut vector = [0i32; 16];
+        fdct4x4_scalar(&alternating, &mut scalar, 4);
+        neon::fdct4x4(&alternating, &mut vector, 4);
+        assert_eq!(vector, scalar, "alternating extreme residual");
     }
 
     #[cfg(target_arch = "aarch64")]

@@ -1,4 +1,4 @@
-//! AArch64 NEON 8x8, 16x16, and 32x32 forward DCTs.
+//! AArch64 NEON 4x4, 8x8, 16x16, and 32x32 forward DCTs.
 //!
 //! The 16x16 and 32x32 first passes apply the scalar VP9 schedules to eight
 //! i16 lanes. Their second passes retain bounded opening stages before
@@ -747,6 +747,37 @@ unsafe fn transpose4(a: V, b: V, c: V, d: V) -> [V; 4] {
 }
 
 #[inline(always)]
+unsafe fn fdct4x4_pass(input: [V; 4]) -> [V; 4] {
+    let s0 = add(input[0], input[3]);
+    let s1 = add(input[1], input[2]);
+    let s2 = sub(input[1], input[2]);
+    let s3 = sub(input[0], input[3]);
+    let output0 = wrap16(mul_round(add(s0, s1), COSPI_16_64));
+    let output2 = wrap16(mul_round(sub(s0, s1), COSPI_16_64));
+    let output1 = wrap16(mul_add_round(s3, COSPI_8_64, s2, COSPI_24_64));
+    let output3 = wrap16(mul_add_round(s3, COSPI_24_64, s2, -COSPI_8_64));
+    transpose4(output0, output1, output2, output3)
+}
+
+#[target_feature(enable = "neon")]
+unsafe fn fdct4x4_inner(input: *const i16, output: *mut i32, stride: usize) {
+    let mut rows = [vdupq_n_s32(0); 4];
+    for (row, values) in rows.iter_mut().enumerate() {
+        *values = vshlq_n_s32::<4>(vmovl_s16(vld1_s16(input.add(row * stride))));
+    }
+    if *input != 0 {
+        rows[0] = vsetq_lane_s32::<0>(vgetq_lane_s32::<0>(rows[0]) + 1, rows[0]);
+    }
+    rows = fdct4x4_pass(rows);
+    rows = fdct4x4_pass(rows);
+    let one = vdupq_n_s32(1);
+    for (row, values) in rows.into_iter().enumerate() {
+        let reduced = wrap16(vshrq_n_s32::<2>(add(values, one)));
+        vst1q_s32(output.add(row * 4), reduced);
+    }
+}
+
+#[inline(always)]
 unsafe fn transpose8(mut rows: [V16; 8]) -> [V16; 8] {
     let ab0 = vtrn1q_s16(rows[0], rows[1]);
     let ab1 = vtrn2q_s16(rows[0], rows[1]);
@@ -1165,6 +1196,14 @@ pub(super) fn fdct16x16(input: &[i16], output: &mut [i32; 256], stride: usize) {
     // SAFETY: The bounds above prove every 4-value input load. `output`
     // provides all 256 destinations, and NEON is mandatory on AArch64.
     unsafe { fdct16x16_inner(input.as_ptr(), output.as_mut_ptr(), stride) };
+}
+
+pub(super) fn fdct4x4(input: &[i16], output: &mut [i32; 16], stride: usize) {
+    assert!(stride >= 4);
+    assert!(input.len() >= 3 * stride + 4);
+    // SAFETY: The bounds above prove every four-value input load. `output`
+    // provides all 16 destinations, and NEON is mandatory on AArch64.
+    unsafe { fdct4x4_inner(input.as_ptr(), output.as_mut_ptr(), stride) };
 }
 
 pub(super) fn fdct8x8(input: &[i16], output: &mut [i32; 64], stride: usize) {
