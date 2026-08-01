@@ -137,6 +137,8 @@ struct CandidatePredScratch {
     primary: [u8; 64 * 64],
     alternate: [u8; 64 * 64],
     residual: [i16; 32 * 32],
+    chroma_u: [u8; 32 * 32],
+    chroma_v: [u8; 32 * 32],
 }
 
 thread_local! {
@@ -149,6 +151,8 @@ thread_local! {
                 primary: [0; 64 * 64],
                 alternate: [0; 64 * 64],
                 residual: [0; 32 * 32],
+                chroma_u: [0; 32 * 32],
+                chroma_v: [0; 32 * 32],
             })
         };
 }
@@ -3148,6 +3152,8 @@ fn evaluate_candidate_with_filter_set(
                 primary,
                 alternate,
                 residual,
+                chroma_u,
+                chroma_v,
             } = &mut *scratch;
             let filters: &[InterpFilter; 2] = filter_set
                 .try_into()
@@ -3167,6 +3173,8 @@ fn evaluate_candidate_with_filter_set(
                 filter,
                 winner_pred,
                 residual,
+                chroma_u,
+                chroma_v,
                 Some(model),
             )
         })
@@ -3187,10 +3195,14 @@ fn evaluate_candidate_for_filter(
 ) -> InterModeSearchResult {
     CANDIDATE_PRED_SCRATCH.with_borrow_mut(|scratch| {
         let CandidatePredScratch {
-            primary, residual, ..
+            primary,
+            residual,
+            chroma_u,
+            chroma_v,
+            ..
         } = &mut *scratch;
         evaluate_candidate_for_filter_with_pred(
-            params, mode, mv, ref_mv, lambda, filter, primary, residual, None,
+            params, mode, mv, ref_mv, lambda, filter, primary, residual, chroma_u, chroma_v, None,
         )
     })
 }
@@ -3205,6 +3217,8 @@ fn evaluate_candidate_for_filter_with_pred(
     filter: InterpFilter,
     pred: &mut [u8; 64 * 64],
     residual: &mut [i16; 32 * 32],
+    pred_u: &mut [u8; 32 * 32],
+    pred_v: &mut [u8; 32 * 32],
     precomputed_model: Option<ModelRdResult>,
 ) -> InterModeSearchResult {
     let bw = usize::from(params.block_size.width());
@@ -3547,9 +3561,8 @@ fn evaluate_candidate_for_filter_with_pred(
             col: mv.col / 2,
         };
 
-        // Build UV MC predictions into scratch buffers.
-        let mut pred_u = [0u8; 32 * 32];
-        let mut pred_v = [0u8; 32 * 32];
+        // Build UV MC predictions into per-worker scratch. Each predictor
+        // overwrites the complete active prefix consumed by model-RD.
         {
             let ref_u_plane = PlaneRef {
                 data: params.ref_u,
@@ -3565,7 +3578,7 @@ fn evaluate_candidate_for_filter_with_pred(
                 uv_mv,
                 uv_bw,
                 uv_bh,
-                &mut pred_u,
+                pred_u,
                 uv_bw,
                 filter,
             );
@@ -3585,7 +3598,7 @@ fn evaluate_candidate_for_filter_with_pred(
                 uv_mv,
                 uv_bw,
                 uv_bh,
-                &mut pred_v,
+                pred_v,
                 uv_bw,
                 filter,
             );
@@ -3598,11 +3611,11 @@ fn evaluate_candidate_for_filter_with_pred(
         let uv_rd = model_rd_for_sb_uv(ModelRdUvInput {
             src_u: &params.src_u[src_u_start..],
             src_u_stride: params.uv_stride,
-            pred_u: &pred_u,
+            pred_u,
             pred_u_stride: uv_bw,
             src_v: &params.src_v[src_v_start..],
             src_v_stride: params.uv_stride,
-            pred_v: &pred_v,
+            pred_v,
             pred_v_stride: uv_bw,
             bw,
             bh, // luma dimensions — halved internally
@@ -5011,9 +5024,21 @@ mod tests {
             width: pw,
             height: ph,
         };
+        let uv_src = make_plane(pw / 2, ph / 2, 37);
+        let uv_ref = make_plane(pw / 2, ph / 2, 113);
         let harness = TestHarness::new(pw, 50);
         let mvc = MvCandidates::default();
-        let small = make_params(
+        let with_chroma = |params| InterModeSearchParams {
+            src_u: &uv_src,
+            src_v: &uv_src,
+            ref_u: &uv_ref,
+            ref_v: &uv_ref,
+            uv_stride: pw / 2,
+            uv_dc_quant: 73,
+            uv_ac_quant: 91,
+            ..params
+        };
+        let small = with_chroma(make_params(
             &harness,
             BlockSize::Block16x16,
             &src_plane,
@@ -5022,8 +5047,8 @@ mod tests {
             &mvc,
             MvLimits::new(-32, 32, -32, 32),
             50,
-        );
-        let large = make_params(
+        ));
+        let large = with_chroma(make_params(
             &harness,
             BlockSize::Block64x64,
             &src_plane,
@@ -5032,7 +5057,7 @@ mod tests {
             &mvc,
             MvLimits::new(-32, 32, -32, 32),
             50,
-        );
+        ));
         let lambda = compute_rd_mult(50, frame_type_for_rd(small.frame_kind));
 
         let before = evaluate_candidate_for_filter(
