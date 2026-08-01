@@ -3123,6 +3123,14 @@ impl StreamEncoder {
             let s2_frame_gate = rvp9_core::mode_decision::inter::frame_s2_gate();
             let mut result_slots: Vec<Option<InterTileJobResult>> =
                 (0..tile_count).map(|_| None).collect();
+            // Let tile 0 render into the allocation that will become the
+            // merged reconstruction. After the jobs finish we exchange it
+            // back and copy only the other disjoint tile columns over it.
+            // The displaced output allocation remains tile 0's reusable
+            // scratch, so neither side loses its capacity.
+            std::mem::swap(&mut new_recon_y, &mut self.inter_tile_scratch[0].recon_y);
+            std::mem::swap(&mut new_recon_u, &mut self.inter_tile_scratch[0].recon_u);
+            std::mem::swap(&mut new_recon_v, &mut self.inter_tile_scratch[0].recon_v);
             let tile_scratch = &mut self.inter_tile_scratch;
             self.frame_worker_pool
                 .as_mut()
@@ -3188,6 +3196,9 @@ impl StreamEncoder {
                         });
                     }
                 });
+            std::mem::swap(&mut new_recon_y, &mut tile_scratch[0].recon_y);
+            std::mem::swap(&mut new_recon_u, &mut tile_scratch[0].recon_u);
+            std::mem::swap(&mut new_recon_v, &mut tile_scratch[0].recon_v);
             let tile_results: Vec<InterTileJobResult> = result_slots
                 .into_iter()
                 .enumerate()
@@ -3236,19 +3247,21 @@ impl StreamEncoder {
                         }
                     }
                 }
-                for row in 0..h as usize {
-                    let start = row * w as usize + bounds.mi_col_start * 8;
-                    let end = row * w as usize + bounds.mi_col_end * 8;
-                    new_recon_y[start..end].copy_from_slice(&scratch.recon_y[start..end]);
-                }
-                let uv_width = w as usize / 2;
-                let uv_col_start = bounds.mi_col_start * 4;
-                let uv_col_end = bounds.mi_col_end * 4;
-                for row in 0..h as usize / 2 {
-                    let start = row * uv_width + uv_col_start;
-                    let end = row * uv_width + uv_col_end;
-                    new_recon_u[start..end].copy_from_slice(&scratch.recon_u[start..end]);
-                    new_recon_v[start..end].copy_from_slice(&scratch.recon_v[start..end]);
+                if tile_col != 0 {
+                    for row in 0..h as usize {
+                        let start = row * w as usize + bounds.mi_col_start * 8;
+                        let end = row * w as usize + bounds.mi_col_end * 8;
+                        new_recon_y[start..end].copy_from_slice(&scratch.recon_y[start..end]);
+                    }
+                    let uv_width = w as usize / 2;
+                    let uv_col_start = bounds.mi_col_start * 4;
+                    let uv_col_end = bounds.mi_col_end * 4;
+                    for row in 0..h as usize / 2 {
+                        let start = row * uv_width + uv_col_start;
+                        let end = row * uv_width + uv_col_end;
+                        new_recon_u[start..end].copy_from_slice(&scratch.recon_u[start..end]);
+                        new_recon_v[start..end].copy_from_slice(&scratch.recon_v[start..end]);
+                    }
                 }
                 for row in 0..mi_rows_us {
                     let start = row * mi_cols_us + bounds.mi_col_start;
