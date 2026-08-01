@@ -2495,8 +2495,10 @@ const INTRA_IN_INTER_MODES: [IntraMode; 3] = [IntraMode::Dc, IntraMode::V, Intra
 ///    edges provided in `params.intra_{above,left}_pixels`.
 /// 2. Runs `model_rd_for_sb_y` to estimate variance-domain rate/dist
 ///    and detect skip-txfm blocks.
-/// 3. When `skip_txfm != AcDc`, runs the full DCT round-trip via
-///    `reconstruct_via_round_trip` for the coefficient-aware RD.
+/// 3. Under realtime model-only calibration, reuses the luma model for
+///    blocks below 32x32, matching libvpx `use_simple_block_yrd`; other
+///    non-skipped candidates run the full DCT round-trip via
+///    `reconstruct_via_round_trip` for coefficient-aware RD.
 /// 4. Computes `rate = model_rd_rate + coef_rate + skip_cost +
 ///    mbmode_cost + intra_cost_penalty + ref_frame_cost_intra`.
 /// 5. Returns the best intra candidate as a [`PickInterModeResult`]
@@ -2695,7 +2697,8 @@ fn evaluate_intra_fallback_with_scratch(
                 tx_mode,
             });
 
-            // 3. DCT round-trip (or skip).
+            // 3. Reuse the realtime luma model, run the DCT round-trip,
+            // or take the all-zero model skip.
             let by = if mrd.skip_txfm == SkipTxfm::AcDc {
                 // Intra path is out of S2/S3 scope (HLD §5): keep the AcDc
                 // short-circuit and its all-zero result. `dct_eob_total` is
@@ -2704,6 +2707,19 @@ fn evaluate_intra_fallback_with_scratch(
                     coef_rate: 0,
                     coef_dist: 0,
                     skippable: true,
+                    dct_eob_total: 0,
+                }
+            } else if params.rd_calibration.model_only && params.block_size < BlockSize::Block32x32
+            {
+                // Pinned libvpx's cpu-used >= 7 `use_simple_block_yrd`
+                // path returns the already-computed luma model for non-key
+                // blocks below 32x32. Intra-in-inter candidates run under
+                // that same speed feature, so avoid a second Hadamard/DCT
+                // pass here just as the inter-candidate path does.
+                BlockYrdResult {
+                    coef_rate: mrd.rate.max(0) as u64,
+                    coef_dist: mrd.dist,
+                    skippable: false,
                     dct_eob_total: 0,
                 }
             } else {
@@ -6835,6 +6851,101 @@ mod tests {
             disabled,
             "disabled intra fallback must not inspect neighbour pixels"
         );
+    }
+
+    #[test]
+    fn realtime_intra_fallback_reuses_luma_model_below_32x32() {
+        let pw = 64;
+        let ph = 64;
+        let src_data = make_plane(pw, ph, 0x51a7);
+        let ref_data = make_plane(pw, ph, 0x927d);
+        let src_plane = PlaneRef {
+            data: &src_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let ref_plane = PlaneRef {
+            data: &ref_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let harness = TestHarness::new(pw, 20);
+        let fc = FrameContext::new_default();
+        let intra_y_costs = crate::cost::symbol_costs::intra_y_mode_costs_inter(&fc)[0];
+        let mvc = MvCandidates::default();
+        let above = [73u8; 64];
+        let left = [181u8; 64];
+        let mut params = make_dual_ref_params(
+            &harness,
+            &intra_y_costs,
+            BlockSize::Block16x16,
+            &src_plane,
+            &ref_plane,
+            (16, 16),
+            &mvc,
+            &mvc,
+            MvLimits::new(-4, 4, -4, 4),
+            20,
+        );
+        params.intra_above_pixels = Some(&above);
+        params.intra_left_pixels = Some(&left);
+        params.intra_top_left_pixel = 127;
+        params.rt_intra_dc_only_low_content = true;
+
+        let lambda = compute_rd_mult(20, frame_type_for_rd(params.frame_kind));
+        let penalty = get_intra_cost_penalty(params.q_index, params.block_size);
+        let control = evaluate_intra_fallback(&params, lambda, penalty, i64::MAX)
+            .expect("compatibility calibration must evaluate DC intra");
+        assert!(
+            control.dct_eob_total > 0,
+            "the control must exercise the duplicate transform path"
+        );
+
+        params.rd_calibration = InterRdCalibration::realtime();
+        let realtime = evaluate_intra_fallback(&params, lambda, penalty, i64::MAX)
+            .expect("realtime calibration must evaluate DC intra");
+
+        let mut pred = [0u8; 64 * 64];
+        intra_predict(
+            IntraMode::Dc,
+            &mut pred[..16 * 16],
+            16,
+            16,
+            PredCtx {
+                above: &above[..32],
+                left: &left[..16],
+                above_left: 127,
+            },
+            DcAvailability {
+                above_available: true,
+                left_available: true,
+            },
+            crate::dsp::get_ref(),
+        );
+        let dc_zbin = i64::from(harness.quantizer.zbin[0]);
+        let ac_zbin = i64::from(harness.quantizer.zbin[1]);
+        let model = model_rd_for_sb_y(ModelRdYInput {
+            src: &src_plane.data[16 * src_plane.stride + 16..],
+            src_stride: src_plane.stride,
+            pred: &pred,
+            pred_stride: 16,
+            bw: 16,
+            bh: 16,
+            bsize: BlockSize::Block16x16,
+            dc_quant: harness.quantizer.dequant[0] as u32,
+            ac_quant: harness.quantizer.dequant[1] as u32,
+            dc_thr: (dc_zbin * dc_zbin) >> 6,
+            ac_thr: (ac_zbin * ac_zbin) >> 6,
+            tx_mode: TxMode::TxModeSelect,
+        });
+        assert_ne!(model.skip_txfm, SkipTxfm::AcDc);
+        assert_eq!(realtime.picked_intra_mode, Some(IntraMode::Dc));
+        assert_eq!(realtime.picked_tx_size, model.tx_size);
+        assert_eq!(realtime.coef_rate, model.rate.max(0) as u64);
+        assert_eq!(realtime.coef_dist, model.dist);
+        assert_eq!(realtime.dct_eob_total, 0);
     }
 
     #[test]
