@@ -2846,7 +2846,7 @@ impl StreamEncoder {
                 .named_ref_planes(crate::buffer_pool::LAST_REF)
                 .0
         };
-        let sb_partitions_intra_shape = choose_partitions_for_frame(FramePartitionInput {
+        let partition_input = FramePartitionInput {
             width_px: w as usize,
             height_px: h as usize,
             q_index,
@@ -2864,60 +2864,16 @@ impl StreamEncoder {
             // `noise_sensitivity == 0`); returns 2 or 4 on noisier
             // input and broadens the threshold ladder accordingly.
             noise_threshold_scale: self.pre_analysis.vbp_threshold_scale(),
-        });
-
-        // Convert the intra-shaped partition descriptors into inter-
-        // shaped ones (picker fields default to ZEROMV / Mv::ZERO and
-        // are overwritten by the simulator).
-        let sb_cols = mi_cols_us / 8;
-        let mut sb_partitions: Vec<Vec<InterPartitionLeafDesc>> = sb_partitions_intra_shape
-            .iter()
-            .enumerate()
-            .map(|(sb_idx, leaves)| {
-                let sb_row = sb_idx / sb_cols;
-                let sb_col = sb_idx - sb_row * sb_cols;
-                leaves
-                    .iter()
-                    .map(|l| {
-                        // AQ.3 — project the seg_map onto this leaf
-                        // by sampling the top-left mi cell. Cyclic
-                        // refresh paints whole SBs uniformly so the
-                        // top-left is exact for any leaf inside the
-                        // SB.
-                        let leaf_mi_row = sb_row * 8 + l.mi_row_in_sb;
-                        let leaf_mi_col = sb_col * 8 + l.mi_col_in_sb;
-                        let seg_id = seg_map[leaf_mi_row * mi_cols_us + leaf_mi_col];
-                        InterPartitionLeafDesc {
-                            mi_row_in_sb: l.mi_row_in_sb,
-                            mi_col_in_sb: l.mi_col_in_sb,
-                            leaf_bsize: l.leaf_bsize,
-                            picked_mode: InterMode::ZeroMv,
-                            picked_mv: Mv::ZERO,
-                            skip: true,
-                            segment_id: seg_id,
-                            // A15 Phase B — default picked ref to LAST.
-                            // The picker overwrites this per-leaf when
-                            // it iterates {LAST, GOLDEN} below; skip-
-                            // fallback leaves retain LAST (matches A14).
-                            picked_ref_frame: RefFrame::LastFrame,
-                            // F.5 — default to EightTap; the picker
-                            // overwrites this when it runs the
-                            // per-block filter loop. Skip-fallback
-                            // leaves keep `EightTap`, matching the
-                            // pre-F.5 hard-coded default.
-                            picked_interp_filter:
-                                rvp9_core::bitstream::frame::InterpFilter::EightTap,
-                            picked_intra_mode: None,
-                            picked_ref_frame2: RefFrame::NoRefFrame,
-                            picked_mv2: Mv::ZERO,
-                            // Track-F iter7 — default to max; the
-                            // simulator's TX-size RD loop overwrites it.
-                            picked_tx_size: max_txsize(l.leaf_bsize),
-                        }
-                    })
-                    .collect()
-            })
-            .collect();
+        };
+        let parallel_tile_picker = log2_tile_cols > 0 && self.parallelism.max_threads > 1;
+        let mut sb_partitions = if parallel_tile_picker {
+            (0..(h as usize / 64) * (w as usize / 64))
+                .map(|_| Vec::new())
+                .collect()
+        } else {
+            let intra_partitions = choose_partitions_for_frame(partition_input);
+            inter_partitions_from_intra_shape(&intra_partitions, &seg_map, mi_cols_us)
+        };
 
         // Save the previous reference for the simulator — the simulator
         // reads `last_recon_*` and writes the new recon into
@@ -3159,7 +3115,6 @@ impl StreamEncoder {
             // it touches. Results are collected and merged in column order,
             // so scheduling cannot affect the packet or persistent encoder
             // state.
-            let initial_partitions = &sb_partitions;
             let initial_rd_tables = self.rd_thresh_tables.clone();
             let initial_history = std::env::var_os("RVP9_EXACT_VBP_TREE")
                 .is_some_and(|value| value != "0")
@@ -3188,18 +3143,21 @@ impl StreamEncoder {
                         );
                         let sb_col_start = bounds.mi_col_start / 8;
                         let sb_col_end = bounds.mi_col_end / 8;
-                        let mut tile_partitions: Vec<Vec<InterPartitionLeafDesc>> =
-                            (0..initial_partitions.len()).map(|_| Vec::new()).collect();
-                        for sb_row in 0..h as usize / 64 {
-                            for sb_col in sb_col_start..sb_col_end {
-                                let sb_idx = sb_row * sb_cols + sb_col;
-                                tile_partitions[sb_idx] = initial_partitions[sb_idx].clone();
-                            }
-                        }
                         let mut tile_rd_tables = initial_rd_tables.clone();
                         let mut tile_history = initial_history.clone();
+                        let seg_map = seg_map.as_slice();
                         scope.submit(move || {
                             rvp9_core::mode_decision::inter::set_frame_s2_gate(s2_frame_gate);
+                            let mut tile_partitions = choose_mapped_partitions_for_sb_cols(
+                                partition_input,
+                                sb_col_start..sb_col_end,
+                                |decision, sb_row, sb_col| {
+                                    let leaves = leaves_from_decision(decision);
+                                    inter_leaves_from_intra(
+                                        &leaves, sb_row, sb_col, seg_map, mi_cols_us,
+                                    )
+                                },
+                            );
                             let mut tile_split_stats = NonRdSplitStats::default();
                             let tile_encode = run_inter_picker!(
                                 &mut scratch.recon_y,
@@ -4433,6 +4391,7 @@ fn capture_diag_prelf_recon(
 /// a flat-128 fallback when `is_keyframe = true`); for inter frames
 /// `ref_y` must point at the previous-frame's Y reconstruction
 /// (LASTFRAME under our zero-MV mode).
+#[derive(Clone, Copy)]
 struct FramePartitionInput<'a> {
     width_px: usize,
     height_px: usize,
@@ -4450,6 +4409,26 @@ struct FramePartitionInput<'a> {
 }
 
 fn choose_partitions_for_frame(input: FramePartitionInput<'_>) -> Vec<Vec<PartitionLeafDesc>> {
+    choose_partitions_for_sb_cols(input, 0..input.width_px / 64)
+}
+
+fn choose_partitions_for_sb_cols(
+    input: FramePartitionInput<'_>,
+    sb_col_range: std::ops::Range<usize>,
+) -> Vec<Vec<PartitionLeafDesc>> {
+    choose_mapped_partitions_for_sb_cols(input, sb_col_range, |decision, _, _| {
+        leaves_from_decision(decision)
+    })
+}
+
+fn choose_mapped_partitions_for_sb_cols<T, F>(
+    input: FramePartitionInput<'_>,
+    sb_col_range: std::ops::Range<usize>,
+    mut map_decision: F,
+) -> Vec<Vec<T>>
+where
+    F: FnMut(&PartitionDecision, usize, usize) -> Vec<T>,
+{
     let FramePartitionInput {
         width_px,
         height_px,
@@ -4462,7 +4441,7 @@ fn choose_partitions_for_frame(input: FramePartitionInput<'_>) -> Vec<Vec<Partit
     } = input;
     let sb_cols = width_px / 64;
     let sb_rows = height_px / 64;
-    let mut out: Vec<Vec<PartitionLeafDesc>> = Vec::with_capacity(sb_rows * sb_cols);
+    let mut out: Vec<Vec<T>> = (0..sb_rows * sb_cols).map(|_| Vec::new()).collect();
 
     let src_plane = PlaneRef {
         data: src_y,
@@ -4481,8 +4460,9 @@ fn choose_partitions_for_frame(input: FramePartitionInput<'_>) -> Vec<Vec<Partit
     let vbp_qindex = vbp_qindex_for_partition(q_index, is_keyframe);
     let vbp_avg_inter_qindex = vbp_avg_inter_qindex_for_partition(avg_inter_qindex, is_keyframe);
 
+    debug_assert!(sb_col_range.end <= sb_cols);
     for sb_row in 0..sb_rows {
-        for sb_col in 0..sb_cols {
+        for sb_col in sb_col_range.clone() {
             let params = PartitionSearchParams {
                 src_plane: &src_plane,
                 src_offset_xy: (sb_col * 64, sb_row * 64),
@@ -4525,10 +4505,61 @@ fn choose_partitions_for_frame(input: FramePartitionInput<'_>) -> Vec<Vec<Partit
                     );
                 }
             }
-            out.push(leaves_from_decision(&decision));
+            out[sb_row * sb_cols + sb_col] = map_decision(&decision, sb_row, sb_col);
         }
     }
     out
+}
+
+fn inter_partitions_from_intra_shape(
+    intra_partitions: &[Vec<PartitionLeafDesc>],
+    seg_map: &[u8],
+    mi_cols: usize,
+) -> Vec<Vec<InterPartitionLeafDesc>> {
+    let sb_cols = mi_cols / 8;
+    intra_partitions
+        .iter()
+        .enumerate()
+        .map(|(sb_idx, leaves)| {
+            let sb_row = sb_idx / sb_cols;
+            let sb_col = sb_idx - sb_row * sb_cols;
+            inter_leaves_from_intra(leaves, sb_row, sb_col, seg_map, mi_cols)
+        })
+        .collect()
+}
+
+fn inter_leaves_from_intra(
+    leaves: &[PartitionLeafDesc],
+    sb_row: usize,
+    sb_col: usize,
+    seg_map: &[u8],
+    mi_cols: usize,
+) -> Vec<InterPartitionLeafDesc> {
+    leaves
+        .iter()
+        .map(|leaf| {
+            // AQ.3 — cyclic refresh paints whole SBs uniformly, so
+            // sampling the leaf's top-left mi cell is exact.
+            let leaf_mi_row = sb_row * 8 + leaf.mi_row_in_sb;
+            let leaf_mi_col = sb_col * 8 + leaf.mi_col_in_sb;
+            let segment_id = seg_map[leaf_mi_row * mi_cols + leaf_mi_col];
+            InterPartitionLeafDesc {
+                mi_row_in_sb: leaf.mi_row_in_sb,
+                mi_col_in_sb: leaf.mi_col_in_sb,
+                leaf_bsize: leaf.leaf_bsize,
+                picked_mode: InterMode::ZeroMv,
+                picked_mv: Mv::ZERO,
+                skip: true,
+                segment_id,
+                picked_ref_frame: RefFrame::LastFrame,
+                picked_interp_filter: rvp9_core::bitstream::frame::InterpFilter::EightTap,
+                picked_intra_mode: None,
+                picked_ref_frame2: RefFrame::NoRefFrame,
+                picked_mv2: Mv::ZERO,
+                picked_tx_size: max_txsize(leaf.leaf_bsize),
+            }
+        })
+        .collect()
 }
 
 fn vbp_qindex_for_partition(q_index: u8, is_keyframe: bool) -> u8 {
