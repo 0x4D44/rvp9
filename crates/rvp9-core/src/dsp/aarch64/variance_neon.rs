@@ -1,4 +1,4 @@
-//! NEON variance `(sum, sse)` reductions for VP9's 8/16/32/64-wide blocks.
+//! NEON variance `(sum, sse)` reductions for VP9's 4/8/16/32/64-wide blocks.
 //!
 //! The inter RD model consumes the integer-exact residual sum and squared
 //! error before applying its scalar variance finisher. These kernels mirror
@@ -129,6 +129,88 @@ unsafe fn var_sum_sse_dotprod_inner(
         )))),
         u64::from(vaddvq_u32(sse)),
     )
+}
+
+#[inline]
+#[target_feature(enable = "neon")]
+unsafe fn load_four_4byte_rows(src: *const u8, stride: usize) -> uint8x16_t {
+    let mut rows = vdupq_n_u32(0);
+    rows = vsetq_lane_u32::<0>(core::ptr::read_unaligned(src.cast()), rows);
+    rows = vsetq_lane_u32::<1>(core::ptr::read_unaligned(src.add(stride).cast()), rows);
+    rows = vsetq_lane_u32::<2>(core::ptr::read_unaligned(src.add(2 * stride).cast()), rows);
+    rows = vsetq_lane_u32::<3>(core::ptr::read_unaligned(src.add(3 * stride).cast()), rows);
+    vreinterpretq_u8_u32(rows)
+}
+
+#[target_feature(enable = "dotprod")]
+unsafe fn var_sum_sse_4_dotprod_inner(
+    src: *const u8,
+    src_stride: usize,
+    pred: *const u8,
+    pred_stride: usize,
+    height: usize,
+) -> (i64, u64) {
+    let mut src_sum = vdupq_n_u32(0);
+    let mut pred_sum = vdupq_n_u32(0);
+    let mut sse = vdupq_n_u32(0);
+    let ones = vdupq_n_u8(1);
+
+    for row in (0..height).step_by(4) {
+        let src_bytes = load_four_4byte_rows(src.add(row * src_stride), src_stride);
+        let pred_bytes = load_four_4byte_rows(pred.add(row * pred_stride), pred_stride);
+        let diff = vabdq_u8(src_bytes, pred_bytes);
+        sse = unsigned_dot(sse, diff, diff);
+        src_sum = unsigned_dot(src_sum, src_bytes, ones);
+        pred_sum = unsigned_dot(pred_sum, pred_bytes, ones);
+    }
+
+    (
+        i64::from(vaddvq_s32(vreinterpretq_s32_u32(vsubq_u32(
+            src_sum, pred_sum,
+        )))),
+        u64::from(vaddvq_u32(sse)),
+    )
+}
+
+fn var_sum_sse_4_dotprod(
+    src: &[u8],
+    src_stride: usize,
+    pred: &[u8],
+    pred_stride: usize,
+    height: usize,
+) -> (i64, u64) {
+    assert!(matches!(height, 4 | 8));
+    assert!(src_stride >= 4);
+    assert!(pred_stride >= 4);
+    assert!(src.len() >= (height - 1) * src_stride + 4);
+    assert!(pred.len() >= (height - 1) * pred_stride + 4);
+
+    // SAFETY: Dispatch installs these wrappers only when dotprod is present.
+    // Exact-width unaligned 32-bit loads consume four live bytes per row;
+    // four rows are packed before each dot-product reduction.
+    unsafe {
+        var_sum_sse_4_dotprod_inner(src.as_ptr(), src_stride, pred.as_ptr(), pred_stride, height)
+    }
+}
+
+/// Dot-product `(sum, sse)` reduction for a 4x4 block.
+pub fn var_sum_sse_4x4_dotprod(
+    src: &[u8],
+    src_stride: usize,
+    pred: &[u8],
+    pred_stride: usize,
+) -> (i64, u64) {
+    var_sum_sse_4_dotprod(src, src_stride, pred, pred_stride, 4)
+}
+
+/// Dot-product `(sum, sse)` reduction for a 4x8 block.
+pub fn var_sum_sse_4x8_dotprod(
+    src: &[u8],
+    src_stride: usize,
+    pred: &[u8],
+    pred_stride: usize,
+) -> (i64, u64) {
+    var_sum_sse_4_dotprod(src, src_stride, pred, pred_stride, 8)
 }
 
 /// Generic safe NEON `(sum, sse)` reduction.
@@ -272,6 +354,8 @@ mod tests {
     use crate::dsp::distortion;
 
     const SIZES: &[(BlockSize, usize, usize)] = &[
+        (BlockSize::Block4x4, 4, 4),
+        (BlockSize::Block4x8, 4, 8),
         (BlockSize::Block8x4, 8, 4),
         (BlockSize::Block8x8, 8, 8),
         (BlockSize::Block8x16, 8, 16),
@@ -284,6 +368,36 @@ mod tests {
         (BlockSize::Block64x32, 64, 32),
         (BlockSize::Block64x64, 64, 64),
     ];
+
+    fn neon_for_shape(
+        src: &[u8],
+        src_stride: usize,
+        pred: &[u8],
+        pred_stride: usize,
+        width: usize,
+        height: usize,
+    ) -> (i64, u64) {
+        if width == 4 {
+            distortion::var_sum_sse(src, src_stride, pred, pred_stride, width, height)
+        } else {
+            var_sum_sse_neon(src, src_stride, pred, pred_stride, width, height)
+        }
+    }
+
+    fn dotprod_for_shape(
+        src: &[u8],
+        src_stride: usize,
+        pred: &[u8],
+        pred_stride: usize,
+        width: usize,
+        height: usize,
+    ) -> (i64, u64) {
+        match (width, height) {
+            (4, 4) => var_sum_sse_4x4_dotprod(src, src_stride, pred, pred_stride),
+            (4, 8) => var_sum_sse_4x8_dotprod(src, src_stride, pred, pred_stride),
+            _ => var_sum_sse_dotprod(src, src_stride, pred, pred_stride, width, height),
+        }
+    }
 
     struct Lcg32(u32);
 
@@ -308,12 +422,12 @@ mod tests {
                     .map(|_| rng.byte())
                     .collect();
                 assert_eq!(
-                    var_sum_sse_neon(&src, src_stride, &pred, pred_stride, width, height),
+                    neon_for_shape(&src, src_stride, &pred, pred_stride, width, height),
                     distortion::var_sum_sse(&src, src_stride, &pred, pred_stride, width, height),
                     "mismatch at {width}x{height}, stride jitter {jitter}"
                 );
                 assert_eq!(
-                    var_sum_sse_dotprod(&src, src_stride, &pred, pred_stride, width, height),
+                    dotprod_for_shape(&src, src_stride, &pred, pred_stride, width, height),
                     distortion::var_sum_sse(&src, src_stride, &pred, pred_stride, width, height),
                     "dotprod mismatch at {width}x{height}, stride jitter {jitter}"
                 );
@@ -330,12 +444,12 @@ mod tests {
                 let src = vec![src_value; (height - 1) * src_stride + width];
                 let pred = vec![pred_value; (height - 1) * pred_stride + width];
                 assert_eq!(
-                    var_sum_sse_neon(&src, src_stride, &pred, pred_stride, width, height),
+                    neon_for_shape(&src, src_stride, &pred, pred_stride, width, height),
                     distortion::var_sum_sse(&src, src_stride, &pred, pred_stride, width, height),
                     "edge mismatch at {width}x{height}, {src_value} vs {pred_value}"
                 );
                 assert_eq!(
-                    var_sum_sse_dotprod(&src, src_stride, &pred, pred_stride, width, height),
+                    dotprod_for_shape(&src, src_stride, &pred, pred_stride, width, height),
                     distortion::var_sum_sse(&src, src_stride, &pred, pred_stride, width, height),
                     "dotprod edge mismatch at {width}x{height}, {src_value} vs {pred_value}"
                 );

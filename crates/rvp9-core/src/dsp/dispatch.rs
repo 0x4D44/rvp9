@@ -2345,8 +2345,16 @@ impl SimdDispatch {
             }
             VarTable {
                 fns: [
-                    sc::var_sum_sse_4x4 as VarFn,
-                    sc::var_sum_sse_4x8,
+                    var_slot!(
+                        sc::var_sum_sse_4x4,
+                        sc::var_sum_sse_4x4,
+                        neon::var_sum_sse_4x4_dotprod
+                    ),
+                    var_slot!(
+                        sc::var_sum_sse_4x8,
+                        sc::var_sum_sse_4x8,
+                        neon::var_sum_sse_4x8_dotprod
+                    ),
                     var_slot!(
                         sc::var_sum_sse_8x4,
                         neon::var_sum_sse_8x4_neon,
