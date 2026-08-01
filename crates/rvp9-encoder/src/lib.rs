@@ -3412,10 +3412,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     use rvp9_core::cost::symbol_costs::{
         inter_mode_costs, partition_costs, switchable_interp_costs,
     };
+    use rvp9_core::inter::get_pred_context_switchable_interp;
     use rvp9_core::inter::mv_ref::{
         BlockBounds, find_last_golden_nearest_near_mvs_with_context, find_nearest_near_mvs,
     };
-    use rvp9_core::inter::{get_mode_context, get_pred_context_switchable_interp};
     use rvp9_core::mode_decision::inter::{
         InterModeSearchParams, MvCandidates, PickInterModeParams, pick_inter_mode,
     };
@@ -4600,23 +4600,26 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         leaf_mi_col,
                         current_tile,
                     );
-                    let inter_mode_ctx = get_mode_context(bs, &neighbours);
                     let leaf_prev_mv: Option<PrevFrameMvRef> = prev_mv_grid
                         .and_then(|g| g.get(leaf_mi_row * mi_cols_us + leaf_mi_col).copied());
-                    let build_mvc = |rf: RefFrame| -> MvCandidates {
-                        let (nearest, near) = find_nearest_near_mvs(
-                            bs,
-                            rf,
-                            &neighbours,
-                            &sign_bias,
-                            &bounds,
-                            leaf_prev_mv,
-                            allow_hp,
-                        );
-                        MvCandidates { nearest, near }
+                    let realtime_mv_context = find_last_golden_nearest_near_mvs_with_context(
+                        bs,
+                        &neighbours,
+                        &sign_bias,
+                        &bounds,
+                        leaf_prev_mv,
+                        allow_hp,
+                    );
+                    let [last_ref_mvs, golden_ref_mvs] = realtime_mv_context.refs;
+                    let inter_mode_ctx = realtime_mv_context.mode_context;
+                    let mvc = MvCandidates {
+                        nearest: last_ref_mvs.nearest,
+                        near: last_ref_mvs.near,
                     };
-                    let mvc = build_mvc(RefFrame::LastFrame);
-                    let mvc_golden = build_mvc(RefFrame::GoldenFrame);
+                    let mvc_golden = MvCandidates {
+                        nearest: golden_ref_mvs.nearest,
+                        near: golden_ref_mvs.near,
+                    };
                     let descent_mvc = if a4_descent_independent_mv {
                         MvCandidates {
                             nearest: Mv::ZERO,
@@ -4682,16 +4685,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     let switchable_interp_ctx =
                         get_pred_context_switchable_interp(nb_above, nb_left);
                     let skip_ctx = rvp9_core::inter::get_pred_context_skip(nb_above, nb_left);
-                    let last_const_motion = rvp9_core::inter::mv_refs_rt_const_motion(
-                        bs,
-                        RefFrame::LastFrame,
-                        &neighbours,
-                    );
-                    let golden_const_motion = rvp9_core::inter::mv_refs_rt_const_motion(
-                        bs,
-                        RefFrame::GoldenFrame,
-                        &neighbours,
-                    );
+                    let last_const_motion = last_ref_mvs.const_motion;
+                    let golden_const_motion = golden_ref_mvs.const_motion;
                     let neighbour_mv = |mi: Option<&rvp9_core::mode_info::ModeInfo>| -> Option<Mv> {
                         match mi.map(|m| m.mode) {
                             Some(rvp9_core::mode_info::BlockMode::Inter { mvs, .. }) => {
