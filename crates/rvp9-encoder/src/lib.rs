@@ -4735,9 +4735,15 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         rd_calibration: inter_rd_calibration,
                         last_const_motion,
                         golden_const_motion,
-                        src_u: input_yuv.1,
+                        // The recursive descent is a speculative luma proxy:
+                        // score partition shapes without rebuilding/modeling
+                        // both chroma planes for every rejected candidate.
+                        // The selected leaves are picked again below with the
+                        // real U/V inputs, so emitted mode and residual choices
+                        // still include full chroma RD.
+                        src_u: &[],
                         src_u_stride: uvw,
-                        src_v: input_yuv.2,
+                        src_v: &[],
                         src_v_stride: uvw,
                         // Reference-buffer split — picker chroma
                         // SSE/RD reads the ME-side LAST view.
@@ -10708,6 +10714,69 @@ mod tests {
              off={} leaves, on={} leaves",
             leaves_off.len(),
             leaves_on.len(),
+        );
+    }
+
+    /// Partition descent deliberately uses a luma-only proxy, while the
+    /// committed-leaf picker still sees chroma. Two inter frames with the
+    /// same luma and uniformly shifted chroma must therefore keep the same
+    /// partition layout but produce different final chroma RD evidence.
+    #[test]
+    fn a4_descent_is_luma_only_but_final_pick_uses_chroma() {
+        let _guard = env_test_mutex();
+        // SAFETY: serialised via env_test_mutex.
+        unsafe {
+            std::env::set_var("RVP9_F02_ORACLE", "1");
+            std::env::remove_var("RVP9_A4_RD_PARTITION_DISABLE");
+        }
+        crate::f02_oracle::init_from_env();
+
+        let y = textured_luma_64(0xa4d3_5c17);
+        let reference_uv = vec![128u8; 32 * 32];
+        let shifted_uv = vec![160u8; 32 * 32];
+
+        let collect = |inter_uv: &[u8]| {
+            let mut enc = frame_loop::StreamEncoder::new(streaming_config()).unwrap();
+            let _key = enc
+                .encode_frame(&yuv_view_64(&y, &reference_uv, &reference_uv))
+                .unwrap();
+            let _ = crate::f02_oracle::drain_frame();
+            let inter = enc
+                .encode_frame(&yuv_view_64(&y, inter_uv, inter_uv))
+                .unwrap();
+            let decisions = crate::f02_oracle::drain_frame();
+            let layout = decisions
+                .iter()
+                .map(|decision| (decision.mi_row, decision.mi_col, decision.bsize))
+                .collect::<Vec<_>>();
+            let chroma_rd = decisions
+                .iter()
+                .map(|decision| (decision.uv_model_rate, decision.uv_model_dist))
+                .collect::<Vec<_>>();
+            (layout, chroma_rd, inter.data)
+        };
+
+        let (reference_layout, reference_chroma_rd, reference_packet) = collect(&reference_uv);
+        let (shifted_layout, shifted_chroma_rd, shifted_packet) = collect(&shifted_uv);
+
+        // SAFETY: serialised via env_test_mutex.
+        unsafe {
+            std::env::remove_var("RVP9_F02_ORACLE");
+        }
+        crate::f02_oracle::init_from_env();
+
+        assert!(!reference_layout.is_empty(), "inter frame must emit leaves");
+        assert_eq!(
+            reference_layout, shifted_layout,
+            "uniform chroma changes must not alter the luma-only descent layout",
+        );
+        assert_ne!(
+            reference_chroma_rd, shifted_chroma_rd,
+            "final committed-leaf picks must retain chroma RD",
+        );
+        assert_ne!(
+            reference_packet, shifted_packet,
+            "changed chroma residuals must reach the emitted stream",
         );
     }
 

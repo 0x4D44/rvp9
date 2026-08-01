@@ -3726,3 +3726,43 @@ libvpx v1.14.1. Average-YUV BD-rate improves from `-11.626509%` to
 **Future plan:** retain the full final-picker search and validate this proxy
 policy across the complete cpu-used 6-8 corpus. Revert the default if another
 important clip exceeds the feature-specific regression tolerance.
+
+### 2026-08-01 — Speculative partition descent is luma-only
+
+**Where:** `rvp9_encoder::pick_and_simulate_inter_encode_partitions`, in the
+recursive A4 descent's `PickInterModeParams` construction.
+
+**What libvpx does:** its cpu-used 7 realtime partition chooser uses a cheap
+luma-led non-RD partition path. Full inter mode and chroma residual decisions
+run only for the selected partition leaves.
+
+**What rvp9 does:** rvp9's recursive partition proxy runs its real inter-mode
+picker for every speculative shape. Those speculative calls now omit U/V
+source planes, while the committed-leaf picker still receives and scores both
+chroma planes before emission.
+
+**Why:** the recursive proxy consumed `70.93%` of measured encoder time and
+repeated chroma prediction and model-RD work for candidates it discarded. A
+luma-only proxy preserves the final chroma decision while removing that
+duplicated work.
+
+**Byte-parity impact:** partition choices can change. At the canonical
+250 kbps Foreman CBR point the stream changes from 68,862 to 68,743 bytes.
+The stream decodes to identical I420 under rvp9-decoder, pinned vpxdec, and
+ffmpeg; all three outputs have SHA-256
+`87ab883398a14563624de5e3caecd01bd87d8efe771f1ac311e104aa4723aed4`.
+
+**Compression-efficiency impact:** the canonical seven-point CBR curve is
+`-11.067228%` luma BD-rate and `-10.596498%` average-YUV BD-rate versus
+pinned libvpx v1.14.1. This spends 1.576584 luma percentage points of rvp9's
+former CBR margin while remaining well inside the reference parity gate. The
+canonical VBR curve improves to `-9.506021%` luma and `-8.304137%`
+average-YUV BD-rate versus pinned libvpx.
+
+**Speed impact:** forty alternating one-thread CBR pairs improve median total
+child CPU by `10.964%`, user CPU by `11.140%`, and wall time by `10.939%`,
+with 40/40 wins for every metric.
+
+**Future plan:** retain full chroma in the committed-leaf picker. Validate the
+luma proxy across cpu-used 6-8 and the representative corpus; revert or narrow
+it if any important clip exceeds the 2% unexplained-regression tolerance.
