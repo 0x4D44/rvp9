@@ -2685,7 +2685,12 @@ fn evaluate_intra_fallback(
         };
 
         // 4. Distortion = SSE(src, recon).
-        let sse = sse_block(params.src_plane, params.src_offset, &recon, bw, bw, bh);
+        let (_, sse) = (dispatch.variance(params.block_size))(
+            &params.src_plane.data[src_start..],
+            params.src_plane.stride,
+            &recon,
+            bw,
+        );
         let dist = sse.min(u32::MAX as u64) as u32;
 
         // 5. Rate = mbmode_cost + ref_frame_cost[INTRA] +
