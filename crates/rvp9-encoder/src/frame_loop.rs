@@ -2094,10 +2094,28 @@ impl StreamEncoder {
         // OR `last_source_y == None` (first frame post-KF). Updates
         // `pre_analysis.avg_source_sad[]` and
         // `pre_analysis.content_state_sb[]` for every SB64.
-        if self.pre_analysis.compute_source_sad_onepass {
-            self.pre_analysis
-                .compute_avg_source_sad(y_tight, matches!(self.config.rc_mode, RcMode::Cbr));
-        }
+        let source_maps_parallel = if self.pre_analysis.compute_source_sad_onepass {
+            if let Some(worker_pool) = self.frame_worker_pool.as_mut() {
+                let tile_count =
+                    1usize << self.parallelism.effective_log2_tile_cols(self.config.width);
+                let max_jobs = (self.parallelism.max_threads as usize).min(tile_count);
+                self.pre_analysis.compute_source_maps_parallel(
+                    y_tight,
+                    u_tight,
+                    v_tight,
+                    matches!(self.config.rc_mode, RcMode::Cbr),
+                    worker_pool,
+                    max_jobs,
+                );
+                true
+            } else {
+                self.pre_analysis
+                    .compute_avg_source_sad(y_tight, matches!(self.config.rc_mode, RcMode::Cbr));
+                false
+            }
+        } else {
+            false
+        };
         // W2.3(vpxenc parity, A5 P2): one-pass scene detection
         // (libvpx `vp9_ratectrl.c:3034-3216`). Updates
         // `pre_analysis.{high_source_sad, scene_cut_force_key_frame,
@@ -2135,7 +2153,7 @@ impl StreamEncoder {
         // (`vp9_encodeframe.c:5560`) under `cpi->use_skin_detection`;
         // we run it once per frame in pre-analysis, consumed by the
         // picker once the consumer side is wired.
-        if self.pre_analysis.compute_source_sad_onepass {
+        if self.pre_analysis.compute_source_sad_onepass && !source_maps_parallel {
             self.pre_analysis
                 .compute_skin_map(y_tight, u_tight, v_tight);
         }

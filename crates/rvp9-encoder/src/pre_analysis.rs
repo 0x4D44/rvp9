@@ -310,22 +310,102 @@ impl PreAnalysisState {
         let dispatch = rvp9_core::dsp::get_ref();
         let sad64 = dispatch.sad(BlockSize::Block64x64);
         let variance64 = dispatch.variance(BlockSize::Block64x64);
-        for sb_r in 0..sb_rows {
-            for sb_c in 0..sb_cols {
-                let (sad, sse, sum) = sb_sad_and_var_dispatched(
-                    src_y_tight,
-                    last,
-                    w,
-                    sb_r * 64,
-                    sb_c * 64,
-                    sad64,
-                    variance64,
-                );
-                let idx = sb_r * sb_cols + sb_c;
-                self.avg_source_sad[idx] = sad;
-                self.content_state_sb[idx] = classify_source_sad(sad, sse, sum, cbr_mode);
+        compute_avg_source_sad_rows(
+            src_y_tight,
+            last,
+            w,
+            0,
+            cbr_mode,
+            sad64,
+            variance64,
+            &mut self.avg_source_sad[..sb_rows * sb_cols],
+            &mut self.content_state_sb[..sb_rows * sb_cols],
+        );
+    }
+
+    /// Compute the independent source-SAD and skin-map producers on the
+    /// stream encoder's existing frame worker pool.
+    ///
+    /// Both outputs are split into disjoint row spans. The scope joins every
+    /// span before the caller consumes scene-detection or picker inputs, so
+    /// this preserves the serial producer ordering without adding threads.
+    pub fn compute_source_maps_parallel(
+        &mut self,
+        src_y_tight: &[u8],
+        src_u_tight: &[u8],
+        src_v_tight: &[u8],
+        cbr_mode: bool,
+        worker_pool: &mut rvp9_core::tile_threading::WorkerPool,
+        max_jobs: usize,
+    ) {
+        let w = self.width as usize;
+        let h = self.height as usize;
+        let uvw = w / 2;
+        let uvh = h / 2;
+        debug_assert_eq!(src_y_tight.len(), w * h);
+        debug_assert_eq!(src_u_tight.len(), uvw * uvh);
+        debug_assert_eq!(src_v_tight.len(), uvw * uvh);
+
+        let sb_cols = (w / 64).max(1);
+        let sb_rows = (h / 64).max(1);
+        let mi_cols = w / 8;
+        let mi_rows = h / 8;
+        // Split each independent producer across half the execution budget.
+        // This exposes one scope-wide job per slot without the eight-job CPU
+        // overhead of giving both producers the full worker width.
+        let producer_jobs = max_jobs.max(1).div_ceil(2);
+        let sb_rows_per_job = sb_rows.div_ceil(producer_jobs);
+        let mi_rows_per_job = mi_rows.div_ceil(producer_jobs);
+        let dispatch = rvp9_core::dsp::get_ref();
+        let sad64 = dispatch.sad(BlockSize::Block64x64);
+        let variance64 = dispatch.variance(BlockSize::Block64x64);
+        let last_source = self.last_source_y.as_deref();
+
+        worker_pool.scope(|scope| {
+            if let Some(last) = last_source {
+                for (chunk_index, (sad_out, state_out)) in self
+                    .avg_source_sad
+                    .chunks_mut(sb_rows_per_job * sb_cols)
+                    .zip(self.content_state_sb.chunks_mut(sb_rows_per_job * sb_cols))
+                    .enumerate()
+                {
+                    let sb_row_start = chunk_index * sb_rows_per_job;
+                    scope.submit(move || {
+                        compute_avg_source_sad_rows(
+                            src_y_tight,
+                            last,
+                            w,
+                            sb_row_start,
+                            cbr_mode,
+                            sad64,
+                            variance64,
+                            sad_out,
+                            state_out,
+                        );
+                    });
+                }
             }
-        }
+
+            for (chunk_index, (skin_out, consecutive_zero_mv)) in self
+                .skin_map
+                .chunks_mut(mi_rows_per_job * mi_cols)
+                .zip(self.consec_zero_mv.chunks(mi_rows_per_job * mi_cols))
+                .enumerate()
+            {
+                let mi_row_start = chunk_index * mi_rows_per_job;
+                scope.submit(move || {
+                    compute_skin_map_rows(
+                        src_y_tight,
+                        src_u_tight,
+                        src_v_tight,
+                        w,
+                        mi_row_start,
+                        consecutive_zero_mv,
+                        skin_out,
+                    );
+                });
+            }
+        });
     }
 
     /// Save the just-encoded source's luma plane for the next
@@ -769,44 +849,15 @@ impl PreAnalysisState {
         debug_assert_eq!(src_y_tight.len(), w * h);
         debug_assert_eq!(src_u_tight.len(), uvw * uvh);
         debug_assert_eq!(src_v_tight.len(), uvw * uvh);
-        let mi_cols = w / 8;
-        let mi_rows = h / 8;
-        // libvpx `vp9_skin_detection.c:27-30` for BLOCK_8X8:
-        //   y_width_shift  = (4 << b_width_log2_lookup[BLOCK_8X8]=1) >> 1 = 4
-        //   y_height_shift = (4 << b_height_log2_lookup[BLOCK_8X8]=1) >> 1 = 4
-        //   uv_width_shift = 4 >> 1 = 2
-        //   uv_height_shift = 4 >> 1 = 2
-        // The center pixel of an 8×8 luma block is at (+4, +4); of a
-        // 4×4 chroma block at (+2, +2).
-        const Y_CENTER: usize = 4;
-        const UV_CENTER: usize = 2;
-        for mi_row in 0..mi_rows {
-            for mi_col in 0..mi_cols {
-                let mi_idx = mi_row * mi_cols + mi_col;
-                let consec_zeromv = self.consec_zero_mv[mi_idx] as i32;
-                // libvpx `vp9_skin_detection.c:31-33`: read the center
-                // pixel of the 8×8 luma / 4×4 chroma block rooted at
-                // this mi cell.
-                let y_pix_row = mi_row * 8 + Y_CENTER;
-                let y_pix_col = mi_col * 8 + Y_CENTER;
-                let uv_pix_row = mi_row * 4 + UV_CENTER;
-                let uv_pix_col = mi_col * 4 + UV_CENTER;
-                // Bounds-safe at the right/bottom edge: even if
-                // mi_cols/mi_rows are exact (width % 8 == 0, height %
-                // 8 == 0), the center pixel is at offset 4 which is
-                // strictly inside the block, so no overflow.
-                let ysource = src_y_tight[y_pix_row * w + y_pix_col] as i32;
-                let usource = src_u_tight[uv_pix_row * uvw + uv_pix_col] as i32;
-                let vsource = src_v_tight[uv_pix_row * uvw + uv_pix_col] as i32;
-                self.skin_map[mi_idx] = compute_skin_block(
-                    ysource,
-                    usource,
-                    vsource,
-                    consec_zeromv,
-                    /* curr_motion_magn = */ 0,
-                );
-            }
-        }
+        compute_skin_map_rows(
+            src_y_tight,
+            src_u_tight,
+            src_v_tight,
+            w,
+            0,
+            &self.consec_zero_mv,
+            &mut self.skin_map,
+        );
     }
 
     /// W2.6(vpxenc parity, A5 P13): vbp-threshold noise scaling
@@ -1034,6 +1085,81 @@ fn sb_sad_and_var_dispatched(
     let sad = u64::from(sad64(src, stride, last, stride));
     let (sum, sse) = variance64(src, stride, last, stride);
     (sad, sse, sum.unsigned_abs())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn compute_avg_source_sad_rows(
+    src: &[u8],
+    last: &[u8],
+    stride: usize,
+    sb_row_start: usize,
+    cbr_mode: bool,
+    sad64: SadFn,
+    variance64: VarFn,
+    sad_out: &mut [u64],
+    state_out: &mut [ContentStateSb],
+) {
+    let sb_cols = (stride / 64).max(1);
+    debug_assert_eq!(sad_out.len(), state_out.len());
+    debug_assert_eq!(sad_out.len() % sb_cols, 0);
+    for (local_index, (sad_slot, state_slot)) in
+        sad_out.iter_mut().zip(state_out.iter_mut()).enumerate()
+    {
+        let sb_row = sb_row_start + local_index / sb_cols;
+        let sb_col = local_index % sb_cols;
+        let (sad, sse, sum) = sb_sad_and_var_dispatched(
+            src,
+            last,
+            stride,
+            sb_row * 64,
+            sb_col * 64,
+            sad64,
+            variance64,
+        );
+        *sad_slot = sad;
+        *state_slot = classify_source_sad(sad, sse, sum, cbr_mode);
+    }
+}
+
+fn compute_skin_map_rows(
+    src_y: &[u8],
+    src_u: &[u8],
+    src_v: &[u8],
+    width: usize,
+    mi_row_start: usize,
+    consecutive_zero_mv: &[u8],
+    skin_out: &mut [u8],
+) {
+    let mi_cols = width / 8;
+    let uv_width = width / 2;
+    debug_assert_eq!(consecutive_zero_mv.len(), skin_out.len());
+    debug_assert_eq!(skin_out.len() % mi_cols, 0);
+    // libvpx `vp9_skin_detection.c:27-30` for BLOCK_8X8: the center
+    // samples are (+4,+4) in luma and (+2,+2) in 4:2:0 chroma.
+    const Y_CENTER: usize = 4;
+    const UV_CENTER: usize = 2;
+    for (local_index, (skin, &consec_zeromv)) in skin_out
+        .iter_mut()
+        .zip(consecutive_zero_mv.iter())
+        .enumerate()
+    {
+        let mi_row = mi_row_start + local_index / mi_cols;
+        let mi_col = local_index % mi_cols;
+        let y_pix_row = mi_row * 8 + Y_CENTER;
+        let y_pix_col = mi_col * 8 + Y_CENTER;
+        let uv_pix_row = mi_row * 4 + UV_CENTER;
+        let uv_pix_col = mi_col * 4 + UV_CENTER;
+        let ysource = src_y[y_pix_row * width + y_pix_col] as i32;
+        let usource = src_u[uv_pix_row * uv_width + uv_pix_col] as i32;
+        let vsource = src_v[uv_pix_row * uv_width + uv_pix_col] as i32;
+        *skin = compute_skin_block(
+            ysource,
+            usource,
+            vsource,
+            i32::from(consec_zeromv),
+            /* curr_motion_magn = */ 0,
+        );
+    }
 }
 
 fn classify_source_sad(sad: u64, sse: u64, sum: u64, cbr_mode: bool) -> ContentStateSb {
@@ -1544,6 +1670,48 @@ mod tests {
                 )
             );
         }
+    }
+
+    /// Unit 306 — the worker-pool producer split must preserve both source
+    /// maps exactly, including unequal final row chunks.
+    #[test]
+    fn parallel_source_maps_match_serial_producers() {
+        const W: usize = 256;
+        const H: usize = 216;
+        let mut source_y = vec![0u8; W * H];
+        let mut previous_y = vec![0u8; W * H];
+        let mut source_u = vec![0u8; (W / 2) * (H / 2)];
+        let mut source_v = vec![0u8; (W / 2) * (H / 2)];
+        for (index, pixel) in source_y.iter_mut().enumerate() {
+            *pixel = ((index * 29 + index / W * 7) & 255) as u8;
+        }
+        for (index, pixel) in previous_y.iter_mut().enumerate() {
+            *pixel = ((index * 17 + index / W * 11 + 31) & 255) as u8;
+        }
+        for (index, pixel) in source_u.iter_mut().enumerate() {
+            *pixel = ((index * 13 + 91) & 255) as u8;
+        }
+        for (index, pixel) in source_v.iter_mut().enumerate() {
+            *pixel = ((index * 19 + 137) & 255) as u8;
+        }
+
+        let mut serial = PreAnalysisState::new(W as u32, H as u32);
+        serial.capture_last_source(&previous_y);
+        for (index, count) in serial.consec_zero_mv.iter_mut().enumerate() {
+            *count = (index % 64) as u8;
+        }
+        let mut parallel = serial.clone();
+
+        serial.compute_avg_source_sad(&source_y, true);
+        serial.compute_skin_map(&source_y, &source_u, &source_v);
+        let mut pool = rvp9_core::tile_threading::WorkerPool::new_with_caller(
+            std::num::NonZeroUsize::new(4).unwrap(),
+        );
+        parallel.compute_source_maps_parallel(&source_y, &source_u, &source_v, true, &mut pool, 4);
+
+        assert_eq!(parallel.avg_source_sad, serial.avg_source_sad);
+        assert_eq!(parallel.content_state_sb, serial.content_state_sb);
+        assert_eq!(parallel.skin_map, serial.skin_map);
     }
 
     /// W2.2 PROOF — SB-grid sizing matches the encoder's
