@@ -571,6 +571,36 @@ pub fn int_pro_motion_estimation(
     sb_px_y: usize,
     bsize: BlockSize,
 ) -> IntProMeResult {
+    int_pro_motion_estimation_impl(src_plane, ref_plane, sb_px_x, sb_px_y, bsize, true)
+}
+
+/// Fast integer-projection seed for realtime callers that refine motion in a
+/// subsequent per-block search.
+///
+/// This preserves the projection match and its honest full-block SAD, but does
+/// not run the six neighbouring full-block SAD probes that can move the seed by
+/// at most one pixel. Use [`int_pro_motion_estimation`] when this result is the
+/// final motion estimate rather than a seed for a later search.
+#[must_use]
+pub fn int_pro_motion_estimation_seed(
+    src_plane: &PlaneRef<'_>,
+    ref_plane: &PlaneRef<'_>,
+    sb_px_x: usize,
+    sb_px_y: usize,
+    bsize: BlockSize,
+) -> IntProMeResult {
+    int_pro_motion_estimation_impl(src_plane, ref_plane, sb_px_x, sb_px_y, bsize, false)
+}
+
+#[allow(clippy::needless_range_loop)]
+fn int_pro_motion_estimation_impl(
+    src_plane: &PlaneRef<'_>,
+    ref_plane: &PlaneRef<'_>,
+    sb_px_x: usize,
+    sb_px_y: usize,
+    bsize: BlockSize,
+    refine_2d: bool,
+) -> IntProMeResult {
     let bw = usize::from(bsize.width());
     let bh = usize::from(bsize.height());
     if bw != bh
@@ -725,6 +755,15 @@ pub fn int_pro_motion_estimation(
     };
 
     let mut best_sad = try_sad(row, col);
+    if !refine_2d {
+        return IntProMeResult {
+            mv: Mv {
+                row: (row * 8).clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16,
+                col: (col * 8).clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16,
+            },
+            best_sad,
+        };
+    }
 
     // 4-pt diamond: { (-1,0), (0,-1), (0,1), (1,0) } (libvpx's
     // `search_pos` order, vp9_mcomp.c:2257-2262).
@@ -1145,6 +1184,48 @@ mod tests {
         let col_fp = i32::from(result.mv.col) / 8;
         assert!(row_fp.abs() <= 1, "row MV should be ~0, got {} FP", row_fp);
         assert!(col_fp.abs() <= 1, "col MV should be ~0, got {} FP", col_fp);
+    }
+
+    #[test]
+    fn realtime_seed_reports_sad_at_projection_match() {
+        let w = 256;
+        let h = 256;
+        let src_buf: Vec<u8> = (0..w * h)
+            .map(|i| (((i * 73 + i / 13) ^ 0x5a) & 0xff) as u8)
+            .collect();
+        let ref_buf: Vec<u8> = (0..w * h)
+            .map(|i| (((i * 67 + i / 11) ^ 0xa5) & 0xff) as u8)
+            .collect();
+        let src = PlaneRef {
+            data: &src_buf,
+            stride: w,
+            width: w,
+            height: h,
+        };
+        let reference = PlaneRef {
+            data: &ref_buf,
+            stride: w,
+            width: w,
+            height: h,
+        };
+        let result =
+            int_pro_motion_estimation_seed(&src, &reference, 96, 96, BlockSize::Block64x64);
+        let source = &src.data[96 * src.stride + 96..];
+        let sad_fn = crate::dsp::get_ref().sad(BlockSize::Block64x64);
+        let mut edge_scratch = None;
+        let expected = sad_block_clamped(
+            BlockSize::Block64x64,
+            sad_fn,
+            source,
+            src.stride,
+            &reference,
+            (
+                96 + i32::from(result.mv.row) / 8,
+                96 + i32::from(result.mv.col) / 8,
+            ),
+            &mut edge_scratch,
+        );
+        assert_eq!(result.best_sad, expected);
     }
 
     /// Synthetic horizontal translation: ref's content (vertical

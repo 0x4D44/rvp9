@@ -3212,7 +3212,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         nonrd_pick_partition_with_pruners, variance_hint_bounds,
     };
     use rvp9_core::mode_decision::speed_features::{self as sf_mod};
-    use rvp9_core::mv_search::int_pro_me::int_pro_motion_estimation;
+    use rvp9_core::mv_search::int_pro_me::{
+        int_pro_motion_estimation, int_pro_motion_estimation_seed,
+    };
     use rvp9_core::mv_search::mv_limits::MvLimits;
     use rvp9_core::mv_search::{PlaneRef, init_dsmotion_compensation};
     use rvp9_core::quant::forward::{QuantizerDeltas, init_plane_quantizers, plane_dequant_pair};
@@ -3906,6 +3908,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
             // an unclamped Q3 MV; per-leaf clamping happens
             // inside [`pick_inter_mode_luma`] via the picker's
             // own MvLimits envelope before the diamond search.
+            // The large-frame realtime path keeps the projection match and
+            // its center SAD, but leaves neighbouring full-block refinement
+            // to the later per-leaf NEWMV search.
             //
             // E10 — every SB (including frame-edge SBs) now produces a
             // seed: the projection window and 2D-SAD halo read through
@@ -3916,8 +3921,17 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
             // 12 of 16 SBs on a 256×256 frame bailed outright.
             let sb_px_x = sb_col * 64;
             let sb_px_y = sb_row * 64;
-            let int_pro =
-                int_pro_motion_estimation(&src_y, &ref_y, sb_px_x, sb_px_y, BlockSize::Block64x64);
+            let int_pro = if rt_large_recovery {
+                int_pro_motion_estimation_seed(
+                    &src_y,
+                    &ref_y,
+                    sb_px_x,
+                    sb_px_y,
+                    BlockSize::Block64x64,
+                )
+            } else {
+                int_pro_motion_estimation(&src_y, &ref_y, sb_px_x, sb_px_y, BlockSize::Block64x64)
+            };
             // Treat a literal zero MV as "no useful seed" — the
             // picker's existing NEAREST/ZERO-at-(0,0) candidates
             // already cover that case.
