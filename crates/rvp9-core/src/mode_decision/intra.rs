@@ -228,6 +228,24 @@ fn block_yrd_distortion(
 /// shift table.
 #[must_use]
 pub fn pick_intra_mode_luma(params: &IntraModeSearchParams<'_>) -> IntraModeSearchResult {
+    pick_intra_mode_luma_through(params, IntraMode::Tm)
+}
+
+/// Run the realtime keyframe luma-mode search used by libvpx at speed 4+.
+///
+/// The non-RD keyframe picker evaluates only `DC_PRED`, `V_PRED`, and
+/// `H_PRED` (`vp9_pickmode.c::vp9_pick_intra_mode`). Their VP9 discriminants
+/// are contiguous, so this shares the full picker's exact scoring loop while
+/// stopping after [`IntraMode::H`].
+#[must_use]
+pub fn pick_realtime_intra_mode_luma(params: &IntraModeSearchParams<'_>) -> IntraModeSearchResult {
+    pick_intra_mode_luma_through(params, IntraMode::H)
+}
+
+fn pick_intra_mode_luma_through(
+    params: &IntraModeSearchParams<'_>,
+    last_mode: IntraMode,
+) -> IntraModeSearchResult {
     let tx_size = max_txsize(params.block_size);
     let tx_side = tx_size.side();
     // F8.0 supports blocks where the max-tx-size's side matches the
@@ -292,7 +310,7 @@ pub fn pick_intra_mode_luma(params: &IntraModeSearchParams<'_>) -> IntraModeSear
     let left_idx = params.left_mode_ctx as usize;
     let mode_cost_row = &params.y_mode_costs[above_idx][left_idx];
 
-    for raw_mode in 0u8..NUM_INTRA_MODES as u8 {
+    for raw_mode in 0u8..=last_mode as u8 {
         let mode = IntraMode::from_u8(raw_mode).expect("0..10 valid");
         let ctx = PredCtx {
             above: &above_row[..2 * tx_side],
@@ -1145,7 +1163,7 @@ mod tests {
     /// search and gathering every mode's (rate, dist) cost as a
     /// distinct check via [`pick_intra_mode_luma_all_costs`].
     #[test]
-    fn pick_intra_mode_walks_all_10_modes() {
+    fn pick_intra_mode_full_and_realtime_walk_expected_modes() {
         let bs = 16;
         let src = make_vstripe_src(bs);
         let src_plane = PlaneRef {
@@ -1194,11 +1212,22 @@ mod tests {
             .expect("non-empty");
         assert_eq!(main.best_mode, min_entry.best_mode);
         assert_eq!(main.best_rd_cost, min_entry.best_rd_cost);
+
+        // The realtime wrapper must return the exact minimum of libvpx's
+        // speed-4+ keyframe subset: DC, V, and H.
+        let realtime = pick_realtime_intra_mode_luma(&params);
+        let realtime_min = all_costs[..=IntraMode::H as usize]
+            .iter()
+            .min_by_key(|r| r.best_rd_cost)
+            .expect("DC/V/H subset is non-empty");
+        assert_eq!(realtime.best_mode, realtime_min.best_mode);
+        assert_eq!(realtime.best_rd_cost, realtime_min.best_rd_cost);
     }
 
     /// Diagnostic-only variant: returns the full
     /// `(mode, rate, dist, rd_cost)` table for every mode, in mode
-    /// order 0..10. Used by [`pick_intra_mode_walks_all_10_modes`] as
+    /// order 0..10. Used by
+    /// [`pick_intra_mode_full_and_realtime_walk_expected_modes`] as
     /// an instrumentation oracle: the production picker only returns
     /// the winner, so we re-implement the loop here without the
     /// argmin.
