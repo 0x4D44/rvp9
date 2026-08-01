@@ -78,45 +78,42 @@ use rvp9_core::transforms::{TxMode, TxSize};
 pub static TRELLIS_CHANGED_COEFFS: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(0);
 
-thread_local! {
-    /// Residual, transform, and quantization storage reused by emitted inter
-    /// blocks on one tile worker. Keeping the fields under one TLS borrow
-    /// avoids entering two independent `RefCell`s for every non-zero block.
-    static INTER_EMIT_SCRATCH: std::cell::RefCell<InterEmitScratch> =
-        const { std::cell::RefCell::new(InterEmitScratch {
+struct InterEmitScratch {
+    residual: [i16; 32 * 32],
+    quant: InterEmitQuantScratch,
+}
+
+impl InterEmitScratch {
+    const fn new() -> Self {
+        Self {
             residual: [0; 32 * 32],
             quant: InterEmitQuantScratch {
                 coefs: [0; 32 * 32],
                 qcoeff: [0; 32 * 32],
                 dqcoeff: [0; 32 * 32],
             },
-        }) };
-}
+        }
+    }
 
-struct InterEmitScratch {
-    residual: [i16; 32 * 32],
-    quant: InterEmitQuantScratch,
+    #[inline]
+    fn with_len<R>(
+        &mut self,
+        len: usize,
+        operation: impl FnOnce(&mut [i16], &mut InterEmitQuantScratch) -> R,
+    ) -> R {
+        assert!(
+            len <= 32 * 32,
+            "inter emit residual length {len} exceeds 32x32 scratch"
+        );
+        let Self { residual, quant } = self;
+        operation(&mut residual[..len], quant)
+    }
 }
 
 struct InterEmitQuantScratch {
     coefs: [i32; 32 * 32],
     qcoeff: [i16; 32 * 32],
     dqcoeff: [i16; 32 * 32],
-}
-
-#[inline]
-fn with_inter_emit_scratch<R>(
-    len: usize,
-    operation: impl FnOnce(&mut [i16], &mut InterEmitQuantScratch) -> R,
-) -> R {
-    assert!(
-        len <= 32 * 32,
-        "inter emit residual length {len} exceeds 32x32 scratch"
-    );
-    INTER_EMIT_SCRATCH.with_borrow_mut(|scratch| {
-        let InterEmitScratch { residual, quant } = &mut *scratch;
-        operation(&mut residual[..len], quant)
-    })
 }
 
 /// Read the running total of coefficients changed by the `RVP9_TRELLIS`
@@ -3420,6 +3417,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     use rvp9_core::mv_search::{PlaneRef, init_dsmotion_compensation};
     use rvp9_core::quant::forward::{QuantizerDeltas, init_plane_quantizers, plane_dequant_pair};
 
+    // One tile worker owns this complete call. Reuse its emission buffers
+    // directly instead of entering thread-local scratch for every transform.
+    let mut inter_emit_scratch = InterEmitScratch::new();
+
     // W0.4: compute the per-frame `SpeedFeatures` once. The dispatcher
     // is pure — no side effects on `cpi` like libvpx's
     // `vp9_set_speed_features_framesize_{independent,dependent}` —
@@ -6659,7 +6660,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                 } else {
                                     None
                                 };
-                                let (qcoeff_i32, eob_usize) = with_inter_emit_scratch(
+                                let (qcoeff_i32, eob_usize) = inter_emit_scratch.with_len(
                                     residual_len,
                                     |residual, quant_scratch| {
                                         #[cfg(target_arch = "aarch64")]
@@ -7051,7 +7052,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                 } else {
                                     None
                                 };
-                                let (qcoeff_i32, eob_usize) = with_inter_emit_scratch(
+                                let (qcoeff_i32, eob_usize) = inter_emit_scratch.with_len(
                                     residual_len,
                                     |residual, quant_scratch| {
                                         let emit_residual_start = if emit_profile_enabled {
@@ -8197,33 +8198,6 @@ fn inter_forward_quant_one_tx_with_scratch<R>(
         }
         operation(qcoeff, &scratch.coefs[..n], eob)
     }
-}
-
-#[cfg(test)]
-#[allow(clippy::too_many_arguments)]
-fn with_inter_forward_quant_one_tx<R>(
-    residual: &[i16],
-    tx_side: usize,
-    plane_tx: TxSize,
-    quantizer: &rvp9_core::quant::forward::PlaneQuantizers,
-    plane_type: usize,
-    trellis: Option<TrellisCtx<'_>>,
-    quant_fp: bool,
-    operation: impl FnOnce(&[i16], &[i32], usize) -> R,
-) -> R {
-    INTER_EMIT_SCRATCH.with_borrow_mut(|scratch| {
-        inter_forward_quant_one_tx_with_scratch(
-            &mut scratch.quant,
-            residual,
-            tx_side,
-            plane_tx,
-            quantizer,
-            plane_type,
-            trellis,
-            quant_fp,
-            operation,
-        )
-    })
 }
 
 /// Shared `RVP9_TRELLIS` post-quant step for the inter + intra-in-inter
@@ -9431,8 +9405,9 @@ mod tests {
 
     #[test]
     fn inter_emit_residual_scratch_is_prefix_bounded_and_causal() {
-        let run_small = || {
-            with_inter_emit_scratch(8 * 8, |residual, _| {
+        let mut scratch = InterEmitScratch::new();
+        let run_small = |scratch: &mut InterEmitScratch| {
+            scratch.with_len(8 * 8, |residual, _| {
                 assert_eq!(residual.len(), 8 * 8);
                 for (index, value) in residual.iter_mut().enumerate() {
                     *value = index as i16 - 31;
@@ -9441,10 +9416,10 @@ mod tests {
             })
         };
 
-        with_inter_emit_scratch(32 * 32, |residual, _| residual.fill(i16::MAX));
-        let after_positive = run_small();
-        with_inter_emit_scratch(32 * 32, |residual, _| residual.fill(i16::MIN));
-        let after_negative = run_small();
+        scratch.with_len(32 * 32, |residual, _| residual.fill(i16::MAX));
+        let after_positive = run_small(&mut scratch);
+        scratch.with_len(32 * 32, |residual, _| residual.fill(i16::MIN));
+        let after_negative = run_small(&mut scratch);
 
         assert_eq!(
             after_negative, after_positive,
@@ -9457,12 +9432,14 @@ mod tests {
         use rvp9_core::quant::forward::{QuantizerDeltas, init_plane_quantizers};
 
         let quantizer = init_plane_quantizers(117, QuantizerDeltas::Y);
-        let run = |tx_size: TxSize, salt: i16| {
+        let mut scratch = InterEmitScratch::new();
+        let run = |scratch: &mut InterEmitScratch, tx_size: TxSize, salt: i16| {
             let side = tx_size.side();
             let residual: Vec<i16> = (0..side * side)
                 .map(|index| ((index as i16 * 13 + salt) & 0xff) - 128)
                 .collect();
-            with_inter_forward_quant_one_tx(
+            inter_forward_quant_one_tx_with_scratch(
+                &mut scratch.quant,
                 &residual,
                 side,
                 tx_size,
@@ -9475,9 +9452,9 @@ mod tests {
         };
 
         for tx_size in [TxSize::Tx4x4, TxSize::Tx8x8, TxSize::Tx16x16] {
-            let before = run(tx_size, 7);
-            let _contaminating_full_scratch_transform = run(TxSize::Tx32x32, 93);
-            let after = run(tx_size, 7);
+            let before = run(&mut scratch, tx_size, 7);
+            let _contaminating_full_scratch_transform = run(&mut scratch, TxSize::Tx32x32, 93);
+            let after = run(&mut scratch, tx_size, 7);
             assert_eq!(
                 after, before,
                 "{tx_size:?} result must not depend on the prior scratch contents"
@@ -9491,12 +9468,13 @@ mod tests {
         use rvp9_core::transforms::TxType;
 
         let quantizer = init_plane_quantizers(117, QuantizerDeltas::Y);
-        let run = |tx_size: TxSize, tx_type: TxType, poison: i16| {
-            let side = tx_size.side();
-            let residual: Vec<i16> = (0..side * side)
-                .map(|index| ((index as i16 * 29 + 17) & 0xff) - 128)
-                .collect();
-            INTER_EMIT_SCRATCH.with_borrow_mut(|scratch| {
+        let mut scratch = InterEmitScratch::new();
+        let run =
+            |scratch: &mut InterEmitScratch, tx_size: TxSize, tx_type: TxType, poison: i16| {
+                let side = tx_size.side();
+                let residual: Vec<i16> = (0..side * side)
+                    .map(|index| ((index as i16 * 29 + 17) & 0xff) - 128)
+                    .collect();
                 scratch.quant.coefs.fill(i32::from(poison));
                 scratch.quant.qcoeff.fill(poison);
                 scratch.quant.dqcoeff.fill(poison);
@@ -9511,8 +9489,7 @@ mod tests {
                     None,
                     |qcoeff, dqcoeff, eob| (qcoeff.to_vec(), dqcoeff.to_vec(), eob),
                 )
-            })
-        };
+            };
 
         for (tx_size, tx_type) in [
             (TxSize::Tx4x4, TxType::AdstAdst),
@@ -9521,8 +9498,8 @@ mod tests {
             (TxSize::Tx32x32, TxType::DctDct),
         ] {
             assert_eq!(
-                run(tx_size, tx_type, 11),
-                run(tx_size, tx_type, -17),
+                run(&mut scratch, tx_size, tx_type, 11),
+                run(&mut scratch, tx_size, tx_type, -17),
                 "{tx_size:?}/{tx_type:?} output must overwrite active scratch",
             );
         }
