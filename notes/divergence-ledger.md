@@ -3885,3 +3885,49 @@ total child CPU by `0.679%` with 60/100 wins and wall time by `0.634%` with
 **Future plan:** keep single-reference traversal conditional on the same
 GOLDEN-disable and VeryHighSad gates. Any additional reference pruning must
 retain an equivalent differential oracle.
+
+### 2026-08-01 — Quantizer-scaled 16x16 descent breakout
+
+**Where:** `rvp9_encoder::stage4a_descent_breakout_16_dist_qmul` and the
+`Block16x16` breakout adapter in
+`rvp9_encoder::pick_and_simulate_inter_encode_partitions`.
+
+**What libvpx does:** realtime non-RD partition search uses several content,
+source-variance, and speed-feature breakouts to avoid unproductive child and
+rectangular searches.
+
+**What rvp9 does:** CPU7 realtime CBR on the small-frame P8 path stops after a
+winning 16x16 NONE candidate when its luma proxy distortion is no greater than
+`base_qindex * 800`. VBR, large-frame recovery, other speed presets, and final
+leaf picking are unchanged. `RVP9_A4_BREAKOUT_16_DIST_QMUL=0` restores the
+former differential path.
+
+**Why:** the accepted Unit 427 profile evaluated roughly 64,290 speculative
+8x8 candidates per canonical encode, although most low-distortion parent
+blocks did not need the finer search. A fixed distortion threshold either
+left too much work or harmed low-q frames. Scaling by qindex preserves more
+detail search as quality rises.
+
+**Byte-parity impact:** intentional CBR partition decisions change. At 250
+kbps the canonical stream is 68,771 bytes with SHA-256
+`586d2ca30885eb65d0705fa0974dcb34e1c1e22fbaa74e6c5d8357d2f1496bea`.
+Rvp9-decoder, pinned vpxdec, and ffmpeg produce identical 7,372,800-byte I420
+with SHA-256
+`5c734ac7220e695a09ff0c8b142c086c18ccd44e73417c4234aa6d10648dfe6d`.
+The canonical 250 kbps VBR stream remains byte-identical to Unit 427 at
+47,321 bytes and SHA-256
+`a3323810381759704ac8afca469b136be99bf3e9c7ec5f8a47c8ce1b95fe21e1`.
+
+**Compression-efficiency impact:** the canonical seven-point CBR luma
+BD-rate improves from `-8.618636%` to `-8.925850%` against pinned vpxenc;
+average-YUV improves from `-8.021811%` to `-8.352930%`. Relative to Unit 427,
+the luma and average-YUV movements are `-0.274111%` and `-0.294412%`.
+
+**Speed impact:** eighty alternating one-thread CBR pairs reduce median total
+child CPU by `23.559%` with 80/80 wins and wall time by `23.256%` with 78/80
+wins. A fresh forty-pair absolute comparison measures `2.088532x` pinned
+vpxenc total child CPU and `2.061090x` wall time.
+
+**Future plan:** validate the same distortion signal independently before
+extending it to cpu-used 6/8, large frames, or v1 feature modes. The new
+profile shifts the largest share from descent to the final causal picker.

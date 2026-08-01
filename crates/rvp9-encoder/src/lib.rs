@@ -2858,6 +2858,32 @@ fn stage4a_block16_split_admission(
     }
 }
 
+fn stage4a_descent_breakout_16_dist_qmul(
+    p8_enabled: bool,
+    rt_large_recovery: bool,
+    rc_mode: crate::rate_control::RcMode,
+    speed: i32,
+    deadline: rvp9_core::mode_decision::speed_features::Deadline,
+    override_qmul: Option<u32>,
+) -> Option<u32> {
+    match override_qmul {
+        Some(0) => None,
+        Some(qmul) => Some(qmul),
+        None if p8_enabled
+            && !rt_large_recovery
+            && matches!(rc_mode, crate::rate_control::RcMode::Cbr)
+            && speed == 7
+            && matches!(
+                deadline,
+                rvp9_core::mode_decision::speed_features::Deadline::Realtime
+            ) =>
+        {
+            Some(800)
+        }
+        None => None,
+    }
+}
+
 fn a4_partition_rd_mult_for_env(base_rd_mult: u32) -> u32 {
     let Some(num) = std::env::var("RVP9_A4_RDMULT_NUM")
         .ok()
@@ -3179,6 +3205,7 @@ pub(crate) struct InterEncodeEnv {
     a4_descent_cb_filter: Option<bool>,
     a4_descent_disable_golden: Option<bool>,
     a4_descent_disable_rect_newmv: Option<bool>,
+    a4_breakout_16_dist_qmul: Option<u32>,
     rt_skip_intmv_filter_search: Option<bool>,
     newmv_diff_bias: Option<bool>,
     rt_min_partition32: Option<bool>,
@@ -3226,6 +3253,9 @@ impl InterEncodeEnv {
             a4_descent_cb_filter: bool_override("RVP9_A4_DESCENT_CB_FILTER"),
             a4_descent_disable_golden: bool_override("RVP9_A4_DESCENT_DISABLE_GOLDEN"),
             a4_descent_disable_rect_newmv: bool_override("RVP9_A4_DESCENT_DISABLE_RECT_NEWMV"),
+            a4_breakout_16_dist_qmul: std::env::var("RVP9_A4_BREAKOUT_16_DIST_QMUL")
+                .ok()
+                .and_then(|value| value.parse().ok()),
             rt_skip_intmv_filter_search: bool_override("RVP9_RT_SKIP_INTMV_FILTER_SEARCH"),
             newmv_diff_bias: bool_override("RVP9_NEWMV_DIFF_BIAS"),
             rt_min_partition32: bool_override("RVP9_RT_MIN_PARTITION32"),
@@ -3715,6 +3745,18 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         speed,
         deadline,
         stage4a_product_split_override,
+    );
+    // The full 16x16-to-8x8/rectangular search has a poor return on smooth
+    // low-distortion parents. Scale the breakout threshold by qindex so
+    // low-rate frames prune more aggressively while high-quality frames keep
+    // the detail search. `=0` restores the pre-breakout differential path.
+    let a4_breakout_16_dist_qmul = stage4a_descent_breakout_16_dist_qmul(
+        p8_enabled,
+        rt_large_recovery,
+        rc_mode,
+        speed,
+        deadline,
+        env.a4_breakout_16_dist_qmul,
     );
     let f3_partition_costs = if f3_nonrd_partition_enabled {
         // Diagnostic only: libvpx sources partition_cost from the live frame
@@ -4983,6 +5025,12 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                         none_rate: u32,
                                         none_dist: u32|
                      -> bool {
+                        if let Some(dist_qmul) = a4_breakout_16_dist_qmul
+                            && matches!(bs, BS::Block16x16)
+                            && none_dist <= u32::from(base_qindex).saturating_mul(dist_qmul)
+                        {
+                            return true;
+                        }
                         if !ml_breakout_active {
                             return false;
                         }
@@ -9876,6 +9924,47 @@ mod tests {
         assert!(!p8_vbr_qmax_enabled(false, RcMode::Vbr, 181, 180));
         assert!(!p8_vbr_qmax_enabled(false, RcMode::Cbr, 170, 180));
         assert!(!p8_vbr_qmax_enabled(true, RcMode::Vbr, 170, 180));
+    }
+
+    #[test]
+    fn block16_distortion_breakout_is_cpu7_cbr_realtime_only() {
+        use rvp9_core::mode_decision::speed_features::Deadline;
+
+        let policy = |p8, large, rc, speed, deadline, override_qmul| {
+            stage4a_descent_breakout_16_dist_qmul(p8, large, rc, speed, deadline, override_qmul)
+        };
+        assert_eq!(
+            policy(true, false, RcMode::Cbr, 7, Deadline::Realtime, None),
+            Some(800)
+        );
+        assert_eq!(
+            policy(false, false, RcMode::Cbr, 7, Deadline::Realtime, None),
+            None
+        );
+        assert_eq!(
+            policy(true, true, RcMode::Cbr, 7, Deadline::Realtime, None),
+            None
+        );
+        assert_eq!(
+            policy(true, false, RcMode::Vbr, 7, Deadline::Realtime, None),
+            None
+        );
+        assert_eq!(
+            policy(true, false, RcMode::Cbr, 6, Deadline::Realtime, None),
+            None
+        );
+        assert_eq!(
+            policy(true, false, RcMode::Cbr, 7, Deadline::Good, None),
+            None
+        );
+        assert_eq!(
+            policy(false, true, RcMode::Vbr, 6, Deadline::Good, Some(600)),
+            Some(600)
+        );
+        assert_eq!(
+            policy(true, false, RcMode::Cbr, 7, Deadline::Realtime, Some(0)),
+            None
+        );
     }
 
     #[test]
