@@ -180,8 +180,7 @@ fn int_pro_row_clamped(
     debug_assert!(height >= 2);
     let norm_factor = (height >> 1) as i32;
     let direct_y = base_y >= 0 && base_y as usize + height <= plane.height;
-    for (idx, slot) in hbuf.iter_mut().enumerate() {
-        let x = (base_x + idx as i32).clamp(0, plane.width as i32 - 1) as usize;
+    let sum_column = |x: usize| {
         let mut sum: i32 = 0;
         if direct_y {
             let y = base_y as usize;
@@ -194,7 +193,23 @@ fn int_pro_row_clamped(
                 sum += i32::from(plane.data[y * plane.stride + x]);
             }
         }
-        *slot = (sum / norm_factor) as i16;
+        (sum / norm_factor) as i16
+    };
+
+    let chunk_width = hbuf.len() as i32;
+    let plane_width = plane.width as i32;
+    let left = (-base_x).clamp(0, chunk_width) as usize;
+    let right = (base_x + chunk_width - plane_width).clamp(0, chunk_width) as usize;
+    let middle_end = hbuf.len() - right;
+
+    if left != 0 {
+        hbuf[..left].fill(sum_column(0));
+    }
+    for (idx, slot) in hbuf[left..middle_end].iter_mut().enumerate() {
+        *slot = sum_column((base_x + left as i32 + idx as i32) as usize);
+    }
+    if right != 0 {
+        hbuf[middle_end..].fill(sum_column(plane.width - 1));
     }
 }
 
@@ -857,6 +872,40 @@ mod tests {
             *slot = (int_pro_col_clamped(&plane, 32 + idx as i32, 64, 64) >> 5) as i16;
         }
         assert_eq!(actual_cols, expected_cols);
+    }
+
+    #[test]
+    fn clamped_row_projection_reuses_replicated_border_spans_exactly() {
+        let width = 9usize;
+        let height = 11usize;
+        let stride = 13usize;
+        let mut pixels = vec![0u8; stride * height];
+        for row in 0..height {
+            for col in 0..width {
+                pixels[row * stride + col] = ((row * 37 + col * 19 + 11) & 0xff) as u8;
+            }
+        }
+        let plane = PlaneRef {
+            data: &pixels,
+            stride,
+            width,
+            height,
+        };
+
+        for base_y in [-5, 2, 9] {
+            for base_x in [-32, -5, 4, 20] {
+                let mut actual = [i16::MIN; 16];
+                int_pro_row_clamped(&mut actual, &plane, base_y, base_x, 8);
+                let mut expected = [0i16; 16];
+                for (col, slot) in expected.iter_mut().enumerate() {
+                    let sum: i32 = (0..8)
+                        .map(|row| i32::from(clamp_px(&plane, base_y + row, base_x + col as i32)))
+                        .sum();
+                    *slot = (sum / 4) as i16;
+                }
+                assert_eq!(actual, expected, "base_y={base_y} base_x={base_x}");
+            }
+        }
     }
 
     #[test]
