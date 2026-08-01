@@ -797,12 +797,12 @@ fn frame_content_signals(y: &[u8], last: Option<&[u8]>, w: usize, h: usize) -> F
 /// the production content discriminator (only the HF term of
 /// [`frame_content_signals`], skipping the variance / temporal / gradient
 /// work). Cheap: one pass, integer ops per pixel.
-fn frame_hf_energy(y: &[u8], w: usize, h: usize) -> f64 {
+#[cfg(any(test, not(target_arch = "aarch64")))]
+fn frame_hf_laplacian_sum_scalar(y: &[u8], w: usize, h: usize) -> u64 {
     if w < 3 || h < 3 || y.len() < w * h {
-        return 0.0;
+        return 0;
     }
     let mut lap_sum: u64 = 0;
-    let mut interior: u64 = 0;
     for r in 1..h - 1 {
         let row = r * w;
         let up = (r - 1) * w;
@@ -814,10 +814,103 @@ fn frame_hf_energy(y: &[u8], w: usize, h: usize) -> f64 {
             let u = i32::from(y[up + c]);
             let d = i32::from(y[dn + c]);
             lap_sum += u64::from((4 * p - l - rgt - u - d).unsigned_abs());
-            interior += 1;
         }
     }
-    lap_sum as f64 / interior.max(1) as f64
+    lap_sum
+}
+
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+unsafe fn frame_hf_laplacian_sum_neon(y: &[u8], w: usize, h: usize) -> u64 {
+    use std::arch::aarch64::*;
+
+    if w < 3 || h < 3 || y.len() < w * h {
+        return 0;
+    }
+
+    #[inline(always)]
+    unsafe fn abs_laplacian_sum_8(
+        p: uint8x8_t,
+        left: uint8x8_t,
+        right: uint8x8_t,
+        up: uint8x8_t,
+        down: uint8x8_t,
+    ) -> u64 {
+        // SAFETY: All operands are initialized NEON values. Four u8
+        // neighbours and `4 * p` fit in u16; their signed difference fits
+        // in i16, so the absolute value and horizontal sum are exact.
+        unsafe {
+            let p4 = vshlq_n_u16(vmovl_u8(p), 2);
+            let neighbours = vaddq_u16(
+                vaddq_u16(vmovl_u8(left), vmovl_u8(right)),
+                vaddq_u16(vmovl_u8(up), vmovl_u8(down)),
+            );
+            let lap = vsubq_s16(vreinterpretq_s16_u16(p4), vreinterpretq_s16_u16(neighbours));
+            u64::from(vaddlvq_u16(vreinterpretq_u16_s16(vabsq_s16(lap))))
+        }
+    }
+
+    let mut lap_sum = 0u64;
+    for r in 1..h - 1 {
+        let row = r * w;
+        let up = row - w;
+        let down = row + w;
+        let mut c = 1usize;
+        while c + 16 < w {
+            // SAFETY: The loop bounds keep every 16-byte load within its
+            // source row. `left` starts one byte earlier and `right` one
+            // byte later, both still inside the same `w`-byte row.
+            unsafe {
+                let p = vld1q_u8(y.as_ptr().add(row + c));
+                let left = vld1q_u8(y.as_ptr().add(row + c - 1));
+                let right = vld1q_u8(y.as_ptr().add(row + c + 1));
+                let above = vld1q_u8(y.as_ptr().add(up + c));
+                let below = vld1q_u8(y.as_ptr().add(down + c));
+                lap_sum += abs_laplacian_sum_8(
+                    vget_low_u8(p),
+                    vget_low_u8(left),
+                    vget_low_u8(right),
+                    vget_low_u8(above),
+                    vget_low_u8(below),
+                );
+                lap_sum += abs_laplacian_sum_8(
+                    vget_high_u8(p),
+                    vget_high_u8(left),
+                    vget_high_u8(right),
+                    vget_high_u8(above),
+                    vget_high_u8(below),
+                );
+            }
+            c += 16;
+        }
+        while c < w - 1 {
+            let p = i32::from(y[row + c]);
+            let left = i32::from(y[row + c - 1]);
+            let right = i32::from(y[row + c + 1]);
+            let above = i32::from(y[up + c]);
+            let below = i32::from(y[down + c]);
+            lap_sum += u64::from((4 * p - left - right - above - below).unsigned_abs());
+            c += 1;
+        }
+    }
+    lap_sum
+}
+
+fn frame_hf_energy(y: &[u8], w: usize, h: usize) -> f64 {
+    if w < 3 || h < 3 || y.len() < w * h {
+        return 0.0;
+    }
+    #[cfg(target_arch = "aarch64")]
+    let lap_sum = {
+        // SAFETY: NEON is mandatory in AArch64. The helper validates the
+        // plane length and bounds every vector load to one complete row.
+        unsafe { frame_hf_laplacian_sum_neon(y, w, h) }
+    };
+    #[cfg(not(target_arch = "aarch64"))]
+    let lap_sum = frame_hf_laplacian_sum_scalar(y, w, h);
+
+    let interior = ((w - 2) * (h - 2)) as u64;
+    lap_sum as f64 / interior as f64
 }
 
 /// Lever-3b / 3D — is the content-adaptive S2 frame gate enabled?
@@ -5469,6 +5562,40 @@ fn gather_coded_segments_and_skip(
 mod tests {
     use super::*;
     use rvp9_decoder::{Decoder, ParsedFrame};
+
+    #[cfg(target_arch = "aarch64")]
+    #[test]
+    fn frame_hf_neon_matches_scalar_for_vector_tails_and_content() {
+        for &(w, h) in &[
+            (3, 3),
+            (17, 5),
+            (18, 7),
+            (31, 9),
+            (32, 11),
+            (33, 13),
+            (64, 16),
+            (127, 19),
+        ] {
+            let mut state = (w as u32).wrapping_mul(0x9e37_79b9) ^ h as u32;
+            let mut y = Vec::with_capacity(w * h);
+            for _ in 0..w * h {
+                state ^= state << 13;
+                state ^= state >> 17;
+                state ^= state << 5;
+                y.push(state as u8);
+            }
+
+            let scalar = frame_hf_laplacian_sum_scalar(&y, w, h);
+            // SAFETY: NEON is mandatory in AArch64 and `y` is a complete
+            // tight `w * h` plane.
+            let neon = unsafe { frame_hf_laplacian_sum_neon(&y, w, h) };
+            assert_eq!(neon, scalar, "{w}x{h}");
+            assert_eq!(
+                frame_hf_energy(&y, w, h),
+                scalar as f64 / ((w - 2) * (h - 2)) as f64
+            );
+        }
+    }
 
     #[test]
     fn prelf_snapshot_is_absent_unless_diagnostics_are_enabled() {
