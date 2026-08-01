@@ -7,6 +7,7 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 
 pub mod convolve8_neon;
+pub mod convolve_copy_neon;
 pub mod int_pro_neon;
 pub mod lpf16_neon;
 pub mod quantize_neon;
@@ -16,6 +17,7 @@ pub mod subpel_variance_neon;
 pub mod subtract_neon;
 pub mod variance_neon;
 
+pub use convolve_copy_neon::convolve_copy_neon;
 pub use convolve8_neon::{convolve8_horiz_neon, convolve8_neon, convolve8_vert_neon};
 pub use int_pro_neon::{vpx_int_pro_col_neon, vpx_int_pro_row_neon, vpx_vector_var_neon};
 pub use lpf16_neon::{

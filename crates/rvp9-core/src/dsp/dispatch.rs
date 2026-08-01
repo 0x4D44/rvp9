@@ -1206,8 +1206,8 @@ pub struct SimdDispatch {
     /// Wave I I5 — integer-pel copy: copy a `w × h` block from `src`
     /// to `dst`. Mirrors [`crate::inter::convolve_copy`] (libvpx
     /// `vpx_convolve_copy_c`). Wave J J1 promotes this slot to AVX2 on
-    /// x86_64 hosts that report `caps.avx2`; non-AVX2 hosts (and
-    /// non-x86_64 targets) keep the scalar reference.
+    /// x86_64 hosts that report `caps.avx2`; AArch64 hosts use pinned
+    /// libvpx's equivalent fixed-width NEON copy when `caps.neon` is set.
     pub(crate) convolve_copy:
         fn(src: &[u8], src_stride: usize, dst: &mut [u8], dst_stride: usize, w: usize, h: usize),
 
@@ -1934,7 +1934,13 @@ impl SimdDispatch {
         } else {
             crate::inter::filter::convolve_copy
         };
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(target_arch = "aarch64")]
+        let convolve_copy: fn(&[u8], usize, &mut [u8], usize, usize, usize) = if caps.neon {
+            crate::dsp::aarch64::convolve_copy_neon
+        } else {
+            crate::inter::filter::convolve_copy
+        };
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         let convolve_copy: fn(&[u8], usize, &mut [u8], usize, usize, usize) =
             crate::inter::filter::convolve_copy;
         // ---- Wave J J2 — AVX2 convolve_avg promotion. ----
@@ -3035,9 +3041,8 @@ impl SimdDispatch {
         self.plane_dequant_finisher
     }
 
-    /// Dispatch the integer-pel block copy kernel (Wave I I5). Scalar
-    /// only at I5; AVX2 promotion deferred to Wave J. See field doc
-    /// on [`SimdDispatch::convolve_copy`].
+    /// Dispatch the integer-pel block copy kernel. Uses AVX2 on capable
+    /// x86-64 hosts, NEON on capable AArch64 hosts, and scalar otherwise.
     #[inline]
     #[must_use]
     pub fn convolve_copy(&self) -> fn(&[u8], usize, &mut [u8], usize, usize, usize) {
