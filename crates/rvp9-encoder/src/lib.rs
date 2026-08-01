@@ -2884,6 +2884,22 @@ fn stage4a_descent_breakout_16_dist_qmul(
     }
 }
 
+fn stage4a_suppress_final_newmv(
+    block_size: BlockSize,
+    cached_mode: InterMode,
+    cached_partition_distortion: u32,
+    base_qindex: u8,
+    descent_breakout_qmul: u32,
+) -> bool {
+    const FINAL_NEWMV_DIST_QMUL: u32 = 600;
+
+    matches!(block_size, BlockSize::Block16x16)
+        && cached_mode != InterMode::NewMv
+        && cached_partition_distortion
+            <= u32::from(base_qindex)
+                .saturating_mul(descent_breakout_qmul.min(FINAL_NEWMV_DIST_QMUL))
+}
+
 fn a4_partition_rd_mult_for_env(base_rd_mult: u32) -> u32 {
     let Some(num) = std::env::var("RVP9_A4_RDMULT_NUM")
         .ok()
@@ -6037,6 +6053,31 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         (None, None)
                     };
 
+                // Unit 430: a very smooth 16x16 descent winner that did not
+                // need NEWMV is a bounded negative signal for repeating the
+                // expensive NEWMV search under the causal grid. Keep the
+                // final search on every motion-selected or less-smooth leaf.
+                // `RVP9_A4_BREAKOUT_16_DIST_QMUL=0` leaves this disabled with
+                // the parent breakout, preserving one differential escape.
+                let mut final_inter_mode_mask = rt_inter_mode_mask;
+                if matches!(leaf_bsize, BlockSize::Block16x16)
+                    && a4_breakout_16_dist_qmul.is_some_and(|dist_qmul| {
+                        descent_pick_cache
+                            .get(leaf_mi_row, leaf_mi_col, leaf_bsize)
+                            .is_some_and(|(cached, _, _)| {
+                                stage4a_suppress_final_newmv(
+                                    leaf_bsize,
+                                    cached.best_mode,
+                                    cached.partition_distortion,
+                                    base_qindex,
+                                    dist_qmul,
+                                )
+                            })
+                    })
+                {
+                    final_inter_mode_mask[leaf_bsize.idx()] &= !(1u8 << InterMode::NewMv.idx());
+                }
+
                 let pick_params = PickInterModeParams {
                     block_size: leaf_bsize,
                     src_plane: &src_y,
@@ -6202,7 +6243,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     //  - `rt_intra_dc_only_low_content` — `1` only at
                     //    speed-8 (vp9_speed_features.c:770). Default `false`
                     //    here keeps intra-fallback quality at speed 6/7.
-                    inter_mode_mask: rt_inter_mode_mask,
+                    inter_mode_mask: final_inter_mode_mask,
                     // W0.4: see top of `pick_and_simulate_inter_
                     // encode_partitions` — the dispatcher computed
                     // `sf` once per frame and every per-leaf literal
@@ -9965,6 +10006,41 @@ mod tests {
             policy(true, false, RcMode::Cbr, 7, Deadline::Realtime, Some(0)),
             None
         );
+    }
+
+    #[test]
+    fn final_newmv_suppression_requires_smooth_non_newmv_block16() {
+        let suppress = |bsize, mode, dist, qindex, qmul| {
+            stage4a_suppress_final_newmv(bsize, mode, dist, qindex, qmul)
+        };
+        assert!(suppress(
+            BlockSize::Block16x16,
+            InterMode::NearestMv,
+            120_000,
+            200,
+            1000,
+        ));
+        assert!(!suppress(
+            BlockSize::Block16x16,
+            InterMode::NewMv,
+            120_000,
+            200,
+            1000,
+        ));
+        assert!(!suppress(
+            BlockSize::Block8x8,
+            InterMode::NearestMv,
+            120_000,
+            200,
+            1000,
+        ));
+        assert!(!suppress(
+            BlockSize::Block16x16,
+            InterMode::NearestMv,
+            120_001,
+            200,
+            1000,
+        ));
     }
 
     #[test]

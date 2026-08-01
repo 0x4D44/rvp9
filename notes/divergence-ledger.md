@@ -3935,3 +3935,45 @@ absolute comparison measures `1.966712x` pinned-vpxenc total child CPU and
 **Future plan:** validate the same distortion signal independently before
 extending it to cpu-used 6/8, large frames, or v1 feature modes. The new
 profile shifts the largest share from descent to the final causal picker.
+
+### 2026-08-01 — Smooth 16x16 final-NEWMV suppression
+
+**Where:** `rvp9_encoder::stage4a_suppress_final_newmv` and the final causal
+picker mask in `rvp9_encoder::pick_and_simulate_inter_encode_partitions`.
+
+**What libvpx does:** its variance-based partition tree and adaptive realtime
+mode thresholds suppress low-value motion searches using temporal variance,
+source variance, and prior mode frequency.
+
+**What rvp9 does:** on the same CPU7 small-frame CBR slice as the quantizer-
+scaled breakout, a committed 16x16 leaf omits final-causal NEWMV only when the
+speculative descent selected a non-NEWMV mode and its partition distortion is
+no greater than `base_qindex * 600`. Every motion-selected or less-smooth leaf
+keeps NEWMV. Setting `RVP9_A4_BREAKOUT_16_DIST_QMUL=0` disables both related
+departures.
+
+**Why:** after Unit 429, final picking is `57.39%` inclusive profile weight;
+NEWMV search alone is `15.64%`. The cached descent winner provides a measured
+motion/content signal without another source-analysis pass.
+
+**Byte-parity impact:** intentional mode decisions change. At 250 kbps the
+canonical stream is 68,683 bytes with SHA-256
+`f9df047255c0e4a46be7270695324df51dd85aef7c1025c39972012a601c5c83`.
+Rvp9-decoder, pinned vpxdec, and ffmpeg produce identical 7,372,800-byte I420
+with SHA-256
+`ad04b802a34ae57d30b759a327576884a31a116663ff0aebadc8adb72260f1ce`.
+
+**Compression-efficiency impact:** against pinned vpxenc the canonical
+seven-point CBR curve remains `-7.504821%` luma and `-6.946820%` average-YUV.
+Relative to Unit 429, the movements are `+0.790669%` and `+0.770716%`.
+Independent testsrc2 and Mandelbrot luma movements are `+0.603107%` and
+`+0.660061%`; the stationary-noise curve is byte-identical.
+
+**Speed impact:** forty alternating one-thread pairs reduce median total child
+CPU by `3.351%` with 34/40 wins and wall time by `3.106%` with 29/40 wins. A
+fresh forty-pair absolute comparison measures `1.880599x` pinned-vpxenc total
+CPU and `1.840730x` wall time.
+
+**Future plan:** keep this classifier limited to the measured slice. Generalize
+only with representative 720p/1080p corpus evidence and a speed-feature policy
+for CPU6/8.
