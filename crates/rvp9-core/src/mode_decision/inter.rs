@@ -886,7 +886,7 @@ pub fn pick_inter_mode_luma(params: &InterModeSearchParams<'_>) -> InterModeSear
 
     // Candidate 4: NEWMV — full-pel diamond seeded at NEAREST, then
     // sub-pel tree-pruned-more refinement.
-    let new_mv = run_newmv_search(params);
+    let new_mv = run_newmv_search(params, None);
     let new = evaluate_candidate(
         params,
         InterMode::NewMv,
@@ -945,7 +945,7 @@ pub fn pick_inter_mode_luma_all_costs(
         params.mv_candidates.near,
         lambda,
     );
-    let new_mv = run_newmv_search(params);
+    let new_mv = run_newmv_search(params, None);
     let new = evaluate_candidate(
         params,
         InterMode::NewMv,
@@ -1721,27 +1721,28 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
     // `usable_ref_frame` at GOLDEN). Bit 1 of the mask = LAST,
     // bit 2 = GOLDEN, matching libvpx's `1 << ref_frame` indexing
     // (`LAST_FRAME = 1`, `GOLDEN_FRAME = 2`).
-    let (pred_mv_sad_last, pred_mv_sad_golden) = if params.reference_masking {
-        let last_cands = [last_mvc_safe.nearest, last_mvc_safe.near];
-        let (_, sad_last) = crate::mv_search::mv_pred::mv_pred_sad_seed(
-            params.src_plane,
-            params.last_ref_plane,
-            params.src_offset,
-            &last_cands,
-            params.block_size,
-        );
-        let golden_cands = [golden_mvc_safe.nearest, golden_mvc_safe.near];
-        let (_, sad_golden) = crate::mv_search::mv_pred::mv_pred_sad_seed(
-            params.src_plane,
-            params.golden_ref_plane,
-            params.src_offset,
-            &golden_cands,
-            params.block_size,
-        );
-        (sad_last, sad_golden)
-    } else {
-        (u32::MAX, u32::MAX)
-    };
+    let ((pred_mv_last, pred_mv_sad_last), (pred_mv_golden, pred_mv_sad_golden)) =
+        if params.reference_masking {
+            let last_cands = [last_mvc_safe.nearest, last_mvc_safe.near];
+            let last = crate::mv_search::mv_pred::mv_pred_sad_seed(
+                params.src_plane,
+                params.last_ref_plane,
+                params.src_offset,
+                &last_cands,
+                params.block_size,
+            );
+            let golden_cands = [golden_mvc_safe.nearest, golden_mvc_safe.near];
+            let golden = crate::mv_search::mv_pred::mv_pred_sad_seed(
+                params.src_plane,
+                params.golden_ref_plane,
+                params.src_offset,
+                &golden_cands,
+                params.block_size,
+            );
+            (last, golden)
+        } else {
+            ((Mv::ZERO, u32::MAX), (Mv::ZERO, u32::MAX))
+        };
     // Bit indices: 1 = LAST, 2 = GOLDEN (libvpx convention).
     let mut ref_frame_skip_mask: u32 = 0;
     if params.reference_masking && pred_mv_sad_last != u32::MAX && pred_mv_sad_golden != u32::MAX {
@@ -2042,7 +2043,12 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
                         uv_dc_quant: params.uv_dc_quant,
                         uv_ac_quant: params.uv_ac_quant,
                     };
-                    *cached = Some(run_newmv_search(&single_params));
+                    let pred_seed = params.reference_masking.then_some(if ref_idx == 0 {
+                        (pred_mv_last, pred_mv_sad_last)
+                    } else {
+                        (pred_mv_golden, pred_mv_sad_golden)
+                    });
+                    *cached = Some(run_newmv_search(&single_params, pred_seed));
                 }
                 cached.unwrap()
             }
@@ -2828,7 +2834,10 @@ fn rt_newmv_subpel_iters_override() -> Option<i32> {
 ///   picked NEWMV yet — chicken-and-egg). The int_pro estimate
 ///   already accounts for SAD-domain quality at the SB level, so
 ///   we trust it and only run sub-pel refinement around it.
-fn run_newmv_search(params: &InterModeSearchParams<'_>) -> Mv {
+fn run_newmv_search(
+    params: &InterModeSearchParams<'_>,
+    precomputed_pred_seed: Option<(Mv, u32)>,
+) -> Mv {
     // Compute the full-pel-domain MV center for the sub-pel
     // refinement step. The `SubPixelSearchParams::center_mv` is a
     // FULL-PEL value (the sub-pel search lifts it via `* 8`
@@ -2854,14 +2863,16 @@ fn run_newmv_search(params: &InterModeSearchParams<'_>) -> Mv {
     // lowest SAD as the diamond search seed. If an SB-level int_pro seed
     // is also available, keep whichever has the lower SAD.
     let ref_mv = clamp_mv_to_limits(params.mv_candidates.nearest, &params.mv_limits);
-    let candidates = [params.mv_candidates.nearest, params.mv_candidates.near];
-    let (pred_mv, pred_sad) = crate::mv_search::mv_pred::mv_pred_sad_seed(
-        params.src_plane,
-        params.ref_plane,
-        params.src_offset,
-        &candidates,
-        params.block_size,
-    );
+    let (pred_mv, pred_sad) = precomputed_pred_seed.unwrap_or_else(|| {
+        let candidates = [params.mv_candidates.nearest, params.mv_candidates.near];
+        crate::mv_search::mv_pred::mv_pred_sad_seed(
+            params.src_plane,
+            params.ref_plane,
+            params.src_offset,
+            &candidates,
+            params.block_size,
+        )
+    });
     // Merge with SB-level int_pro seed: if int_pro exists, evaluate its
     // SAD too and keep whichever is better.
     let start_mv = if pred_sad < u32::MAX {
@@ -4983,6 +4994,58 @@ mod tests {
         assert_eq!(
             res.best_distortion, 0,
             "zero-MV winner on identical ref should have zero distortion",
+        );
+    }
+
+    /// Reference masking and NEWMV use the same predictor-MV SAD probe.
+    /// Reusing its result must preserve the complete diamond + sub-pel
+    /// search result, including when an independent int-pro seed competes.
+    #[test]
+    fn newmv_search_reuses_precomputed_predictor_seed_exactly() {
+        let pw = 96;
+        let ph = 96;
+        let src_data = make_plane(pw, ph, 0x51A7);
+        let ref_data = make_plane(pw, ph, 0x927D);
+        let src_plane = PlaneRef {
+            data: &src_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let ref_plane = PlaneRef {
+            data: &ref_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let harness = TestHarness::new(pw, 80);
+        let mvc = MvCandidates {
+            nearest: Mv { row: 8, col: -16 },
+            near: Mv { row: -8, col: 24 },
+        };
+        let mut params = make_params(
+            &harness,
+            BlockSize::Block16x16,
+            &src_plane,
+            &ref_plane,
+            (32, 32),
+            &mvc,
+            MvLimits::new(-24, 24, -24, 24),
+            80,
+        );
+        params.newmv_seed = Some(Mv { row: 24, col: 16 });
+        let candidates = [mvc.nearest, mvc.near];
+        let pred_seed = crate::mv_search::mv_pred::mv_pred_sad_seed(
+            &src_plane,
+            &ref_plane,
+            params.src_offset,
+            &candidates,
+            params.block_size,
+        );
+
+        assert_eq!(
+            run_newmv_search(&params, None),
+            run_newmv_search(&params, Some(pred_seed)),
         );
     }
 
