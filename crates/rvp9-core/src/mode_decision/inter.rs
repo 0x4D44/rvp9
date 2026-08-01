@@ -2607,6 +2607,13 @@ fn evaluate_intra_fallback(
         let rd_limit = best_intra
             .as_ref()
             .map_or(best_inter_rd, |best| best.best_rd_cost.min(best_inter_rd));
+        // P20 — libvpx applies the same adaptive RD threshold table to
+        // intra-in-inter candidates before building their predictions.
+        if params.rd_thresh_table.is_some_and(|table| {
+            rd_limit < table.effective_intra_thresh(params.block_size, mode, params.q_index)
+        }) {
+            continue;
+        }
         if rd_cost(lambda, fixed_rate, 0) >= rd_limit {
             continue;
         }
@@ -6644,6 +6651,67 @@ mod tests {
             pick_inter_mode(&params),
             disabled,
             "disabled intra fallback must not inspect neighbour pixels"
+        );
+    }
+
+    #[test]
+    fn p20_adaptive_rd_threshold_can_prune_all_intra_modes() {
+        use crate::mode_decision::rd_thresh::RdThreshTable;
+
+        let pw = 64;
+        let ph = 64;
+        let src_data = make_plane(pw, ph, 91);
+        let ref_data = make_plane(pw, ph, 17);
+        let src_plane = PlaneRef {
+            data: &src_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let ref_plane = PlaneRef {
+            data: &ref_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let harness = TestHarness::new(pw, 200);
+        let fc = FrameContext::new_default();
+        let intra_y_costs = crate::cost::symbol_costs::intra_y_mode_costs_inter(&fc)[0];
+        let mvc = MvCandidates::default();
+        let above = [128u8; 64];
+        let left = [128u8; 64];
+        let mut params = make_dual_ref_params(
+            &harness,
+            &intra_y_costs,
+            BlockSize::Block16x16,
+            &src_plane,
+            &ref_plane,
+            (16, 16),
+            &mvc,
+            &mvc,
+            MvLimits::new(-4, 4, -4, 4),
+            200,
+        );
+        params.intra_above_pixels = Some(&above);
+        params.intra_left_pixels = Some(&left);
+
+        let lambda = compute_rd_mult(200, frame_type_for_rd(params.frame_kind));
+        let penalty = get_intra_cost_penalty(params.q_index, params.block_size);
+        let mut table = RdThreshTable::new();
+        for mode in INTRA_IN_INTER_MODES {
+            table.set_intra_freq_fact_for_test(params.block_size, mode, 256);
+        }
+        let incumbent =
+            table.effective_intra_thresh(params.block_size, IntraMode::Dc, params.q_index) - 1;
+
+        assert!(
+            evaluate_intra_fallback(&params, lambda, penalty, incumbent).is_some(),
+            "without P20, the synthetic intra search must produce a candidate",
+        );
+        params.rd_thresh_table = Some(&table);
+        assert!(
+            evaluate_intra_fallback(&params, lambda, penalty, incumbent).is_none(),
+            "P20 must prune every intra mode below its effective threshold",
         );
     }
 

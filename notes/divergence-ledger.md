@@ -581,28 +581,32 @@ change recovers libvpx's quarter-pel choices without the measured speed and
 BD-rate regression. Re-evaluate independently for cpu-used 6 and 8 during the
 full preset matrix.
 
-### 2026-07-30 — Disable the simplified realtime intra-in-inter fallback
+### 2026-07-30 — Retain a three-mode realtime intra-in-inter fallback
 **Where:** `rvp9-core::mode_decision::inter::pick_inter_mode` and
 `rvp9-encoder::encode_inter_frame`; libvpx counterpart:
 `vp9/encoder/vp9_pickmode.c:2517-2646`.
-**What libvpx does:** evaluates selected intra modes after the realtime inter
-search when the best inter RD exceeds its intra threshold. On the pinned
-Foreman Stage 4a run, about 2% of coded block area is intra.
-**What rvp9 does:** keeps the fallback implementation and direct tests, but
-the v1 realtime encoder disables it through
-`PickInterModeParams::enable_intra_fallback`. Keyframes remain intra-coded.
-**Why:** rvp9's simplified intra RD path selected 20.34% intra area at
-250 kbps and damaged both quality and speed. Disabling it is a reproducible
-Pareto improvement across the strict seven-point Foreman curve.
+**What libvpx does:** evaluates DC/V/H/TM after the realtime inter search,
+uses adaptive per-mode RD thresholds, and applies additional search-skip and
+low-source-SAD entry guards. Its chosen luma mode also drives chroma.
+**What rvp9 does:** evaluates DC/V/H on final leaves, ranks them in the
+coefficient-distortion domain, and keeps UV prediction on DC. It now reads and
+updates libvpx's adaptive intra RD-threshold slots. It does not apply the
+remaining search-skip/low-source-SAD shortcuts.
+**Why:** the original pixel-SSE fallback over-selected intra and was disabled.
+The coefficient-domain correction made the narrower final-leaf search a
+reproducible quality and speed win, so it was re-enabled. Separate attempts to
+copy libvpx's entry shortcuts and luma-driven chroma both worsened the strict
+Foreman curve.
 **Byte-parity impact:** structural — inter frames choose different block modes,
 but all exercised streams remain byte-exact across rvp9-decoder, vpxdec, and
 ffmpeg decoded output.
-**Compression-efficiency impact:** Stage 4a BD-rate improved from `+25.77%` to
-`+15.77%`; matched-bitrate PSNR deficit improved from `1.149 dB` to
-`0.815 dB`. Aggregate median encode time improved from `12.99 ms` to
-`12.21 ms`.
-**Future plan:** re-enable only after the intra-in-inter RD model and selection
-rate match libvpx across the representative corpus and retain a Pareto gain.
+**Compression-efficiency impact:** the coefficient-domain fallback improved
+the then-current Stage 4a BD-rate from `+6.8761%` to `+4.9246%`. Adding the
+adaptive intra threshold later improved the measured seven-point Foreman curve
+by a further `0.0476%` relative while reducing the exact-VBP test CPU by
+`4.917%`.
+**Future plan:** add TM, luma-driven chroma, or the remaining entry shortcuts
+only when each retains a reproducible corpus-level Pareto improvement.
 
 ### 2026-07-30 — Neutral inherited-MV context in the Stage 4a partition proxy
 **Where:** `rvp9-encoder::pick_and_simulate_inter_encode_partitions`;

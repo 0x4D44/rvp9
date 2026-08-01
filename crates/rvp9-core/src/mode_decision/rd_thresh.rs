@@ -26,18 +26,15 @@
 //! ```
 //!
 //! After the frame's picker has decided the winning mode, the caller
-//! calls [`update_thresh_freq_fact`] which decays the winner's fact
-//! (`*fact -= *fact >> 4`) and increments every other inter mode's fact
-//! (`*fact = min(*fact + 1, adaptive_rd_thresh * RD_THRESH_MAX_FACT)`).
+//! calls [`update_thresh_freq_fact`] or [`update_intra_thresh_freq_fact`].
+//! The winner's fact decays and the other evaluated modes' facts increment.
 //!
 //! ## libvpx fidelity & divergences
 //!
 //! - **THR_MODES mapping**: we mirror the `mode_idx[MAX_REF_FRAMES][4]`
-//!   table from `vp9_pickmode.c:1089-1094`. rvp9 only ports the LAST
-//!   and GOLDEN inter slots; ALTREF and compound entries stay at their
-//!   default (`thresh_mult` from `vp9_set_rd_speed_thresholds` but
-//!   never accessed by the gate because rvp9's picker only iterates
-//!   LAST+GOLDEN ZERO/NEAREST/NEAR/NEW).
+//!   table from `vp9_pickmode.c:1089-1094`. rvp9 ports the LAST and GOLDEN
+//!   inter slots plus its DC/V/H realtime intra subset. ALTREF, compound,
+//!   TM, and directional intra entries stay unused.
 //! - **`adaptive_rd_thresh = 4`**: matches libvpx's cpu-used 6 / 8
 //!   realtime path (`vp9_speed_features.c:752`,
 //!   `vp9_speed_features.c:550`). Equivalent to the operating point
@@ -60,6 +57,7 @@
 
 use crate::bitstream::BitDepth;
 use crate::block::{BLOCK_SIZES, BlockSize};
+use crate::intra_pred::IntraMode;
 use crate::mode_info::{InterMode, RefFrame};
 use crate::quant::dc_quant;
 
@@ -105,6 +103,23 @@ const THR_NEARG: usize = 9;
 const THR_ZEROMV: usize = 10;
 const THR_ZEROG: usize = 11;
 
+#[inline]
+#[must_use]
+const fn intra_thr_mode_idx(mode: IntraMode) -> usize {
+    match mode {
+        IntraMode::Dc => 3,
+        IntraMode::Tm => 15,
+        IntraMode::H => 22,
+        IntraMode::V => 23,
+        IntraMode::D135 => 24,
+        IntraMode::D207 => 25,
+        IntraMode::D153 => 26,
+        IntraMode::D63 => 27,
+        IntraMode::D117 => 28,
+        IntraMode::D45 => 29,
+    }
+}
+
 /// Map `(ref_frame, inter_mode)` to the libvpx `THR_MODES` slot index
 /// used by `thresh_mult[]` / `thresh_freq_fact[bsize][..]`. Mirrors
 /// `mode_idx[MAX_REF_FRAMES][4]` (`vp9_pickmode.c:1089-1094`) for the
@@ -130,8 +145,8 @@ pub fn thr_mode_idx(ref_frame: RefFrame, mode: InterMode) -> Option<usize> {
 /// `vp9_set_rd_speed_thresholds` with `sf.adaptive_rd_thresh > 0`
 /// (`vp9_rd.c:693-745`).
 ///
-/// Slots untouched by rvp9's picker (intra THR_*, compound THR_COMP_*,
-/// ALTREF THR_*A) carry their libvpx default values so the table
+/// Slots untouched by rvp9's picker (compound THR_COMP_* and ALTREF
+/// THR_*A) carry their libvpx default values so the table
 /// stays drop-in compatible with a future port that does iterate them.
 #[must_use]
 const fn thresh_mult_table() -> [i32; MAX_MODES] {
@@ -213,8 +228,8 @@ impl RdThreshTable {
     }
 
     /// Effective RD threshold for `(bsize, ref_frame, mode)` at the
-    /// supplied `qindex`. Returns `None` when the mode is not gated
-    /// (ALTREF / intra slots — the gate has no slot to read).
+    /// supplied `qindex`. Returns `None` when the inter mode is not gated
+    /// (ALTREF or a non-inter reference).
     ///
     /// Mirrors libvpx `vp9_rd.c:373-374` (the base) ×
     /// `vp9_rd.h:193-196` (the gate factor): `rd_thresh_base *
@@ -231,9 +246,26 @@ impl RdThreshTable {
         qindex: u8,
     ) -> Option<i64> {
         let thr_idx = thr_mode_idx(ref_frame, mode)?;
+        Some(self.effective_thresh_idx(bsize, thr_idx, qindex))
+    }
+
+    /// Effective adaptive-RD threshold for an intra prediction mode.
+    #[inline]
+    #[must_use]
+    pub(crate) fn effective_intra_thresh(
+        &self,
+        bsize: BlockSize,
+        mode: IntraMode,
+        qindex: u8,
+    ) -> i64 {
+        self.effective_thresh_idx(bsize, intra_thr_mode_idx(mode), qindex)
+    }
+
+    #[inline]
+    fn effective_thresh_idx(&self, bsize: BlockSize, thr_idx: usize, qindex: u8) -> i64 {
         let mult = THRESH_MULT[thr_idx];
         if mult == 0 {
-            return Some(0);
+            return 0;
         }
         let q = compute_rd_thresh_factor(qindex);
         let bsf = i32::from(RD_THRESH_BLOCK_SIZE_FACTOR[bsize.idx()]);
@@ -246,7 +278,7 @@ impl RdThreshTable {
         let fact = i64::from(self.fact[bsize.idx()][thr_idx]);
         // `rd_less_than_thresh` uses `thresh * fact >> 5`
         // (`vp9_rd.h:195`). Same arithmetic, surfaced as an i64.
-        Some(base.saturating_mul(fact) >> 5)
+        base.saturating_mul(fact) >> 5
     }
 
     /// Read the raw `thresh_freq_fact[bsize][thr_mode]`. Used by tests.
@@ -281,6 +313,16 @@ impl RdThreshTable {
             }
             None => false,
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_intra_freq_fact_for_test(
+        &mut self,
+        bsize: BlockSize,
+        mode: IntraMode,
+        value: i32,
+    ) {
+        self.fact[bsize.idx()][intra_thr_mode_idx(mode)] = value;
     }
 }
 
@@ -334,11 +376,9 @@ pub fn rd_less_than_thresh(
 ///
 /// libvpx's `vp9_pickmode.c:2725-2738` updates EVERY inter mode at
 /// `bsize` for the winning ref frame after a pick, plus the same
-/// across all 4 intra modes when the winner is intra. rvp9 follows
-/// the inter case (LAST or GOLDEN winner) and skips the intra-winner
-/// fan-out (the rvp9 picker's intra fallback is rare and the
-/// per-leaf fact churn on intra slots wouldn't affect the picker
-/// without those slots being read).
+/// across all 4 intra modes when the winner is intra. This function handles
+/// the inter case; [`update_intra_thresh_freq_fact`] handles rvp9's three-mode
+/// realtime intra search.
 ///
 /// The §11 `limit_newmv_early_exit` flag and `source_variance` value
 /// gate the libvpx low-cap branch at `vp9_pickmode.c:1147-1149`:
@@ -433,6 +473,27 @@ pub fn update_thresh_freq_fact_with_s11(
     }
 }
 
+/// Update the adaptive threshold facts for rvp9's three realtime intra modes.
+/// Mirrors libvpx's intra-winner branch at `vp9_pickmode.c:2708-2724`.
+pub fn update_intra_thresh_freq_fact(
+    table: &mut RdThreshTable,
+    bsize: BlockSize,
+    winning_mode: IntraMode,
+) {
+    const MODES: [IntraMode; 3] = [IntraMode::Dc, IntraMode::V, IntraMode::H];
+    let winner_idx = intra_thr_mode_idx(winning_mode);
+    let cap = ADAPTIVE_RD_THRESH.saturating_mul(RD_THRESH_MAX_FACT);
+    for mode in MODES {
+        let idx = intra_thr_mode_idx(mode);
+        let fact = &mut table.fact[bsize.idx()][idx];
+        if idx == winner_idx {
+            *fact -= *fact >> 4;
+        } else {
+            *fact = fact.saturating_add(RD_THRESH_INC).min(cap);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -481,6 +542,30 @@ mod tests {
         assert_eq!(
             thr_mode_idx(RefFrame::GoldenFrame, InterMode::NewMv),
             Some(6),
+        );
+        assert_eq!(intra_thr_mode_idx(IntraMode::Dc), 3);
+        assert_eq!(intra_thr_mode_idx(IntraMode::Tm), 15);
+        assert_eq!(intra_thr_mode_idx(IntraMode::H), 22);
+        assert_eq!(intra_thr_mode_idx(IntraMode::V), 23);
+    }
+
+    #[test]
+    fn p20_intra_update_decays_winner_and_increments_losers() {
+        let mut table = RdThreshTable::new();
+        let bsize = BlockSize::Block16x16;
+        update_intra_thresh_freq_fact(&mut table, bsize, IntraMode::V);
+
+        assert_eq!(
+            table.fact[bsize.idx()][intra_thr_mode_idx(IntraMode::V)],
+            30
+        );
+        assert_eq!(
+            table.fact[bsize.idx()][intra_thr_mode_idx(IntraMode::Dc)],
+            33
+        );
+        assert_eq!(
+            table.fact[bsize.idx()][intra_thr_mode_idx(IntraMode::H)],
+            33
         );
     }
 

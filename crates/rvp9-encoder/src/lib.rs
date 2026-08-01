@@ -6145,14 +6145,18 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         i128::from(unified_pick.coef_rate) - i128::from(cached.coef_rate);
                 }
                 // P20 — update `thresh_freq_fact` after the pick.
-                // Mirrors libvpx `vp9_pickmode.c:2725-2738`: decay the
-                // winning (ref, mode) slot's fact and increment every
-                // other inter slot for the winning ref. Skip for
-                // intra-winning picks (libvpx's intra-loop branch at
-                // `vp9_pickmode.c:2708-2724` updates intra slots,
-                // which rvp9's gate does not read — see the
-                // `rd_thresh` module's divergence note).
-                if matches!(
+                // Mirrors libvpx `vp9_pickmode.c:2708-2738`: update the
+                // three realtime intra slots after an intra winner, or
+                // the four inter slots belonging to the winning ref.
+                if unified_pick.picked_ref_frame == rvp9_core::mode_info::RefFrame::IntraFrame {
+                    if let Some(intra_mode) = unified_pick.picked_intra_mode {
+                        rvp9_core::mode_decision::rd_thresh::update_intra_thresh_freq_fact(
+                            rd_thresh_table,
+                            leaf_bsize,
+                            intra_mode,
+                        );
+                    }
+                } else if matches!(
                     unified_pick.picked_ref_frame,
                     rvp9_core::mode_info::RefFrame::LastFrame
                         | rvp9_core::mode_info::RefFrame::GoldenFrame,
