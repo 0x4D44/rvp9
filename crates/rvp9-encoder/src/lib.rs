@@ -3402,7 +3402,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         inter_mode_costs, partition_costs, switchable_interp_costs,
     };
     use rvp9_core::inter::mv_ref::{
-        BlockBounds, find_last_golden_nearest_near_mvs, find_nearest_near_mvs,
+        BlockBounds, find_last_golden_nearest_near_mvs_with_context, find_nearest_near_mvs,
     };
     use rvp9_core::inter::{get_mode_context, get_pred_context_switchable_interp};
     use rvp9_core::mode_decision::inter::{
@@ -5462,7 +5462,6 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 // Matches libvpx `x->mbmi_ext->mode_context[ref_frame]`
                 // populated by `vp9_find_mv_refs`. Context is ref-frame-
                 // independent (only spatial neighbour modes matter).
-                let inter_mode_ctx = get_mode_context(leaf_bsize, &neighbours);
                 // A18 — collocated `PrevFrameMvRef` for `find_mv_refs`
                 // salvage. Mirrors the decoder's lookup at
                 // `tile.rs:2036` —
@@ -5479,7 +5478,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 // through to the pre-A18 spatial-only behaviour.
                 let leaf_prev_mv: Option<PrevFrameMvRef> = prev_mv_grid
                     .and_then(|g| g.get(leaf_mi_row * mi_cols_us + leaf_mi_col).copied());
-                let [last_ref_mvs, golden_ref_mvs] = find_last_golden_nearest_near_mvs(
+                let realtime_mv_context = find_last_golden_nearest_near_mvs_with_context(
                     leaf_bsize,
                     &neighbours,
                     &sign_bias,
@@ -5487,6 +5486,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     leaf_prev_mv,
                     allow_hp,
                 );
+                let [last_ref_mvs, golden_ref_mvs] = realtime_mv_context.refs;
+                let inter_mode_ctx = realtime_mv_context.mode_context;
                 let mvc = MvCandidates {
                     nearest: last_ref_mvs.nearest,
                     near: last_ref_mvs.near,

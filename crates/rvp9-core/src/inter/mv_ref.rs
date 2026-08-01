@@ -63,6 +63,7 @@
 //!   sub-blocks), `lower_mv_precision`, store in `best_ref_mvs`.
 
 use crate::block::BlockSize;
+use crate::inter::mode_info::{mode_context_counter, mode_context_from_counter};
 use crate::inter::mv::use_mv_hp;
 use crate::mode_info::{BlockMode, InterMode, ModeInfo, Mv, RefFrame};
 
@@ -815,6 +816,15 @@ pub struct RealtimeRefMvs {
     pub const_motion: bool,
 }
 
+/// LAST/GOLDEN realtime candidates plus their shared inter-mode context.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct RealtimeRefMvContext {
+    /// Motion candidates for LAST, then GOLDEN.
+    pub refs: [RealtimeRefMvs; 2],
+    /// Context derived from the first two spatial neighbours.
+    pub mode_context: usize,
+}
+
 /// Resolve LAST and GOLDEN realtime candidates in one neighbour walk.
 ///
 /// This is equivalent to calling [`find_nearest_near_mvs`] and
@@ -831,6 +841,28 @@ pub fn find_last_golden_nearest_near_mvs<N: NeighbourLookup>(
     prev_frame_mv: Option<PrevFrameMvRef>,
     allow_hp: bool,
 ) -> [RealtimeRefMvs; 2] {
+    find_last_golden_nearest_near_mvs_with_context(
+        block_size,
+        neighbours,
+        sign_bias,
+        bounds,
+        prev_frame_mv,
+        allow_hp,
+    )
+    .refs
+}
+
+/// Resolve LAST/GOLDEN candidates and the inter-mode context in one walk.
+#[allow(clippy::too_many_arguments)]
+#[must_use]
+pub fn find_last_golden_nearest_near_mvs_with_context<N: NeighbourLookup>(
+    block_size: BlockSize,
+    neighbours: &N,
+    sign_bias: &[bool; 4],
+    bounds: &BlockBounds,
+    prev_frame_mv: Option<PrevFrameMvRef>,
+    allow_hp: bool,
+) -> RealtimeRefMvContext {
     const REFS: [RefFrame; 2] = [RefFrame::LastFrame, RefFrame::GoldenFrame];
     let mv_ref_search = &MV_REF_BLOCKS[block_size.idx()];
     let mut lists = [[Mv::ZERO; MAX_MV_REF_CANDIDATES]; 2];
@@ -838,6 +870,7 @@ pub fn find_last_golden_nearest_near_mvs<N: NeighbourLookup>(
     let mut first_slot0 = [None; 2];
     let mut const_motion = [true; 2];
     let mut any_neighbour = false;
+    let mut mode_context_sum = 0;
 
     for (position_index, &mv_ref) in mv_ref_search.iter().enumerate() {
         let Some(candidate_mi) = neighbours.get(mv_ref) else {
@@ -846,6 +879,7 @@ pub fn find_last_golden_nearest_near_mvs<N: NeighbourLookup>(
         any_neighbour = true;
 
         if position_index < 2 {
+            mode_context_sum += mode_context_counter(candidate_mi);
             let slot0_ref = candidate_ref(candidate_mi, 0);
             let slot0_mv = candidate_mv(candidate_mi, 0);
             for (ref_index, &ref_frame) in REFS.iter().enumerate() {
@@ -962,7 +996,7 @@ pub fn find_last_golden_nearest_near_mvs<N: NeighbourLookup>(
         }
     }
 
-    core::array::from_fn(|ref_index| {
+    let refs = core::array::from_fn(|ref_index| {
         let list = finish(
             lists[ref_index],
             counts[ref_index],
@@ -975,7 +1009,11 @@ pub fn find_last_golden_nearest_near_mvs<N: NeighbourLookup>(
             near,
             const_motion: const_motion[ref_index],
         }
-    })
+    });
+    RealtimeRefMvContext {
+        refs,
+        mode_context: mode_context_from_counter(mode_context_sum),
+    }
 }
 
 /// Sub-8 driver. Mirrors libvpx `append_sub8x8_mvs_for_idx`
@@ -1426,7 +1464,7 @@ mod tests {
         let assert_equivalent =
             |lookup: &ListNeighbours<'_>, prev_frame_mv: Option<PrevFrameMvRef>| {
                 for allow_hp in [false, true] {
-                    let paired = find_last_golden_nearest_near_mvs(
+                    let paired_with_context = find_last_golden_nearest_near_mvs_with_context(
                         BlockSize::Block16x16,
                         lookup,
                         &sign_bias,
@@ -1434,6 +1472,11 @@ mod tests {
                         prev_frame_mv,
                         allow_hp,
                     );
+                    assert_eq!(
+                        paired_with_context.mode_context,
+                        crate::inter::mode_info::get_mode_context(BlockSize::Block16x16, lookup),
+                    );
+                    let paired = paired_with_context.refs;
                     for (index, ref_frame) in [RefFrame::LastFrame, RefFrame::GoldenFrame]
                         .into_iter()
                         .enumerate()

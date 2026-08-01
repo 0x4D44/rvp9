@@ -82,6 +82,14 @@ const MODE_2_COUNTER_INTER: [i32; 4] = [
 ];
 const MODE_2_COUNTER_INTRA: i32 = 9;
 
+#[inline]
+pub(crate) fn mode_context_counter(mode_info: &ModeInfo) -> i32 {
+    match mode_info.mode {
+        BlockMode::Intra { .. } => MODE_2_COUNTER_INTRA,
+        BlockMode::Inter { mode, .. } => MODE_2_COUNTER_INTER[mode.idx()],
+    }
+}
+
 /// libvpx `counter_to_context[19]` (`vp9_mvref_common.h:67-87`).
 /// Maps the summed-context-counter (0..=18) into the
 /// [`INTER_MODE_CONTEXTS`] index used to fetch
@@ -111,6 +119,11 @@ const COUNTER_TO_CONTEXT: [u8; 19] = [
     6, // BOTH_INTRA
 ];
 
+#[inline]
+pub(crate) fn mode_context_from_counter(counter: i32) -> usize {
+    COUNTER_TO_CONTEXT[counter.clamp(0, 18) as usize] as usize
+}
+
 /// Compute the inter-mode context for a block at the given
 /// `(mi_row, mi_col)` (tile-relative, mi-units). Mirrors libvpx
 /// `get_mode_context` (`vp9_decodemv.c:670-689`).
@@ -125,17 +138,13 @@ pub fn get_mode_context<N: NeighbourLookup>(block_size: BlockSize, neighbours: &
     let mut counter: i32 = 0;
     for &mv_ref in mv_ref_search.iter().take(2) {
         if let Some(candidate) = neighbours.get(mv_ref) {
-            counter += match candidate.mode {
-                BlockMode::Intra { .. } => MODE_2_COUNTER_INTRA,
-                BlockMode::Inter { mode, .. } => MODE_2_COUNTER_INTER[mode.idx()],
-            };
+            counter += mode_context_counter(candidate);
         }
     }
     // Clamp to the valid range — `counter` is always 0..=18 by
     // construction, but defensively floor at 0 / cap at 18 to match
     // libvpx's `counter_to_context` array bounds.
-    let idx = counter.clamp(0, 18) as usize;
-    COUNTER_TO_CONTEXT[idx] as usize
+    mode_context_from_counter(counter)
 }
 
 /// libvpx `vp9_get_pred_context_switchable_interp`
