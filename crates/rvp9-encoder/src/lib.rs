@@ -4476,15 +4476,11 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 //    paths now exercise the same picker, just at
                 //    different sub-block resolutions.
                 //
-                //    Borrow plumbing: `mi_grid` / `recon_yuv_out`
-                //    are read immutably for the descent (the
-                //    descent doesn't mutate them — only the
-                //    post-descent picker loop does). Borrows are
-                //    re-acquired inline so they expire when this
-                //    block ends, freeing the mutable borrows
-                //    that the per-leaf loop needs.
+                //    Borrow plumbing: `mi_grid` is read immutably for the
+                //    descent (only the post-descent picker loop mutates it).
+                //    The borrow is re-acquired inline so it expires before
+                //    the per-leaf loop needs mutable access.
                 let mi_grid_ro: &[Option<rvp9_core::mode_info::ModeInfo>] = &mi_grid;
-                let recon_y_ro: &[u8] = recon_yuv_out.0;
                 let mut descent_picker = |sb_local_x_8x8: usize, sb_local_y_8x8: usize, bs: BS| {
                     let leaf_mi_row = sb_row * 8 + sb_local_y_8x8;
                     let leaf_mi_col = sb_col * 8 + sb_local_x_8x8;
@@ -4614,37 +4610,6 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         },
                     );
 
-                    // Intra-prediction neighbour edges from the
-                    // running Y recon (initialised to last-recon,
-                    // so for the first SB this is identical to the
-                    // reference plane).
-                    let intra_have_above = leaf_px_y > 0;
-                    let intra_have_left = leaf_mi_col > current_tile.mi_col_start;
-                    let mut intra_above_buf = [0u8; 64];
-                    let mut intra_left_buf = [0u8; 64];
-                    let intra_above: Option<&[u8]> = if intra_have_above {
-                        let row_off = (leaf_px_y - 1) * w + leaf_px_x;
-                        let n = bw_px.min(w - leaf_px_x);
-                        intra_above_buf[..n].copy_from_slice(&recon_y_ro[row_off..row_off + n]);
-                        Some(&intra_above_buf[..n])
-                    } else {
-                        None
-                    };
-                    let intra_left: Option<&[u8]> = if intra_have_left {
-                        let n = bh_px.min(h - leaf_px_y);
-                        for r in 0..n {
-                            intra_left_buf[r] = recon_y_ro[(leaf_px_y + r) * w + (leaf_px_x - 1)];
-                        }
-                        Some(&intra_left_buf[..n])
-                    } else {
-                        None
-                    };
-                    let intra_top_left = if intra_have_above && intra_have_left {
-                        recon_y_ro[(leaf_px_y - 1) * w + (leaf_px_x - 1)]
-                    } else {
-                        127
-                    };
-
                     // Neighbour mi-grid context predicates.
                     let nb_above = if leaf_mi_row > 0 {
                         mi_grid_layout.get(mi_grid_ro, leaf_mi_row - 1, leaf_mi_col)
@@ -4722,9 +4687,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         golden_nearest_in_bounds: mv_in_bounds(descent_mvc_golden.nearest),
                         golden_near_in_bounds: mv_in_bounds(descent_mvc_golden.near),
                         enable_intra_fallback: false,
-                        intra_above_pixels: intra_above,
-                        intra_left_pixels: intra_left,
-                        intra_top_left_pixel: intra_top_left,
+                        intra_above_pixels: None,
+                        intra_left_pixels: None,
+                        intra_top_left_pixel: 127,
                         intra_y_mode_costs: &intra_y_mode_costs_inter,
                         ref_frame_cost_intra,
                         switchable_interp_costs: &sic,

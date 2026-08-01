@@ -6551,6 +6551,15 @@ mod tests {
             "disabling the fallback must preserve an inter winner"
         );
         assert_eq!(disabled.picked_intra_mode, None);
+
+        params.intra_above_pixels = None;
+        params.intra_left_pixels = None;
+        params.intra_top_left_pixel = 0;
+        assert_eq!(
+            pick_inter_mode(&params),
+            disabled,
+            "disabled intra fallback must not inspect neighbour pixels"
+        );
     }
 
     /// `pick_inter_mode` with `block_size = Block64x64`: the intra
