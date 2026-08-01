@@ -424,6 +424,84 @@ unsafe fn convolve8_vert_i8mm_inner(
     }
 }
 
+#[target_feature(enable = "i8mm")]
+unsafe fn convolve8_vert_i8mm_4_inner(
+    src: *const u8,
+    src_stride: usize,
+    dst: *mut u8,
+    dst_stride: usize,
+    filter: &[i16; 8],
+    h: usize,
+) {
+    let filters8 = vmovn_s16(vld1q_s16(filter.as_ptr()));
+    let filters = vcombine_s8(filters8, filters8);
+    let transpose_0 = vld1q_u8(DOTPROD_TRANSPOSE.as_ptr());
+    let transpose_1 = vld1q_u8(DOTPROD_TRANSPOSE.as_ptr().add(16));
+    let merge_0 = vld1q_u8(DOTPROD_MERGE_BLOCK.as_ptr());
+    let merge_1 = vld1q_u8(DOTPROD_MERGE_BLOCK.as_ptr().add(16));
+    let merge_2 = vld1q_u8(DOTPROD_MERGE_BLOCK.as_ptr().add(32));
+    let vector_h = h & !3;
+
+    if vector_h != 0 {
+        let s0 = load_four_repeated(src);
+        let s1 = load_four_repeated(src.add(src_stride));
+        let s2 = load_four_repeated(src.add(2 * src_stride));
+        let s3 = load_four_repeated(src.add(3 * src_stride));
+        let s4 = load_four_repeated(src.add(4 * src_stride));
+        let s5 = load_four_repeated(src.add(5 * src_stride));
+        let s6 = load_four_repeated(src.add(6 * src_stride));
+        let zero = vdup_n_u8(0);
+
+        let mut t0 = transpose_concat_8x4_i8mm(s0, s1, s2, s3, transpose_0, transpose_1);
+        let mut t1 = transpose_concat_8x4_i8mm(s1, s2, s3, s4, transpose_0, transpose_1);
+        let mut t2 = transpose_concat_8x4_i8mm(s2, s3, s4, s5, transpose_0, transpose_1);
+        let mut t3 = transpose_concat_8x4_i8mm(s3, s4, s5, s6, transpose_0, transpose_1);
+        let mut t4 = transpose_concat_8x4_i8mm(s4, s5, s6, zero, transpose_0, transpose_1);
+        let mut t5 = transpose_concat_8x4_i8mm(s5, s6, zero, zero, transpose_0, transpose_1);
+        let mut t6 = transpose_concat_8x4_i8mm(s6, zero, zero, zero, transpose_0, transpose_1);
+
+        for y in (0..vector_h).step_by(4) {
+            let s7 = load_four_repeated(src.add((y + 7) * src_stride));
+            let s8 = load_four_repeated(src.add((y + 8) * src_stride));
+            let s9 = load_four_repeated(src.add((y + 9) * src_stride));
+            let s10 = load_four_repeated(src.add((y + 10) * src_stride));
+            let t7 = transpose_concat_8x4_i8mm(s7, s8, s9, s10, transpose_0, transpose_1);
+
+            let lo = uint8x16x2_t(t3.0, t7.0);
+            t4.0 = vqtbl2q_u8(lo, merge_0);
+            t5.0 = vqtbl2q_u8(lo, merge_1);
+            t6.0 = vqtbl2q_u8(lo, merge_2);
+            let hi = uint8x16x2_t(t3.1, t7.1);
+            t4.1 = vqtbl2q_u8(hi, merge_0);
+            t5.1 = vqtbl2q_u8(hi, merge_1);
+            t6.1 = vqtbl2q_u8(hi, merge_2);
+
+            let d0 = filter_four_rows_i8mm(t0.0, t4.0, t0.1, t4.1, filters);
+            let d1 = filter_four_rows_i8mm(t1.0, t5.0, t1.1, t5.1, filters);
+            let d2 = filter_four_rows_i8mm(t2.0, t6.0, t2.1, t6.1, filters);
+            let d3 = filter_four_rows_i8mm(t3.0, t7.0, t3.1, t7.1, filters);
+            store_four(dst.add(y * dst_stride), d0);
+            store_four(dst.add((y + 1) * dst_stride), d1);
+            store_four(dst.add((y + 2) * dst_stride), d2);
+            store_four(dst.add((y + 3) * dst_stride), d3);
+
+            t0 = t4;
+            t1 = t5;
+            t2 = t6;
+            t3 = t7;
+        }
+    }
+
+    for y in vector_h..h {
+        let samples =
+            core::array::from_fn(|tap| load_four_repeated(src.add((y + tap) * src_stride)));
+        store_four(
+            dst.add(y * dst_stride),
+            filter_four_columns(samples, filter),
+        );
+    }
+}
+
 #[target_feature(enable = "neon")]
 unsafe fn convolve8_vert_neon_4_inner(
     src: *const u8,
@@ -652,17 +730,29 @@ pub fn convolve8_vert_neon(
 ) {
     validate_vert(src, src_stride, dst, dst_stride, w, h);
     if w == 4 {
-        // SAFETY: vertical validation guarantees four readable source bytes
+        let narrow_filter = filter.iter().all(|&tap| i8::try_from(tap).is_ok());
+        // SAFETY: Vertical validation guarantees four readable source bytes
         // for each of the h + 7 rows and four writable destination bytes.
         unsafe {
-            convolve8_vert_neon_4_inner(
-                src.as_ptr(),
-                src_stride,
-                dst.as_mut_ptr(),
-                dst_stride,
-                filter,
-                h,
-            );
+            if std::arch::is_aarch64_feature_detected!("i8mm") && narrow_filter {
+                convolve8_vert_i8mm_4_inner(
+                    src.as_ptr(),
+                    src_stride,
+                    dst.as_mut_ptr(),
+                    dst_stride,
+                    filter,
+                    h,
+                );
+            } else {
+                convolve8_vert_neon_4_inner(
+                    src.as_ptr(),
+                    src_stride,
+                    dst.as_mut_ptr(),
+                    dst_stride,
+                    filter,
+                    h,
+                );
+            }
         }
         return;
     }
