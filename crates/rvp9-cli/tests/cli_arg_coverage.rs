@@ -674,7 +674,6 @@ fn enc_parse_only_flags_reject_and_are_tagged_not_yet() {
         ("--frame-parallel", Some("1")),
         ("--error-resilient", Some("1")),
         ("--tune", Some("psnr")),
-        ("--tune-content", Some("screen")),
         ("--svc", None),
         ("--bit-depth", Some("10")),
         ("--psnr", None),
@@ -697,7 +696,6 @@ fn enc_parse_only_flags_reject_and_are_tagged_not_yet() {
         ("--resize-allowed", Some("1")),
         ("--resize-width", Some("640")),
         ("--resize-height", Some("360")),
-        ("--quiet", None),
     ];
 
     let help = Command::new(enc_bin())

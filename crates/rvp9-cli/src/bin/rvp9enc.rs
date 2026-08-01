@@ -461,8 +461,8 @@ fn flag_table() -> Vec<Flag<EncOpts>> {
             long: "tune-content",
             short: None,
             arg: Arg::Required,
-            help: "content type to tune (default/screen/film)",
-            apply: None,
+            help: "content type to tune (default)",
+            apply: Some(|_, v| validate_eq(v, "default", "--tune-content")),
         },
         Flag {
             long: "noise-sensitivity",
@@ -687,7 +687,9 @@ fn flag_table() -> Vec<Flag<EncOpts>> {
             short: Some('q'),
             arg: Arg::None,
             help: "do not print encode progress",
-            apply: None,
+            // Encoding is already silent unless `--verbose` is present, so
+            // libvpx's explicit quiet flag is a behavior-preserving no-op.
+            apply: Some(|_, _| Ok(())),
         },
     ]
 }
@@ -1401,6 +1403,28 @@ mod tests {
         let mut zero_threads = EncOpts::default();
         args::parse(&table, &mut zero_threads, &s(&["--threads=0"]), "rvp9enc").unwrap();
         assert_eq!(build_encoder_parallelism(&zero_threads).max_threads, 1);
+    }
+
+    #[test]
+    fn matched_default_content_and_quiet_are_supported() {
+        let table = flag_table();
+        let mut opts = EncOpts::default();
+        args::parse(
+            &table,
+            &mut opts,
+            &s(&["--tune-content=default", "--quiet"]),
+            "rvp9enc",
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn non_default_content_tuning_remains_unsupported() {
+        let table = flag_table();
+        let mut opts = EncOpts::default();
+        let err =
+            args::parse(&table, &mut opts, &s(&["--tune-content=screen"]), "rvp9enc").unwrap_err();
+        assert!(err.contains("not supported yet (only default)"), "{err}");
     }
 
     /// `--good` and `--best` are mutually exclusive with `--rt` (the
