@@ -147,6 +147,17 @@ pub struct PreAnalysisState {
     pub height: u32,
 }
 
+/// Execution controls for the parallel realtime source-map producers.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ParallelSourceMapConfig {
+    /// Apply the CBR-only lighting-change source-SAD classification.
+    pub(crate) cbr_mode: bool,
+    /// Maximum worker jobs available to the producer split.
+    pub(crate) max_jobs: usize,
+    /// Compute the content classifier's luma Laplacian in the same jobs.
+    pub(crate) compute_hf_energy: bool,
+}
+
 impl PreAnalysisState {
     /// Allocate fresh state for a `width × height` encoder. Both
     /// dimensions must be positive multiples of 8 (the mi-grid
@@ -326,18 +337,17 @@ impl PreAnalysisState {
     /// Compute the independent source-SAD and skin-map producers on the
     /// stream encoder's existing frame worker pool.
     ///
-    /// Both outputs are split into disjoint row spans. The scope joins every
-    /// span before the caller consumes scene-detection or picker inputs, so
-    /// this preserves the serial producer ordering without adding threads.
-    pub fn compute_source_maps_parallel(
+    /// Outputs are split into disjoint row spans. The scope joins every span
+    /// before the caller consumes scene-detection or picker inputs, so this
+    /// preserves the serial producer ordering without adding threads.
+    pub(crate) fn compute_source_maps_parallel(
         &mut self,
         src_y_tight: &[u8],
         src_u_tight: &[u8],
         src_v_tight: &[u8],
-        cbr_mode: bool,
         worker_pool: &mut rvp9_core::tile_threading::WorkerPool,
-        max_jobs: usize,
-    ) {
+        config: ParallelSourceMapConfig,
+    ) -> Option<u64> {
         let w = self.width as usize;
         let h = self.height as usize;
         let uvw = w / 2;
@@ -353,13 +363,14 @@ impl PreAnalysisState {
         // Split each independent producer across half the execution budget.
         // This exposes one scope-wide job per slot without the eight-job CPU
         // overhead of giving both producers the full worker width.
-        let producer_jobs = max_jobs.max(1).div_ceil(2);
+        let producer_jobs = config.max_jobs.max(1).div_ceil(2);
         let sb_rows_per_job = sb_rows.div_ceil(producer_jobs);
         let mi_rows_per_job = mi_rows.div_ceil(producer_jobs);
         let dispatch = rvp9_core::dsp::get_ref();
         let sad64 = dispatch.sad(BlockSize::Block64x64);
         let variance64 = dispatch.variance(BlockSize::Block64x64);
         let last_source = self.last_source_y.as_deref();
+        let mut hf_laplacian_sums = vec![0u64; producer_jobs];
 
         worker_pool.scope(|scope| {
             if let Some(last) = last_source {
@@ -376,7 +387,7 @@ impl PreAnalysisState {
                             last,
                             w,
                             sb_row_start,
-                            cbr_mode,
+                            config.cbr_mode,
                             sad64,
                             variance64,
                             sad_out,
@@ -386,13 +397,15 @@ impl PreAnalysisState {
                 }
             }
 
-            for (chunk_index, (skin_out, consecutive_zero_mv)) in self
+            for (chunk_index, ((skin_out, consecutive_zero_mv), hf_laplacian_sum)) in self
                 .skin_map
                 .chunks_mut(mi_rows_per_job * mi_cols)
                 .zip(self.consec_zero_mv.chunks(mi_rows_per_job * mi_cols))
+                .zip(hf_laplacian_sums.iter_mut())
                 .enumerate()
             {
                 let mi_row_start = chunk_index * mi_rows_per_job;
+                let mi_row_count = skin_out.len() / mi_cols;
                 scope.submit(move || {
                     compute_skin_map_rows(
                         src_y_tight,
@@ -403,9 +416,27 @@ impl PreAnalysisState {
                         consecutive_zero_mv,
                         skin_out,
                     );
+                    if config.compute_hf_energy {
+                        let pixel_row_start = (mi_row_start * 8).max(1);
+                        let pixel_row_end = if mi_row_start + mi_row_count == mi_rows {
+                            h - 1
+                        } else {
+                            (mi_row_start + mi_row_count) * 8
+                        };
+                        *hf_laplacian_sum = frame_hf_laplacian_sum_rows(
+                            src_y_tight,
+                            w,
+                            h,
+                            pixel_row_start,
+                            pixel_row_end,
+                        );
+                    }
                 });
             }
         });
+        config
+            .compute_hf_energy
+            .then(|| hf_laplacian_sums.into_iter().sum())
     }
 
     /// Save the just-encoded source's luma plane for the next
@@ -1087,6 +1118,161 @@ fn sb_sad_and_var_dispatched(
     (sad, sse, sum.unsigned_abs())
 }
 
+/// Sum `|4p - up - down - left - right|` over the requested interior rows.
+///
+/// `row_end` is exclusive. Callers may split `1..height - 1` into disjoint
+/// spans and add the returned integer sums without changing the result.
+pub(crate) fn frame_hf_laplacian_sum_rows(
+    y: &[u8],
+    width: usize,
+    height: usize,
+    row_start: usize,
+    row_end: usize,
+) -> u64 {
+    if width < 3 || height < 3 || y.len() < width * height {
+        return 0;
+    }
+    let row_start = row_start.max(1);
+    let row_end = row_end.min(height - 1);
+    if row_start >= row_end {
+        return 0;
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    {
+        // SAFETY: NEON is mandatory in AArch64. The helper validates the
+        // plane length and bounds every vector load to one complete row.
+        unsafe { frame_hf_laplacian_sum_rows_neon(y, width, row_start, row_end) }
+    }
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        frame_hf_laplacian_sum_rows_scalar(y, width, row_start, row_end)
+    }
+}
+
+#[cfg(any(test, not(target_arch = "aarch64")))]
+fn frame_hf_laplacian_sum_rows_scalar(
+    y: &[u8],
+    width: usize,
+    row_start: usize,
+    row_end: usize,
+) -> u64 {
+    let mut laplacian_sum = 0u64;
+    for row_index in row_start..row_end {
+        let row = row_index * width;
+        let up = row - width;
+        let down = row + width;
+        for column in 1..width - 1 {
+            let pixel = i32::from(y[row + column]);
+            let left = i32::from(y[row + column - 1]);
+            let right = i32::from(y[row + column + 1]);
+            let above = i32::from(y[up + column]);
+            let below = i32::from(y[down + column]);
+            laplacian_sum += u64::from((4 * pixel - left - right - above - below).unsigned_abs());
+        }
+    }
+    laplacian_sum
+}
+
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+unsafe fn frame_hf_laplacian_sum_rows_neon(
+    y: &[u8],
+    width: usize,
+    row_start: usize,
+    row_end: usize,
+) -> u64 {
+    use std::arch::aarch64::*;
+
+    #[inline(always)]
+    unsafe fn abs_laplacian_sum_8(
+        pixel: uint8x8_t,
+        left: uint8x8_t,
+        right: uint8x8_t,
+        up: uint8x8_t,
+        down: uint8x8_t,
+    ) -> u64 {
+        // SAFETY: All operands are initialized NEON values. Four u8
+        // neighbours and `4 * pixel` fit in u16; their signed difference fits
+        // in i16, so the absolute value and horizontal sum are exact.
+        unsafe {
+            let pixel_times_four = vshlq_n_u16(vmovl_u8(pixel), 2);
+            let neighbours = vaddq_u16(
+                vaddq_u16(vmovl_u8(left), vmovl_u8(right)),
+                vaddq_u16(vmovl_u8(up), vmovl_u8(down)),
+            );
+            let laplacian = vsubq_s16(
+                vreinterpretq_s16_u16(pixel_times_four),
+                vreinterpretq_s16_u16(neighbours),
+            );
+            u64::from(vaddlvq_u16(vreinterpretq_u16_s16(vabsq_s16(laplacian))))
+        }
+    }
+
+    let mut laplacian_sum = 0u64;
+    for row_index in row_start..row_end {
+        let row = row_index * width;
+        let up = row - width;
+        let down = row + width;
+        let mut column = 1usize;
+        while column + 16 < width {
+            // SAFETY: The loop bounds keep every 16-byte load within its
+            // source row. `left` starts one byte earlier and `right` one byte
+            // later, both still inside the same `width`-byte row.
+            unsafe {
+                let pixel = vld1q_u8(y.as_ptr().add(row + column));
+                let left = vld1q_u8(y.as_ptr().add(row + column - 1));
+                let right = vld1q_u8(y.as_ptr().add(row + column + 1));
+                let above = vld1q_u8(y.as_ptr().add(up + column));
+                let below = vld1q_u8(y.as_ptr().add(down + column));
+                laplacian_sum += abs_laplacian_sum_8(
+                    vget_low_u8(pixel),
+                    vget_low_u8(left),
+                    vget_low_u8(right),
+                    vget_low_u8(above),
+                    vget_low_u8(below),
+                );
+                laplacian_sum += abs_laplacian_sum_8(
+                    vget_high_u8(pixel),
+                    vget_high_u8(left),
+                    vget_high_u8(right),
+                    vget_high_u8(above),
+                    vget_high_u8(below),
+                );
+            }
+            column += 16;
+        }
+        while column < width - 1 {
+            let pixel = i32::from(y[row + column]);
+            let left = i32::from(y[row + column - 1]);
+            let right = i32::from(y[row + column + 1]);
+            let above = i32::from(y[up + column]);
+            let below = i32::from(y[down + column]);
+            laplacian_sum += u64::from((4 * pixel - left - right - above - below).unsigned_abs());
+            column += 1;
+        }
+    }
+    laplacian_sum
+}
+
+#[cfg(test)]
+pub(crate) fn frame_hf_laplacian_sum_scalar(y: &[u8], width: usize, height: usize) -> u64 {
+    if width < 3 || height < 3 || y.len() < width * height {
+        return 0;
+    }
+    frame_hf_laplacian_sum_rows_scalar(y, width, 1, height - 1)
+}
+
+#[cfg(all(test, target_arch = "aarch64"))]
+pub(crate) unsafe fn frame_hf_laplacian_sum_neon(y: &[u8], width: usize, height: usize) -> u64 {
+    if width < 3 || height < 3 || y.len() < width * height {
+        return 0;
+    }
+    // SAFETY: The caller accepts the target-feature contract, and the bounds
+    // above prove all complete rows used by the helper exist.
+    unsafe { frame_hf_laplacian_sum_rows_neon(y, width, 1, height - 1) }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn compute_avg_source_sad_rows(
     src: &[u8],
@@ -1707,11 +1893,27 @@ mod tests {
         let mut pool = rvp9_core::tile_threading::WorkerPool::new_with_caller(
             std::num::NonZeroUsize::new(4).unwrap(),
         );
-        parallel.compute_source_maps_parallel(&source_y, &source_u, &source_v, true, &mut pool, 4);
+        let parallel_hf_sum = parallel
+            .compute_source_maps_parallel(
+                &source_y,
+                &source_u,
+                &source_v,
+                &mut pool,
+                ParallelSourceMapConfig {
+                    cbr_mode: true,
+                    max_jobs: 4,
+                    compute_hf_energy: true,
+                },
+            )
+            .expect("parallel source maps computed HF energy");
 
         assert_eq!(parallel.avg_source_sad, serial.avg_source_sad);
         assert_eq!(parallel.content_state_sb, serial.content_state_sb);
         assert_eq!(parallel.skin_map, serial.skin_map);
+        assert_eq!(
+            parallel_hf_sum,
+            frame_hf_laplacian_sum_rows(&source_y, W, H, 1, H - 1),
+        );
     }
 
     /// W2.2 PROOF — SB-grid sizing matches the encoder's
