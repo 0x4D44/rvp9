@@ -288,6 +288,35 @@ impl FrameCounts {
     /// Mirrors libvpx `cm->counts` accumulation in
     /// `vp9_decode_tiles_mt`.
     pub fn add(&mut self, other: &Self) {
+        self.add_non_coef(other);
+        self.coef.add(&other.coef);
+        // ENCODER-ONLY: fold the full 12-token histogram when present on
+        // both sides (per-tile-worker merge). The decoder leaves this
+        // `None`, so this is a no-op on the decode path.
+        if let (Some(dst), Some(src)) = (self.coef_full.as_mut(), other.coef_full.as_ref()) {
+            for (tx_a, tx_b) in dst.iter_mut().zip(src.iter()) {
+                for (pt_a, pt_b) in tx_a.iter_mut().zip(tx_b.iter()) {
+                    for (rt_a, rt_b) in pt_a.iter_mut().zip(pt_b.iter()) {
+                        for (band_a, band_b) in rt_a.iter_mut().zip(rt_b.iter()) {
+                            for (ctx_a, ctx_b) in band_a.iter_mut().zip(band_b.iter()) {
+                                for (a, b) in ctx_a.iter_mut().zip(ctx_b.iter()) {
+                                    *a += *b;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Merge every non-coefficient field from a tile-local count bank.
+    ///
+    /// Retained-token replay gathers coefficient histograms before the
+    /// compressed header, then gathers mode/MV counts during final packing.
+    /// This avoids scanning the known-zero coefficient banks of those final
+    /// tile-local counts.
+    pub fn add_non_coef(&mut self, other: &Self) {
         for (ra, rb) in self.y_mode.iter_mut().zip(other.y_mode.iter()) {
             for (a, b) in ra.iter_mut().zip(rb.iter()) {
                 *a += *b;
@@ -303,7 +332,6 @@ impl FrameCounts {
                 *a += *b;
             }
         }
-        self.coef.add(&other.coef);
         for (ra, rb) in self
             .switchable_interp
             .iter_mut()
@@ -347,24 +375,6 @@ impl FrameCounts {
             }
         }
         self.mv.add(&other.mv);
-        // ENCODER-ONLY: fold the full 12-token histogram when present on
-        // both sides (per-tile-worker merge). The decoder leaves this
-        // `None`, so this is a no-op on the decode path.
-        if let (Some(dst), Some(src)) = (self.coef_full.as_mut(), other.coef_full.as_ref()) {
-            for (tx_a, tx_b) in dst.iter_mut().zip(src.iter()) {
-                for (pt_a, pt_b) in tx_a.iter_mut().zip(tx_b.iter()) {
-                    for (rt_a, rt_b) in pt_a.iter_mut().zip(pt_b.iter()) {
-                        for (band_a, band_b) in rt_a.iter_mut().zip(rt_b.iter()) {
-                            for (ctx_a, ctx_b) in band_a.iter_mut().zip(band_b.iter()) {
-                                for (a, b) in ctx_a.iter_mut().zip(ctx_b.iter()) {
-                                    *a += *b;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
     }
 }
 
@@ -1444,6 +1454,21 @@ mod tests {
         assert_eq!(merged.skip[1][1], 5 * 17 + 17 * 17);
         assert_eq!(merged.mv.joints[2], 5 * 18 + 17 * 18);
         assert_eq!(merged.mv.comps[1].bits[3][1], 5 * 20 + 17 * 20);
+    }
+
+    #[test]
+    fn frame_counts_add_non_coef_leaves_coefficient_banks_unchanged() {
+        let mut destination = FrameCounts::default();
+        let mut source = FrameCounts::default();
+        populate_synthetic(&mut destination, 5);
+        populate_synthetic(&mut source, 17);
+        let coef_before = destination.coef.clone();
+
+        destination.add_non_coef(&source);
+
+        assert_eq!(destination.coef, coef_before);
+        assert_eq!(destination.partition[5][1], 5 * 4 + 17 * 4);
+        assert_eq!(destination.mv.joints[2], 5 * 18 + 17 * 18);
     }
 
     #[test]

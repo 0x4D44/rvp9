@@ -1828,21 +1828,26 @@ fn write_inter_partition_tree(
 ) -> Result<(), ModesWriterError> {
     debug_assert!(mi_row < bounds.mi_row_end && mi_col < bounds.mi_col_end);
 
+    let coef_record_only =
+        bw.is_count_only() && matches!(retained_pass.as_deref(), Some(CoefTokenPass::Record(_)));
+
     let n8x8_l2: u8 = n4x4_l2.saturating_sub(1);
     let num_8x8_wh: usize = 1usize << n8x8_l2;
     let hbs: usize = num_8x8_wh >> 1;
 
     let mi_row_in_tile = mi_row - bounds.mi_row_start;
     let mi_col_in_tile = mi_col - bounds.mi_col_start;
-    let bsl: usize = n8x8_l2 as usize;
-    let ctx = part_ctx.context(mi_row_in_tile, mi_col_in_tile, bsl);
 
     let partition = infer_inter_partition(mi_grid, mi_cols, mi_row, mi_col, bsize)?;
-    set_category(BitCategory::Partition);
-    write_partition(bw, &fc.partition_prob[ctx], partition);
-    // P0b — accumulate partition count for backward adaptation.
-    if let Some(c) = counts.as_deref_mut() {
-        c.partition[ctx][partition as usize] += 1;
+    if !coef_record_only {
+        let bsl: usize = n8x8_l2 as usize;
+        let ctx = part_ctx.context(mi_row_in_tile, mi_col_in_tile, bsl);
+        set_category(BitCategory::Partition);
+        write_partition(bw, &fc.partition_prob[ctx], partition);
+        // P0b — accumulate partition count for backward adaptation.
+        if let Some(c) = counts.as_deref_mut() {
+            c.partition[ctx][partition as usize] += 1;
+        }
     }
 
     let sub = subsize(bsize, partition)
@@ -2111,13 +2116,38 @@ fn write_inter_partition_tree(
     }
 
     // Partition-context update gate — same as the keyframe walker.
-    if (bsize as u8) >= (BlockSize::Block8x8 as u8)
+    if !coef_record_only
+        && (bsize as u8) >= (BlockSize::Block8x8 as u8)
         && (bsize == BlockSize::Block8x8 || partition != PartitionType::Split)
     {
         part_ctx.update(mi_row_in_tile, mi_col_in_tile, sub, num_8x8_wh);
     }
 
     Ok(())
+}
+
+#[inline]
+fn effective_inter_tx_size(
+    mi: &ModeInfo,
+    leaf_bsize: BlockSize,
+    tx_mode: TxMode,
+    is_inter: bool,
+) -> TxSize {
+    let allow_select = !mi.skip || !is_inter;
+    let max_tx = max_txsize(leaf_bsize);
+    if allow_select && tx_mode == TxMode::TxModeSelect {
+        mi.tx_size
+    } else {
+        let cap = tx_mode_to_biggest_tx_size(tx_mode) as u8;
+        let raw = core::cmp::min(max_tx as u8, cap);
+        match raw {
+            0 => TxSize::Tx4x4,
+            1 => TxSize::Tx8x8,
+            2 => TxSize::Tx16x16,
+            3 => TxSize::Tx32x32,
+            _ => unreachable!("min of TxSize values out of range: {raw}"),
+        }
+    }
 }
 
 /// Emit one inter-frame leaf coding block at `(mi_row, mi_col)`.
@@ -2181,6 +2211,27 @@ fn write_inter_block_leaf(
         return Err(ModesWriterError::UnsupportedSegmentation { mi_row, mi_col });
     }
     let is_inter = matches!(mi.mode, BlockMode::Inter { .. });
+    let effective_tx_size = effective_inter_tx_size(mi, leaf_bsize, tx_mode, is_inter);
+
+    let coef_record_only =
+        bw.is_count_only() && matches!(retained_pass.as_deref(), Some(CoefTokenPass::Record(_)));
+    if coef_record_only {
+        write_or_reset_inter_residual(
+            bw,
+            fc,
+            coef_ctx,
+            coef_source,
+            mi_row,
+            mi_col,
+            tile_bounds.mi_col_start,
+            leaf_bsize,
+            effective_tx_size,
+            mi,
+            counts,
+            retained_pass,
+        );
+        return Ok(());
+    }
 
     // 1. Segment_id. AQ.0 emits a plain tree decode when
     //    `seg.is_some()` (i.e. `enabled && update_map &&
@@ -2241,19 +2292,6 @@ fn write_inter_block_leaf(
     // Mirror the decoder-side derivation when allow_select == false
     // so the writer accepts any `mi.tx_size` consistent with that
     // derivation. (In `Select` mode we trust the caller's tx_size.)
-    let effective_tx_size = if allow_select && tx_mode == TxMode::TxModeSelect {
-        mi.tx_size
-    } else {
-        let cap = tx_mode_to_biggest_tx_size(tx_mode) as u8;
-        let raw = core::cmp::min(max_tx as u8, cap);
-        match raw {
-            0 => TxSize::Tx4x4,
-            1 => TxSize::Tx8x8,
-            2 => TxSize::Tx16x16,
-            3 => TxSize::Tx32x32,
-            _ => unreachable!("min of TxSize values out of range: {raw}"),
-        }
-    };
     set_category(BitCategory::TxSize);
     crate::mode_info::write_tx_size(
         bw,
@@ -2381,7 +2419,41 @@ fn write_inter_block_leaf(
     //    `mi.skip == false` we walk planes 0/1/2 and emit one
     //    `write_block_tokens` per TX position, mirroring the decoder's
     //    `reconstruct_inter_block` / `reconstruct_intra_planes` loop.
+    write_or_reset_inter_residual(
+        bw,
+        fc,
+        coef_ctx,
+        coef_source,
+        mi_row,
+        mi_col,
+        tile_bounds.mi_col_start,
+        leaf_bsize,
+        effective_tx_size,
+        mi,
+        counts,
+        retained_pass,
+    );
+
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn write_or_reset_inter_residual(
+    bw: &mut BoolWriter<'_>,
+    fc: &FrameContext,
+    coef_ctx: &mut TileCoefCtx,
+    coef_source: &dyn InterCoefSource,
+    mi_row: usize,
+    mi_col: usize,
+    tile_mi_col_start: usize,
+    leaf_bsize: BlockSize,
+    effective_tx_size: TxSize,
+    mi: &ModeInfo,
+    counts: Option<&mut FrameCounts>,
+    retained_pass: Option<&mut CoefTokenPass<'_>>,
+) {
     if !mi.skip {
+        let is_inter = matches!(mi.mode, BlockMode::Inter { .. });
         // G5 -- extract y_mode for intra-in-inter residual coding.
         // Inter blocks pass IntraMode::Dc (unused since is_inter
         // forces DctDct + ref_type=1 inside the residual writer).
@@ -2393,7 +2465,6 @@ fn write_inter_block_leaf(
         // A6 TWO_LOOP — split the `FrameCounts` borrow into the 4-token
         // `.coef` model bank (backward adaptation) and the optional
         // encoder-only full 12-token `.coef_full` bank (count pass).
-        // Disjoint fields, so a single `&mut` destructure is sound.
         let (coef_bank, coef_full_bank): (
             Option<&mut CoefCountsBank>,
             Option<&mut crate::entropy::adapt::Coef12Bank>,
@@ -2408,7 +2479,7 @@ fn write_inter_block_leaf(
             coef_source,
             mi_row,
             mi_col,
-            tile_bounds.mi_col_start,
+            tile_mi_col_start,
             leaf_bsize,
             effective_tx_size,
             is_inter,
@@ -2418,24 +2489,10 @@ fn write_inter_block_leaf(
             retained_pass,
         );
     } else {
-        // RC.X1 — mirror libvpx's `dec_reset_skip_context`
-        // (`vp9_decodeframe.c:1008-1010`): when a leaf is skip-coded
-        // the decoder zeros the per-plane above/left coef-context
-        // cells the block covers, so the NEXT non-skip leaf sees a
-        // fresh context. The encoder must do the same so the bool
-        // coder stays in sync — otherwise our `initial_pt` for the
-        // next leaf's coef tokens differs from the decoder's, the
-        // EOB prob differs, and the bit stream desyncs.
-        reset_skip_coef_context(
-            coef_ctx,
-            leaf_bsize,
-            mi_row,
-            mi_col,
-            tile_bounds.mi_col_start,
-        );
+        // RC.X1 — mirror libvpx's `dec_reset_skip_context` so the next
+        // non-skip leaf derives the same initial coefficient context.
+        reset_skip_coef_context(coef_ctx, leaf_bsize, mi_row, mi_col, tile_mi_col_start);
     }
-
-    Ok(())
 }
 
 /// RC.X1 — encoder-side mirror of libvpx's `dec_reset_skip_context`
@@ -6800,6 +6857,62 @@ mod tests {
             .map(|ctx| ctx[crate::entropy::EOB_MODEL_TOKEN])
             .sum();
         assert!(total_coef_eob > 0, "non-skip residuals must count EOBs");
+
+        let mut split_counts = FrameCounts::default();
+        let mut retained = crate::entropy::RetainedCoefTokens::default();
+        let mut record_pass = CoefTokenPass::record(&mut retained);
+        let mut record_sink = [];
+        let mut record_bw = BoolWriter::start_count_only(&mut record_sink);
+        let mut record_coef_ctx = TileCoefCtx::new(mi_cols as usize);
+        write_tile_inter_with_retained(
+            &mut record_bw,
+            &count_fc,
+            &params,
+            TxMode::AllowTx32x32,
+            &grid,
+            mi_rows,
+            mi_cols,
+            bounds,
+            None,
+            None,
+            &mut record_coef_ctx,
+            &coef_source,
+            Some(&mut split_counts),
+            Some(&mut record_pass),
+        )
+        .expect("coefficient-only record traversal");
+        assert_eq!(split_counts.coef, counts.coef);
+        assert_eq!(split_counts.partition, FrameCounts::default().partition);
+        assert_eq!(split_counts.skip, FrameCounts::default().skip);
+
+        let mut replay_counts = FrameCounts::default();
+        let mut replay_pass = CoefTokenPass::replay(&retained);
+        let mut replay_buf = vec![0u8; 4 * 1024];
+        let mut replay_bw = BoolWriter::start_encode(&mut replay_buf);
+        let mut replay_coef_ctx = TileCoefCtx::new(mi_cols as usize);
+        write_tile_inter_with_retained(
+            &mut replay_bw,
+            &fc,
+            &params,
+            TxMode::AllowTx32x32,
+            &grid,
+            mi_rows,
+            mi_cols,
+            bounds,
+            None,
+            None,
+            &mut replay_coef_ctx,
+            &coef_source,
+            Some(&mut replay_counts),
+            Some(&mut replay_pass),
+        )
+        .expect("retained replay traversal");
+        assert_eq!(replay_counts.coef, FrameCounts::default().coef);
+        split_counts.add_non_coef(&replay_counts);
+        assert_eq!(
+            split_counts, counts,
+            "coefficient-only record plus final mode counts must equal one full traversal"
+        );
     }
 
     /// ModesWriterError Display impl coverage — each variant.

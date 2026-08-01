@@ -5088,11 +5088,12 @@ fn build_inter_packet_with_residuals(
     // frame's coefficient counts (`vp9_bitstream.c:1316-1394` runs
     // `pack_mb_tokens` accounting before `write_compressed_header`,
     // which calls `update_coef_probs`). rvp9 writes the header first,
-    // so we add a dry run: encode the SAME tile data into a throwaway
-    // buffer with a `FrameCounts` whose `coef_full` is the full 12-token
-    // histogram. Token VALUES come from `coef_source` (residuals) and
-    // are probability-INDEPENDENT, so the counts produced here are
-    // identical to the real tile pass's regardless of which FC is used.
+    // so this pre-header pass walks only the coefficient blocks, retaining
+    // their symbolic tokens and filling the 4-/12-token histograms. It skips
+    // partition and mode serialization; those counts are gathered during the
+    // already-required final tile write. Token VALUES come from `coef_source`
+    // and are probability-INDEPENDENT, so this pass is valid with the pre-
+    // update FC.
     // We clone `decoder_fc` so this pass never mutates the live mirror.
     let count_fc = decoder_fc.clone();
     let mut count_counts = FrameCounts {
@@ -5135,8 +5136,7 @@ fn build_inter_packet_with_residuals(
                 Some(&mut token_pass),
             )?;
             retained_coef_tiles.push(retained);
-            // The writer deliberately emits no bytes — only the explicit
-            // FrameCounts updates from the identical syntax walk matter.
+            // The writer deliberately emits no bytes and no mode syntax.
         }
         Ok(())
     })?;
@@ -5179,7 +5179,7 @@ fn build_inter_packet_with_residuals(
 
     let tile_fc: &FrameContext = decoder_fc;
     let tx_mode = target.tx_mode;
-    let encode_tile = |tile_col: usize| -> Result<Vec<u8>, EncodeError> {
+    let encode_tile = |tile_col: usize| -> Result<(Vec<u8>, FrameCounts), EncodeError> {
         let bounds = tile_bounds(
             mi_rows as usize,
             mi_cols as usize,
@@ -5191,6 +5191,7 @@ fn build_inter_packet_with_residuals(
         // F10.1c — sized generously (per-pixel × 4) since real
         // residuals can dominate the bit budget at higher Q indices.
         let mut tile_buf = vec![0u8; (mi_rows as usize) * (mi_cols as usize) * 64 + 16 * 1024];
+        let mut tile_counts = FrameCounts::default();
         let tile_len = {
             let mut bw = BoolWriter::start_encode(&mut tile_buf);
             let mut coef_ctx = TileCoefCtx::new(bounds.mi_col_end - bounds.mi_col_start);
@@ -5211,18 +5212,18 @@ fn build_inter_packet_with_residuals(
                 prev_mv_grid,
                 &mut coef_ctx,
                 coef_source,
-                // The count-only traversal above already gathered the
-                // complete probability-independent FrameCounts. Repeating
-                // those updates here only recreates the same adaptation
-                // input while emitting the arithmetic-coded bytes.
-                None,
+                // The pre-header pass gathers only coefficient histograms.
+                // Accumulate all non-coefficient counts while performing
+                // this already-required final syntax traversal. Retained
+                // coefficient replay returns before touching coef counts.
+                Some(&mut tile_counts),
                 Some(&mut token_pass),
             )?;
             bw.stop_encode()
                 .map_err(|_| EncodeError::Bitstream(BitstreamError::CompressedHeaderTooLarge))?
         };
         tile_buf.truncate(tile_len);
-        Ok(tile_buf)
+        Ok((tile_buf, tile_counts))
     };
 
     // Bit-accounting diagnostics are thread-local and intentionally observe
@@ -5234,7 +5235,8 @@ fn build_inter_packet_with_residuals(
         && !rvp9_core::entropy::bitacct::enabled();
     let mut tile_bufs = Vec::with_capacity(tile_cols);
     if run_parallel {
-        type TileWriteResultSlot = std::sync::Mutex<Option<Result<Vec<u8>, EncodeError>>>;
+        type TileWriteResultSlot =
+            std::sync::Mutex<Option<Result<(Vec<u8>, FrameCounts), EncodeError>>>;
         let result_slots: Vec<TileWriteResultSlot> = (0..tile_cols)
             .map(|_| std::sync::Mutex::new(None))
             .collect();
@@ -5252,26 +5254,26 @@ fn build_inter_packet_with_residuals(
                 }
             });
         for (tile_col, result_slot) in result_slots.into_iter().enumerate() {
-            tile_bufs.push(
-                result_slot
-                    .into_inner()
-                    .expect("inter tile writer result slot mutex poisoned")
-                    .unwrap_or_else(|| panic!("inter tile writer {tile_col} produced no result"))?,
-            );
+            let (tile_buf, tile_counts) = result_slot
+                .into_inner()
+                .expect("inter tile writer result slot mutex poisoned")
+                .unwrap_or_else(|| panic!("inter tile writer {tile_col} produced no result"))?;
+            tile_bufs.push(tile_buf);
+            count_counts.add_non_coef(&tile_counts);
         }
     } else {
         for tile_col in 0..tile_cols {
-            tile_bufs.push(encode_tile(tile_col)?);
+            let (tile_buf, tile_counts) = encode_tile(tile_col)?;
+            tile_bufs.push(tile_buf);
+            count_counts.add_non_coef(&tile_counts);
         }
     }
     let tile_refs: Vec<&[u8]> = tile_bufs.iter().map(Vec::as_slice).collect();
     let tile_buf = write_tile_buffers(&tile_refs, tile_cols as u32, 1)?;
 
-    // The count-only traversal is the canonical source for backward
-    // adaptation as well as the coefficient update plan. Its encoder-only
-    // 12-token bank is no longer needed after plan construction; exclude it
-    // from the decoder-shaped output counts and preserve the prior additive
-    // output-slot contract.
+    // Coefficient counts came from the pre-header record traversal; all other
+    // backward-adaptation counts came from final tile packing. The encoder-
+    // only 12-token bank is no longer needed after plan construction.
     count_counts.coef_full = None;
     if let Some(dst) = counts {
         dst.add(&count_counts);
