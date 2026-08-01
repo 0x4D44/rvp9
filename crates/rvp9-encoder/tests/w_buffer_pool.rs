@@ -304,8 +304,16 @@ fn a10_byte_identity_pre_vs_post_refactor() {
     // BYTE-CLEAN; `RVP9_LA=0` restores the PRE-LA bytes EXACTLY (len 6625,
     // fnv1a 0xc87e_f0db_888f_275d). Correct, intentional golden update.
     // Prior iter golden: (len 6625, fnv1a 0xc87e_f0db_888f_275d).
-    const GOLDEN_HASH: u64 = 0x612e_fb7c_61fa_a3d5;
-    const GOLDEN_LEN: usize = 6563;
+    //
+    // Re-captured again (2026-08-01) after the production-parity stack
+    // changed the default AQ-off realtime picker and split policy. Those
+    // intentional coding decisions change this synthetic stream without
+    // changing the reference-pool mapping that this oracle guards. The new
+    // stream was reproduced twice with the same hash, and the sibling decode
+    // test accepts all 12 frames. Prior production golden: (len 6563, fnv1a
+    // 0x612e_fb7c_61fa_a3d5).
+    const GOLDEN_HASH: u64 = 0x0c1d_12c3_efe1_68b3;
+    const GOLDEN_LEN: usize = 9162;
 
     let stream = encode_fixed_clip();
     let hash = fnv1a(&stream);
