@@ -75,7 +75,7 @@ pub const BAND_COUNTS: [[i16; 8]; 4] = [
 /// Returns one of `ZERO/ONE/TWO/THREE/FOUR/CAT1..CAT6` (token values
 /// `0..=10`). Never returns `EOB_TOKEN` (callers handle EOB
 /// separately).
-#[inline]
+#[inline(always)]
 #[must_use]
 pub fn vp9_get_token(v: i32) -> u8 {
     let abs_v = v.unsigned_abs();
@@ -119,6 +119,7 @@ impl BandCountsWalker {
     /// caller has emitted the DC coefficient before this constructor
     /// returns; the walker manages the AC bands going forward.
     #[must_use]
+    #[inline(always)]
     pub fn start_after_dc(tx_size: TxSize) -> Self {
         let counts = BAND_COUNTS[tx_size as usize];
         // libvpx advances past the DC slot at line 365 and then reads
@@ -135,6 +136,7 @@ impl BandCountsWalker {
     /// just advanced (caller should bump its `token_costs` slab).
     /// When the trailing `0` sentinel is hit (libvpx's terminator),
     /// `band_left` stays at zero and the caller stops emitting EOB.
+    #[inline(always)]
     pub fn step(&mut self) -> bool {
         self.band_left -= 1;
         if self.band_left == 0 && self.next_idx < self.counts.len() {
@@ -150,6 +152,7 @@ impl BandCountsWalker {
     /// current scan position. Mirrors libvpx's `if (band_left)` check
     /// before the EOB cost addition (line 416).
     #[must_use]
+    #[inline(always)]
     pub fn eob_should_be_charged(&self) -> bool {
         self.band_left != 0
     }
@@ -305,7 +308,7 @@ pub fn cost_coeffs(
     cost
 }
 
-#[inline]
+#[inline(always)]
 #[allow(clippy::too_many_arguments)]
 fn token_cost(
     costs: &CoefCostTable,
@@ -331,7 +334,7 @@ fn token_cost(
     ) as u32
 }
 
-#[inline]
+#[inline(always)]
 fn extra_bits_cost(token: u8) -> u32 {
     if (token as usize) < EXTRA_BITS_COST_LT_CAT6.len() {
         EXTRA_BITS_COST_LT_CAT6[token as usize]

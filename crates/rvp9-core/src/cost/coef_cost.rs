@@ -217,7 +217,7 @@ pub struct CoefCostIndex {
 
 /// Lookup the cost of coefficient token `idx.token` at the
 /// `(tx_size, plane_type, ref_type, band, ctx)` cell selected by `idx`.
-#[inline]
+#[inline(always)]
 #[must_use]
 pub fn coef_token_cost(table: &CoefCostTable, idx: CoefCostIndex) -> i32 {
     let s = usize::from(idx.skip_eob);
