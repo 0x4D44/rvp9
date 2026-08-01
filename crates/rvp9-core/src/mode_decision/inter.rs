@@ -2438,7 +2438,8 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
     let inter_mode_thresh = rd_cost(lambda, intra_cost_penalty, 0);
 
     if params.enable_intra_fallback && best.best_rd_cost > inter_mode_thresh {
-        let intra_result = evaluate_intra_fallback(params, lambda, intra_cost_penalty);
+        let intra_result =
+            evaluate_intra_fallback(params, lambda, intra_cost_penalty, best.best_rd_cost);
         if let Some(intra) = intra_result
             && intra.best_rd_cost < best.best_rd_cost
         {
@@ -2487,6 +2488,7 @@ fn evaluate_intra_fallback(
     params: &PickInterModeParams<'_>,
     lambda: u32,
     intra_cost_penalty: u32,
+    best_inter_rd: i64,
 ) -> Option<PickInterModeResult> {
     let intra_costs = params.intra_y_mode_costs;
 
@@ -2594,6 +2596,21 @@ fn evaluate_intra_fallback(
         {
             continue;
         }
+
+        // Coefficient rate and distortion are nonnegative. If the fixed
+        // mode/reference/penalty syntax cost already reaches the strict RD
+        // winner, no completion of this candidate can replace it.
+        let mbmode_cost = intra_costs[mode as usize].max(0) as u32;
+        let fixed_rate = mbmode_cost
+            .saturating_add(params.ref_frame_cost_intra)
+            .saturating_add(intra_cost_penalty);
+        let rd_limit = best_intra
+            .as_ref()
+            .map_or(best_inter_rd, |best| best.best_rd_cost.min(best_inter_rd));
+        if rd_cost(lambda, fixed_rate, 0) >= rd_limit {
+            continue;
+        }
+
         // 1. Build prediction.
         let mut pred = [0u8; 64 * 64];
         let ctx = PredCtx {
@@ -2705,12 +2722,8 @@ fn evaluate_intra_fallback(
 
         // 5. Rate = mbmode_cost + ref_frame_cost[INTRA] +
         //           intra_cost_penalty + coef_rate.
-        let mbmode_cost = intra_costs[mode as usize].max(0) as u32;
         let effective_coef_rate: u32 = by.coef_rate.min(u32::MAX as u64) as u32;
-        let rate = mbmode_cost
-            .saturating_add(params.ref_frame_cost_intra)
-            .saturating_add(intra_cost_penalty)
-            .saturating_add(effective_coef_rate);
+        let rate = fixed_rate.saturating_add(effective_coef_rate);
 
         // libvpx ranks realtime intra candidates with the coefficient-domain
         // distortion produced by `block_yrd` (`vp9_pickmode.c:2608-2633`),
@@ -10241,7 +10254,7 @@ mod tests {
         params.max_intra_bsize = BlockSize::Block16x16;
         let lambda = compute_rd_mult(50, frame_type_for_rd(params.frame_kind));
         let cp = crate::cost::get_intra_cost_penalty(params.q_index, params.block_size);
-        let res_active = evaluate_intra_fallback(&params, lambda, cp);
+        let res_active = evaluate_intra_fallback(&params, lambda, cp, i64::MAX);
         assert!(
             res_active.is_none(),
             "§11 max_intra_bsize ACTIVE: Block32x32 > Block16x16 must \
@@ -10251,7 +10264,7 @@ mod tests {
         // Control: max_intra_bsize = Block32x32 → Block32x32 <=
         // Block32x32 → intra fallback runs.
         params.max_intra_bsize = BlockSize::Block32x32;
-        let res_control = evaluate_intra_fallback(&params, lambda, cp).expect(
+        let res_control = evaluate_intra_fallback(&params, lambda, cp, i64::MAX).expect(
             "§11 max_intra_bsize CONTROL: Block32x32 <= Block32x32 must \
              permit intra fallback",
         );
@@ -10264,6 +10277,10 @@ mod tests {
             res_control.best_rd_cost,
             rd_cost(lambda, res_control.best_rate, expected_dist_rd),
             "realtime intra ranking must use libvpx's block_yrd distortion domain",
+        );
+        assert!(
+            evaluate_intra_fallback(&params, lambda, cp, 0).is_none(),
+            "a zero incumbent RD must prune every nonnegative intra candidate",
         );
     }
 
@@ -10326,7 +10343,7 @@ mod tests {
 
         // Active: gate on. Only DC may win.
         params.rt_intra_dc_only_low_content = true;
-        let active = evaluate_intra_fallback(&params, lambda, cp);
+        let active = evaluate_intra_fallback(&params, lambda, cp, i64::MAX);
         if let Some(res) = active {
             assert_eq!(
                 res.picked_intra_mode,
@@ -10341,7 +10358,7 @@ mod tests {
         // Control: gate off. V or H may win on this horizontal-
         // gradient source.
         params.rt_intra_dc_only_low_content = false;
-        let control = evaluate_intra_fallback(&params, lambda, cp);
+        let control = evaluate_intra_fallback(&params, lambda, cp, i64::MAX);
         assert!(
             control.is_some(),
             "§11 rt_intra_dc_only_low_content CONTROL: intra fallback \
@@ -10412,7 +10429,7 @@ mod tests {
 
         let lambda = compute_rd_mult(50, frame_type_for_rd(params.frame_kind));
         let cp = crate::cost::get_intra_cost_penalty(params.q_index, params.block_size);
-        let bypass = evaluate_intra_fallback(&params, lambda, cp);
+        let bypass = evaluate_intra_fallback(&params, lambda, cp, i64::MAX);
         assert!(
             bypass.is_some(),
             "§11 rt_intra_dc_only_low_content BYPASS (VeryHighSad): \
