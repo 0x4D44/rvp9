@@ -3689,3 +3689,40 @@ pinned vpxenc, down from `1.34822x`.
 **Future plan:** keep batch SAD as an exact implementation optimization.
 Do not pad the later three-candidate rounds with a discarded fourth lane
 without separate measurement.
+
+### 2026-08-01 — Small-frame partition descent uses chessboard filter search
+
+**Where:** `rvp9_encoder::InterEncodeEnv::descent_cb_filter_search` and
+`rvp9_encoder::pick_and_simulate_inter_encode_partitions`.
+
+**What libvpx does:** cpu-used 7 realtime enables
+`cb_pred_filter_search` only above 640x480. Below that threshold, its
+realtime picker searches the configured interpolation filters on every
+eligible fractional-MV block.
+
+**What rvp9 does:** the speculative partition-descent picker applies the
+chessboard shortcut at every scoped resolution. The final emitted picker
+keeps libvpx's resolution gate and therefore performs the full small-frame
+search. `RVP9_A4_DESCENT_CB_FILTER=0` restores the former full-search proxy
+for differential diagnosis.
+
+**Why:** rvp9's recursive partition proxy is materially more expensive than
+libvpx's non-RD partition path. Alternating paired measurements show the
+shortcut removes work while the final picker recovers full mode quality.
+
+**Byte-parity impact:** the chosen partition tree can change. At the canonical
+250 kbps Foreman point the stream changes from 68,659 to 68,862 bytes. The
+stream remains standards-compliant; this change does not alter bitstream
+syntax or decoder behavior.
+
+**Compression-efficiency impact:** the seven-point canonical Foreman curve
+improves from `-12.264557%` to `-12.643812%` luma BD-rate against pinned
+libvpx v1.14.1. Average-YUV BD-rate improves from `-11.626509%` to
+`-11.953755%`.
+
+**Speed impact:** thirty alternating pairs improve median total child CPU by
+`1.918%` and wall time by `1.965%`, with 29/30 CPU and 29/30 wall wins.
+
+**Future plan:** retain the full final-picker search and validate this proxy
+policy across the complete cpu-used 6-8 corpus. Revert the default if another
+important clip exceeds the feature-specific regression tolerance.

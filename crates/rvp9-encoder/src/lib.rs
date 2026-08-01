@@ -3246,6 +3246,13 @@ impl InterEncodeEnv {
     fn skip_integer_mv_filter_search(&self) -> bool {
         self.flag_or(self.rt_skip_intmv_filter_search, true)
     }
+
+    /// Use libvpx's chessboard filter-search proxy throughout realtime
+    /// partition descent. Rvp9 applies it below libvpx's resolution gate
+    /// because the final emitted picker still performs the full search.
+    fn descent_cb_filter_search(&self) -> bool {
+        self.flag_or(self.a4_descent_cb_filter, true)
+    }
 }
 
 #[allow(clippy::too_many_arguments)] // AQ.1 added `seg_q_deltas`; the
@@ -3962,7 +3969,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // good-quality quantizer the realtime default.
     let rt_quant_fp = env.flag_or(env.rt_quant_fp, true);
     let rt_reuse_descent_pick = env.flag_or(env.rt_reuse_descent_pick, rt_large_recovery);
-    let a4_descent_cb_filter_search = env.flag_or(env.a4_descent_cb_filter, rt_large_recovery);
+    let a4_descent_cb_filter_search = env.descent_cb_filter_search();
     let rt_skip_integer_mv_filter_search = env.skip_integer_mv_filter_search();
     let newmv_diff_bias_enabled =
         newmv_diff_bias_for_mode(rc_mode, env.flag_or(env.newmv_diff_bias, true));
@@ -4810,10 +4817,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         limit_newmv_early_exit: sf.limit_newmv_early_exit,
                         bias_golden: sf.bias_golden,
                         frames_since_golden,
-                        // A/B knob: make only the A4 partition descent use
-                        // libvpx's chessboard filter-search shortcut. The
-                        // final emitted picker below keeps the normal speed
-                        // feature, so this only changes the partition proxy.
+                        // Apply the chessboard shortcut only to the A4
+                        // partition proxy. The final emitted picker below
+                        // keeps the resolution-gated libvpx speed feature and
+                        // therefore performs the full small-frame search.
                         cb_pred_filter_search: sf.cb_pred_filter_search
                             || a4_descent_cb_filter_search,
                         skip_integer_mv_filter_search: rt_skip_integer_mv_filter_search,
@@ -9951,6 +9958,22 @@ mod tests {
         // SAFETY: the mutex above serialises all encoder environment tests.
         unsafe { std::env::set_var(key, "0") };
         assert!(!InterEncodeEnv::capture().skip_integer_mv_filter_search());
+        // SAFETY: the mutex above serialises all encoder environment tests.
+        unsafe { std::env::remove_var(key) };
+    }
+
+    #[test]
+    fn realtime_descent_uses_chessboard_filter_search_by_default() {
+        let _guard = env_test_mutex();
+        let key = "RVP9_A4_DESCENT_CB_FILTER";
+        // SAFETY: the mutex above serialises all encoder environment tests.
+        unsafe { std::env::remove_var(key) };
+        assert!(InterEncodeEnv::capture().descent_cb_filter_search());
+
+        // Preserve the full-search differential escape hatch.
+        // SAFETY: the mutex above serialises all encoder environment tests.
+        unsafe { std::env::set_var(key, "0") };
+        assert!(!InterEncodeEnv::capture().descent_cb_filter_search());
         // SAFETY: the mutex above serialises all encoder environment tests.
         unsafe { std::env::remove_var(key) };
     }
