@@ -3848,3 +3848,40 @@ time by `12.484%`; CPU wins 40/40 pairs and wall wins 39/40.
 **Future plan:** do not extend this policy to square candidates: the measured
 all-shape variant lost 7.321397 luma BD-rate points on VBR. Validate the
 rectangular-only proxy across cpu-used 6-8 and the complete corpus.
+
+### 2026-08-01 — Disabled references use a single MV-context walk
+
+**Where:** `rvp9_core::inter::mv_ref::
+find_realtime_refs_nearest_near_mvs_with_context` and
+`rvp9_encoder::pick_and_simulate_inter_encode_partitions`.
+
+**What libvpx does:** the realtime picker builds motion-reference candidates
+only for references that remain usable after its reference gates.
+
+**What rvp9 does:** ordinary speculative candidates, whose GOLDEN reference is
+disabled by the accepted proxy policy, build only LAST nearest/near motion,
+constant-motion state, and the shared inter-mode context. VeryHighSad blocks
+retain the paired LAST/GOLDEN walk. The final picker remains paired. A const-
+generic core helper shares the exact traversal implementation for one or two
+references.
+
+**Why:** after suppressing GOLDEN search, the descent still performed all
+GOLDEN candidate-list bookkeeping. The single-reference helper removes that
+dead work without adding a second traversal or changing LAST/context results.
+
+**Byte-parity impact:** none. A focused oracle compares the single-reference
+result and context with the paired helper across compound, different-reference,
+previous-frame, empty-grid, and precision cases. The canonical Unit 424 CBR
+stream remains 68,738 bytes with SHA-256
+`d893b844154db16537ebedf3cd7d85ea4c0b711da70938e098ec88d41db0e1fd`.
+
+**Compression-efficiency impact:** none; stream bytes are unchanged, so Unit
+424's accepted CBR/VBR curves and clean product result remain authoritative.
+
+**Speed impact:** one hundred alternating one-thread CBR pairs improve median
+total child CPU by `0.679%` with 60/100 wins and wall time by `0.634%` with
+66/100 wins.
+
+**Future plan:** keep single-reference traversal conditional on the same
+GOLDEN-disable and VeryHighSad gates. Any additional reference pruning must
+retain an equivalent differential oracle.

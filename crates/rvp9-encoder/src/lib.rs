@@ -3431,7 +3431,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     };
     use rvp9_core::inter::get_pred_context_switchable_interp;
     use rvp9_core::inter::mv_ref::{
-        BlockBounds, find_last_golden_nearest_near_mvs_with_context, find_nearest_near_mvs,
+        BlockBounds, RealtimeRefMvs, find_last_golden_nearest_near_mvs_with_context,
+        find_last_nearest_near_mvs_with_context, find_nearest_near_mvs,
     };
     use rvp9_core::mode_decision::inter::{
         InterModeSearchParams, MvCandidates, PickInterModeParams, pick_inter_mode,
@@ -4632,16 +4633,45 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     );
                     let leaf_prev_mv: Option<PrevFrameMvRef> = prev_mv_grid
                         .and_then(|g| g.get(leaf_mi_row * mi_cols_us + leaf_mi_col).copied());
-                    let realtime_mv_context = find_last_golden_nearest_near_mvs_with_context(
-                        bs,
-                        &neighbours,
-                        &sign_bias,
-                        &bounds,
-                        leaf_prev_mv,
-                        allow_hp,
-                    );
-                    let [last_ref_mvs, golden_ref_mvs] = realtime_mv_context.refs;
-                    let inter_mode_ctx = realtime_mv_context.mode_context;
+                    let sb_cols = (width / 64).max(1) as usize;
+                    let sb_idx = (leaf_mi_row / 8) * sb_cols + (leaf_mi_col / 8);
+                    let content_state_sb = content_state_sb_grid
+                        .get(sb_idx)
+                        .copied()
+                        .unwrap_or(rvp9_core::mode_decision::inter::ContentStateSb::Normal);
+                    let (last_ref_mvs, golden_ref_mvs, inter_mode_ctx) =
+                        if a4_descent_disable_golden
+                            && content_state_sb
+                                != rvp9_core::mode_decision::inter::ContentStateSb::VeryHighSad
+                        {
+                            let (last, mode_context) = find_last_nearest_near_mvs_with_context(
+                                bs,
+                                &neighbours,
+                                &sign_bias,
+                                &bounds,
+                                leaf_prev_mv,
+                                allow_hp,
+                            );
+                            (
+                                last,
+                                RealtimeRefMvs {
+                                    nearest: Mv::ZERO,
+                                    near: Mv::ZERO,
+                                    const_motion: true,
+                                },
+                                mode_context,
+                            )
+                        } else {
+                            let context = find_last_golden_nearest_near_mvs_with_context(
+                                bs,
+                                &neighbours,
+                                &sign_bias,
+                                &bounds,
+                                leaf_prev_mv,
+                                allow_hp,
+                            );
+                            (context.refs[0], context.refs[1], context.mode_context)
+                        };
                     let mvc = MvCandidates {
                         nearest: last_ref_mvs.nearest,
                         near: last_ref_mvs.near,
@@ -4829,14 +4859,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         // from W2.2 avg_source_sad pass. Index via
                         // (leaf_mi_row/8, leaf_mi_col/8) — the SB
                         // grid resolution is 64×64 luma.
-                        content_state_sb: {
-                            let sb_cols = (width / 64).max(1) as usize;
-                            let sb_idx = (leaf_mi_row / 8) * sb_cols + (leaf_mi_col / 8);
-                            content_state_sb_grid
-                                .get(sb_idx)
-                                .copied()
-                                .unwrap_or(rvp9_core::mode_decision::inter::ContentStateSb::Normal)
-                        },
+                        content_state_sb,
                         is_screen_content: false,
                         zero_temp_sad_source: None,
                         scene_change_detected: scene_change_detected_frame,

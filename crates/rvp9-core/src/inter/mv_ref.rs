@@ -852,23 +852,24 @@ pub fn find_last_golden_nearest_near_mvs<N: NeighbourLookup>(
     .refs
 }
 
-/// Resolve LAST/GOLDEN candidates and the inter-mode context in one walk.
+/// Resolve one or more references and the shared inter-mode context in one
+/// neighbour walk.
 #[allow(clippy::too_many_arguments)]
 #[must_use]
-pub fn find_last_golden_nearest_near_mvs_with_context<N: NeighbourLookup>(
+fn find_realtime_refs_nearest_near_mvs_with_context<N: NeighbourLookup, const REF_COUNT: usize>(
+    ref_frames: [RefFrame; REF_COUNT],
     block_size: BlockSize,
     neighbours: &N,
     sign_bias: &[bool; 4],
     bounds: &BlockBounds,
     prev_frame_mv: Option<PrevFrameMvRef>,
     allow_hp: bool,
-) -> RealtimeRefMvContext {
-    const REFS: [RefFrame; 2] = [RefFrame::LastFrame, RefFrame::GoldenFrame];
+) -> ([RealtimeRefMvs; REF_COUNT], usize) {
     let mv_ref_search = &MV_REF_BLOCKS[block_size.idx()];
-    let mut lists = [[Mv::ZERO; MAX_MV_REF_CANDIDATES]; 2];
-    let mut counts = [0usize; 2];
-    let mut first_slot0 = [None; 2];
-    let mut const_motion = [true; 2];
+    let mut lists = [[Mv::ZERO; MAX_MV_REF_CANDIDATES]; REF_COUNT];
+    let mut counts = [0usize; REF_COUNT];
+    let mut first_slot0 = [None; REF_COUNT];
+    let mut const_motion = [true; REF_COUNT];
     let mut any_neighbour = false;
     let mut mode_context_sum = 0;
 
@@ -882,7 +883,7 @@ pub fn find_last_golden_nearest_near_mvs_with_context<N: NeighbourLookup>(
             mode_context_sum += mode_context_counter(candidate_mi);
             let slot0_ref = candidate_ref(candidate_mi, 0);
             let slot0_mv = candidate_mv(candidate_mi, 0);
-            for (ref_index, &ref_frame) in REFS.iter().enumerate() {
+            for (ref_index, &ref_frame) in ref_frames.iter().enumerate() {
                 if slot0_ref == ref_frame {
                     match first_slot0[ref_index] {
                         None => first_slot0[ref_index] = Some(slot0_mv),
@@ -893,7 +894,7 @@ pub fn find_last_golden_nearest_near_mvs_with_context<N: NeighbourLookup>(
             }
         }
 
-        for (ref_index, &ref_frame) in REFS.iter().enumerate() {
+        for (ref_index, &ref_frame) in ref_frames.iter().enumerate() {
             if counts[ref_index] == MAX_MV_REF_CANDIDATES {
                 continue;
             }
@@ -911,7 +912,7 @@ pub fn find_last_golden_nearest_near_mvs_with_context<N: NeighbourLookup>(
     }
 
     if let Some(prev) = prev_frame_mv {
-        for (ref_index, &ref_frame) in REFS.iter().enumerate() {
+        for (ref_index, &ref_frame) in ref_frames.iter().enumerate() {
             if counts[ref_index] == MAX_MV_REF_CANDIDATES {
                 continue;
             }
@@ -936,7 +937,7 @@ pub fn find_last_golden_nearest_near_mvs_with_context<N: NeighbourLookup>(
             if !is_inter_block(candidate_mi) {
                 continue;
             }
-            for (ref_index, &ref_frame) in REFS.iter().enumerate() {
+            for (ref_index, &ref_frame) in ref_frames.iter().enumerate() {
                 if counts[ref_index] == MAX_MV_REF_CANDIDATES {
                     continue;
                 }
@@ -969,7 +970,7 @@ pub fn find_last_golden_nearest_near_mvs_with_context<N: NeighbourLookup>(
     }
 
     if let Some(prev) = prev_frame_mv {
-        for (ref_index, &ref_frame) in REFS.iter().enumerate() {
+        for (ref_index, &ref_frame) in ref_frames.iter().enumerate() {
             if counts[ref_index] == MAX_MV_REF_CANDIDATES {
                 continue;
             }
@@ -1010,10 +1011,53 @@ pub fn find_last_golden_nearest_near_mvs_with_context<N: NeighbourLookup>(
             const_motion: const_motion[ref_index],
         }
     });
-    RealtimeRefMvContext {
-        refs,
-        mode_context: mode_context_from_counter(mode_context_sum),
-    }
+    (refs, mode_context_from_counter(mode_context_sum))
+}
+
+/// Resolve LAST/GOLDEN candidates and the inter-mode context in one walk.
+#[allow(clippy::too_many_arguments)]
+#[must_use]
+pub fn find_last_golden_nearest_near_mvs_with_context<N: NeighbourLookup>(
+    block_size: BlockSize,
+    neighbours: &N,
+    sign_bias: &[bool; 4],
+    bounds: &BlockBounds,
+    prev_frame_mv: Option<PrevFrameMvRef>,
+    allow_hp: bool,
+) -> RealtimeRefMvContext {
+    let (refs, mode_context) = find_realtime_refs_nearest_near_mvs_with_context(
+        [RefFrame::LastFrame, RefFrame::GoldenFrame],
+        block_size,
+        neighbours,
+        sign_bias,
+        bounds,
+        prev_frame_mv,
+        allow_hp,
+    );
+    RealtimeRefMvContext { refs, mode_context }
+}
+
+/// Resolve LAST candidates and the inter-mode context in one walk.
+#[allow(clippy::too_many_arguments)]
+#[must_use]
+pub fn find_last_nearest_near_mvs_with_context<N: NeighbourLookup>(
+    block_size: BlockSize,
+    neighbours: &N,
+    sign_bias: &[bool; 4],
+    bounds: &BlockBounds,
+    prev_frame_mv: Option<PrevFrameMvRef>,
+    allow_hp: bool,
+) -> (RealtimeRefMvs, usize) {
+    let ([last], mode_context) = find_realtime_refs_nearest_near_mvs_with_context(
+        [RefFrame::LastFrame],
+        block_size,
+        neighbours,
+        sign_bias,
+        bounds,
+        prev_frame_mv,
+        allow_hp,
+    );
+    (last, mode_context)
 }
 
 /// Sub-8 driver. Mirrors libvpx `append_sub8x8_mvs_for_idx`
@@ -1477,6 +1521,16 @@ mod tests {
                         crate::inter::mode_info::get_mode_context(BlockSize::Block16x16, lookup),
                     );
                     let paired = paired_with_context.refs;
+                    let (last_only, last_mode_context) = find_last_nearest_near_mvs_with_context(
+                        BlockSize::Block16x16,
+                        lookup,
+                        &sign_bias,
+                        &bounds,
+                        prev_frame_mv,
+                        allow_hp,
+                    );
+                    assert_eq!(last_only, paired[0]);
+                    assert_eq!(last_mode_context, paired_with_context.mode_context);
                     for (index, ref_frame) in [RefFrame::LastFrame, RefFrame::GoldenFrame]
                         .into_iter()
                         .enumerate()
