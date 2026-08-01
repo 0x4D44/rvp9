@@ -2545,7 +2545,11 @@ impl SimdDispatch {
                         neon::vpx_sub_pixel_variance8x8_neon,
                         neon::vpx_sub_pixel_variance8x8_dotprod
                     ),
-                    Some(sc::vpx_sub_pixel_variance8x16),
+                    subpel_slot!(
+                        sc::vpx_sub_pixel_variance8x16,
+                        neon::vpx_sub_pixel_variance8x16_neon,
+                        neon::vpx_sub_pixel_variance8x16_dotprod
+                    ),
                     subpel_slot!(
                         sc::vpx_sub_pixel_variance16x8,
                         neon::vpx_sub_pixel_variance16x8_neon,

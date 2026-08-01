@@ -488,6 +488,37 @@ pub fn vpx_sub_pixel_variance8x8_neon(
         )
     }
 }
+
+/// NEON sub-pixel variance 8x16.
+pub fn vpx_sub_pixel_variance8x16_neon(
+    src: &[u8],
+    src_stride: usize,
+    xoffset: usize,
+    yoffset: usize,
+    reference: &[u8],
+    ref_stride: usize,
+) -> (u32, u32) {
+    assert!(xoffset < 8 && yoffset < 8);
+    assert!(src_stride >= 8 + usize::from(xoffset != 0));
+    assert!(ref_stride >= 8);
+    assert!(src.len() >= 16 * src_stride + 8 + usize::from(xoffset != 0));
+    assert!(reference.len() >= 15 * ref_stride + 8);
+
+    // SAFETY: AArch64 dispatch selects this wrapper only when NEON is
+    // present. The assertions prove every exact-width load, the optional
+    // horizontal neighbour, and the vertical source row are live.
+    unsafe {
+        sub_pixel_variance_8_neon_inner(
+            src.as_ptr(),
+            src_stride,
+            reference.as_ptr(),
+            ref_stride,
+            xoffset,
+            yoffset,
+            16,
+        )
+    }
+}
 subpel_var_neon_fn!(vpx_sub_pixel_variance16x8_neon, 16, 8);
 subpel_var_neon_fn!(vpx_sub_pixel_variance16x16_neon, 16, 16);
 subpel_var_neon_fn!(vpx_sub_pixel_variance16x32_neon, 16, 32);
@@ -523,6 +554,36 @@ pub fn vpx_sub_pixel_variance8x8_dotprod(
             xoffset,
             yoffset,
             8,
+        )
+    }
+}
+
+/// Dot-product sub-pixel variance 8x16.
+pub fn vpx_sub_pixel_variance8x16_dotprod(
+    src: &[u8],
+    src_stride: usize,
+    xoffset: usize,
+    yoffset: usize,
+    reference: &[u8],
+    ref_stride: usize,
+) -> (u32, u32) {
+    assert!(xoffset < 8 && yoffset < 8);
+    assert!(src_stride >= 8 + usize::from(xoffset != 0));
+    assert!(ref_stride >= 8);
+    assert!(src.len() >= 16 * src_stride + 8 + usize::from(xoffset != 0));
+    assert!(reference.len() >= 15 * ref_stride + 8);
+
+    // SAFETY: Dispatch selects this wrapper only when dotprod is present.
+    // The assertions prove the complete eight-wide source footprint.
+    unsafe {
+        sub_pixel_variance_8_dotprod_inner(
+            src.as_ptr(),
+            src_stride,
+            reference.as_ptr(),
+            ref_stride,
+            xoffset,
+            yoffset,
+            16,
         )
     }
 }
@@ -572,6 +633,7 @@ mod tests {
 
     const SHAPES: &[(BlockSize, usize, usize)] = &[
         (BlockSize::Block8x8, 8, 8),
+        (BlockSize::Block8x16, 8, 16),
         (BlockSize::Block16x8, 16, 8),
         (BlockSize::Block16x16, 16, 16),
         (BlockSize::Block16x32, 16, 32),
@@ -602,7 +664,15 @@ mod tests {
         let (xoffset, yoffset) = offsets;
         let (width, height) = shape;
         if width == 8 {
-            vpx_sub_pixel_variance8x8_neon(src, src_stride, xoffset, yoffset, reference, ref_stride)
+            match height {
+                8 => vpx_sub_pixel_variance8x8_neon(
+                    src, src_stride, xoffset, yoffset, reference, ref_stride,
+                ),
+                16 => vpx_sub_pixel_variance8x16_neon(
+                    src, src_stride, xoffset, yoffset, reference, ref_stride,
+                ),
+                _ => unreachable!(),
+            }
         } else {
             sub_pixel_variance_neon(
                 src, src_stride, reference, ref_stride, xoffset, yoffset, width, height,
@@ -621,9 +691,15 @@ mod tests {
         let (xoffset, yoffset) = offsets;
         let (width, height) = shape;
         if width == 8 {
-            vpx_sub_pixel_variance8x8_dotprod(
-                src, src_stride, xoffset, yoffset, reference, ref_stride,
-            )
+            match height {
+                8 => vpx_sub_pixel_variance8x8_dotprod(
+                    src, src_stride, xoffset, yoffset, reference, ref_stride,
+                ),
+                16 => vpx_sub_pixel_variance8x16_dotprod(
+                    src, src_stride, xoffset, yoffset, reference, ref_stride,
+                ),
+                _ => unreachable!(),
+            }
         } else {
             sub_pixel_variance_dotprod(
                 src, src_stride, reference, ref_stride, xoffset, yoffset, width, height,

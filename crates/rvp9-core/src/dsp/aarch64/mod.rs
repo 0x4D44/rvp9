@@ -50,6 +50,7 @@ pub use sad4d_neon::{
 };
 pub use subpel_variance_neon::{
     vpx_sub_pixel_variance8x8_dotprod, vpx_sub_pixel_variance8x8_neon,
+    vpx_sub_pixel_variance8x16_dotprod, vpx_sub_pixel_variance8x16_neon,
     vpx_sub_pixel_variance16x8_dotprod, vpx_sub_pixel_variance16x8_neon,
     vpx_sub_pixel_variance16x16_dotprod, vpx_sub_pixel_variance16x16_neon,
     vpx_sub_pixel_variance16x32_dotprod, vpx_sub_pixel_variance16x32_neon,
