@@ -3318,9 +3318,10 @@ fn evaluate_candidate_for_filter_with_pred(
     // Use the model_rd TX size for the round-trip (replaces the
     // previous hard-coded `max_txsize(block_size)`).
     let tx_size = mrd.tx_size;
-    let yuv_early_term = use_large
-        && mrd.skip_txfm == SkipTxfm::AcDc
-        && chroma_planes_skippable(params, dsp, mv, bw, bh, tx_size, filter);
+    let chroma_skip_probe = (use_large && mrd.skip_txfm == SkipTxfm::AcDc)
+        .then(|| chroma_planes_skippable(params, dsp, mv, bw, bh, tx_size, filter, pred_u, pred_v))
+        .flatten();
+    let yuv_early_term = chroma_skip_probe.is_some_and(|probe| probe.all_skippable);
 
     // Compute the reconstruction. For Block16x16 / Block32x32 the
     // block matches its max_txsize and we do one big transform.
@@ -3629,46 +3630,35 @@ fn evaluate_candidate_for_filter_with_pred(
             col: mv.col / 2,
         };
 
-        // Build UV MC predictions into per-worker scratch. Each predictor
-        // overwrites the complete active prefix consumed by model-RD.
-        {
-            let ref_u_plane = PlaneRef {
-                data: params.ref_u,
-                stride: params.uv_stride,
-                width: params.uv_stride, // full chroma width
-                height: params.ref_u.len() / params.uv_stride,
-            };
-            build_inter_prediction(
+        // Reuse every prediction the large-block skip probe materialized
+        // before it either succeeded or rejected early termination.
+        let ready_mask = chroma_skip_probe.map_or(0, |probe| probe.ready_mask);
+        if ready_mask & 1 == 0 {
+            build_chroma_prediction(
+                params.ref_u,
+                params.uv_stride,
                 dsp,
-                &ref_u_plane,
                 uv_x,
                 uv_y,
                 uv_mv,
                 uv_bw,
                 uv_bh,
-                pred_u,
-                uv_bw,
                 filter,
+                pred_u,
             );
         }
-        {
-            let ref_v_plane = PlaneRef {
-                data: params.ref_v,
-                stride: params.uv_stride,
-                width: params.uv_stride,
-                height: params.ref_v.len() / params.uv_stride,
-            };
-            build_inter_prediction(
+        if ready_mask & 2 == 0 {
+            build_chroma_prediction(
+                params.ref_v,
+                params.uv_stride,
                 dsp,
-                &ref_v_plane,
                 uv_x,
                 uv_y,
                 uv_mv,
                 uv_bw,
                 uv_bh,
-                pred_v,
-                uv_bw,
                 filter,
+                pred_v,
             );
         }
 
@@ -4011,6 +4001,36 @@ fn build_inter_prediction(
     }
 }
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+struct ChromaSkipProbe {
+    all_skippable: bool,
+    ready_mask: u8,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_chroma_prediction(
+    reference: &[u8],
+    uv_stride: usize,
+    dsp: &crate::dsp::SimdDispatch,
+    uv_x: usize,
+    uv_y: usize,
+    uv_mv: Mv,
+    uv_bw: usize,
+    uv_bh: usize,
+    filter: InterpFilter,
+    pred: &mut [u8; 32 * 32],
+) {
+    let ref_plane = PlaneRef {
+        data: reference,
+        stride: uv_stride,
+        width: uv_stride,
+        height: reference.len() / uv_stride,
+    };
+    build_inter_prediction(
+        dsp, &ref_plane, uv_x, uv_y, uv_mv, uv_bw, uv_bh, pred, uv_bw, filter,
+    );
+}
+
 /// Test both chroma planes for libvpx's large-block transform-skip early exit.
 ///
 /// This is the `skip_uv[2]` loop in `model_rd_for_sb_y_large`: predict each
@@ -4025,14 +4045,16 @@ fn chroma_planes_skippable(
     bh: usize,
     tx_size: TxSize,
     filter: InterpFilter,
-) -> bool {
+    pred_u: &mut [u8; 32 * 32],
+    pred_v: &mut [u8; 32 * 32],
+) -> Option<ChromaSkipProbe> {
     if params.src_u.is_empty()
         || params.src_v.is_empty()
         || params.ref_u.is_empty()
         || params.ref_v.is_empty()
         || params.uv_stride == 0
     {
-        return false;
+        return None;
     }
 
     let uv_bw = bw >> 1;
@@ -4053,29 +4075,43 @@ fn chroma_planes_skippable(
         >> threshold_shift;
     let uv_bsize = crate::block::uv_plane_block_size(params.block_size, 1, 1);
     let variance = dsp.variance(uv_bsize);
-    let mut pred = [0u8; 32 * 32];
 
-    for (src, reference) in [(params.src_u, params.ref_u), (params.src_v, params.ref_v)] {
-        let ref_plane = PlaneRef {
-            data: reference,
-            stride: params.uv_stride,
-            width: params.uv_stride,
-            height: reference.len() / params.uv_stride,
-        };
-        build_inter_prediction(
-            dsp, &ref_plane, uv_x, uv_y, uv_mv, uv_bw, uv_bh, &mut pred, uv_bw, filter,
+    for (index, (src, reference, pred)) in [
+        (params.src_u, params.ref_u, &mut *pred_u),
+        (params.src_v, params.ref_v, &mut *pred_v),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        build_chroma_prediction(
+            reference,
+            params.uv_stride,
+            dsp,
+            uv_x,
+            uv_y,
+            uv_mv,
+            uv_bw,
+            uv_bh,
+            filter,
+            pred,
         );
         let src = &src[uv_y * params.uv_stride + uv_x..];
-        let (sum, sse) = variance(src, params.uv_stride, &pred, uv_bw);
+        let (sum, sse) = variance(src, params.uv_stride, pred, uv_bw);
         let mean_square = (sum * sum) as u64 / (uv_bw * uv_bh) as u64;
         let var = sse.saturating_sub(mean_square);
         let dc_energy = sse.saturating_sub(var);
         if !((var < ac_threshold || var == 0) && (dc_energy < dc_threshold || sse == var)) {
-            return false;
+            return Some(ChromaSkipProbe {
+                all_skippable: false,
+                ready_mask: (1u8 << (index + 1)) - 1,
+            });
         }
     }
 
-    true
+    Some(ChromaSkipProbe {
+        all_skippable: true,
+        ready_mask: 3,
+    })
 }
 
 /// Run the forward/inverse-transform round-trip on `residual = src -
@@ -7037,26 +7073,73 @@ mod tests {
             params.uv_stride = uv_stride;
             params.uv_dc_quant = 96;
             params.uv_ac_quant = 80;
+            let mut pred_u = [255u8; 32 * 32];
+            let mut pred_v = [255u8; 32 * 32];
 
-            assert!(chroma_planes_skippable(
-                &params,
-                crate::dsp::get_ref(),
-                Mv::ZERO,
-                side,
-                side,
-                TxSize::Tx8x8,
-                InterpFilter::EightTap,
-            ));
+            assert_eq!(
+                chroma_planes_skippable(
+                    &params,
+                    crate::dsp::get_ref(),
+                    Mv::ZERO,
+                    side,
+                    side,
+                    TxSize::Tx8x8,
+                    InterpFilter::EightTap,
+                    &mut pred_u,
+                    &mut pred_v,
+                ),
+                Some(ChromaSkipProbe {
+                    all_skippable: true,
+                    ready_mask: 3,
+                }),
+            );
+            params.src_u = &uv_shifted;
+            pred_u.fill(255);
+            pred_v.fill(255);
+            assert_eq!(
+                chroma_planes_skippable(
+                    &params,
+                    crate::dsp::get_ref(),
+                    Mv::ZERO,
+                    side,
+                    side,
+                    TxSize::Tx8x8,
+                    InterpFilter::EightTap,
+                    &mut pred_u,
+                    &mut pred_v,
+                ),
+                Some(ChromaSkipProbe {
+                    all_skippable: false,
+                    ready_mask: 1,
+                }),
+            );
+            let uv_area = (side / 2) * (side / 2);
+            assert!(pred_u[..uv_area].iter().all(|&pixel| pixel == 0));
+            assert!(pred_v[..uv_area].iter().all(|&pixel| pixel == 255));
+
+            params.src_u = &uv_zero;
             params.src_v = &uv_shifted;
-            assert!(!chroma_planes_skippable(
-                &params,
-                crate::dsp::get_ref(),
-                Mv::ZERO,
-                side,
-                side,
-                TxSize::Tx8x8,
-                InterpFilter::EightTap,
-            ));
+            pred_u.fill(255);
+            pred_v.fill(255);
+            assert_eq!(
+                chroma_planes_skippable(
+                    &params,
+                    crate::dsp::get_ref(),
+                    Mv::ZERO,
+                    side,
+                    side,
+                    TxSize::Tx8x8,
+                    InterpFilter::EightTap,
+                    &mut pred_u,
+                    &mut pred_v,
+                ),
+                Some(ChromaSkipProbe {
+                    all_skippable: false,
+                    ready_mask: 3,
+                }),
+            );
+            assert!(pred_u[..uv_area].iter().all(|&pixel| pixel == 0));
+            assert!(pred_v[..uv_area].iter().all(|&pixel| pixel == 0));
         }
     }
 
