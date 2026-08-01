@@ -734,7 +734,7 @@ pub fn convolve8_neon(
 ) {
     assert!((1..=64).contains(&w));
     assert!((1..=64).contains(&h));
-    if w < 8 {
+    if w < 8 && w != 4 {
         convolve8(src, src_stride, dst, dst_stride, filter_x, filter_y, w, h);
         return;
     }
