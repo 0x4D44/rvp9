@@ -1,6 +1,6 @@
 //! NEON pixel subtraction for VP9 transform residuals.
 //!
-//! This mirrors libvpx's `vpx_subtract_block_neon` for the square 8/16/32
+//! This mirrors libvpx's `vpx_subtract_block_neon` for the square 8/16/32/64
 //! transforms used by rvp9's block-rate/distortion path.
 
 use core::arch::aarch64::*;
@@ -20,7 +20,7 @@ unsafe fn subtract_square_neon_inner<const TRACK_NONZERO: bool>(
         let pred_row = pred.add(row * pred_stride);
         let dst_row = dst.add(row * side);
 
-        if side == 32 {
+        if side >= 32 {
             for col in (0..side).step_by(32) {
                 let src_0 = vld1q_u8(src_row.add(col));
                 let src_1 = vld1q_u8(src_row.add(col + 16));
@@ -62,7 +62,7 @@ unsafe fn subtract_square_neon_inner<const TRACK_NONZERO: bool>(
     !TRACK_NONZERO || vmaxvq_u16(nonzero) != 0
 }
 
-/// Subtracts a square 8/16/32 prediction block from source pixels.
+/// Subtracts a square 8/16/32/64 prediction block from source pixels.
 pub fn subtract_square_neon(
     src: &[u8],
     src_stride: usize,
@@ -71,7 +71,7 @@ pub fn subtract_square_neon(
     dst: &mut [i16],
     side: usize,
 ) {
-    assert!(matches!(side, 8 | 16 | 32));
+    assert!(matches!(side, 8 | 16 | 32 | 64));
     assert!(src_stride >= side);
     assert!(pred_stride >= side);
     assert!(src.len() >= (side - 1) * src_stride + side);
@@ -102,7 +102,7 @@ pub fn subtract_square_neon_with_nonzero(
     dst: &mut [i16],
     side: usize,
 ) -> bool {
-    assert!(matches!(side, 8 | 16 | 32));
+    assert!(matches!(side, 8 | 16 | 32 | 64));
     assert!(src_stride >= side);
     assert!(pred_stride >= side);
     assert!(src.len() >= (side - 1) * src_stride + side);
@@ -156,7 +156,7 @@ mod tests {
     #[test]
     fn differential_random_all_sizes_and_strides() {
         let mut rng = Lcg32(0x5AB7_12AC);
-        for side in [8, 16, 32] {
+        for side in [8, 16, 32, 64] {
             for jitter in 0..17 {
                 let src_stride = side + jitter;
                 let pred_stride = side + (jitter * 5 + 2) % 17;
@@ -202,7 +202,7 @@ mod tests {
 
     #[test]
     fn differential_extreme_values() {
-        for side in [8, 16, 32] {
+        for side in [8, 16, 32, 64] {
             let src = vec![0; side * side];
             let pred = vec![u8::MAX; side * side];
             let mut residual = vec![0; side * side];

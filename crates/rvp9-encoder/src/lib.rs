@@ -8726,6 +8726,29 @@ fn choose_inter_luma_tx_size(input: InterLumaTxInput<'_>) -> TxSize {
     let block_h_px = plane_bh_4x4 * 4;
     let InterEmitScratch { residual, quant } = scratch;
     let leaf_residual = &mut residual[..block_w_px * block_h_px];
+    #[cfg(target_arch = "aarch64")]
+    if block_w_px == block_h_px {
+        let pixel_offset = plane_px_y * plane_stride + plane_px_x;
+        rvp9_core::dsp::aarch64::subtract_square_neon(
+            &input_plane[pixel_offset..],
+            plane_stride,
+            &recon_plane[pixel_offset..],
+            plane_stride,
+            leaf_residual,
+            block_w_px,
+        );
+    } else {
+        for r in 0..block_h_px {
+            let src_row = (plane_px_y + r) * plane_stride + plane_px_x;
+            let dst_row = r * block_w_px;
+            for c in 0..block_w_px {
+                let s = i16::from(input_plane[src_row + c]);
+                let p = i16::from(recon_plane[src_row + c]);
+                leaf_residual[dst_row + c] = s - p;
+            }
+        }
+    }
+    #[cfg(not(target_arch = "aarch64"))]
     for r in 0..block_h_px {
         let src_row = (plane_px_y + r) * plane_stride + plane_px_x;
         let dst_row = r * block_w_px;
