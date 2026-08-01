@@ -3644,3 +3644,42 @@ matched profile cuts broad frame pre-analysis self samples from 254 to 56.
 **Future plan:** keep the scalar oracle independent and resolve dispatch
 pointers outside the superblock loop. Any new architecture kernel must pass
 the same integer-exact reduction oracle before entering this path.
+
+### 2026-07-31 — Fast-diamond initial neighbours use four-reference SAD
+
+**Where:** `rvp9_core::dsp::aarch64::sad4d_neon`,
+`rvp9_core::dsp::dispatch::SimdDispatch::build`, and
+`rvp9_core::mv_search::full_pixel::fast_diamond_search_sad`.
+
+**What libvpx does:** its general and refining diamond searches use the
+`sdx4df` dispatch slot, while `vp9_pattern_search_sad` evaluates the initial
+four unit neighbours of `FAST_DIAMOND` with four single-reference SAD calls.
+On AArch64, `sdx4df` selects base-NEON or dot-product kernels.
+
+**What rvp9 does:** all four-reference SAD dispatch slots now select exact
+AArch64 NEON kernels. Widths 16 through 64 select dot-product kernels when
+available. The initial fast-diamond neighbours also use that existing batch
+slot when all four MVs are legal; clipped-boundary searches retain the
+ordered scalar path. Later three-neighbour refinement rounds remain scalar.
+
+**Why:** the four candidates share one source block. Loading it once and
+accumulating four reference differences removes repeated source loads without
+changing search breadth, candidate order, MV costs, or strict tie-breaking.
+
+**Byte-parity impact:** none. Random, edge-value, shape, stride, ISA-dispatch,
+and boundary tests are integer-exact against scalar SAD. The 120-frame
+cpu-used 7 product stream remains 740,177 bytes with SHA-256
+`6991a5b50db78b87c4b01ba02e32c948bfb0a97ea693381b9e2ddb8752adfa1d`.
+
+**Compression-efficiency impact:** none; search decisions and stream bytes
+are unchanged, so the accepted Stage 4a curve remains `-7.662735%` PSNR
+BD-rate versus pinned libvpx v1.14.1.
+
+**Speed impact:** twenty paired one-thread encodes improve total child CPU by
+`0.711%` with 17/20 wins. Two twenty-pair four-thread runs improve paired
+CPU by `0.174%` and `0.789%`. Fresh matched four-thread CPU is `1.33618x`
+pinned vpxenc, down from `1.34822x`.
+
+**Future plan:** keep batch SAD as an exact implementation optimization.
+Do not pad the later three-candidate rounds with a discarded fourth lane
+without separate measurement.

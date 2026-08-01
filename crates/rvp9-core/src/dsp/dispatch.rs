@@ -668,11 +668,10 @@ impl SadTable {
 
 /// 4-reference SAD fn type (P1-B / PR3):
 /// `(src, src_stride, &refs[4], ref_stride, &mut out[4])`. Writes
-/// `out[k] = Σ|src − refs[k]|` for `k ∈ 0..4`. Mirrors the scalar
-/// `crate::dsp::distortion::vpx_sad{W}x{H}x4d` shims and the AVX2
-/// `crate::dsp::x86_64::vpx_sad{W}x{H}x4d_avx2` wrappers — both share this
-/// signature, so a slot may hold either with no caller-visible change. Each
-/// output lane is byte-exact with the corresponding single [`SadFn`] result.
+/// `out[k] = Σ|src − refs[k]|` for `k ∈ 0..4`. The scalar and architecture
+/// wrappers share this signature, so a slot may hold any ISA implementation
+/// with no caller-visible change. Each output lane is byte-exact with the
+/// corresponding single [`SadFn`] result.
 pub type Sad4dFn = fn(&[u8], usize, &[&[u8]; 4], usize, &mut [u32; 4]);
 
 /// 13-entry 4-reference SAD dispatch table, one fn-pointer per VP9 block
@@ -680,9 +679,9 @@ pub type Sad4dFn = fn(&[u8], usize, &[&[u8]; 4], usize, &mut [u32; 4]);
 /// `cpi->fn_ptr[bsize].sdx4df` indirection. Used by the diamond search's
 /// `all_in` fast path (`crate::mv_search::full_pixel`) to evaluate the four
 /// axis-aligned candidate sites of a step in one call. Each entry is selected
-/// by one `if caps.avx2` clause in [`SimdDispatch::build`] — the AVX2 wrapper
-/// on AVX2 hosts, the scalar four-`sad` reference otherwise. Byte-exact across
-/// the two arms, and each lane byte-exact with the single-SAD slot.
+/// by ISA capability in [`SimdDispatch::build`] — AVX2 on x86-64, dot-product
+/// or base NEON on AArch64, and the scalar four-`sad` reference otherwise.
+/// Every arm is byte-exact with the corresponding single-SAD slot.
 #[derive(Debug, Clone)]
 pub struct Sad4dTable {
     /// Indexed by `BlockSize::idx()` (`0..=12`).
@@ -2132,10 +2131,9 @@ impl SimdDispatch {
 
         // ---- PR3 — per-size 4-reference SAD (sdx4df) table. ----
         // One clause per VP9 block size, mirroring the single-SAD table: the
-        // AVX2 safe wrapper on AVX2 hosts, the scalar four-`sad` reference
-        // otherwise. Both arms are byte-exact (each lane is an integer
-        // `Σ|a − b|`), so the diamond search's `all_in` fast path sees
-        // identical SADs either way.
+        // SIMD safe wrapper on supported hosts, the scalar four-`sad`
+        // reference otherwise. Every arm is byte-exact (each lane is an
+        // integer `Σ|a − b|`), so the search sees identical SADs either way.
         #[cfg(target_arch = "x86_64")]
         let sad4d: Sad4dTable = {
             use crate::dsp::distortion as sc;
@@ -2168,7 +2166,79 @@ impl SimdDispatch {
                 ],
             }
         };
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(target_arch = "aarch64")]
+        let sad4d: Sad4dTable = {
+            use crate::dsp::aarch64 as neon;
+            use crate::dsp::distortion as sc;
+            macro_rules! sad4d_slot {
+                ($scalar:path, $neon:path) => {
+                    if caps.neon {
+                        $neon as Sad4dFn
+                    } else {
+                        $scalar as Sad4dFn
+                    }
+                };
+                ($scalar:path, $neon:path, $dotprod:path) => {
+                    if caps.dotprod {
+                        $dotprod as Sad4dFn
+                    } else if caps.neon {
+                        $neon as Sad4dFn
+                    } else {
+                        $scalar as Sad4dFn
+                    }
+                };
+            }
+            Sad4dTable {
+                fns: [
+                    sad4d_slot!(sc::vpx_sad4x4x4d, neon::vpx_sad4x4x4d_neon),
+                    sad4d_slot!(sc::vpx_sad4x8x4d, neon::vpx_sad4x8x4d_neon),
+                    sad4d_slot!(sc::vpx_sad8x4x4d, neon::vpx_sad8x4x4d_neon),
+                    sad4d_slot!(sc::vpx_sad8x8x4d, neon::vpx_sad8x8x4d_neon),
+                    sad4d_slot!(sc::vpx_sad8x16x4d, neon::vpx_sad8x16x4d_neon),
+                    sad4d_slot!(
+                        sc::vpx_sad16x8x4d,
+                        neon::vpx_sad16x8x4d_neon,
+                        neon::vpx_sad16x8x4d_dotprod
+                    ),
+                    sad4d_slot!(
+                        sc::vpx_sad16x16x4d,
+                        neon::vpx_sad16x16x4d_neon,
+                        neon::vpx_sad16x16x4d_dotprod
+                    ),
+                    sad4d_slot!(
+                        sc::vpx_sad16x32x4d,
+                        neon::vpx_sad16x32x4d_neon,
+                        neon::vpx_sad16x32x4d_dotprod
+                    ),
+                    sad4d_slot!(
+                        sc::vpx_sad32x16x4d,
+                        neon::vpx_sad32x16x4d_neon,
+                        neon::vpx_sad32x16x4d_dotprod
+                    ),
+                    sad4d_slot!(
+                        sc::vpx_sad32x32x4d,
+                        neon::vpx_sad32x32x4d_neon,
+                        neon::vpx_sad32x32x4d_dotprod
+                    ),
+                    sad4d_slot!(
+                        sc::vpx_sad32x64x4d,
+                        neon::vpx_sad32x64x4d_neon,
+                        neon::vpx_sad32x64x4d_dotprod
+                    ),
+                    sad4d_slot!(
+                        sc::vpx_sad64x32x4d,
+                        neon::vpx_sad64x32x4d_neon,
+                        neon::vpx_sad64x32x4d_dotprod
+                    ),
+                    sad4d_slot!(
+                        sc::vpx_sad64x64x4d,
+                        neon::vpx_sad64x64x4d_neon,
+                        neon::vpx_sad64x64x4d_dotprod
+                    ),
+                ],
+            }
+        };
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         let sad4d: Sad4dTable = {
             let _ = caps;
             use crate::dsp::distortion as sc;

@@ -120,10 +120,11 @@ fn sad_for(bsize: BlockSize) -> SadFn {
 }
 
 /// Dispatch the 4-reference SAD (`sdx4df`) kernel by block size (PR3).
-/// Mirrors libvpx `cpi->fn_ptr[bsize].sdx4df` — the AVX2 kernel on AVX2
-/// hosts, the scalar four-`sad` reference otherwise. Each output lane is
-/// byte-exact with [`sad_for`]. **Resolve once per search call** and reuse
-/// across every `all_in` step, amortizing the `get_ref()` OnceLock load.
+/// Mirrors libvpx `cpi->fn_ptr[bsize].sdx4df` — AVX2 on x86-64,
+/// dot-product or base NEON on AArch64, and the scalar four-`sad` reference
+/// otherwise. Each output lane is byte-exact with [`sad_for`]. **Resolve once
+/// per search call** and reuse across every batched step, amortizing the
+/// `get_ref()` OnceLock load.
 #[inline]
 #[must_use]
 fn sad4d_for(bsize: BlockSize) -> Sad4dFn {
@@ -674,6 +675,7 @@ pub fn fast_diamond_search_sad(params: &FullPixelSearchParams<'_>) -> FullPixelS
     const DIRECTIONS: [(i16, i16); 4] = [(0, -1), (1, 0), (0, 1), (-1, 0)];
 
     let sad_fn = sad_for(params.block_size);
+    let sad4d_fn = sad4d_for(params.block_size);
     let fcenter_row = params.center_mv.row >> 3;
     let fcenter_col = params.center_mv.col >> 3;
     let start_mv = params.start_mv.unwrap_or(params.center_mv);
@@ -701,6 +703,92 @@ pub fn fast_diamond_search_sad(params: &FullPixelSearchParams<'_>) -> FullPixelS
         ))
     });
     let mut rounds = 0;
+
+    let candidates = DIRECTIONS.map(|(delta_row, delta_col)| {
+        (
+            i32::from(best_row) + i32::from(delta_row),
+            i32::from(best_col) + i32::from(delta_col),
+        )
+    });
+    let all_in = candidates
+        .iter()
+        .all(|&(row, col)| is_mv_in(&params.mv_limits, row, col));
+    let mut initial_direction = None;
+    if all_in {
+        let mvs = candidates.map(|(row, col)| (row as i16, col as i16));
+        let sads = sad4d_at(
+            params.block_size,
+            sad_fn,
+            sad4d_fn,
+            params.src_plane,
+            params.src_offset,
+            params.ref_plane,
+            &mvs,
+        );
+        for (index, raw_sad) in sads.into_iter().enumerate() {
+            if let Some(raw_sad) = raw_sad
+                && raw_sad < best_sad
+            {
+                let (candidate_row, candidate_col) = mvs[index];
+                let augmented = raw_sad.saturating_add(mvsad_err_cost(
+                    candidate_row,
+                    candidate_col,
+                    fcenter_row,
+                    fcenter_col,
+                    params.sad_per_bit,
+                    params.mv_costs,
+                ));
+                if augmented < best_sad {
+                    best_sad = augmented;
+                    initial_direction = Some(index);
+                }
+            }
+        }
+    } else {
+        for (index, &(candidate_row, candidate_col)) in candidates.iter().enumerate() {
+            if !is_mv_in(&params.mv_limits, candidate_row, candidate_col) {
+                continue;
+            }
+            let candidate_row = candidate_row as i16;
+            let candidate_col = candidate_col as i16;
+            if let Some(raw_sad) = sad_at(
+                params.block_size,
+                sad_fn,
+                params.src_plane,
+                params.src_offset,
+                params.ref_plane,
+                candidate_row,
+                candidate_col,
+            ) && raw_sad < best_sad
+            {
+                let augmented = raw_sad.saturating_add(mvsad_err_cost(
+                    candidate_row,
+                    candidate_col,
+                    fcenter_row,
+                    fcenter_col,
+                    params.sad_per_bit,
+                    params.mv_costs,
+                ));
+                if augmented < best_sad {
+                    best_sad = augmented;
+                    initial_direction = Some(index);
+                }
+            }
+        }
+    }
+
+    let Some(mut direction) = initial_direction else {
+        return FullPixelSearchResult {
+            best_mv_row: best_row,
+            best_mv_col: best_col,
+            best_sad,
+            iters_used: rounds,
+        };
+    };
+    let (delta_row, delta_col) = DIRECTIONS[direction];
+    best_row += delta_row;
+    best_col += delta_col;
+    rounds += 1;
 
     let mut evaluate = |indices: &[usize], row: i16, col: i16| {
         let mut best_direction = None;
@@ -739,19 +827,6 @@ pub fn fast_diamond_search_sad(params: &FullPixelSearchParams<'_>) -> FullPixelS
         }
         best_direction
     };
-
-    let Some(mut direction) = evaluate(&[0, 1, 2, 3], best_row, best_col) else {
-        return FullPixelSearchResult {
-            best_mv_row: best_row,
-            best_mv_col: best_col,
-            best_sad,
-            iters_used: rounds,
-        };
-    };
-    let (delta_row, delta_col) = DIRECTIONS[direction];
-    best_row += delta_row;
-    best_col += delta_col;
-    rounds += 1;
 
     loop {
         let adjacent = [(direction + 3) % 4, direction, (direction + 1) % 4];

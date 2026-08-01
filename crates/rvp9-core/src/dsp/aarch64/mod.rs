@@ -10,6 +10,7 @@ pub mod convolve8_neon;
 pub mod int_pro_neon;
 pub mod lpf16_neon;
 pub mod quantize_neon;
+pub mod sad4d_neon;
 pub mod sad_neon;
 pub mod subpel_variance_neon;
 pub mod subtract_neon;
@@ -31,6 +32,14 @@ pub use sad_neon::{
     vpx_sad4x4_neon, vpx_sad4x8_neon, vpx_sad8x4_neon, vpx_sad8x8_neon, vpx_sad8x16_neon,
     vpx_sad16x8_neon, vpx_sad16x16_neon, vpx_sad16x32_neon, vpx_sad32x16_neon, vpx_sad32x32_neon,
     vpx_sad32x64_neon, vpx_sad64x32_neon, vpx_sad64x64_neon,
+};
+pub use sad4d_neon::{
+    vpx_sad4x4x4d_neon, vpx_sad4x8x4d_neon, vpx_sad8x4x4d_neon, vpx_sad8x8x4d_neon,
+    vpx_sad8x16x4d_neon, vpx_sad16x8x4d_dotprod, vpx_sad16x8x4d_neon, vpx_sad16x16x4d_dotprod,
+    vpx_sad16x16x4d_neon, vpx_sad16x32x4d_dotprod, vpx_sad16x32x4d_neon, vpx_sad32x16x4d_dotprod,
+    vpx_sad32x16x4d_neon, vpx_sad32x32x4d_dotprod, vpx_sad32x32x4d_neon, vpx_sad32x64x4d_dotprod,
+    vpx_sad32x64x4d_neon, vpx_sad64x32x4d_dotprod, vpx_sad64x32x4d_neon, vpx_sad64x64x4d_dotprod,
+    vpx_sad64x64x4d_neon,
 };
 pub use subpel_variance_neon::{
     vpx_sub_pixel_variance16x8_dotprod, vpx_sub_pixel_variance16x8_neon,
