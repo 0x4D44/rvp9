@@ -2691,13 +2691,17 @@ fn evaluate_intra_fallback(
         };
 
         // 4. Distortion = SSE(src, recon).
-        let (_, sse) = (dispatch.variance(params.block_size))(
-            &params.src_plane.data[src_start..],
-            params.src_plane.stride,
-            &recon,
-            bw,
-        );
-        let dist = sse.min(u32::MAX as u64) as u32;
+        let dist = if mrd.skip_txfm == SkipTxfm::AcDc {
+            mrd.sse_y
+        } else {
+            let (_, sse) = (dispatch.variance(params.block_size))(
+                &params.src_plane.data[src_start..],
+                params.src_plane.stride,
+                &recon,
+                bw,
+            );
+            sse.min(u32::MAX as u64) as u32
+        };
 
         // 5. Rate = mbmode_cost + ref_frame_cost[INTRA] +
         //           intra_cost_penalty + coef_rate.
