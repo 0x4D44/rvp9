@@ -5,7 +5,6 @@ use crossbeam_channel::{Receiver, Sender, unbounded};
 use std::num::NonZeroUsize;
 use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread::{self, JoinHandle};
 
 use super::scope::FrameScope;
@@ -40,6 +39,11 @@ pub struct WorkerPool {
     /// Job sender. `Option` so [`Drop`] can drop it (closing the
     /// channel; workers' `recv()` returns `Err` and they exit).
     job_tx: Option<Sender<WorkerJob>>,
+    /// Reused completion channel. Scopes cannot overlap because `scope`
+    /// borrows the pool mutably, so draining the exact submitted-job count
+    /// leaves no outcome for the next frame.
+    done_tx: Sender<WorkerOutcome>,
+    done_rx: Receiver<WorkerOutcome>,
 }
 
 impl std::fmt::Debug for WorkerPool {
@@ -146,6 +150,7 @@ impl WorkerPool {
         F: FnMut(usize, Receiver<WorkerJob>) -> std::io::Result<JoinHandle<()>>,
     {
         let (job_tx, job_rx) = unbounded::<WorkerJob>();
+        let (done_tx, done_rx) = unbounded::<WorkerOutcome>();
         let mut workers = Vec::new();
         workers
             .try_reserve_exact(worker_count)
@@ -172,6 +177,8 @@ impl WorkerPool {
             workers,
             caller_participates,
             job_tx: Some(job_tx),
+            done_tx,
+            done_rx,
         })
     }
 
@@ -198,32 +205,16 @@ impl WorkerPool {
     where
         F: for<'frame> FnOnce(&FrameScope<'_, 'frame>) -> R,
     {
-        // Per-scope channel: workers signal completion (and panic
-        // payload, if any) here. Bounded(0) would deadlock at submit
-        // time (would block the worker until the main thread receives);
-        // unbounded is safe because the queue length is bounded by
-        // pending count anyway.
-        //
-        // The Mutex around the panic-payload Vec gives us O(1)
-        // ordered push per worker. Worker order matches the SeqCst
-        // pending-counter ordering — the first job to fetch_add(1)
-        // gets the lowest submission index, the first to finish may
-        // be a different one, but ordering is by submission index
-        // not completion order. See the worker_id assignment in
-        // [`FrameScope::submit`].
-        let (done_tx, done_rx) = unbounded::<WorkerOutcome>();
-
-        // Build the scope. Borrowing `self` (the pool) gives the
-        // scope a way to access the job channel. Pending counter +
-        // done channel are scope-local.
-        let pending = AtomicUsize::new(0);
+        // The Mutex around the panic-payload Vec gives us O(1) ordered push
+        // per worker. The persistent completion channel is safe to reuse:
+        // mutable scope borrows prohibit overlap, and this call drains one
+        // outcome for every submitted job before returning.
         let panics: Mutex<Vec<(usize, Box<dyn std::any::Any + Send + 'static>)>> =
             Mutex::new(Vec::new());
         let caller_job = Mutex::new(None);
         let scope = FrameScope::new(
             self,
-            &pending,
-            &done_tx,
+            &self.done_tx,
             &panics,
             self.caller_participates.then_some(&caller_job),
         );
@@ -231,6 +222,7 @@ impl WorkerPool {
         // Run the closure under catch_unwind so we can join cleanly
         // even on panic.
         let closure_result = catch_unwind(AssertUnwindSafe(|| f(&scope)));
+        let submitted_jobs = scope.submitted_jobs();
 
         // In caller-participating mode, `FrameScope::submit` reserves the
         // first job here instead of sending it to an OS worker. Run it even
@@ -240,34 +232,18 @@ impl WorkerPool {
             job();
         }
 
-        // Drop the local `done_tx` clone so once all workers have
-        // their per-job senders dropped (post-job), the channel
-        // empties. Actually — workers don't own done_tx directly;
-        // each job closure captures a clone. The pending counter is
-        // what we rely on.
-        drop(done_tx);
-
-        // Drain the done channel until pending == 0. Each WorkerOutcome
-        // signals one completed job (success or panic). We DON'T
-        // re-raise here — we collect into the panics Vec and decide
-        // priority after.
-        while pending.load(Ordering::SeqCst) > 0 {
-            match done_rx.recv() {
+        // Drain exactly one outcome per submitted job. We DON'T re-raise
+        // here — workers already collected panic payloads in submission
+        // order, and priority is decided after every borrowed job joins.
+        for remaining in (0..submitted_jobs).rev() {
+            match self.done_rx.recv() {
                 Ok(_outcome) => {
-                    // Outcome already pushed by the worker into the
-                    // panics Vec if it was a panic. Decrement the
-                    // pending counter.
-                    pending.fetch_sub(1, Ordering::SeqCst);
+                    // The worker already pushed any panic payload.
                 }
                 Err(_) => {
-                    // Channel disconnected with pending > 0 — only
-                    // possible if a worker thread died without
-                    // signalling, which can't happen because our
-                    // worker loop always sends a completion. Treat
-                    // as a fatal logic error.
                     panic!(
                         "rvp9 WorkerPool: done channel closed with pending jobs ({} left)",
-                        pending.load(Ordering::SeqCst)
+                        remaining + 1,
                     );
                 }
             }

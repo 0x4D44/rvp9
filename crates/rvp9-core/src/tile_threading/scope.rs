@@ -28,7 +28,6 @@ use super::pool::{WorkerJob, WorkerOutcome, WorkerPool};
 /// returning, so the borrowed data outlives every worker's access.
 pub struct FrameScope<'scope, 'frame> {
     pool: &'scope WorkerPool,
-    pending: &'scope AtomicUsize,
     done_tx: &'scope Sender<WorkerOutcome>,
     panics: &'scope Mutex<Vec<(usize, Box<dyn Any + Send + 'static>)>>,
     /// Optional slot for one job executed by the scope caller after
@@ -53,14 +52,12 @@ impl<'scope, 'frame> FrameScope<'scope, 'frame> {
     /// fresh per call.
     pub(crate) fn new(
         pool: &'scope WorkerPool,
-        pending: &'scope AtomicUsize,
         done_tx: &'scope Sender<WorkerOutcome>,
         panics: &'scope Mutex<Vec<(usize, Box<dyn Any + Send + 'static>)>>,
         caller_job: Option<&'scope Mutex<Option<WorkerJob>>>,
     ) -> Self {
         Self {
             pool,
-            pending,
             done_tx,
             panics,
             caller_job,
@@ -94,8 +91,7 @@ impl<'scope, 'frame> FrameScope<'scope, 'frame> {
         // submitter is a caller-side discipline, not a type-system
         // guarantee. Atomics ensure multi-submitter remains sound if
         // a future decoder wants it.
-        let submission_idx = self.next_submission_idx.fetch_add(1, Ordering::SeqCst);
-        self.pending.fetch_add(1, Ordering::SeqCst);
+        let submission_idx = self.next_submission_idx.fetch_add(1, Ordering::Relaxed);
 
         // Clone the per-scope channels so the closure (which will
         // travel into a worker thread) carries its own handles.
@@ -201,6 +197,11 @@ impl<'scope, 'frame> FrameScope<'scope, 'frame> {
             .job_sender()
             .send(boxed_static as WorkerJob)
             .expect("rvp9 WorkerPool: job channel closed mid-scope (worker pool dropped?)");
+    }
+
+    /// Number of jobs submitted in this scope.
+    pub(crate) fn submitted_jobs(&self) -> usize {
+        self.next_submission_idx.load(Ordering::Relaxed)
     }
 }
 
@@ -403,6 +404,27 @@ mod tests {
             });
         }
         assert_eq!(counter.load(Ordering::SeqCst), 12);
+    }
+
+    /// Unit 308 — a persistent completion channel must be empty and reusable
+    /// after a worker panic has been joined and propagated.
+    #[test]
+    fn pool_reusable_after_worker_panic() {
+        let mut pool = WorkerPool::new(nz(2));
+        let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            pool.scope(|scope| {
+                scope.submit(|| panic!("first scope"));
+            });
+        }));
+        assert!(result.is_err());
+
+        let counter = AtomicUsize::new(0);
+        pool.scope(|scope| {
+            scope.submit(|| {
+                counter.fetch_add(1, Ordering::SeqCst);
+            });
+        });
+        assert_eq!(counter.load(Ordering::SeqCst), 1);
     }
 
     /// A persistent pool keeps its OS worker alive between frame scopes.
