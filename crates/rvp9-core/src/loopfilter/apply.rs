@@ -102,6 +102,36 @@ unsafe impl Send for SharedFrame {}
 unsafe impl Sync for SharedFrame {}
 
 impl SharedFrame {
+    /// Construct a YUV420 frame view over tight visible-plane allocations.
+    ///
+    /// The loop-filter mask builder suppresses every frame-boundary edge, so
+    /// filtering reads and writes only visible pixels. Callers must keep all
+    /// three allocations alive and must not access them until every worker
+    /// using the returned view has joined.
+    pub fn from_tight_yuv420(
+        y: &mut [u8],
+        u: &mut [u8],
+        v: &mut [u8],
+        width: usize,
+        height: usize,
+    ) -> Self {
+        assert!(width.is_multiple_of(2) && height.is_multiple_of(2));
+        assert_eq!(y.len(), width * height);
+        assert_eq!(u.len(), (width / 2) * (height / 2));
+        assert_eq!(v.len(), u.len());
+        Self {
+            y_ptr: y.as_mut_ptr(),
+            u_ptr: u.as_mut_ptr(),
+            v_ptr: v.as_mut_ptr(),
+            y_len: y.len(),
+            u_len: u.len(),
+            v_len: v.len(),
+            y_stride: width,
+            uv_stride: width / 2,
+            chroma: ChromaFormat::Yuv420,
+        }
+    }
+
     /// Construct a [`SharedFrame`] from a mutable [`Yv12Buffer`] borrow. The
     /// returned wrapper borrows from `yv12`'s allocation; callers MUST keep
     /// `yv12` alive (and refrain from any other `&mut yv12` access) for the
