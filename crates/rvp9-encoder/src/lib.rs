@@ -8837,6 +8837,10 @@ struct InterLumaTxInput<'a> {
 }
 
 fn choose_inter_luma_tx_size(input: InterLumaTxInput<'_>) -> TxSize {
+    choose_inter_luma_tx_size_impl::<true>(input)
+}
+
+fn choose_inter_luma_tx_size_impl<const PRUNE: bool>(input: InterLumaTxInput<'_>) -> TxSize {
     use rvp9_core::quant::forward::{
         vp9_quantize_b_32x32_with_order, vp9_quantize_b_with_order,
         vp9_quantize_fp_32x32_with_order, vp9_quantize_fp_with_order,
@@ -8917,7 +8921,7 @@ fn choose_inter_luma_tx_size(input: InterLumaTxInput<'_>) -> TxSize {
     // Walk every candidate size from max down to Tx4x4 (libvpx walks the
     // full depth in the good-quality path; the realtime/RT op-point still
     // benefits because the residual transform is cheap relative to ME).
-    for n in (0..=(max_tx as usize)).rev() {
+    'candidate_sizes: for n in (0..=(max_tx as usize)).rev() {
         let tx_size = match n {
             0 => TxSize::Tx4x4,
             1 => TxSize::Tx8x8,
@@ -9069,6 +9073,17 @@ fn choose_inter_luma_tx_size(input: InterLumaTxInput<'_>) -> TxSize {
                 for r in 0..tx_step_4x4 {
                     if ty4 + r < plane_bh_4x4 {
                         left_ctx[ty4 + r] = nz;
+                    }
+                }
+
+                // All remaining tile-rate and distortion contributions are
+                // non-negative. Once this candidate's partial lower bound
+                // cannot beat the best complete size, its unevaluated tiles
+                // cannot change the strict argmin.
+                if PRUNE && best_rd != i64::MAX {
+                    let partial_rate = total_rate.saturating_add(tx_size_cost[tx_size as usize]);
+                    if rdcost(partial_rate, total_dist) >= best_rd {
+                        continue 'candidate_sizes;
                     }
                 }
 
@@ -9682,12 +9697,12 @@ mod tests {
             FrameTypeForRd::Inter,
         ));
         let mut scratch = InterEmitScratch::new();
-        let run = |scratch: &mut InterEmitScratch, poison: i16, quant_fp: bool| {
+        let run = |scratch: &mut InterEmitScratch, poison: i16, quant_fp: bool, prune: bool| {
             scratch.residual.fill(poison);
             scratch.quant.coefs.fill(i32::from(poison));
             scratch.quant.qcoeff.fill(poison);
             scratch.quant.dqcoeff.fill(poison);
-            choose_inter_luma_tx_size(InterLumaTxInput {
+            let pick_input = InterLumaTxInput {
                 input_plane: &input,
                 recon_plane: &recon,
                 plane_stride: SIDE,
@@ -9700,15 +9715,86 @@ mod tests {
                 tx_size_cost: [0, 17, 31, 47],
                 quant_fp,
                 scratch,
-            })
+            };
+            if prune {
+                choose_inter_luma_tx_size(pick_input)
+            } else {
+                choose_inter_luma_tx_size_impl::<false>(pick_input)
+            }
         };
 
         for quant_fp in [false, true] {
             assert_eq!(
-                run(&mut scratch, i16::MIN, quant_fp),
-                run(&mut scratch, i16::MAX, quant_fp),
+                run(&mut scratch, i16::MIN, quant_fp, true),
+                run(&mut scratch, i16::MAX, quant_fp, true),
                 "TX choice must not depend on prior scratch contents (quant_fp={quant_fp})"
             );
+            assert_eq!(
+                run(&mut scratch, 0x1234, quant_fp, false),
+                run(&mut scratch, -0x1234, quant_fp, true),
+                "pruning must preserve the exhaustive TX argmin (quant_fp={quant_fp})"
+            );
+        }
+    }
+
+    #[test]
+    fn inter_tx_size_pruning_matches_exhaustive_search() {
+        use rvp9_core::cost::{FrameTypeForRd, coef_cost::build_coef_cost_table};
+        use rvp9_core::quant::forward::{QuantizerDeltas, init_plane_quantizers};
+
+        const SIDE: usize = 80;
+        let input: Vec<u8> = (0..SIDE * SIDE)
+            .map(|index| ((index * 37 + index / SIDE * 19 + 23) & 0xff) as u8)
+            .collect();
+        let recon: Vec<u8> = (0..SIDE * SIDE)
+            .map(|index| ((index * 13 + index / SIDE * 31 + 79) & 0xff) as u8)
+            .collect();
+        let coef_costs = build_coef_cost_table(&FrameContext::new_default());
+
+        for leaf_bsize in [
+            BlockSize::Block8x8,
+            BlockSize::Block16x16,
+            BlockSize::Block16x32,
+            BlockSize::Block32x16,
+            BlockSize::Block32x32,
+            BlockSize::Block64x64,
+        ] {
+            for q_index in [20, 96, 200] {
+                let quantizer = init_plane_quantizers(q_index, QuantizerDeltas::Y);
+                let rdmult = i64::from(rvp9_core::cost::compute_rd_mult(
+                    q_index,
+                    FrameTypeForRd::Inter,
+                ));
+                for quant_fp in [false, true] {
+                    let pick = |scratch: &mut InterEmitScratch, prune: bool| {
+                        let input = InterLumaTxInput {
+                            input_plane: &input,
+                            recon_plane: &recon,
+                            plane_stride: SIDE,
+                            plane_px_x: 8,
+                            plane_px_y: 8,
+                            leaf_bsize,
+                            quantizer: &quantizer,
+                            coef_costs: &coef_costs,
+                            rdmult,
+                            tx_size_cost: [0, 17, 31, 47],
+                            quant_fp,
+                            scratch,
+                        };
+                        if prune {
+                            choose_inter_luma_tx_size_impl::<true>(input)
+                        } else {
+                            choose_inter_luma_tx_size_impl::<false>(input)
+                        }
+                    };
+                    let exhaustive = pick(&mut InterEmitScratch::new(), false);
+                    let pruned = pick(&mut InterEmitScratch::new(), true);
+                    assert_eq!(
+                        pruned, exhaustive,
+                        "pruning changed {leaf_bsize:?} q={q_index} quant_fp={quant_fp}"
+                    );
+                }
+            }
         }
     }
 
