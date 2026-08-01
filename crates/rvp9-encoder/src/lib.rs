@@ -6070,10 +6070,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     //    6/7 so `true`.
                     //  - `bias_golden` — `1` at speed 5+ CBR non-SVC
                     //    (vp9_speed_features.c:640).
-                    //  - `cb_pred_filter_search` — `2` at speed 6 above
-                    //    1280×720 (vp9_speed_features.c:658). rvp9 has no
-                    //    resolution-dependent toggle so default `false`;
-                    //    encoders that target the >720p path may opt in.
+                    //  - `cb_pred_filter_search` — `2` above 1280×720 at
+                    //    speed 5/6, above 640×480 at speed 7, and above
+                    //    352×288 at speed 8 (`vp9_speed_features.c:658,
+                    //    742, 800`).
                     //  - `disable_golden_ref` — `1` only at speed-9 CBR
                     //    (vp9_speed_features.c:811). Off at our op point.
                     //  - `max_intra_bsize` — `Block32x32` at speed 5+

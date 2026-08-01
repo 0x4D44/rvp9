@@ -131,10 +131,10 @@ pub struct SpeedFeatures {
     /// libvpx `sf->bias_golden` (`vp9_speed_features.c:640`). `1` at
     /// speed 5+ CBR non-SVC.
     pub bias_golden: bool,
-    /// libvpx `sf->cb_pred_filter_search` (`vp9_speed_features.c:658`).
-    /// libvpx uses `int` (0/1/2); rvp9 currently consumes only the
-    /// boolean "active" predicate (the `2` value enables the per-CB
-    /// interp-filter early exit at speed 6 above 1280×720).
+    /// libvpx `sf->cb_pred_filter_search` (`vp9_speed_features.c:658,
+    /// 742, 800`). Libvpx uses `int` (0/1/2); rvp9 currently consumes
+    /// only the boolean "active" predicate. The resolution threshold
+    /// falls as speed rises from 5 through 8.
     pub cb_pred_filter_search: bool,
     /// libvpx `sf->disable_golden_ref` (`vp9_speed_features.c:811`).
     /// `1` only at speed 9 CBR. rvp9 op-points stop at 8, so this is
@@ -240,10 +240,15 @@ fn apply_rt(sf: &mut SpeedFeatures, mag: u32, width: u32, height: u32, _content:
         sf.bias_golden = true;
     }
 
-    // libvpx `vp9_speed_features.c:658` — speed 6 above 1280x720
-    // upgrades cb_pred_filter_search to `2`. rvp9 carries it as a
-    // boolean today; the resolution gate is preserved.
-    if mag == 6 && width * height > 1280 * 720 {
+    // libvpx `vp9_speed_features.c:658, 742, 800` — the framesize gate
+    // becomes progressively more aggressive: speed 5/6 above 720p,
+    // speed 7 above VGA, and speed 8 above CIF. rvp9 carries the value
+    // as a boolean today; preserve the ordered overrides exactly.
+    let pixels = width.saturating_mul(height);
+    if (mag >= 5 && pixels > 1280 * 720)
+        || (mag >= 7 && pixels > 640 * 480)
+        || (mag >= 8 && pixels > 352 * 288)
+    {
         sf.cb_pred_filter_search = true;
     }
 
@@ -593,30 +598,41 @@ mod tests {
         assert_eq!(rt7.rd_ml_partition.prune_rect_thresh, [-1, -1, -1, -1]);
     }
 
-    /// Speed 7 / Realtime — the rvp9 §11 hardcodes at lib.rs:3713-3724.
-    /// PROOF that the dispatcher reproduces them. libvpx citations:
-    /// `vp9_speed_features.c:571, 639, 640`.
+    /// Speed 7 / Realtime — prove the dispatcher matches libvpx's mode
+    /// and filter-search gates at a 720p-class resolution.
     #[test]
-    fn w0_3_speed7_realtime_matches_rvp9_section_11_hardcodes() {
+    fn w0_3_speed7_realtime_matches_libvpx_gates() {
         let sf = dispatch(7, Deadline::Realtime, 1280, 720, ContentTier::Default);
         assert_eq!(sf.max_intra_bsize, BlockSize::Block32x32);
         assert!(sf.limit_newmv_early_exit);
         assert!(sf.bias_golden);
-        assert!(!sf.cb_pred_filter_search); // exactly 1280x720, not "above"
+        assert!(sf.cb_pred_filter_search); // speed 7 lowers the gate to VGA
         assert!(!sf.disable_golden_ref);
         assert!(!sf.rt_intra_dc_only_low_content);
     }
 
-    /// Speed 6 above 1280×720 lights up cb_pred_filter_search
-    /// (libvpx `vp9_speed_features.c:658`). The resolution gate is the
-    /// load-bearing precondition — a regression that ignores width×
-    /// height would fail this test.
+    /// The three libvpx framesize thresholds become more aggressive as
+    /// realtime speed rises (`vp9_speed_features.c:658, 742, 800`).
     #[test]
-    fn w0_3_speed6_above_720p_enables_cb_pred_filter_search() {
-        let sub = dispatch(6, Deadline::Realtime, 1280, 720, ContentTier::Default);
-        let over = dispatch(6, Deadline::Realtime, 1920, 1080, ContentTier::Default);
-        assert!(!sub.cb_pred_filter_search);
-        assert!(over.cb_pred_filter_search);
+    fn w0_3_cb_pred_filter_search_tracks_speed_and_resolution() {
+        assert!(
+            !dispatch(6, Deadline::Realtime, 1280, 720, ContentTier::Default).cb_pred_filter_search
+        );
+        assert!(
+            dispatch(6, Deadline::Realtime, 1920, 1080, ContentTier::Default).cb_pred_filter_search
+        );
+        assert!(
+            !dispatch(7, Deadline::Realtime, 640, 480, ContentTier::Default).cb_pred_filter_search
+        );
+        assert!(
+            dispatch(7, Deadline::Realtime, 1280, 704, ContentTier::Default).cb_pred_filter_search
+        );
+        assert!(
+            !dispatch(8, Deadline::Realtime, 352, 288, ContentTier::Default).cb_pred_filter_search
+        );
+        assert!(
+            dispatch(8, Deadline::Realtime, 640, 360, ContentTier::Default).cb_pred_filter_search
+        );
     }
 
     /// Speed 8 toggles two gates relative to speed 7
