@@ -1150,13 +1150,9 @@ pub struct StreamEncoder {
     ///     evaluation inside
     ///     `lib.rs::pick_and_simulate_inter_encode_partitions`.
     ///
-    /// Until the denoiser / filtered-ALTREF wave fills it differently,
-    /// `me_ref_*` mirrors `last_recon_*` byte-for-byte (committed in
-    /// `encode_frame` after every encoded frame). The PROOF test
-    /// `reference_split_me_and_pred_identical_initially` asserts this
-    /// equality in steady state. When the denoiser is later wired to
-    /// write filtered pixels into `me_ref_*`, that test fails until it
-    /// is updated — the intended anti-G3 signal.
+    /// These buffers are allocated only when the denoiser is active. The
+    /// default path reads the LAST pool slot directly, avoiding an otherwise
+    /// redundant full-frame mirror after every commit.
     me_ref_y: Vec<u8>,
     /// ME-side reference, U plane. See [`Self::me_ref_y`].
     me_ref_u: Vec<u8>,
@@ -1655,17 +1651,28 @@ impl StreamEncoder {
             // prior `last_recon_* / golden_recon_* / altref_recon_*`
             // field-triples; LAST/GOLDEN/ALTREF resolve through the map.
             ref_pool: crate::buffer_pool::RefFramePool::new(w, h),
-            // ME-side reference buffer for LAST. Allocated as a
-            // separate Vec so the denoiser / filtered-ALTREF wave can
-            // write filtered pixels here without touching the
-            // residual-coding reference (the pool). Currently mirrors
-            // the LAST pool slot after every commit (see `encode_frame`).
+            // ME-side reference buffer for LAST. Allocated as a separate
+            // Vec only when the denoiser can write filtered pixels without
+            // touching the residual-coding reference (the pool). The common
+            // denoiser-off path reads LAST directly.
             // libvpx `vp9_denoiser.c:294-304` is the parity reference —
             // `running_avg_y[]` is NOT part of `cm->frame_refs[]`/the
             // pool, hence its own field here.
-            me_ref_y: vec![0u8; w * h],
-            me_ref_u: vec![0u8; uvw * uvh],
-            me_ref_v: vec![0u8; uvw * uvh],
+            me_ref_y: if config.noise_sensitivity > 0 {
+                vec![0u8; w * h]
+            } else {
+                Vec::new()
+            },
+            me_ref_u: if config.noise_sensitivity > 0 {
+                vec![0u8; uvw * uvh]
+            } else {
+                Vec::new()
+            },
+            me_ref_v: if config.noise_sensitivity > 0 {
+                vec![0u8; uvw * uvh]
+            } else {
+                Vec::new()
+            },
             // W-ALTREF picker — no ARF has fired yet; the picker stays
             // LAST/GOLDEN-only until the first ARF emission.
             altref_slot_emitted: false,
@@ -2481,19 +2488,18 @@ impl StreamEncoder {
         // until the next `encode_altref_internal` sets this true again.
         self.altref_slot_emitted = false;
 
-        // Reference-buffer split — mirror the post-LF KF reconstruction
-        // into the ME-side reference buffer. The denoiser only runs on
-        // inter frames (libvpx `vp9_denoiser.c:410` —
-        // `last_is_reference` is false on KF), so the KF mirror is a
-        // straight byte-copy. On the next inter frame the denoiser
-        // reads the previous-frame running-average from the LAST_FRAME
-        // slot — seeded below from the KF reconstruction (libvpx's
-        // `denoiser->reset` triggers a copy from the current frame to
-        // every slot, `vp9_denoiser.c:464-474`).
-        let (last_y, last_u, last_v) = self.ref_pool.named_ref_planes(crate::buffer_pool::LAST_REF);
-        self.me_ref_y.copy_from_slice(last_y);
-        self.me_ref_u.copy_from_slice(last_u);
-        self.me_ref_v.copy_from_slice(last_v);
+        // Reference-buffer split — seed the separate ME-side reference only
+        // when the denoiser is active. Otherwise motion analysis reads this
+        // post-LF LAST reconstruction directly. The denoiser only runs on
+        // inter frames (libvpx `vp9_denoiser.c:410`), so its KF mirror is a
+        // straight byte-copy before the running-average slots are seeded.
+        if self.denoiser.is_some() {
+            let (last_y, last_u, last_v) =
+                self.ref_pool.named_ref_planes(crate::buffer_pool::LAST_REF);
+            self.me_ref_y.copy_from_slice(last_y);
+            self.me_ref_u.copy_from_slice(last_u);
+            self.me_ref_v.copy_from_slice(last_v);
+        }
         if let Some(den) = self.denoiser.as_mut() {
             // libvpx `vp9_denoiser.c:464-524` — on
             // `denoiser->reset` (which fires on the first frame after
@@ -2861,21 +2867,23 @@ impl StreamEncoder {
 
         // F10.1a — F8.2 variance-based partition decision per SB.
         //
-        // Reference-buffer split: the variance picker is part of the
-        // ME-side analysis pipeline (its source-vs-ref variance feeds
-        // partition decisions, not the bitstream residual). Read from
-        // `me_ref_y` rather than `last_recon_y` so the denoiser /
-        // filtered-ALTREF wave can later bias partitioning without
-        // touching the residual-coding reference. While the split is
-        // initially structural-only (`me_ref_* == last_recon_*` after
-        // every commit), reading from `me_ref_y` here keeps every ME
-        // call site on the ME-side buffer.
+        // Reference-buffer split: variance analysis uses the denoised mirror
+        // when active and otherwise reads LAST directly. Partition decisions
+        // stay separate from the residual-coding reference policy without a
+        // redundant default-path copy.
+        let partition_ref_y = if self.denoiser.is_some() {
+            self.me_ref_y.as_slice()
+        } else {
+            self.ref_pool
+                .named_ref_planes(crate::buffer_pool::LAST_REF)
+                .0
+        };
         let sb_partitions_intra_shape = choose_partitions_for_frame(FramePartitionInput {
             width_px: w as usize,
             height_px: h as usize,
             q_index,
             src_y: input_yuv.0,
-            ref_y: &self.me_ref_y,
+            ref_y: partition_ref_y,
             is_keyframe: false,
             // E2: inter-frame VBP thresholds depend on the rate
             // controller's running `avg_frame_qindex[INTER_FRAME]` to
@@ -3092,7 +3100,11 @@ impl StreamEncoder {
         let avg_inter_qindex = self.rate_control.avg_frame_qindex_inter;
         let frames_since_key = self.rate_control.frames_since_key;
         let frames_since_golden = self.frames_since_golden_refresh;
-        let me_ref_yuv = (&self.me_ref_y[..], &self.me_ref_u[..], &self.me_ref_v[..]);
+        let me_ref_yuv = if self.denoiser.is_some() {
+            (&self.me_ref_y[..], &self.me_ref_u[..], &self.me_ref_v[..])
+        } else {
+            (last_y, last_u, last_v)
+        };
         let frame_context = &self.frame_context;
         let frame_mv_costs = rvp9_core::cost::mv_cost::build_nmv_cost_table(
             &frame_context.nmvc,
@@ -3632,11 +3644,12 @@ impl StreamEncoder {
         // writes its `running_avg_y` (vp9_denoiser.c:425-428) and
         // `cm->frame_refs[]` stays decoder-equivalent. Chroma planes
         // mirror byte-exact (luma-only filter, libvpx `vp9_denoiser.h:46`).
-        let (last_y, last_u, last_v) = self.ref_pool.named_ref_planes(crate::buffer_pool::LAST_REF);
-        self.me_ref_y.copy_from_slice(last_y);
-        self.me_ref_u.copy_from_slice(last_u);
-        self.me_ref_v.copy_from_slice(last_v);
         if self.denoiser.is_some() {
+            let (last_y, last_u, last_v) =
+                self.ref_pool.named_ref_planes(crate::buffer_pool::LAST_REF);
+            self.me_ref_y.copy_from_slice(last_y);
+            self.me_ref_u.copy_from_slice(last_u);
+            self.me_ref_v.copy_from_slice(last_v);
             self.apply_w5_denoiser_to_me_ref_y();
         }
 
@@ -3764,12 +3777,19 @@ impl StreamEncoder {
         // F8.2 variance picker the show-frame path uses
         // (`encode_inter_internal`), so the ARF gets a content-driven
         // partition instead of one flat 64×64 leaf.
+        let partition_ref_y = if self.denoiser.is_some() {
+            self.me_ref_y.as_slice()
+        } else {
+            self.ref_pool
+                .named_ref_planes(crate::buffer_pool::LAST_REF)
+                .0
+        };
         let sb_partitions_intra_shape = choose_partitions_for_frame(FramePartitionInput {
             width_px: w_us,
             height_px: h_us,
             q_index,
             src_y: filtered_yuv.0,
-            ref_y: &self.me_ref_y,
+            ref_y: partition_ref_y,
             is_keyframe: false,
             avg_inter_qindex: self.rate_control.avg_frame_qindex_inter,
             noise_threshold_scale: self.pre_analysis.vbp_threshold_scale(),
@@ -3853,6 +3873,11 @@ impl StreamEncoder {
             .ref_pool
             .named_ref_planes(crate::buffer_pool::GOLDEN_REF);
         let mut stage4a_frame_split_stats = NonRdSplitStats::default();
+        let me_ref_yuv = if self.denoiser.is_some() {
+            (&self.me_ref_y[..], &self.me_ref_u[..], &self.me_ref_v[..])
+        } else {
+            (last_y, last_u, last_v)
+        };
         let encoded = pick_and_simulate_inter_encode_partitions(
             w,
             h,
@@ -3860,7 +3885,7 @@ impl StreamEncoder {
             self.rate_control.avg_frame_qindex_inter,
             &seg_q_deltas,
             filtered_yuv,
-            (&self.me_ref_y, &self.me_ref_u, &self.me_ref_v),
+            me_ref_yuv,
             (last_y, last_u, last_v),
             (gld_y, gld_u, gld_v),
             // W-ALTREF — the ARF itself predicts from LAST/GOLDEN only
@@ -4334,7 +4359,13 @@ impl StreamEncoder {
     /// frame.
     #[cfg(test)]
     pub(crate) fn me_ref_y(&self) -> &[u8] {
-        &self.me_ref_y
+        if self.denoiser.is_some() {
+            &self.me_ref_y
+        } else {
+            self.ref_pool
+                .named_ref_planes(crate::buffer_pool::LAST_REF)
+                .0
+        }
     }
 
     /// Test-only — the encoder's mirror of the decoder's FC bank 0
@@ -4360,14 +4391,26 @@ impl StreamEncoder {
     /// See [`Self::me_ref_y`].
     #[cfg(test)]
     pub(crate) fn me_ref_u(&self) -> &[u8] {
-        &self.me_ref_u
+        if self.denoiser.is_some() {
+            &self.me_ref_u
+        } else {
+            self.ref_pool
+                .named_ref_planes(crate::buffer_pool::LAST_REF)
+                .1
+        }
     }
 
     /// Test-only — read access to the ME-side LAST reference V plane.
     /// See [`Self::me_ref_y`].
     #[cfg(test)]
     pub(crate) fn me_ref_v(&self) -> &[u8] {
-        &self.me_ref_v
+        if self.denoiser.is_some() {
+            &self.me_ref_v
+        } else {
+            self.ref_pool
+                .named_ref_planes(crate::buffer_pool::LAST_REF)
+                .2
+        }
     }
 }
 
@@ -9730,26 +9773,22 @@ mod tests {
             );
         }
 
-        // Anti-cheat: the buffers MUST be separate `Vec` storage, not
-        // an alias. If a later refactor accidentally aliases them
-        // (e.g. via a shared `Arc`), this `as_ptr()` comparison
-        // catches it: byte-identical content but distinct backing
-        // allocations is the only correct structural split.
-        assert_ne!(
+        // With denoising disabled, ME reads LAST directly instead of
+        // maintaining a redundant full-frame mirror.
+        assert_eq!(
             enc.me_ref_y().as_ptr(),
             enc.last_recon_y().as_ptr(),
-            "me_ref_y and last_recon_y must be separately allocated \
-             — a shared buffer is not a real split",
+            "denoiser-off ME luma must alias LAST",
         );
-        assert_ne!(
+        assert_eq!(
             enc.me_ref_u().as_ptr(),
             enc.last_recon_u().as_ptr(),
-            "me_ref_u and last_recon_u must be separately allocated",
+            "denoiser-off ME chroma U must alias LAST",
         );
-        assert_ne!(
+        assert_eq!(
             enc.me_ref_v().as_ptr(),
             enc.last_recon_v().as_ptr(),
-            "me_ref_v and last_recon_v must be separately allocated",
+            "denoiser-off ME chroma V must alias LAST",
         );
     }
 
