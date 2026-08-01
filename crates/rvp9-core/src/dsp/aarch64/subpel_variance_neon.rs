@@ -18,9 +18,18 @@ use super::variance_neon::unsigned_dot;
 unsafe fn filter_8(a: *const u8, b: *const u8, offset: usize) -> uint8x8_t {
     let av = vld1_u8(a);
     if offset == 0 {
+        av
+    } else {
+        filter_8_values(av, vld1_u8(b), offset)
+    }
+}
+
+#[inline]
+#[target_feature(enable = "neon")]
+unsafe fn filter_8_values(av: uint8x8_t, bv: uint8x8_t, offset: usize) -> uint8x8_t {
+    if offset == 0 {
         return av;
     }
-    let bv = vld1_u8(b);
     if offset == 4 {
         return vrhadd_u8(av, bv);
     }
@@ -290,9 +299,60 @@ unsafe fn sub_pixel_variance_8_dotprod_inner(
     height: usize,
 ) -> (u32, u32) {
     let mut accum = DotprodVarianceAccumulator::new();
-    sub_pixel_variance_8_body!(
-        accum, src, src_stride, reference, ref_stride, xoffset, yoffset, height
-    )
+    debug_assert!(height.is_multiple_of(2));
+
+    if xoffset == 0 {
+        for row in (0..height).step_by(2) {
+            let top = src.add(row * src_stride);
+            let middle = top.add(src_stride);
+            let bottom = middle.add(src_stride);
+            let pred = vcombine_u8(
+                filter_8(top, middle, yoffset),
+                filter_8(middle, bottom, yoffset),
+            );
+            let reference_rows = vcombine_u8(
+                vld1_u8(reference.add(row * ref_stride)),
+                vld1_u8(reference.add((row + 1) * ref_stride)),
+            );
+            accum.add(pred, reference_rows);
+        }
+    } else if yoffset == 0 {
+        for row in (0..height).step_by(2) {
+            let first = src.add(row * src_stride);
+            let second = src.add((row + 1) * src_stride);
+            let pred = vcombine_u8(
+                filter_8(first, first.add(1), xoffset),
+                filter_8(second, second.add(1), xoffset),
+            );
+            let reference_rows = vcombine_u8(
+                vld1_u8(reference.add(row * ref_stride)),
+                vld1_u8(reference.add((row + 1) * ref_stride)),
+            );
+            accum.add(pred, reference_rows);
+        }
+    } else {
+        let mut horizontal_first = filter_8(src, src.add(1), xoffset);
+        for row in (0..height).step_by(2) {
+            let middle = src.add((row + 1) * src_stride);
+            let bottom = src.add((row + 2) * src_stride);
+            let horizontal_middle = filter_8(middle, middle.add(1), xoffset);
+            let horizontal_bottom = filter_8(bottom, bottom.add(1), xoffset);
+            let pred = vcombine_u8(
+                filter_8_values(horizontal_first, horizontal_middle, yoffset),
+                filter_8_values(horizontal_middle, horizontal_bottom, yoffset),
+            );
+            let reference_rows = vcombine_u8(
+                vld1_u8(reference.add(row * ref_stride)),
+                vld1_u8(reference.add((row + 1) * ref_stride)),
+            );
+            accum.add(pred, reference_rows);
+            horizontal_first = horizontal_bottom;
+        }
+    }
+
+    let (sum, sse) = accum.finish();
+    let variance = (sse - sum * sum / (8 * height) as i64).max(0) as u32;
+    (variance, sse as u32)
 }
 
 #[target_feature(enable = "neon")]
