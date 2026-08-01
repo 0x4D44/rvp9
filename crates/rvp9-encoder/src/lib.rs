@@ -82,6 +82,22 @@ thread_local! {
     /// tile worker. Callers receive only the active transform prefix.
     static INTER_EMIT_RESIDUAL_SCRATCH: std::cell::RefCell<[i16; 32 * 32]> =
         const { std::cell::RefCell::new([0; 32 * 32]) };
+    /// Forward-transform and quantization storage reused by emitted inter
+    /// blocks on one tile worker. Every kernel overwrites its active prefix,
+    /// so retaining the inactive tail avoids repeatedly clearing three
+    /// maximum-sized arrays for smaller chroma transforms.
+    static INTER_EMIT_QUANT_SCRATCH: std::cell::RefCell<InterEmitQuantScratch> =
+        const { std::cell::RefCell::new(InterEmitQuantScratch {
+            coefs: [0; 32 * 32],
+            qcoeff: [0; 32 * 32],
+            dqcoeff: [0; 32 * 32],
+        }) };
+}
+
+struct InterEmitQuantScratch {
+    coefs: [i32; 32 * 32],
+    qcoeff: [i16; 32 * 32],
+    dqcoeff: [i16; 32 * 32],
 }
 
 #[inline]
@@ -91,6 +107,11 @@ fn with_inter_emit_residual_scratch<R>(len: usize, operation: impl FnOnce(&mut [
         "inter emit residual length {len} exceeds 32x32 scratch"
     );
     INTER_EMIT_RESIDUAL_SCRATCH.with_borrow_mut(|scratch| operation(&mut scratch[..len]))
+}
+
+#[inline]
+fn with_inter_emit_quant_scratch<R>(operation: impl FnOnce(&mut InterEmitQuantScratch) -> R) -> R {
+    INTER_EMIT_QUANT_SCRATCH.with_borrow_mut(operation)
 }
 
 /// Read the running total of coefficients changed by the `RVP9_TRELLIS`
@@ -7867,111 +7888,103 @@ fn inter_forward_quant_one_tx(
     use rvp9_core::transforms::forward::{fdct8x8, fdct16x16, fdct32x32, fht4x4};
     use rvp9_core::transforms::scans::scan_for;
 
-    let n = plane_tx.n_coeffs();
-    let mut coefs = [0i32; 1024];
-    match plane_tx {
-        TxSize::Tx4x4 => {
-            // Inter blocks always use DctDct (no ADST hybrid). `fht4x4`
-            // with `TxType::DctDct` is the DCT-DCT variant.
-            let mut buf = [0i32; 16];
-            fht4x4(residual, &mut buf, tx_side, TxType::DctDct);
-            coefs[..n].copy_from_slice(&buf[..]);
-        }
-        TxSize::Tx8x8 => {
-            let mut buf = [0i32; 64];
-            fdct8x8(residual, &mut buf, tx_side);
-            coefs[..n].copy_from_slice(&buf[..]);
-        }
-        TxSize::Tx16x16 => {
-            let mut buf = [0i32; 256];
-            fdct16x16(residual, &mut buf, tx_side);
-            coefs[..n].copy_from_slice(&buf[..]);
-        }
-        TxSize::Tx32x32 => {
-            let mut buf = [0i32; 1024];
-            fdct32x32(residual, &mut buf, tx_side);
-            coefs.copy_from_slice(&buf[..]);
-        }
-    }
-
-    let scan = scan_for(plane_tx, TxType::DctDct);
-    let dequant_pair = [quantizer.dequant[0], quantizer.dequant[1]];
-    let mut qcoeff_i16 = [0i16; 1024];
-    let mut dqcoeff_i16 = [0i16; 1024];
-    let eob = if quant_fp {
+    with_inter_emit_quant_scratch(|scratch| {
+        let n = plane_tx.n_coeffs();
         match plane_tx {
-            TxSize::Tx32x32 => vp9_quantize_fp_32x32_with_order(
-                &coefs,
-                /* skip_block = */ false,
-                &quantizer.round_fp,
-                &quantizer.quant_fp,
-                &mut qcoeff_i16[..n],
-                &mut dqcoeff_i16[..n],
-                &dequant_pair,
-                &scan,
-            ),
-            _ => vp9_quantize_fp_with_order(
-                &coefs,
-                n,
-                /* skip_block = */ false,
-                &quantizer.round_fp,
-                &quantizer.quant_fp,
-                &mut qcoeff_i16,
-                &mut dqcoeff_i16,
-                &dequant_pair,
-                &scan,
-            ),
+            TxSize::Tx4x4 => {
+                // Inter blocks always use DctDct (no ADST hybrid).
+                let output: &mut [i32; 16] = (&mut scratch.coefs[..n])
+                    .try_into()
+                    .expect("Tx4x4 coefficient prefix has 16 entries");
+                fht4x4(residual, output, tx_side, TxType::DctDct);
+            }
+            TxSize::Tx8x8 => {
+                let output: &mut [i32; 64] = (&mut scratch.coefs[..n])
+                    .try_into()
+                    .expect("Tx8x8 coefficient prefix has 64 entries");
+                fdct8x8(residual, output, tx_side);
+            }
+            TxSize::Tx16x16 => {
+                let output: &mut [i32; 256] = (&mut scratch.coefs[..n])
+                    .try_into()
+                    .expect("Tx16x16 coefficient prefix has 256 entries");
+                fdct16x16(residual, output, tx_side);
+            }
+            TxSize::Tx32x32 => fdct32x32(residual, &mut scratch.coefs, tx_side),
         }
-    } else {
-        match plane_tx {
-            TxSize::Tx32x32 => vp9_quantize_b_32x32_with_order(
-                &coefs,
-                /* skip_block = */ false,
-                &quantizer.zbin,
-                &quantizer.round,
-                &quantizer.quant,
-                &quantizer.quant_shift,
-                &mut qcoeff_i16[..n],
-                &mut dqcoeff_i16[..n],
-                &dequant_pair,
-                &scan,
-            ),
-            _ => vp9_quantize_b_with_order(
-                &coefs,
-                n,
-                /* skip_block = */ false,
-                &quantizer.zbin,
-                &quantizer.round,
-                &quantizer.quant,
-                &quantizer.quant_shift,
-                &mut qcoeff_i16,
-                &mut dqcoeff_i16,
-                &dequant_pair,
-                &scan,
-            ),
+
+        let scan = scan_for(plane_tx, TxType::DctDct);
+        let dequant_pair = [quantizer.dequant[0], quantizer.dequant[1]];
+        let coefs = &scratch.coefs[..n];
+        let qcoeff = &mut scratch.qcoeff[..n];
+        let dqcoeff = &mut scratch.dqcoeff[..n];
+        let eob = if quant_fp {
+            match plane_tx {
+                TxSize::Tx32x32 => vp9_quantize_fp_32x32_with_order(
+                    coefs,
+                    /* skip_block = */ false,
+                    &quantizer.round_fp,
+                    &quantizer.quant_fp,
+                    qcoeff,
+                    dqcoeff,
+                    &dequant_pair,
+                    &scan,
+                ),
+                _ => vp9_quantize_fp_with_order(
+                    coefs,
+                    n,
+                    /* skip_block = */ false,
+                    &quantizer.round_fp,
+                    &quantizer.quant_fp,
+                    qcoeff,
+                    dqcoeff,
+                    &dequant_pair,
+                    &scan,
+                ),
+            }
+        } else {
+            match plane_tx {
+                TxSize::Tx32x32 => vp9_quantize_b_32x32_with_order(
+                    coefs,
+                    /* skip_block = */ false,
+                    &quantizer.zbin,
+                    &quantizer.round,
+                    &quantizer.quant,
+                    &quantizer.quant_shift,
+                    qcoeff,
+                    dqcoeff,
+                    &dequant_pair,
+                    &scan,
+                ),
+                _ => vp9_quantize_b_with_order(
+                    coefs,
+                    n,
+                    /* skip_block = */ false,
+                    &quantizer.zbin,
+                    &quantizer.round,
+                    &quantizer.quant,
+                    &quantizer.quant_shift,
+                    qcoeff,
+                    dqcoeff,
+                    &dequant_pair,
+                    &scan,
+                ),
+            }
+        };
+
+        let eob = maybe_trellis(
+            coefs, qcoeff, dqcoeff, eob, plane_tx, &scan, quantizer, plane_type, trellis,
+        );
+
+        let eob_usize = eob as usize;
+        if eob_usize == 0 {
+            return (Vec::new(), Vec::new(), 0);
         }
-    };
 
-    let eob = maybe_trellis(
-        &coefs[..n],
-        &mut qcoeff_i16[..n],
-        &mut dqcoeff_i16[..n],
-        eob,
-        plane_tx,
-        &scan,
-        quantizer,
-        plane_type,
-        trellis,
-    );
-
-    let eob_usize = eob as usize;
-    if eob_usize == 0 {
-        return (Vec::new(), Vec::new(), 0);
-    }
-
-    let qcoeff_i32: Vec<i32> = qcoeff_i16[..n].iter().copied().map(i32::from).collect();
-    let dqcoeff_i32: Vec<i32> = dqcoeff_i16[..n].iter().copied().map(i32::from).collect();
-    (qcoeff_i32, dqcoeff_i32, eob_usize)
+        let qcoeff_i32 = qcoeff.iter().copied().map(i32::from).collect();
+        let dqcoeff_i32 = dqcoeff.iter().copied().map(i32::from).collect();
+        (qcoeff_i32, dqcoeff_i32, eob_usize)
+    })
 }
 
 /// Shared `RVP9_TRELLIS` post-quant step for the inter + intra-in-inter
@@ -9033,6 +9046,30 @@ mod tests {
             after_negative, after_positive,
             "active residual prefix must be independent of wider prior transforms"
         );
+    }
+
+    #[test]
+    fn inter_emit_quant_scratch_is_independent_of_prior_transform_size() {
+        use rvp9_core::quant::forward::{QuantizerDeltas, init_plane_quantizers};
+
+        let quantizer = init_plane_quantizers(117, QuantizerDeltas::Y);
+        let run = |tx_size: TxSize, salt: i16| {
+            let side = tx_size.side();
+            let residual: Vec<i16> = (0..side * side)
+                .map(|index| ((index as i16 * 13 + salt) & 0xff) - 128)
+                .collect();
+            inter_forward_quant_one_tx(&residual, side, tx_size, &quantizer, 0, None, true)
+        };
+
+        for tx_size in [TxSize::Tx4x4, TxSize::Tx8x8, TxSize::Tx16x16] {
+            let before = run(tx_size, 7);
+            let _contaminating_full_scratch_transform = run(TxSize::Tx32x32, 93);
+            let after = run(tx_size, 7);
+            assert_eq!(
+                after, before,
+                "{tx_size:?} result must not depend on the prior scratch contents"
+            );
+        }
     }
 
     #[test]
