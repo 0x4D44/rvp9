@@ -48,9 +48,18 @@ unsafe fn filter_8_values(av: uint8x8_t, bv: uint8x8_t, offset: usize) -> uint8x
 unsafe fn filter_16(a: *const u8, b: *const u8, offset: usize) -> uint8x16_t {
     let av = vld1q_u8(a);
     if offset == 0 {
+        av
+    } else {
+        filter_16_values(av, vld1q_u8(b), offset)
+    }
+}
+
+#[inline]
+#[target_feature(enable = "neon")]
+unsafe fn filter_16_values(av: uint8x16_t, bv: uint8x16_t, offset: usize) -> uint8x16_t {
+    if offset == 0 {
         return av;
     }
-    let bv = vld1q_u8(b);
     if offset == 4 {
         return vrhaddq_u8(av, bv);
     }
@@ -393,6 +402,48 @@ unsafe fn sub_pixel_variance_dotprod_inner(
 
 #[target_feature(enable = "dotprod")]
 #[allow(clippy::too_many_arguments)]
+unsafe fn sub_pixel_variance_16_dotprod_inner(
+    src: *const u8,
+    src_stride: usize,
+    reference: *const u8,
+    ref_stride: usize,
+    xoffset: usize,
+    yoffset: usize,
+    height: usize,
+) -> (u32, u32) {
+    let mut accum = DotprodVarianceAccumulator::new();
+
+    if xoffset == 0 {
+        for row in 0..height {
+            let top = src.add(row * src_stride);
+            let bottom = top.add(src_stride);
+            let pred = filter_16(top, bottom, yoffset);
+            accum.add(pred, vld1q_u8(reference.add(row * ref_stride)));
+        }
+    } else if yoffset == 0 {
+        for row in 0..height {
+            let src_row = src.add(row * src_stride);
+            let pred = filter_16(src_row, src_row.add(1), xoffset);
+            accum.add(pred, vld1q_u8(reference.add(row * ref_stride)));
+        }
+    } else {
+        let mut horizontal_top = filter_16(src, src.add(1), xoffset);
+        for row in 0..height {
+            let bottom = src.add((row + 1) * src_stride);
+            let horizontal_bottom = filter_16(bottom, bottom.add(1), xoffset);
+            let pred = filter_16_values(horizontal_top, horizontal_bottom, yoffset);
+            accum.add(pred, vld1q_u8(reference.add(row * ref_stride)));
+            horizontal_top = horizontal_bottom;
+        }
+    }
+
+    let (sum, sse) = accum.finish();
+    let variance = (sse - sum * sum / (16 * height) as i64).max(0) as u32;
+    (variance, sse as u32)
+}
+
+#[target_feature(enable = "dotprod")]
+#[allow(clippy::too_many_arguments)]
 unsafe fn sub_pixel_variance_32x32_dotprod_inner(
     src: *const u8,
     src_stride: usize,
@@ -514,6 +565,41 @@ macro_rules! subpel_var_dotprod_fn {
             sub_pixel_variance_dotprod(
                 src, src_stride, reference, ref_stride, xoffset, yoffset, $w, $h,
             )
+        }
+    };
+}
+
+macro_rules! subpel_var_16_dotprod_fn {
+    ($name:ident, $h:expr) => {
+        #[doc = concat!("Dot-product sub-pixel variance 16x", stringify!($h), ".")]
+        pub fn $name(
+            src: &[u8],
+            src_stride: usize,
+            xoffset: usize,
+            yoffset: usize,
+            reference: &[u8],
+            ref_stride: usize,
+        ) -> (u32, u32) {
+            assert!(xoffset < 8 && yoffset < 8);
+            assert!(src_stride >= 16 + usize::from(xoffset != 0));
+            assert!(ref_stride >= 16);
+            assert!(src.len() >= $h * src_stride + 16 + usize::from(xoffset != 0));
+            assert!(reference.len() >= ($h - 1) * ref_stride + 16);
+
+            // SAFETY: Dispatch selects this wrapper only when dotprod is
+            // present. The assertions prove every 16-wide source and
+            // reference load, including the optional horizontal neighbour.
+            unsafe {
+                sub_pixel_variance_16_dotprod_inner(
+                    src.as_ptr(),
+                    src_stride,
+                    reference.as_ptr(),
+                    ref_stride,
+                    xoffset,
+                    yoffset,
+                    $h,
+                )
+            }
         }
     };
 }
@@ -647,9 +733,9 @@ pub fn vpx_sub_pixel_variance8x16_dotprod(
         )
     }
 }
-subpel_var_dotprod_fn!(vpx_sub_pixel_variance16x8_dotprod, 16, 8);
-subpel_var_dotprod_fn!(vpx_sub_pixel_variance16x16_dotprod, 16, 16);
-subpel_var_dotprod_fn!(vpx_sub_pixel_variance16x32_dotprod, 16, 32);
+subpel_var_16_dotprod_fn!(vpx_sub_pixel_variance16x8_dotprod, 8);
+subpel_var_16_dotprod_fn!(vpx_sub_pixel_variance16x16_dotprod, 16);
+subpel_var_16_dotprod_fn!(vpx_sub_pixel_variance16x32_dotprod, 32);
 subpel_var_dotprod_fn!(vpx_sub_pixel_variance32x16_dotprod, 32, 16);
 /// Dot-product sub-pixel variance 32x32.
 pub fn vpx_sub_pixel_variance32x32_dotprod(
@@ -756,6 +842,19 @@ mod tests {
                     src, src_stride, xoffset, yoffset, reference, ref_stride,
                 ),
                 16 => vpx_sub_pixel_variance8x16_dotprod(
+                    src, src_stride, xoffset, yoffset, reference, ref_stride,
+                ),
+                _ => unreachable!(),
+            }
+        } else if width == 16 {
+            match height {
+                8 => vpx_sub_pixel_variance16x8_dotprod(
+                    src, src_stride, xoffset, yoffset, reference, ref_stride,
+                ),
+                16 => vpx_sub_pixel_variance16x16_dotprod(
+                    src, src_stride, xoffset, yoffset, reference, ref_stride,
+                ),
+                32 => vpx_sub_pixel_variance16x32_dotprod(
                     src, src_stride, xoffset, yoffset, reference, ref_stride,
                 ),
                 _ => unreachable!(),
