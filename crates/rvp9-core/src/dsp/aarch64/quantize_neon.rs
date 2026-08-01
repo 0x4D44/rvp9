@@ -1239,7 +1239,7 @@ mod tests {
                         &mut scalar_q,
                         &mut scalar_dq,
                         &qp.dequant,
-                        order.scan,
+                        order.scan(),
                     );
                     let neon_eob = vp9_quantize_fp_neon(
                         &coeff,
@@ -1250,7 +1250,7 @@ mod tests {
                         &mut neon_q,
                         &mut neon_dq,
                         &qp.dequant,
-                        order.iscan,
+                        order.iscan(),
                     );
                     assert_eq!(neon_eob, scalar_eob, "{tx_size:?}/{tx_type:?}/q{q_index}");
                     assert_eq!(neon_q, scalar_q, "{tx_size:?}/{tx_type:?}/q{q_index}");
@@ -1275,7 +1275,7 @@ mod tests {
                 for scan_position in [None, Some(0), Some(1), Some(n / 2), Some(n - 1)] {
                     let mut coeff = vec![0; n];
                     if let Some(position) = scan_position {
-                        coeff[order.scan[position] as usize] =
+                        coeff[order.scan()[position] as usize] =
                             if position & 1 == 0 { 32_767 } else { -32_768 };
                     }
                     let mut scalar_q = vec![0; n];
@@ -1291,7 +1291,7 @@ mod tests {
                         &mut scalar_q,
                         &mut scalar_dq,
                         &qp.dequant,
-                        order.scan,
+                        order.scan(),
                     );
                     let neon_eob = vp9_quantize_fp_neon(
                         &coeff,
@@ -1302,7 +1302,7 @@ mod tests {
                         &mut neon_q,
                         &mut neon_dq,
                         &qp.dequant,
-                        order.iscan,
+                        order.iscan(),
                     );
                     assert_eq!(
                         (neon_eob, neon_q, neon_dq),
@@ -1329,7 +1329,7 @@ mod tests {
                 &mut qcoeff,
                 &mut dqcoeff,
                 &[5, 6],
-                order.iscan,
+                order.iscan(),
             ),
             0
         );
@@ -1350,7 +1350,7 @@ mod tests {
                     let mut coeff = vec![0; 1024];
                     if let Some(position) = scan_position {
                         let band = usize::from(position != 0);
-                        coeff[order.scan[position] as usize] =
+                        coeff[order.scan()[position] as usize] =
                             (i32::from(qp.dequant[band]) >> 2) + delta;
                     }
                     inputs.push(coeff);
@@ -1370,7 +1370,7 @@ mod tests {
                     &mut scalar_q,
                     &mut scalar_dq,
                     &qp.dequant,
-                    order.scan,
+                    order.scan(),
                 );
                 let neon_eob = vp9_quantize_fp_32x32_neon(
                     &coeff,
@@ -1380,7 +1380,7 @@ mod tests {
                     &mut neon_q,
                     &mut neon_dq,
                     &qp.dequant,
-                    order.iscan,
+                    order.iscan(),
                 );
                 assert_eq!(neon_eob, scalar_eob, "q{q_index}/case{case}");
                 assert_eq!(neon_q, scalar_q, "q{q_index}/case{case}");
@@ -1399,7 +1399,7 @@ mod tests {
                 &mut qcoeff,
                 &mut dqcoeff,
                 &[5, 6],
-                order.iscan,
+                order.iscan(),
             ),
             0
         );
@@ -1423,7 +1423,7 @@ mod tests {
                 let mut final_scan_only = vec![0; n];
                 let final_scan = i16::try_from(n).expect("VP9 transform size fits i16");
                 let final_scan_index = order
-                    .iscan
+                    .iscan()
                     .iter()
                     .position(|&scan_position| scan_position == final_scan)
                     .expect("inverse scan includes the final position");
@@ -1455,7 +1455,7 @@ mod tests {
                             &mut wide_q,
                             &mut wide_dq,
                             &qp.dequant,
-                            order.iscan,
+                            order.iscan(),
                         )
                     } else {
                         vp9_quantize_fp_neon(
@@ -1467,7 +1467,7 @@ mod tests {
                             &mut wide_q,
                             &mut wide_dq,
                             &qp.dequant,
-                            order.iscan,
+                            order.iscan(),
                         )
                     };
                     let metrics = if tx_size == TxSize::Tx32x32 {
@@ -1476,7 +1476,7 @@ mod tests {
                             &qp.round_fp,
                             &qp.quant_fp,
                             &qp.dequant,
-                            order.iscan,
+                            order.iscan(),
                         )
                     } else {
                         vp9_quantize_fp_i16_metrics_neon(
@@ -1485,7 +1485,7 @@ mod tests {
                             &qp.round_fp,
                             &qp.quant_fp,
                             &qp.dequant,
-                            order.iscan,
+                            order.iscan(),
                         )
                     };
                     let rate_metrics = if tx_size == TxSize::Tx32x32 {
@@ -1494,7 +1494,7 @@ mod tests {
                             &qp.round_fp,
                             &qp.quant_fp,
                             &qp.dequant,
-                            order.iscan,
+                            order.iscan(),
                         )
                     } else {
                         vp9_quantize_fp_i16_rate_metrics_neon(
@@ -1502,7 +1502,7 @@ mod tests {
                             n,
                             &qp.round_fp,
                             &qp.quant_fp,
-                            order.iscan,
+                            order.iscan(),
                         )
                     };
 
@@ -1550,7 +1550,7 @@ mod tests {
                         &mut scalar_q,
                         &mut scalar_dq,
                         &qp.dequant,
-                        order.scan,
+                        order.scan(),
                     );
                     let neon_eob = vp9_quantize_b_neon(
                         &coeff,
@@ -1563,7 +1563,7 @@ mod tests {
                         &mut neon_q,
                         &mut neon_dq,
                         &qp.dequant,
-                        order.iscan,
+                        order.iscan(),
                     );
                     assert_eq!(neon_eob, scalar_eob, "{tx_size:?}/{tx_type:?}/q{q_index}");
                     assert_eq!(neon_q, scalar_q, "{tx_size:?}/{tx_type:?}/q{q_index}");
@@ -1591,7 +1591,7 @@ mod tests {
                             let mut coeff = vec![0; n];
                             if let Some(position) = scan_position {
                                 let band = usize::from(position != 0);
-                                coeff[order.scan[position] as usize] =
+                                coeff[order.scan()[position] as usize] =
                                     i32::from(qp.zbin[band]) + delta;
                             }
                             let mut scalar_q = vec![0; n];
@@ -1609,7 +1609,7 @@ mod tests {
                                 &mut scalar_q,
                                 &mut scalar_dq,
                                 &qp.dequant,
-                                order.scan,
+                                order.scan(),
                             );
                             let neon_eob = vp9_quantize_b_neon(
                                 &coeff,
@@ -1622,7 +1622,7 @@ mod tests {
                                 &mut neon_q,
                                 &mut neon_dq,
                                 &qp.dequant,
-                                order.iscan,
+                                order.iscan(),
                             );
                             assert_eq!(
                                 (neon_eob, neon_q, neon_dq),
@@ -1651,7 +1651,7 @@ mod tests {
                         if let Some(position) = scan_position {
                             let band = usize::from(position != 0);
                             let threshold = (i32::from(qp.zbin[band]) + 1) >> 1;
-                            coeff[order.scan[position] as usize] = sign * (threshold + delta);
+                            coeff[order.scan()[position] as usize] = sign * (threshold + delta);
                         }
                         inputs.push(coeff);
                     }
@@ -1673,7 +1673,7 @@ mod tests {
                     &mut scalar_q,
                     &mut scalar_dq,
                     &qp.dequant,
-                    order.scan,
+                    order.scan(),
                 );
                 let neon_eob = vp9_quantize_b_32x32_neon(
                     &coeff,
@@ -1685,7 +1685,7 @@ mod tests {
                     &mut neon_q,
                     &mut neon_dq,
                     &qp.dequant,
-                    order.iscan,
+                    order.iscan(),
                 );
                 assert_eq!(neon_eob, scalar_eob, "q{q_index}/case{case}");
                 assert_eq!(neon_q, scalar_q, "q{q_index}/case{case}");
@@ -1710,7 +1710,7 @@ mod tests {
                 &mut qcoeff,
                 &mut dqcoeff,
                 &[9, 10],
-                order.iscan,
+                order.iscan(),
             ),
             0
         );

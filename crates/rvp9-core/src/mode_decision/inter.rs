@@ -4151,7 +4151,7 @@ fn reconstruct_via_round_trip(
                         &params.quantizer.round_fp,
                         &params.quantizer.quant_fp,
                         &dequant_pair,
-                        scan.iscan,
+                        scan.iscan(),
                     )
                 } else {
                     crate::dsp::aarch64::vp9_quantize_fp_i16_metrics_neon(
@@ -4160,7 +4160,7 @@ fn reconstruct_via_round_trip(
                         &params.quantizer.round_fp,
                         &params.quantizer.quant_fp,
                         &dequant_pair,
-                        scan.iscan,
+                        scan.iscan(),
                     )
                 };
                 (metrics.eob, metrics.satd, metrics.error >> 2)
@@ -4171,7 +4171,7 @@ fn reconstruct_via_round_trip(
                         &params.quantizer.round_fp,
                         &params.quantizer.quant_fp,
                         &dequant_pair,
-                        scan.iscan,
+                        scan.iscan(),
                     )
                 } else {
                     crate::dsp::aarch64::vp9_quantize_fp_i16_rate_metrics_neon(
@@ -4179,7 +4179,7 @@ fn reconstruct_via_round_trip(
                         $n,
                         &params.quantizer.round_fp,
                         &params.quantizer.quant_fp,
-                        scan.iscan,
+                        scan.iscan(),
                     )
                 };
                 (metrics.eob, metrics.satd, 0)

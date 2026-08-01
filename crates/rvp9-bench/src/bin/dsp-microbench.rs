@@ -420,7 +420,7 @@ fn run_quantize_b() {
                 black_box(&mut scalar_q),
                 black_box(&mut scalar_dq),
                 &qp.dequant,
-                order.scan,
+                order.scan(),
             ));
         });
         let dispatch_ns = bench_min_ns(batches, iters, || {
@@ -485,7 +485,7 @@ fn run_quantize_fp() {
                 black_box(&mut scalar_q),
                 black_box(&mut scalar_dq),
                 &qp.dequant,
-                order.scan,
+                order.scan(),
             ));
         });
         let dispatch_ns = bench_min_ns(batches, iters, || {

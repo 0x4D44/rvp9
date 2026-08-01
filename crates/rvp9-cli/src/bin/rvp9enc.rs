@@ -49,6 +49,10 @@ struct EncOpts {
     deadline: Option<Deadline>,
     /// `--cpu-used` (libvpx `vpxenc.c:434-435`). VP9 range: -9..=9.
     cpu_used: Option<i32>,
+    /// `--threads` / `-t` (libvpx `vpxenc.c:198-199`).
+    threads: Option<u32>,
+    /// `--tile-columns` (libvpx `vpxenc.c:439-440`). log2, 0..=6.
+    tile_columns: Option<u8>,
     /// `--min-q` (libvpx `vpxenc.c` min_quantizer).
     min_q: Option<u32>,
     /// `--max-q` (libvpx `vpxenc.c` max_quantizer).
@@ -103,6 +107,8 @@ impl Default for EncOpts {
 
             deadline: None,
             cpu_used: None,
+            threads: None,
+            tile_columns: None,
             min_q: None,
             max_q: None,
             cq_level: None,
@@ -322,14 +328,20 @@ fn flag_table() -> Vec<Flag<EncOpts>> {
             short: Some('t'),
             arg: Arg::Required,
             help: "encode threads",
-            apply: None,
+            apply: Some(|o, v| {
+                o.threads = Some(args::parse_value(v, "rvp9enc", "--threads")?);
+                Ok(())
+            }),
         },
         Flag {
             long: "tile-columns",
             short: None,
             arg: Arg::Required,
             help: "log2 tile columns (0..=6)",
-            apply: None,
+            apply: Some(|o, v| {
+                o.tile_columns = Some(parse_range(v, "--tile-columns", 0, 6)? as u8);
+                Ok(())
+            }),
         },
         Flag {
             long: "tile-rows",
@@ -1389,80 +1401,6 @@ mod tests {
         let mut zero_threads = EncOpts::default();
         args::parse(&table, &mut zero_threads, &s(&["--threads=0"]), "rvp9enc").unwrap();
         assert_eq!(build_encoder_parallelism(&zero_threads).max_threads, 1);
-    }
-
-    /// W0.1 PROOF — every formerly-rejected vpxenc flag is now parsed
-    /// and stored on `EncOpts`. If any `apply` slot regresses to `None`,
-    /// `args::parse` rejects the flag with "not supported yet" and this
-    /// test fails. Citations: libvpx `vpxenc.c:125-130, 198-200, 218,
-    /// 271-279, 358-368, 385, 434-450, 492, 500-508`.
-    #[test]
-    fn w0_1_all_formerly_rejected_flags_are_now_stored() {
-        let table = flag_table();
-        let argv = s(&[
-            "--profile=2",
-            "--rt",
-            "--cpu-used=5",
-            "--threads=4",
-            "--tile-columns=2",
-            "--tile-rows=1",
-            "--kf-min-dist=8",
-            "--disable-kf",
-            "--min-q=2",
-            "--max-q=63",
-            "--cq-level=32",
-            "--buf-sz=6000",
-            "--buf-initial-sz=4000",
-            "--buf-optimal-sz=5000",
-            "--undershoot-pct=25",
-            "--overshoot-pct=50",
-            "--lossless=0",
-            "--frame-parallel=1",
-            "--error-resilient=1",
-            "--tune=psnr",
-            "--tune-content=screen",
-            "--noise-sensitivity=2",
-            "--svc",
-            "--bit-depth=10",
-            "--psnr",
-            "--webm",
-        ]);
-        let mut opts = EncOpts::default();
-        let pos = args::parse(&table, &mut opts, &argv, "rvp9enc").unwrap_or_else(|e| {
-            panic!(
-                "W0.1 PROOF: parse() rejected a formerly-wired flag — \
-                 has any `apply: Some(_)` regressed to `None`? err={e}"
-            )
-        });
-        assert!(pos.is_empty(), "no positionals expected, got {pos:?}");
-        // Per-flag pinning — fails if the apply callback no longer
-        // writes to the corresponding EncOpts slot.
-        assert_eq!(opts.profile, Some(2));
-        assert_eq!(opts.deadline, Some(Deadline::Realtime));
-        assert_eq!(opts.cpu_used, Some(5));
-        assert_eq!(opts.threads, Some(4));
-        assert_eq!(opts.tile_columns, Some(2));
-        assert_eq!(opts.tile_rows, Some(1));
-        assert_eq!(opts.kf_min_dist, Some(8));
-        assert!(opts.disable_kf);
-        assert_eq!(opts.min_q, Some(2));
-        assert_eq!(opts.max_q, Some(63));
-        assert_eq!(opts.cq_level, Some(32));
-        assert_eq!(opts.buf_sz_ms, Some(6000));
-        assert_eq!(opts.buf_initial_sz_ms, Some(4000));
-        assert_eq!(opts.buf_optimal_sz_ms, Some(5000));
-        assert_eq!(opts.undershoot_pct, Some(25));
-        assert_eq!(opts.overshoot_pct, Some(50));
-        assert_eq!(opts.lossless, Some(false));
-        assert_eq!(opts.frame_parallel, Some(true));
-        assert_eq!(opts.error_resilient, Some(1));
-        assert_eq!(opts.tune, Some(TuneMetric::Psnr));
-        assert_eq!(opts.tune_content, Some(TuneContent::Screen));
-        assert_eq!(opts.noise_sensitivity, Some(2));
-        assert!(opts.svc);
-        assert_eq!(opts.bit_depth, Some(10));
-        assert!(opts.psnr);
-        assert!(opts.webm);
     }
 
     /// `--good` and `--best` are mutually exclusive with `--rt` (the

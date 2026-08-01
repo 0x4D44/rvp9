@@ -213,7 +213,7 @@ pub fn vp9_quantize_b_with_order(
             qcoeff_ptr,
             dqcoeff_ptr,
             dequant_ptr,
-            order.iscan,
+            order.iscan(),
         )
     }
     #[cfg(not(target_arch = "aarch64"))]
@@ -229,7 +229,7 @@ pub fn vp9_quantize_b_with_order(
             qcoeff_ptr,
             dqcoeff_ptr,
             dequant_ptr,
-            order.scan,
+            order.scan(),
         )
     }
 }
@@ -368,7 +368,7 @@ pub fn vp9_quantize_b_32x32_with_order(
             qcoeff_ptr,
             dqcoeff_ptr,
             dequant_ptr,
-            order.iscan,
+            order.iscan(),
         )
     }
     #[cfg(not(target_arch = "aarch64"))]
@@ -383,7 +383,7 @@ pub fn vp9_quantize_b_32x32_with_order(
             qcoeff_ptr,
             dqcoeff_ptr,
             dequant_ptr,
-            order.scan,
+            order.scan(),
         )
     }
 }
@@ -480,7 +480,7 @@ pub fn vp9_quantize_fp_with_order(
             qcoeff_ptr,
             dqcoeff_ptr,
             dequant_ptr,
-            order.iscan,
+            order.iscan(),
         )
     }
     #[cfg(not(target_arch = "aarch64"))]
@@ -494,7 +494,7 @@ pub fn vp9_quantize_fp_with_order(
             qcoeff_ptr,
             dqcoeff_ptr,
             dequant_ptr,
-            order.scan,
+            order.scan(),
         )
     }
 }
@@ -589,7 +589,7 @@ pub fn vp9_quantize_fp_32x32_with_order(
             qcoeff_ptr,
             dqcoeff_ptr,
             dequant_ptr,
-            order.iscan,
+            order.iscan(),
         )
     }
     #[cfg(not(target_arch = "aarch64"))]
@@ -602,7 +602,7 @@ pub fn vp9_quantize_fp_32x32_with_order(
             qcoeff_ptr,
             dqcoeff_ptr,
             dequant_ptr,
-            order.scan,
+            order.scan(),
         )
     }
 }

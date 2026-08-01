@@ -123,17 +123,14 @@ impl WorkerPool {
         worker_count: usize,
         caller_participates: bool,
     ) -> std::io::Result<Self> {
-        Self::try_new_with_spawner_and_caller(
-            worker_count,
-            caller_participates,
-            |worker_id, rx| {
-                thread::Builder::new()
-                    .name(format!("rvp9-worker-{worker_id}"))
-                    .spawn(move || worker_loop(rx))
-            },
-        )
+        Self::try_new_with_spawner_and_caller(worker_count, caller_participates, |worker_id, rx| {
+            thread::Builder::new()
+                .name(format!("rvp9-worker-{worker_id}"))
+                .spawn(move || worker_loop(rx))
+        })
     }
 
+    #[cfg(test)]
     fn try_new_with_spawner<F>(n: NonZeroUsize, spawn_worker: F) -> std::io::Result<Self>
     where
         F: FnMut(usize, Receiver<WorkerJob>) -> std::io::Result<JoinHandle<()>>,

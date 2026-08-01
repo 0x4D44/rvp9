@@ -1866,7 +1866,7 @@ mod tests {
             .into_iter()
             .enumerate()
         {
-            mixed[scan.scan[scan_pos] as usize] = value;
+            mixed[scan.scan()[scan_pos] as usize] = value;
         }
         let cases = [
             ([0i32; 16], 0usize),
@@ -3192,7 +3192,7 @@ mod tests {
         let probs = flat_coef_probs(64, 64, 64);
         let scan4 = default_scan_4x4();
         let mut sparse = vec![0i32; 16];
-        sparse[scan4.scan[5] as usize] = -2;
+        sparse[scan4.scan()[5] as usize] = -2;
         let expected = enc_block(&probs, &scan4, 2, TxSize::Tx4x4, 16, &sparse, 6);
 
         // Dirty every byte the reusable cache can expose, including bytes

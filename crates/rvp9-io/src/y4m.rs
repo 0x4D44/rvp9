@@ -119,12 +119,14 @@ fn zeroed_buffer(len: usize, label: &str) -> io::Result<Vec<u8>> {
 
 fn resize_zeroed_buffer(buffer: &mut Vec<u8>, len: usize, label: &str) -> io::Result<()> {
     if len > buffer.len() {
-        buffer.try_reserve_exact(len - buffer.len()).map_err(|error| {
-            y4m_error(
-                io::ErrorKind::OutOfMemory,
-                format!("cannot allocate {label} ({len} bytes): {error}"),
-            )
-        })?;
+        buffer
+            .try_reserve_exact(len - buffer.len())
+            .map_err(|error| {
+                y4m_error(
+                    io::ErrorKind::OutOfMemory,
+                    format!("cannot allocate {label} ({len} bytes): {error}"),
+                )
+            })?;
     }
     buffer.resize(len, 0);
     Ok(())
@@ -571,8 +573,7 @@ mod tests {
         assert_eq!(streaming.next_frame().expect("read f1"), Some(f1.clone()));
         assert_eq!(streaming.next_frame().expect("read EOF"), None);
 
-        let mut reusable =
-            Y4mReader::open(&path, w, h, usize::MAX).expect("open reusable reader");
+        let mut reusable = Y4mReader::open(&path, w, h, usize::MAX).expect("open reusable reader");
         let mut frame = YuvFrameBuf::default();
         assert!(reusable.next_frame_into(&mut frame).expect("reuse f0"));
         assert_eq!(frame, f0);

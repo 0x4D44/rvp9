@@ -178,8 +178,8 @@ fn enc_webm_rejected_before_creating_ivf_output() {
 
 // The parser's `apply: None` path keeps recognized but unavailable
 // features fail-loud. `--webm` exercises that contract above until a
-// WebM muxer exists; other vpxenc parity flags remain stored for their
-// implementation waves.
+// WebM muxer exists; other unimplemented vpxenc parity flags remain
+// explicit `None` entries until their values affect encoding.
 
 // ========================================================================
 // --codec validation (both binaries)
@@ -662,8 +662,6 @@ fn enc_verbose_emits_summary_line() {
 fn enc_parse_only_flags_reject_and_are_tagged_not_yet() {
     let unplumbed = [
         ("--profile", Some("2")),
-        ("--threads", Some("4")),
-        ("--tile-columns", Some("2")),
         ("--tile-rows", Some("1")),
         ("--kf-min-dist", Some("8")),
         ("--disable-kf", None),

@@ -6975,6 +6975,7 @@ mod tests {
             &segmentation,
             0x01,
             true,
+            false,
             [false; 3],
             [0, 1, 2],
             None,
