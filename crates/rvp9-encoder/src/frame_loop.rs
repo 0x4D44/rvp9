@@ -1819,6 +1819,25 @@ impl StreamEncoder {
             ));
         }
 
+        // Lag-zero input is consumed before this call returns, so tightly
+        // packed planes need no owned lookahead copy. Last_Source still
+        // retains luma after the encode; its reusable allocation is updated
+        // in `encode_one_source`. Strided and delayed inputs keep the
+        // libvpx-shaped owned ring path below.
+        if self.config.lag_in_frames == 0
+            && yuv.y_stride == w
+            && yuv.u_stride == uvw
+            && yuv.v_stride == uvw
+        {
+            self.lookahead.record_direct_push();
+            return self
+                .encode_one_source(
+                    (&yuv.y[..w * h], &yuv.u[..uvw * uvh], &yuv.v[..uvw * uvh]),
+                    None,
+                )
+                .map(Some);
+        }
+
         // W1.5(vpxenc parity, A19 rows 20-21): push the source frame
         // into the lookahead ring (libvpx `vp9_receive_raw_frame` →
         // `vp9_lookahead_push`, `vp9_lookahead.c:93-199`). The push
@@ -1890,7 +1909,16 @@ impl StreamEncoder {
             Some(entry) => entry.clone(),
             None => return Ok(None),
         };
-        let (y_tight, u_tight, v_tight) = (&popped.y, &popped.u, &popped.v);
+        self.encode_one_source((&popped.y, &popped.u, &popped.v), Some(&popped.y))
+            .map(Some)
+    }
+
+    fn encode_one_source(
+        &mut self,
+        source: (&[u8], &[u8], &[u8]),
+        shared_source_y: Option<&std::sync::Arc<[u8]>>,
+    ) -> Result<EncodedFrame, EncodeError> {
+        let (y_tight, u_tight, v_tight) = source;
 
         // F.0.2 oracle — stamp the current frame index on the thread-
         // local sink so picker-hook BlockDecisions carry the right
@@ -2261,7 +2289,12 @@ impl StreamEncoder {
         // the `cpi->Last_Source = cpi->Source` swap after the encode
         // completes; the lookahead owns immutable reference-counted
         // planes, so Last_Source retains the luma allocation directly.
-        self.pre_analysis.capture_last_source_shared(y_tight);
+        if let Some(shared_source_y) = shared_source_y {
+            self.pre_analysis
+                .capture_last_source_shared(shared_source_y);
+        } else {
+            self.pre_analysis.capture_last_source(y_tight);
+        }
 
         // A18 (SVC) — tag the frame's temporal layer. The decision was
         // computed by `svc_assign_layer` before the encode; keyframes
@@ -2272,13 +2305,13 @@ impl StreamEncoder {
         // here). The next frame's `svc_assign_layer` recomputes it.
         self.svc_frame = None;
 
-        Ok(Some(EncodedFrame {
+        Ok(EncodedFrame {
             data: packet,
             frame_kind,
             q_index,
             actual_bits,
             temporal_layer_id,
-        }))
+        })
     }
 
     /// Keyframe internal: drive the F5.1 simulator to produce per-TX
@@ -10727,6 +10760,73 @@ mod tests {
             "flush() at lag=0 must drain zero frames; got {} tail packets",
             tail.len(),
         );
+    }
+
+    /// Lag-zero tight input bypasses the owned lookahead copy, while
+    /// strided input keeps the ring fallback. Both paths must produce the
+    /// same packet sequence, including the Last_Source-dependent inter
+    /// frames after the first call.
+    #[test]
+    fn w_lag_zero_tight_and_strided_paths_match() {
+        const W: usize = 64;
+        const H: usize = 64;
+        let cfg = EncoderConfig {
+            width: W as u32,
+            height: H as u32,
+            framerate: 30.0,
+            target_bitrate_bps: 1_000_000,
+            gop_length: 30,
+            aq_mode: AqMode::Off,
+            use_prev_frame_mvs: false,
+            speed: 7,
+            deadline: Deadline::Realtime,
+            noise_sensitivity: 0,
+            bit_depth: rvp9_core::BitDepth::Bd8,
+            lag_in_frames: 0,
+            enable_alt_ref: false,
+            rc_mode: RcMode::Cbr,
+            cq_level: 0,
+            temporal_layers: 1,
+            enable_tpl: false,
+            stage4a_product_split_override: Default::default(),
+            min_qindex: 4,
+            max_qindex: 255,
+        };
+        let (y, u, v) = gradient_frame(W, H);
+        let y_stride = W + 8;
+        let uv_stride = W / 2 + 4;
+        let mut y_strided = vec![0u8; y_stride * H];
+        let mut u_strided = vec![0u8; uv_stride * H / 2];
+        let mut v_strided = vec![0u8; uv_stride * H / 2];
+        for row in 0..H {
+            y_strided[row * y_stride..row * y_stride + W]
+                .copy_from_slice(&y[row * W..(row + 1) * W]);
+        }
+        for row in 0..H / 2 {
+            u_strided[row * uv_stride..row * uv_stride + W / 2]
+                .copy_from_slice(&u[row * W / 2..(row + 1) * W / 2]);
+            v_strided[row * uv_stride..row * uv_stride + W / 2]
+                .copy_from_slice(&v[row * W / 2..(row + 1) * W / 2]);
+        }
+        let tight = yuv_view(&y, &u, &v, W);
+        let strided = YuvFrameRef {
+            y: &y_strided,
+            u: &u_strided,
+            v: &v_strided,
+            y_stride,
+            u_stride: uv_stride,
+            v_stride: uv_stride,
+        };
+        let mut tight_enc = StreamEncoder::new(cfg).expect("tight encoder");
+        let mut strided_enc = StreamEncoder::new(cfg).expect("strided encoder");
+        for frame in 0..3 {
+            let tight_packet = tight_enc.encode_frame(&tight).expect("tight encode");
+            let strided_packet = strided_enc.encode_frame(&strided).expect("strided encode");
+            assert_eq!(tight_packet.data, strided_packet.data, "frame {frame}");
+            assert_eq!(tight_packet.frame_kind, strided_packet.frame_kind);
+            assert_eq!(tight_packet.q_index, strided_packet.q_index);
+            assert_eq!(tight_packet.actual_bits, strided_packet.actual_bits);
+        }
     }
 
     /// PROOF — with `lag_in_frames > 0` the synchronous

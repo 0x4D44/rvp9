@@ -185,6 +185,13 @@ impl LookaheadCtx {
         self.next_show_idx
     }
 
+    /// Record a synchronous lag-zero input that bypasses owned lookahead
+    /// storage. The frame-loop still advances push-time ordering before it
+    /// starts encoding, matching [`Self::push`] when a later encode fails.
+    pub(crate) fn record_direct_push(&mut self) {
+        self.next_show_idx += 1;
+    }
+
     /// Push a source frame into the lookahead. Mirrors libvpx
     /// `vp9_lookahead_push` (`vp9_lookahead.c:93-199`) — copies the
     /// frame into the ring slot at `write_idx`, stamps it with
