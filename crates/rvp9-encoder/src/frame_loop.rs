@@ -3046,6 +3046,8 @@ impl StreamEncoder {
         let deadline = self.config.deadline;
         let rc_mode = self.config.rc_mode;
         let split_override = self.config.stage4a_product_split_override;
+        let inter_env_snapshot = crate::InterEncodeEnv::capture();
+        let inter_env = &inter_env_snapshot;
         let noise_estimate = self.pre_analysis.noise_estimate;
         let high_source_sad = self.pre_analysis.high_source_sad;
         let content_state_sb = &self.pre_analysis.content_state_sb;
@@ -3064,6 +3066,7 @@ impl StreamEncoder {
                 $active_tile_col:expr
             ) => {
                 pick_and_simulate_inter_encode_partitions(
+                    inter_env,
                     w,
                     h,
                     q_index,
@@ -3851,7 +3854,9 @@ impl StreamEncoder {
         } else {
             (last_y, last_u, last_v)
         };
+        let inter_env = crate::InterEncodeEnv::capture();
         let encoded = pick_and_simulate_inter_encode_partitions(
+            &inter_env,
             w,
             h,
             q_index,

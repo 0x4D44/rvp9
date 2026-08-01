@@ -3128,10 +3128,103 @@ impl<T> DescentPickCache<T> {
     }
 }
 
+/// Immutable snapshot of diagnostic and A/B environment knobs shared by all
+/// tile jobs for one frame.
+pub(crate) struct InterEncodeEnv {
+    rt_disable_golden: bool,
+    rt_disable_newmv: bool,
+    rt_disable_newmv_max_edge: Option<u8>,
+    rt_disable_nearmv: bool,
+    a4_descent_independent_mv: Option<bool>,
+    trellis: Option<bool>,
+    a4_rd_partition_disable: bool,
+    f3_nonrd_partition_enable: bool,
+    phase2_reuse_disable: bool,
+    p8: Option<bool>,
+    p8_qmax: Option<u8>,
+    a4_live_partition_cost: bool,
+    diag_golden: bool,
+    diag_picker: bool,
+    diag_intpro_sb: bool,
+    e3_mvdiag: bool,
+    s2_xtab: bool,
+    rt_profile: bool,
+    exact_vbp_tree: Option<bool>,
+    live_ref_costs: Option<bool>,
+    rt_emit_max_tx: Option<bool>,
+    rt_emit_tx_rd: Option<bool>,
+    rt_quant_fp: Option<bool>,
+    rt_reuse_descent_pick: Option<bool>,
+    a4_descent_cb_filter: Option<bool>,
+    rt_skip_intmv_filter_search: Option<bool>,
+    newmv_diff_bias: Option<bool>,
+    rt_min_partition32: Option<bool>,
+    emit_profile: bool,
+    a4_profile: bool,
+    variance_hint_dump: bool,
+    a4_rect_disable: bool,
+    a4_split_stats: bool,
+    diag_intpro: bool,
+    p8_stats: bool,
+}
+
+impl InterEncodeEnv {
+    pub(crate) fn capture() -> Self {
+        let bool_override = |key: &str| std::env::var_os(key).map(|value| value != "0");
+        Self {
+            rt_disable_golden: std::env::var_os("RVP9_RT_DISABLE_GOLDEN").is_some(),
+            rt_disable_newmv: std::env::var_os("RVP9_RT_DISABLE_NEWMV").is_some(),
+            rt_disable_newmv_max_edge: std::env::var("RVP9_RT_DISABLE_NEWMV_MAX_EDGE")
+                .ok()
+                .and_then(|value| value.parse().ok()),
+            rt_disable_nearmv: std::env::var_os("RVP9_RT_DISABLE_NEARMV").is_some(),
+            a4_descent_independent_mv: bool_override("RVP9_A4_DESCENT_INDEPENDENT_MV"),
+            trellis: bool_override("RVP9_TRELLIS"),
+            a4_rd_partition_disable: std::env::var_os("RVP9_A4_RD_PARTITION_DISABLE").is_some(),
+            f3_nonrd_partition_enable: std::env::var_os("RVP9_F3_NONRD_PARTITION_ENABLE").is_some(),
+            phase2_reuse_disable: std::env::var_os("RVP9_PHASE2_REUSE_DISABLE").is_some(),
+            p8: bool_override("RVP9_P8"),
+            p8_qmax: std::env::var("RVP9_P8_QMAX")
+                .ok()
+                .and_then(|value| value.parse().ok()),
+            a4_live_partition_cost: bool_override("RVP9_A4_LIVE_PARTITION_COST") == Some(true),
+            diag_golden: std::env::var("RVP9_DIAG_GOLDEN_PICKS").is_ok(),
+            diag_picker: std::env::var_os("RVP9_DIAG_PICKER").is_some(),
+            diag_intpro_sb: std::env::var_os("RVP9_DIAG_INTPRO_SB").is_some(),
+            e3_mvdiag: std::env::var("RVP9_E3_MVDIAG").is_ok(),
+            s2_xtab: std::env::var("RVP9_S2_XTAB").is_ok(),
+            rt_profile: std::env::var_os("RVP9_RT_PROFILE").is_some(),
+            exact_vbp_tree: bool_override("RVP9_EXACT_VBP_TREE"),
+            live_ref_costs: bool_override("RVP9_LIVE_REF_COSTS"),
+            rt_emit_max_tx: bool_override("RVP9_RT_EMIT_MAX_TX"),
+            rt_emit_tx_rd: bool_override("RVP9_RT_EMIT_TX_RD"),
+            rt_quant_fp: bool_override("RVP9_RT_QUANT_FP"),
+            rt_reuse_descent_pick: bool_override("RVP9_RT_REUSE_DESCENT_PICK"),
+            a4_descent_cb_filter: bool_override("RVP9_A4_DESCENT_CB_FILTER"),
+            rt_skip_intmv_filter_search: bool_override("RVP9_RT_SKIP_INTMV_FILTER_SEARCH"),
+            newmv_diff_bias: bool_override("RVP9_NEWMV_DIFF_BIAS"),
+            rt_min_partition32: bool_override("RVP9_RT_MIN_PARTITION32"),
+            emit_profile: std::env::var_os("RVP9_EMIT_PROFILE").is_some(),
+            a4_profile: std::env::var_os("RVP9_A4_PROFILE").is_some(),
+            variance_hint_dump: bool_override("RVP9_VARIANCE_HINT_DUMP") == Some(true),
+            a4_rect_disable: std::env::var_os("RVP9_A4_RECT_DISABLE").is_some(),
+            a4_split_stats: std::env::var_os("RVP9_A4_SPLIT_STATS").is_some(),
+            diag_intpro: std::env::var("RVP9_DIAG_INTPRO").is_ok(),
+            p8_stats: std::env::var_os("RVP9_P8_STATS").is_some(),
+        }
+    }
+
+    #[inline]
+    fn flag_or(&self, value: Option<bool>, default: bool) -> bool {
+        value.unwrap_or(default)
+    }
+}
+
 #[allow(clippy::too_many_arguments)] // AQ.1 added `seg_q_deltas`; the
 // remaining args are all load-bearing per-frame inputs that don't
 // reduce to a meaningful struct yet — revisit when AQ.3 lands.
 pub(crate) fn pick_and_simulate_inter_encode_partitions(
+    env: &InterEncodeEnv,
     width: u32,
     height: u32,
     base_qindex: u8,
@@ -3307,19 +3400,15 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // and the result is consumed by every per-leaf
     // `PickInterModeParams` literal below.
     let sf = sf_mod::dispatch(speed, deadline, width, height, content_tier);
-    let rt_disable_golden_ref =
-        sf.disable_golden_ref || std::env::var_os("RVP9_RT_DISABLE_GOLDEN").is_some();
+    let rt_disable_golden_ref = sf.disable_golden_ref || env.rt_disable_golden;
     let mut rt_inter_mode_mask = rvp9_core::mode_decision::inter::default_inter_mode_mask();
-    if std::env::var_os("RVP9_RT_DISABLE_NEWMV").is_some() {
+    if env.rt_disable_newmv {
         let newmv_bit = 1u8 << InterMode::NewMv.idx();
         for mask in &mut rt_inter_mode_mask {
             *mask &= !newmv_bit;
         }
     }
-    if let Some(max_edge) = std::env::var("RVP9_RT_DISABLE_NEWMV_MAX_EDGE")
-        .ok()
-        .and_then(|v| v.parse::<u8>().ok())
-    {
+    if let Some(max_edge) = env.rt_disable_newmv_max_edge {
         let newmv_bit = 1u8 << InterMode::NewMv.idx();
         for bsize in [
             BlockSize::Block4x4,
@@ -3341,7 +3430,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
             }
         }
     }
-    if std::env::var_os("RVP9_RT_DISABLE_NEARMV").is_some() {
+    if env.rt_disable_nearmv {
         let nearmv_bit = 1u8 << InterMode::NearMv.idx();
         for mask in &mut rt_inter_mode_mask {
             *mask &= !nearmv_bit;
@@ -3354,10 +3443,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // predictor; ZERO and NEWMV remain fully evaluated. The final emitted
     // picker still uses the real causal neighbours. `=0` preserves the old
     // diagnostic.
-    let a4_descent_independent_mv = std::env::var_os("RVP9_A4_DESCENT_INDEPENDENT_MV").map_or(
-        a4_descent_independent_mv_default(rc_mode, speed, deadline),
-        |value| value != "0",
-    );
+    let a4_descent_independent_mv = env
+        .a4_descent_independent_mv
+        .unwrap_or_else(|| a4_descent_independent_mv_default(rc_mode, speed, deadline));
 
     let w = width as usize;
     let h = height as usize;
@@ -3466,10 +3554,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // — adversarially confirmed). NOT run on the RT path (speed>=5),
     // matching libvpx and keeping the cpu7 goldens byte-identical.
     // `RVP9_TRELLIS=0` restores the byte-identical baseline.
-    let trellis_enabled = speed.unsigned_abs() <= 4
-        && std::env::var("RVP9_TRELLIS")
-            .map(|v| v != "0")
-            .unwrap_or(true);
+    let trellis_enabled = speed.unsigned_abs() <= 4 && env.trellis.unwrap_or(true);
     let rdo_skip_costs = rvp9_core::cost::skip_costs(frame_context);
     let rdo_tx_size_costs = rvp9_core::cost::tx_size_costs(frame_context);
     // Skip-bit cost at the middle skip context (the per-leaf skip_ctx
@@ -3526,15 +3611,14 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // - **min/max block-size clamps** come from `variance_hint_bounds`
     //   (libvpx `x->{min,max}_partition_size`), with the R3 floor at
     //   Block16x16.
-    let f3_nonrd_partition_enabled = std::env::var_os("RVP9_A4_RD_PARTITION_DISABLE").is_none()
-        || std::env::var_os("RVP9_F3_NONRD_PARTITION_ENABLE").is_some();
+    let f3_nonrd_partition_enabled = !env.a4_rd_partition_disable || env.f3_nonrd_partition_enable;
     // Phase-2 option-A — cache + reuse the descent's NEWMV search
     // result for the final per-leaf pass (seed-only / cross-decoder-safe
     // variant). Default ON; opt OUT with `RVP9_PHASE2_REUSE_DISABLE=1`
     // (the standing A/B knob for re-confirming the speed/quality split).
     // Only meaningful when the descent runs (`f3_nonrd_partition_enabled`),
     // since the cache is populated by the descent's picker calls.
-    let phase2_reuse_enabled = std::env::var_os("RVP9_PHASE2_REUSE_DISABLE").is_none();
+    let phase2_reuse_enabled = !env.phase2_reuse_disable;
     // Phase A — enable 8×8 inter partitions in the A4 descent. Default
     // ON for fixed-Q / CBR-style paths where matched-Q Foreman improves,
     // and now also for one-pass VBR only at low-q/high-rate frames
@@ -3546,15 +3630,11 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // threshold. When ON, the descent lowers its `min_partition_size` floor
     // to Block8x8 so Block16x16 may SPLIT into four 8×8 NONE leaves and 8×8
     // becomes a valid NONE candidate.
-    let p8_enabled = std::env::var("RVP9_P8")
-        .map(|v| v != "0")
-        .unwrap_or_else(|_| {
-            std::env::var("RVP9_P8_QMAX")
-                .ok()
-                .and_then(|v| v.parse::<u8>().ok())
-                .map(|qmax| p8_vbr_qmax_enabled(rt_large_recovery, rc_mode, base_qindex, qmax))
-                .unwrap_or_else(|| p8_default_enabled(rt_large_recovery, rc_mode, base_qindex))
-        });
+    let p8_enabled = env.p8.unwrap_or_else(|| {
+        env.p8_qmax
+            .map(|qmax| p8_vbr_qmax_enabled(rt_large_recovery, rc_mode, base_qindex, qmax))
+            .unwrap_or_else(|| p8_default_enabled(rt_large_recovery, rc_mode, base_qindex))
+    });
     let block16_split_admission = stage4a_block16_split_admission(
         p8_enabled,
         rt_large_recovery,
@@ -3567,7 +3647,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         // Diagnostic only: libvpx sources partition_cost from the live frame
         // context, but the Stage 4a VBR gate is BD-negative with that source
         // until the surrounding A4 calibration moves with it.
-        if std::env::var_os("RVP9_A4_LIVE_PARTITION_COST").is_some_and(|v| v != "0") {
+        if env.a4_live_partition_cost {
             Some(partition_costs(frame_context))
         } else {
             Some(partition_costs(&FrameContext::new_default()))
@@ -3688,15 +3768,15 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // end of the SB loop below. Counts only non-skip leaves.
     let mut diag_golden_picks: usize = 0;
     let mut diag_last_picks: usize = 0;
-    let diag_golden_enabled = std::env::var("RVP9_DIAG_GOLDEN_PICKS").is_ok();
+    let diag_golden_enabled = env.diag_golden;
     // This diagnostic gate is consulted several times per leaf. Snapshot it
     // once per tile job instead of entering the process environment lock in
     // the mode-decision hot path.
-    let diag_picker_enabled = std::env::var_os("RVP9_DIAG_PICKER").is_some();
+    let diag_picker_enabled = env.diag_picker;
     // This seed diagnostic is emitted once per SB. Snapshot its process-env
     // gate here with the other diagnostics instead of locking the environment
     // for every superblock on normal encodes.
-    let diag_intpro_sb_enabled = std::env::var_os("RVP9_DIAG_INTPRO_SB").is_some();
+    let diag_intpro_sb_enabled = env.diag_intpro_sb;
 
     // E3 (2026-05-22) — NEWMV diagnosis. Env-gated (`RVP9_E3_MVDIAG`).
     // For every picker-supported leaf we compute the LAST-ref
@@ -3709,14 +3789,14 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     //     cost (Hypothesis 3 evidence).
     // A sample (first `E3_DIAG_SAMPLE_LIMIT`) of per-leaf rows is printed
     // verbatim; the rest is summarised at frame end.
-    let e3_diag_enabled = std::env::var("RVP9_E3_MVDIAG").is_ok();
+    let e3_diag_enabled = env.e3_mvdiag;
     const E3_DIAG_SAMPLE_LIMIT: usize = 40;
     let mut e3_sample_printed: usize = 0;
 
     // S2/F.0.2 diagnostic flags, read once. The luma-EOB split is needed
     // by either diagnostic, but remains zero-cost in the hot emit TX walk
     // when both are disabled (the default).
-    let s2_xtab_enabled = std::env::var("RVP9_S2_XTAB").is_ok();
+    let s2_xtab_enabled = env.s2_xtab;
     let f02_oracle_enabled = crate::f02_oracle::is_enabled();
     rvp9_core::mode_decision::inter::candidate_trace::reset(f02_oracle_enabled);
     // win counts indexed [ZERO, NEAREST, NEAR, NEW].
@@ -3813,7 +3893,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         vec![None; mi_rows_us * mi_grid_layout.mi_cols];
     let sign_bias = sign_bias_from_header(&[false, false, altref_available]);
 
-    let rt_profile_enabled = std::env::var_os("RVP9_RT_PROFILE").is_some();
+    let rt_profile_enabled = env.rt_profile;
     let rt_profile_frame_start = std::time::Instant::now();
     let mut rt_profile_descent_time = std::time::Duration::ZERO;
     let mut rt_profile_final_pick_time = std::time::Duration::ZERO;
@@ -3821,14 +3901,12 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     let mut rt_profile_final_leaves = 0usize;
     let mut rt_profile_picker_leaves = 0usize;
     let mut rt_profile_fallback_leaves = 0usize;
-    let env_flag_default =
-        |key: &str, default: bool| std::env::var_os(key).map_or(default, |v| v != "0");
     // Exact pinned-libvpx cpu-used 7 variance-tree experiment. This stays
     // opt-in until the fixed-Q and product gates show a reproducible Pareto
     // improvement. The pure tree itself is differential-oracle exact; this
     // product adapter supplies its source, selected LAST/GOLDEN predictor,
     // thresholds, and causal leaf list.
-    let exact_vbp_tree_enabled = env_flag_default("RVP9_EXACT_VBP_TREE", false)
+    let exact_vbp_tree_enabled = env.flag_or(env.exact_vbp_tree, false)
         && exact_vbp_history.is_some()
         && speed == 7
         && deadline == rvp9_core::mode_decision::speed_features::Deadline::Realtime
@@ -3840,26 +3918,24 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
             "exact VBP history must have one entry per superblock"
         );
     }
-    let live_ref_costs_enabled =
-        exact_vbp_tree_enabled && env_flag_default("RVP9_LIVE_REF_COSTS", true);
-    let rt_emit_max_tx = env_flag_default("RVP9_RT_EMIT_MAX_TX", rt_large_recovery);
-    let rt_emit_tx_rd = env_flag_default("RVP9_RT_EMIT_TX_RD", true);
+    let live_ref_costs_enabled = exact_vbp_tree_enabled && env.flag_or(env.live_ref_costs, true);
+    let rt_emit_max_tx = env.flag_or(env.rt_emit_max_tx, rt_large_recovery);
+    let rt_emit_tx_rd = env.flag_or(env.rt_emit_tx_rd, true);
     // libvpx speed >= 4 uses `quant_fp` for every inter frame. Preserve
     // `=0` as the regular-quantizer diagnostic without making the slower
     // good-quality quantizer the realtime default.
-    let rt_quant_fp = env_flag_default("RVP9_RT_QUANT_FP", true);
-    let rt_reuse_descent_pick = env_flag_default("RVP9_RT_REUSE_DESCENT_PICK", rt_large_recovery);
-    let a4_descent_cb_filter_search =
-        env_flag_default("RVP9_A4_DESCENT_CB_FILTER", rt_large_recovery);
+    let rt_quant_fp = env.flag_or(env.rt_quant_fp, true);
+    let rt_reuse_descent_pick = env.flag_or(env.rt_reuse_descent_pick, rt_large_recovery);
+    let a4_descent_cb_filter_search = env.flag_or(env.a4_descent_cb_filter, rt_large_recovery);
     let rt_skip_integer_mv_filter_search =
-        env_flag_default("RVP9_RT_SKIP_INTMV_FILTER_SEARCH", rt_large_recovery);
+        env.flag_or(env.rt_skip_intmv_filter_search, rt_large_recovery);
     let newmv_diff_bias_enabled =
-        newmv_diff_bias_for_mode(rc_mode, env_flag_default("RVP9_NEWMV_DIFF_BIAS", true));
+        newmv_diff_bias_for_mode(rc_mode, env.flag_or(env.newmv_diff_bias, true));
     // Large-frame recovery: skip the A4 descent's 16x16 picker layer.
     // This removes the dominant 720p timing work while leaving the
     // small-frame quality gates untouched. `=0` restores the full descent.
-    let rt_min_partition32 = env_flag_default("RVP9_RT_MIN_PARTITION32", rt_large_recovery);
-    let emit_profile_enabled = std::env::var_os("RVP9_EMIT_PROFILE").is_some();
+    let rt_min_partition32 = env.flag_or(env.rt_min_partition32, rt_large_recovery);
+    let emit_profile_enabled = env.emit_profile;
     let mut emit_profile_pred_time = std::time::Duration::ZERO;
     let mut emit_profile_tx_select_time = std::time::Duration::ZERO;
     let mut emit_profile_residual_time = std::time::Duration::ZERO;
@@ -3871,11 +3947,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     let mut emit_profile_nonzero_tx_blocks = 0usize;
     let mut emit_profile_eob_sum = 0usize;
     let mut emit_profile_plane_tx_blocks = [0usize; 3];
-    let a4_profile_enabled = std::env::var_os("RVP9_A4_PROFILE").is_some();
-    let variance_hint_dump_enabled =
-        std::env::var_os("RVP9_VARIANCE_HINT_DUMP").is_some_and(|v| v != "0");
-    let a4_rect_disable = std::env::var_os("RVP9_A4_RECT_DISABLE").is_some();
-    let a4_split_stats_enabled = std::env::var_os("RVP9_A4_SPLIT_STATS").is_some();
+    let a4_profile_enabled = env.a4_profile;
+    let variance_hint_dump_enabled = env.variance_hint_dump;
+    let a4_rect_disable = env.a4_rect_disable;
+    let a4_split_stats_enabled = env.a4_split_stats;
     let mut a4_profile_calls = [0usize; rvp9_core::block::BLOCK_SIZES];
     let mut a4_profile_pick_time = [std::time::Duration::ZERO; rvp9_core::block::BLOCK_SIZES];
     let mut a4_profile_committed = [0usize; rvp9_core::block::BLOCK_SIZES];
@@ -7438,7 +7513,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // Set RVP9_DIAG_INTPRO=1 to enable.
     // A15 Phase B Step 5 — also count GOLDEN picks (key diagnostic
     // for the widened-picker BD-rate measurement).
-    if std::env::var("RVP9_DIAG_INTPRO").is_ok() {
+    if env.diag_intpro {
         let mut count_zero = 0usize;
         let mut count_nearest = 0usize;
         let mut count_new = 0usize;
@@ -7536,7 +7611,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // over the final leaf list (counts leaves, not area). Reports the
     // descent-chosen 8×8 cumulative counter alongside, distinguishing
     // "8×8 appears" mechanics from the variance-hint baseline.
-    if std::env::var_os("RVP9_P8_STATS").is_some() {
+    if env.p8_stats {
         let mut n8 = 0usize;
         let mut n16 = 0usize;
         let mut n32 = 0usize;
