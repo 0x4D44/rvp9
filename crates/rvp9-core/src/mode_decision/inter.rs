@@ -2619,20 +2619,28 @@ fn evaluate_intra_fallback(
         }
 
         // 1. Build prediction.
-        let mut pred = [0u8; 64 * 64];
+        let mut recon = [0u8; 64 * 64];
         let ctx = PredCtx {
             above: &above_row[..2 * bw],
             left: &left_col[..bh],
             above_left,
         };
         // intra_predict needs stride == bw for contiguous layout.
-        intra_predict(mode, &mut pred[..bw * bh], bw, bw, ctx, dc_avail, &dispatch);
+        intra_predict(
+            mode,
+            &mut recon[..bw * bh],
+            bw,
+            bw,
+            ctx,
+            dc_avail,
+            &dispatch,
+        );
 
         // 2. Variance-domain RD model.
         let mrd = model_rd_for_sb_y(ModelRdYInput {
             src: &src_slice[src_start..],
             src_stride: params.src_plane.stride,
-            pred: &pred,
+            pred: &recon,
             pred_stride: bw,
             bw,
             bh,
@@ -2647,9 +2655,6 @@ fn evaluate_intra_fallback(
         let picked_tx_size = mrd.tx_size;
 
         // 3. DCT round-trip (or skip).
-        let mut recon = [0u8; 64 * 64];
-        recon[..bw * bh].copy_from_slice(&pred[..bw * bh]);
-
         let by = if mrd.skip_txfm == SkipTxfm::AcDc {
             // Intra path is out of S2/S3 scope (HLD §5): keep the AcDc
             // short-circuit and its all-zero result. `dct_eob_total` is
@@ -2700,7 +2705,7 @@ fn evaluate_intra_fallback(
             reconstruct_via_round_trip(
                 &single_params,
                 RoundTripBuffers {
-                    pred: &pred,
+                    pred: &[],
                     recon: &mut recon,
                     residual: &mut residual,
                 },
@@ -4100,6 +4105,8 @@ fn chroma_planes_skippable(
 /// `residual` is caller-owned reusable scratch. Each tile overwrites the
 /// complete transform-sized prefix before the Hadamard or DCT reads it.
 struct RoundTripBuffers<'a> {
+    // Prediction source for non-reconstructing diagnostic calls. Product
+    // reconstruction reads the identical initial prediction from `recon`.
     pred: &'a [u8],
     recon: &'a mut [u8],
     residual: &'a mut [i16; 32 * 32],
@@ -4288,7 +4295,7 @@ fn reconstruct_via_round_trip(
                 crate::dsp::aarch64::subtract_square_neon_with_nonzero(
                     &src.data[(sy + off_y) * src.stride + sx + off_x..],
                     src.stride,
-                    &pred[off_y * bw + off_x..],
+                    &recon[off_y * bw + off_x..],
                     bw,
                     residual,
                     tx_side,
@@ -4302,7 +4309,11 @@ fn reconstruct_via_round_trip(
                 for r in 0..tx_side {
                     for c in 0..tx_side {
                         let s = src.data[(sy + off_y + r) * src.stride + (sx + off_x + c)] as i16;
-                        let p = pred[(off_y + r) * bw + (off_x + c)] as i16;
+                        let p = if reconstruct {
+                            recon[(off_y + r) * bw + (off_x + c)] as i16
+                        } else {
+                            pred[(off_y + r) * bw + (off_x + c)] as i16
+                        };
                         let value = s - p;
                         residual[r * tx_side + c] = value;
                         nonzero |= value != 0;
@@ -5439,6 +5450,76 @@ mod tests {
             assert_eq!(result.dct_eob_total, 0);
             assert_eq!(recon, pred);
         }
+    }
+
+    #[test]
+    fn reconstructed_round_trip_reads_prediction_from_recon() {
+        let pw = 64;
+        let ph = 64;
+        let src_data = make_plane(pw, ph, 17);
+        let ref_data = make_plane(pw, ph, 91);
+        let src_plane = PlaneRef {
+            data: &src_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let ref_plane = PlaneRef {
+            data: &ref_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let harness = TestHarness::new(pw, 50);
+        let mvc = MvCandidates::default();
+        let params = make_params(
+            &harness,
+            BlockSize::Block16x16,
+            &src_plane,
+            &ref_plane,
+            (0, 0),
+            &mvc,
+            MvLimits::new(-32, 32, -32, 32),
+            50,
+        );
+        let prediction = vec![91u8; 16 * 16];
+        let poison = vec![0u8; 16 * 16];
+        let mut expected_recon = prediction.clone();
+        let mut actual_recon = prediction.clone();
+        let mut expected_residual = [0i16; 32 * 32];
+        let mut actual_residual = [0i16; 32 * 32];
+        let options = RoundTripOptions {
+            reconstruct: true,
+            collect_coef_dist: true,
+        };
+
+        let expected = reconstruct_via_round_trip(
+            &params,
+            RoundTripBuffers {
+                pred: &prediction,
+                recon: &mut expected_recon,
+                residual: &mut expected_residual,
+            },
+            16,
+            16,
+            TxSize::Tx16x16,
+            options,
+        );
+        let actual = reconstruct_via_round_trip(
+            &params,
+            RoundTripBuffers {
+                pred: &poison,
+                recon: &mut actual_recon,
+                residual: &mut actual_residual,
+            },
+            16,
+            16,
+            TxSize::Tx16x16,
+            options,
+        );
+
+        assert_eq!(actual, expected);
+        assert_eq!(actual_recon, expected_recon);
     }
 
     #[test]
