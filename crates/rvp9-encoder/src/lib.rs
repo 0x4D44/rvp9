@@ -3635,6 +3635,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // once per tile job instead of entering the process environment lock in
     // the mode-decision hot path.
     let diag_picker_enabled = std::env::var_os("RVP9_DIAG_PICKER").is_some();
+    // This seed diagnostic is emitted once per SB. Snapshot its process-env
+    // gate here with the other diagnostics instead of locking the environment
+    // for every superblock on normal encodes.
+    let diag_intpro_sb_enabled = std::env::var_os("RVP9_DIAG_INTPRO_SB").is_some();
 
     // E3 (2026-05-22) — NEWMV diagnosis. Env-gated (`RVP9_E3_MVDIAG`).
     // For every picker-supported leaf we compute the LAST-ref
@@ -4195,7 +4199,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
             // A3'-int-pro diagnostic — per-SB seed activity. Set
             // RVP9_DIAG_INTPRO_SB=1 to enable (off by default to
             // avoid log spam).
-            if std::env::var("RVP9_DIAG_INTPRO_SB").is_ok() {
+            if diag_intpro_sb_enabled {
                 #[allow(clippy::print_stderr)]
                 {
                     eprintln!(
