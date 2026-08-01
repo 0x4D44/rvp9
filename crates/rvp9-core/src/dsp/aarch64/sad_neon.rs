@@ -48,15 +48,17 @@ unsafe fn sad_neon_inner(
             vaddlvq_u16(sum)
         }
         32 => {
-            let mut sum = vdupq_n_u32(0);
+            let mut sums = [vdupq_n_u16(0), vdupq_n_u16(0)];
             for row in 0..h {
                 let s = src.add(row * src_stride);
                 let r = reference.add(row * ref_stride);
                 let d0 = vabdq_u8(vld1q_u8(s), vld1q_u8(r));
                 let d1 = vabdq_u8(vld1q_u8(s.add(16)), vld1q_u8(r.add(16)));
-                sum = vpadalq_u16(sum, vpaddlq_u8(d0));
-                sum = vpadalq_u16(sum, vpaddlq_u8(d1));
+                sums[0] = vpadalq_u8(sums[0], d0);
+                sums[1] = vpadalq_u8(sums[1], d1);
             }
+            let mut sum = vpaddlq_u16(sums[0]);
+            sum = vpadalq_u16(sum, sums[1]);
             vaddvq_u32(sum)
         }
         64 => {
