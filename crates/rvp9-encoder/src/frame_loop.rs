@@ -3131,6 +3131,7 @@ impl StreamEncoder {
             std::mem::swap(&mut new_recon_y, &mut self.inter_tile_scratch[0].recon_y);
             std::mem::swap(&mut new_recon_u, &mut self.inter_tile_scratch[0].recon_u);
             std::mem::swap(&mut new_recon_v, &mut self.inter_tile_scratch[0].recon_v);
+            std::mem::swap(&mut cur_mv_grid, &mut self.inter_tile_scratch[0].mv_grid);
             let tile_scratch = &mut self.inter_tile_scratch;
             self.frame_worker_pool
                 .as_mut()
@@ -3199,6 +3200,7 @@ impl StreamEncoder {
             std::mem::swap(&mut new_recon_y, &mut tile_scratch[0].recon_y);
             std::mem::swap(&mut new_recon_u, &mut tile_scratch[0].recon_u);
             std::mem::swap(&mut new_recon_v, &mut tile_scratch[0].recon_v);
+            std::mem::swap(&mut cur_mv_grid, &mut tile_scratch[0].mv_grid);
             let tile_results: Vec<InterTileJobResult> = result_slots
                 .into_iter()
                 .enumerate()
@@ -3263,10 +3265,12 @@ impl StreamEncoder {
                         new_recon_v[start..end].copy_from_slice(&scratch.recon_v[start..end]);
                     }
                 }
-                for row in 0..mi_rows_us {
-                    let start = row * mi_cols_us + bounds.mi_col_start;
-                    let end = row * mi_cols_us + bounds.mi_col_end;
-                    cur_mv_grid[start..end].copy_from_slice(&scratch.mv_grid[start..end]);
+                if tile_col != 0 {
+                    for row in 0..mi_rows_us {
+                        let start = row * mi_cols_us + bounds.mi_col_start;
+                        let end = row * mi_cols_us + bounds.mi_col_end;
+                        cur_mv_grid[start..end].copy_from_slice(&scratch.mv_grid[start..end]);
+                    }
                 }
                 self.rd_thresh_tables[tile_col] = result.rd_tables[tile_col].clone();
                 stage4a_frame_split_stats.accumulate(&result.split_stats);
