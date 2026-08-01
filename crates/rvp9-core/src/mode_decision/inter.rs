@@ -4243,23 +4243,39 @@ fn reconstruct_via_round_trip(
             // 1. Build residual = src - pred for reconstruction. The
             // AArch64 Hadamard-only path fuses these loads into its transform.
             #[cfg(target_arch = "aarch64")]
-            if reconstruct {
-                crate::dsp::aarch64::subtract_square_neon(
+            let residual_nonzero = if reconstruct {
+                crate::dsp::aarch64::subtract_square_neon_with_nonzero(
                     &src.data[(sy + off_y) * src.stride + sx + off_x..],
                     src.stride,
                     &pred[off_y * bw + off_x..],
                     bw,
                     residual,
                     tx_side,
-                );
-            }
+                )
+            } else {
+                true
+            };
             #[cfg(not(target_arch = "aarch64"))]
-            for r in 0..tx_side {
-                for c in 0..tx_side {
-                    let s = src.data[(sy + off_y + r) * src.stride + (sx + off_x + c)] as i16;
-                    let p = pred[(off_y + r) * bw + (off_x + c)] as i16;
-                    residual[r * tx_side + c] = s - p;
+            let residual_nonzero = {
+                let mut nonzero = false;
+                for r in 0..tx_side {
+                    for c in 0..tx_side {
+                        let s = src.data[(sy + off_y + r) * src.stride + (sx + off_x + c)] as i16;
+                        let p = pred[(off_y + r) * bw + (off_x + c)] as i16;
+                        let value = s - p;
+                        residual[r * tx_side + c] = value;
+                        nonzero |= value != 0;
+                    }
                 }
+                nonzero
+            };
+
+            // A pixel-exact prediction has zero Hadamard and DCT
+            // coefficients. Preserve block_yrd's one-EOB-symbol charge while
+            // avoiding both transform/quantize pipelines and their scratch.
+            if reconstruct && !residual_nonzero {
+                by_eob_cost = by_eob_cost.saturating_add(1);
+                continue;
             }
 
             // 2. F.1 / Phase 4c — per-tile block_yrd accumulators via
@@ -5270,6 +5286,66 @@ mod tests {
             assert_eq!(rate_only.skippable, first.skippable);
             assert_eq!(rate_only.dct_eob_total, first.dct_eob_total);
             assert_eq!(rate_only.coef_dist, 0);
+        }
+    }
+
+    #[test]
+    fn reconstructed_exact_zero_round_trip_preserves_empty_tile_metrics() {
+        let pw = 64;
+        let ph = 64;
+        let src_data = vec![91u8; pw * ph];
+        let ref_data = make_plane(pw, ph, 17);
+        let src_plane = PlaneRef {
+            data: &src_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let ref_plane = PlaneRef {
+            data: &ref_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let harness = TestHarness::new(pw, 50);
+        let mvc = MvCandidates::default();
+        let params = make_params(
+            &harness,
+            BlockSize::Block64x64,
+            &src_plane,
+            &ref_plane,
+            (0, 0),
+            &mvc,
+            MvLimits::new(-32, 32, -32, 32),
+            50,
+        );
+
+        let mut residual = [i16::MAX; 32 * 32];
+        for tx_size in [TxSize::Tx8x8, TxSize::Tx16x16, TxSize::Tx32x32] {
+            let side = tx_size.side();
+            let pred = vec![91u8; side * side];
+            let mut recon = pred.clone();
+            let result = reconstruct_via_round_trip(
+                &params,
+                RoundTripBuffers {
+                    pred: &pred,
+                    recon: &mut recon,
+                    residual: &mut residual,
+                },
+                side,
+                side,
+                tx_size,
+                RoundTripOptions {
+                    reconstruct: true,
+                    collect_coef_dist: true,
+                },
+            );
+
+            assert_eq!(result.coef_rate, 1 << crate::cost::VP9_PROB_COST_SHIFT);
+            assert_eq!(result.coef_dist, 0);
+            assert!(result.skippable);
+            assert_eq!(result.dct_eob_total, 0);
+            assert_eq!(recon, pred);
         }
     }
 
