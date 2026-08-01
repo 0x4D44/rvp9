@@ -401,8 +401,15 @@ fn gop_topology_byte_identity() {
     // post-KF entropy state shrinks the bitstream (23434 -> 23201).
     // Correct, intentional golden update. Prior iter golden:
     // (len 23434, fnv1a 0xb083_6c6d_2fd1_46bf).
-    const GOLDEN_HASH: u64 = 0x646a_4565_7bc3_f735;
-    const GOLDEN_LEN: usize = 23201;
+    //
+    // Re-captured again (2026-08-01) after the production-parity stack
+    // changed the default AQ-off realtime picker and split policy. The
+    // sibling schedule oracle still matches every emitted frame across more
+    // than two GOPs, so the schedule invariant is unchanged. The new stream
+    // reproduced twice with the same hash. Prior production golden: (len
+    // 23201, fnv1a 0x646a_4565_7bc3_f735).
+    const GOLDEN_HASH: u64 = 0x906e_c190_985d_e6ec;
+    const GOLDEN_LEN: usize = 26653;
 
     let stream = encode_fixed_clip();
     let hash = fnv1a(&stream);
