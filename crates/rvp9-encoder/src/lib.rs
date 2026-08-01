@@ -6645,58 +6645,6 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
 
                                 // Step 2: residual = source - prediction.
                                 let residual_len = tx_side * tx_side;
-                                let mut residual = [0i16; 1024];
-                                #[cfg(target_arch = "aarch64")]
-                                if matches!(tx_side, 8 | 16 | 32) {
-                                    let _ =
-                                        rvp9_core::dsp::aarch64::subtract_square_neon_with_nonzero(
-                                            &input_plane[dst_off..],
-                                            plane_stride,
-                                            &recon_plane[dst_off..],
-                                            plane_stride,
-                                            &mut residual,
-                                            tx_side,
-                                        );
-                                } else {
-                                    for r in 0..tx_side {
-                                        for c in 0..tx_side {
-                                            let off = (tx_px_y + r) * plane_stride + (tx_px_x + c);
-                                            let s = input_plane[off] as i16;
-                                            let p = recon_plane[off] as i16;
-                                            residual[r * tx_side + c] = s - p;
-                                        }
-                                    }
-                                }
-                                #[cfg(not(target_arch = "aarch64"))]
-                                for r in 0..tx_side {
-                                    for c in 0..tx_side {
-                                        let off = (tx_px_y + r) * plane_stride + (tx_px_x + c);
-                                        let s = input_plane[off] as i16;
-                                        let p = recon_plane[off] as i16;
-                                        residual[r * tx_side + c] = s - p;
-                                    }
-                                }
-
-                                // E9 DIAG — tap Y-plane intra residual.
-                                if plane == 0 {
-                                    crate::predstat::record_y_residual(
-                                        &residual[..residual_len],
-                                        tx_side,
-                                        plane_tx as usize,
-                                    );
-                                    // E9/stage-SSE DIAG — capture Y intra
-                                    // prediction pixels into `diag_pred`.
-                                    crate::predstat::record_y_pred_block(
-                                        recon_plane,
-                                        plane_stride,
-                                        tx_px_x,
-                                        tx_px_y,
-                                        tx_side,
-                                        plane_w,
-                                        plane_h,
-                                    );
-                                }
-
                                 // Steps 3-4: forward hybrid transform + quant.
                                 // RVP9_TRELLIS — intra-in-inter emit path
                                 // (KF intra block / intra block in inter
@@ -6710,28 +6658,87 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                 } else {
                                     None
                                 };
-                                let (qcoeff_i32, dqcoeff_i32, eob_usize) =
-                                    intra_forward_quant_one_tx(
-                                        &residual,
-                                        tx_side,
-                                        plane_tx,
-                                        tx_type,
-                                        &quantizer,
-                                        usize::from(plane != 0),
-                                        trellis_ctx,
-                                    );
+                                let (qcoeff_i32, eob_usize) = with_inter_emit_scratch(
+                                    residual_len,
+                                    |residual, quant_scratch| {
+                                        #[cfg(target_arch = "aarch64")]
+                                        if matches!(tx_side, 8 | 16 | 32) {
+                                            let _ = rvp9_core::dsp::aarch64::subtract_square_neon_with_nonzero(
+                                                &input_plane[dst_off..],
+                                                plane_stride,
+                                                &recon_plane[dst_off..],
+                                                plane_stride,
+                                                residual,
+                                                tx_side,
+                                            );
+                                        } else {
+                                            for r in 0..tx_side {
+                                                for c in 0..tx_side {
+                                                    let off =
+                                                        (tx_px_y + r) * plane_stride + tx_px_x + c;
+                                                    residual[r * tx_side + c] = input_plane[off]
+                                                        as i16
+                                                        - recon_plane[off] as i16;
+                                                }
+                                            }
+                                        }
+                                        #[cfg(not(target_arch = "aarch64"))]
+                                        for r in 0..tx_side {
+                                            for c in 0..tx_side {
+                                                let off =
+                                                    (tx_px_y + r) * plane_stride + tx_px_x + c;
+                                                residual[r * tx_side + c] = input_plane[off] as i16
+                                                    - recon_plane[off] as i16;
+                                            }
+                                        }
 
-                                // Step 5: inverse transform-add into recon.
-                                if eob_usize > 0 {
-                                    intra_inverse_transform_add(
-                                        plane_tx,
-                                        tx_type,
-                                        &dqcoeff_i32,
-                                        eob_usize,
-                                        &mut recon_plane[dst_off..],
-                                        plane_stride,
-                                    );
-                                }
+                                        // E9 DIAG — tap Y-plane intra residual.
+                                        if plane == 0 {
+                                            crate::predstat::record_y_residual(
+                                                residual,
+                                                tx_side,
+                                                plane_tx as usize,
+                                            );
+                                            crate::predstat::record_y_pred_block(
+                                                recon_plane,
+                                                plane_stride,
+                                                tx_px_x,
+                                                tx_px_y,
+                                                tx_side,
+                                                plane_w,
+                                                plane_h,
+                                            );
+                                        }
+
+                                        intra_forward_quant_one_tx_with_scratch(
+                                            quant_scratch,
+                                            residual,
+                                            tx_side,
+                                            plane_tx,
+                                            tx_type,
+                                            &quantizer,
+                                            usize::from(plane != 0),
+                                            trellis_ctx,
+                                            |qcoeff, dqcoeff, eob| {
+                                                // Step 5: inverse transform-add into recon.
+                                                if eob > 0 {
+                                                    intra_inverse_transform_add(
+                                                        plane_tx,
+                                                        tx_type,
+                                                        dqcoeff,
+                                                        eob,
+                                                        &mut recon_plane[dst_off..],
+                                                        plane_stride,
+                                                    );
+                                                }
+                                                (
+                                                    qcoeff.iter().copied().map(i32::from).collect(),
+                                                    eob,
+                                                )
+                                            },
+                                        )
+                                    },
+                                );
 
                                 // Step 6: stash coefs for the writer.
                                 coef_source.insert(
@@ -9051,9 +9058,11 @@ fn inter_inverse_dct_add(
 /// (AdstDct, DctAdst, AdstAdst) via the `fht*` family, and derives
 /// scan order from `(plane_tx, tx_type)` rather than hardcoding DctDct.
 ///
-/// Returns `(qcoeff_i32, dqcoeff_i32, eob)`.
+/// The caller supplies tile-worker scratch and consumes the active qcoeff and
+/// widened dqcoeff prefixes before that scratch is reused.
 #[allow(clippy::too_many_arguments)]
-fn intra_forward_quant_one_tx(
+fn intra_forward_quant_one_tx_with_scratch<R>(
+    scratch: &mut InterEmitQuantScratch,
     residual: &[i16],
     tx_side: usize,
     plane_tx: TxSize,
@@ -9061,84 +9070,83 @@ fn intra_forward_quant_one_tx(
     quantizer: &rvp9_core::quant::forward::PlaneQuantizers,
     plane_type: usize,
     trellis: Option<TrellisCtx<'_>>,
-) -> (Vec<i32>, Vec<i32>, usize) {
+    operation: impl FnOnce(&[i16], &[i32], usize) -> R,
+) -> R {
     use rvp9_core::quant::forward::{vp9_quantize_b_32x32_with_order, vp9_quantize_b_with_order};
     use rvp9_core::transforms::forward::{fdct32x32, fht4x4, fht8x8, fht16x16};
     use rvp9_core::transforms::scans::scan_for;
 
     let n = plane_tx.n_coeffs();
-    let mut coefs = vec![0i32; n];
     match plane_tx {
         TxSize::Tx4x4 => {
-            let mut buf = [0i32; 16];
-            fht4x4(residual, &mut buf, tx_side, tx_type);
-            coefs.copy_from_slice(&buf[..]);
+            let output: &mut [i32; 16] = (&mut scratch.coefs[..n])
+                .try_into()
+                .expect("Tx4x4 coefficient prefix has 16 entries");
+            fht4x4(residual, output, tx_side, tx_type);
         }
         TxSize::Tx8x8 => {
-            let mut buf = [0i32; 64];
-            fht8x8(residual, &mut buf, tx_side, tx_type);
-            coefs.copy_from_slice(&buf[..]);
+            let output: &mut [i32; 64] = (&mut scratch.coefs[..n])
+                .try_into()
+                .expect("Tx8x8 coefficient prefix has 64 entries");
+            fht8x8(residual, output, tx_side, tx_type);
         }
         TxSize::Tx16x16 => {
-            let mut buf = [0i32; 256];
-            fht16x16(residual, &mut buf, tx_side, tx_type);
-            coefs.copy_from_slice(&buf[..]);
+            let output: &mut [i32; 256] = (&mut scratch.coefs[..n])
+                .try_into()
+                .expect("Tx16x16 coefficient prefix has 256 entries");
+            fht16x16(residual, output, tx_side, tx_type);
         }
         TxSize::Tx32x32 => {
             // VP9 has no hybrid 32x32 -- always pure DCT.
-            let mut buf = [0i32; 1024];
-            fdct32x32(residual, &mut buf, tx_side);
-            coefs.copy_from_slice(&buf[..]);
+            fdct32x32(residual, &mut scratch.coefs, tx_side);
         }
     }
 
     let scan = scan_for(plane_tx, tx_type);
     let dequant_pair = [quantizer.dequant[0], quantizer.dequant[1]];
-    let mut qcoeff_i16 = vec![0i16; n];
-    let mut dqcoeff_i16 = vec![0i16; n];
+    let coefs = &scratch.coefs[..n];
+    let qcoeff = &mut scratch.qcoeff[..n];
+    let dqcoeff = &mut scratch.dqcoeff[..n];
     let eob = match plane_tx {
         TxSize::Tx32x32 => vp9_quantize_b_32x32_with_order(
-            &coefs,
+            coefs,
             /* skip_block = */ false,
             &quantizer.zbin,
             &quantizer.round,
             &quantizer.quant,
             &quantizer.quant_shift,
-            &mut qcoeff_i16,
-            &mut dqcoeff_i16,
+            qcoeff,
+            dqcoeff,
             &dequant_pair,
             &scan,
         ),
         _ => vp9_quantize_b_with_order(
-            &coefs,
+            coefs,
             n,
             /* skip_block = */ false,
             &quantizer.zbin,
             &quantizer.round,
             &quantizer.quant,
             &quantizer.quant_shift,
-            &mut qcoeff_i16,
-            &mut dqcoeff_i16,
+            qcoeff,
+            dqcoeff,
             &dequant_pair,
             &scan,
         ),
     };
 
     let eob = maybe_trellis(
-        &coefs,
-        &mut qcoeff_i16,
-        &mut dqcoeff_i16,
-        eob,
-        plane_tx,
-        &scan,
-        quantizer,
-        plane_type,
-        trellis,
+        coefs, qcoeff, dqcoeff, eob, plane_tx, &scan, quantizer, plane_type, trellis,
     );
 
-    let qcoeff_i32: Vec<i32> = qcoeff_i16.into_iter().map(i32::from).collect();
-    let dqcoeff_i32: Vec<i32> = dqcoeff_i16.into_iter().map(i32::from).collect();
-    (qcoeff_i32, dqcoeff_i32, eob as usize)
+    let eob = eob as usize;
+    if eob == 0 {
+        return operation(&[], &[], 0);
+    }
+    for (output, &value) in scratch.coefs[..n].iter_mut().zip(dqcoeff.iter()) {
+        *output = i32::from(value);
+    }
+    operation(qcoeff, &scratch.coefs[..n], eob)
 }
 
 /// G5 — Inverse transform-add for intra paths (both keyframe and
@@ -9472,6 +9480,49 @@ mod tests {
             assert_eq!(
                 after, before,
                 "{tx_size:?} result must not depend on the prior scratch contents"
+            );
+        }
+    }
+
+    #[test]
+    fn intra_emit_quant_scratch_is_independent_of_prior_contents() {
+        use rvp9_core::quant::forward::{QuantizerDeltas, init_plane_quantizers};
+        use rvp9_core::transforms::TxType;
+
+        let quantizer = init_plane_quantizers(117, QuantizerDeltas::Y);
+        let run = |tx_size: TxSize, tx_type: TxType, poison: i16| {
+            let side = tx_size.side();
+            let residual: Vec<i16> = (0..side * side)
+                .map(|index| ((index as i16 * 29 + 17) & 0xff) - 128)
+                .collect();
+            INTER_EMIT_SCRATCH.with_borrow_mut(|scratch| {
+                scratch.quant.coefs.fill(i32::from(poison));
+                scratch.quant.qcoeff.fill(poison);
+                scratch.quant.dqcoeff.fill(poison);
+                intra_forward_quant_one_tx_with_scratch(
+                    &mut scratch.quant,
+                    &residual,
+                    side,
+                    tx_size,
+                    tx_type,
+                    &quantizer,
+                    0,
+                    None,
+                    |qcoeff, dqcoeff, eob| (qcoeff.to_vec(), dqcoeff.to_vec(), eob),
+                )
+            })
+        };
+
+        for (tx_size, tx_type) in [
+            (TxSize::Tx4x4, TxType::AdstAdst),
+            (TxSize::Tx8x8, TxType::DctAdst),
+            (TxSize::Tx16x16, TxType::AdstDct),
+            (TxSize::Tx32x32, TxType::DctDct),
+        ] {
+            assert_eq!(
+                run(tx_size, tx_type, 11),
+                run(tx_size, tx_type, -17),
+                "{tx_size:?}/{tx_type:?} output must overwrite active scratch",
             );
         }
     }
