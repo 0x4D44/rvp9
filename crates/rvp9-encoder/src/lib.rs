@@ -65,6 +65,7 @@ use rvp9_core::block::BlockSize;
 use rvp9_core::coef_ctx::TileCoefCtx;
 use rvp9_core::entropy::{BoolWriter, FrameContext, FrameCounts, RetainedCoefTokens};
 use rvp9_core::inter::mode_info::{InterModeReadParams, setup_compound_reference_mode};
+use rvp9_core::inter::mv_ref::PrevFrameMvRef;
 use rvp9_core::inter::mv_ref::sign_bias_from_header;
 use rvp9_core::intra_pred::IntraMode;
 use rvp9_core::mode_info::{BlockMode, InterMode, ModeInfo, Mv, RefFrame};
@@ -2565,6 +2566,47 @@ impl InterPartitionLeafDesc {
             bmi: Default::default(),
         }
     }
+
+    #[inline]
+    fn mv_ref(self) -> PrevFrameMvRef {
+        if self.picked_ref_frame == RefFrame::IntraFrame {
+            PrevFrameMvRef {
+                mvs: [Mv::ZERO; 2],
+                ref_frames: [RefFrame::IntraFrame, RefFrame::NoRefFrame],
+            }
+        } else {
+            PrevFrameMvRef {
+                mvs: [self.picked_mv, self.picked_mv2],
+                ref_frames: [self.picked_ref_frame, self.picked_ref_frame2],
+            }
+        }
+    }
+}
+
+fn splat_final_inter_leaf_into_grids(
+    mi_grid: &mut [Option<rvp9_core::mode_info::ModeInfo>],
+    layout: InterPickerMiGridLayout,
+    out_mv_grid: &mut [PrevFrameMvRef],
+    out_mi_cols: usize,
+    leaf_mi_row: usize,
+    leaf_mi_col: usize,
+    leaf: InterPartitionLeafDesc,
+) {
+    let n_8x8_wide = leaf.leaf_bsize.n_8x8_wide() as usize;
+    let n_8x8_high = leaf.leaf_bsize.n_8x8_high() as usize;
+    let mode_info = leaf.mode_info();
+    let mv_ref = leaf.mv_ref();
+    for dr in 0..n_8x8_high {
+        for dc in 0..n_8x8_wide {
+            let mi_row = leaf_mi_row + dr;
+            let mi_col = leaf_mi_col + dc;
+            let local_index = layout
+                .index(mi_row, mi_col)
+                .expect("inter leaf must stay inside its causal MI grid");
+            mi_grid[local_index] = Some(mode_info);
+            out_mv_grid[mi_row * out_mi_cols + mi_col] = mv_ref;
+        }
+    }
 }
 
 pub(crate) struct RecordedCoefTile {
@@ -3202,7 +3244,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     use rvp9_core::cost::symbol_costs::{
         inter_mode_costs, partition_costs, switchable_interp_costs,
     };
-    use rvp9_core::inter::mv_ref::{BlockBounds, PrevFrameMvRef, find_nearest_near_mvs};
+    use rvp9_core::inter::mv_ref::{BlockBounds, find_nearest_near_mvs};
     use rvp9_core::inter::{get_mode_context, get_pred_context_switchable_interp};
     use rvp9_core::mode_decision::inter::{
         InterModeSearchParams, MvCandidates, PickInterModeParams, pick_inter_mode,
@@ -3841,6 +3883,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     } else {
         0
     };
+
+    debug_assert_eq!(out_mv_grid.len(), mi_rows_us * mi_cols_us);
+    out_mv_grid.fill(PrevFrameMvRef::default());
 
     for sb_row in 0..sb_rows {
         for sb_col in 0..sb_cols {
@@ -7224,19 +7269,14 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 // neighbour MV-ref propagation matches the per-ref
                 // picker behaviour (the decoder's `find_mv_refs` is
                 // ref-aware).
-                splat_inter_leaf_into_mi_grid(
+                splat_final_inter_leaf_into_grids(
                     &mut mi_grid,
                     mi_grid_layout,
+                    out_mv_grid,
+                    mi_cols_us,
                     leaf_mi_row,
                     leaf_mi_col,
-                    leaf_bsize,
-                    sb_partitions[sb_idx][leaf_idx].picked_mode,
-                    sb_partitions[sb_idx][leaf_idx].picked_mv,
-                    sb_partitions[sb_idx][leaf_idx].segment_id,
-                    sb_partitions[sb_idx][leaf_idx].skip,
-                    sb_partitions[sb_idx][leaf_idx].picked_ref_frame,
-                    sb_partitions[sb_idx][leaf_idx].picked_intra_mode,
-                    sb_partitions[sb_idx][leaf_idx].picked_interp_filter,
+                    sb_partitions[sb_idx][leaf_idx],
                 );
                 if let Some(t0) = rt_profile_emit_start {
                     rt_profile_emit_time += t0.elapsed();
@@ -7524,79 +7564,6 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     0
                 },
             );
-        }
-    }
-
-    // A18 — Write back the final picked-leaf MVs into `out_mv_grid` for
-    // the encoder to capture as the *next* frame's `prev_mv_grid`.
-    // Mirrors the decoder's `cur_mv_grid` write-back at
-    // `tile.rs:2141-2155` — for inter cells, store
-    // `(ref_frames, mvs)`; for intra-in-inter cells, store
-    // `(IntraFrame, zero-mv)` matching the decoder's D.7 path.
-    debug_assert_eq!(out_mv_grid.len(), mi_rows_us * mi_cols_us);
-    for cell in out_mv_grid.iter_mut() {
-        *cell = PrevFrameMvRef::default();
-    }
-    for sb_row in 0..sb_rows {
-        for sb_col in 0..sb_cols {
-            let current_tile = tile_for_mi_col(&tile_bounds_by_col, sb_col * 8);
-            let tile_col = tile_bounds_by_col
-                .iter()
-                .position(|&bounds| bounds == current_tile)
-                .expect("current tile came from tile_bounds_by_col");
-            if active_tile_col.is_some_and(|active| active != tile_col) {
-                continue;
-            }
-            let sb_idx = sb_row * sb_cols + sb_col;
-            for leaf in &sb_partitions[sb_idx] {
-                let leaf_mi_row = sb_row * 8 + leaf.mi_row_in_sb;
-                let leaf_mi_col = sb_col * 8 + leaf.mi_col_in_sb;
-                let bw_mi = leaf.leaf_bsize.n_8x8_wide() as usize;
-                let bh_mi = leaf.leaf_bsize.n_8x8_high() as usize;
-                // Replace the causal pick-time cell with the final emitted
-                // descriptor. Emission may select a smaller transform or a
-                // compound second reference after the causal MV lookup no
-                // longer needs this leaf, so the writer-facing grid must use
-                // the finalized form.
-                let final_mode_info = leaf.mode_info();
-                // Phase 2b — intra-in-inter blocks write
-                // `(IntraFrame, zero-mv)` to the MV grid, matching
-                // the decoder's D.7 path. Inter blocks write the
-                // picked MV + ref frame as before.
-                let entry = if leaf.picked_ref_frame == RefFrame::IntraFrame {
-                    PrevFrameMvRef {
-                        mvs: [Mv::ZERO; 2],
-                        ref_frames: [RefFrame::IntraFrame, RefFrame::NoRefFrame],
-                    }
-                } else if leaf.picked_ref_frame2.is_inter() {
-                    // W-COMPOUND — carry both refs + both MVs so the next
-                    // frame's `find_mv_refs` sees the compound block the
-                    // same way the decoder's `cur_mv_grid` write-back does
-                    // (`tile.rs:2141-2155`).
-                    PrevFrameMvRef {
-                        mvs: [leaf.picked_mv, leaf.picked_mv2],
-                        ref_frames: [leaf.picked_ref_frame, leaf.picked_ref_frame2],
-                    }
-                } else {
-                    PrevFrameMvRef {
-                        mvs: [leaf.picked_mv, Mv::ZERO],
-                        ref_frames: [leaf.picked_ref_frame, RefFrame::NoRefFrame],
-                    }
-                };
-                for dr in 0..bh_mi {
-                    for dc in 0..bw_mi {
-                        let r = leaf_mi_row + dr;
-                        let c = leaf_mi_col + dc;
-                        if r < mi_rows_us && c < mi_cols_us {
-                            out_mv_grid[r * mi_cols_us + c] = entry;
-                            let mi_index = mi_grid_layout
-                                .index(r, c)
-                                .expect("active leaf must lie inside its picker mi-grid tile");
-                            mi_grid[mi_index] = Some(final_mode_info);
-                        }
-                    }
-                }
-            }
         }
     }
 
