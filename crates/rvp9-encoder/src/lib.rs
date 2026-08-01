@@ -2783,6 +2783,18 @@ fn p8_vbr_qmax_enabled(
     !rt_large_recovery && matches!(rc_mode, crate::rate_control::RcMode::Vbr) && base_qindex <= qmax
 }
 
+#[inline(always)]
+fn build_mv_candidates_if_available(
+    available: bool,
+    build: impl FnOnce() -> rvp9_core::mode_decision::inter::MvCandidates,
+) -> rvp9_core::mode_decision::inter::MvCandidates {
+    if available {
+        build()
+    } else {
+        rvp9_core::mode_decision::inter::MvCandidates::default()
+    }
+}
+
 fn mv_in_strict_limits_or_visible_full_chroma_pel(
     mv: Mv,
     limits: rvp9_core::mv_search::MvLimits,
@@ -5487,8 +5499,12 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 // W-ALTREF — ALTREF MV candidates. `build_mvc` is
                 // ref-agnostic; the `sign_bias[ALTREF]` flip (set above
                 // when ALTREF is live) is applied inside `find_mv_refs`.
-                // Only consumed when `altref_available` is true.
-                let mvc_altref = build_mvc(RefFrame::AltrefFrame);
+                // Only build them when the reference is live. The default
+                // single-layer path marks ALTREF unavailable, so an eager
+                // walk here did work that every downstream gate discarded.
+                let mvc_altref = build_mv_candidates_if_available(altref_available, || {
+                    build_mvc(RefFrame::AltrefFrame)
+                });
 
                 // AQ.1 — per-leaf effective qindex from the leaf's
                 // `segment_id` + the frame-level `seg_q_deltas` table.
@@ -9085,6 +9101,34 @@ fn intra_inverse_transform_add(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unavailable_reference_skips_mv_candidate_builder() {
+        let calls = std::cell::Cell::new(0);
+        let unavailable = build_mv_candidates_if_available(false, || {
+            calls.set(calls.get() + 1);
+            rvp9_core::mode_decision::inter::MvCandidates {
+                nearest: Mv { row: 8, col: 16 },
+                near: Mv { row: 24, col: 32 },
+            }
+        });
+        assert_eq!(
+            unavailable,
+            rvp9_core::mode_decision::inter::MvCandidates::default()
+        );
+        assert_eq!(calls.get(), 0);
+
+        let available = build_mv_candidates_if_available(true, || {
+            calls.set(calls.get() + 1);
+            rvp9_core::mode_decision::inter::MvCandidates {
+                nearest: Mv { row: 8, col: 16 },
+                near: Mv { row: 24, col: 32 },
+            }
+        });
+        assert_eq!(available.nearest, Mv { row: 8, col: 16 });
+        assert_eq!(available.near, Mv { row: 24, col: 32 });
+        assert_eq!(calls.get(), 1);
+    }
 
     #[test]
     fn zero_motion_fallback_copies_only_the_leaf_footprint() {
