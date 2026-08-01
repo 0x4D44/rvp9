@@ -39,10 +39,10 @@
 //!   inter mode picker per leaf, then runs the inter simulator to
 //!   produce real per-TX residuals. Block8x8 leaves still fall back to
 //!   ZEROMV/LASTFRAME/skip (sub-8 picker out of scope).
-//! - **No mode decision on keyframes.** Every KF SB is forced to
-//!   `Block64x64` `IntraMode::Dc` for both Y and UV (matching the
-//!   F5.1 simulator). F8.0's `pick_intra_mode_luma` is not driven yet
-//!   — same reason as inter.
+//! - **Realtime keyframe mode policy.** Variance partitioning chooses the
+//!   keyframe leaves. Their luma picker evaluates DC/V/H and chroma stays DC,
+//!   matching libvpx speed 4+. Transform size uses the largest leaf size
+//!   capped by frame `ALLOW_16X16`.
 //! - **No segmentation, no loop filter, no error-resilient mode.**
 //! - **Reference buffer is the encoder-side reconstruction.** For
 //!   keyframes we use the F5.1 simulator's `recon_yuv_out` (the
@@ -2298,8 +2298,8 @@ impl StreamEncoder {
             noise_threshold_scale: 1,
         });
 
-        // F10.1b — pick the Y intra mode per leaf via
-        // `pick_intra_mode_luma`, run the F5.1 simulator with the
+        // F10.1b — pick the Y intra mode per leaf via the realtime DC/V/H
+        // picker, then run the F5.1 simulator with the
         // picked modes. Output goes directly into our reference
         // buffers — those ARE the reconstruction.
         //
@@ -4428,15 +4428,13 @@ fn leaves_from_decision(decision: &PartitionDecision) -> Vec<PartitionLeafDesc> 
             // `pick_and_simulate_intra_encode_partitions`. The inter
             // path doesn't read it.
             predicted_y_mode: IntraMode::Dc,
-            // F10.1b chroma picker (Stage 4a' chroma-DC closure) mutates
-            // this on the KF path too. Inter path ignores it.
+            // Realtime keyframes keep chroma at DC. Inter ignores this field.
             predicted_uv_mode: IntraMode::Dc,
             // AQ.1 — default to segment 0 (no Q-delta). AQ.3 will
             // populate this from the cyclic-refresh state machine.
             segment_id: 0,
-            // Track-F iter8 — default to max; the KF intra TX-size RD loop
-            // (`choose_intra_luma_tx_size`) overwrites it during
-            // `pick_and_simulate_intra_encode_partitions`.
+            // Default to the block maximum. Realtime keyframe simulation
+            // overwrites this with the block maximum capped at Tx16x16.
             picked_tx_size: max_txsize(bs),
         }
     }
@@ -4530,19 +4528,15 @@ fn build_kf_mi_grid(
                 let leaf_mi_col = sb_col * 8 + leaf.mi_col_in_sb;
                 let cell = ModeInfo {
                     block_size: leaf.leaf_bsize,
-                    // Track-F iter8 — per-block RD-chosen intra tx_size from
-                    // the simulator (`choose_intra_luma_tx_size`). The KF
-                    // modes writer signals it under `tx_mode = TxModeSelect`.
-                    // KF leaves are never skip (`skip: false` below), so
-                    // `allow_select` is always true — no skip cap needed.
+                    // Realtime keyframes use the largest leaf transform
+                    // capped at Tx16x16. Frame `ALLOW_16X16` makes this size
+                    // implicit, matching libvpx's USE_LARGESTALL policy.
                     tx_size: leaf.picked_tx_size,
                     skip: false,
                     segment_id: 0,
                     seg_id_predicted: false,
                     mode: BlockMode::Intra {
-                        // F10.1b — picker-driven Y mode. Stage 4a'
-                        // chroma-DC closure: per-leaf picker-driven
-                        // UV mode (see `pick_intra_mode_uv`).
+                        // Realtime DC/V/H luma pick plus canonical DC chroma.
                         y_mode: leaf.predicted_y_mode,
                         uv_mode: leaf.predicted_uv_mode,
                     },
@@ -6612,7 +6606,7 @@ mod tests {
             predicted_y_mode: IntraMode::Dc,
             predicted_uv_mode: IntraMode::Dc,
             segment_id: 0,
-            picked_tx_size: max_txsize(BlockSize::Block64x64),
+            picked_tx_size: crate::realtime_keyframe_tx_size(BlockSize::Block64x64),
         };
         let sb_partitions = vec![vec![leaf]; (w / 64) as usize];
         let y = vec![128u8; (w * h) as usize];
@@ -6672,7 +6666,7 @@ mod tests {
             predicted_y_mode: IntraMode::Dc,
             predicted_uv_mode: IntraMode::Dc,
             segment_id: 0,
-            picked_tx_size: max_txsize(BlockSize::Block64x64),
+            picked_tx_size: crate::realtime_keyframe_tx_size(BlockSize::Block64x64),
         };
         let kf_partitions = vec![vec![kf_leaf]; (w / 64) as usize];
         let y = vec![128u8; (w * h) as usize];

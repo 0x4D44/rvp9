@@ -1404,13 +1404,11 @@ pub(crate) fn effective_qindex_for_segment(
 /// `predicted_y_mode` is the intra mode the simulator should use for
 /// the leaf's prediction + forward / inverse transform pair. The single-
 /// leaf form ([`simulate_dc_intra_encode`]) and the partition-aware
-/// frame loop's pre-F10.1b path use `IntraMode::Dc`; F10.1b drives this
-/// from [`crate::mode_decision::intra::pick_intra_mode_luma`].
+/// frame loop's pre-F10.1b path use `IntraMode::Dc`; realtime keyframes drive
+/// this from `pick_realtime_intra_mode_luma`'s DC/V/H subset.
 /// `predicted_uv_mode` is the chroma intra mode used for both U and V
-/// planes (VP9 wire format emits a single `uv_mode` per leaf). The
-/// F10.1b chroma picker (Stage 4a' chroma-DC closure) drives this from
-/// [`crate::mode_decision::intra::pick_intra_mode_uv`]; pre-picker
-/// paths default to `IntraMode::Dc` (matching the prior v1 behaviour).
+/// planes (VP9 wire format emits a single `uv_mode` per leaf). Realtime
+/// keyframes and pre-picker paths keep it at `IntraMode::Dc`.
 /// `segment_id` selects the per-segment Q-delta entry in
 /// `seg_q_deltas` that the forward-quant path uses for this leaf
 /// (AQ.1). For AQ-disabled frames callers leave it `0` and the
@@ -1428,19 +1426,17 @@ pub(crate) struct PartitionLeafDesc {
     /// forward/inverse transforms.
     pub predicted_y_mode: IntraMode,
     /// Intra UV-mode applied to BOTH U and V planes for this leaf.
-    /// Picked by [`pick_intra_mode_uv`] alongside the luma mode.
+    /// Realtime keyframes set it to [`IntraMode::Dc`].
     pub predicted_uv_mode: IntraMode,
     /// AQ.1 — segment id `0..=7` driving the per-leaf effective
     /// qindex via [`effective_qindex_for_segment`]. `0` for AQ-off.
     pub segment_id: u8,
-    /// Track-F iter8 — per-block RD-chosen luma transform size for the
-    /// KF/intra path. [`choose_intra_luma_tx_size`] (libvpx
-    /// `rd_pick_intra_sby_mode` causal-recon TX-size loop) fills this;
+    /// Luma transform size for the KF/intra path. Realtime keyframes fill
+    /// this from [`realtime_keyframe_tx_size`];
     /// [`crate::frame_loop::build_kf_mi_grid`] /
     /// [`crate::loopfilter::build_kf_mi_grid_for_lf`] splat it into
-    /// `mi.tx_size` and the KF modes writer signals it under `tx_mode =
-    /// TxModeSelect`. Defaults to `max_txsize(leaf_bsize)` (the pre-iter8
-    /// always-max behaviour) for the non-picker test simulator paths.
+    /// `mi.tx_size`. Frame `ALLOW_16X16` makes the realtime size implicit.
+    /// Non-picker test simulator paths default to `max_txsize(leaf_bsize)`.
     pub picked_tx_size: TxSize,
 }
 
@@ -1645,11 +1641,10 @@ fn simulate_dc_intra_encode_partitions_no_zero_with_tiles(
                 let leaf_bsize = leaf.leaf_bsize;
                 let leaf_mi_row = sb_row * 8 + leaf.mi_row_in_sb;
                 let leaf_mi_col = sb_col * 8 + leaf.mi_col_in_sb;
-                // Track-F iter8 — the KF intra TX-size RD loop
-                // (`choose_intra_luma_tx_size`) sets `leaf.picked_tx_size`
-                // before this simulator codes the leaf; non-picker test
-                // callers leave it at `max_txsize(leaf_bsize)` (the prior
-                // always-max behaviour). UV is capped to the Y size.
+                // Realtime keyframe policy sets `leaf.picked_tx_size` to the
+                // block maximum capped at Tx16x16 before this simulator codes
+                // the leaf. Non-picker tests may supply any valid size. UV is
+                // capped to the Y size.
                 let luma_tx = leaf.picked_tx_size;
                 debug_assert!(
                     (luma_tx as u8) <= (rvp9_core::block::max_txsize(leaf_bsize) as u8),
@@ -1657,11 +1652,9 @@ fn simulate_dc_intra_encode_partitions_no_zero_with_tiles(
                     luma_tx,
                     leaf_bsize,
                 );
-                // F10.1b: Y plane uses the picked intra mode. Stage 4a'
-                // chroma-DC closure: UV planes use `leaf.predicted_uv_mode`
-                // (also picked by F10.1b — see `pick_intra_mode_uv`).
-                // Pre-picker call sites set `predicted_uv_mode =
-                // IntraMode::Dc` to preserve prior behaviour. The Y mode
+                // F10.1b: Y uses the realtime-picked intra mode. UV uses
+                // `leaf.predicted_uv_mode`, which realtime keyframes keep at
+                // DC. The Y mode
                 // also drives `tx_type` for the forward transform +
                 // scan order at sizes < Tx32x32 (Tx32x32 always uses
                 // DctDct, mirroring the decoder + writer); UV is
@@ -1983,7 +1976,7 @@ fn simulate_dc_intra_encode_partitions_no_zero_with_tiles(
 }
 
 /// F10.1b — pick the Y intra mode per leaf via
-/// [`rvp9_core::mode_decision::intra::pick_intra_mode_luma`], record it
+/// [`rvp9_core::mode_decision::intra::pick_realtime_intra_mode_luma`], record it
 /// into the leaf descriptor, AND encode the leaf in the same walk so
 /// the running recon buffer feeds the next leaf's neighbour fetch.
 ///
