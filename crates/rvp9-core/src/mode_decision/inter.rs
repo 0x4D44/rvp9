@@ -1651,6 +1651,13 @@ const fn suppress_last_newmv_for_low_temp_var(
 /// (once per ref) and taking the argmin at the caller.
 #[must_use]
 pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult {
+    CANDIDATE_PRED_SCRATCH.with_borrow_mut(|scratch| pick_inter_mode_with_scratch(params, scratch))
+}
+
+fn pick_inter_mode_with_scratch(
+    params: &PickInterModeParams<'_>,
+    candidate_scratch: &mut CandidatePredScratch,
+) -> PickInterModeResult {
     debug_assert!(
         params.inter_mode_ctx < INTER_MODE_CONTEXTS,
         "inter_mode_ctx {} out of [0, {INTER_MODE_CONTEXTS})",
@@ -2228,13 +2235,14 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
             &[InterpFilter::EightTap]
         };
 
-        let candidate = evaluate_candidate_with_filter_set(
+        let candidate = evaluate_candidate_with_filter_set_using_scratch(
             &single_params,
             mode,
             mv,
             ref_mv,
             lambda,
             filter_set,
+            candidate_scratch,
         );
 
         mode_checked[ref_idx][mode.idx()] = true;
@@ -3144,40 +3152,67 @@ fn evaluate_candidate_with_filter_set(
     lambda: u32,
     filter_set: &[InterpFilter],
 ) -> InterModeSearchResult {
+    CANDIDATE_PRED_SCRATCH.with_borrow_mut(|scratch| {
+        evaluate_candidate_with_filter_set_using_scratch(
+            params, mode, mv, ref_mv, lambda, filter_set, scratch,
+        )
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn evaluate_candidate_with_filter_set_using_scratch(
+    params: &InterModeSearchParams<'_>,
+    mode: InterMode,
+    mv: Mv,
+    ref_mv: Mv,
+    lambda: u32,
+    filter_set: &[InterpFilter],
+    scratch: &mut CandidatePredScratch,
+) -> InterModeSearchResult {
+    let CandidatePredScratch {
+        primary,
+        alternate,
+        residual,
+        chroma_u,
+        chroma_v,
+    } = scratch;
     if filter_set.len() == 1 {
-        evaluate_candidate_for_filter(params, mode, mv, ref_mv, lambda, filter_set[0])
+        evaluate_candidate_for_filter_with_pred(
+            params,
+            mode,
+            mv,
+            ref_mv,
+            lambda,
+            filter_set[0],
+            primary,
+            residual,
+            chroma_u,
+            chroma_v,
+            None,
+        )
     } else {
-        CANDIDATE_PRED_SCRATCH.with_borrow_mut(|scratch| {
-            let CandidatePredScratch {
-                primary,
-                alternate,
-                residual,
-                chroma_u,
-                chroma_v,
-            } = &mut *scratch;
-            let filters: &[InterpFilter; 2] = filter_set
-                .try_into()
-                .expect("VP9 realtime filter search has exactly two filters");
-            let (filter, model, slot) =
-                select_interp_filter_by_luma_model(params, mv, lambda, filters, primary, alternate);
-            let winner_pred = match slot {
-                FilterPredictionSlot::Candidate => primary,
-                FilterPredictionSlot::Alternate => alternate,
-            };
-            evaluate_candidate_for_filter_with_pred(
-                params,
-                mode,
-                mv,
-                ref_mv,
-                lambda,
-                filter,
-                winner_pred,
-                residual,
-                chroma_u,
-                chroma_v,
-                Some(model),
-            )
-        })
+        let filters: &[InterpFilter; 2] = filter_set
+            .try_into()
+            .expect("VP9 realtime filter search has exactly two filters");
+        let (filter, model, slot) =
+            select_interp_filter_by_luma_model(params, mv, lambda, filters, primary, alternate);
+        let winner_pred = match slot {
+            FilterPredictionSlot::Candidate => primary,
+            FilterPredictionSlot::Alternate => alternate,
+        };
+        evaluate_candidate_for_filter_with_pred(
+            params,
+            mode,
+            mv,
+            ref_mv,
+            lambda,
+            filter,
+            winner_pred,
+            residual,
+            chroma_u,
+            chroma_v,
+            Some(model),
+        )
     }
 }
 
@@ -3185,6 +3220,7 @@ fn evaluate_candidate_with_filter_set(
 /// pre-F.5 `evaluate_candidate` body, with the filter parameter
 /// threaded into `build_inter_prediction` and the switchable-filter
 /// signalling rate added to the rate sum for non-default filters.
+#[cfg(test)]
 fn evaluate_candidate_for_filter(
     params: &InterModeSearchParams<'_>,
     mode: InterMode,
@@ -3194,15 +3230,14 @@ fn evaluate_candidate_for_filter(
     filter: InterpFilter,
 ) -> InterModeSearchResult {
     CANDIDATE_PRED_SCRATCH.with_borrow_mut(|scratch| {
-        let CandidatePredScratch {
-            primary,
-            residual,
-            chroma_u,
-            chroma_v,
-            ..
-        } = &mut *scratch;
-        evaluate_candidate_for_filter_with_pred(
-            params, mode, mv, ref_mv, lambda, filter, primary, residual, chroma_u, chroma_v, None,
+        evaluate_candidate_with_filter_set_using_scratch(
+            params,
+            mode,
+            mv,
+            ref_mv,
+            lambda,
+            &[filter],
+            scratch,
         )
     })
 }
