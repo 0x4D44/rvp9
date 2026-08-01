@@ -8116,6 +8116,18 @@ fn choose_intra_luma_tx_size(
     let mut best_tx = max_tx;
     let mut best_rd = i64::MAX;
 
+    // Reuse one maximum-size transform workspace across every candidate and
+    // TX block in this leaf. The previous path allocated one residual Vec per
+    // candidate and five coefficient Vecs per block (raw, qcoeff, dqcoeff,
+    // widened dqcoeff, then a narrowed distortion copy). A 32x32 leaf visits
+    // 85 blocks while walking Tx32x32 down to Tx4x4, so those short-lived
+    // allocations dominated keyframe TX selection.
+    let mut residual = [0i16; 1024];
+    let mut coefs_i32 = [0i32; 1024];
+    let mut qcoeff_i16 = [0i16; 1024];
+    let mut dqcoeff_i16 = [0i16; 1024];
+    let mut dqcoeff_i32 = [0i32; 1024];
+
     // Per-candidate scratch recon. Intra prediction reads only the leaf plus
     // its one-pixel causal above/left halo; cloning the entire frame for every
     // leaf made keyframe TX selection scale with frame area squared. Keep a
@@ -8180,10 +8192,8 @@ fn choose_intra_luma_tx_size(
         let mut total_dist: i64 = 0;
         let mut total_rate: u32 = 0;
         // Leaf-local propagating entropy context: above[col4], left[row4].
-        let mut above_ctx = vec![0u8; plane_bw_4x4];
-        let mut left_ctx = vec![0u8; plane_bh_4x4];
-
-        let mut residual = vec![0i16; tx_side * tx_side];
+        let mut above_ctx = [0u8; 16];
+        let mut left_ctx = [0u8; 16];
 
         let mut ty4 = 0usize;
         while ty4 < plane_bh_4x4 {
@@ -8244,14 +8254,31 @@ fn choose_intra_luma_tx_size(
                 // Forward hybrid transform (raw coefs needed for the
                 // transform-domain distortion `vp9_block_error(coeff,
                 // dqcoeff)`) then forward quant.
-                let coefs_i32 = intra_forward_coefs_one_tx(&residual, tx_side, tx_size, tx_type);
-                let (qcoeff_i16, dqcoeff_i32, eob) =
-                    intra_quant_one_tx(&coefs_i32, tx_size, tx_type, quantizer);
-                let dqcoeff_i16: Vec<i16> = dqcoeff_i32.iter().map(|&v| v as i16).collect();
+                let ncoeff = tx_size.n_coeffs();
+                intra_forward_coefs_one_tx(
+                    &residual[..ncoeff],
+                    tx_side,
+                    tx_size,
+                    tx_type,
+                    &mut coefs_i32,
+                );
+                let eob = intra_quant_one_tx(
+                    &coefs_i32,
+                    tx_size,
+                    tx_type,
+                    quantizer,
+                    &mut qcoeff_i16,
+                    &mut dqcoeff_i16,
+                );
+                for (dst, &src) in dqcoeff_i32[..ncoeff].iter_mut().zip(&dqcoeff_i16[..ncoeff]) {
+                    *dst = i32::from(src);
+                }
 
                 // Transform-domain distortion: vp9_block_error >> shift.
-                let (err, _ssz) =
-                    crate::rdo::block_error::vp9_block_error(&coefs_i32, &dqcoeff_i16);
+                let (err, _ssz) = crate::rdo::block_error::vp9_block_error(
+                    &coefs_i32[..ncoeff],
+                    &dqcoeff_i16[..ncoeff],
+                );
                 total_dist += err >> shift;
 
                 // Coefficient rate via cost_coeffs with the leaf-local
@@ -8260,7 +8287,7 @@ fn choose_intra_luma_tx_size(
                 let left = left_ctx[ty4];
                 let coeff_ctx = rvp9_core::coef_ctx::combine_entropy_contexts(above, left);
                 total_rate = total_rate.saturating_add(crate::rdo::cost_coeffs::cost_coeffs(
-                    &qcoeff_i16,
+                    &qcoeff_i16[..ncoeff],
                     scan.scan(),
                     eob as u16,
                     tx_size,
@@ -8276,7 +8303,7 @@ fn choose_intra_luma_tx_size(
                     intra_inverse_transform_add(
                         tx_size,
                         tx_type,
-                        &dqcoeff_i32,
+                        &dqcoeff_i32[..ncoeff],
                         eob,
                         &mut scratch[dst_off..],
                         scratch_stride,
@@ -8315,7 +8342,7 @@ fn choose_intra_luma_tx_size(
 }
 
 /// Track-F iter8 helper — forward hybrid transform of one intra TX block
-/// returning the raw transform coefficients (pre-quant). Used by
+/// writing the raw transform coefficients (pre-quant) into caller scratch. Used by
 /// [`choose_intra_luma_tx_size`] for the `vp9_block_error(coeff,
 /// dqcoeff)` transform-domain distortion (which needs the un-quantized
 /// `coeff`, not the qcoeff). Mirrors the forward-transform half of
@@ -8325,37 +8352,34 @@ fn intra_forward_coefs_one_tx(
     tx_side: usize,
     plane_tx: TxSize,
     tx_type: rvp9_core::transforms::TxType,
-) -> Vec<i32> {
+    coefs: &mut [i32; 1024],
+) {
     use rvp9_core::transforms::forward::{fdct32x32, fht4x4, fht8x8, fht16x16};
-    let n = plane_tx.n_coeffs();
-    let mut coefs = vec![0i32; n];
     match plane_tx {
         TxSize::Tx4x4 => {
             let mut buf = [0i32; 16];
             fht4x4(residual, &mut buf, tx_side, tx_type);
-            coefs.copy_from_slice(&buf[..]);
+            coefs[..16].copy_from_slice(&buf);
         }
         TxSize::Tx8x8 => {
             let mut buf = [0i32; 64];
             fht8x8(residual, &mut buf, tx_side, tx_type);
-            coefs.copy_from_slice(&buf[..]);
+            coefs[..64].copy_from_slice(&buf);
         }
         TxSize::Tx16x16 => {
             let mut buf = [0i32; 256];
             fht16x16(residual, &mut buf, tx_side, tx_type);
-            coefs.copy_from_slice(&buf[..]);
+            coefs[..256].copy_from_slice(&buf);
         }
         TxSize::Tx32x32 => {
-            let mut buf = [0i32; 1024];
-            fdct32x32(residual, &mut buf, tx_side);
-            coefs.copy_from_slice(&buf[..]);
+            fdct32x32(residual, coefs, tx_side);
         }
     }
-    coefs
 }
 
 /// Track-F iter8 helper — forward quant of raw transform coefficients for
-/// one intra TX block. Returns `(qcoeff_i16, dqcoeff_i32, eob)`. Mirrors
+/// one intra TX block. Writes qcoeff/dqcoeff into caller scratch and returns
+/// the EOB. Mirrors
 /// the quant half of [`intra_forward_quant_one_tx`] but takes the raw
 /// `coefs` (already transformed by [`intra_forward_coefs_one_tx`]) so the
 /// RD loop transforms exactly once per sub-block.
@@ -8364,43 +8388,42 @@ fn intra_quant_one_tx(
     plane_tx: TxSize,
     tx_type: rvp9_core::transforms::TxType,
     quantizer: &rvp9_core::quant::forward::PlaneQuantizers,
-) -> (Vec<i16>, Vec<i32>, usize) {
+    qcoeff_i16: &mut [i16; 1024],
+    dqcoeff_i16: &mut [i16; 1024],
+) -> usize {
     use rvp9_core::quant::forward::{vp9_quantize_b_32x32_with_order, vp9_quantize_b_with_order};
     use rvp9_core::transforms::scans::scan_for;
     let n = plane_tx.n_coeffs();
     let scan = scan_for(plane_tx, tx_type);
     let dequant_pair = [quantizer.dequant[0], quantizer.dequant[1]];
-    let mut qcoeff_i16 = vec![0i16; n];
-    let mut dqcoeff_i16 = vec![0i16; n];
     let eob = match plane_tx {
         TxSize::Tx32x32 => vp9_quantize_b_32x32_with_order(
-            coefs,
+            &coefs[..n],
             /* skip_block = */ false,
             &quantizer.zbin,
             &quantizer.round,
             &quantizer.quant,
             &quantizer.quant_shift,
-            &mut qcoeff_i16,
-            &mut dqcoeff_i16,
+            &mut qcoeff_i16[..n],
+            &mut dqcoeff_i16[..n],
             &dequant_pair,
             &scan,
         ),
         _ => vp9_quantize_b_with_order(
-            coefs,
+            &coefs[..n],
             n,
             /* skip_block = */ false,
             &quantizer.zbin,
             &quantizer.round,
             &quantizer.quant,
             &quantizer.quant_shift,
-            &mut qcoeff_i16,
-            &mut dqcoeff_i16,
+            &mut qcoeff_i16[..n],
+            &mut dqcoeff_i16[..n],
             &dequant_pair,
             &scan,
         ),
     };
-    let dqcoeff_i32: Vec<i32> = dqcoeff_i16.into_iter().map(i32::from).collect();
-    (qcoeff_i16, dqcoeff_i32, eob as usize)
+    eob as usize
 }
 
 /// Track-F iter7 — per-block transform-size RD selection for the inter Y
@@ -8977,6 +9000,66 @@ mod tests {
         };
 
         assert_eq!(pick(&input_a, &recon_a), pick(&input_b, &recon_b));
+    }
+
+    #[test]
+    fn intra_tx_rd_scratch_is_bounded_and_independent_of_prior_tx_size() {
+        use rvp9_core::quant::forward::{QuantizerDeltas, init_plane_quantizers};
+        use rvp9_core::transforms::TxType;
+
+        let residual: Vec<i16> = (0..1024)
+            .map(|index| ((index * 37 + index / 32 * 19) % 511) as i16 - 255)
+            .collect();
+        let quantizer = init_plane_quantizers(80, QuantizerDeltas::Y);
+        let cases = [
+            (TxSize::Tx4x4, TxType::AdstAdst),
+            (TxSize::Tx8x8, TxType::DctAdst),
+            (TxSize::Tx16x16, TxType::AdstDct),
+            (TxSize::Tx32x32, TxType::DctDct),
+        ];
+
+        let run = |tx_size: TxSize, tx_type: TxType, poison: i16| {
+            let ncoeff = tx_size.n_coeffs();
+            let mut coefs = [i32::from(poison); 1024];
+            let mut qcoeff = [poison; 1024];
+            let mut dqcoeff = [poison; 1024];
+            intra_forward_coefs_one_tx(
+                &residual[..ncoeff],
+                tx_size.side(),
+                tx_size,
+                tx_type,
+                &mut coefs,
+            );
+            let eob = intra_quant_one_tx(
+                &coefs,
+                tx_size,
+                tx_type,
+                &quantizer,
+                &mut qcoeff,
+                &mut dqcoeff,
+            );
+            assert!(
+                coefs[ncoeff..]
+                    .iter()
+                    .all(|&value| value == i32::from(poison))
+            );
+            assert!(qcoeff[ncoeff..].iter().all(|&value| value == poison));
+            assert!(dqcoeff[ncoeff..].iter().all(|&value| value == poison));
+            (
+                coefs[..ncoeff].to_vec(),
+                qcoeff[..ncoeff].to_vec(),
+                dqcoeff[..ncoeff].to_vec(),
+                eob,
+            )
+        };
+
+        for (tx_size, tx_type) in cases {
+            assert_eq!(
+                run(tx_size, tx_type, 11),
+                run(tx_size, tx_type, -17),
+                "active TX output must not depend on a previous block's scratch contents"
+            );
+        }
     }
 
     #[test]
