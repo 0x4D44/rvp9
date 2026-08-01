@@ -394,6 +394,8 @@ pub struct InterRdCalibration {
     pub hadamard_only: bool,
     /// Rank the Hadamard-only path with the luma model's distortion estimate.
     pub model_dist: bool,
+    /// Reuse the luma model's coefficient rate and skip classification.
+    pub model_only: bool,
 }
 
 impl InterRdCalibration {
@@ -407,6 +409,7 @@ impl InterRdCalibration {
             lambda_den: 1,
             hadamard_only: false,
             model_dist: false,
+            model_only: false,
         }
     }
 
@@ -421,6 +424,7 @@ impl InterRdCalibration {
             lambda_den: 2,
             hadamard_only: true,
             model_dist: true,
+            model_only: true,
         }
     }
 }
@@ -3331,6 +3335,13 @@ fn evaluate_candidate_for_filter_with_pred(
             skippable: true,
             dct_eob_total: 0,
         }
+    } else if hadamard_only && params.rd_calibration.model_only {
+        BlockYrdResult {
+            coef_rate: mrd.rate.max(0) as u64,
+            coef_dist: mrd.dist,
+            skippable: mrd.skip_txfm == SkipTxfm::AcDc,
+            dct_eob_total: 0,
+        }
     } else {
         let recon_pixels = recon.as_mut().map_or(&mut [][..], |pixels| &mut pixels[..]);
         let use_model_dist = hadamard_only
@@ -5022,7 +5033,7 @@ mod tests {
     }
 
     #[test]
-    fn stage4a_picker_reuses_luma_model_distortion() {
+    fn stage4a_picker_reuses_luma_model_rate_and_distortion() {
         let pw = 64;
         let ph = 64;
         let src_data = make_plane(pw, ph, 17);
@@ -5078,7 +5089,9 @@ mod tests {
             InterpFilter::EightTap,
         );
 
+        assert_eq!(result.coef_rate, expected.rate.max(0) as u64);
         assert_eq!(result.coef_dist, expected.dist);
+        assert_eq!(result.dct_eob_total, 0);
     }
 
     #[test]
