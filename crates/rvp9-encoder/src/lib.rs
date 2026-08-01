@@ -2878,7 +2878,7 @@ fn stage4a_descent_breakout_16_dist_qmul(
                 rvp9_core::mode_decision::speed_features::Deadline::Realtime
             ) =>
         {
-            Some(800)
+            Some(1000)
         }
         None => None,
     }
@@ -9935,7 +9935,7 @@ mod tests {
         };
         assert_eq!(
             policy(true, false, RcMode::Cbr, 7, Deadline::Realtime, None),
-            Some(800)
+            Some(1000)
         );
         assert_eq!(
             policy(false, false, RcMode::Cbr, 7, Deadline::Realtime, None),

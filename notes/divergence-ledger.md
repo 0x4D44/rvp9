@@ -3898,7 +3898,7 @@ rectangular searches.
 
 **What rvp9 does:** CPU7 realtime CBR on the small-frame P8 path stops after a
 winning 16x16 NONE candidate when its luma proxy distortion is no greater than
-`base_qindex * 800`. VBR, large-frame recovery, other speed presets, and final
+`base_qindex * 1000`. VBR, large-frame recovery, other speed presets, and final
 leaf picking are unchanged. `RVP9_A4_BREAKOUT_16_DIST_QMUL=0` restores the
 former differential path.
 
@@ -3909,24 +3909,28 @@ left too much work or harmed low-q frames. Scaling by qindex preserves more
 detail search as quality rises.
 
 **Byte-parity impact:** intentional CBR partition decisions change. At 250
-kbps the canonical stream is 68,771 bytes with SHA-256
-`586d2ca30885eb65d0705fa0974dcb34e1c1e22fbaa74e6c5d8357d2f1496bea`.
+kbps the canonical stream is 68,902 bytes with SHA-256
+`4b263f04288f04878c9f8a0dbf768e7d4eb5f9bc2f69dda536128d4c47b16dcd`.
 Rvp9-decoder, pinned vpxdec, and ffmpeg produce identical 7,372,800-byte I420
 with SHA-256
-`5c734ac7220e695a09ff0c8b142c086c18ccd44e73417c4234aa6d10648dfe6d`.
+`6e6b7bff03178250e54de31e7872fa92026e22e8f6bd2896771ca3edf5d5ca33`.
 The canonical 250 kbps VBR stream remains byte-identical to Unit 427 at
 47,321 bytes and SHA-256
 `a3323810381759704ac8afca469b136be99bf3e9c7ec5f8a47c8ce1b95fe21e1`.
 
 **Compression-efficiency impact:** the canonical seven-point CBR luma
-BD-rate improves from `-8.618636%` to `-8.925850%` against pinned vpxenc;
-average-YUV improves from `-8.021811%` to `-8.352930%`. Relative to Unit 427,
-the luma and average-YUV movements are `-0.274111%` and `-0.294412%`.
+BD-rate is `-8.214294%` against pinned vpxenc and average-YUV is
+`-7.644745%`. Relative to the initial multiplier-800 policy, the luma and
+average-YUV movements are `+0.803734%` and `+0.798775%`. Three independent
+small-frame synthetic screens showed no unexplained regression above 0.26%;
+the stationary-noise curve was non-monotonic and therefore diagnostic-only.
 
-**Speed impact:** eighty alternating one-thread CBR pairs reduce median total
-child CPU by `23.559%` with 80/80 wins and wall time by `23.256%` with 78/80
-wins. A fresh forty-pair absolute comparison measures `2.088532x` pinned
-vpxenc total child CPU and `2.061090x` wall time.
+**Speed impact:** relative to the multiplier-800 policy, eighty alternating
+one-thread CBR pairs reduce median total child CPU by `6.576%` with 79/80 wins
+and wall time by `7.113%` with 73/80 wins. The prior multiplier-800 absolute
+comparison measured `2.088532x` pinned-vpxenc total child CPU; a fresh
+absolute comparison measures `1.966712x` pinned-vpxenc total child CPU and
+`1.951313x` wall time.
 
 **Future plan:** validate the same distortion signal independently before
 extending it to cpu-used 6/8, large frames, or v1 feature modes. The new
