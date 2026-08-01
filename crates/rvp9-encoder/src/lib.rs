@@ -3239,6 +3239,13 @@ impl InterEncodeEnv {
     fn flag_or(&self, value: Option<bool>, default: bool) -> bool {
         value.unwrap_or(default)
     }
+
+    /// Mirror libvpx realtime `search_filter_ref`: integer-pel motion
+    /// never needs interpolation-filter search. The environment override
+    /// remains available for differential diagnostics.
+    fn skip_integer_mv_filter_search(&self) -> bool {
+        self.flag_or(self.rt_skip_intmv_filter_search, true)
+    }
 }
 
 #[allow(clippy::too_many_arguments)] // AQ.1 added `seg_q_deltas`; the
@@ -3956,8 +3963,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     let rt_quant_fp = env.flag_or(env.rt_quant_fp, true);
     let rt_reuse_descent_pick = env.flag_or(env.rt_reuse_descent_pick, rt_large_recovery);
     let a4_descent_cb_filter_search = env.flag_or(env.a4_descent_cb_filter, rt_large_recovery);
-    let rt_skip_integer_mv_filter_search =
-        env.flag_or(env.rt_skip_intmv_filter_search, rt_large_recovery);
+    let rt_skip_integer_mv_filter_search = env.skip_integer_mv_filter_search();
     let newmv_diff_bias_enabled =
         newmv_diff_bias_for_mode(rc_mode, env.flag_or(env.newmv_diff_bias, true));
     // Large-frame recovery: skip the A4 descent's 16x16 picker layer.
@@ -9931,6 +9937,22 @@ mod tests {
             full_pixel_search_method_for_mode(8, Deadline::Good),
             FullPixelSearchMethod::Nstep
         );
+    }
+
+    #[test]
+    fn realtime_integer_mv_filter_search_is_skipped_by_default() {
+        let _guard = env_test_mutex();
+        let key = "RVP9_RT_SKIP_INTMV_FILTER_SEARCH";
+        // SAFETY: the mutex above serialises all encoder environment tests.
+        unsafe { std::env::remove_var(key) };
+        assert!(InterEncodeEnv::capture().skip_integer_mv_filter_search());
+
+        // Preserve the diagnostic escape hatch used by differential sweeps.
+        // SAFETY: the mutex above serialises all encoder environment tests.
+        unsafe { std::env::set_var(key, "0") };
+        assert!(!InterEncodeEnv::capture().skip_integer_mv_filter_search());
+        // SAFETY: the mutex above serialises all encoder environment tests.
+        unsafe { std::env::remove_var(key) };
     }
 
     #[test]
