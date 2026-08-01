@@ -1361,14 +1361,14 @@ impl SimdDispatch {
         } else {
             scalar_idct8x8_add
         };
-        #[cfg(not(target_arch = "x86_64"))]
-        let idct8x8_add: fn(&[i32; 64], &mut [u8], usize) = {
-            // Caps type doesn't carry `avx2` on non-x86_64; silence
-            // the unused-variable warning while keeping the parameter
-            // name uniform.
-            let _ = caps;
+        #[cfg(target_arch = "aarch64")]
+        let idct8x8_add: fn(&[i32; 64], &mut [u8], usize) = if caps.neon {
+            crate::dsp::aarch64::idct8x8_add_neon
+        } else {
             scalar_idct8x8_add
         };
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+        let idct8x8_add: fn(&[i32; 64], &mut [u8], usize) = scalar_idct8x8_add;
 
         // Task A — eob<=12 sparse 8×8 path. SSE2 (universal on x86_64)
         // skips rows 4..7 of the 1-D row pass per the bitstream's
@@ -3333,6 +3333,24 @@ mod tests {
             scalar as usize,
             "sse2=false must install the scalar idct8x8_64_add"
         );
+    }
+
+    /// AArch64 selects the dense NEON 8x8 inverse-DCT kernel only when
+    /// runtime capability detection reports NEON.
+    #[cfg(target_arch = "aarch64")]
+    #[test]
+    fn neon_caps_select_dense_idct8x8_kernel() {
+        let mut caps = detect();
+        caps.neon = false;
+        let scalar_dispatch = SimdDispatch::build(caps);
+        let scalar: fn(&[i32; 64], &mut [u8], usize) = crate::transforms::inverse::idct8x8_64_add;
+        assert_eq!(scalar_dispatch.idct8x8_add() as usize, scalar as usize);
+
+        caps.neon = true;
+        let neon_dispatch = SimdDispatch::build(caps);
+        let neon: fn(&[i32; 64], &mut [u8], usize) = crate::dsp::aarch64::idct8x8_add_neon;
+        assert_eq!(neon_dispatch.idct8x8_add() as usize, neon as usize);
+        assert_ne!(neon_dispatch.idct8x8_add() as usize, scalar as usize);
     }
 
     /// Forcing `sse2 = false` falls back to the scalar reference for

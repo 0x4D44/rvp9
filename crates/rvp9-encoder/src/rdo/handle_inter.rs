@@ -68,9 +68,7 @@ use rvp9_core::inter::filter::{
 use rvp9_core::mode_info::{InterMode, Mv};
 use rvp9_core::mv_search::full_pixel::PlaneRef;
 use rvp9_core::quant::forward::PlaneQuantizers;
-use rvp9_core::transforms::inverse::{
-    idct4x4_16_add, idct8x8_64_add, idct16x16_256_add, idct32x32_1024_add,
-};
+use rvp9_core::transforms::inverse::{idct4x4_16_add, idct16x16_256_add, idct32x32_1024_add};
 use rvp9_core::transforms::scans::scan_for;
 use rvp9_core::transforms::{TxMode, TxSize, TxType};
 
@@ -1297,7 +1295,7 @@ fn reconstruct_tile(
             for (b, &d) in buf.iter_mut().zip(dqcoeff.iter()) {
                 *b = i32::from(d);
             }
-            idct8x8_64_add(&buf, recon, recon_stride);
+            (rvp9_core::dsp::get_ref().idct8x8_add())(&buf, recon, recon_stride);
         }
         TxSize::Tx16x16 => {
             let mut buf: Box<[i32; 256]> = Box::new([0; 256]);

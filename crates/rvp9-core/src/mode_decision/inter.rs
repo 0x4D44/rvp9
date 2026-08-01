@@ -129,7 +129,7 @@ use crate::quant::forward::{
 #[cfg(not(target_arch = "aarch64"))]
 use crate::quant::forward::{vp9_quantize_fp_32x32_with_order, vp9_quantize_fp_with_order};
 use crate::transforms::forward::{fdct8x8, fdct16x16, fdct32x32};
-use crate::transforms::inverse::{idct8x8_64_add, idct16x16_256_add, idct32x32_1024_add};
+use crate::transforms::inverse::{idct16x16_256_add, idct32x32_1024_add};
 use crate::transforms::scans::scan_for;
 use crate::transforms::{TxMode, TxSize, TxType};
 
@@ -4079,6 +4079,7 @@ fn reconstruct_via_round_trip(
     tx_size: TxSize,
     options: RoundTripOptions,
 ) -> BlockYrdResult {
+    let dsp = crate::dsp::get_ref();
     let RoundTripBuffers {
         pred,
         recon,
@@ -4397,8 +4398,7 @@ fn reconstruct_via_round_trip(
                             for (dst, &src) in buf.iter_mut().zip(&dqcoeff[..64]) {
                                 *dst = i32::from(src);
                             }
-                            // TODO(G4.2): route through SimdDispatch::idct8x8_add() once mode_decision threads &SimdDispatch.
-                            idct8x8_64_add(&buf, &mut recon[recon_start..], bw);
+                            (dsp.idct8x8_add())(&buf, &mut recon[recon_start..], bw);
                         }
                         TxSize::Tx16x16 => {
                             let mut buf = [0i32; 256];
