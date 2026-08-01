@@ -133,7 +133,7 @@ impl VarianceAccumulator {
 }
 
 macro_rules! sub_pixel_variance_body {
-    ($accum:ident, $src:ident, $src_stride:ident, $reference:ident, $ref_stride:ident, $xoffset:ident, $yoffset:ident, $width:ident, $height:ident) => {{
+    ($accum:ident, $src:ident, $src_stride:ident, $reference:ident, $ref_stride:ident, $xoffset:ident, $yoffset:ident, $width:expr, $height:expr) => {{
         if $xoffset == 0 {
             for row in 0..$height {
                 let top = $src.add(row * $src_stride);
@@ -220,6 +220,22 @@ unsafe fn sub_pixel_variance_dotprod_inner(
     let mut accum = DotprodVarianceAccumulator::new();
     sub_pixel_variance_body!(
         accum, src, src_stride, reference, ref_stride, xoffset, yoffset, width, height
+    )
+}
+
+#[target_feature(enable = "dotprod")]
+#[allow(clippy::too_many_arguments)]
+unsafe fn sub_pixel_variance_32x32_dotprod_inner(
+    src: *const u8,
+    src_stride: usize,
+    reference: *const u8,
+    ref_stride: usize,
+    xoffset: usize,
+    yoffset: usize,
+) -> (u32, u32) {
+    let mut accum = DotprodVarianceAccumulator::new();
+    sub_pixel_variance_body!(
+        accum, src, src_stride, reference, ref_stride, xoffset, yoffset, 32, 32
     )
 }
 
@@ -347,7 +363,34 @@ subpel_var_dotprod_fn!(vpx_sub_pixel_variance16x8_dotprod, 16, 8);
 subpel_var_dotprod_fn!(vpx_sub_pixel_variance16x16_dotprod, 16, 16);
 subpel_var_dotprod_fn!(vpx_sub_pixel_variance16x32_dotprod, 16, 32);
 subpel_var_dotprod_fn!(vpx_sub_pixel_variance32x16_dotprod, 32, 16);
-subpel_var_dotprod_fn!(vpx_sub_pixel_variance32x32_dotprod, 32, 32);
+/// Dot-product sub-pixel variance 32x32.
+pub fn vpx_sub_pixel_variance32x32_dotprod(
+    src: &[u8],
+    src_stride: usize,
+    xoffset: usize,
+    yoffset: usize,
+    reference: &[u8],
+    ref_stride: usize,
+) -> (u32, u32) {
+    assert!(xoffset < 8 && yoffset < 8);
+    assert!(src_stride >= 32 + usize::from(xoffset != 0));
+    assert!(ref_stride >= 32);
+    assert!(src.len() >= 32 * src_stride + 32 + usize::from(xoffset != 0));
+    assert!(reference.len() >= 31 * ref_stride + 32);
+
+    // SAFETY: Dispatch selects this wrapper only when dotprod is present. The
+    // assertions prove the extra horizontal byte and vertical row are live.
+    unsafe {
+        sub_pixel_variance_32x32_dotprod_inner(
+            src.as_ptr(),
+            src_stride,
+            reference.as_ptr(),
+            ref_stride,
+            xoffset,
+            yoffset,
+        )
+    }
+}
 subpel_var_dotprod_fn!(vpx_sub_pixel_variance32x64_dotprod, 32, 64);
 subpel_var_dotprod_fn!(vpx_sub_pixel_variance64x32_dotprod, 64, 32);
 subpel_var_dotprod_fn!(vpx_sub_pixel_variance64x64_dotprod, 64, 64);
