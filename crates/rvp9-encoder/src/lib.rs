@@ -1359,6 +1359,15 @@ fn f5_uv_plane_block_size(bsize: BlockSize) -> BlockSize {
     }
 }
 
+/// Largest transform allowed by libvpx's realtime keyframe policy.
+///
+/// Speed 4+ combines `USE_LARGESTALL` with frame `tx_mode = ALLOW_16X16`,
+/// so the chosen size is the leaf maximum capped at 16x16.
+#[inline]
+fn realtime_keyframe_tx_size(bsize: BlockSize) -> TxSize {
+    rvp9_core::block::max_txsize(bsize).min(TxSize::Tx16x16)
+}
+
 /// AQ.1 — compute the effective qindex for a leaf, given the base
 /// qindex and the per-segment Q-delta table from the uncompressed
 /// header (`SegmentationParams.feature_data[seg][SEG_LVL_ALT_Q]`).
@@ -2051,15 +2060,6 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
 
     let y_mode_costs = intra_y_mode_costs_kf_table();
 
-    // Track-F iter8 — coef-cost table for the per-leaf intra TX-size RD
-    // loop (`choose_intra_luma_tx_size`). The KF codes against the
-    // default FrameContext (`build_keyframe_packet` uses
-    // `FrameContext::new_default()` and never refreshes FC bank 0), so
-    // the rate model uses the default coef probs — exactly what the
-    // writer/decoder will use.
-    let kf_fc = FrameContext::new_default();
-    let rdo_coef_costs = rvp9_core::cost::coef_cost::build_coef_cost_table(&kf_fc);
-
     // Zero recon up-front — the per-leaf simulator call expects the
     // recon plane to be already populated for previously-encoded leaves
     // and zero outside.
@@ -2211,34 +2211,11 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
                     }
                 }
 
-                // Track-F iter8 — per-block intra TX-size RD selection for
-                // the Y plane. The committed neighbour recon
-                // (`recon_yuv_out.0`, populated by all previously-encoded
-                // leaves) is the input the causal intra TX-size loop needs;
-                // it simulates predict→fdct→quant→idct-add per candidate
-                // size and returns the min-RD size. Stored on the leaf so
-                // the per-leaf simulator below codes the Y plane at it and
-                // `build_kf_mi_grid` signals it under `TxModeSelect`.
-                let tx_rd_rdmult = i64::from(rvp9_core::cost::compute_rd_mult(
-                    i32::from(leaf_qindex),
-                    rvp9_core::cost::FrameTypeForRd::Key,
-                ));
-                let chosen_intra_tx = choose_intra_luma_tx_size(
-                    input_yuv.0,
-                    recon_yuv_out.0,
-                    w,
-                    w,
-                    h,
-                    leaf_px_x,
-                    leaf_px_y,
-                    leaf_bsize,
-                    picked_mode,
-                    have_above,
-                    have_left,
-                    &leaf_quantizer,
-                    &rdo_coef_costs,
-                    tx_rd_rdmult,
-                );
+                // libvpx's speed-4+ keyframe path uses USE_LARGESTALL with
+                // frame tx_mode ALLOW_16X16. Pick the largest transform that
+                // both the leaf and that frame-level cap allow; no per-leaf
+                // transform-size RD sweep is run in this realtime policy.
+                let chosen_intra_tx = realtime_keyframe_tx_size(leaf_bsize);
                 sb_partitions[sb_idx][leaf_idx].picked_tx_size = chosen_intra_tx;
 
                 // libvpx's speed-4+ realtime policy masks every chroma TX
@@ -7987,6 +7964,7 @@ fn maybe_trellis(
 /// Returns the chosen luma `TxSize`. The caller (the KF intra picker)
 /// stores it on the leaf and re-codes the Y plane with it; the modes
 /// writer signals it under `tx_mode = TxModeSelect`.
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 fn choose_intra_luma_tx_size(
     input_plane: &[u8],
@@ -8259,6 +8237,7 @@ fn choose_intra_luma_tx_size(
 /// dqcoeff)` transform-domain distortion (which needs the un-quantized
 /// `coeff`, not the qcoeff). Mirrors the forward-transform half of
 /// [`intra_forward_quant_one_tx`].
+#[cfg(test)]
 fn intra_forward_coefs_one_tx(
     residual: &[i16],
     tx_side: usize,
@@ -8295,6 +8274,7 @@ fn intra_forward_coefs_one_tx(
 /// the quant half of [`intra_forward_quant_one_tx`] but takes the raw
 /// `coefs` (already transformed by [`intra_forward_coefs_one_tx`]) so the
 /// RD loop transforms exactly once per sub-block.
+#[cfg(test)]
 fn intra_quant_one_tx(
     coefs: &[i32],
     plane_tx: TxSize,
@@ -10887,6 +10867,26 @@ mod tests {
     // AQ.1 — per-segment Q-delta drives the forward quant init.
     //
     // The four scalar tests below pin down the
+    #[test]
+    fn realtime_keyframe_tx_size_caps_leaf_maximum_at_16x16() {
+        assert_eq!(
+            realtime_keyframe_tx_size(BlockSize::Block8x8),
+            TxSize::Tx8x8
+        );
+        assert_eq!(
+            realtime_keyframe_tx_size(BlockSize::Block16x16),
+            TxSize::Tx16x16
+        );
+        assert_eq!(
+            realtime_keyframe_tx_size(BlockSize::Block32x32),
+            TxSize::Tx16x16
+        );
+        assert_eq!(
+            realtime_keyframe_tx_size(BlockSize::Block64x64),
+            TxSize::Tx16x16
+        );
+    }
+
     // `effective_qindex_for_segment` helper's table semantics + clamp
     // behaviour. Test #5 is the key oracle: it runs the simulator on
     // two equally-sized leaves whose only difference is `segment_id`

@@ -4735,11 +4735,10 @@ fn build_keyframe_packet_with_tiles(
         allow_high_precision_mv: false,
     };
     let target = CompressedHeaderResult {
-        // Track-F iter8 — `TxModeSelect` enables per-block intra tx_size
-        // signalling on the KF. The intra TX-size RD loop
-        // (`choose_intra_luma_tx_size`) RD-picks each leaf's Y tx_size;
-        // the KF modes writer emits the selected-tx tree bits.
-        tx_mode: TxMode::TxModeSelect,
+        // libvpx speed 4+ uses USE_LARGESTALL for realtime keyframes and
+        // advertises ALLOW_16X16. Leaf transforms are therefore implicit:
+        // the largest size allowed by the block and this frame-level cap.
+        tx_mode: TxMode::AllowTx16x16,
         reference_mode: ReferenceMode::Single,
     };
 
