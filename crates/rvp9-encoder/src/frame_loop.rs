@@ -4479,6 +4479,7 @@ where
     };
     let vbp_force_split_enabled =
         !is_keyframe && std::env::var_os("RVP9_VBP_FORCE_SPLIT").is_some_and(|v| v != "0");
+    let partition_histogram_enabled = !is_keyframe && std::env::var_os("RVP9_PART_HIST").is_some();
     let vbp_qindex = vbp_qindex_for_partition(q_index, is_keyframe);
     let vbp_avg_inter_qindex = vbp_avg_inter_qindex_for_partition(avg_inter_qindex, is_keyframe);
 
@@ -4504,7 +4505,7 @@ where
             };
             // E2 diagnostic (env-gated): accumulate per-8×8-cell area by
             // leaf size so we can report the inter partition histogram.
-            if !is_keyframe && std::env::var_os("RVP9_PART_HIST").is_some() {
+            if partition_histogram_enabled {
                 let mut counts = [0usize; 4]; // 8,16,32,64
                 for row in &decision.cells {
                     for &bs in row {
