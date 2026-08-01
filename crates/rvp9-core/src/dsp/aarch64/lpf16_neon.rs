@@ -1,4 +1,4 @@
-//! Eight-lane NEON kernels for VP9's 8- and 16-tap loop filters.
+//! NEON kernels for VP9's 8- and 16-tap loop filters.
 //!
 //! The arithmetic follows `vpx_dsp/arm/loopfilter_neon.c`. Each lane is one
 //! transverse edge position. The Rust wrapper keeps the scalar slice API and
@@ -294,6 +294,276 @@ unsafe fn filter16_lanes(
     let wide15 = filter15(&values);
     for index in 0..14 {
         output[index + 1] = vbsl_u8(wide15_mask, wide15[index], output[index + 1]);
+    }
+    output
+}
+
+#[inline(always)]
+unsafe fn filter_masks_16(
+    limit: u8,
+    blimit: u8,
+    thresh: u8,
+    values: &[uint8x16_t; 16],
+) -> (uint8x16_t, uint8x16_t, uint8x16_t, uint8x16_t) {
+    let p7 = values[0];
+    let p6 = values[1];
+    let p5 = values[2];
+    let p4 = values[3];
+    let p3 = values[4];
+    let p2 = values[5];
+    let p1 = values[6];
+    let p0 = values[7];
+    let q0 = values[8];
+    let q1 = values[9];
+    let q2 = values[10];
+    let q3 = values[11];
+    let q4 = values[12];
+    let q5 = values[13];
+    let q6 = values[14];
+    let q7 = values[15];
+
+    let inner_diff = vmaxq_u8(vabdq_u8(p1, p0), vabdq_u8(q1, q0));
+    let mut max_adjacent = inner_diff;
+    max_adjacent = vmaxq_u8(max_adjacent, vabdq_u8(p3, p2));
+    max_adjacent = vmaxq_u8(max_adjacent, vabdq_u8(p2, p1));
+    max_adjacent = vmaxq_u8(max_adjacent, vabdq_u8(q2, q1));
+    max_adjacent = vmaxq_u8(max_adjacent, vabdq_u8(q3, q2));
+    let adjacent_ok = vcleq_u8(max_adjacent, vdupq_n_u8(limit));
+
+    let boundary_half = |p0: uint8x8_t, q0: uint8x8_t, p1: uint8x8_t, q1: uint8x8_t| {
+        let p0q0 = vabdl_u8(p0, q0);
+        let p1q1 = vabdl_u8(p1, q1);
+        let boundary = vaddq_u16(vshlq_n_u16(p0q0, 1), vshrq_n_u16(p1q1, 1));
+        vmovn_u16(vcleq_u16(boundary, vdupq_n_u16(u16::from(blimit))))
+    };
+    let boundary_ok = vcombine_u8(
+        boundary_half(
+            vget_low_u8(p0),
+            vget_low_u8(q0),
+            vget_low_u8(p1),
+            vget_low_u8(q1),
+        ),
+        boundary_half(
+            vget_high_u8(p0),
+            vget_high_u8(q0),
+            vget_high_u8(p1),
+            vget_high_u8(q1),
+        ),
+    );
+    let mask = vandq_u8(adjacent_ok, boundary_ok);
+    let hev = vcgtq_u8(inner_diff, vdupq_n_u8(thresh));
+
+    let mut flat_diff = inner_diff;
+    flat_diff = vmaxq_u8(flat_diff, vabdq_u8(p2, p0));
+    flat_diff = vmaxq_u8(flat_diff, vabdq_u8(q2, q0));
+    flat_diff = vmaxq_u8(flat_diff, vabdq_u8(p3, p0));
+    flat_diff = vmaxq_u8(flat_diff, vabdq_u8(q3, q0));
+    let flat = vcleq_u8(flat_diff, vdupq_n_u8(1));
+
+    let mut flat2_diff = vabdq_u8(p4, p0);
+    flat2_diff = vmaxq_u8(flat2_diff, vabdq_u8(p5, p0));
+    flat2_diff = vmaxq_u8(flat2_diff, vabdq_u8(p6, p0));
+    flat2_diff = vmaxq_u8(flat2_diff, vabdq_u8(p7, p0));
+    flat2_diff = vmaxq_u8(flat2_diff, vabdq_u8(q4, q0));
+    flat2_diff = vmaxq_u8(flat2_diff, vabdq_u8(q5, q0));
+    flat2_diff = vmaxq_u8(flat2_diff, vabdq_u8(q6, q0));
+    flat2_diff = vmaxq_u8(flat2_diff, vabdq_u8(q7, q0));
+    let flat2 = vcleq_u8(flat2_diff, vdupq_n_u8(1));
+    (mask, flat, flat2, hev)
+}
+
+#[inline(always)]
+unsafe fn filter4_16(
+    mask: uint8x16_t,
+    hev: uint8x16_t,
+    p1: uint8x16_t,
+    p0: uint8x16_t,
+    q0: uint8x16_t,
+    q1: uint8x16_t,
+) -> [uint8x16_t; 4] {
+    let sign = vdupq_n_u8(0x80);
+    let mut ps1 = vreinterpretq_s8_u8(veorq_u8(p1, sign));
+    let mut ps0 = vreinterpretq_s8_u8(veorq_u8(p0, sign));
+    let mut qs0 = vreinterpretq_s8_u8(veorq_u8(q0, sign));
+    let mut qs1 = vreinterpretq_s8_u8(veorq_u8(q1, sign));
+
+    let mut filter = vqsubq_s8(ps1, qs1);
+    filter = vandq_s8(filter, vreinterpretq_s8_u8(hev));
+    let inner = vqsubq_s8(qs0, ps0);
+    filter = vqaddq_s8(filter, inner);
+    filter = vqaddq_s8(filter, inner);
+    filter = vqaddq_s8(filter, inner);
+    filter = vandq_s8(filter, vreinterpretq_s8_u8(mask));
+
+    let filter1 = vshrq_n_s8(vqaddq_s8(filter, vdupq_n_s8(4)), 3);
+    let filter2 = vshrq_n_s8(vqaddq_s8(filter, vdupq_n_s8(3)), 3);
+    qs0 = vqsubq_s8(qs0, filter1);
+    ps0 = vqaddq_s8(ps0, filter2);
+
+    let outer = vbicq_s8(vrshrq_n_s8(filter1, 1), vreinterpretq_s8_u8(hev));
+    qs1 = vqsubq_s8(qs1, outer);
+    ps1 = vqaddq_s8(ps1, outer);
+
+    [
+        veorq_u8(vreinterpretq_u8_s8(ps1), sign),
+        veorq_u8(vreinterpretq_u8_s8(ps0), sign),
+        veorq_u8(vreinterpretq_u8_s8(qs0), sign),
+        veorq_u8(vreinterpretq_u8_s8(qs1), sign),
+    ]
+}
+
+#[inline(always)]
+unsafe fn update_sum_16(
+    sum: &mut [uint16x8_t; 2],
+    sub0: uint8x16_t,
+    sub1: uint8x16_t,
+    add0: uint8x16_t,
+    add1: uint8x16_t,
+) {
+    for (lane, get_half) in [
+        vget_low_u8 as unsafe fn(uint8x16_t) -> uint8x8_t,
+        vget_high_u8 as unsafe fn(uint8x16_t) -> uint8x8_t,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        sum[lane] = vsubw_u8(sum[lane], get_half(sub0));
+        sum[lane] = vsubw_u8(sum[lane], get_half(sub1));
+        sum[lane] = vaddw_u8(sum[lane], get_half(add0));
+        sum[lane] = vaddw_u8(sum[lane], get_half(add1));
+    }
+}
+
+#[inline(always)]
+unsafe fn filter7_16(values: &[uint8x16_t; 8]) -> [uint8x16_t; 6] {
+    let p3 = values[0];
+    let p2 = values[1];
+    let p1 = values[2];
+    let p0 = values[3];
+    let q0 = values[4];
+    let q1 = values[5];
+    let q2 = values[6];
+    let q3 = values[7];
+
+    let mut sum = [
+        vaddl_u8(vget_low_u8(p3), vget_low_u8(p3)),
+        vaddl_u8(vget_high_u8(p3), vget_high_u8(p3)),
+    ];
+    for add in [p3, p2, p2, p1, p0, q0] {
+        sum[0] = vaddw_u8(sum[0], vget_low_u8(add));
+        sum[1] = vaddw_u8(sum[1], vget_high_u8(add));
+    }
+    let rounded =
+        |sum: &[uint16x8_t; 2]| vcombine_u8(vrshrn_n_u16(sum[0], 3), vrshrn_n_u16(sum[1], 3));
+    let mut output = [vdupq_n_u8(0); 6];
+    output[0] = rounded(&sum);
+    for (index, &(sub0, sub1, add0, add1)) in [
+        (p3, p2, p1, q1),
+        (p3, p1, p0, q2),
+        (p3, p0, q0, q3),
+        (p2, q0, q1, q3),
+        (p1, q1, q2, q3),
+    ]
+    .iter()
+    .enumerate()
+    {
+        update_sum_16(&mut sum, sub0, sub1, add0, add1);
+        output[index + 1] = rounded(&sum);
+    }
+    output
+}
+
+#[inline(always)]
+unsafe fn filter15_16(values: &[uint8x16_t; 16]) -> [uint8x16_t; 14] {
+    let p7 = values[0];
+    let p6 = values[1];
+    let p5 = values[2];
+    let p4 = values[3];
+    let p3 = values[4];
+    let p2 = values[5];
+    let p1 = values[6];
+    let p0 = values[7];
+    let q0 = values[8];
+    let q1 = values[9];
+    let q2 = values[10];
+    let q3 = values[11];
+    let q4 = values[12];
+    let q5 = values[13];
+    let q6 = values[14];
+    let q7 = values[15];
+
+    let mut sum = [
+        vshll_n_u8(vget_low_u8(p7), 3),
+        vshll_n_u8(vget_high_u8(p7), 3),
+    ];
+    for (sum_half, get_half) in sum.iter_mut().zip([
+        vget_low_u8 as unsafe fn(uint8x16_t) -> uint8x8_t,
+        vget_high_u8 as unsafe fn(uint8x16_t) -> uint8x8_t,
+    ]) {
+        *sum_half = vsubw_u8(*sum_half, get_half(p7));
+        for add in [p6, p6, p5, p4, p3, p2, p1, p0, q0] {
+            *sum_half = vaddw_u8(*sum_half, get_half(add));
+        }
+    }
+    let rounded =
+        |sum: &[uint16x8_t; 2]| vcombine_u8(vrshrn_n_u16(sum[0], 4), vrshrn_n_u16(sum[1], 4));
+    let mut output = [vdupq_n_u8(0); 14];
+    output[0] = rounded(&sum);
+    for (index, &(sub0, sub1, add0, add1)) in [
+        (p7, p6, p5, q1),
+        (p7, p5, p4, q2),
+        (p7, p4, p3, q3),
+        (p7, p3, p2, q4),
+        (p7, p2, p1, q5),
+        (p7, p1, p0, q6),
+        (p7, p0, q0, q7),
+        (p6, q0, q1, q7),
+        (p5, q1, q2, q7),
+        (p4, q2, q3, q7),
+        (p3, q3, q4, q7),
+        (p2, q4, q5, q7),
+        (p1, q5, q6, q7),
+    ]
+    .iter()
+    .enumerate()
+    {
+        update_sum_16(&mut sum, sub0, sub1, add0, add1);
+        output[index + 1] = rounded(&sum);
+    }
+    output
+}
+
+#[inline(always)]
+unsafe fn filter16_dual_lanes(
+    values: [uint8x16_t; 16],
+    limit: u8,
+    blimit: u8,
+    thresh: u8,
+) -> [uint8x16_t; 16] {
+    let (mask, flat, flat2, hev) = filter_masks_16(limit, blimit, thresh, &values);
+    let mut output = values;
+
+    let narrow = filter4_16(mask, hev, values[6], values[7], values[8], values[9]);
+    output[6] = narrow[0];
+    output[7] = narrow[1];
+    output[8] = narrow[2];
+    output[9] = narrow[3];
+
+    let wide7_mask = vandq_u8(mask, flat);
+    if vmaxvq_u8(wide7_mask) == 0 {
+        return output;
+    }
+    let wide7 = filter7_16(&[
+        values[4], values[5], values[6], values[7], values[8], values[9], values[10], values[11],
+    ]);
+    for index in 0..6 {
+        output[index + 5] = vbslq_u8(wide7_mask, wide7[index], output[index + 5]);
+    }
+
+    let wide15_mask = vandq_u8(wide7_mask, flat2);
+    let wide15 = filter15_16(&values);
+    for index in 0..14 {
+        output[index + 1] = vbslq_u8(wide15_mask, wide15[index], output[index + 1]);
     }
     output
 }
@@ -640,6 +910,26 @@ unsafe fn vertical_inner(
     }
 }
 
+#[target_feature(enable = "neon")]
+unsafe fn horizontal_dual_inner(
+    pixels: *mut u8,
+    s_index: usize,
+    pitch: usize,
+    blimit: u8,
+    limit: u8,
+    thresh: u8,
+) {
+    let start = pixels.add(s_index - 8 * pitch);
+    let mut values = [vdupq_n_u8(0); 16];
+    for (row, value) in values.iter_mut().enumerate() {
+        *value = vld1q_u8(start.add(row * pitch));
+    }
+    let output = filter16_dual_lanes(values, limit, blimit, thresh);
+    for (row, value) in output.iter().enumerate().take(15).skip(1) {
+        vst1q_u8(start.add(row * pitch), *value);
+    }
+}
+
 /// Apply the 16-tap loop filter across eight horizontal edge columns.
 pub fn lpf_horizontal_16_neon(
     pixels: &mut [u8],
@@ -666,8 +956,12 @@ pub fn lpf_horizontal_16_dual_neon(
     limit: u8,
     thresh: u8,
 ) {
-    lpf_horizontal_16_neon(pixels, s_index, pitch, blimit, limit, thresh);
-    lpf_horizontal_16_neon(pixels, s_index + 8, pitch, blimit, limit, thresh);
+    assert!(pitch >= 16);
+    assert!(s_index >= 8 * pitch);
+    assert!(s_index + 7 * pitch + 15 < pixels.len());
+    // SAFETY: AArch64 always provides NEON. The assertions prove that all
+    // sixteen 16-byte row loads and the fourteen row stores stay in `pixels`.
+    unsafe { horizontal_dual_inner(pixels.as_mut_ptr(), s_index, pitch, blimit, limit, thresh) }
 }
 
 /// Apply the 16-tap loop filter down eight vertical edge rows.
@@ -875,6 +1169,23 @@ mod tests {
         let vertical_index = 4 * pitch + 16;
         lpf_vertical_8(&mut scalar, vertical_index, pitch, 255, 255, 255);
         lpf_vertical_8_neon(&mut neon, vertical_index, pitch, 255, 255, 255);
+        assert_eq!(neon, scalar);
+    }
+
+    #[test]
+    fn differential_16_tap_dual_boundary_does_not_saturate_at_255() {
+        let pitch = 32;
+        let height = 24;
+        let mut input = vec![0u8; pitch * height];
+        for row in 12..height {
+            input[row * pitch..(row + 1) * pitch].fill(255);
+        }
+
+        let horizontal_index = 12 * pitch + 4;
+        let mut scalar = input.clone();
+        let mut neon = input;
+        lpf_horizontal_16_dual(&mut scalar, horizontal_index, pitch, 255, 255, 255);
+        lpf_horizontal_16_dual_neon(&mut neon, horizontal_index, pitch, 255, 255, 255);
         assert_eq!(neon, scalar);
     }
 
