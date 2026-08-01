@@ -15,28 +15,89 @@ unsafe fn convolve_copy_neon_inner(
     w: usize,
     h: usize,
 ) {
-    for row in 0..h {
-        let src_row = src.add(row * src_stride);
-        let dst_row = dst.add(row * dst_stride);
-        match w {
-            4 => {
-                let value = core::ptr::read_unaligned(src_row.cast::<u32>());
-                core::ptr::write_unaligned(dst_row.cast::<u32>(), value);
+    match w {
+        4 => {
+            let mut row = 0;
+            while row + 1 < h {
+                let value_0 = core::ptr::read_unaligned(src.add(row * src_stride).cast::<u32>());
+                let value_1 =
+                    core::ptr::read_unaligned(src.add((row + 1) * src_stride).cast::<u32>());
+                core::ptr::write_unaligned(dst.add(row * dst_stride).cast::<u32>(), value_0);
+                core::ptr::write_unaligned(dst.add((row + 1) * dst_stride).cast::<u32>(), value_1);
+                row += 2;
             }
-            8 => vst1_u8(dst_row, vld1_u8(src_row)),
-            16 => vst1q_u8(dst_row, vld1q_u8(src_row)),
-            32 => {
+            if row < h {
+                let value = core::ptr::read_unaligned(src.add(row * src_stride).cast::<u32>());
+                core::ptr::write_unaligned(dst.add(row * dst_stride).cast::<u32>(), value);
+            }
+        }
+        8 => {
+            let mut row = 0;
+            while row + 1 < h {
+                let value_0 = vld1_u8(src.add(row * src_stride));
+                let value_1 = vld1_u8(src.add((row + 1) * src_stride));
+                vst1_u8(dst.add(row * dst_stride), value_0);
+                vst1_u8(dst.add((row + 1) * dst_stride), value_1);
+                row += 2;
+            }
+            if row < h {
+                vst1_u8(
+                    dst.add(row * dst_stride),
+                    vld1_u8(src.add(row * src_stride)),
+                );
+            }
+        }
+        16 => {
+            let mut row = 0;
+            while row + 1 < h {
+                let value_0 = vld1q_u8(src.add(row * src_stride));
+                let value_1 = vld1q_u8(src.add((row + 1) * src_stride));
+                vst1q_u8(dst.add(row * dst_stride), value_0);
+                vst1q_u8(dst.add((row + 1) * dst_stride), value_1);
+                row += 2;
+            }
+            if row < h {
+                vst1q_u8(
+                    dst.add(row * dst_stride),
+                    vld1q_u8(src.add(row * src_stride)),
+                );
+            }
+        }
+        32 => {
+            let mut row = 0;
+            while row + 1 < h {
+                let src_0 = src.add(row * src_stride);
+                let src_1 = src.add((row + 1) * src_stride);
+                let dst_0 = dst.add(row * dst_stride);
+                let dst_1 = dst.add((row + 1) * dst_stride);
+                let value_00 = vld1q_u8(src_0);
+                let value_01 = vld1q_u8(src_0.add(16));
+                let value_10 = vld1q_u8(src_1);
+                let value_11 = vld1q_u8(src_1.add(16));
+                vst1q_u8(dst_0, value_00);
+                vst1q_u8(dst_0.add(16), value_01);
+                vst1q_u8(dst_1, value_10);
+                vst1q_u8(dst_1.add(16), value_11);
+                row += 2;
+            }
+            if row < h {
+                let src_row = src.add(row * src_stride);
+                let dst_row = dst.add(row * dst_stride);
                 vst1q_u8(dst_row, vld1q_u8(src_row));
                 vst1q_u8(dst_row.add(16), vld1q_u8(src_row.add(16)));
             }
-            64 => {
+        }
+        64 => {
+            for row in 0..h {
+                let src_row = src.add(row * src_stride);
+                let dst_row = dst.add(row * dst_stride);
                 vst1q_u8(dst_row, vld1q_u8(src_row));
                 vst1q_u8(dst_row.add(16), vld1q_u8(src_row.add(16)));
                 vst1q_u8(dst_row.add(32), vld1q_u8(src_row.add(32)));
                 vst1q_u8(dst_row.add(48), vld1q_u8(src_row.add(48)));
             }
-            _ => unreachable!("validated VP9 prediction width"),
         }
+        _ => unreachable!("validated VP9 prediction width"),
     }
 }
 
@@ -95,6 +156,11 @@ mod tests {
             (32, 64),
             (64, 32),
             (64, 64),
+            (4, 5),
+            (8, 5),
+            (16, 5),
+            (32, 5),
+            (64, 5),
         ];
         let mut rng = Lcg32(0xC0FF_EE42);
         for (w, h) in shapes {
