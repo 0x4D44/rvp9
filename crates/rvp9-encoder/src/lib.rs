@@ -2580,6 +2580,18 @@ pub(crate) struct RecordedCoefTile {
 pub(crate) struct InterSimulationResult {
     pub(crate) coefs: VecBackedInterCoefSource,
     pub(crate) recorded_coef_tile: Option<RecordedCoefTile>,
+    pub(crate) mi_grid: InterSimulationMiGrid,
+}
+
+/// Final causal mode-info grid produced while the inter picker commits leaves.
+///
+/// Parallel tile jobs retain only their local column span; the frame loop
+/// merges those disjoint row slices instead of rebuilding every cell from the
+/// partition descriptors after the picker barrier.
+pub(crate) struct InterSimulationMiGrid {
+    pub(crate) cells: Vec<Option<rvp9_core::mode_info::ModeInfo>>,
+    pub(crate) mi_col_start: usize,
+    pub(crate) mi_cols: usize,
 }
 
 fn record_encoded_inter_leaf(
@@ -7507,6 +7519,12 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 let leaf_mi_col = sb_col * 8 + leaf.mi_col_in_sb;
                 let bw_mi = leaf.leaf_bsize.n_8x8_wide() as usize;
                 let bh_mi = leaf.leaf_bsize.n_8x8_high() as usize;
+                // Replace the causal pick-time cell with the final emitted
+                // descriptor. Emission may select a smaller transform or a
+                // compound second reference after the causal MV lookup no
+                // longer needs this leaf, so the writer-facing grid must use
+                // the finalized form.
+                let final_mode_info = leaf.mode_info();
                 // Phase 2b — intra-in-inter blocks write
                 // `(IntraFrame, zero-mv)` to the MV grid, matching
                 // the decoder's D.7 path. Inter blocks write the
@@ -7537,6 +7555,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         let c = leaf_mi_col + dc;
                         if r < mi_rows_us && c < mi_cols_us {
                             out_mv_grid[r * mi_cols_us + c] = entry;
+                            let mi_index = mi_grid_layout
+                                .index(r, c)
+                                .expect("active leaf must lie inside its picker mi-grid tile");
+                            mi_grid[mi_index] = Some(final_mode_info);
                         }
                     }
                 }
@@ -7547,6 +7569,11 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     InterSimulationResult {
         coefs: coef_source,
         recorded_coef_tile,
+        mi_grid: InterSimulationMiGrid {
+            cells: mi_grid,
+            mi_col_start: mi_grid_layout.mi_col_start,
+            mi_cols: mi_grid_layout.mi_cols,
+        },
     }
 }
 

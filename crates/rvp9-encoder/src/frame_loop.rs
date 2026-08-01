@@ -94,8 +94,8 @@ use crate::rate_control::{
     FirstPassStats, FrameKind as RcFrameKind, RateControl, RateControlConfig, RcMode, TwoPassState,
 };
 use crate::{
-    EncodeError, InterPartitionLeafDesc, PartitionLeafDesc, RecordedCoefTile,
-    VecBackedInterCoefSource, pick_and_simulate_inter_encode_partitions,
+    EncodeError, InterPartitionLeafDesc, InterSimulationMiGrid, PartitionLeafDesc,
+    RecordedCoefTile, VecBackedInterCoefSource, pick_and_simulate_inter_encode_partitions,
     pick_and_simulate_intra_encode_partitions,
 };
 
@@ -1354,6 +1354,7 @@ struct InterTileJobResult {
     split_stats: NonRdSplitStats,
     coefs: VecBackedInterCoefSource,
     recorded_coef_tile: RecordedCoefTile,
+    mi_grid: InterSimulationMiGrid,
 }
 
 struct InterTileScratch {
@@ -3192,7 +3193,7 @@ impl StreamEncoder {
         }
 
         let tile_count = 1usize << log2_tile_cols;
-        let (coef_source, recorded_coef_tiles) = if tile_count > 1
+        let (coef_source, recorded_coef_tiles, mi_grid) = if tile_count > 1
             && self.parallelism.max_threads > 1
         {
             // Tile-MT: execute independent full-height column jobs on the
@@ -3264,6 +3265,7 @@ impl StreamEncoder {
                                 split_stats: tile_split_stats,
                                 coefs: tile_encode.coefs,
                                 recorded_coef_tile,
+                                mi_grid: tile_encode.mi_grid,
                             };
                             *result_slot
                                 .lock()
@@ -3283,6 +3285,7 @@ impl StreamEncoder {
                 .collect();
 
             let mut recorded_coef_tiles = Vec::with_capacity(tile_count);
+            let mut merged_mi_grid = vec![None; mi_rows_us * mi_cols_us];
             for result in tile_results {
                 let tile_col = result.tile_col;
                 let scratch = &self.inter_tile_scratch[tile_col];
@@ -3323,13 +3326,22 @@ impl StreamEncoder {
                     let start = row * mi_cols_us + bounds.mi_col_start;
                     let end = row * mi_cols_us + bounds.mi_col_end;
                     cur_mv_grid[start..end].copy_from_slice(&scratch.mv_grid[start..end]);
+                    debug_assert_eq!(result.mi_grid.mi_col_start, bounds.mi_col_start);
+                    debug_assert_eq!(
+                        result.mi_grid.mi_cols,
+                        bounds.mi_col_end - bounds.mi_col_start
+                    );
+                    let local_start = row * result.mi_grid.mi_cols;
+                    let local_end = local_start + result.mi_grid.mi_cols;
+                    merged_mi_grid[start..end]
+                        .clone_from_slice(&result.mi_grid.cells[local_start..local_end]);
                 }
                 self.rd_thresh_tables[tile_col] = result.rd_tables[tile_col].clone();
                 stage4a_frame_split_stats.accumulate(&result.split_stats);
                 merged_coefs.merge_from(result.coefs);
                 recorded_coef_tiles.push(result.recorded_coef_tile);
             }
-            (merged_coefs, recorded_coef_tiles)
+            (merged_coefs, recorded_coef_tiles, merged_mi_grid)
         } else {
             let encoded = run_inter_picker!(
                 &mut new_recon_y,
@@ -3344,7 +3356,9 @@ impl StreamEncoder {
                 None
             );
             debug_assert!(encoded.recorded_coef_tile.is_none());
-            (encoded.coefs, Vec::new())
+            debug_assert_eq!(encoded.mi_grid.mi_col_start, 0);
+            debug_assert_eq!(encoded.mi_grid.mi_cols, mi_cols_us);
+            (encoded.coefs, Vec::new(), encoded.mi_grid.cells)
         };
         self.stage4a_split_stats
             .accumulate(&stage4a_frame_split_stats);
@@ -3362,7 +3376,11 @@ impl StreamEncoder {
         // libvpx's RT speed-feature default
         // (`vp9_speed_features.c::set_rt_speed_feature_framesize_
         // independent` `lpf_pick = LPF_PICK_FROM_Q`).
-        let mi_grid = build_inter_mi_grid_from_picker(h / 8, w / 8, &sb_partitions);
+        debug_assert_eq!(
+            mi_grid,
+            build_inter_mi_grid_from_picker(h / 8, w / 8, &sb_partitions),
+            "picker-owned mi grid must match the descriptor rebuild",
+        );
         let filter_level = if self.config.speed.unsigned_abs() <= 4 {
             // libvpx `vp9_picklpf.c:46-157` search.
             crate::loopfilter::search_filter_level(&crate::loopfilter::SearchFilterLevelParams {
