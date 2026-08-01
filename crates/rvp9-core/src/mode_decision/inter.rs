@@ -287,9 +287,9 @@ fn s2_acdc_roundtrip_enabled() -> bool {
 /// and uses that quantizer's `skippable` result. Rvp9 currently also runs a
 /// DCT, `quantize_b`, inverse DCT, and pixel-SSE pass for every candidate so
 /// its picker can predict the emit-side luma EOB and expose decoded-pixel
-/// distortion. Stage 4a VBR omits that duplicate transform pipeline;
-/// `RVP9_PICKER_HADAMARD_ONLY=0/1` remains a diagnostic override. The emitted
-/// winner still runs the normal DCT/reconstruction path.
+/// distortion. The one-pass realtime calibration omits that duplicate
+/// transform pipeline; `RVP9_PICKER_HADAMARD_ONLY=0/1` remains a diagnostic
+/// override. The emitted winner still runs the normal DCT/reconstruction path.
 #[inline]
 fn picker_hadamard_only_enabled(calibration: InterRdCalibration) -> bool {
     use std::sync::OnceLock;
@@ -301,8 +301,8 @@ fn picker_hadamard_only_enabled(calibration: InterRdCalibration) -> bool {
 
 /// LA (Track A6, 2026-05-30) — HF-gated natural-content lambda calibration.
 ///
-/// Default ON (`m = 2` for legacy policies, `m = 1.5` for Stage 4a VBR);
-/// `RVP9_LA=0` restores the pre-LA baseline byte-for-byte.
+/// Default ON (`m = 2` for legacy policies, `m = 1.5` for calibrated realtime
+/// paths); `RVP9_LA=0` restores the pre-LA baseline byte-for-byte.
 /// `RVP9_LA_NUM`/`RVP9_LA_DEN` override the multiplier.
 ///
 /// rvp9's `compute_rd_mult` under-weights rate on natural content at this
@@ -413,9 +413,9 @@ impl InterRdCalibration {
         }
     }
 
-    /// Stage 4a one-pass VBR policy. The skip-side `<< 4` matches
+    /// One-pass realtime policy. The skip-side `<< 4` matches
     /// libvpx's `block_yrd` rescale before the skip-vs-encode RD test.
-    pub const fn stage4a_vbr() -> Self {
+    pub const fn realtime() -> Self {
         Self {
             s3_domain: true,
             s3_skip_shift: 4,
@@ -5079,7 +5079,7 @@ mod tests {
             50,
         );
         let params = InterModeSearchParams {
-            rd_calibration: InterRdCalibration::stage4a_vbr(),
+            rd_calibration: InterRdCalibration::realtime(),
             ..control
         };
         let mut pred = [0u8; 64 * 64];

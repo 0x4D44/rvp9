@@ -2869,15 +2869,23 @@ fn inter_rd_calibration_for_mode(
     rc_mode: crate::rate_control::RcMode,
     speed: i32,
     deadline: rvp9_core::mode_decision::speed_features::Deadline,
+    cyclic_refresh_active: bool,
 ) -> rvp9_core::mode_decision::inter::InterRdCalibration {
-    if matches!(rc_mode, crate::rate_control::RcMode::Vbr)
+    let speed = speed.unsigned_abs();
+    let calibrated_rc = match rc_mode {
+        crate::rate_control::RcMode::Cbr | crate::rate_control::RcMode::Vbr => speed >= 6,
+        crate::rate_control::RcMode::Cq
+        | crate::rate_control::RcMode::Q
+        | crate::rate_control::RcMode::VbrTwoPass => false,
+    };
+    if calibrated_rc
+        && !cyclic_refresh_active
         && matches!(
             deadline,
             rvp9_core::mode_decision::speed_features::Deadline::Realtime
         )
-        && speed.unsigned_abs() >= 7
     {
-        rvp9_core::mode_decision::inter::InterRdCalibration::stage4a_vbr()
+        rvp9_core::mode_decision::inter::InterRdCalibration::realtime()
     } else {
         rvp9_core::mode_decision::inter::InterRdCalibration::default()
     }
@@ -3455,7 +3463,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         && speed.unsigned_abs() >= 7
         && matches!(content_tier, sf_mod::ContentTier::Default)
         && u64::from(width) * u64::from(height) >= 700_000;
-    let inter_rd_calibration = inter_rd_calibration_for_mode(rc_mode, speed, deadline);
+    let cyclic_refresh_active = seg_q_deltas.iter().any(Option::is_some);
+    let inter_rd_calibration =
+        inter_rd_calibration_for_mode(rc_mode, speed, deadline, cyclic_refresh_active);
     let full_pixel_search_method = full_pixel_search_method_for_mode(speed, deadline);
 
     let sb_cols = w / 64;
@@ -9676,12 +9686,12 @@ mod tests {
     }
 
     #[test]
-    fn inter_rd_calibration_is_vbr_realtime_speed7_only() {
+    fn inter_rd_calibration_covers_realtime_v1_presets() {
         use rvp9_core::mode_decision::inter::InterRdCalibration;
         use rvp9_core::mode_decision::speed_features::Deadline;
 
-        let active = inter_rd_calibration_for_mode(RcMode::Vbr, 7, Deadline::Realtime);
-        assert_eq!(active, InterRdCalibration::stage4a_vbr());
+        let active = inter_rd_calibration_for_mode(RcMode::Vbr, 7, Deadline::Realtime, false);
+        assert_eq!(active, InterRdCalibration::realtime());
         assert!(active.s3_domain);
         assert_eq!(
             active.s3_skip_shift, 4,
@@ -9698,15 +9708,31 @@ mod tests {
             "Stage 4a's measured natural-content lambda optimum is 1.5x"
         );
         assert_eq!(
-            inter_rd_calibration_for_mode(RcMode::Vbr, 6, Deadline::Realtime),
+            inter_rd_calibration_for_mode(RcMode::Cbr, 6, Deadline::Realtime, false),
+            InterRdCalibration::realtime()
+        );
+        assert_eq!(
+            inter_rd_calibration_for_mode(RcMode::Vbr, 7, Deadline::Good, false),
             InterRdCalibration::default()
         );
         assert_eq!(
-            inter_rd_calibration_for_mode(RcMode::Vbr, 7, Deadline::Good),
+            inter_rd_calibration_for_mode(RcMode::Cbr, 7, Deadline::Realtime, false),
+            InterRdCalibration::realtime()
+        );
+        assert_eq!(
+            inter_rd_calibration_for_mode(RcMode::Cbr, 8, Deadline::Realtime, false),
+            InterRdCalibration::realtime()
+        );
+        assert_eq!(
+            inter_rd_calibration_for_mode(RcMode::Vbr, 6, Deadline::Realtime, false),
+            InterRdCalibration::realtime()
+        );
+        assert_eq!(
+            inter_rd_calibration_for_mode(RcMode::Cq, 7, Deadline::Realtime, false),
             InterRdCalibration::default()
         );
         assert_eq!(
-            inter_rd_calibration_for_mode(RcMode::Cbr, 7, Deadline::Realtime),
+            inter_rd_calibration_for_mode(RcMode::Cbr, 7, Deadline::Realtime, true),
             InterRdCalibration::default()
         );
     }
