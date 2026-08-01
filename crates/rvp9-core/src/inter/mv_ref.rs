@@ -804,6 +804,180 @@ pub fn find_nearest_near_mvs<N: NeighbourLookup>(
     find_best_ref_mvs(&list, allow_hp)
 }
 
+/// Encoder realtime candidates and constant-motion flag for one reference.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct RealtimeRefMvs {
+    /// NEARESTMV candidate after precision lowering.
+    pub nearest: Mv,
+    /// NEARMV candidate after precision lowering.
+    pub near: Mv,
+    /// Whether the first two spatial neighbours lack two distinct slot-0 MVs.
+    pub const_motion: bool,
+}
+
+/// Resolve LAST and GOLDEN realtime candidates in one neighbour walk.
+///
+/// This is equivalent to calling [`find_nearest_near_mvs`] and
+/// [`mv_refs_rt_const_motion`] separately for both references, but shares the
+/// eight-position spatial traversal. ALTREF remains on the single-reference
+/// path because it is unavailable in the normal realtime configuration.
+#[allow(clippy::too_many_arguments)]
+#[must_use]
+pub fn find_last_golden_nearest_near_mvs<N: NeighbourLookup>(
+    block_size: BlockSize,
+    neighbours: &N,
+    sign_bias: &[bool; 4],
+    bounds: &BlockBounds,
+    prev_frame_mv: Option<PrevFrameMvRef>,
+    allow_hp: bool,
+) -> [RealtimeRefMvs; 2] {
+    const REFS: [RefFrame; 2] = [RefFrame::LastFrame, RefFrame::GoldenFrame];
+    let mv_ref_search = &MV_REF_BLOCKS[block_size.idx()];
+    let mut lists = [[Mv::ZERO; MAX_MV_REF_CANDIDATES]; 2];
+    let mut counts = [0usize; 2];
+    let mut first_slot0 = [None; 2];
+    let mut const_motion = [true; 2];
+    let mut any_neighbour = false;
+
+    for (position_index, &mv_ref) in mv_ref_search.iter().enumerate() {
+        let Some(candidate_mi) = neighbours.get(mv_ref) else {
+            continue;
+        };
+        any_neighbour = true;
+
+        if position_index < 2 {
+            let slot0_ref = candidate_ref(candidate_mi, 0);
+            let slot0_mv = candidate_mv(candidate_mi, 0);
+            for (ref_index, &ref_frame) in REFS.iter().enumerate() {
+                if slot0_ref == ref_frame {
+                    match first_slot0[ref_index] {
+                        None => first_slot0[ref_index] = Some(slot0_mv),
+                        Some(first) if first != slot0_mv => const_motion[ref_index] = false,
+                        Some(_) => {}
+                    }
+                }
+            }
+        }
+
+        for (ref_index, &ref_frame) in REFS.iter().enumerate() {
+            if counts[ref_index] == MAX_MV_REF_CANDIDATES {
+                continue;
+            }
+            let mv = if candidate_ref(candidate_mi, 0) == ref_frame {
+                Some(candidate_mv(candidate_mi, 0))
+            } else if candidate_ref(candidate_mi, 1) == ref_frame {
+                Some(candidate_mv(candidate_mi, 1))
+            } else {
+                None
+            };
+            if let Some(mv) = mv {
+                add_mv_ref_list_eb(mv, &mut lists[ref_index], &mut counts[ref_index], false);
+            }
+        }
+    }
+
+    if let Some(prev) = prev_frame_mv {
+        for (ref_index, &ref_frame) in REFS.iter().enumerate() {
+            if counts[ref_index] == MAX_MV_REF_CANDIDATES {
+                continue;
+            }
+            let mv = if prev.ref_frames[0] == ref_frame {
+                Some(prev.mvs[0])
+            } else if prev.ref_frames[1] == ref_frame {
+                Some(prev.mvs[1])
+            } else {
+                None
+            };
+            if let Some(mv) = mv {
+                add_mv_ref_list_eb(mv, &mut lists[ref_index], &mut counts[ref_index], false);
+            }
+        }
+    }
+
+    if any_neighbour {
+        for &mv_ref in mv_ref_search.iter().take(MVREF_NEIGHBOURS) {
+            let Some(candidate_mi) = neighbours.get(mv_ref) else {
+                continue;
+            };
+            if !is_inter_block(candidate_mi) {
+                continue;
+            }
+            for (ref_index, &ref_frame) in REFS.iter().enumerate() {
+                if counts[ref_index] == MAX_MV_REF_CANDIDATES {
+                    continue;
+                }
+                let r0 = candidate_ref(candidate_mi, 0);
+                if r0 != ref_frame
+                    && add_mv_ref_list_eb(
+                        scale_mv(r0, ref_frame, sign_bias, candidate_mv(candidate_mi, 0)),
+                        &mut lists[ref_index],
+                        &mut counts[ref_index],
+                        false,
+                    )
+                {
+                    continue;
+                }
+                if has_second_ref(candidate_mi) {
+                    let r1 = candidate_ref(candidate_mi, 1);
+                    let mv0 = candidate_mv(candidate_mi, 0);
+                    let mv1 = candidate_mv(candidate_mi, 1);
+                    if r1 != ref_frame && mv1 != mv0 {
+                        add_mv_ref_list_eb(
+                            scale_mv(r1, ref_frame, sign_bias, mv1),
+                            &mut lists[ref_index],
+                            &mut counts[ref_index],
+                            false,
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    if let Some(prev) = prev_frame_mv {
+        for (ref_index, &ref_frame) in REFS.iter().enumerate() {
+            if counts[ref_index] == MAX_MV_REF_CANDIDATES {
+                continue;
+            }
+            if prev.ref_frames[0] != ref_frame && prev.ref_frames[0].is_inter() {
+                add_mv_ref_list_eb(
+                    scale_mv(prev.ref_frames[0], ref_frame, sign_bias, prev.mvs[0]),
+                    &mut lists[ref_index],
+                    &mut counts[ref_index],
+                    false,
+                );
+            }
+            if counts[ref_index] < MAX_MV_REF_CANDIDATES
+                && prev.ref_frames[1].is_inter()
+                && prev.ref_frames[1] != ref_frame
+                && prev.mvs[1] != prev.mvs[0]
+            {
+                add_mv_ref_list_eb(
+                    scale_mv(prev.ref_frames[1], ref_frame, sign_bias, prev.mvs[1]),
+                    &mut lists[ref_index],
+                    &mut counts[ref_index],
+                    false,
+                );
+            }
+        }
+    }
+
+    core::array::from_fn(|ref_index| {
+        let list = finish(
+            lists[ref_index],
+            counts[ref_index],
+            InterMode::NearMv,
+            bounds,
+        );
+        let (nearest, near) = find_best_ref_mvs(&list, allow_hp);
+        RealtimeRefMvs {
+            nearest,
+            near,
+            const_motion: const_motion[ref_index],
+        }
+    })
+}
+
 /// Sub-8 driver. Mirrors libvpx `append_sub8x8_mvs_for_idx`
 /// (`vp9_decodemv.c:609-668`). For sub-8 partitions, each 4×4 sub-
 /// block (`j ∈ {0..3}`) gets its own "best sub-8 ref MV" derived
@@ -1209,6 +1383,84 @@ mod tests {
         assert_equivalent(&different_ref_neighbours, None);
         assert_equivalent(&empty_neighbours, Some(previous));
         assert_equivalent(&empty_neighbours, None);
+    }
+
+    #[test]
+    fn paired_last_golden_walk_matches_four_independent_queries() {
+        let above = inter_mi_compound(
+            BlockSize::Block16x16,
+            [RefFrame::LastFrame, RefFrame::GoldenFrame],
+            [Mv { row: 13, col: -7 }, Mv { row: -5, col: 17 }],
+        );
+        let left = inter_mi(
+            BlockSize::Block16x16,
+            RefFrame::GoldenFrame,
+            Mv { row: 21, col: 9 },
+        );
+        let diagonal = inter_mi(
+            BlockSize::Block16x16,
+            RefFrame::LastFrame,
+            Mv { row: -19, col: 23 },
+        );
+        let intra = intra_mi(BlockSize::Block16x16);
+        let altref = inter_mi(
+            BlockSize::Block16x16,
+            RefFrame::AltrefFrame,
+            Mv { row: 25, col: -29 },
+        );
+        let neighbours = ListNeighbours::new()
+            .with(Position { row: -1, col: 0 }, &above)
+            .with(Position { row: 0, col: -1 }, &left)
+            .with(Position { row: -1, col: 1 }, &diagonal)
+            .with(Position { row: 1, col: -1 }, &intra);
+        let different_ref = ListNeighbours::new().with(Position { row: -1, col: 0 }, &altref);
+        let empty = ListNeighbours::new();
+        let previous = PrevFrameMvRef {
+            mvs: [Mv { row: 27, col: -31 }, Mv { row: -11, col: 15 }],
+            ref_frames: [RefFrame::GoldenFrame, RefFrame::LastFrame],
+        };
+        let bounds = loose_bounds();
+        let mut sign_bias = [false; 4];
+        sign_bias[RefFrame::GoldenFrame as usize] = true;
+
+        let assert_equivalent =
+            |lookup: &ListNeighbours<'_>, prev_frame_mv: Option<PrevFrameMvRef>| {
+                for allow_hp in [false, true] {
+                    let paired = find_last_golden_nearest_near_mvs(
+                        BlockSize::Block16x16,
+                        lookup,
+                        &sign_bias,
+                        &bounds,
+                        prev_frame_mv,
+                        allow_hp,
+                    );
+                    for (index, ref_frame) in [RefFrame::LastFrame, RefFrame::GoldenFrame]
+                        .into_iter()
+                        .enumerate()
+                    {
+                        let (nearest, near) = find_nearest_near_mvs(
+                            BlockSize::Block16x16,
+                            ref_frame,
+                            lookup,
+                            &sign_bias,
+                            &bounds,
+                            prev_frame_mv,
+                            allow_hp,
+                        );
+                        assert_eq!(paired[index].nearest, nearest);
+                        assert_eq!(paired[index].near, near);
+                        assert_eq!(
+                            paired[index].const_motion,
+                            mv_refs_rt_const_motion(BlockSize::Block16x16, ref_frame, lookup,),
+                        );
+                    }
+                }
+            };
+
+        assert_equivalent(&neighbours, Some(previous));
+        assert_equivalent(&different_ref, None);
+        assert_equivalent(&empty, Some(previous));
+        assert_equivalent(&empty, None);
     }
 
     /// Sign-bias mismatch: candidate's ref has opposite sign bias

@@ -3397,7 +3397,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     use rvp9_core::cost::symbol_costs::{
         inter_mode_costs, partition_costs, switchable_interp_costs,
     };
-    use rvp9_core::inter::mv_ref::{BlockBounds, find_nearest_near_mvs};
+    use rvp9_core::inter::mv_ref::{
+        BlockBounds, find_last_golden_nearest_near_mvs, find_nearest_near_mvs,
+    };
     use rvp9_core::inter::{get_mode_context, get_pred_context_switchable_interp};
     use rvp9_core::mode_decision::inter::{
         InterModeSearchParams, MvCandidates, PickInterModeParams, pick_inter_mode,
@@ -5473,6 +5475,22 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 // through to the pre-A18 spatial-only behaviour.
                 let leaf_prev_mv: Option<PrevFrameMvRef> = prev_mv_grid
                     .and_then(|g| g.get(leaf_mi_row * mi_cols_us + leaf_mi_col).copied());
+                let [last_ref_mvs, golden_ref_mvs] = find_last_golden_nearest_near_mvs(
+                    leaf_bsize,
+                    &neighbours,
+                    &sign_bias,
+                    &bounds,
+                    leaf_prev_mv,
+                    allow_hp,
+                );
+                let mvc = MvCandidates {
+                    nearest: last_ref_mvs.nearest,
+                    near: last_ref_mvs.near,
+                };
+                let mvc_golden = MvCandidates {
+                    nearest: golden_ref_mvs.nearest,
+                    near: golden_ref_mvs.near,
+                };
                 let build_mvc = |ref_frame: RefFrame| -> MvCandidates {
                     // One complete NEARMV walk returns the same first
                     // candidate as NEWMV's early-break walk plus the second
@@ -5488,14 +5506,6 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     );
                     MvCandidates { nearest, near }
                 };
-                let mvc = build_mvc(RefFrame::LastFrame);
-                // A15 Phase B Step 3 — GOLDEN candidates feed the
-                // second picker invocation below. The encoder iterates
-                // {LAST, GOLDEN} × {ZERO, NEAREST, NEAR, NEW} = 8
-                // candidates by calling `pick_inter_mode_luma` once
-                // per ref frame and taking the min-RD winner across
-                // both rankings.
-                let mvc_golden = build_mvc(RefFrame::GoldenFrame);
                 // W-ALTREF — ALTREF MV candidates. `build_mvc` is
                 // ref-agnostic; the `sign_bias[ALTREF]` flip (set above
                 // when ALTREF is live) is applied inside `find_mv_refs`.
@@ -5648,16 +5658,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 // first 2 spatial neighbours don't yield 2 distinct
                 // same-ref MVs; the picker uses it to skip NEARMV
                 // (`vp9_pickmode.c:2166`).
-                let last_const_motion = rvp9_core::inter::mv_refs_rt_const_motion(
-                    leaf_bsize,
-                    RefFrame::LastFrame,
-                    &neighbours,
-                );
-                let golden_const_motion = rvp9_core::inter::mv_refs_rt_const_motion(
-                    leaf_bsize,
-                    RefFrame::GoldenFrame,
-                    &neighbours,
-                );
+                let last_const_motion = last_ref_mvs.const_motion;
+                let golden_const_motion = golden_ref_mvs.const_motion;
 
                 // P13 — extract neighbour MVs for vp9_NEWMV_diff_bias.
                 // Mirrors libvpx `xd->above_mi->mv[0]` /
