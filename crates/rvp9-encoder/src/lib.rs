@@ -3885,7 +3885,6 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     };
 
     debug_assert_eq!(out_mv_grid.len(), mi_rows_us * mi_cols_us);
-    out_mv_grid.fill(PrevFrameMvRef::default());
 
     for sb_row in 0..sb_rows {
         for sb_col in 0..sb_cols {
