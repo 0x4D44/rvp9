@@ -6909,23 +6909,24 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                 } else {
                                     None
                                 };
-                                let (qcoeff_i32, eob_usize) =
-                                    with_inter_emit_residual_scratch(residual_len, |residual| {
+                                let (qcoeff_i32, eob_usize) = with_inter_emit_residual_scratch(
+                                    residual_len,
+                                    |residual| {
                                         let emit_residual_start = if emit_profile_enabled {
                                             Some(std::time::Instant::now())
                                         } else {
                                             None
                                         };
                                         #[cfg(target_arch = "aarch64")]
-                                        if matches!(tx_side, 8 | 16 | 32) {
-                                            rvp9_core::dsp::aarch64::subtract_square_neon(
+                                        let residual_nonzero = if matches!(tx_side, 8 | 16 | 32) {
+                                            rvp9_core::dsp::aarch64::subtract_square_neon_with_nonzero(
                                                 &input_plane[dst_off..],
                                                 plane_stride,
                                                 &recon_plane[dst_off..],
                                                 plane_stride,
                                                 residual,
                                                 tx_side,
-                                            );
+                                            )
                                         } else {
                                             for r in 0..tx_side {
                                                 for c in 0..tx_side {
@@ -6936,16 +6937,23 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                                         - recon_plane[off] as i16;
                                                 }
                                             }
-                                        }
+                                            residual.iter().any(|&value| value != 0)
+                                        };
                                         #[cfg(not(target_arch = "aarch64"))]
-                                        for r in 0..tx_side {
-                                            for c in 0..tx_side {
-                                                let off =
-                                                    (tx_px_y + r) * plane_stride + (tx_px_x + c);
-                                                residual[r * tx_side + c] = input_plane[off] as i16
-                                                    - recon_plane[off] as i16;
+                                        let residual_nonzero = {
+                                            let mut nonzero = false;
+                                            for r in 0..tx_side {
+                                                for c in 0..tx_side {
+                                                    let off = (tx_px_y + r) * plane_stride
+                                                        + (tx_px_x + c);
+                                                    let value = input_plane[off] as i16
+                                                        - recon_plane[off] as i16;
+                                                    residual[r * tx_side + c] = value;
+                                                    nonzero |= value != 0;
+                                                }
                                             }
-                                        }
+                                            nonzero
+                                        };
                                         if let Some(t0) = emit_residual_start {
                                             emit_profile_residual_time += t0.elapsed();
                                         }
@@ -6971,6 +6979,15 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                                 plane_w,
                                                 plane_h,
                                             );
+                                        }
+
+                                        // A pixel-exact prediction has an
+                                        // identically zero transform and
+                                        // quantized coefficient block. The
+                                        // coefficient source represents that
+                                        // case with its existing empty marker.
+                                        if !residual_nonzero {
+                                            return (Vec::new(), 0);
                                         }
 
                                         // RVP9_TRELLIS — inter emit path.
@@ -7015,7 +7032,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                                 (qcoeff_i32, eob)
                                             },
                                         )
-                                    });
+                                    },
+                                );
                                 if emit_profile_enabled {
                                     emit_profile_eob_sum += eob_usize;
                                     if eob_usize > 0 {
