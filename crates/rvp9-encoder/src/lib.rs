@@ -3656,9 +3656,29 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // picker-driven leaves overwrite their region via the per-TX
     // IT-add. Mirrors the decoder's "MC writes into dst, then residual
     // IT-add applies on top" sequence.
-    recon_yuv_out.0.copy_from_slice(last_recon_yuv.0);
-    recon_yuv_out.1.copy_from_slice(last_recon_yuv.1);
-    recon_yuv_out.2.copy_from_slice(last_recon_yuv.2);
+    if let Some(tile_col) = active_tile_col {
+        let bounds = column_tile_bounds(h / 8, w / 8, log2_tile_cols)[tile_col];
+        let y_col_start = bounds.mi_col_start * 8;
+        let y_col_end = bounds.mi_col_end * 8;
+        for row in 0..h {
+            let start = row * w + y_col_start;
+            let end = row * w + y_col_end;
+            recon_yuv_out.0[start..end].copy_from_slice(&last_recon_yuv.0[start..end]);
+        }
+        let uv_width = w / 2;
+        let uv_col_start = bounds.mi_col_start * 4;
+        let uv_col_end = bounds.mi_col_end * 4;
+        for row in 0..h / 2 {
+            let start = row * uv_width + uv_col_start;
+            let end = row * uv_width + uv_col_end;
+            recon_yuv_out.1[start..end].copy_from_slice(&last_recon_yuv.1[start..end]);
+            recon_yuv_out.2[start..end].copy_from_slice(&last_recon_yuv.2[start..end]);
+        }
+    } else {
+        recon_yuv_out.0.copy_from_slice(last_recon_yuv.0);
+        recon_yuv_out.1.copy_from_slice(last_recon_yuv.1);
+        recon_yuv_out.2.copy_from_slice(last_recon_yuv.2);
+    }
 
     // A2.foreman - In-progress mi_grid for spatial MV-ref propagation
     // (H3' fix). The encoder walks leaves in raster order; right after
