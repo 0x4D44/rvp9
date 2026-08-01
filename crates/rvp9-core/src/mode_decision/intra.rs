@@ -6,9 +6,9 @@
 //! `D` is libvpx's transform-coefficient-domain distortion model
 //! (`block_yrd`: `sum((coef - dqcoeff)^2) >> shift`) and `R` is the
 //! mode-coding rate cost in 1/512-bit `vp9_prob_cost` units. The
-//! inverse DCT is still run to produce the reconstruction (callers
-//! depend on the recon for downstream encoding stages), but the
-//! distortion no longer uses post-recon SSE.
+//! picker does not reconstruct candidates because its public result
+//! contains only mode, rate, and transform-domain distortion. The encoder
+//! reconstructs the selected mode in its later emit pass.
 //!
 //! Reference: `vp9/encoder/vp9_pickmode.c:1155-1213` (realtime
 //! `vp9_pick_intra_mode`) and `vp9/encoder/vp9_pickmode.c:718-844`
@@ -25,8 +25,8 @@
 //!   domain distortion `block_yrd` (`(coef - dqcoeff)^2 >> shift`)
 //!   instead of post-recon SSE. The shift table mirrors
 //!   `vp9_rdopt.c:574`: `shift = (tx_size == TX_32X32) ? 0 : 2`. The
-//!   pixel-domain reconstruction is still produced (callers consume
-//!   it).
+//!   Candidate reconstruction is unnecessary for this transform-domain
+//!   argmin and is left to the selected-mode emit pass.
 //! - **No UV-mode pick.** libvpx's `estimate_block_intra` also runs
 //!   over UV planes inside the per-mode loop using `model_rd_for_sb_uv`;
 //!   F8.0 is luma-only. UV-mode search is deferred (the supervisor's
@@ -34,8 +34,7 @@
 //! - **No `skip_txfm[]` flag.** libvpx maintains a per-plane
 //!   skip-transform short-circuit that re-uses the previous block's
 //!   "all coefficients quantized to zero" flag. F8.0 always runs the
-//!   forward/inverse round-trip so the recon is exact even when the
-//!   distortion model is in transform domain.
+//!   forward transform and quantization for every candidate.
 //!
 //! ## Algorithm (F8.0-fix)
 //!
@@ -54,12 +53,8 @@
 //!    tx_size)` — `sum((coef[i] - dqcoeff[i])^2) >> shift`, where
 //!    `shift = (tx_size == Tx32x32) ? 0 : 2` (matches
 //!    `vp9/encoder/vp9_rdopt.c:574`).
-//! 7. Inverse DCT into a `recon` buffer (initialised to `pred`). On
-//!    `eob == 0` we skip the inverse and `recon == pred`. The recon
-//!    is no longer used to score distortion but is still computed so
-//!    callers can consume it.
-//! 8. Look up `R = y_mode_costs[above_ctx][left_ctx][mode]`.
-//! 9. `rd_cost = ROUND_POWER_OF_TWO(R * lambda, 9) + (D << 7)` —
+//! 7. Look up `R = y_mode_costs[above_ctx][left_ctx][mode]`.
+//! 8. `rd_cost = ROUND_POWER_OF_TWO(R * lambda, 9) + (D << 7)` —
 //!    libvpx `RDCOST` macro at `vp9_rd.h:29-30`.
 //!
 //! Keep the mode with minimum `rd_cost`. Returns the winner.
@@ -78,9 +73,6 @@ use crate::quant::forward::{
     PlaneQuantizers, vp9_quantize_b_32x32_with_order, vp9_quantize_b_with_order,
 };
 use crate::transforms::forward::{fdct32x32, fht4x4, fht8x8, fht16x16};
-use crate::transforms::inverse::{
-    idct4x4_16_add, idct8x8_64_add, idct16x16_256_add, idct32x32_1024_add,
-};
 use crate::transforms::scans::scan_for;
 use crate::transforms::{TxSize, TxType};
 
@@ -266,7 +258,6 @@ pub fn pick_intra_mode_luma(params: &IntraModeSearchParams<'_>) -> IntraModeSear
     // Scratch buffers reused across modes — sized for the largest
     // supported TX (32×32 = 1024 coefficients / 1024 pixels).
     let mut pred = [0u8; 32 * 32];
-    let mut recon = [0u8; 32 * 32];
     let mut residual = [0i16; 32 * 32];
     let mut coefs = [0i32; 1024];
     let mut qcoeff = [0i16; 1024];
@@ -384,7 +375,7 @@ pub fn pick_intra_mode_luma(params: &IntraModeSearchParams<'_>) -> IntraModeSear
             *d = 0;
         }
         let dequant_pair = [params.quantizer.dequant[0], params.quantizer.dequant[1]];
-        let eob = if tx_size == TxSize::Tx32x32 {
+        let _eob = if tx_size == TxSize::Tx32x32 {
             vp9_quantize_b_32x32_with_order(
                 &coefs[..1024],
                 false,
@@ -412,10 +403,7 @@ pub fn pick_intra_mode_luma(params: &IntraModeSearchParams<'_>) -> IntraModeSear
                 &scan,
             )
         };
-        let eob_usize = eob as usize;
-
-        // 5. Widen dq to i32 once — used for both the distortion model
-        //    and the inverse transform kernels below.
+        // 5. Widen dq to i32 for the distortion model.
         let dq32 = &mut dq_buf[..n];
         for (i, &v) in dqcoeff[..n].iter().enumerate() {
             dq32[i] = v as i32;
@@ -427,44 +415,10 @@ pub fn pick_intra_mode_luma(params: &IntraModeSearchParams<'_>) -> IntraModeSear
         //    forward quant).
         let (dist, _skippable) = block_yrd_distortion(&coefs[..n], dq32, n, tx_size);
 
-        // 7. Reconstruct: recon = pred + idct(dq). Initialise recon to
-        //    pred, then add the dequantized residual via the matching
-        //    inverse kernel. When eob == 0 the kernel writes nothing,
-        //    so recon stays at pred (libvpx's fast-skip). The recon is
-        //    kept for downstream consumers (e.g. UV-mode search) — the
-        //    distortion above no longer reads it.
-        let recon_slice = &mut recon[..tx_side * tx_side];
-        recon_slice.copy_from_slice(&pred[..tx_side * tx_side]);
-        if eob_usize > 0 {
-            match tx_size {
-                TxSize::Tx4x4 => {
-                    let mut buf = [0i32; 16];
-                    buf.copy_from_slice(&dq32[..16]);
-                    idct4x4_16_add(&buf, recon_slice, tx_side);
-                }
-                TxSize::Tx8x8 => {
-                    let mut buf = [0i32; 64];
-                    buf.copy_from_slice(&dq32[..64]);
-                    // TODO(G4.2): route through SimdDispatch::idct8x8_add() once mode_decision threads &SimdDispatch.
-                    idct8x8_64_add(&buf, recon_slice, tx_side);
-                }
-                TxSize::Tx16x16 => {
-                    let mut buf = [0i32; 256];
-                    buf.copy_from_slice(&dq32[..256]);
-                    idct16x16_256_add(&buf, recon_slice, tx_side);
-                }
-                TxSize::Tx32x32 => {
-                    let mut buf = [0i32; 1024];
-                    buf.copy_from_slice(&dq32[..1024]);
-                    idct32x32_1024_add(&buf, recon_slice, tx_side);
-                }
-            }
-        }
-
-        // 8. Rate = mode-coding cost.
+        // 7. Rate = mode-coding cost.
         let rate = mode_cost_row[raw_mode as usize].max(0) as u32;
 
-        // 9. RD cost.
+        // 8. RD cost.
         let this_rd = rd_cost(lambda, rate, u64::from(dist));
 
         if this_rd < best.best_rd_cost {
@@ -849,6 +803,9 @@ mod tests {
     use super::*;
     use crate::cost::intra_y_mode_costs_kf_table;
     use crate::quant::forward::{QuantizerDeltas, init_plane_quantizers};
+    use crate::transforms::inverse::{
+        idct4x4_16_add, idct8x8_64_add, idct16x16_256_add, idct32x32_1024_add,
+    };
 
     /// Build a `bs x bs` constant-grey luma block at (0, 0).
     fn make_flat_src(bs: usize, value: u8) -> Vec<u8> {
