@@ -3118,176 +3118,176 @@ impl StreamEncoder {
         }
 
         let tile_count = 1usize << log2_tile_cols;
-        let (coef_source, recorded_coef_tiles, mi_grid) =
-            if tile_count > 1 && self.parallelism.max_threads > 1 {
-                // Tile-MT: execute independent full-height column jobs on the
-                // stream-owned worker pool. Each job owns every mutable object
-                // it touches. Results are collected and merged in column order,
-                // so scheduling cannot affect the packet or persistent encoder
-                // state.
-                let initial_partitions = &sb_partitions;
-                let initial_rd_tables = self.rd_thresh_tables.clone();
-                let initial_history = std::env::var_os("RVP9_EXACT_VBP_TREE")
-                    .is_some_and(|value| value != "0")
-                    .then(|| self.vbp_partition_history.clone());
-                let mut merged_coefs = VecBackedInterCoefSource::new(w, h);
-                let s2_frame_gate = rvp9_core::mode_decision::inter::frame_s2_gate();
-                let mut result_slots: Vec<Option<InterTileJobResult>> =
-                    (0..tile_count).map(|_| None).collect();
-                let tile_scratch = &mut self.inter_tile_scratch;
-                self.frame_worker_pool
-                    .as_mut()
-                    .expect("parallel tile picking requires the frame worker pool")
-                    .scope(|scope| {
-                        for (tile_col, (result_slot, scratch)) in result_slots
-                            .iter_mut()
-                            .zip(tile_scratch.iter_mut())
-                            .enumerate()
-                        {
-                            let bounds = tile_bounds(
-                                mi_rows_us,
-                                mi_cols_us,
-                                0,
-                                log2_tile_cols,
-                                0,
-                                tile_col as u32,
+        let (coef_source, recorded_coef_tiles, mi_grid) = if tile_count > 1
+            && self.parallelism.max_threads > 1
+        {
+            // Tile-MT: execute independent full-height column jobs on the
+            // stream-owned worker pool. Each job owns every mutable object
+            // it touches. Results are collected and merged in column order,
+            // so scheduling cannot affect the packet or persistent encoder
+            // state.
+            let initial_partitions = &sb_partitions;
+            let initial_rd_tables = self.rd_thresh_tables.clone();
+            let initial_history = std::env::var_os("RVP9_EXACT_VBP_TREE")
+                .is_some_and(|value| value != "0")
+                .then(|| self.vbp_partition_history.clone());
+            let mut merged_coefs = VecBackedInterCoefSource::new(w, h);
+            let s2_frame_gate = rvp9_core::mode_decision::inter::frame_s2_gate();
+            let mut result_slots: Vec<Option<InterTileJobResult>> =
+                (0..tile_count).map(|_| None).collect();
+            let tile_scratch = &mut self.inter_tile_scratch;
+            self.frame_worker_pool
+                .as_mut()
+                .expect("parallel tile picking requires the frame worker pool")
+                .scope(|scope| {
+                    for (tile_col, (result_slot, scratch)) in result_slots
+                        .iter_mut()
+                        .zip(tile_scratch.iter_mut())
+                        .enumerate()
+                    {
+                        let bounds = tile_bounds(
+                            mi_rows_us,
+                            mi_cols_us,
+                            0,
+                            log2_tile_cols,
+                            0,
+                            tile_col as u32,
+                        );
+                        let sb_col_start = bounds.mi_col_start / 8;
+                        let sb_col_end = bounds.mi_col_end / 8;
+                        let mut tile_partitions: Vec<Vec<InterPartitionLeafDesc>> =
+                            (0..initial_partitions.len()).map(|_| Vec::new()).collect();
+                        for sb_row in 0..h as usize / 64 {
+                            for sb_col in sb_col_start..sb_col_end {
+                                let sb_idx = sb_row * sb_cols + sb_col;
+                                tile_partitions[sb_idx] = initial_partitions[sb_idx].clone();
+                            }
+                        }
+                        let mut tile_rd_tables = initial_rd_tables.clone();
+                        let mut tile_history = initial_history.clone();
+                        scope.submit(move || {
+                            rvp9_core::mode_decision::inter::set_frame_s2_gate(s2_frame_gate);
+                            let mut tile_split_stats = NonRdSplitStats::default();
+                            let tile_encode = run_inter_picker!(
+                                &mut scratch.recon_y,
+                                &mut scratch.recon_u,
+                                &mut scratch.recon_v,
+                                &mut tile_partitions,
+                                &mut scratch.mv_grid,
+                                &mut tile_rd_tables,
+                                tile_history.as_deref_mut(),
+                                &mut tile_split_stats,
+                                true,
+                                Some(tile_col)
                             );
-                            let sb_col_start = bounds.mi_col_start / 8;
-                            let sb_col_end = bounds.mi_col_end / 8;
-                            let mut tile_partitions: Vec<Vec<InterPartitionLeafDesc>> =
-                                (0..initial_partitions.len()).map(|_| Vec::new()).collect();
-                            for sb_row in 0..h as usize / 64 {
-                                for sb_col in sb_col_start..sb_col_end {
-                                    let sb_idx = sb_row * sb_cols + sb_col;
-                                    tile_partitions[sb_idx] = initial_partitions[sb_idx].clone();
-                                }
-                            }
-                            let mut tile_rd_tables = initial_rd_tables.clone();
-                            let mut tile_history = initial_history.clone();
-                            scope.submit(move || {
-                                rvp9_core::mode_decision::inter::set_frame_s2_gate(s2_frame_gate);
-                                let mut tile_split_stats = NonRdSplitStats::default();
-                                let tile_encode = run_inter_picker!(
-                                    &mut scratch.recon_y,
-                                    &mut scratch.recon_u,
-                                    &mut scratch.recon_v,
-                                    &mut tile_partitions,
-                                    &mut scratch.mv_grid,
-                                    &mut tile_rd_tables,
-                                    tile_history.as_deref_mut(),
-                                    &mut tile_split_stats,
-                                    true,
-                                    Some(tile_col)
-                                );
-                                let recorded_coef_tile = tile_encode
-                                    .recorded_coef_tile
-                                    .expect("one coefficient-token result per tile job");
-                                let result = InterTileJobResult {
-                                    tile_col,
-                                    partitions: tile_partitions,
-                                    rd_tables: tile_rd_tables,
-                                    history: tile_history,
-                                    split_stats: tile_split_stats,
-                                    coefs: tile_encode.coefs,
-                                    recorded_coef_tile,
-                                    mi_grid: tile_encode.mi_grid,
-                                };
-                                *result_slot = Some(result);
-                            });
-                        }
-                    });
-                let tile_results: Vec<InterTileJobResult> = result_slots
-                    .into_iter()
-                    .enumerate()
-                    .map(|(tile_col, result_slot)| {
-                        result_slot
-                            .unwrap_or_else(|| panic!("inter tile {tile_col} produced no result"))
-                    })
-                    .collect();
+                            let recorded_coef_tile = tile_encode
+                                .recorded_coef_tile
+                                .expect("one coefficient-token result per tile job");
+                            let result = InterTileJobResult {
+                                tile_col,
+                                partitions: tile_partitions,
+                                rd_tables: tile_rd_tables,
+                                history: tile_history,
+                                split_stats: tile_split_stats,
+                                coefs: tile_encode.coefs,
+                                recorded_coef_tile,
+                                mi_grid: tile_encode.mi_grid,
+                            };
+                            *result_slot = Some(result);
+                        });
+                    }
+                });
+            let tile_results: Vec<InterTileJobResult> = result_slots
+                .into_iter()
+                .enumerate()
+                .map(|(tile_col, result_slot)| {
+                    result_slot
+                        .unwrap_or_else(|| panic!("inter tile {tile_col} produced no result"))
+                })
+                .collect();
 
-                let mut recorded_coef_tiles = Vec::with_capacity(tile_count);
-                // Tile grids cover disjoint, ordered column spans. Append one
-                // row span from each tile rather than first filling a full
-                // frame with `None` and immediately overwriting every cell.
-                let mut merged_mi_grid = Vec::with_capacity(mi_rows_us * mi_cols_us);
-                for row in 0..mi_rows_us {
-                    let mut expected_col_start = 0usize;
-                    for result in &tile_results {
-                        debug_assert_eq!(result.mi_grid.mi_col_start, expected_col_start);
-                        let local_start = row * result.mi_grid.mi_cols;
-                        let local_end = local_start + result.mi_grid.mi_cols;
-                        merged_mi_grid
-                            .extend_from_slice(&result.mi_grid.cells[local_start..local_end]);
-                        expected_col_start += result.mi_grid.mi_cols;
-                    }
-                    debug_assert_eq!(expected_col_start, mi_cols_us);
+            let mut recorded_coef_tiles = Vec::with_capacity(tile_count);
+            // Tile grids cover disjoint, ordered column spans. Append one
+            // row span from each tile rather than first filling a full
+            // frame with `None` and immediately overwriting every cell.
+            let mut merged_mi_grid = Vec::with_capacity(mi_rows_us * mi_cols_us);
+            for row in 0..mi_rows_us {
+                let mut expected_col_start = 0usize;
+                for result in &tile_results {
+                    debug_assert_eq!(result.mi_grid.mi_col_start, expected_col_start);
+                    let local_start = row * result.mi_grid.mi_cols;
+                    let local_end = local_start + result.mi_grid.mi_cols;
+                    merged_mi_grid.extend_from_slice(&result.mi_grid.cells[local_start..local_end]);
+                    expected_col_start += result.mi_grid.mi_cols;
                 }
-                debug_assert_eq!(merged_mi_grid.len(), mi_rows_us * mi_cols_us);
-                for result in tile_results {
-                    let tile_col = result.tile_col;
-                    let scratch = &self.inter_tile_scratch[tile_col];
-                    let bounds = tile_bounds(
-                        mi_rows_us,
-                        mi_cols_us,
-                        0,
-                        log2_tile_cols,
-                        0,
-                        tile_col as u32,
-                    );
-                    let sb_col_start = bounds.mi_col_start / 8;
-                    let sb_col_end = bounds.mi_col_end / 8;
-                    for sb_row in 0..h as usize / 64 {
-                        for sb_col in sb_col_start..sb_col_end {
-                            let sb_idx = sb_row * (w as usize / 64) + sb_col;
-                            sb_partitions[sb_idx] = result.partitions[sb_idx].clone();
-                            if let Some(history) = &result.history {
-                                self.vbp_partition_history[sb_idx] = history[sb_idx].clone();
-                            }
+                debug_assert_eq!(expected_col_start, mi_cols_us);
+            }
+            debug_assert_eq!(merged_mi_grid.len(), mi_rows_us * mi_cols_us);
+            for result in tile_results {
+                let tile_col = result.tile_col;
+                let scratch = &self.inter_tile_scratch[tile_col];
+                let bounds = tile_bounds(
+                    mi_rows_us,
+                    mi_cols_us,
+                    0,
+                    log2_tile_cols,
+                    0,
+                    tile_col as u32,
+                );
+                let sb_col_start = bounds.mi_col_start / 8;
+                let sb_col_end = bounds.mi_col_end / 8;
+                for sb_row in 0..h as usize / 64 {
+                    for sb_col in sb_col_start..sb_col_end {
+                        let sb_idx = sb_row * (w as usize / 64) + sb_col;
+                        sb_partitions[sb_idx] = result.partitions[sb_idx].clone();
+                        if let Some(history) = &result.history {
+                            self.vbp_partition_history[sb_idx] = history[sb_idx].clone();
                         }
                     }
-                    for row in 0..h as usize {
-                        let start = row * w as usize + bounds.mi_col_start * 8;
-                        let end = row * w as usize + bounds.mi_col_end * 8;
-                        new_recon_y[start..end].copy_from_slice(&scratch.recon_y[start..end]);
-                    }
-                    let uv_width = w as usize / 2;
-                    let uv_col_start = bounds.mi_col_start * 4;
-                    let uv_col_end = bounds.mi_col_end * 4;
-                    for row in 0..h as usize / 2 {
-                        let start = row * uv_width + uv_col_start;
-                        let end = row * uv_width + uv_col_end;
-                        new_recon_u[start..end].copy_from_slice(&scratch.recon_u[start..end]);
-                        new_recon_v[start..end].copy_from_slice(&scratch.recon_v[start..end]);
-                    }
-                    for row in 0..mi_rows_us {
-                        let start = row * mi_cols_us + bounds.mi_col_start;
-                        let end = row * mi_cols_us + bounds.mi_col_end;
-                        cur_mv_grid[start..end].copy_from_slice(&scratch.mv_grid[start..end]);
-                    }
-                    self.rd_thresh_tables[tile_col] = result.rd_tables[tile_col].clone();
-                    stage4a_frame_split_stats.accumulate(&result.split_stats);
-                    merged_coefs.merge_from(result.coefs);
-                    recorded_coef_tiles.push(result.recorded_coef_tile);
                 }
-                (merged_coefs, recorded_coef_tiles, merged_mi_grid)
-            } else {
-                let encoded = run_inter_picker!(
-                    &mut new_recon_y,
-                    &mut new_recon_u,
-                    &mut new_recon_v,
-                    &mut sb_partitions,
-                    &mut cur_mv_grid,
-                    &mut self.rd_thresh_tables,
-                    Some(&mut self.vbp_partition_history),
-                    &mut stage4a_frame_split_stats,
-                    false,
-                    None
-                );
-                debug_assert!(encoded.recorded_coef_tile.is_none());
-                debug_assert_eq!(encoded.mi_grid.mi_col_start, 0);
-                debug_assert_eq!(encoded.mi_grid.mi_cols, mi_cols_us);
-                (encoded.coefs, Vec::new(), encoded.mi_grid.cells)
-            };
+                for row in 0..h as usize {
+                    let start = row * w as usize + bounds.mi_col_start * 8;
+                    let end = row * w as usize + bounds.mi_col_end * 8;
+                    new_recon_y[start..end].copy_from_slice(&scratch.recon_y[start..end]);
+                }
+                let uv_width = w as usize / 2;
+                let uv_col_start = bounds.mi_col_start * 4;
+                let uv_col_end = bounds.mi_col_end * 4;
+                for row in 0..h as usize / 2 {
+                    let start = row * uv_width + uv_col_start;
+                    let end = row * uv_width + uv_col_end;
+                    new_recon_u[start..end].copy_from_slice(&scratch.recon_u[start..end]);
+                    new_recon_v[start..end].copy_from_slice(&scratch.recon_v[start..end]);
+                }
+                for row in 0..mi_rows_us {
+                    let start = row * mi_cols_us + bounds.mi_col_start;
+                    let end = row * mi_cols_us + bounds.mi_col_end;
+                    cur_mv_grid[start..end].copy_from_slice(&scratch.mv_grid[start..end]);
+                }
+                self.rd_thresh_tables[tile_col] = result.rd_tables[tile_col].clone();
+                stage4a_frame_split_stats.accumulate(&result.split_stats);
+                merged_coefs.merge_from(result.coefs);
+                recorded_coef_tiles.push(result.recorded_coef_tile);
+            }
+            (merged_coefs, recorded_coef_tiles, merged_mi_grid)
+        } else {
+            let encoded = run_inter_picker!(
+                &mut new_recon_y,
+                &mut new_recon_u,
+                &mut new_recon_v,
+                &mut sb_partitions,
+                &mut cur_mv_grid,
+                &mut self.rd_thresh_tables,
+                Some(&mut self.vbp_partition_history),
+                &mut stage4a_frame_split_stats,
+                false,
+                None
+            );
+            debug_assert!(encoded.recorded_coef_tile.is_none());
+            debug_assert_eq!(encoded.mi_grid.mi_col_start, 0);
+            debug_assert_eq!(encoded.mi_grid.mi_cols, mi_cols_us);
+            (encoded.coefs, Vec::new(), encoded.mi_grid.cells)
+        };
         self.stage4a_split_stats
             .accumulate(&stage4a_frame_split_stats);
 
