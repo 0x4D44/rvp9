@@ -6812,7 +6812,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                 } else {
                                     None
                                 };
-                                let (qcoeff_i32, dqcoeff_i32, eob_usize) =
+                                let (qcoeff_i32, eob_usize) =
                                     with_inter_emit_residual_scratch(residual_len, |residual| {
                                         let emit_residual_start = if emit_profile_enabled {
                                             Some(std::time::Instant::now())
@@ -6883,7 +6883,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                         } else {
                                             None
                                         };
-                                        let result = inter_forward_quant_one_tx(
+                                        with_inter_forward_quant_one_tx(
                                             residual,
                                             tx_side,
                                             plane_tx,
@@ -6891,40 +6891,39 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                             usize::from(plane != 0),
                                             trellis_ctx,
                                             rt_quant_fp,
-                                        );
-                                        if let Some(t0) = emit_quant_start {
-                                            emit_profile_quant_time += t0.elapsed();
-                                        }
-                                        result
+                                            |qcoeff, dqcoeff, eob| {
+                                                if let Some(t0) = emit_quant_start {
+                                                    emit_profile_quant_time += t0.elapsed();
+                                                }
+                                                let emit_inverse_start =
+                                                    if emit_profile_enabled && eob > 0 {
+                                                        Some(std::time::Instant::now())
+                                                    } else {
+                                                        None
+                                                    };
+                                                if eob > 0 {
+                                                    inter_inverse_dct_add(
+                                                        plane_tx,
+                                                        dqcoeff,
+                                                        eob,
+                                                        &mut recon_plane[dst_off..],
+                                                        plane_stride,
+                                                    );
+                                                }
+                                                if let Some(t0) = emit_inverse_start {
+                                                    emit_profile_inverse_time += t0.elapsed();
+                                                }
+                                                let qcoeff_i32 =
+                                                    qcoeff.iter().copied().map(i32::from).collect();
+                                                (qcoeff_i32, eob)
+                                            },
+                                        )
                                     });
                                 if emit_profile_enabled {
                                     emit_profile_eob_sum += eob_usize;
                                     if eob_usize > 0 {
                                         emit_profile_nonzero_tx_blocks += 1;
                                     }
-                                }
-
-                                // Inverse-DCT-add into recon (the encoder's
-                                // bit-exact mirror of the decoder's
-                                // `inverse_transform_add_dct`). Skip when
-                                // eob == 0 — matches the decoder's
-                                // `if eob > 0` guard.
-                                let emit_inverse_start = if emit_profile_enabled && eob_usize > 0 {
-                                    Some(std::time::Instant::now())
-                                } else {
-                                    None
-                                };
-                                if eob_usize > 0 {
-                                    inter_inverse_dct_add(
-                                        plane_tx,
-                                        &dqcoeff_i32,
-                                        eob_usize,
-                                        &mut recon_plane[dst_off..],
-                                        plane_stride,
-                                    );
-                                }
-                                if let Some(t0) = emit_inverse_start {
-                                    emit_profile_inverse_time += t0.elapsed();
                                 }
 
                                 let emit_coef_insert_start = if emit_profile_enabled {
@@ -7871,7 +7870,8 @@ struct TrellisCtx<'a> {
 /// `vp9_optimize_b` on the post-quant coefficients before they are
 /// returned (so both the serialised qcoeff AND the recon-driving dqcoeff
 /// are the trellis-adjusted values).
-fn inter_forward_quant_one_tx(
+#[allow(clippy::too_many_arguments)] // transform/quant inputs plus the scoped output callback
+fn with_inter_forward_quant_one_tx<R>(
     residual: &[i16],
     tx_side: usize,
     plane_tx: TxSize,
@@ -7879,7 +7879,8 @@ fn inter_forward_quant_one_tx(
     plane_type: usize,
     trellis: Option<TrellisCtx<'_>>,
     quant_fp: bool,
-) -> (Vec<i32>, Vec<i32>, usize) {
+    operation: impl FnOnce(&[i16], &[i32], usize) -> R,
+) -> R {
     use rvp9_core::quant::forward::{
         vp9_quantize_b_32x32_with_order, vp9_quantize_b_with_order,
         vp9_quantize_fp_32x32_with_order, vp9_quantize_fp_with_order,
@@ -7976,14 +7977,15 @@ fn inter_forward_quant_one_tx(
             coefs, qcoeff, dqcoeff, eob, plane_tx, &scan, quantizer, plane_type, trellis,
         );
 
-        let eob_usize = eob as usize;
-        if eob_usize == 0 {
-            return (Vec::new(), Vec::new(), 0);
+        let eob = eob as usize;
+        if eob == 0 {
+            return operation(&[], &[], 0);
         }
 
-        let qcoeff_i32 = qcoeff.iter().copied().map(i32::from).collect();
-        let dqcoeff_i32 = dqcoeff.iter().copied().map(i32::from).collect();
-        (qcoeff_i32, dqcoeff_i32, eob_usize)
+        for (output, &value) in scratch.coefs[..n].iter_mut().zip(dqcoeff.iter()) {
+            *output = i32::from(value);
+        }
+        operation(qcoeff, &scratch.coefs[..n], eob)
     })
 }
 
@@ -9058,7 +9060,16 @@ mod tests {
             let residual: Vec<i16> = (0..side * side)
                 .map(|index| ((index as i16 * 13 + salt) & 0xff) - 128)
                 .collect();
-            inter_forward_quant_one_tx(&residual, side, tx_size, &quantizer, 0, None, true)
+            with_inter_forward_quant_one_tx(
+                &residual,
+                side,
+                tx_size,
+                &quantizer,
+                0,
+                None,
+                true,
+                |qcoeff, dqcoeff, eob| (qcoeff.to_vec(), dqcoeff.to_vec(), eob),
+            )
         };
 
         for tx_size in [TxSize::Tx4x4, TxSize::Tx8x8, TxSize::Tx16x16] {
