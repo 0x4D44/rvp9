@@ -443,8 +443,11 @@ fn gop_topology_byte_identity() {
     // adopted libvpx's realtime search level 0. The new bytes reproduced
     // twice, and the sibling schedule oracle still matches every emitted
     // frame.
-    const GOLDEN_HASH: u64 = 0x687e_a82e_0874_da5c;
-    const GOLDEN_LEN: usize = 24730;
+    //
+    // Re-captured after CPU7 stopped NEWMV refinement at quarter-pel, matching
+    // pinned libvpx. The sibling schedule oracle still matches every frame.
+    const GOLDEN_HASH: u64 = 0x0091_ffcf_c8ed_5cad;
+    const GOLDEN_LEN: usize = 24927;
 
     let stream = encode_fixed_clip();
     let hash = fnv1a(&stream);

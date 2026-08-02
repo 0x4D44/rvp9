@@ -346,8 +346,11 @@ fn a10_byte_identity_pre_vs_post_refactor() {
     // Re-captured again (2026-08-02) after CPU7 NEWMV sub-pel refinement
     // adopted libvpx's realtime search level 0. The new bytes reproduced
     // twice, and the sibling decode oracle still accepts all 12 frames.
-    const GOLDEN_HASH: u64 = 0x33db_a19c_48d1_6124;
-    const GOLDEN_LEN: usize = 7075;
+    //
+    // Re-captured after CPU7 stopped NEWMV refinement at quarter-pel, matching
+    // pinned libvpx. The sibling decode oracle still accepts all 12 frames.
+    const GOLDEN_HASH: u64 = 0x8fd6_6b83_e046_f0e4;
+    const GOLDEN_LEN: usize = 7068;
 
     let stream = encode_fixed_clip();
     let hash = fnv1a(&stream);

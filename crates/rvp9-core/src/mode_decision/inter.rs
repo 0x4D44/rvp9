@@ -122,7 +122,7 @@ use crate::mv_search::full_pixel::{
 use crate::mv_search::mv_limits::MvLimits;
 use crate::mv_search::search_site::SearchSiteConfig;
 use crate::mv_search::sub_pixel::{
-    SubPixelSearchParams, adaptive_subpel_force_stop, find_best_sub_pixel_tree,
+    SubPixelForcedStop, SubPixelSearchParams, find_best_sub_pixel_tree,
 };
 use crate::quant::forward::{
     PlaneQuantizers, vp9_quantize_b_32x32_with_order, vp9_quantize_b_with_order,
@@ -2935,6 +2935,9 @@ fn rt_newmv_subpel_iters_override() -> Option<i32> {
 /// (`vp9_speed_features.c:set_rt_speed_feature_framesize_independent`).
 const RT_NEWMV_SUBPEL_SEARCH_LEVEL: i32 = 0;
 
+/// Pinned libvpx stops realtime CPU7 NEWMV refinement at quarter-pel.
+const RT_NEWMV_SUBPEL_FORCE_STOP: SubPixelForcedStop = SubPixelForcedStop::QuarterPel;
+
 /// Run the F7.0 full-pel diamond + sub-pel refinement for NEWMV.
 /// Returns the resulting MV in 1/8-pel units.
 ///
@@ -3113,18 +3116,10 @@ fn run_newmv_search(
         );
     }
 
-    // P14 — adaptive `subpel_force_stop` (libvpx
-    // `vp9_pickmode.c:239-246`). For large full-pel MVs we stop at
-    // 1/2-pel; for zero/small full-pel MVs we refine to 1/4-pel. The
-    // libvpx speed-9 thresholds are reproduced bug-for-bug in
-    // [`adaptive_subpel_force_stop`]. rvp9 locks the rt path to
-    // cpu-used 6-8 and applies the adaptive selector unconditionally
-    // — strictly this is wider than libvpx (which only enables it at
-    // speed 9 via `vp9_speed_features.c:803-806`) but the rvp9 target
-    // is a single rt config, so we follow the rt-leaning behaviour
-    // here. EIGHTH_PEL is no longer reachable for NEWMV; libvpx's
-    // speed-9 setter likewise never selects it for NEWMV.
-    let forced_stop = adaptive_subpel_force_stop(center_mv_fp);
+    // Realtime speed 4+ sets `sf.mv.subpel_force_stop = QUARTER_PEL`.
+    // The adaptive quarter/half-pel selector is enabled only at speed 9,
+    // outside the v1 CPU6-8 scope.
+    let forced_stop = RT_NEWMV_SUBPEL_FORCE_STOP;
     let iters_per_step = rt_newmv_subpel_iters_override()
         .map(|v| v.min(2))
         .unwrap_or(RT_NEWMV_SUBPEL_SEARCH_LEVEL);
@@ -5085,6 +5080,7 @@ mod tests {
     #[test]
     fn realtime_newmv_subpel_level_matches_libvpx_cpu7() {
         assert_eq!(RT_NEWMV_SUBPEL_SEARCH_LEVEL, 0);
+        assert_eq!(RT_NEWMV_SUBPEL_FORCE_STOP, SubPixelForcedStop::QuarterPel);
     }
 
     /// Deterministic chaotic-content plane via xorshift32 so SAD-driven
