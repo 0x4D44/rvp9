@@ -608,8 +608,8 @@ pub fn write_tile_intra_keyframe(
     )
 }
 
-/// [`write_tile_intra_keyframe`] with optional coefficient counts for
-/// the encoder's pre-header probability-update pass.
+/// [`write_tile_intra_keyframe`] with optional frame counts for the
+/// encoder's pre-header coefficient and skip probability-update pass.
 #[allow(clippy::too_many_arguments)]
 pub fn write_tile_intra_keyframe_with_counts(
     bw: &mut BoolWriter<'_>,
@@ -1372,7 +1372,7 @@ fn write_block_intra_keyframe(
     mi: &ModeInfo,
     coef_ctx: &mut TileCoefCtx,
     coef_source: &dyn IntraCoefSource,
-    counts: Option<&mut FrameCounts>,
+    mut counts: Option<&mut FrameCounts>,
 ) -> Result<(), ModesWriterError> {
     // Scope validation — the leaf cell's recorded block_size must
     // match the partition-tree-derived expected subsize at this
@@ -1423,6 +1423,9 @@ fn write_block_intra_keyframe(
     //    decoder reads with `r.read(probs[ctx])` (`mode_info.rs::
     //    read_skip`).
     bw.write(u8::from(mi.skip), fc.skip_probs[skip_ctx]);
+    if let Some(c) = counts.as_deref_mut() {
+        c.skip[skip_ctx][usize::from(mi.skip)] += 1;
+    }
 
     // 2. tx_size. The decoder reads tx_size RIGHT AFTER skip and BEFORE
     //    the Y mode (`rvp9_decoder::tile::decode_block`, read_skip ->

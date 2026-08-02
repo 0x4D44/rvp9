@@ -4386,6 +4386,13 @@ impl StreamEncoder {
         &self.decoder_fc_state.coef_probs
     }
 
+    /// Test-only — the encoder's mirror of the decoder's keyframe-updated
+    /// skip probabilities.
+    #[cfg(test)]
+    pub(crate) fn decoder_fc_state_skip_probs(&self) -> &[u8; 3] {
+        &self.decoder_fc_state.skip_probs
+    }
+
     /// Test-only — the encoder's mirror of the decoder's FC bank 1
     /// state. ARFs route through bank 1; this lets the ARF-specific
     /// proof check the same mirror invariant as the show-frame bank 0
@@ -4961,7 +4968,7 @@ fn build_keyframe_packet_with_tiles(
     let mi_cols = width / 8;
     let mi_grid = build_kf_mi_grid(mi_rows, mi_cols, sb_partitions);
 
-    let post_fc = decoder_fc.clone();
+    let mut post_fc = decoder_fc.clone();
     let opts = CompressedHeaderOptions {
         lossless: false,
         intra_only: true,
@@ -5012,6 +5019,22 @@ fn build_keyframe_packet_with_tiles(
         }
         Ok(())
     })?;
+    for (post, (&old, &counts)) in post_fc
+        .skip_probs
+        .iter_mut()
+        .zip(decoder_fc.skip_probs.iter().zip(count_counts.skip.iter()))
+    {
+        let ideal = rvp9_core::entropy::get_binary_prob(counts[0], counts[1]);
+        let update = crate::bitstream_gates::prob_diff_update_savings_search(
+            counts,
+            old,
+            ideal,
+            rvp9_core::entropy::DIFF_UPDATE_PROB,
+        );
+        if update.savings > 0 {
+            *post = update.best_newp;
+        }
+    }
     let coef_plan = count_counts.coef_full.as_ref().map(|full| {
         crate::bitstream_gates::build_coef_prob_update_plan(
             full,
@@ -8110,7 +8133,7 @@ mod tests {
     /// adapting from the post-header (partial-TWO_LOOP-update) FC drifts
     /// and corrupts the stream by ~frame 4.
     #[test]
-    fn keyframe_emits_live_coef_probability_updates() {
+    fn keyframe_emits_live_coefficient_and_skip_probability_updates() {
         const W: usize = 128;
         const H: usize = 128;
         let mut cfg = EncoderConfig::new(W as u32, H as u32);
@@ -8142,6 +8165,22 @@ mod tests {
         );
         assert!(tail.refresh_frame_context);
         assert!(tail.frame_parallel_decoding_mode);
+
+        let mut dec = Decoder::new();
+        let frames = decode_packet(&mut dec, &pkt.data);
+        for frame in &frames {
+            let _ = dec.decode_frame(frame).expect("decode keyframe");
+        }
+        assert_ne!(
+            enc.decoder_fc_state_skip_probs(),
+            &rvp9_core::entropy::DEFAULT_SKIP_PROBS,
+            "a noisy keyframe must forward-update its skip probabilities"
+        );
+        assert_eq!(
+            enc.decoder_fc_state_skip_probs(),
+            &dec.frame_context(0).skip_probs,
+            "encoder and decoder must retain the same forward-updated skip bank"
+        );
     }
 
     #[test]
