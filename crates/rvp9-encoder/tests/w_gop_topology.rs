@@ -433,8 +433,13 @@ fn gop_topology_byte_identity() {
     // Re-captured again (2026-08-02) after mode decisions started pricing
     // skip syntax from the live frame context. The new bytes reproduced twice,
     // and the sibling schedule oracle still matches every emitted frame.
-    const GOLDEN_HASH: u64 = 0xadec_eb84_4c14_355e;
-    const GOLDEN_LEN: usize = 26981;
+    //
+    // Re-captured again (2026-08-02) after full-pel and sub-pel motion
+    // searches began using libvpx's qindex-derived rate multipliers. The new
+    // bytes reproduced twice, and the sibling schedule oracle still matches
+    // every emitted frame.
+    const GOLDEN_HASH: u64 = 0x049f_1168_56ac_9617;
+    const GOLDEN_LEN: usize = 24397;
 
     let stream = encode_fixed_clip();
     let hash = fnv1a(&stream);

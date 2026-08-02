@@ -86,6 +86,7 @@
 //!    libvpx `RDCOST` macro at `vp9_rd.h:29-30`.
 
 use crate::Pixel;
+use crate::bitstream::BitDepth;
 use crate::bitstream::frame::InterpFilter;
 use crate::bitstream::header::FrameKind;
 use crate::block::{BLOCK_SIZES, BlockSize};
@@ -585,21 +586,25 @@ mod test_gate_override {
 /// so legacy tests keep their previous semantics.
 const F1_DEFAULT_SKIP_CTX: usize = 1;
 
-/// `sad_per_bit` heuristic for full-pel MV search — libvpx's
-/// `sadperbit16` is `2 * x->errorperbit` for the realtime path, where
-/// `errorperbit ≈ rd_mult >> RD_EPB_SHIFT` (`vp9_rd.c:294-302`,
-/// `vp9_rdopt.h:42`). For Path-A v1 we use a simpler constant that
-/// keeps the cost balanced against the SAD magnitudes the diamond
-/// search compares: an empirical small positive integer that lets the
-/// dist-attractor win on shifted-ref input. Tuning lives later.
-const DEFAULT_SAD_PER_BIT: i32 = 16;
+/// Qindex-derived `sadperbit16` for full-pel MV search. Mirrors
+/// libvpx's 8-bit motion-estimation LUT initialization in
+/// `vp9_rd.c:init_me_luts_bd`.
+#[inline]
+fn sad_per_bit_16(q_index: u8) -> i32 {
+    let q = f64::from(crate::quant::ac_quant(
+        i32::from(q_index),
+        0,
+        BitDepth::Eight,
+    )) / 4.0;
+    (0.0418 * q + 2.4107) as i32
+}
 
-/// `error_per_bit` for sub-pel refinement, analogous to
-/// [`DEFAULT_SAD_PER_BIT`] but in the variance domain. libvpx derives
-/// it as `(rd_mult * 1) >> RD_EPB_SHIFT` (`vp9_rd.c:341-345`); we
-/// likewise pin a small constant to ensure sub-pel pulls toward the
-/// minimum-variance position without being drowned out by MV cost.
-const DEFAULT_ERROR_PER_BIT: i32 = 16;
+/// Qindex-derived `errorperbit` for sub-pel refinement. Mirrors
+/// libvpx's `set_error_per_bit` (`vp9_rd.h`) with `RD_EPB_SHIFT = 6`.
+#[inline]
+fn error_per_bit(q_index: u8, frame_kind: FrameKind) -> i32 {
+    (compute_rd_mult(i32::from(q_index), frame_type_for_rd(frame_kind)) >> 6).max(1) as i32
+}
 
 #[inline]
 fn fast_diamond_diagnostic_override() -> Option<bool> {
@@ -3038,7 +3043,7 @@ fn run_newmv_search(
         center_mv: ref_mv,
         start_mv,
         mv_limits: params.mv_limits,
-        sad_per_bit: DEFAULT_SAD_PER_BIT,
+        sad_per_bit: sad_per_bit_16(params.q_index),
         mv_costs: params.mv_costs,
         max_iters,
         site_config: params.site_config,
@@ -3127,7 +3132,7 @@ fn run_newmv_search(
         center_mv: center_mv_fp,
         ref_mv: params.mv_candidates.nearest,
         mv_limits: params.mv_limits,
-        error_per_bit: DEFAULT_ERROR_PER_BIT,
+        error_per_bit: error_per_bit(params.q_index, params.frame_kind),
         mv_costs: params.mv_costs,
         allow_hp: params.allow_hp,
         forced_stop,
@@ -5064,6 +5069,13 @@ mod tests {
             allow_high_precision_mv: false,
             interp_filter: InterpFilter::EightTap,
         }
+    }
+
+    #[test]
+    fn motion_search_rate_multipliers_match_libvpx_at_q200() {
+        let frame_kind = synthetic_inter_frame_kind();
+        assert_eq!(sad_per_bit_16(200), 9);
+        assert_eq!(error_per_bit(200, frame_kind), 10_285);
     }
 
     /// Deterministic chaotic-content plane via xorshift32 so SAD-driven

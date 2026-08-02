@@ -337,8 +337,13 @@ fn a10_byte_identity_pre_vs_post_refactor() {
     // Re-captured again (2026-08-02) after mode decisions started pricing
     // skip syntax from the live frame context. The new bytes reproduced twice,
     // and the sibling decode oracle still accepts all 12 frames.
-    const GOLDEN_HASH: u64 = 0xed17_4471_123a_f4bb;
-    const GOLDEN_LEN: usize = 8965;
+    //
+    // Re-captured again (2026-08-02) after full-pel and sub-pel motion
+    // searches began using libvpx's qindex-derived rate multipliers. The new
+    // bytes reproduced twice, and the sibling decode oracle still accepts all
+    // 12 frames.
+    const GOLDEN_HASH: u64 = 0x0ff9_14b0_a6bf_96bb;
+    const GOLDEN_LEN: usize = 6814;
 
     let stream = encode_fixed_clip();
     let hash = fnv1a(&stream);
