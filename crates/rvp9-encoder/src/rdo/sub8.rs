@@ -68,7 +68,7 @@ use rvp9_core::inter::filter::{
 };
 use rvp9_core::mode_info::{InterMode, Mv, RefFrame};
 use rvp9_core::mv_search::full_pixel::PlaneRef;
-use rvp9_core::quant::forward::{PlaneQuantizers, scan_for_forward};
+use rvp9_core::quant::forward::{PlaneQuantizers, scan_for_forward, vp9_quantize_b_with_order};
 use rvp9_core::transforms::forward::fdct4x4;
 use rvp9_core::transforms::scans::scan_for;
 use rvp9_core::transforms::{TxSize, TxType};
@@ -228,7 +228,7 @@ fn encode_inter_sub_block(
     let mut qcoeff = [0i16; 16];
     let mut dqcoeff = [0i16; 16];
     let dequant_pair = [quant.dequant[0], quant.dequant[1]];
-    let eob = rvp9_core::quant::forward::vp9_quantize_b(
+    let eob = vp9_quantize_b_with_order(
         &coeff,
         16,
         false,
@@ -239,7 +239,7 @@ fn encode_inter_sub_block(
         &mut qcoeff,
         &mut dqcoeff,
         &dequant_pair,
-        fwd_scan,
+        &scan,
     );
 
     // 4. Transform-domain distortion + sse (libvpx lines 1716-1718).

@@ -58,7 +58,7 @@ use rvp9_core::block::BlockSize;
 use rvp9_core::coef_ctx::combine_entropy_contexts;
 use rvp9_core::cost::coef_cost::CoefCostTable;
 use rvp9_core::intra_pred::{DcAvailability, IntraMode, NUM_INTRA_MODES, PredCtx, intra_predict};
-use rvp9_core::quant::forward::{PlaneQuantizers, scan_for_forward, vp9_quantize_b};
+use rvp9_core::quant::forward::{PlaneQuantizers, scan_for_forward, vp9_quantize_b_with_order};
 use rvp9_core::transforms::TxSize;
 use rvp9_core::transforms::forward::fht4x4;
 use rvp9_core::transforms::inverse::iht4x4_16_add;
@@ -232,7 +232,7 @@ pub fn pick_intra4x4_block(params: &PickIntra4x4Params<'_>) -> Option<Pick4x4Res
         let mut qcoeff = [0i16; 16];
         let mut dqcoeff = [0i16; 16];
         let dequant_pair = [params.quant.dequant[0], params.quant.dequant[1]];
-        let eob = vp9_quantize_b(
+        let eob = vp9_quantize_b_with_order(
             &coeff,
             16,
             false,
@@ -243,7 +243,7 @@ pub fn pick_intra4x4_block(params: &PickIntra4x4Params<'_>) -> Option<Pick4x4Res
             &mut qcoeff,
             &mut dqcoeff,
             &dequant_pair,
-            fwd_scan,
+            &scan,
         );
 
         // 4. Coefficient rate (libvpx `cost_coeffs`, line 1258).

@@ -8,7 +8,7 @@
 
 use rvp9_core::cost::coef_cost::CoefCostTable;
 use rvp9_core::intra_pred::{DcAvailability, IntraMode, NUM_INTRA_MODES, PredCtx, intra_predict};
-use rvp9_core::quant::forward::{PlaneQuantizers, scan_for_forward, vp9_quantize_b};
+use rvp9_core::quant::forward::{PlaneQuantizers, scan_for_forward, vp9_quantize_b_with_order};
 use rvp9_core::transforms::TxSize;
 use rvp9_core::transforms::forward::fht8x8;
 use rvp9_core::transforms::scans::scan_for;
@@ -129,7 +129,7 @@ pub fn pick_intra8x8_y_mode(params: &PickIntra8x8Params<'_>) -> Option<PickIntra
         let fwd_scan = scan_for_forward(&scan);
         let mut qcoeff = [0i16; SIDE * SIDE];
         let mut dqcoeff = [0i16; SIDE * SIDE];
-        let eob = vp9_quantize_b(
+        let eob = vp9_quantize_b_with_order(
             &coeff,
             SIDE * SIDE,
             false,
@@ -140,7 +140,7 @@ pub fn pick_intra8x8_y_mode(params: &PickIntra8x8Params<'_>) -> Option<PickIntra
             &mut qcoeff,
             &mut dqcoeff,
             &[params.quant.dequant[0], params.quant.dequant[1]],
-            fwd_scan,
+            &scan,
         );
 
         let rate_y = cost_coeffs_with_contexts(
