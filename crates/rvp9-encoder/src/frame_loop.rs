@@ -100,6 +100,11 @@ use crate::{
     pick_and_simulate_intra_encode_partitions,
 };
 
+#[inline]
+const fn video_frame_chessboard_index(frame_idx: u32) -> u32 {
+    frame_idx & 1
+}
+
 /// Adaptive-quantization mode. Selects whether the encoder runs an
 /// AQ state machine on inter frames.
 ///
@@ -3067,6 +3072,14 @@ impl StreamEncoder {
         let high_source_sad = self.pre_analysis.high_source_sad;
         let content_state_sb = &self.pre_analysis.content_state_sb;
         let skin_map = &self.pre_analysis.skin_map;
+        let chessboard_index = if matches!(deadline, Deadline::Realtime)
+            && (6..=8).contains(&speed.unsigned_abs())
+            && u64::from(w) * u64::from(h) >= 700_000
+        {
+            video_frame_chessboard_index(self.frame_idx)
+        } else {
+            frames_since_golden & 1
+        };
         macro_rules! run_inter_picker {
             (
                 $recon_y:expr,
@@ -3103,7 +3116,7 @@ impl StreamEncoder {
                     frame_mv_costs_ref,
                     $rd_tables,
                     frames_since_golden,
-                    frames_since_golden & 1,
+                    chessboard_index,
                     speed,
                     deadline,
                     rvp9_core::mode_decision::speed_features::ContentTier::Default,
@@ -5710,6 +5723,14 @@ fn gather_coded_segments_and_skip(
 mod tests {
     use super::*;
     use rvp9_decoder::{Decoder, ParsedFrame};
+
+    #[test]
+    fn filter_search_chessboard_tracks_video_frame_parity() {
+        assert_eq!(video_frame_chessboard_index(0), 0);
+        assert_eq!(video_frame_chessboard_index(1), 1);
+        assert_eq!(video_frame_chessboard_index(30), 0);
+        assert_eq!(video_frame_chessboard_index(31), 1);
+    }
 
     #[cfg(target_arch = "aarch64")]
     #[test]

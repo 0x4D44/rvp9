@@ -159,6 +159,8 @@ impl RoundTripScratch {
     }
 }
 
+const MAX_MC_FOOTPRINT: usize = 64 + FILTER_TAPS - 1;
+
 thread_local! {
     /// Two prediction buffers reused across serial candidate evaluations on
     /// one tile worker. Each builder overwrites its complete active prefix;
@@ -173,6 +175,10 @@ thread_local! {
                 round_trip: RoundTripScratch::new(),
             })
         };
+    /// Edge-replicated reference footprint, reused by one tile worker.
+    /// Every scratch-path call overwrites the complete active prefix.
+    static MC_BORDER_SCRATCH: std::cell::RefCell<[u8; MAX_MC_FOOTPRINT * MAX_MC_FOOTPRINT]> =
+        const { std::cell::RefCell::new([0; MAX_MC_FOOTPRINT * MAX_MC_FOOTPRINT]) };
 }
 
 // ---------------------------------------------------------------------
@@ -3920,12 +3926,9 @@ fn evaluate_candidate_for_filter_with_pred(
 /// the horiz-only / vert-only / 2-D `convolve8*` kernels per libvpx
 /// `inter_predictor` (`vp9_reconinter.h:23-32`).
 ///
-/// **No border extension**: callers must ensure that
-/// `src_offset + (mv >> 3) ± 3` stays inside the reference plane. The
-/// MV-limits machinery (`set_mv_search_range`) is the encoder's
-/// border-extend equivalent. F8.1 v1 doesn't run on edge blocks
-/// directly; the partition picker (F8.2) will choose conservative
-/// MV bounds for edge blocks.
+/// Reference reads outside the visible plane use edge replication, matching
+/// libvpx's extended YV12 borders. The common in-bounds case reads the source
+/// plane directly; only edge-crossing footprints use a compact scratch.
 #[allow(clippy::too_many_arguments)] // mirrors libvpx's argument list 1:1
 fn build_inter_prediction(
     dsp: &crate::dsp::SimdDispatch,
@@ -3979,28 +3982,15 @@ fn build_inter_prediction(
     let win_x = ref_x - pad_x;
     let win_y = ref_y - pad_y;
 
-    // Bounds check (debug-only): the caller's MV limits should keep
-    // the read window inside the reference plane. We don't
-    // border-extend here.
-    debug_assert!(
-        win_x >= 0 && win_y >= 0,
-        "inter pred read window out of bounds: ({win_x}, {win_y})",
-    );
     let win_h = bh + if y_nonzero { FILTER_TAPS - 1 } else { 0 };
     let win_w = bw + if x_nonzero { FILTER_TAPS - 1 } else { 0 };
-    debug_assert!(
-        (win_x as usize) + win_w <= ref_plane.width,
-        "inter pred read window beyond ref width: x={win_x} + w={win_w} > {}",
-        ref_plane.width,
-    );
-    debug_assert!(
-        (win_y as usize) + win_h <= ref_plane.height,
-        "inter pred read window beyond ref height: y={win_y} + h={win_h} > {}",
-        ref_plane.height,
-    );
+    debug_assert!(win_w < 64 + FILTER_TAPS);
+    debug_assert!(win_h < 64 + FILTER_TAPS);
 
-    let src_start = (win_y as usize) * ref_plane.stride + (win_x as usize);
-    let src_slice = &ref_plane.data[src_start..];
+    let footprint_in_bounds = win_x >= 0
+        && win_y >= 0
+        && win_x + win_w as isize <= ref_plane.width as isize
+        && win_y + win_h as isize <= ref_plane.height as isize;
 
     // Dispatch the kernel matching the (x_nonzero, y_nonzero) pair.
     // F.5 — the kernel is now per-block: the picker drives it via the
@@ -4019,45 +4009,43 @@ fn build_inter_prediction(
     // (`convolve8_avx2.rs:122/196`). Hence byte-identity-preserving. The
     // `dsp` handle is hoisted to `evaluate_candidate_for_filter` (one
     // `get_ref()` OnceLock load per candidate, not per convolve call).
-    match (x_nonzero, y_nonzero) {
+    let mut convolve_from = |src_slice: &[u8], src_stride: usize| match (x_nonzero, y_nonzero) {
         (false, false) => {
-            (dsp.convolve_copy())(src_slice, ref_plane.stride, dst, dst_stride, bw, bh);
+            (dsp.convolve_copy())(src_slice, src_stride, dst, dst_stride, bw, bh);
         }
         (true, false) => {
-            (dsp.convolve8_horiz())(
-                src_slice,
-                ref_plane.stride,
-                dst,
-                dst_stride,
-                filter_x,
-                bw,
-                bh,
-            );
+            (dsp.convolve8_horiz())(src_slice, src_stride, dst, dst_stride, filter_x, bw, bh);
         }
         (false, true) => {
-            (dsp.convolve8_vert())(
-                src_slice,
-                ref_plane.stride,
-                dst,
-                dst_stride,
-                filter_y,
-                bw,
-                bh,
-            );
+            (dsp.convolve8_vert())(src_slice, src_stride, dst, dst_stride, filter_y, bw, bh);
         }
         (true, true) => {
             (dsp.convolve8())(
-                src_slice,
-                ref_plane.stride,
-                dst,
-                dst_stride,
-                filter_x,
-                filter_y,
-                bw,
-                bh,
+                src_slice, src_stride, dst, dst_stride, filter_x, filter_y, bw, bh,
             );
         }
+    };
+    if footprint_in_bounds {
+        let src_start = (win_y as usize) * ref_plane.stride + win_x as usize;
+        convolve_from(&ref_plane.data[src_start..], ref_plane.stride);
+        return;
     }
+
+    MC_BORDER_SCRATCH.with_borrow_mut(|border_scratch| {
+        for row in 0..win_h {
+            let ref_row = (win_y + row as isize)
+                .clamp(0, ref_plane.height.saturating_sub(1) as isize)
+                as usize;
+            for col in 0..win_w {
+                let ref_col = (win_x + col as isize)
+                    .clamp(0, ref_plane.width.saturating_sub(1) as isize)
+                    as usize;
+                border_scratch[row * win_w + col] =
+                    ref_plane.data[ref_row * ref_plane.stride + ref_col];
+            }
+        }
+        convolve_from(&border_scratch[..win_w * win_h], win_w);
+    });
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -5311,6 +5299,77 @@ mod tests {
         assert_eq!(result.coef_rate, expected.rate.max(0) as u64);
         assert_eq!(result.coef_dist, expected.dist);
         assert_eq!(result.dct_eob_total, 0);
+    }
+
+    #[test]
+    fn inter_prediction_edge_replicates_filtered_and_integer_footprints() {
+        let width = 8usize;
+        let height = 8usize;
+        let reference: Vec<u8> = (0..width * height)
+            .map(|i| ((i * 29 + i / width * 7) & 0xff) as u8)
+            .collect();
+        let plane = PlaneRef {
+            data: &reference,
+            stride: width,
+            width,
+            height,
+        };
+
+        let mut filtered = [0u8; 8 * 8];
+        build_inter_prediction(
+            crate::dsp::get_ref(),
+            &plane,
+            0,
+            0,
+            Mv { row: 4, col: 4 },
+            8,
+            8,
+            &mut filtered,
+            8,
+            InterpFilter::EightTapSmooth,
+        );
+        let mut padded = [0u8; 15 * 15];
+        for row in 0..15 {
+            for col in 0..15 {
+                let src_row = (row as isize - 3).clamp(0, 7) as usize;
+                let src_col = (col as isize - 3).clamp(0, 7) as usize;
+                padded[row * 15 + col] = reference[src_row * width + src_col];
+            }
+        }
+        let mut expected_filtered = [0u8; 8 * 8];
+        let kernel = kernel_for(InterpFilter::EightTapSmooth);
+        crate::inter::filter::convolve8(
+            &padded,
+            15,
+            &mut expected_filtered,
+            8,
+            &kernel[8],
+            &kernel[8],
+            8,
+            8,
+        );
+        assert_eq!(filtered, expected_filtered);
+
+        let mut integer = [0u8; 8 * 8];
+        build_inter_prediction(
+            crate::dsp::get_ref(),
+            &plane,
+            0,
+            0,
+            Mv { row: -8, col: -8 },
+            8,
+            8,
+            &mut integer,
+            8,
+            InterpFilter::EightTap,
+        );
+        for row in 0usize..8 {
+            for col in 0usize..8 {
+                let src_row = row.saturating_sub(1);
+                let src_col = col.saturating_sub(1);
+                assert_eq!(integer[row * 8 + col], reference[src_row * width + src_col]);
+            }
+        }
     }
 
     #[test]

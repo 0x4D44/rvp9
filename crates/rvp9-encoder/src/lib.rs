@@ -3176,6 +3176,52 @@ fn mv_in_strict_limits_or_visible_full_chroma_pel(
         && ref_y + block_size.1 as i64 <= frame_size.1 as i64
 }
 
+/// Per-block unrestricted-motion-vector window from libvpx
+/// `vp9_encodeframe.c:set_offsets`. Units are full pixels. The reference
+/// planes are tight, but both picker and reconstruction prediction paths
+/// edge-replicate reads that cross the visible frame boundary.
+fn libvpx_inter_mv_limits(
+    mi_row: usize,
+    mi_col: usize,
+    block_mi_w: usize,
+    block_mi_h: usize,
+    frame_mi_rows: usize,
+    frame_mi_cols: usize,
+) -> rvp9_core::mv_search::MvLimits {
+    const MI_SIZE: i32 = 8;
+    const VP9_INTERP_EXTEND: i32 = 4;
+    rvp9_core::mv_search::MvLimits::new(
+        -(((mi_col + block_mi_w) as i32 * MI_SIZE) + VP9_INTERP_EXTEND),
+        ((frame_mi_cols - mi_col) as i32 * MI_SIZE) + VP9_INTERP_EXTEND,
+        -(((mi_row + block_mi_h) as i32 * MI_SIZE) + VP9_INTERP_EXTEND),
+        ((frame_mi_rows - mi_row) as i32 * MI_SIZE) + VP9_INTERP_EXTEND,
+    )
+}
+
+fn tight_inter_mv_limits(
+    block_origin: (usize, usize),
+    block_size: (usize, usize),
+    frame_size: (usize, usize),
+) -> rvp9_core::mv_search::MvLimits {
+    let (x, y) = block_origin;
+    let (bw, bh) = block_size;
+    let (width, height) = frame_size;
+    let col_min_luma = -(x as i32) + 3;
+    let col_max_luma = width as i32 - x as i32 - bw as i32 - 4;
+    let row_min_luma = -(y as i32) + 3;
+    let row_max_luma = height as i32 - y as i32 - bh as i32 - 4;
+    let col_min_chroma = 6 - x as i32;
+    let col_max_chroma = width as i32 - x as i32 - bw as i32 - 7;
+    let row_min_chroma = 6 - y as i32;
+    let row_max_chroma = height as i32 - y as i32 - bh as i32 - 7;
+    rvp9_core::mv_search::MvLimits::new(
+        col_min_luma.max(col_min_chroma),
+        col_max_luma.min(col_max_chroma),
+        row_min_luma.max(row_min_chroma),
+        row_max_luma.min(row_max_chroma),
+    )
+}
+
 fn stage4a_block16_split_admission(
     p8_enabled: bool,
     rt_large_recovery: bool,
@@ -3919,6 +3965,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     let uvh = h / 2;
     let rt_large_recovery = matches!(deadline, sf_mod::Deadline::Realtime)
         && speed.unsigned_abs() >= 7
+        && matches!(content_tier, sf_mod::ContentTier::Default)
+        && u64::from(width) * u64::from(height) >= 700_000;
+    let rt_v1_umv_border = matches!(deadline, sf_mod::Deadline::Realtime)
+        && (6..=8).contains(&speed.unsigned_abs())
         && matches!(content_tier, sf_mod::ContentTier::Default)
         && u64::from(width) * u64::from(height) >= 700_000;
     let cyclic_refresh_active = seg_q_deltas.iter().any(Option::is_some);
@@ -4987,24 +5037,26 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         return None;
                     }
 
-                    // MV envelope (mirrors the post-descent loop's
-                    // luma + 4:2:0 chroma intersection).
-                    let col_min_luma = -(leaf_px_x as i32) + 3;
-                    let col_max_luma = (w as i32) - (leaf_px_x as i32) - (bw_px as i32) - 4;
-                    let row_min_luma = -(leaf_px_y as i32) + 3;
-                    let row_max_luma = (h as i32) - (leaf_px_y as i32) - (bh_px as i32) - 4;
-                    let col_min_chroma = 6 - leaf_px_x as i32;
-                    let col_max_chroma = (w as i32) - (leaf_px_x as i32) - (bw_px as i32) - 7;
-                    let row_min_chroma = 6 - leaf_px_y as i32;
-                    let row_max_chroma = (h as i32) - (leaf_px_y as i32) - (bh_px as i32) - 7;
-                    let col_min = col_min_luma.max(col_min_chroma);
-                    let col_max = col_max_luma.min(col_max_chroma);
-                    let row_min = row_min_luma.max(row_min_chroma);
-                    let row_max = row_max_luma.min(row_max_chroma);
-                    if col_min > col_max || row_min > row_max {
+                    // Match libvpx's per-block UMV window. Edge-crossing
+                    // candidates are safe because the picker now mirrors
+                    // the reference frame's replicated border.
+                    let mv_limits = if rt_v1_umv_border {
+                        libvpx_inter_mv_limits(
+                            leaf_mi_row,
+                            leaf_mi_col,
+                            usize::from(bs.n_8x8_wide()),
+                            usize::from(bs.n_8x8_high()),
+                            mi_rows_us,
+                            mi_cols_us,
+                        )
+                    } else {
+                        tight_inter_mv_limits((leaf_px_x, leaf_px_y), (bw_px, bh_px), (w, h))
+                    };
+                    if mv_limits.col_min > mv_limits.col_max
+                        || mv_limits.row_min > mv_limits.row_max
+                    {
                         return None;
                     }
-                    let mv_limits = MvLimits::new(col_min, col_max, row_min, row_max);
                     let mv_in_bounds = |m: Mv| -> bool {
                         mv_in_strict_limits_or_visible_full_chroma_pel(
                             m,
@@ -5755,55 +5807,28 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     continue;
                 }
 
-                // Constrain NEWMV search limits so the F8.1 picker's sub-pel
-                // convolve footprint stays inside the frame on EVERY plane
-                // (luma + 4:2:0 chroma). The 8-tap kernel touches
-                // `int_pel - 3 .. int_pel + bw + 4` in the
-                // unscaled-with-subpel case.
-                //
-                // Luma:   `leaf_px + mv_int - 3 >= 0` AND
-                //         `leaf_px + mv_int + bw + 4 <= plane_w`.
-                // Chroma: same constraint on the chroma plane, where
-                //         `chroma_leaf = leaf_px / 2`, `chroma_bw =
-                //         bw / 2`, `chroma_w = w / 2`, and the chroma
-                //         Q4 MV equals the luma Q3 MV. Because the
-                //         picker's sub-pel refinement can drive the
-                //         Q3 luma MV to `mv_fullpel*8 ± 7`, the chroma
-                //         integer-pel base can drop one pixel below
-                //         the luma integer-pel mapping when the
-                //         physical motion lands on a half-chroma-pel.
-                //         The arithmetic resolves to an envelope
-                //         three luma full-pels TIGHTER on every side
-                //         than the luma-only envelope. A1 — without
-                //         this tightening, Block8x8 leaves at frame
-                //         edges with the picked MV at the luma-only
-                //         boundary underflowed `build_inter_pred_plane_unscaled`
-                //         on the chroma plane (the simulator does not
-                //         border-extend; see its caller-invariant
-                //         comment).
-                //
-                // Candidates that are integer-pel on both luma and 4:2:0
-                // chroma need no interpolation halo and are safe whenever
-                // their visible block stays inside the frame. Candidate-bound
-                // checks below admit those vectors outside this envelope.
-                //
-                // If the resulting envelope is degenerate (col_min >
-                // col_max) the leaf is too close to a frame edge for
-                // any non-zero MV; skip the picker and fall back to
-                // ZEROMV / skip = true so the assert in F8.1's
-                // `build_inter_prediction` doesn't fire.
-                let col_min_luma = -(leaf_px_x as i32) + 3;
-                let col_max_luma = (w as i32) - (leaf_px_x as i32) - (bw as i32) - 4;
-                let row_min_luma = -(leaf_px_y as i32) + 3;
-                let row_max_luma = (h as i32) - (leaf_px_y as i32) - (bh as i32) - 4;
-                let col_min_chroma = 6 - leaf_px_x as i32;
-                let col_max_chroma = (w as i32) - (leaf_px_x as i32) - (bw as i32) - 7;
-                let row_min_chroma = 6 - leaf_px_y as i32;
-                let row_max_chroma = (h as i32) - (leaf_px_y as i32) - (bh as i32) - 7;
-                let col_min = col_min_luma.max(col_min_chroma);
-                let col_max = col_max_luma.min(col_max_chroma);
-                let row_min = row_min_luma.max(row_min_chroma);
-                let row_max = row_max_luma.min(row_max_chroma);
+                // Match libvpx's unrestricted-MV window. Unlike the former
+                // tight-plane envelope, this admits filtered vectors at frame
+                // edges; picker and reconstruction paths edge-replicate the
+                // reference footprint just as libvpx's extended YV12 buffers
+                // do. Keep the degenerate check as defensive protection for
+                // malformed geometry even though valid frames cannot hit it.
+                let mv_limits = if rt_v1_umv_border {
+                    libvpx_inter_mv_limits(
+                        leaf_mi_row,
+                        leaf_mi_col,
+                        usize::from(leaf_bsize.n_8x8_wide()),
+                        usize::from(leaf_bsize.n_8x8_high()),
+                        mi_rows_us,
+                        mi_cols_us,
+                    )
+                } else {
+                    tight_inter_mv_limits((leaf_px_x, leaf_px_y), (bw, bh), (w, h))
+                };
+                let col_min = mv_limits.col_min;
+                let col_max = mv_limits.col_max;
+                let row_min = mv_limits.row_min;
+                let row_max = mv_limits.row_max;
                 if col_min > col_max || row_min > row_max {
                     rt_profile_fallback_leaves += 1;
                     sb_partitions[sb_idx][leaf_idx].picked_mode = InterMode::ZeroMv;
@@ -5900,8 +5925,6 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     }
                     continue;
                 }
-                let mv_limits = MvLimits::new(col_min, col_max, row_min, row_max);
-
                 // A2.foreman - Spatial MV-ref seeding (H3' fix).
                 // Build a `find_mv_refs` neighbour lookup against the
                 // in-progress `mi_grid` (cells covered by earlier-
@@ -6033,22 +6056,11 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     },
                 );
 
-                // A2.foreman - The picker's strict `MvLimits` are
-                // tighter than the decoder's `clamp_mv_ref` envelope
-                // because its sub-pel candidate evaluator still uses
-                // tight reference planes. If `mvc.nearest` falls outside
-                // `mv_limits`, a filtered candidate can over-read the
-                // reference plane. Exact ZEROMV is the narrow exception:
-                // it is integer-pel, reads only the visible block, and is
-                // safe even when the conservative halo envelope excludes it
-                // at a frame edge. The same holds for any vector that remains
-                // integer-pel after chroma subsampling and whose visible block
-                // remains in frame.
-                //
-                // To preserve bit-exact encoder<->decoder agreement
-                // AND avoid the panic, when a non-zero `mvc.nearest` is OOB we
-                // substitute Mv::ZERO in the picker's mvc so the
-                // NEARESTMV evaluation reconstructs at (0,0) instead.
+                // A2.foreman — reject causal MV references outside libvpx's
+                // per-block UMV window. The prediction paths safely handle
+                // any vector inside this window through edge replication.
+                // For a genuinely out-of-window reference, substitute zero
+                // in the picker and prevent NEARESTMV from winning below.
                 // We then never let the picker actually choose
                 // NEARESTMV: post-pick, if `picked_mode ==
                 // NearestMv`, override to the better-RD candidate
@@ -6768,7 +6780,6 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 } else {
                     [Default::default(); 4]
                 };
-
                 // E12 (2026-05-22) — search-failure-vs-prediction-ceiling
                 // oracle. Read-only diagnostic, env-gated
                 // `RVP9_E12_ORACLE`; no encoder state mutated.
@@ -10393,6 +10404,15 @@ mod tests {
         assert!(!is_safe(Mv { row: 1, col: 0 }, (0, 0), (16, 16)));
         assert!(!is_safe(Mv::ZERO, (248, 248), (16, 16)));
         assert!(is_safe(Mv { row: 48, col: 48 }, (0, 0), (16, 16)));
+    }
+
+    #[test]
+    fn unrestricted_mv_limits_match_libvpx_top_left_block32() {
+        let limits = libvpx_inter_mv_limits(0, 0, 4, 4, 88, 160);
+        assert_eq!(
+            limits,
+            rvp9_core::mv_search::MvLimits::new(-36, 1284, -36, 708)
+        );
     }
 
     #[test]

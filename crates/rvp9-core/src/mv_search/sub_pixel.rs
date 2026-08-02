@@ -46,6 +46,15 @@ use crate::mv_search::mv_limits::{MvLimits, set_subpel_mv_search_range};
 /// yoffset, reference, ref_stride) -> (variance, sse)`.
 type SvfFn = fn(&[u8], usize, usize, usize, &[u8], usize) -> (u32, u32);
 
+const MAX_SUBPEL_FETCH: usize = 64 + 1;
+
+thread_local! {
+    /// Edge-replicated bilinear footprint reused by one search worker.
+    /// Every scratch-path call overwrites the complete active prefix.
+    static SUBPEL_BORDER_SCRATCH: std::cell::RefCell<[u8; MAX_SUBPEL_FETCH * MAX_SUBPEL_FETCH]> =
+        const { std::cell::RefCell::new([0; MAX_SUBPEL_FETCH * MAX_SUBPEL_FETCH]) };
+}
+
 /// `forced_stop` enum mirror of libvpx's `SUBPEL_FORCE_STOP`
 /// (`vp9_speed_features.h:168`). The numeric values match libvpx so
 /// the integer comparisons inside the search loop stay bitwise-equiv.
@@ -171,8 +180,8 @@ fn svf_for(bsize: BlockSize) -> Option<SvfFn> {
 
 /// Helper: try to compute (variance + mv_err_cost) for a 1/8-pel
 /// candidate MV `(tr, tc)`. Returns `u32::MAX` if the candidate is
-/// out of the sub-pel limits or the reference fetch would be
-/// out-of-bounds.
+/// out of the sub-pel limits. Reference samples outside the visible plane
+/// are edge-replicated, matching libvpx's extended YV12 borders.
 ///
 /// `(tr, tc)` are signed 1/8-pel coordinates; the integer pixel
 /// position is `(tr >> 3, tc >> 3)`, and the phase passed to the
@@ -228,23 +237,49 @@ fn try_subpel(
     // at the reference offset.
     let ref_col_i = src_col as isize + int_col as isize;
     let ref_row_i = src_row as isize + int_row as isize;
-    if ref_col_i < 0 || ref_row_i < 0 {
-        return u32::MAX;
-    }
-    let ref_col = ref_col_i as usize;
-    let ref_row = ref_row_i as usize;
     // Need (bh + 1) rows × (bw + 1) cols accessible. Even at phase
     // (0, 0) the kernel still reads the +1 row/col, so we must
     // always have headroom.
-    if ref_col + bw + 1 > ref_plane.width || ref_row + bh + 1 > ref_plane.height {
-        return u32::MAX;
-    }
-    let ref_start = ref_row * ref_plane.stride + ref_col;
-    let ref_end = (ref_row + bh) * ref_plane.stride + ref_col + bw + 1;
-    if ref_end > ref_plane.data.len() {
-        return u32::MAX;
-    }
-    let ref_slice = &ref_plane.data[ref_start..ref_end];
+    let fetch_w = bw + 1;
+    let fetch_h = bh + 1;
+    let fetch_in_bounds = ref_col_i >= 0
+        && ref_row_i >= 0
+        && ref_col_i + fetch_w as isize <= ref_plane.width as isize
+        && ref_row_i + fetch_h as isize <= ref_plane.height as isize;
+    let (var, _sse) = if fetch_in_bounds {
+        let ref_start = ref_row_i as usize * ref_plane.stride + ref_col_i as usize;
+        svf(
+            &ref_plane.data[ref_start..],
+            ref_plane.stride,
+            xoff,
+            yoff,
+            src_slice,
+            src_plane.stride,
+        )
+    } else {
+        SUBPEL_BORDER_SCRATCH.with_borrow_mut(|border_scratch| {
+            for row in 0..fetch_h {
+                let ref_row = (ref_row_i + row as isize)
+                    .clamp(0, ref_plane.height.saturating_sub(1) as isize)
+                    as usize;
+                for col in 0..fetch_w {
+                    let ref_col = (ref_col_i + col as isize)
+                        .clamp(0, ref_plane.width.saturating_sub(1) as isize)
+                        as usize;
+                    border_scratch[row * fetch_w + col] =
+                        ref_plane.data[ref_row * ref_plane.stride + ref_col];
+                }
+            }
+            svf(
+                &border_scratch[..fetch_w * fetch_h],
+                fetch_w,
+                xoff,
+                yoff,
+                src_slice,
+                src_plane.stride,
+            )
+        })
+    };
 
     // sub_pixel_variance signature: (src, src_stride, xoff, yoff,
     // ref, ref_stride). NB: libvpx-internal naming is reversed
@@ -253,15 +288,6 @@ fn try_subpel(
     // dsp/distortion.rs preserves that convention; we pass
     // `ref_slice` as the bilinear-filtered "src" and `src_slice`
     // as the variance "reference".
-    let (var, _sse) = svf(
-        ref_slice,
-        ref_plane.stride,
-        xoff,
-        yoff,
-        src_slice,
-        src_plane.stride,
-    );
-
     let cost = mv_err_cost(
         tr as i16,
         tc as i16,
@@ -967,6 +993,35 @@ mod tests {
         };
         let r = find_best_sub_pixel_tree_pruned_more(&params);
         assert_eq!(r.best_mv, Mv::ZERO, "identical planes → MV stays at zero");
+    }
+
+    #[test]
+    fn edge_subpel_candidate_uses_replicated_reference_border() {
+        let costs = build_nmv_cost_table(&DEFAULT_NMV_CONTEXT, true);
+        let width = 1280usize;
+        let height = 704usize;
+        let reference = make_plane(width, height, 11);
+        let plane = PlaneRef {
+            data: &reference,
+            stride: width,
+            width,
+            height,
+        };
+        let score = try_subpel(
+            4,
+            4,
+            &plane,
+            (width - 8, height - 8),
+            &plane,
+            svf_for(BlockSize::Block8x8).expect("8x8 subpel variance kernel"),
+            8,
+            8,
+            &MvLimits::new(-32, 32, -32, 32),
+            Mv::ZERO,
+            1,
+            &costs,
+        );
+        assert_ne!(score, u32::MAX, "legal edge subpel MV must be evaluated");
     }
 
     #[test]
