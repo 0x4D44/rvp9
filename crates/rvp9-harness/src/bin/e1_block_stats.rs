@@ -36,7 +36,7 @@
 
 use rvp9_core::bitstream::FrameKind as WireFrameKind;
 use rvp9_core::block::{BLOCK_SIZES, BlockSize};
-use rvp9_core::entropy::{EOB_MODEL_TOKEN, ONE_TOKEN, TWO_TOKEN, ZERO_TOKEN};
+use rvp9_core::entropy::{EOB_MODEL_TOKEN, INTRA_MODES, ONE_TOKEN, TWO_TOKEN, ZERO_TOKEN};
 use rvp9_core::mode_info::{BlockMode, InterMode, ModeInfo, RefFrame};
 use rvp9_decoder::{Decoder, ParsedFrame};
 use rvp9_encoder::{AqMode, EncoderConfig, RcMode, StreamEncoder, YuvFrameRef};
@@ -150,6 +150,7 @@ struct FrameStats {
     block_area8: [u64; BLOCK_SIZES],
     /// Area-weighted (8x8 units) mode tallies.
     intra_area8: u64,
+    intra_mode_area8: [u64; INTRA_MODES],
     inter_mode_area8: [u64; 4], // indexed by InterMode::idx (NEAREST/NEAR/ZERO/NEW)
     /// Area-weighted skip=1.
     skip_area8: u64,
@@ -285,6 +286,33 @@ impl Aggregate {
         }
         acc
     }
+    fn block_count_key(&self) -> [u64; BLOCK_SIZES] {
+        let mut acc = [0u64; BLOCK_SIZES];
+        for f in self.frames.iter().filter(|f| f.is_key) {
+            for (acc_slot, value) in acc.iter_mut().zip(f.block_count.iter()) {
+                *acc_slot += *value;
+            }
+        }
+        acc
+    }
+    fn block_area8_key(&self) -> [u64; BLOCK_SIZES] {
+        let mut acc = [0u64; BLOCK_SIZES];
+        for f in self.frames.iter().filter(|f| f.is_key) {
+            for (acc_slot, value) in acc.iter_mut().zip(f.block_area8.iter()) {
+                *acc_slot += *value;
+            }
+        }
+        acc
+    }
+    fn intra_mode_area8_key(&self) -> [u64; INTRA_MODES] {
+        let mut acc = [0u64; INTRA_MODES];
+        for f in self.frames.iter().filter(|f| f.is_key) {
+            for (acc_slot, value) in acc.iter_mut().zip(f.intra_mode_area8.iter()) {
+                *acc_slot += *value;
+            }
+        }
+        acc
+    }
     fn inter_aggregate(&self) -> (u64, u64, [u64; 4], u64, u64, u64, u64) {
         // (intra_area, total_area, inter_mode_area, skip_area, last, golden, altref)
         let mut intra = 0;
@@ -324,6 +352,22 @@ fn block_label(b: usize) -> &'static str {
         10 => "32x64",
         11 => "64x32",
         12 => "64x64",
+        _ => "?",
+    }
+}
+
+fn intra_mode_label(mode: usize) -> &'static str {
+    match mode {
+        0 => "DC",
+        1 => "V",
+        2 => "H",
+        3 => "D45",
+        4 => "D135",
+        5 => "D117",
+        6 => "D153",
+        7 => "D207",
+        8 => "D63",
+        9 => "TM",
         _ => "?",
     }
 }
@@ -509,8 +553,9 @@ fn accumulate_grid(grid: &[Option<ModeInfo>], mi_rows: usize, mi_cols: usize, fs
             }
 
             match &mi.mode {
-                BlockMode::Intra { .. } => {
+                BlockMode::Intra { y_mode, .. } => {
                     fs.intra_area8 += area8;
+                    fs.intra_mode_area8[*y_mode as usize] += area8;
                 }
                 BlockMode::Inter {
                     mode, ref_frames, ..
@@ -882,6 +927,74 @@ fn emit_report(
             format!("{:.0}/{:.0}/{:.0}/{:.0}", tx[0], tx[1], tx[2], tx[3])
         })
     );
+
+    // ---- Keyframe predictor diagnostic ----
+    let _ = writeln!(md, "\n### Keyframe partition and luma-mode distribution\n");
+    let _ = writeln!(
+        md,
+        "Distinct keyframe leaves and area coverage. Mode percentages are area-weighted.\n"
+    );
+    let _ = writeln!(
+        md,
+        "| field | rvp9 count / area% | libvpx count / area% |\n|---|---:|---:|"
+    );
+    let r_key_count = rvp9.block_count_key();
+    let r_key_area = rvp9.block_area8_key();
+    let r_key_total = r_key_area.iter().sum::<u64>().max(1);
+    let l_key_count = libvpx.map(Aggregate::block_count_key);
+    let l_key_area = libvpx.map(Aggregate::block_area8_key);
+    let l_key_total = l_key_area
+        .as_ref()
+        .map(|area| area.iter().sum::<u64>().max(1));
+    for block in 0..BLOCK_SIZES {
+        let r_has = r_key_count[block] > 0;
+        let l_has = l_key_count.as_ref().is_some_and(|count| count[block] > 0);
+        if !r_has && !l_has {
+            continue;
+        }
+        let libvpx_value = match (&l_key_count, &l_key_area, l_key_total) {
+            (Some(count), Some(area), Some(total)) => format!(
+                "{} / {:.1}",
+                count[block],
+                100.0 * area[block] as f64 / total as f64
+            ),
+            _ => "n/a".into(),
+        };
+        let _ = writeln!(
+            md,
+            "| partition {} | {} / {:.1} | {} |",
+            block_label(block),
+            r_key_count[block],
+            100.0 * r_key_area[block] as f64 / r_key_total as f64,
+            libvpx_value
+        );
+    }
+    let r_key_modes = rvp9.intra_mode_area8_key();
+    let l_key_modes = libvpx.map(Aggregate::intra_mode_area8_key);
+    let r_mode_total = r_key_modes.iter().sum::<u64>().max(1);
+    let l_mode_total = l_key_modes
+        .as_ref()
+        .map(|modes| modes.iter().sum::<u64>().max(1));
+    for mode in 0..INTRA_MODES {
+        let r_has = r_key_modes[mode] > 0;
+        let l_has = l_key_modes.as_ref().is_some_and(|modes| modes[mode] > 0);
+        if !r_has && !l_has {
+            continue;
+        }
+        let libvpx_value = match (&l_key_modes, l_mode_total) {
+            (Some(modes), Some(total)) => {
+                format!("{:.1}", 100.0 * modes[mode] as f64 / total as f64)
+            }
+            _ => "n/a".into(),
+        };
+        let _ = writeln!(
+            md,
+            "| mode {} | {:.1} | {} |",
+            intra_mode_label(mode),
+            100.0 * r_key_modes[mode] as f64 / r_mode_total as f64,
+            libvpx_value
+        );
+    }
 
     // ---- 5. Per-frame Q (report aggregate avg here, full table later) ----
     let avg_q = |a: &Aggregate| -> (f64, u16, u16) {
@@ -1280,6 +1393,33 @@ mod tests {
         std::fs::write(first.path().join("marker"), b"test").unwrap();
         drop(first);
         assert!(!first_path.exists());
+    }
+
+    #[test]
+    fn keyframe_field_aggregates_exclude_inter_frames() {
+        let mut key = FrameStats {
+            is_key: true,
+            ..Default::default()
+        };
+        key.block_count[BlockSize::Block16x16.idx()] = 3;
+        key.block_area8[BlockSize::Block16x16.idx()] = 12;
+        key.intra_mode_area8[0] = 8;
+        key.intra_mode_area8[1] = 4;
+
+        let mut inter = FrameStats::default();
+        inter.block_count[BlockSize::Block8x8.idx()] = 64;
+        inter.block_area8[BlockSize::Block8x8.idx()] = 64;
+        inter.intra_mode_area8[2] = 64;
+
+        let aggregate = Aggregate {
+            frames: vec![key, inter],
+        };
+        assert_eq!(aggregate.block_count_key()[BlockSize::Block16x16.idx()], 3);
+        assert_eq!(aggregate.block_area8_key()[BlockSize::Block16x16.idx()], 12);
+        assert_eq!(aggregate.block_count_key()[BlockSize::Block8x8.idx()], 0);
+        assert_eq!(aggregate.intra_mode_area8_key()[0], 8);
+        assert_eq!(aggregate.intra_mode_area8_key()[1], 4);
+        assert_eq!(aggregate.intra_mode_area8_key()[2], 0);
     }
 
     #[test]
