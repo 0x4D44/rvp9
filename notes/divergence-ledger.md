@@ -4106,3 +4106,54 @@ CPU and `1.840730x` wall time.
 **Future plan:** keep this classifier limited to the measured slice. Generalize
 only with representative 720p/1080p corpus evidence and a speed-feature policy
 for CPU6/8.
+
+### 2026-08-02 — Current-frame non-coefficient probability updates retain compact tokens
+
+**Where:** `rvp9_encoder::bitstream_gates::build_noncoef_prob_update_target`,
+`rvp9_encoder::frame_loop::build_inter_packet_with_residuals`, and
+`rvp9_core::entropy::detokenize::CoefTokenPass::RecordFull`; libvpx
+counterparts: `vp9/encoder/vp9_bitstream.c::write_compressed_header` and
+`vp9/encoder/vp9_encodemv.c::vp9_write_nmv_probs`.
+
+**What libvpx does:** gathers the current frame's complete syntax counts before
+the compressed header, then savings-gates TX, skip, inter-mode, interpolation,
+intra/inter, reference, Y-mode, partition, and MV probability updates. Tile
+symbols use the resulting same-frame probability bank.
+
+**What rvp9 does:** its one-thread pre-header traversal now records retained
+coefficient tokens and complete mode/MV counts in one pass. Parallel tile
+pickers still produce coefficient-only records, so packet assembly performs a
+count-only retained-token replay before the header to gather their mode/MV
+counts. The probability targets use libvpx's standard diff-update savings
+search and its distinct seven-bit odd-probability MV update test. Setting
+`RVP9_FORWARD_MODE_PROBS=0` restores the retired path for diagnostics only.
+
+**Why:** rvp9's former coefficient-only count pass deferred non-coefficient
+counts until final tile packing, after the header. That prevented the coupled
+same-frame updates and left measurable fixed-q syntax waste. The retained-token
+boundary lets both traversals share probability-independent coefficient data
+without adding a frame-sized libvpx `TOKENEXTRA` arena.
+
+**Byte-parity impact:** intentional streams change. A 60-frame 1280x704
+in-to-tree VBR stream at 1000 kbps has SHA-256
+`86b85cc919c26aba3d1915d710f7fb642851043343f412751fbe4d2e57d0615f`.
+Rvp9-decoder, pinned vpxdec, and ffmpeg produce the same 81,100,800-byte I420,
+SHA-256 `11e65e53dd43c6b10258b3fd5138e4e69a9b653c6e810c908b0a0c53f55a2262`.
+
+**Compression-efficiency impact:** fixed-q 200 old-town keeps identical decoded
+PSNR while shrinking from 78,059 to 77,546 bytes (`-0.657%`). Against pinned
+vpxenc, the three luma BD-rates move from
+`+15.745779%/-6.972353%/+38.107266%` to
+`+15.222327%/-9.692528%/+38.256838%`; average-YUV moves from
+`+14.975975%/-6.315552%/+35.485312%` to
+`+14.465214%/-9.031002%/+35.699395%`. The small old-town trade remains a
+rate-control-feedback issue around an intrinsically bit-saving fixed-symbol
+update, so this is retained as a measured source-parity prerequisite.
+
+**Speed impact:** after reusing the pre-header complete counts during final
+packing, nine warmed alternating one-thread measurements show median user CPU
+at `1.006670x` and wall time at `1.007037x` the prior path. The overall
+encoder remains roughly `1.5x` pinned vpxenc, outside the final gate.
+
+**Future plan:** parallelize or fuse the tile-MT count replay, and reconcile
+rate-control response before judging the small old-town curve movement final.

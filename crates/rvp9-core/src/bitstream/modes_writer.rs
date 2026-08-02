@@ -7303,6 +7303,32 @@ mod tests {
         assert_eq!(split_counts.partition, FrameCounts::default().partition);
         assert_eq!(split_counts.skip, FrameCounts::default().skip);
 
+        let mut full_record_counts = FrameCounts::default();
+        let mut full_retained = crate::entropy::RetainedCoefTokens::default();
+        let mut full_record_pass = CoefTokenPass::record_full(&mut full_retained);
+        let mut full_record_sink = [];
+        let mut full_record_bw = BoolWriter::start_count_only(&mut full_record_sink);
+        let mut full_record_coef_ctx = TileCoefCtx::new(mi_cols as usize);
+        write_tile_inter_with_retained(
+            &mut full_record_bw,
+            &count_fc,
+            &params,
+            TxMode::AllowTx32x32,
+            &grid,
+            mi_rows,
+            mi_cols,
+            bounds,
+            None,
+            None,
+            &mut full_record_coef_ctx,
+            &coef_source,
+            Some(&mut full_record_counts),
+            Some(&mut full_record_pass),
+        )
+        .expect("full count-and-record traversal");
+        assert_eq!(full_record_counts, counts);
+        assert_eq!(full_retained, retained);
+
         let mut leaf_counts = FrameCounts::default();
         let mut leaf_retained = crate::entropy::RetainedCoefTokens::default();
         let mut leaf_coef_ctx = TileCoefCtx::new(mi_cols as usize);

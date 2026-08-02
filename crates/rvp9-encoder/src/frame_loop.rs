@@ -5243,8 +5243,9 @@ fn build_inter_packet_with_residuals(
     prev_mv_grid: Option<&[PrevFrameMvRef]>,
     // P0b — optional output slot for backward-adaptation counts.
     counts: Option<&mut FrameCounts>,
-    // P0b — frame context to use for encoding (replaces
-    // `FrameContext::new_default()` when backward adaptation is active).
+    // P0b — legacy post-header target retained for the
+    // `RVP9_FORWARD_MODE_PROBS=0` differential path. Product encoding builds
+    // the post-header target from `decoder_fc` and current-frame counts.
     fc_override: Option<&FrameContext>,
     // P0b — mirror of the decoder's FC bank. The compressed header
     // diff-encodes from this state to `fc_override` (or default when
@@ -5280,15 +5281,24 @@ fn build_inter_packet_with_residuals(
     let mi_cols = width / 8;
     debug_assert_eq!(mi_grid.len(), (mi_rows * mi_cols) as usize);
 
+    // Match libvpx's current-frame compressed-header adaptation. The opt-out
+    // exists only for differential diagnosis against the retired behaviour.
+    let forward_mode_probs =
+        std::env::var("RVP9_FORWARD_MODE_PROBS").map_or(true, |value| value != "0");
+
     // P0b — `decoder_fc` is the decoder's current FC bank state,
     // mirrored by the caller. The compressed header diff-encodes
     // `decoder_fc` toward `post_fc`, mutating `decoder_fc` in place.
     // After the diff-update pass, `decoder_fc` holds the actual FC
     // both sides use for this frame's tile data. The caller persists
     // the mutated `decoder_fc` for the next frame.
-    let post_fc = match fc_override {
-        Some(fc) => fc.clone(),
-        None => FrameContext::new_default(),
+    let mut post_fc = if forward_mode_probs {
+        decoder_fc.clone()
+    } else {
+        match fc_override {
+            Some(fc) => fc.clone(),
+            None => FrameContext::new_default(),
+        }
     };
     // F.5 — frame-level filter is unconditionally `Switchable`
     // (Phase 2c). The writer emits per-block switchable-interp bits
@@ -5433,7 +5443,11 @@ fn build_inter_packet_with_residuals(
                 let mut bw = BoolWriter::start_count_only(&mut count_sink);
                 let mut coef_ctx = TileCoefCtx::new(bounds.mi_col_end - bounds.mi_col_start);
                 let mut retained = RetainedCoefTokens::default();
-                let mut token_pass = CoefTokenPass::record(&mut retained);
+                let mut token_pass = if forward_mode_probs {
+                    CoefTokenPass::record_full(&mut retained)
+                } else {
+                    CoefTokenPass::record(&mut retained)
+                };
                 write_tile_inter_with_retained(
                     &mut bw,
                     &count_fc,
@@ -5458,6 +5472,70 @@ fn build_inter_packet_with_residuals(
             }
             Ok(())
         })?;
+    }
+
+    // Libvpx gathers this frame's complete syntax
+    // counts before writing the compressed header, then forward-updates all
+    // non-coefficient probabilities from those counts. Product rvp9 already
+    // records coefficient tokens during mode decision, but gathers mode/MV
+    // counts only during final tile packing (after the header). Replay the
+    // retained tokens in a count-only traversal for the tile-MT path; the
+    // serial path gathers both count families in its existing record pass.
+    if forward_mode_probs {
+        let mut replay_counts = FrameCounts::default();
+        if let Some(recorded) = recorded_coef_tiles {
+            rvp9_core::entropy::bitacct::with_suppressed(|| -> Result<(), EncodeError> {
+                for (tile_col, tile) in recorded.iter().enumerate() {
+                    let bounds = tile_bounds(
+                        mi_rows as usize,
+                        mi_cols as usize,
+                        0,
+                        log2_tile_cols,
+                        0,
+                        tile_col as u32,
+                    );
+                    let mut token_pass = CoefTokenPass::replay(&tile.retained);
+                    let mut count_sink = [];
+                    let mut bw = BoolWriter::start_count_only(&mut count_sink);
+                    let mut coef_ctx = TileCoefCtx::new(bounds.mi_col_end - bounds.mi_col_start);
+                    let mut tile_counts = FrameCounts::default();
+                    write_tile_inter_with_retained(
+                        &mut bw,
+                        &count_fc,
+                        &params,
+                        target.tx_mode,
+                        mi_grid,
+                        mi_rows,
+                        mi_cols,
+                        bounds,
+                        seg_write,
+                        prev_mv_grid,
+                        &mut coef_ctx,
+                        coef_source,
+                        Some(&mut tile_counts),
+                        Some(&mut token_pass),
+                    )?;
+                    replay_counts.add_non_coef(&tile_counts);
+                }
+                Ok(())
+            })?;
+        }
+        let forward_counts = if recorded_coef_tiles.is_some() {
+            &replay_counts
+        } else {
+            &count_counts
+        };
+        post_fc = crate::bitstream_gates::build_noncoef_prob_update_target(
+            decoder_fc,
+            forward_counts,
+            reference_mode_frame,
+            /* interp_switchable = */ true,
+            /* tx_mode_select = */ true,
+            allow_hp,
+        );
+        if recorded_coef_tiles.is_some() {
+            count_counts.add_non_coef(&replay_counts);
+        }
     }
 
     // A6 — build the live TWO_LOOP coef-prob update plan from THIS
@@ -5498,6 +5576,7 @@ fn build_inter_packet_with_residuals(
 
     let tile_fc: &FrameContext = decoder_fc;
     let tx_mode = target.tx_mode;
+    let collect_final_counts = !forward_mode_probs;
     let encode_tile = |tile_col: usize| -> Result<(Vec<u8>, FrameCounts), EncodeError> {
         let bounds = tile_bounds(
             mi_rows as usize,
@@ -5522,6 +5601,7 @@ fn build_inter_packet_with_residuals(
             // P0b — use `decoder_fc` (the actual FC after
             // compressed-header diff-updates) rather than `post_fc`
             // (the target).
+            let counts = collect_final_counts.then_some(&mut tile_counts);
             write_tile_inter_with_retained(
                 &mut bw,
                 tile_fc,
@@ -5539,7 +5619,7 @@ fn build_inter_packet_with_residuals(
                 // Accumulate all non-coefficient counts while performing
                 // this already-required final syntax traversal. Retained
                 // coefficient replay returns before touching coef counts.
-                Some(&mut tile_counts),
+                counts,
                 Some(&mut token_pass),
             )?;
             bw.stop_encode()
@@ -5575,13 +5655,17 @@ fn build_inter_packet_with_residuals(
             let (tile_buf, tile_counts) = result_slot
                 .unwrap_or_else(|| panic!("inter tile writer {tile_col} produced no result"))?;
             tile_bufs.push(tile_buf);
-            count_counts.add_non_coef(&tile_counts);
+            if collect_final_counts {
+                count_counts.add_non_coef(&tile_counts);
+            }
         }
     } else {
         for tile_col in 0..tile_cols {
             let (tile_buf, tile_counts) = encode_tile(tile_col)?;
             tile_bufs.push(tile_buf);
-            count_counts.add_non_coef(&tile_counts);
+            if collect_final_counts {
+                count_counts.add_non_coef(&tile_counts);
+            }
         }
     }
     let tile_refs: Vec<&[u8]> = tile_bufs.iter().map(Vec::as_slice).collect();

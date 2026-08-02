@@ -48,20 +48,26 @@
 //!
 //! - HBD: every helper assumes 8-bit unsigned counts / probabilities.
 //! - SIMD: scalar reference only.
-//! - Encoder integration: these helpers ship standalone with PROOF
-//!   tests; wiring them into `frame_loop.rs` is a separate task.
 
 use rvp9_core::bitstream::InterpFilter;
-use rvp9_core::bitstream::frame::REF_FRAMES;
-use rvp9_core::bitstream::{CoefProbUpdatePlan, CoefSlotUpdate, tx_mode_to_biggest_tx_size};
+use rvp9_core::bitstream::frame::{REF_FRAMES, ReferenceMode};
+use rvp9_core::bitstream::{
+    CoefProbUpdatePlan, CoefSlotUpdate, MV_UPDATE_PROB, tx_mode_to_biggest_tx_size,
+};
 use rvp9_core::cost::coef_cost::{ENTROPY_NODES, ENTROPY_TOKENS, PIVOT_NODE};
 use rvp9_core::cost::prob_cost::{VP9_PROB_COST_SHIFT, vp9_cost_one, vp9_cost_zero};
 use rvp9_core::entropy::BoolWriter;
+use rvp9_core::entropy::adapt::{
+    VP9_INTER_MODE_TREE, VP9_INTRA_MODE_TREE, VP9_MV_CLASS_TREE, VP9_MV_CLASS0_TREE,
+    VP9_MV_FP_TREE, VP9_MV_JOINT_TREE, VP9_PARTITION_TREE, VP9_SWITCHABLE_INTERP_TREE,
+};
 use rvp9_core::entropy::{
-    COEF_BANDS, COEFF_CONTEXTS, Coef12Bank, CoeffProbsModel, DIFF_UPDATE_PROB,
-    EobBranchCountsBlock, MODEL_NODES, PLANE_TYPES, REF_TYPES, SWITCHABLE_FILTER_CONTEXTS,
-    SWITCHABLE_FILTERS, TX_SIZES, UNCONSTRAINED_NODES, VP9_PARETO8_FULL, get_binary_prob,
-    remap_prob, write_prob_diff_update,
+    BLOCK_SIZE_GROUPS, CLASS0_SIZE, COEF_BANDS, COEFF_CONTEXTS, Coef12Bank, CoeffProbsModel,
+    DIFF_UPDATE_PROB, EobBranchCountsBlock, FrameContext, FrameCounts, INTER_MODE_CONTEXTS,
+    INTRA_INTER_CONTEXTS, MODEL_NODES, MV_OFFSET_BITS, PARTITION_CONTEXTS, PLANE_TYPES,
+    REF_CONTEXTS, REF_TYPES, SKIP_CONTEXTS, SWITCHABLE_FILTER_CONTEXTS, SWITCHABLE_FILTERS,
+    TX_SIZE_CONTEXTS, TX_SIZES, UNCONSTRAINED_NODES, VP9_PARETO8_FULL, get_binary_prob, remap_prob,
+    write_prob_diff_update,
 };
 use rvp9_core::transforms::TxMode;
 
@@ -646,6 +652,233 @@ pub fn update_coef_probs_common(
 }
 
 // =====================================================================
+// Same-frame non-coefficient probability updates
+// =====================================================================
+
+#[inline]
+fn update_binary_target(oldp: u8, ct: [u32; 2]) -> u8 {
+    let ideal = get_binary_prob(ct[0], ct[1]);
+    let search = prob_diff_update_savings_search(ct, oldp, ideal, DIFF_UPDATE_PROB);
+    if search.savings > 0 {
+        search.best_newp
+    } else {
+        oldp
+    }
+}
+
+fn update_tree_target_impl(
+    node: usize,
+    tree: &[i8],
+    counts: &[u32],
+    old_probs: &[u8],
+    target_probs: &mut [u8],
+) -> u32 {
+    let left = tree[node];
+    let left_count = if left <= 0 {
+        counts[(-left) as usize]
+    } else {
+        update_tree_target_impl(left as usize, tree, counts, old_probs, target_probs)
+    };
+    let right = tree[node + 1];
+    let right_count = if right <= 0 {
+        counts[(-right) as usize]
+    } else {
+        update_tree_target_impl(right as usize, tree, counts, old_probs, target_probs)
+    };
+    let prob_idx = node >> 1;
+    target_probs[prob_idx] = update_binary_target(old_probs[prob_idx], [left_count, right_count]);
+    left_count + right_count
+}
+
+fn update_tree_target(tree: &[i8], counts: &[u32], old_probs: &[u8], target_probs: &mut [u8]) {
+    let _ = update_tree_target_impl(0, tree, counts, old_probs, target_probs);
+}
+
+#[inline]
+fn update_mv_target(oldp: u8, ct: [u32; 2]) -> u8 {
+    let newp = get_binary_prob(ct[0], ct[1]) | 1;
+    let old_cost = cost_branch256(ct, oldp) + i64::from(vp9_cost_zero(MV_UPDATE_PROB));
+    let new_cost = cost_branch256(ct, newp)
+        + i64::from(vp9_cost_one(MV_UPDATE_PROB))
+        + (7_i64 << VP9_PROB_COST_SHIFT);
+    if old_cost > new_cost { newp } else { oldp }
+}
+
+fn update_mv_tree_target(tree: &[i8], counts: &[u32], old_probs: &[u8], target_probs: &mut [u8]) {
+    fn visit(
+        node: usize,
+        tree: &[i8],
+        counts: &[u32],
+        old_probs: &[u8],
+        target_probs: &mut [u8],
+    ) -> u32 {
+        let left = tree[node];
+        let left_count = if left <= 0 {
+            counts[(-left) as usize]
+        } else {
+            visit(left as usize, tree, counts, old_probs, target_probs)
+        };
+        let right = tree[node + 1];
+        let right_count = if right <= 0 {
+            counts[(-right) as usize]
+        } else {
+            visit(right as usize, tree, counts, old_probs, target_probs)
+        };
+        let prob_idx = node >> 1;
+        target_probs[prob_idx] = update_mv_target(old_probs[prob_idx], [left_count, right_count]);
+        left_count + right_count
+    }
+    let _ = visit(0, tree, counts, old_probs, target_probs);
+}
+
+/// Build the compressed-header probability target selected from this frame's
+/// non-coefficient counts. Mirrors the current-frame updates in libvpx
+/// `write_compressed_header`; coefficient updates remain on their dedicated
+/// TWO_LOOP plan.
+#[must_use]
+pub fn build_noncoef_prob_update_target(
+    pre: &FrameContext,
+    counts: &FrameCounts,
+    reference_mode: ReferenceMode,
+    interp_switchable: bool,
+    tx_mode_select: bool,
+    allow_hp: bool,
+) -> FrameContext {
+    let mut target = pre.clone();
+
+    if tx_mode_select {
+        for ctx in 0..TX_SIZE_CONTEXTS {
+            let c8 = counts.tx.p8x8[ctx];
+            target.tx_probs.p8x8[ctx][0] =
+                update_binary_target(pre.tx_probs.p8x8[ctx][0], [c8[0], c8[1]]);
+            let c16 = counts.tx.p16x16[ctx];
+            let b16 = [[c16[0], c16[1] + c16[2]], [c16[1], c16[2]]];
+            for (slot, ct) in b16.into_iter().enumerate() {
+                target.tx_probs.p16x16[ctx][slot] =
+                    update_binary_target(pre.tx_probs.p16x16[ctx][slot], ct);
+            }
+            let c32 = counts.tx.p32x32[ctx];
+            let b32 = [
+                [c32[0], c32[1] + c32[2] + c32[3]],
+                [c32[1], c32[2] + c32[3]],
+                [c32[2], c32[3]],
+            ];
+            for (slot, ct) in b32.into_iter().enumerate() {
+                target.tx_probs.p32x32[ctx][slot] =
+                    update_binary_target(pre.tx_probs.p32x32[ctx][slot], ct);
+            }
+        }
+    }
+
+    for ctx in 0..SKIP_CONTEXTS {
+        target.skip_probs[ctx] = update_binary_target(pre.skip_probs[ctx], counts.skip[ctx]);
+    }
+    for ctx in 0..INTER_MODE_CONTEXTS {
+        update_tree_target(
+            &VP9_INTER_MODE_TREE,
+            &counts.inter_mode[ctx],
+            &pre.inter_mode_probs[ctx],
+            &mut target.inter_mode_probs[ctx],
+        );
+    }
+    if interp_switchable {
+        for ctx in 0..SWITCHABLE_FILTER_CONTEXTS {
+            update_tree_target(
+                &VP9_SWITCHABLE_INTERP_TREE,
+                &counts.switchable_interp[ctx],
+                &pre.switchable_interp_prob[ctx],
+                &mut target.switchable_interp_prob[ctx],
+            );
+        }
+    }
+    for ctx in 0..INTRA_INTER_CONTEXTS {
+        target.intra_inter_prob[ctx] =
+            update_binary_target(pre.intra_inter_prob[ctx], counts.intra_inter[ctx]);
+    }
+    if reference_mode == ReferenceMode::Select {
+        for ctx in 0..target.comp_inter_prob.len() {
+            target.comp_inter_prob[ctx] =
+                update_binary_target(pre.comp_inter_prob[ctx], counts.comp_inter[ctx]);
+        }
+    }
+    if reference_mode != ReferenceMode::Compound {
+        for ctx in 0..REF_CONTEXTS {
+            for branch in 0..2 {
+                target.single_ref_prob[ctx][branch] = update_binary_target(
+                    pre.single_ref_prob[ctx][branch],
+                    counts.single_ref[ctx][branch],
+                );
+            }
+        }
+    }
+    if reference_mode != ReferenceMode::Single {
+        for ctx in 0..REF_CONTEXTS {
+            target.comp_ref_prob[ctx] =
+                update_binary_target(pre.comp_ref_prob[ctx], counts.comp_ref[ctx]);
+        }
+    }
+    for group in 0..BLOCK_SIZE_GROUPS {
+        update_tree_target(
+            &VP9_INTRA_MODE_TREE,
+            &counts.y_mode[group],
+            &pre.y_mode_prob[group],
+            &mut target.y_mode_prob[group],
+        );
+    }
+    for ctx in 0..PARTITION_CONTEXTS {
+        update_tree_target(
+            &VP9_PARTITION_TREE,
+            &counts.partition[ctx],
+            &pre.partition_prob[ctx],
+            &mut target.partition_prob[ctx],
+        );
+    }
+
+    update_mv_tree_target(
+        &VP9_MV_JOINT_TREE,
+        &counts.mv.joints,
+        &pre.nmvc.joints,
+        &mut target.nmvc.joints,
+    );
+    for component in 0..2 {
+        let old = &pre.nmvc.comps[component];
+        let out = &mut target.nmvc.comps[component];
+        let ct = &counts.mv.comps[component];
+        out.sign = update_mv_target(old.sign, ct.sign);
+        update_mv_tree_target(
+            &VP9_MV_CLASS_TREE,
+            &ct.classes,
+            &old.classes,
+            &mut out.classes,
+        );
+        update_mv_tree_target(
+            &VP9_MV_CLASS0_TREE,
+            &ct.class0,
+            &old.class0,
+            &mut out.class0,
+        );
+        for bit in 0..MV_OFFSET_BITS {
+            out.bits[bit] = update_mv_target(old.bits[bit], ct.bits[bit]);
+        }
+        for class0 in 0..CLASS0_SIZE {
+            update_mv_tree_target(
+                &VP9_MV_FP_TREE,
+                &ct.class0_fp[class0],
+                &old.class0_fp[class0],
+                &mut out.class0_fp[class0],
+            );
+        }
+        update_mv_tree_target(&VP9_MV_FP_TREE, &ct.fp, &old.fp, &mut out.fp);
+        if allow_hp {
+            out.class0_hp = update_mv_target(old.class0_hp, ct.class0_hp);
+            out.hp = update_mv_target(old.hp, ct.hp);
+        }
+    }
+
+    target
+}
+
+// =====================================================================
 // W7.2 — fix_interp_filter
 // =====================================================================
 
@@ -863,6 +1096,69 @@ mod tests {
     use super::*;
 
     // ----- W7.1 -----
+
+    #[test]
+    fn same_frame_noncoef_target_is_identity_without_symbols() {
+        let pre = FrameContext::new_default();
+        let target = build_noncoef_prob_update_target(
+            &pre,
+            &FrameCounts::default(),
+            ReferenceMode::Single,
+            true,
+            true,
+            true,
+        );
+        assert_eq!(target, pre);
+    }
+
+    #[test]
+    fn same_frame_noncoef_target_updates_every_emitted_probability_family() {
+        let pre = FrameContext::new_default();
+        let mut counts = FrameCounts::default();
+        counts.tx.p8x8[0] = [10_000, 1];
+        counts.tx.p16x16[0] = [10_000, 1, 1];
+        counts.tx.p32x32[0] = [10_000, 1, 1, 1];
+        counts.skip[0] = [10_000, 1];
+        counts.inter_mode[0][3] = 10_000;
+        counts.switchable_interp[0][2] = 10_000;
+        counts.intra_inter[0] = [10_000, 1];
+        counts.single_ref[0][0] = [10_000, 1];
+        counts.single_ref[0][1] = [1, 10_000];
+        counts.y_mode[0][9] = 10_000;
+        counts.partition[0][3] = 10_000;
+        counts.mv.joints[3] = 10_000;
+        counts.mv.comps[0].sign = [10_000, 1];
+        counts.mv.comps[0].classes[10] = 10_000;
+        counts.mv.comps[0].class0[1] = 10_000;
+        counts.mv.comps[0].bits[0] = [10_000, 1];
+        counts.mv.comps[0].class0_fp[0][3] = 10_000;
+        counts.mv.comps[0].fp[3] = 10_000;
+        counts.mv.comps[0].class0_hp = [10_000, 1];
+        counts.mv.comps[0].hp = [1, 10_000];
+
+        let target = build_noncoef_prob_update_target(
+            &pre,
+            &counts,
+            ReferenceMode::Single,
+            true,
+            true,
+            true,
+        );
+
+        assert_ne!(target.tx_probs, pre.tx_probs);
+        assert_ne!(target.skip_probs, pre.skip_probs);
+        assert_ne!(target.inter_mode_probs, pre.inter_mode_probs);
+        assert_ne!(target.switchable_interp_prob, pre.switchable_interp_prob);
+        assert_ne!(target.intra_inter_prob, pre.intra_inter_prob);
+        assert_ne!(target.single_ref_prob, pre.single_ref_prob);
+        assert_ne!(target.y_mode_prob, pre.y_mode_prob);
+        assert_ne!(target.partition_prob, pre.partition_prob);
+        assert_ne!(target.nmvc, pre.nmvc);
+        assert_eq!(target.comp_inter_prob, pre.comp_inter_prob);
+        assert_eq!(target.comp_ref_prob, pre.comp_ref_prob);
+        assert_eq!(target.uv_mode_prob, pre.uv_mode_prob);
+        assert_eq!(target.coef_probs, pre.coef_probs);
+    }
 
     /// W7.1 PROOF — `vp9_prob_diff_update_savings_search`
     /// (`vp9_subexp.c:117-139`).

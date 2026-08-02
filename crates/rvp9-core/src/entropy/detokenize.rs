@@ -1051,8 +1051,13 @@ pub struct RetainedCoefTokens {
 /// Record or replay state for [`write_block_tokens_with_retained`].
 #[derive(Debug)]
 pub enum CoefTokenPass<'a> {
-    /// Append each transform block's symbolic tokens.
+    /// Append each transform block's symbolic tokens while the modes writer
+    /// suppresses non-coefficient syntax and counts.
     Record(&'a mut RetainedCoefTokens),
+    /// Append symbolic coefficient tokens during a complete count-only tile
+    /// traversal. This lets an encoder gather current-frame mode/MV counts
+    /// and retained coefficients in one pre-header pass.
+    RecordFull(&'a mut RetainedCoefTokens),
     /// Replay previously retained blocks in syntax traversal order.
     Replay {
         /// The immutable recorded tile token stream.
@@ -1073,6 +1078,12 @@ impl<'a> CoefTokenPass<'a> {
         Self::Record(retained)
     }
 
+    /// Create a recording pass that leaves full mode syntax enabled.
+    #[must_use]
+    pub fn record_full(retained: &'a mut RetainedCoefTokens) -> Self {
+        Self::RecordFull(retained)
+    }
+
     /// Create a replay pass.
     #[must_use]
     pub fn replay(retained: &'a RetainedCoefTokens) -> Self {
@@ -1088,7 +1099,7 @@ impl<'a> CoefTokenPass<'a> {
     #[must_use]
     pub fn finished(&self) -> bool {
         match self {
-            Self::Record(_) => true,
+            Self::Record(_) | Self::RecordFull(_) => true,
             Self::Replay {
                 retained,
                 next_block,
@@ -1744,7 +1755,7 @@ pub fn write_block_tokens_with_retained(
         (None, _) => None,
     };
     let recorded = match retained_pass {
-        Some(CoefTokenPass::Record(retained)) => {
+        Some(CoefTokenPass::Record(retained) | CoefTokenPass::RecordFull(retained)) => {
             let emit_bits = !bw.is_count_only();
             encode_coefs_impl(
                 bw,
