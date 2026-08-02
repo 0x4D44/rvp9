@@ -23,7 +23,10 @@
 //! cargo run -p rvp9-harness --release --bin f02-block-oracle -- \
 //!     --foreman tests/corpus/foreman_cif.y4m \
 //!     --vpxenc third_party/libvpx/build_f02/vpxenc.exe \
+//!     --width 256 --height 256 \
+//!     --fps 30 \
 //!     --frames 64 \
+//!     --threads 1 --tile-columns 6 \
 //!     --kbps 25,50,100,250 \
 //!     --vbr \
 //!     --fixed-q 120 \
@@ -33,7 +36,8 @@
 
 use rvp9_encoder::f02_oracle::{self, BlockDecision};
 use rvp9_encoder::{
-    AqMode, EncoderConfig, RcMode, Stage4aProductSplitOverride, StreamEncoder, YuvFrameRef,
+    AqMode, EncoderConfig, EncoderParallelism, RcMode, Stage4aProductSplitOverride, StreamEncoder,
+    YuvFrameRef,
 };
 use rvp9_harness::container::{IvfHeader, write_ivf};
 use rvp9_harness::f02_schema::{compare_decisions, parse_jsonl_stream};
@@ -46,6 +50,29 @@ use std::process::{Command, Stdio};
 const DEFAULT_W: u32 = 256;
 const DEFAULT_H: u32 = 256;
 const DEFAULT_FRAMES: u32 = 64;
+
+#[derive(Copy, Clone)]
+struct OracleEncodeConfig {
+    width: u32,
+    height: u32,
+    frames: u32,
+    fps: Option<u32>,
+    threads: u32,
+    tile_columns: u8,
+    kbps: u32,
+    vbr: bool,
+}
+
+fn oracle_parallelism(encode: OracleEncodeConfig) -> EncoderParallelism {
+    EncoderParallelism {
+        max_threads: encode.threads,
+        requested_log2_tile_cols: encode.tile_columns,
+    }
+}
+
+fn oracle_fps(encode: OracleEncodeConfig, source_fps: f64) -> f64 {
+    encode.fps.map_or(source_fps, f64::from)
+}
 
 fn arg(args: &[String], key: &str) -> Option<String> {
     let mut iter = args.iter();
@@ -95,6 +122,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let frames: u32 = arg(&argv, "--frames")
         .and_then(|s| s.parse().ok())
         .unwrap_or(DEFAULT_FRAMES);
+    let width: u32 = arg(&argv, "--width")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(DEFAULT_W);
+    let height: u32 = arg(&argv, "--height")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(DEFAULT_H);
+    let fps: Option<u32> = arg(&argv, "--fps").and_then(|s| s.parse().ok());
+    let threads: u32 = arg(&argv, "--threads")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1)
+        .max(1);
+    let tile_columns: u8 = arg(&argv, "--tile-columns")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(6);
     let kbps_list: Vec<u32> = arg(&argv, "--kbps")
         .unwrap_or_else(|| "100".into())
         .split(',')
@@ -154,6 +195,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("  libvpx    : {}", vpxenc_path.display());
     }
     println!("  frames    : {}", frames);
+    println!("  geometry  : {width}x{height}");
+    println!(
+        "  fps       : {}",
+        fps.map_or_else(|| "source header".to_string(), |value| value.to_string())
+    );
+    println!("  threads   : {threads}");
+    println!("  tile cols : log2 request {tile_columns}");
     println!("  bitrates  : {:?} kbps", kbps_list);
     println!("  rate mode : {}", if vbr { "VBR" } else { "CBR" });
     println!(
@@ -190,7 +238,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for &kbps in &kbps_list {
         println!("\n=== {} kbps target bitrate ===", kbps);
         let rvp9_ivf = run_dir.join(format!("foreman_{}kbps_rvp9.ivf", kbps));
-        let rvp9_records = drive_rvp9_leg(&foreman_path, frames, kbps, vbr, strict, &rvp9_ivf)?;
+        let encode = OracleEncodeConfig {
+            width,
+            height,
+            frames,
+            fps,
+            threads,
+            tile_columns,
+            kbps,
+            vbr,
+        };
+        let rvp9_records = drive_rvp9_leg(&foreman_path, encode, strict, &rvp9_ivf)?;
         println!(
             "  rvp9: {} per-block decisions across {} frames",
             rvp9_records.len(),
@@ -201,15 +259,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let libvpx_records = if no_libvpx {
             Vec::new()
         } else {
-            drive_libvpx_leg(
-                &vpxenc_path,
-                &foreman_path,
-                frames,
-                kbps,
-                &run_dir,
-                vbr,
-                fixed_q,
-            )?
+            drive_libvpx_leg(&vpxenc_path, &foreman_path, encode, &run_dir, fixed_q)?
         };
         if !no_libvpx {
             println!("  libvpx: {} per-block decisions", libvpx_records.len());
@@ -371,19 +421,23 @@ fn chrono_like_timestamp() -> String {
 /// each frame.
 fn drive_rvp9_leg(
     foreman_path: &Path,
-    frames: u32,
-    kbps: u32,
-    vbr: bool,
+    encode: OracleEncodeConfig,
     strict: bool,
     ivf_path: &Path,
 ) -> Result<Vec<BlockDecision>, Box<dyn std::error::Error>> {
-    let (gop_length, rc_mode) = rvp9_rate_config(frames, vbr);
-    let (yuv_frames, src_fps) = read_cropped(foreman_path, DEFAULT_W, DEFAULT_H, frames as usize)?;
+    let (gop_length, rc_mode) = rvp9_rate_config(encode.frames, encode.vbr);
+    let (yuv_frames, source_fps) = read_cropped(
+        foreman_path,
+        encode.width,
+        encode.height,
+        encode.frames as usize,
+    )?;
+    let fps = oracle_fps(encode, source_fps);
     let cfg = EncoderConfig {
-        width: DEFAULT_W,
-        height: DEFAULT_H,
-        framerate: src_fps,
-        target_bitrate_bps: kbps * 1000,
+        width: encode.width,
+        height: encode.height,
+        framerate: fps,
+        target_bitrate_bps: encode.kbps * 1000,
         gop_length,
         aq_mode: AqMode::Off,
         use_prev_frame_mvs: false,
@@ -401,7 +455,8 @@ fn drive_rvp9_leg(
         min_qindex: 4,
         max_qindex: 255,
     };
-    let mut enc = StreamEncoder::new(cfg)?;
+    let parallelism = oracle_parallelism(encode);
+    let mut enc = StreamEncoder::new_with_parallelism(cfg, parallelism)?;
     let mut all_records = Vec::new();
     let mut packets = Vec::with_capacity(yuv_frames.len());
     // Drain any prior thread-local state.
@@ -411,9 +466,9 @@ fn drive_rvp9_leg(
             y,
             u,
             v,
-            y_stride: DEFAULT_W as usize,
-            u_stride: DEFAULT_W as usize / 2,
-            v_stride: DEFAULT_W as usize / 2,
+            y_stride: encode.width as usize,
+            u_stride: encode.width as usize / 2,
+            v_stride: encode.width as usize / 2,
         };
         let packet = enc.encode_frame(&view)?;
         packets.push(packet.data);
@@ -422,9 +477,9 @@ fn drive_rvp9_leg(
     }
     let mut ivf = File::create(ivf_path)?;
     let header = IvfHeader::vp9(
-        DEFAULT_W as u16,
-        DEFAULT_H as u16,
-        src_fps.round() as u32,
+        encode.width as u16,
+        encode.height as u16,
+        fps.round() as u32,
         1,
     );
     let packet_refs: Vec<&[u8]> = packets.iter().map(Vec::as_slice).collect();
@@ -436,20 +491,20 @@ fn drive_rvp9_leg(
 /// pointed at a sidecar JSONL file under `run_dir`. The harness
 /// then re-reads that file.
 ///
-/// The source is center-cropped to the same 256×256 I420 frames used by
+/// The source is center-cropped to the same requested I420 geometry used by
 /// the rvp9 leg. The CLI options match the Stage 4a product gate.
 fn drive_libvpx_leg(
     vpxenc: &Path,
     foreman: &Path,
-    frames: u32,
-    kbps: u32,
+    encode: OracleEncodeConfig,
     run_dir: &Path,
-    vbr: bool,
     fixed_q: Option<u8>,
 ) -> Result<Vec<BlockDecision>, Box<dyn std::error::Error>> {
-    let sidecar = run_dir.join(format!("foreman_{}kbps_libvpx.jsonl", kbps));
-    let raw = run_dir.join(format!("foreman_{}kbps_input.i420", kbps));
-    let (cropped, src_fps) = read_cropped(foreman, DEFAULT_W, DEFAULT_H, frames as usize)?;
+    let sidecar = run_dir.join(format!("foreman_{}kbps_libvpx.jsonl", encode.kbps));
+    let raw = run_dir.join(format!("foreman_{}kbps_input.i420", encode.kbps));
+    let (cropped, source_fps) =
+        read_cropped(foreman, encode.width, encode.height, encode.frames as usize)?;
+    let fps = oracle_fps(encode, source_fps);
     {
         let mut out = File::create(&raw)?;
         for (y, u, v) in &cropped {
@@ -468,15 +523,17 @@ fn drive_libvpx_leg(
         .arg("--tune-content=default")
         .arg("--lag-in-frames=0")
         .arg("--passes=1")
+        .arg(format!("--threads={}", encode.threads))
+        .arg(format!("--tile-columns={}", encode.tile_columns))
         .arg("--i420")
-        .arg(format!("--width={DEFAULT_W}"))
-        .arg(format!("--height={DEFAULT_H}"))
-        .arg(format!("--fps={}/1", src_fps.round() as u32))
-        .arg(format!("--target-bitrate={}", kbps))
-        .arg(format!("--limit={}", frames))
+        .arg(format!("--width={}", encode.width))
+        .arg(format!("--height={}", encode.height))
+        .arg(format!("--fps={}/1", fps.round() as u32))
+        .arg(format!("--target-bitrate={}", encode.kbps))
+        .arg(format!("--limit={}", encode.frames))
         .arg("--aq-mode=0")
         .arg("-o")
-        .arg(run_dir.join(format!("foreman_{}kbps_libvpx.ivf", kbps)))
+        .arg(run_dir.join(format!("foreman_{}kbps_libvpx.ivf", encode.kbps)))
         .arg(&raw)
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
@@ -487,7 +544,7 @@ fn drive_libvpx_leg(
             .arg(format!("--cq-level={cli_q}"))
             .arg(format!("--min-q={cli_q}"))
             .arg(format!("--max-q={max_q}"));
-    } else if !vbr {
+    } else if !encode.vbr {
         cmd.arg("--end-usage=cbr");
     }
     let out = cmd.output()?;
@@ -519,6 +576,19 @@ fn drive_libvpx_leg(
 mod tests {
     use super::*;
 
+    fn test_encode_config() -> OracleEncodeConfig {
+        OracleEncodeConfig {
+            width: 1280,
+            height: 704,
+            frames: 60,
+            fps: Some(30),
+            threads: 1,
+            tile_columns: 6,
+            kbps: 1000,
+            vbr: true,
+        }
+    }
+
     #[test]
     fn vbr_oracle_uses_single_keyframe_and_vbr_rate_control() {
         assert_eq!(rvp9_rate_config(64, true), (65, RcMode::Vbr));
@@ -543,5 +613,22 @@ mod tests {
         assert_eq!(fixed_q_cli_range(120), Some((30, 38)));
         assert_eq!(fixed_q_cli_range(121), None);
         assert_eq!(fixed_q_cli_range(224), None);
+    }
+
+    #[test]
+    fn production_oracle_uses_matched_parallelism() {
+        let parallelism = oracle_parallelism(test_encode_config());
+        assert_eq!(parallelism.max_threads, 1);
+        assert_eq!(parallelism.requested_log2_tile_cols, 6);
+        assert_eq!(parallelism.effective_log2_tile_cols(1280), 2);
+    }
+
+    #[test]
+    fn explicit_fps_overrides_source_header() {
+        assert_eq!(oracle_fps(test_encode_config(), 50.0), 30.0);
+
+        let mut source_rate = test_encode_config();
+        source_rate.fps = None;
+        assert_eq!(oracle_fps(source_rate, 50.0), 50.0);
     }
 }
