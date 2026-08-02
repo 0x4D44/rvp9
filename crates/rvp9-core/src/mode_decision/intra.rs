@@ -62,15 +62,19 @@
 use crate::Pixel;
 use crate::bitstream::header::FrameKind;
 use crate::block::{BlockSize, max_txsize};
-use crate::cost::{FrameTypeForRd, compute_rd_mult};
+use crate::cost::{FrameTypeForRd, compute_rd_mult, vp9_cost_bit};
+use crate::entropy::default_probs::DEFAULT_SKIP_PROBS;
 use crate::intra_pred::{
     ABOVE_UNAVAILABLE_FILL, DcAvailability, IntraMode, LEFT_UNAVAILABLE_FILL, NUM_INTRA_MODES,
     PredCtx, intra_predict,
 };
+use crate::mode_decision::block_yrd::{block_error_fp_i32, satd_i16};
+use crate::mode_decision::hadamard::hadamard_16x16;
 use crate::mode_decision::rd_cost;
 use crate::mv_search::PlaneRef;
 use crate::quant::forward::{
     PlaneQuantizers, vp9_quantize_b_32x32_with_order, vp9_quantize_b_with_order,
+    vp9_quantize_fp_with_order,
 };
 use crate::transforms::forward::{fdct32x32, fht4x4, fht8x8, fht16x16};
 use crate::transforms::scans::scan_for;
@@ -239,7 +243,134 @@ pub fn pick_intra_mode_luma(params: &IntraModeSearchParams<'_>) -> IntraModeSear
 /// stopping after [`IntraMode::H`].
 #[must_use]
 pub fn pick_realtime_intra_mode_luma(params: &IntraModeSearchParams<'_>) -> IntraModeSearchResult {
-    pick_intra_mode_luma_through(params, IntraMode::H)
+    if params.block_size == BlockSize::Block16x16 {
+        pick_realtime_intra_mode_luma_16x16(params)
+    } else {
+        pick_intra_mode_luma_through(params, IntraMode::H)
+    }
+}
+
+/// Match libvpx's realtime keyframe `vp9_pick_intra_mode` model for one
+/// 16x16 leaf. Unlike the full-RD intra picker, this path deliberately uses
+/// a Walsh-Hadamard transform, `quantize_fp`, SATD of quantized coefficients
+/// as its rate proxy, and coefficient-domain quantization error as distortion
+/// (`vp9_pickmode.c::block_yrd`).
+fn pick_realtime_intra_mode_luma_16x16(
+    params: &IntraModeSearchParams<'_>,
+) -> IntraModeSearchResult {
+    const SIDE: usize = 16;
+    const N: usize = SIDE * SIDE;
+
+    let lambda = compute_rd_mult(
+        i32::from(params.q_index),
+        frame_type_for_rd(params.frame_kind),
+    );
+    let (above_row, above_left, left_col) = build_edges(
+        SIDE,
+        params.above_pixels,
+        params.left_pixels,
+        params.top_left_pixel,
+        params.have_above,
+        params.have_left,
+    );
+    let dc_avail = DcAvailability {
+        above_available: params.have_above,
+        left_available: params.have_left,
+    };
+    let dispatch = crate::dsp::get();
+    let mode_cost_row =
+        &params.y_mode_costs[params.above_mode_ctx as usize][params.left_mode_ctx as usize];
+    // A keyframe starts from the default probability bank. The first leaf's
+    // skip context is zero; non-skippable candidates all pay the same skip
+    // cost, so this affects the argmin only when a residual quantizes away.
+    let skip_prob = DEFAULT_SKIP_PROBS[0];
+
+    let mut best = IntraModeSearchResult {
+        best_mode: IntraMode::Dc,
+        best_rd_cost: i64::MAX,
+        best_distortion: u32::MAX,
+        best_rate: u32::MAX,
+    };
+    let mut pred = [0u8; N];
+    let mut residual = [0i16; N];
+    let mut had_coeff = [0i16; N];
+    let mut coeff = [0i32; N];
+    let mut qcoeff = [0i16; N];
+    let mut dqcoeff = [0i16; N];
+    let scan = scan_for(TxSize::Tx16x16, TxType::DctDct);
+    let dequant_pair = [params.quantizer.dequant[0], params.quantizer.dequant[1]];
+
+    for raw_mode in IntraMode::Dc as u8..=IntraMode::H as u8 {
+        let mode = IntraMode::from_u8(raw_mode).expect("DC/V/H modes are valid");
+        intra_predict(
+            mode,
+            &mut pred,
+            SIDE,
+            SIDE,
+            PredCtx {
+                above: &above_row[..2 * SIDE],
+                left: &left_col[..SIDE],
+                above_left,
+            },
+            dc_avail,
+            &dispatch,
+        );
+
+        let src = params.src_plane;
+        let (sx, sy) = params.src_offset;
+        for row in 0..SIDE {
+            for col in 0..SIDE {
+                residual[row * SIDE + col] =
+                    i16::from(src.data[(sy + row) * src.stride + sx + col])
+                        - i16::from(pred[row * SIDE + col]);
+            }
+        }
+        hadamard_16x16(&residual, SIDE, &mut had_coeff);
+        for (dst, &src) in coeff.iter_mut().zip(&had_coeff) {
+            *dst = i32::from(src);
+        }
+        let eob = vp9_quantize_fp_with_order(
+            &coeff,
+            N,
+            false,
+            &params.quantizer.round_fp,
+            &params.quantizer.quant_fp,
+            &mut qcoeff,
+            &mut dqcoeff,
+            &dequant_pair,
+            &scan,
+        );
+        let rate_satd = if eob == 1 {
+            i32::from(qcoeff[0]).unsigned_abs()
+        } else if eob > 1 {
+            satd_i16(&qcoeff)
+        } else {
+            0
+        };
+        let block_rate = (u64::from(rate_satd) << (2 + crate::cost::VP9_PROB_COST_SHIFT))
+            + (1u64 << crate::cost::VP9_PROB_COST_SHIFT);
+        let skippable = eob == 0;
+        let rate = if skippable {
+            u64::from(vp9_cost_bit(skip_prob, true))
+        } else {
+            block_rate + u64::from(vp9_cost_bit(skip_prob, false))
+        }
+        .saturating_add(mode_cost_row[raw_mode as usize].max(0) as u64)
+        .min(u64::from(u32::MAX)) as u32;
+        let dist = (block_error_fp_i32(&coeff, &dqcoeff) >> 2).clamp(0, i64::from(u32::MAX)) as u32;
+        let this_rd = rd_cost(lambda, rate, u64::from(dist));
+
+        if this_rd < best.best_rd_cost {
+            best = IntraModeSearchResult {
+                best_mode: mode,
+                best_rd_cost: this_rd,
+                best_distortion: dist,
+                best_rate: rate,
+            };
+        }
+    }
+
+    best
 }
 
 fn pick_intra_mode_luma_through(
@@ -1213,15 +1344,73 @@ mod tests {
         assert_eq!(main.best_mode, min_entry.best_mode);
         assert_eq!(main.best_rd_cost, min_entry.best_rd_cost);
 
-        // The realtime wrapper must return the exact minimum of libvpx's
-        // speed-4+ keyframe subset: DC, V, and H.
+        // The realtime wrapper is independently bounded to libvpx's
+        // speed-4+ keyframe subset: DC, V, and H. Its 16x16 scorer uses
+        // libvpx's fast Hadamard/SATD model, so it deliberately need not
+        // equal the full-RD DCT model's subset minimum.
         let realtime = pick_realtime_intra_mode_luma(&params);
-        let realtime_min = all_costs[..=IntraMode::H as usize]
-            .iter()
-            .min_by_key(|r| r.best_rd_cost)
-            .expect("DC/V/H subset is non-empty");
-        assert_eq!(realtime.best_mode, realtime_min.best_mode);
-        assert_eq!(realtime.best_rd_cost, realtime_min.best_rd_cost);
+        assert!((realtime.best_mode as u8) <= IntraMode::H as u8);
+        assert!(realtime.best_rd_cost > 0);
+    }
+
+    /// The first 16x16 leaf of the pinned `in_to_tree` fixture at qindex 83.
+    /// A temporary trace in pinned libvpx v1.14.1 produced the same winning
+    /// H candidate: rate 200,965, distortion 45,284, RD 15,846,565.
+    #[test]
+    fn realtime_intra16_matches_pinned_libvpx_leaf() {
+        let src = [
+            187, 187, 182, 181, 175, 181, 181, 179, 182, 182, 182, 186, 184, 186, 184, 183, 183,
+            188, 185, 181, 186, 180, 181, 186, 181, 180, 186, 179, 184, 184, 180, 178, 181, 184,
+            180, 183, 188, 189, 184, 181, 183, 185, 183, 177, 186, 183, 181, 179, 183, 184, 180,
+            186, 184, 181, 183, 183, 182, 184, 188, 186, 181, 188, 187, 189, 182, 186, 184, 182,
+            182, 182, 176, 188, 187, 181, 180, 182, 176, 185, 195, 189, 179, 185, 179, 183, 180,
+            185, 182, 180, 184, 183, 187, 183, 179, 185, 182, 182, 179, 186, 185, 189, 185, 187,
+            184, 183, 181, 188, 181, 179, 175, 178, 185, 183, 171, 176, 176, 174, 184, 191, 187,
+            186, 178, 182, 178, 181, 185, 186, 182, 184, 185, 186, 179, 176, 185, 183, 181, 185,
+            181, 183, 182, 178, 190, 182, 178, 184, 179, 186, 180, 181, 189, 177, 179, 183, 179,
+            181, 186, 182, 181, 179, 181, 181, 182, 184, 188, 178, 176, 189, 184, 178, 181, 183,
+            188, 188, 183, 183, 182, 184, 178, 176, 181, 182, 176, 183, 186, 176, 180, 182, 185,
+            184, 181, 183, 182, 181, 179, 183, 184, 188, 183, 179, 185, 184, 184, 179, 177, 183,
+            182, 186, 186, 178, 175, 183, 189, 186, 178, 181, 183, 187, 187, 177, 177, 186, 180,
+            182, 184, 187, 179, 178, 185, 184, 184, 182, 184, 172, 181, 185, 180, 188, 171, 183,
+            183, 186, 184, 176, 179, 178, 184, 183, 181, 177, 181, 182, 181, 179, 185, 184, 182,
+            184,
+        ];
+        let src_plane = PlaneRef {
+            data: &src,
+            stride: 16,
+            width: 16,
+            height: 16,
+        };
+        let quantizer = init_plane_quantizers(83, QuantizerDeltas::Y);
+        let costs = intra_y_mode_costs_kf_table();
+        let edge = [0u8; 32];
+        let params = IntraModeSearchParams {
+            block_size: BlockSize::Block16x16,
+            src_plane: &src_plane,
+            src_offset: (0, 0),
+            above_pixels: &edge,
+            left_pixels: &edge,
+            top_left_pixel: 0,
+            have_above: false,
+            have_left: false,
+            quantizer: &quantizer,
+            q_index: 83,
+            frame_kind: FrameKind::KeyFrame,
+            above_mode_ctx: IntraMode::Dc,
+            left_mode_ctx: IntraMode::Dc,
+            y_mode_costs: &costs,
+        };
+
+        assert_eq!(
+            pick_realtime_intra_mode_luma(&params),
+            IntraModeSearchResult {
+                best_mode: IntraMode::H,
+                best_rd_cost: 15_846_565,
+                best_distortion: 45_284,
+                best_rate: 200_965,
+            }
+        );
     }
 
     /// Diagnostic-only variant: returns the full
