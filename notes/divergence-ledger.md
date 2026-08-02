@@ -31,33 +31,38 @@ libvpx counterparts: `vp9/encoder/vp9_encodeframe.c::{fill_variance_4x4avg,set_v
 and `vp9/encoder/vp9_rdopt.c::rd_pick_intra_sub_8x8_y_mode`.
 **What libvpx does:** keyframes build a source-variance tree from rounded 4x4
 averages, consider NONE/HORZ/VERT/SPLIT partitions, and pick four causal BMI
-modes with live coefficient entropy contexts.
+modes with live coefficient entropy contexts. At realtime cpu-used 6–8 it
+restricts 4x4 luma search to DC/V/H and uses the full neighbour-derived token
+context plus exact sign/category-bit cost for every coefficient.
 **What rvp9 does:** `RVP9_EXACT_KF_SUB8=1` enables a diagnostic-only tree that
 uses the same rounded 4x4-average variance but considers NONE/SPLIT only. A
-selected 8x8 SPLIT carries four causal 4x4 modes and prices them with the live
-tile above/left coefficient contexts, updating the contexts after every
-winner. Production behavior is unchanged.
+selected 8x8 SPLIT carries four causal DC/V/H 4x4 modes and prices them with
+the full token-neighbour and live tile above/left coefficient contexts,
+including exact coefficient sign/category-bit costs. It updates the contexts
+after every winner. Production behavior is unchanged.
 **Why:** this is the smallest independently testable seam that closes the
 measured keyframe-reference mismatch without exposing incomplete behavior as
-a default. It permits direct measurement before adding rectangular partition
-search or threading coefficient contexts through the picker.
+a default. The corrected picker matches pinned libvpx exactly for the first 80
+consecutive live 4x4 decisions; the next mismatch is caused by the mode and
+reconstruction of an adjacent larger keyframe block.
 **Byte-parity impact:** structural only under the diagnostic environment flag.
 The normal CPU7 VBR stream remains 47,314 bytes with SHA-256
 `96af4829c357ff6550bfbec8667d5d19e07f78e65e0145b7da3096082ec00eaf`.
 Under the flag, rvp9-decoder, pinned vpxdec, and ffmpeg produce identical
 decoded output.
-**Compression-efficiency impact:** at fixed qindex 120, the first keyframe is
-36,216 bits versus libvpx's 35,368 and gains 0.28 dB luma PSNR. The 64-frame
-stream shrinks from 124,458 to 115,241 bytes because the improved keyframe is
-a better inter reference. On the native
-three-clip CPU7 screen, luma BD-rate moves from
-`+43.4699%/+4.23215%/+81.88394%` to
-`+39.313659%/+6.701459%/+76.876911%` for
-`in_to_tree`/`ducks_take_off`/`old_town_cross`. The ducks regression prevents
-default enablement.
-**Future plan:** compare the per-mode 4x4 RD inputs against pinned libvpx at
-identical source and neighbour pixels. Forced-root splitting and the CPU7
-DC/V/H sub-8 mask were measured and rejected as non-Pareto changes.
+**Compression-efficiency impact:** at fixed qindex 120, the corrected first
+keyframe is 40,040 bits at 38.095 dB luma PSNR versus libvpx's 35,368 bits at
+38.031 dB. The 64-frame stream is 125,968 bytes versus libvpx's 82,270. On the
+native three-clip CPU7 screen, luma BD-rate is
+`+39.568155%/+6.249183%/+76.936364%` for
+`in_to_tree`/`ducks_take_off`/`old_town_cross`. Relative to the prior
+full-ten-mode diagnostic, ducks improves 0.452 points while in-tree and old
+town regress 0.255 and 0.059 points. This is retained only as a measured
+source-faithful prerequisite; the mixed result prevents default enablement.
+**Future plan:** correct the first adjacent larger-block mismatch. At traced
+4x4 call 80 rvp9 derives keyframe mode contexts `(A=DC,L=V)` while libvpx uses
+`(A=DC,L=H)`; the differing left reconstruction also changes DC/H prediction.
+Forced-root splitting remains rejected as non-Pareto.
 
 ### 2026-08-02 — Keep the calibrated VBR rate prior and GOLDEN allocator default-off
 **Where:** `rvp9_encoder::frame_loop::{VBR_BITS_PER_MB_MULTIPLIER_DEFAULT,StreamEncoder::new,StreamEncoder::encode_frame}`

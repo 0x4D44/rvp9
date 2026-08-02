@@ -5,8 +5,8 @@
 //! Ports the per-4×4 KF intra picker stack:
 //!
 //! - `rd_pick_intra4x4block` — `vp9/encoder/vp9_rdopt.c:1061-1297`
-//!   (v1.14.1 commit `12f3a2ac6`). Picks the best of the 10 intra
-//!   prediction modes for a single 4×4 sub-block. For every mode it
+//!   (v1.14.1 commit `12f3a2ac6`). Picks the best realtime candidate
+//!   (DC/V/H at cpu-used 6–8) for a single 4×4 sub-block. For every mode it
 //!   builds the real intra prediction (`vp9_predict_intra_block`,
 //!   line 1230), forms the residual (`vpx_subtract_block`, line 1233),
 //!   runs the hybrid forward transform keyed on the mode's tx_type
@@ -37,11 +37,10 @@
 //!   (libvpx lines 1235-1248) is out of scope; the picker always uses
 //!   the `vp9_fht4x4` / `vp9_iht4x4_add` hybrid-transform path
 //!   (libvpx lines 1249-1268).
-//! - **No `intra_y_mode_mask` / `FLAG_SKIP_INTRA_DIRMISMATCH` speed
-//!   feature.** The mask gate at libvpx line 1207 and the
-//!   `conditional_skipintra` gate at libvpx line 1211 are speed-feature
-//!   optimisations; the standalone picker walks all 10 modes (the
-//!   `sf` = default = "all modes" path).
+//! - **Realtime DC/V/H mode mask.** Matched cpu-used 6–8 realtime encodes
+//!   set `intra_y_mode_mask[TX_4X4] = INTRA_DC_H_V`. The picker therefore
+//!   evaluates exactly those three modes. `FLAG_SKIP_INTRA_DIRMISMATCH`
+//!   only gates the four oblique modes, which the mask already excludes.
 //! - **No early `RDCOST(...) >= best_rd` short-circuit inside the 4×4
 //!   walk** (libvpx line 1264). A 4×4 block is a single transform tile,
 //!   so there is only ever one `(idy, idx)` iteration — the
@@ -66,7 +65,7 @@ use rvp9_core::transforms::inverse::iht4x4_16_add;
 use rvp9_core::transforms::scans::scan_for;
 
 use crate::rdo::block_error::vp9_block_error;
-use crate::rdo::cost_coeffs::cost_coeffs;
+use crate::rdo::cost_coeffs::cost_coeffs_with_contexts;
 
 /// Number of 4×4 sub-blocks inside an 8×8 parent. Mirrors libvpx
 /// `num_4x4_blocks_high_lookup[BLOCK_8X8] *
@@ -194,7 +193,9 @@ pub fn pick_intra4x4_block(params: &PickIntra4x4Params<'_>) -> Option<Pick4x4Res
     // the qcoeff in raster order against the forward scan.
     let dispatch = rvp9_core::dsp::get();
 
-    for raw in 0u8..NUM_INTRA_MODES as u8 {
+    // Realtime speed >=4 sets `INTRA_DC_H_V` for TX_4X4. Enum order is
+    // DC=0, V=1, H=2, so this inclusive range is the source mask exactly.
+    for raw in 0u8..=IntraMode::H as u8 {
         let mode = IntraMode::from_u8(raw).expect("0..10 valid");
         let tx_type = mode.tx_type();
 
@@ -246,9 +247,10 @@ pub fn pick_intra4x4_block(params: &PickIntra4x4Params<'_>) -> Option<Pick4x4Res
         );
 
         // 4. Coefficient rate (libvpx `cost_coeffs`, line 1258).
-        let ratey = cost_coeffs(
+        let ratey = cost_coeffs_with_contexts(
             &qcoeff,
             fwd_scan,
+            scan.neighbors(),
             eob,
             TxSize::Tx4x4,
             0, // plane_type: Y
@@ -816,8 +818,8 @@ mod tests {
         );
     }
 
-    /// PROOF W7.9 (DIFFERENTIAL ORACLE — picker truly walks all modes:
-    /// the full free pick on the vertical gradient elects H, the
+    /// PROOF W7.9 (DIFFERENTIAL ORACLE — the realtime free pick walks its
+    /// DC/V/H mask and elects H, the
     /// exact-fit mode) — libvpx `vp9_rdopt.c:1201` loops `DC_PRED..=
     /// TM_PRED`. With a flat (zero) cost table the winner is purely the
     /// best real fit; for a vertical gradient with a matching left
@@ -853,6 +855,35 @@ mod tests {
             result.winner.mode,
         );
         assert_eq!(result.winner.dist, 0, "exact fit → zero distortion");
+    }
+
+    /// Regression for the first live `ducks_take_off` winner mismatch. With
+    /// exact coefficient pricing, TM would have a lower unrestricted RD, but
+    /// pinned realtime cpu-used 7 masks the search to DC/V/H and selects V.
+    #[test]
+    fn keyframe_4x4_realtime_mask_matches_libvpx_ducks_winner() {
+        let costs = build_coef_cost_table(&FrameContext::new_default());
+        let quant = init_plane_quantizers(119, QuantizerDeltas::Y);
+        let src = [
+            86, 61, 38, 32, 67, 46, 33, 30, 54, 51, 70, 84, 76, 110, 156, 169,
+        ];
+        let edges = Sub4x4Edges {
+            above: [65, 57, 45, 37, 28, 28, 28, 28],
+            left: [129; 4],
+            above_left: 129,
+            above_available: true,
+            left_available: false,
+        };
+        let bmode = [462, 1993, 1585, 2385, 2010, 3074, 2595, 2155, 2840, 2150];
+        let mut params = make_params(&src, edges, &bmode, &quant, &costs);
+        params.coeff_ctx = 1;
+        params.rdmult = 65_430;
+
+        let result = pick_intra4x4_block(&params).expect("realtime picker returns a winner");
+        assert_eq!(result.winner.mode, IntraMode::V);
+        assert_eq!(result.winner.rate_y, 19_767);
+        assert_eq!(result.winner.dist, 4_769);
+        assert_eq!(result.winner.rd, 3_391_207);
     }
 
     /// PROOF W7.9 (sub-8×8 KF intra iterates all 4 sub-blocks with REAL

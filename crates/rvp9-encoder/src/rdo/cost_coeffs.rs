@@ -5,15 +5,8 @@
 //!
 //! - `band_counts[TX_SIZES][8]` — `vp9/encoder/vp9_rdopt.c:352-357`
 //!   (v1.14.1 commit `12f3a2ac6`).
-//! - `cost_coeffs` — `vp9/encoder/vp9_rdopt.c:358-459`. We port the
-//!   `use_fast_coef_costing == 1` branch (the most-used speed-feature
-//!   path) because the slow branch threads `nb` (neighbours) + a per-
-//!   coefficient `token_cache` through `get_coef_context`; the slow
-//!   branch is exactly the work the trellis (`vp9_optimize_b`,
-//!   W4.4) does coefficient-by-coefficient, so cost-coeffs only needs
-//!   the fast variant for the W4 batch. The slow path will arrive when
-//!   the inter-mode picker integrates the cost; the trellis already
-//!   has the neighbour-context machinery inside it.
+//! - `cost_coeffs` — `vp9/encoder/vp9_rdopt.c:358-459`. Both the fast
+//!   speed-feature path and the full neighbour-context path are ported.
 //! - `vp9_pt_energy_class` — `vp9/common/vp9_entropy.c:95-96`.
 //! - `vp9_get_token` — `vp9/encoder/vp9_tokenize.h:108-111`. The
 //!   threshold table mirrors the `CATn_MIN_VAL` constants in
@@ -27,7 +20,10 @@
 //! the per-token `extra_bits_cost` table mirroring libvpx
 //! `vp9_extra_bits[t].cost` (`vp9_tokenize.c`).
 
-use rvp9_core::cost::coef_cost::{CoefCostIndex, CoefCostTable, ENTROPY_TOKENS, coef_token_cost};
+use rvp9_core::cost::{
+    coef_cost::{CoefCostIndex, CoefCostTable, ENTROPY_TOKENS, coef_token_cost},
+    vp9_cost_bit,
+};
 use rvp9_core::transforms::TxSize;
 
 /// `EOB_TOKEN = 11` per libvpx `vp9_entropy.h:38`.
@@ -308,6 +304,134 @@ pub fn cost_coeffs(
     cost
 }
 
+/// Full neighbour-context variant of libvpx `cost_coeffs`
+/// (`use_fast_coef_costing == 0`, `vp9_rdopt.c:420-456`).
+///
+/// Unlike [`cost_coeffs`], every AC token derives its context from the
+/// already-seen coefficient-token energy classes at the scan order's two
+/// causal neighbour positions. Realtime keyframes select this path even at
+/// high `cpu-used` presets (`vp9_speed_features.c:set_rt_speed_feature_framesize_independent`).
+#[allow(clippy::too_many_arguments)]
+#[must_use]
+pub fn cost_coeffs_with_contexts(
+    qcoeff: &[i16],
+    scan: &[i16],
+    neighbors: &[i16],
+    eob: u16,
+    tx_size: TxSize,
+    plane_type: usize,
+    ref_type: usize,
+    coeff_ctx: usize,
+    costs: &CoefCostTable,
+) -> u32 {
+    let n = tx_size.n_coeffs();
+    debug_assert!(qcoeff.len() >= n);
+    debug_assert!(scan.len() >= n);
+    debug_assert!(neighbors.len() >= (n + 1) * 2);
+    debug_assert!(usize::from(eob) <= n);
+
+    if eob == 0 {
+        return token_cost(
+            costs, tx_size, plane_type, ref_type, 0, coeff_ctx, EOB_TOKEN, false,
+        );
+    }
+
+    // Matches libvpx's fixed 32x32 token cache. Only the first `n` entries
+    // are addressable for the selected transform size.
+    let mut token_cache = [0u8; 32 * 32];
+    let mut walker = BandCountsWalker::start_after_dc(tx_size);
+
+    let dc_rc = scan[0] as usize;
+    let dc_token = vp9_get_token(i32::from(qcoeff[dc_rc]));
+    let mut cost = token_cost(
+        costs, tx_size, plane_type, ref_type, 0, coeff_ctx, dc_token, false,
+    )
+    .saturating_add(exact_extra_bits_cost(i32::from(qcoeff[dc_rc])));
+    token_cache[dc_rc] = VP9_PT_ENERGY_CLASS[dc_token as usize];
+
+    let mut band = 1usize;
+    let mut prev_token = dc_token;
+    for (c, &scan_pos) in scan.iter().enumerate().take(usize::from(eob)).skip(1) {
+        let rc = scan_pos as usize;
+        let token = vp9_get_token(i32::from(qcoeff[rc]));
+        let ctx = coef_context(neighbors, &token_cache, c);
+        cost = cost
+            .saturating_add(token_cost(
+                costs,
+                tx_size,
+                plane_type,
+                ref_type,
+                band,
+                ctx,
+                token,
+                prev_token == ZERO_TOKEN,
+            ))
+            .saturating_add(exact_extra_bits_cost(i32::from(qcoeff[rc])));
+        token_cache[rc] = VP9_PT_ENERGY_CLASS[token as usize];
+        prev_token = token;
+        if walker.step() {
+            band += 1;
+        }
+    }
+
+    if walker.eob_should_be_charged() {
+        let ctx = coef_context(neighbors, &token_cache, usize::from(eob));
+        cost = cost.saturating_add(token_cost(
+            costs, tx_size, plane_type, ref_type, band, ctx, EOB_TOKEN, false,
+        ));
+    }
+
+    cost
+}
+
+#[inline(always)]
+fn coef_context(neighbors: &[i16], token_cache: &[u8], scan_pos: usize) -> usize {
+    let first = neighbors[2 * scan_pos] as usize;
+    let second = neighbors[2 * scan_pos + 1] as usize;
+    ((1 + usize::from(token_cache[first]) + usize::from(token_cache[second])) >> 1).min(5)
+}
+
+/// Exact 8-bit `vp9_get_token_cost` extra-bit charge for one coefficient.
+///
+/// Every non-zero coefficient pays a 50/50 sign bit. Category tokens also
+/// encode `abs(value) - CATn_MIN_VAL` most-significant bit first under the
+/// fixed VP9 category probabilities (`vp9_entropy.c:32-38`).
+#[inline]
+fn exact_extra_bits_cost(value: i32) -> u32 {
+    const CAT1: [u8; 1] = [159];
+    const CAT2: [u8; 2] = [165, 145];
+    const CAT3: [u8; 3] = [173, 148, 140];
+    const CAT4: [u8; 4] = [176, 155, 140, 135];
+    const CAT5: [u8; 5] = [180, 157, 141, 134, 130];
+    const CAT6: [u8; 14] = [
+        254, 254, 254, 252, 249, 243, 230, 196, 177, 153, 140, 133, 130, 129,
+    ];
+
+    let magnitude = value.unsigned_abs();
+    if magnitude == 0 {
+        return 0;
+    }
+
+    let (base, probs): (u32, &[u8]) = match magnitude {
+        1..=4 => (magnitude, &[]),
+        5..=6 => (5, &CAT1),
+        7..=10 => (7, &CAT2),
+        11..=18 => (11, &CAT3),
+        19..=34 => (19, &CAT4),
+        35..=66 => (35, &CAT5),
+        _ => (67, &CAT6),
+    };
+    let extra = magnitude.saturating_sub(base);
+    let category_cost = probs.iter().enumerate().fold(0u32, |cost, (index, &prob)| {
+        let shift = probs.len() - index - 1;
+        let bit = ((extra >> shift) & 1) != 0;
+        cost.saturating_add(vp9_cost_bit(prob, bit))
+    });
+
+    // The sign probability is 128, so either sign costs exactly 512.
+    512u32.saturating_add(category_cost)
+}
+
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
 fn token_cost(
@@ -443,6 +567,33 @@ mod tests {
             one_cost > zero_cost,
             "single-coeff cost ({one_cost}) must exceed all-zero cost ({zero_cost})",
         );
+    }
+
+    /// Regression for the first exact CPU7 keyframe 4x4 RD mismatch found on
+    /// `ducks_take_off`. Pinned libvpx v1.14.1 prices this exact default-scan
+    /// block at 18,784 units with `use_fast_coef_costing=0`; the legacy fast
+    /// context/token-extra approximation incorrectly returns 14,227.
+    #[test]
+    fn keyframe_4x4_full_context_cost_matches_libvpx() {
+        let costs = build_coef_cost_table(&FrameContext::new_default());
+        let scan = default_scan_4x4();
+        let qcoeff = [-22, 1, 0, 0, -1, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+
+        let fast = cost_coeffs(&qcoeff, scan.scan(), 4, TxSize::Tx4x4, 0, 0, 0, &costs);
+        let full = cost_coeffs_with_contexts(
+            &qcoeff,
+            scan.scan(),
+            scan.neighbors(),
+            4,
+            TxSize::Tx4x4,
+            0,
+            0,
+            0,
+            &costs,
+        );
+
+        assert_eq!(fast, 14_227);
+        assert_eq!(full, 18_784);
     }
 
     /// `vp9_get_token` matches libvpx's `vp9_get_token` thresholds.
