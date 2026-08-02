@@ -5268,6 +5268,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         switchable_interp_costs: &sic,
                         switchable_interp_ctx,
                         skip_ctx,
+                        skip_prob: frame_context.skip_probs[skip_ctx],
                         rd_calibration: inter_rd_calibration,
                         last_const_motion,
                         golden_const_motion,
@@ -6495,6 +6496,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     switchable_interp_costs: &sic,
                     switchable_interp_ctx,
                     skip_ctx,
+                    skip_prob: frame_context.skip_probs[skip_ctx],
                     rd_calibration: inter_rd_calibration,
                     last_const_motion,
                     golden_const_motion,
@@ -6837,6 +6839,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             switchable_interp_costs: &sic,
                             switchable_interp_ctx,
                             skip_ctx: Some(skip_ctx),
+                            skip_prob: Some(frame_context.skip_probs[skip_ctx]),
                             rd_calibration: inter_rd_calibration,
                             src_u: input_yuv.1,
                             src_v: input_yuv.2,
@@ -6900,6 +6903,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         switchable_interp_costs: &sic,
                         switchable_interp_ctx,
                         skip_ctx: Some(skip_ctx),
+                        skip_prob: Some(frame_context.skip_probs[skip_ctx]),
                         rd_calibration: inter_rd_calibration,
                         src_u: input_yuv.1,
                         src_v: input_yuv.2,
@@ -7881,8 +7885,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     let skip_bits_est = if final_ref == RefFrame::IntraFrame {
                         0
                     } else {
-                        let skip_prob =
-                            rvp9_core::entropy::default_probs::DEFAULT_SKIP_PROBS[skip_ctx];
+                        let skip_prob = frame_context.skip_probs[skip_ctx];
                         rvp9_core::cost::vp9_cost_bit(skip_prob, pick.picker_skip)
                     };
                     // F.1 — `coef_bits_est` now live. The picker's

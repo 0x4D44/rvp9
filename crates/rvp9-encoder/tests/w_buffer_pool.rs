@@ -333,8 +333,12 @@ fn a10_byte_identity_pre_vs_post_refactor() {
     // honoring libvpx's per-superblock U/V color-sensitivity mask. The new
     // bytes reproduced twice, and the sibling decode oracle still accepts all
     // 12 frames.
-    const GOLDEN_HASH: u64 = 0x52b9_2ca0_ebb4_f377;
-    const GOLDEN_LEN: usize = 8971;
+    //
+    // Re-captured again (2026-08-02) after mode decisions started pricing
+    // skip syntax from the live frame context. The new bytes reproduced twice,
+    // and the sibling decode oracle still accepts all 12 frames.
+    const GOLDEN_HASH: u64 = 0xed17_4471_123a_f4bb;
+    const GOLDEN_LEN: usize = 8965;
 
     let stream = encode_fixed_clip();
     let hash = fnv1a(&stream);

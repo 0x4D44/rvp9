@@ -429,8 +429,12 @@ fn gop_topology_byte_identity() {
     // honoring libvpx's per-superblock U/V color-sensitivity mask. The new
     // bytes reproduced twice, and the sibling schedule oracle still matches
     // every emitted frame.
-    const GOLDEN_HASH: u64 = 0x2f93_0f41_4e22_e982;
-    const GOLDEN_LEN: usize = 26920;
+    //
+    // Re-captured again (2026-08-02) after mode decisions started pricing
+    // skip syntax from the live frame context. The new bytes reproduced twice,
+    // and the sibling schedule oracle still matches every emitted frame.
+    const GOLDEN_HASH: u64 = 0xadec_eb84_4c14_355e;
+    const GOLDEN_LEN: usize = 26981;
 
     let stream = encode_fixed_clip();
     let hash = fnv1a(&stream);

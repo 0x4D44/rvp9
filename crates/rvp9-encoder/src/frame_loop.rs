@@ -7739,6 +7739,7 @@ mod tests {
             switchable_interp_costs: &sic,
             switchable_interp_ctx: 3,
             skip_ctx: None,
+            skip_prob: None,
             rd_calibration: InterRdCalibration::default(),
             src_u: &[],
             src_v: &[],

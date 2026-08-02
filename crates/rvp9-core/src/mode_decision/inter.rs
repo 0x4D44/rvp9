@@ -761,6 +761,9 @@ pub struct InterModeSearchParams<'a> {
     /// pre-P19 behaviour for harnesses that don't carry a real
     /// per-leaf context.
     pub skip_ctx: Option<usize>,
+    /// Live frame-context probability for this block's skip symbol.
+    /// `None` preserves the default-table fallback for standalone tests.
+    pub skip_prob: Option<u8>,
     /// Optional encoder-supplied RD-domain calibration policy.
     pub rd_calibration: InterRdCalibration,
 
@@ -1103,6 +1106,9 @@ pub struct PickInterModeParams<'a> {
     /// neighbours' `skip` flags. Used by `evaluate_candidate`'s
     /// skip-flag tie-break (libvpx `vp9_pickmode.c:2355-2362`).
     pub skip_ctx: usize,
+    /// Live `FrameContext::skip_probs[skip_ctx]` used by both picker RD
+    /// pricing and the modes writer.
+    pub skip_prob: u8,
     /// Optional encoder-supplied RD-domain calibration policy.
     pub rd_calibration: InterRdCalibration,
 
@@ -2074,6 +2080,7 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
                         switchable_interp_costs: params.switchable_interp_costs,
                         switchable_interp_ctx: params.switchable_interp_ctx,
                         skip_ctx: Some(params.skip_ctx),
+                        skip_prob: Some(params.skip_prob),
                         rd_calibration: params.rd_calibration,
                         src_u: params.src_u,
                         src_v: params.src_v,
@@ -2238,6 +2245,7 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
             switchable_interp_costs: params.switchable_interp_costs,
             switchable_interp_ctx: params.switchable_interp_ctx,
             skip_ctx: Some(params.skip_ctx),
+            skip_prob: Some(params.skip_prob),
             rd_calibration: params.rd_calibration,
             src_u: params.src_u,
             src_v: params.src_v,
@@ -2772,6 +2780,7 @@ fn evaluate_intra_fallback_with_scratch(
                     switchable_interp_costs: params.switchable_interp_costs,
                     switchable_interp_ctx: params.switchable_interp_ctx,
                     skip_ctx: Some(params.skip_ctx),
+                    skip_prob: Some(params.skip_prob),
                     rd_calibration: params.rd_calibration,
                     // G1: UV fields unused for intra fallback.
                     src_u: params.src_u,
@@ -3862,7 +3871,9 @@ fn evaluate_candidate_for_filter_with_pred(
         .skip_ctx
         .unwrap_or(F1_DEFAULT_SKIP_CTX)
         .min(crate::entropy::default_probs::DEFAULT_SKIP_PROBS.len() - 1);
-    let skip_prob = crate::entropy::default_probs::DEFAULT_SKIP_PROBS[skip_ctx];
+    let skip_prob = params
+        .skip_prob
+        .unwrap_or(crate::entropy::default_probs::DEFAULT_SKIP_PROBS[skip_ctx]);
     let skip_false_cost = crate::cost::vp9_cost_bit(skip_prob, false);
     let skip_true_cost = crate::cost::vp9_cost_bit(skip_prob, true);
 
@@ -5136,6 +5147,7 @@ mod tests {
             // P19 — None falls back to F1_DEFAULT_SKIP_CTX (middle ctx),
             // matching the pre-P19 harness behaviour.
             skip_ctx: None,
+            skip_prob: None,
             rd_calibration: InterRdCalibration::default(),
             // G1: UV fields — empty for luma-only unit tests.
             src_u: &[],
@@ -6398,6 +6410,7 @@ mod tests {
             switchable_interp_costs: &harness.sic,
             switchable_interp_ctx: 3,
             skip_ctx: None,
+            skip_prob: None,
             rd_calibration: InterRdCalibration::default(),
             src_u: &[],
             src_v: &[],
@@ -6847,6 +6860,7 @@ mod tests {
             switchable_interp_ctx: 3,
             // P19 — middle context default, neutral 128 prob.
             skip_ctx: 1,
+            skip_prob: crate::entropy::default_probs::DEFAULT_SKIP_PROBS[1],
             rd_calibration: InterRdCalibration::default(),
             // P15 — neither ref's spatial neighbours yielded 2 distinct
             // same-ref MVs (no neighbours in this synthetic harness),
@@ -8335,6 +8349,34 @@ mod tests {
             r0.best_rd_cost,
             r2.best_rate,
             r2.best_rd_cost,
+        );
+
+        // A caller-supplied live frame-context probability overrides the
+        // default table even when the causal context is unchanged.
+        p_ctx0.skip_ctx = Some(1);
+        p_ctx2.skip_ctx = Some(1);
+        p_ctx0.skip_prob = Some(16);
+        p_ctx2.skip_prob = Some(240);
+        let live_low = evaluate_candidate_for_filter(
+            &p_ctx0,
+            InterMode::ZeroMv,
+            Mv::ZERO,
+            Mv::ZERO,
+            lambda,
+            InterpFilter::EightTap,
+        );
+        let live_high = evaluate_candidate_for_filter(
+            &p_ctx2,
+            InterMode::ZeroMv,
+            Mv::ZERO,
+            Mv::ZERO,
+            lambda,
+            InterpFilter::EightTap,
+        );
+        assert!(
+            live_low.best_rate != live_high.best_rate
+                || live_low.best_rd_cost != live_high.best_rd_cost,
+            "live skip probability must override the default-table price",
         );
     }
 
