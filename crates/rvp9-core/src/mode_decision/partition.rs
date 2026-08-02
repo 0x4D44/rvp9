@@ -16,8 +16,9 @@
 //!
 //! - `var < threshold[level]` → emit a leaf at this size (no split).
 //! - Otherwise descend into 4 quadrants and recurse.
-//! - At 8x8 the recursion bottoms out: a high-variance 8x8 still
-//!   emits a Block8x8 leaf (we don't split below 8x8 in F8.2).
+//! - At 8x8 the production recursion bottoms out. The focused keyframe
+//!   diagnostic may instead represent a high-variance 8x8 SPLIT as one
+//!   `Block4x4` ModeInfo cell with four BMI modes.
 //!
 //! ## libvpx divergences (recorded)
 //!
@@ -26,10 +27,11 @@
 //!   `vp9_encodeframe.c:472-547`). F8.2 emits only NONE/SPLIT leaves.
 //!   This is a deliberate simplification — the supervisor will revisit
 //!   if BD-rate compares show H/V partitions are load-bearing.
-//! - **No 4x4 leaves.** libvpx descends to 4x4 for keyframes
-//!   (`use_4x4_partition` in `choose_partitioning:1313`). F8.2 caps
-//!   recursion at 8x8 — the writer / mode-decision side doesn't yet
-//!   support 4x4 either.
+//! - **Production caps keyframes above sub-8.** libvpx descends to 4x4
+//!   for keyframes (`use_4x4_partition` in `choose_partitioning:1313`).
+//!   The default F8.2 path retains its historical Block16x16 cap. A
+//!   focused diagnostic path can now exercise the source-faithful
+//!   Block4x4 representation without changing production output.
 //! - **Per-pixel variance, not the 256× fixed-point form.** libvpx's
 //!   `get_variance` returns `256 * (sse - sum²/N) / N` so the
 //!   thresholds in `set_vbp_thresholds` carry a `256×` implicit
@@ -78,7 +80,8 @@ use crate::quant::forward::{QuantizerDeltas, plane_dequant_pair};
 
 /// 8x8 grid count for a 64x64 superblock — every leaf is one of the
 /// 13 VP9 block sizes, but partition descent in F8.2 lands at one of
-/// `Block8x8` / `Block16x16` / `Block32x32` / `Block64x64`.
+/// `Block8x8` / `Block16x16` / `Block32x32` / `Block64x64`. The focused
+/// keyframe diagnostic may represent an 8x8 SPLIT as `Block4x4`.
 pub(crate) const SB_8X8_GRID: usize = 8;
 
 /// A 64x64 superblock's partition decision.
@@ -140,6 +143,10 @@ impl PartitionDecision {
             side: usize,
         ) -> bool {
             let bsize = cells[row][col];
+            if side == 1 {
+                return matches!(bsize, BlockSize::Block8x8 | BlockSize::Block4x4)
+                    && stamped(cells, row, col, 1, 1, bsize);
+            }
             let width = usize::from(bsize.width()) / 8;
             let height = usize::from(bsize.height()) / 8;
 
@@ -1362,7 +1369,20 @@ impl VbpThresholds {
 pub fn choose_partitioning(params: &PartitionSearchParams<'_>) -> PartitionDecision {
     let thresholds = thresholds_for_params(params);
 
-    choose_partitioning_with_force_map(params, &thresholds, None)
+    choose_partitioning_with_force_map(params, &thresholds, None, false)
+}
+
+/// Run the keyframe partition picker with its source-faithful sub-8
+/// diagnostic enabled.
+///
+/// Unlike [`choose_partitioning`], a high-variance keyframe can descend
+/// through 16x16 and represent an 8x8 `SPLIT` as one `Block4x4` cell. This
+/// function is an experiment seam; the production caller does not use it.
+#[must_use]
+pub fn choose_partitioning_keyframe_sub8(params: &PartitionSearchParams<'_>) -> PartitionDecision {
+    let thresholds = thresholds_for_params(params);
+
+    choose_partitioning_with_force_map(params, &thresholds, None, true)
 }
 
 /// Run [`choose_partitioning`] with the libvpx-style inter-frame force-split
@@ -1378,7 +1398,7 @@ pub fn choose_partitioning_force_split(params: &PartitionSearchParams<'_>) -> Pa
     let thresholds = thresholds_for_params(params);
     let force_split = ForceSplitMap::for_params(params, &thresholds);
 
-    choose_partitioning_with_force_map(params, &thresholds, Some(&force_split))
+    choose_partitioning_with_force_map(params, &thresholds, Some(&force_split), false)
 }
 
 fn thresholds_for_params(params: &PartitionSearchParams<'_>) -> VbpThresholds {
@@ -1401,6 +1421,7 @@ fn choose_partitioning_with_force_map(
     params: &PartitionSearchParams<'_>,
     thresholds: &VbpThresholds,
     force_split: Option<&ForceSplitMap>,
+    allow_keyframe_sub8: bool,
 ) -> PartitionDecision {
     let mut decision = PartitionDecision {
         cells: [[BlockSize::Block8x8; SB_8X8_GRID]; SB_8X8_GRID],
@@ -1413,6 +1434,7 @@ fn choose_partitioning_with_force_map(
         BlockSize::Block64x64,
         thresholds,
         force_split,
+        allow_keyframe_sub8,
         &mut decision,
     ) {
         // descend always returns true on the top-level call because we
@@ -1530,6 +1552,47 @@ fn block_per_pixel_variance(
     var_total / n as u64
 }
 
+/// Keyframe VBP variance over 4x4 source averages.
+///
+/// Pinned libvpx calls `fill_variance_4x4avg` for every keyframe, treating
+/// each 4x4 average minus 128 as one sample and building all parent nodes by
+/// summing those samples. The returned value folds out libvpx's 256x scale,
+/// matching [`VbpThresholds`].
+fn keyframe_4x4_average_variance(
+    params: &PartitionSearchParams<'_>,
+    origin_8x8: (usize, usize),
+    bs: BlockSize,
+) -> u64 {
+    debug_assert!(params.is_keyframe);
+    let block_side = bs.width() as usize;
+    let sample_side = block_side / 4;
+    let block_x = params.src_offset_xy.0 + origin_8x8.1 * 8;
+    let block_y = params.src_offset_xy.1 + origin_8x8.0 * 8;
+    let mut sum = 0i64;
+    let mut sum_squares = 0u64;
+
+    for sample_row in 0..sample_side {
+        for sample_col in 0..sample_side {
+            let sample_x = block_x + sample_col * 4;
+            let sample_y = block_y + sample_row * 4;
+            let mut pixel_sum = 0u32;
+            for row in 0..4 {
+                let offset = (sample_y + row) * params.src_plane.stride + sample_x;
+                for &pixel in &params.src_plane.data[offset..offset + 4] {
+                    pixel_sum += u32::from(pixel);
+                }
+            }
+            let difference = i64::from((pixel_sum + 8) >> 4) - 128;
+            sum += difference;
+            sum_squares = sum_squares.saturating_add((difference * difference) as u64);
+        }
+    }
+
+    let count = (sample_side * sample_side) as u64;
+    let correction = (sum * sum) as u64 / count;
+    sum_squares.saturating_sub(correction) / count
+}
+
 /// Recursive descent helper. `origin` is the top-left of the current
 /// block in 8x8 grid coordinates (`(row_8x8, col_8x8)`); `bs` is the
 /// current block size.
@@ -1543,13 +1606,18 @@ fn descend(
     bs: BlockSize,
     thresholds: &VbpThresholds,
     force_split: Option<&ForceSplitMap>,
+    allow_keyframe_sub8: bool,
     decision: &mut PartitionDecision,
 ) -> bool {
     let (row_8x8, col_8x8) = origin_8x8;
     let bs_pixels = bs.width() as usize;
 
     // Per-pixel variance for the current block.
-    let per_pixel_var = block_per_pixel_variance(params, origin_8x8, bs);
+    let per_pixel_var = if params.is_keyframe && allow_keyframe_sub8 {
+        keyframe_4x4_average_variance(params, origin_8x8, bs)
+    } else {
+        block_per_pixel_variance(params, origin_8x8, bs)
+    };
 
     // Threshold index: 0 → 64, 1 → 32, 2 → 16, 3 → 8.
     //
@@ -1579,7 +1647,7 @@ fn descend(
     // (matches A1's documented inter Block8x8 picker contribution).
     // Reverted; the inter-cap experiment did not help and slightly
     // regressed testsrc. See wrk_docs/A7-inter-cap-foreman-report.md.
-    let allow_split_to_8x8 = !params.is_keyframe;
+    let allow_split_to_8x8 = !params.is_keyframe || allow_keyframe_sub8;
     let (threshold_idx, child_size) = match bs {
         BlockSize::Block64x64 => (0usize, Some(BlockSize::Block32x32)),
         BlockSize::Block32x32 => (1, Some(BlockSize::Block16x16)),
@@ -1595,6 +1663,19 @@ fn descend(
     };
 
     let threshold = thresholds.thresholds[threshold_idx];
+
+    // A sub-8 VP9 partition still occupies one 8x8 ModeInfo grid cell.
+    // Represent the 8x8 SPLIT by stamping Block4x4; its four BMI modes
+    // carry the actual 4x4 luma decisions. There is no smaller mi-grid
+    // coordinate to recurse into.
+    if bs == BlockSize::Block8x8 && params.is_keyframe && allow_keyframe_sub8 {
+        decision.cells[row_8x8][col_8x8] = if per_pixel_var > threshold {
+            BlockSize::Block4x4
+        } else {
+            BlockSize::Block8x8
+        };
+        return true;
+    }
 
     // Decision rule. At Block8x8 we always emit a leaf (no further
     // descent). At larger sizes we split iff the per-pixel variance
@@ -1627,7 +1708,15 @@ fn descend(
         (row_8x8 + half, col_8x8 + half),
     ];
     for &q in &quadrants {
-        if !descend(params, q, child, thresholds, force_split, decision) {
+        if !descend(
+            params,
+            q,
+            child,
+            thresholds,
+            force_split,
+            allow_keyframe_sub8,
+            decision,
+        ) {
             return false;
         }
     }
@@ -2490,6 +2579,70 @@ mod tests {
         assert_eq!(
             kf_64, 0,
             "KF path on xorshift source should not land at 64x64"
+        );
+        assert!(
+            kf.cells
+                .iter()
+                .flatten()
+                .all(|&bsize| bsize != BlockSize::Block4x4),
+            "the production keyframe path must retain its sub-8 cap",
+        );
+    }
+
+    /// The diagnostic keyframe path can carry an 8x8 SPLIT in one mi-grid
+    /// cell, while the production entry point remains byte-stable above it.
+    #[test]
+    fn choose_partitioning_keyframe_sub8_emits_block4x4_cells() {
+        let src_buf = xorshift_plane(0xABCDEF01);
+        let ref_buf = src_buf.clone();
+        let src = plane_ref(&src_buf);
+        let reference = plane_ref(&ref_buf);
+        let params = make_params(&src, &reference, 50, /* keyframe */ true);
+
+        let production = choose_partitioning(&params);
+        let diagnostic = choose_partitioning_keyframe_sub8(&params);
+
+        assert!(production.is_valid_partition());
+        assert!(diagnostic.is_valid_partition());
+        assert!(
+            production
+                .cells
+                .iter()
+                .flatten()
+                .all(|&bsize| bsize != BlockSize::Block4x4),
+        );
+        assert!(
+            diagnostic
+                .cells
+                .iter()
+                .flatten()
+                .any(|&bsize| bsize == BlockSize::Block4x4),
+            "high-variance keyframe diagnostic must reach sub-8 BMI leaves",
+        );
+    }
+
+    #[test]
+    fn keyframe_4x4_average_variance_filters_balanced_pixel_texture() {
+        let mut src_buf = vec![0u8; 64 * 64];
+        for row in 0..64 {
+            for col in 0..64 {
+                src_buf[row * 64 + col] = if (row + col).is_multiple_of(2) {
+                    0
+                } else {
+                    255
+                };
+            }
+        }
+        let ref_buf = flat_plane(128);
+        let src = plane_ref(&src_buf);
+        let reference = plane_ref(&ref_buf);
+        let params = make_params(&src, &reference, 50, /* keyframe */ true);
+
+        assert!(block_per_pixel_variance(&params, (0, 0), BlockSize::Block8x8) > 10_000);
+        assert_eq!(
+            keyframe_4x4_average_variance(&params, (0, 0), BlockSize::Block8x8),
+            0,
+            "balanced 4x4 texture has identical rounded averages and must be filtered",
         );
     }
 

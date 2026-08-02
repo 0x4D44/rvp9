@@ -2097,10 +2097,17 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
     sb_partitions: &mut [Vec<PartitionLeafDesc>],
     log2_tile_cols: u8,
 ) -> VecBackedIntraCoefSource {
-    use rvp9_core::cost::intra_y_mode_costs_kf_table;
+    use rvp9_core::cost::{
+        FrameTypeForRd, coef_cost::build_coef_cost_table, compute_rd_mult,
+        intra_y_mode_costs_kf_table,
+    };
+    use rvp9_core::entropy::FrameContext;
+    use rvp9_core::intra_pred::{ABOVE_UNAVAILABLE_FILL, LEFT_UNAVAILABLE_FILL};
     use rvp9_core::mode_decision::intra::{IntraModeSearchParams, pick_realtime_intra_mode_luma};
     use rvp9_core::mv_search::PlaneRef;
     use rvp9_core::quant::forward::{QuantizerDeltas, init_plane_quantizers};
+
+    use crate::rdo::sub8_kf_intra::{PickIntraSub8x8Params, pick_intra_sub_8x8_y_mode};
 
     let w = width as usize;
     let h = height as usize;
@@ -2117,7 +2124,7 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
     let mi_cols = w / 8;
     let mi_rows = h / 8;
     let tile_bounds_by_col = column_tile_bounds(mi_rows, mi_cols, log2_tile_cols);
-    let mut picked_y_mode_grid: Vec<Option<IntraMode>> = vec![None; mi_rows * mi_cols];
+    let mut picked_y_mode_grid: Vec<Option<[IntraMode; 4]>> = vec![None; mi_rows * mi_cols];
 
     // First pass: walk SBs/leaves in raster, run the simulator one
     // leaf at a time, prepended by a picker call. The simulator
@@ -2131,6 +2138,11 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
     // pixels` / `left_pixels` come from the same buffer.
 
     let y_mode_costs = intra_y_mode_costs_kf_table();
+    let coef_costs = sb_partitions
+        .iter()
+        .flatten()
+        .any(|leaf| leaf.leaf_bsize < BlockSize::Block8x8)
+        .then(|| build_coef_cost_table(&FrameContext::new_default()));
 
     // Zero recon up-front — the per-leaf simulator call expects the
     // recon plane to be already populated for previously-encoded leaves
@@ -2168,15 +2180,21 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
                 );
                 let leaf_px_x = leaf_mi_col * 8;
                 let leaf_px_y = leaf_mi_row * 8;
+                let prediction_side = if leaf_bsize < BlockSize::Block8x8 {
+                    8
+                } else {
+                    bs_pixels
+                };
 
                 let have_above = leaf_px_y > 0;
                 let have_left = leaf_mi_col > current_tile.mi_col_start;
-                let mut above_pixels = vec![0u8; bs_pixels];
-                let mut left_pixels = vec![0u8; bs_pixels];
+                let mut above_pixels = vec![0u8; prediction_side];
+                let mut left_pixels = vec![0u8; prediction_side];
                 if have_above {
                     let above_row_y = leaf_px_y - 1;
                     let row_off = above_row_y * w + leaf_px_x;
-                    above_pixels.copy_from_slice(&recon_yuv_out.0[row_off..row_off + bs_pixels]);
+                    above_pixels
+                        .copy_from_slice(&recon_yuv_out.0[row_off..row_off + prediction_side]);
                 }
                 if have_left {
                     let left_col_x = leaf_px_x - 1;
@@ -2190,18 +2208,20 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
                     0u8
                 };
 
-                let above_mode_ctx = if leaf_mi_row > 0 {
+                let above_modes = if leaf_mi_row > 0 {
                     picked_y_mode_grid[(leaf_mi_row - 1) * mi_cols + leaf_mi_col]
-                        .unwrap_or(IntraMode::Dc)
+                        .unwrap_or([IntraMode::Dc; 4])
                 } else {
-                    IntraMode::Dc
+                    [IntraMode::Dc; 4]
                 };
-                let left_mode_ctx = if leaf_mi_col > current_tile.mi_col_start {
+                let left_modes = if leaf_mi_col > current_tile.mi_col_start {
                     picked_y_mode_grid[leaf_mi_row * mi_cols + (leaf_mi_col - 1)]
-                        .unwrap_or(IntraMode::Dc)
+                        .unwrap_or([IntraMode::Dc; 4])
                 } else {
-                    IntraMode::Dc
+                    [IntraMode::Dc; 4]
                 };
+                let above_mode_ctx = above_modes[2];
+                let left_mode_ctx = left_modes[1];
 
                 // F8.0 picker requires `block_size.side == tx_size.side`
                 // (debug_assert at `mode_decision/intra.rs:246`). The
@@ -2226,8 +2246,57 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
                 );
                 let leaf_quantizer =
                     init_plane_quantizers(i32::from(leaf_qindex), QuantizerDeltas::Y);
-                let picked_mode = if leaf_bsize == BlockSize::Block64x64 {
-                    IntraMode::Dc
+                let picked_y_modes = if leaf_bsize < BlockSize::Block8x8 {
+                    let mut src = [0u8; 64];
+                    for row in 0..8 {
+                        let src_start = (leaf_px_y + row) * w + leaf_px_x;
+                        src[row * 8..row * 8 + 8]
+                            .copy_from_slice(&input_yuv.0[src_start..src_start + 8]);
+                    }
+                    let mut above = [ABOVE_UNAVAILABLE_FILL; 16];
+                    if have_above {
+                        let above_start = (leaf_px_y - 1) * w;
+                        for (column, slot) in above.iter_mut().enumerate() {
+                            *slot = recon_yuv_out.0[above_start + (leaf_px_x + column).min(w - 1)];
+                        }
+                    }
+                    let mut left = [LEFT_UNAVAILABLE_FILL; 8];
+                    if have_left {
+                        left.copy_from_slice(&left_pixels);
+                    }
+                    let above_left = if have_above && have_left {
+                        top_left_pixel
+                    } else if have_above {
+                        LEFT_UNAVAILABLE_FILL
+                    } else {
+                        ABOVE_UNAVAILABLE_FILL
+                    };
+                    let params = PickIntraSub8x8Params {
+                        parent_bsize: BlockSize::Block8x8,
+                        src: &src,
+                        above: &above,
+                        left: &left,
+                        above_left,
+                        have_above,
+                        have_left,
+                        y_mode_costs: &y_mode_costs,
+                        above_modes,
+                        left_modes,
+                        quant: &leaf_quantizer,
+                        coef_costs: coef_costs
+                            .as_ref()
+                            .expect("sub-8 leaves require coefficient costs"),
+                        rdmult: i64::from(compute_rd_mult(
+                            i32::from(leaf_qindex),
+                            FrameTypeForRd::Key,
+                        )),
+                        best_rd: i64::MAX,
+                    };
+                    let result = pick_intra_sub_8x8_y_mode(&params)
+                        .expect("unbounded sub-8 keyframe pick must choose four modes");
+                    core::array::from_fn(|index| result.sub_winners[index].mode)
+                } else if leaf_bsize == BlockSize::Block64x64 {
+                    [IntraMode::Dc; 4]
                 } else {
                     let src_plane = PlaneRef {
                         data: input_yuv.0,
@@ -2251,7 +2320,12 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
                         left_mode_ctx,
                         y_mode_costs: &y_mode_costs,
                     };
-                    pick_realtime_intra_mode_luma(&params).best_mode
+                    [pick_realtime_intra_mode_luma(&params).best_mode; 4]
+                };
+                let picked_mode = if leaf_bsize < BlockSize::Block8x8 {
+                    picked_y_modes[3]
+                } else {
+                    picked_y_modes[0]
                 };
 
                 // A0' diagnostic — dump per-leaf KF intra mode pick when
@@ -2273,13 +2347,13 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
                     }
                 }
 
-                sb_partitions[sb_idx][leaf_idx].predicted_y_modes = [picked_mode; 4];
+                sb_partitions[sb_idx][leaf_idx].predicted_y_modes = picked_y_modes;
                 let n_8x8 = (bs_pixels / 8).max(1);
                 for dr in 0..n_8x8 {
                     for dc in 0..n_8x8 {
                         let mi_r = leaf_mi_row + dr;
                         let mi_c = leaf_mi_col + dc;
-                        picked_y_mode_grid[mi_r * mi_cols + mi_c] = Some(picked_mode);
+                        picked_y_mode_grid[mi_r * mi_cols + mi_c] = Some(picked_y_modes);
                     }
                 }
 

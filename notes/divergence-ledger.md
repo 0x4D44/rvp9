@@ -24,6 +24,39 @@ Each entry:
 
 ## Entries
 
+### 2026-08-02 — Diagnostic keyframe sub-8 tree omits rectangular partitions
+**Where:** `rvp9_core::mode_decision::partition::choose_partitioning_keyframe_sub8`
+and `rvp9_encoder::frame_loop::pick_and_simulate_intra_encode_partitions`;
+libvpx counterparts: `vp9/encoder/vp9_encodeframe.c::{fill_variance_4x4avg,set_vt_partitioning}`
+and `vp9/encoder/vp9_rdopt.c::rd_pick_intra_sub_8x8_y_mode`.
+**What libvpx does:** keyframes build a source-variance tree from rounded 4x4
+averages, consider NONE/HORZ/VERT/SPLIT partitions, and pick four causal BMI
+modes with live coefficient entropy contexts.
+**What rvp9 does:** `RVP9_EXACT_KF_SUB8=1` enables a diagnostic-only tree that
+uses the same rounded 4x4-average variance but considers NONE/SPLIT only. A
+selected 8x8 SPLIT carries four causal 4x4 modes. Coefficient rate estimates
+still use entropy context zero. Production behavior is unchanged.
+**Why:** this is the smallest independently testable seam that closes the
+measured keyframe-reference mismatch without exposing incomplete behavior as
+a default. It permits direct measurement before adding rectangular partition
+search or threading coefficient contexts through the picker.
+**Byte-parity impact:** structural only under the diagnostic environment flag.
+The normal CPU7 VBR stream remains 47,314 bytes with SHA-256
+`96af4829c357ff6550bfbec8667d5d19e07f78e65e0145b7da3096082ec00eaf`.
+Under the flag, rvp9-decoder, pinned vpxdec, and ffmpeg produce identical
+decoded output.
+**Compression-efficiency impact:** at fixed qindex 120, the first keyframe is
+35,416 bits versus libvpx's 35,368 and gains 0.13 dB luma PSNR. On the native
+three-clip CPU7 screen, luma BD-rate moves from
+`+43.4699%/+4.23215%/+81.88394%` to
+`+39.568619%/+6.942496%/+76.373751%` for
+`in_to_tree`/`ducks_take_off`/`old_town_cross`. The ducks regression prevents
+default enablement.
+**Future plan:** first measure live subblock coefficient contexts and keyframe-
+only rate/quality on the regressing clip. Add coefficient-context threading or
+source rectangular partitions one measured hypothesis at a time, and require
+a representative Pareto result before changing production.
+
 ### 2026-08-02 — Keep the calibrated VBR rate prior and GOLDEN allocator default-off
 **Where:** `rvp9_encoder::frame_loop::{VBR_BITS_PER_MB_MULTIPLIER_DEFAULT,StreamEncoder::new,StreamEncoder::encode_frame}`
 and `rvp9_encoder::rate_control::{cbr::RateFactorLevel,vbr::pick_q_and_bounds}`;

@@ -80,6 +80,7 @@ use rvp9_core::intra_pred::IntraMode;
 use rvp9_core::mode_decision::nonrd_partition::NonRdSplitStats;
 use rvp9_core::mode_decision::partition::{
     PartitionDecision, PartitionSearchParams, choose_partitioning, choose_partitioning_force_split,
+    choose_partitioning_keyframe_sub8,
 };
 use rvp9_core::mode_info::{BlockMode, InterMode, ModeInfo, Mv, RefFrame};
 use rvp9_core::mv_search::PlaneRef;
@@ -4493,6 +4494,8 @@ where
     };
     let vbp_force_split_enabled =
         !is_keyframe && std::env::var_os("RVP9_VBP_FORCE_SPLIT").is_some_and(|v| v != "0");
+    let keyframe_sub8_enabled =
+        is_keyframe && std::env::var_os("RVP9_EXACT_KF_SUB8").is_some_and(|value| value != "0");
     let partition_histogram_enabled = !is_keyframe && std::env::var_os("RVP9_PART_HIST").is_some();
     let vbp_qindex = vbp_qindex_for_partition(q_index, is_keyframe);
     let vbp_avg_inter_qindex = vbp_avg_inter_qindex_for_partition(avg_inter_qindex, is_keyframe);
@@ -4512,7 +4515,9 @@ where
                 avg_inter_qindex: vbp_avg_inter_qindex,
                 noise_threshold_scale,
             };
-            let decision = if vbp_force_split_enabled {
+            let decision = if keyframe_sub8_enabled {
+                choose_partitioning_keyframe_sub8(&params)
+            } else if vbp_force_split_enabled {
                 choose_partitioning_force_split(&params)
             } else {
                 choose_partitioning(&params)
@@ -4662,7 +4667,7 @@ fn leaves_from_decision(decision: &PartitionDecision) -> Vec<PartitionLeafDesc> 
 
     fn cells_wide(bs: BlockSize) -> usize {
         match bs {
-            BlockSize::Block8x8 => 1,
+            BlockSize::Block4x4 | BlockSize::Block8x8 => 1,
             BlockSize::Block16x16 => 2,
             BlockSize::Block32x32 => 4,
             BlockSize::Block64x64 => 8,
@@ -6549,6 +6554,73 @@ mod tests {
              distinct sizes seen = {}",
             count_distinct_block_sizes(grid),
         );
+    }
+
+    #[test]
+    fn exact_keyframe_sub8_path_round_trips_bmi_modes() {
+        let _guard = env_test_mutex();
+        let key = "RVP9_EXACT_KF_SUB8";
+        // SAFETY: the mutex above serialises all env_test_mutex callers.
+        unsafe {
+            std::env::set_var(key, "1");
+        }
+
+        let mut enc = StreamEncoder::new(EncoderConfig {
+            width: 64,
+            height: 64,
+            framerate: 30.0,
+            target_bitrate_bps: 2_000_000,
+            gop_length: 30,
+            aq_mode: AqMode::Off,
+            use_prev_frame_mvs: false,
+            speed: 7,
+            deadline: Deadline::Realtime,
+            noise_sensitivity: 0,
+            bit_depth: rvp9_core::BitDepth::Bd8,
+            lag_in_frames: 0,
+            enable_alt_ref: false,
+            rc_mode: RcMode::Cbr,
+            cq_level: 0,
+            temporal_layers: 1,
+            enable_tpl: false,
+            stage4a_product_split_override: Default::default(),
+            min_qindex: 4,
+            max_qindex: 255,
+        })
+        .unwrap();
+        let y = xorshift_y_plane(64, 64, 0x5AB8_4F4F);
+        let u = vec![128u8; 32 * 32];
+        let v = vec![128u8; 32 * 32];
+
+        let packet = enc.encode_frame(&yuv_view(&y, &u, &v, 64)).unwrap();
+        // SAFETY: the mutex above serialises all env_test_mutex callers.
+        unsafe {
+            std::env::remove_var(key);
+        }
+
+        let mut decoder = Decoder::new();
+        let frames = decode_packet(&mut decoder, &packet.data);
+        decoder
+            .decode_frame(&frames[0])
+            .expect("decoder must accept live sub-8 keyframe syntax");
+        let grid = decoder.last_frame_mi_grid();
+        let sub8_cells: Vec<_> = grid
+            .iter()
+            .flatten()
+            .filter(|cell| cell.block_size == BlockSize::Block4x4)
+            .collect();
+        assert!(
+            !sub8_cells.is_empty(),
+            "high-variance exact keyframe path must emit Block4x4 cells"
+        );
+        for cell in sub8_cells {
+            assert!(cell.bmi.iter().all(|bmi| bmi.as_mode < 10));
+            let BlockMode::Intra { y_mode, uv_mode } = cell.mode else {
+                panic!("keyframe sub-8 cell must be intra");
+            };
+            assert_eq!(y_mode as u8, cell.bmi[3].as_mode);
+            assert_eq!(uv_mode, IntraMode::Dc);
+        }
     }
 
     /// F10.1a — Flat input keeps the picker on `Block64x64` (the F8.2
@@ -10463,6 +10535,23 @@ mod tests {
         let decision = PartitionDecision { cells };
         let leaves = leaves_from_decision(&decision);
         assert_eq!(leaves.len(), 64);
+    }
+
+    #[test]
+    fn leaves_from_decision_emits_one_block4x4_bmi_leaf_per_mi_cell() {
+        let decision = PartitionDecision {
+            cells: [[BlockSize::Block4x4; 8]; 8],
+        };
+        assert!(decision.is_valid_partition());
+
+        let leaves = leaves_from_decision(&decision);
+
+        assert_eq!(leaves.len(), 64);
+        assert!(
+            leaves
+                .iter()
+                .all(|leaf| leaf.leaf_bsize == BlockSize::Block4x4)
+        );
     }
 
     #[test]
