@@ -47,11 +47,10 @@ pub(super) enum RateFactorLevel {
     /// inter classification not implemented in v1).
     #[allow(dead_code)]
     InterHigh = 1,
-    /// libvpx `GF_ARF_LOW = 2`. Reserved — GF/ARF path not driven.
+    /// libvpx `GF_ARF_LOW = 2`. Reserved for the two-pass low-motion GF path.
     #[allow(dead_code)]
     GfArfLow = 2,
-    /// libvpx `GF_ARF_STD = 3`. Reserved — GF/ARF path not driven.
-    #[allow(dead_code)]
+    /// libvpx `GF_ARF_STD = 3`. One-pass VBR GOLDEN/ALTREF refreshes.
     GfArfStd = 3,
     /// libvpx `KF_STD = 4`. Key / intra-only frame.
     KfStd = 4,
@@ -64,15 +63,16 @@ impl RateFactorLevel {
         self as usize
     }
 
-    /// Pick the v1 CBR rate-factor level for a frame kind. Mirrors
-    /// libvpx `get_rate_correction_factor` (`vp9_ratectrl.c:689-710`)
-    /// for the `pass != 2 && !gf_cbr_boost` branch — keyframes land in
-    /// `KF_STD`, every inter frame lands in `INTER_NORMAL`.
+    /// Pick the one-pass rate-factor level for a frame kind. Mirrors
+    /// libvpx `get_rate_correction_factor` (`vp9_ratectrl.c:689-710`):
+    /// keyframes use `KF_STD`, ordinary inter frames use `INTER_NORMAL`,
+    /// and VBR GOLDEN refreshes use their independent `GF_ARF_STD` model.
     #[inline]
     pub(super) const fn for_frame(frame_kind: FrameKind) -> Self {
         match frame_kind {
             FrameKind::Key => Self::KfStd,
-            FrameKind::Inter | FrameKind::Golden => Self::InterNormal,
+            FrameKind::Inter => Self::InterNormal,
+            FrameKind::Golden => Self::GfArfStd,
         }
     }
 }
@@ -1308,6 +1308,13 @@ mod tests {
         let level = RateFactorLevel::for_frame(FrameKind::Inter);
         assert_eq!(level, RateFactorLevel::InterNormal);
         assert_eq!(level.as_index(), 0);
+    }
+
+    #[test]
+    fn rate_factor_level_for_golden_returns_gf_arf_std() {
+        let level = RateFactorLevel::for_frame(FrameKind::Golden);
+        assert_eq!(level, RateFactorLevel::GfArfStd);
+        assert_eq!(level.as_index(), 3);
     }
 
     #[test]

@@ -1417,7 +1417,17 @@ impl StreamEncoder {
 
         let rc_config = config.to_rate_control_config();
         rc_config.validate().map_err(EncodeError::InvalidConfig)?;
-        let rate_control = RateControl::new(rc_config);
+        let vbr_gf_rc_enabled = matches!(config.rc_mode, RcMode::Vbr)
+            && std::env::var_os("RVP9_VBR_GF_RC").is_some_and(|v| v != "0");
+        let golden_refresh_period = if vbr_gf_rc_enabled {
+            rc_config.one_pass_vbr_gf_interval()
+        } else {
+            crate::gop::GOLDEN_REFRESH_PERIOD
+        };
+        let mut rate_control = RateControl::new(rc_config);
+        if vbr_gf_rc_enabled {
+            rate_control.baseline_gf_interval = i64::from(golden_refresh_period);
+        }
 
         let w = config.width as usize;
         let h = config.height as usize;
@@ -1457,7 +1467,11 @@ impl StreamEncoder {
         // 1-pass inputs before `config` is moved into the struct. The
         // schedule is the single source of truth for per-frame type +
         // refresh flags (see the `gf_group` field doc).
-        let gf_group = crate::gop::GfGroup::new(config.gop_length, config.enable_alt_ref);
+        let gf_group = crate::gop::GfGroup::new_with_golden_refresh_period(
+            config.gop_length,
+            config.enable_alt_ref,
+            golden_refresh_period,
+        );
 
         // A18 (SVC) — build the temporal-layer context when configured
         // for > 1 temporal layer. Mirrors libvpx `vp9_init_layer_context`

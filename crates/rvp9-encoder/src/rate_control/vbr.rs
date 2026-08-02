@@ -32,20 +32,10 @@
 //!
 //! ## What's intentionally NOT here (DOCUMENTED DIVERGENCES)
 //!
-//! - **GF/ARF path.** libvpx's VBR branches the inter path on
-//!   `cpi->refresh_golden_frame || cpi->refresh_alt_ref_frame`
-//!   (`vp9_ratectrl.c:1186-1222`) and computes target/Q from
-//!   `get_gf_active_quality`. Our encoder treats every non-keyframe as
-//!   a normal inter (same simplification as CBR — see
-//!   `super::mod::cbr::pick_q_and_bounds`). Tracked alongside the CBR
-//!   GF/ARF deferral.
 //! - **Forced KF / `this_key_frame_forced`.** The popping-prevention
 //!   path at `vp9_ratectrl.c:1158-1166` requires the 2-pass stats
 //!   reader (`rc->last_boosted_qindex`) and is out of scope for
 //!   one-pass.
-//! - **LIMIT_QRANGE_FOR_ALTREF_AND_KEY** (`vp9_ratectrl.c:1260-1279`).
-//!   The qdelta widens `top_index` on KF/GF; without the ALTREF /
-//!   GF-update path this is dead code for our one-pass-no-GF model.
 //! - **`q_adj_factor` for CIF or smaller** (`vp9_ratectrl.c:1176-1178`).
 //!   rvp9's default frame is 1280x720 (well above CIF); leaving the
 //!   factor at 1.0 is libvpx-equivalent for our default config.
@@ -62,6 +52,7 @@ use super::cbr::{
     get_rate_correction_factor, qindex_to_q, regulate_q,
 };
 use super::{FrameKind, RateControl};
+use crate::aq_cyclic_refresh::{FrameKind as QDeltaFrameKind, vp9_compute_qdelta_by_rate};
 
 /// libvpx `rc->fac_active_worst_inter`, seeded by `vp9_rc_init` at line
 /// 399 to `150` and only modified by the high-source-SAD detector. We
@@ -85,17 +76,6 @@ const GF_HIGH: i32 = 2000;
 /// `DEFAULT_GF_BOOST` (`vp9_ratectrl.h:31`) after
 /// `vp9_set_gf_update_one_pass_vbr` resets `rc->gfu_boost`.
 const GF_ACTIVE_QUALITY_BOOST: i32 = 2000;
-
-/// Default `baseline_gf_interval` for one-pass VBR after
-/// `vp9_set_gf_update_one_pass_vbr` runs once (libvpx `vp9_ratectrl.c:
-/// 2078-2079`): `min(20, max(10, (min_gf+max_gf)/2)) == 15` for the
-/// default `min_gf_interval=4` / `max_gf_interval=16` seeded by
-/// `vp9_rc_init` (lines 425-432, libvpx's framerate-driven init).
-///
-/// We hard-code 15 — the steady-state value libvpx settles into for our
-/// 30 fps default. The dynamic adjuster (`adjust_gfint_frame_constraint`
-/// at line 2050) is part of the GF/ARF path we don't drive.
-const BASELINE_GF_INTERVAL: i64 = 15;
 
 /// libvpx `af_ratio_onepass_vbr`, seeded to `10` at
 /// `vp9_ratectrl.c:389` and reset to `10` every GF update
@@ -304,8 +284,8 @@ fn clamp_pframe_target_size_vbr(rc: &RateControl, raw: i64) -> u32 {
 
 fn calc_pframe_target_size_vbr(rc: &RateControl) -> u32 {
     let avg = i64::from(rc.avg_frame_bandwidth);
-    let numerator = avg.saturating_mul(BASELINE_GF_INTERVAL);
-    let denominator = BASELINE_GF_INTERVAL + AF_RATIO_ONEPASS_VBR - 1;
+    let numerator = avg.saturating_mul(rc.baseline_gf_interval);
+    let denominator = rc.baseline_gf_interval + AF_RATIO_ONEPASS_VBR - 1;
     let raw = if denominator > 0 {
         numerator / denominator
     } else {
@@ -317,9 +297,9 @@ fn calc_pframe_target_size_vbr(rc: &RateControl) -> u32 {
 fn calc_golden_target_size_vbr(rc: &RateControl) -> u32 {
     let avg = i64::from(rc.avg_frame_bandwidth);
     let numerator = avg
-        .saturating_mul(BASELINE_GF_INTERVAL)
+        .saturating_mul(rc.baseline_gf_interval)
         .saturating_mul(AF_RATIO_ONEPASS_VBR);
-    let denominator = BASELINE_GF_INTERVAL + AF_RATIO_ONEPASS_VBR - 1;
+    let denominator = rc.baseline_gf_interval + AF_RATIO_ONEPASS_VBR - 1;
     let raw = if denominator > 0 {
         numerator / denominator
     } else {
@@ -333,8 +313,8 @@ fn calc_golden_target_size_vbr(rc: &RateControl) -> u32 {
 ///
 /// This is the VBR rate-control front door — mirrors
 /// `rc_pick_q_and_bounds_one_pass_vbr` (`vp9_ratectrl.c:1138-1303`),
-/// with the GF/ARF, CQ/Q, forced-KF, and LIMIT_QRANGE branches pruned
-/// (see module comment for the divergence ledger).
+/// with the CQ/Q and forced-KF branches pruned (see the module comment
+/// for the remaining divergences).
 ///
 /// Algorithm (line numbers refer to `vp9_ratectrl.c`):
 ///
@@ -373,6 +353,24 @@ pub(super) fn pick_q_and_bounds(rc: &mut RateControl, frame_kind: FrameKind) -> 
     let active_best = active_best.clamp(rc.best_quality, rc.worst_quality);
     let active_worst = active_worst.clamp(active_best, rc.worst_quality);
 
+    // Pinned libvpx builds `LIMIT_QRANGE_FOR_ALTREF_AND_KEY=1`.
+    // A one-pass GOLDEN refresh therefore may not code at a Q worse than
+    // the 1.75x-rate equivalent of `active_worst_quality`, even when the
+    // still-adapting GF rate model asks for a coarser Q. This is the
+    // reference's protection against starving the first boosted frame.
+    let top_index = if matches!(frame_kind, FrameKind::Golden) {
+        let qdelta = vp9_compute_qdelta_by_rate(
+            active_worst as u8,
+            QDeltaFrameKind::Inter,
+            1.75,
+            rc.best_quality as u8,
+            rc.worst_quality as u8,
+        );
+        (active_worst + i32::from(qdelta)).max(active_best)
+    } else {
+        active_worst
+    };
+
     // 5. Regulate Q within the active range (libvpx `vp9_ratectrl.c:1287`).
     let correction_factor = get_rate_correction_factor(rc, frame_kind);
     let multiplier = rc.config().bits_per_mb_multiplier;
@@ -385,16 +383,21 @@ pub(super) fn pick_q_and_bounds(rc: &mut RateControl, frame_kind: FrameKind) -> 
         correction_factor,
         multiplier,
     );
-    let q = q.clamp(active_best, active_worst);
+    let q = if q > top_index && target_bits < rc.max_frame_bandwidth {
+        top_index
+    } else {
+        q
+    }
+    .clamp(active_best, active_worst);
 
-    // 6. Persist bounds + picked Q for postencode feedback. Mirrors
-    //    the CBR path's `*bottom_index = active_best`, `*top_index =
-    //    active_worst` writeback at lines 1257-1258.
+    // 6. Persist bounds + picked Q for postencode feedback. The
+    //    compile-time GOLDEN rate-floor branch tightens `top_index`
+    //    after the common active-worst calculation.
     rc.active_min_qindex = active_best as u8;
-    rc.active_max_qindex = active_worst as u8;
+    rc.active_max_qindex = top_index as u8;
     rc.last_picked_qindex = q as u8;
 
-    (q as u8, active_best as u8, active_worst as u8)
+    (q as u8, active_best as u8, top_index as u8)
 }
 
 #[cfg(test)]
@@ -482,12 +485,14 @@ mod tests {
         let rc = RateControl::new(vbr_config());
         let target = calc_pframe_target_size_vbr(&rc);
         let avg = rc.avg_frame_bandwidth;
-        // avg * 15 / 24 == avg * 0.625
-        let expected = (u64::from(avg) * 15 / 24) as u32;
+        // Production retains baseline_gf_interval=15:
+        // avg * 15 / (15 + 10 - 1).
+        let interval = rc.baseline_gf_interval as u64;
+        let expected = (u64::from(avg) * interval / (interval + 9)) as u32;
         // Allow ±1 for integer division.
         assert!(
             target.abs_diff(expected) <= 1 || target >= expected,
-            "VBR inter target {target} should be ~{expected} (avg * 15/24)"
+            "VBR inter target {target} should be ~{expected}"
         );
     }
 
@@ -497,9 +502,9 @@ mod tests {
         let inter_target = calc_pframe_target_size_vbr(&rc);
         let golden_target = calc_golden_target_size_vbr(&rc);
         let expected = ((u64::from(rc.avg_frame_bandwidth)
-            * BASELINE_GF_INTERVAL as u64
+            * rc.baseline_gf_interval as u64
             * AF_RATIO_ONEPASS_VBR as u64)
-            / (BASELINE_GF_INTERVAL + AF_RATIO_ONEPASS_VBR - 1) as u64)
+            / (rc.baseline_gf_interval + AF_RATIO_ONEPASS_VBR - 1) as u64)
             .min(u64::from(rc.max_frame_bandwidth)) as u32;
         assert_eq!(golden_target, expected);
         assert!(
@@ -528,6 +533,21 @@ mod tests {
         assert!(
             golden_best < inter_best,
             "GF active-best ({golden_best}) should allow lower Q than normal inter ({inter_best})"
+        );
+    }
+
+    #[test]
+    fn golden_q_is_limited_to_pinned_rate_boost_range() {
+        let mut rc = RateControl::new(vbr_config());
+        rc.total_actual_bits = 1_000_000;
+        rc.frames_since_key = 11;
+        rc.avg_frame_qindex_inter = 160;
+        let unconstrained_worst = active_worst_quality_vbr(&rc, FrameKind::Golden);
+        let (_, bottom, top) = pick_q_and_bounds(&mut rc, FrameKind::Golden);
+        assert!(bottom <= top);
+        assert!(
+            i32::from(top) < unconstrained_worst,
+            "1.75x GOLDEN rate floor must tighten top Q below active_worst"
         );
     }
 

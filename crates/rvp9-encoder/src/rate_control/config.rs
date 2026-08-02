@@ -188,6 +188,30 @@ impl RateControlConfig {
         mbs.min(u32::MAX as u64) as u32
     }
 
+    /// Pinned libvpx's initial one-pass VBR GOLDEN interval for this
+    /// resolution and frame rate (`vp9_rc_get_default_{min,max}_gf_interval`
+    /// followed by `vp9_set_gf_update_one_pass_vbr`).
+    #[must_use]
+    pub(crate) fn one_pass_vbr_gf_interval(&self) -> u32 {
+        const MIN_GF_INTERVAL: u32 = 4;
+        const MAX_GF_INTERVAL: u32 = 16;
+        const FACTOR_SAFE: f64 = 3840.0 * 2160.0 * 20.0;
+
+        let default_min = (self.framerate * 0.125) as u32;
+        let mut min_interval = default_min.clamp(MIN_GF_INTERVAL, MAX_GF_INTERVAL);
+        let factor = f64::from(self.frame_width) * f64::from(self.frame_height) * self.framerate;
+        if factor > FACTOR_SAFE {
+            let scaled = (f64::from(MIN_GF_INTERVAL) * factor / FACTOR_SAFE + 0.5) as u32;
+            min_interval = min_interval.max(scaled);
+        }
+
+        let mut max_interval = ((self.framerate * 0.75) as u32).min(MAX_GF_INTERVAL);
+        max_interval += max_interval & 1;
+        max_interval = max_interval.max(min_interval);
+
+        ((min_interval + max_interval) / 2).clamp(10, 20)
+    }
+
     /// Validate the config. Returns an error string on the first
     /// detected problem.
     ///
@@ -291,6 +315,26 @@ mod tests {
         // 1280x720 → 80 x 45 = 3600 MBs.
         let cfg = RateControlConfig::default();
         assert_eq!(cfg.mbs(), 80 * 45);
+    }
+
+    #[test]
+    fn one_pass_vbr_gf_interval_matches_pinned_defaults() {
+        let mut cfg = RateControlConfig {
+            frame_width: 1280,
+            frame_height: 720,
+            framerate: 30.0,
+            ..RateControlConfig::default()
+        };
+        assert_eq!(cfg.one_pass_vbr_gf_interval(), 10);
+
+        cfg.frame_height = 704;
+        cfg.framerate = 50.0;
+        assert_eq!(cfg.one_pass_vbr_gf_interval(), 11);
+
+        cfg.frame_width = 1920;
+        cfg.frame_height = 1080;
+        cfg.framerate = 60.0;
+        assert_eq!(cfg.one_pass_vbr_gf_interval(), 11);
     }
 
     #[test]

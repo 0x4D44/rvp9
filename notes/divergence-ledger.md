@@ -24,6 +24,37 @@ Each entry:
 
 ## Entries
 
+### 2026-08-02 — Keep the calibrated VBR rate prior and GOLDEN allocator default-off
+**Where:** `rvp9_encoder::frame_loop::{VBR_BITS_PER_MB_MULTIPLIER_DEFAULT,StreamEncoder::new,StreamEncoder::encode_frame}`
+and `rvp9_encoder::rate_control::{cbr::RateFactorLevel,vbr::pick_q_and_bounds}`;
+libvpx counterparts: `vp9/encoder/vp9_ratectrl.c::{get_rate_correction_factor,rc_pick_q_and_bounds_one_pass_vbr,vp9_set_gf_update_one_pass_vbr}`.
+**What libvpx does:** uses the unscaled bits-per-MB model, derives the
+one-pass GOLDEN interval from frame rate and resolution, assigns boosted
+GOLDEN frames an independent `GF_ARF_STD` correction slot, and caps their
+top Q at the 1.75x-rate equivalent.
+**What rvp9 does:** production VBR retains its measured 4x bits-per-MB prior,
+fixed eight-frame refresh cadence, and ordinary-inter rate allocation for
+GOLDEN refreshes. `RVP9_BPM_MULTIPLIER=1 RVP9_VBR_GF_RC=1` enables the
+source-aligned stack for controlled diagnostics; that path uses the pinned
+interval formula, independent correction slot, and 1.75x Q bound.
+**Why:** rvp9's current partition, inter-mode, and skip decisions do not yet
+match libvpx's residual distribution. Enabling the source-aligned stack by
+default regressed the seven-point CPU7 Foreman luma BD-rate from `-8.534253%`
+to `+20.131756%` versus vpxenc. It improved the exact-partition diagnostic on
+the two failing native clips from `+67.616%/+105.583%` to
+`+45.707%/+83.762%`, which makes the opt-in path a useful prerequisite, but
+that partition mode is not fast enough to ship.
+**Byte-parity impact:** structural only when either diagnostic override is
+enabled. Production defaults retain the established rate prior and allocator.
+**Compression-efficiency impact:** production Foreman remains quality-positive
+against pinned vpxenc. The native CPU7 corpus remains far outside the final
+gate and is tracked in the parity journal.
+**Future plan:** first close the measured partition/mode/skip mismatch. Then
+retest the source-aligned allocator on the full corpus and make it default
+only when it is a reproducible quality/speed Pareto improvement. This entry
+supersedes the 2026-05-22 A10 statement that the VBR default multiplier is
+1.0.
+
 ### 2026-08-01 — Large-block work bypass requires YUV skip; mode-loop stop remains Y-only
 **Where:** `rvp9-core::mode_decision::inter::{evaluate_candidate_for_filter_with_pred,chroma_planes_skippable}`;
 libvpx counterpart: `vp9/encoder/vp9_pickmode.c::model_rd_for_sb_y_large`.

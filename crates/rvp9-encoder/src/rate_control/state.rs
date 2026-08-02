@@ -157,6 +157,11 @@ pub struct RateControl {
     /// `rc->best_quality`.
     pub(crate) best_quality: i32,
 
+    /// One-pass VBR GOLDEN allocation interval. Production retains the
+    /// calibrated legacy value; the libvpx-aligned diagnostic path
+    /// replaces it with the frame-rate-derived interval.
+    pub(crate) baseline_gf_interval: i64,
+
     /// Max buffer capacity in bits (`buffer_size_ms * target_bps /
     /// 1000`). Mirrors libvpx `rc->maximum_buffer_size`
     /// (`vp9_ratectrl.h:156`).
@@ -276,6 +281,7 @@ impl RateControl {
             mbs: config.mbs(),
             worst_quality: i32::from(config.max_qindex),
             best_quality: i32::from(config.min_qindex),
+            baseline_gf_interval: 15,
             maximum_buffer_size,
             optimal_buffer_level,
             starting_buffer_level,

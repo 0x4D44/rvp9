@@ -80,7 +80,8 @@ pub enum FrameUpdateType {
 /// `A14_GOLDEN_REFRESH_PERIOD` constant (`frame_loop.rs`) and libvpx's
 /// `cpi->refresh_golden_frame` cadence
 /// (`vp9_firstpass.c::define_gf_group`, typically the 8-15 frame range;
-/// pinned to 8 for deterministic 1-pass behaviour).
+/// pinned to 8 for the legacy CBR schedule). One-pass VBR supplies its
+/// frame-rate-derived interval through [`GfGroup::new_with_golden_refresh_period`].
 pub const GOLDEN_REFRESH_PERIOD: u32 = 8;
 
 /// libvpx `MAX_STATIC_GF_GROUP_LENGTH` (`vp9_ratectrl.h:46`). The
@@ -125,6 +126,8 @@ pub struct GfGroup {
     /// `baseline_gf_interval` (`vp9_firstpass.c::define_gf_group`). Only
     /// consulted when `enable_alt_ref`.
     gf_interval: u32,
+    /// Show-frame offset cadence for one-pass GOLDEN refreshes.
+    golden_refresh_period: u32,
     /// `true` iff the encoder is configured for ALTREF emission.
     enable_alt_ref: bool,
 }
@@ -144,6 +147,16 @@ impl GfGroup {
     /// `self.config.gop_length.max(1)`).
     #[must_use]
     pub fn new(gop_length: u32, enable_alt_ref: bool) -> Self {
+        Self::new_with_golden_refresh_period(gop_length, enable_alt_ref, GOLDEN_REFRESH_PERIOD)
+    }
+
+    /// Build a group with a rate-control-selected GOLDEN cadence.
+    #[must_use]
+    pub fn new_with_golden_refresh_period(
+        gop_length: u32,
+        enable_alt_ref: bool,
+        golden_refresh_period: u32,
+    ) -> Self {
         let gop_length = gop_length.max(1);
         // libvpx default `baseline_gf_interval` for the half-GOP ARF
         // cadence; `.max(2)` floors it so a 2-frame filter is viable.
@@ -151,6 +164,7 @@ impl GfGroup {
         Self {
             gop_length,
             gf_interval,
+            golden_refresh_period: golden_refresh_period.max(1),
             enable_alt_ref,
         }
     }
@@ -198,7 +212,7 @@ impl GfGroup {
     /// reproduces the encoder's CURRENT schedule exactly:
     ///
     /// - offset `0` → [`FrameUpdateType::KfUpdate`], `refresh = 0xFF`.
-    /// - inter offset where `offset % GOLDEN_REFRESH_PERIOD == 0` →
+    /// - inter offset where `offset % golden_refresh_period == 0` →
     ///   [`FrameUpdateType::GfUpdate`], `refresh = 0x03`.
     /// - any other inter offset → [`FrameUpdateType::LfUpdate`],
     ///   `refresh = 0x01`.
@@ -222,15 +236,15 @@ impl GfGroup {
             };
         }
 
-        // Inter frame. GOLDEN refresh fires every `GOLDEN_REFRESH_PERIOD`
+        // Inter frame. GOLDEN refresh fires every configured period
         // inter frames since the keyframe; because the keyframe sits at
         // offset 0 and resets the counter, the refresh lands at GOP
-        // offsets that are exact multiples of the period (8, 16, 24, ...).
+        // offsets that are exact multiples of that period.
         // This reproduces the frame loop's `frames_since_golden_refresh`
         // state machine (increment-then-check, reset on refresh): the
-        // counter equals `offset % GOLDEN_REFRESH_PERIOD` after each
+        // counter equals `offset % golden_refresh_period` after each
         // increment, hitting the period exactly at those offsets.
-        let golden_refresh = offset.is_multiple_of(GOLDEN_REFRESH_PERIOD);
+        let golden_refresh = offset.is_multiple_of(self.golden_refresh_period);
 
         // ARF cadence: when enabled, a non-show ARF is built once the
         // count of inter frames already coded since the keyframe reaches
@@ -322,6 +336,18 @@ mod tests {
             } else {
                 assert_eq!(s.refresh_frame_flags, 0x01, "f{idx}");
             }
+        }
+    }
+
+    #[test]
+    fn custom_golden_period_drives_vbr_schedule() {
+        let g = GfGroup::new_with_golden_refresh_period(60, false, 11);
+        for idx in 1..34 {
+            assert_eq!(
+                matches!(g.schedule(idx).update_type, FrameUpdateType::GfUpdate),
+                idx % 11 == 0,
+                "f{idx}"
+            );
         }
     }
 
