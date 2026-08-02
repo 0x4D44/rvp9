@@ -2931,6 +2931,10 @@ fn rt_newmv_subpel_iters_override() -> Option<i32> {
     })
 }
 
+/// Pinned libvpx sets `subpel_search_level = 0` for realtime speeds 3+
+/// (`vp9_speed_features.c:set_rt_speed_feature_framesize_independent`).
+const RT_NEWMV_SUBPEL_SEARCH_LEVEL: i32 = 0;
+
 /// Run the F7.0 full-pel diamond + sub-pel refinement for NEWMV.
 /// Returns the resulting MV in 1/8-pel units.
 ///
@@ -3123,7 +3127,7 @@ fn run_newmv_search(
     let forced_stop = adaptive_subpel_force_stop(center_mv_fp);
     let iters_per_step = rt_newmv_subpel_iters_override()
         .map(|v| v.min(2))
-        .unwrap_or(2);
+        .unwrap_or(RT_NEWMV_SUBPEL_SEARCH_LEVEL);
     let sub = find_best_sub_pixel_tree(&SubPixelSearchParams {
         block_size: params.block_size,
         src_plane: params.src_plane,
@@ -3136,9 +3140,9 @@ fn run_newmv_search(
         mv_costs: params.mv_costs,
         allow_hp: params.allow_hp,
         forced_stop,
-        // libvpx rt default: `sf.mv.subpel_search_level = 2`
-        // (`vp9_speed_features.c:929`), enabling SECOND_LEVEL_CHECKS
-        // after each pyramid level's FIRST_LEVEL_CHECKS.
+        // Realtime speeds 3+ set `sf.mv.subpel_search_level = 0`, which
+        // skips the tree-extension checks after each level's cardinal and
+        // diagonal probes.
         iters_per_step,
     });
     sub.best_mv
@@ -5076,6 +5080,11 @@ mod tests {
         let frame_kind = synthetic_inter_frame_kind();
         assert_eq!(sad_per_bit_16(200), 9);
         assert_eq!(error_per_bit(200, frame_kind), 10_285);
+    }
+
+    #[test]
+    fn realtime_newmv_subpel_level_matches_libvpx_cpu7() {
+        assert_eq!(RT_NEWMV_SUBPEL_SEARCH_LEVEL, 0);
     }
 
     /// Deterministic chaotic-content plane via xorshift32 so SAD-driven

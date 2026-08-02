@@ -145,11 +145,9 @@ pub struct SubPixelSearchParams<'a> {
     /// pyramid level runs `FIRST_LEVEL_CHECKS` unconditionally; when
     /// `iters_per_step > 1`, it additionally runs
     /// `SECOND_LEVEL_CHECKS` to fan out further in the winning
-    /// direction. libvpx's rt setter leaves this at the default of
-    /// `2` (`vp9_speed_features.c:929`) for all rt speed presets
-    /// except SVC speed 3+ (which drops it to 0-1). For our locked
-    /// cpu-used 6-8 rt config the value is **2**, matching libvpx's
-    /// non-SVC rt path bug-for-bug.
+    /// direction. libvpx's realtime setter changes this to `0` at
+    /// speed 3+, including the v1 cpu-used 6-8 scope
+    /// (`vp9_speed_features.c:set_rt_speed_feature_framesize_independent`).
     pub iters_per_step: i32,
 }
 
