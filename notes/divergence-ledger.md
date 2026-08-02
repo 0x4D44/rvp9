@@ -53,8 +53,11 @@ matching `vp9_predict_intra_block`. Block16x16 leaves now use libvpx's
 realtime Hadamard + `quantize_fp` model: quantized-coefficient SATD rate,
 coefficient error distortion, skip syntax, and DC/V/H mode syntax. The first
 explicit-30fps `in_to_tree` leaf matches all three pinned-libvpx candidate
-scores exactly and selects H. Block32x32 leaves still use rvp9's older
-approximate picker. Production behavior is unchanged.
+scores exactly and selects H. Block32x32 applies the same model over four
+causal Tx16 tiles; the formerly divergent leaf at pixel `(416,0)` matches all
+three pinned-libvpx candidate scores exactly. Across the explicit-30fps
+`in_to_tree` keyframe, all 12,124 decoded leaf sizes and luma modes now agree.
+Production behavior is unchanged.
 **Why:** this is the smallest independently testable seam that closes the
 measured keyframe-reference mismatch without exposing incomplete behavior as
 a default. The corrected picker matches pinned libvpx exactly for the first 80
@@ -71,31 +74,30 @@ Under the flag, rvp9-decoder, pinned vpxdec, and ffmpeg produce the same
 For the current explicit-30fps `in_to_tree` 1000 kbps stream, rvp9-decoder,
 pinned vpxdec, and ffmpeg each produce the same 81,100,800-byte I420 output,
 SHA-256
-`772dafd6180ae9fd1439117f170e9510955e70f1ef04f1cdb8f556d787a9701e`.
+`ebb1762b11116bbb0d2512b609734b5f5b709e8a5f7ec400cc9de64cd7133606`.
 **Compression-efficiency impact:** at fixed qindex 120, the corrected first
 keyframe is 37,536 bits at 37.999 dB luma PSNR versus libvpx's 35,368 bits at
 38.031 dB. The 64-frame stream is 124,353 bytes versus libvpx's 82,270. On the
 fresh explicitly matched 30fps native three-clip CPU7 screen, luma BD-rate is
-`+41.901676%/-1.351268%/+97.014178%` and average-YUV BD-rate is
-`+38.560932%/-0.564844%/+88.504310%` for
+`+41.837072%/-1.351268%/+96.584123%` and average-YUV BD-rate is
+`+38.471076%/-0.564844%/+88.041766%` for
 `in_to_tree`/`ducks_take_off`/`old_town_cross`. Versus its clean predecessor,
-the Block16x16 model moves luma by `-0.516688/+0.020122/+0.074517`
-points and average-YUV by `-0.465290/+0.023927/+0.177145` points. It is
-retained as a source-faithful prerequisite; the mixed movement is not a
-corpus-wide Pareto win. The earlier
+the Block32x32 model moves luma by `-0.064605/+0.000000/-0.430055`
+points and average-YUV by `-0.089856/+0.000000/-0.462544` points. It is a
+small reproducible Pareto improvement on this screen. The earlier
 `+36.442309%/+5.200030%/+75.260522%` screen encoded the native 50fps Y4M timing
 and is not evidence for the declared 720p30 configuration. The path remains
 far outside the final 0.5% gate.
 **Speed impact:** on the 60-frame 1280x704 `in_to_tree` 1000 kbps VBR
-diagnostic at explicit 30fps, nine warmed alternating pairs measure 0.553380
-seconds rvp9 versus 0.402272 seconds vpxenc median child CPU (`1.375636x`);
-wall time is `1.371019x`. This is not a corpus geomean and does not pass the
+diagnostic at explicit 30fps, nine warmed alternating pairs measure 0.549401
+seconds rvp9 versus 0.400559 seconds vpxenc median child CPU (`1.371586x`);
+wall time is `1.362243x`. This is not a corpus geomean and does not pass the
 final speed gate.
-**Future plan:** extend the same fast model over the four Tx16 tiles in each
-Block32x32 leaf, including libvpx's internal prediction-edge semantics. Then
-rerun the paired leaf trace to find the next causal mismatch. Rectangular
-keyframe partitions remain omitted, but none were exercised by this matched
-keyframe.
+**Future plan:** compare reconstructed keyframe pixels now that every
+partition and luma-mode decision agrees. Locate the first transform,
+quantization, chroma-mode, or reconstruction mismatch before returning to the
+inter-frame reference gap. Rectangular keyframe partitions remain omitted,
+but none were exercised by this matched keyframe.
 
 ### 2026-08-02 — Keep the calibrated VBR rate prior and GOLDEN allocator default-off
 **Where:** `rvp9_encoder::frame_loop::{VBR_BITS_PER_MB_MULTIPLIER_DEFAULT,StreamEncoder::new,StreamEncoder::encode_frame}`

@@ -6,7 +6,7 @@ Durable project facts/conventions belong in `CLAUDE.md` / `AGENTS.md`, not here.
 Hard cap: 20 entries.
 
 - 2026-08-02: Keyframe VBP comparisons must retain libvpx's 256x variance precision; folding both sides to integers changes `504 > 450` into `1 > 1` (`partition.rs:keyframe_4x4_average_variance`).
-- 2026-08-02: Realtime keyframe leaves >=16 use Hadamard+`quantize_fp` SATD pricing, not full-RD DCT pricing (`intra.rs:pick_realtime_intra_mode_luma_16x16`).
+- 2026-08-02: Realtime keyframe leaves >=16 use Hadamard+`quantize_fp` SATD pricing, not full-RD DCT pricing (`intra.rs:pick_realtime_intra_mode_luma_large`).
 - 2026-06-17: Module / `lib.rs` doc headers are STALE ("Stage 3 skeleton", "what does NOT work yet"). The encoder and decoder are far more complete than the prose claims — trust `git log`, `PLAN.md`, and `wrk_journals/` over module doc comments.
 - 2026-06-17: `.cargo/config.toml` sets `target-cpu=native`, so `--release` binaries are NOT portable across x86_64 hosts (SIGILL/illegal-instruction on an older CPU than the build host). For a portable build use `RUSTFLAGS="" cargo build --release`.
 - 2026-06-17: `crates/rvp9-fuzz` is deliberately OUTSIDE the workspace (cargo-fuzz `#![no_main]` → LNK1561 on `cargo build --workspace`). Run it via `cargo +nightly fuzz run <target>` from inside the crate, never through the workspace.

@@ -1,14 +1,11 @@
 //! Intra mode search — libvpx-faithful port of `vp9_pick_intra_mode`.
 //!
-//! Tries the 10 VP9 intra modes (`DC_PRED .. TM_PRED`) for a single
-//! luma block, performs prediction + forward DCT + quantize +
-//! dequantize, and picks the mode minimising `D + lambda * R` where
-//! `D` is libvpx's transform-coefficient-domain distortion model
-//! (`block_yrd`: `sum((coef - dqcoeff)^2) >> shift`) and `R` is the
-//! mode-coding rate cost in 1/512-bit `vp9_prob_cost` units. The
-//! picker does not reconstruct candidates because its public result
-//! contains only mode, rate, and transform-domain distortion. The encoder
-//! reconstructs the selected mode in its later emit pass.
+//! The general picker tries all 10 VP9 intra modes with hybrid DCT/ADST and
+//! `quantize_b`. The realtime keyframe picker follows libvpx's speed-4+
+//! policy: DC/V/H only, with 16x16 Hadamard tiles, `quantize_fp`, quantized
+//! coefficient SATD rate, coefficient-error distortion, and skip/mode syntax.
+//! Both return only the winner and its modeled cost; the encoder reconstructs
+//! the selected mode in its later emit pass.
 //!
 //! Reference: `vp9/encoder/vp9_pickmode.c:1155-1213` (realtime
 //! `vp9_pick_intra_mode`) and `vp9/encoder/vp9_pickmode.c:718-844`
@@ -17,15 +14,15 @@
 //!
 //! ## libvpx divergences (recorded)
 //!
-//! - **Mode set.** libvpx-realtime only evaluates DC / V / H
+//! - **General-picker mode set.** libvpx-realtime only evaluates DC / V / H
 //!   (`for (this_mode = DC_PRED; this_mode <= H_PRED; ++this_mode)` at
-//!   `vp9_pickmode.c:1188`); we evaluate all 10 modes — explicit
-//!   supervisor decision for F8.0.
-//! - **Distortion model.** We adopt libvpx's transform-coefficient-
-//!   domain distortion `block_yrd` (`(coef - dqcoeff)^2 >> shift`)
-//!   instead of post-recon SSE. The shift table mirrors
+//!   `vp9_pickmode.c:1188`). [`pick_intra_mode_luma`] remains a separate
+//!   all-mode API; [`pick_realtime_intra_mode_luma`] uses DC/V/H.
+//! - **General-picker distortion model.** It uses transform-coefficient
+//!   distortion (`(coef - dqcoeff)^2 >> shift`) instead of post-recon SSE.
+//!   The shift table mirrors
 //!   `vp9_rdopt.c:574`: `shift = (tx_size == TX_32X32) ? 0 : 2`. The
-//!   Candidate reconstruction is unnecessary for this transform-domain
+//!   candidate reconstruction is unnecessary for this transform-domain
 //!   argmin and is left to the selected-mode emit pass.
 //! - **No UV-mode pick.** libvpx's `estimate_block_intra` also runs
 //!   over UV planes inside the per-mode loop using `model_rd_for_sb_uv`;
@@ -36,7 +33,7 @@
 //!   "all coefficients quantized to zero" flag. F8.0 always runs the
 //!   forward transform and quantization for every candidate.
 //!
-//! ## Algorithm (F8.0-fix)
+//! ## General-picker algorithm
 //!
 //! For each `mode ∈ 0..NUM_INTRA_MODES`:
 //!
@@ -243,40 +240,40 @@ pub fn pick_intra_mode_luma(params: &IntraModeSearchParams<'_>) -> IntraModeSear
 /// stopping after [`IntraMode::H`].
 #[must_use]
 pub fn pick_realtime_intra_mode_luma(params: &IntraModeSearchParams<'_>) -> IntraModeSearchResult {
-    if params.block_size == BlockSize::Block16x16 {
-        pick_realtime_intra_mode_luma_16x16(params)
+    if matches!(
+        params.block_size,
+        BlockSize::Block16x16 | BlockSize::Block32x32
+    ) {
+        pick_realtime_intra_mode_luma_large(params)
     } else {
         pick_intra_mode_luma_through(params, IntraMode::H)
     }
 }
 
-/// Match libvpx's realtime keyframe `vp9_pick_intra_mode` model for one
-/// 16x16 leaf. Unlike the full-RD intra picker, this path deliberately uses
-/// a Walsh-Hadamard transform, `quantize_fp`, SATD of quantized coefficients
-/// as its rate proxy, and coefficient-domain quantization error as distortion
-/// (`vp9_pickmode.c::block_yrd`).
-fn pick_realtime_intra_mode_luma_16x16(
+/// Match libvpx's realtime keyframe `vp9_pick_intra_mode` model for a
+/// Block16x16 or Block32x32 leaf. Unlike the full-RD intra picker, this path
+/// deliberately uses 16x16 Walsh-Hadamard tiles, `quantize_fp`, SATD of
+/// quantized coefficients as its rate proxy, and coefficient-domain
+/// quantization error as distortion (`vp9_pickmode.c::block_yrd`).
+fn pick_realtime_intra_mode_luma_large(
     params: &IntraModeSearchParams<'_>,
 ) -> IntraModeSearchResult {
-    const SIDE: usize = 16;
-    const N: usize = SIDE * SIDE;
-
+    const TX_SIDE: usize = 16;
+    const TX_N: usize = TX_SIDE * TX_SIDE;
+    let side = params.block_size.width() as usize;
+    debug_assert!(matches!(side, 16 | 32));
     let lambda = compute_rd_mult(
         i32::from(params.q_index),
         frame_type_for_rd(params.frame_kind),
     );
     let (above_row, above_left, left_col) = build_edges(
-        SIDE,
+        side,
         params.above_pixels,
         params.left_pixels,
         params.top_left_pixel,
         params.have_above,
         params.have_left,
     );
-    let dc_avail = DcAvailability {
-        above_available: params.have_above,
-        left_available: params.have_left,
-    };
     let dispatch = crate::dsp::get();
     let mode_cost_row =
         &params.y_mode_costs[params.above_mode_ctx as usize][params.left_mode_ctx as usize];
@@ -291,65 +288,115 @@ fn pick_realtime_intra_mode_luma_16x16(
         best_distortion: u32::MAX,
         best_rate: u32::MAX,
     };
-    let mut pred = [0u8; N];
-    let mut residual = [0i16; N];
-    let mut had_coeff = [0i16; N];
-    let mut coeff = [0i32; N];
-    let mut qcoeff = [0i16; N];
-    let mut dqcoeff = [0i16; N];
+    let mut pred = [0u8; 32 * 32];
+    let mut residual = [0i16; TX_N];
+    let mut had_coeff = [0i16; TX_N];
+    let mut coeff = [0i32; TX_N];
+    let mut qcoeff = [0i16; TX_N];
+    let mut dqcoeff = [0i16; TX_N];
     let scan = scan_for(TxSize::Tx16x16, TxType::DctDct);
     let dequant_pair = [params.quantizer.dequant[0], params.quantizer.dequant[1]];
 
     for raw_mode in IntraMode::Dc as u8..=IntraMode::H as u8 {
         let mode = IntraMode::from_u8(raw_mode).expect("DC/V/H modes are valid");
-        intra_predict(
-            mode,
-            &mut pred,
-            SIDE,
-            SIDE,
-            PredCtx {
-                above: &above_row[..2 * SIDE],
-                left: &left_col[..SIDE],
-                above_left,
-            },
-            dc_avail,
-            &dispatch,
-        );
+        let mut rate_satd = 0u32;
+        let mut dist = 0i64;
+        let mut skippable = true;
+        let mut eob_cost = 0u32;
 
-        let src = params.src_plane;
-        let (sx, sy) = params.src_offset;
-        for row in 0..SIDE {
-            for col in 0..SIDE {
-                residual[row * SIDE + col] =
-                    i16::from(src.data[(sy + row) * src.stride + sx + col])
-                        - i16::from(pred[row * SIDE + col]);
+        // libvpx's transformed-block walker visits the Tx16 tiles in raster
+        // order. Each prediction is written into the candidate destination
+        // before the next tile reads its internal top/left edge.
+        for tile_y in (0..side).step_by(TX_SIDE) {
+            for tile_x in (0..side).step_by(TX_SIDE) {
+                let have_above = tile_y > 0 || params.have_above;
+                let have_left = tile_x > 0 || params.have_left;
+                let mut tile_above = [ABOVE_UNAVAILABLE_FILL; 2 * TX_SIDE];
+                let mut tile_left = [LEFT_UNAVAILABLE_FILL; TX_SIDE];
+
+                if have_above {
+                    if tile_y == 0 {
+                        tile_above[..TX_SIDE].copy_from_slice(&above_row[tile_x..tile_x + TX_SIDE]);
+                    } else {
+                        let start = (tile_y - 1) * side + tile_x;
+                        tile_above[..TX_SIDE].copy_from_slice(&pred[start..start + TX_SIDE]);
+                    }
+                    let last = tile_above[TX_SIDE - 1];
+                    tile_above[TX_SIDE..].fill(last);
+                }
+                if have_left {
+                    if tile_x == 0 {
+                        tile_left.copy_from_slice(&left_col[tile_y..tile_y + TX_SIDE]);
+                    } else {
+                        for row in 0..TX_SIDE {
+                            tile_left[row] = pred[(tile_y + row) * side + tile_x - 1];
+                        }
+                    }
+                }
+                let tile_above_left = if tile_x > 0 && tile_y > 0 {
+                    pred[(tile_y - 1) * side + tile_x - 1]
+                } else if tile_y == 0 && tile_x > 0 && params.have_above {
+                    above_row[tile_x - 1]
+                } else if tile_x == 0 && tile_y > 0 && params.have_left {
+                    left_col[tile_y - 1]
+                } else {
+                    above_left
+                };
+
+                intra_predict(
+                    mode,
+                    &mut pred[tile_y * side + tile_x..],
+                    side,
+                    TX_SIDE,
+                    PredCtx {
+                        above: &tile_above,
+                        left: &tile_left,
+                        above_left: tile_above_left,
+                    },
+                    DcAvailability {
+                        above_available: have_above,
+                        left_available: have_left,
+                    },
+                    &dispatch,
+                );
+
+                let src = params.src_plane;
+                let (sx, sy) = params.src_offset;
+                for row in 0..TX_SIDE {
+                    for col in 0..TX_SIDE {
+                        residual[row * TX_SIDE + col] =
+                            i16::from(
+                                src.data[(sy + tile_y + row) * src.stride + sx + tile_x + col],
+                            ) - i16::from(pred[(tile_y + row) * side + tile_x + col]);
+                    }
+                }
+                hadamard_16x16(&residual, TX_SIDE, &mut had_coeff);
+                for (dst, &src) in coeff.iter_mut().zip(&had_coeff) {
+                    *dst = i32::from(src);
+                }
+                let eob = vp9_quantize_fp_with_order(
+                    &coeff,
+                    TX_N,
+                    false,
+                    &params.quantizer.round_fp,
+                    &params.quantizer.quant_fp,
+                    &mut qcoeff,
+                    &mut dqcoeff,
+                    &dequant_pair,
+                    &scan,
+                );
+                if eob == 1 {
+                    rate_satd = rate_satd.saturating_add(i32::from(qcoeff[0]).unsigned_abs());
+                } else if eob > 1 {
+                    rate_satd = rate_satd.saturating_add(satd_i16(&qcoeff));
+                }
+                dist = dist.saturating_add(block_error_fp_i32(&coeff, &dqcoeff) >> 2);
+                skippable &= eob == 0;
+                eob_cost += 1;
             }
         }
-        hadamard_16x16(&residual, SIDE, &mut had_coeff);
-        for (dst, &src) in coeff.iter_mut().zip(&had_coeff) {
-            *dst = i32::from(src);
-        }
-        let eob = vp9_quantize_fp_with_order(
-            &coeff,
-            N,
-            false,
-            &params.quantizer.round_fp,
-            &params.quantizer.quant_fp,
-            &mut qcoeff,
-            &mut dqcoeff,
-            &dequant_pair,
-            &scan,
-        );
-        let rate_satd = if eob == 1 {
-            i32::from(qcoeff[0]).unsigned_abs()
-        } else if eob > 1 {
-            satd_i16(&qcoeff)
-        } else {
-            0
-        };
         let block_rate = (u64::from(rate_satd) << (2 + crate::cost::VP9_PROB_COST_SHIFT))
-            + (1u64 << crate::cost::VP9_PROB_COST_SHIFT);
-        let skippable = eob == 0;
+            + (u64::from(eob_cost) << crate::cost::VP9_PROB_COST_SHIFT);
         let rate = if skippable {
             u64::from(vp9_cost_bit(skip_prob, true))
         } else {
@@ -357,7 +404,7 @@ fn pick_realtime_intra_mode_luma_16x16(
         }
         .saturating_add(mode_cost_row[raw_mode as usize].max(0) as u64)
         .min(u64::from(u32::MAX)) as u32;
-        let dist = (block_error_fp_i32(&coeff, &dqcoeff) >> 2).clamp(0, i64::from(u32::MAX)) as u32;
+        let dist = dist.clamp(0, i64::from(u32::MAX)) as u32;
         let this_rd = rd_cost(lambda, rate, u64::from(dist));
 
         if this_rd < best.best_rd_cost {
@@ -1409,6 +1456,87 @@ mod tests {
                 best_rd_cost: 15_846_565,
                 best_distortion: 45_284,
                 best_rate: 200_965,
+            }
+        );
+    }
+
+    /// The first formerly divergent Block32x32 leaf at pixel `(416,0)` in
+    /// the pinned `in_to_tree` qindex-83 keyframe. Pinned libvpx reports the
+    /// same DC winner: rate 135,842, distortion 177,320, RD 29,490,387.
+    #[test]
+    fn realtime_intra32_matches_pinned_libvpx_leaf() {
+        const SRC_HEX: &str = concat!(
+            "c3b9b0b8b8b7b9b5babebcbdb9bbc0bdb9b1b7b3b0b9b7b5bab6c0babac0bab8bdc1b8bab4b6b9b7bab6bcbabbbebdb5b8bfb9b5b8b9bdbcb3b8bebbbbbbb9ba",
+            "b6b7bcb8b1bbbabdb9bec1b6bbbdbcb2bbc0bcb3b8b8bbb6bbbababcb8b8b9b9b9bdbbbcbeb8b9c1bcbabbc0bab4b6b7bfb9b3b0bbbebab5bfb8bab8b8b8b8b8",
+            "bfbeb5bebdb7b3babebfb3b9bebdb8beb4bebebebdb2b5beb6b9beb8b5bbb3b0b9b3bdb8b9bfbcb4b7b9b7b9b9bab9b6b7bcbebbbcb1b3bcb3b8b8b7bcbdafb6",
+            "b9b5b8b9b9bcb8b3bdbebbc2bcbbb6b6bdbbb4babdb7c4b7b1b8b7b7bcbbb2b8bcc3b9b5b6b6b3bab8bcb7b8b9b5b9c1b7b6b5b4b6bcbebcb6bcbbbfb6beb7ba",
+            "b4b6b4bababbb7b7babab5b3afbbb8b2b4b9b7b8b9b6b4c0c6b7b7c4b9b5b6beb5b4b1bbc2b9b8afb4bcbbbbb4b5b5bfc2b7b6b7b5b1bcbfc1b8b8bcb7b5b8b9",
+            "b7b7b5b2b4aeb1b7b8b5b9bcbdbebbbfb9b6b8b6b5adb3bab4b6bdb5b0c0b9b4bab7b2b8b6c1bababfb2b8b7b8b9b5b5b4b5bbc4bab6b6b9b2b4babdbdb8b2ba",
+            "bbc0b6b3b4bcbbb8b4b5b9b5b3b7b7bab9b9b4b8b7bbb7bab4b8bcbfbcb9bcb7b7b6b6acbab6b3b9b9b8bab9bab8b8bcb5bab5b6bbbab4bab9bab8bcc0b9bcbb",
+            "bbbcb2b6b8b3b8bdbcb9bebab8b9b8b7b5b6bcbdb6b9bcb7b9b8bbb9b0afb8b2b8b9b5bab4b8bebbb3b0b7bfbbbbbfb4b5b9bbb4b2b9bbb9b8b8bbb6bdb5b7b1",
+            "b8b9b2b1b6b8b4bab9b4b7b8b5b1b8b8b5bebab5b9c0b7b8b7bab7bbbeb7bcbbbab3babababbb7b8b8bab7b3bcb5b9bcbdb5b4b7b8bbbbb5b8b8b6b9b6bcb8b6",
+            "b9b4b4bdbcbbbab2bbb5b8b5b8b6b7b9bfbabab6b5b4b9b5b7b4bab8b9b8b7b9b6b5b9b6b0babcb5b9b4afb8b6b5b7b4bcc6c2bbb9b2b7b6b4b9b5bab5b2bbb9",
+            "b7aeb5b0b4b5b8b9b6b9b6b7b4b8bdbdb8b6bcb4b6b5bab6b8b9b2bdbabeb5b9bbb6bcbcb7babbb9b3bfc2b4afb4b2bfb8b2b9b8b9bab9bab8b4b4b9bbc0bdb2",
+            "b4b1b6b6b4b9b7b8bbbabab8b5b8b8b8bdbeb1b7babebcb3bbbab6b9c0beb8afbbb2b7b5afbdc1b4b9b7b7b6babcb3b4b9b7b6b4b5bfb6b3b7b2b7b8b6bab4b5",
+            "bcb9b3b6b5bbc2b6b2b2bdb8b7b6b0b7bcbbb7b0babcb4b8bbb9b2b6b7b8b8b9b8bdb4b5b4babbacb4b6b4bbb3bdb5bbbcb7b1b5bbc0b9bdbab8b9b6b9b6b1b8",
+            "bfbdb2b3bdb8b5b7bbb9bcb8b6b5b8b5b4acb6bfb8bcc0bab9babdbab7b7b8b8bbb7bab8bbb9b7b5b9c4bbb7b9b6b9b5b4b3bdbfb6b0bdb8b5b9bab6babdbdb7",
+            "b8b8b7b6b6b8b7bcb3bab4bdb8b4b2bcbab6b5afb6bab6b8b8bab9b3b9bebbb5b7beb3b6babdb8b8bab6b8bfb5bdb4b3b9b6b1b7b4bcb3b2bebeb7bdbab8b5bb",
+            "bdb7b7bab9b5bdb7b5bbb5b3b8bab8b8bbb4b6bbbdb2b4b7b4b5b7b5bcbbb2b2bab7bab6b7b8babebbb7b6b3b8b4b7bcb4b8bab8b6b8bcbbadb4bdb0b8b4b0b4",
+        );
+        fn decode_hex(input: &str) -> Vec<u8> {
+            input
+                .as_bytes()
+                .chunks_exact(2)
+                .map(|pair| {
+                    let nibble = |byte| match byte {
+                        b'0'..=b'9' => byte - b'0',
+                        b'a'..=b'f' => byte - b'a' + 10,
+                        _ => panic!("invalid fixture hex"),
+                    };
+                    (nibble(pair[0]) << 4) | nibble(pair[1])
+                })
+                .collect()
+        }
+
+        let src = decode_hex(SRC_HEX);
+        assert_eq!(src.len(), 32 * 32);
+        let src_plane = PlaneRef {
+            data: &src,
+            stride: 32,
+            width: 32,
+            height: 32,
+        };
+        let left = [
+            190, 189, 185, 181, 175, 181, 187, 180, 180, 184, 186, 185, 185, 187, 179, 178, 183,
+            190, 189, 180, 184, 185, 180, 186, 185, 183, 182, 182, 182, 183, 187, 182,
+        ];
+        let above = [0u8; 64];
+        let quantizer = init_plane_quantizers(83, QuantizerDeltas::Y);
+        let costs = intra_y_mode_costs_kf_table();
+        let params = IntraModeSearchParams {
+            block_size: BlockSize::Block32x32,
+            src_plane: &src_plane,
+            src_offset: (0, 0),
+            above_pixels: &above,
+            left_pixels: &left,
+            top_left_pixel: 0,
+            have_above: false,
+            have_left: true,
+            quantizer: &quantizer,
+            q_index: 83,
+            frame_kind: FrameKind::KeyFrame,
+            above_mode_ctx: IntraMode::Dc,
+            left_mode_ctx: IntraMode::Dc,
+            y_mode_costs: &costs,
+        };
+
+        assert_eq!(
+            pick_realtime_intra_mode_luma(&params),
+            IntraModeSearchResult {
+                best_mode: IntraMode::Dc,
+                best_rd_cost: 29_490_387,
+                best_distortion: 177_320,
+                best_rate: 135_842,
             }
         );
     }
