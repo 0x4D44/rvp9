@@ -37,8 +37,12 @@ context plus exact sign/category-bit cost for every coefficient. An unsplit
 8x8 leaf instead uses the full keyframe RD search: mode and coefficient rate,
 reconstructed-pixel SSE, and conditional directional-mode pruning.
 **What rvp9 does:** `RVP9_EXACT_KF_SUB8=1` enables a diagnostic-only tree that
-uses the same rounded 4x4-average variance but considers NONE/SPLIT only. A
-selected 8x8 SPLIT carries four causal DC/V/H 4x4 modes and prices them with
+uses the same rounded 4x4-average variance in libvpx's native 256x fixed-point
+domain but considers NONE/SPLIT only. It forces the keyframe root split and
+propagates 16x16 force flags in libvpx's quadrant-major order. On the explicit
+30fps `in_to_tree` qindex-83 keyframe, all 16,092 visited partition nodes now
+match libvpx exactly across 220 superblocks. A selected 8x8 SPLIT carries four
+causal DC/V/H 4x4 modes and prices them with
 the full token-neighbour and live tile above/left coefficient contexts,
 including exact coefficient sign/category-bit costs. It updates the contexts
 after every winner. An unsplit 8x8 leaf now uses libvpx's full coefficient-rate
@@ -60,29 +64,32 @@ The normal CPU7 VBR stream remains 47,314 bytes with SHA-256
 Under the flag, rvp9-decoder, pinned vpxdec, and ffmpeg produce the same
 6,291,456-byte I420 output, SHA-256
 `a2ae4522e7247ebc39c25d8984744f5395db2ef84c111e42dee359f0cc5808c8`.
+For the current explicit-30fps `in_to_tree` 1000 kbps stream, rvp9-decoder,
+pinned vpxdec, and ffmpeg each produce the same 81,100,800-byte I420 output,
+SHA-256
+`edc8cd73db7ca624956d7b808523f67159e75c53ea741cdb38efba419df2265d`.
 **Compression-efficiency impact:** at fixed qindex 120, the corrected first
 keyframe is 37,536 bits at 37.999 dB luma PSNR versus libvpx's 35,368 bits at
 38.031 dB. The 64-frame stream is 124,353 bytes versus libvpx's 82,270. On the
 fresh explicitly matched 30fps native three-clip CPU7 screen, luma BD-rate is
-`+41.931593%/-1.262049%/+98.190423%` and average-YUV BD-rate is
-`+38.611595%/-0.475956%/+89.517771%` for
+`+42.418364%/-1.371391%/+96.939653%` and average-YUV BD-rate is
+`+39.026223%/-0.588771%/+88.327165%` for
 `in_to_tree`/`ducks_take_off`/`old_town_cross`. Versus its clean predecessor,
-the luma movements are `-0.485067/+0.032045/+0.311801` points and average-YUV
-movements are `-0.411762/+0.041047/+0.503158` points. It is retained as a
-source-faithful prerequisite, not a Pareto curve win. The earlier
+the exact-tree correction moves luma by `+0.486772/-0.109342/-1.250756`
+points and average-YUV by `+0.414628/-0.112815/-1.190610` points. It is
+retained as a source-faithful prerequisite, not a Pareto curve win. The earlier
 `+36.442309%/+5.200030%/+75.260522%` screen encoded the native 50fps Y4M timing
 and is not evidence for the declared 720p30 configuration. The path remains
 far outside the final 0.5% gate.
 **Speed impact:** on the 60-frame 1280x704 `in_to_tree` 1000 kbps VBR
-diagnostic at explicit 30fps, nine warmed alternating pairs measure 0.544936
-seconds rvp9 versus 0.397744 seconds vpxenc median child CPU (`1.370067x`);
-wall time is `1.366852x`. This is not a corpus geomean and does not pass the
+diagnostic at explicit 30fps, nine warmed alternating pairs measure 0.548058
+seconds rvp9 versus 0.400488 seconds vpxenc median child CPU (`1.368475x`);
+wall time is `1.369253x`. This is not a corpus geomean and does not pass the
 final speed gate.
-**Future plan:** trace the first keyframe partition-decision mismatch with
-both encoders explicitly set to 30fps. The native-50fps 4x4 prefix now agrees
-through call 799, then enters different partition regions at call 800; do not
-continue small-block pricing until the matched-30fps tree identifies its first
-causal split mismatch. Forced-root splitting remains rejected as non-Pareto.
+**Future plan:** with the explicit-30fps partition map now exact, rerun the
+paired live keyframe leaf trace and locate the first larger-leaf RD or
+reconstruction mismatch. Rectangular keyframe partitions remain omitted, but
+none were exercised by this matched keyframe.
 
 ### 2026-08-02 — Keep the calibrated VBR rate prior and GOLDEN allocator default-off
 **Where:** `rvp9_encoder::frame_loop::{VBR_BITS_PER_MB_MULTIPLIER_DEFAULT,StreamEncoder::new,StreamEncoder::encode_frame}`

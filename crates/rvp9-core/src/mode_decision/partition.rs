@@ -32,23 +32,18 @@
 //!   The default F8.2 path retains its historical Block16x16 cap. A
 //!   focused diagnostic path can now exercise the source-faithful
 //!   Block4x4 representation without changing production output.
-//! - **Per-pixel variance, not the 256× fixed-point form.** libvpx's
-//!   `get_variance` returns `256 * (sse - sum²/N) / N` so the
-//!   thresholds in `set_vbp_thresholds` carry a `256×` implicit
-//!   factor. We compute per-pixel variance directly (`(sse - sum²/N)
-//!   / N`) and scale the threshold accordingly — same comparison,
-//!   simpler arithmetic.
+//! - **Legacy per-pixel variance.** The production path folds libvpx's
+//!   256× variance scale out of both operands. The exact keyframe diagnostic
+//!   retains the native fixed-point scale because integer folding loses
+//!   fractional split boundaries.
 //! - **No content-state / noise-level scaling.** libvpx adjusts the
 //!   base threshold by `noise_level`, `content_state`,
 //!   `scene_change_detected`, etc. F8.2 uses the unscaled keyframe
 //!   path. Add those modulations later if needed.
-//! - **No force-split on max-32x32 for keyframes.** libvpx's keyframe
-//!   path forces a SPLIT at 64x64 unconditionally
-//!   (`set_vt_partitioning:504-508`). F8.2 lets 64x64 stay a leaf if
-//!   variance is low enough — a fully flat KF can pick `Block64x64`,
-//!   which is legal in VP9 even though libvpx prefers smaller blocks
-//!   on keyframes. This matters for the all-flat-KF test (which we
-//!   want to land on `Block64x64`, not `Block32x32`).
+//! - **Legacy keyframes may retain 64x64.** The production path lets a flat
+//!   keyframe keep a 64x64 leaf. The exact keyframe diagnostic follows
+//!   `set_vt_partitioning`: it always splits the root and propagates
+//!   high-variance 16x16 force flags through their 32x32 parents.
 //!
 //! ## Threshold formula (libvpx-derived, keyframe)
 //!
@@ -1255,6 +1250,27 @@ impl VbpThresholds {
         }
     }
 
+    /// Compute keyframe thresholds in libvpx's native 256x fixed-point
+    /// variance units.
+    ///
+    /// The source-faithful keyframe path must retain the fractional part of
+    /// the variance comparison. Folding both operands down to integer
+    /// per-pixel units changes a comparison such as `504 > 450` into
+    /// `1 > 1`. The legacy production path still uses [`Self::for_keyframe`]
+    /// until it is replaced wholesale by the exact path.
+    fn for_keyframe_fixed_point(q_index: u8) -> Self {
+        let (_dc, ac) = plane_dequant_pair(i32::from(q_index), QuantizerDeltas::Y);
+        let threshold_base = 20u64 * (ac as u64);
+        Self {
+            thresholds: [
+                threshold_base,
+                threshold_base >> 2,
+                threshold_base >> 2,
+                threshold_base << 2,
+            ],
+        }
+    }
+
     /// Compute the **inter**-path libvpx thresholds for a given qindex,
     /// specialized to realtime speed/cpu-used = 7.
     ///
@@ -1380,9 +1396,10 @@ pub fn choose_partitioning(params: &PartitionSearchParams<'_>) -> PartitionDecis
 /// function is an experiment seam; the production caller does not use it.
 #[must_use]
 pub fn choose_partitioning_keyframe_sub8(params: &PartitionSearchParams<'_>) -> PartitionDecision {
-    let thresholds = thresholds_for_params(params);
+    let thresholds = VbpThresholds::for_keyframe_fixed_point(params.q_index);
+    let force_split = ForceSplitMap::for_keyframe_exact(params, &thresholds);
 
-    choose_partitioning_with_force_map(params, &thresholds, None, true)
+    choose_partitioning_with_force_map(params, &thresholds, Some(&force_split), true)
 }
 
 /// Run [`choose_partitioning`] with the libvpx-style inter-frame force-split
@@ -1455,6 +1472,39 @@ struct ForceSplitMap {
 }
 
 impl ForceSplitMap {
+    fn for_keyframe_exact(params: &PartitionSearchParams<'_>, thresholds: &VbpThresholds) -> Self {
+        debug_assert!(params.is_keyframe);
+        let mut map = Self {
+            split_64x64: true,
+            ..Self::default()
+        };
+
+        for quadrant in 0..4 {
+            let row32 = (quadrant >> 1) * 4;
+            let col32 = (quadrant & 1) * 4;
+            for child in 0..4 {
+                let row16 = row32 + (child >> 1) * 2;
+                let col16 = col32 + (child & 1) * 2;
+                let index16 = quadrant * 4 + child;
+                if keyframe_4x4_average_variance(params, (row16, col16), BlockSize::Block16x16)
+                    > thresholds.thresholds[2]
+                {
+                    map.split_16x16[index16] = true;
+                    map.split_32x32[quadrant] = true;
+                }
+            }
+
+            if !map.split_32x32[quadrant]
+                && keyframe_4x4_average_variance(params, (row32, col32), BlockSize::Block32x32)
+                    > thresholds.thresholds[1]
+            {
+                map.split_32x32[quadrant] = true;
+            }
+        }
+
+        map
+    }
+
     fn for_params(params: &PartitionSearchParams<'_>, thresholds: &VbpThresholds) -> Self {
         if params.is_keyframe {
             return Self::default();
@@ -1506,7 +1556,11 @@ impl ForceSplitMap {
                 self.split_32x32.get(idx).copied().unwrap_or(false)
             }
             BlockSize::Block16x16 => {
-                let idx = (row / 2) * 4 + (col / 2);
+                // libvpx numbers the sixteen 16x16 flags as four children
+                // within each 32x32 quadrant, not as one 4x4 raster.
+                let quadrant = (row / 4) * 2 + (col / 4);
+                let child = ((row % 4) / 2) * 2 + ((col % 4) / 2);
+                let idx = quadrant * 4 + child;
                 self.split_16x16.get(idx).copied().unwrap_or(false)
             }
             _ => false,
@@ -1556,8 +1610,9 @@ fn block_per_pixel_variance(
 ///
 /// Pinned libvpx calls `fill_variance_4x4avg` for every keyframe, treating
 /// each 4x4 average minus 128 as one sample and building all parent nodes by
-/// summing those samples. The returned value folds out libvpx's 256x scale,
-/// matching [`VbpThresholds`].
+/// summing those samples. The returned value retains libvpx's 256x
+/// fixed-point scale so strict comparisons preserve fractional per-pixel
+/// variance.
 fn keyframe_4x4_average_variance(
     params: &PartitionSearchParams<'_>,
     origin_8x8: (usize, usize),
@@ -1590,7 +1645,7 @@ fn keyframe_4x4_average_variance(
 
     let count = (sample_side * sample_side) as u64;
     let correction = (sum * sum) as u64 / count;
-    sum_squares.saturating_sub(correction) / count
+    256 * sum_squares.saturating_sub(correction) / count
 }
 
 /// Recursive descent helper. `origin` is the top-left of the current
@@ -1682,6 +1737,11 @@ fn descend(
     // exceeds the threshold.
     let split = match child_size {
         None => false,
+        Some(_) if params.is_keyframe && allow_keyframe_sub8 && bs == BlockSize::Block64x64 => {
+            // `set_vt_partitioning` always splits keyframe blocks above
+            // 32x32, regardless of their variance.
+            true
+        }
         Some(_) => {
             force_split.is_some_and(|map| map.split_at(origin_8x8, bs)) || per_pixel_var > threshold
         }
@@ -2622,6 +2682,59 @@ mod tests {
     }
 
     #[test]
+    fn choose_partitioning_keyframe_sub8_forces_root_split() {
+        let src_buf = flat_plane(128);
+        let ref_buf = flat_plane(128);
+        let src = plane_ref(&src_buf);
+        let reference = plane_ref(&ref_buf);
+        let params = make_params(&src, &reference, 83, /* keyframe */ true);
+
+        let production = choose_partitioning(&params);
+        let exact = choose_partitioning_keyframe_sub8(&params);
+
+        assert_eq!(production, PartitionDecision::all_64x64());
+        assert!(
+            exact
+                .cells
+                .iter()
+                .flatten()
+                .all(|&bsize| bsize == BlockSize::Block32x32),
+            "libvpx always splits keyframe blocks larger than 32x32",
+        );
+    }
+
+    #[test]
+    fn choose_partitioning_keyframe_sub8_propagates_child_force_split() {
+        let mut src_buf = flat_plane(128);
+        for row in 0..4 {
+            for pixel in &mut src_buf[row * 64..row * 64 + 4] {
+                *pixel = 136;
+            }
+        }
+        let ref_buf = flat_plane(128);
+        let src = plane_ref(&src_buf);
+        let reference = plane_ref(&ref_buf);
+        let params = make_params(&src, &reference, 83, /* keyframe */ true);
+        let exact = choose_partitioning_keyframe_sub8(&params);
+
+        // The whole top-left 32x32 has variance 252, below q83's 450
+        // threshold. Its top-left 16x16 has variance 960, so libvpx's
+        // prepass forces both that child and its 32x32 parent to split.
+        assert_eq!(exact.cells[0][0], BlockSize::Block8x8);
+        assert_eq!(exact.cells[0][2], BlockSize::Block16x16);
+        assert_eq!(exact.cells[0][4], BlockSize::Block32x32);
+    }
+
+    #[test]
+    fn force_split_map_uses_quadrant_major_16x16_indices() {
+        let mut map = ForceSplitMap::default();
+        map.split_16x16[4] = true;
+
+        assert!(map.split_at((0, 4), BlockSize::Block16x16));
+        assert!(!map.split_at((0, 2), BlockSize::Block16x16));
+    }
+
+    #[test]
     fn keyframe_4x4_average_variance_filters_balanced_pixel_texture() {
         let mut src_buf = vec![0u8; 64 * 64];
         for row in 0..64 {
@@ -2643,6 +2756,35 @@ mod tests {
             keyframe_4x4_average_variance(&params, (0, 0), BlockSize::Block8x8),
             0,
             "balanced 4x4 texture has identical rounded averages and must be filtered",
+        );
+    }
+
+    #[test]
+    fn keyframe_fixed_point_variance_preserves_split_boundary() {
+        let mut src_buf = flat_plane(128);
+        for row in 0..4 {
+            for pixel in &mut src_buf[row * 64..row * 64 + 4] {
+                *pixel = 139;
+            }
+        }
+        let ref_buf = flat_plane(128);
+        let src = plane_ref(&src_buf);
+        let reference = plane_ref(&ref_buf);
+        let params = make_params(&src, &reference, 83, /* keyframe */ true);
+        let thresholds = VbpThresholds::for_keyframe_fixed_point(83);
+
+        // One +11 sample among 64 gives residual 120/64 pixels. Libvpx
+        // retains that fraction as 480 in its 256x variance domain and
+        // therefore splits against q83's 32x32 threshold of 450. Folding
+        // both values down would incorrectly compare 1 > 1.
+        assert_eq!(
+            keyframe_4x4_average_variance(&params, (0, 0), BlockSize::Block32x32),
+            480,
+        );
+        assert_eq!(thresholds.thresholds[1], 450);
+        assert!(
+            keyframe_4x4_average_variance(&params, (0, 0), BlockSize::Block32x32)
+                > thresholds.thresholds[1]
         );
     }
 
