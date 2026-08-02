@@ -318,8 +318,13 @@ fn a10_byte_identity_pre_vs_post_refactor() {
     // 12a9db9 as the first intentional coding change after the prior refresh;
     // the current clean baseline and the edge-motion task tree reproduce these
     // bytes exactly, while the sibling decode test remains green.
-    const GOLDEN_HASH: u64 = 0xb17d_c324_076d_b9c6;
-    const GOLDEN_LEN: usize = 8896;
+    //
+    // Re-captured again (2026-08-02) after the realtime VBR picker stopped
+    // using libvpx's CBR-only large-block model and Block32 started running
+    // real `block_yrd`. This deliberately changes coding decisions; the
+    // sibling reference-pool decode oracle still accepts all 12 frames.
+    const GOLDEN_HASH: u64 = 0x3e05_96b7_dae7_6f29;
+    const GOLDEN_LEN: usize = 8890;
 
     let stream = encode_fixed_clip();
     let hash = fnv1a(&stream);

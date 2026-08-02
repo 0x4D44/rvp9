@@ -420,6 +420,8 @@ pub struct InterRdCalibration {
     pub model_dist: bool,
     /// Reuse the luma model's coefficient rate and skip classification.
     pub model_only: bool,
+    /// Use libvpx's CBR-only per-transform large-block luma model.
+    pub large_block_model: bool,
 }
 
 impl InterRdCalibration {
@@ -434,6 +436,7 @@ impl InterRdCalibration {
             hadamard_only: false,
             model_dist: false,
             model_only: false,
+            large_block_model: true,
         }
     }
 
@@ -449,7 +452,15 @@ impl InterRdCalibration {
             hadamard_only: true,
             model_dist: true,
             model_only: true,
+            large_block_model: true,
         }
+    }
+
+    /// Select whether blocks at least 32×32 use the CBR-only large model.
+    #[must_use]
+    pub const fn with_large_block_model(mut self, enabled: bool) -> Self {
+        self.large_block_model = enabled;
+        self
     }
 }
 
@@ -3157,10 +3168,9 @@ fn luma_model_rd(
     bw: usize,
     bh: usize,
 ) -> ModelRdResult {
-    let dc_zbin = i64::from(params.quantizer.zbin[0]);
-    let ac_zbin = i64::from(params.quantizer.zbin[1]);
-    let dc_thr = (dc_zbin * dc_zbin) >> 6;
-    let ac_thr = (ac_zbin * ac_zbin) >> 6;
+    let use_large =
+        params.block_size >= BlockSize::Block32x32 && params.rd_calibration.large_block_model;
+    let (dc_thr, ac_thr) = luma_model_skip_thresholds(use_large, params.quantizer);
     let src = params.src_plane;
     let (sx, sy) = params.src_offset;
     let src_start = sy * src.stride + sx;
@@ -3178,11 +3188,25 @@ fn luma_model_rd(
         ac_thr,
         tx_mode: TxMode::TxModeSelect,
     };
-    if params.block_size >= BlockSize::Block32x32 {
+    if use_large {
         model_rd_for_sb_y_large(input)
     } else {
         model_rd_for_sb_y(input)
     }
+}
+
+fn luma_model_skip_thresholds(use_large: bool, quantizer: &PlaneQuantizers) -> (i64, i64) {
+    let threshold_source = if use_large {
+        // `model_rd_for_sb_y_large` derives both thresholds directly from
+        // the decoder dequantizers (`vp9_pickmode.c:446-449`). The smaller
+        // model instead consumes `quant_thred`, which is zbin squared.
+        quantizer.dequant
+    } else {
+        quantizer.zbin
+    };
+    let dc = i64::from(threshold_source[0]);
+    let ac = i64::from(threshold_source[1]);
+    ((dc * dc) >> 6, (ac * ac) >> 6)
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -3358,7 +3382,8 @@ fn evaluate_candidate_for_filter_with_pred(
     // distortion is `sse << 4` (libvpx convention) and the rate
     // component from coefficients is zero.
     //
-    let use_large = params.block_size >= BlockSize::Block32x32;
+    let use_large =
+        params.block_size >= BlockSize::Block32x32 && params.rd_calibration.large_block_model;
     let mrd = if let Some(model) = precomputed_model {
         model
     } else {
@@ -3446,7 +3471,10 @@ fn evaluate_candidate_for_filter_with_pred(
             skippable: true,
             dct_eob_total: 0,
         }
-    } else if hadamard_only && params.rd_calibration.model_only {
+    } else if hadamard_only
+        && params.rd_calibration.model_only
+        && params.block_size < BlockSize::Block32x32
+    {
         BlockYrdResult {
             coef_rate: mrd.rate.max(0) as u64,
             coef_dist: mrd.dist,
@@ -3457,6 +3485,7 @@ fn evaluate_candidate_for_filter_with_pred(
         let recon_pixels = recon.as_mut().map_or(&mut [][..], |pixels| &mut pixels[..]);
         let use_model_dist = hadamard_only
             && params.rd_calibration.model_dist
+            && params.block_size < BlockSize::Block32x32
             && s3_domain_enabled_for_q(params.q_index, params.rd_calibration);
         let collect_coef_dist = (!use_model_dist
             && s3_domain_enabled_for_q(params.q_index, params.rd_calibration))
@@ -5302,6 +5331,89 @@ mod tests {
     }
 
     #[test]
+    fn block32_realtime_picker_runs_real_block_yrd() {
+        let pw = 64;
+        let ph = 64;
+        let src_data = make_plane(pw, ph, 17);
+        let ref_data = make_plane(pw, ph, 91);
+        let src_plane = PlaneRef {
+            data: &src_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let ref_plane = PlaneRef {
+            data: &ref_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let harness = TestHarness::new(pw, 166);
+        let mvc = MvCandidates::default();
+        let control = make_params(
+            &harness,
+            BlockSize::Block32x32,
+            &src_plane,
+            &ref_plane,
+            (16, 16),
+            &mvc,
+            MvLimits::new(-32, 32, -32, 32),
+            166,
+        );
+        let params = InterModeSearchParams {
+            rd_calibration: InterRdCalibration::realtime(),
+            ..control
+        };
+        let mut pred = [0u8; 64 * 64];
+        build_inter_prediction(
+            crate::dsp::get_ref(),
+            params.ref_plane,
+            params.src_offset.0,
+            params.src_offset.1,
+            Mv::ZERO,
+            32,
+            32,
+            &mut pred,
+            32,
+            InterpFilter::EightTap,
+        );
+        let model = luma_model_rd(&params, &pred[..32 * 32], 32, 32);
+        let mut no_recon = [];
+        let mut scratch = RoundTripScratch::new();
+        let expected = reconstruct_via_round_trip(
+            &params,
+            RoundTripBuffers {
+                pred: &pred,
+                recon: &mut no_recon,
+                scratch: &mut scratch,
+            },
+            32,
+            32,
+            model.tx_size,
+            RoundTripOptions {
+                reconstruct: false,
+                collect_coef_dist: true,
+            },
+        );
+        let result = evaluate_candidate_for_filter(
+            &params,
+            InterMode::ZeroMv,
+            Mv::ZERO,
+            Mv::ZERO,
+            compute_rd_mult(166, frame_type_for_rd(params.frame_kind)),
+            InterpFilter::EightTap,
+        );
+
+        assert_eq!(result.coef_rate, expected.coef_rate);
+        assert_eq!(result.coef_dist, expected.coef_dist);
+        assert_ne!(
+            (result.coef_rate, result.coef_dist),
+            (model.rate.max(0) as u64, model.dist),
+            "Block32 must not reuse the small-block model-only result"
+        );
+    }
+
+    #[test]
     fn inter_prediction_edge_replicates_filtered_and_integer_footprints() {
         let width = 8usize;
         let height = 8usize;
@@ -5370,6 +5482,51 @@ mod tests {
                 assert_eq!(integer[row * 8 + col], reference[src_row * width + src_col]);
             }
         }
+    }
+
+    #[test]
+    fn large_luma_model_uses_dequant_skip_thresholds() {
+        let quantizer = init_plane_quantizers(166, QuantizerDeltas::Y);
+        let dequant_thresholds = luma_model_skip_thresholds(true, &quantizer);
+        let zbin_thresholds = luma_model_skip_thresholds(false, &quantizer);
+        assert!(dequant_thresholds.1 > zbin_thresholds.1);
+
+        let amplitude = (1i64..=127)
+            .find(|&value| {
+                let cell_variance = 64 * value * value;
+                cell_variance >= zbin_thresholds.1 && cell_variance < dequant_thresholds.1
+            })
+            .expect("q166 has an integer residual between zbin and dequant thresholds");
+        let pred = [128u8; 32 * 32];
+        let mut src = pred;
+        for row in 0..32 {
+            for col in 0..32 {
+                src[row * 32 + col] = if (row + col) & 1 == 0 {
+                    128 + amplitude as u8
+                } else {
+                    128 - amplitude as u8
+                };
+            }
+        }
+        let evaluate = |(dc_thr, ac_thr)| {
+            model_rd_for_sb_y_large(ModelRdYInput {
+                src: &src,
+                src_stride: 32,
+                pred: &pred,
+                pred_stride: 32,
+                bw: 32,
+                bh: 32,
+                bsize: BlockSize::Block32x32,
+                dc_quant: quantizer.dequant[0] as u32,
+                ac_quant: quantizer.dequant[1] as u32,
+                dc_thr,
+                ac_thr,
+                tx_mode: TxMode::TxModeSelect,
+            })
+        };
+
+        assert_eq!(evaluate(zbin_thresholds).skip_txfm, SkipTxfm::None);
+        assert_eq!(evaluate(dequant_thresholds).skip_txfm, SkipTxfm::AcDc);
     }
 
     #[test]

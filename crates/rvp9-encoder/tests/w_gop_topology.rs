@@ -414,8 +414,13 @@ fn gop_topology_byte_identity() {
     // 12a9db9 as the first intentional coding change after the prior refresh.
     // The schedule oracle still matches every emitted frame, and both the
     // clean baseline and edge-motion task tree reproduce these bytes exactly.
-    const GOLDEN_HASH: u64 = 0x8976_6868_4185_7955;
-    const GOLDEN_LEN: usize = 26907;
+    //
+    // Re-captured again (2026-08-02) after the realtime VBR picker stopped
+    // using libvpx's CBR-only large-block model and Block32 started running
+    // real `block_yrd`. This deliberately changes coding decisions; the
+    // sibling schedule oracle still matches every emitted frame.
+    const GOLDEN_HASH: u64 = 0x3fcd_e09d_c4b9_b19b;
+    const GOLDEN_LEN: usize = 26295;
 
     let stream = encode_fixed_clip();
     let hash = fnv1a(&stream);

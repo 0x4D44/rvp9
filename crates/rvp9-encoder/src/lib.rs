@@ -3336,6 +3336,7 @@ fn inter_rd_calibration_for_mode(
         )
     {
         rvp9_core::mode_decision::inter::InterRdCalibration::realtime()
+            .with_large_block_model(matches!(rc_mode, crate::rate_control::RcMode::Cbr))
     } else {
         rvp9_core::mode_decision::inter::InterRdCalibration::default()
     }
@@ -10620,7 +10621,10 @@ mod tests {
         use rvp9_core::mode_decision::speed_features::Deadline;
 
         let active = inter_rd_calibration_for_mode(RcMode::Vbr, 7, Deadline::Realtime, false);
-        assert_eq!(active, InterRdCalibration::realtime());
+        assert_eq!(
+            active,
+            InterRdCalibration::realtime().with_large_block_model(false)
+        );
         assert!(active.s3_domain);
         assert_eq!(
             active.s3_skip_shift, 4,
@@ -10654,7 +10658,7 @@ mod tests {
         );
         assert_eq!(
             inter_rd_calibration_for_mode(RcMode::Vbr, 6, Deadline::Realtime, false),
-            InterRdCalibration::realtime()
+            InterRdCalibration::realtime().with_large_block_model(false)
         );
         assert_eq!(
             inter_rd_calibration_for_mode(RcMode::Cq, 7, Deadline::Realtime, false),
