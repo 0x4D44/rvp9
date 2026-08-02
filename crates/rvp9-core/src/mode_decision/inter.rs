@@ -116,7 +116,7 @@ use crate::mode_decision::model_rd::{
 use crate::mode_decision::rd_cost;
 use crate::mode_info::{InterMode, Mv, RefFrame};
 use crate::mv_search::full_pixel::{
-    FullPixelSearchParams, PlaneRef, diamond_search_sad, fast_diamond_search_sad,
+    FullPixelSearchParams, PlaneRef, fast_diamond_search_sad, nstep_search_sad,
 };
 use crate::mv_search::mv_limits::MvLimits;
 use crate::mv_search::search_site::SearchSiteConfig;
@@ -3016,7 +3016,7 @@ fn run_newmv_search(
     let full = if use_fast_diamond {
         fast_diamond_search_sad(&full_params)
     } else {
-        diamond_search_sad(&full_params)
+        nstep_search_sad(&full_params)
     };
     let center_mv_fp = Mv {
         row: full.best_mv_row,
@@ -6085,7 +6085,10 @@ mod tests {
             mv_candidates: &mvc,
             mv_limits: MvLimits::new(-4, 4, -4, 4),
             site_config: &harness.cfg,
-            full_pixel_search_method: Default::default(),
+            // Keep this mode-cost test on one deterministic NEWMV winner;
+            // NSTEP's independent restarts can legitimately select a
+            // different zero-cost mode for this synthetic pattern.
+            full_pixel_search_method: FullPixelSearchMethod::FastDiamond,
             mv_costs: &harness.costs,
             inter_mode_costs: &harness.inter_costs,
             inter_mode_ctx: 0,

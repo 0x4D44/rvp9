@@ -434,9 +434,8 @@ pub fn exhaustive_full_pel_min_sad(
 ///   against `bestsad`, then re-add the MV cost and re-compare. This
 ///   short-circuits expensive cost-lookups when the raw SAD already
 ///   exceeds the running best.
-/// - The `num00` semantics (libvpx returns this to the wrapper) are
-///   not exposed yet — the wrapper isn't ported in F7.0. The result's
-///   `iters_used` field is provided in its stead.
+/// - The private implementation also returns libvpx's `num00` count so
+///   the NSTEP wrapper can skip redundant smaller-start searches.
 ///
 /// **Differences vs libvpx:**
 ///
@@ -447,6 +446,13 @@ pub fn exhaustive_full_pel_min_sad(
 /// - libvpx's `start_mv_sad` is passed in by the wrapper; here we
 ///   compute it inline for the initial position.
 pub fn diamond_search_sad(params: &FullPixelSearchParams<'_>) -> FullPixelSearchResult {
+    diamond_search_sad_from_step(params, 0).0
+}
+
+fn diamond_search_sad_from_step(
+    params: &FullPixelSearchParams<'_>,
+    start_step: usize,
+) -> (FullPixelSearchResult, usize) {
     let site_config = params.site_config;
     debug_assert_eq!(site_config.searches_per_step, 4);
     let searches_per_step = site_config.searches_per_step as usize;
@@ -474,6 +480,8 @@ pub fn diamond_search_sad(params: &FullPixelSearchParams<'_>) -> FullPixelSearch
         .clamp(params.mv_limits.row_min, params.mv_limits.row_max) as i16;
     let mut best_col = (i32::from(start_mv.col >> 3))
         .clamp(params.mv_limits.col_min, params.mv_limits.col_max) as i16;
+    let initial_row = best_row;
+    let initial_col = best_col;
 
     // Initial SAD; if out-of-bounds, fall back to u32::MAX so any
     // valid step is preferred.
@@ -501,13 +509,14 @@ pub fn diamond_search_sad(params: &FullPixelSearchParams<'_>) -> FullPixelSearch
 
     let mut last_site: i32 = -1;
     let mut iters_used = 0i32;
+    let mut num00 = 0usize;
 
     let max_iters = params.max_iters.max(0);
     let tot_steps = site_config.total_steps as i32;
     let effective_steps = max_iters.min(tot_steps);
 
-    for step in 0..effective_steps {
-        iters_used = step + 1;
+    for step in start_step as i32..effective_steps {
+        iters_used += 1;
         let base = (step as usize) * searches_per_step;
 
         // libvpx all_in fast path: peek at indices [base..base+4] —
@@ -644,8 +653,10 @@ pub fn diamond_search_sad(params: &FullPixelSearchParams<'_>) -> FullPixelSearch
             last_site = best_site;
         } else if last_site == -1 {
             // libvpx's `else if (best_address == in_what)` branch:
-            // center stayed best from the very start. We don't
-            // expose `num00` in the result yet.
+            // center stayed best from the very start.
+            if best_row == initial_row && best_col == initial_col {
+                num00 += 1;
+            }
         }
         // (best_site == last_site case absorbed; libvpx skips the
         // address-update when the same direction was best as last
@@ -654,11 +665,213 @@ pub fn diamond_search_sad(params: &FullPixelSearchParams<'_>) -> FullPixelSearch
         // cycle-saving effect when we're recomputing SAD anyway.)
     }
 
+    (
+        FullPixelSearchResult {
+            best_mv_row: best_row,
+            best_mv_col: best_col,
+            best_sad: bestsad,
+            iters_used,
+        },
+        num00,
+    )
+}
+
+#[inline]
+fn full_pixel_variance_cost(
+    params: &FullPixelSearchParams<'_>,
+    result: FullPixelSearchResult,
+) -> u32 {
+    let width = usize::from(params.block_size.width());
+    let height = usize::from(params.block_size.height());
+    let Some((src, src_stride)) = block_at(
+        params.src_plane,
+        params.src_offset.0 as isize,
+        params.src_offset.1 as isize,
+        width,
+        height,
+    ) else {
+        return u32::MAX;
+    };
+    let Some((reference, ref_stride)) = block_at(
+        params.ref_plane,
+        params.src_offset.0 as isize + isize::from(result.best_mv_col),
+        params.src_offset.1 as isize + isize::from(result.best_mv_row),
+        width,
+        height,
+    ) else {
+        return u32::MAX;
+    };
+    let (sum, sum_sq) =
+        (crate::dsp::get_ref().variance(params.block_size))(src, src_stride, reference, ref_stride);
+    let samples = (width * height) as u64;
+    let mean_sq = ((sum * sum) as u64) / samples;
+    let variance = sum_sq.saturating_sub(mean_sq).min(u64::from(u32::MAX)) as u32;
+    variance.saturating_add(mv_err_cost(
+        result.best_mv_row.saturating_mul(8),
+        result.best_mv_col.saturating_mul(8),
+        params.center_mv.row,
+        params.center_mv.col,
+        params.sad_per_bit,
+        params.mv_costs,
+    ))
+}
+
+/// Final unit-step refinement used by libvpx's `NSTEP` wrapper.
+#[must_use]
+fn refining_search_sad(
+    params: &FullPixelSearchParams<'_>,
+    initial: FullPixelSearchResult,
+    search_range: i32,
+) -> FullPixelSearchResult {
+    const NEIGHBORS: [(i16, i16); 4] = [(-1, 0), (0, -1), (0, 1), (1, 0)];
+
+    let sad_fn = sad_for(params.block_size);
+    let sad4d_fn = sad4d_for(params.block_size);
+    let fcenter_row = params.center_mv.row >> 3;
+    let fcenter_col = params.center_mv.col >> 3;
+    let mut best_row = initial.best_mv_row;
+    let mut best_col = initial.best_mv_col;
+    let mut best_sad = initial.best_sad;
+    let mut moves = 0;
+
+    for _ in 0..search_range.max(0) {
+        let candidates = NEIGHBORS.map(|(delta_row, delta_col)| {
+            (
+                i32::from(best_row) + i32::from(delta_row),
+                i32::from(best_col) + i32::from(delta_col),
+            )
+        });
+        let all_in = candidates
+            .iter()
+            .all(|&(row, col)| is_mv_in(&params.mv_limits, row, col));
+        let mut best_site = None;
+
+        if all_in {
+            let mvs = candidates.map(|(row, col)| (row as i16, col as i16));
+            let sads = sad4d_at(
+                params.block_size,
+                sad_fn,
+                sad4d_fn,
+                params.src_plane,
+                params.src_offset,
+                params.ref_plane,
+                &mvs,
+            );
+            for (index, raw_sad) in sads.into_iter().enumerate() {
+                if let Some(raw_sad) = raw_sad
+                    && raw_sad < best_sad
+                {
+                    let (candidate_row, candidate_col) = mvs[index];
+                    let augmented = raw_sad.saturating_add(mvsad_err_cost(
+                        candidate_row,
+                        candidate_col,
+                        fcenter_row,
+                        fcenter_col,
+                        params.sad_per_bit,
+                        params.mv_costs,
+                    ));
+                    if augmented < best_sad {
+                        best_sad = augmented;
+                        best_site = Some(index);
+                    }
+                }
+            }
+        } else {
+            for (index, &(candidate_row, candidate_col)) in candidates.iter().enumerate() {
+                if !is_mv_in(&params.mv_limits, candidate_row, candidate_col) {
+                    continue;
+                }
+                let candidate_row = candidate_row as i16;
+                let candidate_col = candidate_col as i16;
+                if let Some(raw_sad) = sad_at(
+                    params.block_size,
+                    sad_fn,
+                    params.src_plane,
+                    params.src_offset,
+                    params.ref_plane,
+                    candidate_row,
+                    candidate_col,
+                ) && raw_sad < best_sad
+                {
+                    let augmented = raw_sad.saturating_add(mvsad_err_cost(
+                        candidate_row,
+                        candidate_col,
+                        fcenter_row,
+                        fcenter_col,
+                        params.sad_per_bit,
+                        params.mv_costs,
+                    ));
+                    if augmented < best_sad {
+                        best_sad = augmented;
+                        best_site = Some(index);
+                    }
+                }
+            }
+        }
+
+        let Some(best_site) = best_site else {
+            break;
+        };
+        best_row += NEIGHBORS[best_site].0;
+        best_col += NEIGHBORS[best_site].1;
+        moves += 1;
+    }
+
     FullPixelSearchResult {
         best_mv_row: best_row,
         best_mv_col: best_col,
-        best_sad: bestsad,
-        iters_used,
+        best_sad,
+        iters_used: initial.iters_used + moves,
+    }
+}
+
+/// Libvpx `NSTEP` wrapper used by realtime cpu-used 6.
+///
+/// Runs the progressively smaller diamond starts selected by
+/// `fullpel_search_step_param = 6`, ranks their winners in the variance
+/// domain, then performs the final eight-move unit refinement.
+#[must_use]
+pub fn nstep_search_sad(params: &FullPixelSearchParams<'_>) -> FullPixelSearchResult {
+    const STEP_PARAM: usize = 6;
+    let effective_steps =
+        (params.max_iters.max(0) as usize).min(params.site_config.total_steps as usize);
+    if effective_steps <= STEP_PARAM {
+        return diamond_search_sad_from_step(params, effective_steps).0;
+    }
+    let start_step = STEP_PARAM.min(effective_steps);
+    let further_steps = effective_steps.saturating_sub(start_step + 1);
+    let (mut best, mut n) = diamond_search_sad_from_step(params, start_step);
+    let mut best_cost = full_pixel_variance_cost(params, best);
+    let mut num00 = 0usize;
+    let mut do_refine = n <= further_steps;
+
+    while n < further_steps {
+        n += 1;
+        if num00 != 0 {
+            num00 -= 1;
+            continue;
+        }
+
+        let (candidate, candidate_num00) = diamond_search_sad_from_step(params, start_step + n);
+        num00 = candidate_num00;
+        let candidate_cost = full_pixel_variance_cost(params, candidate);
+        if candidate_cost < best_cost {
+            best = candidate;
+            best_cost = candidate_cost;
+        }
+        if num00 > further_steps - n {
+            do_refine = false;
+        }
+    }
+
+    if !do_refine {
+        return best;
+    }
+    let refined = refining_search_sad(params, best, 8);
+    if full_pixel_variance_cost(params, refined) < best_cost {
+        refined
+    } else {
+        best
     }
 }
 
@@ -911,6 +1124,15 @@ mod tests {
             "identical planes → SAD should be MV-cost only (got {})",
             r.best_sad
         );
+
+        let (nstep_seed, num00) = diamond_search_sad_from_step(&params, 6);
+        assert_eq!(
+            num00,
+            cfg.total_steps as usize - 6,
+            "a stationary NSTEP seed must report every remaining center hit"
+        );
+        let nstep = nstep_search_sad(&params);
+        assert_eq!(nstep, nstep_seed, "num00 must skip redundant restarts");
     }
 
     #[test]
@@ -980,6 +1202,13 @@ mod tests {
             "expected MV ({shift_row}, {shift_col}), got ({}, {})",
             r.best_mv_row,
             r.best_mv_col
+        );
+
+        let nstep = nstep_search_sad(&params);
+        assert_eq!(
+            (nstep.best_mv_row, nstep.best_mv_col),
+            (shift_row, shift_col),
+            "NSTEP should recover the same small shift"
         );
 
         let fast_params = FullPixelSearchParams {
@@ -1121,6 +1350,11 @@ mod tests {
         assert_eq!(r.iters_used, 0, "max_iters=0 → iters_used=0");
         assert_eq!(r.best_mv_row, 0);
         assert_eq!(r.best_mv_col, 0);
+        assert_eq!(
+            nstep_search_sad(&params),
+            r,
+            "NSTEP must also respect a zero-iteration budget"
+        );
     }
 
     /// Tight mv_limits force the `all_in` fast path to fail at every
