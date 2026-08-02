@@ -4656,6 +4656,7 @@ fn leaves_from_decision(decision: &PartitionDecision) -> Vec<PartitionLeafDesc> 
             predicted_y_modes: [IntraMode::Dc; 4],
             // Realtime keyframes keep chroma at DC. Inter ignores this field.
             predicted_uv_mode: IntraMode::Dc,
+            skip: false,
             // AQ.1 — default to segment 0 (no Q-delta). AQ.3 will
             // populate this from the cyclic-refresh state machine.
             segment_id: 0,
@@ -4733,8 +4734,8 @@ fn splat_leaf_mode_info(
 }
 
 /// Build the keyframe mi_grid from the per-SB partition decisions.
-/// Each leaf gets a `DC_PRED` intra `ModeInfo` with `skip = false`
-/// splatted across every 8×8 cell it covers.
+/// Each leaf gets its picked intra `ModeInfo`, including the post-encode
+/// all-zero `skip` decision, splatted across every 8×8 cell it covers.
 fn build_kf_mi_grid(
     mi_rows: u32,
     mi_cols: u32,
@@ -4758,7 +4759,7 @@ fn build_kf_mi_grid(
                     // capped at Tx16x16. Frame `ALLOW_16X16` makes this size
                     // implicit, matching libvpx's USE_LARGESTALL policy.
                     tx_size: leaf.picked_tx_size,
-                    skip: false,
+                    skip: leaf.skip,
                     segment_id: 0,
                     seg_id_predicted: false,
                     mode: BlockMode::Intra {
@@ -5024,9 +5025,9 @@ fn build_keyframe_packet_with_tiles(
             // applied to its reference reconstruction.
             filter_level,
             sharpness_level: 0,
-            mode_ref_delta_enabled: false,
-            mode_ref_delta_update: false,
-            ref_deltas: [None; 4],
+            mode_ref_delta_enabled: true,
+            mode_ref_delta_update: true,
+            ref_deltas: [Some(1), None, Some(-1), Some(-1)],
             mode_deltas: [None; 2],
         },
         quantization: QuantizationParams {
@@ -5547,7 +5548,7 @@ fn build_inter_packet_with_residuals(
             // pass applied to the encoder's reference reconstruction).
             filter_level,
             sharpness_level: 0,
-            mode_ref_delta_enabled: false,
+            mode_ref_delta_enabled: true,
             mode_ref_delta_update: false,
             ref_deltas: [None; 4],
             mode_deltas: [None; 2],
@@ -6673,6 +6674,10 @@ mod tests {
         // all-flat KF lands on a single Block64x64 leaf — same shape
         // as the F10.0-era path. Assert that here.
         let grid = dec.last_frame_mi_grid();
+        assert!(
+            grid.iter().flatten().all(|cell| cell.skip),
+            "flat 128 keyframe must signal skip after every transform quantizes to zero"
+        );
         for cell in grid.iter() {
             let cell = cell.expect("every mi-cell must be populated");
             assert_eq!(
@@ -6865,6 +6870,7 @@ mod tests {
                     leaf_bsize: BlockSize::Block8x8,
                     predicted_y_modes: [IntraMode::V; 4],
                     predicted_uv_mode: IntraMode::Dc,
+                    skip: false,
                     segment_id: 0,
                     picked_tx_size: max_txsize(BlockSize::Block8x8),
                 });
@@ -6949,6 +6955,7 @@ mod tests {
             leaf_bsize: bsize,
             predicted_y_modes: [IntraMode::Dc; 4],
             predicted_uv_mode: IntraMode::Dc,
+            skip: false,
             segment_id: 0,
             picked_tx_size: crate::realtime_keyframe_tx_size(bsize),
         };
@@ -7048,6 +7055,7 @@ mod tests {
             leaf_bsize: BlockSize::Block64x64,
             predicted_y_modes: [IntraMode::Dc; 4],
             predicted_uv_mode: IntraMode::Dc,
+            skip: false,
             segment_id: 0,
             picked_tx_size: crate::realtime_keyframe_tx_size(BlockSize::Block64x64),
         };
@@ -7108,6 +7116,7 @@ mod tests {
             leaf_bsize: BlockSize::Block64x64,
             predicted_y_modes: [IntraMode::Dc; 4],
             predicted_uv_mode: IntraMode::Dc,
+            skip: false,
             segment_id: 0,
             picked_tx_size: crate::realtime_keyframe_tx_size(BlockSize::Block64x64),
         };
@@ -8386,6 +8395,12 @@ mod tests {
         assert_eq!(
             tail.loop_filter.filter_level, expected,
             "F11.0-T1: filter_level should match the picker formula"
+        );
+        assert!(tail.loop_filter.mode_ref_delta_enabled);
+        assert!(tail.loop_filter.mode_ref_delta_update);
+        assert_eq!(
+            tail.loop_filter.ref_deltas,
+            [Some(1), None, Some(-1), Some(-1)]
         );
     }
 

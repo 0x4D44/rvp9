@@ -4,12 +4,12 @@
 //! (`rvp9_decoder::tile::decode_tile_intra` + `decode_partition` +
 //! `decode_block`). v1 scope was every-SB-PARTITION_NONE; S4.13
 //! widens the writer to mirror the decoder's full recursive
-//! partition tree (HORZ / VERT / SPLIT down to BLOCK_8x8 leaves)
-//! while keeping the per-leaf intra-DC-skip residual contract
-//! intact.
+//! partition tree (HORZ / VERT / SPLIT down to BLOCK_8x8 leaves),
+//! with real per-leaf intra modes and residuals.
 //!
 //! Each leaf block is still required to be intra (any of the 10
-//! Y/UV modes) with `skip == true`; segmentation must be disabled.
+//! Y/UV modes); segmentation must be disabled. A leaf may set skip
+//! when every luma and chroma transform has EOB zero.
 //! The caller is responsible for emitting a compressed header with
 //! `tx_mode == AllowTx32x32` (or any non-`TxModeSelect` mode) so
 //! that the per-block `tx_size` is implicit. Any input
@@ -56,7 +56,7 @@
 //!    mi_col_in_tile, bsl)` where `bsl = n8x8_l2 = n4x4_l2 - 1`.
 //! 2. **Per-leaf block** at the chosen `subsize`:
 //!    - **Segment_id** — skipped (segmentation disabled).
-//!    - **Skip flag** — `1` against `fc.skip_probs[skip_ctx]`.
+//!    - **Skip flag** — encoded against `fc.skip_probs[skip_ctx]`.
 //!    - **Y intra mode** — chosen mode encoded as the
 //!      `VP9_INTRA_MODE_TREE` walk against
 //!      `VP9_KF_Y_MODE_PROB[above_mode][left_mode]`.
@@ -64,7 +64,8 @@
 //!      `VP9_KF_UV_MODE_PROB[y_mode]`.
 //!    - **tx_size** — NOT emitted on the wire (caller's
 //!      `tx_mode != TxModeSelect`).
-//!    - **Residual tokens** — none (skip is set).
+//!    - **Residual tokens** — emitted for non-skip leaves; skip leaves
+//!      reset the coefficient contexts exactly as the decoder does.
 //!
 //! ## Caller contract
 //!
@@ -72,7 +73,7 @@
 //!   `tx_mode = AllowTx32x32` (or any non-`TxModeSelect` mode whose
 //!   `tx_mode_to_biggest_tx_size` matches each leaf's expected
 //!   `tx_size`). The wire format cannot otherwise communicate the
-//!   per-block tx-size for skip-only blocks.
+//!   per-block tx-size when it is implicit.
 //! - The frame must be a keyframe (or intra-only) and segmentation
 //!   must be disabled in the uncompressed header.
 //! - Frame dimensions must be multiples of 64 pixels (= 8 mi-units).
@@ -1450,11 +1451,9 @@ fn write_block_intra_keyframe(
     // 5. Residual coefs. The decoder's `reconstruct_intra_planes`
     //    walks each plane × each TX position, decoding tokens via
     //    `decode_block_tokens` when `!mi.skip`. We mirror that walk
-    //    here. The skip=true path is handled implicitly by the
-    //    decoder's `dec_reset_skip_context` (zeros the coef-context
-    //    cells covering the block) — under writer scope today all
-    //    existing skip=true call sites start with a zero coef_ctx,
-    //    so the reset is a no-op and we don't replicate it.
+    //    here. Skip leaves must instead zero the coefficient contexts,
+    //    matching libvpx's `dec_reset_skip_context`, because realtime
+    //    keyframes can interleave skip and non-skip leaves.
     if !mi.skip {
         write_intra_block_residual(
             bw,
@@ -1473,6 +1472,8 @@ fn write_block_intra_keyframe(
             uv_mode,
             &mi.bmi,
         );
+    } else {
+        reset_skip_coef_context(coef_ctx, leaf_bsize, mi_row, mi_col, bounds.mi_col_start);
     }
 
     // 6. Splat the just-written neighbour state across the leaf's
@@ -3201,6 +3202,27 @@ mod tests {
             (0..8).all(|x4| coef_ctx.above_coef(0, x4) == 0),
             "the second tile's first block must update local columns 0..8"
         );
+    }
+
+    #[test]
+    fn keyframe_skip_resets_luma_and_chroma_coefficient_contexts() {
+        let mut coef_ctx = TileCoefCtx::new(8);
+        for plane in 0..3 {
+            coef_ctx.set_coef_flags(plane, 0, 0, 16 >> SUBSAMPLING_X[plane], 8, true);
+        }
+
+        reset_skip_coef_context(&mut coef_ctx, BlockSize::Block8x8, 1, 2, 0);
+
+        assert_eq!(coef_ctx.above_coef(0, 4), 0);
+        assert_eq!(coef_ctx.above_coef(0, 5), 0);
+        assert_eq!(coef_ctx.left_coef(0, 2), 0);
+        assert_eq!(coef_ctx.left_coef(0, 3), 0);
+        assert_eq!(coef_ctx.above_coef(1, 2), 0);
+        assert_eq!(coef_ctx.left_coef(1, 1), 0);
+        assert_eq!(coef_ctx.above_coef(2, 2), 0);
+        assert_eq!(coef_ctx.left_coef(2, 1), 0);
+        assert_eq!(coef_ctx.above_coef(0, 3), 1);
+        assert_eq!(coef_ctx.left_coef(0, 1), 1);
     }
 
     /// Writer produces the canonical `PARTITION_NONE` 1-bit emission

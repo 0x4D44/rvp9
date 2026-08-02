@@ -1470,6 +1470,10 @@ pub(crate) struct PartitionLeafDesc {
     /// Intra UV-mode applied to BOTH U and V planes for this leaf.
     /// Realtime keyframes set it to [`IntraMode::Dc`].
     pub predicted_uv_mode: IntraMode,
+    /// Whether all Y/U/V transform blocks quantized to zero. Realtime
+    /// keyframes mirror libvpx's post-encode `mi->skip` update and signal
+    /// `skip=true` for such leaves.
+    pub skip: bool,
     /// AQ.1 — segment id `0..=7` driving the per-leaf effective
     /// qindex via [`effective_qindex_for_segment`]. `0` for AQ-off.
     pub segment_id: u8,
@@ -1546,6 +1550,7 @@ pub(crate) fn simulate_dc_intra_encode(
             leaf_bsize: BlockSize::Block64x64,
             predicted_y_modes: [IntraMode::Dc; 4],
             predicted_uv_mode: IntraMode::Dc,
+            skip: false,
             segment_id: 0,
             picked_tx_size: rvp9_core::block::max_txsize(BlockSize::Block64x64),
         }]);
@@ -2521,65 +2526,6 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
                 let picked_uv_mode = IntraMode::Dc;
                 sb_partitions[sb_idx][leaf_idx].predicted_uv_mode = picked_uv_mode;
 
-                // F.0.2 oracle — record one BlockDecision per coded
-                // intra leaf. Single relaxed atomic load when the env
-                // var `RVP9_F02_ORACLE` is unset (see HLD §3.2 / §7).
-                if crate::f02_oracle::is_enabled() {
-                    crate::f02_oracle::record_decision(crate::f02_oracle::BlockDecision {
-                        frame_idx: crate::f02_oracle::current_frame_idx(),
-                        mi_row: leaf_mi_row as u16,
-                        mi_col: leaf_mi_col as u16,
-                        bsize: leaf_bsize,
-                        mode: crate::f02_oracle::BlockDecisionMode::Intra(picked_mode),
-                        ref_frame: RefFrame::IntraFrame,
-                        mv_row: 0,
-                        mv_col: 0,
-                        // Picker mode-rate estimate is not exposed
-                        // through the existing `pick_intra_mode_luma`
-                        // result struct (only the winner mode comes
-                        // back). HLD §3.4.1 marks `mode_bits_est` as
-                        // "live"; the closest we can emit without
-                        // widening the picker API (out of scope,
-                        // HLD §9) is `0` for intra at F.0.2. F.x
-                        // milestones that need exact intra-mode
-                        // bits will widen the picker's return
-                        // shape.
-                        mode_bits_est: 0,
-                        mv_bits_est: 0,
-                        ref_bits_est: 0,
-                        filter_bits_est: 0,
-                        skip_bits_est: 0,
-                        // Forward-looking per HLD §3.4.1 — `0`
-                        // until F.1 lands the coef-bit estimator.
-                        coef_bits_est: 0,
-                        picker_rate: 0,
-                        picker_dist: 0,
-                        picker_rd_cost: 0,
-                        model_var_y: 0,
-                        model_tx_size: rvp9_core::block::max_txsize(leaf_bsize),
-                        model_skip_txfm: 0,
-                        luma_coef_rate: 0,
-                        luma_coef_dist: 0,
-                        uv_model_rate: 0,
-                        uv_model_dist: 0,
-                        uv_u_sensitive: false,
-                        uv_v_sensitive: false,
-                        partition_u_sensitive: false,
-                        partition_v_sensitive: false,
-                        last_candidates: [Default::default(); 4],
-                        sse_after_pred: 0,
-                        interp_filter: None,
-                        // Intra leaves in the F5.1 path always
-                        // emit residuals (`skip = false` on every
-                        // coded intra leaf). The RC.X1 skip-on-
-                        // zero-eob override only applies to inter.
-                        skip_flag: false,
-                        q_index: leaf_qindex,
-                        tx_size: rvp9_core::block::max_txsize(leaf_bsize),
-                        luma_eob_nonzero: false,
-                    });
-                }
-
                 // Encode this leaf directly into the running coefficient
                 // source. Recon state from earlier leaves is preserved and
                 // remains the causal neighbour input for the next pick.
@@ -2599,6 +2545,63 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
                     Some((sb_idx, leaf_idx)),
                     &mut coef_source,
                 );
+                sb_partitions[sb_idx][leaf_idx].skip = intra_leaf_all_zero(
+                    &coef_source,
+                    leaf_mi_row,
+                    leaf_mi_col,
+                    leaf_bsize,
+                    chosen_intra_tx,
+                );
+                // F.0.2 oracle — record after residual generation so its
+                // skip state matches the syntax emitted for this leaf.
+                if crate::f02_oracle::is_enabled() {
+                    let luma_eob_nonzero = intra_leaf_luma_eob_nonzero(
+                        &coef_source,
+                        leaf_mi_row,
+                        leaf_mi_col,
+                        leaf_bsize,
+                        chosen_intra_tx,
+                    );
+                    crate::f02_oracle::record_decision(crate::f02_oracle::BlockDecision {
+                        frame_idx: crate::f02_oracle::current_frame_idx(),
+                        mi_row: leaf_mi_row as u16,
+                        mi_col: leaf_mi_col as u16,
+                        bsize: leaf_bsize,
+                        mode: crate::f02_oracle::BlockDecisionMode::Intra(picked_mode),
+                        ref_frame: RefFrame::IntraFrame,
+                        mv_row: 0,
+                        mv_col: 0,
+                        // The keyframe picker does not expose these F.0.2
+                        // diagnostic estimates through its result shape.
+                        mode_bits_est: 0,
+                        mv_bits_est: 0,
+                        ref_bits_est: 0,
+                        filter_bits_est: 0,
+                        skip_bits_est: 0,
+                        coef_bits_est: 0,
+                        picker_rate: 0,
+                        picker_dist: 0,
+                        picker_rd_cost: 0,
+                        model_var_y: 0,
+                        model_tx_size: chosen_intra_tx,
+                        model_skip_txfm: 0,
+                        luma_coef_rate: 0,
+                        luma_coef_dist: 0,
+                        uv_model_rate: 0,
+                        uv_model_dist: 0,
+                        uv_u_sensitive: false,
+                        uv_v_sensitive: false,
+                        partition_u_sensitive: false,
+                        partition_v_sensitive: false,
+                        last_candidates: [Default::default(); 4],
+                        sse_after_pred: 0,
+                        interp_filter: None,
+                        skip_flag: sb_partitions[sb_idx][leaf_idx].skip,
+                        q_index: leaf_qindex,
+                        tx_size: chosen_intra_tx,
+                        luma_eob_nonzero,
+                    });
+                }
                 if let Some(contexts) = picker_coef_contexts.as_mut() {
                     update_intra_picker_luma_coef_context(
                         &mut contexts[current_tile_index],
@@ -2615,6 +2618,79 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
     }
 
     coef_source
+}
+
+fn intra_leaf_all_zero(
+    coef_source: &VecBackedIntraCoefSource,
+    mi_row: usize,
+    mi_col: usize,
+    leaf_bsize: BlockSize,
+    luma_tx: TxSize,
+) -> bool {
+    use rvp9_core::bitstream::IntraCoefSource;
+
+    for plane in 0..3 {
+        let ss_x = F5_SUBSAMPLING_X[plane];
+        let ss_y = F5_SUBSAMPLING_Y[plane];
+        let plane_bsize = if plane == 0 {
+            leaf_bsize
+        } else {
+            f5_uv_plane_block_size(leaf_bsize)
+        };
+        let plane_tx = if plane == 0 {
+            luma_tx
+        } else {
+            f5_uv_plane_tx_size(leaf_bsize, luma_tx)
+        };
+        let is_sub8 = leaf_bsize < BlockSize::Block8x8;
+        let (bw_4x4, bh_4x4) = if is_sub8 {
+            (2 >> ss_x, 2 >> ss_y)
+        } else {
+            (
+                plane_bsize.n_4x4_wide() as usize,
+                plane_bsize.n_4x4_high() as usize,
+            )
+        };
+        let step = 1usize << plane_tx as usize;
+        for y4 in (0..bh_4x4).step_by(step) {
+            for x4 in (0..bw_4x4).step_by(step) {
+                let (_, eob) = coef_source.get_block_coefs(mi_row, mi_col, plane, x4, y4, plane_tx);
+                if eob != 0 {
+                    return false;
+                }
+            }
+        }
+    }
+    true
+}
+
+fn intra_leaf_luma_eob_nonzero(
+    coef_source: &VecBackedIntraCoefSource,
+    mi_row: usize,
+    mi_col: usize,
+    leaf_bsize: BlockSize,
+    luma_tx: TxSize,
+) -> bool {
+    use rvp9_core::bitstream::IntraCoefSource;
+
+    let (bw_4x4, bh_4x4) = if leaf_bsize < BlockSize::Block8x8 {
+        (2, 2)
+    } else {
+        (
+            leaf_bsize.n_4x4_wide() as usize,
+            leaf_bsize.n_4x4_high() as usize,
+        )
+    };
+    let step = 1usize << luma_tx as usize;
+    for y4 in (0..bh_4x4).step_by(step) {
+        for x4 in (0..bw_4x4).step_by(step) {
+            let (_, eob) = coef_source.get_block_coefs(mi_row, mi_col, 0, x4, y4, luma_tx);
+            if eob != 0 {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 // ---------------------------------------------------------------------------
@@ -12300,6 +12376,7 @@ mod tests {
                     leaf_bsize: BlockSize::Block8x8,
                     predicted_y_modes: [IntraMode::Dc; 4],
                     predicted_uv_mode: IntraMode::Dc,
+                    skip: false,
                     segment_id: seg,
                     picked_tx_size: rvp9_core::block::max_txsize(BlockSize::Block8x8),
                 });

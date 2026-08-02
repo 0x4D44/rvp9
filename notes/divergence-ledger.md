@@ -1550,26 +1550,20 @@ not a coding choice. The yardstick has documented uncertainty
 exit gate, port the cubic fit (4×4 matrix solve, ~30 lines of
 arithmetic, no crate dependency).
 
-### 2026-05-21 — Encoder-side loop-filter level approximation (F11.0)
+### 2026-05-21 — Encoder-side loop-filter level approximation (F11.0) [resolved 2026-08-02]
 **Where:** `rvp9-encoder::loopfilter::pick_filter_level`. libvpx
-counterpart: `vp9/encoder/vp9_picklpf.c::av1_pick_filter_level` with
-full RD search.
-**What libvpx does:** searches `filter_level` to minimise RD cost
-across a range bracketed by previous-frame `filter_level`. Around
-half a dozen reconstructions per frame.
-**What rvp9 does:** approximates the picked level as
-`(q_index >> 1).min(63)`. Skips loop filter entirely at q < 2 (the
-F5.1 quant table is undefined at q = 0; encoder forbids q = 0).
-**Why:** RD-search over filter level is a per-frame inner-loop cost.
-v1 ships the heuristic. Bit-exact encoder↔decoder reconstruction is
-preserved (both apply the same `filter_level`).
-**Byte-parity impact:** structural — picked level differs from
-libvpx's per-frame choice.
-**Compression-efficiency impact:** unmeasured. The libvpx heuristic
-on cpu-used 7-8 is close to a linear-q approximation already, so
-expected delta is small (< 0.5 % BD-rate).
-**Future plan:** if Stage 4b's measurement work shows > 1 % BD-rate
-attributable to filter-level choice, port the RD search.
+counterpart: `vp9/encoder/vp9_picklpf.c::vp9_pick_filter_level`.
+**Original divergence:** rvp9 used `(q_index >> 1).min(63)` while
+libvpx realtime cpu-used 6–8 selected `LPF_PICK_FROM_Q`.
+**Resolution:** rvp9 now mirrors the 8-bit `LPF_PICK_FROM_Q` formula,
+including the keyframe adjustment, and applies libvpx's default
+reference deltas `[1, 0, -1, -1]` in both the bitstream and encoder
+reconstruction. `RVP9_LPFQ=0` remains a diagnostic escape hatch.
+**Byte-parity impact:** none in the matched v1 realtime policy.
+**Compression-efficiency impact:** the old approximation is no longer
+the product default.
+**Remaining scope:** full-image and sub-image filter-level searches are
+outside the one-pass realtime v1 matrix.
 
 ### 2026-05-21 — No NEARMV / compound-ref / temporal SVC inter shapes [A14 Phase A landed 2026-05-22]
 **Where:** rvp9-encoder doesn't drive compound-ref inter blocks or

@@ -6,9 +6,8 @@
 //!
 //! Two public entry points:
 //!
-//! - [`pick_filter_level`] — coarse `vp9_pick_filter_level`
-//!   approximation: `filter_level ≈ q_index / 2`. See "Divergences"
-//!   below.
+//! - [`pick_filter_level`] — libvpx's realtime `LPF_PICK_FROM_Q`
+//!   policy, with a diagnostic escape hatch for the legacy proxy.
 //! - [`apply_loop_filter_to_tight_recon`] — copies the encoder's
 //!   tight-stride reconstruction planes into a temporary
 //!   [`Yv12Buffer`], runs `setup_mask` + `adjust_mask` +
@@ -20,32 +19,18 @@
 //!
 //! ## Header invariants
 //!
-//! The encoder emits `mode_ref_delta_enabled = false` and
-//! `mode_ref_delta_update = false` in every uncompressed header. With
-//! that header shape, the decoder's `merge_lf_params` sets
-//! `lf_deltas.enabled = false` (the keyframe-reset `[1, 0, -1, -1]`
-//! deltas are overwritten by this merge — `enabled` is set
-//! unconditionally). Consequently `resolve_filter_levels` takes the
-//! "no deltas" branch and produces a flat `[seg][ref][mode]` cube
-//! where every cell equals `filter_level`. The encoder mirrors this
-//! by passing `ResolvedLfDeltas::default()` (all-zero, `enabled =
-//! false`).
+//! The encoder enables libvpx's default mode/reference deltas. Keyframes
+//! signal the reset values `[1, 0, -1, -1]`; following inter frames keep
+//! them enabled without re-sending unchanged values. The encoder applies
+//! the same resolved delta state to its reference reconstruction.
 //!
 //! ## Divergences from libvpx
 //!
-//! - **Filter-level picking.** libvpx's `vp9_pick_filter_level`
-//!   (`vp9_picklpf.c:191-294`) runs a filtered-vs-unfiltered SSE
-//!   search bracketing the previous frame's `filter_level`. That
-//!   requires re-running the loop filter at multiple candidate levels
-//!   per frame — too heavy for v1. We use a libvpx-friendly proxy:
-//!   `filter_level = (q_index >> 1).min(MAX_LOOP_FILTER)`. At
-//!   typical Q indices (40..120) this lands in the
-//!   `filter_level ∈ [20, 60]` range, which sits inside libvpx's
-//!   own typical envelope for the same Q. Re-evaluate in F11.1 once
-//!   PSNR oracles are stable.
-//! - **No `lf_deltas` plumbing.** v1 emits zero ref/mode deltas,
-//!   matching the encoder's "no segmentation, single-ref LAST"
-//!   shape. F11.1+ may revisit if/when segmentation is wired.
+//! - **No full-image filter search.** Realtime cpu-used 6–8 selects
+//!   `LPF_PICK_FROM_Q`, which rvp9 mirrors. The slower full-image and
+//!   sub-image search policies remain outside the v1 realtime scope.
+//! - **Fixed `lf_deltas`.** v1 uses libvpx's default reference deltas
+//!   and zero mode deltas; it does not yet adapt them per frame.
 //! - **No sharpness control.** `sharpness_level = 0` always.
 
 use rvp9_core::bitstream::BitDepth;
@@ -56,6 +41,12 @@ use rvp9_core::intra_pred::IntraMode;
 use rvp9_core::loopfilter::{
     LoopFilterInfo, LoopFilterMask, MAX_LOOP_FILTER, ResolvedLfDeltas, SegmentationLfView,
     adjust_mask, loop_filter_frame, resolve_filter_levels, setup_mask,
+};
+
+const LIBVPX_DEFAULT_LF_DELTAS: ResolvedLfDeltas = ResolvedLfDeltas {
+    ref_deltas: [1, 0, -1, -1],
+    mode_deltas: [0, 0],
+    enabled: true,
 };
 use rvp9_core::mode_info::{BlockMode, ModeInfo};
 use rvp9_core::quant::ac_quant;
@@ -131,8 +122,8 @@ pub(crate) fn pick_filter_level(q_index: u8, is_key: bool) -> u8 {
 /// Apply the loop filter in place to the encoder's tight-stride
 /// reconstruction planes. After return, `recon_y/u/v` contain the
 /// post-LF pixels — the same pixels the decoder will produce after
-/// its own LF pass given a header that emits the same `filter_level`
-/// + zero LF deltas + sharpness 0.
+/// its own LF pass given a header that emits the same `filter_level`,
+/// default LF deltas, and sharpness 0.
 ///
 /// `mi_grid` carries one [`Option<ModeInfo>`] per 8×8 luma cell,
 /// row-major with stride `mi_cols`. `None` cells are replaced with a
@@ -213,7 +204,7 @@ pub(crate) fn apply_loop_filter_to_tight_recon_parallel(
 
         let levels = resolve_filter_levels(
             filter_level,
-            ResolvedLfDeltas::default(),
+            LIBVPX_DEFAULT_LF_DELTAS,
             SegmentationLfView::default(),
         );
         let info = LoopFilterInfo::new(/* sharpness_level = */ 0);
@@ -306,14 +297,12 @@ pub(crate) fn apply_loop_filter_to_tight_recon_parallel(
         }
     }
 
-    // Resolve the [seg][ref][mode] filter-level cube. The encoder
-    // emits `mode_ref_delta_enabled = false` ⇒ the decoder's
-    // `merge_lf_params` sets `lf_deltas.enabled = false` ⇒ every
-    // (seg, ref, mode) cell collapses to `filter_level`. We mirror
-    // that here.
+    // Resolve the [seg][ref][mode] filter-level cube with libvpx's
+    // keyframe-reset mode/reference deltas. This is also the persistent
+    // state used by the following inter frames.
     let levels = resolve_filter_levels(
         filter_level,
-        ResolvedLfDeltas::default(),
+        LIBVPX_DEFAULT_LF_DELTAS,
         SegmentationLfView::default(),
     );
     let info = LoopFilterInfo::new(/* sharpness_level = */ 0);
@@ -451,7 +440,7 @@ pub(crate) fn build_kf_mi_grid_for_lf(
                     // (`leaf.picked_tx_size`), or the encoder's in-loop LF
                     // diverges from the decoder's and seeds drift.
                     tx_size: leaf.picked_tx_size,
-                    skip: false,
+                    skip: leaf.skip,
                     segment_id: 0,
                     seg_id_predicted: false,
                     mode: BlockMode::Intra {
