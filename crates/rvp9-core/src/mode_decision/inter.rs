@@ -2605,6 +2605,8 @@ fn evaluate_intra_fallback_with_scratch(
     let bw = usize::from(params.block_size.width());
     let bh = usize::from(params.block_size.height());
     let tx_size = crate::block::max_txsize(params.block_size);
+    let large_hadamard_only =
+        params.rd_calibration.hadamard_only && params.block_size >= BlockSize::Block32x32;
     let _tx_side = tx_size.side();
 
     let have_above = params.intra_above_pixels.is_some();
@@ -2797,26 +2799,47 @@ fn evaluate_intra_fallback_with_scratch(
                     uv_dc_quant: params.uv_dc_quant,
                     uv_ac_quant: params.uv_ac_quant,
                 };
-                reconstruct_via_round_trip(
-                    &single_params,
-                    RoundTripBuffers {
-                        pred: &[],
-                        recon,
-                        scratch: round_trip,
-                    },
-                    bw,
-                    bh,
-                    mrd.tx_size,
-                    RoundTripOptions {
-                        reconstruct: true,
-                        collect_coef_dist: true,
-                    },
-                )
+                if large_hadamard_only {
+                    let mut no_recon = [];
+                    reconstruct_via_round_trip(
+                        &single_params,
+                        RoundTripBuffers {
+                            pred: recon,
+                            recon: &mut no_recon,
+                            scratch: round_trip,
+                        },
+                        bw,
+                        bh,
+                        mrd.tx_size.min(TxSize::Tx16x16),
+                        RoundTripOptions {
+                            reconstruct: false,
+                            collect_coef_dist: true,
+                        },
+                    )
+                } else {
+                    reconstruct_via_round_trip(
+                        &single_params,
+                        RoundTripBuffers {
+                            pred: &[],
+                            recon,
+                            scratch: round_trip,
+                        },
+                        bw,
+                        bh,
+                        mrd.tx_size,
+                        RoundTripOptions {
+                            reconstruct: true,
+                            collect_coef_dist: true,
+                        },
+                    )
+                }
             };
 
             // 4. Distortion = SSE(src, recon).
             let dist = if mrd.skip_txfm == SkipTxfm::AcDc {
                 mrd.sse_y
+            } else if large_hadamard_only {
+                by.coef_dist.clamp(0, i64::from(u32::MAX)) as u32
             } else {
                 let (_, sse) = (dispatch.variance(params.block_size))(
                     &params.src_plane.data[src_start..],
@@ -2840,7 +2863,9 @@ fn evaluate_intra_fallback_with_scratch(
         // not the post-reconstruction pixel SSE used for diagnostics. When
         // model-RD takes the all-zero shortcut there is no transform result,
         // so use the equivalent VP9 distortion scale (`pixel SSE << 4`).
-        let dist_rd = if by.skippable {
+        let dist_rd = if large_hadamard_only {
+            by.coef_dist.max(0) as u64
+        } else if by.skippable {
             u64::from(dist) << 4
         } else {
             by.coef_dist.max(0) as u64
@@ -7279,6 +7304,65 @@ mod tests {
         assert_eq!(realtime.coef_rate, model.rate.max(0) as u64);
         assert_eq!(realtime.coef_dist, model.dist);
         assert_eq!(realtime.dct_eob_total, 0);
+    }
+
+    #[test]
+    fn realtime_large_intra_fallback_uses_hadamard_only_block_yrd() {
+        let pw = 64;
+        let ph = 64;
+        let src_data = make_plane(pw, ph, 0x51a7);
+        let ref_data = make_plane(pw, ph, 0x927d);
+        let src_plane = PlaneRef {
+            data: &src_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let ref_plane = PlaneRef {
+            data: &ref_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let harness = TestHarness::new(pw, 20);
+        let fc = FrameContext::new_default();
+        let intra_y_costs = crate::cost::symbol_costs::intra_y_mode_costs_inter(&fc)[0];
+        let mvc = MvCandidates::default();
+        let above = [73u8; 64];
+        let left = [181u8; 64];
+        let mut params = make_dual_ref_params(
+            &harness,
+            &intra_y_costs,
+            BlockSize::Block32x32,
+            &src_plane,
+            &ref_plane,
+            (16, 16),
+            &mvc,
+            &mvc,
+            MvLimits::new(-4, 4, -4, 4),
+            20,
+        );
+        params.intra_above_pixels = Some(&above);
+        params.intra_left_pixels = Some(&left);
+        params.intra_top_left_pixel = 127;
+        params.rt_intra_dc_only_low_content = true;
+
+        let lambda = compute_rd_mult(20, frame_type_for_rd(params.frame_kind));
+        let penalty = get_intra_cost_penalty(params.q_index, params.block_size);
+        let compatibility = evaluate_intra_fallback(&params, lambda, penalty, i64::MAX)
+            .expect("compatibility calibration must evaluate DC intra");
+        assert!(
+            compatibility.dct_eob_total > 0,
+            "compatibility calibration must retain the DCT reconstruction path"
+        );
+
+        params.rd_calibration = InterRdCalibration::realtime();
+        let realtime = evaluate_intra_fallback(&params, lambda, penalty, i64::MAX)
+            .expect("realtime calibration must evaluate DC intra");
+        assert_eq!(realtime.picked_intra_mode, Some(IntraMode::Dc));
+        assert_eq!(realtime.dct_eob_total, 0);
+        assert!(realtime.coef_rate > 0);
+        assert!(realtime.coef_dist > 0);
     }
 
     #[test]
