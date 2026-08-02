@@ -4648,7 +4648,7 @@ fn leaves_from_decision(decision: &PartitionDecision) -> Vec<PartitionLeafDesc> 
             // F10.1b — placeholder. The KF path mutates this via
             // `pick_and_simulate_intra_encode_partitions`. The inter
             // path doesn't read it.
-            predicted_y_mode: IntraMode::Dc,
+            predicted_y_modes: [IntraMode::Dc; 4],
             // Realtime keyframes keep chroma at DC. Inter ignores this field.
             predicted_uv_mode: IntraMode::Dc,
             // AQ.1 — default to segment 0 (no Q-delta). AQ.3 will
@@ -4758,10 +4758,10 @@ fn build_kf_mi_grid(
                     seg_id_predicted: false,
                     mode: BlockMode::Intra {
                         // Realtime DC/V/H luma pick plus canonical DC chroma.
-                        y_mode: leaf.predicted_y_mode,
+                        y_mode: leaf.parent_y_mode(),
                         uv_mode: leaf.predicted_uv_mode,
                     },
-                    bmi: Default::default(),
+                    bmi: leaf.bmi(),
                 };
                 splat_leaf_mode_info(
                     &mut mi_grid,
@@ -6766,11 +6766,12 @@ mod tests {
     }
 
     /// F10.1b WIRING ORACLE — bypass the F8.0 picker by hand-injecting
-    /// a `PartitionLeafDesc` with `predicted_y_mode = IntraMode::V`,
+    /// a `PartitionLeafDesc` with every `predicted_y_modes` slot set to
+    /// `IntraMode::V`,
     /// feed it through `simulate_dc_intra_encode_partitions` +
     /// `build_keyframe_packet`, then decode and assert every cell
     /// round-trips as `V_PRED`. Proves the F10.1b wiring layer
-    /// (`PartitionLeafDesc.predicted_y_mode` → `build_kf_mi_grid` →
+    /// (`PartitionLeafDesc.predicted_y_modes` → `build_kf_mi_grid` →
     /// writer → decoder mi-grid) faithfully threads the picker's
     /// chosen mode, independent of what the picker actually picks
     /// when called from the frame loop with realistic neighbour data.
@@ -6790,7 +6791,7 @@ mod tests {
                     mi_row_in_sb: r,
                     mi_col_in_sb: c,
                     leaf_bsize: BlockSize::Block8x8,
-                    predicted_y_mode: IntraMode::V,
+                    predicted_y_modes: [IntraMode::V; 4],
                     predicted_uv_mode: IntraMode::Dc,
                     segment_id: 0,
                     picked_tx_size: max_txsize(BlockSize::Block8x8),
@@ -6862,6 +6863,107 @@ mod tests {
     }
 
     #[test]
+    fn block4x4_keyframe_bmi_modes_and_reconstruction_round_trip() {
+        use crate::{PartitionLeafDesc, simulate_dc_intra_encode_partitions};
+        use rvp9_core::bitstream::IntraCoefSource;
+        use rvp9_core::transforms::TxSize;
+
+        let w = 64u32;
+        let h = 64u32;
+        let q_index = 50u8;
+        let make_leaf = |row, col, bsize| PartitionLeafDesc {
+            mi_row_in_sb: row,
+            mi_col_in_sb: col,
+            leaf_bsize: bsize,
+            predicted_y_modes: [IntraMode::Dc; 4],
+            predicted_uv_mode: IntraMode::Dc,
+            segment_id: 0,
+            picked_tx_size: crate::realtime_keyframe_tx_size(bsize),
+        };
+
+        // VP9 coding order: the top-left 16x16 is split to four 8x8
+        // cells, with its first cell represented by four 4x4 BMIs.
+        let bmi_modes = [IntraMode::H, IntraMode::V, IntraMode::D45, IntraMode::Tm];
+        let mut sub8 = make_leaf(0, 0, BlockSize::Block4x4);
+        sub8.predicted_y_modes = bmi_modes;
+        let leaves = vec![
+            sub8,
+            make_leaf(0, 1, BlockSize::Block8x8),
+            make_leaf(1, 0, BlockSize::Block8x8),
+            make_leaf(1, 1, BlockSize::Block8x8),
+            make_leaf(0, 2, BlockSize::Block16x16),
+            make_leaf(2, 0, BlockSize::Block16x16),
+            make_leaf(2, 2, BlockSize::Block16x16),
+            make_leaf(0, 4, BlockSize::Block32x32),
+            make_leaf(4, 0, BlockSize::Block32x32),
+            make_leaf(4, 4, BlockSize::Block32x32),
+        ];
+        let sb_partitions = vec![leaves];
+
+        let y_input: Vec<u8> = (0..(w * h) as usize)
+            .map(|index| {
+                let row = index / w as usize;
+                let col = index % w as usize;
+                ((row * 7 + col * 11 + (row ^ col) * 3) & 255) as u8
+            })
+            .collect();
+        let u_input = vec![96u8; ((w / 2) * (h / 2)) as usize];
+        let v_input = vec![160u8; ((w / 2) * (h / 2)) as usize];
+        let mut y_recon = vec![0u8; y_input.len()];
+        let mut u_recon = vec![0u8; u_input.len()];
+        let mut v_recon = vec![0u8; v_input.len()];
+
+        let coef_source = simulate_dc_intra_encode_partitions(
+            w,
+            h,
+            q_index,
+            &[None; 8],
+            (&y_input, &u_input, &v_input),
+            (&mut y_recon, &mut u_recon, &mut v_recon),
+            &sb_partitions,
+        );
+        for bmi_index in 0..4 {
+            let (_, eob) =
+                coef_source.get_block_coefs(0, 0, 0, bmi_index & 1, bmi_index >> 1, TxSize::Tx4x4);
+            assert!(
+                eob > 0,
+                "BMI {bmi_index} must retain its own luma coefficients"
+            );
+        }
+
+        let packet = build_keyframe_packet(w, h, q_index, 0, &coef_source, &sb_partitions)
+            .expect("build sub-8 keyframe packet");
+        let mut decoder = Decoder::new();
+        let frames = decode_packet(&mut decoder, &packet);
+        let decoded = decoder
+            .decode_frame(&frames[0])
+            .expect("rvp9 decoder accepts Block4x4 keyframe syntax");
+
+        let first = decoder.last_frame_mi_grid()[0].expect("top-left ModeInfo");
+        assert_eq!(first.block_size, BlockSize::Block4x4);
+        assert_eq!(first.tx_size, TxSize::Tx4x4);
+        assert!(matches!(
+            first.mode,
+            BlockMode::Intra {
+                y_mode: IntraMode::Tm,
+                ..
+            }
+        ));
+        for (index, expected) in bmi_modes.into_iter().enumerate() {
+            assert_eq!(first.bmi[index].as_mode, expected as u8);
+        }
+
+        let decoded_y = decoded.y_plane();
+        for row in 0..h as usize {
+            assert_eq!(
+                &decoded_y.data()[row * decoded_y.stride()..][..w as usize],
+                &y_recon[row * w as usize..][..w as usize],
+                "encoder and decoder reconstruction differ on row {row}"
+            );
+        }
+    }
+
+    #[test]
     fn sequential_two_tile_keyframe_has_valid_header_prefixes_and_decode() {
         use crate::{PartitionLeafDesc, simulate_dc_intra_encode_partitions};
         use rvp9_core::bitstream::{parse_tile_buffers, parse_uncompressed_header};
@@ -6872,7 +6974,7 @@ mod tests {
             mi_row_in_sb: 0,
             mi_col_in_sb: 0,
             leaf_bsize: BlockSize::Block64x64,
-            predicted_y_mode: IntraMode::Dc,
+            predicted_y_modes: [IntraMode::Dc; 4],
             predicted_uv_mode: IntraMode::Dc,
             segment_id: 0,
             picked_tx_size: crate::realtime_keyframe_tx_size(BlockSize::Block64x64),
@@ -6932,7 +7034,7 @@ mod tests {
             mi_row_in_sb: 0,
             mi_col_in_sb: 0,
             leaf_bsize: BlockSize::Block64x64,
-            predicted_y_mode: IntraMode::Dc,
+            predicted_y_modes: [IntraMode::Dc; 4],
             predicted_uv_mode: IntraMode::Dc,
             segment_id: 0,
             picked_tx_size: crate::realtime_keyframe_tx_size(BlockSize::Block64x64),

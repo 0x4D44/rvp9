@@ -68,7 +68,7 @@ use rvp9_core::inter::mode_info::{InterModeReadParams, setup_compound_reference_
 use rvp9_core::inter::mv_ref::PrevFrameMvRef;
 use rvp9_core::inter::mv_ref::sign_bias_from_header;
 use rvp9_core::intra_pred::IntraMode;
-use rvp9_core::mode_info::{BlockMode, InterMode, ModeInfo, Mv, RefFrame};
+use rvp9_core::mode_info::{BlockMode, BmiInfo, InterMode, ModeInfo, Mv, RefFrame};
 use rvp9_core::transforms::{TxMode, TxSize};
 
 /// Positive-control counter for the `RVP9_TRELLIS` coefficient
@@ -1443,8 +1443,8 @@ pub(crate) fn effective_qindex_for_segment(
 /// `(mi_row_in_sb, mi_col_in_sb)` is the leaf's top-left in 8×8 mi
 /// units relative to the SB's top-left (i.e. each is in `0..8`).
 /// `leaf_bsize` is the leaf's [`BlockSize`] (square, ≥ 8×8 for F10.1a).
-/// `predicted_y_mode` is the intra mode the simulator should use for
-/// the leaf's prediction + forward / inverse transform pair. The single-
+/// `predicted_y_modes` holds the four raster-order 4×4 BMI modes for a
+/// sub-8 leaf. Larger leaves keep all four slots equal. The single-
 /// leaf form ([`simulate_dc_intra_encode`]) and the partition-aware
 /// frame loop's pre-F10.1b path use `IntraMode::Dc`; realtime keyframes drive
 /// this from `pick_realtime_intra_mode_luma`'s DC/V/H subset.
@@ -1464,9 +1464,9 @@ pub(crate) struct PartitionLeafDesc {
     /// Leaf [`BlockSize`] (square: `Block8x8` / `Block16x16` /
     /// `Block32x32` / `Block64x64`).
     pub leaf_bsize: BlockSize,
-    /// Intra Y-mode the simulator should use for prediction +
-    /// forward/inverse transforms.
-    pub predicted_y_mode: IntraMode,
+    /// Raster-order 4×4 luma modes. All slots are equal for leaves at
+    /// least 8×8; a Block4x4 leaf carries four causal BMI modes.
+    pub predicted_y_modes: [IntraMode; 4],
     /// Intra UV-mode applied to BOTH U and V planes for this leaf.
     /// Realtime keyframes set it to [`IntraMode::Dc`].
     pub predicted_uv_mode: IntraMode,
@@ -1480,6 +1480,38 @@ pub(crate) struct PartitionLeafDesc {
     /// `mi.tx_size`. Frame `ALLOW_16X16` makes the realtime size implicit.
     /// Non-picker test simulator paths default to `max_txsize(leaf_bsize)`.
     pub picked_tx_size: TxSize,
+}
+
+impl PartitionLeafDesc {
+    #[inline]
+    fn parent_y_mode(self) -> IntraMode {
+        if self.leaf_bsize < BlockSize::Block8x8 {
+            self.predicted_y_modes[3]
+        } else {
+            self.predicted_y_modes[0]
+        }
+    }
+
+    #[inline]
+    fn y_mode_for_tx(self, tx_x4_local: usize, tx_y4_local: usize) -> IntraMode {
+        if self.leaf_bsize < BlockSize::Block8x8 {
+            self.predicted_y_modes[(tx_y4_local << 1) | tx_x4_local]
+        } else {
+            self.predicted_y_modes[0]
+        }
+    }
+
+    #[inline]
+    fn bmi(self) -> [BmiInfo; 4] {
+        if self.leaf_bsize < BlockSize::Block8x8 {
+            core::array::from_fn(|index| BmiInfo {
+                as_mode: self.predicted_y_modes[index] as u8,
+                ..BmiInfo::default()
+            })
+        } else {
+            [BmiInfo::default(); 4]
+        }
+    }
 }
 
 /// Encoder simulator: per-TX-block predict → residual → fdct →
@@ -1512,7 +1544,7 @@ pub(crate) fn simulate_dc_intra_encode(
             mi_row_in_sb: 0,
             mi_col_in_sb: 0,
             leaf_bsize: BlockSize::Block64x64,
-            predicted_y_mode: IntraMode::Dc,
+            predicted_y_modes: [IntraMode::Dc; 4],
             predicted_uv_mode: IntraMode::Dc,
             segment_id: 0,
             picked_tx_size: rvp9_core::block::max_txsize(BlockSize::Block64x64),
@@ -1694,14 +1726,13 @@ fn simulate_dc_intra_encode_partitions_no_zero_with_tiles(
                     luma_tx,
                     leaf_bsize,
                 );
-                // F10.1b: Y uses the realtime-picked intra mode. UV uses
+                // F10.1b: Y uses the realtime-picked intra mode. A sub-8
+                // leaf may carry a different mode for each 4x4 TX. UV uses
                 // `leaf.predicted_uv_mode`, which realtime keyframes keep at
-                // DC. The Y mode
-                // also drives `tx_type` for the forward transform +
+                // DC. The per-TX Y mode also drives the forward-transform
                 // scan order at sizes < Tx32x32 (Tx32x32 always uses
                 // DctDct, mirroring the decoder + writer); UV is
                 // always DctDct.
-                let leaf_y_mode = leaf.predicted_y_mode;
                 let leaf_uv_mode = leaf.predicted_uv_mode;
 
                 // AQ.1 — per-leaf effective qindex. When AQ is off
@@ -1750,11 +1781,18 @@ fn simulate_dc_intra_encode_partitions_no_zero_with_tiles(
                     };
 
                     // Plane 4×4 extents for this leaf. Mirrors the
-                    // decoder's `reconstruct_intra_planes` derivation:
-                    // sub-8 luma pins to `(2 >> ss)` but for F10.1a we
-                    // only see ≥ 8×8 leaves so the regular path is fine.
-                    let plane_bw_4x4 = plane_bsize.n_4x4_wide() as usize;
-                    let plane_bh_4x4 = plane_bsize.n_4x4_high() as usize;
+                    // decoder's `reconstruct_intra_planes` derivation.
+                    // Sub-8 ModeInfo occupies one 8x8 cell: four luma
+                    // 4x4 TXs and one 4x4 TX per chroma plane.
+                    let is_sub8 = leaf_bsize < BlockSize::Block8x8;
+                    let (plane_bw_4x4, plane_bh_4x4) = if is_sub8 {
+                        (2 >> ss_x, 2 >> ss_y)
+                    } else {
+                        (
+                            plane_bsize.n_4x4_wide() as usize,
+                            plane_bsize.n_4x4_high() as usize,
+                        )
+                    };
                     let tx_step_4x4 = 1usize << (plane_tx as usize);
                     let tx_side = plane_tx.side();
 
@@ -1804,11 +1842,10 @@ fn simulate_dc_intra_encode_partitions_no_zero_with_tiles(
                             let have_left = have_left_block || tx_x4_local > 0;
                             let have_right = (tx_x4_local + tx_step_4x4) < plane_bw_4x4;
 
-                            // Y plane uses the picked Y mode; both UV
-                            // planes use the picked UV mode (single
-                            // `uv_mode` per leaf in VP9 wire format).
+                            // Sub-8 Y uses the causal mode for this BMI;
+                            // both UV planes use the single wire `uv_mode`.
                             let plane_mode = if plane == 0 {
-                                leaf_y_mode
+                                leaf.y_mode_for_tx(tx_x4_local, tx_y4_local)
                             } else {
                                 leaf_uv_mode
                             };
@@ -2037,7 +2074,7 @@ fn simulate_dc_intra_encode_partitions_no_zero_with_tiles(
 /// 3. Call `pick_realtime_intra_mode_luma` to choose among libvpx's
 ///    speed-4+ keyframe subset: DC, V, and H.
 /// 4. Write the picked mode back into `sb_partitions[sb][leaf]
-///    .predicted_y_mode` AND the picked-mode grid (splat across every
+///    .predicted_y_modes` AND the picked-mode grid (splat across every
 ///    8×8 mi cell the leaf covers).
 /// 5. Keep chroma at DC, matching libvpx's speed-4+ realtime keyframe
 ///    policy (`intra_uv_mode_mask[*] = INTRA_DC`).
@@ -2236,7 +2273,7 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
                     }
                 }
 
-                sb_partitions[sb_idx][leaf_idx].predicted_y_mode = picked_mode;
+                sb_partitions[sb_idx][leaf_idx].predicted_y_modes = [picked_mode; 4];
                 let n_8x8 = (bs_pixels / 8).max(1);
                 for dr in 0..n_8x8 {
                     for dc in 0..n_8x8 {
@@ -12011,7 +12048,7 @@ mod tests {
                     mi_row_in_sb: r,
                     mi_col_in_sb: c,
                     leaf_bsize: BlockSize::Block8x8,
-                    predicted_y_mode: IntraMode::Dc,
+                    predicted_y_modes: [IntraMode::Dc; 4],
                     predicted_uv_mode: IntraMode::Dc,
                     segment_id: seg,
                     picked_tx_size: rvp9_core::block::max_txsize(BlockSize::Block8x8),

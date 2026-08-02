@@ -455,10 +455,10 @@ pub(crate) fn build_kf_mi_grid_for_lf(
                     segment_id: 0,
                     seg_id_predicted: false,
                     mode: BlockMode::Intra {
-                        y_mode: leaf.predicted_y_mode,
+                        y_mode: leaf.parent_y_mode(),
                         uv_mode: IntraMode::Dc,
                     },
-                    bmi: Default::default(),
+                    bmi: leaf.bmi(),
                 };
                 splat_leaf(
                     &mut mi_grid,
