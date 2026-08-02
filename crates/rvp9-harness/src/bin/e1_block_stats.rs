@@ -151,6 +151,7 @@ struct FrameStats {
     /// Area-weighted (8x8 units) mode tallies.
     intra_area8: u64,
     intra_mode_area8: [u64; INTRA_MODES],
+    uv_mode_area8: [u64; INTRA_MODES],
     inter_mode_area8: [u64; 4], // indexed by InterMode::idx (NEAREST/NEAR/ZERO/NEW)
     /// Area-weighted skip=1.
     skip_area8: u64,
@@ -267,6 +268,45 @@ impl Aggregate {
         let n = f64::from(n.max(1));
         (leaves.map(|v| v as f64 / n), y_blocks.map(|v| v as f64 / n))
     }
+    fn key_bitstream_sections(&self) -> (u64, u64, u64) {
+        self.frames
+            .iter()
+            .filter(|f| f.is_key)
+            .fold((0, 0, 0), |(header, compressed, tile), f| {
+                (
+                    header + f.header_bits,
+                    compressed + f.compressed_header_bits,
+                    tile + f.tile_data_bits,
+                )
+            })
+    }
+    fn key_coef_model_tokens(&self) -> (u64, u64, u64, u64, u64) {
+        self.frames.iter().filter(|f| f.is_key).fold(
+            (0, 0, 0, 0, 0),
+            |(zero, one, two_plus, eob, eob_branch), f| {
+                (
+                    zero + f.coef_zero_tokens,
+                    one + f.coef_one_tokens,
+                    two_plus + f.coef_two_plus_tokens,
+                    eob + f.coef_eob_tokens,
+                    eob_branch + f.coef_eob_branch_attempts,
+                )
+            },
+        )
+    }
+    fn key_tx_counts(&self) -> ([u64; 4], [u64; 4]) {
+        let mut leaves = [0u64; 4];
+        let mut y_blocks = [0u64; 4];
+        for f in self.frames.iter().filter(|f| f.is_key) {
+            for (acc, value) in leaves.iter_mut().zip(f.tx_leaf_count.iter()) {
+                *acc += *value;
+            }
+            for (acc, value) in y_blocks.iter_mut().zip(f.tx_y_block_count.iter()) {
+                *acc += *value;
+            }
+        }
+        (leaves, y_blocks)
+    }
     /// Sum a per-block array across all INTER frames (the realtime path).
     fn block_count_inter(&self) -> [u64; BLOCK_SIZES] {
         let mut acc = [0u64; BLOCK_SIZES];
@@ -312,6 +352,23 @@ impl Aggregate {
             }
         }
         acc
+    }
+    fn uv_mode_area8_key(&self) -> [u64; INTRA_MODES] {
+        let mut acc = [0u64; INTRA_MODES];
+        for f in self.frames.iter().filter(|f| f.is_key) {
+            for (acc_slot, value) in acc.iter_mut().zip(f.uv_mode_area8.iter()) {
+                *acc_slot += *value;
+            }
+        }
+        acc
+    }
+    fn key_skip_area(&self) -> (u64, u64) {
+        self.frames
+            .iter()
+            .filter(|f| f.is_key)
+            .fold((0, 0), |(skip, total), f| {
+                (skip + f.skip_area8, total + f.total_area8)
+            })
     }
     fn inter_aggregate(&self) -> (u64, u64, [u64; 4], u64, u64, u64, u64) {
         // (intra_area, total_area, inter_mode_area, skip_area, last, golden, altref)
@@ -553,9 +610,10 @@ fn accumulate_grid(grid: &[Option<ModeInfo>], mi_rows: usize, mi_cols: usize, fs
             }
 
             match &mi.mode {
-                BlockMode::Intra { y_mode, .. } => {
+                BlockMode::Intra { y_mode, uv_mode } => {
                     fs.intra_area8 += area8;
                     fs.intra_mode_area8[*y_mode as usize] += area8;
+                    fs.uv_mode_area8[*uv_mode as usize] += area8;
                 }
                 BlockMode::Inter {
                     mode, ref_frames, ..
@@ -928,8 +986,72 @@ fn emit_report(
         })
     );
 
-    // ---- Keyframe predictor diagnostic ----
-    let _ = writeln!(md, "\n### Keyframe partition and luma-mode distribution\n");
+    // ---- Keyframe diagnostic ----
+    let _ = writeln!(md, "\n### Keyframe bitstream decomposition\n");
+    let _ = writeln!(md, "| metric | rvp9 | libvpx |\n|---|---:|---:|");
+    let (r_key_hdr, r_key_comp, r_key_tile) = rvp9.key_bitstream_sections();
+    let _ = writeln!(
+        md,
+        "| uncompressed / compressed / tile-data bits | {r_key_hdr}/{r_key_comp}/{r_key_tile} | {} |",
+        libvpx.map_or("n/a".into(), |l| {
+            let (h, c, t) = l.key_bitstream_sections();
+            format!("{h}/{c}/{t}")
+        })
+    );
+    let (r_key_zero, r_key_one, r_key_two_plus, r_key_eob, r_key_eob_branch) =
+        rvp9.key_coef_model_tokens();
+    let _ = writeln!(
+        md,
+        "| coef model tokens zero/one/two+/eob | {r_key_zero}/{r_key_one}/{r_key_two_plus}/{r_key_eob} | {} |",
+        libvpx.map_or("n/a".into(), |l| {
+            let (z, o, t, e, _) = l.key_coef_model_tokens();
+            format!("{z}/{o}/{t}/{e}")
+        })
+    );
+    let _ = writeln!(
+        md,
+        "| coef eob-branch attempts | {r_key_eob_branch} | {} |",
+        libvpx.map_or("n/a".into(), |l| {
+            format!("{}", l.key_coef_model_tokens().4)
+        })
+    );
+    let (r_key_tx_leaves, r_key_tx_blocks) = rvp9.key_tx_counts();
+    let _ = writeln!(
+        md,
+        "| luma TX leaves 4x4/8x8/16x16/32x32 | {}/{}/{}/{} | {} |",
+        r_key_tx_leaves[0],
+        r_key_tx_leaves[1],
+        r_key_tx_leaves[2],
+        r_key_tx_leaves[3],
+        libvpx.map_or("n/a".into(), |l| {
+            let (tx, _) = l.key_tx_counts();
+            format!("{}/{}/{}/{}", tx[0], tx[1], tx[2], tx[3])
+        })
+    );
+    let _ = writeln!(
+        md,
+        "| luma TX blocks 4x4/8x8/16x16/32x32 | {}/{}/{}/{} | {} |",
+        r_key_tx_blocks[0],
+        r_key_tx_blocks[1],
+        r_key_tx_blocks[2],
+        r_key_tx_blocks[3],
+        libvpx.map_or("n/a".into(), |l| {
+            let (_, tx) = l.key_tx_counts();
+            format!("{}/{}/{}/{}", tx[0], tx[1], tx[2], tx[3])
+        })
+    );
+    let (r_key_skip, r_key_area) = rvp9.key_skip_area();
+    let _ = writeln!(
+        md,
+        "| skip area% | {:.1} | {} |",
+        100.0 * r_key_skip as f64 / r_key_area.max(1) as f64,
+        libvpx.map_or("n/a".into(), |l| {
+            let (skip, area) = l.key_skip_area();
+            format!("{:.1}", 100.0 * skip as f64 / area.max(1) as f64)
+        })
+    );
+
+    let _ = writeln!(md, "\n### Keyframe partition and mode distribution\n");
     let _ = writeln!(
         md,
         "Distinct keyframe leaves and area coverage. Mode percentages are area-weighted.\n"
@@ -992,6 +1114,32 @@ fn emit_report(
             "| mode {} | {:.1} | {} |",
             intra_mode_label(mode),
             100.0 * r_key_modes[mode] as f64 / r_mode_total as f64,
+            libvpx_value
+        );
+    }
+    let r_key_uv_modes = rvp9.uv_mode_area8_key();
+    let l_key_uv_modes = libvpx.map(Aggregate::uv_mode_area8_key);
+    let r_uv_total = r_key_uv_modes.iter().sum::<u64>().max(1);
+    let l_uv_total = l_key_uv_modes
+        .as_ref()
+        .map(|modes| modes.iter().sum::<u64>().max(1));
+    for mode in 0..INTRA_MODES {
+        let r_has = r_key_uv_modes[mode] > 0;
+        let l_has = l_key_uv_modes.as_ref().is_some_and(|modes| modes[mode] > 0);
+        if !r_has && !l_has {
+            continue;
+        }
+        let libvpx_value = match (&l_key_uv_modes, l_uv_total) {
+            (Some(modes), Some(total)) => {
+                format!("{:.1}", 100.0 * modes[mode] as f64 / total as f64)
+            }
+            _ => "n/a".into(),
+        };
+        let _ = writeln!(
+            md,
+            "| UV mode {} | {:.1} | {} |",
+            intra_mode_label(mode),
+            100.0 * r_key_uv_modes[mode] as f64 / r_uv_total as f64,
             libvpx_value
         );
     }
@@ -1405,6 +1553,16 @@ mod tests {
         key.block_area8[BlockSize::Block16x16.idx()] = 12;
         key.intra_mode_area8[0] = 8;
         key.intra_mode_area8[1] = 4;
+        key.uv_mode_area8[2] = 12;
+        key.header_bits = 80;
+        key.compressed_header_bits = 160;
+        key.tile_data_bits = 240;
+        key.coef_zero_tokens = 7;
+        key.coef_eob_branch_attempts = 9;
+        key.tx_leaf_count[2] = 3;
+        key.tx_y_block_count[2] = 12;
+        key.skip_area8 = 4;
+        key.total_area8 = 12;
 
         let mut inter = FrameStats::default();
         inter.block_count[BlockSize::Block8x8.idx()] = 64;
@@ -1420,6 +1578,12 @@ mod tests {
         assert_eq!(aggregate.intra_mode_area8_key()[0], 8);
         assert_eq!(aggregate.intra_mode_area8_key()[1], 4);
         assert_eq!(aggregate.intra_mode_area8_key()[2], 0);
+        assert_eq!(aggregate.uv_mode_area8_key()[2], 12);
+        assert_eq!(aggregate.key_bitstream_sections(), (80, 160, 240));
+        assert_eq!(aggregate.key_coef_model_tokens(), (7, 0, 0, 0, 9));
+        assert_eq!(aggregate.key_tx_counts().0[2], 3);
+        assert_eq!(aggregate.key_tx_counts().1[2], 12);
+        assert_eq!(aggregate.key_skip_area(), (4, 12));
     }
 
     #[test]
