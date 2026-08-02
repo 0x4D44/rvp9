@@ -408,8 +408,14 @@ fn gop_topology_byte_identity() {
     // than two GOPs, so the schedule invariant is unchanged. The new stream
     // reproduced twice with the same hash. Prior production golden: (len
     // 23201, fnv1a 0x646a_4565_7bc3_f735).
-    const GOLDEN_HASH: u64 = 0x906e_c190_985d_e6ec;
-    const GOLDEN_LEN: usize = 26653;
+    //
+    // Re-captured again (2026-08-02) after the accepted realtime intra-model
+    // reuse and keyframe parity units. A clean-history bisect identified
+    // 12a9db9 as the first intentional coding change after the prior refresh.
+    // The schedule oracle still matches every emitted frame, and both the
+    // clean baseline and edge-motion task tree reproduce these bytes exactly.
+    const GOLDEN_HASH: u64 = 0x8976_6868_4185_7955;
+    const GOLDEN_LEN: usize = 26907;
 
     let stream = encode_fixed_clip();
     let hash = fnv1a(&stream);
