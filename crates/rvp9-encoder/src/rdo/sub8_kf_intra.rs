@@ -318,12 +318,18 @@ pub struct PickIntraSub8x8Params<'a> {
     pub have_above: bool,
     /// Whether the 8×8 block has a left neighbour.
     pub have_left: bool,
-    /// Per-sub-block, per-mode cost table: `[blk_idx][mode]`. libvpx
-    /// keys this on the per-sub-block `(A, L)` neighbour-mode context
-    /// (`cpi->y_mode_costs[A][L]`, line 1329); the caller pre-resolves
-    /// the context and supplies the resulting `bmode_costs` row per
-    /// sub-block.
-    pub bmode_costs: &'a [[i32; NUM_INTRA_MODES]; NUM_SUB_BLOCKS],
+    /// Full keyframe luma mode-cost table, indexed by
+    /// `[above_mode][left_mode][candidate_mode]`. The picker resolves the
+    /// causal per-sub-block `(A, L)` context after each earlier winner,
+    /// matching `vp9_above_block_mode` / `vp9_left_block_mode` and
+    /// `cpi->y_mode_costs[A][L]` at libvpx lines 1326-1329.
+    pub y_mode_costs: &'a [[[i32; NUM_INTRA_MODES]; NUM_INTRA_MODES]; NUM_INTRA_MODES],
+    /// Four luma BMI modes from the 8x8 block immediately above. Only
+    /// slots 2 and 3 are read for the current block's top sub-blocks.
+    pub above_modes: [IntraMode; NUM_SUB_BLOCKS],
+    /// Four luma BMI modes from the 8x8 block immediately left. Only
+    /// slots 1 and 3 are read for the current block's left sub-blocks.
+    pub left_modes: [IntraMode; NUM_SUB_BLOCKS],
     /// Y-plane quantizers.
     pub quant: &'a PlaneQuantizers,
     /// Coefficient-bit cost table.
@@ -379,6 +385,7 @@ pub fn pick_intra_sub_8x8_y_mode(
     let mut recon8 = [0u8; 64];
 
     let mut sub_winners: [Option<KfIntraSubWinner>; NUM_SUB_BLOCKS] = [None; NUM_SUB_BLOCKS];
+    let mut selected_modes = [IntraMode::Dc; NUM_SUB_BLOCKS];
     let mut total_rate: u64 = 0;
     let mut total_rate_y: u64 = 0;
     let mut total_distortion: i64 = 0;
@@ -395,13 +402,21 @@ pub fn pick_intra_sub_8x8_y_mode(
             // or the 8×8 block's own neighbours (boundary).
             let src = extract_sub_src(params.src, idx, idy);
             let edges = build_sub_edges(params, &recon8, idx, idy);
+            let (above_mode, left_mode) = subblock_mode_context(
+                blk_idx,
+                &selected_modes,
+                &params.above_modes,
+                &params.left_modes,
+                params.have_above,
+                params.have_left,
+            );
 
             let sub_cap = params.best_rd.saturating_sub(total_rd);
             let sub_params = PickIntra4x4Params {
                 blk_idx: blk_idx as u8,
                 src: &src,
                 edges,
-                bmode_costs: &params.bmode_costs[blk_idx],
+                bmode_costs: &params.y_mode_costs[above_mode as usize][left_mode as usize],
                 quant: params.quant,
                 coef_costs: params.coef_costs,
                 rdmult: params.rdmult,
@@ -422,6 +437,7 @@ pub fn pick_intra_sub_8x8_y_mode(
             total_rate = total_rate.saturating_add(u64::from(winner.rate));
             total_rate_y = total_rate_y.saturating_add(u64::from(winner.rate_y));
             total_distortion = total_distortion.saturating_add(winner.dist);
+            selected_modes[blk_idx] = winner.mode;
             sub_winners[blk_idx] = Some(winner);
 
             // libvpx line 1350: `if (total_rd >= best_rd) return
@@ -455,6 +471,41 @@ pub fn pick_intra_sub_8x8_y_mode(
         total_rd,
         recon: recon8,
     })
+}
+
+/// Resolve the keyframe mode-probability context for one 4x4 sub-block.
+/// This is the Rust equivalent of libvpx `vp9_above_block_mode` and
+/// `vp9_left_block_mode` (`vp9/common/vp9_blockd.c:13-34`).
+fn subblock_mode_context(
+    blk_idx: usize,
+    selected_modes: &[IntraMode; NUM_SUB_BLOCKS],
+    above_modes: &[IntraMode; NUM_SUB_BLOCKS],
+    left_modes: &[IntraMode; NUM_SUB_BLOCKS],
+    have_above: bool,
+    have_left: bool,
+) -> (IntraMode, IntraMode) {
+    debug_assert!(blk_idx < NUM_SUB_BLOCKS);
+
+    let above = if blk_idx < 2 {
+        if have_above {
+            above_modes[blk_idx + 2]
+        } else {
+            IntraMode::Dc
+        }
+    } else {
+        selected_modes[blk_idx - 2]
+    };
+    let left = if blk_idx.is_multiple_of(2) {
+        if have_left {
+            left_modes[blk_idx + 1]
+        } else {
+            IntraMode::Dc
+        }
+    } else {
+        selected_modes[blk_idx - 1]
+    };
+
+    (above, left)
 }
 
 /// Extract the 4×4 source sub-block at `(idx, idy)` from the 8×8 source.
@@ -775,7 +826,7 @@ mod tests {
         let fc = FrameContext::new_default();
         let costs = build_coef_cost_table(&fc);
         let quant = init_plane_quantizers(48, QuantizerDeltas::Y);
-        let bmode = [flat_bmode_costs(); NUM_SUB_BLOCKS];
+        let y_mode_costs = [[[0; NUM_INTRA_MODES]; NUM_INTRA_MODES]; NUM_INTRA_MODES];
 
         let src = [120u8; 64];
         let above = [120u8; 16];
@@ -788,7 +839,9 @@ mod tests {
             above_left: 120,
             have_above: true,
             have_left: true,
-            bmode_costs: &bmode,
+            y_mode_costs: &y_mode_costs,
+            above_modes: [IntraMode::Dc; NUM_SUB_BLOCKS],
+            left_modes: [IntraMode::Dc; NUM_SUB_BLOCKS],
             quant: &quant,
             coef_costs: &costs,
             rdmult: 80,
@@ -825,7 +878,7 @@ mod tests {
         let fc = FrameContext::new_default();
         let costs = build_coef_cost_table(&fc);
         let quant = init_plane_quantizers(32, QuantizerDeltas::Y);
-        let bmode = [flat_bmode_costs(); NUM_SUB_BLOCKS];
+        let y_mode_costs = [[[0; NUM_INTRA_MODES]; NUM_INTRA_MODES]; NUM_INTRA_MODES];
 
         // Build an 8×8 source that is a pure VERTICAL gradient across the
         // whole block: row r constant = 30 + 25*r. With a left column
@@ -854,7 +907,9 @@ mod tests {
             above_left: 30,
             have_above: true,
             have_left: true,
-            bmode_costs: &bmode,
+            y_mode_costs: &y_mode_costs,
+            above_modes: [IntraMode::Dc; NUM_SUB_BLOCKS],
+            left_modes: [IntraMode::Dc; NUM_SUB_BLOCKS],
             quant: &quant,
             coef_costs: &costs,
             rdmult: 80,
@@ -887,7 +942,7 @@ mod tests {
         let fc = FrameContext::new_default();
         let costs = build_coef_cost_table(&fc);
         let quant = init_plane_quantizers(48, QuantizerDeltas::Y);
-        let bmode = [flat_bmode_costs(); NUM_SUB_BLOCKS];
+        let y_mode_costs = [[[0; NUM_INTRA_MODES]; NUM_INTRA_MODES]; NUM_INTRA_MODES];
 
         // A high-energy source (checkerboard) so no mode fits cheaply.
         let mut src = [0u8; 64];
@@ -906,7 +961,9 @@ mod tests {
             above_left: 128,
             have_above: true,
             have_left: true,
-            bmode_costs: &bmode,
+            y_mode_costs: &y_mode_costs,
+            above_modes: [IntraMode::Dc; NUM_SUB_BLOCKS],
+            left_modes: [IntraMode::Dc; NUM_SUB_BLOCKS],
             quant: &quant,
             coef_costs: &costs,
             rdmult: 80,
@@ -916,6 +973,43 @@ mod tests {
         assert!(
             pick_intra_sub_8x8_y_mode(&params).is_none(),
             "tight best_rd cap must reject the block",
+        );
+    }
+
+    /// The two boundary contexts come from the neighbouring block's BMI,
+    /// while the internal contexts come from winners selected earlier in
+    /// raster order. This is the load-bearing causal dependency that a
+    /// caller cannot pre-resolve before the four-block walk begins.
+    #[test]
+    fn w7_9_kf_intra_sub_8x8_mode_contexts_are_causal() {
+        let above_modes = [IntraMode::Dc, IntraMode::V, IntraMode::H, IntraMode::D45];
+        let left_modes = [
+            IntraMode::D135,
+            IntraMode::D117,
+            IntraMode::D153,
+            IntraMode::D207,
+        ];
+        let selected_modes = [IntraMode::Tm, IntraMode::D63, IntraMode::V, IntraMode::H];
+
+        assert_eq!(
+            subblock_mode_context(0, &selected_modes, &above_modes, &left_modes, true, true),
+            (IntraMode::H, IntraMode::D117),
+        );
+        assert_eq!(
+            subblock_mode_context(1, &selected_modes, &above_modes, &left_modes, true, true),
+            (IntraMode::D45, IntraMode::Tm),
+        );
+        assert_eq!(
+            subblock_mode_context(2, &selected_modes, &above_modes, &left_modes, true, true),
+            (IntraMode::Tm, IntraMode::D207),
+        );
+        assert_eq!(
+            subblock_mode_context(3, &selected_modes, &above_modes, &left_modes, true, true),
+            (IntraMode::D63, IntraMode::V),
+        );
+        assert_eq!(
+            subblock_mode_context(0, &selected_modes, &above_modes, &left_modes, false, false),
+            (IntraMode::Dc, IntraMode::Dc),
         );
     }
 }
