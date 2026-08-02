@@ -24,45 +24,59 @@ Each entry:
 
 ## Entries
 
-### 2026-08-02 — Diagnostic keyframe sub-8 tree omits rectangular partitions
+### 2026-08-02 — Diagnostic keyframe small-block tree omits rectangular partitions
 **Where:** `rvp9_core::mode_decision::partition::choose_partitioning_keyframe_sub8`
 and `rvp9_encoder::frame_loop::pick_and_simulate_intra_encode_partitions`;
 libvpx counterparts: `vp9/encoder/vp9_encodeframe.c::{fill_variance_4x4avg,set_vt_partitioning}`
-and `vp9/encoder/vp9_rdopt.c::rd_pick_intra_sub_8x8_y_mode`.
+and `vp9/encoder/vp9_rdopt.c::{rd_pick_intra_sub_8x8_y_mode,rd_pick_intra_sby_mode}`.
 **What libvpx does:** keyframes build a source-variance tree from rounded 4x4
 averages, consider NONE/HORZ/VERT/SPLIT partitions, and pick four causal BMI
 modes with live coefficient entropy contexts. At realtime cpu-used 6–8 it
 restricts 4x4 luma search to DC/V/H and uses the full neighbour-derived token
-context plus exact sign/category-bit cost for every coefficient.
+context plus exact sign/category-bit cost for every coefficient. An unsplit
+8x8 leaf instead uses the full keyframe RD search: mode and coefficient rate,
+reconstructed-pixel SSE, and conditional directional-mode pruning.
 **What rvp9 does:** `RVP9_EXACT_KF_SUB8=1` enables a diagnostic-only tree that
 uses the same rounded 4x4-average variance but considers NONE/SPLIT only. A
 selected 8x8 SPLIT carries four causal DC/V/H 4x4 modes and prices them with
 the full token-neighbour and live tile above/left coefficient contexts,
 including exact coefficient sign/category-bit costs. It updates the contexts
-after every winner. Production behavior is unchanged.
+after every winner. An unsplit 8x8 leaf now uses libvpx's full coefficient-rate
+and reconstructed-pixel RD path, including the combined two-cell entropy
+context and conditional directional search. Larger keyframe leaves still use
+rvp9's older approximate picker. Production behavior is unchanged.
 **Why:** this is the smallest independently testable seam that closes the
 measured keyframe-reference mismatch without exposing incomplete behavior as
 a default. The corrected picker matches pinned libvpx exactly for the first 80
-consecutive live 4x4 decisions; the next mismatch is caused by the mode and
-reconstruction of an adjacent larger keyframe block.
+consecutive live 4x4 decisions. Porting the adjacent 8x8 path makes that leaf
+and its causal 4x4 follower exact, and extends full live agreement through the
+first 264 4x4 decisions.
 **Byte-parity impact:** structural only under the diagnostic environment flag.
 The normal CPU7 VBR stream remains 47,314 bytes with SHA-256
 `96af4829c357ff6550bfbec8667d5d19e07f78e65e0145b7da3096082ec00eaf`.
-Under the flag, rvp9-decoder, pinned vpxdec, and ffmpeg produce identical
-decoded output.
+Under the flag, rvp9-decoder, pinned vpxdec, and ffmpeg produce the same
+6,291,456-byte I420 output, SHA-256
+`6d4737e0e6a11f65fcb3dd295fdc01b10118613d07e2f5691f2fd9831b09035c`.
 **Compression-efficiency impact:** at fixed qindex 120, the corrected first
-keyframe is 40,040 bits at 38.095 dB luma PSNR versus libvpx's 35,368 bits at
-38.031 dB. The 64-frame stream is 125,968 bytes versus libvpx's 82,270. On the
+keyframe is 37,496 bits at 37.958 dB luma PSNR versus libvpx's 35,368 bits at
+38.031 dB. The 64-frame stream is 123,899 bytes versus libvpx's 82,270. On the
 native three-clip CPU7 screen, luma BD-rate is
-`+39.568155%/+6.249183%/+76.936364%` for
-`in_to_tree`/`ducks_take_off`/`old_town_cross`. Relative to the prior
-full-ten-mode diagnostic, ducks improves 0.452 points while in-tree and old
-town regress 0.255 and 0.059 points. This is retained only as a measured
-source-faithful prerequisite; the mixed result prevents default enablement.
-**Future plan:** correct the first adjacent larger-block mismatch. At traced
-4x4 call 80 rvp9 derives keyframe mode contexts `(A=DC,L=V)` while libvpx uses
-`(A=DC,L=H)`; the differing left reconstruction also changes DC/H prediction.
-Forced-root splitting remains rejected as non-Pareto.
+`+36.442309%/+5.200030%/+75.260522%` and average-YUV BD-rate is
+`+33.644003%/+6.238181%/+69.680491%` for
+`in_to_tree`/`ducks_take_off`/`old_town_cross`. This improves every luma curve
+by 1.049–3.126 points versus the exact-4x4 predecessor, so the path remains a
+measured prerequisite. It is still far outside the final 0.5% gate.
+**Speed impact:** on the 60-frame 1280x704 `in_to_tree` 1000 kbps VBR
+diagnostic, nine warmed alternating pairs measure 0.492873 seconds rvp9 versus
+0.381869 seconds vpxenc median child CPU (`1.290686x`); wall time is
+`1.286295x`. This is not a corpus geomean and does not pass the final speed
+gate.
+**Future plan:** trace the first post-fix divergence at 4x4 call 264. Its
+source, coefficient context, mode costs, and winner still agree, but the
+external left edge from the neighbouring 8x8 TM leaf at pixel `(112,8)` is
+lower by one on two rows. Compare that leaf's qcoeff/EOB and DCT reconstruction
+against libvpx before changing another mode or partition rule. Forced-root
+splitting remains rejected as non-Pareto.
 
 ### 2026-08-02 — Keep the calibrated VBR rate prior and GOLDEN allocator default-off
 **Where:** `rvp9_encoder::frame_loop::{VBR_BITS_PER_MB_MULTIPLIER_DEFAULT,StreamEncoder::new,StreamEncoder::encode_frame}`

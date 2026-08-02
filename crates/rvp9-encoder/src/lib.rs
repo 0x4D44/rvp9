@@ -2138,6 +2138,7 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
     sb_partitions: &mut [Vec<PartitionLeafDesc>],
     log2_tile_cols: u8,
 ) -> VecBackedIntraCoefSource {
+    use rvp9_core::coef_ctx::combine_entropy_contexts;
     use rvp9_core::cost::{
         FrameTypeForRd, coef_cost::build_coef_cost_table, compute_rd_mult,
         intra_y_mode_costs_kf_table,
@@ -2148,6 +2149,7 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
     use rvp9_core::mv_search::PlaneRef;
     use rvp9_core::quant::forward::{QuantizerDeltas, init_plane_quantizers};
 
+    use crate::rdo::kf_intra8::{PickIntra8x8Params, pick_intra8x8_y_mode};
     use crate::rdo::sub8_kf_intra::{PickIntraSub8x8Params, pick_intra_sub_8x8_y_mode};
 
     let w = width as usize;
@@ -2179,10 +2181,15 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
     // pixels` / `left_pixels` come from the same buffer.
 
     let y_mode_costs = intra_y_mode_costs_kf_table();
+    let exact_keyframe_sub8 =
+        std::env::var_os("RVP9_EXACT_KF_SUB8").is_some_and(|value| value != "0");
     let coef_costs = sb_partitions
         .iter()
         .flatten()
-        .any(|leaf| leaf.leaf_bsize < BlockSize::Block8x8)
+        .any(|leaf| {
+            leaf.leaf_bsize < BlockSize::Block8x8
+                || (exact_keyframe_sub8 && leaf.leaf_bsize == BlockSize::Block8x8)
+        })
         .then(|| build_coef_cost_table(&FrameContext::new_default()));
     let mut picker_coef_contexts = coef_costs.as_ref().map(|_| {
         tile_bounds_by_col
@@ -2370,6 +2377,63 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
                     let result = pick_intra_sub_8x8_y_mode(&params)
                         .expect("unbounded sub-8 keyframe pick must choose four modes");
                     core::array::from_fn(|index| result.sub_winners[index].mode)
+                } else if exact_keyframe_sub8 && leaf_bsize == BlockSize::Block8x8 {
+                    let mut src = [0u8; 64];
+                    for row in 0..8 {
+                        let src_start = (leaf_px_y + row) * w + leaf_px_x;
+                        src[row * 8..row * 8 + 8]
+                            .copy_from_slice(&input_yuv.0[src_start..src_start + 8]);
+                    }
+                    let mut above = [ABOVE_UNAVAILABLE_FILL; 16];
+                    if have_above {
+                        let above_start = (leaf_px_y - 1) * w;
+                        for (column, slot) in above.iter_mut().enumerate() {
+                            *slot = recon_yuv_out.0[above_start + (leaf_px_x + column).min(w - 1)];
+                        }
+                    }
+                    let mut left = [LEFT_UNAVAILABLE_FILL; 8];
+                    if have_left {
+                        left.copy_from_slice(&left_pixels);
+                    }
+                    let above_left = if have_above && have_left {
+                        top_left_pixel
+                    } else if have_above {
+                        LEFT_UNAVAILABLE_FILL
+                    } else {
+                        ABOVE_UNAVAILABLE_FILL
+                    };
+                    let picker_coef_ctx = picker_coef_contexts
+                        .as_ref()
+                        .expect("exact 8x8 leaves require picker coefficient contexts")
+                        .get(current_tile_index)
+                        .expect("current keyframe tile has coefficient context");
+                    let x4_base = (leaf_mi_col - current_tile.mi_col_start) * 2;
+                    let y4_in_sb_base = (leaf_mi_row & 7) * 2;
+                    let above_ctx = picker_coef_ctx.above_coef(0, x4_base)
+                        | picker_coef_ctx.above_coef(0, x4_base + 1);
+                    let left_ctx = picker_coef_ctx.left_coef(0, y4_in_sb_base)
+                        | picker_coef_ctx.left_coef(0, y4_in_sb_base + 1);
+                    let result = pick_intra8x8_y_mode(&PickIntra8x8Params {
+                        src: &src,
+                        above: &above,
+                        left: &left,
+                        above_left,
+                        have_above,
+                        have_left,
+                        bmode_costs: &y_mode_costs[above_mode_ctx as usize][left_mode_ctx as usize],
+                        quant: &leaf_quantizer,
+                        coef_costs: coef_costs
+                            .as_ref()
+                            .expect("exact 8x8 leaves require coefficient costs"),
+                        coeff_ctx: combine_entropy_contexts(above_ctx, left_ctx),
+                        rdmult: i64::from(compute_rd_mult(
+                            i32::from(leaf_qindex),
+                            FrameTypeForRd::Key,
+                        )),
+                        best_rd: i64::MAX,
+                    })
+                    .expect("unbounded 8x8 keyframe pick must choose a mode");
+                    [result.mode; 4]
                 } else if leaf_bsize == BlockSize::Block64x64 {
                     [IntraMode::Dc; 4]
                 } else {
