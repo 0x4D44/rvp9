@@ -97,7 +97,7 @@ use crate::inter::mode_info::{
 };
 use crate::inter::mv_ref::{BlockBounds, NeighbourLookup, Position, PrevFrameMvRef};
 use crate::intra_pred::IntraMode;
-use crate::mode_info::{BlockMode, ModeInfo, get_tx_size_context, write_segment_id};
+use crate::mode_info::{BlockMode, BmiInfo, ModeInfo, get_tx_size_context, write_segment_id};
 use crate::transforms::{TxMode, TxSize, TxType};
 
 /// Encoder-side segmentation context for the per-block writer.
@@ -356,7 +356,7 @@ impl core::fmt::Display for ModesWriterError {
             ),
             Self::UnsupportedBlockMode { mi_row, mi_col } => write!(
                 f,
-                "modes_writer v1: cell ({mi_row}, {mi_col}) requires intra DC_PRED on Y and UV"
+                "modes_writer v1: cell ({mi_row}, {mi_col}) has unsupported or inconsistent intra mode info"
             ),
             Self::UnsupportedNonSkip { mi_row, mi_col } => write!(
                 f,
@@ -678,12 +678,10 @@ fn mi_grid_get(
 /// caller recurses (which validates the four quadrants).
 ///
 /// Edge cases:
-/// - `bsize == Block8x8`: the writer scope reduction pins the
-///   parent-8x8 partition to `PARTITION_NONE`. If the leaf at
-///   `(mi_row, mi_col)` is anything other than `Block8x8`, return
-///   [`ModesWriterError::InconsistentPartitionTree`] — the decoder
-///   `hbs == 0` BLOCK_8x8 sub-partitioning into 4x4/4x8/8x4 isn't
-///   supported by this scope.
+/// - `bsize == Block8x8`: match the three legal sub-8 leaves exactly:
+///   `Block8x4` → HORZ, `Block4x8` → VERT, and `Block4x4` → SPLIT.
+///   The caller handles these through the VP9 `hbs == 0` one-cell
+///   branch rather than recursing below the mi-grid resolution.
 /// - The leaf size doesn't match `bsize`, `subsize(bsize, HORZ)`, or
 ///   `subsize(bsize, VERT)`, and the parent isn't square enough to
 ///   SPLIT (i.e. `subsize(bsize, SPLIT)` is `None`): return
@@ -703,9 +701,25 @@ fn infer_partition(
         return Ok(PartitionType::None);
     }
 
-    // BLOCK_8x8 parents: scope-reduced to NONE only. Any non-matching
-    // leaf size at parent-8x8 is rejected.
+    // BLOCK_8x8 parents terminate the mi-grid walk. Their sub-8
+    // partition lives inside one ModeInfo cell and is represented by
+    // its `bmi` array, so match the leaf size without recursing.
     if bsize == BlockSize::Block8x8 {
+        if let Some(horz) = subsize(bsize, PartitionType::Horz)
+            && leaf_bsize == horz
+        {
+            return Ok(PartitionType::Horz);
+        }
+        if let Some(vert) = subsize(bsize, PartitionType::Vert)
+            && leaf_bsize == vert
+        {
+            return Ok(PartitionType::Vert);
+        }
+        if let Some(split) = subsize(bsize, PartitionType::Split)
+            && leaf_bsize == split
+        {
+            return Ok(PartitionType::Split);
+        }
         return Err(ModesWriterError::InconsistentPartitionTree {
             mi_row,
             mi_col,
@@ -749,8 +763,8 @@ fn infer_partition(
 /// partition)` — the sub-partitioning is then handled internally by
 /// `resolve_sub8_bmi` (mirrored by S4.16e's `write_sub8_bmi`).
 ///
-/// Keyframes still call [`infer_partition`] which pins BLOCK_8x8 to
-/// `PARTITION_NONE` per VP9 spec (sub-8 partitioning is inter-only).
+/// Keyframes call [`infer_partition`], which now recognises the same
+/// legal sub-8 partition shapes and writes keyframe BMI modes.
 fn infer_inter_partition(
     mi_grid: &[Option<ModeInfo>],
     mi_cols: usize,
@@ -870,10 +884,9 @@ fn write_partition(bw: &mut BoolWriter<'_>, probs: &[u8; 3], partition: Partitio
 ///
 /// Scope assumptions: `has_rows && has_cols` always hold inside the
 /// writer because `write_tile_intra_keyframe` rejects mi-grids whose
-/// dimensions aren't multiples of 8. The `hbs == 0` BLOCK_8x8
-/// sub-partitioning branch on the decoder side is similarly out of
-/// scope; [`infer_partition`] forces BLOCK_8x8 parents to
-/// `PARTITION_NONE`.
+/// dimensions aren't multiples of 8. At `hbs == 0`, the writer mirrors
+/// the decoder's one-call branch: the sub-8 leaf and its four BMI slots
+/// occupy one 8x8 mi-grid cell.
 #[allow(clippy::too_many_arguments)] // mirrors libvpx 1:1
 fn write_partition_tree(
     bw: &mut BoolWriter<'_>,
@@ -926,6 +939,30 @@ fn write_partition_tree(
 
     let sub = subsize(bsize, partition)
         .expect("infer_partition only returns a partition whose subsize is legal");
+
+    if hbs == 0 {
+        let mi = mi_grid_get(mi_grid, mi_cols, mi_row, mi_col)
+            .ok_or(ModesWriterError::MissingCell { mi_row, mi_col })?;
+        write_block_intra_keyframe(
+            bw,
+            fc,
+            tx_mode,
+            seg,
+            nbr_ctx,
+            bounds,
+            mi_grid,
+            mi_rows,
+            mi_cols,
+            mi_row,
+            mi_col,
+            sub,
+            &mi,
+            coef_ctx,
+            coef_source,
+        )?;
+        part_ctx.update(mi_row_in_tile, mi_col_in_tile, sub, num_8x8_wh);
+        return Ok(());
+    }
 
     match partition {
         PartitionType::None => {
@@ -1132,6 +1169,126 @@ fn write_partition_tree(
     Ok(())
 }
 
+#[inline]
+fn keyframe_neighbour_y_mode(neighbour: Option<&ModeInfo>, block: usize) -> IntraMode {
+    let Some(neighbour) = neighbour else {
+        return IntraMode::Dc;
+    };
+    let BlockMode::Intra { y_mode, .. } = neighbour.mode else {
+        return IntraMode::Dc;
+    };
+    if neighbour.block_size < BlockSize::Block8x8 {
+        IntraMode::from_u8(neighbour.bmi[block].as_mode).unwrap_or(y_mode)
+    } else {
+        y_mode
+    }
+}
+
+#[inline]
+fn keyframe_above_block_mode(
+    block: usize,
+    bmi: &[BmiInfo; 4],
+    above: Option<&ModeInfo>,
+) -> IntraMode {
+    if block < 2 {
+        keyframe_neighbour_y_mode(above, block + 2)
+    } else {
+        IntraMode::from_u8(bmi[block - 2].as_mode).unwrap_or(IntraMode::Dc)
+    }
+}
+
+#[inline]
+fn keyframe_left_block_mode(
+    block: usize,
+    bmi: &[BmiInfo; 4],
+    left: Option<&ModeInfo>,
+) -> IntraMode {
+    if block == 0 || block == 2 {
+        keyframe_neighbour_y_mode(left, block + 1)
+    } else {
+        IntraMode::from_u8(bmi[block - 1].as_mode).unwrap_or(IntraMode::Dc)
+    }
+}
+
+#[inline]
+fn keyframe_luma_mode_for_tx(
+    block_size: BlockSize,
+    bmi: &[BmiInfo; 4],
+    parent_y_mode: IntraMode,
+    tx_x4_local: usize,
+    tx_y4_local: usize,
+) -> IntraMode {
+    if block_size < BlockSize::Block8x8 {
+        let bmi_index = (tx_y4_local << 1) | tx_x4_local;
+        IntraMode::from_u8(bmi[bmi_index].as_mode).unwrap_or(parent_y_mode)
+    } else {
+        parent_y_mode
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn write_sub8_keyframe_y_modes(
+    bw: &mut BoolWriter<'_>,
+    block_size: BlockSize,
+    parent_y_mode: IntraMode,
+    bmi: &[BmiInfo; 4],
+    above: Option<&ModeInfo>,
+    left: Option<&ModeInfo>,
+    mi_row: usize,
+    mi_col: usize,
+) -> Result<(), ModesWriterError> {
+    let mode_at = |index: usize| {
+        IntraMode::from_u8(bmi[index].as_mode)
+            .ok_or(ModesWriterError::UnsupportedBlockMode { mi_row, mi_col })
+    };
+    let write_one = |bw: &mut BoolWriter<'_>, index: usize, mode: IntraMode| {
+        let above_mode = keyframe_above_block_mode(index, bmi, above);
+        let left_mode = keyframe_left_block_mode(index, bmi, left);
+        write_intra_mode(
+            bw,
+            &VP9_KF_Y_MODE_PROB[above_mode as usize][left_mode as usize],
+            mode,
+        );
+    };
+
+    match block_size {
+        BlockSize::Block4x4 => {
+            if parent_y_mode != mode_at(3)? {
+                return Err(ModesWriterError::UnsupportedBlockMode { mi_row, mi_col });
+            }
+            for index in 0..4 {
+                write_one(bw, index, mode_at(index)?);
+            }
+        }
+        BlockSize::Block4x8 => {
+            let mode0 = mode_at(0)?;
+            let mode1 = mode_at(1)?;
+            if mode_at(2)? != mode0 || mode_at(3)? != mode1 || parent_y_mode != mode1 {
+                return Err(ModesWriterError::UnsupportedBlockMode { mi_row, mi_col });
+            }
+            write_one(bw, 0, mode0);
+            write_one(bw, 1, mode1);
+        }
+        BlockSize::Block8x4 => {
+            let mode0 = mode_at(0)?;
+            let mode2 = mode_at(2)?;
+            if mode_at(1)? != mode0 || mode_at(3)? != mode2 || parent_y_mode != mode2 {
+                return Err(ModesWriterError::UnsupportedBlockMode { mi_row, mi_col });
+            }
+            write_one(bw, 0, mode0);
+            write_one(bw, 2, mode2);
+        }
+        _ => {
+            return Err(ModesWriterError::UnsupportedBlockSize {
+                mi_row,
+                mi_col,
+                block_size,
+            });
+        }
+    }
+    Ok(())
+}
+
 /// Write the per-leaf keyframe mode info for the block of size
 /// `leaf_bsize` starting at `(mi_row, mi_col)`. The leaf is required
 /// to be:
@@ -1204,7 +1361,7 @@ fn write_block_intra_keyframe(
 
     let mi_row_in_tile = mi_row - bounds.mi_row_start;
     let mi_col_in_tile = mi_col - bounds.mi_col_start;
-    let (above_mode, left_mode, skip_ctx) = nbr_ctx.neighbours_for(mi_row_in_tile, mi_col_in_tile);
+    let (_, _, skip_ctx) = nbr_ctx.neighbours_for(mi_row_in_tile, mi_col_in_tile);
 
     // 0. Segment_id. When `seg.is_some()`, the caller has committed
     //    `segmentation.enabled && segmentation.update_map` in the
@@ -1272,9 +1429,19 @@ fn write_block_intra_keyframe(
         effective_tx_size,
     );
 
-    // 3. Intra Y mode against `VP9_KF_Y_MODE_PROB[above][left]`.
-    let y_probs = &VP9_KF_Y_MODE_PROB[above_mode as usize][left_mode as usize];
-    write_intra_mode(bw, y_probs, y_mode);
+    // 3. Intra Y mode(s). A sub-8 ModeInfo carries up to four causal
+    //    BMI modes inside its one mi-grid cell. Larger blocks retain
+    //    the existing single-mode path.
+    if leaf_bsize < BlockSize::Block8x8 {
+        write_sub8_keyframe_y_modes(
+            bw, leaf_bsize, y_mode, &mi.bmi, tx_above, tx_left, mi_row, mi_col,
+        )?;
+    } else {
+        let above_mode = keyframe_above_block_mode(0, &mi.bmi, tx_above);
+        let left_mode = keyframe_left_block_mode(0, &mi.bmi, tx_left);
+        let y_probs = &VP9_KF_Y_MODE_PROB[above_mode as usize][left_mode as usize];
+        write_intra_mode(bw, y_probs, y_mode);
+    }
 
     // 4. Intra UV mode against `VP9_KF_UV_MODE_PROB[y_mode]`.
     let uv_probs = &VP9_KF_UV_MODE_PROB[y_mode as usize];
@@ -1304,6 +1471,7 @@ fn write_block_intra_keyframe(
             effective_tx_size,
             y_mode,
             uv_mode,
+            &mi.bmi,
         );
     }
 
@@ -1358,6 +1526,7 @@ fn write_intra_block_residual(
     luma_tx: TxSize,
     y_mode: IntraMode,
     _uv_mode: IntraMode,
+    bmi: &[BmiInfo; 4],
 ) {
     let mi_col_in_tile = mi_col - tile_mi_col_start;
     let mi_row_in_sb = mi_row & MI_MASK;
@@ -1399,22 +1568,22 @@ fn write_intra_block_residual(
 
         let seg_eob = plane_tx.n_coeffs();
 
-        // TX type. Y plane: `intra_mode_to_tx_type_lookup[y_mode]`
-        // (collapses to `DctDct` for DC_PRED / TM_PRED at sizes ≥
-        // Tx32x32 anyway). UV: always `DctDct`. Mirrors
-        // `rvp9_decoder::reconstruct::resolve_tx_type`.
-        let tx_type = if plane == 0 {
-            y_mode.tx_type()
-        } else {
-            TxType::DctDct
-        };
-
         // Raster-order walk over TX positions inside this plane's
         // coding block.
         let mut tx_y4_local = 0usize;
         while tx_y4_local < plane_bh_4x4 {
             let mut tx_x4_local = 0usize;
             while tx_x4_local < plane_bw_4x4 {
+                let mode_for_this_tx = if plane == 0 {
+                    keyframe_luma_mode_for_tx(leaf_bsize, bmi, y_mode, tx_x4_local, tx_y4_local)
+                } else {
+                    y_mode
+                };
+                let tx_type = if plane == 0 {
+                    mode_for_this_tx.tx_type()
+                } else {
+                    TxType::DctDct
+                };
                 let (coefs, eob) = coef_source.get_block_coefs(
                     mi_row,
                     mi_col,
@@ -3025,6 +3194,7 @@ mod tests {
             TxSize::Tx32x32,
             IntraMode::Dc,
             IntraMode::Dc,
+            &[BmiInfo::default(); 4],
         );
 
         assert!(
@@ -3927,23 +4097,135 @@ mod tests {
         assert_eq!(p, PartitionType::Split);
     }
 
-    /// `infer_partition` rejects a BLOCK_8x8 parent whose top-left
-    /// leaf is anything other than `Block8x8` — scope reduction
-    /// disallows sub-8 partitioning.
+    /// A BLOCK_8x8 parent maps the three legal sub-8 leaf shapes onto
+    /// its HORZ / VERT / SPLIT symbols without recursing below one mi.
     #[test]
-    fn infer_partition_rejects_sub8_partitioning() {
+    fn infer_partition_recognises_sub8_partitioning() {
         let mi_cols = 8usize;
-        let mut grid: Vec<Option<ModeInfo>> = vec![None; mi_cols * mi_cols];
-        // Synthesize a `Block4x4` leaf at (0,0) under a Block8x8 parent.
-        grid[0] = Some(make_dc_cell(BlockSize::Block4x4));
-        let err = infer_partition(&grid, mi_cols, 0, 0, BlockSize::Block8x8).unwrap_err();
-        assert!(matches!(
-            err,
-            ModesWriterError::InconsistentPartitionTree {
-                parent_bsize: BlockSize::Block8x8,
-                ..
-            }
-        ));
+        for (leaf, expected) in [
+            (BlockSize::Block8x4, PartitionType::Horz),
+            (BlockSize::Block4x8, PartitionType::Vert),
+            (BlockSize::Block4x4, PartitionType::Split),
+        ] {
+            let mut grid: Vec<Option<ModeInfo>> = vec![None; mi_cols * mi_cols];
+            grid[0] = Some(make_dc_cell(leaf));
+            assert_eq!(
+                infer_partition(&grid, mi_cols, 0, 0, BlockSize::Block8x8)
+                    .expect("legal sub-8 partition"),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn keyframe_block4x4_partition_and_bmi_modes_round_trip() {
+        let fc = FrameContext::new_default();
+        let bounds = TileBounds {
+            mi_row_start: 0,
+            mi_row_end: 8,
+            mi_col_start: 0,
+            mi_col_end: 8,
+        };
+        let expected_modes = [IntraMode::H, IntraMode::V, IntraMode::D45, IntraMode::Tm];
+        let mut bmi = [BmiInfo::default(); 4];
+        for (slot, mode) in bmi.iter_mut().zip(expected_modes) {
+            slot.as_mode = mode as u8;
+        }
+        let sub8 = ModeInfo {
+            block_size: BlockSize::Block4x4,
+            tx_size: TxSize::Tx4x4,
+            skip: true,
+            segment_id: 0,
+            seg_id_predicted: false,
+            mode: BlockMode::Intra {
+                y_mode: IntraMode::Tm,
+                uv_mode: IntraMode::D135,
+            },
+            bmi,
+        };
+        assert_eq!(
+            keyframe_above_block_mode(0, &[BmiInfo::default(); 4], Some(&sub8)),
+            IntraMode::D45,
+            "the block below a sub-8 leaf sees its bottom-left BMI mode"
+        );
+        assert_eq!(
+            keyframe_left_block_mode(0, &[BmiInfo::default(); 4], Some(&sub8)),
+            IntraMode::V,
+            "the block right of a sub-8 leaf sees its top-right BMI mode"
+        );
+        for (index, expected) in expected_modes.into_iter().enumerate() {
+            assert_eq!(
+                keyframe_luma_mode_for_tx(
+                    BlockSize::Block4x4,
+                    &sub8.bmi,
+                    IntraMode::Tm,
+                    index & 1,
+                    index >> 1,
+                ),
+                expected,
+                "each 4x4 residual uses its own BMI transform type"
+            );
+        }
+        let mut grid = vec![Some(make_dc_cell(BlockSize::Block8x8)); 64];
+        grid[0] = Some(sub8);
+
+        let mut buf = vec![0u8; 256];
+        let written = {
+            let mut bw = BoolWriter::start_encode(&mut buf);
+            let mut part_ctx = PartitionCtx::new(8);
+            let mut nbr_ctx = NeighbourCtx::new(8);
+            let mut coef_ctx = TileCoefCtx::new(8);
+            let coef_source = crate::bitstream::AllZeroIntraCoefSource::new();
+            write_partition_tree(
+                &mut bw,
+                &mut part_ctx,
+                &mut nbr_ctx,
+                &bounds,
+                &grid,
+                8,
+                8,
+                0,
+                0,
+                BlockSize::Block8x8,
+                1,
+                &fc,
+                TxMode::AllowTx32x32,
+                None,
+                &mut coef_ctx,
+                &coef_source,
+            )
+            .expect("write sub-8 keyframe leaf");
+            bw.stop_encode().expect("stop_encode")
+        };
+        buf.truncate(written);
+
+        let mut reader = BoolReader::new(&buf).expect("reader");
+        let partition = read_partition(&mut reader, &VP9_KF_PARTITION_PROBS[0], 0, None);
+        assert_eq!(partition, PartitionType::Split);
+        assert!(read_skip(&mut reader, &fc.skip_probs, 0, None));
+
+        let mut decoded = [IntraMode::Dc; 4];
+        for index in 0..4 {
+            let above = if index < 2 {
+                IntraMode::Dc
+            } else {
+                decoded[index - 2]
+            };
+            let left = if index == 0 || index == 2 {
+                IntraMode::Dc
+            } else {
+                decoded[index - 1]
+            };
+            decoded[index] = read_intra_mode(
+                &mut reader,
+                &VP9_KF_Y_MODE_PROB[above as usize][left as usize],
+            );
+        }
+        assert_eq!(decoded, expected_modes);
+        assert_eq!(
+            read_intra_mode(&mut reader, &VP9_KF_UV_MODE_PROB[IntraMode::Tm as usize],),
+            IntraMode::D135
+        );
     }
 
     /// Per-partition-type round-trip: writer emits the bit-sequence
@@ -7591,22 +7873,8 @@ mod tests {
     /// (lines 676-681).
     #[test]
     fn s5_infer_partition_rejects_inconsistent_keyframe() {
-        // Block8x8 cell at (0,0); parent expected Block16x16. The
-        // keyframe `infer_partition` doesn't allow sub-8 leaves under
-        // Block16x16 → it tries to match against HORZ/VERT/SPLIT
-        // subsizes of Block16x16. None match Block8x8 → SPLIT path,
-        // but for Block16x16 SPLIT subsize is Block8x8 → matches.
-        // Actually that's fine. Let me try a Block4x4 (sub-8) at a
-        // Block16x16 parent: HORZ=Block16x8, VERT=Block8x16,
-        // SPLIT=Block8x8. Block4x4 doesn't match any → SPLIT path
-        // taken since subsize(Block16x16, SPLIT) = Block8x8 exists →
-        // returns SPLIT. The keyframe walker then tries to decode
-        // SPLIT children at Block8x8 level; each child cell must be
-        // Block8x8 but we have Block4x4 → infer_partition at Block8x8
-        // sees Block4x4. Block8x8 has no HORZ/VERT subsize per
-        // `subsize`; only SPLIT-into-something exists if `subsize`
-        // returns None. Actually let me try inconsistent Block32x32 at
-        // Block16x16 parent → not a subsize → InconsistentPartitionTree.
+        // A larger rectangular leaf cannot appear below the square
+        // parent reached by the recursive tree walk.
         let mi_rows = 8u32;
         let mi_cols = 8u32;
         let mut grid: Vec<Option<ModeInfo>> = vec![None; (mi_rows * mi_cols) as usize];
