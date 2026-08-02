@@ -312,8 +312,14 @@ fn a10_byte_identity_pre_vs_post_refactor() {
     // stream was reproduced twice with the same hash, and the sibling decode
     // test accepts all 12 frames. Prior production golden: (len 6563, fnv1a
     // 0x612e_fb7c_61fa_a3d5).
-    const GOLDEN_HASH: u64 = 0x0c1d_12c3_efe1_68b3;
-    const GOLDEN_LEN: usize = 9162;
+    //
+    // Re-captured again (2026-08-02) after the accepted realtime intra-model
+    // reuse and keyframe parity units. A clean-history bisect identified
+    // 12a9db9 as the first intentional coding change after the prior refresh;
+    // the current clean baseline and the edge-motion task tree reproduce these
+    // bytes exactly, while the sibling decode test remains green.
+    const GOLDEN_HASH: u64 = 0xb17d_c324_076d_b9c6;
+    const GOLDEN_LEN: usize = 8896;
 
     let stream = encode_fixed_clip();
     let hash = fnv1a(&stream);
