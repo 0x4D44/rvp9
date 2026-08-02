@@ -24,6 +24,35 @@ Each entry:
 
 ## Entries
 
+### 2026-08-02 — Large-frame maximum transform retained outside Block32
+**Where:** `rvp9_encoder::realtime_emit_luma_tx_size` and
+`rvp9_encoder::pick_and_simulate_inter_encode_partitions`; libvpx counterpart:
+`vp9/encoder/vp9_pickmode.c`'s selected `mi->tx_size` consumed by
+`vp9/encoder/vp9_encodemb.c`.
+**What libvpx does:** realtime residual emission uses the transform size stored
+by the non-RD picker for every block size.
+**What rvp9 does:** Block32 now reuses the picker's transform because its tiled
+`block_yrd` decision is production-aligned. Large-frame recovery continues to
+force the maximum transform for Block64, Block16, rectangular, and smaller
+leaves. `RVP9_RT_EMIT_MAX_TX=0 RVP9_RT_EMIT_TX_RD=0` remains the full libvpx
+policy diagnostic.
+**Why:** full picker-transform reuse improves two current VBR clips but
+regresses `ducks_take_off` by `+7.396107%` average-YUV BD-rate. Restricting the
+change to Block32 preserves that clip (`+0.014199%`) while improving
+`in_to_tree` by `-2.768749%` and `old_town_cross` by `-3.332769%` relative to
+the preceding production baseline.
+**Byte-parity impact:** structural. The representative 60-frame 1000 kbps
+stream decodes bit-exactly under rvp9-decoder, pinned vpxdec, and ffmpeg to
+81,100,800-byte I420, SHA-256
+`a7a66c20f5073596a9aaff06ce470fd66528b77185d4941539eba4eb42762e66`.
+**Compression-efficiency impact:** versus pinned vpxenc, average-YUV BD-rate
+is `+16.633922%/-5.296992%/+37.047361%` on
+`in_to_tree`/`ducks_take_off`/`old_town_cross`; luma is
+`+17.442906%/-5.986901%/+39.705404%`.
+**Future plan:** align Block64 and smaller picker residual models before
+removing their maximum-transform recovery. Do not promote the broad diagnostic
+until every important clip stays within the per-clip regression tolerance.
+
 ### 2026-08-02 — Diagnostic keyframe small-block tree omits rectangular partitions
 **Where:** `rvp9_core::mode_decision::partition::choose_partitioning_keyframe_sub8`
 and `rvp9_encoder::frame_loop::pick_and_simulate_intra_encode_partitions`;

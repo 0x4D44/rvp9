@@ -3587,6 +3587,24 @@ impl<T> DescentPickCache<T> {
     }
 }
 
+/// Select the transform size used by final realtime residual emission.
+///
+/// Large-frame recovery historically forced every leaf to its maximum
+/// transform. Block32 is the measured exception: its realtime picker runs the
+/// same tiled `block_yrd` path as libvpx and carries the transform decision the
+/// residual walk must reuse. Other sizes retain the existing recovery policy.
+fn realtime_emit_luma_tx_size(
+    force_max_tx: bool,
+    bsize: BlockSize,
+    picked_tx_size: TxSize,
+) -> TxSize {
+    if force_max_tx && bsize != BlockSize::Block32x32 {
+        rvp9_core::block::max_txsize(bsize)
+    } else {
+        picked_tx_size
+    }
+}
+
 /// Immutable snapshot of diagnostic and A/B environment knobs shared by all
 /// tile jobs for one frame.
 pub(crate) struct InterEncodeEnv {
@@ -7306,11 +7324,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     if emit_profile_enabled {
                         emit_profile_inter_leaves += 1;
                     }
-                    let mut chosen_luma_tx = if rt_emit_max_tx {
-                        rvp9_core::block::max_txsize(leaf_bsize)
-                    } else {
-                        pick.picked_tx_size
-                    };
+                    let mut chosen_luma_tx =
+                        realtime_emit_luma_tx_size(rt_emit_max_tx, leaf_bsize, pick.picked_tx_size);
                     for plane in 0..3 {
                         let ss_x = F5_SUBSAMPLING_X[plane];
                         let ss_y = F5_SUBSAMPLING_Y[plane];
@@ -10809,6 +10824,26 @@ mod tests {
         assert!(!should_skip_realtime_luma_transform(false, SkipTxfm::AcDc));
         assert!(!should_skip_realtime_luma_transform(true, SkipTxfm::AcOnly));
         assert!(!should_skip_realtime_luma_transform(true, SkipTxfm::None));
+    }
+
+    #[test]
+    fn realtime_block32_emit_reuses_picker_transform() {
+        assert_eq!(
+            realtime_emit_luma_tx_size(true, BlockSize::Block32x32, TxSize::Tx8x8),
+            TxSize::Tx8x8,
+        );
+        assert_eq!(
+            realtime_emit_luma_tx_size(true, BlockSize::Block64x64, TxSize::Tx8x8),
+            TxSize::Tx32x32,
+        );
+        assert_eq!(
+            realtime_emit_luma_tx_size(true, BlockSize::Block16x16, TxSize::Tx8x8),
+            TxSize::Tx16x16,
+        );
+        assert_eq!(
+            realtime_emit_luma_tx_size(false, BlockSize::Block64x64, TxSize::Tx8x8),
+            TxSize::Tx8x8,
+        );
     }
 
     #[test]
