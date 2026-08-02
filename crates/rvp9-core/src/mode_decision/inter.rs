@@ -129,7 +129,7 @@ use crate::quant::forward::{
 };
 #[cfg(not(target_arch = "aarch64"))]
 use crate::quant::forward::{vp9_quantize_fp_32x32_with_order, vp9_quantize_fp_with_order};
-use crate::transforms::forward::{fdct8x8, fdct16x16, fdct32x32};
+use crate::transforms::forward::{fdct8x8_libvpx_lowbd, fdct16x16, fdct32x32};
 use crate::transforms::inverse::{idct16x16_256_add, idct32x32_1024_add};
 use crate::transforms::scans::scan_for;
 use crate::transforms::{TxMode, TxSize, TxType};
@@ -4571,7 +4571,7 @@ fn reconstruct_via_round_trip(
                         let output: &mut [i32; 64] = (&mut coefs[..64])
                             .try_into()
                             .expect("8x8 coefficient prefix has 64 elements");
-                        fdct8x8(&residual[..64], output, tx_side);
+                        fdct8x8_libvpx_lowbd(&residual[..64], output, tx_side);
                     }
                     TxSize::Tx16x16 => {
                         let output: &mut [i32; 256] = (&mut coefs[..256])
