@@ -118,7 +118,6 @@ pub fn pick_intra8x8_y_mode(params: &PickIntra8x8Params<'_>) -> Option<PickIntra
             },
             &dispatch,
         );
-
         let mut residual = [0i16; SIDE * SIDE];
         for (diff, (&src, &pred)) in residual.iter_mut().zip(params.src.iter().zip(&recon)) {
             *diff = i16::from(src) - i16::from(pred);
@@ -290,6 +289,56 @@ mod tests {
         assert_eq!(
             [next.recon[3], next.recon[7], next.recon[11], next.recon[15]],
             [134, 168, 203, 155]
+        );
+    }
+
+    #[test]
+    fn ducks_standalone_tx8_extends_top_right_for_d63() {
+        let src = [
+            187, 188, 189, 188, 183, 180, 183, 176, 198, 196, 192, 190, 182, 180, 182, 181, 176,
+            177, 178, 179, 181, 184, 185, 191, 162, 176, 185, 190, 196, 195, 202, 208, 185, 194,
+            197, 194, 186, 184, 179, 179, 151, 148, 149, 150, 141, 143, 137, 132, 155, 153, 157,
+            161, 162, 163, 165, 163, 193, 199, 199, 192, 200, 201, 203, 205,
+        ];
+        // A standalone 8x8 leaf has one Tx8. No transform to its right has
+        // been reconstructed, so VP9 repeats the last causal top pixel.
+        let above = [
+            181, 181, 181, 181, 184, 186, 188, 189, 189, 189, 189, 189, 189, 189, 189, 189,
+        ];
+        let left = [187, 197, 158, 142, 195, 140, 137, 187];
+        let costs = intra_y_mode_costs_kf_table();
+        let quant = init_plane_quantizers(119, QuantizerDeltas::Y);
+        let coef_costs = build_coef_cost_table(&FrameContext::new_default());
+        let result = pick_intra8x8_y_mode(&PickIntra8x8Params {
+            src: &src,
+            above: &above,
+            left: &left,
+            above_left: 181,
+            have_above: true,
+            have_left: true,
+            bmode_costs: &costs[IntraMode::H as usize][IntraMode::H as usize],
+            quant: &quant,
+            coef_costs: &coef_costs,
+            coeff_ctx: 2,
+            rdmult: 65_430,
+            best_rd: i64::MAX,
+        })
+        .expect("unbounded 8x8 pick must select a mode");
+
+        assert_eq!(result.mode, IntraMode::D63);
+        assert_eq!(result.rate_y, 31_315);
+        assert_eq!(result.rate, 34_834);
+        assert_eq!(result.dist, 15_072);
+        assert_eq!(result.rd, 6_380_756);
+        assert!(!result.skippable);
+        assert_eq!(
+            result.recon,
+            [
+                187, 186, 185, 185, 185, 185, 185, 185, 194, 192, 190, 188, 186, 184, 182, 181,
+                173, 173, 176, 179, 183, 186, 187, 188, 172, 175, 181, 188, 196, 202, 206, 208,
+                185, 187, 187, 187, 187, 186, 184, 183, 150, 150, 149, 147, 144, 140, 137, 136,
+                148, 151, 154, 157, 159, 161, 162, 162, 195, 197, 199, 201, 202, 203, 203, 204,
+            ]
         );
     }
 }

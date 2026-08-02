@@ -2095,6 +2095,12 @@ fn update_intra_picker_luma_coef_context(
     }
 }
 
+#[inline]
+fn extend_standalone_tx8_above(above: &mut [u8; 16]) {
+    let top_right = above[7];
+    above[8..].fill(top_right);
+}
+
 /// F10.1b — pick the Y intra mode per leaf via
 /// [`rvp9_core::mode_decision::intra::pick_realtime_intra_mode_luma`], record it
 /// into the leaf descriptor, AND encode the leaf in the same walk so
@@ -2387,9 +2393,15 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
                     let mut above = [ABOVE_UNAVAILABLE_FILL; 16];
                     if have_above {
                         let above_start = (leaf_px_y - 1) * w;
-                        for (column, slot) in above.iter_mut().enumerate() {
-                            *slot = recon_yuv_out.0[above_start + (leaf_px_x + column).min(w - 1)];
-                        }
+                        above[..8].copy_from_slice(
+                            &recon_yuv_out.0[above_start + leaf_px_x..above_start + leaf_px_x + 8],
+                        );
+                        // A Block8x8 leaf contains one Tx8x8, so there is no
+                        // causally available transform to its right. VP9
+                        // extends the final top sample for directional
+                        // predictors instead of reading unreconstructed
+                        // pixels from the next leaf.
+                        extend_standalone_tx8_above(&mut above);
                     }
                     let mut left = [LEFT_UNAVAILABLE_FILL; 8];
                     if have_left {
@@ -9696,6 +9708,20 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn standalone_tx8_extends_only_the_unavailable_top_right() {
+        let mut above = [
+            181, 181, 181, 181, 184, 186, 188, 189, 0, 0, 0, 0, 0, 0, 0, 0,
+        ];
+        extend_standalone_tx8_above(&mut above);
+        assert_eq!(
+            above,
+            [
+                181, 181, 181, 181, 184, 186, 188, 189, 189, 189, 189, 189, 189, 189, 189, 189,
+            ]
+        );
     }
 
     #[test]

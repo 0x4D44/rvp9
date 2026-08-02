@@ -43,40 +43,46 @@ the full token-neighbour and live tile above/left coefficient contexts,
 including exact coefficient sign/category-bit costs. It updates the contexts
 after every winner. An unsplit 8x8 leaf now uses libvpx's full coefficient-rate
 and reconstructed-pixel RD path, including the combined two-cell entropy
-context and conditional directional search. Larger keyframe leaves still use
-rvp9's older approximate picker. Production behavior is unchanged.
+context and conditional directional search. Its standalone Tx8 predictor also
+extends the last causal top pixel across the unavailable top-right region,
+matching `vp9_predict_intra_block`. Larger keyframe leaves still use rvp9's
+older approximate picker. Production behavior is unchanged.
 **Why:** this is the smallest independently testable seam that closes the
 measured keyframe-reference mismatch without exposing incomplete behavior as
 a default. The corrected picker matches pinned libvpx exactly for the first 80
 consecutive live 4x4 decisions. Porting the adjacent 8x8 path makes that leaf
-and its causal 4x4 follower exact, and extends full live agreement through the
-first 264 4x4 decisions.
+and its causal 4x4 follower exact. Extending standalone Tx8 top-right pixels
+corrects the next D63 winner and extends full live agreement through the first
+800 4x4 decisions on the native-50fps diagnostic.
 **Byte-parity impact:** structural only under the diagnostic environment flag.
 The normal CPU7 VBR stream remains 47,314 bytes with SHA-256
 `96af4829c357ff6550bfbec8667d5d19e07f78e65e0145b7da3096082ec00eaf`.
 Under the flag, rvp9-decoder, pinned vpxdec, and ffmpeg produce the same
 6,291,456-byte I420 output, SHA-256
-`6d4737e0e6a11f65fcb3dd295fdc01b10118613d07e2f5691f2fd9831b09035c`.
+`a2ae4522e7247ebc39c25d8984744f5395db2ef84c111e42dee359f0cc5808c8`.
 **Compression-efficiency impact:** at fixed qindex 120, the corrected first
-keyframe is 37,496 bits at 37.958 dB luma PSNR versus libvpx's 35,368 bits at
-38.031 dB. The 64-frame stream is 123,899 bytes versus libvpx's 82,270. On the
-native three-clip CPU7 screen, luma BD-rate is
-`+36.442309%/+5.200030%/+75.260522%` and average-YUV BD-rate is
-`+33.644003%/+6.238181%/+69.680491%` for
-`in_to_tree`/`ducks_take_off`/`old_town_cross`. This improves every luma curve
-by 1.049–3.126 points versus the exact-4x4 predecessor, so the path remains a
-measured prerequisite. It is still far outside the final 0.5% gate.
+keyframe is 37,536 bits at 37.999 dB luma PSNR versus libvpx's 35,368 bits at
+38.031 dB. The 64-frame stream is 124,353 bytes versus libvpx's 82,270. On the
+fresh explicitly matched 30fps native three-clip CPU7 screen, luma BD-rate is
+`+41.931593%/-1.262049%/+98.190423%` and average-YUV BD-rate is
+`+38.611595%/-0.475956%/+89.517771%` for
+`in_to_tree`/`ducks_take_off`/`old_town_cross`. Versus its clean predecessor,
+the luma movements are `-0.485067/+0.032045/+0.311801` points and average-YUV
+movements are `-0.411762/+0.041047/+0.503158` points. It is retained as a
+source-faithful prerequisite, not a Pareto curve win. The earlier
+`+36.442309%/+5.200030%/+75.260522%` screen encoded the native 50fps Y4M timing
+and is not evidence for the declared 720p30 configuration. The path remains
+far outside the final 0.5% gate.
 **Speed impact:** on the 60-frame 1280x704 `in_to_tree` 1000 kbps VBR
-diagnostic, nine warmed alternating pairs measure 0.492873 seconds rvp9 versus
-0.381869 seconds vpxenc median child CPU (`1.290686x`); wall time is
-`1.286295x`. This is not a corpus geomean and does not pass the final speed
-gate.
-**Future plan:** trace the first post-fix divergence at 4x4 call 264. Its
-source, coefficient context, mode costs, and winner still agree, but the
-external left edge from the neighbouring 8x8 TM leaf at pixel `(112,8)` is
-lower by one on two rows. Compare that leaf's qcoeff/EOB and DCT reconstruction
-against libvpx before changing another mode or partition rule. Forced-root
-splitting remains rejected as non-Pareto.
+diagnostic at explicit 30fps, nine warmed alternating pairs measure 0.544936
+seconds rvp9 versus 0.397744 seconds vpxenc median child CPU (`1.370067x`);
+wall time is `1.366852x`. This is not a corpus geomean and does not pass the
+final speed gate.
+**Future plan:** trace the first keyframe partition-decision mismatch with
+both encoders explicitly set to 30fps. The native-50fps 4x4 prefix now agrees
+through call 799, then enters different partition regions at call 800; do not
+continue small-block pricing until the matched-30fps tree identifies its first
+causal split mismatch. Forced-root splitting remains rejected as non-Pareto.
 
 ### 2026-08-02 — Keep the calibrated VBR rate prior and GOLDEN allocator default-off
 **Where:** `rvp9_encoder::frame_loop::{VBR_BITS_PER_MB_MULTIPLIER_DEFAULT,StreamEncoder::new,StreamEncoder::encode_frame}`
