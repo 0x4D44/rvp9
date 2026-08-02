@@ -3207,8 +3207,8 @@ mod tests {
     #[test]
     fn keyframe_skip_resets_luma_and_chroma_coefficient_contexts() {
         let mut coef_ctx = TileCoefCtx::new(8);
-        for plane in 0..3 {
-            coef_ctx.set_coef_flags(plane, 0, 0, 16 >> SUBSAMPLING_X[plane], 8, true);
+        for (plane, &subsampling_x) in SUBSAMPLING_X.iter().enumerate() {
+            coef_ctx.set_coef_flags(plane, 0, 0, 16 >> subsampling_x, 8, true);
         }
 
         reset_skip_coef_context(&mut coef_ctx, BlockSize::Block8x8, 1, 2, 0);
