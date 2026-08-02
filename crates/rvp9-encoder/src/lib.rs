@@ -8624,7 +8624,7 @@ fn inter_forward_quant_one_tx_with_scratch<R>(
         vp9_quantize_fp_32x32_with_order, vp9_quantize_fp_with_order,
     };
     use rvp9_core::transforms::TxType;
-    use rvp9_core::transforms::forward::{fdct8x8, fdct16x16, fdct32x32, fht4x4};
+    use rvp9_core::transforms::forward::{fdct8x8_libvpx_lowbd, fdct16x16, fdct32x32, fht4x4};
     use rvp9_core::transforms::scans::scan_for;
 
     {
@@ -8641,7 +8641,7 @@ fn inter_forward_quant_one_tx_with_scratch<R>(
                 let output: &mut [i32; 64] = (&mut scratch.coefs[..n])
                     .try_into()
                     .expect("Tx8x8 coefficient prefix has 64 entries");
-                fdct8x8(residual, output, tx_side);
+                fdct8x8_libvpx_lowbd(residual, output, tx_side);
             }
             TxSize::Tx16x16 => {
                 let output: &mut [i32; 256] = (&mut scratch.coefs[..n])
@@ -9212,7 +9212,7 @@ fn choose_inter_luma_tx_size_impl<const PRUNE: bool>(input: InterLumaTxInput<'_>
         vp9_quantize_fp_32x32_with_order, vp9_quantize_fp_with_order,
     };
     use rvp9_core::transforms::TxType;
-    use rvp9_core::transforms::forward::{fdct8x8, fdct16x16, fdct32x32, fht4x4};
+    use rvp9_core::transforms::forward::{fdct8x8_libvpx_lowbd, fdct16x16, fdct32x32, fht4x4};
     use rvp9_core::transforms::scans::scan_for;
 
     let InterLumaTxInput {
@@ -9334,7 +9334,7 @@ fn choose_inter_luma_tx_size_impl<const PRUNE: bool>(input: InterLumaTxInput<'_>
                         );
                     }
                     TxSize::Tx8x8 => {
-                        fdct8x8(
+                        fdct8x8_libvpx_lowbd(
                             residual_tile,
                             (&mut coefs[..64])
                                 .try_into()

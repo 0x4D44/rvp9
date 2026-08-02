@@ -89,6 +89,28 @@ unsafe fn mul_round16(a: V16, constant: i32) -> V16 {
 }
 
 #[inline(always)]
+unsafe fn mul_round16_fast(a: V16, constant: i32) -> V16 {
+    vqrdmulhq_s16(a, vdupq_n_s16((2 * constant) as i16))
+}
+
+#[inline(always)]
+unsafe fn butterfly_one_coeff_wide(a: V16, b: V16, constant: i32) -> (V16, V16) {
+    let constant = vdupq_n_s32(constant << 17);
+    let add_lo = vqrdmulhq_s32(vaddl_s16(vget_low_s16(a), vget_low_s16(b)), constant);
+    let add_hi = vqrdmulhq_s32(vaddl_high_s16(a, b), constant);
+    let sub_lo = vqrdmulhq_s32(vsubl_s16(vget_low_s16(a), vget_low_s16(b)), constant);
+    let sub_hi = vqrdmulhq_s32(vsubl_high_s16(a, b), constant);
+    (
+        vcombine_s16(vmovn_s32(add_lo), vmovn_s32(add_hi)),
+        vcombine_s16(vmovn_s32(sub_lo), vmovn_s32(sub_hi)),
+    )
+}
+
+const FDCT8_EXACT_ONE_COEFF: u8 = 0;
+const FDCT8_PASS1_FAST_ONE_COEFF: u8 = 1;
+const FDCT8_PASS2_WIDE_ONE_COEFF: u8 = 2;
+
+#[inline(always)]
 unsafe fn mul_add_round16(a: V16, ac: i32, b: V16, bc: i32) -> V16 {
     let ac = ac as i16;
     let bc = bc as i16;
@@ -833,7 +855,7 @@ unsafe fn transpose8(mut rows: [V16; 8]) -> [V16; 8] {
 }
 
 #[inline(always)]
-unsafe fn fdct8x8_pass(input: [V16; 8]) -> [V16; 8] {
+unsafe fn fdct8x8_pass<const MODE: u8>(input: [V16; 8]) -> [V16; 8] {
     let s0 = add16(input[0], input[7]);
     let s1 = add16(input[1], input[6]);
     let s2 = add16(input[2], input[5]);
@@ -848,13 +870,35 @@ unsafe fn fdct8x8_pass(input: [V16; 8]) -> [V16; 8] {
     let x2 = sub16(s1, s2);
     let x3 = sub16(s0, s3);
     let mut output = [vdupq_n_s16(0); 8];
-    output[0] = mul_round16(add16(x0, x1), COSPI_16_64);
+    (output[0], output[4]) = if MODE == FDCT8_PASS1_FAST_ONE_COEFF {
+        (
+            mul_round16_fast(add16(x0, x1), COSPI_16_64),
+            mul_round16_fast(sub16(x0, x1), COSPI_16_64),
+        )
+    } else if MODE == FDCT8_PASS2_WIDE_ONE_COEFF {
+        butterfly_one_coeff_wide(x0, x1, COSPI_16_64)
+    } else {
+        (
+            mul_round16(add16(x0, x1), COSPI_16_64),
+            mul_round16(sub16(x0, x1), COSPI_16_64),
+        )
+    };
     output[2] = mul_add_round16(x3, COSPI_8_64, x2, COSPI_24_64);
-    output[4] = mul_round16(sub16(x0, x1), COSPI_16_64);
+    let (t3, t2) = if MODE == FDCT8_PASS1_FAST_ONE_COEFF {
+        (
+            mul_round16_fast(add16(s6, s5), COSPI_16_64),
+            mul_round16_fast(sub16(s6, s5), COSPI_16_64),
+        )
+    } else if MODE == FDCT8_PASS2_WIDE_ONE_COEFF {
+        butterfly_one_coeff_wide(s6, s5, COSPI_16_64)
+    } else {
+        (
+            mul_round16(add16(s6, s5), COSPI_16_64),
+            mul_round16(sub16(s6, s5), COSPI_16_64),
+        )
+    };
     output[6] = mul_add_round16(x3, COSPI_24_64, x2, -COSPI_8_64);
 
-    let t2 = mul_round16(sub16(s6, s5), COSPI_16_64);
-    let t3 = mul_round16(add16(s6, s5), COSPI_16_64);
     let x0 = add16(s4, t2);
     let x1 = sub16(s4, t2);
     let x2 = sub16(s7, t3);
@@ -866,24 +910,18 @@ unsafe fn fdct8x8_pass(input: [V16; 8]) -> [V16; 8] {
     transpose8(output)
 }
 
-#[target_feature(enable = "neon")]
-unsafe fn fdct8x8_inner(input: *const i16, output: *mut i32, stride: usize) -> bool {
+#[inline(always)]
+unsafe fn fdct8x8_first_pass<const MODE: u8>(input: *const i16, stride: usize) -> [V16; 8] {
     let mut rows = [vdupq_n_s16(0); 8];
     for (row, values) in rows.iter_mut().enumerate() {
         *values = vshlq_n_s16::<2>(vld1q_s16(input.add(row * stride)));
     }
-    rows = fdct8x8_pass(rows);
-    let max_abs = rows.iter().fold(vdupq_n_s16(0), |maximum, &values| {
-        vmaxq_s16(maximum, vqabsq_s16(values))
-    });
-    if vmaxvq_s16(max_abs) > 4095 {
-        // The second pass can add as many as eight input magnitudes before
-        // narrowing. Keep those rare high-energy blocks on the i32 scalar
-        // path rather than accepting the non-HBD libvpx kernel's i16 wrap.
-        return false;
-    }
-    rows = fdct8x8_pass(rows);
+    fdct8x8_pass::<MODE>(rows)
+}
 
+#[inline(always)]
+unsafe fn fdct8x8_second_pass_store(rows: [V16; 8], output: *mut i32) {
+    let rows = fdct8x8_pass::<FDCT8_EXACT_ONE_COEFF>(rows);
     for (row, values) in rows.into_iter().enumerate() {
         // C integer division truncates toward zero. For negative values,
         // subtracting the -1 sign before the halving shift implements it.
@@ -893,7 +931,35 @@ unsafe fn fdct8x8_inner(input: *const i16, output: *mut i32, stride: usize) -> b
         vst1q_s32(destination, vmovl_s16(vget_low_s16(reduced)));
         vst1q_s32(destination.add(4), vmovl_high_s16(reduced));
     }
+}
+
+#[target_feature(enable = "neon")]
+unsafe fn fdct8x8_inner(input: *const i16, output: *mut i32, stride: usize) -> bool {
+    let rows = fdct8x8_first_pass::<FDCT8_EXACT_ONE_COEFF>(input, stride);
+    let max_abs = rows.iter().fold(vdupq_n_s16(0), |maximum, &values| {
+        vmaxq_s16(maximum, vqabsq_s16(values))
+    });
+    if vmaxvq_s16(max_abs) > 4095 {
+        // The second pass can add as many as eight input magnitudes before
+        // narrowing. Keep those rare high-energy blocks on the i32 scalar
+        // path rather than accepting the non-HBD libvpx kernel's i16 wrap.
+        return false;
+    }
+    fdct8x8_second_pass_store(rows, output);
     true
+}
+
+#[target_feature(enable = "neon")]
+unsafe fn fdct8x8_libvpx_lowbd_inner(input: *const i16, output: *mut i32, stride: usize) {
+    let rows = fdct8x8_first_pass::<FDCT8_PASS1_FAST_ONE_COEFF>(input, stride);
+    let rows = fdct8x8_pass::<FDCT8_PASS2_WIDE_ONE_COEFF>(rows);
+    for (row, values) in rows.into_iter().enumerate() {
+        let sign = vshrq_n_s16::<15>(values);
+        let reduced = vhsubq_s16(values, sign);
+        let destination = output.add(row * 8);
+        vst1q_s32(destination, vmovl_s16(vget_low_s16(reduced)));
+        vst1q_s32(destination.add(4), vmovl_high_s16(reduced));
+    }
 }
 
 #[inline(always)]
@@ -1214,6 +1280,16 @@ pub(super) fn fdct8x8(input: &[i16], output: &mut [i32; 64], stride: usize) {
     if !unsafe { fdct8x8_inner(input.as_ptr(), output.as_mut_ptr(), stride) } {
         super::fdct8x8_scalar(input, output, stride);
     }
+}
+
+pub(super) fn fdct8x8_libvpx_lowbd(input: &[i16], output: &mut [i32; 64], stride: usize) {
+    assert!(stride >= 8);
+    assert!(input.len() >= 7 * stride + 8);
+    // SAFETY: The bounds above prove every eight-value input load. `output`
+    // provides all 64 destinations, and NEON is mandatory on AArch64. This
+    // deliberately mirrors libvpx's low-bit-depth first-pass approximation
+    // and unchecked i16 second pass.
+    unsafe { fdct8x8_libvpx_lowbd_inner(input.as_ptr(), output.as_mut_ptr(), stride) };
 }
 
 pub(super) fn fht16x16(input: &[i16], output: &mut [i32; 256], stride: usize, tx_type: TxType) {

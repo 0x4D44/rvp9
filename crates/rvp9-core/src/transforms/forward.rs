@@ -485,6 +485,22 @@ pub fn fdct8x8(input: &[i16], output: &mut [i32; 64], stride: usize) {
     }
 }
 
+/// Run the low-bit-depth 8x8 forward DCT used by libvpx's realtime encoder.
+///
+/// On AArch64 this uses libvpx's approximate first-pass multiply and unchecked
+/// i16 second pass. The regular [`fdct8x8`] retains its scalar-equivalent
+/// behavior for general callers. Other architectures use that implementation.
+pub fn fdct8x8_libvpx_lowbd(input: &[i16], output: &mut [i32; 64], stride: usize) {
+    #[cfg(target_arch = "aarch64")]
+    {
+        neon::fdct8x8_libvpx_lowbd(input, output, stride);
+    }
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        fdct8x8(input, output, stride);
+    }
+}
+
 /// Helper: the fdct8 inner pipeline operating on pre-loaded
 /// `s0..s7` values and writing into `out[base..base+8]`. Factored out
 /// because [`fdct8x8`] needs it twice (one pass with ×4 scaling, one
@@ -2335,6 +2351,23 @@ mod tests {
         fdct8x8_scalar(&alternating, &mut scalar, 8);
         neon::fdct8x8(&alternating, &mut vector, 8);
         assert_eq!(vector, scalar, "alternating residual extremes");
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    #[test]
+    fn fdct8x8_libvpx_lowbd_preserves_neon_wrap_semantics() {
+        let extreme = [-255i16; 64];
+        let mut wrapped = [0i32; 64];
+        fdct8x8_libvpx_lowbd(&extreme, &mut wrapped, 8);
+        assert_eq!(wrapped[0], -16_319);
+        assert!(wrapped[1..].iter().all(|&coefficient| coefficient == 0));
+
+        let ordinary: [i16; 64] = std::array::from_fn(|index| (index as i16 % 17) - 8);
+        let mut safe = [0i32; 64];
+        let mut lowbd = [0i32; 64];
+        fdct8x8(&ordinary, &mut safe, 8);
+        fdct8x8_libvpx_lowbd(&ordinary, &mut lowbd, 8);
+        assert_eq!(lowbd, safe, "ordinary residuals use the same coefficients");
     }
 
     #[cfg(target_arch = "aarch64")]
