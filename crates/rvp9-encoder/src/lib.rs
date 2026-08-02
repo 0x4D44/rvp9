@@ -3398,6 +3398,7 @@ fn partition_color_sensitivity(
     sensitivity
 }
 
+#[cfg(test)]
 fn zero_mv_sad64_edge_clamped(
     src: &[u8],
     reference: &[u8],
@@ -4620,16 +4621,18 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 Some(int_pro.mv)
             };
             // The partition tree and its chroma-sensitivity probe select the
-            // same LAST-vs-GOLDEN predictor. Compute GOLDEN's 64x64 zero-MV
-            // SAD once; the exact-tree path below reuses this result instead
-            // of scanning the superblock a second time.
+            // same LAST-vs-GOLDEN predictor. Production dimensions are
+            // multiples of 64, so compute GOLDEN's zero-MV SAD once with the
+            // dispatched full-block kernel; the exact-tree path below reuses
+            // this result instead of scanning the superblock a second time.
             let golden_distinct = golden_recon_yuv.0.as_ptr() != last_recon_yuv.0.as_ptr();
             let sb_golden_sad = if !rt_disable_golden_ref && golden_distinct {
-                zero_mv_sad64_edge_clamped(
-                    input_yuv.0,
-                    golden_recon_yuv.0,
-                    (w, h),
-                    (sb_px_x, sb_px_y),
+                let src_offset = sb_px_y * w + sb_px_x;
+                rvp9_core::dsp::get_ref().sad(BlockSize::Block64x64)(
+                    &input_yuv.0[src_offset..],
+                    w,
+                    &golden_recon_yuv.0[src_offset..],
+                    w,
                 )
             } else {
                 u32::MAX
@@ -10709,6 +10712,20 @@ mod tests {
             zero_mv_sad64_edge_clamped(&src, &reference, (80, 72), (64, 64)),
             64 * 64,
         );
+    }
+
+    #[test]
+    fn zero_mv_sad64_full_block_matches_dispatched_kernel() {
+        let src = (0..64 * 64)
+            .map(|i| (i as u8).wrapping_mul(37))
+            .collect::<Vec<_>>();
+        let reference = (0..64 * 64)
+            .map(|i| (i as u8).wrapping_mul(19).wrapping_add(11))
+            .collect::<Vec<_>>();
+        let edge_clamped = zero_mv_sad64_edge_clamped(&src, &reference, (64, 64), (0, 0));
+        let dispatched =
+            rvp9_core::dsp::get_ref().sad(BlockSize::Block64x64)(&src, 64, &reference, 64);
+        assert_eq!(dispatched, edge_clamped);
     }
 
     #[test]
