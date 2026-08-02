@@ -323,8 +323,13 @@ fn a10_byte_identity_pre_vs_post_refactor() {
     // using libvpx's CBR-only large-block model and Block32 started running
     // real `block_yrd`. This deliberately changes coding decisions; the
     // sibling reference-pool decode oracle still accepts all 12 frames.
-    const GOLDEN_HASH: u64 = 0x3e05_96b7_dae7_6f29;
-    const GOLDEN_LEN: usize = 8890;
+    //
+    // Re-captured again (2026-08-02) after Block32's luma-only
+    // encode-vs-skip comparison was ordered like libvpx. The new bytes
+    // reproduced twice, and the sibling decode oracle still accepts all 12
+    // frames.
+    const GOLDEN_HASH: u64 = 0xbcd1_613d_737c_248e;
+    const GOLDEN_LEN: usize = 9006;
 
     let stream = encode_fixed_clip();
     let hash = fnv1a(&stream);

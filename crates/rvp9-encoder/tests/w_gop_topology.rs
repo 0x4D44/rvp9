@@ -419,8 +419,13 @@ fn gop_topology_byte_identity() {
     // using libvpx's CBR-only large-block model and Block32 started running
     // real `block_yrd`. This deliberately changes coding decisions; the
     // sibling schedule oracle still matches every emitted frame.
-    const GOLDEN_HASH: u64 = 0x3fcd_e09d_c4b9_b19b;
-    const GOLDEN_LEN: usize = 26295;
+    //
+    // Re-captured again (2026-08-02) after Block32's luma-only
+    // encode-vs-skip comparison was ordered like libvpx. The new bytes
+    // reproduced twice, and the sibling schedule oracle still matches every
+    // emitted frame.
+    const GOLDEN_HASH: u64 = 0x7d8a_9b42_b9f9_db0a;
+    const GOLDEN_LEN: usize = 26625;
 
     let stream = encode_fixed_clip();
     let hash = fnv1a(&stream);

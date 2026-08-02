@@ -3209,6 +3209,24 @@ fn luma_model_skip_thresholds(use_large: bool, quantizer: &PlaneQuantizers) -> (
     ((dc * dc) >> 6, (ac * ac) >> 6)
 }
 
+fn y_skip_tie_break_allowed(
+    block_size: BlockSize,
+    hadamard_only: bool,
+    by: BlockYrdResult,
+) -> bool {
+    // Pinned libvpx lets the skip-side RD comparison override a non-skippable
+    // Hadamard result and carries `SKIP_TXFM_AC_DC` into the emitter. That is
+    // required for Block32+, where the EOB-only Hadamard rate can lose to the
+    // prediction-SSE branch even though one modeled coefficient survived.
+    !s2_gate_enabled()
+        || block_size >= BlockSize::Block32x32
+        || if hadamard_only {
+            by.skippable
+        } else {
+            by.dct_eob_total == 0
+        }
+}
+
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 enum FilterPredictionSlot {
     Candidate,
@@ -3790,6 +3808,11 @@ fn evaluate_candidate_for_filter_with_pred(
         .saturating_add(effective_coef_rate)
         .saturating_add(filter_rate)
         .saturating_add(uv_rate);
+    let syntax_and_uv_rate = mode_rate
+        .saturating_add(mv_rate)
+        .saturating_add(params.ref_frame_rate_cost)
+        .saturating_add(filter_rate)
+        .saturating_add(uv_rate);
 
     // **F.1 — libvpx skip-flag tie-break (vp9_pickmode.c:2355-2362, Q5).**
     // Unconditionally active since Phase 2c.
@@ -3848,12 +3871,7 @@ fn evaluate_candidate_for_filter_with_pred(
     // residual path honestly.
     // With the gate disabled (A/B), `y_skippable` is forced true so the
     // tie-break alone decides — the HEAD behaviour.
-    let y_skippable = !s2_gate_enabled()
-        || if hadamard_only {
-            by.skippable
-        } else {
-            by.dct_eob_total == 0
-        };
+    let y_skippable = y_skip_tie_break_allowed(params.block_size, hadamard_only, by);
 
     // **S3 — RD-domain alignment (`dist → coef_dist`).**
     //
@@ -3886,9 +3904,23 @@ fn evaluate_candidate_for_filter_with_pred(
             (u64::from(dist), u64::from(sse_after_pred_u32))
         };
 
-    let rd_encode = rd_cost(lambda, rate, dist_encode);
-    let rd_skip = rd_cost(lambda, 0, dist_skip);
-    let take_skip = y_skippable && rd_encode >= rd_skip;
+    let large_luma_tie = hadamard_only && params.block_size >= BlockSize::Block32x32;
+    let (rd_encode, rd_skip) = if large_luma_tie {
+        // libvpx resolves the luma-only encode-vs-skip choice immediately
+        // after `block_yrd`, then adds filter, chroma, mode, MV, and reference
+        // costs. Including those later terms in this comparison prevents the
+        // selected `SKIP_TXFM_AC_DC` state from reaching the emitter.
+        (
+            rd_cost(lambda, effective_coef_rate, coef_dist_u64),
+            rd_cost(lambda, 0, dist_skip),
+        )
+    } else {
+        (
+            rd_cost(lambda, rate, dist_encode),
+            rd_cost(lambda, 0, dist_skip),
+        )
+    };
+    let take_skip = (large_luma_tie || y_skippable) && rd_encode >= rd_skip;
     let skip_txfm = if by.skippable || take_skip {
         SkipTxfm::AcDc
     } else {
@@ -3899,7 +3931,19 @@ fn evaluate_candidate_for_filter_with_pred(
     // oracle — both expect pixel SSE). `final_dist_rd` is the
     // domain-correct dist that feeds the ranking `this_rd`, so mode
     // selection ranks in one consistent domain.
-    let (final_rate, final_dist, final_dist_rd) = if take_skip {
+    let (final_rate, final_dist, final_dist_rd) = if large_luma_tie {
+        let luma_rate = if take_skip {
+            skip_true_cost
+        } else {
+            effective_coef_rate.saturating_add(skip_false_cost)
+        };
+        let luma_dist = if take_skip { dist_skip } else { coef_dist_u64 };
+        (
+            syntax_and_uv_rate.saturating_add(luma_rate),
+            dist,
+            luma_dist.saturating_add(uv_dist.max(0) as u64),
+        )
+    } else if take_skip {
         // Y quantizes to zero AND skip is cheaper. The decoder will see
         // `sse_after_pred` as the distortion (no residual on the inverse
         // path); the rate collapses to the skip=true bit.
@@ -5411,6 +5455,29 @@ mod tests {
             (model.rate.max(0) as u64, model.dist),
             "Block32 must not reuse the small-block model-only result"
         );
+    }
+
+    #[test]
+    fn block32_skip_tie_break_can_override_hadamard_eob() {
+        let non_skippable = BlockYrdResult {
+            coef_rate: 10_240,
+            coef_dist: 312_787,
+            skippable: false,
+            dct_eob_total: 1,
+        };
+
+        test_gate_override::with(true, || {
+            assert!(y_skip_tie_break_allowed(
+                BlockSize::Block32x32,
+                true,
+                non_skippable,
+            ));
+            assert!(!y_skip_tie_break_allowed(
+                BlockSize::Block16x16,
+                true,
+                non_skippable,
+            ));
+        });
     }
 
     #[test]
