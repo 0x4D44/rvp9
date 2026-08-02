@@ -42,12 +42,6 @@
 //!   `conditional_skipintra` gate at libvpx line 1211 are speed-feature
 //!   optimisations; the standalone picker walks all 10 modes (the
 //!   `sf` = default = "all modes" path).
-//! - **No per-coefficient `coeff_ctx` threading across sub-blocks.**
-//!   libvpx combines the above/left entropy contexts
-//!   (`combine_entropy_contexts`, line 1253) into the `cost_coeffs`
-//!   context; the standalone picker uses `coeff_ctx = 0` (the
-//!   start-of-block context). The full neighbour-context plumbing lands
-//!   with the trellis integration.
 //! - **No early `RDCOST(...) >= best_rd` short-circuit inside the 4×4
 //!   walk** (libvpx line 1264). A 4×4 block is a single transform tile,
 //!   so there is only ever one `(idy, idx)` iteration — the
@@ -62,6 +56,7 @@
 //! arbitration for KF blocks below 8×8.
 
 use rvp9_core::block::BlockSize;
+use rvp9_core::coef_ctx::combine_entropy_contexts;
 use rvp9_core::cost::coef_cost::CoefCostTable;
 use rvp9_core::intra_pred::{DcAvailability, IntraMode, NUM_INTRA_MODES, PredCtx, intra_predict};
 use rvp9_core::quant::forward::{PlaneQuantizers, scan_for_forward, vp9_quantize_b};
@@ -103,6 +98,10 @@ pub struct KfIntraSubWinner {
     pub rate: u32,
     /// Winning token-only rate (`ratey`).
     pub rate_y: u32,
+    /// Initial coefficient entropy context used to price the winner.
+    pub coeff_ctx: usize,
+    /// Whether the winning transform emitted any non-zero coefficient.
+    pub eob_nonzero: bool,
     /// Winning distortion (`block_error >> 2`).
     pub dist: i64,
     /// Winning RD (`RDCOST(rdmult, rate, dist)`).
@@ -146,6 +145,9 @@ pub struct PickIntra4x4Params<'a> {
     pub quant: &'a PlaneQuantizers,
     /// Coefficient-bit cost table (feeds `cost_coeffs`).
     pub coef_costs: &'a CoefCostTable,
+    /// Initial coefficient context from the live above/left transform
+    /// neighbours (`combine_entropy_contexts(a, l)`).
+    pub coeff_ctx: usize,
     /// `rdmult` (lambda).
     pub rdmult: i64,
     /// `rd_thresh` cap (libvpx line 1066 / 1069 `best_rd = rd_thresh`).
@@ -251,7 +253,7 @@ pub fn pick_intra4x4_block(params: &PickIntra4x4Params<'_>) -> Option<Pick4x4Res
             TxSize::Tx4x4,
             0, // plane_type: Y
             0, // ref_type
-            0, // coeff_ctx (start-of-block, see scope note)
+            params.coeff_ctx,
             params.coef_costs,
         );
 
@@ -286,6 +288,8 @@ pub fn pick_intra4x4_block(params: &PickIntra4x4Params<'_>) -> Option<Pick4x4Res
                     mode,
                     rate,
                     rate_y: ratey,
+                    coeff_ctx: params.coeff_ctx,
+                    eob_nonzero: eob > 0,
                     dist: distortion,
                     rd: this_rd,
                 },
@@ -334,6 +338,10 @@ pub struct PickIntraSub8x8Params<'a> {
     pub quant: &'a PlaneQuantizers,
     /// Coefficient-bit cost table.
     pub coef_costs: &'a CoefCostTable,
+    /// Two luma coefficient contexts immediately above this 8x8 block.
+    pub above_coef_contexts: [u8; 2],
+    /// Two luma coefficient contexts immediately left of this 8x8 block.
+    pub left_coef_contexts: [u8; 2],
     /// `rdmult` (lambda).
     pub rdmult: i64,
     /// `best_rd` cap (libvpx line 1302).
@@ -386,6 +394,8 @@ pub fn pick_intra_sub_8x8_y_mode(
 
     let mut sub_winners: [Option<KfIntraSubWinner>; NUM_SUB_BLOCKS] = [None; NUM_SUB_BLOCKS];
     let mut selected_modes = [IntraMode::Dc; NUM_SUB_BLOCKS];
+    let mut above_coef_contexts = params.above_coef_contexts;
+    let mut left_coef_contexts = params.left_coef_contexts;
     let mut total_rate: u64 = 0;
     let mut total_rate_y: u64 = 0;
     let mut total_distortion: i64 = 0;
@@ -393,8 +403,8 @@ pub fn pick_intra_sub_8x8_y_mode(
 
     // Walk `(idy, idx) ∈ {0,1}²`, sub-block `i = idy * 2 + idx`
     // (libvpx lines 1319-1324).
-    for idy in 0..2usize {
-        for idx in 0..2usize {
+    for (idy, left_coef_context) in left_coef_contexts.iter_mut().enumerate() {
+        for (idx, above_coef_context) in above_coef_contexts.iter_mut().enumerate() {
             let blk_idx = idy * 2 + idx;
 
             // Build this sub-block's 4×4 source + neighbour edges. The
@@ -419,6 +429,7 @@ pub fn pick_intra_sub_8x8_y_mode(
                 bmode_costs: &params.y_mode_costs[above_mode as usize][left_mode as usize],
                 quant: params.quant,
                 coef_costs: params.coef_costs,
+                coeff_ctx: combine_entropy_contexts(*above_coef_context, *left_coef_context),
                 rdmult: params.rdmult,
                 rd_thresh: sub_cap,
             };
@@ -427,6 +438,8 @@ pub fn pick_intra_sub_8x8_y_mode(
             // (→ None) on a miss against `best_rd - total_rd`.
             let result = pick_intra4x4_block(&sub_params)?;
             let winner = result.winner;
+            *above_coef_context = u8::from(winner.eob_nonzero);
+            *left_coef_context = u8::from(winner.eob_nonzero);
 
             // Write the winning recon into the shared 8×8 buffer so the
             // next sub-block can read it as a neighbour edge.
@@ -454,6 +467,8 @@ pub fn pick_intra_sub_8x8_y_mode(
             mode: IntraMode::Dc,
             rate: 0,
             rate_y: 0,
+            coeff_ctx: 0,
+            eob_nonzero: false,
             dist: 0,
             rd: i64::MAX,
         }; NUM_SUB_BLOCKS];
@@ -661,6 +676,7 @@ mod tests {
             bmode_costs: bmode,
             quant,
             coef_costs: costs,
+            coeff_ctx: 0,
             rdmult: 80,
             rd_thresh: i64::MAX,
         }
@@ -703,6 +719,29 @@ mod tests {
         );
         // And the recon recovers the source exactly.
         assert_eq!(result.recon, src, "exact prediction → recon == source");
+    }
+
+    #[test]
+    fn w7_9_kf_intra_4x4_prices_live_coefficient_context() {
+        let fc = FrameContext::new_default();
+        let costs = build_coef_cost_table(&fc);
+        let quant = init_plane_quantizers(48, QuantizerDeltas::Y);
+        let bmode = flat_bmode_costs();
+        let src = [100u8; SUB * SUB];
+        let edges = uniform_edges(100);
+        let context_zero = make_params(&src, edges, &bmode, &quant, &costs);
+        let mut context_two = make_params(&src, edges, &bmode, &quant, &costs);
+        context_two.coeff_ctx = 2;
+
+        let zero = pick_intra4x4_block(&context_zero).expect("context-zero winner");
+        let two = pick_intra4x4_block(&context_two).expect("context-two winner");
+
+        assert_eq!(zero.winner.coeff_ctx, 0);
+        assert_eq!(two.winner.coeff_ctx, 2);
+        assert_ne!(
+            zero.winner.rate_y, two.winner.rate_y,
+            "default coefficient probabilities must price EOB differently by context",
+        );
     }
 
     /// PROOF W7.9 (DIFFERENTIAL ORACLE — vertical gradient prefers a
@@ -844,6 +883,8 @@ mod tests {
             left_modes: [IntraMode::Dc; NUM_SUB_BLOCKS],
             quant: &quant,
             coef_costs: &costs,
+            above_coef_contexts: [1; 2],
+            left_coef_contexts: [1; 2],
             rdmult: 80,
             best_rd: i64::MAX,
         };
@@ -858,6 +899,11 @@ mod tests {
                 w.mode,
             );
         }
+        assert_eq!(
+            r.sub_winners.map(|winner| winner.coeff_ctx),
+            [2, 1, 1, 0],
+            "zero-EOB winners must clear their causal above/left contexts",
+        );
         assert_eq!(
             r.total_distortion, 0,
             "flat block → zero aggregate distortion"
@@ -912,6 +958,8 @@ mod tests {
             left_modes: [IntraMode::Dc; NUM_SUB_BLOCKS],
             quant: &quant,
             coef_costs: &costs,
+            above_coef_contexts: [0; 2],
+            left_coef_contexts: [0; 2],
             rdmult: 80,
             best_rd: i64::MAX,
         };
@@ -966,6 +1014,8 @@ mod tests {
             left_modes: [IntraMode::Dc; NUM_SUB_BLOCKS],
             quant: &quant,
             coef_costs: &costs,
+            above_coef_contexts: [0; 2],
+            left_coef_contexts: [0; 2],
             rdmult: 80,
             // Cap at 1 — any real residual blows past it.
             best_rd: 1,

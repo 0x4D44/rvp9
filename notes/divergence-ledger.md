@@ -34,8 +34,9 @@ averages, consider NONE/HORZ/VERT/SPLIT partitions, and pick four causal BMI
 modes with live coefficient entropy contexts.
 **What rvp9 does:** `RVP9_EXACT_KF_SUB8=1` enables a diagnostic-only tree that
 uses the same rounded 4x4-average variance but considers NONE/SPLIT only. A
-selected 8x8 SPLIT carries four causal 4x4 modes. Coefficient rate estimates
-still use entropy context zero. Production behavior is unchanged.
+selected 8x8 SPLIT carries four causal 4x4 modes and prices them with the live
+tile above/left coefficient contexts, updating the contexts after every
+winner. Production behavior is unchanged.
 **Why:** this is the smallest independently testable seam that closes the
 measured keyframe-reference mismatch without exposing incomplete behavior as
 a default. It permits direct measurement before adding rectangular partition
@@ -46,16 +47,17 @@ The normal CPU7 VBR stream remains 47,314 bytes with SHA-256
 Under the flag, rvp9-decoder, pinned vpxdec, and ffmpeg produce identical
 decoded output.
 **Compression-efficiency impact:** at fixed qindex 120, the first keyframe is
-35,416 bits versus libvpx's 35,368 and gains 0.13 dB luma PSNR. On the native
+36,216 bits versus libvpx's 35,368 and gains 0.28 dB luma PSNR. The 64-frame
+stream shrinks from 124,458 to 115,241 bytes because the improved keyframe is
+a better inter reference. On the native
 three-clip CPU7 screen, luma BD-rate moves from
 `+43.4699%/+4.23215%/+81.88394%` to
-`+39.568619%/+6.942496%/+76.373751%` for
+`+39.313659%/+6.701459%/+76.876911%` for
 `in_to_tree`/`ducks_take_off`/`old_town_cross`. The ducks regression prevents
 default enablement.
-**Future plan:** first measure live subblock coefficient contexts and keyframe-
-only rate/quality on the regressing clip. Add coefficient-context threading or
-source rectangular partitions one measured hypothesis at a time, and require
-a representative Pareto result before changing production.
+**Future plan:** measure source rectangular partitions and forced-root behavior
+one hypothesis at a time. Require a representative Pareto result before
+changing production.
 
 ### 2026-08-02 — Keep the calibrated VBR rate prior and GOLDEN allocator default-off
 **Where:** `rvp9_encoder::frame_loop::{VBR_BITS_PER_MB_MULTIPLIER_DEFAULT,StreamEncoder::new,StreamEncoder::encode_frame}`

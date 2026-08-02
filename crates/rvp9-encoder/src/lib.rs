@@ -2054,6 +2054,47 @@ fn simulate_dc_intra_encode_partitions_no_zero_with_tiles(
     }
 }
 
+fn update_intra_picker_luma_coef_context(
+    coef_ctx: &mut TileCoefCtx,
+    coef_source: &VecBackedIntraCoefSource,
+    mi_row: usize,
+    mi_col: usize,
+    tile_mi_col_start: usize,
+    leaf_bsize: BlockSize,
+    tx_size: TxSize,
+) {
+    let extent_4x4 = if leaf_bsize < BlockSize::Block8x8 {
+        2
+    } else {
+        leaf_bsize.n_4x4_wide() as usize
+    };
+    let tx_step_4x4 = 1usize << tx_size as usize;
+    let x4_base = (mi_col - tile_mi_col_start) * 2;
+    let y4_in_sb_base = (mi_row & 7) * 2;
+
+    for tx_y4_local in (0..extent_4x4).step_by(tx_step_4x4) {
+        for tx_x4_local in (0..extent_4x4).step_by(tx_step_4x4) {
+            let (_, eob) = rvp9_core::bitstream::IntraCoefSource::get_block_coefs(
+                coef_source,
+                mi_row,
+                mi_col,
+                0,
+                tx_x4_local,
+                tx_y4_local,
+                tx_size,
+            );
+            coef_ctx.set_coef_flags(
+                0,
+                x4_base + tx_x4_local,
+                y4_in_sb_base + tx_y4_local,
+                tx_step_4x4,
+                tx_step_4x4,
+                eob > 0,
+            );
+        }
+    }
+}
+
 /// F10.1b — pick the Y intra mode per leaf via
 /// [`rvp9_core::mode_decision::intra::pick_realtime_intra_mode_luma`], record it
 /// into the leaf descriptor, AND encode the leaf in the same walk so
@@ -2143,6 +2184,12 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
         .flatten()
         .any(|leaf| leaf.leaf_bsize < BlockSize::Block8x8)
         .then(|| build_coef_cost_table(&FrameContext::new_default()));
+    let mut picker_coef_contexts = coef_costs.as_ref().map(|_| {
+        tile_bounds_by_col
+            .iter()
+            .map(|bounds| TileCoefCtx::new(bounds.mi_col_end - bounds.mi_col_start))
+            .collect::<Vec<_>>()
+    });
 
     // Zero recon up-front — the per-leaf simulator call expects the
     // recon plane to be already populated for previously-encoded leaves
@@ -2160,8 +2207,21 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
     let mut coef_source = VecBackedIntraCoefSource::new(width, height);
 
     for sb_row in 0..sb_rows {
+        if let Some(contexts) = picker_coef_contexts.as_mut() {
+            for context in contexts {
+                context.reset_left_coef();
+            }
+        }
         for sb_col in 0..sb_cols {
             let current_tile = tile_for_mi_col(&tile_bounds_by_col, sb_col * 8);
+            let current_tile_index = picker_coef_contexts.as_ref().map_or(0, |_| {
+                tile_bounds_by_col
+                    .iter()
+                    .position(|bounds| {
+                        sb_col * 8 >= bounds.mi_col_start && sb_col * 8 < bounds.mi_col_end
+                    })
+                    .expect("current keyframe superblock belongs to one tile")
+            });
             let sb_idx = sb_row * sb_cols + sb_col;
             for leaf_idx in 0..sb_partitions[sb_idx].len() {
                 let (leaf_mi_row, leaf_mi_col, leaf_bsize) = {
@@ -2271,6 +2331,13 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
                     } else {
                         ABOVE_UNAVAILABLE_FILL
                     };
+                    let picker_coef_ctx = picker_coef_contexts
+                        .as_ref()
+                        .expect("sub-8 leaves require picker coefficient contexts")
+                        .get(current_tile_index)
+                        .expect("current keyframe tile has coefficient context");
+                    let x4_base = (leaf_mi_col - current_tile.mi_col_start) * 2;
+                    let y4_in_sb_base = (leaf_mi_row & 7) * 2;
                     let params = PickIntraSub8x8Params {
                         parent_bsize: BlockSize::Block8x8,
                         src: &src,
@@ -2286,6 +2353,14 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
                         coef_costs: coef_costs
                             .as_ref()
                             .expect("sub-8 leaves require coefficient costs"),
+                        above_coef_contexts: [
+                            picker_coef_ctx.above_coef(0, x4_base),
+                            picker_coef_ctx.above_coef(0, x4_base + 1),
+                        ],
+                        left_coef_contexts: [
+                            picker_coef_ctx.left_coef(0, y4_in_sb_base),
+                            picker_coef_ctx.left_coef(0, y4_in_sb_base + 1),
+                        ],
                         rdmult: i64::from(compute_rd_mult(
                             i32::from(leaf_qindex),
                             FrameTypeForRd::Key,
@@ -2448,6 +2523,17 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
                     Some((sb_idx, leaf_idx)),
                     &mut coef_source,
                 );
+                if let Some(contexts) = picker_coef_contexts.as_mut() {
+                    update_intra_picker_luma_coef_context(
+                        &mut contexts[current_tile_index],
+                        &coef_source,
+                        leaf_mi_row,
+                        leaf_mi_col,
+                        current_tile.mi_col_start,
+                        leaf_bsize,
+                        chosen_intra_tx,
+                    );
+                }
             }
         }
     }
