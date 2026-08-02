@@ -4619,30 +4619,34 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
             } else {
                 Some(int_pro.mv)
             };
+            // The partition tree and its chroma-sensitivity probe select the
+            // same LAST-vs-GOLDEN predictor. Compute GOLDEN's 64x64 zero-MV
+            // SAD once; the exact-tree path below reuses this result instead
+            // of scanning the superblock a second time.
+            let golden_distinct = golden_recon_yuv.0.as_ptr() != last_recon_yuv.0.as_ptr();
+            let sb_golden_sad = if !rt_disable_golden_ref && golden_distinct {
+                zero_mv_sad64_edge_clamped(
+                    input_yuv.0,
+                    golden_recon_yuv.0,
+                    (w, h),
+                    (sb_px_x, sb_px_y),
+                )
+            } else {
+                u32::MAX
+            };
+            let last_bias_num = if rc_mode == crate::rate_control::RcMode::Cbr {
+                7
+            } else {
+                8
+            };
+            let sb_partition_use_golden =
+                u64::from(sb_golden_sad) < (u64::from(int_pro.best_sad) * last_bias_num) >> 3;
             let sb_partition_color_sensitivity = {
-                let golden_distinct = golden_recon_yuv.0.as_ptr() != last_recon_yuv.0.as_ptr();
-                let golden_sad = if !rt_disable_golden_ref && golden_distinct {
-                    zero_mv_sad64_edge_clamped(
-                        input_yuv.0,
-                        golden_recon_yuv.0,
-                        (w, h),
-                        (sb_px_x, sb_px_y),
-                    )
-                } else {
-                    u32::MAX
-                };
-                let last_bias_num = if rc_mode == crate::rate_control::RcMode::Cbr {
-                    7
-                } else {
-                    8
-                };
-                let use_golden =
-                    u64::from(golden_sad) < (u64::from(int_pro.best_sad) * last_bias_num) >> 3;
-                let (partition_ref_uv, partition_mv, selected_sad) = if use_golden {
+                let (partition_ref_uv, partition_mv, selected_sad) = if sb_partition_use_golden {
                     (
                         (golden_recon_yuv.1, golden_recon_yuv.2),
                         Mv::ZERO,
-                        golden_sad,
+                        sb_golden_sad,
                     )
                 } else {
                     (
@@ -4734,28 +4738,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     // cpu7 considers GOLDEN at zero MV and keeps LAST unless
                     // GOLDEN is strictly better than 7/8 of int-pro LAST SAD
                     // (the CBR short-circuit bias; VBR uses the unbiased SAD).
-                    let src_offset = sb_px_y * w + sb_px_x;
-                    let sad64 = rvp9_core::dsp::get_ref().sad(BlockSize::Block64x64);
-                    let golden_distinct = golden_recon_yuv.0.as_ptr() != last_recon_yuv.0.as_ptr();
-                    let golden_sad = if !rt_disable_golden_ref && golden_distinct {
-                        sad64(
-                            &input_yuv.0[src_offset..],
-                            w,
-                            &golden_recon_yuv.0[src_offset..],
-                            w,
-                        )
-                    } else {
-                        u32::MAX
-                    };
-                    let last_bias_num = if rc_mode == crate::rate_control::RcMode::Cbr {
-                        7
-                    } else {
-                        8
-                    };
-                    let use_golden =
-                        u64::from(golden_sad) < (u64::from(int_pro.best_sad) * last_bias_num) >> 3;
-                    let (partition_ref, partition_mv, selected_sad) = if use_golden {
-                        (golden_recon_yuv.0, Mv::ZERO, golden_sad)
+                    let (partition_ref, partition_mv, selected_sad) = if sb_partition_use_golden {
+                        (golden_recon_yuv.0, Mv::ZERO, sb_golden_sad)
                     } else {
                         (last_recon_yuv.0, partition_mv, int_pro.best_sad)
                     };
@@ -4815,7 +4799,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             compute_minmax_variance: true,
                             segment_is_boosted: segment_id != 0
                                 && seg_q_deltas[usize::from(segment_id)].is_some(),
-                            partition_ref_is_last: !use_golden,
+                            partition_ref_is_last: !sb_partition_use_golden,
                             partition_mv_row: partition_mv.row,
                             partition_mv_col: partition_mv.col,
                             low_temp_var_mode: u8::from(
