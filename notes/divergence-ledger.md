@@ -55,9 +55,9 @@ three-clip CPU7 screen, luma BD-rate moves from
 `+39.313659%/+6.701459%/+76.876911%` for
 `in_to_tree`/`ducks_take_off`/`old_town_cross`. The ducks regression prevents
 default enablement.
-**Future plan:** measure source rectangular partitions and forced-root behavior
-one hypothesis at a time. Require a representative Pareto result before
-changing production.
+**Future plan:** compare the per-mode 4x4 RD inputs against pinned libvpx at
+identical source and neighbour pixels. Forced-root splitting and the CPU7
+DC/V/H sub-8 mask were measured and rejected as non-Pareto changes.
 
 ### 2026-08-02 — Keep the calibrated VBR rate prior and GOLDEN allocator default-off
 **Where:** `rvp9_encoder::frame_loop::{VBR_BITS_PER_MB_MULTIPLIER_DEFAULT,StreamEncoder::new,StreamEncoder::encode_frame}`
