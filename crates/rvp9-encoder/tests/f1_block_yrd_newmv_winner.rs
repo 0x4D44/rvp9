@@ -137,6 +137,7 @@ fn f1_block_yrd_newmv_wins_on_shifted_ref() {
         ref_u: &[],
         ref_v: &[],
         uv_stride: 0,
+        color_sensitivity: [false; 2],
         uv_dc_quant: 0,
         uv_ac_quant: 0,
     };
@@ -235,6 +236,7 @@ fn f1_identical_source_yields_skip_winner() {
         ref_u: &[],
         ref_v: &[],
         uv_stride: 0,
+        color_sensitivity: [false; 2],
         uv_dc_quant: 0,
         uv_ac_quant: 0,
     };

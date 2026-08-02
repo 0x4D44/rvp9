@@ -110,8 +110,8 @@ use crate::mode_decision::hadamard::{
     hadamard_8x8_subtract, hadamard_16x16_subtract, hadamard_32x32_subtract,
 };
 use crate::mode_decision::model_rd::{
-    ModelRdResult, ModelRdUvInput, ModelRdYInput, SkipTxfm, model_rd_for_sb_uv, model_rd_for_sb_y,
-    model_rd_for_sb_y_large,
+    ModelRdResult, ModelRdUvInput, ModelRdYInput, SkipTxfm, model_rd_for_sb_uv_masked,
+    model_rd_for_sb_y, model_rd_for_sb_y_large,
 };
 use crate::mode_decision::rd_cost;
 use crate::mode_info::{InterMode, Mv, RefFrame};
@@ -775,6 +775,9 @@ pub struct InterModeSearchParams<'a> {
     pub ref_v: &'a [u8],
     /// Stride of all UV planes (= w/2 for 4:2:0).
     pub uv_stride: usize,
+    /// Per-plane libvpx color-sensitivity mask (`[U, V]`). Insensitive
+    /// planes do not contribute prediction work or model-RD cost.
+    pub color_sensitivity: [bool; 2],
     /// Chroma DC dequant (`dequant[0]` from UV quantizer).
     pub uv_dc_quant: u32,
     /// Chroma AC dequant (`dequant[1]` from UV quantizer).
@@ -1132,6 +1135,8 @@ pub struct PickInterModeParams<'a> {
     pub golden_ref_v: &'a [u8],
     /// Stride of all UV ref planes (= w/2 for 4:2:0).
     pub uv_stride: usize,
+    /// Per-SB libvpx color-sensitivity mask (`[U, V]`).
+    pub color_sensitivity: [bool; 2],
     /// Chroma DC dequant (`dequant[0]` from UV quantizer).
     pub uv_dc_quant: u32,
     /// Chroma AC dequant (`dequant[1]` from UV quantizer).
@@ -2075,6 +2080,7 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
                         ref_u,
                         ref_v,
                         uv_stride: params.uv_stride,
+                        color_sensitivity: params.color_sensitivity,
                         uv_dc_quant: params.uv_dc_quant,
                         uv_ac_quant: params.uv_ac_quant,
                     };
@@ -2238,6 +2244,7 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
             ref_u,
             ref_v,
             uv_stride: params.uv_stride,
+            color_sensitivity: params.color_sensitivity,
             uv_dc_quant: params.uv_dc_quant,
             uv_ac_quant: params.uv_ac_quant,
         };
@@ -2772,6 +2779,7 @@ fn evaluate_intra_fallback_with_scratch(
                     ref_u: params.last_ref_u,
                     ref_v: params.last_ref_v,
                     uv_stride: params.uv_stride,
+                    color_sensitivity: params.color_sensitivity,
                     uv_dc_quant: params.uv_dc_quant,
                     uv_ac_quant: params.uv_ac_quant,
                 };
@@ -3722,6 +3730,7 @@ fn evaluate_candidate_for_filter_with_pred(
     // Only runs when UV planes are provided (non-empty src_u). Test
     // harnesses pass empty slices to skip this path.
     let (uv_rate, uv_dist): (u32, i64) = if !yuv_early_term
+        && (params.color_sensitivity[0] || params.color_sensitivity[1])
         && !params.src_u.is_empty()
         && !params.ref_u.is_empty()
         && params.uv_stride > 0
@@ -3745,7 +3754,7 @@ fn evaluate_candidate_for_filter_with_pred(
         // Reuse every prediction the large-block skip probe materialized
         // before it either succeeded or rejected early termination.
         let ready_mask = chroma_skip_probe.map_or(0, |probe| probe.ready_mask);
-        if ready_mask & 1 == 0 {
+        if params.color_sensitivity[0] && ready_mask & 1 == 0 {
             build_chroma_prediction(
                 params.ref_u,
                 params.uv_stride,
@@ -3759,7 +3768,7 @@ fn evaluate_candidate_for_filter_with_pred(
                 pred_u,
             );
         }
-        if ready_mask & 2 == 0 {
+        if params.color_sensitivity[1] && ready_mask & 2 == 0 {
             build_chroma_prediction(
                 params.ref_v,
                 params.uv_stride,
@@ -3778,21 +3787,24 @@ fn evaluate_candidate_for_filter_with_pred(
         let src_u_start = uv_y * params.uv_stride + uv_x;
         let src_v_start = uv_y * params.uv_stride + uv_x;
 
-        let uv_rd = model_rd_for_sb_uv(ModelRdUvInput {
-            src_u: &params.src_u[src_u_start..],
-            src_u_stride: params.uv_stride,
-            pred_u,
-            pred_u_stride: uv_bw,
-            src_v: &params.src_v[src_v_start..],
-            src_v_stride: params.uv_stride,
-            pred_v,
-            pred_v_stride: uv_bw,
-            bw,
-            bh, // luma dimensions — halved internally
-            bsize: params.block_size,
-            dc_quant: params.uv_dc_quant,
-            ac_quant: params.uv_ac_quant,
-        });
+        let uv_rd = model_rd_for_sb_uv_masked(
+            ModelRdUvInput {
+                src_u: &params.src_u[src_u_start..],
+                src_u_stride: params.uv_stride,
+                pred_u,
+                pred_u_stride: uv_bw,
+                src_v: &params.src_v[src_v_start..],
+                src_v_stride: params.uv_stride,
+                pred_v,
+                pred_v_stride: uv_bw,
+                bw,
+                bh, // luma dimensions — halved internally
+                bsize: params.block_size,
+                dc_quant: params.uv_dc_quant,
+                ac_quant: params.uv_ac_quant,
+            },
+            params.color_sensitivity,
+        );
 
         (uv_rd.rate.max(0) as u32, uv_rd.dist)
     } else {
@@ -5131,6 +5143,7 @@ mod tests {
             ref_u: &[],
             ref_v: &[],
             uv_stride: 0,
+            color_sensitivity: [false; 2],
             uv_dc_quant: 0,
             uv_ac_quant: 0,
         }
@@ -5624,6 +5637,7 @@ mod tests {
             ref_u: &uv_ref,
             ref_v: &uv_ref,
             uv_stride: pw / 2,
+            color_sensitivity: [true; 2],
             uv_dc_quant: 73,
             uv_ac_quant: 91,
             ..params
@@ -6390,6 +6404,7 @@ mod tests {
             ref_u: &[],
             ref_v: &[],
             uv_stride: 0,
+            color_sensitivity: [false; 2],
             uv_dc_quant: 0,
             uv_ac_quant: 0,
         };
@@ -6850,6 +6865,7 @@ mod tests {
             golden_ref_u: &[],
             golden_ref_v: &[],
             uv_stride: 0,
+            color_sensitivity: [false; 2],
             uv_dc_quant: 0,
             uv_ac_quant: 0,
             encode_breakout: 0,
@@ -7671,6 +7687,7 @@ mod tests {
         params_with_uv.ref_u = &data_u_ref;
         params_with_uv.ref_v = &data_v_ref;
         params_with_uv.uv_stride = pw / 2;
+        params_with_uv.color_sensitivity = [true; 2];
         params_with_uv.uv_dc_quant = 96;
         params_with_uv.uv_ac_quant = 80;
 

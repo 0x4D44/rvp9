@@ -7745,6 +7745,7 @@ mod tests {
             ref_u: &[],
             ref_v: &[],
             uv_stride: 0,
+            color_sensitivity: [false; 2],
             uv_dc_quant: 0,
             uv_ac_quant: 0,
         };

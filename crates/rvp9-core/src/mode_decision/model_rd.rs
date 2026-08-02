@@ -506,6 +506,19 @@ pub struct ModelRdUvResult {
 ///   and `dequant[1]`). The caller must pass the raw dequant values;
 ///   this function applies the `>> 3` divisor for 8-bit internally.
 pub fn model_rd_for_sb_uv(input: ModelRdUvInput<'_>) -> ModelRdUvResult {
+    model_rd_for_sb_uv_masked(input, [true; 2])
+}
+
+/// Chroma model-RD with libvpx's per-plane color-sensitivity mask.
+///
+/// `sensitive[0]` selects U and `sensitive[1]` selects V. Pinned libvpx
+/// skips both prediction and model cost for an insensitive chroma plane in
+/// `model_rd_for_sb_uv` (`vp9_pickmode.c:869-877`).
+#[must_use]
+pub fn model_rd_for_sb_uv_masked(
+    input: ModelRdUvInput<'_>,
+    sensitive: [bool; 2],
+) -> ModelRdUvResult {
     let ModelRdUvInput {
         src_u,
         src_u_stride,
@@ -543,10 +556,16 @@ pub fn model_rd_for_sb_uv(input: ModelRdUvInput<'_>) -> ModelRdUvResult {
 
     // Process both U and V planes (mirroring the `for i in
     // start_plane..=stop_plane` loop in libvpx).
-    for (src, src_stride, pred, pred_stride) in [
+    for ((src, src_stride, pred, pred_stride), sensitive) in [
         (src_u, src_u_stride, pred_u, pred_u_stride),
         (src_v, src_v_stride, pred_v, pred_v_stride),
-    ] {
+    ]
+    .into_iter()
+    .zip(sensitive)
+    {
+        if !sensitive {
+            continue;
+        }
         let (var, sse) = compute_variance(reduce, src, src_stride, pred, pred_stride, uv_bw, uv_bh);
 
         // DC component: model_rd_from_var_lapndz(sse - var, ...)
@@ -1476,6 +1495,40 @@ mod tests {
             result_u_only.dist * 2,
             "both-plane dist should be 2x single-plane dist"
         );
+    }
+
+    #[test]
+    fn model_rd_uv_mask_skips_insensitive_planes() {
+        let flat = [128u8; 8 * 8];
+        let textured = core::array::from_fn::<_, { 8 * 8 }, _>(|i| {
+            128u8.saturating_add((i / 8 * 3 + i % 8) as u8)
+        });
+        let input = || {
+            uv_input!(
+                &textured,
+                8,
+                &flat,
+                8,
+                &textured,
+                8,
+                &flat,
+                8,
+                16,
+                16,
+                BlockSize::Block16x16,
+                96,
+                80,
+            )
+        };
+
+        let both = model_rd_for_sb_uv_masked(input(), [true, true]);
+        let u_only = model_rd_for_sb_uv_masked(input(), [true, false]);
+        let neither = model_rd_for_sb_uv_masked(input(), [false, false]);
+
+        assert_eq!(both.rate, u_only.rate * 2);
+        assert_eq!(both.dist, u_only.dist * 2);
+        assert_eq!(neither.rate, 0);
+        assert_eq!(neither.dist, 0);
     }
 
     // -----------------------------------------------------------------------

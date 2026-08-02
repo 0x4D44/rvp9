@@ -4601,7 +4601,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
             } else {
                 Some(int_pro.mv)
             };
-            let sb_partition_color_sensitivity = if f02_oracle_enabled {
+            let sb_partition_color_sensitivity = {
                 let golden_distinct = golden_recon_yuv.0.as_ptr() != last_recon_yuv.0.as_ptr();
                 let golden_sad = if !rt_disable_golden_ref && golden_distinct {
                     zero_mv_sad64_edge_clamped(
@@ -4641,8 +4641,6 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     partition_mv,
                     selected_sad,
                 )
-            } else {
-                [false; 2]
             };
 
             let mut used_exact_vbp_tree = false;
@@ -5272,6 +5270,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         golden_ref_u: golden_recon_yuv.1,
                         golden_ref_v: golden_recon_yuv.2,
                         uv_stride: uvw,
+                        color_sensitivity: [false; 2],
                         uv_dc_quant: uv_dc_dq as u32,
                         uv_ac_quant: uv_ac_dq as u32,
                         encode_breakout: 20,
@@ -6493,6 +6492,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     golden_ref_u: golden_recon_yuv.1,
                     golden_ref_v: golden_recon_yuv.2,
                     uv_stride: uvw,
+                    color_sensitivity: sb_partition_color_sensitivity,
                     uv_dc_quant: uv_dc_dq as u32,
                     uv_ac_quant: uv_ac_dq as u32,
                     // G4: encode breakout test fields.
@@ -6827,6 +6827,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             ref_u: me_ref_yuv.1,
                             ref_v: me_ref_yuv.2,
                             uv_stride: uvw,
+                            color_sensitivity: sb_partition_color_sensitivity,
                             uv_dc_quant: uv_dc_dq as u32,
                             uv_ac_quant: uv_ac_dq as u32,
                         },
@@ -6889,6 +6890,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         ref_u: me_ref_yuv.1,
                         ref_v: me_ref_yuv.2,
                         uv_stride: uvw,
+                        color_sensitivity: sb_partition_color_sensitivity,
                         uv_dc_quant: uv_dc_dq as u32,
                         uv_ac_quant: uv_ac_dq as u32,
                     };
@@ -7920,12 +7922,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         luma_coef_dist: pick.coef_dist,
                         uv_model_rate: pick.uv_rate,
                         uv_model_dist: pick.uv_dist,
-                        // The current rvp9 realtime picker always evaluates
-                        // both chroma planes when their buffers are present.
                         uv_u_sensitive: final_ref != RefFrame::IntraFrame
-                            && !input_yuv.1.is_empty(),
+                            && sb_partition_color_sensitivity[0],
                         uv_v_sensitive: final_ref != RefFrame::IntraFrame
-                            && !input_yuv.2.is_empty(),
+                            && sb_partition_color_sensitivity[1],
                         partition_u_sensitive: sb_partition_color_sensitivity[0],
                         partition_v_sensitive: sb_partition_color_sensitivity[1],
                         last_candidates: f02_last_candidates,
