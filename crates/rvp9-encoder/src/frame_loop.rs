@@ -20,8 +20,9 @@
 //! - GOP boundary: first frame is a keyframe; thereafter a keyframe is
 //!   emitted whenever the rate-controller's `frames_to_key` counter
 //!   reaches zero.
-//! - Frame-context bank 0 stays at default — keyframes use
-//!   `refresh_frame_context = false`. Inter frames emit
+//! - Keyframes forward-update frame-context bank 0 from their coefficient
+//!   counts and retain it with frame-parallel backward adaptation disabled.
+//!   Inter frames emit
 //!   `refresh_frame_flags = 0x01` so the decoder updates the
 //!   LASTFRAME ref slot to point at this frame's reconstruction
 //!   (post-A11 fix; pre-A11 set `0x00` which left the decoder's
@@ -62,7 +63,7 @@ use rvp9_core::bitstream::{
     CompressedHeaderOptions, CompressedHeaderResult, FrameKind as WireFrameKind, InterCoefSource,
     InterpFilter, Profile, RawBitWriter, UncompressedHeader, tile_bounds, write_compressed_header,
     write_tile_buffers, write_tile_inter_with_retained, write_tile_intra_keyframe,
-    write_uncompressed_header,
+    write_tile_intra_keyframe_with_counts, write_uncompressed_header,
 };
 // W6.2(vpxenc parity, HBD scaffold) — pixel-pipeline bit-depth. **Not**
 // the same as the wire-format `WireBitDepth` (`Eight`/`Ten`/`Twelve`)
@@ -1165,13 +1166,11 @@ pub struct StreamEncoder {
     /// [`Self::diag_last_recon_y`] (post-recon). `None` before the first
     /// encoded frame or when the gate is off.
     diag_pred: Option<crate::predstat::PredFrame>,
-    /// P0b — Persistent frame context for backward adaptation. Reset to
-    /// `FrameContext::new_default()` on every keyframe (mirrors libvpx's
-    /// `vp9_setup_past_independence` which resets FC bank 0). After each
-    /// inter frame the encoder runs `adapt_{mode,coef,mv}_probs` on the
-    /// accumulated counts and stores the result here. The decoder does
-    /// the same when `refresh_frame_context == true`, keeping both sides
-    /// in sync.
+    /// P0b — Persistent frame context for backward adaptation. Every
+    /// keyframe resets the bank, then retains its compressed-header
+    /// forward coefficient updates. After each inter frame the encoder
+    /// runs `adapt_{mode,coef,mv}_probs` on the accumulated counts and
+    /// stores the result here. The decoder follows the same transitions.
     frame_context: FrameContext,
     /// P0b — Mirror of decoder FC bank 0. Normal inter frames apply the
     /// same compressed-header forward updates and backward adaptation on
@@ -2534,11 +2533,10 @@ impl StreamEncoder {
         // every FC bank to defaults. Keep the encoder's working context and
         // decoder-bank mirrors in lock-step with the decoder before the next
         // inter frame diff-encodes its compressed header.
-        self.frame_context = FrameContext::new_default();
-        self.decoder_fc_state = FrameContext::new_default();
+        let mut keyframe_fc = FrameContext::new_default();
         self.decoder_fc_state_arf = FrameContext::new_default();
 
-        build_keyframe_packet_with_tiles(
+        let packet = build_keyframe_packet_with_tiles(
             w,
             h,
             q_index,
@@ -2546,7 +2544,11 @@ impl StreamEncoder {
             &coef_source,
             &sb_partitions,
             log2_tile_cols,
-        )
+            &mut keyframe_fc,
+        )?;
+        self.frame_context = keyframe_fc.clone();
+        self.decoder_fc_state = keyframe_fc;
+        Ok(packet)
     }
 
     /// W5.5 — apply the VP9 temporal denoiser to the just-mirrored
@@ -4920,10 +4922,9 @@ fn build_inter_mi_grid_from_picker(
 /// header + tile data) with real per-TX residual coefs supplied by
 /// `coef_source` (the F5.1 simulator's output).
 ///
-/// Mirrors `Encoder::build_keyframe_payload_with_residuals` in
-/// `lib.rs` but with `refresh_frame_context = false` always, so the
-/// decoder's FC bank 0 stays at default and subsequent inter frames
-/// can use the default FC as their `pre_fc`.
+/// Mirrors `Encoder::build_keyframe_payload_with_residuals` in `lib.rs`.
+/// Coefficient counts drive the same forward probability updates used to
+/// code this frame's tiles and seed FC bank 0 for subsequent inter frames.
 #[cfg(test)]
 fn build_keyframe_packet(
     width: u32,
@@ -4941,6 +4942,7 @@ fn build_keyframe_packet(
         coef_source,
         sb_partitions,
         0,
+        &mut FrameContext::new_default(),
     )
 }
 
@@ -4953,14 +4955,13 @@ fn build_keyframe_packet_with_tiles(
     coef_source: &dyn rvp9_core::bitstream::IntraCoefSource,
     sb_partitions: &[Vec<PartitionLeafDesc>],
     log2_tile_cols: u8,
+    decoder_fc: &mut FrameContext,
 ) -> Result<Vec<u8>, EncodeError> {
     let mi_rows = height / 8;
     let mi_cols = width / 8;
     let mi_grid = build_kf_mi_grid(mi_rows, mi_cols, sb_partitions);
 
-    let pre_fc_template = FrameContext::new_default();
-    let mut pre_fc = pre_fc_template.clone();
-    let post_fc = pre_fc.clone();
+    let post_fc = decoder_fc.clone();
     let opts = CompressedHeaderOptions {
         lossless: false,
         intra_only: true,
@@ -4976,20 +4977,66 @@ fn build_keyframe_packet_with_tiles(
         reference_mode: ReferenceMode::Single,
     };
 
+    let tile_cols = 1usize << log2_tile_cols;
+    let count_fc = decoder_fc.clone();
+    let mut count_counts = FrameCounts {
+        coef_full: Some(rvp9_core::entropy::new_coef12_bank()),
+        ..FrameCounts::default()
+    };
+    rvp9_core::entropy::bitacct::with_suppressed(|| -> Result<(), EncodeError> {
+        for tile_col in 0..tile_cols {
+            let bounds = tile_bounds(
+                mi_rows as usize,
+                mi_cols as usize,
+                0,
+                log2_tile_cols,
+                0,
+                tile_col as u32,
+            );
+            let mut count_sink = [];
+            let mut bw = BoolWriter::start_count_only(&mut count_sink);
+            let mut coef_ctx = TileCoefCtx::new(bounds.mi_col_end - bounds.mi_col_start);
+            write_tile_intra_keyframe_with_counts(
+                &mut bw,
+                &mi_grid,
+                mi_rows,
+                mi_cols,
+                bounds,
+                &count_fc,
+                target.tx_mode,
+                /* seg = */ None,
+                &mut coef_ctx,
+                coef_source,
+                Some(&mut count_counts),
+            )?;
+        }
+        Ok(())
+    })?;
+    let coef_plan = count_counts.coef_full.as_ref().map(|full| {
+        crate::bitstream_gates::build_coef_prob_update_plan(
+            full,
+            &count_counts.coef.eob_branch,
+            &decoder_fc.coef_probs,
+            target.tx_mode,
+        )
+    });
+
     let mut compressed_buf = vec![0u8; 16 * 1024];
     let compressed_len = {
         let mut bw = BoolWriter::start_encode(&mut compressed_buf);
-        // A6 — keyframe stays on the Strategy-B (no-plan) coef path:
-        // `pre_fc == post_fc` for the KF, so it emits an all-`0` coef
-        // table (no updates) byte-identically to the pre-TWO_LOOP
-        // behaviour. TWO_LOOP fires on the count-bearing inter frames.
-        write_compressed_header(&mut bw, &mut pre_fc, &post_fc, opts, &target, None)?;
+        write_compressed_header(
+            &mut bw,
+            decoder_fc,
+            &post_fc,
+            opts,
+            &target,
+            coef_plan.as_ref(),
+        )?;
         bw.stop_encode()
             .map_err(|_| EncodeError::Bitstream(BitstreamError::CompressedHeaderTooLarge))?
     };
     compressed_buf.truncate(compressed_len);
 
-    let tile_cols = 1usize << log2_tile_cols;
     let mut tile_bufs = Vec::with_capacity(tile_cols);
     for tile_col in 0..tile_cols {
         let bounds = tile_bounds(
@@ -5010,7 +5057,7 @@ fn build_keyframe_packet_with_tiles(
                 mi_rows,
                 mi_cols,
                 bounds,
-                &post_fc,
+                decoder_fc,
                 target.tx_mode,
                 /* seg = */ None,
                 &mut coef_ctx,
@@ -5026,11 +5073,10 @@ fn build_keyframe_packet_with_tiles(
     let tile_buf = write_tile_buffers(&tile_refs, tile_cols as u32, 1)?;
 
     let tail = HeaderTail {
-        // Keep FC bank 0 at default so subsequent inter frames can use
-        // the default FC as their `pre_fc` without the encoder having
-        // to mirror backward-adapt logic.
-        refresh_frame_context: false,
-        frame_parallel_decoding_mode: false,
+        // Retain the forward-updated coefficient probabilities while
+        // suppressing backward adaptation, matching realtime libvpx.
+        refresh_frame_context: true,
+        frame_parallel_decoding_mode: true,
         frame_context_idx: 0,
         loop_filter: LoopFilterParams {
             // F11.0 — emit the F11.0-picked filter_level so the decoder
@@ -7097,8 +7143,17 @@ mod tests {
             &sb_partitions,
         );
 
-        let packet = build_keyframe_packet_with_tiles(w, h, 80, 0, &coef_source, &sb_partitions, 1)
-            .expect("two-tile keyframe assembly");
+        let packet = build_keyframe_packet_with_tiles(
+            w,
+            h,
+            80,
+            0,
+            &coef_source,
+            &sb_partitions,
+            1,
+            &mut FrameContext::new_default(),
+        )
+        .expect("two-tile keyframe assembly");
 
         const NO_REFS: [Option<(u32, u32)>; 8] = [None; 8];
         let (header, header_end) =
@@ -7157,9 +7212,17 @@ mod tests {
             (&mut recon_y, &mut recon_u, &mut recon_v),
             &kf_partitions,
         );
-        let keyframe =
-            build_keyframe_packet_with_tiles(w, h, 80, 0, &kf_coef_source, &kf_partitions, 1)
-                .expect("two-tile keyframe");
+        let keyframe = build_keyframe_packet_with_tiles(
+            w,
+            h,
+            80,
+            0,
+            &kf_coef_source,
+            &kf_partitions,
+            1,
+            &mut FrameContext::new_default(),
+        )
+        .expect("two-tile keyframe");
 
         let inter_leaf = InterPartitionLeafDesc {
             mi_row_in_sb: 0,
@@ -8046,6 +8109,41 @@ mod tests {
     /// FC (`rvp9-decoder/src/lib.rs:2342`), so the encoder must too;
     /// adapting from the post-header (partial-TWO_LOOP-update) FC drifts
     /// and corrupts the stream by ~frame 4.
+    #[test]
+    fn keyframe_emits_live_coef_probability_updates() {
+        const W: usize = 128;
+        const H: usize = 128;
+        let mut cfg = EncoderConfig::new(W as u32, H as u32);
+        cfg.target_bitrate_bps = 800_000;
+        cfg.gop_length = 30;
+        cfg.use_prev_frame_mvs = false;
+        cfg.speed = 7;
+        cfg.rc_mode = RcMode::Cbr;
+        let mut enc = StreamEncoder::new(cfg).unwrap();
+
+        let mut seed = 0x1234_5678u32;
+        let y: Vec<u8> = (0..W * H)
+            .map(|_| {
+                seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+                (seed >> 24) as u8
+            })
+            .collect();
+        let u = vec![128u8; (W / 2) * (H / 2)];
+        let v = vec![128u8; (W / 2) * (H / 2)];
+        let pkt = enc.encode_frame(&yuv_view(&y, &u, &v, W)).unwrap();
+
+        const NO_REFS: [Option<(u32, u32)>; 8] = [None; 8];
+        let (header, _) =
+            rvp9_core::bitstream::parse_uncompressed_header(&pkt.data, &NO_REFS).unwrap();
+        let tail = header.tail.expect("keyframe tail");
+        assert!(
+            tail.first_partition_size > 2,
+            "a noisy keyframe must carry coefficient probability updates"
+        );
+        assert!(tail.refresh_frame_context);
+        assert!(tail.frame_parallel_decoding_mode);
+    }
+
     #[test]
     fn a6_twoloop_decoder_fc_stays_synced_across_frames() {
         const W: usize = 128;

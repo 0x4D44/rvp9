@@ -61,6 +61,7 @@ pub use modes_writer::{
     ModesWriterError, SegmentationWriteParams, TileBounds as ModesTileBounds,
     record_inter_leaf_coefficients, tile_bounds, tile_mi_offset, write_tile_inter,
     write_tile_inter_with_retained, write_tile_intra_keyframe,
+    write_tile_intra_keyframe_with_counts,
 };
 pub use raw::{RawBitReader, RawBitWriter};
 pub use sub_parsers::{

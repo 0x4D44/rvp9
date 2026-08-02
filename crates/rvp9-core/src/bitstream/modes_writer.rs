@@ -593,6 +593,37 @@ pub fn write_tile_intra_keyframe(
     coef_ctx: &mut TileCoefCtx,
     coef_source: &dyn IntraCoefSource,
 ) -> Result<(), ModesWriterError> {
+    write_tile_intra_keyframe_with_counts(
+        bw,
+        mi_grid,
+        mi_rows,
+        mi_cols,
+        tile_bounds,
+        fc,
+        tx_mode,
+        seg,
+        coef_ctx,
+        coef_source,
+        None,
+    )
+}
+
+/// [`write_tile_intra_keyframe`] with optional coefficient counts for
+/// the encoder's pre-header probability-update pass.
+#[allow(clippy::too_many_arguments)]
+pub fn write_tile_intra_keyframe_with_counts(
+    bw: &mut BoolWriter<'_>,
+    mi_grid: &[Option<ModeInfo>],
+    mi_rows: u32,
+    mi_cols: u32,
+    tile_bounds: TileBounds,
+    fc: &FrameContext,
+    tx_mode: TxMode,
+    seg: Option<SegmentationWriteParams<'_>>,
+    coef_ctx: &mut TileCoefCtx,
+    coef_source: &dyn IntraCoefSource,
+    mut counts: Option<&mut FrameCounts>,
+) -> Result<(), ModesWriterError> {
     if !mi_rows.is_multiple_of(MI_BLOCK_SIZE as u32)
         || !mi_cols.is_multiple_of(MI_BLOCK_SIZE as u32)
     {
@@ -642,6 +673,7 @@ pub fn write_tile_intra_keyframe(
                 seg,
                 coef_ctx,
                 coef_source,
+                counts.as_deref_mut(),
             )?;
             mi_col += MI_BLOCK_SIZE;
         }
@@ -906,6 +938,7 @@ fn write_partition_tree(
     seg: Option<SegmentationWriteParams<'_>>,
     coef_ctx: &mut TileCoefCtx,
     coef_source: &dyn IntraCoefSource,
+    mut counts: Option<&mut FrameCounts>,
 ) -> Result<(), ModesWriterError> {
     // Defensive: the frame-edge clip in `decode_partition` should
     // never fire because (1) the writer caller's `NonMultipleOfSb`
@@ -960,6 +993,7 @@ fn write_partition_tree(
             &mi,
             coef_ctx,
             coef_source,
+            counts.as_deref_mut(),
         )?;
         part_ctx.update(mi_row_in_tile, mi_col_in_tile, sub, num_8x8_wh);
         return Ok(());
@@ -986,6 +1020,7 @@ fn write_partition_tree(
                 &mi,
                 coef_ctx,
                 coef_source,
+                counts.as_deref_mut(),
             )?;
         }
         PartitionType::Horz => {
@@ -1009,6 +1044,7 @@ fn write_partition_tree(
                 &top,
                 coef_ctx,
                 coef_source,
+                counts.as_deref_mut(),
             )?;
             let mi_row_b = mi_row + hbs;
             let bot = mi_grid_get(mi_grid, mi_cols, mi_row_b, mi_col).ok_or(
@@ -1033,6 +1069,7 @@ fn write_partition_tree(
                 &bot,
                 coef_ctx,
                 coef_source,
+                counts.as_deref_mut(),
             )?;
         }
         PartitionType::Vert => {
@@ -1054,6 +1091,7 @@ fn write_partition_tree(
                 &left,
                 coef_ctx,
                 coef_source,
+                counts.as_deref_mut(),
             )?;
             let mi_col_r = mi_col + hbs;
             let right = mi_grid_get(mi_grid, mi_cols, mi_row, mi_col_r).ok_or(
@@ -1078,6 +1116,7 @@ fn write_partition_tree(
                 &right,
                 coef_ctx,
                 coef_source,
+                counts.as_deref_mut(),
             )?;
         }
         PartitionType::Split => {
@@ -1100,6 +1139,7 @@ fn write_partition_tree(
                 seg,
                 coef_ctx,
                 coef_source,
+                counts.as_deref_mut(),
             )?;
             write_partition_tree(
                 bw,
@@ -1118,6 +1158,7 @@ fn write_partition_tree(
                 seg,
                 coef_ctx,
                 coef_source,
+                counts.as_deref_mut(),
             )?;
             write_partition_tree(
                 bw,
@@ -1136,6 +1177,7 @@ fn write_partition_tree(
                 seg,
                 coef_ctx,
                 coef_source,
+                counts.as_deref_mut(),
             )?;
             write_partition_tree(
                 bw,
@@ -1154,6 +1196,7 @@ fn write_partition_tree(
                 seg,
                 coef_ctx,
                 coef_source,
+                counts,
             )?;
         }
     }
@@ -1329,6 +1372,7 @@ fn write_block_intra_keyframe(
     mi: &ModeInfo,
     coef_ctx: &mut TileCoefCtx,
     coef_source: &dyn IntraCoefSource,
+    counts: Option<&mut FrameCounts>,
 ) -> Result<(), ModesWriterError> {
     // Scope validation — the leaf cell's recorded block_size must
     // match the partition-tree-derived expected subsize at this
@@ -1471,6 +1515,7 @@ fn write_block_intra_keyframe(
             y_mode,
             uv_mode,
             &mi.bmi,
+            counts,
         );
     } else {
         reset_skip_coef_context(coef_ctx, leaf_bsize, mi_row, mi_col, bounds.mi_col_start);
@@ -1528,7 +1573,12 @@ fn write_intra_block_residual(
     y_mode: IntraMode,
     _uv_mode: IntraMode,
     bmi: &[BmiInfo; 4],
+    counts: Option<&mut FrameCounts>,
 ) {
+    let (mut coef_bank, mut coef_full_bank) = match counts {
+        Some(c) => (Some(&mut c.coef), c.coef_full.as_deref_mut()),
+        None => (None, None),
+    };
     let mi_col_in_tile = mi_col - tile_mi_col_start;
     let mi_row_in_sb = mi_row & MI_MASK;
 
@@ -1622,8 +1672,8 @@ fn write_intra_block_residual(
                     seg_eob,
                     coefs,
                     eob,
-                    None, // KF path: no 4-token coef count accumulation
-                    None, // KF path: no 12-token TWO_LOOP count pass
+                    coef_bank.as_deref_mut(),
+                    coef_full_bank.as_deref_mut(),
                 );
                 tx_x4_local += tx_step_4x4;
             }
@@ -3196,6 +3246,7 @@ mod tests {
             IntraMode::Dc,
             IntraMode::Dc,
             &[BmiInfo::default(); 4],
+            None,
         );
 
         assert!(
@@ -3297,6 +3348,7 @@ mod tests {
                 &mi,
                 &mut coef_ctx,
                 &coef_source,
+                None,
             )
             .expect("write_block_intra_keyframe should succeed");
             bw.stop_encode().expect("stop_encode")
@@ -4215,6 +4267,7 @@ mod tests {
                 None,
                 &mut coef_ctx,
                 &coef_source,
+                None,
             )
             .expect("write sub-8 keyframe leaf");
             bw.stop_encode().expect("stop_encode")
@@ -5999,6 +6052,7 @@ mod tests {
                 &mi,
                 &mut coef_ctx,
                 &coef_source,
+                None,
             )
             .expect("write_block_intra_keyframe with seg should succeed");
             bw.stop_encode().expect("stop_encode")
@@ -8142,6 +8196,7 @@ mod tests {
             &bad,
             &mut coef_ctx,
             &coef_source,
+            None,
         )
         .unwrap_err();
         assert!(matches!(
@@ -8195,6 +8250,7 @@ mod tests {
             &bad,
             &mut coef_ctx,
             &coef_source,
+            None,
         )
         .unwrap_err();
         assert!(matches!(
