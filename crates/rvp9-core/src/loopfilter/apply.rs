@@ -119,6 +119,34 @@ impl SharedFrame {
         assert_eq!(y.len(), width * height);
         assert_eq!(u.len(), (width / 2) * (height / 2));
         assert_eq!(v.len(), u.len());
+        Self::from_tight_yuv420_storage(y, u, v, width)
+    }
+
+    /// Construct a YUV420 frame view backed through the final 64-pixel
+    /// superblock row.
+    ///
+    /// `height` remains the visible frame height. The extra whole-row tail is
+    /// addressable storage only: frame-boundary masks suppress every edge
+    /// outside the visible MI grid, while fixed-width SIMD kernels may still
+    /// form slices through the complete final superblock. Callers must
+    /// initialize the tail, keep the padded allocations alive, and leave them
+    /// inaccessible until all filter workers have joined.
+    pub fn from_tight_yuv420_with_sb_tail(
+        y: &mut [u8],
+        u: &mut [u8],
+        v: &mut [u8],
+        width: usize,
+        height: usize,
+    ) -> Self {
+        assert!(width.is_multiple_of(2) && height.is_multiple_of(2));
+        let storage_height = height.next_multiple_of(MI_BLOCK_SIZE * 8);
+        assert_eq!(y.len(), width * storage_height);
+        assert_eq!(u.len(), (width / 2) * (storage_height / 2));
+        assert_eq!(v.len(), u.len());
+        Self::from_tight_yuv420_storage(y, u, v, width)
+    }
+
+    fn from_tight_yuv420_storage(y: &mut [u8], u: &mut [u8], v: &mut [u8], width: usize) -> Self {
         Self {
             y_ptr: y.as_mut_ptr(),
             u_ptr: u.as_mut_ptr(),

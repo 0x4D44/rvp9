@@ -343,20 +343,31 @@ pub(crate) fn apply_loop_filter_to_tight_recon_parallel(
 /// packet construction.
 ///
 /// Complete superblock rows use the direct tight-plane split-edge path.
-/// Partial bottom rows keep the bordered adapter required by the SIMD kernels;
-/// running that adapter on the dedicated worker is still independent of packet
-/// construction because it owns only the reconstruction planes.
+/// Partial bottom rows temporarily extend the tight planes with zeroed storage
+/// through the final superblock boundary. Boundary masks keep that tail
+/// semantically invisible while fixed-width SIMD kernels retain addressable
+/// storage, avoiding the bordered full-plane copy adapter.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn apply_loop_filter_for_packet_overlap(
     width: u32,
     height: u32,
     filter_level: u8,
     mi_grid: &[Option<ModeInfo>],
-    recon_y: &mut [u8],
-    recon_u: &mut [u8],
-    recon_v: &mut [u8],
+    recon_y: &mut Vec<u8>,
+    recon_u: &mut Vec<u8>,
+    recon_v: &mut Vec<u8>,
     num_tile_cols: usize,
 ) {
+    let w = width as usize;
+    let h = height as usize;
+    let uvw = w / 2;
+    let uvh = h / 2;
+    let visible_y_len = w * h;
+    let visible_uv_len = uvw * uvh;
+    assert_eq!(recon_y.len(), visible_y_len);
+    assert_eq!(recon_u.len(), visible_uv_len);
+    assert_eq!(recon_v.len(), visible_uv_len);
+
     if height.is_multiple_of(64) {
         apply_loop_filter_to_tight_recon_split_edge(
             width,
@@ -369,7 +380,11 @@ pub(crate) fn apply_loop_filter_for_packet_overlap(
             num_tile_cols,
         );
     } else {
-        apply_loop_filter_to_tight_recon_parallel(
+        let storage_h = h.next_multiple_of(64);
+        recon_y.resize(w * storage_h, 0);
+        recon_u.resize(uvw * (storage_h / 2), 0);
+        recon_v.resize(uvw * (storage_h / 2), 0);
+        apply_loop_filter_to_tight_recon_split_edge(
             width,
             height,
             filter_level,
@@ -377,10 +392,11 @@ pub(crate) fn apply_loop_filter_for_packet_overlap(
             recon_y,
             recon_u,
             recon_v,
-            None,
-            1,
             num_tile_cols,
         );
+        recon_y.truncate(visible_y_len);
+        recon_u.truncate(visible_uv_len);
+        recon_v.truncate(visible_uv_len);
     }
 }
 
@@ -417,7 +433,11 @@ pub(crate) fn apply_loop_filter_to_tight_recon_split_edge(
     let sb_cols = mi_cols.div_ceil(SB_MI_SIZE);
     let frame_mi_opt = complete_mi_grid_for_lf(mi_grid);
     let cur_sb_col: Vec<AtomicI32> = (0..sb_rows).map(|_| AtomicI32::new(-1)).collect();
-    let shared = SharedFrame::from_tight_yuv420(recon_y, recon_u, recon_v, w, h);
+    let shared = if height.is_multiple_of(64) {
+        SharedFrame::from_tight_yuv420(recon_y, recon_u, recon_v, w, h)
+    } else {
+        SharedFrame::from_tight_yuv420_with_sb_tail(recon_y, recon_u, recon_v, w, h)
+    };
     let state = ColumnWavefrontLfState {
         shared,
         info: &info,

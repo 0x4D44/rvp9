@@ -5,6 +5,7 @@ Distilled, non-obvious gotchas future sessions need — dated one-liners.
 Durable project facts/conventions belong in `CLAUDE.md` / `AGENTS.md`, not here.
 Hard cap: 20 entries.
 
+- 2026-08-03: Partial LF can pad to the next SB row (`loopfilter.rs:apply_loop_filter_for_packet_overlap`).
 - 2026-08-02: Keyframe VBP comparisons must retain libvpx's 256x variance precision; folding both sides to integers changes `504 > 450` into `1 > 1` (`partition.rs:keyframe_4x4_average_variance`).
 - 2026-08-02: Realtime keyframe leaves >=16 use Hadamard+`quantize_fp` SATD pricing, not full-RD DCT pricing (`intra.rs:pick_realtime_intra_mode_luma_large`).
 - 2026-06-17: Module / `lib.rs` doc headers are STALE ("Stage 3 skeleton", "what does NOT work yet"). The encoder and decoder are far more complete than the prose claims — trust `git log`, `PLAN.md`, and `wrk_journals/` over module doc comments.

@@ -3730,7 +3730,8 @@ impl StreamEncoder {
         }
         // Filtering owns only reconstruction while packet construction owns
         // entropy state. Complete SB rows use the direct split-edge filter;
-        // partial bottom rows keep the bordered adapter on the same worker.
+        // partial bottom rows add temporary addressable tail storage for the
+        // same backend while retaining the visible boundary masks.
         let overlap_lf_and_packet =
             filter_level > 0 && self.parallelism.max_threads > 1 && lf_packet_overlap_enabled();
         let packet_result = if overlap_lf_and_packet {
