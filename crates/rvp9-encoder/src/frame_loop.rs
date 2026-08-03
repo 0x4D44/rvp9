@@ -90,7 +90,7 @@ use rvp9_core::transforms::TxMode;
 use crate::aq_cyclic_refresh::{CyclicRefresh, CyclicRefreshConfig};
 use crate::denoiser::{Denoiser, DenoiserLevel, INTRA_FRAME_IDX, vp9_denoiser_filter};
 use crate::loopfilter::{
-    apply_loop_filter_to_tight_recon_parallel, apply_loop_filter_to_tight_recon_split_edge,
+    apply_loop_filter_for_packet_overlap, apply_loop_filter_to_tight_recon_parallel,
     build_kf_mi_grid_for_lf, pick_filter_level,
 };
 use crate::rate_control::{
@@ -3728,13 +3728,11 @@ impl StreamEncoder {
                 )
             };
         }
-        // The split-edge filter operates directly on tight planes and needs
-        // complete 64x64 rows. Partial bottom SBs use the bordered fallback
-        // inside `apply_loop_filter_to_tight_recon_parallel` instead.
-        let overlap_lf_and_packet = filter_level > 0
-            && self.parallelism.max_threads > 1
-            && h.is_multiple_of(64)
-            && lf_packet_overlap_enabled();
+        // Filtering owns only reconstruction while packet construction owns
+        // entropy state. Complete SB rows use the direct split-edge filter;
+        // partial bottom rows keep the bordered adapter on the same worker.
+        let overlap_lf_and_packet =
+            filter_level > 0 && self.parallelism.max_threads > 1 && lf_packet_overlap_enabled();
         let packet_result = if overlap_lf_and_packet {
             // Loop filtering owns only the new reconstruction planes. Packet
             // construction reads coefficients, mode metadata, and probability
@@ -3750,7 +3748,7 @@ impl StreamEncoder {
             // propagating below.
             let lf_job = unsafe {
                 lf_pool.dispatch(|| {
-                    apply_loop_filter_to_tight_recon_split_edge(
+                    apply_loop_filter_for_packet_overlap(
                         w,
                         h,
                         filter_level,

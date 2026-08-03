@@ -339,6 +339,51 @@ pub(crate) fn apply_loop_filter_to_tight_recon_parallel(
     }
 }
 
+/// Apply the encoder loop filter on the worker used to overlap filtering with
+/// packet construction.
+///
+/// Complete superblock rows use the direct tight-plane split-edge path.
+/// Partial bottom rows keep the bordered adapter required by the SIMD kernels;
+/// running that adapter on the dedicated worker is still independent of packet
+/// construction because it owns only the reconstruction planes.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn apply_loop_filter_for_packet_overlap(
+    width: u32,
+    height: u32,
+    filter_level: u8,
+    mi_grid: &[Option<ModeInfo>],
+    recon_y: &mut [u8],
+    recon_u: &mut [u8],
+    recon_v: &mut [u8],
+    num_tile_cols: usize,
+) {
+    if height.is_multiple_of(64) {
+        apply_loop_filter_to_tight_recon_split_edge(
+            width,
+            height,
+            filter_level,
+            mi_grid,
+            recon_y,
+            recon_u,
+            recon_v,
+            num_tile_cols,
+        );
+    } else {
+        apply_loop_filter_to_tight_recon_parallel(
+            width,
+            height,
+            filter_level,
+            mi_grid,
+            recon_y,
+            recon_u,
+            recon_v,
+            None,
+            1,
+            num_tile_cols,
+        );
+    }
+}
+
 /// Run the alias-safe split-edge loop filter directly on tight reconstruction
 /// planes. The wrapper owns exclusive plane borrows for the complete call and
 /// invokes exactly one core worker; callers may place this call on a scoped
@@ -858,6 +903,54 @@ mod w7_4_tests {
             assert_eq!(parallel_u, serial_u, "U differs at {w}x{h}");
             assert_eq!(parallel_v, serial_v, "V differs at {w}x{h}");
         }
+    }
+
+    #[test]
+    fn packet_overlap_filter_matches_serial_on_partial_bottom_sb() {
+        let w = 64usize;
+        let h = 72usize;
+        let filter_level = 30u8;
+        let mi_grid = build_intra_mi_grid(h / 8, w / 8);
+        let mut source_y = vec![0u8; w * h];
+        for r in 0..h {
+            for c in 0..w {
+                source_y[r * w + c] = 115 + (((r / 8 + c / 8) & 1) as u8) * 10;
+            }
+        }
+        let source_u = vec![120u8; (w / 2) * (h / 2)];
+        let source_v = vec![120u8; (w / 2) * (h / 2)];
+
+        let mut serial_y = source_y.clone();
+        let mut serial_u = source_u.clone();
+        let mut serial_v = source_v.clone();
+        apply_loop_filter_to_tight_recon(
+            w as u32,
+            h as u32,
+            filter_level,
+            &mi_grid,
+            &mut serial_y,
+            &mut serial_u,
+            &mut serial_v,
+        );
+
+        let mut overlap_y = source_y.clone();
+        let mut overlap_u = source_u.clone();
+        let mut overlap_v = source_v.clone();
+        apply_loop_filter_for_packet_overlap(
+            w as u32,
+            h as u32,
+            filter_level,
+            &mi_grid,
+            &mut overlap_y,
+            &mut overlap_u,
+            &mut overlap_v,
+            1,
+        );
+
+        assert_ne!(serial_y, source_y, "fixture must exercise luma filtering");
+        assert_eq!(overlap_y, serial_y);
+        assert_eq!(overlap_u, serial_u);
+        assert_eq!(overlap_v, serial_v);
     }
 
     /// W7.4 PROOF — `search_filter_level` (`vp9_picklpf.c:78-157`).
