@@ -97,8 +97,8 @@ use crate::rate_control::{
 };
 use crate::{
     EncodeError, InterPartitionLeafDesc, InterSimulationMiGrid, PartitionLeafDesc,
-    RecordedCoefTile, VecBackedInterCoefSource, pick_and_simulate_inter_encode_partitions,
-    pick_and_simulate_intra_encode_partitions,
+    RecordedCoefTile, VecBackedInterCoefSource, VecBackedIntraCoefSource,
+    pick_and_simulate_inter_encode_partitions, pick_and_simulate_intra_encode_partitions,
 };
 
 #[inline]
@@ -1263,6 +1263,13 @@ struct InterTileScratch {
     mv_grid: Vec<PrevFrameMvRef>,
 }
 
+/// Owned output from one independent full-height keyframe column tile.
+struct KeyframeTileJobResult {
+    tile_col: usize,
+    partitions: Vec<Vec<PartitionLeafDesc>>,
+    coefs: VecBackedIntraCoefSource,
+}
+
 /// A18 (SVC) — the per-frame temporal-layer decision for one inter
 /// frame. Derived from the [`crate::svc::Svc`] scaffold's temporal
 /// setter (`vp9_svc_layercontext.c:517-720`) and the encoder's
@@ -2405,7 +2412,95 @@ impl StreamEncoder {
         // DIRECTLY into the committed slot (the prior code reconstructed
         // into `last_recon_*`, which was the LAST slot's storage).
         self.ref_pool.keyframe_reset();
-        let coef_source = {
+        let tile_count = 1usize << log2_tile_cols;
+        let parallel_keyframe_tiles = tile_count > 1
+            && self.parallelism.max_threads > 1
+            // These diagnostics use thread-local sinks drained by the stream
+            // thread. Keep their existing whole-frame ordering and ownership.
+            && !crate::predstat::enabled()
+            && !crate::f02_oracle::is_enabled();
+        let coef_source = if parallel_keyframe_tiles {
+            let initial_partitions = sb_partitions.clone();
+            let mut result_slots: Vec<Option<KeyframeTileJobResult>> =
+                (0..tile_count).map(|_| None).collect();
+            let tile_scratch = &mut self.inter_tile_scratch;
+            self.frame_worker_pool
+                .as_mut()
+                .expect("parallel keyframe tiles require the frame worker pool")
+                .scope(|scope| {
+                    for (tile_col, (result_slot, scratch)) in result_slots
+                        .iter_mut()
+                        .zip(tile_scratch.iter_mut())
+                        .enumerate()
+                    {
+                        let mut tile_partitions = initial_partitions.clone();
+                        scope.submit(move || {
+                            let coefs = pick_and_simulate_intra_encode_partitions(
+                                w,
+                                h,
+                                q_index,
+                                &seg_q_deltas,
+                                input_yuv,
+                                (
+                                    &mut scratch.recon_y,
+                                    &mut scratch.recon_u,
+                                    &mut scratch.recon_v,
+                                ),
+                                &mut tile_partitions,
+                                log2_tile_cols,
+                                Some(tile_col),
+                            );
+                            *result_slot = Some(KeyframeTileJobResult {
+                                tile_col,
+                                partitions: tile_partitions,
+                                coefs,
+                            });
+                        });
+                    }
+                });
+
+            let tile_results: Vec<KeyframeTileJobResult> = result_slots
+                .into_iter()
+                .enumerate()
+                .map(|(tile_col, result)| {
+                    result.unwrap_or_else(|| panic!("keyframe tile {tile_col} produced no result"))
+                })
+                .collect();
+            let mut merged_coefs = VecBackedIntraCoefSource::new(w, h);
+            let mi_rows = h as usize / 8;
+            let mi_cols = w as usize / 8;
+            let sb_cols = w as usize / 64;
+            let (ry, ru, rv) = self.ref_pool.new_frame_planes_mut();
+            for result in tile_results {
+                let tile_col = result.tile_col;
+                let bounds = tile_bounds(mi_rows, mi_cols, 0, log2_tile_cols, 0, tile_col as u32);
+                let sb_col_start = bounds.mi_col_start / 8;
+                let sb_col_end = bounds.mi_col_end / 8;
+                for sb_row in 0..h as usize / 64 {
+                    for sb_col in sb_col_start..sb_col_end {
+                        let sb_idx = sb_row * sb_cols + sb_col;
+                        sb_partitions[sb_idx] = result.partitions[sb_idx].clone();
+                    }
+                }
+                let scratch = &tile_scratch[tile_col];
+                for row in 0..h as usize {
+                    let start = row * w as usize + bounds.mi_col_start * 8;
+                    let end = row * w as usize + bounds.mi_col_end * 8;
+                    ry[start..end].copy_from_slice(&scratch.recon_y[start..end]);
+                }
+                let uv_width = w as usize / 2;
+                let uv_col_start = bounds.mi_col_start * 4;
+                let uv_col_end = bounds.mi_col_end * 4;
+                for row in 0..h as usize / 2 {
+                    let start = row * uv_width + uv_col_start;
+                    let end = row * uv_width + uv_col_end;
+                    ru[start..end].copy_from_slice(&scratch.recon_u[start..end]);
+                    rv[start..end].copy_from_slice(&scratch.recon_v[start..end]);
+                }
+                merged_coefs.merge_from(result.coefs);
+            }
+            merged_coefs
+        } else {
             let (ry, ru, rv) = self.ref_pool.new_frame_planes_mut();
             pick_and_simulate_intra_encode_partitions(
                 w,
@@ -2416,6 +2511,7 @@ impl StreamEncoder {
                 (ry, ru, rv),
                 &mut sb_partitions,
                 log2_tile_cols,
+                None,
             )
         };
 

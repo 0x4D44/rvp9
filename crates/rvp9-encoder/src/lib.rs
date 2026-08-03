@@ -1041,6 +1041,29 @@ impl VecBackedIntraCoefSource {
         }
     }
 
+    /// Build an empty source containing only one column tile's physical slots.
+    #[must_use]
+    pub(crate) fn new_for_mi_columns(
+        width: u32,
+        height: u32,
+        mi_col_start: usize,
+        mi_col_end: usize,
+    ) -> Self {
+        Self {
+            inner: VecBackedInterCoefSource::new_for_mi_columns(
+                width,
+                height,
+                mi_col_start,
+                mi_col_end,
+            ),
+        }
+    }
+
+    /// Merge one disjoint tile-owned coefficient source into this frame source.
+    pub(crate) fn merge_from(&mut self, other: Self) {
+        self.inner.merge_from(other.inner);
+    }
+
     /// Record one TX block's quantized coefficients + eob. `plane`
     /// indexes 0/1/2 for Y/U/V; the local TX coordinates `(tx_x4_local,
     /// tx_y4_local)` are in plane-relative 4×4 sub-block units inside
@@ -2237,6 +2260,7 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
     recon_yuv_out: (&mut [u8], &mut [u8], &mut [u8]),
     sb_partitions: &mut [Vec<PartitionLeafDesc>],
     log2_tile_cols: u8,
+    active_tile_col: Option<usize>,
 ) -> VecBackedIntraCoefSource {
     use rvp9_core::coef_ctx::combine_entropy_contexts;
     use rvp9_core::cost::{
@@ -2267,6 +2291,16 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
     let mi_cols = w / 8;
     let mi_rows = h / 8;
     let tile_bounds_by_col = column_tile_bounds(mi_rows, mi_cols, log2_tile_cols);
+    let active_bounds = active_tile_col.map(|tile_col| {
+        *tile_bounds_by_col
+            .get(tile_col)
+            .expect("active keyframe tile column must exist")
+    });
+    let active_sb_cols = active_bounds.map_or(0..sb_cols, |bounds| {
+        debug_assert_eq!(bounds.mi_col_start % 8, 0);
+        debug_assert_eq!(bounds.mi_col_end % 8, 0);
+        bounds.mi_col_start / 8..bounds.mi_col_end / 8
+    });
     let mut picked_y_mode_grid: Vec<Option<[IntraMode; 4]>> = vec![None; mi_rows * mi_cols];
 
     // First pass: walk SBs/leaves in raster, run the simulator one
@@ -2311,7 +2345,17 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
         *px = 0;
     }
 
-    let mut coef_source = VecBackedIntraCoefSource::new(width, height);
+    let mut coef_source = active_bounds.map_or_else(
+        || VecBackedIntraCoefSource::new(width, height),
+        |bounds| {
+            VecBackedIntraCoefSource::new_for_mi_columns(
+                width,
+                height,
+                bounds.mi_col_start,
+                bounds.mi_col_end,
+            )
+        },
+    );
 
     for sb_row in 0..sb_rows {
         if let Some(contexts) = picker_coef_contexts.as_mut() {
@@ -2319,7 +2363,7 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
                 context.reset_left_coef();
             }
         }
-        for sb_col in 0..sb_cols {
+        for sb_col in active_sb_cols.clone() {
             let current_tile = tile_for_mi_col(&tile_bounds_by_col, sb_col * 8);
             let current_tile_index = picker_coef_contexts.as_ref().map_or(0, |_| {
                 tile_bounds_by_col
