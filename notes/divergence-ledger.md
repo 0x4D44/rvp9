@@ -4221,11 +4221,11 @@ libvpx counterparts: `vp9/encoder/vp9_encoder.c::encode_frame_to_data_rate`,
 **What libvpx does:** schedules its encoder stages through libvpx's worker
 model and multi-threaded loop-filter implementation.
 
-**What rvp9 does:** on multi-threaded normal show inter frames, rvp9 runs its
-alias-safe single-worker loop filter on a scoped thread while the caller packs
-the already-selected coefficients and mode metadata. The scoped thread joins
-before the filtered reconstruction is committed. `RVP9_LF_PACKET_OVERLAP=0`
-restores serial stage ordering for diagnostics.
+**What rvp9 does:** on multi-threaded normal show inter frames, rvp9 dispatches
+its alias-safe single-worker loop filter to a dedicated long-lived worker while
+the caller packs the already-selected coefficients and mode metadata. The
+dispatch handle joins before the filtered reconstruction is committed.
+`RVP9_LF_PACKET_OVERLAP=0` restores serial stage ordering for diagnostics.
 
 **Why:** profiling attributed 1,306 inclusive samples to rvp9's loop filter
 and 1,270 to packet construction, versus 485 and 780 samples in matched
@@ -4249,12 +4249,11 @@ vpxenc.
 
 **Speed impact:** two independent forty-pair comparisons against serial
 ordering improved median paired wall time by `5.99%` and `6.90%`, with 33/40
-and 37/40 wins. Median paired child CPU rose by `0.92%` and `0.68%` because
-the scoped worker lifecycle trades a small amount of total work for critical-
-path overlap. A fresh loaded-host comparison measured `1.324256x` paired
-wall time versus vpxenc, so the final `1.05x` gate remains open.
+and 37/40 wins. Replacing the initial per-frame scoped threads with the
+long-lived worker improved another two trials by `0.72%` and `1.79%` paired
+wall time and by `0.89%` and `1.40%` paired child CPU. A fresh loaded-host
+comparison measured `1.279116x` paired wall time versus vpxenc, so the final
+`1.05x` gate remains open.
 
-**Future plan:** profile the overlapped critical path, then target the largest
-remaining output-preserving wall-time gap. Consider persistent worker reuse
-only if profiles attribute material cost to the per-frame scoped-thread
-lifecycle.
+**Future plan:** profile the persistent-worker critical path, then target the
+largest remaining output-preserving wall-time gap.

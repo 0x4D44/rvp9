@@ -995,6 +995,10 @@ pub struct StreamEncoder {
     /// post-reconstruction loop filtering, and final tile writing. The
     /// pool is absent for the single-worker path.
     frame_worker_pool: Option<rvp9_core::tile_threading::WorkerPool>,
+    /// Dedicated long-lived worker for post-tile loop filtering. It stays
+    /// separate from `frame_worker_pool` so packet tile jobs can run while
+    /// the filtered reconstruction planes are exclusively borrowed here.
+    lf_worker_pool: Option<rvp9_core::tile_threading::LfWorkerPool>,
     /// Frame-shaped per-column scratch retained across inter frames. The
     /// active tile rectangle is overwritten completely before it is merged;
     /// retaining these buffers avoids allocating and zeroing four complete
@@ -1481,6 +1485,9 @@ impl StreamEncoder {
                     .expect("frame worker count is nonzero"),
             )
         });
+        let lf_worker_pool = frame_worker_pool
+            .is_some()
+            .then(|| rvp9_core::tile_threading::LfWorkerPool::new(std::num::NonZeroUsize::MIN));
         let inter_tile_scratch = if frame_worker_pool.is_some() {
             (0..tile_count)
                 .map(|_| InterTileScratch {
@@ -1577,6 +1584,7 @@ impl StreamEncoder {
             config,
             parallelism,
             frame_worker_pool,
+            lf_worker_pool,
             inter_tile_scratch,
             inter_recon_scratch: Some((
                 vec![0u8; w * h],
@@ -3667,10 +3675,17 @@ impl StreamEncoder {
             // Loop filtering owns only the new reconstruction planes. Packet
             // construction reads coefficients, mode metadata, and probability
             // state, so both operations are independent after tile encoding.
-            // The scope is a hard join boundary; packet errors also join the
-            // pixel worker before propagating below.
-            std::thread::scope(|scope| {
-                let lf_job = scope.spawn(|| {
+            let lf_pool = self
+                .lf_worker_pool
+                .as_ref()
+                .expect("multi-threaded encoder must own a loop-filter worker");
+            // SAFETY: the named handle is always consumed by `wait()` below;
+            // it is never forgotten. That join completes the worker's borrows
+            // of `mi_grid` and the reconstruction planes before this function
+            // can commit or drop them. Packet errors also cross the join before
+            // propagating below.
+            let lf_job = unsafe {
+                lf_pool.dispatch(|| {
                     apply_loop_filter_to_tight_recon_split_edge(
                         w,
                         h,
@@ -3681,13 +3696,11 @@ impl StreamEncoder {
                         &mut new_recon_v,
                         1usize << log2_tile_cols,
                     );
-                });
-                let packet = build_packet!();
-                lf_job
-                    .join()
-                    .expect("scoped loop-filter worker must not panic");
-                packet
-            })
+                })
+            };
+            let packet = build_packet!();
+            lf_job.wait();
+            packet
         } else {
             if filter_level > 0 {
                 apply_loop_filter_to_tight_recon_parallel(
