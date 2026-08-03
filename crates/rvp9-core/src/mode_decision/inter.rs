@@ -932,7 +932,7 @@ pub fn pick_inter_mode_luma(params: &InterModeSearchParams<'_>) -> InterModeSear
 
     // Candidate 4: NEWMV — full-pel diamond seeded at NEAREST, then
     // sub-pel tree-pruned-more refinement.
-    let new_mv = run_newmv_search(params, None);
+    let new_mv = run_newmv_search(params, None, None).best_mv;
     let new = evaluate_candidate(
         params,
         InterMode::NewMv,
@@ -991,7 +991,7 @@ pub fn pick_inter_mode_luma_all_costs(
         params.mv_candidates.near,
         lambda,
     );
-    let new_mv = run_newmv_search(params, None);
+    let new_mv = run_newmv_search(params, None, None).best_mv;
     let new = evaluate_candidate(
         params,
         InterMode::NewMv,
@@ -2101,7 +2101,20 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
                     } else {
                         (pred_mv_golden, pred_mv_sad_golden)
                     });
-                    *cached = Some(run_newmv_search(&single_params, pred_seed));
+                    let searched = run_newmv_search(
+                        &single_params,
+                        pred_seed,
+                        Some(NewMvSubpelGate {
+                            lambda,
+                            best_rd_so_far: best
+                                .as_ref()
+                                .map_or(i64::MAX, |incumbent| incumbent.best_rd_cost),
+                        }),
+                    );
+                    if searched.subpel_gate_rejected {
+                        continue;
+                    }
+                    *cached = Some(searched.best_mv);
                 }
                 cached.unwrap()
             }
@@ -2964,7 +2977,8 @@ const RT_NEWMV_SUBPEL_SEARCH_LEVEL: i32 = 0;
 const RT_NEWMV_SUBPEL_FORCE_STOP: SubPixelForcedStop = SubPixelForcedStop::QuarterPel;
 
 /// Run the F7.0 full-pel diamond + sub-pel refinement for NEWMV.
-/// Returns the resulting MV in 1/8-pel units.
+/// Returns the resulting MV in 1/8-pel units, or a syntax-RD rejection for a
+/// fresh search whose full-pel motion cost already exceeds the incumbent.
 ///
 /// Two paths:
 ///
@@ -2993,10 +3007,49 @@ const RT_NEWMV_SUBPEL_FORCE_STOP: SubPixelForcedStop = SubPixelForcedStop::Quart
 ///   picked NEWMV yet — chicken-and-egg). The int_pro estimate
 ///   already accounts for SAD-domain quality at the SB level, so
 ///   we trust it and only run sub-pel refinement around it.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+struct NewMvSearchResult {
+    best_mv: Mv,
+    subpel_gate_rejected: bool,
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+struct NewMvSubpelGate {
+    lambda: u32,
+    best_rd_so_far: i64,
+}
+
+fn newmv_fullpel_syntax_rd_cost(
+    params: &InterModeSearchParams<'_>,
+    fullpel_mv: Mv,
+    lambda: u32,
+) -> i64 {
+    let diff_row = fullpel_mv
+        .row
+        .wrapping_sub(params.mv_candidates.nearest.row);
+    let diff_col = fullpel_mv
+        .col
+        .wrapping_sub(params.mv_candidates.nearest.col);
+    let raw_mv_rate = mv_cost(diff_row, diff_col, params.mv_costs).max(0) as u64;
+    let mv_rate = ((raw_mv_rate * 108 + 64) >> 7).min(u64::from(u32::MAX)) as u32;
+    let mode_rate =
+        params.inter_mode_costs[params.inter_mode_ctx][InterMode::NewMv.idx()].max(0) as u32;
+    rd_cost(lambda, mv_rate.saturating_add(mode_rate), 0)
+}
+
+fn newmv_fullpel_syntax_rejected(
+    params: &InterModeSearchParams<'_>,
+    fullpel_mv: Mv,
+    gate: NewMvSubpelGate,
+) -> bool {
+    newmv_fullpel_syntax_rd_cost(params, fullpel_mv, gate.lambda) > gate.best_rd_so_far
+}
+
 fn run_newmv_search(
     params: &InterModeSearchParams<'_>,
     precomputed_pred_seed: Option<(Mv, u32)>,
-) -> Mv {
+    subpel_gate: Option<NewMvSubpelGate>,
+) -> NewMvSearchResult {
     // Compute the full-pel-domain MV center for the sub-pel
     // refinement step. The `SubPixelSearchParams::center_mv` is a
     // FULL-PEL value (the sub-pel search lifts it via `* 8`
@@ -3093,6 +3146,22 @@ fn run_newmv_search(
         row: full.best_mv_row,
         col: full.best_mv_col,
     };
+    let fullpel_mv = Mv {
+        row: center_mv_fp.row.saturating_mul(8),
+        col: center_mv_fp.col.saturating_mul(8),
+    };
+    // Pinned libvpx rejects a fresh full-pel NEWMV result before fractional
+    // refinement when its syntax cost alone already loses to the incumbent
+    // (`vp9_pickmode.c:218-253`). Keep its strict `>` and 108/128 MV-rate
+    // scaling. Cached descent overrides bypass this fresh-search path.
+    let subpel_gate_rejected =
+        subpel_gate.is_some_and(|gate| newmv_fullpel_syntax_rejected(params, fullpel_mv, gate));
+    if subpel_gate_rejected {
+        return NewMvSearchResult {
+            best_mv: fullpel_mv,
+            subpel_gate_rejected: true,
+        };
+    }
 
     // E13 diamond-search-quality oracle (diagnostic-only, env-gated).
     // Records SAD@(0,0), SAD@diamond-output (NEWMVraw), and the
@@ -3165,7 +3234,10 @@ fn run_newmv_search(
         // diagonal probes.
         iters_per_step,
     });
-    sub.best_mv
+    NewMvSearchResult {
+        best_mv: sub.best_mv,
+        subpel_gate_rejected,
+    }
 }
 
 /// F.5 — per-block interpolation-filter search set (unconditionally
@@ -5307,9 +5379,70 @@ mod tests {
         );
 
         assert_eq!(
-            run_newmv_search(&params, None),
-            run_newmv_search(&params, Some(pred_seed)),
+            run_newmv_search(&params, None, None),
+            run_newmv_search(&params, Some(pred_seed), None),
         );
+    }
+
+    #[test]
+    fn newmv_fullpel_syntax_gate_uses_libvpx_rate_and_strict_comparison() {
+        let pw = 64;
+        let ph = 64;
+        let data = make_plane(pw, ph, 0x648);
+        let plane = PlaneRef {
+            data: &data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let harness = TestHarness::new(pw, 80);
+        let mvc = MvCandidates {
+            nearest: Mv { row: 8, col: -8 },
+            near: Mv::ZERO,
+        };
+        let params = make_params(
+            &harness,
+            BlockSize::Block16x16,
+            &plane,
+            &plane,
+            (16, 16),
+            &mvc,
+            MvLimits::new(-16, 16, -16, 16),
+            80,
+        );
+        let fullpel_mv = Mv { row: 24, col: -16 };
+        let lambda = compute_rd_mult(80, frame_type_for_rd(params.frame_kind));
+        let syntax_rd = newmv_fullpel_syntax_rd_cost(&params, fullpel_mv, lambda);
+
+        let diff_row = fullpel_mv.row.wrapping_sub(mvc.nearest.row);
+        let diff_col = fullpel_mv.col.wrapping_sub(mvc.nearest.col);
+        let raw_mv_rate = mv_cost(diff_row, diff_col, params.mv_costs).max(0) as u64;
+        let scaled_mv_rate = ((raw_mv_rate * 108 + 64) >> 7) as u32;
+        let mode_rate =
+            params.inter_mode_costs[params.inter_mode_ctx][InterMode::NewMv.idx()].max(0) as u32;
+        assert_eq!(
+            syntax_rd,
+            rd_cost(lambda, scaled_mv_rate.saturating_add(mode_rate), 0),
+        );
+        assert!(
+            !newmv_fullpel_syntax_rejected(
+                &params,
+                fullpel_mv,
+                NewMvSubpelGate {
+                    lambda,
+                    best_rd_so_far: syntax_rd,
+                },
+            ),
+            "libvpx's strict > comparison must preserve an exact RD tie",
+        );
+        assert!(newmv_fullpel_syntax_rejected(
+            &params,
+            fullpel_mv,
+            NewMvSubpelGate {
+                lambda,
+                best_rd_so_far: syntax_rd - 1,
+            },
+        ));
     }
 
     #[test]
