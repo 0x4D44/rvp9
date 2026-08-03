@@ -1008,7 +1008,12 @@ fn find_realtime_refs_nearest_near_mvs_with_context<N: NeighbourLookup, const RE
         RealtimeRefMvs {
             nearest,
             near,
-            const_motion: const_motion[ref_index],
+            // `find_predictors` selects the full `vp9_find_mv_refs` path
+            // when `cm->use_prev_frame_mvs` is true. Its caller initializes
+            // `const_motion[]` to zero, and only the shorter `mv_refs_rt`
+            // path overwrites an entry. Therefore NEARMV must remain
+            // eligible whenever the previous-frame candidate path is live.
+            const_motion: prev_frame_mv.is_none() && const_motion[ref_index],
         }
     });
     (refs, mode_context_from_counter(mode_context_sum))
@@ -1468,6 +1473,26 @@ mod tests {
     }
 
     #[test]
+    fn previous_frame_mv_path_keeps_nearmv_eligible() {
+        let neighbours = ListNeighbours::new();
+        let previous = PrevFrameMvRef {
+            mvs: [Mv { row: 16, col: -8 }, Mv::ZERO],
+            ref_frames: [RefFrame::LastFrame, RefFrame::NoRefFrame],
+        };
+        let context = find_last_golden_nearest_near_mvs_with_context(
+            BlockSize::Block16x16,
+            &neighbours,
+            &[false; 4],
+            &loose_bounds(),
+            Some(previous),
+            true,
+        );
+
+        assert!(!context.refs[0].const_motion);
+        assert!(!context.refs[1].const_motion);
+    }
+
+    #[test]
     fn paired_last_golden_walk_matches_four_independent_queries() {
         let above = inter_mi_compound(
             BlockSize::Block16x16,
@@ -1548,7 +1573,12 @@ mod tests {
                         assert_eq!(paired[index].near, near);
                         assert_eq!(
                             paired[index].const_motion,
-                            mv_refs_rt_const_motion(BlockSize::Block16x16, ref_frame, lookup,),
+                            prev_frame_mv.is_none()
+                                && mv_refs_rt_const_motion(
+                                    BlockSize::Block16x16,
+                                    ref_frame,
+                                    lookup,
+                                ),
                         );
                     }
                 }
