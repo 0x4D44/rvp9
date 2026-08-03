@@ -1742,6 +1742,25 @@ fn tile_for_mi_col(bounds: &[ModesTileBounds], mi_col: usize) -> ModesTileBounds
         .expect("every frame MI column belongs to exactly one VP9 tile")
 }
 
+fn inter_row_job_sb_columns(
+    bounds: &[ModesTileBounds],
+    active_tile_col: Option<usize>,
+    job: crate::row_mt::RowJob,
+) -> std::ops::Range<usize> {
+    let tile = *bounds
+        .get(job.tile_col)
+        .expect("inter row job tile column is out of bounds");
+    assert!(
+        active_tile_col.is_none_or(|active| active == job.tile_col),
+        "inter row job does not belong to the active tile"
+    );
+    assert!(
+        tile.mi_col_start.is_multiple_of(8) && tile.mi_col_end.is_multiple_of(8),
+        "inter row jobs require superblock-aligned tile columns"
+    );
+    tile.mi_col_start / 8..tile.mi_col_end / 8
+}
+
 /// `simulate_dc_intra_encode_partitions` without the up-front recon zeroing.
 pub(crate) fn simulate_dc_intra_encode_partitions_no_zero(
     width: u32,
@@ -4813,16 +4832,12 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         0
     };
 
-    let mut encode_sb_row = |sb_row: usize| {
-        for sb_col in 0..sb_cols {
-            let current_tile = tile_for_mi_col(&tile_bounds_by_col, sb_col * 8);
-            let tile_col = tile_bounds_by_col
-                .iter()
-                .position(|&bounds| bounds == current_tile)
-                .expect("current tile came from tile_bounds_by_col");
-            if active_tile_col.is_some_and(|active| active != tile_col) {
-                continue;
-            }
+    let mut encode_job = |job: crate::row_mt::RowJob| {
+        let current_tile = tile_bounds_by_col[job.tile_col];
+        let sb_columns = inter_row_job_sb_columns(&tile_bounds_by_col, active_tile_col, job);
+        let sb_row = job.sb_row;
+        for sb_col in sb_columns {
+            let tile_col = job.tile_col;
             let rd_thresh_table = &mut rd_thresh_tables[tile_col];
             let sb_idx = sb_row * sb_cols + sb_col;
 
@@ -8273,7 +8288,13 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         }
     };
     for sb_row in 0..sb_rows {
-        encode_sb_row(sb_row);
+        if let Some(tile_col) = active_tile_col {
+            encode_job(crate::row_mt::RowJob { sb_row, tile_col });
+        } else {
+            for tile_col in 0..tile_bounds_by_col.len() {
+                encode_job(crate::row_mt::RowJob { sb_row, tile_col });
+            }
+        }
     }
 
     if rt_profile_enabled {
@@ -10039,6 +10060,37 @@ fn intra_inverse_transform_add(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inter_row_jobs_partition_unequal_tiles_into_disjoint_sb_ranges() {
+        let bounds = column_tile_bounds(16, 30 * 8, 2);
+        let mut observed = Vec::new();
+        for tile_col in 0..bounds.len() {
+            observed.extend(inter_row_job_sb_columns(
+                &bounds,
+                None,
+                crate::row_mt::RowJob {
+                    sb_row: 1,
+                    tile_col,
+                },
+            ));
+        }
+        assert_eq!(observed, (0..30).collect::<Vec<_>>());
+    }
+
+    #[test]
+    #[should_panic(expected = "inter row job does not belong to the active tile")]
+    fn inter_row_job_rejects_another_active_tile() {
+        let bounds = column_tile_bounds(16, 20 * 8, 2);
+        let _ = inter_row_job_sb_columns(
+            &bounds,
+            Some(2),
+            crate::row_mt::RowJob {
+                sb_row: 0,
+                tile_col: 1,
+            },
+        );
+    }
 
     #[test]
     fn inter_row_grids_commit_mode_and_mv_cells_together() {
