@@ -1295,6 +1295,66 @@ struct InterTileScratch {
     mv_grid: Vec<PrevFrameMvRef>,
 }
 
+#[derive(Copy, Clone)]
+enum TileReconPlane {
+    Y,
+    U,
+    V,
+}
+
+struct InterTileReconCopy<'a> {
+    mi_rows: usize,
+    mi_cols: usize,
+    log2_tile_cols: u8,
+    tile_scratch: &'a [InterTileScratch],
+}
+
+impl InterTileReconCopy<'_> {
+    fn copy_rows(
+        &self,
+        destination_rows: &mut [u8],
+        plane_width: usize,
+        source_rows: std::ops::Range<usize>,
+        plane: TileReconPlane,
+    ) {
+        debug_assert_eq!(destination_rows.len(), source_rows.len() * plane_width);
+        let pixels_per_mi = match plane {
+            TileReconPlane::Y => 8,
+            TileReconPlane::U | TileReconPlane::V => 4,
+        };
+        let tile_count = 1usize << self.log2_tile_cols;
+        for (tile_col, scratch) in self
+            .tile_scratch
+            .iter()
+            .enumerate()
+            .take(tile_count)
+            .skip(1)
+        {
+            let bounds = tile_bounds(
+                self.mi_rows,
+                self.mi_cols,
+                0,
+                self.log2_tile_cols,
+                0,
+                tile_col as u32,
+            );
+            let col_start = bounds.mi_col_start * pixels_per_mi;
+            let col_end = bounds.mi_col_end * pixels_per_mi;
+            let source = match plane {
+                TileReconPlane::Y => &scratch.recon_y,
+                TileReconPlane::U => &scratch.recon_u,
+                TileReconPlane::V => &scratch.recon_v,
+            };
+            for (destination_row, source_row) in source_rows.clone().enumerate() {
+                let destination_start = destination_row * plane_width + col_start;
+                let source_start = source_row * plane_width + col_start;
+                destination_rows[destination_start..destination_start + col_end - col_start]
+                    .copy_from_slice(&source[source_start..source_start + col_end - col_start]);
+            }
+        }
+    }
+}
+
 /// Owned output from one independent full-height keyframe column tile.
 struct KeyframeTileJobResult {
     tile_col: usize,
@@ -3374,6 +3434,57 @@ impl StreamEncoder {
             std::mem::swap(&mut new_recon_u, &mut tile_scratch[0].recon_u);
             std::mem::swap(&mut new_recon_v, &mut tile_scratch[0].recon_v);
             std::mem::swap(&mut cur_mv_grid, &mut tile_scratch[0].mv_grid);
+            // Tile 0 rendered directly into the frame allocation via the
+            // swaps above. Copy the other disjoint tile columns in parallel
+            // before the stream thread consumes the merged reconstruction.
+            // Splitting luma by rows and chroma by planes gives four wholly
+            // disjoint mutable destinations without unsafe aliasing.
+            let y_mid = h as usize / 2;
+            let (new_recon_y_top, new_recon_y_bottom) =
+                new_recon_y.split_at_mut(y_mid * w as usize);
+            let recon_copy = InterTileReconCopy {
+                mi_rows: mi_rows_us,
+                mi_cols: mi_cols_us,
+                log2_tile_cols,
+                tile_scratch,
+            };
+            self.frame_worker_pool
+                .as_mut()
+                .expect("parallel tile reconstruction merge requires the frame worker pool")
+                .scope(|scope| {
+                    scope.submit(|| {
+                        recon_copy.copy_rows(
+                            new_recon_y_top,
+                            w as usize,
+                            0..y_mid,
+                            TileReconPlane::Y,
+                        );
+                    });
+                    scope.submit(|| {
+                        recon_copy.copy_rows(
+                            new_recon_y_bottom,
+                            w as usize,
+                            y_mid..h as usize,
+                            TileReconPlane::Y,
+                        );
+                    });
+                    scope.submit(|| {
+                        recon_copy.copy_rows(
+                            &mut new_recon_u,
+                            w as usize / 2,
+                            0..h as usize / 2,
+                            TileReconPlane::U,
+                        );
+                    });
+                    scope.submit(|| {
+                        recon_copy.copy_rows(
+                            &mut new_recon_v,
+                            w as usize / 2,
+                            0..h as usize / 2,
+                            TileReconPlane::V,
+                        );
+                    });
+                });
             let tile_results: Vec<InterTileJobResult> = result_slots
                 .into_iter()
                 .enumerate()
@@ -3420,22 +3531,6 @@ impl StreamEncoder {
                         if let Some(history) = &result.history {
                             self.vbp_partition_history[sb_idx] = history[sb_idx].clone();
                         }
-                    }
-                }
-                if tile_col != 0 {
-                    for row in 0..h as usize {
-                        let start = row * w as usize + bounds.mi_col_start * 8;
-                        let end = row * w as usize + bounds.mi_col_end * 8;
-                        new_recon_y[start..end].copy_from_slice(&scratch.recon_y[start..end]);
-                    }
-                    let uv_width = w as usize / 2;
-                    let uv_col_start = bounds.mi_col_start * 4;
-                    let uv_col_end = bounds.mi_col_end * 4;
-                    for row in 0..h as usize / 2 {
-                        let start = row * uv_width + uv_col_start;
-                        let end = row * uv_width + uv_col_end;
-                        new_recon_u[start..end].copy_from_slice(&scratch.recon_u[start..end]);
-                        new_recon_v[start..end].copy_from_slice(&scratch.recon_v[start..end]);
                     }
                 }
                 if tile_col != 0 {
