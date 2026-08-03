@@ -1106,6 +1106,14 @@ pub struct PickInterModeParams<'a> {
     /// neighbour filters. Compute via
     /// [`crate::inter::get_pred_context_switchable_interp`] per leaf.
     pub switchable_interp_ctx: usize,
+    /// Realtime interpolation-filter reference selected from the above/left
+    /// inter neighbours. Mirrors pinned libvpx `filter_ref`: above wins,
+    /// then left, otherwise [`InterpFilter::Switchable`]. LAST-frame near-MV
+    /// modes reuse a concrete reference instead of searching both filters.
+    pub filter_ref: InterpFilter,
+    /// Whether a GOLDEN candidate may run interpolation-filter search.
+    /// Pinned libvpx permits this for VBR and SVC, but not ordinary CBR.
+    pub search_golden_filter: bool,
     /// P19 — per-block skip-prob context (0..=2). Compute via
     /// [`crate::inter::get_pred_context_skip`] from the above/left
     /// neighbours' `skip` flags. Used by `evaluate_candidate`'s
@@ -1626,15 +1634,13 @@ const fn mi_width_log2_for_bsize(bsize: BlockSize) -> u32 {
     }
 }
 
-/// libvpx realtime filter-search predicate.
+/// Realtime filter-search predicate derived from libvpx.
 ///
 /// `search_filter_ref` runs only when the candidate MV has a fractional
-/// luma component. Integer-pel MVs force `EIGHTTAP`, even if the frame
+/// luma component. Integer-pel MVs reuse the selected filter, even if the frame
 /// header is switchable and even if `cb_pred_filter_search` would put
 /// this block on the chessboard-search half.
-#[inline]
-#[must_use]
-fn should_search_interp_filter(
+struct InterpFilterSearch {
     skip_integer_mv_filter_search: bool,
     cb_pred_filter_search: bool,
     mi_row: u32,
@@ -1642,7 +1648,44 @@ fn should_search_interp_filter(
     chessboard_index: u32,
     block_size: BlockSize,
     mv: Mv,
-) -> bool {
+    mode: InterMode,
+    ref_frame: RefFrame,
+    filter_ref: InterpFilter,
+    search_golden_filter: bool,
+}
+
+#[inline]
+#[must_use]
+fn should_search_interp_filter(search: InterpFilterSearch) -> bool {
+    let InterpFilterSearch {
+        skip_integer_mv_filter_search,
+        cb_pred_filter_search,
+        mi_row,
+        mi_col,
+        chessboard_index,
+        block_size,
+        mv,
+        mode,
+        ref_frame,
+        filter_ref,
+        search_golden_filter,
+    } = search;
+    // Unlike libvpx, retain the nearest-MV LAST search and all enabled GOLDEN
+    // searches. Their extra residual quality is material for rvp9, while
+    // reusing the neighbour filter for LAST near-MV candidates removes the
+    // measured redundant evaluations.
+    if mode != InterMode::NewMv
+        && mode != InterMode::NearestMv
+        && filter_ref != InterpFilter::Switchable
+        && !(ref_frame == RefFrame::GoldenFrame && search_golden_filter)
+    {
+        return false;
+    }
+    if ref_frame != RefFrame::LastFrame
+        && !(ref_frame == RefFrame::GoldenFrame && search_golden_filter)
+    {
+        return false;
+    }
     if skip_integer_mv_filter_search && ((mv.row | mv.col) & 0x07) == 0 {
         return false;
     }
@@ -2303,8 +2346,9 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
         // `vp9_pickmode.c:1852-1858`, `:2308-2315`). Search runs only
         // for fractional-pel MVs. When `cb_pred_filter_search` is
         // active, fractional candidates are further reduced to a
-        // chessboard-pattern subset; the other candidates use default
-        // `EightTap` with no search. The chessboard predicate is:
+        // chessboard-pattern subset; the other candidates reuse the selected
+        // neighbour filter, or default to `EightTap` when none exists. The
+        // chessboard predicate is:
         //
         // ```c
         // const int bsl = mi_width_log2_lookup[bsize];
@@ -2314,19 +2358,28 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
         //
         // where `chessboard_index = current_video_frame & 1` so the
         // pattern toggles each frame.
-        let run_filter_search = should_search_interp_filter(
-            params.skip_integer_mv_filter_search,
-            params.cb_pred_filter_search,
-            params.mi_row,
-            params.mi_col,
-            params.chessboard_index,
-            params.block_size,
+        let run_filter_search = should_search_interp_filter(InterpFilterSearch {
+            skip_integer_mv_filter_search: params.skip_integer_mv_filter_search,
+            cb_pred_filter_search: params.cb_pred_filter_search,
+            mi_row: params.mi_row,
+            mi_col: params.mi_col,
+            chessboard_index: params.chessboard_index,
+            block_size: params.block_size,
             mv,
-        );
+            mode,
+            ref_frame,
+            filter_ref: params.filter_ref,
+            search_golden_filter: params.search_golden_filter,
+        });
+        let fallback_filter = if params.filter_ref == InterpFilter::Switchable {
+            InterpFilter::EightTap
+        } else {
+            params.filter_ref
+        };
         let filter_set: &[InterpFilter] = if run_filter_search {
             f5_filter_search_set()
         } else {
-            &[InterpFilter::EightTap]
+            std::slice::from_ref(&fallback_filter)
         };
 
         let candidate = evaluate_candidate_with_filter_set(
@@ -7052,6 +7105,8 @@ mod tests {
             ref_frame_cost_intra: 0,
             switchable_interp_costs: &harness.sic,
             switchable_interp_ctx: 3,
+            filter_ref: InterpFilter::Switchable,
+            search_golden_filter: true,
             // P19 — middle context default, neutral 128 prob.
             skip_ctx: 1,
             skip_prob: crate::entropy::default_probs::DEFAULT_SKIP_PROBS[1],
@@ -10958,31 +11013,85 @@ mod tests {
     fn s11_filter_search_requires_subpel_mv_before_chessboard() {
         let integer_mv = Mv { row: 8, col: 0 };
         let subpel_mv = Mv { row: 0, col: 1 };
+        let search = |skip_integer, chessboard, mi_row, mv| {
+            should_search_interp_filter(InterpFilterSearch {
+                skip_integer_mv_filter_search: skip_integer,
+                cb_pred_filter_search: chessboard,
+                mi_row,
+                mi_col: 0,
+                chessboard_index: 0,
+                block_size: BlockSize::Block16x16,
+                mv,
+                mode: InterMode::NewMv,
+                ref_frame: RefFrame::LastFrame,
+                filter_ref: InterpFilter::Switchable,
+                search_golden_filter: true,
+            })
+        };
+        let policy_search = |mode, ref_frame, filter_ref, search_golden_filter| {
+            should_search_interp_filter(InterpFilterSearch {
+                skip_integer_mv_filter_search: true,
+                cb_pred_filter_search: false,
+                mi_row: 2,
+                mi_col: 0,
+                chessboard_index: 0,
+                block_size: BlockSize::Block16x16,
+                mv: subpel_mv,
+                mode,
+                ref_frame,
+                filter_ref,
+                search_golden_filter,
+            })
+        };
 
         assert!(
-            should_search_interp_filter(false, false, 2, 0, 0, BlockSize::Block16x16, integer_mv,),
+            search(false, false, 2, integer_mv),
             "small-frame compatibility path keeps integer-pel filter search available"
         );
         assert!(
-            !should_search_interp_filter(true, false, 2, 0, 0, BlockSize::Block16x16, integer_mv,),
+            !search(true, false, 2, integer_mv),
             "large-frame speed path skips integer-pel filter search"
         );
         assert!(
-            !should_search_interp_filter(true, true, 2, 0, 0, BlockSize::Block16x16, integer_mv),
+            !search(true, true, 2, integer_mv),
             "integer-pel MV must skip filter search even on a chessboard-search block"
         );
         assert!(
-            !should_search_interp_filter(true, true, 0, 0, 0, BlockSize::Block16x16, subpel_mv),
+            !search(true, true, 0, subpel_mv),
             "sub-pel MV still obeys cb_pred_filter_search predicate=0"
         );
         assert!(
-            should_search_interp_filter(true, true, 2, 0, 0, BlockSize::Block16x16, subpel_mv),
+            search(true, true, 2, subpel_mv),
             "sub-pel MV on predicate=1 block must run filter search"
         );
         assert!(
-            should_search_interp_filter(false, false, 0, 0, 0, BlockSize::Block16x16, subpel_mv),
+            search(false, false, 0, subpel_mv),
             "sub-pel MV runs filter search when cb_pred_filter_search is off"
         );
+        assert!(policy_search(
+            InterMode::NearestMv,
+            RefFrame::LastFrame,
+            InterpFilter::EightTapSmooth,
+            true,
+        ));
+        assert!(!policy_search(
+            InterMode::NearMv,
+            RefFrame::LastFrame,
+            InterpFilter::EightTapSmooth,
+            true,
+        ));
+        assert!(policy_search(
+            InterMode::NearMv,
+            RefFrame::GoldenFrame,
+            InterpFilter::EightTapSmooth,
+            true,
+        ));
+        assert!(!policy_search(
+            InterMode::NewMv,
+            RefFrame::GoldenFrame,
+            InterpFilter::Switchable,
+            false,
+        ));
     }
 
     /// §11 — `cb_pred_filter_search`: the chessboard predicate

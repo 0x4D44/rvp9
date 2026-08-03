@@ -40,9 +40,9 @@ pub use filter::{
 pub use mode_info::{
     InterModeReadParams, SWITCHABLE_INTERP_TREE, get_intra_inter_context, get_mode_context,
     get_pred_context_comp_ref_p, get_pred_context_single_ref_p1, get_pred_context_single_ref_p2,
-    get_pred_context_skip, get_pred_context_switchable_interp, get_reference_mode_context,
-    read_inter_block_mode_info, read_ref_frames, read_switchable_interp_filter,
-    setup_compound_reference_mode,
+    get_pred_context_skip, get_pred_context_switchable_interp, get_pred_filter_ref,
+    get_reference_mode_context, read_inter_block_mode_info, read_ref_frames,
+    read_switchable_interp_filter, setup_compound_reference_mode,
 };
 pub use mv::{read_mv, read_mv_component};
 pub use mv_ref::{

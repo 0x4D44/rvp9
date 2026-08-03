@@ -190,6 +190,24 @@ pub fn get_pred_context_switchable_interp(
     ctx as usize
 }
 
+/// Choose the realtime picker's neighbour interpolation-filter reference.
+///
+/// Mirrors pinned libvpx `vp9_pickmode.c:1908-1917`: prefer the above
+/// neighbour when it is inter, otherwise use an inter left neighbour, and
+/// fall back to [`InterpFilter::Switchable`] when neither neighbour is inter.
+/// The caller uses this reference to decide whether it can reuse a concrete
+/// neighbour filter or needs to search the realtime filter set.
+#[must_use]
+pub fn get_pred_filter_ref(above: Option<&ModeInfo>, left: Option<&ModeInfo>) -> InterpFilter {
+    let inter_filter = |mi: Option<&ModeInfo>| match mi.map(|m| m.mode) {
+        Some(BlockMode::Inter { interp_filter, .. }) => Some(interp_filter),
+        _ => None,
+    };
+    inter_filter(above)
+        .or_else(|| inter_filter(left))
+        .unwrap_or(InterpFilter::Switchable)
+}
+
 /// libvpx `vp9_get_skip_context` (`vp9_pred_common.h:55-61`).
 ///
 /// ```c
@@ -5164,6 +5182,35 @@ mod tests {
         );
         let ctx = get_pred_context_switchable_interp(Some(&above), Some(&left));
         assert_eq!(ctx, InterpFilter::EightTapSharp as usize);
+    }
+
+    /// The realtime filter reference prefers an inter above neighbour even
+    /// when the inter left neighbour chose a different filter.
+    #[test]
+    fn pred_filter_ref_prefers_inter_above_then_left() {
+        let above = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTapSmooth,
+        );
+        let left = inter_neighbour_full(
+            BlockSize::Block16x16,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        assert_eq!(
+            get_pred_filter_ref(Some(&above), Some(&left)),
+            InterpFilter::EightTapSmooth,
+        );
+        assert_eq!(
+            get_pred_filter_ref(Some(&intra_neighbour(BlockSize::Block16x16)), Some(&left)),
+            InterpFilter::EightTap,
+        );
+        assert_eq!(get_pred_filter_ref(None, None), InterpFilter::Switchable,);
     }
 
     // ----- get_reference_mode_context: edge has_second_ref vs not

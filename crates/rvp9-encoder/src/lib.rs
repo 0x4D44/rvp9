@@ -4218,11 +4218,11 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     use rvp9_core::cost::symbol_costs::{
         inter_mode_costs, partition_costs, switchable_interp_costs,
     };
-    use rvp9_core::inter::get_pred_context_switchable_interp;
     use rvp9_core::inter::mv_ref::{
         BlockBounds, RealtimeRefMvs, find_last_golden_nearest_near_mvs_with_context,
         find_last_nearest_near_mvs_with_context, find_nearest_near_mvs,
     };
+    use rvp9_core::inter::{get_pred_context_switchable_interp, get_pred_filter_ref};
     use rvp9_core::mode_decision::inter::{
         InterModeSearchParams, MvCandidates, PickInterModeParams, pick_inter_mode,
     };
@@ -5574,6 +5574,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     };
                     let switchable_interp_ctx =
                         get_pred_context_switchable_interp(nb_above, nb_left);
+                    let filter_ref = get_pred_filter_ref(nb_above, nb_left);
                     let skip_ctx = rvp9_core::inter::get_pred_context_skip(nb_above, nb_left);
                     let last_const_motion = last_ref_mvs.const_motion;
                     let golden_const_motion = golden_ref_mvs.const_motion;
@@ -5621,6 +5622,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         ref_frame_cost_intra,
                         switchable_interp_costs: &sic,
                         switchable_interp_ctx,
+                        filter_ref,
+                        search_golden_filter: rc_mode == crate::rate_control::RcMode::Vbr,
                         skip_ctx,
                         skip_prob: frame_context.skip_probs[skip_ctx],
                         rd_calibration: inter_rd_calibration,
@@ -6521,6 +6524,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     )
                 };
                 let switchable_interp_ctx = get_pred_context_switchable_interp(nb_above, nb_left);
+                let filter_ref = get_pred_filter_ref(nb_above, nb_left);
                 // P19 — per-block skip-prob context, libvpx
                 // `vp9_pred_common.h:55-61` (`above.skip + left.skip`).
                 // Threaded into the picker's skip-flag tie-break.
@@ -6846,6 +6850,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     ref_frame_cost_intra,
                     switchable_interp_costs: &sic,
                     switchable_interp_ctx,
+                    filter_ref,
+                    search_golden_filter: rc_mode == crate::rate_control::RcMode::Vbr,
                     skip_ctx,
                     skip_prob: frame_context.skip_probs[skip_ctx],
                     rd_calibration: inter_rd_calibration,
