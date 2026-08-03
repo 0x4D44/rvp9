@@ -4157,3 +4157,55 @@ encoder remains roughly `1.5x` pinned vpxenc, outside the final gate.
 
 **Future plan:** parallelize or fuse the tile-MT count replay, and reconcile
 rate-control response before judging the small old-town curve movement final.
+
+### 2026-08-03 — Focused TX8/TX16 emission redecision
+
+**Where:** `rvp9_encoder::choose_inter_luma_tx_size` and
+`rvp9_encoder::realtime_force_max_emit_tx`; libvpx counterparts:
+`vp9/encoder/vp9_pickmode.c::block_yrd` and
+`vp9/encoder/vp9_rdopt.c::choose_tx_size_from_rd`.
+
+**What libvpx does:** its realtime picker couples transform selection to the
+mode decision and prunes the search according to its speed features.
+
+**What rvp9 does:** CPU7 realtime large frames using the exact variance tree
+run a final coefficient-domain RD comparison between TX8 and TX16 only on
+leaves whose maximum transform is TX16. Other leaf classes retain the maximum
+transform policy. `RVP9_RT_EMIT_MAX_TX=1` restores the former large-frame
+shortcut for diagnostics.
+
+**Why:** fixed-Q bit accounting localized the remaining old-town gap to
+coefficient coding: rvp9 spent about 136,006 more modeled coefficient bits
+than vpxenc while spending about 17,291 fewer bits on all other syntax. A full
+TX-size search recovered quality but cost roughly 27%; the focused search
+crosses the Stage 4a quality gate at about one sixth of that local cost.
+
+**Byte-parity impact:** intentional streams change. At 1000 kbps the
+in-to-tree, ducks-take-off, and old-town-cross IVF SHA-256 values are
+`42f1793d007bc1a7b930e24d356eba3e491809c8919d20559f24f38a52cdba61`,
+`92c4fd03192cdba8d0e21856506c1513830f9933417ce344ddeb1b9bae08ac23`,
+and `ab8f38fb7c3df77ccea723f54015374ffc173463b682a50908da9b6f35366cfe`.
+Rvp9-decoder, pinned vpxdec, and ffmpeg produce identical I420 output for each
+stream, with SHA-256 values
+`6421eea9c439a277b2b989c22243ec7efd5c2f1ff918874df992a83009fd1f47`,
+`81c63c024f4079ef2933d1ae5625d1672a80077bd32265556d1c9b589f24a30f`,
+and `95172f5e66afb5476a94ab0c450381f40b5aaeafb3e303e7ad262c811b80b671`.
+
+**Compression-efficiency impact:** six-point luma BD-rate versus pinned
+vpxenc is `-5.762787%`, `-13.685349%`, and `+1.380523%` on in-to-tree,
+ducks-take-off, and old-town-cross. Average-YUV BD-rate is `-5.130545%`,
+`-12.650144%`, and `+1.192608%`. This moves the limiting old-town result from
+Unit 597's `+2.330452%` luma and `+2.384092%` average-YUV inside the Stage 4a
+`+2%` gate, but not the final `+0.5%` gate.
+
+**Speed impact:** twelve rotating four-thread observations measured a
+`1.0414x` local wall-time ratio against the former maximum-TX policy. A fresh
+twelve-pair comparison measured `0.245485 s` versus pinned vpxenc's
+`0.168107 s`, or `1.4603x`, on the loaded host. Nine warmed one-thread runs
+measured `10.991 ms/frame`, inside the 720p30 absolute budget but outside the
+final relative-speed gate.
+
+**Future plan:** retain the focused search as the Stage 4a quality
+prerequisite. Profile its duplicate selected-transform work and recover the
+local cost before widening the search to TX32 leaves; the wider search reaches
+the final three-clip quality gate but is not yet speed-compatible.

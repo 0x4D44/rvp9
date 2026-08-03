@@ -3743,6 +3743,20 @@ fn realtime_emit_luma_tx_size(
     }
 }
 
+/// Decide whether large-frame recovery should force the legacy maximum-TX
+/// emission policy.
+///
+/// The exact variance tree has enough rate-distortion fidelity to run the
+/// focused TX redecision below. Other large-frame paths retain their measured
+/// speed shortcut unless an explicit diagnostic override says otherwise.
+fn realtime_force_max_emit_tx(
+    override_value: Option<bool>,
+    large_frame_recovery: bool,
+    exact_vbp_tree: bool,
+) -> bool {
+    override_value.unwrap_or(large_frame_recovery && !exact_vbp_tree)
+}
+
 /// Immutable snapshot of diagnostic and A/B environment knobs shared by all
 /// tile jobs for one frame.
 pub(crate) struct InterEncodeEnv {
@@ -4606,7 +4620,11 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         );
     }
     let live_ref_costs_enabled = exact_vbp_tree_enabled && env.flag_or(env.live_ref_costs, true);
-    let rt_emit_max_tx = env.flag_or(env.rt_emit_max_tx, rt_large_recovery);
+    let rt_emit_max_tx = realtime_force_max_emit_tx(
+        env.rt_emit_max_tx,
+        rt_large_recovery,
+        exact_vbp_tree_enabled,
+    );
     let rt_emit_tx_rd = env.flag_or(env.rt_emit_tx_rd, true);
     // libvpx speed >= 4 uses `quant_fp` for every inter frame. Preserve
     // `=0` as the regular-quantizer diagnostic without making the slower
@@ -7445,8 +7463,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     //
                     // Start from the RT picker's model-RD TX decision so
                     // `RVP9_RT_EMIT_TX_RD=0` can test libvpx-style reuse of
-                    // `mi->tx_size`. The default below still re-runs the
-                    // older emit-side RD redecision before coding Y.
+                    // `mi->tx_size`. The exact variance-tree path below
+                    // redecides only the measured TX8/TX16 leaf class.
                     if emit_profile_enabled {
                         emit_profile_inter_leaves += 1;
                     }
@@ -7624,9 +7642,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         // Diagnostic A/B: `RVP9_RT_EMIT_TX_RD=0` reuses
                         // the RT picker's model-RD TX decision, matching
                         // libvpx pickmode's stored `mi->tx_size`. The
-                        // default remains the older good-quality emit-side
-                        // TX-size redecision until the coupled path is
-                        // quality-neutral.
+                        // exact variance-tree default uses the focused
+                        // TX8/TX16 redecision; other large-frame paths keep
+                        // their established maximum-TX shortcut.
                         if plane == 0 && !rt_emit_max_tx && rt_emit_tx_rd {
                             let emit_tx_select_start = if emit_profile_enabled {
                                 Some(std::time::Instant::now())
@@ -9346,11 +9364,22 @@ struct InterLumaTxInput<'a> {
     scratch: &'a mut InterEmitScratch,
 }
 
-fn choose_inter_luma_tx_size(input: InterLumaTxInput<'_>) -> TxSize {
-    choose_inter_luma_tx_size_impl::<true>(input)
+fn realtime_inter_tx_candidate(max_tx: TxSize, candidate: TxSize) -> bool {
+    max_tx == TxSize::Tx16x16 && matches!(candidate, TxSize::Tx8x8 | TxSize::Tx16x16)
 }
 
-fn choose_inter_luma_tx_size_impl<const PRUNE: bool>(input: InterLumaTxInput<'_>) -> TxSize {
+fn choose_inter_luma_tx_size(input: InterLumaTxInput<'_>) -> TxSize {
+    let max_tx = rvp9_core::block::max_txsize(input.leaf_bsize);
+    if max_tx != TxSize::Tx16x16 {
+        return max_tx;
+    }
+    choose_inter_luma_tx_size_impl::<true>(input, true)
+}
+
+fn choose_inter_luma_tx_size_impl<const PRUNE: bool>(
+    input: InterLumaTxInput<'_>,
+    realtime_candidate_subset: bool,
+) -> TxSize {
     use rvp9_core::quant::forward::{
         vp9_quantize_b_32x32_with_order, vp9_quantize_b_with_order,
         vp9_quantize_fp_32x32_with_order, vp9_quantize_fp_with_order,
@@ -9379,7 +9408,6 @@ fn choose_inter_luma_tx_size_impl<const PRUNE: bool>(input: InterLumaTxInput<'_>
     if max_tx == TxSize::Tx4x4 {
         return TxSize::Tx4x4;
     }
-
     let plane_bw_4x4 = leaf_bsize.n_4x4_wide() as usize;
     let plane_bh_4x4 = leaf_bsize.n_4x4_high() as usize;
     let dequant_pair = [quantizer.dequant[0], quantizer.dequant[1]];
@@ -9428,9 +9456,9 @@ fn choose_inter_luma_tx_size_impl<const PRUNE: bool>(input: InterLumaTxInput<'_>
     let mut best_tx = max_tx;
     let mut best_rd = i64::MAX;
 
-    // Walk every candidate size from max down to Tx4x4 (libvpx walks the
-    // full depth in the good-quality path; the realtime/RT op-point still
-    // benefits because the residual transform is cheap relative to ME).
+    // Walk candidate sizes from max down to Tx4x4. Exhaustive diagnostics
+    // retain the full libvpx good-quality depth; the measured realtime policy
+    // admits only TX16 and TX8 for the eligible leaf class.
     'candidate_sizes: for n in (0..=(max_tx as usize)).rev() {
         let tx_size = match n {
             0 => TxSize::Tx4x4,
@@ -9438,6 +9466,9 @@ fn choose_inter_luma_tx_size_impl<const PRUNE: bool>(input: InterLumaTxInput<'_>
             2 => TxSize::Tx16x16,
             _ => TxSize::Tx32x32,
         };
+        if realtime_candidate_subset && !realtime_inter_tx_candidate(max_tx, tx_size) {
+            continue;
+        }
         let tx_step_4x4 = 1usize << (tx_size as usize);
         let ncoef = tx_size.n_coeffs();
         let scan = scan_for(tx_size, TxType::DctDct);
@@ -10241,9 +10272,9 @@ mod tests {
                 scratch,
             };
             if prune {
-                choose_inter_luma_tx_size(pick_input)
+                choose_inter_luma_tx_size_impl::<true>(pick_input, false)
             } else {
-                choose_inter_luma_tx_size_impl::<false>(pick_input)
+                choose_inter_luma_tx_size_impl::<false>(pick_input, false)
             }
         };
 
@@ -10306,9 +10337,9 @@ mod tests {
                             scratch,
                         };
                         if prune {
-                            choose_inter_luma_tx_size_impl::<true>(input)
+                            choose_inter_luma_tx_size_impl::<true>(input, false)
                         } else {
-                            choose_inter_luma_tx_size_impl::<false>(input)
+                            choose_inter_luma_tx_size_impl::<false>(input, false)
                         }
                     };
                     let exhaustive = pick(&mut InterEmitScratch::new(), false);
@@ -11012,6 +11043,25 @@ mod tests {
             realtime_emit_luma_tx_size(false, BlockSize::Block64x64, TxSize::Tx8x8),
             TxSize::Tx8x8,
         );
+    }
+
+    #[test]
+    fn exact_vbp_large_frames_enable_focused_tx_redecision() {
+        assert!(realtime_force_max_emit_tx(None, true, false));
+        assert!(!realtime_force_max_emit_tx(None, true, true));
+        assert!(!realtime_force_max_emit_tx(Some(false), true, false));
+        assert!(realtime_force_max_emit_tx(Some(true), true, true));
+    }
+
+    #[test]
+    fn realtime_tx_redecision_searches_only_tx8_and_tx16() {
+        assert!(!realtime_inter_tx_candidate(TxSize::Tx16x16, TxSize::Tx4x4));
+        assert!(realtime_inter_tx_candidate(TxSize::Tx16x16, TxSize::Tx8x8));
+        assert!(realtime_inter_tx_candidate(
+            TxSize::Tx16x16,
+            TxSize::Tx16x16
+        ));
+        assert!(!realtime_inter_tx_candidate(TxSize::Tx32x32, TxSize::Tx8x8));
     }
 
     #[test]
