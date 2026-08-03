@@ -2357,6 +2357,11 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
         },
     );
 
+    // Every keyframe leaf needs at most one 64-pixel edge. Reuse fixed
+    // function-local scratch instead of allocating two tiny vectors per
+    // leaf. Unavailable edges are ignored under their explicit flags.
+    let mut above_pixels = [0u8; 64];
+    let mut left_pixels = [0u8; 64];
     for sb_row in 0..sb_rows {
         if let Some(contexts) = picker_coef_contexts.as_mut() {
             for context in contexts {
@@ -2399,17 +2404,15 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
 
                 let have_above = leaf_px_y > 0;
                 let have_left = leaf_mi_col > current_tile.mi_col_start;
-                let mut above_pixels = vec![0u8; prediction_side];
-                let mut left_pixels = vec![0u8; prediction_side];
                 if have_above {
                     let above_row_y = leaf_px_y - 1;
                     let row_off = above_row_y * w + leaf_px_x;
-                    above_pixels
+                    above_pixels[..prediction_side]
                         .copy_from_slice(&recon_yuv_out.0[row_off..row_off + prediction_side]);
                 }
                 if have_left {
                     let left_col_x = leaf_px_x - 1;
-                    for (r, slot) in left_pixels.iter_mut().enumerate() {
+                    for (r, slot) in left_pixels[..prediction_side].iter_mut().enumerate() {
                         *slot = recon_yuv_out.0[(leaf_px_y + r) * w + left_col_x];
                     }
                 }
@@ -2473,7 +2476,7 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
                     }
                     let mut left = [LEFT_UNAVAILABLE_FILL; 8];
                     if have_left {
-                        left.copy_from_slice(&left_pixels);
+                        left.copy_from_slice(&left_pixels[..8]);
                     }
                     let above_left = if have_above && have_left {
                         top_left_pixel
@@ -2543,7 +2546,7 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
                     }
                     let mut left = [LEFT_UNAVAILABLE_FILL; 8];
                     if have_left {
-                        left.copy_from_slice(&left_pixels);
+                        left.copy_from_slice(&left_pixels[..8]);
                     }
                     let above_left = if have_above && have_left {
                         top_left_pixel
@@ -2597,8 +2600,8 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
                         block_size: leaf_bsize,
                         src_plane: &src_plane,
                         src_offset: (leaf_px_x, leaf_px_y),
-                        above_pixels: &above_pixels,
-                        left_pixels: &left_pixels,
+                        above_pixels: &above_pixels[..prediction_side],
+                        left_pixels: &left_pixels[..prediction_side],
                         top_left_pixel,
                         have_above,
                         have_left,
