@@ -1259,8 +1259,8 @@ pub fn encode_coefs(
     eob: usize,
     counts: Option<&mut DecodeCoefCounts<'_>>,
 ) {
-    encode_coefs_impl(
-        bw, coef_probs, scan, initial_pt, tx_size, seg_eob, raw_coefs, eob, counts, None, true,
+    encode_coefs_impl::<_, true>(
+        bw, coef_probs, scan, initial_pt, tx_size, seg_eob, raw_coefs, eob, counts, None,
     );
 }
 
@@ -1283,7 +1283,7 @@ impl EncodeCoef for i16 {
 }
 
 #[allow(clippy::too_many_arguments)] // retained-token variant of encode_coefs
-fn encode_coefs_impl<T: EncodeCoef>(
+fn encode_coefs_impl<T: EncodeCoef, const EMIT_BITS: bool>(
     bw: &mut BoolWriter<'_>,
     coef_probs: &CoefBandCtxProbs,
     scan: &ScanOrder,
@@ -1294,7 +1294,6 @@ fn encode_coefs_impl<T: EncodeCoef>(
     eob: usize,
     mut counts: Option<&mut DecodeCoefCounts<'_>>,
     mut retained: Option<&mut Vec<RetainedCoefToken>>,
-    emit_bits: bool,
 ) {
     assert!(
         seg_eob <= tx_size.n_coeffs(),
@@ -1336,7 +1335,7 @@ fn encode_coefs_impl<T: EncodeCoef>(
                     prob_ctx: retained_prob_ctx(band, initial_pt),
                 });
             }
-            if emit_bits {
+            if EMIT_BITS {
                 bw.write(0, coef_probs[band][initial_pt][EOB_CONTEXT_NODE]);
             }
         }
@@ -1344,7 +1343,7 @@ fn encode_coefs_impl<T: EncodeCoef>(
     }
 
     ENCODE_COEFS_SCRATCH.with_borrow_mut(|scratch| {
-        encode_coefs_with_token_cache(
+        encode_coefs_with_token_cache::<_, EMIT_BITS>(
             bw,
             coef_probs,
             scan,
@@ -1355,14 +1354,13 @@ fn encode_coefs_impl<T: EncodeCoef>(
             eob,
             counts,
             retained,
-            emit_bits,
             scratch.as_mut_slice(),
         );
     });
 }
 
 #[allow(clippy::too_many_arguments)] // scratch-bearing encode_coefs hot loop
-fn encode_coefs_with_token_cache<T: EncodeCoef>(
+fn encode_coefs_with_token_cache<T: EncodeCoef, const EMIT_BITS: bool>(
     bw: &mut BoolWriter<'_>,
     coef_probs: &CoefBandCtxProbs,
     scan: &ScanOrder,
@@ -1373,7 +1371,6 @@ fn encode_coefs_with_token_cache<T: EncodeCoef>(
     eob: usize,
     mut counts: Option<&mut DecodeCoefCounts<'_>>,
     mut retained: Option<&mut Vec<RetainedCoefToken>>,
-    emit_bits: bool,
     token_cache: &mut [u8],
 ) {
     let band_translate = get_band_translate(tx_size);
@@ -1394,7 +1391,7 @@ fn encode_coefs_with_token_cache<T: EncodeCoef>(
         }
 
         // Outer-loop EOB decision — we are NOT at EOB, emit '1'.
-        if emit_bits {
+        if EMIT_BITS {
             bw.write(1, prob[EOB_CONTEXT_NODE]);
         }
 
@@ -1409,13 +1406,13 @@ fn encode_coefs_with_token_cache<T: EncodeCoef>(
             if coef != 0 {
                 // Break out — emit NOT-ZERO and proceed to the value
                 // tree below.
-                if emit_bits {
+                if EMIT_BITS {
                     bw.write(1, local_prob[ZERO_CONTEXT_NODE]);
                 }
                 break;
             }
             // ZERO_TOKEN at this position.
-            if emit_bits {
+            if EMIT_BITS {
                 bw.write(0, local_prob[ZERO_CONTEXT_NODE]);
             }
             if let Some(tokens) = retained.as_deref_mut() {
@@ -1491,7 +1488,7 @@ fn encode_coefs_with_token_cache<T: EncodeCoef>(
             }
         }
 
-        token_cache[raster_idx] = if emit_bits {
+        token_cache[raster_idx] = if EMIT_BITS {
             write_nonzero_coef(bw, local_prob, coef)
         } else {
             token_cache_value(abs_val)
@@ -1534,7 +1531,7 @@ fn encode_coefs_with_token_cache<T: EncodeCoef>(
                 prob_ctx: retained_prob_ctx(band, ctx),
             });
         }
-        if emit_bits {
+        if EMIT_BITS {
             bw.write(0, prob[EOB_CONTEXT_NODE]);
         }
     }
@@ -1894,20 +1891,33 @@ fn write_block_tokens_with_retained_impl<T: EncodeCoef>(
     };
     let recorded = match retained_pass {
         Some(CoefTokenPass::Record(retained) | CoefTokenPass::RecordFull(retained)) => {
-            let emit_bits = !bw.is_count_only();
-            encode_coefs_impl(
-                bw,
-                coef_probs,
-                &scan,
-                initial_pt,
-                tx_size,
-                seg_eob,
-                raw_coefs,
-                eob,
-                block_counts.as_mut(),
-                Some(&mut retained.tokens),
-                emit_bits,
-            );
+            if bw.is_count_only() {
+                encode_coefs_impl::<_, false>(
+                    bw,
+                    coef_probs,
+                    &scan,
+                    initial_pt,
+                    tx_size,
+                    seg_eob,
+                    raw_coefs,
+                    eob,
+                    block_counts.as_mut(),
+                    Some(&mut retained.tokens),
+                );
+            } else {
+                encode_coefs_impl::<_, true>(
+                    bw,
+                    coef_probs,
+                    &scan,
+                    initial_pt,
+                    tx_size,
+                    seg_eob,
+                    raw_coefs,
+                    eob,
+                    block_counts.as_mut(),
+                    Some(&mut retained.tokens),
+                );
+            }
             let token_end = retained.tokens.len();
             retained.block_ends.push(
                 u32::try_from(token_end).expect("retained coefficient token count exceeds u32"),
@@ -1918,7 +1928,7 @@ fn write_block_tokens_with_retained_impl<T: EncodeCoef>(
         Some(CoefTokenPass::Replay { .. }) | None => false,
     };
     if !recorded {
-        encode_coefs_impl(
+        encode_coefs_impl::<_, true>(
             bw,
             coef_probs,
             &scan,
@@ -1929,7 +1939,6 @@ fn write_block_tokens_with_retained_impl<T: EncodeCoef>(
             eob,
             block_counts.as_mut(),
             None,
-            true,
         );
     }
 
@@ -2030,7 +2039,7 @@ mod tests {
             let mut retained = Vec::new();
             let mut count_sink = [];
             let mut count_writer = BoolWriter::start_count_only(&mut count_sink);
-            encode_coefs_impl(
+            encode_coefs_impl::<_, false>(
                 &mut count_writer,
                 &pre_probs,
                 &scan,
@@ -2041,7 +2050,6 @@ mod tests {
                 eob,
                 None,
                 Some(&mut retained),
-                false,
             );
 
             let direct = encode(|w| {
