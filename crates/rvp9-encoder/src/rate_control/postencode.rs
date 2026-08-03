@@ -141,15 +141,20 @@ pub(super) fn postencode_update(rc: &mut RateControl, actual_bits: u32, frame_ki
     match frame_kind {
         FrameKind::Key => {
             rc.last_q_keyframe = qindex;
-            // libvpx: `avg = (3 * avg + new) >> 2`
-            let new_avg = (3 * u32::from(rc.avg_frame_qindex_key) + u32::from(qindex)) >> 2;
+            // libvpx `ROUND_POWER_OF_TWO(..., 2)` adds the half-step
+            // before shifting, so this is rounded rather than truncated.
+            let new_avg = (3 * u32::from(rc.avg_frame_qindex_key) + u32::from(qindex) + 2) >> 2;
             rc.avg_frame_qindex_key = new_avg as u8;
         }
-        FrameKind::Inter | FrameKind::Golden => {
+        FrameKind::Inter => {
             rc.last_q_inter = qindex;
-            let new_avg = (3 * u32::from(rc.avg_frame_qindex_inter) + u32::from(qindex)) >> 2;
+            let new_avg = (3 * u32::from(rc.avg_frame_qindex_inter) + u32::from(qindex) + 2) >> 2;
             rc.avg_frame_qindex_inter = new_avg as u8;
         }
+        // Pinned libvpx excludes boosted GOLDEN/ALTREF refreshes from normal
+        // inter Q history. Feeding them back contaminates both the ambient
+        // inter bound and the next GOLDEN bound.
+        FrameKind::Golden => {}
     }
 
     // -- Buffer update --
@@ -303,6 +308,31 @@ mod tests {
         rc.postencode_update(bits, FrameKind::Key);
         assert_eq!(rc.frames_since_key, 0);
         assert_eq!(rc.frames_to_key, rc.config().gop_length - 1);
+    }
+
+    #[test]
+    fn golden_postencode_preserves_normal_inter_q_history() {
+        let mut rc = fresh_rc();
+        rc.last_q_inter = 121;
+        rc.avg_frame_qindex_inter = 117;
+        rc.last_picked_qindex = 64;
+
+        rc.postencode_update(rc.avg_frame_bandwidth, FrameKind::Golden);
+
+        assert_eq!(rc.last_q_inter, 121);
+        assert_eq!(rc.avg_frame_qindex_inter, 117);
+    }
+
+    #[test]
+    fn inter_q_history_uses_libvpx_rounding() {
+        let mut rc = fresh_rc();
+        rc.avg_frame_qindex_inter = 100;
+        rc.last_picked_qindex = 103;
+
+        rc.postencode_update(rc.avg_frame_bandwidth, FrameKind::Inter);
+
+        assert_eq!(rc.last_q_inter, 103);
+        assert_eq!(rc.avg_frame_qindex_inter, 101);
     }
 
     // Closed-loop convergence oracle (RC.1).
