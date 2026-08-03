@@ -2876,6 +2876,102 @@ impl InterPickerMiGridLayout {
     }
 }
 
+/// Serial ownership adapter for the causal mode and previous-MV grids.
+///
+/// Row-MT will replace the implementation behind this seam with row-disjoint
+/// writes and wavefront-ordered reads. Keeping both grids together ensures a
+/// committed leaf cannot update mode propagation without also updating the
+/// next-frame MV history.
+struct InterRowGrids<'a> {
+    mi_grid: Vec<Option<rvp9_core::mode_info::ModeInfo>>,
+    layout: InterPickerMiGridLayout,
+    out_mv_grid: &'a mut [PrevFrameMvRef],
+    out_mi_cols: usize,
+}
+
+impl<'a> InterRowGrids<'a> {
+    fn new(
+        mi_rows: usize,
+        layout: InterPickerMiGridLayout,
+        out_mv_grid: &'a mut [PrevFrameMvRef],
+        out_mi_cols: usize,
+    ) -> Self {
+        Self {
+            mi_grid: vec![None; mi_rows * layout.mi_cols],
+            layout,
+            out_mv_grid,
+            out_mi_cols,
+        }
+    }
+
+    #[inline]
+    fn as_slice(&self) -> &[Option<rvp9_core::mode_info::ModeInfo>] {
+        &self.mi_grid
+    }
+
+    #[inline]
+    fn get(&self, mi_row: usize, mi_col: usize) -> Option<&rvp9_core::mode_info::ModeInfo> {
+        self.layout.get(&self.mi_grid, mi_row, mi_col)
+    }
+
+    #[inline]
+    #[allow(clippy::too_many_arguments)]
+    fn splat_mode(
+        &mut self,
+        leaf_mi_row: usize,
+        leaf_mi_col: usize,
+        leaf_bsize: BlockSize,
+        picked_mode: InterMode,
+        picked_mv: Mv,
+        segment_id: u8,
+        skip: bool,
+        picked_ref_frame: RefFrame,
+        picked_intra_mode: Option<IntraMode>,
+        picked_interp_filter: InterpFilter,
+    ) {
+        splat_inter_leaf_into_mi_grid(
+            &mut self.mi_grid,
+            self.layout,
+            leaf_mi_row,
+            leaf_mi_col,
+            leaf_bsize,
+            picked_mode,
+            picked_mv,
+            segment_id,
+            skip,
+            picked_ref_frame,
+            picked_intra_mode,
+            picked_interp_filter,
+        );
+    }
+
+    #[inline]
+    fn splat_final(
+        &mut self,
+        leaf_mi_row: usize,
+        leaf_mi_col: usize,
+        leaf: InterPartitionLeafDesc,
+    ) {
+        splat_final_inter_leaf_into_grids(
+            &mut self.mi_grid,
+            self.layout,
+            self.out_mv_grid,
+            self.out_mi_cols,
+            leaf_mi_row,
+            leaf_mi_col,
+            leaf,
+        );
+    }
+
+    fn into_simulation_grid(self) -> InterSimulationMiGrid {
+        InterSimulationMiGrid {
+            cells: self.mi_grid,
+            mi_col_start: self.layout.mi_col_start,
+            mi_cols: self.layout.mi_cols,
+        }
+    }
+}
+
 struct InterPickerMiGridLookup<'a> {
     mi_grid: &'a [Option<rvp9_core::mode_info::ModeInfo>],
     layout: InterPickerMiGridLayout,
@@ -4632,8 +4728,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     });
     let mut coef_record_sink = [];
     let mut coef_record_bw = BoolWriter::start_count_only(&mut coef_record_sink);
-    let mut mi_grid: Vec<Option<rvp9_core::mode_info::ModeInfo>> =
-        vec![None; mi_rows_us * mi_grid_layout.mi_cols];
+    debug_assert_eq!(out_mv_grid.len(), mi_rows_us * mi_cols_us);
+    let mut row_grids = InterRowGrids::new(mi_rows_us, mi_grid_layout, out_mv_grid, mi_cols_us);
     let sign_bias = sign_bias_from_header(&[false, false, altref_available]);
 
     let rt_profile_enabled = env.rt_profile;
@@ -4716,8 +4812,6 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     } else {
         0
     };
-
-    debug_assert_eq!(out_mv_grid.len(), mi_rows_us * mi_cols_us);
 
     let mut encode_sb_row = |sb_row: usize| {
         for sb_col in 0..sb_cols {
@@ -5211,7 +5305,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 //    descent (only the post-descent picker loop mutates it).
                 //    The borrow is re-acquired inline so it expires before
                 //    the per-leaf loop needs mutable access.
-                let mi_grid_ro: &[Option<rvp9_core::mode_info::ModeInfo>] = &mi_grid;
+                let mi_grid_ro = row_grids.as_slice();
                 let mut descent_picker = |sb_local_x_8x8: usize, sb_local_y_8x8: usize, bs: BS| {
                     let leaf_mi_row = sb_row * 8 + sb_local_y_8x8;
                     let leaf_mi_col = sb_col * 8 + sb_local_x_8x8;
@@ -5286,7 +5380,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     );
                     let neighbours = InterPickerMiGridLookup::new(
                         mi_grid_ro,
-                        mi_grid_layout,
+                        row_grids.layout,
                         leaf_mi_row,
                         leaf_mi_col,
                         current_tile,
@@ -5377,12 +5471,16 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
 
                     // Neighbour mi-grid context predicates.
                     let nb_above = if leaf_mi_row > 0 {
-                        mi_grid_layout.get(mi_grid_ro, leaf_mi_row - 1, leaf_mi_col)
+                        row_grids
+                            .layout
+                            .get(mi_grid_ro, leaf_mi_row - 1, leaf_mi_col)
                     } else {
                         None
                     };
                     let nb_left = if leaf_mi_col > current_tile.mi_col_start {
-                        mi_grid_layout.get(mi_grid_ro, leaf_mi_row, leaf_mi_col - 1)
+                        row_grids
+                            .layout
+                            .get(mi_grid_ro, leaf_mi_row, leaf_mi_col - 1)
                     } else {
                         None
                     };
@@ -5973,9 +6071,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             luma_eob_nonzero: false,
                         });
                     }
-                    splat_inter_leaf_into_mi_grid(
-                        &mut mi_grid,
-                        mi_grid_layout,
+                    row_grids.splat_mode(
                         leaf_mi_row,
                         leaf_mi_col,
                         leaf_bsize,
@@ -6101,9 +6197,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             luma_eob_nonzero: false,
                         });
                     }
-                    splat_inter_leaf_into_mi_grid(
-                        &mut mi_grid,
-                        mi_grid_layout,
+                    row_grids.splat_mode(
                         leaf_mi_row,
                         leaf_mi_col,
                         leaf_bsize,
@@ -6164,8 +6258,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     bh_mi,
                 );
                 let neighbours = InterPickerMiGridLookup::new(
-                    &mi_grid,
-                    mi_grid_layout,
+                    row_grids.as_slice(),
+                    row_grids.layout,
                     leaf_mi_row,
                     leaf_mi_col,
                     current_tile,
@@ -6329,12 +6423,12 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 // G2 — switchable-filter context from above/left
                 // neighbours in the in-progress mi_grid.
                 let nb_above = if leaf_mi_row > 0 {
-                    mi_grid_layout.get(&mi_grid, leaf_mi_row - 1, leaf_mi_col)
+                    row_grids.get(leaf_mi_row - 1, leaf_mi_col)
                 } else {
                     None
                 };
                 let nb_left = if leaf_mi_col > current_tile.mi_col_start {
-                    mi_grid_layout.get(&mi_grid, leaf_mi_row, leaf_mi_col - 1)
+                    row_grids.get(leaf_mi_row, leaf_mi_col - 1)
                 } else {
                     None
                 };
@@ -8171,15 +8265,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 // neighbour MV-ref propagation matches the per-ref
                 // picker behaviour (the decoder's `find_mv_refs` is
                 // ref-aware).
-                splat_final_inter_leaf_into_grids(
-                    &mut mi_grid,
-                    mi_grid_layout,
-                    out_mv_grid,
-                    mi_cols_us,
-                    leaf_mi_row,
-                    leaf_mi_col,
-                    sb_partitions[sb_idx][leaf_idx],
-                );
+                row_grids.splat_final(leaf_mi_row, leaf_mi_col, sb_partitions[sb_idx][leaf_idx]);
                 if let Some(t0) = rt_profile_emit_start {
                     rt_profile_emit_time += t0.elapsed();
                 }
@@ -8475,11 +8561,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     InterSimulationResult {
         coefs: coef_source,
         recorded_coef_tile,
-        mi_grid: InterSimulationMiGrid {
-            cells: mi_grid,
-            mi_col_start: mi_grid_layout.mi_col_start,
-            mi_cols: mi_grid_layout.mi_cols,
-        },
+        mi_grid: row_grids.into_simulation_grid(),
     }
 }
 
@@ -9957,6 +10039,48 @@ fn intra_inverse_transform_add(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inter_row_grids_commit_mode_and_mv_cells_together() {
+        let mut out_mv_grid = vec![PrevFrameMvRef::default(); 4 * 8];
+        let layout = InterPickerMiGridLayout::new(2, 4);
+        let leaf = InterPartitionLeafDesc {
+            mi_row_in_sb: 0,
+            mi_col_in_sb: 0,
+            leaf_bsize: BlockSize::Block16x16,
+            picked_mode: InterMode::NewMv,
+            picked_mv: Mv { row: 8, col: -16 },
+            skip: false,
+            segment_id: 3,
+            picked_ref_frame: RefFrame::GoldenFrame,
+            picked_interp_filter: InterpFilter::EightTapSmooth,
+            picked_intra_mode: None,
+            picked_ref_frame2: RefFrame::NoRefFrame,
+            picked_mv2: Mv::ZERO,
+            picked_tx_size: TxSize::Tx8x8,
+        };
+        let expected_mode = leaf.mode_info();
+        let expected_mv = leaf.mv_ref();
+
+        let mut grids = InterRowGrids::new(4, layout, &mut out_mv_grid, 8);
+        grids.splat_final(1, 2, leaf);
+        for row in 1..3 {
+            for col in 2..4 {
+                assert_eq!(grids.get(row, col), Some(&expected_mode));
+            }
+        }
+        assert_eq!(grids.get(0, 2), None);
+        let simulation_grid = grids.into_simulation_grid();
+
+        assert_eq!(simulation_grid.mi_col_start, 2);
+        assert_eq!(simulation_grid.mi_cols, 4);
+        for row in 1..3 {
+            for col in 2..4 {
+                assert_eq!(out_mv_grid[row * 8 + col], expected_mv);
+            }
+        }
+        assert_eq!(out_mv_grid[0], PrevFrameMvRef::default());
+    }
 
     #[test]
     fn duplicate_golden_shortcut_requires_topology_refresh_and_all_plane_aliases() {
