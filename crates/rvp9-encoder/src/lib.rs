@@ -3053,9 +3053,9 @@ pub(crate) struct InterPartitionLeafDesc {
     pub picked_mv2: Mv,
     /// Picked luma transform size splatted by both mi-grid builders and
     /// signalled by the modes writer under `tx_mode = TxModeSelect`.
-    /// The default realtime emit path still fills this from its
-    /// emit-side RD redecision; `RVP9_RT_EMIT_TX_RD=0` reuses the
-    /// picker's `calculate_tx_size` model decision for diagnostics.
+    /// The default realtime emit path reuses the picker's
+    /// `calculate_tx_size` model decision; `RVP9_RT_EMIT_TX_RD=1` enables
+    /// the focused emit-side RD redecision for diagnostics.
     pub picked_tx_size: TxSize,
 }
 
@@ -3755,6 +3755,12 @@ fn realtime_force_max_emit_tx(
     exact_vbp_tree: bool,
 ) -> bool {
     override_value.unwrap_or(large_frame_recovery && !exact_vbp_tree)
+}
+
+/// Reuse the realtime picker's transform by default. The focused emit-side
+/// TX8/TX16 search remains available only as an explicit diagnostic.
+fn realtime_emit_tx_rd_enabled(override_value: Option<bool>) -> bool {
+    override_value.unwrap_or(false)
 }
 
 /// Immutable snapshot of diagnostic and A/B environment knobs shared by all
@@ -4625,7 +4631,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         rt_large_recovery,
         exact_vbp_tree_enabled,
     );
-    let rt_emit_tx_rd = env.flag_or(env.rt_emit_tx_rd, true);
+    let rt_emit_tx_rd = realtime_emit_tx_rd_enabled(env.rt_emit_tx_rd);
     // libvpx speed >= 4 uses `quant_fp` for every inter frame. Preserve
     // `=0` as the regular-quantizer diagnostic without making the slower
     // good-quality quantizer the realtime default.
@@ -7461,10 +7467,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     // decoder's `reconstruct_inter_block` plane / TX walk
                     // (rvp9-decoder::reconstruct_inter, lines 199-554).
                     //
-                    // Start from the RT picker's model-RD TX decision so
-                    // `RVP9_RT_EMIT_TX_RD=0` can test libvpx-style reuse of
-                    // `mi->tx_size`. The exact variance-tree path below
-                    // redecides only the measured TX8/TX16 leaf class.
+                    // Start from the RT picker's model-RD TX decision,
+                    // matching libvpx's reuse of `mi->tx_size`. The optional
+                    // exact variance-tree diagnostic below redecides only the
+                    // measured TX8/TX16 leaf class.
                     if emit_profile_enabled {
                         emit_profile_inter_leaves += 1;
                     }
@@ -7639,12 +7645,12 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             emit_profile_pred_time += t0.elapsed();
                         }
 
-                        // Diagnostic A/B: `RVP9_RT_EMIT_TX_RD=0` reuses
-                        // the RT picker's model-RD TX decision, matching
-                        // libvpx pickmode's stored `mi->tx_size`. The
-                        // exact variance-tree default redecides TX8/TX16 only
-                        // for TX16-capable leaves; other leaf classes retain
-                        // the picker transform. Other large-frame paths keep
+                        // The default reuses the RT picker's model-RD TX
+                        // decision, matching libvpx pickmode's stored
+                        // `mi->tx_size`. Diagnostic
+                        // `RVP9_RT_EMIT_TX_RD=1` redecides TX8/TX16 only for
+                        // TX16-capable leaves; other leaf classes retain the
+                        // picker transform. Other large-frame paths keep
                         // their established maximum-TX shortcut.
                         if plane == 0
                             && should_redecide_inter_luma_tx(
@@ -11057,7 +11063,7 @@ mod tests {
     }
 
     #[test]
-    fn exact_vbp_large_frames_enable_focused_tx_redecision() {
+    fn exact_vbp_large_frames_release_max_tx_shortcut() {
         assert!(realtime_force_max_emit_tx(None, true, false));
         assert!(!realtime_force_max_emit_tx(None, true, true));
         assert!(!realtime_force_max_emit_tx(Some(false), true, false));
@@ -11066,6 +11072,9 @@ mod tests {
 
     #[test]
     fn realtime_tx_redecision_searches_only_tx8_and_tx16() {
+        assert!(!realtime_emit_tx_rd_enabled(None));
+        assert!(realtime_emit_tx_rd_enabled(Some(true)));
+        assert!(!realtime_emit_tx_rd_enabled(Some(false)));
         assert!(should_redecide_inter_luma_tx(
             false,
             true,

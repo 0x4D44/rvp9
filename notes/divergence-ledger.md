@@ -4158,9 +4158,10 @@ encoder remains roughly `1.5x` pinned vpxenc, outside the final gate.
 **Future plan:** parallelize or fuse the tile-MT count replay, and reconcile
 rate-control response before judging the small old-town curve movement final.
 
-### 2026-08-03 — Focused TX8/TX16 emission redecision
+### 2026-08-03 — Reuse the realtime picker's transform at emission
 
-**Where:** `rvp9_encoder::choose_inter_luma_tx_size` and
+**Where:** `rvp9_encoder::realtime_emit_tx_rd_enabled`,
+`rvp9_encoder::choose_inter_luma_tx_size`, and
 `rvp9_encoder::realtime_force_max_emit_tx`; libvpx counterparts:
 `vp9/encoder/vp9_pickmode.c::block_yrd` and
 `vp9/encoder/vp9_rdopt.c::choose_tx_size_from_rd`.
@@ -4168,45 +4169,43 @@ rate-control response before judging the small old-town curve movement final.
 **What libvpx does:** its realtime picker couples transform selection to the
 mode decision and prunes the search according to its speed features.
 
-**What rvp9 does:** CPU7 realtime large frames using the exact variance tree
-run a final coefficient-domain RD comparison between TX8 and TX16 only on
-leaves whose maximum transform is TX16. Other leaf classes retain the
-transform selected by the realtime picker. `RVP9_RT_EMIT_MAX_TX=1` restores
-the former large-frame shortcut for diagnostics.
+**What rvp9 does:** CPU7 realtime large frames emit the transform selected by
+the realtime picker. `RVP9_RT_EMIT_TX_RD=1` enables a diagnostic final
+coefficient-domain RD comparison between TX8 and TX16 on leaves whose maximum
+transform is TX16. `RVP9_RT_EMIT_MAX_TX=1` restores the former large-frame
+maximum-transform shortcut for diagnostics.
 
-**Why:** fixed-Q bit accounting localized the remaining old-town gap to
-coefficient coding: rvp9 spent about 136,006 more modeled coefficient bits
-than vpxenc while spending about 17,291 fewer bits on all other syntax. A full
-TX-size search recovered quality but cost roughly 27%; the focused search
-crosses the Stage 4a quality gate at about one sixth of that local cost.
+**Why:** libvpx stores its picker decision in `mi->tx_size` and reuses it at
+emission. Rvp9's optional final search crossed the quality gate, but profiling
+attributed `3.69%` of samples to duplicate transform redecision. Preserving
+the picker result crosses the final three-clip gate while removing that work.
 
 **Byte-parity impact:** intentional streams change. At 1000 kbps the
 in-to-tree, ducks-take-off, and old-town-cross IVF SHA-256 values are
-`e9e586f787d81c2186c27e5168067e746b640c5c4908e146f08be2db762912aa`,
-`179af8821906be954fdaed7a7db57f07f8f1bead185600ca94c724f75b3075b7`,
-and `2c4fb5efcb77f3ca72cc5f9dfdf65b0a74d695b1e8f1905f0947da7b0617d1bf`.
+`f7bd8d37eaf4b31453adfc36d00210a9858cf8b8f4e591c502e0e2756838214d`,
+`6b2d85ae518824147246493ce7a4c47c5f81421503036b093fc554461c65dab4`,
+and `0677e10a54a53bb5bdf33506787caaf3e3548d4cffe22c330c3c44d9a033212c`.
 Rvp9-decoder, pinned vpxdec, and ffmpeg produce identical I420 output for each
 stream, with SHA-256 values
-`dab2c8141b6d0bb01e46eaa7275943f1d4cd043e02325d4df085a1cc2a832e13`,
-`8c10978a28bc47e9bfd5887dca8af9fb01e38dc88e5d093c12647d4d53b57385`,
-and `eecb0c6559feeec7b5ee8f3e9a3b7ddafa6080849c1ef2ca4dd543dab9854dbc`.
+`445af4b4fbade370d0d79dc3487191061d9283aaf9cc20318588a47b10a4faec`,
+`ce79268b66adefc52b527b4eb4316818db41c3f47736036fc35d2f9ffaf3ba9a`,
+and `22f0380edabe53f41451d62ee0c442b662944c5362fd435dbfd330edae2479c0`.
 
 **Compression-efficiency impact:** six-point luma BD-rate versus pinned
-vpxenc is `-6.683490%`, `-12.766600%`, and `-2.274202%` on in-to-tree,
-ducks-take-off, and old-town-cross. Average-YUV BD-rate is `-5.901878%`,
-`-11.782100%`, and `-1.780696%`. This clears both the Stage 4a `+2%` gate and
+vpxenc is `-5.592461%`, `-6.370118%`, and `-1.019382%` on in-to-tree,
+ducks-take-off, and old-town-cross. Average-YUV BD-rate is `-4.875724%`,
+`-5.645272%`, and `-0.782441%`. This clears both the Stage 4a `+2%` gate and
 the final `+0.5%` gate on the current three-clip matrix. The wider required
 corpus and configuration matrix remains unmeasured.
 
-**Speed impact:** preserving the picker transform improved forty alternating
-four-thread old-town pairs by `1.74%` median paired wall time and `2.26%`
-paired child CPU, with 31 and 35 wins respectively. Twenty fresh alternating
-pairs measured `0.227152 s` versus pinned vpxenc's `0.158111 s`, or `1.436663x`
-by wall medians and `1.437988x` paired. Nine warmed one-thread runs measured
-`10.592 ms/frame`, inside the 720p30 median budget but outside the final
-relative-speed gate.
+**Speed impact:** disabling the duplicate final search improved forty
+alternating four-thread old-town pairs by `4.68%` median paired wall time and
+`5.55%` paired child CPU, with 38 and 39 wins respectively. Twenty fresh
+alternating pairs measured `0.222037 s` versus pinned vpxenc's `0.164370 s`,
+or `1.350835x` by wall medians and `1.348525x` paired. Nine warmed one-thread
+runs measured `9.907 ms/frame`, inside the 720p30 median budget but outside
+the final relative-speed gate.
 
-**Future plan:** retain the focused TX16-class search and picker transform for
-all other leaves. Profile this accepted build against pinned vpxenc and remove
-the next measured structural speed gap without giving back the three-clip
-quality gate.
+**Future plan:** retain picker-transform reuse while it stays inside the
+quality gate. Profile the accepted default against pinned vpxenc and remove
+the next measured structural speed gap without giving back that gate.
