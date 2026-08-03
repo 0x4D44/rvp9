@@ -1220,13 +1220,12 @@ pub struct StreamEncoder {
     /// banks, and the only inter-frame writer is
     /// [`Self::encode_altref_internal`].
     decoder_fc_state_arf: FrameContext,
-    /// P20 — adaptive RD-threshold tables (libvpx
-    /// `vp9_pickmode.c:2241-2247` gate state). One per stream;
-    /// re-initialised to libvpx's `RD_THRESH_INIT_FACT = 32` every
-    /// keyframe (mirrors `vp9_encodeframe.c:5874-5875`,
-    /// `vp9_setup_past_independence`'s implicit reset path for
-    /// tile-state). Each column tile owns an independent table so
-    /// parallel tile decisions cannot race or influence one another.
+    /// P20 / row-MT — adaptive RD-threshold tables (libvpx
+    /// `vp9_pickmode.c:1712-1716,2240-2245`). One persistent table per
+    /// `(column tile, SB row)`, flattened tile-major. This mirrors
+    /// `TileDataEnc::row_base_thresh_freq_fact`: row workers never share a
+    /// mutable threshold bank, and worker scheduling cannot change which
+    /// prior decisions affect a row.
     /// After each inter pick the encoder calls
     /// [`rvp9_core::mode_decision::rd_thresh::update_thresh_freq_fact`]
     /// to decay the winner's fact and increment the losers.
@@ -1278,7 +1277,6 @@ pub struct StreamEncoder {
 /// global-coordinate code stays unchanged. Merge copies only this tile's
 /// disjoint rectangles and SB records into the frame result.
 struct InterTileJobResult {
-    tile_col: usize,
     claimed_jobs: Vec<crate::row_mt::RowJob>,
     partitions: Vec<Vec<InterPartitionLeafDesc>>,
     rd_tables: Vec<rvp9_core::mode_decision::rd_thresh::RdThreshTable>,
@@ -1661,11 +1659,11 @@ impl StreamEncoder {
             frame_context: FrameContext::new_default(),
             decoder_fc_state: FrameContext::new_default(),
             decoder_fc_state_arf: FrameContext::new_default(),
-            // P20 / tile-MT — one fresh adaptive-RD-threshold table at
-            // INIT_FACT per logical column tile.
+            // P20 / row-MT — one fresh adaptive-RD-threshold table at
+            // INIT_FACT per logical `(column tile, SB row)`.
             rd_thresh_tables: vec![
                 rvp9_core::mode_decision::rd_thresh::RdThreshTable::new();
-                tile_count
+                tile_count * (h / 64)
             ],
             vbp_partition_history: vec![
                 rvp9_core::mode_decision::partition::FixedTreeHistoryEntry::default();
@@ -3358,7 +3356,6 @@ impl StreamEncoder {
                                 .recorded_coef_tile
                                 .expect("one coefficient-token result per tile job");
                             let result = InterTileJobResult {
-                                tile_col,
                                 claimed_jobs: (0..h as usize / 64)
                                     .map(|sb_row| crate::row_mt::RowJob { sb_row, tile_col })
                                     .collect(),
@@ -3476,6 +3473,8 @@ impl StreamEncoder {
             debug_assert_eq!(merged_mi_grid.len(), mi_rows_us * mi_cols_us);
             for (job, worker_id) in row_owners.iter() {
                 let result = &tile_results[worker_id];
+                let rd_table_index = job.tile_col * (h as usize / 64) + job.sb_row;
+                self.rd_thresh_tables[rd_table_index] = result.rd_tables[rd_table_index].clone();
                 row_owners.merge_job_rect(&mut sb_partitions, &result.partitions, job, 1);
                 if let Some(history) = &result.history {
                     row_owners.merge_job_rect(&mut self.vbp_partition_history, history, job, 1);
@@ -3490,8 +3489,6 @@ impl StreamEncoder {
                 }
             }
             for result in tile_results {
-                let tile_col = result.tile_col;
-                self.rd_thresh_tables[tile_col] = result.rd_tables[tile_col].clone();
                 stage4a_frame_split_stats.accumulate(&result.split_stats);
                 merged_coefs.merge_from(result.coefs);
                 recorded_coef_tiles.push(result.recorded_coef_tile);
@@ -7812,7 +7809,7 @@ mod tests {
 
     fn assert_four_tile_output_is_thread_count_independent_and_bit_exact() {
         let w = 1280usize;
-        let h = 64usize;
+        let h = 128usize;
         let cfg = EncoderConfig::new(w as u32, h as u32);
         let tile_layout = |max_threads| EncoderParallelism {
             max_threads,
@@ -7824,9 +7821,9 @@ mod tests {
             .expect("construct two-worker encoder");
         let mut threaded = StreamEncoder::new_with_parallelism(cfg, tile_layout(4))
             .expect("construct four-worker encoder");
-        assert_eq!(serial.rd_thresh_tables.len(), 4);
-        assert_eq!(two_workers.rd_thresh_tables.len(), 4);
-        assert_eq!(threaded.rd_thresh_tables.len(), 4);
+        assert_eq!(serial.rd_thresh_tables.len(), 8);
+        assert_eq!(two_workers.rd_thresh_tables.len(), 8);
+        assert_eq!(threaded.rd_thresh_tables.len(), 8);
         assert_eq!(threaded.inter_tile_scratch.len(), 4);
         let scratch_allocations: Vec<_> = threaded
             .inter_tile_scratch
@@ -7918,7 +7915,7 @@ mod tests {
             "tile recon and MV scratch allocations must survive consecutive inter frames",
         );
         assert_ne!(
-            serial.rd_thresh_tables[0], serial.rd_thresh_tables[3],
+            serial.rd_thresh_tables[0], serial.rd_thresh_tables[6],
             "flat and moving tiles must adapt independent RD thresholds",
         );
         assert_eq!(

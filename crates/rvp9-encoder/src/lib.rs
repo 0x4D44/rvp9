@@ -4705,8 +4705,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     let tile_bounds_by_col = column_tile_bounds(mi_rows_us, mi_cols_us, log2_tile_cols);
     assert_eq!(
         rd_thresh_tables.len(),
-        tile_bounds_by_col.len(),
-        "one adaptive RD-threshold table is required per column tile",
+        tile_bounds_by_col.len() * sb_rows,
+        "one adaptive RD-threshold table is required per tile SB row",
     );
     let mi_grid_layout = if let Some(tile_col) = active_tile_col {
         let bounds = tile_bounds_by_col
@@ -4838,7 +4838,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         let sb_row = job.sb_row;
         for sb_col in sb_columns {
             let tile_col = job.tile_col;
-            let rd_thresh_table = &mut rd_thresh_tables[tile_col];
+            let rd_thresh_table = &mut rd_thresh_tables[tile_col * sb_rows + sb_row];
             let sb_idx = sb_row * sb_cols + sb_col;
 
             // A23 — per-64x64-SB TPL `cb_rdmult` (libvpx

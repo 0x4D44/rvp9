@@ -4257,3 +4257,55 @@ comparison measured `1.279116x` paired wall time versus vpxenc, so the final
 
 **Future plan:** profile the persistent-worker critical path, then target the
 largest remaining output-preserving wall-time gap.
+
+### 2026-08-03 — Use libvpx row-MT adaptive thresholds internally
+
+**Where:** `rvp9_encoder::frame_loop::StreamEncoder::rd_thresh_tables` and
+`rvp9_encoder::pick_and_simulate_inter_encode_partitions`; libvpx
+counterparts: `vp9/encoder/vp9_pickmode.c::rd_less_than_thresh_row_mt`,
+`update_thresh_freq_fact_row_mt`, and
+`vp9/encoder/vp9_multi_thread.c::vp9_row_mt_alloc_rd_thresh`.
+
+**What libvpx does:** the matched vpxenc default has `--row-mt=0` and uses one
+adaptive threshold bank per tile. With `--row-mt=1`, libvpx instead keeps a
+persistent `row_base_thresh_freq_fact` bank per `(tile, SB row)` so concurrent
+rows never mutate one threshold table.
+
+**What rvp9 does:** rvp9 uses the libvpx row-MT table topology internally for
+its matched four-tile realtime configuration: one persistent
+`RdThreshTable` per `(tile, SB row)`, flattened tile-major. The public CLI
+does not expose a separate row-MT stream-selection switch.
+
+**Why:** tail-row work sharing is required to remove the measured 8.5% median
+tile imbalance without sharing a mutable picker table or making output depend
+on worker scheduling. The per-row topology is libvpx's own solution and lets
+each row job carry wholly private mutable rate-decision state.
+
+**Byte-parity impact:** structural. At 1000 kbps the in-to-tree,
+ducks-take-off, and old-town-cross IVF SHA-256 values are
+`925761c7afe28970465f2db61a4eefc324277961bcca2fa391fda089a0c44715`,
+`d119c7f0493622bdfd3c81a76522ce283a944582518fc57e368fe14ec8f6c037`,
+and `584948269e22715565c893d221582fdcbb618989fe9493c8977eb8c8fbdad9e2`.
+Rvp9-decoder, pinned vpxdec, and ffmpeg agree bit-exactly on 81,100,800-byte
+I420 output for all three, with SHA-256
+`18f28d49b4069a60a8c79766fb42de5793ef0eee5b9bc3d931d45e94db73e00d`,
+`9f048dd89cda9d33232bd71e497b9c5c72ef20358a39e00e7c6b2bb9138e718c`,
+and `cda140b3abbeb766ce5625a5a302d5de27e8c9223522765ee3a7eb27e0243ebc`.
+
+**Compression-efficiency impact:** versus the preceding accepted baseline,
+six-point luma BD-rate changes by `-0.314627%/+0.087955%/-0.135811%` and
+average-YUV by `-0.321406%/+0.098914%/-0.112491%` on
+in-to-tree/ducks-take-off/old-town-cross. Versus pinned vpxenc, the resulting
+luma BD-rates are `-5.851064%/-6.195072%/-1.080472%`; average-YUV is
+`-5.154446%/-5.465080%/-0.830402%`. The small ducks movement is well inside
+the per-clip tolerance, while the three-clip geomean improves.
+
+**Speed impact:** a loaded-host 15-pair diagnostic measured per-clip wall
+ratios `1.011745/1.010906/0.981689` and child-CPU ratios
+`1.007586/1.010656/0.981438`, or approximately `1.00135x` wall and
+`0.99981x` CPU by corpus geomean. This is neutral diagnostic evidence, not a
+final quiet-host speed claim.
+
+**Future plan:** retain the topology while enabling concurrent row claims.
+Re-run the full quiet-host quality/speed matrix; reconsider only if a wider
+clip or feature stage exceeds its regression tolerance.
