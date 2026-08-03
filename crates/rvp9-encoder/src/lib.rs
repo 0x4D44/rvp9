@@ -3455,14 +3455,6 @@ fn partition_color_sensitivity(
         .zip([ref_uv.0, ref_uv.1])
         .enumerate()
     {
-        let mut source_block = [0u8; 32 * 32];
-        for row in 0..32 {
-            let src_y = (uv_y + row).min(uv_height - 1);
-            for col in 0..32 {
-                let src_x = (uv_x + col).min(uv_width - 1);
-                source_block[row * 32 + col] = src[src_y * uv_width + src_x];
-            }
-        }
         let mut predictor = [0u8; 32 * 32];
         build_inter_pred_block_unscaled(
             reference,
@@ -3479,8 +3471,20 @@ fn partition_color_sensitivity(
             32,
             InterpFilter::Bilinear,
         );
-        let uv_sad =
-            rvp9_core::dsp::get_ref().sad(BlockSize::Block32x32)(&source_block, 32, &predictor, 32);
+        let sad32 = rvp9_core::dsp::get_ref().sad(BlockSize::Block32x32);
+        let uv_sad = if uv_x + 32 <= uv_width && uv_y + 32 <= uv_height {
+            sad32(&src[uv_y * uv_width + uv_x..], uv_width, &predictor, 32)
+        } else {
+            let mut source_block = [0u8; 32 * 32];
+            for row in 0..32 {
+                let src_y = (uv_y + row).min(uv_height - 1);
+                for col in 0..32 {
+                    let src_x = (uv_x + col).min(uv_width - 1);
+                    source_block[row * 32 + col] = src[src_y * uv_width + src_x];
+                }
+            }
+            sad32(&source_block, 32, &predictor, 32)
+        };
         sensitivity[plane] = uv_sad > (y_sad >> 2);
     }
 
@@ -10792,6 +10796,26 @@ mod tests {
                 (&src_u, &src_v),
                 (&ref_u, &ref_v),
                 (64, 48),
+                (0, 0),
+                Mv::ZERO,
+                4_000,
+            ),
+            [false, true],
+        );
+    }
+
+    #[test]
+    fn partition_color_sensitivity_reads_full_source_block_in_place() {
+        let src_u = vec![80u8; 40 * 40];
+        let src_v = vec![120u8; 40 * 40];
+        let ref_u = src_u.clone();
+        let ref_v = vec![80u8; 40 * 40];
+
+        assert_eq!(
+            partition_color_sensitivity(
+                (&src_u, &src_v),
+                (&ref_u, &ref_v),
+                (80, 80),
                 (0, 0),
                 Mv::ZERO,
                 4_000,
