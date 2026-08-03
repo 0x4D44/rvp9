@@ -2641,6 +2641,8 @@ impl StreamEncoder {
             &sb_partitions,
             log2_tile_cols,
             &mut keyframe_fc,
+            self.frame_worker_pool.as_mut(),
+            self.parallelism.max_threads as usize,
         )?;
         self.frame_context = keyframe_fc.clone();
         self.decoder_fc_state = keyframe_fc;
@@ -5034,7 +5036,7 @@ fn build_keyframe_packet(
     height: u32,
     base_qindex: u8,
     filter_level: u8,
-    coef_source: &dyn rvp9_core::bitstream::IntraCoefSource,
+    coef_source: &VecBackedIntraCoefSource,
     sb_partitions: &[Vec<PartitionLeafDesc>],
 ) -> Result<Vec<u8>, EncodeError> {
     build_keyframe_packet_with_tiles(
@@ -5046,6 +5048,8 @@ fn build_keyframe_packet(
         sb_partitions,
         0,
         &mut FrameContext::new_default(),
+        None,
+        1,
     )
 }
 
@@ -5055,10 +5059,12 @@ fn build_keyframe_packet_with_tiles(
     height: u32,
     base_qindex: u8,
     filter_level: u8,
-    coef_source: &dyn rvp9_core::bitstream::IntraCoefSource,
+    coef_source: &VecBackedIntraCoefSource,
     sb_partitions: &[Vec<PartitionLeafDesc>],
     log2_tile_cols: u8,
     decoder_fc: &mut FrameContext,
+    mut worker_pool: Option<&mut rvp9_core::tile_threading::WorkerPool>,
+    max_threads: usize,
 ) -> Result<Vec<u8>, EncodeError> {
     let mi_rows = height / 8;
     let mi_cols = width / 8;
@@ -5081,13 +5087,25 @@ fn build_keyframe_packet_with_tiles(
     };
 
     let tile_cols = 1usize << log2_tile_cols;
+    // Bit-accounting diagnostics are thread-local and intentionally observe
+    // the caller thread. Keep that opt-in path serial; production tile writers
+    // are independent because VP9 resets arithmetic and coefficient context at
+    // every column-tile boundary.
+    let run_parallel = tile_cols > 1
+        && max_threads > 1
+        && worker_pool.is_some()
+        && !rvp9_core::entropy::bitacct::enabled();
     let count_fc = decoder_fc.clone();
     let mut count_counts = FrameCounts {
         coef_full: Some(rvp9_core::entropy::new_coef12_bank()),
         ..FrameCounts::default()
     };
-    rvp9_core::entropy::bitacct::with_suppressed(|| -> Result<(), EncodeError> {
-        for tile_col in 0..tile_cols {
+    let count_tile = |tile_col| {
+        let mut tile_counts = FrameCounts {
+            coef_full: Some(rvp9_core::entropy::new_coef12_bank()),
+            ..FrameCounts::default()
+        };
+        rvp9_core::entropy::bitacct::with_suppressed(|| -> Result<(), EncodeError> {
             let bounds = tile_bounds(
                 mi_rows as usize,
                 mi_cols as usize,
@@ -5110,11 +5128,36 @@ fn build_keyframe_packet_with_tiles(
                 /* seg = */ None,
                 &mut coef_ctx,
                 coef_source,
-                Some(&mut count_counts),
+                Some(&mut tile_counts),
             )?;
+            Ok(())
+        })?;
+        Ok::<FrameCounts, EncodeError>(tile_counts)
+    };
+    if run_parallel {
+        type TileCountResult = Result<FrameCounts, EncodeError>;
+        let mut result_slots: Vec<Option<TileCountResult>> = (0..tile_cols).map(|_| None).collect();
+        worker_pool
+            .as_deref_mut()
+            .expect("parallel keyframe counting requires the frame worker pool")
+            .scope(|scope| {
+                for (tile_col, result_slot) in result_slots.iter_mut().enumerate() {
+                    let count_tile = &count_tile;
+                    scope.submit(move || {
+                        *result_slot = Some(count_tile(tile_col));
+                    });
+                }
+            });
+        for (tile_col, result) in result_slots.into_iter().enumerate() {
+            let tile_counts = result
+                .unwrap_or_else(|| panic!("keyframe count tile {tile_col} produced no result"))?;
+            count_counts.add(&tile_counts);
         }
-        Ok(())
-    })?;
+    } else {
+        for tile_col in 0..tile_cols {
+            count_counts.add(&count_tile(tile_col)?);
+        }
+    }
     for (post, (&old, &counts)) in post_fc
         .skip_probs
         .iter_mut()
@@ -5156,8 +5199,8 @@ fn build_keyframe_packet_with_tiles(
     };
     compressed_buf.truncate(compressed_len);
 
-    let mut tile_bufs = Vec::with_capacity(tile_cols);
-    for tile_col in 0..tile_cols {
+    let tile_fc = decoder_fc.clone();
+    let encode_tile = |tile_col| {
         let bounds = tile_bounds(
             mi_rows as usize,
             mi_cols as usize,
@@ -5176,7 +5219,7 @@ fn build_keyframe_packet_with_tiles(
                 mi_rows,
                 mi_cols,
                 bounds,
-                decoder_fc,
+                &tile_fc,
                 target.tx_mode,
                 /* seg = */ None,
                 &mut coef_ctx,
@@ -5186,7 +5229,33 @@ fn build_keyframe_packet_with_tiles(
                 .map_err(|_| EncodeError::Bitstream(BitstreamError::CompressedHeaderTooLarge))?
         };
         tile_buf.truncate(tile_len);
-        tile_bufs.push(tile_buf);
+        Ok::<Vec<u8>, EncodeError>(tile_buf)
+    };
+    let mut tile_bufs = Vec::with_capacity(tile_cols);
+    if run_parallel {
+        type TileWriteResult = Result<Vec<u8>, EncodeError>;
+        let mut result_slots: Vec<Option<TileWriteResult>> = (0..tile_cols).map(|_| None).collect();
+        worker_pool
+            .expect("parallel keyframe writing requires the frame worker pool")
+            .scope(|scope| {
+                for (tile_col, result_slot) in result_slots.iter_mut().enumerate() {
+                    let encode_tile = &encode_tile;
+                    scope.submit(move || {
+                        *result_slot = Some(encode_tile(tile_col));
+                    });
+                }
+            });
+        for (tile_col, result) in result_slots.into_iter().enumerate() {
+            tile_bufs.push(
+                result.unwrap_or_else(|| {
+                    panic!("keyframe writer tile {tile_col} produced no result")
+                })?,
+            );
+        }
+    } else {
+        for tile_col in 0..tile_cols {
+            tile_bufs.push(encode_tile(tile_col)?);
+        }
     }
     let tile_refs: Vec<&[u8]> = tile_bufs.iter().map(Vec::as_slice).collect();
     let tile_buf = write_tile_buffers(&tile_refs, tile_cols as u32, 1)?;
@@ -7355,6 +7424,8 @@ mod tests {
             &sb_partitions,
             1,
             &mut FrameContext::new_default(),
+            None,
+            1,
         )
         .expect("two-tile keyframe assembly");
 
@@ -7424,6 +7495,8 @@ mod tests {
             &kf_partitions,
             1,
             &mut FrameContext::new_default(),
+            None,
+            1,
         )
         .expect("two-tile keyframe");
 
