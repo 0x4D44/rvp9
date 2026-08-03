@@ -4209,3 +4209,52 @@ the final relative-speed gate.
 **Future plan:** retain picker-transform reuse while it stays inside the
 quality gate. Profile the accepted default against pinned vpxenc and remove
 the next measured structural speed gap without giving back that gate.
+
+### 2026-08-03 — Overlap inter-frame loop filtering with packet construction
+
+**Where:** `rvp9_encoder::frame_loop::StreamEncoder::encode_inter_internal`
+and `rvp9_encoder::loopfilter::apply_loop_filter_to_tight_recon_split_edge`;
+libvpx counterparts: `vp9/encoder/vp9_encoder.c::encode_frame_to_data_rate`,
+`vp9/encoder/vp9_bitstream.c::vp9_pack_bitstream`, and
+`vp9/common/vp9_loopfilter.c::vp9_loop_filter_frame_mt`.
+
+**What libvpx does:** schedules its encoder stages through libvpx's worker
+model and multi-threaded loop-filter implementation.
+
+**What rvp9 does:** on multi-threaded normal show inter frames, rvp9 runs its
+alias-safe single-worker loop filter on a scoped thread while the caller packs
+the already-selected coefficients and mode metadata. The scoped thread joins
+before the filtered reconstruction is committed. `RVP9_LF_PACKET_OVERLAP=0`
+restores serial stage ordering for diagnostics.
+
+**Why:** profiling attributed 1,306 inclusive samples to rvp9's loop filter
+and 1,270 to packet construction, versus 485 and 780 samples in matched
+libvpx subtrees. The stages are independent after tile encoding: filtering
+owns only the new reconstruction planes, while packing reads coefficients,
+mode metadata, and probability state. Overlap shortens the critical path
+without changing either result or reintroducing unsafe multi-worker plane
+aliasing.
+
+**Byte-parity impact:** none in the exercised four-thread 60-frame old-town
+stream. The 2500 kbps IVF remains byte-identical with SHA-256
+`e27ceee6a9d7fc521d8ace45d9bdb0dcc0641ced06baa53713f13f0c83208b0f`.
+Rvp9-decoder, pinned vpxdec, and ffmpeg each produce the same 81,100,800-byte
+I420 with SHA-256
+`01b4b2eddb9b5971b393dc686be235d1103371ba829d8dbfe0f1997a20dd52b0`.
+
+**Compression-efficiency impact:** none because the encoded stream is
+byte-identical. The accepted three-clip six-point curves therefore retain
+their luma BD-rates of `-5.592461%/-6.370118%/-1.019382%` versus pinned
+vpxenc.
+
+**Speed impact:** two independent forty-pair comparisons against serial
+ordering improved median paired wall time by `5.99%` and `6.90%`, with 33/40
+and 37/40 wins. Median paired child CPU rose by `0.92%` and `0.68%` because
+the scoped worker lifecycle trades a small amount of total work for critical-
+path overlap. A fresh loaded-host comparison measured `1.324256x` paired
+wall time versus vpxenc, so the final `1.05x` gate remains open.
+
+**Future plan:** profile the overlapped critical path, then target the largest
+remaining output-preserving wall-time gap. Consider persistent worker reuse
+only if profiles attribute material cost to the per-frame scoped-thread
+lifecycle.

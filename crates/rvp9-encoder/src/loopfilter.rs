@@ -199,60 +199,19 @@ pub(crate) fn apply_loop_filter_to_tight_recon_parallel(
     if available_lf_workers >= 2
         && let Some(worker_pool) = worker_pool
     {
-        use rvp9_core::loopfilter::apply::{ColumnWavefrontLfState, RowMaskInputs, SharedFrame};
-        use std::sync::atomic::AtomicI32;
-
-        let levels = resolve_filter_levels(
-            filter_level,
-            LIBVPX_DEFAULT_LF_DELTAS,
-            SegmentationLfView::default(),
-        );
-        let info = LoopFilterInfo::new(/* sharpness_level = */ 0);
-        let sb_rows = mi_rows.div_ceil(SB_MI_SIZE);
-        let sb_cols = mi_cols.div_ceil(SB_MI_SIZE);
-        let frame_mi_opt = complete_mi_grid_for_lf(mi_grid);
-        let cur_sb_col: Vec<AtomicI32> = (0..sb_rows).map(|_| AtomicI32::new(-1)).collect();
-        let shared = SharedFrame::from_tight_yuv420(recon_y, recon_u, recon_v, w, h);
-        let state = ColumnWavefrontLfState {
-            shared,
-            info: &info,
-            row_inputs: RowMaskInputs {
-                mi_grid: &frame_mi_opt,
-                mi_stride: mi_cols,
-                mi_rows,
-                mi_cols,
-                levels: &levels,
-            },
-            non420: None,
-            sb_rows,
-            sb_cols,
-            cur_sb_col: &cur_sb_col,
-            nsync: rvp9_core::loopfilter::apply::nsync_for_width(width),
-            decode_progress: None,
-            num_tile_cols: num_tile_cols as i32,
-            lf_delay: 1,
-            abort: None,
-        };
-        let simd_dispatch = rvp9_core::dsp::get();
-        let num_lf_workers = 1;
         worker_pool.scope(|scope| {
-            for worker_id in 0..num_lf_workers {
-                let state = &state;
-                let dispatch = simd_dispatch.clone();
-                scope.submit(move || {
-                    // SAFETY: the scope joins every job before the tight
-                    // plane borrows can be used again, and this path submits
-                    // only one alias-safe loop-filter worker.
-                    unsafe {
-                        rvp9_core::loopfilter::apply::run_split_edge_lf_worker(
-                            state,
-                            worker_id,
-                            num_lf_workers,
-                            &dispatch,
-                        );
-                    }
-                });
-            }
+            scope.submit(move || {
+                apply_loop_filter_to_tight_recon_split_edge(
+                    width,
+                    height,
+                    filter_level,
+                    mi_grid,
+                    recon_y,
+                    recon_u,
+                    recon_v,
+                    num_tile_cols,
+                );
+            });
         });
         return;
     }
@@ -372,6 +331,69 @@ pub(crate) fn apply_loop_filter_to_tight_recon_parallel(
         for r in 0..uvh {
             recon_v[r * uvw..r * uvw + uvw].copy_from_slice(&data[r * stride..r * stride + uvw]);
         }
+    }
+}
+
+/// Run the alias-safe split-edge loop filter directly on tight reconstruction
+/// planes. The wrapper owns exclusive plane borrows for the complete call and
+/// invokes exactly one core worker; callers may place this call on a scoped
+/// thread while independent coefficient/packet work runs elsewhere.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn apply_loop_filter_to_tight_recon_split_edge(
+    width: u32,
+    height: u32,
+    filter_level: u8,
+    mi_grid: &[Option<ModeInfo>],
+    recon_y: &mut [u8],
+    recon_u: &mut [u8],
+    recon_v: &mut [u8],
+    num_tile_cols: usize,
+) {
+    use rvp9_core::loopfilter::apply::{ColumnWavefrontLfState, RowMaskInputs, SharedFrame};
+    use std::sync::atomic::AtomicI32;
+
+    assert!(filter_level > 0);
+    let w = width as usize;
+    let h = height as usize;
+    let mi_rows = h / 8;
+    let mi_cols = w / 8;
+    let levels = resolve_filter_levels(
+        filter_level,
+        LIBVPX_DEFAULT_LF_DELTAS,
+        SegmentationLfView::default(),
+    );
+    let info = LoopFilterInfo::new(/* sharpness_level = */ 0);
+    let sb_rows = mi_rows.div_ceil(SB_MI_SIZE);
+    let sb_cols = mi_cols.div_ceil(SB_MI_SIZE);
+    let frame_mi_opt = complete_mi_grid_for_lf(mi_grid);
+    let cur_sb_col: Vec<AtomicI32> = (0..sb_rows).map(|_| AtomicI32::new(-1)).collect();
+    let shared = SharedFrame::from_tight_yuv420(recon_y, recon_u, recon_v, w, h);
+    let state = ColumnWavefrontLfState {
+        shared,
+        info: &info,
+        row_inputs: RowMaskInputs {
+            mi_grid: &frame_mi_opt,
+            mi_stride: mi_cols,
+            mi_rows,
+            mi_cols,
+            levels: &levels,
+        },
+        non420: None,
+        sb_rows,
+        sb_cols,
+        cur_sb_col: &cur_sb_col,
+        nsync: rvp9_core::loopfilter::apply::nsync_for_width(width),
+        decode_progress: None,
+        num_tile_cols: num_tile_cols as i32,
+        lf_delay: 1,
+        abort: None,
+    };
+    let simd_dispatch = rvp9_core::dsp::get();
+    // SAFETY: this safe wrapper holds exclusive access to every tight plane
+    // until the single worker returns. `run_split_edge_lf_worker` asserts the
+    // one-worker invariant, so no overlapping mutable slice can be formed.
+    unsafe {
+        rvp9_core::loopfilter::apply::run_split_edge_lf_worker(&state, 0, 1, &simd_dispatch);
     }
 }
 

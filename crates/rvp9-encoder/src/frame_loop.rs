@@ -90,7 +90,8 @@ use rvp9_core::transforms::TxMode;
 use crate::aq_cyclic_refresh::{CyclicRefresh, CyclicRefreshConfig};
 use crate::denoiser::{Denoiser, DenoiserLevel, INTRA_FRAME_IDX, vp9_denoiser_filter};
 use crate::loopfilter::{
-    apply_loop_filter_to_tight_recon_parallel, build_kf_mi_grid_for_lf, pick_filter_level,
+    apply_loop_filter_to_tight_recon_parallel, apply_loop_filter_to_tight_recon_split_edge,
+    build_kf_mi_grid_for_lf, pick_filter_level,
 };
 use crate::rate_control::{
     FirstPassStats, FrameKind as RcFrameKind, RateControl, RateControlConfig, RcMode, TwoPassState,
@@ -104,6 +105,33 @@ use crate::{
 #[inline]
 const fn video_frame_chessboard_index(frame_idx: u32) -> u32 {
     frame_idx & 1
+}
+
+#[inline]
+fn lf_packet_overlap_policy(value: Option<&std::ffi::OsStr>) -> bool {
+    value.is_none_or(|value| value != "0")
+}
+
+#[inline]
+fn lf_packet_overlap_enabled() -> bool {
+    use std::sync::OnceLock;
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        lf_packet_overlap_policy(std::env::var_os("RVP9_LF_PACKET_OVERLAP").as_deref())
+    })
+}
+
+#[cfg(test)]
+mod lf_packet_overlap_tests {
+    use super::lf_packet_overlap_policy;
+    use std::ffi::OsStr;
+
+    #[test]
+    fn overlap_is_default_on_with_explicit_zero_escape() {
+        assert!(lf_packet_overlap_policy(None));
+        assert!(lf_packet_overlap_policy(Some(OsStr::new("1"))));
+        assert!(!lf_packet_overlap_policy(Some(OsStr::new("0"))));
+    }
 }
 
 /// Adaptive-quantization mode. Selects whether the encoder runs an
@@ -3477,20 +3505,6 @@ impl StreamEncoder {
         // unless the `RVP9_E9_PREDSTAT` gate is on). See the KF site for
         // the accumulator-reset note.
         self.diag_pred = Some(crate::predstat::take_pred_frame());
-        if filter_level > 0 {
-            apply_loop_filter_to_tight_recon_parallel(
-                w,
-                h,
-                filter_level,
-                &mi_grid,
-                &mut new_recon_y,
-                &mut new_recon_u,
-                &mut new_recon_v,
-                self.frame_worker_pool.as_mut(),
-                self.parallelism.max_threads as usize,
-                1usize << log2_tile_cols,
-            );
-        }
         // AQ.3 — build the segmentation header + per-leaf write params.
         // `Off` produces `None` (segmentation disabled in the header,
         // no per-leaf bits emitted by the modes_writer — Stage 4a
@@ -3568,81 +3582,130 @@ impl StreamEncoder {
         // differs from `pre_fc`; the encoder MUST adapt from the
         // pre-header snapshot to stay in lock-step with the decoder.
         let pre_header_decoder_fc = decoder_fc.clone();
-        let packet = build_inter_packet_with_residuals(
-            w,
-            h,
-            q_index,
-            filter_level,
-            &coef_source,
-            (!recorded_coef_tiles.is_empty()).then_some(recorded_coef_tiles.as_slice()),
-            &mi_grid,
-            &segmentation_params,
-            refresh_flags,
-            // W8 — normal inter frames are show frames; the ALTREF
-            // path goes through `encode_altref_internal` which calls
-            // the writer with `show_frame: false` and
-            // `refresh_frame_flags = 0x04`.
-            /* show_frame = */
-            true,
-            error_resilient,
-            // W-ALTREF — when the ALTREF picker candidate is live this
-            // show frame may name ALTREF in its ref set, so the ALTREF
-            // slot is sign-biased (it points at a FUTURE display-order
-            // frame; libvpx `set_ref_sign_bias`). LAST/GOLDEN point at
-            // past frames → `false`. When NOT live (the cross-decoder
-            // gate's config, `enable_alt_ref = false`) this is
-            // `[false, false, false]` — wire bytes unchanged. This MUST
-            // match the picker's `sign_bias` in
-            // `pick_and_simulate_inter_encode_partitions`.
-            /* ref_frame_sign_biases = */
-            [false, false, altref_picker_live],
-            // DRIFT-FIX (GOLDEN ref-index) — the encoder's internal
-            // named-ref model resolves LAST/GOLDEN/ALTREF through the
-            // IDENTITY selector `named_ref_planes(i) = slots[
-            // ref_frame_map[i]]` (LAST→map[0], GOLDEN→map[1],
-            // ALTREF→map[2]; see `RefFramePool::frame_refs`). The decoder
-            // resolves logical ref `i` as `ref_frame_map[ref_frame_indices
-            // [i]]` (`rvp9-decoder/src/lib.rs:2295`). For the encoder's
-            // GOLDEN prediction to read the SAME physical slot the decoder
-            // resolves, the wire `ref_frame_indices` MUST be the identity
-            // `[0, 1, 2]` — NOT the prior `[0, 0, 0]` collapse.
-            //
-            // The prior `[0, 0, 0]` told the decoder "GOLDEN → ref_frame_
-            // map[0]". After frame 1's LAST-only refresh (`0x01`),
-            // `ref_frame_map[0]` holds frame 1 while the encoder's GOLDEN
-            // (map[1]) still holds the frame-0 KF (GOLDEN only rotates on
-            // the `0x03` golden-refresh). So a GOLDEN-picked block was
-            // predicted by the encoder from the KF but reconstructed by
-            // the decoder from frame 1 → SEVERITY-1 inter-frame drift from
-            // frame 2 onward. The identity map keeps both sides in
-            // lock-step (the refresh rotation is applied identically on
-            // both — decoder `lib.rs:2112`, encoder
-            // `update_reference_frames`). ALTREF stays at slot 2 (identity)
-            // whether or not the picker candidate is live; the index is
-            // only consulted by the decoder for blocks that actually name
-            // ALTREF, which the picker only emits when `altref_picker_live`.
-            /* ref_frame_indices = */
-            [0, 1, 2],
-            // A18 — Thread the same `prev_mv_grid` the picker used so
-            // the writer's `find_mv_refs` produces the SAME
-            // `best_ref_mv` the decoder will compute.
-            prev_grid_slice,
-            Some(&mut frame_counts),
-            // P0b — pass the adapted FC so the compressed header
-            // diff-encodes content-adapted probabilities against the
-            // decoder's FC bank state. Normal inter frames then perform
-            // matching backward adaptation; error-resilient SVC frames
-            // retain only these forward updates.
-            Some(&self.frame_context),
-            &mut decoder_fc,
-            // W-ALTREF — show frames use FC bank 0 (libvpx
-            // `frame_context_idx = refresh_alt_ref_frame = 0`).
-            /* frame_context_idx = */
-            0,
-            log2_tile_cols,
-            self.frame_worker_pool.as_mut(),
-            self.parallelism.max_threads,
-        )?;
+        macro_rules! build_packet {
+            () => {
+                build_inter_packet_with_residuals(
+                    w,
+                    h,
+                    q_index,
+                    filter_level,
+                    &coef_source,
+                    (!recorded_coef_tiles.is_empty()).then_some(recorded_coef_tiles.as_slice()),
+                    &mi_grid,
+                    &segmentation_params,
+                    refresh_flags,
+                    // W8 — normal inter frames are show frames; the ALTREF
+                    // path goes through `encode_altref_internal` which calls
+                    // the writer with `show_frame: false` and
+                    // `refresh_frame_flags = 0x04`.
+                    /* show_frame = */
+                    true,
+                    error_resilient,
+                    // W-ALTREF — when the ALTREF picker candidate is live this
+                    // show frame may name ALTREF in its ref set, so the ALTREF
+                    // slot is sign-biased (it points at a FUTURE display-order
+                    // frame; libvpx `set_ref_sign_bias`). LAST/GOLDEN point at
+                    // past frames → `false`. When NOT live (the cross-decoder
+                    // gate's config, `enable_alt_ref = false`) this is
+                    // `[false, false, false]` — wire bytes unchanged. This MUST
+                    // match the picker's `sign_bias` in
+                    // `pick_and_simulate_inter_encode_partitions`.
+                    /* ref_frame_sign_biases = */
+                    [false, false, altref_picker_live],
+                    // DRIFT-FIX (GOLDEN ref-index) — the encoder's internal
+                    // named-ref model resolves LAST/GOLDEN/ALTREF through the
+                    // IDENTITY selector `named_ref_planes(i) = slots[
+                    // ref_frame_map[i]]` (LAST→map[0], GOLDEN→map[1],
+                    // ALTREF→map[2]; see `RefFramePool::frame_refs`). The decoder
+                    // resolves logical ref `i` as `ref_frame_map[ref_frame_indices
+                    // [i]]` (`rvp9-decoder/src/lib.rs:2295`). For the encoder's
+                    // GOLDEN prediction to read the SAME physical slot the decoder
+                    // resolves, the wire `ref_frame_indices` MUST be the identity
+                    // `[0, 1, 2]` — NOT the prior `[0, 0, 0]` collapse.
+                    //
+                    // The prior `[0, 0, 0]` told the decoder "GOLDEN → ref_frame_
+                    // map[0]". After frame 1's LAST-only refresh (`0x01`),
+                    // `ref_frame_map[0]` holds frame 1 while the encoder's GOLDEN
+                    // (map[1]) still holds the frame-0 KF (GOLDEN only rotates on
+                    // the `0x03` golden-refresh). So a GOLDEN-picked block was
+                    // predicted by the encoder from the KF but reconstructed by
+                    // the decoder from frame 1 → SEVERITY-1 inter-frame drift from
+                    // frame 2 onward. The identity map keeps both sides in
+                    // lock-step (the refresh rotation is applied identically on
+                    // both — decoder `lib.rs:2112`, encoder
+                    // `update_reference_frames`). ALTREF stays at slot 2 (identity)
+                    // whether or not the picker candidate is live; the index is
+                    // only consulted by the decoder for blocks that actually name
+                    // ALTREF, which the picker only emits when `altref_picker_live`.
+                    /* ref_frame_indices = */
+                    [0, 1, 2],
+                    // A18 — Thread the same `prev_mv_grid` the picker used so
+                    // the writer's `find_mv_refs` produces the SAME
+                    // `best_ref_mv` the decoder will compute.
+                    prev_grid_slice,
+                    Some(&mut frame_counts),
+                    // P0b — pass the adapted FC so the compressed header
+                    // diff-encodes content-adapted probabilities against the
+                    // decoder's FC bank state. Normal inter frames then perform
+                    // matching backward adaptation; error-resilient SVC frames
+                    // retain only these forward updates.
+                    Some(&self.frame_context),
+                    &mut decoder_fc,
+                    // W-ALTREF — show frames use FC bank 0 (libvpx
+                    // `frame_context_idx = refresh_alt_ref_frame = 0`).
+                    /* frame_context_idx = */
+                    0,
+                    log2_tile_cols,
+                    self.frame_worker_pool.as_mut(),
+                    self.parallelism.max_threads,
+                )
+            };
+        }
+        let overlap_lf_and_packet =
+            filter_level > 0 && self.parallelism.max_threads > 1 && lf_packet_overlap_enabled();
+        let packet_result = if overlap_lf_and_packet {
+            // Loop filtering owns only the new reconstruction planes. Packet
+            // construction reads coefficients, mode metadata, and probability
+            // state, so both operations are independent after tile encoding.
+            // The scope is a hard join boundary; packet errors also join the
+            // pixel worker before propagating below.
+            std::thread::scope(|scope| {
+                let lf_job = scope.spawn(|| {
+                    apply_loop_filter_to_tight_recon_split_edge(
+                        w,
+                        h,
+                        filter_level,
+                        &mi_grid,
+                        &mut new_recon_y,
+                        &mut new_recon_u,
+                        &mut new_recon_v,
+                        1usize << log2_tile_cols,
+                    );
+                });
+                let packet = build_packet!();
+                lf_job
+                    .join()
+                    .expect("scoped loop-filter worker must not panic");
+                packet
+            })
+        } else {
+            if filter_level > 0 {
+                apply_loop_filter_to_tight_recon_parallel(
+                    w,
+                    h,
+                    filter_level,
+                    &mi_grid,
+                    &mut new_recon_y,
+                    &mut new_recon_u,
+                    &mut new_recon_v,
+                    self.frame_worker_pool.as_mut(),
+                    self.parallelism.max_threads as usize,
+                    1usize << log2_tile_cols,
+                );
+            }
+            build_packet!()
+        };
+        let packet = packet_result?;
 
         // W0.5(vpxenc parity, A2 P0 / A1 P5): with `refresh_frame_
         // context = true` set in the inter-frame header tail
