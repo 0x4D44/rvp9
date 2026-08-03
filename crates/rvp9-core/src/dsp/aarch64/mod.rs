@@ -11,6 +11,7 @@ pub mod convolve_copy_neon;
 pub mod idct8x8_neon;
 pub mod int_pro_neon;
 pub mod lpf16_neon;
+pub mod minmax_neon;
 pub mod quantize_neon;
 pub mod sad4d_neon;
 pub mod sad_neon;
@@ -29,6 +30,7 @@ pub use lpf16_neon::{
     lpf_horizontal_16_neon, lpf_vertical_8_dual_neon, lpf_vertical_8_neon,
     lpf_vertical_16_dual_neon, lpf_vertical_16_neon,
 };
+pub use minmax_neon::minmax_8x8_neon;
 pub use quantize_neon::{
     HadamardQuantMetrics, HadamardQuantRateMetrics, vp9_quantize_b_32x32_neon, vp9_quantize_b_neon,
     vp9_quantize_fp_32x32_i16_metrics_neon, vp9_quantize_fp_32x32_i16_rate_metrics_neon,

@@ -728,17 +728,33 @@ fn minmax_8x8_spread(input: &FixedTreeInterInput<'_>, x16: usize, y16: usize) ->
         if x8 >= input.visible_width || y8 >= input.visible_height {
             continue;
         }
-        let mut min_diff = 255;
-        let mut max_diff = 0;
-        for row in 0..8 {
-            for col in 0..8 {
-                let index = (y8 + row) * 64 + x8 + col;
-                let diff =
-                    (i32::from(input.source[index]) - i32::from(input.predictor[index])).abs();
-                min_diff = min_diff.min(diff);
-                max_diff = max_diff.max(diff);
+        let index = y8 * 64 + x8;
+        #[cfg(target_arch = "aarch64")]
+        let (min_diff, max_diff) = {
+            let (minimum, maximum) = crate::dsp::aarch64::minmax_8x8_neon(
+                &input.source[index..],
+                64,
+                &input.predictor[index..],
+                64,
+            );
+            (i32::from(minimum), i32::from(maximum))
+        };
+        #[cfg(not(target_arch = "aarch64"))]
+        let (min_diff, max_diff) = {
+            let mut minimum = 255;
+            let mut maximum = 0;
+            for row in 0..8 {
+                for col in 0..8 {
+                    let offset = index + row * 64 + col;
+                    let diff = (i32::from(input.source[offset])
+                        - i32::from(input.predictor[offset]))
+                    .abs();
+                    minimum = minimum.min(diff);
+                    maximum = maximum.max(diff);
+                }
             }
-        }
+            (minimum, maximum)
+        };
         let spread = max_diff - min_diff;
         spread_max = spread_max.max(spread);
         spread_min = spread_min.min(spread);
