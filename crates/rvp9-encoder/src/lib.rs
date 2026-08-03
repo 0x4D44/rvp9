@@ -11702,6 +11702,29 @@ mod tests {
     }
 
     #[test]
+    fn inter_coef_worker_sources_merge_disjoint_rows_in_one_tile() {
+        use rvp9_core::bitstream::InterCoefSource;
+
+        let mut frame = VecBackedInterCoefSource::new(128, 128);
+        let mut upper_worker = VecBackedInterCoefSource::new_for_mi_columns(128, 128, 0, 16);
+        let mut lower_worker = VecBackedInterCoefSource::new_for_mi_columns(128, 128, 0, 16);
+        upper_worker.insert(1, 2, 0, 0, 0, vec![4; 16], 4);
+        lower_worker.insert(9, 2, 0, 0, 0, vec![8; 16], 8);
+
+        // Worker completion order is deliberately the inverse of tile-raster
+        // row order. Dense physical slots, not merge order, drive replay.
+        frame.merge_from(lower_worker);
+        frame.merge_from(upper_worker);
+
+        let (upper, upper_eob) = frame.get_block_coefs(1, 2, 0, 0, 0, TxSize::Tx4x4);
+        let (lower, lower_eob) = frame.get_block_coefs(9, 2, 0, 0, 0, TxSize::Tx4x4);
+        assert_eq!(upper, &[4; 16]);
+        assert_eq!(upper_eob, 4);
+        assert_eq!(lower, &[8; 16]);
+        assert_eq!(lower_eob, 8);
+    }
+
+    #[test]
     #[should_panic(expected = "disjoint physical TX slots")]
     fn inter_coef_direct_slot_merge_rejects_overlap() {
         let mut left = VecBackedInterCoefSource::new(128, 64);

@@ -401,6 +401,218 @@ pub struct RowJob {
     pub tile_col: usize,
 }
 
+/// Failure while assembling exact-once row-job ownership after workers join.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RowJobOwnershipError {
+    /// Two worker results claim the same `(tile, row)` job.
+    Duplicate {
+        /// Duplicated job.
+        job: RowJob,
+        /// Worker recorded first.
+        existing_worker: usize,
+        /// Worker that attempted the duplicate claim.
+        duplicate_worker: usize,
+    },
+    /// One or more scheduled jobs have no worker result.
+    Incomplete {
+        /// Number of missing jobs.
+        missing_jobs: usize,
+    },
+}
+
+impl std::fmt::Display for RowJobOwnershipError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Duplicate {
+                job,
+                existing_worker,
+                duplicate_worker,
+            } => write!(
+                f,
+                "row job ({},{}) belongs to workers {} and {}",
+                job.tile_col, job.sb_row, existing_worker, duplicate_worker
+            ),
+            Self::Incomplete { missing_jobs } => {
+                write!(f, "row worker results are missing {missing_jobs} jobs")
+            }
+        }
+    }
+}
+
+impl std::error::Error for RowJobOwnershipError {}
+
+/// Exact owner of every `(tile column, superblock row)` worker result.
+///
+/// Workers append claimed jobs to their private result. After all workers
+/// join, the dispatcher assigns those claims here. Duplicate and missing jobs
+/// fail before any frame output is merged. Iteration is always tile-column
+/// then row order, independent of scheduling or worker completion order.
+#[derive(Debug)]
+pub struct RowJobOwners {
+    tile_sb_starts: Box<[usize]>,
+    tile_sb_cols: Box<[usize]>,
+    sb_rows: usize,
+    owners: Box<[Option<usize>]>,
+    assigned: usize,
+}
+
+impl RowJobOwners {
+    /// Allocate an empty ownership map for one frame.
+    ///
+    /// # Panics
+    ///
+    /// Panics if there are no tiles, a tile has no SB column, or `sb_rows`
+    /// is zero.
+    #[must_use]
+    pub fn new(tile_sb_cols: &[usize], sb_rows: usize) -> Self {
+        assert!(!tile_sb_cols.is_empty(), "row ownership requires a tile");
+        assert!(sb_rows > 0, "row ownership requires an SB row");
+        assert!(
+            tile_sb_cols.iter().all(|&cols| cols > 0),
+            "row ownership tiles must contain an SB column"
+        );
+        let mut tile_sb_starts = Vec::with_capacity(tile_sb_cols.len());
+        let mut sb_start = 0usize;
+        for &cols in tile_sb_cols {
+            tile_sb_starts.push(sb_start);
+            sb_start = sb_start
+                .checked_add(cols)
+                .expect("row ownership frame width overflow");
+        }
+        let jobs = tile_sb_cols
+            .len()
+            .checked_mul(sb_rows)
+            .expect("row ownership job count overflow");
+        Self {
+            tile_sb_starts: tile_sb_starts.into_boxed_slice(),
+            tile_sb_cols: tile_sb_cols.into(),
+            sb_rows,
+            owners: vec![None; jobs].into_boxed_slice(),
+            assigned: 0,
+        }
+    }
+
+    /// Assign one completed job to a worker.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RowJobOwnershipError::Duplicate`] if another result already
+    /// owns the job.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the job lies outside this frame.
+    pub fn assign(&mut self, worker_id: usize, job: RowJob) -> Result<(), RowJobOwnershipError> {
+        let index = self.index(job);
+        if let Some(existing_worker) = self.owners[index] {
+            return Err(RowJobOwnershipError::Duplicate {
+                job,
+                existing_worker,
+                duplicate_worker: worker_id,
+            });
+        }
+        self.owners[index] = Some(worker_id);
+        self.assigned += 1;
+        Ok(())
+    }
+
+    /// Require every scheduled job to have exactly one worker result.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RowJobOwnershipError::Incomplete`] with the number of
+    /// unassigned jobs.
+    pub fn require_complete(&self) -> Result<(), RowJobOwnershipError> {
+        let missing_jobs = self.owners.len() - self.assigned;
+        if missing_jobs == 0 {
+            Ok(())
+        } else {
+            Err(RowJobOwnershipError::Incomplete { missing_jobs })
+        }
+    }
+
+    /// Iterate assigned jobs in deterministic tile-raster order.
+    pub fn iter(&self) -> impl Iterator<Item = (RowJob, usize)> + '_ {
+        self.owners
+            .iter()
+            .copied()
+            .enumerate()
+            .filter_map(|(index, owner)| {
+                owner.map(|worker_id| {
+                    let tile_col = index / self.sb_rows;
+                    let sb_row = index % self.sb_rows;
+                    (RowJob { sb_row, tile_col }, worker_id)
+                })
+            })
+    }
+
+    /// Copy one owned job rectangle from a full-frame worker shadow.
+    ///
+    /// `cells_per_sb` is 64 for luma pixels, 32 for 4:2:0 chroma, 8 for
+    /// MI/MV cells, and 1 for the SB partition/history arrays. Source and
+    /// destination use identical tight full-frame layouts.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the job is unassigned, the scale is zero, or either slice
+    /// does not match the configured frame shape.
+    pub fn merge_job_rect<T: Clone>(
+        &self,
+        destination: &mut [T],
+        source: &[T],
+        job: RowJob,
+        cells_per_sb: usize,
+    ) {
+        assert!(cells_per_sb > 0, "row merge scale must be positive");
+        let index = self.index(job);
+        assert!(
+            self.owners[index].is_some(),
+            "cannot merge an unassigned row job"
+        );
+        let frame_sb_cols: usize = self.tile_sb_cols.iter().sum();
+        let row_stride = frame_sb_cols
+            .checked_mul(cells_per_sb)
+            .expect("row merge stride overflow");
+        let rows = self
+            .sb_rows
+            .checked_mul(cells_per_sb)
+            .expect("row merge height overflow");
+        let expected_len = row_stride
+            .checked_mul(rows)
+            .expect("row merge frame size overflow");
+        assert_eq!(
+            destination.len(),
+            expected_len,
+            "row merge destination has the wrong frame shape"
+        );
+        assert_eq!(
+            source.len(),
+            expected_len,
+            "row merge source has the wrong frame shape"
+        );
+        let col_start = self.tile_sb_starts[job.tile_col] * cells_per_sb;
+        let col_len = self.tile_sb_cols[job.tile_col] * cells_per_sb;
+        let row_start = job.sb_row * cells_per_sb;
+        for row in row_start..row_start + cells_per_sb {
+            let start = row * row_stride + col_start;
+            let end = start + col_len;
+            destination[start..end].clone_from_slice(&source[start..end]);
+        }
+    }
+
+    fn index(&self, job: RowJob) -> usize {
+        assert!(
+            job.tile_col < self.tile_sb_cols.len(),
+            "row ownership tile column is out of bounds"
+        );
+        assert!(
+            job.sb_row < self.sb_rows,
+            "row ownership SB row is out of bounds"
+        );
+        job.tile_col * self.sb_rows + job.sb_row
+    }
+}
+
 /// Frame-local row-MT queues and wavefront state.
 ///
 /// Each tile column owns an ordered queue of superblock rows. Workers begin
@@ -777,7 +989,8 @@ impl RowSync {
 #[cfg(test)]
 mod tests {
     use super::{
-        RowJob, RowMtContext, RowSync, RowWorkerShadow, SbBoundary, SbBoundaryError, SbBoundaryGrid,
+        RowJob, RowJobOwners, RowJobOwnershipError, RowMtContext, RowSync, RowWorkerShadow,
+        SbBoundary, SbBoundaryError, SbBoundaryGrid,
     };
     use rvp9_core::block::BlockSize;
     use rvp9_core::intra_pred::IntraMode;
@@ -1192,6 +1405,89 @@ mod tests {
         );
         assert!(context.queues_drained());
         assert_eq!(context.remaining_jobs(), 0);
+    }
+
+    #[test]
+    fn row_job_owners_merge_two_worker_shadows_without_holes_or_overlap() {
+        let mut owners = RowJobOwners::new(&[1, 2], 2);
+        let worker_jobs = [
+            [
+                RowJob {
+                    sb_row: 0,
+                    tile_col: 0,
+                },
+                RowJob {
+                    sb_row: 1,
+                    tile_col: 1,
+                },
+            ],
+            [
+                RowJob {
+                    sb_row: 1,
+                    tile_col: 0,
+                },
+                RowJob {
+                    sb_row: 0,
+                    tile_col: 1,
+                },
+            ],
+        ];
+        for (worker_id, jobs) in worker_jobs.iter().enumerate() {
+            for &job in jobs {
+                owners.assign(worker_id, job).unwrap();
+            }
+        }
+        owners.require_complete().unwrap();
+        assert_eq!(
+            owners.iter().collect::<Vec<_>>(),
+            vec![
+                (worker_jobs[0][0], 0),
+                (worker_jobs[1][0], 1),
+                (worker_jobs[1][1], 1),
+                (worker_jobs[0][1], 0),
+            ]
+        );
+
+        for cells_per_sb in [64, 32, 8, 1] {
+            let len = 3 * 2 * cells_per_sb * cells_per_sb;
+            let sources = [vec![10u8; len], vec![20u8; len]];
+            let mut merged = vec![0u8; len];
+            for (job, worker_id) in owners.iter() {
+                owners.merge_job_rect(&mut merged, &sources[worker_id], job, cells_per_sb);
+            }
+            let area_per_worker = 3 * cells_per_sb * cells_per_sb;
+            assert_eq!(
+                merged.iter().filter(|&&value| value == 10).count(),
+                area_per_worker
+            );
+            assert_eq!(
+                merged.iter().filter(|&&value| value == 20).count(),
+                area_per_worker
+            );
+            assert!(!merged.contains(&0));
+        }
+    }
+
+    #[test]
+    fn row_job_owners_reject_duplicates_and_report_missing_jobs() {
+        let mut owners = RowJobOwners::new(&[1, 1], 2);
+        let job = RowJob {
+            sb_row: 1,
+            tile_col: 0,
+        };
+        owners.assign(3, job).unwrap();
+        assert_eq!(
+            owners.assign(7, job),
+            Err(RowJobOwnershipError::Duplicate {
+                job,
+                existing_worker: 3,
+                duplicate_worker: 7,
+            })
+        );
+        assert_eq!(
+            owners.require_complete(),
+            Err(RowJobOwnershipError::Incomplete { missing_jobs: 3 })
+        );
     }
 
     #[test]
