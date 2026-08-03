@@ -180,12 +180,15 @@ fn active_worst_quality_vbr(rc: &RateControl, frame_kind: FrameKind) -> i32 {
         FrameKind::Golden => {
             // libvpx GF/ARF refresh branch:
             // current_video_frame == 1 uses `last_q[KEY] * 5 >> 2`;
-            // steady-state GF uses avg inter Q times fac_active_worst_gf.
+            // steady-state GF uses the most recent inter Q times
+            // fac_active_worst_gf (`vp9_ratectrl.c:914-919`). This is
+            // deliberately not the smoothed inter-Q average used below to
+            // derive active-best quality.
             // `vp9_ratectrl.c:914-919`.
             if rc.frames_since_key <= 1 && rc.total_actual_bits > 0 {
                 last_q_key.saturating_mul(5) >> 2
             } else {
-                (avg_inter.saturating_mul(FAC_ACTIVE_WORST_GF)) / 100
+                (i32::from(rc.last_q_inter).saturating_mul(FAC_ACTIVE_WORST_GF)) / 100
             }
         }
     };
@@ -520,13 +523,17 @@ mod tests {
         rc.frames_since_key = 16;
         rc.avg_frame_qindex_inter = 180;
         rc.avg_frame_qindex_key = 80;
+        rc.last_q_inter = 120;
         let inter_worst = active_worst_quality_vbr(&rc, FrameKind::Inter);
         let golden_worst = active_worst_quality_vbr(&rc, FrameKind::Golden);
         assert_eq!(
             inter_worst, 255,
             "inter uses avg_inter * 150 / 100, clamped"
         );
-        assert_eq!(golden_worst, 180, "GF uses avg_inter * 100 / 100");
+        assert_eq!(
+            golden_worst, 120,
+            "GF active-worst uses last inter Q, not the smoothed average"
+        );
 
         let inter_best = active_best_quality_vbr(&rc, FrameKind::Inter, inter_worst);
         let golden_best = active_best_quality_vbr(&rc, FrameKind::Golden, golden_worst);
