@@ -1832,7 +1832,14 @@ fn write_block_tokens_with_retained_impl<T: EncodeCoef>(
         if let (Some(token_end), Some(nonzero)) = (token_end, nonzero)
             && let Some(tokens) = retained.tokens.get(*token_start..token_end)
         {
-            replay_retained_coefs(bw, coef_probs, tokens);
+            // The forward-probability prepass needs the modes walk and its
+            // non-coefficient counts, but its count-only writer discards every
+            // coefficient bit. Consume the retained block and update contexts
+            // without walking its tokens; final tile writers still replay the
+            // exact token stream against the post-header probabilities.
+            if !bw.is_count_only() {
+                replay_retained_coefs(bw, coef_probs, tokens);
+            }
             *token_start = token_end;
             *next_block += 1;
             coef_ctx.set_coef_flags(plane, x4, y4_in_sb, n, n, nonzero);
@@ -2211,6 +2218,47 @@ mod tests {
             );
         }
         assert!(!mismatch_pass.finished());
+    }
+
+    #[test]
+    fn count_only_replay_consumes_block_without_reading_tokens() {
+        let retained = RetainedCoefTokens {
+            // An emitted replay would index this deliberately invalid
+            // probability context and panic. Count-only replay must only
+            // consume the recorded block boundary and nonzero flag.
+            tokens: vec![RetainedCoefToken {
+                value: 1,
+                prob_ctx: u8::MAX,
+            }],
+            block_ends: vec![1],
+            block_nonzero: vec![true],
+        };
+        let mut replay_pass = CoefTokenPass::replay(&retained);
+        let mut coef_ctx = TileCoefCtx::new(8);
+        let mut sink = [];
+        let mut writer = BoolWriter::start_count_only(&mut sink);
+
+        write_block_tokens_with_retained(
+            &mut writer,
+            &FrameContext::new_default(),
+            &mut coef_ctx,
+            0,
+            0,
+            0,
+            TxSize::Tx4x4,
+            TxType::DctDct,
+            1,
+            16,
+            &[0; 16],
+            0,
+            None,
+            None,
+            Some(&mut replay_pass),
+        );
+
+        assert!(replay_pass.finished());
+        assert_eq!(coef_ctx.above_coef(0, 0), 1);
+        assert_eq!(coef_ctx.left_coef(0, 0), 1);
     }
 
     /// EOB at position 0 ⇒ no coefficients decoded.
