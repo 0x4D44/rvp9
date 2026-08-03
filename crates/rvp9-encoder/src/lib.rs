@@ -4719,7 +4719,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
 
     debug_assert_eq!(out_mv_grid.len(), mi_rows_us * mi_cols_us);
 
-    for sb_row in 0..sb_rows {
+    let mut encode_sb_row = |sb_row: usize| {
         for sb_col in 0..sb_cols {
             let current_tile = tile_for_mi_col(&tile_bounds_by_col, sb_col * 8);
             let tile_col = tile_bounds_by_col
@@ -8185,6 +8185,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 }
             }
         }
+    };
+    for sb_row in 0..sb_rows {
+        encode_sb_row(sb_row);
     }
 
     if rt_profile_enabled {
