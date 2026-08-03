@@ -7642,10 +7642,17 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         // Diagnostic A/B: `RVP9_RT_EMIT_TX_RD=0` reuses
                         // the RT picker's model-RD TX decision, matching
                         // libvpx pickmode's stored `mi->tx_size`. The
-                        // exact variance-tree default uses the focused
-                        // TX8/TX16 redecision; other large-frame paths keep
+                        // exact variance-tree default redecides TX8/TX16 only
+                        // for TX16-capable leaves; other leaf classes retain
+                        // the picker transform. Other large-frame paths keep
                         // their established maximum-TX shortcut.
-                        if plane == 0 && !rt_emit_max_tx && rt_emit_tx_rd {
+                        if plane == 0
+                            && should_redecide_inter_luma_tx(
+                                rt_emit_max_tx,
+                                rt_emit_tx_rd,
+                                leaf_bsize,
+                            )
+                        {
                             let emit_tx_select_start = if emit_profile_enabled {
                                 Some(std::time::Instant::now())
                             } else {
@@ -9368,6 +9375,10 @@ fn realtime_inter_tx_candidate(max_tx: TxSize, candidate: TxSize) -> bool {
     max_tx == TxSize::Tx16x16 && matches!(candidate, TxSize::Tx8x8 | TxSize::Tx16x16)
 }
 
+fn should_redecide_inter_luma_tx(force_max_tx: bool, tx_rd: bool, bsize: BlockSize) -> bool {
+    !force_max_tx && tx_rd && rvp9_core::block::max_txsize(bsize) == TxSize::Tx16x16
+}
+
 fn choose_inter_luma_tx_size(input: InterLumaTxInput<'_>) -> TxSize {
     let max_tx = rvp9_core::block::max_txsize(input.leaf_bsize);
     if max_tx != TxSize::Tx16x16 {
@@ -11055,6 +11066,26 @@ mod tests {
 
     #[test]
     fn realtime_tx_redecision_searches_only_tx8_and_tx16() {
+        assert!(should_redecide_inter_luma_tx(
+            false,
+            true,
+            BlockSize::Block16x16,
+        ));
+        assert!(!should_redecide_inter_luma_tx(
+            false,
+            true,
+            BlockSize::Block32x32,
+        ));
+        assert!(!should_redecide_inter_luma_tx(
+            true,
+            true,
+            BlockSize::Block16x16,
+        ));
+        assert!(!should_redecide_inter_luma_tx(
+            false,
+            false,
+            BlockSize::Block16x16,
+        ));
         assert!(!realtime_inter_tx_candidate(TxSize::Tx16x16, TxSize::Tx4x4));
         assert!(realtime_inter_tx_candidate(TxSize::Tx16x16, TxSize::Tx8x8));
         assert!(realtime_inter_tx_candidate(

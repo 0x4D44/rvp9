@@ -4170,9 +4170,9 @@ mode decision and prunes the search according to its speed features.
 
 **What rvp9 does:** CPU7 realtime large frames using the exact variance tree
 run a final coefficient-domain RD comparison between TX8 and TX16 only on
-leaves whose maximum transform is TX16. Other leaf classes retain the maximum
-transform policy. `RVP9_RT_EMIT_MAX_TX=1` restores the former large-frame
-shortcut for diagnostics.
+leaves whose maximum transform is TX16. Other leaf classes retain the
+transform selected by the realtime picker. `RVP9_RT_EMIT_MAX_TX=1` restores
+the former large-frame shortcut for diagnostics.
 
 **Why:** fixed-Q bit accounting localized the remaining old-town gap to
 coefficient coding: rvp9 spent about 136,006 more modeled coefficient bits
@@ -4182,30 +4182,31 @@ crosses the Stage 4a quality gate at about one sixth of that local cost.
 
 **Byte-parity impact:** intentional streams change. At 1000 kbps the
 in-to-tree, ducks-take-off, and old-town-cross IVF SHA-256 values are
-`42f1793d007bc1a7b930e24d356eba3e491809c8919d20559f24f38a52cdba61`,
-`92c4fd03192cdba8d0e21856506c1513830f9933417ce344ddeb1b9bae08ac23`,
-and `ab8f38fb7c3df77ccea723f54015374ffc173463b682a50908da9b6f35366cfe`.
+`e9e586f787d81c2186c27e5168067e746b640c5c4908e146f08be2db762912aa`,
+`179af8821906be954fdaed7a7db57f07f8f1bead185600ca94c724f75b3075b7`,
+and `2c4fb5efcb77f3ca72cc5f9dfdf65b0a74d695b1e8f1905f0947da7b0617d1bf`.
 Rvp9-decoder, pinned vpxdec, and ffmpeg produce identical I420 output for each
 stream, with SHA-256 values
-`6421eea9c439a277b2b989c22243ec7efd5c2f1ff918874df992a83009fd1f47`,
-`81c63c024f4079ef2933d1ae5625d1672a80077bd32265556d1c9b589f24a30f`,
-and `95172f5e66afb5476a94ab0c450381f40b5aaeafb3e303e7ad262c811b80b671`.
+`dab2c8141b6d0bb01e46eaa7275943f1d4cd043e02325d4df085a1cc2a832e13`,
+`8c10978a28bc47e9bfd5887dca8af9fb01e38dc88e5d093c12647d4d53b57385`,
+and `eecb0c6559feeec7b5ee8f3e9a3b7ddafa6080849c1ef2ca4dd543dab9854dbc`.
 
 **Compression-efficiency impact:** six-point luma BD-rate versus pinned
-vpxenc is `-5.762787%`, `-13.685349%`, and `+1.380523%` on in-to-tree,
-ducks-take-off, and old-town-cross. Average-YUV BD-rate is `-5.130545%`,
-`-12.650144%`, and `+1.192608%`. This moves the limiting old-town result from
-Unit 597's `+2.330452%` luma and `+2.384092%` average-YUV inside the Stage 4a
-`+2%` gate, but not the final `+0.5%` gate.
+vpxenc is `-6.683490%`, `-12.766600%`, and `-2.274202%` on in-to-tree,
+ducks-take-off, and old-town-cross. Average-YUV BD-rate is `-5.901878%`,
+`-11.782100%`, and `-1.780696%`. This clears both the Stage 4a `+2%` gate and
+the final `+0.5%` gate on the current three-clip matrix. The wider required
+corpus and configuration matrix remains unmeasured.
 
-**Speed impact:** twelve rotating four-thread observations measured a
-`1.0414x` local wall-time ratio against the former maximum-TX policy. A fresh
-twelve-pair comparison measured `0.245485 s` versus pinned vpxenc's
-`0.168107 s`, or `1.4603x`, on the loaded host. Nine warmed one-thread runs
-measured `10.991 ms/frame`, inside the 720p30 absolute budget but outside the
-final relative-speed gate.
+**Speed impact:** preserving the picker transform improved forty alternating
+four-thread old-town pairs by `1.74%` median paired wall time and `2.26%`
+paired child CPU, with 31 and 35 wins respectively. Twenty fresh alternating
+pairs measured `0.227152 s` versus pinned vpxenc's `0.158111 s`, or `1.436663x`
+by wall medians and `1.437988x` paired. Nine warmed one-thread runs measured
+`10.592 ms/frame`, inside the 720p30 median budget but outside the final
+relative-speed gate.
 
-**Future plan:** retain the focused search as the Stage 4a quality
-prerequisite. Profile its duplicate selected-transform work and recover the
-local cost before widening the search to TX32 leaves; the wider search reaches
-the final three-clip quality gate but is not yet speed-compatible.
+**Future plan:** retain the focused TX16-class search and picker transform for
+all other leaves. Profile this accepted build against pinned vpxenc and remove
+the next measured structural speed gap without giving back the three-clip
+quality gate.
