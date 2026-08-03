@@ -3213,6 +3213,27 @@ fn segment_id_for_hint_cell(
         .unwrap_or(0)
 }
 
+/// Pinned libvpx restricts the first post-refresh realtime pick to LAST
+/// (`vp9_pickmode.c:1907-1911`). Require exact storage identity for every
+/// prediction plane as well as the matching non-SVC/non-ALTREF topology;
+/// a denoiser-owned ME view therefore keeps GOLDEN eligible.
+fn golden_ref_duplicates_last(
+    allow_last_only_topology: bool,
+    frames_since_golden: u32,
+    me_ref_yuv: (&[u8], &[u8], &[u8]),
+    last_recon_yuv: (&[u8], &[u8], &[u8]),
+    golden_recon_yuv: (&[u8], &[u8], &[u8]),
+) -> bool {
+    fn same_storage(a: (&[u8], &[u8], &[u8]), b: (&[u8], &[u8], &[u8])) -> bool {
+        a.0.as_ptr() == b.0.as_ptr() && a.1.as_ptr() == b.1.as_ptr() && a.2.as_ptr() == b.2.as_ptr()
+    }
+
+    allow_last_only_topology
+        && frames_since_golden == 0
+        && same_storage(me_ref_yuv, last_recon_yuv)
+        && same_storage(golden_recon_yuv, last_recon_yuv)
+}
+
 /// F10.1c — Drive the F8.1 inter mode picker per leaf and run the
 /// inter encoder simulator that produces real residual coefficients +
 /// a decoder-bit-exact encoder reconstruction.
@@ -3992,6 +4013,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // gate's `frames_since_golden > 4` predicate
     // (`vp9_pickmode.c:2237-2239`).
     frames_since_golden: u32,
+    // Pinned-libvpx `gf_temporal_ref` topology gate. True only for the
+    // single-layer, non-ALTREF show-frame path; exact buffer identity is
+    // checked inside this function before GOLDEN is suppressed.
+    allow_duplicate_golden_prune: bool,
     // §11 — libvpx `get_chessboard_index(cm->current_video_frame) =
     // current_video_frame & 1` (`vp9_common.h:88-90`). Feeds the
     // `cb_pred_filter_search` chessboard predicate at
@@ -4081,6 +4106,13 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // `PickInterModeParams` literal below.
     let sf = sf_mod::dispatch(speed, deadline, width, height, content_tier);
     let rt_disable_golden_ref = sf.disable_golden_ref || env.rt_disable_golden;
+    let golden_ref_is_last = golden_ref_duplicates_last(
+        allow_duplicate_golden_prune,
+        frames_since_golden,
+        me_ref_yuv,
+        last_recon_yuv,
+        golden_recon_yuv,
+    );
     let mut rt_inter_mode_mask = rvp9_core::mode_decision::inter::default_inter_mode_mask();
     if env.rt_disable_newmv {
         let newmv_bit = 1u8 << InterMode::NewMv.idx();
@@ -5500,6 +5532,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         limit_newmv_early_exit: sf.limit_newmv_early_exit,
                         bias_golden: sf.bias_golden,
                         frames_since_golden,
+                        golden_ref_is_last,
                         // Apply the chessboard shortcut only to the A4
                         // partition proxy. The final emitted picker below
                         // keeps the resolution-gated libvpx speed feature and
@@ -6784,6 +6817,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     limit_newmv_early_exit: sf.limit_newmv_early_exit,
                     bias_golden: sf.bias_golden,
                     frames_since_golden,
+                    golden_ref_is_last,
                     cb_pred_filter_search: sf.cb_pred_filter_search,
                     skip_integer_mv_filter_search: rt_skip_integer_mv_filter_search,
                     mi_row: leaf_mi_row as u32,
@@ -9919,6 +9953,31 @@ fn intra_inverse_transform_add(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn duplicate_golden_shortcut_requires_topology_refresh_and_all_plane_aliases() {
+        let y = [1u8; 64];
+        let u = [2u8; 16];
+        let v = [3u8; 16];
+        let shared = (&y[..], &u[..], &v[..]);
+
+        assert!(golden_ref_duplicates_last(true, 0, shared, shared, shared));
+        assert!(!golden_ref_duplicates_last(
+            false, 0, shared, shared, shared
+        ));
+        assert!(!golden_ref_duplicates_last(true, 1, shared, shared, shared));
+
+        let other_y = [1u8; 64];
+        let other_u = [2u8; 16];
+        let other_v = [3u8; 16];
+        let distinct = (&other_y[..], &other_u[..], &other_v[..]);
+        assert!(!golden_ref_duplicates_last(
+            true, 0, distinct, shared, shared
+        ));
+        assert!(!golden_ref_duplicates_last(
+            true, 0, shared, shared, distinct
+        ));
+    }
 
     #[test]
     fn unavailable_reference_skips_mv_candidate_builder() {

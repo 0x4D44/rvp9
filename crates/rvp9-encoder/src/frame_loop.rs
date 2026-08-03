@@ -3187,6 +3187,11 @@ impl StreamEncoder {
         let avg_inter_qindex = self.rate_control.avg_frame_qindex_inter;
         let frames_since_key = self.rate_control.frames_since_key;
         let frames_since_golden = self.frames_since_golden_refresh;
+        // Pinned libvpx's post-refresh LAST-only shortcut requires a
+        // temporal GOLDEN reference and excludes SVC/ALTREF topology.
+        // The picker additionally proves exact Y/U/V storage identity.
+        let allow_duplicate_golden_prune =
+            self.config.temporal_layers == 1 && !self.config.enable_alt_ref;
         let me_ref_yuv = if self.denoiser.is_some() {
             (&self.me_ref_y[..], &self.me_ref_u[..], &self.me_ref_v[..])
         } else {
@@ -3252,6 +3257,7 @@ impl StreamEncoder {
                     frame_mv_costs_ref,
                     $rd_tables,
                     frames_since_golden,
+                    allow_duplicate_golden_prune,
                     chessboard_index,
                     speed,
                     deadline,
@@ -4083,6 +4089,7 @@ impl StreamEncoder {
             &arf_mv_costs,
             &mut arf_rd_thresh,
             self.frames_since_golden_refresh,
+            false,
             self.frames_since_golden_refresh & 1,
             self.config.speed,
             self.config.deadline,

@@ -1351,6 +1351,14 @@ pub struct PickInterModeParams<'a> {
     /// `frames_since_golden > 4` check (`vp9_pickmode.c:2238`).
     pub frames_since_golden: u32,
 
+    /// Whether GOLDEN resolves to exactly the same prediction storage as
+    /// LAST on the first frame after a GOLDEN refresh. Pinned libvpx sets
+    /// `usable_ref_frame = LAST_FRAME` for this non-SVC, non-ALTREF case
+    /// (`vp9_pickmode.c:1907-1911`), so every GOLDEN candidate is redundant.
+    /// This is separate from [`Self::disable_golden_ref`]: it is an
+    /// unconditional reference-topology fact, not a content speed feature.
+    pub golden_ref_is_last: bool,
+
     /// libvpx `cpi->sf.cb_pred_filter_search` (`vp9_speed_features.h:442`,
     /// gate site `vp9_pickmode.c:1852-1858`). When `true`, only run the
     /// per-block interpolation-filter search on chessboard-pattern
@@ -1782,20 +1790,31 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
                 &last_cands,
                 params.block_size,
             );
-            let golden_cands = [golden_mvc_safe.nearest, golden_mvc_safe.near];
-            let golden = crate::mv_search::mv_pred::mv_pred_sad_seed(
-                params.src_plane,
-                params.golden_ref_plane,
-                params.src_offset,
-                &golden_cands,
-                params.block_size,
-            );
+            let golden = if params.golden_ref_is_last {
+                (Mv::ZERO, u32::MAX)
+            } else {
+                let golden_cands = [golden_mvc_safe.nearest, golden_mvc_safe.near];
+                crate::mv_search::mv_pred::mv_pred_sad_seed(
+                    params.src_plane,
+                    params.golden_ref_plane,
+                    params.src_offset,
+                    &golden_cands,
+                    params.block_size,
+                )
+            };
             (last, golden)
         } else {
             ((Mv::ZERO, u32::MAX), (Mv::ZERO, u32::MAX))
         };
     // Bit indices: 1 = LAST, 2 = GOLDEN (libvpx convention).
     let mut ref_frame_skip_mask: u32 = 0;
+    // Pinned libvpx `vp9_pickmode.c:1907-1911`: immediately after a
+    // GOLDEN refresh, the non-SVC/non-ALTREF path caps
+    // `usable_ref_frame` at LAST. The caller proves the storage alias;
+    // unlike `disable_golden_ref`, VeryHighSad does not bypass this fact.
+    if params.golden_ref_is_last {
+        ref_frame_skip_mask |= 1 << 2;
+    }
     if params.reference_masking && pred_mv_sad_last != u32::MAX && pred_mv_sad_golden != u32::MAX {
         // `pred_mv_sad_last << 1` — guarded against overflow on the
         // very-high-SAD edge (a u32 MAX/2 SAD would never trigger the
@@ -7101,6 +7120,7 @@ mod tests {
             limit_newmv_early_exit: false,
             bias_golden: false,
             frames_since_golden: 0,
+            golden_ref_is_last: false,
             cb_pred_filter_search: false,
             skip_integer_mv_filter_search: false,
             mi_row: 0,
@@ -11187,6 +11207,63 @@ mod tests {
             "§11 disable_golden_ref BYPASS (VeryHighSad): finite RD; got {}",
             res.best_rd_cost,
         );
+    }
+
+    /// Pinned libvpx's post-refresh `usable_ref_frame = LAST_FRAME` cap
+    /// is a reference-topology rule, so VeryHighSad must not bypass it.
+    /// Give GOLDEN a perfect source match and LAST a deliberately poor
+    /// one: the control picks GOLDEN, while the alias gate permits only LAST.
+    #[test]
+    fn post_refresh_duplicate_golden_is_unconditionally_masked() {
+        let pw = 64;
+        let ph = 64;
+        let src_data = make_plane(pw, ph, 91);
+        let last_data = vec![0u8; pw * ph];
+        let src_plane = PlaneRef {
+            data: &src_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let last_plane = PlaneRef {
+            data: &last_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let golden_plane = PlaneRef {
+            data: &src_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let harness = TestHarness::new(pw, 50);
+        let fc = FrameContext::new_default();
+        let intra_y_costs = crate::cost::symbol_costs::intra_y_mode_costs_inter(&fc)[0];
+        let mvc = MvCandidates::default();
+        let mut params = make_dual_ref_params(
+            &harness,
+            &intra_y_costs,
+            BlockSize::Block16x16,
+            &src_plane,
+            &last_plane,
+            (16, 16),
+            &mvc,
+            &mvc,
+            MvLimits::new(-16, 16, -16, 16),
+            50,
+        );
+        params.golden_ref_plane = &golden_plane;
+        params.enable_intra_fallback = false;
+        params.reference_masking = false;
+        params.content_state_sb = ContentStateSb::VeryHighSad;
+
+        let control = pick_inter_mode(&params);
+        assert_eq!(control.picked_ref_frame, RefFrame::GoldenFrame);
+
+        params.golden_ref_is_last = true;
+        let active = pick_inter_mode(&params);
+        assert_eq!(active.picked_ref_frame, RefFrame::LastFrame);
     }
 
     /// §11 — `max_intra_bsize`: replacing the hardcoded `Block64x64`
