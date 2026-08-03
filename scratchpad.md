@@ -79,9 +79,9 @@ Out-of-scope observations parked for a separate, human-invoked review. Dated
   scripts and correcting the vector to upstream's `vp90-2-03-size-202x202.webm`.
 - [ ] 2026-06-25: Add honest 1080p/1080p60 encoder realtime performance rows after the
   encoder supports render-width/render-height or another explicit coded/render-size
-  strategy. Literal 1920x1080 is currently invalid because `StreamEncoder::new` rejects
-  non-64-multiple coded dimensions (`crates/rvp9-encoder/src/frame_loop.rs:1249`), so
-  the performance-hardening pass parked those rows instead of measuring a fake size.
+  strategy. **UPDATE 2026-08-03:** Unit 671 removed the coded-height blocker and proved
+  literal 1920x1080 streams under rvp9-decoder, pinned vpxdec, and ffmpeg. The honest
+  warmed 1080p30/60 performance rows remain open and are now the next benchmark step.
 - [ ] 2026-06-21: **Skip RD tie-break over-triggers skip when the skip bit is cheap**
   (`crates/rvp9-core/src/mode_decision/inter.rs` `evaluate_candidate_for_filter`, the
   `rd_encode >= rd_skip` tie-break). Measured: feeding libvpx's frame-adapted skip

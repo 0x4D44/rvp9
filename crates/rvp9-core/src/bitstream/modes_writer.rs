@@ -29,13 +29,11 @@
 //!
 //! ## Frame-edge scope reduction
 //!
-//! The writer rejects mi-grids whose `(mi_rows, mi_cols)` aren't
-//! multiples of 8 via [`ModesWriterError::NonMultipleOfSb`], so the
-//! frame-edge cases (`has_rows` or `has_cols` false; or the
-//! `hbs == 0` BLOCK_8x8 sub-partitioning branch on the decoder side)
-//! never fire. The writer always emits via the full 4-way
-//! `read_partition` tree-walk path. When the writer is widened to
-//! arbitrary frame sizes, those branches become future work.
+//! Partial superblocks use the same reduced partition syntax as the
+//! decoder: an unavailable lower or right half removes impossible
+//! partition choices, and an entirely outside recursive quadrant is
+//! skipped. Product encoder widths remain superblock-aligned, while
+//! heights may end on any 8-pixel mi-row boundary.
 //!
 //! The BLOCK_8x8 leaf is accepted as a leaf, but BLOCK_8x8 parents
 //! always emit `PARTITION_NONE` (no further sub-8 partitioning into
@@ -294,9 +292,8 @@ pub enum ModesWriterError {
         /// Column of the offending cell.
         mi_col: usize,
     },
-    /// The supplied `(mi_rows, mi_cols)` were not a multiple of 8
-    /// (one 64×64 superblock per axis). v1 doesn't handle partial
-    /// superblocks at the frame edge.
+    /// Legacy geometry error retained for API compatibility. Current
+    /// writers support partial frame-edge superblocks.
     NonMultipleOfSb {
         /// Frame mi rows.
         mi_rows: u32,
@@ -564,8 +561,8 @@ impl NeighbourCtx {
 ///   `tx_size = min(max_tx, tx_mode_to_biggest_tx_size(tx_mode))`.
 /// - The uncompressed header must commit `segmentation.enabled =
 ///   false`.
-/// - The frame must be a keyframe (or intra-only) and its
-///   `(mi_rows, mi_cols)` must be multiples of 8.
+/// - The frame must be a keyframe (or intra-only), with dimensions on
+///   8-pixel mi-row boundaries.
 ///
 /// # Errors
 ///
@@ -576,8 +573,7 @@ impl NeighbourCtx {
 ///   `UnsupportedBlockMode` / `UnsupportedNonSkip` /
 ///   `UnsupportedSegmentation` — the cell's `ModeInfo` exceeded the
 ///   writer scope.
-/// - [`ModesWriterError::NonMultipleOfSb`] / `InvalidTileBounds` —
-///   geometry-level rejections.
+/// - `InvalidTileBounds` — geometry-level rejection.
 /// - [`ModesWriterError::BufferOverflow`] — the [`BoolWriter`]
 ///   overflowed.
 #[allow(clippy::too_many_arguments)] // mirrors libvpx's per-tile signature
@@ -624,11 +620,6 @@ pub fn write_tile_intra_keyframe_with_counts(
     coef_source: &dyn IntraCoefSource,
     mut counts: Option<&mut FrameCounts>,
 ) -> Result<(), ModesWriterError> {
-    if !mi_rows.is_multiple_of(MI_BLOCK_SIZE as u32)
-        || !mi_cols.is_multiple_of(MI_BLOCK_SIZE as u32)
-    {
-        return Err(ModesWriterError::NonMultipleOfSb { mi_rows, mi_cols });
-    }
     let mi_rows_us = mi_rows as usize;
     let mi_cols_us = mi_cols as usize;
     if tile_bounds.mi_row_end > mi_rows_us
@@ -915,11 +906,10 @@ fn write_partition(bw: &mut BoolWriter<'_>, probs: &[u8; 3], partition: Partitio
 ///    (`bsize >= BLOCK_8X8 && (bsize == BLOCK_8X8 || partition !=
 ///    SPLIT)`).
 ///
-/// Scope assumptions: `has_rows && has_cols` always hold inside the
-/// writer because `write_tile_intra_keyframe` rejects mi-grids whose
-/// dimensions aren't multiples of 8. At `hbs == 0`, the writer mirrors
-/// the decoder's one-call branch: the sub-8 leaf and its four BMI slots
-/// occupy one 8x8 mi-grid cell.
+/// At frame edges, unavailable halves use the decoder's reduced
+/// partition syntax and outside recursive quadrants return immediately.
+/// At `hbs == 0`, the writer mirrors the decoder's one-call branch: the
+/// sub-8 leaf and its four BMI slots occupy one 8x8 mi-grid cell.
 #[allow(clippy::too_many_arguments)] // mirrors libvpx 1:1
 fn write_partition_tree(
     bw: &mut BoolWriter<'_>,
@@ -940,11 +930,9 @@ fn write_partition_tree(
     coef_source: &dyn IntraCoefSource,
     mut counts: Option<&mut FrameCounts>,
 ) -> Result<(), ModesWriterError> {
-    // Defensive: the frame-edge clip in `decode_partition` should
-    // never fire because (1) the writer caller's `NonMultipleOfSb`
-    // gate pins `(mi_rows, mi_cols)` to multiples of 8, and (2) the
-    // SB scan loop only enters this function at superblock-aligned
-    // coordinates inside `tile_bounds`. Express the invariant.
+    if mi_row >= mi_rows || mi_col >= mi_cols {
+        return Ok(());
+    }
     debug_assert!(mi_row < bounds.mi_row_end && mi_col < bounds.mi_col_end);
 
     let n8x8_l2: u8 = n4x4_l2.saturating_sub(1);
@@ -956,20 +944,27 @@ fn write_partition_tree(
     let bsl: usize = n8x8_l2 as usize;
     let ctx = part_ctx.context(mi_row_in_tile, mi_col_in_tile, bsl);
 
-    // Frame-edge invariant — the writer is restricted upstream to
-    // multiples of 64 px, so the asymmetric (rows-only / cols-only)
-    // and (no-rows && no-cols) partition cases never fire. Assert.
-    debug_assert!(
-        mi_row + hbs < bounds.mi_row_end,
-        "has_rows must hold; frame-multiple-of-64 invariant violated"
-    );
-    debug_assert!(
-        mi_col + hbs < bounds.mi_col_end,
-        "has_cols must hold; frame-multiple-of-64 invariant violated"
-    );
-
+    let has_rows = mi_row + hbs < mi_rows;
+    let has_cols = mi_col + hbs < mi_cols;
     let partition = infer_partition(mi_grid, mi_cols, mi_row, mi_col, bsize)?;
-    write_partition(bw, &VP9_KF_PARTITION_PROBS[ctx], partition);
+    let probs = &VP9_KF_PARTITION_PROBS[ctx];
+    if has_rows && has_cols {
+        write_partition(bw, probs, partition);
+    } else if !has_rows && has_cols {
+        debug_assert!(matches!(
+            partition,
+            PartitionType::Horz | PartitionType::Split
+        ));
+        bw.write(u8::from(partition == PartitionType::Split), probs[1]);
+    } else if has_rows && !has_cols {
+        debug_assert!(matches!(
+            partition,
+            PartitionType::Vert | PartitionType::Split
+        ));
+        bw.write(u8::from(partition == PartitionType::Split), probs[2]);
+    } else {
+        debug_assert_eq!(partition, PartitionType::Split);
+    }
 
     let sub = subsize(bsize, partition)
         .expect("infer_partition only returns a partition whose subsize is legal");
@@ -1046,31 +1041,33 @@ fn write_partition_tree(
                 coef_source,
                 counts.as_deref_mut(),
             )?;
-            let mi_row_b = mi_row + hbs;
-            let bot = mi_grid_get(mi_grid, mi_cols, mi_row_b, mi_col).ok_or(
-                ModesWriterError::MissingCell {
-                    mi_row: mi_row_b,
+            if has_rows {
+                let mi_row_b = mi_row + hbs;
+                let bot = mi_grid_get(mi_grid, mi_cols, mi_row_b, mi_col).ok_or(
+                    ModesWriterError::MissingCell {
+                        mi_row: mi_row_b,
+                        mi_col,
+                    },
+                )?;
+                write_block_intra_keyframe(
+                    bw,
+                    fc,
+                    tx_mode,
+                    seg,
+                    nbr_ctx,
+                    bounds,
+                    mi_grid,
+                    mi_rows,
+                    mi_cols,
+                    mi_row_b,
                     mi_col,
-                },
-            )?;
-            write_block_intra_keyframe(
-                bw,
-                fc,
-                tx_mode,
-                seg,
-                nbr_ctx,
-                bounds,
-                mi_grid,
-                mi_rows,
-                mi_cols,
-                mi_row_b,
-                mi_col,
-                sub,
-                &bot,
-                coef_ctx,
-                coef_source,
-                counts.as_deref_mut(),
-            )?;
+                    sub,
+                    &bot,
+                    coef_ctx,
+                    coef_source,
+                    counts.as_deref_mut(),
+                )?;
+            }
         }
         PartitionType::Vert => {
             let left = mi_grid_get(mi_grid, mi_cols, mi_row, mi_col)
@@ -1093,31 +1090,33 @@ fn write_partition_tree(
                 coef_source,
                 counts.as_deref_mut(),
             )?;
-            let mi_col_r = mi_col + hbs;
-            let right = mi_grid_get(mi_grid, mi_cols, mi_row, mi_col_r).ok_or(
-                ModesWriterError::MissingCell {
+            if has_cols {
+                let mi_col_r = mi_col + hbs;
+                let right = mi_grid_get(mi_grid, mi_cols, mi_row, mi_col_r).ok_or(
+                    ModesWriterError::MissingCell {
+                        mi_row,
+                        mi_col: mi_col_r,
+                    },
+                )?;
+                write_block_intra_keyframe(
+                    bw,
+                    fc,
+                    tx_mode,
+                    seg,
+                    nbr_ctx,
+                    bounds,
+                    mi_grid,
+                    mi_rows,
+                    mi_cols,
                     mi_row,
-                    mi_col: mi_col_r,
-                },
-            )?;
-            write_block_intra_keyframe(
-                bw,
-                fc,
-                tx_mode,
-                seg,
-                nbr_ctx,
-                bounds,
-                mi_grid,
-                mi_rows,
-                mi_cols,
-                mi_row,
-                mi_col_r,
-                sub,
-                &right,
-                coef_ctx,
-                coef_source,
-                counts.as_deref_mut(),
-            )?;
+                    mi_col_r,
+                    sub,
+                    &right,
+                    coef_ctx,
+                    coef_source,
+                    counts.as_deref_mut(),
+                )?;
+            }
         }
         PartitionType::Split => {
             // 4-way recursion in (mi_row | +hbs, mi_col | +hbs) order
@@ -1557,11 +1556,8 @@ fn write_block_intra_keyframe(
 /// for each plane in 0..3, walk plane-block in TX-step-4×4 strides
 /// over (row, col).
 ///
-/// The frame-edge clamping the decoder applies (the
-/// `tx_px_x >= plane_width_px` / `tx_px_y >= plane_height_px` short-
-/// circuit) is intentionally omitted: the writer invariant
-/// (`mi_rows`, `mi_cols` both multiples of 8) means partial blocks at
-/// the frame edge never arise.
+/// The caller must provide a partition tree whose leaves fit the visible
+/// frame. Partial superblocks are supported, but partial leaves are not.
 #[allow(clippy::too_many_arguments)]
 fn write_intra_block_residual(
     bw: &mut BoolWriter<'_>,
@@ -1881,7 +1877,7 @@ impl NeighbourLookup for MiGridNeighbourLookup<'_> {
 /// - The uncompressed header must commit `segmentation.enabled =
 ///   false` (or at least `segmentation_update_map = false` so no
 ///   per-block bits are emitted).
-/// - The frame's `(mi_rows, mi_cols)` must be multiples of 8.
+/// - Every partition leaf must fit inside the visible mi-grid.
 /// - The frame must NOT be a keyframe (the keyframe path emits
 ///   different per-block bits — modes, no is_inter, etc.).
 ///
@@ -1897,8 +1893,7 @@ impl NeighbourLookup for MiGridNeighbourLookup<'_> {
 ///   no longer returned after Phase 2b intra-in-inter support).
 /// - [`ModesWriterError::InterModeWrite`] — sub-8 leaf, or other
 ///   inter-mode-writer error.
-/// - [`ModesWriterError::NonMultipleOfSb`] /
-///   `InvalidTileBounds` — geometry-level rejections.
+/// - `InvalidTileBounds` — geometry-level rejection.
 /// - [`ModesWriterError::BufferOverflow`] — `BoolWriter` overflowed.
 #[allow(clippy::too_many_arguments)]
 pub fn write_tile_inter(
@@ -1953,11 +1948,6 @@ pub fn write_tile_inter_with_retained(
     mut counts: Option<&mut FrameCounts>,
     mut retained_pass: Option<&mut CoefTokenPass<'_>>,
 ) -> Result<(), ModesWriterError> {
-    if !mi_rows.is_multiple_of(MI_BLOCK_SIZE as u32)
-        || !mi_cols.is_multiple_of(MI_BLOCK_SIZE as u32)
-    {
-        return Err(ModesWriterError::NonMultipleOfSb { mi_rows, mi_cols });
-    }
     let mi_rows_us = mi_rows as usize;
     let mi_cols_us = mi_cols as usize;
     if tile_bounds.mi_row_end > mi_rows_us
@@ -2050,6 +2040,9 @@ fn write_inter_partition_tree(
     mut counts: Option<&mut FrameCounts>,
     mut retained_pass: Option<&mut CoefTokenPass<'_>>,
 ) -> Result<(), ModesWriterError> {
+    if mi_row >= mi_rows || mi_col >= mi_cols {
+        return Ok(());
+    }
     debug_assert!(mi_row < bounds.mi_row_end && mi_col < bounds.mi_col_end);
 
     let coef_record_only =
@@ -2062,12 +2055,31 @@ fn write_inter_partition_tree(
     let mi_row_in_tile = mi_row - bounds.mi_row_start;
     let mi_col_in_tile = mi_col - bounds.mi_col_start;
 
+    let has_rows = mi_row + hbs < mi_rows;
+    let has_cols = mi_col + hbs < mi_cols;
     let partition = infer_inter_partition(mi_grid, mi_cols, mi_row, mi_col, bsize)?;
     if !coef_record_only {
         let bsl: usize = n8x8_l2 as usize;
         let ctx = part_ctx.context(mi_row_in_tile, mi_col_in_tile, bsl);
         set_category(BitCategory::Partition);
-        write_partition(bw, &fc.partition_prob[ctx], partition);
+        let probs = &fc.partition_prob[ctx];
+        if has_rows && has_cols {
+            write_partition(bw, probs, partition);
+        } else if !has_rows && has_cols {
+            debug_assert!(matches!(
+                partition,
+                PartitionType::Horz | PartitionType::Split
+            ));
+            bw.write(u8::from(partition == PartitionType::Split), probs[1]);
+        } else if has_rows && !has_cols {
+            debug_assert!(matches!(
+                partition,
+                PartitionType::Vert | PartitionType::Split
+            ));
+            bw.write(u8::from(partition == PartitionType::Split), probs[2]);
+        } else {
+            debug_assert_eq!(partition, PartitionType::Split);
+        }
         // P0b — accumulate partition count for backward adaptation.
         if let Some(c) = counts.as_deref_mut() {
             c.partition[ctx][partition as usize] += 1;
@@ -2112,17 +2124,6 @@ fn write_inter_partition_tree(
         }
         return Ok(());
     }
-
-    // Same frame-edge invariant as the keyframe writer: dims are
-    // multiples of 64, so `has_rows && has_cols` always holds.
-    debug_assert!(
-        mi_row + hbs < bounds.mi_row_end,
-        "has_rows must hold; frame-multiple-of-64 invariant violated"
-    );
-    debug_assert!(
-        mi_col + hbs < bounds.mi_col_end,
-        "has_cols must hold; frame-multiple-of-64 invariant violated"
-    );
 
     match partition {
         PartitionType::None => {
@@ -2172,33 +2173,35 @@ fn write_inter_partition_tree(
                 counts.as_deref_mut(),
                 retained_pass.as_deref_mut(),
             )?;
-            let mi_row_b = mi_row + hbs;
-            let bot = mi_grid_get(mi_grid, mi_cols, mi_row_b, mi_col).ok_or(
-                ModesWriterError::MissingCell {
-                    mi_row: mi_row_b,
+            if has_rows {
+                let mi_row_b = mi_row + hbs;
+                let bot = mi_grid_get(mi_grid, mi_cols, mi_row_b, mi_col).ok_or(
+                    ModesWriterError::MissingCell {
+                        mi_row: mi_row_b,
+                        mi_col,
+                    },
+                )?;
+                write_inter_block_leaf(
+                    bw,
+                    fc,
+                    params,
+                    tx_mode,
+                    mi_grid,
+                    mi_rows,
+                    mi_cols,
+                    *bounds,
+                    mi_row_b,
                     mi_col,
-                },
-            )?;
-            write_inter_block_leaf(
-                bw,
-                fc,
-                params,
-                tx_mode,
-                mi_grid,
-                mi_rows,
-                mi_cols,
-                *bounds,
-                mi_row_b,
-                mi_col,
-                sub,
-                &bot,
-                seg,
-                prev_mv_grid,
-                coef_ctx,
-                coef_source,
-                counts.as_deref_mut(),
-                retained_pass.as_deref_mut(),
-            )?;
+                    sub,
+                    &bot,
+                    seg,
+                    prev_mv_grid,
+                    coef_ctx,
+                    coef_source,
+                    counts.as_deref_mut(),
+                    retained_pass.as_deref_mut(),
+                )?;
+            }
         }
         PartitionType::Vert => {
             let left = mi_grid_get(mi_grid, mi_cols, mi_row, mi_col)
@@ -2223,33 +2226,35 @@ fn write_inter_partition_tree(
                 counts.as_deref_mut(),
                 retained_pass.as_deref_mut(),
             )?;
-            let mi_col_r = mi_col + hbs;
-            let right = mi_grid_get(mi_grid, mi_cols, mi_row, mi_col_r).ok_or(
-                ModesWriterError::MissingCell {
+            if has_cols {
+                let mi_col_r = mi_col + hbs;
+                let right = mi_grid_get(mi_grid, mi_cols, mi_row, mi_col_r).ok_or(
+                    ModesWriterError::MissingCell {
+                        mi_row,
+                        mi_col: mi_col_r,
+                    },
+                )?;
+                write_inter_block_leaf(
+                    bw,
+                    fc,
+                    params,
+                    tx_mode,
+                    mi_grid,
+                    mi_rows,
+                    mi_cols,
+                    *bounds,
                     mi_row,
-                    mi_col: mi_col_r,
-                },
-            )?;
-            write_inter_block_leaf(
-                bw,
-                fc,
-                params,
-                tx_mode,
-                mi_grid,
-                mi_rows,
-                mi_cols,
-                *bounds,
-                mi_row,
-                mi_col_r,
-                sub,
-                &right,
-                seg,
-                prev_mv_grid,
-                coef_ctx,
-                coef_source,
-                counts.as_deref_mut(),
-                retained_pass.as_deref_mut(),
-            )?;
+                    mi_col_r,
+                    sub,
+                    &right,
+                    seg,
+                    prev_mv_grid,
+                    coef_ctx,
+                    coef_source,
+                    counts.as_deref_mut(),
+                    retained_pass.as_deref_mut(),
+                )?;
+            }
         }
         PartitionType::Split => {
             write_inter_partition_tree(
@@ -2893,10 +2898,8 @@ fn uv_plane_tx_size(bsize: BlockSize, luma_tx: TxSize) -> TxSize {
 /// tile-relative coefficient-context column. `mi_row_in_sb` remains
 /// `mi_row & MI_MASK` because tile rows are superblock-aligned.
 ///
-/// The frame-edge clamping the decoder applies (libvpx
-/// `predict_recon_inter`) is intentionally omitted here: the writer's
-/// invariant (`mi_rows`, `mi_cols` both multiples of 8) means partial
-/// blocks at the frame edge never arise.
+/// The caller must provide a partition tree whose leaves fit the visible
+/// frame. Partial superblocks are supported, but partial leaves are not.
 #[allow(clippy::too_many_arguments)]
 fn write_inter_block_residual(
     bw: &mut BoolWriter<'_>,
@@ -3518,21 +3521,48 @@ mod tests {
         }
     }
 
-    /// `write_tile_intra_keyframe` rejects non-multiple-of-64 dims.
+    /// A seven-mi-row keyframe uses the reduced bottom-edge partition
+    /// syntax and round-trips without visiting an out-of-frame leaf.
     #[test]
-    fn write_tile_intra_keyframe_rejects_non_multiple_of_sb() {
-        let mut buf = vec![0u8; 64];
-        let fc = FrameContext::new_default();
-        let grid = make_dc_grid(7, 8); // 56 px high, not a multiple of 64
-        let bounds = TileBounds {
-            mi_row_start: 0,
-            mi_row_end: 7,
-            mi_col_start: 0,
-            mi_col_end: 8,
-        };
-        let mut bw = BoolWriter::start_encode(&mut buf);
-        let err = write_tile_intra_keyframe_default(&mut bw, &grid, 7, 8, bounds, &fc).unwrap_err();
-        assert!(matches!(err, ModesWriterError::NonMultipleOfSb { .. }));
+    fn write_tile_intra_keyframe_round_trips_partial_bottom_sb() {
+        let mi_rows = 7u32;
+        let mi_cols = 8u32;
+        let mut grid = vec![None; (mi_rows * mi_cols) as usize];
+        for col in [0, 4] {
+            splat_cell(
+                &mut grid,
+                mi_cols as usize,
+                0,
+                col,
+                make_dc_cell(BlockSize::Block32x32),
+            );
+        }
+        for col in [0, 2, 4, 6] {
+            splat_cell(
+                &mut grid,
+                mi_cols as usize,
+                4,
+                col,
+                make_dc_cell(BlockSize::Block16x16),
+            );
+        }
+        for col in 0..8 {
+            splat_cell(
+                &mut grid,
+                mi_cols as usize,
+                6,
+                col,
+                make_dc_cell(BlockSize::Block8x8),
+            );
+        }
+
+        let leaves = encode_then_replay(mi_rows, mi_cols, &grid);
+        assert_eq!(leaves.len(), 14);
+        assert!(
+            leaves.iter().all(|(row, _, bsize)| {
+                row + usize::from(bsize.n_8x8_high()) <= mi_rows as usize
+            })
+        );
     }
 
     /// Full 2x2-SB (128x128) tile round-trips. The partition-context
@@ -3794,15 +3824,36 @@ mod tests {
         n4x4_l2: u8,
         leaves: &mut Vec<(usize, usize, BlockSize)>,
     ) {
+        if mi_row >= bounds.mi_row_end || mi_col >= bounds.mi_col_end {
+            return;
+        }
         let n8x8_l2 = n4x4_l2.saturating_sub(1);
         let num_8x8_wh: usize = 1usize << n8x8_l2;
         let hbs = num_8x8_wh >> 1;
+        let has_rows = mi_row + hbs < bounds.mi_row_end;
+        let has_cols = mi_col + hbs < bounds.mi_col_end;
         let mi_row_in_tile = mi_row - bounds.mi_row_start;
         let mi_col_in_tile = mi_col - bounds.mi_col_start;
         let bsl = n8x8_l2 as usize;
         let ctx = part_ctx.context(mi_row_in_tile, mi_col_in_tile, bsl);
         let probs = &VP9_KF_PARTITION_PROBS[ctx];
-        let partition = read_partition(r, probs, ctx, None);
+        let partition = if has_rows && has_cols {
+            read_partition(r, probs, ctx, None)
+        } else if !has_rows && has_cols {
+            if r.read(probs[1]) != 0 {
+                PartitionType::Split
+            } else {
+                PartitionType::Horz
+            }
+        } else if has_rows && !has_cols {
+            if r.read(probs[2]) != 0 {
+                PartitionType::Split
+            } else {
+                PartitionType::Vert
+            }
+        } else {
+            PartitionType::Split
+        };
         let sub = subsize(bsize, partition).expect("legal subsize");
 
         let mut read_leaf = |r: &mut BoolReader<'_>,
@@ -3832,11 +3883,15 @@ mod tests {
             }
             PartitionType::Horz => {
                 read_leaf(r, nbr, mi_row, mi_col, sub);
-                read_leaf(r, nbr, mi_row + hbs, mi_col, sub);
+                if has_rows {
+                    read_leaf(r, nbr, mi_row + hbs, mi_col, sub);
+                }
             }
             PartitionType::Vert => {
                 read_leaf(r, nbr, mi_row, mi_col, sub);
-                read_leaf(r, nbr, mi_row, mi_col + hbs, sub);
+                if has_cols {
+                    read_leaf(r, nbr, mi_row, mi_col + hbs, sub);
+                }
             }
             PartitionType::Split => {
                 replay_partition_tree(
@@ -4461,6 +4516,36 @@ mod tests {
         }
     }
 
+    fn make_partial_bottom_inter_grid(mi_rows: u32, mi_cols: u32) -> Vec<Option<ModeInfo>> {
+        assert_eq!((mi_rows, mi_cols), (7, 8));
+        let mut grid = vec![None; (mi_rows * mi_cols) as usize];
+        let mut splat = |row, col, bsize| {
+            splat_cell(
+                &mut grid,
+                mi_cols as usize,
+                row,
+                col,
+                make_inter_cell(
+                    bsize,
+                    InterMode::ZeroMv,
+                    [RefFrame::LastFrame, RefFrame::NoRefFrame],
+                    [Mv::ZERO; 2],
+                    InterpFilter::EightTap,
+                ),
+            );
+        };
+        for col in [0, 4] {
+            splat(0, col, BlockSize::Block32x32);
+        }
+        for col in [0, 2, 4, 6] {
+            splat(4, col, BlockSize::Block16x16);
+        }
+        for col in 0..8 {
+            splat(6, col, BlockSize::Block8x8);
+        }
+        grid
+    }
+
     /// Replay the encoded buffer through the per-symbol readers,
     /// walking the same partition + neighbour state the writer
     /// produced. Returns the recovered `Vec<(mi_row, mi_col, ModeInfo)>`
@@ -4483,15 +4568,36 @@ mod tests {
         prev_mv_grid: Option<&[PrevFrameMvRef]>,
         leaves: &mut Vec<(usize, usize, ModeInfo)>,
     ) {
+        if mi_row >= mi_rows || mi_col >= mi_cols {
+            return;
+        }
         let n8x8_l2 = n4x4_l2.saturating_sub(1);
         let num_8x8_wh: usize = 1usize << n8x8_l2;
         let hbs = num_8x8_wh >> 1;
+        let has_rows = mi_row + hbs < mi_rows;
+        let has_cols = mi_col + hbs < mi_cols;
         let mi_row_in_tile = mi_row - bounds.mi_row_start;
         let mi_col_in_tile = mi_col - bounds.mi_col_start;
         let bsl = n8x8_l2 as usize;
         let ctx = part_ctx.context(mi_row_in_tile, mi_col_in_tile, bsl);
         let probs = &fc.partition_prob[ctx];
-        let partition = read_partition(r, probs, ctx, None);
+        let partition = if has_rows && has_cols {
+            read_partition(r, probs, ctx, None)
+        } else if !has_rows && has_cols {
+            if r.read(probs[1]) != 0 {
+                PartitionType::Split
+            } else {
+                PartitionType::Horz
+            }
+        } else if has_rows && !has_cols {
+            if r.read(probs[2]) != 0 {
+                PartitionType::Split
+            } else {
+                PartitionType::Vert
+            }
+        } else {
+            PartitionType::Split
+        };
         let sub = subsize(bsize, partition).expect("legal subsize");
 
         let read_leaf = |r: &mut BoolReader<'_>,
@@ -4584,11 +4690,15 @@ mod tests {
             }
             PartitionType::Horz => {
                 read_leaf(r, leaves, mi_row, mi_col, sub);
-                read_leaf(r, leaves, mi_row + hbs, mi_col, sub);
+                if has_rows {
+                    read_leaf(r, leaves, mi_row + hbs, mi_col, sub);
+                }
             }
             PartitionType::Vert => {
                 read_leaf(r, leaves, mi_row, mi_col, sub);
-                read_leaf(r, leaves, mi_row, mi_col + hbs, sub);
+                if has_cols {
+                    read_leaf(r, leaves, mi_row, mi_col + hbs, sub);
+                }
             }
             PartitionType::Split => {
                 replay_inter_partition_tree(
@@ -5958,44 +6068,28 @@ mod tests {
         );
     }
 
-    /// `write_tile_inter` rejects non-multiple-of-64 dims.
+    /// A seven-mi-row inter frame round-trips through the decoder's
+    /// reduced bottom-edge partition syntax.
     #[test]
-    fn s4_16c_rejects_non_multiple_of_sb() {
+    fn s4_16c_round_trips_partial_bottom_sb() {
         let fc = FrameContext::new_default();
         let params = s4c_default_params();
         let mi_rows = 7u32;
         let mi_cols = 8u32;
-        let grid: Vec<Option<ModeInfo>> = vec![None; (mi_rows * mi_cols) as usize];
-        let bounds = TileBounds {
-            mi_row_start: 0,
-            mi_row_end: 7,
-            mi_col_start: 0,
-            mi_col_end: 8,
-        };
-        let mut buf = vec![0u8; 1024];
-        let mut bw = BoolWriter::start_encode(&mut buf);
-        let mut coef_ctx = TileCoefCtx::new(mi_cols as usize);
-        let coef_source = crate::bitstream::AllZeroCoefSource::new();
-        let err = write_tile_inter(
-            &mut bw,
+        let grid = make_partial_bottom_inter_grid(mi_rows, mi_cols);
+        let leaves = encode_then_replay_inter(
             &fc,
             &params,
             TxMode::AllowTx32x32,
-            &grid,
             mi_rows,
             mi_cols,
-            bounds,
-            /* seg = */ None,
-            /* prev_mv_grid = */ None,
-            &mut coef_ctx,
-            &coef_source,
+            &grid,
             None,
-        )
-        .unwrap_err();
-        assert!(
-            matches!(err, ModesWriterError::NonMultipleOfSb { .. }),
-            "got: {err:?}"
         );
+        assert_eq!(leaves.len(), 14);
+        assert!(leaves.iter().all(|(row, _, mi)| {
+            row + usize::from(mi.block_size.n_8x8_high()) <= mi_rows as usize
+        }));
     }
 
     // ---------------------------------------------------------------
@@ -7018,41 +7112,32 @@ mod tests {
 
     // ----- Stage 5: write_tile_inter validation error paths
 
-    /// `write_tile_inter` rejects mi_rows not a multiple of MI_BLOCK_SIZE.
+    /// A half-height bottom SB can use the single visible HORZ leaf.
     #[test]
-    fn s5_tile_inter_rejects_non_multiple_of_sb() {
+    fn s5_tile_inter_round_trips_half_height_bottom_sb() {
         let fc = FrameContext::new_default();
         let params = s4c_default_params();
-        let mi_rows = 4u32; // not a multiple of MI_BLOCK_SIZE = 8.
+        let mi_rows = 4u32;
         let mi_cols = 8u32;
-        let grid: Vec<Option<ModeInfo>> = vec![None; (mi_rows * mi_cols) as usize];
-        let bounds = TileBounds {
-            mi_row_start: 0,
-            mi_row_end: mi_rows as usize,
-            mi_col_start: 0,
-            mi_col_end: mi_cols as usize,
-        };
-        let mut buf = vec![0u8; 256];
-        let mut bw = BoolWriter::start_encode(&mut buf);
-        let mut coef_ctx = TileCoefCtx::new(mi_cols as usize);
-        let coef_source = crate::bitstream::AllZeroCoefSource::new();
-        let err = write_tile_inter(
-            &mut bw,
+        let half = make_inter_cell(
+            BlockSize::Block64x32,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        let grid = vec![Some(half); (mi_rows * mi_cols) as usize];
+        let leaves = encode_then_replay_inter(
             &fc,
             &params,
             TxMode::AllowTx32x32,
-            &grid,
             mi_rows,
             mi_cols,
-            bounds,
+            &grid,
             None,
-            None,
-            &mut coef_ctx,
-            &coef_source,
-            None,
-        )
-        .unwrap_err();
-        assert!(matches!(err, ModesWriterError::NonMultipleOfSb { .. }));
+        );
+        assert_eq!(leaves.len(), 1);
+        assert_eq!(leaves[0].2.block_size, BlockSize::Block64x32);
     }
 
     /// `write_tile_inter` rejects tile bounds outside frame.

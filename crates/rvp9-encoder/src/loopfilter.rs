@@ -196,7 +196,12 @@ pub(crate) fn apply_loop_filter_to_tight_recon_parallel(
         .min(num_tile_cols.max(1))
         .min(mi_rows.div_ceil(SB_MI_SIZE))
         .max(1);
-    if available_lf_workers >= 2
+    // The direct split-edge path operates on tight planes and its SIMD
+    // kernels intentionally touch a complete final SB row. Partial bottom
+    // rows therefore use the existing bordered Yv12 path below, matching the
+    // decoder's allocation and avoiding reads beyond visible storage.
+    if height.is_multiple_of(64)
+        && available_lf_workers >= 2
         && let Some(worker_pool) = worker_pool
     {
         worker_pool.scope(|scope| {

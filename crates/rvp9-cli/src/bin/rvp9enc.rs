@@ -179,7 +179,7 @@ fn flag_table() -> Vec<Flag<EncOpts>> {
             long: "height",
             short: Some('h'),
             arg: Arg::Required,
-            help: "coded height (mult of 64)",
+            help: "coded height (mult of 8)",
             apply: Some(|o, v| {
                 o.height = Some(args::parse_value(v, "rvp9enc", "--height")?);
                 Ok(())
@@ -861,8 +861,8 @@ fn run(opts: &EncOpts, positionals: &[String]) -> Result<(), String> {
     // Build and validate the encoder config via the shared
     // `build_encoder_config` mapping (the single CLI→encoder source of
     // truth; see its doc-comment for the per-flag libvpx citations).
-    // Width/height must be a multiple of 64 — a Stage 4a limitation,
-    // surfaced clearly by `StreamEncoder::new` below.
+    // Width stays SB-column aligned. Height may end in a partial SB row,
+    // which is required by literal 720p and 1080p inputs.
     let config = build_encoder_config(
         opts,
         info.coded_w,
@@ -903,8 +903,8 @@ fn run(opts: &EncOpts, positionals: &[String]) -> Result<(), String> {
     let parallelism = build_encoder_parallelism(opts);
     let mut encoder = StreamEncoder::new_with_parallelism(config, parallelism).map_err(|e| {
         format!(
-            "{e} (note: the Stage 4a encoder requires coded dimensions \
-             that are multiples of 64 — use -w/-h to crop)"
+            "{e} (note: coded width must be a multiple of 64 and coded \
+             height must be a multiple of 8 — use -w/-h to crop)"
         )
     })?;
 
@@ -1035,8 +1035,8 @@ fn run_two_pass(
 
     let encoded = encode_two_pass(*config, &views).map_err(|e| {
         format!(
-            "two-pass encode: {e} (note: the Stage 4a encoder requires \
-             coded dimensions that are multiples of 64 — use -w/-h to crop)"
+            "two-pass encode: {e} (note: coded width must be a multiple \
+             of 64 and coded height must be a multiple of 8 — use -w/-h to crop)"
         )
     })?;
 

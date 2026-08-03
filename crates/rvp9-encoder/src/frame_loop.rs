@@ -7,8 +7,8 @@
 //!
 //! ## Scope (MVP)
 //!
-//! - Width / height multiples of 64 (matches the existing wire-format
-//!   writers' scope).
+//! - Width is a multiple of 64 and height is a multiple of 8. The latter
+//!   permits the partial bottom superblock rows used by 720p and 1080p.
 //! - 4:2:0 chroma (Profile 0), 8-bit depth.
 //! - Single tile (`tile_cols = tile_rows = 1`).
 //! - Single 64×64 SB grid per frame.
@@ -203,7 +203,7 @@ fn default_bits_per_mb_multiplier(rc_mode: RcMode, base_default: f64) -> f64 {
 pub struct EncoderConfig {
     /// Coded luma width in pixels. Must be a positive multiple of 64.
     pub width: u32,
-    /// Coded luma height in pixels. Must be a positive multiple of 64.
+    /// Coded luma height in pixels. Must be a positive multiple of 8.
     pub height: u32,
     /// Frame-rate in Hz. Must be positive and finite.
     pub framerate: f64,
@@ -1391,7 +1391,7 @@ impl StreamEncoder {
     /// # Errors
     ///
     /// Returns [`EncodeError::InvalidConfig`] if the configuration is
-    /// rejected (width/height not multiples of 64, framerate ≤ 0,
+    /// rejected (width not a multiple of 64, height not a multiple of 8,
     /// gop_length == 0, etc.).
     pub fn new(config: EncoderConfig) -> Result<Self, EncodeError> {
         Self::new_with_parallelism(config, EncoderParallelism::default())
@@ -1419,9 +1419,9 @@ impl StreamEncoder {
                 "width must be a positive multiple of 64",
             ));
         }
-        if !config.height.is_multiple_of(64) || config.height == 0 {
+        if !config.height.is_multiple_of(8) || config.height == 0 {
             return Err(EncodeError::InvalidConfig(
-                "height must be a positive multiple of 64",
+                "height must be a positive multiple of 8",
             ));
         }
         if config.bit_depth != BitDepth::Bd8 {
@@ -1663,11 +1663,11 @@ impl StreamEncoder {
             // INIT_FACT per logical `(column tile, SB row)`.
             rd_thresh_tables: vec![
                 rvp9_core::mode_decision::rd_thresh::RdThreshTable::new();
-                tile_count * (h / 64)
+                tile_count * h.div_ceil(64)
             ],
             vbp_partition_history: vec![
                 rvp9_core::mode_decision::partition::FixedTreeHistoryEntry::default();
-                (w / 64) * (h / 64)
+                (w / 64) * h.div_ceil(64)
             ],
             stage4a_split_stats: NonRdSplitStats::default(),
             // W5.5 — temporal denoiser (libvpx
@@ -2511,7 +2511,7 @@ impl StreamEncoder {
                 let bounds = tile_bounds(mi_rows, mi_cols, 0, log2_tile_cols, 0, tile_col as u32);
                 let sb_col_start = bounds.mi_col_start / 8;
                 let sb_col_end = bounds.mi_col_end / 8;
-                for sb_row in 0..h as usize / 64 {
+                for sb_row in 0..(h as usize).div_ceil(64) {
                     for sb_col in sb_col_start..sb_col_end {
                         let sb_idx = sb_row * sb_cols + sb_col;
                         sb_partitions[sb_idx] = result.partitions[sb_idx].clone();
@@ -3022,7 +3022,7 @@ impl StreamEncoder {
         };
         let parallel_tile_picker = log2_tile_cols > 0 && self.parallelism.max_threads > 1;
         let mut sb_partitions = if parallel_tile_picker {
-            (0..(h as usize / 64) * (w as usize / 64))
+            (0..(h as usize).div_ceil(64) * (w as usize / 64))
                 .map(|_| Vec::new())
                 .collect()
         } else {
@@ -3333,7 +3333,9 @@ impl StreamEncoder {
                                 partition_input,
                                 sb_col_start..sb_col_end,
                                 |decision, sb_row, sb_col| {
-                                    let leaves = leaves_from_decision(decision);
+                                    let visible_mi_rows = (h as usize - sb_row * 64).min(64) / 8;
+                                    let leaves =
+                                        leaves_from_decision_visible(decision, visible_mi_rows, 8);
                                     inter_leaves_from_intra(
                                         &leaves, sb_row, sb_col, seg_map, mi_cols_us,
                                     )
@@ -3356,7 +3358,7 @@ impl StreamEncoder {
                                 .recorded_coef_tile
                                 .expect("one coefficient-token result per tile job");
                             let result = InterTileJobResult {
-                                claimed_jobs: (0..h as usize / 64)
+                                claimed_jobs: (0..(h as usize).div_ceil(64))
                                     .map(|sb_row| crate::row_mt::RowJob { sb_row, tile_col })
                                     .collect(),
                                 partitions: tile_partitions,
@@ -3396,7 +3398,8 @@ impl StreamEncoder {
                     (bounds.mi_col_end - bounds.mi_col_start) / 8
                 })
                 .collect();
-            let mut row_owners = crate::row_mt::RowJobOwners::new(&tile_sb_cols, h as usize / 64);
+            let sb_rows = (h as usize).div_ceil(64);
+            let mut row_owners = crate::row_mt::RowJobOwners::new(&tile_sb_cols, sb_rows);
             for (worker_id, result) in tile_results.iter().enumerate() {
                 for &job in &result.claimed_jobs {
                     row_owners
@@ -3473,7 +3476,7 @@ impl StreamEncoder {
             debug_assert_eq!(merged_mi_grid.len(), mi_rows_us * mi_cols_us);
             for (job, worker_id) in row_owners.iter() {
                 let result = &tile_results[worker_id];
-                let rd_table_index = job.tile_col * (h as usize / 64) + job.sb_row;
+                let rd_table_index = job.tile_col * sb_rows + job.sb_row;
                 self.rd_thresh_tables[rd_table_index] = result.rd_tables[rd_table_index].clone();
                 row_owners.merge_job_rect(&mut sb_partitions, &result.partitions, job, 1);
                 if let Some(history) = &result.history {
@@ -3718,8 +3721,13 @@ impl StreamEncoder {
                 )
             };
         }
-        let overlap_lf_and_packet =
-            filter_level > 0 && self.parallelism.max_threads > 1 && lf_packet_overlap_enabled();
+        // The split-edge filter operates directly on tight planes and needs
+        // complete 64x64 rows. Partial bottom SBs use the bordered fallback
+        // inside `apply_loop_filter_to_tight_recon_parallel` instead.
+        let overlap_lf_and_packet = filter_level > 0
+            && self.parallelism.max_threads > 1
+            && h.is_multiple_of(64)
+            && lf_packet_overlap_enabled();
         let packet_result = if overlap_lf_and_packet {
             // Loop filtering owns only the new reconstruction planes. Packet
             // construction reads coefficients, mode metadata, and probability
@@ -4699,8 +4707,10 @@ fn choose_partitions_for_sb_cols(
     input: FramePartitionInput<'_>,
     sb_col_range: std::ops::Range<usize>,
 ) -> Vec<Vec<PartitionLeafDesc>> {
-    choose_mapped_partitions_for_sb_cols(input, sb_col_range, |decision, _, _| {
-        leaves_from_decision(decision)
+    let height_px = input.height_px;
+    choose_mapped_partitions_for_sb_cols(input, sb_col_range, |decision, sb_row, _| {
+        let visible_mi_rows = (height_px - sb_row * 64).min(64) / 8;
+        leaves_from_decision_visible(decision, visible_mi_rows, 8)
     })
 }
 
@@ -4723,7 +4733,7 @@ where
         noise_threshold_scale,
     } = input;
     let sb_cols = width_px / 64;
-    let sb_rows = height_px / 64;
+    let sb_rows = height_px.div_ceil(64);
     let mut out: Vec<Vec<T>> = (0..sb_rows * sb_cols).map(|_| Vec::new()).collect();
 
     let src_plane = PlaneRef {
@@ -4749,24 +4759,29 @@ where
     debug_assert!(sb_col_range.end <= sb_cols);
     for sb_row in 0..sb_rows {
         for sb_col in sb_col_range.clone() {
-            let params = PartitionSearchParams {
-                src_plane: &src_plane,
-                src_offset_xy: (sb_col * 64, sb_row * 64),
-                ref_plane: &ref_plane,
-                ref_offset_xy: (sb_col * 64, sb_row * 64),
-                is_keyframe,
-                q_index: vbp_qindex,
-                frame_width: width_px,
-                frame_height: height_px,
-                avg_inter_qindex: vbp_avg_inter_qindex,
-                noise_threshold_scale,
-            };
-            let decision = if keyframe_sub8_enabled {
-                choose_partitioning_keyframe_sub8(&params)
-            } else if vbp_force_split_enabled {
-                choose_partitioning_force_split(&params)
+            let visible_height = (height_px - sb_row * 64).min(64);
+            let decision = if visible_height < 64 {
+                edge_partition_decision(8, visible_height / 8)
             } else {
-                choose_partitioning(&params)
+                let params = PartitionSearchParams {
+                    src_plane: &src_plane,
+                    src_offset_xy: (sb_col * 64, sb_row * 64),
+                    ref_plane: &ref_plane,
+                    ref_offset_xy: (sb_col * 64, sb_row * 64),
+                    is_keyframe,
+                    q_index: vbp_qindex,
+                    frame_width: width_px,
+                    frame_height: height_px,
+                    avg_inter_qindex: vbp_avg_inter_qindex,
+                    noise_threshold_scale,
+                };
+                if keyframe_sub8_enabled {
+                    choose_partitioning_keyframe_sub8(&params)
+                } else if vbp_force_split_enabled {
+                    choose_partitioning_force_split(&params)
+                } else {
+                    choose_partitioning(&params)
+                }
             };
             // E2 diagnostic (env-gated): accumulate per-8×8-cell area by
             // leaf size so we can report the inter partition histogram.
@@ -4954,6 +4969,77 @@ fn leaves_from_decision(decision: &PartitionDecision) -> Vec<PartitionLeafDesc> 
     leaves
 }
 
+/// Return a legal square-only partition for a partial edge superblock.
+///
+/// VP9 makes unavailable partition branches implicit. Production target
+/// widths are SB aligned, so only the bottom edge is partial today; keeping
+/// both dimensions explicit makes the invariant testable and avoids encoding
+/// leaves whose top-left MI lies outside the visible frame.
+fn edge_partition_decision(visible_mi_cols: usize, visible_mi_rows: usize) -> PartitionDecision {
+    debug_assert!((1..=8).contains(&visible_mi_cols));
+    debug_assert!((1..=8).contains(&visible_mi_rows));
+    let mut decision = PartitionDecision {
+        cells: [[BlockSize::Block8x8; 8]; 8],
+    };
+
+    fn block_size(side_mi: usize) -> BlockSize {
+        match side_mi {
+            8 => BlockSize::Block64x64,
+            4 => BlockSize::Block32x32,
+            2 => BlockSize::Block16x16,
+            1 => BlockSize::Block8x8,
+            _ => unreachable!("VP9 square partition side"),
+        }
+    }
+
+    fn fill(
+        decision: &mut PartitionDecision,
+        row: usize,
+        col: usize,
+        side: usize,
+        visible_rows: usize,
+        visible_cols: usize,
+    ) {
+        if row >= visible_rows || col >= visible_cols {
+            return;
+        }
+        if row + side <= visible_rows && col + side <= visible_cols {
+            let bsize = block_size(side);
+            for cells in &mut decision.cells[row..row + side] {
+                cells[col..col + side].fill(bsize);
+            }
+            return;
+        }
+        debug_assert!(side > 1);
+        let half = side / 2;
+        fill(decision, row, col, half, visible_rows, visible_cols);
+        fill(decision, row, col + half, half, visible_rows, visible_cols);
+        fill(decision, row + half, col, half, visible_rows, visible_cols);
+        fill(
+            decision,
+            row + half,
+            col + half,
+            half,
+            visible_rows,
+            visible_cols,
+        );
+    }
+
+    fill(&mut decision, 0, 0, 8, visible_mi_rows, visible_mi_cols);
+    decision
+}
+
+fn leaves_from_decision_visible(
+    decision: &PartitionDecision,
+    visible_mi_rows: usize,
+    visible_mi_cols: usize,
+) -> Vec<PartitionLeafDesc> {
+    leaves_from_decision(decision)
+        .into_iter()
+        .filter(|leaf| leaf.mi_row_in_sb < visible_mi_rows && leaf.mi_col_in_sb < visible_mi_cols)
+        .collect()
+}
+
 /// Splat `cell` into every 8×8 slot of `mi_grid` the leaf at
 /// `(leaf_mi_row, leaf_mi_col)` with size `leaf_bsize` covers. The
 /// writer's `infer_partition` reads the top-left of each leaf, but
@@ -4962,6 +5048,7 @@ fn leaves_from_decision(decision: &PartitionDecision) -> Vec<PartitionLeafDesc> 
 /// the same `block_size`).
 fn splat_leaf_mode_info(
     mi_grid: &mut [Option<ModeInfo>],
+    mi_rows: usize,
     mi_cols: usize,
     leaf_mi_row: usize,
     leaf_mi_col: usize,
@@ -4974,7 +5061,9 @@ fn splat_leaf_mode_info(
         for dc in 0..n_8x8_wide {
             let mi_row = leaf_mi_row + dr;
             let mi_col = leaf_mi_col + dc;
-            mi_grid[mi_row * mi_cols + mi_col] = Some(cell);
+            if mi_row < mi_rows && mi_col < mi_cols {
+                mi_grid[mi_row * mi_cols + mi_col] = Some(cell);
+            }
         }
     }
 }
@@ -4992,7 +5081,7 @@ fn build_kf_mi_grid(
     let mut mi_grid: Vec<Option<ModeInfo>> = vec![None; mi_rows_us * mi_cols_us];
 
     let sb_cols = mi_cols_us / 8;
-    let sb_rows = mi_rows_us / 8;
+    let sb_rows = mi_rows_us.div_ceil(8);
     for sb_row in 0..sb_rows {
         for sb_col in 0..sb_cols {
             let leaves = &sb_partitions[sb_row * sb_cols + sb_col];
@@ -5017,6 +5106,7 @@ fn build_kf_mi_grid(
                 };
                 splat_leaf_mode_info(
                     &mut mi_grid,
+                    mi_rows_us,
                     mi_cols_us,
                     leaf_mi_row,
                     leaf_mi_col,
@@ -5043,7 +5133,7 @@ fn build_inter_mi_grid_from_picker(
     let mut mi_grid: Vec<Option<ModeInfo>> = vec![None; mi_rows_us * mi_cols_us];
 
     let sb_cols = mi_cols_us / 8;
-    let sb_rows = mi_rows_us / 8;
+    let sb_rows = mi_rows_us.div_ceil(8);
     for sb_row in 0..sb_rows {
         for sb_col in 0..sb_cols {
             let leaves = &sb_partitions[sb_row * sb_cols + sb_col];
@@ -5133,6 +5223,7 @@ fn build_inter_mi_grid_from_picker(
                 };
                 splat_leaf_mode_info(
                     &mut mi_grid,
+                    mi_rows_us,
                     mi_cols_us,
                     leaf_mi_row,
                     leaf_mi_col,
@@ -6169,7 +6260,7 @@ fn gather_coded_segments_and_skip(
     let mut coded_segments = vec![0u8; mi_rows * mi_cols];
     let mut coded_skip = vec![false; mi_rows * mi_cols];
     let sb_cols = mi_cols / 8;
-    let sb_rows = mi_rows / 8;
+    let sb_rows = mi_rows.div_ceil(8);
     for sb_row in 0..sb_rows {
         for sb_col in 0..sb_cols {
             let leaves = &sb_partitions[sb_row * sb_cols + sb_col];
@@ -6180,9 +6271,13 @@ fn gather_coded_segments_and_skip(
                 let n_wide = leaf.leaf_bsize.n_8x8_wide() as usize;
                 for dr in 0..n_high {
                     for dc in 0..n_wide {
-                        let idx = (leaf_mi_row + dr) * mi_cols + (leaf_mi_col + dc);
-                        coded_segments[idx] = leaf.segment_id;
-                        coded_skip[idx] = leaf.skip;
+                        let row = leaf_mi_row + dr;
+                        let col = leaf_mi_col + dc;
+                        if row < mi_rows && col < mi_cols {
+                            let idx = row * mi_cols + col;
+                            coded_segments[idx] = leaf.segment_id;
+                            coded_skip[idx] = leaf.skip;
+                        }
                     }
                 }
             }
@@ -10015,7 +10110,7 @@ mod tests {
     }
 
     #[test]
-    fn stream_encoder_rejects_non_multiple_of_64_height() {
+    fn stream_encoder_rejects_non_multiple_of_8_height() {
         let cfg = EncoderConfig {
             height: 65,
             ..baseline_config()
@@ -10028,6 +10123,39 @@ mod tests {
             matches!(err, EncodeError::InvalidConfig(msg) if msg.contains("height")),
             "expected InvalidConfig referencing height",
         );
+    }
+
+    #[test]
+    fn stream_encoder_accepts_partial_bottom_superblock_height() {
+        let cfg = EncoderConfig {
+            height: 72,
+            ..baseline_config()
+        };
+        StreamEncoder::new(cfg).expect("8-pixel-aligned partial SB height must be valid");
+    }
+
+    #[test]
+    fn stream_encoder_partial_bottom_superblock_key_and_inter_decode() {
+        const W: usize = 64;
+        const H: usize = 72;
+        let cfg = EncoderConfig {
+            height: H as u32,
+            ..baseline_config()
+        };
+        let mut encoder = StreamEncoder::new(cfg).expect("partial-height config");
+        let mut decoder = Decoder::new();
+        let (y, u, v) = gradient_frame(W, H);
+        let view = yuv_view(&y, &u, &v, W);
+
+        for expected_kind in [FrameKind::Key, FrameKind::Inter] {
+            let packet = encoder.encode_frame(&view).expect("partial-height encode");
+            assert_eq!(packet.frame_kind, expected_kind);
+            let frames = decode_packet(&mut decoder, &packet.data);
+            assert_eq!(frames.len(), 1);
+            decoder
+                .decode_frame(&frames[0])
+                .expect("partial-height decoder round-trip");
+        }
     }
 
     #[test]
@@ -11117,6 +11245,26 @@ mod tests {
         let decision = PartitionDecision { cells };
         let leaves = leaves_from_decision(&decision);
         assert_eq!(leaves.len(), 64);
+    }
+
+    #[test]
+    fn edge_partition_covers_1080p_bottom_row_without_out_of_frame_leaves() {
+        let decision = edge_partition_decision(8, 7);
+        let leaves = leaves_from_decision_visible(&decision, 7, 8);
+        let mut covered = [[false; 8]; 7];
+        for leaf in leaves {
+            let rows = leaf.leaf_bsize.n_8x8_high() as usize;
+            let cols = leaf.leaf_bsize.n_8x8_wide() as usize;
+            assert!(leaf.mi_row_in_sb + rows <= 7);
+            assert!(leaf.mi_col_in_sb + cols <= 8);
+            for row in &mut covered[leaf.mi_row_in_sb..leaf.mi_row_in_sb + rows] {
+                for cell in &mut row[leaf.mi_col_in_sb..leaf.mi_col_in_sb + cols] {
+                    assert!(!*cell, "edge leaves must not overlap");
+                    *cell = true;
+                }
+            }
+        }
+        assert!(covered.into_iter().flatten().all(|cell| cell));
     }
 
     #[test]

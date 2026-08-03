@@ -1822,7 +1822,7 @@ fn simulate_dc_intra_encode_partitions_no_zero_with_tiles(
     let uvh = h / 2;
 
     let sb_cols = w / 64;
-    let sb_rows = h / 64;
+    let sb_rows = h.div_ceil(64);
     let tile_bounds_by_col = column_tile_bounds(h / 8, w / 8, log2_tile_cols);
     assert_eq!(
         sb_partitions.len(),
@@ -2299,7 +2299,7 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
     let w = width as usize;
     let h = height as usize;
     let sb_cols = w / 64;
-    let sb_rows = h / 64;
+    let sb_rows = h.div_ceil(64);
     assert_eq!(
         sb_partitions.len(),
         sb_rows * sb_cols,
@@ -3675,7 +3675,6 @@ fn partition_color_sensitivity(
     sensitivity
 }
 
-#[cfg(test)]
 fn zero_mv_sad64_edge_clamped(
     src: &[u8],
     reference: &[u8],
@@ -4305,7 +4304,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     let full_pixel_search_method = full_pixel_search_method_for_mode(speed, deadline);
 
     let sb_cols = w / 64;
-    let sb_rows = h / 64;
+    let sb_rows = h.div_ceil(64);
 
     // A1' — Frame-area gate on the Block8x8 inter picker. The
     // variance partitioner descends to Block8x8 at high-motion edges
@@ -4772,7 +4771,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     if exact_vbp_tree_enabled {
         assert_eq!(
             exact_vbp_history.as_deref().map(|history| history.len()),
-            Some((w / 64) * (h / 64)),
+            Some((w / 64) * h.div_ceil(64)),
             "exact VBP history must have one entry per superblock"
         );
     }
@@ -4907,7 +4906,17 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
             // 12 of 16 SBs on a 256×256 frame bailed outright.
             let sb_px_x = sb_col * 64;
             let sb_px_y = sb_row * 64;
-            let int_pro = if rt_large_recovery {
+            let int_pro = if sb_px_y + 64 > h {
+                rvp9_core::mv_search::int_pro_me::IntProMeResult {
+                    mv: Mv::ZERO,
+                    best_sad: zero_mv_sad64_edge_clamped(
+                        input_yuv.0,
+                        last_recon_yuv.0,
+                        (w, h),
+                        (sb_px_x, sb_px_y),
+                    ),
+                }
+            } else if rt_large_recovery {
                 int_pro_motion_estimation_seed(
                     &src_y,
                     &ref_y,
@@ -4932,13 +4941,20 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
             // dispatched full-block kernel; the exact-tree path below reuses
             // this result instead of scanning the superblock a second time.
             let golden_distinct = golden_recon_yuv.0.as_ptr() != last_recon_yuv.0.as_ptr();
-            let sb_golden_sad = if !rt_disable_golden_ref && golden_distinct {
+            let sb_golden_sad = if !rt_disable_golden_ref && golden_distinct && sb_px_y + 64 <= h {
                 let src_offset = sb_px_y * w + sb_px_x;
                 rvp9_core::dsp::get_ref().sad(BlockSize::Block64x64)(
                     &input_yuv.0[src_offset..],
                     w,
                     &golden_recon_yuv.0[src_offset..],
                     w,
+                )
+            } else if !rt_disable_golden_ref && golden_distinct {
+                zero_mv_sad64_edge_clamped(
+                    input_yuv.0,
+                    golden_recon_yuv.0,
+                    (w, h),
+                    (sb_px_x, sb_px_y),
                 )
             } else {
                 u32::MAX
@@ -4976,7 +4992,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
 
             let mut used_exact_vbp_tree = false;
             let mut exact_variance_low = [false; 25];
-            if exact_vbp_tree_enabled {
+            if exact_vbp_tree_enabled && sb_px_y + 64 <= h {
                 use rvp9_core::bitstream::frame::InterpFilter;
                 use rvp9_core::mode_decision::partition::{
                     Cpu7InterVbpThresholdInput, FixedTreeCopyConditions, FixedTreeInterInput,
@@ -5224,7 +5240,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
             // (NEWMV / NEARESTMV winners + coef/mode/mv rate), not a
             // synthetic proxy. The two paths exercise the same picker at
             // different sub-block resolutions.
-            if f3_nonrd_partition_enabled && !used_exact_vbp_tree {
+            // The descent currently evaluates a complete 64x64 source
+            // region. Keep the edge-safe variance tree for a partial
+            // bottom SB; every retained leaf then fits the visible frame.
+            if f3_nonrd_partition_enabled && !used_exact_vbp_tree && sb_px_y + 64 <= h {
                 let rt_profile_descent_start = if rt_profile_enabled {
                     Some(std::time::Instant::now())
                 } else {

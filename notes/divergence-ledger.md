@@ -4309,3 +4309,52 @@ final quiet-host speed claim.
 **Future plan:** retain the topology while enabling concurrent row claims.
 Re-run the full quiet-host quality/speed matrix; reconsider only if a wider
 clip or feature stage exceeds its regression tolerance.
+
+### 2026-08-03 — Fit partial bottom superblocks with complete square leaves
+
+**Where:** `rvp9_encoder::frame_loop::edge_partition_decision`,
+`rvp9_encoder::frame_loop::choose_mapped_partitions_for_sb_cols`, and
+`rvp9_core::bitstream::modes_writer::{write_partition_tree,write_inter_partition_tree}`;
+libvpx counterparts: `vp9/encoder/vp9_encodeframe.c::encode_sb_row` and
+`vp9/decoder/vp9_decodeframe.c::decode_partition`.
+
+**What libvpx does:** VP9's edge syntax removes partition choices only when a
+half-block has no visible mi row or column. A selected leaf may therefore
+extend beyond the visible frame; libvpx's prediction, transform, reconstruction,
+and loop-filter buffers provide and clamp that edge storage.
+
+**What rvp9 does:** widths remain 64-pixel aligned, while heights may end on
+any 8-pixel mi-row boundary. The final partial superblock uses a deterministic
+square-only tree whose every leaf fits the visible frame. The writer emits the
+same reduced edge bits the decoder reads. Full-block exact-VBP, integer
+projection, A4 descent, and direct split-edge filtering stay on complete
+superblocks; the partial row uses edge-safe SAD, the fitted variance tree, and
+the bordered loop-filter path.
+
+**Why:** literal 1280x720 and 1920x1080 are required production targets. The
+previous 64-pixel height restriction forced 1280x704 proxy evidence and
+rejected literal 1080p before encoding. Fitted leaves reuse rvp9's existing
+tight visible planes without introducing padded frame storage throughout the
+picker and reconstruction pipeline.
+
+**Byte-parity impact:** none for aligned inputs. The three Unit 669
+1280x704/1000-kbps streams retain exact SHA-256 values
+`925761c7afe28970465f2db61a4eefc324277961bcca2fa391fda089a0c44715`,
+`d119c7f0493622bdfd3c81a76522ce283a944582518fc57e368fe14ec8f6c037`,
+and `584948269e22715565c893d221582fdcbb618989fe9493c8977eb8c8fbdad9e2`.
+At literal 720p, rvp9-decoder, pinned vpxdec, and ffmpeg agree on decoded
+SHA-256 `f7a71f68...e440`, `d861e1d1...f30f`, and `9f4b7a49...7361` for
+in-to-tree, ducks-take-off, and old-town-cross. At literal 1080p they agree on
+`35ed4323...2442`, `655df642...c801`, and `7614ad03...1880`.
+
+**Compression-efficiency impact:** not yet measured at literal 720p/1080p.
+The aligned 1280x704 streams are byte-identical, so their accepted Unit 669
+BD-rate evidence is unchanged. Literal-resolution BD-rate curves are the next
+required quality measurement.
+
+**Speed impact:** not yet claimed. Correctness runs completed well inside the
+process timeout, but the host was not quiet and the runs were not the warmed,
+repeated median protocol required by the final speed gate.
+
+**Future plan:** measure matched six-point cpu-used 7 curves and warmed
+per-clip speed at literal 720p and 1080p, then add the 1080p30/60 budget rows.

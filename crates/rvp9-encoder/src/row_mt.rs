@@ -233,7 +233,8 @@ impl<'a> RowWorkerShadow<'a> {
     /// # Panics
     ///
     /// Panics if the reconstruction planes are not tight YUV420 buffers for
-    /// a positive 64-aligned frame, or if the MI grid does not cover a
+    /// a positive frame with 64-aligned width and 8-aligned height, or if
+    /// the MI grid does not cover a
     /// non-empty, SB-aligned column-tile rectangle in that frame.
     pub fn new(
         recon_y: &'a mut [u8],
@@ -254,8 +255,8 @@ impl<'a> RowWorkerShadow<'a> {
         );
         let frame_height = recon_y.len() / frame_width;
         assert!(
-            frame_height > 0 && frame_height.is_multiple_of(64),
-            "row worker frame height must be a positive multiple of 64"
+            frame_height > 0 && frame_height.is_multiple_of(8),
+            "row worker frame height must be a positive multiple of 8"
         );
         let uv_width = frame_width / 2;
         let uv_height = frame_height / 2;
@@ -365,7 +366,7 @@ impl<'a> RowWorkerShadow<'a> {
         global_sb_col: usize,
     ) -> (usize, usize, usize, usize, usize, usize) {
         assert!(
-            sb_row < self.frame_height / 64,
+            sb_row < self.frame_height.div_ceil(64),
             "row worker SB row is out of bounds"
         );
         let global_mi_col = global_sb_col
@@ -379,11 +380,11 @@ impl<'a> RowWorkerShadow<'a> {
             "row worker SB column exceeds its tile"
         );
         (
-            (sb_row + 1) * 64 - 1,
+            ((sb_row + 1) * 64).min(self.frame_height) - 1,
             global_sb_col * 64,
-            (sb_row + 1) * 32 - 1,
+            ((sb_row + 1) * 32).min(self.frame_height / 2) - 1,
             global_sb_col * 32,
-            (sb_row + 1) * 8 - 1,
+            ((sb_row + 1) * 8).min(self.frame_height / 8) - 1,
             local_mi_col,
         )
     }
@@ -573,27 +574,31 @@ impl RowJobOwners {
         let row_stride = frame_sb_cols
             .checked_mul(cells_per_sb)
             .expect("row merge stride overflow");
-        let rows = self
+        let padded_rows = self
             .sb_rows
             .checked_mul(cells_per_sb)
             .expect("row merge height overflow");
-        let expected_len = row_stride
-            .checked_mul(rows)
+        let maximum_len = row_stride
+            .checked_mul(padded_rows)
             .expect("row merge frame size overflow");
         assert_eq!(
+            source.len(),
             destination.len(),
-            expected_len,
+            "row merge source and destination shapes differ"
+        );
+        assert!(
+            destination.len() <= maximum_len && destination.len().is_multiple_of(row_stride),
             "row merge destination has the wrong frame shape"
         );
-        assert_eq!(
-            source.len(),
-            expected_len,
-            "row merge source has the wrong frame shape"
-        );
+        let actual_rows = destination.len() / row_stride;
         let col_start = self.tile_sb_starts[job.tile_col] * cells_per_sb;
         let col_len = self.tile_sb_cols[job.tile_col] * cells_per_sb;
         let row_start = job.sb_row * cells_per_sb;
-        for row in row_start..row_start + cells_per_sb {
+        assert!(
+            row_start < actual_rows,
+            "row merge job starts outside the visible frame"
+        );
+        for row in row_start..(row_start + cells_per_sb).min(actual_rows) {
             let start = row * row_stride + col_start;
             let end = start + col_len;
             destination[start..end].clone_from_slice(&source[start..end]);
@@ -1103,6 +1108,27 @@ mod tests {
     }
 
     #[test]
+    fn worker_shadow_exports_visible_partial_bottom_boundary() {
+        const WIDTH: usize = 64;
+        const HEIGHT: usize = 72;
+        let mut y = vec![1u8; WIDTH * HEIGHT];
+        let mut u = vec![2u8; (WIDTH / 2) * (HEIGHT / 2)];
+        let mut v = vec![3u8; (WIDTH / 2) * (HEIGHT / 2)];
+        let mut mi = vec![None; (WIDTH / 8) * (HEIGHT / 8)];
+        y[(HEIGHT - 1) * WIDTH..].fill(11);
+        u[(HEIGHT / 2 - 1) * (WIDTH / 2)..].fill(12);
+        v[(HEIGHT / 2 - 1) * (WIDTH / 2)..].fill(13);
+        mi[(HEIGHT / 8 - 1) * (WIDTH / 8)..].fill(Some(mode_info(14)));
+
+        let boundary = RowWorkerShadow::new(&mut y, &mut u, &mut v, WIDTH, &mut mi, 0, 8)
+            .export_boundary(1, 0);
+        assert_eq!(boundary.bottom_y, [11; 64]);
+        assert_eq!(boundary.bottom_u, [12; 32]);
+        assert_eq!(boundary.bottom_v, [13; 32]);
+        assert_eq!(boundary.bottom_mi, [Some(mode_info(14)); 8]);
+    }
+
+    #[test]
     fn boundary_grid_keeps_unequal_tiles_and_rows_disjoint() {
         let grid = SbBoundaryGrid::new(&[2, 3], 2);
         let tile0_sync = RowSync::new(2);
@@ -1465,6 +1491,57 @@ mod tests {
                 area_per_worker
             );
             assert!(!merged.contains(&0));
+        }
+    }
+
+    #[test]
+    fn row_job_owners_merge_clamps_partial_bottom_row() {
+        let mut owners = RowJobOwners::new(&[1, 1], 2);
+        for tile_col in 0..2 {
+            owners
+                .assign(
+                    0,
+                    RowJob {
+                        sb_row: 0,
+                        tile_col,
+                    },
+                )
+                .unwrap();
+            owners
+                .assign(
+                    1,
+                    RowJob {
+                        sb_row: 1,
+                        tile_col,
+                    },
+                )
+                .unwrap();
+        }
+        owners.require_complete().unwrap();
+
+        for cells_per_sb in [64, 32, 8, 1] {
+            let actual_rows = if cells_per_sb == 1 {
+                2
+            } else {
+                cells_per_sb + cells_per_sb / 8
+            };
+            let row_stride = 2 * cells_per_sb;
+            let len = actual_rows * row_stride;
+            let sources = [vec![10u8; len], vec![20u8; len]];
+            let mut merged = vec![0u8; len];
+            for (job, worker_id) in owners.iter() {
+                owners.merge_job_rect(&mut merged, &sources[worker_id], job, cells_per_sb);
+            }
+            assert!(
+                merged[..cells_per_sb * row_stride]
+                    .iter()
+                    .all(|&value| value == 10)
+            );
+            assert!(
+                merged[cells_per_sb * row_stride..]
+                    .iter()
+                    .all(|&value| value == 20)
+            );
         }
     }
 

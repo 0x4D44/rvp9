@@ -176,7 +176,7 @@ impl PreAnalysisState {
         );
         let mi_rows = (height / 8) as usize;
         let mi_cols = (width / 8) as usize;
-        let sb_rows = (height / 64).max(1) as usize;
+        let sb_rows = height.div_ceil(64).max(1) as usize;
         let sb_cols = (width / 64).max(1) as usize;
         let (ne_level, ne_thresh) = noise_estimate_init_params(width, height);
         Self {
@@ -374,10 +374,12 @@ impl PreAnalysisState {
 
         worker_pool.scope(|scope| {
             if let Some(last) = last_source {
-                for (chunk_index, (sad_out, state_out)) in self
-                    .avg_source_sad
+                for (chunk_index, (sad_out, state_out)) in self.avg_source_sad[..sb_rows * sb_cols]
                     .chunks_mut(sb_rows_per_job * sb_cols)
-                    .zip(self.content_state_sb.chunks_mut(sb_rows_per_job * sb_cols))
+                    .zip(
+                        self.content_state_sb[..sb_rows * sb_cols]
+                            .chunks_mut(sb_rows_per_job * sb_cols),
+                    )
                     .enumerate()
                 {
                     let sb_row_start = chunk_index * sb_rows_per_job;
