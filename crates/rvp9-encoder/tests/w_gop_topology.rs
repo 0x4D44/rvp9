@@ -446,8 +446,15 @@ fn gop_topology_byte_identity() {
     //
     // Re-captured after CPU7 stopped NEWMV refinement at quarter-pel, matching
     // pinned libvpx. The sibling schedule oracle still matches every frame.
-    const GOLDEN_HASH: u64 = 0x0091_ffcf_c8ed_5cad;
-    const GOLDEN_LEN: usize = 24927;
+    //
+    // Re-captured after normal inter Q history excluded boosted GOLDEN
+    // refreshes and adopted libvpx's rounded EWMA. The parent of 6a909b26
+    // emits the prior 24,927-byte golden; that source-correct commit is the
+    // first intentional coding change. The current clean Unit 651 baseline
+    // reproduces the bytes below, and the sibling schedule oracle still
+    // matches every emitted frame.
+    const GOLDEN_HASH: u64 = 0xa34d_c1d6_f430_7467;
+    const GOLDEN_LEN: usize = 23293;
 
     let stream = encode_fixed_clip();
     let hash = fnv1a(&stream);

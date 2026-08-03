@@ -349,8 +349,14 @@ fn a10_byte_identity_pre_vs_post_refactor() {
     //
     // Re-captured after CPU7 stopped NEWMV refinement at quarter-pel, matching
     // pinned libvpx. The sibling decode oracle still accepts all 12 frames.
-    const GOLDEN_HASH: u64 = 0x8fd6_6b83_e046_f0e4;
-    const GOLDEN_LEN: usize = 7068;
+    //
+    // Re-captured after normal inter Q history excluded boosted GOLDEN
+    // refreshes and adopted libvpx's rounded EWMA. A clean-history bisect
+    // identified 6a909b26 as the first intentional coding change after the
+    // prior refresh. The stream reproduced on the clean Unit 651 baseline,
+    // and the sibling reference-pool decode oracle remains green.
+    const GOLDEN_HASH: u64 = 0xac2b_85e4_6b0c_37fc;
+    const GOLDEN_LEN: usize = 7057;
 
     let stream = encode_fixed_clip();
     let hash = fnv1a(&stream);
