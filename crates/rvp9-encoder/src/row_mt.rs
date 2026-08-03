@@ -464,6 +464,28 @@ impl RowMtContext {
             .pop()
     }
 
+    /// Claim this worker's next job, stealing from the fullest column after
+    /// its current column drains.
+    ///
+    /// `current_tile_col` is updated whenever the worker changes columns.
+    /// A single worker therefore drains its initial column in row order, then
+    /// drains the remaining columns by largest queue and lowest-column tie
+    /// break. Concurrent workers use the same method without duplicating a
+    /// claim.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `current_tile_col` is outside this context or a queue mutex
+    /// was poisoned by a worker panic.
+    pub fn claim_for_worker(&self, current_tile_col: &mut usize) -> Option<RowJob> {
+        loop {
+            if let Some(job) = self.pop_for_column(*current_tile_col) {
+                return Some(job);
+            }
+            *current_tile_col = self.steal_target(*current_tile_col)?;
+        }
+    }
+
     /// Select the column with the most unclaimed row jobs.
     ///
     /// Equal loads choose the lowest column index. Returns `None` once every
@@ -1129,6 +1151,47 @@ mod tests {
         assert_eq!(context.pop_for_column(0).unwrap().sb_row, 0);
         assert_eq!(context.pop_for_column(0).unwrap().sb_row, 1);
         assert_eq!(context.steal_target(0), Some(1));
+    }
+
+    #[test]
+    fn one_worker_drains_row_jobs_in_deterministic_column_order() {
+        let context = RowMtContext::new(3, 2);
+        let mut tile_col = context.initial_tile_for_worker(0);
+        let mut jobs = Vec::new();
+        while let Some(job) = context.claim_for_worker(&mut tile_col) {
+            jobs.push(job);
+        }
+        assert_eq!(
+            jobs,
+            vec![
+                RowJob {
+                    sb_row: 0,
+                    tile_col: 0
+                },
+                RowJob {
+                    sb_row: 1,
+                    tile_col: 0
+                },
+                RowJob {
+                    sb_row: 0,
+                    tile_col: 1
+                },
+                RowJob {
+                    sb_row: 1,
+                    tile_col: 1
+                },
+                RowJob {
+                    sb_row: 0,
+                    tile_col: 2
+                },
+                RowJob {
+                    sb_row: 1,
+                    tile_col: 2
+                },
+            ]
+        );
+        assert!(context.queues_drained());
+        assert_eq!(context.remaining_jobs(), 0);
     }
 
     #[test]

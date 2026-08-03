@@ -8287,14 +8287,18 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
             }
         }
     };
-    for sb_row in 0..sb_rows {
-        if let Some(tile_col) = active_tile_col {
+    if let Some(tile_col) = active_tile_col {
+        for sb_row in 0..sb_rows {
             encode_job(crate::row_mt::RowJob { sb_row, tile_col });
-        } else {
-            for tile_col in 0..tile_bounds_by_col.len() {
-                encode_job(crate::row_mt::RowJob { sb_row, tile_col });
-            }
         }
+    } else {
+        let row_context = crate::row_mt::RowMtContext::new(tile_bounds_by_col.len(), sb_rows);
+        let mut tile_col = row_context.initial_tile_for_worker(0);
+        while let Some(job) = row_context.claim_for_worker(&mut tile_col) {
+            encode_job(job);
+        }
+        debug_assert!(row_context.queues_drained());
+        debug_assert_eq!(row_context.remaining_jobs(), 0);
     }
 
     if rt_profile_enabled {
