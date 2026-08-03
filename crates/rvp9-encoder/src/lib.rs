@@ -157,6 +157,7 @@ pub mod pre_analysis;
 pub mod predstat;
 pub mod rate_control;
 pub mod rdo;
+pub mod row_mt;
 pub mod segmentation;
 pub mod skipstat;
 pub mod svc;
