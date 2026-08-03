@@ -8951,16 +8951,16 @@ mod tests {
         /// Tile-scoped 'static buffers are safe because the test
         /// borrows immutably for one call at a time.
         struct OnePerYThenZero {
-            y_buf: [i32; 1024],
-            zero_buf: [i32; 1024],
+            y_buf: [i16; 1024],
+            zero_buf: [i16; 1024],
         }
         impl OnePerYThenZero {
             fn new() -> Self {
-                let mut y_buf = [0i32; 1024];
+                let mut y_buf = [0i16; 1024];
                 y_buf[0] = 1;
                 Self {
                     y_buf,
-                    zero_buf: [0i32; 1024],
+                    zero_buf: [0i16; 1024],
                 }
             }
         }
@@ -8973,7 +8973,7 @@ mod tests {
                 _tx_x4_local: usize,
                 _tx_y4_local: usize,
                 tx_size: TxSize,
-            ) -> (&[i32], usize) {
+            ) -> (&[i16], usize) {
                 let n = tx_size.n_coeffs();
                 if plane == 0 {
                     (&self.y_buf[..n], 1)

@@ -1264,15 +1264,33 @@ pub fn encode_coefs(
     );
 }
 
+trait EncodeCoef: Copy {
+    fn to_i32(self) -> i32;
+}
+
+impl EncodeCoef for i32 {
+    #[inline]
+    fn to_i32(self) -> i32 {
+        self
+    }
+}
+
+impl EncodeCoef for i16 {
+    #[inline]
+    fn to_i32(self) -> i32 {
+        i32::from(self)
+    }
+}
+
 #[allow(clippy::too_many_arguments)] // retained-token variant of encode_coefs
-fn encode_coefs_impl(
+fn encode_coefs_impl<T: EncodeCoef>(
     bw: &mut BoolWriter<'_>,
     coef_probs: &CoefBandCtxProbs,
     scan: &ScanOrder,
     initial_pt: usize,
     tx_size: TxSize,
     seg_eob: usize,
-    raw_coefs: &[i32],
+    raw_coefs: &[T],
     eob: usize,
     mut counts: Option<&mut DecodeCoefCounts<'_>>,
     mut retained: Option<&mut Vec<RetainedCoefToken>>,
@@ -1344,14 +1362,14 @@ fn encode_coefs_impl(
 }
 
 #[allow(clippy::too_many_arguments)] // scratch-bearing encode_coefs hot loop
-fn encode_coefs_with_token_cache(
+fn encode_coefs_with_token_cache<T: EncodeCoef>(
     bw: &mut BoolWriter<'_>,
     coef_probs: &CoefBandCtxProbs,
     scan: &ScanOrder,
     initial_pt: usize,
     tx_size: TxSize,
     seg_eob: usize,
-    raw_coefs: &[i32],
+    raw_coefs: &[T],
     eob: usize,
     mut counts: Option<&mut DecodeCoefCounts<'_>>,
     mut retained: Option<&mut Vec<RetainedCoefToken>>,
@@ -1387,7 +1405,7 @@ fn encode_coefs_with_token_cache(
         let mut local_prob = prob;
         loop {
             let raster_idx = scan.scan()[c] as usize;
-            let coef = raw_coefs[raster_idx];
+            let coef = raw_coefs[raster_idx].to_i32();
             if coef != 0 {
                 // Break out — emit NOT-ZERO and proceed to the value
                 // tree below.
@@ -1440,7 +1458,7 @@ fn encode_coefs_with_token_cache(
 
         // Non-zero coefficient — emit the value tree.
         let raster_idx = scan.scan()[c] as usize;
-        let coef = raw_coefs[raster_idx];
+        let coef = raw_coefs[raster_idx].to_i32();
         let abs_val = coef.unsigned_abs() as i32;
         if let Some(tokens) = retained.as_deref_mut() {
             debug_assert!(i16::try_from(coef).is_ok());
@@ -1656,6 +1674,44 @@ pub fn write_block_tokens(
     );
 }
 
+/// [`write_block_tokens`] for the encoder's native signed-16-bit quantizer
+/// output.
+#[allow(clippy::too_many_arguments)]
+pub fn write_block_tokens_i16(
+    bw: &mut BoolWriter<'_>,
+    fc: &FrameContext,
+    coef_ctx: &mut TileCoefCtx,
+    plane: usize,
+    x4: usize,
+    y4_in_sb: usize,
+    tx_size: TxSize,
+    tx_type: TxType,
+    ref_type: usize,
+    seg_eob: usize,
+    raw_coefs: &[i16],
+    eob: usize,
+    counts: Option<&mut CoefCountsBank>,
+    full_counts: Option<&mut crate::entropy::adapt::Coef12Bank>,
+) {
+    write_block_tokens_with_retained_i16(
+        bw,
+        fc,
+        coef_ctx,
+        plane,
+        x4,
+        y4_in_sb,
+        tx_size,
+        tx_type,
+        ref_type,
+        seg_eob,
+        raw_coefs,
+        eob,
+        counts,
+        full_counts,
+        None,
+    );
+}
+
 /// [`write_block_tokens`] with an optional coefficient-token record/replay
 /// pass for two-loop encoders.
 #[allow(clippy::too_many_arguments)] // mirrors decode_block_tokens 1:1
@@ -1671,6 +1727,81 @@ pub fn write_block_tokens_with_retained(
     ref_type: usize,
     seg_eob: usize,
     raw_coefs: &[i32],
+    eob: usize,
+    counts: Option<&mut CoefCountsBank>,
+    full_counts: Option<&mut crate::entropy::adapt::Coef12Bank>,
+    retained_pass: Option<&mut CoefTokenPass<'_>>,
+) {
+    write_block_tokens_with_retained_impl(
+        bw,
+        fc,
+        coef_ctx,
+        plane,
+        x4,
+        y4_in_sb,
+        tx_size,
+        tx_type,
+        ref_type,
+        seg_eob,
+        raw_coefs,
+        eob,
+        counts,
+        full_counts,
+        retained_pass,
+    );
+}
+
+/// [`write_block_tokens_with_retained`] for signed-16-bit coefficients.
+#[allow(clippy::too_many_arguments)]
+pub fn write_block_tokens_with_retained_i16(
+    bw: &mut BoolWriter<'_>,
+    fc: &FrameContext,
+    coef_ctx: &mut TileCoefCtx,
+    plane: usize,
+    x4: usize,
+    y4_in_sb: usize,
+    tx_size: TxSize,
+    tx_type: TxType,
+    ref_type: usize,
+    seg_eob: usize,
+    raw_coefs: &[i16],
+    eob: usize,
+    counts: Option<&mut CoefCountsBank>,
+    full_counts: Option<&mut crate::entropy::adapt::Coef12Bank>,
+    retained_pass: Option<&mut CoefTokenPass<'_>>,
+) {
+    write_block_tokens_with_retained_impl(
+        bw,
+        fc,
+        coef_ctx,
+        plane,
+        x4,
+        y4_in_sb,
+        tx_size,
+        tx_type,
+        ref_type,
+        seg_eob,
+        raw_coefs,
+        eob,
+        counts,
+        full_counts,
+        retained_pass,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn write_block_tokens_with_retained_impl<T: EncodeCoef>(
+    bw: &mut BoolWriter<'_>,
+    fc: &FrameContext,
+    coef_ctx: &mut TileCoefCtx,
+    plane: usize,
+    x4: usize,
+    y4_in_sb: usize,
+    tx_size: TxSize,
+    tx_type: TxType,
+    ref_type: usize,
+    seg_eob: usize,
+    raw_coefs: &[T],
     eob: usize,
     counts: Option<&mut CoefCountsBank>,
     full_counts: Option<&mut crate::entropy::adapt::Coef12Bank>,
@@ -1780,7 +1911,7 @@ pub fn write_block_tokens_with_retained(
         Some(CoefTokenPass::Replay { .. }) | None => false,
     };
     if !recorded {
-        encode_coefs(
+        encode_coefs_impl(
             bw,
             coef_probs,
             &scan,
@@ -1790,6 +1921,8 @@ pub fn write_block_tokens_with_retained(
             raw_coefs,
             eob,
             block_counts.as_mut(),
+            None,
+            true,
         );
     }
 
@@ -1919,6 +2052,62 @@ mod tests {
             });
             let replay = encode(|w| replay_retained_coefs(w, &post_probs, &retained));
             assert_eq!(replay, direct, "retained replay diverged for eob={eob}");
+        }
+    }
+
+    #[test]
+    fn i16_block_writer_matches_i32_tokens_and_contexts() {
+        let fc = FrameContext::new_default();
+        let mut raw_i16 = [0i16; 64];
+        let scan = scan_for(TxSize::Tx8x8, TxType::DctDct);
+        for (position, value) in [1i16, -2, 7, -19, 127, -511].into_iter().enumerate() {
+            raw_i16[scan.scan()[position] as usize] = value;
+        }
+        let raw_i32 = raw_i16.map(i32::from);
+        let mut ctx_i16 = TileCoefCtx::new(8);
+        let mut ctx_i32 = TileCoefCtx::new(8);
+
+        let bytes_i16 = encode(|writer| {
+            write_block_tokens_i16(
+                writer,
+                &fc,
+                &mut ctx_i16,
+                0,
+                0,
+                0,
+                TxSize::Tx8x8,
+                TxType::DctDct,
+                1,
+                64,
+                &raw_i16,
+                6,
+                None,
+                None,
+            );
+        });
+        let bytes_i32 = encode(|writer| {
+            write_block_tokens(
+                writer,
+                &fc,
+                &mut ctx_i32,
+                0,
+                0,
+                0,
+                TxSize::Tx8x8,
+                TxType::DctDct,
+                1,
+                64,
+                &raw_i32,
+                6,
+                None,
+                None,
+            );
+        });
+
+        assert_eq!(bytes_i16, bytes_i32);
+        for index in 0..2 {
+            assert_eq!(ctx_i16.above_coef(0, index), ctx_i32.above_coef(0, index));
+            assert_eq!(ctx_i16.left_coef(0, index), ctx_i32.left_coef(0, index));
         }
     }
 

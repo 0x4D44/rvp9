@@ -64,7 +64,8 @@ pub use detokenize::{
     ENTROPY_TOKENS, EOB_MODEL_TOKEN, EobBranchCountsBlock, ONE_TOKEN, RetainedCoefTokens,
     TWO_TOKEN, VP9_CAT1_PROB, VP9_CAT2_PROB, VP9_CAT3_PROB, VP9_CAT4_PROB, VP9_CAT5_PROB,
     VP9_CAT6_PROB, VP9_COEFBAND_TRANS_4X4, VP9_COEFBAND_TRANS_8X8PLUS, ZERO_TOKEN, decode_coefs,
-    encode_coefs, write_block_tokens, write_block_tokens_with_retained,
+    encode_coefs, write_block_tokens, write_block_tokens_i16, write_block_tokens_with_retained,
+    write_block_tokens_with_retained_i16,
 };
 pub use diff_update::{DIFF_UPDATE_PROB, diff_update_prob, inv_remap_prob};
 pub use frame_context::{FRAME_CONTEXTS, FRAME_CONTEXTS_LOG2, FrameContext, TX_SIZES};

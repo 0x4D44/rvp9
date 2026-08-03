@@ -1006,14 +1006,19 @@ impl Encoder {
 // tx_x4_local, tx_y4_local) tuple the writer hands to
 // `IntraCoefSource::get_block_coefs`.
 
-/// Stored block payload: `(qcoeff buffer, eob)`.
-type IntraCoefBlockValue = (Vec<i32>, usize);
+/// Stored block payload inside [`VecBackedInterCoefSource::coefficients`].
+#[derive(Copy, Clone, Debug)]
+struct IntraCoefBlockValue {
+    offset: u32,
+    len: u16,
+    eob: u16,
+}
 
 /// Backing storage for zero-EOB inter TX markers. When the encoder's
 /// quantizer returns `eob == 0`, the writer only needs an all-zero slice
 /// of the requested TX size; storing a full zero vector per block would
 /// allocate in the hottest emit path for no information.
-static INTER_ZERO_COEFS: [i32; 1024] = [0; 1024];
+static INTER_ZERO_COEFS: [i16; 1024] = [0; 1024];
 
 /// Empty marker in [`VecBackedInterCoefSource::slots`].
 const INTER_COEF_SLOT_EMPTY: u32 = u32::MAX;
@@ -1077,7 +1082,7 @@ impl rvp9_core::bitstream::IntraCoefSource for VecBackedIntraCoefSource {
         tx_x4_local: usize,
         tx_y4_local: usize,
         tx_size: TxSize,
-    ) -> (&[i32], usize) {
+    ) -> (&[i16], usize) {
         rvp9_core::bitstream::InterCoefSource::get_block_coefs(
             &self.inner,
             mi_row,
@@ -1117,6 +1122,9 @@ pub struct VecBackedInterCoefSource {
     slots: Vec<u32>,
     /// Coefficient payloads in insertion order.
     blocks: Vec<IntraCoefBlockValue>,
+    /// Contiguous coefficient arena. Keeping all transform payloads here
+    /// avoids one heap allocation per transform in the inter emit hot path.
+    coefficients: Vec<i16>,
 }
 
 impl VecBackedInterCoefSource {
@@ -1183,7 +1191,10 @@ impl VecBackedInterCoefSource {
             plane_strides,
             plane_rows: [luma_rows, chroma_rows, chroma_rows],
             slots: vec![INTER_COEF_SLOT_EMPTY; total_slots],
-            blocks: Vec::new(),
+            blocks: Vec::with_capacity(total_slots),
+            // Every physical 4x4 slot accounts for 16 coefficients. Larger
+            // transforms occupy several slots but store the same total area.
+            coefficients: Vec::with_capacity(total_slots * 16),
         }
     }
 
@@ -1231,15 +1242,83 @@ impl VecBackedInterCoefSource {
         qcoefs: Vec<i32>,
         eob: usize,
     ) {
+        self.insert_coefficients(
+            mi_row,
+            mi_col,
+            plane,
+            tx_x4_local,
+            tx_y4_local,
+            &qcoefs,
+            eob,
+            |value| i16::try_from(value).expect("quantized coefficient exceeds i16"),
+        );
+    }
+
+    /// Record one transform directly from the quantizer's i16 scratch.
+    #[allow(clippy::too_many_arguments)]
+    fn insert_i16(
+        &mut self,
+        mi_row: usize,
+        mi_col: usize,
+        plane: usize,
+        tx_x4_local: usize,
+        tx_y4_local: usize,
+        qcoefs: &[i16],
+        eob: usize,
+    ) {
+        self.insert_coefficients(
+            mi_row,
+            mi_col,
+            plane,
+            tx_x4_local,
+            tx_y4_local,
+            qcoefs,
+            eob,
+            |value| value,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn insert_coefficients<T: Copy>(
+        &mut self,
+        mi_row: usize,
+        mi_col: usize,
+        plane: usize,
+        tx_x4_local: usize,
+        tx_y4_local: usize,
+        qcoefs: &[T],
+        eob: usize,
+        convert: impl Fn(T) -> i16,
+    ) {
         let slot = self.slot_index(mi_row, mi_col, plane, tx_x4_local, tx_y4_local);
         let block_index = self.slots[slot];
+        let len = u16::try_from(qcoefs.len()).expect("transform coefficient count exceeds u16");
+        let eob = u16::try_from(eob).expect("transform EOB exceeds u16");
+        if block_index != INTER_COEF_SLOT_EMPTY {
+            let entry = self.blocks[block_index as usize];
+            if entry.len == len {
+                let start = entry.offset as usize;
+                let end = start + usize::from(len);
+                for (dst, &src) in self.coefficients[start..end].iter_mut().zip(qcoefs) {
+                    *dst = convert(src);
+                }
+                self.blocks[block_index as usize].eob = eob;
+                return;
+            }
+        }
+
+        let offset = u32::try_from(self.coefficients.len())
+            .expect("inter coefficient arena exceeds u32 capacity");
+        self.coefficients
+            .extend(qcoefs.iter().copied().map(convert));
+        let value = IntraCoefBlockValue { offset, len, eob };
         if block_index == INTER_COEF_SLOT_EMPTY {
             let block_index = u32::try_from(self.blocks.len())
                 .expect("inter coefficient source exceeds u32 block capacity");
-            self.blocks.push((qcoefs, eob));
+            self.blocks.push(value);
             self.slots[slot] = block_index;
         } else {
-            self.blocks[block_index as usize] = (qcoefs, eob);
+            self.blocks[block_index as usize] = value;
         }
     }
 
@@ -1258,12 +1337,21 @@ impl VecBackedInterCoefSource {
     /// Merge disjoint tile-owned coefficient blocks into this frame
     /// source. Tile jobs use global MI coordinates, so no key rebasing
     /// is required.
-    pub(crate) fn merge_from(&mut self, other: Self) {
+    pub(crate) fn merge_from(&mut self, mut other: Self) {
         assert_eq!(self.width, other.width);
         assert_eq!(self.height, other.height);
         assert_eq!(self.plane_rows, other.plane_rows);
         let block_base = u32::try_from(self.blocks.len())
             .expect("inter coefficient source exceeds u32 block capacity");
+        let coefficient_base = u32::try_from(self.coefficients.len())
+            .expect("inter coefficient arena exceeds u32 capacity");
+        for block in &mut other.blocks {
+            block.offset = block
+                .offset
+                .checked_add(coefficient_base)
+                .expect("inter coefficient arena exceeds u32 capacity");
+        }
+        self.coefficients.extend(other.coefficients);
         self.blocks.extend(other.blocks);
         for plane in 0..3 {
             let self_col_start = self.plane_col_starts[plane];
@@ -1308,7 +1396,7 @@ impl rvp9_core::bitstream::InterCoefSource for VecBackedInterCoefSource {
         tx_x4_local: usize,
         tx_y4_local: usize,
         tx_size: TxSize,
-    ) -> (&[i32], usize) {
+    ) -> (&[i16], usize) {
         let slot = self.slot_index(mi_row, mi_col, plane, tx_x4_local, tx_y4_local);
         let block_index = self.slots[slot];
         assert_ne!(
@@ -1319,11 +1407,12 @@ impl rvp9_core::bitstream::InterCoefSource for VecBackedInterCoefSource {
         );
         let entry = &self.blocks[block_index as usize];
         let n = tx_size.n_coeffs();
-        if entry.1 == 0 && entry.0.is_empty() {
+        if entry.eob == 0 && entry.len == 0 {
             return (&INTER_ZERO_COEFS[..n], 0);
         }
-        debug_assert!(entry.0.len() >= n);
-        (&entry.0[..n], entry.1)
+        debug_assert!(usize::from(entry.len) >= n);
+        let start = entry.offset as usize;
+        (&self.coefficients[start..start + n], usize::from(entry.eob))
     }
 }
 
@@ -7192,7 +7281,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                 } else {
                                     None
                                 };
-                                let (qcoeff_i32, eob_usize) = inter_emit_scratch.with_len(
+                                let eob_usize = inter_emit_scratch.with_len(
                                     residual_len,
                                     |residual, quant_scratch| {
                                         #[cfg(target_arch = "aarch64")]
@@ -7265,26 +7354,24 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                                         plane_stride,
                                                     );
                                                 }
-                                                (
-                                                    qcoeff.iter().copied().map(i32::from).collect(),
+                                                coef_source.insert_i16(
+                                                    leaf_mi_row,
+                                                    leaf_mi_col,
+                                                    plane,
+                                                    tx_x4_local,
+                                                    tx_y4_local,
+                                                    qcoeff,
                                                     eob,
-                                                )
+                                                );
+                                                eob
                                             },
                                         )
                                     },
                                 );
 
-                                // Step 6: stash coefs for the writer.
-                                coef_source.insert(
-                                    leaf_mi_row,
-                                    leaf_mi_col,
-                                    plane,
-                                    tx_x4_local,
-                                    tx_y4_local,
-                                    qcoeff_i32,
-                                    eob_usize,
-                                );
-                                // Step 7: accumulate eob for skip decision.
+                                // Step 6: coefficients were stashed directly
+                                // from the quantizer scratch above. Step 7:
+                                // accumulate eob for the skip decision.
                                 leaf_total_eob += eob_usize;
                                 if (s2_xtab_enabled || f02_oracle_enabled) && plane == 0 {
                                     leaf_y_eob += eob_usize;
@@ -7582,7 +7669,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                 } else {
                                     None
                                 };
-                                let (qcoeff_i32, eob_usize) = inter_emit_scratch.with_len(
+                                let eob_usize = inter_emit_scratch.with_len(
                                     residual_len,
                                     |residual, quant_scratch| {
                                         let emit_residual_start = if emit_profile_enabled {
@@ -7660,7 +7747,21 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                         // coefficient source represents that
                                         // case with its existing empty marker.
                                         if !residual_nonzero {
-                                            return (Vec::new(), 0);
+                                            let emit_coef_insert_start = emit_profile_enabled
+                                                .then(std::time::Instant::now);
+                                            coef_source.insert(
+                                                leaf_mi_row,
+                                                leaf_mi_col,
+                                                plane,
+                                                tx_x4_local,
+                                                tx_y4_local,
+                                                Vec::new(),
+                                                0,
+                                            );
+                                            if let Some(t0) = emit_coef_insert_start {
+                                                emit_profile_coef_insert_time += t0.elapsed();
+                                            }
+                                            return 0;
                                         }
 
                                         // RVP9_TRELLIS — inter emit path.
@@ -7701,9 +7802,21 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                                 if let Some(t0) = emit_inverse_start {
                                                     emit_profile_inverse_time += t0.elapsed();
                                                 }
-                                                let qcoeff_i32 =
-                                                    qcoeff.iter().copied().map(i32::from).collect();
-                                                (qcoeff_i32, eob)
+                                                let emit_coef_insert_start = emit_profile_enabled
+                                                    .then(std::time::Instant::now);
+                                                coef_source.insert_i16(
+                                                    leaf_mi_row,
+                                                    leaf_mi_col,
+                                                    plane,
+                                                    tx_x4_local,
+                                                    tx_y4_local,
+                                                    qcoeff,
+                                                    eob,
+                                                );
+                                                if let Some(t0) = emit_coef_insert_start {
+                                                    emit_profile_coef_insert_time += t0.elapsed();
+                                                }
+                                                eob
                                             },
                                         )
                                     },
@@ -7715,23 +7828,6 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                     }
                                 }
 
-                                let emit_coef_insert_start = if emit_profile_enabled {
-                                    Some(std::time::Instant::now())
-                                } else {
-                                    None
-                                };
-                                coef_source.insert(
-                                    leaf_mi_row,
-                                    leaf_mi_col,
-                                    plane,
-                                    tx_x4_local,
-                                    tx_y4_local,
-                                    qcoeff_i32,
-                                    eob_usize,
-                                );
-                                if let Some(t0) = emit_coef_insert_start {
-                                    emit_profile_coef_insert_time += t0.elapsed();
-                                }
                                 leaf_total_eob += eob_usize;
                                 if (s2_xtab_enabled || f02_oracle_enabled) && plane == 0 {
                                     leaf_y_eob += eob_usize;
@@ -11079,7 +11175,10 @@ mod tests {
         let coefs = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
         src.insert(0, 0, 0, 0, 0, coefs.clone(), 5);
         let (got_coefs, got_eob) = src.get_block_coefs(0, 0, 0, 0, 0, TxSize::Tx4x4);
-        assert_eq!(&got_coefs[..16], &coefs[..16]);
+        assert_eq!(
+            got_coefs,
+            &[1i16, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+        );
         assert_eq!(got_eob, 5);
     }
 
@@ -11094,7 +11193,12 @@ mod tests {
         ];
         src.insert(1, 2, 1, 0, 0, coefs.clone(), 7);
         let (got_coefs, got_eob) = src.get_block_coefs(1, 2, 1, 0, 0, TxSize::Tx4x4);
-        assert_eq!(&got_coefs[..16], &coefs[..16]);
+        assert_eq!(
+            got_coefs,
+            &[
+                10i16, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160
+            ]
+        );
         assert_eq!(got_eob, 7);
     }
 

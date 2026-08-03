@@ -59,7 +59,7 @@ pub trait IntraCoefSource {
         tx_x4_local: usize,
         tx_y4_local: usize,
         tx_size: TxSize,
-    ) -> (&[i32], usize);
+    ) -> (&[i16], usize);
 }
 
 /// All-zero coefficient source. Every TX block reports
@@ -84,7 +84,7 @@ impl AllZeroIntraCoefSource {
 
 /// Backing storage large enough for the biggest VP9 TX block:
 /// `Tx32x32` has `1024` coefficients.
-static ALL_ZERO_COEFS: [i32; 1024] = [0; 1024];
+static ALL_ZERO_COEFS: [i16; 1024] = [0; 1024];
 
 impl IntraCoefSource for AllZeroIntraCoefSource {
     fn get_block_coefs(
@@ -95,7 +95,7 @@ impl IntraCoefSource for AllZeroIntraCoefSource {
         _tx_x4_local: usize,
         _tx_y4_local: usize,
         tx_size: TxSize,
-    ) -> (&[i32], usize) {
+    ) -> (&[i16], usize) {
         (&ALL_ZERO_COEFS[..tx_size.n_coeffs()], 0)
     }
 }

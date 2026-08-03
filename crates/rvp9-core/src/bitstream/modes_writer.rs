@@ -90,8 +90,8 @@ use crate::entropy::adapt::CoefCountsBank;
 use crate::entropy::bitacct::{BitCategory, set_category};
 use crate::entropy::{
     BoolWriter, CoefTokenPass, FrameContext, FrameCounts, RetainedCoefTokens,
-    VP9_KF_PARTITION_PROBS, VP9_KF_UV_MODE_PROB, VP9_KF_Y_MODE_PROB, write_block_tokens,
-    write_block_tokens_with_retained,
+    VP9_KF_PARTITION_PROBS, VP9_KF_UV_MODE_PROB, VP9_KF_Y_MODE_PROB, write_block_tokens_i16,
+    write_block_tokens_with_retained_i16,
 };
 use crate::inter::mode_info::{
     InterModeReadParams, InterModeWriteError, get_intra_inter_context, write_inter_block_mode_info,
@@ -1662,7 +1662,7 @@ fn write_intra_block_residual(
                     plane,
                     plane_tx,
                 );
-                write_block_tokens(
+                write_block_tokens_i16(
                     bw,
                     fc,
                     coef_ctx,
@@ -3004,7 +3004,7 @@ fn write_inter_block_residual(
                     plane,
                     plane_tx,
                 );
-                write_block_tokens_with_retained(
+                write_block_tokens_with_retained_i16(
                     bw,
                     fc,
                     coef_ctx,
@@ -5322,12 +5322,12 @@ mod tests {
     #[test]
     fn s4_16g_round_trip_non_skip_one_per_y_coef() {
         struct OnePerYCoefSource {
-            zero: [i32; 1024],
-            one_y: [i32; 1024],
+            zero: [i16; 1024],
+            one_y: [i16; 1024],
         }
         impl OnePerYCoefSource {
             fn new() -> Self {
-                let mut one_y = [0i32; 1024];
+                let mut one_y = [0i16; 1024];
                 // DC (raster position 0) = 1. The default scan tables
                 // map scan position 0 → raster position 0, so this is
                 // the DC-only block.
@@ -5347,7 +5347,7 @@ mod tests {
                 _tx_x4_local: usize,
                 _tx_y4_local: usize,
                 tx_size: TxSize,
-            ) -> (&[i32], usize) {
+            ) -> (&[i16], usize) {
                 if plane == 0 {
                     (&self.one_y[..tx_size.n_coeffs()], 1)
                 } else {
