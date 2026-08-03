@@ -1294,6 +1294,36 @@ struct InterTileScratch {
     mv_grid: Vec<PrevFrameMvRef>,
 }
 
+struct ColumnTileInterCoefSource {
+    mi_col_start: usize,
+    mi_col_end: usize,
+    source: VecBackedInterCoefSource,
+}
+
+struct ColumnTilesInterCoefSource {
+    tiles: Vec<ColumnTileInterCoefSource>,
+}
+
+impl rvp9_core::bitstream::InterCoefSource for ColumnTilesInterCoefSource {
+    fn get_block_coefs(
+        &self,
+        mi_row: usize,
+        mi_col: usize,
+        plane: usize,
+        tx_x4_local: usize,
+        tx_y4_local: usize,
+        tx_size: rvp9_core::transforms::TxSize,
+    ) -> (&[i16], usize) {
+        let tile = self
+            .tiles
+            .iter()
+            .find(|tile| mi_col >= tile.mi_col_start && mi_col < tile.mi_col_end)
+            .expect("inter coefficient query must belong to a column tile");
+        tile.source
+            .get_block_coefs(mi_row, mi_col, plane, tx_x4_local, tx_y4_local, tx_size)
+    }
+}
+
 struct TightTileRowsMut<'a, T> {
     col_start: usize,
     rows: Vec<&'a mut [T]>,
@@ -3359,9 +3389,11 @@ impl StreamEncoder {
         }
 
         let tile_count = 1usize << log2_tile_cols;
-        let (coef_source, recorded_coef_tiles, mi_grid) = if tile_count > 1
-            && self.parallelism.max_threads > 1
-        {
+        let (coef_source, recorded_coef_tiles, mi_grid): (
+            Box<dyn rvp9_core::bitstream::InterCoefSource>,
+            Vec<RecordedCoefTile>,
+            Vec<Option<ModeInfo>>,
+        ) = if tile_count > 1 && self.parallelism.max_threads > 1 {
             // Tile-MT: execute independent full-height column jobs on the
             // stream-owned worker pool. Each job owns every mutable object
             // it touches. Results are collected and merged in column order,
@@ -3371,7 +3403,6 @@ impl StreamEncoder {
             let initial_history = std::env::var_os("RVP9_EXACT_VBP_TREE")
                 .is_some_and(|value| value != "0")
                 .then(|| self.vbp_partition_history.clone());
-            let mut merged_coefs = VecBackedInterCoefSource::new(w, h);
             let s2_frame_gate = rvp9_core::mode_decision::inter::frame_s2_gate();
             let mut result_slots: Vec<Option<InterTileJobResult>> =
                 (0..tile_count).map(|_| None).collect();
@@ -3560,12 +3591,30 @@ impl StreamEncoder {
                     row_owners.merge_job_rect(&mut self.vbp_partition_history, history, job, 1);
                 }
             }
-            for result in tile_results {
+            let mut tile_coef_sources = Vec::with_capacity(tile_count);
+            for (result, (mi_col_start, mi_col_end)) in tile_results.into_iter().zip(mi_tile_ranges)
+            {
                 stage4a_frame_split_stats.accumulate(&result.split_stats);
-                merged_coefs.merge_from(result.coefs);
+                // Tile-MT records every coefficient as a retained symbolic
+                // token while the picker owns its column-local coefficient
+                // source. The packet passes still query TX metadata through
+                // InterCoefSource while replaying those tokens, but they do
+                // not require one copied full-frame arena. Preserve the tile
+                // sources and dispatch each query to its owning column.
+                tile_coef_sources.push(ColumnTileInterCoefSource {
+                    mi_col_start,
+                    mi_col_end,
+                    source: result.coefs,
+                });
                 recorded_coef_tiles.push(result.recorded_coef_tile);
             }
-            (merged_coefs, recorded_coef_tiles, merged_mi_grid)
+            (
+                Box::new(ColumnTilesInterCoefSource {
+                    tiles: tile_coef_sources,
+                }),
+                recorded_coef_tiles,
+                merged_mi_grid,
+            )
         } else {
             let encoded = run_inter_picker!(
                 &mut new_recon_y,
@@ -3582,7 +3631,7 @@ impl StreamEncoder {
             debug_assert!(encoded.recorded_coef_tile.is_none());
             debug_assert_eq!(encoded.mi_grid.mi_col_start, 0);
             debug_assert_eq!(encoded.mi_grid.mi_cols, mi_cols_us);
-            (encoded.coefs, Vec::new(), encoded.mi_grid.cells)
+            (Box::new(encoded.coefs), Vec::new(), encoded.mi_grid.cells)
         };
         self.stage4a_split_stats
             .accumulate(&stage4a_frame_split_stats);
@@ -3718,7 +3767,7 @@ impl StreamEncoder {
                     h,
                     q_index,
                     filter_level,
-                    &coef_source,
+                    coef_source.as_ref(),
                     (!recorded_coef_tiles.is_empty()).then_some(recorded_coef_tiles.as_slice()),
                     &mi_grid,
                     &segmentation_params,
@@ -7944,6 +7993,49 @@ mod tests {
                 "flat source must decode bit-exactly through both external decoders"
             );
         }
+    }
+
+    #[test]
+    fn column_tile_coef_source_dispatches_across_tile_boundary() {
+        let mut left = VecBackedInterCoefSource::new_for_mi_columns(128, 64, 0, 8);
+        left.insert_i16(0, 7, 0, 0, 0, &[3; 16], 1);
+        let mut right = VecBackedInterCoefSource::new_for_mi_columns(128, 64, 8, 16);
+        right.insert_i16(0, 8, 0, 0, 0, &[5; 16], 2);
+        let source = ColumnTilesInterCoefSource {
+            tiles: vec![
+                ColumnTileInterCoefSource {
+                    mi_col_start: 0,
+                    mi_col_end: 8,
+                    source: left,
+                },
+                ColumnTileInterCoefSource {
+                    mi_col_start: 8,
+                    mi_col_end: 16,
+                    source: right,
+                },
+            ],
+        };
+
+        let (left_coefs, left_eob) = rvp9_core::bitstream::InterCoefSource::get_block_coefs(
+            &source,
+            0,
+            7,
+            0,
+            0,
+            0,
+            rvp9_core::transforms::TxSize::Tx4x4,
+        );
+        let (right_coefs, right_eob) = rvp9_core::bitstream::InterCoefSource::get_block_coefs(
+            &source,
+            0,
+            8,
+            0,
+            0,
+            0,
+            rvp9_core::transforms::TxSize::Tx4x4,
+        );
+        assert_eq!((left_coefs, left_eob), (&[3; 16][..], 1));
+        assert_eq!((right_coefs, right_eob), (&[5; 16][..], 2));
     }
 
     #[test]
