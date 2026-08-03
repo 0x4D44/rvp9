@@ -3615,6 +3615,28 @@ fn inter_rd_calibration_for_mode(
     }
 }
 
+fn golden_real_block_yrd_enabled(
+    rc_mode: crate::rate_control::RcMode,
+    speed: i32,
+    deadline: rvp9_core::mode_decision::speed_features::Deadline,
+    cyclic_refresh_active: bool,
+    is_golden_refresh: bool,
+    override_value: Option<bool>,
+) -> bool {
+    if !is_golden_refresh {
+        return false;
+    }
+    override_value.unwrap_or_else(|| {
+        matches!(rc_mode, crate::rate_control::RcMode::Vbr)
+            && speed.unsigned_abs() == 7
+            && matches!(
+                deadline,
+                rvp9_core::mode_decision::speed_features::Deadline::Realtime
+            )
+            && !cyclic_refresh_active
+    })
+}
+
 fn newmv_diff_bias_for_mode(rc_mode: crate::rate_control::RcMode, env_enabled: bool) -> bool {
     env_enabled && matches!(rc_mode, crate::rate_control::RcMode::Cbr)
 }
@@ -3936,6 +3958,7 @@ pub(crate) struct InterEncodeEnv {
     rt_skip_intmv_filter_search: Option<bool>,
     newmv_diff_bias: Option<bool>,
     rt_min_partition32: Option<bool>,
+    golden_real_block_yrd: Option<bool>,
     emit_profile: bool,
     a4_profile: bool,
     variance_hint_dump: bool,
@@ -3986,6 +4009,7 @@ impl InterEncodeEnv {
             rt_skip_intmv_filter_search: bool_override("RVP9_RT_SKIP_INTMV_FILTER_SEARCH"),
             newmv_diff_bias: bool_override("RVP9_NEWMV_DIFF_BIAS"),
             rt_min_partition32: bool_override("RVP9_RT_MIN_PARTITION32"),
+            golden_real_block_yrd: bool_override("RVP9_GOLDEN_REAL_BLOCK_YRD"),
             emit_profile: std::env::var_os("RVP9_EMIT_PROFILE").is_some(),
             a4_profile: std::env::var_os("RVP9_A4_PROFILE").is_some(),
             variance_hint_dump: bool_override("RVP9_VARIANCE_HINT_DUMP") == Some(true),
@@ -4128,6 +4152,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // gate's `frames_since_golden > 4` predicate
     // (`vp9_pickmode.c:2237-2239`).
     frames_since_golden: u32,
+    // Show-frame GOLDEN refresh marker. CPU-used 7 realtime VBR uses the
+    // source-faithful block_yrd path on these frames while retaining the
+    // measured model-only approximation on ordinary inter frames.
+    is_golden_refresh: bool,
     // Pinned-libvpx `gf_temporal_ref` topology gate. True only for the
     // single-layer, non-ALTREF show-frame path; exact buffer identity is
     // checked inside this function before GOLDEN is suppressed.
@@ -4299,8 +4327,18 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         && matches!(content_tier, sf_mod::ContentTier::Default)
         && u64::from(width) * u64::from(height) >= 700_000;
     let cyclic_refresh_active = seg_q_deltas.iter().any(Option::is_some);
-    let inter_rd_calibration =
+    let mut inter_rd_calibration =
         inter_rd_calibration_for_mode(rc_mode, speed, deadline, cyclic_refresh_active);
+    if golden_real_block_yrd_enabled(
+        rc_mode,
+        speed,
+        deadline,
+        cyclic_refresh_active,
+        is_golden_refresh,
+        env.golden_real_block_yrd,
+    ) {
+        inter_rd_calibration.model_only = false;
+    }
     let full_pixel_search_method = full_pixel_search_method_for_mode(speed, deadline);
 
     let sb_cols = w / 64;
@@ -11130,6 +11168,52 @@ mod tests {
             inter_rd_calibration_for_mode(RcMode::Cbr, 7, Deadline::Realtime, true),
             InterRdCalibration::default()
         );
+    }
+
+    #[test]
+    fn golden_real_block_yrd_is_scoped_to_cpu7_realtime_vbr() {
+        use rvp9_core::mode_decision::speed_features::Deadline;
+
+        let cases = [
+            (RcMode::Vbr, 7, Deadline::Realtime, false, true, None, true),
+            (
+                RcMode::Vbr,
+                7,
+                Deadline::Realtime,
+                false,
+                false,
+                None,
+                false,
+            ),
+            (RcMode::Vbr, 6, Deadline::Realtime, false, true, None, false),
+            (RcMode::Cbr, 7, Deadline::Realtime, false, true, None, false),
+            (RcMode::Vbr, 7, Deadline::Good, false, true, None, false),
+            (RcMode::Vbr, 7, Deadline::Realtime, true, true, None, false),
+            (
+                RcMode::Vbr,
+                7,
+                Deadline::Realtime,
+                false,
+                true,
+                Some(false),
+                false,
+            ),
+            (
+                RcMode::Vbr,
+                8,
+                Deadline::Realtime,
+                false,
+                true,
+                Some(true),
+                true,
+            ),
+        ];
+        for (rc_mode, speed, deadline, aq, golden, override_value, expected) in cases {
+            assert_eq!(
+                golden_real_block_yrd_enabled(rc_mode, speed, deadline, aq, golden, override_value,),
+                expected
+            );
+        }
     }
 
     #[test]

@@ -50,6 +50,7 @@ use std::process::{Command, Stdio};
 const DEFAULT_W: u32 = 256;
 const DEFAULT_H: u32 = 256;
 const DEFAULT_FRAMES: u32 = 64;
+const PRODUCT_GOP_LENGTH: u32 = 60;
 
 #[derive(Copy, Clone)]
 struct OracleEncodeConfig {
@@ -87,11 +88,11 @@ fn arg(args: &[String], key: &str) -> Option<String> {
     None
 }
 
-fn rvp9_rate_config(frames: u32, vbr: bool) -> (u32, RcMode) {
+fn rvp9_rate_config(vbr: bool) -> (u32, RcMode) {
     if vbr {
-        (frames.saturating_add(1), RcMode::Vbr)
+        (PRODUCT_GOP_LENGTH, RcMode::Vbr)
     } else {
-        (30, RcMode::Cbr)
+        (PRODUCT_GOP_LENGTH, RcMode::Cbr)
     }
 }
 
@@ -425,7 +426,7 @@ fn drive_rvp9_leg(
     strict: bool,
     ivf_path: &Path,
 ) -> Result<Vec<BlockDecision>, Box<dyn std::error::Error>> {
-    let (gop_length, rc_mode) = rvp9_rate_config(encode.frames, encode.vbr);
+    let (gop_length, rc_mode) = rvp9_rate_config(encode.vbr);
     let (yuv_frames, source_fps) = read_cropped(
         foreman_path,
         encode.width,
@@ -590,13 +591,13 @@ mod tests {
     }
 
     #[test]
-    fn vbr_oracle_uses_single_keyframe_and_vbr_rate_control() {
-        assert_eq!(rvp9_rate_config(64, true), (65, RcMode::Vbr));
+    fn vbr_oracle_uses_production_gop_and_vbr_rate_control() {
+        assert_eq!(rvp9_rate_config(true), (60, RcMode::Vbr));
     }
 
     #[test]
-    fn default_oracle_preserves_legacy_cbr_configuration() {
-        assert_eq!(rvp9_rate_config(64, false), (30, RcMode::Cbr));
+    fn cbr_oracle_uses_production_gop_and_cbr_rate_control() {
+        assert_eq!(rvp9_rate_config(false), (60, RcMode::Cbr));
     }
 
     #[test]

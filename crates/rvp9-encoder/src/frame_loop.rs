@@ -3186,6 +3186,12 @@ impl StreamEncoder {
         let avg_inter_qindex = self.rate_control.avg_frame_qindex_inter;
         let frames_since_key = self.rate_control.frames_since_key;
         let frames_since_golden = self.frames_since_golden_refresh;
+        // The picker uses source-faithful block_yrd on the scheduled CPU7
+        // realtime VBR refresh while ordinary inter frames keep model-only RD.
+        let is_golden_refresh = matches!(
+            self.gf_group.schedule(self.frame_idx).update_type,
+            crate::gop::FrameUpdateType::GfUpdate
+        );
         // Pinned libvpx's post-refresh LAST-only shortcut requires a
         // temporal GOLDEN reference and excludes SVC/ALTREF topology.
         // The picker additionally proves exact Y/U/V storage identity.
@@ -3256,6 +3262,7 @@ impl StreamEncoder {
                     frame_mv_costs_ref,
                     $rd_tables,
                     frames_since_golden,
+                    is_golden_refresh,
                     allow_duplicate_golden_prune,
                     chessboard_index,
                     speed,
@@ -4140,6 +4147,7 @@ impl StreamEncoder {
             &arf_mv_costs,
             &mut arf_rd_thresh,
             self.frames_since_golden_refresh,
+            false,
             false,
             self.frames_since_golden_refresh & 1,
             self.config.speed,

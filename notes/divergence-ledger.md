@@ -4358,3 +4358,47 @@ repeated median protocol required by the final speed gate.
 
 **Future plan:** measure matched six-point cpu-used 7 curves and warmed
 per-clip speed at literal 720p and 1080p, then add the 1080p30/60 budget rows.
+
+### 2026-08-03 — Retain model-only RD outside CPU7 VBR GOLDEN refreshes
+
+**Where:** `rvp9_encoder::golden_real_block_yrd_enabled` and
+`rvp9_encoder::pick_and_simulate_inter_encode_partitions`; libvpx counterpart:
+`vp9/encoder/vp9_pickmode.c::block_yrd`.
+
+**What libvpx does:** the cpu-used 7 realtime picker computes the selected
+prediction's transform-domain rate and distortion through `block_yrd`.
+
+**What rvp9 does:** one-pass realtime VBR at cpu-used 7 now uses rvp9's real
+Hadamard `block_yrd` path on scheduled GOLDEN refreshes. Ordinary inter
+frames retain the measured model-only approximation. CBR, cpu-used 6/8,
+non-realtime, and cyclic-refresh AQ behavior is unchanged until each matched
+configuration has its own curve evidence. `RVP9_GOLDEN_REAL_BLOCK_YRD=0/1`
+remains a differential override.
+
+**Why:** paired block traces found that model-only RD selected NEWMV over
+about 50% of the first 1080p ducks GOLDEN frame, versus 31% in pinned libvpx.
+Real `block_yrd` reduced that share to 24% and corrected the persistent
+GOLDEN coding-efficiency deficit without perturbing ordinary frames.
+
+**Byte-parity impact:** structural. The accepted 1080p ducks target-2500
+stream SHA-256 is
+`da5e7056638ebf479715e396fcb36dbd52cab745739886c8e271d3b6ca7dda50`.
+Rvp9-decoder, pinned vpxdec, and ffmpeg agree bit-exactly on its decoded
+186,624,000-byte I420 output, SHA-256
+`ef8daeb588f4eb3cbf0c15460a797c9c4443a920c5bc22b9861cb58e04f7e8b3`.
+
+**Compression-efficiency impact:** versus pinned vpxenc, three-clip
+six-point luma BD-rate is `-4.433528%/-8.558332%/+0.076182%` at 720p and
+`-0.154700%/-3.467245%/-0.703721%` at 1080p for
+in-to-tree/ducks-take-off/old-town-cross. Geometric aggregates are
+`-4.370150%` and `-1.452616%`. Average-YUV aggregates are `-3.872535%` and
+`-1.041800%`. The limiting 1080p ducks luma result improves from
+`+2.273803%` to `-3.467245%`.
+
+**Speed impact:** a loaded-host seven-pair same-binary screen measured a
+1.58 s candidate median versus 1.64 s with the override disabled. This rules
+out a material local slowdown but is not final quiet-host speed evidence.
+
+**Future plan:** remeasure on a quiet host, then test the same source-faithful
+policy independently for cpu-used 6/8, CBR, AQ, denoiser, and SVC before
+expanding its default scope.
