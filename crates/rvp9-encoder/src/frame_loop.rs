@@ -1279,6 +1279,7 @@ pub struct StreamEncoder {
 /// disjoint rectangles and SB records into the frame result.
 struct InterTileJobResult {
     tile_col: usize,
+    claimed_jobs: Vec<crate::row_mt::RowJob>,
     partitions: Vec<Vec<InterPartitionLeafDesc>>,
     rd_tables: Vec<rvp9_core::mode_decision::rd_thresh::RdThreshTable>,
     history: Option<Vec<rvp9_core::mode_decision::partition::FixedTreeHistoryEntry>>,
@@ -1293,66 +1294,6 @@ struct InterTileScratch {
     recon_u: Vec<u8>,
     recon_v: Vec<u8>,
     mv_grid: Vec<PrevFrameMvRef>,
-}
-
-#[derive(Copy, Clone)]
-enum TileReconPlane {
-    Y,
-    U,
-    V,
-}
-
-struct InterTileReconCopy<'a> {
-    mi_rows: usize,
-    mi_cols: usize,
-    log2_tile_cols: u8,
-    tile_scratch: &'a [InterTileScratch],
-}
-
-impl InterTileReconCopy<'_> {
-    fn copy_rows(
-        &self,
-        destination_rows: &mut [u8],
-        plane_width: usize,
-        source_rows: std::ops::Range<usize>,
-        plane: TileReconPlane,
-    ) {
-        debug_assert_eq!(destination_rows.len(), source_rows.len() * plane_width);
-        let pixels_per_mi = match plane {
-            TileReconPlane::Y => 8,
-            TileReconPlane::U | TileReconPlane::V => 4,
-        };
-        let tile_count = 1usize << self.log2_tile_cols;
-        for (tile_col, scratch) in self
-            .tile_scratch
-            .iter()
-            .enumerate()
-            .take(tile_count)
-            .skip(1)
-        {
-            let bounds = tile_bounds(
-                self.mi_rows,
-                self.mi_cols,
-                0,
-                self.log2_tile_cols,
-                0,
-                tile_col as u32,
-            );
-            let col_start = bounds.mi_col_start * pixels_per_mi;
-            let col_end = bounds.mi_col_end * pixels_per_mi;
-            let source = match plane {
-                TileReconPlane::Y => &scratch.recon_y,
-                TileReconPlane::U => &scratch.recon_u,
-                TileReconPlane::V => &scratch.recon_v,
-            };
-            for (destination_row, source_row) in source_rows.clone().enumerate() {
-                let destination_start = destination_row * plane_width + col_start;
-                let source_start = source_row * plane_width + col_start;
-                destination_rows[destination_start..destination_start + col_end - col_start]
-                    .copy_from_slice(&source[source_start..source_start + col_end - col_start]);
-            }
-        }
-    }
 }
 
 /// Owned output from one independent full-height keyframe column tile.
@@ -3418,6 +3359,9 @@ impl StreamEncoder {
                                 .expect("one coefficient-token result per tile job");
                             let result = InterTileJobResult {
                                 tile_col,
+                                claimed_jobs: (0..h as usize / 64)
+                                    .map(|sb_row| crate::row_mt::RowJob { sb_row, tile_col })
+                                    .collect(),
                                 partitions: tile_partitions,
                                 rd_tables: tile_rd_tables,
                                 history: tile_history,
@@ -3434,57 +3378,6 @@ impl StreamEncoder {
             std::mem::swap(&mut new_recon_u, &mut tile_scratch[0].recon_u);
             std::mem::swap(&mut new_recon_v, &mut tile_scratch[0].recon_v);
             std::mem::swap(&mut cur_mv_grid, &mut tile_scratch[0].mv_grid);
-            // Tile 0 rendered directly into the frame allocation via the
-            // swaps above. Copy the other disjoint tile columns in parallel
-            // before the stream thread consumes the merged reconstruction.
-            // Splitting luma by rows and chroma by planes gives four wholly
-            // disjoint mutable destinations without unsafe aliasing.
-            let y_mid = h as usize / 2;
-            let (new_recon_y_top, new_recon_y_bottom) =
-                new_recon_y.split_at_mut(y_mid * w as usize);
-            let recon_copy = InterTileReconCopy {
-                mi_rows: mi_rows_us,
-                mi_cols: mi_cols_us,
-                log2_tile_cols,
-                tile_scratch,
-            };
-            self.frame_worker_pool
-                .as_mut()
-                .expect("parallel tile reconstruction merge requires the frame worker pool")
-                .scope(|scope| {
-                    scope.submit(|| {
-                        recon_copy.copy_rows(
-                            new_recon_y_top,
-                            w as usize,
-                            0..y_mid,
-                            TileReconPlane::Y,
-                        );
-                    });
-                    scope.submit(|| {
-                        recon_copy.copy_rows(
-                            new_recon_y_bottom,
-                            w as usize,
-                            y_mid..h as usize,
-                            TileReconPlane::Y,
-                        );
-                    });
-                    scope.submit(|| {
-                        recon_copy.copy_rows(
-                            &mut new_recon_u,
-                            w as usize / 2,
-                            0..h as usize / 2,
-                            TileReconPlane::U,
-                        );
-                    });
-                    scope.submit(|| {
-                        recon_copy.copy_rows(
-                            &mut new_recon_v,
-                            w as usize / 2,
-                            0..h as usize / 2,
-                            TileReconPlane::V,
-                        );
-                    });
-                });
             let tile_results: Vec<InterTileJobResult> = result_slots
                 .into_iter()
                 .enumerate()
@@ -3493,6 +3386,76 @@ impl StreamEncoder {
                         .unwrap_or_else(|| panic!("inter tile {tile_col} produced no result"))
                 })
                 .collect();
+            let tile_sb_cols: Vec<_> = (0..tile_count)
+                .map(|tile_col| {
+                    let bounds = tile_bounds(
+                        mi_rows_us,
+                        mi_cols_us,
+                        0,
+                        log2_tile_cols,
+                        0,
+                        tile_col as u32,
+                    );
+                    (bounds.mi_col_end - bounds.mi_col_start) / 8
+                })
+                .collect();
+            let mut row_owners = crate::row_mt::RowJobOwners::new(&tile_sb_cols, h as usize / 64);
+            for (worker_id, result) in tile_results.iter().enumerate() {
+                for &job in &result.claimed_jobs {
+                    row_owners
+                        .assign(worker_id, job)
+                        .expect("inter row worker jobs must be disjoint");
+                }
+            }
+            row_owners
+                .require_complete()
+                .expect("every inter row job must produce a worker result");
+
+            // Worker 0 rendered directly into the frame allocation via the
+            // swaps above. Copy only jobs owned by the other full-frame
+            // shadows. Y/U/V destinations are independent, so the three
+            // plane merges run concurrently without shared mutable state.
+            self.frame_worker_pool
+                .as_mut()
+                .expect("parallel tile reconstruction merge requires the frame worker pool")
+                .scope(|scope| {
+                    scope.submit(|| {
+                        for (job, worker_id) in row_owners.iter() {
+                            if worker_id != 0 {
+                                row_owners.merge_job_rect(
+                                    &mut new_recon_y,
+                                    &tile_scratch[worker_id].recon_y,
+                                    job,
+                                    64,
+                                );
+                            }
+                        }
+                    });
+                    scope.submit(|| {
+                        for (job, worker_id) in row_owners.iter() {
+                            if worker_id != 0 {
+                                row_owners.merge_job_rect(
+                                    &mut new_recon_u,
+                                    &tile_scratch[worker_id].recon_u,
+                                    job,
+                                    32,
+                                );
+                            }
+                        }
+                    });
+                    scope.submit(|| {
+                        for (job, worker_id) in row_owners.iter() {
+                            if worker_id != 0 {
+                                row_owners.merge_job_rect(
+                                    &mut new_recon_v,
+                                    &tile_scratch[worker_id].recon_v,
+                                    job,
+                                    32,
+                                );
+                            }
+                        }
+                    });
+                });
 
             let mut recorded_coef_tiles = Vec::with_capacity(tile_count);
             // Tile grids cover disjoint, ordered column spans. Append one
@@ -3511,35 +3474,23 @@ impl StreamEncoder {
                 debug_assert_eq!(expected_col_start, mi_cols_us);
             }
             debug_assert_eq!(merged_mi_grid.len(), mi_rows_us * mi_cols_us);
+            for (job, worker_id) in row_owners.iter() {
+                let result = &tile_results[worker_id];
+                row_owners.merge_job_rect(&mut sb_partitions, &result.partitions, job, 1);
+                if let Some(history) = &result.history {
+                    row_owners.merge_job_rect(&mut self.vbp_partition_history, history, job, 1);
+                }
+                if worker_id != 0 {
+                    row_owners.merge_job_rect(
+                        &mut cur_mv_grid,
+                        &tile_scratch[worker_id].mv_grid,
+                        job,
+                        8,
+                    );
+                }
+            }
             for result in tile_results {
                 let tile_col = result.tile_col;
-                let scratch = &self.inter_tile_scratch[tile_col];
-                let bounds = tile_bounds(
-                    mi_rows_us,
-                    mi_cols_us,
-                    0,
-                    log2_tile_cols,
-                    0,
-                    tile_col as u32,
-                );
-                let sb_col_start = bounds.mi_col_start / 8;
-                let sb_col_end = bounds.mi_col_end / 8;
-                for sb_row in 0..h as usize / 64 {
-                    for sb_col in sb_col_start..sb_col_end {
-                        let sb_idx = sb_row * (w as usize / 64) + sb_col;
-                        sb_partitions[sb_idx] = result.partitions[sb_idx].clone();
-                        if let Some(history) = &result.history {
-                            self.vbp_partition_history[sb_idx] = history[sb_idx].clone();
-                        }
-                    }
-                }
-                if tile_col != 0 {
-                    for row in 0..mi_rows_us {
-                        let start = row * mi_cols_us + bounds.mi_col_start;
-                        let end = row * mi_cols_us + bounds.mi_col_end;
-                        cur_mv_grid[start..end].copy_from_slice(&scratch.mv_grid[start..end]);
-                    }
-                }
                 self.rd_thresh_tables[tile_col] = result.rd_tables[tile_col].clone();
                 stage4a_frame_split_stats.accumulate(&result.split_stats);
                 merged_coefs.merge_from(result.coefs);
