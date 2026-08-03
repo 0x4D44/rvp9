@@ -10,6 +10,7 @@ pub mod convolve8_neon;
 pub mod convolve_copy_neon;
 pub mod idct8x8_neon;
 pub mod int_pro_neon;
+pub mod intra_pred_neon;
 pub mod lpf16_neon;
 pub mod minmax_neon;
 pub mod quantize_neon;
@@ -25,6 +26,7 @@ pub use idct8x8_neon::idct8x8_add_neon;
 pub use int_pro_neon::{
     vpx_int_pro_col_neon, vpx_int_pro_row_clamped_neon, vpx_int_pro_row_neon, vpx_vector_var_neon,
 };
+pub use intra_pred_neon::{dc_predict_full_neon, h_predictor_neon, v_predictor_neon};
 pub use lpf16_neon::{
     lpf_horizontal_8_dual_neon, lpf_horizontal_8_neon, lpf_horizontal_16_dual_neon,
     lpf_horizontal_16_neon, lpf_vertical_8_dual_neon, lpf_vertical_8_neon,

@@ -46,7 +46,7 @@ pub mod x86_64;
 
 pub use dispatch::{SimdDispatch, get, get_ref, init};
 
-#[cfg(any(target_arch = "x86_64", test))]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
 pub(crate) fn validate_intra_predictor_layout(
     dst_len: usize,
     stride: usize,

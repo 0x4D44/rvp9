@@ -1513,7 +1513,13 @@ impl SimdDispatch {
         } else {
             scalar_v_predictor
         };
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(target_arch = "aarch64")]
+        let v_predictor: fn(&mut [u8], usize, usize, &[u8]) = if caps.neon {
+            crate::dsp::aarch64::v_predictor_neon
+        } else {
+            scalar_v_predictor
+        };
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         let v_predictor: fn(&mut [u8], usize, usize, &[u8]) = scalar_v_predictor;
 
         // ---- Wave I I2 — size-parametric H_PRED intra-predictor. ----
@@ -1528,7 +1534,13 @@ impl SimdDispatch {
         } else {
             scalar_h_predictor
         };
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(target_arch = "aarch64")]
+        let h_predictor: fn(&mut [u8], usize, usize, &[u8]) = if caps.neon {
+            crate::dsp::aarch64::h_predictor_neon
+        } else {
+            scalar_h_predictor
+        };
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         let h_predictor: fn(&mut [u8], usize, usize, &[u8]) = scalar_h_predictor;
 
         // ---- Wave I I3 — TM_PRED intra-predictor (size-parametric).
@@ -1621,7 +1633,13 @@ impl SimdDispatch {
         } else {
             scalar_dc_predict_full
         };
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(target_arch = "aarch64")]
+        let dc_predict_full: fn(&mut [u8], usize, usize, &[u8], &[u8]) = if caps.neon {
+            crate::dsp::aarch64::dc_predict_full_neon
+        } else {
+            scalar_dc_predict_full
+        };
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         let dc_predict_full: fn(&mut [u8], usize, usize, &[u8], &[u8]) = scalar_dc_predict_full;
 
         #[cfg(target_arch = "x86_64")]
