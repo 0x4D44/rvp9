@@ -8,6 +8,18 @@
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Condvar, Mutex};
 
+/// A row-MT scope was cancelled after one of its jobs failed.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RowSyncCancelled;
+
+impl std::fmt::Display for RowSyncCancelled {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("row-MT scope cancelled")
+    }
+}
+
+impl std::error::Error for RowSyncCancelled {}
+
 /// One encoder row-MT work item.
 ///
 /// Tile rows are outside the v1 scope, so a job is fully identified by its
@@ -129,6 +141,16 @@ impl RowMtContext {
             .expect("row-MT tile column is out of bounds")
     }
 
+    /// Cancel every tile-column wavefront after any row job fails.
+    ///
+    /// A worker-scope panic guard must call this before completion is joined,
+    /// otherwise a dependant blocked in another column can strand the scope.
+    pub fn cancel(&self) {
+        for sync in &self.row_syncs {
+            sync.cancel();
+        }
+    }
+
     /// Number of unclaimed jobs across every tile column.
     #[must_use]
     pub fn remaining_jobs(&self) -> usize {
@@ -192,6 +214,7 @@ impl RowJobQueue {
 pub struct RowSync {
     rows: Box<[RowProgress]>,
     enabled: bool,
+    cancelled: AtomicBool,
 }
 
 #[derive(Debug)]
@@ -217,6 +240,7 @@ impl RowSync {
                 })
                 .collect(),
             enabled: true,
+            cancelled: AtomicBool::new(false),
         }
     }
 
@@ -226,6 +250,7 @@ impl RowSync {
         Self {
             rows: Box::new([]),
             enabled: false,
+            cancelled: AtomicBool::new(false),
         }
     }
 
@@ -244,6 +269,26 @@ impl RowSync {
         for row in &self.rows {
             *row.completed_col.lock().expect("RowSync mutex poisoned") = -1;
         }
+        self.cancelled.store(false, Ordering::Release);
+    }
+
+    /// Cancel this tile column and wake every blocked reader.
+    ///
+    /// Cancellation is idempotent. Mutex poisoning is recovered here because
+    /// this method is the failure path that must wake dependants even after a
+    /// worker panic.
+    pub fn cancel(&self) {
+        if !self.enabled {
+            return;
+        }
+        self.cancelled.store(true, Ordering::Release);
+        for row in &self.rows {
+            let _completed = row
+                .completed_col
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            row.changed.notify_all();
+        }
     }
 
     /// Wait until the row above has completed column `col`.
@@ -251,18 +296,25 @@ impl RowSync {
     /// Row zero has no dependency and returns immediately. Dummy instances
     /// also return immediately.
     ///
+    /// # Errors
+    ///
+    /// Returns [`RowSyncCancelled`] after any job cancels this tile column.
+    ///
     /// # Panics
     ///
     /// Panics when `row` is outside the configured range, `col` is negative,
     /// or the preceding row's mutex was poisoned by a worker panic.
-    pub fn read(&self, row: usize, col: i32) {
+    pub fn read(&self, row: usize, col: i32) -> Result<(), RowSyncCancelled> {
         if !self.enabled {
-            return;
+            return Ok(());
         }
         assert!(row < self.rows.len(), "row-MT read row is out of bounds");
         assert!(col >= 0, "row-MT read column must be non-negative");
+        if self.cancelled.load(Ordering::Acquire) {
+            return Err(RowSyncCancelled);
+        }
         if row == 0 {
-            return;
+            return Ok(());
         }
 
         let preceding = &self.rows[row - 1];
@@ -271,11 +323,18 @@ impl RowSync {
             .lock()
             .expect("RowSync mutex poisoned");
         while *completed < col {
+            if self.cancelled.load(Ordering::Acquire) {
+                return Err(RowSyncCancelled);
+            }
             completed = preceding
                 .changed
                 .wait(completed)
                 .expect("RowSync mutex poisoned");
         }
+        if self.cancelled.load(Ordering::Acquire) {
+            return Err(RowSyncCancelled);
+        }
+        Ok(())
     }
 
     /// Publish completion of `(row, col)` and wake the dependent row.
@@ -284,13 +343,17 @@ impl RowSync {
     /// end-of-row sentinel for a sync range of one. This releases any reader
     /// whose last dependency is the completed row.
     ///
+    /// # Errors
+    ///
+    /// Returns [`RowSyncCancelled`] after any job cancels this tile column.
+    ///
     /// # Panics
     ///
     /// Panics when the coordinates are invalid, columns are published out of
     /// order, or the row's mutex was poisoned by a worker panic.
-    pub fn write(&self, row: usize, col: i32, cols: i32) {
+    pub fn write(&self, row: usize, col: i32, cols: i32) -> Result<(), RowSyncCancelled> {
         if !self.enabled {
-            return;
+            return Ok(());
         }
         assert!(row < self.rows.len(), "row-MT write row is out of bounds");
         assert!(cols > 0, "row-MT column count must be positive");
@@ -298,18 +361,25 @@ impl RowSync {
             (0..cols).contains(&col),
             "row-MT write column is out of bounds"
         );
+        if self.cancelled.load(Ordering::Acquire) {
+            return Err(RowSyncCancelled);
+        }
 
         let progress = &self.rows[row];
         let mut completed = progress
             .completed_col
             .lock()
             .expect("RowSync mutex poisoned");
+        if self.cancelled.load(Ordering::Acquire) {
+            return Err(RowSyncCancelled);
+        }
         assert!(
             col > *completed,
             "row-MT columns must be published in increasing order"
         );
         *completed = if col == cols - 1 { cols + 1 } else { col };
         progress.changed.notify_one();
+        Ok(())
     }
 }
 
@@ -324,14 +394,14 @@ mod tests {
     #[test]
     fn dummy_sync_is_a_no_op_for_arbitrary_coordinates() {
         let sync = RowSync::dummy();
-        sync.read(usize::MAX, -1);
-        sync.write(usize::MAX, -1, -1);
+        sync.read(usize::MAX, -1).unwrap();
+        sync.write(usize::MAX, -1, -1).unwrap();
         sync.reset();
     }
 
     #[test]
     fn first_row_never_waits() {
-        RowSync::new(2).read(0, 7);
+        RowSync::new(2).read(0, 7).unwrap();
     }
 
     #[test]
@@ -342,15 +412,15 @@ mod tests {
         let waiter_sync = Arc::clone(&sync);
         let waiter = std::thread::spawn(move || {
             started_tx.send(()).unwrap();
-            waiter_sync.read(1, 2);
+            waiter_sync.read(1, 2).unwrap();
             done_tx.send(()).unwrap();
         });
 
         started_rx.recv().unwrap();
-        sync.write(0, 0, 4);
-        sync.write(0, 1, 4);
+        sync.write(0, 0, 4).unwrap();
+        sync.write(0, 1, 4).unwrap();
         assert!(done_rx.recv_timeout(Duration::from_millis(20)).is_err());
-        sync.write(0, 2, 4);
+        sync.write(0, 2, 4).unwrap();
         done_rx.recv_timeout(Duration::from_secs(1)).unwrap();
         waiter.join().unwrap();
     }
@@ -361,12 +431,12 @@ mod tests {
         let (done_tx, done_rx) = mpsc::channel();
         let waiter_sync = Arc::clone(&sync);
         let waiter = std::thread::spawn(move || {
-            waiter_sync.read(1, 4);
+            waiter_sync.read(1, 4).unwrap();
             done_tx.send(()).unwrap();
         });
 
         for col in 0..4 {
-            sync.write(0, col, 4);
+            sync.write(0, col, 4).unwrap();
         }
         done_rx.recv_timeout(Duration::from_secs(1)).unwrap();
         waiter.join().unwrap();
@@ -375,20 +445,53 @@ mod tests {
     #[test]
     fn reset_restores_the_dependency() {
         let sync = Arc::new(RowSync::new(2));
-        sync.write(0, 0, 1);
-        sync.read(1, 0);
+        sync.write(0, 0, 1).unwrap();
+        sync.read(1, 0).unwrap();
         sync.reset();
 
         let (done_tx, done_rx) = mpsc::channel();
         let waiter_sync = Arc::clone(&sync);
         let waiter = std::thread::spawn(move || {
-            waiter_sync.read(1, 0);
+            waiter_sync.read(1, 0).unwrap();
             done_tx.send(()).unwrap();
         });
         assert!(done_rx.recv_timeout(Duration::from_millis(20)).is_err());
-        sync.write(0, 0, 1);
+        sync.write(0, 0, 1).unwrap();
         done_rx.recv_timeout(Duration::from_secs(1)).unwrap();
         waiter.join().unwrap();
+    }
+
+    #[test]
+    fn cancellation_wakes_a_blocked_reader() {
+        let sync = Arc::new(RowSync::new(2));
+        let (started_tx, started_rx) = mpsc::channel();
+        let (done_tx, done_rx) = mpsc::channel();
+        let waiter_sync = Arc::clone(&sync);
+        let waiter = std::thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            done_tx.send(waiter_sync.read(1, 0)).unwrap();
+        });
+
+        started_rx.recv().unwrap();
+        assert!(done_rx.recv_timeout(Duration::from_millis(20)).is_err());
+        sync.cancel();
+        assert_eq!(
+            done_rx.recv_timeout(Duration::from_secs(1)).unwrap(),
+            Err(super::RowSyncCancelled)
+        );
+        waiter.join().unwrap();
+    }
+
+    #[test]
+    fn reset_clears_cancellation_between_frames() {
+        let sync = RowSync::new(1);
+        sync.cancel();
+        assert_eq!(sync.read(0, 0), Err(super::RowSyncCancelled));
+        assert_eq!(sync.write(0, 0, 1), Err(super::RowSyncCancelled));
+
+        sync.reset();
+        sync.read(0, 0).unwrap();
+        sync.write(0, 0, 1).unwrap();
     }
 
     #[test]
@@ -401,7 +504,7 @@ mod tests {
         })
         .join();
 
-        let panic = std::panic::catch_unwind(|| sync.read(1, 0));
+        let panic = std::panic::catch_unwind(|| sync.read(1, 0).unwrap());
         assert!(panic.is_err());
     }
 
@@ -488,19 +591,31 @@ mod tests {
     #[test]
     fn each_tile_column_owns_independent_wavefront_state() {
         let context = RowMtContext::new(2, 2);
-        context.row_sync_for_column(0).write(0, 0, 1);
-        context.row_sync_for_column(0).read(1, 0);
+        context.row_sync_for_column(0).write(0, 0, 1).unwrap();
+        context.row_sync_for_column(0).read(1, 0).unwrap();
 
         let context = Arc::new(context);
         let (done_tx, done_rx) = mpsc::channel();
         let waiter_context = Arc::clone(&context);
         let waiter = std::thread::spawn(move || {
-            waiter_context.row_sync_for_column(1).read(1, 0);
+            waiter_context.row_sync_for_column(1).read(1, 0).unwrap();
             done_tx.send(()).unwrap();
         });
         assert!(done_rx.recv_timeout(Duration::from_millis(20)).is_err());
-        context.row_sync_for_column(1).write(0, 0, 1);
+        context.row_sync_for_column(1).write(0, 0, 1).unwrap();
         done_rx.recv_timeout(Duration::from_secs(1)).unwrap();
         waiter.join().unwrap();
+    }
+
+    #[test]
+    fn context_cancellation_reaches_every_tile_column() {
+        let context = RowMtContext::new(3, 2);
+        context.cancel();
+        for tile_col in 0..3 {
+            assert_eq!(
+                context.row_sync_for_column(tile_col).read(0, 0),
+                Err(super::RowSyncCancelled)
+            );
+        }
     }
 }
