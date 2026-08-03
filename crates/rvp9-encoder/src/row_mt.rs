@@ -6,7 +6,9 @@
 //! buffers; those arenas remain the dispatcher's responsibility.
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Condvar, Mutex};
+use std::sync::{Condvar, Mutex, OnceLock};
+
+use rvp9_core::mode_info::ModeInfo;
 
 /// A row-MT scope was cancelled after one of its jobs failed.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -19,6 +21,193 @@ impl std::fmt::Display for RowSyncCancelled {
 }
 
 impl std::error::Error for RowSyncCancelled {}
+
+/// Immutable causal state published after one superblock finishes.
+///
+/// The row below imports these bottom reconstruction edges as its top edge.
+/// The final MI row carries the motion and intra/inter context needed by
+/// neighbour lookup. Left-edge state remains worker-local because each row job
+/// processes its superblocks from left to right.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SbBoundary {
+    /// Bottom luma row of the completed 64x64 superblock.
+    pub bottom_y: [u8; 64],
+    /// Bottom U row of the completed 32x32 chroma block.
+    pub bottom_u: [u8; 32],
+    /// Bottom V row of the completed 32x32 chroma block.
+    pub bottom_v: [u8; 32],
+    /// Final bottom row of eight luma MI cells.
+    pub bottom_mi: [Option<ModeInfo>; 8],
+}
+
+/// Failure while publishing or consuming an SB row-MT boundary.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SbBoundaryError {
+    /// Another job already published the same `(tile, row, column)` slot.
+    AlreadyPublished,
+    /// Row progress was visible without its required immutable boundary.
+    MissingPublishedBoundary,
+    /// A failed job cancelled the frame wavefront.
+    Cancelled,
+}
+
+impl std::fmt::Display for SbBoundaryError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::AlreadyPublished => f.write_str("SB boundary was already published"),
+            Self::MissingPublishedBoundary => {
+                f.write_str("row progress advanced without an SB boundary")
+            }
+            Self::Cancelled => f.write_str("SB boundary wait was cancelled"),
+        }
+    }
+}
+
+impl std::error::Error for SbBoundaryError {}
+
+impl From<RowSyncCancelled> for SbBoundaryError {
+    fn from(_: RowSyncCancelled) -> Self {
+        Self::Cancelled
+    }
+}
+
+/// Exact-once immutable boundary publication for one encoded frame.
+///
+/// Slots are indexed by `(tile column, superblock row, tile-local superblock
+/// column)`. Tile widths may differ by one superblock, so the flattened
+/// storage records a prefix offset for each tile.
+#[derive(Debug)]
+pub struct SbBoundaryGrid {
+    tile_offsets: Box<[usize]>,
+    tile_widths: Box<[usize]>,
+    sb_rows: usize,
+    slots: Box<[OnceLock<SbBoundary>]>,
+    published: AtomicUsize,
+}
+
+impl SbBoundaryGrid {
+    /// Allocate empty boundary slots for one frame.
+    ///
+    /// # Panics
+    ///
+    /// Panics if there are no tiles, a tile is empty, or `sb_rows` is zero.
+    #[must_use]
+    pub fn new(tile_sb_cols: &[usize], sb_rows: usize) -> Self {
+        assert!(!tile_sb_cols.is_empty(), "boundary grid requires a tile");
+        assert!(sb_rows > 0, "boundary grid requires an SB row");
+        assert!(
+            tile_sb_cols.iter().all(|&width| width > 0),
+            "boundary grid tiles must contain an SB column"
+        );
+        let mut tile_offsets = Vec::with_capacity(tile_sb_cols.len());
+        let mut slot_count = 0usize;
+        for &width in tile_sb_cols {
+            tile_offsets.push(slot_count);
+            slot_count = slot_count
+                .checked_add(width.checked_mul(sb_rows).expect("boundary grid overflow"))
+                .expect("boundary grid overflow");
+        }
+        Self {
+            tile_offsets: tile_offsets.into_boxed_slice(),
+            tile_widths: tile_sb_cols.into(),
+            sb_rows,
+            slots: (0..slot_count)
+                .map(|_| OnceLock::new())
+                .collect::<Vec<_>>()
+                .into_boxed_slice(),
+            published: AtomicUsize::new(0),
+        }
+    }
+
+    /// Publish one completed SB boundary, then advance its row wavefront.
+    ///
+    /// The immutable `OnceLock` store happens before [`RowSync::write`], so a
+    /// successful reader can never observe progress without the boundary.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SbBoundaryError::AlreadyPublished`] for a duplicate slot or
+    /// [`SbBoundaryError::Cancelled`] after another job cancels the frame.
+    ///
+    /// # Panics
+    ///
+    /// Panics if any coordinate is outside the configured grid.
+    pub fn publish_and_advance(
+        &self,
+        sync: &RowSync,
+        tile_col: usize,
+        sb_row: usize,
+        local_sb_col: usize,
+        boundary: SbBoundary,
+    ) -> Result<(), SbBoundaryError> {
+        let index = self.index(tile_col, sb_row, local_sb_col);
+        self.slots[index]
+            .set(boundary)
+            .map_err(|_| SbBoundaryError::AlreadyPublished)?;
+        self.published.fetch_add(1, Ordering::Relaxed);
+        sync.write(
+            sb_row,
+            i32::try_from(local_sb_col).expect("local SB column exceeds i32"),
+            i32::try_from(self.tile_widths[tile_col]).expect("tile width exceeds i32"),
+        )?;
+        Ok(())
+    }
+
+    /// Wait for and return the boundary directly above an SB.
+    ///
+    /// Row zero has no causal predecessor and returns `Ok(None)`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SbBoundaryError::Cancelled`] after a job failure. Returns
+    /// [`SbBoundaryError::MissingPublishedBoundary`] if row progress advanced
+    /// without its required publication, which indicates an internal ordering
+    /// defect.
+    ///
+    /// # Panics
+    ///
+    /// Panics if any coordinate is outside the configured grid.
+    pub fn wait_for_above(
+        &self,
+        sync: &RowSync,
+        tile_col: usize,
+        sb_row: usize,
+        local_sb_col: usize,
+    ) -> Result<Option<&SbBoundary>, SbBoundaryError> {
+        let _ = self.index(tile_col, sb_row, local_sb_col);
+        sync.read(
+            sb_row,
+            i32::try_from(local_sb_col).expect("local SB column exceeds i32"),
+        )?;
+        if sb_row == 0 {
+            return Ok(None);
+        }
+        let above = self.index(tile_col, sb_row - 1, local_sb_col);
+        self.slots[above]
+            .get()
+            .map(Some)
+            .ok_or(SbBoundaryError::MissingPublishedBoundary)
+    }
+
+    /// Number of exact-once publications completed so far.
+    #[must_use]
+    pub fn published_boundaries(&self) -> usize {
+        self.published.load(Ordering::Relaxed)
+    }
+
+    fn index(&self, tile_col: usize, sb_row: usize, local_sb_col: usize) -> usize {
+        let width = *self
+            .tile_widths
+            .get(tile_col)
+            .expect("boundary tile column is out of bounds");
+        assert!(sb_row < self.sb_rows, "boundary SB row is out of bounds");
+        assert!(
+            local_sb_col < width,
+            "boundary tile-local SB column is out of bounds"
+        );
+        self.tile_offsets[tile_col] + sb_row * width + local_sb_col
+    }
+}
 
 /// One encoder row-MT work item.
 ///
@@ -385,7 +574,7 @@ impl RowSync {
 
 #[cfg(test)]
 mod tests {
-    use super::{RowJob, RowMtContext, RowSync};
+    use super::{RowJob, RowMtContext, RowSync, SbBoundary, SbBoundaryError, SbBoundaryGrid};
     use std::collections::HashSet;
     use std::sync::Arc;
     use std::sync::mpsc;
@@ -397,6 +586,130 @@ mod tests {
         sync.read(usize::MAX, -1).unwrap();
         sync.write(usize::MAX, -1, -1).unwrap();
         sync.reset();
+    }
+
+    fn boundary(seed: u8) -> SbBoundary {
+        SbBoundary {
+            bottom_y: [seed; 64],
+            bottom_u: [seed.wrapping_add(1); 32],
+            bottom_v: [seed.wrapping_add(2); 32],
+            bottom_mi: [None; 8],
+        }
+    }
+
+    #[test]
+    fn boundary_grid_keeps_unequal_tiles_and_rows_disjoint() {
+        let grid = SbBoundaryGrid::new(&[2, 3], 2);
+        let tile0_sync = RowSync::new(2);
+        let tile1_sync = RowSync::new(2);
+        let tile0 = boundary(10);
+        let tile1 = boundary(20);
+
+        grid.publish_and_advance(&tile0_sync, 0, 0, 1, tile0.clone())
+            .unwrap();
+        grid.publish_and_advance(&tile1_sync, 1, 0, 0, tile1.clone())
+            .unwrap();
+
+        assert_eq!(
+            grid.wait_for_above(&tile0_sync, 0, 1, 1).unwrap(),
+            Some(&tile0)
+        );
+        assert_eq!(
+            grid.wait_for_above(&tile1_sync, 1, 1, 0).unwrap(),
+            Some(&tile1)
+        );
+        assert_eq!(grid.published_boundaries(), 2);
+    }
+
+    #[test]
+    fn boundary_slot_is_published_exactly_once_under_race() {
+        let grid = Arc::new(SbBoundaryGrid::new(&[1], 1));
+        let sync = Arc::new(RowSync::new(1));
+        let (result_tx, result_rx) = mpsc::channel();
+        let mut publishers = Vec::new();
+        for seed in [30, 40] {
+            let publisher_grid = Arc::clone(&grid);
+            let publisher_sync = Arc::clone(&sync);
+            let publisher_tx = result_tx.clone();
+            publishers.push(std::thread::spawn(move || {
+                publisher_tx
+                    .send(publisher_grid.publish_and_advance(
+                        &publisher_sync,
+                        0,
+                        0,
+                        0,
+                        boundary(seed),
+                    ))
+                    .unwrap();
+            }));
+        }
+        drop(result_tx);
+        for publisher in publishers {
+            publisher.join().unwrap();
+        }
+
+        let results: Vec<_> = result_rx.into_iter().collect();
+        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+        assert_eq!(
+            results
+                .iter()
+                .filter(|result| **result == Err(SbBoundaryError::AlreadyPublished))
+                .count(),
+            1
+        );
+        assert_eq!(grid.published_boundaries(), 1);
+    }
+
+    #[test]
+    fn boundary_publication_happens_before_row_progress() {
+        let grid = Arc::new(SbBoundaryGrid::new(&[1], 2));
+        let sync = Arc::new(RowSync::new(2));
+        let expected = boundary(50);
+        let reader_grid = Arc::clone(&grid);
+        let reader_sync = Arc::clone(&sync);
+        let (started_tx, started_rx) = mpsc::channel();
+        let (done_tx, done_rx) = mpsc::channel();
+        let reader = std::thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            let observed = reader_grid
+                .wait_for_above(&reader_sync, 0, 1, 0)
+                .unwrap()
+                .unwrap();
+            done_tx.send(observed.clone()).unwrap();
+        });
+
+        started_rx.recv().unwrap();
+        assert!(done_rx.recv_timeout(Duration::from_millis(20)).is_err());
+        grid.publish_and_advance(&sync, 0, 0, 0, expected.clone())
+            .unwrap();
+        assert_eq!(
+            done_rx.recv_timeout(Duration::from_secs(1)).unwrap(),
+            expected
+        );
+        reader.join().unwrap();
+    }
+
+    #[test]
+    fn progress_without_boundary_trips_internal_error() {
+        let grid = SbBoundaryGrid::new(&[1], 2);
+        let sync = RowSync::new(2);
+        sync.write(0, 0, 1).unwrap();
+        assert_eq!(
+            grid.wait_for_above(&sync, 0, 1, 0),
+            Err(SbBoundaryError::MissingPublishedBoundary)
+        );
+    }
+
+    #[test]
+    fn cancelled_boundary_wait_returns_without_publication() {
+        let grid = SbBoundaryGrid::new(&[1], 2);
+        let sync = RowSync::new(2);
+        sync.cancel();
+        assert_eq!(
+            grid.wait_for_above(&sync, 0, 1, 0),
+            Err(SbBoundaryError::Cancelled)
+        );
+        assert_eq!(grid.published_boundaries(), 0);
     }
 
     #[test]
