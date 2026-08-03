@@ -5434,7 +5434,7 @@ fn build_inter_packet_with_residuals(
     // Stream-owned persistent workers. Parallel product callers provide
     // the same pool used by tile picking and loop filtering; serial tests
     // and one-thread encodes pass `None`.
-    worker_pool: Option<&mut rvp9_core::tile_threading::WorkerPool>,
+    mut worker_pool: Option<&mut rvp9_core::tile_threading::WorkerPool>,
     // Tile arithmetic writers are independent after the compressed header
     // fixes the frame context. Cap their worker count at the configured
     // encoder parallelism so packet assembly shares the product thread
@@ -5515,6 +5515,12 @@ fn build_inter_packet_with_residuals(
     };
 
     let tile_cols = 1usize << log2_tile_cols;
+    // Bit-accounting diagnostics are thread-local and intentionally observe
+    // the caller thread. Keep their tile traversals serial.
+    let run_parallel = tile_cols > 1
+        && max_threads > 1
+        && worker_pool.is_some()
+        && !rvp9_core::entropy::bitacct::enabled();
 
     // W-ALTREF — derive the 4-entry per-RefFrame sign-bias array from
     // the caller's 3-entry `[LAST, GOLDEN, ALTREF]` header bias.
@@ -5649,41 +5655,70 @@ fn build_inter_packet_with_residuals(
     if forward_mode_probs {
         let mut replay_counts = FrameCounts::default();
         if let Some(recorded) = recorded_coef_tiles {
-            rvp9_core::entropy::bitacct::with_suppressed(|| -> Result<(), EncodeError> {
-                for (tile_col, tile) in recorded.iter().enumerate() {
-                    let bounds = tile_bounds(
-                        mi_rows as usize,
-                        mi_cols as usize,
-                        0,
-                        log2_tile_cols,
-                        0,
-                        tile_col as u32,
-                    );
-                    let mut token_pass = CoefTokenPass::replay(&tile.retained);
-                    let mut count_sink = [];
-                    let mut bw = BoolWriter::start_count_only(&mut count_sink);
-                    let mut coef_ctx = TileCoefCtx::new(bounds.mi_col_end - bounds.mi_col_start);
-                    let mut tile_counts = FrameCounts::default();
-                    write_tile_inter_with_retained(
-                        &mut bw,
-                        &count_fc,
-                        &params,
-                        target.tx_mode,
-                        mi_grid,
-                        mi_rows,
-                        mi_cols,
-                        bounds,
-                        seg_write,
-                        prev_mv_grid,
-                        &mut coef_ctx,
-                        coef_source,
-                        Some(&mut tile_counts),
-                        Some(&mut token_pass),
-                    )?;
+            let replay_tile = |tile_col: usize| {
+                let tile = &recorded[tile_col];
+                rvp9_core::entropy::bitacct::with_suppressed(
+                    || -> Result<FrameCounts, EncodeError> {
+                        let bounds = tile_bounds(
+                            mi_rows as usize,
+                            mi_cols as usize,
+                            0,
+                            log2_tile_cols,
+                            0,
+                            tile_col as u32,
+                        );
+                        let mut token_pass = CoefTokenPass::replay(&tile.retained);
+                        let mut count_sink = [];
+                        let mut bw = BoolWriter::start_count_only(&mut count_sink);
+                        let mut coef_ctx =
+                            TileCoefCtx::new(bounds.mi_col_end - bounds.mi_col_start);
+                        let mut tile_counts = FrameCounts::default();
+                        write_tile_inter_with_retained(
+                            &mut bw,
+                            &count_fc,
+                            &params,
+                            target.tx_mode,
+                            mi_grid,
+                            mi_rows,
+                            mi_cols,
+                            bounds,
+                            seg_write,
+                            prev_mv_grid,
+                            &mut coef_ctx,
+                            coef_source,
+                            Some(&mut tile_counts),
+                            Some(&mut token_pass),
+                        )?;
+                        Ok(tile_counts)
+                    },
+                )
+            };
+            if run_parallel {
+                type TileReplayResult = Result<FrameCounts, EncodeError>;
+                let mut result_slots: Vec<Option<TileReplayResult>> =
+                    (0..tile_cols).map(|_| None).collect();
+                worker_pool
+                    .as_deref_mut()
+                    .expect("parallel mode counting requires the frame worker pool")
+                    .scope(|scope| {
+                        for (tile_col, result_slot) in result_slots.iter_mut().enumerate() {
+                            let replay_tile = &replay_tile;
+                            scope.submit(move || {
+                                *result_slot = Some(replay_tile(tile_col));
+                            });
+                        }
+                    });
+                for (tile_col, result) in result_slots.into_iter().enumerate() {
+                    let tile_counts = result.unwrap_or_else(|| {
+                        panic!("inter mode-count tile {tile_col} produced no result")
+                    })?;
                     replay_counts.add_non_coef(&tile_counts);
                 }
-                Ok(())
-            })?;
+            } else {
+                for tile_col in 0..tile_cols {
+                    replay_counts.add_non_coef(&replay_tile(tile_col)?);
+                }
+            }
         }
         let forward_counts = if recorded_coef_tiles.is_some() {
             &replay_counts
@@ -5794,13 +5829,6 @@ fn build_inter_packet_with_residuals(
         Ok((tile_buf, tile_counts))
     };
 
-    // Bit-accounting diagnostics are thread-local and intentionally observe
-    // the caller thread. Keep that opt-in path serial; production encoding
-    // runs independent tile arithmetic writers concurrently.
-    let run_parallel = tile_cols > 1
-        && max_threads > 1
-        && worker_pool.is_some()
-        && !rvp9_core::entropy::bitacct::enabled();
     let mut tile_bufs = Vec::with_capacity(tile_cols);
     if run_parallel {
         type TileWriteResult = Result<(Vec<u8>, FrameCounts), EncodeError>;
