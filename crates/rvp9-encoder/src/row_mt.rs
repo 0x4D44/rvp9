@@ -209,6 +209,186 @@ impl SbBoundaryGrid {
     }
 }
 
+/// Mutable view of one row worker's private full-frame reconstruction and MI
+/// shadows.
+///
+/// Workers never share these slices. The view only exports the completed
+/// bottom edge of one superblock or imports the immutable edge published by
+/// the row above. Pixel coordinates are frame-global; the MI grid may cover a
+/// single column tile and therefore carries its global starting column.
+pub struct RowWorkerShadow<'a> {
+    recon_y: &'a mut [u8],
+    recon_u: &'a mut [u8],
+    recon_v: &'a mut [u8],
+    frame_width: usize,
+    frame_height: usize,
+    mi_grid: &'a mut [Option<ModeInfo>],
+    mi_col_start: usize,
+    mi_cols: usize,
+}
+
+impl<'a> RowWorkerShadow<'a> {
+    /// Bind owned worker buffers to their frame and tile layout.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the reconstruction planes are not tight YUV420 buffers for
+    /// a positive 64-aligned frame, or if the MI grid does not cover a
+    /// non-empty, SB-aligned column-tile rectangle in that frame.
+    pub fn new(
+        recon_y: &'a mut [u8],
+        recon_u: &'a mut [u8],
+        recon_v: &'a mut [u8],
+        frame_width: usize,
+        mi_grid: &'a mut [Option<ModeInfo>],
+        mi_col_start: usize,
+        mi_cols: usize,
+    ) -> Self {
+        assert!(
+            frame_width > 0 && frame_width.is_multiple_of(64),
+            "row worker frame width must be a positive multiple of 64"
+        );
+        assert!(
+            recon_y.len().is_multiple_of(frame_width),
+            "row worker luma plane must use tight frame stride"
+        );
+        let frame_height = recon_y.len() / frame_width;
+        assert!(
+            frame_height > 0 && frame_height.is_multiple_of(64),
+            "row worker frame height must be a positive multiple of 64"
+        );
+        let uv_width = frame_width / 2;
+        let uv_height = frame_height / 2;
+        assert_eq!(
+            recon_u.len(),
+            uv_width * uv_height,
+            "row worker U plane must be tight 4:2:0"
+        );
+        assert_eq!(
+            recon_v.len(),
+            uv_width * uv_height,
+            "row worker V plane must be tight 4:2:0"
+        );
+        assert!(
+            mi_cols > 0 && mi_cols.is_multiple_of(8),
+            "row worker MI tile width must contain whole superblocks"
+        );
+        assert!(
+            mi_col_start.is_multiple_of(8),
+            "row worker MI tile start must be superblock-aligned"
+        );
+        assert!(
+            mi_col_start + mi_cols <= frame_width / 8,
+            "row worker MI tile exceeds the frame"
+        );
+        assert_eq!(
+            mi_grid.len(),
+            frame_height / 8 * mi_cols,
+            "row worker MI grid has the wrong tile shape"
+        );
+        Self {
+            recon_y,
+            recon_u,
+            recon_v,
+            frame_width,
+            frame_height,
+            mi_grid,
+            mi_col_start,
+            mi_cols,
+        }
+    }
+
+    /// Copy one completed superblock's bottom reconstruction and MI edges.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the superblock lies outside this worker's frame or tile.
+    pub fn export_boundary(&self, sb_row: usize, global_sb_col: usize) -> SbBoundary {
+        let (y_row, y_col, uv_row, uv_col, mi_row, local_mi_col) =
+            self.boundary_coordinates(sb_row, global_sb_col);
+        let mut boundary = SbBoundary {
+            bottom_y: [0; 64],
+            bottom_u: [0; 32],
+            bottom_v: [0; 32],
+            bottom_mi: [None; 8],
+        };
+        let y_start = y_row * self.frame_width + y_col;
+        boundary
+            .bottom_y
+            .copy_from_slice(&self.recon_y[y_start..y_start + 64]);
+        let uv_width = self.frame_width / 2;
+        let uv_start = uv_row * uv_width + uv_col;
+        boundary
+            .bottom_u
+            .copy_from_slice(&self.recon_u[uv_start..uv_start + 32]);
+        boundary
+            .bottom_v
+            .copy_from_slice(&self.recon_v[uv_start..uv_start + 32]);
+        let mi_start = mi_row * self.mi_cols + local_mi_col;
+        boundary
+            .bottom_mi
+            .copy_from_slice(&self.mi_grid[mi_start..mi_start + 8]);
+        boundary
+    }
+
+    /// Import the immutable edge above the requested superblock row.
+    ///
+    /// # Panics
+    ///
+    /// Panics for row zero or if the superblock lies outside this worker's
+    /// frame or tile.
+    pub fn import_above_boundary(
+        &mut self,
+        sb_row: usize,
+        global_sb_col: usize,
+        boundary: &SbBoundary,
+    ) {
+        assert!(sb_row > 0, "the first SB row has no boundary above it");
+        let (_, y_col, _, uv_col, _, local_mi_col) =
+            self.boundary_coordinates(sb_row, global_sb_col);
+        let y_row = sb_row * 64 - 1;
+        let y_start = y_row * self.frame_width + y_col;
+        self.recon_y[y_start..y_start + 64].copy_from_slice(&boundary.bottom_y);
+        let uv_width = self.frame_width / 2;
+        let uv_row = sb_row * 32 - 1;
+        let uv_start = uv_row * uv_width + uv_col;
+        self.recon_u[uv_start..uv_start + 32].copy_from_slice(&boundary.bottom_u);
+        self.recon_v[uv_start..uv_start + 32].copy_from_slice(&boundary.bottom_v);
+        let mi_row = sb_row * 8 - 1;
+        let mi_start = mi_row * self.mi_cols + local_mi_col;
+        self.mi_grid[mi_start..mi_start + 8].copy_from_slice(&boundary.bottom_mi);
+    }
+
+    fn boundary_coordinates(
+        &self,
+        sb_row: usize,
+        global_sb_col: usize,
+    ) -> (usize, usize, usize, usize, usize, usize) {
+        assert!(
+            sb_row < self.frame_height / 64,
+            "row worker SB row is out of bounds"
+        );
+        let global_mi_col = global_sb_col
+            .checked_mul(8)
+            .expect("row worker SB column overflow");
+        let local_mi_col = global_mi_col
+            .checked_sub(self.mi_col_start)
+            .expect("row worker SB column precedes its tile");
+        assert!(
+            local_mi_col + 8 <= self.mi_cols,
+            "row worker SB column exceeds its tile"
+        );
+        (
+            (sb_row + 1) * 64 - 1,
+            global_sb_col * 64,
+            (sb_row + 1) * 32 - 1,
+            global_sb_col * 32,
+            (sb_row + 1) * 8 - 1,
+            local_mi_col,
+        )
+    }
+}
+
 /// One encoder row-MT work item.
 ///
 /// Tile rows are outside the v1 scope, so a job is fully identified by its
@@ -574,7 +754,13 @@ impl RowSync {
 
 #[cfg(test)]
 mod tests {
-    use super::{RowJob, RowMtContext, RowSync, SbBoundary, SbBoundaryError, SbBoundaryGrid};
+    use super::{
+        RowJob, RowMtContext, RowSync, RowWorkerShadow, SbBoundary, SbBoundaryError, SbBoundaryGrid,
+    };
+    use rvp9_core::block::BlockSize;
+    use rvp9_core::intra_pred::IntraMode;
+    use rvp9_core::mode_info::{BlockMode, ModeInfo};
+    use rvp9_core::transforms::TxSize;
     use std::collections::HashSet;
     use std::sync::Arc;
     use std::sync::mpsc;
@@ -595,6 +781,90 @@ mod tests {
             bottom_v: [seed.wrapping_add(2); 32],
             bottom_mi: [None; 8],
         }
+    }
+
+    fn mode_info(seed: u8) -> ModeInfo {
+        ModeInfo {
+            block_size: BlockSize::Block8x8,
+            tx_size: TxSize::Tx8x8,
+            skip: seed.is_multiple_of(2),
+            segment_id: seed % 8,
+            seg_id_predicted: false,
+            mode: BlockMode::Intra {
+                y_mode: IntraMode::Dc,
+                uv_mode: IntraMode::Dc,
+            },
+            bmi: Default::default(),
+        }
+    }
+
+    #[test]
+    fn serial_worker_shadows_handoff_one_superblock_boundary() {
+        const WIDTH: usize = 128;
+        const HEIGHT: usize = 128;
+        const UV_WIDTH: usize = WIDTH / 2;
+        const UV_HEIGHT: usize = HEIGHT / 2;
+        const MI_COL_START: usize = 8;
+        const MI_COLS: usize = 8;
+        let mut producer_y = vec![1u8; WIDTH * HEIGHT];
+        let mut producer_u = vec![2u8; UV_WIDTH * UV_HEIGHT];
+        let mut producer_v = vec![3u8; UV_WIDTH * UV_HEIGHT];
+        let mut producer_mi = vec![None; HEIGHT / 8 * MI_COLS];
+        for col in 0..64 {
+            producer_y[63 * WIDTH + 64 + col] = 10 + col as u8;
+        }
+        for col in 0..32 {
+            producer_u[31 * UV_WIDTH + 32 + col] = 20 + col as u8;
+            producer_v[31 * UV_WIDTH + 32 + col] = 30 + col as u8;
+        }
+        for col in 0..8 {
+            producer_mi[7 * MI_COLS + col] = Some(mode_info(40 + col as u8));
+        }
+        let expected = RowWorkerShadow::new(
+            &mut producer_y,
+            &mut producer_u,
+            &mut producer_v,
+            WIDTH,
+            &mut producer_mi,
+            MI_COL_START,
+            MI_COLS,
+        )
+        .export_boundary(0, 1);
+
+        let grid = SbBoundaryGrid::new(&[1, 1], 2);
+        let sync = RowSync::new(2);
+        grid.publish_and_advance(&sync, 1, 0, 0, expected.clone())
+            .unwrap();
+
+        let mut consumer_y = vec![101u8; WIDTH * HEIGHT];
+        let mut consumer_u = vec![102u8; UV_WIDTH * UV_HEIGHT];
+        let mut consumer_v = vec![103u8; UV_WIDTH * UV_HEIGHT];
+        let mut consumer_mi = vec![None; HEIGHT / 8 * MI_COLS];
+        let observed = grid.wait_for_above(&sync, 1, 1, 0).unwrap().unwrap();
+        RowWorkerShadow::new(
+            &mut consumer_y,
+            &mut consumer_u,
+            &mut consumer_v,
+            WIDTH,
+            &mut consumer_mi,
+            MI_COL_START,
+            MI_COLS,
+        )
+        .import_above_boundary(1, 1, observed);
+
+        assert_eq!(&consumer_y[63 * WIDTH + 64..64 * WIDTH], &expected.bottom_y);
+        assert_eq!(consumer_y[63 * WIDTH + 63], 101);
+        assert_eq!(consumer_y[64 * WIDTH + 64], 101);
+        assert_eq!(
+            &consumer_u[31 * UV_WIDTH + 32..32 * UV_WIDTH],
+            &expected.bottom_u
+        );
+        assert_eq!(
+            &consumer_v[31 * UV_WIDTH + 32..32 * UV_WIDTH],
+            &expected.bottom_v
+        );
+        assert_eq!(&consumer_mi[7 * MI_COLS..8 * MI_COLS], &expected.bottom_mi);
+        assert!(consumer_mi[8 * MI_COLS..].iter().all(Option::is_none));
     }
 
     #[test]
