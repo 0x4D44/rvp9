@@ -51,6 +51,7 @@ pub struct BoolWriter<'a> {
     buffer: &'a mut [u8],
     error: bool,
     count_only: bool,
+    bitacct_enabled: bool,
 }
 
 impl<'a> BoolWriter<'a> {
@@ -60,6 +61,10 @@ impl<'a> BoolWriter<'a> {
     pub fn start_encode(buffer: &'a mut [u8]) -> Self {
         super::bitacct::set_category(super::bitacct::BitCategory::Other);
         let size = u32::try_from(buffer.len()).unwrap_or(i32::MAX as u32);
+        // Bit accounting is initialized before stream writers are created and
+        // stays fixed for their lifetime. Snapshot it once so the production
+        // arithmetic-coder hot path does not load a global atomic per bit.
+        let bitacct_enabled = super::bitacct::enabled();
         let mut w = Self {
             low_value: 0,
             range: 255,
@@ -69,6 +74,7 @@ impl<'a> BoolWriter<'a> {
             buffer,
             error: false,
             count_only: false,
+            bitacct_enabled,
         };
         // Per libvpx: emit a `0` at probability 128 as a marker bit so
         // the reader's `vpx_reader_init` can verify the start of stream.
@@ -94,6 +100,7 @@ impl<'a> BoolWriter<'a> {
             buffer,
             error: false,
             count_only: true,
+            bitacct_enabled: false,
         }
     }
 
@@ -114,10 +121,9 @@ impl<'a> BoolWriter<'a> {
         if self.count_only {
             return;
         }
-        // E4 diagnostic: env-gated per-category bit accounting. No-op
-        // (one relaxed atomic load) unless RVP9_E4_BITACCT is set. Does
-        // NOT alter coding state.
-        if super::bitacct::enabled() {
+        // E4 diagnostic: the writer snapshots the stream-wide flag at
+        // construction. This does not alter coding state.
+        if self.bitacct_enabled {
             super::bitacct::record(bit, probability);
         }
         let mut count = self.count;
