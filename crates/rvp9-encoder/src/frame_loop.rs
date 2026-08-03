@@ -1294,6 +1294,79 @@ struct InterTileScratch {
     mv_grid: Vec<PrevFrameMvRef>,
 }
 
+struct TightTileRowsMut<'a, T> {
+    col_start: usize,
+    rows: Vec<&'a mut [T]>,
+}
+
+impl<T: Clone> TightTileRowsMut<'_, T> {
+    fn copy_from_full_frame(&mut self, source: &[T], source_stride: usize) {
+        assert!(
+            source_stride > 0,
+            "tile copy source stride must be positive"
+        );
+        assert_eq!(
+            source.len(),
+            source_stride * self.rows.len(),
+            "tile copy source must be a tight full-frame plane"
+        );
+        for (row_index, destination) in self.rows.iter_mut().enumerate() {
+            let start = row_index * source_stride + self.col_start;
+            let end = start + destination.len();
+            destination.clone_from_slice(&source[start..end]);
+        }
+    }
+}
+
+fn split_tight_plane_tiles_mut<'a, T>(
+    plane: &'a mut [T],
+    row_width: usize,
+    tile_ranges: &[(usize, usize)],
+) -> Vec<TightTileRowsMut<'a, T>> {
+    assert!(row_width > 0, "tile split row width must be positive");
+    assert!(
+        plane.len().is_multiple_of(row_width),
+        "tile split plane must use a tight stride"
+    );
+    assert!(!tile_ranges.is_empty(), "tile split requires a tile");
+    let mut expected_start = 0usize;
+    for &(start, end) in tile_ranges {
+        assert_eq!(start, expected_start, "tile ranges must be contiguous");
+        assert!(end > start, "tile ranges must be non-empty");
+        expected_start = end;
+    }
+    assert_eq!(expected_start, row_width, "tile ranges must cover each row");
+
+    let row_count = plane.len() / row_width;
+    let mut tile_rows: Vec<Vec<&'a mut [T]>> = tile_ranges
+        .iter()
+        .map(|_| Vec::with_capacity(row_count))
+        .collect();
+    for row in plane.chunks_exact_mut(row_width) {
+        let mut remaining = row;
+        for (tile_index, &(start, end)) in tile_ranges.iter().enumerate() {
+            debug_assert_eq!(start, row_width - remaining.len());
+            let (tile, rest) = remaining.split_at_mut(end - start);
+            tile_rows[tile_index].push(tile);
+            remaining = rest;
+        }
+        debug_assert!(remaining.is_empty());
+    }
+
+    tile_rows
+        .into_iter()
+        .zip(tile_ranges)
+        .map(|(rows, &(col_start, _))| TightTileRowsMut { col_start, rows })
+        .collect()
+}
+
+struct InterTileOutputMut<'a> {
+    recon_y: TightTileRowsMut<'a, u8>,
+    recon_u: TightTileRowsMut<'a, u8>,
+    recon_v: TightTileRowsMut<'a, u8>,
+    mv_grid: TightTileRowsMut<'a, PrevFrameMvRef>,
+}
+
 /// Owned output from one independent full-height keyframe column tile.
 struct KeyframeTileJobResult {
     tile_col: usize,
@@ -3302,23 +3375,58 @@ impl StreamEncoder {
             let s2_frame_gate = rvp9_core::mode_decision::inter::frame_s2_gate();
             let mut result_slots: Vec<Option<InterTileJobResult>> =
                 (0..tile_count).map(|_| None).collect();
-            // Let tile 0 render into the allocation that will become the
-            // merged reconstruction. After the jobs finish we exchange it
-            // back and copy only the other disjoint tile columns over it.
-            // The displaced output allocation remains tile 0's reusable
-            // scratch, so neither side loses its capacity.
-            std::mem::swap(&mut new_recon_y, &mut self.inter_tile_scratch[0].recon_y);
-            std::mem::swap(&mut new_recon_u, &mut self.inter_tile_scratch[0].recon_u);
-            std::mem::swap(&mut new_recon_v, &mut self.inter_tile_scratch[0].recon_v);
-            std::mem::swap(&mut cur_mv_grid, &mut self.inter_tile_scratch[0].mv_grid);
+            let mi_tile_ranges: Vec<_> = (0..tile_count)
+                .map(|tile_col| {
+                    let bounds = tile_bounds(
+                        mi_rows_us,
+                        mi_cols_us,
+                        0,
+                        log2_tile_cols,
+                        0,
+                        tile_col as u32,
+                    );
+                    (bounds.mi_col_start, bounds.mi_col_end)
+                })
+                .collect();
+            let y_tile_ranges: Vec<_> = mi_tile_ranges
+                .iter()
+                .map(|&(start, end)| (start * 8, end * 8))
+                .collect();
+            let uv_tile_ranges: Vec<_> = mi_tile_ranges
+                .iter()
+                .map(|&(start, end)| (start * 4, end * 4))
+                .collect();
+            let y_outputs =
+                split_tight_plane_tiles_mut(&mut new_recon_y, w as usize, &y_tile_ranges);
+            let u_outputs =
+                split_tight_plane_tiles_mut(&mut new_recon_u, w as usize / 2, &uv_tile_ranges);
+            let v_outputs =
+                split_tight_plane_tiles_mut(&mut new_recon_v, w as usize / 2, &uv_tile_ranges);
+            let mv_outputs =
+                split_tight_plane_tiles_mut(&mut cur_mv_grid, mi_cols_us, &mi_tile_ranges);
+            let tile_outputs: Vec<_> = y_outputs
+                .into_iter()
+                .zip(u_outputs)
+                .zip(v_outputs)
+                .zip(mv_outputs)
+                .map(
+                    |(((recon_y, recon_u), recon_v), mv_grid)| InterTileOutputMut {
+                        recon_y,
+                        recon_u,
+                        recon_v,
+                        mv_grid,
+                    },
+                )
+                .collect();
             let tile_scratch = &mut self.inter_tile_scratch;
             self.frame_worker_pool
                 .as_mut()
                 .expect("parallel tile picking requires the frame worker pool")
                 .scope(|scope| {
-                    for (tile_col, (result_slot, scratch)) in result_slots
+                    for (tile_col, ((result_slot, scratch), mut output)) in result_slots
                         .iter_mut()
                         .zip(tile_scratch.iter_mut())
+                        .zip(tile_outputs)
                         .enumerate()
                     {
                         let bounds = tile_bounds(
@@ -3364,6 +3472,18 @@ impl StreamEncoder {
                             let recorded_coef_tile = tile_encode
                                 .recorded_coef_tile
                                 .expect("one coefficient-token result per tile job");
+                            output
+                                .recon_y
+                                .copy_from_full_frame(&scratch.recon_y, w as usize);
+                            output
+                                .recon_u
+                                .copy_from_full_frame(&scratch.recon_u, w as usize / 2);
+                            output
+                                .recon_v
+                                .copy_from_full_frame(&scratch.recon_v, w as usize / 2);
+                            output
+                                .mv_grid
+                                .copy_from_full_frame(&scratch.mv_grid, mi_cols_us);
                             let result = InterTileJobResult {
                                 claimed_jobs: (0..(h as usize).div_ceil(64))
                                     .map(|sb_row| crate::row_mt::RowJob { sb_row, tile_col })
@@ -3380,10 +3500,6 @@ impl StreamEncoder {
                         });
                     }
                 });
-            std::mem::swap(&mut new_recon_y, &mut tile_scratch[0].recon_y);
-            std::mem::swap(&mut new_recon_u, &mut tile_scratch[0].recon_u);
-            std::mem::swap(&mut new_recon_v, &mut tile_scratch[0].recon_v);
-            std::mem::swap(&mut cur_mv_grid, &mut tile_scratch[0].mv_grid);
             let tile_results: Vec<InterTileJobResult> = result_slots
                 .into_iter()
                 .enumerate()
@@ -3418,52 +3534,6 @@ impl StreamEncoder {
                 .require_complete()
                 .expect("every inter row job must produce a worker result");
 
-            // Worker 0 rendered directly into the frame allocation via the
-            // swaps above. Copy only jobs owned by the other full-frame
-            // shadows. Y/U/V destinations are independent, so the three
-            // plane merges run concurrently without shared mutable state.
-            self.frame_worker_pool
-                .as_mut()
-                .expect("parallel tile reconstruction merge requires the frame worker pool")
-                .scope(|scope| {
-                    scope.submit(|| {
-                        for (job, worker_id) in row_owners.iter() {
-                            if worker_id != 0 {
-                                row_owners.merge_job_rect(
-                                    &mut new_recon_y,
-                                    &tile_scratch[worker_id].recon_y,
-                                    job,
-                                    64,
-                                );
-                            }
-                        }
-                    });
-                    scope.submit(|| {
-                        for (job, worker_id) in row_owners.iter() {
-                            if worker_id != 0 {
-                                row_owners.merge_job_rect(
-                                    &mut new_recon_u,
-                                    &tile_scratch[worker_id].recon_u,
-                                    job,
-                                    32,
-                                );
-                            }
-                        }
-                    });
-                    scope.submit(|| {
-                        for (job, worker_id) in row_owners.iter() {
-                            if worker_id != 0 {
-                                row_owners.merge_job_rect(
-                                    &mut new_recon_v,
-                                    &tile_scratch[worker_id].recon_v,
-                                    job,
-                                    32,
-                                );
-                            }
-                        }
-                    });
-                });
-
             let mut recorded_coef_tiles = Vec::with_capacity(tile_count);
             // Tile grids cover disjoint, ordered column spans. Append one
             // row span from each tile rather than first filling a full
@@ -3488,14 +3558,6 @@ impl StreamEncoder {
                 row_owners.merge_job_rect(&mut sb_partitions, &result.partitions, job, 1);
                 if let Some(history) = &result.history {
                     row_owners.merge_job_rect(&mut self.vbp_partition_history, history, job, 1);
-                }
-                if worker_id != 0 {
-                    row_owners.merge_job_rect(
-                        &mut cur_mv_grid,
-                        &tile_scratch[worker_id].mv_grid,
-                        job,
-                        8,
-                    );
                 }
             }
             for result in tile_results {
