@@ -210,20 +210,28 @@ impl SbBoundaryGrid {
     }
 }
 
-/// Mutable view of one row worker's private full-frame reconstruction and MI
-/// shadows.
+/// Mutable view of one row worker's private reconstruction and MI shadows.
 ///
 /// Workers never share these slices. The view only exports the completed
 /// bottom edge of one superblock or imports the immutable edge published by
-/// the row above. Pixel coordinates are frame-global; the MI grid may cover a
-/// single column tile and therefore carries its global starting column.
+/// the row above. Pixel and MI coordinates remain frame-global; backing
+/// storage may cover the full frame or one compact tile-width row window.
 pub struct RowWorkerShadow<'a> {
     recon_y: &'a mut [u8],
     recon_u: &'a mut [u8],
     recon_v: &'a mut [u8],
-    frame_width: usize,
     frame_height: usize,
+    y_row_start: usize,
+    y_col_start: usize,
+    y_stride: usize,
+    y_rows: usize,
+    uv_row_start: usize,
+    uv_col_start: usize,
+    uv_stride: usize,
+    uv_rows: usize,
     mi_grid: &'a mut [Option<ModeInfo>],
+    mi_row_start: usize,
+    mi_rows: usize,
     mi_col_start: usize,
     mi_cols: usize,
 }
@@ -292,9 +300,125 @@ impl<'a> RowWorkerShadow<'a> {
             recon_y,
             recon_u,
             recon_v,
-            frame_width,
             frame_height,
+            y_row_start: 0,
+            y_col_start: 0,
+            y_stride: frame_width,
+            y_rows: frame_height,
+            uv_row_start: 0,
+            uv_col_start: 0,
+            uv_stride: uv_width,
+            uv_rows: uv_height,
             mi_grid,
+            mi_row_start: 0,
+            mi_rows: frame_height / 8,
+            mi_col_start,
+            mi_cols,
+        }
+    }
+
+    /// Bind compact storage for one tile-width superblock-row job.
+    ///
+    /// For rows after row zero, luma and chroma storage begins with the one
+    /// reconstruction row immediately above the job. MI storage begins three
+    /// rows above it. The remaining storage contains only this job's visible
+    /// output rows, including a partial final superblock row.
+    ///
+    /// # Panics
+    ///
+    /// Panics if dimensions, row coordinates, tile columns, or backing slice
+    /// lengths do not describe that exact compact window.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_compact_row(
+        recon_y: &'a mut [u8],
+        recon_u: &'a mut [u8],
+        recon_v: &'a mut [u8],
+        frame_dimensions: (usize, usize),
+        sb_row: usize,
+        mi_grid: &'a mut [Option<ModeInfo>],
+        mi_columns: (usize, usize),
+    ) -> Self {
+        let (frame_width, frame_height) = frame_dimensions;
+        let (mi_col_start, mi_cols) = mi_columns;
+        assert!(
+            frame_width > 0 && frame_width.is_multiple_of(64),
+            "row worker frame width must be a positive multiple of 64"
+        );
+        assert!(
+            frame_height > 0 && frame_height.is_multiple_of(8),
+            "row worker frame height must be a positive multiple of 8"
+        );
+        assert!(
+            sb_row < frame_height.div_ceil(64),
+            "compact row worker SB row is out of bounds"
+        );
+        assert!(
+            mi_cols > 0 && mi_cols.is_multiple_of(8),
+            "row worker MI tile width must contain whole superblocks"
+        );
+        assert!(
+            mi_col_start.is_multiple_of(8),
+            "row worker MI tile start must be superblock-aligned"
+        );
+        assert!(
+            mi_col_start + mi_cols <= frame_width / 8,
+            "row worker MI tile exceeds the frame"
+        );
+
+        let job_y_start = sb_row * 64;
+        let job_y_end = (job_y_start + 64).min(frame_height);
+        let y_row_start = job_y_start.saturating_sub(usize::from(sb_row > 0));
+        let y_rows = job_y_end - y_row_start;
+        let y_stride = mi_cols * 8;
+        assert_eq!(
+            recon_y.len(),
+            y_rows * y_stride,
+            "compact row worker luma plane has the wrong shape"
+        );
+
+        let uv_frame_height = frame_height / 2;
+        let job_uv_start = sb_row * 32;
+        let job_uv_end = (job_uv_start + 32).min(uv_frame_height);
+        let uv_row_start = job_uv_start.saturating_sub(usize::from(sb_row > 0));
+        let uv_rows = job_uv_end - uv_row_start;
+        let uv_stride = mi_cols * 4;
+        assert_eq!(
+            recon_u.len(),
+            uv_rows * uv_stride,
+            "compact row worker U plane has the wrong shape"
+        );
+        assert_eq!(
+            recon_v.len(),
+            uv_rows * uv_stride,
+            "compact row worker V plane has the wrong shape"
+        );
+
+        let job_mi_start = sb_row * 8;
+        let job_mi_end = (job_mi_start + 8).min(frame_height / 8);
+        let mi_row_start = job_mi_start.saturating_sub(3);
+        let mi_rows = job_mi_end - mi_row_start;
+        assert_eq!(
+            mi_grid.len(),
+            mi_rows * mi_cols,
+            "compact row worker MI grid has the wrong shape"
+        );
+
+        Self {
+            recon_y,
+            recon_u,
+            recon_v,
+            frame_height,
+            y_row_start,
+            y_col_start: mi_col_start * 8,
+            y_stride,
+            y_rows,
+            uv_row_start,
+            uv_col_start: mi_col_start * 4,
+            uv_stride,
+            uv_rows,
+            mi_grid,
+            mi_row_start,
+            mi_rows,
             mi_col_start,
             mi_cols,
         }
@@ -314,12 +438,11 @@ impl<'a> RowWorkerShadow<'a> {
             bottom_v: [0; 32],
             bottom_mi: [None; 24],
         };
-        let y_start = y_row * self.frame_width + y_col;
+        let y_start = self.y_index(y_row, y_col, 64);
         boundary
             .bottom_y
             .copy_from_slice(&self.recon_y[y_start..y_start + 64]);
-        let uv_width = self.frame_width / 2;
-        let uv_start = uv_row * uv_width + uv_col;
+        let uv_start = self.uv_index(uv_row, uv_col, 32);
         boundary
             .bottom_u
             .copy_from_slice(&self.recon_u[uv_start..uv_start + 32]);
@@ -331,7 +454,7 @@ impl<'a> RowWorkerShadow<'a> {
             "row boundary requires three visible causal MI rows"
         );
         for row in 0..3 {
-            let mi_start = (mi_row - 2 + row) * self.mi_cols + local_mi_col;
+            let mi_start = self.mi_index(mi_row - 2 + row, local_mi_col, 8);
             boundary.bottom_mi[row * 8..row * 8 + 8]
                 .copy_from_slice(&self.mi_grid[mi_start..mi_start + 8]);
         }
@@ -354,16 +477,15 @@ impl<'a> RowWorkerShadow<'a> {
         let (_, y_col, _, uv_col, _, local_mi_col) =
             self.boundary_coordinates(sb_row, global_sb_col);
         let y_row = sb_row * 64 - 1;
-        let y_start = y_row * self.frame_width + y_col;
+        let y_start = self.y_index(y_row, y_col, 64);
         self.recon_y[y_start..y_start + 64].copy_from_slice(&boundary.bottom_y);
-        let uv_width = self.frame_width / 2;
         let uv_row = sb_row * 32 - 1;
-        let uv_start = uv_row * uv_width + uv_col;
+        let uv_start = self.uv_index(uv_row, uv_col, 32);
         self.recon_u[uv_start..uv_start + 32].copy_from_slice(&boundary.bottom_u);
         self.recon_v[uv_start..uv_start + 32].copy_from_slice(&boundary.bottom_v);
         let mi_row = sb_row * 8 - 3;
         for row in 0..3 {
-            let mi_start = (mi_row + row) * self.mi_cols + local_mi_col;
+            let mi_start = self.mi_index(mi_row + row, local_mi_col, 8);
             self.mi_grid[mi_start..mi_start + 8]
                 .copy_from_slice(&boundary.bottom_mi[row * 8..row * 8 + 8]);
         }
@@ -396,6 +518,45 @@ impl<'a> RowWorkerShadow<'a> {
             ((sb_row + 1) * 8).min(self.frame_height / 8) - 1,
             local_mi_col,
         )
+    }
+
+    fn y_index(&self, global_row: usize, global_col: usize, width: usize) -> usize {
+        let local_row = global_row
+            .checked_sub(self.y_row_start)
+            .expect("row worker luma row precedes its window");
+        let local_col = global_col
+            .checked_sub(self.y_col_start)
+            .expect("row worker luma column precedes its window");
+        assert!(
+            local_row < self.y_rows && local_col + width <= self.y_stride,
+            "row worker luma span exceeds its window"
+        );
+        local_row * self.y_stride + local_col
+    }
+
+    fn uv_index(&self, global_row: usize, global_col: usize, width: usize) -> usize {
+        let local_row = global_row
+            .checked_sub(self.uv_row_start)
+            .expect("row worker chroma row precedes its window");
+        let local_col = global_col
+            .checked_sub(self.uv_col_start)
+            .expect("row worker chroma column precedes its window");
+        assert!(
+            local_row < self.uv_rows && local_col + width <= self.uv_stride,
+            "row worker chroma span exceeds its window"
+        );
+        local_row * self.uv_stride + local_col
+    }
+
+    fn mi_index(&self, global_row: usize, local_col: usize, width: usize) -> usize {
+        let local_row = global_row
+            .checked_sub(self.mi_row_start)
+            .expect("row worker MI row precedes its window");
+        assert!(
+            local_row < self.mi_rows && local_col + width <= self.mi_cols,
+            "row worker MI span exceeds its window"
+        );
+        local_row * self.mi_cols + local_col
     }
 }
 
@@ -1163,6 +1324,106 @@ mod tests {
     }
 
     #[test]
+    fn compact_worker_shadow_matches_full_frame_boundary_handoff() {
+        const WIDTH: usize = 128;
+        const HEIGHT: usize = 128;
+        const MI_COL_START: usize = 8;
+        const MI_COLS: usize = 8;
+
+        let mut full_y = vec![0u8; WIDTH * HEIGHT];
+        let mut full_u = vec![0u8; (WIDTH / 2) * (HEIGHT / 2)];
+        let mut full_v = vec![0u8; (WIDTH / 2) * (HEIGHT / 2)];
+        let mut full_mi = vec![None; (HEIGHT / 8) * MI_COLS];
+        for col in 0..64 {
+            full_y[63 * WIDTH + 64 + col] = 10 + col as u8;
+        }
+        for col in 0..32 {
+            full_u[31 * (WIDTH / 2) + 32 + col] = 20 + col as u8;
+            full_v[31 * (WIDTH / 2) + 32 + col] = 30 + col as u8;
+        }
+        for row in 5..8 {
+            for col in 0..8 {
+                full_mi[row * MI_COLS + col] = Some(mode_info(40 + ((row - 5) * 8 + col) as u8));
+            }
+        }
+        let full_boundary = RowWorkerShadow::new(
+            &mut full_y,
+            &mut full_u,
+            &mut full_v,
+            WIDTH,
+            &mut full_mi,
+            MI_COL_START,
+            MI_COLS,
+        )
+        .export_boundary(0, 1);
+
+        let mut compact_y = vec![0u8; 64 * 64];
+        let mut compact_u = vec![0u8; 32 * 32];
+        let mut compact_v = vec![0u8; 32 * 32];
+        let mut compact_mi = vec![None; 8 * MI_COLS];
+        compact_y[63 * 64..64 * 64].copy_from_slice(&full_boundary.bottom_y);
+        compact_u[31 * 32..32 * 32].copy_from_slice(&full_boundary.bottom_u);
+        compact_v[31 * 32..32 * 32].copy_from_slice(&full_boundary.bottom_v);
+        compact_mi[5 * MI_COLS..8 * MI_COLS].copy_from_slice(&full_boundary.bottom_mi);
+        let compact_boundary = RowWorkerShadow::new_compact_row(
+            &mut compact_y,
+            &mut compact_u,
+            &mut compact_v,
+            (WIDTH, HEIGHT),
+            0,
+            &mut compact_mi,
+            (MI_COL_START, MI_COLS),
+        )
+        .export_boundary(0, 1);
+        assert_eq!(compact_boundary, full_boundary);
+
+        let mut full_consumer_y = vec![101u8; WIDTH * HEIGHT];
+        let mut full_consumer_u = vec![102u8; (WIDTH / 2) * (HEIGHT / 2)];
+        let mut full_consumer_v = vec![103u8; (WIDTH / 2) * (HEIGHT / 2)];
+        let mut full_consumer_mi = vec![None; (HEIGHT / 8) * MI_COLS];
+        RowWorkerShadow::new(
+            &mut full_consumer_y,
+            &mut full_consumer_u,
+            &mut full_consumer_v,
+            WIDTH,
+            &mut full_consumer_mi,
+            MI_COL_START,
+            MI_COLS,
+        )
+        .import_above_boundary(1, 1, &full_boundary);
+
+        let mut compact_consumer_y = vec![101u8; 65 * 64];
+        let mut compact_consumer_u = vec![102u8; 33 * 32];
+        let mut compact_consumer_v = vec![103u8; 33 * 32];
+        let mut compact_consumer_mi = vec![None; 11 * MI_COLS];
+        RowWorkerShadow::new_compact_row(
+            &mut compact_consumer_y,
+            &mut compact_consumer_u,
+            &mut compact_consumer_v,
+            (WIDTH, HEIGHT),
+            1,
+            &mut compact_consumer_mi,
+            (MI_COL_START, MI_COLS),
+        )
+        .import_above_boundary(1, 1, &full_boundary);
+
+        assert_eq!(&compact_consumer_y[..64], &full_boundary.bottom_y);
+        assert_eq!(&compact_consumer_u[..32], &full_boundary.bottom_u);
+        assert_eq!(&compact_consumer_v[..32], &full_boundary.bottom_v);
+        assert_eq!(&compact_consumer_mi[..24], &full_boundary.bottom_mi);
+        assert_eq!(
+            &full_consumer_y[63 * WIDTH + 64..64 * WIDTH],
+            &compact_consumer_y[..64]
+        );
+        assert_eq!(
+            &full_consumer_mi[5 * MI_COLS..8 * MI_COLS],
+            &compact_consumer_mi[..24]
+        );
+        assert!(compact_consumer_y[64..].iter().all(|&sample| sample == 101));
+        assert!(compact_consumer_mi[24..].iter().all(Option::is_none));
+    }
+
+    #[test]
     fn worker_shadow_exports_visible_partial_bottom_boundary() {
         const WIDTH: usize = 64;
         const HEIGHT: usize = 72;
@@ -1181,6 +1442,26 @@ mod tests {
         assert_eq!(boundary.bottom_u, [12; 32]);
         assert_eq!(boundary.bottom_v, [13; 32]);
         assert_eq!(boundary.bottom_mi, [Some(mode_info(14)); 24]);
+
+        let mut compact_y = vec![1u8; 9 * WIDTH];
+        let mut compact_u = vec![2u8; 5 * (WIDTH / 2)];
+        let mut compact_v = vec![3u8; 5 * (WIDTH / 2)];
+        let mut compact_mi = vec![None; 4 * (WIDTH / 8)];
+        compact_y[8 * WIDTH..].fill(11);
+        compact_u[4 * (WIDTH / 2)..].fill(12);
+        compact_v[4 * (WIDTH / 2)..].fill(13);
+        compact_mi[(WIDTH / 8)..].fill(Some(mode_info(14)));
+        let compact_boundary = RowWorkerShadow::new_compact_row(
+            &mut compact_y,
+            &mut compact_u,
+            &mut compact_v,
+            (WIDTH, HEIGHT),
+            1,
+            &mut compact_mi,
+            (0, 8),
+        )
+        .export_boundary(1, 0);
+        assert_eq!(compact_boundary, boundary);
     }
 
     #[test]
