@@ -3802,6 +3802,33 @@ fn record_encoded_inter_leaf(
     );
 }
 
+#[allow(clippy::too_many_arguments)]
+fn record_encoded_inter_row(
+    tile: &mut RecordedCoefTile,
+    bw: &mut BoolWriter<'_>,
+    frame_context: &FrameContext,
+    coef_source: &VecBackedInterCoefSource,
+    sb_row: usize,
+    sb_columns: std::ops::Range<usize>,
+    sb_cols: usize,
+    sb_partitions: &[Vec<InterPartitionLeafDesc>],
+) {
+    for sb_col in sb_columns {
+        let sb_idx = sb_row * sb_cols + sb_col;
+        for &leaf in &sb_partitions[sb_idx] {
+            record_encoded_inter_leaf(
+                tile,
+                bw,
+                frame_context,
+                coef_source,
+                sb_row * 8 + leaf.mi_row_in_sb,
+                sb_col * 8 + leaf.mi_col_in_sb,
+                leaf,
+            );
+        }
+    }
+}
+
 fn segment_id_for_hint_cell(
     hints: &[InterPartitionLeafDesc],
     mi_row_in_sb: usize,
@@ -5406,7 +5433,11 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
 
     let mut encode_job = |job: crate::row_mt::RowJob,
                           recon_yuv_out: &mut InterReconPlanes<'_>,
-                          row_grids: &mut InterRowGrids<'_>| {
+                          row_grids: &mut InterRowGrids<'_>,
+                          coef_source: &mut VecBackedInterCoefSource,
+                          recorded_coef_tile: &mut Option<RecordedCoefTile>,
+                          coef_record_bw: &mut BoolWriter<'_>,
+                          defer_coef_recording: bool| {
         let current_tile = tile_bounds_by_col[job.tile_col];
         let sb_columns = inter_row_job_sb_columns(&tile_bounds_by_col, active_tile_col, job);
         let sb_row = job.sb_row;
@@ -6709,12 +6740,12 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             );
                         }
                     }
-                    if let Some(recorded) = recorded_coef_tile.as_mut() {
+                    if !defer_coef_recording && let Some(recorded) = recorded_coef_tile.as_mut() {
                         record_encoded_inter_leaf(
                             recorded,
-                            &mut coef_record_bw,
+                            coef_record_bw,
                             frame_context,
-                            &coef_source,
+                            coef_source,
                             leaf_mi_row,
                             leaf_mi_col,
                             sb_partitions[sb_idx][leaf_idx],
@@ -6822,12 +6853,12 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         /* picked_interp_filter = */
                         rvp9_core::bitstream::frame::InterpFilter::EightTap,
                     );
-                    if let Some(recorded) = recorded_coef_tile.as_mut() {
+                    if !defer_coef_recording && let Some(recorded) = recorded_coef_tile.as_mut() {
                         record_encoded_inter_leaf(
                             recorded,
-                            &mut coef_record_bw,
+                            coef_record_bw,
                             frame_context,
-                            &coef_source,
+                            coef_source,
                             leaf_mi_row,
                             leaf_mi_col,
                             sb_partitions[sb_idx][leaf_idx],
@@ -8749,12 +8780,12 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         );
                     }
                 }
-                if let Some(recorded) = recorded_coef_tile.as_mut() {
+                if !defer_coef_recording && let Some(recorded) = recorded_coef_tile.as_mut() {
                     record_encoded_inter_leaf(
                         recorded,
-                        &mut coef_record_bw,
+                        coef_record_bw,
                         frame_context,
-                        &coef_source,
+                        coef_source,
                         leaf_mi_row,
                         leaf_mi_col,
                         sb_partitions[sb_idx][leaf_idx],
@@ -8919,6 +8950,18 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 }
             }
         }
+        if defer_coef_recording && let Some(recorded) = recorded_coef_tile.as_mut() {
+            record_encoded_inter_row(
+                recorded,
+                coef_record_bw,
+                frame_context,
+                coef_source,
+                job.sb_row,
+                inter_row_job_sb_columns(&tile_bounds_by_col, active_tile_col, job),
+                sb_cols,
+                sb_partitions,
+            );
+        }
     };
     let compact_recon_rows = active_tile_col.is_some()
         && env.flag_or(env.compact_recon_rows, false)
@@ -8981,11 +9024,24 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     compact_grids.mi_grid[compact_index] = row_grids.get(mi_row, mi_col).copied();
                 }
             }
+            let mut row_coef_source = VecBackedInterCoefSource::new_for_mi_rect(
+                width,
+                height,
+                job_mi_row_start,
+                job_mi_row_end,
+                bounds.mi_col_start,
+                bounds.mi_col_end,
+            );
             encode_job(
                 crate::row_mt::RowJob { sb_row, tile_col },
                 &mut compact,
                 &mut compact_grids,
+                &mut row_coef_source,
+                &mut recorded_coef_tile,
+                &mut coef_record_bw,
+                true,
             );
+            coef_source.merge_from(row_coef_source);
             for mi_row in job_mi_row_start..job_mi_row_end {
                 for mi_col in bounds.mi_col_start..bounds.mi_col_end {
                     let compact_index = compact_grid_layout
@@ -9034,13 +9090,25 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     crate::row_mt::RowJob { sb_row, tile_col },
                     &mut recon_yuv_out,
                     &mut row_grids,
+                    &mut coef_source,
+                    &mut recorded_coef_tile,
+                    &mut coef_record_bw,
+                    false,
                 );
             }
         } else {
             let row_context = crate::row_mt::RowMtContext::new(tile_bounds_by_col.len(), sb_rows);
             let mut tile_col = row_context.initial_tile_for_worker(0);
             while let Some(job) = row_context.claim_for_worker(&mut tile_col) {
-                encode_job(job, &mut recon_yuv_out, &mut row_grids);
+                encode_job(
+                    job,
+                    &mut recon_yuv_out,
+                    &mut row_grids,
+                    &mut coef_source,
+                    &mut recorded_coef_tile,
+                    &mut coef_record_bw,
+                    false,
+                );
             }
             debug_assert!(row_context.queues_drained());
             debug_assert_eq!(row_context.remaining_jobs(), 0);
