@@ -5404,7 +5404,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         0
     };
 
-    let mut encode_job = |job: crate::row_mt::RowJob, recon_yuv_out: &mut InterReconPlanes<'_>| {
+    let mut encode_job = |job: crate::row_mt::RowJob,
+                          recon_yuv_out: &mut InterReconPlanes<'_>,
+                          row_grids: &mut InterRowGrids<'_>| {
         let current_tile = tile_bounds_by_col[job.tile_col];
         let sb_columns = inter_row_job_sb_columns(&tile_bounds_by_col, active_tile_col, job);
         let sb_row = job.sb_row;
@@ -8951,7 +8953,60 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     );
                 }
             }
-            encode_job(crate::row_mt::RowJob { sb_row, tile_col }, &mut compact);
+            let job_mi_row_start = sb_row * 8;
+            let job_mi_row_end = (job_mi_row_start + 8).min(mi_rows_us);
+            let compact_grid_layout = InterPickerMiGridLayout::new_rect(
+                job_mi_row_start.saturating_sub(3),
+                job_mi_row_end - job_mi_row_start.saturating_sub(3),
+                bounds.mi_col_start,
+                tile_mi_cols,
+            );
+            let compact_mv_layout = InterPickerMiGridLayout::new_rect(
+                job_mi_row_start,
+                job_mi_row_end - job_mi_row_start,
+                bounds.mi_col_start,
+                tile_mi_cols,
+            );
+            let mut compact_mv = vec![
+                PrevFrameMvRef::default();
+                compact_mv_layout.mi_rows * compact_mv_layout.mi_cols
+            ];
+            let mut compact_grids =
+                InterRowGrids::new(compact_grid_layout, &mut compact_mv, compact_mv_layout);
+            for mi_row in compact_grid_layout.mi_row_start..job_mi_row_start {
+                for mi_col in bounds.mi_col_start..bounds.mi_col_end {
+                    let compact_index = compact_grid_layout
+                        .index(mi_row, mi_col)
+                        .expect("compact causal MI cell must be in bounds");
+                    compact_grids.mi_grid[compact_index] = row_grids.get(mi_row, mi_col).copied();
+                }
+            }
+            encode_job(
+                crate::row_mt::RowJob { sb_row, tile_col },
+                &mut compact,
+                &mut compact_grids,
+            );
+            for mi_row in job_mi_row_start..job_mi_row_end {
+                for mi_col in bounds.mi_col_start..bounds.mi_col_end {
+                    let compact_index = compact_grid_layout
+                        .index(mi_row, mi_col)
+                        .expect("compact result MI cell must be in bounds");
+                    let aggregate_index = row_grids
+                        .layout
+                        .index(mi_row, mi_col)
+                        .expect("aggregate result MI cell must be in bounds");
+                    row_grids.mi_grid[aggregate_index] = compact_grids.mi_grid[compact_index];
+                    let compact_mv_index = compact_mv_layout
+                        .index(mi_row, mi_col)
+                        .expect("compact result MV cell must be in bounds");
+                    let aggregate_mv_index = row_grids
+                        .out_layout
+                        .index(mi_row, mi_col)
+                        .expect("aggregate result MV cell must be in bounds");
+                    row_grids.out_mv_grid[aggregate_mv_index] =
+                        compact_grids.out_mv_grid[compact_mv_index];
+                }
+            }
             for (plane, full) in [&mut *recon_y_out, &mut *recon_u_out, &mut *recon_v_out]
                 .into_iter()
                 .enumerate()
@@ -8978,13 +9033,14 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 encode_job(
                     crate::row_mt::RowJob { sb_row, tile_col },
                     &mut recon_yuv_out,
+                    &mut row_grids,
                 );
             }
         } else {
             let row_context = crate::row_mt::RowMtContext::new(tile_bounds_by_col.len(), sb_rows);
             let mut tile_col = row_context.initial_tile_for_worker(0);
             while let Some(job) = row_context.claim_for_worker(&mut tile_col) {
-                encode_job(job, &mut recon_yuv_out);
+                encode_job(job, &mut recon_yuv_out, &mut row_grids);
             }
             debug_assert!(row_context.queues_drained());
             debug_assert_eq!(row_context.remaining_jobs(), 0);
