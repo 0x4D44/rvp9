@@ -5244,7 +5244,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
             // {nearest, near} and the rate cost is priced against nearest,
             // so a full match means the fresh search would land on the
             // same MV (faithful reuse). Any mismatch -> re-search (R2).
-            let mut descent_pick_cache = DescentPickCache::new();
+            let descent_enabled =
+                f3_nonrd_partition_enabled && !used_exact_vbp_tree && sb_px_y + 64 <= h;
+            let mut descent_pick_cache = descent_enabled.then(DescentPickCache::new);
 
             // A3'-int-pro diagnostic — per-SB seed activity. Set
             // RVP9_DIAG_INTPRO_SB=1 to enable (off by default to
@@ -5281,7 +5283,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
             // The descent currently evaluates a complete 64x64 source
             // region. Keep the edge-safe variance tree for a partial
             // bottom SB; every retained leaf then fits the visible frame.
-            if f3_nonrd_partition_enabled && !used_exact_vbp_tree && sb_px_y + 64 <= h {
+            if descent_enabled {
                 let rt_profile_descent_start = if rt_profile_enabled {
                     Some(std::time::Instant::now())
                 } else {
@@ -5745,12 +5747,15 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     // exact leaf. Keyed by absolute mi position + bsize;
                     // the descent never queries the same key twice.
                     if phase2_reuse_enabled {
-                        descent_pick_cache.insert(
-                            leaf_mi_row,
-                            leaf_mi_col,
-                            bs,
-                            (result, descent_mvc, descent_mvc_golden),
-                        );
+                        descent_pick_cache
+                            .as_mut()
+                            .expect("enabled partition descent owns a picker cache")
+                            .insert(
+                                leaf_mi_row,
+                                leaf_mi_col,
+                                bs,
+                                (result, descent_mvc, descent_mvc_golden),
+                            );
                     }
                     // Translate to the descent's PartitionRdCandidate.
                     // `best_rate` is already in `vp9_prob_cost` units
@@ -6743,7 +6748,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 // overrides; the cpu<=4 RDO path runs its own search.
                 let (phase2_override_last, phase2_override_golden) =
                     if phase2_reuse_enabled && rdo_unified.is_none() {
-                        match descent_pick_cache.get(leaf_mi_row, leaf_mi_col, leaf_bsize) {
+                        match descent_pick_cache
+                            .as_ref()
+                            .and_then(|cache| cache.get(leaf_mi_row, leaf_mi_col, leaf_bsize))
+                        {
                             Some((cached, desc_mvc_last, desc_mvc_golden)) => {
                                 // MATCH GUARD (R2): only reuse the descent's
                                 // NEWMV when the final pass's CAUSAL
@@ -6798,7 +6806,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 if matches!(leaf_bsize, BlockSize::Block16x16)
                     && a4_breakout_16_dist_qmul.is_some_and(|dist_qmul| {
                         descent_pick_cache
-                            .get(leaf_mi_row, leaf_mi_col, leaf_bsize)
+                            .as_ref()
+                            .and_then(|cache| cache.get(leaf_mi_row, leaf_mi_col, leaf_bsize))
                             .is_some_and(|(cached, _, _)| {
                                 stage4a_suppress_final_newmv(
                                     leaf_bsize,
@@ -7012,7 +7021,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 // would be the forbidden cheat.
                 let cached_descent_pick = if rt_reuse_descent_pick && rdo_unified.is_none() {
                     descent_pick_cache
-                        .get(leaf_mi_row, leaf_mi_col, leaf_bsize)
+                        .as_ref()
+                        .and_then(|cache| cache.get(leaf_mi_row, leaf_mi_col, leaf_bsize))
                         .map(|(cached, _, _)| *cached)
                 } else {
                     None
@@ -7034,8 +7044,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     rt_profile_picker_leaves += 1;
                 }
                 if a4_profile_enabled
-                    && let Some((cached, _, _)) =
-                        descent_pick_cache.get(leaf_mi_row, leaf_mi_col, leaf_bsize)
+                    && let Some((cached, _, _)) = descent_pick_cache
+                        .as_ref()
+                        .and_then(|cache| cache.get(leaf_mi_row, leaf_mi_col, leaf_bsize))
                 {
                     let idx = leaf_bsize.idx();
                     a4_profile_committed[idx] += 1;
