@@ -1296,7 +1296,6 @@ pub struct StreamEncoder {
 /// disjoint rectangles and SB records into the frame result.
 struct InterTileJobResult {
     claimed_jobs: Vec<crate::row_mt::RowJob>,
-    partitions: Vec<Vec<InterPartitionLeafDesc>>,
     rd_tables: Vec<rvp9_core::mode_decision::rd_thresh::RdThreshTable>,
     history: Option<Vec<rvp9_core::mode_decision::partition::FixedTreeHistoryEntry>>,
     split_stats: NonRdSplitStats,
@@ -1310,6 +1309,9 @@ struct InterTileScratch {
     recon_u: Vec<u8>,
     recon_v: Vec<u8>,
     mv_grid: Vec<PrevFrameMvRef>,
+    // The outer frame grid survives across inter frames. Owned leaf vectors
+    // move into the final grid, and the next refill clears every cell first.
+    partitions: Vec<Vec<InterPartitionLeafDesc>>,
 }
 
 struct ColumnTileInterCoefSource {
@@ -1615,6 +1617,7 @@ impl StreamEncoder {
                     recon_u: vec![0; uvw * uvh],
                     recon_v: vec![0; uvw * uvh],
                     mv_grid: vec![PrevFrameMvRef::default(); (h / 8) * (w / 8)],
+                    partitions: (0..h.div_ceil(64) * (w / 64)).map(|_| Vec::new()).collect(),
                 })
                 .collect()
         } else {
@@ -3493,9 +3496,10 @@ impl StreamEncoder {
                         let seg_map = seg_map.as_slice();
                         scope.submit(move || {
                             rvp9_core::mode_decision::inter::set_frame_s2_gate(s2_frame_gate);
-                            let mut tile_partitions = choose_mapped_partitions_for_sb_cols(
+                            choose_mapped_partitions_for_sb_cols_into(
                                 partition_input,
                                 sb_col_start..sb_col_end,
+                                &mut scratch.partitions,
                                 |decision, sb_row, sb_col| {
                                     let visible_mi_rows = (h as usize - sb_row * 64).min(64) / 8;
                                     let leaves =
@@ -3510,7 +3514,7 @@ impl StreamEncoder {
                                 &mut scratch.recon_y,
                                 &mut scratch.recon_u,
                                 &mut scratch.recon_v,
-                                &mut tile_partitions,
+                                &mut scratch.partitions,
                                 &mut scratch.mv_grid,
                                 &mut tile_rd_tables,
                                 tile_history.as_deref_mut(),
@@ -3537,7 +3541,6 @@ impl StreamEncoder {
                                 claimed_jobs: (0..(h as usize).div_ceil(64))
                                     .map(|sb_row| crate::row_mt::RowJob { sb_row, tile_col })
                                     .collect(),
-                                partitions: tile_partitions,
                                 rd_tables: tile_rd_tables,
                                 history: tile_history,
                                 split_stats: tile_split_stats,
@@ -3604,7 +3607,12 @@ impl StreamEncoder {
                 let result = &mut tile_results[worker_id];
                 let rd_table_index = job.tile_col * sb_rows + job.sb_row;
                 self.rd_thresh_tables[rd_table_index] = result.rd_tables[rd_table_index].clone();
-                row_owners.move_job_rect(&mut sb_partitions, &mut result.partitions, job, 1);
+                row_owners.move_job_rect(
+                    &mut sb_partitions,
+                    &mut tile_scratch[worker_id].partitions,
+                    job,
+                    1,
+                );
                 if let Some(history) = &result.history {
                     row_owners.merge_job_rect(&mut self.vbp_partition_history, history, job, 1);
                 }
@@ -4866,9 +4874,22 @@ fn choose_partitions_for_sb_cols(
 fn choose_mapped_partitions_for_sb_cols<T, F>(
     input: FramePartitionInput<'_>,
     sb_col_range: std::ops::Range<usize>,
-    mut map_decision: F,
+    map_decision: F,
 ) -> Vec<Vec<T>>
 where
+    F: FnMut(&PartitionDecision, usize, usize) -> Vec<T>,
+{
+    let mut out = Vec::new();
+    choose_mapped_partitions_for_sb_cols_into(input, sb_col_range, &mut out, map_decision);
+    out
+}
+
+fn choose_mapped_partitions_for_sb_cols_into<T, F>(
+    input: FramePartitionInput<'_>,
+    sb_col_range: std::ops::Range<usize>,
+    out: &mut Vec<Vec<T>>,
+    mut map_decision: F,
+) where
     F: FnMut(&PartitionDecision, usize, usize) -> Vec<T>,
 {
     let FramePartitionInput {
@@ -4883,7 +4904,15 @@ where
     } = input;
     let sb_cols = width_px / 64;
     let sb_rows = height_px.div_ceil(64);
-    let mut out: Vec<Vec<T>> = (0..sb_rows * sb_cols).map(|_| Vec::new()).collect();
+    let partition_cells = sb_rows * sb_cols;
+    // Tile jobs retain this outer allocation. Clear even unowned cells so an
+    // interrupted or poisoned prior fill cannot leak stale partition state.
+    if out.len() == partition_cells {
+        out.iter_mut().for_each(Vec::clear);
+    } else {
+        out.clear();
+        out.resize_with(partition_cells, Vec::new);
+    }
 
     let src_plane = PlaneRef {
         data: src_y,
@@ -4960,7 +4989,6 @@ where
             out[sb_row * sb_cols + sb_col] = map_decision(&decision, sb_row, sb_col);
         }
     }
-    out
 }
 
 fn inter_partitions_from_intra_shape(
@@ -8152,6 +8180,7 @@ mod tests {
                     scratch.recon_u.as_ptr(),
                     scratch.recon_v.as_ptr(),
                     scratch.mv_grid.as_ptr(),
+                    scratch.partitions.as_ptr(),
                 )
             })
             .collect();
@@ -8225,12 +8254,13 @@ mod tests {
                     scratch.recon_u.as_ptr(),
                     scratch.recon_v.as_ptr(),
                     scratch.mv_grid.as_ptr(),
+                    scratch.partitions.as_ptr(),
                 )
             })
             .collect();
         assert_eq!(
             retained_allocations, scratch_allocations,
-            "tile recon and MV scratch allocations must survive consecutive inter frames",
+            "tile recon, MV, and partition scratch allocations must survive consecutive inter frames",
         );
         assert_ne!(
             serial.rd_thresh_tables[0], serial.rd_thresh_tables[6],
@@ -11488,6 +11518,42 @@ mod tests {
             }
         }
         assert!(covered.into_iter().flatten().all(|cell| cell));
+    }
+
+    #[test]
+    fn mapped_partition_reuse_clears_poison_without_reallocating_outer_grid() {
+        let width = 128usize;
+        let height = 64usize;
+        let src_y: Vec<_> = (0..width * height)
+            .map(|index| ((index * 13 + index / width * 17) & 0xff) as u8)
+            .collect();
+        let ref_y = vec![128u8; src_y.len()];
+        let input = FramePartitionInput {
+            width_px: width,
+            height_px: height,
+            q_index: 120,
+            src_y: &src_y,
+            ref_y: &ref_y,
+            is_keyframe: false,
+            avg_inter_qindex: 120,
+            noise_threshold_scale: 1,
+        };
+        let map = |decision: &PartitionDecision, sb_row, sb_col| {
+            vec![sb_row, sb_col, leaves_from_decision(decision).len()]
+        };
+        let expected = choose_mapped_partitions_for_sb_cols(input, 1..2, map);
+        let mut reused = vec![vec![usize::MAX; 4]; expected.len()];
+        let outer_ptr = reused.as_ptr();
+        let outer_capacity = reused.capacity();
+
+        choose_mapped_partitions_for_sb_cols_into(input, 1..2, &mut reused, map);
+
+        assert_eq!(
+            reused, expected,
+            "reused mapping must contain no stale cells"
+        );
+        assert_eq!(reused.as_ptr(), outer_ptr);
+        assert_eq!(reused.capacity(), outer_capacity);
     }
 
     #[test]
