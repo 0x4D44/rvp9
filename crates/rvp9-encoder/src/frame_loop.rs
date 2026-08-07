@@ -3625,6 +3625,8 @@ impl StreamEncoder {
             for row in 0..mi_rows_us {
                 let mut expected_col_start = 0usize;
                 for result in &tile_results {
+                    debug_assert_eq!(result.mi_grid.mi_row_start, 0);
+                    debug_assert_eq!(result.mi_grid.mi_rows, mi_rows_us);
                     debug_assert_eq!(result.mi_grid.mi_col_start, expected_col_start);
                     let local_start = row * result.mi_grid.mi_cols;
                     let local_end = local_start + result.mi_grid.mi_cols;
@@ -3684,6 +3686,8 @@ impl StreamEncoder {
                 None
             );
             debug_assert!(encoded.recorded_coef_tile.is_none());
+            debug_assert_eq!(encoded.mi_grid.mi_row_start, 0);
+            debug_assert_eq!(encoded.mi_grid.mi_rows, mi_rows_us);
             debug_assert_eq!(encoded.mi_grid.mi_col_start, 0);
             debug_assert_eq!(encoded.mi_grid.mi_cols, mi_cols_us);
             (Box::new(encoded.coefs), Vec::new(), encoded.mi_grid.cells)

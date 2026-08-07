@@ -2922,21 +2922,33 @@ fn intra_leaf_luma_eob_nonzero(
 /// cells or out-of-frame `None`).
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 struct InterPickerMiGridLayout {
+    mi_row_start: usize,
+    mi_rows: usize,
     mi_col_start: usize,
     mi_cols: usize,
 }
 
 impl InterPickerMiGridLayout {
-    fn new(mi_col_start: usize, mi_cols: usize) -> Self {
+    fn new(mi_rows: usize, mi_col_start: usize, mi_cols: usize) -> Self {
+        Self::new_rect(0, mi_rows, mi_col_start, mi_cols)
+    }
+
+    fn new_rect(mi_row_start: usize, mi_rows: usize, mi_col_start: usize, mi_cols: usize) -> Self {
+        assert!(mi_rows > 0, "inter MI layout must contain a row");
+        assert!(mi_cols > 0, "inter MI layout must contain a column");
         Self {
+            mi_row_start,
+            mi_rows,
             mi_col_start,
             mi_cols,
         }
     }
 
     fn index(self, mi_row: usize, mi_col: usize) -> Option<usize> {
+        let local_row = mi_row.checked_sub(self.mi_row_start)?;
         let local_col = mi_col.checked_sub(self.mi_col_start)?;
-        (local_col < self.mi_cols).then_some(mi_row * self.mi_cols + local_col)
+        (local_row < self.mi_rows && local_col < self.mi_cols)
+            .then_some(local_row * self.mi_cols + local_col)
     }
 
     fn get(
@@ -2959,21 +2971,25 @@ struct InterRowGrids<'a> {
     mi_grid: Vec<Option<rvp9_core::mode_info::ModeInfo>>,
     layout: InterPickerMiGridLayout,
     out_mv_grid: &'a mut [PrevFrameMvRef],
-    out_mi_cols: usize,
+    out_layout: InterPickerMiGridLayout,
 }
 
 impl<'a> InterRowGrids<'a> {
     fn new(
-        mi_rows: usize,
         layout: InterPickerMiGridLayout,
         out_mv_grid: &'a mut [PrevFrameMvRef],
-        out_mi_cols: usize,
+        out_layout: InterPickerMiGridLayout,
     ) -> Self {
+        assert_eq!(
+            out_mv_grid.len(),
+            out_layout.mi_rows * out_layout.mi_cols,
+            "inter MV output must match its compact layout",
+        );
         Self {
-            mi_grid: vec![None; mi_rows * layout.mi_cols],
+            mi_grid: vec![None; layout.mi_rows * layout.mi_cols],
             layout,
             out_mv_grid,
-            out_mi_cols,
+            out_layout,
         }
     }
 
@@ -3029,7 +3045,7 @@ impl<'a> InterRowGrids<'a> {
             &mut self.mi_grid,
             self.layout,
             self.out_mv_grid,
-            self.out_mi_cols,
+            self.out_layout,
             leaf_mi_row,
             leaf_mi_col,
             leaf,
@@ -3039,6 +3055,8 @@ impl<'a> InterRowGrids<'a> {
     fn into_simulation_grid(self) -> InterSimulationMiGrid {
         InterSimulationMiGrid {
             cells: self.mi_grid,
+            mi_row_start: self.layout.mi_row_start,
+            mi_rows: self.layout.mi_rows,
             mi_col_start: self.layout.mi_col_start,
             mi_cols: self.layout.mi_cols,
         }
@@ -3283,7 +3301,7 @@ fn splat_final_inter_leaf_into_grids(
     mi_grid: &mut [Option<rvp9_core::mode_info::ModeInfo>],
     layout: InterPickerMiGridLayout,
     out_mv_grid: &mut [PrevFrameMvRef],
-    out_mi_cols: usize,
+    out_layout: InterPickerMiGridLayout,
     leaf_mi_row: usize,
     leaf_mi_col: usize,
     leaf: InterPartitionLeafDesc,
@@ -3300,7 +3318,10 @@ fn splat_final_inter_leaf_into_grids(
                 .index(mi_row, mi_col)
                 .expect("inter leaf must stay inside its causal MI grid");
             mi_grid[local_index] = Some(mode_info);
-            out_mv_grid[mi_row * out_mi_cols + mi_col] = mv_ref;
+            let out_index = out_layout
+                .index(mi_row, mi_col)
+                .expect("inter leaf must stay inside its MV output grid");
+            out_mv_grid[out_index] = mv_ref;
         }
     }
 }
@@ -3399,6 +3420,8 @@ impl<'a> InterPartitionHistoryMut<'a> {
 /// partition descriptors after the picker barrier.
 pub(crate) struct InterSimulationMiGrid {
     pub(crate) cells: Vec<Option<rvp9_core::mode_info::ModeInfo>>,
+    pub(crate) mi_row_start: usize,
+    pub(crate) mi_rows: usize,
     pub(crate) mi_col_start: usize,
     pub(crate) mi_cols: usize,
 }
@@ -4896,9 +4919,13 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         let bounds = tile_bounds_by_col
             .get(tile_col)
             .expect("active tile column must have frame bounds");
-        InterPickerMiGridLayout::new(bounds.mi_col_start, bounds.mi_col_end - bounds.mi_col_start)
+        InterPickerMiGridLayout::new(
+            mi_rows_us,
+            bounds.mi_col_start,
+            bounds.mi_col_end - bounds.mi_col_start,
+        )
     } else {
-        InterPickerMiGridLayout::new(0, mi_cols_us)
+        InterPickerMiGridLayout::new(mi_rows_us, 0, mi_cols_us)
     };
     let mut coef_source = if let Some(tile_col) = active_tile_col {
         let bounds = tile_bounds_by_col
@@ -4932,7 +4959,11 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     let mut coef_record_sink = [];
     let mut coef_record_bw = BoolWriter::start_count_only(&mut coef_record_sink);
     debug_assert_eq!(out_mv_grid.len(), mi_rows_us * mi_cols_us);
-    let mut row_grids = InterRowGrids::new(mi_rows_us, mi_grid_layout, out_mv_grid, mi_cols_us);
+    let mut row_grids = InterRowGrids::new(
+        mi_grid_layout,
+        out_mv_grid,
+        InterPickerMiGridLayout::new(mi_rows_us, 0, mi_cols_us),
+    );
     let sign_bias = sign_bias_from_header(&[false, false, altref_available]);
 
     let rt_profile_enabled = env.rt_profile;
@@ -10343,7 +10374,7 @@ mod tests {
     #[test]
     fn inter_row_grids_commit_mode_and_mv_cells_together() {
         let mut out_mv_grid = vec![PrevFrameMvRef::default(); 4 * 8];
-        let layout = InterPickerMiGridLayout::new(2, 4);
+        let layout = InterPickerMiGridLayout::new(4, 2, 4);
         let leaf = InterPartitionLeafDesc {
             mi_row_in_sb: 0,
             mi_col_in_sb: 0,
@@ -10362,7 +10393,11 @@ mod tests {
         let expected_mode = leaf.mode_info();
         let expected_mv = leaf.mv_ref();
 
-        let mut grids = InterRowGrids::new(4, layout, &mut out_mv_grid, 8);
+        let mut grids = InterRowGrids::new(
+            layout,
+            &mut out_mv_grid,
+            InterPickerMiGridLayout::new(4, 0, 8),
+        );
         grids.splat_final(1, 2, leaf);
         for row in 1..3 {
             for col in 2..4 {
@@ -10372,6 +10407,8 @@ mod tests {
         assert_eq!(grids.get(0, 2), None);
         let simulation_grid = grids.into_simulation_grid();
 
+        assert_eq!(simulation_grid.mi_row_start, 0);
+        assert_eq!(simulation_grid.mi_rows, 4);
         assert_eq!(simulation_grid.mi_col_start, 2);
         assert_eq!(simulation_grid.mi_cols, 4);
         for row in 1..3 {
@@ -10380,6 +10417,95 @@ mod tests {
             }
         }
         assert_eq!(out_mv_grid[0], PrevFrameMvRef::default());
+    }
+
+    #[test]
+    fn compact_inter_row_grid_matches_full_grid_with_three_causal_rows() {
+        const MI_ROWS: usize = 16;
+        const MI_COLS: usize = 16;
+        const TILE_MI_COL_START: usize = 8;
+        const TILE_MI_COLS: usize = 8;
+        const JOB_MI_ROW_START: usize = 8;
+        const CAUSAL_MI_ROW_START: usize = JOB_MI_ROW_START - 3;
+        const CAUSAL_AND_JOB_ROWS: usize = 11;
+
+        let full_layout = InterPickerMiGridLayout::new(MI_ROWS, 0, MI_COLS);
+        let compact_layout = InterPickerMiGridLayout::new_rect(
+            CAUSAL_MI_ROW_START,
+            CAUSAL_AND_JOB_ROWS,
+            TILE_MI_COL_START,
+            TILE_MI_COLS,
+        );
+        let compact_output_layout =
+            InterPickerMiGridLayout::new_rect(JOB_MI_ROW_START, 8, TILE_MI_COL_START, TILE_MI_COLS);
+        let mut full_mv = vec![PrevFrameMvRef::default(); MI_ROWS * MI_COLS];
+        let mut compact_mv = vec![PrevFrameMvRef::default(); 8 * TILE_MI_COLS];
+        let mut full = InterRowGrids::new(full_layout, &mut full_mv, full_layout);
+        let mut compact =
+            InterRowGrids::new(compact_layout, &mut compact_mv, compact_output_layout);
+
+        let causal_leaf = InterPartitionLeafDesc {
+            mi_row_in_sb: 0,
+            mi_col_in_sb: 0,
+            leaf_bsize: BlockSize::Block8x8,
+            picked_mode: InterMode::NearMv,
+            picked_mv: Mv { row: -8, col: 16 },
+            skip: true,
+            segment_id: 2,
+            picked_ref_frame: RefFrame::LastFrame,
+            picked_interp_filter: InterpFilter::EightTap,
+            picked_intra_mode: None,
+            picked_ref_frame2: RefFrame::NoRefFrame,
+            picked_mv2: Mv::ZERO,
+            picked_tx_size: TxSize::Tx8x8,
+        };
+        for row in CAUSAL_MI_ROW_START..JOB_MI_ROW_START {
+            for col in TILE_MI_COL_START..TILE_MI_COL_START + TILE_MI_COLS {
+                let cell = Some(causal_leaf.mode_info());
+                full.mi_grid[full_layout.index(row, col).expect("full causal cell")] = cell;
+                compact.mi_grid[compact_layout.index(row, col).expect("compact causal cell")] =
+                    cell;
+                assert_eq!(compact.get(row, col), full.get(row, col));
+            }
+        }
+
+        let final_leaf = InterPartitionLeafDesc {
+            leaf_bsize: BlockSize::Block64x64,
+            picked_mode: InterMode::NewMv,
+            picked_mv: Mv { row: 24, col: -32 },
+            skip: false,
+            segment_id: 4,
+            picked_ref_frame: RefFrame::GoldenFrame,
+            picked_interp_filter: InterpFilter::EightTapSmooth,
+            picked_intra_mode: None,
+            picked_ref_frame2: RefFrame::NoRefFrame,
+            picked_mv2: Mv::ZERO,
+            picked_tx_size: TxSize::Tx16x16,
+            ..causal_leaf
+        };
+        full.splat_final(JOB_MI_ROW_START, TILE_MI_COL_START, final_leaf);
+        compact.splat_final(JOB_MI_ROW_START, TILE_MI_COL_START, final_leaf);
+
+        for row in JOB_MI_ROW_START..JOB_MI_ROW_START + 8 {
+            for col in TILE_MI_COL_START..TILE_MI_COL_START + TILE_MI_COLS {
+                assert_eq!(compact.get(row, col), full.get(row, col));
+                let compact_index = compact_output_layout
+                    .index(row, col)
+                    .expect("compact MV cell");
+                let full_index = full_layout.index(row, col).expect("full MV cell");
+                assert_eq!(
+                    compact.out_mv_grid[compact_index],
+                    full.out_mv_grid[full_index]
+                );
+            }
+        }
+        assert_eq!(compact.mi_grid.len(), CAUSAL_AND_JOB_ROWS * TILE_MI_COLS);
+        assert_eq!(compact.out_mv_grid.len(), 8 * TILE_MI_COLS);
+        let simulation_grid = compact.into_simulation_grid();
+        assert_eq!(simulation_grid.mi_row_start, CAUSAL_MI_ROW_START);
+        assert_eq!(simulation_grid.mi_rows, CAUSAL_AND_JOB_ROWS);
+        assert_eq!(simulation_grid.mi_col_start, TILE_MI_COL_START);
+        assert_eq!(simulation_grid.mi_cols, TILE_MI_COLS);
     }
 
     #[test]
@@ -11062,7 +11188,7 @@ mod tests {
         let mut grid = vec![None; 8 * 8];
         splat_inter_leaf_into_mi_grid(
             &mut grid,
-            InterPickerMiGridLayout::new(0, 8),
+            InterPickerMiGridLayout::new(8, 0, 8),
             0,
             0,
             BlockSize::Block16x16,
@@ -11094,9 +11220,12 @@ mod tests {
         const MI_ROWS: usize = 4;
         const MI_COLS: usize = 64;
         let tile = tile_bounds(MI_ROWS, MI_COLS, 0, 2, 0, 2);
-        let local_layout =
-            InterPickerMiGridLayout::new(tile.mi_col_start, tile.mi_col_end - tile.mi_col_start);
-        let full_layout = InterPickerMiGridLayout::new(0, MI_COLS);
+        let local_layout = InterPickerMiGridLayout::new(
+            MI_ROWS,
+            tile.mi_col_start,
+            tile.mi_col_end - tile.mi_col_start,
+        );
+        let full_layout = InterPickerMiGridLayout::new(MI_ROWS, 0, MI_COLS);
         let mut local_grid = vec![None; MI_ROWS * local_layout.mi_cols];
         let mut full_grid = vec![None; MI_ROWS * MI_COLS];
 
