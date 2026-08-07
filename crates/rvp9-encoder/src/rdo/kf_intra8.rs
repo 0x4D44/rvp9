@@ -13,7 +13,7 @@ use rvp9_core::transforms::TxSize;
 use rvp9_core::transforms::forward::fht8x8;
 use rvp9_core::transforms::scans::scan_for;
 
-use crate::rdo::cost_coeffs::cost_coeffs_with_contexts;
+use crate::rdo::cost_coeffs::cost_coeffs_with_contexts_cached;
 
 const SIDE: usize = 8;
 
@@ -89,6 +89,7 @@ pub fn pick_intra8x8_y_mode(params: &PickIntra8x8Params<'_>) -> Option<PickIntra
     let dispatch = rvp9_core::dsp::get();
     let mut best_rd = params.best_rd;
     let mut best: Option<PickIntra8x8Result> = None;
+    let mut token_cache = [0u8; SIDE * SIDE];
 
     for raw_mode in 0u8..=IntraMode::Tm as u8 {
         let mode = IntraMode::from_u8(raw_mode).expect("0..10 valid");
@@ -143,7 +144,7 @@ pub fn pick_intra8x8_y_mode(params: &PickIntra8x8Params<'_>) -> Option<PickIntra
             &scan,
         );
 
-        let rate_y = cost_coeffs_with_contexts(
+        let rate_y = cost_coeffs_with_contexts_cached(
             &qcoeff,
             fwd_scan,
             scan.neighbors(),
@@ -153,6 +154,7 @@ pub fn pick_intra8x8_y_mode(params: &PickIntra8x8Params<'_>) -> Option<PickIntra
             0,
             params.coeff_ctx,
             params.coef_costs,
+            &mut token_cache,
         );
 
         if eob > 0 {

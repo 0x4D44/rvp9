@@ -65,7 +65,7 @@ use rvp9_core::transforms::inverse::iht4x4_16_add;
 use rvp9_core::transforms::scans::scan_for;
 
 use crate::rdo::block_error::vp9_block_error;
-use crate::rdo::cost_coeffs::cost_coeffs_with_contexts;
+use crate::rdo::cost_coeffs::cost_coeffs_with_contexts_cached;
 
 /// Number of 4×4 sub-blocks inside an 8×8 parent. Mirrors libvpx
 /// `num_4x4_blocks_high_lookup[BLOCK_8X8] *
@@ -192,6 +192,7 @@ pub fn pick_intra4x4_block(params: &PickIntra4x4Params<'_>) -> Option<Pick4x4Res
     // → `vp9_scan_orders[TX_4X4][tx_type]`, line 1252). cost_coeffs reads
     // the qcoeff in raster order against the forward scan.
     let dispatch = rvp9_core::dsp::get();
+    let mut token_cache = [0u8; SUB * SUB];
 
     // Realtime speed >=4 sets `INTRA_DC_H_V` for TX_4X4. Enum order is
     // DC=0, V=1, H=2, so this inclusive range is the source mask exactly.
@@ -247,7 +248,7 @@ pub fn pick_intra4x4_block(params: &PickIntra4x4Params<'_>) -> Option<Pick4x4Res
         );
 
         // 4. Coefficient rate (libvpx `cost_coeffs`, line 1258).
-        let ratey = cost_coeffs_with_contexts(
+        let ratey = cost_coeffs_with_contexts_cached(
             &qcoeff,
             fwd_scan,
             scan.neighbors(),
@@ -257,6 +258,7 @@ pub fn pick_intra4x4_block(params: &PickIntra4x4Params<'_>) -> Option<Pick4x4Res
             0, // ref_type
             params.coeff_ctx,
             params.coef_costs,
+            &mut token_cache,
         );
 
         // 5. Transform-domain distortion: vp9_block_error(coeff,

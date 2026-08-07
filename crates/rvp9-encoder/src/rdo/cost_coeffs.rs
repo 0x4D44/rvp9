@@ -324,18 +324,6 @@ pub fn cost_coeffs_with_contexts(
     coeff_ctx: usize,
     costs: &CoefCostTable,
 ) -> u32 {
-    let n = tx_size.n_coeffs();
-    debug_assert!(qcoeff.len() >= n);
-    debug_assert!(scan.len() >= n);
-    debug_assert!(neighbors.len() >= (n + 1) * 2);
-    debug_assert!(usize::from(eob) <= n);
-
-    if eob == 0 {
-        return token_cost(
-            costs, tx_size, plane_type, ref_type, 0, coeff_ctx, EOB_TOKEN, false,
-        );
-    }
-
     // libvpx reserves a fixed 32x32 stack cache but only touches the selected
     // transform's coefficient extent. Select a correspondingly sized safe
     // backing array so the common realtime 4x4/8x8/16x16 paths do not zero
@@ -362,6 +350,56 @@ pub fn cost_coeffs_with_contexts(
             &mut cache_32x32
         }
     };
+    cost_coeffs_with_contexts_cached(
+        qcoeff,
+        scan,
+        neighbors,
+        eob,
+        tx_size,
+        plane_type,
+        ref_type,
+        coeff_ctx,
+        costs,
+        token_cache,
+    )
+}
+
+/// Internal full-context coefficient costing with caller-owned token scratch.
+///
+/// The scratch may contain stale initialized bytes. VP9 scan neighbours are
+/// causal, so this call overwrites every position before reading it.
+#[allow(clippy::too_many_arguments)]
+#[must_use]
+pub(crate) fn cost_coeffs_with_contexts_cached(
+    qcoeff: &[i16],
+    scan: &[i16],
+    neighbors: &[i16],
+    eob: u16,
+    tx_size: TxSize,
+    plane_type: usize,
+    ref_type: usize,
+    coeff_ctx: usize,
+    costs: &CoefCostTable,
+    token_cache: &mut [u8],
+) -> u32 {
+    let n = tx_size.n_coeffs();
+    debug_assert!(qcoeff.len() >= n);
+    debug_assert!(scan.len() >= n);
+    debug_assert!(neighbors.len() >= (n + 1) * 2);
+    debug_assert!(usize::from(eob) <= n);
+    debug_assert!(token_cache.len() >= n);
+
+    // `neighbors` is causal in scan order: every cache position read at
+    // coefficient `c` was written by an earlier coefficient in this call.
+    // Callers may therefore reuse initialized scratch without clearing it,
+    // matching libvpx's uninitialized stack cache without unsafe Rust.
+
+    if eob == 0 {
+        return token_cost(
+            costs, tx_size, plane_type, ref_type, 0, coeff_ctx, EOB_TOKEN, false,
+        );
+    }
+
     let mut walker = BandCountsWalker::start_after_dc(tx_size);
 
     let dc_rc = scan[0] as usize;
@@ -496,7 +534,8 @@ mod tests {
     use super::*;
     use rvp9_core::cost::coef_cost::build_coef_cost_table;
     use rvp9_core::entropy::FrameContext;
-    use rvp9_core::transforms::scans::{default_scan, default_scan_4x4};
+    use rvp9_core::transforms::TxType;
+    use rvp9_core::transforms::scans::{default_scan, default_scan_4x4, scan_for};
 
     /// PROOF W4.3 — `band_counts` matches libvpx
     /// `vp9/encoder/vp9_rdopt.c:352-357`. We compare every entry to
@@ -646,6 +685,71 @@ mod tests {
             );
 
             assert!(cost > 0, "{tx_size:?} must price its complete scan");
+        }
+    }
+
+    #[test]
+    fn reused_context_cache_is_independent_of_stale_fill() {
+        const VALUES: [i16; 12] = [0, 1, -1, 2, -3, 4, -5, 7, -11, 19, -35, 67];
+        let costs = build_coef_cost_table(&FrameContext::new_default());
+        for tx_size in [
+            TxSize::Tx4x4,
+            TxSize::Tx8x8,
+            TxSize::Tx16x16,
+            TxSize::Tx32x32,
+        ] {
+            let tx_types: &[TxType] = if tx_size == TxSize::Tx32x32 {
+                &[TxType::DctDct]
+            } else {
+                &[
+                    TxType::DctDct,
+                    TxType::AdstDct,
+                    TxType::DctAdst,
+                    TxType::AdstAdst,
+                ]
+            };
+            for &tx_type in tx_types {
+                let scan = scan_for(tx_size, tx_type);
+                let n = tx_size.n_coeffs();
+                let mut qcoeff = vec![0i16; n];
+                for (c, &rc) in scan.scan().iter().enumerate() {
+                    qcoeff[rc as usize] = VALUES[c % VALUES.len()];
+                }
+                let mut zero_cache = [0u8; 32 * 32];
+                let mut stale_cache = [0xa5u8; 32 * 32];
+                for eob in 0..=n {
+                    zero_cache.fill(0);
+                    stale_cache.fill(0xa5);
+                    let zero = cost_coeffs_with_contexts_cached(
+                        &qcoeff,
+                        scan.scan(),
+                        scan.neighbors(),
+                        eob as u16,
+                        tx_size,
+                        0,
+                        0,
+                        0,
+                        &costs,
+                        &mut zero_cache[..n],
+                    );
+                    let stale = cost_coeffs_with_contexts_cached(
+                        &qcoeff,
+                        scan.scan(),
+                        scan.neighbors(),
+                        eob as u16,
+                        tx_size,
+                        0,
+                        0,
+                        0,
+                        &costs,
+                        &mut stale_cache[..n],
+                    );
+                    assert_eq!(
+                        stale, zero,
+                        "stale cache affected {tx_size:?}/{tx_type:?} eob={eob}",
+                    );
+                }
+            }
         }
     }
 
