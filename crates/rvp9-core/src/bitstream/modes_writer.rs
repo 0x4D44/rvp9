@@ -87,9 +87,9 @@ use crate::coef_ctx::TileCoefCtx;
 use crate::entropy::adapt::CoefCountsBank;
 use crate::entropy::bitacct::{BitCategory, set_category};
 use crate::entropy::{
-    BoolWriter, CoefTokenPass, FrameContext, FrameCounts, RetainedCoefTokens,
-    VP9_KF_PARTITION_PROBS, VP9_KF_UV_MODE_PROB, VP9_KF_Y_MODE_PROB, write_block_tokens_i16,
-    write_block_tokens_with_retained_i16,
+    BoolWriter, CoefReplayStatus, CoefTokenPass, FrameContext, FrameCounts, RetainedCoefTokens,
+    VP9_KF_PARTITION_PROBS, VP9_KF_UV_MODE_PROB, VP9_KF_Y_MODE_PROB, try_replay_retained_block,
+    write_block_tokens_i16, write_block_tokens_with_retained_i16,
 };
 use crate::inter::mode_info::{
     InterModeReadParams, InterModeWriteError, get_intra_inter_context, write_inter_block_mode_info,
@@ -2983,6 +2983,21 @@ fn write_inter_block_residual(
         while tx_y4_local < plane_bh_4x4 {
             let mut tx_x4_local = 0usize;
             while tx_x4_local < plane_bw_4x4 {
+                let replay_status = try_replay_retained_block(
+                    bw,
+                    fc,
+                    coef_ctx,
+                    plane,
+                    plane_x4_base + tx_x4_local,
+                    plane_y4_in_sb_base + tx_y4_local,
+                    plane_tx,
+                    ref_type,
+                    retained_pass.as_deref_mut(),
+                );
+                if replay_status == CoefReplayStatus::Replayed {
+                    tx_x4_local += tx_step_4x4;
+                    continue;
+                }
                 let (coefs, eob) = coef_source.get_block_coefs(
                     mi_row,
                     mi_col,
@@ -3022,7 +3037,11 @@ fn write_inter_block_residual(
                     eob,
                     counts.as_deref_mut(),
                     full_counts.as_deref_mut(),
-                    retained_pass.as_deref_mut(),
+                    match replay_status {
+                        CoefReplayStatus::NotReplay => retained_pass.as_deref_mut(),
+                        CoefReplayStatus::Mismatch => None,
+                        CoefReplayStatus::Replayed => unreachable!(),
+                    },
                 );
                 tx_x4_local += tx_step_4x4;
             }
@@ -7436,6 +7455,22 @@ mod tests {
         assert_eq!(leaf_counts.coef, split_counts.coef);
         assert_eq!(leaf_retained, retained);
 
+        struct ReplayOnlyCoefSource;
+
+        impl InterCoefSource for ReplayOnlyCoefSource {
+            fn get_block_coefs(
+                &self,
+                _mi_row: usize,
+                _mi_col: usize,
+                _plane: usize,
+                _tx_x4_local: usize,
+                _tx_y4_local: usize,
+                _tx_size: TxSize,
+            ) -> (&[i16], usize) {
+                panic!("valid retained replay must not query coefficient storage");
+            }
+        }
+
         let mut replay_counts = FrameCounts::default();
         let mut replay_pass = CoefTokenPass::replay(&retained);
         let mut replay_buf = vec![0u8; 4 * 1024];
@@ -7453,7 +7488,7 @@ mod tests {
             None,
             None,
             &mut replay_coef_ctx,
-            &coef_source,
+            &ReplayOnlyCoefSource,
             Some(&mut replay_counts),
             Some(&mut replay_pass),
         )

@@ -1588,6 +1588,78 @@ fn replay_retained_coefs(
     }
 }
 
+/// Outcome of attempting to consume one retained transform block.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CoefReplayStatus {
+    /// The pass records tokens or is absent, so the caller must tokenize.
+    NotReplay,
+    /// One complete retained block was consumed.
+    Replayed,
+    /// Replay state was malformed; the caller must tokenize as a fallback.
+    Mismatch,
+}
+
+/// Consume one retained transform block before the writer fetches coefficients.
+///
+/// Retained replay needs only symbolic tokens and the recorded nonzero flag.
+/// Moving this check ahead of coefficient-source lookup avoids revisiting the
+/// coefficient arena during both the pre-header mode-count traversal and the
+/// final arithmetic-coder traversal.
+#[allow(clippy::too_many_arguments)]
+#[inline]
+pub(crate) fn try_replay_retained_block(
+    bw: &mut BoolWriter<'_>,
+    fc: &FrameContext,
+    coef_ctx: &mut TileCoefCtx,
+    plane: usize,
+    x4: usize,
+    y4_in_sb: usize,
+    tx_size: TxSize,
+    ref_type: usize,
+    retained_pass: Option<&mut CoefTokenPass<'_>>,
+) -> CoefReplayStatus {
+    let Some(CoefTokenPass::Replay {
+        retained,
+        next_block,
+        token_start,
+        mismatch,
+    }) = retained_pass
+    else {
+        return CoefReplayStatus::NotReplay;
+    };
+    let token_end = retained
+        .block_ends
+        .get(*next_block)
+        .copied()
+        .map(|end| end as usize);
+    let nonzero = retained.block_nonzero.get(*next_block).copied();
+    if let (Some(token_end), Some(nonzero)) = (token_end, nonzero)
+        && let Some(tokens) = retained.tokens.get(*token_start..token_end)
+    {
+        // The forward-probability prepass needs the modes walk and its
+        // non-coefficient counts, but its count-only writer discards every
+        // coefficient bit. Consume the retained block and update contexts
+        // without walking its tokens; final tile writers still replay the
+        // exact token stream against the post-header probabilities.
+        if !bw.is_count_only() {
+            let plane_type = usize::from(plane > 0);
+            let coef_probs = &fc.coef_probs[tx_size as usize][plane_type][ref_type];
+            replay_retained_coefs(bw, coef_probs, tokens);
+        }
+        *token_start = token_end;
+        *next_block += 1;
+        let n = 1usize << (tx_size as usize);
+        coef_ctx.set_coef_flags(plane, x4, y4_in_sb, n, n, nonzero);
+        return CoefReplayStatus::Replayed;
+    }
+
+    // Fall back to direct tokenization so malformed internal state cannot
+    // produce a partial tile. The tile wrapper returns the mismatch after the
+    // syntax walk and the caller discards it.
+    *mismatch = true;
+    CoefReplayStatus::Mismatch
+}
+
 /// Encode one transform block's coefficients with full per-TX-block
 /// neighbour-context setup — the encoder-side mirror of
 /// `vp9_decode_block_tokens` (`vp9/decoder/vp9_detokenize.c:275-333`).
@@ -1804,6 +1876,21 @@ fn write_block_tokens_with_retained_impl<T: EncodeCoef>(
     full_counts: Option<&mut crate::entropy::adapt::Coef12Bank>,
     mut retained_pass: Option<&mut CoefTokenPass<'_>>,
 ) {
+    if try_replay_retained_block(
+        bw,
+        fc,
+        coef_ctx,
+        plane,
+        x4,
+        y4_in_sb,
+        tx_size,
+        ref_type,
+        retained_pass.as_deref_mut(),
+    ) == CoefReplayStatus::Replayed
+    {
+        return;
+    }
+
     // libvpx `get_plane_type`: Y → 0, UV → 1
     // (`vp9_blockd.h:210-212`).
     let plane_type = usize::from(plane > 0);
@@ -1813,40 +1900,6 @@ fn write_block_tokens_with_retained_impl<T: EncodeCoef>(
     let coef_probs: &CoefBandCtxProbs = &fc.coef_probs[tx_size as usize][plane_type][ref_type];
 
     let n = 1usize << (tx_size as usize); // 1 / 2 / 4 / 8
-    if let Some(CoefTokenPass::Replay {
-        retained,
-        next_block,
-        token_start,
-        mismatch,
-    }) = retained_pass.as_deref_mut()
-    {
-        let token_end = retained
-            .block_ends
-            .get(*next_block)
-            .copied()
-            .map(|end| end as usize);
-        let nonzero = retained.block_nonzero.get(*next_block).copied();
-        if let (Some(token_end), Some(nonzero)) = (token_end, nonzero)
-            && let Some(tokens) = retained.tokens.get(*token_start..token_end)
-        {
-            // The forward-probability prepass needs the modes walk and its
-            // non-coefficient counts, but its count-only writer discards every
-            // coefficient bit. Consume the retained block and update contexts
-            // without walking its tokens; final tile writers still replay the
-            // exact token stream against the post-header probabilities.
-            if !bw.is_count_only() {
-                replay_retained_coefs(bw, coef_probs, tokens);
-            }
-            *token_start = token_end;
-            *next_block += 1;
-            coef_ctx.set_coef_flags(plane, x4, y4_in_sb, n, n, nonzero);
-            return;
-        }
-        // Fall back to direct tokenization so malformed internal state
-        // cannot produce a partial tile. The tile wrapper returns the
-        // mismatch after the syntax walk and the caller discards it.
-        *mismatch = true;
-    }
 
     // libvpx `vp9_scan_orders[tx_size][tx_type]`
     // (`vp9_decodeframe.c:326-328`).
