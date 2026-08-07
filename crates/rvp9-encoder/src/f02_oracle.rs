@@ -562,10 +562,11 @@ mod tests {
 
     #[test]
     fn sink_off_by_default() {
+        let _guard = crate::env_test_mutex();
         // Without any env init the static atomic is `false`. Whatever
         // any other test may have set, force off for this assertion.
-        // (Thread-locals are per-test-thread so a second thread isn't
-        // contaminated by env churn.)
+        // The crate-wide guard serializes the shared enable atomic with
+        // encoder tests that call `init_from_env`.
         F02_ON.store(false, Ordering::Relaxed);
         // Drain first in case a previous test populated this thread's
         // sink.
@@ -577,6 +578,7 @@ mod tests {
 
     #[test]
     fn sink_on_records_and_drains() {
+        let _guard = crate::env_test_mutex();
         F02_ON.store(true, Ordering::Relaxed);
         // Reset thread-local state for determinism.
         let _ = drain_frame();
@@ -595,9 +597,9 @@ mod tests {
 
     #[test]
     fn init_from_env_unset_yields_disabled() {
-        // SAFETY: this test is single-threaded by virtue of `cargo
-        // test`'s per-test isolation. We mutate process env then
-        // re-read. No other threads in this crate touch this var.
+        let _guard = crate::env_test_mutex();
+        // SAFETY: the crate-wide guard serializes this process-environment
+        // mutation with every encoder test that touches F02 state.
         unsafe { std::env::remove_var("RVP9_F02_ORACLE") };
         init_from_env();
         assert!(!is_enabled());
