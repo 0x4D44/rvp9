@@ -3377,6 +3377,7 @@ impl StreamEncoder {
                     (gld_y, gld_u, gld_v),
                     altref_planes_for_picker,
                     ($recon_y, $recon_u, $recon_v),
+                    crate::InterReconLayout::full(w as usize, h as usize),
                     $partitions,
                     prev_grid_slice,
                     $mv_grid,
@@ -4336,6 +4337,7 @@ impl StreamEncoder {
             // the documented ARF scope (LAST/intra per leaf).
             None,
             (&mut arf_recon_y, &mut arf_recon_u, &mut arf_recon_v),
+            crate::InterReconLayout::full(w as usize, h as usize),
             &mut sb_partitions,
             arf_prev_mv_grid,
             &mut arf_mv_grid,

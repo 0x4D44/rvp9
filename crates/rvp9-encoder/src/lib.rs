@@ -1537,7 +1537,7 @@ fn copy_last_ref_leaf_to_recon(
     mi_col: usize,
     bsize: BlockSize,
     last_recon_yuv: (&[u8], &[u8], &[u8]),
-    recon_yuv_out: (&mut [u8], &mut [u8], &mut [u8]),
+    recon_yuv_out: &mut InterReconPlanes<'_>,
 ) {
     for plane in 0..3 {
         let ss_x = F5_SUBSAMPLING_X[plane];
@@ -1555,16 +1555,18 @@ fn copy_last_ref_leaf_to_recon(
         let pixel_y = (mi_row * 8) >> ss_y;
         debug_assert!(pixel_x + block_width <= plane_width);
         debug_assert!(pixel_y + block_height <= plane_height);
-        let (src, dst) = match plane {
-            0 => (last_recon_yuv.0, &mut *recon_yuv_out.0),
-            1 => (last_recon_yuv.1, &mut *recon_yuv_out.1),
-            _ => (last_recon_yuv.2, &mut *recon_yuv_out.2),
+        let src = match plane {
+            0 => last_recon_yuv.0,
+            1 => last_recon_yuv.1,
+            _ => last_recon_yuv.2,
         };
-        for row in pixel_y..pixel_y + block_height {
-            let start = row * plane_width + pixel_x;
-            let end = start + block_width;
-            dst[start..end].copy_from_slice(&src[start..end]);
-        }
+        recon_yuv_out.plane_mut(plane).copy_from_full_frame(
+            src,
+            pixel_x,
+            pixel_y,
+            block_width,
+            block_height,
+        );
     }
 }
 
@@ -3342,6 +3344,327 @@ pub(crate) struct InterSimulationResult {
     pub(crate) mi_grid: InterSimulationMiGrid,
 }
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+struct InterReconPlaneLayout {
+    frame_width: usize,
+    frame_height: usize,
+    row_start: usize,
+    col_start: usize,
+    stride: usize,
+    rows: usize,
+}
+
+impl InterReconPlaneLayout {
+    fn full(frame_width: usize, frame_height: usize) -> Self {
+        assert!(frame_width > 0, "inter recon plane width must be positive");
+        assert!(
+            frame_height > 0,
+            "inter recon plane height must be positive"
+        );
+        Self {
+            frame_width,
+            frame_height,
+            row_start: 0,
+            col_start: 0,
+            stride: frame_width,
+            rows: frame_height,
+        }
+    }
+
+    #[cfg(test)]
+    fn window(
+        frame_width: usize,
+        frame_height: usize,
+        row_start: usize,
+        col_start: usize,
+        width: usize,
+        rows: usize,
+    ) -> Self {
+        assert!(width > 0, "inter recon window width must be positive");
+        assert!(rows > 0, "inter recon window height must be positive");
+        assert!(
+            col_start + width <= frame_width,
+            "inter recon window exceeds the frame width"
+        );
+        assert!(
+            row_start + rows <= frame_height,
+            "inter recon window exceeds the frame height"
+        );
+        Self {
+            frame_width,
+            frame_height,
+            row_start,
+            col_start,
+            stride: width,
+            rows,
+        }
+    }
+
+    #[inline]
+    fn is_full(self) -> bool {
+        self.row_start == 0
+            && self.col_start == 0
+            && self.stride == self.frame_width
+            && self.rows == self.frame_height
+    }
+
+    #[inline]
+    fn local_block(
+        self,
+        global_x: usize,
+        global_y: usize,
+        width: usize,
+        height: usize,
+    ) -> (usize, usize) {
+        let local_x = global_x
+            .checked_sub(self.col_start)
+            .expect("inter recon block starts before its window column");
+        let local_y = global_y
+            .checked_sub(self.row_start)
+            .expect("inter recon block starts before its window row");
+        assert!(
+            local_x + width <= self.stride,
+            "inter recon block exceeds its window width"
+        );
+        assert!(
+            local_y + height <= self.rows,
+            "inter recon block exceeds its window height"
+        );
+        (local_x, local_y)
+    }
+}
+
+/// Reconstruction-plane ownership used by one inter picker invocation.
+///
+/// The full layout preserves the existing frame-shaped tile-worker fast path.
+/// The compact layout maps frame-global coordinates into one tile-width SB-row
+/// window: one imported row above the job plus its visible output rows.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub(crate) struct InterReconLayout {
+    planes: [InterReconPlaneLayout; 3],
+}
+
+impl InterReconLayout {
+    pub(crate) fn full(width: usize, height: usize) -> Self {
+        assert!(
+            width > 0 && width.is_multiple_of(2),
+            "inter recon frame width must be positive and even"
+        );
+        assert!(
+            height > 0 && height.is_multiple_of(2),
+            "inter recon frame height must be positive and even"
+        );
+        Self {
+            planes: [
+                InterReconPlaneLayout::full(width, height),
+                InterReconPlaneLayout::full(width / 2, height / 2),
+                InterReconPlaneLayout::full(width / 2, height / 2),
+            ],
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn compact_row(
+        width: usize,
+        height: usize,
+        sb_row: usize,
+        mi_col_start: usize,
+        mi_cols: usize,
+    ) -> Self {
+        assert!(
+            width > 0 && width.is_multiple_of(64),
+            "compact inter recon frame width must be a positive multiple of 64"
+        );
+        assert!(
+            height > 0 && height.is_multiple_of(8),
+            "compact inter recon frame height must be a positive multiple of 8"
+        );
+        assert!(
+            sb_row < height.div_ceil(64),
+            "compact inter recon SB row is out of bounds"
+        );
+        assert!(
+            mi_cols > 0 && mi_cols.is_multiple_of(8),
+            "compact inter recon tile width must contain whole superblocks"
+        );
+        assert!(
+            mi_col_start.is_multiple_of(8) && mi_col_start + mi_cols <= width / 8,
+            "compact inter recon tile columns are invalid"
+        );
+
+        let plane_layout = |subsampling: usize| {
+            let plane_width = width >> subsampling;
+            let plane_height = height >> subsampling;
+            let job_row_start = (sb_row * 64) >> subsampling;
+            let job_row_end = (job_row_start + (64 >> subsampling)).min(plane_height);
+            let row_start = job_row_start.saturating_sub(usize::from(sb_row > 0));
+            let col_start = (mi_col_start * 8) >> subsampling;
+            let window_width = (mi_cols * 8) >> subsampling;
+            InterReconPlaneLayout::window(
+                plane_width,
+                plane_height,
+                row_start,
+                col_start,
+                window_width,
+                job_row_end - row_start,
+            )
+        };
+        Self {
+            planes: [plane_layout(0), plane_layout(1), plane_layout(1)],
+        }
+    }
+
+    #[inline]
+    fn plane(self, plane: usize) -> InterReconPlaneLayout {
+        self.planes[plane]
+    }
+}
+
+struct InterReconPlane<'a> {
+    data: &'a mut [u8],
+    layout: InterReconPlaneLayout,
+}
+
+impl<'a> InterReconPlane<'a> {
+    fn new(data: &'a mut [u8], layout: InterReconPlaneLayout) -> Self {
+        assert_eq!(
+            data.len(),
+            layout.stride * layout.rows,
+            "inter recon plane storage does not match its layout"
+        );
+        Self { data, layout }
+    }
+
+    #[inline]
+    fn get(&self, global_x: usize, global_y: usize) -> u8 {
+        let (local_x, local_y) = self.layout.local_block(global_x, global_y, 1, 1);
+        self.data[local_y * self.layout.stride + local_x]
+    }
+
+    #[inline]
+    fn copy_row_to(&self, global_x: usize, global_y: usize, destination: &mut [u8]) {
+        let (local_x, local_y) = self
+            .layout
+            .local_block(global_x, global_y, destination.len(), 1);
+        let start = local_y * self.layout.stride + local_x;
+        destination.copy_from_slice(&self.data[start..start + destination.len()]);
+    }
+
+    fn copy_from_full_frame(
+        &mut self,
+        source: &[u8],
+        global_x: usize,
+        global_y: usize,
+        width: usize,
+        height: usize,
+    ) {
+        let layout = self.layout;
+        assert_eq!(
+            source.len(),
+            layout.frame_width * layout.frame_height,
+            "inter recon copy source must be a tight full-frame plane"
+        );
+        let (local_x, local_y) = layout.local_block(global_x, global_y, width, height);
+        for row in 0..height {
+            let source_start = (global_y + row) * layout.frame_width + global_x;
+            let destination_start = (local_y + row) * layout.stride + local_x;
+            self.data[destination_start..destination_start + width]
+                .copy_from_slice(&source[source_start..source_start + width]);
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn build_inter_prediction(
+        &mut self,
+        reference: &[u8],
+        global_x: usize,
+        global_y: usize,
+        width: usize,
+        height: usize,
+        mv_q4_col: i32,
+        mv_q4_row: i32,
+        interp_filter: rvp9_core::bitstream::frame::InterpFilter,
+        is_compound_avg: bool,
+        pred_border: &mut [u8; MAX_INTER_PRED_BORDER_BYTES],
+    ) {
+        let layout = self.layout;
+        if layout.is_full() {
+            build_inter_pred_plane_unscaled(
+                reference,
+                layout.frame_width,
+                layout.frame_width,
+                layout.frame_height,
+                global_x,
+                global_y,
+                width,
+                height,
+                mv_q4_col,
+                mv_q4_row,
+                self.data,
+                layout.stride,
+                interp_filter,
+                is_compound_avg,
+                pred_border,
+            );
+        } else {
+            let (local_x, local_y) = layout.local_block(global_x, global_y, width, height);
+            build_inter_pred_plane_unscaled_at_dst(
+                reference,
+                layout.frame_width,
+                layout.frame_width,
+                layout.frame_height,
+                global_x,
+                global_y,
+                local_x,
+                local_y,
+                width,
+                height,
+                mv_q4_col,
+                mv_q4_row,
+                self.data,
+                layout.stride,
+                interp_filter,
+                is_compound_avg,
+                pred_border,
+            );
+        }
+    }
+}
+
+struct InterReconPlanes<'a> {
+    y: InterReconPlane<'a>,
+    u: InterReconPlane<'a>,
+    v: InterReconPlane<'a>,
+}
+
+impl<'a> InterReconPlanes<'a> {
+    fn new(planes: (&'a mut [u8], &'a mut [u8], &'a mut [u8]), layout: InterReconLayout) -> Self {
+        Self {
+            y: InterReconPlane::new(planes.0, layout.plane(0)),
+            u: InterReconPlane::new(planes.1, layout.plane(1)),
+            v: InterReconPlane::new(planes.2, layout.plane(2)),
+        }
+    }
+
+    #[inline]
+    fn plane(&self, plane: usize) -> &InterReconPlane<'a> {
+        match plane {
+            0 => &self.y,
+            1 => &self.u,
+            _ => &self.v,
+        }
+    }
+
+    #[inline]
+    fn plane_mut(&mut self, plane: usize) -> &mut InterReconPlane<'a> {
+        match plane {
+            0 => &mut self.y,
+            1 => &mut self.u,
+            _ => &mut self.v,
+        }
+    }
+}
+
 pub(crate) enum InterPartitionHistoryMut<'a> {
     Frame {
         entries: &'a mut [rvp9_core::mode_decision::partition::FixedTreeHistoryEntry],
@@ -4284,6 +4607,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // gates whether ALTREF is iterated.
     altref_recon_yuv: Option<(&[u8], &[u8], &[u8])>,
     recon_yuv_out: (&mut [u8], &mut [u8], &mut [u8]),
+    recon_layout: InterReconLayout,
     sb_partitions: &mut [Vec<InterPartitionLeafDesc>],
     // A18 — Previous frame's MV grid for `find_mv_refs` salvage
     // (libvpx `cm->prev_frame->mvs`). Indexed row-major at stride
@@ -4485,6 +4809,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     let h = height as usize;
     let uvw = w / 2;
     let uvh = h / 2;
+    let mut recon_yuv_out = InterReconPlanes::new(recon_yuv_out, recon_layout);
     let rt_large_recovery = matches!(deadline, sf_mod::Deadline::Realtime)
         && speed.unsigned_abs() >= 7
         && matches!(content_tier, sf_mod::ContentTier::Default)
@@ -6286,11 +6611,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         leaf_mi_col,
                         leaf_bsize,
                         last_recon_yuv,
-                        (
-                            &mut *recon_yuv_out.0,
-                            &mut *recon_yuv_out.1,
-                            &mut *recon_yuv_out.2,
-                        ),
+                        &mut recon_yuv_out,
                     );
                     // F.0.2 oracle — record the skip-fallback decision
                     // too (otherwise sub-8 leaves are missing from the
@@ -6412,11 +6733,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         leaf_mi_col,
                         leaf_bsize,
                         last_recon_yuv,
-                        (
-                            &mut *recon_yuv_out.0,
-                            &mut *recon_yuv_out.1,
-                            &mut *recon_yuv_out.2,
-                        ),
+                        &mut recon_yuv_out,
                     );
                     // F.0.2 oracle — also record this degenerate-MV-
                     // envelope fallback so frame-edge leaves aren't
@@ -6666,25 +6983,25 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 let intra_left: Option<&[u8]>;
                 let intra_top_left: u8;
                 {
-                    let recon_y: &[u8] = recon_yuv_out.0;
+                    let recon_y = recon_yuv_out.plane(0);
                     if intra_have_above {
-                        let row_off = (leaf_px_y - 1) * w + leaf_px_x;
                         let n = bw.min(w - leaf_px_x);
-                        intra_above_buf[..n].copy_from_slice(&recon_y[row_off..row_off + n]);
+                        recon_y.copy_row_to(leaf_px_x, leaf_px_y - 1, &mut intra_above_buf[..n]);
                         intra_above = Some(&intra_above_buf[..n]);
                     } else {
                         intra_above = None;
                     }
                     if intra_have_left {
-                        for r in 0..bh.min(h - leaf_px_y) {
-                            intra_left_buf[r] = recon_y[(leaf_px_y + r) * w + (leaf_px_x - 1)];
+                        let left_len = bh.min(h - leaf_px_y);
+                        for (row, slot) in intra_left_buf[..left_len].iter_mut().enumerate() {
+                            *slot = recon_y.get(leaf_px_x - 1, leaf_px_y + row);
                         }
-                        intra_left = Some(&intra_left_buf[..bh.min(h - leaf_px_y)]);
+                        intra_left = Some(&intra_left_buf[..left_len]);
                     } else {
                         intra_left = None;
                     }
                     intra_top_left = if intra_have_above && intra_have_left {
-                        recon_y[(leaf_px_y - 1) * w + (leaf_px_x - 1)]
+                        recon_y.get(leaf_px_x - 1, leaf_px_y - 1)
                     } else {
                         127
                     };
@@ -7656,7 +7973,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         let ss_y = F5_SUBSAMPLING_Y[plane];
                         let plane_w = if plane == 0 { w } else { uvw };
                         let plane_h = if plane == 0 { h } else { uvh };
-                        let plane_stride = plane_w;
+                        let input_stride = plane_w;
 
                         let plane_bsize = if plane == 0 {
                             leaf_bsize
@@ -7680,11 +7997,21 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
 
                         // G5 — bind input + recon planes (input was
                         // previously only used in the inter branch).
-                        let (input_plane, recon_plane) = match plane {
-                            0 => (input_yuv.0, &mut *recon_yuv_out.0),
-                            1 => (input_yuv.1, &mut *recon_yuv_out.1),
-                            _ => (input_yuv.2, &mut *recon_yuv_out.2),
+                        let input_plane = match plane {
+                            0 => input_yuv.0,
+                            1 => input_yuv.1,
+                            _ => input_yuv.2,
                         };
+                        let recon_plane = recon_yuv_out.plane_mut(plane);
+                        let recon_layout = recon_plane.layout;
+                        let block_w_px = plane_bw_4x4 * 4;
+                        let block_h_px = plane_bh_4x4 * 4;
+                        let (recon_plane_px_x, recon_plane_px_y) = recon_layout
+                            .local_block(plane_px_x, plane_px_y, block_w_px, block_h_px);
+                        let recon_stride = recon_layout.stride;
+                        let recon_plane_w = recon_layout.stride;
+                        let recon_plane_h = recon_layout.rows;
+                        let recon_data = &mut *recon_plane.data;
 
                         let have_above_block = leaf_mi_row > 0;
                         let have_left_block = leaf_mi_col > current_tile.mi_col_start;
@@ -7711,6 +8038,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             while tx_x4_local < plane_bw_4x4 {
                                 let tx_px_x = plane_px_x + tx_x4_local * 4;
                                 let tx_px_y = plane_px_y + tx_y4_local * 4;
+                                let recon_tx_px_x = recon_plane_px_x + tx_x4_local * 4;
+                                let recon_tx_px_y = recon_plane_px_y + tx_y4_local * 4;
 
                                 // Step 1: intra prediction (existing).
                                 let have_top = have_above_block || tx_y4_local > 0;
@@ -7719,12 +8048,12 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
 
                                 let mut edges = EdgeBuffers::new();
                                 build_intra_predictors(
-                                    recon_plane,
-                                    plane_stride,
-                                    tx_px_x,
-                                    tx_px_y,
-                                    plane_w,
-                                    plane_h,
+                                    recon_data,
+                                    recon_stride,
+                                    recon_tx_px_x,
+                                    recon_tx_px_y,
+                                    recon_plane_w,
+                                    recon_plane_h,
                                     plane_tx,
                                     plane_mode,
                                     have_top,
@@ -7738,11 +8067,12 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                     left_available: have_left,
                                 };
 
-                                let dst_off = tx_px_y * plane_stride + tx_px_x;
+                                let input_off = tx_px_y * input_stride + tx_px_x;
+                                let dst_off = recon_tx_px_y * recon_stride + recon_tx_px_x;
                                 intra_predict(
                                     plane_mode,
-                                    &mut recon_plane[dst_off..],
-                                    plane_stride,
+                                    &mut recon_data[dst_off..],
+                                    recon_stride,
                                     tx_side,
                                     pred_ctx,
                                     dc_avail,
@@ -7770,31 +8100,39 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                         #[cfg(target_arch = "aarch64")]
                                         if matches!(tx_side, 8 | 16 | 32) {
                                             let _ = rvp9_core::dsp::aarch64::subtract_square_neon_with_nonzero(
-                                                &input_plane[dst_off..],
-                                                plane_stride,
-                                                &recon_plane[dst_off..],
-                                                plane_stride,
+                                                &input_plane[input_off..],
+                                                input_stride,
+                                                &recon_data[dst_off..],
+                                                recon_stride,
                                                 residual,
                                                 tx_side,
                                             );
                                         } else {
                                             for r in 0..tx_side {
                                                 for c in 0..tx_side {
-                                                    let off =
-                                                        (tx_px_y + r) * plane_stride + tx_px_x + c;
-                                                    residual[r * tx_side + c] = input_plane[off]
+                                                    let input_index =
+                                                        (tx_px_y + r) * input_stride + tx_px_x + c;
+                                                    let recon_index = (recon_tx_px_y + r)
+                                                        * recon_stride
+                                                        + recon_tx_px_x
+                                                        + c;
+                                                    residual[r * tx_side + c] = input_plane[input_index]
                                                         as i16
-                                                        - recon_plane[off] as i16;
+                                                        - recon_data[recon_index] as i16;
                                                 }
                                             }
                                         }
                                         #[cfg(not(target_arch = "aarch64"))]
                                         for r in 0..tx_side {
                                             for c in 0..tx_side {
-                                                let off =
-                                                    (tx_px_y + r) * plane_stride + tx_px_x + c;
-                                                residual[r * tx_side + c] = input_plane[off] as i16
-                                                    - recon_plane[off] as i16;
+                                                let input_index =
+                                                    (tx_px_y + r) * input_stride + tx_px_x + c;
+                                                let recon_index = (recon_tx_px_y + r) * recon_stride
+                                                    + recon_tx_px_x
+                                                    + c;
+                                                residual[r * tx_side + c] = input_plane[input_index]
+                                                    as i16
+                                                    - recon_data[recon_index] as i16;
                                             }
                                         }
 
@@ -7805,9 +8143,11 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                                 tx_side,
                                                 plane_tx as usize,
                                             );
-                                            crate::predstat::record_y_pred_block(
-                                                recon_plane,
-                                                plane_stride,
+                                            crate::predstat::record_y_pred_block_from_window(
+                                                recon_data,
+                                                recon_stride,
+                                                recon_tx_px_x,
+                                                recon_tx_px_y,
                                                 tx_px_x,
                                                 tx_px_y,
                                                 tx_side,
@@ -7833,8 +8173,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                                         tx_type,
                                                         dqcoeff,
                                                         eob,
-                                                        &mut recon_plane[dst_off..],
-                                                        plane_stride,
+                                                        &mut recon_data[dst_off..],
+                                                        recon_stride,
                                                     );
                                                 }
                                                 coef_source.insert_i16(
@@ -7892,7 +8232,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         let ss_y = F5_SUBSAMPLING_Y[plane];
                         let plane_w = if plane == 0 { w } else { uvw };
                         let plane_h = if plane == 0 { h } else { uvh };
-                        let plane_stride = plane_w;
+                        let input_stride = plane_w;
 
                         let plane_bsize = if plane == 0 {
                             leaf_bsize
@@ -7942,29 +8282,18 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                  the picker must not select ALTREF unless its slot is available",
                             )
                         };
-                        let (input_plane, ref_plane_data, recon_plane) = match (plane, picked_ref) {
-                            (0, RefFrame::AltrefFrame) => {
-                                (input_yuv.0, altref_yuv().0, &mut *recon_yuv_out.0)
-                            }
-                            (1, RefFrame::AltrefFrame) => {
-                                (input_yuv.1, altref_yuv().1, &mut *recon_yuv_out.1)
-                            }
-                            (_, RefFrame::AltrefFrame) => {
-                                (input_yuv.2, altref_yuv().2, &mut *recon_yuv_out.2)
-                            }
-                            (0, RefFrame::GoldenFrame) => {
-                                (input_yuv.0, golden_recon_yuv.0, &mut *recon_yuv_out.0)
-                            }
-                            (1, RefFrame::GoldenFrame) => {
-                                (input_yuv.1, golden_recon_yuv.1, &mut *recon_yuv_out.1)
-                            }
-                            (_, RefFrame::GoldenFrame) => {
-                                (input_yuv.2, golden_recon_yuv.2, &mut *recon_yuv_out.2)
-                            }
-                            (0, _) => (input_yuv.0, last_recon_yuv.0, &mut *recon_yuv_out.0),
-                            (1, _) => (input_yuv.1, last_recon_yuv.1, &mut *recon_yuv_out.1),
-                            (_, _) => (input_yuv.2, last_recon_yuv.2, &mut *recon_yuv_out.2),
+                        let (input_plane, ref_plane_data) = match (plane, picked_ref) {
+                            (0, RefFrame::AltrefFrame) => (input_yuv.0, altref_yuv().0),
+                            (1, RefFrame::AltrefFrame) => (input_yuv.1, altref_yuv().1),
+                            (_, RefFrame::AltrefFrame) => (input_yuv.2, altref_yuv().2),
+                            (0, RefFrame::GoldenFrame) => (input_yuv.0, golden_recon_yuv.0),
+                            (1, RefFrame::GoldenFrame) => (input_yuv.1, golden_recon_yuv.1),
+                            (_, RefFrame::GoldenFrame) => (input_yuv.2, golden_recon_yuv.2),
+                            (0, _) => (input_yuv.0, last_recon_yuv.0),
+                            (1, _) => (input_yuv.1, last_recon_yuv.1),
+                            (_, _) => (input_yuv.2, last_recon_yuv.2),
                         };
+                        let recon_plane = recon_yuv_out.plane_mut(plane);
 
                         // Build the leaf's MC prediction into the recon
                         // plane region (mirrors the decoder's MC step that
@@ -7985,19 +8314,14 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         } else {
                             None
                         };
-                        build_inter_pred_plane_unscaled(
+                        recon_plane.build_inter_prediction(
                             ref_plane_data,
-                            plane_stride,
-                            plane_w,
-                            plane_h,
                             plane_px_x,
                             plane_px_y,
                             block_w_px,
                             block_h_px,
                             mv_q4_col,
                             mv_q4_row,
-                            recon_plane,
-                            plane_stride,
                             sb_partitions[sb_idx][leaf_idx].picked_interp_filter,
                             /* is_compound_avg = */ false,
                             &mut inter_emit_scratch.pred_border,
@@ -8036,19 +8360,14 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                 1 => altref_yuv().1,
                                 _ => altref_yuv().2,
                             };
-                            build_inter_pred_plane_unscaled(
+                            recon_plane.build_inter_prediction(
                                 ref2_plane_data,
-                                plane_stride,
-                                plane_w,
-                                plane_h,
                                 plane_px_x,
                                 plane_px_y,
                                 block_w_px,
                                 block_h_px,
                                 mv2_q4_col,
                                 mv2_q4_row,
-                                recon_plane,
-                                plane_stride,
                                 sb_partitions[sb_idx][leaf_idx].picked_interp_filter,
                                 /* is_compound_avg = */ true,
                                 &mut inter_emit_scratch.pred_border,
@@ -8057,6 +8376,11 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         if let Some(t0) = emit_pred_start {
                             emit_profile_pred_time += t0.elapsed();
                         }
+                        let recon_layout = recon_plane.layout;
+                        let (recon_plane_px_x, recon_plane_px_y) = recon_layout
+                            .local_block(plane_px_x, plane_px_y, block_w_px, block_h_px);
+                        let recon_stride = recon_layout.stride;
+                        let recon_data = &mut *recon_plane.data;
 
                         // The default reuses the RT picker's model-RD TX
                         // decision, matching libvpx pickmode's stored
@@ -8079,10 +8403,13 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             };
                             chosen_luma_tx = choose_inter_luma_tx_size(InterLumaTxInput {
                                 input_plane,
-                                recon_plane,
-                                plane_stride,
-                                plane_px_x,
-                                plane_px_y,
+                                input_stride,
+                                input_px_x: plane_px_x,
+                                input_px_y: plane_px_y,
+                                recon_plane: recon_data,
+                                recon_stride,
+                                recon_px_x: recon_plane_px_x,
+                                recon_px_y: recon_plane_px_y,
                                 leaf_bsize,
                                 quantizer: &quantizer,
                                 coef_costs: &rdo_coef_costs,
@@ -8143,7 +8470,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             while tx_x4_local < plane_bw_4x4 {
                                 let tx_px_x = plane_px_x + tx_x4_local * 4;
                                 let tx_px_y = plane_px_y + tx_y4_local * 4;
-                                let dst_off = tx_px_y * plane_stride + tx_px_x;
+                                let recon_tx_px_x = recon_plane_px_x + tx_x4_local * 4;
+                                let recon_tx_px_y = recon_plane_px_y + tx_y4_local * 4;
+                                let input_off = tx_px_y * input_stride + tx_px_x;
+                                let dst_off = recon_tx_px_y * recon_stride + recon_tx_px_x;
 
                                 // Residual = input - pred. `recon_plane`
                                 // currently holds the MC prediction.
@@ -8172,21 +8502,26 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                         #[cfg(target_arch = "aarch64")]
                                         let residual_nonzero = if matches!(tx_side, 8 | 16 | 32) {
                                             rvp9_core::dsp::aarch64::subtract_square_neon_with_nonzero(
-                                                &input_plane[dst_off..],
-                                                plane_stride,
-                                                &recon_plane[dst_off..],
-                                                plane_stride,
+                                                &input_plane[input_off..],
+                                                input_stride,
+                                                &recon_data[dst_off..],
+                                                recon_stride,
                                                 residual,
                                                 tx_side,
                                             )
                                         } else {
                                             for r in 0..tx_side {
                                                 for c in 0..tx_side {
-                                                    let off = (tx_px_y + r) * plane_stride
-                                                        + (tx_px_x + c);
-                                                    residual[r * tx_side + c] = input_plane[off]
+                                                    let input_index = (tx_px_y + r) * input_stride
+                                                        + tx_px_x
+                                                        + c;
+                                                    let recon_index = (recon_tx_px_y + r)
+                                                        * recon_stride
+                                                        + recon_tx_px_x
+                                                        + c;
+                                                    residual[r * tx_side + c] = input_plane[input_index]
                                                         as i16
-                                                        - recon_plane[off] as i16;
+                                                        - recon_data[recon_index] as i16;
                                                 }
                                             }
                                             residual.iter().any(|&value| value != 0)
@@ -8196,10 +8531,15 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                             let mut nonzero = false;
                                             for r in 0..tx_side {
                                                 for c in 0..tx_side {
-                                                    let off = (tx_px_y + r) * plane_stride
-                                                        + (tx_px_x + c);
-                                                    let value = input_plane[off] as i16
-                                                        - recon_plane[off] as i16;
+                                                    let input_index = (tx_px_y + r) * input_stride
+                                                        + tx_px_x
+                                                        + c;
+                                                    let recon_index = (recon_tx_px_y + r)
+                                                        * recon_stride
+                                                        + recon_tx_px_x
+                                                        + c;
+                                                    let value = input_plane[input_index] as i16
+                                                        - recon_data[recon_index] as i16;
                                                     residual[r * tx_side + c] = value;
                                                     nonzero |= value != 0;
                                                 }
@@ -8222,9 +8562,11 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                             // prediction pixels into `diag_pred`.
                                             // `recon_plane` holds pure MC prediction
                                             // for this TX (residual not yet added).
-                                            crate::predstat::record_y_pred_block(
-                                                recon_plane,
-                                                plane_stride,
+                                            crate::predstat::record_y_pred_block_from_window(
+                                                recon_data,
+                                                recon_stride,
+                                                recon_tx_px_x,
+                                                recon_tx_px_y,
                                                 tx_px_x,
                                                 tx_px_y,
                                                 tx_side,
@@ -8287,8 +8629,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                                         plane_tx,
                                                         dqcoeff,
                                                         eob,
-                                                        &mut recon_plane[dst_off..],
-                                                        plane_stride,
+                                                        &mut recon_data[dst_off..],
+                                                        recon_stride,
                                                     );
                                                 }
                                                 if let Some(t0) = emit_inverse_start {
@@ -9785,10 +10127,13 @@ fn intra_quant_one_tx(
 /// it and the writer signals it (under `tx_mode = TxModeSelect`).
 struct InterLumaTxInput<'a> {
     input_plane: &'a [u8],
+    input_stride: usize,
+    input_px_x: usize,
+    input_px_y: usize,
     recon_plane: &'a [u8],
-    plane_stride: usize,
-    plane_px_x: usize,
-    plane_px_y: usize,
+    recon_stride: usize,
+    recon_px_x: usize,
+    recon_px_y: usize,
     leaf_bsize: BlockSize,
     quantizer: &'a rvp9_core::quant::forward::PlaneQuantizers,
     coef_costs: &'a rvp9_core::cost::coef_cost::CoefCostTable,
@@ -9828,10 +10173,13 @@ fn choose_inter_luma_tx_size_impl<const PRUNE: bool>(
 
     let InterLumaTxInput {
         input_plane,
+        input_stride,
+        input_px_x,
+        input_px_y,
         recon_plane,
-        plane_stride,
-        plane_px_x,
-        plane_px_y,
+        recon_stride,
+        recon_px_x,
+        recon_px_y,
         leaf_bsize,
         quantizer,
         coef_costs,
@@ -9857,33 +10205,36 @@ fn choose_inter_luma_tx_size_impl<const PRUNE: bool>(
     let leaf_residual = &mut residual[..block_w_px * block_h_px];
     #[cfg(target_arch = "aarch64")]
     if block_w_px == block_h_px {
-        let pixel_offset = plane_px_y * plane_stride + plane_px_x;
+        let input_offset = input_px_y * input_stride + input_px_x;
+        let recon_offset = recon_px_y * recon_stride + recon_px_x;
         rvp9_core::dsp::aarch64::subtract_square_neon(
-            &input_plane[pixel_offset..],
-            plane_stride,
-            &recon_plane[pixel_offset..],
-            plane_stride,
+            &input_plane[input_offset..],
+            input_stride,
+            &recon_plane[recon_offset..],
+            recon_stride,
             leaf_residual,
             block_w_px,
         );
     } else {
         for r in 0..block_h_px {
-            let src_row = (plane_px_y + r) * plane_stride + plane_px_x;
+            let src_row = (input_px_y + r) * input_stride + input_px_x;
+            let recon_row = (recon_px_y + r) * recon_stride + recon_px_x;
             let dst_row = r * block_w_px;
             for c in 0..block_w_px {
                 let s = i16::from(input_plane[src_row + c]);
-                let p = i16::from(recon_plane[src_row + c]);
+                let p = i16::from(recon_plane[recon_row + c]);
                 leaf_residual[dst_row + c] = s - p;
             }
         }
     }
     #[cfg(not(target_arch = "aarch64"))]
     for r in 0..block_h_px {
-        let src_row = (plane_px_y + r) * plane_stride + plane_px_x;
+        let src_row = (input_px_y + r) * input_stride + input_px_x;
+        let recon_row = (recon_px_y + r) * recon_stride + recon_px_x;
         let dst_row = r * block_w_px;
         for c in 0..block_w_px {
             let s = i16::from(input_plane[src_row + c]);
-            let p = i16::from(recon_plane[src_row + c]);
+            let p = i16::from(recon_plane[recon_row + c]);
             leaf_residual[dst_row + c] = s - p;
         }
     }
@@ -10607,15 +10958,21 @@ mod tests {
         let mut recon_u = vec![SENTINEL; u.len()];
         let mut recon_v = vec![SENTINEL; v.len()];
 
-        copy_last_ref_leaf_to_recon(
-            W,
-            H,
-            2,
-            6,
-            BlockSize::Block32x16,
-            (&y, &u, &v),
-            (&mut recon_y, &mut recon_u, &mut recon_v),
-        );
+        {
+            let mut recon = InterReconPlanes::new(
+                (&mut recon_y, &mut recon_u, &mut recon_v),
+                InterReconLayout::full(W, H),
+            );
+            copy_last_ref_leaf_to_recon(
+                W,
+                H,
+                2,
+                6,
+                BlockSize::Block32x16,
+                (&y, &u, &v),
+                &mut recon,
+            );
+        }
 
         for (plane, (src, recon)) in [(&y, &recon_y), (&u, &recon_u), (&v, &recon_v)]
             .into_iter()
@@ -10637,6 +10994,237 @@ mod tests {
                         assert_eq!(recon[index], SENTINEL);
                     }
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn compact_inter_recon_prediction_and_residual_match_full_frame() {
+        use rvp9_core::bitstream::frame::InterpFilter;
+
+        const W: usize = 128;
+        const H: usize = 128;
+        const X: usize = 72;
+        const Y: usize = 80;
+        const SIDE: usize = 16;
+        let reference: Vec<u8> = (0..W * H)
+            .map(|index| ((index * 17 + index / W * 29 + 43) & 0xff) as u8)
+            .collect();
+        let reference2: Vec<u8> = (0..W * H)
+            .map(|index| ((index * 31 + index / W * 7 + 101) & 0xff) as u8)
+            .collect();
+        let full_layout = InterReconLayout::full(W, H).plane(0);
+        let compact_layout = InterReconLayout::compact_row(W, H, 1, 8, 8).plane(0);
+        let mut full = vec![0x5a; full_layout.stride * full_layout.rows];
+        let mut compact = vec![0x5a; compact_layout.stride * compact_layout.rows];
+
+        {
+            let mut full_plane = InterReconPlane::new(&mut full, full_layout);
+            let mut border = [0u8; MAX_INTER_PRED_BORDER_BYTES];
+            full_plane.build_inter_prediction(
+                &reference,
+                X,
+                Y,
+                SIDE,
+                SIDE,
+                11,
+                -7,
+                InterpFilter::EightTapSmooth,
+                false,
+                &mut border,
+            );
+            full_plane.build_inter_prediction(
+                &reference2,
+                X,
+                Y,
+                SIDE,
+                SIDE,
+                -5,
+                9,
+                InterpFilter::EightTap,
+                true,
+                &mut border,
+            );
+        }
+        {
+            let mut compact_plane = InterReconPlane::new(&mut compact, compact_layout);
+            let mut border = [0u8; MAX_INTER_PRED_BORDER_BYTES];
+            compact_plane.build_inter_prediction(
+                &reference,
+                X,
+                Y,
+                SIDE,
+                SIDE,
+                11,
+                -7,
+                InterpFilter::EightTapSmooth,
+                false,
+                &mut border,
+            );
+            compact_plane.build_inter_prediction(
+                &reference2,
+                X,
+                Y,
+                SIDE,
+                SIDE,
+                -5,
+                9,
+                InterpFilter::EightTap,
+                true,
+                &mut border,
+            );
+        }
+
+        let mut dq = [0i32; 64];
+        dq[0] = 224;
+        let full_offset = Y * full_layout.stride + X;
+        let (compact_x, compact_y) = compact_layout.local_block(X, Y, SIDE, SIDE);
+        let compact_offset = compact_y * compact_layout.stride + compact_x;
+        inter_inverse_dct_add(
+            TxSize::Tx8x8,
+            &dq,
+            1,
+            &mut full[full_offset..],
+            full_layout.stride,
+        );
+        inter_inverse_dct_add(
+            TxSize::Tx8x8,
+            &dq,
+            1,
+            &mut compact[compact_offset..],
+            compact_layout.stride,
+        );
+
+        for row in 0..SIDE {
+            let full_start = (Y + row) * full_layout.stride + X;
+            let compact_start = (compact_y + row) * compact_layout.stride + compact_x;
+            assert_eq!(
+                &compact[compact_start..compact_start + SIDE],
+                &full[full_start..full_start + SIDE],
+                "compact prediction/residual differs on row {row}"
+            );
+        }
+    }
+
+    #[test]
+    fn compact_inter_recon_intra_edges_match_full_frame() {
+        use rvp9_core::intra_pred::{
+            DcAvailability, EdgeBuffers, IntraMode, build_intra_predictors, intra_predict,
+        };
+
+        const W: usize = 128;
+        const H: usize = 128;
+        const X: usize = 80;
+        const Y: usize = 80;
+        const SIDE: usize = 8;
+        let full_layout = InterReconLayout::full(W, H).plane(0);
+        let compact_layout = InterReconLayout::compact_row(W, H, 1, 8, 8).plane(0);
+        let full: Vec<u8> = (0..W * H)
+            .map(|index| ((index * 13 + index / W * 41 + 19) & 0xff) as u8)
+            .collect();
+        let mut compact = vec![0u8; compact_layout.stride * compact_layout.rows];
+        {
+            let mut compact_plane = InterReconPlane::new(&mut compact, compact_layout);
+            compact_plane.copy_from_full_frame(
+                &full,
+                compact_layout.col_start,
+                compact_layout.row_start,
+                compact_layout.stride,
+                compact_layout.rows,
+            );
+        }
+        let (compact_x, compact_y) = compact_layout.local_block(X, Y, SIDE, SIDE);
+        let mut full_edges = EdgeBuffers::new();
+        build_intra_predictors(
+            &full,
+            full_layout.stride,
+            X,
+            Y,
+            full_layout.stride,
+            full_layout.rows,
+            TxSize::Tx8x8,
+            IntraMode::D135,
+            true,
+            true,
+            false,
+            &mut full_edges,
+        );
+        let mut compact_edges = EdgeBuffers::new();
+        build_intra_predictors(
+            &compact,
+            compact_layout.stride,
+            compact_x,
+            compact_y,
+            compact_layout.stride,
+            compact_layout.rows,
+            TxSize::Tx8x8,
+            IntraMode::D135,
+            true,
+            true,
+            false,
+            &mut compact_edges,
+        );
+        let mut full_prediction = [0u8; SIDE * SIDE];
+        let mut compact_prediction = [0u8; SIDE * SIDE];
+        let availability = DcAvailability {
+            above_available: true,
+            left_available: true,
+        };
+        intra_predict(
+            IntraMode::D135,
+            &mut full_prediction,
+            SIDE,
+            SIDE,
+            full_edges.pred_ctx(SIDE),
+            availability,
+            rvp9_core::dsp::get_ref(),
+        );
+        intra_predict(
+            IntraMode::D135,
+            &mut compact_prediction,
+            SIDE,
+            SIDE,
+            compact_edges.pred_ctx(SIDE),
+            availability,
+            rvp9_core::dsp::get_ref(),
+        );
+        assert_eq!(compact_prediction, full_prediction);
+    }
+
+    #[test]
+    fn compact_inter_recon_partial_bottom_row_matches_full_frame() {
+        const W: usize = 128;
+        const H: usize = 72;
+        let layout = InterReconLayout::compact_row(W, H, 1, 8, 8);
+        assert_eq!(layout.plane(0).rows, 9);
+        assert_eq!(layout.plane(1).rows, 5);
+        assert_eq!(layout.plane(2).rows, 5);
+
+        for plane in 0..3 {
+            let plane_layout = layout.plane(plane);
+            let source: Vec<u8> = (0..plane_layout.frame_width * plane_layout.frame_height)
+                .map(|index| ((index * 23 + plane * 59) & 0xff) as u8)
+                .collect();
+            let mut compact = vec![0xa5; plane_layout.stride * plane_layout.rows];
+            {
+                let mut compact_plane = InterReconPlane::new(&mut compact, plane_layout);
+                compact_plane.copy_from_full_frame(
+                    &source,
+                    plane_layout.col_start,
+                    plane_layout.row_start,
+                    plane_layout.stride,
+                    plane_layout.rows,
+                );
+            }
+            for local_row in 0..plane_layout.rows {
+                let global_row = plane_layout.row_start + local_row;
+                let source_start = global_row * plane_layout.frame_width + plane_layout.col_start;
+                let compact_start = local_row * plane_layout.stride;
+                assert_eq!(
+                    &compact[compact_start..compact_start + plane_layout.stride],
+                    &source[source_start..source_start + plane_layout.stride],
+                    "partial compact plane {plane} differs on row {global_row}"
+                );
             }
         }
     }
@@ -10922,10 +11510,13 @@ mod tests {
             scratch.quant.dqcoeff.fill(poison);
             let pick_input = InterLumaTxInput {
                 input_plane: &input,
+                input_stride: SIDE,
+                input_px_x: BLOCK_X,
+                input_px_y: BLOCK_Y,
                 recon_plane: &recon,
-                plane_stride: SIDE,
-                plane_px_x: BLOCK_X,
-                plane_px_y: BLOCK_Y,
+                recon_stride: SIDE,
+                recon_px_x: BLOCK_X,
+                recon_px_y: BLOCK_Y,
                 leaf_bsize: BlockSize::Block32x32,
                 quantizer: &quantizer,
                 coef_costs: &coef_costs,
@@ -10987,10 +11578,13 @@ mod tests {
                     let pick = |scratch: &mut InterEmitScratch, prune: bool| {
                         let input = InterLumaTxInput {
                             input_plane: &input,
+                            input_stride: SIDE,
+                            input_px_x: 8,
+                            input_px_y: 8,
                             recon_plane: &recon,
-                            plane_stride: SIDE,
-                            plane_px_x: 8,
-                            plane_px_y: 8,
+                            recon_stride: SIDE,
+                            recon_px_x: 8,
+                            recon_px_y: 8,
                             leaf_bsize,
                             quantizer: &quantizer,
                             coef_costs: &coef_costs,

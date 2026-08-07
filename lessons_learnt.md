@@ -5,6 +5,7 @@ Distilled, non-obvious gotchas future sessions need — dated one-liners.
 Durable project facts/conventions belong in `CLAUDE.md` / `AGENTS.md`, not here.
 Hard cap: 20 entries.
 
+- 2026-08-07: Compact row recon keeps reference/input coordinates global and maps only destinations (`lib.rs:InterReconPlane`).
 - 2026-08-07: Replicated borders: copy row spans + fill halos; per-pixel clamps cost ~1% (`filter.rs:copy_edge_replicated_window`).
 - 2026-08-07: Borrow hot immutable SIMD dispatch; Arc clones cost 2.7% wall (`inter.rs:evaluate_intra_fallback_with_scratch`).
 - 2026-08-03: Partial LF can pad to the next SB row (`loopfilter.rs:apply_loop_filter_for_packet_overlap`).

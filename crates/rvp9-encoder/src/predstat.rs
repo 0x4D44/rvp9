@@ -67,6 +67,38 @@ pub fn record_y_pred_block(
     frame_w: usize,
     frame_h: usize,
 ) {
+    record_y_pred_block_from_window(
+        pred,
+        pred_stride,
+        px_x,
+        px_y,
+        px_x,
+        px_y,
+        tx_side,
+        frame_w,
+        frame_h,
+    );
+}
+
+/// Record prediction pixels whose source lives in an origin-shifted window.
+///
+/// `(source_px_x, source_px_y)` addresses the tight source window while
+/// `(frame_px_x, frame_px_y)` selects the corresponding whole-frame diagnostic
+/// destination. This keeps row-worker diagnostics identical to full-frame
+/// picker output without expanding their reconstruction storage.
+#[inline]
+#[allow(clippy::too_many_arguments)]
+pub fn record_y_pred_block_from_window(
+    pred: &[u8],
+    pred_stride: usize,
+    source_px_x: usize,
+    source_px_y: usize,
+    frame_px_x: usize,
+    frame_px_y: usize,
+    tx_side: usize,
+    frame_w: usize,
+    frame_h: usize,
+) {
     if !enabled() {
         return;
     }
@@ -78,8 +110,8 @@ pub fn record_y_pred_block(
             pf.y = vec![0u8; frame_w * frame_h];
         }
         for r in 0..tx_side {
-            let src_off = (px_y + r) * pred_stride + px_x;
-            let dst_off = (px_y + r) * frame_w + px_x;
+            let src_off = (source_px_y + r) * pred_stride + source_px_x;
+            let dst_off = (frame_px_y + r) * frame_w + frame_px_x;
             pf.y[dst_off..dst_off + tx_side].copy_from_slice(&pred[src_off..src_off + tx_side]);
         }
     });
