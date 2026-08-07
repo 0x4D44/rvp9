@@ -78,9 +78,13 @@ use rvp9_core::transforms::{TxMode, TxSize};
 pub static TRELLIS_CHANGED_COEFFS: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(0);
 
+const MAX_INTER_PRED_BORDER_DIM: usize = 64 + (VP9_INTERP_EXTEND as usize * 2 - 1);
+const MAX_INTER_PRED_BORDER_BYTES: usize = MAX_INTER_PRED_BORDER_DIM * MAX_INTER_PRED_BORDER_DIM;
+
 struct InterEmitScratch {
     residual: [i16; 64 * 64],
     quant: InterEmitQuantScratch,
+    pred_border: [u8; MAX_INTER_PRED_BORDER_BYTES],
 }
 
 impl InterEmitScratch {
@@ -92,6 +96,7 @@ impl InterEmitScratch {
                 qcoeff: [0; 32 * 32],
                 dqcoeff: [0; 32 * 32],
             },
+            pred_border: [0; MAX_INTER_PRED_BORDER_BYTES],
         }
     }
 
@@ -105,7 +110,9 @@ impl InterEmitScratch {
             len <= 32 * 32,
             "inter emit residual length {len} exceeds 32x32 scratch"
         );
-        let Self { residual, quant } = self;
+        let Self {
+            residual, quant, ..
+        } = self;
         operation(&mut residual[..len], quant)
     }
 }
@@ -3667,6 +3674,7 @@ fn partition_color_sensitivity(
     sb_origin: (usize, usize),
     partition_mv: Mv,
     y_sad: u32,
+    pred_border: &mut [u8; MAX_INTER_PRED_BORDER_BYTES],
 ) -> [bool; 2] {
     let (width, height) = frame_size;
     let uv_width = width / 2;
@@ -3695,6 +3703,7 @@ fn partition_color_sensitivity(
             &mut predictor,
             32,
             InterpFilter::Bilinear,
+            pred_border,
         );
         let sad32 = rvp9_core::dsp::get_ref().sad(BlockSize::Block32x32);
         let uv_sad = if uv_x + 32 <= uv_width && uv_y + 32 <= uv_height {
@@ -5044,6 +5053,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     (sb_px_x, sb_px_y),
                     partition_mv,
                     selected_sad,
+                    &mut inter_emit_scratch.pred_border,
                 )
             };
 
@@ -5141,6 +5151,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         &mut predictor_block,
                         64,
                         InterpFilter::Bilinear,
+                        &mut inter_emit_scratch.pred_border,
                     );
 
                     let (_, ac) =
@@ -7827,6 +7838,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             plane_stride,
                             sb_partitions[sb_idx][leaf_idx].picked_interp_filter,
                             /* is_compound_avg = */ false,
+                            &mut inter_emit_scratch.pred_border,
                         );
 
                         // W-COMPOUND — second-reference averaging pass. A
@@ -7877,6 +7889,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                 plane_stride,
                                 sb_partitions[sb_idx][leaf_idx].picked_interp_filter,
                                 /* is_compound_avg = */ true,
+                                &mut inter_emit_scratch.pred_border,
                             );
                         }
                         if let Some(t0) = emit_pred_start {
@@ -8727,6 +8740,7 @@ fn build_inter_pred_plane_unscaled(
     // (`reconstruct_inter.rs:331-476`). `false` for single-ref leaves and
     // for the first (LAST) reference of a compound leaf.
     is_compound_avg: bool,
+    pred_border: &mut [u8; MAX_INTER_PRED_BORDER_BYTES],
 ) {
     build_inter_pred_plane_unscaled_at_dst(
         ref_plane,
@@ -8745,6 +8759,7 @@ fn build_inter_pred_plane_unscaled(
         dst_stride,
         interp_filter,
         is_compound_avg,
+        pred_border,
     );
 }
 
@@ -8766,6 +8781,7 @@ fn build_inter_pred_block_unscaled(
     dst: &mut [u8],
     dst_stride: usize,
     interp_filter: rvp9_core::bitstream::frame::InterpFilter,
+    pred_border: &mut [u8; MAX_INTER_PRED_BORDER_BYTES],
 ) {
     build_inter_pred_plane_unscaled_at_dst(
         ref_plane,
@@ -8784,6 +8800,7 @@ fn build_inter_pred_block_unscaled(
         dst_stride,
         interp_filter,
         false,
+        pred_border,
     );
 }
 
@@ -8805,6 +8822,7 @@ fn build_inter_pred_plane_unscaled_at_dst(
     dst_stride: usize,
     interp_filter: rvp9_core::bitstream::frame::InterpFilter,
     is_compound_avg: bool,
+    pred_border: &mut [u8; MAX_INTER_PRED_BORDER_BYTES],
 ) {
     use rvp9_core::inter::filter::{SUBPEL_BITS, SUBPEL_MASK};
     use rvp9_core::inter::scale::{ScaleFactors, inter_predictor_with_dispatch};
@@ -8895,11 +8913,11 @@ fn build_inter_pred_plane_unscaled_at_dst(
     // relative to the scratch origin where the axis is sub-pel filtered.
     let b_w = (x1 - x0) as usize;
     let b_h = (y1 - y0) as usize;
-    let mut scratch = vec![0u8; b_w * b_h];
+    let scratch = &mut pred_border[..b_w * b_h];
     enc_build_mc_border(
         ref_plane,
         ref_stride,
-        &mut scratch,
+        scratch,
         b_w,
         x0,
         y0,
@@ -9671,7 +9689,9 @@ fn choose_inter_luma_tx_size_impl<const PRUNE: bool>(
     let dequant_pair = [quantizer.dequant[0], quantizer.dequant[1]];
     let block_w_px = plane_bw_4x4 * 4;
     let block_h_px = plane_bh_4x4 * 4;
-    let InterEmitScratch { residual, quant } = scratch;
+    let InterEmitScratch {
+        residual, quant, ..
+    } = scratch;
     let leaf_residual = &mut residual[..block_w_px * block_h_px];
     #[cfg(target_arch = "aarch64")]
     if block_w_px == block_h_px {
@@ -10804,6 +10824,7 @@ mod tests {
             .collect();
         let mut full = vec![0u8; width * height];
         let mut compact = [0u8; 64 * 64];
+        let mut pred_border = [0u8; MAX_INTER_PRED_BORDER_BYTES];
         let mv_col_q4 = 11;
         let mv_row_q4 = -7;
 
@@ -10822,6 +10843,7 @@ mod tests {
             width,
             InterpFilter::Bilinear,
             false,
+            &mut pred_border,
         );
         build_inter_pred_block_unscaled(
             &reference,
@@ -10837,6 +10859,7 @@ mod tests {
             &mut compact,
             64,
             InterpFilter::Bilinear,
+            &mut pred_border,
         );
 
         for row in 0..64 {
@@ -10845,6 +10868,54 @@ mod tests {
                 &full[(32 + row) * width + 32..(32 + row) * width + 96],
             );
         }
+    }
+
+    #[test]
+    fn reused_inter_pred_border_scratch_overwrites_prior_contents() {
+        let width = 64usize;
+        let height = 64usize;
+        let reference: Vec<u8> = (0..width * height)
+            .map(|i| ((i * 37 + i / width * 11) & 0xff) as u8)
+            .collect();
+        let mut first = [0u8; 32 * 32];
+        let mut second = [0u8; 32 * 32];
+        let mut pred_border = [0x55; MAX_INTER_PRED_BORDER_BYTES];
+
+        build_inter_pred_block_unscaled(
+            &reference,
+            width,
+            width,
+            height,
+            0,
+            0,
+            32,
+            32,
+            -11,
+            -7,
+            &mut first,
+            32,
+            InterpFilter::EightTap,
+            &mut pred_border,
+        );
+        pred_border.fill(0xaa);
+        build_inter_pred_block_unscaled(
+            &reference,
+            width,
+            width,
+            height,
+            0,
+            0,
+            32,
+            32,
+            -11,
+            -7,
+            &mut second,
+            32,
+            InterpFilter::EightTap,
+            &mut pred_border,
+        );
+
+        assert_eq!(first, second);
     }
 
     #[test]
@@ -11297,6 +11368,7 @@ mod tests {
         let src_v = vec![120u8; 32 * 24];
         let ref_u = src_u.clone();
         let ref_v = vec![80u8; 32 * 24];
+        let mut pred_border = [0u8; MAX_INTER_PRED_BORDER_BYTES];
 
         assert_eq!(
             partition_color_sensitivity(
@@ -11306,6 +11378,7 @@ mod tests {
                 (0, 0),
                 Mv::ZERO,
                 4_000,
+                &mut pred_border,
             ),
             [false, true],
         );
@@ -11317,6 +11390,7 @@ mod tests {
         let src_v = vec![120u8; 40 * 40];
         let ref_u = src_u.clone();
         let ref_v = vec![80u8; 40 * 40];
+        let mut pred_border = [0u8; MAX_INTER_PRED_BORDER_BYTES];
 
         assert_eq!(
             partition_color_sensitivity(
@@ -11326,6 +11400,7 @@ mod tests {
                 (0, 0),
                 Mv::ZERO,
                 4_000,
+                &mut pred_border,
             ),
             [false, true],
         );
