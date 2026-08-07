@@ -564,6 +564,54 @@ impl RowJobOwners {
         job: RowJob,
         cells_per_sb: usize,
     ) {
+        assert_eq!(
+            source.len(),
+            destination.len(),
+            "row merge source and destination shapes differ"
+        );
+        for range in self.job_rect_ranges(destination.len(), job, cells_per_sb) {
+            destination[range.clone()].clone_from_slice(&source[range]);
+        }
+    }
+
+    /// Move one owned job rectangle from a disposable full-frame worker shadow.
+    ///
+    /// This is the ownership-preserving counterpart to [`Self::merge_job_rect`].
+    /// Each selected source cell is replaced by `T::default()` so callers can
+    /// consume a worker result without cloning its heap-backed values.
+    ///
+    /// # Panics
+    ///
+    /// Panics under the same shape and ownership conditions as
+    /// [`Self::merge_job_rect`].
+    pub fn move_job_rect<T: Default>(
+        &self,
+        destination: &mut [T],
+        source: &mut [T],
+        job: RowJob,
+        cells_per_sb: usize,
+    ) {
+        assert_eq!(
+            source.len(),
+            destination.len(),
+            "row merge source and destination shapes differ"
+        );
+        for range in self.job_rect_ranges(destination.len(), job, cells_per_sb) {
+            for (destination, source) in destination[range.clone()]
+                .iter_mut()
+                .zip(&mut source[range])
+            {
+                *destination = std::mem::take(source);
+            }
+        }
+    }
+
+    fn job_rect_ranges(
+        &self,
+        destination_len: usize,
+        job: RowJob,
+        cells_per_sb: usize,
+    ) -> impl Iterator<Item = std::ops::Range<usize>> + '_ {
         assert!(cells_per_sb > 0, "row merge scale must be positive");
         let index = self.index(job);
         assert!(
@@ -581,16 +629,11 @@ impl RowJobOwners {
         let maximum_len = row_stride
             .checked_mul(padded_rows)
             .expect("row merge frame size overflow");
-        assert_eq!(
-            source.len(),
-            destination.len(),
-            "row merge source and destination shapes differ"
-        );
         assert!(
-            destination.len() <= maximum_len && destination.len().is_multiple_of(row_stride),
+            destination_len <= maximum_len && destination_len.is_multiple_of(row_stride),
             "row merge destination has the wrong frame shape"
         );
-        let actual_rows = destination.len() / row_stride;
+        let actual_rows = destination_len / row_stride;
         let col_start = self.tile_sb_starts[job.tile_col] * cells_per_sb;
         let col_len = self.tile_sb_cols[job.tile_col] * cells_per_sb;
         let row_start = job.sb_row * cells_per_sb;
@@ -598,11 +641,10 @@ impl RowJobOwners {
             row_start < actual_rows,
             "row merge job starts outside the visible frame"
         );
-        for row in row_start..(row_start + cells_per_sb).min(actual_rows) {
+        (row_start..(row_start + cells_per_sb).min(actual_rows)).map(move |row| {
             let start = row * row_stride + col_start;
-            let end = start + col_len;
-            destination[start..end].clone_from_slice(&source[start..end]);
-        }
+            start..start + col_len
+        })
     }
 
     fn index(&self, job: RowJob) -> usize {
@@ -1543,6 +1585,76 @@ mod tests {
                     .all(|&value| value == 20)
             );
         }
+    }
+
+    #[test]
+    fn row_job_owners_move_preserves_owned_vec_allocations() {
+        let mut owners = RowJobOwners::new(&[2, 1], 2);
+        for sb_row in 0..2 {
+            owners
+                .assign(
+                    0,
+                    RowJob {
+                        sb_row,
+                        tile_col: 0,
+                    },
+                )
+                .unwrap();
+            owners
+                .assign(
+                    1,
+                    RowJob {
+                        sb_row,
+                        tile_col: 1,
+                    },
+                )
+                .unwrap();
+        }
+        owners.require_complete().unwrap();
+
+        let mut sources = [
+            (10u8..16).map(|value| vec![value]).collect::<Vec<_>>(),
+            (20u8..26).map(|value| vec![value]).collect::<Vec<_>>(),
+        ];
+        let expected_values = [10, 11, 22, 13, 14, 25];
+        let expected_pointers = [
+            sources[0][0].as_ptr(),
+            sources[0][1].as_ptr(),
+            sources[1][2].as_ptr(),
+            sources[0][3].as_ptr(),
+            sources[0][4].as_ptr(),
+            sources[1][5].as_ptr(),
+        ];
+        let mut merged = vec![Vec::<u8>::new(); 6];
+
+        for (job, worker_id) in owners.iter() {
+            owners.move_job_rect(&mut merged, &mut sources[worker_id], job, 1);
+        }
+
+        assert_eq!(
+            merged.iter().map(|value| value[0]).collect::<Vec<_>>(),
+            expected_values
+        );
+        assert_eq!(
+            merged.iter().map(Vec::as_ptr).collect::<Vec<_>>(),
+            expected_pointers
+        );
+        assert!(
+            [0, 1, 3, 4]
+                .into_iter()
+                .all(|index| sources[0][index].is_empty())
+        );
+        assert!([2, 5].into_iter().all(|index| sources[1][index].is_empty()));
+        assert!(
+            [2, 5]
+                .into_iter()
+                .all(|index| !sources[0][index].is_empty())
+        );
+        assert!(
+            [0, 1, 3, 4]
+                .into_iter()
+                .all(|index| !sources[1][index].is_empty())
+        );
     }
 
     #[test]

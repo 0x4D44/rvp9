@@ -3549,7 +3549,7 @@ impl StreamEncoder {
                         });
                     }
                 });
-            let tile_results: Vec<InterTileJobResult> = result_slots
+            let mut tile_results: Vec<InterTileJobResult> = result_slots
                 .into_iter()
                 .enumerate()
                 .map(|(tile_col, result_slot)| {
@@ -3601,10 +3601,10 @@ impl StreamEncoder {
             }
             debug_assert_eq!(merged_mi_grid.len(), mi_rows_us * mi_cols_us);
             for (job, worker_id) in row_owners.iter() {
-                let result = &tile_results[worker_id];
+                let result = &mut tile_results[worker_id];
                 let rd_table_index = job.tile_col * sb_rows + job.sb_row;
                 self.rd_thresh_tables[rd_table_index] = result.rd_tables[rd_table_index].clone();
-                row_owners.merge_job_rect(&mut sb_partitions, &result.partitions, job, 1);
+                row_owners.move_job_rect(&mut sb_partitions, &mut result.partitions, job, 1);
                 if let Some(history) = &result.history {
                     row_owners.merge_job_rect(&mut self.vbp_partition_history, history, job, 1);
                 }
