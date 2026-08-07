@@ -3344,6 +3344,88 @@ pub(crate) struct InterSimulationResult {
     pub(crate) mi_grid: InterSimulationMiGrid,
 }
 
+struct CompactInterRowResult {
+    job: crate::row_mt::RowJob,
+    mi_col_start: usize,
+    mi_col_end: usize,
+    recon_layout: InterReconLayout,
+    recon_y: Vec<u8>,
+    recon_u: Vec<u8>,
+    recon_v: Vec<u8>,
+    mi_grid: InterSimulationMiGrid,
+    mv_layout: InterPickerMiGridLayout,
+    mv_grid: Vec<PrevFrameMvRef>,
+    coefs: VecBackedInterCoefSource,
+}
+
+impl CompactInterRowResult {
+    #[allow(clippy::too_many_arguments)]
+    fn merge_into(
+        mut self,
+        frame_width: usize,
+        frame_height: usize,
+        recon_y_out: &mut [u8],
+        recon_u_out: &mut [u8],
+        recon_v_out: &mut [u8],
+        row_grids: &mut InterRowGrids<'_>,
+        coef_source: &mut VecBackedInterCoefSource,
+    ) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+        let tile_mi_cols = self.mi_col_end - self.mi_col_start;
+        let compact = InterReconPlanes::new(
+            (&mut self.recon_y, &mut self.recon_u, &mut self.recon_v),
+            self.recon_layout,
+        );
+        for (plane, full) in [recon_y_out, recon_u_out, recon_v_out]
+            .into_iter()
+            .enumerate()
+        {
+            let subsampling = usize::from(plane != 0);
+            let global_x = self.mi_col_start * (8 >> subsampling);
+            let global_y = self.job.sb_row * (64 >> subsampling);
+            let plane_height = frame_height >> subsampling;
+            let visible_rows = (64 >> subsampling).min(plane_height - global_y);
+            compact.plane(plane).copy_to_full_frame(
+                full,
+                global_x,
+                global_y,
+                tile_mi_cols * (8 >> subsampling),
+                visible_rows,
+            );
+        }
+
+        let job_mi_row_start = self.job.sb_row * 8;
+        let job_mi_row_end = (job_mi_row_start + 8).min(frame_height / 8);
+        debug_assert_eq!(self.mi_grid.mi_col_start, self.mi_col_start);
+        debug_assert_eq!(self.mi_grid.mi_cols, tile_mi_cols);
+        debug_assert_eq!(self.mv_layout.mi_row_start, job_mi_row_start);
+        debug_assert_eq!(self.mv_layout.mi_rows, job_mi_row_end - job_mi_row_start);
+        for mi_row in job_mi_row_start..job_mi_row_end {
+            for mi_col in self.mi_col_start..self.mi_col_end {
+                let compact_index = (mi_row - self.mi_grid.mi_row_start) * self.mi_grid.mi_cols
+                    + mi_col
+                    - self.mi_grid.mi_col_start;
+                let aggregate_index = row_grids
+                    .layout
+                    .index(mi_row, mi_col)
+                    .expect("aggregate result MI cell must be in bounds");
+                row_grids.mi_grid[aggregate_index] = self.mi_grid.cells[compact_index];
+                let compact_mv_index = self
+                    .mv_layout
+                    .index(mi_row, mi_col)
+                    .expect("compact result MV cell must be in bounds");
+                let aggregate_mv_index = row_grids
+                    .out_layout
+                    .index(mi_row, mi_col)
+                    .expect("aggregate result MV cell must be in bounds");
+                row_grids.out_mv_grid[aggregate_mv_index] = self.mv_grid[compact_mv_index];
+            }
+        }
+        debug_assert_eq!(frame_width, self.recon_layout.plane(0).frame_width);
+        coef_source.merge_from(self.coefs);
+        (self.recon_y, self.recon_u, self.recon_v)
+    }
+}
+
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 struct InterReconPlaneLayout {
     frame_width: usize,
@@ -8979,23 +9061,6 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
             compact_y.resize(layout.plane(0).stride * layout.plane(0).rows, 0);
             compact_u.resize(layout.plane(1).stride * layout.plane(1).rows, 0);
             compact_v.resize(layout.plane(2).stride * layout.plane(2).rows, 0);
-            let mut compact =
-                InterReconPlanes::new((&mut compact_y, &mut compact_u, &mut compact_v), layout);
-            if sb_row > 0 {
-                for (plane, full) in [&*recon_y_out, &*recon_u_out, &*recon_v_out]
-                    .into_iter()
-                    .enumerate()
-                {
-                    let plane_layout = layout.plane(plane);
-                    compact.plane_mut(plane).copy_from_full_frame(
-                        full,
-                        plane_layout.col_start,
-                        plane_layout.row_start,
-                        plane_layout.stride,
-                        1,
-                    );
-                }
-            }
             let job_mi_row_start = sb_row * 8;
             let job_mi_row_end = (job_mi_row_start + 8).min(mi_rows_us);
             let compact_grid_layout = InterPickerMiGridLayout::new_rect(
@@ -9014,16 +9079,6 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 PrevFrameMvRef::default();
                 compact_mv_layout.mi_rows * compact_mv_layout.mi_cols
             ];
-            let mut compact_grids =
-                InterRowGrids::new(compact_grid_layout, &mut compact_mv, compact_mv_layout);
-            for mi_row in compact_grid_layout.mi_row_start..job_mi_row_start {
-                for mi_col in bounds.mi_col_start..bounds.mi_col_end {
-                    let compact_index = compact_grid_layout
-                        .index(mi_row, mi_col)
-                        .expect("compact causal MI cell must be in bounds");
-                    compact_grids.mi_grid[compact_index] = row_grids.get(mi_row, mi_col).copied();
-                }
-            }
             let mut row_coef_source = VecBackedInterCoefSource::new_for_mi_rect(
                 width,
                 height,
@@ -9032,54 +9087,68 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 bounds.mi_col_start,
                 bounds.mi_col_end,
             );
-            encode_job(
-                crate::row_mt::RowJob { sb_row, tile_col },
-                &mut compact,
-                &mut compact_grids,
-                &mut row_coef_source,
-                &mut recorded_coef_tile,
-                &mut coef_record_bw,
-                true,
-            );
-            coef_source.merge_from(row_coef_source);
-            for mi_row in job_mi_row_start..job_mi_row_end {
-                for mi_col in bounds.mi_col_start..bounds.mi_col_end {
-                    let compact_index = compact_grid_layout
-                        .index(mi_row, mi_col)
-                        .expect("compact result MI cell must be in bounds");
-                    let aggregate_index = row_grids
-                        .layout
-                        .index(mi_row, mi_col)
-                        .expect("aggregate result MI cell must be in bounds");
-                    row_grids.mi_grid[aggregate_index] = compact_grids.mi_grid[compact_index];
-                    let compact_mv_index = compact_mv_layout
-                        .index(mi_row, mi_col)
-                        .expect("compact result MV cell must be in bounds");
-                    let aggregate_mv_index = row_grids
-                        .out_layout
-                        .index(mi_row, mi_col)
-                        .expect("aggregate result MV cell must be in bounds");
-                    row_grids.out_mv_grid[aggregate_mv_index] =
-                        compact_grids.out_mv_grid[compact_mv_index];
+            let compact_mi_grid = {
+                let mut compact =
+                    InterReconPlanes::new((&mut compact_y, &mut compact_u, &mut compact_v), layout);
+                if sb_row > 0 {
+                    for (plane, full) in [&*recon_y_out, &*recon_u_out, &*recon_v_out]
+                        .into_iter()
+                        .enumerate()
+                    {
+                        let plane_layout = layout.plane(plane);
+                        compact.plane_mut(plane).copy_from_full_frame(
+                            full,
+                            plane_layout.col_start,
+                            plane_layout.row_start,
+                            plane_layout.stride,
+                            1,
+                        );
+                    }
                 }
-            }
-            for (plane, full) in [&mut *recon_y_out, &mut *recon_u_out, &mut *recon_v_out]
-                .into_iter()
-                .enumerate()
-            {
-                let subsampling = usize::from(plane != 0);
-                let global_x = bounds.mi_col_start * (8 >> subsampling);
-                let global_y = sb_row * (64 >> subsampling);
-                let plane_height = h >> subsampling;
-                let visible_rows = (64 >> subsampling).min(plane_height - global_y);
-                compact.plane(plane).copy_to_full_frame(
-                    full,
-                    global_x,
-                    global_y,
-                    tile_mi_cols * (8 >> subsampling),
-                    visible_rows,
+                let mut compact_grids =
+                    InterRowGrids::new(compact_grid_layout, &mut compact_mv, compact_mv_layout);
+                for mi_row in compact_grid_layout.mi_row_start..job_mi_row_start {
+                    for mi_col in bounds.mi_col_start..bounds.mi_col_end {
+                        let compact_index = compact_grid_layout
+                            .index(mi_row, mi_col)
+                            .expect("compact causal MI cell must be in bounds");
+                        compact_grids.mi_grid[compact_index] =
+                            row_grids.get(mi_row, mi_col).copied();
+                    }
+                }
+                encode_job(
+                    crate::row_mt::RowJob { sb_row, tile_col },
+                    &mut compact,
+                    &mut compact_grids,
+                    &mut row_coef_source,
+                    &mut recorded_coef_tile,
+                    &mut coef_record_bw,
+                    true,
                 );
+                compact_grids.into_simulation_grid()
+            };
+            (compact_y, compact_u, compact_v) = CompactInterRowResult {
+                job: crate::row_mt::RowJob { sb_row, tile_col },
+                mi_col_start: bounds.mi_col_start,
+                mi_col_end: bounds.mi_col_end,
+                recon_layout: layout,
+                recon_y: compact_y,
+                recon_u: compact_u,
+                recon_v: compact_v,
+                mi_grid: compact_mi_grid,
+                mv_layout: compact_mv_layout,
+                mv_grid: compact_mv,
+                coefs: row_coef_source,
             }
+            .merge_into(
+                w,
+                h,
+                recon_y_out,
+                recon_u_out,
+                recon_v_out,
+                &mut row_grids,
+                &mut coef_source,
+            );
         }
     } else {
         let mut recon_yuv_out =
