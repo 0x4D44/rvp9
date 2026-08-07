@@ -3344,6 +3344,79 @@ pub(crate) struct InterSimulationResult {
     pub(crate) mi_grid: InterSimulationMiGrid,
 }
 
+struct InterPartitionGrid<'a> {
+    cells: &'a mut [Vec<InterPartitionLeafDesc>],
+    sb_row_start: usize,
+    sb_rows: usize,
+    sb_col_start: usize,
+    sb_cols: usize,
+    frame_sb_cols: usize,
+}
+
+impl<'a> InterPartitionGrid<'a> {
+    fn full(cells: &'a mut [Vec<InterPartitionLeafDesc>], sb_rows: usize, sb_cols: usize) -> Self {
+        assert_eq!(cells.len(), sb_rows * sb_cols);
+        Self {
+            cells,
+            sb_row_start: 0,
+            sb_rows,
+            sb_col_start: 0,
+            sb_cols,
+            frame_sb_cols: sb_cols,
+        }
+    }
+
+    fn compact_row(
+        cells: &'a mut [Vec<InterPartitionLeafDesc>],
+        sb_row: usize,
+        sb_col_start: usize,
+        sb_cols: usize,
+        frame_sb_cols: usize,
+    ) -> Self {
+        assert_eq!(cells.len(), sb_cols);
+        assert!(sb_cols > 0 && sb_col_start + sb_cols <= frame_sb_cols);
+        Self {
+            cells,
+            sb_row_start: sb_row,
+            sb_rows: 1,
+            sb_col_start,
+            sb_cols,
+            frame_sb_cols,
+        }
+    }
+
+    fn local_index(&self, frame_index: usize) -> usize {
+        let sb_row = frame_index / self.frame_sb_cols;
+        let sb_col = frame_index % self.frame_sb_cols;
+        let local_row = sb_row
+            .checked_sub(self.sb_row_start)
+            .expect("partition index precedes its row window");
+        let local_col = sb_col
+            .checked_sub(self.sb_col_start)
+            .expect("partition index precedes its column window");
+        assert!(
+            local_row < self.sb_rows && local_col < self.sb_cols,
+            "partition index exceeds its compact window"
+        );
+        local_row * self.sb_cols + local_col
+    }
+}
+
+impl std::ops::Index<usize> for InterPartitionGrid<'_> {
+    type Output = Vec<InterPartitionLeafDesc>;
+
+    fn index(&self, frame_index: usize) -> &Self::Output {
+        &self.cells[self.local_index(frame_index)]
+    }
+}
+
+impl std::ops::IndexMut<usize> for InterPartitionGrid<'_> {
+    fn index_mut(&mut self, frame_index: usize) -> &mut Self::Output {
+        let local_index = self.local_index(frame_index);
+        &mut self.cells[local_index]
+    }
+}
+
 struct CompactInterRowResult {
     job: crate::row_mt::RowJob,
     mi_col_start: usize,
@@ -3356,6 +3429,7 @@ struct CompactInterRowResult {
     mv_layout: InterPickerMiGridLayout,
     mv_grid: Vec<PrevFrameMvRef>,
     coefs: VecBackedInterCoefSource,
+    partitions: Vec<Vec<InterPartitionLeafDesc>>,
 }
 
 impl CompactInterRowResult {
@@ -3369,6 +3443,7 @@ impl CompactInterRowResult {
         recon_v_out: &mut [u8],
         row_grids: &mut InterRowGrids<'_>,
         coef_source: &mut VecBackedInterCoefSource,
+        partitions: &mut [Vec<InterPartitionLeafDesc>],
     ) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
         let tile_mi_cols = self.mi_col_end - self.mi_col_start;
         let compact = InterReconPlanes::new(
@@ -3422,6 +3497,15 @@ impl CompactInterRowResult {
         }
         debug_assert_eq!(frame_width, self.recon_layout.plane(0).frame_width);
         coef_source.merge_from(self.coefs);
+        let sb_col_start = self.mi_col_start / 8;
+        for (local_sb_col, partition) in self.partitions.drain(..).enumerate() {
+            let destination = self.job.sb_row * (frame_width / 64) + sb_col_start + local_sb_col;
+            assert!(
+                partitions[destination].is_empty(),
+                "compact partition result must have one exact owner"
+            );
+            partitions[destination] = partition;
+        }
         (self.recon_y, self.recon_u, self.recon_v)
     }
 }
@@ -3893,7 +3977,7 @@ fn record_encoded_inter_row(
     sb_row: usize,
     sb_columns: std::ops::Range<usize>,
     sb_cols: usize,
-    sb_partitions: &[Vec<InterPartitionLeafDesc>],
+    sb_partitions: &InterPartitionGrid<'_>,
 ) {
     for sb_col in sb_columns {
         let sb_idx = sb_row * sb_cols + sb_col;
@@ -5523,7 +5607,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                           coef_source: &mut VecBackedInterCoefSource,
                           recorded_coef_tile: &mut Option<RecordedCoefTile>,
                           coef_record_bw: &mut BoolWriter<'_>,
-                          defer_coef_recording: bool| {
+                          defer_coef_recording: bool,
+                          sb_partitions: &mut InterPartitionGrid<'_>| {
         let current_tile = tile_bounds_by_col[job.tile_col];
         let sb_columns = inter_row_job_sb_columns(&tile_bounds_by_col, active_tile_col, job);
         let sb_row = job.sb_row;
@@ -9075,6 +9160,11 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
             let sb_row = job.sb_row;
             let bounds = tile_bounds_by_col[tile_col];
             let tile_mi_cols = bounds.mi_col_end - bounds.mi_col_start;
+            let sb_column_range = bounds.mi_col_start / 8..bounds.mi_col_end / 8;
+            let mut row_partitions: Vec<_> = sb_column_range
+                .clone()
+                .map(|sb_col| std::mem::take(&mut sb_partitions[sb_row * sb_cols + sb_col]))
+                .collect();
             let layout =
                 InterReconLayout::compact_row(w, h, sb_row, bounds.mi_col_start, tile_mi_cols);
             compact_y.resize(layout.plane(0).stride * layout.plane(0).rows, 0);
@@ -9126,6 +9216,13 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 }
                 let mut compact_grids =
                     InterRowGrids::new(compact_grid_layout, &mut compact_mv, compact_mv_layout);
+                let mut partition_grid = InterPartitionGrid::compact_row(
+                    &mut row_partitions,
+                    sb_row,
+                    sb_column_range.start,
+                    sb_column_range.len(),
+                    sb_cols,
+                );
                 for mi_row in compact_grid_layout.mi_row_start..job_mi_row_start {
                     for mi_col in bounds.mi_col_start..bounds.mi_col_end {
                         let compact_index = compact_grid_layout
@@ -9143,6 +9240,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     &mut recorded_coef_tile,
                     &mut coef_record_bw,
                     true,
+                    &mut partition_grid,
                 );
                 compact_grids.into_simulation_grid()
             };
@@ -9158,6 +9256,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 mv_layout: compact_mv_layout,
                 mv_grid: compact_mv,
                 coefs: row_coef_source,
+                partitions: row_partitions,
             }
             .merge_into(
                 w,
@@ -9167,11 +9266,13 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 recon_v_out,
                 &mut row_grids,
                 &mut coef_source,
+                sb_partitions,
             );
         }
     } else {
         let mut recon_yuv_out =
             InterReconPlanes::new((recon_y_out, recon_u_out, recon_v_out), recon_layout);
+        let mut partition_grid = InterPartitionGrid::full(sb_partitions, sb_rows, sb_cols);
         if let Some(tile_col) = active_tile_col {
             for sb_row in 0..sb_rows {
                 encode_job(
@@ -9182,6 +9283,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     &mut recorded_coef_tile,
                     &mut coef_record_bw,
                     false,
+                    &mut partition_grid,
                 );
             }
         } else {
@@ -9196,6 +9298,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     &mut recorded_coef_tile,
                     &mut coef_record_bw,
                     false,
+                    &mut partition_grid,
                 );
             }
             debug_assert!(row_context.queues_drained());
@@ -11181,6 +11284,34 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn compact_inter_partition_grid_maps_frame_indices() {
+        let leaf = InterPartitionLeafDesc {
+            mi_row_in_sb: 0,
+            mi_col_in_sb: 0,
+            leaf_bsize: BlockSize::Block64x64,
+            picked_mode: InterMode::ZeroMv,
+            picked_mv: Mv::ZERO,
+            skip: true,
+            segment_id: 5,
+            picked_ref_frame: RefFrame::LastFrame,
+            picked_interp_filter: InterpFilter::EightTap,
+            picked_intra_mode: None,
+            picked_ref_frame2: RefFrame::NoRefFrame,
+            picked_mv2: Mv::ZERO,
+            picked_tx_size: TxSize::Tx32x32,
+        };
+        let mut cells = vec![vec![leaf], vec![]];
+        let mut compact = InterPartitionGrid::compact_row(&mut cells, 2, 1, 2, 4);
+
+        assert_eq!(compact[2 * 4 + 1][0].segment_id, 5);
+        compact[2 * 4 + 2].push(InterPartitionLeafDesc {
+            segment_id: 7,
+            ..leaf
+        });
+        assert_eq!(compact[2 * 4 + 2][0].segment_id, 7);
     }
 
     #[test]
