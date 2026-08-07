@@ -1750,6 +1750,18 @@ const fn suppress_last_newmv_for_low_temp_var(
         && !matches!(content_state_sb, ContentStateSb::VeryHighSad)
 }
 
+#[inline]
+fn pre_search_mv_is_zero(mode: InterMode, candidates: &MvCandidates) -> bool {
+    match mode {
+        InterMode::ZeroMv => true,
+        InterMode::NearestMv => candidates.nearest == Mv::ZERO,
+        InterMode::NearMv => candidates.near == Mv::ZERO,
+        // libvpx initializes frame_mv[NEWMV] to INVALID_MV and applies
+        // adaptive RD pruning before combined_motion_search overwrites it.
+        InterMode::NewMv => false,
+    }
+}
+
 /// Run the unified dual-ref inter-mode RD search for one luma block.
 ///
 /// Iterates candidates in libvpx's `RT_INTER_MODES` interleaved order
@@ -2113,6 +2125,33 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
             continue;
         }
 
+        // P20 — adaptive RD-threshold gate (libvpx
+        // `vp9_pickmode.c:2233-2252`). This must run before NEWMV motion
+        // search. At this point libvpx's `frame_mv[NEWMV]` is INVALID_MV,
+        // so NEWMV is non-zero for the gate even when its eventual search
+        // result would be zero. Running the gate after the search wastes the
+        // full-pel and sub-pel work and incorrectly grants that result the
+        // zero-MV exemption.
+        if let (Some(b), Some(table)) = (best.as_ref(), params.rd_thresh_table) {
+            let mv_is_zero = pre_search_mv_is_zero(mode, mvc_safe);
+            if !mv_is_zero
+                && let Some(thresh) =
+                    table.effective_thresh(params.block_size, ref_frame, mode, params.q_index)
+            {
+                let biased_thresh = if params.bias_golden
+                    && ref_frame == RefFrame::GoldenFrame
+                    && params.frames_since_golden > 4
+                {
+                    thresh.saturating_mul(8) // libvpx `<< 3`
+                } else {
+                    thresh
+                };
+                if b.best_rd_cost < biased_thresh {
+                    continue;
+                }
+            }
+        }
+
         // Determine the candidate MV.
         let mv = match mode {
             InterMode::ZeroMv => Mv::ZERO,
@@ -2264,43 +2303,6 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
         }
         if skip_this {
             continue;
-        }
-
-        // P20 — adaptive RD-threshold gate (libvpx
-        // `vp9_pickmode.c:2241-2247`). When a threshold table is
-        // attached, skip this candidate if the running best RD cost
-        // is below the per-(bsize, ref, mode) effective threshold
-        // AND the candidate MV is non-zero (libvpx's zero-MV
-        // exemption at vp9_pickmode.c:2247: `if frame_mv[mode]
-        // [ref_frame].as_int != 0 continue;`). Without a running
-        // best (the very first evaluable candidate), `best` is
-        // `None` and the gate is not consulted.
-        //
-        // §11 — `bias_golden` (libvpx `vp9_pickmode.c:2237-2239`).
-        // When the gate is active AND this candidate is for GOLDEN
-        // AND the last GOLDEN refresh was > 4 frames ago, scale
-        // `mode_rd_thresh` by `1 << 3` (the libvpx
-        // `mode_rd_thresh = mode_rd_thresh << 3;` step). The shift
-        // is applied INSIDE the P20 block since libvpx applies it
-        // immediately before the `rd_less_than_thresh` call.
-        if let (Some(b), Some(table)) = (best.as_ref(), params.rd_thresh_table) {
-            let mv_is_zero = mv == Mv::ZERO;
-            if !mv_is_zero
-                && let Some(thresh) =
-                    table.effective_thresh(params.block_size, ref_frame, mode, params.q_index)
-            {
-                let biased_thresh = if params.bias_golden
-                    && ref_frame == RefFrame::GoldenFrame
-                    && params.frames_since_golden > 4
-                {
-                    thresh.saturating_mul(8) // libvpx `<< 3`
-                } else {
-                    thresh
-                };
-                if b.best_rd_cost < biased_thresh {
-                    continue;
-                }
-            }
         }
 
         // Build a single-ref params struct for the evaluator.
@@ -9429,6 +9431,18 @@ mod tests {
     // `vp9_pickmode.c:2241-2247` and the post-loop update at
     // `vp9_pickmode.c:2725-2738`.
     // ====================================================================
+
+    #[test]
+    fn p20_newmv_is_nonzero_before_motion_search() {
+        let candidates = MvCandidates::default();
+        assert!(pre_search_mv_is_zero(InterMode::ZeroMv, &candidates));
+        assert!(pre_search_mv_is_zero(InterMode::NearestMv, &candidates));
+        assert!(pre_search_mv_is_zero(InterMode::NearMv, &candidates));
+        assert!(
+            !pre_search_mv_is_zero(InterMode::NewMv, &candidates),
+            "libvpx gates NEWMV while frame_mv[NEWMV] is INVALID_MV, before search"
+        );
+    }
 
     /// P20 PROOF (1) — `update_thresh_freq_fact` decays the winning
     /// (ref, mode) slot's fact and increments every other slot's fact
