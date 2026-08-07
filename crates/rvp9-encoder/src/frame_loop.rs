@@ -1296,7 +1296,6 @@ pub struct StreamEncoder {
 /// disjoint rectangles and SB records into the frame result.
 struct InterTileJobResult {
     claimed_jobs: Vec<crate::row_mt::RowJob>,
-    history: Option<Vec<rvp9_core::mode_decision::partition::FixedTreeHistoryEntry>>,
     split_stats: NonRdSplitStats,
     coefs: VecBackedInterCoefSource,
     recorded_coef_tile: RecordedCoefTile,
@@ -3419,9 +3418,8 @@ impl StreamEncoder {
             // it touches. Results are collected and merged in column order,
             // so scheduling cannot affect the packet or persistent encoder
             // state.
-            let initial_history = std::env::var_os("RVP9_EXACT_VBP_TREE")
-                .is_some_and(|value| value != "0")
-                .then(|| self.vbp_partition_history.clone());
+            let exact_vbp_history_enabled =
+                std::env::var_os("RVP9_EXACT_VBP_TREE").is_some_and(|value| value != "0");
             let s2_frame_gate = rvp9_core::mode_decision::inter::frame_s2_gate();
             let mut result_slots: Vec<Option<InterTileJobResult>> =
                 (0..tile_count).map(|_| None).collect();
@@ -3469,24 +3467,50 @@ impl StreamEncoder {
                 )
                 .collect();
             let sb_rows = (h as usize).div_ceil(64);
+            let sb_cols = mi_cols_us / 8;
+            let history_tile_ranges: Vec<_> = mi_tile_ranges
+                .iter()
+                .map(|&(mi_col_start, mi_col_end)| (mi_col_start / 8, mi_col_end / 8))
+                .collect();
+            let tile_histories: Vec<Option<crate::InterPartitionHistoryMut<'_>>> =
+                if exact_vbp_history_enabled {
+                    split_tight_plane_tiles_mut(
+                        &mut self.vbp_partition_history,
+                        sb_cols,
+                        &history_tile_ranges,
+                    )
+                    .into_iter()
+                    .map(|tile| {
+                        Some(crate::InterPartitionHistoryMut::tile_rows(
+                            tile.col_start,
+                            tile.rows,
+                        ))
+                    })
+                    .collect()
+                } else {
+                    (0..tile_count).map(|_| None).collect()
+                };
+            let tile_scratch = &mut self.inter_tile_scratch;
             let mut rd_table_tiles = self.rd_thresh_tables.chunks_exact_mut(sb_rows);
             assert_eq!(
                 rd_table_tiles.len(),
                 tile_count,
                 "one adaptive RD-threshold row slice is required per tile",
             );
-            let tile_scratch = &mut self.inter_tile_scratch;
             self.frame_worker_pool
                 .as_mut()
                 .expect("parallel tile picking requires the frame worker pool")
                 .scope(|scope| {
-                    for (tile_col, (((result_slot, scratch), mut output), tile_rd_tables)) in
-                        result_slots
-                            .iter_mut()
-                            .zip(tile_scratch.iter_mut())
-                            .zip(tile_outputs)
-                            .zip(&mut rd_table_tiles)
-                            .enumerate()
+                    for (
+                        tile_col,
+                        ((((result_slot, scratch), mut output), tile_rd_tables), tile_history),
+                    ) in result_slots
+                        .iter_mut()
+                        .zip(tile_scratch.iter_mut())
+                        .zip(tile_outputs)
+                        .zip(&mut rd_table_tiles)
+                        .zip(tile_histories)
+                        .enumerate()
                     {
                         let bounds = tile_bounds(
                             mi_rows_us,
@@ -3498,7 +3522,6 @@ impl StreamEncoder {
                         );
                         let sb_col_start = bounds.mi_col_start / 8;
                         let sb_col_end = bounds.mi_col_end / 8;
-                        let mut tile_history = initial_history.clone();
                         let seg_map = seg_map.as_slice();
                         scope.submit(move || {
                             rvp9_core::mode_decision::inter::set_frame_s2_gate(s2_frame_gate);
@@ -3528,7 +3551,7 @@ impl StreamEncoder {
                                 &mut scratch.partitions,
                                 &mut scratch.mv_grid,
                                 tile_rd_tables,
-                                tile_history.as_deref_mut(),
+                                tile_history,
                                 &mut tile_split_stats,
                                 true,
                                 Some(tile_col)
@@ -3552,7 +3575,6 @@ impl StreamEncoder {
                                 claimed_jobs: (0..(h as usize).div_ceil(64))
                                     .map(|sb_row| crate::row_mt::RowJob { sb_row, tile_col })
                                     .collect(),
-                                history: tile_history,
                                 split_stats: tile_split_stats,
                                 coefs: tile_encode.coefs,
                                 recorded_coef_tile,
@@ -3562,7 +3584,7 @@ impl StreamEncoder {
                         });
                     }
                 });
-            let mut tile_results: Vec<InterTileJobResult> = result_slots
+            let tile_results: Vec<InterTileJobResult> = result_slots
                 .into_iter()
                 .enumerate()
                 .map(|(tile_col, result_slot)| {
@@ -3613,16 +3635,12 @@ impl StreamEncoder {
             }
             debug_assert_eq!(merged_mi_grid.len(), mi_rows_us * mi_cols_us);
             for (job, worker_id) in row_owners.iter() {
-                let result = &mut tile_results[worker_id];
                 row_owners.move_job_rect(
                     &mut sb_partitions,
                     &mut tile_scratch[worker_id].partitions,
                     job,
                     1,
                 );
-                if let Some(history) = &result.history {
-                    row_owners.merge_job_rect(&mut self.vbp_partition_history, history, job, 1);
-                }
             }
             let mut tile_coef_sources = Vec::with_capacity(tile_count);
             for (result, (mi_col_start, mi_col_end)) in tile_results.into_iter().zip(mi_tile_ranges)
@@ -3656,7 +3674,11 @@ impl StreamEncoder {
                 &mut sb_partitions,
                 &mut cur_mv_grid,
                 &mut self.rd_thresh_tables,
-                Some(&mut self.vbp_partition_history),
+                Some(crate::InterPartitionHistoryMut::frame(
+                    &mut self.vbp_partition_history,
+                    (h as usize).div_ceil(64),
+                    mi_cols_us / 8,
+                )),
                 &mut stage4a_frame_split_stats,
                 false,
                 None
@@ -8206,6 +8228,59 @@ mod tests {
     }
 
     #[test]
+    fn tile_partition_history_views_mutate_uneven_tiles_in_place() {
+        use rvp9_core::mode_decision::partition::FixedTreeHistoryEntry;
+
+        let sb_rows = 3usize;
+        let sb_cols = 5usize;
+        let tile_ranges = [(0, 1), (1, 4), (4, 5)];
+        let mut frame_history = vec![FixedTreeHistoryEntry::default(); sb_rows * sb_cols];
+        for (index, entry) in frame_history.iter_mut().enumerate() {
+            let mut variance_low = [false; 25];
+            variance_low[index] = true;
+            entry.update(
+                PartitionDecision::all_64x64(),
+                (index % 8) as u8,
+                variance_low,
+            );
+        }
+        let original = frame_history.clone();
+
+        let tiles = split_tight_plane_tiles_mut(&mut frame_history, sb_cols, &tile_ranges);
+        for (tile_index, tile) in tiles.into_iter().enumerate() {
+            let (sb_col_start, sb_col_end) = tile_ranges[tile_index];
+            let mut history = crate::InterPartitionHistoryMut::tile_rows(tile.col_start, tile.rows);
+            for sb_row in 0..sb_rows {
+                for sb_col in sb_col_start..sb_col_end {
+                    let frame_index = sb_row * sb_cols + sb_col;
+                    let entry = history.get_mut(sb_row, sb_col);
+                    assert_eq!(*entry, original[frame_index]);
+                    let mut variance_low = [false; 25];
+                    variance_low[frame_index] = true;
+                    entry.update(
+                        PartitionDecision::all_64x64(),
+                        (tile_index + 1) as u8,
+                        variance_low,
+                    );
+                }
+            }
+        }
+
+        for sb_row in 0..sb_rows {
+            for sb_col in 0..sb_cols {
+                let expected_tile = tile_ranges
+                    .iter()
+                    .position(|&(start, end)| sb_col >= start && sb_col < end)
+                    .expect("tile ranges cover every SB column");
+                assert_eq!(
+                    frame_history[sb_row * sb_cols + sb_col].previous_segment_id(),
+                    (expected_tile + 1) as u8,
+                );
+            }
+        }
+    }
+
+    #[test]
     fn stream_encoder_four_tile_output_is_thread_count_independent_and_bit_exact() {
         // Several encoder tests temporarily change process-wide RVP9_*
         // diagnostic and partition overrides. This test reads those knobs
@@ -8233,6 +8308,8 @@ mod tests {
     fn assert_four_tile_output_is_thread_count_independent_and_bit_exact() {
         let w = 1280usize;
         let h = 128usize;
+        let exact_vbp_tree_enabled =
+            std::env::var_os("RVP9_EXACT_VBP_TREE").is_some_and(|value| value != "0");
         let cfg = EncoderConfig::new(w as u32, h as u32);
         let tile_layout = |max_threads| EncoderParallelism {
             max_threads,
@@ -8404,6 +8481,23 @@ mod tests {
             serial.rd_thresh_tables, threaded.rd_thresh_tables,
             "fixed tile layout must leave identical per-tile state",
         );
+        assert_eq!(
+            serial.vbp_partition_history, two_workers.vbp_partition_history,
+            "two-worker execution must leave identical partition history",
+        );
+        assert_eq!(
+            serial.vbp_partition_history, threaded.vbp_partition_history,
+            "fixed tile layout must leave identical partition history",
+        );
+        if exact_vbp_tree_enabled {
+            assert!(
+                serial
+                    .vbp_partition_history
+                    .iter()
+                    .any(|entry| entry.is_initialized()),
+                "exact-VBP regression must exercise persistent partition history",
+            );
+        }
     }
 
     /// F10.1b regression — Flat KF content keeps DC_PRED dominant. The

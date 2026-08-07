@@ -3274,6 +3274,77 @@ pub(crate) struct InterSimulationResult {
     pub(crate) mi_grid: InterSimulationMiGrid,
 }
 
+pub(crate) enum InterPartitionHistoryMut<'a> {
+    Frame {
+        entries: &'a mut [rvp9_core::mode_decision::partition::FixedTreeHistoryEntry],
+        sb_cols: usize,
+    },
+    TileRows {
+        sb_col_start: usize,
+        rows: Vec<&'a mut [rvp9_core::mode_decision::partition::FixedTreeHistoryEntry]>,
+    },
+}
+
+impl<'a> InterPartitionHistoryMut<'a> {
+    pub(crate) fn frame(
+        entries: &'a mut [rvp9_core::mode_decision::partition::FixedTreeHistoryEntry],
+        sb_rows: usize,
+        sb_cols: usize,
+    ) -> Self {
+        assert!(sb_cols > 0, "partition history must have an SB column");
+        assert_eq!(
+            entries.len(),
+            sb_rows * sb_cols,
+            "partition history must have one entry per frame superblock",
+        );
+        Self::Frame { entries, sb_cols }
+    }
+
+    pub(crate) fn tile_rows(
+        sb_col_start: usize,
+        rows: Vec<&'a mut [rvp9_core::mode_decision::partition::FixedTreeHistoryEntry]>,
+    ) -> Self {
+        assert!(
+            !rows.is_empty(),
+            "partition-history tile must have an SB row"
+        );
+        let tile_sb_cols = rows[0].len();
+        assert!(
+            tile_sb_cols > 0 && rows.iter().all(|row| row.len() == tile_sb_cols),
+            "partition-history tile rows must be non-empty and equally wide",
+        );
+        Self::TileRows { sb_col_start, rows }
+    }
+
+    fn assert_layout(&self, sb_rows: usize, sb_col_range: std::ops::Range<usize>) {
+        match self {
+            Self::Frame { entries, sb_cols } => {
+                assert_eq!(sb_col_range, 0..*sb_cols);
+                assert_eq!(entries.len(), sb_rows * *sb_cols);
+            }
+            Self::TileRows { sb_col_start, rows } => {
+                assert_eq!(*sb_col_start, sb_col_range.start);
+                assert_eq!(rows.len(), sb_rows);
+                assert!(
+                    rows.iter()
+                        .all(|row| row.len() == sb_col_range.end - sb_col_range.start)
+                );
+            }
+        }
+    }
+
+    pub(crate) fn get_mut(
+        &mut self,
+        sb_row: usize,
+        sb_col: usize,
+    ) -> &mut rvp9_core::mode_decision::partition::FixedTreeHistoryEntry {
+        match self {
+            Self::Frame { entries, sb_cols } => &mut entries[sb_row * *sb_cols + sb_col],
+            Self::TileRows { sb_col_start, rows } => &mut rows[sb_row][sb_col - *sb_col_start],
+        }
+    }
+}
+
 /// Final causal mode-info grid produced while the inter picker commits leaves.
 ///
 /// Parallel tile jobs retain only their local column span; the frame loop
@@ -4222,9 +4293,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // history. `None` isolates non-show ALTREF coding and disables the exact
     // adapter even if its diagnostic environment flag is set.
     frames_since_key: u32,
-    mut exact_vbp_history: Option<
-        &mut [rvp9_core::mode_decision::partition::FixedTreeHistoryEntry],
-    >,
+    mut exact_vbp_history: Option<InterPartitionHistoryMut<'_>>,
     // A23 — opt-in TPL rdmult adjustment. `Some((tpl_frame, r0))` only
     // when `config.enable_tpl` is set AND the single-GOP forward TPL pass
     // produced a valid frame grid for this frame; `None` otherwise (the
@@ -4838,11 +4907,20 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         && deadline == rvp9_core::mode_decision::speed_features::Deadline::Realtime
         && content_tier == rvp9_core::mode_decision::speed_features::ContentTier::Default;
     if exact_vbp_tree_enabled {
-        assert_eq!(
-            exact_vbp_history.as_deref().map(|history| history.len()),
-            Some((w / 64) * h.div_ceil(64)),
-            "exact VBP history must have one entry per superblock"
-        );
+        let history_sb_col_range = active_tile_col.map_or(0..sb_cols, |tile_col| {
+            let bounds = tile_bounds_by_col
+                .get(tile_col)
+                .expect("active tile column must have frame bounds");
+            assert!(
+                bounds.mi_col_start.is_multiple_of(8) && bounds.mi_col_end.is_multiple_of(8),
+                "partition-history tile bounds must be superblock aligned",
+            );
+            bounds.mi_col_start / 8..bounds.mi_col_end / 8
+        });
+        exact_vbp_history
+            .as_ref()
+            .expect("exact VBP history checked above")
+            .assert_layout(sb_rows, history_sb_col_range);
     }
     let live_ref_costs_enabled = exact_vbp_tree_enabled && env.flag_or(env.live_ref_costs, true);
     let rt_emit_max_tx = realtime_force_max_emit_tx(
@@ -5091,9 +5169,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     noise_estimate: noise_estimate_frame,
                     content_state,
                 });
-                let history = &mut exact_vbp_history
-                    .as_deref_mut()
-                    .expect("exact VBP history checked above")[sb_idx];
+                let history = exact_vbp_history
+                    .as_mut()
+                    .expect("exact VBP history checked above")
+                    .get_mut(sb_row, sb_col);
                 let copy_conditions = FixedTreeCopyConditions {
                     frames_since_key,
                     segment_id,
