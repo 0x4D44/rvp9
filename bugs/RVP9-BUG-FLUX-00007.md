@@ -1,6 +1,6 @@
 # RVP9-BUG-FLUX-00007 — GOP byte golden lags accepted encoder output
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Must
 - **Severity:** Low
 - **Area:** tests/encoder GOP topology
@@ -19,7 +19,7 @@
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-07T11:00:30Z, raised via `deltic bugs new` model=gpt-5.6-sol@xhigh)
+- **State history:** Open (2026-08-07T11:00:30Z, raised via `deltic bugs new` model=gpt-5.6-sol@xhigh) → Fixed (2026-08-07, `bb188d336838e30fd600795e318397c99c340780`, fixed by Codex)
 
 ## Observation
 
@@ -27,6 +27,18 @@ On untouched origin/main commit 187b6af6, run: cargo test -p rvp9-encoder --test
 
 ## Fix
 
-<unfixed — raised only>
+Commit `bb188d336838e30fd600795e318397c99c340780` refreshes the byte
+golden to the stable accepted production-parity stream. The byte assertion and
+the independent emitted-frame schedule oracle remain intact.
+
+Regression evidence:
+
+- Untouched `origin/main` commit `187b6af6` and the integration tree both
+  produced 23,186 bytes with FNV-1a `0xc5a9eaff599669d2`.
+- `cargo test -p rvp9-encoder --test w_gop_topology --locked -- --nocapture`
+  passes both the byte-identity and schedule-oracle tests.
+- A second exact byte-identity run reproduced the same length and hash.
+
+Awaiting independent verification before closure.
 
 ## Notes
