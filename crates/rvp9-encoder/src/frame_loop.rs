@@ -6219,13 +6219,26 @@ where
                 if let Some(job) = parallel_aux_job.take() {
                     scope.submit(job);
                 }
-                for (tile_col, result_slot) in result_slots.iter_mut().enumerate() {
+                let (tile_zero_slot, later_slots) = result_slots
+                    .split_first_mut()
+                    .expect("parallel tile writing requires at least two tiles");
+                // The caller executes the first submitted job. Tile column one
+                // is consistently the longest final-writer job on the CPU7
+                // corpus, while column zero is the shortest; submit column one
+                // first without changing result or bitstream order.
+                for (offset, result_slot) in later_slots.iter_mut().enumerate() {
+                    let tile_col = offset + 1;
                     let encode_tile = &encode_tile;
                     scope.submit(move || {
                         let result = encode_tile(tile_col);
                         *result_slot = Some(result);
                     });
                 }
+                let encode_tile = &encode_tile;
+                scope.submit(move || {
+                    let result = encode_tile(0);
+                    *tile_zero_slot = Some(result);
+                });
             });
         for (tile_col, result_slot) in result_slots.into_iter().enumerate() {
             let (tile_buf, tile_counts) = result_slot
