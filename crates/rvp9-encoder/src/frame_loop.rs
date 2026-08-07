@@ -121,9 +121,18 @@ fn lf_packet_overlap_enabled() -> bool {
     })
 }
 
+#[inline]
+const fn should_overlap_lf_and_packet(
+    filter_level: u8,
+    lf_worker_available: bool,
+    policy_enabled: bool,
+) -> bool {
+    filter_level > 0 && lf_worker_available && policy_enabled
+}
+
 #[cfg(test)]
 mod lf_packet_overlap_tests {
-    use super::lf_packet_overlap_policy;
+    use super::{lf_packet_overlap_policy, should_overlap_lf_and_packet};
     use std::ffi::OsStr;
 
     #[test]
@@ -131,6 +140,14 @@ mod lf_packet_overlap_tests {
         assert!(lf_packet_overlap_policy(None));
         assert!(lf_packet_overlap_policy(Some(OsStr::new("1"))));
         assert!(!lf_packet_overlap_policy(Some(OsStr::new("0"))));
+    }
+
+    #[test]
+    fn overlap_requires_a_constructed_worker() {
+        assert!(should_overlap_lf_and_packet(16, true, true));
+        assert!(!should_overlap_lf_and_packet(16, false, true));
+        assert!(!should_overlap_lf_and_packet(0, true, true));
+        assert!(!should_overlap_lf_and_packet(16, true, false));
     }
 }
 
@@ -3843,8 +3860,11 @@ impl StreamEncoder {
         // entropy state. Complete SB rows use the direct split-edge filter;
         // partial bottom rows add temporary addressable tail storage for the
         // same backend while retaining the visible boundary masks.
-        let overlap_lf_and_packet =
-            filter_level > 0 && self.parallelism.max_threads > 1 && lf_packet_overlap_enabled();
+        let overlap_lf_and_packet = should_overlap_lf_and_packet(
+            filter_level,
+            self.lf_worker_pool.is_some(),
+            lf_packet_overlap_enabled(),
+        );
         let packet_result = if overlap_lf_and_packet {
             // Loop filtering owns only the new reconstruction planes. Packet
             // construction reads coefficients, mode metadata, and probability
