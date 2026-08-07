@@ -3430,6 +3430,9 @@ struct CompactInterRowResult {
     mv_grid: Vec<PrevFrameMvRef>,
     coefs: VecBackedInterCoefSource,
     partitions: Vec<Vec<InterPartitionLeafDesc>>,
+    rd_table_index: usize,
+    rd_thresh_table: rvp9_core::mode_decision::rd_thresh::RdThreshTable,
+    vbp_history: Option<Vec<rvp9_core::mode_decision::partition::FixedTreeHistoryEntry>>,
 }
 
 impl CompactInterRowResult {
@@ -3444,6 +3447,8 @@ impl CompactInterRowResult {
         row_grids: &mut InterRowGrids<'_>,
         coef_source: &mut VecBackedInterCoefSource,
         partitions: &mut [Vec<InterPartitionLeafDesc>],
+        rd_thresh_tables: &mut [rvp9_core::mode_decision::rd_thresh::RdThreshTable],
+        vbp_history: &mut Option<InterPartitionHistoryMut<'_>>,
     ) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
         let tile_mi_cols = self.mi_col_end - self.mi_col_start;
         let compact = InterReconPlanes::new(
@@ -3505,6 +3510,15 @@ impl CompactInterRowResult {
                 "compact partition result must have one exact owner"
             );
             partitions[destination] = partition;
+        }
+        rd_thresh_tables[self.rd_table_index] = self.rd_thresh_table;
+        if let Some(history) = self.vbp_history {
+            let sb_col_range = self.mi_col_start / 8..self.mi_col_end / 8;
+            if let Some(history_destination) = vbp_history.as_mut() {
+                history_destination.restore_row(self.job.sb_row, sb_col_range, history);
+            } else {
+                panic!("compact VBP row result has no history destination");
+            }
         }
         (self.recon_y, self.recon_u, self.recon_v)
     }
@@ -3861,6 +3875,11 @@ pub(crate) enum InterPartitionHistoryMut<'a> {
         sb_col_start: usize,
         rows: Vec<&'a mut [rvp9_core::mode_decision::partition::FixedTreeHistoryEntry]>,
     },
+    RowOwned {
+        sb_row: usize,
+        sb_col_start: usize,
+        entries: Vec<rvp9_core::mode_decision::partition::FixedTreeHistoryEntry>,
+    },
 }
 
 impl<'a> InterPartitionHistoryMut<'a> {
@@ -3894,6 +3913,22 @@ impl<'a> InterPartitionHistoryMut<'a> {
         Self::TileRows { sb_col_start, rows }
     }
 
+    pub(crate) fn row_owned(
+        sb_row: usize,
+        sb_col_start: usize,
+        entries: Vec<rvp9_core::mode_decision::partition::FixedTreeHistoryEntry>,
+    ) -> Self {
+        assert!(
+            !entries.is_empty(),
+            "partition-history row must be non-empty"
+        );
+        Self::RowOwned {
+            sb_row,
+            sb_col_start,
+            entries,
+        }
+    }
+
     fn assert_layout(&self, sb_rows: usize, sb_col_range: std::ops::Range<usize>) {
         match self {
             Self::Frame { entries, sb_cols } => {
@@ -3908,6 +3943,85 @@ impl<'a> InterPartitionHistoryMut<'a> {
                         .all(|row| row.len() == sb_col_range.end - sb_col_range.start)
                 );
             }
+            Self::RowOwned {
+                sb_row,
+                sb_col_start,
+                entries,
+            } => {
+                assert!(*sb_row < sb_rows);
+                assert_eq!(*sb_col_start, sb_col_range.start);
+                assert_eq!(entries.len(), sb_col_range.end - sb_col_range.start);
+            }
+        }
+    }
+
+    fn take_row(
+        &mut self,
+        sb_row: usize,
+        sb_col_range: std::ops::Range<usize>,
+    ) -> Vec<rvp9_core::mode_decision::partition::FixedTreeHistoryEntry> {
+        assert!(sb_col_range.start < sb_col_range.end);
+        match self {
+            Self::Frame { entries, sb_cols } => {
+                assert!(sb_col_range.end <= *sb_cols);
+                (sb_col_range)
+                    .map(|sb_col| std::mem::take(&mut entries[sb_row * *sb_cols + sb_col]))
+                    .collect()
+            }
+            Self::TileRows { sb_col_start, rows } => {
+                assert_eq!(sb_col_range.start, *sb_col_start);
+                let width = sb_col_range.end - sb_col_range.start;
+                assert!(sb_row < rows.len());
+                assert_eq!(rows[sb_row].len(), width);
+                rows[sb_row].iter_mut().map(std::mem::take).collect()
+            }
+            Self::RowOwned {
+                sb_row: owned_sb_row,
+                sb_col_start,
+                entries,
+            } => {
+                assert_eq!(*owned_sb_row, sb_row);
+                assert_eq!(*sb_col_start, sb_col_range.start);
+                assert_eq!(entries.len(), sb_col_range.end - sb_col_range.start);
+                std::mem::take(entries)
+            }
+        }
+    }
+
+    fn restore_row(
+        &mut self,
+        sb_row: usize,
+        sb_col_range: std::ops::Range<usize>,
+        entries_to_restore: Vec<rvp9_core::mode_decision::partition::FixedTreeHistoryEntry>,
+    ) {
+        assert_eq!(
+            entries_to_restore.len(),
+            sb_col_range.end - sb_col_range.start
+        );
+        match self {
+            Self::Frame { entries, sb_cols } => {
+                assert!(sb_col_range.end <= *sb_cols);
+                for (offset, entry) in entries_to_restore.into_iter().enumerate() {
+                    entries[sb_row * *sb_cols + sb_col_range.start + offset] = entry;
+                }
+            }
+            Self::TileRows { sb_col_start, rows } => {
+                assert_eq!(*sb_col_start, sb_col_range.start);
+                assert!(sb_row < rows.len());
+                assert_eq!(rows[sb_row].len(), entries_to_restore.len());
+                for (destination, entry) in rows[sb_row].iter_mut().zip(entries_to_restore) {
+                    *destination = entry;
+                }
+            }
+            Self::RowOwned {
+                sb_row: owned_sb_row,
+                sb_col_start,
+                entries,
+            } => {
+                assert_eq!(*owned_sb_row, sb_row);
+                assert_eq!(*sb_col_start, sb_col_range.start);
+                *entries = entries_to_restore;
+            }
         }
     }
 
@@ -3919,6 +4033,14 @@ impl<'a> InterPartitionHistoryMut<'a> {
         match self {
             Self::Frame { entries, sb_cols } => &mut entries[sb_row * *sb_cols + sb_col],
             Self::TileRows { sb_col_start, rows } => &mut rows[sb_row][sb_col - *sb_col_start],
+            Self::RowOwned {
+                sb_row: owned_sb_row,
+                sb_col_start,
+                entries,
+            } => {
+                assert_eq!(*owned_sb_row, sb_row);
+                &mut entries[sb_col - *sb_col_start]
+            }
         }
     }
 }
@@ -5601,6 +5723,11 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         0
     };
 
+    let history_state: std::cell::RefCell<Option<InterPartitionHistoryMut<'_>>> =
+        std::cell::RefCell::new(None);
+    let rd_thresh_table_state: std::cell::RefCell<
+        Option<rvp9_core::mode_decision::rd_thresh::RdThreshTable>,
+    > = std::cell::RefCell::new(None);
     let mut encode_job = |job: crate::row_mt::RowJob,
                           recon_yuv_out: &mut InterReconPlanes<'_>,
                           row_grids: &mut InterRowGrids<'_>,
@@ -5609,17 +5736,15 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                           coef_record_bw: &mut BoolWriter<'_>,
                           defer_coef_recording: bool,
                           sb_partitions: &mut InterPartitionGrid<'_>| {
+        let mut history_state = history_state.borrow_mut();
+        let mut rd_thresh_table_state = rd_thresh_table_state.borrow_mut();
+        let rd_thresh_table = rd_thresh_table_state
+            .as_mut()
+            .expect("one row-owned RD threshold table must be installed");
         let current_tile = tile_bounds_by_col[job.tile_col];
         let sb_columns = inter_row_job_sb_columns(&tile_bounds_by_col, active_tile_col, job);
         let sb_row = job.sb_row;
         for sb_col in sb_columns {
-            let tile_col = job.tile_col;
-            let rd_table_index = if rd_tables_are_tile_local {
-                sb_row
-            } else {
-                tile_col * sb_rows + sb_row
-            };
-            let rd_thresh_table = &mut rd_thresh_tables[rd_table_index];
             let sb_idx = sb_row * sb_cols + sb_col;
 
             // A23 — per-64x64-SB TPL `cb_rdmult` (libvpx
@@ -5799,7 +5924,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     noise_estimate: noise_estimate_frame,
                     content_state,
                 });
-                let history = exact_vbp_history
+                let history = history_state
                     .as_mut()
                     .expect("exact VBP history checked above")
                     .get_mut(sb_row, sb_col);
@@ -9155,12 +9280,27 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         let mut compact_y = Vec::new();
         let mut compact_u = Vec::new();
         let mut compact_v = Vec::new();
+        let mut compact_history_backing = exact_vbp_history.take();
         for job in jobs {
             let tile_col = job.tile_col;
             let sb_row = job.sb_row;
             let bounds = tile_bounds_by_col[tile_col];
             let tile_mi_cols = bounds.mi_col_end - bounds.mi_col_start;
             let sb_column_range = bounds.mi_col_start / 8..bounds.mi_col_end / 8;
+            let rd_table_index = if rd_tables_are_tile_local {
+                sb_row
+            } else {
+                tile_col * sb_rows + sb_row
+            };
+            let row_rd_thresh_table = std::mem::take(&mut rd_thresh_tables[rd_table_index]);
+            history_state.replace(compact_history_backing.as_mut().map(|history| {
+                InterPartitionHistoryMut::row_owned(
+                    sb_row,
+                    sb_column_range.start,
+                    history.take_row(sb_row, sb_column_range.clone()),
+                )
+            }));
+            rd_thresh_table_state.replace(Some(row_rd_thresh_table));
             let mut row_partitions: Vec<_> = sb_column_range
                 .clone()
                 .map(|sb_col| std::mem::take(&mut sb_partitions[sb_row * sb_cols + sb_col]))
@@ -9244,6 +9384,14 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 );
                 compact_grids.into_simulation_grid()
             };
+            let vbp_history = match history_state.replace(None) {
+                None => None,
+                Some(InterPartitionHistoryMut::RowOwned { entries, .. }) => Some(entries),
+                Some(_) => panic!("compact VBP row must own its history entries"),
+            };
+            let row_rd_thresh_table = rd_thresh_table_state
+                .replace(None)
+                .expect("compact row must return its RD threshold table");
             (compact_y, compact_u, compact_v) = CompactInterRowResult {
                 job,
                 mi_col_start: bounds.mi_col_start,
@@ -9257,6 +9405,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 mv_grid: compact_mv,
                 coefs: row_coef_source,
                 partitions: row_partitions,
+                rd_table_index,
+                rd_thresh_table: row_rd_thresh_table,
+                vbp_history,
             }
             .merge_into(
                 w,
@@ -9267,14 +9418,24 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 &mut row_grids,
                 &mut coef_source,
                 sb_partitions,
+                rd_thresh_tables,
+                &mut compact_history_backing,
             );
         }
     } else {
         let mut recon_yuv_out =
             InterReconPlanes::new((recon_y_out, recon_u_out, recon_v_out), recon_layout);
         let mut partition_grid = InterPartitionGrid::full(sb_partitions, sb_rows, sb_cols);
+        history_state.replace(exact_vbp_history.take());
         if let Some(tile_col) = active_tile_col {
             for sb_row in 0..sb_rows {
+                let rd_table_index = if rd_tables_are_tile_local {
+                    sb_row
+                } else {
+                    tile_col * sb_rows + sb_row
+                };
+                rd_thresh_table_state
+                    .replace(Some(std::mem::take(&mut rd_thresh_tables[rd_table_index])));
                 encode_job(
                     crate::row_mt::RowJob { sb_row, tile_col },
                     &mut recon_yuv_out,
@@ -9285,11 +9446,21 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     false,
                     &mut partition_grid,
                 );
+                rd_thresh_tables[rd_table_index] = rd_thresh_table_state
+                    .replace(None)
+                    .expect("full row must return its RD threshold table");
             }
         } else {
             let row_context = crate::row_mt::RowMtContext::new(tile_bounds_by_col.len(), sb_rows);
             let mut tile_col = row_context.initial_tile_for_worker(0);
             while let Some(job) = row_context.claim_for_worker(&mut tile_col) {
+                let rd_table_index = if rd_tables_are_tile_local {
+                    job.sb_row
+                } else {
+                    job.tile_col * sb_rows + job.sb_row
+                };
+                rd_thresh_table_state
+                    .replace(Some(std::mem::take(&mut rd_thresh_tables[rd_table_index])));
                 encode_job(
                     job,
                     &mut recon_yuv_out,
@@ -9300,6 +9471,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     false,
                     &mut partition_grid,
                 );
+                rd_thresh_tables[rd_table_index] = rd_thresh_table_state
+                    .replace(None)
+                    .expect("full row must return its RD threshold table");
             }
             debug_assert!(row_context.queues_drained());
             debug_assert_eq!(row_context.remaining_jobs(), 0);
@@ -11312,6 +11486,41 @@ mod tests {
             ..leaf
         });
         assert_eq!(compact[2 * 4 + 2][0].segment_id, 7);
+    }
+
+    #[test]
+    fn compact_inter_partition_history_moves_and_restores_one_row() {
+        use rvp9_core::mode_decision::partition::{FixedTreeHistoryEntry, PartitionDecision};
+
+        let sb_rows = 3usize;
+        let sb_cols = 4usize;
+        let mut frame_entries = vec![FixedTreeHistoryEntry::default(); sb_rows * sb_cols];
+        for (index, entry) in frame_entries.iter_mut().enumerate() {
+            entry.update(
+                PartitionDecision::all_64x64(),
+                (index + 1) as u8,
+                [false; 25],
+            );
+        }
+        let mut full = InterPartitionHistoryMut::frame(&mut frame_entries, sb_rows, sb_cols);
+
+        let row_entries = full.take_row(2, 1..3);
+        assert_eq!(row_entries[0].previous_segment_id(), 10);
+        assert_eq!(row_entries[1].previous_segment_id(), 11);
+        assert!(!full.get_mut(2, 1).is_initialized());
+        assert_eq!(full.get_mut(2, 0).previous_segment_id(), 9);
+
+        let mut row = InterPartitionHistoryMut::row_owned(2, 1, row_entries);
+        row.get_mut(2, 2)
+            .update(PartitionDecision::all_64x64(), 99, [true; 25]);
+        let restored_entries = match row {
+            InterPartitionHistoryMut::RowOwned { entries, .. } => entries,
+            _ => panic!("compact history must retain its owned row"),
+        };
+        full.restore_row(2, 1..3, restored_entries);
+        assert_eq!(full.get_mut(2, 1).previous_segment_id(), 10);
+        assert_eq!(full.get_mut(2, 2).previous_segment_id(), 99);
+        assert_eq!(full.get_mut(2, 2).copied_frame_count(), 0);
     }
 
     #[test]
