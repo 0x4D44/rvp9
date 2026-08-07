@@ -4547,14 +4547,13 @@ fn reconstruct_via_round_trip(
             $transform(&residual[..$n], tx_side, &mut had_coeff_i16);
 
             #[cfg(target_arch = "aarch64")]
-            let (had_eob, rate_satd, dist) = if collect_coef_dist {
+            let (had_nonzero, rate_satd, dist) = if collect_coef_dist {
                 let metrics = if $is_32x32 {
                     crate::dsp::aarch64::vp9_quantize_fp_32x32_i16_metrics_neon(
                         &had_coeff_i16,
                         &params.quantizer.round_fp,
                         &params.quantizer.quant_fp,
                         &dequant_pair,
-                        scan.iscan(),
                     )
                 } else {
                     crate::dsp::aarch64::vp9_quantize_fp_i16_metrics_neon(
@@ -4563,10 +4562,9 @@ fn reconstruct_via_round_trip(
                         &params.quantizer.round_fp,
                         &params.quantizer.quant_fp,
                         &dequant_pair,
-                        scan.iscan(),
                     )
                 };
-                (metrics.eob, metrics.satd, metrics.error >> 2)
+                (metrics.nonzero, metrics.satd, metrics.error >> 2)
             } else {
                 let metrics = if $is_32x32 {
                     crate::dsp::aarch64::vp9_quantize_fp_32x32_i16_rate_metrics_neon(
@@ -4574,7 +4572,6 @@ fn reconstruct_via_round_trip(
                         &params.quantizer.round_fp,
                         &params.quantizer.quant_fp,
                         &dequant_pair,
-                        scan.iscan(),
                     )
                 } else {
                     crate::dsp::aarch64::vp9_quantize_fp_i16_rate_metrics_neon(
@@ -4582,13 +4579,12 @@ fn reconstruct_via_round_trip(
                         $n,
                         &params.quantizer.round_fp,
                         &params.quantizer.quant_fp,
-                        scan.iscan(),
                     )
                 };
-                (metrics.eob, metrics.satd, 0)
+                (metrics.nonzero, metrics.satd, 0)
             };
             #[cfg(not(target_arch = "aarch64"))]
-            let (had_eob, rate_satd, dist) = {
+            let (had_nonzero, rate_satd, dist) = {
                 let mut had_coeff = [0i32; $n];
                 for (dst, &src) in had_coeff.iter_mut().zip(&had_coeff_i16) {
                     *dst = i32::from(src);
@@ -4631,9 +4627,9 @@ fn reconstruct_via_round_trip(
                 } else {
                     0
                 };
-                (eob, rate_satd, dist)
+                (eob != 0, rate_satd, dist)
             };
-            (had_eob, rate_satd, dist)
+            (had_nonzero, rate_satd, dist)
         }};
     }
 
@@ -4692,7 +4688,7 @@ fn reconstruct_via_round_trip(
             // reconstruction.
             //
             // 1-3. Hadamard transform, quantize_fp, and tile metrics.
-            let (had_eob, tile_rate_satd, tile_dist) = match tx_size {
+            let (had_nonzero, tile_rate_satd, tile_dist) = match tx_size {
                 TxSize::Tx8x8 => {
                     hadamard_metrics!(64, hadamard_8x8, hadamard_8x8_subtract, false, off_x, off_y)
                 }
@@ -4720,7 +4716,7 @@ fn reconstruct_via_round_trip(
             };
             // Accumulate block_yrd metrics from Hadamard-quantized
             //    coefficients (libvpx vp9_pickmode.c:804, 830-835).
-            by_skippable &= had_eob == 0;
+            by_skippable &= !had_nonzero;
             by_eob_cost = by_eob_cost.saturating_add(1);
             by_rate_satd = by_rate_satd.saturating_add(tile_rate_satd);
             by_dist = by_dist.saturating_add(tile_dist);
