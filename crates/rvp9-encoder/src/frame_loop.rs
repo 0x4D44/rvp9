@@ -3500,12 +3500,17 @@ impl StreamEncoder {
                                 partition_input,
                                 sb_col_start..sb_col_end,
                                 &mut scratch.partitions,
-                                |decision, sb_row, sb_col| {
+                                |decision, sb_row, sb_col, mapped_leaves| {
                                     let visible_mi_rows = (h as usize - sb_row * 64).min(64) / 8;
                                     let leaves =
                                         leaves_from_decision_visible(decision, visible_mi_rows, 8);
-                                    inter_leaves_from_intra(
-                                        &leaves, sb_row, sb_col, seg_map, mi_cols_us,
+                                    inter_leaves_from_intra_into(
+                                        &leaves,
+                                        sb_row,
+                                        sb_col,
+                                        seg_map,
+                                        mi_cols_us,
+                                        mapped_leaves,
                                     )
                                 },
                             );
@@ -4111,6 +4116,21 @@ impl StreamEncoder {
             let (coded_segments, coded_skip) =
                 gather_coded_segments_and_skip(mi_rows_us, mi_cols_us, &sb_partitions);
             cr.post_encode_update(&coded_segments, &coded_skip, q_index);
+        }
+
+        // The packet writer and AQ feedback above are the final consumers of
+        // the picked leaves. Return each tile-owned inner allocation to its
+        // long-lived scratch grid so the next inter frame can refill it in
+        // place. On an earlier encode error these vectors simply drop with the
+        // local frame grid; the next attempt remains correct and reallocates.
+        if parallel_tile_picker {
+            return_parallel_partition_vectors_to_tile_scratch(
+                &mut sb_partitions,
+                &mut self.inter_tile_scratch,
+                mi_rows_us,
+                mi_cols_us,
+                log2_tile_cols,
+            );
         }
 
         Ok(packet)
@@ -4874,13 +4894,20 @@ fn choose_partitions_for_sb_cols(
 fn choose_mapped_partitions_for_sb_cols<T, F>(
     input: FramePartitionInput<'_>,
     sb_col_range: std::ops::Range<usize>,
-    map_decision: F,
+    mut map_decision: F,
 ) -> Vec<Vec<T>>
 where
     F: FnMut(&PartitionDecision, usize, usize) -> Vec<T>,
 {
     let mut out = Vec::new();
-    choose_mapped_partitions_for_sb_cols_into(input, sb_col_range, &mut out, map_decision);
+    choose_mapped_partitions_for_sb_cols_into(
+        input,
+        sb_col_range,
+        &mut out,
+        |decision, sb_row, sb_col, mapped| {
+            *mapped = map_decision(decision, sb_row, sb_col);
+        },
+    );
     out
 }
 
@@ -4890,7 +4917,7 @@ fn choose_mapped_partitions_for_sb_cols_into<T, F>(
     out: &mut Vec<Vec<T>>,
     mut map_decision: F,
 ) where
-    F: FnMut(&PartitionDecision, usize, usize) -> Vec<T>,
+    F: FnMut(&PartitionDecision, usize, usize, &mut Vec<T>),
 {
     let FramePartitionInput {
         width_px,
@@ -4986,7 +5013,12 @@ fn choose_mapped_partitions_for_sb_cols_into<T, F>(
                     );
                 }
             }
-            out[sb_row * sb_cols + sb_col] = map_decision(&decision, sb_row, sb_col);
+            map_decision(
+                &decision,
+                sb_row,
+                sb_col,
+                &mut out[sb_row * sb_cols + sb_col],
+            );
         }
     }
 }
@@ -5015,31 +5047,74 @@ fn inter_leaves_from_intra(
     seg_map: &[u8],
     mi_cols: usize,
 ) -> Vec<InterPartitionLeafDesc> {
-    leaves
-        .iter()
-        .map(|leaf| {
-            // AQ.3 — cyclic refresh paints whole SBs uniformly, so
-            // sampling the leaf's top-left mi cell is exact.
-            let leaf_mi_row = sb_row * 8 + leaf.mi_row_in_sb;
-            let leaf_mi_col = sb_col * 8 + leaf.mi_col_in_sb;
-            let segment_id = seg_map[leaf_mi_row * mi_cols + leaf_mi_col];
-            InterPartitionLeafDesc {
-                mi_row_in_sb: leaf.mi_row_in_sb,
-                mi_col_in_sb: leaf.mi_col_in_sb,
-                leaf_bsize: leaf.leaf_bsize,
-                picked_mode: InterMode::ZeroMv,
-                picked_mv: Mv::ZERO,
-                skip: true,
-                segment_id,
-                picked_ref_frame: RefFrame::LastFrame,
-                picked_interp_filter: rvp9_core::bitstream::frame::InterpFilter::EightTap,
-                picked_intra_mode: None,
-                picked_ref_frame2: RefFrame::NoRefFrame,
-                picked_mv2: Mv::ZERO,
-                picked_tx_size: max_txsize(leaf.leaf_bsize),
+    let mut out = Vec::with_capacity(leaves.len());
+    inter_leaves_from_intra_into(leaves, sb_row, sb_col, seg_map, mi_cols, &mut out);
+    out
+}
+
+fn inter_leaves_from_intra_into(
+    leaves: &[PartitionLeafDesc],
+    sb_row: usize,
+    sb_col: usize,
+    seg_map: &[u8],
+    mi_cols: usize,
+    out: &mut Vec<InterPartitionLeafDesc>,
+) {
+    out.clear();
+    out.extend(leaves.iter().map(|leaf| {
+        // AQ.3 — cyclic refresh paints whole SBs uniformly, so
+        // sampling the leaf's top-left mi cell is exact.
+        let leaf_mi_row = sb_row * 8 + leaf.mi_row_in_sb;
+        let leaf_mi_col = sb_col * 8 + leaf.mi_col_in_sb;
+        let segment_id = seg_map[leaf_mi_row * mi_cols + leaf_mi_col];
+        InterPartitionLeafDesc {
+            mi_row_in_sb: leaf.mi_row_in_sb,
+            mi_col_in_sb: leaf.mi_col_in_sb,
+            leaf_bsize: leaf.leaf_bsize,
+            picked_mode: InterMode::ZeroMv,
+            picked_mv: Mv::ZERO,
+            skip: true,
+            segment_id,
+            picked_ref_frame: RefFrame::LastFrame,
+            picked_interp_filter: rvp9_core::bitstream::frame::InterpFilter::EightTap,
+            picked_intra_mode: None,
+            picked_ref_frame2: RefFrame::NoRefFrame,
+            picked_mv2: Mv::ZERO,
+            picked_tx_size: max_txsize(leaf.leaf_bsize),
+        }
+    }));
+}
+
+fn return_parallel_partition_vectors_to_tile_scratch(
+    frame_partitions: &mut [Vec<InterPartitionLeafDesc>],
+    tile_scratch: &mut [InterTileScratch],
+    mi_rows: usize,
+    mi_cols: usize,
+    log2_tile_cols: u8,
+) {
+    let tile_count = 1usize << log2_tile_cols;
+    let sb_rows = mi_rows.div_ceil(8);
+    let sb_cols = mi_cols / 8;
+    assert_eq!(tile_scratch.len(), tile_count);
+    assert_eq!(frame_partitions.len(), sb_rows * sb_cols);
+
+    for (tile_col, scratch) in tile_scratch.iter_mut().enumerate() {
+        assert_eq!(scratch.partitions.len(), frame_partitions.len());
+        let bounds = tile_bounds(mi_rows, mi_cols, 0, log2_tile_cols, 0, tile_col as u32);
+        debug_assert_eq!(bounds.mi_col_start % 8, 0);
+        debug_assert_eq!(bounds.mi_col_end % 8, 0);
+        for sb_row in 0..sb_rows {
+            for sb_col in bounds.mi_col_start / 8..bounds.mi_col_end / 8 {
+                let sb_index = sb_row * sb_cols + sb_col;
+                debug_assert!(scratch.partitions[sb_index].is_empty());
+                std::mem::swap(
+                    &mut frame_partitions[sb_index],
+                    &mut scratch.partitions[sb_index],
+                );
             }
-        })
-        .collect()
+        }
+    }
+    debug_assert!(frame_partitions.iter().all(Vec::is_empty));
 }
 
 fn vbp_qindex_for_partition(q_index: u8, is_keyframe: bool) -> u8 {
@@ -8184,6 +8259,7 @@ mod tests {
                 )
             })
             .collect();
+        let mut partition_leaf_allocations_after_first_inter = None;
         let mut decoder = Decoder::new();
 
         for frame_idx in 0..3usize {
@@ -8213,6 +8289,58 @@ mod tests {
             let serial_packet = serial.encode_frame(&view).expect("serial encode");
             let two_worker_packet = two_workers.encode_frame(&view).expect("two-worker encode");
             let threaded_packet = threaded.encode_frame(&view).expect("threaded encode");
+            if frame_idx >= 1 {
+                let partition_leaf_allocations: Vec<Vec<_>> = threaded
+                    .inter_tile_scratch
+                    .iter()
+                    .map(|scratch| {
+                        scratch
+                            .partitions
+                            .iter()
+                            .map(|leaves| (leaves.as_ptr(), leaves.capacity()))
+                            .collect()
+                    })
+                    .collect();
+                if frame_idx == 1 {
+                    assert!(
+                        partition_leaf_allocations
+                            .iter()
+                            .flatten()
+                            .any(|&(_, cap)| cap > 0)
+                    );
+                    partition_leaf_allocations_after_first_inter = Some(partition_leaf_allocations);
+                } else {
+                    let previous = partition_leaf_allocations_after_first_inter
+                        .as_ref()
+                        .expect("first inter frame captured partition allocations");
+                    let mut unchanged_allocations = 0usize;
+                    for (current_tile, previous_tile) in
+                        partition_leaf_allocations.iter().zip(previous)
+                    {
+                        for (
+                            &(current_ptr, current_capacity),
+                            &(previous_ptr, previous_capacity),
+                        ) in current_tile.iter().zip(previous_tile)
+                        {
+                            assert!(
+                                current_capacity >= previous_capacity,
+                                "retained per-SB leaf capacity must not shrink",
+                            );
+                            if current_capacity == previous_capacity && current_capacity > 0 {
+                                assert_eq!(
+                                    current_ptr, previous_ptr,
+                                    "unchanged per-SB leaf capacity must reuse its allocation",
+                                );
+                                unchanged_allocations += 1;
+                            }
+                        }
+                    }
+                    assert!(
+                        unchanged_allocations > 0,
+                        "consecutive inter frames must reuse at least one leaf allocation",
+                    );
+                }
+            }
             assert_eq!(
                 serial_packet.data, two_worker_packet.data,
                 "fixed tile layout must be identical with two workers at frame {frame_idx}",
@@ -11521,7 +11649,7 @@ mod tests {
     }
 
     #[test]
-    fn mapped_partition_reuse_clears_poison_without_reallocating_outer_grid() {
+    fn mapped_partition_reuse_clears_poison_without_reallocating_grids() {
         let width = 128usize;
         let height = 64usize;
         let src_y: Vec<_> = (0..width * height)
@@ -11545,8 +11673,17 @@ mod tests {
         let mut reused = vec![vec![usize::MAX; 4]; expected.len()];
         let outer_ptr = reused.as_ptr();
         let outer_capacity = reused.capacity();
+        let inner_ptr = reused[1].as_ptr();
+        let inner_capacity = reused[1].capacity();
 
-        choose_mapped_partitions_for_sb_cols_into(input, 1..2, &mut reused, map);
+        choose_mapped_partitions_for_sb_cols_into(
+            input,
+            1..2,
+            &mut reused,
+            |decision, sb_row, sb_col, mapped| {
+                mapped.extend(map(decision, sb_row, sb_col));
+            },
+        );
 
         assert_eq!(
             reused, expected,
@@ -11554,6 +11691,8 @@ mod tests {
         );
         assert_eq!(reused.as_ptr(), outer_ptr);
         assert_eq!(reused.capacity(), outer_capacity);
+        assert_eq!(reused[1].as_ptr(), inner_ptr);
+        assert_eq!(reused[1].capacity(), inner_capacity);
     }
 
     #[test]

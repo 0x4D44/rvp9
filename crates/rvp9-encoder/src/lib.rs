@@ -6022,8 +6022,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 //    `segment_id` from the variance hint at each
                 //    leaf's top-left mi cell (the descent doesn't
                 //    own segment-id information; AQ.1 owns it).
-                let mut new_leaves: Vec<InterPartitionLeafDesc> =
-                    Vec::with_capacity(descent_result.leaves.len());
+                let segment_ids = segment_ids_for_hint_cells(&sb_partitions[sb_idx]);
+                let committed_leaves = &mut sb_partitions[sb_idx];
+                committed_leaves.clear();
+                committed_leaves.reserve(descent_result.leaves.len());
                 for leaf in &descent_result.leaves {
                     // A4-rect anti-G3 diagnostic: count each rectangular
                     // leaf (`width != height`) the descent committed. A
@@ -6048,12 +6050,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     // RD descent can split a hinted leaf; exact-origin
                     // lookup would drop those child leaves back to
                     // segment 0 and silently disable AQ for them.
-                    let seg = segment_id_for_hint_cell(
-                        &sb_partitions[sb_idx],
-                        leaf.mi_row_in_sb,
-                        leaf.mi_col_in_sb,
-                    );
-                    new_leaves.push(InterPartitionLeafDesc {
+                    let seg = segment_ids[leaf.mi_row_in_sb * 8 + leaf.mi_col_in_sb];
+                    committed_leaves.push(InterPartitionLeafDesc {
                         mi_row_in_sb: leaf.mi_row_in_sb,
                         mi_col_in_sb: leaf.mi_col_in_sb,
                         leaf_bsize: leaf.bsize,
@@ -6075,7 +6073,6 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         picked_tx_size: rvp9_core::block::max_txsize(leaf.bsize),
                     });
                 }
-                sb_partitions[sb_idx] = new_leaves;
                 if let Some(t0) = rt_profile_descent_start {
                     rt_profile_descent_time += t0.elapsed();
                 }
