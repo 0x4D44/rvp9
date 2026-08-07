@@ -4649,6 +4649,10 @@ impl InterEncodeEnv {
         value.unwrap_or(default)
     }
 
+    pub(crate) fn compact_recon_rows_enabled(&self) -> bool {
+        self.flag_or(self.compact_recon_rows, false)
+    }
+
     /// Mirror libvpx realtime `search_filter_ref`: integer-pel motion
     /// never needs interpolation-filter search. The environment override
     /// remains available for differential diagnostics.
@@ -9045,17 +9049,32 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
             );
         }
     };
-    let compact_recon_rows = active_tile_col.is_some()
-        && env.flag_or(env.compact_recon_rows, false)
-        && recon_layout == InterReconLayout::full(w, h);
+    let compact_recon_rows =
+        env.compact_recon_rows_enabled() && recon_layout == InterReconLayout::full(w, h);
     if compact_recon_rows {
-        let tile_col = active_tile_col.expect("compact reconstruction requires one active tile");
-        let bounds = tile_bounds_by_col[tile_col];
-        let tile_mi_cols = bounds.mi_col_end - bounds.mi_col_start;
+        let jobs: Vec<_> = if let Some(tile_col) = active_tile_col {
+            (0..sb_rows)
+                .map(|sb_row| crate::row_mt::RowJob { sb_row, tile_col })
+                .collect()
+        } else {
+            let row_context = crate::row_mt::RowMtContext::new(tile_bounds_by_col.len(), sb_rows);
+            let mut tile_col = row_context.initial_tile_for_worker(0);
+            let mut jobs = Vec::with_capacity(tile_bounds_by_col.len() * sb_rows);
+            while let Some(job) = row_context.claim_for_worker(&mut tile_col) {
+                jobs.push(job);
+            }
+            debug_assert!(row_context.queues_drained());
+            debug_assert_eq!(row_context.remaining_jobs(), 0);
+            jobs
+        };
         let mut compact_y = Vec::new();
         let mut compact_u = Vec::new();
         let mut compact_v = Vec::new();
-        for sb_row in 0..sb_rows {
+        for job in jobs {
+            let tile_col = job.tile_col;
+            let sb_row = job.sb_row;
+            let bounds = tile_bounds_by_col[tile_col];
+            let tile_mi_cols = bounds.mi_col_end - bounds.mi_col_start;
             let layout =
                 InterReconLayout::compact_row(w, h, sb_row, bounds.mi_col_start, tile_mi_cols);
             compact_y.resize(layout.plane(0).stride * layout.plane(0).rows, 0);
@@ -9117,7 +9136,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     }
                 }
                 encode_job(
-                    crate::row_mt::RowJob { sb_row, tile_col },
+                    job,
                     &mut compact,
                     &mut compact_grids,
                     &mut row_coef_source,
@@ -9128,7 +9147,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 compact_grids.into_simulation_grid()
             };
             (compact_y, compact_u, compact_v) = CompactInterRowResult {
-                job: crate::row_mt::RowJob { sb_row, tile_col },
+                job,
                 mi_col_start: bounds.mi_col_start,
                 mi_col_end: bounds.mi_col_end,
                 recon_layout: layout,

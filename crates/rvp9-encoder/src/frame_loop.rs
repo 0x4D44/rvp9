@@ -3142,7 +3142,10 @@ impl StreamEncoder {
             // input and broadens the threshold ladder accordingly.
             noise_threshold_scale: self.pre_analysis.vbp_threshold_scale(),
         };
-        let parallel_tile_picker = log2_tile_cols > 0 && self.parallelism.max_threads > 1;
+        let inter_env_snapshot = crate::InterEncodeEnv::capture();
+        let parallel_tile_picker = log2_tile_cols > 0
+            && self.parallelism.max_threads > 1
+            && !inter_env_snapshot.compact_recon_rows_enabled();
         let mut sb_partitions = if parallel_tile_picker {
             (0..(h as usize).div_ceil(64) * (w as usize / 64))
                 .map(|_| Vec::new())
@@ -3334,7 +3337,6 @@ impl StreamEncoder {
         let deadline = self.config.deadline;
         let rc_mode = self.config.rc_mode;
         let split_override = self.config.stage4a_product_split_override;
-        let inter_env_snapshot = crate::InterEncodeEnv::capture();
         let inter_env = &inter_env_snapshot;
         let noise_estimate = self.pre_analysis.noise_estimate;
         let high_source_sad = self.pre_analysis.high_source_sad;
@@ -3413,7 +3415,7 @@ impl StreamEncoder {
             Box<dyn rvp9_core::bitstream::InterCoefSource>,
             Vec<RecordedCoefTile>,
             Vec<Option<ModeInfo>>,
-        ) = if tile_count > 1 && self.parallelism.max_threads > 1 {
+        ) = if parallel_tile_picker {
             // Tile-MT: execute independent full-height column jobs on the
             // stream-owned worker pool. Each job owns every mutable object
             // it touches. Results are collected and merged in column order,
