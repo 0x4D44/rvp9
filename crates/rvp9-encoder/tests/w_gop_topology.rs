@@ -453,8 +453,14 @@ fn gop_topology_byte_identity() {
     // first intentional coding change. The current clean Unit 651 baseline
     // reproduces the bytes below, and the sibling schedule oracle still
     // matches every emitted frame.
-    const GOLDEN_HASH: u64 = 0xa34d_c1d6_f430_7467;
-    const GOLDEN_LEN: usize = 23293;
+    //
+    // Re-captured again (2026-08-07) after the accepted production-parity
+    // stack. Untouched origin/main at 187b6af6 and the Unit 689 integration
+    // tree independently reproduce these bytes. The sibling schedule oracle
+    // still matches every emitted frame, so this is an earlier intentional
+    // coding change rather than a GOP topology regression.
+    const GOLDEN_HASH: u64 = 0xc5a9_eaff_5996_69d2;
+    const GOLDEN_LEN: usize = 23186;
 
     let stream = encode_fixed_clip();
     let hash = fnv1a(&stream);
