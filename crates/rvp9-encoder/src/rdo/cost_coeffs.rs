@@ -336,9 +336,32 @@ pub fn cost_coeffs_with_contexts(
         );
     }
 
-    // Matches libvpx's fixed 32x32 token cache. Only the first `n` entries
-    // are addressable for the selected transform size.
-    let mut token_cache = [0u8; 32 * 32];
+    // libvpx reserves a fixed 32x32 stack cache but only touches the selected
+    // transform's coefficient extent. Select a correspondingly sized safe
+    // backing array so the common realtime 4x4/8x8/16x16 paths do not zero
+    // 1024 bytes on every coefficient-cost call.
+    let mut cache_4x4;
+    let mut cache_8x8;
+    let mut cache_16x16;
+    let mut cache_32x32;
+    let token_cache: &mut [u8] = match tx_size {
+        TxSize::Tx4x4 => {
+            cache_4x4 = [0u8; 4 * 4];
+            &mut cache_4x4
+        }
+        TxSize::Tx8x8 => {
+            cache_8x8 = [0u8; 8 * 8];
+            &mut cache_8x8
+        }
+        TxSize::Tx16x16 => {
+            cache_16x16 = [0u8; 16 * 16];
+            &mut cache_16x16
+        }
+        TxSize::Tx32x32 => {
+            cache_32x32 = [0u8; 32 * 32];
+            &mut cache_32x32
+        }
+    };
     let mut walker = BandCountsWalker::start_after_dc(tx_size);
 
     let dc_rc = scan[0] as usize;
@@ -354,7 +377,7 @@ pub fn cost_coeffs_with_contexts(
     for (c, &scan_pos) in scan.iter().enumerate().take(usize::from(eob)).skip(1) {
         let rc = scan_pos as usize;
         let token = vp9_get_token(i32::from(qcoeff[rc]));
-        let ctx = coef_context(neighbors, &token_cache, c);
+        let ctx = coef_context(neighbors, token_cache, c);
         cost = cost
             .saturating_add(token_cost(
                 costs,
@@ -375,7 +398,7 @@ pub fn cost_coeffs_with_contexts(
     }
 
     if walker.eob_should_be_charged() {
-        let ctx = coef_context(neighbors, &token_cache, usize::from(eob));
+        let ctx = coef_context(neighbors, token_cache, usize::from(eob));
         cost = cost.saturating_add(token_cost(
             costs, tx_size, plane_type, ref_type, band, ctx, EOB_TOKEN, false,
         ));
@@ -473,7 +496,7 @@ mod tests {
     use super::*;
     use rvp9_core::cost::coef_cost::build_coef_cost_table;
     use rvp9_core::entropy::FrameContext;
-    use rvp9_core::transforms::scans::default_scan_4x4;
+    use rvp9_core::transforms::scans::{default_scan, default_scan_4x4};
 
     /// PROOF W4.3 — `band_counts` matches libvpx
     /// `vp9/encoder/vp9_rdopt.c:352-357`. We compare every entry to
@@ -594,6 +617,36 @@ mod tests {
 
         assert_eq!(fast, 14_227);
         assert_eq!(full, 18_784);
+    }
+
+    #[test]
+    fn sized_context_cache_covers_every_transform_extent() {
+        let costs = build_coef_cost_table(&FrameContext::new_default());
+        for tx_size in [
+            TxSize::Tx4x4,
+            TxSize::Tx8x8,
+            TxSize::Tx16x16,
+            TxSize::Tx32x32,
+        ] {
+            let scan = default_scan(tx_size);
+            let n = tx_size.n_coeffs();
+            let mut qcoeff = vec![0i16; n];
+            qcoeff[scan.scan()[n - 1] as usize] = 1;
+
+            let cost = cost_coeffs_with_contexts(
+                &qcoeff,
+                scan.scan(),
+                scan.neighbors(),
+                n as u16,
+                tx_size,
+                0,
+                0,
+                0,
+                &costs,
+            );
+
+            assert!(cost > 0, "{tx_size:?} must price its complete scan");
+        }
     }
 
     /// `vp9_get_token` matches libvpx's `vp9_get_token` thresholds.
