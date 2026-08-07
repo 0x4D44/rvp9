@@ -2724,7 +2724,10 @@ fn evaluate_intra_fallback_with_scratch(
         above_available: have_above,
         left_available: have_left,
     };
-    let dispatch = crate::dsp::get();
+    // The process-wide table is immutable after initialization. Borrow it
+    // directly because this path runs once per intra candidate; cloning the
+    // Arc here adds an atomic refcount pair to every candidate evaluation.
+    let dispatch = crate::dsp::get_ref();
 
     // Quantizer-derived thresholds for model_rd (same as inter path).
     let dc_zbin = params.quantizer.zbin[0] as i64;
@@ -2797,15 +2800,7 @@ fn evaluate_intra_fallback_with_scratch(
                 left: &left_col[..bh],
                 above_left,
             };
-            intra_predict(
-                mode,
-                &mut recon[..bw * bh],
-                bw,
-                bw,
-                ctx,
-                dc_avail,
-                &dispatch,
-            );
+            intra_predict(mode, &mut recon[..bw * bh], bw, bw, ctx, dc_avail, dispatch);
 
             // 2. Variance-domain RD model.
             let mrd = model_rd_for_sb_y(ModelRdYInput {

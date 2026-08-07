@@ -7448,7 +7448,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         .picked_intra_mode
                         .expect("IntraFrame pick must have picked_intra_mode");
                     let intra_uv_mode = rvp9_core::intra_pred::IntraMode::Dc;
-                    let dispatch = rvp9_core::dsp::get();
+                    let dispatch = rvp9_core::dsp::get_ref();
 
                     for plane in 0..3 {
                         let ss_x = F5_SUBSAMPLING_X[plane];
@@ -7545,7 +7545,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                     tx_side,
                                     pred_ctx,
                                     dc_avail,
-                                    &dispatch,
+                                    dispatch,
                                 );
 
                                 // Step 2: residual = source - prediction.
@@ -8779,7 +8779,7 @@ fn build_inter_pred_plane_unscaled_at_dst(
     is_compound_avg: bool,
 ) {
     use rvp9_core::inter::filter::{SUBPEL_BITS, SUBPEL_MASK};
-    use rvp9_core::inter::scale::{ScaleFactors, inter_predictor};
+    use rvp9_core::inter::scale::{ScaleFactors, inter_predictor_with_dispatch};
 
     // Identity scale (ref dims = cur dims).
     let sf = ScaleFactors::new(ref_w as u32, ref_h as u32, ref_w as u32, ref_h as u32);
@@ -8843,7 +8843,7 @@ fn build_inter_pred_plane_unscaled_at_dst(
         let col_base = (int_x + col_pre) as usize;
         let src_base = row_base * ref_stride + col_base;
 
-        inter_predictor(
+        inter_predictor_with_dispatch(
             &ref_plane[src_base..],
             ref_stride,
             &mut dst[dst_off..],
@@ -8855,6 +8855,7 @@ fn build_inter_pred_plane_unscaled_at_dst(
             bw,
             bh,
             is_compound_avg,
+            rvp9_core::dsp::get_ref(),
         );
         return;
     }
@@ -8885,7 +8886,7 @@ fn build_inter_pred_plane_unscaled_at_dst(
     let scratch_row = (int_y - y0) + if y_pad { -(VP9_INTERP_EXTEND - 1) } else { 0 };
     let scratch_base = (scratch_row as usize) * b_w + (scratch_col as usize);
 
-    inter_predictor(
+    inter_predictor_with_dispatch(
         &scratch[scratch_base..],
         b_w,
         &mut dst[dst_off..],
@@ -8897,6 +8898,7 @@ fn build_inter_pred_plane_unscaled_at_dst(
         bw,
         bh,
         is_compound_avg,
+        rvp9_core::dsp::get_ref(),
     );
 }
 
