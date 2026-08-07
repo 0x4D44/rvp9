@@ -1144,9 +1144,11 @@ pub struct VecBackedInterCoefSource {
     plane_offsets: [usize; 3],
     /// First global plane-relative 4x4 column represented in `slots`.
     plane_col_starts: [usize; 3],
+    /// First global plane-relative 4x4 row represented in `slots`.
+    plane_row_starts: [usize; 3],
     /// Per-plane widths in plane-relative 4x4 units.
     plane_strides: [usize; 3],
-    /// Per-plane heights in plane-relative 4x4 units.
+    /// Per-plane stored heights in plane-relative 4x4 units.
     plane_rows: [usize; 3],
     /// Dense physical-TX-position to `blocks` index mapping. Luma uses one
     /// slot per 4x4 luma cell; U and V use one per 4x4 chroma cell.
@@ -1162,9 +1164,9 @@ impl VecBackedInterCoefSource {
     /// Build an empty source for the given frame dimensions.
     #[must_use]
     pub fn new(width: u32, height: u32) -> Self {
-        let luma_cols = (width as usize).div_ceil(4);
-        let chroma_cols = (width as usize).div_ceil(8);
-        Self::new_for_plane_columns(width, height, [0; 3], [luma_cols, chroma_cols, chroma_cols])
+        let mi_rows = (height as usize).div_ceil(8);
+        let mi_cols = (width as usize).div_ceil(8);
+        Self::new_for_mi_rect(width, height, 0, mi_rows, 0, mi_cols)
     }
 
     /// Build an empty source containing only a column tile's physical slots.
@@ -1175,17 +1177,45 @@ impl VecBackedInterCoefSource {
         mi_col_start: usize,
         mi_col_end: usize,
     ) -> Self {
+        let mi_rows = (height as usize).div_ceil(8);
+        Self::new_for_mi_rect(width, height, 0, mi_rows, mi_col_start, mi_col_end)
+    }
+
+    /// Build an empty source containing only one MI rectangle's physical slots.
+    #[must_use]
+    pub(crate) fn new_for_mi_rect(
+        width: u32,
+        height: u32,
+        mi_row_start: usize,
+        mi_row_end: usize,
+        mi_col_start: usize,
+        mi_col_end: usize,
+    ) -> Self {
         let width_usize = width as usize;
+        let height_usize = height as usize;
+        let mi_rows = height_usize.div_ceil(8);
         let mi_cols = width_usize.div_ceil(8);
         assert!(
             mi_col_start <= mi_col_end && mi_col_end <= mi_cols,
             "inter coefficient tile columns must lie inside the frame",
         );
+        assert!(
+            mi_row_start <= mi_row_end && mi_row_end <= mi_rows,
+            "inter coefficient tile rows must lie inside the frame",
+        );
         let luma_cols = width_usize.div_ceil(4);
         let chroma_cols = width_usize.div_ceil(8);
-        Self::new_for_plane_columns(
+        let luma_rows = height_usize.div_ceil(4);
+        let chroma_rows = height_usize.div_ceil(8);
+        Self::new_for_plane_rect(
             width,
             height,
+            [mi_row_start * 2, mi_row_start, mi_row_start],
+            [
+                (mi_row_end * 2).min(luma_rows),
+                mi_row_end.min(chroma_rows),
+                mi_row_end.min(chroma_rows),
+            ],
             [mi_col_start * 2, mi_col_start, mi_col_start],
             [
                 (mi_col_end * 2).min(luma_cols),
@@ -1195,32 +1225,38 @@ impl VecBackedInterCoefSource {
         )
     }
 
-    fn new_for_plane_columns(
+    fn new_for_plane_rect(
         width: u32,
         height: u32,
+        plane_row_starts: [usize; 3],
+        plane_row_ends: [usize; 3],
         plane_col_starts: [usize; 3],
         plane_col_ends: [usize; 3],
     ) -> Self {
         let width = width as usize;
         let height = height as usize;
-        let luma_rows = height.div_ceil(4);
-        let chroma_rows = height.div_ceil(8);
+        let plane_rows = std::array::from_fn(|plane| {
+            plane_row_ends[plane]
+                .checked_sub(plane_row_starts[plane])
+                .expect("inter coefficient plane row range must be ordered")
+        });
         let plane_strides = std::array::from_fn(|plane| {
             plane_col_ends[plane]
                 .checked_sub(plane_col_starts[plane])
                 .expect("inter coefficient plane column range must be ordered")
         });
-        let luma_slots = plane_strides[0] * luma_rows;
-        let chroma_u_slots = plane_strides[1] * chroma_rows;
-        let chroma_v_slots = plane_strides[2] * chroma_rows;
+        let luma_slots = plane_strides[0] * plane_rows[0];
+        let chroma_u_slots = plane_strides[1] * plane_rows[1];
+        let chroma_v_slots = plane_strides[2] * plane_rows[2];
         let total_slots = luma_slots + chroma_u_slots + chroma_v_slots;
         Self {
             width: width as u32,
             height: height as u32,
             plane_offsets: [0, luma_slots, luma_slots + chroma_u_slots],
             plane_col_starts,
+            plane_row_starts,
             plane_strides,
-            plane_rows: [luma_rows, chroma_rows, chroma_rows],
+            plane_rows,
             slots: vec![INTER_COEF_SLOT_EMPTY; total_slots],
             blocks: Vec::with_capacity(total_slots),
             // Every physical 4x4 slot accounts for 16 coefficients. Larger
@@ -1251,14 +1287,18 @@ impl VecBackedInterCoefSource {
             .and_then(|y| y.checked_add(tx_y4_local))
             .expect("inter coefficient y coordinate overflow");
         let plane_col_start = self.plane_col_starts[plane];
+        let plane_row_start = self.plane_row_starts[plane];
         assert!(
             x4 >= plane_col_start
                 && x4 - plane_col_start < self.plane_strides[plane]
-                && y4 < self.plane_rows[plane],
+                && y4 >= plane_row_start
+                && y4 - plane_row_start < self.plane_rows[plane],
             "inter coefficient coordinate outside plane: \
              mi=({mi_row},{mi_col}) plane={plane} local=({tx_x4_local},{tx_y4_local})",
         );
-        self.plane_offsets[plane] + y4 * self.plane_strides[plane] + (x4 - plane_col_start)
+        self.plane_offsets[plane]
+            + (y4 - plane_row_start) * self.plane_strides[plane]
+            + (x4 - plane_col_start)
     }
 
     /// Record one TX block's quantized coefficients + eob.
@@ -1365,13 +1405,11 @@ impl VecBackedInterCoefSource {
         self.height
     }
 
-    /// Merge disjoint tile-owned coefficient blocks into this frame
-    /// source. Tile jobs use global MI coordinates, so no key rebasing
-    /// is required.
+    /// Merge disjoint rectangle-owned coefficient blocks into this source.
+    /// Jobs use global MI coordinates, so no key rebasing is required.
     pub(crate) fn merge_from(&mut self, mut other: Self) {
         assert_eq!(self.width, other.width);
         assert_eq!(self.height, other.height);
-        assert_eq!(self.plane_rows, other.plane_rows);
         let block_base = u32::try_from(self.blocks.len())
             .expect("inter coefficient source exceeds u32 block capacity");
         let coefficient_base = u32::try_from(self.coefficients.len())
@@ -1387,12 +1425,21 @@ impl VecBackedInterCoefSource {
         for plane in 0..3 {
             let self_col_start = self.plane_col_starts[plane];
             let other_col_start = other.plane_col_starts[plane];
+            let self_row_start = self.plane_row_starts[plane];
+            let other_row_start = other.plane_row_starts[plane];
             let other_col_offset = other_col_start
                 .checked_sub(self_col_start)
-                .expect("merged coefficient source must contain the tile columns");
+                .expect("merged coefficient source must contain the rectangle columns");
+            let other_row_offset = other_row_start
+                .checked_sub(self_row_start)
+                .expect("merged coefficient source must contain the rectangle rows");
             assert!(
                 other_col_offset + other.plane_strides[plane] <= self.plane_strides[plane],
-                "merged coefficient source must contain the tile columns",
+                "merged coefficient source must contain the rectangle columns",
+            );
+            assert!(
+                other_row_offset + other.plane_rows[plane] <= self.plane_rows[plane],
+                "merged coefficient source must contain the rectangle rows",
             );
             for row in 0..other.plane_rows[plane] {
                 for col in 0..other.plane_strides[plane] {
@@ -1402,12 +1449,12 @@ impl VecBackedInterCoefSource {
                         continue;
                     }
                     let slot = &mut self.slots[self.plane_offsets[plane]
-                        + row * self.plane_strides[plane]
+                        + (other_row_offset + row) * self.plane_strides[plane]
                         + other_col_offset
                         + col];
                     assert_eq!(
                         *slot, INTER_COEF_SLOT_EMPTY,
-                        "column tile coefficient sources must have disjoint physical TX slots",
+                        "coefficient sources must have disjoint physical TX slots",
                     );
                     *slot = block_base
                         .checked_add(other_slot)
@@ -12034,8 +12081,13 @@ mod tests {
         use rvp9_core::bitstream::InterCoefSource;
 
         let mut frame = VecBackedInterCoefSource::new(128, 128);
-        let mut upper_worker = VecBackedInterCoefSource::new_for_mi_columns(128, 128, 0, 16);
-        let mut lower_worker = VecBackedInterCoefSource::new_for_mi_columns(128, 128, 0, 16);
+        let mut upper_worker = VecBackedInterCoefSource::new_for_mi_rect(128, 128, 0, 8, 0, 16);
+        let mut lower_worker = VecBackedInterCoefSource::new_for_mi_rect(128, 128, 8, 16, 0, 16);
+        assert_eq!(
+            upper_worker.slots.len() + lower_worker.slots.len(),
+            frame.slots.len(),
+            "disjoint row sources must allocate one frame of slots in total",
+        );
         upper_worker.insert(1, 2, 0, 0, 0, vec![4; 16], 4);
         lower_worker.insert(9, 2, 0, 0, 0, vec![8; 16], 8);
 
@@ -12050,6 +12102,46 @@ mod tests {
         assert_eq!(upper_eob, 4);
         assert_eq!(lower, &[8; 16]);
         assert_eq!(lower_eob, 8);
+    }
+
+    #[test]
+    fn inter_coef_worker_sources_merge_disjoint_tile_row_rectangles() {
+        use rvp9_core::bitstream::InterCoefSource;
+
+        let mut frame = VecBackedInterCoefSource::new(128, 128);
+        let mut rectangles = [
+            VecBackedInterCoefSource::new_for_mi_rect(128, 128, 0, 8, 0, 8),
+            VecBackedInterCoefSource::new_for_mi_rect(128, 128, 0, 8, 8, 16),
+            VecBackedInterCoefSource::new_for_mi_rect(128, 128, 8, 16, 0, 8),
+            VecBackedInterCoefSource::new_for_mi_rect(128, 128, 8, 16, 8, 16),
+        ];
+        assert_eq!(
+            rectangles
+                .iter()
+                .map(|source| source.slots.len())
+                .sum::<usize>(),
+            frame.slots.len(),
+            "disjoint tile-row rectangles must allocate one frame of slots in total",
+        );
+
+        for (index, source) in rectangles.iter_mut().enumerate() {
+            let mi_row = if index < 2 { 1 } else { 9 };
+            let mi_col = if index.is_multiple_of(2) { 2 } else { 10 };
+            let value = i32::try_from(index + 1).expect("test value fits i32");
+            source.insert(mi_row, mi_col, 0, 0, 0, vec![value; 16], index + 1);
+        }
+        for source in rectangles.into_iter().rev() {
+            frame.merge_from(source);
+        }
+
+        for index in 0usize..4 {
+            let mi_row = if index < 2 { 1 } else { 9 };
+            let mi_col = if index.is_multiple_of(2) { 2 } else { 10 };
+            let value = i16::try_from(index + 1).expect("test value fits i16");
+            let (coefs, eob) = frame.get_block_coefs(mi_row, mi_col, 0, 0, 0, TxSize::Tx4x4);
+            assert_eq!(coefs, &[value; 16]);
+            assert_eq!(eob, index + 1);
+        }
     }
 
     #[test]
