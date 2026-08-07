@@ -256,18 +256,18 @@ fn try_subpel(
         )
     } else {
         SUBPEL_BORDER_SCRATCH.with_borrow_mut(|border_scratch| {
-            for row in 0..fetch_h {
-                let ref_row = (ref_row_i + row as isize)
-                    .clamp(0, ref_plane.height.saturating_sub(1) as isize)
-                    as usize;
-                for col in 0..fetch_w {
-                    let ref_col = (ref_col_i + col as isize)
-                        .clamp(0, ref_plane.width.saturating_sub(1) as isize)
-                        as usize;
-                    border_scratch[row * fetch_w + col] =
-                        ref_plane.data[ref_row * ref_plane.stride + ref_col];
-                }
-            }
+            crate::inter::filter::copy_edge_replicated_window(
+                ref_plane.data,
+                ref_plane.stride,
+                ref_plane.width,
+                ref_plane.height,
+                ref_col_i,
+                ref_row_i,
+                fetch_w,
+                fetch_h,
+                border_scratch,
+                fetch_w,
+            );
             svf(
                 &border_scratch[..fetch_w * fetch_h],
                 fetch_w,

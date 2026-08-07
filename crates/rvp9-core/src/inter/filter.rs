@@ -172,6 +172,51 @@ pub fn kernel_for(filter: InterpFilter) -> &'static [[i16; 8]; SUBPEL_SHIFTS] {
     }
 }
 
+/// Copy a signed source window into scratch with visible-edge replication.
+///
+/// Motion search and inter prediction use this only when a filter footprint
+/// crosses the visible frame. Clamp each row once, copy its in-frame span as
+/// one slice, then fill the left and right halos from the edge pixels.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn copy_edge_replicated_window(
+    src: &[u8],
+    src_stride: usize,
+    src_width: usize,
+    src_height: usize,
+    window_x: isize,
+    window_y: isize,
+    window_width: usize,
+    window_height: usize,
+    dst: &mut [u8],
+    dst_stride: usize,
+) {
+    assert!(src_width > 0 && src_height > 0);
+    assert!(src_stride >= src_width);
+    assert!(src.len() >= src_stride * src_height);
+    assert!(dst_stride >= window_width);
+    assert!(dst.len() >= dst_stride * window_height);
+
+    let window_right = window_x.saturating_add_unsigned(window_width);
+    let interior_start = window_x.clamp(0, src_width as isize) as usize;
+    let interior_end = window_right.clamp(0, src_width as isize) as usize;
+    let interior_width = interior_end - interior_start;
+    let left_width = window_x.saturating_neg().clamp(0, window_width as isize) as usize;
+    let right_width = window_width - left_width - interior_width;
+
+    for row in 0..window_height {
+        let src_y = window_y
+            .saturating_add_unsigned(row)
+            .clamp(0, src_height as isize - 1) as usize;
+        let src_row = &src[src_y * src_stride..][..src_width];
+        let dst_row = &mut dst[row * dst_stride..][..window_width];
+        dst_row[..left_width].fill(src_row[0]);
+        dst_row[left_width..left_width + interior_width]
+            .copy_from_slice(&src_row[interior_start..interior_end]);
+        dst_row[left_width + interior_width..].fill(src_row[src_width - 1]);
+        debug_assert_eq!(right_width, dst_row.len() - left_width - interior_width);
+    }
+}
+
 /// Apply rounding + clipping to a single 8-tap sum, matching libvpx
 /// `clip_pixel(ROUND_POWER_OF_TWO(sum, FILTER_BITS))`
 /// (`vpx_dsp/vpx_convolve.c:36`).
@@ -750,6 +795,70 @@ pub fn convolve8_scaled_avg(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn edge_replicated_window_copies_interior_and_fills_every_halo() {
+        let src = [1, 2, 3, 4, 5, 6];
+        let mut dst = [99; 4 * 7];
+        copy_edge_replicated_window(&src, 3, 3, 2, -1, -1, 5, 4, &mut dst, 7);
+        assert_eq!(&dst[0..5], &[1, 1, 2, 3, 3]);
+        assert_eq!(&dst[7..12], &[1, 1, 2, 3, 3]);
+        assert_eq!(&dst[14..19], &[4, 4, 5, 6, 6]);
+        assert_eq!(&dst[21..26], &[4, 4, 5, 6, 6]);
+        assert_eq!([dst[5], dst[6], dst[12], dst[13]], [99; 4]);
+        assert_eq!([dst[19], dst[20], dst[26], dst[27]], [99; 4]);
+
+        let mut fully_outside = [0; 4];
+        copy_edge_replicated_window(&src, 3, 3, 2, -6, 0, 2, 1, &mut fully_outside, 2);
+        copy_edge_replicated_window(&src, 3, 3, 2, 6, 1, 2, 1, &mut fully_outside[2..], 2);
+        assert_eq!(fully_outside, [1, 1, 6, 6]);
+    }
+
+    #[test]
+    fn edge_replicated_window_matches_per_pixel_clamp_sweep() {
+        let src_width = 7usize;
+        let src_height = 5usize;
+        let src: Vec<u8> = (0..src_width * src_height)
+            .map(|index| (index * 17 + 3) as u8)
+            .collect();
+        for window_y in -8isize..=8 {
+            for window_x in -10isize..=10 {
+                for window_height in 1usize..=8 {
+                    for window_width in 1usize..=10 {
+                        let dst_stride = window_width + 3;
+                        let mut actual = vec![0xa5; dst_stride * window_height];
+                        let mut expected = actual.clone();
+                        for row in 0..window_height {
+                            let src_y = (window_y + row as isize).clamp(0, src_height as isize - 1)
+                                as usize;
+                            for col in 0..window_width {
+                                let src_x = (window_x + col as isize)
+                                    .clamp(0, src_width as isize - 1)
+                                    as usize;
+                                expected[row * dst_stride + col] = src[src_y * src_width + src_x];
+                            }
+                        }
+                        copy_edge_replicated_window(
+                            &src,
+                            src_width,
+                            src_width,
+                            src_height,
+                            window_x,
+                            window_y,
+                            window_width,
+                            window_height,
+                            &mut actual,
+                            dst_stride,
+                        );
+                        assert_eq!(
+                            actual, expected,
+                            "window=({window_x},{window_y}) {window_width}x{window_height}",
+                        );
+                    }
+                }
+            }
+        }
+    }
 
     // --- Filter-table transcription correctness ------------------------
 

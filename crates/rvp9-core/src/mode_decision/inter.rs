@@ -4298,18 +4298,18 @@ fn build_inter_prediction(
     }
 
     MC_BORDER_SCRATCH.with_borrow_mut(|border_scratch| {
-        for row in 0..win_h {
-            let ref_row = (win_y + row as isize)
-                .clamp(0, ref_plane.height.saturating_sub(1) as isize)
-                as usize;
-            for col in 0..win_w {
-                let ref_col = (win_x + col as isize)
-                    .clamp(0, ref_plane.width.saturating_sub(1) as isize)
-                    as usize;
-                border_scratch[row * win_w + col] =
-                    ref_plane.data[ref_row * ref_plane.stride + ref_col];
-            }
-        }
+        crate::inter::filter::copy_edge_replicated_window(
+            ref_plane.data,
+            ref_plane.stride,
+            ref_plane.width,
+            ref_plane.height,
+            win_x,
+            win_y,
+            win_w,
+            win_h,
+            border_scratch,
+            win_w,
+        );
         convolve_from(&border_scratch[..win_w * win_h], win_w);
     });
 }
