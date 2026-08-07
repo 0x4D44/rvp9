@@ -1,6 +1,6 @@
 # RVP9-BUG-FLUX-00005 — One-tile multithreaded encodes panic without loop-filter worker
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Must
 - **Severity:** High
 - **Area:** encoder/loop-filter overlap
@@ -19,7 +19,7 @@
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-07T10:54:24Z, raised via `deltic bugs new` model=gpt-5.6-sol@xhigh)
+- **State history:** Open (2026-08-07T10:54:24Z, raised via `deltic bugs new` model=gpt-5.6-sol@xhigh) → Fixed (2026-08-07, `92c340999cf6c71a840445d7908edc856dccf40c`, fixed by Codex)
 
 ## Observation
 
@@ -27,6 +27,19 @@ On commit 4a07bca7, run: cargo test -p rvp9-cli --test cli_arg_coverage enc_y4m_
 
 ## Fix
 
-<unfixed — raised only>
+Commit `92c340999cf6c71a840445d7908edc856dccf40c` makes packet/loop-filter
+overlap depend on an actually constructed loop-filter worker. One-tile
+multithreaded encodes now use the non-overlap path.
+
+Regression evidence:
+
+- Before the fix,
+  `cargo test -p rvp9-cli --test cli_arg_coverage enc_y4m_input_encodes_successfully --locked -- --exact --nocapture`
+  reproduced the worker-ownership panic.
+- After the fix, that exact CLI test passes.
+- `cargo test -p rvp9-encoder overlap_requires_a_constructed_worker --locked`
+  passes and pins the ownership predicate.
+
+Awaiting independent verification before closure.
 
 ## Notes
