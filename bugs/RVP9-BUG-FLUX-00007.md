@@ -1,0 +1,32 @@
+# RVP9-BUG-FLUX-00007 — GOP byte golden lags accepted encoder output
+
+- **State:** Open
+- **Priority:** Must
+- **Severity:** Low
+- **Area:** tests/encoder GOP topology
+- **Raised:** 2026-08-07T11:00:30Z
+- **Discovery source:** Automation
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
+- **Verify retry after:** -
+- **Held branch:** -
+- **Legacy fixed run:** -
+- **Attempts:** fix=0, doubt=0, indeterminate=0
+- **State history:** Open (2026-08-07T11:00:30Z, raised via `deltic bugs new` model=gpt-5.6-sol@xhigh)
+
+## Observation
+
+On untouched origin/main commit 187b6af6, run: cargo test -p rvp9-encoder --test w_gop_topology gop_topology_byte_identity --locked -- --exact --nocapture. The stable stream is 23186 bytes with FNV-1a 0xc5a9eaff599669d2, but the fixture expects 23293 bytes and 0xa34dc1d6f4307467. The sibling gop_topology_schedule_matches_emitted_frames test passes. Expected: the byte golden records the accepted stream while the schedule oracle continues to guard GOP behavior.
+
+## Fix
+
+<unfixed — raised only>
+
+## Notes
