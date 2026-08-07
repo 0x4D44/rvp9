@@ -90,8 +90,9 @@ use rvp9_core::transforms::TxMode;
 use crate::aq_cyclic_refresh::{CyclicRefresh, CyclicRefreshConfig};
 use crate::denoiser::{Denoiser, DenoiserLevel, INTRA_FRAME_IDX, vp9_denoiser_filter};
 use crate::loopfilter::{
-    apply_loop_filter_for_packet_overlap, apply_loop_filter_to_tight_recon_parallel,
-    build_kf_mi_grid_for_lf, pick_filter_level,
+    apply_loop_filter_to_tight_recon_parallel, apply_packet_overlap_chroma,
+    apply_packet_overlap_luma, build_kf_mi_grid_for_lf, pad_packet_overlap_recon,
+    pick_filter_level, truncate_packet_overlap_recon,
 };
 use crate::rate_control::{
     FirstPassStats, FrameKind as RcFrameKind, RateControl, RateControlConfig, RcMode, TwoPassState,
@@ -3778,7 +3779,7 @@ impl StreamEncoder {
         // pre-header snapshot to stay in lock-step with the decoder.
         let pre_header_decoder_fc = decoder_fc.clone();
         macro_rules! build_packet {
-            () => {
+            ($parallel_aux_job:expr) => {
                 build_inter_packet_with_residuals(
                     w,
                     h,
@@ -3851,6 +3852,7 @@ impl StreamEncoder {
                     /* frame_context_idx = */
                     0,
                     log2_tile_cols,
+                    $parallel_aux_job,
                     self.frame_worker_pool.as_mut(),
                     self.parallelism.max_threads,
                 )
@@ -3873,27 +3875,35 @@ impl StreamEncoder {
                 .lf_worker_pool
                 .as_ref()
                 .expect("multi-threaded encoder must own a loop-filter worker");
+            pad_packet_overlap_recon(w, h, &mut new_recon_y, &mut new_recon_u, &mut new_recon_v);
             // SAFETY: the named handle is always consumed by `wait()` below;
             // it is never forgotten. That join completes the worker's borrows
-            // of `mi_grid` and the reconstruction planes before this function
-            // can commit or drop them. Packet errors also cross the join before
-            // propagating below.
+            // of `mi_grid` and luma before this function can commit or drop
+            // them. The packet worker scope independently joins the disjoint
+            // chroma borrows before returning, including on packet errors.
             let lf_job = unsafe {
                 lf_pool.dispatch(|| {
-                    apply_loop_filter_for_packet_overlap(
-                        w,
-                        h,
-                        filter_level,
-                        &mi_grid,
-                        &mut new_recon_y,
-                        &mut new_recon_u,
-                        &mut new_recon_v,
-                        1usize << log2_tile_cols,
-                    );
+                    apply_packet_overlap_luma(w, h, filter_level, &mi_grid, &mut new_recon_y);
                 })
             };
-            let packet = build_packet!();
+            let packet = build_packet!(Some(|| {
+                apply_packet_overlap_chroma(
+                    w,
+                    h,
+                    filter_level,
+                    &mi_grid,
+                    &mut new_recon_u,
+                    &mut new_recon_v,
+                );
+            }));
             lf_job.wait();
+            truncate_packet_overlap_recon(
+                w,
+                h,
+                &mut new_recon_y,
+                &mut new_recon_u,
+                &mut new_recon_v,
+            );
             packet
         } else {
             if filter_level > 0 {
@@ -3910,7 +3920,7 @@ impl StreamEncoder {
                     1usize << log2_tile_cols,
                 );
             }
-            build_packet!()
+            build_packet!(None::<fn()>)
         };
         let packet = packet_result?;
 
@@ -4402,6 +4412,7 @@ impl StreamEncoder {
             /* frame_context_idx = */
             1,
             log2_tile_cols,
+            None::<fn()>,
             self.frame_worker_pool.as_mut(),
             self.parallelism.max_threads,
         )?;
@@ -5702,7 +5713,7 @@ fn build_keyframe_packet_with_tiles(
 /// header bit and the per-leaf bits are suppressed — Stage 4a bytes
 /// preserved exactly.
 #[allow(clippy::too_many_arguments)] // load-bearing AQ.3 plumbing args
-fn build_inter_packet_with_residuals(
+fn build_inter_packet_with_residuals<F>(
     width: u32,
     height: u32,
     base_qindex: u8,
@@ -5786,6 +5797,10 @@ fn build_inter_packet_with_residuals(
     // Product callers remain at zero until the mode-decision and
     // reconstruction loop applies the same tile-edge semantics.
     log2_tile_cols: u8,
+    // Optional disjoint frame work submitted into the first packet worker
+    // scope. The CPU7 overlap path uses this to filter chroma while the
+    // dedicated LF worker filters luma.
+    parallel_aux_job: Option<F>,
     // Stream-owned persistent workers. Parallel product callers provide
     // the same pool used by tile picking and loop filtering; serial tests
     // and one-thread encodes pass `None`.
@@ -5795,7 +5810,10 @@ fn build_inter_packet_with_residuals(
     // encoder parallelism so packet assembly shares the product thread
     // contract used by mode decision.
     max_threads: u32,
-) -> Result<Vec<u8>, EncodeError> {
+) -> Result<Vec<u8>, EncodeError>
+where
+    F: FnOnce() + Send,
+{
     use rvp9_core::bitstream::SegmentationWriteParams;
     let mi_rows = height / 8;
     let mi_cols = width / 8;
@@ -5876,6 +5894,10 @@ fn build_inter_packet_with_residuals(
         && max_threads > 1
         && worker_pool.is_some()
         && !rvp9_core::entropy::bitacct::enabled();
+    let mut parallel_aux_job = parallel_aux_job;
+    if !run_parallel && let Some(job) = parallel_aux_job.take() {
+        job();
+    }
 
     // W-ALTREF — derive the 4-entry per-RefFrame sign-bias array from
     // the caller's 3-entry `[LAST, GOLDEN, ALTREF]` header bias.
@@ -6056,6 +6078,9 @@ fn build_inter_packet_with_residuals(
                     .as_deref_mut()
                     .expect("parallel mode counting requires the frame worker pool")
                     .scope(|scope| {
+                        if let Some(job) = parallel_aux_job.take() {
+                            scope.submit(job);
+                        }
                         for (tile_col, result_slot) in result_slots.iter_mut().enumerate() {
                             let replay_tile = &replay_tile;
                             scope.submit(move || {
@@ -6191,6 +6216,9 @@ fn build_inter_packet_with_residuals(
         worker_pool
             .expect("parallel tile writing requires the frame worker pool")
             .scope(|scope| {
+                if let Some(job) = parallel_aux_job.take() {
+                    scope.submit(job);
+                }
                 for (tile_col, result_slot) in result_slots.iter_mut().enumerate() {
                     let encode_tile = &encode_tile;
                     scope.submit(move || {
@@ -7929,6 +7957,7 @@ mod tests {
             &mut decoder_fc,
             0,
             1,
+            None::<fn()>,
             None,
             4,
         )

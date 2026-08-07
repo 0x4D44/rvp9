@@ -1002,6 +1002,57 @@ pub unsafe fn apply_one_sb(
     );
 }
 
+/// Filter the luma plane for one superblock.
+///
+/// The caller supplies exclusive access to the complete luma plane. This
+/// plane-only boundary lets an encoder schedule luma independently from the
+/// disjoint chroma allocations while retaining the established per-plane
+/// raster order.
+#[allow(clippy::too_many_arguments)]
+#[inline]
+pub fn apply_one_sb_luma(
+    y_data: &mut [u8],
+    y_stride: usize,
+    lfm: &LoopFilterMask,
+    mi_row: usize,
+    mi_col: usize,
+    mi_rows: usize,
+    info: &LoopFilterInfo,
+    dispatch: &SimdDispatch,
+) {
+    let luma_pos = PlaneSs00Pos {
+        mi_row,
+        mi_col,
+        mi_rows,
+    };
+    filter_block_plane_ss00(y_data, y_stride, lfm, luma_pos, info, dispatch);
+}
+
+/// Filter both YUV420 chroma planes for one superblock.
+///
+/// U and V are independent of luma but retain their original U-then-V order.
+/// The caller supplies exclusive access to both complete chroma planes.
+#[allow(clippy::too_many_arguments)]
+#[inline]
+pub fn apply_one_sb_chroma_yuv420(
+    u_data: &mut [u8],
+    v_data: &mut [u8],
+    uv_stride: usize,
+    lfm: &LoopFilterMask,
+    mi_row: usize,
+    mi_col: usize,
+    mi_rows: usize,
+    info: &LoopFilterInfo,
+    dispatch: &SimdDispatch,
+) {
+    filter_block_plane_ss11(
+        u_data, uv_stride, lfm, mi_row, mi_col, mi_rows, info, dispatch,
+    );
+    filter_block_plane_ss11(
+        v_data, uv_stride, lfm, mi_row, mi_col, mi_rows, info, dispatch,
+    );
+}
+
 /// Inner per-SB helper that takes plane slices directly. Used by both
 /// the serial row walker (which acquires slices once outside the row
 /// loop) and the public `apply_one_sb` entry (which acquires them per
@@ -1025,12 +1076,9 @@ fn apply_one_sb_inner(
     dispatch: &SimdDispatch,
 ) {
     // Y plane (ss = 0).
-    let luma_pos = PlaneSs00Pos {
-        mi_row,
-        mi_col,
-        mi_rows,
-    };
-    filter_block_plane_ss00(y_data, y_stride, lfm, luma_pos, info, dispatch);
+    apply_one_sb_luma(
+        y_data, y_stride, lfm, mi_row, mi_col, mi_rows, info, dispatch,
+    );
     // U / V planes. Dispatch on the established chroma format:
     //   - Yuv420 → ss11 (4×4 chroma grid; UV masks).
     //   - Yuv444 → ss00 (8×8 chroma grid == luma; Y masks).
@@ -1038,11 +1086,8 @@ fn apply_one_sb_inner(
     // `LF_PATH_444` (`vp9_loopfilter.c:1452-1458`).
     match chroma {
         ChromaFormat::Yuv420 => {
-            filter_block_plane_ss11(
-                u_data, uv_stride, lfm, mi_row, mi_col, mi_rows, info, dispatch,
-            );
-            filter_block_plane_ss11(
-                v_data, uv_stride, lfm, mi_row, mi_col, mi_rows, info, dispatch,
+            apply_one_sb_chroma_yuv420(
+                u_data, v_data, uv_stride, lfm, mi_row, mi_col, mi_rows, info, dispatch,
             );
         }
         ChromaFormat::Yuv444 => {
@@ -1050,6 +1095,11 @@ fn apply_one_sb_inner(
             // ss00 (libvpx `vp9_filter_block_plane_ss00` for
             // `LF_PATH_444`). The chroma plane is full-resolution,
             // so the same SB-origin formula as luma applies.
+            let luma_pos = PlaneSs00Pos {
+                mi_row,
+                mi_col,
+                mi_rows,
+            };
             filter_block_plane_ss00(u_data, uv_stride, lfm, luma_pos, info, dispatch);
             filter_block_plane_ss00(v_data, uv_stride, lfm, luma_pos, info, dispatch);
         }

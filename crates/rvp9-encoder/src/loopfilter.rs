@@ -339,65 +339,132 @@ pub(crate) fn apply_loop_filter_to_tight_recon_parallel(
     }
 }
 
-/// Apply the encoder loop filter on the worker used to overlap filtering with
-/// packet construction.
+/// Extend tight reconstruction storage through the final superblock row.
 ///
-/// Complete superblock rows use the direct tight-plane split-edge path.
-/// Partial bottom rows temporarily extend the tight planes with zeroed storage
-/// through the final superblock boundary. Boundary masks keep that tail
-/// semantically invisible while fixed-width SIMD kernels retain addressable
-/// storage, avoiding the bordered full-plane copy adapter.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn apply_loop_filter_for_packet_overlap(
+/// The visible lengths are preserved by [`truncate_packet_overlap_recon`]
+/// after the independently scheduled luma and chroma passes have joined.
+pub(crate) fn pad_packet_overlap_recon(
     width: u32,
     height: u32,
-    filter_level: u8,
-    mi_grid: &[Option<ModeInfo>],
     recon_y: &mut Vec<u8>,
     recon_u: &mut Vec<u8>,
     recon_v: &mut Vec<u8>,
-    num_tile_cols: usize,
 ) {
     let w = width as usize;
     let h = height as usize;
     let uvw = w / 2;
-    let uvh = h / 2;
-    let visible_y_len = w * h;
-    let visible_uv_len = uvw * uvh;
-    assert_eq!(recon_y.len(), visible_y_len);
-    assert_eq!(recon_u.len(), visible_uv_len);
-    assert_eq!(recon_v.len(), visible_uv_len);
+    assert_eq!(recon_y.len(), w * h);
+    assert_eq!(recon_u.len(), uvw * (h / 2));
+    assert_eq!(recon_v.len(), uvw * (h / 2));
+    let storage_h = h.next_multiple_of(64);
+    recon_y.resize(w * storage_h, 0);
+    recon_u.resize(uvw * (storage_h / 2), 0);
+    recon_v.resize(uvw * (storage_h / 2), 0);
+}
 
-    if height.is_multiple_of(64) {
-        apply_loop_filter_to_tight_recon_split_edge(
-            width,
-            height,
-            filter_level,
-            mi_grid,
-            recon_y,
-            recon_u,
-            recon_v,
-            num_tile_cols,
-        );
-    } else {
-        let storage_h = h.next_multiple_of(64);
-        recon_y.resize(w * storage_h, 0);
-        recon_u.resize(uvw * (storage_h / 2), 0);
-        recon_v.resize(uvw * (storage_h / 2), 0);
-        apply_loop_filter_to_tight_recon_split_edge(
-            width,
-            height,
-            filter_level,
-            mi_grid,
-            recon_y,
-            recon_u,
-            recon_v,
-            num_tile_cols,
-        );
-        recon_y.truncate(visible_y_len);
-        recon_u.truncate(visible_uv_len);
-        recon_v.truncate(visible_uv_len);
+/// Restore tight reconstruction vectors to their visible frame lengths.
+pub(crate) fn truncate_packet_overlap_recon(
+    width: u32,
+    height: u32,
+    recon_y: &mut Vec<u8>,
+    recon_u: &mut Vec<u8>,
+    recon_v: &mut Vec<u8>,
+) {
+    let w = width as usize;
+    let h = height as usize;
+    let uvw = w / 2;
+    recon_y.truncate(w * h);
+    recon_u.truncate(uvw * (h / 2));
+    recon_v.truncate(uvw * (h / 2));
+}
+
+fn apply_packet_overlap_plane(
+    width: u32,
+    height: u32,
+    filter_level: u8,
+    mi_grid: &[Option<ModeInfo>],
+    mut apply_sb: impl FnMut(
+        &LoopFilterMask,
+        usize,
+        usize,
+        usize,
+        &LoopFilterInfo,
+        &rvp9_core::dsp::SimdDispatch,
+    ),
+) {
+    assert!(filter_level > 0);
+    let mi_rows = height as usize / 8;
+    let mi_cols = width as usize / 8;
+    let sb_rows = mi_rows.div_ceil(SB_MI_SIZE);
+    let sb_cols = mi_cols.div_ceil(SB_MI_SIZE);
+    let levels = resolve_filter_levels(
+        filter_level,
+        LIBVPX_DEFAULT_LF_DELTAS,
+        SegmentationLfView::default(),
+    );
+    let info = LoopFilterInfo::new(/* sharpness_level = */ 0);
+    let frame_mi_opt = complete_mi_grid_for_lf(mi_grid);
+    let row_inputs = rvp9_core::loopfilter::apply::RowMaskInputs {
+        mi_grid: &frame_mi_opt,
+        mi_stride: mi_cols,
+        mi_rows,
+        mi_cols,
+        levels: &levels,
+    };
+    let dispatch = rvp9_core::dsp::get();
+    let mut row_lfm = vec![LoopFilterMask::default(); sb_cols];
+    for sb_row in 0..sb_rows {
+        rvp9_core::loopfilter::apply::build_lfm_row(sb_row, sb_cols, &row_inputs, &mut row_lfm);
+        let mi_row = sb_row * SB_MI_SIZE;
+        for (sb_col, lfm) in row_lfm.iter().enumerate() {
+            apply_sb(lfm, mi_row, sb_col * SB_MI_SIZE, mi_rows, &info, &dispatch);
+        }
     }
+}
+
+/// Apply only the luma half of the packet-overlapped YUV420 loop filter.
+pub(crate) fn apply_packet_overlap_luma(
+    width: u32,
+    height: u32,
+    filter_level: u8,
+    mi_grid: &[Option<ModeInfo>],
+    recon_y: &mut [u8],
+) {
+    let stride = width as usize;
+    apply_packet_overlap_plane(
+        width,
+        height,
+        filter_level,
+        mi_grid,
+        |lfm, mi_row, mi_col, mi_rows, info, dispatch| {
+            rvp9_core::loopfilter::apply::apply_one_sb_luma(
+                recon_y, stride, lfm, mi_row, mi_col, mi_rows, info, dispatch,
+            );
+        },
+    );
+}
+
+/// Apply only the chroma half of the packet-overlapped YUV420 loop filter.
+pub(crate) fn apply_packet_overlap_chroma(
+    width: u32,
+    height: u32,
+    filter_level: u8,
+    mi_grid: &[Option<ModeInfo>],
+    recon_u: &mut [u8],
+    recon_v: &mut [u8],
+) {
+    let stride = width as usize / 2;
+    apply_packet_overlap_plane(
+        width,
+        height,
+        filter_level,
+        mi_grid,
+        |lfm, mi_row, mi_col, mi_rows, info, dispatch| {
+            rvp9_core::loopfilter::apply::apply_one_sb_chroma_yuv420(
+                recon_u, recon_v, stride, lfm, mi_row, mi_col, mi_rows, info, dispatch,
+            );
+        },
+    );
 }
 
 /// Run the alias-safe split-edge loop filter directly on tight reconstruction
@@ -926,51 +993,64 @@ mod w7_4_tests {
     }
 
     #[test]
-    fn packet_overlap_filter_matches_serial_on_partial_bottom_sb() {
-        let w = 64usize;
-        let h = 72usize;
-        let filter_level = 30u8;
-        let mi_grid = build_intra_mi_grid(h / 8, w / 8);
-        let mut source_y = vec![0u8; w * h];
-        for r in 0..h {
-            for c in 0..w {
-                source_y[r * w + c] = 115 + (((r / 8 + c / 8) & 1) as u8) * 10;
+    fn split_packet_overlap_filter_matches_serial() {
+        for (w, h) in [(64usize, 72usize), (128, 128)] {
+            let filter_level = 30u8;
+            let mi_grid = build_intra_mi_grid(h / 8, w / 8);
+            let mut source_y = vec![0u8; w * h];
+            for r in 0..h {
+                for c in 0..w {
+                    source_y[r * w + c] = 115 + (((r / 8 + c / 8) & 1) as u8) * 10;
+                }
             }
+            let source_u = vec![120u8; (w / 2) * (h / 2)];
+            let source_v = vec![120u8; (w / 2) * (h / 2)];
+
+            let mut serial_y = source_y.clone();
+            let mut serial_u = source_u.clone();
+            let mut serial_v = source_v.clone();
+            apply_loop_filter_to_tight_recon(
+                w as u32,
+                h as u32,
+                filter_level,
+                &mi_grid,
+                &mut serial_y,
+                &mut serial_u,
+                &mut serial_v,
+            );
+
+            let mut overlap_y = source_y.clone();
+            let mut overlap_u = source_u.clone();
+            let mut overlap_v = source_v.clone();
+            pad_packet_overlap_recon(
+                w as u32,
+                h as u32,
+                &mut overlap_y,
+                &mut overlap_u,
+                &mut overlap_v,
+            );
+            apply_packet_overlap_luma(w as u32, h as u32, filter_level, &mi_grid, &mut overlap_y);
+            apply_packet_overlap_chroma(
+                w as u32,
+                h as u32,
+                filter_level,
+                &mi_grid,
+                &mut overlap_u,
+                &mut overlap_v,
+            );
+            truncate_packet_overlap_recon(
+                w as u32,
+                h as u32,
+                &mut overlap_y,
+                &mut overlap_u,
+                &mut overlap_v,
+            );
+
+            assert_ne!(serial_y, source_y, "fixture must exercise luma filtering");
+            assert_eq!(overlap_y, serial_y, "luma differs at {w}x{h}");
+            assert_eq!(overlap_u, serial_u, "U differs at {w}x{h}");
+            assert_eq!(overlap_v, serial_v, "V differs at {w}x{h}");
         }
-        let source_u = vec![120u8; (w / 2) * (h / 2)];
-        let source_v = vec![120u8; (w / 2) * (h / 2)];
-
-        let mut serial_y = source_y.clone();
-        let mut serial_u = source_u.clone();
-        let mut serial_v = source_v.clone();
-        apply_loop_filter_to_tight_recon(
-            w as u32,
-            h as u32,
-            filter_level,
-            &mi_grid,
-            &mut serial_y,
-            &mut serial_u,
-            &mut serial_v,
-        );
-
-        let mut overlap_y = source_y.clone();
-        let mut overlap_u = source_u.clone();
-        let mut overlap_v = source_v.clone();
-        apply_loop_filter_for_packet_overlap(
-            w as u32,
-            h as u32,
-            filter_level,
-            &mi_grid,
-            &mut overlap_y,
-            &mut overlap_u,
-            &mut overlap_v,
-            1,
-        );
-
-        assert_ne!(serial_y, source_y, "fixture must exercise luma filtering");
-        assert_eq!(overlap_y, serial_y);
-        assert_eq!(overlap_u, serial_u);
-        assert_eq!(overlap_v, serial_v);
     }
 
     /// W7.4 PROOF — `search_filter_level` (`vp9_picklpf.c:78-157`).
