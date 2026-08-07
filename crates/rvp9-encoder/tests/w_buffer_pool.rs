@@ -355,8 +355,14 @@ fn a10_byte_identity_pre_vs_post_refactor() {
     // identified 6a909b26 as the first intentional coding change after the
     // prior refresh. The stream reproduced on the clean Unit 651 baseline,
     // and the sibling reference-pool decode oracle remains green.
-    const GOLDEN_HASH: u64 = 0xac2b_85e4_6b0c_37fc;
-    const GOLDEN_LEN: usize = 7057;
+    //
+    // Re-captured again (2026-08-07) after the accepted production-parity
+    // stack. Untouched origin/main at 187b6af6 and the Unit 689 integration
+    // tree independently reproduce these bytes, while the sibling decoder
+    // oracle still accepts all 12 frames. This refresh records an earlier
+    // intentional coding change; Unit 689 does not cause the drift.
+    const GOLDEN_HASH: u64 = 0x0d37_a3ba_8258_9d9a;
+    const GOLDEN_LEN: usize = 7053;
 
     let stream = encode_fixed_clip();
     let hash = fnv1a(&stream);
