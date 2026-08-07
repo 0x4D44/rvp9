@@ -5034,7 +5034,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 use rvp9_core::bitstream::frame::InterpFilter;
                 use rvp9_core::mode_decision::partition::{
                     Cpu7InterVbpThresholdInput, FixedTreeCopyConditions, FixedTreeInterInput,
-                    FixedTreeLeaf, PartitionDecision, choose_fixed_tree_inter,
+                    FixedTreeLeaf, PartitionDecision, choose_fixed_tree_inter_selection,
                     cpu7_inter_vbp_thresholds,
                 };
                 use rvp9_core::mv_search::set_subpel_mv_search_range;
@@ -5070,7 +5070,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         | rvp9_core::mode_decision::inter::ContentStateSb::LowSadHighSumdiff
                 );
                 let low_source_copy = if low_source_sad && !scene_change_detected_frame {
-                    history.try_copy(copy_conditions)
+                    history.try_copy_selection(copy_conditions)
                 } else {
                     None
                 };
@@ -5150,7 +5150,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                     ..(sb_px_y + row) * w + sb_px_x + 64],
                             );
                         }
-                        choose_fixed_tree_inter(&FixedTreeInterInput {
+                        choose_fixed_tree_inter_selection(&FixedTreeInterInput {
                             source: &source_block,
                             predictor: &predictor_block,
                             visible_width: 64,
@@ -5188,7 +5188,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             variance_low,
                         )
                     } else if int_pro.best_sad < vbp_threshold_copy {
-                        if let Some(copy) = history.try_copy(copy_conditions) {
+                        if let Some(copy) = history.try_copy_selection(copy_conditions) {
                             (copy.leaves, copy.variance_low)
                         } else {
                             let trace = choose_fresh_tree();

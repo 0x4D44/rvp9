@@ -457,6 +457,20 @@ pub struct FixedTreePartitionTrace {
     pub leaves: Vec<FixedTreeLeaf>,
 }
 
+/// Product output of the realtime fixed-tree selector.
+///
+/// Unlike [`FixedTreePartitionTrace`], this omits the node and accumulator
+/// diagnostics used only by the differential oracle.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FixedTreePartitionSelection {
+    /// Final leaf-size grid retained in partition history.
+    pub decision: PartitionDecision,
+    /// Low-temporal-variance flags retained with the selected tree.
+    pub variance_low: [bool; 25],
+    /// Final leaves in recursive coding order.
+    pub leaves: Vec<FixedTreeLeaf>,
+}
+
 /// Per-superblock state retained by libvpx's realtime partition-copy path.
 ///
 /// `choose_partitioning` may reuse the previous canonical tree for a quiet
@@ -502,13 +516,10 @@ pub struct FixedTreeCopy {
 }
 
 impl FixedTreeHistoryEntry {
-    /// Try libvpx's common `copy_partitioning` eligibility checks.
-    ///
-    /// The caller owns the two trigger predicates: low source SAD before
-    /// prediction, and low selected-LAST SAD after prediction. A successful
-    /// copy increments the consecutive count but does not replace the source
-    /// tree or its variance flags.
-    pub fn try_copy(&mut self, conditions: FixedTreeCopyConditions) -> Option<FixedTreeCopy> {
+    fn copied_decision(
+        &mut self,
+        conditions: FixedTreeCopyConditions,
+    ) -> Option<(PartitionDecision, [bool; 25])> {
         if conditions.frames_since_key <= 1
             || !conditions.svc_copy_allowed
             || conditions.resize_pending
@@ -520,13 +531,40 @@ impl FixedTreeHistoryEntry {
         }
         let decision = self.decision.clone()?;
         self.copied_frame_count = self.copied_frame_count.saturating_add(1);
+        Some((decision, self.variance_low))
+    }
+
+    /// Try libvpx's common `copy_partitioning` eligibility checks.
+    ///
+    /// The caller owns the two trigger predicates: low source SAD before
+    /// prediction, and low selected-LAST SAD after prediction. A successful
+    /// copy increments the consecutive count but does not replace the source
+    /// tree or its variance flags.
+    pub fn try_copy(&mut self, conditions: FixedTreeCopyConditions) -> Option<FixedTreeCopy> {
+        let (decision, variance_low) = self.copied_decision(conditions)?;
         let (nodes, leaves) = trace_fixed_decision(&decision);
         Some(FixedTreeCopy {
             decision,
             nodes,
             leaves,
-            variance_low: self.variance_low,
+            variance_low,
             copied_frame_count: self.copied_frame_count,
+        })
+    }
+
+    /// Try the product partition-copy path without materializing oracle nodes.
+    ///
+    /// Eligibility and history mutation are identical to [`Self::try_copy`].
+    pub fn try_copy_selection(
+        &mut self,
+        conditions: FixedTreeCopyConditions,
+    ) -> Option<FixedTreePartitionSelection> {
+        let (decision, variance_low) = self.copied_decision(conditions)?;
+        let leaves = trace_fixed_leaves(&decision);
+        Some(FixedTreePartitionSelection {
+            decision,
+            variance_low,
+            leaves,
         })
     }
 
@@ -857,15 +895,17 @@ fn try_fixed_partition(
     false
 }
 
-fn trace_fixed_decision(
+fn trace_fixed_decision_into(
     decision: &PartitionDecision,
-) -> (Vec<FixedTreeNodeDecision>, Vec<FixedTreeLeaf>) {
+    nodes: &mut Option<&mut Vec<FixedTreeNodeDecision>>,
+    leaves: &mut Vec<FixedTreeLeaf>,
+) {
     fn walk(
         decision: &PartitionDecision,
         row: usize,
         col: usize,
         side: usize,
-        nodes: &mut Vec<FixedTreeNodeDecision>,
+        nodes: &mut Option<&mut Vec<FixedTreeNodeDecision>>,
         leaves: &mut Vec<FixedTreeLeaf>,
     ) {
         let bsize = decision.cells[row][col];
@@ -887,12 +927,14 @@ fn trace_fixed_decision(
         } else {
             FixedTreePartitionSymbol::Split
         };
-        nodes.push(FixedTreeNodeDecision {
-            row_8x8: row,
-            col_8x8: col,
-            parent_size,
-            symbol,
-        });
+        if let Some(nodes) = nodes.as_deref_mut() {
+            nodes.push(FixedTreeNodeDecision {
+                row_8x8: row,
+                col_8x8: col,
+                parent_size,
+                symbol,
+            });
+        }
 
         match symbol {
             FixedTreePartitionSymbol::None => leaves.push(FixedTreeLeaf {
@@ -934,21 +976,27 @@ fn trace_fixed_decision(
         }
     }
 
+    walk(decision, 0, 0, 8, nodes, leaves);
+}
+
+fn trace_fixed_decision(
+    decision: &PartitionDecision,
+) -> (Vec<FixedTreeNodeDecision>, Vec<FixedTreeLeaf>) {
     let mut nodes = Vec::with_capacity(85);
     let mut leaves = Vec::with_capacity(64);
-    walk(decision, 0, 0, 8, &mut nodes, &mut leaves);
+    trace_fixed_decision_into(decision, &mut Some(&mut nodes), &mut leaves);
     (nodes, leaves)
 }
 
-/// Run the pure inter-frame `choose_partitioning` variance-tree core used by
-/// pinned libvpx v1.14.1 at realtime cpu-used 7.
-///
-/// Predictor selection, early partition-copy exits, and downstream mode
-/// picking remain outside this seam. That boundary lets a differential oracle
-/// feed both implementations identical materialized inputs and compare every
-/// intermediate node before this path is allowed to become the product default.
-#[must_use]
-pub fn choose_fixed_tree_inter(input: &FixedTreeInterInput<'_>) -> FixedTreePartitionTrace {
+fn trace_fixed_leaves(decision: &PartitionDecision) -> Vec<FixedTreeLeaf> {
+    let mut leaves = Vec::with_capacity(64);
+    trace_fixed_decision_into(decision, &mut None, &mut leaves);
+    leaves
+}
+
+fn choose_fixed_tree_inter_impl<const DIAGNOSTICS: bool>(
+    input: &FixedTreeInterInput<'_>,
+) -> FixedTreePartitionTrace {
     assert!(input.source.len() >= 64 * 64);
     assert!(input.predictor.len() >= 64 * 64);
     assert!((1..=64).contains(&input.visible_width));
@@ -1147,19 +1195,27 @@ pub fn choose_fixed_tree_inter(input: &FixedTreeInterInput<'_>) -> FixedTreePart
 
     debug_assert!(decision.is_valid_partition());
     let variance_low = fixed_tree_variance_low(input, &decision, &tree);
-    let (nodes, leaves) = trace_fixed_decision(&decision);
+    let (nodes, leaves) = if DIAGNOSTICS {
+        trace_fixed_decision(&decision)
+    } else {
+        (Vec::new(), trace_fixed_leaves(&decision))
+    };
     let mut variances = [FixedTreeVarianceTrace::default(); 21];
     let mut accumulators = [FixedTreeNodeAccumulatorTrace::default(); 21];
-    for index in 0..21 {
-        variances[index] = tree[index].trace();
-        accumulators[index] = tree[index].accumulator_trace();
+    if DIAGNOSTICS {
+        for index in 0..21 {
+            variances[index] = tree[index].trace();
+            accumulators[index] = tree[index].accumulator_trace();
+        }
     }
     let mut alternate_4x4_variances = [FixedTreeVarianceTrace::default(); 16];
     let mut alternate_4x4_accumulators = [FixedTreeNodeAccumulatorTrace::default(); 16];
-    for index in 0..16 {
-        if used_4x4_averages[index] {
-            alternate_4x4_variances[index] = decision_16x16[index].trace();
-            alternate_4x4_accumulators[index] = decision_16x16[index].accumulator_trace();
+    if DIAGNOSTICS {
+        for index in 0..16 {
+            if used_4x4_averages[index] {
+                alternate_4x4_variances[index] = decision_16x16[index].trace();
+                alternate_4x4_accumulators[index] = decision_16x16[index].accumulator_trace();
+            }
         }
     }
     FixedTreePartitionTrace {
@@ -1175,6 +1231,33 @@ pub fn choose_fixed_tree_inter(input: &FixedTreeInterInput<'_>) -> FixedTreePart
         alternate_4x4_accumulators,
         nodes,
         leaves,
+    }
+}
+
+/// Run the pure inter-frame `choose_partitioning` variance-tree core used by
+/// pinned libvpx v1.14.1 at realtime cpu-used 7.
+///
+/// Predictor selection, early partition-copy exits, and downstream mode
+/// picking remain outside this seam. This diagnostic form materializes every
+/// intermediate node for the differential oracle.
+#[must_use]
+pub fn choose_fixed_tree_inter(input: &FixedTreeInterInput<'_>) -> FixedTreePartitionTrace {
+    choose_fixed_tree_inter_impl::<true>(input)
+}
+
+/// Select the product inter-frame variance tree without oracle diagnostics.
+///
+/// The selected decision, low-variance flags, and coding-order leaves are
+/// identical to [`choose_fixed_tree_inter`].
+#[must_use]
+pub fn choose_fixed_tree_inter_selection(
+    input: &FixedTreeInterInput<'_>,
+) -> FixedTreePartitionSelection {
+    let trace = choose_fixed_tree_inter_impl::<false>(input);
+    FixedTreePartitionSelection {
+        decision: trace.decision,
+        variance_low: trace.variance_low,
+        leaves: trace.leaves,
     }
 }
 
@@ -1856,6 +1939,22 @@ mod tests {
     }
 
     #[test]
+    fn fixed_tree_product_selection_matches_full_trace() {
+        let predictor = flat_plane(128);
+        for source in [flat_plane(128), xorshift_plane(17), xorshift_plane(91)] {
+            for thresholds in [[1, 1, 1, 1], [1 << 20; 4]] {
+                let mut input = fixed_tree_input(&source, &predictor);
+                input.thresholds = thresholds;
+                let trace = choose_fixed_tree_inter(&input);
+                let selection = choose_fixed_tree_inter_selection(&input);
+                assert_eq!(selection.decision, trace.decision);
+                assert_eq!(selection.variance_low, trace.variance_low);
+                assert_eq!(selection.leaves, trace.leaves);
+            }
+        }
+    }
+
+    #[test]
     fn fixed_tree_history_copies_twice_then_requires_refresh() {
         let source = xorshift_plane(17);
         let predictor = flat_plane(128);
@@ -1864,6 +1963,8 @@ mod tests {
         let mut variance_low = [false; 25];
         variance_low[7] = true;
         history.update(trace.decision.clone(), 0, variance_low);
+
+        let mut product_history = history.clone();
 
         let conditions = FixedTreeCopyConditions {
             frames_since_key: 2,
@@ -1878,6 +1979,14 @@ mod tests {
         assert_eq!(first.leaves, trace.leaves);
         assert_eq!(first.variance_low, variance_low);
         assert_eq!(first.copied_frame_count, 1);
+
+        let product = product_history
+            .try_copy_selection(conditions)
+            .expect("first product copy");
+        assert_eq!(product.decision, trace.decision);
+        assert_eq!(product.leaves, trace.leaves);
+        assert_eq!(product.variance_low, variance_low);
+        assert_eq!(product_history.copied_frame_count(), 1);
 
         let second = history.try_copy(conditions).expect("second copy");
         assert_eq!(second.copied_frame_count, 2);
