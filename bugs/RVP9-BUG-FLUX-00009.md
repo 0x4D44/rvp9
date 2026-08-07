@@ -6,15 +6,15 @@
 - **Area:** tests/encoder f02 oracle
 - **Raised:** 2026-08-07T14:03:38Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
+- **Owner:** deltic:manual
+- **Owner role:** fix
+- **Owner run:** fix-20260807T164647Z-p56265-n874415000-c1
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-FLUX-00009-run-fix-20260807T164647Z-p56265-n874415000-c1
+- **Owner base:** 7a0dc64c8a8872e79d864a57b163211b668b924d
 - **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner since:** 2026-08-07T16:46:47Z
+- **Owner until:** 2026-08-07T18:46:47Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
