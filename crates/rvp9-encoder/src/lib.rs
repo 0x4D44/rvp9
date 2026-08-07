@@ -3371,7 +3371,6 @@ impl InterReconPlaneLayout {
         }
     }
 
-    #[cfg(test)]
     fn window(
         frame_width: usize,
         frame_height: usize,
@@ -3463,7 +3462,6 @@ impl InterReconLayout {
         }
     }
 
-    #[cfg(test)]
     pub(crate) fn compact_row(
         width: usize,
         height: usize,
@@ -3570,6 +3568,29 @@ impl<'a> InterReconPlane<'a> {
             let destination_start = (local_y + row) * layout.stride + local_x;
             self.data[destination_start..destination_start + width]
                 .copy_from_slice(&source[source_start..source_start + width]);
+        }
+    }
+
+    fn copy_to_full_frame(
+        &self,
+        destination: &mut [u8],
+        global_x: usize,
+        global_y: usize,
+        width: usize,
+        height: usize,
+    ) {
+        let layout = self.layout;
+        assert_eq!(
+            destination.len(),
+            layout.frame_width * layout.frame_height,
+            "inter recon copy destination must be a tight full-frame plane"
+        );
+        let (local_x, local_y) = layout.local_block(global_x, global_y, width, height);
+        for row in 0..height {
+            let source_start = (local_y + row) * layout.stride + local_x;
+            let destination_start = (global_y + row) * layout.frame_width + global_x;
+            destination[destination_start..destination_start + width]
+                .copy_from_slice(&self.data[source_start..source_start + width]);
         }
     }
 
@@ -4458,6 +4479,7 @@ pub(crate) struct InterEncodeEnv {
     a4_split_stats: bool,
     diag_intpro: bool,
     p8_stats: bool,
+    compact_recon_rows: Option<bool>,
 }
 
 impl InterEncodeEnv {
@@ -4509,6 +4531,7 @@ impl InterEncodeEnv {
             a4_split_stats: std::env::var_os("RVP9_A4_SPLIT_STATS").is_some(),
             diag_intpro: std::env::var("RVP9_DIAG_INTPRO").is_ok(),
             p8_stats: std::env::var_os("RVP9_P8_STATS").is_some(),
+            compact_recon_rows: bool_override("RVP9_COMPACT_RECON_ROWS"),
         }
     }
 
@@ -4809,7 +4832,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     let h = height as usize;
     let uvw = w / 2;
     let uvh = h / 2;
-    let mut recon_yuv_out = InterReconPlanes::new(recon_yuv_out, recon_layout);
+    let (recon_y_out, recon_u_out, recon_v_out) = recon_yuv_out;
     let rt_large_recovery = matches!(deadline, sf_mod::Deadline::Realtime)
         && speed.unsigned_abs() >= 7
         && matches!(content_tier, sf_mod::ContentTier::Default)
@@ -5381,7 +5404,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         0
     };
 
-    let mut encode_job = |job: crate::row_mt::RowJob| {
+    let mut encode_job = |job: crate::row_mt::RowJob, recon_yuv_out: &mut InterReconPlanes<'_>| {
         let current_tile = tile_bounds_by_col[job.tile_col];
         let sb_columns = inter_row_job_sb_columns(&tile_bounds_by_col, active_tile_col, job);
         let sb_row = job.sb_row;
@@ -6611,7 +6634,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         leaf_mi_col,
                         leaf_bsize,
                         last_recon_yuv,
-                        &mut recon_yuv_out,
+                        recon_yuv_out,
                     );
                     // F.0.2 oracle — record the skip-fallback decision
                     // too (otherwise sub-8 leaves are missing from the
@@ -6733,7 +6756,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         leaf_mi_col,
                         leaf_bsize,
                         last_recon_yuv,
-                        &mut recon_yuv_out,
+                        recon_yuv_out,
                     );
                     // F.0.2 oracle — also record this degenerate-MV-
                     // envelope fallback so frame-edge leaves aren't
@@ -8895,18 +8918,77 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
             }
         }
     };
-    if let Some(tile_col) = active_tile_col {
+    let compact_recon_rows = active_tile_col.is_some()
+        && env.flag_or(env.compact_recon_rows, false)
+        && recon_layout == InterReconLayout::full(w, h);
+    if compact_recon_rows {
+        let tile_col = active_tile_col.expect("compact reconstruction requires one active tile");
+        let bounds = tile_bounds_by_col[tile_col];
+        let tile_mi_cols = bounds.mi_col_end - bounds.mi_col_start;
+        let mut compact_y = Vec::new();
+        let mut compact_u = Vec::new();
+        let mut compact_v = Vec::new();
         for sb_row in 0..sb_rows {
-            encode_job(crate::row_mt::RowJob { sb_row, tile_col });
+            let layout =
+                InterReconLayout::compact_row(w, h, sb_row, bounds.mi_col_start, tile_mi_cols);
+            compact_y.resize(layout.plane(0).stride * layout.plane(0).rows, 0);
+            compact_u.resize(layout.plane(1).stride * layout.plane(1).rows, 0);
+            compact_v.resize(layout.plane(2).stride * layout.plane(2).rows, 0);
+            let mut compact =
+                InterReconPlanes::new((&mut compact_y, &mut compact_u, &mut compact_v), layout);
+            if sb_row > 0 {
+                for (plane, full) in [&*recon_y_out, &*recon_u_out, &*recon_v_out]
+                    .into_iter()
+                    .enumerate()
+                {
+                    let plane_layout = layout.plane(plane);
+                    compact.plane_mut(plane).copy_from_full_frame(
+                        full,
+                        plane_layout.col_start,
+                        plane_layout.row_start,
+                        plane_layout.stride,
+                        1,
+                    );
+                }
+            }
+            encode_job(crate::row_mt::RowJob { sb_row, tile_col }, &mut compact);
+            for (plane, full) in [&mut *recon_y_out, &mut *recon_u_out, &mut *recon_v_out]
+                .into_iter()
+                .enumerate()
+            {
+                let subsampling = usize::from(plane != 0);
+                let global_x = bounds.mi_col_start * (8 >> subsampling);
+                let global_y = sb_row * (64 >> subsampling);
+                let plane_height = h >> subsampling;
+                let visible_rows = (64 >> subsampling).min(plane_height - global_y);
+                compact.plane(plane).copy_to_full_frame(
+                    full,
+                    global_x,
+                    global_y,
+                    tile_mi_cols * (8 >> subsampling),
+                    visible_rows,
+                );
+            }
         }
     } else {
-        let row_context = crate::row_mt::RowMtContext::new(tile_bounds_by_col.len(), sb_rows);
-        let mut tile_col = row_context.initial_tile_for_worker(0);
-        while let Some(job) = row_context.claim_for_worker(&mut tile_col) {
-            encode_job(job);
+        let mut recon_yuv_out =
+            InterReconPlanes::new((recon_y_out, recon_u_out, recon_v_out), recon_layout);
+        if let Some(tile_col) = active_tile_col {
+            for sb_row in 0..sb_rows {
+                encode_job(
+                    crate::row_mt::RowJob { sb_row, tile_col },
+                    &mut recon_yuv_out,
+                );
+            }
+        } else {
+            let row_context = crate::row_mt::RowMtContext::new(tile_bounds_by_col.len(), sb_rows);
+            let mut tile_col = row_context.initial_tile_for_worker(0);
+            while let Some(job) = row_context.claim_for_worker(&mut tile_col) {
+                encode_job(job, &mut recon_yuv_out);
+            }
+            debug_assert!(row_context.queues_drained());
+            debug_assert_eq!(row_context.remaining_jobs(), 0);
         }
-        debug_assert!(row_context.queues_drained());
-        debug_assert_eq!(row_context.remaining_jobs(), 0);
     }
 
     if rt_profile_enabled {
@@ -11225,6 +11307,30 @@ mod tests {
                     &source[source_start..source_start + plane_layout.stride],
                     "partial compact plane {plane} differs on row {global_row}"
                 );
+            }
+            let subsampling = usize::from(plane != 0);
+            let output_row_start = 64 >> subsampling;
+            let output_rows = plane_layout.frame_height - output_row_start;
+            let mut merged = vec![0x3c; plane_layout.frame_width * plane_layout.frame_height];
+            InterReconPlane::new(&mut compact, plane_layout).copy_to_full_frame(
+                &mut merged,
+                plane_layout.col_start,
+                output_row_start,
+                plane_layout.stride,
+                output_rows,
+            );
+            for row in 0..plane_layout.frame_height {
+                for col in 0..plane_layout.frame_width {
+                    let index = row * plane_layout.frame_width + col;
+                    let inside = row >= output_row_start
+                        && col >= plane_layout.col_start
+                        && col < plane_layout.col_start + plane_layout.stride;
+                    assert_eq!(
+                        merged[index],
+                        if inside { source[index] } else { 0x3c },
+                        "partial compact plane {plane} merged the wrong cell ({row}, {col})"
+                    );
+                }
             }
         }
     }
