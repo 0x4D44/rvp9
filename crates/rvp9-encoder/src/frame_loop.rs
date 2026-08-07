@@ -1296,7 +1296,6 @@ pub struct StreamEncoder {
 /// disjoint rectangles and SB records into the frame result.
 struct InterTileJobResult {
     claimed_jobs: Vec<crate::row_mt::RowJob>,
-    rd_tables: Vec<rvp9_core::mode_decision::rd_thresh::RdThreshTable>,
     history: Option<Vec<rvp9_core::mode_decision::partition::FixedTreeHistoryEntry>>,
     split_stats: NonRdSplitStats,
     coefs: VecBackedInterCoefSource,
@@ -3420,7 +3419,6 @@ impl StreamEncoder {
             // it touches. Results are collected and merged in column order,
             // so scheduling cannot affect the packet or persistent encoder
             // state.
-            let initial_rd_tables = self.rd_thresh_tables.clone();
             let initial_history = std::env::var_os("RVP9_EXACT_VBP_TREE")
                 .is_some_and(|value| value != "0")
                 .then(|| self.vbp_partition_history.clone());
@@ -3470,16 +3468,25 @@ impl StreamEncoder {
                     },
                 )
                 .collect();
+            let sb_rows = (h as usize).div_ceil(64);
+            let mut rd_table_tiles = self.rd_thresh_tables.chunks_exact_mut(sb_rows);
+            assert_eq!(
+                rd_table_tiles.len(),
+                tile_count,
+                "one adaptive RD-threshold row slice is required per tile",
+            );
             let tile_scratch = &mut self.inter_tile_scratch;
             self.frame_worker_pool
                 .as_mut()
                 .expect("parallel tile picking requires the frame worker pool")
                 .scope(|scope| {
-                    for (tile_col, ((result_slot, scratch), mut output)) in result_slots
-                        .iter_mut()
-                        .zip(tile_scratch.iter_mut())
-                        .zip(tile_outputs)
-                        .enumerate()
+                    for (tile_col, (((result_slot, scratch), mut output), tile_rd_tables)) in
+                        result_slots
+                            .iter_mut()
+                            .zip(tile_scratch.iter_mut())
+                            .zip(tile_outputs)
+                            .zip(&mut rd_table_tiles)
+                            .enumerate()
                     {
                         let bounds = tile_bounds(
                             mi_rows_us,
@@ -3491,7 +3498,6 @@ impl StreamEncoder {
                         );
                         let sb_col_start = bounds.mi_col_start / 8;
                         let sb_col_end = bounds.mi_col_end / 8;
-                        let mut tile_rd_tables = initial_rd_tables.clone();
                         let mut tile_history = initial_history.clone();
                         let seg_map = seg_map.as_slice();
                         scope.submit(move || {
@@ -3521,7 +3527,7 @@ impl StreamEncoder {
                                 &mut scratch.recon_v,
                                 &mut scratch.partitions,
                                 &mut scratch.mv_grid,
-                                &mut tile_rd_tables,
+                                tile_rd_tables,
                                 tile_history.as_deref_mut(),
                                 &mut tile_split_stats,
                                 true,
@@ -3546,7 +3552,6 @@ impl StreamEncoder {
                                 claimed_jobs: (0..(h as usize).div_ceil(64))
                                     .map(|sb_row| crate::row_mt::RowJob { sb_row, tile_col })
                                     .collect(),
-                                rd_tables: tile_rd_tables,
                                 history: tile_history,
                                 split_stats: tile_split_stats,
                                 coefs: tile_encode.coefs,
@@ -3578,7 +3583,6 @@ impl StreamEncoder {
                     (bounds.mi_col_end - bounds.mi_col_start) / 8
                 })
                 .collect();
-            let sb_rows = (h as usize).div_ceil(64);
             let mut row_owners = crate::row_mt::RowJobOwners::new(&tile_sb_cols, sb_rows);
             for (worker_id, result) in tile_results.iter().enumerate() {
                 for &job in &result.claimed_jobs {
@@ -3610,8 +3614,6 @@ impl StreamEncoder {
             debug_assert_eq!(merged_mi_grid.len(), mi_rows_us * mi_cols_us);
             for (job, worker_id) in row_owners.iter() {
                 let result = &mut tile_results[worker_id];
-                let rd_table_index = job.tile_col * sb_rows + job.sb_row;
-                self.rd_thresh_tables[rd_table_index] = result.rd_tables[rd_table_index].clone();
                 row_owners.move_job_rect(
                     &mut sb_partitions,
                     &mut tile_scratch[worker_id].partitions,
