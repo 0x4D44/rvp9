@@ -25,9 +25,10 @@ impl std::error::Error for RowSyncCancelled {}
 /// Immutable causal state published after one superblock finishes.
 ///
 /// The row below imports these bottom reconstruction edges as its top edge.
-/// The final MI row carries the motion and intra/inter context needed by
-/// neighbour lookup. Left-edge state remains worker-local because each row job
-/// processes its superblocks from left to right.
+/// The final three MI rows carry the motion and intra/inter context needed by
+/// `MV_REF_BLOCKS`, whose deepest causal lookup is three MI rows above. Left-
+/// edge state remains worker-local because each row job processes its
+/// superblocks from left to right.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SbBoundary {
     /// Bottom luma row of the completed 64x64 superblock.
@@ -36,8 +37,8 @@ pub struct SbBoundary {
     pub bottom_u: [u8; 32],
     /// Bottom V row of the completed 32x32 chroma block.
     pub bottom_v: [u8; 32],
-    /// Final bottom row of eight luma MI cells.
-    pub bottom_mi: [Option<ModeInfo>; 8],
+    /// Final bottom three rows of eight luma MI cells, row-major.
+    pub bottom_mi: [Option<ModeInfo>; 24],
 }
 
 /// Failure while publishing or consuming an SB row-MT boundary.
@@ -311,7 +312,7 @@ impl<'a> RowWorkerShadow<'a> {
             bottom_y: [0; 64],
             bottom_u: [0; 32],
             bottom_v: [0; 32],
-            bottom_mi: [None; 8],
+            bottom_mi: [None; 24],
         };
         let y_start = y_row * self.frame_width + y_col;
         boundary
@@ -325,10 +326,15 @@ impl<'a> RowWorkerShadow<'a> {
         boundary
             .bottom_v
             .copy_from_slice(&self.recon_v[uv_start..uv_start + 32]);
-        let mi_start = mi_row * self.mi_cols + local_mi_col;
-        boundary
-            .bottom_mi
-            .copy_from_slice(&self.mi_grid[mi_start..mi_start + 8]);
+        assert!(
+            mi_row >= 2,
+            "row boundary requires three visible causal MI rows"
+        );
+        for row in 0..3 {
+            let mi_start = (mi_row - 2 + row) * self.mi_cols + local_mi_col;
+            boundary.bottom_mi[row * 8..row * 8 + 8]
+                .copy_from_slice(&self.mi_grid[mi_start..mi_start + 8]);
+        }
         boundary
     }
 
@@ -355,9 +361,12 @@ impl<'a> RowWorkerShadow<'a> {
         let uv_start = uv_row * uv_width + uv_col;
         self.recon_u[uv_start..uv_start + 32].copy_from_slice(&boundary.bottom_u);
         self.recon_v[uv_start..uv_start + 32].copy_from_slice(&boundary.bottom_v);
-        let mi_row = sb_row * 8 - 1;
-        let mi_start = mi_row * self.mi_cols + local_mi_col;
-        self.mi_grid[mi_start..mi_start + 8].copy_from_slice(&boundary.bottom_mi);
+        let mi_row = sb_row * 8 - 3;
+        for row in 0..3 {
+            let mi_start = (mi_row + row) * self.mi_cols + local_mi_col;
+            self.mi_grid[mi_start..mi_start + 8]
+                .copy_from_slice(&boundary.bottom_mi[row * 8..row * 8 + 8]);
+        }
     }
 
     fn boundary_coordinates(
@@ -1061,7 +1070,7 @@ mod tests {
             bottom_y: [seed; 64],
             bottom_u: [seed.wrapping_add(1); 32],
             bottom_v: [seed.wrapping_add(2); 32],
-            bottom_mi: [None; 8],
+            bottom_mi: [None; 24],
         }
     }
 
@@ -1099,8 +1108,11 @@ mod tests {
             producer_u[31 * UV_WIDTH + 32 + col] = 20 + col as u8;
             producer_v[31 * UV_WIDTH + 32 + col] = 30 + col as u8;
         }
-        for col in 0..8 {
-            producer_mi[7 * MI_COLS + col] = Some(mode_info(40 + col as u8));
+        for row in 5..8 {
+            for col in 0..8 {
+                producer_mi[row * MI_COLS + col] =
+                    Some(mode_info(40 + ((row - 5) * 8 + col) as u8));
+            }
         }
         let expected = RowWorkerShadow::new(
             &mut producer_y,
@@ -1145,7 +1157,8 @@ mod tests {
             &consumer_v[31 * UV_WIDTH + 32..32 * UV_WIDTH],
             &expected.bottom_v
         );
-        assert_eq!(&consumer_mi[7 * MI_COLS..8 * MI_COLS], &expected.bottom_mi);
+        assert_eq!(&consumer_mi[5 * MI_COLS..8 * MI_COLS], &expected.bottom_mi);
+        assert!(consumer_mi[..5 * MI_COLS].iter().all(Option::is_none));
         assert!(consumer_mi[8 * MI_COLS..].iter().all(Option::is_none));
     }
 
@@ -1160,14 +1173,14 @@ mod tests {
         y[(HEIGHT - 1) * WIDTH..].fill(11);
         u[(HEIGHT / 2 - 1) * (WIDTH / 2)..].fill(12);
         v[(HEIGHT / 2 - 1) * (WIDTH / 2)..].fill(13);
-        mi[(HEIGHT / 8 - 1) * (WIDTH / 8)..].fill(Some(mode_info(14)));
+        mi[(HEIGHT / 8 - 3) * (WIDTH / 8)..].fill(Some(mode_info(14)));
 
         let boundary = RowWorkerShadow::new(&mut y, &mut u, &mut v, WIDTH, &mut mi, 0, 8)
             .export_boundary(1, 0);
         assert_eq!(boundary.bottom_y, [11; 64]);
         assert_eq!(boundary.bottom_u, [12; 32]);
         assert_eq!(boundary.bottom_v, [13; 32]);
-        assert_eq!(boundary.bottom_mi, [Some(mode_info(14)); 8]);
+        assert_eq!(boundary.bottom_mi, [Some(mode_info(14)); 24]);
     }
 
     #[test]
