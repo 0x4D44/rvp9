@@ -1022,18 +1022,33 @@ fn full_token_from_abs(abs_val: i32) -> usize {
 /// pre-header count pass and final tile packing.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct RetainedCoefToken {
-    value: i16,
+    extra: u16,
+    token: u8,
     prob_ctx: u8,
 }
 
 const _: () = assert!(core::mem::size_of::<RetainedCoefToken>() == 4);
-const RETAINED_EOB: i16 = i16::MIN;
+const RETAINED_EOB_TOKEN: u8 = (ENTROPY_TOKENS - 1) as u8;
+const RETAINED_TOKEN_BASE: [u16; ENTROPY_TOKENS - 1] = [0, 1, 2, 3, 4, 5, 7, 11, 19, 35, 67];
 
 #[inline]
 fn retained_prob_ctx(band: usize, ctx: usize) -> u8 {
     debug_assert!(band < COEF_BANDS);
     debug_assert!(ctx < COEFF_CONTEXTS);
     (band * COEFF_CONTEXTS + ctx) as u8
+}
+
+#[inline]
+fn retained_token_extra(coef: i16) -> (u8, u16) {
+    debug_assert_ne!(coef, 0);
+    let abs_val = coef.unsigned_abs();
+    let token = if abs_val == 1 {
+        ONE_TOKEN
+    } else {
+        full_token_from_abs(i32::from(abs_val))
+    };
+    let extra = (abs_val - RETAINED_TOKEN_BASE[token]) * 2 + u16::from(coef < 0);
+    (token as u8, extra)
 }
 
 /// Per-tile coefficient tokens grouped by transform-block boundary.
@@ -1331,7 +1346,8 @@ fn encode_coefs_impl<T: EncodeCoef, const EMIT_BITS: bool>(
             }
             if let Some(tokens) = retained.as_deref_mut() {
                 tokens.push(RetainedCoefToken {
-                    value: RETAINED_EOB,
+                    extra: 0,
+                    token: RETAINED_EOB_TOKEN,
                     prob_ctx: retained_prob_ctx(band, initial_pt),
                 });
             }
@@ -1417,7 +1433,8 @@ fn encode_coefs_with_token_cache<T: EncodeCoef, const EMIT_BITS: bool>(
             }
             if let Some(tokens) = retained.as_deref_mut() {
                 tokens.push(RetainedCoefToken {
-                    value: 0,
+                    extra: 0,
+                    token: ZERO_TOKEN as u8,
                     prob_ctx: retained_prob_ctx(band_translate[c] as usize, ctx),
                 });
             }
@@ -1459,8 +1476,10 @@ fn encode_coefs_with_token_cache<T: EncodeCoef, const EMIT_BITS: bool>(
         let abs_val = coef.unsigned_abs() as i32;
         if let Some(tokens) = retained.as_deref_mut() {
             debug_assert!(i16::try_from(coef).is_ok());
+            let (token, extra) = retained_token_extra(coef as i16);
             tokens.push(RetainedCoefToken {
-                value: coef as i16,
+                extra,
+                token,
                 prob_ctx: retained_prob_ctx(band_translate[c] as usize, ctx),
             });
         }
@@ -1527,7 +1546,8 @@ fn encode_coefs_with_token_cache<T: EncodeCoef, const EMIT_BITS: bool>(
         let prob = &coef_probs[band][ctx];
         if let Some(tokens) = retained {
             tokens.push(RetainedCoefToken {
-                value: RETAINED_EOB,
+                extra: 0,
+                token: RETAINED_EOB_TOKEN,
                 prob_ctx: retained_prob_ctx(band, ctx),
             });
         }
@@ -1547,7 +1567,7 @@ fn replay_retained_coefs(
     while i < tokens.len() {
         let token = tokens[i];
         let prob = &coef_probs[token.prob_ctx as usize];
-        if token.value == RETAINED_EOB {
+        if token.token == RETAINED_EOB_TOKEN {
             bw.write(0, prob[EOB_CONTEXT_NODE]);
             i += 1;
             continue;
@@ -1558,27 +1578,27 @@ fn replay_retained_coefs(
         bw.write(1, prob[EOB_CONTEXT_NODE]);
         loop {
             let token = tokens[i];
-            if token.value == RETAINED_EOB {
+            if token.token == RETAINED_EOB_TOKEN {
                 break;
             }
             let local_prob = &coef_probs[token.prob_ctx as usize];
-            match token.value {
-                0 => {
+            match token.token as usize {
+                ZERO_TOKEN => {
                     bw.write(0, local_prob[ZERO_CONTEXT_NODE]);
                     i += 1;
                     if i == tokens.len() {
                         return;
                     }
                 }
-                coef => {
+                nonzero_token => {
                     bw.write(1, local_prob[ZERO_CONTEXT_NODE]);
                     // Match libvpx's ONE_TOKEN packing path here rather than
                     // entering the much larger category-token writer.
-                    if coef == 1 || coef == -1 {
+                    if nonzero_token == ONE_TOKEN {
                         bw.write(0, local_prob[ONE_CONTEXT_NODE]);
-                        bw.write_bit(u8::from(coef < 0));
+                        bw.write_bit((token.extra & 1) as u8);
                     } else {
-                        let _ = write_nonzero_coef(bw, local_prob, i32::from(coef));
+                        write_retained_nonzero_token(bw, local_prob, nonzero_token, token.extra);
                     }
                     i += 1;
                     break;
@@ -1586,6 +1606,53 @@ fn replay_retained_coefs(
             }
         }
     }
+}
+
+#[inline(never)]
+fn write_retained_nonzero_token(
+    bw: &mut BoolWriter<'_>,
+    local_prob: &[u8; 3],
+    token: usize,
+    extra: u16,
+) {
+    debug_assert!((TWO_TOKEN..RETAINED_EOB_TOKEN as usize).contains(&token));
+    bw.write(1, local_prob[ONE_CONTEXT_NODE]);
+    let p = &VP9_PARETO8_FULL[(local_prob[PIVOT_NODE] - 1) as usize];
+    if token <= 4 {
+        bw.write(0, p[0]);
+        if token == TWO_TOKEN {
+            bw.write(0, p[1]);
+        } else {
+            bw.write(1, p[1]);
+            bw.write((token - 3) as u8, p[2]);
+        }
+    } else {
+        bw.write(1, p[0]);
+        if token <= 6 {
+            bw.write(0, p[3]);
+            bw.write((token - 5) as u8, p[4]);
+        } else {
+            bw.write(1, p[3]);
+            if token <= 8 {
+                bw.write(0, p[5]);
+                bw.write((token - 7) as u8, p[6]);
+            } else {
+                bw.write(1, p[5]);
+                bw.write((token - 9) as u8, p[7]);
+            }
+        }
+        let extension = i32::from(extra >> 1);
+        match token {
+            5 => write_coeff_bits(bw, extension, &VP9_CAT1_PROB),
+            6 => write_coeff_bits(bw, extension, &VP9_CAT2_PROB),
+            7 => write_coeff_bits(bw, extension, &VP9_CAT3_PROB),
+            8 => write_coeff_bits(bw, extension, &VP9_CAT4_PROB),
+            9 => write_coeff_bits(bw, extension, &VP9_CAT5_PROB),
+            10 => write_coeff_bits(bw, extension, &VP9_CAT6_PROB),
+            _ => unreachable!(),
+        }
+    }
+    bw.write_bit((extra & 1) as u8);
 }
 
 /// Outcome of attempting to consume one retained transform block.
@@ -2062,6 +2129,38 @@ mod tests {
     }
 
     #[test]
+    fn retained_token_extra_matches_libvpx_lowbd_buckets() {
+        let cases = [
+            (1, 1, 0),
+            (-1, 1, 1),
+            (2, 2, 0),
+            (-2, 2, 1),
+            (3, 3, 0),
+            (4, 4, 0),
+            (5, 5, 0),
+            (-6, 5, 3),
+            (7, 6, 0),
+            (-10, 6, 7),
+            (11, 7, 0),
+            (-18, 7, 15),
+            (19, 8, 0),
+            (-34, 8, 31),
+            (35, 9, 0),
+            (-66, 9, 63),
+            (67, 10, 0),
+            (i16::MAX, 10, 65_400),
+            (i16::MIN, 10, 65_403),
+        ];
+        for (coef, expected_token, expected_extra) in cases {
+            assert_eq!(
+                retained_token_extra(coef),
+                (expected_token, expected_extra),
+                "coefficient {coef}",
+            );
+        }
+    }
+
+    #[test]
     fn retained_tokens_match_direct_encode_with_new_probabilities() {
         let scan = default_scan_4x4();
         let pre_probs = flat_coef_probs(71, 93, 117);
@@ -2288,7 +2387,8 @@ mod tests {
             // probability context and panic. Count-only replay must only
             // consume the recorded block boundary and nonzero flag.
             tokens: vec![RetainedCoefToken {
-                value: 1,
+                extra: 0,
+                token: ONE_TOKEN as u8,
                 prob_ctx: u8::MAX,
             }],
             block_ends: vec![1],
