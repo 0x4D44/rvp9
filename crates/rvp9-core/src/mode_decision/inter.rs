@@ -1927,6 +1927,10 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
     // skipped. See `PickInterModeParams::newmv_override_last`.
     let mut newmv_last: Option<Mv> = params.newmv_override_last;
     let mut newmv_golden: Option<Mv> = params.newmv_override_golden;
+    // The diagnostic override is process-wide and immutable after its first
+    // lookup. Resolve it once per block instead of reloading its `OnceLock`
+    // for every fractional-pel mode candidate.
+    let searched_filter_set = f5_filter_search_set();
 
     let mut best: Option<PickInterModeResult> = None;
     // F.0.2 diagnostic slots use the shared order
@@ -2379,7 +2383,7 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
             params.filter_ref
         };
         let filter_set: &[InterpFilter] = if run_filter_search {
-            f5_filter_search_set()
+            searched_filter_set
         } else {
             std::slice::from_ref(&fallback_filter)
         };
