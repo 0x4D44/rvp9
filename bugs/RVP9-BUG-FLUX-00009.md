@@ -1,25 +1,25 @@
 # RVP9-BUG-FLUX-00009 — f02 oracle sink test races global environment state
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** tests/encoder f02 oracle
 - **Raised:** 2026-08-07T14:03:38Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260807T164647Z-p56265-n874415000-c1
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLUX-00009-run-fix-20260807T164647Z-p56265-n874415000-c1
-- **Owner base:** 7a0dc64c8a8872e79d864a57b163211b668b924d
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-08-07T16:46:47Z
-- **Owner until:** 2026-08-07T18:46:47Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-07T14:03:38Z, raised via `deltic bugs new` model=gpt-5.6-sol@high)
+- **State history:** Open (2026-08-07T14:03:38Z, raised via `deltic bugs new` model=gpt-5.6-sol@high) -> Fixed (2026-08-07T16:50:12Z, deltic:auto role=fix run=fix-20260807T164647Z-p56265-n874415000-c1 branch=task/bug-RVP9-BUG-FLUX-00009-run-fix-20260807T164647Z-p56265-n874415000-c1 code=51234e3a gate=manual)
 
 ## Observation
 
