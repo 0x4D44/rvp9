@@ -3433,6 +3433,7 @@ struct CompactInterRowResult {
     rd_table_index: usize,
     rd_thresh_table: rvp9_core::mode_decision::rd_thresh::RdThreshTable,
     vbp_history: Option<Vec<rvp9_core::mode_decision::partition::FixedTreeHistoryEntry>>,
+    emit_scratch: InterEmitScratch,
 }
 
 impl CompactInterRowResult {
@@ -3449,7 +3450,7 @@ impl CompactInterRowResult {
         partitions: &mut [Vec<InterPartitionLeafDesc>],
         rd_thresh_tables: &mut [rvp9_core::mode_decision::rd_thresh::RdThreshTable],
         vbp_history: &mut Option<InterPartitionHistoryMut<'_>>,
-    ) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+    ) -> (Vec<u8>, Vec<u8>, Vec<u8>, InterEmitScratch) {
         let tile_mi_cols = self.mi_col_end - self.mi_col_start;
         let compact = InterReconPlanes::new(
             (&mut self.recon_y, &mut self.recon_u, &mut self.recon_v),
@@ -3520,7 +3521,7 @@ impl CompactInterRowResult {
                 panic!("compact VBP row result has no history destination");
             }
         }
-        (self.recon_y, self.recon_u, self.recon_v)
+        (self.recon_y, self.recon_u, self.recon_v, self.emit_scratch)
     }
 }
 
@@ -5071,9 +5072,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     use rvp9_core::mv_search::{PlaneRef, init_dsmotion_compensation};
     use rvp9_core::quant::forward::{QuantizerDeltas, init_plane_quantizers, plane_dequant_pair};
 
-    // One tile worker owns this complete call. Reuse its emission buffers
-    // directly instead of entering thread-local scratch for every transform.
-    let mut inter_emit_scratch = InterEmitScratch::new();
+    // One row producer owns this complete call. Keep the emission buffers in
+    // an explicit slot so a completed compact row can transfer ownership to
+    // its bounded result before the coordinator merges it.
+    let inter_emit_scratch_state = std::cell::RefCell::new(Some(InterEmitScratch::new()));
 
     // W0.4: compute the per-frame `SpeedFeatures` once. The dispatcher
     // is pure — no side effects on `cpi` like libvpx's
@@ -5736,6 +5738,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                           coef_record_bw: &mut BoolWriter<'_>,
                           defer_coef_recording: bool,
                           sb_partitions: &mut InterPartitionGrid<'_>| {
+        let mut inter_emit_scratch_state = inter_emit_scratch_state.borrow_mut();
+        let inter_emit_scratch = inter_emit_scratch_state
+            .as_mut()
+            .expect("one row-owned emission scratch must be installed");
         let mut history_state = history_state.borrow_mut();
         let mut rd_thresh_table_state = rd_thresh_table_state.borrow_mut();
         let rd_thresh_table = rd_thresh_table_state
@@ -8768,7 +8774,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                 rdmult: tx_rd_rdmult,
                                 tx_size_cost: rdo_tx_size_cost,
                                 quant_fp: rt_quant_fp,
-                                scratch: &mut inter_emit_scratch,
+                                scratch: inter_emit_scratch,
                             });
                             if let Some(t0) = emit_tx_select_start {
                                 emit_profile_tx_select_time += t0.elapsed();
@@ -9384,6 +9390,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 );
                 compact_grids.into_simulation_grid()
             };
+            let row_emit_scratch = inter_emit_scratch_state
+                .replace(None)
+                .expect("compact row must return its emission scratch");
             let vbp_history = match history_state.replace(None) {
                 None => None,
                 Some(InterPartitionHistoryMut::RowOwned { entries, .. }) => Some(entries),
@@ -9392,7 +9401,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
             let row_rd_thresh_table = rd_thresh_table_state
                 .replace(None)
                 .expect("compact row must return its RD threshold table");
-            (compact_y, compact_u, compact_v) = CompactInterRowResult {
+            let (merged_y, merged_u, merged_v, emit_scratch) = CompactInterRowResult {
                 job,
                 mi_col_start: bounds.mi_col_start,
                 mi_col_end: bounds.mi_col_end,
@@ -9408,6 +9417,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 rd_table_index,
                 rd_thresh_table: row_rd_thresh_table,
                 vbp_history,
+                emit_scratch: row_emit_scratch,
             }
             .merge_into(
                 w,
@@ -9421,6 +9431,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 rd_thresh_tables,
                 &mut compact_history_backing,
             );
+            compact_y = merged_y;
+            compact_u = merged_u;
+            compact_v = merged_v;
+            inter_emit_scratch_state.replace(Some(emit_scratch));
         }
     } else {
         let mut recon_yuv_out =
@@ -11521,6 +11535,21 @@ mod tests {
         assert_eq!(full.get_mut(2, 1).previous_segment_id(), 10);
         assert_eq!(full.get_mut(2, 2).previous_segment_id(), 99);
         assert_eq!(full.get_mut(2, 2).copied_frame_count(), 0);
+    }
+
+    #[test]
+    fn compact_row_emission_scratch_transfers_without_reinitializing() {
+        let slot = std::cell::RefCell::new(Some(InterEmitScratch::new()));
+        let mut scratch = slot
+            .replace(None)
+            .expect("scratch slot must start occupied");
+        scratch.residual[0] = 17;
+        assert!(slot.borrow().is_none());
+        slot.replace(Some(scratch));
+        assert_eq!(
+            slot.borrow().as_ref().expect("scratch returned").residual[0],
+            17
+        );
     }
 
     #[test]
