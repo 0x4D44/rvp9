@@ -27,6 +27,13 @@ Observation: 'cargo test -p rvp9-encoder --locked' failed once at crates/rvp9-en
 
 ## Fix
 
-<unfixed — raised only>
+Commit `51234e3a` makes all three f02 unit tests that mutate the process-global
+enable state hold the encoder crate's shared environment-test mutex. This
+serializes them with encoder tests that call `f02_oracle::init_from_env`, so a
+parallel test can no longer disable the sink between record calls.
+
+Focused f02 tests, the full encoder library, workspace formatting, workspace
+all-target clippy, workspace tests, and doctests passed. The bug remains
+`Fixed` until a different verifier independently confirms and closes it.
 
 ## Notes
