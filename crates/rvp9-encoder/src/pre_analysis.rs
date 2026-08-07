@@ -360,30 +360,44 @@ impl PreAnalysisState {
         let sb_rows = (h / 64).max(1);
         let mi_cols = w / 8;
         let mi_rows = h / 8;
-        // Split each independent producer across half the execution budget.
-        // This exposes one scope-wide job per slot without the eight-job CPU
-        // overhead of giving both producers the full worker width.
+        // Preserve the existing total job count, but give every job one span
+        // from each independent producer. Mixed jobs balance the caller and
+        // OS workers without the eight-job coordination cost of splitting
+        // both producers across the full worker width independently.
         let producer_jobs = config.max_jobs.max(1).div_ceil(2);
-        let sb_rows_per_job = sb_rows.div_ceil(producer_jobs);
-        let mi_rows_per_job = mi_rows.div_ceil(producer_jobs);
+        let mixed_jobs = (producer_jobs * 2).min(sb_rows).min(mi_rows);
         let dispatch = rvp9_core::dsp::get_ref();
         let sad64 = dispatch.sad(BlockSize::Block64x64);
         let variance64 = dispatch.variance(BlockSize::Block64x64);
         let last_source = self.last_source_y.as_deref();
-        let mut hf_laplacian_sums = vec![0u64; producer_jobs];
+        let mut hf_laplacian_sums = vec![0u64; mixed_jobs];
 
         worker_pool.scope(|scope| {
-            if let Some(last) = last_source {
-                for (chunk_index, (sad_out, state_out)) in self.avg_source_sad[..sb_rows * sb_cols]
-                    .chunks_mut(sb_rows_per_job * sb_cols)
-                    .zip(
-                        self.content_state_sb[..sb_rows * sb_cols]
-                            .chunks_mut(sb_rows_per_job * sb_cols),
-                    )
-                    .enumerate()
-                {
-                    let sb_row_start = chunk_index * sb_rows_per_job;
-                    scope.submit(move || {
+            let mut sad_remaining = &mut self.avg_source_sad[..sb_rows * sb_cols];
+            let mut state_remaining = &mut self.content_state_sb[..sb_rows * sb_cols];
+            let mut skin_remaining = self.skin_map.as_mut_slice();
+            let mut zero_mv_remaining = self.consec_zero_mv.as_slice();
+            let mut sb_row_start = 0;
+            let mut mi_row_start = 0;
+            for (job_index, hf_laplacian_sum) in hf_laplacian_sums.iter_mut().enumerate() {
+                let jobs_left = mixed_jobs - job_index;
+                let sb_job_rows = (sad_remaining.len() / sb_cols).div_ceil(jobs_left);
+                let mi_job_rows = (skin_remaining.len() / mi_cols).div_ceil(jobs_left);
+                let (sad_out, sad_tail) =
+                    std::mem::take(&mut sad_remaining).split_at_mut(sb_job_rows * sb_cols);
+                sad_remaining = sad_tail;
+                let (state_out, state_tail) =
+                    std::mem::take(&mut state_remaining).split_at_mut(sb_job_rows * sb_cols);
+                state_remaining = state_tail;
+                let (skin_out, skin_tail) =
+                    std::mem::take(&mut skin_remaining).split_at_mut(mi_job_rows * mi_cols);
+                skin_remaining = skin_tail;
+                let (consecutive_zero_mv, zero_mv_tail) =
+                    zero_mv_remaining.split_at(mi_job_rows * mi_cols);
+                zero_mv_remaining = zero_mv_tail;
+                let mi_row_count = skin_out.len() / mi_cols;
+                scope.submit(move || {
+                    if let Some(last) = last_source {
                         compute_avg_source_sad_rows(
                             src_y_tight,
                             last,
@@ -395,20 +409,7 @@ impl PreAnalysisState {
                             sad_out,
                             state_out,
                         );
-                    });
-                }
-            }
-
-            for (chunk_index, ((skin_out, consecutive_zero_mv), hf_laplacian_sum)) in self
-                .skin_map
-                .chunks_mut(mi_rows_per_job * mi_cols)
-                .zip(self.consec_zero_mv.chunks(mi_rows_per_job * mi_cols))
-                .zip(hf_laplacian_sums.iter_mut())
-                .enumerate()
-            {
-                let mi_row_start = chunk_index * mi_rows_per_job;
-                let mi_row_count = skin_out.len() / mi_cols;
-                scope.submit(move || {
+                    }
                     compute_skin_map_rows(
                         src_y_tight,
                         src_u_tight,
@@ -434,7 +435,13 @@ impl PreAnalysisState {
                         );
                     }
                 });
+                sb_row_start += sb_job_rows;
+                mi_row_start += mi_job_rows;
             }
+            debug_assert!(sad_remaining.is_empty());
+            debug_assert!(state_remaining.is_empty());
+            debug_assert!(skin_remaining.is_empty());
+            debug_assert!(zero_mv_remaining.is_empty());
         });
         config
             .compute_hf_energy
@@ -1860,12 +1867,15 @@ mod tests {
         }
     }
 
-    /// Unit 306 — the worker-pool producer split must preserve both source
-    /// maps exactly, including unequal final row chunks.
+    /// Unit 703 — mixed worker jobs must preserve both source maps exactly,
+    /// including unequal final row chunks in both producer grids.
     #[test]
     fn parallel_source_maps_match_serial_producers() {
         const W: usize = 256;
-        const H: usize = 216;
+        // Five SB rows and 41 MI rows split four ways as 2/1/1/1 and
+        // 11/10/10/10. A simple zip of `chunks_mut(div_ceil)` would expose
+        // only three jobs and silently miss the final skin/HF span.
+        const H: usize = 328;
         let mut source_y = vec![0u8; W * H];
         let mut previous_y = vec![0u8; W * H];
         let mut source_u = vec![0u8; (W / 2) * (H / 2)];
