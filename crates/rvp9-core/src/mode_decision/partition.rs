@@ -460,15 +460,14 @@ pub struct FixedTreePartitionTrace {
 /// Product output of the realtime fixed-tree selector.
 ///
 /// Unlike [`FixedTreePartitionTrace`], this omits the node and accumulator
-/// diagnostics used only by the differential oracle.
+/// diagnostics used only by the differential oracle. Visit its final leaves
+/// without allocating via [`visit_fixed_tree_leaves`].
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FixedTreePartitionSelection {
     /// Final leaf-size grid retained in partition history.
     pub decision: PartitionDecision,
     /// Low-temporal-variance flags retained with the selected tree.
     pub variance_low: [bool; 25],
-    /// Final leaves in recursive coding order.
-    pub leaves: Vec<FixedTreeLeaf>,
 }
 
 /// Per-superblock state retained by libvpx's realtime partition-copy path.
@@ -552,7 +551,7 @@ impl FixedTreeHistoryEntry {
         })
     }
 
-    /// Try the product partition-copy path without materializing oracle nodes.
+    /// Try the product partition-copy path without materializing trace vectors.
     ///
     /// Eligibility and history mutation are identical to [`Self::try_copy`].
     pub fn try_copy_selection(
@@ -560,11 +559,9 @@ impl FixedTreeHistoryEntry {
         conditions: FixedTreeCopyConditions,
     ) -> Option<FixedTreePartitionSelection> {
         let (decision, variance_low) = self.copied_decision(conditions)?;
-        let leaves = trace_fixed_leaves(&decision);
         Some(FixedTreePartitionSelection {
             decision,
             variance_low,
-            leaves,
         })
     }
 
@@ -895,19 +892,23 @@ fn try_fixed_partition(
     false
 }
 
-fn trace_fixed_decision_into(
+fn trace_fixed_decision_into<F>(
     decision: &PartitionDecision,
     nodes: &mut Option<&mut Vec<FixedTreeNodeDecision>>,
-    leaves: &mut Vec<FixedTreeLeaf>,
-) {
-    fn walk(
+    visit_leaf: &mut F,
+) where
+    F: FnMut(FixedTreeLeaf),
+{
+    fn walk<F>(
         decision: &PartitionDecision,
         row: usize,
         col: usize,
         side: usize,
         nodes: &mut Option<&mut Vec<FixedTreeNodeDecision>>,
-        leaves: &mut Vec<FixedTreeLeaf>,
-    ) {
+        visit_leaf: &mut F,
+    ) where
+        F: FnMut(FixedTreeLeaf),
+    {
         let bsize = decision.cells[row][col];
         let width = usize::from(bsize.width()) / 8;
         let height = usize::from(bsize.height()) / 8;
@@ -937,30 +938,30 @@ fn trace_fixed_decision_into(
         }
 
         match symbol {
-            FixedTreePartitionSymbol::None => leaves.push(FixedTreeLeaf {
+            FixedTreePartitionSymbol::None => visit_leaf(FixedTreeLeaf {
                 row_8x8: row,
                 col_8x8: col,
                 block_size: bsize,
             }),
             FixedTreePartitionSymbol::Horizontal => {
-                leaves.push(FixedTreeLeaf {
+                visit_leaf(FixedTreeLeaf {
                     row_8x8: row,
                     col_8x8: col,
                     block_size: bsize,
                 });
-                leaves.push(FixedTreeLeaf {
+                visit_leaf(FixedTreeLeaf {
                     row_8x8: row + height,
                     col_8x8: col,
                     block_size: bsize,
                 });
             }
             FixedTreePartitionSymbol::Vertical => {
-                leaves.push(FixedTreeLeaf {
+                visit_leaf(FixedTreeLeaf {
                     row_8x8: row,
                     col_8x8: col,
                     block_size: bsize,
                 });
-                leaves.push(FixedTreeLeaf {
+                visit_leaf(FixedTreeLeaf {
                     row_8x8: row,
                     col_8x8: col + width,
                     block_size: bsize,
@@ -968,15 +969,15 @@ fn trace_fixed_decision_into(
             }
             FixedTreePartitionSymbol::Split => {
                 let half = side / 2;
-                walk(decision, row, col, half, nodes, leaves);
-                walk(decision, row, col + half, half, nodes, leaves);
-                walk(decision, row + half, col, half, nodes, leaves);
-                walk(decision, row + half, col + half, half, nodes, leaves);
+                walk(decision, row, col, half, nodes, visit_leaf);
+                walk(decision, row, col + half, half, nodes, visit_leaf);
+                walk(decision, row + half, col, half, nodes, visit_leaf);
+                walk(decision, row + half, col + half, half, nodes, visit_leaf);
             }
         }
     }
 
-    walk(decision, 0, 0, 8, nodes, leaves);
+    walk(decision, 0, 0, 8, nodes, visit_leaf);
 }
 
 fn trace_fixed_decision(
@@ -984,14 +985,22 @@ fn trace_fixed_decision(
 ) -> (Vec<FixedTreeNodeDecision>, Vec<FixedTreeLeaf>) {
     let mut nodes = Vec::with_capacity(85);
     let mut leaves = Vec::with_capacity(64);
-    trace_fixed_decision_into(decision, &mut Some(&mut nodes), &mut leaves);
+    trace_fixed_decision_into(decision, &mut Some(&mut nodes), &mut |leaf| {
+        leaves.push(leaf)
+    });
     (nodes, leaves)
 }
 
-fn trace_fixed_leaves(decision: &PartitionDecision) -> Vec<FixedTreeLeaf> {
-    let mut leaves = Vec::with_capacity(64);
-    trace_fixed_decision_into(decision, &mut None, &mut leaves);
-    leaves
+/// Visit the final leaves of a legal fixed-tree decision in VP9 coding order.
+///
+/// This is the allocation-free product counterpart to the leaf vector stored
+/// by [`FixedTreePartitionTrace`].
+pub fn visit_fixed_tree_leaves(
+    decision: &PartitionDecision,
+    mut visit_leaf: impl FnMut(FixedTreeLeaf),
+) {
+    debug_assert!(decision.is_valid_partition());
+    trace_fixed_decision_into(decision, &mut None, &mut visit_leaf);
 }
 
 fn choose_fixed_tree_inter_impl<const DIAGNOSTICS: bool>(
@@ -1198,7 +1207,7 @@ fn choose_fixed_tree_inter_impl<const DIAGNOSTICS: bool>(
     let (nodes, leaves) = if DIAGNOSTICS {
         trace_fixed_decision(&decision)
     } else {
-        (Vec::new(), trace_fixed_leaves(&decision))
+        (Vec::new(), Vec::new())
     };
     let mut variances = [FixedTreeVarianceTrace::default(); 21];
     let mut accumulators = [FixedTreeNodeAccumulatorTrace::default(); 21];
@@ -1247,8 +1256,9 @@ pub fn choose_fixed_tree_inter(input: &FixedTreeInterInput<'_>) -> FixedTreePart
 
 /// Select the product inter-frame variance tree without oracle diagnostics.
 ///
-/// The selected decision, low-variance flags, and coding-order leaves are
-/// identical to [`choose_fixed_tree_inter`].
+/// The selected decision and low-variance flags are identical to
+/// [`choose_fixed_tree_inter`]. Use [`visit_fixed_tree_leaves`] when the
+/// coding-order leaves are needed.
 #[must_use]
 pub fn choose_fixed_tree_inter_selection(
     input: &FixedTreeInterInput<'_>,
@@ -1257,7 +1267,6 @@ pub fn choose_fixed_tree_inter_selection(
     FixedTreePartitionSelection {
         decision: trace.decision,
         variance_low: trace.variance_low,
-        leaves: trace.leaves,
     }
 }
 
@@ -1949,7 +1958,9 @@ mod tests {
                 let selection = choose_fixed_tree_inter_selection(&input);
                 assert_eq!(selection.decision, trace.decision);
                 assert_eq!(selection.variance_low, trace.variance_low);
-                assert_eq!(selection.leaves, trace.leaves);
+                let mut visited = Vec::new();
+                visit_fixed_tree_leaves(&selection.decision, |leaf| visited.push(leaf));
+                assert_eq!(visited, trace.leaves);
             }
         }
     }
@@ -1984,7 +1995,9 @@ mod tests {
             .try_copy_selection(conditions)
             .expect("first product copy");
         assert_eq!(product.decision, trace.decision);
-        assert_eq!(product.leaves, trace.leaves);
+        let mut product_leaves = Vec::new();
+        visit_fixed_tree_leaves(&product.decision, |leaf| product_leaves.push(leaf));
+        assert_eq!(product_leaves, trace.leaves);
         assert_eq!(product.variance_low, variance_low);
         assert_eq!(product_history.copied_frame_count(), 1);
 

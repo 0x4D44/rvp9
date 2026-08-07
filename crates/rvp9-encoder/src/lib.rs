@@ -3329,6 +3329,25 @@ fn segment_id_for_hint_cell(
         .unwrap_or(0)
 }
 
+fn segment_ids_for_hint_cells(hints: &[InterPartitionLeafDesc]) -> [u8; 64] {
+    let mut segment_ids = [0u8; 64];
+    let mut assigned = [false; 64];
+    for hint in hints {
+        let row_end = (hint.mi_row_in_sb + hint.leaf_bsize.n_8x8_high() as usize).min(8);
+        let col_end = (hint.mi_col_in_sb + hint.leaf_bsize.n_8x8_wide() as usize).min(8);
+        for row in hint.mi_row_in_sb.min(8)..row_end {
+            for col in hint.mi_col_in_sb.min(8)..col_end {
+                let index = row * 8 + col;
+                if !assigned[index] {
+                    segment_ids[index] = hint.segment_id;
+                    assigned[index] = true;
+                }
+            }
+        }
+    }
+    segment_ids
+}
+
 /// Pinned libvpx restricts the first post-refresh realtime pick to LAST
 /// (`vp9_pickmode.c:1907-1911`). Require exact storage identity for every
 /// prediction plane as well as the matching non-SVC/non-ALTREF topology;
@@ -5034,8 +5053,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 use rvp9_core::bitstream::frame::InterpFilter;
                 use rvp9_core::mode_decision::partition::{
                     Cpu7InterVbpThresholdInput, FixedTreeCopyConditions, FixedTreeInterInput,
-                    FixedTreeLeaf, PartitionDecision, choose_fixed_tree_inter_selection,
-                    cpu7_inter_vbp_thresholds,
+                    PartitionDecision, choose_fixed_tree_inter_selection,
+                    cpu7_inter_vbp_thresholds, visit_fixed_tree_leaves,
                 };
                 use rvp9_core::mv_search::set_subpel_mv_search_range;
 
@@ -5075,8 +5094,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     None
                 };
 
-                let (exact_leaves, variance_low) = if let Some(copy) = low_source_copy {
-                    (copy.leaves, copy.variance_low)
+                let (exact_decision, variance_low) = if let Some(copy) = low_source_copy {
+                    (copy.decision, copy.variance_low)
                 } else {
                     // `set_offsets(..., BLOCK_64X64)` defines this full-pel
                     // UMV envelope. int-pro returns Q3, then libvpx derives a
@@ -5178,52 +5197,50 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         let decision = PartitionDecision::all_64x64();
                         let mut variance_low = [false; 25];
                         variance_low[0] = true;
-                        history.update(decision, segment_id, variance_low);
-                        (
-                            vec![FixedTreeLeaf {
-                                row_8x8: 0,
-                                col_8x8: 0,
-                                block_size: BlockSize::Block64x64,
-                            }],
-                            variance_low,
-                        )
+                        history.update(decision.clone(), segment_id, variance_low);
+                        (decision, variance_low)
                     } else if int_pro.best_sad < vbp_threshold_copy {
                         if let Some(copy) = history.try_copy_selection(copy_conditions) {
-                            (copy.leaves, copy.variance_low)
+                            (copy.decision, copy.variance_low)
                         } else {
-                            let trace = choose_fresh_tree();
-                            history.update(trace.decision.clone(), segment_id, trace.variance_low);
-                            (trace.leaves, trace.variance_low)
+                            let selection = choose_fresh_tree();
+                            history.update(
+                                selection.decision.clone(),
+                                segment_id,
+                                selection.variance_low,
+                            );
+                            (selection.decision, selection.variance_low)
                         }
                     } else {
-                        let trace = choose_fresh_tree();
-                        history.update(trace.decision.clone(), segment_id, trace.variance_low);
-                        (trace.leaves, trace.variance_low)
+                        let selection = choose_fresh_tree();
+                        history.update(
+                            selection.decision.clone(),
+                            segment_id,
+                            selection.variance_low,
+                        );
+                        (selection.decision, selection.variance_low)
                     }
                 };
                 exact_variance_low = variance_low;
-                sb_partitions[sb_idx] = exact_leaves
-                    .into_iter()
-                    .map(|leaf| InterPartitionLeafDesc {
+                let segment_ids = segment_ids_for_hint_cells(&sb_partitions[sb_idx]);
+                sb_partitions[sb_idx].clear();
+                visit_fixed_tree_leaves(&exact_decision, |leaf| {
+                    sb_partitions[sb_idx].push(InterPartitionLeafDesc {
                         mi_row_in_sb: leaf.row_8x8,
                         mi_col_in_sb: leaf.col_8x8,
                         leaf_bsize: leaf.block_size,
                         picked_mode: InterMode::ZeroMv,
                         picked_mv: Mv::ZERO,
                         skip: true,
-                        segment_id: segment_id_for_hint_cell(
-                            &sb_partitions[sb_idx],
-                            leaf.row_8x8,
-                            leaf.col_8x8,
-                        ),
+                        segment_id: segment_ids[leaf.row_8x8 * 8 + leaf.col_8x8],
                         picked_ref_frame: RefFrame::LastFrame,
                         picked_interp_filter: InterpFilter::EightTap,
                         picked_intra_mode: None,
                         picked_ref_frame2: RefFrame::NoRefFrame,
                         picked_mv2: Mv::ZERO,
                         picked_tx_size: rvp9_core::block::max_txsize(leaf.block_size),
-                    })
-                    .collect();
+                    });
+                });
                 used_exact_vbp_tree = true;
             }
 
@@ -10212,6 +10229,36 @@ mod tests {
             }
         }
         assert_eq!(out_mv_grid[0], PrevFrameMvRef::default());
+    }
+
+    #[test]
+    fn fixed_tree_hint_segment_grid_matches_point_lookup() {
+        let hint = |mi_col_in_sb, segment_id| InterPartitionLeafDesc {
+            mi_row_in_sb: 0,
+            mi_col_in_sb,
+            leaf_bsize: BlockSize::Block32x64,
+            picked_mode: InterMode::ZeroMv,
+            picked_mv: Mv::ZERO,
+            skip: true,
+            segment_id,
+            picked_ref_frame: RefFrame::LastFrame,
+            picked_interp_filter: InterpFilter::EightTap,
+            picked_intra_mode: None,
+            picked_ref_frame2: RefFrame::NoRefFrame,
+            picked_mv2: Mv::ZERO,
+            picked_tx_size: TxSize::Tx32x32,
+        };
+        let hints = [hint(0, 3), hint(4, 6)];
+        let segment_ids = segment_ids_for_hint_cells(&hints);
+
+        for row in 0..8 {
+            for col in 0..8 {
+                assert_eq!(
+                    segment_ids[row * 8 + col],
+                    segment_id_for_hint_cell(&hints, row, col),
+                );
+            }
+        }
     }
 
     #[test]
