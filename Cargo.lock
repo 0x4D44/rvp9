@@ -402,7 +402,7 @@ version = "0.0.0"
 
 [[package]]
 name = "rvp9-bench"
-version = "0.1.35"
+version = "0.1.36"
 dependencies = [
  "rvp9-core",
  "rvp9-decoder",
@@ -412,7 +412,7 @@ dependencies = [
 
 [[package]]
 name = "rvp9-cli"
-version = "0.1.35"
+version = "0.1.36"
 dependencies = [
  "rvp9-core",
  "rvp9-decoder",
@@ -422,7 +422,7 @@ dependencies = [
 
 [[package]]
 name = "rvp9-core"
-version = "0.1.35"
+version = "0.1.36"
 dependencies = [
  "crossbeam-channel",
  "proptest",
@@ -430,7 +430,7 @@ dependencies = [
 
 [[package]]
 name = "rvp9-decoder"
-version = "0.1.35"
+version = "0.1.36"
 dependencies = [
  "rvp9-core",
  "rvp9-encoder",
@@ -440,7 +440,7 @@ dependencies = [
 
 [[package]]
 name = "rvp9-encoder"
-version = "0.1.35"
+version = "0.1.36"
 dependencies = [
  "rvp9-core",
  "rvp9-decoder",
@@ -452,7 +452,7 @@ dependencies = [
 
 [[package]]
 name = "rvp9-harness"
-version = "0.1.35"
+version = "0.1.36"
 dependencies = [
  "rvp9-core",
  "rvp9-decoder",
@@ -464,7 +464,7 @@ dependencies = [
 
 [[package]]
 name = "rvp9-io"
-version = "0.1.35"
+version = "0.1.36"
 dependencies = [
  "rvp9-core",
 ]
