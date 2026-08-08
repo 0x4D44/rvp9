@@ -4690,3 +4690,49 @@ GOLDEN-only cost is small; it is not acceptance timing evidence.
 **Future plan:** keep this measured quality prerequisite while closing the
 remaining in-tree and old-town residuals, then repeat the quiet-host timing
 matrix before final acceptance.
+
+### 2026-08-09 — Couple exact CPU7 VBR partitions to the source RD lambda
+
+**Where:** `rvp9_encoder::InterEncodeEnv::exact_vbp_tree_enabled`,
+`rvp9_encoder::inter_rd_calibration_for_frame`, and
+`rvp9_encoder::frame_loop::exact_keyframe_sub8_enabled`.
+
+**What libvpx does:** pinned vpxenc CPU7 realtime uses its variance-based
+partition tree on every inter frame and evaluates those decisions with its
+native RD multiplier. Its keyframe variance policy can emit sub-8x8
+partitions without rvp9's historical high-rate restriction.
+
+**What rvp9 does:** CPU7 realtime one-pass VBR with default content now uses
+the source-exact variance tree and source RD lambda together on every show
+inter frame. Keyframes admit the exact sub-8x8 path only through Q index 120;
+this measured cutoff avoids the high-rate corpus regression from enabling it
+unconditionally. `RVP9_EXACT_VBP_TREE=0` disables the coupled product policy,
+while `RVP9_EXACT_KF_SUB8=1` retains the independent syntax diagnostic. CBR,
+CPU6/8, non-realtime deadlines, non-show ALTREF coding, and other content
+tiers are unchanged.
+
+**Why:** neither ingredient generalizes alone. Removing lambda attenuation
+from the former GOLDEN-only hybrid measured
+`+17.188%/-23.292%/+4.570%`; full exact VBP with the source lambda measured
+`+1.389%/-12.055%/+2.411%`. Unconditional exact keyframe sub-8x8 then moved
+the curves to `+2.216%/-9.319%/+0.245%`. Limiting that keyframe path to
+Q <= 120 produces `+1.279%/-9.786%/+1.769%` for
+in-tree/ducks/old-town. This is the first fresh canonical CPU7 VBR result
+with every required clip inside the Stage 4a `+2%` intermediate gate.
+
+**Byte-parity impact:** intentional and structural. The exercised old-town
+4000-kbps stream has SHA-256
+`4e35c277573ce8a29a02d9b4a4546ed92c13a091cfb665c2e76f8fd9b85525b4`.
+Rvp9-decoder, pinned vpxdec, and ffmpeg each produce the same 186,624,000-byte
+I420 output with SHA-256
+`8caa15362ab0d4ca9056f645110e9f905b6887c6fed55f685e77bf50dfb97c71`.
+
+**Speed impact:** alternating old-town target-2500 runs on the loaded host
+measured about `0.48 s` for rvp9 and `0.39-0.40 s` for vpxenc, roughly
+`1.22-1.23x`. The absolute time is about 8 ms/frame, but the relative speed
+gate is red. Unrelated simulator load means this is diagnostic evidence, not
+the required quiet-host acceptance timing.
+
+**Future plan:** retain this measured Stage 4a quality prerequisite, profile
+the exact path, and remove its largest proven cost without reopening any of
+the three six-point curves.

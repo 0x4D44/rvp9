@@ -463,6 +463,16 @@ impl InterRdCalibration {
         self.large_block_model = enabled;
         self
     }
+
+    /// Select whether the natural-content lambda attenuation is active.
+    #[must_use]
+    pub const fn with_lambda_attenuation(mut self, enabled: bool) -> Self {
+        if !enabled {
+            self.lambda_num = 0;
+            self.lambda_den = 1;
+        }
+        self
+    }
 }
 
 impl Default for InterRdCalibration {

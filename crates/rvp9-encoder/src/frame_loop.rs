@@ -248,6 +248,23 @@ fn vbr_gf_rc_enabled(rc_mode: RcMode) -> bool {
         && vbr_gf_rc_policy(std::env::var_os("RVP9_VBR_GF_RC").as_deref())
 }
 
+const CPU7_VBR_EXACT_KEYFRAME_SUB8_QMAX: u8 = 120;
+
+fn exact_keyframe_sub8_enabled(config: &EncoderConfig, q_index: u8) -> bool {
+    if std::env::var_os("RVP9_EXACT_KF_SUB8").is_some_and(|value| value != "0") {
+        return true;
+    }
+
+    q_index <= CPU7_VBR_EXACT_KEYFRAME_SUB8_QMAX
+        && crate::InterEncodeEnv::capture().exact_vbp_tree_enabled(
+            config.rc_mode,
+            config.speed,
+            config.deadline,
+            rvp9_core::mode_decision::speed_features::ContentTier::Default,
+        )
+        && matches!(config.rc_mode, RcMode::Vbr)
+}
+
 /// Public configuration for the F10.0 streaming encoder.
 ///
 /// Wraps a [`RateControlConfig`] plus the encoder-specific knobs the
@@ -2566,6 +2583,7 @@ impl StreamEncoder {
         }
         self.vbp_partition_history
             .fill(rvp9_core::mode_decision::partition::FixedTreeHistoryEntry::default());
+        let exact_keyframe_sub8 = exact_keyframe_sub8_enabled(&self.config, q_index);
 
         // F10.1a — pick the per-SB partition via the F8.2 variance
         // picker. For KF the ref plane is unused (the picker substitutes
@@ -2579,6 +2597,7 @@ impl StreamEncoder {
             // For keyframes the partition picker ignores ref_y.
             ref_y: input_yuv.0,
             is_keyframe: true,
+            exact_keyframe_sub8,
             // Keyframe: `avg_inter_qindex` is unused by the KF threshold
             // path. Pass the running inter average anyway for clarity.
             avg_inter_qindex: self.rate_control.avg_frame_qindex_inter,
@@ -2644,6 +2663,7 @@ impl StreamEncoder {
                                 &mut tile_partitions,
                                 log2_tile_cols,
                                 Some(tile_col),
+                                exact_keyframe_sub8,
                             );
                             *result_slot = Some(KeyframeTileJobResult {
                                 tile_col,
@@ -2707,6 +2727,7 @@ impl StreamEncoder {
                 &mut sb_partitions,
                 log2_tile_cols,
                 None,
+                exact_keyframe_sub8,
             )
         };
 
@@ -3168,6 +3189,7 @@ impl StreamEncoder {
             src_y: input_yuv.0,
             ref_y: partition_ref_y,
             is_keyframe: false,
+            exact_keyframe_sub8: false,
             // E2: inter-frame VBP thresholds depend on the rate
             // controller's running `avg_frame_qindex[INTER_FRAME]` to
             // pick the `>200`/`>220` thresholds[2] boost (foreman 100k
@@ -3466,7 +3488,6 @@ impl StreamEncoder {
                 speed,
                 deadline,
                 rvp9_core::mode_decision::speed_features::ContentTier::Default,
-                is_golden_refresh,
             );
             let s2_frame_gate = rvp9_core::mode_decision::inter::frame_s2_gate();
             let mut result_slots: Vec<Option<InterTileJobResult>> =
@@ -4292,6 +4313,7 @@ impl StreamEncoder {
             src_y: filtered_yuv.0,
             ref_y: partition_ref_y,
             is_keyframe: false,
+            exact_keyframe_sub8: false,
             avg_inter_qindex: self.rate_control.avg_frame_qindex_inter,
             noise_threshold_scale: self.pre_analysis.vbp_threshold_scale(),
         });
@@ -4958,6 +4980,7 @@ struct FramePartitionInput<'a> {
     src_y: &'a [u8],
     ref_y: &'a [u8],
     is_keyframe: bool,
+    exact_keyframe_sub8: bool,
     avg_inter_qindex: u8,
     // W2.6 — pre-analysis noise threshold scale. `1` keeps the legacy
     // inter threshold ladder untouched; >=2 multiplies the per-level
@@ -5017,6 +5040,7 @@ fn choose_mapped_partitions_for_sb_cols_into<T, F>(
         src_y,
         ref_y,
         is_keyframe,
+        exact_keyframe_sub8,
         avg_inter_qindex,
         noise_threshold_scale,
     } = input;
@@ -5046,8 +5070,7 @@ fn choose_mapped_partitions_for_sb_cols_into<T, F>(
     };
     let vbp_force_split_enabled =
         !is_keyframe && std::env::var_os("RVP9_VBP_FORCE_SPLIT").is_some_and(|v| v != "0");
-    let keyframe_sub8_enabled =
-        is_keyframe && std::env::var_os("RVP9_EXACT_KF_SUB8").is_some_and(|value| value != "0");
+    let keyframe_sub8_enabled = is_keyframe && exact_keyframe_sub8;
     let partition_histogram_enabled = !is_keyframe && std::env::var_os("RVP9_PART_HIST").is_some();
     let vbp_qindex = vbp_qindex_for_partition(q_index, is_keyframe);
     let vbp_avg_inter_qindex = vbp_avg_inter_qindex_for_partition(avg_inter_qindex, is_keyframe);
@@ -7516,6 +7539,46 @@ mod tests {
              distinct sizes seen = {}",
             count_distinct_block_sizes(grid),
         );
+    }
+
+    #[test]
+    fn exact_keyframe_sub8_product_policy_is_q_scoped_to_cpu7_vbr() {
+        let _guard = env_test_mutex();
+        let exact_tree_key = "RVP9_EXACT_VBP_TREE";
+        let sub8_key = "RVP9_EXACT_KF_SUB8";
+        // SAFETY: the mutex above serialises all env_test_mutex callers.
+        unsafe {
+            std::env::remove_var(exact_tree_key);
+            std::env::remove_var(sub8_key);
+        }
+
+        let mut config = EncoderConfig::new(1920, 1080);
+        config.rc_mode = RcMode::Vbr;
+        assert!(exact_keyframe_sub8_enabled(&config, 120));
+        assert!(!exact_keyframe_sub8_enabled(&config, 121));
+
+        config.speed = 6;
+        assert!(!exact_keyframe_sub8_enabled(&config, 120));
+        config.speed = 7;
+        config.rc_mode = RcMode::Cbr;
+        assert!(!exact_keyframe_sub8_enabled(&config, 120));
+
+        // The exact-tree negative control closes the whole product policy.
+        config.rc_mode = RcMode::Vbr;
+        // SAFETY: the mutex above serialises all env_test_mutex callers.
+        unsafe { std::env::set_var(exact_tree_key, "0") };
+        assert!(!exact_keyframe_sub8_enabled(&config, 120));
+
+        // Preserve the independent sub-8 syntax diagnostic for other modes.
+        // SAFETY: the mutex above serialises all env_test_mutex callers.
+        unsafe { std::env::set_var(sub8_key, "1") };
+        config.rc_mode = RcMode::Cbr;
+        assert!(exact_keyframe_sub8_enabled(&config, 255));
+        // SAFETY: the mutex above serialises all env_test_mutex callers.
+        unsafe {
+            std::env::remove_var(exact_tree_key);
+            std::env::remove_var(sub8_key);
+        }
     }
 
     #[test]
@@ -11871,6 +11934,7 @@ mod tests {
             src_y: &src_y,
             ref_y: &ref_y,
             is_keyframe: false,
+            exact_keyframe_sub8: false,
             avg_inter_qindex: 120,
             noise_threshold_scale: 1,
         };

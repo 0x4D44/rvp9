@@ -2465,6 +2465,7 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
     sb_partitions: &mut [Vec<PartitionLeafDesc>],
     log2_tile_cols: u8,
     active_tile_col: Option<usize>,
+    exact_keyframe_sub8: bool,
 ) -> VecBackedIntraCoefSource {
     use rvp9_core::coef_ctx::combine_entropy_contexts;
     use rvp9_core::cost::{
@@ -2519,8 +2520,6 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
     // pixels` / `left_pixels` come from the same buffer.
 
     let y_mode_costs = intra_y_mode_costs_kf_table();
-    let exact_keyframe_sub8 =
-        std::env::var_os("RVP9_EXACT_KF_SUB8").is_some_and(|value| value != "0");
     let coef_costs = sb_partitions
         .iter()
         .flatten()
@@ -4788,6 +4787,17 @@ fn inter_rd_calibration_for_mode(
     }
 }
 
+fn inter_rd_calibration_for_frame(
+    rc_mode: crate::rate_control::RcMode,
+    speed: i32,
+    deadline: rvp9_core::mode_decision::speed_features::Deadline,
+    cyclic_refresh_active: bool,
+    exact_vbp_tree_enabled: bool,
+) -> rvp9_core::mode_decision::inter::InterRdCalibration {
+    inter_rd_calibration_for_mode(rc_mode, speed, deadline, cyclic_refresh_active)
+        .with_lambda_attenuation(!exact_vbp_tree_enabled)
+}
+
 fn golden_real_block_yrd_enabled(
     rc_mode: crate::rate_control::RcMode,
     speed: i32,
@@ -5226,20 +5236,19 @@ impl InterEncodeEnv {
         self.flag_or(self.compact_recon_rows, false)
     }
 
-    /// Use the pinned-libvpx variance tree on the CPU7 realtime VBR frames
-    /// where its measured allocation gain generalizes. An explicit override
-    /// retains the whole-frame diagnostic used by differential tests.
+    /// Use the pinned-libvpx variance tree on CPU7 realtime VBR show frames.
+    /// An explicit override retains the whole-frame diagnostic used by
+    /// differential tests.
     pub(crate) fn exact_vbp_tree_enabled(
         &self,
         rc_mode: crate::rate_control::RcMode,
         speed: i32,
         deadline: rvp9_core::mode_decision::speed_features::Deadline,
         content_tier: rvp9_core::mode_decision::speed_features::ContentTier,
-        is_golden_refresh: bool,
     ) -> bool {
         let selected = self
             .exact_vbp_tree
-            .unwrap_or(rc_mode == crate::rate_control::RcMode::Vbr && is_golden_refresh);
+            .unwrap_or(rc_mode == crate::rate_control::RcMode::Vbr);
         selected
             && speed == 7
             && deadline == rvp9_core::mode_decision::speed_features::Deadline::Realtime
@@ -5549,9 +5558,19 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         && (6..=8).contains(&speed.unsigned_abs())
         && matches!(content_tier, sf_mod::ContentTier::Default)
         && u64::from(width) * u64::from(height) >= 700_000;
+    // The exact pinned-libvpx VBP tree and source RD lambda form one measured
+    // CPU7 VBR policy. The product path applies them together on every show
+    // frame; non-show ALTREF coding passes no history and stays isolated.
+    let exact_vbp_tree_enabled = env.exact_vbp_tree_enabled(rc_mode, speed, deadline, content_tier)
+        && exact_vbp_history.is_some();
     let cyclic_refresh_active = seg_q_deltas.iter().any(Option::is_some);
-    let mut inter_rd_calibration =
-        inter_rd_calibration_for_mode(rc_mode, speed, deadline, cyclic_refresh_active);
+    let mut inter_rd_calibration = inter_rd_calibration_for_frame(
+        rc_mode,
+        speed,
+        deadline,
+        cyclic_refresh_active,
+        exact_vbp_tree_enabled,
+    );
     if golden_real_block_yrd_enabled(
         rc_mode,
         speed,
@@ -6006,11 +6025,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     let rt_profile_frame_start = std::time::Instant::now();
     // The pure tree is differential-oracle exact; this product adapter
     // supplies its source, selected LAST/GOLDEN predictor, thresholds, and
-    // causal leaf list. Product CPU7 VBR uses it only on scheduled GOLDEN
-    // refreshes; the environment override retains the whole-frame diagnostic.
-    let exact_vbp_tree_enabled =
-        env.exact_vbp_tree_enabled(rc_mode, speed, deadline, content_tier, is_golden_refresh)
-            && exact_vbp_history.is_some();
+    // causal leaf list.
     if exact_vbp_tree_enabled {
         let history_sb_col_range = active_tile_col.map_or(0..sb_cols, |tile_col| {
             let bounds = tile_bounds_by_col
@@ -13583,6 +13598,12 @@ mod tests {
             (3, 2),
             "Stage 4a's measured natural-content lambda optimum is 1.5x"
         );
+        let exact = inter_rd_calibration_for_frame(RcMode::Vbr, 7, Deadline::Realtime, false, true);
+        assert_eq!(
+            (exact.lambda_num, exact.lambda_den),
+            (0, 1),
+            "the exact VBP path must retain the source RD lambda"
+        );
         assert_eq!(
             inter_rd_calibration_for_mode(RcMode::Cbr, 6, Deadline::Realtime, false),
             InterRdCalibration::realtime()
@@ -13776,7 +13797,7 @@ mod tests {
     }
 
     #[test]
-    fn exact_vbp_defaults_to_cpu7_realtime_vbr_golden_refreshes() {
+    fn exact_vbp_defaults_to_all_cpu7_realtime_vbr_show_frames() {
         use rvp9_core::mode_decision::speed_features::{ContentTier, Deadline};
 
         let _guard = env_test_mutex();
@@ -13789,42 +13810,25 @@ mod tests {
             7,
             Deadline::Realtime,
             ContentTier::Default,
-            true,
-        ));
-        assert!(!env.exact_vbp_tree_enabled(
-            RcMode::Vbr,
-            7,
-            Deadline::Realtime,
-            ContentTier::Default,
-            false,
         ));
         assert!(!env.exact_vbp_tree_enabled(
             RcMode::Cbr,
             7,
             Deadline::Realtime,
             ContentTier::Default,
-            true,
         ));
         assert!(!env.exact_vbp_tree_enabled(
             RcMode::Vbr,
             6,
             Deadline::Realtime,
             ContentTier::Default,
-            true,
         ));
-        assert!(!env.exact_vbp_tree_enabled(
-            RcMode::Vbr,
-            7,
-            Deadline::Good,
-            ContentTier::Default,
-            true,
-        ));
+        assert!(!env.exact_vbp_tree_enabled(RcMode::Vbr, 7, Deadline::Good, ContentTier::Default,));
         assert!(!env.exact_vbp_tree_enabled(
             RcMode::Vbr,
             7,
             Deadline::Realtime,
             ContentTier::Screen,
-            true,
         ));
 
         // Preserve whole-frame exact-tree diagnostics within the existing
@@ -13836,7 +13840,6 @@ mod tests {
             7,
             Deadline::Realtime,
             ContentTier::Default,
-            false,
         ));
 
         // Explicit zero is the product-policy negative control.
@@ -13847,7 +13850,6 @@ mod tests {
             7,
             Deadline::Realtime,
             ContentTier::Default,
-            true,
         ));
         // SAFETY: the mutex above serialises all encoder environment tests.
         unsafe { std::env::remove_var(key) };
