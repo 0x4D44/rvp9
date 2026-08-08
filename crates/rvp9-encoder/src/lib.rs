@@ -3780,6 +3780,7 @@ impl CompactInterRowResult {
         Vec<u8>,
         Vec<Option<rvp9_core::mode_info::ModeInfo>>,
         VecBackedInterCoefSource,
+        Vec<Vec<InterPartitionLeafDesc>>,
         InterEmitScratch,
         CompactInterRowDiagnostics,
     ) {
@@ -3846,6 +3847,7 @@ impl CompactInterRowResult {
             );
             partitions[destination] = partition;
         }
+        let reusable_partitions = self.partitions;
         rd_thresh_tables[self.rd_table_index] = self.rd_thresh_table;
         if let Some(history) = self.vbp_history {
             let sb_col_range = self.mi_col_start / 8..self.mi_col_end / 8;
@@ -3861,6 +3863,7 @@ impl CompactInterRowResult {
             self.recon_v,
             reusable_mi,
             reusable_coefs,
+            reusable_partitions,
             self.emit_scratch,
             self.diagnostics,
         )
@@ -9667,6 +9670,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 (0..tile_bounds_by_col.len()).map(|_| None).collect();
             let mut compact_mi_scratch: Vec<Vec<Option<rvp9_core::mode_info::ModeInfo>>> =
                 (0..tile_bounds_by_col.len()).map(|_| Vec::new()).collect();
+            let mut compact_partition_scratch: Vec<Vec<Vec<InterPartitionLeafDesc>>> =
+                (0..tile_bounds_by_col.len()).map(|_| Vec::new()).collect();
             for sb_row in 0..sb_rows {
                 let mut works = Vec::with_capacity(tile_bounds_by_col.len());
                 for (tile_col, &bounds) in tile_bounds_by_col.iter().enumerate() {
@@ -9677,10 +9682,14 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     let vbp_history = compact_history_backing
                         .as_mut()
                         .map(|history| history.take_row(sb_row, sb_column_range.clone()));
-                    let row_partitions: Vec<_> = sb_column_range
-                        .clone()
-                        .map(|sb_col| std::mem::take(&mut sb_partitions[sb_row * sb_cols + sb_col]))
-                        .collect();
+                    let mut row_partitions =
+                        std::mem::take(&mut compact_partition_scratch[tile_col]);
+                    row_partitions.clear();
+                    for sb_col in sb_column_range.clone() {
+                        row_partitions.push(std::mem::take(
+                            &mut sb_partitions[sb_row * sb_cols + sb_col],
+                        ));
+                    }
                     let recon_layout = InterReconLayout::compact_row(
                         w,
                         h,
@@ -9869,6 +9878,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         recon_v,
                         reusable_mi,
                         reusable_coefs,
+                        reusable_partitions,
                         _emit_scratch,
                         diagnostics,
                     ) = result.merge_into(
@@ -9886,6 +9896,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     compact_recon_scratch[result_tile_col] = (recon_y, recon_u, recon_v);
                     compact_mi_scratch[result_tile_col] = reusable_mi;
                     compact_coef_scratch[result_tile_col] = Some(reusable_coefs);
+                    compact_partition_scratch[result_tile_col] = reusable_partitions;
                     frame_diagnostics.merge_from(diagnostics);
                 }
             }
@@ -10032,6 +10043,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     merged_v,
                     _reusable_mi,
                     _reusable_coefs,
+                    _reusable_partitions,
                     emit_scratch,
                     diagnostics,
                 ) = CompactInterRowResult {
