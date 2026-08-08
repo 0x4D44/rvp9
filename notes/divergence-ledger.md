@@ -4547,3 +4547,34 @@ the causal proxy pending a speed-safe quality fix.
 
 **Future plan:** run cross-decoder checks, CPU6/CPU7/CPU8 VBR curves, and the
 CBR/AQ/denoiser/SVC feature matrix before treating this default as final.
+
+### 2026-08-08 — Guard A4 full-pick reuse by causal context and winner mode
+
+**Where:** `rvp9_encoder::pick_and_simulate_inter_encode_partitions` and
+`realtime_cached_full_pick_allowed`.
+
+**What libvpx does:** its realtime encoder does not run a speculative A4
+partition picker and therefore has no cached full-pick result to reuse.
+
+**What rvp9 does:** rvp9 reuses an A4 full-pick result only when the final
+causal LAST and GOLDEN `(nearest, near)` pairs match the speculative context,
+and only for non-NEWMV winners. Matching NEWMV searches remain available as
+phase-2 overrides, but the final causal picker re-ranks them.
+
+**Why:** reusing a stale full NEWMV pick produced a large VBR quality loss.
+The guarded policy reduced the corrected CPU7 1080p30 in-tree VBR curve from
+the unguarded `+19.4186%` diagnostic to `+1.614%` BD-rate in the measured
+non-NEWMV reuse variant. This is an intermediate result, not final parity.
+
+**Byte-parity impact:** structural. The policy changes mode decisions by
+design; every exercised stream must pass rvp9-decoder, pinned vpxdec, and
+ffmpeg decode gates before final acceptance.
+
+**Speed impact:** the measured three-run CPU7 VBR-2500 screen was
+`0.51/0.52/0.52 s` for rvp9 versus `0.37/0.37/0.39 s` for vpxenc, a median
+ratio of about `1.35x`. The policy is therefore a quality unit only and does
+not close the `1.05x` speed gate.
+
+**Future plan:** replace complete re-picks on mismatched leaves with a
+causal-context-preserving fast correction, then repeat the same six-point
+curves and warmed timing matrix.

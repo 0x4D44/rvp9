@@ -4936,6 +4936,23 @@ fn a4_descent_independent_mv_default(
         && speed.unsigned_abs() >= 7
 }
 
+/// Reuse an A4 full-pick result only when its causal MV context is still
+/// valid. Cached NEWMV winners remain on the final causal picker: their
+/// speculative residual ranking is especially sensitive to the later row
+/// context, while nearest/zero winners are stable enough to reuse directly.
+#[inline]
+fn realtime_cached_full_pick_allowed(
+    reuse_enabled: bool,
+    rdo_present: bool,
+    context_matches: bool,
+    cached_mode: Option<InterMode>,
+) -> bool {
+    reuse_enabled
+        && !rdo_present
+        && context_matches
+        && cached_mode.is_some_and(|mode| mode != InterMode::NewMv)
+}
+
 fn variance_hint_cell_code(bs: BlockSize) -> &'static str {
     match bs {
         BlockSize::Block8x8 => "8",
@@ -8021,13 +8038,23 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     // mv_limits, so the override is always in-bounds (R7-safe).
                     // Only the RT picker (`rdo_unified == None`) honours the
                     // overrides; the cpu<=4 RDO path runs its own search.
+                    let descent_context = descent_pick_cache
+                        .as_ref()
+                        .and_then(|cache| cache.get(leaf_mi_row, leaf_mi_col, leaf_bsize));
+                    let descent_context_matches =
+                        descent_context.is_some_and(|(_, desc_mvc_last, desc_mvc_golden)| {
+                            mvc.nearest == desc_mvc_last.nearest
+                                && mvc.near == desc_mvc_last.near
+                                && mvc_golden.nearest == desc_mvc_golden.nearest
+                                && mvc_golden.near == desc_mvc_golden.near
+                        });
                     let (phase2_override_last, phase2_override_golden) =
                         if phase2_reuse_enabled && rdo_unified.is_none() {
                             match descent_pick_cache
                                 .as_ref()
                                 .and_then(|cache| cache.get(leaf_mi_row, leaf_mi_col, leaf_bsize))
                             {
-                                Some((cached, desc_mvc_last, desc_mvc_golden)) => {
+                                Some((cached, _, _)) => {
                                     // MATCH GUARD (R2): only reuse the descent's
                                     // NEWMV when the final pass's CAUSAL
                                     // (nearest, near) pair equals the descent's
@@ -8038,16 +8065,12 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                     // the SAME MV, so reuse is faithful. Any
                                     // mismatch -> re-search (avoids the R2 quality
                                     // wobble from re-pricing a stale-context MV).
-                                    let ov_last = if mvc.nearest == desc_mvc_last.nearest
-                                        && mvc.near == desc_mvc_last.near
-                                    {
+                                    let ov_last = if descent_context_matches {
                                         cached.newmv_search_last
                                     } else {
                                         None
                                     };
-                                    let ov_golden = if mvc_golden.nearest == desc_mvc_golden.nearest
-                                        && mvc_golden.near == desc_mvc_golden.near
-                                    {
+                                    let ov_golden = if descent_context_matches {
                                         cached.newmv_search_golden
                                     } else {
                                         None
@@ -8294,7 +8317,12 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     // picker only runs when RDO didn't decide the leaf — a
                     // dispatch that ran RDO then discarded it for the RT result
                     // would be the forbidden cheat.
-                    let cached_descent_pick = if rt_reuse_descent_pick && rdo_unified.is_none() {
+                    let cached_descent_pick = if realtime_cached_full_pick_allowed(
+                        rt_reuse_descent_pick,
+                        rdo_unified.is_some(),
+                        descent_context_matches,
+                        descent_context.map(|(cached, _, _)| cached.best_mode),
+                    ) {
                         descent_pick_cache
                             .as_ref()
                             .and_then(|cache| cache.get(leaf_mi_row, leaf_mi_col, leaf_bsize))
@@ -14004,6 +14032,41 @@ mod tests {
             7,
             Deadline::Good,
         ));
+    }
+
+    #[test]
+    fn realtime_cached_full_pick_requires_context_and_non_newmv_winner() {
+        assert!(realtime_cached_full_pick_allowed(
+            true,
+            false,
+            true,
+            Some(InterMode::NearestMv),
+        ));
+        assert!(realtime_cached_full_pick_allowed(
+            true,
+            false,
+            true,
+            Some(InterMode::ZeroMv),
+        ));
+        assert!(!realtime_cached_full_pick_allowed(
+            true,
+            false,
+            true,
+            Some(InterMode::NewMv),
+        ));
+        assert!(!realtime_cached_full_pick_allowed(
+            true,
+            false,
+            false,
+            Some(InterMode::NearestMv),
+        ));
+        assert!(!realtime_cached_full_pick_allowed(
+            true,
+            true,
+            true,
+            Some(InterMode::NearestMv),
+        ));
+        assert!(!realtime_cached_full_pick_allowed(true, false, true, None,));
     }
 
     #[test]
