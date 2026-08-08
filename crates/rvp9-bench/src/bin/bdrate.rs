@@ -143,12 +143,12 @@ fn encode(
         &format!("--tune-content={}", config.tune_content),
         "--quiet",
         "--ivf",
-        "-o",
     ]);
     if let Some(limit_arg) = &limit_arg {
         command.arg(limit_arg);
     }
     let status = command
+        .arg("-o")
         .arg(&out)
         .arg(input)
         .status()
