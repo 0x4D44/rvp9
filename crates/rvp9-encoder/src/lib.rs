@@ -9500,6 +9500,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 Some(pool) => pool,
                 None => unreachable!("compact row worker pool presence was checked above"),
             };
+            let mut compact_recon_scratch: Vec<(Vec<u8>, Vec<u8>, Vec<u8>)> = (0
+                ..tile_bounds_by_col.len())
+                .map(|_| (Vec::new(), Vec::new(), Vec::new()))
+                .collect();
             for sb_row in 0..sb_rows {
                 let mut works = Vec::with_capacity(tile_bounds_by_col.len());
                 for (tile_col, &bounds) in tile_bounds_by_col.iter().enumerate() {
@@ -9521,12 +9525,11 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         bounds.mi_col_start,
                         tile_mi_cols,
                     );
-                    let mut recon_y =
-                        vec![0; recon_layout.plane(0).stride * recon_layout.plane(0).rows];
-                    let mut recon_u =
-                        vec![0; recon_layout.plane(1).stride * recon_layout.plane(1).rows];
-                    let mut recon_v =
-                        vec![0; recon_layout.plane(2).stride * recon_layout.plane(2).rows];
+                    let (mut recon_y, mut recon_u, mut recon_v) =
+                        std::mem::take(&mut compact_recon_scratch[tile_col]);
+                    recon_y.resize(recon_layout.plane(0).stride * recon_layout.plane(0).rows, 0);
+                    recon_u.resize(recon_layout.plane(1).stride * recon_layout.plane(1).rows, 0);
+                    recon_v.resize(recon_layout.plane(2).stride * recon_layout.plane(2).rows, 0);
                     if sb_row > 0 {
                         let mut compact = InterReconPlanes::new(
                             (&mut recon_y, &mut recon_u, &mut recon_v),
@@ -9683,7 +9686,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 });
                 for result_slot in result_slots {
                     let result = result_slot.expect("compact row worker produced no result");
-                    let (_recon_y, _recon_u, _recon_v, _emit_scratch, diagnostics) = result
+                    let result_tile_col = result.job.tile_col;
+                    let (recon_y, recon_u, recon_v, _emit_scratch, diagnostics) = result
                         .merge_into(
                             w,
                             h,
@@ -9696,6 +9700,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             rd_thresh_tables,
                             &mut compact_history_backing,
                         );
+                    compact_recon_scratch[result_tile_col] = (recon_y, recon_u, recon_v);
                     frame_diagnostics.merge_from(diagnostics);
                 }
             }
