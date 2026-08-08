@@ -1938,625 +1938,631 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
     // production gates below are recorded.
     let mut last_candidates: [Option<InterModeSearchResult>; 4] = [None; 4];
 
-    for &(ref_frame, mode) in &RT_INTER_MODES {
-        let ref_idx: usize = match ref_frame {
-            RefFrame::LastFrame => 0,
-            RefFrame::GoldenFrame => 1,
-            _ => unreachable!(),
-        };
-        let mvc_safe = if ref_idx == 0 {
-            &last_mvc_safe
-        } else {
-            &golden_mvc_safe
-        };
-        let ref_plane = if ref_idx == 0 {
-            params.last_ref_plane
-        } else {
-            params.golden_ref_plane
-        };
-        let ref_frame_rate_cost = if ref_idx == 0 {
-            params.ref_frame_cost_last
-        } else {
-            params.ref_frame_cost_golden
-        };
-        // G1 — per-ref UV planes for chroma RD.
-        let (ref_u, ref_v) = if ref_idx == 0 {
-            (params.last_ref_u, params.last_ref_v)
-        } else {
-            (params.golden_ref_u, params.golden_ref_v)
-        };
-
-        // OOB veto for NEAREST / NEAR: skip if the caller flagged the
-        // MV as out-of-bounds.
-        match (ref_idx, mode) {
-            (0, InterMode::NearestMv) if !params.last_nearest_in_bounds => continue,
-            (0, InterMode::NearMv) if !params.last_near_in_bounds => continue,
-            (1, InterMode::NearestMv) if !params.golden_nearest_in_bounds => continue,
-            (1, InterMode::NearMv) if !params.golden_near_in_bounds => continue,
-            _ => {}
-        }
-
-        // §11 — `inter_mode_mask[bsize]` (libvpx
-        // `vp9_pickmode.c:2140`): skip modes not allowed for this
-        // bsize. Bit `m` of the per-bsize mask corresponds to
-        // `InterMode::idx() = m` (NEAREST=0, NEAR=1, ZERO=2, NEW=3).
-        if (params.inter_mode_mask[params.block_size.idx()] & (1u8 << mode.idx())) == 0 {
-            continue;
-        }
-
-        // §10 — screen-content short-circuit (libvpx
-        // `vp9_pickmode.c:2120-2138`):
-        //
-        // ```c
-        // if (cpi->oxcf.content == VP9E_CONTENT_SCREEN) {
-        //   if (cpi->compute_source_sad_onepass && cpi->sf.use_source_sad) {
-        //     if ((frame_mv[this_mode][ref_frame].as_int != 0 &&
-        //          x->zero_temp_sad_source) ||
-        //         (frame_mv[this_mode][ref_frame].as_int == 0 &&
-        //          x->source_variance == 0 && ref_frame == LAST_FRAME &&
-        //          !x->zero_temp_sad_source))
-        //       continue;
-        //   } else if (frame_mv[this_mode][ref_frame].as_int != 0 &&
-        //              x->source_variance == 0) {
-        //     continue;
-        //   }
-        // }
-        // ```
-        //
-        // We derive `mv_will_be_zero` ahead of MV determination — only
-        // ZEROMV can produce an `as_int == 0`. NEAREST / NEAR also have
-        // zero MVs when the safe-clamped candidate is `(0, 0)`. The MV
-        // determination block below uses `mvc_safe`, so we replicate
-        // the same lookup here for the gate test.
-        let probe_mv_zero = match mode {
-            InterMode::ZeroMv => true,
-            InterMode::NearestMv => mvc_safe.nearest == Mv::ZERO,
-            InterMode::NearMv => mvc_safe.near == Mv::ZERO,
-            // NEWMV's MV isn't known yet; libvpx checks the post-search
-            // value. Conservatively treat as non-zero (the gate's
-            // `mv != 0 && source_variance == 0` branch will fire when
-            // source_variance is zero, matching libvpx behaviour for
-            // any non-zero NEWMV result).
-            InterMode::NewMv => false,
-        };
-        if params.is_screen_content {
-            // `Some(sad)` carries libvpx's `compute_source_sad_onepass
-            // && use_source_sad == true` AND the boolean
-            // `zero_temp_sad_source = (sad == 0)` (`vp9_encodeframe.c:
-            // 1255`). `None` ⇒ source-SAD not computed → falls through
-            // to the fallback branch at vp9_pickmode.c:2134-2137.
-            match params.zero_temp_sad_source {
-                Some(sad) => {
-                    let zts = sad == 0;
-                    if (!probe_mv_zero && zts)
-                        || (probe_mv_zero
-                            && params.source_variance == 0
-                            && ref_frame == RefFrame::LastFrame
-                            && !zts)
-                    {
-                        continue;
-                    }
-                }
-                None => {
-                    if !probe_mv_zero && params.source_variance == 0 {
-                        continue;
-                    }
-                }
-            }
-        }
-
-        // P18 — `ref_frame_skip_mask` veto. Mirrors libvpx
-        // `vp9_pickmode.c:2217` (`if (ref_frame_skip_mask & (1 <<
-        // ref_frame)) continue;`). The mask was built upfront based
-        // on `pred_mv_sad` thresholds; a set bit causes every
-        // remaining candidate for that ref frame to be skipped.
-        let ref_bit: u32 = match ref_frame {
-            RefFrame::LastFrame => 1 << 1,
-            RefFrame::GoldenFrame => 1 << 2,
-            _ => 0,
-        };
-        if ref_frame_skip_mask & ref_bit != 0 {
-            continue;
-        }
-
-        // P15 — libvpx `vp9_pickmode.c:2166`:
-        //   `if (const_motion[ref_frame] && this_mode == NEARMV) continue;`
-        //
-        // `const_motion[ref_frame]` is set by `mv_refs_rt`
-        // (`vp9_pickmode.c:60-153`) when the first 2 spatial
-        // neighbours don't yield 2 distinct same-ref MVs — meaning
-        // NEAR is either redundant with NEAREST or sourced from a
-        // non-spatial fallback that the picker doesn't trust.
-        if mode == InterMode::NearMv {
-            let const_motion = if ref_idx == 0 {
-                params.last_const_motion
-            } else {
-                params.golden_const_motion
+    CANDIDATE_PRED_SCRATCH.with_borrow_mut(|scratch| {
+        for &(ref_frame, mode) in &RT_INTER_MODES {
+            let ref_idx: usize = match ref_frame {
+                RefFrame::LastFrame => 0,
+                RefFrame::GoldenFrame => 1,
+                _ => unreachable!(),
             };
-            if const_motion {
+            let mvc_safe = if ref_idx == 0 {
+                &last_mvc_safe
+            } else {
+                &golden_mvc_safe
+            };
+            let ref_plane = if ref_idx == 0 {
+                params.last_ref_plane
+            } else {
+                params.golden_ref_plane
+            };
+            let ref_frame_rate_cost = if ref_idx == 0 {
+                params.ref_frame_cost_last
+            } else {
+                params.ref_frame_cost_golden
+            };
+            // G1 — per-ref UV planes for chroma RD.
+            let (ref_u, ref_v) = if ref_idx == 0 {
+                (params.last_ref_u, params.last_ref_v)
+            } else {
+                (params.golden_ref_u, params.golden_ref_v)
+            };
+
+            // OOB veto for NEAREST / NEAR: skip if the caller flagged the
+            // MV as out-of-bounds.
+            match (ref_idx, mode) {
+                (0, InterMode::NearestMv) if !params.last_nearest_in_bounds => continue,
+                (0, InterMode::NearMv) if !params.last_near_in_bounds => continue,
+                (1, InterMode::NearestMv) if !params.golden_nearest_in_bounds => continue,
+                (1, InterMode::NearMv) if !params.golden_near_in_bounds => continue,
+                _ => {}
+            }
+
+            // §11 — `inter_mode_mask[bsize]` (libvpx
+            // `vp9_pickmode.c:2140`): skip modes not allowed for this
+            // bsize. Bit `m` of the per-bsize mask corresponds to
+            // `InterMode::idx() = m` (NEAREST=0, NEAR=1, ZERO=2, NEW=3).
+            if (params.inter_mode_mask[params.block_size.idx()] & (1u8 << mode.idx())) == 0 {
                 continue;
             }
-        }
 
-        // §10 — `force_skip_low_temp_var` GOLDEN gate (libvpx
-        // `vp9_pickmode.c:2171-2175`):
-        //
-        // ```c
-        // if (!force_mv_inter_layer && force_skip_low_temp_var &&
-        //     ref_frame == GOLDEN_FRAME &&
-        //     frame_mv[this_mode][ref_frame].as_int != 0) {
-        //   continue;
-        // }
-        // ```
-        //
-        // Skips non-zero-MV modes on GOLDEN when the per-SB variance
-        // tracker (`x->variance_low[]`) reports the SB as a low-
-        // temporal-variance block — i.e. the prediction from any ref
-        // ≈ the source, so the only useful motion is zero. (rvp9 has no
-        // SVC inter-layer path, so the `force_mv_inter_layer` guard is
-        // always true here.)
-        if params.force_skip_low_temp_var && ref_frame == RefFrame::GoldenFrame && !probe_mv_zero {
-            continue;
-        }
+            // §10 — screen-content short-circuit (libvpx
+            // `vp9_pickmode.c:2120-2138`):
+            //
+            // ```c
+            // if (cpi->oxcf.content == VP9E_CONTENT_SCREEN) {
+            //   if (cpi->compute_source_sad_onepass && cpi->sf.use_source_sad) {
+            //     if ((frame_mv[this_mode][ref_frame].as_int != 0 &&
+            //          x->zero_temp_sad_source) ||
+            //         (frame_mv[this_mode][ref_frame].as_int == 0 &&
+            //          x->source_variance == 0 && ref_frame == LAST_FRAME &&
+            //          !x->zero_temp_sad_source))
+            //       continue;
+            //   } else if (frame_mv[this_mode][ref_frame].as_int != 0 &&
+            //              x->source_variance == 0) {
+            //     continue;
+            //   }
+            // }
+            // ```
+            //
+            // We derive `mv_will_be_zero` ahead of MV determination — only
+            // ZEROMV can produce an `as_int == 0`. NEAREST / NEAR also have
+            // zero MVs when the safe-clamped candidate is `(0, 0)`. The MV
+            // determination block below uses `mvc_safe`, so we replicate
+            // the same lookup here for the gate test.
+            let probe_mv_zero = match mode {
+                InterMode::ZeroMv => true,
+                InterMode::NearestMv => mvc_safe.nearest == Mv::ZERO,
+                InterMode::NearMv => mvc_safe.near == Mv::ZERO,
+                // NEWMV's MV isn't known yet; libvpx checks the post-search
+                // value. Conservatively treat as non-zero (the gate's
+                // `mv != 0 && source_variance == 0` branch will fire when
+                // source_variance is zero, matching libvpx behaviour for
+                // any non-zero NEWMV result).
+                InterMode::NewMv => false,
+            };
+            if params.is_screen_content {
+                // `Some(sad)` carries libvpx's `compute_source_sad_onepass
+                // && use_source_sad == true` AND the boolean
+                // `zero_temp_sad_source = (sad == 0)` (`vp9_encodeframe.c:
+                // 1255`). `None` ⇒ source-SAD not computed → falls through
+                // to the fallback branch at vp9_pickmode.c:2134-2137.
+                match params.zero_temp_sad_source {
+                    Some(sad) => {
+                        let zts = sad == 0;
+                        if (!probe_mv_zero && zts)
+                            || (probe_mv_zero
+                                && params.source_variance == 0
+                                && ref_frame == RefFrame::LastFrame
+                                && !zts)
+                        {
+                            continue;
+                        }
+                    }
+                    None => {
+                        if !probe_mv_zero && params.source_variance == 0 {
+                            continue;
+                        }
+                    }
+                }
+            }
 
-        // §10 — `force_skip_low_temp_var` LAST NEWMV gate (libvpx
-        // `vp9_pickmode.c:2177-2183`):
-        //
-        // ```c
-        // if (x->content_state_sb != kVeryHighSad &&
-        //     (cpi->sf.short_circuit_low_temp_var >= 2 ||
-        //      (cpi->sf.short_circuit_low_temp_var == 1 &&
-        //       bsize == BLOCK_64X64)) &&
-        //     force_skip_low_temp_var && ref_frame == LAST_FRAME &&
-        //     this_mode == NEWMV) {
-        //   continue;
-        // }
-        // ```
-        //
-        // Skips LAST + NEWMV when the SB is low-temporal-variance AND
-        // not a very-high-SAD block. The `short_circuit_low_temp_var`
-        // speed-feature variants 2/3 enable this for every block size;
-        // variant 1 enables it only for 64x64. Cpu-used 7 CBR uses variant
-        // 1, while cpu-used 8 uses variants 2/3.
-        if suppress_last_newmv_for_low_temp_var(
-            params.force_skip_low_temp_var,
-            params.short_circuit_low_temp_var,
-            params.block_size,
-            params.content_state_sb,
-            ref_frame,
-            mode,
-        ) {
-            continue;
-        }
+            // P18 — `ref_frame_skip_mask` veto. Mirrors libvpx
+            // `vp9_pickmode.c:2217` (`if (ref_frame_skip_mask & (1 <<
+            // ref_frame)) continue;`). The mask was built upfront based
+            // on `pred_mv_sad` thresholds; a set bit causes every
+            // remaining candidate for that ref frame to be skipped.
+            let ref_bit: u32 = match ref_frame {
+                RefFrame::LastFrame => 1 << 1,
+                RefFrame::GoldenFrame => 1 << 2,
+                _ => 0,
+            };
+            if ref_frame_skip_mask & ref_bit != 0 {
+                continue;
+            }
 
-        // P20 — adaptive RD-threshold gate (libvpx
-        // `vp9_pickmode.c:2233-2252`). This must run before NEWMV motion
-        // search. At this point libvpx's `frame_mv[NEWMV]` is INVALID_MV,
-        // so NEWMV is non-zero for the gate even when its eventual search
-        // result would be zero. Running the gate after the search wastes the
-        // full-pel and sub-pel work and incorrectly grants that result the
-        // zero-MV exemption.
-        if let (Some(b), Some(table)) = (best.as_ref(), params.rd_thresh_table) {
-            let mv_is_zero = pre_search_mv_is_zero(mode, mvc_safe);
-            if !mv_is_zero
-                && let Some(thresh) =
-                    table.effective_thresh(params.block_size, ref_frame, mode, params.q_index)
-            {
-                let biased_thresh = if params.bias_golden
-                    && ref_frame == RefFrame::GoldenFrame
-                    && params.frames_since_golden > 4
-                {
-                    thresh.saturating_mul(8) // libvpx `<< 3`
+            // P15 — libvpx `vp9_pickmode.c:2166`:
+            //   `if (const_motion[ref_frame] && this_mode == NEARMV) continue;`
+            //
+            // `const_motion[ref_frame]` is set by `mv_refs_rt`
+            // (`vp9_pickmode.c:60-153`) when the first 2 spatial
+            // neighbours don't yield 2 distinct same-ref MVs — meaning
+            // NEAR is either redundant with NEAREST or sourced from a
+            // non-spatial fallback that the picker doesn't trust.
+            if mode == InterMode::NearMv {
+                let const_motion = if ref_idx == 0 {
+                    params.last_const_motion
                 } else {
-                    thresh
+                    params.golden_const_motion
                 };
-                if b.best_rd_cost < biased_thresh {
+                if const_motion {
                     continue;
                 }
             }
-        }
 
-        // Determine the candidate MV.
-        let mv = match mode {
-            InterMode::ZeroMv => Mv::ZERO,
-            InterMode::NearestMv => mvc_safe.nearest,
-            InterMode::NearMv => mvc_safe.near,
-            InterMode::NewMv => {
-                // Lazily run the NEWMV search for this ref frame.
-                let cached = if ref_idx == 0 {
-                    &mut newmv_last
-                } else {
-                    &mut newmv_golden
-                };
-                if cached.is_none() {
-                    let single_params = InterModeSearchParams {
-                        block_size: params.block_size,
-                        src_plane: params.src_plane,
-                        src_offset: params.src_offset,
-                        ref_plane,
-                        mv_candidates: mvc_safe,
-                        mv_limits: params.mv_limits,
-                        site_config: params.site_config,
-                        full_pixel_search_method: params.full_pixel_search_method,
-                        mv_costs: params.mv_costs,
-                        inter_mode_costs: params.inter_mode_costs,
-                        inter_mode_ctx: params.inter_mode_ctx,
-                        quantizer: params.quantizer,
-                        q_index: params.q_index,
-                        allow_hp: params.allow_hp,
-                        frame_kind: params.frame_kind,
-                        newmv_seed: params.newmv_seed,
-                        ref_frame_rate_cost,
-                        switchable_interp_costs: params.switchable_interp_costs,
-                        switchable_interp_ctx: params.switchable_interp_ctx,
-                        skip_ctx: Some(params.skip_ctx),
-                        skip_prob: Some(params.skip_prob),
-                        rd_calibration: params.rd_calibration,
-                        src_u: params.src_u,
-                        src_v: params.src_v,
-                        ref_u,
-                        ref_v,
-                        uv_stride: params.uv_stride,
-                        color_sensitivity: params.color_sensitivity,
-                        uv_dc_quant: params.uv_dc_quant,
-                        uv_ac_quant: params.uv_ac_quant,
-                    };
-                    let pred_seed = params.reference_masking.then_some(if ref_idx == 0 {
-                        (pred_mv_last, pred_mv_sad_last)
-                    } else {
-                        (pred_mv_golden, pred_mv_sad_golden)
-                    });
-                    let searched = run_newmv_search(
-                        &single_params,
-                        pred_seed,
-                        Some(NewMvSubpelGate {
-                            lambda,
-                            best_rd_so_far: best
-                                .as_ref()
-                                .map_or(i64::MAX, |incumbent| incumbent.best_rd_cost),
-                        }),
-                    );
-                    if searched.subpel_gate_rejected {
-                        continue;
-                    }
-                    *cached = Some(searched.best_mv);
-                }
-                cached.unwrap()
-            }
-        };
-
-        // Record the MV for this (ref, mode) slot.
-        frame_mv[ref_idx][mode.idx()] = mv;
-
-        // P17 — faithful port of libvpx's mode_checked dedup loop
-        // (`vp9_pickmode.c:2256-2270`). For each other inter mode in
-        // `NEARESTMV..=NEWMV`, if its `mode_checked` is set AND its
-        // recorded MV equals this candidate's MV AND that MV is zero,
-        // skip this candidate.
-        //
-        // libvpx restricts the dedup to the zero-MV case via the
-        // explicit `frame_mv[inter_mv_mode][ref_frame].as_int == 0`
-        // clause (`vp9_pickmode.c:2264`), with the TODO comment at
-        // 2256-2258 noting that dropping the zero restriction caused
-        // regressions and was left "for duplicate zero-mv for now".
-        // A faithful port keeps that restriction.
-        let mut skip_this = false;
-        for &other in &[
-            InterMode::NearestMv,
-            InterMode::NearMv,
-            InterMode::ZeroMv,
-            InterMode::NewMv,
-        ] {
-            if other == mode {
+            // §10 — `force_skip_low_temp_var` GOLDEN gate (libvpx
+            // `vp9_pickmode.c:2171-2175`):
+            //
+            // ```c
+            // if (!force_mv_inter_layer && force_skip_low_temp_var &&
+            //     ref_frame == GOLDEN_FRAME &&
+            //     frame_mv[this_mode][ref_frame].as_int != 0) {
+            //   continue;
+            // }
+            // ```
+            //
+            // Skips non-zero-MV modes on GOLDEN when the per-SB variance
+            // tracker (`x->variance_low[]`) reports the SB as a low-
+            // temporal-variance block — i.e. the prediction from any ref
+            // ≈ the source, so the only useful motion is zero. (rvp9 has no
+            // SVC inter-layer path, so the `force_mv_inter_layer` guard is
+            // always true here.)
+            if params.force_skip_low_temp_var
+                && ref_frame == RefFrame::GoldenFrame
+                && !probe_mv_zero
+            {
                 continue;
             }
-            if mode_checked[ref_idx][other.idx()]
-                && mv == frame_mv[ref_idx][other.idx()]
-                && frame_mv[ref_idx][other.idx()] == Mv::ZERO
-            {
-                skip_this = true;
-                break;
+
+            // §10 — `force_skip_low_temp_var` LAST NEWMV gate (libvpx
+            // `vp9_pickmode.c:2177-2183`):
+            //
+            // ```c
+            // if (x->content_state_sb != kVeryHighSad &&
+            //     (cpi->sf.short_circuit_low_temp_var >= 2 ||
+            //      (cpi->sf.short_circuit_low_temp_var == 1 &&
+            //       bsize == BLOCK_64X64)) &&
+            //     force_skip_low_temp_var && ref_frame == LAST_FRAME &&
+            //     this_mode == NEWMV) {
+            //   continue;
+            // }
+            // ```
+            //
+            // Skips LAST + NEWMV when the SB is low-temporal-variance AND
+            // not a very-high-SAD block. The `short_circuit_low_temp_var`
+            // speed-feature variants 2/3 enable this for every block size;
+            // variant 1 enables it only for 64x64. Cpu-used 7 CBR uses variant
+            // 1, while cpu-used 8 uses variants 2/3.
+            if suppress_last_newmv_for_low_temp_var(
+                params.force_skip_low_temp_var,
+                params.short_circuit_low_temp_var,
+                params.block_size,
+                params.content_state_sb,
+                ref_frame,
+                mode,
+            ) {
+                continue;
             }
-        }
-        // libvpx `vp9_pickmode.c:2286-2289`: skip any non-NEARESTMV
-        // mode whose MV equals NEAREST's MV.
-        //
-        // In libvpx this is unconditional — `frame_mv[NEARESTMV]
-        // [ref_frame]` is pre-populated by `find_predictors`
-        // (`vp9_pickmode.c:1285-1287`), so on the `NEAREST==(0,0)` tie
-        // the iter-0 `(LAST, ZEROMV)` candidate is dropped and NEARESTMV
-        // wins. The baseline (`RVP9_NEAREST=0`) rvp9 path instead guards
-        // on `mode_checked[NEARESTMV]`, which is false at iter-0 (ZEROMV
-        // runs first) — so ZEROMV is evaluated, becomes the incumbent
-        // `best`, and the strict-`<` new-best rule keeps it on the tie.
-        // That over-picks ZEROMV / under-picks NEARESTMV vs libvpx and
-        // poisons the neighbour MV grid (NEAREST collapses to (0,0)).
-        //
-        // The default-on `RVP9_NEAREST` fix (HLD 2026.05.30) restores
-        // libvpx's behaviour: pre-populate `frame_mv[NEARESTMV]` (above)
-        // and make this skip *unconditional*, narrowed to the in-bounds
-        // NEAREST so the OOB-substitution safety the `mode_checked` guard
-        // provided is preserved (when NEAREST is OOB-substituted to ZERO,
-        // the skip must NOT fire or ZEROMV/NEAR/NEW could all be dropped,
-        // leaving an empty candidate set). When NEAREST is OOB it is also
-        // OOB-vetoed above, so ZEROMV is correctly the surviving zero-MV
-        // candidate.
-        //
-        // The `mode_checked` guard exists because rvp9's OOB-veto
-        // substitutes `Mv::ZERO` for `mvc_safe.nearest` when the real
-        // NEAREST is out of bounds; without the narrowing this skip would
-        // treat a clamped-to-zero NEAREST as equal to ZEROMV and drop it.
-        let nearest_dedup = if nearest_tie_fix {
-            // Unconditional (libvpx), narrowed to the in-bounds NEAREST.
-            let nearest_in_bounds = if ref_idx == 0 {
-                params.last_nearest_in_bounds
-            } else {
-                params.golden_nearest_in_bounds
+
+            // P20 — adaptive RD-threshold gate (libvpx
+            // `vp9_pickmode.c:2233-2252`). This must run before NEWMV motion
+            // search. At this point libvpx's `frame_mv[NEWMV]` is INVALID_MV,
+            // so NEWMV is non-zero for the gate even when its eventual search
+            // result would be zero. Running the gate after the search wastes the
+            // full-pel and sub-pel work and incorrectly grants that result the
+            // zero-MV exemption.
+            if let (Some(b), Some(table)) = (best.as_ref(), params.rd_thresh_table) {
+                let mv_is_zero = pre_search_mv_is_zero(mode, mvc_safe);
+                if !mv_is_zero
+                    && let Some(thresh) =
+                        table.effective_thresh(params.block_size, ref_frame, mode, params.q_index)
+                {
+                    let biased_thresh = if params.bias_golden
+                        && ref_frame == RefFrame::GoldenFrame
+                        && params.frames_since_golden > 4
+                    {
+                        thresh.saturating_mul(8) // libvpx `<< 3`
+                    } else {
+                        thresh
+                    };
+                    if b.best_rd_cost < biased_thresh {
+                        continue;
+                    }
+                }
+            }
+
+            // Determine the candidate MV.
+            let mv = match mode {
+                InterMode::ZeroMv => Mv::ZERO,
+                InterMode::NearestMv => mvc_safe.nearest,
+                InterMode::NearMv => mvc_safe.near,
+                InterMode::NewMv => {
+                    // Lazily run the NEWMV search for this ref frame.
+                    let cached = if ref_idx == 0 {
+                        &mut newmv_last
+                    } else {
+                        &mut newmv_golden
+                    };
+                    if cached.is_none() {
+                        let single_params = InterModeSearchParams {
+                            block_size: params.block_size,
+                            src_plane: params.src_plane,
+                            src_offset: params.src_offset,
+                            ref_plane,
+                            mv_candidates: mvc_safe,
+                            mv_limits: params.mv_limits,
+                            site_config: params.site_config,
+                            full_pixel_search_method: params.full_pixel_search_method,
+                            mv_costs: params.mv_costs,
+                            inter_mode_costs: params.inter_mode_costs,
+                            inter_mode_ctx: params.inter_mode_ctx,
+                            quantizer: params.quantizer,
+                            q_index: params.q_index,
+                            allow_hp: params.allow_hp,
+                            frame_kind: params.frame_kind,
+                            newmv_seed: params.newmv_seed,
+                            ref_frame_rate_cost,
+                            switchable_interp_costs: params.switchable_interp_costs,
+                            switchable_interp_ctx: params.switchable_interp_ctx,
+                            skip_ctx: Some(params.skip_ctx),
+                            skip_prob: Some(params.skip_prob),
+                            rd_calibration: params.rd_calibration,
+                            src_u: params.src_u,
+                            src_v: params.src_v,
+                            ref_u,
+                            ref_v,
+                            uv_stride: params.uv_stride,
+                            color_sensitivity: params.color_sensitivity,
+                            uv_dc_quant: params.uv_dc_quant,
+                            uv_ac_quant: params.uv_ac_quant,
+                        };
+                        let pred_seed = params.reference_masking.then_some(if ref_idx == 0 {
+                            (pred_mv_last, pred_mv_sad_last)
+                        } else {
+                            (pred_mv_golden, pred_mv_sad_golden)
+                        });
+                        let searched = run_newmv_search(
+                            &single_params,
+                            pred_seed,
+                            Some(NewMvSubpelGate {
+                                lambda,
+                                best_rd_so_far: best
+                                    .as_ref()
+                                    .map_or(i64::MAX, |incumbent| incumbent.best_rd_cost),
+                            }),
+                        );
+                        if searched.subpel_gate_rejected {
+                            continue;
+                        }
+                        *cached = Some(searched.best_mv);
+                    }
+                    cached.unwrap()
+                }
             };
-            mode != InterMode::NearestMv
-                && nearest_in_bounds
-                && mv == frame_mv[ref_idx][InterMode::NearestMv.idx()]
-        } else {
-            // Baseline: guarded on `mode_checked[NEARESTMV]`.
-            mode != InterMode::NearestMv
-                && mode_checked[ref_idx][InterMode::NearestMv.idx()]
-                && mv == frame_mv[ref_idx][InterMode::NearestMv.idx()]
-        };
-        if nearest_dedup {
-            skip_this = true;
-        }
-        if skip_this {
-            continue;
-        }
 
-        // Build a single-ref params struct for the evaluator.
-        let single_params = InterModeSearchParams {
-            block_size: params.block_size,
-            src_plane: params.src_plane,
-            src_offset: params.src_offset,
-            ref_plane,
-            mv_candidates: mvc_safe,
-            mv_limits: params.mv_limits,
-            site_config: params.site_config,
-            full_pixel_search_method: params.full_pixel_search_method,
-            mv_costs: params.mv_costs,
-            inter_mode_costs: params.inter_mode_costs,
-            inter_mode_ctx: params.inter_mode_ctx,
-            quantizer: params.quantizer,
-            q_index: params.q_index,
-            allow_hp: params.allow_hp,
-            frame_kind: params.frame_kind,
-            newmv_seed: params.newmv_seed,
-            ref_frame_rate_cost,
-            switchable_interp_costs: params.switchable_interp_costs,
-            switchable_interp_ctx: params.switchable_interp_ctx,
-            skip_ctx: Some(params.skip_ctx),
-            skip_prob: Some(params.skip_prob),
-            rd_calibration: params.rd_calibration,
-            src_u: params.src_u,
-            src_v: params.src_v,
-            ref_u,
-            ref_v,
-            uv_stride: params.uv_stride,
-            color_sensitivity: params.color_sensitivity,
-            uv_dc_quant: params.uv_dc_quant,
-            uv_ac_quant: params.uv_ac_quant,
-        };
+            // Record the MV for this (ref, mode) slot.
+            frame_mv[ref_idx][mode.idx()] = mv;
 
-        let ref_mv = match mode {
-            InterMode::NearMv => mvc_safe.near,
-            _ => mvc_safe.nearest,
-        };
+            // P17 — faithful port of libvpx's mode_checked dedup loop
+            // (`vp9_pickmode.c:2256-2270`). For each other inter mode in
+            // `NEARESTMV..=NEWMV`, if its `mode_checked` is set AND its
+            // recorded MV equals this candidate's MV AND that MV is zero,
+            // skip this candidate.
+            //
+            // libvpx restricts the dedup to the zero-MV case via the
+            // explicit `frame_mv[inter_mv_mode][ref_frame].as_int == 0`
+            // clause (`vp9_pickmode.c:2264`), with the TODO comment at
+            // 2256-2258 noting that dropping the zero restriction caused
+            // regressions and was left "for duplicate zero-mv for now".
+            // A faithful port keeps that restriction.
+            let mut skip_this = false;
+            for &other in &[
+                InterMode::NearestMv,
+                InterMode::NearMv,
+                InterMode::ZeroMv,
+                InterMode::NewMv,
+            ] {
+                if other == mode {
+                    continue;
+                }
+                if mode_checked[ref_idx][other.idx()]
+                    && mv == frame_mv[ref_idx][other.idx()]
+                    && frame_mv[ref_idx][other.idx()] == Mv::ZERO
+                {
+                    skip_this = true;
+                    break;
+                }
+            }
+            // libvpx `vp9_pickmode.c:2286-2289`: skip any non-NEARESTMV
+            // mode whose MV equals NEAREST's MV.
+            //
+            // In libvpx this is unconditional — `frame_mv[NEARESTMV]
+            // [ref_frame]` is pre-populated by `find_predictors`
+            // (`vp9_pickmode.c:1285-1287`), so on the `NEAREST==(0,0)` tie
+            // the iter-0 `(LAST, ZEROMV)` candidate is dropped and NEARESTMV
+            // wins. The baseline (`RVP9_NEAREST=0`) rvp9 path instead guards
+            // on `mode_checked[NEARESTMV]`, which is false at iter-0 (ZEROMV
+            // runs first) — so ZEROMV is evaluated, becomes the incumbent
+            // `best`, and the strict-`<` new-best rule keeps it on the tie.
+            // That over-picks ZEROMV / under-picks NEARESTMV vs libvpx and
+            // poisons the neighbour MV grid (NEAREST collapses to (0,0)).
+            //
+            // The default-on `RVP9_NEAREST` fix (HLD 2026.05.30) restores
+            // libvpx's behaviour: pre-populate `frame_mv[NEARESTMV]` (above)
+            // and make this skip *unconditional*, narrowed to the in-bounds
+            // NEAREST so the OOB-substitution safety the `mode_checked` guard
+            // provided is preserved (when NEAREST is OOB-substituted to ZERO,
+            // the skip must NOT fire or ZEROMV/NEAR/NEW could all be dropped,
+            // leaving an empty candidate set). When NEAREST is OOB it is also
+            // OOB-vetoed above, so ZEROMV is correctly the surviving zero-MV
+            // candidate.
+            //
+            // The `mode_checked` guard exists because rvp9's OOB-veto
+            // substitutes `Mv::ZERO` for `mvc_safe.nearest` when the real
+            // NEAREST is out of bounds; without the narrowing this skip would
+            // treat a clamped-to-zero NEAREST as equal to ZEROMV and drop it.
+            let nearest_dedup = if nearest_tie_fix {
+                // Unconditional (libvpx), narrowed to the in-bounds NEAREST.
+                let nearest_in_bounds = if ref_idx == 0 {
+                    params.last_nearest_in_bounds
+                } else {
+                    params.golden_nearest_in_bounds
+                };
+                mode != InterMode::NearestMv
+                    && nearest_in_bounds
+                    && mv == frame_mv[ref_idx][InterMode::NearestMv.idx()]
+            } else {
+                // Baseline: guarded on `mode_checked[NEARESTMV]`.
+                mode != InterMode::NearestMv
+                    && mode_checked[ref_idx][InterMode::NearestMv.idx()]
+                    && mv == frame_mv[ref_idx][InterMode::NearestMv.idx()]
+            };
+            if nearest_dedup {
+                skip_this = true;
+            }
+            if skip_this {
+                continue;
+            }
 
-        // §11 — interpolation-filter search gate (libvpx
-        // `vp9_pickmode.c:1852-1858`, `:2308-2315`). Search runs only
-        // for fractional-pel MVs. When `cb_pred_filter_search` is
-        // active, fractional candidates are further reduced to a
-        // chessboard-pattern subset; the other candidates reuse the selected
-        // neighbour filter, or default to `EightTap` when none exists. The
-        // chessboard predicate is:
-        //
-        // ```c
-        // const int bsl = mi_width_log2_lookup[bsize];
-        // pred_filter_search =
-        //     (((mi_row + mi_col) >> bsl) + chessboard_index) & 1;
-        // ```
-        //
-        // where `chessboard_index = current_video_frame & 1` so the
-        // pattern toggles each frame.
-        let run_filter_search = should_search_interp_filter(InterpFilterSearch {
-            skip_integer_mv_filter_search: params.skip_integer_mv_filter_search,
-            cb_pred_filter_search: params.cb_pred_filter_search,
-            mi_row: params.mi_row,
-            mi_col: params.mi_col,
-            chessboard_index: params.chessboard_index,
-            block_size: params.block_size,
-            mv,
-            mode,
-            ref_frame,
-            filter_ref: params.filter_ref,
-            search_golden_filter: params.search_golden_filter,
-        });
-        let fallback_filter = if params.filter_ref == InterpFilter::Switchable {
-            InterpFilter::EightTap
-        } else {
-            params.filter_ref
-        };
-        let filter_set: &[InterpFilter] = if run_filter_search {
-            searched_filter_set
-        } else {
-            std::slice::from_ref(&fallback_filter)
-        };
+            // Build a single-ref params struct for the evaluator.
+            let single_params = InterModeSearchParams {
+                block_size: params.block_size,
+                src_plane: params.src_plane,
+                src_offset: params.src_offset,
+                ref_plane,
+                mv_candidates: mvc_safe,
+                mv_limits: params.mv_limits,
+                site_config: params.site_config,
+                full_pixel_search_method: params.full_pixel_search_method,
+                mv_costs: params.mv_costs,
+                inter_mode_costs: params.inter_mode_costs,
+                inter_mode_ctx: params.inter_mode_ctx,
+                quantizer: params.quantizer,
+                q_index: params.q_index,
+                allow_hp: params.allow_hp,
+                frame_kind: params.frame_kind,
+                newmv_seed: params.newmv_seed,
+                ref_frame_rate_cost,
+                switchable_interp_costs: params.switchable_interp_costs,
+                switchable_interp_ctx: params.switchable_interp_ctx,
+                skip_ctx: Some(params.skip_ctx),
+                skip_prob: Some(params.skip_prob),
+                rd_calibration: params.rd_calibration,
+                src_u: params.src_u,
+                src_v: params.src_v,
+                ref_u,
+                ref_v,
+                uv_stride: params.uv_stride,
+                color_sensitivity: params.color_sensitivity,
+                uv_dc_quant: params.uv_dc_quant,
+                uv_ac_quant: params.uv_ac_quant,
+            };
 
-        let candidate = evaluate_candidate_with_filter_set(
-            &single_params,
-            mode,
-            mv,
-            ref_mv,
-            lambda,
-            filter_set,
-        );
+            let ref_mv = match mode {
+                InterMode::NearMv => mvc_safe.near,
+                _ => mvc_safe.nearest,
+            };
 
-        mode_checked[ref_idx][mode.idx()] = true;
+            // §11 — interpolation-filter search gate (libvpx
+            // `vp9_pickmode.c:1852-1858`, `:2308-2315`). Search runs only
+            // for fractional-pel MVs. When `cb_pred_filter_search` is
+            // active, fractional candidates are further reduced to a
+            // chessboard-pattern subset; the other candidates reuse the selected
+            // neighbour filter, or default to `EightTap` when none exists. The
+            // chessboard predicate is:
+            //
+            // ```c
+            // const int bsl = mi_width_log2_lookup[bsize];
+            // pred_filter_search =
+            //     (((mi_row + mi_col) >> bsl) + chessboard_index) & 1;
+            // ```
+            //
+            // where `chessboard_index = current_video_frame & 1` so the
+            // pattern toggles each frame.
+            let run_filter_search = should_search_interp_filter(InterpFilterSearch {
+                skip_integer_mv_filter_search: params.skip_integer_mv_filter_search,
+                cb_pred_filter_search: params.cb_pred_filter_search,
+                mi_row: params.mi_row,
+                mi_col: params.mi_col,
+                chessboard_index: params.chessboard_index,
+                block_size: params.block_size,
+                mv,
+                mode,
+                ref_frame,
+                filter_ref: params.filter_ref,
+                search_golden_filter: params.search_golden_filter,
+            });
+            let fallback_filter = if params.filter_ref == InterpFilter::Switchable {
+                InterpFilter::EightTap
+            } else {
+                params.filter_ref
+            };
+            let filter_set: &[InterpFilter] = if run_filter_search {
+                searched_filter_set
+            } else {
+                std::slice::from_ref(&fallback_filter)
+            };
 
-        // P13 — vp9_NEWMV_diff_bias (vp9_pickmode.c:2402-2411). Apply
-        // the magnitude/noise-driven RD-cost scaling to NEWMV candidates
-        // whose MV diverges from the neighbour average when the caller keeps
-        // this diagnostic gate enabled.
-        let (bias_num, bias_den) = if params.newmv_diff_bias_enabled {
-            newmv_diff_bias(
-                params.above_mv,
-                params.left_mv,
+            let candidate = evaluate_candidate_with_filter_set_with_scratch(
+                &single_params,
                 mode,
                 mv,
-                params.block_size,
-                ref_frame == RefFrame::LastFrame,
-                params.noise_estimate,
-                params.lowvar_highsumdiff,
-                params.is_skin,
-            )
-        } else {
-            (1, 1)
-        };
-        let mut biased_rd_cost = apply_rdcost_bias(candidate.best_rd_cost, bias_num, bias_den);
+                ref_mv,
+                lambda,
+                filter_set,
+                scratch,
+            );
 
-        // §10 — screen-content bias-against-zero-last (libvpx
-        // `vp9_pickmode.c:2429-2434`):
-        //
-        // ```c
-        // if (cpi->oxcf.content == VP9E_CONTENT_SCREEN &&
-        //     (scene_change_detected || svc->high_num_blocks_with_motion) &&
-        //     ref_frame == LAST_FRAME &&
-        //     frame_mv[this_mode][ref_frame].as_int == 0 &&
-        //     svc->spatial_layer_id == 0 && x->source_variance == 0 &&
-        //     sse_y > 0) {
-        //   this_rdc.rdcost = this_rdc.rdcost << 2;
-        // }
-        // ```
-        //
-        // On a spatially flat screen-content block, during a scene
-        // change or high-motion frame, penalise the (LAST, ZeroMV)
-        // candidate when the (0,0) prediction has non-zero pixel SSE
-        // (i.e. the block is moving but appears flat). The 4× rdcost
-        // pushes the picker toward NEWMV / GOLDEN.
-        if params.is_screen_content
-            && params.scene_change_detected
-            && ref_frame == RefFrame::LastFrame
-            && mv == Mv::ZERO
-            && params.source_variance == 0
-            && candidate.sse_y > 0
-        {
-            biased_rd_cost = biased_rd_cost.saturating_mul(4);
-        }
+            mode_checked[ref_idx][mode.idx()] = true;
 
-        if ref_frame == RefFrame::LastFrame {
-            let slot = match mode {
-                InterMode::ZeroMv => 0,
-                InterMode::NearestMv => 1,
-                InterMode::NearMv => 2,
-                InterMode::NewMv => 3,
+            // P13 — vp9_NEWMV_diff_bias (vp9_pickmode.c:2402-2411). Apply
+            // the magnitude/noise-driven RD-cost scaling to NEWMV candidates
+            // whose MV diverges from the neighbour average when the caller keeps
+            // this diagnostic gate enabled.
+            let (bias_num, bias_den) = if params.newmv_diff_bias_enabled {
+                newmv_diff_bias(
+                    params.above_mv,
+                    params.left_mv,
+                    mode,
+                    mv,
+                    params.block_size,
+                    ref_frame == RefFrame::LastFrame,
+                    params.noise_estimate,
+                    params.lowvar_highsumdiff,
+                    params.is_skin,
+                )
+            } else {
+                (1, 1)
             };
-            let mut traced = candidate;
-            traced.best_rd_cost = biased_rd_cost;
-            last_candidates[slot] = Some(traced);
-        }
+            let mut biased_rd_cost = apply_rdcost_bias(candidate.best_rd_cost, bias_num, bias_den);
 
-        let is_new_best = match best.as_ref() {
-            None => true,
-            Some(prev) => biased_rd_cost < prev.best_rd_cost,
-        };
-        if is_new_best {
-            best = Some(PickInterModeResult {
-                best_mode: candidate.best_mode,
-                best_mv: candidate.best_mv,
-                // P13 — store the biased RD so downstream comparisons
-                // (intra-fallback gate, encode-breakout early exit) see
-                // the same penalty libvpx applied (vp9_pickmode.c:2406).
-                best_rd_cost: biased_rd_cost,
-                best_distortion: candidate.best_distortion,
-                partition_distortion: if picker_hadamard_only_enabled(params.rd_calibration) {
-                    candidate.ranking_distortion.min(u64::from(u32::MAX)) as u32
-                } else {
-                    candidate.best_distortion
-                },
-                best_rate: candidate.best_rate,
-                coef_rate: candidate.coef_rate,
-                coef_dist: candidate.coef_dist,
-                uv_rate: candidate.uv_rate,
-                uv_dist: candidate.uv_dist,
-                picked_interp_filter: candidate.picked_interp_filter,
-                picked_tx_size: candidate.picked_tx_size,
-                skip_txfm: candidate.skip_txfm,
-                picked_ref_frame: ref_frame,
-                picked_intra_mode: None,
-                var_y: candidate.var_y,
-                sse_y: candidate.sse_y,
-                dct_eob_total: candidate.dct_eob_total,
-                picker_skip: candidate.picker_skip,
-                // Phase-2 option-A: set after the candidate loop from
-                // the accumulated per-ref NEWMV search caches.
-                newmv_search_last: None,
-                newmv_search_golden: None,
-                candidate_trace_id: 0,
-            });
-        }
+            // §10 — screen-content bias-against-zero-last (libvpx
+            // `vp9_pickmode.c:2429-2434`):
+            //
+            // ```c
+            // if (cpi->oxcf.content == VP9E_CONTENT_SCREEN &&
+            //     (scene_change_detected || svc->high_num_blocks_with_motion) &&
+            //     ref_frame == LAST_FRAME &&
+            //     frame_mv[this_mode][ref_frame].as_int == 0 &&
+            //     svc->spatial_layer_id == 0 && x->source_variance == 0 &&
+            //     sse_y > 0) {
+            //   this_rdc.rdcost = this_rdc.rdcost << 2;
+            // }
+            // ```
+            //
+            // On a spatially flat screen-content block, during a scene
+            // change or high-motion frame, penalise the (LAST, ZeroMV)
+            // candidate when the (0,0) prediction has non-zero pixel SSE
+            // (i.e. the block is moving but appears flat). The 4× rdcost
+            // pushes the picker toward NEWMV / GOLDEN.
+            if params.is_screen_content
+                && params.scene_change_detected
+                && ref_frame == RefFrame::LastFrame
+                && mv == Mv::ZERO
+                && params.source_variance == 0
+                && candidate.sse_y > 0
+            {
+                biased_rd_cost = biased_rd_cost.saturating_mul(4);
+            }
 
-        // --- G4: encode breakout test ---
-        //
-        // After updating the best candidate, check if the prediction
-        // alone is good enough to skip residual coding entirely.
-        // When this fires, the mode loop breaks immediately -- no
-        // further candidates are evaluated, and the intra fallback
-        // is skipped.
-        //
-        // Port of `encode_breakout_test` (vp9_pickmode.c:933-1036).
-        //
-        // §10 — `scene_change_detected` gate (libvpx
-        // `vp9_pickmode.c:2415`): the encode-breakout test is suppressed
-        // during a scene change so the picker keeps evaluating
-        // candidates (a new scene typically needs NEWMV, not the zero-
-        // residual short-circuit).
-        if params.encode_breakout > 0
-            && !params.scene_change_detected
-            && let Some(ref b) = best
-            && is_new_best
-            && crate::mode_decision::model_rd::encode_breakout_test(
-                b.var_y,
-                b.sse_y,
-                params.dequant_dc,
-                params.dequant_ac,
-                params.block_size,
-                b.best_mv,
-                params.encode_breakout,
-            )
-        {
-            break;
-        }
+            if ref_frame == RefFrame::LastFrame {
+                let slot = match mode {
+                    InterMode::ZeroMv => 0,
+                    InterMode::NearestMv => 1,
+                    InterMode::NearMv => 2,
+                    InterMode::NewMv => 3,
+                };
+                let mut traced = candidate;
+                traced.best_rd_cost = biased_rd_cost;
+                last_candidates[slot] = Some(traced);
+            }
 
-        // G6 — early_term mode-loop exit (libvpx vp9_pickmode.c:2474-2478).
-        // When the large model detects a full skip on a block >= 32x32,
-        // exit after at least 2 candidates have been evaluated.
-        if candidate.early_term
-            && let Some(ref b) = best
-            && (b.best_rd_cost <= biased_rd_cost || is_new_best)
-        {
-            // At least 2 candidates evaluated (this one + previous best),
-            // and the current or previous best has early_term set.
-            // Only break if we're past the first evaluated candidate.
-            if mode_checked.iter().flatten().filter(|&&c| c).count() > 1 {
+            let is_new_best = match best.as_ref() {
+                None => true,
+                Some(prev) => biased_rd_cost < prev.best_rd_cost,
+            };
+            if is_new_best {
+                best = Some(PickInterModeResult {
+                    best_mode: candidate.best_mode,
+                    best_mv: candidate.best_mv,
+                    // P13 — store the biased RD so downstream comparisons
+                    // (intra-fallback gate, encode-breakout early exit) see
+                    // the same penalty libvpx applied (vp9_pickmode.c:2406).
+                    best_rd_cost: biased_rd_cost,
+                    best_distortion: candidate.best_distortion,
+                    partition_distortion: if picker_hadamard_only_enabled(params.rd_calibration) {
+                        candidate.ranking_distortion.min(u64::from(u32::MAX)) as u32
+                    } else {
+                        candidate.best_distortion
+                    },
+                    best_rate: candidate.best_rate,
+                    coef_rate: candidate.coef_rate,
+                    coef_dist: candidate.coef_dist,
+                    uv_rate: candidate.uv_rate,
+                    uv_dist: candidate.uv_dist,
+                    picked_interp_filter: candidate.picked_interp_filter,
+                    picked_tx_size: candidate.picked_tx_size,
+                    skip_txfm: candidate.skip_txfm,
+                    picked_ref_frame: ref_frame,
+                    picked_intra_mode: None,
+                    var_y: candidate.var_y,
+                    sse_y: candidate.sse_y,
+                    dct_eob_total: candidate.dct_eob_total,
+                    picker_skip: candidate.picker_skip,
+                    // Phase-2 option-A: set after the candidate loop from
+                    // the accumulated per-ref NEWMV search caches.
+                    newmv_search_last: None,
+                    newmv_search_golden: None,
+                    candidate_trace_id: 0,
+                });
+            }
+
+            // --- G4: encode breakout test ---
+            //
+            // After updating the best candidate, check if the prediction
+            // alone is good enough to skip residual coding entirely.
+            // When this fires, the mode loop breaks immediately -- no
+            // further candidates are evaluated, and the intra fallback
+            // is skipped.
+            //
+            // Port of `encode_breakout_test` (vp9_pickmode.c:933-1036).
+            //
+            // §10 — `scene_change_detected` gate (libvpx
+            // `vp9_pickmode.c:2415`): the encode-breakout test is suppressed
+            // during a scene change so the picker keeps evaluating
+            // candidates (a new scene typically needs NEWMV, not the zero-
+            // residual short-circuit).
+            if params.encode_breakout > 0
+                && !params.scene_change_detected
+                && let Some(ref b) = best
+                && is_new_best
+                && crate::mode_decision::model_rd::encode_breakout_test(
+                    b.var_y,
+                    b.sse_y,
+                    params.dequant_dc,
+                    params.dequant_ac,
+                    params.block_size,
+                    b.best_mv,
+                    params.encode_breakout,
+                )
+            {
+                break;
+            }
+
+            // G6 — early_term mode-loop exit (libvpx vp9_pickmode.c:2474-2478).
+            // When the large model detects a full skip on a block >= 32x32,
+            // exit after at least 2 candidates have been evaluated.
+            if candidate.early_term
+                && let Some(ref b) = best
+                && (b.best_rd_cost <= biased_rd_cost || is_new_best)
+            {
+                // At least 2 candidates evaluated (this one + previous best),
+                // and the current or previous best has early_term set.
+                // Only break if we're past the first evaluated candidate.
+                if mode_checked.iter().flatten().filter(|&&c| c).count() > 1 {
+                    break;
+                }
+            }
+
+            // Early-exit: if the best candidate so far is a perfect
+            // skip (zero RD cost or skip_txfm == AcDc detected via zero
+            // distortion + minimal rate), break early.
+            if let Some(ref b) = best
+                && b.best_rd_cost == 0
+            {
                 break;
             }
         }
-
-        // Early-exit: if the best candidate so far is a perfect
-        // skip (zero RD cost or skip_txfm == AcDc detected via zero
-        // distortion + minimal rate), break early.
-        if let Some(ref b) = best
-            && b.best_rd_cost == 0
-        {
-            break;
-        }
-    }
+    });
 
     // E13 diamond-search-quality oracle (diagnostic-only, env-gated).
     // The oracle measures NEWMV search and inter-mode RD rejection, so
@@ -3495,40 +3501,63 @@ fn evaluate_candidate_with_filter_set(
     lambda: u32,
     filter_set: &[InterpFilter],
 ) -> InterModeSearchResult {
+    CANDIDATE_PRED_SCRATCH.with_borrow_mut(|scratch| {
+        evaluate_candidate_with_filter_set_with_scratch(
+            params, mode, mv, ref_mv, lambda, filter_set, scratch,
+        )
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn evaluate_candidate_with_filter_set_with_scratch(
+    params: &InterModeSearchParams<'_>,
+    mode: InterMode,
+    mv: Mv,
+    ref_mv: Mv,
+    lambda: u32,
+    filter_set: &[InterpFilter],
+    scratch: &mut CandidatePredScratch,
+) -> InterModeSearchResult {
     if filter_set.len() == 1 {
-        evaluate_candidate_for_filter(params, mode, mv, ref_mv, lambda, filter_set[0])
+        evaluate_candidate_for_filter_with_scratch(
+            params,
+            mode,
+            mv,
+            ref_mv,
+            lambda,
+            filter_set[0],
+            scratch,
+        )
     } else {
-        CANDIDATE_PRED_SCRATCH.with_borrow_mut(|scratch| {
-            let CandidatePredScratch {
-                primary,
-                alternate,
-                chroma_u,
-                chroma_v,
-                round_trip,
-            } = &mut *scratch;
-            let filters: &[InterpFilter; 2] = filter_set
-                .try_into()
-                .expect("VP9 realtime filter search has exactly two filters");
-            let (filter, model, slot) =
-                select_interp_filter_by_luma_model(params, mv, lambda, filters, primary, alternate);
-            let winner_pred = match slot {
-                FilterPredictionSlot::Candidate => primary,
-                FilterPredictionSlot::Alternate => alternate,
-            };
-            evaluate_candidate_for_filter_with_pred(
-                params,
-                mode,
-                mv,
-                ref_mv,
-                lambda,
-                filter,
-                winner_pred,
-                round_trip,
-                chroma_u,
-                chroma_v,
-                Some(model),
-            )
-        })
+        let CandidatePredScratch {
+            primary,
+            alternate,
+            chroma_u,
+            chroma_v,
+            round_trip,
+        } = scratch;
+        let filters: &[InterpFilter; 2] = filter_set
+            .try_into()
+            .expect("VP9 realtime filter search has exactly two filters");
+        let (filter, model, slot) =
+            select_interp_filter_by_luma_model(params, mv, lambda, filters, primary, alternate);
+        let winner_pred = match slot {
+            FilterPredictionSlot::Candidate => primary,
+            FilterPredictionSlot::Alternate => alternate,
+        };
+        evaluate_candidate_for_filter_with_pred(
+            params,
+            mode,
+            mv,
+            ref_mv,
+            lambda,
+            filter,
+            winner_pred,
+            round_trip,
+            chroma_u,
+            chroma_v,
+            Some(model),
+        )
     }
 }
 
@@ -3536,6 +3565,7 @@ fn evaluate_candidate_with_filter_set(
 /// pre-F.5 `evaluate_candidate` body, with the filter parameter
 /// threaded into `build_inter_prediction` and the switchable-filter
 /// signalling rate added to the rate sum for non-default filters.
+#[cfg(test)]
 fn evaluate_candidate_for_filter(
     params: &InterModeSearchParams<'_>,
     mode: InterMode,
@@ -3545,17 +3575,31 @@ fn evaluate_candidate_for_filter(
     filter: InterpFilter,
 ) -> InterModeSearchResult {
     CANDIDATE_PRED_SCRATCH.with_borrow_mut(|scratch| {
-        let CandidatePredScratch {
-            primary,
-            chroma_u,
-            chroma_v,
-            round_trip,
-            ..
-        } = &mut *scratch;
-        evaluate_candidate_for_filter_with_pred(
-            params, mode, mv, ref_mv, lambda, filter, primary, round_trip, chroma_u, chroma_v, None,
+        evaluate_candidate_for_filter_with_scratch(
+            params, mode, mv, ref_mv, lambda, filter, scratch,
         )
     })
+}
+
+fn evaluate_candidate_for_filter_with_scratch(
+    params: &InterModeSearchParams<'_>,
+    mode: InterMode,
+    mv: Mv,
+    ref_mv: Mv,
+    lambda: u32,
+    filter: InterpFilter,
+    scratch: &mut CandidatePredScratch,
+) -> InterModeSearchResult {
+    let CandidatePredScratch {
+        primary,
+        chroma_u,
+        chroma_v,
+        round_trip,
+        ..
+    } = scratch;
+    evaluate_candidate_for_filter_with_pred(
+        params, mode, mv, ref_mv, lambda, filter, primary, round_trip, chroma_u, chroma_v, None,
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
