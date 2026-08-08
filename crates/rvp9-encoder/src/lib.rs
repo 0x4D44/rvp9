@@ -3417,6 +3417,151 @@ impl std::ops::IndexMut<usize> for InterPartitionGrid<'_> {
     }
 }
 
+const E3_DIAG_SAMPLE_LIMIT: usize = 40;
+
+/// Diagnostic counters and profiles produced while picking one inter row.
+///
+/// These values are deliberately separate from codec state. A compact row can
+/// transfer them with its result, and the coordinator can merge them in row
+/// order without sharing mutable diagnostic sinks between producers.
+#[derive(Default)]
+struct CompactInterRowDiagnostics {
+    diag_golden_picks: usize,
+    diag_last_picks: usize,
+    e3_samples: Vec<String>,
+    e3_win_counts: [usize; 4],
+    e3_total_leaves: usize,
+    e3_newmv_nonzero: usize,
+    e3_newmv_mag_sum: u64,
+    e3_newmv_mag_max: u32,
+    e3_newmv_best_dist: usize,
+    e3_newmv_best_dist_lost: usize,
+    e3_lost_mv_rate_sum: u64,
+    e3_lost_total_rate_sum: u64,
+    e3_lost_rd_gap_sum: i128,
+    rt_profile_descent_time: std::time::Duration,
+    rt_profile_final_pick_time: std::time::Duration,
+    rt_profile_emit_time: std::time::Duration,
+    rt_profile_final_leaves: usize,
+    rt_profile_picker_leaves: usize,
+    rt_profile_fallback_leaves: usize,
+    emit_profile_pred_time: std::time::Duration,
+    emit_profile_tx_select_time: std::time::Duration,
+    emit_profile_residual_time: std::time::Duration,
+    emit_profile_quant_time: std::time::Duration,
+    emit_profile_inverse_time: std::time::Duration,
+    emit_profile_coef_insert_time: std::time::Duration,
+    emit_profile_inter_leaves: usize,
+    emit_profile_tx_blocks: usize,
+    emit_profile_nonzero_tx_blocks: usize,
+    emit_profile_eob_sum: usize,
+    emit_profile_plane_tx_blocks: [usize; 3],
+    a4_profile_calls: [usize; rvp9_core::block::BLOCK_SIZES],
+    a4_profile_pick_time: [std::time::Duration; rvp9_core::block::BLOCK_SIZES],
+    a4_profile_committed: [usize; rvp9_core::block::BLOCK_SIZES],
+    a4_profile_same_pick: [usize; rvp9_core::block::BLOCK_SIZES],
+    a4_profile_rate_delta: [i64; rvp9_core::block::BLOCK_SIZES],
+    a4_profile_dist_delta: [i64; rvp9_core::block::BLOCK_SIZES],
+    a4_profile_coef_rate_delta: [i128; rvp9_core::block::BLOCK_SIZES],
+    a4_split_stats: rvp9_core::mode_decision::nonrd_partition::NonRdSplitStats,
+}
+
+impl CompactInterRowDiagnostics {
+    fn merge_from(&mut self, mut other: Self) {
+        self.diag_golden_picks += other.diag_golden_picks;
+        self.diag_last_picks += other.diag_last_picks;
+        if self.e3_samples.len() < E3_DIAG_SAMPLE_LIMIT {
+            let remaining = E3_DIAG_SAMPLE_LIMIT - self.e3_samples.len();
+            self.e3_samples.extend(
+                other
+                    .e3_samples
+                    .drain(..remaining.min(other.e3_samples.len())),
+            );
+        }
+        for (dst, src) in self.e3_win_counts.iter_mut().zip(other.e3_win_counts) {
+            *dst += src;
+        }
+        self.e3_total_leaves += other.e3_total_leaves;
+        self.e3_newmv_nonzero += other.e3_newmv_nonzero;
+        self.e3_newmv_mag_sum += other.e3_newmv_mag_sum;
+        self.e3_newmv_mag_max = self.e3_newmv_mag_max.max(other.e3_newmv_mag_max);
+        self.e3_newmv_best_dist += other.e3_newmv_best_dist;
+        self.e3_newmv_best_dist_lost += other.e3_newmv_best_dist_lost;
+        self.e3_lost_mv_rate_sum += other.e3_lost_mv_rate_sum;
+        self.e3_lost_total_rate_sum += other.e3_lost_total_rate_sum;
+        self.e3_lost_rd_gap_sum += other.e3_lost_rd_gap_sum;
+        self.rt_profile_descent_time += other.rt_profile_descent_time;
+        self.rt_profile_final_pick_time += other.rt_profile_final_pick_time;
+        self.rt_profile_emit_time += other.rt_profile_emit_time;
+        self.rt_profile_final_leaves += other.rt_profile_final_leaves;
+        self.rt_profile_picker_leaves += other.rt_profile_picker_leaves;
+        self.rt_profile_fallback_leaves += other.rt_profile_fallback_leaves;
+        self.emit_profile_pred_time += other.emit_profile_pred_time;
+        self.emit_profile_tx_select_time += other.emit_profile_tx_select_time;
+        self.emit_profile_residual_time += other.emit_profile_residual_time;
+        self.emit_profile_quant_time += other.emit_profile_quant_time;
+        self.emit_profile_inverse_time += other.emit_profile_inverse_time;
+        self.emit_profile_coef_insert_time += other.emit_profile_coef_insert_time;
+        self.emit_profile_inter_leaves += other.emit_profile_inter_leaves;
+        self.emit_profile_tx_blocks += other.emit_profile_tx_blocks;
+        self.emit_profile_nonzero_tx_blocks += other.emit_profile_nonzero_tx_blocks;
+        self.emit_profile_eob_sum += other.emit_profile_eob_sum;
+        for (dst, src) in self
+            .emit_profile_plane_tx_blocks
+            .iter_mut()
+            .zip(other.emit_profile_plane_tx_blocks)
+        {
+            *dst += src;
+        }
+        for (dst, src) in self.a4_profile_calls.iter_mut().zip(other.a4_profile_calls) {
+            *dst += src;
+        }
+        for (dst, src) in self
+            .a4_profile_pick_time
+            .iter_mut()
+            .zip(other.a4_profile_pick_time)
+        {
+            *dst += src;
+        }
+        for (dst, src) in self
+            .a4_profile_committed
+            .iter_mut()
+            .zip(other.a4_profile_committed)
+        {
+            *dst += src;
+        }
+        for (dst, src) in self
+            .a4_profile_same_pick
+            .iter_mut()
+            .zip(other.a4_profile_same_pick)
+        {
+            *dst += src;
+        }
+        for (dst, src) in self
+            .a4_profile_rate_delta
+            .iter_mut()
+            .zip(other.a4_profile_rate_delta)
+        {
+            *dst += src;
+        }
+        for (dst, src) in self
+            .a4_profile_dist_delta
+            .iter_mut()
+            .zip(other.a4_profile_dist_delta)
+        {
+            *dst += src;
+        }
+        for (dst, src) in self
+            .a4_profile_coef_rate_delta
+            .iter_mut()
+            .zip(other.a4_profile_coef_rate_delta)
+        {
+            *dst += src;
+        }
+        self.a4_split_stats.accumulate(&other.a4_split_stats);
+    }
+}
+
 struct CompactInterRowResult {
     job: crate::row_mt::RowJob,
     mi_col_start: usize,
@@ -3434,6 +3579,7 @@ struct CompactInterRowResult {
     rd_thresh_table: rvp9_core::mode_decision::rd_thresh::RdThreshTable,
     vbp_history: Option<Vec<rvp9_core::mode_decision::partition::FixedTreeHistoryEntry>>,
     emit_scratch: InterEmitScratch,
+    diagnostics: CompactInterRowDiagnostics,
 }
 
 impl CompactInterRowResult {
@@ -3450,7 +3596,13 @@ impl CompactInterRowResult {
         partitions: &mut [Vec<InterPartitionLeafDesc>],
         rd_thresh_tables: &mut [rvp9_core::mode_decision::rd_thresh::RdThreshTable],
         vbp_history: &mut Option<InterPartitionHistoryMut<'_>>,
-    ) -> (Vec<u8>, Vec<u8>, Vec<u8>, InterEmitScratch) {
+    ) -> (
+        Vec<u8>,
+        Vec<u8>,
+        Vec<u8>,
+        InterEmitScratch,
+        CompactInterRowDiagnostics,
+    ) {
         let tile_mi_cols = self.mi_col_end - self.mi_col_start;
         let compact = InterReconPlanes::new(
             (&mut self.recon_y, &mut self.recon_u, &mut self.recon_v),
@@ -3521,7 +3673,13 @@ impl CompactInterRowResult {
                 panic!("compact VBP row result has no history destination");
             }
         }
-        (self.recon_y, self.recon_u, self.recon_v, self.emit_scratch)
+        (
+            self.recon_y,
+            self.recon_u,
+            self.recon_v,
+            self.emit_scratch,
+            self.diagnostics,
+        )
     }
 }
 
@@ -5061,8 +5219,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         InterModeSearchParams, MvCandidates, PickInterModeParams, pick_inter_mode,
     };
     use rvp9_core::mode_decision::nonrd_partition::{
-        NonRdDescentParams, NonRdSplitStats, PartitionRdCandidate,
-        nonrd_pick_partition_with_pruners, variance_hint_bounds,
+        NonRdDescentParams, PartitionRdCandidate, nonrd_pick_partition_with_pruners,
+        variance_hint_bounds,
     };
     use rvp9_core::mode_decision::speed_features::{self as sf_mod};
     use rvp9_core::mv_search::int_pro_me::{
@@ -5497,8 +5655,6 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // A16 diagnostic: count GOLDEN ref-frame picks per inter frame when
     // RVP9_DIAG_GOLDEN_PICKS is set. Emitted as a single eprintln at
     // end of the SB loop below. Counts only non-skip leaves.
-    let mut diag_golden_picks: usize = 0;
-    let mut diag_last_picks: usize = 0;
     let diag_golden_enabled = env.diag_golden;
     // This diagnostic gate is consulted several times per leaf. Snapshot it
     // once per tile job instead of entering the process environment lock in
@@ -5521,9 +5677,6 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // A sample (first `E3_DIAG_SAMPLE_LIMIT`) of per-leaf rows is printed
     // verbatim; the rest is summarised at frame end.
     let e3_diag_enabled = env.e3_mvdiag;
-    const E3_DIAG_SAMPLE_LIMIT: usize = 40;
-    let mut e3_sample_printed: usize = 0;
-
     // S2/F.0.2 diagnostic flags, read once. The luma-EOB split is needed
     // by either diagnostic, but remains zero-cost in the hot emit TX walk
     // when both are disabled (the default).
@@ -5531,20 +5684,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     let f02_oracle_enabled = crate::f02_oracle::is_enabled();
     rvp9_core::mode_decision::inter::candidate_trace::reset(f02_oracle_enabled);
     // win counts indexed [ZERO, NEAREST, NEAR, NEW].
-    let mut e3_win_counts = [0usize; 4];
-    let mut e3_total_leaves: usize = 0;
-    let mut e3_newmv_nonzero: usize = 0; // NEWMV MV magnitude > 0
-    let mut e3_newmv_mag_sum: u64 = 0;
-    let mut e3_newmv_mag_max: u32 = 0;
-    // Leaves where NEWMV had strictly lowest distortion among the 4.
-    let mut e3_newmv_best_dist: usize = 0;
-    // ...of those, how many NEWMV nonetheless LOST the RD argmin.
-    let mut e3_newmv_best_dist_lost: usize = 0;
-    // Accumulated NEWMV cost decomposition over the "best-dist-but-lost"
-    // leaves: rate vs distortion shares + RD gap to the winner.
-    let mut e3_lost_mv_rate_sum: u64 = 0;
-    let mut e3_lost_total_rate_sum: u64 = 0;
-    let mut e3_lost_rd_gap_sum: i128 = 0;
+    // Row producers own these counters. The coordinator merges completed
+    // rows in syntax order before emitting any frame-level diagnostics.
+    let diagnostics_state = std::cell::RefCell::new(Some(CompactInterRowDiagnostics::default()));
 
     // A2.foreman - In-progress mi_grid for spatial MV-ref propagation
     // (H3' fix). The encoder walks leaves in raster order; right after
@@ -5637,12 +5779,6 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
 
     let rt_profile_enabled = env.rt_profile;
     let rt_profile_frame_start = std::time::Instant::now();
-    let mut rt_profile_descent_time = std::time::Duration::ZERO;
-    let mut rt_profile_final_pick_time = std::time::Duration::ZERO;
-    let mut rt_profile_emit_time = std::time::Duration::ZERO;
-    let mut rt_profile_final_leaves = 0usize;
-    let mut rt_profile_picker_leaves = 0usize;
-    let mut rt_profile_fallback_leaves = 0usize;
     // Exact pinned-libvpx cpu-used 7 variance-tree experiment. This stays
     // opt-in until the fixed-Q and product gates show a reproducible Pareto
     // improvement. The pure tree itself is differential-oracle exact; this
@@ -5691,29 +5827,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // small-frame quality gates untouched. `=0` restores the full descent.
     let rt_min_partition32 = env.flag_or(env.rt_min_partition32, rt_large_recovery);
     let emit_profile_enabled = env.emit_profile;
-    let mut emit_profile_pred_time = std::time::Duration::ZERO;
-    let mut emit_profile_tx_select_time = std::time::Duration::ZERO;
-    let mut emit_profile_residual_time = std::time::Duration::ZERO;
-    let mut emit_profile_quant_time = std::time::Duration::ZERO;
-    let mut emit_profile_inverse_time = std::time::Duration::ZERO;
-    let mut emit_profile_coef_insert_time = std::time::Duration::ZERO;
-    let mut emit_profile_inter_leaves = 0usize;
-    let mut emit_profile_tx_blocks = 0usize;
-    let mut emit_profile_nonzero_tx_blocks = 0usize;
-    let mut emit_profile_eob_sum = 0usize;
-    let mut emit_profile_plane_tx_blocks = [0usize; 3];
     let a4_profile_enabled = env.a4_profile;
     let variance_hint_dump_enabled = env.variance_hint_dump;
     let a4_rect_disable = env.a4_rect_disable;
     let a4_split_stats_enabled = env.a4_split_stats;
-    let mut a4_profile_calls = [0usize; rvp9_core::block::BLOCK_SIZES];
-    let mut a4_profile_pick_time = [std::time::Duration::ZERO; rvp9_core::block::BLOCK_SIZES];
-    let mut a4_profile_committed = [0usize; rvp9_core::block::BLOCK_SIZES];
-    let mut a4_profile_same_pick = [0usize; rvp9_core::block::BLOCK_SIZES];
-    let mut a4_profile_rate_delta = [0i64; rvp9_core::block::BLOCK_SIZES];
-    let mut a4_profile_dist_delta = [0i64; rvp9_core::block::BLOCK_SIZES];
-    let mut a4_profile_coef_rate_delta = [0i128; rvp9_core::block::BLOCK_SIZES];
-    let mut a4_split_stats = NonRdSplitStats::default();
     let rt_profile_phase2_reused_start = if rt_profile_enabled {
         crate::rdo::inter_dispatch::PHASE2_NEWMV_REUSED.load(std::sync::atomic::Ordering::Relaxed)
     } else {
@@ -5730,18 +5847,60 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     let rd_thresh_table_state: std::cell::RefCell<
         Option<rvp9_core::mode_decision::rd_thresh::RdThreshTable>,
     > = std::cell::RefCell::new(None);
-    let mut encode_job = |job: crate::row_mt::RowJob,
-                          recon_yuv_out: &mut InterReconPlanes<'_>,
-                          row_grids: &mut InterRowGrids<'_>,
-                          coef_source: &mut VecBackedInterCoefSource,
-                          recorded_coef_tile: &mut Option<RecordedCoefTile>,
-                          coef_record_bw: &mut BoolWriter<'_>,
-                          defer_coef_recording: bool,
-                          sb_partitions: &mut InterPartitionGrid<'_>| {
+    let encode_job = |job: crate::row_mt::RowJob,
+                      recon_yuv_out: &mut InterReconPlanes<'_>,
+                      row_grids: &mut InterRowGrids<'_>,
+                      coef_source: &mut VecBackedInterCoefSource,
+                      recorded_coef_tile: &mut Option<RecordedCoefTile>,
+                      coef_record_bw: &mut BoolWriter<'_>,
+                      defer_coef_recording: bool,
+                      sb_partitions: &mut InterPartitionGrid<'_>| {
         let mut inter_emit_scratch_state = inter_emit_scratch_state.borrow_mut();
         let inter_emit_scratch = inter_emit_scratch_state
             .as_mut()
             .expect("one row-owned emission scratch must be installed");
+        let mut diagnostics_state = diagnostics_state.borrow_mut();
+        let diagnostics = diagnostics_state
+            .as_mut()
+            .expect("one row-owned diagnostic state must be installed");
+        let diag_golden_picks = &mut diagnostics.diag_golden_picks;
+        let diag_last_picks = &mut diagnostics.diag_last_picks;
+        let e3_samples = &mut diagnostics.e3_samples;
+        let e3_win_counts = &mut diagnostics.e3_win_counts;
+        let e3_total_leaves = &mut diagnostics.e3_total_leaves;
+        let e3_newmv_nonzero = &mut diagnostics.e3_newmv_nonzero;
+        let e3_newmv_mag_sum = &mut diagnostics.e3_newmv_mag_sum;
+        let e3_newmv_mag_max = &mut diagnostics.e3_newmv_mag_max;
+        let e3_newmv_best_dist = &mut diagnostics.e3_newmv_best_dist;
+        let e3_newmv_best_dist_lost = &mut diagnostics.e3_newmv_best_dist_lost;
+        let e3_lost_mv_rate_sum = &mut diagnostics.e3_lost_mv_rate_sum;
+        let e3_lost_total_rate_sum = &mut diagnostics.e3_lost_total_rate_sum;
+        let e3_lost_rd_gap_sum = &mut diagnostics.e3_lost_rd_gap_sum;
+        let rt_profile_descent_time = &mut diagnostics.rt_profile_descent_time;
+        let rt_profile_final_pick_time = &mut diagnostics.rt_profile_final_pick_time;
+        let rt_profile_emit_time = &mut diagnostics.rt_profile_emit_time;
+        let rt_profile_final_leaves = &mut diagnostics.rt_profile_final_leaves;
+        let rt_profile_picker_leaves = &mut diagnostics.rt_profile_picker_leaves;
+        let rt_profile_fallback_leaves = &mut diagnostics.rt_profile_fallback_leaves;
+        let emit_profile_pred_time = &mut diagnostics.emit_profile_pred_time;
+        let emit_profile_tx_select_time = &mut diagnostics.emit_profile_tx_select_time;
+        let emit_profile_residual_time = &mut diagnostics.emit_profile_residual_time;
+        let emit_profile_quant_time = &mut diagnostics.emit_profile_quant_time;
+        let emit_profile_inverse_time = &mut diagnostics.emit_profile_inverse_time;
+        let emit_profile_coef_insert_time = &mut diagnostics.emit_profile_coef_insert_time;
+        let emit_profile_inter_leaves = &mut diagnostics.emit_profile_inter_leaves;
+        let emit_profile_tx_blocks = &mut diagnostics.emit_profile_tx_blocks;
+        let emit_profile_nonzero_tx_blocks = &mut diagnostics.emit_profile_nonzero_tx_blocks;
+        let emit_profile_eob_sum = &mut diagnostics.emit_profile_eob_sum;
+        let emit_profile_plane_tx_blocks = &mut diagnostics.emit_profile_plane_tx_blocks;
+        let a4_profile_calls = &mut diagnostics.a4_profile_calls;
+        let a4_profile_pick_time = &mut diagnostics.a4_profile_pick_time;
+        let a4_profile_committed = &mut diagnostics.a4_profile_committed;
+        let a4_profile_same_pick = &mut diagnostics.a4_profile_same_pick;
+        let a4_profile_rate_delta = &mut diagnostics.a4_profile_rate_delta;
+        let a4_profile_dist_delta = &mut diagnostics.a4_profile_dist_delta;
+        let a4_profile_coef_rate_delta = &mut diagnostics.a4_profile_coef_rate_delta;
+        let a4_split_stats = &mut diagnostics.a4_split_stats;
         let mut history_state = history_state.borrow_mut();
         let mut rd_thresh_table_state = rd_thresh_table_state.borrow_mut();
         let rd_thresh_table = rd_thresh_table_state
@@ -6922,12 +7081,12 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     });
                 }
                 if let Some(t0) = rt_profile_descent_start {
-                    rt_profile_descent_time += t0.elapsed();
+                    *rt_profile_descent_time += t0.elapsed();
                 }
             }
 
             for leaf_idx in 0..sb_partitions[sb_idx].len() {
-                rt_profile_final_leaves += 1;
+                *rt_profile_final_leaves += 1;
                 let (leaf_mi_row, leaf_mi_col, leaf_bsize) = {
                     let leaf = &sb_partitions[sb_idx][leaf_idx];
                     (
@@ -6957,7 +7116,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 );
 
                 if !picker_supported {
-                    rt_profile_fallback_leaves += 1;
+                    *rt_profile_fallback_leaves += 1;
                     sb_partitions[sb_idx][leaf_idx].picked_mode = InterMode::ZeroMv;
                     sb_partitions[sb_idx][leaf_idx].picked_mv = Mv::ZERO;
                     sb_partitions[sb_idx][leaf_idx].skip = true;
@@ -7079,7 +7238,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 let row_min = mv_limits.row_min;
                 let row_max = mv_limits.row_max;
                 if col_min > col_max || row_min > row_max {
-                    rt_profile_fallback_leaves += 1;
+                    *rt_profile_fallback_leaves += 1;
                     sb_partitions[sb_idx][leaf_idx].picked_mode = InterMode::ZeroMv;
                     sb_partitions[sb_idx][leaf_idx].picked_mv = Mv::ZERO;
                     sb_partitions[sb_idx][leaf_idx].skip = true;
@@ -7905,8 +8064,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     (None, None) => pick_inter_mode(&pick_params),
                 };
                 if let Some(t0) = rt_profile_final_pick_start {
-                    rt_profile_final_pick_time += t0.elapsed();
-                    rt_profile_picker_leaves += 1;
+                    *rt_profile_final_pick_time += t0.elapsed();
+                    *rt_profile_picker_leaves += 1;
                 }
                 if a4_profile_enabled
                     && let Some((cached, _, _)) = descent_pick_cache
@@ -8153,7 +8312,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     let all =
                         rvp9_core::mode_decision::inter::pick_inter_mode_luma_all_costs(&e3_params);
                     // all = [ZERO, NEAREST, NEAR, NEW].
-                    e3_total_leaves += 1;
+                    *e3_total_leaves += 1;
                     // RD argmin (mirror the picker's own argmin).
                     let mut win_idx = 0usize;
                     for i in 1..4 {
@@ -8168,10 +8327,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         + i32::from(new.best_mv.col).abs())
                         as u32;
                     if new_mag > 0 {
-                        e3_newmv_nonzero += 1;
+                        *e3_newmv_nonzero += 1;
                     }
-                    e3_newmv_mag_sum += u64::from(new_mag);
-                    e3_newmv_mag_max = e3_newmv_mag_max.max(new_mag);
+                    *e3_newmv_mag_sum += u64::from(new_mag);
+                    *e3_newmv_mag_max = (*e3_newmv_mag_max).max(new_mag);
 
                     // Did NEWMV have the strictly-lowest distortion?
                     let new_best_dist = all
@@ -8183,9 +8342,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             .enumerate()
                             .any(|(i, c)| i != 3 && new.best_distortion < c.best_distortion);
                     if new_best_dist {
-                        e3_newmv_best_dist += 1;
+                        *e3_newmv_best_dist += 1;
                         if win_idx != 3 {
-                            e3_newmv_best_dist_lost += 1;
+                            *e3_newmv_best_dist_lost += 1;
                             // Decompose NEWMV's rate into mode + mv rate.
                             // mv_rate = ROUND_POWER_OF_TWO(mv_cost*108, 7)
                             // relative to mvc_safe.nearest (the ref MV).
@@ -8195,53 +8354,49 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                 rvp9_core::cost::mv_cost::mv_cost(diff_row, diff_col, mv_costs)
                                     .max(0) as u64;
                             let mv_rate = (raw * 108 + 64) >> 7;
-                            e3_lost_mv_rate_sum += mv_rate;
-                            e3_lost_total_rate_sum += u64::from(new.best_rate);
+                            *e3_lost_mv_rate_sum += mv_rate;
+                            *e3_lost_total_rate_sum += u64::from(new.best_rate);
                             let gap = i128::from(new.best_rd_cost)
                                 - i128::from(all[win_idx].best_rd_cost);
-                            e3_lost_rd_gap_sum += gap;
+                            *e3_lost_rd_gap_sum += gap;
                         }
                     }
 
-                    if e3_sample_printed < E3_DIAG_SAMPLE_LIMIT {
-                        e3_sample_printed += 1;
-                        #[allow(clippy::print_stderr)]
-                        {
-                            let names = ["ZERO", "NEAREST", "NEAR", "NEW"];
-                            eprintln!(
-                                "E3 leaf px=({},{}) bs={:?} q={} nearest=({},{}) newmv=({},{}) mag={} | \
-                                 ZERO[rd={} d={} r={}] NEAREST[rd={} d={} r={}] NEAR[rd={} d={} r={}] NEW[rd={} d={} r={}] WIN={}",
-                                leaf_px_x,
-                                leaf_px_y,
-                                leaf_bsize,
-                                leaf_qindex,
-                                mvc_safe.nearest.row,
-                                mvc_safe.nearest.col,
-                                new.best_mv.row,
-                                new.best_mv.col,
-                                new_mag,
-                                all[0].best_rd_cost,
-                                all[0].best_distortion,
-                                all[0].best_rate,
-                                all[1].best_rd_cost,
-                                all[1].best_distortion,
-                                all[1].best_rate,
-                                all[2].best_rd_cost,
-                                all[2].best_distortion,
-                                all[2].best_rate,
-                                all[3].best_rd_cost,
-                                all[3].best_distortion,
-                                all[3].best_rate,
-                                names[win_idx],
-                            );
-                        }
+                    if e3_samples.len() < E3_DIAG_SAMPLE_LIMIT {
+                        let names = ["ZERO", "NEAREST", "NEAR", "NEW"];
+                        e3_samples.push(format!(
+                            "E3 leaf px=({},{}) bs={:?} q={} nearest=({},{}) newmv=({},{}) mag={} | \
+                             ZERO[rd={} d={} r={}] NEAREST[rd={} d={} r={}] NEAR[rd={} d={} r={}] NEW[rd={} d={} r={}] WIN={}",
+                            leaf_px_x,
+                            leaf_px_y,
+                            leaf_bsize,
+                            leaf_qindex,
+                            mvc_safe.nearest.row,
+                            mvc_safe.nearest.col,
+                            new.best_mv.row,
+                            new.best_mv.col,
+                            new_mag,
+                            all[0].best_rd_cost,
+                            all[0].best_distortion,
+                            all[0].best_rate,
+                            all[1].best_rd_cost,
+                            all[1].best_distortion,
+                            all[1].best_rate,
+                            all[2].best_rd_cost,
+                            all[2].best_distortion,
+                            all[2].best_rate,
+                            all[3].best_rd_cost,
+                            all[3].best_distortion,
+                            all[3].best_rate,
+                            names[win_idx],
+                        ));
                     }
                 }
 
                 if diag_golden_enabled {
                     match picked_ref {
-                        RefFrame::GoldenFrame => diag_golden_picks += 1,
-                        _ => diag_last_picks += 1,
+                        RefFrame::GoldenFrame => *diag_golden_picks += 1,
+                        _ => *diag_last_picks += 1,
                     }
                 }
 
@@ -8581,7 +8736,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     // exact variance-tree diagnostic below redecides only the
                     // measured TX8/TX16 leaf class.
                     if emit_profile_enabled {
-                        emit_profile_inter_leaves += 1;
+                        *emit_profile_inter_leaves += 1;
                     }
                     let mut chosen_luma_tx =
                         realtime_emit_luma_tx_size(rt_emit_max_tx, leaf_bsize, pick.picked_tx_size);
@@ -8732,7 +8887,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             );
                         }
                         if let Some(t0) = emit_pred_start {
-                            emit_profile_pred_time += t0.elapsed();
+                            *emit_profile_pred_time += t0.elapsed();
                         }
                         let recon_layout = recon_plane.layout;
                         let (recon_plane_px_x, recon_plane_px_y) = recon_layout
@@ -8777,7 +8932,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                 scratch: inter_emit_scratch,
                             });
                             if let Some(t0) = emit_tx_select_start {
-                                emit_profile_tx_select_time += t0.elapsed();
+                                *emit_profile_tx_select_time += t0.elapsed();
                             }
                         }
                         let plane_tx = if plane == 0 {
@@ -8836,7 +8991,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                 // Residual = input - pred. `recon_plane`
                                 // currently holds the MC prediction.
                                 if emit_profile_enabled {
-                                    emit_profile_tx_blocks += 1;
+                                    *emit_profile_tx_blocks += 1;
                                     emit_profile_plane_tx_blocks[plane] += 1;
                                 }
                                 let residual_len = tx_side * tx_side;
@@ -8905,7 +9060,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                             nonzero
                                         };
                                         if let Some(t0) = emit_residual_start {
-                                            emit_profile_residual_time += t0.elapsed();
+                                            *emit_profile_residual_time += t0.elapsed();
                                         }
 
                                         // E9 DIAG — tap the Y-plane prediction residual
@@ -8951,7 +9106,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                                 0,
                                             );
                                             if let Some(t0) = emit_coef_insert_start {
-                                                emit_profile_coef_insert_time += t0.elapsed();
+                                                *emit_profile_coef_insert_time += t0.elapsed();
                                             }
                                             return 0;
                                         }
@@ -8974,7 +9129,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                             rt_quant_fp,
                                             |qcoeff, dqcoeff, eob| {
                                                 if let Some(t0) = emit_quant_start {
-                                                    emit_profile_quant_time += t0.elapsed();
+                                                    *emit_profile_quant_time += t0.elapsed();
                                                 }
                                                 let emit_inverse_start =
                                                     if emit_profile_enabled && eob > 0 {
@@ -8992,7 +9147,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                                     );
                                                 }
                                                 if let Some(t0) = emit_inverse_start {
-                                                    emit_profile_inverse_time += t0.elapsed();
+                                                    *emit_profile_inverse_time += t0.elapsed();
                                                 }
                                                 let emit_coef_insert_start = emit_profile_enabled
                                                     .then(std::time::Instant::now);
@@ -9006,7 +9161,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                                     eob,
                                                 );
                                                 if let Some(t0) = emit_coef_insert_start {
-                                                    emit_profile_coef_insert_time += t0.elapsed();
+                                                    *emit_profile_coef_insert_time += t0.elapsed();
                                                 }
                                                 eob
                                             },
@@ -9014,9 +9169,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                     },
                                 );
                                 if emit_profile_enabled {
-                                    emit_profile_eob_sum += eob_usize;
+                                    *emit_profile_eob_sum += eob_usize;
                                     if eob_usize > 0 {
-                                        emit_profile_nonzero_tx_blocks += 1;
+                                        *emit_profile_nonzero_tx_blocks += 1;
                                     }
                                 }
 
@@ -9248,7 +9403,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 // ref-aware).
                 row_grids.splat_final(leaf_mi_row, leaf_mi_col, sb_partitions[sb_idx][leaf_idx]);
                 if let Some(t0) = rt_profile_emit_start {
-                    rt_profile_emit_time += t0.elapsed();
+                    *rt_profile_emit_time += t0.elapsed();
                 }
             }
         }
@@ -9265,6 +9420,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
             );
         }
     };
+    let mut frame_diagnostics = CompactInterRowDiagnostics::default();
     let compact_recon_rows =
         env.compact_recon_rows_enabled() && recon_layout == InterReconLayout::full(w, h);
     if compact_recon_rows {
@@ -9390,6 +9546,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 );
                 compact_grids.into_simulation_grid()
             };
+            let row_diagnostics = diagnostics_state
+                .replace(None)
+                .expect("compact row must return its diagnostic state");
             let row_emit_scratch = inter_emit_scratch_state
                 .replace(None)
                 .expect("compact row must return its emission scratch");
@@ -9401,7 +9560,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
             let row_rd_thresh_table = rd_thresh_table_state
                 .replace(None)
                 .expect("compact row must return its RD threshold table");
-            let (merged_y, merged_u, merged_v, emit_scratch) = CompactInterRowResult {
+            let (merged_y, merged_u, merged_v, emit_scratch, diagnostics) = CompactInterRowResult {
                 job,
                 mi_col_start: bounds.mi_col_start,
                 mi_col_end: bounds.mi_col_end,
@@ -9418,6 +9577,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 rd_thresh_table: row_rd_thresh_table,
                 vbp_history,
                 emit_scratch: row_emit_scratch,
+                diagnostics: row_diagnostics,
             }
             .merge_into(
                 w,
@@ -9435,6 +9595,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
             compact_u = merged_u;
             compact_v = merged_v;
             inter_emit_scratch_state.replace(Some(emit_scratch));
+            frame_diagnostics.merge_from(diagnostics);
+            diagnostics_state.replace(Some(CompactInterRowDiagnostics::default()));
         }
     } else {
         let mut recon_yuv_out =
@@ -9493,10 +9655,17 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
             debug_assert_eq!(row_context.remaining_jobs(), 0);
         }
     }
+    if !compact_recon_rows {
+        frame_diagnostics = diagnostics_state
+            .into_inner()
+            .expect("full inter path must return its diagnostic state");
+    }
 
     if rt_profile_enabled {
         let total = rt_profile_frame_start.elapsed();
-        let accounted = rt_profile_descent_time + rt_profile_final_pick_time + rt_profile_emit_time;
+        let accounted = frame_diagnostics.rt_profile_descent_time
+            + frame_diagnostics.rt_profile_final_pick_time
+            + frame_diagnostics.rt_profile_emit_time;
         let other = total.saturating_sub(accounted);
         let reused = crate::rdo::inter_dispatch::PHASE2_NEWMV_REUSED
             .load(std::sync::atomic::Ordering::Relaxed)
@@ -9510,13 +9679,13 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
             eprintln!(
                 "[RT_PROFILE] total={:.2}ms descent={:.2}ms final_pick={:.2}ms emit={:.2}ms other={:.2}ms leaves={} picker_leaves={} fallback_leaves={} phase2_reused={} phase2_fresh={}",
                 ms(total),
-                ms(rt_profile_descent_time),
-                ms(rt_profile_final_pick_time),
-                ms(rt_profile_emit_time),
+                ms(frame_diagnostics.rt_profile_descent_time),
+                ms(frame_diagnostics.rt_profile_final_pick_time),
+                ms(frame_diagnostics.rt_profile_emit_time),
                 ms(other),
-                rt_profile_final_leaves,
-                rt_profile_picker_leaves,
-                rt_profile_fallback_leaves,
+                frame_diagnostics.rt_profile_final_leaves,
+                frame_diagnostics.rt_profile_picker_leaves,
+                frame_diagnostics.rt_profile_fallback_leaves,
                 reused,
                 fresh,
             );
@@ -9528,19 +9697,19 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         {
             eprintln!(
                 "[EMIT_PROFILE] inter_leaves={} tx_blocks={} y_tx={} u_tx={} v_tx={} nonzero_tx={} eob_sum={} pred={:.2}ms tx_select={:.2}ms residual={:.2}ms quant={:.2}ms inverse={:.2}ms coef_insert={:.2}ms",
-                emit_profile_inter_leaves,
-                emit_profile_tx_blocks,
-                emit_profile_plane_tx_blocks[0],
-                emit_profile_plane_tx_blocks[1],
-                emit_profile_plane_tx_blocks[2],
-                emit_profile_nonzero_tx_blocks,
-                emit_profile_eob_sum,
-                ms(emit_profile_pred_time),
-                ms(emit_profile_tx_select_time),
-                ms(emit_profile_residual_time),
-                ms(emit_profile_quant_time),
-                ms(emit_profile_inverse_time),
-                ms(emit_profile_coef_insert_time),
+                frame_diagnostics.emit_profile_inter_leaves,
+                frame_diagnostics.emit_profile_tx_blocks,
+                frame_diagnostics.emit_profile_plane_tx_blocks[0],
+                frame_diagnostics.emit_profile_plane_tx_blocks[1],
+                frame_diagnostics.emit_profile_plane_tx_blocks[2],
+                frame_diagnostics.emit_profile_nonzero_tx_blocks,
+                frame_diagnostics.emit_profile_eob_sum,
+                ms(frame_diagnostics.emit_profile_pred_time),
+                ms(frame_diagnostics.emit_profile_tx_select_time),
+                ms(frame_diagnostics.emit_profile_residual_time),
+                ms(frame_diagnostics.emit_profile_quant_time),
+                ms(frame_diagnostics.emit_profile_inverse_time),
+                ms(frame_diagnostics.emit_profile_coef_insert_time),
             );
         }
     }
@@ -9551,11 +9720,12 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         ];
         let mut parts = Vec::new();
         let mut committed_parts = Vec::new();
-        let total_time = a4_profile_pick_time
+        let total_time = frame_diagnostics
+            .a4_profile_pick_time
             .iter()
             .copied()
             .fold(std::time::Duration::ZERO, |acc, d| acc + d);
-        for (idx, &calls) in a4_profile_calls.iter().enumerate() {
+        for (idx, &calls) in frame_diagnostics.a4_profile_calls.iter().enumerate() {
             if calls == 0 {
                 continue;
             }
@@ -9563,18 +9733,18 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 "{}={}({:.2}ms)",
                 labels[idx],
                 calls,
-                a4_profile_pick_time[idx].as_secs_f64() * 1_000.0,
+                frame_diagnostics.a4_profile_pick_time[idx].as_secs_f64() * 1_000.0,
             ));
-            let committed = a4_profile_committed[idx];
+            let committed = frame_diagnostics.a4_profile_committed[idx];
             if committed > 0 {
                 committed_parts.push(format!(
                     "{}={} same={} d_rate={:.1} d_dist={:.1} d_coef_rate={:.1}",
                     labels[idx],
                     committed,
-                    a4_profile_same_pick[idx],
-                    a4_profile_rate_delta[idx] as f64 / committed as f64,
-                    a4_profile_dist_delta[idx] as f64 / committed as f64,
-                    a4_profile_coef_rate_delta[idx] as f64 / committed as f64,
+                    frame_diagnostics.a4_profile_same_pick[idx],
+                    frame_diagnostics.a4_profile_rate_delta[idx] as f64 / committed as f64,
+                    frame_diagnostics.a4_profile_dist_delta[idx] as f64 / committed as f64,
+                    frame_diagnostics.a4_profile_coef_rate_delta[idx] as f64 / committed as f64,
                 ));
             }
         }
@@ -9636,6 +9806,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     }
 
     if a4_split_stats_enabled {
+        let a4_split_stats = &frame_diagnostics.a4_split_stats;
         let comparable =
             a4_split_stats.block16_split_beats_none + a4_split_stats.block16_split_loses_to_none;
         let avg_margin = if comparable == 0 {
@@ -9685,7 +9856,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         }
     }
 
-    stage4a_split_stats_out.accumulate(&a4_split_stats);
+    stage4a_split_stats_out.accumulate(&frame_diagnostics.a4_split_stats);
 
     // Phase A (`RVP9_P8_STATS`) — per-frame partition-size distribution
     // over the final leaf list (counts leaves, not area). Reports the
@@ -9721,14 +9892,14 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     if diag_golden_enabled {
         #[allow(clippy::print_stderr)]
         {
-            let total = diag_golden_picks + diag_last_picks;
+            let total = frame_diagnostics.diag_golden_picks + frame_diagnostics.diag_last_picks;
             eprintln!(
                 "[A16-golden-picks] last={} golden={} total={} golden_pct={:.1}",
-                diag_last_picks,
-                diag_golden_picks,
+                frame_diagnostics.diag_last_picks,
+                frame_diagnostics.diag_golden_picks,
                 total,
                 if total > 0 {
-                    100.0 * diag_golden_picks as f64 / total as f64
+                    100.0 * frame_diagnostics.diag_golden_picks as f64 / total as f64
                 } else {
                     0.0
                 },
@@ -9739,36 +9910,42 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     if e3_diag_enabled {
         #[allow(clippy::print_stderr)]
         {
-            let n = e3_total_leaves.max(1);
+            for sample in &frame_diagnostics.e3_samples {
+                eprintln!("{sample}");
+            }
+            let n = frame_diagnostics.e3_total_leaves.max(1);
             eprintln!(
                 "[E3-mvdiag] frame summary: leaves={} | RD-win: ZERO={} NEAREST={} NEAR={} NEW={} (NEW {:.1}%) | \
                  newmv_nonzero_mv={} ({:.1}%) avg_mag={:.1} max_mag={} | \
                  newmv_best_dist={} of_those_lost_rd={} | \
                  lost-leaf avg: mv_rate={} total_rate={} rd_gap={}",
-                e3_total_leaves,
-                e3_win_counts[0],
-                e3_win_counts[1],
-                e3_win_counts[2],
-                e3_win_counts[3],
-                100.0 * e3_win_counts[3] as f64 / n as f64,
-                e3_newmv_nonzero,
-                100.0 * e3_newmv_nonzero as f64 / n as f64,
-                e3_newmv_mag_sum as f64 / n as f64,
-                e3_newmv_mag_max,
-                e3_newmv_best_dist,
-                e3_newmv_best_dist_lost,
-                if e3_newmv_best_dist_lost > 0 {
-                    e3_lost_mv_rate_sum / e3_newmv_best_dist_lost as u64
+                frame_diagnostics.e3_total_leaves,
+                frame_diagnostics.e3_win_counts[0],
+                frame_diagnostics.e3_win_counts[1],
+                frame_diagnostics.e3_win_counts[2],
+                frame_diagnostics.e3_win_counts[3],
+                100.0 * frame_diagnostics.e3_win_counts[3] as f64 / n as f64,
+                frame_diagnostics.e3_newmv_nonzero,
+                100.0 * frame_diagnostics.e3_newmv_nonzero as f64 / n as f64,
+                frame_diagnostics.e3_newmv_mag_sum as f64 / n as f64,
+                frame_diagnostics.e3_newmv_mag_max,
+                frame_diagnostics.e3_newmv_best_dist,
+                frame_diagnostics.e3_newmv_best_dist_lost,
+                if frame_diagnostics.e3_newmv_best_dist_lost > 0 {
+                    frame_diagnostics.e3_lost_mv_rate_sum
+                        / frame_diagnostics.e3_newmv_best_dist_lost as u64
                 } else {
                     0
                 },
-                if e3_newmv_best_dist_lost > 0 {
-                    e3_lost_total_rate_sum / e3_newmv_best_dist_lost as u64
+                if frame_diagnostics.e3_newmv_best_dist_lost > 0 {
+                    frame_diagnostics.e3_lost_total_rate_sum
+                        / frame_diagnostics.e3_newmv_best_dist_lost as u64
                 } else {
                     0
                 },
-                if e3_newmv_best_dist_lost > 0 {
-                    e3_lost_rd_gap_sum / e3_newmv_best_dist_lost as i128
+                if frame_diagnostics.e3_newmv_best_dist_lost > 0 {
+                    frame_diagnostics.e3_lost_rd_gap_sum
+                        / frame_diagnostics.e3_newmv_best_dist_lost as i128
                 } else {
                     0
                 },
@@ -11550,6 +11727,39 @@ mod tests {
             slot.borrow().as_ref().expect("scratch returned").residual[0],
             17
         );
+    }
+
+    #[test]
+    fn compact_row_diagnostics_merge_is_bounded_and_additive() {
+        let mut first = CompactInterRowDiagnostics {
+            diag_last_picks: 3,
+            ..CompactInterRowDiagnostics::default()
+        };
+        first.e3_win_counts[0] = 2;
+        first.e3_samples.push("row-0".to_string());
+        first.a4_profile_calls[6] = 4;
+        first.a4_split_stats.block16_attempts = 5;
+
+        let mut second = CompactInterRowDiagnostics {
+            diag_golden_picks: 7,
+            ..CompactInterRowDiagnostics::default()
+        };
+        second.e3_win_counts[3] = 6;
+        second
+            .e3_samples
+            .extend((0..E3_DIAG_SAMPLE_LIMIT).map(|index| format!("row-1-{index}")));
+        second.a4_profile_calls[6] = 8;
+        second.a4_split_stats.block16_attempts = 9;
+
+        first.merge_from(second);
+
+        assert_eq!(first.diag_last_picks, 3);
+        assert_eq!(first.diag_golden_picks, 7);
+        assert_eq!(first.e3_win_counts, [2, 0, 0, 6]);
+        assert_eq!(first.e3_samples.len(), E3_DIAG_SAMPLE_LIMIT);
+        assert_eq!(first.e3_samples[0], "row-0");
+        assert_eq!(first.a4_profile_calls[6], 12);
+        assert_eq!(first.a4_split_stats.block16_attempts, 14);
     }
 
     #[test]
