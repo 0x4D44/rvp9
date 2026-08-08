@@ -226,7 +226,9 @@ impl RateControl {
         //   max_frame_bandwidth =
         //       max(max(MBs * MAX_MB_RATE, MAXIMUM_FRAME_BANDWIDTH), vbr_max_bits)
         // with `MAX_MB_RATE = 250`, `MAXIMUM_FRAME_BANDWIDTH = 2_000_000`,
-        // and the 1-pass `two_pass_vbrmax_section` default of 400 (== 4x avg).
+        // and libvpx's `two_pass_vbrmax_section` default of 2000 (== 20x avg)
+        // for VBR. Keep the established 4x ceiling for other modes while this
+        // source-faithful one-pass VBR correction is measured in isolation.
         //
         // PREVIOUS rvp9 DIVERGENCE: `max_frame_bandwidth = 4 * avg` only.
         // That starved the keyframe — the iframe target clamp
@@ -237,8 +239,14 @@ impl RateControl {
         // grow ~5x, matching the reference (E6 keyframe-boost fix).
         const MAX_MB_RATE: u64 = 250;
         const MAXIMUM_FRAME_BANDWIDTH: u64 = 2_000_000;
-        const TWO_PASS_VBRMAX_SECTION: u64 = 400;
-        let vbr_max_bits = u64::from(avg_frame_bandwidth) * TWO_PASS_VBRMAX_SECTION / 100;
+        const DEFAULT_MAX_SECTION: u64 = 400;
+        const VBR_MAX_SECTION: u64 = 2000;
+        let max_section = if config.rc_mode == super::RcMode::Vbr {
+            VBR_MAX_SECTION
+        } else {
+            DEFAULT_MAX_SECTION
+        };
+        let vbr_max_bits = u64::from(avg_frame_bandwidth) * max_section / 100;
         let mb_rate_bits = u64::from(config.mbs()) * MAX_MB_RATE;
         let max_frame_bandwidth = mb_rate_bits
             .max(MAXIMUM_FRAME_BANDWIDTH)
@@ -547,6 +555,20 @@ mod tests {
         // Sanity on derived bandwidths.
         assert!(rc.avg_frame_bandwidth > 0);
         assert!(rc.max_frame_bandwidth >= rc.avg_frame_bandwidth);
+    }
+
+    #[test]
+    fn one_pass_vbr_uses_libvpx_default_max_section() {
+        use super::super::RcMode;
+        let config = RateControlConfig {
+            rc_mode: RcMode::Vbr,
+            target_bitrate_bps: 6_000_000,
+            framerate: 30.0,
+            ..RateControlConfig::default()
+        };
+        let rc = RateControl::new(config);
+        assert_eq!(rc.avg_frame_bandwidth, 200_000);
+        assert_eq!(rc.max_frame_bandwidth, 4_000_000);
     }
 
     #[test]
