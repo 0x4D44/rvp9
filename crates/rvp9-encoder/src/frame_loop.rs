@@ -207,10 +207,33 @@ pub use rvp9_core::mode_decision::speed_features::Deadline;
 // relying on a permanent, mode-wide multiplier.
 const VBR_BITS_PER_MB_MULTIPLIER_DEFAULT: f64 = 1.0;
 
+// libvpx's one-pass VBR path uses a much longer leaky bucket than CBR:
+// `vp9_cx_iface.c::set_encoder_config` selects 240 s capacity and 60 s
+// starting/optimal fullness whenever `rc_end_usage == VPX_VBR`.
+const VBR_BUFFER_SIZE_MS: u32 = 240_000;
+const VBR_STARTING_BUFFER_MS: u32 = 60_000;
+const VBR_OPTIMAL_BUFFER_MS: u32 = 60_000;
+
 fn default_bits_per_mb_multiplier(rc_mode: RcMode, base_default: f64) -> f64 {
     match rc_mode {
         RcMode::Vbr => VBR_BITS_PER_MB_MULTIPLIER_DEFAULT,
         _ => base_default,
+    }
+}
+
+fn rate_control_buffer_defaults(rc_mode: RcMode, defaults: &RateControlConfig) -> (u32, u32, u32) {
+    if matches!(rc_mode, RcMode::Vbr) {
+        (
+            VBR_BUFFER_SIZE_MS,
+            VBR_STARTING_BUFFER_MS,
+            VBR_OPTIMAL_BUFFER_MS,
+        )
+    } else {
+        (
+            defaults.buffer_size_ms,
+            defaults.starting_buffer_ms,
+            defaults.optimal_buffer_ms,
+        )
     }
 }
 
@@ -510,6 +533,8 @@ impl EncoderConfig {
     /// buffer geometry (6 s buffer, 4 s starting, 5 s optimal).
     fn to_rate_control_config(self) -> RateControlConfig {
         let defaults = RateControlConfig::default();
+        let (buffer_size_ms, starting_buffer_ms, optimal_buffer_ms) =
+            rate_control_buffer_defaults(self.rc_mode, &defaults);
         // A10 experiment hook — let test harnesses override the
         // `bits_per_mb_multiplier` knob without plumbing a new public
         // field through every caller. Env var
@@ -530,6 +555,9 @@ impl EncoderConfig {
             gop_length: self.gop_length,
             frame_width: self.width,
             frame_height: self.height,
+            buffer_size_ms,
+            starting_buffer_ms,
+            optimal_buffer_ms,
             bits_per_mb_multiplier,
             // Re-audit pass 2 #7 follow-up: thread the user's
             // `--min-q` / `--max-q` selection through to the rate
@@ -11070,6 +11098,23 @@ mod tests {
         assert_eq!(
             default_bits_per_mb_multiplier(RcMode::VbrTwoPass, base),
             base
+        );
+    }
+
+    #[test]
+    fn vbr_uses_libvpx_long_buffer_defaults() {
+        let defaults = RateControlConfig::default();
+        assert_eq!(
+            rate_control_buffer_defaults(RcMode::Cbr, &defaults),
+            (6000, 4000, 5000)
+        );
+        assert_eq!(
+            rate_control_buffer_defaults(RcMode::Vbr, &defaults),
+            (
+                VBR_BUFFER_SIZE_MS,
+                VBR_STARTING_BUFFER_MS,
+                VBR_OPTIMAL_BUFFER_MS
+            )
         );
     }
 
