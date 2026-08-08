@@ -4439,3 +4439,31 @@ out a material local slowdown but is not final quiet-host speed evidence.
 **Future plan:** remeasure on a quiet host, then test the same source-faithful
 policy independently for cpu-used 6/8, CBR, AQ, denoiser, and SVC before
 expanding its default scope.
+
+### 2026-08-08 — Restore GOLDEN in the default A4 speculative proxy
+
+**Where:** `rvp9_encoder::InterEncodeEnv::descent_disable_golden`.
+
+**What libvpx does:** the realtime partition decision keeps its normal
+LAST/GOLDEN reference context available; reference pruning is a separate
+speed-feature decision, not a universal partition-proxy rule.
+
+**What rvp9 does:** the A4 proxy now keeps GOLDEN by default, matching the
+final picker’s reference set. `RVP9_A4_DESCENT_DISABLE_GOLDEN=1` preserves the
+previous LAST-only proxy as a diagnostic speed override; the final picker is
+unchanged in either case.
+
+**Evidence:** on the three 1920x1080 60-frame CPU7 VBR-2500 clips, the default
+LAST-only proxy produced 956,293 / 1,139,663 / 984,674 bytes and 35.0214 /
+27.6011 / 34.8240 dB. The GOLDEN-enabled proxy produced 945,169 / 1,137,581 /
+992,878 bytes and 35.0483 / 27.5897 / 34.8931 dB. These are matched-bitrate
+diagnostics, not the final BD-rate gate.
+
+Twelve paired quiet-host runs against pinned vpxenc v1.14.1 under the same
+four-thread CPU7 VBR-2500 settings gave median wall ratios of approximately
+`1.04x/0.83x/0.99x` for in-tree/ducks/old-town (geomean about `0.94x`). All
+streams decoded successfully under vpxdec; the source-level policy test and
+focused encoder suite remain the required correctness gates.
+
+**Future plan:** remeasure this default across cpu-used 6/8, CBR, AQ, denoiser,
+and SVC before treating the policy as final parity evidence.

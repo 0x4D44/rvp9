@@ -5221,11 +5221,11 @@ impl InterEncodeEnv {
         self.flag_or(self.a4_descent_cb_filter, true)
     }
 
-    /// Keep the speculative partition proxy on LAST for ordinary content.
-    /// The final emitted picker still evaluates GOLDEN, and the core picker's
-    /// very-high-SAD exception keeps GOLDEN available to scene transitions.
+    /// Keep the speculative partition proxy's full LAST/GOLDEN search for
+    /// ordinary content. The final emitted picker uses the same references.
+    /// Set the override to `1` to measure the cheaper LAST-only proxy.
     fn descent_disable_golden(&self) -> bool {
-        self.flag_or(self.a4_descent_disable_golden, true)
+        self.flag_or(self.a4_descent_disable_golden, false)
     }
 
     /// Rank rectangular partition arms with inherited/zero motion while
@@ -6947,10 +6947,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         mi_row: leaf_mi_row as u32,
                         mi_col: leaf_mi_col as u32,
                         chessboard_index,
-                        // The speculative partition proxy uses LAST only for
-                        // ordinary content. The final picker below retains the
-                        // configured GOLDEN search, and VeryHighSad bypasses
-                        // this core speed feature for scene transitions.
+                        // The speculative partition proxy follows the normal
+                        // LAST/GOLDEN search by default. Set the diagnostic
+                        // override to disable GOLDEN when profiling the
+                        // cheaper LAST-only proxy.
                         disable_golden_ref: rt_disable_golden_ref || a4_descent_disable_golden,
                         max_intra_bsize: sf.max_intra_bsize,
                         rt_intra_dc_only_low_content: sf.rt_intra_dc_only_low_content,
@@ -13745,18 +13745,18 @@ mod tests {
     }
 
     #[test]
-    fn realtime_descent_disables_golden_by_default() {
+    fn realtime_descent_keeps_golden_by_default() {
         let _guard = env_test_mutex();
         let key = "RVP9_A4_DESCENT_DISABLE_GOLDEN";
         // SAFETY: the mutex above serialises all encoder environment tests.
         unsafe { std::env::remove_var(key) };
-        assert!(InterEncodeEnv::capture().descent_disable_golden());
+        assert!(!InterEncodeEnv::capture().descent_disable_golden());
 
-        // Preserve a full-reference differential escape hatch. This changes
+        // Preserve the cheaper LAST-only diagnostic escape hatch. This changes
         // only the speculative descent; the final picker remains untouched.
         // SAFETY: the mutex above serialises all encoder environment tests.
-        unsafe { std::env::set_var(key, "0") };
-        assert!(!InterEncodeEnv::capture().descent_disable_golden());
+        unsafe { std::env::set_var(key, "1") };
+        assert!(InterEncodeEnv::capture().descent_disable_golden());
         // SAFETY: the mutex above serialises all encoder environment tests.
         unsafe { std::env::remove_var(key) };
     }
