@@ -4651,3 +4651,42 @@ quiet-host warmed median gate remains outstanding.
 **Future plan:** compare A4 and exact-tree decisions on ordinary inter frames
 to identify a causal per-superblock admission signal, then repeat the same
 three-clip curve before broadening the policy.
+
+### 2026-08-09 — Recheck transform size on exact-tree GOLDEN frames
+
+**Where:** `rvp9_encoder::realtime_emit_tx_rd_enabled` and
+`rvp9_encoder::pick_and_simulate_inter_encode_partitions`.
+
+**What libvpx does:** its realtime picker selects and stores the emitted
+transform size as part of the block-mode decision.
+
+**What rvp9 does:** approximate A4 large-frame partitions retain the measured
+maximum-transform emission shortcut. Exact variance-tree frames perform the
+existing coefficient-domain RD comparison between TX8 and TX16 on leaves
+whose maximum transform is TX16. In the CPU7 VBR product policy, those exact
+frames are scheduled GOLDEN refreshes only. `RVP9_RT_EMIT_TX_RD=0` disables
+the comparison and `=1` retains the broader diagnostic override.
+
+**Why:** the exact partition tree changes the residual shapes enough that the
+picker's model transform is no longer the best emitted transform consistently.
+The focused comparison improves all three current six-point curves from
+`+5.741%/-24.054%/+8.218%` to `+5.236%/-24.838%/+7.073%` for
+in-tree/ducks/old-town. Applying it to every ordinary frame improves the curves
+further, but its larger measured cost remains unsuitable while the speed gate
+is open.
+
+**Byte-parity impact:** intentional. The exercised old-town 4000-kbps stream
+has SHA-256
+`32fbd36bd74f2f0a1ff80afd1064f5965c4f16293bb8ed2c83319c300f2d8250`.
+Rvp9-decoder, pinned vpxdec, and ffmpeg each produce the same 186,624,000-byte
+I420 output with SHA-256
+`f04a64606ceaa42d1babdc40177b8b6ac2d9a1013b701545dc81bb9e481c60a9`.
+
+**Speed impact:** five alternating old-town pairs on the loaded host measured
+median wall times of about `0.44 s` before and `0.45 s` after. Unrelated
+simulator processes occupied the host, so this establishes only that the
+GOLDEN-only cost is small; it is not acceptance timing evidence.
+
+**Future plan:** keep this measured quality prerequisite while closing the
+remaining in-tree and old-town residuals, then repeat the quiet-host timing
+matrix before final acceptance.

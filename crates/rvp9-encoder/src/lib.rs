@@ -3399,8 +3399,9 @@ pub(crate) struct InterPartitionLeafDesc {
     /// Picked luma transform size splatted by both mi-grid builders and
     /// signalled by the modes writer under `tx_mode = TxModeSelect`.
     /// The default realtime emit path reuses the picker's
-    /// `calculate_tx_size` model decision; `RVP9_RT_EMIT_TX_RD=1` enables
-    /// the focused emit-side RD redecision for diagnostics.
+    /// `calculate_tx_size` model decision. Exact variance-tree frames run the
+    /// focused TX8/TX16 emit-side RD redecision; `RVP9_RT_EMIT_TX_RD` retains
+    /// an explicit diagnostic override.
     pub picked_tx_size: TxSize,
 }
 
@@ -5109,10 +5110,11 @@ fn realtime_force_max_emit_tx(
     override_value.unwrap_or(large_frame_recovery && !exact_vbp_tree)
 }
 
-/// Reuse the realtime picker's transform by default. The focused emit-side
-/// TX8/TX16 search remains available only as an explicit diagnostic.
-fn realtime_emit_tx_rd_enabled(override_value: Option<bool>) -> bool {
-    override_value.unwrap_or(false)
+/// Reuse the realtime picker's transform on the approximate partition path.
+/// Exact variance-tree frames have enough partition fidelity for the measured
+/// focused TX8/TX16 redecision; retain an explicit diagnostic override.
+fn realtime_emit_tx_rd_enabled(override_value: Option<bool>, exact_vbp_tree: bool) -> bool {
+    override_value.unwrap_or(exact_vbp_tree)
 }
 
 /// Immutable snapshot of diagnostic and A/B environment knobs shared by all
@@ -6031,7 +6033,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         rt_large_recovery,
         exact_vbp_tree_enabled,
     );
-    let rt_emit_tx_rd = realtime_emit_tx_rd_enabled(env.rt_emit_tx_rd);
+    let rt_emit_tx_rd = realtime_emit_tx_rd_enabled(env.rt_emit_tx_rd, exact_vbp_tree_enabled);
     // libvpx speed >= 4 uses `quant_fp` for every inter frame. Preserve
     // `=0` as the regular-quantizer diagnostic without making the slower
     // good-quality quantizer the realtime default.
@@ -9160,13 +9162,13 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             let recon_stride = recon_layout.stride;
                             let recon_data = &mut *recon_plane.data;
 
-                            // The default reuses the RT picker's model-RD TX
-                            // decision, matching libvpx pickmode's stored
-                            // `mi->tx_size`. Diagnostic
-                            // `RVP9_RT_EMIT_TX_RD=1` redecides TX8/TX16 only for
-                            // TX16-capable leaves; other leaf classes retain the
-                            // picker transform. Other large-frame paths keep
-                            // their established maximum-TX shortcut.
+                            // Approximate partition paths reuse the RT picker's
+                            // model-RD TX decision, matching libvpx pickmode's
+                            // stored `mi->tx_size`. Exact variance-tree frames
+                            // redecide TX8/TX16 only for TX16-capable leaves;
+                            // other leaf classes retain the picker transform.
+                            // Other large-frame paths keep their established
+                            // maximum-TX shortcut.
                             if plane == 0
                                 && should_redecide_inter_luma_tx(
                                     rt_emit_max_tx,
@@ -13944,9 +13946,10 @@ mod tests {
 
     #[test]
     fn realtime_tx_redecision_searches_only_tx8_and_tx16() {
-        assert!(!realtime_emit_tx_rd_enabled(None));
-        assert!(realtime_emit_tx_rd_enabled(Some(true)));
-        assert!(!realtime_emit_tx_rd_enabled(Some(false)));
+        assert!(!realtime_emit_tx_rd_enabled(None, false));
+        assert!(realtime_emit_tx_rd_enabled(None, true));
+        assert!(realtime_emit_tx_rd_enabled(Some(true), false));
+        assert!(!realtime_emit_tx_rd_enabled(Some(false), true));
         assert!(should_redecide_inter_luma_tx(
             false,
             true,
