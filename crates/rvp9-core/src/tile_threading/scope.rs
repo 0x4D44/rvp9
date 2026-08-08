@@ -37,6 +37,10 @@ pub struct FrameScope<'scope, 'frame> {
     /// Monotonic per-job index used for "first-panic-by-submission-
     /// order" sorting in the panic-priority protocol.
     next_submission_idx: AtomicUsize,
+    /// Number of submitted jobs not yet joined by [`Self::join`]. This is
+    /// separate from `next_submission_idx` so panic ordering remains global
+    /// across multiple caller-controlled waves in one scope.
+    pending_jobs: AtomicUsize,
     /// `&'frame mut ()` PhantomData: ties `'frame` to a mutable
     /// borrow's invariance — caller cannot extend it via subtyping
     /// or sub-cast a `'frame`-bounded reference up to `'static`.
@@ -62,6 +66,7 @@ impl<'scope, 'frame> FrameScope<'scope, 'frame> {
             panics,
             caller_job,
             next_submission_idx: AtomicUsize::new(0),
+            pending_jobs: AtomicUsize::new(0),
             _frame: PhantomData,
         }
     }
@@ -92,6 +97,7 @@ impl<'scope, 'frame> FrameScope<'scope, 'frame> {
         // guarantee. Atomics ensure multi-submitter remains sound if
         // a future decoder wants it.
         let submission_idx = self.next_submission_idx.fetch_add(1, Ordering::Relaxed);
+        self.pending_jobs.fetch_add(1, Ordering::Release);
 
         // Clone the per-scope channels so the closure (which will
         // travel into a worker thread) carries its own handles.
@@ -199,10 +205,41 @@ impl<'scope, 'frame> FrameScope<'scope, 'frame> {
             .expect("rvp9 WorkerPool: job channel closed mid-scope (worker pool dropped?)");
     }
 
-    /// Number of jobs submitted in this scope.
-    pub(crate) fn submitted_jobs(&self) -> usize {
-        self.next_submission_idx.load(Ordering::Relaxed)
+    /// Join every job submitted since the previous join.
+    ///
+    /// A scope normally joins all jobs when its closure returns. Callers that
+    /// need several causal waves can join between submissions without paying
+    /// for a fresh scope. Worker panic payloads remain deferred until the
+    /// outer scope completes, preserving submission-order panic priority.
+    pub fn join(&self) {
+        let submitted_jobs = self.pending_jobs.swap(0, Ordering::AcqRel);
+        if submitted_jobs == 0 {
+            return;
+        }
+
+        if let Some(caller_job) = self.caller_job {
+            let job = caller_job
+                .lock()
+                .expect("rvp9 WorkerPool: caller-job mutex poisoned")
+                .take();
+            if let Some(job) = job {
+                job();
+            }
+        }
+
+        for remaining in (0..submitted_jobs).rev() {
+            match self.pool.recv_completion() {
+                Ok(_outcome) => {}
+                Err(_) => {
+                    panic!(
+                        "rvp9 WorkerPool: done channel closed with pending jobs ({} left)",
+                        remaining + 1,
+                    );
+                }
+            }
+        }
     }
+
 }
 
 // Tests live alongside the implementation so they can poke at
@@ -404,6 +441,26 @@ mod tests {
             });
         }
         assert_eq!(counter.load(Ordering::SeqCst), 12);
+    }
+
+    /// A single scope can join multiple caller-controlled waves while
+    /// preserving the borrow and completion guarantees of separate scopes.
+    #[test]
+    fn scope_can_join_multiple_waves() {
+        let mut pool = WorkerPool::new(nz(2));
+        let counter = AtomicUsize::new(0);
+        pool.scope(|scope| {
+            scope.submit(|| {
+                counter.fetch_add(1, Ordering::SeqCst);
+            });
+            scope.join();
+            assert_eq!(counter.load(Ordering::SeqCst), 1);
+            scope.submit(|| {
+                counter.fetch_add(1, Ordering::SeqCst);
+            });
+            scope.join();
+            assert_eq!(counter.load(Ordering::SeqCst), 2);
+        });
     }
 
     /// Unit 308 — a persistent completion channel must be empty and reusable
