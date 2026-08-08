@@ -219,11 +219,33 @@ impl WorkerPool {
         // Run the closure under catch_unwind so we can join cleanly
         // even on panic.
         let closure_result = catch_unwind(AssertUnwindSafe(|| f(&scope)));
-        // Join any final wave not already joined explicitly by the closure.
-        // We DON'T re-raise here — workers already collected panic payloads
-        // in submission order, and priority is decided after every borrowed
-        // job joins.
-        scope.join();
+
+        let submitted_jobs = scope.submitted_jobs();
+
+        // In caller-participating mode, `FrameScope::submit` reserves the
+        // first job here instead of sending it to an OS worker. Run it even
+        // when the scope closure panicked: borrowed captures still require
+        // the same unconditional completion guarantee as queued jobs.
+        if let Some(job) = caller_job.into_inner().expect("caller-job mutex poisoned") {
+            job();
+        }
+
+        // Drain exactly one outcome per submitted job. We DON'T re-raise
+        // here — workers already collected panic payloads in submission
+        // order, and priority is decided after every borrowed job joins.
+        for remaining in (0..submitted_jobs).rev() {
+            match self.done_rx.recv() {
+                Ok(_outcome) => {
+                    // The worker already pushed any panic payload.
+                }
+                Err(_) => {
+                    panic!(
+                        "rvp9 WorkerPool: done channel closed with pending jobs ({} left)",
+                        remaining + 1,
+                    );
+                }
+            }
+        }
 
         // Decide which payload (if any) to re-raise. After the M1
         // liveness fix in `FrameScope::submit`, the wrapper holds
@@ -256,10 +278,6 @@ impl WorkerPool {
         self.job_tx
             .as_ref()
             .expect("WorkerPool::scope called after Drop began")
-    }
-
-    pub(crate) fn recv_completion(&self) -> Result<WorkerOutcome, crossbeam_channel::RecvError> {
-        self.done_rx.recv()
     }
 
     #[cfg(test)]
