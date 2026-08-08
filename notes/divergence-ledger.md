@@ -4467,3 +4467,45 @@ focused encoder suite remain the required correctness gates.
 
 **Future plan:** remeasure this default across cpu-used 6/8, CBR, AQ, denoiser,
 and SVC before treating the policy as final parity evidence.
+
+### 2026-08-08 — CPU6 large-frame realtime recovery policy
+
+**Where:** `rvp9_encoder::pick_and_simulate_inter_encode_partitions` and
+`realtime_cpu6_large_recovery_for_mode`.
+
+**What libvpx does:** pinned vpxenc CPU6 realtime keeps the full NSTEP-based
+picker and its normal speculative partition work on large default-content
+frames.
+
+**What rvp9 does:** for CPU6 realtime default-content frames at or above
+700,000 pixels (the 720p30, 1080p30, and 1080p60 targets), rvp9 keeps the
+variance-hint leaf tree, skips the expensive A4 speculative descent, and
+removes NEWMV from blocks no larger than 16x16. CPU7/8 and non-default content
+retain the existing A4 policy. The gate is source-level, not an environment
+default; the prior behavior remains available through the existing diagnostic
+controls for comparison.
+
+**Why:** CPU6 profiling showed A4 descent dominating the frame budget, while
+the no-descent path still spent roughly 9,000 fresh NEWMV searches per frame.
+The measured CPU6 recovery policy brought 1080p VBR-2500 wall time to
+`0.348/0.452/0.339 s` versus pinned vpxenc medians of about
+`0.45/0.57/0.42 s` for in-tree/ducks/old-town. A 1280x704 screen measured
+`0.124 s` versus `0.133 s` for vpxenc. These are warmed local screens, not the
+final corpus geomean gate.
+
+**Byte-parity impact:** structural. The 1080p in-tree policy stream decodes
+bit-exactly under rvp9-decoder, pinned vpxdec, and ffmpeg; all three produce
+the 186,624,000-byte I420 SHA-256
+`10ae6149cfb81786a3267d57c2d306477f706cabf88e941ff9f6d44b979230bd`.
+
+**Compression-efficiency impact:** matched-output diagnostics are favorable
+but are not the final BD-rate gate. At VBR-2500, decoded average PSNR versus
+the source was `24.4547/24.3441 dB` for rvp9/vpxenc on in-tree,
+`17.8041/17.8450 dB` on ducks, and `23.9525/23.8155 dB` on old-town. At
+1280x704 testsrc, the corresponding values were `24.6289/23.6866 dB`.
+Four-point CBR screens are recorded in
+`/private/tmp/rvp9-unit811-cpu6-newmv16-curves.csv`; the points have limited
+curve overlap, so no BD-rate claim is made here.
+
+**Future plan:** run the same policy through the six-point CBR/VBR curves,
+full corpus, and CPU6 feature stages before treating CPU6 as final parity.

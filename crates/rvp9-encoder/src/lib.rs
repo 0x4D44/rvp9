@@ -4905,6 +4905,24 @@ fn full_pixel_search_method_for_mode(
     }
 }
 
+fn realtime_cpu6_large_recovery_for_mode(
+    speed: i32,
+    deadline: rvp9_core::mode_decision::speed_features::Deadline,
+    content_tier: rvp9_core::mode_decision::speed_features::ContentTier,
+    width: u32,
+    height: u32,
+) -> bool {
+    matches!(
+        deadline,
+        rvp9_core::mode_decision::speed_features::Deadline::Realtime
+    ) && speed.unsigned_abs() == 6
+        && matches!(
+            content_tier,
+            rvp9_core::mode_decision::speed_features::ContentTier::Default
+        )
+        && u64::from(width) * u64::from(height) >= 700_000
+}
+
 fn a4_descent_independent_mv_default(
     rc_mode: crate::rate_control::RcMode,
     speed: i32,
@@ -5439,6 +5457,13 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         last_recon_yuv,
         golden_recon_yuv,
     );
+    // CPU6's faithful NSTEP picker remains substantially slower than the
+    // pinned vpxenc path on large realtime frames. The measured recovery
+    // policy keeps the variance-hint leaves, skips the expensive speculative
+    // A4 descent, and avoids fresh NEWMV searches on blocks no larger than
+    // 16x16. CPU7/8 retain the existing A4 recovery path below.
+    let rt_cpu6_large_recovery =
+        realtime_cpu6_large_recovery_for_mode(speed, deadline, content_tier, width, height);
     let mut rt_inter_mode_mask = rvp9_core::mode_decision::inter::default_inter_mode_mask();
     if env.rt_disable_newmv {
         let newmv_bit = 1u8 << InterMode::NewMv.idx();
@@ -5466,6 +5491,20 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
             if bsize.width() <= max_edge && bsize.height() <= max_edge {
                 rt_inter_mode_mask[bsize.idx()] &= !newmv_bit;
             }
+        }
+    }
+    if rt_cpu6_large_recovery {
+        let newmv_bit = 1u8 << InterMode::NewMv.idx();
+        for bsize in [
+            BlockSize::Block4x4,
+            BlockSize::Block4x8,
+            BlockSize::Block8x4,
+            BlockSize::Block8x8,
+            BlockSize::Block8x16,
+            BlockSize::Block16x8,
+            BlockSize::Block16x16,
+        ] {
+            rt_inter_mode_mask[bsize.idx()] &= !newmv_bit;
         }
     }
     if env.rt_disable_nearmv {
@@ -6467,8 +6506,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 // {nearest, near} and the rate cost is priced against nearest,
                 // so a full match means the fresh search would land on the
                 // same MV (faithful reuse). Any mismatch -> re-search (R2).
-                let descent_enabled =
-                    f3_nonrd_partition_enabled && !used_exact_vbp_tree && sb_px_y + 64 <= h;
+                let descent_enabled = f3_nonrd_partition_enabled
+                    && !used_exact_vbp_tree
+                    && !rt_cpu6_large_recovery
+                    && sb_px_y + 64 <= h;
                 let mut descent_pick_cache = descent_enabled.then(DescentPickCache::new);
 
                 // A3'-int-pro diagnostic — per-SB seed activity. Set
@@ -13710,6 +13751,47 @@ mod tests {
             full_pixel_search_method_for_mode(8, Deadline::Good),
             FullPixelSearchMethod::Nstep
         );
+    }
+
+    #[test]
+    fn realtime_cpu6_large_recovery_is_resolution_and_content_gated() {
+        use rvp9_core::mode_decision::speed_features::{ContentTier, Deadline};
+
+        assert!(realtime_cpu6_large_recovery_for_mode(
+            6,
+            Deadline::Realtime,
+            ContentTier::Default,
+            1920,
+            1080,
+        ));
+        assert!(realtime_cpu6_large_recovery_for_mode(
+            6,
+            Deadline::Realtime,
+            ContentTier::Default,
+            1280,
+            720,
+        ));
+        assert!(!realtime_cpu6_large_recovery_for_mode(
+            7,
+            Deadline::Realtime,
+            ContentTier::Default,
+            1920,
+            1080,
+        ));
+        assert!(!realtime_cpu6_large_recovery_for_mode(
+            6,
+            Deadline::Realtime,
+            ContentTier::Screen,
+            1920,
+            1080,
+        ));
+        assert!(!realtime_cpu6_large_recovery_for_mode(
+            6,
+            Deadline::Good,
+            ContentTier::Default,
+            1920,
+            1080,
+        ));
     }
 
     #[test]
