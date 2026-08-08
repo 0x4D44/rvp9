@@ -4548,6 +4548,14 @@ the causal proxy pending a speed-safe quality fix.
 **Future plan:** run cross-decoder checks, CPU6/CPU7/CPU8 VBR curves, and the
 CBR/AQ/denoiser/SVC feature matrix before treating this default as final.
 
+### 2026-08-08 — Supersede CPU6 large-frame recovery hypothesis
+
+The CPU6 large-frame recovery described above was removed after matched
+six-point CBR/VBR screens showed a severe quality cliff, including non-overlap
+on the old-town VBR curve. Full causal search restored the curve but was about
+4.3x slower. The policy is rejected and is no longer present in the source;
+the entry above remains as historical evidence for the measured hypothesis.
+
 ### 2026-08-08 — Guard A4 full-pick reuse by causal context and winner mode
 
 **Where:** `rvp9_encoder::pick_and_simulate_inter_encode_partitions` and
