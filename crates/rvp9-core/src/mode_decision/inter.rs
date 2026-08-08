@@ -4578,34 +4578,39 @@ fn reconstruct_via_round_trip(
     // Tx32x32 tile even though only the prefix could be read.
     macro_rules! hadamard_metrics {
         ($n:literal, $transform:path, $subtract:path, $is_32x32:literal, $off_x:expr, $off_y:expr) => {{
-            let mut had_coeff_i16 = [0i16; $n];
+            let mut had_coeff_uninit = std::mem::MaybeUninit::<[i16; $n]>::uninit();
+            // SAFETY: every supported Hadamard transform and subtract kernel
+            // writes all `$n` output coefficients before this slice is read.
+            let had_coeff_i16: &mut [i16] = unsafe {
+                std::slice::from_raw_parts_mut(had_coeff_uninit.as_mut_ptr().cast::<i16>(), $n)
+            };
             #[cfg(target_arch = "aarch64")]
             if reconstruct {
-                $transform(&residual[..$n], tx_side, &mut had_coeff_i16);
+                $transform(&residual[..$n], tx_side, had_coeff_i16);
             } else {
                 $subtract(
                     &src.data[(sy + $off_y) * src.stride + sx + $off_x..],
                     src.stride,
                     &pred[$off_y * bw + $off_x..],
                     bw,
-                    &mut had_coeff_i16,
+                    had_coeff_i16,
                 );
             }
             #[cfg(not(target_arch = "aarch64"))]
-            $transform(&residual[..$n], tx_side, &mut had_coeff_i16);
+            $transform(&residual[..$n], tx_side, had_coeff_i16);
 
             #[cfg(target_arch = "aarch64")]
             let (had_nonzero, rate_satd, dist) = if collect_coef_dist {
                 let metrics = if $is_32x32 {
                     crate::dsp::aarch64::vp9_quantize_fp_32x32_i16_metrics_neon(
-                        &had_coeff_i16,
+                        had_coeff_i16,
                         &params.quantizer.round_fp,
                         &params.quantizer.quant_fp,
                         &dequant_pair,
                     )
                 } else {
                     crate::dsp::aarch64::vp9_quantize_fp_i16_metrics_neon(
-                        &had_coeff_i16,
+                        had_coeff_i16,
                         $n,
                         &params.quantizer.round_fp,
                         &params.quantizer.quant_fp,
@@ -4616,14 +4621,14 @@ fn reconstruct_via_round_trip(
             } else {
                 let metrics = if $is_32x32 {
                     crate::dsp::aarch64::vp9_quantize_fp_32x32_i16_rate_metrics_neon(
-                        &had_coeff_i16,
+                        had_coeff_i16,
                         &params.quantizer.round_fp,
                         &params.quantizer.quant_fp,
                         &dequant_pair,
                     )
                 } else {
                     crate::dsp::aarch64::vp9_quantize_fp_i16_rate_metrics_neon(
-                        &had_coeff_i16,
+                        had_coeff_i16,
                         $n,
                         &params.quantizer.round_fp,
                         &params.quantizer.quant_fp,
@@ -4634,7 +4639,7 @@ fn reconstruct_via_round_trip(
             #[cfg(not(target_arch = "aarch64"))]
             let (had_nonzero, rate_satd, dist) = {
                 let mut had_coeff = [0i32; $n];
-                for (dst, &src) in had_coeff.iter_mut().zip(&had_coeff_i16) {
+                for (dst, &src) in had_coeff.iter_mut().zip(had_coeff_i16.iter()) {
                     *dst = i32::from(src);
                 }
                 let mut had_qcoeff = [0i16; $n];
