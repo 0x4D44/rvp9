@@ -85,10 +85,10 @@ impl HadamardMetricAccumulator {
         &mut self,
         coeff_lo: int32x4_t,
         coeff_hi: int32x4_t,
-        q: int16x8_t,
         dq: int16x8_t,
+        abs_q: int16x8_t,
     ) {
-        self.satd = vpadalq_u16(self.satd, vreinterpretq_u16_s16(vabsq_s16(q)));
+        self.satd = vpadalq_u16(self.satd, vreinterpretq_u16_s16(abs_q));
 
         let diff_lo = vsubq_s32(coeff_lo, vmovl_s16(vget_low_s16(dq)));
         let diff_hi = vsubq_s32(coeff_hi, vmovl_s16(vget_high_s16(dq)));
@@ -275,7 +275,7 @@ unsafe fn quantize_i16_8(
     // The scalar result casts `q * dequant` back to i16, so only the low
     // product half is observable. Multiply all eight lanes directly.
     let dq = vmulq_s16(q, dequant);
-    metrics.add(coeff_lo, coeff_hi, q, dq);
+    metrics.add(coeff_lo, coeff_hi, dq, abs_q);
 }
 
 #[inline]
@@ -583,7 +583,12 @@ unsafe fn quantize_fp_32x32_i16_8(
     let dq_lo = vshrq_n_s32::<1>(vaddq_s32(dq_lo, negative_lo));
     let dq_hi = vshrq_n_s32::<1>(vaddq_s32(dq_hi, negative_hi));
     let dq = vcombine_s16(vmovn_s32(dq_lo), vmovn_s32(dq_hi));
-    metrics.add(coeff_lo, coeff_hi, q, dq);
+    metrics.add(
+        coeff_lo,
+        coeff_hi,
+        dq,
+        vandq_s16(abs_q, vreinterpretq_s16_u16(keep)),
+    );
 }
 
 #[inline]
