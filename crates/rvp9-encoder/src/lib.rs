@@ -5224,6 +5224,26 @@ impl InterEncodeEnv {
         self.flag_or(self.compact_recon_rows, false)
     }
 
+    /// Use the pinned-libvpx variance tree on the CPU7 realtime VBR frames
+    /// where its measured allocation gain generalizes. An explicit override
+    /// retains the whole-frame diagnostic used by differential tests.
+    pub(crate) fn exact_vbp_tree_enabled(
+        &self,
+        rc_mode: crate::rate_control::RcMode,
+        speed: i32,
+        deadline: rvp9_core::mode_decision::speed_features::Deadline,
+        content_tier: rvp9_core::mode_decision::speed_features::ContentTier,
+        is_golden_refresh: bool,
+    ) -> bool {
+        let selected = self
+            .exact_vbp_tree
+            .unwrap_or(rc_mode == crate::rate_control::RcMode::Vbr && is_golden_refresh);
+        selected
+            && speed == 7
+            && deadline == rvp9_core::mode_decision::speed_features::Deadline::Realtime
+            && content_tier == rvp9_core::mode_decision::speed_features::ContentTier::Default
+    }
+
     /// Mirror libvpx realtime `search_filter_ref`: integer-pel motion
     /// never needs interpolation-filter search. The environment override
     /// remains available for differential diagnostics.
@@ -5982,16 +6002,13 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
 
     let rt_profile_enabled = env.rt_profile;
     let rt_profile_frame_start = std::time::Instant::now();
-    // Exact pinned-libvpx cpu-used 7 variance-tree experiment. This stays
-    // opt-in until the fixed-Q and product gates show a reproducible Pareto
-    // improvement. The pure tree itself is differential-oracle exact; this
-    // product adapter supplies its source, selected LAST/GOLDEN predictor,
-    // thresholds, and causal leaf list.
-    let exact_vbp_tree_enabled = env.flag_or(env.exact_vbp_tree, false)
-        && exact_vbp_history.is_some()
-        && speed == 7
-        && deadline == rvp9_core::mode_decision::speed_features::Deadline::Realtime
-        && content_tier == rvp9_core::mode_decision::speed_features::ContentTier::Default;
+    // The pure tree is differential-oracle exact; this product adapter
+    // supplies its source, selected LAST/GOLDEN predictor, thresholds, and
+    // causal leaf list. Product CPU7 VBR uses it only on scheduled GOLDEN
+    // refreshes; the environment override retains the whole-frame diagnostic.
+    let exact_vbp_tree_enabled =
+        env.exact_vbp_tree_enabled(rc_mode, speed, deadline, content_tier, is_golden_refresh)
+            && exact_vbp_history.is_some();
     if exact_vbp_tree_enabled {
         let history_sb_col_range = active_tile_col.map_or(0..sb_cols, |tile_col| {
             let bounds = tile_bounds_by_col
@@ -13752,6 +13769,84 @@ mod tests {
         // SAFETY: the mutex above serialises all encoder environment tests.
         unsafe { std::env::set_var(key, "0") };
         assert!(!InterEncodeEnv::capture().skip_integer_mv_filter_search());
+        // SAFETY: the mutex above serialises all encoder environment tests.
+        unsafe { std::env::remove_var(key) };
+    }
+
+    #[test]
+    fn exact_vbp_defaults_to_cpu7_realtime_vbr_golden_refreshes() {
+        use rvp9_core::mode_decision::speed_features::{ContentTier, Deadline};
+
+        let _guard = env_test_mutex();
+        let key = "RVP9_EXACT_VBP_TREE";
+        // SAFETY: the mutex above serialises all encoder environment tests.
+        unsafe { std::env::remove_var(key) };
+        let env = InterEncodeEnv::capture();
+        assert!(env.exact_vbp_tree_enabled(
+            RcMode::Vbr,
+            7,
+            Deadline::Realtime,
+            ContentTier::Default,
+            true,
+        ));
+        assert!(!env.exact_vbp_tree_enabled(
+            RcMode::Vbr,
+            7,
+            Deadline::Realtime,
+            ContentTier::Default,
+            false,
+        ));
+        assert!(!env.exact_vbp_tree_enabled(
+            RcMode::Cbr,
+            7,
+            Deadline::Realtime,
+            ContentTier::Default,
+            true,
+        ));
+        assert!(!env.exact_vbp_tree_enabled(
+            RcMode::Vbr,
+            6,
+            Deadline::Realtime,
+            ContentTier::Default,
+            true,
+        ));
+        assert!(!env.exact_vbp_tree_enabled(
+            RcMode::Vbr,
+            7,
+            Deadline::Good,
+            ContentTier::Default,
+            true,
+        ));
+        assert!(!env.exact_vbp_tree_enabled(
+            RcMode::Vbr,
+            7,
+            Deadline::Realtime,
+            ContentTier::Screen,
+            true,
+        ));
+
+        // Preserve whole-frame exact-tree diagnostics within the existing
+        // CPU7 realtime/default-content scope, including non-VBR modes.
+        // SAFETY: the mutex above serialises all encoder environment tests.
+        unsafe { std::env::set_var(key, "1") };
+        assert!(InterEncodeEnv::capture().exact_vbp_tree_enabled(
+            RcMode::Cbr,
+            7,
+            Deadline::Realtime,
+            ContentTier::Default,
+            false,
+        ));
+
+        // Explicit zero is the product-policy negative control.
+        // SAFETY: the mutex above serialises all encoder environment tests.
+        unsafe { std::env::set_var(key, "0") };
+        assert!(!InterEncodeEnv::capture().exact_vbp_tree_enabled(
+            RcMode::Vbr,
+            7,
+            Deadline::Realtime,
+            ContentTier::Default,
+            true,
+        ));
         // SAFETY: the mutex above serialises all encoder environment tests.
         unsafe { std::env::remove_var(key) };
     }

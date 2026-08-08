@@ -4613,3 +4613,41 @@ streams remain VP9 and require the full decoder/conformance matrix.
 
 **Future plan:** close the remaining old-town and in-tree VBR residuals,
 then repeat the same default policy across CPU6/7/8 and target resolutions.
+
+### 2026-08-08 — Use exact variance partitions on CPU7 VBR GOLDEN refreshes
+
+**Where:** `rvp9_encoder::InterEncodeEnv::exact_vbp_tree_enabled` and the
+realtime inter picker in `rvp9_encoder::pick_and_simulate_inter_encode_partitions`.
+
+**What libvpx does:** pinned vpxenc CPU7 realtime uses its variance-based
+partition tree on every inter frame and carries persistent partition history.
+
+**What rvp9 does:** CPU7 realtime one-pass VBR with default content uses the
+pinned-source-exact variance tree only on scheduled GOLDEN refresh frames.
+Ordinary inter frames retain rvp9's measured A4 recursive partition search.
+`RVP9_EXACT_VBP_TREE=1` retains the full exact-tree differential diagnostic;
+`RVP9_EXACT_VBP_TREE=0` disables the product policy as a negative control.
+Other speeds, rate-control modes, deadlines, and content tiers are unchanged.
+
+**Why:** neither partition path generalizes by itself. The full exact tree
+measured `+13.282%/+3.115%/-3.149%` luma BD-rate on in-tree/old-town/ducks,
+while A4 measured `+8.127%/+11.115%/-22.567%`. The GOLDEN-only combination
+improves every six-point curve to `+5.741%/+8.218%/-24.054%`. At the old-town
+2500-kbps point, the policy moves rvp9 from `4814 kbps / 35.19 dB` to
+`4324 kbps / 35.14 dB`, versus vpxenc's `3989 kbps / 35.10 dB`. This is a
+measured Pareto prerequisite, not the Stage 4a `+2%` exit.
+
+**Byte-parity impact:** structural. The exercised 4000-kbps old-town stream
+has SHA-256 `c0a47f0ba24c4ac9ec5231cb6c2e69482ea54b11a9b5d2fef611f2d615555084`.
+Rvp9-decoder, pinned vpxdec, and ffmpeg each produce the same 186,624,000-byte
+I420 output with SHA-256
+`136ecd67bac5abac48b2deb850ed3ad1703f77248cc20ff883707fca1ca44a3b`.
+
+**Speed impact:** five alternating loaded-host old-town pairs showed no
+visible change between A4 and the GOLDEN-only policy, but unrelated simulator
+processes occupied the host. This is diagnostic evidence only; the required
+quiet-host warmed median gate remains outstanding.
+
+**Future plan:** compare A4 and exact-tree decisions on ordinary inter frames
+to identify a causal per-superblock admission signal, then repeat the same
+three-clip curve before broadening the policy.

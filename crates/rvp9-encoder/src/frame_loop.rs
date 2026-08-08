@@ -3461,8 +3461,13 @@ impl StreamEncoder {
             // it touches. Results are collected and merged in column order,
             // so scheduling cannot affect the packet or persistent encoder
             // state.
-            let exact_vbp_history_enabled =
-                std::env::var_os("RVP9_EXACT_VBP_TREE").is_some_and(|value| value != "0");
+            let exact_vbp_history_enabled = inter_env.exact_vbp_tree_enabled(
+                rc_mode,
+                speed,
+                deadline,
+                rvp9_core::mode_decision::speed_features::ContentTier::Default,
+                is_golden_refresh,
+            );
             let s2_frame_gate = rvp9_core::mode_decision::inter::frame_s2_gate();
             let mut result_slots: Vec<Option<InterTileJobResult>> =
                 (0..tile_count).map(|_| None).collect();
