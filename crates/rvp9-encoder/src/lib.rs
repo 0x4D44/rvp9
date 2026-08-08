@@ -1265,6 +1265,74 @@ impl VecBackedInterCoefSource {
         }
     }
 
+    /// Reset this source to one MI rectangle while retaining its backing
+    /// allocations. Compact row workers reuse one source per tile column
+    /// across row waves, so only the physical slot map and payload lengths
+    /// need to be reset between jobs.
+    pub(crate) fn reset_for_mi_rect(
+        &mut self,
+        width: u32,
+        height: u32,
+        mi_row_start: usize,
+        mi_row_end: usize,
+        mi_col_start: usize,
+        mi_col_end: usize,
+    ) {
+        let width_usize = width as usize;
+        let height_usize = height as usize;
+        let mi_rows = height_usize.div_ceil(8);
+        let mi_cols = width_usize.div_ceil(8);
+        assert!(
+            mi_col_start <= mi_col_end && mi_col_end <= mi_cols,
+            "inter coefficient tile columns must lie inside the frame",
+        );
+        assert!(
+            mi_row_start <= mi_row_end && mi_row_end <= mi_rows,
+            "inter coefficient tile rows must lie inside the frame",
+        );
+        let luma_cols = width_usize.div_ceil(4);
+        let chroma_cols = width_usize.div_ceil(8);
+        let luma_rows = height_usize.div_ceil(4);
+        let chroma_rows = height_usize.div_ceil(8);
+        let plane_row_starts = [mi_row_start * 2, mi_row_start, mi_row_start];
+        let plane_row_ends = [
+            (mi_row_end * 2).min(luma_rows),
+            mi_row_end.min(chroma_rows),
+            mi_row_end.min(chroma_rows),
+        ];
+        let plane_col_starts = [mi_col_start * 2, mi_col_start, mi_col_start];
+        let plane_col_ends = [
+            (mi_col_end * 2).min(luma_cols),
+            mi_col_end.min(chroma_cols),
+            mi_col_end.min(chroma_cols),
+        ];
+        let plane_rows = std::array::from_fn(|plane| {
+            plane_row_ends[plane]
+                .checked_sub(plane_row_starts[plane])
+                .expect("inter coefficient plane row range must be ordered")
+        });
+        let plane_strides = std::array::from_fn(|plane| {
+            plane_col_ends[plane]
+                .checked_sub(plane_col_starts[plane])
+                .expect("inter coefficient plane column range must be ordered")
+        });
+        let luma_slots = plane_strides[0] * plane_rows[0];
+        let chroma_u_slots = plane_strides[1] * plane_rows[1];
+        let chroma_v_slots = plane_strides[2] * plane_rows[2];
+        let total_slots = luma_slots + chroma_u_slots + chroma_v_slots;
+        self.width = width;
+        self.height = height;
+        self.plane_offsets = [0, luma_slots, luma_slots + chroma_u_slots];
+        self.plane_col_starts = plane_col_starts;
+        self.plane_row_starts = plane_row_starts;
+        self.plane_strides = plane_strides;
+        self.plane_rows = plane_rows;
+        self.slots.resize(total_slots, INTER_COEF_SLOT_EMPTY);
+        self.slots.fill(INTER_COEF_SLOT_EMPTY);
+        self.blocks.clear();
+        self.coefficients.clear();
+    }
+
     /// Map a leaf-local TX coordinate to its unique physical plane slot.
     fn slot_index(
         &self,
@@ -1462,6 +1530,66 @@ impl VecBackedInterCoefSource {
                 }
             }
         }
+    }
+
+    /// Merge a disjoint rectangle-owned source while returning its backing
+    /// allocations for reuse by the next row wave.
+    pub(crate) fn merge_from_reusable(&mut self, other: &mut Self) {
+        assert_eq!(self.width, other.width);
+        assert_eq!(self.height, other.height);
+        let block_base = u32::try_from(self.blocks.len())
+            .expect("inter coefficient source exceeds u32 block capacity");
+        let coefficient_base = u32::try_from(self.coefficients.len())
+            .expect("inter coefficient arena exceeds u32 capacity");
+        for block in &mut other.blocks {
+            block.offset = block
+                .offset
+                .checked_add(coefficient_base)
+                .expect("inter coefficient arena exceeds u32 capacity");
+        }
+        self.coefficients.append(&mut other.coefficients);
+        self.blocks.append(&mut other.blocks);
+        for plane in 0..3 {
+            let self_col_start = self.plane_col_starts[plane];
+            let other_col_start = other.plane_col_starts[plane];
+            let self_row_start = self.plane_row_starts[plane];
+            let other_row_start = other.plane_row_starts[plane];
+            let other_col_offset = other_col_start
+                .checked_sub(self_col_start)
+                .expect("merged coefficient source must contain the rectangle columns");
+            let other_row_offset = other_row_start
+                .checked_sub(self_row_start)
+                .expect("merged coefficient source must contain the rectangle rows");
+            assert!(
+                other_col_offset + other.plane_strides[plane] <= self.plane_strides[plane],
+                "merged coefficient source must contain the rectangle columns",
+            );
+            assert!(
+                other_row_offset + other.plane_rows[plane] <= self.plane_rows[plane],
+                "merged coefficient source must contain the rectangle rows",
+            );
+            for row in 0..other.plane_rows[plane] {
+                for col in 0..other.plane_strides[plane] {
+                    let other_slot = other.slots
+                        [other.plane_offsets[plane] + row * other.plane_strides[plane] + col];
+                    if other_slot == INTER_COEF_SLOT_EMPTY {
+                        continue;
+                    }
+                    let slot = &mut self.slots[self.plane_offsets[plane]
+                        + (other_row_offset + row) * self.plane_strides[plane]
+                        + other_col_offset
+                        + col];
+                    assert_eq!(
+                        *slot, INTER_COEF_SLOT_EMPTY,
+                        "coefficient sources must have disjoint physical TX slots",
+                    );
+                    *slot = block_base
+                        .checked_add(other_slot)
+                        .expect("inter coefficient source exceeds u32 block capacity");
+                }
+            }
+        }
+        other.slots.fill(INTER_COEF_SLOT_EMPTY);
     }
 }
 
@@ -3625,6 +3753,7 @@ impl CompactInterRowResult {
         Vec<u8>,
         Vec<u8>,
         Vec<u8>,
+        VecBackedInterCoefSource,
         InterEmitScratch,
         CompactInterRowDiagnostics,
     ) {
@@ -3679,7 +3808,8 @@ impl CompactInterRowResult {
             }
         }
         debug_assert_eq!(frame_width, self.recon_layout.plane(0).frame_width);
-        coef_source.merge_from(self.coefs);
+        let mut reusable_coefs = self.coefs;
+        coef_source.merge_from_reusable(&mut reusable_coefs);
         let sb_col_start = self.mi_col_start / 8;
         for (local_sb_col, partition) in self.partitions.drain(..).enumerate() {
             let destination = self.job.sb_row * (frame_width / 64) + sb_col_start + local_sb_col;
@@ -3702,6 +3832,7 @@ impl CompactInterRowResult {
             self.recon_y,
             self.recon_u,
             self.recon_v,
+            reusable_coefs,
             self.emit_scratch,
             self.diagnostics,
         )
@@ -9504,6 +9635,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 ..tile_bounds_by_col.len())
                 .map(|_| (Vec::new(), Vec::new(), Vec::new()))
                 .collect();
+            let mut compact_coef_scratch: Vec<Option<VecBackedInterCoefSource>> =
+                (0..tile_bounds_by_col.len()).map(|_| None).collect();
             for sb_row in 0..sb_rows {
                 let mut works = Vec::with_capacity(tile_bounds_by_col.len());
                 for (tile_col, &bounds) in tile_bounds_by_col.iter().enumerate() {
@@ -9567,7 +9700,18 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         PrevFrameMvRef::default();
                         compact_mv_layout.mi_rows * compact_mv_layout.mi_cols
                     ];
-                    let row_coef_source = VecBackedInterCoefSource::new_for_mi_rect(
+                    let mut row_coef_source =
+                        compact_coef_scratch[tile_col].take().unwrap_or_else(|| {
+                            VecBackedInterCoefSource::new_for_mi_rect(
+                                width,
+                                height,
+                                job_mi_row_start,
+                                job_mi_row_end,
+                                bounds.mi_col_start,
+                                bounds.mi_col_end,
+                            )
+                        });
+                    row_coef_source.reset_for_mi_rect(
                         width,
                         height,
                         job_mi_row_start,
@@ -9687,8 +9831,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 for result_slot in result_slots {
                     let result = result_slot.expect("compact row worker produced no result");
                     let result_tile_col = result.job.tile_col;
-                    let (recon_y, recon_u, recon_v, _emit_scratch, diagnostics) = result
-                        .merge_into(
+                    let (recon_y, recon_u, recon_v, reusable_coefs, _emit_scratch, diagnostics) =
+                        result.merge_into(
                             w,
                             h,
                             recon_y_out,
@@ -9701,6 +9845,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             &mut compact_history_backing,
                         );
                     compact_recon_scratch[result_tile_col] = (recon_y, recon_u, recon_v);
+                    compact_coef_scratch[result_tile_col] = Some(reusable_coefs);
                     frame_diagnostics.merge_from(diagnostics);
                 }
             }
@@ -9841,7 +9986,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     Some(InterPartitionHistoryMut::RowOwned { entries, .. }) => Some(entries),
                     Some(_) => panic!("compact VBP row must own its history entries"),
                 };
-                let (merged_y, merged_u, merged_v, emit_scratch, diagnostics) =
+                let (merged_y, merged_u, merged_v, _reusable_coefs, emit_scratch, diagnostics) =
                     CompactInterRowResult {
                         job,
                         mi_col_start: bounds.mi_col_start,
@@ -13980,6 +14125,33 @@ mod tests {
         let (right_coefs, right_eob) = frame.get_block_coefs(1, 12, 2, 0, 0, TxSize::Tx4x4);
         assert_eq!(right_coefs, &[9; 16]);
         assert_eq!(right_eob, 9);
+    }
+
+    #[test]
+    fn inter_coef_row_source_reset_reuses_storage_and_merges() {
+        use rvp9_core::bitstream::InterCoefSource;
+
+        let mut frame = VecBackedInterCoefSource::new(128, 128);
+        let mut row = VecBackedInterCoefSource::new_for_mi_rect(128, 128, 0, 8, 0, 8);
+        row.insert(0, 0, 0, 0, 0, vec![3; 16], 4);
+        let slots_capacity = row.slots.capacity();
+        let blocks_capacity = row.blocks.capacity();
+        let coefficients_capacity = row.coefficients.capacity();
+        frame.merge_from_reusable(&mut row);
+
+        assert!(row.slots.iter().all(|&slot| slot == INTER_COEF_SLOT_EMPTY));
+        assert!(row.blocks.is_empty());
+        assert!(row.coefficients.is_empty());
+        assert_eq!(row.slots.capacity(), slots_capacity);
+        assert_eq!(row.blocks.capacity(), blocks_capacity);
+        assert_eq!(row.coefficients.capacity(), coefficients_capacity);
+
+        row.reset_for_mi_rect(128, 128, 8, 16, 0, 8);
+        row.insert(8, 0, 0, 0, 0, vec![9; 16], 8);
+        frame.merge_from_reusable(&mut row);
+        let (coefs, eob) = frame.get_block_coefs(8, 0, 0, 0, 0, TxSize::Tx4x4);
+        assert_eq!(coefs, &[9; 16]);
+        assert_eq!(eob, 8);
     }
 
     #[test]
