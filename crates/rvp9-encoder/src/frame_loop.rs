@@ -3361,7 +3361,8 @@ impl StreamEncoder {
                 $history:expr,
                 $split_stats:expr,
                 $record_coef_tokens:expr,
-                $active_tile_col:expr
+                $active_tile_col:expr,
+                $worker_pool:expr
             ) => {
                 pick_and_simulate_inter_encode_partitions(
                     inter_env,
@@ -3406,6 +3407,7 @@ impl StreamEncoder {
                     $record_coef_tokens,
                     log2_tile_cols,
                     $active_tile_col,
+                    $worker_pool,
                 )
             };
         }
@@ -3557,7 +3559,8 @@ impl StreamEncoder {
                                 tile_history,
                                 &mut tile_split_stats,
                                 true,
-                                Some(tile_col)
+                                Some(tile_col),
+                                None
                             );
                             let recorded_coef_tile = tile_encode
                                 .recorded_coef_tile
@@ -3686,7 +3689,8 @@ impl StreamEncoder {
                 )),
                 &mut stage4a_frame_split_stats,
                 false,
-                None
+                None,
+                self.frame_worker_pool.as_mut()
             );
             debug_assert!(encoded.recorded_coef_tile.is_none());
             debug_assert_eq!(encoded.mi_grid.mi_row_start, 0);
@@ -4370,6 +4374,7 @@ impl StreamEncoder {
             false,
             log2_tile_cols,
             None,
+            self.frame_worker_pool.as_mut(),
         );
         let coef_source = encoded.coefs;
         self.stage4a_split_stats
@@ -8313,6 +8318,23 @@ mod tests {
         }
     }
 
+    #[test]
+    fn stream_encoder_compact_row_workers_are_thread_count_independent() {
+        let _guard = env_test_mutex();
+        // SAFETY: env_test_mutex serialises every test that mutates the
+        // process-wide encoder environment.
+        unsafe {
+            std::env::set_var("RVP9_COMPACT_RECON_ROWS", "1");
+            std::env::set_var("RVP9_COMPACT_ROW_WORKERS", "1");
+        }
+        assert_four_tile_output_is_thread_count_independent_and_bit_exact();
+        // SAFETY: the mutex above remains held while restoring both knobs.
+        unsafe {
+            std::env::remove_var("RVP9_COMPACT_ROW_WORKERS");
+            std::env::remove_var("RVP9_COMPACT_RECON_ROWS");
+        }
+    }
+
     fn assert_four_tile_output_is_thread_count_independent_and_bit_exact() {
         let w = 1280usize;
         let h = 128usize;
@@ -8376,7 +8398,9 @@ mod tests {
             let serial_packet = serial.encode_frame(&view).expect("serial encode");
             let two_worker_packet = two_workers.encode_frame(&view).expect("two-worker encode");
             let threaded_packet = threaded.encode_frame(&view).expect("threaded encode");
-            if frame_idx >= 1 {
+            if frame_idx >= 1
+                && std::env::var_os("RVP9_COMPACT_RECON_ROWS").is_none_or(|value| value == "0")
+            {
                 let partition_leaf_allocations: Vec<Vec<_>> = threaded
                     .inter_tile_scratch
                     .iter()

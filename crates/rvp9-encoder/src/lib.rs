@@ -3582,6 +3582,31 @@ struct CompactInterRowResult {
     diagnostics: CompactInterRowDiagnostics,
 }
 
+/// Owned inputs for one compact row producer.
+///
+/// A row wave prepares these values on the caller before submitting jobs, so
+/// every worker owns its reconstruction, partitions, thresholds, history, and
+/// coefficient arena. The coordinator merges the resulting row objects in
+/// tile order after the worker scope joins.
+struct CompactInterRowWork {
+    job: crate::row_mt::RowJob,
+    mi_col_start: usize,
+    mi_col_end: usize,
+    recon_layout: InterReconLayout,
+    recon_y: Vec<u8>,
+    recon_u: Vec<u8>,
+    recon_v: Vec<u8>,
+    compact_grid_layout: InterPickerMiGridLayout,
+    compact_mi: Vec<Option<rvp9_core::mode_info::ModeInfo>>,
+    compact_mv_layout: InterPickerMiGridLayout,
+    compact_mv: Vec<PrevFrameMvRef>,
+    coefs: VecBackedInterCoefSource,
+    partitions: Vec<Vec<InterPartitionLeafDesc>>,
+    rd_table_index: usize,
+    rd_thresh_table: rvp9_core::mode_decision::rd_thresh::RdThreshTable,
+    vbp_history: Option<Vec<rvp9_core::mode_decision::partition::FixedTreeHistoryEntry>>,
+}
+
 impl CompactInterRowResult {
     #[allow(clippy::too_many_arguments)]
     fn merge_into(
@@ -4954,6 +4979,7 @@ pub(crate) struct InterEncodeEnv {
     diag_intpro: bool,
     p8_stats: bool,
     compact_recon_rows: Option<bool>,
+    compact_row_workers: Option<bool>,
 }
 
 impl InterEncodeEnv {
@@ -5006,6 +5032,7 @@ impl InterEncodeEnv {
             diag_intpro: std::env::var("RVP9_DIAG_INTPRO").is_ok(),
             p8_stats: std::env::var_os("RVP9_P8_STATS").is_some(),
             compact_recon_rows: bool_override("RVP9_COMPACT_RECON_ROWS"),
+            compact_row_workers: bool_override("RVP9_COMPACT_ROW_WORKERS"),
         }
     }
 
@@ -5204,6 +5231,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     record_coef_tokens: bool,
     log2_tile_cols: u8,
     active_tile_col: Option<usize>,
+    worker_pool: Option<&mut rvp9_core::tile_threading::WorkerPool>,
 ) -> InterSimulationResult {
     use rvp9_core::bitstream::frame::{InterpFilter as WireInterpFilter, MAX_INTER_REFS};
     use rvp9_core::bitstream::header::FrameKind as WireFrameKind;
@@ -9461,175 +9489,391 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         };
     let compact_recon_rows =
         env.compact_recon_rows_enabled() && recon_layout == InterReconLayout::full(w, h);
+    let frame_s2_gate = rvp9_core::mode_decision::inter::frame_s2_gate();
     if compact_recon_rows {
-        let jobs: Vec<_> = if let Some(tile_col) = active_tile_col {
-            (0..sb_rows)
-                .map(|sb_row| crate::row_mt::RowJob { sb_row, tile_col })
-                .collect()
-        } else {
-            let row_context = crate::row_mt::RowMtContext::new(tile_bounds_by_col.len(), sb_rows);
-            let mut tile_col = row_context.initial_tile_for_worker(0);
-            let mut jobs = Vec::with_capacity(tile_bounds_by_col.len() * sb_rows);
-            while let Some(job) = row_context.claim_for_worker(&mut tile_col) {
-                jobs.push(job);
-            }
-            debug_assert!(row_context.queues_drained());
-            debug_assert_eq!(row_context.remaining_jobs(), 0);
-            jobs
-        };
-        let mut compact_y = Vec::new();
-        let mut compact_u = Vec::new();
-        let mut compact_v = Vec::new();
-        let mut compact_history_backing = full_history.take();
-        for job in jobs {
-            let tile_col = job.tile_col;
-            let sb_row = job.sb_row;
-            let bounds = tile_bounds_by_col[tile_col];
-            let tile_mi_cols = bounds.mi_col_end - bounds.mi_col_start;
-            let sb_column_range = bounds.mi_col_start / 8..bounds.mi_col_end / 8;
-            let rd_table_index = if rd_tables_are_tile_local {
-                sb_row
-            } else {
-                tile_col * sb_rows + sb_row
+        if active_tile_col.is_none()
+            && env.flag_or(env.compact_row_workers, true)
+            && worker_pool.is_some()
+        {
+            let mut compact_history_backing = full_history.take();
+            let worker_pool = match worker_pool {
+                Some(pool) => pool,
+                None => unreachable!("compact row worker pool presence was checked above"),
             };
-            let mut row_rd_thresh_table = std::mem::take(&mut rd_thresh_tables[rd_table_index]);
-            let mut row_history = compact_history_backing.as_mut().map(|history| {
-                InterPartitionHistoryMut::row_owned(
-                    sb_row,
-                    sb_column_range.start,
-                    history.take_row(sb_row, sb_column_range.clone()),
-                )
-            });
-            let mut row_emit_scratch = inter_emit_scratch;
-            let mut row_diagnostics = CompactInterRowDiagnostics::default();
-            let mut row_partitions: Vec<_> = sb_column_range
-                .clone()
-                .map(|sb_col| std::mem::take(&mut sb_partitions[sb_row * sb_cols + sb_col]))
-                .collect();
-            let layout =
-                InterReconLayout::compact_row(w, h, sb_row, bounds.mi_col_start, tile_mi_cols);
-            compact_y.resize(layout.plane(0).stride * layout.plane(0).rows, 0);
-            compact_u.resize(layout.plane(1).stride * layout.plane(1).rows, 0);
-            compact_v.resize(layout.plane(2).stride * layout.plane(2).rows, 0);
-            let job_mi_row_start = sb_row * 8;
-            let job_mi_row_end = (job_mi_row_start + 8).min(mi_rows_us);
-            let compact_grid_layout = InterPickerMiGridLayout::new_rect(
-                job_mi_row_start.saturating_sub(3),
-                job_mi_row_end - job_mi_row_start.saturating_sub(3),
-                bounds.mi_col_start,
-                tile_mi_cols,
-            );
-            let compact_mv_layout = InterPickerMiGridLayout::new_rect(
-                job_mi_row_start,
-                job_mi_row_end - job_mi_row_start,
-                bounds.mi_col_start,
-                tile_mi_cols,
-            );
-            let mut compact_mv = vec![
-                PrevFrameMvRef::default();
-                compact_mv_layout.mi_rows * compact_mv_layout.mi_cols
-            ];
-            let mut row_coef_source = VecBackedInterCoefSource::new_for_mi_rect(
-                width,
-                height,
-                job_mi_row_start,
-                job_mi_row_end,
-                bounds.mi_col_start,
-                bounds.mi_col_end,
-            );
-            let compact_mi_grid = {
-                let mut compact =
-                    InterReconPlanes::new((&mut compact_y, &mut compact_u, &mut compact_v), layout);
-                if sb_row > 0 {
-                    for (plane, full) in [&*recon_y_out, &*recon_u_out, &*recon_v_out]
-                        .into_iter()
-                        .enumerate()
-                    {
-                        let plane_layout = layout.plane(plane);
-                        compact.plane_mut(plane).copy_from_full_frame(
-                            full,
-                            plane_layout.col_start,
-                            plane_layout.row_start,
-                            plane_layout.stride,
-                            1,
+            for sb_row in 0..sb_rows {
+                let mut works = Vec::with_capacity(tile_bounds_by_col.len());
+                for (tile_col, &bounds) in tile_bounds_by_col.iter().enumerate() {
+                    let tile_mi_cols = bounds.mi_col_end - bounds.mi_col_start;
+                    let sb_column_range = bounds.mi_col_start / 8..bounds.mi_col_end / 8;
+                    let rd_table_index = tile_col * sb_rows + sb_row;
+                    let row_rd_thresh_table = std::mem::take(&mut rd_thresh_tables[rd_table_index]);
+                    let vbp_history = compact_history_backing
+                        .as_mut()
+                        .map(|history| history.take_row(sb_row, sb_column_range.clone()));
+                    let row_partitions: Vec<_> = sb_column_range
+                        .clone()
+                        .map(|sb_col| std::mem::take(&mut sb_partitions[sb_row * sb_cols + sb_col]))
+                        .collect();
+                    let recon_layout = InterReconLayout::compact_row(
+                        w,
+                        h,
+                        sb_row,
+                        bounds.mi_col_start,
+                        tile_mi_cols,
+                    );
+                    let mut recon_y =
+                        vec![0; recon_layout.plane(0).stride * recon_layout.plane(0).rows];
+                    let mut recon_u =
+                        vec![0; recon_layout.plane(1).stride * recon_layout.plane(1).rows];
+                    let mut recon_v =
+                        vec![0; recon_layout.plane(2).stride * recon_layout.plane(2).rows];
+                    if sb_row > 0 {
+                        let mut compact = InterReconPlanes::new(
+                            (&mut recon_y, &mut recon_u, &mut recon_v),
+                            recon_layout,
                         );
+                        for (plane, full) in [&*recon_y_out, &*recon_u_out, &*recon_v_out]
+                            .into_iter()
+                            .enumerate()
+                        {
+                            let plane_layout = recon_layout.plane(plane);
+                            compact.plane_mut(plane).copy_from_full_frame(
+                                full,
+                                plane_layout.col_start,
+                                plane_layout.row_start,
+                                plane_layout.stride,
+                                1,
+                            );
+                        }
                     }
-                }
-                let mut compact_grids =
-                    InterRowGrids::new(compact_grid_layout, &mut compact_mv, compact_mv_layout);
-                let mut partition_grid = InterPartitionGrid::compact_row(
-                    &mut row_partitions,
-                    sb_row,
-                    sb_column_range.start,
-                    sb_column_range.len(),
-                    sb_cols,
-                );
-                for mi_row in compact_grid_layout.mi_row_start..job_mi_row_start {
-                    for mi_col in bounds.mi_col_start..bounds.mi_col_end {
-                        let compact_index = compact_grid_layout
-                            .index(mi_row, mi_col)
-                            .expect("compact causal MI cell must be in bounds");
-                        compact_grids.mi_grid[compact_index] =
-                            row_grids.get(mi_row, mi_col).copied();
+                    let job_mi_row_start = sb_row * 8;
+                    let job_mi_row_end = (job_mi_row_start + 8).min(mi_rows_us);
+                    let compact_grid_layout = InterPickerMiGridLayout::new_rect(
+                        job_mi_row_start.saturating_sub(3),
+                        job_mi_row_end - job_mi_row_start.saturating_sub(3),
+                        bounds.mi_col_start,
+                        tile_mi_cols,
+                    );
+                    let compact_mv_layout = InterPickerMiGridLayout::new_rect(
+                        job_mi_row_start,
+                        job_mi_row_end - job_mi_row_start,
+                        bounds.mi_col_start,
+                        tile_mi_cols,
+                    );
+                    let compact_mv = vec![
+                        PrevFrameMvRef::default();
+                        compact_mv_layout.mi_rows * compact_mv_layout.mi_cols
+                    ];
+                    let row_coef_source = VecBackedInterCoefSource::new_for_mi_rect(
+                        width,
+                        height,
+                        job_mi_row_start,
+                        job_mi_row_end,
+                        bounds.mi_col_start,
+                        bounds.mi_col_end,
+                    );
+                    let mut compact_mi = vec![None; compact_grid_layout.mi_rows * tile_mi_cols];
+                    for mi_row in compact_grid_layout.mi_row_start..job_mi_row_start {
+                        for mi_col in bounds.mi_col_start..bounds.mi_col_end {
+                            let compact_index = compact_grid_layout
+                                .index(mi_row, mi_col)
+                                .expect("compact causal MI cell must be in bounds");
+                            compact_mi[compact_index] = row_grids.get(mi_row, mi_col).copied();
+                        }
                     }
+                    let recon_layout_for_work = recon_layout;
+                    works.push(CompactInterRowWork {
+                        job: crate::row_mt::RowJob { sb_row, tile_col },
+                        mi_col_start: bounds.mi_col_start,
+                        mi_col_end: bounds.mi_col_end,
+                        recon_layout: recon_layout_for_work,
+                        recon_y,
+                        recon_u,
+                        recon_v,
+                        compact_grid_layout,
+                        compact_mi,
+                        compact_mv_layout,
+                        compact_mv,
+                        coefs: row_coef_source,
+                        partitions: row_partitions,
+                        rd_table_index,
+                        rd_thresh_table: row_rd_thresh_table,
+                        vbp_history,
+                    });
                 }
-                encode_job(
-                    job,
-                    &mut compact,
-                    &mut compact_grids,
-                    &mut row_coef_source,
-                    &mut recorded_coef_tile,
-                    &mut coef_record_bw,
-                    true,
-                    &mut partition_grid,
-                    &mut row_emit_scratch,
-                    &mut row_history,
-                    &mut row_rd_thresh_table,
-                    &mut row_diagnostics,
-                );
-                compact_grids.into_simulation_grid()
-            };
-            let vbp_history = match row_history {
-                None => None,
-                Some(InterPartitionHistoryMut::RowOwned { entries, .. }) => Some(entries),
-                Some(_) => panic!("compact VBP row must own its history entries"),
-            };
-            let (merged_y, merged_u, merged_v, emit_scratch, diagnostics) = CompactInterRowResult {
-                job,
-                mi_col_start: bounds.mi_col_start,
-                mi_col_end: bounds.mi_col_end,
-                recon_layout: layout,
-                recon_y: compact_y,
-                recon_u: compact_u,
-                recon_v: compact_v,
-                mi_grid: compact_mi_grid,
-                mv_layout: compact_mv_layout,
-                mv_grid: compact_mv,
-                coefs: row_coef_source,
-                partitions: row_partitions,
-                rd_table_index,
-                rd_thresh_table: row_rd_thresh_table,
-                vbp_history,
-                emit_scratch: row_emit_scratch,
-                diagnostics: row_diagnostics,
+
+                let mut result_slots: Vec<Option<CompactInterRowResult>> =
+                    (0..works.len()).map(|_| None).collect();
+                worker_pool.scope(|scope| {
+                    for (result_slot, mut work) in result_slots.iter_mut().zip(works) {
+                        scope.submit(move || {
+                            rvp9_core::mode_decision::inter::set_frame_s2_gate(frame_s2_gate);
+                            let mut row_history = work.vbp_history.take().map(|entries| {
+                                InterPartitionHistoryMut::row_owned(
+                                    work.job.sb_row,
+                                    work.mi_col_start / 8,
+                                    entries,
+                                )
+                            });
+                            let mut row_emit_scratch = InterEmitScratch::new();
+                            let mut row_diagnostics = CompactInterRowDiagnostics::default();
+                            let mut recorded_coef_tile = None;
+                            let mut coef_sink = [];
+                            let mut coef_record_bw = BoolWriter::start_count_only(&mut coef_sink);
+                            let mut compact = InterReconPlanes::new(
+                                (&mut work.recon_y, &mut work.recon_u, &mut work.recon_v),
+                                work.recon_layout,
+                            );
+                            let mut compact_grids = InterRowGrids::new(
+                                work.compact_grid_layout,
+                                &mut work.compact_mv,
+                                work.compact_mv_layout,
+                            );
+                            compact_grids.mi_grid.copy_from_slice(&work.compact_mi);
+                            let mut partition_grid = InterPartitionGrid::compact_row(
+                                &mut work.partitions,
+                                work.job.sb_row,
+                                work.mi_col_start / 8,
+                                (work.mi_col_end - work.mi_col_start) / 8,
+                                sb_cols,
+                            );
+                            encode_job(
+                                work.job,
+                                &mut compact,
+                                &mut compact_grids,
+                                &mut work.coefs,
+                                &mut recorded_coef_tile,
+                                &mut coef_record_bw,
+                                true,
+                                &mut partition_grid,
+                                &mut row_emit_scratch,
+                                &mut row_history,
+                                &mut work.rd_thresh_table,
+                                &mut row_diagnostics,
+                            );
+                            let mi_grid = compact_grids.into_simulation_grid();
+                            let vbp_history = match row_history {
+                                None => None,
+                                Some(InterPartitionHistoryMut::RowOwned { entries, .. }) => {
+                                    Some(entries)
+                                }
+                                Some(_) => panic!("compact VBP row must own its history entries"),
+                            };
+                            *result_slot = Some(CompactInterRowResult {
+                                job: work.job,
+                                mi_col_start: work.mi_col_start,
+                                mi_col_end: work.mi_col_end,
+                                recon_layout: work.recon_layout,
+                                recon_y: work.recon_y,
+                                recon_u: work.recon_u,
+                                recon_v: work.recon_v,
+                                mi_grid,
+                                mv_layout: work.compact_mv_layout,
+                                mv_grid: work.compact_mv,
+                                coefs: work.coefs,
+                                partitions: work.partitions,
+                                rd_table_index: work.rd_table_index,
+                                rd_thresh_table: work.rd_thresh_table,
+                                vbp_history,
+                                emit_scratch: row_emit_scratch,
+                                diagnostics: row_diagnostics,
+                            });
+                        });
+                    }
+                });
+                for result_slot in result_slots {
+                    let result = result_slot.expect("compact row worker produced no result");
+                    let (_recon_y, _recon_u, _recon_v, _emit_scratch, diagnostics) = result
+                        .merge_into(
+                            w,
+                            h,
+                            recon_y_out,
+                            recon_u_out,
+                            recon_v_out,
+                            &mut row_grids,
+                            &mut coef_source,
+                            sb_partitions,
+                            rd_thresh_tables,
+                            &mut compact_history_backing,
+                        );
+                    frame_diagnostics.merge_from(diagnostics);
+                }
             }
-            .merge_into(
-                w,
-                h,
-                recon_y_out,
-                recon_u_out,
-                recon_v_out,
-                &mut row_grids,
-                &mut coef_source,
-                sb_partitions,
-                rd_thresh_tables,
-                &mut compact_history_backing,
-            );
-            compact_y = merged_y;
-            compact_u = merged_u;
-            compact_v = merged_v;
-            inter_emit_scratch = emit_scratch;
-            frame_diagnostics.merge_from(diagnostics);
+        } else {
+            let jobs: Vec<_> = if let Some(tile_col) = active_tile_col {
+                (0..sb_rows)
+                    .map(|sb_row| crate::row_mt::RowJob { sb_row, tile_col })
+                    .collect()
+            } else {
+                let row_context =
+                    crate::row_mt::RowMtContext::new(tile_bounds_by_col.len(), sb_rows);
+                let mut tile_col = row_context.initial_tile_for_worker(0);
+                let mut jobs = Vec::with_capacity(tile_bounds_by_col.len() * sb_rows);
+                while let Some(job) = row_context.claim_for_worker(&mut tile_col) {
+                    jobs.push(job);
+                }
+                debug_assert!(row_context.queues_drained());
+                debug_assert_eq!(row_context.remaining_jobs(), 0);
+                jobs
+            };
+            let mut compact_y = Vec::new();
+            let mut compact_u = Vec::new();
+            let mut compact_v = Vec::new();
+            let mut compact_history_backing = full_history.take();
+            for job in jobs {
+                let tile_col = job.tile_col;
+                let sb_row = job.sb_row;
+                let bounds = tile_bounds_by_col[tile_col];
+                let tile_mi_cols = bounds.mi_col_end - bounds.mi_col_start;
+                let sb_column_range = bounds.mi_col_start / 8..bounds.mi_col_end / 8;
+                let rd_table_index = if rd_tables_are_tile_local {
+                    sb_row
+                } else {
+                    tile_col * sb_rows + sb_row
+                };
+                let mut row_rd_thresh_table = std::mem::take(&mut rd_thresh_tables[rd_table_index]);
+                let mut row_history = compact_history_backing.as_mut().map(|history| {
+                    InterPartitionHistoryMut::row_owned(
+                        sb_row,
+                        sb_column_range.start,
+                        history.take_row(sb_row, sb_column_range.clone()),
+                    )
+                });
+                let mut row_emit_scratch =
+                    std::mem::replace(&mut inter_emit_scratch, InterEmitScratch::new());
+                let mut row_diagnostics = CompactInterRowDiagnostics::default();
+                let mut row_partitions: Vec<_> = sb_column_range
+                    .clone()
+                    .map(|sb_col| std::mem::take(&mut sb_partitions[sb_row * sb_cols + sb_col]))
+                    .collect();
+                let layout =
+                    InterReconLayout::compact_row(w, h, sb_row, bounds.mi_col_start, tile_mi_cols);
+                compact_y.resize(layout.plane(0).stride * layout.plane(0).rows, 0);
+                compact_u.resize(layout.plane(1).stride * layout.plane(1).rows, 0);
+                compact_v.resize(layout.plane(2).stride * layout.plane(2).rows, 0);
+                let job_mi_row_start = sb_row * 8;
+                let job_mi_row_end = (job_mi_row_start + 8).min(mi_rows_us);
+                let compact_grid_layout = InterPickerMiGridLayout::new_rect(
+                    job_mi_row_start.saturating_sub(3),
+                    job_mi_row_end - job_mi_row_start.saturating_sub(3),
+                    bounds.mi_col_start,
+                    tile_mi_cols,
+                );
+                let compact_mv_layout = InterPickerMiGridLayout::new_rect(
+                    job_mi_row_start,
+                    job_mi_row_end - job_mi_row_start,
+                    bounds.mi_col_start,
+                    tile_mi_cols,
+                );
+                let mut compact_mv = vec![
+                    PrevFrameMvRef::default();
+                    compact_mv_layout.mi_rows * compact_mv_layout.mi_cols
+                ];
+                let mut row_coef_source = VecBackedInterCoefSource::new_for_mi_rect(
+                    width,
+                    height,
+                    job_mi_row_start,
+                    job_mi_row_end,
+                    bounds.mi_col_start,
+                    bounds.mi_col_end,
+                );
+                let compact_mi_grid = {
+                    let mut compact = InterReconPlanes::new(
+                        (&mut compact_y, &mut compact_u, &mut compact_v),
+                        layout,
+                    );
+                    if sb_row > 0 {
+                        for (plane, full) in [&*recon_y_out, &*recon_u_out, &*recon_v_out]
+                            .into_iter()
+                            .enumerate()
+                        {
+                            let plane_layout = layout.plane(plane);
+                            compact.plane_mut(plane).copy_from_full_frame(
+                                full,
+                                plane_layout.col_start,
+                                plane_layout.row_start,
+                                plane_layout.stride,
+                                1,
+                            );
+                        }
+                    }
+                    let mut compact_grids =
+                        InterRowGrids::new(compact_grid_layout, &mut compact_mv, compact_mv_layout);
+                    let mut partition_grid = InterPartitionGrid::compact_row(
+                        &mut row_partitions,
+                        sb_row,
+                        sb_column_range.start,
+                        sb_column_range.len(),
+                        sb_cols,
+                    );
+                    for mi_row in compact_grid_layout.mi_row_start..job_mi_row_start {
+                        for mi_col in bounds.mi_col_start..bounds.mi_col_end {
+                            let compact_index = compact_grid_layout
+                                .index(mi_row, mi_col)
+                                .expect("compact causal MI cell must be in bounds");
+                            compact_grids.mi_grid[compact_index] =
+                                row_grids.get(mi_row, mi_col).copied();
+                        }
+                    }
+                    encode_job(
+                        job,
+                        &mut compact,
+                        &mut compact_grids,
+                        &mut row_coef_source,
+                        &mut recorded_coef_tile,
+                        &mut coef_record_bw,
+                        true,
+                        &mut partition_grid,
+                        &mut row_emit_scratch,
+                        &mut row_history,
+                        &mut row_rd_thresh_table,
+                        &mut row_diagnostics,
+                    );
+                    compact_grids.into_simulation_grid()
+                };
+                let vbp_history = match row_history {
+                    None => None,
+                    Some(InterPartitionHistoryMut::RowOwned { entries, .. }) => Some(entries),
+                    Some(_) => panic!("compact VBP row must own its history entries"),
+                };
+                let (merged_y, merged_u, merged_v, emit_scratch, diagnostics) =
+                    CompactInterRowResult {
+                        job,
+                        mi_col_start: bounds.mi_col_start,
+                        mi_col_end: bounds.mi_col_end,
+                        recon_layout: layout,
+                        recon_y: compact_y,
+                        recon_u: compact_u,
+                        recon_v: compact_v,
+                        mi_grid: compact_mi_grid,
+                        mv_layout: compact_mv_layout,
+                        mv_grid: compact_mv,
+                        coefs: row_coef_source,
+                        partitions: row_partitions,
+                        rd_table_index,
+                        rd_thresh_table: row_rd_thresh_table,
+                        vbp_history,
+                        emit_scratch: row_emit_scratch,
+                        diagnostics: row_diagnostics,
+                    }
+                    .merge_into(
+                        w,
+                        h,
+                        recon_y_out,
+                        recon_u_out,
+                        recon_v_out,
+                        &mut row_grids,
+                        &mut coef_source,
+                        sb_partitions,
+                        rd_thresh_tables,
+                        &mut compact_history_backing,
+                    );
+                compact_y = merged_y;
+                compact_u = merged_u;
+                compact_v = merged_v;
+                inter_emit_scratch = emit_scratch;
+                frame_diagnostics.merge_from(diagnostics);
+            }
         }
     } else {
         let mut recon_yuv_out =
