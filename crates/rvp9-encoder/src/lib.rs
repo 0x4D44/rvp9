@@ -3123,6 +3123,30 @@ impl<'a> InterRowGrids<'a> {
         }
     }
 
+    fn new_with_mi_grid(
+        layout: InterPickerMiGridLayout,
+        mi_grid: Vec<Option<rvp9_core::mode_info::ModeInfo>>,
+        out_mv_grid: &'a mut [PrevFrameMvRef],
+        out_layout: InterPickerMiGridLayout,
+    ) -> Self {
+        assert_eq!(
+            mi_grid.len(),
+            layout.mi_rows * layout.mi_cols,
+            "inter MI input must match its compact layout",
+        );
+        assert_eq!(
+            out_mv_grid.len(),
+            out_layout.mi_rows * out_layout.mi_cols,
+            "inter MV output must match its compact layout",
+        );
+        Self {
+            mi_grid,
+            layout,
+            out_mv_grid,
+            out_layout,
+        }
+    }
+
     #[inline]
     fn as_slice(&self) -> &[Option<rvp9_core::mode_info::ModeInfo>] {
         &self.mi_grid
@@ -3737,6 +3761,7 @@ struct CompactInterRowWork {
 
 impl CompactInterRowResult {
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::type_complexity)]
     fn merge_into(
         mut self,
         frame_width: usize,
@@ -3753,6 +3778,7 @@ impl CompactInterRowResult {
         Vec<u8>,
         Vec<u8>,
         Vec<u8>,
+        Vec<Option<rvp9_core::mode_info::ModeInfo>>,
         VecBackedInterCoefSource,
         InterEmitScratch,
         CompactInterRowDiagnostics,
@@ -3808,6 +3834,7 @@ impl CompactInterRowResult {
             }
         }
         debug_assert_eq!(frame_width, self.recon_layout.plane(0).frame_width);
+        let reusable_mi = self.mi_grid.cells;
         let mut reusable_coefs = self.coefs;
         coef_source.merge_from_reusable(&mut reusable_coefs);
         let sb_col_start = self.mi_col_start / 8;
@@ -3832,6 +3859,7 @@ impl CompactInterRowResult {
             self.recon_y,
             self.recon_u,
             self.recon_v,
+            reusable_mi,
             reusable_coefs,
             self.emit_scratch,
             self.diagnostics,
@@ -9637,6 +9665,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 .collect();
             let mut compact_coef_scratch: Vec<Option<VecBackedInterCoefSource>> =
                 (0..tile_bounds_by_col.len()).map(|_| None).collect();
+            let mut compact_mi_scratch: Vec<Vec<Option<rvp9_core::mode_info::ModeInfo>>> =
+                (0..tile_bounds_by_col.len()).map(|_| Vec::new()).collect();
             for sb_row in 0..sb_rows {
                 let mut works = Vec::with_capacity(tile_bounds_by_col.len());
                 for (tile_col, &bounds) in tile_bounds_by_col.iter().enumerate() {
@@ -9719,7 +9749,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         bounds.mi_col_start,
                         bounds.mi_col_end,
                     );
-                    let mut compact_mi = vec![None; compact_grid_layout.mi_rows * tile_mi_cols];
+                    let mut compact_mi = std::mem::take(&mut compact_mi_scratch[tile_col]);
+                    compact_mi.resize(compact_grid_layout.mi_rows * tile_mi_cols, None);
+                    compact_mi.fill(None);
                     for mi_row in compact_grid_layout.mi_row_start..job_mi_row_start {
                         for mi_col in bounds.mi_col_start..bounds.mi_col_end {
                             let compact_index = compact_grid_layout
@@ -9771,12 +9803,12 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                 (&mut work.recon_y, &mut work.recon_u, &mut work.recon_v),
                                 work.recon_layout,
                             );
-                            let mut compact_grids = InterRowGrids::new(
+                            let mut compact_grids = InterRowGrids::new_with_mi_grid(
                                 work.compact_grid_layout,
+                                work.compact_mi,
                                 &mut work.compact_mv,
                                 work.compact_mv_layout,
                             );
-                            compact_grids.mi_grid.copy_from_slice(&work.compact_mi);
                             let mut partition_grid = InterPartitionGrid::compact_row(
                                 &mut work.partitions,
                                 work.job.sb_row,
@@ -9831,20 +9863,28 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 for result_slot in result_slots {
                     let result = result_slot.expect("compact row worker produced no result");
                     let result_tile_col = result.job.tile_col;
-                    let (recon_y, recon_u, recon_v, reusable_coefs, _emit_scratch, diagnostics) =
-                        result.merge_into(
-                            w,
-                            h,
-                            recon_y_out,
-                            recon_u_out,
-                            recon_v_out,
-                            &mut row_grids,
-                            &mut coef_source,
-                            sb_partitions,
-                            rd_thresh_tables,
-                            &mut compact_history_backing,
-                        );
+                    let (
+                        recon_y,
+                        recon_u,
+                        recon_v,
+                        reusable_mi,
+                        reusable_coefs,
+                        _emit_scratch,
+                        diagnostics,
+                    ) = result.merge_into(
+                        w,
+                        h,
+                        recon_y_out,
+                        recon_u_out,
+                        recon_v_out,
+                        &mut row_grids,
+                        &mut coef_source,
+                        sb_partitions,
+                        rd_thresh_tables,
+                        &mut compact_history_backing,
+                    );
                     compact_recon_scratch[result_tile_col] = (recon_y, recon_u, recon_v);
+                    compact_mi_scratch[result_tile_col] = reusable_mi;
                     compact_coef_scratch[result_tile_col] = Some(reusable_coefs);
                     frame_diagnostics.merge_from(diagnostics);
                 }
@@ -9986,38 +10026,45 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     Some(InterPartitionHistoryMut::RowOwned { entries, .. }) => Some(entries),
                     Some(_) => panic!("compact VBP row must own its history entries"),
                 };
-                let (merged_y, merged_u, merged_v, _reusable_coefs, emit_scratch, diagnostics) =
-                    CompactInterRowResult {
-                        job,
-                        mi_col_start: bounds.mi_col_start,
-                        mi_col_end: bounds.mi_col_end,
-                        recon_layout: layout,
-                        recon_y: compact_y,
-                        recon_u: compact_u,
-                        recon_v: compact_v,
-                        mi_grid: compact_mi_grid,
-                        mv_layout: compact_mv_layout,
-                        mv_grid: compact_mv,
-                        coefs: row_coef_source,
-                        partitions: row_partitions,
-                        rd_table_index,
-                        rd_thresh_table: row_rd_thresh_table,
-                        vbp_history,
-                        emit_scratch: row_emit_scratch,
-                        diagnostics: row_diagnostics,
-                    }
-                    .merge_into(
-                        w,
-                        h,
-                        recon_y_out,
-                        recon_u_out,
-                        recon_v_out,
-                        &mut row_grids,
-                        &mut coef_source,
-                        sb_partitions,
-                        rd_thresh_tables,
-                        &mut compact_history_backing,
-                    );
+                let (
+                    merged_y,
+                    merged_u,
+                    merged_v,
+                    _reusable_mi,
+                    _reusable_coefs,
+                    emit_scratch,
+                    diagnostics,
+                ) = CompactInterRowResult {
+                    job,
+                    mi_col_start: bounds.mi_col_start,
+                    mi_col_end: bounds.mi_col_end,
+                    recon_layout: layout,
+                    recon_y: compact_y,
+                    recon_u: compact_u,
+                    recon_v: compact_v,
+                    mi_grid: compact_mi_grid,
+                    mv_layout: compact_mv_layout,
+                    mv_grid: compact_mv,
+                    coefs: row_coef_source,
+                    partitions: row_partitions,
+                    rd_table_index,
+                    rd_thresh_table: row_rd_thresh_table,
+                    vbp_history,
+                    emit_scratch: row_emit_scratch,
+                    diagnostics: row_diagnostics,
+                }
+                .merge_into(
+                    w,
+                    h,
+                    recon_y_out,
+                    recon_u_out,
+                    recon_v_out,
+                    &mut row_grids,
+                    &mut coef_source,
+                    sb_partitions,
+                    rd_thresh_tables,
+                    &mut compact_history_backing,
+                );
                 compact_y = merged_y;
                 compact_u = merged_u;
                 compact_v = merged_v;
@@ -11952,6 +11999,24 @@ mod tests {
             }
         }
         assert_eq!(out_mv_grid[0], PrevFrameMvRef::default());
+    }
+
+    #[test]
+    fn inter_row_grids_accepts_owned_mi_grid_without_copying() {
+        let layout = InterPickerMiGridLayout::new_rect(4, 4, 2, 4);
+        let mi_grid = vec![None; layout.mi_rows * layout.mi_cols];
+        let mut out_mv_grid = vec![PrevFrameMvRef::default(); 8 * 4];
+        let grids = InterRowGrids::new_with_mi_grid(
+            layout,
+            mi_grid,
+            &mut out_mv_grid,
+            InterPickerMiGridLayout::new_rect(4, 8, 2, 4),
+        );
+        assert_eq!(grids.as_slice().len(), 4 * 4);
+        assert!(grids.as_slice().iter().all(Option::is_none));
+        let simulation_grid = grids.into_simulation_grid();
+        assert_eq!(simulation_grid.cells.len(), 4 * 4);
+        assert!(simulation_grid.cells.iter().all(Option::is_none));
     }
 
     #[test]
