@@ -202,13 +202,27 @@ pub enum Stage4aProductSplitOverride {
 // `rvp9_encoder::Deadline` is preserved for W0.2 callers (CLI, tests).
 pub use rvp9_core::mode_decision::speed_features::Deadline;
 
-const VBR_BITS_PER_MB_MULTIPLIER_DEFAULT: f64 = 4.0;
+// The simplified estimator now starts at libvpx's unit correction factor.
+// VBR's post-encode feedback supplies the content correction instead of
+// relying on a permanent, mode-wide multiplier.
+const VBR_BITS_PER_MB_MULTIPLIER_DEFAULT: f64 = 1.0;
 
 fn default_bits_per_mb_multiplier(rc_mode: RcMode, base_default: f64) -> f64 {
     match rc_mode {
         RcMode::Vbr => VBR_BITS_PER_MB_MULTIPLIER_DEFAULT,
         _ => base_default,
     }
+}
+
+#[inline]
+fn vbr_gf_rc_policy(value: Option<&std::ffi::OsStr>) -> bool {
+    value.is_none_or(|v| v != "0")
+}
+
+#[inline]
+fn vbr_gf_rc_enabled(rc_mode: RcMode) -> bool {
+    matches!(rc_mode, RcMode::Vbr)
+        && vbr_gf_rc_policy(std::env::var_os("RVP9_VBR_GF_RC").as_deref())
 }
 
 /// Public configuration for the F10.0 streaming encoder.
@@ -1581,15 +1595,14 @@ impl StreamEncoder {
 
         let rc_config = config.to_rate_control_config();
         rc_config.validate().map_err(EncodeError::InvalidConfig)?;
-        let vbr_gf_rc_enabled = matches!(config.rc_mode, RcMode::Vbr)
-            && std::env::var_os("RVP9_VBR_GF_RC").is_some_and(|v| v != "0");
-        let golden_refresh_period = if vbr_gf_rc_enabled {
+        let vbr_gf_rc_is_enabled = vbr_gf_rc_enabled(config.rc_mode);
+        let golden_refresh_period = if vbr_gf_rc_is_enabled {
             rc_config.one_pass_vbr_gf_interval()
         } else {
             crate::gop::GOLDEN_REFRESH_PERIOD
         };
         let mut rate_control = RateControl::new(rc_config);
-        if vbr_gf_rc_enabled {
+        if vbr_gf_rc_is_enabled {
             rate_control.baseline_gf_interval = i64::from(golden_refresh_period);
         }
 
@@ -2127,10 +2140,7 @@ impl StreamEncoder {
         };
         let rc_frame_kind = match frame_sched.update_type {
             crate::gop::FrameUpdateType::KfUpdate => RcFrameKind::Key,
-            crate::gop::FrameUpdateType::GfUpdate
-                if matches!(self.config.rc_mode, RcMode::Vbr)
-                    && std::env::var_os("RVP9_VBR_GF_RC").is_some_and(|v| v != "0") =>
-            {
+            crate::gop::FrameUpdateType::GfUpdate if vbr_gf_rc_enabled(self.config.rc_mode) => {
                 RcFrameKind::Golden
             }
             _ => RcFrameKind::Inter,
@@ -11061,6 +11071,15 @@ mod tests {
             default_bits_per_mb_multiplier(RcMode::VbrTwoPass, base),
             base
         );
+    }
+
+    #[test]
+    fn vbr_golden_rate_control_defaults_on_and_accepts_zero_escape() {
+        use std::ffi::OsStr;
+
+        assert!(vbr_gf_rc_policy(None));
+        assert!(vbr_gf_rc_policy(Some(OsStr::new("1"))));
+        assert!(!vbr_gf_rc_policy(Some(OsStr::new("0"))));
     }
 
     #[test]

@@ -4578,3 +4578,30 @@ not close the `1.05x` speed gate.
 **Future plan:** replace complete re-picks on mismatched leaves with a
 causal-context-preserving fast correction, then repeat the same six-point
 curves and warmed timing matrix.
+
+### 2026-08-08 — Enable the libvpx-aligned VBR-GOLDEN controller by default
+
+**Where:** `rvp9_encoder::frame_loop::{vbr_gf_rc_enabled,StreamEncoder::new_with_parallelism}`
+and the VBR bits-per-MB multiplier default.
+
+**What libvpx does:** one-pass realtime VBR builds a frame-rate-derived
+GOLDEN cadence and starts its simplified bits-per-MB estimator at correction
+factor `1.0`; post-encode feedback learns content bias per frame.
+
+**What rvp9 does:** VBR now uses that cadence and unit estimator by default.
+`RVP9_VBR_GF_RC=0` remains an explicit diagnostic escape hatch, and
+`RVP9_BPM_MULTIPLIER=<value>` still overrides the estimator for experiments.
+CBR and other rate-control modes are unchanged.
+
+**Why:** the previous VBR-only multiplier `4.0` and opt-in Golden schedule
+were diagnostic scaffolding, not production parity. Removing both defaults
+reduced the CPU7 1080p30 six-point VBR curves to
+`+1.614%/+6.925%/-19.758%` for in-tree/old-town/ducks under the canonical
+four-thread, 60-frame settings. This is an intermediate improvement, not the
+final `+0.5%` corpus gate.
+
+**Byte-parity impact:** intentional rate-control and frame-structure changes;
+streams remain VP9 and require the full decoder/conformance matrix.
+
+**Future plan:** close the remaining old-town and in-tree VBR residuals,
+then repeat the same default policy across CPU6/7/8 and target resolutions.
