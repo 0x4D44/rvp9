@@ -50,8 +50,9 @@ impl HadamardRateAccumulator {
 
     #[inline]
     #[target_feature(enable = "neon")]
-    unsafe fn add(&mut self, q: int16x8_t) {
-        self.satd = vpadalq_u16(self.satd, vreinterpretq_u16_s16(vabsq_s16(q)));
+    unsafe fn add_abs(&mut self, abs_q: int16x8_t) {
+        // Rate-only callers already have non-negative, gate-masked magnitudes.
+        self.satd = vpadalq_u16(self.satd, vreinterpretq_u16_s16(abs_q));
     }
 
     #[inline]
@@ -287,11 +288,9 @@ unsafe fn quantize_i16_8_rate(
     metrics: &mut HadamardRateAccumulator,
 ) {
     let coeff = vld1q_s16(coeff);
-    let sign = vshrq_n_s16::<15>(coeff);
     let rounded = vqaddq_s16(vqabsq_s16(coeff), round);
     let abs_q = vshrq_n_s16::<1>(vqdmulhq_s16(rounded, quant));
-    let q = vsubq_s16(veorq_s16(abs_q, sign), sign);
-    metrics.add(q);
+    metrics.add_abs(abs_q);
 }
 
 #[target_feature(enable = "neon")]
@@ -598,16 +597,11 @@ unsafe fn quantize_fp_32x32_i16_8_rate(
     metrics: &mut HadamardRateAccumulator,
 ) {
     let coeff = vld1q_s16(coeff);
-    let sign = vshrq_n_s16::<15>(coeff);
     let abs = vqabsq_s16(coeff);
     let keep = vcgeq_s16(abs, gate);
     let rounded = vqaddq_s16(abs, round);
-    let abs_q = vqdmulhq_s16(rounded, quant);
-    let q = vandq_s16(
-        vsubq_s16(veorq_s16(abs_q, sign), sign),
-        vreinterpretq_s16_u16(keep),
-    );
-    metrics.add(q);
+    let abs_q = vandq_s16(vqdmulhq_s16(rounded, quant), vreinterpretq_s16_u16(keep));
+    metrics.add_abs(abs_q);
 }
 
 #[target_feature(enable = "neon")]
