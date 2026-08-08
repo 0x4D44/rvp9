@@ -4924,16 +4924,13 @@ fn realtime_cpu6_large_recovery_for_mode(
 }
 
 fn a4_descent_independent_mv_default(
-    rc_mode: crate::rate_control::RcMode,
     speed: i32,
     deadline: rvp9_core::mode_decision::speed_features::Deadline,
 ) -> bool {
-    matches!(rc_mode, crate::rate_control::RcMode::Vbr)
-        && matches!(
-            deadline,
-            rvp9_core::mode_decision::speed_features::Deadline::Realtime
-        )
-        && speed.unsigned_abs() >= 7
+    matches!(
+        deadline,
+        rvp9_core::mode_decision::speed_features::Deadline::Realtime
+    ) && speed.unsigned_abs() >= 7
 }
 
 fn variance_hint_cell_code(bs: BlockSize) -> &'static str {
@@ -5534,7 +5531,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // diagnostic.
     let a4_descent_independent_mv = env
         .a4_descent_independent_mv
-        .unwrap_or_else(|| a4_descent_independent_mv_default(rc_mode, speed, deadline));
+        .unwrap_or_else(|| a4_descent_independent_mv_default(speed, deadline));
 
     let w = width as usize;
     let h = height as usize;
@@ -13976,34 +13973,13 @@ mod tests {
     }
 
     #[test]
-    fn a4_independent_mv_proxy_is_scoped_to_stage4a_vbr() {
+    fn a4_independent_mv_proxy_is_scoped_to_realtime_speed_7_or_faster() {
         use rvp9_core::mode_decision::speed_features::Deadline;
 
-        assert!(a4_descent_independent_mv_default(
-            crate::rate_control::RcMode::Vbr,
-            7,
-            Deadline::Realtime,
-        ));
-        assert!(a4_descent_independent_mv_default(
-            crate::rate_control::RcMode::Vbr,
-            8,
-            Deadline::Realtime,
-        ));
-        assert!(!a4_descent_independent_mv_default(
-            crate::rate_control::RcMode::Vbr,
-            6,
-            Deadline::Realtime,
-        ));
-        assert!(!a4_descent_independent_mv_default(
-            crate::rate_control::RcMode::Cbr,
-            7,
-            Deadline::Realtime,
-        ));
-        assert!(!a4_descent_independent_mv_default(
-            crate::rate_control::RcMode::Vbr,
-            7,
-            Deadline::Good,
-        ));
+        assert!(a4_descent_independent_mv_default(7, Deadline::Realtime,));
+        assert!(a4_descent_independent_mv_default(8, Deadline::Realtime,));
+        assert!(!a4_descent_independent_mv_default(6, Deadline::Realtime,));
+        assert!(!a4_descent_independent_mv_default(7, Deadline::Good,));
     }
 
     #[test]
