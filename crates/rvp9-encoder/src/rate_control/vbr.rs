@@ -82,6 +82,9 @@ const GF_ACTIVE_QUALITY_BOOST: i32 = 2000;
 /// (`vp9_ratectrl.c:2081`). Steady-state value with no GF reshuffle.
 const AF_RATIO_ONEPASS_VBR: i64 = 10;
 
+/// libvpx `DEFAULT_GF_BOOST` used to derive the one-pass VBR AF ratio.
+const DEFAULT_GF_BOOST: i32 = 2000;
+
 /// `inter_minq` LUT lookup. libvpx `init_minq_luts` (`vp9_ratectrl.c:
 /// 128-138`) populates `inter[i]` with coefficients
 /// `(0.00000271, -0.00113, 0.70)`. Identical formula to `rtc_minq` (the
@@ -110,10 +113,10 @@ fn arfgf_high_motion_minq(qindex: i32) -> i32 {
 
 /// Port of libvpx `get_gf_active_quality`
 /// (`vp9_ratectrl.c:889-903`) for the one-pass, non-layered GF path.
-fn get_gf_active_quality(q: i32) -> i32 {
+fn get_gf_active_quality(q: i32, gfu_boost: i32) -> i32 {
     get_active_quality(
         q,
-        GF_ACTIVE_QUALITY_BOOST,
+        gfu_boost,
         GF_LOW,
         GF_HIGH,
         arfgf_low_motion_minq,
@@ -234,7 +237,7 @@ fn active_best_quality_vbr(rc: &RateControl, frame_kind: FrameKind, active_worst
             } else {
                 avg_key
             };
-            get_gf_active_quality(q)
+            get_gf_active_quality(q, rc.gfu_boost)
         }
     };
 
@@ -288,7 +291,7 @@ fn clamp_pframe_target_size_vbr(rc: &RateControl, raw: i64) -> u32 {
 fn calc_pframe_target_size_vbr(rc: &RateControl) -> u32 {
     let avg = i64::from(rc.avg_frame_bandwidth);
     let numerator = avg.saturating_mul(rc.baseline_gf_interval);
-    let denominator = rc.baseline_gf_interval + AF_RATIO_ONEPASS_VBR - 1;
+    let denominator = rc.baseline_gf_interval + i64::from(rc.af_ratio_onepass_vbr) - 1;
     let raw = if denominator > 0 {
         numerator / denominator
     } else {
@@ -299,10 +302,11 @@ fn calc_pframe_target_size_vbr(rc: &RateControl) -> u32 {
 
 fn calc_golden_target_size_vbr(rc: &RateControl) -> u32 {
     let avg = i64::from(rc.avg_frame_bandwidth);
+    let af_ratio = i64::from(rc.af_ratio_onepass_vbr);
     let numerator = avg
         .saturating_mul(rc.baseline_gf_interval)
-        .saturating_mul(AF_RATIO_ONEPASS_VBR);
-    let denominator = rc.baseline_gf_interval + AF_RATIO_ONEPASS_VBR - 1;
+        .saturating_mul(af_ratio);
+    let denominator = rc.baseline_gf_interval + af_ratio - 1;
     let raw = if denominator > 0 {
         numerator / denominator
     } else {
@@ -336,6 +340,21 @@ fn calc_golden_target_size_vbr(rc: &RateControl) -> u32 {
 ///    `active_max_qindex`, `last_picked_qindex` so the post-encode
 ///    feedback loop has the matching state.
 pub(super) fn pick_q_and_bounds(rc: &mut RateControl, frame_kind: FrameKind) -> (u8, u8, u8) {
+    // libvpx resets the Golden-frame boost ratio at each group boundary,
+    // then retunes it after frame 30 from avg_frame_low_motion. The
+    // frame-loop schedule already supplies the matching Golden marker.
+    if matches!(frame_kind, FrameKind::Golden) {
+        rc.af_ratio_onepass_vbr = AF_RATIO_ONEPASS_VBR as i32;
+        rc.gfu_boost = GF_ACTIVE_QUALITY_BOOST;
+        if rc.current_video_frame > 30 && rc.avg_frame_low_motion > 0 {
+            let boost = (DEFAULT_GF_BOOST * (rc.avg_frame_low_motion << 1)
+                / (rc.avg_frame_low_motion + 100))
+                .max(500);
+            rc.gfu_boost = boost;
+            rc.af_ratio_onepass_vbr = (3 * boost / 400).clamp(5, 15);
+        }
+    }
+
     // 1. Per-frame target bits (libvpx `vp9_rc_get_one_pass_vbr_params`,
     //    `vp9_ratectrl.c:2118-2143`).
     let target_bits = match frame_kind {
@@ -556,6 +575,16 @@ mod tests {
             i32::from(top) < unconstrained_worst,
             "1.75x GOLDEN rate floor must tighten top Q below active_worst"
         );
+    }
+
+    #[test]
+    fn late_golden_update_derives_low_motion_boost_ratio() {
+        let mut rc = RateControl::new(vbr_config());
+        rc.current_video_frame = 40;
+        rc.avg_frame_low_motion = 75;
+        let _ = pick_q_and_bounds(&mut rc, FrameKind::Golden);
+        assert_eq!(rc.gfu_boost, 1714);
+        assert_eq!(rc.af_ratio_onepass_vbr, 12);
     }
 
     /// PROOF — `pick_q_and_bounds` returns a valid `(q, lo, hi)` triple

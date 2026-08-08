@@ -162,6 +162,20 @@ pub struct RateControl {
     /// replaces it with the frame-rate-derived interval.
     pub(crate) baseline_gf_interval: i64,
 
+    /// libvpx `rc->avg_frame_low_motion`, the smoothed percentage of
+    /// LAST-referenced cells whose motion vector is below two pixels.
+    /// Updated after each show inter frame and consumed by one-pass VBR's
+    /// Golden-frame allocation heuristic.
+    pub(crate) avg_frame_low_motion: i32,
+
+    /// libvpx `rc->af_ratio_onepass_vbr`, reset at each Golden update and
+    /// adjusted from the running low-motion estimate after frame 30.
+    pub(crate) af_ratio_onepass_vbr: i32,
+
+    /// libvpx `rc->gfu_boost`, which selects the low-/high-motion Golden
+    /// active-best-quality table for one-pass VBR.
+    pub(crate) gfu_boost: i32,
+
     /// Max buffer capacity in bits (`buffer_size_ms * target_bps /
     /// 1000`). Mirrors libvpx `rc->maximum_buffer_size`
     /// (`vp9_ratectrl.h:156`).
@@ -282,6 +296,9 @@ impl RateControl {
             worst_quality: i32::from(config.max_qindex),
             best_quality: i32::from(config.min_qindex),
             baseline_gf_interval: 15,
+            avg_frame_low_motion: 0,
+            af_ratio_onepass_vbr: 10,
+            gfu_boost: 2000,
             maximum_buffer_size,
             optimal_buffer_level,
             starting_buffer_level,
@@ -403,6 +420,14 @@ impl RateControl {
         }
     }
 
+    /// Update libvpx's one-pass low-motion EWMA after a show inter frame.
+    /// `low_motion_percent` is the percentage of 8×8 cells that use LAST
+    /// with both MV components below two pixels.
+    pub(crate) fn update_frame_low_motion(&mut self, low_motion_percent: u32) {
+        let pct = low_motion_percent.min(100) as i32;
+        self.avg_frame_low_motion = (3 * self.avg_frame_low_motion + pct) >> 2;
+    }
+
     /// Read-only access to the snapshot config.
     #[must_use]
     pub fn config(&self) -> &RateControlConfig {
@@ -522,6 +547,15 @@ mod tests {
         // Sanity on derived bandwidths.
         assert!(rc.avg_frame_bandwidth > 0);
         assert!(rc.max_frame_bandwidth >= rc.avg_frame_bandwidth);
+    }
+
+    #[test]
+    fn low_motion_ewma_uses_libvpx_rounding() {
+        let mut rc = RateControl::new(RateControlConfig::default());
+        rc.update_frame_low_motion(77);
+        assert_eq!(rc.avg_frame_low_motion, 19);
+        rc.update_frame_low_motion(58);
+        assert_eq!(rc.avg_frame_low_motion, 28);
     }
 
     #[test]

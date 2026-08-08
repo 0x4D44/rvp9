@@ -4137,6 +4137,17 @@ impl StreamEncoder {
         // (vp9_noise_estimate.c:182-188) reads this. Without this
         // update the counter stays at zero forever → noise estimator
         // never sees `frame_low_motion = true`.
+        let low_motion_cells = cur_mv_grid
+            .iter()
+            .filter(|cell| {
+                let mv = cell.mvs[0];
+                cell.ref_frames[0] == RefFrame::LastFrame
+                    && i32::from(mv.row).abs() < 16
+                    && i32::from(mv.col).abs() < 16
+            })
+            .count();
+        self.rate_control
+            .update_frame_low_motion((100 * low_motion_cells / cur_mv_grid.len().max(1)) as u32);
         for (idx, cell) in cur_mv_grid.iter().enumerate() {
             if idx >= self.pre_analysis.consec_zero_mv.len() {
                 break;
