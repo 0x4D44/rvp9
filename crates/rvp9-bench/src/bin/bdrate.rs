@@ -22,6 +22,8 @@
 //!       --input          tests/corpus/parkrun_720p30.y4m \
 //!       --cpu-used       7 \
 //!       --bitrates       500,1000,1500,2000,3000,4500 \
+//!       --fps            30/1 --threads 4 --tile-columns 2 --limit 60 \
+//!       --end-usage     cbr --tune-content default \
 //!       [--csv           bdrate.csv]
 //!
 //! With `--csv <path>`, also emits a machine-readable CSV with the schema
@@ -39,6 +41,13 @@ struct Args {
     input: PathBuf,
     cpu_used: u32,
     bitrates_kbps: Vec<u32>,
+    end_usage: String,
+    fps: String,
+    threads: u32,
+    tile_columns: u32,
+    lag_in_frames: u32,
+    tune_content: String,
+    limit: Option<u32>,
     /// Optional CSV output path for CI ingestion.
     csv: Option<PathBuf>,
 }
@@ -72,6 +81,19 @@ fn parse_args() -> Args {
                     .collect()
             })
             .unwrap_or_else(|| vec![500, 1000, 1500, 2000, 3000, 4500]),
+        end_usage: get("--end-usage").unwrap_or_else(|| "cbr".to_owned()),
+        fps: get("--fps").unwrap_or_else(|| "30/1".to_owned()),
+        threads: get("--threads")
+            .map(|s| s.parse().expect("--threads u32"))
+            .unwrap_or(1),
+        tile_columns: get("--tile-columns")
+            .map(|s| s.parse().expect("--tile-columns u32"))
+            .unwrap_or(0),
+        lag_in_frames: get("--lag-in-frames")
+            .map(|s| s.parse().expect("--lag-in-frames u32"))
+            .unwrap_or(0),
+        tune_content: get("--tune-content").unwrap_or_else(|| "default".to_owned()),
+        limit: get("--limit").map(|s| s.parse().expect("--limit u32")),
         csv: get("--csv").map(PathBuf::from),
     }
 }
@@ -84,22 +106,49 @@ struct RdPoint {
     psnr_db: f64,
 }
 
+struct EncodeConfig<'a> {
+    end_usage: &'a str,
+    fps: &'a str,
+    threads: u32,
+    tile_columns: u32,
+    lag_in_frames: u32,
+    tune_content: &'a str,
+    limit: Option<u32>,
+}
+
 /// Encode `input` with `encoder` at the given target bitrate. Returns the
 /// path to the resulting IVF.
-fn encode(encoder: &Path, input: &Path, cpu_used: u32, bitrate_kbps: u32, tag: &str) -> PathBuf {
+fn encode(
+    encoder: &Path,
+    input: &Path,
+    cpu_used: u32,
+    bitrate_kbps: u32,
+    tag: &str,
+    config: &EncodeConfig<'_>,
+) -> PathBuf {
     let out = std::env::temp_dir().join(format!("rvp9_bdrate_{tag}_{bitrate_kbps}k.ivf"));
-    let status = Command::new(encoder)
-        .args([
-            "--codec=vp9",
-            "--passes=1",
-            "--rt",
-            &format!("--cpu-used={cpu_used}"),
-            "--end-usage=cbr",
-            &format!("--target-bitrate={bitrate_kbps}"),
-            "--lag-in-frames=0",
-            "--ivf",
-            "-o",
-        ])
+    let limit_arg = config.limit.map(|value| format!("--limit={value}"));
+    let mut command = Command::new(encoder);
+    command.args([
+        "--codec=vp9",
+        "--passes=1",
+        "--rt",
+        &format!("--cpu-used={cpu_used}"),
+        &format!("--end-usage={}", config.end_usage),
+        &format!("--target-bitrate={bitrate_kbps}"),
+        &format!("--fps={}", config.fps),
+        &format!("--threads={}", config.threads),
+        &format!("--tile-columns={}", config.tile_columns),
+        &format!("--lag-in-frames={}", config.lag_in_frames),
+        &format!("--tune-content={}", config.tune_content),
+        "--quiet",
+        "--ivf",
+        "-o",
+    ]);
+    if let Some(limit_arg) = &limit_arg {
+        command.arg(limit_arg);
+    }
+    let status = command
         .arg(&out)
         .arg(input)
         .status()
@@ -263,15 +312,36 @@ fn main() -> ExitCode {
     println!("anchor: {}", args.anchor_encoder.display());
     println!("test:   {}", args.test_encoder.display());
     println!("input:  {}", args.input.display());
+    println!(
+        "config: --rt --cpu-used={} --end-usage={} --fps={} --threads={} --tile-columns={} --lag-in-frames={} --tune-content={}{}",
+        args.cpu_used,
+        args.end_usage,
+        args.fps,
+        args.threads,
+        args.tile_columns,
+        args.lag_in_frames,
+        args.tune_content,
+        args.limit
+            .map_or(String::new(), |limit| format!(" --limit={limit}")),
+    );
     println!();
 
     // Parse fps from the source Y4M header so realised-bitrate math is
     // accurate for non-30fps clips. Fall back to 30.0 if the header
     // can't be read for some reason.
-    let fps = std::fs::read(&args.input)
+    let fps_hz = std::fs::read(&args.input)
         .ok()
         .and_then(|d| rvp9_bench::parse_y4m_header(&d).map(|(h, _)| h.fps()))
         .unwrap_or(30.0);
+    let encode_config = EncodeConfig {
+        end_usage: &args.end_usage,
+        fps: &args.fps,
+        threads: args.threads,
+        tile_columns: args.tile_columns,
+        lag_in_frames: args.lag_in_frames,
+        tune_content: &args.tune_content,
+        limit: args.limit,
+    };
 
     let mut anchor_rd: Vec<RdPoint> = Vec::new();
     let mut test_rd: Vec<RdPoint> = Vec::new();
@@ -283,14 +353,22 @@ fn main() -> ExitCode {
             args.cpu_used,
             br,
             "anchor",
+            &encode_config,
         );
-        let t_ivf = encode(&args.test_encoder, &args.input, args.cpu_used, br, "test");
+        let t_ivf = encode(
+            &args.test_encoder,
+            &args.input,
+            args.cpu_used,
+            br,
+            "test",
+            &encode_config,
+        );
 
         let a_frames = rvp9_bench::count_ivf_frames(&a_ivf);
         let t_frames = rvp9_bench::count_ivf_frames(&t_ivf);
 
-        let a_br = measured_bitrate_kbps(&a_ivf, a_frames, fps);
-        let t_br = measured_bitrate_kbps(&t_ivf, t_frames, fps);
+        let a_br = measured_bitrate_kbps(&a_ivf, a_frames, fps_hz);
+        let t_br = measured_bitrate_kbps(&t_ivf, t_frames, fps_hz);
 
         let a_psnr = decode_and_psnr(&args.decoder, &a_ivf, &args.input);
         let t_psnr = decode_and_psnr(&args.decoder, &t_ivf, &args.input);
