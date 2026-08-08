@@ -4510,7 +4510,7 @@ curve overlap, so no BD-rate claim is made here.
 **Future plan:** run the same policy through the six-point CBR/VBR curves,
 full corpus, and CPU6 feature stages before treating CPU6 as final parity.
 
-### 2026-08-08 — Use independent MV proxies for realtime CPU7/8 A4 descent
+### 2026-08-08 — Use independent MV proxies for realtime CPU7/8 CBR A4 descent
 
 **Where:** `rvp9_encoder::a4_descent_independent_mv_default` and the A4
 speculative partition proxy.
@@ -4518,10 +4518,12 @@ speculative partition proxy.
 **What libvpx does:** its realtime partition search carries causal motion
 predictors into each candidate's motion search.
 
-**What rvp9 does:** realtime CPU7 and CPU8 now use one neutral predictor for
+**What rvp9 does:** realtime CPU7 and CPU8 CBR use one neutral predictor for
 each speculative partition shape, while the final causal picker remains
-unchanged. `RVP9_A4_DESCENT_INDEPENDENT_MV=0` restores the inherited/causal
-proxy for diagnostics; the policy is limited to realtime speed 7 and faster.
+unchanged. VBR retains the causal proxy because the independent variant
+regresses its measured VBR curves. `RVP9_A4_DESCENT_INDEPENDENT_MV=0` restores
+the inherited/causal proxy for diagnostics; the policy is limited to realtime
+speed 7 and faster.
 
 **Why:** on the matched 1080p30 CBR-2500 in-tree clip, six-point luma BD-rate
 versus pinned vpxenc improved from `-16.235%` to `-20.957%` at CPU7 and from
@@ -4536,6 +4538,12 @@ combined with the existing LAST-only descent override.
 **Byte-parity impact:** the proxy changes partition and motion decisions, so
 the output is intentionally not byte-identical to the prior rvp9 stream. A
 cross-decoder and conformance pass remains required before final acceptance.
+
+**VBR scope:** the independent proxy is not the default for VBR. On the same
+six-point curves, CPU7 measured `+29.5246%/+21.7426%/-1.9957%` for
+in-tree/old-town/ducks with the independent proxy, versus
+`+19.4186%/+11.8024%/-10.1272%` with the causal proxy. VBR therefore retains
+the causal proxy pending a speed-safe quality fix.
 
 **Future plan:** run cross-decoder checks, CPU6/CPU7/CPU8 VBR curves, and the
 CBR/AQ/denoiser/SVC feature matrix before treating this default as final.
