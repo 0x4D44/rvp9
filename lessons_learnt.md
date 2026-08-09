@@ -5,6 +5,7 @@ Distilled, non-obvious gotchas future sessions need — dated one-liners.
 Durable project facts/conventions belong in `CLAUDE.md` / `AGENTS.md`, not here.
 Hard cap: 20 entries.
 
+- 2026-08-09: CPU8 approximate VBP lost quality and speed; start from the exact tree (`lib.rs:exact_vbp_tree_enabled`).
 - 2026-08-09: Encoder PGO needs preset/feature breadth to win wall time (`scripts/build-encoder-pgo.sh:training_rows`).
 - 2026-08-09: A tuning miss at one resolution can need a frame-area policy, not global rejection (`lib.rs:exact_vbp_partition_qindex`).
 - 2026-08-09: A journaled retained experiment may still lack code; verify both tree and evidence (`y4m.rs:Y4mReader::next_frame_into`).

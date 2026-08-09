@@ -4817,3 +4817,47 @@ evidence; quiet-host timing remains required.
 **Future plan:** retain the byte-exact work reduction, refresh quiet-host
 direct timing, and keep the exact fallback if broader corpus clips approach
 the threshold guard band.
+
+### 2026-08-09 — Use exact variance partitions and causal GOLDEN filters at CPU8
+
+**Where:** `rvp9_encoder::InterEncodeEnv::exact_vbp_tree_enabled`,
+`rvp9_encoder::realtime_search_golden_filter`, and both realtime inter-picker
+parameter assemblies in `rvp9_encoder::pick_and_simulate_inter_encode_partitions`.
+
+**What libvpx does:** pinned CPU8 realtime uses `VAR_BASED_PARTITION`, permits
+partition copying through frame four, and limits interpolation-filter work
+with its chessboard predicate. Eligible GOLDEN VBR candidates may still search
+the filter on the active chessboard cells.
+
+**What rvp9 does:** CPU8 realtime one-pass VBR with default content now uses
+rvp9's source-exact variance-tree adapter on every show inter frame, including
+the existing resolution-scaled partition-Q calibration. It also reuses the
+causal neighbour filter for every GOLDEN candidate instead of retaining
+rvp9's broader GOLDEN filter-search exception. CPU7 retains its accepted
+filter policy. CBR and non-realtime paths are unchanged.
+
+**Why:** the preceding CPU8 approximation measured
+`+6.277%/-25.638%/+10.988%` at 1080p for in-tree/ducks/old-town. Exact
+variance partitions plus causal GOLDEN filters move those curves to
+`-2.152%/-13.652%/-4.220%`. Native 720p also improves every curve to
+`-4.146%/-17.467%/-6.782%`. The GOLDEN rule is a deliberate departure from
+libvpx's chessboard eligibility because rvp9's additional search worsened both
+the required corpus result and the measured CPU8 work.
+
+**Byte-parity impact:** intentional and structural. The exercised 1080p
+old-town target-2500 IVF has SHA-256
+`d9b63f0f9cf0289c863b7000859c107881d6b891c7e87c51b63b9d3608d21a8e`.
+Rvp9-decoder, pinned vpxdec, and ffmpeg each emit the same 186,624,000-byte
+I420 output with SHA-256
+`eb91205e82aac52648034b21b6b3c7cdd7cef94cef24e2e0916452736988f50f`.
+
+**Speed impact:** against the preceding representative-PGO rvp9, fifteen
+warmed alternating 1080p pairs measured a `0.954372x` paired wall geomean and
+`0.955471x` paired child-CPU geomean. At 720p the same comparison measured
+`1.025709x` paired wall, while absolute candidate times stayed between 3.3
+and 4.2 ms/frame. Direct CPU8 parity remains open: the 720p candidate/vpxenc
+paired wall geomean is `1.209155x`.
+
+**Future plan:** retain this cross-resolution quality and 1080p speed
+prerequisite, then profile the remaining CPU8 work gap without weakening the
+new six-point curves.

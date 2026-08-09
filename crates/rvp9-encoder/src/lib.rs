@@ -4847,6 +4847,13 @@ fn golden_real_block_yrd_enabled(
     })
 }
 
+/// Retain rvp9's broader GOLDEN filter search through CPU7. At CPU8 the
+/// measured extra search regresses both corpus speed and rate distortion, so
+/// reuse the causal neighbour filter instead.
+fn realtime_search_golden_filter(rc_mode: crate::rate_control::RcMode, speed: i32) -> bool {
+    matches!(rc_mode, crate::rate_control::RcMode::Vbr) && speed.unsigned_abs() < 8
+}
+
 fn newmv_diff_bias_for_mode(rc_mode: crate::rate_control::RcMode, env_enabled: bool) -> bool {
     env_enabled && matches!(rc_mode, crate::rate_control::RcMode::Cbr)
 }
@@ -5351,7 +5358,7 @@ impl InterEncodeEnv {
         self.flag_or(self.compact_recon_rows, false)
     }
 
-    /// Use the pinned-libvpx variance tree on CPU7 realtime VBR show frames.
+    /// Use the pinned-libvpx variance tree on CPU7/8 realtime VBR show frames.
     /// An explicit override retains the whole-frame diagnostic used by
     /// differential tests.
     pub(crate) fn exact_vbp_tree_enabled(
@@ -5365,7 +5372,7 @@ impl InterEncodeEnv {
             .exact_vbp_tree
             .unwrap_or(rc_mode == crate::rate_control::RcMode::Vbr);
         selected
-            && speed == 7
+            && matches!(speed, 7 | 8)
             && deadline == rvp9_core::mode_decision::speed_features::Deadline::Realtime
             && content_tier == rvp9_core::mode_decision::speed_features::ContentTier::Default
     }
@@ -7032,7 +7039,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         switchable_interp_costs: &sic,
                         switchable_interp_ctx,
                         filter_ref,
-                        search_golden_filter: rc_mode == crate::rate_control::RcMode::Vbr,
+                        search_golden_filter: realtime_search_golden_filter(rc_mode, speed),
                         skip_ctx,
                         skip_prob: frame_context.skip_probs[skip_ctx],
                         rd_calibration: inter_rd_calibration,
@@ -8279,7 +8286,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     switchable_interp_costs: &sic,
                     switchable_interp_ctx,
                     filter_ref,
-                    search_golden_filter: rc_mode == crate::rate_control::RcMode::Vbr,
+                    search_golden_filter: realtime_search_golden_filter(rc_mode, speed),
                     skip_ctx,
                     skip_prob: frame_context.skip_probs[skip_ctx],
                     rd_calibration: inter_rd_calibration,
@@ -14015,7 +14022,7 @@ mod tests {
     }
 
     #[test]
-    fn exact_vbp_defaults_to_all_cpu7_realtime_vbr_show_frames() {
+    fn exact_vbp_defaults_to_cpu7_and_cpu8_realtime_vbr_show_frames() {
         use rvp9_core::mode_decision::speed_features::{ContentTier, Deadline};
 
         let _guard = env_test_mutex();
@@ -14038,6 +14045,12 @@ mod tests {
         assert!(!env.exact_vbp_tree_enabled(
             RcMode::Vbr,
             6,
+            Deadline::Realtime,
+            ContentTier::Default,
+        ));
+        assert!(env.exact_vbp_tree_enabled(
+            RcMode::Vbr,
+            8,
             Deadline::Realtime,
             ContentTier::Default,
         ));
@@ -14071,6 +14084,13 @@ mod tests {
         ));
         // SAFETY: the mutex above serialises all encoder environment tests.
         unsafe { std::env::remove_var(key) };
+    }
+
+    #[test]
+    fn cpu8_reuses_the_causal_filter_for_golden_candidates() {
+        assert!(realtime_search_golden_filter(RcMode::Vbr, 7));
+        assert!(!realtime_search_golden_filter(RcMode::Vbr, 8));
+        assert!(!realtime_search_golden_filter(RcMode::Cbr, 7));
     }
 
     #[test]
