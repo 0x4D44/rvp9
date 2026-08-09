@@ -24,6 +24,8 @@
 //!       --bitrates       500,1000,1500,2000,3000,4500 \
 //!       --fps            30/1 --threads 4 --tile-columns 2 --limit 60 \
 //!       --end-usage     cbr --tune-content default \
+//!       [--aq-mode 3] [--noise-sensitivity 1] \
+//!       [--anchor-arg VALUE]... [--test-arg VALUE]... \
 //!       [--csv           bdrate.csv]
 //!
 //! With `--csv <path>`, also emits a machine-readable CSV with the schema
@@ -47,6 +49,10 @@ struct Args {
     tile_columns: u32,
     lag_in_frames: u32,
     tune_content: String,
+    aq_mode: Option<u32>,
+    noise_sensitivity: Option<u32>,
+    anchor_args: Vec<String>,
+    test_args: Vec<String>,
     limit: Option<u32>,
     /// Optional CSV output path for CI ingestion.
     csv: Option<PathBuf>,
@@ -54,10 +60,21 @@ struct Args {
 
 fn parse_args() -> Args {
     let argv: Vec<String> = std::env::args().collect();
+    parse_args_from(&argv)
+}
+
+fn parse_args_from(argv: &[String]) -> Args {
     let get = |flag: &str| -> Option<String> {
         argv.iter()
             .position(|a| a == flag)
             .and_then(|i| argv.get(i + 1).cloned())
+    };
+    let get_all = |flag: &str| -> Vec<String> {
+        argv.iter()
+            .enumerate()
+            .filter(|(_, arg)| arg.as_str() == flag)
+            .filter_map(|(index, _)| argv.get(index + 1).cloned())
+            .collect()
     };
 
     Args {
@@ -93,6 +110,11 @@ fn parse_args() -> Args {
             .map(|s| s.parse().expect("--lag-in-frames u32"))
             .unwrap_or(0),
         tune_content: get("--tune-content").unwrap_or_else(|| "default".to_owned()),
+        aq_mode: get("--aq-mode").map(|s| s.parse().expect("--aq-mode u32")),
+        noise_sensitivity: get("--noise-sensitivity")
+            .map(|s| s.parse().expect("--noise-sensitivity u32")),
+        anchor_args: get_all("--anchor-arg"),
+        test_args: get_all("--test-arg"),
         limit: get("--limit").map(|s| s.parse().expect("--limit u32")),
         csv: get("--csv").map(PathBuf::from),
     }
@@ -113,7 +135,47 @@ struct EncodeConfig<'a> {
     tile_columns: u32,
     lag_in_frames: u32,
     tune_content: &'a str,
+    aq_mode: Option<u32>,
+    noise_sensitivity: Option<u32>,
     limit: Option<u32>,
+}
+
+fn encoder_command(
+    encoder: &Path,
+    input: &Path,
+    output: &Path,
+    cpu_used: u32,
+    bitrate_kbps: u32,
+    config: &EncodeConfig<'_>,
+    extra_args: &[String],
+) -> Command {
+    let mut command = Command::new(encoder);
+    command.args([
+        "--codec=vp9".to_owned(),
+        "--passes=1".to_owned(),
+        "--rt".to_owned(),
+        format!("--cpu-used={cpu_used}"),
+        format!("--end-usage={}", config.end_usage),
+        format!("--target-bitrate={bitrate_kbps}"),
+        format!("--fps={}", config.fps),
+        format!("--threads={}", config.threads),
+        format!("--tile-columns={}", config.tile_columns),
+        format!("--lag-in-frames={}", config.lag_in_frames),
+        format!("--tune-content={}", config.tune_content),
+        "--quiet".to_owned(),
+        "--ivf".to_owned(),
+    ]);
+    if let Some(aq_mode) = config.aq_mode {
+        command.arg(format!("--aq-mode={aq_mode}"));
+    }
+    if let Some(noise_sensitivity) = config.noise_sensitivity {
+        command.arg(format!("--noise-sensitivity={noise_sensitivity}"));
+    }
+    if let Some(limit) = config.limit {
+        command.arg(format!("--limit={limit}"));
+    }
+    command.args(extra_args).arg("-o").arg(output).arg(input);
+    command
 }
 
 /// Encode `input` with `encoder` at the given target bitrate. Returns the
@@ -125,34 +187,20 @@ fn encode(
     bitrate_kbps: u32,
     tag: &str,
     config: &EncodeConfig<'_>,
+    extra_args: &[String],
 ) -> PathBuf {
     let out = std::env::temp_dir().join(format!("rvp9_bdrate_{tag}_{bitrate_kbps}k.ivf"));
-    let limit_arg = config.limit.map(|value| format!("--limit={value}"));
-    let mut command = Command::new(encoder);
-    command.args([
-        "--codec=vp9",
-        "--passes=1",
-        "--rt",
-        &format!("--cpu-used={cpu_used}"),
-        &format!("--end-usage={}", config.end_usage),
-        &format!("--target-bitrate={bitrate_kbps}"),
-        &format!("--fps={}", config.fps),
-        &format!("--threads={}", config.threads),
-        &format!("--tile-columns={}", config.tile_columns),
-        &format!("--lag-in-frames={}", config.lag_in_frames),
-        &format!("--tune-content={}", config.tune_content),
-        "--quiet",
-        "--ivf",
-    ]);
-    if let Some(limit_arg) = &limit_arg {
-        command.arg(limit_arg);
-    }
-    let status = command
-        .arg("-o")
-        .arg(&out)
-        .arg(input)
-        .status()
-        .expect("encoder failed");
+    let status = encoder_command(
+        encoder,
+        input,
+        &out,
+        cpu_used,
+        bitrate_kbps,
+        config,
+        extra_args,
+    )
+    .status()
+    .expect("encoder failed");
     assert!(
         status.success(),
         "encoder {} failed at {bitrate_kbps}k",
@@ -313,7 +361,7 @@ fn main() -> ExitCode {
     println!("test:   {}", args.test_encoder.display());
     println!("input:  {}", args.input.display());
     println!(
-        "config: --rt --cpu-used={} --end-usage={} --fps={} --threads={} --tile-columns={} --lag-in-frames={} --tune-content={}{}",
+        "config: --rt --cpu-used={} --end-usage={} --fps={} --threads={} --tile-columns={} --lag-in-frames={} --tune-content={}{}{}{}",
         args.cpu_used,
         args.end_usage,
         args.fps,
@@ -321,9 +369,20 @@ fn main() -> ExitCode {
         args.tile_columns,
         args.lag_in_frames,
         args.tune_content,
+        args.aq_mode
+            .map_or(String::new(), |value| format!(" --aq-mode={value}")),
+        args.noise_sensitivity.map_or(String::new(), |value| {
+            format!(" --noise-sensitivity={value}")
+        }),
         args.limit
             .map_or(String::new(), |limit| format!(" --limit={limit}")),
     );
+    if !args.anchor_args.is_empty() {
+        println!("anchor args: {}", args.anchor_args.join(" "));
+    }
+    if !args.test_args.is_empty() {
+        println!("test args:   {}", args.test_args.join(" "));
+    }
     println!();
 
     // Parse fps from the source Y4M header so realised-bitrate math is
@@ -340,6 +399,8 @@ fn main() -> ExitCode {
         tile_columns: args.tile_columns,
         lag_in_frames: args.lag_in_frames,
         tune_content: &args.tune_content,
+        aq_mode: args.aq_mode,
+        noise_sensitivity: args.noise_sensitivity,
         limit: args.limit,
     };
 
@@ -354,6 +415,7 @@ fn main() -> ExitCode {
             br,
             "anchor",
             &encode_config,
+            &args.anchor_args,
         );
         let t_ivf = encode(
             &args.test_encoder,
@@ -362,6 +424,7 @@ fn main() -> ExitCode {
             br,
             "test",
             &encode_config,
+            &args.test_args,
         );
 
         let a_frames = rvp9_bench::count_ivf_frames(&a_ivf);
@@ -452,6 +515,78 @@ fn write_csv(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parser_preserves_repeated_role_specific_arguments() {
+        let argv = [
+            "bdrate",
+            "--anchor-encoder",
+            "anchor",
+            "--test-encoder",
+            "test",
+            "--decoder",
+            "decoder",
+            "--input",
+            "input.y4m",
+            "--anchor-arg",
+            "--ts-number-layers=2",
+            "--test-arg",
+            "--temporal-layers=2",
+            "--anchor-arg",
+            "--ts-layer-id=0,1",
+        ]
+        .map(str::to_owned);
+
+        let args = parse_args_from(&argv);
+
+        assert_eq!(
+            args.anchor_args,
+            ["--ts-number-layers=2", "--ts-layer-id=0,1"]
+        );
+        assert_eq!(args.test_args, ["--temporal-layers=2"]);
+    }
+
+    #[test]
+    fn encoder_command_keeps_matched_and_role_specific_arguments_separate() {
+        let config = EncodeConfig {
+            end_usage: "cbr",
+            fps: "30/1",
+            threads: 4,
+            tile_columns: 2,
+            lag_in_frames: 0,
+            tune_content: "default",
+            aq_mode: Some(3),
+            noise_sensitivity: Some(1),
+            limit: Some(60),
+        };
+        let anchor_args = vec![
+            "--ts-number-layers=2".to_owned(),
+            "--ts-layer-id=0,1".to_owned(),
+        ];
+        let command = encoder_command(
+            Path::new("anchor"),
+            Path::new("input.y4m"),
+            Path::new("output.ivf"),
+            7,
+            1_500,
+            &config,
+            &anchor_args,
+        );
+        let args: Vec<String> = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+
+        assert!(args.contains(&"--aq-mode=3".to_owned()));
+        assert!(args.contains(&"--noise-sensitivity=1".to_owned()));
+        assert!(args.contains(&"--limit=60".to_owned()));
+        let output_index = args.iter().position(|arg| arg == "-o").unwrap();
+        assert_eq!(
+            &args[output_index - 2..output_index],
+            ["--ts-number-layers=2", "--ts-layer-id=0,1"]
+        );
+        assert_eq!(&args[output_index..], ["-o", "output.ivf", "input.y4m"]);
+    }
 
     #[test]
     fn csv_writer_rejects_missing_bdrate_without_creating_output() {
