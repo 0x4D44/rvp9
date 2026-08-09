@@ -10,7 +10,8 @@
 //! explicitly, **in release mode**:
 //!
 //! ```text
-//! cargo test --release --test realtime_gate -- --ignored --nocapture
+//! cargo test --release --test realtime_gate realtime_gate_720p30 -- \
+//!     --exact --ignored --nocapture --test-threads=1
 //! ```
 //!
 //! ## Why `--release`
@@ -34,8 +35,8 @@
 //! 1. Locates `tests/corpus/testsrc_720p30.y4m` via
 //!    [`rvp9_harness::y4m::probe_testsrc_720p`]. If absent, prints a
 //!    skip message and returns successfully.
-//! 2. Reads 30 frames at the encoder's coded resolution
-//!    (`1280 × 704`, see below) via
+//! 2. Reads 30 frames at the literal 720p coded resolution
+//!    (`1280 × 720`) via
 //!    [`rvp9_harness::y4m::read_cropped`].
 //! 3. For each frame: calls
 //!    [`rvp9_encoder::StreamEncoder::encode_frame`] and records the
@@ -48,21 +49,12 @@
 //! 6. Asserts `median ≤ 33 ms` and `p99 ≤ 50 ms`. The test FAILS if
 //!    either gate misses; the diagnostic explains what to do next.
 //!
-//! ## Coded resolution: 1280 × 704, not 1280 × 720
+//! ## Coded resolution: literal 1280 × 720
 //!
-//! `StreamEncoder` requires both `width` and `height` to be positive
-//! multiples of 64 (the VP9 super-block size). 720 ÷ 64 = 11.25 — not
-//! a multiple. The closest 64-multiple ≤ 720 is **704**, so we
-//! centre-crop 16 rows (8 top + 8 bottom) from the 720p source. This
-//! preserves the FULL 1280-wide luma plus 97.8 % of the rows; the
-//! frame-time measurement is for all practical purposes equivalent to
-//! a "true 720p" encode (the workload is dominated by the per-block
-//! kernels, which are independent of the trimmed boundary rows).
-//!
-//! When the encoder grows arbitrary-resolution support (cropping
-//! within a 64-multiple coded frame, per VP9's `render_width`/
-//! `render_height` mechanism), this test should re-target 1280 × 720
-//! directly. Until then, 1280 × 704 is the honest measurement.
+//! The encoder supports partial bottom superblocks, so the acceptance
+//! oracle measures every source line. Older revisions cropped to 704
+//! lines because they required superblock-multiple dimensions; those
+//! results are historical diagnostics, not the literal current gate.
 //!
 //! ## What to do if the gate FAILS
 //!
@@ -88,9 +80,8 @@ mod common;
 
 /// Coded luma width — equal to 720p's 1280.
 const W: u32 = 1280;
-/// Coded luma height. 720 is NOT a multiple of 64 (VP9 super-block);
-/// 704 is the closest 64-multiple ≤ 720 (see the module docs).
-const H: u32 = 704;
+/// Coded luma height — literal 720p, including the partial bottom SB.
+const H: u32 = 720;
 /// Total frames to read + encode.
 const N_FRAMES: usize = 30;
 /// Frames to skip as warm-up before computing the median. The first
@@ -181,6 +172,18 @@ fn frame_time_summary_reports_tail_quantiles() {
 #[test]
 #[ignore = "RC.3 — 720p30 frame-time exit gate; run with `--release --ignored`"]
 fn realtime_gate_720p30() {
+    run_realtime_gate_720p30(AqMode::Off, "Stage 4a");
+}
+
+/// Stage 4b exit criterion #2: cyclic-refresh AQ retains the 720p30
+/// median and tail budgets under the same CPU7 realtime configuration.
+#[test]
+#[ignore = "Stage 4b AQ3 — 720p30 frame-time exit gate; run with `--release --ignored`"]
+fn realtime_gate_720p30_aq3() {
+    run_realtime_gate_720p30(AqMode::CyclicRefresh, "Stage 4b AQ3");
+}
+
+fn run_realtime_gate_720p30(aq_mode: AqMode, stage: &str) {
     // ---------------------------------------------------------------
     // Step 1: locate the y4m corpus, or skip-clean.
     // ---------------------------------------------------------------
@@ -192,17 +195,17 @@ fn realtime_gate_720p30() {
         return;
     };
 
-    eprintln!("RC.3 — 720p30 Real-Time Frame-Time Gate");
+    eprintln!("{stage} — 720p30 Real-Time Frame-Time Gate");
     eprintln!("========================================");
     eprintln!("Source: {}", path.display());
-    eprintln!("Coded resolution: {W} × {H} (centre-cropped 1280×720 → {W}×{H})");
+    eprintln!("Coded resolution: {W} × {H}");
     eprintln!(
         "Frames: {N_FRAMES}    Warm-up: {WARMUP_FRAMES}    Budgets: median 33.00 ms, p99 50.00 ms"
     );
     eprintln!();
 
     // ---------------------------------------------------------------
-    // Step 2: read N frames at 1280×704 (centre-crop of 1280×720).
+    // Step 2: read N frames at literal 1280×720.
     // ---------------------------------------------------------------
     let (frames, framerate) = match read_cropped(&path, W, H, N_FRAMES) {
         Ok(t) => t,
@@ -227,10 +230,10 @@ fn realtime_gate_720p30() {
     // Step 3: build the encoder; configure for RT-style operation.
     //
     // Target bitrate is set to 2 Mbps — a representative WebRTC
-    // 720p30 operating point. AQ is OFF (Stage 4a baseline gate; AQ
-    // is Stage 4b). GOP length matches `N_FRAMES + 1` so the run
-    // contains exactly one keyframe at frame 0 (the worst frame for
-    // the timing, but still included in the measurement after warm-up).
+    // 720p30 operating point. The caller selects AQ-off for Stage 4a
+    // or cyclic refresh for Stage 4b. GOP length matches
+    // `N_FRAMES + 1` so the run contains exactly one keyframe at frame
+    // 0 (the worst frame for timing, but outside the measured window).
     // ---------------------------------------------------------------
     let cfg = EncoderConfig {
         width: W,
@@ -238,7 +241,7 @@ fn realtime_gate_720p30() {
         framerate,
         target_bitrate_bps: 2_000_000,
         gop_length: (N_FRAMES as u32) + 1,
-        aq_mode: AqMode::Off,
+        aq_mode,
         use_prev_frame_mvs: false,
         speed: 7,
         deadline: rvp9_encoder::Deadline::Realtime,
@@ -299,15 +302,15 @@ fn realtime_gate_720p30() {
     let median_ns = summary.median.as_nanos();
     let median_ms = summary.median.as_secs_f64() * 1_000.0;
     if median_ns <= MEDIAN_BUDGET_NS {
-        eprintln!("Stage 4a RT gate (median ≤ 33 ms): PASS — median {median_ms:.2} ms ≤ 33.00 ms");
+        eprintln!("{stage} RT gate (median ≤ 33 ms): PASS — median {median_ms:.2} ms ≤ 33.00 ms");
     } else {
         let over_ms = (median_ns as i128 - MEDIAN_BUDGET_NS as i128) as f64 / 1_000_000.0;
         eprintln!(
-            "Stage 4a RT gate (median ≤ 33 ms): FAIL by {over_ms:.2} ms — \
+            "{stage} RT gate (median ≤ 33 ms): FAIL by {over_ms:.2} ms — \
              median {median_ms:.2} ms > 33.00 ms"
         );
         eprintln!(
-            "Stage 4a RT gate FAILS by {over_ms:.2}ms. Profile via \
+            "{stage} RT gate FAILS by {over_ms:.2}ms. Profile via \
              `cargo flamegraph -p rvp9-encoder --test realtime_gate -- \
              --ignored` to identify hot kernels."
         );
@@ -316,22 +319,22 @@ fn realtime_gate_720p30() {
     let p99_ns = summary.p99.as_nanos();
     let p99_ms = summary.p99.as_secs_f64() * 1_000.0;
     if p99_ns <= P99_BUDGET_NS {
-        eprintln!("Stage 4a RT tail gate (p99 ≤ 50 ms): PASS — p99 {p99_ms:.2} ms ≤ 50.00 ms");
+        eprintln!("{stage} RT tail gate (p99 ≤ 50 ms): PASS — p99 {p99_ms:.2} ms ≤ 50.00 ms");
     } else {
         let over_ms = (p99_ns as i128 - P99_BUDGET_NS as i128) as f64 / 1_000_000.0;
         eprintln!(
-            "Stage 4a RT tail gate (p99 ≤ 50 ms): FAIL by {over_ms:.2} ms — \
+            "{stage} RT tail gate (p99 ≤ 50 ms): FAIL by {over_ms:.2} ms — \
              p99 {p99_ms:.2} ms > 50.00 ms"
         );
     }
 
     assert!(
         median_ns <= MEDIAN_BUDGET_NS,
-        "RC.3 Stage 4a RT gate: median frame time {median_ms:.2} ms > 33.00 ms budget",
+        "{stage} RT gate: median frame time {median_ms:.2} ms > 33.00 ms budget",
     );
     assert!(
         p99_ns <= P99_BUDGET_NS,
-        "RC.3 Stage 4a RT tail gate: p99 frame time {p99_ms:.2} ms > 50.00 ms budget",
+        "{stage} RT tail gate: p99 frame time {p99_ms:.2} ms > 50.00 ms budget",
     );
 }
 

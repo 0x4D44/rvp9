@@ -611,8 +611,8 @@ Open items routed:
 3. Regression: ensure 4a real-time targets still hit.
 
 **Exit criteria:**
-- [ ] BD-rate gain from AQ-3 on test corpus matches libvpx's gain to within 0.3%.
-- [ ] 720p30 real-time still passes.
+- [x] BD-rate gain from AQ-3 on test corpus matches libvpx's gain to within 0.3%.
+- [x] 720p30 real-time still passes.
 
 **Estimated effort:** 2 weeks (down from 3–4 — modes 1/2 elided).
 
