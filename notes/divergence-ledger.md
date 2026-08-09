@@ -5153,3 +5153,53 @@ canonical 720p30 AQ-active CPU7 realtime configuration.
 
 **Future plan:** retain immediate startup eligibility and measure Stage 4b's
 720p30 speed exit before starting the denoiser feature matrix.
+
+### 2026-08-09 — Filter a reusable coded-source buffer and keep high denoise scalar-exact
+
+**Where:** `rvp9_encoder::denoise_inter_leaf` and
+`rvp9_encoder::denoiser::vp9_denoiser_filter`; libvpx counterparts:
+`vp9_denoiser_denoise` and `vp9_denoiser_filter_neon`.
+
+**What libvpx does:** filters the source from picker-selected LAST/GOLDEN
+temporal predictors, retains the resulting denoised frame, and dispatches its
+AArch64 filter through RTCD at both medium and high strength. Pinned libvpx's
+NEON and C high-strength filters disagree when `absdiff == 4` and motion
+exceeds 24; the source warns that `increase_denoising` is not bit-exact with
+its SIMD implementations.
+
+**What rvp9 does:** retains the picker evidence needed to select the same
+temporal predictor, filters luma directly into one reusable coded-source
+buffer, and rotates that buffer into LAST/GOLDEN denoiser state after coding.
+On AArch64, medium strength uses a widened-accumulator NEON port. High strength
+deliberately uses the scalar oracle so rvp9's public filter remains bit-exact
+across its own dispatch paths. Chroma and coded mode/reference/MV syntax remain
+unchanged.
+
+**Why:** the former fixed-grid post-encode filter never changed the coded
+source and regressed clean-reference BD-rate by `+44.412%`. Picker-selected
+source filtering closes the quality failure. Directly filtering the reusable
+buffer removes a second full-frame copy and an accepted-leaf copy, while the
+high-strength fallback avoids adopting a documented libvpx ISA-dependent
+result in a non-production mode.
+
+**Byte-parity impact:** intentional versus the former denoiser. The final
+target-1500 stream is byte-identical before and after SIMD/buffer fusion at
+SHA-256
+`9e44d8affb3d9e8dc8a8384258aeb04aee9e63e1cf3716f711872adf7714aaaa`.
+Rvp9-decoder, pinned vpxdec, and ffmpeg each emit 82,944,000 I420 bytes at
+SHA-256
+`d6fbeceb85242590fd06d633c30437fe8cc20bfb1b16d4dfa0a8a5bcd2b2b320`.
+
+**Compression-efficiency impact:** the six-point CPU7 realtime VBR noisy-source
+curve, scored against its clean reference, is `-0.565%` versus feature-enabled
+pinned vpxenc. This passes the focused `<= +0.5%` denoiser quality gate.
+
+**Speed impact:** fifteen rotated, high-resolution 60-frame 720p30 runs of the
+documented 22-row production PGO build measure a `0.531845 s` rvp9 median
+against `0.508113 s` for pinned vpxenc, a `1.046706x` wall ratio and
+`8.864 ms/frame` absolute time. The pre-SIMD plain-release rvp9 median was
+`0.71 s`. A matched ThinLTO experiment regressed the ratio to `1.066989x` and
+was removed.
+
+**Future plan:** retain the exact medium-strength NEON path while broadening
+denoiser evidence across the declared livestream corpus and CPU6/8 presets.

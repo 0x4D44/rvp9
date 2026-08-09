@@ -48,9 +48,9 @@
 //! - **No HBD path.** rvp9 is 8-bit-only across the board; the
 //!   `CONFIG_VP9_HIGHBITDEPTH` branches in `vp9_denoiser_alloc` and
 //!   the `vp9_highbd_denoiser_filter_*` SSE2 stubs are omitted.
-//! - **No SIMD.** Faithful scalar reference only. The libvpx
-//!   `vp9_denoiser_filter_sse2` / `_neon` variants live behind the
-//!   rtcd dispatcher; SIMD parity is a follow-up wave item.
+//! - **No SSE2 path.** x86-64 keeps the faithful scalar reference. The
+//!   AArch64 path dispatches to the port of libvpx's NEON filter and is
+//!   checked against the scalar implementation on that target.
 //! - **No SVC paths.** rvp9 has no SVC support yet, so the
 //!   `use_svc=true` branch in `vp9_denoiser_alloc`, the
 //!   `vp9_denoiser_realloc_svc_helper`-shaped per-slot realloc logic,
@@ -382,6 +382,64 @@ pub fn vp9_denoiser_filter(
     validate_plane_window("mc_avg", mc_avg.len(), mc_avg_stride, bw, bh)?;
     validate_plane_window("avg", avg.len(), avg_stride, bw, bh)?;
 
+    #[cfg(target_arch = "aarch64")]
+    if !increase_denoising && neon_filter_block_size(bs) {
+        // SAFETY: The three windows were validated above. AArch64 requires
+        // NEON, and the helper only performs unaligned loads/stores within
+        // those validated windows. High denoise remains scalar because pinned
+        // libvpx's NEON and C filters disagree at the level-one threshold.
+        return Ok(unsafe {
+            neon::filter(
+                neon::FilterPlanes {
+                    sig,
+                    sig_stride,
+                    mc_avg,
+                    mc_avg_stride,
+                    avg,
+                    avg_stride,
+                },
+                neon::FilterConfig {
+                    increase_denoising,
+                    bs,
+                    motion_magnitude,
+                },
+            )
+        });
+    }
+
+    vp9_denoiser_filter_scalar(
+        sig,
+        sig_stride,
+        mc_avg,
+        mc_avg_stride,
+        avg,
+        avg_stride,
+        increase_denoising,
+        bs,
+        motion_magnitude,
+    )
+}
+
+/// Scalar reference implementation of [`vp9_denoiser_filter`].
+///
+/// The public wrapper validates the three windows before dispatching here or
+/// to the AArch64 NEON implementation. Keeping this body separate gives the
+/// NEON differential test a stable scalar oracle.
+#[allow(clippy::too_many_arguments)]
+fn vp9_denoiser_filter_scalar(
+    sig: &[u8],
+    sig_stride: usize,
+    mc_avg: &[u8],
+    mc_avg_stride: usize,
+    avg: &mut [u8],
+    avg_stride: usize,
+    increase_denoising: bool,
+    bs: BlockSize,
+    motion_magnitude: i32,
+) -> Result<DenoiserDecision, DenoiserInputError> {
+    let bw = bs.width() as usize;
+    let bh = bs.height() as usize;
+
     // `vp9_denoiser.c:77` — base adj table for absdiff buckets [4..7],
     // [8..15], else. Shifted up if motion is small.
     let mut adj_val: [i32; 3] = [3, 4, 6];
@@ -473,6 +531,429 @@ pub fn vp9_denoiser_filter(
             DenoiserDecision::CopyBlock
         },
     )
+}
+
+// -----------------------------------------------------------------------------
+// AArch64 NEON filter (libvpx `vp9_denoiser_neon.c`)
+// -----------------------------------------------------------------------------
+
+/// The block sizes handled by libvpx's NEON dispatcher. The scalar path is
+/// retained for the three 4-pixel-wide VP9 shapes and 8×4, which are not
+/// denoised by the encoder driver and have no NEON kernel in libvpx.
+#[cfg(target_arch = "aarch64")]
+#[inline]
+const fn neon_filter_block_size(bs: BlockSize) -> bool {
+    matches!(
+        bs,
+        BlockSize::Block8x8
+            | BlockSize::Block8x16
+            | BlockSize::Block16x8
+            | BlockSize::Block16x16
+            | BlockSize::Block16x32
+            | BlockSize::Block32x16
+            | BlockSize::Block32x32
+            | BlockSize::Block32x64
+            | BlockSize::Block64x32
+            | BlockSize::Block64x64
+    )
+}
+
+#[cfg(target_arch = "aarch64")]
+mod neon {
+    use super::{
+        BlockSize, DenoiserDecision, MOTION_MAGNITUDE_THRESHOLD, neon_filter_block_size,
+        total_adj_strong_thresh,
+    };
+    use std::arch::aarch64::{
+        int8x16_t, int16x8_t, uint8x16_t, vabdq_u8, vaddlvq_s16, vaddq_s16, vaddq_u8, vandq_u8,
+        vbslq_u8, vcgtq_u8, vcleq_u8, vcltq_u8, vdupq_n_s16, vdupq_n_u8, vget_high_s8,
+        vget_high_u8, vget_low_s8, vget_low_u8, vld1q_u8, vminq_u8, vmovl_s8, vqaddq_u8, vqsubq_u8,
+        vreinterpretq_s8_u8, vst1_u8, vst1q_u8, vsubq_s8,
+    };
+
+    pub(super) struct FilterPlanes<'a> {
+        pub(super) sig: &'a [u8],
+        pub(super) sig_stride: usize,
+        pub(super) mc_avg: &'a [u8],
+        pub(super) mc_avg_stride: usize,
+        pub(super) avg: &'a mut [u8],
+        pub(super) avg_stride: usize,
+    }
+
+    #[derive(Clone, Copy)]
+    pub(super) struct FilterConfig {
+        pub(super) increase_denoising: bool,
+        pub(super) bs: BlockSize,
+        pub(super) motion_magnitude: i32,
+    }
+
+    #[derive(Clone, Copy)]
+    struct StrongFilterVectors {
+        level1_threshold: uint8x16_t,
+        level2_threshold: uint8x16_t,
+        level3_threshold: uint8x16_t,
+        level1_adjustment: uint8x16_t,
+        delta_level_1_and_2: uint8x16_t,
+        delta_level_2_and_3: uint8x16_t,
+    }
+
+    /// Widen each signed-byte adjustment before accumulating it. The C NEON
+    /// implementation uses signed-byte accumulators because its normal
+    /// adjustment range fits there. Widening preserves the scalar i32 sum for
+    /// the high-denoising boundary cases while keeping the sample work vector
+    /// based.
+    #[inline]
+    #[target_feature(enable = "neon")]
+    unsafe fn add_adjustments(
+        sum_low: int16x8_t,
+        sum_high: int16x8_t,
+        adjustment: int8x16_t,
+    ) -> (int16x8_t, int16x8_t) {
+        (
+            vaddq_s16(sum_low, vmovl_s8(vget_low_s8(adjustment))),
+            vaddq_s16(sum_high, vmovl_s8(vget_high_s8(adjustment))),
+        )
+    }
+
+    #[inline]
+    #[target_feature(enable = "neon")]
+    unsafe fn horizontal_add(sum_low: int16x8_t, sum_high: int16x8_t) -> i32 {
+        vaddlvq_s16(sum_low) + vaddlvq_s16(sum_high)
+    }
+
+    /// Port of libvpx `denoiser_16x1_neon`. The two widened accumulators are
+    /// equivalent to the scalar filter's `total_adj: i32` accumulator.
+    #[inline]
+    #[target_feature(enable = "neon")]
+    unsafe fn denoiser_16x1(
+        sig: *const u8,
+        mc_running_avg_y: *const u8,
+        running_avg_y: *mut u8,
+        vectors: &StrongFilterVectors,
+        sum_low: int16x8_t,
+        sum_high: int16x8_t,
+    ) -> (int16x8_t, int16x8_t) {
+        // SAFETY: Callers pass pointers to at least 16 contiguous samples in
+        // each row; the validated public wrapper establishes that contract.
+        unsafe {
+            let v_sig = vld1q_u8(sig);
+            let v_mc_running_avg_y = vld1q_u8(mc_running_avg_y);
+
+            let v_abs_diff = vabdq_u8(v_sig, v_mc_running_avg_y);
+            let v_diff_pos_mask = vcltq_u8(v_sig, v_mc_running_avg_y);
+            let v_diff_neg_mask = vcgtq_u8(v_sig, v_mc_running_avg_y);
+
+            let v_level1_mask = vcleq_u8(vectors.level1_threshold, v_abs_diff);
+            let v_level2_mask = vcleq_u8(vectors.level2_threshold, v_abs_diff);
+            let v_level3_mask = vcleq_u8(vectors.level3_threshold, v_abs_diff);
+
+            let v_level2_adjustment = vandq_u8(v_level2_mask, vectors.delta_level_1_and_2);
+            let v_level3_adjustment = vandq_u8(v_level3_mask, vectors.delta_level_2_and_3);
+            let v_level1and2_adjustment = vaddq_u8(vectors.level1_adjustment, v_level2_adjustment);
+            let v_level1and2and3_adjustment =
+                vaddq_u8(v_level1and2_adjustment, v_level3_adjustment);
+            let v_abs_adjustment = vbslq_u8(v_level1_mask, v_level1and2and3_adjustment, v_abs_diff);
+
+            let v_pos_adjustment = vandq_u8(v_diff_pos_mask, v_abs_adjustment);
+            let v_neg_adjustment = vandq_u8(v_diff_neg_mask, v_abs_adjustment);
+            let mut v_running_avg_y = vqaddq_u8(v_sig, v_pos_adjustment);
+            v_running_avg_y = vqsubq_u8(v_running_avg_y, v_neg_adjustment);
+            vst1q_u8(running_avg_y, v_running_avg_y);
+
+            let adjustment = vsubq_s8(
+                vreinterpretq_s8_u8(v_pos_adjustment),
+                vreinterpretq_s8_u8(v_neg_adjustment),
+            );
+            add_adjustments(sum_low, sum_high, adjustment)
+        }
+    }
+
+    /// Port of libvpx `denoiser_adjust_16x1_neon` for the weak pass.
+    #[inline]
+    #[target_feature(enable = "neon")]
+    unsafe fn denoiser_adjust_16x1(
+        sig: *const u8,
+        mc_running_avg_y: *const u8,
+        running_avg_y: *mut u8,
+        delta: uint8x16_t,
+        sum_low: int16x8_t,
+        sum_high: int16x8_t,
+    ) -> (int16x8_t, int16x8_t) {
+        // SAFETY: Callers pass pointers to at least 16 contiguous samples in
+        // each row; the validated public wrapper establishes that contract.
+        unsafe {
+            let mut v_running_avg_y = vld1q_u8(running_avg_y);
+            let v_sig = vld1q_u8(sig);
+            let v_mc_running_avg_y = vld1q_u8(mc_running_avg_y);
+
+            let v_abs_diff = vabdq_u8(v_sig, v_mc_running_avg_y);
+            let v_diff_pos_mask = vcltq_u8(v_sig, v_mc_running_avg_y);
+            let v_diff_neg_mask = vcgtq_u8(v_sig, v_mc_running_avg_y);
+            let v_abs_adjustment = vminq_u8(v_abs_diff, delta);
+            let v_pos_adjustment = vandq_u8(v_diff_pos_mask, v_abs_adjustment);
+            let v_neg_adjustment = vandq_u8(v_diff_neg_mask, v_abs_adjustment);
+
+            v_running_avg_y = vqsubq_u8(v_running_avg_y, v_pos_adjustment);
+            v_running_avg_y = vqaddq_u8(v_running_avg_y, v_neg_adjustment);
+            vst1q_u8(running_avg_y, v_running_avg_y);
+
+            let adjustment = vsubq_s8(
+                vreinterpretq_s8_u8(v_neg_adjustment),
+                vreinterpretq_s8_u8(v_pos_adjustment),
+            );
+            add_adjustments(sum_low, sum_high, adjustment)
+        }
+    }
+
+    /// Port of libvpx `vp9_denoiser_NxM_neon`.
+    #[target_feature(enable = "neon")]
+    unsafe fn filter_nxm(planes: &mut FilterPlanes<'_>, config: FilterConfig) -> DenoiserDecision {
+        // SAFETY: The public wrapper validates all windows before reaching
+        // this helper. Every row pointer below stays within those windows.
+        unsafe {
+            let shift_inc = i32::from(
+                config.increase_denoising && config.motion_magnitude <= MOTION_MAGNITUDE_THRESHOLD,
+            );
+            let level1_adjustment = if config.motion_magnitude <= MOTION_MAGNITUDE_THRESHOLD {
+                4 + shift_inc
+            } else {
+                3
+            };
+            let vectors = StrongFilterVectors {
+                level1_threshold: vdupq_n_u8((4 + shift_inc) as u8),
+                level2_threshold: vdupq_n_u8(8),
+                level3_threshold: vdupq_n_u8(16),
+                level1_adjustment: vdupq_n_u8(level1_adjustment as u8),
+                delta_level_1_and_2: vdupq_n_u8(1),
+                delta_level_2_and_3: vdupq_n_u8(2),
+            };
+
+            let width = config.bs.width() as usize;
+            let height = config.bs.height() as usize;
+            let width_vectors = width / 16;
+            let mut sums_low = [[vdupq_n_s16(0); 4]; 4];
+            let mut sums_high = [[vdupq_n_s16(0); 4]; 4];
+
+            for row in 0..height {
+                for chunk in 0..width_vectors {
+                    let sig_ptr = planes
+                        .sig
+                        .as_ptr()
+                        .add(row * planes.sig_stride + chunk * 16);
+                    let mc_ptr = planes
+                        .mc_avg
+                        .as_ptr()
+                        .add(row * planes.mc_avg_stride + chunk * 16);
+                    let avg_ptr = planes
+                        .avg
+                        .as_mut_ptr()
+                        .add(row * planes.avg_stride + chunk * 16);
+                    let (low, high) = denoiser_16x1(
+                        sig_ptr,
+                        mc_ptr,
+                        avg_ptr,
+                        &vectors,
+                        sums_low[chunk][row >> 4],
+                        sums_high[chunk][row >> 4],
+                    );
+                    sums_low[chunk][row >> 4] = low;
+                    sums_high[chunk][row >> 4] = high;
+                }
+            }
+
+            let mut sum_diff = 0i32;
+            for chunk in 0..width_vectors {
+                for group in 0..4 {
+                    sum_diff += vaddlvq_s16(sums_low[chunk][group]);
+                    sum_diff += vaddlvq_s16(sums_high[chunk][group]);
+                }
+            }
+            let sum_diff_thresh = total_adj_strong_thresh(config.bs, config.increase_denoising);
+            if sum_diff.abs() > sum_diff_thresh {
+                let delta =
+                    ((sum_diff.abs() - sum_diff_thresh) >> super::num_pels_log2(config.bs)) + 1;
+                if delta >= 4 {
+                    return DenoiserDecision::CopyBlock;
+                }
+                let delta = vdupq_n_u8(delta as u8);
+                for row in 0..height {
+                    for chunk in 0..width_vectors {
+                        let sig_ptr = planes
+                            .sig
+                            .as_ptr()
+                            .add(row * planes.sig_stride + chunk * 16);
+                        let mc_ptr = planes
+                            .mc_avg
+                            .as_ptr()
+                            .add(row * planes.mc_avg_stride + chunk * 16);
+                        let avg_ptr = planes
+                            .avg
+                            .as_mut_ptr()
+                            .add(row * planes.avg_stride + chunk * 16);
+                        let (low, high) = denoiser_adjust_16x1(
+                            sig_ptr,
+                            mc_ptr,
+                            avg_ptr,
+                            delta,
+                            sums_low[chunk][row >> 4],
+                            sums_high[chunk][row >> 4],
+                        );
+                        sums_low[chunk][row >> 4] = low;
+                        sums_high[chunk][row >> 4] = high;
+                    }
+                }
+                sum_diff = 0;
+                for chunk in 0..width_vectors {
+                    for group in 0..4 {
+                        sum_diff += vaddlvq_s16(sums_low[chunk][group]);
+                        sum_diff += vaddlvq_s16(sums_high[chunk][group]);
+                    }
+                }
+                if sum_diff.abs() > sum_diff_thresh {
+                    return DenoiserDecision::CopyBlock;
+                }
+            }
+            DenoiserDecision::FilterBlock
+        }
+    }
+
+    /// Port of libvpx `vp9_denoiser_8xN_neon`.
+    #[target_feature(enable = "neon")]
+    unsafe fn filter_8xn(planes: &mut FilterPlanes<'_>, config: FilterConfig) -> DenoiserDecision {
+        // SAFETY: The public wrapper validates all windows before reaching
+        // this helper. The temporary rows are local and every source/dest
+        // pointer stays within the validated windows.
+        unsafe {
+            let shift_inc = i32::from(
+                config.increase_denoising && config.motion_magnitude <= MOTION_MAGNITUDE_THRESHOLD,
+            );
+            let level1_adjustment = if config.motion_magnitude <= MOTION_MAGNITUDE_THRESHOLD {
+                4 + shift_inc
+            } else {
+                3
+            };
+            let vectors = StrongFilterVectors {
+                level1_threshold: vdupq_n_u8((4 + shift_inc) as u8),
+                level2_threshold: vdupq_n_u8(8),
+                level3_threshold: vdupq_n_u8(16),
+                level1_adjustment: vdupq_n_u8(level1_adjustment as u8),
+                delta_level_1_and_2: vdupq_n_u8(1),
+                delta_level_2_and_3: vdupq_n_u8(2),
+            };
+            let height = config.bs.height() as usize;
+            let pair_count = height / 2;
+            let mut sig_buffer = [[0u8; 16]; 8];
+            let mut mc_buffer = [[0u8; 16]; 8];
+            let mut running_buffer = [[0u8; 16]; 8];
+            let mut sum_low = vdupq_n_s16(0);
+            let mut sum_high = vdupq_n_s16(0);
+
+            for row_pair in 0..pair_count {
+                let row = row_pair * 2;
+                std::ptr::copy_nonoverlapping(
+                    planes.sig.as_ptr().add(row * planes.sig_stride),
+                    sig_buffer[row_pair].as_mut_ptr(),
+                    8,
+                );
+                std::ptr::copy_nonoverlapping(
+                    planes.sig.as_ptr().add((row + 1) * planes.sig_stride),
+                    sig_buffer[row_pair].as_mut_ptr().add(8),
+                    8,
+                );
+                std::ptr::copy_nonoverlapping(
+                    planes.mc_avg.as_ptr().add(row * planes.mc_avg_stride),
+                    mc_buffer[row_pair].as_mut_ptr(),
+                    8,
+                );
+                std::ptr::copy_nonoverlapping(
+                    planes.mc_avg.as_ptr().add((row + 1) * planes.mc_avg_stride),
+                    mc_buffer[row_pair].as_mut_ptr().add(8),
+                    8,
+                );
+                std::ptr::copy_nonoverlapping(
+                    planes.avg.as_ptr().add(row * planes.avg_stride),
+                    running_buffer[row_pair].as_mut_ptr(),
+                    8,
+                );
+                std::ptr::copy_nonoverlapping(
+                    planes.avg.as_ptr().add((row + 1) * planes.avg_stride),
+                    running_buffer[row_pair].as_mut_ptr().add(8),
+                    8,
+                );
+                (sum_low, sum_high) = denoiser_16x1(
+                    sig_buffer[row_pair].as_ptr(),
+                    mc_buffer[row_pair].as_ptr(),
+                    running_buffer[row_pair].as_mut_ptr(),
+                    &vectors,
+                    sum_low,
+                    sum_high,
+                );
+                let running = vld1q_u8(running_buffer[row_pair].as_ptr());
+                vst1_u8(
+                    planes.avg.as_mut_ptr().add(row * planes.avg_stride),
+                    vget_low_u8(running),
+                );
+                vst1_u8(
+                    planes.avg.as_mut_ptr().add((row + 1) * planes.avg_stride),
+                    vget_high_u8(running),
+                );
+            }
+
+            let sum_diff_thresh = total_adj_strong_thresh(config.bs, config.increase_denoising);
+            let mut sum_diff = horizontal_add(sum_low, sum_high);
+            if sum_diff.abs() > sum_diff_thresh {
+                let delta =
+                    ((sum_diff.abs() - sum_diff_thresh) >> super::num_pels_log2(config.bs)) + 1;
+                if delta >= 4 {
+                    return DenoiserDecision::CopyBlock;
+                }
+                let delta = vdupq_n_u8(delta as u8);
+                for row_pair in 0..pair_count {
+                    (sum_low, sum_high) = denoiser_adjust_16x1(
+                        sig_buffer[row_pair].as_ptr(),
+                        mc_buffer[row_pair].as_ptr(),
+                        running_buffer[row_pair].as_mut_ptr(),
+                        delta,
+                        sum_low,
+                        sum_high,
+                    );
+                    let running = vld1q_u8(running_buffer[row_pair].as_ptr());
+                    let row = row_pair * 2;
+                    vst1_u8(
+                        planes.avg.as_mut_ptr().add(row * planes.avg_stride),
+                        vget_low_u8(running),
+                    );
+                    vst1_u8(
+                        planes.avg.as_mut_ptr().add((row + 1) * planes.avg_stride),
+                        vget_high_u8(running),
+                    );
+                }
+                sum_diff = horizontal_add(sum_low, sum_high);
+                if sum_diff.abs() > sum_diff_thresh {
+                    return DenoiserDecision::CopyBlock;
+                }
+            }
+            DenoiserDecision::FilterBlock
+        }
+    }
+
+    #[target_feature(enable = "neon")]
+    pub(super) unsafe fn filter(
+        mut planes: FilterPlanes<'_>,
+        config: FilterConfig,
+    ) -> DenoiserDecision {
+        // SAFETY: The caller validates all plane windows; the two kernels
+        // perform only in-bounds NEON loads/stores.
+        unsafe {
+            if matches!(config.bs, BlockSize::Block8x8 | BlockSize::Block8x16) {
+                filter_8xn(&mut planes, config)
+            } else if neon_filter_block_size(config.bs) {
+                filter_nxm(&mut planes, config)
+            } else {
+                DenoiserDecision::CopyBlock
+            }
+        }
+    }
 }
 
 // -----------------------------------------------------------------------------
@@ -1315,6 +1796,105 @@ mod tests {
             ),
             "large-diff decision must be FilterBlock or CopyBlock, got {decision:?}",
         );
+    }
+
+    /// The AArch64 port must preserve the scalar decision and every active
+    /// output sample across all block shapes handled by libvpx's NEON
+    /// dispatcher. Strided windows and randomized byte extremes are included;
+    /// motion values cover both sides of the 24-pixel adjustment threshold.
+    /// Medium denoise exercises NEON, while high denoise proves the scalar
+    /// fallback for pinned libvpx's known C/NEON threshold disagreement.
+    #[cfg(target_arch = "aarch64")]
+    #[test]
+    fn w5_3_neon_filter_matches_scalar_for_supported_shapes() {
+        const BLOCKS: [BlockSize; 10] = [
+            BlockSize::Block8x8,
+            BlockSize::Block8x16,
+            BlockSize::Block16x8,
+            BlockSize::Block16x16,
+            BlockSize::Block16x32,
+            BlockSize::Block32x16,
+            BlockSize::Block32x32,
+            BlockSize::Block32x64,
+            BlockSize::Block64x32,
+            BlockSize::Block64x64,
+        ];
+        const MOTIONS: [i32; 4] = [0, 24, 25, 96];
+
+        for (block_index, &bs) in BLOCKS.iter().enumerate() {
+            let width = bs.width() as usize;
+            let height = bs.height() as usize;
+            for stride_pad in [0usize, 3, 11] {
+                let stride = width + stride_pad;
+                let len = stride * height;
+                let mut sig = vec![0u8; len];
+                let mut mc = vec![0u8; len];
+                let mut avg_scalar = vec![0xa5u8; len];
+                let mut avg_neon = avg_scalar.clone();
+                for case in 0..8u32 {
+                    let mut state = 0x9e37_79b9u32
+                        ^ (block_index as u32).wrapping_mul(0x85eb_ca6b)
+                        ^ case.wrapping_mul(0xc2b2_ae35);
+                    for row in 0..height {
+                        for col in 0..width {
+                            let index = row * stride + col;
+                            if case == 0 {
+                                let source =
+                                    12 + ((row * 29 + col * 17 + block_index * 7) % 220) as i32;
+                                let delta =
+                                    ((row * 13 + col * 19 + block_index * 23) % 43) as i32 - 21;
+                                sig[index] = source as u8;
+                                mc[index] = (source + delta).clamp(0, 255) as u8;
+                            } else {
+                                state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                                sig[index] = (state >> 24) as u8;
+                                state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                                mc[index] = (state >> 24) as u8;
+                            }
+                        }
+                    }
+
+                    for &increase_denoising in &[false, true] {
+                        for &motion_magnitude in &MOTIONS {
+                            avg_scalar.fill(0xa5);
+                            avg_neon.copy_from_slice(&avg_scalar);
+                            let scalar_decision = vp9_denoiser_filter_scalar(
+                                &sig,
+                                stride,
+                                &mc,
+                                stride,
+                                &mut avg_scalar,
+                                stride,
+                                increase_denoising,
+                                bs,
+                                motion_magnitude,
+                            )
+                            .expect("validated differential-test window");
+                            let neon_decision = vp9_denoiser_filter(
+                                &sig,
+                                stride,
+                                &mc,
+                                stride,
+                                &mut avg_neon,
+                                stride,
+                                increase_denoising,
+                                bs,
+                                motion_magnitude,
+                            )
+                            .expect("validated differential-test window");
+                            assert_eq!(
+                                neon_decision, scalar_decision,
+                                "decision mismatch for {bs:?}, stride={stride}, case={case}, increase={increase_denoising}, motion={motion_magnitude}",
+                            );
+                            assert_eq!(
+                                avg_neon, avg_scalar,
+                                "output mismatch for {bs:?}, stride={stride}, case={case}, increase={increase_denoising}, motion={motion_magnitude}",
+                            );
+                        }
+                    }
+                }
+            }
+        }
     }
 
     // -------------------------------------------------------------------------

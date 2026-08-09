@@ -1497,6 +1497,30 @@ pub struct PickInterModeParams<'a> {
     pub newmv_override_golden: Option<Mv>,
 }
 
+/// Candidate statistics consumed by the temporal denoiser.
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
+pub struct DenoiserPickContext {
+    /// Minimum-SSE evaluated zero-MV candidate across LAST and GOLDEN.
+    pub zeromv: Option<DenoiserCandidateContext>,
+    /// Minimum-SSE evaluated zero-MV LAST candidate.
+    pub zeromv_last: Option<DenoiserCandidateContext>,
+    /// Minimum-SSE evaluated candidate carrying a nonzero MV.
+    pub nonzero: Option<DenoiserCandidateContext>,
+}
+
+/// Evaluated inter candidate retained for temporal denoising.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct DenoiserCandidateContext {
+    /// Pixel-domain luma SSE.
+    pub sse: u32,
+    /// Candidate motion vector in VP9 1/8-pel units.
+    pub mv: Mv,
+    /// Interpolation filter used to form this candidate.
+    pub interp_filter: InterpFilter,
+    /// Reference frame used to form this candidate.
+    pub ref_frame: RefFrame,
+}
+
 /// Result of [`pick_inter_mode`].
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct PickInterModeResult {
@@ -1568,6 +1592,8 @@ pub struct PickInterModeResult {
     /// through [`candidate_trace::take`]; this keeps the production result
     /// compact and avoids allocating on the normal picker path.
     pub candidate_trace_id: u64,
+    /// Compact production denoiser statistics from evaluated inter candidates.
+    pub denoiser: DenoiserPickContext,
 }
 
 /// Diagnostic storage for candidates evaluated by the real interleaved
@@ -1989,6 +2015,9 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
     // `[ZERO, NEAREST, NEAR, NEW]`. Only candidates that survive the real
     // production gates below are recorded.
     let mut last_candidates: [Option<InterModeSearchResult>; 4] = [None; 4];
+    let mut denoiser_zeromv: Option<(usize, DenoiserCandidateContext)> = None;
+    let mut denoiser_zeromv_last: Option<(usize, DenoiserCandidateContext)> = None;
+    let mut denoiser_nonzero: Option<(usize, DenoiserCandidateContext)> = None;
 
     CANDIDATE_PRED_SCRATCH.with_borrow_mut(|scratch| {
         for &(ref_frame, mode) in &RT_INTER_MODES {
@@ -2523,16 +2552,39 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
                 biased_rd_cost = biased_rd_cost.saturating_mul(4);
             }
 
+            let slot = match mode {
+                InterMode::ZeroMv => 0,
+                InterMode::NearestMv => 1,
+                InterMode::NearMv => 2,
+                InterMode::NewMv => 3,
+            };
             if ref_frame == RefFrame::LastFrame {
-                let slot = match mode {
-                    InterMode::ZeroMv => 0,
-                    InterMode::NearestMv => 1,
-                    InterMode::NearMv => 2,
-                    InterMode::NewMv => 3,
-                };
                 let mut traced = candidate;
                 traced.best_rd_cost = biased_rd_cost;
                 last_candidates[slot] = Some(traced);
+            }
+            let denoiser_candidate = DenoiserCandidateContext {
+                sse: candidate.sse_y,
+                mv: candidate.best_mv,
+                interp_filter: candidate.picked_interp_filter,
+                ref_frame,
+            };
+            let candidate_priority = ref_idx * 4 + slot;
+            let update_minimum = |minimum: &mut Option<(usize, DenoiserCandidateContext)>| {
+                if minimum.is_none_or(|(priority, current)| {
+                    denoiser_candidate.sse < current.sse
+                        || (denoiser_candidate.sse == current.sse && candidate_priority < priority)
+                }) {
+                    *minimum = Some((candidate_priority, denoiser_candidate));
+                }
+            };
+            if candidate.best_mv == Mv::ZERO {
+                update_minimum(&mut denoiser_zeromv);
+                if ref_frame == RefFrame::LastFrame {
+                    update_minimum(&mut denoiser_zeromv_last);
+                }
+            } else {
+                update_minimum(&mut denoiser_nonzero);
             }
 
             let is_new_best = match best.as_ref() {
@@ -2572,6 +2624,7 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
                     newmv_search_last: None,
                     newmv_search_golden: None,
                     candidate_trace_id: 0,
+                    denoiser: DenoiserPickContext::default(),
                 });
             }
 
@@ -2683,6 +2736,11 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
     // when the intra fallback replaced `best`.
     best.newmv_search_last = newmv_last;
     best.newmv_search_golden = newmv_golden;
+    best.denoiser = DenoiserPickContext {
+        zeromv: denoiser_zeromv.map(|(_, candidate)| candidate),
+        zeromv_last: denoiser_zeromv_last.map(|(_, candidate)| candidate),
+        nonzero: denoiser_nonzero.map(|(_, candidate)| candidate),
+    };
     best.candidate_trace_id = candidate_trace::record(last_candidates);
 
     best
@@ -3088,6 +3146,7 @@ fn evaluate_intra_fallback_with_scratch(
                 newmv_search_last: None,
                 newmv_search_golden: None,
                 candidate_trace_id: 0,
+                denoiser: DenoiserPickContext::default(),
             });
         }
     }
@@ -7550,6 +7609,67 @@ mod tests {
         candidate_trace::reset(false);
         let untraced = pick_inter_mode(&params);
         assert_eq!(untraced.candidate_trace_id, 0);
+    }
+
+    #[test]
+    fn denoiser_context_retains_best_zero_motion_reference() {
+        let pw = 64;
+        let ph = 64;
+        let src_data = make_plane(pw, ph, 73);
+        let last_data = make_plane(pw, ph, 19);
+        let golden_data = src_data.clone();
+        let src_plane = PlaneRef {
+            data: &src_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let last_plane = PlaneRef {
+            data: &last_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let golden_plane = PlaneRef {
+            data: &golden_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let harness = TestHarness::new(pw, 80);
+        let fc = FrameContext::new_default();
+        let intra_costs = crate::cost::symbol_costs::intra_y_mode_costs_inter(&fc);
+        let mvc = MvCandidates {
+            nearest: Mv { row: 0, col: 8 },
+            near: Mv { row: 8, col: 0 },
+        };
+        let mut params = make_dual_ref_params(
+            &harness,
+            &intra_costs[0],
+            BlockSize::Block16x16,
+            &src_plane,
+            &last_plane,
+            (16, 16),
+            &mvc,
+            &mvc,
+            MvLimits::new(-4, 4, -4, 4),
+            80,
+        );
+        params.golden_ref_plane = &golden_plane;
+        params.enable_intra_fallback = false;
+        params.reference_masking = false;
+
+        let context = pick_inter_mode(&params).denoiser;
+        let best_zero = context
+            .zeromv
+            .expect("an evaluated zero-MV candidate must be retained");
+        let last_zero = context
+            .zeromv_last
+            .expect("the evaluated LAST zero-MV candidate must be retained");
+        assert_eq!(best_zero.ref_frame, RefFrame::GoldenFrame);
+        assert_eq!(best_zero.mv, Mv::ZERO);
+        assert_eq!(last_zero.ref_frame, RefFrame::LastFrame);
+        assert!(best_zero.sse < last_zero.sse);
     }
 
     /// `pick_inter_mode`: when `intra_above_pixels` is `Some` and a

@@ -89,7 +89,7 @@ use rvp9_core::mv_search::PlaneRef;
 use rvp9_core::transforms::TxMode;
 
 use crate::aq_cyclic_refresh::{CyclicRefresh, CyclicRefreshConfig};
-use crate::denoiser::{Denoiser, DenoiserLevel, INTRA_FRAME_IDX, vp9_denoiser_filter};
+use crate::denoiser::{Denoiser, INTRA_FRAME_IDX};
 use crate::loopfilter::{
     apply_loop_filter_to_tight_recon_parallel, apply_packet_overlap_chroma,
     apply_packet_overlap_luma, build_kf_mi_grid_for_lf, pad_packet_overlap_recon,
@@ -1563,21 +1563,6 @@ struct SvcFrameDecision {
     refresh_frame_flags: u8,
 }
 
-/// W5.5 — LAST_FRAME ref-slot index inside `Denoiser::running_avg_y`.
-/// Mirrors libvpx `vp9_blockd.h::LAST_FRAME = 1`. The slot holds the
-/// previous frame's denoised running-average, consumed as the zero-MV
-/// reference for the current frame's denoising pass.
-const LAST_FRAME_IDX: usize = 1;
-
-/// W5.5 — per-block size of the denoiser pass. libvpx's
-/// `perform_motion_compensation` early-returns `COPY_BLOCK` for any
-/// block smaller than 16×16 (`vp9_denoiser.c:215-218`), so 16×16 is
-/// the minimum block the filter ever sees in practice. The minimal
-/// integration runs the scalar filter on a 16×16 grid over `me_ref_y`
-/// using the previous frame's denoised running-average (stored in
-/// `running_avg_y[LAST_FRAME_IDX]`) as the zero-MV `mc_avg`.
-const W5_DENOISE_TILE: usize = 16;
-
 // A14 — GOLDEN refresh period for the inter path moved to the GOP
 // topology module as `crate::gop::GOLDEN_REFRESH_PERIOD` (the schedule
 // authority). The frame loop now reads the refresh disposition from
@@ -2948,16 +2933,14 @@ impl StreamEncoder {
             // `denoiser->reset` (which fires on the first frame after
             // a KF), copy the current frame into every running_avg_y
             // slot so the next frame's filter has a real reference.
-            // For the minimal pass we only need slot LAST_FRAME_IDX
-            // (the zero-MV reference) and INTRA_FRAME_IDX (the
-            // per-frame scratch).
+            // Slot zero is the per-frame scratch. Seed every reference slot
+            // from the keyframe reconstruction so LAST and GOLDEN denoiser
+            // candidates begin from the same causal picture.
             den.running_avg_y[INTRA_FRAME_IDX]
                 .y_buffer
                 .copy_from_slice(&self.me_ref_y);
-            if den.running_avg_y.len() > LAST_FRAME_IDX {
-                den.running_avg_y[LAST_FRAME_IDX]
-                    .y_buffer
-                    .copy_from_slice(&self.me_ref_y);
+            for running_ref in den.running_avg_y.iter_mut().skip(1) {
+                running_ref.y_buffer.copy_from_slice(&self.me_ref_y);
             }
             // libvpx `vp9_denoiser.c:528` — `denoiser->reset = 0`
             // after the seed copy.
@@ -3008,150 +2991,6 @@ impl StreamEncoder {
         self.frame_context = keyframe_fc.clone();
         self.decoder_fc_state = keyframe_fc;
         Ok(packet)
-    }
-
-    /// W5.5 — apply the VP9 temporal denoiser to the just-mirrored
-    /// `me_ref_y` plane (luma only — libvpx's denoiser is luma-only,
-    /// `vp9_denoiser.h:46`). Runs the scalar `vp9_denoiser_filter`
-    /// (`vp9_denoiser.c:68-180`) over a 16×16 tile grid, using the
-    /// previous frame's running-average (stored in
-    /// `running_avg_y[LAST_FRAME_IDX]`) as the zero-MV `mc_avg`
-    /// reference. The filtered output replaces the per-tile bytes in
-    /// `me_ref_y` and is also captured into
-    /// `running_avg_y[LAST_FRAME_IDX]` so the next frame has a
-    /// reference (libvpx `vp9_denoiser.c:425-428` running_avg_y write,
-    /// `vp9_denoiser.c:464-524` ref-update bookkeeping).
-    ///
-    /// **Scope-down vs full libvpx.** The full `vp9_denoiser_denoise`
-    /// driver (`vp9_denoiser.c:336-437`) consumes per-block picker
-    /// state (`newmv_sse`, `zeromv_sse`, `best_reference_frame`) and
-    /// the picked MV/MC block, and is invoked from inside the per-SB
-    /// mode-decision loop. Threading that plumbing through the
-    /// encoder's per-frame loop requires substantial picker
-    /// integration (the picker doesn't currently expose the per-leaf
-    /// MC predictor or its picker context). This minimal pass
-    /// demonstrates the storage path: it applies the real
-    /// `vp9_denoiser_filter` on a fixed 16×16 grid with zero motion
-    /// and skips the picker-driven `perform_motion_compensation`
-    /// gates. Real per-block picker-driven denoising is a follow-up;
-    /// the structural wiring (Denoiser field, KF-seed, per-frame
-    /// filter pass, `running_avg_y` rotation) is identical.
-    ///
-    /// **Cross-decoder gate invariant.** This function only touches
-    /// `me_ref_y` and the denoiser's `running_avg_y` slots — never
-    /// `last_recon_*`. The decoder rebuilds from the bitstream and
-    /// sees the un-denoised `last_recon_*`, so the gate stays
-    /// byte-exact (the gate runs at `noise_sensitivity == 0` and
-    /// hence never invokes this code path).
-    fn apply_w5_denoiser_to_me_ref_y(&mut self) {
-        let den = match self.denoiser.as_mut() {
-            Some(d) => d,
-            None => return,
-        };
-        // libvpx `vp9_denoiser.c:410` — denoiser only runs when level
-        // ≥ `kDenLow`. `vp9_denoiser_alloc` initialises level to
-        // Medium, so this gate is open by default; we honour it
-        // explicitly for symmetry with the upstream driver.
-        if den.denoising_level < DenoiserLevel::Low {
-            return;
-        }
-        let w = self.config.width as usize;
-        let h = self.config.height as usize;
-        let stride = w;
-        let tile = W5_DENOISE_TILE;
-        let bs = BlockSize::Block16x16;
-        // libvpx `vp9_denoiser.c:336-437` driver's `increase_denoising`
-        // is gated on (level == kDenHigh && !is_skin). The standalone
-        // module ignores skin (no detector wired yet); we mirror the
-        // High-level branch only.
-        let increase_denoising = den.denoising_level == DenoiserLevel::High;
-
-        // Process the plane in 16×16 tiles. Any tail rows/cols that
-        // don't form a full 16×16 are left as the byte-exact mirror
-        // (matches libvpx's `perform_motion_compensation` early-out
-        // for non-aligned blocks — `vp9_denoiser.c:215-218`). The
-        // encoder's width/height invariants pin both to multiples of
-        // 64, so 16-tiling is always exact (no tail in practice; the
-        // bounds check below is defensive).
-        let n_rows = h / tile;
-        let n_cols = w / tile;
-
-        for tr in 0..n_rows {
-            for tc in 0..n_cols {
-                let off = (tr * tile) * stride + (tc * tile);
-                // libvpx `vp9_denoiser.c:425-428` — strong+weak
-                // filter pass writes filtered samples into the
-                // `INTRA_FRAME_IDX` scratch. We then copy the scratch
-                // tile back into `me_ref_y` and into the LAST_FRAME
-                // slot for the next frame's reference.
-                //
-                // The `sig` is the current encoder reconstruction
-                // (post-LF) — what libvpx would feed in as the
-                // current frame's source post-`vp9_compute_skin_block`
-                // (vp9_denoiser.c:418-421). The `mc_avg` is the
-                // previous frame's running-average at the same
-                // position (zero-MV assumption, scope-down).
-                let scratch_stride = den.running_avg_y[INTRA_FRAME_IDX].stride as usize;
-                let _ = scratch_stride; // tight-stride invariant: == width.
-
-                // Build the filter inputs as windowed views.
-                // `sig` and `mc_avg` are read-only; `avg` is the
-                // scratch slot at INTRA_FRAME_IDX that the filter
-                // writes into.
-                //
-                // Borrow split: we need `&self.me_ref_y` (sig) and
-                // `&den.running_avg_y[LAST_FRAME_IDX]` (mc_avg) and
-                // `&mut den.running_avg_y[INTRA_FRAME_IDX]` (avg).
-                // To avoid overlapping borrows on `den`, split the
-                // Vec via `split_at_mut`.
-                let (head, tail) = den.running_avg_y.split_at_mut(LAST_FRAME_IDX);
-                // `head` covers `[INTRA_FRAME_IDX..LAST_FRAME_IDX)`
-                // i.e. just slot 0 (INTRA scratch). `tail` starts at
-                // LAST_FRAME_IDX.
-                let scratch = &mut head[INTRA_FRAME_IDX];
-                let mc_ref = &tail[0]; // tail[0] == LAST_FRAME_IDX slot.
-
-                let Ok(_decision) = vp9_denoiser_filter(
-                    &self.me_ref_y[off..],
-                    stride,
-                    &mc_ref.y_buffer[off..],
-                    mc_ref.stride as usize,
-                    &mut scratch.y_buffer[off..],
-                    scratch.stride as usize,
-                    increase_denoising,
-                    bs,
-                    0, // motion_magnitude (zero-MV assumption).
-                ) else {
-                    return;
-                };
-                // Copy the filtered (or copied) tile from the scratch
-                // back into `me_ref_y`. libvpx's
-                // `vp9_denoiser_filter_c` writes the strong+weak
-                // result into `avg` (the scratch); the driver
-                // (`vp9_denoiser.c:425-432`) then copies the scratch
-                // into the source and the running-avg ref-slot. We
-                // collapse the two copies: scratch → me_ref_y +
-                // scratch → LAST_FRAME slot.
-                for r in 0..tile {
-                    let s = off + r * stride;
-                    self.me_ref_y[s..s + tile].copy_from_slice(&scratch.y_buffer[s..s + tile]);
-                }
-            }
-        }
-        // libvpx `vp9_denoiser.c:464-524` — rotate the scratch into
-        // the LAST_FRAME slot so the next frame's filter pass has a
-        // reference. The simplest faithful rotation is a full-plane
-        // copy from the per-frame scratch (which now holds the
-        // filtered samples for every tile we processed; tail tiles
-        // are still zero — but the width/height multiple-of-64
-        // invariant means there are no tail tiles).
-        if den.running_avg_y.len() > LAST_FRAME_IDX {
-            let (head, tail) = den.running_avg_y.split_at_mut(LAST_FRAME_IDX);
-            tail[0]
-                .y_buffer
-                .copy_from_slice(&head[INTRA_FRAME_IDX].y_buffer);
-        }
-        den.current_denoiser_frame = den.current_denoiser_frame.saturating_add(1);
     }
 
     /// A18 (SVC) — assign the current frame's temporal layer and derive
@@ -3342,6 +3181,7 @@ impl StreamEncoder {
         let inter_env_snapshot = crate::InterEncodeEnv::capture();
         let parallel_tile_picker = log2_tile_cols > 0
             && self.parallelism.max_threads > 1
+            && self.denoiser.is_none()
             && !inter_env_snapshot.compact_recon_rows_enabled();
         let mut sb_partitions = if parallel_tile_picker {
             (0..(h as usize).div_ceil(64) * (w as usize / 64))
@@ -3539,6 +3379,7 @@ impl StreamEncoder {
         let high_source_sad = self.pre_analysis.high_source_sad;
         let content_state_sb = &self.pre_analysis.content_state_sb;
         let skin_map = &self.pre_analysis.skin_map;
+        let consec_zero_mv = &self.pre_analysis.consec_zero_mv;
         let chessboard_index = if matches!(deadline, Deadline::Realtime)
             && (6..=8).contains(&speed.unsigned_abs())
             && u64::from(w) * u64::from(h) >= 700_000
@@ -3560,7 +3401,8 @@ impl StreamEncoder {
                 $split_stats:expr,
                 $record_coef_tokens:expr,
                 $active_tile_col:expr,
-                $worker_pool:expr
+                $worker_pool:expr,
+                $denoiser:expr
             ) => {
                 pick_and_simulate_inter_encode_partitions(
                     inter_env,
@@ -3597,6 +3439,7 @@ impl StreamEncoder {
                     high_source_sad,
                     content_state_sb,
                     skin_map,
+                    consec_zero_mv,
                     frames_since_key,
                     $history,
                     tpl_rdmult_arg,
@@ -3606,6 +3449,7 @@ impl StreamEncoder {
                     log2_tile_cols,
                     $active_tile_col,
                     $worker_pool,
+                    $denoiser,
                 )
             };
         }
@@ -3778,6 +3622,7 @@ impl StreamEncoder {
                                 &mut tile_split_stats,
                                 true,
                                 Some(tile_col),
+                                None,
                                 None
                             );
                             let recorded_coef_tile = tile_encode
@@ -3909,7 +3754,8 @@ impl StreamEncoder {
                 &mut stage4a_frame_split_stats,
                 false,
                 None,
-                self.frame_worker_pool.as_mut()
+                self.frame_worker_pool.as_mut(),
+                self.denoiser.as_mut()
             );
             debug_assert!(encoded.recorded_coef_tile.is_none());
             debug_assert_eq!(encoded.mi_grid.mi_row_start, 0);
@@ -4283,25 +4129,15 @@ impl StreamEncoder {
         self.inter_recon_scratch = Some(displaced_recon);
         self.ref_pool.update_reference_frames(refresh_flags);
 
-        // Reference-buffer split — mirror the just-committed post-LF
-        // reconstruction (the LAST pool slot) into the ME-side reference.
-        // When the temporal denoiser is enabled (`noise_sensitivity > 0`),
-        // the `apply_w5_denoiser_to_me_ref_y` call below overwrites
-        // `me_ref_y` with the per-block running-average so subsequent
-        // motion search reads a filtered view; the pool's LAST slot (the
-        // residual-coding reference) is untouched. This mirrors libvpx's
-        // separation of `running_avg_y[]` from `cm->frame_refs[]`
-        // (vp9_denoiser.c:294-304, vp9_denoiser.h:46) — the denoiser
-        // writes its `running_avg_y` (vp9_denoiser.c:425-428) and
-        // `cm->frame_refs[]` stays decoder-equivalent. Chroma planes
-        // mirror byte-exact (luma-only filter, libvpx `vp9_denoiser.h:46`).
+        // Keep the legacy ME mirror decoder-equivalent. Current-source
+        // denoising now runs on final LAST leaves inside the picker/simulator
+        // and retains its temporal state in `Denoiser::running_avg_y`.
         if self.denoiser.is_some() {
             let (last_y, last_u, last_v) =
                 self.ref_pool.named_ref_planes(crate::buffer_pool::LAST_REF);
             self.me_ref_y.copy_from_slice(last_y);
             self.me_ref_u.copy_from_slice(last_u);
             self.me_ref_v.copy_from_slice(last_v);
-            self.apply_w5_denoiser_to_me_ref_y();
         }
 
         // A18 — Commit the per-leaf MV grid for the next inter
@@ -4593,6 +4429,7 @@ impl StreamEncoder {
             self.pre_analysis.high_source_sad,
             &self.pre_analysis.content_state_sb,
             &self.pre_analysis.skin_map,
+            &self.pre_analysis.consec_zero_mv,
             0,
             None,
             // A23 — TPL is not wired into the non-show ARF's own coding in
@@ -4606,6 +4443,7 @@ impl StreamEncoder {
             log2_tile_cols,
             None,
             self.frame_worker_pool.as_mut(),
+            None,
         );
         let coef_source = encoded.coefs;
         self.stage4a_split_stats
@@ -11514,12 +11352,11 @@ mod tests {
     /// place (separate `Vec` storage, all call sites routed) without
     /// changing the bitstream.
     ///
-    /// **W5.5 update**: the test still asserts byte-identity, but it
-    /// now explicitly pins `noise_sensitivity = 0`. The complementary
-    /// PROOF [`reference_split_denoiser_filters_me_ref_only`] covers
-    /// the `noise_sensitivity > 0` branch, where the denoiser writes
-    /// filtered pixels into `me_ref_y` and the equality is expected
-    /// to break.
+    /// The complementary
+    /// [`denoiser_filters_coded_luma_and_preserves_decoder_reference`]
+    /// test covers the enabled path. Current-source denoising changes the
+    /// coded luma before residual formation while this legacy ME mirror stays
+    /// decoder-equivalent.
     #[test]
     fn reference_split_me_and_pred_identical_initially() {
         // Encode a KF + several inter frames against a small 64×64
@@ -11596,38 +11433,13 @@ mod tests {
         );
     }
 
-    /// W5.5 PROOF — temporal denoiser wired into the encoder's per-
-    /// frame loop. When `noise_sensitivity > 0`, the post-recon mirror
-    /// is followed by a real `vp9_denoiser_filter` pass that writes
-    /// filtered samples into `me_ref_y`. This test pins three
-    /// invariants:
-    ///
-    /// 1. `me_ref_y != last_recon_y` after the first inter frame
-    ///    (filtering happened — anti-G3 against a stripped denoiser
-    ///    call).
-    /// 2. `last_recon_*` is unchanged by the denoiser pass: the
-    ///    encoder still uses the un-denoised reconstruction for
-    ///    residual coding (cross-decoder gate invariant — libvpx
-    ///    `vp9_denoiser.c:294-304` me_ref vs cm->frame_refs[]).
-    /// 3. Chroma planes (`me_ref_u`, `me_ref_v`) are not touched by
-    ///    the denoiser (libvpx is luma-only,
-    ///    `vp9_denoiser.h:46` — `running_avg_y` only, no UV).
-    ///
-    /// The encoded frame still parses as a valid VP9 frame (proves
-    /// the denoiser writing to `me_ref_*` doesn't desync the
-    /// bitstream). The W5.1 cross-decoder gate
-    /// (`tests/cross_decoder_gate.rs`) verifies byte-exact decode at
-    /// `noise_sensitivity == 0`; this test verifies the
-    /// `noise_sensitivity > 0` path stays internally consistent.
+    /// The temporal denoiser changes the coded luma source while the legacy
+    /// ME mirror remains decoder-equivalent. Keyframes seed every denoiser
+    /// reference, and chroma remains untouched.
     #[test]
-    fn reference_split_denoiser_filters_me_ref_only() {
+    fn denoiser_filters_coded_luma_and_preserves_decoder_reference() {
         let mut cfg = baseline_config();
-        // W5.1 — non-zero `noise_sensitivity` enables the denoiser.
         cfg.noise_sensitivity = 2;
-        // 128×128 so the partition picker can pick a real inter
-        // partition with motion (the variance-based picker produces
-        // a uniform Block64x64 grid on a flat input). A gradient
-        // gives the filter something to operate on.
         let cfg = EncoderConfig {
             width: 128,
             height: 128,
@@ -11636,81 +11448,55 @@ mod tests {
         let mut enc = StreamEncoder::new(cfg).unwrap();
         let (y, u, v) = gradient_frame(128, 128);
 
-        // KF: denoiser does NOT run (libvpx `vp9_denoiser.c:410`
-        // `last_is_reference` is false on KF). After KF, both buffers
-        // are byte-identical (the KF mirror just copies).
         let _kf = enc.encode_frame(&yuv_view(&y, &u, &v, 128)).unwrap();
         assert_eq!(
             enc.me_ref_y(),
             enc.last_recon_y(),
-            "after KF, denoiser must NOT have run; me_ref_y == last_recon_y",
+            "the keyframe ME mirror must remain decoder-equivalent",
+        );
+        let denoiser = enc
+            .denoiser
+            .as_ref()
+            .expect("noise sensitivity enables denoiser");
+        assert!(
+            denoiser
+                .running_avg_y
+                .iter()
+                .skip(1)
+                .all(|reference| reference.y_buffer == enc.me_ref_y()),
+            "the keyframe must seed every temporal denoiser reference",
         );
 
-        // Construct a second frame that differs from the KF (so the
-        // inter reconstruction diverges from the KF reconstruction —
-        // which is what the denoiser sees as `mc_avg`). A vertical
-        // brightness shift is enough to force non-trivial residual
-        // coding and a meaningfully different `last_recon_y`.
         let (mut y2, u2, v2) = gradient_frame(128, 128);
-        for r in 0..128 {
-            for c in 0..128 {
-                y2[r * 128 + c] = y2[r * 128 + c].saturating_add(40);
-            }
+        for (index, sample) in y2.iter_mut().enumerate() {
+            *sample = if index & 1 == 0 {
+                sample.saturating_add(2)
+            } else {
+                sample.saturating_sub(2)
+            };
         }
         let inter = enc.encode_frame(&yuv_view(&y2, &u2, &v2, 128)).unwrap();
-
-        // Invariant 1: me_ref_y diverged from last_recon_y (the
-        // filter wrote at least one sample). With a non-trivial frame
-        // change, `sig = last_recon_y` and `mc_avg =
-        // running_avg_y[LAST_FRAME]` (seeded from the KF
-        // reconstruction) differ; the strong-pass `snap-to-MC` path
-        // (`vp9_denoiser.c:99-101`) snaps `avg` to `mc_avg` on
-        // small-diff samples, biasing `me_ref_y` toward the previous
-        // frame — exactly the temporal-smoothing behaviour libvpx
-        // documents (`vp9_denoiser.c:425-428`).
-        assert_ne!(
+        let denoiser = enc.denoiser.as_ref().expect("denoiser remains allocated");
+        assert_eq!(denoiser.current_denoiser_frame, 1);
+        assert_eq!(
+            denoiser.running_avg_y[1].y_buffer, denoiser.running_avg_y[INTRA_FRAME_IDX].y_buffer,
+            "the completed denoised source must rotate into LAST",
+        );
+        assert_eq!(
             enc.me_ref_y(),
             enc.last_recon_y(),
-            "denoiser must filter at least one sample of me_ref_y \
-             (anti-G3: this fails if the apply_w5_denoiser_to_me_ref_y \
-             call is stripped from encode_inter_internal)",
+            "the ME mirror must follow the decoder-equivalent reconstruction",
         );
-
-        // Invariant 2: last_recon_* is unchanged by the denoiser
-        // pass. The decoder reads from the bitstream → it
-        // reconstructs the un-denoised samples; the encoder's
-        // last_recon_* must match what the decoder sees.
-        // (The denoiser writes to me_ref_y only; this assertion
-        // catches a regression where last_recon_* gets accidentally
-        // overwritten by the filter.)
-        let post_inter_recon_y: Vec<u8> = enc.last_recon_y().to_vec();
-        // last_recon_y is the inter reconstruction (post-LF, post-
-        // residual-add). It MUST equal the encoder's residual-coding
-        // reference, which is decoder-equivalent. We can't easily
-        // assert "byte-exact vs decoder" inside a unit test (that's
-        // the cross-decoder gate's job), but we can assert the
-        // denoiser pass didn't *copy from me_ref* into last_recon.
-        assert_eq!(
-            post_inter_recon_y.len(),
-            (cfg.width * cfg.height) as usize,
-            "last_recon_y must be tight-stride width*height",
-        );
-
-        // Invariant 3: chroma planes are NOT touched by the
-        // denoiser (luma-only filter).
         assert_eq!(
             enc.me_ref_u(),
             enc.last_recon_u(),
-            "denoiser must be luma-only; me_ref_u == last_recon_u",
+            "denoising must not split chroma U from decoder reconstruction",
         );
         assert_eq!(
             enc.me_ref_v(),
             enc.last_recon_v(),
-            "denoiser must be luma-only; me_ref_v == last_recon_v",
+            "denoising must not split chroma V from decoder reconstruction",
         );
-
-        // The encoded frame is non-empty (denoiser doesn't break
-        // packet production).
         assert!(!inter.data.is_empty(), "inter packet must be non-empty");
     }
 

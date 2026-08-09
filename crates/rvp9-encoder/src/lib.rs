@@ -87,6 +87,7 @@ const MAX_INTER_PRED_BORDER_BYTES: usize = MAX_INTER_PRED_BORDER_DIM * MAX_INTER
 struct InterEmitScratch {
     residual: [i16; 64 * 64],
     quant: InterEmitQuantScratch,
+    denoise_pred: [u8; 64 * 64],
     pred_border: [u8; MAX_INTER_PRED_BORDER_BYTES],
 }
 
@@ -99,6 +100,7 @@ impl InterEmitScratch {
                 qcoeff: [0; 32 * 32],
                 dqcoeff: [0; 32 * 32],
             },
+            denoise_pred: [0; 64 * 64],
             pred_border: [0; MAX_INTER_PRED_BORDER_BYTES],
         }
     }
@@ -5548,6 +5550,121 @@ const fn runtime_profiling_enabled(requested: bool) -> bool {
 
 const RUNTIME_PROFILING_COMPILED: bool = cfg!(feature = "runtime-profiling");
 
+#[allow(clippy::too_many_arguments)]
+fn denoise_inter_leaf(
+    denoiser: &mut crate::denoiser::Denoiser,
+    raw_source_y: &[u8],
+    coding_source_y: &mut [u8],
+    width: usize,
+    height: usize,
+    leaf_px_x: usize,
+    leaf_px_y: usize,
+    block_size: BlockSize,
+    pick_context: rvp9_core::mode_decision::inter::DenoiserPickContext,
+    is_skin: bool,
+    consec_zeromv: i32,
+    mc_block: &mut [u8; 64 * 64],
+    pred_border: &mut [u8; MAX_INTER_PRED_BORDER_BYTES],
+) {
+    use crate::denoiser::{DenoiserDecision, DenoiserLevel};
+
+    let Some(zeromv) = pick_context.zeromv else {
+        return;
+    };
+    let zeromv_last = pick_context.zeromv_last;
+    let increase_denoising = !is_skin && denoiser.denoising_level == DenoiserLevel::High;
+    let nonzero = pick_context.nonzero;
+    let nonzero_motion_magnitude = nonzero.map_or(0, |candidate| {
+        let row = u64::from(candidate.mv.row.unsigned_abs());
+        let col = u64::from(candidate.mv.col.unsigned_abs());
+        (row * row + col * col).min(i32::MAX as u64) as i32
+    });
+    let use_nonzero = nonzero.is_some_and(|candidate| {
+        candidate.ref_frame == RefFrame::LastFrame
+            && i64::from(zeromv.sse) - i64::from(candidate.sse)
+                > i64::from(crate::denoiser::sse_diff_thresh(
+                    block_size,
+                    increase_denoising,
+                    nonzero_motion_magnitude,
+                ))
+    });
+    let selected = if use_nonzero {
+        nonzero.expect("nonzero candidate selected above")
+    } else {
+        let bias_to_last = zeromv.ref_frame != RefFrame::LastFrame
+            && zeromv_last.is_some_and(|last| {
+                u64::from(last.sse) < (5 * u64::from(zeromv.sse)) >> 2
+                    || denoiser.denoising_level >= DenoiserLevel::High
+            });
+        if bias_to_last {
+            zeromv_last.expect("LAST zero-MV candidate selected above")
+        } else {
+            zeromv
+        }
+    };
+    let motion_magnitude = if !use_nonzero && denoiser.denoising_level > DenoiserLevel::Medium {
+        0
+    } else {
+        nonzero_motion_magnitude
+    };
+    if is_skin && (motion_magnitude > 0 || consec_zeromv < 4) {
+        return;
+    }
+    if selected.sse > crate::denoiser::sse_thresh(block_size, increase_denoising)
+        || motion_magnitude
+            > (crate::denoiser::noise_motion_thresh(block_size, increase_denoising) << 3)
+    {
+        return;
+    }
+
+    let predictor_mv = if use_nonzero { selected.mv } else { Mv::ZERO };
+    let bw = block_size.width() as usize;
+    let bh = block_size.height() as usize;
+    let selected_ref_index = match selected.ref_frame {
+        RefFrame::GoldenFrame => 2,
+        _ => 1,
+    };
+    let running_avg = &denoiser.running_avg_y[selected_ref_index];
+    let source_offset = leaf_px_y * width + leaf_px_x;
+    build_inter_pred_block_unscaled(
+        &running_avg.y_buffer,
+        running_avg.stride as usize,
+        width,
+        height,
+        leaf_px_x,
+        leaf_px_y,
+        bw,
+        bh,
+        i32::from(predictor_mv.col) * 2,
+        i32::from(predictor_mv.row) * 2,
+        &mut mc_block[..bw * bh],
+        bw,
+        selected.interp_filter,
+        pred_border,
+    );
+    let decision = crate::denoiser::vp9_denoiser_filter(
+        &raw_source_y[source_offset..],
+        width,
+        &mc_block[..bw * bh],
+        bw,
+        &mut coding_source_y[source_offset..],
+        width,
+        increase_denoising,
+        block_size,
+        motion_magnitude,
+    );
+    let Ok(decision) = decision else {
+        return;
+    };
+    if matches!(decision, DenoiserDecision::CopyBlock) {
+        for row in 0..bh {
+            let source_row = (leaf_px_y + row) * width + leaf_px_x;
+            coding_source_y[source_row..source_row + bw]
+                .copy_from_slice(&raw_source_y[source_row..source_row + bw]);
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)] // AQ.1 added `seg_q_deltas`; the
 // remaining args are all load-bearing per-frame inputs that don't
 // reduce to a meaningful struct yet — revisit when AQ.3 lands.
@@ -5686,6 +5803,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     content_state_sb_grid: &[rvp9_core::mode_decision::inter::ContentStateSb],
     // Per-mi `skin_map[mi_rows * mi_cols]` from W2.5 (0 = non-skin).
     skin_map: &[u8],
+    // Per-mi consecutive zero-MV history used by libvpx's denoiser skin gate.
+    consec_zero_mv: &[u8],
     // Exact pinned-libvpx VBP copy eligibility and persistent show-frame
     // history. `None` isolates non-show ALTREF coding and disables the exact
     // adapter even if its diagnostic environment flag is set.
@@ -5707,6 +5826,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     log2_tile_cols: u8,
     active_tile_col: Option<usize>,
     worker_pool: Option<&mut rvp9_core::tile_threading::WorkerPool>,
+    mut denoiser: Option<&mut crate::denoiser::Denoiser>,
 ) -> InterSimulationResult {
     use rvp9_core::bitstream::frame::{InterpFilter as WireInterpFilter, MAX_INTER_REFS};
     use rvp9_core::bitstream::header::FrameKind as WireFrameKind;
@@ -5737,6 +5857,13 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // an explicit slot so a completed compact row can transfer ownership to
     // its bounded result before the coordinator merges it.
     let mut inter_emit_scratch = InterEmitScratch::new();
+    let mut coding_source_y = denoiser.as_deref_mut().map(|denoiser| {
+        let mut coding_source =
+            std::mem::take(&mut denoiser.running_avg_y[crate::denoiser::INTRA_FRAME_IDX].y_buffer);
+        coding_source.resize(input_yuv.0.len(), 0);
+        coding_source.copy_from_slice(input_yuv.0);
+        coding_source
+    });
 
     // W0.4: compute the per-frame `SpeedFeatures` once. The dispatcher
     // is pure — no side effects on `cpi` like libvpx's
@@ -6382,7 +6509,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
          row_emit_scratch: &mut InterEmitScratch,
          row_history: &mut Option<InterPartitionHistoryMut<'_>>,
          row_rd_thresh_table: &mut rvp9_core::mode_decision::rd_thresh::RdThreshTable,
-         row_diagnostics: &mut CompactInterRowDiagnostics| {
+         row_diagnostics: &mut CompactInterRowDiagnostics,
+         mut job_denoiser: Option<&mut crate::denoiser::Denoiser>,
+         mut job_coding_source_y: Option<&mut [u8]>| {
             let inter_emit_scratch = row_emit_scratch;
             let diagnostics = row_diagnostics;
             let diag_golden_picks = &mut diagnostics.diag_golden_picks;
@@ -8372,6 +8501,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                     newmv_search_last: None,
                                     newmv_search_golden: None,
                                     candidate_trace_id: 0,
+                                    denoiser: Default::default(),
                                 }
                             })
                         } else {
@@ -8683,7 +8813,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         rdo_unified.is_some(),
                         descent_context_matches,
                         descent_context.map(|(cached, _, _)| cached.best_mode),
-                    ) {
+                    ) && job_denoiser.is_none()
+                    {
                         descent_pick_cache
                             .as_ref()
                             .and_then(|cache| cache.get(leaf_mi_row, leaf_mi_col, leaf_bsize))
@@ -8809,6 +8940,50 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             InterMode::NearestMv => causal.nearest,
                             _ => causal.near,
                         };
+                    }
+
+                    if rdo_compound_second.is_none()
+                        && leaf_bsize.width() >= 16
+                        && leaf_bsize.height() >= 16
+                        && let (Some(denoiser), Some(coding_source_y)) = (
+                            job_denoiser.as_deref_mut(),
+                            job_coding_source_y.as_deref_mut(),
+                        )
+                    {
+                        let mi_cols = (width / 8) as usize;
+                        let mi_idx = leaf_mi_row * mi_cols + leaf_mi_col;
+                        let is_skin = skin_map.get(mi_idx).copied().unwrap_or(0) != 0;
+                        let consec_zeromv = if is_skin {
+                            let mi_w = usize::from(leaf_bsize.n_8x8_wide());
+                            let mi_h = usize::from(leaf_bsize.n_8x8_high());
+                            (0..mi_h)
+                                .flat_map(|row| {
+                                    (0..mi_w).filter_map(move |col| {
+                                        consec_zero_mv
+                                            .get((leaf_mi_row + row) * mi_cols + leaf_mi_col + col)
+                                    })
+                                })
+                                .copied()
+                                .min()
+                                .map_or(0, i32::from)
+                        } else {
+                            0
+                        };
+                        denoise_inter_leaf(
+                            denoiser,
+                            input_yuv.0,
+                            coding_source_y,
+                            width as usize,
+                            height as usize,
+                            leaf_px_x,
+                            leaf_px_y,
+                            leaf_bsize,
+                            pick.denoiser,
+                            is_skin,
+                            consec_zeromv,
+                            &mut inter_emit_scratch.denoise_pred,
+                            &mut inter_emit_scratch.pred_border,
+                        );
                     }
 
                     let f02_last_candidates = if f02_oracle_enabled {
@@ -9448,13 +9623,22 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                 )
                             };
                             let (input_plane, ref_plane_data) = match (plane, picked_ref) {
-                                (0, RefFrame::AltrefFrame) => (input_yuv.0, altref_yuv().0),
+                                (0, RefFrame::AltrefFrame) => (
+                                    job_coding_source_y.as_deref().unwrap_or(input_yuv.0),
+                                    altref_yuv().0,
+                                ),
                                 (1, RefFrame::AltrefFrame) => (input_yuv.1, altref_yuv().1),
                                 (_, RefFrame::AltrefFrame) => (input_yuv.2, altref_yuv().2),
-                                (0, RefFrame::GoldenFrame) => (input_yuv.0, golden_recon_yuv.0),
+                                (0, RefFrame::GoldenFrame) => (
+                                    job_coding_source_y.as_deref().unwrap_or(input_yuv.0),
+                                    golden_recon_yuv.0,
+                                ),
                                 (1, RefFrame::GoldenFrame) => (input_yuv.1, golden_recon_yuv.1),
                                 (_, RefFrame::GoldenFrame) => (input_yuv.2, golden_recon_yuv.2),
-                                (0, _) => (input_yuv.0, last_recon_yuv.0),
+                                (0, _) => (
+                                    job_coding_source_y.as_deref().unwrap_or(input_yuv.0),
+                                    last_recon_yuv.0,
+                                ),
                                 (1, _) => (input_yuv.1, last_recon_yuv.1),
                                 (_, _) => (input_yuv.2, last_recon_yuv.2),
                             };
@@ -10152,8 +10336,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 );
             }
         };
-    let compact_recon_rows =
-        env.compact_recon_rows_enabled() && recon_layout == InterReconLayout::full(w, h);
+    let compact_recon_rows = denoiser.is_none()
+        && env.compact_recon_rows_enabled()
+        && recon_layout == InterReconLayout::full(w, h);
     let frame_s2_gate = rvp9_core::mode_decision::inter::frame_s2_gate();
     if compact_recon_rows {
         if active_tile_col.is_none()
@@ -10341,6 +10526,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                 &mut row_history,
                                 &mut work.rd_thresh_table,
                                 &mut row_diagnostics,
+                                None,
+                                None,
                             );
                             let mi_grid = compact_grids.into_simulation_grid();
                             let vbp_history = match row_history {
@@ -10532,6 +10719,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         &mut row_history,
                         &mut row_rd_thresh_table,
                         &mut row_diagnostics,
+                        None,
+                        None,
                     );
                     compact_grids.into_simulation_grid()
                 };
@@ -10612,6 +10801,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     &mut full_history,
                     &mut row_rd_thresh_table,
                     &mut frame_diagnostics,
+                    denoiser.as_deref_mut(),
+                    coding_source_y.as_deref_mut(),
                 );
                 rd_thresh_tables[rd_table_index] = row_rd_thresh_table;
             }
@@ -10638,6 +10829,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     &mut full_history,
                     &mut row_rd_thresh_table,
                     &mut frame_diagnostics,
+                    denoiser.as_deref_mut(),
+                    coding_source_y.as_deref_mut(),
                 );
                 rd_thresh_tables[rd_table_index] = row_rd_thresh_table;
             }
@@ -10937,6 +11130,27 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 },
             );
         }
+    }
+
+    if let Some(denoiser) = denoiser {
+        denoiser.running_avg_y[crate::denoiser::INTRA_FRAME_IDX].y_buffer = coding_source_y
+            .take()
+            .expect("active denoiser must retain its coded-source buffer");
+        let (scratch, refs) = denoiser.running_avg_y.split_at_mut(1);
+        if is_golden_refresh && refs.len() > 1 {
+            refs[0]
+                .y_buffer
+                .copy_from_slice(&scratch[crate::denoiser::INTRA_FRAME_IDX].y_buffer);
+            refs[1]
+                .y_buffer
+                .copy_from_slice(&scratch[crate::denoiser::INTRA_FRAME_IDX].y_buffer);
+        } else {
+            std::mem::swap(
+                &mut refs[0].y_buffer,
+                &mut scratch[crate::denoiser::INTRA_FRAME_IDX].y_buffer,
+            );
+        }
+        denoiser.current_denoiser_frame = denoiser.current_denoiser_frame.saturating_add(1);
     }
 
     InterSimulationResult {
@@ -12446,6 +12660,54 @@ fn intra_inverse_transform_add(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn denoiser_leaf_uses_selected_golden_running_average() {
+        use rvp9_core::mode_decision::inter::{DenoiserCandidateContext, DenoiserPickContext};
+
+        let mut denoiser = crate::denoiser::Denoiser::alloc(1, 64, 64).unwrap();
+        denoiser.running_avg_y[1].y_buffer.fill(20);
+        denoiser.running_avg_y[2].y_buffer.fill(100);
+        let raw = vec![102u8; 64 * 64];
+        let mut coding = raw.clone();
+        let golden_zero = DenoiserCandidateContext {
+            sse: 1_024,
+            mv: Mv::ZERO,
+            interp_filter: InterpFilter::EightTap,
+            ref_frame: RefFrame::GoldenFrame,
+        };
+        let last_zero = DenoiserCandidateContext {
+            sse: 64_000,
+            mv: Mv::ZERO,
+            interp_filter: InterpFilter::EightTap,
+            ref_frame: RefFrame::LastFrame,
+        };
+        let mut mc_block = [0u8; 64 * 64];
+        let mut pred_border = [0u8; MAX_INTER_PRED_BORDER_BYTES];
+
+        denoise_inter_leaf(
+            &mut denoiser,
+            &raw,
+            &mut coding,
+            64,
+            64,
+            0,
+            0,
+            BlockSize::Block16x16,
+            DenoiserPickContext {
+                zeromv: Some(golden_zero),
+                zeromv_last: Some(last_zero),
+                nonzero: None,
+            },
+            false,
+            0,
+            &mut mc_block,
+            &mut pred_border,
+        );
+
+        assert!(coding[..16 * 16].iter().any(|&sample| sample != 102));
+        assert!(coding[..16 * 16].iter().all(|&sample| sample >= 100));
+    }
 
     #[test]
     fn inter_row_jobs_partition_unequal_tiles_into_disjoint_sb_ranges() {
