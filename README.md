@@ -87,6 +87,26 @@ cargo run --release --bin realtime -- `
     --cpu-used 7 --budget-ms 33.333
 ```
 
+### Production encoder build
+
+The parity-qualified encoder uses host-trained LLVM profile-guided
+optimization in addition to the workspace's native-CPU release settings.
+Build it on the host that will run it; profiles are not portable across source
+revisions, Rust/LLVM versions, or machines.
+
+```bash
+rustup component add llvm-tools-preview
+./scripts/build-encoder-pgo.sh
+target/encoder-pgo/optimized/release/rvp9enc --version
+```
+
+The fixed 22-row training matrix covers cpu-used 6–8, 720p and 1080p, VBR,
+CBR with cyclic-refresh AQ, denoising, temporal SVC, and bitrate extremes.
+It requires the canonical corpus from `scripts/fetch-corpus.sh` plus `ffmpeg`.
+The build records its commit, toolchain, host, and exact matrix under
+`target/encoder-pgo/runs/<run-id>/manifest.txt`. Plain `cargo build --release`
+remains useful for development, but it is not the production speed artifact.
+
 ## Licence
 
 BSD 3-Clause (see `ATTRIBUTION.md`). This project is a derivative of libvpx,
