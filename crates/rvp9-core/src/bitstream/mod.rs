@@ -59,8 +59,8 @@ pub use inter_coef_source::{AllZeroCoefSource, InterCoefSource};
 pub use intra_coef_source::{AllZeroIntraCoefSource, IntraCoefSource};
 pub use modes_writer::{
     ModesWriterError, SegmentationWriteParams, TileBounds as ModesTileBounds,
-    record_inter_leaf_coefficients, tile_bounds, tile_mi_offset, write_tile_inter,
-    write_tile_inter_with_retained, write_tile_intra_keyframe,
+    count_tile_inter_noncoef, record_inter_leaf_coefficients, tile_bounds, tile_mi_offset,
+    write_tile_inter, write_tile_inter_with_retained, write_tile_intra_keyframe,
     write_tile_intra_keyframe_with_counts, write_tile_intra_keyframe_with_counts_and_retained,
     write_tile_intra_keyframe_with_retained,
 };

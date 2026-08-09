@@ -61,10 +61,11 @@ use rvp9_core::bitstream::sub_parsers::{
 use rvp9_core::bitstream::{
     BitDepth as WireBitDepth, BitstreamError, ChromaFormat, ColorRange, ColorSpace,
     CompressedHeaderOptions, CompressedHeaderResult, FrameKind as WireFrameKind, InterCoefSource,
-    InterpFilter, Profile, RawBitWriter, UncompressedHeader, tile_bounds, write_compressed_header,
-    write_tile_buffers, write_tile_inter_with_retained, write_tile_intra_keyframe,
-    write_tile_intra_keyframe_with_counts, write_tile_intra_keyframe_with_counts_and_retained,
-    write_tile_intra_keyframe_with_retained, write_uncompressed_header,
+    InterpFilter, Profile, RawBitWriter, UncompressedHeader, count_tile_inter_noncoef, tile_bounds,
+    write_compressed_header, write_tile_buffers, write_tile_inter_with_retained,
+    write_tile_intra_keyframe, write_tile_intra_keyframe_with_counts,
+    write_tile_intra_keyframe_with_counts_and_retained, write_tile_intra_keyframe_with_retained,
+    write_uncompressed_header,
 };
 // W6.2(vpxenc parity, HBD scaffold) — pixel-pipeline bit-depth. **Not**
 // the same as the wire-format `WireBitDepth` (`Eight`/`Ten`/`Twelve`)
@@ -6330,18 +6331,16 @@ where
         })?;
     }
 
-    // Libvpx gathers this frame's complete syntax
-    // counts before writing the compressed header, then forward-updates all
-    // non-coefficient probabilities from those counts. Product rvp9 already
-    // records coefficient tokens during mode decision, but gathers mode/MV
-    // counts only during final tile packing (after the header). Replay the
-    // retained tokens in a count-only traversal for the tile-MT path; the
-    // serial path gathers both count families in its existing record pass.
+    // Libvpx gathers this frame's complete syntax counts before writing the
+    // compressed header, then forward-updates all non-coefficient
+    // probabilities from those counts. Product rvp9 already records
+    // coefficient tokens during mode decision. Count the remaining chosen
+    // partition/mode/MV syntax directly: boolean serialization and retained
+    // coefficient replay are irrelevant to these probability banks.
     if forward_mode_probs {
         let mut replay_counts = FrameCounts::default();
-        if let Some(recorded) = recorded_coef_tiles {
-            let replay_tile = |tile_col: usize| {
-                let tile = &recorded[tile_col];
+        if recorded_coef_tiles.is_some() {
+            let count_tile = |tile_col: usize| {
                 rvp9_core::entropy::bitacct::with_suppressed(
                     || -> Result<FrameCounts, EncodeError> {
                         let bounds = tile_bounds(
@@ -6352,27 +6351,16 @@ where
                             0,
                             tile_col as u32,
                         );
-                        let mut token_pass = CoefTokenPass::replay(&tile.retained);
-                        let mut count_sink = [];
-                        let mut bw = BoolWriter::start_count_only(&mut count_sink);
-                        let mut coef_ctx =
-                            TileCoefCtx::new(bounds.mi_col_end - bounds.mi_col_start);
                         let mut tile_counts = FrameCounts::default();
-                        write_tile_inter_with_retained(
-                            &mut bw,
-                            &count_fc,
+                        count_tile_inter_noncoef(
                             &params,
                             target.tx_mode,
                             mi_grid,
                             mi_rows,
                             mi_cols,
                             bounds,
-                            seg_write,
                             prev_mv_grid,
-                            &mut coef_ctx,
-                            coef_source,
-                            Some(&mut tile_counts),
-                            Some(&mut token_pass),
+                            &mut tile_counts,
                         )?;
                         Ok(tile_counts)
                     },
@@ -6390,9 +6378,9 @@ where
                             scope.submit(job);
                         }
                         for (tile_col, result_slot) in result_slots.iter_mut().enumerate() {
-                            let replay_tile = &replay_tile;
+                            let count_tile = &count_tile;
                             scope.submit(move || {
-                                *result_slot = Some(replay_tile(tile_col));
+                                *result_slot = Some(count_tile(tile_col));
                             });
                         }
                     });
@@ -6404,7 +6392,7 @@ where
                 }
             } else {
                 for tile_col in 0..tile_cols {
-                    replay_counts.add_non_coef(&replay_tile(tile_col)?);
+                    replay_counts.add_non_coef(&count_tile(tile_col)?);
                 }
             }
         }
