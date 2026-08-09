@@ -4774,3 +4774,39 @@ small directional win, not quiet-host acceptance timing.
 
 **Future plan:** retain the uniform calibration while closing the remaining
 in-tree gap, then generalize and repeat the final quiet-host matrix.
+
+### 2026-08-09 — Sample the custom high-frequency frame classifier
+
+**Where:** `rvp9_encoder::pre_analysis::frame_hf_laplacian_sampled_sum_rows`
+and the S2 frame gate in `rvp9_encoder::frame_loop`.
+
+**What libvpx does:** pinned vpxenc has no equivalent full-frame Laplacian
+classifier. Rvp9 added this source signal to choose its S2 skip policy for
+natural versus synthetic content.
+
+**What rvp9 does:** the production classifier estimates the frame mean from
+one globally fixed row out of every four. If that estimate lands within two
+Laplacian units of the configured decision threshold, rvp9 recomputes the
+original exact full-frame mean before deciding. The exact full-frame helper
+remains the test oracle and diagnostic fallback.
+
+**Why:** the measured natural and synthetic ranges are separated by more than
+2x, while a fresh CPU7 profile assigned about 1.2% of all weighted samples to
+the exact classifier scan. The fixed global phase makes the result independent
+of worker-job boundaries; the exact guard preserves threshold-adjacent
+behavior instead of relying on the approximation where it could matter.
+
+**Byte-parity impact:** the exercised 60-frame in-tree, ducks, and old-town
+streams are byte-identical before and after at both 1280x720 and 1920x1080.
+The 1080p hashes remain `0673d4c9...b1ceb5d`, `90528e63...fe32`, and
+`cd18f47f...d6b62`; the 720p hashes are `a250773e...916ffa`,
+`710505e0...ed407`, and `a5bba3a5...7b2466`.
+
+**Speed impact:** median retired-instruction ratios were
+`0.99044x/0.99258x/0.99011x` for in-tree/ducks/old-town. A warmed wall-time
+run overlapped an unrelated host-wide LTO/PGO build and is not acceptance
+evidence; quiet-host timing remains required.
+
+**Future plan:** retain the byte-exact work reduction, refresh quiet-host
+direct timing, and keep the exact fallback if broader corpus clips approach
+the threshold guard band.

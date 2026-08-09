@@ -426,7 +426,7 @@ impl PreAnalysisState {
                         } else {
                             (mi_row_start + mi_row_count) * 8
                         };
-                        *hf_laplacian_sum = frame_hf_laplacian_sum_rows(
+                        *hf_laplacian_sum = frame_hf_laplacian_sampled_sum_rows(
                             src_y_tight,
                             w,
                             h,
@@ -1151,12 +1151,51 @@ pub(crate) fn frame_hf_laplacian_sum_rows(
     {
         // SAFETY: NEON is mandatory in AArch64. The helper validates the
         // plane length and bounds every vector load to one complete row.
-        unsafe { frame_hf_laplacian_sum_rows_neon(y, width, row_start, row_end) }
+        unsafe { frame_hf_laplacian_sum_rows_neon(y, width, row_start, row_end, 1) }
     }
     #[cfg(not(target_arch = "aarch64"))]
     {
-        frame_hf_laplacian_sum_rows_scalar(y, width, row_start, row_end)
+        frame_hf_laplacian_sum_rows_scalar(y, width, row_start, row_end, 1)
     }
+}
+
+/// Estimate the full-frame Laplacian sum from every fourth interior row.
+///
+/// The production high-frequency classifier consumes only a thresholded
+/// frame mean. Sampling one globally fixed row phase removes three quarters
+/// of that classifier's pixel work while keeping job-boundary results
+/// independent of how the frame worker pool partitions the row spans.
+pub(crate) fn frame_hf_laplacian_sampled_sum_rows(
+    y: &[u8],
+    width: usize,
+    height: usize,
+    row_start: usize,
+    row_end: usize,
+) -> u64 {
+    const ROW_STEP: usize = 4;
+    if width < 3 || height < 3 || y.len() < width * height {
+        return 0;
+    }
+    let mut row_start = row_start.max(1);
+    let row_end = row_end.min(height - 1);
+    let phase = (row_start - 1) % ROW_STEP;
+    if phase != 0 {
+        row_start += ROW_STEP - phase;
+    }
+    if row_start >= row_end {
+        return 0;
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    let sampled = {
+        // SAFETY: NEON is mandatory in AArch64. The helper validates the
+        // plane length and bounds every vector load to one complete row.
+        unsafe { frame_hf_laplacian_sum_rows_neon(y, width, row_start, row_end, ROW_STEP) }
+    };
+    #[cfg(not(target_arch = "aarch64"))]
+    let sampled = frame_hf_laplacian_sum_rows_scalar(y, width, row_start, row_end, ROW_STEP);
+
+    sampled.saturating_mul(ROW_STEP as u64)
 }
 
 #[cfg(any(test, not(target_arch = "aarch64")))]
@@ -1165,9 +1204,10 @@ fn frame_hf_laplacian_sum_rows_scalar(
     width: usize,
     row_start: usize,
     row_end: usize,
+    row_step: usize,
 ) -> u64 {
     let mut laplacian_sum = 0u64;
-    for row_index in row_start..row_end {
+    for row_index in (row_start..row_end).step_by(row_step) {
         let row = row_index * width;
         let up = row - width;
         let down = row + width;
@@ -1190,6 +1230,7 @@ unsafe fn frame_hf_laplacian_sum_rows_neon(
     width: usize,
     row_start: usize,
     row_end: usize,
+    row_step: usize,
 ) -> u64 {
     use std::arch::aarch64::*;
 
@@ -1219,7 +1260,7 @@ unsafe fn frame_hf_laplacian_sum_rows_neon(
     }
 
     let mut laplacian_sum = 0u64;
-    for row_index in row_start..row_end {
+    for row_index in (row_start..row_end).step_by(row_step) {
         let row = row_index * width;
         let up = row - width;
         let down = row + width;
@@ -1269,7 +1310,7 @@ pub(crate) fn frame_hf_laplacian_sum_scalar(y: &[u8], width: usize, height: usiz
     if width < 3 || height < 3 || y.len() < width * height {
         return 0;
     }
-    frame_hf_laplacian_sum_rows_scalar(y, width, 1, height - 1)
+    frame_hf_laplacian_sum_rows_scalar(y, width, 1, height - 1, 1)
 }
 
 #[cfg(all(test, target_arch = "aarch64"))]
@@ -1279,7 +1320,7 @@ pub(crate) unsafe fn frame_hf_laplacian_sum_neon(y: &[u8], width: usize, height:
     }
     // SAFETY: The caller accepts the target-feature contract, and the bounds
     // above prove all complete rows used by the helper exist.
-    unsafe { frame_hf_laplacian_sum_rows_neon(y, width, 1, height - 1) }
+    unsafe { frame_hf_laplacian_sum_rows_neon(y, width, 1, height - 1, 1) }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1924,8 +1965,37 @@ mod tests {
         assert_eq!(parallel.skin_map, serial.skin_map);
         assert_eq!(
             parallel_hf_sum,
-            frame_hf_laplacian_sum_rows(&source_y, W, H, 1, H - 1),
+            frame_hf_laplacian_sampled_sum_rows(&source_y, W, H, 1, H - 1),
         );
+    }
+
+    /// Unit 915 — the sampled production classifier must retain the exact
+    /// oracle's decision on representative low- and high-frequency planes.
+    #[test]
+    fn sampled_hf_laplacian_preserves_representative_classifier_decisions() {
+        const W: usize = 128;
+        const H: usize = 72;
+        const THRESHOLD: f64 = 7.0;
+        let flat = vec![96u8; W * H];
+        let textured = (0..W * H)
+            .map(|index| {
+                let row = index / W;
+                let column = index % W;
+                ((column * 29 + row * 47 + column * row * 3) & 255) as u8
+            })
+            .collect::<Vec<_>>();
+
+        for plane in [&flat, &textured] {
+            let exact = frame_hf_laplacian_sum_rows(plane, W, H, 1, H - 1) as f64
+                / ((W - 2) * (H - 2)) as f64;
+            let sampled = frame_hf_laplacian_sampled_sum_rows(plane, W, H, 1, H - 1) as f64
+                / ((W - 2) * (H - 2)) as f64;
+            assert_eq!(
+                sampled >= THRESHOLD,
+                exact >= THRESHOLD,
+                "classifier changed: exact={exact}, sampled={sampled}",
+            );
+        }
     }
 
     /// W2.2 PROOF — SB-grid sizing matches the encoder's

@@ -905,20 +905,44 @@ fn frame_content_signals(y: &[u8], last: Option<&[u8]>, w: usize, h: usize) -> F
     }
 }
 
-/// Lever-3b / 3D — lean per-frame spatial high-frequency energy: the
-/// mean absolute discrete Laplacian `|4p - up - down - left - right|`
-/// over interior pixels of a tight-stride `w * h` luma plane. This is
-/// the production content discriminator (only the HF term of
-/// [`frame_content_signals`], skipping the variance / temporal / gradient
-/// work). Cheap: one pass, integer ops per pixel.
+/// Lever-3b / 3D — sampled per-frame spatial high-frequency energy: the
+/// estimated mean absolute discrete Laplacian
+/// `|4p - up - down - left - right|` over a tight-stride luma plane. This is
+/// the cheap production discriminator; threshold-adjacent estimates are
+/// replaced by [`frame_hf_energy_exact`] before the caller decides.
 fn frame_hf_energy(y: &[u8], w: usize, h: usize) -> f64 {
     if w < 3 || h < 3 || y.len() < w * h {
         return 0.0;
     }
-    let lap_sum = crate::pre_analysis::frame_hf_laplacian_sum_rows(y, w, h, 1, h - 1);
+    let lap_sum = crate::pre_analysis::frame_hf_laplacian_sampled_sum_rows(y, w, h, 1, h - 1);
 
     let interior = ((w - 2) * (h - 2)) as u64;
     lap_sum as f64 / interior as f64
+}
+
+/// Exact high-frequency energy used only when the sampled classifier lands
+/// close enough to the decision boundary that approximation could matter.
+fn frame_hf_energy_exact(y: &[u8], w: usize, h: usize) -> f64 {
+    if w < 3 || h < 3 || y.len() < w * h {
+        return 0.0;
+    }
+    let lap_sum = crate::pre_analysis::frame_hf_laplacian_sum_rows(y, w, h, 1, h - 1);
+    let interior = ((w - 2) * (h - 2)) as u64;
+    lap_sum as f64 / interior as f64
+}
+
+fn guarded_frame_hf_energy(
+    y: &[u8],
+    w: usize,
+    h: usize,
+    sampled_energy: f64,
+    threshold: f64,
+) -> f64 {
+    if (sampled_energy - threshold).abs() <= 2.0 {
+        frame_hf_energy_exact(y, w, h)
+    } else {
+        sampled_energy
+    }
 }
 
 /// Lever-3b / 3D — is the content-adaptive S2 frame gate enabled?
@@ -2386,7 +2410,14 @@ impl StreamEncoder {
                     laplacian_sum as f64 / interior as f64
                 },
             );
-            Some(hf_energy >= three_d_thresh())
+            let threshold = three_d_thresh();
+            // The measured natural/synthetic ranges leave a wide gap around
+            // the default threshold. Preserve the exact full-frame oracle for
+            // ambiguous sampled values; representative frames stay on the
+            // cheap path while threshold-adjacent content cannot be decided
+            // by the approximation alone.
+            let hf_energy = guarded_frame_hf_energy(y_tight, w, h, hf_energy, threshold);
+            Some(hf_energy >= threshold)
         } else {
             None
         };
@@ -6771,10 +6802,27 @@ mod tests {
             let neon = unsafe { crate::pre_analysis::frame_hf_laplacian_sum_neon(&y, w, h) };
             assert_eq!(neon, scalar, "{w}x{h}");
             assert_eq!(
-                frame_hf_energy(&y, w, h),
+                frame_hf_energy_exact(&y, w, h),
                 scalar as f64 / ((w - 2) * (h - 2)) as f64
             );
+            assert_eq!(
+                frame_hf_energy(&y, w, h),
+                crate::pre_analysis::frame_hf_laplacian_sampled_sum_rows(&y, w, h, 1, h - 1) as f64
+                    / ((w - 2) * (h - 2)) as f64
+            );
         }
+    }
+
+    #[test]
+    fn sampled_hf_guard_rechecks_only_threshold_adjacent_estimates() {
+        const W: usize = 16;
+        const H: usize = 8;
+        let y = (0..W * H)
+            .map(|index| (index * 37) as u8)
+            .collect::<Vec<_>>();
+        let exact = frame_hf_energy_exact(&y, W, H);
+        assert_eq!(guarded_frame_hf_energy(&y, W, H, 7.0, 7.0), exact);
+        assert_eq!(guarded_frame_hf_energy(&y, W, H, 10.0, 7.0), 10.0);
     }
 
     #[test]
