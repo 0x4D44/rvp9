@@ -45,7 +45,7 @@ use crate::entropy::{
     BoolReader, BoolWriter, COMP_INTER_CONTEXTS, FrameContext, FrameCounts, INTER_MODE_CONTEXTS,
     INTRA_INTER_CONTEXTS, NmvCounts, REF_CONTEXTS, SWITCHABLE_FILTER_CONTEXTS, SWITCHABLE_FILTERS,
 };
-use crate::inter::mv::{read_mv, write_mv, write_tree};
+use crate::inter::mv::{count_mv, read_mv, write_mv, write_tree};
 use crate::inter::mv_ref::{
     BlockBounds, NeighbourLookup, Position, PrevFrameMvRef, append_sub8x8_mvs_for_idx,
     find_mv_refs, lower_mv_precision,
@@ -948,60 +948,112 @@ impl core::fmt::Display for InterModeWriteError {
 
 impl std::error::Error for InterModeWriteError {}
 
-/// Encode the per-inter-block mode info. Mirrors libvpx
-/// `vp9/encoder/vp9_bitstream.c:pack_inter_mode_mvs` for both the
-/// parent-block (block_size ≥ `Block8x8`) and sub-8 (`Block4x4` /
-/// `Block4x8` / `Block8x4`) paths.
+/// Accumulate the non-coefficient counts for one inter mode-info payload.
 ///
-/// This is the inverse of [`read_inter_block_mode_info`] — round-tripping
-/// `(fc, params, neighbours, block_size, bounds, prev_mv, mi)` through
-/// `write_inter_block_mode_info` and then `read_inter_block_mode_info`
-/// must recover the same `(mode, ref_frames, mvs, interp_filter)`.
+/// `inter_mode_ctx` and `best_ref_mvs` are explicit because realtime mode
+/// decision already derives them before committing a leaf. Passing those
+/// values lets it retain exact header counts without repeating the spatial
+/// MV-reference walk. Sub-8 mode and MV counts intentionally remain omitted,
+/// matching the existing writer-side count behavior.
+#[allow(clippy::too_many_arguments)]
+pub fn count_inter_block_mode_info(
+    params: &InterModeReadParams,
+    block_size: BlockSize,
+    above: Option<&ModeInfo>,
+    left: Option<&ModeInfo>,
+    inter_mode_ctx: usize,
+    best_ref_mvs: [Mv; 2],
+    mi: &ModeInfo,
+    counts: &mut FrameCounts,
+) -> Result<(), InterModeWriteError> {
+    let (mode, ref_frames, mvs, interp_filter) = match mi.mode {
+        BlockMode::Inter {
+            mode,
+            ref_frames,
+            mvs,
+            interp_filter,
+        } => (mode, ref_frames, mvs, interp_filter),
+        BlockMode::Intra { .. } => return Err(InterModeWriteError::NotInter),
+    };
+    let is_sub8 = (block_size as u8) < (BlockSize::Block8x8 as u8);
+    let is_compound = ref_frames[1].is_inter();
+
+    match params.reference_mode {
+        ReferenceMode::Select => {
+            let ctx = get_reference_mode_context(above, left, params.comp_fixed_ref);
+            debug_assert!(ctx < COMP_INTER_CONTEXTS);
+            counts.comp_inter[ctx][usize::from(is_compound)] += 1;
+        }
+        ReferenceMode::Compound => debug_assert!(is_compound),
+        ReferenceMode::Single => debug_assert!(!is_compound),
+    }
+
+    if is_compound {
+        let idx = params.sign_bias[params.comp_fixed_ref as usize] as usize;
+        debug_assert_eq!(ref_frames[idx], params.comp_fixed_ref);
+        let var_slot = ref_frames[1 - idx];
+        let bit = u8::from(var_slot == params.comp_var_ref[1]);
+        debug_assert!(bit == 1 || var_slot == params.comp_var_ref[0]);
+        let ctx = get_pred_context_comp_ref_p(
+            above,
+            left,
+            &params.sign_bias,
+            params.comp_fixed_ref,
+            params.comp_var_ref,
+        );
+        debug_assert!(ctx < REF_CONTEXTS);
+        counts.comp_ref[ctx][bit as usize] += 1;
+    } else {
+        let ctx0 = get_pred_context_single_ref_p1(above, left);
+        debug_assert!(ctx0 < REF_CONTEXTS);
+        match ref_frames[0] {
+            RefFrame::LastFrame => counts.single_ref[ctx0][0][0] += 1,
+            RefFrame::GoldenFrame | RefFrame::AltrefFrame => {
+                counts.single_ref[ctx0][0][1] += 1;
+                let ctx1 = get_pred_context_single_ref_p2(above, left);
+                debug_assert!(ctx1 < REF_CONTEXTS);
+                let bit = usize::from(ref_frames[0] == RefFrame::AltrefFrame);
+                counts.single_ref[ctx1][1][bit] += 1;
+            }
+            _ => debug_assert!(
+                false,
+                "count_inter_block_mode_info: invalid single reference {:?}",
+                ref_frames[0]
+            ),
+        }
+    }
+
+    debug_assert!(inter_mode_ctx < INTER_MODE_CONTEXTS);
+    if !is_sub8 {
+        counts.inter_mode[inter_mode_ctx][mode.idx()] += 1;
+    }
+
+    if params.interp_filter == InterpFilter::Switchable {
+        let ctx = get_pred_context_switchable_interp(above, left);
+        counts.switchable_interp[ctx][interp_filter as usize] += 1;
+    }
+
+    if !is_sub8 && matches!(mode, InterMode::NewMv) {
+        let num_refs = 1 + usize::from(is_compound);
+        for i in 0..num_refs {
+            count_mv(
+                mvs[i],
+                best_ref_mvs[i],
+                params.allow_high_precision_mv,
+                &mut counts.mv,
+            );
+        }
+    }
+
+    Ok(())
+}
+
+/// Encode one inter block's reference, mode, filter, and motion-vector syntax.
 ///
-/// Stages, in the exact wire order the decoder consumes them:
-/// 1. Reference frames — single or compound, via the
-///    [`read_ref_frames`] inverse. The `is_compound` decision is
-///    derived from `mi.ref_frames[1]` (compound iff
-///    `ref_frames[1].is_inter()`); the `Select` reference-mode emits
-///    one boolean against `comp_inter_prob[ctx]`, otherwise no
-///    `comp_inter` bit is emitted.
-/// 2. Parent inter mode — [`INTER_MODE_TREE`] via
-///    `fc.inter_mode_probs[ctx]`, where
-///    `ctx = get_mode_context(block_size, neighbours)`. **Skipped
-///    for sub-8 blocks** (each 4×4 sub-block emits its own mode in
-///    step 4).
-/// 3. Switchable interpolation filter — only emitted when
-///    `params.interp_filter == InterpFilter::Switchable`. The
-///    [`SWITCHABLE_INTERP_TREE`] is walked against
-///    `fc.switchable_interp_prob[ctx]`. Emitted once for the parent
-///    block in both the ≥8×8 and sub-8 paths.
-/// 4. MV / sub-block payload — for ≥8×8 blocks, the [`InterMode::NewMv`]
-///    branch emits the per-ref MV residual via [`write_mv`]
-///    (NEAREST / NEAR / ZERO are MV-bit-free — the decoder
-///    reconstructs them from the ref-MV list). For sub-8 blocks,
-///    each 4×4 sub-block emits its own inter-mode (via
-///    [`INTER_MODE_TREE`]) followed by any NEWMV residuals; see
-///    [`write_sub8_bmi`].
-///
-/// ## Sub-8 caller contract
-///
-/// For `Block4x4` / `Block4x8` / `Block8x4`, the caller must
-/// populate `mi.bmi[j].as_mode = sub_mode.idx() as u8` and
-/// `mi.bmi[j].as_mv` for each of the 4 sub-blocks. The parent's
-/// `mi.mode` must match `mi.bmi[3].as_mode` (libvpx's
-/// `mi->mode = b_mode` at end-of-loop convention). The 2×2
-/// replication rules are also asserted on the input:
-///
-/// - `Block4x8` (num_4x4_h = 2): `bmi[2] == bmi[0]` and
-///   `bmi[3] == bmi[1]`.
-/// - `Block8x4` (num_4x4_w = 2): `bmi[1] == bmi[0]` and
-///   `bmi[3] == bmi[2]`.
-/// - `Block4x4`: all 4 entries are independent.
-///
-/// Caller violations of the per-sub-block invariants surface as
-/// [`InterModeWriteError::Sub8InvalidSubMode`] /
-/// [`InterModeWriteError::Sub8ParentModeMismatch`]; the replication
-/// rules and per-mode MV invariants are enforced via `debug_assert!`.
+/// This is the inverse of [`read_inter_block_mode_info`]. Parent blocks emit
+/// one inter mode and any `NEWMV` residuals; sub-8 blocks delegate their
+/// per-4x4 payload to [`write_sub8_bmi`]. When `counts` is present, the shared
+/// [`count_inter_block_mode_info`] helper retains the exact adaptation counts.
 #[allow(clippy::too_many_arguments)]
 pub fn write_inter_block_mode_info<N: NeighbourLookup>(
     bw: &mut BoolWriter<'_>,
@@ -1035,10 +1087,6 @@ pub fn write_inter_block_mode_info<N: NeighbourLookup>(
             let ctx = get_reference_mode_context(above, left, params.comp_fixed_ref);
             debug_assert!(ctx < COMP_INTER_CONTEXTS);
             bw.write(u8::from(is_compound), fc.comp_inter_prob[ctx]);
-            // P0b — accumulate comp_inter count.
-            if let Some(c) = counts.as_deref_mut() {
-                c.comp_inter[ctx][usize::from(is_compound)] += 1;
-            }
         }
         ReferenceMode::Compound => debug_assert!(is_compound),
         ReferenceMode::Single => debug_assert!(!is_compound),
@@ -1066,10 +1114,6 @@ pub fn write_inter_block_mode_info<N: NeighbourLookup>(
         );
         debug_assert!(ctx < REF_CONTEXTS);
         bw.write(bit, fc.comp_ref_prob[ctx]);
-        // P0b — accumulate comp_ref count.
-        if let Some(c) = counts.as_deref_mut() {
-            c.comp_ref[ctx][bit as usize] += 1;
-        }
     } else {
         // Decoder: bit0=0 → LAST; bit0=1, bit1=0 → GOLDEN;
         //          bit0=1, bit1=1 → ALTREF.
@@ -1078,32 +1122,18 @@ pub fn write_inter_block_mode_info<N: NeighbourLookup>(
         match ref_frames[0] {
             RefFrame::LastFrame => {
                 bw.write(0, fc.single_ref_prob[ctx0][0]);
-                // P0b — single_ref p1 = 0.
-                if let Some(c) = counts.as_deref_mut() {
-                    c.single_ref[ctx0][0][0] += 1;
-                }
             }
             RefFrame::GoldenFrame => {
                 bw.write(1, fc.single_ref_prob[ctx0][0]);
                 let ctx1 = get_pred_context_single_ref_p2(above, left);
                 debug_assert!(ctx1 < REF_CONTEXTS);
                 bw.write(0, fc.single_ref_prob[ctx1][1]);
-                // P0b — single_ref p1 = 1, p2 = 0.
-                if let Some(c) = counts.as_deref_mut() {
-                    c.single_ref[ctx0][0][1] += 1;
-                    c.single_ref[ctx1][1][0] += 1;
-                }
             }
             RefFrame::AltrefFrame => {
                 bw.write(1, fc.single_ref_prob[ctx0][0]);
                 let ctx1 = get_pred_context_single_ref_p2(above, left);
                 debug_assert!(ctx1 < REF_CONTEXTS);
                 bw.write(1, fc.single_ref_prob[ctx1][1]);
-                // P0b — single_ref p1 = 1, p2 = 1.
-                if let Some(c) = counts.as_deref_mut() {
-                    c.single_ref[ctx0][0][1] += 1;
-                    c.single_ref[ctx1][1][1] += 1;
-                }
             }
             // Single-ref block must reference a real ref frame.
             _ => debug_assert!(
@@ -1127,10 +1157,6 @@ pub fn write_inter_block_mode_info<N: NeighbourLookup>(
             &fc.inter_mode_probs[inter_mode_ctx],
             mode.idx() as i8,
         );
-        // P0b — accumulate inter_mode count.
-        if let Some(c) = counts.as_deref_mut() {
-            c.inter_mode[inter_mode_ctx][mode.idx()] += 1;
-        }
     }
 
     // 3. Switchable interpolation filter — only when the frame header
@@ -1145,14 +1171,22 @@ pub fn write_inter_block_mode_info<N: NeighbourLookup>(
             &fc.switchable_interp_prob[ctx],
             interp_filter as i8,
         );
-        // P0b — accumulate switchable_interp count.
-        if let Some(c) = counts.as_deref_mut() {
-            c.switchable_interp[ctx][interp_filter as usize] += 1;
-        }
     }
 
     // 4. MV / sub-block payload.
     if is_sub8 {
+        if let Some(c) = counts.as_deref_mut() {
+            count_inter_block_mode_info(
+                params,
+                block_size,
+                above,
+                left,
+                inter_mode_ctx,
+                [Mv::ZERO; 2],
+                mi,
+                c,
+            )?;
+        }
         return write_sub8_bmi(
             bw,
             fc,
@@ -1171,6 +1205,7 @@ pub fn write_inter_block_mode_info<N: NeighbourLookup>(
     // Parent-block (≥8×8) MV residuals — only for NEWMV.
     // NEAREST/NEAR/ZERO emit no MV bits; the decoder reconstructs
     // them from the ref-MV list.
+    let mut best_ref_mvs = [Mv::ZERO; 2];
     if matches!(mode, InterMode::NewMv) {
         let num_refs = 1 + usize::from(is_compound);
         for i in 0..num_refs {
@@ -1188,6 +1223,7 @@ pub fn write_inter_block_mode_info<N: NeighbourLookup>(
             );
             let idx = list.count.saturating_sub(1).min(list.mvs.len() - 1);
             let best_ref_mv = lower_mv_precision(list.mvs[idx], params.allow_high_precision_mv);
+            best_ref_mvs[i] = best_ref_mv;
             set_category(BitCategory::MvDelta);
             write_mv(
                 bw,
@@ -1195,10 +1231,23 @@ pub fn write_inter_block_mode_info<N: NeighbourLookup>(
                 best_ref_mv,
                 params.allow_high_precision_mv,
                 &fc.nmvc,
-                counts.as_deref_mut().map(|c| &mut c.mv),
+                None,
             );
             set_category(BitCategory::ModeRef);
         }
+    }
+
+    if let Some(c) = counts {
+        count_inter_block_mode_info(
+            params,
+            block_size,
+            above,
+            left,
+            inter_mode_ctx,
+            best_ref_mvs,
+            mi,
+            c,
+        )?;
     }
 
     Ok(())
