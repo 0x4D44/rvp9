@@ -1691,7 +1691,13 @@ impl SimdDispatch {
         } else {
             scalar_iht8x8_add
         };
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(target_arch = "aarch64")]
+        let iht8x8_add: fn(&[i32; 64], &mut [u8], usize, TxType) = if caps.neon {
+            crate::dsp::aarch64::iht8x8_add_neon
+        } else {
+            scalar_iht8x8_add
+        };
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         let iht8x8_add: fn(&[i32; 64], &mut [u8], usize, TxType) = scalar_iht8x8_add;
 
         // ---- Wave F F5 — 16×16 hybrid ADST slot. AVX2-capable on
@@ -3429,6 +3435,25 @@ mod tests {
         let neon: fn(&[i32; 64], &mut [u8], usize) = crate::dsp::aarch64::idct8x8_add_neon;
         assert_eq!(neon_dispatch.idct8x8_add() as usize, neon as usize);
         assert_ne!(neon_dispatch.idct8x8_add() as usize, scalar as usize);
+    }
+
+    /// AArch64 selects the dense NEON 8×8 hybrid inverse-transform kernel
+    /// only when runtime capability detection reports NEON.
+    #[cfg(target_arch = "aarch64")]
+    #[test]
+    fn neon_caps_select_hybrid_iht8x8_kernel() {
+        let mut caps = detect();
+        caps.neon = false;
+        let scalar_dispatch = SimdDispatch::build(caps);
+        let scalar: fn(&[i32; 64], &mut [u8], usize, TxType) =
+            crate::transforms::inverse::iht8x8_64_add;
+        assert_eq!(scalar_dispatch.iht8x8_add() as usize, scalar as usize);
+
+        caps.neon = true;
+        let neon_dispatch = SimdDispatch::build(caps);
+        let neon: fn(&[i32; 64], &mut [u8], usize, TxType) = crate::dsp::aarch64::iht8x8_add_neon;
+        assert_eq!(neon_dispatch.iht8x8_add() as usize, neon as usize);
+        assert_ne!(neon_dispatch.iht8x8_add() as usize, scalar as usize);
     }
 
     /// Forcing `sse2 = false` falls back to the scalar reference for
