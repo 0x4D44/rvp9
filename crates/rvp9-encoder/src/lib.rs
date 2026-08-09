@@ -4069,6 +4069,48 @@ impl InterReconLayout {
         }
     }
 
+    pub(crate) fn tile_column(
+        width: usize,
+        height: usize,
+        mi_col_start: usize,
+        mi_cols: usize,
+    ) -> Self {
+        assert!(
+            width > 0 && width.is_multiple_of(64),
+            "tile inter recon frame width must be a positive multiple of 64"
+        );
+        assert!(
+            height > 0 && height.is_multiple_of(8),
+            "tile inter recon frame height must be a positive multiple of 8"
+        );
+        assert!(
+            mi_cols > 0 && mi_cols.is_multiple_of(8),
+            "tile inter recon width must contain whole superblocks"
+        );
+        assert!(
+            mi_col_start.is_multiple_of(8) && mi_col_start + mi_cols <= width / 8,
+            "tile inter recon columns are invalid"
+        );
+
+        let plane_layout = |subsampling: usize| {
+            let plane_width = width >> subsampling;
+            let plane_height = height >> subsampling;
+            let col_start = (mi_col_start * 8) >> subsampling;
+            let window_width = (mi_cols * 8) >> subsampling;
+            InterReconPlaneLayout::window(
+                plane_width,
+                plane_height,
+                0,
+                col_start,
+                window_width,
+                plane_height,
+            )
+        };
+        Self {
+            planes: [plane_layout(0), plane_layout(1), plane_layout(1)],
+        }
+    }
+
     #[inline]
     fn plane(self, plane: usize) -> InterReconPlaneLayout {
         self.planes[plane]
@@ -12759,6 +12801,22 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn tile_column_inter_recon_layout_is_full_height_and_tile_tight() {
+        const W: usize = 1920;
+        const H: usize = 1080;
+        let layout = InterReconLayout::tile_column(W, H, 64, 64);
+        assert_eq!(
+            layout.plane(0),
+            InterReconPlaneLayout::window(W, H, 0, 512, 512, H)
+        );
+        assert_eq!(
+            layout.plane(1),
+            InterReconPlaneLayout::window(W / 2, H / 2, 0, 256, 256, H / 2)
+        );
+        assert_eq!(layout.plane(2), layout.plane(1));
     }
 
     #[test]

@@ -1454,6 +1454,27 @@ impl<T: Clone> TightTileRowsMut<'_, T> {
             destination.clone_from_slice(&source[start..end]);
         }
     }
+
+    fn copy_from_tight_tile(&mut self, source: &[T], source_stride: usize) {
+        assert!(
+            source_stride > 0,
+            "tile copy source stride must be positive"
+        );
+        assert_eq!(
+            source.len(),
+            source_stride * self.rows.len(),
+            "tile copy source must be a tight tile plane"
+        );
+        for (row_index, destination) in self.rows.iter_mut().enumerate() {
+            assert_eq!(
+                destination.len(),
+                source_stride,
+                "tile source and destination widths must match"
+            );
+            let start = row_index * source_stride;
+            destination.clone_from_slice(&source[start..start + source_stride]);
+        }
+    }
 }
 
 fn split_tight_plane_tiles_mut<'a, T>(
@@ -2682,6 +2703,15 @@ impl StreamEncoder {
             let mut result_slots: Vec<Option<KeyframeTileJobResult>> =
                 (0..tile_count).map(|_| None).collect();
             let tile_scratch = &mut self.inter_tile_scratch;
+            for scratch in tile_scratch.iter_mut() {
+                scratch.recon_y.resize(w as usize * h as usize, 0);
+                scratch
+                    .recon_u
+                    .resize((w as usize / 2) * (h as usize / 2), 0);
+                scratch
+                    .recon_v
+                    .resize((w as usize / 2) * (h as usize / 2), 0);
+            }
             self.frame_worker_pool
                 .as_mut()
                 .expect("parallel keyframe tiles require the frame worker pool")
@@ -3460,6 +3490,7 @@ impl StreamEncoder {
                 $recon_y:expr,
                 $recon_u:expr,
                 $recon_v:expr,
+                $recon_layout:expr,
                 $partitions:expr,
                 $mv_grid:expr,
                 $rd_tables:expr,
@@ -3485,7 +3516,7 @@ impl StreamEncoder {
                     (gld_y, gld_u, gld_v),
                     altref_planes_for_picker,
                     ($recon_y, $recon_u, $recon_v),
-                    crate::InterReconLayout::full(w as usize, h as usize),
+                    $recon_layout,
                     $partitions,
                     prev_grid_slice,
                     $mv_grid,
@@ -3636,6 +3667,21 @@ impl StreamEncoder {
                         );
                         let sb_col_start = bounds.mi_col_start / 8;
                         let sb_col_end = bounds.mi_col_end / 8;
+                        let tile_mi_cols = bounds.mi_col_end - bounds.mi_col_start;
+                        let tile_width = tile_mi_cols * 8;
+                        let tile_recon_layout = crate::InterReconLayout::tile_column(
+                            w as usize,
+                            h as usize,
+                            bounds.mi_col_start,
+                            tile_mi_cols,
+                        );
+                        scratch.recon_y.resize(tile_width * h as usize, 0);
+                        scratch
+                            .recon_u
+                            .resize((tile_width / 2) * (h as usize / 2), 0);
+                        scratch
+                            .recon_v
+                            .resize((tile_width / 2) * (h as usize / 2), 0);
                         let seg_map = seg_map.as_slice();
                         scope.submit(move || {
                             rvp9_core::mode_decision::inter::set_frame_s2_gate(s2_frame_gate);
@@ -3662,6 +3708,7 @@ impl StreamEncoder {
                                 &mut scratch.recon_y,
                                 &mut scratch.recon_u,
                                 &mut scratch.recon_v,
+                                tile_recon_layout,
                                 &mut scratch.partitions,
                                 &mut scratch.mv_grid,
                                 tile_rd_tables,
@@ -3676,13 +3723,13 @@ impl StreamEncoder {
                                 .expect("one coefficient-token result per tile job");
                             output
                                 .recon_y
-                                .copy_from_full_frame(&scratch.recon_y, w as usize);
+                                .copy_from_tight_tile(&scratch.recon_y, tile_width);
                             output
                                 .recon_u
-                                .copy_from_full_frame(&scratch.recon_u, w as usize / 2);
+                                .copy_from_tight_tile(&scratch.recon_u, tile_width / 2);
                             output
                                 .recon_v
-                                .copy_from_full_frame(&scratch.recon_v, w as usize / 2);
+                                .copy_from_tight_tile(&scratch.recon_v, tile_width / 2);
                             output
                                 .mv_grid
                                 .copy_from_full_frame(&scratch.mv_grid, mi_cols_us);
@@ -3788,6 +3835,7 @@ impl StreamEncoder {
                 &mut new_recon_y,
                 &mut new_recon_u,
                 &mut new_recon_v,
+                crate::InterReconLayout::full(w as usize, h as usize),
                 &mut sb_partitions,
                 &mut cur_mv_grid,
                 &mut self.rd_thresh_tables,
