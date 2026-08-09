@@ -316,6 +316,22 @@ pub struct Cpu7InterVbpThresholds {
 /// never consults it because 8x8 is the minimum inter block.
 #[must_use]
 pub fn cpu7_inter_vbp_thresholds(input: Cpu7InterVbpThresholdInput) -> Cpu7InterVbpThresholds {
+    rt_inter_vbp_thresholds(7, input)
+}
+
+/// Compute pinned-libvpx's cpu-used 6–8 inter variance thresholds.
+///
+/// The three focused realtime presets share the same threshold ladder but
+/// use their actual speed as the `thresholds[2]` shift. At 720p and above,
+/// cpu-used 6 receives libvpx's extra high-resolution shift and therefore
+/// matches cpu-used 7; cpu-used 8 retains its one-bit larger 16x16 split
+/// threshold. Content-state scaling starts at cpu-used 7.
+#[must_use]
+pub fn rt_inter_vbp_thresholds(
+    speed: i32,
+    input: Cpu7InterVbpThresholdInput,
+) -> Cpu7InterVbpThresholds {
+    debug_assert!((6..=8).contains(&speed));
     let (_, ac) = plane_dequant_pair(i32::from(input.q_index), QuantizerDeltas::Y);
     let raw_base = i64::from(ac);
     let mut base = raw_base;
@@ -327,7 +343,9 @@ pub fn cpu7_inter_vbp_thresholds(input: Cpu7InterVbpThresholdInput) -> Cpu7Inter
             NoiseLevel::Low => base,
         };
     }
-    if input.content_state.scales_cpu7_partition_threshold() {
+    if (speed >= 8 && input.frame_width <= 640 && input.frame_height <= 480)
+        || (speed >= 7 && input.content_state.scales_cpu7_partition_threshold())
+    {
         base = (5 * base) >> 2;
     }
 
@@ -340,11 +358,19 @@ pub fn cpu7_inter_vbp_thresholds(input: Cpu7InterVbpThresholdInput) -> Cpu7Inter
         }
         (base >> 3, base >> 1, t2)
     } else if input.frame_width < 1280 && input.frame_height < 720 {
-        (base, (5 * base) >> 2, base << 7)
+        (base, (5 * base) >> 2, base << speed)
     } else if input.frame_width < 1920 && input.frame_height < 1080 {
-        (base, base << 1, base << 7)
+        let mut t2 = base << speed;
+        if speed < 7 {
+            t2 <<= 1;
+        }
+        (base, base << 1, t2)
     } else {
-        (base, (5 * base) >> 1, base << 7)
+        let mut t2 = base << speed;
+        if speed < 7 {
+            t2 <<= 1;
+        }
+        (base, (5 * base) >> 1, t2)
     };
     Cpu7InterVbpThresholds {
         thresholds: [t0, t1, t2, raw_base * 80],
@@ -2150,6 +2176,29 @@ mod tests {
                 minmax_threshold: 70,
             },
         );
+    }
+
+    #[test]
+    fn focused_rt_thresholds_use_the_actual_cpu_preset() {
+        let input = Cpu7InterVbpThresholdInput {
+            q_index: 120,
+            avg_inter_qindex: 120,
+            frame_width: 1280,
+            frame_height: 720,
+            noise_estimate: NoiseEstimate::default(),
+            content_state: ContentStateSb::Normal,
+        };
+
+        let cpu6 = rt_inter_vbp_thresholds(6, input);
+        let cpu7 = rt_inter_vbp_thresholds(7, input);
+        let cpu8 = rt_inter_vbp_thresholds(8, input);
+
+        assert_eq!(cpu7, cpu7_inter_vbp_thresholds(input));
+        assert_eq!(cpu6.thresholds, cpu7.thresholds);
+        assert_eq!(cpu8.thresholds[..2], cpu7.thresholds[..2]);
+        assert_eq!(cpu8.thresholds[2], cpu7.thresholds[2] << 1);
+        assert_eq!(cpu8.thresholds[3], cpu7.thresholds[3]);
+        assert_eq!(cpu8.minmax_threshold, cpu7.minmax_threshold);
     }
 
     #[test]

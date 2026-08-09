@@ -6726,7 +6726,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     use rvp9_core::mode_decision::partition::{
                         Cpu7InterVbpThresholdInput, FixedTreeCopyConditions, FixedTreeInterInput,
                         PartitionDecision, choose_fixed_tree_inter_selection,
-                        cpu7_inter_vbp_thresholds, visit_fixed_tree_leaves,
+                        rt_inter_vbp_thresholds, visit_fixed_tree_leaves,
                     };
                     use rvp9_core::mv_search::set_subpel_mv_search_range;
 
@@ -6739,14 +6739,17 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         .get(sb_idx)
                         .copied()
                         .unwrap_or(rvp9_core::mode_decision::inter::ContentStateSb::Normal);
-                    let thresholds = cpu7_inter_vbp_thresholds(Cpu7InterVbpThresholdInput {
-                        q_index: partition_qindex,
-                        avg_inter_qindex,
-                        frame_width: w,
-                        frame_height: h,
-                        noise_estimate: noise_estimate_frame,
-                        content_state,
-                    });
+                    let thresholds = rt_inter_vbp_thresholds(
+                        speed,
+                        Cpu7InterVbpThresholdInput {
+                            q_index: partition_qindex,
+                            avg_inter_qindex,
+                            frame_width: w,
+                            frame_height: h,
+                            noise_estimate: noise_estimate_frame,
+                            content_state,
+                        },
+                    );
                     let history = history_state
                         .as_mut()
                         .expect("exact VBP history checked above")

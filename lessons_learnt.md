@@ -5,6 +5,7 @@ Distilled, non-obvious gotchas future sessions need — dated one-liners.
 Durable project facts/conventions belong in `CLAUDE.md` / `AGENTS.md`, not here.
 Hard cap: 20 entries.
 
+- 2026-08-09: Exact VBP thresholds must take the live CPU preset; a CPU7 helper over-splits CPU8 (`partition.rs:rt_inter_vbp_thresholds`).
 - 2026-08-09: VP9 denoising must filter the coded source from picker-selected temporal refs, not a post-encode ME mirror (`lib.rs:denoise_inter_leaf`).
 - 2026-08-09: Libvpx denoiser baselines require `CONFIG_VP9_TEMPORAL_DENOISING=1` and a fresh RTCD build directory (`scripts/build-libvpx.sh`).
 - 2026-08-09: Translating libvpx's eligible `map==0` to an age map means seeding at the age threshold, not zero (`aq_cyclic_refresh.rs:CyclicRefresh::new`).
