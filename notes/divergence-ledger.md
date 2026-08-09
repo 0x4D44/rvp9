@@ -4663,35 +4663,38 @@ three-clip curve before broadening the policy.
 transform size as part of the block-mode decision.
 
 **What rvp9 does:** approximate A4 large-frame partitions retain the measured
-maximum-transform emission shortcut. Exact variance-tree frames perform the
-existing coefficient-domain RD comparison between TX8 and TX16 on leaves
-whose maximum transform is TX16. In the CPU7 VBR product policy, those exact
-frames are scheduled GOLDEN refreshes only. `RVP9_RT_EMIT_TX_RD=0` disables
-the comparison and `=1` retains the broader diagnostic override.
+maximum-transform emission shortcut. At cpu-used 7, exact variance-tree frames
+perform the existing coefficient-domain RD comparison between TX8 and TX16 on
+leaves whose maximum transform is TX16; in the VBR product policy, those exact
+frames are scheduled GOLDEN refreshes only. At cpu-used 8, exact-tree frames
+reuse the transform selected by the realtime picker, matching libvpx's
+single-decision data flow. `RVP9_RT_EMIT_TX_RD=0` disables the comparison and
+`=1` retains the broader diagnostic override at either preset.
 
-**Why:** the exact partition tree changes the residual shapes enough that the
-picker's model transform is no longer the best emitted transform consistently.
-The focused comparison improves all three current six-point curves from
-`+5.741%/-24.054%/+8.218%` to `+5.236%/-24.838%/+7.073%` for
-in-tree/ducks/old-town. Applying it to every ordinary frame improves the curves
-further, but its larger measured cost remains unsuitable while the speed gate
-is open.
+**Why:** cpu-used 7 needs the focused redecision as a measured quality
+prerequisite. Cpu-used 8 has enough quality headroom to remove the duplicated
+transform work: its six-point 1080p curves remain `-1.736%/-7.655%/-3.776%`
+and its 720p curves remain `-3.686%/-11.835%/-5.141%` for
+in-tree/ducks/old-town versus pinned vpxenc. This preserves every final quality
+gate while moving cpu-used 8 closer to the speed target.
 
-**Byte-parity impact:** intentional. The exercised old-town 4000-kbps stream
-has SHA-256
-`32fbd36bd74f2f0a1ff80afd1064f5965c4f16293bb8ed2c83319c300f2d8250`.
+**Byte-parity impact:** intentional. The exercised cpu-used 8 old-town
+2500-kbps stream has SHA-256
+`29389c3986260a4d1cfed59bb9226a21cb34b1eb47e7ab75a897814e86fae2f3`.
 Rvp9-decoder, pinned vpxdec, and ffmpeg each produce the same 186,624,000-byte
 I420 output with SHA-256
-`f04a64606ceaa42d1babdc40177b8b6ac2d9a1013b701545dc81bb9e481c60a9`.
+`b4bc12668387e62e7190fb95c33575320b07c886e0782e008c88c6f4c9452b59`.
 
-**Speed impact:** five alternating old-town pairs on the loaded host measured
-median wall times of about `0.44 s` before and `0.45 s` after. Unrelated
-simulator processes occupied the host, so this establishes only that the
-GOLDEN-only cost is small; it is not acceptance timing evidence.
+**Speed impact:** fifteen warmed alternating plain-release pairs on the three
+1080p clips measured a `0.969168x` paired wall-time geomean and a `0.961215x`
+paired child-CPU geomean against the preceding cpu-used 8 baseline. The
+candidate's median frame times were `6.324/7.736/6.129 ms` for
+in-tree/ducks/old-town. Representative-PGO comparison with pinned vpxenc
+remains the acceptance timing gate.
 
-**Future plan:** keep this measured quality prerequisite while closing the
-remaining in-tree and old-town residuals, then repeat the quiet-host timing
-matrix before final acceptance.
+**Future plan:** keep the cpu-used 7 redecision and cpu-used 8 picker reuse.
+Refresh the representative-PGO binary and direct pinned-vpxenc timing matrix,
+then profile the remaining cpu-used 8 gap.
 
 ### 2026-08-09 — Couple exact CPU7 VBR partitions to the source RD lambda
 

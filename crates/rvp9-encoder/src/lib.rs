@@ -5242,11 +5242,15 @@ fn realtime_force_max_emit_tx(
     override_value.unwrap_or(large_frame_recovery && !exact_vbp_tree)
 }
 
-/// Reuse the realtime picker's transform on the approximate partition path.
-/// Exact variance-tree frames have enough partition fidelity for the measured
-/// focused TX8/TX16 redecision; retain an explicit diagnostic override.
-fn realtime_emit_tx_rd_enabled(override_value: Option<bool>, exact_vbp_tree: bool) -> bool {
-    override_value.unwrap_or(exact_vbp_tree)
+/// Reuse the realtime picker's transform on the approximate partition path and
+/// at CPU8. CPU7 exact-tree frames retain the measured quality-critical
+/// TX8/TX16 redecision; the explicit override remains authoritative.
+fn realtime_emit_tx_rd_enabled(
+    override_value: Option<bool>,
+    exact_vbp_tree: bool,
+    speed: i32,
+) -> bool {
+    override_value.unwrap_or(exact_vbp_tree && speed < 8)
 }
 
 /// Immutable snapshot of diagnostic and A/B environment knobs shared by all
@@ -6181,7 +6185,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         rt_large_recovery,
         exact_vbp_tree_enabled,
     );
-    let rt_emit_tx_rd = realtime_emit_tx_rd_enabled(env.rt_emit_tx_rd, exact_vbp_tree_enabled);
+    let rt_emit_tx_rd =
+        realtime_emit_tx_rd_enabled(env.rt_emit_tx_rd, exact_vbp_tree_enabled, speed);
     // libvpx speed >= 4 uses `quant_fp` for every inter frame. Preserve
     // `=0` as the regular-quantizer diagnostic without making the slower
     // good-quality quantizer the realtime default.
@@ -14186,10 +14191,11 @@ mod tests {
 
     #[test]
     fn realtime_tx_redecision_searches_only_tx8_and_tx16() {
-        assert!(!realtime_emit_tx_rd_enabled(None, false));
-        assert!(realtime_emit_tx_rd_enabled(None, true));
-        assert!(realtime_emit_tx_rd_enabled(Some(true), false));
-        assert!(!realtime_emit_tx_rd_enabled(Some(false), true));
+        assert!(!realtime_emit_tx_rd_enabled(None, false, 7));
+        assert!(realtime_emit_tx_rd_enabled(None, true, 7));
+        assert!(!realtime_emit_tx_rd_enabled(None, true, 8));
+        assert!(realtime_emit_tx_rd_enabled(Some(true), false, 8));
+        assert!(!realtime_emit_tx_rd_enabled(Some(false), true, 7));
         assert!(should_redecide_inter_luma_tx(
             false,
             true,
