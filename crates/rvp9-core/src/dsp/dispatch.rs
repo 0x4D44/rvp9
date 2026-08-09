@@ -854,10 +854,11 @@ pub struct SimdDispatch {
     /// Task A — 8×8 inverse DCT + residual add for sparse blocks with
     /// `eob <= 12` (top-left 4×4 sub-block non-zero). Signature mirrors
     /// the scalar reference
-    /// [`crate::transforms::inverse::idct8x8_12_add`]. On x86_64 SSE2
-    /// CPUs this points at the safe wrapper
-    /// [`crate::dsp::x86_64::idct8x8_add_sse2_12`]; otherwise it points
-    /// at the scalar reference. The kernel exploits the eob-12 contract
+    /// [`crate::transforms::inverse::idct8x8_12_add`]. This selects the
+    /// safe wrappers [`crate::dsp::x86_64::idct8x8_add_sse2_12`] on
+    /// x86_64 SSE2 and [`crate::dsp::aarch64::idct8x8_12_add_neon`] on
+    /// AArch64 NEON; otherwise it points at the scalar reference. The kernel
+    /// exploits the eob-12 contract
     /// (rows 4..7 of `input` are zero) and runs the row pass on 4 rows
     /// instead of 8.
     pub(crate) idct8x8_12_add: fn(input: &[i32; 64], dst: &mut [u8], stride: usize),
@@ -1379,7 +1380,13 @@ impl SimdDispatch {
         } else {
             crate::transforms::inverse::idct8x8_12_add
         };
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(target_arch = "aarch64")]
+        let idct8x8_12_add: fn(&[i32; 64], &mut [u8], usize) = if caps.neon {
+            crate::dsp::aarch64::idct8x8_12_add_neon
+        } else {
+            crate::transforms::inverse::idct8x8_12_add
+        };
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         let idct8x8_12_add: fn(&[i32; 64], &mut [u8], usize) = {
             let _ = caps;
             crate::transforms::inverse::idct8x8_12_add
@@ -3435,6 +3442,24 @@ mod tests {
         let neon: fn(&[i32; 64], &mut [u8], usize) = crate::dsp::aarch64::idct8x8_add_neon;
         assert_eq!(neon_dispatch.idct8x8_add() as usize, neon as usize);
         assert_ne!(neon_dispatch.idct8x8_add() as usize, scalar as usize);
+    }
+
+    /// AArch64 selects the sparse NEON 8x8 inverse-DCT kernel only when
+    /// runtime capability detection reports NEON.
+    #[cfg(target_arch = "aarch64")]
+    #[test]
+    fn neon_caps_select_sparse_idct8x8_12_kernel() {
+        let mut caps = detect();
+        caps.neon = false;
+        let scalar_dispatch = SimdDispatch::build(caps);
+        let scalar: fn(&[i32; 64], &mut [u8], usize) = crate::transforms::inverse::idct8x8_12_add;
+        assert_eq!(scalar_dispatch.idct8x8_12_add() as usize, scalar as usize);
+
+        caps.neon = true;
+        let neon_dispatch = SimdDispatch::build(caps);
+        let neon: fn(&[i32; 64], &mut [u8], usize) = crate::dsp::aarch64::idct8x8_12_add_neon;
+        assert_eq!(neon_dispatch.idct8x8_12_add() as usize, neon as usize);
+        assert_ne!(neon_dispatch.idct8x8_12_add() as usize, scalar as usize);
     }
 
     /// AArch64 selects the dense NEON 8×8 hybrid inverse-transform kernel

@@ -1,4 +1,4 @@
-//! Dense 8x8 inverse DCT and residual add for AArch64 NEON.
+//! Dense and sparse 8x8 inverse DCT residual adds for AArch64 NEON.
 //!
 //! This follows libvpx's `vpx_idct8x8_64_add_neon`: load and narrow the
 //! 64 transform coefficients, run two transpose-plus-1D passes, then round,
@@ -286,6 +286,27 @@ unsafe fn idct8x8_add_neon_inner(input: &[i32; 64], dst: &mut [u8], stride: usiz
     }
 }
 
+#[target_feature(enable = "neon")]
+unsafe fn idct8x8_12_add_neon_inner(input: &[i32; 64], dst: &mut [u8], stride: usize) {
+    let zero = vdupq_n_s16(0);
+    let mut io = [zero; 8];
+    for (row, slot) in io[..4].iter_mut().enumerate() {
+        *slot = load_i32_as_i16(input.as_ptr().add(row * 8));
+    }
+
+    // `eob <= 12` confines all nonzero scan positions to the first four
+    // coefficient rows. Keeping rows 4..7 zero matches libvpx's sparse
+    // caller contract while reusing the bit-exact dense vector stages.
+    for _ in 0..2 {
+        transpose_8x8(&mut io);
+        idct8(&mut io);
+    }
+
+    for (row, residual) in io.into_iter().enumerate() {
+        add_and_store_row(residual, dst.as_mut_ptr().add(row * stride));
+    }
+}
+
 /// Add a dense 8x8 inverse-DCT residual to an 8-bit prediction block.
 ///
 /// This wrapper is installed only when runtime capability detection reports
@@ -299,6 +320,18 @@ pub fn idct8x8_add_neon(input: &[i32; 64], dst: &mut [u8], stride: usize) {
     // capability detection reports NEON. AArch64 mandates NEON in practice;
     // direct tests also gate on `is_aarch64_feature_detected!("neon")`.
     unsafe { idct8x8_add_neon_inner(input, dst, stride) }
+}
+
+/// Add an `eob <= 12` sparse 8x8 inverse-DCT residual to an 8-bit block.
+///
+/// Coefficients in input rows 4..7 are deliberately ignored, matching
+/// [`crate::transforms::inverse::idct8x8_12_add`] and libvpx's sparse kernel.
+pub fn idct8x8_12_add_neon(input: &[i32; 64], dst: &mut [u8], stride: usize) {
+    assert!(stride >= 8, "stride too small for 8x8 add");
+    assert!(dst.len() >= 7 * stride + 8, "dst too small for 8x8 add");
+
+    // SAFETY: dispatch installs this wrapper only on AArch64 NEON targets.
+    unsafe { idct8x8_12_add_neon_inner(input, dst, stride) }
 }
 
 /// Add a dense 8×8 inverse hybrid-transform residual to an 8-bit prediction.
@@ -359,8 +392,7 @@ unsafe fn iht8x8_add_neon_inner(input: &[i32; 64], dst: &mut [u8], stride: usize
 #[cfg(all(test, target_arch = "aarch64", not(miri)))]
 mod tests {
     use super::*;
-    use crate::transforms::inverse::idct8x8_64_add;
-    use crate::transforms::inverse::iht8x8_64_add;
+    use crate::transforms::inverse::{idct8x8_12_add, idct8x8_64_add, iht8x8_64_add};
     use std::arch::is_aarch64_feature_detected;
 
     fn compare(input: &[i32; 64], stride: usize, skew: usize) {
@@ -373,6 +405,18 @@ mod tests {
         idct8x8_add_neon(input, &mut neon[skew..len], stride);
         idct8x8_64_add(input, &mut scalar[skew..len], stride);
         assert_eq!(neon, scalar, "stride={stride} skew={skew}");
+    }
+
+    fn compare_12(input: &[i32; 64], stride: usize, skew: usize) {
+        let len = skew + 7 * stride + 8;
+        let mut neon = vec![0u8; len + 16];
+        for (i, pixel) in neon.iter_mut().enumerate() {
+            *pixel = (i as u8).wrapping_mul(41).wrapping_add(17);
+        }
+        let mut scalar = neon.clone();
+        idct8x8_12_add_neon(input, &mut neon[skew..len], stride);
+        idct8x8_12_add(input, &mut scalar[skew..len], stride);
+        assert_eq!(neon, scalar, "sparse stride={stride} skew={skew}");
     }
 
     #[test]
@@ -407,6 +451,34 @@ mod tests {
                 *coefficient = ((state >> 17) as i32 & 0xfff) - 2048;
             }
             compare(&input, 8 + case % 17, case % 16);
+        }
+    }
+
+    #[test]
+    fn idct8x8_12_neon_matches_scalar_and_ignores_tail_rows() {
+        if !is_aarch64_feature_detected!("neon") {
+            return;
+        }
+
+        let mut state = 0xa076_1d64_78bd_642fu64;
+        for case in 0..512 {
+            let mut input = [0i32; 64];
+            for coefficient in &mut input[..32] {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                *coefficient = ((state >> 17) as i32 & 0xfff) - 2048;
+            }
+            // The sparse contract ignores these rows; poison them so the test
+            // catches an accidental dense load or dependence on scratch tail.
+            for (index, coefficient) in input[32..].iter_mut().enumerate() {
+                *coefficient = if index & 1 == 0 {
+                    i16::MAX as i32
+                } else {
+                    i16::MIN as i32
+                };
+            }
+            compare_12(&input, 8 + case % 19, case % 16);
         }
     }
 
