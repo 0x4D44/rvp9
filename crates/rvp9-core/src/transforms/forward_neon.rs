@@ -1,4 +1,4 @@
-//! AArch64 NEON 4x4, 8x8, 16x16, and 32x32 forward DCTs.
+//! AArch64 NEON 4x4, 8x8, 16x16, and 32x32 forward transforms.
 //!
 //! The 16x16 and 32x32 first passes apply the scalar VP9 schedules to eight
 //! i16 lanes. Their second passes retain bounded opening stages before
@@ -781,6 +781,35 @@ unsafe fn fdct4x4_pass(input: [V; 4]) -> [V; 4] {
     transpose4(output0, output1, output2, output3)
 }
 
+#[inline(always)]
+unsafe fn fadst4x4_pass(input: [V; 4]) -> [V; 4] {
+    let t0 = add(
+        mul_add_noround(input[0], SINPI_1_9, input[1], SINPI_2_9),
+        vmulq_n_s32(input[3], SINPI_4_9),
+    );
+    let t1 = vmulq_n_s32(sub(add(input[0], input[1]), input[3]), SINPI_3_9);
+    let t2 = add(
+        mul_add_noround(input[0], SINPI_4_9, input[1], -SINPI_1_9),
+        vmulq_n_s32(input[3], SINPI_2_9),
+    );
+    let t3 = vmulq_n_s32(input[2], SINPI_3_9);
+
+    let output0 = wrap16(round14(add(t0, t3)));
+    let output1 = wrap16(round14(t1));
+    let output2 = wrap16(round14(sub(t2, t3)));
+    let output3 = wrap16(round14(add(sub(t2, t0), t3)));
+    transpose4(output0, output1, output2, output3)
+}
+
+#[inline(always)]
+unsafe fn hybrid4x4_pass(input: [V; 4], adst: bool) -> [V; 4] {
+    if adst {
+        fadst4x4_pass(input)
+    } else {
+        fdct4x4_pass(input)
+    }
+}
+
 #[target_feature(enable = "neon")]
 unsafe fn fdct4x4_inner(input: *const i16, output: *mut i32, stride: usize) {
     let mut rows = [vdupq_n_s32(0); 4];
@@ -792,6 +821,30 @@ unsafe fn fdct4x4_inner(input: *const i16, output: *mut i32, stride: usize) {
     }
     rows = fdct4x4_pass(rows);
     rows = fdct4x4_pass(rows);
+    let one = vdupq_n_s32(1);
+    for (row, values) in rows.into_iter().enumerate() {
+        let reduced = wrap16(vshrq_n_s32::<2>(add(values, one)));
+        vst1q_s32(output.add(row * 4), reduced);
+    }
+}
+
+#[target_feature(enable = "neon")]
+unsafe fn fht4x4_inner(input: *const i16, output: *mut i32, stride: usize, tx_type: TxType) {
+    let (column_adst, row_adst) = match tx_type {
+        TxType::DctDct => (false, false),
+        TxType::AdstDct => (true, false),
+        TxType::DctAdst => (false, true),
+        TxType::AdstAdst => (true, true),
+    };
+    let mut rows = [vdupq_n_s32(0); 4];
+    for (row, values) in rows.iter_mut().enumerate() {
+        *values = vshlq_n_s32::<4>(vmovl_s16(vld1_s16(input.add(row * stride))));
+    }
+    if *input != 0 {
+        rows[0] = vsetq_lane_s32::<0>(vgetq_lane_s32::<0>(rows[0]) + 1, rows[0]);
+    }
+    rows = hybrid4x4_pass(rows, column_adst);
+    rows = hybrid4x4_pass(rows, row_adst);
     let one = vdupq_n_s32(1);
     for (row, values) in rows.into_iter().enumerate() {
         let reduced = wrap16(vshrq_n_s32::<2>(add(values, one)));
@@ -959,6 +1012,153 @@ unsafe fn fdct8x8_libvpx_lowbd_inner(input: *const i16, output: *mut i32, stride
         let destination = output.add(row * 8);
         vst1q_s32(destination, vmovl_s16(vget_low_s16(reduced)));
         vst1q_s32(destination.add(4), vmovl_high_s16(reduced));
+    }
+}
+
+#[inline(always)]
+unsafe fn fdct8x4(input: &[V; 8], output: &mut [V; 8]) {
+    let s0 = add(input[0], input[7]);
+    let s1 = add(input[1], input[6]);
+    let s2 = add(input[2], input[5]);
+    let s3 = add(input[3], input[4]);
+    let s4 = sub(input[3], input[4]);
+    let s5 = sub(input[2], input[5]);
+    let s6 = sub(input[1], input[6]);
+    let s7 = sub(input[0], input[7]);
+
+    let x0 = add(s0, s3);
+    let x1 = add(s1, s2);
+    let x2 = sub(s1, s2);
+    let x3 = sub(s0, s3);
+    output[0] = wrap16(mul_round(add(x0, x1), COSPI_16_64));
+    output[2] = wrap16(mul_add_round(x3, COSPI_8_64, x2, COSPI_24_64));
+    output[4] = wrap16(mul_round(sub(x0, x1), COSPI_16_64));
+    output[6] = wrap16(mul_add_round(x3, COSPI_24_64, x2, -COSPI_8_64));
+
+    let t2 = mul_round(sub(s6, s5), COSPI_16_64);
+    let t3 = mul_round(add(s6, s5), COSPI_16_64);
+    let x0 = add(s4, t2);
+    let x1 = sub(s4, t2);
+    let x2 = sub(s7, t3);
+    let x3 = add(s7, t3);
+    output[1] = wrap16(mul_add_round(x0, COSPI_28_64, x3, COSPI_4_64));
+    output[3] = wrap16(mul_add_round(x2, COSPI_12_64, x1, -COSPI_20_64));
+    output[5] = wrap16(mul_add_round(x1, COSPI_12_64, x2, COSPI_20_64));
+    output[7] = wrap16(mul_add_round(x3, COSPI_28_64, x0, -COSPI_4_64));
+}
+
+#[inline(always)]
+unsafe fn fadst8x4(input: &[V; 8], output: &mut [V; 8]) {
+    let x = [
+        input[7], input[0], input[5], input[2], input[3], input[4], input[1], input[6],
+    ];
+
+    let s0 = mul_add_noround(x[0], COSPI_2_64, x[1], COSPI_30_64);
+    let s1 = mul_add_noround(x[0], COSPI_30_64, x[1], -COSPI_2_64);
+    let s2 = mul_add_noround(x[2], COSPI_10_64, x[3], COSPI_22_64);
+    let s3 = mul_add_noround(x[2], COSPI_22_64, x[3], -COSPI_10_64);
+    let s4 = mul_add_noround(x[4], COSPI_18_64, x[5], COSPI_14_64);
+    let s5 = mul_add_noround(x[4], COSPI_14_64, x[5], -COSPI_18_64);
+    let s6 = mul_add_noround(x[6], COSPI_26_64, x[7], COSPI_6_64);
+    let s7 = mul_add_noround(x[6], COSPI_6_64, x[7], -COSPI_26_64);
+
+    let x0 = round14(add(s0, s4));
+    let x1 = round14(add(s1, s5));
+    let x2 = round14(add(s2, s6));
+    let x3 = round14(add(s3, s7));
+    let x4 = round14(sub(s0, s4));
+    let x5 = round14(sub(s1, s5));
+    let x6 = round14(sub(s2, s6));
+    let x7 = round14(sub(s3, s7));
+
+    let s4 = mul_add_noround(x4, COSPI_8_64, x5, COSPI_24_64);
+    let s5 = mul_add_noround(x4, COSPI_24_64, x5, -COSPI_8_64);
+    let s6 = mul_add_noround(x6, -COSPI_24_64, x7, COSPI_8_64);
+    let s7 = mul_add_noround(x6, COSPI_8_64, x7, COSPI_24_64);
+    let t0 = add(x0, x2);
+    let t1 = add(x1, x3);
+    let t2 = sub(x0, x2);
+    let t3 = sub(x1, x3);
+    let t4 = round14(add(s4, s6));
+    let t5 = round14(add(s5, s7));
+    let t6 = round14(sub(s4, s6));
+    let t7 = round14(sub(s5, s7));
+
+    let u2 = mul_round(add(t2, t3), COSPI_16_64);
+    let u3 = mul_round(sub(t2, t3), COSPI_16_64);
+    let u6 = mul_round(add(t6, t7), COSPI_16_64);
+    let u7 = mul_round(sub(t6, t7), COSPI_16_64);
+    output[0] = wrap16(t0);
+    output[1] = wrap16(vnegq_s32(t4));
+    output[2] = wrap16(u6);
+    output[3] = wrap16(vnegq_s32(u2));
+    output[4] = wrap16(u3);
+    output[5] = wrap16(vnegq_s32(u7));
+    output[6] = wrap16(t5);
+    output[7] = wrap16(vnegq_s32(t1));
+}
+
+#[inline(always)]
+unsafe fn hybrid_transform8x4(input: &[V; 8], output: &mut [V; 8], adst: bool) {
+    if adst {
+        fadst8x4(input, output);
+    } else {
+        fdct8x4(input, output);
+    }
+}
+
+#[target_feature(enable = "neon")]
+unsafe fn fht8x8_inner(input: *const i16, output: *mut i32, stride: usize, tx_type: TxType) {
+    let zero = vdupq_n_s32(0);
+    let (column_adst, row_adst) = match tx_type {
+        TxType::DctDct => (false, false),
+        TxType::AdstDct => (true, false),
+        TxType::DctAdst => (false, true),
+        TxType::AdstAdst => (true, true),
+    };
+    let mut intermediate = [0i32; 64];
+
+    for column in [0, 4] {
+        let mut lane_in = [zero; 8];
+        for (row, values) in lane_in.iter_mut().enumerate() {
+            *values = vshlq_n_s32::<2>(vmovl_s16(vld1_s16(input.add(row * stride + column))));
+        }
+        let mut lane_out = [zero; 8];
+        hybrid_transform8x4(&lane_in, &mut lane_out, column_adst);
+        for (coefficient, values) in lane_out.into_iter().enumerate() {
+            vst1q_s32(
+                intermediate.as_mut_ptr().add(coefficient * 8 + column),
+                values,
+            );
+        }
+    }
+
+    for row in [0, 4] {
+        let mut lane_in = [zero; 8];
+        for column in [0, 4] {
+            let lanes = transpose4(
+                vld1q_s32(intermediate.as_ptr().add(row * 8 + column)),
+                vld1q_s32(intermediate.as_ptr().add((row + 1) * 8 + column)),
+                vld1q_s32(intermediate.as_ptr().add((row + 2) * 8 + column)),
+                vld1q_s32(intermediate.as_ptr().add((row + 3) * 8 + column)),
+            );
+            lane_in[column..column + 4].copy_from_slice(&lanes);
+        }
+        let mut lane_out = [zero; 8];
+        hybrid_transform8x4(&lane_in, &mut lane_out, row_adst);
+        for coefficient in [0, 4] {
+            let rows = transpose4(
+                lane_out[coefficient],
+                lane_out[coefficient + 1],
+                lane_out[coefficient + 2],
+                lane_out[coefficient + 3],
+            );
+            for (lane, values) in rows.into_iter().enumerate() {
+                let negative = vreinterpretq_s32_u32(vshrq_n_u32::<31>(vcltq_s32(values, zero)));
+                let reduced = wrap16(vshrq_n_s32::<1>(add(values, negative)));
+                vst1q_s32(output.add((row + lane) * 8 + coefficient), reduced);
+            }
+        }
     }
 }
 
@@ -1272,6 +1472,14 @@ pub(super) fn fdct4x4(input: &[i16], output: &mut [i32; 16], stride: usize) {
     unsafe { fdct4x4_inner(input.as_ptr(), output.as_mut_ptr(), stride) };
 }
 
+pub(super) fn fht4x4(input: &[i16], output: &mut [i32; 16], stride: usize, tx_type: TxType) {
+    assert!(stride >= 4);
+    assert!(input.len() >= 3 * stride + 4);
+    // SAFETY: The bounds above prove every four-value input load. `output`
+    // provides all 16 destinations, and NEON is mandatory on AArch64.
+    unsafe { fht4x4_inner(input.as_ptr(), output.as_mut_ptr(), stride, tx_type) };
+}
+
 pub(super) fn fdct8x8(input: &[i16], output: &mut [i32; 64], stride: usize) {
     assert!(stride >= 8);
     assert!(input.len() >= 7 * stride + 8);
@@ -1290,6 +1498,14 @@ pub(super) fn fdct8x8_libvpx_lowbd(input: &[i16], output: &mut [i32; 64], stride
     // deliberately mirrors libvpx's low-bit-depth first-pass approximation
     // and unchecked i16 second pass.
     unsafe { fdct8x8_libvpx_lowbd_inner(input.as_ptr(), output.as_mut_ptr(), stride) };
+}
+
+pub(super) fn fht8x8(input: &[i16], output: &mut [i32; 64], stride: usize, tx_type: TxType) {
+    assert!(stride >= 8);
+    assert!(input.len() >= 7 * stride + 8);
+    // SAFETY: The bounds above prove every four-value input load. `output`
+    // provides all 64 destinations, and NEON is mandatory on AArch64.
+    unsafe { fht8x8_inner(input.as_ptr(), output.as_mut_ptr(), stride, tx_type) };
 }
 
 pub(super) fn fht16x16(input: &[i16], output: &mut [i32; 256], stride: usize, tx_type: TxType) {

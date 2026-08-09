@@ -43,10 +43,12 @@ mod neon;
 /// Function pointer for a 1D 4-point forward transform — either
 /// [`fdct4`] or [`fadst4`]. Used by the [`fht4x4`] dispatcher to pick
 /// per-axis kernels via the FHT_4 table.
+#[cfg(any(not(target_arch = "aarch64"), test))]
 type Fwd1d4 = fn(&[i32; 4], &mut [i32; 4]);
 
 /// Function pointer for a 1D 8-point forward transform — either
 /// [`fdct8`] or [`fadst8`]. Used by [`fht8x8`] via the FHT_8 table.
+#[cfg(any(not(target_arch = "aarch64"), test))]
 type Fwd1d8 = fn(&[i32; 8], &mut [i32; 8]);
 
 /// 1D 4-point forward DCT. The `tran_high_t` intermediates in the C
@@ -224,9 +226,10 @@ pub fn fdct4x4(input: &[i16], output: &mut [i32; 16], stride: usize) {
 /// `(x + 1) >> 2` reduction.
 ///
 /// Mirrors libvpx `vp9_fht4x4_c` (`vp9/encoder/vp9_dct.c:530-555`).
-pub fn fht4x4(input: &[i16], output: &mut [i32; 16], stride: usize, tx_type: TxType) {
+#[cfg(any(not(target_arch = "aarch64"), test))]
+fn fht4x4_scalar(input: &[i16], output: &mut [i32; 16], stride: usize, tx_type: TxType) {
     if matches!(tx_type, TxType::DctDct) {
-        fdct4x4(input, output, stride);
+        fdct4x4_scalar(input, output, stride);
         return;
     }
 
@@ -279,6 +282,23 @@ pub fn fht4x4(input: &[i16], output: &mut [i32; 16], stride: usize, tx_type: TxT
         for j in 0..4 {
             output[i * 4 + j] = wraplow((row_out[j] + 1) >> 2);
         }
+    }
+}
+
+/// Dispatch the 4x4 hybrid forward transform to the exact AArch64 vector
+/// kernel when available, retaining `fht4x4_scalar` as the portable oracle.
+pub fn fht4x4(input: &[i16], output: &mut [i32; 16], stride: usize, tx_type: TxType) {
+    if matches!(tx_type, TxType::DctDct) {
+        fdct4x4(input, output, stride);
+        return;
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        neon::fht4x4(input, output, stride, tx_type);
+    }
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        fht4x4_scalar(input, output, stride, tx_type);
     }
 }
 
@@ -563,9 +583,10 @@ fn fdct8_inner(
 /// `(x + (x < 0)) >> 1` reduction (= `/ 2` truncation toward zero).
 ///
 /// Mirrors libvpx `vp9_fht8x8_c` (`vp9/encoder/vp9_dct.c:557-582`).
-pub fn fht8x8(input: &[i16], output: &mut [i32; 64], stride: usize, tx_type: TxType) {
+#[cfg(any(not(target_arch = "aarch64"), test))]
+fn fht8x8_scalar(input: &[i16], output: &mut [i32; 64], stride: usize, tx_type: TxType) {
     if matches!(tx_type, TxType::DctDct) {
-        fdct8x8(input, output, stride);
+        fdct8x8_scalar(input, output, stride);
         return;
     }
 
@@ -612,6 +633,23 @@ pub fn fht8x8(input: &[i16], output: &mut [i32; 64], stride: usize, tx_type: TxT
             let adjusted = v + i32::from(v < 0);
             output[j + i * 8] = wraplow(adjusted >> 1);
         }
+    }
+}
+
+/// Dispatch the 8x8 hybrid forward transform to the exact AArch64 vector
+/// kernel when available, retaining `fht8x8_scalar` as the portable oracle.
+pub fn fht8x8(input: &[i16], output: &mut [i32; 64], stride: usize, tx_type: TxType) {
+    if matches!(tx_type, TxType::DctDct) {
+        fdct8x8(input, output, stride);
+        return;
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        neon::fht8x8(input, output, stride, tx_type);
+    }
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        fht8x8_scalar(input, output, stride, tx_type);
     }
 }
 
@@ -2368,6 +2406,114 @@ mod tests {
         fdct8x8(&ordinary, &mut safe, 8);
         fdct8x8_libvpx_lowbd(&ordinary, &mut lowbd, 8);
         assert_eq!(lowbd, safe, "ordinary residuals use the same coefficients");
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    #[test]
+    fn fht4x4_neon_matches_scalar_all_tx_types() {
+        let mut state = 0xf4a4_31a7_25c6_09bf_u64;
+        for tx_type in [
+            TxType::DctDct,
+            TxType::AdstDct,
+            TxType::DctAdst,
+            TxType::AdstAdst,
+        ] {
+            for case in 0..512 {
+                let stride = 4 + case % 17;
+                let mut residual = vec![0i16; 3 * stride + 4];
+                for row in 0..4 {
+                    for column in 0..4 {
+                        state = state
+                            .wrapping_mul(6_364_136_223_846_793_005)
+                            .wrapping_add(1_442_695_040_888_963_407);
+                        residual[row * stride + column] = (((state >> 32) % 511) as i16) - 255;
+                    }
+                }
+                let mut scalar = [0i32; 16];
+                let mut vector = [0i32; 16];
+                fht4x4_scalar(&residual, &mut scalar, stride, tx_type);
+                neon::fht4x4(&residual, &mut vector, stride, tx_type);
+                assert_eq!(
+                    vector, scalar,
+                    "{tx_type:?} random residual case {case}, stride {stride}"
+                );
+            }
+
+            for &value in &[-255i16, 0, 255] {
+                let residual = [value; 16];
+                let mut scalar = [0i32; 16];
+                let mut vector = [0i32; 16];
+                fht4x4_scalar(&residual, &mut scalar, 4, tx_type);
+                neon::fht4x4(&residual, &mut vector, 4, tx_type);
+                assert_eq!(vector, scalar, "{tx_type:?} constant residual {value}");
+            }
+
+            for axis in [0, 1] {
+                let residual: [i16; 16] = std::array::from_fn(|index| {
+                    let coordinate = if axis == 0 { index / 4 } else { index % 4 };
+                    if coordinate & 1 == 0 { -255 } else { 255 }
+                });
+                let mut scalar = [0i32; 16];
+                let mut vector = [0i32; 16];
+                fht4x4_scalar(&residual, &mut scalar, 4, tx_type);
+                neon::fht4x4(&residual, &mut vector, 4, tx_type);
+                assert_eq!(vector, scalar, "{tx_type:?} axis {axis} extreme residual");
+            }
+        }
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    #[test]
+    fn fht8x8_neon_matches_scalar_all_tx_types() {
+        let mut state = 0xfad5_8a4c_72ce_903b_u64;
+        for tx_type in [
+            TxType::DctDct,
+            TxType::AdstDct,
+            TxType::DctAdst,
+            TxType::AdstAdst,
+        ] {
+            for case in 0..256 {
+                let stride = 8 + case % 17;
+                let mut residual = vec![0i16; 7 * stride + 8];
+                for row in 0..8 {
+                    for column in 0..8 {
+                        state = state
+                            .wrapping_mul(6_364_136_223_846_793_005)
+                            .wrapping_add(1_442_695_040_888_963_407);
+                        residual[row * stride + column] = (((state >> 32) % 511) as i16) - 255;
+                    }
+                }
+                let mut scalar = [0i32; 64];
+                let mut vector = [0i32; 64];
+                fht8x8_scalar(&residual, &mut scalar, stride, tx_type);
+                neon::fht8x8(&residual, &mut vector, stride, tx_type);
+                assert_eq!(
+                    vector, scalar,
+                    "{tx_type:?} random residual case {case}, stride {stride}"
+                );
+            }
+
+            for &value in &[-255i16, 0, 255] {
+                let residual = [value; 64];
+                let mut scalar = [0i32; 64];
+                let mut vector = [0i32; 64];
+                fht8x8_scalar(&residual, &mut scalar, 8, tx_type);
+                neon::fht8x8(&residual, &mut vector, 8, tx_type);
+                assert_eq!(vector, scalar, "{tx_type:?} constant residual {value}");
+            }
+
+            for axis in [0, 1] {
+                let residual: [i16; 64] = std::array::from_fn(|index| {
+                    let coordinate = if axis == 0 { index / 8 } else { index % 8 };
+                    if coordinate & 1 == 0 { -255 } else { 255 }
+                });
+                let mut scalar = [0i32; 64];
+                let mut vector = [0i32; 64];
+                fht8x8_scalar(&residual, &mut scalar, 8, tx_type);
+                neon::fht8x8(&residual, &mut vector, 8, tx_type);
+                assert_eq!(vector, scalar, "{tx_type:?} axis {axis} extreme residual");
+            }
+        }
     }
 
     #[cfg(target_arch = "aarch64")]
