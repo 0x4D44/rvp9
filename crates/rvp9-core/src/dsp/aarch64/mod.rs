@@ -28,8 +28,9 @@ pub use int_pro_neon::{
 };
 pub use intra_pred_neon::{dc_predict_full_neon, h_predictor_neon, v_predictor_neon};
 pub use lpf16_neon::{
-    lpf_horizontal_8_dual_neon, lpf_horizontal_8_neon, lpf_horizontal_16_dual_neon,
-    lpf_horizontal_16_neon, lpf_vertical_8_dual_neon, lpf_vertical_8_neon,
+    lpf_horizontal_4_dual_neon, lpf_horizontal_4_neon, lpf_horizontal_8_dual_neon,
+    lpf_horizontal_8_neon, lpf_horizontal_16_dual_neon, lpf_horizontal_16_neon,
+    lpf_vertical_4_dual_neon, lpf_vertical_4_neon, lpf_vertical_8_dual_neon, lpf_vertical_8_neon,
     lpf_vertical_16_dual_neon, lpf_vertical_16_neon,
 };
 pub use minmax_neon::minmax_8x8_neon;

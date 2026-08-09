@@ -1,10 +1,99 @@
-//! NEON kernels for VP9's 8- and 16-tap loop filters.
+//! NEON kernels for VP9's 4-, 8-, and 16-tap loop filters.
 //!
 //! The arithmetic follows `vpx_dsp/arm/loopfilter_neon.c`. Each lane is one
 //! transverse edge position. The Rust wrapper keeps the scalar slice API and
 //! validates the complete 16-pixel neighbourhood before entering NEON code.
 
 use core::arch::aarch64::*;
+
+#[inline(always)]
+unsafe fn filter4_masks(
+    limit: u8,
+    blimit: u8,
+    thresh: u8,
+    values: &[uint8x8_t; 8],
+) -> (uint8x8_t, uint8x8_t) {
+    let p3 = values[0];
+    let p2 = values[1];
+    let p1 = values[2];
+    let p0 = values[3];
+    let q0 = values[4];
+    let q1 = values[5];
+    let q2 = values[6];
+    let q3 = values[7];
+
+    let inner_diff = vmax_u8(vabd_u8(p1, p0), vabd_u8(q1, q0));
+    let mut max_adjacent = inner_diff;
+    max_adjacent = vmax_u8(max_adjacent, vabd_u8(p3, p2));
+    max_adjacent = vmax_u8(max_adjacent, vabd_u8(p2, p1));
+    max_adjacent = vmax_u8(max_adjacent, vabd_u8(q2, q1));
+    max_adjacent = vmax_u8(max_adjacent, vabd_u8(q3, q2));
+    let adjacent_ok = vcle_u8(max_adjacent, vdup_n_u8(limit));
+
+    // Widen before adding. The scalar oracle's boundary expression can
+    // exceed 255 even for valid VP9 thresholds.
+    let p0q0 = vabdl_u8(p0, q0);
+    let p1q1 = vabdl_u8(p1, q1);
+    let boundary = vaddq_u16(vshlq_n_u16(p0q0, 1), vshrq_n_u16(p1q1, 1));
+    let boundary_ok = vmovn_u16(vcleq_u16(boundary, vdupq_n_u16(u16::from(blimit))));
+    let mask = vand_u8(adjacent_ok, boundary_ok);
+    let hev = vcgt_u8(inner_diff, vdup_n_u8(thresh));
+    (mask, hev)
+}
+
+#[inline(always)]
+unsafe fn filter4_masks_16(
+    limit: uint8x16_t,
+    blimit: uint8x16_t,
+    thresh: uint8x16_t,
+    values: &[uint8x16_t; 8],
+) -> (uint8x16_t, uint8x16_t) {
+    let p3 = values[0];
+    let p2 = values[1];
+    let p1 = values[2];
+    let p0 = values[3];
+    let q0 = values[4];
+    let q1 = values[5];
+    let q2 = values[6];
+    let q3 = values[7];
+
+    let inner_diff = vmaxq_u8(vabdq_u8(p1, p0), vabdq_u8(q1, q0));
+    let mut max_adjacent = inner_diff;
+    max_adjacent = vmaxq_u8(max_adjacent, vabdq_u8(p3, p2));
+    max_adjacent = vmaxq_u8(max_adjacent, vabdq_u8(p2, p1));
+    max_adjacent = vmaxq_u8(max_adjacent, vabdq_u8(q2, q1));
+    max_adjacent = vmaxq_u8(max_adjacent, vabdq_u8(q3, q2));
+    let adjacent_ok = vcleq_u8(max_adjacent, limit);
+
+    // AArch64 only exposes the widening subtract for eight byte lanes at a
+    // time, so widen each half independently before the boundary sum.
+    let boundary_half =
+        |p0: uint8x8_t, q0: uint8x8_t, p1: uint8x8_t, q1: uint8x8_t, blimit: uint8x8_t| {
+            let p0q0 = vabdl_u8(p0, q0);
+            let p1q1 = vabdl_u8(p1, q1);
+            let boundary = vaddq_u16(vshlq_n_u16(p0q0, 1), vshrq_n_u16(p1q1, 1));
+            vmovn_u16(vcleq_u16(boundary, vmovl_u8(blimit)))
+        };
+    let boundary_ok = vcombine_u8(
+        boundary_half(
+            vget_low_u8(p0),
+            vget_low_u8(q0),
+            vget_low_u8(p1),
+            vget_low_u8(q1),
+            vget_low_u8(blimit),
+        ),
+        boundary_half(
+            vget_high_u8(p0),
+            vget_high_u8(q0),
+            vget_high_u8(p1),
+            vget_high_u8(q1),
+            vget_high_u8(blimit),
+        ),
+    );
+    let mask = vandq_u8(adjacent_ok, boundary_ok);
+    let hev = vcgtq_u8(inner_diff, thresh);
+    (mask, hev)
+}
 
 #[inline(always)]
 unsafe fn filter_masks(
@@ -763,6 +852,212 @@ unsafe fn transpose_8x16(columns: [uint8x8_t; 16]) -> [uint8x16_t; 8] {
 }
 
 #[target_feature(enable = "neon")]
+unsafe fn horizontal_4_inner(
+    pixels: *mut u8,
+    s_index: usize,
+    pitch: usize,
+    blimit: u8,
+    limit: u8,
+    thresh: u8,
+) {
+    let start = pixels.add(s_index - 4 * pitch);
+    let mut values = [vdup_n_u8(0); 8];
+    for (row, value) in values.iter_mut().enumerate() {
+        *value = vld1_u8(start.add(row * pitch));
+    }
+    let (mask, hev) = filter4_masks(limit, blimit, thresh, &values);
+    let narrow = filter4(mask, hev, values[2], values[3], values[4], values[5]);
+    for (row, value) in narrow.iter().enumerate() {
+        vst1_u8(start.add((row + 2) * pitch), *value);
+    }
+}
+
+#[target_feature(enable = "neon")]
+#[allow(clippy::too_many_arguments)]
+unsafe fn horizontal_4_dual_inner(
+    pixels: *mut u8,
+    s_index: usize,
+    pitch: usize,
+    blimit0: u8,
+    limit0: u8,
+    thresh0: u8,
+    blimit1: u8,
+    limit1: u8,
+    thresh1: u8,
+) {
+    let start = pixels.add(s_index - 4 * pitch);
+    let mut values = [vdupq_n_u8(0); 8];
+    for (row, value) in values.iter_mut().enumerate() {
+        *value = vld1q_u8(start.add(row * pitch));
+    }
+    let limit = vcombine_u8(vdup_n_u8(limit0), vdup_n_u8(limit1));
+    let blimit = vcombine_u8(vdup_n_u8(blimit0), vdup_n_u8(blimit1));
+    let thresh = vcombine_u8(vdup_n_u8(thresh0), vdup_n_u8(thresh1));
+    let (mask, hev) = filter4_masks_16(limit, blimit, thresh, &values);
+    let narrow = filter4_16(mask, hev, values[2], values[3], values[4], values[5]);
+    for (row, value) in narrow.iter().enumerate() {
+        vst1q_u8(start.add((row + 2) * pitch), *value);
+    }
+}
+
+#[target_feature(enable = "neon")]
+unsafe fn vertical_4_inner(
+    pixels: *mut u8,
+    s_index: usize,
+    pitch: usize,
+    blimit: u8,
+    limit: u8,
+    thresh: u8,
+) {
+    let start = pixels.add(s_index - 4);
+    let mut rows = [vdup_n_u8(0); 8];
+    for (row, value) in rows.iter_mut().enumerate() {
+        *value = vld1_u8(start.add(row * pitch));
+    }
+    let columns = transpose_8x8(rows);
+    let (mask, hev) = filter4_masks(limit, blimit, thresh, &columns);
+    let narrow = filter4(mask, hev, columns[2], columns[3], columns[4], columns[5]);
+    let filtered = [
+        columns[0], columns[1], narrow[0], narrow[1], narrow[2], narrow[3], columns[6], columns[7],
+    ];
+    for (row, value) in transpose_8x8(filtered).iter().enumerate() {
+        vst1_u8(start.add(row * pitch), *value);
+    }
+}
+
+#[target_feature(enable = "neon")]
+#[allow(clippy::too_many_arguments)]
+unsafe fn vertical_4_dual_inner(
+    pixels: *mut u8,
+    s_index: usize,
+    pitch: usize,
+    blimit0: u8,
+    limit0: u8,
+    thresh0: u8,
+    blimit1: u8,
+    limit1: u8,
+    thresh1: u8,
+) {
+    let start = pixels.add(s_index - 4);
+    let mut rows = [vdup_n_u8(0); 16];
+    for (row, value) in rows.iter_mut().enumerate() {
+        *value = vld1_u8(start.add(row * pitch));
+    }
+    let columns = transpose_8x16(rows);
+    let limit = vcombine_u8(vdup_n_u8(limit0), vdup_n_u8(limit1));
+    let blimit = vcombine_u8(vdup_n_u8(blimit0), vdup_n_u8(blimit1));
+    let thresh = vcombine_u8(vdup_n_u8(thresh0), vdup_n_u8(thresh1));
+    let (mask, hev) = filter4_masks_16(limit, blimit, thresh, &columns);
+    let narrow = filter4_16(mask, hev, columns[2], columns[3], columns[4], columns[5]);
+    let filtered = [
+        columns[0], columns[1], narrow[0], narrow[1], narrow[2], narrow[3], columns[6], columns[7],
+    ];
+    for (row, value) in transpose_16x8(filtered).iter().enumerate() {
+        vst1_u8(start.add(row * pitch), *value);
+    }
+}
+
+/// Apply the 4-tap loop filter across eight horizontal edge columns.
+pub fn lpf_horizontal_4_neon(
+    pixels: &mut [u8],
+    s_index: usize,
+    pitch: usize,
+    blimit: u8,
+    limit: u8,
+    thresh: u8,
+) {
+    assert!(pitch >= 8);
+    assert!(s_index >= 4 * pitch);
+    assert!(s_index + 3 * pitch + 7 < pixels.len());
+    // SAFETY: The assertions prove that all eight tap loads and four output
+    // row stores stay inside `pixels`; AArch64 supplies NEON unconditionally.
+    unsafe { horizontal_4_inner(pixels.as_mut_ptr(), s_index, pitch, blimit, limit, thresh) }
+}
+
+/// Apply two adjacent 4-tap horizontal filters with independent thresholds.
+#[allow(clippy::too_many_arguments)]
+pub fn lpf_horizontal_4_dual_neon(
+    pixels: &mut [u8],
+    s_index: usize,
+    pitch: usize,
+    blimit0: u8,
+    limit0: u8,
+    thresh0: u8,
+    blimit1: u8,
+    limit1: u8,
+    thresh1: u8,
+) {
+    assert!(pitch >= 16);
+    assert!(s_index >= 4 * pitch);
+    assert!(s_index + 3 * pitch + 15 < pixels.len());
+    // SAFETY: The assertions prove that each eight-row load and four 16-byte
+    // output row stores stay inside `pixels`; AArch64 supplies NEON.
+    unsafe {
+        horizontal_4_dual_inner(
+            pixels.as_mut_ptr(),
+            s_index,
+            pitch,
+            blimit0,
+            limit0,
+            thresh0,
+            blimit1,
+            limit1,
+            thresh1,
+        )
+    }
+}
+
+/// Apply the 4-tap loop filter down eight vertical edge rows.
+pub fn lpf_vertical_4_neon(
+    pixels: &mut [u8],
+    s_index: usize,
+    pitch: usize,
+    blimit: u8,
+    limit: u8,
+    thresh: u8,
+) {
+    assert!(pitch >= 8);
+    assert!(s_index >= 4);
+    assert!(s_index + 7 * pitch + 3 < pixels.len());
+    // SAFETY: The assertions prove that all eight 8-byte row loads and stores
+    // stay inside `pixels`; AArch64 supplies NEON.
+    unsafe { vertical_4_inner(pixels.as_mut_ptr(), s_index, pitch, blimit, limit, thresh) }
+}
+
+/// Apply two vertically adjacent 4-tap filters with independent thresholds.
+#[allow(clippy::too_many_arguments)]
+pub fn lpf_vertical_4_dual_neon(
+    pixels: &mut [u8],
+    s_index: usize,
+    pitch: usize,
+    blimit0: u8,
+    limit0: u8,
+    thresh0: u8,
+    blimit1: u8,
+    limit1: u8,
+    thresh1: u8,
+) {
+    assert!(pitch >= 8);
+    assert!(s_index >= 4);
+    assert!(s_index + 15 * pitch + 3 < pixels.len());
+    // SAFETY: The assertions prove that all sixteen 8-byte row loads and
+    // stores stay inside `pixels`; AArch64 supplies NEON.
+    unsafe {
+        vertical_4_dual_inner(
+            pixels.as_mut_ptr(),
+            s_index,
+            pitch,
+            blimit0,
+            limit0,
+            thresh0,
+            blimit1,
+            limit1,
+            thresh1,
+        )
+    }
+}
+
+#[target_feature(enable = "neon")]
 unsafe fn horizontal_8_inner(
     pixels: *mut u8,
     s_index: usize,
@@ -998,7 +1293,8 @@ pub fn lpf_vertical_16_dual_neon(
 mod tests {
     use super::*;
     use crate::loopfilter::{
-        lpf_horizontal_8, lpf_horizontal_8_dual, lpf_horizontal_16, lpf_horizontal_16_dual,
+        lpf_horizontal_4, lpf_horizontal_4_dual, lpf_horizontal_8, lpf_horizontal_8_dual,
+        lpf_horizontal_16, lpf_horizontal_16_dual, lpf_vertical_4, lpf_vertical_4_dual,
         lpf_vertical_8, lpf_vertical_8_dual, lpf_vertical_16, lpf_vertical_16_dual,
     };
 
@@ -1053,6 +1349,119 @@ mod tests {
             actual
         };
         assert_eq!(actual, input);
+    }
+
+    #[test]
+    fn differential_random_4_tap_single_and_dual_edges() {
+        let mut rng = Lcg32(0x4F11_7E22);
+        for iteration in 0..512 {
+            let pitch = 32 + iteration % 17;
+            let height = 48;
+            let input: Vec<u8> = (0..pitch * height).map(|_| rng.byte()).collect();
+            let blimit0 = rng.byte();
+            let limit0 = rng.byte();
+            let thresh0 = rng.byte();
+            let blimit1 = rng.byte();
+            let limit1 = rng.byte();
+            let thresh1 = rng.byte();
+
+            let horizontal_index = 16 * pitch + 5;
+            let vertical_index = 5 * pitch + 12;
+            let mut scalar = input.clone();
+            let mut neon = input.clone();
+            lpf_horizontal_4(
+                &mut scalar,
+                horizontal_index,
+                pitch,
+                blimit0,
+                limit0,
+                thresh0,
+            );
+            lpf_horizontal_4_neon(&mut neon, horizontal_index, pitch, blimit0, limit0, thresh0);
+            assert_eq!(neon, scalar, "horizontal iteration {iteration}");
+
+            scalar.clone_from(&input);
+            neon.clone_from(&input);
+            lpf_vertical_4(&mut scalar, vertical_index, pitch, blimit0, limit0, thresh0);
+            lpf_vertical_4_neon(&mut neon, vertical_index, pitch, blimit0, limit0, thresh0);
+            assert_eq!(neon, scalar, "vertical iteration {iteration}");
+
+            scalar.clone_from(&input);
+            neon.clone_from(&input);
+            lpf_horizontal_4_dual(
+                &mut scalar,
+                horizontal_index,
+                pitch,
+                blimit0,
+                limit0,
+                thresh0,
+                blimit1,
+                limit1,
+                thresh1,
+            );
+            lpf_horizontal_4_dual_neon(
+                &mut neon,
+                horizontal_index,
+                pitch,
+                blimit0,
+                limit0,
+                thresh0,
+                blimit1,
+                limit1,
+                thresh1,
+            );
+            assert_eq!(neon, scalar, "horizontal dual iteration {iteration}");
+
+            scalar.clone_from(&input);
+            neon.clone_from(&input);
+            lpf_vertical_4_dual(
+                &mut scalar,
+                vertical_index,
+                pitch,
+                blimit0,
+                limit0,
+                thresh0,
+                blimit1,
+                limit1,
+                thresh1,
+            );
+            lpf_vertical_4_dual_neon(
+                &mut neon,
+                vertical_index,
+                pitch,
+                blimit0,
+                limit0,
+                thresh0,
+                blimit1,
+                limit1,
+                thresh1,
+            );
+            assert_eq!(neon, scalar, "vertical dual iteration {iteration}");
+        }
+    }
+
+    #[test]
+    fn differential_4_tap_extreme_boundary_and_stride() {
+        for &pitch in &[8, 16, 31, 64] {
+            let height = 40;
+            let mut input = vec![0u8; pitch * height];
+            for (index, byte) in input.iter_mut().enumerate() {
+                *byte = if index % 3 == 0 { 255 } else { 0 };
+            }
+            let horizontal_index = 16 * pitch;
+            let vertical_index = 8 * pitch + 4;
+            let mut scalar = input.clone();
+            let mut neon = input.clone();
+            lpf_horizontal_4(&mut scalar, horizontal_index, pitch, 255, 255, 255);
+            lpf_horizontal_4_neon(&mut neon, horizontal_index, pitch, 255, 255, 255);
+            assert_eq!(neon, scalar, "horizontal pitch {pitch}");
+
+            scalar.clone_from(&input);
+            neon.clone_from(&input);
+            lpf_vertical_4(&mut scalar, vertical_index, pitch, 255, 255, 255);
+            lpf_vertical_4_neon(&mut neon, vertical_index, pitch, 255, 255, 255);
+            assert_eq!(neon, scalar, "vertical pitch {pitch}");
+        }
     }
 
     #[test]
