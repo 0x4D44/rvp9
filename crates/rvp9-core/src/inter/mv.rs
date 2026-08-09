@@ -533,28 +533,15 @@ pub fn write_mv_component(
         "write_mv_component: zero handled by joint short-circuit"
     );
 
-    let sign: u8 = if diff < 0 { 1 } else { 0 };
-    // `abs_diff` is `abs(diff)` widened to u32. `i16::unsigned_abs`
-    // returns u16; widen so the subtraction below stays in u32.
-    let abs_diff = u32::from(diff.unsigned_abs());
-    // libvpx's `z = (sign ? -v : v) - 1`. `z` is the "mag" in
-    // `read_mv_component` parlance.
-    let mag = abs_diff - 1;
-    debug_assert!(
-        mag < (1u32 << 14),
-        "write_mv_component: diff out of MV_IN_USE_BITS range (got abs={abs_diff})"
-    );
-
-    // Class + magnitude base.
-    let (class, mag_base) = mv_class_and_base(mag);
-    let is_class0 = matches!(class, MvClass::Class0);
-
-    // libvpx: `o = mag - mag_base`, `d = o >> 3`, `f = (o >> 1) & 3`,
-    // `e = o & 1`. For class 0, `mag_base = 0` so `o = mag`.
-    let offset = mag - mag_base;
-    let d = offset >> 3;
-    let fr = (offset >> 1) & 3;
-    let hp = offset & 1;
+    let parts = mv_component_parts(diff);
+    let MvComponentParts {
+        sign,
+        class,
+        is_class0,
+        d,
+        fr,
+        hp,
+    } = parts;
 
     // Sign bit.
     bw.write(sign, comp_probs.sign);
@@ -602,24 +589,101 @@ pub fn write_mv_component(
 
     // P0b — accumulate MV component counts for backward adaptation.
     if let Some(cc) = comp_counts {
-        cc.sign[sign as usize] += 1;
-        cc.classes[class as usize] += 1;
-        if is_class0 {
-            cc.class0[d as usize] += 1;
-            cc.class0_fp[d as usize][fr as usize] += 1;
-            // libvpx's `vp9_inc_mv` bumps HP counts unconditionally;
-            // when no HP bit was coded, `hp == 1` by construction.
-            cc.class0_hp[hp as usize] += 1;
-        } else {
-            let n = class as usize + CLASS0_BITS - 1;
-            for i in 0..n {
-                let bit = ((d >> i) & 1) as usize;
-                cc.bits[i][bit] += 1;
-            }
-            cc.fp[fr as usize] += 1;
-            // Keep writer-side counts identical to the decoder/read path.
-            cc.hp[hp as usize] += 1;
+        count_mv_component_parts(parts, cc);
+    }
+}
+
+#[derive(Copy, Clone)]
+struct MvComponentParts {
+    sign: u8,
+    class: MvClass,
+    is_class0: bool,
+    d: u32,
+    fr: u32,
+    hp: u32,
+}
+
+#[inline]
+fn mv_component_parts(diff: i16) -> MvComponentParts {
+    debug_assert!(diff != 0, "zero MV component has no component syntax");
+    let sign = u8::from(diff < 0);
+    let abs_diff = u32::from(diff.unsigned_abs());
+    let mag = abs_diff - 1;
+    debug_assert!(
+        mag < (1u32 << 14),
+        "MV component diff exceeds MV_IN_USE_BITS (got abs={abs_diff})"
+    );
+    let (class, mag_base) = mv_class_and_base(mag);
+    let is_class0 = matches!(class, MvClass::Class0);
+    let offset = mag - mag_base;
+    let d = offset >> 3;
+    let fr = (offset >> 1) & 3;
+    let hp = offset & 1;
+    MvComponentParts {
+        sign,
+        class,
+        is_class0,
+        d,
+        fr,
+        hp,
+    }
+}
+
+#[inline]
+fn count_mv_component_parts(parts: MvComponentParts, counts: &mut NmvComponentCounts) {
+    let MvComponentParts {
+        sign,
+        class,
+        is_class0,
+        d,
+        fr,
+        hp,
+    } = parts;
+    counts.sign[sign as usize] += 1;
+    counts.classes[class as usize] += 1;
+    if is_class0 {
+        counts.class0[d as usize] += 1;
+        counts.class0_fp[d as usize][fr as usize] += 1;
+        // libvpx's `vp9_inc_mv` bumps HP counts unconditionally; when no HP
+        // bit was coded, `hp == 1` by construction.
+        counts.class0_hp[hp as usize] += 1;
+    } else {
+        let n = class as usize + CLASS0_BITS - 1;
+        for i in 0..n {
+            let bit = ((d >> i) & 1) as usize;
+            counts.bits[i][bit] += 1;
         }
+        counts.fp[fr as usize] += 1;
+        // Keep writer-side counts identical to the decoder/read path.
+        counts.hp[hp as usize] += 1;
+    }
+}
+
+/// Accumulate the backward-adaptation counts for one `NEWMV` residual.
+///
+/// This is the count-only counterpart of [`write_mv`]. It lets mode decision
+/// retain the exact count bank while it already has the chosen MV and its
+/// reference MV, without replaying the boolean syntax before the compressed
+/// header.
+#[inline]
+pub fn count_mv(cur_mv: Mv, ref_mv: Mv, allow_hp: bool, counts: &mut NmvCounts) {
+    let diff = Mv {
+        row: cur_mv.row.wrapping_sub(ref_mv.row),
+        col: cur_mv.col.wrapping_sub(ref_mv.col),
+    };
+    let joint = get_mv_joint(diff);
+    counts.joints[joint as usize] += 1;
+
+    let use_hp = allow_hp && use_mv_hp(ref_mv);
+    if joint.vertical() {
+        let parts = mv_component_parts(diff.row);
+        debug_assert!(use_hp || parts.hp == 1);
+        count_mv_component_parts(parts, &mut counts.comps[0]);
+    }
+    if joint.horizontal() {
+        let parts = mv_component_parts(diff.col);
+        debug_assert!(use_hp || parts.hp == 1);
+        count_mv_component_parts(parts, &mut counts.comps[1]);
     }
 }
 
@@ -1424,6 +1488,59 @@ mod tests {
             w.stop_encode().expect("stop_encode");
         }
         assert_eq!(counts.comps[1].hp, [0, 1]);
+    }
+
+    #[test]
+    fn count_mv_matches_writer_counts() {
+        let ctx = &DEFAULT_NMV_CONTEXT;
+        let cases = [
+            (Mv::ZERO, Mv::ZERO, true),
+            (Mv { row: 7, col: 0 }, Mv::ZERO, true),
+            (Mv { row: 0, col: -33 }, Mv::ZERO, true),
+            (
+                Mv {
+                    row: 511,
+                    col: -701,
+                },
+                Mv { row: -4, col: 6 },
+                true,
+            ),
+            // The large reference disables per-block HP coding. Both
+            // residual components are even, as that path requires.
+            (Mv { row: 224, col: 72 }, Mv { row: 200, col: 200 }, true),
+            (
+                Mv {
+                    row: -300,
+                    col: 1200,
+                },
+                Mv { row: 10, col: -20 },
+                false,
+            ),
+        ];
+
+        for (cur_mv, ref_mv, allow_hp) in cases {
+            let mut writer_counts = NmvCounts::default();
+            let mut buf = vec![0u8; 256];
+            {
+                let mut w = BoolWriter::start_encode(&mut buf);
+                write_mv(
+                    &mut w,
+                    cur_mv,
+                    ref_mv,
+                    allow_hp,
+                    ctx,
+                    Some(&mut writer_counts),
+                );
+                for _ in 0..16 {
+                    w.write_bit(0);
+                }
+                w.stop_encode().expect("stop_encode");
+            }
+
+            let mut direct_counts = NmvCounts::default();
+            count_mv(cur_mv, ref_mv, allow_hp, &mut direct_counts);
+            assert_eq!(direct_counts, writer_counts, "{cur_mv:?} from {ref_mv:?}");
+        }
     }
 
     /// 200-iter fuzz over random (`cur_mv`, `ref_mv`, `allow_hp`)
