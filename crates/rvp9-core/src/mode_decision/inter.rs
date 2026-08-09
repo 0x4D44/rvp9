@@ -1708,6 +1708,16 @@ fn should_search_interp_filter(search: InterpFilterSearch) -> bool {
     }
 }
 
+#[inline]
+#[must_use]
+fn retain_last_nearest_filter_search(
+    frame_width: usize,
+    frame_height: usize,
+    block_size: BlockSize,
+) -> bool {
+    frame_width.saturating_mul(frame_height) <= 1280 * 720 || block_size == BlockSize::Block64x64
+}
+
 /// libvpx default `inter_mode_mask[]` for cpu-used-5+: every bsize gets
 /// `INTER_ALL` except the four >= 32×32 sizes which lose NEARMV (=
 /// `INTER_NEAREST_NEW_ZERO`). Mirrors `vp9_speed_features.c:994` (base
@@ -2378,7 +2388,7 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
             //
             // where `chessboard_index = current_video_frame & 1` so the
             // pattern toggles each frame.
-            let run_filter_search = should_search_interp_filter(InterpFilterSearch {
+            let mut run_filter_search = should_search_interp_filter(InterpFilterSearch {
                 skip_integer_mv_filter_search: params.skip_integer_mv_filter_search,
                 cb_pred_filter_search: params.cb_pred_filter_search,
                 mi_row: params.mi_row,
@@ -2391,6 +2401,20 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
                 filter_ref: params.filter_ref,
                 search_golden_filter: params.search_golden_filter,
             });
+            // Large-frame policy: retain the measured 64x64 LAST/NEAREST
+            // quality exception, but reuse a concrete causal filter on smaller
+            // LAST/NEAREST leaves. Required 720p inputs keep the full accepted
+            // search policy.
+            if !retain_last_nearest_filter_search(
+                params.src_plane.width,
+                params.src_plane.height,
+                params.block_size,
+            ) && ref_frame == RefFrame::LastFrame
+                && mode == InterMode::NearestMv
+                && params.filter_ref != InterpFilter::Switchable
+            {
+                run_filter_search = false;
+            }
             let fallback_filter = if params.filter_ref == InterpFilter::Switchable {
                 InterpFilter::EightTap
             } else {
@@ -11159,6 +11183,25 @@ mod tests {
             RefFrame::GoldenFrame,
             InterpFilter::Switchable,
             false,
+        ));
+    }
+
+    #[test]
+    fn last_nearest_filter_search_keeps_720p_and_large_1080p_leaves() {
+        assert!(retain_last_nearest_filter_search(
+            1280,
+            720,
+            BlockSize::Block8x8,
+        ));
+        assert!(retain_last_nearest_filter_search(
+            1920,
+            1080,
+            BlockSize::Block64x64,
+        ));
+        assert!(!retain_last_nearest_filter_search(
+            1920,
+            1080,
+            BlockSize::Block32x32,
         ));
     }
 
