@@ -11239,19 +11239,6 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
 /// `VP9_INTERP_EXTEND = 4` trailing samples on any sub-pel-filtered axis.
 const VP9_INTERP_EXTEND: i32 = 4;
 
-const INTER_IDENTITY_SCALE_FACTORS: rvp9_core::inter::scale::ScaleFactors =
-    rvp9_core::inter::scale::ScaleFactors {
-        x_scale_fp: rvp9_core::inter::scale::REF_NO_SCALE,
-        y_scale_fp: rvp9_core::inter::scale::REF_NO_SCALE,
-        x_step_q4: 1 << rvp9_core::inter::filter::SUBPEL_BITS,
-        y_step_q4: 1 << rvp9_core::inter::filter::SUBPEL_BITS,
-    };
-
-#[inline]
-fn identity_scaled_coordinate_q4(pixel: usize, mv_q4: i32) -> i32 {
-    ((pixel as i32) << rvp9_core::inter::filter::SUBPEL_BITS) + i32::from(mv_q4 as i16)
-}
-
 #[allow(clippy::too_many_arguments)]
 fn build_inter_pred_plane_unscaled(
     ref_plane: &[u8],
@@ -11365,13 +11352,17 @@ fn build_inter_pred_plane_unscaled_at_dst(
     pred_border: &mut [u8; MAX_INTER_PRED_BORDER_BYTES],
 ) {
     use rvp9_core::inter::filter::{SUBPEL_BITS, SUBPEL_MASK};
-    use rvp9_core::inter::scale::inter_predictor_with_dispatch;
+    use rvp9_core::inter::scale::{ScaleFactors, inter_predictor_with_dispatch};
 
-    // All v1 encoder callers use equal reference/current dimensions. Keep
-    // libvpx's frame-level identity scale constant instead of rebuilding the
-    // general resize state for every predicted plane.
-    let total_x_q4 = identity_scaled_coordinate_q4(ref_px_x, mv_q4_col);
-    let total_y_q4 = identity_scaled_coordinate_q4(ref_px_y, mv_q4_row);
+    // Identity scale (ref dims = cur dims).
+    let sf = ScaleFactors::new(ref_w as u32, ref_h as u32, ref_w as u32, ref_h as u32);
+    debug_assert!(
+        !sf.is_scaled(),
+        "F10.1c v1 encoder assumes identity ref scale"
+    );
+
+    let total_x_q4 = sf.scaled_x_q4(ref_px_x as i32, mv_q4_col as i16);
+    let total_y_q4 = sf.scaled_y_q4(ref_px_y as i32, mv_q4_row as i16);
     let int_x = total_x_q4 >> SUBPEL_BITS;
     let int_y = total_y_q4 >> SUBPEL_BITS;
     let subpel_x_q4 = total_x_q4 & SUBPEL_MASK;
@@ -11432,7 +11423,7 @@ fn build_inter_pred_plane_unscaled_at_dst(
             dst_stride,
             subpel_x_q4,
             subpel_y_q4,
-            &INTER_IDENTITY_SCALE_FACTORS,
+            &sf,
             interp_filter,
             bw,
             bh,
@@ -11475,7 +11466,7 @@ fn build_inter_pred_plane_unscaled_at_dst(
         dst_stride,
         subpel_x_q4,
         subpel_y_q4,
-        &INTER_IDENTITY_SCALE_FACTORS,
+        &sf,
         interp_filter,
         bw,
         bh,
@@ -13930,24 +13921,6 @@ mod tests {
             active_single_ref_frame_costs(&fc, None, None),
             [2473, 80, 2422, 2585],
         );
-    }
-
-    #[test]
-    fn inter_identity_scale_specialization_matches_generic_scale() {
-        use rvp9_core::inter::scale::ScaleFactors;
-
-        for &(width, height) in &[(64, 64), (1280, 720), (1920, 1080)] {
-            let generic = ScaleFactors::new(width, height, width, height);
-            assert_eq!(INTER_IDENTITY_SCALE_FACTORS, generic);
-            for &pixel in &[0usize, 1, 63, width as usize - 1] {
-                for &mv_q4 in &[-32_768, -257, -1, 0, 1, 257, 32_767] {
-                    assert_eq!(
-                        identity_scaled_coordinate_q4(pixel, mv_q4),
-                        generic.scaled_x_q4(pixel as i32, mv_q4 as i16),
-                    );
-                }
-            }
-        }
     }
 
     #[test]
