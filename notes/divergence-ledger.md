@@ -5119,3 +5119,37 @@ and boosted-leaf work; no broad timing claim is made before the feature matrix.
 
 **Future plan:** retain the source-faithful golden hook while porting the
 candidate-Q-dependent VBR BOOST1 delta.
+
+### 2026-08-09 — Seed age-based cyclic refresh as immediately eligible
+
+**Where:** `rvp9_encoder::aq_cyclic_refresh::CyclicRefresh::new`; libvpx
+counterpart: `vp9_cyclic_refresh_alloc` and `cyclic_refresh_update_map`.
+
+**What libvpx does:** zero-initializes its signed refresh map and treats
+`map[i] == 0` as eligible immediately. A freshly allocated map therefore
+starts the first refresh cycle on the first eligible inter frame.
+
+**What rvp9 does:** represents the same state as an unsigned age and tests
+`age >= min_refresh_age`. Fresh cells now start at `min_refresh_age`, the
+age-domain equivalent of libvpx's eligible zero. Refreshed cells still reset
+to age zero and wait through the configured cooldown.
+
+**Why:** seeding the age map to zero inverted libvpx's initial meaning and
+delayed all cyclic refresh by four frames after every keyframe. Correcting the
+representation closes the signed Stage 4b AQ-gain mismatch from `1.151` to
+`0.205` percentage point.
+
+**Byte-parity impact:** intentional for AQ-enabled streams. The exercised
+target-250 stream decodes bit-exactly through rvp9-decoder, pinned vpxdec, and
+ffmpeg at raw-I420 SHA-256
+`500354ec396c39f2cedbe18b48f33b23854df16323da3a4018cdea959ab45253`.
+
+**Compression-efficiency impact:** the exact signed Foreman VBR AQ gain is
+`+4.509%` for rvp9 versus `+4.714%` for pinned libvpx, a `-0.205`-point delta
+inside the final `0.3%` feature tolerance.
+
+**Speed impact:** no speed claim in this unit. The next gate measures the
+canonical 720p30 AQ-active CPU7 realtime configuration.
+
+**Future plan:** retain immediate startup eligibility and measure Stage 4b's
+720p30 speed exit before starting the denoiser feature matrix.

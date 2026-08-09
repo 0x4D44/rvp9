@@ -235,8 +235,9 @@ impl Default for CyclicRefreshConfig {
 #[derive(Debug, Clone)]
 pub struct CyclicRefresh {
     /// Per-mi-cell map: age in post-encode cycles since the cell was
-    /// last refreshed. 0 = just refreshed (or never refreshed since
-    /// init), 255 = aged-out cap (saturating).
+    /// last refreshed. 0 = just refreshed, 255 = aged-out cap
+    /// (saturating). Fresh cells start at `min_refresh_age` so their
+    /// zero-initialized libvpx counterparts are immediately eligible.
     pub map: Vec<u8>,
     /// Per-mi-cell map of the q-index this cell was last coded at.
     /// Mirrors libvpx `cr->last_coded_q_map` (`vp9_aq_cyclicrefresh.c`
@@ -267,14 +268,13 @@ pub struct CyclicRefresh {
 
 impl CyclicRefresh {
     /// Allocate fresh cyclic-refresh state for an `mi_rows × mi_cols`
-    /// frame. All map cells start at age 0 (just-refreshed) — i.e. no
-    /// cell is eligible for refresh until at least `min_refresh_age`
-    /// post-encode calls have aged them. Mirrors libvpx
-    /// `vp9_cyclic_refresh_alloc`'s zero-init.
+    /// frame. All map cells start eligible, mirroring libvpx's
+    /// zero-initialized `map[i] == 0` eligibility. In rvp9's age-based
+    /// encoding, the equivalent value is `min_refresh_age`.
     #[must_use]
     pub fn new(mi_rows: usize, mi_cols: usize, config: CyclicRefreshConfig) -> Self {
         Self {
-            map: vec![0u8; mi_rows * mi_cols],
+            map: vec![config.min_refresh_age; mi_rows * mi_cols],
             // libvpx seeds `last_coded_q_map` to `MAXQ`
             // (`vp9_aq_cyclicrefresh.c:48-49`) so every cell starts
             // marked "coded at coarsest q" and is therefore eligible
@@ -978,18 +978,18 @@ mod tests {
     }
 
     #[test]
-    fn cyclic_refresh_initial_state_marks_no_refresh() {
-        // Default config has min_refresh_age = 4. Fresh state has all
-        // map entries at age 0, so nothing is eligible. The picked
-        // segmentation map must be all zeros.
+    fn cyclic_refresh_initial_state_is_immediately_eligible() {
+        // Libvpx's zero-initialized refresh map is eligible immediately.
+        // Rvp9's age encoding must seed fresh cells at min_refresh_age
+        // rather than delaying the first refresh cycle.
         let mut cr = make_cr(CyclicRefreshConfig::default());
         let (seg_map, n_refreshed) = cr.pre_encode_pick_segments(100);
         assert_eq!(seg_map.len(), MI_ROWS * MI_COLS);
         assert!(
-            seg_map.iter().all(|&s| s == 0),
-            "fresh-state seg_map must be all zeros (no cell has aged yet)",
+            seg_map.iter().any(|&s| s == CR_SEGMENT_ID_BOOST),
+            "fresh-state seg_map must refresh cells immediately",
         );
-        assert_eq!(n_refreshed, 0);
+        assert!(n_refreshed >= cr.target_refresh_cells());
     }
 
     #[test]
