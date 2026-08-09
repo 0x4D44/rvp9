@@ -1,25 +1,25 @@
 # RVP9-BUG-FLUX-00015 — Rectangular-partition proof does not enable full-motion diagnostic
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Low
 - **Area:** encoder tests
 - **Raised:** 2026-08-09T22:49:48Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260809T230104Z-p97610-n246368000-c1
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLUX-00015-run-fix-20260809T230104Z-p97610-n246368000-c1
-- **Owner base:** 9aa7a90b82b0f2edf86a59c2127f0e834dc128da
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-08-09T23:01:04Z
-- **Owner until:** 2026-08-10T01:01:04Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-09T22:49:48Z, raised via `deltic bugs new` model=gpt-5.6-sol@high)
+- **State history:** Open (2026-08-09T22:49:48Z, raised via `deltic bugs new` model=gpt-5.6-sol@high) -> Fixed (2026-08-09T23:01:25Z, deltic:auto role=fix run=fix-20260809T230104Z-p97610-n246368000-c1 branch=task/bug-RVP9-BUG-FLUX-00015-run-fix-20260809T230104Z-p97610-n246368000-c1 code=dc46d43708262dfebdca2188a5009b2f0653fb96 gate=manual)
 
 ## Observation
 
