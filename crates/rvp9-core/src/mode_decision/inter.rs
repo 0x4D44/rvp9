@@ -2623,7 +2623,12 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
     let intra_cost_penalty = get_intra_cost_penalty(params.q_index, params.block_size);
     let inter_mode_thresh = rd_cost(lambda, intra_cost_penalty, 0);
 
-    if params.enable_intra_fallback && best.best_rd_cost > inter_mode_thresh {
+    if should_evaluate_intra_fallback(
+        params.enable_intra_fallback,
+        best.picker_skip,
+        best.best_rd_cost,
+        inter_mode_thresh,
+    ) {
         let intra_result =
             evaluate_intra_fallback(params, lambda, intra_cost_penalty, best.best_rd_cost);
         if let Some(intra) = intra_result
@@ -2646,6 +2651,20 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
     best.candidate_trace_id = candidate_trace::record(last_candidates);
 
     best
+}
+
+#[inline]
+const fn should_evaluate_intra_fallback(
+    enabled: bool,
+    inter_picker_skip: bool,
+    best_inter_rd: i64,
+    inter_mode_thresh: i64,
+) -> bool {
+    // Pinned libvpx gates its intra-in-inter search on `!x->skip`
+    // (`vp9_pickmode.c:2521`). `picker_skip` is rvp9's matching state: the
+    // winning inter candidate was priced as prediction-only, so evaluating a
+    // residual-bearing intra replacement would undo the realtime skip win.
+    enabled && !inter_picker_skip && best_inter_rd > inter_mode_thresh
 }
 
 /// Intra modes evaluated in the intra-in-inter fallback.
@@ -7497,6 +7516,14 @@ mod tests {
             disabled,
             "disabled intra fallback must not inspect neighbour pixels"
         );
+    }
+
+    #[test]
+    fn intra_fallback_respects_the_inter_picker_skip_gate() {
+        assert!(!should_evaluate_intra_fallback(true, true, 101, 100));
+        assert!(should_evaluate_intra_fallback(true, false, 101, 100));
+        assert!(!should_evaluate_intra_fallback(true, false, 100, 100));
+        assert!(!should_evaluate_intra_fallback(false, false, 101, 100));
     }
 
     #[test]

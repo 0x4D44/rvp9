@@ -4909,17 +4909,18 @@ more quality but exceeded the speed gate and were rejected.
 **Byte-parity impact:** intentional and structural. CPU6 partition history,
 transform signalling, coefficient tokens, and rate-control feedback diverge.
 The exercised CPU6 in-tree target-2500 IVF has SHA-256
-`24e2ff1155a4d5c24193404d02b7fc59b92dc4ff2943fe5fa101e48f00a5786b`.
+`6b89e3cd8ce5fcb7ebcc3ebb5dd0b158de17eb55678fbbb3ae0a072786c1d0b5`.
 Rvp9-decoder, pinned vpxdec, and ffmpeg each emit the same 186,624,000-byte
 I420 output with SHA-256
-`45fd083482f94a3531c538aa2b990eeb2004d4f6cfced195cc45b055999f26a5`.
+`ae0a10ff4076a58f568c163dfbbf5beb0e5a4519bdf1c589f86fd7181cbf76c1`.
 CPU7 and CPU8 policy branches are unchanged; the exercised CPU8 stream is
 byte-identical to the Unit 974 PGO control at SHA-256
 `3e142ba677ebf65c19705f62bdc9784a5486c90da6e235931fcb496923e5fa60`.
 
 **Compression-efficiency impact:** serialized canonical 60-frame 1080p
-six-point in-tree/ducks/old-town curves after the VBR damping correction and
-54-step calibration are `+8.150%/-12.284%/+0.026%`. The previously recorded
+six-point in-tree/ducks/old-town curves after the VBR damping correction,
+54-step calibration, and source-exact intra skip gate are
+`+1.640%/-11.830%/-1.327%`. The previously recorded
 `+5.497%/-9.845%/+4.108%` curves were invalid: concurrent harness processes
 overwrote fixed `/tmp/rvp9_bdrate_{role}_{bitrate}k` streams before decode
 (`RVP9-BUG-FLUX-00010`). Serialized curves for the preceding Unit 974 policy
@@ -4933,8 +4934,10 @@ geomean was `0.971639x`; median rvp9 frame times were
 `5.994/8.998/6.010 ms` for in-tree/ducks/old-town. Fifteen paired same-build
 bias-54/bias-36 comparisons then measured per-clip wall ratios
 `0.943484x/0.985249x/0.972295x`, corpus geomean `0.966851x`; child-CPU
-geomean was `0.964044x`.
+geomean was `0.964044x`. The intra skip gate adds a further same-build wall
+geomean of `0.969323x` and child-CPU geomean of `0.967026x`.
 
 **Future plan:** serialize BD-rate runs until `RVP9-BUG-FLUX-00010` is fixed.
-The in-tree clip is the sole limiting CPU6 quality case; trace its VBR
-rate-control trajectory before spending more speed headroom on coding tools.
+The in-tree clip is now inside the Stage 4a `+2%` intermediate gate but still
+misses final `+0.5%`. Profile its remaining prediction and coefficient gap
+without weakening the source-exact skip behavior.
