@@ -361,8 +361,13 @@ fn a10_byte_identity_pre_vs_post_refactor() {
     // tree independently reproduce these bytes, while the sibling decoder
     // oracle still accepts all 12 frames. This refresh records an earlier
     // intentional coding change; Unit 689 does not cause the drift.
-    const GOLDEN_HASH: u64 = 0x0d37_a3ba_8258_9d9a;
-    const GOLDEN_LEN: usize = 7053;
+    //
+    // Re-captured again (2026-08-09) after the accepted production-parity
+    // stack through denoiser direct-count retention. Two independent runs
+    // reproduce these bytes, and the sibling decoder oracle still accepts all
+    // 12 frames.
+    const GOLDEN_HASH: u64 = 0xcf76_dc3b_0361_b77e;
+    const GOLDEN_LEN: usize = 7136;
 
     let stream = encode_fixed_clip();
     let hash = fnv1a(&stream);
