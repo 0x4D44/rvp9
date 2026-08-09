@@ -124,7 +124,7 @@ fn synthetic_motion_frames(w: u32, h: u32, n_frames: u32) -> (OwnedYuvClip, f64)
 /// so a green run is the live-TWO_LOOP proof; a Strategy-B regression
 /// turns `COEF_PROB_TABLES_SUPPRESSED_WITH_DIFF` to 0 → FAIL.
 #[test]
-fn a6_twoloop_updates_some_and_suppresses_with_diff() {
+fn a6_twoloop_denoiser_direct_counts_update_and_suppress_with_diff() {
     const W: u32 = 256;
     const H: u32 = 256;
     const N_FRAMES: u32 = 8;
@@ -134,7 +134,10 @@ fn a6_twoloop_updates_some_and_suppresses_with_diff() {
     COEF_PROB_TABLES_UPDATED.store(0, Relaxed);
     COEF_PROB_TABLES_SUPPRESSED_WITH_DIFF.store(0, Relaxed);
 
-    let cfg = gate_config(W, H, framerate, N_FRAMES + 1);
+    // Denoising selects the serial picker path whose already-resolved
+    // non-coefficient counts make the pre-header walk coefficient-only.
+    let mut cfg = gate_config(W, H, framerate, N_FRAMES + 1);
+    cfg.noise_sensitivity = 1;
     let mut enc = StreamEncoder::new(cfg).expect("StreamEncoder::new");
     for (y, u, v) in &frames {
         enc.encode_frame(&yuv_view(y, u, v, W as usize))

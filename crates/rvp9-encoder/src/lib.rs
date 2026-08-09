@@ -3537,9 +3537,15 @@ pub(crate) struct RecordedCoefTile {
     mi_col_end: usize,
 }
 
+struct RecordedInterNoncoefTile {
+    counts: FrameCounts,
+    partition_counts: InterPartitionCountState,
+}
+
 pub(crate) struct InterSimulationResult {
     pub(crate) coefs: VecBackedInterCoefSource,
     pub(crate) recorded_coef_tile: Option<RecordedCoefTile>,
+    pub(crate) recorded_noncoef_counts: Option<FrameCounts>,
     pub(crate) mi_grid: InterSimulationMiGrid,
 }
 
@@ -4527,7 +4533,7 @@ fn record_encoded_inter_leaf(
 
 #[allow(clippy::too_many_arguments)]
 fn record_encoded_inter_leaf_noncoef(
-    tile: &mut RecordedCoefTile,
+    counts: &mut FrameCounts,
     params: &InterModeReadParams,
     leaf: InterPartitionLeafDesc,
     above: Option<&ModeInfo>,
@@ -4542,7 +4548,7 @@ fn record_encoded_inter_leaf_noncoef(
         &mi,
         above,
         left,
-        &mut tile.counts,
+        counts,
     );
     if matches!(mi.mode, BlockMode::Inter { .. }) {
         count_inter_block_mode_info(
@@ -4553,7 +4559,7 @@ fn record_encoded_inter_leaf_noncoef(
             inter_mode_ctx,
             best_ref_mvs,
             &mi,
-            &mut tile.counts,
+            counts,
         )
         .expect("committed inter leaf must have valid mode info");
     }
@@ -6415,6 +6421,17 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
             mi_col_end: bounds.mi_col_end,
         }
     });
+    let mut recorded_noncoef_tiles = denoiser.is_some().then(|| {
+        tile_bounds_by_col
+            .iter()
+            .map(|bounds| RecordedInterNoncoefTile {
+                counts: FrameCounts::default(),
+                partition_counts: InterPartitionCountState::new(
+                    bounds.mi_col_end - bounds.mi_col_start,
+                ),
+            })
+            .collect::<Vec<_>>()
+    });
     let mut coef_record_sink = [];
     let mut coef_record_bw = BoolWriter::start_count_only(&mut coef_record_sink);
     debug_assert_eq!(out_mv_grid.len(), mi_rows_us * mi_cols_us);
@@ -6511,6 +6528,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
          row_grids: &mut InterRowGrids<'_>,
          coef_source: &mut VecBackedInterCoefSource,
          recorded_coef_tile: &mut Option<RecordedCoefTile>,
+         recorded_noncoef_tiles: &mut Option<Vec<RecordedInterNoncoefTile>>,
          coef_record_bw: &mut BoolWriter<'_>,
          defer_coef_recording: bool,
          sb_partitions: &mut InterPartitionGrid<'_>,
@@ -7881,7 +7899,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                 None
                             };
                             record_encoded_inter_leaf_noncoef(
-                                recorded,
+                                &mut recorded.counts,
                                 &direct_count_params,
                                 sb_partitions[sb_idx][leaf_idx],
                                 nb_above,
@@ -8038,7 +8056,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                 &neighbours,
                             );
                             record_encoded_inter_leaf_noncoef(
-                                recorded,
+                                &mut recorded.counts,
                                 &direct_count_params,
                                 sb_partitions[sb_idx][leaf_idx],
                                 nb_above,
@@ -10104,7 +10122,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             );
                         }
                     }
-                    if let Some(recorded) = recorded_coef_tile.as_mut() {
+                    if recorded_coef_tile.is_some() || recorded_noncoef_tiles.is_some() {
                         let final_leaf = sb_partitions[sb_idx][leaf_idx];
                         let best_ref_mv = |ref_frame: RefFrame| match ref_frame {
                             RefFrame::GoldenFrame => golden_ref_mvs.nearest,
@@ -10112,8 +10130,17 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             RefFrame::LastFrame => last_ref_mvs.nearest,
                             _ => Mv::ZERO,
                         };
+                        let counts = if let Some(recorded) = recorded_coef_tile.as_mut() {
+                            &mut recorded.counts
+                        } else {
+                            &mut recorded_noncoef_tiles
+                                .as_mut()
+                                .expect("non-coefficient recorder presence was checked")
+                                [job.tile_col]
+                                .counts
+                        };
                         record_encoded_inter_leaf_noncoef(
-                            recorded,
+                            counts,
                             &direct_count_params,
                             final_leaf,
                             nb_above,
@@ -10124,7 +10151,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                 best_ref_mv(final_leaf.picked_ref_frame2),
                             ],
                         );
-                        if !defer_coef_recording {
+                        if !defer_coef_recording && let Some(recorded) = recorded_coef_tile.as_mut()
+                        {
                             record_encoded_inter_leaf(
                                 recorded,
                                 coef_record_bw,
@@ -10300,12 +10328,21 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         *rt_profile_emit_time += t0.elapsed();
                     }
                 }
-                if let Some(recorded) = recorded_coef_tile.as_mut() {
+                if recorded_coef_tile.is_some() || recorded_noncoef_tiles.is_some() {
                     let sb_mi_row = sb_row * 8;
                     let sb_mi_col = sb_col * 8;
                     let leaves = &sb_partitions[sb_idx];
-                    recorded
-                        .partition_counts
+                    let (partition_counts, counts) = if let Some(recorded) =
+                        recorded_coef_tile.as_mut()
+                    {
+                        (&mut recorded.partition_counts, &mut recorded.counts)
+                    } else {
+                        let recorded = &mut recorded_noncoef_tiles
+                            .as_mut()
+                            .expect("non-coefficient recorder presence was checked")[job.tile_col];
+                        (&mut recorded.partition_counts, &mut recorded.counts)
+                    };
+                    partition_counts
                         .count_superblock(
                             current_tile,
                             mi_rows_us,
@@ -10329,7 +10366,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                     })
                                     .map(|leaf| leaf.leaf_bsize)
                             },
-                            &mut recorded.counts,
+                            counts,
                         )
                         .expect("committed superblock must have a valid partition tree");
                 }
@@ -10505,6 +10542,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             let mut row_emit_scratch = InterEmitScratch::new();
                             let mut row_diagnostics = CompactInterRowDiagnostics::default();
                             let mut recorded_coef_tile = None;
+                            let mut recorded_noncoef_tiles = None;
                             let mut coef_sink = [];
                             let mut coef_record_bw = BoolWriter::start_count_only(&mut coef_sink);
                             let mut compact = InterReconPlanes::new(
@@ -10530,6 +10568,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                 &mut compact_grids,
                                 &mut work.coefs,
                                 &mut recorded_coef_tile,
+                                &mut recorded_noncoef_tiles,
                                 &mut coef_record_bw,
                                 true,
                                 &mut partition_grid,
@@ -10708,6 +10747,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         sb_column_range.len(),
                         sb_cols,
                     );
+                    let mut row_recorded_noncoef_tiles = None;
                     for mi_row in compact_grid_layout.mi_row_start..job_mi_row_start {
                         for mi_col in bounds.mi_col_start..bounds.mi_col_end {
                             let compact_index = compact_grid_layout
@@ -10723,6 +10763,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         &mut compact_grids,
                         &mut row_coef_source,
                         &mut recorded_coef_tile,
+                        &mut row_recorded_noncoef_tiles,
                         &mut coef_record_bw,
                         true,
                         &mut partition_grid,
@@ -10805,6 +10846,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     &mut row_grids,
                     &mut coef_source,
                     &mut recorded_coef_tile,
+                    &mut recorded_noncoef_tiles,
                     &mut coef_record_bw,
                     false,
                     &mut partition_grid,
@@ -10833,6 +10875,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     &mut row_grids,
                     &mut coef_source,
                     &mut recorded_coef_tile,
+                    &mut recorded_noncoef_tiles,
                     &mut coef_record_bw,
                     false,
                     &mut partition_grid,
@@ -11167,6 +11210,13 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     InterSimulationResult {
         coefs: coef_source,
         recorded_coef_tile,
+        recorded_noncoef_counts: recorded_noncoef_tiles.map(|tiles| {
+            let mut counts = FrameCounts::default();
+            for tile in tiles {
+                counts.add_non_coef(&tile.counts);
+            }
+            counts
+        }),
         mi_grid: row_grids.into_simulation_grid(),
     }
 }

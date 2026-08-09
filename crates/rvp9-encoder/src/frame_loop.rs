@@ -1402,6 +1402,13 @@ struct InterTileJobResult {
     mi_grid: InterSimulationMiGrid,
 }
 
+type InterPickerFrameOutput = (
+    Box<dyn rvp9_core::bitstream::InterCoefSource>,
+    Vec<RecordedCoefTile>,
+    Option<FrameCounts>,
+    Vec<Option<ModeInfo>>,
+);
+
 struct InterTileScratch {
     recon_y: Vec<u8>,
     recon_u: Vec<u8>,
@@ -3455,11 +3462,8 @@ impl StreamEncoder {
         }
 
         let tile_count = 1usize << log2_tile_cols;
-        let (coef_source, recorded_coef_tiles, mi_grid): (
-            Box<dyn rvp9_core::bitstream::InterCoefSource>,
-            Vec<RecordedCoefTile>,
-            Vec<Option<ModeInfo>>,
-        ) = if parallel_tile_picker {
+        let (coef_source, recorded_coef_tiles, recorded_noncoef_counts, mi_grid):
+            InterPickerFrameOutput = if parallel_tile_picker {
             // Tile-MT: execute independent full-height column jobs on the
             // stream-owned worker pool. Each job owns every mutable object
             // it touches. Results are collected and merged in column order,
@@ -3735,6 +3739,7 @@ impl StreamEncoder {
                     tiles: tile_coef_sources,
                 }),
                 recorded_coef_tiles,
+                None,
                 merged_mi_grid,
             )
         } else {
@@ -3762,7 +3767,12 @@ impl StreamEncoder {
             debug_assert_eq!(encoded.mi_grid.mi_rows, mi_rows_us);
             debug_assert_eq!(encoded.mi_grid.mi_col_start, 0);
             debug_assert_eq!(encoded.mi_grid.mi_cols, mi_cols_us);
-            (Box::new(encoded.coefs), Vec::new(), encoded.mi_grid.cells)
+            (
+                Box::new(encoded.coefs),
+                Vec::new(),
+                encoded.recorded_noncoef_counts,
+                encoded.mi_grid.cells,
+            )
         };
         self.stage4a_split_stats
             .accumulate(&stage4a_frame_split_stats);
@@ -3900,6 +3910,7 @@ impl StreamEncoder {
                     filter_level,
                     coef_source.as_ref(),
                     (!recorded_coef_tiles.is_empty()).then_some(recorded_coef_tiles.as_slice()),
+                    recorded_noncoef_counts.as_ref(),
                     &mi_grid,
                     &segmentation_params,
                     refresh_flags,
@@ -4520,6 +4531,7 @@ impl StreamEncoder {
             q_index,
             filter_level,
             &coef_source,
+            None,
             None,
             &mi_grid,
             &segmentation_params,
@@ -5976,6 +5988,7 @@ fn build_inter_packet_with_residuals<F>(
     filter_level: u8,
     coef_source: &dyn InterCoefSource,
     recorded_coef_tiles: Option<&[RecordedCoefTile]>,
+    recorded_noncoef_counts: Option<&FrameCounts>,
     mi_grid: &[Option<ModeInfo>],
     segmentation: &SegmentationParams,
     refresh_frame_flags: u8,
@@ -6247,7 +6260,7 @@ where
                 let mut bw = BoolWriter::start_count_only(&mut count_sink);
                 let mut coef_ctx = TileCoefCtx::new(bounds.mi_col_end - bounds.mi_col_start);
                 let mut retained = RetainedCoefTokens::default();
-                let mut token_pass = if forward_mode_probs {
+                let mut token_pass = if forward_mode_probs && recorded_noncoef_counts.is_none() {
                     CoefTokenPass::record_full(&mut retained)
                 } else {
                     CoefTokenPass::record(&mut retained)
@@ -6291,6 +6304,8 @@ where
                 recorded_counts.add_non_coef(&tile.counts);
             }
             &recorded_counts
+        } else if let Some(recorded) = recorded_noncoef_counts {
+            recorded
         } else {
             &count_counts
         };
@@ -6304,6 +6319,8 @@ where
         );
         if recorded_coef_tiles.is_some() {
             count_counts.add_non_coef(&recorded_counts);
+        } else if let Some(recorded) = recorded_noncoef_counts {
+            count_counts.add_non_coef(recorded);
         }
     }
 
@@ -8259,6 +8276,7 @@ mod tests {
             80,
             0,
             &coef_source,
+            None,
             None,
             &inter_mi_grid,
             &segmentation,
