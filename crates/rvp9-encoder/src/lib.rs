@@ -2496,6 +2496,10 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
 
     let w = width as usize;
     let h = height as usize;
+    // Read the diagnostic switch once per keyframe tile walk. Environment
+    // lookup takes a process-global lock on macOS and this branch otherwise
+    // runs once per leaf, even in ordinary production encodes.
+    let diag_intra_enabled = std::env::var("RVP9_DIAG_INTRA").is_ok();
     let sb_cols = w / 64;
     let sb_rows = h.div_ceil(64);
     assert_eq!(
@@ -2839,7 +2843,7 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
                 // A0' diagnostic — dump per-leaf KF intra mode pick when
                 // RVP9_DIAG_INTRA is set in the environment. Sampling at
                 // mod-16 keeps the output bounded on a 256x256 frame.
-                if std::env::var("RVP9_DIAG_INTRA").is_ok() {
+                if diag_intra_enabled {
                     #[allow(clippy::print_stderr)]
                     {
                         eprintln!(
