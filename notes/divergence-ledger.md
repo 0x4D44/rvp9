@@ -5038,10 +5038,10 @@ All three pass the final `+0.5%` per-clip gate. Native 720p curves transfer
 byte-for-byte from the preceding `+9` calibration.
 
 **Speed impact:** fifteen warmed same-build pairs measured a `0.994361x`
-wall and `0.987887x` child-CPU corpus geomean. Projecting that gain onto the
-two refreshed Unit 974 PGO direct comparisons gives `1.022102x` to
-`1.041373x` vpxenc wall time. Median candidate frame times are
-`5.353/7.015/5.230 ms`.
+wall and `0.987887x` child-CPU corpus geomean. A fresh representative PGO
+build then measured `1.007237x` direct vpxenc wall time and `1.049389x`
+child CPU. Median PGO frame times are `5.020/6.311/4.874 ms` for
+in-tree/ducks/old-town.
 
-**Future plan:** retrain the representative PGO matrix on this committed tree
-and replace the projected direct-speed range with fresh same-binary evidence.
+**Future plan:** retain this final-green CPU8 VBR policy while validating the
+independent CBR/AQ, denoiser, and temporal/SVC feature matrix.
