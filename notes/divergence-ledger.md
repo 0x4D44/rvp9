@@ -4875,3 +4875,60 @@ paired wall geomean is `1.209155x`.
 **Future plan:** retain this cross-resolution quality and 1080p speed
 prerequisite, then profile the remaining CPU8 work gap without weakening the
 new six-point curves.
+
+### 2026-08-09 — Calibrate CPU6 exact partitions and admit TX4 redecision
+
+**Where:** `rvp9_encoder::InterEncodeEnv::exact_vbp_tree_enabled`,
+`rvp9_encoder::exact_vbp_partition_qindex`, and
+`rvp9_encoder::choose_inter_luma_tx_size`; libvpx counterparts:
+`vp9/encoder/vp9_encodeframe.c:set_vbp_thresholds` and the CPU6 realtime speed
+features in `vp9/encoder/vp9_speed_features.c`.
+
+**What libvpx does:** CPU6 realtime VBR uses variance-based partitioning
+without CPU7's partition-copy shortcut. Its realtime picker stores one
+model-RD transform choice rather than running rvp9's emission-time transform
+search.
+
+**What rvp9 does:** CPU6 now uses the source-exact variance tree, disables
+both history-copy paths, and adds 36 qindex steps only while deriving 1080p
+partition thresholds. Coefficient quantization remains at the rate
+controller's qindex. On TX16-capable leaves, CPU6's existing emission-time
+TX8/TX16 redecision also considers TX4; CPU7 keeps TX8/TX16 and CPU8 keeps its
+accepted picker transform.
+
+**Why:** the preceding approximate CPU6 path measured `2.507062x` vpxenc wall
+time and poor structural fidelity. Exact partitions plus the 36-step
+structural calibration and source-faithful no-copy policy moved the three
+1080p curves to `+6.119%/-9.139%/+4.736%` while running at `0.946161x`
+vpxenc wall time. Adding only TX4 uses part of that speed headroom and improves
+the limiting curves without clip, bitrate, frame-position, or source-signal
+rules. Broad transform searches recovered more quality but exceeded the
+speed gate and were rejected.
+
+**Byte-parity impact:** intentional and structural. CPU6 partition history,
+transform signalling, coefficient tokens, and rate-control feedback diverge.
+The exercised CPU6 old-town target-2500 IVF has SHA-256
+`fe61cebb0e79a5de1fad27010bce4558efc982939475f0db9d3bc7e73740fd94`.
+Rvp9-decoder, pinned vpxdec, and ffmpeg each emit the same 186,624,000-byte
+I420 output with SHA-256
+`4941b8bb15f372d30a51a6a5728874a05c9231f00cfbe0903986297ba3b3dc71`.
+CPU7 and CPU8 policy branches are unchanged; the exercised CPU8 stream is
+byte-identical to the Unit 974 PGO control at SHA-256
+`3e142ba677ebf65c19705f62bdc9784a5486c90da6e235931fcb496923e5fa60`.
+
+**Compression-efficiency impact:** the canonical 60-frame 1080p six-point
+in-tree/ducks/old-town curves are `+5.497%/-9.845%/+4.108%`. Their arithmetic
+mean is `-0.080%`, but in-tree and old-town still exceed the important-clip
+`+2%` guard; this is an accepted measured prerequisite, not final CPU6
+quality parity.
+
+**Speed impact:** fifteen warmed alternating plain-release pairs against
+pinned vpxenc measured per-clip wall ratios
+`0.922675x/1.042926x/0.949883x`, corpus geomean `0.970489x`. The child-CPU
+geomean was `0.971639x`; median rvp9 frame times were
+`5.994/8.998/6.010 ms` for in-tree/ducks/old-town.
+
+**Future plan:** retrain the representative PGO matrix, retain only if CPU6
+speed stays green, then profile the remaining in-tree and old-town coding-
+efficiency gap. Do not broaden transform search without a measured cheap
+winner predicate.

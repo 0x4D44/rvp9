@@ -1742,17 +1742,27 @@ pub(crate) fn effective_qindex_for_segment(
 /// coding Q than pinned vpxenc. Feeding that finer Q directly to the otherwise
 /// exact VBP threshold ladder over-splits the frame and repeats costly final
 /// mode picks. Keep coefficient quantization at the rate controller's Q, but
-/// raise only the partition threshold Q by the measured corpus-wide bias.
+/// raise only the partition threshold Q by the measured preset calibration.
 #[inline]
-fn exact_vbp_partition_qindex(effective_qindex: u8, frame_width: usize, frame_height: usize) -> u8 {
+fn exact_vbp_partition_qindex(
+    effective_qindex: u8,
+    frame_width: usize,
+    frame_height: usize,
+    speed: i32,
+) -> u8 {
     // Unit 914's literal-resolution sweep found that the larger bias is a
     // Pareto win at 1080p, but over-coarsens the 720p tree. Keep the proven
     // 720p calibration and scale only above that pixel count, matching the
     // frame-size-dependent shape of libvpx's realtime speed features.
     const PARTITION_QINDEX_BIAS_720P: u8 = 9;
     const PARTITION_QINDEX_BIAS_LARGE: u8 = 18;
+    const PARTITION_QINDEX_BIAS_CPU6_LARGE: u8 = 36;
     let bias = if frame_width.saturating_mul(frame_height) > 1280 * 720 {
-        PARTITION_QINDEX_BIAS_LARGE
+        if speed == 6 {
+            PARTITION_QINDEX_BIAS_CPU6_LARGE
+        } else {
+            PARTITION_QINDEX_BIAS_LARGE
+        }
     } else {
         PARTITION_QINDEX_BIAS_720P
     };
@@ -5442,7 +5452,7 @@ impl InterEncodeEnv {
         self.flag_or(self.compact_recon_rows, false)
     }
 
-    /// Use the pinned-libvpx variance tree on CPU7/8 realtime VBR show frames.
+    /// Use the pinned-libvpx variance tree on CPU6-8 realtime VBR show frames.
     /// An explicit override retains the whole-frame diagnostic used by
     /// differential tests.
     pub(crate) fn exact_vbp_tree_enabled(
@@ -5456,7 +5466,7 @@ impl InterEncodeEnv {
             .exact_vbp_tree
             .unwrap_or(rc_mode == crate::rate_control::RcMode::Vbr);
         selected
-            && matches!(speed, 7 | 8)
+            && matches!(speed, 6..=8)
             && deadline == rvp9_core::mode_decision::speed_features::Deadline::Realtime
             && content_tier == rvp9_core::mode_decision::speed_features::ContentTier::Default
     }
@@ -6551,7 +6561,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     let segment_id = segment_id_for_hint_cell(&sb_partitions[sb_idx], 0, 0);
                     let effective_qindex =
                         effective_qindex_for_segment(base_qindex, segment_id, seg_q_deltas);
-                    let partition_qindex = exact_vbp_partition_qindex(effective_qindex, w, h);
+                    let partition_qindex =
+                        exact_vbp_partition_qindex(effective_qindex, w, h, speed);
                     let content_state = content_state_sb_grid
                         .get(sb_idx)
                         .copied()
@@ -6580,11 +6591,12 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         rvp9_core::mode_decision::inter::ContentStateSb::LowSadLowSumdiff
                             | rvp9_core::mode_decision::inter::ContentStateSb::LowSadHighSumdiff
                     );
-                    let low_source_copy = if low_source_sad && !scene_change_detected_frame {
-                        history.try_copy_selection(copy_conditions)
-                    } else {
-                        None
-                    };
+                    let low_source_copy =
+                        if speed >= 7 && low_source_sad && !scene_change_detected_frame {
+                            history.try_copy_selection(copy_conditions)
+                        } else {
+                            None
+                        };
 
                     let (exact_decision, variance_low) = if let Some(copy) = low_source_copy {
                         (copy.decision, copy.variance_low)
@@ -6693,7 +6705,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             variance_low[0] = true;
                             history.update(decision.clone(), segment_id, variance_low);
                             (decision, variance_low)
-                        } else if int_pro.best_sad < vbp_threshold_copy {
+                        } else if speed >= 7 && int_pro.best_sad < vbp_threshold_copy {
                             if let Some(copy) = history.try_copy_selection(copy_conditions) {
                                 (copy.decision, copy.variance_low)
                             } else {
@@ -9474,7 +9486,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             // Approximate partition paths reuse the RT picker's
                             // model-RD TX decision, matching libvpx pickmode's
                             // stored `mi->tx_size`. Exact variance-tree frames
-                            // redecide TX8/TX16 only for TX16-capable leaves;
+                            // redecide TX8/TX16 for TX16-capable leaves. CPU6
+                            // also admits TX4 through measured speed headroom;
                             // other leaf classes retain the picker transform.
                             // Other large-frame paths keep their established
                             // maximum-TX shortcut.
@@ -9491,23 +9504,26 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                     } else {
                                         None
                                     };
-                                chosen_luma_tx = choose_inter_luma_tx_size(InterLumaTxInput {
-                                    input_plane,
-                                    input_stride,
-                                    input_px_x: plane_px_x,
-                                    input_px_y: plane_px_y,
-                                    recon_plane: recon_data,
-                                    recon_stride,
-                                    recon_px_x: recon_plane_px_x,
-                                    recon_px_y: recon_plane_px_y,
-                                    leaf_bsize,
-                                    quantizer: &quantizer,
-                                    coef_costs: &rdo_coef_costs,
-                                    rdmult: tx_rd_rdmult,
-                                    tx_size_cost: rdo_tx_size_cost,
-                                    quant_fp: rt_quant_fp,
-                                    scratch: inter_emit_scratch,
-                                });
+                                chosen_luma_tx = choose_inter_luma_tx_size(
+                                    InterLumaTxInput {
+                                        input_plane,
+                                        input_stride,
+                                        input_px_x: plane_px_x,
+                                        input_px_y: plane_px_y,
+                                        recon_plane: recon_data,
+                                        recon_stride,
+                                        recon_px_x: recon_plane_px_x,
+                                        recon_px_y: recon_plane_px_y,
+                                        leaf_bsize,
+                                        quantizer: &quantizer,
+                                        coef_costs: &rdo_coef_costs,
+                                        rdmult: tx_rd_rdmult,
+                                        tx_size_cost: rdo_tx_size_cost,
+                                        quant_fp: rt_quant_fp,
+                                        scratch: inter_emit_scratch,
+                                    },
+                                    realtime_tx4_candidate_enabled(speed),
+                                );
                                 if let Some(t0) = emit_tx_select_start {
                                     *emit_profile_tx_select_time += t0.elapsed();
                                 }
@@ -11818,12 +11834,20 @@ fn should_redecide_inter_luma_tx(force_max_tx: bool, tx_rd: bool, bsize: BlockSi
     !force_max_tx && tx_rd && rvp9_core::block::max_txsize(bsize) == TxSize::Tx16x16
 }
 
-fn choose_inter_luma_tx_size(input: InterLumaTxInput<'_>) -> TxSize {
+fn realtime_tx4_candidate_enabled(speed: i32) -> bool {
+    speed == 6
+}
+
+fn choose_inter_luma_tx_size(input: InterLumaTxInput<'_>, include_tx4: bool) -> TxSize {
     let max_tx = rvp9_core::block::max_txsize(input.leaf_bsize);
     if max_tx != TxSize::Tx16x16 {
         return max_tx;
     }
-    choose_inter_luma_tx_size_impl::<true>(input, true)
+    if include_tx4 {
+        choose_inter_luma_tx_size_impl::<true>(input, false)
+    } else {
+        choose_inter_luma_tx_size_impl::<true>(input, true)
+    }
 }
 
 fn choose_inter_luma_tx_size_impl<const PRUNE: bool>(
@@ -11915,8 +11939,8 @@ fn choose_inter_luma_tx_size_impl<const PRUNE: bool>(
     let mut best_rd = i64::MAX;
 
     // Walk candidate sizes from max down to Tx4x4. Exhaustive diagnostics
-    // retain the full libvpx good-quality depth; the measured realtime policy
-    // admits only TX16 and TX8 for the eligible leaf class.
+    // retain the full libvpx good-quality depth. The measured realtime policy
+    // admits TX16/TX8, plus TX4 on CPU6 through the non-subset path above.
     'candidate_sizes: for n in (0..=(max_tx as usize)).rev() {
         let tx_size = match n {
             0 => TxSize::Tx4x4,
@@ -14248,7 +14272,7 @@ mod tests {
     }
 
     #[test]
-    fn exact_vbp_defaults_to_cpu7_and_cpu8_realtime_vbr_show_frames() {
+    fn exact_vbp_defaults_to_cpu6_through_cpu8_realtime_vbr_show_frames() {
         use rvp9_core::mode_decision::speed_features::{ContentTier, Deadline};
 
         let _guard = env_test_mutex();
@@ -14268,7 +14292,7 @@ mod tests {
             Deadline::Realtime,
             ContentTier::Default,
         ));
-        assert!(!env.exact_vbp_tree_enabled(
+        assert!(env.exact_vbp_tree_enabled(
             RcMode::Vbr,
             6,
             Deadline::Realtime,
@@ -14411,7 +14435,7 @@ mod tests {
     }
 
     #[test]
-    fn realtime_tx_redecision_searches_only_tx8_and_tx16() {
+    fn realtime_tx_redecision_adds_tx4_only_on_cpu6_tx16_leaves() {
         assert!(!realtime_emit_tx_rd_enabled(None, false, 7));
         assert!(realtime_emit_tx_rd_enabled(None, true, 7));
         assert!(!realtime_emit_tx_rd_enabled(None, true, 8));
@@ -14437,8 +14461,10 @@ mod tests {
             false,
             BlockSize::Block16x16,
         ));
+        assert!(realtime_tx4_candidate_enabled(6));
+        assert!(!realtime_tx4_candidate_enabled(7));
         assert!(!realtime_inter_tx_candidate(TxSize::Tx16x16, TxSize::Tx4x4));
-        assert!(realtime_inter_tx_candidate(TxSize::Tx16x16, TxSize::Tx8x8));
+        assert!(realtime_inter_tx_candidate(TxSize::Tx16x16, TxSize::Tx8x8,));
         assert!(realtime_inter_tx_candidate(
             TxSize::Tx16x16,
             TxSize::Tx16x16
@@ -16094,10 +16120,11 @@ mod tests {
 
     #[test]
     fn exact_vbp_partition_qindex_applies_bias_without_wrapping() {
-        assert_eq!(exact_vbp_partition_qindex(100, 1280, 720), 109);
-        assert_eq!(exact_vbp_partition_qindex(100, 1920, 1080), 118);
-        assert_eq!(exact_vbp_partition_qindex(250, 1280, 720), 255);
-        assert_eq!(exact_vbp_partition_qindex(255, 1920, 1080), 255);
+        assert_eq!(exact_vbp_partition_qindex(100, 1280, 720, 6), 109);
+        assert_eq!(exact_vbp_partition_qindex(100, 1920, 1080, 6), 136);
+        assert_eq!(exact_vbp_partition_qindex(100, 1920, 1080, 7), 118);
+        assert_eq!(exact_vbp_partition_qindex(250, 1280, 720, 6), 255);
+        assert_eq!(exact_vbp_partition_qindex(255, 1920, 1080, 6), 255);
     }
 
     /// AQ.1 KEY ORACLE — run the simulator on two equally-shaped 8×8
