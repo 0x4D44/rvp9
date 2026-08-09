@@ -2669,11 +2669,11 @@ const fn should_evaluate_intra_fallback(
 
 /// Intra modes evaluated in the intra-in-inter fallback.
 /// Matches libvpx's `intra_mode_list[] = { DC_PRED, V_PRED, H_PRED,
-/// TM_PRED }` at `vp9_pickmode.c:2556`, minus TM (deferred for v1
-/// simplicity — see module-level doc).
-const INTRA_IN_INTER_MODES: [IntraMode; 3] = [IntraMode::Dc, IntraMode::V, IntraMode::H];
+/// TM_PRED }` at `vp9_pickmode.c:2556`.
+const INTRA_IN_INTER_MODES: [IntraMode; 4] =
+    [IntraMode::Dc, IntraMode::V, IntraMode::H, IntraMode::Tm];
 
-/// Evaluate DC/V/H intra modes as a fallback inside `pick_inter_mode`.
+/// Evaluate DC/V/H/TM intra modes as a fallback inside `pick_inter_mode`.
 ///
 /// Port of libvpx `vp9_pickmode.c:2517-2646`. For each candidate mode
 /// this function:
@@ -7524,6 +7524,14 @@ mod tests {
         assert!(should_evaluate_intra_fallback(true, false, 101, 100));
         assert!(!should_evaluate_intra_fallback(true, false, 100, 100));
         assert!(!should_evaluate_intra_fallback(false, false, 101, 100));
+    }
+
+    #[test]
+    fn realtime_intra_fallback_includes_the_source_tm_candidate() {
+        assert_eq!(
+            INTRA_IN_INTER_MODES,
+            [IntraMode::Dc, IntraMode::V, IntraMode::H, IntraMode::Tm]
+        );
     }
 
     #[test]

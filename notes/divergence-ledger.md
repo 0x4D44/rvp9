@@ -755,14 +755,14 @@ change recovers libvpx's quarter-pel choices without the measured speed and
 BD-rate regression. Re-evaluate independently for cpu-used 6 and 8 during the
 full preset matrix.
 
-### 2026-07-30 — Retain a three-mode realtime intra-in-inter fallback
+### 2026-07-30 — Use the four-mode realtime intra-in-inter fallback
 **Where:** `rvp9-core::mode_decision::inter::pick_inter_mode` and
 `rvp9-encoder::encode_inter_frame`; libvpx counterpart:
 `vp9/encoder/vp9_pickmode.c:2517-2646`.
 **What libvpx does:** evaluates DC/V/H/TM after the realtime inter search,
 uses adaptive per-mode RD thresholds, and applies additional search-skip and
 low-source-SAD entry guards. Its chosen luma mode also drives chroma.
-**What rvp9 does:** evaluates DC/V/H on final leaves, ranks them in the
+**What rvp9 does:** evaluates DC/V/H/TM on final leaves, ranks them in the
 coefficient-distortion domain, and keeps UV prediction on DC. It now reads and
 updates libvpx's adaptive intra RD-threshold slots. It does not apply the
 remaining search-skip/low-source-SAD shortcuts.
@@ -778,9 +778,13 @@ ffmpeg decoded output.
 the then-current Stage 4a BD-rate from `+6.8761%` to `+4.9246%`. Adding the
 adaptive intra threshold later improved the measured seven-point Foreman curve
 by a further `0.0476%` relative while reducing the exact-VBP test CPU by
-`4.917%`.
-**Future plan:** add TM, luma-driven chroma, or the remaining entry shortcuts
-only when each retains a reproducible corpus-level Pareto improvement.
+`4.917%`. Adding the source TM candidate on the corrected CPU6 controller
+improves serialized in-tree/ducks/old-town curves from
+`+1.640%/-11.830%/-1.327%` to `+1.576%/-12.137%/-1.402%`. Fifteen warmed
+same-build pairs measure a `1.0085x` wall-time geomean and `1.0098x` child-CPU
+geomean; CPU6 retains sufficient direct-vpxenc speed margin.
+**Future plan:** add luma-driven chroma or the remaining entry shortcuts only
+when each retains a reproducible corpus-level joint quality/speed improvement.
 
 ### 2026-07-30 — Neutral inherited-MV context in the Stage 4a partition proxy
 **Where:** `rvp9-encoder::pick_and_simulate_inter_encode_partitions`;
