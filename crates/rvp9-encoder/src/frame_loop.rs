@@ -180,6 +180,11 @@ pub enum AqMode {
     CyclicRefresh,
 }
 
+#[inline]
+const fn realtime_skin_detection_enabled(rc_mode: RcMode, aq_mode: AqMode) -> bool {
+    matches!(rc_mode, RcMode::Cbr) && matches!(aq_mode, AqMode::CyclicRefresh)
+}
+
 /// Hidden Stage 4a product override for split-admission diagnostics.
 ///
 /// This is not a user-facing tuning knob. Product gates use
@@ -2280,6 +2285,8 @@ impl StreamEncoder {
         // `pre_analysis.avg_source_sad[]` and
         // `pre_analysis.content_state_sb[]` for every SB64.
         let hf_classifier_enabled = three_d_enabled();
+        let skin_detection_enabled =
+            realtime_skin_detection_enabled(self.config.rc_mode, self.config.aq_mode);
         let (source_maps_parallel, parallel_hf_laplacian_sum) = if self
             .pre_analysis
             .compute_source_sad_onepass
@@ -2295,6 +2302,7 @@ impl StreamEncoder {
                     worker_pool,
                     crate::pre_analysis::ParallelSourceMapConfig {
                         cbr_mode: matches!(self.config.rc_mode, RcMode::Cbr),
+                        compute_skin_map: skin_detection_enabled,
                         max_jobs,
                         compute_hf_energy: hf_classifier_enabled,
                     },
@@ -2342,10 +2350,13 @@ impl StreamEncoder {
         // `vp9_skin_detection.c:18-127`, `vpx_dsp/skin_detection.c:49-79`).
         // Updates `pre_analysis.skin_map[]` for every 8×8 mi cell.
         // libvpx invokes this inside the per-SB `vp9_compute_skin_sb`
-        // (`vp9_encodeframe.c:5560`) under `cpi->use_skin_detection`;
-        // we run it once per frame in pre-analysis, consumed by the
-        // picker once the consumer side is wired.
-        if self.pre_analysis.compute_source_sad_onepass && !source_maps_parallel {
+        // (`vp9_encodeframe.c:5560`) only when CBR cyclic-refresh AQ sets
+        // `cpi->use_skin_detection`. Match that gate here; AQ-off VBR must
+        // not scan a map whose policy consumers are disabled.
+        if self.pre_analysis.compute_source_sad_onepass
+            && !source_maps_parallel
+            && skin_detection_enabled
+        {
             self.pre_analysis
                 .compute_skin_map(y_tight, u_tight, v_tight);
         }
@@ -6765,6 +6776,20 @@ fn gather_coded_segments_and_skip(
 mod tests {
     use super::*;
     use rvp9_decoder::{Decoder, ParsedFrame};
+
+    #[test]
+    fn skin_detection_is_limited_to_cbr_cyclic_refresh() {
+        assert!(realtime_skin_detection_enabled(
+            RcMode::Cbr,
+            AqMode::CyclicRefresh
+        ));
+        assert!(!realtime_skin_detection_enabled(RcMode::Cbr, AqMode::Off));
+        assert!(!realtime_skin_detection_enabled(
+            RcMode::Vbr,
+            AqMode::CyclicRefresh
+        ));
+        assert!(!realtime_skin_detection_enabled(RcMode::Vbr, AqMode::Off));
+    }
 
     #[test]
     fn filter_search_chessboard_tracks_video_frame_parity() {

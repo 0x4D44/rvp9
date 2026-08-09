@@ -152,6 +152,8 @@ pub struct PreAnalysisState {
 pub(crate) struct ParallelSourceMapConfig {
     /// Apply the CBR-only lighting-change source-SAD classification.
     pub(crate) cbr_mode: bool,
+    /// Produce the CBR cyclic-refresh skin map.
+    pub(crate) compute_skin_map: bool,
     /// Maximum worker jobs available to the producer split.
     pub(crate) max_jobs: usize,
     /// Compute the content classifier's luma Laplacian in the same jobs.
@@ -410,15 +412,17 @@ impl PreAnalysisState {
                             state_out,
                         );
                     }
-                    compute_skin_map_rows(
-                        src_y_tight,
-                        src_u_tight,
-                        src_v_tight,
-                        w,
-                        mi_row_start,
-                        consecutive_zero_mv,
-                        skin_out,
-                    );
+                    if config.compute_skin_map {
+                        compute_skin_map_rows(
+                            src_y_tight,
+                            src_u_tight,
+                            src_v_tight,
+                            w,
+                            mi_row_start,
+                            consecutive_zero_mv,
+                            skin_out,
+                        );
+                    }
                     if config.compute_hf_energy {
                         let pixel_row_start = (mi_row_start * 8).max(1);
                         let pixel_row_end = if mi_row_start + mi_row_count == mi_rows {
@@ -1954,6 +1958,7 @@ mod tests {
                 &mut pool,
                 ParallelSourceMapConfig {
                     cbr_mode: true,
+                    compute_skin_map: true,
                     max_jobs: 4,
                     compute_hf_energy: true,
                 },
@@ -1967,6 +1972,38 @@ mod tests {
             parallel_hf_sum,
             frame_hf_laplacian_sampled_sum_rows(&source_y, W, H, 1, H - 1),
         );
+    }
+
+    /// Unit 917 — AQ-off/VBR source-map jobs must not run or overwrite the
+    /// CBR cyclic-refresh-only skin producer.
+    #[test]
+    fn parallel_source_maps_can_skip_skin_detection() {
+        const W: usize = 128;
+        const H: usize = 128;
+        let source_y = vec![96u8; W * H];
+        let source_u = vec![112u8; (W / 2) * (H / 2)];
+        let source_v = vec![144u8; (W / 2) * (H / 2)];
+        let mut state = PreAnalysisState::new(W as u32, H as u32);
+        state.skin_map.fill(0xa5);
+        let expected = state.skin_map.clone();
+        let mut pool = rvp9_core::tile_threading::WorkerPool::new_with_caller(
+            std::num::NonZeroUsize::new(2).unwrap(),
+        );
+
+        state.compute_source_maps_parallel(
+            &source_y,
+            &source_u,
+            &source_v,
+            &mut pool,
+            ParallelSourceMapConfig {
+                cbr_mode: false,
+                compute_skin_map: false,
+                max_jobs: 2,
+                compute_hf_energy: false,
+            },
+        );
+
+        assert_eq!(state.skin_map, expected);
     }
 
     /// Unit 915 — the sampled production classifier must retain the exact
