@@ -5203,3 +5203,37 @@ was removed.
 
 **Future plan:** retain the exact medium-strength NEON path while broadening
 denoiser evidence across the declared livestream corpus and CPU6/8 presets.
+
+### 2026-08-09 — Omit the final CPU8 intra-in-inter fallback
+
+**Where:** `rvp9_encoder::realtime_intra_fallback_enabled` and
+`rvp9_encoder::pick_and_simulate_inter_encode_partitions`; libvpx counterpart:
+`vp9/encoder/vp9_pickmode.c:2514-2646`.
+
+**What libvpx does:** CPU8 may evaluate intra modes after the inter-mode loop
+when the skip, size, content, and adaptive-threshold gates admit the fallback.
+
+**What rvp9 does:** CPU6 and CPU7 keep that behavior. CPU8 returns the selected
+inter winner without running the final intra-in-inter fallback.
+
+**Why:** the matched CPU8 720p profile assigns 5.06% of all product-self samples
+to the fallback. Fifteen warmed same-build noisy-ducks pairs show a reproducible
+`0.940712x` wall and `0.941912x` CPU improvement, while all three serialized
+denoiser-on curves retain substantial quality margin.
+
+**Byte-parity impact:** structural on CPU8. The exercised noisy-ducks
+target-1500 stream changes from SHA-256
+`019bb035ab6c12fc1a5a5ff25f0eaea6c3cca78cb1fc73828ce4ab29e791f23f`
+to `94c9ef35bb966f7fb954029281e2e7e378e63c7393cbd6276ef4093201683165`.
+
+**Compression-efficiency impact:** CPU8 realtime VBR denoiser-on clean-reference
+BD-rates versus feature-enabled pinned vpxenc are
+`-3.041%/-8.855%/-2.959%` for in-tree/ducks/old-town, all inside the final
+`+0.5%` gate.
+
+**Speed impact:** the same-build plain-release noisy-ducks comparison improves
+from `0.592077 s` to `0.556974 s` over 60 frames. Production-PGO confirmation
+is the next gate.
+
+**Future plan:** retain only if independent production-PGO timing reproduces
+the gain and the remaining CPU8 configurations keep their quality gates.

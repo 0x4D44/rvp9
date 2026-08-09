@@ -4977,6 +4977,14 @@ fn realtime_search_golden_filter(rc_mode: crate::rate_control::RcMode, speed: i3
     matches!(rc_mode, crate::rate_control::RcMode::Vbr) && speed.unsigned_abs() < 8
 }
 
+/// Keep the complete intra-in-inter fallback through CPU7. CPU8 already uses
+/// the realtime inter picker and its strictest candidate set; omit the final
+/// intra fallback so the fastest preset does not repeat model-RD prediction
+/// work after selecting an inter winner.
+fn realtime_intra_fallback_enabled(speed: i32) -> bool {
+    speed.unsigned_abs() < 8
+}
+
 fn retain_all_last_nearest_filter_search(rc_mode: crate::rate_control::RcMode, speed: i32) -> bool {
     matches!(rc_mode, crate::rate_control::RcMode::Vbr) && speed.unsigned_abs() == 6
 }
@@ -8637,7 +8645,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     // and loop-filter grids preserve intra winners. Keep it
                     // out of the speculative descent above; libvpx evaluates
                     // it after the inter-mode search on the selected leaf.
-                    enable_intra_fallback: true,
+                    enable_intra_fallback: realtime_intra_fallback_enabled(speed),
                     intra_above_pixels: intra_above,
                     intra_left_pixels: intra_left,
                     intra_top_left_pixel: intra_top_left,
@@ -14700,6 +14708,13 @@ mod tests {
         assert!(realtime_search_golden_filter(RcMode::Vbr, 7));
         assert!(!realtime_search_golden_filter(RcMode::Vbr, 8));
         assert!(!realtime_search_golden_filter(RcMode::Cbr, 7));
+    }
+
+    #[test]
+    fn cpu8_omits_the_final_intra_fallback() {
+        assert!(realtime_intra_fallback_enabled(6));
+        assert!(realtime_intra_fallback_enabled(7));
+        assert!(!realtime_intra_fallback_enabled(8));
     }
 
     #[test]
