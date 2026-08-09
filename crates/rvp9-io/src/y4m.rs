@@ -392,9 +392,23 @@ impl Y4mReader {
                 }
             }
         }
-        self.file.read_exact(&mut self.body)?;
-
         let (y_crop, u_crop, v_crop) = frame;
+        if self.off_x == 0
+            && self.off_y == 0
+            && self.crop.width == self.source.width
+            && self.crop.height == self.source.height
+        {
+            resize_zeroed_buffer(y_crop, self.crop.y_bytes, "full-frame luma plane")?;
+            resize_zeroed_buffer(u_crop, self.crop.uv_bytes, "full-frame U plane")?;
+            resize_zeroed_buffer(v_crop, self.crop.uv_bytes, "full-frame V plane")?;
+            self.file.read_exact(y_crop)?;
+            self.file.read_exact(u_crop)?;
+            self.file.read_exact(v_crop)?;
+            self.remaining -= 1;
+            return Ok(true);
+        }
+
+        self.file.read_exact(&mut self.body)?;
         resize_zeroed_buffer(y_crop, self.crop.y_bytes, "cropped luma plane")?;
         for row in 0..self.crop.height {
             let start = (self.off_y + row) * self.source.width + self.off_x;
@@ -593,6 +607,74 @@ mod tests {
         assert_eq!(frames[0], f0);
         assert_eq!(frames[1], f1);
         assert!((fr - 30.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn y4m_cropped_next_frame_into_reuses_planes_after_frame_params() {
+        let (source_w, source_h, crop_w, crop_h) = (16usize, 16usize, 8usize, 8usize);
+        let source_uv_bytes = (source_w / 2) * (source_h / 2);
+        let mut buf = Vec::new();
+        write_header(
+            &mut buf,
+            source_w as u32,
+            source_h as u32,
+            30,
+            1,
+            ChromaFormat::Yuv420,
+        )
+        .expect("write header");
+
+        for (params, y_bias, u_value, v_value) in [
+            (b"FRAME I0\n".as_slice(), 0u8, 0x40u8, 0x80u8),
+            (b"FRAME\n".as_slice(), 3u8, 0x41u8, 0x81u8),
+        ] {
+            buf.extend_from_slice(params);
+            for row in 0..source_h {
+                for col in 0..source_w {
+                    buf.push(((row * source_w + col) as u8).wrapping_add(y_bias));
+                }
+            }
+            buf.extend(std::iter::repeat_n(u_value, source_uv_bytes));
+            buf.extend(std::iter::repeat_n(v_value, source_uv_bytes));
+        }
+
+        let path = std::env::temp_dir().join(format!(
+            "rvp9_io_y4m_cropped_reuse_{}.y4m",
+            std::process::id()
+        ));
+        std::fs::write(&path, &buf).expect("write temp");
+        let mut reader =
+            Y4mReader::open(&path, crop_w as u32, crop_h as u32, usize::MAX).expect("open reader");
+        let mut frame = YuvFrameBuf::default();
+
+        assert!(reader.next_frame_into(&mut frame).expect("read first crop"));
+        let first_y: Vec<u8> = (4..12)
+            .flat_map(|row| (4..12).map(move |col| (row * source_w + col) as u8))
+            .collect();
+        assert_eq!(frame.0, first_y);
+        assert_eq!(frame.1, vec![0x40; crop_w * crop_h / 4]);
+        assert_eq!(frame.2, vec![0x80; crop_w * crop_h / 4]);
+        let plane_ptrs = (frame.0.as_ptr(), frame.1.as_ptr(), frame.2.as_ptr());
+
+        assert!(
+            reader
+                .next_frame_into(&mut frame)
+                .expect("read second crop")
+        );
+        let second_y: Vec<u8> = first_y
+            .into_iter()
+            .map(|value| value.wrapping_add(3))
+            .collect();
+        assert_eq!(frame.0, second_y);
+        assert_eq!(frame.1, vec![0x41; crop_w * crop_h / 4]);
+        assert_eq!(frame.2, vec![0x81; crop_w * crop_h / 4]);
+        assert_eq!(
+            (frame.0.as_ptr(), frame.1.as_ptr(), frame.2.as_ptr()),
+            plane_ptrs,
+            "equal-sized cropped frames must retain their plane allocations"
+        );
+        assert!(!reader.next_frame_into(&mut frame).expect("read EOF"));
+        let _ = std::fs::remove_file(&path);
     }
 
     /// Oracle for the G-B fix: [`write_header`] emits the y4m chroma
