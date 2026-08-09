@@ -4736,3 +4736,41 @@ the required quiet-host acceptance timing.
 **Future plan:** retain this measured Stage 4a quality prerequisite, profile
 the exact path, and remove its largest proven cost without reopening any of
 the three six-point curves.
+
+### 2026-08-09 — Calibrate exact VBP structure above the coding Q
+
+**Where:** `rvp9_encoder::exact_vbp_partition_qindex` and the exact-tree
+adapter in `rvp9_encoder::pick_and_simulate_inter_encode_partitions`;
+libvpx counterpart: `vp9/encoder/vp9_encodeframe.c:set_vbp_thresholds`.
+
+**What libvpx does:** derives variance-partition thresholds directly from the
+frame or segment coding qindex.
+
+**What rvp9 does:** the CPU7 realtime one-pass VBR exact-tree product path
+adds nine qindex steps only while deriving partition thresholds and the
+low-SAD/copy thresholds. Coefficient quantization and every non-product path
+retain the rate controller's effective qindex.
+
+**Why:** at the old-town 4000-kbps point, rvp9 used average inter qindex
+132.63 versus vpxenc's 138.27, yet emitted fewer bits. Applying the exact
+libvpx threshold formula at that finer live Q produced 20,668 inter 8x8 leaves
+versus vpxenc's 9,748 and repeated expensive final-picker work. The uniform
+partition-only bias compensates for the different live trajectory without a
+clip, bitrate, frame-position, or target-resolution rule. A sweep of biases
+3/6/9/12 selected nine by the worst required clip, not by a single point.
+
+**Byte-parity impact:** intentional and structural. Partition history, rate
+control feedback, and later reconstruction diverge from the previous product
+stream.
+
+**Compression-efficiency impact:** the canonical six-point
+in-tree/ducks/old-town curves move from `+1.279%/-9.786%/+1.769%` to
+`+1.096%/-10.243%/+0.399%`. Every required Stage 4a clip improves.
+
+**Speed impact:** the coarser structure reduces repeated leaf-picker work.
+Nine alternating loaded-host old-town 4000-kbps runs moved median wall time
+from 0.51 s to 0.50 s and median child CPU from 1.64 s to 1.62 s. This is a
+small directional win, not quiet-host acceptance timing.
+
+**Future plan:** retain the uniform calibration while closing the remaining
+in-tree gap, then generalize and repeat the final quiet-host matrix.

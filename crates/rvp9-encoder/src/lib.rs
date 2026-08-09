@@ -1733,6 +1733,19 @@ pub(crate) fn effective_qindex_for_segment(
     }
 }
 
+/// Partition-only Q calibration for the CPU7 VBR exact-tree product path.
+///
+/// Rvp9's live VBR trajectory reaches matched operating points at a finer
+/// coding Q than pinned vpxenc. Feeding that finer Q directly to the otherwise
+/// exact VBP threshold ladder over-splits the frame and repeats costly final
+/// mode picks. Keep coefficient quantization at the rate controller's Q, but
+/// raise only the partition threshold Q by the measured corpus-wide bias.
+#[inline]
+fn exact_vbp_partition_qindex(effective_qindex: u8) -> u8 {
+    const PARTITION_QINDEX_BIAS: u8 = 9;
+    effective_qindex.saturating_add(PARTITION_QINDEX_BIAS)
+}
+
 /// Per-leaf descriptor handed to
 /// [`simulate_dc_intra_encode_partitions`] — describes one intra leaf
 /// inside a 64×64 SB.
@@ -6315,12 +6328,13 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     let segment_id = segment_id_for_hint_cell(&sb_partitions[sb_idx], 0, 0);
                     let effective_qindex =
                         effective_qindex_for_segment(base_qindex, segment_id, seg_q_deltas);
+                    let partition_qindex = exact_vbp_partition_qindex(effective_qindex);
                     let content_state = content_state_sb_grid
                         .get(sb_idx)
                         .copied()
                         .unwrap_or(rvp9_core::mode_decision::inter::ContentStateSb::Normal);
                     let thresholds = cpu7_inter_vbp_thresholds(Cpu7InterVbpThresholdInput {
-                        q_index: effective_qindex,
+                        q_index: partition_qindex,
                         avg_inter_qindex,
                         frame_width: w,
                         frame_height: h,
@@ -6401,7 +6415,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         );
 
                         let (_, ac) =
-                            plane_dequant_pair(i32::from(effective_qindex), QuantizerDeltas::Y);
+                            plane_dequant_pair(i32::from(partition_qindex), QuantizerDeltas::Y);
                         let vbp_threshold_sad = if scene_change_detected_frame {
                             0
                         } else if w <= 352 && h <= 288 {
@@ -15625,6 +15639,13 @@ mod tests {
         let mut seg_q_deltas: [Option<i16>; 8] = [None; 8];
         seg_q_deltas[1] = Some(-20);
         assert_eq!(effective_qindex_for_segment(5, 1, &seg_q_deltas), 0);
+    }
+
+    #[test]
+    fn exact_vbp_partition_qindex_applies_bias_without_wrapping() {
+        assert_eq!(exact_vbp_partition_qindex(100), 109);
+        assert_eq!(exact_vbp_partition_qindex(250), 255);
+        assert_eq!(exact_vbp_partition_qindex(255), 255);
     }
 
     /// AQ.1 KEY ORACLE — run the simulator on two equally-shaped 8×8
