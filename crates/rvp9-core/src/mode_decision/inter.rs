@@ -421,6 +421,9 @@ pub struct InterRdCalibration {
     pub model_dist: bool,
     /// Reuse the luma model's coefficient rate and skip classification.
     pub model_only: bool,
+    /// Replace non-skipped Block16 model rate and distortion with the real
+    /// Hadamard coefficient result while preserving the model skip state.
+    pub block16_coef_rd: bool,
     /// Use libvpx's CBR-only per-transform large-block luma model.
     pub large_block_model: bool,
 }
@@ -437,6 +440,7 @@ impl InterRdCalibration {
             hadamard_only: false,
             model_dist: false,
             model_only: false,
+            block16_coef_rd: false,
             large_block_model: true,
         }
     }
@@ -453,6 +457,7 @@ impl InterRdCalibration {
             hadamard_only: true,
             model_dist: true,
             model_only: true,
+            block16_coef_rd: false,
             large_block_model: true,
         }
     }
@@ -461,6 +466,13 @@ impl InterRdCalibration {
     #[must_use]
     pub const fn with_large_block_model(mut self, enabled: bool) -> Self {
         self.large_block_model = enabled;
+        self
+    }
+
+    /// Select real coefficient rate and distortion for non-skipped Block16 leaves.
+    #[must_use]
+    pub const fn with_block16_coef_rd(mut self, enabled: bool) -> Self {
+        self.block16_coef_rd = enabled;
         self
     }
 
@@ -3772,6 +3784,10 @@ fn evaluate_candidate_for_filter_with_pred(
     // the *picker* honest. Speed cost: one DCT+quantize per former-AcDc
     // leaf on the picker hot path; measured against `realtime_gate_720p30`.
     let hadamard_only = picker_hadamard_only_enabled(params.rd_calibration);
+    let block16_coef_rd = hadamard_only
+        && params.rd_calibration.block16_coef_rd
+        && params.block_size == BlockSize::Block16x16
+        && mrd.skip_txfm != SkipTxfm::AcDc;
     // The product calibration uses the Hadamard result directly, so its
     // distortion pixels are exactly `pred`. Keep reconstruction scratch
     // absent on that path: eagerly creating `[0; 4096]` and then copying
@@ -3803,6 +3819,7 @@ fn evaluate_candidate_for_filter_with_pred(
     } else if hadamard_only
         && params.rd_calibration.model_only
         && params.block_size < BlockSize::Block32x32
+        && !block16_coef_rd
     {
         BlockYrdResult {
             coef_rate: mrd.rate.max(0) as u64,
@@ -3815,6 +3832,7 @@ fn evaluate_candidate_for_filter_with_pred(
         let use_model_dist = hadamard_only
             && params.rd_calibration.model_dist
             && params.block_size < BlockSize::Block32x32
+            && !block16_coef_rd
             && s3_domain_enabled_for_q(params.q_index, params.rd_calibration);
         let collect_coef_dist = (!use_model_dist
             && s3_domain_enabled_for_q(params.q_index, params.rd_calibration))
@@ -3836,6 +3854,9 @@ fn evaluate_candidate_for_filter_with_pred(
         );
         if use_model_dist {
             result.coef_dist = mrd.dist;
+        }
+        if block16_coef_rd {
+            result.skippable = false;
         }
         result
     };
@@ -5708,7 +5729,7 @@ mod tests {
     }
 
     #[test]
-    fn stage4a_picker_reuses_luma_model_rate_and_distortion() {
+    fn stage4a_picker_uses_real_block16_coefficient_rd_when_requested() {
         let pw = 64;
         let ph = 64;
         let src_data = make_plane(pw, ph, 17);
@@ -5737,7 +5758,7 @@ mod tests {
             MvLimits::new(-32, 32, -32, 32),
             50,
         );
-        let params = InterModeSearchParams {
+        let mut params = InterModeSearchParams {
             rd_calibration: InterRdCalibration::realtime(),
             ..control
         };
@@ -5767,6 +5788,20 @@ mod tests {
         assert_eq!(result.coef_rate, expected.rate.max(0) as u64);
         assert_eq!(result.coef_dist, expected.dist);
         assert_eq!(result.dct_eob_total, 0);
+
+        params.rd_calibration = params.rd_calibration.with_block16_coef_rd(true);
+        let coefficient_rd = evaluate_candidate_for_filter(
+            &params,
+            InterMode::ZeroMv,
+            Mv::ZERO,
+            Mv::ZERO,
+            compute_rd_mult(50, frame_type_for_rd(params.frame_kind)),
+            InterpFilter::EightTap,
+        );
+        assert_ne!(coefficient_rd.coef_rate, result.coef_rate);
+        assert_ne!(coefficient_rd.coef_dist, result.coef_dist);
+        assert_eq!(coefficient_rd.skip_txfm, result.skip_txfm);
+        assert_eq!(coefficient_rd.dct_eob_total, 0);
     }
 
     #[test]

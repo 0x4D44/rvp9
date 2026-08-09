@@ -4954,3 +4954,49 @@ geomean of `0.969323x` and child-CPU geomean of `0.967026x`.
 The in-tree clip is now inside the Stage 4a `+2%` intermediate gate but still
 misses final `+0.5%`. Profile its remaining prediction and coefficient gap
 without weakening the source-exact skip behavior.
+
+### 2026-08-09 — Use real coefficient RD only on non-skipped CPU6 Block16 leaves
+
+**Where:** `rvp9_core::mode_decision::inter::evaluate_candidate_for_filter_with_pred`
+and `rvp9_encoder::block16_coef_rd_enabled`; libvpx counterpart:
+`vp9/encoder/vp9_pickmode.c:block_yrd`.
+
+**What libvpx does:** pinned CPU6 realtime leaves `use_simple_block_yrd`
+disabled, so sub-32 inter candidates use real coefficient rate and distortion.
+
+**What rvp9 does:** the exact-tree CPU6 realtime VBR final picker uses its
+existing real Hadamard coefficient rate and distortion only for non-skipped
+Block16 candidates. It preserves the model skip state. Block8 candidates,
+speculative partition descent, CBR, CPU7/8, and non-realtime paths retain
+their preceding model calibration.
+
+**Why:** an earlier global real-`block_yrd` policy and a NEWMV-rate-only slice
+both regressed the old encoder. With the current exact partitions, corrected
+intra skip gate, and filter search, the coupled Block16 slice improves the
+canonical three-clip mean BD-rate from `-4.437%` to `-5.263%`. Using only real
+distortion nearly passed at `+0.509%` on the limiting clip; retaining both the
+real rate and distortion reaches `-1.119%`. Extending the same policy to
+Block8 or model-skipped Block16 leaves did not improve the complete curve.
+
+**Byte-parity impact:** intentional. The exercised CPU6 VBR in-tree
+target-2500 IVF has SHA-256
+`3447f9eb4c9a3685b24261351df164391f7c693b01f38206ea119ae2a63f04fb`.
+Rvp9-decoder, pinned vpxdec, and ffmpeg each emit the same 186,624,000-byte
+I420 output with SHA-256
+`9ec5d37ae4f6b59604a694f6656db005de724e19fd79b6824ffc7fec9601ddc9`.
+CPU7 VBR, CPU8 VBR, and CPU6 CBR streams remain byte-identical to their
+preceding controls.
+
+**Compression-efficiency impact:** serialized canonical 1080p
+in-tree/ducks/old-town curves are `-1.119%/-11.978%/-2.692%` versus vpxenc.
+All three pass the final `+0.5%` per-clip gate.
+
+**Speed impact:** fifteen warmed same-build pairs measured a `1.021465x`
+wall and `1.022048x` child-CPU corpus geomean. Projected against the refreshed
+direct vpxenc baseline, rvp9 remains at `0.945226x` wall time and
+`0.965520x` child CPU. Median candidate frame times are
+`5.955/9.819/5.879 ms`.
+
+**Future plan:** retain the bounded CPU6 scorer and close the independent
+CPU8 quality and 720p speed residual before broadening any real-coefficient
+policy.

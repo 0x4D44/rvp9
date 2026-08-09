@@ -4915,6 +4915,16 @@ fn inter_rd_calibration_for_frame(
         .with_lambda_attenuation(!exact_vbp_tree_enabled)
 }
 
+fn block16_coef_rd_enabled(
+    exact_vbp_tree_enabled: bool,
+    rc_mode: crate::rate_control::RcMode,
+    speed: i32,
+) -> bool {
+    exact_vbp_tree_enabled
+        && speed.unsigned_abs() == 6
+        && matches!(rc_mode, crate::rate_control::RcMode::Vbr)
+}
+
 fn golden_real_block_yrd_enabled(
     rc_mode: crate::rate_control::RcMode,
     speed: i32,
@@ -8470,7 +8480,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     search_golden_filter: realtime_search_golden_filter(rc_mode, speed),
                     skip_ctx,
                     skip_prob: frame_context.skip_probs[skip_ctx],
-                    rd_calibration: inter_rd_calibration,
+                    rd_calibration: inter_rd_calibration.with_block16_coef_rd(
+                        block16_coef_rd_enabled(exact_vbp_tree_enabled, rc_mode, speed),
+                    ),
                     last_const_motion,
                     golden_const_motion,
                     // G1 — UV planes for chroma RD in the picker.
@@ -14051,6 +14063,17 @@ mod tests {
             inter_rd_calibration_for_mode(RcMode::Cbr, 7, Deadline::Realtime, true),
             InterRdCalibration::default()
         );
+    }
+
+    #[test]
+    fn block16_coefficient_rd_is_scoped_to_exact_cpu6_vbr() {
+        assert!(block16_coef_rd_enabled(true, RcMode::Vbr, 6));
+        assert!(block16_coef_rd_enabled(true, RcMode::Vbr, -6));
+        assert!(!block16_coef_rd_enabled(false, RcMode::Vbr, 6));
+        assert!(!block16_coef_rd_enabled(true, RcMode::Vbr, 7));
+        assert!(!block16_coef_rd_enabled(true, RcMode::Vbr, 8));
+        assert!(!block16_coef_rd_enabled(true, RcMode::Cbr, 6));
+        assert!(!block16_coef_rd_enabled(true, RcMode::Cq, 6));
     }
 
     #[test]
