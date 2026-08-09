@@ -4,10 +4,10 @@
 //! restricted to the fields actually used by the 1-pass CBR pick logic.
 
 use super::cbr::{
-    self, MAX_BPB_FACTOR, MIN_BPB_FACTOR, RateFactorLevel, estimate_bits_at_q,
+    self, MAX_BPB_FACTOR, MIN_BPB_FACTOR, RateFactorLevel, estimate_bits_at_q_with_model,
     get_rate_correction_factor, set_rate_correction_factor,
 };
-use super::{FrameKind, RateControl, RcMode};
+use super::{CyclicRefreshRateModel, FrameKind, RateControl, RcMode};
 
 /// Port of `vp9_rc_update_rate_correction_factors`
 /// (`vp9_ratectrl.c:737-817`).
@@ -30,7 +30,12 @@ use super::{FrameKind, RateControl, RcMode};
 /// fields feed the GF-overshoot rescue path
 /// (`vp9_encodedframe_overshoot`) which is out of scope per the
 /// divergence ledger. The damped update itself doesn't read them.
-fn update_rate_correction_factors(rc: &mut RateControl, actual_bits: u32, frame_kind: FrameKind) {
+fn update_rate_correction_factors(
+    rc: &mut RateControl,
+    actual_bits: u32,
+    frame_kind: FrameKind,
+    model: Option<CyclicRefreshRateModel>,
+) {
     // 1. Recover the factor in force when this frame's Q was picked.
     let current_factor = get_rate_correction_factor(rc, frame_kind);
 
@@ -40,7 +45,14 @@ fn update_rate_correction_factors(rc: &mut RateControl, actual_bits: u32, frame_
     //    `rc.last_picked_qindex` in `cbr::pick_q_and_bounds`.
     let picked_q = i32::from(rc.last_picked_qindex);
     let multiplier = rc.config().bits_per_mb_multiplier;
-    let projected = estimate_bits_at_q(frame_kind, picked_q, rc.mbs, current_factor, multiplier);
+    let projected = estimate_bits_at_q_with_model(
+        frame_kind,
+        picked_q,
+        rc.mbs,
+        current_factor,
+        multiplier,
+        model,
+    );
 
     // 3. Compute the integer correction-factor percentage. libvpx
     //    short-circuits when projected ≤ FRAME_OVERHEAD_BITS by
@@ -126,12 +138,21 @@ fn update_rate_correction_factors(rc: &mut RateControl, actual_bits: u32, frame_
 ///
 /// [`RateControl::advance_frame`]: super::RateControl::advance_frame
 pub(super) fn postencode_update(rc: &mut RateControl, actual_bits: u32, frame_kind: FrameKind) {
+    postencode_update_with_model(rc, actual_bits, frame_kind, None);
+}
+
+pub(super) fn postencode_update_with_model(
+    rc: &mut RateControl,
+    actual_bits: u32,
+    frame_kind: FrameKind,
+    model: Option<CyclicRefreshRateModel>,
+) {
     // -- Adapt the per-level rate-correction factor BEFORE we touch
     //    last_q / avg_frame_qindex (libvpx ordering — line 1859 then
     //    line 1864). The damped update reads `last_picked_qindex`,
     //    not the EWMA history, so the order matters only for symmetry
     //    with libvpx.
-    update_rate_correction_factors(rc, actual_bits, frame_kind);
+    update_rate_correction_factors(rc, actual_bits, frame_kind, model);
 
     // -- Update last_q / avg_frame_qindex --
     // libvpx `vp9_rc_postencode_update:1850` records the *actual coded*

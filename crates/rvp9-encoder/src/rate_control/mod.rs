@@ -107,6 +107,49 @@ pub use config::RateControlConfig;
 pub use state::{E8Trace, RateControl};
 pub use two_pass::{FirstPassStats, TwoPassState};
 
+/// Segment-weighted rate model for cyclic-refresh AQ.
+///
+/// Libvpx prices boosted 8x8 cells at their segment Q while it chooses the
+/// frame's base Q and while it updates the postencode correction factor. The
+/// weights are fractions of all 8x8 cells in the frame. Keeping this neutral
+/// model in rate control avoids coupling the controller to AQ's map state.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub(crate) struct CyclicRefreshRateModel {
+    pub(crate) boost1_weight: f64,
+    pub(crate) boost2_weight: f64,
+    pub(crate) boost1_q_delta: i16,
+    pub(crate) boost2_q_delta: i16,
+}
+
+impl CyclicRefreshRateModel {
+    #[must_use]
+    pub(crate) fn boost1(weight: f64, q_delta: i16) -> Self {
+        Self::segments(weight, q_delta, 0.0, 0)
+    }
+
+    #[must_use]
+    pub(crate) fn segments(
+        boost1_weight: f64,
+        boost1_q_delta: i16,
+        boost2_weight: f64,
+        boost2_q_delta: i16,
+    ) -> Self {
+        Self {
+            boost1_weight: boost1_weight.clamp(0.0, 1.0),
+            boost2_weight: boost2_weight.clamp(0.0, 1.0),
+            boost1_q_delta,
+            boost2_q_delta,
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn weights(self) -> (f64, f64, f64) {
+        let boost1 = self.boost1_weight.clamp(0.0, 1.0);
+        let boost2 = self.boost2_weight.clamp(0.0, 1.0 - boost1);
+        (1.0 - boost1 - boost2, boost1, boost2)
+    }
+}
+
 /// W1.6(vpxenc parity, A3 P0): rate-control mode discriminator.
 ///
 /// Mirrors libvpx's `VPX_CBR` / `VPX_VBR` / `VPX_CQ` / `VPX_Q` enum

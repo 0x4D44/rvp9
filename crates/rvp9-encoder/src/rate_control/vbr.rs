@@ -48,10 +48,10 @@
 //!   driven by [`super::two_pass`]; not part of this one-pass module.
 
 use super::cbr::{
-    FRAME_OVERHEAD_BITS, get_active_quality, get_kf_active_quality, get_minq_index,
-    get_rate_correction_factor, qindex_to_q, regulate_q,
+    FRAME_OVERHEAD_BITS, RateEstimateModel, get_active_quality, get_kf_active_quality,
+    get_minq_index, get_rate_correction_factor, qindex_to_q, regulate_q_with_model,
 };
-use super::{FrameKind, RateControl};
+use super::{CyclicRefreshRateModel, FrameKind, RateControl};
 use crate::aq_cyclic_refresh::{FrameKind as QDeltaFrameKind, vp9_compute_qdelta_by_rate};
 
 /// libvpx `rc->fac_active_worst_inter`, seeded by `vp9_rc_init` at line
@@ -340,6 +340,14 @@ fn calc_golden_target_size_vbr(rc: &RateControl) -> u32 {
 ///    `active_max_qindex`, `last_picked_qindex` so the post-encode
 ///    feedback loop has the matching state.
 pub(super) fn pick_q_and_bounds(rc: &mut RateControl, frame_kind: FrameKind) -> (u8, u8, u8) {
+    pick_q_and_bounds_with_model(rc, frame_kind, None)
+}
+
+pub(super) fn pick_q_and_bounds_with_model(
+    rc: &mut RateControl,
+    frame_kind: FrameKind,
+    model: Option<CyclicRefreshRateModel>,
+) -> (u8, u8, u8) {
     // libvpx resets the Golden-frame boost ratio at each group boundary,
     // then retunes it after frame 30 from avg_frame_low_motion. The
     // frame-loop schedule already supplies the matching Golden marker.
@@ -396,14 +404,13 @@ pub(super) fn pick_q_and_bounds(rc: &mut RateControl, frame_kind: FrameKind) -> 
     // 5. Regulate Q within the active range (libvpx `vp9_ratectrl.c:1287`).
     let correction_factor = get_rate_correction_factor(rc, frame_kind);
     let multiplier = rc.config().bits_per_mb_multiplier;
-    let q = regulate_q(
+    let q = regulate_q_with_model(
         frame_kind,
         target_bits,
         active_best,
         active_worst,
         rc.mbs,
-        correction_factor,
-        multiplier,
+        RateEstimateModel::new(correction_factor, multiplier, model),
     );
     let q = if q > top_index && target_bits < rc.max_frame_bandwidth {
         top_index

@@ -249,6 +249,14 @@ pub struct CyclicRefresh {
     /// SB cursor (raster order over the SB grid). Walk resumes here
     /// on the next `pre_encode_pick_segments`.
     pub sb_cursor: usize,
+    /// Number of 8x8 cells coded as BOOST1 in the previous frame's
+    /// final segmentation map. Counts the segment id regardless of
+    /// whether the cell skipped, matching libvpx's postencode count.
+    pub actual_num_seg1_blocks: usize,
+    /// Number of 8x8 cells coded as BOOST2 in the previous frame's
+    /// final segmentation map. Counts the segment id regardless of
+    /// whether the cell skipped, matching libvpx's postencode count.
+    pub actual_num_seg2_blocks: usize,
     /// Frame height in 8x8 mi units.
     pub mi_rows: usize,
     /// Frame width in 8x8 mi units.
@@ -274,6 +282,8 @@ impl CyclicRefresh {
             // `last_coded_q_map[i] > qindex_thresh` gate.
             last_coded_q_map: vec![MAXQ; mi_rows * mi_cols],
             sb_cursor: 0,
+            actual_num_seg1_blocks: 0,
+            actual_num_seg2_blocks: 0,
             mi_rows,
             mi_cols,
             config,
@@ -370,6 +380,33 @@ impl CyclicRefresh {
     pub fn target_refresh_cells(&self) -> usize {
         let total = self.mi_rows * self.mi_cols;
         (total * (self.config.target_refresh_fraction_256 as usize)) / 256
+    }
+
+    /// Compute libvpx's pre-Q cyclic-refresh segment weight.
+    ///
+    /// The sum is shifted before conversion to `f64`, preserving the
+    /// integer order in `vp9_cyclic_refresh_update_parameters`
+    /// (`vp9_aq_cyclicrefresh.c:571-577`). The target fraction is used
+    /// when the previous frame's actual refresh fraction is more than
+    /// `8/7` of the target.
+    #[must_use]
+    pub fn weight_segment(
+        target_cells: usize,
+        actual_num_seg1_blocks: usize,
+        actual_num_seg2_blocks: usize,
+        total_cells: usize,
+    ) -> f64 {
+        if total_cells == 0 {
+            return 0.0;
+        }
+        let target_weight = target_cells as f64 / total_cells as f64;
+        let weight = ((target_cells + actual_num_seg1_blocks + actual_num_seg2_blocks) >> 1) as f64
+            / total_cells as f64;
+        if target_weight < 7.0 * weight / 8.0 {
+            target_weight
+        } else {
+            weight
+        }
     }
 
     /// Pick the segmentation map for the next frame.
@@ -497,6 +534,10 @@ impl CyclicRefresh {
     ///   so don't push it higher than what was recorded".)
     /// - Baseline cells coded without skip: write `base_qindex`.
     ///
+    /// The previous frame's final BOOST1/BOOST2 segment counts are reset
+    /// and recomputed from `coded_segments`, independently of `coded_skip`,
+    /// for the next frame's pre-Q rate-control estimate.
+    ///
     /// **rvp9 simplification:** rvp9 doesn't track per-cell intra/inter
     /// nor a real skip flag for baseline cells, so the inter-skip
     /// branch is keyed only on the `coded_skip` flag — which the
@@ -526,11 +567,19 @@ impl CyclicRefresh {
         );
 
         let base = i32::from(base_qindex);
+        self.actual_num_seg1_blocks = 0;
+        self.actual_num_seg2_blocks = 0;
 
         for i in 0..n_cells {
             let seg = coded_segments[i];
             let skip = coded_skip[i];
             let actually_refreshed = seg == CR_SEGMENT_ID_BOOST && !skip;
+
+            match seg {
+                CR_SEGMENT_ID_BOOST1 => self.actual_num_seg1_blocks += 1,
+                CR_SEGMENT_ID_BOOST2 => self.actual_num_seg2_blocks += 1,
+                _ => {}
+            }
 
             // `last_coded_q_map` update — mirrors libvpx
             // `vp9_cyclic_refresh_update_sb_postencode`. We use
@@ -1141,6 +1190,41 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn cyclic_refresh_postencode_recounts_actual_segments_including_skips() {
+        let mut cr = make_cr(CyclicRefreshConfig::default());
+        let n_cells = MI_ROWS * MI_COLS;
+        let mut coded_segments = vec![CR_SEGMENT_ID_BASE; n_cells];
+        let mut coded_skip = vec![false; n_cells];
+
+        coded_segments[0] = CR_SEGMENT_ID_BOOST1;
+        coded_skip[0] = true;
+        coded_segments[1] = CR_SEGMENT_ID_BOOST1;
+        coded_segments[2] = CR_SEGMENT_ID_BOOST2;
+        coded_skip[2] = true;
+        coded_segments[3] = CR_SEGMENT_ID_BOOST2;
+
+        cr.post_encode_update(&coded_segments, &coded_skip, 100);
+        assert_eq!(cr.actual_num_seg1_blocks, 2);
+        assert_eq!(cr.actual_num_seg2_blocks, 2);
+
+        coded_segments.fill(CR_SEGMENT_ID_BASE);
+        coded_skip.fill(false);
+        cr.post_encode_update(&coded_segments, &coded_skip, 100);
+        assert_eq!(cr.actual_num_seg1_blocks, 0);
+        assert_eq!(cr.actual_num_seg2_blocks, 0);
+    }
+
+    #[test]
+    fn cyclic_refresh_weight_segment_preserves_integer_shift_and_clamp() {
+        // 25 + 10 + 6 = 41; libvpx shifts first, so 41 >> 1 = 20.
+        assert_eq!(CyclicRefresh::weight_segment(25, 10, 6, 100), 0.20);
+
+        // 25 + 20 + 20 = 65; 65 >> 1 = 32, then the 7/8 clamp
+        // selects the target weight (0.25) over 0.32.
+        assert_eq!(CyclicRefresh::weight_segment(25, 20, 20, 100), 0.25);
     }
 
     #[test]

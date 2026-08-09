@@ -96,7 +96,8 @@ use crate::loopfilter::{
     pick_filter_level, truncate_packet_overlap_recon,
 };
 use crate::rate_control::{
-    FirstPassStats, FrameKind as RcFrameKind, RateControl, RateControlConfig, RcMode, TwoPassState,
+    CyclicRefreshRateModel, FirstPassStats, FrameKind as RcFrameKind, RateControl,
+    RateControlConfig, RcMode, TwoPassState,
 };
 use crate::{
     EncodeError, InterPartitionLeafDesc, InterSimulationMiGrid, PartitionLeafDesc,
@@ -2266,8 +2267,38 @@ impl StreamEncoder {
             self.pre_analysis.keyframe_reset();
         }
 
+        // Cyclic-refresh AQ spends extra bits on boosted 8x8 cells. Price the
+        // predicted boosted fraction while choosing base Q, matching libvpx's
+        // `vp9_cyclic_refresh_rc_bits_per_mb` path. The frame-level gate is
+        // pure and is evaluated again by the inter encoder after Q selection.
+        let aq_active_for_rate_control = !rc_frame_kind.is_key()
+            && self.cyclic_refresh.as_ref().is_some_and(|cr| {
+                cr.apply_cyclic_refresh(
+                    false,
+                    self.rate_control.avg_frame_qindex_inter,
+                    self.rate_control.best_quality,
+                    self.rate_control.frames_since_key,
+                )
+            });
+        let aq_rate_model = self
+            .cyclic_refresh
+            .as_ref()
+            .filter(|_| aq_active_for_rate_control)
+            .map(|cr| {
+                let total_cells = cr.mi_rows * cr.mi_cols;
+                let weight = CyclicRefresh::weight_segment(
+                    cr.target_refresh_cells(),
+                    cr.actual_num_seg1_blocks,
+                    cr.actual_num_seg2_blocks,
+                    total_cells,
+                );
+                CyclicRefreshRateModel::boost1(weight, cr.config.segment1_q_delta)
+            });
+
         // Pick Q via the rate controller.
-        let (q_index, _q_lo, _q_hi) = self.rate_control.pick_q_and_bounds(rc_frame_kind);
+        let (q_index, _q_lo, _q_hi) = self
+            .rate_control
+            .pick_q_and_bounds_with_model(rc_frame_kind, aq_rate_model);
         // -- E8 DIAG: inter active_worst / buffer-state trace --
         // Env-gated; captured immediately after the pick so it reflects
         // the buffer state that drove THIS frame's Q. The actual bits are
@@ -2580,9 +2611,31 @@ impl StreamEncoder {
             );
         }
 
+        // Feed the final coded segment fractions into the postencode rate
+        // projection. Unlike the pre-Q estimate, libvpx uses the actual final
+        // segmentation map here, including skipped boosted cells.
+        let aq_postencode_model = self
+            .cyclic_refresh
+            .as_ref()
+            .filter(|_| aq_active_for_rate_control)
+            .and_then(|cr| {
+                let total_cells = cr.mi_rows * cr.mi_cols;
+                (total_cells != 0).then(|| {
+                    CyclicRefreshRateModel::segments(
+                        cr.actual_num_seg1_blocks as f64 / total_cells as f64,
+                        cr.config.segment1_q_delta,
+                        cr.actual_num_seg2_blocks as f64 / total_cells as f64,
+                        0,
+                    )
+                })
+            });
+
         // Post-encode rate-control update + frame counter advance.
-        self.rate_control
-            .postencode_update(actual_bits, rc_frame_kind);
+        self.rate_control.postencode_update_with_model(
+            actual_bits,
+            rc_frame_kind,
+            aq_postencode_model,
+        );
         self.rate_control.advance_frame();
         self.frame_idx = self.frame_idx.saturating_add(1);
 

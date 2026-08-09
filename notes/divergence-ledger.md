@@ -5052,3 +5052,40 @@ in-tree/ducks/old-town.
 
 **Future plan:** retain this final-green CPU8 VBR policy while validating the
 independent CBR/AQ, denoiser, and temporal/SVC feature matrix.
+
+### 2026-08-09 — Price cyclic-refresh segments with a shared fixed-delta model
+
+**Where:** `rvp9_encoder::rate_control::{cbr,postencode}` and
+`rvp9_encoder::frame_loop::StreamEncoder::encode_frame`; libvpx counterparts:
+`vp9_cyclic_refresh_rc_bits_per_mb` and
+`vp9_cyclic_refresh_estimate_bits_at_q`.
+
+**What libvpx does:** weights the pre-Q bit estimate by the planned/previous
+refresh fraction and a candidate-Q-dependent dynamic delta. Its postencode
+projection weights BOOST1 and BOOST2 independently using their actual final
+8x8-cell counts and emitted deltas.
+
+**What rvp9 does:** now applies the same pre-Q and postencode weighting and
+counts final segment IDs independently of skip. Until the dynamic-delta and
+production BOOST2 units land, the model and emitted segmentation both use the
+existing fixed BOOST1 delta of `-8`; BOOST2 remains inactive.
+
+**Why:** keeping the picker and feedback projections unweighted made the base-Q
+controller internally inconsistent whenever AQ spent bits at a finer segment
+Q. Modeling the currently emitted fixed delta is the smallest correct loop
+closure and a measured prerequisite for dynamic deltas.
+
+**Byte-parity impact:** intentional only when cyclic-refresh AQ is active. The
+exercised target-250 IVF decodes bit-exactly through rvp9-decoder, pinned
+vpxdec, and ffmpeg. AQ-off does not construct the weighted model.
+
+**Compression-efficiency impact:** the signed Foreman VBR AQ-gain mismatch
+narrows from `+1.397` to `+1.378` percentage points. It still misses the
+`0.3%` feature gate.
+
+**Speed impact:** no broad timing claim yet. The extra work is bounded to at
+most two scalar bit-model evaluations per candidate qindex on AQ-active
+frames; the final feature speed matrix will measure it with dynamic deltas.
+
+**Future plan:** replace the fixed delta with the pinned VBR dynamic BOOST1
+delta, then enable and price the already implemented per-block BOOST2 policy.

@@ -348,9 +348,20 @@ impl RateControl {
     /// the rate-control family — it consumes the first-pass stats
     /// attached via [`Self::attach_two_pass`].
     pub fn pick_q_and_bounds(&mut self, frame_kind: FrameKind) -> (u8, u8, u8) {
+        self.pick_q_and_bounds_with_model(frame_kind, None)
+    }
+
+    pub(crate) fn pick_q_and_bounds_with_model(
+        &mut self,
+        frame_kind: FrameKind,
+        model: Option<super::CyclicRefreshRateModel>,
+    ) -> (u8, u8, u8) {
         use super::RcMode;
         match self.config.rc_mode {
-            RcMode::Cbr => cbr::pick_q_and_bounds(self, frame_kind),
+            RcMode::Cbr => match model {
+                Some(model) => cbr::pick_q_and_bounds_with_model(self, frame_kind, Some(model)),
+                None => cbr::pick_q_and_bounds(self, frame_kind),
+            },
             // One-pass VBR. Port of libvpx
             // `rc_pick_q_and_bounds_one_pass_vbr`
             // (`vp9_ratectrl.c:1138-1303`). The two-pass arm
@@ -360,7 +371,10 @@ impl RateControl {
             // first-pass stats attached via `attach_two_pass`. The W1.6
             // one-pass VBR PROOF lives in `tests/w_vbr_rc_proof.rs`; the
             // two-pass PROOF in `tests/w_2pass_vbr.rs`.
-            RcMode::Vbr => vbr::pick_q_and_bounds(self, frame_kind),
+            RcMode::Vbr => match model {
+                Some(model) => vbr::pick_q_and_bounds_with_model(self, frame_kind, Some(model)),
+                None => vbr::pick_q_and_bounds(self, frame_kind),
+            },
             // PHASE-3 integration: Constrained-Quality (CQ). Runs the
             // CBR regulator, then clamps the picked Q to be ≥
             // cq_level. Mirrors libvpx's CQ semantics: cq_level is a
@@ -369,7 +383,10 @@ impl RateControl {
             // `vp9_ratectrl.c::vp9_rc_pick_q_and_bounds_one_pass_cbr`
             // CQ branch (search for `cq_level`).
             RcMode::Cq => {
-                let (q, lo, hi) = cbr::pick_q_and_bounds(self, frame_kind);
+                let (q, lo, hi) = match model {
+                    Some(model) => cbr::pick_q_and_bounds_with_model(self, frame_kind, Some(model)),
+                    None => cbr::pick_q_and_bounds(self, frame_kind),
+                };
                 let floor = self.config.cq_level;
                 (q.max(floor), lo.max(floor), hi.max(floor))
             }
@@ -406,6 +423,15 @@ impl RateControl {
     /// [`super::postencode::postencode_update`].
     pub fn postencode_update(&mut self, actual_bits: u32, frame_kind: FrameKind) {
         postencode::postencode_update(self, actual_bits, frame_kind);
+    }
+
+    pub(crate) fn postencode_update_with_model(
+        &mut self,
+        actual_bits: u32,
+        frame_kind: FrameKind,
+        model: Option<super::CyclicRefreshRateModel>,
+    ) {
+        postencode::postencode_update_with_model(self, actual_bits, frame_kind, model);
     }
 
     /// Advance frame counters. Called once per encoded *show* frame

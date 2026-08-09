@@ -7,7 +7,7 @@
 use rvp9_core::bitstream::BitDepth;
 use rvp9_core::quant::ac_quant;
 
-use super::{FrameKind, RateControl, config::MAX_KF_BOOST};
+use super::{CyclicRefreshRateModel, FrameKind, RateControl, config::MAX_KF_BOOST};
 
 /// `BPER_MB_NORMBITS` — libvpx `vp9_ratectrl.h:28`. The bits-per-MB
 /// estimate is multiplied by 512 (= `1 << 9`); the per-frame total
@@ -216,6 +216,84 @@ pub(super) fn estimate_bits_at_q(
     raw.max(i64::from(FRAME_OVERHEAD_BITS))
 }
 
+/// Segment-weighted counterpart of [`estimate_bits_at_q`] for cyclic refresh.
+///
+/// Mirrors `vp9_cyclic_refresh_estimate_bits_at_q`: each segment gets a
+/// complete frame-size estimate at its effective Q, then the estimates are
+/// combined using the actual final 8x8-cell fractions.
+pub(super) fn estimate_bits_at_q_with_model(
+    frame_kind: FrameKind,
+    qindex: i32,
+    mbs: u32,
+    correction_factor: f64,
+    multiplier: f64,
+    model: Option<CyclicRefreshRateModel>,
+) -> i64 {
+    let Some(model) = model else {
+        return estimate_bits_at_q(frame_kind, qindex, mbs, correction_factor, multiplier);
+    };
+    let (base_weight, boost1_weight, boost2_weight) = model.weights();
+    let estimate = |delta: i16| {
+        estimate_bits_at_q(
+            frame_kind,
+            (qindex + i32::from(delta)).clamp(0, 255),
+            mbs,
+            correction_factor,
+            multiplier,
+        ) as f64
+    };
+    (base_weight * estimate(0)
+        + boost1_weight * estimate(model.boost1_q_delta)
+        + boost2_weight * estimate(model.boost2_q_delta)) as i64
+}
+
+#[inline]
+fn bits_per_mb_with_model(
+    frame_kind: FrameKind,
+    qindex: i32,
+    correction_factor: f64,
+    multiplier: f64,
+    model: Option<CyclicRefreshRateModel>,
+) -> i32 {
+    let Some(model) = model else {
+        return bits_per_mb_scaled(frame_kind, qindex, correction_factor, multiplier);
+    };
+    let (base_weight, boost1_weight, boost2_weight) = model.weights();
+    let estimate = |delta: i16| {
+        f64::from(bits_per_mb_scaled(
+            frame_kind,
+            (qindex + i32::from(delta)).clamp(0, 255),
+            correction_factor,
+            multiplier,
+        ))
+    };
+    (base_weight * estimate(0)
+        + boost1_weight * estimate(model.boost1_q_delta)
+        + boost2_weight * estimate(model.boost2_q_delta)) as i32
+}
+
+#[derive(Copy, Clone)]
+pub(super) struct RateEstimateModel {
+    correction_factor: f64,
+    multiplier: f64,
+    cyclic_refresh: Option<CyclicRefreshRateModel>,
+}
+
+impl RateEstimateModel {
+    #[inline]
+    pub(super) const fn new(
+        correction_factor: f64,
+        multiplier: f64,
+        cyclic_refresh: Option<CyclicRefreshRateModel>,
+    ) -> Self {
+        Self {
+            correction_factor,
+            multiplier,
+            cyclic_refresh,
+        }
+    }
+}
+
 /// Pick a Q-index that targets `target_bits_per_frame` within
 /// `[active_best, active_worst]`. Mirrors `vp9_rc_regulate_q`
 /// (`vp9_ratectrl.c:819-862`):
@@ -233,6 +311,24 @@ pub(super) fn regulate_q(
     correction_factor: f64,
     multiplier: f64,
 ) -> i32 {
+    regulate_q_with_model(
+        frame_kind,
+        target_bits_per_frame,
+        active_best,
+        active_worst,
+        mbs,
+        RateEstimateModel::new(correction_factor, multiplier, None),
+    )
+}
+
+pub(super) fn regulate_q_with_model(
+    frame_kind: FrameKind,
+    target_bits_per_frame: u32,
+    active_best: i32,
+    active_worst: i32,
+    mbs: u32,
+    rate_model: RateEstimateModel,
+) -> i32 {
     // `(target_bits << 9) / MBs` — bits_per_mb at the target rate.
     let target_bpm: i64 = if mbs == 0 {
         0
@@ -243,11 +339,12 @@ pub(super) fn regulate_q(
     let mut last_error = i64::MAX;
     let mut i = active_best;
     while i <= active_worst {
-        let bpm_at_i = i64::from(bits_per_mb_scaled(
+        let bpm_at_i = i64::from(bits_per_mb_with_model(
             frame_kind,
             i,
-            correction_factor,
-            multiplier,
+            rate_model.correction_factor,
+            rate_model.multiplier,
+            rate_model.cyclic_refresh,
         ));
         if bpm_at_i <= target_bpm {
             // libvpx tie-break: prefer the Q with the smaller residual.
@@ -639,6 +736,14 @@ fn active_worst_quality(rc: &RateControl, ambient_qp: i32) -> i32 {
 /// `rc.this_frame_target`, `rc.active_min_qindex`,
 /// `rc.active_max_qindex`, and returns `(q, low, high)`.
 pub(super) fn pick_q_and_bounds(rc: &mut RateControl, frame_kind: FrameKind) -> (u8, u8, u8) {
+    pick_q_and_bounds_with_model(rc, frame_kind, None)
+}
+
+pub(super) fn pick_q_and_bounds_with_model(
+    rc: &mut RateControl,
+    frame_kind: FrameKind,
+    model: Option<CyclicRefreshRateModel>,
+) -> (u8, u8, u8) {
     // 1. Per-frame target bits.
     let target_bits = match frame_kind {
         FrameKind::Key => calc_iframe_target_size(rc),
@@ -866,14 +971,13 @@ pub(super) fn pick_q_and_bounds(rc: &mut RateControl, frame_kind: FrameKind) -> 
     // 3. Regulate Q using the current per-level correction factor.
     let correction_factor = get_rate_correction_factor(rc, frame_kind);
     let multiplier = rc.config().bits_per_mb_multiplier;
-    let q = regulate_q(
+    let q = regulate_q_with_model(
         frame_kind,
         regulate_target_bits,
         active_best,
         active_worst,
         rc.mbs,
-        correction_factor,
-        multiplier,
+        RateEstimateModel::new(correction_factor, multiplier, model),
     );
     let q = q.clamp(active_best, active_worst);
 
@@ -1753,6 +1857,47 @@ mod tests {
         assert_eq!(
             q_on, q_off,
             "KFCAP must not double-cap the C1 low-bitrate branch: off={q_off}, on={q_on}",
+        );
+    }
+
+    #[test]
+    fn cyclic_refresh_zero_weight_is_exactly_the_base_rate_model() {
+        let model = CyclicRefreshRateModel::boost1(0.0, -8);
+        for q in [0, 4, 80, 200, 255] {
+            assert_eq!(
+                bits_per_mb_with_model(FrameKind::Inter, q, 1.25, 1.0, Some(model)),
+                bits_per_mb_scaled(FrameKind::Inter, q, 1.25, 1.0),
+            );
+            assert_eq!(
+                estimate_bits_at_q_with_model(FrameKind::Inter, q, 3_600, 1.25, 1.0, Some(model),),
+                estimate_bits_at_q(FrameKind::Inter, q, 3_600, 1.25, 1.0),
+            );
+        }
+    }
+
+    #[test]
+    fn cyclic_refresh_rate_model_prices_boosted_cells_at_finer_q() {
+        let model = CyclicRefreshRateModel::boost1(0.125, -8);
+        let base = bits_per_mb_scaled(FrameKind::Inter, 160, 1.0, 1.0);
+        let boosted = bits_per_mb_with_model(FrameKind::Inter, 160, 1.0, 1.0, Some(model));
+        assert!(
+            boosted > base,
+            "finer boosted cells must increase the predicted bits per MB: base={base}, weighted={boosted}",
+        );
+
+        let target = 50_000;
+        let base_q = regulate_q(FrameKind::Inter, target, 4, 255, 3_600, 1.0, 1.0);
+        let weighted_q = regulate_q_with_model(
+            FrameKind::Inter,
+            target,
+            4,
+            255,
+            3_600,
+            RateEstimateModel::new(1.0, 1.0, Some(model)),
+        );
+        assert!(
+            weighted_q >= base_q,
+            "pricing boosted cells must not choose a finer base Q: base={base_q}, weighted={weighted_q}",
         );
     }
 }
