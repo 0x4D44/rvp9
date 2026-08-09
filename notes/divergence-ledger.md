@@ -5000,3 +5000,48 @@ direct vpxenc baseline, rvp9 remains at `0.945226x` wall time and
 **Future plan:** retain the bounded CPU6 scorer and close the independent
 CPU8 quality and 720p speed residual before broadening any real-coefficient
 policy.
+
+### 2026-08-09 — Recalibrate large-frame CPU8 partition thresholds after VBR damping
+
+**Where:** `rvp9_encoder::exact_vbp_partition_qindex`; libvpx counterpart:
+`vp9/encoder/vp9_encodeframe.c:set_vbp_thresholds`.
+
+**What libvpx does:** pinned CPU8 derives its variance-partition thresholds
+from the current coding qindex and has no separate partition-only Q offset.
+
+**What rvp9 does:** CPU8 exact-tree VBR adds 27 qindex steps only while
+deriving partition-tree split and SAD/copy thresholds above 1280x720. Native
+720p retains its proven 9-step calibration. Coefficient quantization, CPU6/7,
+CBR, and every non-exact-tree path are unchanged.
+
+**Why:** the previous 18-step large-frame calibration was selected before the
+shared one-pass VBR damping correction changed CPU8's live Q trajectory. On
+the corrected rate-control path it left the limiting in-tree curve at
+`+1.526%`. Moving to the next nine-step calibration point improves all three
+canonical-clip arithmetic mean BD-rate by 0.989 point and slightly reduces
+work, without a clip, bitrate, frame-position, or source-signal rule. This is
+an empirical calibration of rvp9's adapter, not a claim of source parity with
+libvpx's additional CPU8 threshold-scaling branches.
+
+**Byte-parity impact:** intentional above 720p. The exercised 1080p in-tree
+target-2500 IVF has SHA-256
+`3afd3279c78a700aae82e7cd30130abb6f2d61bfb4b11361e118b891121b0ef4`.
+Rvp9-decoder, pinned vpxdec, and ffmpeg each emit the same 186,624,000-byte
+I420 output with SHA-256
+`64ff015244e7413a4d0c992e4f23fff39195dacf54d55323d64e4122addcc750`.
+The exercised native-720p stream is byte-identical to the control at SHA-256
+`bf088dcab834b9971a163c17ede3a4132797b8c4c9fd4ee1f007809250ae221c`.
+
+**Compression-efficiency impact:** serialized canonical 1080p
+in-tree/ducks/old-town curves are `-0.645%/-4.182%/-5.804%` versus vpxenc.
+All three pass the final `+0.5%` per-clip gate. Native 720p curves transfer
+byte-for-byte from the preceding `+9` calibration.
+
+**Speed impact:** fifteen warmed same-build pairs measured a `0.994361x`
+wall and `0.987887x` child-CPU corpus geomean. Projecting that gain onto the
+two refreshed Unit 974 PGO direct comparisons gives `1.022102x` to
+`1.041373x` vpxenc wall time. Median candidate frame times are
+`5.353/7.015/5.230 ms`.
+
+**Future plan:** retrain the representative PGO matrix on this committed tree
+and replace the projected direct-speed range with fresh same-binary evidence.
