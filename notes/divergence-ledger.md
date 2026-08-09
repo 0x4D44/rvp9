@@ -5232,8 +5232,11 @@ BD-rates versus feature-enabled pinned vpxenc are
 `+0.5%` gate.
 
 **Speed impact:** the same-build plain-release noisy-ducks comparison improves
-from `0.592077 s` to `0.556974 s` over 60 frames. Production-PGO confirmation
-is the next gate.
+from `0.592077 s` to `0.556974 s` over 60 frames. Independent production-PGO
+builds reproduce a `0.937052x` candidate/control wall ratio. The three-clip
+CPU8 PGO wall ratios versus vpxenc are `1.063225/1.144264/1.055232x`, geomean
+`1.086842x`; this unit materially narrows but does not close the speed gate.
 
-**Future plan:** retain only if independent production-PGO timing reproduces
-the gain and the remaining CPU8 configurations keep their quality gates.
+**Future plan:** retain while the remaining CPU8 configurations keep their
+quality gates. Continue exact non-picker dataflow work to close the residual
+speed gap.
