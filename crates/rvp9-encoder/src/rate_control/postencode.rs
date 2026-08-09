@@ -7,7 +7,7 @@ use super::cbr::{
     self, MAX_BPB_FACTOR, MIN_BPB_FACTOR, RateFactorLevel, estimate_bits_at_q,
     get_rate_correction_factor, set_rate_correction_factor,
 };
-use super::{FrameKind, RateControl};
+use super::{FrameKind, RateControl, RcMode};
 
 /// Port of `vp9_rc_update_rate_correction_factors`
 /// (`vp9_ratectrl.c:737-817`).
@@ -55,7 +55,19 @@ fn update_rate_correction_factors(rc: &mut RateControl, actual_bits: u32, frame_
     //    correction. Subsequent: damp by the log-magnitude of the
     //    miss (libvpx `vp9_ratectrl.c:770-779`).
     let level = RateFactorLevel::for_frame(frame_kind);
-    let slot = level.as_index();
+    // In pinned libvpx one-pass VBR, `get_rate_correction_factor()` still
+    // selects independent KF / inter / GF factor values. The damping gate is
+    // different: `vp9_rc_update_rate_correction_factors()` indexes
+    // `damped_adjustment[]` through the otherwise-unused two-pass GF-group
+    // level, which remains `INTER_NORMAL` for every one-pass frame. The first
+    // keyframe therefore arms damping for the following inter and GOLDEN
+    // updates instead of letting each factor slot make one undamped jump.
+    let damping_level = if matches!(rc.config().rc_mode, RcMode::Vbr) {
+        RateFactorLevel::InterNormal
+    } else {
+        level
+    };
+    let slot = damping_level.as_index();
     let adjustment_limit: f64 = if !rc.damped_adjustment[slot] {
         rc.damped_adjustment[slot] = true;
         1.0
@@ -197,8 +209,9 @@ pub(super) fn postencode_update(rc: &mut RateControl, actual_bits: u32, frame_ki
 
 #[cfg(test)]
 mod tests {
+    use super::super::cbr::RateFactorLevel;
     use super::super::config::RateControlConfig;
-    use super::super::{FrameKind, RateControl};
+    use super::super::{FrameKind, RateControl, RcMode};
 
     fn fresh_rc() -> RateControl {
         let mut rc = RateControl::new(RateControlConfig::default());
@@ -333,6 +346,40 @@ mod tests {
 
         assert_eq!(rc.last_q_inter, 103);
         assert_eq!(rc.avg_frame_qindex_inter, 101);
+    }
+
+    #[test]
+    fn one_pass_vbr_feedback_shares_the_inter_normal_damping_gate() {
+        for kind in [FrameKind::Key, FrameKind::Inter, FrameKind::Golden] {
+            let cfg = RateControlConfig {
+                rc_mode: RcMode::Vbr,
+                ..RateControlConfig::default()
+            };
+            let mut rc = RateControl::new(cfg);
+            let _ = rc.pick_q_and_bounds(kind);
+            rc.postencode_update(rc.avg_frame_bandwidth, kind);
+
+            assert!(
+                rc.damped_adjustment[RateFactorLevel::InterNormal.as_index()],
+                "{kind:?} must arm libvpx's shared one-pass VBR damping gate"
+            );
+            for level in [RateFactorLevel::GfArfStd, RateFactorLevel::KfStd] {
+                assert!(
+                    !rc.damped_adjustment[level.as_index()],
+                    "{kind:?} must not arm its correction-factor slot as a damping gate"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn cbr_feedback_keeps_per_frame_kind_damping_slots() {
+        let mut rc = RateControl::new(RateControlConfig::default());
+        let _ = rc.pick_q_and_bounds(FrameKind::Key);
+        rc.postencode_update(rc.avg_frame_bandwidth, FrameKind::Key);
+
+        assert!(rc.damped_adjustment[RateFactorLevel::KfStd.as_index()]);
+        assert!(!rc.damped_adjustment[RateFactorLevel::InterNormal.as_index()]);
     }
 
     // Closed-loop convergence oracle (RC.1).

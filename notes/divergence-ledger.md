@@ -4916,11 +4916,14 @@ CPU7 and CPU8 policy branches are unchanged; the exercised CPU8 stream is
 byte-identical to the Unit 974 PGO control at SHA-256
 `3e142ba677ebf65c19705f62bdc9784a5486c90da6e235931fcb496923e5fa60`.
 
-**Compression-efficiency impact:** the canonical 60-frame 1080p six-point
-in-tree/ducks/old-town curves are `+5.497%/-9.845%/+4.108%`. Their arithmetic
-mean is `-0.080%`, but in-tree and old-town still exceed the important-clip
-`+2%` guard; this is an accepted measured prerequisite, not final CPU6
-quality parity.
+**Compression-efficiency impact:** a serialized fresh measurement corrected
+the canonical 60-frame 1080p six-point in-tree/ducks/old-town curves to
+`+13.297%/-13.717%/-0.566%`. The previously recorded
+`+5.497%/-9.845%/+4.108%` curves were invalid: concurrent harness processes
+overwrote fixed `/tmp/rvp9_bdrate_{role}_{bitrate}k` streams before decode
+(`RVP9-BUG-FLUX-00010`). Serialized curves for the preceding Unit 974 policy
+are `+23.321%/-7.029%/+9.314%`, so this unit remains a large measured quality
+and speed prerequisite despite the in-tree important-clip failure.
 
 **Speed impact:** fifteen warmed alternating plain-release pairs against
 pinned vpxenc measured per-clip wall ratios
@@ -4928,7 +4931,6 @@ pinned vpxenc measured per-clip wall ratios
 geomean was `0.971639x`; median rvp9 frame times were
 `5.994/8.998/6.010 ms` for in-tree/ducks/old-town.
 
-**Future plan:** retrain the representative PGO matrix, retain only if CPU6
-speed stays green, then profile the remaining in-tree and old-town coding-
-efficiency gap. Do not broaden transform search without a measured cheap
-winner predicate.
+**Future plan:** serialize BD-rate runs until `RVP9-BUG-FLUX-00010` is fixed.
+The in-tree clip is the sole limiting CPU6 quality case; trace its VBR
+rate-control trajectory before spending more speed headroom on coding tools.

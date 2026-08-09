@@ -100,12 +100,15 @@ pub struct RateControl {
     /// (`vp9_ratectrl.c:419-422`).
     pub rate_correction_factors: [f64; RATE_FACTOR_LEVELS],
 
-    /// Per-level "have we seen any frame at this level yet" flag.
+    /// Per-level "have we seen any frame at this damping level yet" flag.
     /// Mirrors libvpx `rc->damped_adjustment[RATE_FACTOR_LEVELS]`
     /// (`vp9_ratectrl.h:203`). First update at each level uses
     /// `adjustment_limit = 1.0` (no damping); subsequent updates use
     /// the log-magnitude damping formula
-    /// (`vp9_ratectrl.c:770-779`).
+    /// (`vp9_ratectrl.c:770-779`). One-pass VBR's GF-group level remains
+    /// `INTER_NORMAL`, so its key, inter, and GOLDEN correction-factor
+    /// updates deliberately share slot zero even though their factor values
+    /// remain independent.
     pub damped_adjustment: [bool; RATE_FACTOR_LEVELS],
 
     // ---- GOP state ----
