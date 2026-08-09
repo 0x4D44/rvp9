@@ -12157,7 +12157,7 @@ fn enc_inverse_transform_add(
     };
 
     debug_assert!(eob > 0, "enc_inverse_transform_add called with eob == 0");
-    let dispatch = rvp9_core::dsp::get();
+    let dispatch = rvp9_core::dsp::get_ref();
 
     match plane_tx {
         TxSize::Tx4x4 => {
