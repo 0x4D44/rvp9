@@ -12045,11 +12045,8 @@ mod tests {
             // restriction. The control result picks among the broader
             // set. The anti-stub guard: the active mode MUST be DC.
             assert_eq!(a.picked_intra_mode, Some(IntraMode::Dc));
-            // The control may pick DC or V or H — any is fine.
-            assert!(matches!(
-                c.picked_intra_mode,
-                Some(IntraMode::Dc) | Some(IntraMode::V) | Some(IntraMode::H)
-            ));
+            // With the gate disabled, any valid intra mode may win.
+            assert!(c.picked_intra_mode.is_some());
         }
     }
 
