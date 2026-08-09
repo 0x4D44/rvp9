@@ -26,6 +26,7 @@
 //!     --width 256 --height 256 \
 //!     --fps 30 \
 //!     --frames 64 \
+//!     --cpu-used 6 \
 //!     --threads 1 --tile-columns 6 \
 //!     --kbps 25,50,100,250 \
 //!     --vbr \
@@ -58,6 +59,7 @@ struct OracleEncodeConfig {
     height: u32,
     frames: u32,
     fps: Option<u32>,
+    cpu_used: i32,
     threads: u32,
     tile_columns: u8,
     kbps: u32,
@@ -86,6 +88,23 @@ fn arg(args: &[String], key: &str) -> Option<String> {
         }
     }
     None
+}
+
+fn parse_cpu_used(args: &[String]) -> Result<i32, String> {
+    let cpu_used = arg(args, "--cpu-used")
+        .map(|value| {
+            value
+                .parse::<i32>()
+                .map_err(|_| format!("--cpu-used must be an integer, got {value:?}"))
+        })
+        .transpose()?
+        .unwrap_or(7);
+    if !(6..=8).contains(&cpu_used) {
+        return Err(format!(
+            "--cpu-used must be one of 6, 7, or 8, got {cpu_used}"
+        ));
+    }
+    Ok(cpu_used)
 }
 
 fn rvp9_rate_config(vbr: bool) -> (u32, RcMode) {
@@ -130,6 +149,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .and_then(|s| s.parse().ok())
         .unwrap_or(DEFAULT_H);
     let fps: Option<u32> = arg(&argv, "--fps").and_then(|s| s.parse().ok());
+    let cpu_used = parse_cpu_used(&argv)?;
     let threads: u32 = arg(&argv, "--threads")
         .and_then(|s| s.parse().ok())
         .unwrap_or(1)
@@ -201,6 +221,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "  fps       : {}",
         fps.map_or_else(|| "source header".to_string(), |value| value.to_string())
     );
+    println!("  cpu-used  : {cpu_used}");
     println!("  threads   : {threads}");
     println!("  tile cols : log2 request {tile_columns}");
     println!("  bitrates  : {:?} kbps", kbps_list);
@@ -244,6 +265,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             height,
             frames,
             fps,
+            cpu_used,
             threads,
             tile_columns,
             kbps,
@@ -442,7 +464,7 @@ fn drive_rvp9_leg(
         gop_length,
         aq_mode: AqMode::Off,
         use_prev_frame_mvs: false,
-        speed: 7,
+        speed: encode.cpu_used,
         deadline: rvp9_encoder::Deadline::Realtime,
         noise_sensitivity: 0,
         bit_depth: rvp9_core::BitDepth::Bd8,
@@ -520,7 +542,7 @@ fn drive_libvpx_leg(
         .arg("--codec=vp9")
         .arg("--ivf")
         .arg("--rt")
-        .arg("--cpu-used=7")
+        .arg(format!("--cpu-used={}", encode.cpu_used))
         .arg("--tune-content=default")
         .arg("--lag-in-frames=0")
         .arg("--passes=1")
@@ -583,6 +605,7 @@ mod tests {
             height: 704,
             frames: 60,
             fps: Some(30),
+            cpu_used: 7,
             threads: 1,
             tile_columns: 6,
             kbps: 1000,
@@ -614,6 +637,23 @@ mod tests {
         assert_eq!(fixed_q_cli_range(120), Some((30, 38)));
         assert_eq!(fixed_q_cli_range(121), None);
         assert_eq!(fixed_q_cli_range(224), None);
+    }
+
+    #[test]
+    fn cpu_used_defaults_to_seven_and_accepts_product_presets() {
+        assert_eq!(parse_cpu_used(&[]).unwrap(), 7);
+        for preset in 6..=8 {
+            let args = vec![format!("--cpu-used={preset}")];
+            assert_eq!(parse_cpu_used(&args).unwrap(), preset);
+        }
+    }
+
+    #[test]
+    fn cpu_used_rejects_non_product_presets_and_invalid_values() {
+        for value in ["5", "9", "fast"] {
+            let args = vec!["--cpu-used".to_string(), value.to_string()];
+            assert!(parse_cpu_used(&args).is_err());
+        }
     }
 
     #[test]

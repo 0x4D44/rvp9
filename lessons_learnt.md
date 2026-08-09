@@ -5,6 +5,7 @@ Distilled, non-obvious gotchas future sessions need — dated one-liners.
 Durable project facts/conventions belong in `CLAUDE.md` / `AGENTS.md`, not here.
 Hard cap: 20 entries.
 
+- 2026-08-09: Libvpx `x->skip` is loop termination, not `skip_txfm`; rvp9's broader gate is a measured safety divergence (`inter.rs:should_evaluate_intra_fallback`).
 - 2026-08-09: Intra-in-inter must not replace a prediction-only skip winner (`inter.rs:should_evaluate_intra_fallback`).
 - 2026-08-09: Parallel BD-rate runs collide on fixed temp names; serialize until `bdrate.rs:encode` fixes RVP9-BUG-FLUX-00010.
 - 2026-08-09: CPU6 needs exact VBP without history copy plus structural-Q 54 (`lib.rs:exact_vbp_partition_qindex`).
