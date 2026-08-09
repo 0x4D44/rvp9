@@ -4242,14 +4242,15 @@ fn evaluate_candidate_for_filter_with_pred(
         // `sse_after_pred` as the distortion (no residual on the inverse
         // path); the rate collapses to the skip=true bit.
         let skip_rate = if skip_modecost_enabled_for_q(params.q_index, params.rd_calibration) {
-            skip_true_cost
-                .saturating_add(mode_rate)
-                .saturating_add(mv_rate)
-                .saturating_add(params.ref_frame_rate_cost)
+            skip_true_cost.saturating_add(syntax_and_uv_rate)
         } else {
             skip_true_cost
         };
-        (skip_rate, sse_after_pred_u32, dist_skip)
+        (
+            skip_rate,
+            sse_after_pred_u32,
+            dist_skip.saturating_add(uv_dist.max(0) as u64),
+        )
     } else {
         // Y residual WILL be coded (gate), or it is cheaper to encode it
         // (tie-break). Pay the skip=false bit and keep `coef_rate`.
@@ -6859,6 +6860,75 @@ mod tests {
         assert_eq!(smooth.picked_interp_filter, InterpFilter::EightTapSmooth);
     }
 
+    /// A fractional-pel prediction-only skip still signals its switchable
+    /// interpolation filter after libvpx resolves the luma skip decision.
+    #[test]
+    fn realtime_prediction_only_skip_keeps_filter_rate() {
+        let pw = 64;
+        let ph = 64;
+        let data = vec![77u8; pw * ph];
+        let plane = PlaneRef {
+            data: &data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let harness = TestHarness::new(pw, 255);
+        let mvc = MvCandidates::default();
+        let mut low_costs = harness.sic;
+        let mut high_costs = harness.sic;
+        let filter_idx = InterpFilter::EightTap as usize;
+        low_costs[3][filter_idx] = 10;
+        high_costs[3][filter_idx] = 133;
+
+        let mut low = make_params(
+            &harness,
+            BlockSize::Block16x16,
+            &plane,
+            &plane,
+            (16, 16),
+            &mvc,
+            MvLimits::new(-4, 4, -4, 4),
+            255,
+        );
+        low.rd_calibration = InterRdCalibration::realtime();
+        low.switchable_interp_costs = &low_costs;
+        let mut high = make_params(
+            &harness,
+            BlockSize::Block16x16,
+            &plane,
+            &plane,
+            (16, 16),
+            &mvc,
+            MvLimits::new(-4, 4, -4, 4),
+            255,
+        );
+        high.rd_calibration = InterRdCalibration::realtime();
+        high.switchable_interp_costs = &high_costs;
+
+        let mv = Mv { row: 1, col: 1 };
+        let lambda = compute_rd_mult(255, frame_type_for_rd(synthetic_inter_frame_kind()));
+        let low_result = evaluate_candidate_for_filter(
+            &low,
+            InterMode::NewMv,
+            mv,
+            mv,
+            lambda,
+            InterpFilter::EightTap,
+        );
+        let high_result = evaluate_candidate_for_filter(
+            &high,
+            InterMode::NewMv,
+            mv,
+            mv,
+            lambda,
+            InterpFilter::EightTap,
+        );
+
+        assert!(low_result.picker_skip && high_result.picker_skip);
+        assert_eq!(high_result.best_rate - low_result.best_rate, 123);
+    }
+
     /// F.5/G2 — invoking `evaluate_candidate_for_filter` with each
     /// filter in the search set produces DIFFERENT predictions (and
     /// hence different distortion / rate / RD) on non-trivial content
@@ -8174,6 +8244,84 @@ mod tests {
             without_uv.best_distortion,
             with_uv.best_rd_cost,
             without_uv.best_rd_cost,
+        );
+    }
+
+    /// Prediction-only skip removes the luma residual, but libvpx adds the
+    /// chroma model after that luma decision. Keep its rate and distortion in
+    /// the final candidate instead of making UV-sensitive skipped motion look
+    /// identical to a luma-only candidate.
+    #[test]
+    fn realtime_prediction_only_skip_keeps_uv_rd_cost() {
+        let pw = 64;
+        let ph = 64;
+        let luma = make_plane(pw, ph, 29);
+        let plane = PlaneRef {
+            data: &luma,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let harness = TestHarness::new(pw, 200);
+        let mvc = MvCandidates::default();
+        let uv_src = make_plane(pw / 2, ph / 2, 47);
+        let uv_ref = make_plane(pw / 2, ph / 2, 91);
+
+        let mut with_uv_params = make_params(
+            &harness,
+            BlockSize::Block16x16,
+            &plane,
+            &plane,
+            (16, 16),
+            &mvc,
+            MvLimits::new(-4, 4, -4, 4),
+            200,
+        );
+        with_uv_params.rd_calibration = InterRdCalibration::realtime();
+        with_uv_params.src_u = &uv_src;
+        with_uv_params.src_v = &uv_src;
+        with_uv_params.ref_u = &uv_ref;
+        with_uv_params.ref_v = &uv_ref;
+        with_uv_params.uv_stride = pw / 2;
+        with_uv_params.color_sensitivity = [true; 2];
+        with_uv_params.uv_dc_quant = 96;
+        with_uv_params.uv_ac_quant = 80;
+
+        let mut without_uv_params = make_params(
+            &harness,
+            BlockSize::Block16x16,
+            &plane,
+            &plane,
+            (16, 16),
+            &mvc,
+            MvLimits::new(-4, 4, -4, 4),
+            200,
+        );
+        without_uv_params.rd_calibration = InterRdCalibration::realtime();
+
+        let lambda = compute_rd_mult(200, frame_type_for_rd(synthetic_inter_frame_kind()));
+        let with_uv = evaluate_candidate_for_filter(
+            &with_uv_params,
+            InterMode::ZeroMv,
+            Mv::ZERO,
+            Mv::ZERO,
+            lambda,
+            InterpFilter::EightTap,
+        );
+        let without_uv = evaluate_candidate_for_filter(
+            &without_uv_params,
+            InterMode::ZeroMv,
+            Mv::ZERO,
+            Mv::ZERO,
+            lambda,
+            InterpFilter::EightTap,
+        );
+
+        assert!(with_uv.picker_skip && without_uv.picker_skip);
+        assert!(with_uv.uv_rate > 0 || with_uv.uv_dist > 0);
+        assert!(
+            with_uv.best_rd_cost > without_uv.best_rd_cost,
+            "UV rate/distortion must survive a luma prediction-only skip"
         );
     }
 
