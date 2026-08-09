@@ -1736,7 +1736,7 @@ pub(crate) fn effective_qindex_for_segment(
     }
 }
 
-/// Partition-only Q calibration for the CPU7 VBR exact-tree product path.
+/// Partition-only Q calibration for the CPU6/7 VBR exact-tree product path.
 ///
 /// Rvp9's live VBR trajectory reaches matched operating points at a finer
 /// coding Q than pinned vpxenc. Feeding that finer Q directly to the otherwise
@@ -1750,13 +1750,13 @@ fn exact_vbp_partition_qindex(
     frame_height: usize,
     speed: i32,
 ) -> u8 {
-    // Unit 914's literal-resolution sweep found that the larger bias is a
-    // Pareto win at 1080p, but over-coarsens the 720p tree. Keep the proven
-    // 720p calibration and scale only above that pixel count, matching the
-    // frame-size-dependent shape of libvpx's realtime speed features.
+    // Serialized Unit 987 curves found that the larger CPU6 bias is a Pareto
+    // win at 1080p. Keep the separately proven 720p calibration and scale
+    // only above that pixel count, matching the frame-size-dependent shape
+    // of libvpx's realtime speed features.
     const PARTITION_QINDEX_BIAS_720P: u8 = 9;
     const PARTITION_QINDEX_BIAS_LARGE: u8 = 18;
-    const PARTITION_QINDEX_BIAS_CPU6_LARGE: u8 = 36;
+    const PARTITION_QINDEX_BIAS_CPU6_LARGE: u8 = 54;
     let bias = if frame_width.saturating_mul(frame_height) > 1280 * 720 {
         if speed == 6 {
             PARTITION_QINDEX_BIAS_CPU6_LARGE
@@ -16121,7 +16121,7 @@ mod tests {
     #[test]
     fn exact_vbp_partition_qindex_applies_bias_without_wrapping() {
         assert_eq!(exact_vbp_partition_qindex(100, 1280, 720, 6), 109);
-        assert_eq!(exact_vbp_partition_qindex(100, 1920, 1080, 6), 136);
+        assert_eq!(exact_vbp_partition_qindex(100, 1920, 1080, 6), 154);
         assert_eq!(exact_vbp_partition_qindex(100, 1920, 1080, 7), 118);
         assert_eq!(exact_vbp_partition_qindex(250, 1280, 720, 6), 255);
         assert_eq!(exact_vbp_partition_qindex(255, 1920, 1080, 6), 255);

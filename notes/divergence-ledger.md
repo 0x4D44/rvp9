@@ -4890,46 +4890,50 @@ model-RD transform choice rather than running rvp9's emission-time transform
 search.
 
 **What rvp9 does:** CPU6 now uses the source-exact variance tree, disables
-both history-copy paths, and adds 36 qindex steps only while deriving 1080p
+both history-copy paths, and adds 54 qindex steps only while deriving 1080p
 partition thresholds. Coefficient quantization remains at the rate
 controller's qindex. On TX16-capable leaves, CPU6's existing emission-time
 TX8/TX16 redecision also considers TX4; CPU7 keeps TX8/TX16 and CPU8 keeps its
 accepted picker transform.
 
 **Why:** the preceding approximate CPU6 path measured `2.507062x` vpxenc wall
-time and poor structural fidelity. Exact partitions plus the 36-step
-structural calibration and source-faithful no-copy policy moved the three
-1080p curves to `+6.119%/-9.139%/+4.736%` while running at `0.946161x`
-vpxenc wall time. Adding only TX4 uses part of that speed headroom and improves
-the limiting curves without clip, bitrate, frame-position, or source-signal
-rules. Broad transform searches recovered more quality but exceeded the
-speed gate and were rejected.
+time and poor structural fidelity. After correcting the harness collision and
+the one-pass VBR damping gate, serialized in-tree curves for structural
+biases 18/36/54/60/72 measured
+`+17.303%/+11.253%/+8.150%/+8.347%/+8.711%`; 54 is the measured optimum.
+Against bias 36 it also reduces same-build corpus wall time by 3.3%. Adding
+only TX4 retains a bounded transform recovery without clip, bitrate,
+frame-position, or source-signal rules. Broad transform searches recovered
+more quality but exceeded the speed gate and were rejected.
 
 **Byte-parity impact:** intentional and structural. CPU6 partition history,
 transform signalling, coefficient tokens, and rate-control feedback diverge.
-The exercised CPU6 old-town target-2500 IVF has SHA-256
-`fe61cebb0e79a5de1fad27010bce4558efc982939475f0db9d3bc7e73740fd94`.
+The exercised CPU6 in-tree target-2500 IVF has SHA-256
+`24e2ff1155a4d5c24193404d02b7fc59b92dc4ff2943fe5fa101e48f00a5786b`.
 Rvp9-decoder, pinned vpxdec, and ffmpeg each emit the same 186,624,000-byte
 I420 output with SHA-256
-`4941b8bb15f372d30a51a6a5728874a05c9231f00cfbe0903986297ba3b3dc71`.
+`45fd083482f94a3531c538aa2b990eeb2004d4f6cfced195cc45b055999f26a5`.
 CPU7 and CPU8 policy branches are unchanged; the exercised CPU8 stream is
 byte-identical to the Unit 974 PGO control at SHA-256
 `3e142ba677ebf65c19705f62bdc9784a5486c90da6e235931fcb496923e5fa60`.
 
-**Compression-efficiency impact:** a serialized fresh measurement corrected
-the canonical 60-frame 1080p six-point in-tree/ducks/old-town curves to
-`+13.297%/-13.717%/-0.566%`. The previously recorded
+**Compression-efficiency impact:** serialized canonical 60-frame 1080p
+six-point in-tree/ducks/old-town curves after the VBR damping correction and
+54-step calibration are `+8.150%/-12.284%/+0.026%`. The previously recorded
 `+5.497%/-9.845%/+4.108%` curves were invalid: concurrent harness processes
 overwrote fixed `/tmp/rvp9_bdrate_{role}_{bitrate}k` streams before decode
 (`RVP9-BUG-FLUX-00010`). Serialized curves for the preceding Unit 974 policy
 are `+23.321%/-7.029%/+9.314%`, so this unit remains a large measured quality
-and speed prerequisite despite the in-tree important-clip failure.
+and speed prerequisite despite the remaining in-tree important-clip failure.
 
 **Speed impact:** fifteen warmed alternating plain-release pairs against
 pinned vpxenc measured per-clip wall ratios
 `0.922675x/1.042926x/0.949883x`, corpus geomean `0.970489x`. The child-CPU
 geomean was `0.971639x`; median rvp9 frame times were
-`5.994/8.998/6.010 ms` for in-tree/ducks/old-town.
+`5.994/8.998/6.010 ms` for in-tree/ducks/old-town. Fifteen paired same-build
+bias-54/bias-36 comparisons then measured per-clip wall ratios
+`0.943484x/0.985249x/0.972295x`, corpus geomean `0.966851x`; child-CPU
+geomean was `0.964044x`.
 
 **Future plan:** serialize BD-rate runs until `RVP9-BUG-FLUX-00010` is fixed.
 The in-tree clip is the sole limiting CPU6 quality case; trace its VBR
