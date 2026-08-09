@@ -11619,6 +11619,43 @@ fn inter_forward_quant_one_tx_with_scratch<R>(
         let qcoeff = &mut scratch.qcoeff[..n];
         let dqcoeff = &mut scratch.dqcoeff[..n];
         let eob = if quant_fp {
+            #[cfg(target_arch = "aarch64")]
+            if trellis.is_none()
+                && !matches!(plane_tx, TxSize::Tx32x32)
+                && rvp9_core::dsp::aarch64::vp9_quantize_fp_all_zero_neon(
+                    coefs,
+                    n,
+                    &quantizer.round_fp,
+                    &quantizer.quant_fp,
+                )
+            {
+                0
+            } else {
+                match plane_tx {
+                    TxSize::Tx32x32 => vp9_quantize_fp_32x32_with_order(
+                        coefs,
+                        /* skip_block = */ false,
+                        &quantizer.round_fp,
+                        &quantizer.quant_fp,
+                        qcoeff,
+                        dqcoeff,
+                        &dequant_pair,
+                        &scan,
+                    ),
+                    _ => vp9_quantize_fp_with_order(
+                        coefs,
+                        n,
+                        /* skip_block = */ false,
+                        &quantizer.round_fp,
+                        &quantizer.quant_fp,
+                        qcoeff,
+                        dqcoeff,
+                        &dequant_pair,
+                        &scan,
+                    ),
+                }
+            }
+            #[cfg(not(target_arch = "aarch64"))]
             match plane_tx {
                 TxSize::Tx32x32 => vp9_quantize_fp_32x32_with_order(
                     coefs,

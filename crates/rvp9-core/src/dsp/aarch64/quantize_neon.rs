@@ -144,6 +144,79 @@ unsafe fn quantize_8(
     *eob_max = vmaxq_s16(*eob_max, eob);
 }
 
+/// Returns whether one eight-coefficient group quantizes entirely to zero.
+///
+/// This deliberately repeats the narrowing, saturating round, and doubling
+/// multiply used by [`quantize_8`].  Keeping the arithmetic here instead of
+/// inspecting the transform coefficients is important: a transform block can
+/// have a nonzero residual while every coefficient still rounds to zero.
+#[inline]
+#[target_feature(enable = "neon")]
+unsafe fn quantize_fp_8_is_zero(coeff: *const i32, round: int16x8_t, quant: int16x8_t) -> bool {
+    let coeff_lo = vld1q_s32(coeff);
+    let coeff_hi = vld1q_s32(coeff.add(4));
+    let coeff = vcombine_s16(vmovn_s32(coeff_lo), vmovn_s32(coeff_hi));
+    let rounded = vqaddq_s16(vqabsq_s16(coeff), round);
+    let abs_q = vshrq_n_s16::<1>(vqdmulhq_s16(rounded, quant));
+    vmaxvq_s16(abs_q) == 0
+}
+
+#[target_feature(enable = "neon")]
+unsafe fn vp9_quantize_fp_all_zero_neon_inner(
+    coeff: *const i32,
+    n_coeffs: usize,
+    round: &[i16; 2],
+    quant: &[i16; 2],
+) -> bool {
+    let round_dc_ac = vld1q_s16(
+        [
+            round[0], round[1], round[1], round[1], round[1], round[1], round[1], round[1],
+        ]
+        .as_ptr(),
+    );
+    let round_ac = vdupq_n_s16(round[1]);
+    let quant_dc_ac = vld1q_s16(
+        [
+            quant[0], quant[1], quant[1], quant[1], quant[1], quant[1], quant[1], quant[1],
+        ]
+        .as_ptr(),
+    );
+    let quant_ac = vdupq_n_s16(quant[1]);
+
+    if !quantize_fp_8_is_zero(coeff, round_dc_ac, quant_dc_ac) {
+        return false;
+    }
+
+    let mut i = 8;
+    while i < n_coeffs {
+        if !quantize_fp_8_is_zero(coeff.add(i), round_ac, quant_ac) {
+            return false;
+        }
+        i += 8;
+    }
+    true
+}
+
+/// Check whether the realtime fast quantizer would produce an all-zero block.
+///
+/// The predicate is intentionally limited to the non-32x32 fast-quantizer
+/// sizes. It does not write either output buffer, so callers may use it before
+/// the full quantizer without clearing stale scratch contents on the zero path.
+pub fn vp9_quantize_fp_all_zero_neon(
+    coeff: &[i32],
+    n_coeffs: usize,
+    round: &[i16; 2],
+    quant: &[i16; 2],
+) -> bool {
+    assert!(matches!(n_coeffs, 16 | 64 | 256));
+    assert!(coeff.len() >= n_coeffs);
+
+    // SAFETY: the size assertion is a multiple of eight, so every vector
+    // load covers an in-bounds coefficient group. NEON is mandatory on the
+    // supported AArch64 targets, matching the sibling quantizer wrapper.
+    unsafe { vp9_quantize_fp_all_zero_neon_inner(coeff.as_ptr(), n_coeffs, round, quant) }
+}
+
 #[target_feature(enable = "neon")]
 #[allow(clippy::too_many_arguments)]
 unsafe fn vp9_quantize_fp_neon_inner(
@@ -1168,6 +1241,79 @@ mod tests {
                     assert_eq!(neon_eob, scalar_eob, "{tx_size:?}/{tx_type:?}/q{q_index}");
                     assert_eq!(neon_q, scalar_q, "{tx_size:?}/{tx_type:?}/q{q_index}");
                     assert_eq!(neon_dq, scalar_dq, "{tx_size:?}/{tx_type:?}/q{q_index}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn all_zero_predicate_matches_scalar_and_neon_at_edges() {
+        let mut rng = Lcg32(0xA110_2E00);
+        for tx_size in [TxSize::Tx4x4, TxSize::Tx8x8, TxSize::Tx16x16] {
+            let n = tx_size.n_coeffs();
+            let order = scan_for(tx_size, TxType::DctDct);
+            for q_index in [0, 1, 20, 80, 160, 255] {
+                let qp = init_plane_quantizers(q_index, QuantizerDeltas::Y);
+                let mut inputs = Vec::new();
+                inputs.push(vec![0; n]);
+                inputs.push(vec![i32::from(i16::MAX); n]);
+                inputs.push(vec![i32::from(i16::MIN); n]);
+
+                for &value in [
+                    qp.round_fp[0],
+                    qp.round_fp[1],
+                    qp.round_fp[1].saturating_add(1),
+                ]
+                .iter()
+                {
+                    inputs.push(vec![i32::from(value); n]);
+                }
+
+                for _ in 0..8 {
+                    inputs.push((0..n).map(|_| rng.coeff()).collect());
+                }
+
+                for coeff in inputs {
+                    let mut scalar_q = vec![7; n];
+                    let mut scalar_dq = vec![9; n];
+                    let mut neon_q = vec![11; n];
+                    let mut neon_dq = vec![13; n];
+                    let scalar_eob = vp9_quantize_fp(
+                        &coeff,
+                        n,
+                        false,
+                        &qp.round_fp,
+                        &qp.quant_fp,
+                        &mut scalar_q,
+                        &mut scalar_dq,
+                        &qp.dequant,
+                        order.scan(),
+                    );
+                    let neon_eob = vp9_quantize_fp_neon(
+                        &coeff,
+                        n,
+                        false,
+                        &qp.round_fp,
+                        &qp.quant_fp,
+                        &mut neon_q,
+                        &mut neon_dq,
+                        &qp.dequant,
+                        order.iscan(),
+                    );
+                    let predicted_zero =
+                        vp9_quantize_fp_all_zero_neon(&coeff, n, &qp.round_fp, &qp.quant_fp);
+                    assert_eq!(
+                        predicted_zero,
+                        scalar_eob == 0,
+                        "scalar {tx_size:?}/q{q_index}/{coeff:?}"
+                    );
+                    assert_eq!(
+                        predicted_zero,
+                        neon_eob == 0,
+                        "neon {tx_size:?}/q{q_index}/{coeff:?}"
+                    );
+                    assert_eq!(neon_q, scalar_q);
+                    assert_eq!(neon_dq, scalar_dq);
                 }
             }
         }
