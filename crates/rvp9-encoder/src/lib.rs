@@ -4906,16 +4906,104 @@ fn zero_mv_sad64_edge_clamped(
     sb_origin: (usize, usize),
 ) -> u32 {
     let (width, height) = frame_size;
-    let mut sad = 0u32;
-    for row in 0..64 {
-        let y = (sb_origin.1 + row).min(height - 1);
-        for col in 0..64 {
-            let x = (sb_origin.0 + col).min(width - 1);
-            let offset = y * width + x;
-            sad += u32::from(src[offset].abs_diff(reference[offset]));
+    let x = sb_origin.0.min(width - 1);
+    let y = sb_origin.1.min(height - 1);
+    let visible_width = (width - x).min(64);
+    let visible_height = (height - y).min(64);
+
+    // Literal 720p/1080p have complete 64-pixel SB columns and only a partial
+    // final row. Cover that common case with the existing SIMD SAD shapes,
+    // then account for libvpx's replicated bottom border once. The descending
+    // bands exactly tile any four-row-aligned visible height without reading
+    // beyond the visible frame.
+    if visible_width == 64 {
+        let dsp = rvp9_core::dsp::get_ref();
+        let start = y * width + x;
+        if visible_height == 64 {
+            return dsp.sad(BlockSize::Block64x64)(
+                &src[start..],
+                width,
+                &reference[start..],
+                width,
+            );
         }
+
+        let mut sad = 0u32;
+        let mut covered_rows = 0usize;
+        if visible_height - covered_rows >= 32 {
+            let offset = start + covered_rows * width;
+            sad +=
+                dsp.sad(BlockSize::Block64x32)(&src[offset..], width, &reference[offset..], width);
+            covered_rows += 32;
+        }
+        if visible_height - covered_rows >= 16 {
+            let offset = start + covered_rows * width;
+            let sad32x16 = dsp.sad(BlockSize::Block32x16);
+            sad += sad32x16(&src[offset..], width, &reference[offset..], width);
+            sad += sad32x16(&src[offset + 32..], width, &reference[offset + 32..], width);
+            covered_rows += 16;
+        }
+        if visible_height - covered_rows >= 8 {
+            let offset = start + covered_rows * width;
+            let sad16x8 = dsp.sad(BlockSize::Block16x8);
+            for col in (0..64).step_by(16) {
+                sad += sad16x8(
+                    &src[offset + col..],
+                    width,
+                    &reference[offset + col..],
+                    width,
+                );
+            }
+            covered_rows += 8;
+        }
+        if visible_height - covered_rows >= 4 {
+            let offset = start + covered_rows * width;
+            let sad8x4 = dsp.sad(BlockSize::Block8x4);
+            for col in (0..64).step_by(8) {
+                sad += sad8x4(
+                    &src[offset + col..],
+                    width,
+                    &reference[offset + col..],
+                    width,
+                );
+            }
+            covered_rows += 4;
+        }
+        for row in covered_rows..visible_height {
+            let offset = start + row * width;
+            for col in 0..64 {
+                sad += u32::from(src[offset + col].abs_diff(reference[offset + col]));
+            }
+        }
+        if visible_height < 64 {
+            let offset = start + (visible_height - 1) * width;
+            let mut last_row_sad = 0u32;
+            for col in 0..64 {
+                last_row_sad += u32::from(src[offset + col].abs_diff(reference[offset + col]));
+            }
+            sad += last_row_sad * (64 - visible_height) as u32;
+        }
+        return sad;
     }
-    sad
+
+    // Non-production partial-width frames retain a compact exact path. Sum
+    // each visible row once, extend its final pixel horizontally, then extend
+    // the final completed row vertically.
+    let mut sad = 0u32;
+    let mut last_row_sad = 0u32;
+    for row in 0..visible_height {
+        let offset = (y + row) * width + x;
+        let mut row_sad = 0u32;
+        for col in 0..visible_width {
+            row_sad += u32::from(src[offset + col].abs_diff(reference[offset + col]));
+        }
+        row_sad += u32::from(
+            src[offset + visible_width - 1].abs_diff(reference[offset + visible_width - 1]),
+        ) * (64 - visible_width) as u32;
+        sad += row_sad;
+        last_row_sad = row_sad;
+    }
+    sad + last_row_sad * (64 - visible_height) as u32
 }
 
 fn full_pixel_search_method_for_mode(
@@ -13802,6 +13890,70 @@ mod tests {
         let dispatched =
             rvp9_core::dsp::get_ref().sad(BlockSize::Block64x64)(&src, 64, &reference, 64);
         assert_eq!(dispatched, edge_clamped);
+    }
+
+    #[test]
+    fn zero_mv_sad64_optimized_edges_match_per_pixel_clamping() {
+        fn scalar_reference(
+            src: &[u8],
+            reference: &[u8],
+            frame_size: (usize, usize),
+            sb_origin: (usize, usize),
+        ) -> u32 {
+            let (width, height) = frame_size;
+            let mut sad = 0u32;
+            for row in 0..64 {
+                let y = (sb_origin.1 + row).min(height - 1);
+                for col in 0..64 {
+                    let x = (sb_origin.0 + col).min(width - 1);
+                    let offset = y * width + x;
+                    sad += u32::from(src[offset].abs_diff(reference[offset]));
+                }
+            }
+            sad
+        }
+
+        let mut state = 0x6a09_e667_f3bc_c909u64;
+        for &(width, height) in &[
+            (1, 1),
+            (7, 5),
+            (64, 64),
+            (64, 65),
+            (64, 72),
+            (64, 95),
+            (72, 64),
+            (80, 72),
+            (128, 108),
+            (1920, 1080),
+        ] {
+            let mut src = vec![0u8; width * height];
+            let mut reference = vec![0u8; width * height];
+            for (src_pixel, reference_pixel) in src.iter_mut().zip(&mut reference) {
+                state = state
+                    .wrapping_mul(6_364_136_223_846_793_005)
+                    .wrapping_add(1_442_695_040_888_963_407);
+                *src_pixel = state as u8;
+                *reference_pixel = (state >> 32) as u8;
+            }
+
+            let origins = [
+                (0, 0),
+                (width.saturating_sub(1), height.saturating_sub(1)),
+                (width + 17, height + 9),
+                (width.saturating_sub(64), height.saturating_sub(64)),
+                (
+                    64.min(width.saturating_sub(1)),
+                    64.min(height.saturating_sub(1)),
+                ),
+            ];
+            for origin in origins {
+                assert_eq!(
+                    zero_mv_sad64_edge_clamped(&src, &reference, (width, height), origin,),
+                    scalar_reference(&src, &reference, (width, height), origin),
+                    "frame={width}x{height}, origin={origin:?}",
+                );
+            }
+        }
     }
 
     #[test]
