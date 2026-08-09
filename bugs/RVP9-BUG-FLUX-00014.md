@@ -1,25 +1,25 @@
 # RVP9-BUG-FLUX-00014 — GOP byte-identity golden lags accepted production-parity stream
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Low
 - **Area:** encoder tests
 - **Raised:** 2026-08-09T22:47:42Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260809T225328Z-p91450-n870271000-c1
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLUX-00014-run-fix-20260809T225328Z-p91450-n870271000-c1
-- **Owner base:** 3c88cfba9c9a84d97514cd7f399c56e5783f5bad
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-08-09T22:53:28Z
-- **Owner until:** 2026-08-10T00:53:28Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-09T22:47:42Z, raised via `deltic bugs new` model=gpt-5.6-sol@high)
+- **State history:** Open (2026-08-09T22:47:42Z, raised via `deltic bugs new` model=gpt-5.6-sol@high) -> Fixed (2026-08-09T22:54:15Z, deltic:auto role=fix run=fix-20260809T225328Z-p91450-n870271000-c1 branch=task/bug-RVP9-BUG-FLUX-00014-run-fix-20260809T225328Z-p91450-n870271000-c1 code=adf6c1b621170f6d9af9ecd8e7e6c52327f5e088 gate=manual)
 
 ## Observation
 
