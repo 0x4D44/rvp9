@@ -4944,6 +4944,10 @@ fn realtime_search_golden_filter(rc_mode: crate::rate_control::RcMode, speed: i3
     matches!(rc_mode, crate::rate_control::RcMode::Vbr) && speed.unsigned_abs() < 8
 }
 
+fn retain_all_last_nearest_filter_search(rc_mode: crate::rate_control::RcMode, speed: i32) -> bool {
+    matches!(rc_mode, crate::rate_control::RcMode::Vbr) && speed.unsigned_abs() == 6
+}
+
 fn newmv_diff_bias_for_mode(rc_mode: crate::rate_control::RcMode, env_enabled: bool) -> bool {
     env_enabled && matches!(rc_mode, crate::rate_control::RcMode::Cbr)
 }
@@ -7245,6 +7249,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         cb_pred_filter_search: sf.cb_pred_filter_search
                             || a4_descent_cb_filter_search,
                         skip_integer_mv_filter_search: rt_skip_integer_mv_filter_search,
+                        retain_all_last_nearest_filter_search: false,
                         mi_row: leaf_mi_row as u32,
                         mi_col: leaf_mi_col as u32,
                         chessboard_index,
@@ -8596,6 +8601,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     golden_ref_is_last,
                     cb_pred_filter_search: sf.cb_pred_filter_search,
                     skip_integer_mv_filter_search: rt_skip_integer_mv_filter_search,
+                    retain_all_last_nearest_filter_search:
+                        retain_all_last_nearest_filter_search(rc_mode, speed),
                     mi_row: leaf_mi_row as u32,
                     mi_col: leaf_mi_col as u32,
                     chessboard_index,
@@ -14341,6 +14348,14 @@ mod tests {
         assert!(realtime_search_golden_filter(RcMode::Vbr, 7));
         assert!(!realtime_search_golden_filter(RcMode::Vbr, 8));
         assert!(!realtime_search_golden_filter(RcMode::Cbr, 7));
+    }
+
+    #[test]
+    fn full_last_nearest_filter_search_is_scoped_to_cpu6_vbr() {
+        assert!(retain_all_last_nearest_filter_search(RcMode::Vbr, 6));
+        assert!(!retain_all_last_nearest_filter_search(RcMode::Vbr, 7));
+        assert!(!retain_all_last_nearest_filter_search(RcMode::Vbr, 8));
+        assert!(!retain_all_last_nearest_filter_search(RcMode::Cbr, 6));
     }
 
     #[test]

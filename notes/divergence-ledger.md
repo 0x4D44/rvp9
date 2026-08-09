@@ -32,36 +32,39 @@ Each entry:
 searches the realtime filter set only for NEWMV or when no concrete neighbour
 filter exists. VBR and SVC permit GOLDEN as a searched reference frame.
 **What rvp9 does:** reuses a concrete neighbour filter for LAST NEARMV. It
-retains every enabled GOLDEN search. LAST NEARESTMV keeps the full search
-through 1280x720; above that frame area only 64x64 leaves keep the extra
-search.
+retains every enabled GOLDEN search. CPU6 VBR retains LAST NEARESTMV filter
+search on every leaf. Other v1 configurations keep the full search through
+1280x720; above that frame area only 64x64 leaves keep the extra search.
 **Why:** rvp9 previously searched every mode and reference. Temporary matched
 counters localized 292,912 excess 16x16 model-RD calls to filter search. The
 fully libvpx-faithful policy reduced calls but made `in_to_tree` 1080p luma
 BD-rate `+2.644060%` versus vpxenc. Retaining LAST NEARESTMV and all VBR
-GOLDEN searches keeps that important clip at `+1.865096%`, while concrete
-filter reuse removes the measured LAST NEARMV evaluations. A later literal-
-resolution sweep found that smaller large-frame NEAREST searches could also
-reuse the causal filter without crossing any 1080p clip guard, while 720p
-old-town still needs the full NEAREST search.
-**Byte-parity impact:** structural. Clean and instrumented candidates produce
-the same representative 720p and 1080p streams. Rvp9-decoder, pinned vpxdec,
-and ffmpeg decode them bit-exactly to I420 SHA-256
-`741fe8ec37aeacb8c39ec1f6a9ca7cadaebde5f5485053bbcd6db14e9e4af5d2`
-and
-`2b36f0f7d2558b770e8c0655b11fe58c19433f5210a020cd926995541920a9ba`.
-**Compression-efficiency impact:** the 720p CPU7 VBR policy and streams are
-unchanged. With the resolution-scaled exact-VBP calibration, 1080p six-point
-luma BD-rate versus pinned vpxenc is `+1.747%/-9.570%/+1.519%` for
-`in_to_tree`/`ducks_take_off`/`old_town_cross`; every important clip remains
-inside the `+2%` guard.
-**Speed impact:** combined with the accepted 1080p exact-VBP calibration,
-fifteen warmed alternating pairs measure a `0.97816x` paired wall geomean and
-`0.97736x` paired child-CPU geomean versus the preceding byte-exact baseline.
-**Future plan:** retain while the per-clip quality gates stay green. Revisit
-the remaining 64x64 NEARESTMV and GOLDEN searches after rvp9's residual model
-matches libvpx closely enough that the fully source-faithful policy no longer
-causes a material quality loss.
+GOLDEN searches recovered that quality, while concrete filter reuse removed
+the measured LAST NEARMV evaluations. A later literal-resolution sweep found
+that CPU7/8 smaller large-frame NEAREST searches could reuse the causal filter
+without crossing any 1080p clip guard. The CPU6 exact-partition path instead
+improves both limiting clips when it keeps the broader search and retains
+enough measured speed headroom to pay for it.
+**Byte-parity impact:** structural for CPU6 VBR. The exercised 1080p in-tree
+target-2500 IVF has SHA-256
+`9869429199e2142ebcd1a149a4950be9cca2f047ac6fb77ed97207420df1e3df`.
+Rvp9-decoder, pinned vpxdec, and ffmpeg each emit the same 186,624,000-byte
+I420 output at SHA-256
+`1a8539a89d9ccb0011c02fe4431d92a31b11f9f83de0eee1fd306b2236b21a66`.
+CPU7 VBR, CPU8 VBR, and CPU6 CBR controls remain byte-identical.
+**Compression-efficiency impact:** CPU7/8 VBR and CPU6 CBR streams remain
+byte-identical to the accepted policy. Canonical CPU6 1080p six-point luma
+BD-rate versus pinned vpxenc is `+1.194%/-11.767%/-2.126%` for
+`in_to_tree`/`ducks_take_off`/`old_town_cross`, improving both limiting clips
+by 0.165 and 0.679 point from `+1.359%/-12.072%/-1.447%`.
+**Speed impact:** fifteen warmed alternating same-build pairs measure a
+`1.000000x` paired wall geomean and `1.001833x` child-CPU geomean versus the
+preceding policy. Direct plain-release pairs against pinned vpxenc measure
+`0.917331x` wall and `0.940492x` child-CPU geomeans. Median rvp9 frame times
+are `5.500/8.667/5.333 ms`.
+**Future plan:** retain while the per-clip quality and speed gates stay green.
+Revisit only after a more source-faithful residual model can replace the extra
+search without losing compression efficiency.
 
 ### 2026-08-02 — Large-frame maximum transform retained outside Block32
 **Where:** `rvp9_encoder::realtime_emit_luma_tx_size` and

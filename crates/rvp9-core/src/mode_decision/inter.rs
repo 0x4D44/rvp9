@@ -1398,6 +1398,11 @@ pub struct PickInterModeParams<'a> {
     /// speed.
     pub skip_integer_mv_filter_search: bool,
 
+    /// When `true`, retain interpolation-filter search for every LAST/NEAREST
+    /// candidate. CPU6 VBR has enough speed headroom for this broader search;
+    /// faster presets keep the large-frame shortcut below.
+    pub retain_all_last_nearest_filter_search: bool,
+
     /// 8×8-MI row index of this block. Feeds the [`cb_pred_filter_search`]
     /// chessboard predicate `((mi_row + mi_col) >> bsl) +
     /// chessboard_index) & 1` (`vp9_pickmode.c:1855-1857`).
@@ -1714,8 +1719,11 @@ fn retain_last_nearest_filter_search(
     frame_width: usize,
     frame_height: usize,
     block_size: BlockSize,
+    retain_all: bool,
 ) -> bool {
-    frame_width.saturating_mul(frame_height) <= 1280 * 720 || block_size == BlockSize::Block64x64
+    retain_all
+        || frame_width.saturating_mul(frame_height) <= 1280 * 720
+        || block_size == BlockSize::Block64x64
 }
 
 /// libvpx default `inter_mode_mask[]` for cpu-used-5+: every bsize gets
@@ -2409,6 +2417,7 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
                 params.src_plane.width,
                 params.src_plane.height,
                 params.block_size,
+                params.retain_all_last_nearest_filter_search,
             ) && ref_frame == RefFrame::LastFrame
                 && mode == InterMode::NearestMv
                 && params.filter_ref != InterpFilter::Switchable
@@ -7347,6 +7356,7 @@ mod tests {
             golden_ref_is_last: false,
             cb_pred_filter_search: false,
             skip_integer_mv_filter_search: false,
+            retain_all_last_nearest_filter_search: false,
             mi_row: 0,
             mi_col: 0,
             chessboard_index: 0,
@@ -11375,16 +11385,25 @@ mod tests {
             1280,
             720,
             BlockSize::Block8x8,
+            false,
         ));
         assert!(retain_last_nearest_filter_search(
             1920,
             1080,
             BlockSize::Block64x64,
+            false,
         ));
         assert!(!retain_last_nearest_filter_search(
             1920,
             1080,
             BlockSize::Block32x32,
+            false,
+        ));
+        assert!(retain_last_nearest_filter_search(
+            1920,
+            1080,
+            BlockSize::Block32x32,
+            true,
         ));
     }
 
