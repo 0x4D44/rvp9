@@ -5089,3 +5089,33 @@ frames; the final feature speed matrix will measure it with dynamic deltas.
 
 **Future plan:** replace the fixed delta with the pinned VBR dynamic BOOST1
 delta, then enable and price the already implemented per-block BOOST2 policy.
+
+### 2026-08-09 — Suppress cyclic refresh on one-pass VBR golden frames
+
+**Where:** `rvp9_encoder::frame_loop::cyclic_refresh_frame_enabled`; libvpx
+counterpart: `vp9_cyclic_refresh_update_parameters` VBR golden-refresh branch.
+
+**What libvpx does:** assigns zero refresh percentage and a neutral rate ratio
+to non-SVC one-pass VBR frames that refresh GOLDEN because rate control already
+boosts those frames.
+
+**What rvp9 does:** now suppresses the AQ rate model, segmentation map, and
+segment Q features on the same VBR GOLDEN role. CBR golden roles and ordinary
+VBR inter frames keep cyclic refresh when the common frame gate passes.
+
+**Why:** refreshing an already boosted GOLDEN frame double-spent bits and
+distorted the signed AQ gain. One shared pre-Q decision also prevents the rate
+model and the emitted segmentation gate from disagreeing.
+
+**Byte-parity impact:** intentional on AQ-enabled VBR golden frames. The
+target-250 candidate decodes bit-exactly through all three required decoders.
+
+**Compression-efficiency impact:** the signed Foreman VBR AQ-gain mismatch
+improves from `1.378` to `1.151` percentage points. It remains outside the
+`0.3%` final feature tolerance.
+
+**Speed impact:** expected favorable because golden frames skip segment-map
+and boosted-leaf work; no broad timing claim is made before the feature matrix.
+
+**Future plan:** retain the source-faithful golden hook while porting the
+candidate-Q-dependent VBR BOOST1 delta.

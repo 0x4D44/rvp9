@@ -186,6 +186,15 @@ const fn realtime_skin_detection_enabled(rc_mode: RcMode, aq_mode: AqMode) -> bo
     matches!(rc_mode, RcMode::Cbr) && matches!(aq_mode, AqMode::CyclicRefresh)
 }
 
+#[inline]
+const fn cyclic_refresh_frame_enabled(
+    rc_mode: RcMode,
+    frame_kind: RcFrameKind,
+    frame_gate: bool,
+) -> bool {
+    frame_gate && !(matches!(rc_mode, RcMode::Vbr) && matches!(frame_kind, RcFrameKind::Golden))
+}
+
 /// Hidden Stage 4a product override for split-admission diagnostics.
 ///
 /// This is not a user-facing tuning knob. Product gates use
@@ -2271,15 +2280,19 @@ impl StreamEncoder {
         // predicted boosted fraction while choosing base Q, matching libvpx's
         // `vp9_cyclic_refresh_rc_bits_per_mb` path. The frame-level gate is
         // pure and is evaluated again by the inter encoder after Q selection.
-        let aq_active_for_rate_control = !rc_frame_kind.is_key()
-            && self.cyclic_refresh.as_ref().is_some_and(|cr| {
-                cr.apply_cyclic_refresh(
-                    false,
-                    self.rate_control.avg_frame_qindex_inter,
-                    self.rate_control.best_quality,
-                    self.rate_control.frames_since_key,
-                )
-            });
+        let aq_active_for_rate_control = cyclic_refresh_frame_enabled(
+            self.config.rc_mode,
+            rc_frame_kind,
+            !rc_frame_kind.is_key()
+                && self.cyclic_refresh.as_ref().is_some_and(|cr| {
+                    cr.apply_cyclic_refresh(
+                        false,
+                        self.rate_control.avg_frame_qindex_inter,
+                        self.rate_control.best_quality,
+                        self.rate_control.frames_since_key,
+                    )
+                }),
+        );
         let aq_rate_model = self
             .cyclic_refresh
             .as_ref()
@@ -2535,7 +2548,11 @@ impl StreamEncoder {
             FrameKind::Key => {
                 self.encode_keyframe_internal(q_index, (y_tight, u_tight, v_tight))?
             }
-            FrameKind::Inter => self.encode_inter_internal(q_index, (y_tight, u_tight, v_tight))?,
+            FrameKind::Inter => self.encode_inter_internal(
+                q_index,
+                (y_tight, u_tight, v_tight),
+                aq_active_for_rate_control,
+            )?,
         };
 
         // W8 — Inter frames advance the inter-frames-since-ARF
@@ -3247,6 +3264,7 @@ impl StreamEncoder {
         &mut self,
         q_index: u8,
         input_yuv: (&[u8], &[u8], &[u8]),
+        aq_active_this_frame: bool,
     ) -> Result<Vec<u8>, EncodeError> {
         let w = self.config.width;
         let h = self.config.height;
@@ -3279,15 +3297,6 @@ impl StreamEncoder {
         // post-encode update for this frame, matching libvpx's
         // call order (cyclic_refresh runs during `setup_frame`,
         // before encoding).
-        let aq_active_this_frame = match &self.cyclic_refresh {
-            None => false,
-            Some(cr) => cr.apply_cyclic_refresh(
-                /* is_keyframe = */ false,
-                self.rate_control.avg_frame_qindex_inter,
-                self.rate_control.best_quality,
-                self.rate_control.frames_since_key,
-            ),
-        };
         let (seg_map, seg_q_deltas): (Vec<u8>, [Option<i16>; 8]) =
             match (&mut self.cyclic_refresh, aq_active_this_frame) {
                 (None, _) | (Some(_), false) => (vec![0u8; mi_rows_us * mi_cols_us], [None; 8]),
@@ -6824,6 +6833,30 @@ mod tests {
             AqMode::CyclicRefresh
         ));
         assert!(!realtime_skin_detection_enabled(RcMode::Vbr, AqMode::Off));
+    }
+
+    #[test]
+    fn cyclic_refresh_skips_one_pass_vbr_golden_frames() {
+        assert!(cyclic_refresh_frame_enabled(
+            RcMode::Vbr,
+            RcFrameKind::Inter,
+            true,
+        ));
+        assert!(!cyclic_refresh_frame_enabled(
+            RcMode::Vbr,
+            RcFrameKind::Golden,
+            true,
+        ));
+        assert!(cyclic_refresh_frame_enabled(
+            RcMode::Cbr,
+            RcFrameKind::Golden,
+            true,
+        ));
+        assert!(!cyclic_refresh_frame_enabled(
+            RcMode::Cbr,
+            RcFrameKind::Inter,
+            false,
+        ));
     }
 
     #[test]
