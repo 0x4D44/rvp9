@@ -20,6 +20,7 @@
 //!       --test-encoder   D:/language/libvpx-stock/vpxenc.exe \
 //!       --decoder        D:/language/libvpx-stock/vpxdec.exe \
 //!       --input          tests/corpus/parkrun_720p30.y4m \
+//!       [--reference-input tests/corpus/parkrun_720p30-clean.y4m] \
 //!       --cpu-used       7 \
 //!       --bitrates       500,1000,1500,2000,3000,4500 \
 //!       --fps            30/1 --threads 4 --tile-columns 2 --limit 60 \
@@ -41,6 +42,7 @@ struct Args {
     test_encoder: PathBuf,
     decoder: PathBuf,
     input: PathBuf,
+    reference_input: PathBuf,
     cpu_used: u32,
     bitrates_kbps: Vec<u32>,
     end_usage: String,
@@ -70,12 +72,23 @@ fn parse_args_from(argv: &[String]) -> Args {
             .and_then(|i| argv.get(i + 1).cloned())
     };
     let get_all = |flag: &str| -> Vec<String> {
+        let inline_prefix = format!("{flag}=");
         argv.iter()
             .enumerate()
-            .filter(|(_, arg)| arg.as_str() == flag)
-            .filter_map(|(index, _)| argv.get(index + 1).cloned())
+            .filter_map(|(index, arg)| {
+                if arg == flag {
+                    argv.get(index + 1).cloned()
+                } else {
+                    arg.strip_prefix(&inline_prefix).map(str::to_owned)
+                }
+            })
             .collect()
     };
+
+    let input = get("--input").map(PathBuf::from).expect("--input required");
+    let reference_input = get("--reference-input")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| input.clone());
 
     Args {
         anchor_encoder: get("--anchor-encoder")
@@ -87,7 +100,8 @@ fn parse_args_from(argv: &[String]) -> Args {
         decoder: get("--decoder")
             .map(PathBuf::from)
             .expect("--decoder required"),
-        input: get("--input").map(PathBuf::from).expect("--input required"),
+        input,
+        reference_input,
         cpu_used: get("--cpu-used")
             .map(|s| s.parse().expect("--cpu-used u32"))
             .unwrap_or(7),
@@ -360,6 +374,7 @@ fn main() -> ExitCode {
     println!("anchor: {}", args.anchor_encoder.display());
     println!("test:   {}", args.test_encoder.display());
     println!("input:  {}", args.input.display());
+    println!("reference input: {}", args.reference_input.display());
     println!(
         "config: --rt --cpu-used={} --end-usage={} --fps={} --threads={} --tile-columns={} --lag-in-frames={} --tune-content={}{}{}{}",
         args.cpu_used,
@@ -433,8 +448,8 @@ fn main() -> ExitCode {
         let a_br = measured_bitrate_kbps(&a_ivf, a_frames, fps_hz);
         let t_br = measured_bitrate_kbps(&t_ivf, t_frames, fps_hz);
 
-        let a_psnr = decode_and_psnr(&args.decoder, &a_ivf, &args.input);
-        let t_psnr = decode_and_psnr(&args.decoder, &t_ivf, &args.input);
+        let a_psnr = decode_and_psnr(&args.decoder, &a_ivf, &args.reference_input);
+        let t_psnr = decode_and_psnr(&args.decoder, &t_ivf, &args.reference_input);
 
         println!(
             "target {br:>5}k | anchor {a_br:>6.0}k psnr {a_psnr:>5.2} | test {t_br:>6.0}k psnr {t_psnr:>5.2}"
@@ -544,6 +559,53 @@ mod tests {
             ["--ts-number-layers=2", "--ts-layer-id=0,1"]
         );
         assert_eq!(args.test_args, ["--temporal-layers=2"]);
+        assert_eq!(args.reference_input, PathBuf::from("input.y4m"));
+    }
+
+    #[test]
+    fn parser_accepts_inline_role_specific_arguments() {
+        let argv = [
+            "bdrate",
+            "--anchor-encoder",
+            "anchor",
+            "--test-encoder",
+            "test",
+            "--decoder",
+            "decoder",
+            "--input",
+            "input.y4m",
+            "--anchor-arg=--noise-sensitivity=0",
+            "--test-arg=--noise-sensitivity=1",
+        ]
+        .map(str::to_owned);
+
+        let args = parse_args_from(&argv);
+
+        assert_eq!(args.anchor_args, ["--noise-sensitivity=0"]);
+        assert_eq!(args.test_args, ["--noise-sensitivity=1"]);
+    }
+
+    #[test]
+    fn parser_accepts_a_separate_quality_reference_input() {
+        let argv = [
+            "bdrate",
+            "--anchor-encoder",
+            "anchor",
+            "--test-encoder",
+            "test",
+            "--decoder",
+            "decoder",
+            "--input",
+            "noisy.y4m",
+            "--reference-input",
+            "clean.y4m",
+        ]
+        .map(str::to_owned);
+
+        let args = parse_args_from(&argv);
+
+        assert_eq!(args.input, PathBuf::from("noisy.y4m"));
+        assert_eq!(args.reference_input, PathBuf::from("clean.y4m"));
     }
 
     #[test]

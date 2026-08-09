@@ -36,7 +36,9 @@ esac
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 LIBVPX_SRC="$REPO_ROOT/third_party/libvpx"
-BUILD_DIR="$REPO_ROOT/build/libvpx"
+# A distinct output directory is required when toggling configure features:
+# libvpx's generated RTCD headers are not reliably invalidated in place.
+BUILD_DIR="${RVP9_LIBVPX_BUILD_DIR:-$REPO_ROOT/build/libvpx}"
 
 # Known-issue on Windows / Git Bash: libvpx's configure + Makefile assume
 # a Linux-like environment and intermittently mis-handle paths and TMPDIR
@@ -107,6 +109,7 @@ CFLAGS="-O3 -fomit-frame-pointer" \
     --enable-vp9 \
     --disable-vp8 \
     --enable-vp9-highbitdepth \
+    --enable-vp9-temporal-denoising \
     --enable-pic \
     --disable-docs \
     --disable-unit-tests
