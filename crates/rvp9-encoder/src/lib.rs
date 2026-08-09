@@ -4948,6 +4948,13 @@ fn retain_all_last_nearest_filter_search(rc_mode: crate::rate_control::RcMode, s
     matches!(rc_mode, crate::rate_control::RcMode::Vbr) && speed.unsigned_abs() == 6
 }
 
+fn retain_last_near_eighttap_filter_search(
+    rc_mode: crate::rate_control::RcMode,
+    speed: i32,
+) -> bool {
+    matches!(rc_mode, crate::rate_control::RcMode::Vbr) && speed.unsigned_abs() == 6
+}
+
 fn newmv_diff_bias_for_mode(rc_mode: crate::rate_control::RcMode, env_enabled: bool) -> bool {
     env_enabled && matches!(rc_mode, crate::rate_control::RcMode::Cbr)
 }
@@ -7250,6 +7257,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             || a4_descent_cb_filter_search,
                         skip_integer_mv_filter_search: rt_skip_integer_mv_filter_search,
                         retain_all_last_nearest_filter_search: false,
+                        retain_last_near_eighttap_filter_search: false,
                         mi_row: leaf_mi_row as u32,
                         mi_col: leaf_mi_col as u32,
                         chessboard_index,
@@ -8603,6 +8611,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     skip_integer_mv_filter_search: rt_skip_integer_mv_filter_search,
                     retain_all_last_nearest_filter_search:
                         retain_all_last_nearest_filter_search(rc_mode, speed),
+                    retain_last_near_eighttap_filter_search:
+                        retain_last_near_eighttap_filter_search(rc_mode, speed),
                     mi_row: leaf_mi_row as u32,
                     mi_col: leaf_mi_col as u32,
                     chessboard_index,
@@ -14351,11 +14361,14 @@ mod tests {
     }
 
     #[test]
-    fn full_last_nearest_filter_search_is_scoped_to_cpu6_vbr() {
+    fn full_filter_search_recoveries_are_scoped_to_cpu6_vbr() {
         assert!(retain_all_last_nearest_filter_search(RcMode::Vbr, 6));
         assert!(!retain_all_last_nearest_filter_search(RcMode::Vbr, 7));
         assert!(!retain_all_last_nearest_filter_search(RcMode::Vbr, 8));
         assert!(!retain_all_last_nearest_filter_search(RcMode::Cbr, 6));
+        assert!(retain_last_near_eighttap_filter_search(RcMode::Vbr, 6));
+        assert!(!retain_last_near_eighttap_filter_search(RcMode::Vbr, 7));
+        assert!(!retain_last_near_eighttap_filter_search(RcMode::Cbr, 6));
     }
 
     #[test]

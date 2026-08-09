@@ -33,7 +33,9 @@ searches the realtime filter set only for NEWMV or when no concrete neighbour
 filter exists. VBR and SVC permit GOLDEN as a searched reference frame.
 **What rvp9 does:** reuses a concrete neighbour filter for LAST NEARMV. It
 retains every enabled GOLDEN search. CPU6 VBR retains LAST NEARESTMV filter
-search on every leaf. Other v1 configurations keep the full search through
+search on every leaf. It also lets fractional LAST NEARMV candidates search
+when their causal filter is `EightTap`, subject to the normal integer-MV and
+chessboard gates. Other v1 configurations keep the full NEAREST search through
 1280x720; above that frame area only 64x64 leaves keep the extra search.
 **Why:** rvp9 previously searched every mode and reference. Temporary matched
 counters localized 292,912 excess 16x16 model-RD calls to filter search. The
@@ -44,24 +46,28 @@ the measured LAST NEARMV evaluations. A later literal-resolution sweep found
 that CPU7/8 smaller large-frame NEAREST searches could reuse the causal filter
 without crossing any 1080p clip guard. The CPU6 exact-partition path instead
 improves both limiting clips when it keeps the broader search and retains
-enough measured speed headroom to pay for it.
+enough measured speed headroom to pay for it. The narrower causal-EightTap
+NEARMV recovery was previously rejected on a loaded-host speed screen; after
+the exact CPU6 partition architecture it is wall- and CPU-neutral in the
+required repeated-pair measurement and improves the corpus curve.
 **Byte-parity impact:** structural for CPU6 VBR. The exercised 1080p in-tree
 target-2500 IVF has SHA-256
-`9869429199e2142ebcd1a149a4950be9cca2f047ac6fb77ed97207420df1e3df`.
+`7f6b00a39da4122139d96140a70d7f059372da86439bf5085b8d1533d51a7824`.
 Rvp9-decoder, pinned vpxdec, and ffmpeg each emit the same 186,624,000-byte
 I420 output at SHA-256
-`1a8539a89d9ccb0011c02fe4431d92a31b11f9f83de0eee1fd306b2236b21a66`.
+`348555a80ab73b95746082729aa045893c651f33474a22c39f75e34e01a4573f`.
 CPU7 VBR, CPU8 VBR, and CPU6 CBR controls remain byte-identical.
 **Compression-efficiency impact:** CPU7/8 VBR and CPU6 CBR streams remain
 byte-identical to the accepted policy. Canonical CPU6 1080p six-point luma
-BD-rate versus pinned vpxenc is `+1.194%/-11.767%/-2.126%` for
-`in_to_tree`/`ducks_take_off`/`old_town_cross`, improving both limiting clips
-by 0.165 and 0.679 point from `+1.359%/-12.072%/-1.447%`.
+BD-rate versus pinned vpxenc is `+1.068%/-12.317%/-2.063%` for
+`in_to_tree`/`ducks_take_off`/`old_town_cross`. Against the preceding CPU6
+policy this improves the limiting clip by 0.126 point and ducks by 0.550 point;
+old-town gives back 0.063 point while remaining a 2.1% win.
 **Speed impact:** fifteen warmed alternating same-build pairs measure a
-`1.000000x` paired wall geomean and `1.001833x` child-CPU geomean versus the
+`1.000000x` paired wall geomean and `1.001026x` child-CPU geomean versus the
 preceding policy. Direct plain-release pairs against pinned vpxenc measure
-`0.917331x` wall and `0.940492x` child-CPU geomeans. Median rvp9 frame times
-are `5.500/8.667/5.333 ms`.
+`0.925363x` wall and `0.944691x` child-CPU geomeans. Median rvp9 frame times
+are `6.000/9.833/6.167 ms`.
 **Future plan:** retain while the per-clip quality and speed gates stay green.
 Revisit only after a more source-faithful residual model can replace the extra
 search without losing compression efficiency.

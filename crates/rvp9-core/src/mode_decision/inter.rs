@@ -1403,6 +1403,11 @@ pub struct PickInterModeParams<'a> {
     /// faster presets keep the large-frame shortcut below.
     pub retain_all_last_nearest_filter_search: bool,
 
+    /// When `true`, a fractional LAST/NEARMV candidate whose causal filter is
+    /// `EightTap` may search the realtime filter pair. CPU6 VBR uses this
+    /// measured recovery while other presets retain causal-filter reuse.
+    pub retain_last_near_eighttap_filter_search: bool,
+
     /// 8×8-MI row index of this block. Feeds the [`cb_pred_filter_search`]
     /// chessboard predicate `((mi_row + mi_col) >> bsl) +
     /// chessboard_index) & 1` (`vp9_pickmode.c:1855-1857`).
@@ -1667,6 +1672,7 @@ struct InterpFilterSearch {
     ref_frame: RefFrame,
     filter_ref: InterpFilter,
     search_golden_filter: bool,
+    retain_last_near_eighttap_filter_search: bool,
 }
 
 #[inline]
@@ -1684,15 +1690,21 @@ fn should_search_interp_filter(search: InterpFilterSearch) -> bool {
         ref_frame,
         filter_ref,
         search_golden_filter,
+        retain_last_near_eighttap_filter_search,
     } = search;
     // Unlike libvpx, retain the nearest-MV LAST search and all enabled GOLDEN
-    // searches. Their extra residual quality is material for rvp9, while
-    // reusing the neighbour filter for LAST near-MV candidates removes the
-    // measured redundant evaluations.
+    // searches. Their extra residual quality is material for rvp9. LAST
+    // near-MV candidates normally reuse the neighbour filter; CPU6 may retain
+    // the measured causal-EightTap exception below.
+    let retained_last_near = retain_last_near_eighttap_filter_search
+        && ref_frame == RefFrame::LastFrame
+        && mode == InterMode::NearMv
+        && filter_ref == InterpFilter::EightTap;
     if mode != InterMode::NewMv
         && mode != InterMode::NearestMv
         && filter_ref != InterpFilter::Switchable
         && !(ref_frame == RefFrame::GoldenFrame && search_golden_filter)
+        && !retained_last_near
     {
         return false;
     }
@@ -2408,6 +2420,8 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
                 ref_frame,
                 filter_ref: params.filter_ref,
                 search_golden_filter: params.search_golden_filter,
+                retain_last_near_eighttap_filter_search: params
+                    .retain_last_near_eighttap_filter_search,
             });
             // Large-frame policy: retain the measured 64x64 LAST/NEAREST
             // quality exception, but reuse a concrete causal filter on smaller
@@ -7357,6 +7371,7 @@ mod tests {
             cb_pred_filter_search: false,
             skip_integer_mv_filter_search: false,
             retain_all_last_nearest_filter_search: false,
+            retain_last_near_eighttap_filter_search: false,
             mi_row: 0,
             mi_col: 0,
             chessboard_index: 0,
@@ -11311,6 +11326,7 @@ mod tests {
                 ref_frame: RefFrame::LastFrame,
                 filter_ref: InterpFilter::Switchable,
                 search_golden_filter: true,
+                retain_last_near_eighttap_filter_search: false,
             })
         };
         let policy_search = |mode, ref_frame, filter_ref, search_golden_filter| {
@@ -11326,6 +11342,7 @@ mod tests {
                 ref_frame,
                 filter_ref,
                 search_golden_filter,
+                retain_last_near_eighttap_filter_search: false,
             })
         };
 
@@ -11365,6 +11382,20 @@ mod tests {
             InterpFilter::EightTapSmooth,
             true,
         ));
+        assert!(should_search_interp_filter(InterpFilterSearch {
+            skip_integer_mv_filter_search: true,
+            cb_pred_filter_search: false,
+            mi_row: 2,
+            mi_col: 0,
+            chessboard_index: 0,
+            block_size: BlockSize::Block16x16,
+            mv: subpel_mv,
+            mode: InterMode::NearMv,
+            ref_frame: RefFrame::LastFrame,
+            filter_ref: InterpFilter::EightTap,
+            search_golden_filter: true,
+            retain_last_near_eighttap_filter_search: true,
+        }));
         assert!(policy_search(
             InterMode::NearMv,
             RefFrame::GoldenFrame,
