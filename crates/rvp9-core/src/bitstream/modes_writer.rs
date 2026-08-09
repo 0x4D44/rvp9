@@ -2485,6 +2485,115 @@ fn effective_inter_tx_size(
     }
 }
 
+#[derive(Copy, Clone)]
+struct InterLeafCountState {
+    is_inter: bool,
+    effective_tx_size: TxSize,
+    skip_ctx: usize,
+    intra_inter_ctx: usize,
+    allow_select: bool,
+    max_tx: TxSize,
+    tx_ctx: usize,
+}
+
+#[inline]
+fn inter_leaf_count_state(
+    tx_mode: TxMode,
+    leaf_bsize: BlockSize,
+    mi: &ModeInfo,
+    above: Option<&ModeInfo>,
+    left: Option<&ModeInfo>,
+) -> InterLeafCountState {
+    let is_inter = matches!(mi.mode, BlockMode::Inter { .. });
+    let effective_tx_size = effective_inter_tx_size(mi, leaf_bsize, tx_mode, is_inter);
+    let skip_ctx =
+        usize::from(above.is_some_and(|m| m.skip)) + usize::from(left.is_some_and(|m| m.skip));
+    let intra_inter_ctx = get_intra_inter_context(above, left);
+    let allow_select = !mi.skip || !is_inter;
+    let max_tx = max_txsize(leaf_bsize);
+    let above_tx = above.map(|m| (m.tx_size, m.skip));
+    let left_tx = left.map(|m| (m.tx_size, m.skip));
+    let tx_ctx = if max_tx >= TxSize::Tx8x8 {
+        get_tx_size_context(above_tx, left_tx, max_tx)
+    } else {
+        0
+    };
+    InterLeafCountState {
+        is_inter,
+        effective_tx_size,
+        skip_ctx,
+        intra_inter_ctx,
+        allow_select,
+        max_tx,
+        tx_ctx,
+    }
+}
+
+#[inline]
+fn count_inter_leaf_syntax_resolved(
+    tx_mode: TxMode,
+    leaf_bsize: BlockSize,
+    mi: &ModeInfo,
+    state: InterLeafCountState,
+    counts: &mut FrameCounts,
+) {
+    counts.skip[state.skip_ctx][usize::from(mi.skip)] += 1;
+    counts.intra_inter[state.intra_inter_ctx][usize::from(state.is_inter)] += 1;
+
+    let tx_counts_selected = state.allow_select && tx_mode == TxMode::TxModeSelect;
+    let tx_idx = state.effective_tx_size as usize;
+    match state.max_tx {
+        TxSize::Tx32x32 => {
+            if tx_counts_selected {
+                counts.tx.p32x32[state.tx_ctx][tx_idx] += 1;
+            }
+            counts.tx.tx_totals[tx_idx] += 1;
+        }
+        TxSize::Tx16x16 => {
+            if tx_counts_selected {
+                counts.tx.p16x16[state.tx_ctx][tx_idx] += 1;
+            }
+            counts.tx.tx_totals[tx_idx] += 1;
+        }
+        TxSize::Tx8x8 => {
+            if tx_counts_selected {
+                counts.tx.p8x8[state.tx_ctx][tx_idx] += 1;
+            }
+            counts.tx.tx_totals[tx_idx] += 1;
+        }
+        TxSize::Tx4x4 => {}
+    }
+
+    if let BlockMode::Intra { y_mode, uv_mode } = mi.mode {
+        let size_group = match leaf_bsize {
+            BlockSize::Block4x4 | BlockSize::Block4x8 | BlockSize::Block8x4 => 0,
+            BlockSize::Block8x8 | BlockSize::Block8x16 | BlockSize::Block16x8 => 1,
+            BlockSize::Block16x16 | BlockSize::Block16x32 | BlockSize::Block32x16 => 2,
+            BlockSize::Block32x32
+            | BlockSize::Block32x64
+            | BlockSize::Block64x32
+            | BlockSize::Block64x64 => 3,
+        };
+        counts.y_mode[size_group][y_mode as usize] += 1;
+        counts.uv_mode[y_mode as usize][uv_mode as usize] += 1;
+    }
+}
+
+/// Accumulate skip, intra/inter, transform-size, and intra-mode counts for a
+/// committed inter-frame leaf without emitting its boolean syntax.
+#[inline]
+pub fn count_inter_leaf_syntax(
+    tx_mode: TxMode,
+    leaf_bsize: BlockSize,
+    mi: &ModeInfo,
+    above: Option<&ModeInfo>,
+    left: Option<&ModeInfo>,
+    counts: &mut FrameCounts,
+) {
+    let state = inter_leaf_count_state(tx_mode, leaf_bsize, mi, above, left);
+    count_inter_leaf_syntax_resolved(tx_mode, leaf_bsize, mi, state, counts);
+}
+
 /// Emit one inter-frame leaf coding block at `(mi_row, mi_col)`.
 /// Mirror of the decoder's `decode_inter_block` per its doc-comment
 /// step list:
@@ -2584,42 +2693,31 @@ fn write_inter_block_leaf(
     let neighbours = MiGridNeighbourLookup::new(mi_grid, mi_cols, mi_row, mi_col, tile_bounds);
     let above = neighbours.get(Position { row: -1, col: 0 });
     let left = neighbours.get(Position { row: 0, col: -1 });
+    let count_state = inter_leaf_count_state(tx_mode, leaf_bsize, mi, above, left);
+    debug_assert_eq!(count_state.is_inter, is_inter);
+    debug_assert_eq!(count_state.effective_tx_size, effective_tx_size);
+    if let Some(c) = counts.as_deref_mut() {
+        count_inter_leaf_syntax_resolved(tx_mode, leaf_bsize, mi, count_state, c);
+    }
 
     // 2. Skip flag. Pre-S4.16g this was hardcoded to `1`; phase 3
     //    of S4.16g widened the writer to accept `mi.skip == false`.
     //    Mirrors `decode_inter_block` step 2.
-    let skip_ctx =
-        usize::from(above.is_some_and(|m| m.skip)) + usize::from(left.is_some_and(|m| m.skip));
     set_category(BitCategory::Skip);
-    bw.write(u8::from(mi.skip), fc.skip_probs[skip_ctx]);
-    // P0b — accumulate skip count.
-    if let Some(c) = counts.as_deref_mut() {
-        c.skip[skip_ctx][usize::from(mi.skip)] += 1;
-    }
+    bw.write(u8::from(mi.skip), fc.skip_probs[count_state.skip_ctx]);
 
     // 3. is_inter classification. Phase 2b: 0 for intra-in-inter
     //    blocks, 1 for inter blocks.
-    let intra_inter_ctx = get_intra_inter_context(above, left);
     set_category(BitCategory::IsInter);
-    bw.write(u8::from(is_inter), fc.intra_inter_prob[intra_inter_ctx]);
-    // P0b — accumulate intra_inter count.
-    if let Some(c) = counts.as_deref_mut() {
-        c.intra_inter[intra_inter_ctx][usize::from(is_inter)] += 1;
-    }
+    bw.write(
+        u8::from(is_inter),
+        fc.intra_inter_prob[count_state.intra_inter_ctx],
+    );
 
     // 4. tx_size. `allow_select = !skip || !is_inter` per libvpx
     //    `vp9_decodemv.c:800`. For intra blocks `!is_inter = true`
     //    so `allow_select = true` always. For inter blocks with
     //    `skip = true`, `allow_select = false`.
-    let allow_select = !mi.skip || !is_inter;
-    let max_tx = max_txsize(leaf_bsize);
-    let above_tx = above.map(|m| (m.tx_size, m.skip));
-    let left_tx = left.map(|m| (m.tx_size, m.skip));
-    let tx_ctx = if max_tx >= TxSize::Tx8x8 {
-        get_tx_size_context(above_tx, left_tx, max_tx)
-    } else {
-        0
-    };
     // The decoder, when `allow_select` is false, derives `tx_size =
     // min(max_tx_size, tx_mode_to_biggest_tx_size(tx_mode))`. The
     // `write_tx_size` debug_assert checks this so the caller has to
@@ -2632,47 +2730,11 @@ fn write_inter_block_leaf(
         bw,
         &fc.tx_probs,
         tx_mode,
-        max_tx,
-        allow_select,
-        tx_ctx,
+        count_state.max_tx,
+        count_state.allow_select,
+        count_state.tx_ctx,
         effective_tx_size,
     );
-    // P0b — accumulate tx-size count. Mirrors the decoder's
-    // `read_tx_size` count logic in `mode_info.rs`: the per-context
-    // p-counts (which `adapt_mode_probs` consumes for tx_probs backward
-    // adaptation) are incremented ONLY in the selected-tx-size branch
-    // (`allow_select && tx_mode == TxModeSelect && max_tx >= Tx8x8`).
-    // In the non-select branch libvpx (and the decoder) skip the
-    // increment, so the writer must too — otherwise skip-inter leaves
-    // (allow_select == false) over-count vs the decoder and desync the
-    // adapted tx_probs across the GOP. `tx_totals` is encoder-only
-    // bookkeeping (the decoder never tracks it); keep it accumulating
-    // for parity with libvpx's tokenize accounting.
-    let tx_counts_selected = allow_select && tx_mode == TxMode::TxModeSelect;
-    if let Some(c) = counts.as_deref_mut() {
-        let tx_idx = effective_tx_size as usize;
-        match max_tx {
-            TxSize::Tx32x32 => {
-                if tx_counts_selected {
-                    c.tx.p32x32[tx_ctx][tx_idx] += 1;
-                }
-                c.tx.tx_totals[tx_idx] += 1;
-            }
-            TxSize::Tx16x16 => {
-                if tx_counts_selected {
-                    c.tx.p16x16[tx_ctx][tx_idx] += 1;
-                }
-                c.tx.tx_totals[tx_idx] += 1;
-            }
-            TxSize::Tx8x8 => {
-                if tx_counts_selected {
-                    c.tx.p8x8[tx_ctx][tx_idx] += 1;
-                }
-                c.tx.tx_totals[tx_idx] += 1;
-            }
-            TxSize::Tx4x4 => {} // no choice to count
-        }
-    }
 
     // 5. Dispatch: intra-in-inter vs inter mode info.
     if is_inter {
@@ -2736,17 +2798,9 @@ fn write_inter_block_leaf(
 
         // Y mode — tree-coded against `fc.y_mode_prob[size_group]`.
         write_intra_mode(bw, &fc.y_mode_prob[size_group], y_mode);
-        // P0b — accumulate y_mode count.
-        if let Some(c) = counts.as_deref_mut() {
-            c.y_mode[size_group][y_mode as usize] += 1;
-        }
 
         // UV mode — tree-coded against `fc.uv_mode_prob[y_mode]`.
         write_intra_mode(bw, &fc.uv_mode_prob[y_mode as usize], uv_mode);
-        // P0b — accumulate uv_mode count.
-        if let Some(c) = counts.as_deref_mut() {
-            c.uv_mode[y_mode as usize][uv_mode as usize] += 1;
-        }
     }
 
     // 6. Residual coefs. When `mi.skip == true` the decoder bypasses
