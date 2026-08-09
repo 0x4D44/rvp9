@@ -92,11 +92,16 @@ use crate::entropy::{
     write_block_tokens_with_retained_i16,
 };
 use crate::inter::mode_info::{
-    InterModeReadParams, InterModeWriteError, get_intra_inter_context, write_inter_block_mode_info,
+    InterModeReadParams, InterModeWriteError, count_inter_block_mode_info, get_intra_inter_context,
+    get_mode_context, write_inter_block_mode_info,
 };
-use crate::inter::mv_ref::{BlockBounds, NeighbourLookup, Position, PrevFrameMvRef};
+use crate::inter::mv_ref::{
+    BlockBounds, NeighbourLookup, Position, PrevFrameMvRef, find_mv_refs, lower_mv_precision,
+};
 use crate::intra_pred::IntraMode;
-use crate::mode_info::{BlockMode, BmiInfo, ModeInfo, get_tx_size_context, write_segment_id};
+use crate::mode_info::{
+    BlockMode, BmiInfo, InterMode, ModeInfo, Mv, get_tx_size_context, write_segment_id,
+};
 use crate::transforms::{TxMode, TxSize, TxType};
 
 /// Encoder-side segmentation context for the per-block writer.
@@ -2033,6 +2038,344 @@ pub fn write_tile_inter(
         counts,
         None,
     )
+}
+
+/// Count one inter tile's partition, mode, reference, transform, and MV syntax
+/// without serializing boolean symbols or visiting coefficient tokens.
+///
+/// This is the pre-compressed-header counterpart of [`write_tile_inter`]. It
+/// shares the leaf count helpers with the writer while retaining the same
+/// causal partition and mode-info traversal.
+#[allow(clippy::too_many_arguments)]
+pub fn count_tile_inter_noncoef(
+    params: &InterModeReadParams,
+    tx_mode: TxMode,
+    mi_grid: &[Option<ModeInfo>],
+    mi_rows: u32,
+    mi_cols: u32,
+    tile_bounds: TileBounds,
+    prev_mv_grid: Option<&[PrevFrameMvRef]>,
+    counts: &mut FrameCounts,
+) -> Result<(), ModesWriterError> {
+    let mi_rows = mi_rows as usize;
+    let mi_cols = mi_cols as usize;
+    if tile_bounds.mi_row_end > mi_rows
+        || tile_bounds.mi_col_end > mi_cols
+        || tile_bounds.mi_row_start > tile_bounds.mi_row_end
+        || tile_bounds.mi_col_start > tile_bounds.mi_col_end
+        || mi_grid.len() != mi_rows * mi_cols
+    {
+        return Err(ModesWriterError::InvalidTileBounds);
+    }
+    if let Some(grid) = prev_mv_grid
+        && grid.len() != mi_rows * mi_cols
+    {
+        return Err(ModesWriterError::InvalidTileBounds);
+    }
+
+    let mut part_ctx = PartitionCtx::new(tile_bounds.mi_col_end - tile_bounds.mi_col_start);
+    let mut mi_row = tile_bounds.mi_row_start;
+    while mi_row < tile_bounds.mi_row_end {
+        part_ctx.reset_left();
+        let mut mi_col = tile_bounds.mi_col_start;
+        while mi_col < tile_bounds.mi_col_end {
+            count_inter_partition_tree_noncoef(
+                params,
+                tx_mode,
+                &mut part_ctx,
+                &tile_bounds,
+                mi_grid,
+                mi_rows,
+                mi_cols,
+                mi_row,
+                mi_col,
+                BlockSize::Block64x64,
+                4,
+                prev_mv_grid,
+                counts,
+            )?;
+            mi_col += MI_BLOCK_SIZE;
+        }
+        mi_row += MI_BLOCK_SIZE;
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn count_inter_partition_tree_noncoef(
+    params: &InterModeReadParams,
+    tx_mode: TxMode,
+    part_ctx: &mut PartitionCtx,
+    bounds: &TileBounds,
+    mi_grid: &[Option<ModeInfo>],
+    mi_rows: usize,
+    mi_cols: usize,
+    mi_row: usize,
+    mi_col: usize,
+    bsize: BlockSize,
+    n4x4_l2: u8,
+    prev_mv_grid: Option<&[PrevFrameMvRef]>,
+    counts: &mut FrameCounts,
+) -> Result<(), ModesWriterError> {
+    if mi_row >= mi_rows || mi_col >= mi_cols {
+        return Ok(());
+    }
+
+    let n8x8_l2 = n4x4_l2.saturating_sub(1);
+    let num_8x8_wh = 1usize << n8x8_l2;
+    let hbs = num_8x8_wh >> 1;
+    let mi_row_in_tile = mi_row - bounds.mi_row_start;
+    let mi_col_in_tile = mi_col - bounds.mi_col_start;
+    let partition = infer_inter_partition(mi_grid, mi_cols, mi_row, mi_col, bsize)?;
+    let ctx = part_ctx.context(mi_row_in_tile, mi_col_in_tile, n8x8_l2 as usize);
+    counts.partition[ctx][partition as usize] += 1;
+    let sub =
+        subsize(bsize, partition).expect("inferred inter partition must have a legal subsize");
+
+    if hbs == 0 {
+        count_inter_leaf_noncoef(
+            params,
+            tx_mode,
+            *bounds,
+            mi_grid,
+            mi_rows,
+            mi_cols,
+            mi_row,
+            mi_col,
+            sub,
+            prev_mv_grid,
+            counts,
+        )?;
+        part_ctx.update(mi_row_in_tile, mi_col_in_tile, sub, num_8x8_wh);
+        return Ok(());
+    }
+
+    match partition {
+        PartitionType::None => count_inter_leaf_noncoef(
+            params,
+            tx_mode,
+            *bounds,
+            mi_grid,
+            mi_rows,
+            mi_cols,
+            mi_row,
+            mi_col,
+            sub,
+            prev_mv_grid,
+            counts,
+        )?,
+        PartitionType::Horz => {
+            count_inter_leaf_noncoef(
+                params,
+                tx_mode,
+                *bounds,
+                mi_grid,
+                mi_rows,
+                mi_cols,
+                mi_row,
+                mi_col,
+                sub,
+                prev_mv_grid,
+                counts,
+            )?;
+            if mi_row + hbs < mi_rows {
+                count_inter_leaf_noncoef(
+                    params,
+                    tx_mode,
+                    *bounds,
+                    mi_grid,
+                    mi_rows,
+                    mi_cols,
+                    mi_row + hbs,
+                    mi_col,
+                    sub,
+                    prev_mv_grid,
+                    counts,
+                )?;
+            }
+        }
+        PartitionType::Vert => {
+            count_inter_leaf_noncoef(
+                params,
+                tx_mode,
+                *bounds,
+                mi_grid,
+                mi_rows,
+                mi_cols,
+                mi_row,
+                mi_col,
+                sub,
+                prev_mv_grid,
+                counts,
+            )?;
+            if mi_col + hbs < mi_cols {
+                count_inter_leaf_noncoef(
+                    params,
+                    tx_mode,
+                    *bounds,
+                    mi_grid,
+                    mi_rows,
+                    mi_cols,
+                    mi_row,
+                    mi_col + hbs,
+                    sub,
+                    prev_mv_grid,
+                    counts,
+                )?;
+            }
+        }
+        PartitionType::Split => {
+            count_inter_partition_tree_noncoef(
+                params,
+                tx_mode,
+                part_ctx,
+                bounds,
+                mi_grid,
+                mi_rows,
+                mi_cols,
+                mi_row,
+                mi_col,
+                sub,
+                n8x8_l2,
+                prev_mv_grid,
+                counts,
+            )?;
+            count_inter_partition_tree_noncoef(
+                params,
+                tx_mode,
+                part_ctx,
+                bounds,
+                mi_grid,
+                mi_rows,
+                mi_cols,
+                mi_row,
+                mi_col + hbs,
+                sub,
+                n8x8_l2,
+                prev_mv_grid,
+                counts,
+            )?;
+            count_inter_partition_tree_noncoef(
+                params,
+                tx_mode,
+                part_ctx,
+                bounds,
+                mi_grid,
+                mi_rows,
+                mi_cols,
+                mi_row + hbs,
+                mi_col,
+                sub,
+                n8x8_l2,
+                prev_mv_grid,
+                counts,
+            )?;
+            count_inter_partition_tree_noncoef(
+                params,
+                tx_mode,
+                part_ctx,
+                bounds,
+                mi_grid,
+                mi_rows,
+                mi_cols,
+                mi_row + hbs,
+                mi_col + hbs,
+                sub,
+                n8x8_l2,
+                prev_mv_grid,
+                counts,
+            )?;
+        }
+    }
+
+    if (bsize as u8) >= (BlockSize::Block8x8 as u8)
+        && (bsize == BlockSize::Block8x8 || partition != PartitionType::Split)
+    {
+        part_ctx.update(mi_row_in_tile, mi_col_in_tile, sub, num_8x8_wh);
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn count_inter_leaf_noncoef(
+    params: &InterModeReadParams,
+    tx_mode: TxMode,
+    tile_bounds: TileBounds,
+    mi_grid: &[Option<ModeInfo>],
+    mi_rows: usize,
+    mi_cols: usize,
+    mi_row: usize,
+    mi_col: usize,
+    leaf_bsize: BlockSize,
+    prev_mv_grid: Option<&[PrevFrameMvRef]>,
+    counts: &mut FrameCounts,
+) -> Result<(), ModesWriterError> {
+    let mi = mi_grid_get(mi_grid, mi_cols, mi_row, mi_col)
+        .ok_or(ModesWriterError::MissingCell { mi_row, mi_col })?;
+    if mi.block_size != leaf_bsize {
+        return Err(ModesWriterError::UnsupportedBlockSize {
+            mi_row,
+            mi_col,
+            block_size: mi.block_size,
+        });
+    }
+    if mi.seg_id_predicted {
+        return Err(ModesWriterError::UnsupportedSegmentation { mi_row, mi_col });
+    }
+
+    let neighbours = MiGridNeighbourLookup::new(mi_grid, mi_cols, mi_row, mi_col, tile_bounds);
+    let above = neighbours.get(Position { row: -1, col: 0 });
+    let left = neighbours.get(Position { row: 0, col: -1 });
+    count_inter_leaf_syntax(tx_mode, leaf_bsize, &mi, above, left, counts);
+
+    if let BlockMode::Inter {
+        mode, ref_frames, ..
+    } = mi.mode
+    {
+        let inter_mode_ctx = get_mode_context(leaf_bsize, &neighbours);
+        let mut best_ref_mvs = [Mv::ZERO; 2];
+        if matches!(mode, InterMode::NewMv) && (leaf_bsize as u8) >= (BlockSize::Block8x8 as u8) {
+            let num_refs = 1 + usize::from(ref_frames[1].is_inter());
+            let bounds_block = BlockBounds::new(
+                mi_row as i32,
+                mi_col as i32,
+                mi_rows as i32,
+                mi_cols as i32,
+                i32::from(leaf_bsize.n_8x8_wide()),
+                i32::from(leaf_bsize.n_8x8_high()),
+            );
+            let prev_mv = prev_mv_grid.and_then(|g| g.get(mi_row * mi_cols + mi_col).copied());
+            for i in 0..num_refs {
+                let list = find_mv_refs(
+                    InterMode::NewMv,
+                    leaf_bsize,
+                    ref_frames[i],
+                    &neighbours,
+                    &params.sign_bias,
+                    &bounds_block,
+                    prev_mv,
+                );
+                let idx = list.count.saturating_sub(1).min(list.mvs.len() - 1);
+                best_ref_mvs[i] = lower_mv_precision(list.mvs[idx], params.allow_high_precision_mv);
+            }
+        }
+        count_inter_block_mode_info(
+            params,
+            leaf_bsize,
+            above,
+            left,
+            inter_mode_ctx,
+            best_ref_mvs,
+            &mi,
+            counts,
+        )
+        .map_err(|source| ModesWriterError::InterModeWrite {
+            mi_row,
+            mi_col,
+            source,
+        })?;
+    }
+    Ok(())
 }
 
 /// [`write_tile_inter`] with an optional coefficient-token record/replay
@@ -7655,6 +7998,25 @@ mod tests {
         assert_eq!(
             count_only_counts, counts,
             "count-only and arithmetic writers must gather identical counts"
+        );
+        let mut direct_noncoef_counts = FrameCounts::default();
+        count_tile_inter_noncoef(
+            &params,
+            TxMode::AllowTx32x32,
+            &grid,
+            mi_rows,
+            mi_cols,
+            bounds,
+            None,
+            &mut direct_noncoef_counts,
+        )
+        .expect("direct non-coefficient traversal");
+        let mut expected_noncoef_counts = counts.clone();
+        expected_noncoef_counts.coef = CoefCountsBank::default();
+        expected_noncoef_counts.coef_full = None;
+        assert_eq!(
+            direct_noncoef_counts, expected_noncoef_counts,
+            "direct traversal must match every writer-side non-coefficient count"
         );
         // Single non-skip 64x64 leaf → one entry in partition, skip,
         // intra_inter, single_ref, inter_mode, tx, plus coefficient EOBs.
