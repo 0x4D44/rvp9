@@ -261,7 +261,8 @@ fn exact_keyframe_sub8_enabled(config: &EncoderConfig, q_index: u8) -> bool {
         return true;
     }
 
-    q_index <= CPU7_VBR_EXACT_KEYFRAME_SUB8_QMAX
+    config.speed == 7
+        && q_index <= CPU7_VBR_EXACT_KEYFRAME_SUB8_QMAX
         && crate::InterEncodeEnv::capture().exact_vbp_tree_enabled(
             config.rc_mode,
             config.speed,
@@ -7679,6 +7680,8 @@ mod tests {
         assert!(!exact_keyframe_sub8_enabled(&config, 121));
 
         config.speed = 6;
+        assert!(!exact_keyframe_sub8_enabled(&config, 120));
+        config.speed = 8;
         assert!(!exact_keyframe_sub8_enabled(&config, 120));
         config.speed = 7;
         config.rc_mode = RcMode::Cbr;

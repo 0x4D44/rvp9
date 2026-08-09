@@ -4742,6 +4742,17 @@ the required quiet-host acceptance timing.
 the exact path, and remove its largest proven cost without reopening any of
 the three six-point curves.
 
+**CPU8 boundary audit (2026-08-09):** extending the exact inter-frame VBP tree
+to cpu-used 8 had also admitted this Q-scoped keyframe path through their shared
+gate, contrary to the CPU7-only policy above. The product predicate now checks
+`speed == 7` explicitly; the environment diagnostic remains preset-agnostic.
+At cpu-used 8, restoring the intended boundary measured a `0.946935x` plain
+wall-time geomean and `0.942605x` child-CPU geomean. Its 1080p curves are
+`-1.471%/-10.066%/-2.643%` and its 720p curves are
+`-1.295%/-12.884%/-1.310%` for in-tree/ducks/old-town versus pinned vpxenc.
+The exercised old-town stream decodes identically under rvp9-decoder, pinned
+vpxdec, and ffmpeg.
+
 ### 2026-08-09 — Calibrate exact VBP structure above the coding Q
 
 **Where:** `rvp9_encoder::exact_vbp_partition_qindex` and the exact-tree
