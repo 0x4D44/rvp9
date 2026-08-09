@@ -247,7 +247,7 @@ unsafe fn filter8_lanes(
     limit: u8,
     blimit: u8,
     thresh: u8,
-) -> ([uint8x8_t; 8], bool) {
+) -> [uint8x8_t; 8] {
     let p3 = values[0];
     let p2 = values[1];
     let p1 = values[2];
@@ -288,14 +288,13 @@ unsafe fn filter8_lanes(
     output[4] = narrow[2];
     output[5] = narrow[3];
 
-    let flat_active = vmaxv_u8(flat) != 0;
-    if flat_active {
+    if vmaxv_u8(flat) != 0 {
         let wide = filter7(&values);
         for index in 0..6 {
             output[index + 1] = vbsl_u8(flat, wide[index], output[index + 1]);
         }
     }
-    (output, flat_active)
+    output
 }
 
 #[inline(always)]
@@ -359,7 +358,7 @@ unsafe fn filter16_lanes(
     limit: u8,
     blimit: u8,
     thresh: u8,
-) -> ([uint8x8_t; 16], bool, bool) {
+) -> [uint8x8_t; 16] {
     let (mask, flat, flat2, hev) = filter_masks(limit, blimit, thresh, &values);
     let mut output = values;
 
@@ -371,7 +370,7 @@ unsafe fn filter16_lanes(
 
     let wide7_mask = vand_u8(mask, flat);
     if vmaxv_u8(wide7_mask) == 0 {
-        return (output, false, false);
+        return output;
     }
     let wide7 = filter7(&[
         values[4], values[5], values[6], values[7], values[8], values[9], values[10], values[11],
@@ -385,7 +384,7 @@ unsafe fn filter16_lanes(
     for index in 0..14 {
         output[index + 1] = vbsl_u8(wide15_mask, wide15[index], output[index + 1]);
     }
-    (output, true, vmaxv_u8(wide15_mask) != 0)
+    output
 }
 
 #[inline(always)]
@@ -629,7 +628,7 @@ unsafe fn filter16_dual_lanes(
     limit: u8,
     blimit: u8,
     thresh: u8,
-) -> ([uint8x16_t; 16], bool, bool) {
+) -> [uint8x16_t; 16] {
     let (mask, flat, flat2, hev) = filter_masks_16(limit, blimit, thresh, &values);
     let mut output = values;
 
@@ -641,7 +640,7 @@ unsafe fn filter16_dual_lanes(
 
     let wide7_mask = vandq_u8(mask, flat);
     if vmaxvq_u8(wide7_mask) == 0 {
-        return (output, false, false);
+        return output;
     }
     let wide7 = filter7_16(&[
         values[4], values[5], values[6], values[7], values[8], values[9], values[10], values[11],
@@ -655,28 +654,7 @@ unsafe fn filter16_dual_lanes(
     for index in 0..14 {
         output[index + 1] = vbslq_u8(wide15_mask, wide15[index], output[index + 1]);
     }
-    (output, true, vmaxvq_u8(wide15_mask) != 0)
-}
-
-#[inline(always)]
-unsafe fn store_middle_4_rows(rows: [uint8x8_t; 8], dst: *mut u8, pitch: usize) {
-    for (row, values) in rows.into_iter().enumerate() {
-        let middle = vext_u8::<2>(values, values);
-        vst1_lane_u32::<0>(
-            dst.add(row * pitch).cast::<u32>(),
-            vreinterpret_u32_u8(middle),
-        );
-    }
-}
-
-#[inline(always)]
-unsafe fn store_middle_6_rows(rows: [uint8x8_t; 8], dst: *mut u8, pitch: usize) {
-    for (row, values) in rows.into_iter().enumerate() {
-        let middle = vext_u8::<1>(values, values);
-        let row_dst = dst.add(row * pitch);
-        vst1_lane_u32::<0>(row_dst.cast::<u32>(), vreinterpret_u32_u8(middle));
-        vst1_lane_u16::<2>(row_dst.add(4).cast::<u16>(), vreinterpret_u16_u8(middle));
-    }
+    output
 }
 
 #[inline(always)]
@@ -1093,14 +1071,8 @@ unsafe fn horizontal_8_inner(
     for (row, value) in values.iter_mut().enumerate() {
         *value = vld1_u8(start.add(row * pitch));
     }
-    let (output, flat_active) = filter8_lanes(values, limit, blimit, thresh);
-    let store_range = if flat_active { 1..7 } else { 2..6 };
-    for (row, value) in output
-        .iter()
-        .enumerate()
-        .take(store_range.end)
-        .skip(store_range.start)
-    {
+    let output = filter8_lanes(values, limit, blimit, thresh);
+    for (row, value) in output.iter().enumerate().take(7).skip(1) {
         vst1_u8(start.add(row * pitch), *value);
     }
 }
@@ -1119,12 +1091,9 @@ unsafe fn vertical_8_inner(
     for (row, value) in rows.iter_mut().enumerate() {
         *value = vld1_u8(start.add(row * pitch));
     }
-    let (columns, flat_active) = filter8_lanes(transpose_8x8(rows), limit, blimit, thresh);
-    let output = transpose_8x8(columns);
-    if flat_active {
-        store_middle_6_rows(output, start.add(1), pitch);
-    } else {
-        store_middle_4_rows(output, start.add(2), pitch);
+    let output = transpose_8x8(filter8_lanes(transpose_8x8(rows), limit, blimit, thresh));
+    for (row, value) in output.iter().enumerate() {
+        vst1_u8(start.add(row * pitch), *value);
     }
 }
 
@@ -1210,20 +1179,9 @@ unsafe fn horizontal_inner(
     for (row, value) in values.iter_mut().enumerate() {
         *value = vld1_u8(start.add(row * pitch));
     }
-    let (output, flat_active, flat2_active) = filter16_lanes(values, limit, blimit, thresh);
-    for (row, value) in output.iter().enumerate().take(10).skip(6) {
+    let output = filter16_lanes(values, limit, blimit, thresh);
+    for (row, value) in output.iter().enumerate().take(15).skip(1) {
         vst1_u8(start.add(row * pitch), *value);
-    }
-    if flat_active {
-        for row in [5, 10] {
-            vst1_u8(start.add(row * pitch), output[row]);
-        }
-    }
-    if flat2_active {
-        for row in [1, 2, 3, 4, 11, 12, 13, 14] {
-            let value = output[row];
-            vst1_u8(start.add(row * pitch), value);
-        }
     }
 }
 
@@ -1241,29 +1199,9 @@ unsafe fn vertical_inner(
     for (row, value) in rows.iter_mut().enumerate() {
         *value = vld1q_u8(start.add(row * pitch));
     }
-    let input = transpose_16x8(rows);
-    let (columns, flat_active, flat2_active) = filter16_lanes(input, limit, blimit, thresh);
-    if flat2_active {
-        let output = transpose_8x16(columns);
-        for (row, value) in output.iter().enumerate() {
-            vst1q_u8(start.add(row * pitch), *value);
-        }
-    } else {
-        let middle = transpose_8x8([
-            columns[4],
-            columns[5],
-            columns[6],
-            columns[7],
-            columns[8],
-            columns[9],
-            columns[10],
-            columns[11],
-        ]);
-        if flat_active {
-            store_middle_6_rows(middle, start.add(5), pitch);
-        } else {
-            store_middle_4_rows(middle, start.add(6), pitch);
-        }
+    let output = transpose_8x16(filter16_lanes(transpose_16x8(rows), limit, blimit, thresh));
+    for (row, value) in output.iter().enumerate() {
+        vst1q_u8(start.add(row * pitch), *value);
     }
 }
 
@@ -1281,19 +1219,9 @@ unsafe fn horizontal_dual_inner(
     for (row, value) in values.iter_mut().enumerate() {
         *value = vld1q_u8(start.add(row * pitch));
     }
-    let (output, flat_active, flat2_active) = filter16_dual_lanes(values, limit, blimit, thresh);
-    for (row, value) in output.iter().enumerate().take(10).skip(6) {
+    let output = filter16_dual_lanes(values, limit, blimit, thresh);
+    for (row, value) in output.iter().enumerate().take(15).skip(1) {
         vst1q_u8(start.add(row * pitch), *value);
-    }
-    if flat_active {
-        for row in [5, 10] {
-            vst1q_u8(start.add(row * pitch), output[row]);
-        }
-    }
-    if flat2_active {
-        for row in [1, 2, 3, 4, 11, 12, 13, 14] {
-            vst1q_u8(start.add(row * pitch), output[row]);
-        }
     }
 }
 
