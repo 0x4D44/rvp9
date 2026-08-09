@@ -56,15 +56,18 @@ use rvp9_core::bitstream::sub_parsers::{
 };
 use rvp9_core::bitstream::{
     AllZeroCoefSource, AllZeroIntraCoefSource, BitDepth, BitstreamError, ChromaFormat, ColorRange,
-    ColorSpace, CompressedHeaderOptions, CompressedHeaderResult, FrameKind, InterpFilter,
-    ModesTileBounds, ModesWriterError, Profile, RawBitWriter, SuperframeBuilder,
-    UncompressedHeader, record_inter_leaf_coefficients, tile_bounds, write_compressed_header,
-    write_tile_inter, write_tile_intra_keyframe, write_uncompressed_header,
+    ColorSpace, CompressedHeaderOptions, CompressedHeaderResult, FrameKind,
+    InterPartitionCountState, InterpFilter, ModesTileBounds, ModesWriterError, Profile,
+    RawBitWriter, SuperframeBuilder, UncompressedHeader, count_inter_leaf_syntax,
+    record_inter_leaf_coefficients, tile_bounds, write_compressed_header, write_tile_inter,
+    write_tile_intra_keyframe, write_uncompressed_header,
 };
 use rvp9_core::block::BlockSize;
 use rvp9_core::coef_ctx::TileCoefCtx;
 use rvp9_core::entropy::{BoolWriter, FrameContext, FrameCounts, RetainedCoefTokens};
-use rvp9_core::inter::mode_info::{InterModeReadParams, setup_compound_reference_mode};
+use rvp9_core::inter::mode_info::{
+    InterModeReadParams, count_inter_block_mode_info, setup_compound_reference_mode,
+};
 use rvp9_core::inter::mv_ref::PrevFrameMvRef;
 use rvp9_core::inter::mv_ref::sign_bias_from_header;
 use rvp9_core::intra_pred::IntraMode;
@@ -3511,6 +3514,7 @@ pub(crate) struct RecordedCoefTile {
     pub(crate) tile_col: usize,
     pub(crate) retained: RetainedCoefTokens,
     pub(crate) counts: FrameCounts,
+    partition_counts: InterPartitionCountState,
     coef_ctx: TileCoefCtx,
     last_sb_row: Option<usize>,
     mi_col_start: usize,
@@ -4461,6 +4465,40 @@ fn record_encoded_inter_leaf(
         &mut tile.counts,
         &mut tile.retained,
     );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn record_encoded_inter_leaf_noncoef(
+    tile: &mut RecordedCoefTile,
+    params: &InterModeReadParams,
+    leaf: InterPartitionLeafDesc,
+    above: Option<&ModeInfo>,
+    left: Option<&ModeInfo>,
+    inter_mode_ctx: usize,
+    best_ref_mvs: [Mv; 2],
+) {
+    let mi = leaf.mode_info();
+    count_inter_leaf_syntax(
+        TxMode::TxModeSelect,
+        leaf.leaf_bsize,
+        &mi,
+        above,
+        left,
+        &mut tile.counts,
+    );
+    if matches!(mi.mode, BlockMode::Inter { .. }) {
+        count_inter_block_mode_info(
+            params,
+            leaf.leaf_bsize,
+            above,
+            left,
+            inter_mode_ctx,
+            best_ref_mvs,
+            &mi,
+            &mut tile.counts,
+        )
+        .expect("committed inter leaf must have valid mode info");
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -6138,6 +6176,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 coef_full: Some(rvp9_core::entropy::new_coef12_bank()),
                 ..FrameCounts::default()
             },
+            partition_counts: InterPartitionCountState::new(
+                bounds.mi_col_end - bounds.mi_col_start,
+            ),
             coef_ctx: TileCoefCtx::new(bounds.mi_col_end - bounds.mi_col_start),
             last_sb_row: None,
             mi_col_start: bounds.mi_col_start,
@@ -6153,6 +6194,21 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         InterPickerMiGridLayout::new(mi_rows_us, 0, mi_cols_us),
     );
     let sign_bias = sign_bias_from_header(&[false, false, altref_available]);
+    let (count_comp_fixed_ref, count_comp_var_ref) = setup_compound_reference_mode(&sign_bias);
+    let direct_count_params = InterModeReadParams {
+        allow_high_precision_mv: allow_hp,
+        interp_filter: InterpFilter::Switchable,
+        reference_mode: if altref_available {
+            ReferenceMode::Select
+        } else {
+            ReferenceMode::Single
+        },
+        comp_fixed_ref: count_comp_fixed_ref,
+        comp_var_ref: count_comp_var_ref,
+        sign_bias,
+        seg_ref_frame: None,
+        seg_skip: false,
+    };
 
     // These profiles place timer branches inside the per-leaf and per-TX hot
     // loops. Compile them out of production builds; diagnostics can opt in
@@ -7566,6 +7622,27 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                 luma_eob_nonzero: false,
                             });
                         }
+                        if let Some(recorded) = recorded_coef_tile.as_mut() {
+                            let nb_above = if leaf_mi_row > 0 {
+                                row_grids.get(leaf_mi_row - 1, leaf_mi_col)
+                            } else {
+                                None
+                            };
+                            let nb_left = if leaf_mi_col > current_tile.mi_col_start {
+                                row_grids.get(leaf_mi_row, leaf_mi_col - 1)
+                            } else {
+                                None
+                            };
+                            record_encoded_inter_leaf_noncoef(
+                                recorded,
+                                &direct_count_params,
+                                sb_partitions[sb_idx][leaf_idx],
+                                nb_above,
+                                nb_left,
+                                0, // sub-8 writer omits parent inter-mode counts
+                                [Mv::ZERO; 2],
+                            );
+                        }
                         row_grids.splat_mode(
                             leaf_mi_row,
                             leaf_mi_col,
@@ -7690,6 +7767,38 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                 tx_size: rvp9_core::transforms::TxSize::Tx4x4,
                                 luma_eob_nonzero: false,
                             });
+                        }
+                        if let Some(recorded) = recorded_coef_tile.as_mut() {
+                            let nb_above = if leaf_mi_row > 0 {
+                                row_grids.get(leaf_mi_row - 1, leaf_mi_col)
+                            } else {
+                                None
+                            };
+                            let nb_left = if leaf_mi_col > current_tile.mi_col_start {
+                                row_grids.get(leaf_mi_row, leaf_mi_col - 1)
+                            } else {
+                                None
+                            };
+                            let neighbours = InterPickerMiGridLookup::new(
+                                row_grids.as_slice(),
+                                row_grids.layout,
+                                leaf_mi_row,
+                                leaf_mi_col,
+                                current_tile,
+                            );
+                            let inter_mode_ctx = rvp9_core::inter::mode_info::get_mode_context(
+                                leaf_bsize,
+                                &neighbours,
+                            );
+                            record_encoded_inter_leaf_noncoef(
+                                recorded,
+                                &direct_count_params,
+                                sb_partitions[sb_idx][leaf_idx],
+                                nb_above,
+                                nb_left,
+                                inter_mode_ctx,
+                                [Mv::ZERO; 2],
+                            );
                         }
                         row_grids.splat_mode(
                             leaf_mi_row,
@@ -9677,16 +9786,37 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             );
                         }
                     }
-                    if !defer_coef_recording && let Some(recorded) = recorded_coef_tile.as_mut() {
-                        record_encoded_inter_leaf(
+                    if let Some(recorded) = recorded_coef_tile.as_mut() {
+                        let final_leaf = sb_partitions[sb_idx][leaf_idx];
+                        let best_ref_mv = |ref_frame: RefFrame| match ref_frame {
+                            RefFrame::GoldenFrame => golden_ref_mvs.nearest,
+                            RefFrame::AltrefFrame => mvc_altref.nearest,
+                            RefFrame::LastFrame => last_ref_mvs.nearest,
+                            _ => Mv::ZERO,
+                        };
+                        record_encoded_inter_leaf_noncoef(
                             recorded,
-                            coef_record_bw,
-                            frame_context,
-                            coef_source,
-                            leaf_mi_row,
-                            leaf_mi_col,
-                            sb_partitions[sb_idx][leaf_idx],
+                            &direct_count_params,
+                            final_leaf,
+                            nb_above,
+                            nb_left,
+                            inter_mode_ctx,
+                            [
+                                best_ref_mv(final_leaf.picked_ref_frame),
+                                best_ref_mv(final_leaf.picked_ref_frame2),
+                            ],
                         );
+                        if !defer_coef_recording {
+                            record_encoded_inter_leaf(
+                                recorded,
+                                coef_record_bw,
+                                frame_context,
+                                coef_source,
+                                leaf_mi_row,
+                                leaf_mi_col,
+                                final_leaf,
+                            );
+                        }
                     }
                     // F.0.2 oracle — record one BlockDecision per coded
                     // inter leaf, AFTER the RC.X1 skip-on-zero-eob override
@@ -9851,6 +9981,39 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     if let Some(t0) = rt_profile_emit_start {
                         *rt_profile_emit_time += t0.elapsed();
                     }
+                }
+                if let Some(recorded) = recorded_coef_tile.as_mut() {
+                    let sb_mi_row = sb_row * 8;
+                    let sb_mi_col = sb_col * 8;
+                    let leaves = &sb_partitions[sb_idx];
+                    recorded
+                        .partition_counts
+                        .count_superblock(
+                            current_tile,
+                            mi_rows_us,
+                            mi_cols_us,
+                            sb_mi_row,
+                            sb_mi_col,
+                            |mi_row, mi_col| {
+                                let row = mi_row.checked_sub(sb_mi_row)?;
+                                let col = mi_col.checked_sub(sb_mi_col)?;
+                                leaves
+                                    .iter()
+                                    .find(|leaf| {
+                                        row >= leaf.mi_row_in_sb
+                                            && row
+                                                < leaf.mi_row_in_sb
+                                                    + usize::from(leaf.leaf_bsize.n_8x8_high())
+                                            && col >= leaf.mi_col_in_sb
+                                            && col
+                                                < leaf.mi_col_in_sb
+                                                    + usize::from(leaf.leaf_bsize.n_8x8_wide())
+                                    })
+                                    .map(|leaf| leaf.leaf_bsize)
+                            },
+                            &mut recorded.counts,
+                        )
+                        .expect("committed superblock must have a valid partition tree");
                 }
             }
             if defer_coef_recording && let Some(recorded) = recorded_coef_tile.as_mut() {

@@ -458,6 +458,131 @@ impl PartitionCtx {
     }
 }
 
+/// Persistent tile-local partition-count context for encoder mode decision.
+///
+/// Call [`InterPartitionCountState::count_superblock`] in raster superblock
+/// order. The state preserves above contexts across rows and resets left
+/// contexts at each new row, exactly like the tile writer.
+#[derive(Clone, Debug)]
+pub struct InterPartitionCountState {
+    ctx: PartitionCtx,
+    last_sb_row: Option<usize>,
+}
+
+impl InterPartitionCountState {
+    /// Create a counter for a tile spanning `tile_mi_cols` 8x8 columns.
+    #[must_use]
+    pub fn new(tile_mi_cols: usize) -> Self {
+        Self {
+            ctx: PartitionCtx::new(tile_mi_cols),
+            last_sb_row: None,
+        }
+    }
+
+    /// Count one committed 64x64 superblock's partition tree.
+    ///
+    /// `leaf_bsize_at` returns the final leaf size covering an absolute MI
+    /// coordinate. Only top-left cells visited by the partition recursion are
+    /// queried.
+    #[allow(clippy::too_many_arguments)]
+    pub fn count_superblock<F>(
+        &mut self,
+        tile_bounds: TileBounds,
+        mi_rows: usize,
+        mi_cols: usize,
+        mi_row: usize,
+        mi_col: usize,
+        mut leaf_bsize_at: F,
+        counts: &mut FrameCounts,
+    ) -> Result<(), ModesWriterError>
+    where
+        F: FnMut(usize, usize) -> Option<BlockSize>,
+    {
+        let sb_row = mi_row / MI_BLOCK_SIZE;
+        if self.last_sb_row != Some(sb_row) {
+            self.ctx.reset_left();
+            self.last_sb_row = Some(sb_row);
+        }
+        count_partition_tree_from_leaf_sizes(
+            &mut self.ctx,
+            &tile_bounds,
+            mi_rows,
+            mi_cols,
+            mi_row,
+            mi_col,
+            BlockSize::Block64x64,
+            4,
+            &mut leaf_bsize_at,
+            counts,
+        )
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn count_partition_tree_from_leaf_sizes<F>(
+    part_ctx: &mut PartitionCtx,
+    bounds: &TileBounds,
+    mi_rows: usize,
+    mi_cols: usize,
+    mi_row: usize,
+    mi_col: usize,
+    bsize: BlockSize,
+    n4x4_l2: u8,
+    leaf_bsize_at: &mut F,
+    counts: &mut FrameCounts,
+) -> Result<(), ModesWriterError>
+where
+    F: FnMut(usize, usize) -> Option<BlockSize>,
+{
+    if mi_row >= mi_rows || mi_col >= mi_cols {
+        return Ok(());
+    }
+    let leaf_bsize =
+        leaf_bsize_at(mi_row, mi_col).ok_or(ModesWriterError::MissingCell { mi_row, mi_col })?;
+    let partition = infer_inter_partition_from_leaf_size(leaf_bsize, mi_row, mi_col, bsize)?;
+    let n8x8_l2 = n4x4_l2.saturating_sub(1);
+    let num_8x8_wh = 1usize << n8x8_l2;
+    let hbs = num_8x8_wh >> 1;
+    let mi_row_in_tile = mi_row - bounds.mi_row_start;
+    let mi_col_in_tile = mi_col - bounds.mi_col_start;
+    let ctx = part_ctx.context(mi_row_in_tile, mi_col_in_tile, n8x8_l2 as usize);
+    counts.partition[ctx][partition as usize] += 1;
+    let sub =
+        subsize(bsize, partition).expect("inferred inter partition must have a legal subsize");
+
+    if hbs == 0 {
+        part_ctx.update(mi_row_in_tile, mi_col_in_tile, sub, num_8x8_wh);
+        return Ok(());
+    }
+    if partition == PartitionType::Split {
+        for (row, col) in [
+            (mi_row, mi_col),
+            (mi_row, mi_col + hbs),
+            (mi_row + hbs, mi_col),
+            (mi_row + hbs, mi_col + hbs),
+        ] {
+            count_partition_tree_from_leaf_sizes(
+                part_ctx,
+                bounds,
+                mi_rows,
+                mi_cols,
+                row,
+                col,
+                sub,
+                n8x8_l2,
+                leaf_bsize_at,
+                counts,
+            )?;
+        }
+    }
+    if (bsize as u8) >= (BlockSize::Block8x8 as u8)
+        && (bsize == BlockSize::Block8x8 || partition != PartitionType::Split)
+    {
+        part_ctx.update(mi_row_in_tile, mi_col_in_tile, sub, num_8x8_wh);
+    }
+    Ok(())
+}
+
 /// Lightweight per-block neighbour state used to derive the
 /// `(above_mode, left_mode)` keyframe-Y-mode probability slot and the
 /// skip context. Conceptually mirrors the subset of
@@ -875,8 +1000,15 @@ fn infer_inter_partition(
 ) -> Result<PartitionType, ModesWriterError> {
     let leaf = mi_grid_get(mi_grid, mi_cols, mi_row, mi_col)
         .ok_or(ModesWriterError::MissingCell { mi_row, mi_col })?;
-    let leaf_bsize = leaf.block_size;
+    infer_inter_partition_from_leaf_size(leaf.block_size, mi_row, mi_col, bsize)
+}
 
+fn infer_inter_partition_from_leaf_size(
+    leaf_bsize: BlockSize,
+    mi_row: usize,
+    mi_col: usize,
+    bsize: BlockSize,
+) -> Result<PartitionType, ModesWriterError> {
     if leaf_bsize == bsize {
         return Ok(PartitionType::None);
     }
@@ -8698,6 +8830,28 @@ mod tests {
             .map(|c| c.iter().sum::<u32>())
             .sum();
         assert_eq!(total, 16);
+
+        let mut direct_partition_counts = FrameCounts::default();
+        let mut partition_state = InterPartitionCountState::new(mi_cols as usize);
+        partition_state
+            .count_superblock(
+                bounds,
+                mi_rows as usize,
+                mi_cols as usize,
+                0,
+                0,
+                |row, col| {
+                    grid[row * mi_cols as usize + col]
+                        .as_ref()
+                        .map(|mi| mi.block_size)
+                },
+                &mut direct_partition_counts,
+            )
+            .expect("direct partition count");
+        assert_eq!(
+            direct_partition_counts.partition, counts.partition,
+            "picker-side partition contexts must match the tile writer"
+        );
     }
 
     /// SPLIT down to 8x8 leaves with FrameCounts populated. Covers

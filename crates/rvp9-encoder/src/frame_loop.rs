@@ -61,11 +61,10 @@ use rvp9_core::bitstream::sub_parsers::{
 use rvp9_core::bitstream::{
     BitDepth as WireBitDepth, BitstreamError, ChromaFormat, ColorRange, ColorSpace,
     CompressedHeaderOptions, CompressedHeaderResult, FrameKind as WireFrameKind, InterCoefSource,
-    InterpFilter, Profile, RawBitWriter, UncompressedHeader, count_tile_inter_noncoef, tile_bounds,
-    write_compressed_header, write_tile_buffers, write_tile_inter_with_retained,
-    write_tile_intra_keyframe, write_tile_intra_keyframe_with_counts,
-    write_tile_intra_keyframe_with_counts_and_retained, write_tile_intra_keyframe_with_retained,
-    write_uncompressed_header,
+    InterpFilter, Profile, RawBitWriter, UncompressedHeader, tile_bounds, write_compressed_header,
+    write_tile_buffers, write_tile_inter_with_retained, write_tile_intra_keyframe,
+    write_tile_intra_keyframe_with_counts, write_tile_intra_keyframe_with_counts_and_retained,
+    write_tile_intra_keyframe_with_retained, write_uncompressed_header,
 };
 // W6.2(vpxenc parity, HBD scaffold) — pixel-pipeline bit-depth. **Not**
 // the same as the wire-format `WireBitDepth` (`Eight`/`Ten`/`Twelve`)
@@ -6113,7 +6112,7 @@ fn build_inter_packet_with_residuals<F>(
     // Stream-owned persistent workers. Parallel product callers provide
     // the same pool used by tile picking and loop filtering; serial tests
     // and one-thread encodes pass `None`.
-    mut worker_pool: Option<&mut rvp9_core::tile_threading::WorkerPool>,
+    worker_pool: Option<&mut rvp9_core::tile_threading::WorkerPool>,
     // Tile arithmetic writers are independent after the compressed header
     // fixes the frame context. Cap their worker count at the configured
     // encoder parallelism so packet assembly shares the product thread
@@ -6334,70 +6333,16 @@ where
     // Libvpx gathers this frame's complete syntax counts before writing the
     // compressed header, then forward-updates all non-coefficient
     // probabilities from those counts. Product rvp9 already records
-    // coefficient tokens during mode decision. Count the remaining chosen
-    // partition/mode/MV syntax directly: boolean serialization and retained
-    // coefficient replay are irrelevant to these probability banks.
+    // coefficient tokens and exact non-coefficient counts while committing
+    // final leaves in each tile worker, so no pre-header syntax traversal is
+    // needed on that path.
     if forward_mode_probs {
-        let mut replay_counts = FrameCounts::default();
-        if recorded_coef_tiles.is_some() {
-            let count_tile = |tile_col: usize| {
-                rvp9_core::entropy::bitacct::with_suppressed(
-                    || -> Result<FrameCounts, EncodeError> {
-                        let bounds = tile_bounds(
-                            mi_rows as usize,
-                            mi_cols as usize,
-                            0,
-                            log2_tile_cols,
-                            0,
-                            tile_col as u32,
-                        );
-                        let mut tile_counts = FrameCounts::default();
-                        count_tile_inter_noncoef(
-                            &params,
-                            target.tx_mode,
-                            mi_grid,
-                            mi_rows,
-                            mi_cols,
-                            bounds,
-                            prev_mv_grid,
-                            &mut tile_counts,
-                        )?;
-                        Ok(tile_counts)
-                    },
-                )
-            };
-            if run_parallel {
-                type TileReplayResult = Result<FrameCounts, EncodeError>;
-                let mut result_slots: Vec<Option<TileReplayResult>> =
-                    (0..tile_cols).map(|_| None).collect();
-                worker_pool
-                    .as_deref_mut()
-                    .expect("parallel mode counting requires the frame worker pool")
-                    .scope(|scope| {
-                        if let Some(job) = parallel_aux_job.take() {
-                            scope.submit(job);
-                        }
-                        for (tile_col, result_slot) in result_slots.iter_mut().enumerate() {
-                            let count_tile = &count_tile;
-                            scope.submit(move || {
-                                *result_slot = Some(count_tile(tile_col));
-                            });
-                        }
-                    });
-                for (tile_col, result) in result_slots.into_iter().enumerate() {
-                    let tile_counts = result.unwrap_or_else(|| {
-                        panic!("inter mode-count tile {tile_col} produced no result")
-                    })?;
-                    replay_counts.add_non_coef(&tile_counts);
-                }
-            } else {
-                for tile_col in 0..tile_cols {
-                    replay_counts.add_non_coef(&count_tile(tile_col)?);
-                }
+        let mut recorded_counts = FrameCounts::default();
+        let forward_counts = if let Some(recorded) = recorded_coef_tiles {
+            for tile in recorded {
+                recorded_counts.add_non_coef(&tile.counts);
             }
-        }
-        let forward_counts = if recorded_coef_tiles.is_some() {
-            &replay_counts
+            &recorded_counts
         } else {
             &count_counts
         };
@@ -6410,7 +6355,7 @@ where
             allow_hp,
         );
         if recorded_coef_tiles.is_some() {
-            count_counts.add_non_coef(&replay_counts);
+            count_counts.add_non_coef(&recorded_counts);
         }
     }
 
