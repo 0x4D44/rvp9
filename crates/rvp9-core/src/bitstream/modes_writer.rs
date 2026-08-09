@@ -89,7 +89,7 @@ use crate::entropy::bitacct::{BitCategory, set_category};
 use crate::entropy::{
     BoolWriter, CoefReplayStatus, CoefTokenPass, FrameContext, FrameCounts, RetainedCoefTokens,
     VP9_KF_PARTITION_PROBS, VP9_KF_UV_MODE_PROB, VP9_KF_Y_MODE_PROB, try_replay_retained_block,
-    write_block_tokens_i16, write_block_tokens_with_retained_i16,
+    write_block_tokens_with_retained_i16,
 };
 use crate::inter::mode_info::{
     InterModeReadParams, InterModeWriteError, get_intra_inter_context, write_inter_block_mode_info,
@@ -589,7 +589,7 @@ pub fn write_tile_intra_keyframe(
     coef_ctx: &mut TileCoefCtx,
     coef_source: &dyn IntraCoefSource,
 ) -> Result<(), ModesWriterError> {
-    write_tile_intra_keyframe_with_counts(
+    write_tile_intra_keyframe_with_counts_and_retained(
         bw,
         mi_grid,
         mi_rows,
@@ -601,6 +601,41 @@ pub fn write_tile_intra_keyframe(
         coef_ctx,
         coef_source,
         None,
+        None,
+    )
+}
+
+/// [`write_tile_intra_keyframe`] with an optional coefficient-token replay
+/// pass. A recording pass captures probability-independent tokens during a
+/// count-only traversal; replay then avoids fetching and re-tokenizing the
+/// same qcoeffs after the compressed header commits new probabilities.
+#[allow(clippy::too_many_arguments)]
+pub fn write_tile_intra_keyframe_with_retained(
+    bw: &mut BoolWriter<'_>,
+    mi_grid: &[Option<ModeInfo>],
+    mi_rows: u32,
+    mi_cols: u32,
+    tile_bounds: TileBounds,
+    fc: &FrameContext,
+    tx_mode: TxMode,
+    seg: Option<SegmentationWriteParams<'_>>,
+    coef_ctx: &mut TileCoefCtx,
+    coef_source: &dyn IntraCoefSource,
+    retained_pass: Option<&mut CoefTokenPass<'_>>,
+) -> Result<(), ModesWriterError> {
+    write_tile_intra_keyframe_with_counts_and_retained(
+        bw,
+        mi_grid,
+        mi_rows,
+        mi_cols,
+        tile_bounds,
+        fc,
+        tx_mode,
+        seg,
+        coef_ctx,
+        coef_source,
+        None,
+        retained_pass,
     )
 }
 
@@ -618,7 +653,40 @@ pub fn write_tile_intra_keyframe_with_counts(
     seg: Option<SegmentationWriteParams<'_>>,
     coef_ctx: &mut TileCoefCtx,
     coef_source: &dyn IntraCoefSource,
+    counts: Option<&mut FrameCounts>,
+) -> Result<(), ModesWriterError> {
+    write_tile_intra_keyframe_with_counts_and_retained(
+        bw,
+        mi_grid,
+        mi_rows,
+        mi_cols,
+        tile_bounds,
+        fc,
+        tx_mode,
+        seg,
+        coef_ctx,
+        coef_source,
+        counts,
+        None,
+    )
+}
+
+/// [`write_tile_intra_keyframe_with_counts`] with an optional coefficient
+/// token record/replay pass.
+#[allow(clippy::too_many_arguments)]
+pub fn write_tile_intra_keyframe_with_counts_and_retained(
+    bw: &mut BoolWriter<'_>,
+    mi_grid: &[Option<ModeInfo>],
+    mi_rows: u32,
+    mi_cols: u32,
+    tile_bounds: TileBounds,
+    fc: &FrameContext,
+    tx_mode: TxMode,
+    seg: Option<SegmentationWriteParams<'_>>,
+    coef_ctx: &mut TileCoefCtx,
+    coef_source: &dyn IntraCoefSource,
     mut counts: Option<&mut FrameCounts>,
+    mut retained_pass: Option<&mut CoefTokenPass<'_>>,
 ) -> Result<(), ModesWriterError> {
     let mi_rows_us = mi_rows as usize;
     let mi_cols_us = mi_cols as usize;
@@ -665,6 +733,7 @@ pub fn write_tile_intra_keyframe_with_counts(
                 coef_ctx,
                 coef_source,
                 counts.as_deref_mut(),
+                retained_pass.as_deref_mut(),
             )?;
             mi_col += MI_BLOCK_SIZE;
         }
@@ -673,6 +742,9 @@ pub fn write_tile_intra_keyframe_with_counts(
 
     if bw.has_error() {
         return Err(ModesWriterError::BufferOverflow);
+    }
+    if retained_pass.is_some_and(|pass| !pass.finished()) {
+        return Err(ModesWriterError::RetainedCoefMismatch);
     }
     Ok(())
 }
@@ -929,6 +1001,7 @@ fn write_partition_tree(
     coef_ctx: &mut TileCoefCtx,
     coef_source: &dyn IntraCoefSource,
     mut counts: Option<&mut FrameCounts>,
+    mut retained_pass: Option<&mut CoefTokenPass<'_>>,
 ) -> Result<(), ModesWriterError> {
     if mi_row >= mi_rows || mi_col >= mi_cols {
         return Ok(());
@@ -989,6 +1062,7 @@ fn write_partition_tree(
             coef_ctx,
             coef_source,
             counts.as_deref_mut(),
+            retained_pass.as_deref_mut(),
         )?;
         part_ctx.update(mi_row_in_tile, mi_col_in_tile, sub, num_8x8_wh);
         return Ok(());
@@ -1016,6 +1090,7 @@ fn write_partition_tree(
                 coef_ctx,
                 coef_source,
                 counts.as_deref_mut(),
+                retained_pass.as_deref_mut(),
             )?;
         }
         PartitionType::Horz => {
@@ -1040,6 +1115,7 @@ fn write_partition_tree(
                 coef_ctx,
                 coef_source,
                 counts.as_deref_mut(),
+                retained_pass.as_deref_mut(),
             )?;
             if has_rows {
                 let mi_row_b = mi_row + hbs;
@@ -1066,6 +1142,7 @@ fn write_partition_tree(
                     coef_ctx,
                     coef_source,
                     counts.as_deref_mut(),
+                    retained_pass.as_deref_mut(),
                 )?;
             }
         }
@@ -1089,6 +1166,7 @@ fn write_partition_tree(
                 coef_ctx,
                 coef_source,
                 counts.as_deref_mut(),
+                retained_pass.as_deref_mut(),
             )?;
             if has_cols {
                 let mi_col_r = mi_col + hbs;
@@ -1115,6 +1193,7 @@ fn write_partition_tree(
                     coef_ctx,
                     coef_source,
                     counts.as_deref_mut(),
+                    retained_pass.as_deref_mut(),
                 )?;
             }
         }
@@ -1139,6 +1218,7 @@ fn write_partition_tree(
                 coef_ctx,
                 coef_source,
                 counts.as_deref_mut(),
+                retained_pass.as_deref_mut(),
             )?;
             write_partition_tree(
                 bw,
@@ -1158,6 +1238,7 @@ fn write_partition_tree(
                 coef_ctx,
                 coef_source,
                 counts.as_deref_mut(),
+                retained_pass.as_deref_mut(),
             )?;
             write_partition_tree(
                 bw,
@@ -1177,6 +1258,7 @@ fn write_partition_tree(
                 coef_ctx,
                 coef_source,
                 counts.as_deref_mut(),
+                retained_pass.as_deref_mut(),
             )?;
             write_partition_tree(
                 bw,
@@ -1196,6 +1278,7 @@ fn write_partition_tree(
                 coef_ctx,
                 coef_source,
                 counts,
+                retained_pass,
             )?;
         }
     }
@@ -1372,6 +1455,7 @@ fn write_block_intra_keyframe(
     coef_ctx: &mut TileCoefCtx,
     coef_source: &dyn IntraCoefSource,
     mut counts: Option<&mut FrameCounts>,
+    retained_pass: Option<&mut CoefTokenPass<'_>>,
 ) -> Result<(), ModesWriterError> {
     // Scope validation — the leaf cell's recorded block_size must
     // match the partition-tree-derived expected subsize at this
@@ -1518,6 +1602,7 @@ fn write_block_intra_keyframe(
             uv_mode,
             &mi.bmi,
             counts,
+            retained_pass,
         );
     } else {
         reset_skip_coef_context(coef_ctx, leaf_bsize, mi_row, mi_col, bounds.mi_col_start);
@@ -1573,6 +1658,7 @@ fn write_intra_block_residual(
     _uv_mode: IntraMode,
     bmi: &[BmiInfo; 4],
     counts: Option<&mut FrameCounts>,
+    mut retained_pass: Option<&mut CoefTokenPass<'_>>,
 ) {
     let (mut coef_bank, mut coef_full_bank) = match counts {
         Some(c) => (Some(&mut c.coef), c.coef_full.as_deref_mut()),
@@ -1634,6 +1720,21 @@ fn write_intra_block_residual(
                 } else {
                     TxType::DctDct
                 };
+                let replay_status = try_replay_retained_block(
+                    bw,
+                    fc,
+                    coef_ctx,
+                    plane,
+                    plane_x4_base + tx_x4_local,
+                    plane_y4_in_sb_base + tx_y4_local,
+                    plane_tx,
+                    /* ref_type = */ 0,
+                    retained_pass.as_deref_mut(),
+                );
+                if replay_status == CoefReplayStatus::Replayed {
+                    tx_x4_local += tx_step_4x4;
+                    continue;
+                }
                 let (coefs, eob) = coef_source.get_block_coefs(
                     mi_row,
                     mi_col,
@@ -1658,7 +1759,7 @@ fn write_intra_block_residual(
                     plane,
                     plane_tx,
                 );
-                write_block_tokens_i16(
+                write_block_tokens_with_retained_i16(
                     bw,
                     fc,
                     coef_ctx,
@@ -1673,6 +1774,11 @@ fn write_intra_block_residual(
                     eob,
                     coef_bank.as_deref_mut(),
                     coef_full_bank.as_deref_mut(),
+                    match replay_status {
+                        CoefReplayStatus::NotReplay => retained_pass.as_deref_mut(),
+                        CoefReplayStatus::Mismatch => None,
+                        CoefReplayStatus::Replayed => unreachable!(),
+                    },
                 );
                 tx_x4_local += tx_step_4x4;
             }
@@ -3272,12 +3378,151 @@ mod tests {
             IntraMode::Dc,
             &[BmiInfo::default(); 4],
             None,
+            None,
         );
 
         assert!(
             (0..8).all(|x4| coef_ctx.above_coef(0, x4) == 0),
             "the second tile's first block must update local columns 0..8"
         );
+    }
+
+    /// Recording a keyframe tile before the compressed header and replaying
+    /// it afterwards must preserve the final arithmetic-coded tile while
+    /// avoiding a second coefficient-source walk.
+    #[test]
+    fn keyframe_retained_tokens_match_direct_qcoeff_serialization() {
+        struct ConstantIntraCoefSource;
+
+        impl IntraCoefSource for ConstantIntraCoefSource {
+            fn get_block_coefs(
+                &self,
+                _mi_row: usize,
+                _mi_col: usize,
+                _plane: usize,
+                _tx_x4_local: usize,
+                _tx_y4_local: usize,
+                tx_size: TxSize,
+            ) -> (&[i16], usize) {
+                static COEFS: [i16; 1024] = [1; 1024];
+                (&COEFS[..tx_size.n_coeffs()], 16.min(tx_size.n_coeffs()))
+            }
+        }
+
+        struct ReplayOnlyIntraCoefSource;
+
+        impl IntraCoefSource for ReplayOnlyIntraCoefSource {
+            fn get_block_coefs(
+                &self,
+                _mi_row: usize,
+                _mi_col: usize,
+                _plane: usize,
+                _tx_x4_local: usize,
+                _tx_y4_local: usize,
+                _tx_size: TxSize,
+            ) -> (&[i16], usize) {
+                panic!("retained keyframe replay must not query coefficient storage");
+            }
+        }
+
+        let mut grid = make_dc_grid(8, 8);
+        for cell in grid.iter_mut().flatten() {
+            cell.skip = false;
+            cell.tx_size = TxSize::Tx32x32;
+        }
+        let bounds = TileBounds {
+            mi_row_start: 0,
+            mi_row_end: 8,
+            mi_col_start: 0,
+            mi_col_end: 8,
+        };
+        let pre_fc = FrameContext::new_default();
+        let mut counts = FrameCounts {
+            coef_full: Some(crate::entropy::new_coef12_bank()),
+            ..FrameCounts::default()
+        };
+        let mut retained = RetainedCoefTokens::default();
+        let mut record_pass = CoefTokenPass::record_full(&mut retained);
+        let mut count_sink = [];
+        let mut count_bw = BoolWriter::start_count_only(&mut count_sink);
+        let mut count_ctx = TileCoefCtx::new(8);
+        write_tile_intra_keyframe_with_counts_and_retained(
+            &mut count_bw,
+            &grid,
+            8,
+            8,
+            bounds,
+            &pre_fc,
+            TxMode::AllowTx32x32,
+            None,
+            &mut count_ctx,
+            &ConstantIntraCoefSource,
+            Some(&mut counts),
+            Some(&mut record_pass),
+        )
+        .expect("keyframe count-and-record traversal");
+        assert!(record_pass.finished());
+
+        let mut post_fc = pre_fc.clone();
+        for contexts in &mut post_fc.coef_probs[TxSize::Tx32x32 as usize] {
+            for reference in contexts {
+                for band in reference {
+                    for nodes in band {
+                        nodes[0] = nodes[0].saturating_add(1).max(1);
+                    }
+                }
+            }
+        }
+
+        let encode_direct = |fc: &FrameContext| {
+            let mut buf = vec![0u8; 16 * 1024];
+            let written = {
+                let mut bw = BoolWriter::start_encode(&mut buf);
+                let mut coef_ctx = TileCoefCtx::new(8);
+                write_tile_intra_keyframe(
+                    &mut bw,
+                    &grid,
+                    8,
+                    8,
+                    bounds,
+                    fc,
+                    TxMode::AllowTx32x32,
+                    None,
+                    &mut coef_ctx,
+                    &ConstantIntraCoefSource,
+                )
+                .expect("direct keyframe tile");
+                bw.stop_encode().expect("stop direct keyframe tile")
+            };
+            buf.truncate(written);
+            buf
+        };
+        let direct = encode_direct(&post_fc);
+
+        let mut replay_buf = vec![0u8; 16 * 1024];
+        let replay_written = {
+            let mut bw = BoolWriter::start_encode(&mut replay_buf);
+            let mut coef_ctx = TileCoefCtx::new(8);
+            let mut replay_pass = CoefTokenPass::replay(&retained);
+            write_tile_intra_keyframe_with_retained(
+                &mut bw,
+                &grid,
+                8,
+                8,
+                bounds,
+                &post_fc,
+                TxMode::AllowTx32x32,
+                None,
+                &mut coef_ctx,
+                &ReplayOnlyIntraCoefSource,
+                Some(&mut replay_pass),
+            )
+            .expect("retained keyframe tile");
+            assert!(replay_pass.finished());
+            bw.stop_encode().expect("stop retained keyframe tile")
+        };
+        replay_buf.truncate(replay_written);
+        assert_eq!(replay_buf, direct);
     }
 
     #[test]
@@ -3373,6 +3618,7 @@ mod tests {
                 &mi,
                 &mut coef_ctx,
                 &coef_source,
+                None,
                 None,
             )
             .expect("write_block_intra_keyframe should succeed");
@@ -4344,6 +4590,7 @@ mod tests {
                 None,
                 &mut coef_ctx,
                 &coef_source,
+                None,
                 None,
             )
             .expect("write sub-8 keyframe leaf");
@@ -6168,6 +6415,7 @@ mod tests {
                 &mi,
                 &mut coef_ctx,
                 &coef_source,
+                None,
                 None,
             )
             .expect("write_block_intra_keyframe with seg should succeed");
@@ -8346,6 +8594,7 @@ mod tests {
             &mut coef_ctx,
             &coef_source,
             None,
+            None,
         )
         .unwrap_err();
         assert!(matches!(
@@ -8399,6 +8648,7 @@ mod tests {
             &bad,
             &mut coef_ctx,
             &coef_source,
+            None,
             None,
         )
         .unwrap_err();

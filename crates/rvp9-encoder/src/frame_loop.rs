@@ -63,7 +63,8 @@ use rvp9_core::bitstream::{
     CompressedHeaderOptions, CompressedHeaderResult, FrameKind as WireFrameKind, InterCoefSource,
     InterpFilter, Profile, RawBitWriter, UncompressedHeader, tile_bounds, write_compressed_header,
     write_tile_buffers, write_tile_inter_with_retained, write_tile_intra_keyframe,
-    write_tile_intra_keyframe_with_counts, write_uncompressed_header,
+    write_tile_intra_keyframe_with_counts, write_tile_intra_keyframe_with_counts_and_retained,
+    write_tile_intra_keyframe_with_retained, write_uncompressed_header,
 };
 // W6.2(vpxenc parity, HBD scaffold) — pixel-pipeline bit-depth. **Not**
 // the same as the wire-format `WireBitDepth` (`Eight`/`Ten`/`Twelve`)
@@ -2859,6 +2860,7 @@ impl StreamEncoder {
             &mut keyframe_fc,
             self.frame_worker_pool.as_mut(),
             self.parallelism.max_threads as usize,
+            true,
         )?;
         self.frame_context = keyframe_fc.clone();
         self.decoder_fc_state = keyframe_fc;
@@ -5633,6 +5635,7 @@ fn build_keyframe_packet(
         &mut FrameContext::new_default(),
         None,
         1,
+        true,
     )
 }
 
@@ -5648,6 +5651,7 @@ fn build_keyframe_packet_with_tiles(
     decoder_fc: &mut FrameContext,
     mut worker_pool: Option<&mut rvp9_core::tile_threading::WorkerPool>,
     max_threads: usize,
+    retain_coef_tokens: bool,
 ) -> Result<Vec<u8>, EncodeError> {
     let mi_rows = height / 8;
     let mi_cols = width / 8;
@@ -5683,11 +5687,13 @@ fn build_keyframe_packet_with_tiles(
         coef_full: Some(rvp9_core::entropy::new_coef12_bank()),
         ..FrameCounts::default()
     };
+    let mut retained_coef_tiles = Vec::with_capacity(tile_cols);
     let count_tile = |tile_col| {
         let mut tile_counts = FrameCounts {
             coef_full: Some(rvp9_core::entropy::new_coef12_bank()),
             ..FrameCounts::default()
         };
+        let mut retained = retain_coef_tokens.then(RetainedCoefTokens::default);
         rvp9_core::entropy::bitacct::with_suppressed(|| -> Result<(), EncodeError> {
             let bounds = tile_bounds(
                 mi_rows as usize,
@@ -5700,25 +5706,43 @@ fn build_keyframe_packet_with_tiles(
             let mut count_sink = [];
             let mut bw = BoolWriter::start_count_only(&mut count_sink);
             let mut coef_ctx = TileCoefCtx::new(bounds.mi_col_end - bounds.mi_col_start);
-            write_tile_intra_keyframe_with_counts(
-                &mut bw,
-                &mi_grid,
-                mi_rows,
-                mi_cols,
-                bounds,
-                &count_fc,
-                target.tx_mode,
-                /* seg = */ None,
-                &mut coef_ctx,
-                coef_source,
-                Some(&mut tile_counts),
-            )?;
+            if let Some(retained) = retained.as_mut() {
+                let mut token_pass = CoefTokenPass::record_full(retained);
+                write_tile_intra_keyframe_with_counts_and_retained(
+                    &mut bw,
+                    &mi_grid,
+                    mi_rows,
+                    mi_cols,
+                    bounds,
+                    &count_fc,
+                    target.tx_mode,
+                    /* seg = */ None,
+                    &mut coef_ctx,
+                    coef_source,
+                    Some(&mut tile_counts),
+                    Some(&mut token_pass),
+                )?;
+            } else {
+                write_tile_intra_keyframe_with_counts(
+                    &mut bw,
+                    &mi_grid,
+                    mi_rows,
+                    mi_cols,
+                    bounds,
+                    &count_fc,
+                    target.tx_mode,
+                    /* seg = */ None,
+                    &mut coef_ctx,
+                    coef_source,
+                    Some(&mut tile_counts),
+                )?;
+            }
             Ok(())
         })?;
-        Ok::<FrameCounts, EncodeError>(tile_counts)
+        Ok::<(FrameCounts, Option<RetainedCoefTokens>), EncodeError>((tile_counts, retained))
     };
     if run_parallel {
-        type TileCountResult = Result<FrameCounts, EncodeError>;
+        type TileCountResult = Result<(FrameCounts, Option<RetainedCoefTokens>), EncodeError>;
         let mut result_slots: Vec<Option<TileCountResult>> = (0..tile_cols).map(|_| None).collect();
         worker_pool
             .as_deref_mut()
@@ -5732,13 +5756,20 @@ fn build_keyframe_packet_with_tiles(
                 }
             });
         for (tile_col, result) in result_slots.into_iter().enumerate() {
-            let tile_counts = result
+            let (tile_counts, retained) = result
                 .unwrap_or_else(|| panic!("keyframe count tile {tile_col} produced no result"))?;
+            if let Some(retained) = retained {
+                retained_coef_tiles.push(retained);
+            }
             count_counts.add(&tile_counts);
         }
     } else {
         for tile_col in 0..tile_cols {
-            count_counts.add(&count_tile(tile_col)?);
+            let (tile_counts, retained) = count_tile(tile_col)?;
+            if let Some(retained) = retained {
+                retained_coef_tiles.push(retained);
+            }
+            count_counts.add(&tile_counts);
         }
     }
     for (post, (&old, &counts)) in post_fc
@@ -5796,18 +5827,35 @@ fn build_keyframe_packet_with_tiles(
         let tile_len = {
             let mut bw = BoolWriter::start_encode(&mut tile_buf);
             let mut coef_ctx = TileCoefCtx::new(bounds.mi_col_end - bounds.mi_col_start);
-            write_tile_intra_keyframe(
-                &mut bw,
-                &mi_grid,
-                mi_rows,
-                mi_cols,
-                bounds,
-                &tile_fc,
-                target.tx_mode,
-                /* seg = */ None,
-                &mut coef_ctx,
-                coef_source,
-            )?;
+            if retain_coef_tokens {
+                let mut token_pass = CoefTokenPass::replay(&retained_coef_tiles[tile_col]);
+                write_tile_intra_keyframe_with_retained(
+                    &mut bw,
+                    &mi_grid,
+                    mi_rows,
+                    mi_cols,
+                    bounds,
+                    &tile_fc,
+                    target.tx_mode,
+                    /* seg = */ None,
+                    &mut coef_ctx,
+                    coef_source,
+                    Some(&mut token_pass),
+                )?;
+            } else {
+                write_tile_intra_keyframe(
+                    &mut bw,
+                    &mi_grid,
+                    mi_rows,
+                    mi_cols,
+                    bounds,
+                    &tile_fc,
+                    target.tx_mode,
+                    /* seg = */ None,
+                    &mut coef_ctx,
+                    coef_source,
+                )?;
+            }
             bw.stop_encode()
                 .map_err(|_| EncodeError::Bitstream(BitstreamError::CompressedHeaderTooLarge))?
         };
@@ -7937,6 +7985,21 @@ mod tests {
             &sb_partitions,
         )
         .expect("build_keyframe_packet must succeed");
+        let legacy_pkt = build_keyframe_packet_with_tiles(
+            w,
+            h,
+            q_index,
+            /* filter_level = */ 0,
+            &coef_source,
+            &sb_partitions,
+            0,
+            &mut FrameContext::new_default(),
+            None,
+            1,
+            false,
+        )
+        .expect("legacy keyframe packet must succeed");
+        assert_eq!(pkt, legacy_pkt, "retained keyframe packet changed bytes");
 
         let mut dec = Decoder::new();
         let frames = decode_packet(&mut dec, &pkt);
@@ -8111,6 +8174,7 @@ mod tests {
             &mut FrameContext::new_default(),
             None,
             1,
+            true,
         )
         .expect("two-tile keyframe assembly");
 
@@ -8182,6 +8246,7 @@ mod tests {
             &mut FrameContext::new_default(),
             None,
             1,
+            true,
         )
         .expect("two-tile keyframe");
 
