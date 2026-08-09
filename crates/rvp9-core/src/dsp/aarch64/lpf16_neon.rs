@@ -851,17 +851,6 @@ unsafe fn transpose_8x16(columns: [uint8x8_t; 16]) -> [uint8x16_t; 8] {
     [d00, d20, d10, d30, d01, d21, d11, d31]
 }
 
-#[inline(always)]
-unsafe fn transpose_16x16(rows: [uint8x16_t; 16]) -> [uint8x16_t; 16] {
-    let upper = transpose_16x8([
-        rows[0], rows[1], rows[2], rows[3], rows[4], rows[5], rows[6], rows[7],
-    ]);
-    let lower = transpose_16x8([
-        rows[8], rows[9], rows[10], rows[11], rows[12], rows[13], rows[14], rows[15],
-    ]);
-    core::array::from_fn(|index| vcombine_u8(upper[index], lower[index]))
-}
-
 #[target_feature(enable = "neon")]
 unsafe fn horizontal_4_inner(
     pixels: *mut u8,
@@ -1217,31 +1206,6 @@ unsafe fn vertical_inner(
 }
 
 #[target_feature(enable = "neon")]
-unsafe fn vertical_dual_inner(
-    pixels: *mut u8,
-    s_index: usize,
-    pitch: usize,
-    blimit: u8,
-    limit: u8,
-    thresh: u8,
-) {
-    let start = pixels.add(s_index - 8);
-    let mut rows = [vdupq_n_u8(0); 16];
-    for (row, value) in rows.iter_mut().enumerate() {
-        *value = vld1q_u8(start.add(row * pitch));
-    }
-    let output = transpose_16x16(filter16_dual_lanes(
-        transpose_16x16(rows),
-        limit,
-        blimit,
-        thresh,
-    ));
-    for (row, value) in output.iter().enumerate() {
-        vst1q_u8(start.add(row * pitch), *value);
-    }
-}
-
-#[target_feature(enable = "neon")]
 unsafe fn horizontal_dual_inner(
     pixels: *mut u8,
     s_index: usize,
@@ -1321,12 +1285,8 @@ pub fn lpf_vertical_16_dual_neon(
     limit: u8,
     thresh: u8,
 ) {
-    assert!(pitch >= 16);
-    assert!(s_index >= 8);
-    assert!(s_index + 15 * pitch + 7 < pixels.len());
-    // SAFETY: AArch64 always provides NEON. The assertions prove that all
-    // sixteen 16-byte row loads and filtered-pixel stores stay in `pixels`.
-    unsafe { vertical_dual_inner(pixels.as_mut_ptr(), s_index, pitch, blimit, limit, thresh) }
+    lpf_vertical_16_neon(pixels, s_index, pitch, blimit, limit, thresh);
+    lpf_vertical_16_neon(pixels, s_index + 8 * pitch, pitch, blimit, limit, thresh);
 }
 
 #[cfg(test)]
@@ -1635,17 +1595,6 @@ mod tests {
         let mut neon = input;
         lpf_horizontal_16_dual(&mut scalar, horizontal_index, pitch, 255, 255, 255);
         lpf_horizontal_16_dual_neon(&mut neon, horizontal_index, pitch, 255, 255, 255);
-        assert_eq!(neon, scalar);
-
-        let mut vertical = vec![0u8; pitch * height];
-        for row in 0..height {
-            vertical[row * pitch + 16..(row + 1) * pitch].fill(255);
-        }
-        scalar = vertical.clone();
-        neon = vertical;
-        let vertical_index = 4 * pitch + 16;
-        lpf_vertical_16_dual(&mut scalar, vertical_index, pitch, 255, 255, 255);
-        lpf_vertical_16_dual_neon(&mut neon, vertical_index, pitch, 255, 255, 255);
         assert_eq!(neon, scalar);
     }
 
