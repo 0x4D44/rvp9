@@ -5,6 +5,7 @@ Distilled, non-obvious gotchas future sessions need — dated one-liners.
 Durable project facts/conventions belong in `CLAUDE.md` / `AGENTS.md`, not here.
 Hard cap: 20 entries.
 
+- 2026-08-09: A captured false flag may survive worker closure lowering; put feature constants at each hot branch (`lib.rs:RUNTIME_PROFILING_COMPILED`).
 - 2026-08-09: Exact VBP arithmetic can still over-split at finer live Q; calibrate structural Q separately (`lib.rs:exact_vbp_partition_qindex`).
 - 2026-08-09: Exact VBP and source lambda are coupled; either alone regresses curves (`lib.rs:inter_rd_calibration_for_frame`).
 - 2026-08-07: Serial compact recon costs ~1–2%; keep it opt-in until row parallelism repays the merge (`lib.rs:compact_recon_rows`).

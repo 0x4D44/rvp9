@@ -5296,6 +5296,13 @@ impl InterEncodeEnv {
     }
 }
 
+#[inline]
+const fn runtime_profiling_enabled(requested: bool) -> bool {
+    RUNTIME_PROFILING_COMPILED && requested
+}
+
+const RUNTIME_PROFILING_COMPILED: bool = cfg!(feature = "runtime-profiling");
+
 #[allow(clippy::too_many_arguments)] // AQ.1 added `seg_q_deltas`; the
 // remaining args are all load-bearing per-frame inputs that don't
 // reduce to a meaningful struct yet — revisit when AQ.3 lands.
@@ -6034,8 +6041,12 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     );
     let sign_bias = sign_bias_from_header(&[false, false, altref_available]);
 
-    let rt_profile_enabled = env.rt_profile;
-    let rt_profile_frame_start = std::time::Instant::now();
+    // These profiles place timer branches inside the per-leaf and per-TX hot
+    // loops. Compile them out of production builds; diagnostics can opt in
+    // with `--features rvp9-encoder/runtime-profiling`.
+    let rt_profile_enabled = runtime_profiling_enabled(env.rt_profile);
+    let rt_profile_frame_start =
+        (RUNTIME_PROFILING_COMPILED && rt_profile_enabled).then(std::time::Instant::now);
     // The pure tree is differential-oracle exact; this product adapter
     // supplies its source, selected LAST/GOLDEN predictor, thresholds, and
     // causal leaf list.
@@ -6076,17 +6087,17 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // This removes the dominant 720p timing work while leaving the
     // small-frame quality gates untouched. `=0` restores the full descent.
     let rt_min_partition32 = env.flag_or(env.rt_min_partition32, rt_large_recovery);
-    let emit_profile_enabled = env.emit_profile;
+    let emit_profile_enabled = runtime_profiling_enabled(env.emit_profile);
     let a4_profile_enabled = env.a4_profile;
     let variance_hint_dump_enabled = env.variance_hint_dump;
     let a4_rect_disable = env.a4_rect_disable;
     let a4_split_stats_enabled = env.a4_split_stats;
-    let rt_profile_phase2_reused_start = if rt_profile_enabled {
+    let rt_profile_phase2_reused_start = if RUNTIME_PROFILING_COMPILED && rt_profile_enabled {
         crate::rdo::inter_dispatch::PHASE2_NEWMV_REUSED.load(std::sync::atomic::Ordering::Relaxed)
     } else {
         0
     };
-    let rt_profile_phase2_fresh_start = if rt_profile_enabled {
+    let rt_profile_phase2_fresh_start = if RUNTIME_PROFILING_COMPILED && rt_profile_enabled {
         crate::rdo::inter_dispatch::PHASE2_NEWMV_FRESH.load(std::sync::atomic::Ordering::Relaxed)
     } else {
         0
@@ -6572,11 +6583,12 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 // region. Keep the edge-safe variance tree for a partial
                 // bottom SB; every retained leaf then fits the visible frame.
                 if descent_enabled {
-                    let rt_profile_descent_start = if rt_profile_enabled {
-                        Some(std::time::Instant::now())
-                    } else {
-                        None
-                    };
+                    let rt_profile_descent_start =
+                        if RUNTIME_PROFILING_COMPILED && rt_profile_enabled {
+                            Some(std::time::Instant::now())
+                        } else {
+                            None
+                        };
                     use rvp9_core::block::BlockSize as BS;
                     use rvp9_core::mode_decision::partition::PartitionDecision;
 
@@ -8337,7 +8349,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     } else {
                         None
                     };
-                    let rt_profile_final_pick_start = if rt_profile_enabled
+                    let rt_profile_final_pick_start = if RUNTIME_PROFILING_COMPILED
+                        && rt_profile_enabled
                         && rdo_unified.is_none()
                         && cached_descent_pick.is_none()
                     {
@@ -8418,7 +8431,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     // y_mode, uv_mode).
                     let mut pick = unified_pick;
                     let picked_ref = pick.picked_ref_frame;
-                    let rt_profile_emit_start = if rt_profile_enabled {
+                    let rt_profile_emit_start = if RUNTIME_PROFILING_COMPILED && rt_profile_enabled
+                    {
                         Some(std::time::Instant::now())
                     } else {
                         None
@@ -9026,7 +9040,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         // matching libvpx's reuse of `mi->tx_size`. The optional
                         // exact variance-tree diagnostic below redecides only the
                         // measured TX8/TX16 leaf class.
-                        if emit_profile_enabled {
+                        if RUNTIME_PROFILING_COMPILED && emit_profile_enabled {
                             *emit_profile_inter_leaves += 1;
                         }
                         let mut chosen_luma_tx = realtime_emit_luma_tx_size(
@@ -9118,11 +9132,12 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             // `for r in 0..num_refs` recon loop
                             // (`reconstruct_inter.rs:331`, `is_compound_avg = r >
                             // 0`): slot 0 writes, slot 1 averages.
-                            let emit_pred_start = if emit_profile_enabled {
-                                Some(std::time::Instant::now())
-                            } else {
-                                None
-                            };
+                            let emit_pred_start =
+                                if RUNTIME_PROFILING_COMPILED && emit_profile_enabled {
+                                    Some(std::time::Instant::now())
+                                } else {
+                                    None
+                                };
                             recon_plane.build_inter_prediction(
                                 ref_plane_data,
                                 plane_px_x,
@@ -9205,11 +9220,12 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                     leaf_bsize,
                                 )
                             {
-                                let emit_tx_select_start = if emit_profile_enabled {
-                                    Some(std::time::Instant::now())
-                                } else {
-                                    None
-                                };
+                                let emit_tx_select_start =
+                                    if RUNTIME_PROFILING_COMPILED && emit_profile_enabled {
+                                        Some(std::time::Instant::now())
+                                    } else {
+                                        None
+                                    };
                                 chosen_luma_tx = choose_inter_luma_tx_size(InterLumaTxInput {
                                     input_plane,
                                     input_stride,
@@ -9286,7 +9302,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
 
                                     // Residual = input - pred. `recon_plane`
                                     // currently holds the MC prediction.
-                                    if emit_profile_enabled {
+                                    if RUNTIME_PROFILING_COMPILED && emit_profile_enabled {
                                         *emit_profile_tx_blocks += 1;
                                         emit_profile_plane_tx_blocks[plane] += 1;
                                     }
@@ -9303,7 +9319,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                     let eob_usize = inter_emit_scratch.with_len(
                                     residual_len,
                                     |residual, quant_scratch| {
-                                        let emit_residual_start = if emit_profile_enabled {
+                                        let emit_residual_start = if RUNTIME_PROFILING_COMPILED
+                                            && emit_profile_enabled
+                                        {
                                             Some(std::time::Instant::now())
                                         } else {
                                             None
@@ -9390,8 +9408,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                         // coefficient source represents that
                                         // case with its existing empty marker.
                                         if !residual_nonzero {
-                                            let emit_coef_insert_start = emit_profile_enabled
-                                                .then(std::time::Instant::now);
+                                            let emit_coef_insert_start =
+                                                (RUNTIME_PROFILING_COMPILED
+                                                    && emit_profile_enabled)
+                                                    .then(std::time::Instant::now);
                                             coef_source.insert(
                                                 leaf_mi_row,
                                                 leaf_mi_col,
@@ -9409,7 +9429,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
 
                                         // RVP9_TRELLIS — inter emit path.
                                         // ref_type = 1 (inter).
-                                        let emit_quant_start = if emit_profile_enabled {
+                                        let emit_quant_start = if RUNTIME_PROFILING_COMPILED
+                                            && emit_profile_enabled
+                                        {
                                             Some(std::time::Instant::now())
                                         } else {
                                             None
@@ -9428,7 +9450,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                                     *emit_profile_quant_time += t0.elapsed();
                                                 }
                                                 let emit_inverse_start =
-                                                    if emit_profile_enabled && eob > 0 {
+                                                    if RUNTIME_PROFILING_COMPILED
+                                                        && emit_profile_enabled
+                                                        && eob > 0
+                                                    {
                                                         Some(std::time::Instant::now())
                                                     } else {
                                                         None
@@ -9445,8 +9470,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                                 if let Some(t0) = emit_inverse_start {
                                                     *emit_profile_inverse_time += t0.elapsed();
                                                 }
-                                                let emit_coef_insert_start = emit_profile_enabled
-                                                    .then(std::time::Instant::now);
+                                                let emit_coef_insert_start =
+                                                    (RUNTIME_PROFILING_COMPILED
+                                                        && emit_profile_enabled)
+                                                        .then(std::time::Instant::now);
                                                 coef_source.insert_i16(
                                                     leaf_mi_row,
                                                     leaf_mi_col,
@@ -9464,7 +9491,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                         )
                                     },
                                 );
-                                    if emit_profile_enabled {
+                                    if RUNTIME_PROFILING_COMPILED && emit_profile_enabled {
                                         *emit_profile_eob_sum += eob_usize;
                                         if eob_usize > 0 {
                                             *emit_profile_nonzero_tx_blocks += 1;
@@ -10218,8 +10245,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
             debug_assert_eq!(row_context.remaining_jobs(), 0);
         }
     }
-    if rt_profile_enabled {
-        let total = rt_profile_frame_start.elapsed();
+    if RUNTIME_PROFILING_COMPILED && rt_profile_enabled {
+        let total = rt_profile_frame_start
+            .expect("enabled runtime profile must have a start time")
+            .elapsed();
         let accounted = frame_diagnostics.rt_profile_descent_time
             + frame_diagnostics.rt_profile_final_pick_time
             + frame_diagnostics.rt_profile_emit_time;
@@ -10248,7 +10277,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
             );
         }
     }
-    if emit_profile_enabled {
+    if RUNTIME_PROFILING_COMPILED && emit_profile_enabled {
         let ms = |d: std::time::Duration| d.as_secs_f64() * 1_000.0;
         #[allow(clippy::print_stderr)]
         {
@@ -13808,6 +13837,15 @@ mod tests {
         assert!(!InterEncodeEnv::capture().skip_integer_mv_filter_search());
         // SAFETY: the mutex above serialises all encoder environment tests.
         unsafe { std::env::remove_var(key) };
+    }
+
+    #[test]
+    fn runtime_profiles_require_the_explicit_build_feature() {
+        assert!(!runtime_profiling_enabled(false));
+        assert_eq!(
+            runtime_profiling_enabled(true),
+            cfg!(feature = "runtime-profiling")
+        );
     }
 
     #[test]

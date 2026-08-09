@@ -12,6 +12,9 @@ workspace = true
 
 [features]
 highbitdepth = ["rvp9-core/highbitdepth"]
+# Keeps timer-heavy internal profiling available without carrying its branches
+# through the production encoder's prediction and transform loops.
+runtime-profiling = []
 
 [dependencies]
 rvp9-core = { path = "../rvp9-core" }
