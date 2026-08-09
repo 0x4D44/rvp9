@@ -1,25 +1,25 @@
 # RVP9-BUG-FLUX-00012 — AQ test keeps encoder all-target clippy red
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Could
 - **Severity:** Low
 - **Area:** encoder/AQ tests
 - **Raised:** 2026-08-09T20:10:46Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260809T223544Z-p48471-n589157000-c1
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLUX-00012-run-fix-20260809T223544Z-p48471-n589157000-c1
-- **Owner base:** 7b5eb2531f7dd60e86dce113fec63c8947a4fd98
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-08-09T22:35:44Z
-- **Owner until:** 2026-08-10T00:35:44Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-09T20:10:46Z, raised via `deltic bugs new`)
+- **State history:** Open (2026-08-09T20:10:46Z, raised via `deltic bugs new`) -> Fixed (2026-08-09T22:52:08Z, deltic:auto role=fix run=fix-20260809T223544Z-p48471-n589157000-c1 branch=task/bug-RVP9-BUG-FLUX-00012-run-fix-20260809T223544Z-p48471-n589157000-c1 code=dfba89f133ca12b3da29dca56c4b30a8d949188e gate=manual)
 
 ## Observation
 
