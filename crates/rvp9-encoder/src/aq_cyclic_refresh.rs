@@ -986,7 +986,7 @@ mod tests {
         let (seg_map, n_refreshed) = cr.pre_encode_pick_segments(100);
         assert_eq!(seg_map.len(), MI_ROWS * MI_COLS);
         assert!(
-            seg_map.iter().any(|&s| s == CR_SEGMENT_ID_BOOST),
+            seg_map.contains(&CR_SEGMENT_ID_BOOST),
             "fresh-state seg_map must refresh cells immediately",
         );
         assert!(n_refreshed >= cr.target_refresh_cells());
