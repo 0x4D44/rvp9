@@ -4919,6 +4919,23 @@ fn inter_rd_calibration_for_frame(
         .with_lambda_attenuation(!exact_vbp_tree_enabled)
 }
 
+fn inter_rd_calibration_for_segment(
+    rc_mode: crate::rate_control::RcMode,
+    speed: i32,
+    deadline: rvp9_core::mode_decision::speed_features::Deadline,
+    cyclic_refresh_active: bool,
+    segment_id: u8,
+    exact_vbp_tree_enabled: bool,
+) -> rvp9_core::mode_decision::inter::InterRdCalibration {
+    inter_rd_calibration_for_frame(
+        rc_mode,
+        speed,
+        deadline,
+        cyclic_refresh_active && segment_id != 0,
+        exact_vbp_tree_enabled,
+    )
+}
+
 fn block16_coef_rd_enabled(
     exact_vbp_tree_enabled: bool,
     rc_mode: crate::rate_control::RcMode,
@@ -5812,11 +5829,12 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     let exact_vbp_tree_enabled = env.exact_vbp_tree_enabled(rc_mode, speed, deadline, content_tier)
         && exact_vbp_history.is_some();
     let cyclic_refresh_active = seg_q_deltas.iter().any(Option::is_some);
-    let mut inter_rd_calibration = inter_rd_calibration_for_frame(
+    let mut inter_rd_calibration = inter_rd_calibration_for_segment(
         rc_mode,
         speed,
         deadline,
         cyclic_refresh_active,
+        0,
         exact_vbp_tree_enabled,
     );
     if golden_real_block_yrd_enabled(
@@ -7085,6 +7103,14 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         );
                         let leaf_qindex =
                             effective_qindex_for_segment(base_qindex, seg, seg_q_deltas);
+                        let descent_rd_calibration = inter_rd_calibration_for_segment(
+                            rc_mode,
+                            speed,
+                            deadline,
+                            cyclic_refresh_active,
+                            seg,
+                            exact_vbp_tree_enabled,
+                        );
                         let quantizer =
                             init_plane_quantizers(i32::from(leaf_qindex), QuantizerDeltas::Y);
                         let (uv_dc_dq, uv_ac_dq) = plane_dequant_pair(
@@ -7182,7 +7208,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         search_golden_filter: realtime_search_golden_filter(rc_mode, speed),
                         skip_ctx,
                         skip_prob: frame_context.skip_probs[skip_ctx],
-                        rd_calibration: inter_rd_calibration,
+                        rd_calibration: descent_rd_calibration,
                         last_const_motion,
                         golden_const_motion,
                         // The recursive descent is a speculative luma proxy:
@@ -8017,10 +8043,16 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     // Feeds BOTH the picker's RD evaluation and the
                     // forward-quant `quantizer` used in
                     // `inter_forward_quant_one_tx` below.
-                    let leaf_qindex = effective_qindex_for_segment(
-                        base_qindex,
-                        sb_partitions[sb_idx][leaf_idx].segment_id,
-                        seg_q_deltas,
+                    let leaf_segment_id = sb_partitions[sb_idx][leaf_idx].segment_id;
+                    let leaf_qindex =
+                        effective_qindex_for_segment(base_qindex, leaf_segment_id, seg_q_deltas);
+                    let leaf_rd_calibration = inter_rd_calibration_for_segment(
+                        rc_mode,
+                        speed,
+                        deadline,
+                        cyclic_refresh_active,
+                        leaf_segment_id,
+                        exact_vbp_tree_enabled,
                     );
                     let quantizer =
                         init_plane_quantizers(i32::from(leaf_qindex), QuantizerDeltas::Y);
@@ -8484,7 +8516,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     search_golden_filter: realtime_search_golden_filter(rc_mode, speed),
                     skip_ctx,
                     skip_prob: frame_context.skip_probs[skip_ctx],
-                    rd_calibration: inter_rd_calibration.with_block16_coef_rd(
+                    rd_calibration: leaf_rd_calibration.with_block16_coef_rd(
                         block16_coef_rd_enabled(exact_vbp_tree_enabled, rc_mode, speed),
                     ),
                     last_const_motion,
@@ -14067,6 +14099,24 @@ mod tests {
             inter_rd_calibration_for_mode(RcMode::Cbr, 7, Deadline::Realtime, true),
             InterRdCalibration::default()
         );
+    }
+
+    #[test]
+    fn cyclic_refresh_calibrates_baseline_and_boosted_segments_independently() {
+        use rvp9_core::mode_decision::speed_features::Deadline;
+
+        let baseline =
+            inter_rd_calibration_for_segment(RcMode::Vbr, 7, Deadline::Realtime, true, 0, true);
+        let boosted =
+            inter_rd_calibration_for_segment(RcMode::Vbr, 7, Deadline::Realtime, true, 1, true);
+        let aq_off =
+            inter_rd_calibration_for_segment(RcMode::Vbr, 7, Deadline::Realtime, false, 1, true);
+
+        assert!(baseline.hadamard_only && baseline.model_only);
+        assert!(!boosted.hadamard_only && !boosted.model_only);
+        assert_eq!(aq_off, baseline, "AQ off ignores stale segment ids");
+        assert_eq!((baseline.lambda_num, baseline.lambda_den), (0, 1));
+        assert_eq!((boosted.lambda_num, boosted.lambda_den), (0, 1));
     }
 
     #[test]

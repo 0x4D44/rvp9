@@ -630,35 +630,42 @@ fell from `1.80 s` to `1.64 s` (`8.9%`).
 **Future plan:** consider libvpx's paired-tap or dot-product kernels only if
 another profile shows interpolation remains material.
 
-### 2026-08-01 — Retain the duplicate picker DCT outside AQ-off v1 realtime
+### 2026-08-01 — Retain the duplicate picker DCT on cyclic-refresh boosted segments
 **Where:** `rvp9-core::mode_decision::inter::evaluate_candidate_for_filter`
 and `InterRdCalibration`; libvpx counterpart:
 `vp9/encoder/vp9_pickmode.c:block_yrd`.
 **What libvpx does:** realtime candidate RD uses one Hadamard transform,
 `quantize_fp`, its coefficient rate/distortion, and its skippable result.
 The selected leaf is transformed and reconstructed later by the encode path.
-**What rvp9 does:** the scoped one-pass realtime AQ-off CBR/VBR cpu-used 6–8
-paths now match that single Hadamard pipeline. Cyclic-refresh AQ, CQ,
-constant-Q, two-pass, and slower presets retain the older second DCT,
-`quantize_b`, inverse DCT, and pixel-SSE pass inside every candidate before
-the selected leaf is transformed again.
+**What rvp9 does:** the scoped one-pass realtime CBR/VBR cpu-used 6–8
+baseline segments match that single Hadamard pipeline, including segment 0
+inside a cyclic-refresh frame. BOOST1/BOOST2, CQ, constant-Q, two-pass, and
+slower presets retain the older second DCT, `quantize_b`, inverse DCT, and
+pixel-SSE pass inside every candidate before the selected leaf is transformed
+again.
 **Why:** the single-pipeline policy is a measured Pareto improvement on the
-AQ-off v1 matrix. Cyclic refresh retains its validated calibration because
-generalising the policy there broke the focused finer-quantization oracle;
-AQ needs its own matched quality sweep. Other retained paths are outside this
-parity objective and keep their established behavior.
+AQ-off v1 matrix. Applying it to boosted AQ leaves breaks the focused
+finer-quantization oracle (`1.691x` AQ/off SSE); applying it only to segment 0
+keeps that oracle green and removes the unrelated baseline-region penalty.
+Other retained paths are outside this parity objective and keep their
+established behavior.
 **Byte-parity impact:** structural for calibrated realtime paths because the Hadamard
 skippable predicate can differ from the former DCT-EOB predicate. Exercised
 streams remain deterministic and decoder-valid.
 **Compression-efficiency impact:** on the 64-frame fixed-Q Foreman screen,
 inter payload moved `25,166 -> 25,085`, `12,788 -> 12,624`, and
 `5,856 -> 5,770` bits/frame at q80/q120/q160 while PSNR improved by
-`0.05/0.07/0.13 dB`.
+`0.05/0.07/0.13 dB`. On the signed Stage 4b Foreman VBR gate, segment-aware
+calibration moves rvp9's AQ penalty from `+36.763%` to `+6.111%`; pinned
+libvpx is `+4.714%`, so the gain delta narrows from `+32.049` to `+1.397`
+percentage points. This is a measured prerequisite, not final AQ parity.
 **Speed impact:** twelve alternating four-encode pairs on 120 frames of
 1280x704 testsrc reduced cpu-used 7 CBR median wall time by `33.55%` and total
 child CPU by `39.54%`, with 12/12 wins for both metrics.
-**Future plan:** calibrate cyclic-refresh AQ against its matched feature matrix.
-Retire the other compatibility paths only under a separately scoped objective.
+**Future plan:** close the remaining AQ delta through the signed-off dynamic
+BOOST1/BOOST2, per-block segment-update, and cyclic-refresh-aware rate-control
+work. Retire the other compatibility paths only under a separately scoped
+objective.
 
 ### 2026-07-30 — Keep both UV planes in the realtime picker model
 **Where:** `rvp9-core::mode_decision::inter::evaluate_candidate_for_filter`
