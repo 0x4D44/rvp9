@@ -5,6 +5,7 @@ Distilled, non-obvious gotchas future sessions need — dated one-liners.
 Durable project facts/conventions belong in `CLAUDE.md` / `AGENTS.md`, not here.
 Hard cap: 20 entries.
 
+- 2026-08-09: A tuning miss at one resolution can need a frame-area policy, not global rejection (`lib.rs:exact_vbp_partition_qindex`).
 - 2026-08-09: A journaled retained experiment may still lack code; verify both tree and evidence (`y4m.rs:Y4mReader::next_frame_into`).
 - 2026-08-09: A captured false flag may survive worker closure lowering; put feature constants at each hot branch (`lib.rs:RUNTIME_PROFILING_COMPILED`).
 - 2026-08-09: Exact VBP arithmetic can still over-split at finer live Q; calibrate structural Q separately (`lib.rs:exact_vbp_partition_qindex`).

@@ -4747,33 +4747,38 @@ libvpx counterpart: `vp9/encoder/vp9_encodeframe.c:set_vbp_thresholds`.
 frame or segment coding qindex.
 
 **What rvp9 does:** the CPU7 realtime one-pass VBR exact-tree product path
-adds nine qindex steps only while deriving partition thresholds and the
-low-SAD/copy thresholds. Coefficient quantization and every non-product path
-retain the rate controller's effective qindex.
+adds nine qindex steps through 1280x720 and eighteen above that frame area,
+only while deriving partition thresholds and the low-SAD/copy thresholds.
+Coefficient quantization and every non-product path retain the rate
+controller's effective qindex.
 
 **Why:** at the old-town 4000-kbps point, rvp9 used average inter qindex
 132.63 versus vpxenc's 138.27, yet emitted fewer bits. Applying the exact
 libvpx threshold formula at that finer live Q produced 20,668 inter 8x8 leaves
 versus vpxenc's 9,748 and repeated expensive final-picker work. The uniform
 partition-only bias compensates for the different live trajectory without a
-clip, bitrate, frame-position, or target-resolution rule. A sweep of biases
-3/6/9/12 selected nine by the worst required clip, not by a single point.
+clip, bitrate, or frame-position rule. The initial 3/6/9/12 sweep selected
+nine by the worst required clip. A later literal-resolution sweep showed that
+eighteen passes all three 1080p clip guards and reduces work, but over-coarsens
+720p; the frame-area split therefore retains the measured-safe calibration at
+both required resolutions.
 
 **Byte-parity impact:** intentional and structural. Partition history, rate
 control feedback, and later reconstruction diverge from the previous product
 stream.
 
-**Compression-efficiency impact:** the canonical six-point
-in-tree/ducks/old-town curves move from `+1.279%/-9.786%/+1.769%` to
-`+1.096%/-10.243%/+0.399%`. Every required Stage 4a clip improves.
+**Compression-efficiency impact:** at 720p the canonical six-point
+in-tree/ducks/old-town curves remain `+0.801%/-11.117%/+0.792%`. At 1080p the
+eighteen-step curves are `+1.678%/-10.062%/+0.610%`; every important clip
+stays inside the `+2%` guard.
 
-**Speed impact:** the coarser structure reduces repeated leaf-picker work.
-Nine alternating loaded-host old-town 4000-kbps runs moved median wall time
-from 0.51 s to 0.50 s and median child CPU from 1.64 s to 1.62 s. This is a
-small directional win, not quiet-host acceptance timing.
+**Speed impact:** the coarser 1080p structure reduces repeated leaf-picker
+work. Fifteen warmed alternating pairs measured a `0.99052x` paired wall
+geomean and `0.98490x` paired child-CPU geomean across the three clips. The
+720p path is byte-identical to the prior nine-step policy.
 
-**Future plan:** retain the uniform calibration while closing the remaining
-in-tree gap, then generalize and repeat the final quiet-host matrix.
+**Future plan:** retain the resolution-scaled calibration while closing the
+remaining speed gap, then repeat the final quiet-host matrix.
 
 ### 2026-08-09 — Sample the custom high-frequency frame classifier
 

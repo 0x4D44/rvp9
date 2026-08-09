@@ -1741,9 +1741,19 @@ pub(crate) fn effective_qindex_for_segment(
 /// mode picks. Keep coefficient quantization at the rate controller's Q, but
 /// raise only the partition threshold Q by the measured corpus-wide bias.
 #[inline]
-fn exact_vbp_partition_qindex(effective_qindex: u8) -> u8 {
-    const PARTITION_QINDEX_BIAS: u8 = 9;
-    effective_qindex.saturating_add(PARTITION_QINDEX_BIAS)
+fn exact_vbp_partition_qindex(effective_qindex: u8, frame_width: usize, frame_height: usize) -> u8 {
+    // Unit 914's literal-resolution sweep found that the larger bias is a
+    // Pareto win at 1080p, but over-coarsens the 720p tree. Keep the proven
+    // 720p calibration and scale only above that pixel count, matching the
+    // frame-size-dependent shape of libvpx's realtime speed features.
+    const PARTITION_QINDEX_BIAS_720P: u8 = 9;
+    const PARTITION_QINDEX_BIAS_LARGE: u8 = 18;
+    let bias = if frame_width.saturating_mul(frame_height) > 1280 * 720 {
+        PARTITION_QINDEX_BIAS_LARGE
+    } else {
+        PARTITION_QINDEX_BIAS_720P
+    };
+    effective_qindex.saturating_add(bias)
 }
 
 /// Per-leaf descriptor handed to
@@ -6431,7 +6441,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     let segment_id = segment_id_for_hint_cell(&sb_partitions[sb_idx], 0, 0);
                     let effective_qindex =
                         effective_qindex_for_segment(base_qindex, segment_id, seg_q_deltas);
-                    let partition_qindex = exact_vbp_partition_qindex(effective_qindex);
+                    let partition_qindex = exact_vbp_partition_qindex(effective_qindex, w, h);
                     let content_state = content_state_sb_grid
                         .get(sb_idx)
                         .copied()
@@ -15837,9 +15847,10 @@ mod tests {
 
     #[test]
     fn exact_vbp_partition_qindex_applies_bias_without_wrapping() {
-        assert_eq!(exact_vbp_partition_qindex(100), 109);
-        assert_eq!(exact_vbp_partition_qindex(250), 255);
-        assert_eq!(exact_vbp_partition_qindex(255), 255);
+        assert_eq!(exact_vbp_partition_qindex(100, 1280, 720), 109);
+        assert_eq!(exact_vbp_partition_qindex(100, 1920, 1080), 118);
+        assert_eq!(exact_vbp_partition_qindex(250, 1280, 720), 255);
+        assert_eq!(exact_vbp_partition_qindex(255, 1920, 1080), 255);
     }
 
     /// AQ.1 KEY ORACLE — run the simulator on two equally-shaped 8×8
