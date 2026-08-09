@@ -459,8 +459,14 @@ fn gop_topology_byte_identity() {
     // tree independently reproduce these bytes. The sibling schedule oracle
     // still matches every emitted frame, so this is an earlier intentional
     // coding change rather than a GOP topology regression.
-    const GOLDEN_HASH: u64 = 0xc5a9_eaff_5996_69d2;
-    const GOLDEN_LEN: usize = 23186;
+    //
+    // Re-captured again (2026-08-09) after the accepted focused-green
+    // production-parity stack. The new stream reproduced three times with
+    // the same length and hash. The sibling schedule-and-decode oracle still
+    // passes all 40 frames, so the GOP topology invariant remains intact.
+    // Prior integrated golden: (len 23186, fnv1a 0xc5a9_eaff_5996_69d2).
+    const GOLDEN_HASH: u64 = 0xcb11_7524_725c_f5ff;
+    const GOLDEN_LEN: usize = 23767;
 
     let stream = encode_fixed_clip();
     let hash = fnv1a(&stream);
