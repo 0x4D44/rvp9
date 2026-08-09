@@ -1,25 +1,25 @@
 # RVP9-BUG-FLUX-00013 — buffer-pool byte-identity test pins stale encoder golden
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Must
 - **Severity:** Low
 - **Area:** encoder/buffer-pool test
 - **Raised:** 2026-08-09T22:43:45Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260809T225244Z-p90219-n341290000-c1
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLUX-00013-run-fix-20260809T225244Z-p90219-n341290000-c1
-- **Owner base:** c0b8d3cc546950536ab6774429c62be5d3825c26
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-08-09T22:52:44Z
-- **Owner until:** 2026-08-10T00:52:44Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-09T22:43:45Z, raised via `deltic bugs new`)
+- **State history:** Open (2026-08-09T22:43:45Z, raised via `deltic bugs new`) -> Fixed (2026-08-09T22:53:08Z, deltic:auto role=fix run=fix-20260809T225244Z-p90219-n341290000-c1 branch=task/bug-RVP9-BUG-FLUX-00013-run-fix-20260809T225244Z-p90219-n341290000-c1 code=39a4b510e22f99b298a14e1b5dd4f79f81511380 gate=manual)
 
 ## Observation
 
