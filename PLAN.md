@@ -676,9 +676,14 @@ three-layer 720p30 VBR diagnostic from
 TL0/TL1/TL2 respectively. All three CPU7 VBR operating points now pass the
 final `+0.5%` gate. The exact vpxenc minimum-Q default was tested and rejected
 because it worsened TL0 to `+1.4166%`. Plain-release one-shot timing is not the
-production PGO speed gate, but it identifies a material SVC-path speed gap for
-profiling after the CPU6/8, two-layer, and CBR quality matrix is closed. The
-720p30/1080p30 speed matrix remains open.
+production PGO speed gate. CPU6 measures
+`+1.8325%/+0.3760%/-0.1343%`, leaving only TL0 open. CPU8 improves from
+`+6.0559%/+6.9584%/+4.4827%` to `+4.4944%/+5.4305%/+3.1999%` with the
+NSTEP exception, but all three layers remain open. Frame-aligned CPU8 traces
+clear rate-control Q as the main TL0 cause. CPU6's exact libvpx minimum-Q
+default also worsens its TL0 result to `+2.1966%`; both failures now point to
+coding-policy efficiency. Two-layer, CBR, and the repeated PGO
+720p30/1080p30 speed matrix remain open.
 
 **Estimated effort:** 4–6 weeks.
 
