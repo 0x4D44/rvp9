@@ -166,6 +166,15 @@ pub struct RateControl {
     /// `rc->total_target_bits` (`vp9_ratectrl.h:148`).
     pub total_target_bits: i64,
 
+    /// Temporal-SVC layer-local short rolling target. Pinned libvpx starts
+    /// each `LAYER_CONTEXT` at zero and updates `(3 * old + target) / 4`
+    /// after each inter frame.
+    pub(crate) svc_rolling_target_bits: i32,
+
+    /// Temporal-SVC layer-local short rolling actual bits, paired with
+    /// [`Self::svc_rolling_target_bits`] for the VBR active-worst factor.
+    pub(crate) svc_rolling_actual_bits: i32,
+
     /// Number of frames dropped post-encode (not used in v1 — present
     /// only to mirror the libvpx field shape so future drop-logic can
     /// land without an ABI break). libvpx `rc->drop_count`.
@@ -331,6 +340,8 @@ impl RateControl {
 
             total_actual_bits: 0,
             total_target_bits: 0,
+            svc_rolling_target_bits: 0,
+            svc_rolling_actual_bits: 0,
 
             drop_count: 0,
 
@@ -377,6 +388,24 @@ impl RateControl {
             .bits_off_target
             .clamp(-self.maximum_buffer_size, self.maximum_buffer_size);
         self.buffer_level = self.bits_off_target;
+    }
+
+    /// Return pinned libvpx's VBR-SVC `fac_active_worst_inter` for this
+    /// layer. The initial factor is 140; established underspend lowers it to
+    /// 120 and a greater-than-2x overspend raises it to 160.
+    pub(crate) fn temporal_svc_vbr_active_worst_factor(&self) -> i32 {
+        if self.svc_rolling_target_bits <= 0 {
+            return 140;
+        }
+        let rate_error =
+            f64::from(self.svc_rolling_actual_bits) / f64::from(self.svc_rolling_target_bits);
+        if rate_error < 1.0 {
+            120
+        } else if rate_error > 2.0 {
+            160
+        } else {
+            140
+        }
     }
 
     /// Raise the inter-Q ambient after a large temporal-SVC keyframe.
@@ -428,7 +457,7 @@ impl RateControl {
         &mut self,
         frame_kind: FrameKind,
         model: Option<super::CyclicRefreshRateModel>,
-        svc_inter_target: Option<u32>,
+        svc: Option<super::TemporalSvcRateControl>,
     ) -> (u8, u8, u8) {
         use super::RcMode;
         match self.config.rc_mode {
@@ -436,7 +465,7 @@ impl RateControl {
                 self,
                 frame_kind,
                 model,
-                svc_inter_target,
+                svc.map(|input| input.target_bits),
             ),
             // One-pass VBR. Port of libvpx
             // `rc_pick_q_and_bounds_one_pass_vbr`
@@ -447,13 +476,10 @@ impl RateControl {
             // first-pass stats attached via `attach_two_pass`. The W1.6
             // one-pass VBR PROOF lives in `tests/w_vbr_rc_proof.rs`; the
             // two-pass PROOF in `tests/w_2pass_vbr.rs`.
-            RcMode::Vbr => match (model, svc_inter_target) {
-                (model, Some(target)) => vbr::pick_q_and_bounds_with_model_and_target(
-                    self,
-                    frame_kind,
-                    model,
-                    Some(target),
-                ),
+            RcMode::Vbr => match (model, svc) {
+                (model, Some(svc)) => {
+                    vbr::pick_q_and_bounds_with_model_and_target(self, frame_kind, model, Some(svc))
+                }
                 (Some(model), None) => {
                     vbr::pick_q_and_bounds_with_model(self, frame_kind, Some(model))
                 }
@@ -467,7 +493,7 @@ impl RateControl {
             // `vp9_ratectrl.c::vp9_rc_pick_q_and_bounds_one_pass_cbr`
             // CQ branch (search for `cq_level`).
             RcMode::Cq => {
-                debug_assert!(svc_inter_target.is_none());
+                debug_assert!(svc.is_none());
                 let (q, lo, hi) = match model {
                     Some(model) => cbr::pick_q_and_bounds_with_model(self, frame_kind, Some(model)),
                     None => cbr::pick_q_and_bounds(self, frame_kind),
@@ -482,7 +508,7 @@ impl RateControl {
             // for `oxcf->rc_mode == VPX_Q`). No rate-control loop —
             // the regulator is bypassed entirely.
             RcMode::Q => {
-                debug_assert!(svc_inter_target.is_none());
+                debug_assert!(svc.is_none());
                 let q_inter = self.config.cq_level;
                 let q_kf = q_inter.saturating_sub(8); // libvpx KF qdelta ≈ -8
                 let q = match frame_kind {

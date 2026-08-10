@@ -267,6 +267,18 @@ fn postencode_update_impl(
     }
     rc.buffer_level = rc.bits_off_target;
 
+    // Pinned `vp9_rc_postencode_update` maintains these short rolling
+    // monitors per SVC layer after inter frames. `vp9_rc_get_svc_params`
+    // uses their ratio to select fac_active_worst_inter=120/140/160.
+    if preencode_credit_applied && !frame_kind.is_key() {
+        let quarter_ewma = |old: i32, sample: u32| -> i32 {
+            ((i64::from(old) * 3 + i64::from(sample) + 2) >> 2)
+                .clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32
+        };
+        rc.svc_rolling_target_bits = quarter_ewma(rc.svc_rolling_target_bits, rc.this_frame_target);
+        rc.svc_rolling_actual_bits = quarter_ewma(rc.svc_rolling_actual_bits, actual_bits);
+    }
+
     // -- Totals --
     rc.total_actual_bits = rc.total_actual_bits.saturating_add(i64::from(actual_bits));
     // libvpx: `total_target_bits += show_frame ? avg_frame_bandwidth : 0;`
@@ -369,6 +381,20 @@ mod tests {
 
         assert_eq!(rc.bits_off_target, i64::from(avg - actual));
         assert_eq!(rc.buffer_level, rc.bits_off_target);
+    }
+
+    #[test]
+    fn svc_postencode_tracks_layer_local_rolling_inter_rate() {
+        let mut rc = fresh_rc();
+        rc.this_frame_target = 24_875;
+        postencode_update_svc_with_model(&mut rc, 39_352, FrameKind::Inter, None);
+        assert_eq!(rc.svc_rolling_target_bits, 6_219);
+        assert_eq!(rc.svc_rolling_actual_bits, 9_838);
+        assert_eq!(rc.temporal_svc_vbr_active_worst_factor(), 140);
+
+        rc.this_frame_target = 24_875;
+        postencode_update_svc_with_model(&mut rc, 1_000, FrameKind::Inter, None);
+        assert_eq!(rc.temporal_svc_vbr_active_worst_factor(), 120);
     }
 
     #[test]

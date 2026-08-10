@@ -108,6 +108,15 @@ pub use config::RateControlConfig;
 pub use state::{E8Trace, RateControl};
 pub use two_pass::{FirstPassStats, TwoPassState};
 
+/// Per-frame temporal-SVC inputs that sit outside a layer's saved rate-control
+/// state. Pinned libvpx uses the incremental layer budget for targeting while
+/// independently applying the GOLDEN/ALTREF refresh Q-range ceiling.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) struct TemporalSvcRateControl {
+    pub(crate) target_bits: u32,
+    pub(crate) boosted_refresh: bool,
+}
+
 /// Segment-weighted rate model for cyclic-refresh AQ.
 ///
 /// Libvpx prices boosted 8x8 cells at their segment Q while it chooses the

@@ -37,8 +37,8 @@ pub struct RateControlConfig {
     pub optimal_buffer_ms: u32,
 
     /// Best (lowest) allowed Q-index. libvpx `oxcf.best_allowed_q`,
-    /// default 0 for CBR / lossless. We default to 4 to avoid lossless
-    /// mode unintentionally (matches libvpx's CBR-realtime preset).
+    /// default 0 for CBR / lossless. We default to 4 because the exact
+    /// vpxenc bound regresses rvp9's measured realtime SVC efficiency.
     pub min_qindex: u8,
 
     /// Worst (highest) allowed Q-index. libvpx `oxcf.worst_allowed_q`,

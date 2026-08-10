@@ -30,10 +30,12 @@ build/libvpx/vpx_temporal_svc_reference \
   --tile-columns 0 \
   --temporal-layers 3 \
   --aq-mode 0 \
+  --trace /tmp/libvpx-t3-trace.csv \
   --limit 60
 ```
 
 The binary validates libvpx's reported temporal ID against the fixed pattern
-for every encoded frame. Per-operating-point extraction and quality analysis
-live in `rvp9-bench` so both encoders pass through the same container and PSNR
-code.
+for every encoded frame. `--trace` emits the corresponding internal Q-index
+and packet bits without changing encoder state. Per-operating-point extraction
+and quality analysis live in `rvp9-bench` so both encoders pass through the
+same container and PSNR code.

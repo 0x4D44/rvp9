@@ -97,7 +97,7 @@ use crate::loopfilter::{
 };
 use crate::rate_control::{
     CyclicRefreshRateModel, FirstPassStats, FrameKind as RcFrameKind, RateControl,
-    RateControlConfig, RcMode, TwoPassState,
+    RateControlConfig, RcMode, TemporalSvcRateControl, TwoPassState,
 };
 use crate::{
     EncodeError, InterPartitionLeafDesc, InterSimulationMiGrid, PartitionLeafDesc,
@@ -379,8 +379,8 @@ pub struct EncoderConfig {
     /// Best (lowest) allowed Q-index. Mirrors libvpx
     /// `oxcf.best_allowed_q` (CLI: `--min-q`). The CBR Q controller
     /// won't pick anything below this. `0` defaults to the
-    /// [`RateControlConfig::min_qindex`] default (4 for the CBR/RT
-    /// preset). Range: `0..=max_qindex`.
+    /// [`RateControlConfig::min_qindex`] production default (4).
+    /// Range: `0..=max_qindex`.
     pub min_qindex: u8,
     /// Worst (highest) allowed Q-index. Mirrors libvpx
     /// `oxcf.worst_allowed_q` (CLI: `--max-q`). The CBR Q controller
@@ -551,9 +551,7 @@ impl EncoderConfig {
             speed: 7,
             deadline: Deadline::Realtime,
             noise_sensitivity: 0,
-            // Mirror the RateControlConfig CBR/RT defaults
-            // (min=4 / max=255) so unspecified callers inherit the
-            // libvpx-faithful preset.
+            // Mirror the measured RateControlConfig production defaults.
             min_qindex: 4,
             max_qindex: 255,
             // W6.2(vpxenc parity, HBD scaffold) — default 8-bit. The
@@ -631,9 +629,8 @@ impl EncoderConfig {
             // controller. The CBR Q regulator clamps `pick_q` between
             // these bounds (libvpx `oxcf.best_allowed_q` /
             // `worst_allowed_q`). When the CLI omits the flags the
-            // `EncoderConfig::new` defaults (4, 255) match the
-            // pre-existing `RateControlConfig` defaults, preserving
-            // byte-identical behaviour for legacy callers.
+            // `EncoderConfig::new` defaults (4, 255) match the measured
+            // production RateControlConfig bounds.
             min_qindex: self.min_qindex,
             max_qindex: self.max_qindex,
             // Re-audit pass 3 follow-up: thread the user's
@@ -1616,6 +1613,10 @@ struct SvcFrameDecision {
     /// Whether libvpx's frame-level `ref_frame_flags` allows GOLDEN mode
     /// candidates. Temporal-only 2-/3-layer patterns allow LAST only.
     allow_golden_ref: bool,
+    /// Whether the temporal setter refreshed its named GOLDEN or ALTREF.
+    /// Pinned one-pass VBR keeps the ordinary SVC inter target but applies
+    /// the compile-time 1.75x refresh Q-range ceiling on these frames.
+    boosted_refresh: bool,
 }
 
 // A14 — GOLDEN refresh period for the inter path moved to the GOP
@@ -3100,6 +3101,7 @@ impl StreamEncoder {
             refresh_frame_flags |= 1 << ref_frame_indices[2];
         }
         let allow_golden_ref = svc.ref_frame_flags & crate::svc::VP9_GOLD_FLAG != 0;
+        let boosted_refresh = svc.ext_refresh_golden_frame || svc.ext_refresh_alt_ref_frame;
 
         // Advance the base-tl0 layer's frame counter for the next inter
         // frame (libvpx `vp9_save_layer_context` bumps
@@ -3117,13 +3119,20 @@ impl StreamEncoder {
             refresh_frame_flags,
             ref_frame_indices,
             allow_golden_ref,
+            boosted_refresh,
         });
     }
 
     /// Restore the selected temporal layer's RC, retain stream-global frame
     /// counters, calculate the incremental CBR target, and credit the active
     /// plus all higher cumulative buffers before Q selection.
-    fn svc_prepare_rate_control(&mut self, frame_kind: RcFrameKind) -> Option<u32> {
+    fn svc_prepare_rate_control(
+        &mut self,
+        frame_kind: RcFrameKind,
+    ) -> Option<TemporalSvcRateControl> {
+        let boosted_refresh = self
+            .svc_frame
+            .is_some_and(|decision| decision.boosted_refresh);
         let svc = self.svc.as_ref()?;
         let avg_frame_size =
             u32::try_from(svc.layer_context[svc.current_layer_idx()].avg_frame_size)
@@ -3150,7 +3159,10 @@ impl StreamEncoder {
             .as_mut()
             .expect("SVC context disappeared during rate-control prepare")
             .preencode_higher_temporal_layer_buffers();
-        target
+        target.map(|target_bits| TemporalSvcRateControl {
+            target_bits,
+            boosted_refresh,
+        })
     }
 
     /// Complete the selected temporal layer's RC update and save it back.

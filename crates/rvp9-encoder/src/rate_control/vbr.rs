@@ -40,9 +40,8 @@
 //!   rvp9's default frame is 1280x720 (well above CIF); leaving the
 //!   factor at 1.0 is libvpx-equivalent for our default config.
 //! - **`current_video_frame == 0` first-KF ambient.** libvpx uses
-//!   `rc->worst_quality` directly. We do the same via the
-//!   `frames_since_key == 0 && total_actual_bits == 0` predicate
-//!   (mirrors the CBR keyframe path).
+//!   `rc->worst_quality` directly. We use the same stream-global counter,
+//!   including after an SVC layer restore.
 //! - **Two-pass.** Landed as the separate [`super::RcMode::VbrTwoPass`]
 //!   arm (port of `rc_pick_q_and_bounds_two_pass`, `vp9_ratectrl.c:1427`)
 //!   driven by [`super::two_pass`]; not part of this one-pass module.
@@ -51,12 +50,12 @@ use super::cbr::{
     FRAME_OVERHEAD_BITS, RateEstimateModel, get_active_quality, get_kf_active_quality,
     get_minq_index, get_rate_correction_factor, qindex_to_q, regulate_q_with_model,
 };
-use super::{CyclicRefreshRateModel, FrameKind, RateControl};
+use super::{CyclicRefreshRateModel, FrameKind, RateControl, TemporalSvcRateControl};
 use crate::aq_cyclic_refresh::{FrameKind as QDeltaFrameKind, vp9_compute_qdelta_by_rate};
 
 /// libvpx `rc->fac_active_worst_inter`, seeded by `vp9_rc_init` at line
-/// 399 to `150` and only modified by the high-source-SAD detector. We
-/// don't drive the SAD detector, so 150 is the steady-state value.
+/// 399 to `150`. Temporal SVC selects its separate 120/140/160 value from
+/// the layer-local rolling rate monitors before calling the common picker.
 const FAC_ACTIVE_WORST_INTER: i32 = 150;
 
 /// libvpx `rc->fac_active_worst_gf`, seeded by `vp9_rc_init` at line
@@ -142,13 +141,19 @@ fn get_gf_active_quality(q: i32, gfu_boost: i32) -> i32 {
 /// clamp to worst_quality
 /// ```
 ///
-/// We map libvpx's `current_video_frame` to our `(total_actual_bits,
-/// frames_since_key)` state: `current_video_frame == 0` ⇔
-/// `total_actual_bits == 0 && frames_since_key == 0` (the first-ever
-/// frame). `current_video_frame == 1` ⇔ exactly one frame has been
-/// emitted, which on a one-pass-KF-first stream means the second frame
-/// (inter, sitting just past the initial keyframe).
+/// `current_video_frame` is stream-global. This distinction matters for SVC:
+/// a fresh enhancement-layer controller has no layer-local actual bits when
+/// it encodes global frame 1, but pinned libvpx still selects the first-inter
+/// keyframe-history branch (`vp9_ratectrl.c:907,921-924`).
 fn active_worst_quality_vbr(rc: &RateControl, frame_kind: FrameKind) -> i32 {
+    active_worst_quality_vbr_with_factor(rc, frame_kind, FAC_ACTIVE_WORST_INTER)
+}
+
+fn active_worst_quality_vbr_with_factor(
+    rc: &RateControl,
+    frame_kind: FrameKind,
+    fac_active_worst_inter: i32,
+) -> i32 {
     let worst_quality = rc.worst_quality;
     let last_q_key = i32::from(rc.last_q_keyframe);
     let avg_inter = i32::from(rc.avg_frame_qindex_inter);
@@ -158,26 +163,23 @@ fn active_worst_quality_vbr(rc: &RateControl, frame_kind: FrameKind) -> i32 {
             // First-ever keyframe → no Q history; libvpx returns
             // worst_quality directly. Subsequent KFs use the previous
             // KF's Q doubled (`vp9_ratectrl.c:911-912`).
-            if rc.total_actual_bits == 0 && rc.frames_since_key == 0 {
+            if rc.current_video_frame == 0 {
                 worst_quality
             } else {
                 last_q_key.saturating_mul(2)
             }
         }
         FrameKind::Inter => {
-            // libvpx's `current_video_frame == 1` is the frame just
-            // after the first KF — `frames_since_key == 1` in our
-            // counting (KF post-encode resets frames_since_key to 0,
-            // then `advance_frame` increments to 1). At that point
-            // `avg_frame_qindex[INTER]` is still the worst_quality seed,
-            // so libvpx falls back to `last_q[KEY] << 1` instead.
+            // libvpx's stream-global `current_video_frame == 1` is the frame
+            // just after the first KF. Do not infer this from layer-local bit
+            // totals: the first enhancement layer is still fresh here.
             // `vp9_ratectrl.c:921-924`.
-            if rc.frames_since_key <= 1 && rc.total_actual_bits > 0 {
+            if rc.current_video_frame == 1 {
                 last_q_key.saturating_mul(2)
             } else {
                 // `avg_inter * 150 / 100` — drives active_worst above
                 // the recent ambient, giving regulate_q headroom.
-                (avg_inter.saturating_mul(FAC_ACTIVE_WORST_INTER)) / 100
+                (avg_inter.saturating_mul(fac_active_worst_inter)) / 100
             }
         }
         FrameKind::Golden => {
@@ -188,7 +190,7 @@ fn active_worst_quality_vbr(rc: &RateControl, frame_kind: FrameKind) -> i32 {
             // deliberately not the smoothed inter-Q average used below to
             // derive active-best quality.
             // `vp9_ratectrl.c:914-919`.
-            if rc.frames_since_key <= 1 && rc.total_actual_bits > 0 {
+            if rc.current_video_frame == 1 {
                 last_q_key.saturating_mul(5) >> 2
             } else {
                 (i32::from(rc.last_q_inter).saturating_mul(FAC_ACTIVE_WORST_GF)) / 100
@@ -221,7 +223,7 @@ fn active_best_quality_vbr(rc: &RateControl, frame_kind: FrameKind, active_worst
             // inter_minq[q]` (`vp9_ratectrl.c:1237-1242`). On the very
             // first inter (current_video_frame == 1) it instead uses
             // `inter_minq[avg_frame_qindex[KEY_FRAME]]`.
-            if rc.frames_since_key <= 1 && rc.total_actual_bits > 0 {
+            if rc.current_video_frame == 1 {
                 inter_minq(avg_key)
             } else {
                 let q = avg_inter.min(active_worst);
@@ -355,7 +357,7 @@ pub(super) fn pick_q_and_bounds_with_model_and_target(
     rc: &mut RateControl,
     frame_kind: FrameKind,
     model: Option<CyclicRefreshRateModel>,
-    svc_inter_target: Option<u32>,
+    svc: Option<TemporalSvcRateControl>,
 ) -> (u8, u8, u8) {
     // libvpx resets the Golden-frame boost ratio at each group boundary,
     // then retunes it after frame 30 from avg_frame_low_motion. The
@@ -376,8 +378,8 @@ pub(super) fn pick_q_and_bounds_with_model_and_target(
     //    `vp9_ratectrl.c:2118-2143`).
     let target_bits = match frame_kind {
         FrameKind::Key => calc_iframe_target_size_vbr(rc),
-        FrameKind::Inter => svc_inter_target
-            .map(|target| clamp_pframe_target_size_vbr(rc, i64::from(target)))
+        FrameKind::Inter => svc
+            .map(|input| clamp_pframe_target_size_vbr(rc, i64::from(input.target_bits)))
             .unwrap_or_else(|| calc_pframe_target_size_vbr(rc)),
         FrameKind::Golden => calc_golden_target_size_vbr(rc),
     };
@@ -385,7 +387,15 @@ pub(super) fn pick_q_and_bounds_with_model_and_target(
 
     // 2. Active worst-Q ceiling — VBR's ambient-driven model
     //    (libvpx `vp9_ratectrl.c:1146` + 905-928).
-    let active_worst = active_worst_quality_vbr(rc, frame_kind);
+    let active_worst = if svc.is_some() {
+        active_worst_quality_vbr_with_factor(
+            rc,
+            frame_kind,
+            rc.temporal_svc_vbr_active_worst_factor(),
+        )
+    } else {
+        active_worst_quality_vbr(rc, frame_kind)
+    };
 
     // 3. Active best-Q floor (libvpx `vp9_ratectrl.c:1167-1247`).
     let active_best = active_best_quality_vbr(rc, frame_kind, active_worst);
@@ -395,11 +405,14 @@ pub(super) fn pick_q_and_bounds_with_model_and_target(
     let active_worst = active_worst.clamp(active_best, rc.worst_quality);
 
     // Pinned libvpx builds `LIMIT_QRANGE_FOR_ALTREF_AND_KEY=1`.
-    // A one-pass GOLDEN refresh therefore may not code at a Q worse than
-    // the 1.75x-rate equivalent of `active_worst_quality`, even when the
-    // still-adapting GF rate model asks for a coarser Q. This is the
-    // reference's protection against starving the first boosted frame.
-    let top_index = if matches!(frame_kind, FrameKind::Golden) {
+    // A one-pass GOLDEN/ALTREF refresh therefore may not code at a Q worse
+    // than the 1.75x-rate equivalent of `active_worst_quality`, even when the
+    // still-adapting rate model asks for a coarser Q. SVC deliberately keeps
+    // the ordinary inter target and ambient bounds, but the compile-time
+    // refresh ceiling still applies (`vp9_ratectrl.c:1260-1278`).
+    let boosted_refresh =
+        matches!(frame_kind, FrameKind::Golden) || svc.is_some_and(|input| input.boosted_refresh);
+    let top_index = if boosted_refresh {
         let qdelta = vp9_compute_qdelta_by_rate(
             active_worst as u8,
             QDeltaFrameKind::Inter,
@@ -458,7 +471,7 @@ mod tests {
     #[test]
     fn active_worst_first_kf_returns_worst_quality() {
         let rc = RateControl::new(vbr_config());
-        // total_actual_bits == 0 && frames_since_key == 0 → first KF.
+        // current_video_frame == 0 → first KF.
         let aw = active_worst_quality_vbr(&rc, FrameKind::Key);
         assert_eq!(
             aw, rc.worst_quality,
@@ -471,23 +484,30 @@ mod tests {
     #[test]
     fn active_worst_subsequent_kf_doubles_last_kf_q() {
         let mut rc = RateControl::new(vbr_config());
-        rc.total_actual_bits = 100_000;
+        rc.current_video_frame = 60;
         rc.last_q_keyframe = 60;
         let aw = active_worst_quality_vbr(&rc, FrameKind::Key);
         assert_eq!(aw, 120, "subsequent KF active_worst = last_q_keyframe * 2");
     }
 
-    /// First inter (frames_since_key == 1, total_actual_bits > 0): use
-    /// `last_q[KEY] << 1` (avg_inter EWMA hasn't moved off the
-    /// worst_quality seed yet).
+    /// The first enhancement layer is layer-local fresh, but global frame 1
+    /// must still use the coded keyframe's Q history for both bounds.
     #[test]
-    fn active_worst_first_inter_uses_last_kf_q_times_two() {
+    fn temporal_svc_fresh_enhancement_uses_stream_frame_one_key_history() {
         let mut rc = RateControl::new(vbr_config());
-        rc.total_actual_bits = 100_000;
+        rc.current_video_frame = 1;
+        rc.total_actual_bits = 0;
         rc.frames_since_key = 1;
-        rc.last_q_keyframe = 50;
+        rc.last_q_keyframe = 63;
+        rc.avg_frame_qindex_key = 113;
+        rc.avg_frame_qindex_inter = 129;
         let aw = active_worst_quality_vbr(&rc, FrameKind::Inter);
-        assert_eq!(aw, 100, "first inter active_worst = last_q_keyframe * 2");
+        assert_eq!(aw, 126, "first inter active_worst = last_q_keyframe * 2");
+        assert_eq!(
+            active_best_quality_vbr(&rc, FrameKind::Inter, aw),
+            inter_minq(113),
+            "first enhancement inter must seed active-best from keyframe ambient"
+        );
     }
 
     /// Steady-state inter: `avg_inter * 150 / 100`, capped at
@@ -496,6 +516,7 @@ mod tests {
     fn active_worst_steady_state_inter_uses_fac_active_worst() {
         let mut rc = RateControl::new(vbr_config());
         rc.total_actual_bits = 1_000_000;
+        rc.current_video_frame = 30;
         rc.frames_since_key = 30;
         rc.avg_frame_qindex_inter = 80;
         let aw = active_worst_quality_vbr(&rc, FrameKind::Inter);
@@ -542,10 +563,52 @@ mod tests {
         rc.avg_frame_bandwidth = 40_000;
         rc.min_frame_bandwidth = 10_000;
 
-        let _ =
-            pick_q_and_bounds_with_model_and_target(&mut rc, FrameKind::Inter, None, Some(20_000));
+        let _ = pick_q_and_bounds_with_model_and_target(
+            &mut rc,
+            FrameKind::Inter,
+            None,
+            Some(TemporalSvcRateControl {
+                target_bits: 20_000,
+                boosted_refresh: false,
+            }),
+        );
         assert_eq!(rc.this_frame_target, 20_000);
         assert_ne!(rc.this_frame_target, calc_pframe_target_size_vbr(&rc));
+    }
+
+    #[test]
+    fn temporal_svc_refresh_keeps_inter_target_and_tightens_qrange() {
+        let mut plain = RateControl::new(vbr_config());
+        plain.current_video_frame = 2;
+        plain.avg_frame_bandwidth = 75_000;
+        plain.avg_frame_qindex_inter = 127;
+        let mut refresh = plain.clone();
+        let target_bits = 49_750;
+
+        let (_, _, plain_top) = pick_q_and_bounds_with_model_and_target(
+            &mut plain,
+            FrameKind::Inter,
+            None,
+            Some(TemporalSvcRateControl {
+                target_bits,
+                boosted_refresh: false,
+            }),
+        );
+        let (refresh_q, _, refresh_top) = pick_q_and_bounds_with_model_and_target(
+            &mut refresh,
+            FrameKind::Inter,
+            None,
+            Some(TemporalSvcRateControl {
+                target_bits,
+                boosted_refresh: true,
+            }),
+        );
+
+        assert_eq!(plain.this_frame_target, target_bits);
+        assert_eq!(refresh.this_frame_target, target_bits);
+        assert_eq!(plain_top, 177);
+        assert_eq!(refresh_top, 146);
+        assert!(refresh_q <= refresh_top);
     }
 
     #[test]

@@ -5323,3 +5323,37 @@ realtime matrix remains required.
 **Future plan:** revisit the lower clamp only when frame dropping lands. Run
 the declared Stage 4d per-layer quality and realtime gates now that topology
 and rate-control lifecycles are active.
+
+### 2026-08-10 — Retain minimum Q-index 4 after temporal-SVC measurement
+
+**Where:** `rvp9_encoder::EncoderConfig::new`,
+`rvp9_encoder::rate_control::RateControlConfig::default`, and
+`rvp9enc::build_encoder_config`; libvpx counterpart:
+`vp9/vp9_cx_iface.c::encoder_usage_cfg_map` (`rc_min_quantizer = 0`).
+
+**What libvpx does:** vpxenc leaves the public minimum quantizer at zero for
+the scoped realtime VBR temporal-SVC configuration. Its initial VBR Q ambient
+is therefore `(255 + 0) / 2 = 127`.
+
+**What rvp9 does:** production defaults retain minimum Q-index 4, giving an
+initial ambient of 129. Explicit `--min-q=0` remains supported.
+
+**Why:** a source-aligned default-zero experiment made the leading CPU7/T3
+Q trace match libvpx at frames 0, 1, 2, and 4 (`63/126/146/177`), but worsened
+the six-point 720p30 TL0 BD-rate from `+1.068861%` to `+1.416559%`. TL1 also
+worsened from `+0.090075%` to `+0.277144%`; only the already-green TL2 improved,
+from `-2.540335%` to `-2.662054%`. This is not a production Pareto improvement.
+
+**Byte-parity impact:** default streams differ; callers can request the
+libvpx bound explicitly with `--min-q=0`.
+
+**Compression-efficiency impact:** retaining 4 preserves the better measured
+temporal-SVC curve above. The rejected curve is
+`/private/tmp/rvp9-unit1103-default-min0-curve.csv`.
+
+**Speed impact:** not accepted as speed evidence; the diagnostic used one
+plain-release run per operating point.
+
+**Future plan:** keep the measured default while closing TL0 through its
+source-backed CPU7 base-layer motion-search policy. Revisit only if a later
+coding change reverses this controlled result.

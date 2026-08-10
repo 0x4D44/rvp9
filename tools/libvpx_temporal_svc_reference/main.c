@@ -25,6 +25,7 @@
 typedef struct Options {
   const char *input_path;
   const char *output_path;
+  const char *trace_path;
   unsigned int target_bitrate_kbps;
   unsigned int cpu_used;
   unsigned int threads;
@@ -57,6 +58,7 @@ static void usage(FILE *out, const char *program) {
           "  --noise-sensitivity N       default: 0\n"
           "  --limit N                   default: all frames\n"
           "  --keyframe-interval N       default: 60\n"
+          "  --trace PATH                per-frame tid/qindex/bits CSV\n"
           "  --version                   print pinned revision\n",
           program);
 }
@@ -117,6 +119,8 @@ static Options parse_options(int argc, char **argv) {
       options.input_path = required_value(argc, argv, &i);
     } else if (strcmp(arg, "--output") == 0 || strcmp(arg, "-o") == 0) {
       options.output_path = required_value(argc, argv, &i);
+    } else if (strcmp(arg, "--trace") == 0) {
+      options.trace_path = required_value(argc, argv, &i);
     } else if (strcmp(arg, "--target-bitrate") == 0) {
       options.target_bitrate_kbps =
           parse_uint(arg, required_value(argc, argv, &i));
@@ -367,6 +371,7 @@ int main(int argc, char **argv) {
   const Options options = parse_options(argc, argv);
   FILE *input = fopen(options.input_path, "rb");
   FILE *output;
+  FILE *trace = NULL;
   Y4mInfo info;
   vpx_codec_ctx_t codec;
   vpx_codec_enc_cfg_t cfg;
@@ -384,6 +389,11 @@ int main(int argc, char **argv) {
   output = fopen(options.output_path, "wb+");
   if (output == NULL) die_errno("creating", options.output_path);
   write_ivf_header(output, &info, 0);
+  if (options.trace_path != NULL) {
+    trace = fopen(options.trace_path, "w");
+    if (trace == NULL) die_errno("creating", options.trace_path);
+    fprintf(trace, "frame,temporal_id,qindex,actual_bits\n");
+  }
 
   memset(&codec, 0, sizeof(codec));
   if (vpx_codec_enc_config_default(vpx_codec_vp9_cx(), &cfg, 0) !=
@@ -461,6 +471,9 @@ int main(int argc, char **argv) {
 
   while (frame_count < options.limit && read_y4m_frame(input, &raw, &info)) {
     vpx_svc_layer_id_t layer_id;
+    int qindex = 0;
+    unsigned int frame_packets;
+    uint64_t payload_before;
     const unsigned int expected_id =
         temporal_id(frame_count, options.temporal_layers);
     check_codec(&codec,
@@ -478,7 +491,18 @@ int main(int argc, char **argv) {
               frame_count, layer_id.temporal_layer_id, expected_id);
       exit(EXIT_FAILURE);
     }
-    packet_count += drain_packets(&codec, output, &payload_bytes);
+    check_codec(&codec,
+                vpx_codec_control(&codec, VP8E_GET_LAST_QUANTIZER, &qindex),
+                "querying qindex");
+    payload_before = payload_bytes;
+    frame_packets = drain_packets(&codec, output, &payload_bytes);
+    if (frame_packets != 1)
+      die("lag-zero frame did not produce exactly one packet");
+    packet_count += frame_packets;
+    if (trace != NULL) {
+      fprintf(trace, "%u,%u,%d,%" PRIu64 "\n", frame_count, expected_id,
+              qindex, (payload_bytes - payload_before) * 8U);
+    }
     ++frame_count;
   }
 
@@ -493,6 +517,8 @@ int main(int argc, char **argv) {
   if (fseek(output, 0, SEEK_SET) != 0) die("cannot seek to IVF header");
   write_ivf_header(output, &info, packet_count);
   if (fclose(output) != 0) die_errno("closing", options.output_path);
+  if (trace != NULL && fclose(trace) != 0)
+    die_errno("closing", options.trace_path);
   fclose(input);
   vpx_img_free(&raw);
   check_codec(&codec, vpx_codec_destroy(&codec), "destroying encoder");

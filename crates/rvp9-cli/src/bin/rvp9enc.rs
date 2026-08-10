@@ -1585,7 +1585,7 @@ mod tests {
     fn w7_8_q_range_plumbs_into_encoder_config() {
         let table = flag_table();
 
-        // Default (flags omitted) → libvpx CBR preset (4, 255).
+        // Default (flags omitted) → measured production bounds (4, 255).
         let o = EncOpts::default();
         let cfg = build_encoder_config_for_test(&o);
         assert_eq!(cfg.min_qindex, 4, "default min_qindex must be 4");
