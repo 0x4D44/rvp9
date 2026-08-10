@@ -32,9 +32,9 @@
 //! 2. **Byte-identity regression (the refactor oracle).** Encode a fixed
 //!    synthetic clip and assert the concatenated packet bytes hash to a
 //!    captured golden. Proves the refactor changed *nothing* about the
-//!    emitted bitstream. Pins `RVP9_A4_RD_PARTITION_DISABLE` (mirroring
-//!    `tests/w_buffer_pool.rs`) so the golden is stable against the A4
-//!    partition descent.
+//!    emitted bitstream. Pins the pre-refactor partition policy (mirroring
+//!    `tests/w_buffer_pool.rs`) so the golden is stable against later
+//!    partition changes.
 //!
 //! libvpx file:line citations:
 //! - `vp9/encoder/vp9_firstpass.h:62-71` — `FRAME_UPDATE_TYPE` enum.
@@ -128,20 +128,21 @@ fn fixed_config() -> EncoderConfig {
     }
 }
 
-/// Pin the pre-A4 partition path (mirrors `tests/w_buffer_pool.rs`) so
-/// the byte-identity golden is stable. SAFETY: integration binary; all
-/// tests here want the descent off, so set-only is race-free.
-fn pin_a4() {
+/// Pin the pre-refactor partition path (mirrors `tests/w_buffer_pool.rs`) so
+/// the byte-identity golden is stable. SAFETY: integration binary; all tests
+/// here want both later partition paths off, so set-only is race-free.
+fn pin_pre_refactor_partition_policy() {
     // SAFETY: integration binary; all tests here set the same process env
     // knob to the same value.
     unsafe {
         std::env::set_var("RVP9_A4_RD_PARTITION_DISABLE", "1");
+        std::env::set_var("RVP9_EXACT_VBP_TREE", "0");
     }
 }
 
 /// Encode the fixed clip and return the concatenated packet bytes.
 fn encode_fixed_clip() -> Vec<u8> {
-    pin_a4();
+    pin_pre_refactor_partition_policy();
     let mut enc = StreamEncoder::new(fixed_config()).expect("StreamEncoder::new");
     let mut stream = Vec::new();
     for idx in 0..N_FRAMES {
@@ -162,7 +163,7 @@ fn encode_fixed_clip() -> Vec<u8> {
 /// real schedule the encoder followed — a stub or divergence fails here.
 #[test]
 fn gop_topology_schedule_matches_emitted_frames() {
-    pin_a4();
+    pin_pre_refactor_partition_policy();
     let cfg = fixed_config();
     // The independent oracle: the GfGroup built from the same inputs.
     let gf_group = GfGroup::new(cfg.gop_length, cfg.enable_alt_ref);
