@@ -26,7 +26,7 @@
 //!   `mv_err_cost` (`vp9_mcomp.c:87-97`).
 
 use crate::block::BlockSize;
-use crate::cost::mv_cost::{MvCosts, mv_cost};
+use crate::cost::mv_cost::{MV_MAX, MvCosts, mv_cost, mv_joint};
 use crate::dsp::dispatch::{Sad4dFn, SadFn};
 use crate::mode_info::Mv;
 use crate::mv_search::mv_limits::{MvLimits, is_mv_in};
@@ -75,6 +75,41 @@ pub fn mvsad_err_cost(
     let prod = (raw as i64).saturating_mul(sad_per_bit as i64);
     let rounded = (prod + (1i64 << 8)) >> 9;
     // Cost is non-negative by construction (raw, sad_per_bit ≥ 0).
+    rounded.max(0) as u32
+}
+
+/// Full-pel search variant of [`mvsad_err_cost`] for the encoder's legal MV
+/// window. Libvpx indexes both component tables directly here; their zero
+/// slots are built as zero, so this avoids the per-axis clamp and branch in
+/// [`mv_cost`] without changing the cost arithmetic.
+#[inline]
+fn mvsad_err_cost_in_range(
+    this_mv_row: i16,
+    this_mv_col: i16,
+    center_mv_row: i16,
+    center_mv_col: i16,
+    sad_per_bit: i32,
+    mv_costs: &MvCosts,
+) -> u32 {
+    let diff_row = i32::from(this_mv_row) - i32::from(center_mv_row);
+    let diff_col = i32::from(this_mv_col) - i32::from(center_mv_col);
+    debug_assert!(
+        (-MV_MAX..=MV_MAX).contains(&diff_row),
+        "full-pel row diff {diff_row} must fit the libvpx MV cost table"
+    );
+    debug_assert!(
+        (-MV_MAX..=MV_MAX).contains(&diff_col),
+        "full-pel col diff {diff_col} must fit the libvpx MV cost table"
+    );
+
+    let diff_row = diff_row as i16;
+    let diff_col = diff_col as i16;
+    let raw = mv_costs.joint_cost[mv_joint(diff_row, diff_col)]
+        + mv_costs.component_cost[0].cost[(i32::from(diff_row) + MV_MAX) as usize]
+        + mv_costs.component_cost[1].cost[(i32::from(diff_col) + MV_MAX) as usize];
+    // ROUND_POWER_OF_TWO(raw * sad_per_bit, 9), matching the public helper.
+    let prod = (raw as i64).saturating_mul(sad_per_bit as i64);
+    let rounded = (prod + (1i64 << 8)) >> 9;
     rounded.max(0) as u32
 }
 
@@ -495,7 +530,7 @@ fn diamond_search_sad_from_step(
         best_col,
     ) {
         Some(s) => {
-            s + mvsad_err_cost(
+            s + mvsad_err_cost_in_range(
                 best_row,
                 best_col,
                 fcenter_row,
@@ -594,7 +629,7 @@ fn diamond_search_sad_from_step(
                     && thissad < bestsad
                 {
                     let augmented = thissad
-                        + mvsad_err_cost(
+                        + mvsad_err_cost_in_range(
                             this_row,
                             this_col,
                             fcenter_row,
@@ -630,7 +665,7 @@ fn diamond_search_sad_from_step(
                 ) && thissad < bestsad
                 {
                     let augmented = thissad
-                        + mvsad_err_cost(
+                        + mvsad_err_cost_in_range(
                             tr,
                             tc,
                             fcenter_row,
@@ -762,7 +797,7 @@ fn refining_search_sad(
                     && raw_sad < best_sad
                 {
                     let (candidate_row, candidate_col) = mvs[index];
-                    let augmented = raw_sad.saturating_add(mvsad_err_cost(
+                    let augmented = raw_sad.saturating_add(mvsad_err_cost_in_range(
                         candidate_row,
                         candidate_col,
                         fcenter_row,
@@ -793,7 +828,7 @@ fn refining_search_sad(
                     candidate_col,
                 ) && raw_sad < best_sad
                 {
-                    let augmented = raw_sad.saturating_add(mvsad_err_cost(
+                    let augmented = raw_sad.saturating_add(mvsad_err_cost_in_range(
                         candidate_row,
                         candidate_col,
                         fcenter_row,
@@ -906,7 +941,7 @@ pub fn fast_diamond_search_sad(params: &FullPixelSearchParams<'_>) -> FullPixelS
         best_col,
     )
     .map_or(u32::MAX, |sad| {
-        sad.saturating_add(mvsad_err_cost(
+        sad.saturating_add(mvsad_err_cost_in_range(
             best_row,
             best_col,
             fcenter_row,
@@ -943,7 +978,7 @@ pub fn fast_diamond_search_sad(params: &FullPixelSearchParams<'_>) -> FullPixelS
                 && raw_sad < best_sad
             {
                 let (candidate_row, candidate_col) = mvs[index];
-                let augmented = raw_sad.saturating_add(mvsad_err_cost(
+                let augmented = raw_sad.saturating_add(mvsad_err_cost_in_range(
                     candidate_row,
                     candidate_col,
                     fcenter_row,
@@ -974,7 +1009,7 @@ pub fn fast_diamond_search_sad(params: &FullPixelSearchParams<'_>) -> FullPixelS
                 candidate_col,
             ) && raw_sad < best_sad
             {
-                let augmented = raw_sad.saturating_add(mvsad_err_cost(
+                let augmented = raw_sad.saturating_add(mvsad_err_cost_in_range(
                     candidate_row,
                     candidate_col,
                     fcenter_row,
@@ -1024,7 +1059,7 @@ pub fn fast_diamond_search_sad(params: &FullPixelSearchParams<'_>) -> FullPixelS
                 candidate_col,
             ) && raw_sad < best_sad
             {
-                let augmented = raw_sad.saturating_add(mvsad_err_cost(
+                let augmented = raw_sad.saturating_add(mvsad_err_cost_in_range(
                     candidate_row,
                     candidate_col,
                     fcenter_row,
@@ -1436,6 +1471,62 @@ mod tests {
             high > low,
             "higher sad_per_bit must increase cost: low={low}, high={high}"
         );
+    }
+
+    /// The full-pel direct-table helper must remain byte-for-byte equivalent
+    /// to the clamping `mv_cost` path throughout the legal table range. The
+    /// cross-product covers zero, the normal search envelope, and both table
+    /// limits on each axis, with representative center and SAD weights.
+    #[test]
+    fn mvsad_err_cost_in_range_matches_mv_cost_at_boundaries() {
+        let costs = build_nmv_cost_table(&DEFAULT_NMV_CONTEXT, false);
+        assert_eq!(
+            costs.component_cost[0].cost[MV_MAX as usize], 0,
+            "vertical zero slot is part of the direct-index invariant"
+        );
+        assert_eq!(
+            costs.component_cost[1].cost[MV_MAX as usize], 0,
+            "horizontal zero slot is part of the direct-index invariant"
+        );
+
+        let centers = [-2046, -1023, -32, 0, 32, 1023, 2046];
+        let diffs = [-MV_MAX, -2046, -1023, -32, -1, 0, 1, 32, 1023, 2046, MV_MAX];
+        let sad_per_bits = [0, 1, 16, 256, i32::MAX];
+
+        for &center_row in &centers {
+            for &center_col in &centers {
+                for &diff_row in &diffs {
+                    for &diff_col in &diffs {
+                        let this_row = (center_row + diff_row) as i16;
+                        let this_col = (center_col + diff_col) as i16;
+                        for &sad_per_bit in &sad_per_bits {
+                            let direct = mvsad_err_cost_in_range(
+                                this_row,
+                                this_col,
+                                center_row as i16,
+                                center_col as i16,
+                                sad_per_bit,
+                                &costs,
+                            );
+                            let raw = mv_cost(diff_row as i16, diff_col as i16, &costs);
+                            let expected = ((raw as i64).saturating_mul(sad_per_bit as i64)
+                                + (1i64 << 8))
+                                >> 9;
+                            assert_eq!(
+                                direct,
+                                expected.max(0) as u32,
+                                "direct cost differs at center=({},{}), diff=({},{}), sad_per_bit={}",
+                                center_row,
+                                center_col,
+                                diff_row,
+                                diff_col,
+                                sad_per_bit
+                            );
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// `raw_sad_at_mv` returns None for out-of-bounds reference reads
