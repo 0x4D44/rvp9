@@ -127,7 +127,9 @@ fn synthetic_motion_frames(w: u32, h: u32, n_frames: u32) -> (OwnedYuvClip, f64)
 fn a6_twoloop_denoiser_direct_counts_update_and_suppress_with_diff() {
     const W: u32 = 256;
     const H: u32 = 256;
-    const N_FRAMES: u32 = 8;
+    // Cover enough product-policy inter frames for the aggregate search to
+    // encounter both profitable and unprofitable coefficient tables.
+    const N_FRAMES: u32 = 16;
 
     let (frames, framerate) = synthetic_motion_frames(W, H, N_FRAMES);
 
