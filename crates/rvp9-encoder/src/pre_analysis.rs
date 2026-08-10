@@ -1142,6 +1142,17 @@ pub(crate) fn frame_hf_laplacian_sum_rows(
     row_start: usize,
     row_end: usize,
 ) -> u64 {
+    frame_hf_laplacian_sum_rows_with_step(y, width, height, row_start, row_end, 1)
+}
+
+fn frame_hf_laplacian_sum_rows_with_step(
+    y: &[u8],
+    width: usize,
+    height: usize,
+    row_start: usize,
+    row_end: usize,
+    row_step: usize,
+) -> u64 {
     if width < 3 || height < 3 || y.len() < width * height {
         return 0;
     }
@@ -1155,11 +1166,11 @@ pub(crate) fn frame_hf_laplacian_sum_rows(
     {
         // SAFETY: NEON is mandatory in AArch64. The helper validates the
         // plane length and bounds every vector load to one complete row.
-        unsafe { frame_hf_laplacian_sum_rows_neon(y, width, row_start, row_end, 1) }
+        unsafe { frame_hf_laplacian_sum_rows_neon(y, width, row_start, row_end, row_step) }
     }
     #[cfg(not(target_arch = "aarch64"))]
     {
-        frame_hf_laplacian_sum_rows_scalar(y, width, row_start, row_end, 1)
+        frame_hf_laplacian_sum_rows_scalar(y, width, row_start, row_end, row_step)
     }
 }
 
@@ -1190,16 +1201,33 @@ pub(crate) fn frame_hf_laplacian_sampled_sum_rows(
         return 0;
     }
 
-    #[cfg(target_arch = "aarch64")]
-    let sampled = {
-        // SAFETY: NEON is mandatory in AArch64. The helper validates the
-        // plane length and bounds every vector load to one complete row.
-        unsafe { frame_hf_laplacian_sum_rows_neon(y, width, row_start, row_end, ROW_STEP) }
-    };
-    #[cfg(not(target_arch = "aarch64"))]
-    let sampled = frame_hf_laplacian_sum_rows_scalar(y, width, row_start, row_end, ROW_STEP);
+    let sampled =
+        frame_hf_laplacian_sum_rows_with_step(y, width, height, row_start, row_end, ROW_STEP);
 
     sampled.saturating_mul(ROW_STEP as u64)
+}
+
+/// Complete an exact full-frame Laplacian sum without rescanning the rows
+/// already consumed by [`frame_hf_laplacian_sampled_sum_rows`].
+pub(crate) fn frame_hf_laplacian_exact_sum_from_sampled(
+    y: &[u8],
+    width: usize,
+    height: usize,
+    sampled_sum: u64,
+) -> u64 {
+    const ROW_STEP: usize = 4;
+    if !sampled_sum.is_multiple_of(ROW_STEP as u64) {
+        return frame_hf_laplacian_sum_rows(y, width, height, 1, height.saturating_sub(1));
+    }
+
+    let row_end = height.saturating_sub(1);
+    let mut exact_sum = sampled_sum / ROW_STEP as u64;
+    for row_start in 2..=ROW_STEP {
+        exact_sum = exact_sum.saturating_add(frame_hf_laplacian_sum_rows_with_step(
+            y, width, height, row_start, row_end, ROW_STEP,
+        ));
+    }
+    exact_sum
 }
 
 #[cfg(any(test, not(target_arch = "aarch64")))]
@@ -2031,6 +2059,32 @@ mod tests {
                 sampled >= THRESHOLD,
                 exact >= THRESHOLD,
                 "classifier changed: exact={exact}, sampled={sampled}",
+            );
+        }
+    }
+
+    #[test]
+    fn sampled_hf_exact_completion_reuses_rows_without_changing_sum() {
+        for &(width, height) in &[(3, 3), (17, 5), (32, 11), (65, 18), (127, 35)] {
+            let plane = (0..width * height)
+                .map(|index| {
+                    let row = index / width;
+                    let column = index % width;
+                    ((column * 31 + row * 43 + column * row * 7) & 255) as u8
+                })
+                .collect::<Vec<_>>();
+            let exact = frame_hf_laplacian_sum_rows(&plane, width, height, 1, height - 1);
+            let sampled = frame_hf_laplacian_sampled_sum_rows(&plane, width, height, 1, height - 1);
+
+            assert_eq!(
+                frame_hf_laplacian_exact_sum_from_sampled(&plane, width, height, sampled,),
+                exact,
+                "sampled-row completion changed the {width}x{height} sum",
+            );
+            assert_eq!(
+                frame_hf_laplacian_exact_sum_from_sampled(&plane, width, height, u64::MAX,),
+                exact,
+                "a saturated estimate must fall back to the exact scan",
             );
         }
     }

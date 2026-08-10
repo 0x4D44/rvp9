@@ -927,6 +927,7 @@ fn frame_content_signals(y: &[u8], last: Option<&[u8]>, w: usize, h: usize) -> F
 /// `|4p - up - down - left - right|` over a tight-stride luma plane. This is
 /// the cheap production discriminator; threshold-adjacent estimates are
 /// replaced by [`frame_hf_energy_exact`] before the caller decides.
+#[cfg(test)]
 fn frame_hf_energy(y: &[u8], w: usize, h: usize) -> f64 {
     if w < 3 || h < 3 || y.len() < w * h {
         return 0.0;
@@ -939,6 +940,7 @@ fn frame_hf_energy(y: &[u8], w: usize, h: usize) -> f64 {
 
 /// Exact high-frequency energy used only when the sampled classifier lands
 /// close enough to the decision boundary that approximation could matter.
+#[cfg(test)]
 fn frame_hf_energy_exact(y: &[u8], w: usize, h: usize) -> f64 {
     if w < 3 || h < 3 || y.len() < w * h {
         return 0.0;
@@ -952,11 +954,19 @@ fn guarded_frame_hf_energy(
     y: &[u8],
     w: usize,
     h: usize,
-    sampled_energy: f64,
+    sampled_laplacian_sum: u64,
     threshold: f64,
 ) -> f64 {
+    let interior = ((w.saturating_sub(2)) * (h.saturating_sub(2))).max(1) as f64;
+    let sampled_energy = sampled_laplacian_sum as f64 / interior;
     if (sampled_energy - threshold).abs() <= 2.0 {
-        frame_hf_energy_exact(y, w, h)
+        crate::pre_analysis::frame_hf_laplacian_exact_sum_from_sampled(
+            y,
+            w,
+            h,
+            sampled_laplacian_sum,
+        ) as f64
+            / interior
     } else {
         sampled_energy
     }
@@ -2473,20 +2483,23 @@ impl StreamEncoder {
         let s2_frame_override = if hf_classifier_enabled {
             let w = self.pre_analysis.width as usize;
             let h = self.pre_analysis.height as usize;
-            let hf_energy = parallel_hf_laplacian_sum.map_or_else(
-                || frame_hf_energy(y_tight, w, h),
-                |laplacian_sum| {
-                    let interior = ((w - 2) * (h - 2)) as u64;
-                    laplacian_sum as f64 / interior as f64
-                },
-            );
+            let sampled_laplacian_sum = parallel_hf_laplacian_sum.unwrap_or_else(|| {
+                crate::pre_analysis::frame_hf_laplacian_sampled_sum_rows(
+                    y_tight,
+                    w,
+                    h,
+                    1,
+                    h.saturating_sub(1),
+                )
+            });
             let threshold = three_d_thresh();
             // The measured natural/synthetic ranges leave a wide gap around
             // the default threshold. Preserve the exact full-frame oracle for
             // ambiguous sampled values; representative frames stay on the
             // cheap path while threshold-adjacent content cannot be decided
             // by the approximation alone.
-            let hf_energy = guarded_frame_hf_energy(y_tight, w, h, hf_energy, threshold);
+            let hf_energy =
+                guarded_frame_hf_energy(y_tight, w, h, sampled_laplacian_sum, threshold);
             Some(hf_energy >= threshold)
         } else {
             None
@@ -6755,10 +6768,21 @@ mod tests {
                 frame_hf_energy_exact(&y, w, h),
                 scalar as f64 / ((w - 2) * (h - 2)) as f64
             );
+            let sampled_sum =
+                crate::pre_analysis::frame_hf_laplacian_sampled_sum_rows(&y, w, h, 1, h - 1);
             assert_eq!(
                 frame_hf_energy(&y, w, h),
-                crate::pre_analysis::frame_hf_laplacian_sampled_sum_rows(&y, w, h, 1, h - 1) as f64
-                    / ((w - 2) * (h - 2)) as f64
+                sampled_sum as f64 / ((w - 2) * (h - 2)) as f64
+            );
+            assert_eq!(
+                crate::pre_analysis::frame_hf_laplacian_exact_sum_from_sampled(
+                    &y,
+                    w,
+                    h,
+                    sampled_sum,
+                ),
+                scalar,
+                "sampled-row reuse changed the exact {w}x{h} sum",
             );
         }
     }
@@ -6771,8 +6795,17 @@ mod tests {
             .map(|index| (index * 37) as u8)
             .collect::<Vec<_>>();
         let exact = frame_hf_energy_exact(&y, W, H);
-        assert_eq!(guarded_frame_hf_energy(&y, W, H, 7.0, 7.0), exact);
-        assert_eq!(guarded_frame_hf_energy(&y, W, H, 10.0, 7.0), 10.0);
+        let sampled_sum =
+            crate::pre_analysis::frame_hf_laplacian_sampled_sum_rows(&y, W, H, 1, H - 1);
+        let sampled = sampled_sum as f64 / ((W - 2) * (H - 2)) as f64;
+        assert_eq!(
+            guarded_frame_hf_energy(&y, W, H, sampled_sum, sampled),
+            exact
+        );
+        assert_eq!(
+            guarded_frame_hf_energy(&y, W, H, sampled_sum, sampled - 3.0),
+            sampled
+        );
     }
 
     #[test]

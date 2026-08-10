@@ -4836,8 +4836,10 @@ natural versus synthetic content.
 **What rvp9 does:** the production classifier estimates the frame mean from
 one globally fixed row out of every four. If that estimate lands within two
 Laplacian units of the configured decision threshold, rvp9 recomputes the
-original exact full-frame mean before deciding. The exact full-frame helper
-remains the test oracle and diagnostic fallback.
+original exact full-frame mean before deciding. The guarded exact completion
+reuses the sampled row phase and scans only the other three phases, so no
+pixel is reduced twice. The exact full-frame helper remains the test oracle
+and saturation fallback.
 
 **Why:** the measured natural and synthetic ranges are separated by more than
 2x, while a fresh CPU7 profile assigned about 1.2% of all weighted samples to
