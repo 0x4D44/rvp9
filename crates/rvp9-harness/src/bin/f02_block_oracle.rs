@@ -29,6 +29,7 @@
 //!     --cpu-used 6 \
 //!     --threads 1 --tile-columns 6 \
 //!     --kbps 25,50,100,250 \
+//!     --aq-mode 3 \
 //!     --vbr \
 //!     --fixed-q 120 \
 //!     --strict \
@@ -64,6 +65,7 @@ struct OracleEncodeConfig {
     tile_columns: u8,
     kbps: u32,
     vbr: bool,
+    aq_mode: u8,
 }
 
 fn oracle_parallelism(encode: OracleEncodeConfig) -> EncoderParallelism {
@@ -105,6 +107,29 @@ fn parse_cpu_used(args: &[String]) -> Result<i32, String> {
         ));
     }
     Ok(cpu_used)
+}
+
+fn parse_aq_mode(args: &[String]) -> Result<u8, String> {
+    let aq_mode = arg(args, "--aq-mode")
+        .map(|value| {
+            value
+                .parse::<u8>()
+                .map_err(|_| format!("--aq-mode must be 0 or 3, got {value:?}"))
+        })
+        .transpose()?
+        .unwrap_or(0);
+    if !matches!(aq_mode, 0 | 3) {
+        return Err(format!("--aq-mode must be 0 or 3, got {aq_mode}"));
+    }
+    Ok(aq_mode)
+}
+
+fn encoder_aq_mode(aq_mode: u8) -> AqMode {
+    if aq_mode == 3 {
+        AqMode::CyclicRefresh
+    } else {
+        AqMode::Off
+    }
 }
 
 fn rvp9_rate_config(vbr: bool) -> (u32, RcMode) {
@@ -150,6 +175,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or(DEFAULT_H);
     let fps: Option<u32> = arg(&argv, "--fps").and_then(|s| s.parse().ok());
     let cpu_used = parse_cpu_used(&argv)?;
+    let aq_mode = parse_aq_mode(&argv)?;
     let threads: u32 = arg(&argv, "--threads")
         .and_then(|s| s.parse().ok())
         .unwrap_or(1)
@@ -226,6 +252,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  tile cols : log2 request {tile_columns}");
     println!("  bitrates  : {:?} kbps", kbps_list);
     println!("  rate mode : {}", if vbr { "VBR" } else { "CBR" });
+    println!("  AQ mode   : {aq_mode}");
     println!(
         "  fixed Q   : {}",
         fixed_q.map_or_else(|| "off".to_string(), |q| q.to_string())
@@ -270,6 +297,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             tile_columns,
             kbps,
             vbr,
+            aq_mode,
         };
         let rvp9_records = drive_rvp9_leg(&foreman_path, encode, strict, &rvp9_ivf)?;
         println!(
@@ -462,7 +490,7 @@ fn drive_rvp9_leg(
         framerate: fps,
         target_bitrate_bps: encode.kbps * 1000,
         gop_length,
-        aq_mode: AqMode::Off,
+        aq_mode: encoder_aq_mode(encode.aq_mode),
         use_prev_frame_mvs: false,
         speed: encode.cpu_used,
         deadline: rvp9_encoder::Deadline::Realtime,
@@ -554,7 +582,7 @@ fn drive_libvpx_leg(
         .arg(format!("--fps={}/1", fps.round() as u32))
         .arg(format!("--target-bitrate={}", encode.kbps))
         .arg(format!("--limit={}", encode.frames))
-        .arg("--aq-mode=0")
+        .arg(format!("--aq-mode={}", encode.aq_mode))
         .arg("-o")
         .arg(run_dir.join(format!("foreman_{}kbps_libvpx.ivf", encode.kbps)))
         .arg(&raw)
@@ -610,6 +638,7 @@ mod tests {
             tile_columns: 6,
             kbps: 1000,
             vbr: true,
+            aq_mode: 0,
         }
     }
 
@@ -654,6 +683,18 @@ mod tests {
             let args = vec!["--cpu-used".to_string(), value.to_string()];
             assert!(parse_cpu_used(&args).is_err());
         }
+    }
+
+    #[test]
+    fn aq_mode_accepts_only_off_and_cyclic_refresh() {
+        assert_eq!(parse_aq_mode(&[]).unwrap(), 0);
+        assert_eq!(parse_aq_mode(&["--aq-mode=3".to_string()]).unwrap(), 3);
+        for value in ["1", "2", "4", "cyclic"] {
+            let args = vec!["--aq-mode".to_string(), value.to_string()];
+            assert!(parse_aq_mode(&args).is_err());
+        }
+        assert_eq!(encoder_aq_mode(0), AqMode::Off);
+        assert_eq!(encoder_aq_mode(3), AqMode::CyclicRefresh);
     }
 
     #[test]
