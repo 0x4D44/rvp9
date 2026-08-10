@@ -5,6 +5,7 @@ Distilled, non-obvious gotchas future sessions need — dated one-liners.
 Durable project facts/conventions belong in `CLAUDE.md` / `AGENTS.md`, not here.
 Hard cap: 20 entries.
 
+- 2026-08-10: CPU8 large-frame int-pro uses the seed-only path; optimize projections, not its unreachable SAD4d refinement (`int_pro_me.rs:int_pro_motion_estimation_seed`).
 - 2026-08-10: Post-Golden LAST-only is a schedule rule, not a buffer-alias proof; keep it under denoising (`lib.rs:post_refresh_last_only`).
 - 2026-08-09: Retain resolved aggregate counts, not per-leaf writer context; metadata replay cost more than its saved walk (`lib.rs:RecordedInterNoncoefTile`).
 - 2026-08-09: Exact VBP thresholds must take the live CPU preset; a CPU7 helper over-splits CPU8 (`partition.rs:rt_inter_vbp_thresholds`).

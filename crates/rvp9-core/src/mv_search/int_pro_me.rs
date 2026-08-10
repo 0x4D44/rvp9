@@ -671,61 +671,92 @@ fn int_pro_motion_estimation_impl(
     // leftmost (bw>>1) columns of an edge SB replicate the border.
     let base_x_row = sb_px_x as i32 - (bw >> 1) as i32;
     let mut hbuf = [0i16; 128];
-    fill_int_pro_rows(
-        &mut hbuf[..search_width],
-        ref_plane,
-        sb_px_y as i32,
-        base_x_row,
-        bh,
-    );
-
     // vbuf: row-sums of ref, starting (bh>>1) rows ABOVE the SB.
     let mut vbuf = [0i16; 128];
     let norm_factor = 3 + (bw >> 5);
     let base_y_col = sb_px_y as i32 - (bh >> 1) as i32;
-    fill_int_pro_cols(
-        &mut vbuf[..search_height],
-        ref_plane,
-        base_y_col,
-        sb_px_x as i32,
-        bw,
-        norm_factor,
-    );
-
     // src_hbuf: column-sums of src SB. libvpx loops idx 0..bw step
     // 16 (Block16x16 → 1 iter, Block64x64 → 4 iters).
     let mut src_hbuf = [0i16; 64];
-    if bw >= 16 {
-        let mut idx = 0;
-        while idx < bw {
-            let off = sb_px_y * src_stride + sb_px_x + idx;
-            vpx_int_pro_row(
-                &mut src_hbuf[idx..idx + 16],
-                &src_plane.data[off..],
-                src_stride,
-                bh,
-            );
-            idx += 16;
-        }
-    } else {
-        // Block8x8: libvpx doesn't use int_pro for 8x8 (variance
-        // partitioner only descends to 16x16 for the SB seed
-        // call), but we keep a defensive scalar fallback so the
-        // helper is total. Compute the 8 column-sums manually.
-        let norm_factor = (bh >> 1) as i32;
-        for idx in 0..bw {
-            let mut sum: i32 = 0;
-            for i in 0..bh {
-                sum += i32::from(src_plane.data[(sb_px_y + i) * src_stride + sb_px_x + idx]);
-            }
-            src_hbuf[idx] = (sum / norm_factor) as i16;
-        }
-    }
-
     // src_vbuf: row-sums of src SB.
     let mut src_vbuf = [0i16; 64];
+
+    // AArch64's common interior 64x64 path shares the central reference and
+    // source loads between the row and column projections. The frame-edge
+    // paths retain the exact edge-clamped helpers below.
+    #[cfg(target_arch = "aarch64")]
+    let used_fused_projection = if bw == 64
+        && bh == 64
+        && base_x_row >= 0
+        && base_y_col >= 0
+        && base_x_row as usize + 128 <= ref_plane.width
+        && base_y_col as usize + 128 <= ref_plane.height
+        && sb_px_x + 64 <= src_plane.width
+        && sb_px_y + 64 <= src_plane.height
     {
-        let norm_factor = 3 + (bw >> 5);
+        let ref_start = base_y_col as usize * ref_plane.stride + base_x_row as usize;
+        let src_start = sb_px_y * src_stride + sb_px_x;
+        crate::dsp::aarch64::int_pro_64x64_fused_neon(
+            &mut hbuf,
+            &mut vbuf,
+            &mut src_hbuf,
+            &mut src_vbuf,
+            &ref_plane.data[ref_start..],
+            ref_plane.stride,
+            &src_plane.data[src_start..],
+            src_stride,
+        );
+        true
+    } else {
+        false
+    };
+    #[cfg(not(target_arch = "aarch64"))]
+    let used_fused_projection = false;
+
+    if !used_fused_projection {
+        fill_int_pro_rows(
+            &mut hbuf[..search_width],
+            ref_plane,
+            sb_px_y as i32,
+            base_x_row,
+            bh,
+        );
+        fill_int_pro_cols(
+            &mut vbuf[..search_height],
+            ref_plane,
+            base_y_col,
+            sb_px_x as i32,
+            bw,
+            norm_factor,
+        );
+
+        if bw >= 16 {
+            let mut idx = 0;
+            while idx < bw {
+                let off = sb_px_y * src_stride + sb_px_x + idx;
+                vpx_int_pro_row(
+                    &mut src_hbuf[idx..idx + 16],
+                    &src_plane.data[off..],
+                    src_stride,
+                    bh,
+                );
+                idx += 16;
+            }
+        } else {
+            // Block8x8: libvpx doesn't use int_pro for 8x8 (variance
+            // partitioner only descends to 16x16 for the SB seed
+            // call), but we keep a defensive scalar fallback so the
+            // helper is total. Compute the 8 column-sums manually.
+            let row_norm = (bh >> 1) as i32;
+            for idx in 0..bw {
+                let mut sum: i32 = 0;
+                for i in 0..bh {
+                    sum += i32::from(src_plane.data[(sb_px_y + i) * src_stride + sb_px_x + idx]);
+                }
+                src_hbuf[idx] = (sum / row_norm) as i16;
+            }
+        }
+
         for idx in 0..bh {
             let row_off = (sb_px_y + idx) * src_stride + sb_px_x;
             let sum = vpx_int_pro_col(&src_plane.data[row_off..], bw);
