@@ -5261,88 +5261,6 @@ fn should_skip_realtime_luma_transform(
         )
 }
 
-/// Largest all-zero coefficient limit reachable by the 8-bit Profile 0
-/// fast-quant tables. Keeping the certificate inside this envelope also
-/// proves that the low-bit-depth 8x8 transform cannot reach its i16 wrap
-/// cases on a certified block.
-const PROFILE0_FAST_ZERO_LIMIT: u32 = 1_273;
-
-#[inline]
-fn fast_quant_zero_coefficient_limit(round: i16, quant: i16) -> Option<u32> {
-    let round = u32::try_from(round).ok()?;
-    let quant = u32::try_from(quant).ok()?;
-    if quant == 0 {
-        return None;
-    }
-    (u32::from(u16::MAX) / quant).checked_sub(round)
-}
-
-/// Prove that every Tx4/Tx8 DCT_DCT coefficient fast-quantizes to zero from
-/// the spatial residual SSE alone.
-///
-/// VP9's scaled 4x4 and 8x8 DCT rows have L2 norm at most 8.00019. The SSE
-/// guard limits the residual norm below 159, which also keeps every AArch64
-/// low-bit-depth Tx8 intermediate below 8,192 and therefore excludes its i16
-/// wrapping cases. Under that guard, fixed-point cosine error, the chained
-/// rounded butterflies, the 4x4 DC bump, and the final reduction contribute
-/// less than five coefficient units. Therefore
-/// `8 * sqrt(sse) + 5 <= limit` is a conservative sufficient condition. The
-/// integer form avoids floating-point rounding at the acceptance boundary.
-#[inline]
-fn residual_sse_certifies_fast_quant_zero(
-    residual_sse: u32,
-    tx_size: TxSize,
-    round_fp: &[i16; 2],
-    quant_fp: &[i16; 2],
-) -> bool {
-    if !matches!(tx_size, TxSize::Tx4x4 | TxSize::Tx8x8) {
-        return false;
-    }
-    let Some(dc_limit) = fast_quant_zero_coefficient_limit(round_fp[0], quant_fp[0]) else {
-        return false;
-    };
-    let Some(ac_limit) = fast_quant_zero_coefficient_limit(round_fp[1], quant_fp[1]) else {
-        return false;
-    };
-    let limit = dc_limit.min(ac_limit);
-    const MAX_NO_WRAP_RESIDUAL_SSE: u32 = 25_000;
-    const INTEGER_TRANSFORM_ERROR: u32 = 5;
-    if residual_sse > MAX_NO_WRAP_RESIDUAL_SSE
-        || limit > PROFILE0_FAST_ZERO_LIMIT
-        || limit <= INTEGER_TRANSFORM_ERROR
-    {
-        return false;
-    }
-    let bounded_limit = u64::from(limit - INTEGER_TRANSFORM_ERROR);
-    64 * u64::from(residual_sse) <= bounded_limit * bounded_limit
-}
-
-fn realtime_picker_skip_chroma_zero_cert_enabled(
-    override_value: Option<bool>,
-    rc_mode: crate::rate_control::RcMode,
-    speed: i32,
-    deadline: rvp9_core::mode_decision::speed_features::Deadline,
-    content_tier: rvp9_core::mode_decision::speed_features::ContentTier,
-    cyclic_refresh_active: bool,
-    denoiser_active: bool,
-) -> bool {
-    override_value.unwrap_or(
-        cfg!(target_arch = "aarch64")
-            && matches!(rc_mode, crate::rate_control::RcMode::Cbr)
-            && speed == 8
-            && matches!(
-                deadline,
-                rvp9_core::mode_decision::speed_features::Deadline::Realtime
-            )
-            && matches!(
-                content_tier,
-                rvp9_core::mode_decision::speed_features::ContentTier::Default
-            )
-            && !cyclic_refresh_active
-            && !denoiser_active,
-    )
-}
-
 fn active_single_ref_frame_costs(
     frame_context: &FrameContext,
     above: Option<&ModeInfo>,
@@ -5496,7 +5414,6 @@ pub(crate) struct InterEncodeEnv {
     rt_emit_max_tx: Option<bool>,
     rt_emit_tx_rd: Option<bool>,
     rt_quant_fp: Option<bool>,
-    rt_picker_skip_chroma_zero_cert: Option<bool>,
     rt_reuse_descent_pick: Option<bool>,
     a4_descent_cb_filter: Option<bool>,
     a4_descent_disable_golden: Option<bool>,
@@ -5548,7 +5465,6 @@ impl InterEncodeEnv {
             rt_emit_max_tx: bool_override("RVP9_RT_EMIT_MAX_TX"),
             rt_emit_tx_rd: bool_override("RVP9_RT_EMIT_TX_RD"),
             rt_quant_fp: bool_override("RVP9_RT_QUANT_FP"),
-            rt_picker_skip_chroma_zero_cert: bool_override("RVP9_RT_PICKER_SKIP_CHROMA_ZERO_CERT"),
             rt_reuse_descent_pick: bool_override("RVP9_RT_REUSE_DESCENT_PICK"),
             a4_descent_cb_filter: bool_override("RVP9_A4_DESCENT_CB_FILTER"),
             a4_descent_disable_golden: bool_override("RVP9_A4_DESCENT_DISABLE_GOLDEN"),
@@ -5945,7 +5861,6 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // an explicit slot so a completed compact row can transfer ownership to
     // its bounded result before the coordinator merges it.
     let mut inter_emit_scratch = InterEmitScratch::new();
-    let denoiser_active = denoiser.is_some();
     let mut coding_source_y = denoiser.as_deref_mut().map(|denoiser| {
         let mut coding_source =
             std::mem::take(&mut denoiser.running_avg_y[crate::denoiser::INTRA_FRAME_IDX].y_buffer);
@@ -6569,15 +6484,6 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // `=0` as the regular-quantizer diagnostic without making the slower
     // good-quality quantizer the realtime default.
     let rt_quant_fp = env.flag_or(env.rt_quant_fp, true);
-    let rt_picker_skip_chroma_zero_cert = realtime_picker_skip_chroma_zero_cert_enabled(
-        env.rt_picker_skip_chroma_zero_cert,
-        rc_mode,
-        speed,
-        deadline,
-        content_tier,
-        cyclic_refresh_active,
-        denoiser_active,
-    );
     let rt_reuse_descent_pick = env.flag_or(env.rt_reuse_descent_pick, rt_large_recovery);
     let a4_descent_cb_filter_search = env.descent_cb_filter_search();
     let a4_descent_disable_golden = env.descent_disable_golden();
@@ -9897,11 +9803,6 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             };
                             let tx_step_4x4 = 1usize << (plane_tx as usize);
                             let tx_side = plane_tx.side();
-                            let certify_picker_skip_chroma = rt_quant_fp
-                                && rt_picker_skip_chroma_zero_cert
-                                && plane != 0
-                                && pick.picker_skip
-                                && matches!(plane_tx, TxSize::Tx4x4 | TxSize::Tx8x8);
 
                             // libvpx `vp9_encodemb.c:590-604`: in realtime
                             // `quant_fp` mode, `SKIP_TXFM_AC_DC` skips only the
@@ -9974,22 +9875,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                         } else {
                                             None
                                         };
-                                        let mut residual_sse_for_zero_cert = None;
                                         #[cfg(target_arch = "aarch64")]
-                                        let residual_nonzero = if certify_picker_skip_chroma
-                                            && tx_side == 8
-                                        {
-                                            let residual_sse = rvp9_core::dsp::aarch64::subtract_square_neon_with_sse(
-                                                &input_plane[input_off..],
-                                                input_stride,
-                                                &recon_data[dst_off..],
-                                                recon_stride,
-                                                residual,
-                                                tx_side,
-                                            );
-                                            residual_sse_for_zero_cert = Some(residual_sse);
-                                            residual_sse != 0
-                                        } else if matches!(tx_side, 8 | 16 | 32) {
+                                        let residual_nonzero = if matches!(tx_side, 8 | 16 | 32) {
                                             rvp9_core::dsp::aarch64::subtract_square_neon_with_nonzero(
                                                 &input_plane[input_off..],
                                                 input_stride,
@@ -9999,8 +9886,6 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                                 tx_side,
                                             )
                                         } else {
-                                            let mut nonzero = false;
-                                            let mut residual_sse = 0u32;
                                             for r in 0..tx_side {
                                                 for c in 0..tx_side {
                                                     let input_index = (tx_px_y + r) * input_stride
@@ -10013,22 +9898,13 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                                     residual[r * tx_side + c] = input_plane[input_index]
                                                         as i16
                                                         - recon_data[recon_index] as i16;
-                                                    let value = residual[r * tx_side + c];
-                                                    nonzero |= value != 0;
-                                                    if certify_picker_skip_chroma {
-                                                        residual_sse += u32::from(value.unsigned_abs()).pow(2);
-                                                    }
                                                 }
                                             }
-                                            if certify_picker_skip_chroma {
-                                                residual_sse_for_zero_cert = Some(residual_sse);
-                                            }
-                                            nonzero
+                                            residual.iter().any(|&value| value != 0)
                                         };
                                         #[cfg(not(target_arch = "aarch64"))]
                                         let residual_nonzero = {
                                             let mut nonzero = false;
-                                            let mut residual_sse = 0u32;
                                             for r in 0..tx_side {
                                                 for c in 0..tx_side {
                                                     let input_index = (tx_px_y + r) * input_stride
@@ -10042,13 +9918,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                                         - recon_data[recon_index] as i16;
                                                     residual[r * tx_side + c] = value;
                                                     nonzero |= value != 0;
-                                                    if certify_picker_skip_chroma {
-                                                        residual_sse += u32::from(value.unsigned_abs()).pow(2);
-                                                    }
                                                 }
-                                            }
-                                            if certify_picker_skip_chroma {
-                                                residual_sse_for_zero_cert = Some(residual_sse);
                                             }
                                             nonzero
                                         };
@@ -10082,22 +9952,11 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                         }
 
                                         // A pixel-exact prediction has an
-                                        // identically zero transform. On the
-                                        // narrow picker-skip chroma path, the
-                                        // spatial SSE certificate also proves
-                                        // that every transformed coefficient
-                                        // fast-quantizes to zero. Both cases
-                                        // use the existing empty marker.
-                                        let certified_quant_zero = residual_sse_for_zero_cert
-                                            .is_some_and(|residual_sse| {
-                                                residual_sse_certifies_fast_quant_zero(
-                                                    residual_sse,
-                                                    plane_tx,
-                                                    &quantizer.round_fp,
-                                                    &quantizer.quant_fp,
-                                                )
-                                            });
-                                        if !residual_nonzero || certified_quant_zero {
+                                        // identically zero transform and
+                                        // quantized coefficient block. The
+                                        // coefficient source represents that
+                                        // case with its existing empty marker.
+                                        if !residual_nonzero {
                                             let emit_coef_insert_start =
                                                 (RUNTIME_PROFILING_COMPILED
                                                     && emit_profile_enabled)
@@ -15009,268 +14868,6 @@ mod tests {
         assert!(!should_skip_realtime_luma_transform(false, SkipTxfm::AcDc));
         assert!(!should_skip_realtime_luma_transform(true, SkipTxfm::AcOnly));
         assert!(!should_skip_realtime_luma_transform(true, SkipTxfm::None));
-    }
-
-    #[test]
-    fn picker_skip_chroma_zero_certificate_is_narrowly_scoped() {
-        use crate::rate_control::RcMode;
-        use rvp9_core::mode_decision::speed_features::{ContentTier, Deadline};
-
-        let enabled = |rc_mode, speed, deadline, content_tier, aq, denoiser| {
-            realtime_picker_skip_chroma_zero_cert_enabled(
-                None,
-                rc_mode,
-                speed,
-                deadline,
-                content_tier,
-                aq,
-                denoiser,
-            )
-        };
-        assert_eq!(
-            enabled(
-                RcMode::Cbr,
-                8,
-                Deadline::Realtime,
-                ContentTier::Default,
-                false,
-                false,
-            ),
-            cfg!(target_arch = "aarch64"),
-        );
-        assert!(!enabled(
-            RcMode::Cbr,
-            7,
-            Deadline::Realtime,
-            ContentTier::Default,
-            false,
-            false,
-        ));
-        assert!(!enabled(
-            RcMode::Vbr,
-            8,
-            Deadline::Realtime,
-            ContentTier::Default,
-            false,
-            false,
-        ));
-        assert!(!enabled(
-            RcMode::Cbr,
-            8,
-            Deadline::Realtime,
-            ContentTier::Default,
-            true,
-            false,
-        ));
-        assert!(!enabled(
-            RcMode::Cbr,
-            8,
-            Deadline::Realtime,
-            ContentTier::Default,
-            false,
-            true,
-        ));
-        assert!(!enabled(
-            RcMode::Cbr,
-            8,
-            Deadline::Good,
-            ContentTier::Default,
-            false,
-            false,
-        ));
-        assert!(!enabled(
-            RcMode::Cbr,
-            8,
-            Deadline::Realtime,
-            ContentTier::Screen,
-            false,
-            false,
-        ));
-        assert!(!realtime_picker_skip_chroma_zero_cert_enabled(
-            Some(false),
-            RcMode::Cbr,
-            8,
-            Deadline::Realtime,
-            ContentTier::Default,
-            false,
-            false,
-        ));
-    }
-
-    #[test]
-    fn fast_quant_zero_limit_is_inclusive_and_profile0_bounded() {
-        use rvp9_core::quant::forward::{QuantizerDeltas, init_plane_quantizers};
-
-        assert_eq!(fast_quant_zero_coefficient_limit(10, 64), Some(1_013));
-        assert!((1_013u32 + 10) * 64 <= u32::from(u16::MAX));
-        assert!((1_014u32 + 10) * 64 > u32::from(u16::MAX));
-        assert_eq!(fast_quant_zero_coefficient_limit(-1, 64), None);
-        assert_eq!(fast_quant_zero_coefficient_limit(10, 0), None);
-        assert_eq!(fast_quant_zero_coefficient_limit(10, -1), None);
-
-        for q_index in 0..=255 {
-            for deltas in [
-                QuantizerDeltas::Y,
-                QuantizerDeltas {
-                    dc_delta: -255,
-                    ac_delta: 255,
-                },
-                QuantizerDeltas {
-                    dc_delta: 255,
-                    ac_delta: -255,
-                },
-            ] {
-                let quantizer = init_plane_quantizers(q_index, deltas);
-                for band in 0..2 {
-                    let limit = fast_quant_zero_coefficient_limit(
-                        quantizer.round_fp[band],
-                        quantizer.quant_fp[band],
-                    )
-                    .unwrap();
-                    assert!(limit <= PROFILE0_FAST_ZERO_LIMIT);
-                }
-            }
-        }
-
-        assert!(!residual_sse_certifies_fast_quant_zero(
-            25_001,
-            TxSize::Tx8x8,
-            &[0, 0],
-            &[52, 52],
-        ));
-        assert!(!residual_sse_certifies_fast_quant_zero(
-            0,
-            TxSize::Tx16x16,
-            &[0, 0],
-            &[52, 52],
-        ));
-    }
-
-    #[cfg(target_arch = "aarch64")]
-    #[test]
-    fn residual_sse_certificate_implies_actual_fast_quant_zero() {
-        use rvp9_core::quant::forward::{
-            QuantizerDeltas, init_plane_quantizers, vp9_quantize_fp_with_order,
-        };
-        use rvp9_core::transforms::TxType;
-        use rvp9_core::transforms::forward::{fdct8x8_libvpx_lowbd, fht4x4};
-        use rvp9_core::transforms::scans::scan_for;
-
-        struct Lcg(u32);
-        impl Lcg {
-            fn next(&mut self) -> u32 {
-                self.0 = self.0.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
-                self.0
-            }
-        }
-
-        let mut residuals = Vec::new();
-        for side in [4usize, 8] {
-            residuals.push((side, vec![0i16; side * side]));
-            for amplitude in [1i16, 2, 4, 8, 16, 32, 64, 127, 255] {
-                residuals.push((side, vec![amplitude; side * side]));
-                residuals.push((side, vec![-amplitude; side * side]));
-                let mut impulse = vec![0i16; side * side];
-                impulse[(side / 2) * side + side / 2] = amplitude;
-                residuals.push((side, impulse));
-                let alternating = (0..side * side)
-                    .map(|index| {
-                        if index.is_multiple_of(2) {
-                            amplitude
-                        } else {
-                            -amplitude
-                        }
-                    })
-                    .collect();
-                residuals.push((side, alternating));
-            }
-        }
-        let mut rng = Lcg(0x5EED_CE47);
-        for index in 0..512usize {
-            let side = if index.is_multiple_of(2) { 4 } else { 8 };
-            let amplitude = [1i16, 2, 4, 8, 16, 32, 64, 127, 255][index % 9];
-            let residual = (0..side * side)
-                .map(|_| {
-                    let span = i32::from(amplitude) * 2 + 1;
-                    (i32::try_from(rng.next() % u32::try_from(span).unwrap()).unwrap()
-                        - i32::from(amplitude)) as i16
-                })
-                .collect();
-            residuals.push((side, residual));
-        }
-
-        let deltas = [
-            QuantizerDeltas::Y,
-            QuantizerDeltas {
-                dc_delta: -15,
-                ac_delta: 15,
-            },
-            QuantizerDeltas {
-                dc_delta: 15,
-                ac_delta: -15,
-            },
-        ];
-        let mut certified = 0usize;
-        for (side, residual) in residuals {
-            let tx_size = if side == 4 {
-                TxSize::Tx4x4
-            } else {
-                TxSize::Tx8x8
-            };
-            let n = tx_size.n_coeffs();
-            let mut coeff = vec![0i32; n];
-            if side == 4 {
-                fht4x4(
-                    &residual,
-                    (&mut coeff[..]).try_into().unwrap(),
-                    side,
-                    TxType::DctDct,
-                );
-            } else {
-                fdct8x8_libvpx_lowbd(&residual, (&mut coeff[..]).try_into().unwrap(), side);
-            }
-            let residual_sse = residual
-                .iter()
-                .map(|&value| u32::from(value.unsigned_abs()).pow(2))
-                .sum();
-            let order = scan_for(tx_size, TxType::DctDct);
-            for delta in deltas {
-                for q_index in 0..=255 {
-                    let quantizer = init_plane_quantizers(q_index, delta);
-                    if !residual_sse_certifies_fast_quant_zero(
-                        residual_sse,
-                        tx_size,
-                        &quantizer.round_fp,
-                        &quantizer.quant_fp,
-                    ) {
-                        continue;
-                    }
-                    certified += 1;
-                    let mut qcoeff = vec![7i16; n];
-                    let mut dqcoeff = vec![9i16; n];
-                    let eob = vp9_quantize_fp_with_order(
-                        &coeff,
-                        n,
-                        false,
-                        &quantizer.round_fp,
-                        &quantizer.quant_fp,
-                        &mut qcoeff,
-                        &mut dqcoeff,
-                        &quantizer.dequant,
-                        &order,
-                    );
-                    assert_eq!(
-                        eob, 0,
-                        "false zero certificate for Tx{side} q={q_index} delta={delta:?} \
-                         sse={residual_sse} coeff={coeff:?}",
-                    );
-                }
-            }
-        }
-        assert!(
-            certified > 10_000,
-            "certificate oracle exercised only {certified} cases"
-        );
     }
 
     #[test]

@@ -6,23 +6,15 @@
 use core::arch::aarch64::*;
 
 #[target_feature(enable = "neon")]
-unsafe fn accumulate_squared_residuals(acc: int32x4_t, diff: uint16x8_t) -> int32x4_t {
-    let signed = vreinterpretq_s16_u16(diff);
-    let acc = vmlal_s16(acc, vget_low_s16(signed), vget_low_s16(signed));
-    vmlal_s16(acc, vget_high_s16(signed), vget_high_s16(signed))
-}
-
-#[target_feature(enable = "neon")]
-unsafe fn subtract_square_neon_inner<const TRACK_NONZERO: bool, const TRACK_SSE: bool>(
+unsafe fn subtract_square_neon_inner<const TRACK_NONZERO: bool>(
     src: *const u8,
     src_stride: usize,
     pred: *const u8,
     pred_stride: usize,
     dst: *mut i16,
     side: usize,
-) -> (bool, u32) {
+) -> bool {
     let mut nonzero = vdupq_n_u16(0);
-    let mut sse = vdupq_n_s32(0);
     for row in 0..side {
         let src_row = src.add(row * src_stride);
         let pred_row = pred.add(row * pred_stride);
@@ -44,12 +36,6 @@ unsafe fn subtract_square_neon_inner<const TRACK_NONZERO: bool, const TRACK_SSE:
                         vorrq_u16(vorrq_u16(diff_0, diff_1), vorrq_u16(diff_2, diff_3)),
                     );
                 }
-                if TRACK_SSE {
-                    sse = accumulate_squared_residuals(sse, diff_0);
-                    sse = accumulate_squared_residuals(sse, diff_1);
-                    sse = accumulate_squared_residuals(sse, diff_2);
-                    sse = accumulate_squared_residuals(sse, diff_3);
-                }
                 vst1q_s16(dst_row.add(col), vreinterpretq_s16_u16(diff_0));
                 vst1q_s16(dst_row.add(col + 8), vreinterpretq_s16_u16(diff_1));
                 vst1q_s16(dst_row.add(col + 16), vreinterpretq_s16_u16(diff_2));
@@ -63,10 +49,6 @@ unsafe fn subtract_square_neon_inner<const TRACK_NONZERO: bool, const TRACK_SSE:
             if TRACK_NONZERO {
                 nonzero = vorrq_u16(nonzero, vorrq_u16(diff_0, diff_1));
             }
-            if TRACK_SSE {
-                sse = accumulate_squared_residuals(sse, diff_0);
-                sse = accumulate_squared_residuals(sse, diff_1);
-            }
             vst1q_s16(dst_row, vreinterpretq_s16_u16(diff_0));
             vst1q_s16(dst_row.add(8), vreinterpretq_s16_u16(diff_1));
         } else {
@@ -74,16 +56,10 @@ unsafe fn subtract_square_neon_inner<const TRACK_NONZERO: bool, const TRACK_SSE:
             if TRACK_NONZERO {
                 nonzero = vorrq_u16(nonzero, diff);
             }
-            if TRACK_SSE {
-                sse = accumulate_squared_residuals(sse, diff);
-            }
             vst1q_s16(dst_row, vreinterpretq_s16_u16(diff));
         }
     }
-    (
-        !TRACK_NONZERO || vmaxvq_u16(nonzero) != 0,
-        if TRACK_SSE { vaddvq_s32(sse) as u32 } else { 0 },
-    )
+    !TRACK_NONZERO || vmaxvq_u16(nonzero) != 0
 }
 
 /// Subtracts a square 8/16/32/64 prediction block from source pixels.
@@ -105,7 +81,7 @@ pub fn subtract_square_neon(
     // SAFETY: AArch64 always provides NEON. The assertions prove that every
     // source load, prediction load, and residual store stays inside its slice.
     unsafe {
-        let _ = subtract_square_neon_inner::<false, false>(
+        let _ = subtract_square_neon_inner::<false>(
             src.as_ptr(),
             src_stride,
             pred.as_ptr(),
@@ -137,7 +113,7 @@ pub fn subtract_square_neon_with_nonzero(
     // OR reduction observes the exact widened differences before they are
     // stored and cannot overflow.
     unsafe {
-        subtract_square_neon_inner::<true, false>(
+        subtract_square_neon_inner::<true>(
             src.as_ptr(),
             src_stride,
             pred.as_ptr(),
@@ -145,42 +121,6 @@ pub fn subtract_square_neon_with_nonzero(
             dst.as_mut_ptr(),
             side,
         )
-        .0
-    }
-}
-
-/// Subtracts a square prediction block and returns the exact residual SSE.
-///
-/// The squared-error accumulation shares the widened residual vectors used by
-/// the stores, avoiding a second traversal of the completed residual block.
-pub fn subtract_square_neon_with_sse(
-    src: &[u8],
-    src_stride: usize,
-    pred: &[u8],
-    pred_stride: usize,
-    dst: &mut [i16],
-    side: usize,
-) -> u32 {
-    assert!(matches!(side, 8 | 16 | 32 | 64));
-    assert!(src_stride >= side);
-    assert!(pred_stride >= side);
-    assert!(src.len() >= (side - 1) * src_stride + side);
-    assert!(pred.len() >= (side - 1) * pred_stride + side);
-    assert!(dst.len() >= side * side);
-
-    // SAFETY: The assertions prove every input load and residual store. Each
-    // i32 lane accumulates at most 1024 values of 255^2 and the final u32 sum
-    // is at most 4096 * 255^2, so neither accumulation can overflow.
-    unsafe {
-        subtract_square_neon_inner::<false, true>(
-            src.as_ptr(),
-            src_stride,
-            pred.as_ptr(),
-            pred_stride,
-            dst.as_mut_ptr(),
-            side,
-        )
-        .1
     }
 }
 
@@ -248,14 +188,6 @@ mod tests {
                     &mut actual[7..],
                     side,
                 );
-                let reported_sse = subtract_square_neon_with_sse(
-                    &src[3..],
-                    src_stride,
-                    &pred[5..],
-                    pred_stride,
-                    &mut actual[7..],
-                    side,
-                );
                 assert_eq!(
                     actual, expected,
                     "mismatch at {side}x{side}, stride jitter {jitter}"
@@ -264,11 +196,6 @@ mod tests {
                     reported_nonzero,
                     expected[7..7 + side * side].iter().any(|&v| v != 0)
                 );
-                let expected_sse = expected[7..7 + side * side]
-                    .iter()
-                    .map(|&value| u32::from(value.unsigned_abs()).pow(2))
-                    .sum::<u32>();
-                assert_eq!(reported_sse, expected_sse);
             }
         }
     }
@@ -289,10 +216,6 @@ mod tests {
                 &mut residual,
                 side
             ));
-            assert_eq!(
-                subtract_square_neon_with_sse(&src, side, &pred, side, &mut residual, side,),
-                side as u32 * side as u32 * 255 * 255,
-            );
 
             subtract_square_neon(&pred, side, &src, side, &mut residual, side);
             assert!(residual.iter().all(|&value| value == 255));
@@ -304,10 +227,6 @@ mod tests {
                 &mut residual,
                 side
             ));
-            assert_eq!(
-                subtract_square_neon_with_sse(&src, side, &src, side, &mut residual, side,),
-                0,
-            );
         }
     }
 }
