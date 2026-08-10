@@ -1300,6 +1300,38 @@ fn emit_per_frame(md: &mut String, label: &str, rvp9: &Aggregate, libvpx: Option
             lintra
         );
     }
+
+    let _ = writeln!(md, "\n### Per-frame partition area % ({label})\n");
+    let _ = writeln!(
+        md,
+        "| frame | rvp9 8x8 | libvpx 8x8 | rvp9 16x16 | libvpx 16x16 | rvp9 32x32 | libvpx 32x32 | rvp9 64x64 | libvpx 64x64 |\n|---:|---:|---:|---:|---:|---:|---:|---:|---:|"
+    );
+    let partition_pct = |f: &FrameStats, bsize: BlockSize| -> f64 {
+        100.0 * f.block_area8[bsize.idx()] as f64 / f.total_area8.max(1) as f64
+    };
+    for i in 0..n {
+        let r = &rvp9.frames[i];
+        let libvpx_pct = |bsize| {
+            libvpx
+                .and_then(|aggregate| aggregate.frames.get(i))
+                .map_or("n/a".to_owned(), |frame| {
+                    format!("{:.1}", partition_pct(frame, bsize))
+                })
+        };
+        let _ = writeln!(
+            md,
+            "| {} | {:.1} | {} | {:.1} | {} | {:.1} | {} | {:.1} | {} |",
+            i,
+            partition_pct(r, BlockSize::Block8x8),
+            libvpx_pct(BlockSize::Block8x8),
+            partition_pct(r, BlockSize::Block16x16),
+            libvpx_pct(BlockSize::Block16x16),
+            partition_pct(r, BlockSize::Block32x32),
+            libvpx_pct(BlockSize::Block32x32),
+            partition_pct(r, BlockSize::Block64x64),
+            libvpx_pct(BlockSize::Block64x64),
+        );
+    }
 }
 
 fn arg(argv: &[String], flag: &str) -> Option<String> {
@@ -1584,6 +1616,33 @@ mod tests {
         assert_eq!(aggregate.key_tx_counts().0[2], 3);
         assert_eq!(aggregate.key_tx_counts().1[2], 12);
         assert_eq!(aggregate.key_skip_area(), (4, 12));
+    }
+
+    #[test]
+    fn per_frame_report_includes_partition_area_for_both_encoders() {
+        let mut rvp9_frame = FrameStats {
+            total_area8: 64,
+            ..Default::default()
+        };
+        rvp9_frame.block_area8[BlockSize::Block8x8.idx()] = 16;
+        rvp9_frame.block_area8[BlockSize::Block16x16.idx()] = 48;
+        let mut libvpx_frame = FrameStats {
+            total_area8: 64,
+            ..Default::default()
+        };
+        libvpx_frame.block_area8[BlockSize::Block32x32.idx()] = 64;
+
+        let rvp9 = Aggregate {
+            frames: vec![rvp9_frame],
+        };
+        let libvpx = Aggregate {
+            frames: vec![libvpx_frame],
+        };
+        let mut report = String::new();
+        emit_per_frame(&mut report, "test", &rvp9, Some(&libvpx));
+
+        assert!(report.contains("### Per-frame partition area % (test)"));
+        assert!(report.contains("| 0 | 25.0 | 0.0 | 75.0 | 0.0 | 0.0 | 100.0 | 0.0 | 0.0 |"));
     }
 
     #[test]
