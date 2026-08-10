@@ -22,8 +22,8 @@
 //! bitstream field. What carries the layering on the wire is the
 //! per-frame REFERENCE / REFRESH structure the temporal setters compute
 //! (`set_flags_and_fb_idx_for_temporal_mode2`,
-//! `vp9_svc_layercontext.c:626-684`): enhancement-layer frames are
-//! non-reference (they refresh nothing the base layer reads), so the
+//! `vp9_svc_layercontext.c:626-684`): enhancement-layer frames refresh
+//! map entry 1 while the base layer continues from map entry 0, so the
 //! base layer skips over them — the stream is temporally scalable.
 //!
 //! vpxdec decodes a temporal-SVC stream as a normal VP9 frame sequence
@@ -208,6 +208,22 @@ fn run_vpxdec(vpxdec: &Path, ivf: &Path, out: &Path) -> std::io::Result<Vec<u8>>
     std::fs::read(out)
 }
 
+fn run_ffmpeg(ivf: &Path, out: &Path) -> std::io::Result<Vec<u8>> {
+    let status = Command::new("ffmpeg")
+        .args(["-hide_banner", "-loglevel", "error", "-y", "-i"])
+        .arg(ivf)
+        .args(["-f", "rawvideo", "-pix_fmt", "yuv420p"])
+        .arg(out)
+        .output()?;
+    if !status.status.success() {
+        return Err(std::io::Error::other(format!(
+            "ffmpeg failed: stderr={}",
+            String::from_utf8_lossy(&status.stderr)
+        )));
+    }
+    std::fs::read(out)
+}
+
 fn write_ivf_packets(path: &Path, framerate: f64, packets: &[Vec<u8>]) {
     let mut f = std::fs::File::create(path).expect("create ivf");
     let header = IvfHeader::vp9(W as u16, H as u16, framerate.round() as u32, 1);
@@ -253,22 +269,22 @@ fn svc_temporal_layer_id_pattern_is_live() {
     );
 
     // --- Anti-G3 arm 2: the SVC layering pattern. ---
-    // Frame 0 is the keyframe (always base layer tl0). The subsequent
-    // inter frames follow libvpx's 0-1-0-1 pattern
+    // Frame 0 is the keyframe (always base layer tl0) and counts as
+    // pattern position 0. The subsequent inter frames continue libvpx's
+    // 0-1-0-1 pattern
     // (`set_flags_and_fb_idx_for_temporal_mode2:629-634`,
     // `tl = current_video_frame_in_layer & 1`). The base-layer frame
-    // counter starts at 0 on the first inter frame, so the inter
-    // sequence is tl = 0, 1, 0, 1, ...  Prefixed by the KF (tl0) the
-    // full per-frame pattern over N_FRAMES is [0, 0, 1, 0, 1, 0, 1, 0].
+    // counter is 1 after the KF, so the inter sequence is tl = 1, 0, 1,
+    // 0, ... and the full per-frame pattern is [0, 1, 0, 1, 0, 1, 0, 1].
     let mut expected = Vec::with_capacity(N_FRAMES as usize);
     expected.push(0u8); // KF
     for inter_idx in 0..(N_FRAMES as usize - 1) {
-        expected.push((inter_idx & 1) as u8);
+        expected.push(((inter_idx + 1) & 1) as u8);
     }
     assert_eq!(
         svc_tids, expected,
         "temporal-SVC per-frame temporal_layer_id must follow the libvpx \
-         0-1-0-1 pattern (KF tl0, then 0,1,0,1...)"
+         0-1-0-1 pattern with the KF counted as tl0"
     );
     // At least one enhancement-layer (tl1) frame must exist — otherwise
     // the "pattern" is degenerate and the test proves nothing.
@@ -279,7 +295,7 @@ fn svc_temporal_layer_id_pattern_is_live() {
 
     // --- Anti-G3 arm 3: the bitstream actually changed. ---
     // The enhancement-layer frames flip `refresh_frame_flags` from 0x01
-    // (single-layer: refresh LAST) to 0x00 (SVC: non-reference). That is
+    // (single-layer: refresh map 0) to 0x02 (SVC: refresh map 1). That is
     // a wire-format change, so the SVC packets MUST differ from the
     // single-layer packets on the enhancement frames. If the SVC wiring
     // were inert, the byte streams would be identical.
@@ -369,6 +385,72 @@ fn svc_temporal_stream_byte_exact_through_vpxdec() {
     let _ = std::fs::remove_file(&ivf_path);
 }
 
+#[test]
+#[ignore = "Stage 4d three-layer extraction oracle — needs vpxdec, ffmpeg, and corpus"]
+fn svc_temporal_three_layer_extracts_byte_exact_through_all_decoders() {
+    let Some((frames, framerate)) = load_source() else {
+        eprintln!("[SKIPPED] testsrc_720p30.y4m corpus not available.");
+        return;
+    };
+    let vpxdec = vpxdec_path().expect("Stage 4d extraction gate requires pinned vpxdec");
+    Command::new("ffmpeg")
+        .arg("-version")
+        .output()
+        .expect("Stage 4d extraction gate requires ffmpeg");
+
+    let (packets, tids) = encode_clip(svc_config(framerate, 3), &frames);
+    assert_eq!(tids, vec![0, 2, 1, 2, 0, 2, 1, 2]);
+
+    let full_yuv = rvp9_decode_all(&packets);
+    let frame_bytes = (W as usize) * (H as usize) * 3 / 2;
+    assert_eq!(full_yuv.len(), frame_bytes * packets.len());
+    let process_id = std::process::id();
+
+    for max_temporal_id in 0..=2u8 {
+        let retained_packets: Vec<Vec<u8>> = packets
+            .iter()
+            .zip(&tids)
+            .filter(|(_, tid)| **tid <= max_temporal_id)
+            .map(|(packet, _)| packet.clone())
+            .collect();
+        let retained_rvp9 = rvp9_decode_all(&retained_packets);
+        let expected_from_full: Vec<u8> = full_yuv
+            .chunks_exact(frame_bytes)
+            .zip(&tids)
+            .filter(|(_, tid)| **tid <= max_temporal_id)
+            .flat_map(|(frame, _)| frame.iter().copied())
+            .collect();
+        assert_eq!(
+            retained_rvp9, expected_from_full,
+            "rvp9-decoder layer {max_temporal_id} extraction changed retained reconstruction"
+        );
+
+        let tmp_dir = std::env::temp_dir();
+        let stem = format!("rvp9_svc_temporal3_{process_id}_tl{max_temporal_id}");
+        let ivf_path = tmp_dir.join(format!("{stem}.ivf"));
+        let vpx_yuv_path = tmp_dir.join(format!("{stem}_vpxdec.yuv"));
+        let ffmpeg_yuv_path = tmp_dir.join(format!("{stem}_ffmpeg.yuv"));
+        write_ivf_packets(&ivf_path, framerate, &retained_packets);
+
+        let vpx_yuv = run_vpxdec(&vpxdec, &ivf_path, &vpx_yuv_path)
+            .expect("vpxdec must decode the extracted temporal layer");
+        let ffmpeg_yuv = run_ffmpeg(&ivf_path, &ffmpeg_yuv_path)
+            .expect("ffmpeg must decode the extracted temporal layer");
+        assert_eq!(
+            vpx_yuv, retained_rvp9,
+            "vpxdec disagrees on extracted temporal layer {max_temporal_id}"
+        );
+        assert_eq!(
+            ffmpeg_yuv, retained_rvp9,
+            "ffmpeg disagrees on extracted temporal layer {max_temporal_id}"
+        );
+
+        let _ = std::fs::remove_file(&ffmpeg_yuv_path);
+        let _ = std::fs::remove_file(&vpx_yuv_path);
+        let _ = std::fs::remove_file(&ivf_path);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // RVP9-BUG-KILN-00014 — dropping enhancement packets must not change
 // reconstruction of the retained base layer.
@@ -405,16 +487,25 @@ fn temporal_svc_base_layer_decodes_identically_when_enhancement_is_dropped() {
     cfg.enable_alt_ref = false;
     let (packets, tids) = encode_clip_at_width(cfg, &frames, DROP_W);
 
-    assert_eq!(tids, vec![0, 0, 1, 0, 1, 0, 1, 0]);
+    assert_eq!(tids, vec![0, 1, 0, 1, 0, 1, 0, 1]);
 
     let mut full_decoder = Decoder::new();
     let mut base_decoder = Decoder::new();
     let mut full_base_frames = Vec::new();
     let mut dropped_base_frames = Vec::new();
+    let mut inter_headers = Vec::new();
 
     for (packet, &temporal_layer_id) in packets.iter().zip(&tids) {
         let full_parsed = decode_packet(&mut full_decoder, packet);
         assert_eq!(full_parsed.len(), 1);
+        if let rvp9_core::bitstream::FrameKind::InterFrame {
+            refresh_frame_flags,
+            ref_frame_indices,
+            ..
+        } = full_parsed[0].header.kind
+        {
+            inter_headers.push((refresh_frame_flags, ref_frame_indices));
+        }
         let full_frame = full_decoder
             .decode_frame(&full_parsed[0])
             .expect("full-layer decode");
@@ -443,6 +534,19 @@ fn temporal_svc_base_layer_decodes_identically_when_enhancement_is_dropped() {
         dropped_base_frames, full_base_frames,
         "base-layer reconstruction must not depend on a dropped enhancement frame"
     );
+    assert_eq!(
+        inter_headers,
+        vec![
+            (0x02, [0, 0, 1]),
+            (0x01, [0, 0, 0]),
+            (0x02, [0, 0, 1]),
+            (0x01, [0, 0, 0]),
+            (0x02, [0, 0, 1]),
+            (0x01, [0, 0, 0]),
+            (0x02, [0, 0, 1]),
+        ],
+        "two-layer headers must match libvpx's 0-1 map routing"
+    );
 
     let mut parser = Decoder::new();
     for (frame_idx, packet) in packets.iter().enumerate() {
@@ -458,4 +562,89 @@ fn temporal_svc_base_layer_decodes_identically_when_enhancement_is_dropped() {
             .decode_frame(&parsed[0])
             .expect("parser state must advance");
     }
+}
+
+// ---------------------------------------------------------------------------
+// Stage 4d — a true 0-2-1-2 hierarchy must survive both legal extraction
+// points: dropping tl2 retains tl0+tl1, and dropping tl1+tl2 retains tl0.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn temporal_svc_three_layers_decode_identically_at_each_drop_point() {
+    const DROP_W: usize = 64;
+    const DROP_H: usize = 64;
+    const DROP_FRAMES: usize = 12;
+
+    let frames: Vec<SourceFrame> = (0..DROP_FRAMES)
+        .map(|frame_idx| {
+            let y = (0..DROP_W * DROP_H)
+                .map(|i| {
+                    let row = i / DROP_W;
+                    let col = i % DROP_W;
+                    let shifted = (col + frame_idx * 5) % DROP_W;
+                    ((shifted * 13 + row * 9 + frame_idx * 17) & 0xff) as u8
+                })
+                .collect();
+            let u = vec![80u8.saturating_add(frame_idx as u8); DROP_W * DROP_H / 4];
+            let v = vec![176u8.saturating_sub(frame_idx as u8); DROP_W * DROP_H / 4];
+            (y, u, v)
+        })
+        .collect();
+
+    let mut cfg = EncoderConfig::new(DROP_W as u32, DROP_H as u32);
+    cfg.gop_length = DROP_FRAMES as u32 + 1;
+    cfg.temporal_layers = 3;
+    cfg.aq_mode = AqMode::Off;
+    cfg.speed = 7;
+    cfg.deadline = rvp9_encoder::Deadline::Realtime;
+    cfg.enable_alt_ref = false;
+    let (packets, tids) = encode_clip_at_width(cfg, &frames, DROP_W);
+
+    assert_eq!(tids, vec![0, 2, 1, 2, 0, 2, 1, 2, 0, 2, 1, 2]);
+
+    let mut full_decoder = Decoder::new();
+    let mut middle_decoder = Decoder::new();
+    let mut base_decoder = Decoder::new();
+    let mut middle_count = 0usize;
+    let mut base_count = 0usize;
+
+    for (packet, &temporal_layer_id) in packets.iter().zip(&tids) {
+        let full_parsed = decode_packet(&mut full_decoder, packet);
+        assert_eq!(full_parsed.len(), 1);
+        let full_frame = full_decoder
+            .decode_frame(&full_parsed[0])
+            .expect("full three-layer decode");
+        let full_bytes = yv12_to_i420_bytes(&full_frame, DROP_W as u32, DROP_H as u32);
+
+        if temporal_layer_id <= 1 {
+            let middle_parsed = decode_packet(&mut middle_decoder, packet);
+            assert_eq!(middle_parsed.len(), 1);
+            let middle_frame = middle_decoder
+                .decode_frame(&middle_parsed[0])
+                .expect("tl0+tl1 decode after dropping tl2");
+            assert_eq!(
+                yv12_to_i420_bytes(&middle_frame, DROP_W as u32, DROP_H as u32),
+                full_bytes,
+                "tl0+tl1 reconstruction changed after dropping tl2"
+            );
+            middle_count += 1;
+        }
+
+        if temporal_layer_id == 0 {
+            let base_parsed = decode_packet(&mut base_decoder, packet);
+            assert_eq!(base_parsed.len(), 1);
+            let base_frame = base_decoder
+                .decode_frame(&base_parsed[0])
+                .expect("tl0 decode after dropping tl1+tl2");
+            assert_eq!(
+                yv12_to_i420_bytes(&base_frame, DROP_W as u32, DROP_H as u32),
+                full_bytes,
+                "tl0 reconstruction changed after dropping tl1+tl2"
+            );
+            base_count += 1;
+        }
+    }
+
+    assert_eq!(middle_count, 6, "expected all tl0+tl1 access units");
+    assert_eq!(base_count, 3, "expected all tl0 access units");
 }

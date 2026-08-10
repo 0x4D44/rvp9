@@ -5777,6 +5777,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // single-layer, non-ALTREF show-frame path; exact buffer identity is
     // checked inside this function before GOLDEN is suppressed.
     allow_duplicate_golden_prune: bool,
+    // Frame-topology override for paths whose allowed reference set is
+    // narrower than the ordinary realtime speed policy. Temporal-only SVC
+    // sets this when libvpx's `ref_frame_flags` contains LAST but not GOLDEN.
+    force_disable_golden_ref: bool,
     // §11 — libvpx `get_chessboard_index(cm->current_video_frame) =
     // current_video_frame & 1` (`vp9_common.h:88-90`). Feeds the
     // `cb_pred_filter_search` chessboard predicate at
@@ -5875,7 +5879,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // and the result is consumed by every per-leaf
     // `PickInterModeParams` literal below.
     let sf = sf_mod::dispatch(speed, deadline, width, height, content_tier);
-    let rt_disable_golden_ref = sf.disable_golden_ref || env.rt_disable_golden;
+    let rt_disable_golden_ref =
+        sf.disable_golden_ref || env.rt_disable_golden || force_disable_golden_ref;
     let golden_ref_is_last =
         post_refresh_last_only(allow_duplicate_golden_prune, frames_since_golden);
     let mut rt_inter_mode_mask = rvp9_core::mode_decision::inter::default_inter_mode_mask();
@@ -8411,7 +8416,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             let golden_inputs = RefInputs {
                                 // GOLDEN availability mirrors the RT picker's
                                 // `disable_golden_ref` speed-feature.
-                                available: !sf.disable_golden_ref,
+                                available: !rt_disable_golden_ref,
                                 ref_y: &ref_y_golden,
                                 ref_u: golden_recon_yuv.1,
                                 ref_v: golden_recon_yuv.2,

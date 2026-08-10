@@ -1077,8 +1077,9 @@ pub struct EncodedFrame {
     /// field. Always `0` for single-layer encodes
     /// (`EncoderConfig::temporal_layers == 1`). For temporal SVC the
     /// value follows the layering pattern (e.g. 0,1,0,1 for 2 layers,
-    /// 0,2,1,2 for 3). Higher values mark non-reference / droppable
-    /// frames (the upper layers a frame-rate-scalable consumer may skip).
+    /// 0,2,1,2 for 3). Higher values mark frames a lower temporal
+    /// operating point may drop. A middle-layer frame can still refresh
+    /// a reference used only by higher layers.
     pub temporal_layer_id: u8,
 }
 
@@ -1564,21 +1565,25 @@ struct KeyframeTileJobResult {
 /// A18 (SVC) — the per-frame temporal-layer decision for one inter
 /// frame. Derived from the [`crate::svc::Svc`] scaffold's temporal
 /// setter (`vp9_svc_layercontext.c:517-720`) and the encoder's
-/// single-LAST-slot pool model.
+/// eight-entry reference-frame map.
 #[derive(Copy, Clone, Debug)]
 struct SvcFrameDecision {
     /// `cpi->svc.temporal_layer_id` for this frame (0 = base). Surfaced
     /// on [`EncodedFrame::temporal_layer_id`].
     temporal_layer_id: u8,
-    /// Wire `refresh_frame_flags` this frame must emit. `0x01` for base
-    /// (tl0) frames (refresh LAST); `0x00` for higher-layer frames
-    /// (non-reference / droppable — refresh nothing the base layer
-    /// reads). This is the rvp9 single-LAST-slot projection of libvpx's
-    /// per-layer `ext_refresh_*` flags (`vp9_svc_layercontext.c:637-665`):
-    /// the base layer refreshes the slot the next base frame reads; the
-    /// enhancement layer refreshes only a slot the base never reads, so
-    /// in the identity pool it refreshes nothing.
+    /// Wire `refresh_frame_flags` this frame must emit. Each libvpx
+    /// `ext_refresh_{last,golden,alt_ref}_frame` output is projected onto
+    /// the map entry selected by the corresponding current fb index.
     refresh_frame_flags: u8,
+    /// Wire `ref_frame_indices[LAST/GOLDEN/ALTREF]`. These are libvpx's
+    /// current `lst_fb_idx` / `gld_fb_idx` / `alt_fb_idx`, not physical
+    /// storage indices. In the three-layer 0-2-1-2 pattern, the second tl2
+    /// picture reads LAST from map entry 1, which contains the preceding
+    /// tl1 reconstruction.
+    ref_frame_indices: [u8; 3],
+    /// Whether libvpx's frame-level `ref_frame_flags` allows GOLDEN mode
+    /// candidates. Temporal-only 2-/3-layer patterns allow LAST only.
+    allow_golden_ref: bool,
 }
 
 // A14 — GOLDEN refresh period for the inter path moved to the GOP
@@ -3029,33 +3034,14 @@ impl StreamEncoder {
     /// `vp9_svc_layercontext.c:527-530` for mode3, `:629-634` for mode2),
     /// then advances the base layer's frame counter for the next call.
     ///
-    /// The scaffold's `current_{lst,gld,alt}_fb_idx` /
-    /// `ext_refresh_*_frame` outputs target libvpx's 8-slot pool; rvp9's
-    /// encoder uses the identity single-LAST-slot pool model (LAST =
-    /// `ref_frame_map[0]`), so we project the per-layer decision onto a
-    /// single refresh flag: tl0 frames refresh LAST (`0x01`) — they are
-    /// the reference the next tl0 frame reads — while enhancement-layer
-    /// frames (`temporal_layer_id > 0`) refresh nothing (`0x00`), making
-    /// them non-reference / droppable. That is exactly the temporal-
-    /// scalability invariant: dropping the top layer leaves a valid,
-    /// lower-frame-rate stream. The frames still READ LAST (slot 0), so
-    /// the picker / residual path is unchanged and the bitstream is
-    /// standard VP9 (byte-exact through vpxdec).
-    ///
-    /// **Scope (honest).** The 2-layer (0-1-0-1) pattern is fully
-    /// faithful: the only enhancement layer (tl1) is genuinely
-    /// non-reference. The 3-layer (0-2-1-2) pattern tags
-    /// `temporal_layer_id` per libvpx (`:527-530`) but, in rvp9's
-    /// single-LAST-slot pool, the mid layer (tl1) is also projected to
-    /// `0x00` rather than refreshing a distinct slot the top layer (tl2)
-    /// could reference. This collapses the 3-level reference HIERARCHY to
-    /// "base + droppable rest" — the stream is still standard VP9
-    /// (byte-exact through vpxdec) and the layer-id tagging is correct,
-    /// but a true 3-tier prediction structure (tl2 -> tl1 -> tl0) needs
-    /// the multi-slot fb_idx routing the scaffold computes
-    /// (`current_{lst,gld,alt}_fb_idx`, `:591-616`) wired into a
-    /// multi-slot encoder ref model — a documented follow-up alongside
-    /// spatial SVC.
+    /// The scaffold's `current_{lst,gld,alt}_fb_idx` outputs become the
+    /// frame header's three reference-map indices. Its three
+    /// `ext_refresh_*_frame` booleans refresh those selected map entries.
+    /// This preserves the full three-layer hierarchy: tl0 refreshes map
+    /// entry 0, tl1 refreshes entry 1, the first tl2 picture reads entry 0,
+    /// and the second tl2 picture reads the tl1 reconstruction from map
+    /// entry 1. Because neither tl2 picture refreshes an entry, dropping tl2
+    /// leaves the tl0+tl1 stream valid; dropping tl1 as well leaves tl0.
     fn svc_assign_layer(&mut self, frame_kind: FrameKind) {
         // Keyframes are always tl0 and keep their 0xFF broadcast refresh
         // (handled by `encode_keyframe_internal`); no inter override.
@@ -3064,15 +3050,15 @@ impl StreamEncoder {
             return;
         };
         if matches!(frame_kind, FrameKind::Key) {
-            // libvpx resets the per-layer frame counter at the KF
-            // boundary (`vp9_svc_layercontext.c` sets `is_key_frame` and
-            // the layer's `current_video_frame_in_layer` is reset via
-            // `vp9_restore_layer_context`). Reset the base-layer counter
-            // so the first post-KF inter frame starts the pattern at tl0.
+            // A keyframe is the first tl0 show frame in libvpx's temporal
+            // pattern. `vp9_inc_frame_in_layer` counts it after emission,
+            // so the first post-KF inter frame starts at pattern position
+            // 1 (tl1 for mode2, tl2 for mode3).
             for lc in &mut svc.layer_context {
                 lc.current_video_frame_in_layer = 0;
                 lc.is_key_frame = true;
             }
+            svc.layer_context[0].current_video_frame_in_layer = 1;
             self.svc_frame = None;
             return;
         }
@@ -3083,6 +3069,30 @@ impl StreamEncoder {
         svc.spatial_layer_to_encode = 0;
         svc.apply_temporal_layering();
         let temporal_layer_id = svc.temporal_layer_id.max(0) as u8;
+
+        let map_index = |index: i32| -> u8 {
+            assert!(
+                (0..crate::buffer_pool::REF_FRAMES as i32).contains(&index),
+                "SVC reference-map index {index} is outside the VP9 map"
+            );
+            index as u8
+        };
+        let ref_frame_indices = [
+            map_index(svc.current_lst_fb_idx),
+            map_index(svc.current_gld_fb_idx),
+            map_index(svc.current_alt_fb_idx),
+        ];
+        let mut refresh_frame_flags = 0u8;
+        if svc.ext_refresh_last_frame {
+            refresh_frame_flags |= 1 << ref_frame_indices[0];
+        }
+        if svc.ext_refresh_golden_frame {
+            refresh_frame_flags |= 1 << ref_frame_indices[1];
+        }
+        if svc.ext_refresh_alt_ref_frame {
+            refresh_frame_flags |= 1 << ref_frame_indices[2];
+        }
+        let allow_golden_ref = svc.ref_frame_flags & crate::svc::VP9_GOLD_FLAG != 0;
 
         // Advance the base-tl0 layer's frame counter for the next inter
         // frame (libvpx `vp9_save_layer_context` bumps
@@ -3095,11 +3105,11 @@ impl StreamEncoder {
             lc.is_key_frame = false;
         }
 
-        // Project onto the single-LAST-slot refresh flag (see method doc).
-        let refresh_frame_flags = if temporal_layer_id == 0 { 0x01 } else { 0x00 };
         self.svc_frame = Some(SvcFrameDecision {
             temporal_layer_id,
             refresh_frame_flags,
+            ref_frame_indices,
+            allow_golden_ref,
         });
     }
 
@@ -3172,13 +3182,21 @@ impl StreamEncoder {
         // when active and otherwise reads LAST directly. Partition decisions
         // stay separate from the residual-coding reference policy without a
         // redundant default-path copy.
-        let partition_ref_y = if self.denoiser.is_some() {
-            self.me_ref_y.as_slice()
-        } else {
-            self.ref_pool
-                .named_ref_planes(crate::buffer_pool::LAST_REF)
-                .0
-        };
+        let ref_frame_indices = self
+            .svc_frame
+            .map_or([0, 1, 2], |decision| decision.ref_frame_indices);
+        let last_ref_map_idx = usize::from(ref_frame_indices[0]);
+        let golden_ref_map_idx = usize::from(ref_frame_indices[1]);
+        let altref_ref_map_idx = usize::from(ref_frame_indices[2]);
+        let force_disable_golden_ref = self
+            .svc_frame
+            .is_some_and(|decision| !decision.allow_golden_ref);
+        let partition_ref_y =
+            if self.denoiser.is_some() && last_ref_map_idx == crate::buffer_pool::LAST_REF {
+                self.me_ref_y.as_slice()
+            } else {
+                self.ref_pool.named_ref_planes(last_ref_map_idx).0
+            };
         let partition_input = FramePartitionInput {
             width_px: w as usize,
             height_px: h as usize,
@@ -3317,16 +3335,13 @@ impl StreamEncoder {
             Vec::new()
         };
 
-        // A10 — resolve the residual-coding reference planes through the
-        // pool's `ref_frame_map` indirection. The encoder's internal
-        // named-ref model reads `ref_frame_map[which]` directly (LAST →
-        // map[0], GOLDEN → map[1], ALTREF → map[2]). LAST rotates every
-        // frame (refresh bit 0); GOLDEN rotates only on GOLDEN-refresh
-        // frames (bit 1); ALTREF rotates only on the ARF (bit 2). This
-        // reproduces the prior `last_recon_* / golden_recon_* /
-        // altref_recon_*` separate-buffer pixels exactly, so the picker
-        // makes identical decisions and the bitstream is byte-identical.
-        let (last_y, last_u, last_v) = self.ref_pool.named_ref_planes(crate::buffer_pool::LAST_REF);
+        // A10 / Stage 4d — resolve residual-coding references through the
+        // same map entries the frame header names. Ordinary encoding uses
+        // `[0, 1, 2]`; temporal SVC supplies the fb indices produced by its
+        // layering setter. In particular, the second tl2 picture in a
+        // three-layer pattern reads LAST from map entry 1, where tl1 was
+        // refreshed.
+        let (last_y, last_u, last_v) = self.ref_pool.named_ref_planes(last_ref_map_idx);
 
         // A23 — run the TPL driver now that both the source window and
         // the LAST recon are in hand. `tpl_result` is `Some` only when
@@ -3353,14 +3368,9 @@ impl StreamEncoder {
             };
         let tpl_rdmult_arg: Option<(&crate::tpl::TplDepFrame, f64)> =
             tpl_result.as_ref().map(|r| (&r.coded_frame, r.r0));
-        let (gld_y, gld_u, gld_v) = self
-            .ref_pool
-            .named_ref_planes(crate::buffer_pool::GOLDEN_REF);
+        let (gld_y, gld_u, gld_v) = self.ref_pool.named_ref_planes(golden_ref_map_idx);
         let altref_planes_for_picker: Option<(&[u8], &[u8], &[u8])> = if altref_picker_live {
-            Some(
-                self.ref_pool
-                    .named_ref_planes(crate::buffer_pool::ALTREF_REF),
-            )
+            Some(self.ref_pool.named_ref_planes(altref_ref_map_idx))
         } else {
             None
         };
@@ -3380,11 +3390,12 @@ impl StreamEncoder {
         // The picker additionally proves exact Y/U/V storage identity.
         let allow_duplicate_golden_prune =
             self.config.temporal_layers == 1 && !self.config.enable_alt_ref;
-        let me_ref_yuv = if self.denoiser.is_some() {
-            (&self.me_ref_y[..], &self.me_ref_u[..], &self.me_ref_v[..])
-        } else {
-            (last_y, last_u, last_v)
-        };
+        let me_ref_yuv =
+            if self.denoiser.is_some() && last_ref_map_idx == crate::buffer_pool::LAST_REF {
+                (&self.me_ref_y[..], &self.me_ref_u[..], &self.me_ref_v[..])
+            } else {
+                (last_y, last_u, last_v)
+            };
         let frame_context = &self.frame_context;
         let frame_mv_costs = rvp9_core::cost::mv_cost::build_nmv_cost_table(
             &frame_context.nmvc,
@@ -3451,6 +3462,7 @@ impl StreamEncoder {
                     frames_since_golden,
                     is_golden_refresh,
                     allow_duplicate_golden_prune,
+                    force_disable_golden_ref,
                     chessboard_index,
                     speed,
                     deadline,
@@ -3888,10 +3900,10 @@ impl StreamEncoder {
         // A18 (SVC) — when temporal SVC is active, the layering pattern
         // (not the GfGroup golden/altref cadence) owns this frame's
         // refresh structure. `svc_assign_layer` computed the override:
-        // tl0 → 0x01 (refresh LAST), enhancement layers → 0x00 (refresh
-        // nothing — non-reference / droppable). The SVC config forbids
-        // ALTREF and the even-temporal-bitrate split means GOLDEN cadence
-        // never engages, so this cleanly replaces `frame_sched`'s flag.
+        // tl0 refreshes map entry 0; temporal-reference frames refresh
+        // map entry 1; top-only mode3 frames refresh nothing. The SVC
+        // config forbids ALTREF and owns this cadence, so this replaces
+        // `frame_sched`'s flag.
         let refresh_flags: u8 = match self.svc_frame {
             Some(d) => d.refresh_frame_flags,
             None => frame_sched.refresh_frame_flags,
@@ -3947,33 +3959,15 @@ impl StreamEncoder {
                     // `pick_and_simulate_inter_encode_partitions`.
                     /* ref_frame_sign_biases = */
                     [false, false, altref_picker_live],
-                    // DRIFT-FIX (GOLDEN ref-index) — the encoder's internal
-                    // named-ref model resolves LAST/GOLDEN/ALTREF through the
-                    // IDENTITY selector `named_ref_planes(i) = slots[
-                    // ref_frame_map[i]]` (LAST→map[0], GOLDEN→map[1],
-                    // ALTREF→map[2]; see `RefFramePool::frame_refs`). The decoder
-                    // resolves logical ref `i` as `ref_frame_map[ref_frame_indices
-                    // [i]]` (`rvp9-decoder/src/lib.rs:2295`). For the encoder's
-                    // GOLDEN prediction to read the SAME physical slot the decoder
-                    // resolves, the wire `ref_frame_indices` MUST be the identity
-                    // `[0, 1, 2]` — NOT the prior `[0, 0, 0]` collapse.
-                    //
-                    // The prior `[0, 0, 0]` told the decoder "GOLDEN → ref_frame_
-                    // map[0]". After frame 1's LAST-only refresh (`0x01`),
-                    // `ref_frame_map[0]` holds frame 1 while the encoder's GOLDEN
-                    // (map[1]) still holds the frame-0 KF (GOLDEN only rotates on
-                    // the `0x03` golden-refresh). So a GOLDEN-picked block was
-                    // predicted by the encoder from the KF but reconstructed by
-                    // the decoder from frame 1 → SEVERITY-1 inter-frame drift from
-                    // frame 2 onward. The identity map keeps both sides in
-                    // lock-step (the refresh rotation is applied identically on
-                    // both — decoder `lib.rs:2112`, encoder
-                    // `update_reference_frames`). ALTREF stays at slot 2 (identity)
-                    // whether or not the picker candidate is live; the index is
-                    // only consulted by the decoder for blocks that actually name
-                    // ALTREF, which the picker only emits when `altref_picker_live`.
+                    // DRIFT-FIX / Stage 4d — the decoder resolves logical ref `i`
+                    // as `ref_frame_map[ref_frame_indices[i]]`. The encoder reads
+                    // the same three selected map entries above. Default encoding
+                    // retains identity `[0, 1, 2]`; temporal SVC uses the layering
+                    // setter's per-frame indices, including LAST→entry 1 on the
+                    // second tl2 picture. Any mismatch here makes residual coding
+                    // reference different pixels on the encoder and decoder.
                     /* ref_frame_indices = */
-                    [0, 1, 2],
+                    ref_frame_indices,
                     // A18 — Thread the same `prev_mv_grid` the picker used so
                     // the writer's `find_mv_refs` produces the SAME
                     // `best_ref_mv` the decoder will compute.
@@ -4444,6 +4438,7 @@ impl StreamEncoder {
             &arf_mv_costs,
             &mut arf_rd_thresh,
             self.frames_since_golden_refresh,
+            false,
             false,
             false,
             self.frames_since_golden_refresh & 1,
@@ -7405,12 +7400,13 @@ mod tests {
             let pkt = enc.encode_frame(&view).expect("encode_frame");
             tids.push(pkt.temporal_layer_id);
         }
-        // Frame 0 = KF (tl0); inter frames 0,1,0,1,0 → full [0,0,1,0,1,0].
+        // Frame 0 = KF (tl0) and counts as pattern position 0; inter frames
+        // continue at positions 1,0,1,0,1.
         assert_eq!(
             tids,
-            vec![0u8, 0, 1, 0, 1, 0],
+            vec![0u8, 1, 0, 1, 0, 1],
             "2-layer temporal SVC must follow the libvpx 0-1-0-1 pattern \
-             (KF tl0, then alternating)"
+             with the KF counted as tl0"
         );
         assert!(
             tids.contains(&1),
@@ -7418,12 +7414,80 @@ mod tests {
         );
     }
 
+    /// Stage 4d — the three-layer pattern must use libvpx's actual map-entry
+    /// routing, not merely tag frames with temporal IDs. The middle layer
+    /// refreshes entry 1, and the following top-layer frame reads LAST from
+    /// that entry. Parsing and decoding every packet makes the wire indices
+    /// and the encoder's residual reference a single differential oracle.
+    #[test]
+    fn temporal_svc_3layer_routes_mid_layer_reference() {
+        const W: usize = 64;
+        const H: usize = 64;
+        let mut cfg = EncoderConfig::new(W as u32, H as u32);
+        cfg.gop_length = 20;
+        cfg.temporal_layers = 3;
+        cfg.aq_mode = AqMode::Off;
+        cfg.speed = 7;
+        cfg.deadline = Deadline::Realtime;
+        cfg.enable_alt_ref = false;
+        let mut enc = StreamEncoder::new(cfg).expect("StreamEncoder::new");
+        let mut dec = Decoder::new();
+        let mut tids = Vec::new();
+        let mut inter_headers = Vec::new();
+
+        for frame_idx in 0..9usize {
+            let y: Vec<u8> = (0..W * H)
+                .map(|i| {
+                    let row = i / W;
+                    let col = i % W;
+                    let shifted = (col + frame_idx * 3) % W;
+                    ((shifted * 11 + row * 7 + frame_idx * 13) & 0xff) as u8
+                })
+                .collect();
+            let u = vec![96u8.saturating_add(frame_idx as u8); W * H / 4];
+            let v = vec![160u8.saturating_sub(frame_idx as u8); W * H / 4];
+            let packet = enc
+                .encode_frame(&yuv_view(&y, &u, &v, W))
+                .expect("encode temporal-SVC frame");
+            tids.push(packet.temporal_layer_id);
+
+            let parsed = decode_packet(&mut dec, &packet.data);
+            assert_eq!(parsed.len(), 1);
+            if let WireFrameKind::InterFrame {
+                refresh_frame_flags,
+                ref_frame_indices,
+                ..
+            } = parsed[0].header.kind
+            {
+                inter_headers.push((refresh_frame_flags, ref_frame_indices));
+            }
+            dec.decode_frame(&parsed[0])
+                .expect("three-layer packet must decode against its routed references");
+        }
+
+        assert_eq!(tids, vec![0, 2, 1, 2, 0, 2, 1, 2, 0]);
+        assert_eq!(
+            inter_headers,
+            vec![
+                (0x00, [0, 0, 1]),
+                (0x02, [0, 0, 1]),
+                (0x00, [1, 0, 1]),
+                (0x01, [0, 0, 0]),
+                (0x00, [0, 0, 1]),
+                (0x02, [0, 0, 1]),
+                (0x00, [1, 0, 1]),
+                (0x01, [0, 0, 0]),
+            ],
+            "three-layer headers must match libvpx's 0-2-1-2 map rotation"
+        );
+    }
+
     /// KILN-00005 — temporal SVC owns the emitted refresh flags, so the
-    /// GOLDEN-age counter must follow the final wire mask rather than the
-    /// single-layer GOP schedule. At GOP offset 8 the schedule asks for a
-    /// GOLDEN refresh, but 2-layer SVC projects that frame to tl1 and emits
-    /// `refresh_frame_flags = 0x00`; resetting the counter there makes later
-    /// picker bias treat stale GOLDEN as fresh.
+    /// map-entry-1 age must follow the final wire mask rather than the
+    /// single-layer GOP schedule. Two-layer tl1 frames refresh map entry 1
+    /// and reset the age. At GOP offset 8 the schedule asks for a GOLDEN
+    /// refresh, but SVC projects that frame to tl0 and emits only `0x01`,
+    /// so the age must advance instead.
     #[test]
     fn a18_temporal_svc_golden_age_follows_emitted_refresh_flags() {
         let w = 64usize;
@@ -7463,13 +7527,13 @@ mod tests {
 
         assert_eq!(
             tids[crate::gop::GOLDEN_REFRESH_PERIOD as usize],
-            1,
-            "the scheduled GOLDEN offset is an SVC enhancement frame"
+            0,
+            "the scheduled GOLDEN offset is an SVC base-layer frame"
         );
         assert_eq!(
             golden_ages,
-            (0..=crate::gop::GOLDEN_REFRESH_PERIOD).collect::<Vec<_>>(),
-            "SVC should not reset GOLDEN age unless the final refresh mask refreshes GOLDEN"
+            vec![0, 0, 1, 0, 1, 0, 1, 0, 1],
+            "SVC map-entry-1 age must follow its final refresh mask, not the GOP schedule"
         );
     }
 

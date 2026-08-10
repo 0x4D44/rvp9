@@ -5280,3 +5280,40 @@ CPU8 PGO wall ratios versus vpxenc are `1.063225/1.144264/1.055232x`, geomean
 **Future plan:** retain while the remaining CPU8 configurations keep their
 quality gates. Continue exact non-picker dataflow work to close the residual
 speed gap.
+
+### 2026-08-10 — Temporal-SVC rate control remains provisional
+
+**Where:** `rvp9_encoder::StreamEncoder::new`,
+`rvp9_encoder::StreamEncoder::svc_assign_layer`, and
+`rvp9_encoder::svc::LayerContext`; libvpx counterparts:
+`vp9_init_layer_context`, `vp9_update_temporal_layer_framerate`,
+`vp9_restore_layer_context`, and `vp9_save_layer_context`.
+
+**What libvpx does:** uses cumulative temporal-layer targets, derives each
+layer's incremental frame budget from adjacent cumulative rates and frame
+rates, restores the selected layer's rate controller before encoding, saves it
+after encoding, and fans buffer updates across the current and higher layers.
+
+**What rvp9 does:** now matches the fixed two-/three-layer temporal IDs,
+reference-map indices, refresh masks, and extraction topology. It still seeds
+each layer context from the full stream rate controller with provisional
+equal-split targets and does not yet activate the stored per-layer controllers.
+
+**Why:** reference correctness is a bounded prerequisite for meaningful
+per-layer rate-distortion measurements. Keeping the still-inactive RC scaffold
+explicit avoids combining topology and rate-control changes in one unit.
+
+**Byte-parity impact:** the corrected temporal topology intentionally changes
+SVC streams. All exercised full and extracted streams decode byte-exactly
+through rvp9-decoder, pinned vpxdec, and ffmpeg. Single-layer output is outside
+the changed branch.
+
+**Compression-efficiency impact:** not measured for this provisional state;
+it is not a Stage 4d quality claim.
+
+**Speed impact:** not measured for this provisional state.
+
+**Future plan:** replace the provisional targets with cumulative
+`[2/3 T, T]` and `[1/2 T, 3/4 T, T]` defaults, activate per-layer RC
+restore/save and buffer fanout, then run the declared Stage 4d quality and
+realtime gates.
