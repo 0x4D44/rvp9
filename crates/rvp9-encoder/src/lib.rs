@@ -4630,25 +4630,12 @@ fn segment_ids_for_hint_cells(hints: &[InterPartitionLeafDesc]) -> [u8; 64] {
     segment_ids
 }
 
-/// Pinned libvpx restricts the first post-refresh realtime pick to LAST
-/// (`vp9_pickmode.c:1907-1911`). Require exact storage identity for every
-/// prediction plane as well as the matching non-SVC/non-ALTREF topology;
-/// a denoiser-owned ME view therefore keeps GOLDEN eligible.
-fn golden_ref_duplicates_last(
-    allow_last_only_topology: bool,
-    frames_since_golden: u32,
-    me_ref_yuv: (&[u8], &[u8], &[u8]),
-    last_recon_yuv: (&[u8], &[u8], &[u8]),
-    golden_recon_yuv: (&[u8], &[u8], &[u8]),
-) -> bool {
-    fn same_storage(a: (&[u8], &[u8], &[u8]), b: (&[u8], &[u8], &[u8])) -> bool {
-        a.0.as_ptr() == b.0.as_ptr() && a.1.as_ptr() == b.1.as_ptr() && a.2.as_ptr() == b.2.as_ptr()
-    }
-
-    allow_last_only_topology
-        && frames_since_golden == 0
-        && same_storage(me_ref_yuv, last_recon_yuv)
-        && same_storage(golden_recon_yuv, last_recon_yuv)
+/// Pinned libvpx restricts the first post-refresh realtime pick to LAST when
+/// the non-SVC temporal-Golden topology is active (`vp9_pickmode.c:1907-1911`).
+/// This is a schedule rule, not a pixel-storage identity test: libvpx applies
+/// it while temporal denoising owns a distinct motion-estimation reference.
+fn post_refresh_last_only(allow_last_only_topology: bool, frames_since_golden: u32) -> bool {
+    allow_last_only_topology && frames_since_golden == 0
 }
 
 /// F10.1c — Drive the F8.1 inter mode picker per leaf and run the
@@ -5886,13 +5873,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // `PickInterModeParams` literal below.
     let sf = sf_mod::dispatch(speed, deadline, width, height, content_tier);
     let rt_disable_golden_ref = sf.disable_golden_ref || env.rt_disable_golden;
-    let golden_ref_is_last = golden_ref_duplicates_last(
-        allow_duplicate_golden_prune,
-        frames_since_golden,
-        me_ref_yuv,
-        last_recon_yuv,
-        golden_recon_yuv,
-    );
+    let golden_ref_is_last =
+        post_refresh_last_only(allow_duplicate_golden_prune, frames_since_golden);
     let mut rt_inter_mode_mask = rvp9_core::mode_decision::inter::default_inter_mode_mask();
     if env.rt_disable_newmv {
         let newmv_bit = 1u8 << InterMode::NewMv.idx();
@@ -13144,28 +13126,10 @@ mod tests {
     }
 
     #[test]
-    fn duplicate_golden_shortcut_requires_topology_refresh_and_all_plane_aliases() {
-        let y = [1u8; 64];
-        let u = [2u8; 16];
-        let v = [3u8; 16];
-        let shared = (&y[..], &u[..], &v[..]);
-
-        assert!(golden_ref_duplicates_last(true, 0, shared, shared, shared));
-        assert!(!golden_ref_duplicates_last(
-            false, 0, shared, shared, shared
-        ));
-        assert!(!golden_ref_duplicates_last(true, 1, shared, shared, shared));
-
-        let other_y = [1u8; 64];
-        let other_u = [2u8; 16];
-        let other_v = [3u8; 16];
-        let distinct = (&other_y[..], &other_u[..], &other_v[..]);
-        assert!(!golden_ref_duplicates_last(
-            true, 0, distinct, shared, shared
-        ));
-        assert!(!golden_ref_duplicates_last(
-            true, 0, shared, shared, distinct
-        ));
+    fn post_refresh_last_only_requires_matching_topology_and_refresh_age() {
+        assert!(post_refresh_last_only(true, 0));
+        assert!(!post_refresh_last_only(false, 0));
+        assert!(!post_refresh_last_only(true, 1));
     }
 
     #[test]
