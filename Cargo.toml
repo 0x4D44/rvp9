@@ -30,7 +30,7 @@ members = [
 # `cd crates/rvp9-fuzz && cargo +nightly fuzz run`).
 
 [workspace.package]
-version = "0.1.48"
+version = "0.1.49"
 edition = "2024"
 license = "BSD-3-Clause"
 authors = ["Arthur <martin@tollens.ai>"]
