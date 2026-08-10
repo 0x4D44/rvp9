@@ -65,7 +65,9 @@ pub use subpel_variance_neon::{
     vpx_sub_pixel_variance64x32_dotprod, vpx_sub_pixel_variance64x32_neon,
     vpx_sub_pixel_variance64x64_dotprod, vpx_sub_pixel_variance64x64_neon,
 };
-pub use subtract_neon::{subtract_square_neon, subtract_square_neon_with_nonzero};
+pub use subtract_neon::{
+    subtract_square_neon, subtract_square_neon_with_nonzero, subtract_square_neon_with_sse,
+};
 pub use variance_neon::{
     get_var_sse_8x8_dotprod, get_var_sse_8x8_neon, var_sum_sse_4x4_dotprod,
     var_sum_sse_4x8_dotprod, var_sum_sse_8x4_dotprod, var_sum_sse_8x4_neon,
