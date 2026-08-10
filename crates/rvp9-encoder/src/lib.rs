@@ -6859,16 +6859,12 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             (i32::from(ac) << 3).max(8000) as u32
                         };
                         let choose_fresh_tree = || {
-                            let mut source_block = [0u8; 64 * 64];
-                            for row in 0..64 {
-                                source_block[row * 64..row * 64 + 64].copy_from_slice(
-                                    &input_yuv.0[(sb_px_y + row) * w + sb_px_x
-                                        ..(sb_px_y + row) * w + sb_px_x + 64],
-                                );
-                            }
+                            let source_offset = sb_px_y * w + sb_px_x;
                             choose_fixed_tree_inter_selection(&FixedTreeInterInput {
-                                source: &source_block,
+                                source: &input_yuv.0[source_offset..],
+                                source_stride: w,
                                 predictor: &predictor_block,
+                                predictor_stride: 64,
                                 visible_width: 64,
                                 visible_height: 64,
                                 frame_width: w,

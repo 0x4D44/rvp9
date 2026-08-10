@@ -234,7 +234,9 @@ fn compare_record(record: &OracleRecord) -> Result<FixedTreePartitionTrace, Stri
     }
     let input = FixedTreeInterInput {
         source: &source,
+        source_stride: 64,
         predictor: &predictor,
+        predictor_stride: 64,
         visible_width: record.visible_width,
         visible_height: record.visible_height,
         frame_width: record.frame_width,

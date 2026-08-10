@@ -19,6 +19,7 @@ pub mod sad_neon;
 pub mod subpel_variance_neon;
 pub mod subtract_neon;
 pub mod variance_neon;
+pub mod vbp_neon;
 
 pub use convolve_copy_neon::convolve_copy_neon;
 pub use convolve8_neon::{convolve8_horiz_neon, convolve8_neon, convolve8_vert_neon};
@@ -78,3 +79,4 @@ pub use variance_neon::{
     var_sum_sse_64x32_dotprod, var_sum_sse_64x32_neon, var_sum_sse_64x64_dotprod,
     var_sum_sse_64x64_neon,
 };
+pub use vbp_neon::avg_diff_8x8_grid_64x64_neon;

@@ -240,16 +240,20 @@ struct VbpThresholds {
 
 /// Pure input to the pinned-libvpx realtime inter variance-tree seam.
 ///
-/// `source` and `predictor` are materialized 64x64, stride-64 blocks. They
-/// include any edge padding already selected by the caller. `visible_width`
-/// and `visible_height` reproduce libvpx's checks for samples whose top-left
-/// falls outside the visible frame.
+/// `source` and `predictor` contain complete 64x64 blocks with independent
+/// strides. They include any edge padding already selected by the caller.
+/// `visible_width` and `visible_height` reproduce libvpx's checks for samples
+/// whose top-left falls outside the visible frame.
 #[derive(Clone, Copy, Debug)]
 pub struct FixedTreeInterInput<'a> {
-    /// Materialized source luma block, stride 64.
+    /// Source luma block.
     pub source: &'a [u8],
-    /// Materialized selected partition predictor, stride 64.
+    /// Source luma stride.
+    pub source_stride: usize,
+    /// Selected partition predictor.
     pub predictor: &'a [u8],
+    /// Predictor stride.
+    pub predictor_stride: usize,
     /// Visible width inside this superblock, in pixels (`1..=64`).
     pub visible_width: usize,
     /// Visible height inside this superblock, in pixels (`1..=64`).
@@ -760,11 +764,11 @@ impl FixedPartitionVariance {
     }
 }
 
-fn rounded_average(block: &[u8], x: usize, y: usize, side: usize) -> i32 {
+fn rounded_average(block: &[u8], stride: usize, x: usize, y: usize, side: usize) -> i32 {
     let mut sum = 0u32;
     for row in 0..side {
         for col in 0..side {
-            sum += u32::from(block[(y + row) * 64 + x + col]);
+            sum += u32::from(block[(y + row) * stride + x + col]);
         }
     }
     let count = (side * side) as u32;
@@ -776,7 +780,8 @@ fn average_diff_var(input: &FixedTreeInterInput<'_>, x: usize, y: usize, side: u
         return FixedVar::default();
     }
     FixedVar::sample(
-        rounded_average(input.source, x, y, side) - rounded_average(input.predictor, x, y, side),
+        rounded_average(input.source, input.source_stride, x, y, side)
+            - rounded_average(input.predictor, input.predictor_stride, x, y, side),
     )
 }
 
@@ -789,14 +794,15 @@ fn minmax_8x8_spread(input: &FixedTreeInterInput<'_>, x16: usize, y16: usize) ->
         if x8 >= input.visible_width || y8 >= input.visible_height {
             continue;
         }
-        let index = y8 * 64 + x8;
+        let source_index = y8 * input.source_stride + x8;
+        let predictor_index = y8 * input.predictor_stride + x8;
         #[cfg(target_arch = "aarch64")]
         let (min_diff, max_diff) = {
             let (minimum, maximum) = crate::dsp::aarch64::minmax_8x8_neon(
-                &input.source[index..],
-                64,
-                &input.predictor[index..],
-                64,
+                &input.source[source_index..],
+                input.source_stride,
+                &input.predictor[predictor_index..],
+                input.predictor_stride,
             );
             (i32::from(minimum), i32::from(maximum))
         };
@@ -806,9 +812,10 @@ fn minmax_8x8_spread(input: &FixedTreeInterInput<'_>, x16: usize, y16: usize) ->
             let mut maximum = 0;
             for row in 0..8 {
                 for col in 0..8 {
-                    let offset = index + row * 64 + col;
-                    let diff = (i32::from(input.source[offset])
-                        - i32::from(input.predictor[offset]))
+                    let source_offset = source_index + row * input.source_stride + col;
+                    let predictor_offset = predictor_index + row * input.predictor_stride + col;
+                    let diff = (i32::from(input.source[source_offset])
+                        - i32::from(input.predictor[predictor_offset]))
                     .abs();
                     minimum = minimum.min(diff);
                     maximum = maximum.max(diff);
@@ -1032,8 +1039,10 @@ pub fn visit_fixed_tree_leaves(
 fn choose_fixed_tree_inter_impl<const DIAGNOSTICS: bool>(
     input: &FixedTreeInterInput<'_>,
 ) -> FixedTreePartitionTrace {
-    assert!(input.source.len() >= 64 * 64);
-    assert!(input.predictor.len() >= 64 * 64);
+    assert!(input.source_stride >= 64);
+    assert!(input.predictor_stride >= 64);
+    assert!(input.source.len() >= 63 * input.source_stride + 64);
+    assert!(input.predictor.len() >= 63 * input.predictor_stride + 64);
     assert!((1..=64).contains(&input.visible_width));
     assert!((1..=64).contains(&input.visible_height));
 
@@ -1048,6 +1057,16 @@ fn choose_fixed_tree_inter_impl<const DIAGNOSTICS: bool>(
     let mut min_16x16 = [i32::MAX; 4];
     force_split[0] = input.force_64x64_split;
 
+    #[cfg(target_arch = "aarch64")]
+    let average_diff_8x8 = (input.visible_width == 64 && input.visible_height == 64).then(|| {
+        crate::dsp::aarch64::avg_diff_8x8_grid_64x64_neon(
+            input.source,
+            input.source_stride,
+            input.predictor,
+            input.predictor_stride,
+        )
+    });
+
     for i in 0..4 {
         let x32 = (i & 1) * 32;
         let y32 = (i >> 1) * 32;
@@ -1056,6 +1075,25 @@ fn choose_fixed_tree_inter_impl<const DIAGNOSTICS: bool>(
             let y16 = y32 + (j >> 1) * 16;
             let index16 = i * 4 + j;
             let trace_index = 5 + index16;
+            #[cfg(target_arch = "aarch64")]
+            let split_8x8 = if let Some(averages) = &average_diff_8x8 {
+                let cell_row = y16 / 8;
+                let cell_col = x16 / 8;
+                [
+                    FixedVar::sample(i32::from(averages[cell_row * 8 + cell_col])),
+                    FixedVar::sample(i32::from(averages[cell_row * 8 + cell_col + 1])),
+                    FixedVar::sample(i32::from(averages[(cell_row + 1) * 8 + cell_col])),
+                    FixedVar::sample(i32::from(averages[(cell_row + 1) * 8 + cell_col + 1])),
+                ]
+            } else {
+                [
+                    average_diff_var(input, x16, y16, 8),
+                    average_diff_var(input, x16 + 8, y16, 8),
+                    average_diff_var(input, x16, y16 + 8, 8),
+                    average_diff_var(input, x16 + 8, y16 + 8, 8),
+                ]
+            };
+            #[cfg(not(target_arch = "aarch64"))]
             let split_8x8 = [
                 average_diff_var(input, x16, y16, 8),
                 average_diff_var(input, x16 + 8, y16, 8),
@@ -1954,7 +1992,9 @@ mod tests {
     fn fixed_tree_input<'a>(source: &'a [u8], predictor: &'a [u8]) -> FixedTreeInterInput<'a> {
         FixedTreeInterInput {
             source,
+            source_stride: 64,
             predictor,
+            predictor_stride: 64,
             visible_width: 64,
             visible_height: 64,
             frame_width: 64,
@@ -1987,6 +2027,37 @@ mod tests {
                 let mut visited = Vec::new();
                 visit_fixed_tree_leaves(&selection.decision, |leaf| visited.push(leaf));
                 assert_eq!(visited, trace.leaves);
+            }
+        }
+    }
+
+    #[test]
+    fn fixed_tree_strided_inputs_match_tight_blocks() {
+        const SOURCE_STRIDE: usize = 79;
+        const PREDICTOR_STRIDE: usize = 83;
+        for source in [flat_plane(0), flat_plane(255), xorshift_plane(17)] {
+            let predictor = xorshift_plane(91);
+            let mut strided_source = vec![0x5a; 63 * SOURCE_STRIDE + 64];
+            let mut strided_predictor = vec![0xa5; 63 * PREDICTOR_STRIDE + 64];
+            for row in 0..64 {
+                strided_source[row * SOURCE_STRIDE..row * SOURCE_STRIDE + 64]
+                    .copy_from_slice(&source[row * 64..row * 64 + 64]);
+                strided_predictor[row * PREDICTOR_STRIDE..row * PREDICTOR_STRIDE + 64]
+                    .copy_from_slice(&predictor[row * 64..row * 64 + 64]);
+            }
+
+            for thresholds in [[1, 1, 1, 1], [1 << 20; 4]] {
+                let mut tight = fixed_tree_input(&source, &predictor);
+                tight.thresholds = thresholds;
+                let mut strided = tight;
+                strided.source = &strided_source;
+                strided.source_stride = SOURCE_STRIDE;
+                strided.predictor = &strided_predictor;
+                strided.predictor_stride = PREDICTOR_STRIDE;
+                assert_eq!(
+                    choose_fixed_tree_inter(&strided),
+                    choose_fixed_tree_inter(&tight),
+                );
             }
         }
     }
