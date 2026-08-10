@@ -5281,7 +5281,7 @@ CPU8 PGO wall ratios versus vpxenc are `1.063225/1.144264/1.055232x`, geomean
 quality gates. Continue exact non-picker dataflow work to close the residual
 speed gap.
 
-### 2026-08-10 — Temporal-SVC rate control remains provisional
+### 2026-08-10 — Bound temporal-SVC buffer deficits without frame dropping
 
 **Where:** `rvp9_encoder::StreamEncoder::new`,
 `rvp9_encoder::StreamEncoder::svc_assign_layer`, and
@@ -5294,26 +5294,32 @@ layer's incremental frame budget from adjacent cumulative rates and frame
 rates, restores the selected layer's rate controller before encoding, saves it
 after encoding, and fans buffer updates across the current and higher layers.
 
-**What rvp9 does:** now matches the fixed two-/three-layer temporal IDs,
-reference-map indices, refresh masks, and extraction topology. It still seeds
-each layer context from the full stream rate controller with provisional
-equal-split targets and does not yet activate the stored per-layer controllers.
+**What rvp9 does:** matches the fixed two-/three-layer temporal IDs,
+reference-map indices, refresh masks, and extraction topology. It uses
+cumulative `[2/3 T, T]` and `[1/2 T, 3/4 T, T]` targets, derives incremental
+frame budgets, restores and saves the active layer controller, fans buffer
+credits and debits through the current and higher cumulative layers, and
+broadcasts keyframe Q history. Unlike libvpx, rvp9 clamps every temporal-layer
+buffer to `[-maximum_buffer_size, +maximum_buffer_size]`; pinned libvpx does
+not lower-clamp higher-layer debits for default content.
 
-**Why:** reference correctness is a bounded prerequisite for meaningful
-per-layer rate-distortion measurements. Keeping the still-inactive RC scaffold
-explicit avoids combining topology and rate-control changes in one unit.
+**Why:** pinned libvpx relies on its frame-drop path to recover from an
+unbounded negative buffer. Rvp9 v1 does not yet implement frame dropping, so a
+bounded deficit prevents runaway buffer arithmetic and matches the existing
+single-layer no-drop policy. The target calculation, layer swap, fanout, and Q
+history remain source-faithful.
 
 **Byte-parity impact:** the corrected temporal topology intentionally changes
 SVC streams. All exercised full and extracted streams decode byte-exactly
 through rvp9-decoder, pinned vpxdec, and ffmpeg. Single-layer output is outside
 the changed branch.
 
-**Compression-efficiency impact:** not measured for this provisional state;
-it is not a Stage 4d quality claim.
+**Compression-efficiency impact:** not measured yet. The formal Stage 4d
+per-layer BD-rate matrix remains required before making a quality claim.
 
-**Speed impact:** not measured for this provisional state.
+**Speed impact:** not measured yet. The formal 720p30 and 1080p30 three-layer
+realtime matrix remains required.
 
-**Future plan:** replace the provisional targets with cumulative
-`[2/3 T, T]` and `[1/2 T, 3/4 T, T]` defaults, activate per-layer RC
-restore/save and buffer fanout, then run the declared Stage 4d quality and
-realtime gates.
+**Future plan:** revisit the lower clamp only when frame dropping lands. Run
+the declared Stage 4d per-layer quality and realtime gates now that topology
+and rate-control lifecycles are active.

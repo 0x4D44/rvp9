@@ -1,4 +1,9 @@
-# SVC temporal integration (A18 zone) — scratchpad
+# SVC temporal integration (A18 zone) — historical scratchpad
+
+> Superseded on 2026-08-10 by the fixed two-/three-layer reference hierarchy
+> and active per-layer rate control in `crates/rvp9-encoder/src/frame_loop.rs`
+> and `crates/rvp9-encoder/src/svc.rs`. The single-slot simplification below
+> records the original bring-up plan; it is not the current design.
 
 ## Goal
 Wire the ported-but-inert `crates/rvp9-encoder/src/svc.rs` scaffold into the

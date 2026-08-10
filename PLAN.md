@@ -661,9 +661,15 @@ acceptance matrix remains open.
 4. Bitstream encoding of layer metadata.
 
 **Exit criteria:**
-- [ ] Decoder (and libvpx decoder) extracts each temporal layer correctly.
+- [x] Decoder (and libvpx decoder) extracts each temporal layer correctly.
 - [ ] BD-rate per layer within 0.5% of libvpx.
 - [ ] 720p30 + 1080p30 real-time still pass with 3-layer temporal SVC.
+
+**Status (2026-08-10):** The two- and three-layer reference hierarchy and
+per-layer rate-control lifecycle are active. Full streams and every retained
+temporal operating point decode byte-exactly through rvp9-decoder, pinned
+vpxdec, and ffmpeg. Per-layer BD-rate and 720p30/1080p30 speed evidence remain
+open.
 
 **Estimated effort:** 4–6 weeks.
 

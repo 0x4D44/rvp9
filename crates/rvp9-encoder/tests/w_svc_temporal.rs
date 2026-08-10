@@ -46,7 +46,7 @@
 //!    (and rvp9-decoder) decode it byte-exact (all layers play).
 
 use rvp9_decoder::{Decoder, ParsedFrame};
-use rvp9_encoder::{AqMode, EncoderConfig, RcMode, StreamEncoder, YuvFrameRef};
+use rvp9_encoder::{AqMode, EncodedFrame, EncoderConfig, RcMode, StreamEncoder, YuvFrameRef};
 use rvp9_harness::container::{IvfHeader, write_ivf};
 use rvp9_harness::y4m::{probe_testsrc_720p, read_cropped as y4m_read_cropped};
 use std::path::{Path, PathBuf};
@@ -233,12 +233,139 @@ fn write_ivf_packets(path: &Path, framerate: f64, packets: &[Vec<u8>]) {
 
 type SourceFrame = (Vec<u8>, Vec<u8>, Vec<u8>);
 
+const LIFECYCLE_W: usize = 64;
+const LIFECYCLE_H: usize = 64;
+const LIFECYCLE_FRAMES: usize = 12;
+
+fn lifecycle_source_frames() -> Vec<SourceFrame> {
+    (0..LIFECYCLE_FRAMES)
+        .map(|frame_idx| {
+            let y = (0..LIFECYCLE_W * LIFECYCLE_H)
+                .map(|i| {
+                    let row = i / LIFECYCLE_W;
+                    let col = i % LIFECYCLE_W;
+                    let shifted = (col + frame_idx * 5) % LIFECYCLE_W;
+                    ((shifted * 13 + row * 9 + frame_idx * 17) & 0xff) as u8
+                })
+                .collect();
+            let u = vec![80u8.saturating_add(frame_idx as u8); LIFECYCLE_W * LIFECYCLE_H / 4];
+            let v = vec![176u8.saturating_sub(frame_idx as u8); LIFECYCLE_W * LIFECYCLE_H / 4];
+            (y, u, v)
+        })
+        .collect()
+}
+
+fn encode_lifecycle_stream(temporal_layers: u32) -> Vec<EncodedFrame> {
+    let frames = lifecycle_source_frames();
+    let mut cfg = EncoderConfig::new(LIFECYCLE_W as u32, LIFECYCLE_H as u32);
+    // Keep all twelve show frames in one GOP so the first-inter pattern is
+    // observed continuously rather than being hidden by a keyframe reset.
+    cfg.gop_length = (LIFECYCLE_FRAMES + 1) as u32;
+    cfg.temporal_layers = temporal_layers;
+    cfg.aq_mode = AqMode::Off;
+    cfg.use_prev_frame_mvs = false;
+    cfg.speed = 7;
+    cfg.deadline = rvp9_encoder::Deadline::Realtime;
+    cfg.enable_alt_ref = false;
+
+    let mut enc = StreamEncoder::new(cfg).expect("StreamEncoder::new");
+    frames
+        .iter()
+        .map(|(y, u, v)| {
+            enc.encode_frame(&yuv_view(y, u, v, LIFECYCLE_W))
+                .expect("encode_frame")
+        })
+        .collect()
+}
+
+fn assert_deterministic_lifecycle(temporal_layers: u32, expected_tids: &[u8]) {
+    let first = encode_lifecycle_stream(temporal_layers);
+    let second = encode_lifecycle_stream(temporal_layers);
+
+    assert_eq!(first.len(), LIFECYCLE_FRAMES);
+    assert_eq!(second.len(), LIFECYCLE_FRAMES);
+    assert_eq!(
+        first
+            .iter()
+            .map(|frame| frame.temporal_layer_id)
+            .collect::<Vec<_>>(),
+        expected_tids,
+        "temporal-SVC IDs must continue across all twelve show frames"
+    );
+
+    let mut layer_bits = vec![0u64; temporal_layers as usize];
+    let mut total_bits = 0u64;
+    for (frame_idx, (left, right)) in first.iter().zip(&second).enumerate() {
+        assert_eq!(
+            left.temporal_layer_id, right.temporal_layer_id,
+            "repeat encode changed temporal layer at frame {frame_idx}"
+        );
+        assert_eq!(
+            left.actual_bits, right.actual_bits,
+            "repeat encode changed actual_bits at frame {frame_idx}"
+        );
+        assert_eq!(
+            left.data, right.data,
+            "repeat encode changed packet bytes at frame {frame_idx}"
+        );
+
+        assert!(
+            !left.data.is_empty(),
+            "frame {frame_idx} packet must be non-empty"
+        );
+        assert!(left.actual_bits > 0, "frame {frame_idx} must spend bits");
+        assert_eq!(
+            left.actual_bits,
+            u32::try_from(
+                left.data
+                    .len()
+                    .checked_mul(8)
+                    .expect("packet bit count must not overflow usize"),
+            )
+            .expect("packet bit count must fit in the public u32 field"),
+            "actual_bits must account for the complete packet"
+        );
+
+        let layer = usize::from(left.temporal_layer_id);
+        assert!(
+            layer < layer_bits.len(),
+            "frame {frame_idx} reported temporal layer {layer} outside {temporal_layers} configured layers"
+        );
+        layer_bits[layer] = layer_bits[layer]
+            .checked_add(u64::from(left.actual_bits))
+            .expect("per-layer bit accounting must remain finite");
+        total_bits = total_bits
+            .checked_add(u64::from(left.actual_bits))
+            .expect("cumulative bit accounting must remain finite");
+    }
+
+    assert!(
+        total_bits > 0,
+        "the stream must have nonzero cumulative bits"
+    );
+    for (layer, bits) in layer_bits.iter().enumerate() {
+        assert!(*bits > 0, "temporal layer {layer} must be exercised");
+    }
+}
+
 fn load_source() -> Option<(Vec<SourceFrame>, f64)> {
     let y4m_path = probe_testsrc_720p()?;
     match y4m_read_cropped(&y4m_path, W, H, N_FRAMES as usize) {
         Ok((f, fr)) if f.len() == N_FRAMES as usize => Some((f, fr)),
         _ => None,
     }
+}
+
+// ---------------------------------------------------------------------------
+// PUBLIC LIFECYCLE MATRIX — deterministic metadata and bit accounting over
+// a complete twelve-show-frame temporal pattern. The extraction tests below
+// remain the reconstruction/drop-point oracle for these same layer modes.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn temporal_svc_lifecycle_is_deterministic_for_two_and_three_layers() {
+    assert_deterministic_lifecycle(2, &[0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1]);
+    assert_deterministic_lifecycle(3, &[0, 2, 1, 2, 0, 2, 1, 2, 0, 2, 1, 2]);
 }
 
 // ---------------------------------------------------------------------------

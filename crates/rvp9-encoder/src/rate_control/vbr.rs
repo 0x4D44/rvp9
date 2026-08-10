@@ -348,6 +348,15 @@ pub(super) fn pick_q_and_bounds_with_model(
     frame_kind: FrameKind,
     model: Option<CyclicRefreshRateModel>,
 ) -> (u8, u8, u8) {
+    pick_q_and_bounds_with_model_and_target(rc, frame_kind, model, None)
+}
+
+pub(super) fn pick_q_and_bounds_with_model_and_target(
+    rc: &mut RateControl,
+    frame_kind: FrameKind,
+    model: Option<CyclicRefreshRateModel>,
+    svc_inter_target: Option<u32>,
+) -> (u8, u8, u8) {
     // libvpx resets the Golden-frame boost ratio at each group boundary,
     // then retunes it after frame 30 from avg_frame_low_motion. The
     // frame-loop schedule already supplies the matching Golden marker.
@@ -367,7 +376,9 @@ pub(super) fn pick_q_and_bounds_with_model(
     //    `vp9_ratectrl.c:2118-2143`).
     let target_bits = match frame_kind {
         FrameKind::Key => calc_iframe_target_size_vbr(rc),
-        FrameKind::Inter => calc_pframe_target_size_vbr(rc),
+        FrameKind::Inter => svc_inter_target
+            .map(|target| clamp_pframe_target_size_vbr(rc, i64::from(target)))
+            .unwrap_or_else(|| calc_pframe_target_size_vbr(rc)),
         FrameKind::Golden => calc_golden_target_size_vbr(rc),
     };
     rc.this_frame_target = target_bits;
@@ -523,6 +534,18 @@ mod tests {
             target.abs_diff(expected) <= 1 || target >= expected,
             "VBR inter target {target} should be ~{expected}"
         );
+    }
+
+    #[test]
+    fn temporal_svc_vbr_uses_incremental_cbr_style_target() {
+        let mut rc = RateControl::new(vbr_config());
+        rc.avg_frame_bandwidth = 40_000;
+        rc.min_frame_bandwidth = 10_000;
+
+        let _ =
+            pick_q_and_bounds_with_model_and_target(&mut rc, FrameKind::Inter, None, Some(20_000));
+        assert_eq!(rc.this_frame_target, 20_000);
+        assert_ne!(rc.this_frame_target, calc_pframe_target_size_vbr(&rc));
     }
 
     #[test]

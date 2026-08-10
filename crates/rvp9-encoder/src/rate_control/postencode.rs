@@ -181,6 +181,25 @@ pub(super) fn postencode_update_with_model(
     frame_kind: FrameKind,
     model: Option<CyclicRefreshRateModel>,
 ) {
+    postencode_update_impl(rc, actual_bits, frame_kind, model, false);
+}
+
+pub(super) fn postencode_update_svc_with_model(
+    rc: &mut RateControl,
+    actual_bits: u32,
+    frame_kind: FrameKind,
+    model: Option<CyclicRefreshRateModel>,
+) {
+    postencode_update_impl(rc, actual_bits, frame_kind, model, true);
+}
+
+fn postencode_update_impl(
+    rc: &mut RateControl,
+    actual_bits: u32,
+    frame_kind: FrameKind,
+    model: Option<CyclicRefreshRateModel>,
+    preencode_credit_applied: bool,
+) {
     // -- Adapt the per-level rate-correction factor BEFORE we touch
     //    last_q / avg_frame_qindex (libvpx ordering — line 1859 then
     //    line 1864). The damped update reads `last_picked_qindex`,
@@ -225,8 +244,14 @@ pub(super) fn postencode_update_with_model(
     }
 
     // -- Buffer update --
-    // bits_off_target = bits_off_target + avg_frame_bandwidth - actual_bits
-    let delta: i64 = i64::from(rc.avg_frame_bandwidth) - i64::from(actual_bits);
+    // Ordinary rvp9 folds libvpx's preencode credit into this update. SVC
+    // applies the cumulative credit to the active and all higher layers
+    // before Q selection, so its postencode path only debits actual bits.
+    let delta = if preencode_credit_applied {
+        -i64::from(actual_bits)
+    } else {
+        i64::from(rc.avg_frame_bandwidth) - i64::from(actual_bits)
+    };
     rc.bits_off_target = rc.bits_off_target.saturating_add(delta);
     // Clamp upper bound at max_buffer_size (libvpx).
     if rc.bits_off_target > rc.maximum_buffer_size {
@@ -267,7 +292,10 @@ mod tests {
     use super::super::cbr::RateFactorLevel;
     use super::super::config::RateControlConfig;
     use super::super::{FrameKind, RateControl, RcMode};
-    use super::{update_cbr_resonance_history, update_rate_correction_factors};
+    use super::{
+        postencode_update_svc_with_model, update_cbr_resonance_history,
+        update_rate_correction_factors,
+    };
 
     fn fresh_rc() -> RateControl {
         let mut rc = RateControl::new(RateControlConfig::default());
@@ -326,6 +354,21 @@ mod tests {
              got {} (before={before}, after={after})",
             after - before
         );
+    }
+
+    #[test]
+    fn svc_preencode_credit_is_not_applied_twice() {
+        let mut rc = fresh_rc();
+        rc.bits_off_target = 0;
+        rc.buffer_level = 0;
+        let avg = rc.avg_frame_bandwidth;
+        let actual = avg / 2;
+
+        rc.svc_preencode_buffer_update();
+        postencode_update_svc_with_model(&mut rc, actual, FrameKind::Inter, None);
+
+        assert_eq!(rc.bits_off_target, i64::from(avg - actual));
+        assert_eq!(rc.buffer_level, rc.bits_off_target);
     }
 
     #[test]

@@ -361,6 +361,40 @@ impl RateControl {
         self.two_pass = Some(state);
     }
 
+    /// Credit one cumulative temporal-layer frame budget before encoding.
+    pub(crate) fn svc_preencode_buffer_update(&mut self) {
+        self.bits_off_target = self
+            .bits_off_target
+            .saturating_add(i64::from(self.avg_frame_bandwidth))
+            .min(self.maximum_buffer_size);
+        self.buffer_level = self.bits_off_target;
+    }
+
+    /// Debit one encoded temporal-layer frame from a cumulative buffer.
+    pub(crate) fn svc_postencode_buffer_debit(&mut self, actual_bits: u32) {
+        self.bits_off_target = self.bits_off_target.saturating_sub(i64::from(actual_bits));
+        self.bits_off_target = self
+            .bits_off_target
+            .clamp(-self.maximum_buffer_size, self.maximum_buffer_size);
+        self.buffer_level = self.bits_off_target;
+    }
+
+    /// Raise the inter-Q ambient after a large temporal-SVC keyframe.
+    pub(crate) fn svc_adjust_inter_ambient_after_keyframe(
+        &mut self,
+        actual_bits: u32,
+        q_index: u8,
+    ) -> Option<u8> {
+        if i64::from(actual_bits) <= 3_i64.saturating_mul(i64::from(self.avg_frame_bandwidth)) {
+            return None;
+        }
+        let corrected = self
+            .avg_frame_qindex_inter
+            .max(((i32::from(q_index) + self.worst_quality) >> 1) as u8);
+        self.avg_frame_qindex_inter = corrected;
+        Some(corrected)
+    }
+
     /// Pick the Q-index for the next frame.
     ///
     /// Returns `(active_qindex, q_low_bound, q_high_bound)`. The caller
@@ -387,12 +421,23 @@ impl RateControl {
         frame_kind: FrameKind,
         model: Option<super::CyclicRefreshRateModel>,
     ) -> (u8, u8, u8) {
+        self.pick_q_and_bounds_with_model_and_target(frame_kind, model, None)
+    }
+
+    pub(crate) fn pick_q_and_bounds_with_model_and_target(
+        &mut self,
+        frame_kind: FrameKind,
+        model: Option<super::CyclicRefreshRateModel>,
+        svc_inter_target: Option<u32>,
+    ) -> (u8, u8, u8) {
         use super::RcMode;
         match self.config.rc_mode {
-            RcMode::Cbr => match model {
-                Some(model) => cbr::pick_q_and_bounds_with_model(self, frame_kind, Some(model)),
-                None => cbr::pick_q_and_bounds(self, frame_kind),
-            },
+            RcMode::Cbr => cbr::pick_q_and_bounds_with_model_and_target(
+                self,
+                frame_kind,
+                model,
+                svc_inter_target,
+            ),
             // One-pass VBR. Port of libvpx
             // `rc_pick_q_and_bounds_one_pass_vbr`
             // (`vp9_ratectrl.c:1138-1303`). The two-pass arm
@@ -402,9 +447,17 @@ impl RateControl {
             // first-pass stats attached via `attach_two_pass`. The W1.6
             // one-pass VBR PROOF lives in `tests/w_vbr_rc_proof.rs`; the
             // two-pass PROOF in `tests/w_2pass_vbr.rs`.
-            RcMode::Vbr => match model {
-                Some(model) => vbr::pick_q_and_bounds_with_model(self, frame_kind, Some(model)),
-                None => vbr::pick_q_and_bounds(self, frame_kind),
+            RcMode::Vbr => match (model, svc_inter_target) {
+                (model, Some(target)) => vbr::pick_q_and_bounds_with_model_and_target(
+                    self,
+                    frame_kind,
+                    model,
+                    Some(target),
+                ),
+                (Some(model), None) => {
+                    vbr::pick_q_and_bounds_with_model(self, frame_kind, Some(model))
+                }
+                (None, None) => vbr::pick_q_and_bounds(self, frame_kind),
             },
             // PHASE-3 integration: Constrained-Quality (CQ). Runs the
             // CBR regulator, then clamps the picked Q to be ≥
@@ -414,6 +467,7 @@ impl RateControl {
             // `vp9_ratectrl.c::vp9_rc_pick_q_and_bounds_one_pass_cbr`
             // CQ branch (search for `cq_level`).
             RcMode::Cq => {
+                debug_assert!(svc_inter_target.is_none());
                 let (q, lo, hi) = match model {
                     Some(model) => cbr::pick_q_and_bounds_with_model(self, frame_kind, Some(model)),
                     None => cbr::pick_q_and_bounds(self, frame_kind),
@@ -428,6 +482,7 @@ impl RateControl {
             // for `oxcf->rc_mode == VPX_Q`). No rate-control loop —
             // the regulator is bypassed entirely.
             RcMode::Q => {
+                debug_assert!(svc_inter_target.is_none());
                 let q_inter = self.config.cq_level;
                 let q_kf = q_inter.saturating_sub(8); // libvpx KF qdelta ≈ -8
                 let q = match frame_kind {
@@ -447,6 +502,16 @@ impl RateControl {
         }
     }
 
+    /// Calculate a temporal-SVC CBR inter target from its incremental
+    /// frame-size budget. Call this before the cumulative preencode credit.
+    pub(crate) fn temporal_svc_inter_target(&self, avg_frame_size: u32) -> u32 {
+        debug_assert!(matches!(
+            self.config.rc_mode,
+            super::RcMode::Cbr | super::RcMode::Vbr
+        ));
+        cbr::calc_pframe_target_size_with_average(self, avg_frame_size)
+    }
+
     /// Update internal state after the frame has been encoded.
     ///
     /// `actual_bits` is the exact bit count of the emitted frame
@@ -463,6 +528,15 @@ impl RateControl {
         model: Option<super::CyclicRefreshRateModel>,
     ) {
         postencode::postencode_update_with_model(self, actual_bits, frame_kind, model);
+    }
+
+    pub(crate) fn postencode_update_svc_with_model(
+        &mut self,
+        actual_bits: u32,
+        frame_kind: FrameKind,
+        model: Option<super::CyclicRefreshRateModel>,
+    ) {
+        postencode::postencode_update_svc_with_model(self, actual_bits, frame_kind, model);
     }
 
     /// Advance frame counters. Called once per encoded *show* frame
@@ -619,6 +693,37 @@ mod tests {
         // Sanity on derived bandwidths.
         assert!(rc.avg_frame_bandwidth > 0);
         assert!(rc.max_frame_bandwidth >= rc.avg_frame_bandwidth);
+    }
+
+    #[test]
+    fn svc_buffer_credit_and_debit_are_separate() {
+        let mut rc = RateControl::new(RateControlConfig::default());
+        rc.bits_off_target = 0;
+        rc.buffer_level = 0;
+        let avg = rc.avg_frame_bandwidth;
+
+        rc.svc_preencode_buffer_update();
+        assert_eq!(rc.bits_off_target, i64::from(avg));
+        rc.svc_postencode_buffer_debit(avg / 4);
+        assert_eq!(rc.bits_off_target, i64::from(avg - avg / 4));
+        assert_eq!(rc.buffer_level, rc.bits_off_target);
+    }
+
+    #[test]
+    fn svc_large_keyframe_raises_inter_q_ambient() {
+        let mut rc = RateControl::new(RateControlConfig::default());
+        rc.avg_frame_bandwidth = 1_000;
+        rc.avg_frame_qindex_inter = 100;
+
+        assert_eq!(rc.svc_adjust_inter_ambient_after_keyframe(3_000, 80), None);
+        assert_eq!(rc.avg_frame_qindex_inter, 100);
+
+        let corrected = ((80 + rc.worst_quality) >> 1) as u8;
+        assert_eq!(
+            rc.svc_adjust_inter_ambient_after_keyframe(3_001, 80),
+            Some(corrected)
+        );
+        assert_eq!(rc.avg_frame_qindex_inter, corrected);
     }
 
     #[test]

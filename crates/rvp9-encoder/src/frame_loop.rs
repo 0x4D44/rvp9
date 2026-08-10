@@ -264,6 +264,37 @@ fn vbr_gf_rc_enabled(rc_mode: RcMode) -> bool {
         && vbr_gf_rc_policy(std::env::var_os("RVP9_VBR_GF_RC").as_deref())
 }
 
+fn temporal_svc_cumulative_targets(
+    target_bitrate_bps: u32,
+    temporal_layers: u32,
+) -> Result<Vec<i32>, EncodeError> {
+    if target_bitrate_bps < temporal_layers {
+        return Err(EncodeError::InvalidConfig(
+            "target_bitrate_bps must be >= temporal_layers for SVC",
+        ));
+    }
+    let total = u64::from(target_bitrate_bps);
+    let targets = match temporal_layers {
+        2 => vec![total * 2 / 3, total],
+        3 => vec![total / 2, total * 3 / 4, total],
+        _ => {
+            return Err(EncodeError::InvalidConfig(
+                "temporal SVC cumulative targets require 2 or 3 layers",
+            ));
+        }
+    };
+    targets
+        .into_iter()
+        .map(|target| {
+            i32::try_from(target).map_err(|_| {
+                EncodeError::InvalidConfig(
+                    "temporal layer target_bitrate_bps must fit in i32 for SVC",
+                )
+            })
+        })
+        .collect()
+}
+
 const CPU7_VBR_EXACT_KEYFRAME_SUB8_QMAX: u8 = 120;
 
 fn exact_keyframe_sub8_enabled(config: &EncoderConfig, q_index: u8) -> bool {
@@ -446,11 +477,12 @@ pub struct EncoderConfig {
     /// When `> 1` the encoder assigns each inter frame a
     /// `temporal_layer_id` from the layering pattern (driven by the
     /// [`crate::svc::Svc`] scaffold's temporal setters) and overrides the
-    /// per-frame `refresh_frame_flags` so that higher-temporal-layer
-    /// frames are NON-REFERENCE (refresh nothing the base layer reads),
-    /// making the stream temporally scalable. The reference reads stay on
-    /// the LAST slot, so the produced bitstream is standard VP9 and
-    /// byte-exact decodable by vpxdec (it plays all layers). The
+    /// per-frame reference-map indices and refresh flags to preserve
+    /// libvpx's fixed hierarchy. TL0 refreshes map entry 0, TL1 refreshes
+    /// entry 1, and TL2 frames refresh nothing; the second TL2 position
+    /// reads the preceding TL1 reconstruction from entry 1. The produced
+    /// bitstream remains standard VP9 and byte-exact decodable by vpxdec.
+    /// The
     /// per-frame `temporal_layer_id` is surfaced on
     /// [`EncodedFrame::temporal_layer_id`] — it is encoder-side metadata
     /// (libvpx `vpx_svc_layer_id`), NOT a VP9 wire field.
@@ -1774,17 +1806,12 @@ impl StreamEncoder {
         // (`vp9_svc_layercontext.c:105-181`) for the one-pass CBR path:
         // `number_spatial_layers = 1` (temporal-only SVC; spatial SVC is
         // a documented follow-up), `number_temporal_layers = N`, one
-        // `LayerContext` per temporal slot. The per-layer target
-        // bandwidth follows libvpx's default geometric split
-        // (`vp9_svc_layercontext.c:131` reads
-        // `oxcf->layer_target_bitrate[layer]`); the rvp9 CLI does not yet
-        // expose per-layer bitrates, so we split the stream target evenly
-        // — the split only affects per-layer RC budgeting, never the
-        // bitstream's frame structure, so the byte-exact gate is
-        // unaffected.
+        // `LayerContext` per temporal slot. Targets are cumulative, as
+        // required by libvpx's `layer_target_bitrate[]` contract. The
+        // default WebRTC allocations are [2/3 T, T] for two layers and
+        // [1/2 T, 3/4 T, T] for three layers; cumulative frame rates use
+        // decimators [2,1] and [4,2,1].
         let svc_ctx = if config.temporal_layers > 1 {
-            let n_tl_u32 = config.temporal_layers;
-            let n_tl = n_tl_u32 as i32;
             let mut svc = crate::svc::Svc::new();
             svc.use_svc = true;
             svc.pass = 0;
@@ -1793,37 +1820,13 @@ impl StreamEncoder {
                 2 => crate::svc::TemporalLayeringMode::Pattern0101,
                 _ => crate::svc::TemporalLayeringMode::Pattern0212,
             };
-            // Even per-layer bitrate split (placeholder until a CLI
-            // per-layer-bitrate flag lands). One slot per temporal layer.
-            if config.target_bitrate_bps < n_tl_u32 {
-                return Err(EncodeError::InvalidConfig(
-                    "target_bitrate_bps must be >= temporal_layers for SVC",
-                ));
-            }
-            let base_layer_bitrate = config.target_bitrate_bps / n_tl_u32;
-            let remainder = config.target_bitrate_bps % n_tl_u32;
-            let targets: Vec<i32> = (0..n_tl_u32)
-                .map(|layer| {
-                    let layer_bitrate = base_layer_bitrate + u32::from(layer < remainder);
-                    i32::try_from(layer_bitrate).map_err(|_| {
-                        EncodeError::InvalidConfig(
-                            "per-layer target_bitrate_bps must fit in i32 for SVC",
-                        )
-                    })
-                })
-                .collect::<Result<_, _>>()?;
-            if targets.iter().any(|&target| target <= 0) {
-                return Err(EncodeError::InvalidConfig(
-                    "per-layer target_bitrate_bps must be > 0 for SVC",
-                ));
-            }
-            if targets.iter().map(|&target| target as u32).sum::<u32>() != config.target_bitrate_bps
-            {
-                return Err(EncodeError::InvalidConfig(
-                    "SVC layer target_bitrate_bps split must preserve total bitrate",
-                ));
-            }
-            svc.alloc_layers(1, n_tl, rc_config, &targets);
+            let targets =
+                temporal_svc_cumulative_targets(config.target_bitrate_bps, config.temporal_layers)?;
+            let rate_decimators: &[u32] = match config.temporal_layers {
+                2 => &[2, 1],
+                _ => &[4, 2, 1],
+            };
+            svc.alloc_temporal_layers(&rate_control, &targets, rate_decimators);
             Some(svc)
         } else {
             None
@@ -2255,7 +2258,9 @@ impl StreamEncoder {
         };
         let rc_frame_kind = match frame_sched.update_type {
             crate::gop::FrameUpdateType::KfUpdate => RcFrameKind::Key,
-            crate::gop::FrameUpdateType::GfUpdate if vbr_gf_rc_enabled(self.config.rc_mode) => {
+            crate::gop::FrameUpdateType::GfUpdate
+                if self.config.temporal_layers == 1 && vbr_gf_rc_enabled(self.config.rc_mode) =>
+            {
                 RcFrameKind::Golden
             }
             _ => RcFrameKind::Inter,
@@ -2270,6 +2275,7 @@ impl StreamEncoder {
         // temporal setter and records the (temporal_layer_id,
         // refresh_frame_flags) decision in `self.svc_frame`.
         self.svc_assign_layer(frame_kind);
+        let temporal_svc_inter_target = self.svc_prepare_rate_control(rc_frame_kind);
 
         // W2.1(vpxenc parity, A5 P0): update per-frame pre-analysis
         // gates. Mirrors libvpx `vp9_encoder.c:3984` —
@@ -2317,9 +2323,11 @@ impl StreamEncoder {
             });
 
         // Pick Q via the rate controller.
-        let (q_index, _q_lo, _q_hi) = self
-            .rate_control
-            .pick_q_and_bounds_with_model(rc_frame_kind, aq_rate_model);
+        let (q_index, _q_lo, _q_hi) = self.rate_control.pick_q_and_bounds_with_model_and_target(
+            rc_frame_kind,
+            aq_rate_model,
+            temporal_svc_inter_target,
+        );
         // -- E8 DIAG: inter active_worst / buffer-state trace --
         // Env-gated; captured immediately after the pick so it reflects
         // the buffer state that drove THIS frame's Q. The actual bits are
@@ -2658,13 +2666,10 @@ impl StreamEncoder {
                 })
             });
 
-        // Post-encode rate-control update + frame counter advance.
-        self.rate_control.postencode_update_with_model(
-            actual_bits,
-            rc_frame_kind,
-            aq_postencode_model,
-        );
-        self.rate_control.advance_frame();
+        // Post-encode rate-control update + frame counter advance. Temporal
+        // SVC saves the active layer and debits every higher cumulative
+        // layer after the common feedback update.
+        self.svc_finalize_rate_control(actual_bits, rc_frame_kind, aq_postencode_model, q_index);
         self.frame_idx = self.frame_idx.saturating_add(1);
 
         // W2.1(vpxenc parity, A5 P0): capture this frame's source as
@@ -3059,6 +3064,8 @@ impl StreamEncoder {
                 lc.is_key_frame = true;
             }
             svc.layer_context[0].current_video_frame_in_layer = 1;
+            svc.spatial_layer_id = 0;
+            svc.temporal_layer_id = 0;
             self.svc_frame = None;
             return;
         }
@@ -3111,6 +3118,91 @@ impl StreamEncoder {
             ref_frame_indices,
             allow_golden_ref,
         });
+    }
+
+    /// Restore the selected temporal layer's RC, retain stream-global frame
+    /// counters, calculate the incremental CBR target, and credit the active
+    /// plus all higher cumulative buffers before Q selection.
+    fn svc_prepare_rate_control(&mut self, frame_kind: RcFrameKind) -> Option<u32> {
+        let svc = self.svc.as_ref()?;
+        let avg_frame_size =
+            u32::try_from(svc.layer_context[svc.current_layer_idx()].avg_frame_size)
+                .expect("temporal SVC avg_frame_size must be positive and fit in u32");
+        let (mut layer_rc, _) = svc.restore_layer_context();
+
+        // libvpx stores current_video_frame outside RATE_CONTROL and
+        // explicitly preserves the two key counters across the layer swap.
+        layer_rc.frames_since_key = self.rate_control.frames_since_key;
+        layer_rc.frames_to_key = self.rate_control.frames_to_key;
+        layer_rc.current_video_frame = self.rate_control.current_video_frame;
+        self.rate_control = layer_rc;
+
+        // Pinned CBR uses the incremental layer-frame budget directly.
+        // Pinned VBR-SVC deliberately calls the same CBR target calculation
+        // because refresh flags define the hierarchy and cannot signal a
+        // VBR Golden boost. Both calculate before the cumulative credit.
+        let target = (matches!(self.config.rc_mode, RcMode::Cbr | RcMode::Vbr)
+            && !frame_kind.is_key())
+        .then(|| self.rate_control.temporal_svc_inter_target(avg_frame_size));
+
+        self.rate_control.svc_preencode_buffer_update();
+        self.svc
+            .as_mut()
+            .expect("SVC context disappeared during rate-control prepare")
+            .preencode_higher_temporal_layer_buffers();
+        target
+    }
+
+    /// Complete the selected temporal layer's RC update and save it back.
+    fn svc_finalize_rate_control(
+        &mut self,
+        actual_bits: u32,
+        frame_kind: RcFrameKind,
+        model: Option<CyclicRefreshRateModel>,
+        q_index: u8,
+    ) {
+        let Some(svc) = self.svc.as_mut() else {
+            self.rate_control
+                .postencode_update_with_model(actual_bits, frame_kind, model);
+            self.rate_control.advance_frame();
+            return;
+        };
+
+        self.rate_control
+            .postencode_update_svc_with_model(actual_bits, frame_kind, model);
+        self.rate_control.advance_frame();
+
+        if frame_kind.is_key() {
+            // libvpx broadcasts the keyframe Q history because every
+            // temporal operating point shares the same coded keyframe.
+            svc.broadcast_keyframe_q_history(
+                self.rate_control.last_q_keyframe,
+                self.rate_control.avg_frame_qindex_key,
+            );
+
+            // A keyframe larger than three cumulative frame budgets leaves
+            // the inter ambient too optimistic. Pinned CBR moves it halfway
+            // toward worst quality and broadcasts the correction.
+            if let Some(corrected) = (self.config.rc_mode == RcMode::Cbr)
+                .then(|| {
+                    self.rate_control
+                        .svc_adjust_inter_ambient_after_keyframe(actual_bits, q_index)
+                })
+                .flatten()
+            {
+                svc.broadcast_inter_q_ambient(corrected);
+            }
+        }
+
+        let idx = svc.current_layer_idx();
+        let target_bandwidth = svc.layer_context[idx].target_bandwidth;
+        svc.postencode_higher_temporal_layer_buffers(actual_bits);
+        svc.save_layer_context(
+            &self.rate_control,
+            target_bandwidth,
+            i32::from(q_index),
+            self.rate_control.mbs as i32,
+        );
     }
 
     /// Inter internal: F10.1c — drive F8.2 partition + F8.1 inter mode
@@ -3381,10 +3473,11 @@ impl StreamEncoder {
         let frames_since_golden = self.frames_since_golden_refresh;
         // The picker uses source-faithful block_yrd on the scheduled CPU7
         // realtime VBR refresh while ordinary inter frames keep model-only RD.
-        let is_golden_refresh = matches!(
-            self.gf_group.schedule(self.frame_idx).update_type,
-            crate::gop::FrameUpdateType::GfUpdate
-        );
+        let is_golden_refresh = self.config.temporal_layers == 1
+            && matches!(
+                self.gf_group.schedule(self.frame_idx).update_type,
+                crate::gop::FrameUpdateType::GfUpdate
+            );
         // Pinned libvpx's post-refresh LAST-only shortcut requires a
         // temporal GOLDEN reference and excludes SVC/ALTREF topology.
         // The picker additionally proves exact Y/U/V storage identity.
@@ -7482,6 +7575,41 @@ mod tests {
         );
     }
 
+    #[test]
+    fn temporal_svc_layer_swaps_preserve_stream_rate_control_counters() {
+        const W: usize = 64;
+        const H: usize = 64;
+        let mut cfg = EncoderConfig::new(W as u32, H as u32);
+        cfg.gop_length = 20;
+        cfg.temporal_layers = 3;
+        cfg.aq_mode = AqMode::Off;
+        cfg.speed = 7;
+        cfg.deadline = Deadline::Realtime;
+        let mut enc = StreamEncoder::new(cfg).expect("StreamEncoder::new");
+
+        for frame_idx in 0..12usize {
+            let y: Vec<u8> = (0..W * H)
+                .map(|i| ((i * 7 + frame_idx * 19) & 0xff) as u8)
+                .collect();
+            let u = vec![96u8.saturating_add(frame_idx as u8); W * H / 4];
+            let v = vec![160u8.saturating_sub(frame_idx as u8); W * H / 4];
+            enc.encode_frame(&yuv_view(&y, &u, &v, W))
+                .expect("encode temporal-SVC frame");
+
+            assert_eq!(enc.frame_idx, (frame_idx + 1) as u32);
+            assert_eq!(enc.rate_control.current_video_frame, enc.frame_idx);
+            assert_eq!(enc.rate_control.frames_since_key, enc.frame_idx);
+        }
+
+        let svc = enc.svc.as_ref().expect("three-layer SVC context");
+        assert!(
+            svc.layer_context
+                .iter()
+                .all(|lc| lc.rc.total_actual_bits > 0),
+            "every temporal layer must retain its own encoded-bit history"
+        );
+    }
+
     /// KILN-00005 — temporal SVC owns the emitted refresh flags, so the
     /// map-entry-1 age must follow the final wire mask rather than the
     /// single-layer GOP schedule. Two-layer tl1 frames refresh map entry 1
@@ -11061,23 +11189,20 @@ mod tests {
     }
 
     #[test]
-    fn stream_encoder_preserves_nondivisible_svc_bitrate_remainder() {
+    fn stream_encoder_uses_cumulative_svc_bitrate_targets() {
         let cfg = EncoderConfig {
             target_bitrate_bps: 101,
             temporal_layers: 2,
             ..baseline_config()
         };
-        let enc = StreamEncoder::new(cfg).expect("small positive per-layer bitrates are valid");
+        let enc = StreamEncoder::new(cfg).expect("small positive cumulative targets are valid");
         let svc = enc.svc.as_ref().expect("temporal_layers > 1 builds SVC");
         let targets: Vec<i32> = svc
             .layer_context
             .iter()
             .map(|lc| lc.target_bandwidth)
             .collect();
-        assert!(
-            targets.iter().all(|&bw| bw > 0) && targets.iter().sum::<i32>() == 101,
-            "expected positive SVC layer targets preserving total bitrate, got {targets:?}",
-        );
+        assert_eq!(targets, [67, 101]);
     }
 
     #[test]

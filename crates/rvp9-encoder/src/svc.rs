@@ -1,11 +1,11 @@
-//! SVC (Scalable Video Coding) layer-context scaffold.
+//! SVC (Scalable Video Coding) layer contexts and temporal patterns.
 //!
 //! Port of libvpx `vp9/encoder/vp9_svc_layercontext.{h,c}`. This is the
-//! **W6.5 + W6.6 scaffold**: data-structure definitions, the per-layer
-//! container, the layer-id → flat-index helper, save/restore plumbing,
-//! and the four temporal-layering pattern setters. The encoder driver
-//! is *not* wired up — `StreamEncoder` does not call into this module
-//! yet; that lands in the integration wave that follows.
+//! **W6.5 + W6.6 implementation**: data-structure definitions, the
+//! per-layer container, cumulative temporal-rate allocation, the layer-id →
+//! flat-index helper, save/restore plumbing, buffer fanout, and the four
+//! temporal-layering pattern setters. `StreamEncoder` drives the fixed
+//! two- and three-layer modes around every frame.
 //!
 //! ## Scope
 //!
@@ -63,9 +63,8 @@
 //!   `aq_cyclic_refresh` does not own swappable buffers yet.
 //! - **Denoiser** (`CONFIG_VP9_TEMPORAL_DENOISING` paths).
 //! - **HBD** (skipped per project policy).
-//! - **`vp9_one_pass_svc_start_layer` / `vp9_svc_start_frame`** — the
-//!   per-frame dispatch wrappers that call the four setters. The
-//!   integration wave will own these.
+//! - **Application-driven `vp9_svc_start_frame` controls** beyond the fixed
+//!   temporal modes. `StreamEncoder` owns the supported one-pass dispatch.
 //!
 //! ## Design choice: per-layer `RateControl`
 //!
@@ -662,6 +661,135 @@ impl Svc {
         }
     }
 
+    /// Allocate one spatial layer with cumulative temporal-layer rates.
+    ///
+    /// Pinned libvpx stores cumulative targets in
+    /// `layer_target_bitrate[]`, derives each layer's cumulative frame
+    /// bandwidth from `target / layer_framerate`, and separately derives
+    /// the incremental size budget for frames introduced by that layer
+    /// (`vp9_update_temporal_layer_framerate`,
+    /// `vp9_svc_layercontext.c:308-334`).
+    ///
+    /// `rate_decimators` must describe strictly increasing cumulative
+    /// frame rates (for example `[2, 1]` or `[4, 2, 1]`).
+    pub fn alloc_temporal_layers(
+        &mut self,
+        stream_rc: &RateControl,
+        cumulative_targets: &[i32],
+        rate_decimators: &[u32],
+    ) {
+        assert!(!cumulative_targets.is_empty(), "need >= 1 temporal layer");
+        assert_eq!(
+            cumulative_targets.len(),
+            rate_decimators.len(),
+            "temporal targets and rate decimators must have equal length"
+        );
+        assert!(
+            cumulative_targets.len() <= MAX_TEMPORAL_LAYERS,
+            "temporal layer count exceeds VPX_TS_MAX_LAYERS"
+        );
+
+        self.number_spatial_layers = 1;
+        self.number_temporal_layers = cumulative_targets.len() as i32;
+        self.layer_context.clear();
+        self.layer_context.reserve_exact(cumulative_targets.len());
+
+        let stream_rc_config = *stream_rc.config();
+        let stream_target = i128::from(stream_rc_config.target_bitrate_bps);
+        let scale_buffer_level = |level: i64, target: i32| -> i64 {
+            let scaled =
+                (i128::from(level) * i128::from(target) + stream_target / 2) / stream_target;
+            i64::try_from(scaled).expect("scaled SVC buffer level must fit in i64")
+        };
+        let mut previous_target = 0i32;
+        let mut previous_framerate = 0.0f64;
+        for (temporal_id, (&target, &decimator)) in
+            cumulative_targets.iter().zip(rate_decimators).enumerate()
+        {
+            assert!(target > 0, "temporal layer targets must be positive");
+            assert!(
+                target >= previous_target,
+                "temporal layer targets must be cumulative and nondecreasing"
+            );
+            assert!(decimator > 0, "temporal rate decimators must be positive");
+
+            let layer_framerate = stream_rc_config.framerate / f64::from(decimator);
+            assert!(
+                layer_framerate > previous_framerate,
+                "temporal layer frame rates must increase with layer id"
+            );
+
+            let mut layer_rc_config = stream_rc_config;
+            layer_rc_config.target_bitrate_bps = target as u32;
+            layer_rc_config.framerate = layer_framerate;
+            let mut layer = LayerContext::new(layer_rc_config, target);
+
+            // Pinned libvpx truncates cumulative target/framerate here.
+            let cumulative_frame_bandwidth =
+                (f64::from(target) / layer_framerate).min(f64::from(i32::MAX)) as u32;
+            layer.rc.avg_frame_bandwidth = cumulative_frame_bandwidth;
+            layer.rc.min_frame_bandwidth = cumulative_frame_bandwidth / 4;
+            layer.rc.max_frame_bandwidth = stream_rc.max_frame_bandwidth;
+            layer.rc.this_frame_target = cumulative_frame_bandwidth;
+            layer.rc.baseline_gf_interval = stream_rc.baseline_gf_interval;
+            layer.rc.starting_buffer_level =
+                scale_buffer_level(stream_rc.starting_buffer_level, target);
+            layer.rc.optimal_buffer_level =
+                scale_buffer_level(stream_rc.optimal_buffer_level, target);
+            layer.rc.maximum_buffer_size =
+                scale_buffer_level(stream_rc.maximum_buffer_size, target);
+            layer.rc.bits_off_target = layer.rc.starting_buffer_level;
+            layer.rc.buffer_level = layer.rc.starting_buffer_level;
+            layer.framerate = layer_framerate;
+            layer.avg_frame_size = if temporal_id == 0 {
+                cumulative_frame_bandwidth as i32
+            } else {
+                (f64::from(target - previous_target) / (layer_framerate - previous_framerate))
+                    .round()
+                    .min(f64::from(i32::MAX)) as i32
+            };
+
+            self.layer_context.push(layer);
+            previous_target = target;
+            previous_framerate = layer_framerate;
+        }
+    }
+
+    /// Credit every higher cumulative temporal-layer buffer before encode.
+    pub fn preencode_higher_temporal_layer_buffers(&mut self) {
+        let first_higher = self.temporal_layer_id.max(0) as usize + 1;
+        for temporal_id in first_higher..self.number_temporal_layers as usize {
+            self.layer_context[temporal_id]
+                .rc
+                .svc_preencode_buffer_update();
+        }
+    }
+
+    /// Debit the encoded frame from every higher cumulative layer buffer.
+    pub fn postencode_higher_temporal_layer_buffers(&mut self, actual_bits: u32) {
+        let first_higher = self.temporal_layer_id.max(0) as usize + 1;
+        for temporal_id in first_higher..self.number_temporal_layers as usize {
+            self.layer_context[temporal_id]
+                .rc
+                .svc_postencode_buffer_debit(actual_bits);
+        }
+    }
+
+    /// Copy the coded keyframe's Q history to every temporal layer.
+    pub fn broadcast_keyframe_q_history(&mut self, last_q: u8, avg_qindex: u8) {
+        for layer in &mut self.layer_context {
+            layer.rc.last_q_keyframe = last_q;
+            layer.rc.avg_frame_qindex_key = avg_qindex;
+        }
+    }
+
+    /// Copy a corrected inter-Q ambient to every temporal layer.
+    pub fn broadcast_inter_q_ambient(&mut self, avg_qindex: u8) {
+        for layer in &mut self.layer_context {
+            layer.rc.avg_frame_qindex_inter = avg_qindex;
+        }
+    }
+
     /// Returns the flat layer index for the current (sl, tl).
     /// Mirrors the libvpx pattern
     /// `cpi->svc.spatial_layer_id * cpi->svc.number_temporal_layers +
@@ -698,9 +826,8 @@ impl Svc {
     // libvpx `vp9_save_layer_context` (`vp9_svc_layercontext.c:391-424`)
     // is the inverse: lc <- cpi.
     //
-    // rvp9 has no `cpi` god-struct yet; encoder integration is later.
-    // The scaffold version below works directly on the `RateControl`
-    // and `target_bandwidth` of the current layer:
+    // rvp9 has no `cpi` god-struct. The stream driver swaps these values
+    // directly around each supported temporal-SVC frame:
     //
     //   - `save_layer_context(into, &rc, target)` stashes the current
     //     stream-level RC into the current layer slot
@@ -1110,6 +1237,123 @@ mod tests {
                 lc.target_bandwidth, targets[i],
                 "layer {i} target_bandwidth mismatch"
             );
+        }
+    }
+
+    #[test]
+    fn temporal_layer_allocation_matches_cumulative_libvpx_budgets() {
+        let rc_cfg = RateControlConfig {
+            target_bitrate_bps: 1_200_000,
+            framerate: 30.0,
+            ..small_rc_config()
+        };
+        let stream_rc = RateControl::new(rc_cfg);
+
+        let mut two = Svc::new();
+        two.alloc_temporal_layers(&stream_rc, &[800_000, 1_200_000], &[2, 1]);
+        assert_eq!(two.number_temporal_layers, 2);
+        assert_eq!(
+            two.layer_context
+                .iter()
+                .map(|lc| lc.target_bandwidth)
+                .collect::<Vec<_>>(),
+            [800_000, 1_200_000]
+        );
+        assert_eq!(
+            two.layer_context
+                .iter()
+                .map(|lc| lc.framerate)
+                .collect::<Vec<_>>(),
+            [15.0, 30.0]
+        );
+        assert_eq!(
+            two.layer_context
+                .iter()
+                .map(|lc| lc.rc.avg_frame_bandwidth)
+                .collect::<Vec<_>>(),
+            [53_333, 40_000]
+        );
+        assert_eq!(
+            two.layer_context
+                .iter()
+                .map(|lc| lc.avg_frame_size)
+                .collect::<Vec<_>>(),
+            [53_333, 26_667]
+        );
+
+        let mut three = Svc::new();
+        three.alloc_temporal_layers(&stream_rc, &[600_000, 900_000, 1_200_000], &[4, 2, 1]);
+        assert_eq!(
+            three
+                .layer_context
+                .iter()
+                .map(|lc| lc.framerate)
+                .collect::<Vec<_>>(),
+            [7.5, 15.0, 30.0]
+        );
+        assert_eq!(
+            three
+                .layer_context
+                .iter()
+                .map(|lc| lc.rc.avg_frame_bandwidth)
+                .collect::<Vec<_>>(),
+            [80_000, 60_000, 40_000]
+        );
+        assert_eq!(
+            three
+                .layer_context
+                .iter()
+                .map(|lc| lc.avg_frame_size)
+                .collect::<Vec<_>>(),
+            [80_000, 40_000, 20_000]
+        );
+        assert_eq!(three.layer_context[0].rc.starting_buffer_level, 2_400_000);
+        assert_eq!(
+            three.layer_context[2].rc.starting_buffer_level,
+            stream_rc.starting_buffer_level
+        );
+    }
+
+    #[test]
+    fn temporal_layer_buffer_fanout_skips_lower_and_active_layers() {
+        let rc_cfg = RateControlConfig {
+            target_bitrate_bps: 1_200_000,
+            framerate: 30.0,
+            ..small_rc_config()
+        };
+        let stream_rc = RateControl::new(rc_cfg);
+        let mut svc = Svc::new();
+        svc.alloc_temporal_layers(&stream_rc, &[600_000, 900_000, 1_200_000], &[4, 2, 1]);
+        svc.temporal_layer_id = 1;
+        for lc in &mut svc.layer_context {
+            lc.rc.bits_off_target = 0;
+            lc.rc.buffer_level = 0;
+        }
+
+        svc.preencode_higher_temporal_layer_buffers();
+        assert_eq!(svc.layer_context[0].rc.bits_off_target, 0);
+        assert_eq!(svc.layer_context[1].rc.bits_off_target, 0);
+        assert_eq!(svc.layer_context[2].rc.bits_off_target, 40_000);
+
+        svc.postencode_higher_temporal_layer_buffers(10_000);
+        assert_eq!(svc.layer_context[0].rc.bits_off_target, 0);
+        assert_eq!(svc.layer_context[1].rc.bits_off_target, 0);
+        assert_eq!(svc.layer_context[2].rc.bits_off_target, 30_000);
+    }
+
+    #[test]
+    fn temporal_layer_q_history_broadcast_reaches_every_layer() {
+        let stream_rc = RateControl::new(small_rc_config());
+        let mut svc = Svc::new();
+        svc.alloc_temporal_layers(&stream_rc, &[100_000, 150_000, 200_000], &[4, 2, 1]);
+
+        svc.broadcast_keyframe_q_history(87, 91);
+        svc.broadcast_inter_q_ambient(143);
+
+        for layer in &svc.layer_context {
+            assert_eq!(layer.rc.last_q_keyframe, 87);
+            assert_eq!(layer.rc.avg_frame_qindex_key, 91);
+            assert_eq!(layer.rc.avg_frame_qindex_inter, 143);
         }
     }
 

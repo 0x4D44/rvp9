@@ -406,14 +406,18 @@ fn adjust_q_cbr(rc: &RateControl, mut q: i32) -> i32 {
 /// libvpx defaults `oxcf->under_shoot_pct = 100`, `oxcf->over_shoot_pct
 /// = 100` (CBR), which we hard-code in v1.
 fn calc_pframe_target_size(rc: &RateControl) -> u32 {
+    calc_pframe_target_size_with_average(rc, rc.avg_frame_bandwidth)
+}
+
+pub(super) fn calc_pframe_target_size_with_average(rc: &RateControl, avg_frame_size: u32) -> u32 {
     const UNDER_SHOOT_PCT: i64 = 100;
     const OVER_SHOOT_PCT: i64 = 100;
 
     let diff: i64 = rc.optimal_buffer_level - rc.buffer_level;
     let one_pct_bits: i64 = 1 + rc.optimal_buffer_level / 100;
 
-    let min_frame_target = (rc.avg_frame_bandwidth >> 4).max(FRAME_OVERHEAD_BITS);
-    let mut target: i64 = i64::from(rc.avg_frame_bandwidth);
+    let min_frame_target = (avg_frame_size >> 4).max(FRAME_OVERHEAD_BITS);
+    let mut target: i64 = i64::from(avg_frame_size);
 
     if diff > 0 {
         // Buffer under-full: shave target.
@@ -767,10 +771,21 @@ pub(super) fn pick_q_and_bounds_with_model(
     frame_kind: FrameKind,
     model: Option<CyclicRefreshRateModel>,
 ) -> (u8, u8, u8) {
+    pick_q_and_bounds_with_model_and_target(rc, frame_kind, model, None)
+}
+
+pub(super) fn pick_q_and_bounds_with_model_and_target(
+    rc: &mut RateControl,
+    frame_kind: FrameKind,
+    model: Option<CyclicRefreshRateModel>,
+    target_override: Option<u32>,
+) -> (u8, u8, u8) {
     // 1. Per-frame target bits.
     let target_bits = match frame_kind {
         FrameKind::Key => calc_iframe_target_size(rc),
-        FrameKind::Inter | FrameKind::Golden => calc_pframe_target_size(rc),
+        FrameKind::Inter | FrameKind::Golden => {
+            target_override.unwrap_or_else(|| calc_pframe_target_size(rc))
+        }
     };
     rc.this_frame_target = target_bits;
 
@@ -1369,6 +1384,21 @@ mod tests {
             "overfull buffer should boost target: \
              overflow={target_overflow}, balanced={target_balanced}",
         );
+    }
+
+    #[test]
+    fn temporal_svc_target_uses_incremental_frame_budget() {
+        let mut rc = RateControl::new(RateControlConfig::default());
+        rc.avg_frame_bandwidth = 40_000;
+        rc.buffer_level = rc.optimal_buffer_level;
+
+        let target = calc_pframe_target_size_with_average(&rc, 20_000);
+        assert_eq!(target, 20_000);
+
+        let _ =
+            pick_q_and_bounds_with_model_and_target(&mut rc, FrameKind::Inter, None, Some(target));
+        assert_eq!(rc.this_frame_target, 20_000);
+        assert_ne!(rc.this_frame_target, rc.avg_frame_bandwidth);
     }
 
     #[test]
