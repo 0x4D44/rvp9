@@ -295,15 +295,15 @@ fn temporal_svc_cumulative_targets(
         .collect()
 }
 
-const CPU7_VBR_EXACT_KEYFRAME_SUB8_QMAX: u8 = 120;
+const VBR_EXACT_KEYFRAME_SUB8_QMAX: u8 = 120;
 
 fn exact_keyframe_sub8_enabled(config: &EncoderConfig, q_index: u8) -> bool {
     if std::env::var_os("RVP9_EXACT_KF_SUB8").is_some_and(|value| value != "0") {
         return true;
     }
 
-    config.speed == 7
-        && q_index <= CPU7_VBR_EXACT_KEYFRAME_SUB8_QMAX
+    (config.speed == 7 || config.temporal_layers == 3 && matches!(config.speed, 6..=8))
+        && q_index <= VBR_EXACT_KEYFRAME_SUB8_QMAX
         && crate::InterEncodeEnv::capture().exact_vbp_tree_enabled(
             config.rc_mode,
             config.speed,
@@ -312,6 +312,14 @@ fn exact_keyframe_sub8_enabled(config: &EncoderConfig, q_index: u8) -> bool {
             false,
         )
         && matches!(config.rc_mode, RcMode::Vbr)
+}
+
+fn source_aligned_cpu8_svc_partitions_enabled(config: &EncoderConfig, has_svc_frame: bool) -> bool {
+    config.temporal_layers == 3
+        && has_svc_frame
+        && matches!(config.rc_mode, RcMode::Vbr)
+        && matches!(config.deadline, Deadline::Realtime)
+        && config.speed == 8
 }
 
 /// Public configuration for the F10.0 streaming encoder.
@@ -3301,6 +3309,8 @@ impl StreamEncoder {
                 .is_some_and(|decision| decision.temporal_layer_id == 0)
             && matches!(self.config.deadline, Deadline::Realtime)
             && self.config.speed.unsigned_abs() >= 7;
+        let source_aligned_cpu8_svc_partitions =
+            source_aligned_cpu8_svc_partitions_enabled(&self.config, self.svc_frame.is_some());
         let partition_ref_y =
             if self.denoiser.is_some() && last_ref_map_idx == crate::buffer_pool::LAST_REF {
                 self.me_ref_y.as_slice()
@@ -3575,6 +3585,7 @@ impl StreamEncoder {
                     allow_duplicate_golden_prune,
                     force_disable_golden_ref,
                     force_nstep_motion_search,
+                    source_aligned_cpu8_svc_partitions,
                     chessboard_index,
                     speed,
                     deadline,
@@ -4550,6 +4561,7 @@ impl StreamEncoder {
             &arf_mv_costs,
             &mut arf_rd_thresh,
             self.frames_since_golden_refresh,
+            false,
             false,
             false,
             false,
@@ -7833,7 +7845,7 @@ mod tests {
     }
 
     #[test]
-    fn exact_keyframe_sub8_product_policy_is_q_scoped_to_cpu7_vbr() {
+    fn exact_keyframe_sub8_product_policy_covers_cpu7_and_three_layer_vbr() {
         let _guard = env_test_mutex();
         let exact_tree_key = "RVP9_EXACT_VBP_TREE";
         let sub8_key = "RVP9_EXACT_KF_SUB8";
@@ -7850,8 +7862,13 @@ mod tests {
 
         config.speed = 6;
         assert!(!exact_keyframe_sub8_enabled(&config, 120));
+        config.temporal_layers = 3;
+        assert!(exact_keyframe_sub8_enabled(&config, 120));
         config.speed = 8;
+        assert!(exact_keyframe_sub8_enabled(&config, 120));
+        config.temporal_layers = 2;
         assert!(!exact_keyframe_sub8_enabled(&config, 120));
+        config.temporal_layers = 3;
         config.speed = 7;
         config.rc_mode = RcMode::Cbr;
         assert!(!exact_keyframe_sub8_enabled(&config, 120));
@@ -7872,6 +7889,25 @@ mod tests {
             std::env::remove_var(exact_tree_key);
             std::env::remove_var(sub8_key);
         }
+    }
+
+    #[test]
+    fn source_aligned_partition_policy_is_cpu8_three_layer_realtime_vbr_only() {
+        let mut config = EncoderConfig::new(1280, 720);
+        config.speed = 8;
+        config.rc_mode = RcMode::Vbr;
+        config.temporal_layers = 3;
+        assert!(source_aligned_cpu8_svc_partitions_enabled(&config, true));
+        assert!(!source_aligned_cpu8_svc_partitions_enabled(&config, false));
+
+        config.temporal_layers = 2;
+        assert!(!source_aligned_cpu8_svc_partitions_enabled(&config, true));
+        config.temporal_layers = 3;
+        config.speed = 7;
+        assert!(!source_aligned_cpu8_svc_partitions_enabled(&config, true));
+        config.speed = 8;
+        config.rc_mode = RcMode::Cbr;
+        assert!(!source_aligned_cpu8_svc_partitions_enabled(&config, true));
     }
 
     #[test]

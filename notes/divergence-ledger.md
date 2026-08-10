@@ -4811,6 +4811,16 @@ wall-time geomean and `0.942605x` child-CPU geomean. Its 1080p curves are
 The exercised old-town stream decodes identically under rvp9-decoder, pinned
 vpxdec, and ffmpeg.
 
+**Temporal-SVC boundary update (2026-08-11):** three-layer realtime VBR now
+admits the same Q<=120 exact sub-8x8 keyframe path at cpu-used 6 and 8. This is
+feature-scoped rather than a reversal of the single-layer CPU8 boundary: the
+focused six-point 720p30 T3 curves move cpu-used 6 TL0/TL1/TL2 from
+`+1.8325%/+0.3760%/-0.1343%` to `-0.4547%/-2.1177%/-2.9243%`, while cpu-used 8
+moves from `+4.4944%/+5.4305%/+3.1999%` to
+`-0.4739%/-0.2892%/-3.1985%`. The relative temporal-SVC speed gate remains
+open; single-layer CPU8 retains the faster keyframe policy and is unchanged
+byte-for-byte.
+
 ### 2026-08-09 — Calibrate exact VBP structure above the coding Q
 
 **Where:** `rvp9_encoder::exact_vbp_partition_qindex` and the exact-tree
@@ -4853,6 +4863,16 @@ geomean and `0.98490x` paired child-CPU geomean across the three clips. The
 
 **Future plan:** retain the resolution-scaled calibration while closing the
 remaining speed gap, then repeat the final quiet-host matrix.
+
+**Temporal-SVC exception (2026-08-11):** CPU8 three-layer realtime VBR bypasses
+the partition-only Q bias and uses the coding Q directly. It also mirrors
+pinned libvpx's speed-8 variance predictor: zero-MV LAST for non-low-resolution,
+non-very-high-SAD blocks, while retaining int-pro only as the later final
+NEWMV-search seed. The ordinary single-layer CPU8 path retains the measured
+partition-Q calibration and prior predictor policy because its quality is green
+and its speed gate is tighter. Combined with the feature-scoped exact keyframe
+path above, the six-point T3 TL0/TL1/TL2 result is
+`-0.4739%/-0.2892%/-3.1985%`.
 
 ### 2026-08-09 — Sample the custom high-frequency frame classifier
 

@@ -1751,7 +1751,11 @@ fn exact_vbp_partition_qindex(
     frame_width: usize,
     frame_height: usize,
     speed: i32,
+    use_source_qindex: bool,
 ) -> u8 {
+    if use_source_qindex {
+        return effective_qindex;
+    }
     // Serialized Unit 987 curves found that the larger CPU6 bias is a Pareto
     // win at 1080p. Unit 1012 likewise recalibrated CPU8 after the shared VBR
     // damping correction changed its live Q trajectory. Keep the separately
@@ -1773,6 +1777,20 @@ fn exact_vbp_partition_qindex(
         PARTITION_QINDEX_BIAS_720P
     };
     effective_qindex.saturating_add(bias)
+}
+
+#[inline]
+fn use_zero_mv_partition_predictor(
+    source_aligned_cpu8_svc_partitions: bool,
+    speed: i32,
+    frame_width: usize,
+    frame_height: usize,
+    content_state: rvp9_core::mode_decision::inter::ContentStateSb,
+) -> bool {
+    source_aligned_cpu8_svc_partitions
+        && speed >= 8
+        && !(frame_width <= 352 && frame_height <= 288)
+        && content_state != rvp9_core::mode_decision::inter::ContentStateSb::VeryHighSad
 }
 
 /// Per-leaf descriptor handed to
@@ -5788,6 +5806,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // ordinary CPU7/8 FAST_DIAMOND search to NSTEP. The stream driver sets
     // this only for TL0; all single-layer and enhancement paths pass false.
     force_nstep_motion_search: bool,
+    // CPU8 three-layer VBR uses pinned libvpx's literal variance-partition
+    // inputs on every temporal layer: coding Q without rvp9's single-layer
+    // calibration and zero-MV LAST prediction on ordinary-resolution blocks.
+    source_aligned_cpu8_svc_partitions: bool,
     // §11 — libvpx `get_chessboard_index(cm->current_video_frame) =
     // current_video_frame & 1` (`vp9_common.h:88-90`). Feeds the
     // `cb_pred_filter_search` chessboard predicate at
@@ -6762,8 +6784,13 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     let segment_id = segment_id_for_hint_cell(&sb_partitions[sb_idx], 0, 0);
                     let effective_qindex =
                         effective_qindex_for_segment(base_qindex, segment_id, seg_q_deltas);
-                    let partition_qindex =
-                        exact_vbp_partition_qindex(effective_qindex, w, h, speed);
+                    let partition_qindex = exact_vbp_partition_qindex(
+                        effective_qindex,
+                        w,
+                        h,
+                        speed,
+                        source_aligned_cpu8_svc_partitions,
+                    );
                     let content_state = content_state_sb_grid
                         .get(sb_idx)
                         .copied()
@@ -6816,13 +6843,39 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         );
                         let mut subpel_limits = MvLimits::default();
                         set_subpel_mv_search_range(&mut subpel_limits, &fullpel_limits, 0, 0);
-                        let partition_mv = Mv {
-                            row: i32::from(int_pro.mv.row)
-                                .clamp(subpel_limits.row_min, subpel_limits.row_max)
-                                as i16,
-                            col: i32::from(int_pro.mv.col)
-                                .clamp(subpel_limits.col_min, subpel_limits.col_max)
-                                as i16,
+                        // Pinned libvpx deliberately skips int-pro partition
+                        // motion at realtime speed 8 for non-low-resolution,
+                        // non-very-high-SAD blocks. Its variance tree therefore
+                        // sees the zero-MV LAST predictor even though the later
+                        // final mode picker can still use int-pro as a NEWMV seed.
+                        let use_zero_mv_partition = use_zero_mv_partition_predictor(
+                            source_aligned_cpu8_svc_partitions,
+                            speed,
+                            w,
+                            h,
+                            content_state,
+                        );
+                        let (partition_mv, last_partition_sad) = if use_zero_mv_partition {
+                            let source_offset = sb_px_y * w + sb_px_x;
+                            let sad = rvp9_core::dsp::get_ref().sad(BlockSize::Block64x64)(
+                                &input_yuv.0[source_offset..],
+                                w,
+                                &last_recon_yuv.0[source_offset..],
+                                w,
+                            );
+                            (Mv::ZERO, sad)
+                        } else {
+                            (
+                                Mv {
+                                    row: i32::from(int_pro.mv.row)
+                                        .clamp(subpel_limits.row_min, subpel_limits.row_max)
+                                        as i16,
+                                    col: i32::from(int_pro.mv.col)
+                                        .clamp(subpel_limits.col_min, subpel_limits.col_max)
+                                        as i16,
+                                },
+                                int_pro.best_sad,
+                            )
                         };
 
                         // cpu7 considers GOLDEN at zero MV and keeps LAST unless
@@ -6832,7 +6885,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         {
                             (golden_recon_yuv.0, Mv::ZERO, sb_golden_sad)
                         } else {
-                            (last_recon_yuv.0, partition_mv, int_pro.best_sad)
+                            (last_recon_yuv.0, partition_mv, last_partition_sad)
                         };
 
                         let mut predictor_block = [0u8; 64 * 64];
@@ -6905,7 +6958,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             variance_low[0] = true;
                             history.update(decision.clone(), segment_id, variance_low);
                             (decision, variance_low)
-                        } else if speed >= 7 && int_pro.best_sad < vbp_threshold_copy {
+                        } else if speed >= 7 && last_partition_sad < vbp_threshold_copy {
                             if let Some(copy) = history.try_copy_selection(copy_conditions) {
                                 (copy.decision, copy.variance_low)
                             } else {
@@ -16609,14 +16662,58 @@ mod tests {
 
     #[test]
     fn exact_vbp_partition_qindex_applies_bias_without_wrapping() {
-        assert_eq!(exact_vbp_partition_qindex(100, 1280, 720, 6), 109);
-        assert_eq!(exact_vbp_partition_qindex(100, 1280, 720, 8), 109);
-        assert_eq!(exact_vbp_partition_qindex(100, 1920, 1080, 6), 154);
-        assert_eq!(exact_vbp_partition_qindex(100, 1920, 1080, 7), 118);
-        assert_eq!(exact_vbp_partition_qindex(100, 1920, 1080, 8), 127);
-        assert_eq!(exact_vbp_partition_qindex(229, 1920, 1080, 8), 255);
-        assert_eq!(exact_vbp_partition_qindex(250, 1280, 720, 6), 255);
-        assert_eq!(exact_vbp_partition_qindex(255, 1920, 1080, 6), 255);
+        assert_eq!(exact_vbp_partition_qindex(100, 1280, 720, 6, false), 109);
+        assert_eq!(exact_vbp_partition_qindex(100, 1280, 720, 8, false), 109);
+        assert_eq!(exact_vbp_partition_qindex(100, 1920, 1080, 6, false), 154);
+        assert_eq!(exact_vbp_partition_qindex(100, 1920, 1080, 7, false), 118);
+        assert_eq!(exact_vbp_partition_qindex(100, 1920, 1080, 8, false), 127);
+        assert_eq!(exact_vbp_partition_qindex(229, 1920, 1080, 8, false), 255);
+        assert_eq!(exact_vbp_partition_qindex(250, 1280, 720, 6, false), 255);
+        assert_eq!(exact_vbp_partition_qindex(255, 1920, 1080, 6, false), 255);
+
+        assert_eq!(exact_vbp_partition_qindex(100, 1280, 720, 8, true), 100);
+        assert_eq!(exact_vbp_partition_qindex(250, 1920, 1080, 8, true), 250);
+    }
+
+    #[test]
+    fn cpu8_three_layer_vbr_uses_libvpx_zero_mv_partition_predictor() {
+        use rvp9_core::mode_decision::inter::ContentStateSb;
+
+        assert!(use_zero_mv_partition_predictor(
+            true,
+            8,
+            1280,
+            720,
+            ContentStateSb::Normal,
+        ));
+        assert!(!use_zero_mv_partition_predictor(
+            false,
+            8,
+            1280,
+            720,
+            ContentStateSb::Normal,
+        ));
+        assert!(!use_zero_mv_partition_predictor(
+            true,
+            7,
+            1280,
+            720,
+            ContentStateSb::Normal,
+        ));
+        assert!(!use_zero_mv_partition_predictor(
+            true,
+            8,
+            352,
+            288,
+            ContentStateSb::Normal,
+        ));
+        assert!(!use_zero_mv_partition_predictor(
+            true,
+            8,
+            1280,
+            720,
+            ContentStateSb::VeryHighSad,
+        ));
     }
 
     /// AQ.1 KEY ORACLE — run the simulator on two equally-shaped 8×8

@@ -5,6 +5,7 @@ Distilled, non-obvious gotchas future sessions need — dated one-liners.
 Durable project facts/conventions belong in `CLAUDE.md` / `AGENTS.md`, not here.
 Hard cap: 20 entries.
 
+- 2026-08-11: A better partition predictor can hurt RD by hiding residual structure; CPU8 VBP intentionally uses zero MV (`lib.rs:use_zero_mv_partition_predictor`).
 - 2026-08-10: CPU7/8 three-layer SVC upgrades TL0 to NSTEP; the generic RT search loses quality (`lib.rs:full_pixel_search_method_for_mode`).
 - 2026-08-10: SVC frame age is stream-global; layer-local bit totals misclassify the first enhancement frame (`vbr.rs:active_worst_quality_vbr_with_factor`).
 - 2026-08-10: Fuse exact-VBP averages, but keep sparse minmax lazy; eager spreads lose (`vbp_neon.rs:avg_diff_8x8_grid_64x64_neon`).
