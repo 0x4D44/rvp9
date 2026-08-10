@@ -466,8 +466,14 @@ fn gop_topology_byte_identity() {
     // the same length and hash. The sibling schedule-and-decode oracle still
     // passes all 40 frames, so the GOP topology invariant remains intact.
     // Prior integrated golden: (len 23186, fnv1a 0xc5a9_eaff_5996_69d2).
-    const GOLDEN_HASH: u64 = 0xcb11_7524_725c_f5ff;
-    const GOLDEN_LEN: usize = 23767;
+    //
+    // Re-captured again (2026-08-10) after ordinary CBR Q-resonance clamping
+    // intentionally changed the per-frame Q sequence. Two independent runs
+    // reproduce these bytes, and the sibling schedule-and-decode oracle still
+    // passes all 40 frames. The exact partition tree remains pinned off in
+    // this fixture, so the hash continues to isolate GOP topology.
+    const GOLDEN_HASH: u64 = 0x124b_0ed7_6b9e_627d;
+    const GOLDEN_LEN: usize = 24229;
 
     let stream = encode_fixed_clip();
     let hash = fnv1a(&stream);
