@@ -24,6 +24,36 @@ Each entry:
 
 ## Entries
 
+### 2026-08-10 — AArch64 large-model variance uses fused four-cell stripes
+**Where:** `rvp9_core::mode_decision::model_rd::compute_variance_8x8_large`
+and `rvp9_core::dsp::aarch64::variance_neon::{var_sum_sse_8x8_grid_neon,
+var_sum_sse_8x8_grid_dotprod}`; libvpx counterpart:
+`vp9/encoder/vp9_pickmode.c::{compute_variance,model_rd_for_sb_y_large}`.
+**What libvpx does:** calls the runtime-dispatched `vpx_get8x8var` kernel once
+for every 8x8 cell, then retains each cell's sum and SSE for its large-block
+transform-skip tests.
+**What rvp9 does:** on AArch64 only, 32x32, 32x64, 64x32, and 64x64 blocks
+reduce four adjacent cells per fixed SIMD stripe. The base-NEON and dot-product
+tiers retain independent per-cell accumulators and finalize cells and totals
+in the original raster order. Other architectures and shapes keep the
+existing dispatched per-cell loop.
+**Why:** the accepted CPU8 CBR profile attributed 677 samples to the repeated
+per-cell grid call, a conservative `1.151%` of process self samples. Fixed
+four-cell stripes remove repeated wrapper and setup work without the register
+spilling caused by an initially rejected eight-cell implementation.
+**Byte-parity impact:** none. The scalar differential covers all four shapes,
+tight/padded/independent strides, constant extrema, checkerboards, and random
+content, comparing all 64 cell slots and both totals. Two 15-pair production-
+PGO comparisons kept all three accepted CPU8 CBR stream hashes byte-identical.
+**Compression-efficiency impact:** none; every exercised stream is unchanged.
+**Speed impact:** repeated production-PGO candidate/control wall geomeans are
+`0.995765x` and `0.996697x`; user-CPU geomeans are `0.993306x` and
+`0.994069x`. The host had one core occupied by `mdss2`, so these qualify the
+exact-output improvement but do not close the direct vpxenc acceptance row.
+**Future plan:** retain while the scalar oracle and product hashes remain
+exact. Rerun the direct CPU8 CBR matrix on the quiet pinned host before
+claiming the final `1.05x` speed exit.
+
 ### 2026-08-03 — Retain quality-bearing nearest and GOLDEN filter searches
 **Where:** `rvp9_core::mode_decision::inter::should_search_interp_filter` and
 `rvp9_encoder::pick_and_simulate_inter_encode_partitions`; libvpx counterpart:

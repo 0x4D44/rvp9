@@ -693,6 +693,62 @@ fn compute_variance_8x8(
     (total_sse, total_sum, sse8x8, sum8x8)
 }
 
+/// Select the AArch64 fused front end for the four large VP9 partition grids.
+///
+/// The fused kernels return the same raster-ordered cell arrays and totals as
+/// [`compute_variance_8x8`]. Other architectures, unsupported shapes, and an
+/// explicitly scalar AArch64 dispatch table retain the existing per-cell path.
+#[cfg(target_arch = "aarch64")]
+#[inline]
+fn compute_variance_8x8_large(
+    reduce: VarianceReduceFn,
+    src: &[u8],
+    src_stride: usize,
+    pred: &[u8],
+    pred_stride: usize,
+    bw: usize,
+    bh: usize,
+) -> (u64, i64, [u32; 64], [i32; 64]) {
+    if matches!((bw, bh), (32, 32) | (32, 64) | (64, 32) | (64, 64)) {
+        let caps = crate::dsp::get_ref().caps;
+        if caps.dotprod {
+            return crate::dsp::aarch64::var_sum_sse_8x8_grid_dotprod(
+                src,
+                src_stride,
+                pred,
+                pred_stride,
+                bw,
+                bh,
+            );
+        }
+        if caps.neon {
+            return crate::dsp::aarch64::var_sum_sse_8x8_grid_neon(
+                src,
+                src_stride,
+                pred,
+                pred_stride,
+                bw,
+                bh,
+            );
+        }
+    }
+    compute_variance_8x8(reduce, src, src_stride, pred, pred_stride, bw, bh)
+}
+
+#[cfg(not(target_arch = "aarch64"))]
+#[inline]
+fn compute_variance_8x8_large(
+    reduce: VarianceReduceFn,
+    src: &[u8],
+    src_stride: usize,
+    pred: &[u8],
+    pred_stride: usize,
+    bw: usize,
+    bh: usize,
+) -> (u64, i64, [u32; 64], [i32; 64]) {
+    compute_variance_8x8(reduce, src, src_stride, pred, pred_stride, bw, bh)
+}
+
 /// Aggregate a grid of sub-block statistics by grouping 2x2 cells.
 ///
 /// For each 2x2 group at `(i, j)` stepping by 2:
@@ -776,7 +832,7 @@ pub fn model_rd_for_sb_y_large(input: ModelRdYInput<'_>) -> ModelRdResult {
     // scalar variance finishers below stay untouched.
     let reduce_8x8 = crate::dsp::get_ref().get_var_sse_8x8();
     let (total_sse, total_sum, sse8x8, sum8x8) =
-        compute_variance_8x8(reduce_8x8, src, src_stride, pred, pred_stride, bw, bh);
+        compute_variance_8x8_large(reduce_8x8, src, src_stride, pred, pred_stride, bw, bh);
 
     // Step 2: whole-block variance from totals.
     let n = (bw * bh) as u64;
@@ -1876,6 +1932,35 @@ mod tests {
         ));
         assert_eq!(result.skip_txfm, SkipTxfm::AcDc);
         assert_eq!(result.rate, 0);
+    }
+
+    #[test]
+    fn large_dc_threshold_boundary_is_inclusive() {
+        // TxModeSelect chooses Tx16x16 for this uniform residual, so each
+        // tested cell has 256 DC-energy units. The libvpx comparison is
+        // inclusive: equality keeps DC coefficients live, while one unit
+        // above the boundary permits the full transform skip.
+        let src = [129u8; 32 * 32];
+        let pred = [128u8; 32 * 32];
+        let evaluate = |dc_thr| {
+            model_rd_for_sb_y_large(y_input!(
+                &src,
+                32,
+                &pred,
+                32,
+                32,
+                32,
+                BlockSize::Block32x32,
+                96,
+                80,
+                dc_thr,
+                1,
+                TxMode::TxModeSelect,
+            ))
+        };
+
+        assert_eq!(evaluate(256).skip_txfm, SkipTxfm::AcOnly);
+        assert_eq!(evaluate(257).skip_txfm, SkipTxfm::AcDc);
     }
 
     // -----------------------------------------------------------------------

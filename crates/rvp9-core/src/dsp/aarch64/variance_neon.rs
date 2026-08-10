@@ -345,6 +345,337 @@ pub fn get_var_sse_8x8_dotprod(
     (sum as i32, sse as u32)
 }
 
+/// Reduce every 8×8 cell in one of the large-block model's supported grids.
+///
+/// The cells are finalized in raster order, matching the old per-cell loop;
+/// the fused front end only shares the row traversal and keeps one accumulator
+/// set per cell column. The returned totals therefore have the same reduction
+/// order and integer values as [`crate::dsp::distortion::get_var_sse_8x8`].
+#[inline]
+#[target_feature(enable = "neon")]
+#[allow(clippy::too_many_arguments)]
+unsafe fn var_sum_sse_8x8_grid_neon_stripe(
+    src: *const u8,
+    src_stride: usize,
+    pred: *const u8,
+    pred_stride: usize,
+    row_base: usize,
+    x_offset: usize,
+    cell_base: usize,
+    sse8x8: &mut [u32; 64],
+    sum8x8: &mut [i32; 64],
+) -> (u64, i64) {
+    let mut total_sse = 0u64;
+    let mut total_sum = 0i64;
+
+    let mut sum0 = vdupq_n_s32(0);
+    let mut sum1 = vdupq_n_s32(0);
+    let mut sum2 = vdupq_n_s32(0);
+    let mut sum3 = vdupq_n_s32(0);
+    let mut sse0_lo = vdupq_n_s32(0);
+    let mut sse1_lo = vdupq_n_s32(0);
+    let mut sse2_lo = vdupq_n_s32(0);
+    let mut sse3_lo = vdupq_n_s32(0);
+    let mut sse0_hi = vdupq_n_s32(0);
+    let mut sse1_hi = vdupq_n_s32(0);
+    let mut sse2_hi = vdupq_n_s32(0);
+    let mut sse3_hi = vdupq_n_s32(0);
+
+    macro_rules! accumulate {
+        ($src_row:ident, $pred_row:ident, $sum:ident, $sse_lo:ident, $sse_hi:ident, $offset:expr) => {{
+            let diff = vreinterpretq_s16_u16(vsubl_u8(
+                vld1_u8($src_row.add(x_offset + $offset)),
+                vld1_u8($pred_row.add(x_offset + $offset)),
+            ));
+            $sum = vpadalq_s16($sum, diff);
+            $sse_lo = vmlal_s16($sse_lo, vget_low_s16(diff), vget_low_s16(diff));
+            $sse_hi = vmlal_s16($sse_hi, vget_high_s16(diff), vget_high_s16(diff));
+        }};
+    }
+
+    for row in 0..8 {
+        let src_row = src.add((row_base + row) * src_stride);
+        let pred_row = pred.add((row_base + row) * pred_stride);
+        accumulate!(src_row, pred_row, sum0, sse0_lo, sse0_hi, 0);
+        accumulate!(src_row, pred_row, sum1, sse1_lo, sse1_hi, 8);
+        accumulate!(src_row, pred_row, sum2, sse2_lo, sse2_hi, 16);
+        accumulate!(src_row, pred_row, sum3, sse3_lo, sse3_hi, 24);
+    }
+
+    macro_rules! finish {
+        ($offset:expr, $sum:ident, $sse_lo:ident, $sse_hi:ident) => {{
+            let cell_sum = i64::from(vaddvq_s32($sum));
+            let cell_sse = vaddvq_u32(vreinterpretq_u32_s32(vaddq_s32($sse_lo, $sse_hi))) as u32;
+            sum8x8[cell_base + $offset] = cell_sum as i32;
+            sse8x8[cell_base + $offset] = cell_sse;
+            total_sum += cell_sum;
+            total_sse += u64::from(cell_sse);
+        }};
+    }
+
+    finish!(0, sum0, sse0_lo, sse0_hi);
+    finish!(1, sum1, sse1_lo, sse1_hi);
+    finish!(2, sum2, sse2_lo, sse2_hi);
+    finish!(3, sum3, sse3_lo, sse3_hi);
+
+    (total_sse, total_sum)
+}
+
+#[inline]
+#[target_feature(enable = "neon")]
+unsafe fn var_sum_sse_8x8_grid_neon_inner(
+    src: *const u8,
+    src_stride: usize,
+    pred: *const u8,
+    pred_stride: usize,
+    width: usize,
+    height: usize,
+) -> (u64, i64, [u32; 64], [i32; 64]) {
+    let nh = height / 8;
+    let nw = width / 8;
+    let mut total_sse = 0u64;
+    let mut total_sum = 0i64;
+    let mut sse8x8 = [0u32; 64];
+    let mut sum8x8 = [0i32; 64];
+
+    for cell_row in 0..nh {
+        let row_base = cell_row * 8;
+        let cell_base = cell_row * nw;
+        let (stripe_sse, stripe_sum) = var_sum_sse_8x8_grid_neon_stripe(
+            src,
+            src_stride,
+            pred,
+            pred_stride,
+            row_base,
+            0,
+            cell_base,
+            &mut sse8x8,
+            &mut sum8x8,
+        );
+        total_sse += stripe_sse;
+        total_sum += stripe_sum;
+        if width == 64 {
+            let (stripe_sse, stripe_sum) = var_sum_sse_8x8_grid_neon_stripe(
+                src,
+                src_stride,
+                pred,
+                pred_stride,
+                row_base,
+                32,
+                cell_base + 4,
+                &mut sse8x8,
+                &mut sum8x8,
+            );
+            total_sse += stripe_sse;
+            total_sum += stripe_sum;
+        }
+    }
+
+    (total_sse, total_sum, sse8x8, sum8x8)
+}
+
+/// Reduce a 32×32, 32×64, 64×32, or 64×64 grid of 8×8 cells with NEON.
+///
+/// Shapes outside this small set are rejected because the large-block model
+/// only routes its four exact VP9 partition grids through this entry point.
+#[must_use]
+pub fn var_sum_sse_8x8_grid_neon(
+    src: &[u8],
+    src_stride: usize,
+    pred: &[u8],
+    pred_stride: usize,
+    width: usize,
+    height: usize,
+) -> (u64, i64, [u32; 64], [i32; 64]) {
+    assert!(matches!(
+        (width, height),
+        (32, 32) | (32, 64) | (64, 32) | (64, 64)
+    ));
+    assert!(src_stride >= width);
+    assert!(pred_stride >= width);
+    assert!(src.len() >= (height - 1) * src_stride + width);
+    assert!(pred.len() >= (height - 1) * pred_stride + width);
+
+    // SAFETY: AArch64 dispatch installs this wrapper only when NEON is
+    // available. The assertions prove every 8-byte load in both footprints;
+    // the immutable slices remain live for the whole inner call.
+    unsafe {
+        var_sum_sse_8x8_grid_neon_inner(
+            src.as_ptr(),
+            src_stride,
+            pred.as_ptr(),
+            pred_stride,
+            width,
+            height,
+        )
+    }
+}
+
+#[inline]
+#[target_feature(enable = "dotprod")]
+#[allow(clippy::too_many_arguments)]
+unsafe fn var_sum_sse_8x8_grid_dotprod_stripe(
+    src: *const u8,
+    src_stride: usize,
+    pred: *const u8,
+    pred_stride: usize,
+    row_base: usize,
+    x_offset: usize,
+    cell_base: usize,
+    sse8x8: &mut [u32; 64],
+    sum8x8: &mut [i32; 64],
+) -> (u64, i64) {
+    let mut total_sse = 0u64;
+    let mut total_sum = 0i64;
+    let ones = vdupq_n_u8(1);
+
+    let mut src_sum0 = vdupq_n_u32(0);
+    let mut src_sum1 = vdupq_n_u32(0);
+    let mut src_sum2 = vdupq_n_u32(0);
+    let mut src_sum3 = vdupq_n_u32(0);
+    let mut pred_sum0 = vdupq_n_u32(0);
+    let mut pred_sum1 = vdupq_n_u32(0);
+    let mut pred_sum2 = vdupq_n_u32(0);
+    let mut pred_sum3 = vdupq_n_u32(0);
+    let mut sse0 = vdupq_n_u32(0);
+    let mut sse1 = vdupq_n_u32(0);
+    let mut sse2 = vdupq_n_u32(0);
+    let mut sse3 = vdupq_n_u32(0);
+
+    macro_rules! accumulate {
+        ($src_row:ident, $pred_row:ident, $src_sum:ident, $pred_sum:ident, $sse:ident, $offset:expr) => {{
+            let src_bytes = vcombine_u8(
+                vld1_u8($src_row.add(x_offset + $offset)),
+                vld1_u8($src_row.add(src_stride + x_offset + $offset)),
+            );
+            let pred_bytes = vcombine_u8(
+                vld1_u8($pred_row.add(x_offset + $offset)),
+                vld1_u8($pred_row.add(pred_stride + x_offset + $offset)),
+            );
+            let diff = vabdq_u8(src_bytes, pred_bytes);
+            $sse = unsigned_dot($sse, diff, diff);
+            $src_sum = unsigned_dot($src_sum, src_bytes, ones);
+            $pred_sum = unsigned_dot($pred_sum, pred_bytes, ones);
+        }};
+    }
+
+    for row in (0..8).step_by(2) {
+        let src_row = src.add((row_base + row) * src_stride);
+        let pred_row = pred.add((row_base + row) * pred_stride);
+        accumulate!(src_row, pred_row, src_sum0, pred_sum0, sse0, 0);
+        accumulate!(src_row, pred_row, src_sum1, pred_sum1, sse1, 8);
+        accumulate!(src_row, pred_row, src_sum2, pred_sum2, sse2, 16);
+        accumulate!(src_row, pred_row, src_sum3, pred_sum3, sse3, 24);
+    }
+
+    macro_rules! finish {
+        ($offset:expr, $src_sum:ident, $pred_sum:ident, $sse:ident) => {{
+            let cell_sum = i64::from(vaddvq_s32(vreinterpretq_s32_u32(vsubq_u32(
+                $src_sum, $pred_sum,
+            ))));
+            let cell_sse = vaddvq_u32($sse);
+            sum8x8[cell_base + $offset] = cell_sum as i32;
+            sse8x8[cell_base + $offset] = cell_sse;
+            total_sum += cell_sum;
+            total_sse += u64::from(cell_sse);
+        }};
+    }
+
+    finish!(0, src_sum0, pred_sum0, sse0);
+    finish!(1, src_sum1, pred_sum1, sse1);
+    finish!(2, src_sum2, pred_sum2, sse2);
+    finish!(3, src_sum3, pred_sum3, sse3);
+
+    (total_sse, total_sum)
+}
+
+#[inline]
+#[target_feature(enable = "dotprod")]
+unsafe fn var_sum_sse_8x8_grid_dotprod_inner(
+    src: *const u8,
+    src_stride: usize,
+    pred: *const u8,
+    pred_stride: usize,
+    width: usize,
+    height: usize,
+) -> (u64, i64, [u32; 64], [i32; 64]) {
+    let nh = height / 8;
+    let nw = width / 8;
+    let mut total_sse = 0u64;
+    let mut total_sum = 0i64;
+    let mut sse8x8 = [0u32; 64];
+    let mut sum8x8 = [0i32; 64];
+
+    for cell_row in 0..nh {
+        let row_base = cell_row * 8;
+        let cell_base = cell_row * nw;
+        let (stripe_sse, stripe_sum) = var_sum_sse_8x8_grid_dotprod_stripe(
+            src,
+            src_stride,
+            pred,
+            pred_stride,
+            row_base,
+            0,
+            cell_base,
+            &mut sse8x8,
+            &mut sum8x8,
+        );
+        total_sse += stripe_sse;
+        total_sum += stripe_sum;
+        if width == 64 {
+            let (stripe_sse, stripe_sum) = var_sum_sse_8x8_grid_dotprod_stripe(
+                src,
+                src_stride,
+                pred,
+                pred_stride,
+                row_base,
+                32,
+                cell_base + 4,
+                &mut sse8x8,
+                &mut sum8x8,
+            );
+            total_sse += stripe_sse;
+            total_sum += stripe_sum;
+        }
+    }
+
+    (total_sse, total_sum, sse8x8, sum8x8)
+}
+
+/// Reduce a 32×32, 32×64, 64×32, or 64×64 grid of 8×8 cells with dotprod.
+#[must_use]
+pub fn var_sum_sse_8x8_grid_dotprod(
+    src: &[u8],
+    src_stride: usize,
+    pred: &[u8],
+    pred_stride: usize,
+    width: usize,
+    height: usize,
+) -> (u64, i64, [u32; 64], [i32; 64]) {
+    assert!(matches!(
+        (width, height),
+        (32, 32) | (32, 64) | (64, 32) | (64, 64)
+    ));
+    assert!(src_stride >= width);
+    assert!(pred_stride >= width);
+    assert!(src.len() >= (height - 1) * src_stride + width);
+    assert!(pred.len() >= (height - 1) * pred_stride + width);
+
+    // SAFETY: AArch64 dispatch installs this wrapper only when dotprod is
+    // available. The assertions prove every 8-byte load in both footprints;
+    // the target-feature inner call uses no memory beyond those footprints.
+    unsafe {
+        var_sum_sse_8x8_grid_dotprod_inner(
+            src.as_ptr(),
+            src_stride,
+            pred.as_ptr(),
+            pred_stride,
+            width,
+            height,
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -405,6 +736,132 @@ mod tests {
         fn byte(&mut self) -> u8 {
             self.0 = self.0.wrapping_mul(1_103_515_245).wrapping_add(12_345);
             (self.0 >> 16) as u8
+        }
+    }
+
+    fn scalar_grid(
+        src: &[u8],
+        src_stride: usize,
+        pred: &[u8],
+        pred_stride: usize,
+        width: usize,
+        height: usize,
+    ) -> (u64, i64, [u32; 64], [i32; 64]) {
+        let nw = width / 8;
+        let nh = height / 8;
+        let mut total_sse = 0u64;
+        let mut total_sum = 0i64;
+        let mut sse8x8 = [0u32; 64];
+        let mut sum8x8 = [0i32; 64];
+        for cell_row in 0..nh {
+            for cell_col in 0..nw {
+                let k = cell_row * nw + cell_col;
+                let (sum, sse) = distortion::get_var_sse_8x8(
+                    &src[cell_row * 8 * src_stride + cell_col * 8..],
+                    src_stride,
+                    &pred[cell_row * 8 * pred_stride + cell_col * 8..],
+                    pred_stride,
+                );
+                sse8x8[k] = sse;
+                sum8x8[k] = sum;
+                total_sse += u64::from(sse);
+                total_sum += i64::from(sum);
+            }
+        }
+        (total_sse, total_sum, sse8x8, sum8x8)
+    }
+
+    fn grid_inputs(
+        width: usize,
+        height: usize,
+        src_stride: usize,
+        pred_stride: usize,
+    ) -> (Vec<u8>, Vec<u8>) {
+        (
+            (0..(height - 1) * src_stride + width)
+                .map(|index| (index as u32).wrapping_mul(37) as u8)
+                .collect(),
+            (0..(height - 1) * pred_stride + width)
+                .map(|index| (index as u32).wrapping_mul(61).wrapping_add(19) as u8)
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn fused_neon_grid_matches_scalar_for_all_large_shapes_and_content() {
+        for &(width, height) in &[(32, 32), (32, 64), (64, 32), (64, 64)] {
+            for &(src_stride, pred_stride) in &[
+                (width, width),
+                (width + 1, width + 13),
+                (width + 17, width + 5),
+            ] {
+                let (mut src, mut pred) = grid_inputs(width, height, src_stride, pred_stride);
+                for &(src_value, pred_value) in &[(0, 0), (0, 255), (255, 0), (255, 255)] {
+                    src.fill(src_value);
+                    pred.fill(pred_value);
+                    assert_eq!(
+                        var_sum_sse_8x8_grid_neon(
+                            &src,
+                            src_stride,
+                            &pred,
+                            pred_stride,
+                            width,
+                            height,
+                        ),
+                        scalar_grid(&src, src_stride, &pred, pred_stride, width, height),
+                        "constant mismatch at {width}x{height}, strides {src_stride}/{pred_stride}",
+                    );
+                }
+
+                for row in 0..height {
+                    for col in 0..width {
+                        src[row * src_stride + col] = if (row + col) & 1 == 0 { 255 } else { 0 };
+                        pred[row * pred_stride + col] = 127;
+                    }
+                }
+                assert_eq!(
+                    var_sum_sse_8x8_grid_neon(&src, src_stride, &pred, pred_stride, width, height,),
+                    scalar_grid(&src, src_stride, &pred, pred_stride, width, height),
+                    "checkerboard mismatch at {width}x{height}, strides {src_stride}/{pred_stride}",
+                );
+
+                let mut rng = Lcg32(0xA8C0_8EED ^ width as u32 ^ (height as u32) << 8);
+                for _ in 0..32 {
+                    for byte in &mut src {
+                        *byte = rng.byte();
+                    }
+                    for byte in &mut pred {
+                        *byte = rng.byte();
+                    }
+                    assert_eq!(
+                        var_sum_sse_8x8_grid_neon(
+                            &src,
+                            src_stride,
+                            &pred,
+                            pred_stride,
+                            width,
+                            height,
+                        ),
+                        scalar_grid(&src, src_stride, &pred, pred_stride, width, height),
+                        "random mismatch at {width}x{height}, strides {src_stride}/{pred_stride}",
+                    );
+
+                    if std::arch::is_aarch64_feature_detected!("dotprod") {
+                        assert_eq!(
+                            var_sum_sse_8x8_grid_dotprod(
+                                &src,
+                                src_stride,
+                                &pred,
+                                pred_stride,
+                                width,
+                                height,
+                            ),
+                            scalar_grid(&src, src_stride, &pred, pred_stride, width, height),
+                            "dotprod random mismatch at {width}x{height}, strides {src_stride}/{pred_stride}",
+                        );
+                    }
+                }
+            }
         }
     }
 

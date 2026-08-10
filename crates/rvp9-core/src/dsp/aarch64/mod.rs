@@ -71,7 +71,8 @@ pub use subtract_neon::{subtract_square_neon, subtract_square_neon_with_nonzero}
 pub use variance_neon::{
     get_var_sse_8x8_dotprod, get_var_sse_8x8_neon, var_sum_sse_4x4_dotprod,
     var_sum_sse_4x8_dotprod, var_sum_sse_8x4_dotprod, var_sum_sse_8x4_neon,
-    var_sum_sse_8x8_dotprod, var_sum_sse_8x8_neon, var_sum_sse_8x16_dotprod, var_sum_sse_8x16_neon,
+    var_sum_sse_8x8_dotprod, var_sum_sse_8x8_grid_dotprod, var_sum_sse_8x8_grid_neon,
+    var_sum_sse_8x8_neon, var_sum_sse_8x16_dotprod, var_sum_sse_8x16_neon,
     var_sum_sse_16x8_dotprod, var_sum_sse_16x8_neon, var_sum_sse_16x16_dotprod,
     var_sum_sse_16x16_neon, var_sum_sse_16x32_dotprod, var_sum_sse_16x32_neon,
     var_sum_sse_32x16_dotprod, var_sum_sse_32x16_neon, var_sum_sse_32x32_dotprod,
