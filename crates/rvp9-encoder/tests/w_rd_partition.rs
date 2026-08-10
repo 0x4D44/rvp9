@@ -253,14 +253,16 @@ fn a4_rd_partition_shape_is_rd_chosen_and_decodes() {
     let framerate = 30.0;
     let frames = synthetic_clip();
 
-    // ---- descent ON (the A4 default) ----------------------------------
+    // ---- descent ON ----------------------------------------------------
     // SAFETY: this test runs in its own process (separate test binary);
-    // no parallel test mutates these env vars. We clear both knobs so
-    // the encoder takes the default (descent ON).
+    // no parallel test mutates these env vars. Disable the newer exact
+    // variance tree so this focused legacy-A4 oracle reaches the recursive
+    // descent that it is designed to compare.
     unsafe {
         std::env::remove_var("RVP9_A4_RD_PARTITION_DISABLE");
         std::env::remove_var("RVP9_F3_NONRD_PARTITION_ENABLE");
         std::env::remove_var("RVP9_A4_RECT_DISABLE");
+        std::env::set_var("RVP9_EXACT_VBP_TREE", "0");
     }
     let (on_packets, on_reshaped) = encode(&frames, framerate);
 
@@ -274,6 +276,7 @@ fn a4_rd_partition_shape_is_rd_chosen_and_decodes() {
     // SAFETY: see the setup block above; this restores the process env knob.
     unsafe {
         std::env::remove_var("RVP9_A4_RD_PARTITION_DISABLE");
+        std::env::remove_var("RVP9_EXACT_VBP_TREE");
     }
 
     eprintln!("descent ON  : reshaped {on_reshaped} SBs");
