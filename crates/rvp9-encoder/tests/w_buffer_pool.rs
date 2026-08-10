@@ -368,8 +368,14 @@ fn a10_byte_identity_pre_vs_post_refactor() {
     // stack through denoiser direct-count retention. Two independent runs
     // reproduce these bytes, and the sibling decoder oracle still accepts all
     // 12 frames.
-    const GOLDEN_HASH: u64 = 0xcf76_dc3b_0361_b77e;
-    const GOLDEN_LEN: usize = 7136;
+    //
+    // Re-captured again (2026-08-10) after ordinary CBR Q-resonance clamping
+    // changed the intended per-frame Q sequence. Two independent runs
+    // reproduce these bytes, while the sibling reference-pool decode oracle
+    // remains green. The partition policy stays pinned above, so this golden
+    // still isolates the pool implementation from later partition changes.
+    const GOLDEN_HASH: u64 = 0x3d6d_2810_a35c_d36d;
+    const GOLDEN_LEN: usize = 7078;
 
     let stream = encode_fixed_clip();
     let hash = fnv1a(&stream);
