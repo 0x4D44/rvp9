@@ -25,11 +25,30 @@ use super::{CyclicRefreshRateModel, FrameKind, RateControl, RcMode};
 /// clamp to [MIN_BPB_FACTOR, MAX_BPB_FACTOR]
 /// ```
 ///
-/// The libvpx oscillation-detector (`q_1_frame` / `q_2_frame` /
-/// `rc_1_frame` / `rc_2_frame` lines 781-795) is NOT ported — those
-/// fields feed the GF-overshoot rescue path
-/// (`vp9_encodedframe_overshoot`) which is out of scope per the
-/// divergence ledger. The damped update itself doesn't read them.
+/// For CBR, the libvpx oscillation history (`q_1_frame` / `q_2_frame` /
+/// `rc_1_frame` / `rc_2_frame`, lines 781-795) is updated here and consumed
+/// by `cbr::adjust_q_cbr` to clamp resonating Q picks. The aggressive
+/// GF-overshoot rescue path (`vp9_encodedframe_overshoot`) remains out of
+/// scope; one-pass VBR does not use the CBR resonance history.
+fn update_cbr_resonance_history(rc: &mut RateControl, correction_pct: i64) {
+    rc.q_2_frame = rc.q_1_frame;
+    rc.q_1_frame = rc.last_picked_qindex;
+    rc.rc_2_frame = rc.rc_1_frame;
+    rc.rc_1_frame = if correction_pct > 110 {
+        -1
+    } else if correction_pct < 90 {
+        1
+    } else {
+        0
+    };
+
+    // A massive overshoot immediately after an undershoot should not look
+    // like a normal alternation to adjust_q_cbr.
+    if rc.rc_1_frame == -1 && rc.rc_2_frame == 1 && correction_pct > 1000 {
+        rc.rc_2_frame = 0;
+    }
+}
+
 fn update_rate_correction_factors(
     rc: &mut RateControl,
     actual_bits: u32,
@@ -54,18 +73,33 @@ fn update_rate_correction_factors(
         model,
     );
 
-    // 3. Compute the integer correction-factor percentage. libvpx
-    //    short-circuits when projected ≤ FRAME_OVERHEAD_BITS by
-    //    leaving `correction_factor = 100` (no adjustment); we mirror
-    //    that by skipping the update entirely.
-    if projected <= i64::from(cbr::FRAME_OVERHEAD_BITS) {
-        return;
+    // 3. Compute the integer correction-factor percentage. libvpx uses a
+    //    neutral 100% sample when the estimate is only frame overhead; CBR
+    //    still consumes that sample for its resonance history.
+    let projected_above_overhead = projected > i64::from(cbr::FRAME_OVERHEAD_BITS);
+    let correction_pct: i64 = if projected_above_overhead {
+        (100_i64 * i64::from(actual_bits)) / projected
+    } else {
+        100
+    };
+
+    // The Q-resonance history is a CBR-only input to the regulator. Keep
+    // VBR and the other non-CBR paths unchanged, including their former
+    // no-op overhead-only correction update.
+    if matches!(rc.config().rc_mode, RcMode::Cbr) {
+        update_cbr_resonance_history(rc, correction_pct);
     }
-    let correction_pct: i64 = (100_i64 * i64::from(actual_bits)) / projected;
 
     // 4. Damping. First frame at this rate-factor level: full
     //    correction. Subsequent: damp by the log-magnitude of the
     //    miss (libvpx `vp9_ratectrl.c:770-779`).
+    // For non-CBR modes, preserve the previous early-return behaviour when
+    // the estimate contains only frame overhead. CBR must continue so the
+    // neutral history sample reaches the damped update below.
+    if !projected_above_overhead && !matches!(rc.config().rc_mode, RcMode::Cbr) {
+        return;
+    }
+
     let level = RateFactorLevel::for_frame(frame_kind);
     // In pinned libvpx one-pass VBR, `get_rate_correction_factor()` still
     // selects independent KF / inter / GF factor values. The damping gate is
@@ -233,6 +267,7 @@ mod tests {
     use super::super::cbr::RateFactorLevel;
     use super::super::config::RateControlConfig;
     use super::super::{FrameKind, RateControl, RcMode};
+    use super::{update_cbr_resonance_history, update_rate_correction_factors};
 
     fn fresh_rc() -> RateControl {
         let mut rc = RateControl::new(RateControlConfig::default());
@@ -401,6 +436,65 @@ mod tests {
 
         assert!(rc.damped_adjustment[RateFactorLevel::KfStd.as_index()]);
         assert!(!rc.damped_adjustment[RateFactorLevel::InterNormal.as_index()]);
+    }
+
+    #[test]
+    fn cbr_resonance_history_shifts_and_classifies_corrections() {
+        let mut rc = RateControl::new(RateControlConfig::default());
+        rc.q_1_frame = 11;
+        rc.q_2_frame = 7;
+        rc.rc_1_frame = 1;
+        rc.rc_2_frame = -1;
+        rc.last_picked_qindex = 33;
+
+        update_cbr_resonance_history(&mut rc, 111);
+        assert_eq!((rc.q_2_frame, rc.q_1_frame), (11, 33));
+        assert_eq!((rc.rc_2_frame, rc.rc_1_frame), (1, -1));
+
+        rc.last_picked_qindex = 44;
+        update_cbr_resonance_history(&mut rc, 89);
+        assert_eq!((rc.q_2_frame, rc.q_1_frame), (33, 44));
+        assert_eq!((rc.rc_2_frame, rc.rc_1_frame), (-1, 1));
+
+        rc.last_picked_qindex = 55;
+        update_cbr_resonance_history(&mut rc, 100);
+        assert_eq!((rc.q_2_frame, rc.q_1_frame), (44, 55));
+        assert_eq!((rc.rc_2_frame, rc.rc_1_frame), (1, 0));
+    }
+
+    #[test]
+    fn cbr_resonance_history_resets_massive_overshoot_alternation() {
+        let mut rc = RateControl::new(RateControlConfig::default());
+        rc.q_1_frame = 80;
+        rc.q_2_frame = 40;
+        rc.rc_1_frame = 1;
+        rc.rc_2_frame = 0;
+        rc.last_picked_qindex = 100;
+
+        update_cbr_resonance_history(&mut rc, 1001);
+
+        assert_eq!(rc.rc_1_frame, -1);
+        assert_eq!(rc.rc_2_frame, 0);
+    }
+
+    #[test]
+    fn cbr_overhead_projection_advances_neutral_resonance_history() {
+        let config = RateControlConfig {
+            frame_width: 16,
+            frame_height: 16,
+            ..RateControlConfig::default()
+        };
+        let mut rc = RateControl::new(config);
+        rc.q_1_frame = 41;
+        rc.q_2_frame = 17;
+        rc.rc_1_frame = -1;
+        rc.rc_2_frame = 1;
+        rc.last_picked_qindex = 255;
+
+        update_rate_correction_factors(&mut rc, u32::MAX, FrameKind::Inter, None);
+
+        assert_eq!((rc.q_2_frame, rc.q_1_frame), (41, 255));
+        assert_eq!((rc.rc_2_frame, rc.rc_1_frame), (-1, 0));
     }
 
     // Closed-loop convergence oracle (RC.1).

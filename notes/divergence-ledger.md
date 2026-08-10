@@ -1937,11 +1937,19 @@ into the discrimination range.
   1 Mbps  @ 360p: actual=35477 b/f  target=33333 b/f +6.4%
   4 Mbps  @ 720p: actual=141819 b/f target=133333 b/f +6.4%
   ```
-**Intentionally NOT ported:** the libvpx oscillation-detector
-fields (`q_1_frame` / `q_2_frame` / `rc_1_frame` / `rc_2_frame`,
-`vp9_ratectrl.c:781-795`) and the `vp9_encodedframe_overshoot`
-9-step state mutation. Those feed the GF-overshoot rescue path,
-which the F9.0 / RC scope explicitly excludes.
+**Resolution update (2026-08-10):** the earlier rationale incorrectly
+treated the oscillation history as exclusive to the aggressive GF-overshoot
+rescue. Pinned libvpx also consumes it directly from `adjust_q_cbr` on every
+ordinary CBR regulator result (`vp9_ratectrl.c:666-686, 781-795, 819-862`).
+Rvp9 now retains the two preceding Q indices and correction classes, including
+the 90/110 deadband and >1000 massive-overshoot reset, and applies the same
+resonance clamp. This removes measured 114/190 Q alternation on representative
+1080p CBR content. `vp9_encodedframe_overshoot` remains intentionally
+unported. Rvp9 also lacks libvpx's `reset_high_source_sad` and GF-CBR-boost
+states, so the scoped default-content, normal-inter path applies the clamp
+whenever the two correction classes alternate. The libvpx screen-content
+cyclic-refresh Q limiter is outside the declared `tune-content=default`
+matrix and remains separate from this helper.
 **Byte-parity impact:** structural still — once the controller
 walks its per-level factor to a content-dependent equilibrium,
 the per-frame Q-index decisions diverge from any encoder driven

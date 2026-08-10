@@ -7,7 +7,7 @@
 use rvp9_core::bitstream::BitDepth;
 use rvp9_core::quant::ac_quant;
 
-use super::{CyclicRefreshRateModel, FrameKind, RateControl, config::MAX_KF_BOOST};
+use super::{CyclicRefreshRateModel, FrameKind, RateControl, RcMode, config::MAX_KF_BOOST};
 
 /// `BPER_MB_NORMBITS` — libvpx `vp9_ratectrl.h:28`. The bits-per-MB
 /// estimate is multiplied by 512 (= `1 << 9`); the per-frame total
@@ -361,6 +361,29 @@ pub(super) fn regulate_q_with_model(
     // Fell through — even at active_worst we exceed target. Cap at
     // worst.
     active_worst
+}
+
+/// Apply libvpx's CBR Q-resonance clamp (adjust_q_cbr,
+/// vp9_ratectrl.c:666-686) to a regulator result.
+///
+/// Alternating correction classes indicate that the rate loop is resonating.
+/// In that case, keep the next Q between the two preceding Q values. When
+/// the most recent frame overshot and the candidate wants to move above that
+/// interval, halve the move toward its upper edge for a faster reaction.
+/// The helper's final clamp is against the global controller bounds, just as
+/// libvpx's helper is; callers must not re-clamp to active per-frame bounds.
+fn adjust_q_cbr(rc: &RateControl, mut q: i32) -> i32 {
+    if i32::from(rc.rc_1_frame) * i32::from(rc.rc_2_frame) == -1 && rc.q_1_frame != rc.q_2_frame {
+        let q_low = i32::from(rc.q_1_frame.min(rc.q_2_frame));
+        let q_high = i32::from(rc.q_1_frame.max(rc.q_2_frame));
+        let qclamp = q.clamp(q_low, q_high);
+        if rc.rc_1_frame == -1 && q > qclamp {
+            q = (q + qclamp) >> 1;
+        } else {
+            q = qclamp;
+        }
+    }
+    q.clamp(rc.best_quality, rc.worst_quality)
 }
 
 /// Compute per-frame target bits for an inter (P) frame in 1-pass CBR.
@@ -979,7 +1002,11 @@ pub(super) fn pick_q_and_bounds_with_model(
         rc.mbs,
         RateEstimateModel::new(correction_factor, multiplier, model),
     );
-    let q = q.clamp(active_best, active_worst);
+    let q = if rc.config().rc_mode == RcMode::Cbr {
+        adjust_q_cbr(rc, q)
+    } else {
+        q.clamp(active_best, active_worst)
+    };
 
     // Persist bounds + the picked Q so postencode can re-apply the
     // damped update formula at the same rate-factor level.
@@ -1051,6 +1078,55 @@ mod tests {
             (1.9..=2.1).contains(&ratio),
             "expected ~2x scaling: one={one}, two={two}, ratio={ratio}"
         );
+    }
+
+    #[test]
+    fn adjust_q_cbr_clamps_below_the_recent_q_interval() {
+        let mut rc = RateControl::new(RateControlConfig::default());
+        rc.q_1_frame = 100;
+        rc.q_2_frame = 80;
+        rc.rc_1_frame = 1;
+        rc.rc_2_frame = -1;
+
+        assert_eq!(adjust_q_cbr(&rc, 50), 80);
+    }
+
+    #[test]
+    fn adjust_q_cbr_uses_faster_overshoot_reaction_above_interval() {
+        let mut rc = RateControl::new(RateControlConfig::default());
+        rc.q_1_frame = 100;
+        rc.q_2_frame = 80;
+        rc.rc_1_frame = -1;
+        rc.rc_2_frame = 1;
+
+        assert_eq!(adjust_q_cbr(&rc, 140), 120);
+    }
+
+    #[test]
+    fn adjust_q_cbr_ignores_neutral_or_non_alternating_history() {
+        let mut rc = RateControl::new(RateControlConfig::default());
+        rc.q_1_frame = 100;
+        rc.q_2_frame = 80;
+
+        rc.rc_1_frame = 0;
+        rc.rc_2_frame = 1;
+        assert_eq!(adjust_q_cbr(&rc, 140), 140);
+
+        rc.rc_1_frame = 1;
+        rc.rc_2_frame = 1;
+        assert_eq!(adjust_q_cbr(&rc, 140), 140);
+
+        rc.rc_1_frame = -1;
+        rc.rc_2_frame = 1;
+        rc.q_2_frame = rc.q_1_frame;
+        assert_eq!(adjust_q_cbr(&rc, 140), 140);
+    }
+
+    #[test]
+    fn adjust_q_cbr_finishes_with_global_quality_bounds() {
+        let rc = RateControl::new(RateControlConfig::default());
+        assert_eq!(adjust_q_cbr(&rc, -1), rc.best_quality);
+        assert_eq!(adjust_q_cbr(&rc, 300), rc.worst_quality);
     }
 
     #[test]

@@ -35,11 +35,12 @@
 //!   (`0.25 + 0.5 * min(1, |log10(0.01 * cf)|)`). The closed-loop
 //!   convergence oracle in `postencode::tests` gates
 //!   `|actual - target| / target ≤ 20 %` across 250 kbps / 1 Mbps /
-//!   4 Mbps targets. The libvpx oscillation-detector fields
+//!   4 Mbps targets. The CBR oscillation-detector fields
 //!   (`q_1_frame` / `q_2_frame` / `rc_1_frame` / `rc_2_frame`,
-//!   `vp9_ratectrl.c:781-795`) are intentionally not ported — they
-//!   feed the GF-overshoot rescue path (`vp9_encodedframe_overshoot`)
-//!   which is out of scope.
+//!   `vp9_ratectrl.c:781-795`) are now ported: postencode classifies the
+//!   last two rate errors and `cbr::adjust_q_cbr` clamps resonating Q picks
+//!   (`vp9_ratectrl.c:666-686, 819-862`). One-pass VBR does not consume this
+//!   CBR-only history.
 //! - **Frame drop / decimation.** `vp9_rc_drop_frame` (`vp9_ratectrl.c:
 //!   554-665`) and the `drop_count` / `decimation_*` machinery are
 //!   stubbed (`drop_count` field carried for ABI shape only).

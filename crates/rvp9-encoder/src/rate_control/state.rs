@@ -86,6 +86,30 @@ pub struct RateControl {
     /// needs the picked Q to compute `projected_size_based_on_q`.
     pub last_picked_qindex: u8,
 
+    // ---- CBR Q-resonance history ----
+    /// Q-index used by the most recent CBR frame. q_2_frame holds the
+    /// preceding frame's Q-index. Both fields start at zero, matching the
+    /// zeroed libvpx encoder state before `vp9_rc_init`; CBR's adjust_q_cbr
+    /// uses them to clamp a candidate between the two Q values after
+    /// alternating rate errors.
+    pub(crate) q_1_frame: u8,
+
+    /// Q-index used by the CBR frame before q_1_frame. It is shifted from
+    /// q_1_frame after each CBR post-encode update and starts at zero,
+    /// matching libvpx rc->q_2_frame initialization.
+    pub(crate) q_2_frame: u8,
+
+    /// Correction class for the most recent CBR frame: -1 means
+    /// overshoot, +1 means undershoot, and 0 means the correction was
+    /// within the neutral deadband or no frame has been classified yet.
+    /// This is libvpx rc->rc_1_frame, initialized to zero.
+    pub(crate) rc_1_frame: i8,
+
+    /// Correction class for the CBR frame before rc_1_frame, with the same
+    /// -1 overshoot, +1 undershoot, and 0 neutral encoding. This is libvpx
+    /// rc->rc_2_frame, initialized to zero.
+    pub(crate) rc_2_frame: i8,
+
     // ---- Rate-correction feedback ----
     /// Per-level rate-correction factor table.
     ///
@@ -285,6 +309,13 @@ impl RateControl {
             active_min_qindex: config.min_qindex,
             active_max_qindex: config.max_qindex,
             last_picked_qindex: config.max_qindex,
+            // libvpx zeroes the complete encoder state before vp9_rc_init,
+            // which also zero-initializes this history
+            // (vp9_encoder.c:2380-2389).
+            q_1_frame: 0,
+            q_2_frame: 0,
+            rc_1_frame: 0,
+            rc_2_frame: 0,
 
             // libvpx `vp9_rc_init` seeds every slot of the
             // rate_correction_factors[] table to 1.0 and every
@@ -575,6 +606,10 @@ mod tests {
         let rc = RateControl::new(RateControlConfig::default());
         assert_eq!(rc.frames_to_key, 0, "first frame must be KF");
         assert_eq!(rc.frames_since_key, 0);
+        assert_eq!(rc.q_1_frame, 0);
+        assert_eq!(rc.q_2_frame, 0);
+        assert_eq!(rc.rc_1_frame, 0);
+        assert_eq!(rc.rc_2_frame, 0);
         // Buffer starts at starting_buffer_ms.
         assert_eq!(rc.buffer_level, rc.starting_buffer_level);
         // Buffer level == bits_off_target post-init.
