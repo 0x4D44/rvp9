@@ -6646,6 +6646,18 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     }
                 });
 
+                let content_state = content_state_sb_grid
+                    .get(sb_idx)
+                    .copied()
+                    .unwrap_or(rvp9_core::mode_decision::inter::ContentStateSb::Normal);
+                let use_zero_mv_partition = use_zero_mv_partition_predictor(
+                    source_aligned_cpu8_svc_partitions,
+                    speed,
+                    w,
+                    h,
+                    content_state,
+                );
+
                 // A3'-int-pro - SB-level coarse ME (libvpx
                 // `vp9_int_pro_motion_estimation`,
                 // `vp9_mcomp.c:2264-2400`). Produces a starter
@@ -6668,7 +6680,13 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 // its center SAD, but leaves neighbouring full-block refinement
                 // to the later per-leaf NEWMV search.
                 //
-                // E10 — every SB (including frame-edge SBs) now produces a
+                // Pinned libvpx's CPU8 non-low-resolution, non-very-high-SAD
+                // branch deliberately uses zero-MV LAST for variance
+                // partitioning and leaves `x->pred_mv[LAST_FRAME]` at zero.
+                // Match both halves of that branch: do not run int-pro and do
+                // not hand its result to the later leaf NEWMV searches.
+                //
+                // E10 — every remaining SB (including frame-edge SBs) produces a
                 // seed: the projection window and 2D-SAD halo read through
                 // an edge-clamped border (libvpx's extended-border frame
                 // equivalent) instead of bailing. A literal zero-MV result
@@ -6677,15 +6695,26 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 // 12 of 16 SBs on a 256×256 frame bailed outright.
                 let sb_px_x = sb_col * 64;
                 let sb_px_y = sb_row * 64;
-                let int_pro = if sb_px_y + 64 > h {
-                    rvp9_core::mv_search::int_pro_me::IntProMeResult {
-                        mv: Mv::ZERO,
-                        best_sad: zero_mv_sad64_edge_clamped(
+                let int_pro = if use_zero_mv_partition || sb_px_y + 64 > h {
+                    let best_sad = if sb_px_x + 64 <= w && sb_px_y + 64 <= h {
+                        let source_offset = sb_px_y * w + sb_px_x;
+                        rvp9_core::dsp::get_ref().sad(BlockSize::Block64x64)(
+                            &input_yuv.0[source_offset..],
+                            w,
+                            &last_recon_yuv.0[source_offset..],
+                            w,
+                        )
+                    } else {
+                        zero_mv_sad64_edge_clamped(
                             input_yuv.0,
                             last_recon_yuv.0,
                             (w, h),
                             (sb_px_x, sb_px_y),
-                        ),
+                        )
+                    };
+                    rvp9_core::mv_search::int_pro_me::IntProMeResult {
+                        mv: Mv::ZERO,
+                        best_sad,
                     }
                 } else if rt_large_recovery {
                     int_pro_motion_estimation_seed(
@@ -6791,10 +6820,6 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         speed,
                         source_aligned_cpu8_svc_partitions,
                     );
-                    let content_state = content_state_sb_grid
-                        .get(sb_idx)
-                        .copied()
-                        .unwrap_or(rvp9_core::mode_decision::inter::ContentStateSb::Normal);
                     let thresholds = rt_inter_vbp_thresholds(
                         speed,
                         Cpu7InterVbpThresholdInput {
@@ -6832,39 +6857,27 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     let (exact_decision, variance_low) = if let Some(copy) = low_source_copy {
                         (copy.decision, copy.variance_low)
                     } else {
-                        // `set_offsets(..., BLOCK_64X64)` defines this full-pel
-                        // UMV envelope. int-pro returns Q3, then libvpx derives a
-                        // Q3 subpel envelope around the zero reference MV and clamps.
-                        let fullpel_limits = MvLimits::new(
-                            -(((sb_col * 8 + 8) * 8) as i32 + VP9_INTERP_EXTEND),
-                            ((mi_cols_us - sb_col * 8) * 8) as i32 + VP9_INTERP_EXTEND,
-                            -(((sb_row * 8 + 8) * 8) as i32 + VP9_INTERP_EXTEND),
-                            ((mi_rows_us - sb_row * 8) * 8) as i32 + VP9_INTERP_EXTEND,
-                        );
-                        let mut subpel_limits = MvLimits::default();
-                        set_subpel_mv_search_range(&mut subpel_limits, &fullpel_limits, 0, 0);
                         // Pinned libvpx deliberately skips int-pro partition
                         // motion at realtime speed 8 for non-low-resolution,
                         // non-very-high-SAD blocks. Its variance tree therefore
-                        // sees the zero-MV LAST predictor even though the later
-                        // final mode picker can still use int-pro as a NEWMV seed.
-                        let use_zero_mv_partition = use_zero_mv_partition_predictor(
-                            source_aligned_cpu8_svc_partitions,
-                            speed,
-                            w,
-                            h,
-                            content_state,
-                        );
+                        // sees the zero-MV LAST predictor and its later mode
+                        // picker receives no nonzero LAST prediction seed.
                         let (partition_mv, last_partition_sad) = if use_zero_mv_partition {
-                            let source_offset = sb_px_y * w + sb_px_x;
-                            let sad = rvp9_core::dsp::get_ref().sad(BlockSize::Block64x64)(
-                                &input_yuv.0[source_offset..],
-                                w,
-                                &last_recon_yuv.0[source_offset..],
-                                w,
-                            );
-                            (Mv::ZERO, sad)
+                            debug_assert_eq!(int_pro.mv, Mv::ZERO);
+                            (Mv::ZERO, int_pro.best_sad)
                         } else {
+                            // `set_offsets(..., BLOCK_64X64)` defines this
+                            // full-pel UMV envelope. int-pro returns Q3, then
+                            // libvpx derives a Q3 subpel envelope around the
+                            // zero reference MV and clamps.
+                            let fullpel_limits = MvLimits::new(
+                                -(((sb_col * 8 + 8) * 8) as i32 + VP9_INTERP_EXTEND),
+                                ((mi_cols_us - sb_col * 8) * 8) as i32 + VP9_INTERP_EXTEND,
+                                -(((sb_row * 8 + 8) * 8) as i32 + VP9_INTERP_EXTEND),
+                                ((mi_rows_us - sb_row * 8) * 8) as i32 + VP9_INTERP_EXTEND,
+                            );
+                            let mut subpel_limits = MvLimits::default();
+                            set_subpel_mv_search_range(&mut subpel_limits, &fullpel_limits, 0, 0);
                             (
                                 Mv {
                                     row: i32::from(int_pro.mv.row)
@@ -16676,7 +16689,7 @@ mod tests {
     }
 
     #[test]
-    fn cpu8_three_layer_vbr_uses_libvpx_zero_mv_partition_predictor() {
+    fn cpu8_three_layer_vbr_zero_mv_policy_skips_int_pro_outside_exceptions() {
         use rvp9_core::mode_decision::inter::ContentStateSb;
 
         assert!(use_zero_mv_partition_predictor(

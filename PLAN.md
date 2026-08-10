@@ -665,25 +665,22 @@ acceptance matrix remains open.
 - [ ] BD-rate per layer within 0.5% of libvpx.
 - [ ] 720p30 + 1080p30 real-time still pass with 3-layer temporal SVC.
 
-**Status (2026-08-10):** The two- and three-layer reference hierarchy and
+**Status (2026-08-11):** The two- and three-layer reference hierarchy and
 per-layer rate-control lifecycle are active. Full streams and every retained
 temporal operating point decode byte-exactly through rvp9-decoder, pinned
-vpxdec, and ffmpeg. Source-backed fixes for stream-global frame age, refresh-Q
-bounds, and layer-local rolling rate monitors, followed by libvpx's CPU7/8
-three-layer TL0 NSTEP motion-search exception, improve the six-point CPU7
-three-layer 720p30 VBR diagnostic from
-`+1.8444%/+0.8388%/-1.7657%` to `-0.2817%/-1.2995%/-3.9786%` for
-TL0/TL1/TL2 respectively. All three CPU7 VBR operating points now pass the
-final `+0.5%` gate. The exact vpxenc minimum-Q default was tested and rejected
-because it worsened TL0 to `+1.4166%`. Plain-release one-shot timing is not the
-production PGO speed gate. CPU6 measures
-`+1.8325%/+0.3760%/-0.1343%`, leaving only TL0 open. CPU8 improves from
-`+6.0559%/+6.9584%/+4.4827%` to `+4.4944%/+5.4305%/+3.1999%` with the
-NSTEP exception, but all three layers remain open. Frame-aligned CPU8 traces
-clear rate-control Q as the main TL0 cause. CPU6's exact libvpx minimum-Q
-default also worsens its TL0 result to `+2.1966%`; both failures now point to
-coding-policy efficiency. Two-layer, CBR, and the repeated PGO
-720p30/1080p30 speed matrix remain open.
+vpxdec, and ffmpeg. The complete six-point 720p30 three-layer VBR curves now
+pass the final `+0.5%` quality gate at every required preset. CPU6
+TL0/TL1/TL2 is `-0.4547%/-2.1177%/-2.9243%`; CPU7 is
+`-0.2817%/-1.2995%/-3.9786%`; CPU8 is
+`-0.4566%/-0.3040%/-3.2455%`. Source-backed fixes cover the temporal
+reference hierarchy, stream-global frame age, refresh-Q bounds, layer-local
+rolling monitors, the TL0 NSTEP search exception, feature-scoped keyframe
+search, and CPU8's zero-MV variance-partition predictor. The matching CPU8
+int-pro-seed removal reproduces a `0.384..0.694%` production-PGO improvement,
+but one-shot curve timings remain `1.5068..1.5717x` vpxenc, so the relative
+speed gate is materially red despite passing the absolute 720p budget.
+Two-layer VBR, both CBR hierarchies, and the repeated PGO 720p30/1080p30 speed
+matrix remain open.
 
 **Estimated effort:** 4–6 weeks.
 

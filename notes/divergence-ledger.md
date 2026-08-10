@@ -4867,12 +4867,15 @@ remaining speed gap, then repeat the final quiet-host matrix.
 **Temporal-SVC exception (2026-08-11):** CPU8 three-layer realtime VBR bypasses
 the partition-only Q bias and uses the coding Q directly. It also mirrors
 pinned libvpx's speed-8 variance predictor: zero-MV LAST for non-low-resolution,
-non-very-high-SAD blocks, while retaining int-pro only as the later final
-NEWMV-search seed. The ordinary single-layer CPU8 path retains the measured
-partition-Q calibration and prior predictor policy because its quality is green
-and its speed gate is tighter. Combined with the feature-scoped exact keyframe
-path above, the six-point T3 TL0/TL1/TL2 result is
-`-0.4739%/-0.2892%/-3.1985%`.
+non-very-high-SAD blocks. Pinned libvpx does not run int-pro in that branch and
+therefore leaves its later LAST prediction seed at zero; rvp9 now does the
+same. The ordinary single-layer CPU8 path retains the measured partition-Q
+calibration and prior predictor policy because its quality is green and its
+speed gate is tighter. Combined with the feature-scoped exact keyframe path
+above, the six-point T3 TL0/TL1/TL2 result is
+`-0.4566%/-0.3040%/-3.2455%`. Two independently trained production-PGO A/B
+runs improve wall time by `0.694%` and `0.384%`; the broader temporal-SVC
+relative-speed gate remains open.
 
 ### 2026-08-09 — Sample the custom high-frequency frame classifier
 
