@@ -278,6 +278,7 @@ fn exact_keyframe_sub8_enabled(config: &EncoderConfig, q_index: u8) -> bool {
             config.speed,
             config.deadline,
             rvp9_core::mode_decision::speed_features::ContentTier::Default,
+            false,
         )
         && matches!(config.rc_mode, RcMode::Vbr)
 }
@@ -3474,6 +3475,7 @@ impl StreamEncoder {
                 speed,
                 deadline,
                 rvp9_core::mode_decision::speed_features::ContentTier::Default,
+                aq_active_this_frame,
             );
             let s2_frame_gate = rvp9_core::mode_decision::inter::frame_s2_gate();
             let mut result_slots: Vec<Option<InterTileJobResult>> =

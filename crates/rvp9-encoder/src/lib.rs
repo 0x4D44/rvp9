@@ -5497,7 +5497,8 @@ impl InterEncodeEnv {
         self.flag_or(self.compact_recon_rows, false)
     }
 
-    /// Use the pinned-libvpx variance tree on CPU6-8 realtime VBR show frames.
+    /// Use the pinned-libvpx variance tree on CPU6-8 realtime VBR and AQ-off
+    /// CBR show frames.
     /// An explicit override retains the whole-frame diagnostic used by
     /// differential tests.
     pub(crate) fn exact_vbp_tree_enabled(
@@ -5506,10 +5507,12 @@ impl InterEncodeEnv {
         speed: i32,
         deadline: rvp9_core::mode_decision::speed_features::Deadline,
         content_tier: rvp9_core::mode_decision::speed_features::ContentTier,
+        cyclic_refresh_active: bool,
     ) -> bool {
-        let selected = self
-            .exact_vbp_tree
-            .unwrap_or(rc_mode == crate::rate_control::RcMode::Vbr);
+        let selected = self.exact_vbp_tree.unwrap_or(
+            matches!(rc_mode, crate::rate_control::RcMode::Vbr)
+                || matches!(rc_mode, crate::rate_control::RcMode::Cbr) && !cyclic_refresh_active,
+        );
         selected
             && matches!(speed, 6..=8)
             && deadline == rvp9_core::mode_decision::speed_features::Deadline::Realtime
@@ -5949,9 +5952,14 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // The exact pinned-libvpx VBP tree and source RD lambda form one measured
     // CPU7 VBR policy. The product path applies them together on every show
     // frame; non-show ALTREF coding passes no history and stays isolated.
-    let exact_vbp_tree_enabled = env.exact_vbp_tree_enabled(rc_mode, speed, deadline, content_tier)
-        && exact_vbp_history.is_some();
     let cyclic_refresh_active = seg_q_deltas.iter().any(Option::is_some);
+    let exact_vbp_tree_enabled = env.exact_vbp_tree_enabled(
+        rc_mode,
+        speed,
+        deadline,
+        content_tier,
+        cyclic_refresh_active,
+    ) && exact_vbp_history.is_some();
     let mut inter_rd_calibration = inter_rd_calibration_for_segment(
         rc_mode,
         speed,
@@ -14690,7 +14698,7 @@ mod tests {
     }
 
     #[test]
-    fn exact_vbp_defaults_to_cpu6_through_cpu8_realtime_vbr_show_frames() {
+    fn exact_vbp_defaults_to_cpu6_through_cpu8_realtime_vbr_and_aq_off_cbr_show_frames() {
         use rvp9_core::mode_decision::speed_features::{ContentTier, Deadline};
 
         let _guard = env_test_mutex();
@@ -14703,31 +14711,49 @@ mod tests {
             7,
             Deadline::Realtime,
             ContentTier::Default,
+            false,
+        ));
+        assert!(env.exact_vbp_tree_enabled(
+            RcMode::Cbr,
+            7,
+            Deadline::Realtime,
+            ContentTier::Default,
+            false,
         ));
         assert!(!env.exact_vbp_tree_enabled(
             RcMode::Cbr,
             7,
             Deadline::Realtime,
             ContentTier::Default,
+            true,
         ));
         assert!(env.exact_vbp_tree_enabled(
             RcMode::Vbr,
             6,
             Deadline::Realtime,
             ContentTier::Default,
+            false,
         ));
         assert!(env.exact_vbp_tree_enabled(
             RcMode::Vbr,
             8,
             Deadline::Realtime,
             ContentTier::Default,
+            false,
         ));
-        assert!(!env.exact_vbp_tree_enabled(RcMode::Vbr, 7, Deadline::Good, ContentTier::Default,));
+        assert!(!env.exact_vbp_tree_enabled(
+            RcMode::Vbr,
+            7,
+            Deadline::Good,
+            ContentTier::Default,
+            false,
+        ));
         assert!(!env.exact_vbp_tree_enabled(
             RcMode::Vbr,
             7,
             Deadline::Realtime,
             ContentTier::Screen,
+            false,
         ));
 
         // Preserve whole-frame exact-tree diagnostics within the existing
@@ -14739,6 +14765,7 @@ mod tests {
             7,
             Deadline::Realtime,
             ContentTier::Default,
+            true,
         ));
 
         // Explicit zero is the product-policy negative control.
@@ -14749,6 +14776,7 @@ mod tests {
             7,
             Deadline::Realtime,
             ContentTier::Default,
+            false,
         ));
         // SAFETY: the mutex above serialises all encoder environment tests.
         unsafe { std::env::remove_var(key) };
@@ -15470,6 +15498,9 @@ mod tests {
             std::env::set_var(key, "1");
             std::env::set_var("RVP9_RT_EMIT_TX_RD", "1");
             std::env::remove_var("RVP9_RT_EMIT_MAX_TX");
+            // This fixture exercises the recursive picker's emit-side TX
+            // oracle, not the product exact-tree policy.
+            std::env::set_var("RVP9_EXACT_VBP_TREE", "0");
         }
         crate::f02_oracle::init_from_env();
         assert!(crate::f02_oracle::is_enabled());
@@ -15508,6 +15539,7 @@ mod tests {
         unsafe {
             std::env::remove_var(key);
             std::env::remove_var("RVP9_RT_EMIT_TX_RD");
+            std::env::remove_var("RVP9_EXACT_VBP_TREE");
         }
         crate::f02_oracle::init_from_env();
         assert!(!crate::f02_oracle::is_enabled());
@@ -15620,6 +15652,9 @@ mod tests {
             // test, so these env-var mutations are serialised.
             unsafe {
                 std::env::set_var("RVP9_F02_ORACLE", "1");
+                // Compare the A4 descent gate itself; the product exact tree
+                // intentionally bypasses both sides of this oracle.
+                std::env::set_var("RVP9_EXACT_VBP_TREE", "0");
                 // A4: the descent is now default-ON, so "gate off" must
                 // explicitly DISABLE it via the opt-out var; "gate on"
                 // is the default but we clear the opt-out to be sure.
@@ -15653,6 +15688,7 @@ mod tests {
             std::env::remove_var("RVP9_F02_ORACLE");
             std::env::remove_var("RVP9_F3_NONRD_PARTITION_ENABLE");
             std::env::remove_var("RVP9_A4_RD_PARTITION_DISABLE");
+            std::env::remove_var("RVP9_EXACT_VBP_TREE");
         }
         crate::f02_oracle::init_from_env();
 
