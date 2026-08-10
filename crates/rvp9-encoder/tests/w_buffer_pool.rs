@@ -123,7 +123,8 @@ fn encode_fixed_clip() -> Vec<u8> {
     // RD partition descent to the default, which legitimately changes
     // the emitted bytes. This test owns the A10 POOL-REFACTOR
     // byte-identity claim, NOT the partition shape — so we pin the
-    // pre-A4 partition path here by disabling the descent. A4's stream
+    // pre-A4 partition path here by disabling both the recursive descent and
+    // the later exact variance-partition tree. A4's stream
     // change is proven valid separately by `tests/w_rd_partition.rs`
     // (vpxdec byte-exact) and the cross_decoder_gate. Do NOT update the
     // golden to A4's stream — that would conflate two independent
@@ -133,6 +134,7 @@ fn encode_fixed_clip() -> Vec<u8> {
     // (the decode test is descent-agnostic), so set-only is race-free.
     unsafe {
         std::env::set_var("RVP9_A4_RD_PARTITION_DISABLE", "1");
+        std::env::set_var("RVP9_EXACT_VBP_TREE", "0");
     }
 
     let cfg = EncoderConfig {
