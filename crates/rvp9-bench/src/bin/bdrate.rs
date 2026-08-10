@@ -544,21 +544,18 @@ mod tests {
             "--input",
             "input.y4m",
             "--anchor-arg",
-            "--ts-number-layers=2",
+            "--row-mt=1",
             "--test-arg",
-            "--temporal-layers=2",
+            "--enable-tpl=0",
             "--anchor-arg",
-            "--ts-layer-id=0,1",
+            "--static-thresh=1",
         ]
         .map(str::to_owned);
 
         let args = parse_args_from(&argv);
 
-        assert_eq!(
-            args.anchor_args,
-            ["--ts-number-layers=2", "--ts-layer-id=0,1"]
-        );
-        assert_eq!(args.test_args, ["--temporal-layers=2"]);
+        assert_eq!(args.anchor_args, ["--row-mt=1", "--static-thresh=1"]);
+        assert_eq!(args.test_args, ["--enable-tpl=0"]);
         assert_eq!(args.reference_input, PathBuf::from("input.y4m"));
     }
 
@@ -621,10 +618,7 @@ mod tests {
             noise_sensitivity: Some(1),
             limit: Some(60),
         };
-        let anchor_args = vec![
-            "--ts-number-layers=2".to_owned(),
-            "--ts-layer-id=0,1".to_owned(),
-        ];
+        let anchor_args = vec!["--row-mt=1".to_owned(), "--static-thresh=1".to_owned()];
         let command = encoder_command(
             Path::new("anchor"),
             Path::new("input.y4m"),
@@ -645,7 +639,7 @@ mod tests {
         let output_index = args.iter().position(|arg| arg == "-o").unwrap();
         assert_eq!(
             &args[output_index - 2..output_index],
-            ["--ts-number-layers=2", "--ts-layer-id=0,1"]
+            ["--row-mt=1", "--static-thresh=1"]
         );
         assert_eq!(&args[output_index..], ["-o", "output.ivf", "input.y4m"]);
     }

@@ -669,7 +669,11 @@ acceptance matrix remains open.
 per-layer rate-control lifecycle are active. Full streams and every retained
 temporal operating point decode byte-exactly through rvp9-decoder, pinned
 vpxdec, and ffmpeg. Per-layer BD-rate and 720p30/1080p30 speed evidence remain
-open.
+open. The first six-point CPU7 three-layer 720p30 VBR diagnostic measures
+`+1.8444%/+0.8388%/-1.7657%` for TL0/TL1/TL2 respectively. TL0 and TL1 remain
+outside the `+0.5%` gate; TL2 passes. Plain-release one-shot timing is not the
+production PGO speed gate, but it identifies a material SVC-path speed gap for
+profiling after the quality discrepancy is localized.
 
 **Estimated effort:** 4–6 weeks.
 

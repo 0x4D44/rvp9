@@ -31,6 +31,10 @@ name = "bdrate"
 path = "src/bin/bdrate.rs"
 
 [[bin]]
+name = "bdrate-svc"
+path = "src/bin/bdrate-svc.rs"
+
+[[bin]]
 name = "decode-throughput"
 path = "src/bin/decode-throughput.rs"
 
