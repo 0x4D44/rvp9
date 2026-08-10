@@ -631,8 +631,17 @@ Open items routed:
 3. SIMD for denoiser kernel.
 
 **Exit criteria:**
-- [ ] On noisy livestream test clips, BD-rate within 0.5% of libvpx (denoise on).
-- [ ] 720p30 real-time still passes with denoiser on.
+- [x] On noisy livestream test clips, BD-rate within 0.5% of libvpx (denoise on).
+- [x] 720p30 real-time still passes with denoiser on.
+
+**Status (2026-08-10):** Focused Stage 4c exit achieved across CPU6–8 on
+three representative noisy 720p30 clips. Per-clip denoise-on PSNR BD-rates
+range from `-3.865%` to `-18.315%` versus pinned vpxenc. Corpus wall-time
+geomeans are `1.017530x`, `1.002867x`, and `1.045717x` for CPU6, CPU7, and
+CPU8 respectively; all remain inside the final `1.05x` relative gate and the
+absolute 720p30 budget. Rvp9-decoder, pinned vpxdec, and ffmpeg agree
+byte-exactly on every exercised stream. The broader v1 resolution and feature
+acceptance matrix remains open.
 
 **Estimated effort:** 3–4 weeks.
 
