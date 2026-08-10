@@ -242,21 +242,24 @@ fn a4_rect_partition_is_evaluated_and_decodes() {
     let framerate = 30.0;
     let frames = synthetic_clip();
 
-    // Descent ON with full rectangular motion search. Production defaults
-    // use inherited/zero motion for rectangular proxy candidates; this
-    // focused proof explicitly enables independent NEWMV because its two
-    // bands are constructed to require different motion vectors. This test
-    // runs in its own process; no parallel test mutates these env vars.
+    // Descent ON with full rectangular motion search. Disable the newer exact
+    // variance tree so this focused legacy-A4 oracle reaches the recursive
+    // descent. Production defaults use inherited/zero motion for rectangular
+    // proxy candidates; this proof explicitly enables independent NEWMV
+    // because its two bands require different motion vectors. This test runs
+    // in its own process; no parallel test mutates these env vars.
     // SAFETY: this test owns these process env knobs for its test-binary run.
     unsafe {
         std::env::remove_var("RVP9_A4_RD_PARTITION_DISABLE");
         std::env::remove_var("RVP9_F3_NONRD_PARTITION_ENABLE");
         std::env::remove_var("RVP9_A4_RECT_DISABLE");
+        std::env::set_var("RVP9_EXACT_VBP_TREE", "0");
         std::env::set_var("RVP9_A4_DESCENT_DISABLE_RECT_NEWMV", "0");
     }
     let (on_packets, on_rect_leaves) = encode(&frames, framerate);
     // SAFETY: restore the production default after the focused encode.
     unsafe {
+        std::env::remove_var("RVP9_EXACT_VBP_TREE");
         std::env::remove_var("RVP9_A4_DESCENT_DISABLE_RECT_NEWMV");
     }
 
