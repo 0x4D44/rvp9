@@ -5161,11 +5161,14 @@ fn zero_mv_sad64_edge_clamped(
 fn full_pixel_search_method_for_mode(
     speed: i32,
     deadline: rvp9_core::mode_decision::speed_features::Deadline,
+    force_nstep: bool,
 ) -> rvp9_core::mode_decision::inter::FullPixelSearchMethod {
-    if matches!(
-        deadline,
-        rvp9_core::mode_decision::speed_features::Deadline::Realtime
-    ) && speed.unsigned_abs() >= 7
+    if !force_nstep
+        && matches!(
+            deadline,
+            rvp9_core::mode_decision::speed_features::Deadline::Realtime
+        )
+        && speed.unsigned_abs() >= 7
     {
         rvp9_core::mode_decision::inter::FullPixelSearchMethod::FastDiamond
     } else {
@@ -5781,6 +5784,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // narrower than the ordinary realtime speed policy. Temporal-only SVC
     // sets this when libvpx's `ref_frame_flags` contains LAST but not GOLDEN.
     force_disable_golden_ref: bool,
+    // Pinned libvpx upgrades three-layer temporal-SVC base frames from the
+    // ordinary CPU7/8 FAST_DIAMOND search to NSTEP. The stream driver sets
+    // this only for TL0; all single-layer and enhancement paths pass false.
+    force_nstep_motion_search: bool,
     // §11 — libvpx `get_chessboard_index(cm->current_video_frame) =
     // current_video_frame & 1` (`vp9_common.h:88-90`). Feeds the
     // `cb_pred_filter_search` chessboard predicate at
@@ -5983,7 +5990,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     ) {
         inter_rd_calibration.model_only = false;
     }
-    let full_pixel_search_method = full_pixel_search_method_for_mode(speed, deadline);
+    let full_pixel_search_method =
+        full_pixel_search_method_for_mode(speed, deadline, force_nstep_motion_search);
 
     let sb_cols = w / 64;
     let sb_rows = h.div_ceil(64);
@@ -14656,19 +14664,27 @@ mod tests {
         use rvp9_core::mode_decision::speed_features::Deadline;
 
         assert_eq!(
-            full_pixel_search_method_for_mode(6, Deadline::Realtime),
+            full_pixel_search_method_for_mode(6, Deadline::Realtime, false),
             FullPixelSearchMethod::Nstep
         );
         assert_eq!(
-            full_pixel_search_method_for_mode(7, Deadline::Realtime),
+            full_pixel_search_method_for_mode(7, Deadline::Realtime, false),
             FullPixelSearchMethod::FastDiamond
         );
         assert_eq!(
-            full_pixel_search_method_for_mode(8, Deadline::Realtime),
+            full_pixel_search_method_for_mode(8, Deadline::Realtime, false),
             FullPixelSearchMethod::FastDiamond
         );
         assert_eq!(
-            full_pixel_search_method_for_mode(8, Deadline::Good),
+            full_pixel_search_method_for_mode(8, Deadline::Good, false),
+            FullPixelSearchMethod::Nstep
+        );
+        assert_eq!(
+            full_pixel_search_method_for_mode(7, Deadline::Realtime, true),
+            FullPixelSearchMethod::Nstep
+        );
+        assert_eq!(
+            full_pixel_search_method_for_mode(8, Deadline::Realtime, true),
             FullPixelSearchMethod::Nstep
         );
     }

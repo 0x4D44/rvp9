@@ -3295,6 +3295,12 @@ impl StreamEncoder {
         let force_disable_golden_ref = self
             .svc_frame
             .is_some_and(|decision| !decision.allow_golden_ref);
+        let force_nstep_motion_search = self.config.temporal_layers > 2
+            && self
+                .svc_frame
+                .is_some_and(|decision| decision.temporal_layer_id == 0)
+            && matches!(self.config.deadline, Deadline::Realtime)
+            && self.config.speed.unsigned_abs() >= 7;
         let partition_ref_y =
             if self.denoiser.is_some() && last_ref_map_idx == crate::buffer_pool::LAST_REF {
                 self.me_ref_y.as_slice()
@@ -3568,6 +3574,7 @@ impl StreamEncoder {
                     is_golden_refresh,
                     allow_duplicate_golden_prune,
                     force_disable_golden_ref,
+                    force_nstep_motion_search,
                     chessboard_index,
                     speed,
                     deadline,
@@ -4543,6 +4550,7 @@ impl StreamEncoder {
             &arf_mv_costs,
             &mut arf_rd_thresh,
             self.frames_since_golden_refresh,
+            false,
             false,
             false,
             false,

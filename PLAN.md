@@ -669,15 +669,16 @@ acceptance matrix remains open.
 per-layer rate-control lifecycle are active. Full streams and every retained
 temporal operating point decode byte-exactly through rvp9-decoder, pinned
 vpxdec, and ffmpeg. Source-backed fixes for stream-global frame age, refresh-Q
-bounds, and layer-local rolling rate monitors improve the six-point CPU7
+bounds, and layer-local rolling rate monitors, followed by libvpx's CPU7/8
+three-layer TL0 NSTEP motion-search exception, improve the six-point CPU7
 three-layer 720p30 VBR diagnostic from
-`+1.8444%/+0.8388%/-1.7657%` to `+1.0689%/+0.0901%/-2.5403%` for
-TL0/TL1/TL2 respectively. TL1 and TL2 pass the final `+0.5%` gate; TL0 remains
-open. The exact vpxenc minimum-Q default was tested and rejected because it
-worsened TL0 to `+1.4166%`. Plain-release one-shot timing is not the production
-PGO speed gate, but it identifies a material SVC-path speed gap for profiling
-after the final TL0 quality discrepancy is closed. The 720p30/1080p30 speed
-matrix remains open.
+`+1.8444%/+0.8388%/-1.7657%` to `-0.2817%/-1.2995%/-3.9786%` for
+TL0/TL1/TL2 respectively. All three CPU7 VBR operating points now pass the
+final `+0.5%` gate. The exact vpxenc minimum-Q default was tested and rejected
+because it worsened TL0 to `+1.4166%`. Plain-release one-shot timing is not the
+production PGO speed gate, but it identifies a material SVC-path speed gap for
+profiling after the CPU6/8, two-layer, and CBR quality matrix is closed. The
+720p30/1080p30 speed matrix remains open.
 
 **Estimated effort:** 4–6 weeks.
 
