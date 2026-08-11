@@ -691,9 +691,14 @@ budgets. A source-faithful CPU7 candidate now applies libvpx's simple
 large-block YRD model to every enhancement picture. Complete T2/T3 VBR and
 CBR curves remain green, while two reversed plain-release rotations improve
 T2 by about 1.5% and T3 by about 3.5%. CPU8 retains its reference-only Q-index
-140 boundary because the literal policy regresses TL2 to `+1.3884%`. The CPU7
-candidate's production-PGO qualification, per-frame p99, and the final
-quiet-host corpus matrix remain open.
+140 boundary because the literal policy regresses TL2 to `+1.3884%`. The
+unchanged production-PGO matrix strengthens the CPU7 gain to `1.4..1.7%` on
+T2 and `3.6..4.0%` on T3. Repeating the full direct matrix reduces the 720p
+geomean from `1.146317x` to `1.132790x`, the 1080p geomean from `1.041934x`
+to `1.034476x`, and the all-row geomean from `1.092880x` to `1.082518x`.
+CPU7 T3 remains red at `1.159796..1.161545x` for 720p and
+`1.066570..1.070168x` for 1080p. Per-frame p99 and the final quiet-host corpus
+matrix remain open.
 
 **Estimated effort:** 4–6 weeks.
 

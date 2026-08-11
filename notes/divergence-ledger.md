@@ -118,13 +118,14 @@ The retained CPU8 policy remains `+0.0142%/+0.2752%/+0.4590%`.
 
 **Speed impact:** two reversed fifteen-pair plain-release CPU7/T2 rotations
 measure paired candidate/control ratios `0.985745x/0.985195x`. T3 measures
-`0.965881x/0.965093x`, a reproducible improvement of about 3.5%. Production
-PGO qualification remains pending. The CPU8 narrowing is byte-identical and
-therefore preserves its accepted one-percent improvement.
+`0.965881x/0.965093x`, a reproducible improvement of about 3.5%. After the
+unchanged production-PGO matrix, separate-median T2 ratios are
+`0.986062x/0.983393x`; T3 is `0.959973x/0.963445x`. The full direct matrix
+improves from `1.092880x` to `1.082518x` overall. The CPU8 narrowing is
+byte-identical and therefore preserves its accepted one-percent improvement.
 
-**Future plan:** qualify CPU7 under the unchanged production-PGO matrix and
-retain it only if the gain reproduces. The temporal-SVC relative-speed gate
-will remain open even if it does, so reprofile the exact accepted image before
+**Future plan:** retained after the PGO gain reproduced. The temporal-SVC
+relative-speed gate remains open, so reprofile the exact accepted image before
 selecting another mechanism.
 
 ### 2026-08-11 — Keep exact 8x8 keyframe RD behind a measured CPU8 mode cap
