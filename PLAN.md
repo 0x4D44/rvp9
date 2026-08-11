@@ -681,9 +681,13 @@ Two-layer VBR now also passes across CPU6-8; CPU6's three-clip aggregate is
 `-2.3151%/-2.2652%`, while its worst individual clip/layer is `+0.5241%` and
 remains inside the explicit `+2%` clip guard. Both CBR hierarchies pass across
 CPU6-8, including CPU6 T2 at `-27.7767%/-23.9911%` and T3 at
-`-32.2313%/-32.2218%/-31.0428%`. The relative temporal speed gate remains
-materially red despite passing the absolute 720p budget. The repeated
-production-PGO 720p30/1080p30 speed matrix remains open.
+`-32.2313%/-32.2218%/-31.0428%`. A repeated production-PGO speed matrix using
+two reversed 15-pair rotations per row measures a `1.146317x` 720p geomean and
+`1.041934x` 1080p geomean. CPU6's 1080p T2/T3 rows pass at
+`0.927699x/0.982764x`, but CPU7/8 T3 remain red at
+`1.107755x/1.144761x`; 720p is red across every row. All measured whole-clip
+times remain below 14 ms/frame, comfortably inside the median real-time
+budgets, but per-frame p99 and the final quiet-host corpus matrix remain open.
 
 **Estimated effort:** 4–6 weeks.
 
