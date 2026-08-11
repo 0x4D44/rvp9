@@ -67,11 +67,13 @@ BD-rates versus pinned vpxenc are `+0.0162%/-0.9956%`; both pass the final
 **Speed impact:** two reversed warmed fifteen-pair plain-release comparisons
 with the exact Unit 1117 control measure paired medians `0.991733x` and
 `0.986524x`, recovering about 0.8--1.35% of whole-encode time. The relative
-temporal-SVC speed gate remains red.
+gain reproduces after the unchanged production-PGO matrix at `0.997490x` and
+`0.994794x`. A direct PGO comparison with pinned vpxenc is still red at
+`1.172420x`, or `5.755/4.906 ms` per frame, while remaining far inside the
+absolute 720p30 budget.
 
-**Future plan:** require the unchanged production-PGO matrix to reproduce the
-gain, then recover the remaining temporal-SVC cost from the measured
-inter-frame picker and NEWMV hotspots.
+**Future plan:** retained after the PGO gain reproduced. Recover the remaining
+temporal-SVC cost from the measured inter-frame picker and NEWMV hotspots.
 
 ### 2026-08-11 — Bound simple large-block RD to high-quality SVC references
 
