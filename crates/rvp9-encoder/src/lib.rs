@@ -5835,7 +5835,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // ordinary CPU7/8 FAST_DIAMOND search to NSTEP. The stream driver sets
     // this only for TL0; all single-layer and enhancement paths pass false.
     force_nstep_motion_search: bool,
-    // CPU8 three-layer VBR uses pinned libvpx's literal variance-partition
+    // CPU8 temporal-SVC VBR uses pinned libvpx's literal variance-partition
     // inputs on every temporal layer: coding Q without rvp9's single-layer
     // calibration and zero-MV LAST prediction on ordinary-resolution blocks.
     source_aligned_cpu8_svc_partitions: bool,

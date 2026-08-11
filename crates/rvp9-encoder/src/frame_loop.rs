@@ -297,17 +297,20 @@ fn temporal_svc_cumulative_targets(
 
 const VBR_EXACT_KEYFRAME_SUB8_QMAX: u8 = 120;
 // Rvp9's coarser keyframes still need the full directional-mode search to
-// keep the temporal-layer curve inside the final gate. At q<=65, retaining
-// exact RD but capping the search at DC/V/H removes redundant work without
-// crossing that boundary.
+// keep the three-layer curve inside the final gate. T2 has enough measured
+// margin to use the source-aligned DC/V/H set across its exact q<=120 range;
+// T3 needs the full directional set above q=65.
 const VBR_KEYFRAME_8X8_MODE_CAP_QMAX: u8 = 65;
+const VBR_T2_KEYFRAME_8X8_MODE_CAP_QMAX: u8 = 120;
 
 fn exact_keyframe_sub8_enabled(config: &EncoderConfig, q_index: u8) -> bool {
     if std::env::var_os("RVP9_EXACT_KF_SUB8").is_some_and(|value| value != "0") {
         return true;
     }
 
-    (config.speed == 7 || config.temporal_layers == 3 && matches!(config.speed, 6..=8))
+    (config.speed == 7
+        || config.temporal_layers == 3 && matches!(config.speed, 6 | 8)
+        || config.temporal_layers == 2 && config.speed == 8)
         && q_index <= VBR_EXACT_KEYFRAME_SUB8_QMAX
         && crate::InterEncodeEnv::capture().exact_vbp_tree_enabled(
             config.rc_mode,
@@ -323,16 +326,20 @@ fn keyframe_8x8_mode_cap_enabled(config: &EncoderConfig, q_index: u8) -> bool {
     if std::env::var_os("RVP9_EXACT_KF_SUB8").is_some_and(|value| value != "0") {
         return false;
     }
+    let qmax = match config.temporal_layers {
+        2 => VBR_T2_KEYFRAME_8X8_MODE_CAP_QMAX,
+        3 => VBR_KEYFRAME_8X8_MODE_CAP_QMAX,
+        _ => return false,
+    };
     exact_keyframe_sub8_enabled(config, q_index)
-        && q_index <= VBR_KEYFRAME_8X8_MODE_CAP_QMAX
-        && config.temporal_layers == 3
+        && q_index <= qmax
         && config.speed == 8
         && matches!(config.rc_mode, RcMode::Vbr)
         && matches!(config.deadline, Deadline::Realtime)
 }
 
 fn source_aligned_cpu8_svc_partitions_enabled(config: &EncoderConfig, has_svc_frame: bool) -> bool {
-    config.temporal_layers == 3
+    matches!(config.temporal_layers, 2 | 3)
         && has_svc_frame
         && matches!(config.rc_mode, RcMode::Vbr)
         && matches!(config.deadline, Deadline::Realtime)
@@ -7878,7 +7885,7 @@ mod tests {
     }
 
     #[test]
-    fn exact_keyframe_sub8_product_policy_covers_cpu7_and_three_layer_vbr() {
+    fn exact_keyframe_sub8_product_policy_covers_cpu7_and_temporal_svc_vbr() {
         let _guard = env_test_mutex();
         let exact_tree_key = "RVP9_EXACT_VBP_TREE";
         let sub8_key = "RVP9_EXACT_KF_SUB8";
@@ -7900,6 +7907,8 @@ mod tests {
         config.speed = 8;
         assert!(exact_keyframe_sub8_enabled(&config, 120));
         config.temporal_layers = 2;
+        assert!(exact_keyframe_sub8_enabled(&config, 120));
+        config.speed = 6;
         assert!(!exact_keyframe_sub8_enabled(&config, 120));
         config.temporal_layers = 3;
         config.speed = 7;
@@ -7925,7 +7934,7 @@ mod tests {
     }
 
     #[test]
-    fn keyframe_8x8_mode_cap_is_cpu8_three_layer_realtime_vbr_only() {
+    fn keyframe_8x8_mode_cap_is_cpu8_temporal_svc_realtime_vbr_only() {
         let _guard = env_test_mutex();
         let sub8_key = "RVP9_EXACT_KF_SUB8";
         // SAFETY: the mutex above serialises all env_test_mutex callers.
@@ -7945,6 +7954,10 @@ mod tests {
         assert!(!keyframe_8x8_mode_cap_enabled(&config, 65));
         config.speed = 8;
         config.temporal_layers = 2;
+        assert!(keyframe_8x8_mode_cap_enabled(&config, 65));
+        assert!(keyframe_8x8_mode_cap_enabled(&config, 120));
+        assert!(!keyframe_8x8_mode_cap_enabled(&config, 121));
+        config.temporal_layers = 1;
         assert!(!keyframe_8x8_mode_cap_enabled(&config, 65));
         config.temporal_layers = 3;
         config.rc_mode = RcMode::Cbr;
@@ -7970,7 +7983,7 @@ mod tests {
     }
 
     #[test]
-    fn source_aligned_partition_policy_is_cpu8_three_layer_realtime_vbr_only() {
+    fn source_aligned_partition_policy_is_cpu8_temporal_svc_realtime_vbr_only() {
         let mut config = EncoderConfig::new(1280, 720);
         config.speed = 8;
         config.rc_mode = RcMode::Vbr;
@@ -7979,6 +7992,8 @@ mod tests {
         assert!(!source_aligned_cpu8_svc_partitions_enabled(&config, false));
 
         config.temporal_layers = 2;
+        assert!(source_aligned_cpu8_svc_partitions_enabled(&config, true));
+        config.temporal_layers = 1;
         assert!(!source_aligned_cpu8_svc_partitions_enabled(&config, true));
         config.temporal_layers = 3;
         config.speed = 7;
