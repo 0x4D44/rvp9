@@ -63,12 +63,15 @@ passes the final `+0.5%` gate.
 
 **Speed impact:** two reversed fifteen-pair plain-release rotations against
 exact integrated Unit 1114 measure paired-median ratios `0.990079x` and
-`0.988691x`, improvements of about 1.0--1.1%. Production-PGO confirmation
-remains required before integration.
+`0.988691x`, improvements of about 1.0--1.1%. After the unchanged 22-row
+production-PGO matrix, two more reversed fifteen-pair rotations measure
+`0.990240x` and `0.989936x`, reproducing a one-percent improvement. A direct
+PGO comparison with pinned vpxenc remains red at `1.237372x`, or
+`5.976/4.824 ms` per frame, while passing the absolute 720p30 budget.
 
-**Future plan:** retain only if the unchanged production-PGO matrix reproduces
-the gain. Recheck CPU7 and the complete T2/T3 CBR/VBR feature matrix before
-final acceptance.
+**Future plan:** retained after the PGO gain reproduced. Recheck CPU7 and the
+complete T2/T3 CBR/VBR feature matrix before final acceptance; continue
+profiling because the temporal-SVC relative-speed gate remains open.
 
 ### 2026-08-11 — Keep exact 8x8 keyframe RD behind a measured CPU8 mode cap
 
