@@ -133,9 +133,37 @@ const fn should_overlap_lf_and_packet(
     filter_level > 0 && lf_worker_available && policy_enabled
 }
 
+/// Whether to deblock the encoder's local reconstruction.
+///
+/// Pinned libvpx emits the selected filter level for every displayed frame,
+/// but runs the encoder-side filter only when the reconstruction is retained as
+/// a reference (`vp9_encoder.c:3397-3450::loopfilter_frame`). The caller may
+/// mark only a proven-disposable reconstruction: the fixed temporal patterns
+/// qualify, while flexible/bypass SVC must first account for application-owned
+/// buffer-slot updates.
+#[inline]
+const fn should_filter_reconstruction(
+    filter_level: u8,
+    discardable_temporal_svc_reconstruction: bool,
+    filter_nonreference_override: bool,
+) -> bool {
+    filter_level > 0 && (!discardable_temporal_svc_reconstruction || filter_nonreference_override)
+}
+
+fn filter_nonreference_recon_override() -> bool {
+    use std::sync::OnceLock;
+
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var_os("RVP9_FILTER_NONREF_RECON").is_some_and(|value| value != "0")
+    })
+}
+
 #[cfg(test)]
 mod lf_packet_overlap_tests {
-    use super::{lf_packet_overlap_policy, should_overlap_lf_and_packet};
+    use super::{
+        lf_packet_overlap_policy, should_filter_reconstruction, should_overlap_lf_and_packet,
+    };
     use std::ffi::OsStr;
 
     #[test]
@@ -151,6 +179,14 @@ mod lf_packet_overlap_tests {
         assert!(!should_overlap_lf_and_packet(16, false, true));
         assert!(!should_overlap_lf_and_packet(0, true, true));
         assert!(!should_overlap_lf_and_packet(16, true, false));
+    }
+
+    #[test]
+    fn local_filter_skips_only_proven_disposable_temporal_svc_reconstructions() {
+        assert!(should_filter_reconstruction(16, false, false));
+        assert!(!should_filter_reconstruction(16, true, false));
+        assert!(should_filter_reconstruction(16, true, true));
+        assert!(!should_filter_reconstruction(0, false, true));
     }
 }
 
@@ -4186,8 +4222,30 @@ impl StreamEncoder {
         // entropy state. Complete SB rows use the direct split-edge filter;
         // partial bottom rows add temporary addressable tail storage for the
         // same backend while retaining the visible boundary masks.
-        let overlap_lf_and_packet = should_overlap_lf_and_packet(
+        // Only the two fixed temporal patterns prove that zero wire refresh
+        // means no retained reconstruction. Flexible/bypass SVC may retain a
+        // zero-refresh frame through an application-owned buffer-slot update;
+        // keep filtering that future path until its explicit lifetime reaches
+        // `SvcFrameDecision`.
+        let discardable_temporal_svc_reconstruction = svc_non_reference_frame
+            && self.svc.as_ref().is_some_and(|svc| {
+                matches!(
+                    svc.temporal_layering_mode,
+                    crate::svc::TemporalLayeringMode::Pattern0101
+                        | crate::svc::TemporalLayeringMode::Pattern0212
+                )
+            });
+        let reconstruction_filter_level = if should_filter_reconstruction(
             filter_level,
+            discardable_temporal_svc_reconstruction,
+            filter_nonreference_recon_override(),
+        ) {
+            filter_level
+        } else {
+            0
+        };
+        let overlap_lf_and_packet = should_overlap_lf_and_packet(
+            reconstruction_filter_level,
             self.lf_worker_pool.is_some(),
             lf_packet_overlap_enabled(),
         );
@@ -4207,14 +4265,20 @@ impl StreamEncoder {
             // chroma borrows before returning, including on packet errors.
             let lf_job = unsafe {
                 lf_pool.dispatch(|| {
-                    apply_packet_overlap_luma(w, h, filter_level, &mi_grid, &mut new_recon_y);
+                    apply_packet_overlap_luma(
+                        w,
+                        h,
+                        reconstruction_filter_level,
+                        &mi_grid,
+                        &mut new_recon_y,
+                    );
                 })
             };
             let packet = build_packet!(Some(|| {
                 apply_packet_overlap_chroma(
                     w,
                     h,
-                    filter_level,
+                    reconstruction_filter_level,
                     &mi_grid,
                     &mut new_recon_u,
                     &mut new_recon_v,
@@ -4230,11 +4294,11 @@ impl StreamEncoder {
             );
             packet
         } else {
-            if filter_level > 0 {
+            if reconstruction_filter_level > 0 {
                 apply_loop_filter_to_tight_recon_parallel(
                     w,
                     h,
-                    filter_level,
+                    reconstruction_filter_level,
                     &mi_grid,
                     &mut new_recon_y,
                     &mut new_recon_u,
