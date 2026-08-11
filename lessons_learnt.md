@@ -5,6 +5,7 @@ Distilled, non-obvious gotchas future sessions need — dated one-liners.
 Durable project facts/conventions belong in `CLAUDE.md` / `AGENTS.md`, not here.
 Hard cap: 20 entries.
 
+- 2026-08-11: Disabled diagnostics still cost if payloads are built first; guard trace copies at source (`inter.rs:pick_inter_mode_impl`).
 - 2026-08-11: Fixed-pattern nonref SVC recons are disposable; emit LF level but skip local deblock (`frame_loop.rs:should_filter_reconstruction`).
 - 2026-08-11: CPU8 SVC nonref model Q≤145 already fails TL2 (+0.773%); keep the full metric (`lib.rs:svc_enhancement_model_only_large_qmax`).
 - 2026-08-11: Output-backed winner rotation realizes only ~0.4% of a 2.8% MC ceiling (`inter.rs:pick_inter_mode_with_output`).

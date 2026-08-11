@@ -1738,6 +1738,15 @@ pub mod candidate_trace {
     }
 }
 
+fn force_candidate_trace_bookkeeping() -> bool {
+    use std::sync::OnceLock;
+
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var_os("RVP9_ALWAYS_BUILD_CANDIDATE_TRACE").is_some_and(|value| value != "0")
+    })
+}
+
 /// libvpx `INTER_*` inter-mode bitmask presets
 /// (`vp9_speed_features.h:31-38`). Each preset encodes which entries of
 /// [`InterMode`] are allowed for a given block size. Bit `m` corresponds
@@ -2137,6 +2146,12 @@ fn pick_inter_mode_impl(
     // F.0.2 diagnostic slots use the shared order
     // `[ZERO, NEAREST, NEAR, NEW]`. Only candidates that survive the real
     // production gates below are recorded.
+    // The F.0.2 oracle is normally disabled. Avoid copying every evaluated
+    // LAST candidate into diagnostic storage and borrowing its TLS record map
+    // on the production path. The override restores the former bookkeeping in
+    // the same binary for exact speed/output comparisons.
+    let collect_candidate_trace =
+        candidate_trace::is_enabled() || force_candidate_trace_bookkeeping();
     let mut last_candidates: [Option<InterModeSearchResult>; 4] = [None; 4];
     let mut denoiser_zeromv: Option<(usize, DenoiserCandidateContext)> = None;
     let mut denoiser_zeromv_last: Option<(usize, DenoiserCandidateContext)> = None;
@@ -2693,7 +2708,7 @@ fn pick_inter_mode_impl(
                 InterMode::NearMv => 2,
                 InterMode::NewMv => 3,
             };
-            if ref_frame == RefFrame::LastFrame {
+            if collect_candidate_trace && ref_frame == RefFrame::LastFrame {
                 let mut traced = candidate;
                 traced.best_rd_cost = biased_rd_cost;
                 last_candidates[slot] = Some(traced);
@@ -2890,7 +2905,11 @@ fn pick_inter_mode_impl(
         zeromv_last: denoiser_zeromv_last.map(|(_, candidate)| candidate),
         nonzero: denoiser_nonzero.map(|(_, candidate)| candidate),
     };
-    best.candidate_trace_id = candidate_trace::record(last_candidates);
+    best.candidate_trace_id = if collect_candidate_trace {
+        candidate_trace::record(last_candidates)
+    } else {
+        0
+    };
 
     best
 }
