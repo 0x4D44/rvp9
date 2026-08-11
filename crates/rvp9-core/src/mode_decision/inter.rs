@@ -1580,6 +1580,63 @@ pub struct PickInterModeParams<'a> {
     pub newmv_override_golden: Option<Mv>,
 }
 
+#[inline(always)]
+fn single_ref_search_params<'short, 'data: 'short>(
+    params: &'short PickInterModeParams<'data>,
+    ref_idx: usize,
+    mv_candidates: &'short MvCandidates,
+) -> InterModeSearchParams<'short> {
+    let (ref_plane, ref_frame_rate_cost, ref_u, ref_v) = match ref_idx {
+        0 => (
+            params.last_ref_plane,
+            params.ref_frame_cost_last,
+            params.last_ref_u,
+            params.last_ref_v,
+        ),
+        1 => (
+            params.golden_ref_plane,
+            params.ref_frame_cost_golden,
+            params.golden_ref_u,
+            params.golden_ref_v,
+        ),
+        _ => unreachable!("inter reference index must be LAST or GOLDEN"),
+    };
+
+    InterModeSearchParams {
+        block_size: params.block_size,
+        src_plane: params.src_plane,
+        src_offset: params.src_offset,
+        ref_plane,
+        mv_candidates,
+        mv_limits: params.mv_limits,
+        site_config: params.site_config,
+        full_pixel_search_method: params.full_pixel_search_method,
+        mv_costs: params.mv_costs,
+        inter_mode_costs: params.inter_mode_costs,
+        inter_mode_ctx: params.inter_mode_ctx,
+        quantizer: params.quantizer,
+        q_index: params.q_index,
+        allow_hp: params.allow_hp,
+        frame_kind: params.frame_kind,
+        newmv_seed: params.newmv_seed,
+        svc_non_reference_frame: params.svc_non_reference_frame,
+        ref_frame_rate_cost,
+        switchable_interp_costs: params.switchable_interp_costs,
+        switchable_interp_ctx: params.switchable_interp_ctx,
+        skip_ctx: Some(params.skip_ctx),
+        skip_prob: Some(params.skip_prob),
+        rd_calibration: params.rd_calibration,
+        src_u: params.src_u,
+        src_v: params.src_v,
+        ref_u,
+        ref_v,
+        uv_stride: params.uv_stride,
+        color_sensitivity: params.color_sensitivity,
+        uv_dc_quant: params.uv_dc_quant,
+        uv_ac_quant: params.uv_ac_quant,
+    }
+}
+
 /// Candidate statistics consumed by the temporal denoiser.
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 pub struct DenoiserPickContext {
@@ -1754,6 +1811,16 @@ fn output_first_prediction_slot_enabled() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
     *ENABLED.get_or_init(|| {
         std::env::var_os("RVP9_RT_OUTPUT_FIRST_SLOT").is_none_or(|value| value != "0")
+    })
+}
+
+#[inline]
+fn reuse_single_ref_params_enabled() -> bool {
+    use std::sync::OnceLock;
+
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var_os("RVP9_RT_REUSE_SINGLE_REF_PARAMS").is_none_or(|value| value != "0")
     })
 }
 
@@ -1953,7 +2020,7 @@ fn pre_search_mv_is_zero(mode: InterMode, candidates: &MvCandidates) -> bool {
 /// (once per ref) and taking the argmin at the caller.
 #[must_use]
 pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult {
-    pick_inter_mode_impl(params, None)
+    pick_inter_mode_impl(params, None, reuse_single_ref_params_enabled())
 }
 
 /// Run the dual-reference inter-mode search while retaining the winning luma
@@ -1974,12 +2041,13 @@ pub fn pick_inter_mode_with_output(
         usize::from(params.block_size.width()),
         usize::from(params.block_size.height()),
     );
-    pick_inter_mode_impl(params, Some(output))
+    pick_inter_mode_impl(params, Some(output), reuse_single_ref_params_enabled())
 }
 
 fn pick_inter_mode_impl(
     params: &PickInterModeParams<'_>,
     mut output: Option<&mut OutputBackedPredictionBuffer<'_>>,
+    reuse_single_ref_params: bool,
 ) -> PickInterModeResult {
     debug_assert!(
         params.inter_mode_ctx < INTER_MODE_CONTEXTS,
@@ -2157,6 +2225,21 @@ fn pick_inter_mode_impl(
     // still preserve the incumbent across every candidate evaluation.
     let output_first_prediction_slot = output_first_prediction_slot_enabled();
 
+    // Every surviving mode for a reference consumes the same compact search
+    // view. Materialize it once per usable reference instead of rebuilding its
+    // 26 fields for every candidate (and a second time for uncached NEWMV).
+    // The disabled path deliberately retains the former construction sites so
+    // production timing can compare both layouts in one binary.
+    let prebuilt_single_ref_params = if reuse_single_ref_params {
+        [
+            Some(single_ref_search_params(params, 0, &last_mvc_safe)),
+            ((ref_frame_skip_mask & (1 << 2)) == 0)
+                .then(|| single_ref_search_params(params, 1, &golden_mvc_safe)),
+        ]
+    } else {
+        [None, None]
+    };
+
     let mut best: Option<PickInterModeResult> = None;
     let mut retained_prediction_slot: Option<FilterPredictionSlot> = None;
     // F.0.2 diagnostic slots use the shared order
@@ -2184,22 +2267,6 @@ fn pick_inter_mode_impl(
                 &last_mvc_safe
             } else {
                 &golden_mvc_safe
-            };
-            let ref_plane = if ref_idx == 0 {
-                params.last_ref_plane
-            } else {
-                params.golden_ref_plane
-            };
-            let ref_frame_rate_cost = if ref_idx == 0 {
-                params.ref_frame_cost_last
-            } else {
-                params.ref_frame_cost_golden
-            };
-            // G1 — per-ref UV planes for chroma RD.
-            let (ref_u, ref_v) = if ref_idx == 0 {
-                (params.last_ref_u, params.last_ref_v)
-            } else {
-                (params.golden_ref_u, params.golden_ref_v)
             };
 
             // OOB veto for NEAREST / NEAR: skip if the caller flagged the
@@ -2408,46 +2475,22 @@ fn pick_inter_mode_impl(
                         &mut newmv_golden
                     };
                     if cached.is_none() {
-                        let single_params = InterModeSearchParams {
-                            block_size: params.block_size,
-                            src_plane: params.src_plane,
-                            src_offset: params.src_offset,
-                            ref_plane,
-                            mv_candidates: mvc_safe,
-                            mv_limits: params.mv_limits,
-                            site_config: params.site_config,
-                            full_pixel_search_method: params.full_pixel_search_method,
-                            mv_costs: params.mv_costs,
-                            inter_mode_costs: params.inter_mode_costs,
-                            inter_mode_ctx: params.inter_mode_ctx,
-                            quantizer: params.quantizer,
-                            q_index: params.q_index,
-                            allow_hp: params.allow_hp,
-                            frame_kind: params.frame_kind,
-                            newmv_seed: params.newmv_seed,
-                            svc_non_reference_frame: params.svc_non_reference_frame,
-                            ref_frame_rate_cost,
-                            switchable_interp_costs: params.switchable_interp_costs,
-                            switchable_interp_ctx: params.switchable_interp_ctx,
-                            skip_ctx: Some(params.skip_ctx),
-                            skip_prob: Some(params.skip_prob),
-                            rd_calibration: params.rd_calibration,
-                            src_u: params.src_u,
-                            src_v: params.src_v,
-                            ref_u,
-                            ref_v,
-                            uv_stride: params.uv_stride,
-                            color_sensitivity: params.color_sensitivity,
-                            uv_dc_quant: params.uv_dc_quant,
-                            uv_ac_quant: params.uv_ac_quant,
-                        };
+                        let local_single_params;
+                        let single_params =
+                            if let Some(prebuilt) = prebuilt_single_ref_params[ref_idx].as_ref() {
+                                prebuilt
+                            } else {
+                                local_single_params =
+                                    single_ref_search_params(params, ref_idx, mvc_safe);
+                                &local_single_params
+                            };
                         let pred_seed = params.reference_masking.then_some(if ref_idx == 0 {
                             (pred_mv_last, pred_mv_sad_last)
                         } else {
                             (pred_mv_golden, pred_mv_sad_golden)
                         });
                         let searched = run_newmv_search(
-                            &single_params,
+                            single_params,
                             pred_seed,
                             Some(NewMvSubpelGate {
                                 lambda,
@@ -2549,39 +2592,13 @@ fn pick_inter_mode_impl(
                 continue;
             }
 
-            // Build a single-ref params struct for the evaluator.
-            let single_params = InterModeSearchParams {
-                block_size: params.block_size,
-                src_plane: params.src_plane,
-                src_offset: params.src_offset,
-                ref_plane,
-                mv_candidates: mvc_safe,
-                mv_limits: params.mv_limits,
-                site_config: params.site_config,
-                full_pixel_search_method: params.full_pixel_search_method,
-                mv_costs: params.mv_costs,
-                inter_mode_costs: params.inter_mode_costs,
-                inter_mode_ctx: params.inter_mode_ctx,
-                quantizer: params.quantizer,
-                q_index: params.q_index,
-                allow_hp: params.allow_hp,
-                frame_kind: params.frame_kind,
-                newmv_seed: params.newmv_seed,
-                svc_non_reference_frame: params.svc_non_reference_frame,
-                ref_frame_rate_cost,
-                switchable_interp_costs: params.switchable_interp_costs,
-                switchable_interp_ctx: params.switchable_interp_ctx,
-                skip_ctx: Some(params.skip_ctx),
-                skip_prob: Some(params.skip_prob),
-                rd_calibration: params.rd_calibration,
-                src_u: params.src_u,
-                src_v: params.src_v,
-                ref_u,
-                ref_v,
-                uv_stride: params.uv_stride,
-                color_sensitivity: params.color_sensitivity,
-                uv_dc_quant: params.uv_dc_quant,
-                uv_ac_quant: params.uv_ac_quant,
+            let local_single_params;
+            let single_params = if let Some(prebuilt) = prebuilt_single_ref_params[ref_idx].as_ref()
+            {
+                prebuilt
+            } else {
+                local_single_params = single_ref_search_params(params, ref_idx, mvc_safe);
+                &local_single_params
             };
 
             let ref_mv = match mode {
@@ -2655,7 +2672,7 @@ fn pick_inter_mode_impl(
                 ]
             };
             let (candidate, candidate_prediction_slot) = evaluate_candidate_with_slots(
-                &single_params,
+                single_params,
                 mode,
                 mv,
                 ref_mv,
@@ -8286,6 +8303,74 @@ mod tests {
             newmv_override_last: None,
             newmv_override_golden: None,
         }
+    }
+
+    #[test]
+    fn prebuilt_single_ref_params_match_per_candidate_materialization() {
+        let width = 64;
+        let height = 64;
+        let last_data = make_plane(width, height, 0x1148);
+        let golden_data = make_plane(width, height, 0x1149);
+        let mut src_data = last_data.clone();
+        let src_offset = (16, 16);
+        for row in 0..16 {
+            for col in 0..16 {
+                src_data[(src_offset.1 + row) * width + src_offset.0 + col] =
+                    last_data[(src_offset.1 + row) * width + src_offset.0 + col + 1];
+            }
+        }
+        let src_plane = PlaneRef {
+            data: &src_data,
+            stride: width,
+            width,
+            height,
+        };
+        let last_plane = PlaneRef {
+            data: &last_data,
+            stride: width,
+            width,
+            height,
+        };
+        let golden_plane = PlaneRef {
+            data: &golden_data,
+            stride: width,
+            width,
+            height,
+        };
+        let harness = TestHarness::new(width, 80);
+        let frame_context = FrameContext::new_default();
+        let intra_y_costs = crate::cost::symbol_costs::intra_y_mode_costs_inter(&frame_context)[0];
+        let last_mvc = MvCandidates {
+            nearest: Mv { row: 0, col: 2 },
+            near: Mv::ZERO,
+        };
+        let golden_mvc = MvCandidates {
+            nearest: Mv { row: 2, col: 0 },
+            near: Mv::ZERO,
+        };
+        let mut params = make_dual_ref_params(
+            &harness,
+            &intra_y_costs,
+            BlockSize::Block16x16,
+            &src_plane,
+            &last_plane,
+            src_offset,
+            &last_mvc,
+            &golden_mvc,
+            MvLimits::new(-4, 4, -4, 4),
+            80,
+        );
+        params.golden_ref_plane = &golden_plane;
+        params.enable_intra_fallback = false;
+        params.reference_masking = false;
+        params.cb_pred_filter_search = false;
+        params.ref_frame_cost_last = 17;
+        params.ref_frame_cost_golden = 29;
+
+        let per_candidate = pick_inter_mode_impl(&params, None, false);
+        let prebuilt = pick_inter_mode_impl(&params, None, true);
+
+        assert_eq!(prebuilt, per_candidate);
     }
 
     /// `pick_inter_mode` with OOB flags: when `last_nearest_in_bounds`
