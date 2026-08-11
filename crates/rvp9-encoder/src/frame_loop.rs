@@ -3337,6 +3337,9 @@ impl StreamEncoder {
         let svc_non_reference_frame = self
             .svc_frame
             .is_some_and(|decision| decision.refresh_frame_flags == 0);
+        let svc_enhancement_frame = self
+            .svc_frame
+            .is_some_and(|decision| decision.temporal_layer_id > 0);
         let partition_ref_y =
             if self.denoiser.is_some() && last_ref_map_idx == crate::buffer_pool::LAST_REF {
                 self.me_ref_y.as_slice()
@@ -3613,6 +3616,7 @@ impl StreamEncoder {
                     force_nstep_motion_search,
                     source_aligned_cpu8_svc_partitions,
                     svc_non_reference_frame,
+                    svc_enhancement_frame,
                     chessboard_index,
                     speed,
                     deadline,
@@ -4588,6 +4592,7 @@ impl StreamEncoder {
             &arf_mv_costs,
             &mut arf_rd_thresh,
             self.frames_since_golden_refresh,
+            false,
             false,
             false,
             false,

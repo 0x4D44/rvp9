@@ -423,6 +423,11 @@ pub struct InterRdCalibration {
     pub model_dist: bool,
     /// Reuse the luma model's coefficient rate and skip classification.
     pub model_only: bool,
+    /// Extend model-only ranking to blocks at least 32x32.
+    ///
+    /// Pinned libvpx enables this for temporal-SVC enhancement frames at
+    /// cpu-used 7 and 8. Base-layer large blocks retain `block_yrd`.
+    pub model_only_large: bool,
     /// Replace non-skipped Block16 model rate and distortion with the real
     /// Hadamard coefficient result while preserving the model skip state.
     pub block16_coef_rd: bool,
@@ -442,6 +447,7 @@ impl InterRdCalibration {
             hadamard_only: false,
             model_dist: false,
             model_only: false,
+            model_only_large: false,
             block16_coef_rd: false,
             large_block_model: true,
         }
@@ -459,6 +465,7 @@ impl InterRdCalibration {
             hadamard_only: true,
             model_dist: true,
             model_only: true,
+            model_only_large: false,
             block16_coef_rd: false,
             large_block_model: true,
         }
@@ -475,6 +482,13 @@ impl InterRdCalibration {
     #[must_use]
     pub const fn with_block16_coef_rd(mut self, enabled: bool) -> Self {
         self.block16_coef_rd = enabled;
+        self
+    }
+
+    /// Select model-only ranking for blocks at least 32x32.
+    #[must_use]
+    pub const fn with_model_only_large(mut self, enabled: bool) -> Self {
+        self.model_only_large = enabled;
         self
     }
 
@@ -3943,7 +3957,7 @@ fn evaluate_candidate_for_filter_with_pred(
         }
     } else if hadamard_only
         && params.rd_calibration.model_only
-        && params.block_size < BlockSize::Block32x32
+        && (params.block_size < BlockSize::Block32x32 || params.rd_calibration.model_only_large)
         && !block16_coef_rd
     {
         BlockYrdResult {
@@ -6014,7 +6028,7 @@ mod tests {
     }
 
     #[test]
-    fn block32_realtime_picker_runs_real_block_yrd() {
+    fn block32_realtime_picker_scopes_model_only_to_enhancement_policy() {
         let pw = 64;
         let ph = 64;
         let src_data = make_plane(pw, ph, 17);
@@ -6043,7 +6057,7 @@ mod tests {
             MvLimits::new(-32, 32, -32, 32),
             166,
         );
-        let params = InterModeSearchParams {
+        let mut params = InterModeSearchParams {
             rd_calibration: InterRdCalibration::realtime(),
             ..control
         };
@@ -6094,6 +6108,19 @@ mod tests {
             (model.rate.max(0) as u64, model.dist),
             "Block32 must not reuse the small-block model-only result"
         );
+
+        params.rd_calibration = params.rd_calibration.with_model_only_large(true);
+        let enhancement = evaluate_candidate_for_filter(
+            &params,
+            InterMode::ZeroMv,
+            Mv::ZERO,
+            Mv::ZERO,
+            compute_rd_mult(166, frame_type_for_rd(params.frame_kind)),
+            InterpFilter::EightTap,
+        );
+        assert_eq!(enhancement.coef_rate, model.rate.max(0) as u64);
+        assert_eq!(enhancement.coef_dist, model.dist);
+        assert_eq!(enhancement.dct_eob_total, 0);
     }
 
     #[test]
