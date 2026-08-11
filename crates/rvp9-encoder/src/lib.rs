@@ -5226,20 +5226,35 @@ fn newmv_diff_bias_for_mode(rc_mode: crate::rate_control::RcMode, env_enabled: b
     env_enabled && matches!(rc_mode, crate::rate_control::RcMode::Cbr)
 }
 
-fn partition_color_sensitivity(
-    src_uv: (&[u8], &[u8]),
-    ref_uv: (&[u8], &[u8]),
+#[derive(Clone, Copy)]
+struct PartitionColorSensitivityInput {
     frame_size: (usize, usize),
     sb_origin: (usize, usize),
     partition_mv: Mv,
     y_sad: u32,
+    direct_zero_mv_sad: bool,
+}
+
+fn partition_color_sensitivity(
+    src_uv: (&[u8], &[u8]),
+    ref_uv: (&[u8], &[u8]),
+    input: PartitionColorSensitivityInput,
     pred_border: &mut [u8; MAX_INTER_PRED_BORDER_BYTES],
 ) -> [bool; 2] {
+    let PartitionColorSensitivityInput {
+        frame_size,
+        sb_origin,
+        partition_mv,
+        y_sad,
+        direct_zero_mv_sad,
+    } = input;
     let (width, height) = frame_size;
     let uv_width = width / 2;
     let uv_height = height / 2;
     let uv_x = sb_origin.0 / 2;
     let uv_y = sb_origin.1 / 2;
+    let complete_block = uv_x + 32 <= uv_width && uv_y + 32 <= uv_height;
+    let use_direct_sad = direct_zero_mv_sad && partition_mv == Mv::ZERO && complete_block;
     let mut sensitivity = [false; 2];
 
     for (plane, (src, reference)) in [src_uv.0, src_uv.1]
@@ -5247,36 +5262,44 @@ fn partition_color_sensitivity(
         .zip([ref_uv.0, ref_uv.1])
         .enumerate()
     {
-        let mut predictor = [0u8; 32 * 32];
-        build_inter_pred_block_unscaled(
-            reference,
-            uv_width,
-            uv_width,
-            uv_height,
-            uv_x,
-            uv_y,
-            32,
-            32,
-            i32::from(partition_mv.col),
-            i32::from(partition_mv.row),
-            &mut predictor,
-            32,
-            InterpFilter::Bilinear,
-            pred_border,
-        );
         let sad32 = rvp9_core::dsp::get_ref().sad(BlockSize::Block32x32);
-        let uv_sad = if uv_x + 32 <= uv_width && uv_y + 32 <= uv_height {
-            sad32(&src[uv_y * uv_width + uv_x..], uv_width, &predictor, 32)
+        let uv_sad = if use_direct_sad {
+            let offset = uv_y * uv_width + uv_x;
+            // Zero-motion bilinear prediction is an exact reference copy.
+            // Read the packed reference plane in place instead of copying the
+            // same 32x32 block to a temporary predictor before the SAD.
+            sad32(&src[offset..], uv_width, &reference[offset..], uv_width)
         } else {
-            let mut source_block = [0u8; 32 * 32];
-            for row in 0..32 {
-                let src_y = (uv_y + row).min(uv_height - 1);
-                for col in 0..32 {
-                    let src_x = (uv_x + col).min(uv_width - 1);
-                    source_block[row * 32 + col] = src[src_y * uv_width + src_x];
+            let mut predictor = [0u8; 32 * 32];
+            build_inter_pred_block_unscaled(
+                reference,
+                uv_width,
+                uv_width,
+                uv_height,
+                uv_x,
+                uv_y,
+                32,
+                32,
+                i32::from(partition_mv.col),
+                i32::from(partition_mv.row),
+                &mut predictor,
+                32,
+                InterpFilter::Bilinear,
+                pred_border,
+            );
+            if complete_block {
+                sad32(&src[uv_y * uv_width + uv_x..], uv_width, &predictor, 32)
+            } else {
+                let mut source_block = [0u8; 32 * 32];
+                for row in 0..32 {
+                    let src_y = (uv_y + row).min(uv_height - 1);
+                    for col in 0..32 {
+                        let src_x = (uv_x + col).min(uv_width - 1);
+                        source_block[row * 32 + col] = src[src_y * uv_width + src_x];
+                    }
                 }
+                sad32(&source_block, 32, &predictor, 32)
             }
-            sad32(&source_block, 32, &predictor, 32)
         };
         sensitivity[plane] = uv_sad > (y_sad >> 2);
     }
@@ -5647,6 +5670,7 @@ pub(crate) struct InterEncodeEnv {
     rt_profile: bool,
     exact_vbp_tree: Option<bool>,
     exact_vbp_skip_legacy_prepass: Option<bool>,
+    direct_zero_mv_color_sad: Option<bool>,
     live_ref_costs: Option<bool>,
     rt_emit_max_tx: Option<bool>,
     rt_emit_tx_rd: Option<bool>,
@@ -5700,6 +5724,7 @@ impl InterEncodeEnv {
             rt_profile: std::env::var_os("RVP9_RT_PROFILE").is_some(),
             exact_vbp_tree: bool_override("RVP9_EXACT_VBP_TREE"),
             exact_vbp_skip_legacy_prepass: bool_override("RVP9_EXACT_VBP_SKIP_LEGACY_PREPASS"),
+            direct_zero_mv_color_sad: bool_override("RVP9_DIRECT_ZERO_MV_COLOR_SAD"),
             live_ref_costs: bool_override("RVP9_LIVE_REF_COSTS"),
             rt_emit_max_tx: bool_override("RVP9_RT_EMIT_MAX_TX"),
             rt_emit_tx_rd: bool_override("RVP9_RT_EMIT_TX_RD"),
@@ -5779,6 +5804,10 @@ impl InterEncodeEnv {
                 content_tier,
                 cyclic_refresh_active,
             )
+    }
+
+    fn direct_zero_mv_color_sad_enabled(&self) -> bool {
+        self.flag_or(self.direct_zero_mv_color_sad, true)
     }
 
     /// Mirror libvpx realtime `search_filter_ref`: integer-pel motion
@@ -7060,10 +7089,13 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     partition_color_sensitivity(
                         (input_yuv.1, input_yuv.2),
                         partition_ref_uv,
-                        (w, h),
-                        (sb_px_x, sb_px_y),
-                        partition_mv,
-                        selected_sad,
+                        PartitionColorSensitivityInput {
+                            frame_size: (w, h),
+                            sb_origin: (sb_px_x, sb_px_y),
+                            partition_mv,
+                            y_sad: selected_sad,
+                            direct_zero_mv_sad: env.direct_zero_mv_color_sad_enabled(),
+                        },
                         &mut inter_emit_scratch.pred_border,
                     )
                 };
@@ -15217,10 +15249,13 @@ mod tests {
             partition_color_sensitivity(
                 (&src_u, &src_v),
                 (&ref_u, &ref_v),
-                (64, 48),
-                (0, 0),
-                Mv::ZERO,
-                4_000,
+                PartitionColorSensitivityInput {
+                    frame_size: (64, 48),
+                    sb_origin: (0, 0),
+                    partition_mv: Mv::ZERO,
+                    y_sad: 4_000,
+                    direct_zero_mv_sad: true,
+                },
                 &mut pred_border,
             ),
             [false, true],
@@ -15239,14 +15274,98 @@ mod tests {
             partition_color_sensitivity(
                 (&src_u, &src_v),
                 (&ref_u, &ref_v),
-                (80, 80),
-                (0, 0),
-                Mv::ZERO,
-                4_000,
+                PartitionColorSensitivityInput {
+                    frame_size: (80, 80),
+                    sb_origin: (0, 0),
+                    partition_mv: Mv::ZERO,
+                    y_sad: 4_000,
+                    direct_zero_mv_sad: true,
+                },
                 &mut pred_border,
             ),
             [false, true],
         );
+    }
+
+    #[test]
+    fn partition_color_sensitivity_direct_zero_mv_matches_bilinear_copy() {
+        let width = 128usize;
+        let height = 128usize;
+        let uv_width = width / 2;
+        let uv_height = height / 2;
+        let src_u = (0..uv_width * uv_height)
+            .map(|i| (i as u8).wrapping_mul(37).wrapping_add(11))
+            .collect::<Vec<_>>();
+        let src_v = (0..uv_width * uv_height)
+            .map(|i| (i as u8).wrapping_mul(19).wrapping_add(83))
+            .collect::<Vec<_>>();
+        let ref_u = (0..uv_width * uv_height)
+            .map(|i| (i as u8).wrapping_mul(13).wrapping_add(29))
+            .collect::<Vec<_>>();
+        let ref_v = (0..uv_width * uv_height)
+            .map(|i| (i as u8).wrapping_mul(23).wrapping_add(47))
+            .collect::<Vec<_>>();
+        let sad32 = rvp9_core::dsp::get_ref().sad(BlockSize::Block32x32);
+
+        for sb_origin in [(0, 0), (64, 0), (0, 64), (64, 64)] {
+            let uv_x = sb_origin.0 / 2;
+            let uv_y = sb_origin.1 / 2;
+            let offset = uv_y * uv_width + uv_x;
+            for (src, reference) in [(&src_u, &ref_u), (&src_v, &ref_v)] {
+                let mut predictor = [0u8; 32 * 32];
+                let mut pred_border = [0u8; MAX_INTER_PRED_BORDER_BYTES];
+                build_inter_pred_block_unscaled(
+                    reference,
+                    uv_width,
+                    uv_width,
+                    uv_height,
+                    uv_x,
+                    uv_y,
+                    32,
+                    32,
+                    0,
+                    0,
+                    &mut predictor,
+                    32,
+                    InterpFilter::Bilinear,
+                    &mut pred_border,
+                );
+                assert_eq!(
+                    sad32(&src[offset..], uv_width, &predictor, 32),
+                    sad32(&src[offset..], uv_width, &reference[offset..], uv_width,),
+                );
+            }
+
+            for y_sad in [0, 1, 1_000, 4_000, 65_535, u32::MAX] {
+                let mut legacy_border = [0u8; MAX_INTER_PRED_BORDER_BYTES];
+                let mut direct_border = [0u8; MAX_INTER_PRED_BORDER_BYTES];
+                let legacy = partition_color_sensitivity(
+                    (&src_u, &src_v),
+                    (&ref_u, &ref_v),
+                    PartitionColorSensitivityInput {
+                        frame_size: (width, height),
+                        sb_origin,
+                        partition_mv: Mv::ZERO,
+                        y_sad,
+                        direct_zero_mv_sad: false,
+                    },
+                    &mut legacy_border,
+                );
+                let direct = partition_color_sensitivity(
+                    (&src_u, &src_v),
+                    (&ref_u, &ref_v),
+                    PartitionColorSensitivityInput {
+                        frame_size: (width, height),
+                        sb_origin,
+                        partition_mv: Mv::ZERO,
+                        y_sad,
+                        direct_zero_mv_sad: true,
+                    },
+                    &mut direct_border,
+                );
+                assert_eq!(direct, legacy);
+            }
+        }
     }
 
     #[test]
