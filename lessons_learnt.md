@@ -5,6 +5,7 @@ Distilled, non-obvious gotchas future sessions need — dated one-liners.
 Durable project facts/conventions belong in `CLAUDE.md` / `AGENTS.md`, not here.
 Hard cap: 20 entries.
 
+- 2026-08-11: Keyframe token contexts need writer Z-order, not raster order (`lib.rs:record_encoded_intra_superblock`).
 - 2026-08-11: FAST_DIAMOND lists are SAD-domain; INT_MAX neighbors remain valid (`sub_pixel.rs:cost_list_is_well_behaved`).
 - 2026-08-11: CPU8 zero-MV VBP also leaves LAST pred_mv zero; retaining int-pro diverges and wastes work (`lib.rs:use_zero_mv_partition_predictor`).
 - 2026-08-10: CPU7/8 three-layer SVC upgrades TL0 to NSTEP; the generic RT search loses quality (`lib.rs:full_pixel_search_method_for_mode`).
