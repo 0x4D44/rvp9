@@ -59,8 +59,7 @@ use rvp9_core::bitstream::{
     ColorSpace, CompressedHeaderOptions, CompressedHeaderResult, FrameKind,
     InterPartitionCountState, InterpFilter, ModesTileBounds, ModesWriterError, Profile,
     RawBitWriter, SuperframeBuilder, UncompressedHeader, count_inter_leaf_syntax,
-    record_inter_leaf_coefficients, record_inter_tx_coefficients_i16,
-    record_intra_tx_coefficients_i16, reset_intra_leaf_coef_context, tile_bounds,
+    record_inter_leaf_coefficients, record_inter_tx_coefficients_i16, tile_bounds,
     write_compressed_header, write_tile_inter, write_tile_intra_keyframe,
     write_uncompressed_header,
 };
@@ -2544,8 +2543,7 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
     exact_keyframe_sub8: bool,
     nonrd_keyframe_8x8: bool,
     keyframe_8x8_mode_cap: bool,
-    record_coef_tokens: bool,
-) -> IntraSimulationResult {
+) -> VecBackedIntraCoefSource {
     use rvp9_core::coef_ctx::combine_entropy_contexts;
     use rvp9_core::cost::{
         FrameTypeForRd, coef_cost::build_coef_cost_table, compute_rd_mult,
@@ -2656,17 +2654,6 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
             )
         },
     );
-    let mut recorded_coef_tiles = record_coef_tokens.then(|| {
-        tile_bounds_by_col
-            .iter()
-            .enumerate()
-            .filter(|(tile_col, _)| active_tile_col.is_none_or(|active| active == *tile_col))
-            .map(|(tile_col, bounds)| RecordedIntraCoefTile::new(tile_col, *bounds))
-            .collect::<Vec<_>>()
-    });
-    let mut coef_record_sink = [];
-    let mut coef_record_bw = BoolWriter::start_count_only(&mut coef_record_sink);
-    let keyframe_record_fc = FrameContext::new_default();
 
     // Every keyframe leaf needs at most one 64-pixel edge. Reuse fixed
     // function-local scratch instead of allocating two tiny vectors per
@@ -2681,12 +2668,14 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
         }
         for sb_col in active_sb_cols.clone() {
             let current_tile = tile_for_mi_col(&tile_bounds_by_col, sb_col * 8);
-            let current_tile_index = tile_bounds_by_col
-                .iter()
-                .position(|bounds| {
-                    sb_col * 8 >= bounds.mi_col_start && sb_col * 8 < bounds.mi_col_end
-                })
-                .expect("current keyframe superblock belongs to one tile");
+            let current_tile_index = picker_coef_contexts.as_ref().map_or(0, |_| {
+                tile_bounds_by_col
+                    .iter()
+                    .position(|bounds| {
+                        sb_col * 8 >= bounds.mi_col_start && sb_col * 8 < bounds.mi_col_end
+                    })
+                    .expect("current keyframe superblock belongs to one tile")
+            });
             let sb_idx = sb_row * sb_cols + sb_col;
             for leaf_idx in 0..sb_partitions[sb_idx].len() {
                 let (leaf_mi_row, leaf_mi_col, leaf_bsize) = {
@@ -3112,31 +3101,10 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
                     );
                 }
             }
-            if let Some(recorded_tiles) = recorded_coef_tiles.as_mut() {
-                let recorded_index = if active_tile_col.is_some() {
-                    0
-                } else {
-                    current_tile_index
-                };
-                record_encoded_intra_superblock(
-                    &mut recorded_tiles[recorded_index],
-                    &mut coef_record_bw,
-                    &keyframe_record_fc,
-                    &coef_source,
-                    sb_row * 8,
-                    sb_col * 8,
-                    mi_rows,
-                    mi_cols,
-                    &sb_partitions[sb_idx],
-                );
-            }
         }
     }
 
-    IntraSimulationResult {
-        coefs: coef_source,
-        recorded_coef_tiles,
-    }
+    coef_source
 }
 
 fn intra_leaf_all_zero(
@@ -3658,276 +3626,6 @@ fn splat_final_inter_leaf_into_grids(
             out_mv_grid[out_index] = mv_ref;
         }
     }
-}
-
-pub(crate) struct IntraSimulationResult {
-    pub(crate) coefs: VecBackedIntraCoefSource,
-    pub(crate) recorded_coef_tiles: Option<Vec<RecordedIntraCoefTile>>,
-}
-
-pub(crate) struct RecordedIntraCoefTile {
-    pub(crate) tile_col: usize,
-    pub(crate) retained: RetainedCoefTokens,
-    pub(crate) counts: FrameCounts,
-    coef_ctx: TileCoefCtx,
-    last_sb_row: Option<usize>,
-    mi_col_start: usize,
-}
-
-impl RecordedIntraCoefTile {
-    fn new(tile_col: usize, bounds: ModesTileBounds) -> Self {
-        Self {
-            tile_col,
-            retained: RetainedCoefTokens::default(),
-            counts: FrameCounts {
-                coef_full: Some(rvp9_core::entropy::new_coef12_bank()),
-                ..FrameCounts::default()
-            },
-            coef_ctx: TileCoefCtx::new(bounds.mi_col_end - bounds.mi_col_start),
-            last_sb_row: None,
-            mi_col_start: bounds.mi_col_start,
-        }
-    }
-}
-
-#[inline]
-fn prepare_recorded_intra_row(
-    tile: &mut RecordedIntraCoefTile,
-    bw: &BoolWriter<'_>,
-    mi_row: usize,
-) {
-    debug_assert!(bw.is_count_only());
-    let sb_row = mi_row / 8;
-    if tile.last_sb_row != Some(sb_row) {
-        tile.coef_ctx.reset_left_coef();
-        tile.last_sb_row = Some(sb_row);
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn record_encoded_intra_leaf(
-    tile: &mut RecordedIntraCoefTile,
-    bw: &mut BoolWriter<'_>,
-    frame_context: &FrameContext,
-    coef_source: &VecBackedIntraCoefSource,
-    mi_row: usize,
-    mi_col: usize,
-    leaf: PartitionLeafDesc,
-) {
-    prepare_recorded_intra_row(tile, bw, mi_row);
-    if leaf.skip {
-        reset_intra_leaf_coef_context(
-            &mut tile.coef_ctx,
-            leaf.leaf_bsize,
-            mi_row,
-            mi_col,
-            tile.mi_col_start,
-        );
-        return;
-    }
-
-    for plane in 0..3 {
-        let ss_x = F5_SUBSAMPLING_X[plane];
-        let ss_y = F5_SUBSAMPLING_Y[plane];
-        let plane_bsize = if plane == 0 {
-            leaf.leaf_bsize
-        } else {
-            f5_uv_plane_block_size(leaf.leaf_bsize)
-        };
-        let plane_tx = if plane == 0 {
-            leaf.picked_tx_size
-        } else {
-            f5_uv_plane_tx_size(leaf.leaf_bsize, leaf.picked_tx_size)
-        };
-        let is_sub8 = leaf.leaf_bsize < BlockSize::Block8x8;
-        let (plane_bw_4x4, plane_bh_4x4) = if is_sub8 {
-            (2 >> ss_x, 2 >> ss_y)
-        } else {
-            (
-                plane_bsize.n_4x4_wide() as usize,
-                plane_bsize.n_4x4_high() as usize,
-            )
-        };
-        let tx_step_4x4 = 1usize << plane_tx as usize;
-        for tx_y4_local in (0..plane_bh_4x4).step_by(tx_step_4x4) {
-            for tx_x4_local in (0..plane_bw_4x4).step_by(tx_step_4x4) {
-                let tx_type = if plane == 0 {
-                    leaf.y_mode_for_tx(tx_x4_local, tx_y4_local).tx_type()
-                } else {
-                    rvp9_core::transforms::TxType::DctDct
-                };
-                let (raw_coefs, eob) = rvp9_core::bitstream::IntraCoefSource::get_block_coefs(
-                    coef_source,
-                    mi_row,
-                    mi_col,
-                    plane,
-                    tx_x4_local,
-                    tx_y4_local,
-                    plane_tx,
-                );
-                record_intra_tx_coefficients_i16(
-                    bw,
-                    frame_context,
-                    &mut tile.coef_ctx,
-                    mi_row,
-                    mi_col,
-                    tile.mi_col_start,
-                    plane,
-                    tx_x4_local,
-                    tx_y4_local,
-                    plane_tx,
-                    tx_type,
-                    raw_coefs,
-                    eob,
-                    &mut tile.counts,
-                    &mut tile.retained,
-                );
-            }
-        }
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn record_encoded_intra_superblock(
-    tile: &mut RecordedIntraCoefTile,
-    bw: &mut BoolWriter<'_>,
-    frame_context: &FrameContext,
-    coef_source: &VecBackedIntraCoefSource,
-    sb_mi_row: usize,
-    sb_mi_col: usize,
-    mi_rows: usize,
-    mi_cols: usize,
-    leaves: &[PartitionLeafDesc],
-) {
-    let mut leaf_at = [None; 64];
-    for (leaf_index, leaf) in leaves.iter().enumerate() {
-        let slot = &mut leaf_at[leaf.mi_row_in_sb * 8 + leaf.mi_col_in_sb];
-        assert!(
-            slot.replace(leaf_index).is_none(),
-            "keyframe partition tree has overlapping leaf origins"
-        );
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn visit(
-        tile: &mut RecordedIntraCoefTile,
-        bw: &mut BoolWriter<'_>,
-        frame_context: &FrameContext,
-        coef_source: &VecBackedIntraCoefSource,
-        sb_mi_row: usize,
-        sb_mi_col: usize,
-        mi_rows: usize,
-        mi_cols: usize,
-        leaves: &[PartitionLeafDesc],
-        leaf_at: &[Option<usize>; 64],
-        mi_row_in_sb: usize,
-        mi_col_in_sb: usize,
-        span_mi: usize,
-    ) -> usize {
-        let mi_row = sb_mi_row + mi_row_in_sb;
-        let mi_col = sb_mi_col + mi_col_in_sb;
-        if mi_row >= mi_rows || mi_col >= mi_cols {
-            return 0;
-        }
-        if let Some(leaf_index) = leaf_at[mi_row_in_sb * 8 + mi_col_in_sb] {
-            let leaf = leaves[leaf_index];
-            if usize::from(leaf.leaf_bsize.n_8x8_wide()).max(1) == span_mi
-                && usize::from(leaf.leaf_bsize.n_8x8_high()).max(1) == span_mi
-            {
-                record_encoded_intra_leaf(
-                    tile,
-                    bw,
-                    frame_context,
-                    coef_source,
-                    mi_row,
-                    mi_col,
-                    leaf,
-                );
-                return 1;
-            }
-        }
-
-        assert!(span_mi > 1, "keyframe partition tree is missing a leaf");
-        let half = span_mi / 2;
-        visit(
-            tile,
-            bw,
-            frame_context,
-            coef_source,
-            sb_mi_row,
-            sb_mi_col,
-            mi_rows,
-            mi_cols,
-            leaves,
-            leaf_at,
-            mi_row_in_sb,
-            mi_col_in_sb,
-            half,
-        ) + visit(
-            tile,
-            bw,
-            frame_context,
-            coef_source,
-            sb_mi_row,
-            sb_mi_col,
-            mi_rows,
-            mi_cols,
-            leaves,
-            leaf_at,
-            mi_row_in_sb,
-            mi_col_in_sb + half,
-            half,
-        ) + visit(
-            tile,
-            bw,
-            frame_context,
-            coef_source,
-            sb_mi_row,
-            sb_mi_col,
-            mi_rows,
-            mi_cols,
-            leaves,
-            leaf_at,
-            mi_row_in_sb + half,
-            mi_col_in_sb,
-            half,
-        ) + visit(
-            tile,
-            bw,
-            frame_context,
-            coef_source,
-            sb_mi_row,
-            sb_mi_col,
-            mi_rows,
-            mi_cols,
-            leaves,
-            leaf_at,
-            mi_row_in_sb + half,
-            mi_col_in_sb + half,
-            half,
-        )
-    }
-
-    let visited = visit(
-        tile,
-        bw,
-        frame_context,
-        coef_source,
-        sb_mi_row,
-        sb_mi_col,
-        mi_rows,
-        mi_cols,
-        leaves,
-        &leaf_at,
-        0,
-        0,
-        8,
-    );
-    assert_eq!(
-        visited,
-        leaves.len(),
-        "keyframe partition tree must visit every final leaf exactly once"
-    );
 }
 
 pub(crate) struct RecordedCoefTile {

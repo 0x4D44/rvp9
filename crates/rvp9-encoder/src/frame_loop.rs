@@ -101,7 +101,7 @@ use crate::rate_control::{
 };
 use crate::{
     EncodeError, InterPartitionLeafDesc, InterSimulationMiGrid, PartitionLeafDesc,
-    RecordedCoefTile, RecordedIntraCoefTile, VecBackedInterCoefSource, VecBackedIntraCoefSource,
+    RecordedCoefTile, VecBackedInterCoefSource, VecBackedIntraCoefSource,
     pick_and_simulate_inter_encode_partitions, pick_and_simulate_intra_encode_partitions,
 };
 
@@ -1640,7 +1640,6 @@ struct KeyframeTileJobResult {
     tile_col: usize,
     partitions: Vec<Vec<PartitionLeafDesc>>,
     coefs: VecBackedIntraCoefSource,
-    recorded_coef_tiles: Option<Vec<RecordedIntraCoefTile>>,
 }
 
 /// A18 (SVC) — the per-frame temporal-layer decision for one inter
@@ -2839,7 +2838,7 @@ impl StreamEncoder {
             // thread. Keep their existing whole-frame ordering and ownership.
             && !crate::predstat::enabled()
             && !crate::f02_oracle::is_enabled();
-        let (coef_source, recorded_intra_coef_tiles) = if parallel_keyframe_tiles {
+        let coef_source = if parallel_keyframe_tiles {
             let initial_partitions = sb_partitions.clone();
             let mut result_slots: Vec<Option<KeyframeTileJobResult>> =
                 (0..tile_count).map(|_| None).collect();
@@ -2864,7 +2863,7 @@ impl StreamEncoder {
                     {
                         let mut tile_partitions = initial_partitions.clone();
                         scope.submit(move || {
-                            let simulation = pick_and_simulate_intra_encode_partitions(
+                            let coefs = pick_and_simulate_intra_encode_partitions(
                                 w,
                                 h,
                                 q_index,
@@ -2881,13 +2880,11 @@ impl StreamEncoder {
                                 exact_keyframe_sub8,
                                 nonrd_keyframe_8x8,
                                 keyframe_8x8_mode_cap,
-                                true,
                             );
                             *result_slot = Some(KeyframeTileJobResult {
                                 tile_col,
                                 partitions: tile_partitions,
-                                coefs: simulation.coefs,
-                                recorded_coef_tiles: simulation.recorded_coef_tiles,
+                                coefs,
                             });
                         });
                     }
@@ -2901,7 +2898,6 @@ impl StreamEncoder {
                 })
                 .collect();
             let mut merged_coefs = VecBackedIntraCoefSource::new(w, h);
-            let mut merged_recorded_coef_tiles = Vec::with_capacity(tile_count);
             let mi_rows = h as usize / 8;
             let mi_cols = w as usize / 8;
             let sb_cols = w as usize / 64;
@@ -2933,16 +2929,11 @@ impl StreamEncoder {
                     rv[start..end].copy_from_slice(&scratch.recon_v[start..end]);
                 }
                 merged_coefs.merge_from(result.coefs);
-                let mut recorded = result
-                    .recorded_coef_tiles
-                    .expect("production keyframe tile must retain coefficient tokens");
-                assert_eq!(recorded.len(), 1, "one recorder is required per tile job");
-                merged_recorded_coef_tiles.push(recorded.pop().expect("recorder exists"));
             }
-            (merged_coefs, Some(merged_recorded_coef_tiles))
+            merged_coefs
         } else {
             let (ry, ru, rv) = self.ref_pool.new_frame_planes_mut();
-            let simulation = pick_and_simulate_intra_encode_partitions(
+            pick_and_simulate_intra_encode_partitions(
                 w,
                 h,
                 q_index,
@@ -2955,9 +2946,7 @@ impl StreamEncoder {
                 exact_keyframe_sub8,
                 nonrd_keyframe_8x8,
                 keyframe_8x8_mode_cap,
-                true,
-            );
-            (simulation.coefs, simulation.recorded_coef_tiles)
+            )
         };
 
         // F11.0 — apply the in-loop deblocking filter to the encoder's
@@ -3086,7 +3075,6 @@ impl StreamEncoder {
             &mut keyframe_fc,
             self.frame_worker_pool.as_mut(),
             self.parallelism.max_threads as usize,
-            recorded_intra_coef_tiles,
             true,
         )?;
         self.frame_context = keyframe_fc.clone();
@@ -5855,7 +5843,6 @@ fn build_keyframe_packet(
         &mut FrameContext::new_default(),
         None,
         1,
-        None,
         true,
     )
 }
@@ -5872,7 +5859,6 @@ fn build_keyframe_packet_with_tiles(
     decoder_fc: &mut FrameContext,
     mut worker_pool: Option<&mut rvp9_core::tile_threading::WorkerPool>,
     max_threads: usize,
-    recorded_coef_tiles: Option<Vec<RecordedIntraCoefTile>>,
     retain_coef_tokens: bool,
 ) -> Result<Vec<u8>, EncodeError> {
     let mi_rows = height / 8;
@@ -5896,18 +5882,6 @@ fn build_keyframe_packet_with_tiles(
     };
 
     let tile_cols = 1usize << log2_tile_cols;
-    if let Some(recorded) = recorded_coef_tiles.as_ref()
-        && (!retain_coef_tokens
-            || recorded.len() != tile_cols
-            || recorded
-                .iter()
-                .enumerate()
-                .any(|(tile_col, tile)| tile.tile_col != tile_col))
-    {
-        return Err(EncodeError::InvalidConfig(
-            "recorded keyframe coefficient tiles must cover every tile column in order",
-        ));
-    }
     // Bit-accounting diagnostics are thread-local and intentionally observe
     // the caller thread. Keep that opt-in path serial; production tile writers
     // are independent because VP9 resets arithmetic and coefficient context at
@@ -5927,10 +5901,7 @@ fn build_keyframe_packet_with_tiles(
             coef_full: Some(rvp9_core::entropy::new_coef12_bank()),
             ..FrameCounts::default()
         };
-        let recorded: Option<&RecordedIntraCoefTile> =
-            recorded_coef_tiles.as_ref().map(|tiles| &tiles[tile_col]);
-        let mut retained =
-            (recorded.is_none() && retain_coef_tokens).then(RetainedCoefTokens::default);
+        let mut retained = retain_coef_tokens.then(RetainedCoefTokens::default);
         rvp9_core::entropy::bitacct::with_suppressed(|| -> Result<(), EncodeError> {
             let bounds = tile_bounds(
                 mi_rows as usize,
@@ -5943,29 +5914,7 @@ fn build_keyframe_packet_with_tiles(
             let mut count_sink = [];
             let mut bw = BoolWriter::start_count_only(&mut count_sink);
             let mut coef_ctx = TileCoefCtx::new(bounds.mi_col_end - bounds.mi_col_start);
-            if let Some(recorded) = recorded {
-                let mut token_pass = CoefTokenPass::replay(&recorded.retained);
-                write_tile_intra_keyframe_with_counts_and_retained(
-                    &mut bw,
-                    &mi_grid,
-                    mi_rows,
-                    mi_cols,
-                    bounds,
-                    &count_fc,
-                    target.tx_mode,
-                    /* seg = */ None,
-                    &mut coef_ctx,
-                    coef_source,
-                    Some(&mut tile_counts),
-                    Some(&mut token_pass),
-                )?;
-                if !token_pass.finished() {
-                    return Err(EncodeError::InvalidConfig(
-                        "recorded keyframe coefficient tokens do not match the syntax traversal",
-                    ));
-                }
-                tile_counts.add_coef(&recorded.counts);
-            } else if let Some(retained) = retained.as_mut() {
+            if let Some(retained) = retained.as_mut() {
                 let mut token_pass = CoefTokenPass::record_full(retained);
                 write_tile_intra_keyframe_with_counts_and_retained(
                     &mut bw,
@@ -6031,14 +5980,6 @@ fn build_keyframe_packet_with_tiles(
             count_counts.add(&tile_counts);
         }
     }
-    let retained_coef_tiles = if let Some(recorded) = recorded_coef_tiles {
-        recorded
-            .into_iter()
-            .map(|tile| tile.retained)
-            .collect::<Vec<_>>()
-    } else {
-        retained_coef_tiles
-    };
     for (post, (&old, &counts)) in post_fc
         .skip_probs
         .iter_mut()
@@ -8519,44 +8460,10 @@ mod tests {
             &mut FrameContext::new_default(),
             None,
             1,
-            None,
             false,
         )
         .expect("legacy keyframe packet must succeed");
         assert_eq!(pkt, legacy_pkt, "retained keyframe packet changed bytes");
-
-        let bounds = tile_bounds(8, 8, 0, 0, 0, 0);
-        let mut recorded = RecordedIntraCoefTile::new(0, bounds);
-        let mut record_sink = [];
-        let mut record_bw = BoolWriter::start_count_only(&mut record_sink);
-        let record_fc = FrameContext::new_default();
-        crate::record_encoded_intra_superblock(
-            &mut recorded,
-            &mut record_bw,
-            &record_fc,
-            &coef_source,
-            0,
-            0,
-            8,
-            8,
-            &sb_partitions[0],
-        );
-        let direct_pkt = build_keyframe_packet_with_tiles(
-            w,
-            h,
-            q_index,
-            /* filter_level = */ 0,
-            &coef_source,
-            &sb_partitions,
-            0,
-            &mut FrameContext::new_default(),
-            None,
-            1,
-            Some(vec![recorded]),
-            true,
-        )
-        .expect("direct-recorded keyframe packet must succeed");
-        assert_eq!(pkt, direct_pkt, "direct keyframe tokens changed bytes");
 
         let mut dec = Decoder::new();
         let frames = decode_packet(&mut dec, &pkt);
@@ -8731,7 +8638,6 @@ mod tests {
             &mut FrameContext::new_default(),
             None,
             1,
-            None,
             true,
         )
         .expect("two-tile keyframe assembly");
@@ -8804,7 +8710,6 @@ mod tests {
             &mut FrameContext::new_default(),
             None,
             1,
-            None,
             true,
         )
         .expect("two-tile keyframe");
