@@ -59,8 +59,9 @@ use rvp9_core::bitstream::{
     ColorSpace, CompressedHeaderOptions, CompressedHeaderResult, FrameKind,
     InterPartitionCountState, InterpFilter, ModesTileBounds, ModesWriterError, Profile,
     RawBitWriter, SuperframeBuilder, UncompressedHeader, count_inter_leaf_syntax,
-    record_inter_leaf_coefficients, tile_bounds, write_compressed_header, write_tile_inter,
-    write_tile_intra_keyframe, write_uncompressed_header,
+    record_inter_leaf_coefficients, record_inter_tx_coefficients_i16, tile_bounds,
+    write_compressed_header, write_tile_inter, write_tile_intra_keyframe,
+    write_uncompressed_header,
 };
 use rvp9_core::block::BlockSize;
 use rvp9_core::coef_ctx::TileCoefCtx;
@@ -3624,6 +3625,14 @@ pub(crate) struct RecordedCoefTile {
     mi_col_end: usize,
 }
 
+#[derive(Copy, Clone)]
+struct PendingInterTx {
+    plane: usize,
+    tx_x4_local: usize,
+    tx_y4_local: usize,
+    tx_size: TxSize,
+}
+
 struct RecordedInterNoncoefTile {
     counts: FrameCounts,
     partition_counts: InterPartitionCountState,
@@ -4596,11 +4605,7 @@ fn record_encoded_inter_leaf(
     leaf: InterPartitionLeafDesc,
 ) {
     debug_assert!(mi_col >= tile.mi_col_start && mi_col < tile.mi_col_end);
-    let sb_row = mi_row / 8;
-    if tile.last_sb_row != Some(sb_row) {
-        tile.coef_ctx.reset_left_coef();
-        tile.last_sb_row = Some(sb_row);
-    }
+    prepare_recorded_inter_row(tile, bw, mi_row);
     let mi = leaf.mode_info();
     record_inter_leaf_coefficients(
         bw,
@@ -4616,6 +4621,88 @@ fn record_encoded_inter_leaf(
         &mut tile.counts,
         &mut tile.retained,
     );
+}
+
+#[inline]
+fn prepare_recorded_inter_row(tile: &mut RecordedCoefTile, bw: &BoolWriter<'_>, mi_row: usize) {
+    debug_assert!(bw.is_count_only());
+    let sb_row = mi_row / 8;
+    if tile.last_sb_row != Some(sb_row) {
+        tile.coef_ctx.reset_left_coef();
+        tile.last_sb_row = Some(sb_row);
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn record_encoded_inter_tx(
+    tile: &mut RecordedCoefTile,
+    bw: &mut BoolWriter<'_>,
+    frame_context: &FrameContext,
+    mi_row: usize,
+    mi_col: usize,
+    tx: PendingInterTx,
+    raw_coefs: &[i16],
+    eob: usize,
+) {
+    prepare_recorded_inter_row(tile, bw, mi_row);
+    record_inter_tx_coefficients_i16(
+        bw,
+        frame_context,
+        &mut tile.coef_ctx,
+        mi_row,
+        mi_col,
+        tile.mi_col_start,
+        tx.plane,
+        tx.tx_x4_local,
+        tx.tx_y4_local,
+        tx.tx_size,
+        raw_coefs,
+        eob,
+        &mut tile.counts,
+        &mut tile.retained,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn record_direct_inter_tx(
+    tile: &mut RecordedCoefTile,
+    bw: &mut BoolWriter<'_>,
+    frame_context: &FrameContext,
+    mi_row: usize,
+    mi_col: usize,
+    pending: &mut Vec<PendingInterTx>,
+    started: &mut bool,
+    tx: PendingInterTx,
+    raw_coefs: &[i16],
+    eob: usize,
+) {
+    if eob == 0 && !*started {
+        pending.push(tx);
+        return;
+    }
+
+    if !*started {
+        for pending_tx in pending.drain(..) {
+            record_encoded_inter_tx(
+                tile,
+                bw,
+                frame_context,
+                mi_row,
+                mi_col,
+                pending_tx,
+                &INTER_ZERO_COEFS[..pending_tx.tx_size.n_coeffs()],
+                0,
+            );
+        }
+        *started = true;
+    }
+
+    let raw_coefs = if eob == 0 {
+        &INTER_ZERO_COEFS[..tx.tx_size.n_coeffs()]
+    } else {
+        raw_coefs
+    };
+    record_encoded_inter_tx(tile, bw, frame_context, mi_row, mi_col, tx, raw_coefs, eob);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -6716,6 +6803,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
             let current_tile = tile_bounds_by_col[job.tile_col];
             let sb_columns = inter_row_job_sb_columns(&tile_bounds_by_col, active_tile_col, job);
             let sb_row = job.sb_row;
+            let mut direct_pending_txs = Vec::with_capacity(16);
             for sb_col in sb_columns {
                 let sb_idx = sb_row * sb_cols + sb_col;
 
@@ -7969,6 +8057,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
 
                 for leaf_idx in 0..sb_partitions[sb_idx].len() {
                     *rt_profile_final_leaves += 1;
+                    direct_pending_txs.clear();
+                    let mut direct_started = false;
                     let (leaf_mi_row, leaf_mi_col, leaf_bsize) = {
                         let leaf = &sb_partitions[sb_idx][leaf_idx];
                         (
@@ -9495,6 +9585,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     // disagreement to Y versus chroma without adding work when
                     // both diagnostics are disabled.
                     let mut leaf_y_eob: usize = 0;
+                    let direct_inter_recording = picked_ref != RefFrame::IntraFrame
+                        && !defer_coef_recording
+                        && recorded_coef_tile.is_some();
 
                     if picked_ref == RefFrame::IntraFrame {
                         // G5 — intra-in-inter block. Single-pass TX walk:
@@ -10011,15 +10104,38 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                 while tx_y4_local < plane_bh_4x4 {
                                     let mut tx_x4_local = 0usize;
                                     while tx_x4_local < plane_bw_4x4 {
-                                        coef_source.insert(
-                                            leaf_mi_row,
-                                            leaf_mi_col,
+                                        let tx = PendingInterTx {
                                             plane,
                                             tx_x4_local,
                                             tx_y4_local,
-                                            Vec::new(),
-                                            0,
-                                        );
+                                            tx_size: plane_tx,
+                                        };
+                                        if direct_inter_recording {
+                                            record_direct_inter_tx(
+                                                recorded_coef_tile
+                                                    .as_mut()
+                                                    .expect("direct recorder presence was checked"),
+                                                coef_record_bw,
+                                                frame_context,
+                                                leaf_mi_row,
+                                                leaf_mi_col,
+                                                &mut direct_pending_txs,
+                                                &mut direct_started,
+                                                tx,
+                                                &INTER_ZERO_COEFS[..plane_tx.n_coeffs()],
+                                                0,
+                                            );
+                                        } else {
+                                            coef_source.insert(
+                                                leaf_mi_row,
+                                                leaf_mi_col,
+                                                plane,
+                                                tx_x4_local,
+                                                tx_y4_local,
+                                                Vec::new(),
+                                                0,
+                                            );
+                                        }
                                         tx_x4_local += tx_step_4x4;
                                     }
                                     tx_y4_local += tx_step_4x4;
@@ -10152,15 +10268,38 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                                 (RUNTIME_PROFILING_COMPILED
                                                     && emit_profile_enabled)
                                                     .then(std::time::Instant::now);
-                                            coef_source.insert(
-                                                leaf_mi_row,
-                                                leaf_mi_col,
+                                            let tx = PendingInterTx {
                                                 plane,
                                                 tx_x4_local,
                                                 tx_y4_local,
-                                                Vec::new(),
-                                                0,
-                                            );
+                                                tx_size: plane_tx,
+                                            };
+                                            if direct_inter_recording {
+                                                record_direct_inter_tx(
+                                                    recorded_coef_tile.as_mut().expect(
+                                                        "direct recorder presence was checked",
+                                                    ),
+                                                    coef_record_bw,
+                                                    frame_context,
+                                                    leaf_mi_row,
+                                                    leaf_mi_col,
+                                                    &mut direct_pending_txs,
+                                                    &mut direct_started,
+                                                    tx,
+                                                    &INTER_ZERO_COEFS[..plane_tx.n_coeffs()],
+                                                    0,
+                                                );
+                                            } else {
+                                                coef_source.insert(
+                                                    leaf_mi_row,
+                                                    leaf_mi_col,
+                                                    plane,
+                                                    tx_x4_local,
+                                                    tx_y4_local,
+                                                    Vec::new(),
+                                                    0,
+                                                );
+                                            }
                                             if let Some(t0) = emit_coef_insert_start {
                                                 *emit_profile_coef_insert_time += t0.elapsed();
                                             }
@@ -10214,15 +10353,37 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                                     (RUNTIME_PROFILING_COMPILED
                                                         && emit_profile_enabled)
                                                         .then(std::time::Instant::now);
-                                                coef_source.insert_i16(
-                                                    leaf_mi_row,
-                                                    leaf_mi_col,
-                                                    plane,
-                                                    tx_x4_local,
-                                                    tx_y4_local,
-                                                    qcoeff,
-                                                    eob,
-                                                );
+                                                if direct_inter_recording {
+                                                    record_direct_inter_tx(
+                                                        recorded_coef_tile.as_mut().expect(
+                                                            "direct recorder presence was checked",
+                                                        ),
+                                                        coef_record_bw,
+                                                        frame_context,
+                                                        leaf_mi_row,
+                                                        leaf_mi_col,
+                                                        &mut direct_pending_txs,
+                                                        &mut direct_started,
+                                                        PendingInterTx {
+                                                            plane,
+                                                            tx_x4_local,
+                                                            tx_y4_local,
+                                                            tx_size: plane_tx,
+                                                        },
+                                                        qcoeff,
+                                                        eob,
+                                                    );
+                                                } else {
+                                                    coef_source.insert_i16(
+                                                        leaf_mi_row,
+                                                        leaf_mi_col,
+                                                        plane,
+                                                        tx_x4_local,
+                                                        tx_y4_local,
+                                                        qcoeff,
+                                                        eob,
+                                                    );
+                                                }
                                                 if let Some(t0) = emit_coef_insert_start {
                                                     *emit_profile_coef_insert_time += t0.elapsed();
                                                 }
@@ -10334,15 +10495,20 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         );
                         if !defer_coef_recording && let Some(recorded) = recorded_coef_tile.as_mut()
                         {
-                            record_encoded_inter_leaf(
-                                recorded,
-                                coef_record_bw,
-                                frame_context,
-                                coef_source,
-                                leaf_mi_row,
-                                leaf_mi_col,
-                                final_leaf,
-                            );
+                            if direct_inter_recording && !final_leaf.skip {
+                                debug_assert!(direct_started);
+                                debug_assert!(direct_pending_txs.is_empty());
+                            } else {
+                                record_encoded_inter_leaf(
+                                    recorded,
+                                    coef_record_bw,
+                                    frame_context,
+                                    coef_source,
+                                    leaf_mi_row,
+                                    leaf_mi_col,
+                                    final_leaf,
+                                );
+                            }
                         }
                     }
                     // F.0.2 oracle — record one BlockDecision per coded
@@ -12939,6 +13105,191 @@ fn intra_inverse_transform_add(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_recorded_coef_tile() -> RecordedCoefTile {
+        RecordedCoefTile {
+            tile_col: 0,
+            retained: RetainedCoefTokens::default(),
+            counts: FrameCounts {
+                coef_full: Some(rvp9_core::entropy::new_coef12_bank()),
+                ..FrameCounts::default()
+            },
+            partition_counts: InterPartitionCountState::new(8),
+            coef_ctx: TileCoefCtx::new(8),
+            last_sb_row: None,
+            mi_col_start: 0,
+            mi_col_end: 8,
+        }
+    }
+
+    #[test]
+    fn direct_inter_tx_recording_flushes_zero_prefix_in_syntax_order() {
+        let frame_context = FrameContext::new_default();
+        let zero = PendingInterTx {
+            plane: 0,
+            tx_x4_local: 0,
+            tx_y4_local: 0,
+            tx_size: TxSize::Tx4x4,
+        };
+        let nonzero = PendingInterTx {
+            tx_x4_local: 1,
+            ..zero
+        };
+        let trailing_zero = PendingInterTx {
+            tx_x4_local: 2,
+            ..zero
+        };
+        let mut nonzero_coefs = [0i16; 16];
+        nonzero_coefs[0] = 7;
+
+        let mut expected = test_recorded_coef_tile();
+        let mut expected_sink = [];
+        let mut expected_bw = BoolWriter::start_count_only(&mut expected_sink);
+        record_encoded_inter_tx(
+            &mut expected,
+            &mut expected_bw,
+            &frame_context,
+            0,
+            0,
+            zero,
+            &INTER_ZERO_COEFS[..16],
+            0,
+        );
+        record_encoded_inter_tx(
+            &mut expected,
+            &mut expected_bw,
+            &frame_context,
+            0,
+            0,
+            nonzero,
+            &nonzero_coefs,
+            1,
+        );
+        record_encoded_inter_tx(
+            &mut expected,
+            &mut expected_bw,
+            &frame_context,
+            0,
+            0,
+            trailing_zero,
+            &INTER_ZERO_COEFS[..16],
+            0,
+        );
+
+        let mut actual = test_recorded_coef_tile();
+        let mut actual_sink = [];
+        let mut actual_bw = BoolWriter::start_count_only(&mut actual_sink);
+        let mut pending = Vec::new();
+        let mut started = false;
+        record_direct_inter_tx(
+            &mut actual,
+            &mut actual_bw,
+            &frame_context,
+            0,
+            0,
+            &mut pending,
+            &mut started,
+            zero,
+            &INTER_ZERO_COEFS[..16],
+            0,
+        );
+        assert_eq!(pending.len(), 1);
+        assert!(!started);
+        assert_eq!(actual.retained, RetainedCoefTokens::default());
+        record_direct_inter_tx(
+            &mut actual,
+            &mut actual_bw,
+            &frame_context,
+            0,
+            0,
+            &mut pending,
+            &mut started,
+            nonzero,
+            &nonzero_coefs,
+            1,
+        );
+        record_direct_inter_tx(
+            &mut actual,
+            &mut actual_bw,
+            &frame_context,
+            0,
+            0,
+            &mut pending,
+            &mut started,
+            trailing_zero,
+            &INTER_ZERO_COEFS[..16],
+            0,
+        );
+
+        assert!(started);
+        assert!(pending.is_empty());
+        assert_eq!(actual.counts, expected.counts);
+        assert_eq!(actual.retained, expected.retained);
+    }
+
+    #[test]
+    fn direct_inter_tx_all_zero_leaf_uses_skip_context_reset() {
+        let frame_context = FrameContext::new_default();
+        let tx = PendingInterTx {
+            plane: 0,
+            tx_x4_local: 0,
+            tx_y4_local: 0,
+            tx_size: TxSize::Tx8x8,
+        };
+        let mut tile = test_recorded_coef_tile();
+        let mut sink = [];
+        let mut bw = BoolWriter::start_count_only(&mut sink);
+        let mut pending = Vec::new();
+        let mut started = false;
+        record_direct_inter_tx(
+            &mut tile,
+            &mut bw,
+            &frame_context,
+            0,
+            0,
+            &mut pending,
+            &mut started,
+            tx,
+            &INTER_ZERO_COEFS[..64],
+            0,
+        );
+        assert_eq!(pending.len(), 1);
+        assert!(!started);
+
+        let skipped_leaf = InterPartitionLeafDesc {
+            mi_row_in_sb: 0,
+            mi_col_in_sb: 0,
+            leaf_bsize: BlockSize::Block8x8,
+            picked_mode: InterMode::ZeroMv,
+            picked_mv: Mv::ZERO,
+            skip: true,
+            segment_id: 0,
+            picked_ref_frame: RefFrame::LastFrame,
+            picked_interp_filter: InterpFilter::EightTap,
+            picked_intra_mode: None,
+            picked_ref_frame2: RefFrame::NoRefFrame,
+            picked_mv2: Mv::ZERO,
+            picked_tx_size: TxSize::Tx8x8,
+        };
+        let empty_source = VecBackedInterCoefSource::new(64, 64);
+        record_encoded_inter_leaf(
+            &mut tile,
+            &mut bw,
+            &frame_context,
+            &empty_source,
+            0,
+            0,
+            skipped_leaf,
+        );
+
+        assert_eq!(tile.last_sb_row, Some(0));
+        assert_eq!(tile.retained, RetainedCoefTokens::default());
+        assert_eq!(tile.counts.coef, FrameCounts::default().coef);
+        assert_eq!(
+            tile.counts.coef_full,
+            Some(rvp9_core::entropy::new_coef12_bank())
+        );
+    }
 
     #[test]
     fn denoiser_leaf_uses_selected_golden_running_average() {

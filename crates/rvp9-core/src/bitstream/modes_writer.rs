@@ -3415,6 +3415,69 @@ pub fn record_inter_leaf_coefficients(
     );
 }
 
+/// Record one already-quantized inter transform block's coefficient tokens.
+///
+/// This is the per-transform counterpart to
+/// [`record_inter_leaf_coefficients`]. The caller supplies the transform's
+/// leaf-local 4×4 coordinates and must visit transform blocks in the same
+/// raster order as [`write_inter_block_residual`]. The helper updates the
+/// inter coefficient context, the four-token coefficient counts, the
+/// optional full twelve-token encoder histogram, and `retained` in one
+/// count-only recording pass.
+///
+/// `raw_coefs` is the quantizer's raster-ordered signed-16-bit output and
+/// must contain at least `tx_size.n_coeffs()` entries. `eob` is the number
+/// of scan positions to encode and must not exceed that coefficient count.
+/// `plane` is `0` for Y or `1`/`2` for U/V. `mi_row` and `mi_col` are
+/// frame-relative mode-info coordinates; `tx_x4_local` and `tx_y4_local`
+/// are relative to the leaf's top-left in that plane.
+#[allow(clippy::too_many_arguments)]
+pub fn record_inter_tx_coefficients_i16(
+    bw: &mut BoolWriter<'_>,
+    fc: &FrameContext,
+    coef_ctx: &mut TileCoefCtx,
+    mi_row: usize,
+    mi_col: usize,
+    tile_mi_col_start: usize,
+    plane: usize,
+    tx_x4_local: usize,
+    tx_y4_local: usize,
+    tx_size: TxSize,
+    raw_coefs: &[i16],
+    eob: usize,
+    counts: &mut FrameCounts,
+    retained: &mut RetainedCoefTokens,
+) {
+    debug_assert!(bw.is_count_only());
+    debug_assert!(plane < 3);
+    debug_assert!(raw_coefs.len() >= tx_size.n_coeffs());
+    debug_assert!(eob <= tx_size.n_coeffs());
+
+    let mi_col_in_tile = mi_col - tile_mi_col_start;
+    let mi_row_in_sb = mi_row & MI_MASK;
+    let x4 = ((mi_col_in_tile * 2) >> SUBSAMPLING_X[plane]) + tx_x4_local;
+    let y4_in_sb = ((mi_row_in_sb * 2) >> SUBSAMPLING_Y[plane]) + tx_y4_local;
+    let mut token_pass = CoefTokenPass::record(retained);
+    let full_counts = counts.coef_full.as_deref_mut();
+    write_block_tokens_with_retained_i16(
+        bw,
+        fc,
+        coef_ctx,
+        plane,
+        x4,
+        y4_in_sb,
+        tx_size,
+        TxType::DctDct,
+        1,
+        tx_size.n_coeffs(),
+        raw_coefs,
+        eob,
+        Some(&mut counts.coef),
+        full_counts,
+        Some(&mut token_pass),
+    );
+}
+
 /// RC.X1 — encoder-side mirror of libvpx's `dec_reset_skip_context`
 /// (`vp9_decodeframe.c:1008-1010`). When a leaf is skip-coded the
 /// decoder zeros the per-plane above/left coef-context cells the
@@ -8050,6 +8113,93 @@ mod tests {
         assert!(matches!(err, ModesWriterError::InvalidTileBounds));
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn record_direct_inter_64x64_leaf(
+        bw: &mut BoolWriter<'_>,
+        fc: &FrameContext,
+        coef_ctx: &mut TileCoefCtx,
+        coef_source: &dyn InterCoefSource,
+        mi_row: usize,
+        mi_col: usize,
+        tile_mi_col_start: usize,
+        counts: &mut FrameCounts,
+        retained: &mut RetainedCoefTokens,
+    ) {
+        let leaf_bsize = BlockSize::Block64x64;
+        let luma_tx = TxSize::Tx32x32;
+        for plane in 0..3 {
+            let plane_bsize = if plane == 0 {
+                leaf_bsize
+            } else {
+                uv_plane_block_size(leaf_bsize)
+            };
+            let plane_tx = if plane == 0 {
+                luma_tx
+            } else {
+                uv_plane_tx_size(leaf_bsize, luma_tx)
+            };
+            let plane_bw_4x4 = plane_bsize.n_4x4_wide() as usize;
+            let plane_bh_4x4 = plane_bsize.n_4x4_high() as usize;
+            let tx_step_4x4 = 1usize << plane_tx as usize;
+            let mut tx_y4_local = 0;
+            while tx_y4_local < plane_bh_4x4 {
+                let mut tx_x4_local = 0;
+                while tx_x4_local < plane_bw_4x4 {
+                    let (raw_coefs, eob) = coef_source.get_block_coefs(
+                        mi_row,
+                        mi_col,
+                        plane,
+                        tx_x4_local,
+                        tx_y4_local,
+                        plane_tx,
+                    );
+                    record_inter_tx_coefficients_i16(
+                        bw,
+                        fc,
+                        coef_ctx,
+                        mi_row,
+                        mi_col,
+                        tile_mi_col_start,
+                        plane,
+                        tx_x4_local,
+                        tx_y4_local,
+                        plane_tx,
+                        raw_coefs,
+                        eob,
+                        counts,
+                        retained,
+                    );
+                    tx_x4_local += tx_step_4x4;
+                }
+                tx_y4_local += tx_step_4x4;
+            }
+        }
+    }
+
+    struct MixedInterCoefSource;
+
+    static MIXED_INTER_ZERO_COEFS: [i16; 1024] = [0; 1024];
+    static MIXED_INTER_NONZERO_COEFS: [i16; 1024] = [7; 1024];
+
+    impl InterCoefSource for MixedInterCoefSource {
+        fn get_block_coefs(
+            &self,
+            _mi_row: usize,
+            _mi_col: usize,
+            plane: usize,
+            tx_x4_local: usize,
+            tx_y4_local: usize,
+            tx_size: TxSize,
+        ) -> (&[i16], usize) {
+            let n = tx_size.n_coeffs();
+            if plane == 0 && tx_x4_local == 0 && tx_y4_local == 0 {
+                (&MIXED_INTER_NONZERO_COEFS[..n], 1)
+            } else {
+                (&MIXED_INTER_ZERO_COEFS[..n], 0)
+            }
+        }
+    }
+
     /// Count-only and arithmetic traversals gather identical complete counts
     /// even when their probability tables differ.
     #[test]
@@ -8229,7 +8379,10 @@ mod tests {
         assert_eq!(full_record_counts, counts);
         assert_eq!(full_retained, retained);
 
-        let mut leaf_counts = FrameCounts::default();
+        let mut leaf_counts = FrameCounts {
+            coef_full: Some(crate::entropy::new_coef12_bank()),
+            ..FrameCounts::default()
+        };
         let mut leaf_retained = crate::entropy::RetainedCoefTokens::default();
         let mut leaf_coef_ctx = TileCoefCtx::new(mi_cols as usize);
         let mut leaf_sink = [];
@@ -8250,6 +8403,76 @@ mod tests {
         );
         assert_eq!(leaf_counts.coef, split_counts.coef);
         assert_eq!(leaf_retained, retained);
+
+        let mut direct_counts = FrameCounts {
+            coef_full: Some(crate::entropy::new_coef12_bank()),
+            ..FrameCounts::default()
+        };
+        let mut direct_retained = crate::entropy::RetainedCoefTokens::default();
+        let mut direct_coef_ctx = TileCoefCtx::new(mi_cols as usize);
+        let mut direct_sink = [];
+        let mut direct_bw = BoolWriter::start_count_only(&mut direct_sink);
+        record_direct_inter_64x64_leaf(
+            &mut direct_bw,
+            &count_fc,
+            &mut direct_coef_ctx,
+            &coef_source,
+            0,
+            0,
+            0,
+            &mut direct_counts,
+            &mut direct_retained,
+        );
+        assert_eq!(direct_counts, leaf_counts);
+        assert_eq!(direct_retained, leaf_retained);
+
+        let mixed_source = MixedInterCoefSource;
+        let mut mixed_leaf_counts = FrameCounts {
+            coef_full: Some(crate::entropy::new_coef12_bank()),
+            ..FrameCounts::default()
+        };
+        let mut mixed_leaf_retained = crate::entropy::RetainedCoefTokens::default();
+        let mut mixed_leaf_coef_ctx = TileCoefCtx::new(mi_cols as usize);
+        let mut mixed_leaf_sink = [];
+        let mut mixed_leaf_bw = BoolWriter::start_count_only(&mut mixed_leaf_sink);
+        record_inter_leaf_coefficients(
+            &mut mixed_leaf_bw,
+            &count_fc,
+            TxMode::AllowTx32x32,
+            &mut mixed_leaf_coef_ctx,
+            &mixed_source,
+            0,
+            0,
+            0,
+            BlockSize::Block64x64,
+            &cell,
+            &mut mixed_leaf_counts,
+            &mut mixed_leaf_retained,
+        );
+
+        let mut mixed_direct_counts = FrameCounts {
+            coef_full: Some(crate::entropy::new_coef12_bank()),
+            ..FrameCounts::default()
+        };
+        let mut mixed_direct_retained = crate::entropy::RetainedCoefTokens::default();
+        let mut mixed_direct_coef_ctx = TileCoefCtx::new(mi_cols as usize);
+        let mut mixed_direct_sink = [];
+        let mut mixed_direct_bw = BoolWriter::start_count_only(&mut mixed_direct_sink);
+        record_direct_inter_64x64_leaf(
+            &mut mixed_direct_bw,
+            &count_fc,
+            &mut mixed_direct_coef_ctx,
+            &mixed_source,
+            0,
+            0,
+            0,
+            &mut mixed_direct_counts,
+            &mut mixed_direct_retained,
+        );
+        assert_ne!(mixed_leaf_counts.coef, leaf_counts.coef);
+        assert_ne!(mixed_leaf_retained, leaf_retained);
+        assert_eq!(mixed_direct_counts, mixed_leaf_counts);
+        assert_eq!(mixed_direct_retained, mixed_leaf_retained);
 
         struct ReplayOnlyCoefSource;
 
