@@ -5,6 +5,7 @@ Distilled, non-obvious gotchas future sessions need — dated one-liners.
 Durable project facts/conventions belong in `CLAUDE.md` / `AGENTS.md`, not here.
 Hard cap: 20 entries.
 
+- 2026-08-11: SVC keyframe Q parity can worsen full curves via RC feedback (`frame_loop.rs:exact_keyframe_sub8_enabled`).
 - 2026-08-11: KF token contexts use Z-order, not raster (`frame_loop.rs:build_keyframe_packet_with_tiles`).
 - 2026-08-11: FAST_DIAMOND lists are SAD-domain; INT_MAX neighbors remain valid (`sub_pixel.rs:cost_list_is_well_behaved`).
 - 2026-08-11: CPU8 zero-MV VBP also leaves LAST pred_mv zero; retaining int-pro diverges and wastes work (`lib.rs:use_zero_mv_partition_predictor`).

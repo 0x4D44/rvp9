@@ -4966,6 +4966,17 @@ moves from `+4.4944%/+5.4305%/+3.1999%` to
 open; single-layer CPU8 retains the faster keyframe policy and is unchanged
 byte-for-byte.
 
+**Two-layer CPU6 boundary update (2026-08-11):** CPU6 two-layer realtime VBR
+now admits the same Q<=120 exact sub-8x8 keyframe path. The representative
+720p30 in-tree/ducks/old-town TL0 curves are
+`+0.4633%/-7.1896%/-0.2189%`; TL1 curves are
+`+0.5241%/-6.4378%/-0.8818%`. Their arithmetic means are
+`-2.3151%/-2.2652%`, and no clip approaches the `+2%` guard. Two reversed
+plain-release rotations measure a `1.042..1.045x` cost versus the preceding
+rvp9 build, so this remains a measured quality prerequisite pending temporal
+speed recovery and production-PGO qualification. CPU6 single-layer, T3,
+CBR, other presets, and non-realtime modes are unchanged by the predicate.
+
 ### 2026-08-09 — Calibrate exact VBP structure above the coding Q
 
 **Where:** `rvp9_encoder::exact_vbp_partition_qindex` and the exact-tree
