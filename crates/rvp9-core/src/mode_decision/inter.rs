@@ -1747,6 +1747,16 @@ fn force_candidate_trace_bookkeeping() -> bool {
     })
 }
 
+#[inline]
+fn output_first_prediction_slot_enabled() -> bool {
+    use std::sync::OnceLock;
+
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var_os("RVP9_RT_OUTPUT_FIRST_SLOT").is_none_or(|value| value != "0")
+    })
+}
+
 /// libvpx `INTER_*` inter-mode bitmask presets
 /// (`vp9_speed_features.h:31-38`). Each preset encodes which entries of
 /// [`InterMode`] are allowed for a given block size. Bit `m` corresponds
@@ -2140,6 +2150,12 @@ fn pick_inter_mode_impl(
     // lookup. Resolve it once per block instead of reloading its `OnceLock`
     // for every fractional-pel mode candidate.
     let searched_filter_set = f5_filter_search_set();
+    // Bias each writable-slot pair toward the caller-owned output. The first
+    // filter is EIGHTTAP and the only filter on the common no-search path, so
+    // this keeps the likely global winner in its final destination and avoids
+    // the row-wise scratch copy at the end of the pick. The other two slots
+    // still preserve the incumbent across every candidate evaluation.
+    let output_first_prediction_slot = output_first_prediction_slot_enabled();
 
     let mut best: Option<PickInterModeResult> = None;
     let mut retained_prediction_slot: Option<FilterPredictionSlot> = None;
@@ -2631,7 +2647,7 @@ fn pick_inter_mode_impl(
             };
 
             let prediction_slots = if output.is_some() {
-                candidate_prediction_slots(retained_prediction_slot)
+                candidate_prediction_slots(retained_prediction_slot, output_first_prediction_slot)
             } else {
                 [
                     FilterPredictionSlot::Candidate,
@@ -3796,7 +3812,28 @@ enum FilterPredictionSlot {
 /// third TLS 64×64 array.
 fn candidate_prediction_slots(
     incumbent: Option<FilterPredictionSlot>,
+    output_first: bool,
 ) -> [FilterPredictionSlot; 2] {
+    if output_first {
+        return match incumbent {
+            None => [
+                FilterPredictionSlot::Output,
+                FilterPredictionSlot::Candidate,
+            ],
+            Some(FilterPredictionSlot::Candidate) => [
+                FilterPredictionSlot::Output,
+                FilterPredictionSlot::Alternate,
+            ],
+            Some(FilterPredictionSlot::Alternate) => [
+                FilterPredictionSlot::Output,
+                FilterPredictionSlot::Candidate,
+            ],
+            Some(FilterPredictionSlot::Output) => [
+                FilterPredictionSlot::Candidate,
+                FilterPredictionSlot::Alternate,
+            ],
+        };
+    }
     match incumbent {
         None => [
             FilterPredictionSlot::Candidate,
@@ -7888,6 +7925,42 @@ mod tests {
                 "row padding was overwritten"
             );
         }
+    }
+
+    #[test]
+    fn output_first_slot_order_preserves_the_incumbent() {
+        use FilterPredictionSlot::{Alternate, Candidate, Output};
+
+        assert_eq!(candidate_prediction_slots(None, true), [Output, Candidate]);
+        assert_eq!(
+            candidate_prediction_slots(Some(Candidate), true),
+            [Output, Alternate]
+        );
+        assert_eq!(
+            candidate_prediction_slots(Some(Alternate), true),
+            [Output, Candidate]
+        );
+        assert_eq!(
+            candidate_prediction_slots(Some(Output), true),
+            [Candidate, Alternate]
+        );
+
+        assert_eq!(
+            candidate_prediction_slots(None, false),
+            [Candidate, Alternate]
+        );
+        assert_eq!(
+            candidate_prediction_slots(Some(Candidate), false),
+            [Alternate, Output]
+        );
+        assert_eq!(
+            candidate_prediction_slots(Some(Alternate), false),
+            [Candidate, Output]
+        );
+        assert_eq!(
+            candidate_prediction_slots(Some(Output), false),
+            [Candidate, Alternate]
+        );
     }
 
     #[test]
