@@ -1924,6 +1924,81 @@ fn write_intra_block_residual(
     }
 }
 
+/// Record one already-quantized keyframe transform block's coefficient tokens.
+///
+/// The caller supplies transform blocks in the same plane/raster order as
+/// [`write_intra_block_residual`]. This updates the intra coefficient context,
+/// the four-token adaptation counts, the optional full twelve-token encoder
+/// histogram, and the retained probability-independent tokens in one
+/// count-only pass.
+///
+/// `raw_coefs` is the quantizer's raster-ordered signed-16-bit output and must
+/// contain at least `tx_size.n_coeffs()` entries. `tx_type` is the intra-mode
+/// transform selected for this exact transform; chroma callers use
+/// [`TxType::DctDct`].
+#[allow(clippy::too_many_arguments)]
+pub fn record_intra_tx_coefficients_i16(
+    bw: &mut BoolWriter<'_>,
+    fc: &FrameContext,
+    coef_ctx: &mut TileCoefCtx,
+    mi_row: usize,
+    mi_col: usize,
+    tile_mi_col_start: usize,
+    plane: usize,
+    tx_x4_local: usize,
+    tx_y4_local: usize,
+    tx_size: TxSize,
+    tx_type: TxType,
+    raw_coefs: &[i16],
+    eob: usize,
+    counts: &mut FrameCounts,
+    retained: &mut RetainedCoefTokens,
+) {
+    debug_assert!(bw.is_count_only());
+    debug_assert!(plane < 3);
+    debug_assert!(raw_coefs.len() >= tx_size.n_coeffs());
+    debug_assert!(eob <= tx_size.n_coeffs());
+
+    let mi_col_in_tile = mi_col - tile_mi_col_start;
+    let mi_row_in_sb = mi_row & MI_MASK;
+    let x4 = ((mi_col_in_tile * 2) >> SUBSAMPLING_X[plane]) + tx_x4_local;
+    let y4_in_sb = ((mi_row_in_sb * 2) >> SUBSAMPLING_Y[plane]) + tx_y4_local;
+    let mut token_pass = CoefTokenPass::record(retained);
+    let full_counts = counts.coef_full.as_deref_mut();
+    write_block_tokens_with_retained_i16(
+        bw,
+        fc,
+        coef_ctx,
+        plane,
+        x4,
+        y4_in_sb,
+        tx_size,
+        tx_type,
+        /* ref_type = */ 0,
+        tx_size.n_coeffs(),
+        raw_coefs,
+        eob,
+        Some(&mut counts.coef),
+        full_counts,
+        Some(&mut token_pass),
+    );
+}
+
+/// Reset coefficient contexts for one skip-coded keyframe leaf.
+///
+/// Direct token recorders call this when every transform in a leaf quantizes
+/// to zero, matching the writer's `dec_reset_skip_context` branch without
+/// retaining any coefficient blocks for that leaf.
+pub fn reset_intra_leaf_coef_context(
+    coef_ctx: &mut TileCoefCtx,
+    leaf_bsize: BlockSize,
+    mi_row: usize,
+    mi_col: usize,
+    tile_mi_col_start: usize,
+) {
+    reset_skip_coef_context(coef_ctx, leaf_bsize, mi_row, mi_col, tile_mi_col_start);
+}
+
 /// Encode an intra-prediction mode against an
 /// `INTRA_MODE_TREE`-shaped 9-prob slot. Mirrors libvpx's
 /// `vp9_write_token` against `vp9_intra_mode_tree`
@@ -4055,6 +4130,62 @@ mod tests {
         .expect("keyframe count-and-record traversal");
         assert!(record_pass.finished());
 
+        let mut direct_counts = FrameCounts {
+            coef_full: Some(crate::entropy::new_coef12_bank()),
+            ..FrameCounts::default()
+        };
+        let mut direct_retained = RetainedCoefTokens::default();
+        let mut direct_ctx = TileCoefCtx::new(8);
+        let mut direct_sink = [];
+        let mut direct_bw = BoolWriter::start_count_only(&mut direct_sink);
+        let leaf_bsize = BlockSize::Block64x64;
+        let luma_tx = TxSize::Tx32x32;
+        for plane in 0..3 {
+            let plane_bsize = if plane == 0 {
+                leaf_bsize
+            } else {
+                uv_plane_block_size(leaf_bsize)
+            };
+            let plane_tx = if plane == 0 {
+                luma_tx
+            } else {
+                uv_plane_tx_size(leaf_bsize, luma_tx)
+            };
+            let tx_step_4x4 = 1usize << plane_tx as usize;
+            for tx_y4_local in (0..plane_bsize.n_4x4_high() as usize).step_by(tx_step_4x4) {
+                for tx_x4_local in (0..plane_bsize.n_4x4_wide() as usize).step_by(tx_step_4x4) {
+                    let (raw_coefs, eob) = ConstantIntraCoefSource.get_block_coefs(
+                        0,
+                        0,
+                        plane,
+                        tx_x4_local,
+                        tx_y4_local,
+                        plane_tx,
+                    );
+                    record_intra_tx_coefficients_i16(
+                        &mut direct_bw,
+                        &pre_fc,
+                        &mut direct_ctx,
+                        0,
+                        0,
+                        0,
+                        plane,
+                        tx_x4_local,
+                        tx_y4_local,
+                        plane_tx,
+                        TxType::DctDct,
+                        raw_coefs,
+                        eob,
+                        &mut direct_counts,
+                        &mut direct_retained,
+                    );
+                }
+            }
+        }
+        assert_eq!(direct_counts.coef, counts.coef);
+        assert_eq!(direct_counts.coef_full, counts.coef_full);
+        assert_eq!(direct_retained, retained);
+
         let mut post_fc = pre_fc.clone();
         for contexts in &mut post_fc.coef_probs[TxSize::Tx32x32 as usize] {
             for reference in contexts {
@@ -4124,7 +4255,7 @@ mod tests {
             coef_ctx.set_coef_flags(plane, 0, 0, 16 >> subsampling_x, 8, true);
         }
 
-        reset_skip_coef_context(&mut coef_ctx, BlockSize::Block8x8, 1, 2, 0);
+        reset_intra_leaf_coef_context(&mut coef_ctx, BlockSize::Block8x8, 1, 2, 0);
 
         assert_eq!(coef_ctx.above_coef(0, 4), 0);
         assert_eq!(coef_ctx.above_coef(0, 5), 0);
