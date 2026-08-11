@@ -1960,7 +1960,11 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
                 &last_cands,
                 params.block_size,
             );
-            let golden = if params.golden_ref_is_last {
+            // A hard reference-availability mask is known before predictor
+            // setup. Pinned libvpx skips `find_predictors` for that reference;
+            // do not build a GOLDEN SAD seed that every candidate gate will
+            // discard below.
+            let golden = if !params.allow_golden_ref || params.golden_ref_is_last {
                 (Mv::ZERO, u32::MAX)
             } else {
                 let golden_cands = [golden_mvc_safe.nearest, golden_mvc_safe.near];
@@ -12077,6 +12081,55 @@ mod tests {
         params.allow_golden_ref = false;
         let unavailable = pick_inter_mode(&params);
         assert_eq!(unavailable.picked_ref_frame, RefFrame::LastFrame);
+    }
+
+    #[test]
+    fn unavailable_golden_skips_reference_masking_prediction() {
+        let pw = 64;
+        let ph = 64;
+        let src_data = make_plane(pw, ph, 91);
+        let last_data = vec![0u8; pw * ph];
+        let src_plane = PlaneRef {
+            data: &src_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let last_plane = PlaneRef {
+            data: &last_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let empty_golden_plane = PlaneRef {
+            data: &[],
+            stride: 0,
+            width: 0,
+            height: 0,
+        };
+        let harness = TestHarness::new(pw, 50);
+        let fc = FrameContext::new_default();
+        let intra_y_costs = crate::cost::symbol_costs::intra_y_mode_costs_inter(&fc)[0];
+        let mvc = MvCandidates::default();
+        let mut params = make_dual_ref_params(
+            &harness,
+            &intra_y_costs,
+            BlockSize::Block16x16,
+            &src_plane,
+            &last_plane,
+            (16, 16),
+            &mvc,
+            &mvc,
+            MvLimits::new(-16, 16, -16, 16),
+            50,
+        );
+        params.golden_ref_plane = &empty_golden_plane;
+        params.allow_golden_ref = false;
+        params.reference_masking = true;
+        params.enable_intra_fallback = false;
+
+        let result = pick_inter_mode(&params);
+        assert_eq!(result.picked_ref_frame, RefFrame::LastFrame);
     }
 
     /// §11 — `max_intra_bsize`: replacing the hardcoded `Block64x64`

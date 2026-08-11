@@ -1590,6 +1590,153 @@ mod tests {
         assert_equivalent(&empty, None);
     }
 
+    /// The LAST-only realtime helper must return the exact first entry and
+    /// shared mode context produced by the LAST/GOLDEN walk. Exercise every
+    /// block-size scan order with deterministic randomized neighbour grids,
+    /// sign biases, previous-frame candidates, and HP precision settings.
+    #[test]
+    fn last_only_matches_paired_last_and_context_for_randomized_inputs() {
+        struct Lcg(u32);
+        impl Lcg {
+            fn next_u32(&mut self) -> u32 {
+                self.0 = self.0.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                self.0
+            }
+
+            fn next_bool(&mut self) -> bool {
+                self.next_u32() & 1 != 0
+            }
+
+            fn next_usize(&mut self, upper: usize) -> usize {
+                (self.next_u32() as usize) % upper
+            }
+
+            fn next_mv(&mut self) -> Mv {
+                let row = (self.next_u32() % 1_025) as i16 - 512;
+                let col = (self.next_u32() % 1_025) as i16 - 512;
+                Mv { row, col }
+            }
+        }
+
+        const BLOCK_SIZES: [BlockSize; 13] = [
+            BlockSize::Block4x4,
+            BlockSize::Block4x8,
+            BlockSize::Block8x4,
+            BlockSize::Block8x8,
+            BlockSize::Block8x16,
+            BlockSize::Block16x8,
+            BlockSize::Block16x16,
+            BlockSize::Block16x32,
+            BlockSize::Block32x16,
+            BlockSize::Block32x32,
+            BlockSize::Block32x64,
+            BlockSize::Block64x32,
+            BlockSize::Block64x64,
+        ];
+        const REAL_REFS: [RefFrame; 3] = [
+            RefFrame::LastFrame,
+            RefFrame::GoldenFrame,
+            RefFrame::AltrefFrame,
+        ];
+        const PREV_REFS: [RefFrame; 4] = [
+            RefFrame::NoRefFrame,
+            RefFrame::LastFrame,
+            RefFrame::GoldenFrame,
+            RefFrame::AltrefFrame,
+        ];
+
+        let mut rng = Lcg(0x51A7_0B1E);
+        for block_size in BLOCK_SIZES {
+            for iteration in 0..16 {
+                let mut modes = Vec::with_capacity(MVREF_NEIGHBOURS);
+                let mut positions = Vec::with_capacity(MVREF_NEIGHBOURS);
+                for &position in &MV_REF_BLOCKS[block_size.idx()] {
+                    if rng.next_bool() {
+                        continue;
+                    }
+                    let mode = if rng.next_usize(5) == 0 {
+                        intra_mi(block_size)
+                    } else {
+                        let first_ref = REAL_REFS[rng.next_usize(REAL_REFS.len())];
+                        let second_ref = if rng.next_bool() {
+                            let candidate = REAL_REFS[rng.next_usize(REAL_REFS.len())];
+                            if candidate == first_ref {
+                                RefFrame::NoRefFrame
+                            } else {
+                                candidate
+                            }
+                        } else {
+                            RefFrame::NoRefFrame
+                        };
+                        if second_ref == RefFrame::NoRefFrame {
+                            inter_mi(block_size, first_ref, rng.next_mv())
+                        } else {
+                            inter_mi_compound(
+                                block_size,
+                                [first_ref, second_ref],
+                                [rng.next_mv(), rng.next_mv()],
+                            )
+                        }
+                    };
+                    positions.push(position);
+                    modes.push(mode);
+                }
+                let neighbours = ListNeighbours {
+                    entries: positions.into_iter().zip(modes.iter()).collect(),
+                };
+
+                let mut sign_bias = [false; 4];
+                for bias in &mut sign_bias {
+                    *bias = rng.next_bool();
+                }
+                let prev_frame_mv = if rng.next_bool() {
+                    let first_ref = PREV_REFS[rng.next_usize(PREV_REFS.len())];
+                    let second_ref = if first_ref.is_inter() && rng.next_bool() {
+                        let candidate = REAL_REFS[rng.next_usize(REAL_REFS.len())];
+                        if candidate == first_ref {
+                            RefFrame::NoRefFrame
+                        } else {
+                            candidate
+                        }
+                    } else {
+                        RefFrame::NoRefFrame
+                    };
+                    Some(PrevFrameMvRef {
+                        mvs: [rng.next_mv(), rng.next_mv()],
+                        ref_frames: [first_ref, second_ref],
+                    })
+                } else {
+                    None
+                };
+                let bounds = loose_bounds();
+
+                for allow_hp in [false, true] {
+                    let paired = find_last_golden_nearest_near_mvs_with_context(
+                        block_size,
+                        &neighbours,
+                        &sign_bias,
+                        &bounds,
+                        prev_frame_mv,
+                        allow_hp,
+                    );
+                    let last_only = find_last_nearest_near_mvs_with_context(
+                        block_size,
+                        &neighbours,
+                        &sign_bias,
+                        &bounds,
+                        prev_frame_mv,
+                        allow_hp,
+                    );
+                    assert_eq!(
+                        last_only,
+                        (paired.refs[0], paired.mode_context),
+                        "block_size={block_size:?}, iteration={iteration}, allow_hp={allow_hp}"
+                    );
+                }
+            }
+        }
+    }
+
     /// Sign-bias mismatch: candidate's ref has opposite sign bias
     /// from the block's ref → MV is negated.
     ///

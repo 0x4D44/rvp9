@@ -7470,9 +7470,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             .copied()
                             .unwrap_or(rvp9_core::mode_decision::inter::ContentStateSb::Normal);
                         let (last_ref_mvs, golden_ref_mvs, inter_mode_ctx) =
-                            if a4_descent_disable_golden
-                                && content_state_sb
-                                    != rvp9_core::mode_decision::inter::ContentStateSb::VeryHighSad
+                            if force_disable_golden_ref
+                                || (a4_descent_disable_golden
+                                    && content_state_sb
+                                        != rvp9_core::mode_decision::inter::ContentStateSb::VeryHighSad)
                             {
                                 let (last, mode_context) = find_last_nearest_near_mvs_with_context(
                                     bs,
@@ -8389,13 +8390,11 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     // `None`, matching the decoder's `prev_mv_grid =
                     // None` setup in
                     // `frame_loop::build_inter_packet_with_residuals`.
-                    // A15 Phase B Step 2 — build BOTH LAST and GOLDEN
-                    // `MvCandidates` per leaf. The mi_grid neighbours +
-                    // bounds are shared between the two ref-frame walks;
-                    // only the `RefFrame` argument to `find_mv_refs`
-                    // differs. Decoder-side `find_mv_refs` already
-                    // dispatches per-ref-frame so this mirrors what the
-                    // decoder will compute when reading a GOLDEN block.
+                    // A15 Phase B Step 2 — build candidates for every live
+                    // reference. The normal path shares one neighbour walk
+                    // across LAST and GOLDEN. Temporal-only SVC declares
+                    // GOLDEN unavailable, so its hard-mask path resolves only
+                    // LAST and keeps the shared mode context from that walk.
                     let bw_mi = leaf_bsize.n_8x8_wide() as i32;
                     let bh_mi = leaf_bsize.n_8x8_high() as i32;
                     let bounds = BlockBounds::new(
@@ -8433,16 +8432,36 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     // through to the pre-A18 spatial-only behaviour.
                     let leaf_prev_mv: Option<PrevFrameMvRef> = prev_mv_grid
                         .and_then(|g| g.get(leaf_mi_row * mi_cols_us + leaf_mi_col).copied());
-                    let realtime_mv_context = find_last_golden_nearest_near_mvs_with_context(
-                        leaf_bsize,
-                        &neighbours,
-                        &sign_bias,
-                        &bounds,
-                        leaf_prev_mv,
-                        allow_hp,
-                    );
-                    let [last_ref_mvs, golden_ref_mvs] = realtime_mv_context.refs;
-                    let inter_mode_ctx = realtime_mv_context.mode_context;
+                    let (last_ref_mvs, golden_ref_mvs, inter_mode_ctx) = if force_disable_golden_ref
+                    {
+                        let (last, mode_context) = find_last_nearest_near_mvs_with_context(
+                            leaf_bsize,
+                            &neighbours,
+                            &sign_bias,
+                            &bounds,
+                            leaf_prev_mv,
+                            allow_hp,
+                        );
+                        (
+                            last,
+                            RealtimeRefMvs {
+                                nearest: Mv::ZERO,
+                                near: Mv::ZERO,
+                                const_motion: true,
+                            },
+                            mode_context,
+                        )
+                    } else {
+                        let context = find_last_golden_nearest_near_mvs_with_context(
+                            leaf_bsize,
+                            &neighbours,
+                            &sign_bias,
+                            &bounds,
+                            leaf_prev_mv,
+                            allow_hp,
+                        );
+                        (context.refs[0], context.refs[1], context.mode_context)
+                    };
                     let mvc = MvCandidates {
                         nearest: last_ref_mvs.nearest,
                         near: last_ref_mvs.near,
