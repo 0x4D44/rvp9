@@ -128,5 +128,7 @@ make -j"$JOBS" target=examples vpxenc vpxdec
 echo
 echo "Build complete. Artifacts:"
 for f in vpxenc vpxdec vpxenc.exe vpxdec.exe; do
-    [ -f "$BUILD_DIR/$f" ] && ls -lh "$BUILD_DIR/$f"
+    if [ -f "$BUILD_DIR/$f" ]; then
+        ls -lh "$BUILD_DIR/$f"
+    fi
 done
