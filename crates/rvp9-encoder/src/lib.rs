@@ -1097,6 +1097,22 @@ impl VecBackedIntraCoefSource {
             .insert(mi_row, mi_col, plane, tx_x4_local, tx_y4_local, qcoefs, eob);
     }
 
+    /// Record one transform directly from the keyframe quantizer's i16 scratch.
+    #[allow(clippy::too_many_arguments)] // mirrors IntraCoefSource trait shape
+    fn insert_i16(
+        &mut self,
+        mi_row: usize,
+        mi_col: usize,
+        plane: usize,
+        tx_x4_local: usize,
+        tx_y4_local: usize,
+        qcoefs: &[i16],
+        eob: usize,
+    ) {
+        self.inner
+            .insert_i16(mi_row, mi_col, plane, tx_x4_local, tx_y4_local, qcoefs, eob);
+    }
+
     /// Frame width in pixels.
     #[must_use]
     pub fn width(&self) -> u32 {
@@ -2414,15 +2430,13 @@ fn simulate_dc_intra_encode_partitions_no_zero_with_tiles(
                             // 7. Record qcoeff buffer + eob, keyed by
                             //    leaf top-left (mi_row, mi_col) so the
                             //    writer's `IntraCoefSource` lookup hits.
-                            let qcoeff_i32: Vec<i32> =
-                                qcoeff_i16.iter().copied().map(i32::from).collect();
-                            out.insert(
+                            out.insert_i16(
                                 leaf_mi_row,
                                 leaf_mi_col,
                                 plane,
                                 tx_x4_local,
                                 tx_y4_local,
-                                qcoeff_i32,
+                                qcoeff_i16,
                                 eob_usize,
                             );
 
@@ -15797,6 +15811,47 @@ mod tests {
             &[1i16, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
         );
         assert_eq!(got_eob, 5);
+    }
+
+    #[test]
+    fn vec_backed_intra_i16_insert_matches_widened_insert() {
+        use rvp9_core::bitstream::IntraCoefSource;
+
+        let qcoeff = [
+            i16::MIN,
+            -1024,
+            -255,
+            -1,
+            0,
+            1,
+            7,
+            31,
+            63,
+            127,
+            255,
+            511,
+            1023,
+            4095,
+            i16::MAX - 1,
+            i16::MAX,
+        ];
+        let mut direct = VecBackedIntraCoefSource::new(64, 64);
+        let mut widened = VecBackedIntraCoefSource::new(64, 64);
+        direct.insert_i16(0, 0, 0, 0, 0, &qcoeff, 13);
+        widened.insert(
+            0,
+            0,
+            0,
+            0,
+            0,
+            qcoeff.iter().copied().map(i32::from).collect(),
+            13,
+        );
+
+        assert_eq!(
+            direct.get_block_coefs(0, 0, 0, 0, 0, TxSize::Tx4x4),
+            widened.get_block_coefs(0, 0, 0, 0, 0, TxSize::Tx4x4),
+        );
     }
 
     #[test]
