@@ -1151,6 +1151,9 @@ pub struct PickInterModeParams<'a> {
     /// Whether the current temporal-SVC picture refreshes no reference slot.
     /// See [`InterModeSearchParams::svc_non_reference_frame`].
     pub svc_non_reference_frame: bool,
+    /// Whether to retain per-candidate minima for the temporal denoiser.
+    /// Speculative descent and encodes without a denoiser leave this false.
+    pub collect_denoiser_stats: bool,
     /// Ref-frame rate cost for LAST in `vp9_prob_cost` units.
     pub ref_frame_cost_last: u32,
     /// Ref-frame rate cost for GOLDEN in `vp9_prob_cost` units.
@@ -1747,6 +1750,15 @@ fn force_candidate_trace_bookkeeping() -> bool {
     })
 }
 
+fn force_denoiser_candidate_bookkeeping() -> bool {
+    use std::sync::OnceLock;
+
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var_os("RVP9_ALWAYS_COLLECT_DENOISER_STATS").is_some_and(|value| value != "0")
+    })
+}
+
 /// libvpx `INTER_*` inter-mode bitmask presets
 /// (`vp9_speed_features.h:31-38`). Each preset encodes which entries of
 /// [`InterMode`] are allowed for a given block size. Bit `m` corresponds
@@ -2152,6 +2164,8 @@ fn pick_inter_mode_impl(
     // the same binary for exact speed/output comparisons.
     let collect_candidate_trace =
         candidate_trace::is_enabled() || force_candidate_trace_bookkeeping();
+    let collect_denoiser_stats =
+        params.collect_denoiser_stats || force_denoiser_candidate_bookkeeping();
     let mut last_candidates: [Option<InterModeSearchResult>; 4] = [None; 4];
     let mut denoiser_zeromv: Option<(usize, DenoiserCandidateContext)> = None;
     let mut denoiser_zeromv_last: Option<(usize, DenoiserCandidateContext)> = None;
@@ -2713,28 +2727,31 @@ fn pick_inter_mode_impl(
                 traced.best_rd_cost = biased_rd_cost;
                 last_candidates[slot] = Some(traced);
             }
-            let denoiser_candidate = DenoiserCandidateContext {
-                sse: candidate.sse_y,
-                mv: candidate.best_mv,
-                interp_filter: candidate.picked_interp_filter,
-                ref_frame,
-            };
-            let candidate_priority = ref_idx * 4 + slot;
-            let update_minimum = |minimum: &mut Option<(usize, DenoiserCandidateContext)>| {
-                if minimum.is_none_or(|(priority, current)| {
-                    denoiser_candidate.sse < current.sse
-                        || (denoiser_candidate.sse == current.sse && candidate_priority < priority)
-                }) {
-                    *minimum = Some((candidate_priority, denoiser_candidate));
+            if collect_denoiser_stats {
+                let denoiser_candidate = DenoiserCandidateContext {
+                    sse: candidate.sse_y,
+                    mv: candidate.best_mv,
+                    interp_filter: candidate.picked_interp_filter,
+                    ref_frame,
+                };
+                let candidate_priority = ref_idx * 4 + slot;
+                let update_minimum = |minimum: &mut Option<(usize, DenoiserCandidateContext)>| {
+                    if minimum.is_none_or(|(priority, current)| {
+                        denoiser_candidate.sse < current.sse
+                            || (denoiser_candidate.sse == current.sse
+                                && candidate_priority < priority)
+                    }) {
+                        *minimum = Some((candidate_priority, denoiser_candidate));
+                    }
+                };
+                if candidate.best_mv == Mv::ZERO {
+                    update_minimum(&mut denoiser_zeromv);
+                    if ref_frame == RefFrame::LastFrame {
+                        update_minimum(&mut denoiser_zeromv_last);
+                    }
+                } else {
+                    update_minimum(&mut denoiser_nonzero);
                 }
-            };
-            if candidate.best_mv == Mv::ZERO {
-                update_minimum(&mut denoiser_zeromv);
-                if ref_frame == RefFrame::LastFrame {
-                    update_minimum(&mut denoiser_zeromv_last);
-                }
-            } else {
-                update_minimum(&mut denoiser_nonzero);
             }
 
             let is_new_best = match best.as_ref() {
@@ -8114,6 +8131,7 @@ mod tests {
             frame_kind: synthetic_inter_frame_kind(),
             newmv_seed: None,
             svc_non_reference_frame: false,
+            collect_denoiser_stats: false,
             ref_frame_cost_last: 0,
             ref_frame_cost_golden: 0,
             last_nearest_in_bounds: true,
@@ -8396,6 +8414,12 @@ mod tests {
         params.golden_ref_plane = &golden_plane;
         params.enable_intra_fallback = false;
         params.reference_masking = false;
+        assert_eq!(
+            pick_inter_mode(&params).denoiser,
+            DenoiserPickContext::default(),
+            "disabled denoiser bookkeeping must leave the compact result empty"
+        );
+        params.collect_denoiser_stats = true;
 
         let context = pick_inter_mode(&params).denoiser;
         let best_zero = context
