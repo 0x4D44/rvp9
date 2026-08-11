@@ -6529,7 +6529,14 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         VecBackedInterCoefSource::new(width, height)
     };
     let mut recorded_coef_tile = record_coef_tokens.then(|| {
-        let tile_col = active_tile_col.expect("coefficient recording requires one active tile");
+        let tile_col = active_tile_col.unwrap_or_else(|| {
+            assert_eq!(
+                tile_bounds_by_col.len(),
+                1,
+                "whole-frame coefficient recording requires one tile column"
+            );
+            0
+        });
         let bounds = tile_bounds_by_col[tile_col];
         RecordedCoefTile {
             tile_col,

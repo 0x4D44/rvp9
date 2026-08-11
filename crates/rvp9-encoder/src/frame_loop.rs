@@ -359,6 +359,12 @@ fn source_aligned_cpu8_svc_partitions_enabled(config: &EncoderConfig, has_svc_fr
         && config.speed == 8
 }
 
+fn serial_inter_coef_recording_enabled(tile_count: usize, max_threads: u32) -> bool {
+    tile_count == 1
+        && max_threads <= 1
+        && std::env::var_os("RVP9_RETAIN_INTER_COEFS").is_none_or(|value| value != "0")
+}
+
 /// Public configuration for the F10.0 streaming encoder.
 ///
 /// Wraps a [`RateControlConfig`] plus the encoder-specific knobs the
@@ -3947,6 +3953,8 @@ impl StreamEncoder {
                 merged_mi_grid,
             )
         } else {
+            let record_coef_tokens =
+                serial_inter_coef_recording_enabled(tile_count, self.parallelism.max_threads);
             let encoded = run_inter_picker!(
                 &mut new_recon_y,
                 &mut new_recon_u,
@@ -3961,20 +3969,26 @@ impl StreamEncoder {
                     mi_cols_us / 8,
                 )),
                 &mut stage4a_frame_split_stats,
-                false,
+                record_coef_tokens,
                 None,
                 self.frame_worker_pool.as_mut(),
                 self.denoiser.as_mut()
             );
-            debug_assert!(encoded.recorded_coef_tile.is_none());
+            debug_assert_eq!(encoded.recorded_coef_tile.is_some(), record_coef_tokens);
             debug_assert_eq!(encoded.mi_grid.mi_row_start, 0);
             debug_assert_eq!(encoded.mi_grid.mi_rows, mi_rows_us);
             debug_assert_eq!(encoded.mi_grid.mi_col_start, 0);
             debug_assert_eq!(encoded.mi_grid.mi_cols, mi_cols_us);
+            let recorded_coef_tiles: Vec<_> = encoded.recorded_coef_tile.into_iter().collect();
+            let recorded_noncoef_counts = if recorded_coef_tiles.is_empty() {
+                encoded.recorded_noncoef_counts
+            } else {
+                None
+            };
             (
                 Box::new(encoded.coefs),
-                Vec::new(),
-                encoded.recorded_noncoef_counts,
+                recorded_coef_tiles,
+                recorded_noncoef_counts,
                 encoded.mi_grid.cells,
             )
         };
@@ -8057,6 +8071,26 @@ mod tests {
         config.speed = 8;
         config.rc_mode = RcMode::Cbr;
         assert!(!source_aligned_cpu8_svc_partitions_enabled(&config, true));
+    }
+
+    #[test]
+    fn serial_inter_coef_recording_requires_one_thread_and_one_tile() {
+        let _guard = env_test_mutex();
+        let key = "RVP9_RETAIN_INTER_COEFS";
+        // SAFETY: the mutex above serialises all env_test_mutex callers.
+        unsafe { std::env::remove_var(key) };
+
+        assert!(serial_inter_coef_recording_enabled(1, 1));
+        assert!(!serial_inter_coef_recording_enabled(2, 1));
+        assert!(!serial_inter_coef_recording_enabled(1, 2));
+
+        // The negative control preserves the old packet-side recording pass.
+        // SAFETY: the mutex above serialises all env_test_mutex callers.
+        unsafe { std::env::set_var(key, "0") };
+        assert!(!serial_inter_coef_recording_enabled(1, 1));
+
+        // SAFETY: the mutex above serialises all env_test_mutex callers.
+        unsafe { std::env::remove_var(key) };
     }
 
     #[test]
