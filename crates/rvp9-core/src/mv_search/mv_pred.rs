@@ -48,7 +48,6 @@ fn q3_to_full_pel(val: i16) -> i16 {
 /// SAD, and that SAD value. Returns `(Mv::ZERO, u32::MAX)` if no
 /// candidate could be evaluated (all OOB).
 #[must_use]
-#[inline(never)]
 pub fn mv_pred_sad_seed(
     src_plane: &PlaneRef<'_>,
     ref_plane: &PlaneRef<'_>,
