@@ -79,6 +79,10 @@ pub struct PickIntra8x8Result {
     pub rd: i64,
     /// Whether the winning transform has no non-zero coefficients.
     pub skippable: bool,
+    /// Winning quantized coefficients in raster order.
+    pub qcoeff: [i16; SIDE * SIDE],
+    /// Winning end-of-block position in the mode's scan order.
+    pub eob: u16,
     /// Winning reconstructed pixels, row-major.
     pub recon: [u8; SIDE * SIDE],
 }
@@ -204,6 +208,8 @@ pub fn pick_intra8x8_y_mode_through(
                 dist,
                 rd: this_rd,
                 skippable: eob == 0,
+                qcoeff,
+                eob,
                 recon,
             });
         }

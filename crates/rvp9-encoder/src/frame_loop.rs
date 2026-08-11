@@ -8264,6 +8264,76 @@ mod tests {
         }
     }
 
+    #[test]
+    fn retained_exact_keyframe_8x8_matches_recomputed_stream() {
+        let _guard = env_test_mutex();
+        let exact_key = "RVP9_EXACT_KF_SUB8";
+        let retain_key = "RVP9_RETAIN_EXACT_KEYFRAME_8X8";
+        // SAFETY: the mutex above serialises all env_test_mutex callers.
+        unsafe {
+            std::env::set_var(exact_key, "1");
+            std::env::remove_var(retain_key);
+        }
+
+        let new_encoder = || {
+            StreamEncoder::new(EncoderConfig {
+                width: 64,
+                height: 64,
+                framerate: 30.0,
+                target_bitrate_bps: 2_000_000,
+                gop_length: 30,
+                aq_mode: AqMode::Off,
+                use_prev_frame_mvs: false,
+                speed: 7,
+                deadline: Deadline::Realtime,
+                noise_sensitivity: 0,
+                bit_depth: rvp9_core::BitDepth::Bd8,
+                lag_in_frames: 0,
+                enable_alt_ref: false,
+                rc_mode: RcMode::Cbr,
+                cq_level: 0,
+                temporal_layers: 1,
+                enable_tpl: false,
+                stage4a_product_split_override: Default::default(),
+                min_qindex: 4,
+                max_qindex: 255,
+            })
+            .unwrap()
+        };
+        let y = xorshift_y_plane(64, 64, 0x5AB8_4F4F);
+        let u = vec![128u8; 32 * 32];
+        let v = vec![128u8; 32 * 32];
+
+        let candidate = new_encoder()
+            .encode_frame(&yuv_view(&y, &u, &v, 64))
+            .unwrap();
+        // SAFETY: the mutex above serialises all env_test_mutex callers.
+        unsafe { std::env::set_var(retain_key, "0") };
+        let control = new_encoder()
+            .encode_frame(&yuv_view(&y, &u, &v, 64))
+            .unwrap();
+        // SAFETY: the mutex above serialises all env_test_mutex callers.
+        unsafe {
+            std::env::remove_var(exact_key);
+            std::env::remove_var(retain_key);
+        }
+
+        assert_eq!(candidate.data, control.data);
+        let mut decoder = Decoder::new();
+        let frames = decode_packet(&mut decoder, &candidate.data);
+        decoder
+            .decode_frame(&frames[0])
+            .expect("decoder must accept retained exact keyframe coefficients");
+        assert!(
+            decoder
+                .last_frame_mi_grid()
+                .iter()
+                .flatten()
+                .any(|cell| cell.block_size == BlockSize::Block8x8),
+            "fixture must exercise an exact 8x8 keyframe leaf"
+        );
+    }
+
     /// F10.1a — Flat input keeps the picker on `Block64x64` (the F8.2
     /// "no-split" outcome). Decoder must recover an all-Block64x64
     /// mi_grid.

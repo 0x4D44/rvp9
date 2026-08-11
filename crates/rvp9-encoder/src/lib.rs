@@ -2043,6 +2043,7 @@ pub(crate) fn simulate_dc_intra_encode_partitions_no_zero(
         sb_partitions,
         0,
         None,
+        None,
         &mut out,
     );
     out
@@ -2059,6 +2060,7 @@ fn simulate_dc_intra_encode_partitions_no_zero_with_tiles(
     sb_partitions: &[Vec<PartitionLeafDesc>],
     log2_tile_cols: u8,
     active_leaf: Option<(usize, usize)>,
+    retained_luma_8x8: Option<&crate::rdo::kf_intra8::PickIntra8x8Result>,
     out: &mut VecBackedIntraCoefSource,
 ) {
     use rvp9_core::intra_pred::{
@@ -2235,6 +2237,30 @@ fn simulate_dc_intra_encode_partitions_no_zero_with_tiles(
                         while tx_x4_local < plane_bw_4x4 {
                             let tx_px_x = leaf_plane_px_x + tx_x4_local * 4;
                             let tx_px_y = leaf_plane_px_y + tx_y4_local * 4;
+
+                            if plane == 0
+                                && let Some(retained) = retained_luma_8x8
+                            {
+                                debug_assert_eq!(leaf_bsize, BlockSize::Block8x8);
+                                debug_assert_eq!(plane_tx, TxSize::Tx8x8);
+                                debug_assert_eq!((tx_x4_local, tx_y4_local), (0, 0));
+                                for row in 0..8 {
+                                    let dst_start = (tx_px_y + row) * plane_stride + tx_px_x;
+                                    recon_plane[dst_start..dst_start + 8]
+                                        .copy_from_slice(&retained.recon[row * 8..row * 8 + 8]);
+                                }
+                                out.insert_i16(
+                                    leaf_mi_row,
+                                    leaf_mi_col,
+                                    0,
+                                    0,
+                                    0,
+                                    &retained.qcoeff,
+                                    usize::from(retained.eob),
+                                );
+                                tx_x4_local += tx_step_4x4;
+                                continue;
+                            }
 
                             let have_top = have_above_block || tx_y4_local > 0;
                             let have_left = have_left_block || tx_x4_local > 0;
@@ -2577,6 +2603,8 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
     // lookup takes a process-global lock on macOS and this branch otherwise
     // runs once per leaf, even in ordinary production encodes.
     let diag_intra_enabled = std::env::var("RVP9_DIAG_INTRA").is_ok();
+    let retain_exact_keyframe_8x8 = !crate::predstat::enabled()
+        && std::env::var_os("RVP9_RETAIN_EXACT_KEYFRAME_8X8").is_none_or(|value| value != "0");
     let sb_cols = w / 64;
     let sb_rows = h.div_ceil(64);
     assert_eq!(
@@ -2758,6 +2786,7 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
                 );
                 let leaf_quantizer =
                     init_plane_quantizers(i32::from(leaf_qindex), QuantizerDeltas::Y);
+                let mut retained_luma_8x8 = None;
                 let picked_y_modes = if leaf_bsize < BlockSize::Block8x8 {
                     let mut src = [0u8; 64];
                     for row in 0..8 {
@@ -2925,7 +2954,11 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
                             pick_intra8x8_y_mode(&params)
                         }
                         .expect("unbounded 8x8 keyframe pick must choose a mode");
-                        [result.mode; 4]
+                        let mode = result.mode;
+                        if retain_exact_keyframe_8x8 {
+                            retained_luma_8x8 = Some(result);
+                        }
+                        [mode; 4]
                     }
                 } else if leaf_bsize == BlockSize::Block64x64 {
                     [IntraMode::Dc; 4]
@@ -3019,6 +3052,7 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
                     sb_partitions,
                     log2_tile_cols,
                     Some((sb_idx, leaf_idx)),
+                    retained_luma_8x8.as_ref(),
                     &mut coef_source,
                 );
                 sb_partitions[sb_idx][leaf_idx].skip = intra_leaf_all_zero(
