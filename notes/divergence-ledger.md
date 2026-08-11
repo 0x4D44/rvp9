@@ -24,6 +24,48 @@ Each entry:
 
 ## Entries
 
+### 2026-08-11 — Keep exact 8x8 keyframe RD behind a measured CPU8 mode cap
+
+**Where:** `rvp9_encoder::frame_loop::keyframe_8x8_mode_cap_enabled`,
+`rvp9_encoder::rdo::kf_intra8::pick_intra8x8_y_mode_through`, and
+`rvp9_encoder::pick_and_simulate_intra_encode_partitions`; libvpx counterpart:
+`vp9/encoder/vp9_pickmode.c:vp9_pick_intra_mode`.
+
+**What libvpx does:** its CPU8 realtime non-RD keyframe picker evaluates only
+DC, V, and H with the Hadamard/fast-quantizer block model.
+
+**What rvp9 does:** CPU8 three-layer realtime VBR keyframes at Q index 65 or
+below evaluate the same DC/V/H mode subset, but retain rvp9's exact 8x8
+coefficient prices and reconstructed-pixel distortion. Coarser Q66--120
+keyframes retain the full exact directional search. CPU6/7, two-layer, CBR,
+non-realtime, and explicit `RVP9_EXACT_KF_SUB8` diagnostic paths are unchanged.
+
+**Why:** the integrated profile counted 9,467 exact 8x8 leaves and 65,435
+post-pruning mode evaluations, or 6.91 evaluations per leaf. A literal
+three-mode Hadamard port improved plain-release wall time by 2.4--2.7%, but
+its full TL2 curve was `+0.6341%`; restoring the coarse keyframe improved that
+only to `+0.6068%`. Adding the largest excluded exact-search winner, D135,
+worsened TL2 to `+1.1690%`. The exact-RD three-mode cap preserves the useful
+speed reduction without that model mismatch.
+
+**Byte-parity impact:** intentional on the affected keyframe. The exercised
+CPU8/T3/VBR 1,500-kbps stream is 522,411 bytes at SHA-256
+`d3a80ced2dd7effdfe5ea34971888a66201ae38ee366714aded2d35703a567c1`.
+Rvp9-decoder, pinned vpxdec, and ffmpeg each emit the same 82,944,000 I420
+bytes at SHA-256
+`15b9c16f19c463acb5ff0e5ce0c6e5d237170720471ec840bae33c1ebe9ec3e3`.
+
+**Compression-efficiency impact:** the complete six-point TL0/TL1/TL2 PSNR
+BD-rates versus pinned vpxenc are `-0.0352%/+0.0178%/+0.2236%`. Every layer
+passes the final `+0.5%` gate.
+
+**Speed impact:** two reversed fifteen-pair plain-release rotations against
+exact integrated Unit 1110 measure separate-median ratios `0.973945x` and
+`0.976403x`; paired-median ratios are `0.976782x` and `0.975081x`.
+
+**Future plan:** retain only if the documented 22-row production-PGO build
+reproduces the gain, then reprofile the remaining temporal-SVC inter path.
+
 ### 2026-08-10 — AArch64 large-model variance uses fused four-cell stripes
 **Where:** `rvp9_core::mode_decision::model_rd::compute_variance_8x8_large`
 and `rvp9_core::dsp::aarch64::variance_neon::{var_sum_sse_8x8_grid_neon,

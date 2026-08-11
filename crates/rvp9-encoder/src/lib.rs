@@ -2526,6 +2526,7 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
     log2_tile_cols: u8,
     active_tile_col: Option<usize>,
     exact_keyframe_sub8: bool,
+    keyframe_8x8_mode_cap: bool,
 ) -> VecBackedIntraCoefSource {
     use rvp9_core::coef_ctx::combine_entropy_contexts;
     use rvp9_core::cost::{
@@ -2538,11 +2539,17 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
     use rvp9_core::mv_search::PlaneRef;
     use rvp9_core::quant::forward::{QuantizerDeltas, init_plane_quantizers};
 
-    use crate::rdo::kf_intra8::{PickIntra8x8Params, pick_intra8x8_y_mode};
+    use crate::rdo::kf_intra8::{
+        PickIntra8x8Params, pick_intra8x8_y_mode, pick_intra8x8_y_mode_through,
+    };
     use crate::rdo::sub8_kf_intra::{PickIntraSub8x8Params, pick_intra_sub_8x8_y_mode};
 
     let w = width as usize;
     let h = height as usize;
+    debug_assert!(
+        !keyframe_8x8_mode_cap || exact_keyframe_sub8,
+        "the 8x8 keyframe mode cap requires exact sub-8 partitions"
+    );
     // Read the diagnostic switch once per keyframe tile walk. Environment
     // lookup takes a process-global lock on macOS and this branch otherwise
     // runs once per leaf, even in ordinary production encodes.
@@ -2833,7 +2840,7 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
                         | picker_coef_ctx.above_coef(0, x4_base + 1);
                     let left_ctx = picker_coef_ctx.left_coef(0, y4_in_sb_base)
                         | picker_coef_ctx.left_coef(0, y4_in_sb_base + 1);
-                    let result = pick_intra8x8_y_mode(&PickIntra8x8Params {
+                    let params = PickIntra8x8Params {
                         src: &src,
                         above: &above,
                         left: &left,
@@ -2851,7 +2858,12 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
                             FrameTypeForRd::Key,
                         )),
                         best_rd: i64::MAX,
-                    })
+                    };
+                    let result = if keyframe_8x8_mode_cap {
+                        pick_intra8x8_y_mode_through(&params, IntraMode::H)
+                    } else {
+                        pick_intra8x8_y_mode(&params)
+                    }
                     .expect("unbounded 8x8 keyframe pick must choose a mode");
                     [result.mode; 4]
                 } else if leaf_bsize == BlockSize::Block64x64 {

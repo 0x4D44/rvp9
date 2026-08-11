@@ -86,12 +86,25 @@ pub struct PickIntra8x8Result {
 /// Mirror libvpx `rd_pick_intra_sby_mode` for a keyframe `BLOCK_8X8` leaf.
 #[must_use]
 pub fn pick_intra8x8_y_mode(params: &PickIntra8x8Params<'_>) -> Option<PickIntra8x8Result> {
+    pick_intra8x8_y_mode_through(params, IntraMode::Tm)
+}
+
+/// Pick an exact 8x8 keyframe luma mode, stopping after `max_mode` in VP9
+/// enum order.
+///
+/// CPU8 temporal SVC uses this boundary to retain full coefficient and pixel
+/// RD scoring while avoiding the seven secondary directional candidates.
+#[must_use]
+pub fn pick_intra8x8_y_mode_through(
+    params: &PickIntra8x8Params<'_>,
+    max_mode: IntraMode,
+) -> Option<PickIntra8x8Result> {
     let dispatch = rvp9_core::dsp::get();
     let mut best_rd = params.best_rd;
     let mut best: Option<PickIntra8x8Result> = None;
     let mut token_cache = [0u8; SIDE * SIDE];
 
-    for raw_mode in 0u8..=IntraMode::Tm as u8 {
+    for raw_mode in 0u8..=max_mode as u8 {
         let mode = IntraMode::from_u8(raw_mode).expect("0..10 valid");
         let best_mode = best.as_ref().map_or(IntraMode::Dc, |winner| winner.mode);
         if conditional_skip(mode, best_mode) {
@@ -221,7 +234,7 @@ mod tests {
         let costs = intra_y_mode_costs_kf_table();
         let quant = init_plane_quantizers(119, QuantizerDeltas::Y);
         let coef_costs = build_coef_cost_table(&FrameContext::new_default());
-        let result = pick_intra8x8_y_mode(&PickIntra8x8Params {
+        let params = PickIntra8x8Params {
             src: &src,
             above: &above,
             left: &left,
@@ -234,8 +247,11 @@ mod tests {
             coeff_ctx: 1,
             rdmult: 65_430,
             best_rd: i64::MAX,
-        })
-        .expect("unbounded 8x8 pick must select a mode");
+        };
+        let result = pick_intra8x8_y_mode(&params).expect("unbounded 8x8 pick must select a mode");
+        let capped = pick_intra8x8_y_mode_through(&params, IntraMode::H)
+            .expect("bounded 8x8 pick must select a mode");
+        assert_eq!(capped, result);
 
         assert_eq!(result.mode, IntraMode::H);
         assert_eq!(result.rate_y, 38_564);
@@ -311,7 +327,7 @@ mod tests {
         let costs = intra_y_mode_costs_kf_table();
         let quant = init_plane_quantizers(119, QuantizerDeltas::Y);
         let coef_costs = build_coef_cost_table(&FrameContext::new_default());
-        let result = pick_intra8x8_y_mode(&PickIntra8x8Params {
+        let params = PickIntra8x8Params {
             src: &src,
             above: &above,
             left: &left,
@@ -324,8 +340,16 @@ mod tests {
             coeff_ctx: 2,
             rdmult: 65_430,
             best_rd: i64::MAX,
-        })
-        .expect("unbounded 8x8 pick must select a mode");
+        };
+        let result = pick_intra8x8_y_mode(&params).expect("unbounded 8x8 pick must select a mode");
+        let capped = pick_intra8x8_y_mode_through(&params, IntraMode::H)
+            .expect("bounded 8x8 pick must select a mode");
+        assert_eq!(capped.mode, IntraMode::V);
+        assert_eq!(capped.rate_y, 31_924);
+        assert_eq!(capped.rate, 34_460);
+        assert_eq!(capped.dist, 16_064);
+        assert_eq!(capped.rd, 6_459_938);
+        assert!(!capped.skippable);
 
         assert_eq!(result.mode, IntraMode::D63);
         assert_eq!(result.rate_y, 31_315);

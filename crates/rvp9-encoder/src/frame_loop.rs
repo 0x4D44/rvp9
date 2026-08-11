@@ -296,6 +296,11 @@ fn temporal_svc_cumulative_targets(
 }
 
 const VBR_EXACT_KEYFRAME_SUB8_QMAX: u8 = 120;
+// Rvp9's coarser keyframes still need the full directional-mode search to
+// keep the temporal-layer curve inside the final gate. At q<=65, retaining
+// exact RD but capping the search at DC/V/H removes redundant work without
+// crossing that boundary.
+const VBR_KEYFRAME_8X8_MODE_CAP_QMAX: u8 = 65;
 
 fn exact_keyframe_sub8_enabled(config: &EncoderConfig, q_index: u8) -> bool {
     if std::env::var_os("RVP9_EXACT_KF_SUB8").is_some_and(|value| value != "0") {
@@ -312,6 +317,18 @@ fn exact_keyframe_sub8_enabled(config: &EncoderConfig, q_index: u8) -> bool {
             false,
         )
         && matches!(config.rc_mode, RcMode::Vbr)
+}
+
+fn keyframe_8x8_mode_cap_enabled(config: &EncoderConfig, q_index: u8) -> bool {
+    if std::env::var_os("RVP9_EXACT_KF_SUB8").is_some_and(|value| value != "0") {
+        return false;
+    }
+    exact_keyframe_sub8_enabled(config, q_index)
+        && q_index <= VBR_KEYFRAME_8X8_MODE_CAP_QMAX
+        && config.temporal_layers == 3
+        && config.speed == 8
+        && matches!(config.rc_mode, RcMode::Vbr)
+        && matches!(config.deadline, Deadline::Realtime)
 }
 
 fn source_aligned_cpu8_svc_partitions_enabled(config: &EncoderConfig, has_svc_frame: bool) -> bool {
@@ -2744,6 +2761,7 @@ impl StreamEncoder {
         self.vbp_partition_history
             .fill(rvp9_core::mode_decision::partition::FixedTreeHistoryEntry::default());
         let exact_keyframe_sub8 = exact_keyframe_sub8_enabled(&self.config, q_index);
+        let keyframe_8x8_mode_cap = keyframe_8x8_mode_cap_enabled(&self.config, q_index);
 
         // F10.1a — pick the per-SB partition via the F8.2 variance
         // picker. For KF the ref plane is unused (the picker substitutes
@@ -2833,6 +2851,7 @@ impl StreamEncoder {
                                 log2_tile_cols,
                                 Some(tile_col),
                                 exact_keyframe_sub8,
+                                keyframe_8x8_mode_cap,
                             );
                             *result_slot = Some(KeyframeTileJobResult {
                                 tile_col,
@@ -2897,6 +2916,7 @@ impl StreamEncoder {
                 log2_tile_cols,
                 None,
                 exact_keyframe_sub8,
+                keyframe_8x8_mode_cap,
             )
         };
 
@@ -7897,6 +7917,51 @@ mod tests {
             std::env::remove_var(exact_tree_key);
             std::env::remove_var(sub8_key);
         }
+    }
+
+    #[test]
+    fn keyframe_8x8_mode_cap_is_cpu8_three_layer_realtime_vbr_only() {
+        let _guard = env_test_mutex();
+        let sub8_key = "RVP9_EXACT_KF_SUB8";
+        // SAFETY: the mutex above serialises all env_test_mutex callers.
+        unsafe { std::env::remove_var(sub8_key) };
+
+        let mut config = EncoderConfig::new(1280, 720);
+        config.deadline = Deadline::Realtime;
+        config.rc_mode = RcMode::Vbr;
+        config.temporal_layers = 3;
+        config.speed = 8;
+        assert!(keyframe_8x8_mode_cap_enabled(&config, 65));
+        assert!(!keyframe_8x8_mode_cap_enabled(&config, 66));
+
+        config.speed = 7;
+        assert!(!keyframe_8x8_mode_cap_enabled(&config, 65));
+        config.speed = 6;
+        assert!(!keyframe_8x8_mode_cap_enabled(&config, 65));
+        config.speed = 8;
+        config.temporal_layers = 2;
+        assert!(!keyframe_8x8_mode_cap_enabled(&config, 65));
+        config.temporal_layers = 3;
+        config.rc_mode = RcMode::Cbr;
+        assert!(!keyframe_8x8_mode_cap_enabled(&config, 65));
+        config.rc_mode = RcMode::Vbr;
+        config.deadline = Deadline::Good;
+        assert!(!keyframe_8x8_mode_cap_enabled(&config, 65));
+
+        // The explicit exact-sub8 diagnostic still enables the full-RD path
+        // outside the product boundary and disables the cap inside it.
+        // SAFETY: the mutex above serialises all env_test_mutex callers.
+        unsafe { std::env::set_var(sub8_key, "1") };
+        config.speed = 7;
+        config.rc_mode = RcMode::Cbr;
+        assert!(exact_keyframe_sub8_enabled(&config, 255));
+        config.speed = 8;
+        config.rc_mode = RcMode::Vbr;
+        config.deadline = Deadline::Realtime;
+        assert!(!keyframe_8x8_mode_cap_enabled(&config, 65));
+
+        // SAFETY: the mutex above serialises all env_test_mutex callers.
+        unsafe { std::env::remove_var(sub8_key) };
     }
 
     #[test]
