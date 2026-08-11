@@ -5646,6 +5646,7 @@ pub(crate) struct InterEncodeEnv {
     s2_xtab: bool,
     rt_profile: bool,
     exact_vbp_tree: Option<bool>,
+    exact_vbp_skip_legacy_prepass: Option<bool>,
     live_ref_costs: Option<bool>,
     rt_emit_max_tx: Option<bool>,
     rt_emit_tx_rd: Option<bool>,
@@ -5698,6 +5699,7 @@ impl InterEncodeEnv {
             s2_xtab: std::env::var("RVP9_S2_XTAB").is_ok(),
             rt_profile: std::env::var_os("RVP9_RT_PROFILE").is_some(),
             exact_vbp_tree: bool_override("RVP9_EXACT_VBP_TREE"),
+            exact_vbp_skip_legacy_prepass: bool_override("RVP9_EXACT_VBP_SKIP_LEGACY_PREPASS"),
             live_ref_costs: bool_override("RVP9_LIVE_REF_COSTS"),
             rt_emit_max_tx: bool_override("RVP9_RT_EMIT_MAX_TX"),
             rt_emit_tx_rd: bool_override("RVP9_RT_EMIT_TX_RD"),
@@ -5755,6 +5757,28 @@ impl InterEncodeEnv {
             && matches!(speed, 6..=8)
             && deadline == rvp9_core::mode_decision::speed_features::Deadline::Realtime
             && content_tier == rvp9_core::mode_decision::speed_features::ContentTier::Default
+    }
+
+    /// Skip the obsolete whole-frame variance pass when the per-superblock
+    /// pinned-libvpx tree will replace every complete superblock. AQ-active
+    /// frames retain the legacy pass because its leaves carry the segment map.
+    pub(crate) fn exact_vbp_skip_legacy_prepass_enabled(
+        &self,
+        rc_mode: crate::rate_control::RcMode,
+        speed: i32,
+        deadline: rvp9_core::mode_decision::speed_features::Deadline,
+        content_tier: rvp9_core::mode_decision::speed_features::ContentTier,
+        cyclic_refresh_active: bool,
+    ) -> bool {
+        !cyclic_refresh_active
+            && self.flag_or(self.exact_vbp_skip_legacy_prepass, true)
+            && self.exact_vbp_tree_enabled(
+                rc_mode,
+                speed,
+                deadline,
+                content_tier,
+                cyclic_refresh_active,
+            )
     }
 
     /// Mirror libvpx realtime `search_filter_ref`: integer-pel motion

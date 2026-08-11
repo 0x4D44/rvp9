@@ -3436,10 +3436,20 @@ impl StreamEncoder {
             && self.parallelism.max_threads > 1
             && self.denoiser.is_none()
             && !inter_env_snapshot.compact_recon_rows_enabled();
+        let skip_legacy_vbp_prepass = !parallel_tile_picker
+            && inter_env_snapshot.exact_vbp_skip_legacy_prepass_enabled(
+                self.config.rc_mode,
+                self.config.speed,
+                self.config.deadline,
+                rvp9_core::mode_decision::speed_features::ContentTier::Default,
+                aq_active_this_frame,
+            );
         let mut sb_partitions = if parallel_tile_picker {
             (0..(h as usize).div_ceil(64) * (w as usize / 64))
                 .map(|_| Vec::new())
                 .collect()
+        } else if skip_legacy_vbp_prepass {
+            exact_vbp_seed_partitions(w as usize, h as usize, &seg_map, mi_cols_us)
         } else {
             let intra_partitions = choose_partitions_for_frame(partition_input);
             inter_partitions_from_intra_shape(&intra_partitions, &seg_map, mi_cols_us)
@@ -5426,6 +5436,36 @@ fn inter_partitions_from_intra_shape(
             inter_leaves_from_intra(leaves, sb_row, sb_col, seg_map, mi_cols)
         })
         .collect()
+}
+
+/// Seed the per-SB storage consumed by the exact pinned-libvpx VBP path.
+/// Complete superblocks need only a placeholder because the exact tree
+/// replaces it before mode picking. A partial bottom superblock retains the
+/// same legal edge shape as the legacy prepass, which the exact path excludes.
+fn exact_vbp_seed_partitions(
+    width_px: usize,
+    height_px: usize,
+    seg_map: &[u8],
+    mi_cols: usize,
+) -> Vec<Vec<InterPartitionLeafDesc>> {
+    let sb_cols = width_px / 64;
+    let sb_rows = height_px.div_ceil(64);
+    let mut partitions = Vec::with_capacity(sb_rows * sb_cols);
+    for sb_row in 0..sb_rows {
+        let visible_mi_rows = (height_px - sb_row * 64).min(64) / 8;
+        let decision = if visible_mi_rows == 8 {
+            PartitionDecision::all_64x64()
+        } else {
+            edge_partition_decision(8, visible_mi_rows)
+        };
+        let leaves = leaves_from_decision_visible(&decision, visible_mi_rows, 8);
+        for sb_col in 0..sb_cols {
+            partitions.push(inter_leaves_from_intra(
+                &leaves, sb_row, sb_col, seg_map, mi_cols,
+            ));
+        }
+    }
+    partitions
 }
 
 fn inter_leaves_from_intra(
@@ -12457,6 +12497,38 @@ mod tests {
             }
         }
         assert!(covered.into_iter().flatten().all(|cell| cell));
+    }
+
+    #[test]
+    fn exact_vbp_seed_uses_placeholders_but_preserves_partial_bottom_shape() {
+        let width = 128usize;
+        let height = 72usize;
+        let mi_cols = width / 8;
+        let seg_map = vec![0u8; (height / 8) * mi_cols];
+        let seeded = exact_vbp_seed_partitions(width, height, &seg_map, mi_cols);
+
+        assert_eq!(seeded.len(), 4);
+        for complete_sb in &seeded[..2] {
+            assert_eq!(complete_sb.len(), 1);
+            assert_eq!(complete_sb[0].leaf_bsize, BlockSize::Block64x64);
+            assert_eq!(complete_sb[0].segment_id, 0);
+        }
+
+        let src_y = vec![37u8; width * height];
+        let ref_y = vec![128u8; width * height];
+        let legacy_shape = choose_partitions_for_frame(FramePartitionInput {
+            width_px: width,
+            height_px: height,
+            q_index: 120,
+            src_y: &src_y,
+            ref_y: &ref_y,
+            is_keyframe: false,
+            exact_keyframe_sub8: false,
+            avg_inter_qindex: 120,
+            noise_threshold_scale: 1,
+        });
+        let legacy = inter_partitions_from_intra_shape(&legacy_shape, &seg_map, mi_cols);
+        assert_eq!(seeded[2..], legacy[2..]);
     }
 
     #[test]
