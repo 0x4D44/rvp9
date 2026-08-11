@@ -61,10 +61,13 @@ passes the final `+0.5%` gate.
 
 **Speed impact:** two reversed fifteen-pair plain-release rotations against
 exact integrated Unit 1110 measure separate-median ratios `0.973945x` and
-`0.976403x`; paired-median ratios are `0.976782x` and `0.975081x`.
+`0.976403x`; paired-median ratios are `0.976782x` and `0.975081x`. After the
+unchanged 22-row production-PGO training matrix, two more reversed fifteen-
+pair rotations measure separate-median ratios `0.972075x` and `0.971174x`;
+paired-median ratios are `0.971636x` and `0.972285x`.
 
-**Future plan:** retain only if the documented 22-row production-PGO build
-reproduces the gain, then reprofile the remaining temporal-SVC inter path.
+**Future plan:** retained after the PGO gain reproduced; reprofile the
+remaining temporal-SVC inter path.
 
 ### 2026-08-10 — AArch64 large-model variance uses fused four-cell stripes
 **Where:** `rvp9_core::mode_decision::model_rd::compute_variance_8x8_large`
