@@ -2526,6 +2526,7 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
     log2_tile_cols: u8,
     active_tile_col: Option<usize>,
     exact_keyframe_sub8: bool,
+    nonrd_keyframe_8x8: bool,
     keyframe_8x8_mode_cap: bool,
 ) -> VecBackedIntraCoefSource {
     use rvp9_core::coef_ctx::combine_entropy_contexts;
@@ -2534,8 +2535,11 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
         intra_y_mode_costs_kf_table,
     };
     use rvp9_core::entropy::FrameContext;
+    use rvp9_core::entropy::default_probs::DEFAULT_SKIP_PROBS;
     use rvp9_core::intra_pred::{ABOVE_UNAVAILABLE_FILL, LEFT_UNAVAILABLE_FILL};
-    use rvp9_core::mode_decision::intra::{IntraModeSearchParams, pick_realtime_intra_mode_luma};
+    use rvp9_core::mode_decision::intra::{
+        IntraModeSearchParams, pick_realtime_intra_mode_luma, pick_realtime_intra_mode_luma_8x8,
+    };
     use rvp9_core::mv_search::PlaneRef;
     use rvp9_core::quant::forward::{QuantizerDeltas, init_plane_quantizers};
 
@@ -2549,6 +2553,10 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
     debug_assert!(
         !keyframe_8x8_mode_cap || exact_keyframe_sub8,
         "the 8x8 keyframe mode cap requires exact sub-8 partitions"
+    );
+    debug_assert!(
+        !nonrd_keyframe_8x8 || exact_keyframe_sub8,
+        "non-RD 8x8 keyframe search requires exact sub-8 partitions"
     );
     // Read the diagnostic switch once per keyframe tile walk. Environment
     // lookup takes a process-global lock on macOS and this branch otherwise
@@ -2578,6 +2586,7 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
         bounds.mi_col_start / 8..bounds.mi_col_end / 8
     });
     let mut picked_y_mode_grid: Vec<Option<[IntraMode; 4]>> = vec![None; mi_rows * mi_cols];
+    let mut picked_skip_grid = nonrd_keyframe_8x8.then(|| vec![None::<bool>; mi_rows * mi_cols]);
 
     // First pass: walk SBs/leaves in raster, run the simulator one
     // leaf at a time, prepended by a picker call. The simulator
@@ -2799,12 +2808,6 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
                         .expect("unbounded sub-8 keyframe pick must choose four modes");
                     core::array::from_fn(|index| result.sub_winners[index].mode)
                 } else if exact_keyframe_sub8 && leaf_bsize == BlockSize::Block8x8 {
-                    let mut src = [0u8; 64];
-                    for row in 0..8 {
-                        let src_start = (leaf_px_y + row) * w + leaf_px_x;
-                        src[row * 8..row * 8 + 8]
-                            .copy_from_slice(&input_yuv.0[src_start..src_start + 8]);
-                    }
                     let mut above = [ABOVE_UNAVAILABLE_FILL; 16];
                     if have_above {
                         let above_start = (leaf_px_y - 1) * w;
@@ -2829,43 +2832,86 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
                     } else {
                         ABOVE_UNAVAILABLE_FILL
                     };
-                    let picker_coef_ctx = picker_coef_contexts
-                        .as_ref()
-                        .expect("exact 8x8 leaves require picker coefficient contexts")
-                        .get(current_tile_index)
-                        .expect("current keyframe tile has coefficient context");
-                    let x4_base = (leaf_mi_col - current_tile.mi_col_start) * 2;
-                    let y4_in_sb_base = (leaf_mi_row & 7) * 2;
-                    let above_ctx = picker_coef_ctx.above_coef(0, x4_base)
-                        | picker_coef_ctx.above_coef(0, x4_base + 1);
-                    let left_ctx = picker_coef_ctx.left_coef(0, y4_in_sb_base)
-                        | picker_coef_ctx.left_coef(0, y4_in_sb_base + 1);
-                    let params = PickIntra8x8Params {
-                        src: &src,
-                        above: &above,
-                        left: &left,
-                        above_left,
-                        have_above,
-                        have_left,
-                        bmode_costs: &y_mode_costs[above_mode_ctx as usize][left_mode_ctx as usize],
-                        quant: &leaf_quantizer,
-                        coef_costs: coef_costs
+                    if nonrd_keyframe_8x8 {
+                        let skip_grid = picked_skip_grid
                             .as_ref()
-                            .expect("exact 8x8 leaves require coefficient costs"),
-                        coeff_ctx: combine_entropy_contexts(above_ctx, left_ctx),
-                        rdmult: i64::from(compute_rd_mult(
-                            i32::from(leaf_qindex),
-                            FrameTypeForRd::Key,
-                        )),
-                        best_rd: i64::MAX,
-                    };
-                    let result = if keyframe_8x8_mode_cap {
-                        pick_intra8x8_y_mode_through(&params, IntraMode::H)
+                            .expect("CPU8 non-RD keyframes retain skip neighbours");
+                        let above_skip = leaf_mi_row > 0
+                            && skip_grid[(leaf_mi_row - 1) * mi_cols + leaf_mi_col]
+                                .unwrap_or(false);
+                        let left_skip = leaf_mi_col > current_tile.mi_col_start
+                            && skip_grid[leaf_mi_row * mi_cols + leaf_mi_col - 1].unwrap_or(false);
+                        let skip_ctx = usize::from(above_skip) + usize::from(left_skip);
+                        let src_plane = PlaneRef {
+                            data: input_yuv.0,
+                            stride: w,
+                            width: w,
+                            height: h,
+                        };
+                        let params = IntraModeSearchParams {
+                            block_size: BlockSize::Block8x8,
+                            src_plane: &src_plane,
+                            src_offset: (leaf_px_x, leaf_px_y),
+                            above_pixels: &above[..8],
+                            left_pixels: &left,
+                            top_left_pixel: above_left,
+                            have_above,
+                            have_left,
+                            quantizer: &leaf_quantizer,
+                            q_index: leaf_qindex,
+                            frame_kind: rvp9_core::bitstream::header::FrameKind::KeyFrame,
+                            above_mode_ctx,
+                            left_mode_ctx,
+                            y_mode_costs: &y_mode_costs,
+                        };
+                        [pick_realtime_intra_mode_luma_8x8(&params, DEFAULT_SKIP_PROBS[skip_ctx])
+                            .best_mode; 4]
                     } else {
-                        pick_intra8x8_y_mode(&params)
+                        let mut src = [0u8; 64];
+                        for row in 0..8 {
+                            let src_start = (leaf_px_y + row) * w + leaf_px_x;
+                            src[row * 8..row * 8 + 8]
+                                .copy_from_slice(&input_yuv.0[src_start..src_start + 8]);
+                        }
+                        let picker_coef_ctx = picker_coef_contexts
+                            .as_ref()
+                            .expect("exact 8x8 leaves require picker coefficient contexts")
+                            .get(current_tile_index)
+                            .expect("current keyframe tile has coefficient context");
+                        let x4_base = (leaf_mi_col - current_tile.mi_col_start) * 2;
+                        let y4_in_sb_base = (leaf_mi_row & 7) * 2;
+                        let above_ctx = picker_coef_ctx.above_coef(0, x4_base)
+                            | picker_coef_ctx.above_coef(0, x4_base + 1);
+                        let left_ctx = picker_coef_ctx.left_coef(0, y4_in_sb_base)
+                            | picker_coef_ctx.left_coef(0, y4_in_sb_base + 1);
+                        let params = PickIntra8x8Params {
+                            src: &src,
+                            above: &above,
+                            left: &left,
+                            above_left,
+                            have_above,
+                            have_left,
+                            bmode_costs: &y_mode_costs[above_mode_ctx as usize]
+                                [left_mode_ctx as usize],
+                            quant: &leaf_quantizer,
+                            coef_costs: coef_costs
+                                .as_ref()
+                                .expect("exact 8x8 leaves require coefficient costs"),
+                            coeff_ctx: combine_entropy_contexts(above_ctx, left_ctx),
+                            rdmult: i64::from(compute_rd_mult(
+                                i32::from(leaf_qindex),
+                                FrameTypeForRd::Key,
+                            )),
+                            best_rd: i64::MAX,
+                        };
+                        let result = if keyframe_8x8_mode_cap {
+                            pick_intra8x8_y_mode_through(&params, IntraMode::H)
+                        } else {
+                            pick_intra8x8_y_mode(&params)
+                        }
+                        .expect("unbounded 8x8 keyframe pick must choose a mode");
+                        [result.mode; 4]
                     }
-                    .expect("unbounded 8x8 keyframe pick must choose a mode");
-                    [result.mode; 4]
                 } else if leaf_bsize == BlockSize::Block64x64 {
                     [IntraMode::Dc; 4]
                 } else {
@@ -2967,6 +3013,17 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
                     leaf_bsize,
                     chosen_intra_tx,
                 );
+                if let Some(skip_grid) = picked_skip_grid.as_mut() {
+                    let leaf_skip = sb_partitions[sb_idx][leaf_idx].skip;
+                    let n_8x8 = (bs_pixels / 8).max(1);
+                    for dr in 0..n_8x8 {
+                        for dc in 0..n_8x8 {
+                            let mi_r = leaf_mi_row + dr;
+                            let mi_c = leaf_mi_col + dc;
+                            skip_grid[mi_r * mi_cols + mi_c] = Some(leaf_skip);
+                        }
+                    }
+                }
                 // F.0.2 oracle — record after residual generation so its
                 // skip state matches the syntax emitted for this leaf.
                 if crate::f02_oracle::is_enabled() {

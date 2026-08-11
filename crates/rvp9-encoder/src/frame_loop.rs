@@ -302,6 +302,7 @@ const VBR_EXACT_KEYFRAME_SUB8_QMAX: u8 = 120;
 // T3 needs the full directional set above q=65.
 const VBR_KEYFRAME_8X8_MODE_CAP_QMAX: u8 = 65;
 const VBR_T2_KEYFRAME_8X8_MODE_CAP_QMAX: u8 = 120;
+const VBR_T2_NONRD_KEYFRAME_8X8_QMAX: u8 = 65;
 
 fn exact_keyframe_sub8_enabled(config: &EncoderConfig, q_index: u8) -> bool {
     if std::env::var_os("RVP9_EXACT_KF_SUB8").is_some_and(|value| value != "0") {
@@ -320,6 +321,18 @@ fn exact_keyframe_sub8_enabled(config: &EncoderConfig, q_index: u8) -> bool {
             false,
         )
         && matches!(config.rc_mode, RcMode::Vbr)
+}
+
+fn nonrd_keyframe_8x8_enabled(config: &EncoderConfig, q_index: u8) -> bool {
+    if std::env::var_os("RVP9_EXACT_KF_SUB8").is_some_and(|value| value != "0") {
+        return false;
+    }
+    exact_keyframe_sub8_enabled(config, q_index)
+        && q_index <= VBR_T2_NONRD_KEYFRAME_8X8_QMAX
+        && config.temporal_layers == 2
+        && config.speed == 8
+        && matches!(config.rc_mode, RcMode::Vbr)
+        && matches!(config.deadline, Deadline::Realtime)
 }
 
 fn keyframe_8x8_mode_cap_enabled(config: &EncoderConfig, q_index: u8) -> bool {
@@ -2768,6 +2781,7 @@ impl StreamEncoder {
         self.vbp_partition_history
             .fill(rvp9_core::mode_decision::partition::FixedTreeHistoryEntry::default());
         let exact_keyframe_sub8 = exact_keyframe_sub8_enabled(&self.config, q_index);
+        let nonrd_keyframe_8x8 = nonrd_keyframe_8x8_enabled(&self.config, q_index);
         let keyframe_8x8_mode_cap = keyframe_8x8_mode_cap_enabled(&self.config, q_index);
 
         // F10.1a — pick the per-SB partition via the F8.2 variance
@@ -2858,6 +2872,7 @@ impl StreamEncoder {
                                 log2_tile_cols,
                                 Some(tile_col),
                                 exact_keyframe_sub8,
+                                nonrd_keyframe_8x8,
                                 keyframe_8x8_mode_cap,
                             );
                             *result_slot = Some(KeyframeTileJobResult {
@@ -2923,6 +2938,7 @@ impl StreamEncoder {
                 log2_tile_cols,
                 None,
                 exact_keyframe_sub8,
+                nonrd_keyframe_8x8,
                 keyframe_8x8_mode_cap,
             )
         };
@@ -7977,6 +7993,46 @@ mod tests {
         config.rc_mode = RcMode::Vbr;
         config.deadline = Deadline::Realtime;
         assert!(!keyframe_8x8_mode_cap_enabled(&config, 65));
+
+        // SAFETY: the mutex above serialises all env_test_mutex callers.
+        unsafe { std::env::remove_var(sub8_key) };
+    }
+
+    #[test]
+    fn nonrd_keyframe_8x8_policy_is_cpu8_two_layer_realtime_vbr_only() {
+        let _guard = env_test_mutex();
+        let sub8_key = "RVP9_EXACT_KF_SUB8";
+        // SAFETY: the mutex above serialises all env_test_mutex callers.
+        unsafe { std::env::remove_var(sub8_key) };
+
+        let mut config = EncoderConfig::new(1280, 720);
+        config.deadline = Deadline::Realtime;
+        config.rc_mode = RcMode::Vbr;
+        config.temporal_layers = 2;
+        config.speed = 8;
+        assert!(nonrd_keyframe_8x8_enabled(&config, 65));
+        assert!(!nonrd_keyframe_8x8_enabled(&config, 66));
+
+        config.speed = 7;
+        assert!(!nonrd_keyframe_8x8_enabled(&config, 65));
+        config.speed = 8;
+        config.temporal_layers = 3;
+        assert!(!nonrd_keyframe_8x8_enabled(&config, 65));
+        config.temporal_layers = 1;
+        assert!(!nonrd_keyframe_8x8_enabled(&config, 65));
+        config.temporal_layers = 2;
+        config.rc_mode = RcMode::Cbr;
+        assert!(!nonrd_keyframe_8x8_enabled(&config, 65));
+        config.rc_mode = RcMode::Vbr;
+        config.deadline = Deadline::Good;
+        assert!(!nonrd_keyframe_8x8_enabled(&config, 65));
+
+        // The explicit exact-sub8 diagnostic still selects the full-RD path.
+        // SAFETY: the mutex above serialises all env_test_mutex callers.
+        unsafe { std::env::set_var(sub8_key, "1") };
+        config.deadline = Deadline::Realtime;
+        assert!(exact_keyframe_sub8_enabled(&config, 255));
+        assert!(!nonrd_keyframe_8x8_enabled(&config, 65));
 
         // SAFETY: the mutex above serialises all env_test_mutex callers.
         unsafe { std::env::remove_var(sub8_key) };

@@ -66,7 +66,7 @@ use crate::intra_pred::{
     PredCtx, intra_predict,
 };
 use crate::mode_decision::block_yrd::{block_error_fp_i32, satd_i16};
-use crate::mode_decision::hadamard::hadamard_16x16;
+use crate::mode_decision::hadamard::{hadamard_8x8, hadamard_16x16};
 use crate::mode_decision::rd_cost;
 use crate::mv_search::PlaneRef;
 use crate::quant::forward::{
@@ -244,24 +244,47 @@ pub fn pick_realtime_intra_mode_luma(params: &IntraModeSearchParams<'_>) -> Intr
         params.block_size,
         BlockSize::Block16x16 | BlockSize::Block32x32
     ) {
-        pick_realtime_intra_mode_luma_large(params)
+        pick_realtime_intra_mode_luma_nonrd(params, DEFAULT_SKIP_PROBS[0])
     } else {
         pick_intra_mode_luma_through(params, IntraMode::H)
     }
 }
 
-/// Match libvpx's realtime keyframe `vp9_pick_intra_mode` model for a
-/// Block16x16 or Block32x32 leaf. Unlike the full-RD intra picker, this path
-/// deliberately uses 16x16 Walsh-Hadamard tiles, `quantize_fp`, SATD of
-/// quantized coefficients as its rate proxy, and coefficient-domain
-/// quantization error as distortion (`vp9_pickmode.c::block_yrd`).
-fn pick_realtime_intra_mode_luma_large(
+/// Match libvpx's realtime keyframe `vp9_pick_intra_mode` model for one 8x8
+/// luma leaf using the caller's live skip probability.
+///
+/// This entry point is intentionally separate from
+/// [`pick_realtime_intra_mode_luma`]. Existing generic 8x8 callers retain
+/// their established hybrid-transform model, while the CPU8 two-layer
+/// temporal-SVC path can opt into libvpx's non-RD Hadamard/fast-quantizer
+/// model without changing CPU6/7 keyframe policy.
+#[must_use]
+pub fn pick_realtime_intra_mode_luma_8x8(
     params: &IntraModeSearchParams<'_>,
+    skip_prob: u8,
 ) -> IntraModeSearchResult {
-    const TX_SIDE: usize = 16;
-    const TX_N: usize = TX_SIDE * TX_SIDE;
+    assert_eq!(params.block_size, BlockSize::Block8x8);
+    pick_realtime_intra_mode_luma_nonrd(params, skip_prob)
+}
+
+/// Match libvpx's realtime keyframe `vp9_pick_intra_mode` model for an 8x8,
+/// 16x16, or 32x32 leaf. Unlike the full-RD intra picker, this path uses
+/// 8x8/16x16 Walsh-Hadamard tiles, `quantize_fp`, SATD of quantized
+/// coefficients as its rate proxy, and coefficient-domain quantization error
+/// as distortion (`vp9_pickmode.c::block_yrd`).
+fn pick_realtime_intra_mode_luma_nonrd(
+    params: &IntraModeSearchParams<'_>,
+    skip_prob: u8,
+) -> IntraModeSearchResult {
     let side = params.block_size.width() as usize;
-    debug_assert!(matches!(side, 16 | 32));
+    debug_assert!(matches!(side, 8 | 16 | 32));
+    let tx_size = if side == 8 {
+        TxSize::Tx8x8
+    } else {
+        TxSize::Tx16x16
+    };
+    let tx_side = tx_size.side();
+    let tx_n = tx_size.n_coeffs();
     let lambda = compute_rd_mult(
         i32::from(params.q_index),
         frame_type_for_rd(params.frame_kind),
@@ -277,11 +300,6 @@ fn pick_realtime_intra_mode_luma_large(
     let dispatch = crate::dsp::get();
     let mode_cost_row =
         &params.y_mode_costs[params.above_mode_ctx as usize][params.left_mode_ctx as usize];
-    // A keyframe starts from the default probability bank. The first leaf's
-    // skip context is zero; non-skippable candidates all pay the same skip
-    // cost, so this affects the argmin only when a residual quantizes away.
-    let skip_prob = DEFAULT_SKIP_PROBS[0];
-
     let mut best = IntraModeSearchResult {
         best_mode: IntraMode::Dc,
         best_rd_cost: i64::MAX,
@@ -289,12 +307,12 @@ fn pick_realtime_intra_mode_luma_large(
         best_rate: u32::MAX,
     };
     let mut pred = [0u8; 32 * 32];
-    let mut residual = [0i16; TX_N];
-    let mut had_coeff = [0i16; TX_N];
-    let mut coeff = [0i32; TX_N];
-    let mut qcoeff = [0i16; TX_N];
-    let mut dqcoeff = [0i16; TX_N];
-    let scan = scan_for(TxSize::Tx16x16, TxType::DctDct);
+    let mut residual = [0i16; 16 * 16];
+    let mut had_coeff = [0i16; 16 * 16];
+    let mut coeff = [0i32; 16 * 16];
+    let mut qcoeff = [0i16; 16 * 16];
+    let mut dqcoeff = [0i16; 16 * 16];
+    let scan = scan_for(tx_size, TxType::DctDct);
     let dequant_pair = [params.quantizer.dequant[0], params.quantizer.dequant[1]];
 
     for raw_mode in IntraMode::Dc as u8..=IntraMode::H as u8 {
@@ -304,31 +322,31 @@ fn pick_realtime_intra_mode_luma_large(
         let mut skippable = true;
         let mut eob_cost = 0u32;
 
-        // libvpx's transformed-block walker visits the Tx16 tiles in raster
-        // order. Each prediction is written into the candidate destination
-        // before the next tile reads its internal top/left edge.
-        for tile_y in (0..side).step_by(TX_SIDE) {
-            for tile_x in (0..side).step_by(TX_SIDE) {
+        // libvpx's transformed-block walker visits the Tx8/Tx16 tiles in
+        // raster order. Each prediction is written into the candidate
+        // destination before the next tile reads its internal top/left edge.
+        for tile_y in (0..side).step_by(tx_side) {
+            for tile_x in (0..side).step_by(tx_side) {
                 let have_above = tile_y > 0 || params.have_above;
                 let have_left = tile_x > 0 || params.have_left;
-                let mut tile_above = [ABOVE_UNAVAILABLE_FILL; 2 * TX_SIDE];
-                let mut tile_left = [LEFT_UNAVAILABLE_FILL; TX_SIDE];
+                let mut tile_above = [ABOVE_UNAVAILABLE_FILL; 2 * 16];
+                let mut tile_left = [LEFT_UNAVAILABLE_FILL; 16];
 
                 if have_above {
                     if tile_y == 0 {
-                        tile_above[..TX_SIDE].copy_from_slice(&above_row[tile_x..tile_x + TX_SIDE]);
+                        tile_above[..tx_side].copy_from_slice(&above_row[tile_x..tile_x + tx_side]);
                     } else {
                         let start = (tile_y - 1) * side + tile_x;
-                        tile_above[..TX_SIDE].copy_from_slice(&pred[start..start + TX_SIDE]);
+                        tile_above[..tx_side].copy_from_slice(&pred[start..start + tx_side]);
                     }
-                    let last = tile_above[TX_SIDE - 1];
-                    tile_above[TX_SIDE..].fill(last);
+                    let last = tile_above[tx_side - 1];
+                    tile_above[tx_side..2 * tx_side].fill(last);
                 }
                 if have_left {
                     if tile_x == 0 {
-                        tile_left.copy_from_slice(&left_col[tile_y..tile_y + TX_SIDE]);
+                        tile_left[..tx_side].copy_from_slice(&left_col[tile_y..tile_y + tx_side]);
                     } else {
-                        for row in 0..TX_SIDE {
+                        for row in 0..tx_side {
                             tile_left[row] = pred[(tile_y + row) * side + tile_x - 1];
                         }
                     }
@@ -347,10 +365,10 @@ fn pick_realtime_intra_mode_luma_large(
                     mode,
                     &mut pred[tile_y * side + tile_x..],
                     side,
-                    TX_SIDE,
+                    tx_side,
                     PredCtx {
-                        above: &tile_above,
-                        left: &tile_left,
+                        above: &tile_above[..2 * tx_side],
+                        left: &tile_left[..tx_side],
                         above_left: tile_above_left,
                     },
                     DcAvailability {
@@ -362,35 +380,44 @@ fn pick_realtime_intra_mode_luma_large(
 
                 let src = params.src_plane;
                 let (sx, sy) = params.src_offset;
-                for row in 0..TX_SIDE {
-                    for col in 0..TX_SIDE {
-                        residual[row * TX_SIDE + col] =
+                for row in 0..tx_side {
+                    for col in 0..tx_side {
+                        residual[row * tx_side + col] =
                             i16::from(
                                 src.data[(sy + tile_y + row) * src.stride + sx + tile_x + col],
                             ) - i16::from(pred[(tile_y + row) * side + tile_x + col]);
                     }
                 }
-                hadamard_16x16(&residual, TX_SIDE, &mut had_coeff);
-                for (dst, &src) in coeff.iter_mut().zip(&had_coeff) {
+                match tx_size {
+                    TxSize::Tx8x8 => {
+                        hadamard_8x8(&residual[..tx_n], tx_side, &mut had_coeff[..tx_n]);
+                    }
+                    TxSize::Tx16x16 => {
+                        hadamard_16x16(&residual[..tx_n], tx_side, &mut had_coeff[..tx_n]);
+                    }
+                    _ => unreachable!("realtime keyframe non-RD uses Tx8 or Tx16"),
+                }
+                for (dst, &src) in coeff[..tx_n].iter_mut().zip(&had_coeff[..tx_n]) {
                     *dst = i32::from(src);
                 }
                 let eob = vp9_quantize_fp_with_order(
-                    &coeff,
-                    TX_N,
+                    &coeff[..tx_n],
+                    tx_n,
                     false,
                     &params.quantizer.round_fp,
                     &params.quantizer.quant_fp,
-                    &mut qcoeff,
-                    &mut dqcoeff,
+                    &mut qcoeff[..tx_n],
+                    &mut dqcoeff[..tx_n],
                     &dequant_pair,
                     &scan,
                 );
                 if eob == 1 {
                     rate_satd = rate_satd.saturating_add(i32::from(qcoeff[0]).unsigned_abs());
                 } else if eob > 1 {
-                    rate_satd = rate_satd.saturating_add(satd_i16(&qcoeff));
+                    rate_satd = rate_satd.saturating_add(satd_i16(&qcoeff[..tx_n]));
                 }
-                dist = dist.saturating_add(block_error_fp_i32(&coeff, &dqcoeff) >> 2);
+                dist =
+                    dist.saturating_add(block_error_fp_i32(&coeff[..tx_n], &dqcoeff[..tx_n]) >> 2);
                 skippable &= eob == 0;
                 eob_cost += 1;
             }
@@ -1456,6 +1483,57 @@ mod tests {
                 best_rd_cost: 15_846_565,
                 best_distortion: 45_284,
                 best_rate: 200_965,
+            }
+        );
+    }
+
+    /// The first 8x8 leaf reached by pinned libvpx's CPU8/T3/VBR
+    /// `vp9_pick_intra_mode` on the in-tree 720p fixture. A temporary
+    /// read-only trace of revision `12f3a2ac` captured all three candidate
+    /// costs without changing the resulting IVF hash. The pinned winner is
+    /// DC: rate 22,131, distortion 7,302, RD 1,621,322.
+    #[test]
+    fn realtime_intra8_matches_pinned_libvpx_leaf() {
+        let src = [
+            188, 184, 188, 184, 178, 183, 183, 178, 179, 185, 185, 181, 186, 181, 184, 186, 186,
+            180, 176, 182, 185, 187, 189, 195, 193, 184, 179, 185, 178, 178, 177, 183, 174, 183,
+            183, 184, 178, 178, 176, 182, 184, 180, 188, 185, 179, 185, 184, 181, 191, 185, 183,
+            182, 180, 184, 188, 178, 176, 180, 180, 177, 186, 192, 188, 184,
+        ];
+        let src_plane = PlaneRef {
+            data: &src,
+            stride: 8,
+            width: 8,
+            height: 8,
+        };
+        let above = [0u8; 16];
+        let left = [183, 177, 180, 187, 190, 183, 183, 181];
+        let quantizer = init_plane_quantizers(63, QuantizerDeltas::Y);
+        let costs = intra_y_mode_costs_kf_table();
+        let params = IntraModeSearchParams {
+            block_size: BlockSize::Block8x8,
+            src_plane: &src_plane,
+            src_offset: (0, 0),
+            above_pixels: &above,
+            left_pixels: &left,
+            top_left_pixel: 0,
+            have_above: false,
+            have_left: true,
+            quantizer: &quantizer,
+            q_index: 63,
+            frame_kind: FrameKind::KeyFrame,
+            above_mode_ctx: IntraMode::Dc,
+            left_mode_ctx: IntraMode::H,
+            y_mode_costs: &costs,
+        };
+
+        assert_eq!(
+            pick_realtime_intra_mode_luma_8x8(&params, 192),
+            IntraModeSearchResult {
+                best_mode: IntraMode::Dc,
+                best_rd_cost: 1_621_322,
+                best_distortion: 7_302,
+                best_rate: 22_131,
             }
         );
     }

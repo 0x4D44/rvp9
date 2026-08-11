@@ -24,9 +24,10 @@ Each entry:
 
 ## Entries
 
-### 2026-08-11 — Keep exact keyframe RD for CPU8 two-layer VBR
+### 2026-08-11 — Bound keyframe RD for CPU8 two-layer VBR
 
 **Where:** `rvp9_encoder::frame_loop::exact_keyframe_sub8_enabled`,
+`rvp9_encoder::frame_loop::nonrd_keyframe_8x8_enabled`,
 `rvp9_encoder::frame_loop::keyframe_8x8_mode_cap_enabled`, and
 `rvp9_encoder::frame_loop::source_aligned_cpu8_svc_partitions_enabled`;
 libvpx counterparts: `vp9/encoder/vp9_pickmode.c:vp9_pick_intra_mode` and the
@@ -36,37 +37,41 @@ realtime variance-partition path.
 variance thresholds and zero-MV LAST partition predictor. Its non-RD 8x8
 keyframe picker evaluates DC, V, and H with a Hadamard/fast-quantizer model.
 
-**What rvp9 does:** CPU8 two-layer realtime VBR now uses the same source
-partition inputs. At keyframe Q index 120 or below it enables rvp9's exact
-sub-8 path and caps 8x8 modes to DC/V/H, retaining exact coefficient prices
-and reconstructed-pixel distortion. T3 keeps its existing full directional
-search above Q65; CPU6/7, single-layer, CBR, and non-realtime policies are
-unchanged.
+**What rvp9 does:** CPU8 two-layer realtime VBR uses the same source partition
+inputs and enables rvp9's exact sub-8 partition path through keyframe Q index
+120. Its 8x8 leaves use libvpx's DC/V/H Hadamard/fast-quantizer model with
+live skip neighbours at Q65 or below. Q66--120 retains rvp9's exact
+coefficient-price and reconstructed-pixel DC/V/H model. T3 keeps its existing
+full directional search above Q65; CPU6/7, single-layer, CBR, and non-realtime
+policies are unchanged.
 
 **Why:** the integrated CPU8 T2 curve failed at `+5.6535%/+5.1379%` for
 TL0/TL1. Source-aligned partitions alone improved it to
 `+2.2970%/+1.3216%`; exact keyframe sub-8 alone reached
 `+2.8169%/+2.3203%`. The combined bounded policy closes the quality gap.
 
+The literal non-RD model through Q120 narrowly failed TL0 at `+0.5206%`.
+Keeping exact RD at the measured Q85/Q113 coarse points restores final-gate
+margin without changing the 1,500-kbps Q65 speed target.
+
 **Byte-parity impact:** intentional on the affected T2 stream. The exercised
 1,500-kbps full/TL1 stream has SHA-256
-`cd58bd224f0c34ea088c804c41cce26e9819e3a0fdeb14dd78956d962c6ab9f6`;
-TL0 is `6a48008f...482e9e`. Rvp9-decoder, pinned vpxdec, and ffmpeg emit the
-same TL0 41,472,000 bytes at SHA-256 `fd492c08...be0546` and the same TL1
-82,944,000 bytes at SHA-256 `52f2c3d6...ce5609`.
+`7942dc9b4a0e0d6eb4defa3aae234ba701ce5731da51558648220ce7ba0c5ac9`.
+Rvp9-decoder, pinned vpxdec, and ffmpeg emit the same 82,944,000 I420 bytes at
+SHA-256 `1e0a82a3d3b7755c342a28ab904743b1c692c9561ed1896d94c8919d77eab066`.
 
 **Compression-efficiency impact:** the complete six-point TL0/TL1 PSNR
-BD-rates versus pinned vpxenc are `-0.3399%/-1.3076%`; both pass the final
+BD-rates versus pinned vpxenc are `+0.0162%/-0.9956%`; both pass the final
 `+0.5%` gate.
 
-**Speed impact:** a warmed fifteen-pair plain-release comparison with exact
-integrated Unit 1116 measures a `1.060903x` paired median, or about 6.1% more
-time. At 1,500 kbps the candidate remains far inside the absolute 720p30
-budget at about 6.4 ms/frame, but the relative-speed gate is red. This is a
-measured quality prerequisite, not a completed speed unit.
+**Speed impact:** two reversed warmed fifteen-pair plain-release comparisons
+with the exact Unit 1117 control measure paired medians `0.991733x` and
+`0.986524x`, recovering about 0.8--1.35% of whole-encode time. The relative
+temporal-SVC speed gate remains red.
 
-**Future plan:** build and profile the production-PGO image, then recover the
-T2 cost from its measured hotspots without weakening the now-green curve.
+**Future plan:** require the unchanged production-PGO matrix to reproduce the
+gain, then recover the remaining temporal-SVC cost from the measured
+inter-frame picker and NEWMV hotspots.
 
 ### 2026-08-11 — Bound simple large-block RD to high-quality SVC references
 
