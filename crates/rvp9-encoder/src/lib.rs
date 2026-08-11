@@ -5912,8 +5912,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // and the result is consumed by every per-leaf
     // `PickInterModeParams` literal below.
     let sf = sf_mod::dispatch(speed, deadline, width, height, content_tier);
-    let rt_disable_golden_ref =
-        sf.disable_golden_ref || env.rt_disable_golden || force_disable_golden_ref;
+    let rt_disable_golden_ref = sf.disable_golden_ref || env.rt_disable_golden;
     let golden_ref_is_last =
         post_refresh_last_only(allow_duplicate_golden_prune, frames_since_golden);
     let mut rt_inter_mode_mask = rvp9_core::mode_decision::inter::default_inter_mode_mask();
@@ -7529,6 +7528,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         mi_row: leaf_mi_row as u32,
                         mi_col: leaf_mi_col as u32,
                         chessboard_index,
+                        allow_golden_ref: !force_disable_golden_ref,
                         // The speculative partition proxy follows the normal
                         // LAST/GOLDEN search by default. Set the diagnostic
                         // override to disable GOLDEN when profiling the
@@ -8894,6 +8894,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     mi_row: leaf_mi_row as u32,
                     mi_col: leaf_mi_col as u32,
                     chessboard_index,
+                    allow_golden_ref: !force_disable_golden_ref,
                     disable_golden_ref: rt_disable_golden_ref,
                     max_intra_bsize: sf.max_intra_bsize,
                     rt_intra_dc_only_low_content: sf.rt_intra_dc_only_low_content,

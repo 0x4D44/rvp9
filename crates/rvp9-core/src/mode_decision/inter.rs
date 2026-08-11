@@ -1442,12 +1442,21 @@ pub struct PickInterModeParams<'a> {
     /// [`cb_pred_filter_search`] predicate.
     pub chessboard_index: u32,
 
+    /// Whether the current frame's reference flags permit GOLDEN.
+    ///
+    /// Pinned libvpx builds `skip_ref_find_pred` directly from
+    /// `cpi->ref_frame_flags` and skips every candidate for a disabled
+    /// reference (`vp9_pickmode.c:1991-1999`, `:2073`). Unlike the
+    /// speed-feature gate below, this hard availability mask has no
+    /// very-high-SAD exception.
+    pub allow_golden_ref: bool,
+
     /// libvpx `cpi->sf.disable_golden_ref` (`vp9_speed_features.h:634`,
-    /// gate site `vp9_pickmode.c:1964-1966`). When `true`, skip GOLDEN
-    /// candidates entirely (`usable_ref_frame = LAST_FRAME`). Note: P18
+    /// gate site `vp9_pickmode.c:1964-1966`). When `true`, normally skip
+    /// GOLDEN candidates (`usable_ref_frame = LAST_FRAME`). Note: P18
     /// `reference_masking` is a different gate (it suppresses GOLDEN
     /// only when `pred_mv_sad[GOLDEN] > 2 * pred_mv_sad[LAST]`); this
-    /// is the unconditional hammer.
+    /// is a separate content-dependent speed feature.
     ///
     /// libvpx defaults to `0` at speed 6/7/8 and `1` only at speed 9
     /// CBR (`vp9_speed_features.c:811`).
@@ -1953,6 +1962,13 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
     // `usable_ref_frame` at LAST. The caller proves the storage alias;
     // unlike `disable_golden_ref`, VeryHighSad does not bypass this fact.
     if params.golden_ref_is_last {
+        ref_frame_skip_mask |= 1 << 2;
+    }
+    // The frame's declared reference flags are a hard availability mask.
+    // This is deliberately separate from `disable_golden_ref`: libvpx's
+    // `skip_ref_find_pred[GOLDEN]` remains set even when a very-high-SAD
+    // block bypasses the optional speed-feature suppression below.
+    if !params.allow_golden_ref {
         ref_frame_skip_mask |= 1 << 2;
     }
     if params.reference_masking && pred_mv_sad_last != u32::MAX && pred_mv_sad_golden != u32::MAX {
@@ -7562,6 +7578,7 @@ mod tests {
             mi_row: 0,
             mi_col: 0,
             chessboard_index: 0,
+            allow_golden_ref: true,
             disable_golden_ref: false,
             max_intra_bsize: BlockSize::Block64x64,
             rt_intra_dc_only_low_content: false,
@@ -11910,12 +11927,13 @@ mod tests {
         );
     }
 
-    /// Pinned libvpx's post-refresh `usable_ref_frame = LAST_FRAME` cap
-    /// is a reference-topology rule, so VeryHighSad must not bypass it.
+    /// Pinned libvpx's post-refresh `usable_ref_frame = LAST_FRAME` cap and
+    /// its `ref_frame_flags` availability mask are reference-topology rules,
+    /// so VeryHighSad must not bypass either one.
     /// Give GOLDEN a perfect source match and LAST a deliberately poor
     /// one: the control picks GOLDEN, while the alias gate permits only LAST.
     #[test]
-    fn post_refresh_duplicate_golden_is_unconditionally_masked() {
+    fn hard_golden_masks_ignore_very_high_sad() {
         let pw = 64;
         let ph = 64;
         let src_data = make_plane(pw, ph, 91);
@@ -11965,6 +11983,11 @@ mod tests {
         params.golden_ref_is_last = true;
         let active = pick_inter_mode(&params);
         assert_eq!(active.picked_ref_frame, RefFrame::LastFrame);
+
+        params.golden_ref_is_last = false;
+        params.allow_golden_ref = false;
+        let unavailable = pick_inter_mode(&params);
+        assert_eq!(unavailable.picked_ref_frame, RefFrame::LastFrame);
     }
 
     /// §11 — `max_intra_bsize`: replacing the hardcoded `Block64x64`
