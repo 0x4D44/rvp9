@@ -1029,6 +1029,8 @@ struct RetainedCoefToken {
 
 const _: () = assert!(core::mem::size_of::<RetainedCoefToken>() == 4);
 const RETAINED_EOB_TOKEN: u8 = (ENTROPY_TOKENS - 1) as u8;
+const RETAINED_BLOCK_NONZERO_FLAG: u32 = 1 << 31;
+const RETAINED_BLOCK_END_MASK: u32 = !RETAINED_BLOCK_NONZERO_FLAG;
 const RETAINED_TOKEN_BASE: [u16; ENTROPY_TOKENS - 1] = [0, 1, 2, 3, 4, 5, 7, 11, 19, 35, 67];
 
 #[inline]
@@ -1059,8 +1061,8 @@ fn retained_token_extra(coef: i16) -> (u8, u16) {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct RetainedCoefTokens {
     tokens: Vec<RetainedCoefToken>,
+    /// Token end in the low 31 bits and the block-nonzero flag in the high bit.
     block_ends: Vec<u32>,
-    block_nonzero: Vec<bool>,
 }
 
 /// Record or replay state for [`write_block_tokens_with_retained`].
@@ -1123,7 +1125,6 @@ impl<'a> CoefTokenPass<'a> {
             } => {
                 !mismatch
                     && *next_block == retained.block_ends.len()
-                    && *next_block == retained.block_nonzero.len()
                     && *token_start == retained.tokens.len()
             }
         }
@@ -1694,15 +1695,14 @@ pub(crate) fn try_replay_retained_block(
     else {
         return CoefReplayStatus::NotReplay;
     };
-    let token_end = retained
-        .block_ends
-        .get(*next_block)
-        .copied()
-        .map(|end| end as usize);
-    let nonzero = retained.block_nonzero.get(*next_block).copied();
-    if let (Some(token_end), Some(nonzero)) = (token_end, nonzero)
-        && let Some(tokens) = retained.tokens.get(*token_start..token_end)
+    let packed_end = retained.block_ends.get(*next_block).copied();
+    if let Some(packed_end) = packed_end
+        && let Some(tokens) = retained
+            .tokens
+            .get(*token_start..(packed_end & RETAINED_BLOCK_END_MASK) as usize)
     {
+        let token_end = (packed_end & RETAINED_BLOCK_END_MASK) as usize;
+        let nonzero = packed_end & RETAINED_BLOCK_NONZERO_FLAG != 0;
         // The forward-probability prepass needs the modes walk and its
         // non-coefficient counts, but its count-only writer discards every
         // coefficient bit. Consume the retained block and update contexts
@@ -2039,10 +2039,20 @@ fn write_block_tokens_with_retained_impl<T: EncodeCoef>(
                 );
             }
             let token_end = retained.tokens.len();
-            retained.block_ends.push(
-                u32::try_from(token_end).expect("retained coefficient token count exceeds u32"),
+            let token_end =
+                u32::try_from(token_end).expect("retained coefficient token count exceeds u32");
+            assert!(
+                token_end <= RETAINED_BLOCK_END_MASK,
+                "retained coefficient token count exceeds packed block-end range"
             );
-            retained.block_nonzero.push(eob > 0);
+            retained.block_ends.push(
+                token_end
+                    | if eob > 0 {
+                        RETAINED_BLOCK_NONZERO_FLAG
+                    } else {
+                        0
+                    },
+            );
             true
         }
         Some(CoefTokenPass::Replay { .. }) | None => false,
@@ -2391,8 +2401,7 @@ mod tests {
                 token: ONE_TOKEN as u8,
                 prob_ctx: u8::MAX,
             }],
-            block_ends: vec![1],
-            block_nonzero: vec![true],
+            block_ends: vec![1 | RETAINED_BLOCK_NONZERO_FLAG],
         };
         let mut replay_pass = CoefTokenPass::replay(&retained);
         let mut coef_ctx = TileCoefCtx::new(8);
