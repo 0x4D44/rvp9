@@ -298,74 +298,6 @@ unsafe fn filter8_lanes(
 }
 
 #[inline(always)]
-unsafe fn filter8_dual_lanes(
-    values: [uint8x16_t; 8],
-    limit0: u8,
-    blimit0: u8,
-    thresh0: u8,
-    limit1: u8,
-    blimit1: u8,
-    thresh1: u8,
-) -> [uint8x16_t; 8] {
-    let p3 = values[0];
-    let p2 = values[1];
-    let p1 = values[2];
-    let p0 = values[3];
-    let q0 = values[4];
-    let q1 = values[5];
-    let q2 = values[6];
-    let q3 = values[7];
-
-    let limit = vcombine_u8(vdup_n_u8(limit0), vdup_n_u8(limit1));
-    let blimit = vcombine_u8(vdup_n_u8(blimit0), vdup_n_u8(blimit1));
-    let thresh = vcombine_u8(vdup_n_u8(thresh0), vdup_n_u8(thresh1));
-    let (mask, hev) = filter4_masks_16(limit, blimit, thresh, &values);
-
-    let inner_diff = vmaxq_u8(vabdq_u8(p1, p0), vabdq_u8(q1, q0));
-    let mut flat_diff = inner_diff;
-    flat_diff = vmaxq_u8(flat_diff, vabdq_u8(p2, p0));
-    flat_diff = vmaxq_u8(flat_diff, vabdq_u8(q2, q0));
-    flat_diff = vmaxq_u8(flat_diff, vabdq_u8(p3, p0));
-    flat_diff = vmaxq_u8(flat_diff, vabdq_u8(q3, q0));
-    let flat = vandq_u8(mask, vcleq_u8(flat_diff, vdupq_n_u8(1)));
-
-    let mut output = values;
-    let narrow = filter4_16(mask, hev, p1, p0, q0, q1);
-    output[2] = narrow[0];
-    output[3] = narrow[1];
-    output[4] = narrow[2];
-    output[5] = narrow[3];
-
-    if vmaxvq_u8(flat) != 0 {
-        let wide = filter7_16(&values);
-        for index in 0..6 {
-            output[index + 1] = vbslq_u8(flat, wide[index], output[index + 1]);
-        }
-    }
-    output
-}
-
-#[inline(always)]
-unsafe fn store_6x8(edge: *mut u8, pitch: usize, values: [uint8x8_t; 6]) {
-    let left = uint8x8x3_t(values[0], values[1], values[2]);
-    let right = uint8x8x3_t(values[3], values[4], values[5]);
-    macro_rules! store_lane {
-        ($lane:literal, $row:literal) => {
-            vst3_lane_u8(edge.add($row * pitch).sub(3), left, $lane);
-            vst3_lane_u8(edge.add($row * pitch), right, $lane);
-        };
-    }
-    store_lane!(0, 0);
-    store_lane!(1, 1);
-    store_lane!(2, 2);
-    store_lane!(3, 3);
-    store_lane!(4, 4);
-    store_lane!(5, 5);
-    store_lane!(6, 6);
-    store_lane!(7, 7);
-}
-
-#[inline(always)]
 unsafe fn filter15(values: &[uint8x8_t; 16]) -> [uint8x8_t; 14] {
     let p7 = values[0];
     let p6 = values[1];
@@ -1165,60 +1097,6 @@ unsafe fn vertical_8_inner(
     }
 }
 
-#[target_feature(enable = "neon")]
-#[allow(clippy::too_many_arguments)]
-unsafe fn vertical_8_dual_inner(
-    pixels: *mut u8,
-    s_index: usize,
-    pitch: usize,
-    blimit0: u8,
-    limit0: u8,
-    thresh0: u8,
-    blimit1: u8,
-    limit1: u8,
-    thresh1: u8,
-) {
-    let edge = pixels.add(s_index);
-    let start = edge.sub(4);
-    let mut rows = [vdup_n_u8(0); 16];
-    for (row, value) in rows.iter_mut().enumerate() {
-        *value = vld1_u8(start.add(row * pitch));
-    }
-    let output = filter8_dual_lanes(
-        transpose_8x16(rows),
-        limit0,
-        blimit0,
-        thresh0,
-        limit1,
-        blimit1,
-        thresh1,
-    );
-    store_6x8(
-        edge,
-        pitch,
-        [
-            vget_low_u8(output[1]),
-            vget_low_u8(output[2]),
-            vget_low_u8(output[3]),
-            vget_low_u8(output[4]),
-            vget_low_u8(output[5]),
-            vget_low_u8(output[6]),
-        ],
-    );
-    store_6x8(
-        edge.add(8 * pitch),
-        pitch,
-        [
-            vget_high_u8(output[1]),
-            vget_high_u8(output[2]),
-            vget_high_u8(output[3]),
-            vget_high_u8(output[4]),
-            vget_high_u8(output[5]),
-            vget_high_u8(output[6]),
-        ],
-    );
-}
-
 /// Apply the 8-tap loop filter across eight horizontal edge columns.
 pub fn lpf_horizontal_8_neon(
     pixels: &mut [u8],
@@ -1283,24 +1161,8 @@ pub fn lpf_vertical_8_dual_neon(
     limit1: u8,
     thresh1: u8,
 ) {
-    assert!(pitch >= 8);
-    assert!(s_index >= 4);
-    assert!(s_index + 15 * pitch + 3 < pixels.len());
-    // SAFETY: AArch64 always provides NEON. The assertions prove that all
-    // sixteen 8-byte row loads and stores stay in `pixels`.
-    unsafe {
-        vertical_8_dual_inner(
-            pixels.as_mut_ptr(),
-            s_index,
-            pitch,
-            blimit0,
-            limit0,
-            thresh0,
-            blimit1,
-            limit1,
-            thresh1,
-        )
-    }
+    lpf_vertical_8_neon(pixels, s_index, pitch, blimit0, limit0, thresh0);
+    lpf_vertical_8_neon(pixels, s_index + 8 * pitch, pitch, blimit1, limit1, thresh1);
 }
 
 #[target_feature(enable = "neon")]
@@ -1712,36 +1574,10 @@ mod tests {
             vertical[row * pitch + 16..(row + 1) * pitch].fill(255);
         }
         scalar.clone_from(&vertical);
-        neon = vertical.clone();
+        neon = vertical;
         let vertical_index = 4 * pitch + 16;
         lpf_vertical_8(&mut scalar, vertical_index, pitch, 255, 255, 255);
         lpf_vertical_8_neon(&mut neon, vertical_index, pitch, 255, 255, 255);
-        assert_eq!(neon, scalar);
-
-        scalar.clone_from(&vertical);
-        neon = vertical;
-        lpf_vertical_8_dual(
-            &mut scalar,
-            vertical_index,
-            pitch,
-            255,
-            255,
-            255,
-            254,
-            253,
-            252,
-        );
-        lpf_vertical_8_dual_neon(
-            &mut neon,
-            vertical_index,
-            pitch,
-            255,
-            255,
-            255,
-            254,
-            253,
-            252,
-        );
         assert_eq!(neon, scalar);
     }
 
