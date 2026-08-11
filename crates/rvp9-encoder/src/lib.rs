@@ -4963,16 +4963,20 @@ fn inter_rd_calibration_for_segment(
 
 fn svc_enhancement_model_only_large_enabled(
     svc_enhancement_frame: bool,
+    svc_non_reference_frame: bool,
     speed: i32,
     deadline: rvp9_core::mode_decision::speed_features::Deadline,
 ) -> bool {
     svc_enhancement_frame
+        && !svc_non_reference_frame
         && speed.unsigned_abs() >= 7
         && matches!(
             deadline,
             rvp9_core::mode_decision::speed_features::Deadline::Realtime
         )
 }
+
+const SVC_MODEL_ONLY_LARGE_QMAX: u8 = 140;
 
 fn block16_coef_rd_enabled(
     exact_vbp_tree_enabled: bool,
@@ -5840,8 +5844,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // fractional refinement (`vp9_pickmode.c:230-233`).
     svc_non_reference_frame: bool,
     // Pinned cpu-used 7/8 libvpx enables `use_simple_block_yrd` for all large
-    // blocks on temporal-SVC enhancement pictures. Base-layer and single-layer
-    // pictures keep the real large-block Hadamard path.
+    // blocks on temporal-SVC enhancement pictures. Rvp9 applies the bounded
+    // quality-safe slice to reference-carrying enhancements; base-layer,
+    // non-reference, and single-layer pictures keep real large-block Hadamard.
     svc_enhancement_frame: bool,
     // §11 — libvpx `get_chessboard_index(cm->current_video_frame) =
     // current_video_frame & 1` (`vp9_common.h:88-90`). Feeds the
@@ -6026,8 +6031,12 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         content_tier,
         cyclic_refresh_active,
     ) && exact_vbp_history.is_some();
-    let svc_model_only_large =
-        svc_enhancement_model_only_large_enabled(svc_enhancement_frame, speed, deadline);
+    let svc_model_only_large = svc_enhancement_model_only_large_enabled(
+        svc_enhancement_frame,
+        svc_non_reference_frame,
+        speed,
+        deadline,
+    );
     let mut inter_rd_calibration = inter_rd_calibration_for_segment(
         rc_mode,
         speed,
@@ -6036,7 +6045,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         0,
         exact_vbp_tree_enabled,
     )
-    .with_model_only_large(svc_model_only_large);
+    .with_model_only_large(svc_model_only_large, SVC_MODEL_ONLY_LARGE_QMAX);
     if golden_real_block_yrd_enabled(
         rc_mode,
         speed,
@@ -7369,7 +7378,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             seg,
                             exact_vbp_tree_enabled,
                         )
-                        .with_model_only_large(svc_model_only_large);
+                        .with_model_only_large(svc_model_only_large, SVC_MODEL_ONLY_LARGE_QMAX);
                         let quantizer =
                             init_plane_quantizers(i32::from(leaf_qindex), QuantizerDeltas::Y);
                         let (uv_dc_dq, uv_ac_dq) = plane_dequant_pair(
@@ -8315,7 +8324,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         leaf_segment_id,
                         exact_vbp_tree_enabled,
                     )
-                    .with_model_only_large(svc_model_only_large);
+                    .with_model_only_large(svc_model_only_large, SVC_MODEL_ONLY_LARGE_QMAX);
                     let quantizer =
                         init_plane_quantizers(i32::from(leaf_qindex), QuantizerDeltas::Y);
                     // Track-F iter7 — rdmult for the per-block TX-size RD loop
@@ -14552,33 +14561,44 @@ mod tests {
     }
 
     #[test]
-    fn svc_large_block_model_only_matches_pinned_enhancement_scope() {
+    fn svc_large_block_model_only_scopes_reference_enhancement_policy() {
         use rvp9_core::mode_decision::speed_features::Deadline;
 
         assert!(svc_enhancement_model_only_large_enabled(
             true,
+            false,
             7,
             Deadline::Realtime
         ));
         assert!(svc_enhancement_model_only_large_enabled(
             true,
-            8,
-            Deadline::Realtime
-        ));
-        assert!(!svc_enhancement_model_only_large_enabled(
-            true,
-            6,
-            Deadline::Realtime
-        ));
-        assert!(!svc_enhancement_model_only_large_enabled(
             false,
             8,
             Deadline::Realtime
         ));
         assert!(!svc_enhancement_model_only_large_enabled(
             true,
+            false,
+            6,
+            Deadline::Realtime
+        ));
+        assert!(!svc_enhancement_model_only_large_enabled(
+            false,
+            false,
+            8,
+            Deadline::Realtime
+        ));
+        assert!(!svc_enhancement_model_only_large_enabled(
+            true,
+            false,
             8,
             Deadline::Good
+        ));
+        assert!(!svc_enhancement_model_only_large_enabled(
+            true,
+            true,
+            8,
+            Deadline::Realtime
         ));
     }
 

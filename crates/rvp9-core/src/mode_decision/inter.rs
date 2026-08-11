@@ -428,6 +428,8 @@ pub struct InterRdCalibration {
     /// Pinned libvpx enables this for temporal-SVC enhancement frames at
     /// cpu-used 7 and 8. Base-layer large blocks retain `block_yrd`.
     pub model_only_large: bool,
+    /// Highest Q index at which [`Self::model_only_large`] applies.
+    pub model_only_large_qmax: u8,
     /// Replace non-skipped Block16 model rate and distortion with the real
     /// Hadamard coefficient result while preserving the model skip state.
     pub block16_coef_rd: bool,
@@ -448,6 +450,7 @@ impl InterRdCalibration {
             model_dist: false,
             model_only: false,
             model_only_large: false,
+            model_only_large_qmax: u8::MAX,
             block16_coef_rd: false,
             large_block_model: true,
         }
@@ -466,6 +469,7 @@ impl InterRdCalibration {
             model_dist: true,
             model_only: true,
             model_only_large: false,
+            model_only_large_qmax: u8::MAX,
             block16_coef_rd: false,
             large_block_model: true,
         }
@@ -487,8 +491,9 @@ impl InterRdCalibration {
 
     /// Select model-only ranking for blocks at least 32x32.
     #[must_use]
-    pub const fn with_model_only_large(mut self, enabled: bool) -> Self {
+    pub const fn with_model_only_large(mut self, enabled: bool, qmax: u8) -> Self {
         self.model_only_large = enabled;
+        self.model_only_large_qmax = qmax;
         self
     }
 
@@ -3957,7 +3962,9 @@ fn evaluate_candidate_for_filter_with_pred(
         }
     } else if hadamard_only
         && params.rd_calibration.model_only
-        && (params.block_size < BlockSize::Block32x32 || params.rd_calibration.model_only_large)
+        && (params.block_size < BlockSize::Block32x32
+            || (params.rd_calibration.model_only_large
+                && params.q_index <= params.rd_calibration.model_only_large_qmax))
         && !block16_coef_rd
     {
         BlockYrdResult {
@@ -6109,13 +6116,25 @@ mod tests {
             "Block32 must not reuse the small-block model-only result"
         );
 
-        params.rd_calibration = params.rd_calibration.with_model_only_large(true);
-        let enhancement = evaluate_candidate_for_filter(
+        params.rd_calibration = params.rd_calibration.with_model_only_large(true, 140);
+        let high_q = evaluate_candidate_for_filter(
             &params,
             InterMode::ZeroMv,
             Mv::ZERO,
             Mv::ZERO,
             compute_rd_mult(166, frame_type_for_rd(params.frame_kind)),
+            InterpFilter::EightTap,
+        );
+        assert_eq!(high_q.coef_rate, expected.coef_rate);
+        assert_eq!(high_q.coef_dist, expected.coef_dist);
+
+        params.q_index = 140;
+        let enhancement = evaluate_candidate_for_filter(
+            &params,
+            InterMode::ZeroMv,
+            Mv::ZERO,
+            Mv::ZERO,
+            compute_rd_mult(140, frame_type_for_rd(params.frame_kind)),
             InterpFilter::EightTap,
         );
         assert_eq!(enhancement.coef_rate, model.rate.max(0) as u64);

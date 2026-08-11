@@ -24,6 +24,52 @@ Each entry:
 
 ## Entries
 
+### 2026-08-11 — Bound simple large-block RD to high-quality SVC references
+
+**Where:** `rvp9_encoder::svc_enhancement_model_only_large_enabled`,
+`rvp9_encoder::SVC_MODEL_ONLY_LARGE_QMAX`, and
+`rvp9_core::mode_decision::inter::InterRdCalibration`; libvpx counterparts:
+`vp9/encoder/vp9_pickmode.c:797-808` and
+`vp9/encoder/vp9_speed_features.c:699-715,790-792`.
+
+**What libvpx does:** CPU7/8 realtime enables `use_simple_block_yrd` and
+returns the luma model instead of the Hadamard/quantized result for every
+large block on every temporal-SVC enhancement picture.
+
+**What rvp9 does:** CPU7/8 realtime uses the same model-only large-block
+ranking on reference-carrying temporal enhancements at Q index 140 or below.
+Base-layer, non-reference enhancement, coarser-Q, CPU6, and non-realtime
+pictures retain the real large-block Hadamard path. Final winner emission is
+unchanged.
+
+**Why:** the integrated CPU8/T3 profile attributes 2,479 self samples, about
+6% of the whole encode, to candidate round-trip reconstruction. The literal
+libvpx policy failed the final TL2 quality gate at `+1.3884%`. Keeping exact
+ranking on non-reference pictures reduced that to `+0.6791%`; a Q-index 150
+boundary was still `+0.5822%`. The round Q-index 140 boundary confines the
+approximation to higher-quality reference pictures and passes all three
+layer gates while retaining a reproducible speed gain.
+
+**Byte-parity impact:** intentional on the affected enhancement pictures.
+The exercised CPU8/T3/VBR 1,500-kbps stream has SHA-256
+`788daa0cd5a1289b377453e3c0aac3531e3d7de8996dce9a99040ec653e3c866`.
+Rvp9-decoder, pinned vpxdec, and ffmpeg each emit the same 82,944,000 I420
+bytes at SHA-256
+`e6d9c1a3747ae348f6b832b68310b813674fa016497a48c86cfb959132cee442`.
+
+**Compression-efficiency impact:** the complete six-point TL0/TL1/TL2 PSNR
+BD-rates versus pinned vpxenc are `+0.0142%/+0.2752%/+0.4590%`. Every layer
+passes the final `+0.5%` gate.
+
+**Speed impact:** two reversed fifteen-pair plain-release rotations against
+exact integrated Unit 1114 measure paired-median ratios `0.990079x` and
+`0.988691x`, improvements of about 1.0--1.1%. Production-PGO confirmation
+remains required before integration.
+
+**Future plan:** retain only if the unchanged production-PGO matrix reproduces
+the gain. Recheck CPU7 and the complete T2/T3 CBR/VBR feature matrix before
+final acceptance.
+
 ### 2026-08-11 — Keep exact 8x8 keyframe RD behind a measured CPU8 mode cap
 
 **Where:** `rvp9_encoder::frame_loop::keyframe_8x8_mode_cap_enabled`,
