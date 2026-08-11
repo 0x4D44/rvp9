@@ -676,11 +676,14 @@ TL0/TL1/TL2 is `-0.4547%/-2.1177%/-2.9243%`; CPU7 is
 reference hierarchy, stream-global frame age, refresh-Q bounds, layer-local
 rolling monitors, the TL0 NSTEP search exception, feature-scoped keyframe
 search, and CPU8's zero-MV variance-partition predictor. The matching CPU8
-int-pro-seed removal reproduces a `0.384..0.694%` production-PGO improvement,
-but one-shot curve timings remain `1.5068..1.5717x` vpxenc, so the relative
-speed gate is materially red despite passing the absolute 720p budget.
-Two-layer VBR, both CBR hierarchies, and the repeated PGO 720p30/1080p30 speed
-matrix remain open.
+int-pro-seed removal reproduces a `0.384..0.694%` production-PGO improvement.
+Two-layer VBR now also passes across CPU6-8; CPU6's three-clip aggregate is
+`-2.3151%/-2.2652%`, while its worst individual clip/layer is `+0.5241%` and
+remains inside the explicit `+2%` clip guard. Both CBR hierarchies pass across
+CPU6-8, including CPU6 T2 at `-27.7767%/-23.9911%` and T3 at
+`-32.2313%/-32.2218%/-31.0428%`. The relative temporal speed gate remains
+materially red despite passing the absolute 720p budget. The repeated
+production-PGO 720p30/1080p30 speed matrix remains open.
 
 **Estimated effort:** 4–6 weeks.
 
