@@ -144,6 +144,52 @@ struct CandidatePredScratch {
     round_trip: RoundTripScratch,
 }
 
+/// Caller-owned luma prediction storage for the output-backed inter picker.
+///
+/// The picker writes only the active `width × height` prefix of each row and
+/// leaves the caller's row padding untouched. The backing slice must be large
+/// enough for the requested block when it is passed to
+/// [`pick_inter_mode_with_output`]. Keeping the stride here, rather than
+/// assuming a tight 64-byte row, lets the encoder hand the picker its final
+/// reconstruction plane directly.
+pub struct OutputBackedPredictionBuffer<'a> {
+    data: &'a mut [u8],
+    stride: usize,
+}
+
+impl<'a> OutputBackedPredictionBuffer<'a> {
+    /// Wrap caller-owned luma storage with its row stride.
+    ///
+    /// `stride` must be non-zero. The block-specific capacity check is done
+    /// by [`pick_inter_mode_with_output`] because the picker can handle
+    /// several block sizes.
+    #[must_use]
+    pub fn new(data: &'a mut [u8], stride: usize) -> Self {
+        assert!(stride > 0, "prediction-buffer stride must be non-zero");
+        Self { data, stride }
+    }
+
+    fn as_mut_slice(&mut self) -> &mut [u8] {
+        self.data
+    }
+
+    const fn stride(&self) -> usize {
+        self.stride
+    }
+
+    fn assert_capacity(&self, bw: usize, bh: usize) {
+        let required = (bh.saturating_sub(1))
+            .saturating_mul(self.stride)
+            .saturating_add(bw);
+        assert!(
+            self.stride >= bw && self.data.len() >= required,
+            "prediction buffer is too small for {bw}x{bh} at stride {} (len {})",
+            self.stride,
+            self.data.len(),
+        );
+    }
+}
+
 struct RoundTripScratch {
     residual: [i16; 32 * 32],
     coefs: [i32; 32 * 32],
@@ -1888,6 +1934,34 @@ fn pre_search_mv_is_zero(mode: InterMode, candidates: &MvCandidates) -> bool {
 /// (once per ref) and taking the argmin at the caller.
 #[must_use]
 pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult {
+    pick_inter_mode_impl(params, None)
+}
+
+/// Run the dual-reference inter-mode search while retaining the winning luma
+/// predictor in caller-owned output storage.
+///
+/// The returned [`PickInterModeResult`] is unchanged from
+/// [`pick_inter_mode`]. When its `picked_ref_frame` is an inter reference, the
+/// active `block_size.width() × block_size.height()` pixels are ready in
+/// `output`; an `IntraFrame` result makes the output contents unspecified.
+/// The primary and alternate TLS buffers plus `output` rotate as three slots,
+/// and at most one final copy is made when the winner remains in TLS scratch.
+#[must_use]
+pub fn pick_inter_mode_with_output(
+    params: &PickInterModeParams<'_>,
+    output: &mut OutputBackedPredictionBuffer<'_>,
+) -> PickInterModeResult {
+    output.assert_capacity(
+        usize::from(params.block_size.width()),
+        usize::from(params.block_size.height()),
+    );
+    pick_inter_mode_impl(params, Some(output))
+}
+
+fn pick_inter_mode_impl(
+    params: &PickInterModeParams<'_>,
+    mut output: Option<&mut OutputBackedPredictionBuffer<'_>>,
+) -> PickInterModeResult {
     debug_assert!(
         params.inter_mode_ctx < INTER_MODE_CONTEXTS,
         "inter_mode_ctx {} out of [0, {INTER_MODE_CONTEXTS})",
@@ -2059,6 +2133,7 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
     let searched_filter_set = f5_filter_search_set();
 
     let mut best: Option<PickInterModeResult> = None;
+    let mut retained_prediction_slot: Option<FilterPredictionSlot> = None;
     // F.0.2 diagnostic slots use the shared order
     // `[ZERO, NEAREST, NEAR, NEW]`. Only candidates that survive the real
     // production gates below are recorded.
@@ -2540,7 +2615,15 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
                 std::slice::from_ref(&fallback_filter)
             };
 
-            let candidate = evaluate_candidate_with_filter_set_with_scratch(
+            let prediction_slots = if output.is_some() {
+                candidate_prediction_slots(retained_prediction_slot)
+            } else {
+                [
+                    FilterPredictionSlot::Candidate,
+                    FilterPredictionSlot::Alternate,
+                ]
+            };
+            let (candidate, candidate_prediction_slot) = evaluate_candidate_with_slots(
                 &single_params,
                 mode,
                 mv,
@@ -2548,6 +2631,8 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
                 lambda,
                 filter_set,
                 scratch,
+                &mut output,
+                prediction_slots,
             );
 
             mode_checked[ref_idx][mode.idx()] = true;
@@ -2642,6 +2727,9 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
                 Some(prev) => biased_rd_cost < prev.best_rd_cost,
             };
             if is_new_best {
+                if output.is_some() {
+                    retained_prediction_slot = Some(candidate_prediction_slot);
+                }
                 best = Some(PickInterModeResult {
                     best_mode: candidate.best_mode,
                     best_mv: candidate.best_mv,
@@ -2733,6 +2821,17 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
             {
                 break;
             }
+        }
+        if let Some(output) = output {
+            let slot =
+                retained_prediction_slot.expect("an inter winner must retain a prediction slot");
+            copy_prediction_slot_to_output(
+                scratch,
+                output,
+                slot,
+                usize::from(params.block_size.width()),
+                usize::from(params.block_size.height()),
+            );
         }
     });
 
@@ -3093,8 +3192,10 @@ fn evaluate_intra_fallback_with_scratch(
                     reconstruct_via_round_trip(
                         &single_params,
                         RoundTripBuffers {
-                            pred: recon,
+                            pred: &recon[..],
+                            pred_stride: bw,
                             recon: &mut no_recon,
+                            recon_stride: bw,
                             scratch: round_trip,
                         },
                         bw,
@@ -3110,7 +3211,9 @@ fn evaluate_intra_fallback_with_scratch(
                         &single_params,
                         RoundTripBuffers {
                             pred: &[],
-                            recon,
+                            pred_stride: bw,
+                            recon: &mut recon[..],
+                            recon_stride: bw,
                             scratch: round_trip,
                         },
                         bw,
@@ -3133,7 +3236,7 @@ fn evaluate_intra_fallback_with_scratch(
                 let (_, sse) = (dispatch.variance(params.block_size))(
                     &params.src_plane.data[src_start..],
                     params.src_plane.stride,
-                    recon,
+                    &recon[..],
                     bw,
                 );
                 sse.min(u32::MAX as u64) as u32
@@ -3598,6 +3701,7 @@ fn evaluate_candidate(
 fn luma_model_rd(
     params: &InterModeSearchParams<'_>,
     pred: &[u8],
+    pred_stride: usize,
     bw: usize,
     bh: usize,
 ) -> ModelRdResult {
@@ -3611,7 +3715,7 @@ fn luma_model_rd(
         src: &src.data[src_start..],
         src_stride: src.stride,
         pred,
-        pred_stride: bw,
+        pred_stride,
         bw,
         bh,
         bsize: params.block_size,
@@ -3664,15 +3768,91 @@ fn y_skip_tie_break_allowed(
 enum FilterPredictionSlot {
     Candidate,
     Alternate,
+    Output,
 }
 
+/// Pick two writable slots while preserving the current global winner in the
+/// third. The first call has no incumbent and uses the two TLS slots; later
+/// calls rotate through the caller-owned output slot without allocating a
+/// third TLS 64×64 array.
+fn candidate_prediction_slots(
+    incumbent: Option<FilterPredictionSlot>,
+) -> [FilterPredictionSlot; 2] {
+    match incumbent {
+        None => [
+            FilterPredictionSlot::Candidate,
+            FilterPredictionSlot::Alternate,
+        ],
+        Some(FilterPredictionSlot::Candidate) => [
+            FilterPredictionSlot::Alternate,
+            FilterPredictionSlot::Output,
+        ],
+        Some(FilterPredictionSlot::Alternate) => [
+            FilterPredictionSlot::Candidate,
+            FilterPredictionSlot::Output,
+        ],
+        Some(FilterPredictionSlot::Output) => [
+            FilterPredictionSlot::Candidate,
+            FilterPredictionSlot::Alternate,
+        ],
+    }
+}
+
+/// Run one operation against a selected prediction slot. Reborrowing the
+/// optional output here keeps the primary/alternate TLS buffers and the
+/// caller-owned output mutually exclusive for every kernel invocation.
+fn with_prediction_slot<R>(
+    primary: &mut [u8; 64 * 64],
+    alternate: &mut [u8; 64 * 64],
+    output: Option<&mut OutputBackedPredictionBuffer<'_>>,
+    slot: FilterPredictionSlot,
+    scratch_stride: usize,
+    operation: impl FnOnce(&mut [u8], usize) -> R,
+) -> R {
+    match slot {
+        FilterPredictionSlot::Candidate => operation(primary, scratch_stride),
+        FilterPredictionSlot::Alternate => operation(alternate, scratch_stride),
+        FilterPredictionSlot::Output => {
+            let output = output.expect("output slot requires output-backed picker");
+            let stride = output.stride();
+            operation(output.as_mut_slice(), stride)
+        }
+    }
+}
+
+fn copy_prediction_slot_to_output(
+    scratch: &CandidatePredScratch,
+    output: &mut OutputBackedPredictionBuffer<'_>,
+    slot: FilterPredictionSlot,
+    bw: usize,
+    bh: usize,
+) {
+    if slot == FilterPredictionSlot::Output {
+        return;
+    }
+    let (source, source_stride) = match slot {
+        FilterPredictionSlot::Candidate => (&scratch.primary[..], bw),
+        FilterPredictionSlot::Alternate => (&scratch.alternate[..], bw),
+        FilterPredictionSlot::Output => unreachable!(),
+    };
+    let destination_stride = output.stride();
+    let destination = output.as_mut_slice();
+    for row in 0..bh {
+        destination[row * destination_stride..row * destination_stride + bw]
+            .copy_from_slice(&source[row * source_stride..row * source_stride + bw]);
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 fn select_interp_filter_by_luma_model(
     params: &InterModeSearchParams<'_>,
     mv: Mv,
     lambda: u32,
     filter_set: &[InterpFilter; 2],
-    candidate_pred: &mut [u8; 64 * 64],
-    alternate_pred: &mut [u8; 64 * 64],
+    primary: &mut [u8; 64 * 64],
+    alternate: &mut [u8; 64 * 64],
+    output: &mut Option<&mut OutputBackedPredictionBuffer<'_>>,
+    prediction_slots: [FilterPredictionSlot; 2],
 ) -> (InterpFilter, ModelRdResult, FilterPredictionSlot) {
     let bw = usize::from(params.block_size.width());
     let bh = usize::from(params.block_size.height());
@@ -3680,26 +3860,31 @@ fn select_interp_filter_by_luma_model(
     let mut best_filter = filter_set[0];
     let mut best_cost = i64::MAX;
     let mut best_model = None;
-    let mut best_slot = FilterPredictionSlot::Candidate;
+    let mut best_slot = prediction_slots[0];
     for (index, &filter) in filter_set.iter().enumerate() {
-        let (pred, slot) = if index == 0 {
-            (&mut *candidate_pred, FilterPredictionSlot::Candidate)
-        } else {
-            (&mut *alternate_pred, FilterPredictionSlot::Alternate)
-        };
-        build_inter_prediction(
-            dsp,
-            params.ref_plane,
-            params.src_offset.0,
-            params.src_offset.1,
-            mv,
+        let slot = prediction_slots[index];
+        let model = with_prediction_slot(
+            primary,
+            alternate,
+            output.as_deref_mut(),
+            slot,
             bw,
-            bh,
-            pred,
-            bw,
-            filter,
+            |pred, stride| {
+                build_inter_prediction(
+                    dsp,
+                    params.ref_plane,
+                    params.src_offset.0,
+                    params.src_offset.1,
+                    mv,
+                    bw,
+                    bh,
+                    pred,
+                    stride,
+                    filter,
+                );
+                luma_model_rd(params, pred, stride, bw, bh)
+            },
         );
-        let model = luma_model_rd(params, &pred[..bw * bh], bw, bh);
         let filter_rate = if (mv.row | mv.col) & 0x07 != 0 {
             params.switchable_interp_costs[params.switchable_interp_ctx][filter as usize].max(0)
                 as u32
@@ -3754,46 +3939,109 @@ fn evaluate_candidate_with_filter_set_with_scratch(
     filter_set: &[InterpFilter],
     scratch: &mut CandidatePredScratch,
 ) -> InterModeSearchResult {
+    let mut output = None;
+    evaluate_candidate_with_slots(
+        params,
+        mode,
+        mv,
+        ref_mv,
+        lambda,
+        filter_set,
+        scratch,
+        &mut output,
+        [
+            FilterPredictionSlot::Candidate,
+            FilterPredictionSlot::Alternate,
+        ],
+    )
+    .0
+}
+
+#[allow(clippy::too_many_arguments)]
+fn evaluate_candidate_with_slots(
+    params: &InterModeSearchParams<'_>,
+    mode: InterMode,
+    mv: Mv,
+    ref_mv: Mv,
+    lambda: u32,
+    filter_set: &[InterpFilter],
+    scratch: &mut CandidatePredScratch,
+    output: &mut Option<&mut OutputBackedPredictionBuffer<'_>>,
+    prediction_slots: [FilterPredictionSlot; 2],
+) -> (InterModeSearchResult, FilterPredictionSlot) {
+    let CandidatePredScratch {
+        primary,
+        alternate,
+        chroma_u,
+        chroma_v,
+        round_trip,
+    } = scratch;
     if filter_set.len() == 1 {
-        evaluate_candidate_for_filter_with_scratch(
-            params,
-            mode,
-            mv,
-            ref_mv,
-            lambda,
-            filter_set[0],
-            scratch,
-        )
-    } else {
-        let CandidatePredScratch {
+        let slot = prediction_slots[0];
+        let bw = usize::from(params.block_size.width());
+        let result = with_prediction_slot(
             primary,
             alternate,
-            chroma_u,
-            chroma_v,
-            round_trip,
-        } = scratch;
+            output.as_deref_mut(),
+            slot,
+            bw,
+            |pred, stride| {
+                evaluate_candidate_for_filter_with_pred(
+                    params,
+                    mode,
+                    mv,
+                    ref_mv,
+                    lambda,
+                    filter_set[0],
+                    pred,
+                    stride,
+                    round_trip,
+                    chroma_u,
+                    chroma_v,
+                    None,
+                )
+            },
+        );
+        (result, slot)
+    } else {
         let filters: &[InterpFilter; 2] = filter_set
             .try_into()
             .expect("VP9 realtime filter search has exactly two filters");
-        let (filter, model, slot) =
-            select_interp_filter_by_luma_model(params, mv, lambda, filters, primary, alternate);
-        let winner_pred = match slot {
-            FilterPredictionSlot::Candidate => primary,
-            FilterPredictionSlot::Alternate => alternate,
-        };
-        evaluate_candidate_for_filter_with_pred(
+        let (filter, model, slot) = select_interp_filter_by_luma_model(
             params,
-            mode,
             mv,
-            ref_mv,
             lambda,
-            filter,
-            winner_pred,
-            round_trip,
-            chroma_u,
-            chroma_v,
-            Some(model),
-        )
+            filters,
+            primary,
+            alternate,
+            output,
+            prediction_slots,
+        );
+        let bw = usize::from(params.block_size.width());
+        let result = with_prediction_slot(
+            primary,
+            alternate,
+            output.as_deref_mut(),
+            slot,
+            bw,
+            |pred, stride| {
+                evaluate_candidate_for_filter_with_pred(
+                    params,
+                    mode,
+                    mv,
+                    ref_mv,
+                    lambda,
+                    filter,
+                    pred,
+                    stride,
+                    round_trip,
+                    chroma_u,
+                    chroma_v,
+                    Some(model),
+                )
+            },
+        );
+        (result, slot)
     }
 }
 
@@ -3817,6 +4065,7 @@ fn evaluate_candidate_for_filter(
     })
 }
 
+#[cfg(test)]
 fn evaluate_candidate_for_filter_with_scratch(
     params: &InterModeSearchParams<'_>,
     mode: InterMode,
@@ -3834,7 +4083,18 @@ fn evaluate_candidate_for_filter_with_scratch(
         ..
     } = scratch;
     evaluate_candidate_for_filter_with_pred(
-        params, mode, mv, ref_mv, lambda, filter, primary, round_trip, chroma_u, chroma_v, None,
+        params,
+        mode,
+        mv,
+        ref_mv,
+        lambda,
+        filter,
+        primary,
+        usize::from(params.block_size.width()),
+        round_trip,
+        chroma_u,
+        chroma_v,
+        None,
     )
 }
 
@@ -3846,7 +4106,8 @@ fn evaluate_candidate_for_filter_with_pred(
     ref_mv: Mv,
     lambda: u32,
     filter: InterpFilter,
-    pred: &mut [u8; 64 * 64],
+    pred: &mut [u8],
+    pred_stride: usize,
     round_trip: &mut RoundTripScratch,
     pred_u: &mut [u8; 32 * 32],
     pred_v: &mut [u8; 32 * 32],
@@ -3854,6 +4115,8 @@ fn evaluate_candidate_for_filter_with_pred(
 ) -> InterModeSearchResult {
     let bw = usize::from(params.block_size.width());
     let bh = usize::from(params.block_size.height());
+    debug_assert!(pred_stride >= bw);
+    debug_assert!(pred.len() >= (bh.saturating_sub(1)) * pred_stride + bw);
 
     // P1-A (HLD-simd-speed §4.1): resolve the SimdDispatch handle ONCE per
     // candidate evaluation (not per `build_inter_prediction` call). This
@@ -3888,10 +4151,10 @@ fn evaluate_candidate_for_filter_with_pred(
             bw,
             bh,
             pred,
-            bw, // pred_stride
+            pred_stride,
             filter,
         );
-        luma_model_rd(params, &pred[..bw * bh], bw, bh)
+        luma_model_rd(params, pred, pred_stride, bw, bh)
     };
 
     // Use the model_rd TX size for the round-trip (replaces the
@@ -3945,7 +4208,10 @@ fn evaluate_candidate_for_filter_with_pred(
         None
     } else {
         let mut pixels = [0u8; 64 * 64];
-        pixels[..bw * bh].copy_from_slice(&pred[..bw * bh]);
+        for row in 0..bh {
+            pixels[row * bw..row * bw + bw]
+                .copy_from_slice(&pred[row * pred_stride..row * pred_stride + bw]);
+        }
         Some(pixels)
     };
     let by = if yuv_early_term {
@@ -3990,8 +4256,10 @@ fn evaluate_candidate_for_filter_with_pred(
         let mut result = reconstruct_via_round_trip(
             params,
             RoundTripBuffers {
-                pred: &pred[..],
+                pred,
+                pred_stride,
                 recon: recon_pixels,
+                recon_stride: bw,
                 scratch: round_trip,
             },
             bw,
@@ -4010,7 +4278,9 @@ fn evaluate_candidate_for_filter_with_pred(
         }
         result
     };
-    let recon_pixels = recon.as_ref().map_or(&pred[..], |pixels| &pixels[..]);
+    let (recon_pixels, recon_stride) = recon
+        .as_ref()
+        .map_or((pred as &[u8], pred_stride), |pixels| (&pixels[..], bw));
 
     // Distortion = SSE(src, recon). For block sizes ≤ 64×64 the SSE
     // fits in u32 (max 64*64*255^2 = 266_342_400 < 2^32).
@@ -4051,7 +4321,7 @@ fn evaluate_candidate_for_filter_with_pred(
             params.src_plane,
             params.src_offset,
             recon_pixels,
-            bw,
+            recon_stride,
             bw,
             bh,
         )
@@ -4074,7 +4344,7 @@ fn evaluate_candidate_for_filter_with_pred(
             // Also row 5 (middle of small block).
             let row5_off = (sy + 5) * params.src_plane.stride + sx;
             let src_row5 = &params.src_plane.data[row5_off..row5_off + 16];
-            let recon_row5 = &recon_pixels[5 * bw..5 * bw + 16];
+            let recon_row5 = &recon_pixels[5 * recon_stride..5 * recon_stride + 16];
             eprintln!(
                 "           src_row5={:?} recon_row5={:?}",
                 src_row5, recon_row5
@@ -4753,7 +5023,9 @@ struct RoundTripBuffers<'a> {
     // Prediction source for non-reconstructing diagnostic calls. Product
     // reconstruction reads the identical initial prediction from `recon`.
     pred: &'a [u8],
+    pred_stride: usize,
     recon: &'a mut [u8],
+    recon_stride: usize,
     scratch: &'a mut RoundTripScratch,
 }
 
@@ -4774,7 +5046,9 @@ fn reconstruct_via_round_trip(
     let dsp = crate::dsp::get_ref();
     let RoundTripBuffers {
         pred,
+        pred_stride,
         recon,
+        recon_stride,
         scratch,
     } = buffers;
     let RoundTripScratch {
@@ -4839,8 +5113,8 @@ fn reconstruct_via_round_trip(
                 $subtract(
                     &src.data[(sy + $off_y) * src.stride + sx + $off_x..],
                     src.stride,
-                    &pred[$off_y * bw + $off_x..],
-                    bw,
+                    &pred[$off_y * pred_stride + $off_x..],
+                    pred_stride,
                     had_coeff_i16,
                 );
             }
@@ -4947,8 +5221,8 @@ fn reconstruct_via_round_trip(
                 crate::dsp::aarch64::subtract_square_neon_with_nonzero(
                     &src.data[(sy + off_y) * src.stride + sx + off_x..],
                     src.stride,
-                    &recon[off_y * bw + off_x..],
-                    bw,
+                    &recon[off_y * recon_stride + off_x..],
+                    recon_stride,
                     residual,
                     tx_side,
                 )
@@ -4962,9 +5236,9 @@ fn reconstruct_via_round_trip(
                     for c in 0..tx_side {
                         let s = src.data[(sy + off_y + r) * src.stride + (sx + off_x + c)] as i16;
                         let p = if reconstruct {
-                            recon[(off_y + r) * bw + (off_x + c)] as i16
+                            recon[(off_y + r) * recon_stride + (off_x + c)] as i16
                         } else {
-                            pred[(off_y + r) * bw + (off_x + c)] as i16
+                            pred[(off_y + r) * pred_stride + (off_x + c)] as i16
                         };
                         let value = s - p;
                         residual[r * tx_side + c] = value;
@@ -5090,7 +5364,7 @@ fn reconstruct_via_round_trip(
                 // an arbitrary destination stride, so a 32x32 tile inside
                 // a 64x64 block needs no contiguous staging copy.
                 if eob > 0 {
-                    let recon_start = off_y * bw + off_x;
+                    let recon_start = off_y * recon_stride + off_x;
                     match tx_size {
                         TxSize::Tx8x8 => {
                             for (dst, &src) in coefs[..64].iter_mut().zip(&dqcoeff[..64]) {
@@ -5099,7 +5373,7 @@ fn reconstruct_via_round_trip(
                             let input: &[i32; 64] = (&coefs[..64])
                                 .try_into()
                                 .expect("8x8 coefficient prefix has 64 elements");
-                            (dsp.idct8x8_add())(input, &mut recon[recon_start..], bw);
+                            (dsp.idct8x8_add())(input, &mut recon[recon_start..], recon_stride);
                         }
                         TxSize::Tx16x16 => {
                             for (dst, &src) in coefs[..256].iter_mut().zip(&dqcoeff[..256]) {
@@ -5108,13 +5382,13 @@ fn reconstruct_via_round_trip(
                             let input: &[i32; 256] = (&coefs[..256])
                                 .try_into()
                                 .expect("16x16 coefficient prefix has 256 elements");
-                            idct16x16_256_add(input, &mut recon[recon_start..], bw);
+                            idct16x16_256_add(input, &mut recon[recon_start..], recon_stride);
                         }
                         TxSize::Tx32x32 => {
                             for (dst, &src) in coefs[..1024].iter_mut().zip(&dqcoeff[..1024]) {
                                 *dst = i32::from(src);
                             }
-                            idct32x32_1024_add(coefs, &mut recon[recon_start..], bw);
+                            idct32x32_1024_add(coefs, &mut recon[recon_start..], recon_stride);
                         }
                         TxSize::Tx4x4 => unreachable!(),
                     }
@@ -6009,7 +6283,7 @@ mod tests {
             16,
             InterpFilter::EightTap,
         );
-        let expected = luma_model_rd(&params, &pred[..16 * 16], 16, 16);
+        let expected = luma_model_rd(&params, &pred[..16 * 16], 16, 16, 16);
         let result = evaluate_candidate_for_filter(
             &params,
             InterMode::ZeroMv,
@@ -6085,14 +6359,16 @@ mod tests {
             32,
             InterpFilter::EightTap,
         );
-        let model = luma_model_rd(&params, &pred[..32 * 32], 32, 32);
+        let model = luma_model_rd(&params, &pred[..32 * 32], 32, 32, 32);
         let mut no_recon = [];
         let mut scratch = RoundTripScratch::new();
         let expected = reconstruct_via_round_trip(
             &params,
             RoundTripBuffers {
                 pred: &pred,
+                pred_stride: 32,
                 recon: &mut no_recon,
+                recon_stride: 32,
                 scratch: &mut scratch,
             },
             32,
@@ -6411,7 +6687,9 @@ mod tests {
                 &params,
                 RoundTripBuffers {
                     pred: &pred,
+                    pred_stride: side,
                     recon: &mut no_recon,
+                    recon_stride: side,
                     scratch: &mut scratch,
                 },
                 side,
@@ -6426,7 +6704,9 @@ mod tests {
                 &params,
                 RoundTripBuffers {
                     pred: &pred,
+                    pred_stride: side,
                     recon: &mut no_recon,
+                    recon_stride: side,
                     scratch: &mut scratch,
                 },
                 side,
@@ -6441,7 +6721,9 @@ mod tests {
                 &params,
                 RoundTripBuffers {
                     pred: &pred,
+                    pred_stride: side,
                     recon: &mut no_recon,
+                    recon_stride: side,
                     scratch: &mut scratch,
                 },
                 side,
@@ -6506,7 +6788,9 @@ mod tests {
                 &params,
                 RoundTripBuffers {
                     pred: &pred,
+                    pred_stride: side,
                     recon: &mut recon,
+                    recon_stride: side,
                     scratch: &mut scratch,
                 },
                 side,
@@ -6574,7 +6858,9 @@ mod tests {
             &params,
             RoundTripBuffers {
                 pred: &prediction,
+                pred_stride: 16,
                 recon: &mut expected_recon,
+                recon_stride: 16,
                 scratch: &mut expected_scratch,
             },
             16,
@@ -6586,7 +6872,9 @@ mod tests {
             &params,
             RoundTripBuffers {
                 pred: &poison,
+                pred_stride: 16,
                 recon: &mut actual_recon,
+                recon_stride: 16,
                 scratch: &mut actual_scratch,
             },
             16,
@@ -7390,7 +7678,7 @@ mod tests {
                 bw,
                 filter,
             );
-            let model = luma_model_rd(&params, &pred[..bw * bh], bw, bh);
+            let model = luma_model_rd(&params, &pred[..bw * bh], bw, bw, bh);
             let filter_rate = params.switchable_interp_costs[params.switchable_interp_ctx]
                 [filter as usize]
                 .max(0) as u32;
@@ -7418,6 +7706,7 @@ mod tests {
         // remain outside the ownership contract.
         let mut candidate_pred = [37u8; 64 * 64];
         let mut alternate_pred = [53u8; 64 * 64];
+        let mut output = None;
         let (retained_filter, retained_model, retained_slot) = select_interp_filter_by_luma_model(
             &params,
             mvc.nearest,
@@ -7425,6 +7714,11 @@ mod tests {
             &[InterpFilter::EightTap, InterpFilter::EightTapSmooth],
             &mut candidate_pred,
             &mut alternate_pred,
+            &mut output,
+            [
+                FilterPredictionSlot::Candidate,
+                FilterPredictionSlot::Alternate,
+            ],
         );
         assert_eq!(retained_filter, expected_filter);
         let mut expected_pred = [0u8; 64 * 64];
@@ -7443,11 +7737,12 @@ mod tests {
         let retained_pred = match retained_slot {
             FilterPredictionSlot::Candidate => &candidate_pred,
             FilterPredictionSlot::Alternate => &alternate_pred,
+            FilterPredictionSlot::Output => unreachable!("output slot is disabled in this test"),
         };
         assert_eq!(&retained_pred[..bw * bh], &expected_pred[..bw * bh]);
         assert!(candidate_pred[bw * bh..].iter().all(|&pixel| pixel == 37));
         assert!(alternate_pred[bw * bh..].iter().all(|&pixel| pixel == 53));
-        let expected_model = luma_model_rd(&params, &expected_pred[..bw * bh], bw, bh);
+        let expected_model = luma_model_rd(&params, &expected_pred[..bw * bh], bw, bw, bh);
         assert_eq!(retained_model.rate, expected_model.rate);
         assert_eq!(retained_model.dist, expected_model.dist);
         assert_eq!(retained_model.var_y, expected_model.var_y);
@@ -7464,6 +7759,227 @@ mod tests {
             &[InterpFilter::EightTap, InterpFilter::EightTapSmooth],
         );
         assert_eq!(searched, expected);
+    }
+
+    fn assert_output_backed_candidate_matches(
+        filter_set: &[InterpFilter],
+        prediction_slots: [FilterPredictionSlot; 2],
+    ) {
+        let pw = 64;
+        let ph = 64;
+        let ref_data = make_plane(pw, ph, 0x5A17);
+        let mut src_data = ref_data.clone();
+        let bw = 16;
+        let bh = 16;
+        let src_offset = (20, 20);
+        for row in 0..bh {
+            for col in 0..bw {
+                src_data[(src_offset.1 + row) * pw + src_offset.0 + col] =
+                    ref_data[(src_offset.1 + row) * pw + src_offset.0 + col + 1];
+            }
+        }
+        let src_plane = PlaneRef {
+            data: &src_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let ref_plane = PlaneRef {
+            data: &ref_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let harness = TestHarness::new(pw, 80);
+        let mvc = MvCandidates {
+            nearest: Mv { row: 0, col: 2 },
+            near: Mv { row: 0, col: 2 },
+        };
+        let params = make_params(
+            &harness,
+            BlockSize::Block16x16,
+            &src_plane,
+            &ref_plane,
+            src_offset,
+            &mvc,
+            MvLimits::new(-4, 4, -4, 4),
+            80,
+        );
+        let lambda = compute_rd_mult(80, frame_type_for_rd(params.frame_kind));
+        let baseline = evaluate_candidate_with_filter_set(
+            &params,
+            InterMode::NearestMv,
+            mvc.nearest,
+            mvc.nearest,
+            lambda,
+            filter_set,
+        );
+
+        let stride = 24;
+        let poison = 0xA5;
+        let mut storage = vec![poison; stride * bh];
+        let mut output = OutputBackedPredictionBuffer::new(&mut storage, stride);
+        let mut scratch = CandidatePredScratch {
+            primary: [0x31; 64 * 64],
+            alternate: [0x47; 64 * 64],
+            chroma_u: [0; 32 * 32],
+            chroma_v: [0; 32 * 32],
+            round_trip: RoundTripScratch::new(),
+        };
+        let (actual, winning_slot) = {
+            let mut output_ref = Some(&mut output);
+            evaluate_candidate_with_slots(
+                &params,
+                InterMode::NearestMv,
+                mvc.nearest,
+                mvc.nearest,
+                lambda,
+                filter_set,
+                &mut scratch,
+                &mut output_ref,
+                prediction_slots,
+            )
+        };
+        copy_prediction_slot_to_output(&scratch, &mut output, winning_slot, bw, bh);
+        assert_eq!(actual, baseline);
+
+        let mut expected = [0u8; 64 * 64];
+        build_inter_prediction(
+            crate::dsp::get_ref(),
+            params.ref_plane,
+            params.src_offset.0,
+            params.src_offset.1,
+            actual.best_mv,
+            bw,
+            bh,
+            &mut expected,
+            bw,
+            actual.picked_interp_filter,
+        );
+        for row in 0..bh {
+            assert_eq!(
+                &storage[row * stride..row * stride + bw],
+                &expected[row * bw..row * bw + bw],
+                "active prediction row {row} differs"
+            );
+            assert!(
+                storage[row * stride + bw..(row + 1) * stride]
+                    .iter()
+                    .all(|&pixel| pixel == poison),
+                "row padding was overwritten"
+            );
+        }
+    }
+
+    #[test]
+    fn output_backed_one_filter_preserves_result_and_poisoned_stride() {
+        assert_output_backed_candidate_matches(
+            &[InterpFilter::EightTap],
+            [
+                FilterPredictionSlot::Output,
+                FilterPredictionSlot::Alternate,
+            ],
+        );
+    }
+
+    #[test]
+    fn output_backed_two_filter_preserves_result_and_poisoned_stride() {
+        assert_output_backed_candidate_matches(
+            &[InterpFilter::EightTap, InterpFilter::EightTapSmooth],
+            [
+                FilterPredictionSlot::Candidate,
+                FilterPredictionSlot::Output,
+            ],
+        );
+    }
+
+    #[test]
+    fn output_backed_picker_preserves_winner_and_final_prediction() {
+        let pw = 64;
+        let ph = 64;
+        let ref_data = make_plane(pw, ph, 0x2D31);
+        let mut src_data = ref_data.clone();
+        let src_offset = (20, 20);
+        let bw = 16;
+        let bh = 16;
+        for row in 0..bh {
+            for col in 0..bw {
+                src_data[(src_offset.1 + row) * pw + src_offset.0 + col] =
+                    ref_data[(src_offset.1 + row + 1) * pw + src_offset.0 + col];
+            }
+        }
+        let src_plane = PlaneRef {
+            data: &src_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let ref_plane = PlaneRef {
+            data: &ref_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let harness = TestHarness::new(pw, 80);
+        let fc = FrameContext::new_default();
+        let intra_y_costs = crate::cost::symbol_costs::intra_y_mode_costs_inter(&fc)[0];
+        let mvc = MvCandidates {
+            nearest: Mv { row: 2, col: 0 },
+            near: Mv { row: 2, col: 0 },
+        };
+        let mut params = make_dual_ref_params(
+            &harness,
+            &intra_y_costs,
+            BlockSize::Block16x16,
+            &src_plane,
+            &ref_plane,
+            src_offset,
+            &mvc,
+            &mvc,
+            MvLimits::new(-4, 4, -4, 4),
+            80,
+        );
+        params.golden_ref_plane = &ref_plane;
+        params.enable_intra_fallback = false;
+        params.reference_masking = false;
+        params.cb_pred_filter_search = false;
+
+        let baseline = pick_inter_mode(&params);
+        let stride = 24;
+        let poison = 0xC7;
+        let mut storage = vec![poison; stride * bh];
+        let actual = {
+            let mut output = OutputBackedPredictionBuffer::new(&mut storage, stride);
+            pick_inter_mode_with_output(&params, &mut output)
+        };
+        assert_eq!(actual, baseline);
+        assert!(actual.picked_ref_frame.is_inter());
+
+        let mut expected = [0u8; 64 * 64];
+        build_inter_prediction(
+            crate::dsp::get_ref(),
+            &ref_plane,
+            src_offset.0,
+            src_offset.1,
+            actual.best_mv,
+            bw,
+            bh,
+            &mut expected,
+            bw,
+            actual.picked_interp_filter,
+        );
+        for row in 0..bh {
+            assert_eq!(
+                &storage[row * stride..row * stride + bw],
+                &expected[row * bw..row * bw + bw],
+            );
+            assert!(
+                storage[row * stride + bw..(row + 1) * stride]
+                    .iter()
+                    .all(|&pixel| pixel == poison),
+                "row padding was overwritten",
+            );
+        }
     }
 
     /// Argmin: NEAR wins when its MV points at the correct shift but

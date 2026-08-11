@@ -4325,6 +4325,22 @@ impl<'a> InterReconPlane<'a> {
         }
     }
 
+    fn output_backed_prediction(
+        &mut self,
+        global_x: usize,
+        global_y: usize,
+        width: usize,
+        height: usize,
+    ) -> rvp9_core::mode_decision::inter::OutputBackedPredictionBuffer<'_> {
+        let layout = self.layout;
+        let (local_x, local_y) = layout.local_block(global_x, global_y, width, height);
+        let start = local_y * layout.stride + local_x;
+        rvp9_core::mode_decision::inter::OutputBackedPredictionBuffer::new(
+            &mut self.data[start..],
+            layout.stride,
+        )
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn build_inter_prediction(
         &mut self,
@@ -5652,6 +5668,7 @@ pub(crate) struct InterEncodeEnv {
     p8_stats: bool,
     compact_recon_rows: Option<bool>,
     compact_row_workers: Option<bool>,
+    rt_output_backed_prediction: Option<bool>,
 }
 
 impl InterEncodeEnv {
@@ -5705,6 +5722,7 @@ impl InterEncodeEnv {
             p8_stats: std::env::var_os("RVP9_P8_STATS").is_some(),
             compact_recon_rows: bool_override("RVP9_COMPACT_RECON_ROWS"),
             compact_row_workers: bool_override("RVP9_COMPACT_ROW_WORKERS"),
+            rt_output_backed_prediction: bool_override("RVP9_RT_OUTPUT_BACKED_PRED"),
         }
     }
 
@@ -6085,6 +6103,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     use rvp9_core::inter::{get_pred_context_switchable_interp, get_pred_filter_ref};
     use rvp9_core::mode_decision::inter::{
         InterModeSearchParams, MvCandidates, PickInterModeParams, pick_inter_mode,
+        pick_inter_mode_with_output,
     };
     use rvp9_core::mode_decision::nonrd_partition::{
         NonRdDescentParams, PartitionRdCandidate, nonrd_pick_partition_with_pruners,
@@ -6739,6 +6758,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     );
     let rt_emit_tx_rd =
         realtime_emit_tx_rd_enabled(env.rt_emit_tx_rd, exact_vbp_tree_enabled, speed);
+    let rt_output_backed_prediction = env.flag_or(env.rt_output_backed_prediction, speed == 8);
     // libvpx speed >= 4 uses `quant_fp` for every inter frame. Preserve
     // `=0` as the regular-quantizer diagnostic without making the slower
     // good-quality quantizer the realtime default.
@@ -9183,9 +9203,21 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     } else {
                         None
                     };
+                    let mut output_prediction_ready = false;
                     let unified_pick = match (rdo_unified, cached_descent_pick) {
                         (Some(rdo), _) => rdo,
                         (None, Some(cached)) => cached,
+                        (None, None) if rt_output_backed_prediction && job_denoiser.is_none() => {
+                            let mut output = recon_yuv_out.plane_mut(0).output_backed_prediction(
+                                leaf_px_x,
+                                leaf_px_y,
+                                usize::from(leaf_bsize.width()),
+                                usize::from(leaf_bsize.height()),
+                            );
+                            let picked = pick_inter_mode_with_output(&pick_params, &mut output);
+                            output_prediction_ready = picked.picked_ref_frame.is_inter();
+                            picked
+                        }
                         (None, None) => pick_inter_mode(&pick_params),
                     };
                     if let Some(t0) = rt_profile_final_pick_start {
@@ -10021,18 +10053,21 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                 } else {
                                     None
                                 };
-                            recon_plane.build_inter_prediction(
-                                ref_plane_data,
-                                plane_px_x,
-                                plane_px_y,
-                                block_w_px,
-                                block_h_px,
-                                mv_q4_col,
-                                mv_q4_row,
-                                sb_partitions[sb_idx][leaf_idx].picked_interp_filter,
-                                /* is_compound_avg = */ false,
-                                &mut inter_emit_scratch.pred_border,
-                            );
+                            let leaf_ref2 = sb_partitions[sb_idx][leaf_idx].picked_ref_frame2;
+                            if plane != 0 || !output_prediction_ready || leaf_ref2.is_inter() {
+                                recon_plane.build_inter_prediction(
+                                    ref_plane_data,
+                                    plane_px_x,
+                                    plane_px_y,
+                                    block_w_px,
+                                    block_h_px,
+                                    mv_q4_col,
+                                    mv_q4_row,
+                                    sb_partitions[sb_idx][leaf_idx].picked_interp_filter,
+                                    /* is_compound_avg = */ false,
+                                    &mut inter_emit_scratch.pred_border,
+                                );
+                            }
 
                             // W-COMPOUND — second-reference averaging pass. A
                             // compound leaf carries `picked_ref_frame2 ==
@@ -10046,7 +10081,6 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             // guaranteed available (a leaf can only carry a
                             // compound second ref when the picker's `altref`
                             // bundle — gated on `altref_available` — was live).
-                            let leaf_ref2 = sb_partitions[sb_idx][leaf_idx].picked_ref_frame2;
                             if leaf_ref2.is_inter() {
                                 debug_assert_eq!(
                                     leaf_ref2,

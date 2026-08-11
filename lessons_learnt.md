@@ -5,6 +5,7 @@ Distilled, non-obvious gotchas future sessions need — dated one-liners.
 Durable project facts/conventions belong in `CLAUDE.md` / `AGENTS.md`, not here.
 Hard cap: 20 entries.
 
+- 2026-08-11: Output-backed winner rotation realizes only ~0.4% of a 2.8% MC ceiling (`inter.rs:pick_inter_mode_with_output`).
 - 2026-08-11: CPU7 SVC tolerates literal large-block YRD; CPU8 TL2 does not (`lib.rs:svc_enhancement_model_only_large_qmax`).
 - 2026-08-11: A terminal `[ -f ] && ls` under `set -e` fails successful builds; use `if` (`scripts/build-libvpx.sh`).
 - 2026-08-11: SVC keyframe Q parity can worsen full curves via RC feedback (`frame_loop.rs:exact_keyframe_sub8_enabled`).
