@@ -8,10 +8,11 @@
 //!    with the 4-site diamond pattern built by
 //!    [`init_dsmotion_compensation`] (mirror of
 //!    `vp9_init_dsmotion_compensation`, `vp9_mcomp.c:98-114`).
-//! 2. [`find_best_sub_pixel_tree_pruned_more`] — sub-pel refinement;
-//!    mirror of `vp9_find_best_sub_pixel_tree_pruned_more`
-//!    (`vp9_mcomp.c:453-513`). The `--cpu-used 6+` default sub-pel
-//!    method when `subpel_search_method == SUBPEL_TREE_PRUNED_MORE`.
+//! 2. [`find_best_sub_pixel_tree`] — the ordinary realtime sub-pel tree.
+//! 3. [`find_best_sub_pixel_tree_pruned_more`] and
+//!    [`find_best_sub_pixel_tree_pruned_evenmore`] — pruned SVC variants;
+//!    the latter is selected for non-reference enhancement pictures at
+//!    cpu-used 7 and 8.
 //!
 //! Supporting helpers:
 //!
@@ -27,14 +28,6 @@
 //! - **No `vp9_init3smotion_compensation`** — the 8-site NSTEP config
 //!   is out of scope for F7.0 (only the 4-site diamond used at cpu-used
 //!   ≥6 is ported).
-//! - **No `cost_list` short-circuit in sub-pel** — libvpx's
-//!   `vp9_find_best_sub_pixel_tree_pruned_more` peeks at a 5-entry
-//!   integer cost-list (filled by `calc_int_cost_list`) and, if
-//!   well-behaved, jumps straight to a parabolic-fit refinement
-//!   skipping the half-pel search. F7.0 always falls through to the
-//!   `FIRST_LEVEL_CHECKS` branch — equivalent to libvpx running with
-//!   `cost_list == NULL`. (`calc_int_cost_list` is L-07 in the LLD
-//!   and lands later with the full pattern_search port.)
 //! - **No second-pred / compound search** — single-ref only.
 //! - **MV cost scaling** — `mvsad_err_cost` uses
 //!   `ROUND_POWER_OF_TWO(mv_cost * sad_per_bit, VP9_PROB_COST_SHIFT)`,
@@ -53,8 +46,8 @@ pub mod search_site;
 pub mod sub_pixel;
 
 pub use full_pixel::{
-    FullPixelSearchParams, FullPixelSearchResult, PlaneRef, diamond_search_sad, mv_err_cost,
-    mvsad_err_cost,
+    FullPixelCostList, FullPixelSearchParams, FullPixelSearchResult, PlaneRef, diamond_search_sad,
+    fast_diamond_search_sad_with_cost_list, mv_err_cost, mvsad_err_cost,
 };
 pub use int_pro_me::{IntProMeResult, int_pro_motion_estimation, int_pro_motion_estimation_seed};
 pub use mv_limits::{
@@ -65,5 +58,6 @@ pub use mv_pred::mv_pred_sad_seed;
 pub use search_site::{SS_COUNT, SearchSiteConfig, init_dsmotion_compensation};
 pub use sub_pixel::{
     SubPixelForcedStop, SubPixelSearchParams, SubPixelSearchResult, adaptive_subpel_force_stop,
-    find_best_sub_pixel_tree, find_best_sub_pixel_tree_pruned_more,
+    find_best_sub_pixel_tree, find_best_sub_pixel_tree_pruned_evenmore,
+    find_best_sub_pixel_tree_pruned_more,
 };

@@ -241,6 +241,13 @@ pub struct FullPixelSearchResult {
     pub iters_used: i32,
 }
 
+/// Libvpx's integer-pel cost surface around a full-pixel search winner.
+///
+/// Entries are `[center, left, bottom, right, top]`. A value of [`i32::MAX`]
+/// marks a neighbor that is outside the legal MV or plane window, matching
+/// libvpx's signed `int cost_list[5]` contract.
+pub type FullPixelCostList = [i32; 5];
+
 /// Read a full-pel `w × h` block from `plane` at `(col, row)` and
 /// return its row slice plus the row stride. Returns `None` if any
 /// pixel of the requested block would lie outside the plane's
@@ -920,6 +927,76 @@ pub fn nstep_search_sad(params: &FullPixelSearchParams<'_>) -> FullPixelSearchRe
 /// directions until none improves the augmented SAD.
 #[must_use]
 pub fn fast_diamond_search_sad(params: &FullPixelSearchParams<'_>) -> FullPixelSearchResult {
+    fast_diamond_search_sad_impl::<false>(params).0
+}
+
+/// CPU7/8 fast-diamond search with its native SAD-domain integer cost surface.
+///
+/// Pinned libvpx populates this list inside `vp9_pattern_search_sad`; retaining
+/// the values while the search moves avoids a second SAD walk before
+/// `SUBPEL_TREE_PRUNED_EVENMORE`. The list order and signed sentinel follow
+/// [`FullPixelCostList`].
+#[must_use]
+pub fn fast_diamond_search_sad_with_cost_list(
+    params: &FullPixelSearchParams<'_>,
+) -> (FullPixelSearchResult, FullPixelCostList) {
+    fast_diamond_search_sad_impl::<true>(params)
+}
+
+#[inline]
+fn signed_cost_list_value(cost: u32) -> i32 {
+    cost.min(i32::MAX as u32) as i32
+}
+
+#[inline]
+fn finish_fast_diamond_search<const WITH_COST_LIST: bool>(
+    params: &FullPixelSearchParams<'_>,
+    best_row: i16,
+    best_col: i16,
+    best_sad: u32,
+    rounds: i32,
+    mut cost_list: FullPixelCostList,
+) -> (FullPixelSearchResult, FullPixelCostList) {
+    const DIRECTIONS: [(i16, i16); 4] = [(0, -1), (1, 0), (0, 1), (-1, 0)];
+
+    if WITH_COST_LIST {
+        let fcenter_row = params.center_mv.row >> 3;
+        let fcenter_col = params.center_mv.col >> 3;
+        for (index, (delta_row, delta_col)) in DIRECTIONS.into_iter().enumerate() {
+            if cost_list[index + 1] == i32::MAX {
+                continue;
+            }
+            let row = best_row + delta_row;
+            let col = best_col + delta_col;
+            let mv_cost = signed_cost_list_value(mvsad_err_cost_in_range(
+                row,
+                col,
+                fcenter_row,
+                fcenter_col,
+                params.sad_per_bit,
+                params.mv_costs,
+            ));
+            // Current VP9 block SAD and MV-rate domains cannot overflow i32.
+            // Saturation only preserves the libvpx INT_MAX sentinel if a
+            // future caller widens either domain.
+            cost_list[index + 1] = cost_list[index + 1].saturating_add(mv_cost);
+        }
+    }
+
+    (
+        FullPixelSearchResult {
+            best_mv_row: best_row,
+            best_mv_col: best_col,
+            best_sad,
+            iters_used: rounds,
+        },
+        cost_list,
+    )
+}
+
+fn fast_diamond_search_sad_impl<const WITH_COST_LIST: bool>(
+    params: &FullPixelSearchParams<'_>,
+) -> (FullPixelSearchResult, FullPixelCostList) {
     const DIRECTIONS: [(i16, i16); 4] = [(0, -1), (1, 0), (0, 1), (-1, 0)];
 
     let sad_fn = sad_for(params.block_size);
@@ -950,6 +1027,10 @@ pub fn fast_diamond_search_sad(params: &FullPixelSearchParams<'_>) -> FullPixelS
             params.mv_costs,
         ))
     });
+    let mut cost_list = [i32::MAX; 5];
+    if WITH_COST_LIST {
+        cost_list[0] = signed_cost_list_value(best_sad);
+    }
     let mut rounds = 0;
 
     let candidates = DIRECTIONS.map(|(delta_row, delta_col)| {
@@ -974,6 +1055,9 @@ pub fn fast_diamond_search_sad(params: &FullPixelSearchParams<'_>) -> FullPixelS
             &mvs,
         );
         for (index, raw_sad) in sads.into_iter().enumerate() {
+            if WITH_COST_LIST {
+                cost_list[index + 1] = raw_sad.map_or(i32::MAX, signed_cost_list_value);
+            }
             if let Some(raw_sad) = raw_sad
                 && raw_sad < best_sad
             {
@@ -999,7 +1083,7 @@ pub fn fast_diamond_search_sad(params: &FullPixelSearchParams<'_>) -> FullPixelS
             }
             let candidate_row = candidate_row as i16;
             let candidate_col = candidate_col as i16;
-            if let Some(raw_sad) = sad_at(
+            let raw_sad = sad_at(
                 params.block_size,
                 sad_fn,
                 params.src_plane,
@@ -1007,7 +1091,12 @@ pub fn fast_diamond_search_sad(params: &FullPixelSearchParams<'_>) -> FullPixelS
                 params.ref_plane,
                 candidate_row,
                 candidate_col,
-            ) && raw_sad < best_sad
+            );
+            if WITH_COST_LIST {
+                cost_list[index + 1] = raw_sad.map_or(i32::MAX, signed_cost_list_value);
+            }
+            if let Some(raw_sad) = raw_sad
+                && raw_sad < best_sad
             {
                 let augmented = raw_sad.saturating_add(mvsad_err_cost_in_range(
                     candidate_row,
@@ -1026,19 +1115,22 @@ pub fn fast_diamond_search_sad(params: &FullPixelSearchParams<'_>) -> FullPixelS
     }
 
     let Some(mut direction) = initial_direction else {
-        return FullPixelSearchResult {
-            best_mv_row: best_row,
-            best_mv_col: best_col,
-            best_sad,
-            iters_used: rounds,
-        };
+        return finish_fast_diamond_search::<WITH_COST_LIST>(
+            params, best_row, best_col, best_sad, rounds, cost_list,
+        );
     };
     let (delta_row, delta_col) = DIRECTIONS[direction];
     best_row += delta_row;
     best_col += delta_col;
     rounds += 1;
 
-    let mut evaluate = |indices: &[usize], row: i16, col: i16| {
+    let mut evaluate = |indices: &[usize], row: i16, col: i16, previous_direction: usize| {
+        if WITH_COST_LIST {
+            let previous_center = cost_list[0];
+            cost_list[1..].fill(i32::MAX);
+            cost_list[((previous_direction + 2) % 4) + 1] = previous_center;
+            cost_list[0] = signed_cost_list_value(best_sad);
+        }
         let mut best_direction = None;
         for &index in indices {
             let (delta_row, delta_col) = DIRECTIONS[index];
@@ -1049,7 +1141,7 @@ pub fn fast_diamond_search_sad(params: &FullPixelSearchParams<'_>) -> FullPixelS
             }
             let candidate_row = candidate_row as i16;
             let candidate_col = candidate_col as i16;
-            if let Some(raw_sad) = sad_at(
+            let raw_sad = sad_at(
                 params.block_size,
                 sad_fn,
                 params.src_plane,
@@ -1057,7 +1149,12 @@ pub fn fast_diamond_search_sad(params: &FullPixelSearchParams<'_>) -> FullPixelS
                 params.ref_plane,
                 candidate_row,
                 candidate_col,
-            ) && raw_sad < best_sad
+            );
+            if WITH_COST_LIST {
+                cost_list[index + 1] = raw_sad.map_or(i32::MAX, signed_cost_list_value);
+            }
+            if let Some(raw_sad) = raw_sad
+                && raw_sad < best_sad
             {
                 let augmented = raw_sad.saturating_add(mvsad_err_cost_in_range(
                     candidate_row,
@@ -1078,7 +1175,7 @@ pub fn fast_diamond_search_sad(params: &FullPixelSearchParams<'_>) -> FullPixelS
 
     loop {
         let adjacent = [(direction + 3) % 4, direction, (direction + 1) % 4];
-        let Some(next_direction) = evaluate(&adjacent, best_row, best_col) else {
+        let Some(next_direction) = evaluate(&adjacent, best_row, best_col, direction) else {
             break;
         };
         direction = next_direction;
@@ -1088,12 +1185,9 @@ pub fn fast_diamond_search_sad(params: &FullPixelSearchParams<'_>) -> FullPixelS
         rounds += 1;
     }
 
-    FullPixelSearchResult {
-        best_mv_row: best_row,
-        best_mv_col: best_col,
-        best_sad,
-        iters_used: rounds,
-    }
+    finish_fast_diamond_search::<WITH_COST_LIST>(
+        params, best_row, best_col, best_sad, rounds, cost_list,
+    )
 }
 
 #[cfg(test)]
@@ -1168,6 +1262,122 @@ mod tests {
         );
         let nstep = nstep_search_sad(&params);
         assert_eq!(nstep, nstep_seed, "num00 must skip redundant restarts");
+    }
+
+    #[test]
+    fn fast_diamond_cost_list_retains_libvpx_sad_domain_while_moving() {
+        let costs = build_nmv_cost_table(&DEFAULT_NMV_CONTEXT, true);
+        let plane_w = 64usize;
+        let plane_h = 64usize;
+        let ref_data: Vec<u8> = (0..plane_h)
+            .flat_map(|row| (0..plane_w).map(move |col| (row * 2 + col) as u8))
+            .collect();
+        let mut src_data = ref_data.clone();
+        let src_col = 24usize;
+        let src_row = 24usize;
+        let shift_row = 2i16;
+        let shift_col = 1i16;
+        for row in 0..16usize {
+            for col in 0..16usize {
+                let ref_row = (src_row as isize + isize::from(shift_row) + row as isize) as usize;
+                let ref_col = (src_col as isize + isize::from(shift_col) + col as isize) as usize;
+                src_data[(src_row + row) * plane_w + src_col + col] =
+                    ref_data[ref_row * plane_w + ref_col];
+            }
+        }
+        let src_plane = PlaneRef {
+            data: &src_data,
+            stride: plane_w,
+            width: plane_w,
+            height: plane_h,
+        };
+        let ref_plane = PlaneRef {
+            data: &ref_data,
+            stride: plane_w,
+            width: plane_w,
+            height: plane_h,
+        };
+        let cfg = init_dsmotion_compensation(plane_w as i32);
+        let params = FullPixelSearchParams {
+            block_size: BlockSize::Block16x16,
+            src_plane: &src_plane,
+            src_offset: (src_col, src_row),
+            ref_plane: &ref_plane,
+            center_mv: Mv::ZERO,
+            start_mv: None,
+            mv_limits: MvLimits::new(-16, 16, -16, 16),
+            sad_per_bit: 19,
+            mv_costs: &costs,
+            max_iters: cfg.total_steps as i32,
+            site_config: &cfg,
+        };
+        let (result, actual) = fast_diamond_search_sad_with_cost_list(&params);
+        assert_eq!(result, fast_diamond_search_sad(&params));
+        assert_eq!(
+            (result.best_mv_row, result.best_mv_col),
+            (shift_row, shift_col)
+        );
+        let positions = [
+            (shift_row, shift_col),
+            (shift_row, shift_col - 1),
+            (shift_row + 1, shift_col),
+            (shift_row, shift_col + 1),
+            (shift_row - 1, shift_col),
+        ];
+        for (index, &(row, col)) in positions.iter().enumerate() {
+            let raw_sad = raw_sad_at_mv(
+                params.block_size,
+                params.src_plane,
+                params.src_offset,
+                params.ref_plane,
+                row,
+                col,
+            )
+            .unwrap();
+            let mv_cost = mvsad_err_cost(row, col, 0, 0, params.sad_per_bit, &costs);
+            let retained_center_cost = if index == 1 { mv_cost } else { 0 };
+            assert_eq!(
+                actual[index],
+                (raw_sad + mv_cost + retained_center_cost) as i32,
+                "cost_list[{index}]"
+            );
+        }
+        assert_eq!(actual[0], result.best_sad as i32);
+    }
+
+    #[test]
+    fn fast_diamond_cost_list_uses_signed_sentinels_at_mv_edges() {
+        let costs = build_nmv_cost_table(&DEFAULT_NMV_CONTEXT, true);
+        let plane_w = 64usize;
+        let data = make_plane(plane_w, plane_w, 41);
+        let plane = PlaneRef {
+            data: &data,
+            stride: plane_w,
+            width: plane_w,
+            height: plane_w,
+        };
+        let cfg = init_dsmotion_compensation(plane_w as i32);
+        let params = FullPixelSearchParams {
+            block_size: BlockSize::Block16x16,
+            src_plane: &plane,
+            src_offset: (24, 24),
+            ref_plane: &plane,
+            center_mv: Mv::ZERO,
+            start_mv: None,
+            mv_limits: MvLimits::new(0, 16, 0, 16),
+            sad_per_bit: 19,
+            mv_costs: &costs,
+            max_iters: cfg.total_steps as i32,
+            site_config: &cfg,
+        };
+        let (result, actual) = fast_diamond_search_sad_with_cost_list(&params);
+        assert_eq!(result, fast_diamond_search_sad(&params));
+        assert_eq!((result.best_mv_row, result.best_mv_col), (0, 0));
+        assert_eq!(actual[0], result.best_sad as i32);
+        assert_eq!(actual[1], i32::MAX, "left neighbor is outside col_min");
+        assert_eq!(actual[4], i32::MAX, "top neighbor is outside row_min");
+        assert_ne!(actual[2], i32::MAX);
+        assert_ne!(actual[3], i32::MAX);
     }
 
     #[test]

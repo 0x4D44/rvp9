@@ -117,12 +117,14 @@ use crate::mode_decision::model_rd::{
 use crate::mode_decision::rd_cost;
 use crate::mode_info::{InterMode, Mv, RefFrame};
 use crate::mv_search::full_pixel::{
-    FullPixelSearchParams, PlaneRef, fast_diamond_search_sad, nstep_search_sad,
+    FullPixelSearchParams, PlaneRef, fast_diamond_search_sad,
+    fast_diamond_search_sad_with_cost_list, nstep_search_sad,
 };
 use crate::mv_search::mv_limits::MvLimits;
 use crate::mv_search::search_site::SearchSiteConfig;
 use crate::mv_search::sub_pixel::{
     SubPixelForcedStop, SubPixelSearchParams, find_best_sub_pixel_tree,
+    find_best_sub_pixel_tree_pruned_evenmore,
 };
 use crate::quant::forward::{
     PlaneQuantizers, vp9_quantize_b_32x32_with_order, vp9_quantize_b_with_order,
@@ -3271,6 +3273,14 @@ struct NewMvSubpelGate {
     best_rd_so_far: i64,
 }
 
+#[inline]
+fn use_svc_pruned_evenmore_subpel(
+    svc_non_reference_frame: bool,
+    full_pixel_search_method: FullPixelSearchMethod,
+) -> bool {
+    svc_non_reference_frame && full_pixel_search_method == FullPixelSearchMethod::FastDiamond
+}
+
 fn newmv_fullpel_syntax_rd_cost(
     params: &InterModeSearchParams<'_>,
     fullpel_mv: Mv,
@@ -3389,10 +3399,18 @@ fn run_newmv_search(
         params.full_pixel_search_method,
         FullPixelSearchMethod::FastDiamond
     ));
-    let full = if use_fast_diamond {
-        fast_diamond_search_sad(&full_params)
+    let use_pruned_evenmore = use_fast_diamond
+        && use_svc_pruned_evenmore_subpel(
+            params.svc_non_reference_frame,
+            params.full_pixel_search_method,
+        );
+    let (full, fast_cost_list) = if use_fast_diamond && use_pruned_evenmore {
+        let (full, cost_list) = fast_diamond_search_sad_with_cost_list(&full_params);
+        (full, Some(cost_list))
+    } else if use_fast_diamond {
+        (fast_diamond_search_sad(&full_params), None)
     } else {
-        nstep_search_sad(&full_params)
+        (nstep_search_sad(&full_params), None)
     };
     let center_mv_fp = Mv {
         row: full.best_mv_row,
@@ -3482,7 +3500,7 @@ fn run_newmv_search(
     let iters_per_step = rt_newmv_subpel_iters_override()
         .map(|v| v.min(2))
         .unwrap_or(RT_NEWMV_SUBPEL_SEARCH_LEVEL);
-    let sub = find_best_sub_pixel_tree(&SubPixelSearchParams {
+    let sub_params = SubPixelSearchParams {
         block_size: params.block_size,
         src_plane: params.src_plane,
         src_offset: params.src_offset,
@@ -3498,7 +3516,16 @@ fn run_newmv_search(
         // skips the tree-extension checks after each level's cardinal and
         // diagonal probes.
         iters_per_step,
-    });
+    };
+    // Pinned libvpx selects SUBPEL_TREE_PRUNED_EVENMORE only at speed 7+
+    // for non-reference SVC enhancement pictures. In the scoped realtime
+    // presets those pictures use FAST_DIAMOND; CPU6 uses NSTEP and retains
+    // the ordinary full sub-pixel tree.
+    let sub = if use_pruned_evenmore {
+        find_best_sub_pixel_tree_pruned_evenmore(&sub_params, fast_cost_list.as_ref())
+    } else {
+        find_best_sub_pixel_tree(&sub_params)
+    };
     NewMvSearchResult {
         best_mv: sub.best_mv,
         subpel_gate_rejected,
@@ -5697,6 +5724,22 @@ mod tests {
             run_newmv_search(&params, None, None),
             run_newmv_search(&params, Some(pred_seed), None),
         );
+    }
+
+    #[test]
+    fn pruned_evenmore_subpel_is_cpu7_8_non_reference_svc_only() {
+        assert!(use_svc_pruned_evenmore_subpel(
+            true,
+            FullPixelSearchMethod::FastDiamond,
+        ));
+        assert!(!use_svc_pruned_evenmore_subpel(
+            false,
+            FullPixelSearchMethod::FastDiamond,
+        ));
+        assert!(!use_svc_pruned_evenmore_subpel(
+            true,
+            FullPixelSearchMethod::Nstep,
+        ));
     }
 
     #[test]

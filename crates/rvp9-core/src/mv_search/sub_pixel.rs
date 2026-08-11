@@ -1,15 +1,14 @@
 //! Sub-pixel MV refinement.
 //!
-//! Ports `vp9_find_best_sub_pixel_tree` and
-//! `vp9_find_best_sub_pixel_tree_pruned_more` from `vp9_mcomp.c`.
+//! Ports `vp9_find_best_sub_pixel_tree`,
+//! `vp9_find_best_sub_pixel_tree_pruned_more`, and
+//! `vp9_find_best_sub_pixel_tree_pruned_evenmore` from `vp9_mcomp.c`.
 //! Non-SVC realtime encoding uses the full tree at cpu-used 6-8; selected
 //! SVC enhancement layers can use the pruned variants.
 //!
-//! The libvpx function has a parabolic-fit short-circuit when the
-//! caller supplies a well-behaved 5-entry `cost_list` (produced by
-//! `calc_int_cost_list`); F7.0 omits that short-circuit (equivalent
-//! to libvpx running with `cost_list == NULL`) and always walks the
-//! `FIRST_LEVEL_CHECKS` half-pel / quarter-pel / eighth-pel pyramid.
+//! The pruned-evenmore path uses a parabolic-fit short-circuit when the caller
+//! supplies the full-pixel method's well-behaved 5-entry `cost_list`. CPU7/8
+//! `FAST_DIAMOND` produces that surface in the SAD domain.
 //!
 //! ## Search pyramid
 //!
@@ -39,7 +38,7 @@ use crate::block::BlockSize;
 use crate::cost::mv_cost::MvCosts;
 use crate::inter::mv::use_mv_hp;
 use crate::mode_info::Mv;
-use crate::mv_search::full_pixel::{PlaneRef, mv_err_cost};
+use crate::mv_search::full_pixel::{FullPixelCostList, PlaneRef, mv_err_cost};
 use crate::mv_search::mv_limits::{MvLimits, set_subpel_mv_search_range};
 
 /// Sub-pel-only kernel signature: `(src, src_stride, xoffset,
@@ -402,6 +401,148 @@ pub fn find_best_sub_pixel_tree_pruned_more(
             &mut besterr,
             hstep,
             iters_per_step,
+            params,
+            svf,
+            bw,
+            bh,
+            &subpel_limits,
+        );
+    }
+
+    SubPixelSearchResult {
+        best_mv: Mv {
+            row: br as i16,
+            col: bc as i16,
+        },
+        best_distortion: besterr,
+    }
+}
+
+#[inline]
+fn divide_and_round(numerator: i64, denominator: i64) -> i64 {
+    debug_assert_ne!(denominator, 0);
+    if (numerator < 0) ^ (denominator < 0) {
+        (numerator - denominator / 2) / denominator
+    } else {
+        (numerator + denominator / 2) / denominator
+    }
+}
+
+#[inline]
+fn cost_surface_min(cost_list: &FullPixelCostList, bits: u32) -> (i32, i32) {
+    let center = i64::from(cost_list[0]);
+    let left = i64::from(cost_list[1]);
+    let bottom = i64::from(cost_list[2]);
+    let right = i64::from(cost_list[3]);
+    let top = i64::from(cost_list[4]);
+    let x_numerator = left - right;
+    let x_denominator = left - 2 * center + right;
+    let y_numerator = top - bottom;
+    let y_denominator = top - 2 * center + bottom;
+    let scale = 1i64 << (bits - 1);
+    (
+        divide_and_round(y_numerator * scale, y_denominator) as i32,
+        divide_and_round(x_numerator * scale, x_denominator) as i32,
+    )
+}
+
+#[inline]
+fn cost_list_is_well_behaved(cost_list: &FullPixelCostList) -> bool {
+    cost_list[0] < cost_list[1]
+        && cost_list[0] < cost_list[2]
+        && cost_list[0] < cost_list[3]
+        && cost_list[0] < cost_list[4]
+}
+
+/// Pinned libvpx's `vp9_find_best_sub_pixel_tree_pruned_evenmore`.
+///
+/// A well-behaved integer-pel cost surface predicts one quarter-pel candidate
+/// directly. Missing or non-convex surfaces fall back to the ordinary
+/// pruned-more half/quarter tree. A missing list is equivalent to libvpx's
+/// `cost_list == NULL` fallback.
+#[must_use]
+pub fn find_best_sub_pixel_tree_pruned_evenmore(
+    params: &SubPixelSearchParams<'_>,
+    cost_list: Option<&FullPixelCostList>,
+) -> SubPixelSearchResult {
+    let Some(cost_list) = cost_list else {
+        return find_best_sub_pixel_tree_pruned_more(params);
+    };
+    if !cost_list_is_well_behaved(cost_list) {
+        return find_best_sub_pixel_tree_pruned_more(params);
+    }
+
+    let Some(svf) = svf_for(params.block_size) else {
+        debug_assert!(
+            false,
+            "sub_pixel_variance not ported for {:?}",
+            params.block_size
+        );
+        return SubPixelSearchResult {
+            best_mv: Mv {
+                row: params.center_mv.row * 8,
+                col: params.center_mv.col * 8,
+            },
+            best_distortion: 0,
+        };
+    };
+    let bw = usize::from(params.block_size.width());
+    let bh = usize::from(params.block_size.height());
+    let mut subpel_limits = MvLimits::default();
+    set_subpel_mv_search_range(
+        &mut subpel_limits,
+        &params.mv_limits,
+        params.ref_mv.row,
+        params.ref_mv.col,
+    );
+
+    let mut br = i32::from(params.center_mv.row) * 8;
+    let mut bc = i32::from(params.center_mv.col) * 8;
+    let mut besterr = try_subpel(
+        br,
+        bc,
+        params.src_plane,
+        params.src_offset,
+        params.ref_plane,
+        svf,
+        bw,
+        bh,
+        &subpel_limits,
+        params.ref_mv,
+        params.error_per_bit,
+        params.mv_costs,
+    );
+
+    let (row_offset, col_offset) = cost_surface_min(cost_list, 2);
+    if row_offset != 0 || col_offset != 0 {
+        let center_row = br;
+        let center_col = bc;
+        let _ = check(
+            center_row + 2 * row_offset,
+            center_col + 2 * col_offset,
+            &mut br,
+            &mut bc,
+            &mut besterr,
+            params,
+            svf,
+            bw,
+            bh,
+            &subpel_limits,
+        );
+    }
+
+    if params.forced_stop == SubPixelForcedStop::EighthPel
+        && params.allow_hp
+        && use_mv_hp(params.ref_mv)
+    {
+        pyramid_level(
+            &mut br,
+            &mut bc,
+            &mut besterr,
+            // The valid-surface branch leaves libvpx's hstep at four before
+            // this final `hstep >>= 1`, so the continuation step is two.
+            2,
+            params.iters_per_step,
             params,
             svf,
             bw,
@@ -1102,6 +1243,169 @@ mod tests {
                 r.best_mv.col
             );
         }
+    }
+
+    #[test]
+    fn pruned_evenmore_surface_fit_matches_libvpx_rounding_and_validity() {
+        assert_eq!(cost_surface_min(&[100, 103, 180, 105, 180], 2), (0, -1));
+        assert_eq!(cost_surface_min(&[100, 180, 103, 180, 105], 2), (1, 0));
+        assert!(!cost_list_is_well_behaved(&[100, 100, 140, 180, 160]));
+        let edge_surface = [100, i32::MAX, 140, 180, 160];
+        assert!(cost_list_is_well_behaved(&edge_surface));
+        assert_eq!(cost_surface_min(&edge_surface, 2), (0, 2));
+    }
+
+    #[test]
+    fn pruned_evenmore_valid_surface_continues_at_quarter_pel_step() {
+        let costs = build_nmv_cost_table(&DEFAULT_NMV_CONTEXT, true);
+        let pw = 64usize;
+        let ph = 64usize;
+        let ref_data = make_plane(pw, ph, 73);
+        let mut src_data = ref_data.clone();
+        let src_col = 24usize;
+        let src_row = 24usize;
+        for row in 0..8usize {
+            for col in 0..8usize {
+                let left = u16::from(ref_data[(src_row + row) * pw + src_col + col]);
+                let right = u16::from(ref_data[(src_row + row) * pw + src_col + col + 1]);
+                src_data[(src_row + row) * pw + src_col + col] = ((left + right + 1) >> 1) as u8;
+            }
+        }
+        let src_plane = PlaneRef {
+            data: &src_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let ref_plane = PlaneRef {
+            data: &ref_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let params = SubPixelSearchParams {
+            block_size: BlockSize::Block8x8,
+            src_plane: &src_plane,
+            src_offset: (src_col, src_row),
+            ref_plane: &ref_plane,
+            center_mv: Mv::ZERO,
+            ref_mv: Mv::ZERO,
+            mv_limits: MvLimits::new(-16, 16, -16, 16),
+            error_per_bit: 0,
+            mv_costs: &costs,
+            allow_hp: true,
+            forced_stop: SubPixelForcedStop::EighthPel,
+            iters_per_step: 0,
+        };
+        let surface = [100, 105, 180, 103, 180];
+        assert_eq!(cost_surface_min(&surface, 2), (0, 1));
+        assert_eq!(
+            find_best_sub_pixel_tree_pruned_evenmore(&params, Some(&surface)).best_mv,
+            Mv { row: 0, col: 4 }
+        );
+    }
+
+    #[test]
+    fn pruned_evenmore_uses_only_the_fitted_quarter_candidate() {
+        let costs = build_nmv_cost_table(&DEFAULT_NMV_CONTEXT, true);
+        let pw = 64usize;
+        let ph = 64usize;
+        let ref_data = make_plane(pw, ph, 11);
+        let mut src_data = ref_data.clone();
+        let src_col = 24usize;
+        let src_row = 24usize;
+        for row in 0..8usize {
+            for col in 0..8usize {
+                let left = i32::from(ref_data[(src_row + row) * pw + src_col + col]);
+                let right = i32::from(ref_data[(src_row + row) * pw + src_col + col + 1]);
+                src_data[(src_row + row) * pw + src_col + col] =
+                    ((left * 96 + right * 32 + 64) >> 7) as u8;
+            }
+        }
+        let src_plane = PlaneRef {
+            data: &src_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let ref_plane = PlaneRef {
+            data: &ref_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let params = SubPixelSearchParams {
+            block_size: BlockSize::Block8x8,
+            src_plane: &src_plane,
+            src_offset: (src_col, src_row),
+            ref_plane: &ref_plane,
+            center_mv: Mv::ZERO,
+            ref_mv: Mv::ZERO,
+            mv_limits: MvLimits::new(-16, 16, -16, 16),
+            error_per_bit: 0,
+            mv_costs: &costs,
+            allow_hp: false,
+            forced_stop: SubPixelForcedStop::QuarterPel,
+            iters_per_step: 0,
+        };
+
+        let normal = find_best_sub_pixel_tree_pruned_more(&params);
+        assert_eq!(normal.best_mv, Mv { row: 0, col: 2 });
+
+        // This valid convex surface predicts col=-2 even though the sampled
+        // image has its exact minimum at col=+2. Libvpx's evenmore path checks
+        // only the fitted point, finds it worse than center, and stops at zero.
+        let misleading_surface = [10, 12, 20, 20, 20];
+        assert_eq!(cost_surface_min(&misleading_surface, 2), (0, -1));
+        let pruned = find_best_sub_pixel_tree_pruned_evenmore(&params, Some(&misleading_surface));
+        assert_eq!(pruned.best_mv, Mv::ZERO);
+        assert!(normal.best_distortion < pruned.best_distortion);
+    }
+
+    #[test]
+    fn pruned_evenmore_nonconvex_or_missing_surface_falls_back_to_pruned_more() {
+        let costs = build_nmv_cost_table(&DEFAULT_NMV_CONTEXT, true);
+        let pw = 64usize;
+        let ph = 64usize;
+        let ref_data = make_plane(pw, ph, 29);
+        let src_data = make_plane(pw, ph, 47);
+        let src_plane = PlaneRef {
+            data: &src_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let ref_plane = PlaneRef {
+            data: &ref_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let params = SubPixelSearchParams {
+            block_size: BlockSize::Block16x16,
+            src_plane: &src_plane,
+            src_offset: (24, 24),
+            ref_plane: &ref_plane,
+            center_mv: Mv { row: 1, col: -2 },
+            ref_mv: Mv { row: 7, col: -5 },
+            mv_limits: MvLimits::new(-16, 16, -16, 16),
+            error_per_bit: 91,
+            mv_costs: &costs,
+            allow_hp: true,
+            forced_stop: SubPixelForcedStop::EighthPel,
+            iters_per_step: 2,
+        };
+        let expected = find_best_sub_pixel_tree_pruned_more(&params);
+        for invalid in [[i32::MAX, 11, 12, 13, 14], [10, 10, 12, 13, 14]] {
+            assert_eq!(
+                find_best_sub_pixel_tree_pruned_evenmore(&params, Some(&invalid)),
+                expected
+            );
+        }
+        assert_eq!(
+            find_best_sub_pixel_tree_pruned_evenmore(&params, None),
+            expected
+        );
     }
 
     #[test]
