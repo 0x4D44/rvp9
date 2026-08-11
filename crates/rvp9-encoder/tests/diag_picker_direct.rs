@@ -101,6 +101,7 @@ fn picker_finds_motion_on_shifted_block() {
         allow_hp: false,
         frame_kind,
         newmv_seed: None,
+        svc_non_reference_frame: false,
         ref_frame_rate_cost: 0,
         switchable_interp_costs: &sic,
         switchable_interp_ctx: 3,

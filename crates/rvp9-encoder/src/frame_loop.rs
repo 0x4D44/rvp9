@@ -3311,6 +3311,12 @@ impl StreamEncoder {
             && self.config.speed.unsigned_abs() >= 7;
         let source_aligned_cpu8_svc_partitions =
             source_aligned_cpu8_svc_partitions_enabled(&self.config, self.svc_frame.is_some());
+        // libvpx recomputes `svc.non_reference_frame` after applying the
+        // temporal pattern: an inter picture is non-reference exactly when no
+        // LAST/GOLDEN/ALTREF slot refreshes (`vp9_svc_layercontext.c:963-966`).
+        let svc_non_reference_frame = self
+            .svc_frame
+            .is_some_and(|decision| decision.refresh_frame_flags == 0);
         let partition_ref_y =
             if self.denoiser.is_some() && last_ref_map_idx == crate::buffer_pool::LAST_REF {
                 self.me_ref_y.as_slice()
@@ -3586,6 +3592,7 @@ impl StreamEncoder {
                     force_disable_golden_ref,
                     force_nstep_motion_search,
                     source_aligned_cpu8_svc_partitions,
+                    svc_non_reference_frame,
                     chessboard_index,
                     speed,
                     deadline,
@@ -4561,6 +4568,7 @@ impl StreamEncoder {
             &arf_mv_costs,
             &mut arf_rd_thresh,
             self.frames_since_golden_refresh,
+            false,
             false,
             false,
             false,
@@ -9296,6 +9304,7 @@ mod tests {
                 interp_filter: InterpFilter::EightTap,
             },
             newmv_seed: None,
+            svc_non_reference_frame: false,
             ref_frame_rate_cost: 0,
             switchable_interp_costs: &sic,
             switchable_interp_ctx: 3,

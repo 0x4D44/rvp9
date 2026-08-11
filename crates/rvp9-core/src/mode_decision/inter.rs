@@ -746,6 +746,10 @@ pub struct InterModeSearchParams<'a> {
     /// When `None`, falls back to seeding at
     /// `mv_candidates.nearest` (the pre-A3' behaviour).
     pub newmv_seed: Option<Mv>,
+    /// Whether the current temporal-SVC picture refreshes no reference slot.
+    /// Pinned libvpx skips fractional NEWMV refinement on these pictures when
+    /// the full-pel search lands at zero motion (`vp9_pickmode.c:230-233`).
+    pub svc_non_reference_frame: bool,
     /// Ref-frame rate cost in `vp9_prob_cost` units (1/512-bit). Added
     /// to every candidate's `rate` so the dual-ref `argmin(pick_last,
     /// pick_golden)` selector at the caller can compare RDs that
@@ -1077,6 +1081,9 @@ pub struct PickInterModeParams<'a> {
     pub frame_kind: FrameKind,
     /// SB-level NEWMV diamond-search seed.
     pub newmv_seed: Option<Mv>,
+    /// Whether the current temporal-SVC picture refreshes no reference slot.
+    /// See [`InterModeSearchParams::svc_non_reference_frame`].
+    pub svc_non_reference_frame: bool,
     /// Ref-frame rate cost for LAST in `vp9_prob_cost` units.
     pub ref_frame_cost_last: u32,
     /// Ref-frame rate cost for GOLDEN in `vp9_prob_cost` units.
@@ -2271,6 +2278,7 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
                             allow_hp: params.allow_hp,
                             frame_kind: params.frame_kind,
                             newmv_seed: params.newmv_seed,
+                            svc_non_reference_frame: params.svc_non_reference_frame,
                             ref_frame_rate_cost,
                             switchable_interp_costs: params.switchable_interp_costs,
                             switchable_interp_ctx: params.switchable_interp_ctx,
@@ -2412,6 +2420,7 @@ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult 
                 allow_hp: params.allow_hp,
                 frame_kind: params.frame_kind,
                 newmv_seed: params.newmv_seed,
+                svc_non_reference_frame: params.svc_non_reference_frame,
                 ref_frame_rate_cost,
                 switchable_interp_costs: params.switchable_interp_costs,
                 switchable_interp_ctx: params.switchable_interp_ctx,
@@ -3021,6 +3030,7 @@ fn evaluate_intra_fallback_with_scratch(
                     allow_hp: params.allow_hp,
                     frame_kind: params.frame_kind,
                     newmv_seed: params.newmv_seed,
+                    svc_non_reference_frame: params.svc_non_reference_frame,
                     ref_frame_rate_cost: 0,
                     switchable_interp_costs: params.switchable_interp_costs,
                     switchable_interp_ctx: params.switchable_interp_ctx,
@@ -3434,6 +3444,19 @@ fn run_newmv_search(
             params.newmv_seed.is_some(),
             mv_mag,
         );
+    }
+
+    // Pinned libvpx avoids fractional refinement when temporal SVC marks the
+    // picture as non-reference and the full-pel result is zero motion
+    // (`vp9_pickmode.c:230-233`). These pictures refresh no reference slot, so
+    // the extra fractional search cannot improve any later picture's motion
+    // predictor. Keep reference pictures and non-zero full-pel results on the
+    // ordinary realtime search path.
+    if params.svc_non_reference_frame && fullpel_mv == Mv::ZERO {
+        return NewMvSearchResult {
+            best_mv: fullpel_mv,
+            subpel_gate_rejected,
+        };
     }
 
     // Realtime speed 4+ sets `sf.mv.subpel_force_stop = QUARTER_PEL`.
@@ -5530,6 +5553,7 @@ mod tests {
             allow_hp: false,
             frame_kind: synthetic_inter_frame_kind(),
             newmv_seed: None,
+            svc_non_reference_frame: false,
             ref_frame_rate_cost: 0,
             switchable_interp_costs: &harness.sic,
             switchable_interp_ctx: 3, // no-neighbour sentinel
@@ -5656,6 +5680,73 @@ mod tests {
         assert_eq!(
             run_newmv_search(&params, None, None),
             run_newmv_search(&params, Some(pred_seed), None),
+        );
+    }
+
+    #[test]
+    fn svc_non_reference_zero_fullpel_skips_fractional_newmv_refinement() {
+        let pw = 96;
+        let ph = 96;
+        let ref_data = make_plane(pw, ph, 0x0212);
+        let ref_plane = PlaneRef {
+            data: &ref_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let src_offset = (32, 32);
+        let mut fractional = [0u8; 64 * 64];
+        build_inter_prediction(
+            crate::dsp::get_ref(),
+            &ref_plane,
+            src_offset.0,
+            src_offset.1,
+            Mv { row: 0, col: 2 },
+            16,
+            16,
+            &mut fractional,
+            16,
+            InterpFilter::EightTap,
+        );
+        let mut src_data = ref_data.clone();
+        for row in 0..16 {
+            let dst = (src_offset.1 + row) * pw + src_offset.0;
+            src_data[dst..dst + 16].copy_from_slice(&fractional[row * 16..row * 16 + 16]);
+        }
+        let src_plane = PlaneRef {
+            data: &src_data,
+            stride: pw,
+            width: pw,
+            height: ph,
+        };
+        let harness = TestHarness::new(pw, 80);
+        let mvc = MvCandidates::default();
+        let mut params = make_params(
+            &harness,
+            BlockSize::Block16x16,
+            &src_plane,
+            &ref_plane,
+            src_offset,
+            &mvc,
+            MvLimits::new(-16, 16, -16, 16),
+            80,
+        );
+
+        let reference_picture = run_newmv_search(&params, None, None);
+        assert_ne!(reference_picture.best_mv, Mv::ZERO);
+        assert!(
+            reference_picture.best_mv.row.abs() < 8 && reference_picture.best_mv.col.abs() < 8,
+            "the full-pel result must be zero before fractional refinement: {:?}",
+            reference_picture.best_mv,
+        );
+
+        params.svc_non_reference_frame = true;
+        assert_eq!(
+            run_newmv_search(&params, None, None),
+            NewMvSearchResult {
+                best_mv: Mv::ZERO,
+                subpel_gate_rejected: false,
+            },
         );
     }
 
@@ -6870,6 +6961,7 @@ mod tests {
             allow_hp: false,
             frame_kind: synthetic_inter_frame_kind(),
             newmv_seed: None,
+            svc_non_reference_frame: false,
             ref_frame_rate_cost: 0,
             switchable_interp_costs: &harness.sic,
             switchable_interp_ctx: 3,
@@ -7377,6 +7469,7 @@ mod tests {
             allow_hp: false,
             frame_kind: synthetic_inter_frame_kind(),
             newmv_seed: None,
+            svc_non_reference_frame: false,
             ref_frame_cost_last: 0,
             ref_frame_cost_golden: 0,
             last_nearest_in_bounds: true,

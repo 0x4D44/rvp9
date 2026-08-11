@@ -5810,6 +5810,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // inputs on every temporal layer: coding Q without rvp9's single-layer
     // calibration and zero-MV LAST prediction on ordinary-resolution blocks.
     source_aligned_cpu8_svc_partitions: bool,
+    // Pinned libvpx marks temporal-SVC pictures that refresh no reference
+    // slot as non-reference frames. Their zero-fullpel NEWMV searches skip
+    // fractional refinement (`vp9_pickmode.c:230-233`).
+    svc_non_reference_frame: bool,
     // §11 — libvpx `get_chessboard_index(cm->current_video_frame) =
     // current_video_frame & 1` (`vp9_common.h:88-90`). Feeds the
     // `cb_pred_filter_search` chessboard predicate at
@@ -7413,6 +7417,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         allow_hp,
                         frame_kind,
                         newmv_seed: sb_newmv_seed,
+                        svc_non_reference_frame,
                         ref_frame_cost_last,
                         ref_frame_cost_golden,
                         last_nearest_in_bounds: mv_in_bounds(descent_mvc.nearest),
@@ -8718,6 +8723,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     allow_hp,
                     frame_kind,
                     newmv_seed: sb_newmv_seed,
+                    svc_non_reference_frame,
                     ref_frame_cost_last,
                     ref_frame_cost_golden,
                     last_nearest_in_bounds: mv_in_bounds(mvc.nearest),
@@ -9143,6 +9149,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                     allow_hp,
                                     frame_kind,
                                     newmv_seed: sb_newmv_seed,
+                                    svc_non_reference_frame,
                                     ref_frame_rate_cost: ref_frame_cost_last,
                                     switchable_interp_costs: &sic,
                                     switchable_interp_ctx,
@@ -9207,6 +9214,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             allow_hp,
                             frame_kind,
                             newmv_seed: sb_newmv_seed,
+                            svc_non_reference_frame,
                             ref_frame_rate_cost: ref_frame_cost_last,
                             switchable_interp_costs: &sic,
                             switchable_interp_ctx,
