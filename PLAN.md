@@ -687,7 +687,13 @@ two reversed 15-pair rotations per row measures a `1.146317x` 720p geomean and
 `0.927699x/0.982764x`, but CPU7/8 T3 remain red at
 `1.107755x/1.144761x`; 720p is red across every row. All measured whole-clip
 times remain below 14 ms/frame, comfortably inside the median real-time
-budgets, but per-frame p99 and the final quiet-host corpus matrix remain open.
+budgets. A source-faithful CPU7 candidate now applies libvpx's simple
+large-block YRD model to every enhancement picture. Complete T2/T3 VBR and
+CBR curves remain green, while two reversed plain-release rotations improve
+T2 by about 1.5% and T3 by about 3.5%. CPU8 retains its reference-only Q-index
+140 boundary because the literal policy regresses TL2 to `+1.3884%`. The CPU7
+candidate's production-PGO qualification, per-frame p99, and the final
+quiet-host corpus matrix remain open.
 
 **Estimated effort:** 4–6 weeks.
 

@@ -75,10 +75,10 @@ absolute 720p30 budget.
 **Future plan:** retained after the PGO gain reproduced. Recover the remaining
 temporal-SVC cost from the measured inter-frame picker and NEWMV hotspots.
 
-### 2026-08-11 — Bound simple large-block RD to high-quality SVC references
+### 2026-08-11 — Match CPU7 and bound CPU8 simple large-block SVC RD
 
-**Where:** `rvp9_encoder::svc_enhancement_model_only_large_enabled`,
-`rvp9_encoder::SVC_MODEL_ONLY_LARGE_QMAX`, and
+**Where:** `rvp9_encoder::svc_enhancement_model_only_large_qmax`,
+`rvp9_encoder::SVC_CPU8_MODEL_ONLY_LARGE_QMAX`, and
 `rvp9_core::mode_decision::inter::InterRdCalibration`; libvpx counterparts:
 `vp9/encoder/vp9_pickmode.c:797-808` and
 `vp9/encoder/vp9_speed_features.c:699-715,790-792`.
@@ -87,42 +87,45 @@ temporal-SVC cost from the measured inter-frame picker and NEWMV hotspots.
 returns the luma model instead of the Hadamard/quantized result for every
 large block on every temporal-SVC enhancement picture.
 
-**What rvp9 does:** CPU7/8 realtime uses the same model-only large-block
-ranking on reference-carrying temporal enhancements at Q index 140 or below.
-Base-layer, non-reference enhancement, coarser-Q, CPU6, and non-realtime
-pictures retain the real large-block Hadamard path. Final winner emission is
-unchanged.
+**What rvp9 does:** CPU7 realtime now matches that policy on every temporal
+enhancement picture. CPU8 realtime uses model-only large-block ranking only
+on reference-carrying enhancements at Q index 140 or below. Base-layer,
+CPU6, non-realtime, and the excluded CPU8 pictures retain the real large-block
+Hadamard path. Final winner emission is unchanged.
 
-**Why:** the integrated CPU8/T3 profile attributes 2,479 self samples, about
-6% of the whole encode, to candidate round-trip reconstruction. The literal
-libvpx policy failed the final TL2 quality gate at `+1.3884%`. Keeping exact
-ranking on non-reference pictures reduced that to `+0.6791%`; a Q-index 150
-boundary was still `+0.5822%`. The round Q-index 140 boundary confines the
-approximation to higher-quality reference pictures and passes all three
-layer gates while retaining a reproducible speed gain.
+**Why:** exact counters on CPU7/T3 attribute 56,741 large-block calls and
+1,042,156 8x8 transform tiles to non-reference enhancements alone. Every
+entry requests distortion without reconstruction, so the avoided work is the
+Hadamard/quantizer metric rather than a duplicate DCT/IDCT. CPU7's complete
+T2/T3 curves make the literal policy safe. CPU8 does not: the literal policy
+fails TL2 at `+1.3884%`. Keeping exact ranking on CPU8 non-reference pictures
+reduced that to `+0.6791%`; a Q-index 150 boundary was still `+0.5822%`. The
+round Q-index 140 boundary passes all three CPU8 layer gates.
 
-**Byte-parity impact:** intentional on the affected enhancement pictures.
-The exercised CPU8/T3/VBR 1,500-kbps stream has SHA-256
-`788daa0cd5a1289b377453e3c0aac3531e3d7de8996dce9a99040ec653e3c866`.
-Rvp9-decoder, pinned vpxdec, and ffmpeg each emit the same 82,944,000 I420
-bytes at SHA-256
-`e6d9c1a3747ae348f6b832b68310b813674fa016497a48c86cfb959132cee442`.
+**Byte-parity impact:** intentional on CPU7 enhancement pictures. The
+exercised 1,500-kbps CPU7 VBR T2/T3 streams have SHA-256
+`b9116b44...b502` and `844b0bbe...01ab6`; CBR T2/T3 are
+`1cc569c3...ad0c` and `fb5b0338...9639`. The narrowed binary reproduces the
+curve streams exactly. All 84 full and retained-layer CPU7 curve streams
+decode byte-exactly through rvp9-decoder, pinned vpxdec, and ffmpeg. CPU8
+remains byte-identical to the accepted Q140 policy at `788daa0c...3c866`.
 
-**Compression-efficiency impact:** the complete six-point TL0/TL1/TL2 PSNR
-BD-rates versus pinned vpxenc are `+0.0142%/+0.2752%/+0.4590%`. Every layer
-passes the final `+0.5%` gate.
+**Compression-efficiency impact:** CPU7 T2 VBR TL0/TL1 is
+`-1.1003%/-2.2022%`; T3 VBR is `-0.3278%/-0.7910%/+0.1842%`. T2 CBR is
+`-34.8616%/-31.1023%`; T3 CBR is
+`-42.2729%/-43.4048%/-41.4014%`. Every layer passes the final `+0.5%` gate.
+The retained CPU8 policy remains `+0.0142%/+0.2752%/+0.4590%`.
 
-**Speed impact:** two reversed fifteen-pair plain-release rotations against
-exact integrated Unit 1114 measure paired-median ratios `0.990079x` and
-`0.988691x`, improvements of about 1.0--1.1%. After the unchanged 22-row
-production-PGO matrix, two more reversed fifteen-pair rotations measure
-`0.990240x` and `0.989936x`, reproducing a one-percent improvement. A direct
-PGO comparison with pinned vpxenc remains red at `1.237372x`, or
-`5.976/4.824 ms` per frame, while passing the absolute 720p30 budget.
+**Speed impact:** two reversed fifteen-pair plain-release CPU7/T2 rotations
+measure paired candidate/control ratios `0.985745x/0.985195x`. T3 measures
+`0.965881x/0.965093x`, a reproducible improvement of about 3.5%. Production
+PGO qualification remains pending. The CPU8 narrowing is byte-identical and
+therefore preserves its accepted one-percent improvement.
 
-**Future plan:** retained after the PGO gain reproduced. Recheck CPU7 and the
-complete T2/T3 CBR/VBR feature matrix before final acceptance; continue
-profiling because the temporal-SVC relative-speed gate remains open.
+**Future plan:** qualify CPU7 under the unchanged production-PGO matrix and
+retain it only if the gain reproduces. The temporal-SVC relative-speed gate
+will remain open even if it does, so reprofile the exact accepted image before
+selecting another mechanism.
 
 ### 2026-08-11 — Keep exact 8x8 keyframe RD behind a measured CPU8 mode cap
 
