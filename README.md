@@ -28,7 +28,12 @@ under `rvp9dec`, pinned libvpx `vpxdec`, and ffmpeg. Run the same gates with:
 ```bash
 ./scripts/qualify-conformance.sh
 ./scripts/qualify-alpha-encoder.sh
+./scripts/qualify-reference-decoder.sh
 ```
+
+The reverse 24-row gate uses pinned `vpxenc` streams across CPU-used 6--8,
+CBR/VBR, AQ3, and denoising, then requires `rvp9dec` and pinned `vpxdec` to
+produce byte-identical decoded output.
 
 Spatial SVC remains the next feature stage. CPU-used 8 three-layer temporal
 SVC speed is still provisional. This alpha does not claim final compression
@@ -105,6 +110,7 @@ cargo build --workspace --release --locked
 # 5. Run the current correctness gates.
 ./scripts/qualify-conformance.sh
 ./scripts/qualify-alpha-encoder.sh
+./scripts/qualify-reference-decoder.sh
 ```
 
 On Windows, run the `.sh` scripts in Git Bash, MSYS2, or WSL. A PowerShell
