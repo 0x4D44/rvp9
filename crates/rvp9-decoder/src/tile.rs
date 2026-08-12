@@ -301,6 +301,24 @@ impl PartitionCtx {
     }
 }
 
+/// Above-neighbour entropy state shared by vertically adjacent tiles in
+/// one tile column. VP9 resets this state once per frame, not once per
+/// tile row; only the left contexts reset at each superblock row.
+pub(crate) struct TileAboveCtx {
+    coef: TileCoefCtx,
+    partition: PartitionCtx,
+}
+
+impl TileAboveCtx {
+    pub(crate) fn new(tile_mi_cols: usize, chroma: ChromaFormat) -> Self {
+        let (ss_x, ss_y) = plane_ss(chroma, 1);
+        Self {
+            coef: TileCoefCtx::new_with_ss(tile_mi_cols, ss_x, ss_y),
+            partition: PartitionCtx::new(tile_mi_cols),
+        }
+    }
+}
+
 /// One frame's input to the tile decoder. The keyframe path threads
 /// the parsed header + the active `tx_mode` (from the compressed
 /// header) through this struct.
@@ -425,11 +443,40 @@ pub fn decode_tile_intra<D: TileFrameDst>(
     params: &FrameDecodeParams,
     fc: &FrameContext,
     dst_frame: &mut D,
+    coef_counts: Option<&mut rvp9_core::entropy::adapt::CoefCountsBank>,
+    cur_segment_ids: &mut [u8],
+    dispatch: &SimdDispatch,
+    mi_view: crate::tile_ctx::TileMiView,
+    decode_progress: Option<&[std::sync::atomic::AtomicU32]>,
+) -> Result<TileDecodeCtx, TileDecodeError> {
+    decode_tile_intra_with_above_ctx(
+        tile_data,
+        bounds,
+        params,
+        fc,
+        dst_frame,
+        coef_counts,
+        cur_segment_ids,
+        dispatch,
+        mi_view,
+        decode_progress,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn decode_tile_intra_with_above_ctx<D: TileFrameDst>(
+    tile_data: &[u8],
+    bounds: TileBounds,
+    params: &FrameDecodeParams,
+    fc: &FrameContext,
+    dst_frame: &mut D,
     mut coef_counts: Option<&mut rvp9_core::entropy::adapt::CoefCountsBank>,
     cur_segment_ids: &mut [u8],
     dispatch: &SimdDispatch,
     mi_view: crate::tile_ctx::TileMiView,
     decode_progress: Option<&[std::sync::atomic::AtomicU32]>,
+    tile_above_ctx: Option<&mut TileAboveCtx>,
 ) -> Result<TileDecodeCtx, TileDecodeError> {
     // G7.2: the per-block decode chain is `ss`-aware for all four legal
     // VP9 chroma formats (G7.1a parametric geometry / G7.1b inter MC /
@@ -460,9 +507,17 @@ pub fn decode_tile_intra<D: TileFrameDst>(
     // above/left rows at half-tile / half-SB for 4:4:4, dropping every
     // chroma coef write past the half boundary and yielding stale-zero
     // contexts on the right half of every SB.
-    let (cc_ss_x, cc_ss_y) = plane_ss(dst_frame.chroma(), 1);
-    let mut coef_ctx = TileCoefCtx::new_with_ss(tile_mi_cols, cc_ss_x, cc_ss_y);
-    let mut part_ctx = PartitionCtx::new(tile_mi_cols);
+    let mut fallback_above_ctx;
+    let tile_above_ctx = if let Some(ctx) = tile_above_ctx {
+        ctx
+    } else {
+        fallback_above_ctx = TileAboveCtx::new(tile_mi_cols, dst_frame.chroma());
+        &mut fallback_above_ctx
+    };
+    let TileAboveCtx {
+        coef: coef_ctx,
+        partition: part_ctx,
+    } = tile_above_ctx;
 
     // D.14 cursor-state instrumentation for keyframe SB walk. Gated by
     // `RVP9_TRACE_KFSB=1`; logs `(range, value, count, pos)` before
@@ -501,8 +556,8 @@ pub fn decode_tile_intra<D: TileFrameDst>(
                 params,
                 &bounds,
                 &mut decode_ctx,
-                &mut coef_ctx,
-                &mut part_ctx,
+                coef_ctx,
+                part_ctx,
                 dst_frame,
                 mi_row,
                 mi_col,
@@ -1736,6 +1791,44 @@ pub fn decode_tile_inter<D: TileFrameDst>(
     params: &InterFrameDecodeParams<'_>,
     fc: &FrameContext,
     dst_frame: &mut D,
+    mv_counts: Option<&mut rvp9_core::entropy::mv_probs::NmvCounts>,
+    coef_counts: Option<&mut rvp9_core::entropy::adapt::CoefCountsBank>,
+    mode_counts: Option<&mut rvp9_core::entropy::adapt::FrameCounts>,
+    prev_mv_grid: Option<&[rvp9_core::inter::mv_ref::PrevFrameMvRef]>,
+    cur_mv_grid: &mut [rvp9_core::inter::mv_ref::PrevFrameMvRef],
+    prev_segment_ids: &[u8],
+    cur_segment_ids: &mut [u8],
+    dispatch: &SimdDispatch,
+    mi_view: crate::tile_ctx::TileMiView,
+    decode_progress: Option<&[std::sync::atomic::AtomicU32]>,
+) -> Result<TileDecodeCtx, TileDecodeError> {
+    decode_tile_inter_with_above_ctx(
+        tile_data,
+        bounds,
+        params,
+        fc,
+        dst_frame,
+        mv_counts,
+        coef_counts,
+        mode_counts,
+        prev_mv_grid,
+        cur_mv_grid,
+        prev_segment_ids,
+        cur_segment_ids,
+        dispatch,
+        mi_view,
+        decode_progress,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn decode_tile_inter_with_above_ctx<D: TileFrameDst>(
+    tile_data: &[u8],
+    bounds: TileBounds,
+    params: &InterFrameDecodeParams<'_>,
+    fc: &FrameContext,
+    dst_frame: &mut D,
     mut mv_counts: Option<&mut rvp9_core::entropy::mv_probs::NmvCounts>,
     mut coef_counts: Option<&mut rvp9_core::entropy::adapt::CoefCountsBank>,
     mut mode_counts: Option<&mut rvp9_core::entropy::adapt::FrameCounts>,
@@ -1746,6 +1839,7 @@ pub fn decode_tile_inter<D: TileFrameDst>(
     dispatch: &SimdDispatch,
     mi_view: crate::tile_ctx::TileMiView,
     decode_progress: Option<&[std::sync::atomic::AtomicU32]>,
+    tile_above_ctx: Option<&mut TileAboveCtx>,
 ) -> Result<TileDecodeCtx, TileDecodeError> {
     if !prev_segment_ids.is_empty() {
         let required = params.base.mi_cols.saturating_mul(bounds.mi_row_end);
@@ -1781,9 +1875,17 @@ pub fn decode_tile_inter<D: TileFrameDst>(
         bounds.mi_col_start,
         bounds.mi_row_start,
     );
-    let (cc_ss_x, cc_ss_y) = plane_ss(dst_frame.chroma(), 1);
-    let mut coef_ctx = TileCoefCtx::new_with_ss(tile_mi_cols, cc_ss_x, cc_ss_y);
-    let mut part_ctx = PartitionCtx::new(tile_mi_cols);
+    let mut fallback_above_ctx;
+    let tile_above_ctx = if let Some(ctx) = tile_above_ctx {
+        ctx
+    } else {
+        fallback_above_ctx = TileAboveCtx::new(tile_mi_cols, dst_frame.chroma());
+        &mut fallback_above_ctx
+    };
+    let TileAboveCtx {
+        coef: coef_ctx,
+        partition: part_ctx,
+    } = tile_above_ctx;
 
     let mut mi_row = bounds.mi_row_start;
     while mi_row < bounds.mi_row_end {
@@ -1798,8 +1900,8 @@ pub fn decode_tile_inter<D: TileFrameDst>(
                 params,
                 &bounds,
                 &mut decode_ctx,
-                &mut coef_ctx,
-                &mut part_ctx,
+                coef_ctx,
+                part_ctx,
                 dst_frame,
                 mi_row,
                 mi_col,
@@ -4128,6 +4230,20 @@ mod tests {
         ctx.reset_left();
         assert_ne!(ctx.above_partition, vec![0u8; 8]); // preserved
         assert_eq!(ctx.left_partition, [0u8; 8]); // cleared
+    }
+
+    #[test]
+    fn tile_above_ctx_survives_tile_row_left_reset() {
+        let mut ctx = TileAboveCtx::new(8, ChromaFormat::Yuv420);
+        ctx.coef.set_coef_flags(0, 0, 0, 1, 1, true);
+        ctx.partition.update(0, 0, BlockSize::Block4x4, 1);
+
+        ctx.coef.reset_left_coef();
+        ctx.partition.reset_left();
+
+        assert_eq!(ctx.coef.above_coef(0, 0), 1);
+        assert_eq!(ctx.coef.left_coef(0, 0), 0);
+        assert_eq!(ctx.partition.context(0, 0, 0), 1);
     }
 
     /// `kf_y_mode_probs_for` selects the row indexed by

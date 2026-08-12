@@ -35,7 +35,7 @@
 //!
 //! Because VP9 decodes in raster order, the above `(r-1, c)` and left
 //! `(r, c-1)` cells are always written before the current block reads
-//! them (or are out of the tile), so — unlike libvpx's per-SB-row
+//! them (or are outside the allowed frame/tile-column bounds), so — unlike libvpx's per-SB-row
 //! `left_context` — no reset is needed; the grid is the canonical
 //! state. The grid also feeds `find_mv_refs`, which needs arbitrary
 //! `(±row, ±col)` neighbours, via [`TileDecodeCtx::mi_at_relative`].
@@ -47,10 +47,10 @@
 //!
 //! ## Frame-edge / tile-edge semantics
 //!
-//! Neighbour reads return `None` at the tile top (`mi_row == 0`) and
-//! tile left edge (`mi_col == 0`) — the signed underflow / bounds
-//! guard in [`TileDecodeCtx::mi_at_relative`] — matching libvpx
-//! `up_available = 0` / `left_available = 0`. The `(None, None)` arm
+//! Neighbour reads return `None` at the frame top and tile left edge.
+//! A tile-row top is not a prediction boundary: frame-grid views read
+//! the completed row above it, while tile columns remain isolated.
+//! This matches libvpx's `up_available` / `left_available` rules. The `(None, None)` arm
 //! in [`rvp9_core::mode_info::get_tx_size_context`] collapses both
 //! sides to `max_tx_size`, equivalent to libvpx's
 //! `xd->above_mi == NULL && xd->left_mi == NULL` path.
@@ -95,6 +95,9 @@ pub use rvp9_core::coef_ctx::{MAX_MB_PLANE, TileCoefCtx, combine_entropy_context
 /// 1. The parent `Vec<Option<ModeInfo>>` must outlive all `TileMiView`s.
 /// 2. No two `TileMiView`s may cover overlapping cell ranges.
 /// 3. No other `&mut` to the parent Vec exists while any view is alive.
+/// 4. Views from different tile rows are not used concurrently. VP9
+///    permits neighbour reads above a tile-row boundary, so a lower row
+///    may read cells written by the completed row above it.
 #[allow(dead_code)]
 pub struct TileMiView {
     /// Raw pointer to the first cell of the frame-wide grid (row 0, col 0).
@@ -116,7 +119,9 @@ pub struct TileMiView {
 // 2. Construction contract guarantees non-overlapping write ranges;
 //    each tile writes only within [mi_row_start..mi_row_end,
 //    mi_col_start..mi_col_end].
-// 3. The parent Vec's lifetime is guaranteed by the scoped thread pool.
+// 3. Cross-row reads cannot race writes because separate tile rows are
+//    decoded sequentially.
+// 4. The parent Vec's lifetime is guaranteed by the scoped thread pool.
 unsafe impl Send for TileMiView {}
 
 impl TileMiView {
@@ -131,6 +136,8 @@ impl TileMiView {
     /// - No two views constructed from the same Vec overlap in their
     ///   `(mi_row_start..mi_row_end, mi_col_start..mi_col_end)` rectangles.
     /// - No other `&mut` to the Vec exists while any view is alive.
+    /// - Views from different tile rows are decoded in row order, not
+    ///   concurrently, because neighbour reads may cross the row boundary.
     pub unsafe fn new(
         ptr: *mut Option<ModeInfo>,
         len: usize,
@@ -355,10 +362,10 @@ impl TileDecodeCtx {
     }
 
     /// Read the [`ModeInfo`] at `(base_row + delta_row,
-    /// base_col + delta_col)`. Returns `None` if the resulting
-    /// position is outside the tile (negative or beyond
-    /// `tile_mi_rows` / `tile_mi_cols`), or if the cell has not yet
-    /// been written, or if no grid was allocated.
+    /// base_col + delta_col)`. Production frame-grid views follow
+    /// libvpx's asymmetric tile bounds: columns are confined to this
+    /// tile, while rows may cross into an already-decoded tile row
+    /// above. Legacy tile-local grids remain confined on all sides.
     ///
     /// Signed arithmetic: the libvpx `find_mv_refs` neighbour table
     /// (`vp9_mvref_common.h:mv_ref_blocks`) includes positions like
@@ -375,6 +382,26 @@ impl TileDecodeCtx {
     ) -> Option<&ModeInfo> {
         let row = base_row.checked_add(delta_row)?;
         let col = base_col.checked_add(delta_col)?;
+        if let Some(ref view) = self.mi_view {
+            let abs_row = (self.mi_row_start as i32).checked_add(row)?;
+            let abs_col = (self.mi_col_start as i32).checked_add(col)?;
+            if abs_row < 0
+                || abs_col < view.mi_col_start as i32
+                || abs_col >= view.mi_col_end as i32
+            {
+                return None;
+            }
+            let idx = (abs_row as usize)
+                .checked_mul(view.mi_stride)?
+                .checked_add(abs_col as usize)?;
+            if idx >= view.len {
+                return None;
+            }
+            // SAFETY: the checked index lies in the frame grid. Tile
+            // columns remain isolated; cross-row reads target a row
+            // completed before this view is used (TileMiView invariant 4).
+            return unsafe { (*view.ptr.add(idx)).as_ref() };
+        }
         if row < 0 || col < 0 {
             return None;
         }
@@ -383,10 +410,10 @@ impl TileDecodeCtx {
 
     /// Read the above neighbour of the block at tile-relative
     /// `(mi_row, mi_col)` — the grid cell directly above it,
-    /// `(mi_row - 1, mi_col)`. Returns `None` at the tile top
-    /// (frame/tile edge — libvpx `above_mi == NULL` / `up_available =
-    /// 0`). Exactly libvpx's `above_mi = xd->mi - mi_stride` read over
-    /// `mi_grid_visible`, gated by the tile-edge bounds in [`mi_at`].
+    /// `(mi_row - 1, mi_col)`. Returns `None` at the frame top, but a
+    /// production frame-grid view can read across a tile-row boundary.
+    /// Exactly libvpx's `above_mi = xd->mi - mi_stride` read over
+    /// `mi_grid_visible`; tile boundaries isolate columns, not rows.
     /// The above neighbour at `(mi_row-1, mi_col)` is always decoded
     /// before the current block in raster order (or out of bounds), so
     /// the read never observes a stale (cross-frame persistent) cell.
@@ -799,6 +826,33 @@ mod tests {
         assert_eq!(ctx.mi_at_relative(5, 10, -1, 0), Some(&mi));
         // base=(5, 10) + delta=(0, -1) → row=5, col=9 (unwritten).
         assert!(ctx.mi_at_relative(5, 10, 0, -1).is_none());
+    }
+
+    /// A tile-row boundary is not an above-neighbour boundary in VP9.
+    /// Production uses a frame-wide MI view, so the first block in a
+    /// lower tile row must see the last decoded MI row above it while
+    /// the tile-column boundary still isolates left neighbours.
+    #[test]
+    fn frame_view_reads_above_across_tile_row_boundary() {
+        let stride = 8;
+        let mut frame_grid = vec![None; stride * 16];
+        let above = mk_intra(TxSize::Tx8x8, true, 3);
+        frame_grid[7 * stride + 3] = Some(above);
+        let bounds = TileBounds {
+            mi_row_start: 8,
+            mi_row_end: 16,
+            mi_col_start: 0,
+            mi_col_end: 8,
+        };
+        // SAFETY: the view is the only live mutable view, the backing
+        // allocation outlives it, and the preceding row is complete.
+        let view =
+            unsafe { TileMiView::new(frame_grid.as_mut_ptr(), frame_grid.len(), stride, &bounds) };
+        let ctx = TileDecodeCtx::new_with_view(8, 8, view, 0, 8);
+
+        assert_eq!(ctx.above(0, 3), Some(&above));
+        assert_eq!(ctx.mi_at_relative(0, 3, -1, 0), Some(&above));
+        assert!(ctx.left(0, 0).is_none(), "tile column remains isolated");
     }
 
     /// `TileDecodeCtx::new` (no grid) is a degenerate legacy/test

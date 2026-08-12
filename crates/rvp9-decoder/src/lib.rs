@@ -90,8 +90,8 @@ use rvp9_core::loopfilter::{
 use rvp9_core::mode_info::ModeInfo;
 
 use crate::tile::{
-    FrameDecodeParams, InterFrameDecodeParams, TileDecodeError, decode_tile_inter,
-    decode_tile_intra, tile_bounds,
+    FrameDecodeParams, InterFrameDecodeParams, TileAboveCtx, TileDecodeError,
+    decode_tile_inter_with_above_ctx, decode_tile_intra_with_above_ctx, tile_bounds,
 };
 use crate::tile_ctx::TileDecodeCtx;
 use std::sync::Mutex;
@@ -1808,10 +1808,12 @@ impl Decoder {
         // threading.md` § "G5.1 dispatch" for the design rationale
         // (especially the per-tile fresh-Yv12Buffer allocation cost
         // vs. unsafe slice-aliasing tradeoff).
-        // G5.3: gate is "multi-tile + multi-thread"; the
-        // tile_rows == 0 restriction of G5.1 is gone because
-        // `merge_tile_rect_from` handles the 2D grid case.
-        let parallel = buffers.len() > 1 && self.num_threads.get() > 1;
+        // Tile columns are independent and may run in parallel. Tile
+        // rows are not: VP9 intra prediction and mode/MV neighbour
+        // lookup may read the completed row above. Keep multi-row
+        // frames on the raster-order inline path until row barriers and
+        // shared reconstruction surfaces exist.
+        let parallel = tile_rows == 1 && buffers.len() > 1 && self.num_threads.get() > 1;
 
         // T-5 — per-frame timing bucket, populated only on the
         // parallel path under the `profile-tiles` feature. Dropped at
@@ -2156,7 +2158,7 @@ impl Decoder {
                             .expect("counts present at job start");
                         #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
                         let t_decode_start = profile::now_cycles();
-                        let res = decode_tile_intra(
+                        let res = decode_tile_intra_with_above_ctx(
                             tile_data,
                             bounds,
                             params_ref,
@@ -2167,6 +2169,7 @@ impl Decoder {
                             simd_dispatch,
                             mi_v,
                             Some(decode_progress_ref),
+                            None,
                         );
                         #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
                         let t_decode_end = profile::now_cycles();
@@ -2314,6 +2317,12 @@ impl Decoder {
             // Inline path (single-threaded knob OR ineligible
             // geometry). Identical to the pre-G5.1 first-cut shape.
             let coef_counts = &mut self.coef_counts;
+            let mut tile_above_contexts: Vec<TileAboveCtx> = (0..tile_cols)
+                .map(|tile_col| {
+                    let bounds = tile_bounds(&tail.tile_info, mi_cols, mi_rows, 0, tile_col);
+                    TileAboveCtx::new(bounds.mi_col_end - bounds.mi_col_start, yv12.chroma())
+                })
+                .collect();
             self.worker_pool.scope(|_scope| {
                 for tile_buf in &buffers {
                     let bounds = tile_bounds(
@@ -2334,7 +2343,7 @@ impl Decoder {
                         )
                     };
                     let fc = &frame_contexts[fc_idx];
-                    let decode_ctx = decode_tile_intra(
+                    let decode_ctx = decode_tile_intra_with_above_ctx(
                         tile_buf.data,
                         bounds,
                         &params,
@@ -2346,6 +2355,7 @@ impl Decoder {
                         mi_view,
                         // Inline path: no LF consumer → no signal needed.
                         None,
+                        Some(&mut tile_above_contexts[tile_buf.col as usize]),
                     )
                     .map_err(DecodeError::TileDecode)?;
                     tile_decode_ctxs.push((bounds, decode_ctx));
@@ -3158,10 +3168,10 @@ impl Decoder {
         // gate. The inter path additionally fans out the per-tile
         // mv-counts / mode-counts / cur_mv_grid / cur_segment_ids
         // worker-local buffers.
-        // G5.3: gate is "multi-tile + multi-thread"; the
-        // tile_rows == 0 restriction of G5.1 is gone because
-        // `merge_tile_rect_from` handles the 2D grid case.
-        let parallel = buffers.len() > 1 && self.num_threads.get() > 1;
+        // As on the intra path, tile rows have prediction dependencies
+        // on the completed row above. Only a single tile row is safe for
+        // the worker-owned scratch-frame dispatch.
+        let parallel = tile_rows == 1 && buffers.len() > 1 && self.num_threads.get() > 1;
 
         // T-5 — per-frame timing bucket; see the matching declaration
         // in `decode_intra_frame_inner`.
@@ -3565,7 +3575,7 @@ impl Decoder {
                             .expect("mode_counts present at job start");
                         #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
                         let t_decode_start = profile::now_cycles();
-                        let res = decode_tile_inter(
+                        let res = decode_tile_inter_with_above_ctx(
                             tile_data,
                             bounds,
                             params_ref,
@@ -3581,6 +3591,7 @@ impl Decoder {
                             simd_dispatch,
                             mi_v,
                             Some(decode_progress_ref),
+                            None,
                         );
                         #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
                         let t_decode_end = profile::now_cycles();
@@ -3750,6 +3761,12 @@ impl Decoder {
             let mv_counts = &mut self.mv_counts;
             let coef_counts = &mut self.coef_counts;
             let mode_counts = &mut self.mode_counts;
+            let mut tile_above_contexts: Vec<TileAboveCtx> = (0..tile_cols)
+                .map(|tile_col| {
+                    let bounds = tile_bounds(&tail.tile_info, mi_cols, mi_rows, 0, tile_col);
+                    TileAboveCtx::new(bounds.mi_col_end - bounds.mi_col_start, yv12.chroma())
+                })
+                .collect();
             self.worker_pool.scope(|_scope| {
                 for tile_buf in &buffers {
                     let bounds = tile_bounds(
@@ -3769,7 +3786,7 @@ impl Decoder {
                         )
                     };
                     let fc = &frame_contexts[fc_idx];
-                    let decode_ctx = decode_tile_inter(
+                    let decode_ctx = decode_tile_inter_with_above_ctx(
                         tile_buf.data,
                         bounds,
                         &params,
@@ -3786,6 +3803,7 @@ impl Decoder {
                         mi_view,
                         // Inline path: no LF consumer → no signal needed.
                         None,
+                        Some(&mut tile_above_contexts[tile_buf.col as usize]),
                     )
                     .map_err(DecodeError::TileDecode)?;
                     tile_decode_ctxs.push((bounds, decode_ctx));
