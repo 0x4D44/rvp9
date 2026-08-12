@@ -1,24 +1,24 @@
 # RVP9-BUG-KILN-00062 — tile_threading scratch-allocation test races its sibling tests and reds the workspace gate
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Must
 - **Severity:** High
 - **Area:** harness/tile threading tests
 - **Raised:** 2026-07-31T10:21:41Z
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260812T144948Z-p77389-n527102000-c1
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KILN-00062-run-fix-20260812T144948Z-p77389-n527102000-c1
-- **Owner base:** e1ea8c76d8af3572050f8ee674526026ebf9f4d9
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-08-12T14:49:48Z
-- **Owner until:** 2026-08-12T16:49:48Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-07-31T10:21:41Z, raised via `deltic bugs new` model=claude-opus-5@high)
+- **State history:** Open (2026-07-31T10:21:41Z, raised via `deltic bugs new` model=claude-opus-5@high) -> Fixed (2026-08-12T14:53:12Z, deltic:auto role=fix run=fix-20260812T144948Z-p77389-n527102000-c1 branch=task/bug-RVP9-BUG-KILN-00062-run-fix-20260812T144948Z-p77389-n527102000-c1 code=77bcde95 gate=manual)
 
 ## Observation
 
