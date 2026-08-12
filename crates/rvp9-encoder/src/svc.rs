@@ -95,6 +95,12 @@ use crate::rate_control::{RateControl, RateControlConfig};
 /// (`vpx/vpx_encoder.h:48`).
 pub const MAX_SPATIAL_LAYERS: usize = 5;
 
+/// Maximum spatial layers supported by rvp9's v1 real-time profile.
+///
+/// libvpx's generic ABI allows five, but `PLAN.md` deliberately limits the
+/// production encoder to two- and three-layer spatial SVC.
+pub const MAX_V1_SPATIAL_LAYERS: usize = 3;
+
 /// Maximum temporal layers. Mirrors libvpx `VPX_TS_MAX_LAYERS = 5`
 /// (`vpx/vpx_encoder.h:42`).
 pub const MAX_TEMPORAL_LAYERS: usize = 5;
@@ -138,6 +144,186 @@ pub enum InterLayerPred {
     /// On but constrained: layer S only predicts from layer S-1 in
     /// the same superframe. libvpx `INTER_LAYER_PRED_ON_CONSTRAINED = 3`.
     OnConstrained = 3,
+}
+
+/// Public configuration for the fixed real-time spatial-SVC topology.
+///
+/// One layer means spatial SVC is disabled. Two layers use the canonical
+/// `1/2, 1/1` pyramid; three use `1/4, 1/2, 1/1`, matching libvpx's one-pass
+/// real-time defaults in `examples/svc_encodeframe.c:417-432`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SpatialSvcConfig {
+    /// Number of spatial layers, in `1..=3`.
+    pub number_spatial_layers: u8,
+    /// Whether enhancement pictures may predict from the next lower spatial
+    /// layer in the same access unit.
+    pub inter_layer_pred: InterLayerPred,
+}
+
+impl Default for SpatialSvcConfig {
+    fn default() -> Self {
+        Self {
+            number_spatial_layers: 1,
+            inter_layer_pred: InterLayerPred::On,
+        }
+    }
+}
+
+/// A validated spatial layer in low-to-high encode order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SpatialLayerSpec {
+    /// Zero-based spatial layer id.
+    pub spatial_layer_id: u8,
+    /// Numerator of this layer's resolution scale.
+    pub scaling_factor_num: u8,
+    /// Denominator of this layer's resolution scale.
+    pub scaling_factor_den: u8,
+    /// Coded luma width.
+    pub width: u32,
+    /// Coded luma height.
+    pub height: u32,
+    /// Bitrate owned by this spatial layer, in bits per second.
+    pub target_bitrate_bps: u32,
+    /// Source filter used when this layer is smaller than the input. The top
+    /// layer consumes the original source and therefore has no filter.
+    pub source_filter: Option<rvp9_core::bitstream::frame::InterpFilter>,
+    /// Q4 source-filter phase. Canonical downscaled layers use phase 8.
+    pub source_filter_phase: u8,
+}
+
+/// Validated fixed spatial-SVC geometry and rate allocation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpatialLayerPlan {
+    /// Requested spatial policy.
+    pub config: SpatialSvcConfig,
+    /// Low-to-high spatial layers. The final entry is always the full source
+    /// resolution.
+    pub layers: Vec<SpatialLayerSpec>,
+}
+
+/// Spatial-SVC configuration error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum SpatialSvcConfigError {
+    /// The v1 real-time profile supports one through three spatial layers.
+    InvalidLayerCount,
+    /// Canonical I420 pyramids require positive, exactly divisible dimensions
+    /// whose lowest layer remains even in both axes.
+    InvalidDimensions,
+    /// The aggregate target must be large enough to give every layer a
+    /// positive integer bitrate.
+    InvalidTargetBitrate,
+}
+
+impl std::fmt::Display for SpatialSvcConfigError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidLayerCount => f.write_str("spatial layer count must be in 1..=3"),
+            Self::InvalidDimensions => {
+                f.write_str("source dimensions must form an exact canonical I420 spatial pyramid")
+            }
+            Self::InvalidTargetBitrate => {
+                f.write_str("target bitrate is too small for the spatial layer allocation")
+            }
+        }
+    }
+}
+
+impl std::error::Error for SpatialSvcConfigError {}
+
+impl SpatialLayerPlan {
+    /// Build libvpx's canonical one-pass real-time spatial pyramid.
+    ///
+    /// Spatial-only target rates follow libvpx's default area allocation in
+    /// `examples/svc_encodeframe.c:345-374`: `1:4` for two layers and
+    /// `1:4:16` for three. Each division truncates independently, as the C
+    /// assignment to `unsigned int` does.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SpatialSvcConfigError`] for an unsupported layer count, an
+    /// input that cannot be halved into the requested even-sized I420 layers,
+    /// or a target too small to allocate at least one bit/s to every layer.
+    pub fn canonical(
+        config: SpatialSvcConfig,
+        source_width: u32,
+        source_height: u32,
+        target_bitrate_bps: u32,
+    ) -> Result<Self, SpatialSvcConfigError> {
+        let (scales, weights): (&[(u8, u8)], &[u32]) = match config.number_spatial_layers {
+            1 => (&[(1, 1)], &[1]),
+            2 => (&[(1, 2), (1, 1)], &[1, 4]),
+            3 => (&[(1, 4), (1, 2), (1, 1)], &[1, 4, 16]),
+            _ => return Err(SpatialSvcConfigError::InvalidLayerCount),
+        };
+        let denominator = u32::from(scales[0].1);
+        if source_width == 0
+            || source_height == 0
+            || !source_width.is_multiple_of(denominator * 2)
+            || !source_height.is_multiple_of(denominator * 2)
+        {
+            return Err(SpatialSvcConfigError::InvalidDimensions);
+        }
+        let total_weight: u32 = weights.iter().sum();
+        if target_bitrate_bps < total_weight {
+            return Err(SpatialSvcConfigError::InvalidTargetBitrate);
+        }
+
+        let mut layers = Vec::with_capacity(scales.len());
+        for (spatial_layer_id, ((scale_num, scale_den), &weight)) in
+            scales.iter().copied().zip(weights).enumerate()
+        {
+            let (width, height) = layer_resolution(
+                source_width,
+                source_height,
+                u32::from(scale_num),
+                u32::from(scale_den),
+            )
+            .ok_or(SpatialSvcConfigError::InvalidDimensions)?;
+            let source_filter = if scale_num == scale_den {
+                None
+            } else if u64::from(width) * u64::from(height) <= 320 * 240 {
+                Some(rvp9_core::bitstream::frame::InterpFilter::EightTapSmooth)
+            } else {
+                Some(rvp9_core::bitstream::frame::InterpFilter::Bilinear)
+            };
+            layers.push(SpatialLayerSpec {
+                spatial_layer_id: spatial_layer_id as u8,
+                scaling_factor_num: scale_num,
+                scaling_factor_den: scale_den,
+                width,
+                height,
+                target_bitrate_bps: target_bitrate_bps / total_weight * weight
+                    + (target_bitrate_bps % total_weight) * weight / total_weight,
+                source_filter,
+                source_filter_phase: u8::from(source_filter.is_some()) * 8,
+            });
+        }
+        Ok(Self { config, layers })
+    }
+}
+
+/// Compute one layer's coded dimensions using libvpx's
+/// `get_layer_resolution` rule (`vp9_svc_layercontext.c:454-470`).
+///
+/// The scaled result is truncated and then rounded up to an even value. `None`
+/// indicates zero input/scale or arithmetic overflow.
+#[must_use]
+pub fn layer_resolution(
+    source_width: u32,
+    source_height: u32,
+    scale_num: u32,
+    scale_den: u32,
+) -> Option<(u32, u32)> {
+    if source_width == 0 || source_height == 0 || scale_num == 0 || scale_den == 0 {
+        return None;
+    }
+    let scaled = |dimension: u32| {
+        let value = u64::from(dimension).checked_mul(u64::from(scale_num))? / u64::from(scale_den);
+        let value = value.checked_add(value & 1)?;
+        u32::try_from(value).ok().filter(|&value| value != 0)
+    };
+    Some((scaled(source_width)?, scaled(source_height)?))
 }
 
 /// Temporal-layering mode selector. Mirrors libvpx
@@ -1204,6 +1390,162 @@ impl Svc {
 mod tests {
     use super::*;
 
+    #[test]
+    fn spatial_plan_three_layer_720p_matches_libvpx_defaults() {
+        let plan = SpatialLayerPlan::canonical(
+            SpatialSvcConfig {
+                number_spatial_layers: 3,
+                inter_layer_pred: InterLayerPred::On,
+            },
+            1280,
+            720,
+            1_500_000,
+        )
+        .unwrap();
+
+        assert_eq!(plan.layers.len(), 3);
+        assert_eq!(
+            plan.layers
+                .iter()
+                .map(|layer| (
+                    layer.spatial_layer_id,
+                    layer.scaling_factor_num,
+                    layer.scaling_factor_den,
+                    layer.width,
+                    layer.height,
+                    layer.target_bitrate_bps,
+                    layer.source_filter,
+                    layer.source_filter_phase,
+                ))
+                .collect::<Vec<_>>(),
+            [
+                (
+                    0,
+                    1,
+                    4,
+                    320,
+                    180,
+                    71_428,
+                    Some(rvp9_core::bitstream::frame::InterpFilter::EightTapSmooth),
+                    8,
+                ),
+                (
+                    1,
+                    1,
+                    2,
+                    640,
+                    360,
+                    285_714,
+                    Some(rvp9_core::bitstream::frame::InterpFilter::Bilinear),
+                    8,
+                ),
+                (2, 1, 1, 1280, 720, 1_142_857, None, 0),
+            ]
+        );
+        assert_eq!(
+            plan.layers
+                .iter()
+                .map(|layer| layer.target_bitrate_bps)
+                .sum::<u32>(),
+            1_499_999
+        );
+    }
+
+    #[test]
+    fn spatial_plan_two_layer_1080p_matches_libvpx_defaults() {
+        let plan = SpatialLayerPlan::canonical(
+            SpatialSvcConfig {
+                number_spatial_layers: 2,
+                inter_layer_pred: InterLayerPred::OnConstrained,
+            },
+            1920,
+            1080,
+            1_000_000,
+        )
+        .unwrap();
+
+        assert_eq!(plan.config.inter_layer_pred, InterLayerPred::OnConstrained);
+        assert_eq!(
+            plan.layers
+                .iter()
+                .map(|layer| (
+                    layer.width,
+                    layer.height,
+                    layer.target_bitrate_bps,
+                    layer.source_filter,
+                ))
+                .collect::<Vec<_>>(),
+            [
+                (
+                    960,
+                    540,
+                    200_000,
+                    Some(rvp9_core::bitstream::frame::InterpFilter::Bilinear),
+                ),
+                (1920, 1080, 800_000, None),
+            ]
+        );
+    }
+
+    #[test]
+    fn layer_resolution_matches_libvpx_even_rounding() {
+        assert_eq!(layer_resolution(1278, 718, 1, 2), Some((640, 360)));
+        assert_eq!(layer_resolution(1, 1, 1, 2), None);
+        assert_eq!(layer_resolution(1280, 720, 0, 1), None);
+        assert_eq!(layer_resolution(1280, 720, 1, 0), None);
+    }
+
+    #[test]
+    fn spatial_plan_rejects_out_of_profile_inputs() {
+        for number_spatial_layers in [0, 4] {
+            assert_eq!(
+                SpatialLayerPlan::canonical(
+                    SpatialSvcConfig {
+                        number_spatial_layers,
+                        inter_layer_pred: InterLayerPred::On,
+                    },
+                    1280,
+                    720,
+                    1_500_000,
+                ),
+                Err(SpatialSvcConfigError::InvalidLayerCount)
+            );
+        }
+        assert_eq!(
+            SpatialLayerPlan::canonical(
+                SpatialSvcConfig {
+                    number_spatial_layers: 3,
+                    inter_layer_pred: InterLayerPred::On,
+                },
+                1280,
+                718,
+                1_500_000,
+            ),
+            Err(SpatialSvcConfigError::InvalidDimensions)
+        );
+        assert_eq!(
+            SpatialLayerPlan::canonical(
+                SpatialSvcConfig {
+                    number_spatial_layers: 3,
+                    inter_layer_pred: InterLayerPred::On,
+                },
+                1280,
+                720,
+                20,
+            ),
+            Err(SpatialSvcConfigError::InvalidTargetBitrate)
+        );
+
+        let one =
+            SpatialLayerPlan::canonical(SpatialSvcConfig::default(), 1280, 720, 900_000).unwrap();
+        assert_eq!(one.layers.len(), 1);
+        assert_eq!(one.layers[0].width, 1280);
+        assert_eq!(one.layers[0].height, 720);
+        assert_eq!(one.layers[0].target_bitrate_bps, 900_000);
+        assert_eq!(one.layers[0].source_filter, None);
+        assert_eq!(one.layers[0].source_filter_phase, 0);
+    }
+
     fn small_rc_config() -> RateControlConfig {
         // Tiny but valid: any positive setup works for unit tests.
         // We mirror the lib's default and shrink it.
@@ -1577,6 +1919,8 @@ mod tests {
         assert_eq!(MAX_VPX_LAYERS, 12);
         // libvpx `vpx/vpx_encoder.h:48`: VPX_SS_MAX_LAYERS = 5.
         assert_eq!(MAX_SPATIAL_LAYERS, 5);
+        // rvp9's production v1 profile supports up to three spatial layers.
+        assert_eq!(MAX_V1_SPATIAL_LAYERS, 3);
         // libvpx `vp9_onyxc_int.h:38`: REF_FRAMES = 1 << 3 = 8.
         assert_eq!(REF_FRAMES, 8);
     }
