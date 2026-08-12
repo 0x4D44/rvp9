@@ -1,24 +1,24 @@
 # RVP9-BUG-KILN-00020 - Public AVX2 predictor wrapper exposes unsafe CPU and slice preconditions
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Must
 - **Severity:** High
 - **Area:** core/dsp x86_64 SIMD API
 - **Raised:** 2026-07-07
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260812T143904Z-p46812-n519221000-c1
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KILN-00020-run-fix-20260812T143904Z-p46812-n519221000-c1
-- **Owner base:** 73947be7fdc38307291a9009d664c4669e970f5e
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-08-12T14:39:04Z
-- **Owner until:** 2026-08-12T16:39:04Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-core/` at `af4c7a2d7533`) -> Fixed (2026-07-30, deltic:auto role=fix run=fix-20260730T171112Z-p5310-n568069000-c1 branch=task/bug-RVP9-BUG-KILN-00020-run-fix-20260730T171112Z-p5310-n568069000-c1 code=ce657a77ef476ba946f167a581c7f111e5bdb97d gate=manual) -> Open (2026-07-31, reopened by independent two-eyes verify pass on `4abe0d8`: the fix regresses the encoder's 64x64 intra fallback)
+- **State history:** Open (2026-07-07, raised by Codex code-review pass over `crates/rvp9-core/` at `af4c7a2d7533`) -> Fixed (2026-07-30, deltic:auto role=fix run=fix-20260730T171112Z-p5310-n568069000-c1 branch=task/bug-RVP9-BUG-KILN-00020-run-fix-20260730T171112Z-p5310-n568069000-c1 code=ce657a77ef476ba946f167a581c7f111e5bdb97d gate=manual) -> Open (2026-07-31, reopened by independent two-eyes verify pass on `4abe0d8`: the fix regresses the encoder's 64x64 intra fallback) -> Fixed (2026-08-12T14:43:28Z, deltic:auto role=fix run=fix-20260812T143904Z-p46812-n519221000-c1 branch=task/bug-RVP9-BUG-KILN-00020-run-fix-20260812T143904Z-p46812-n519221000-c1 code=5d694b76 gate=manual)
 
 ## Observation
 
