@@ -3630,6 +3630,13 @@ impl StreamEncoder {
         let speed = self.config.speed;
         let deadline = self.config.deadline;
         let rc_mode = self.config.rc_mode;
+        let svc_model_only_large_qmax = crate::svc_enhancement_model_only_large_qmax(
+            svc_enhancement_frame,
+            svc_non_reference_frame,
+            self.config.temporal_layers,
+            speed,
+            deadline,
+        );
         let split_override = self.config.stage4a_product_split_override;
         let inter_env = &inter_env_snapshot;
         let noise_estimate = self.pre_analysis.noise_estimate;
@@ -3691,7 +3698,7 @@ impl StreamEncoder {
                     force_nstep_motion_search,
                     source_aligned_cpu8_svc_partitions,
                     svc_non_reference_frame,
-                    svc_enhancement_frame,
+                    svc_model_only_large_qmax,
                     chessboard_index,
                     speed,
                     deadline,
@@ -4709,7 +4716,7 @@ impl StreamEncoder {
             false,
             false,
             false,
-            false,
+            None,
             self.frames_since_golden_refresh & 1,
             self.config.speed,
             self.config.deadline,

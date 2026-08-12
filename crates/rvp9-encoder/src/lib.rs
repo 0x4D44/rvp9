@@ -5172,6 +5172,7 @@ fn inter_rd_calibration_for_segment(
 fn svc_enhancement_model_only_large_qmax(
     svc_enhancement_frame: bool,
     svc_non_reference_frame: bool,
+    temporal_layers: u32,
     speed: i32,
     deadline: rvp9_core::mode_decision::speed_features::Deadline,
 ) -> Option<u8> {
@@ -5189,14 +5190,22 @@ fn svc_enhancement_model_only_large_qmax(
         // makes that literal policy safe for both reference and non-reference
         // pictures across the complete T2/T3 curves.
         7 => Some(u8::MAX),
-        // CPU8 still needs the measured Unit 1116 safety boundary: applying
-        // the literal policy to non-reference pictures regresses TL2 BD-rate.
-        8 if !svc_non_reference_frame => Some(SVC_CPU8_MODEL_ONLY_LARGE_QMAX),
+        // CPU8 retains exact large-block ranking at the higher Q indices where
+        // the literal libvpx policy spends too much enhancement-layer quality.
+        // Non-reference pictures have a wider corpus-qualified boundary because
+        // avoiding their discarded round trips recovers material T3 time.
+        8 if svc_non_reference_frame && temporal_layers != 3 => None,
+        8 => Some(if svc_non_reference_frame {
+            SVC_CPU8_NONREF_MODEL_ONLY_LARGE_QMAX
+        } else {
+            SVC_CPU8_MODEL_ONLY_LARGE_QMAX
+        }),
         _ => None,
     }
 }
 
 const SVC_CPU8_MODEL_ONLY_LARGE_QMAX: u8 = 140;
+const SVC_CPU8_NONREF_MODEL_ONLY_LARGE_QMAX: u8 = 155;
 
 fn block16_coef_rd_enabled(
     exact_vbp_tree_enabled: bool,
@@ -6089,11 +6098,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // slot as non-reference frames. Their zero-fullpel NEWMV searches skip
     // fractional refinement (`vp9_pickmode.c:230-233`).
     svc_non_reference_frame: bool,
-    // Pinned cpu-used 7/8 libvpx enables `use_simple_block_yrd` for all large
-    // blocks on temporal-SVC enhancement pictures. Rvp9 applies the bounded
-    // quality-safe slice to reference-carrying enhancements; base-layer,
-    // non-reference, and single-layer pictures keep real large-block Hadamard.
-    svc_enhancement_frame: bool,
+    // Bounded simple large-block YRD policy already derived from the temporal
+    // hierarchy. `None` keeps exact large-block Hadamard ranking.
+    svc_model_only_large_qmax: Option<u8>,
     // §11 — libvpx `get_chessboard_index(cm->current_video_frame) =
     // current_video_frame & 1` (`vp9_common.h:88-90`). Feeds the
     // `cb_pred_filter_search` chessboard predicate at
@@ -6278,12 +6285,6 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         content_tier,
         cyclic_refresh_active,
     ) && exact_vbp_history.is_some();
-    let svc_model_only_large_qmax = svc_enhancement_model_only_large_qmax(
-        svc_enhancement_frame,
-        svc_non_reference_frame,
-        speed,
-        deadline,
-    );
     let mut inter_rd_calibration = inter_rd_calibration_for_segment(
         rc_mode,
         speed,
@@ -15126,31 +15127,47 @@ mod tests {
         use rvp9_core::mode_decision::speed_features::Deadline;
 
         assert_eq!(
-            svc_enhancement_model_only_large_qmax(true, false, 7, Deadline::Realtime),
+            svc_enhancement_model_only_large_qmax(true, false, 2, 7, Deadline::Realtime),
             Some(u8::MAX)
         );
         assert_eq!(
-            svc_enhancement_model_only_large_qmax(true, true, 7, Deadline::Realtime),
+            svc_enhancement_model_only_large_qmax(true, true, 2, 7, Deadline::Realtime),
             Some(u8::MAX)
         );
         assert_eq!(
-            svc_enhancement_model_only_large_qmax(true, false, 8, Deadline::Realtime),
+            svc_enhancement_model_only_large_qmax(true, false, 2, 8, Deadline::Realtime),
             Some(SVC_CPU8_MODEL_ONLY_LARGE_QMAX)
         );
         assert_eq!(
-            svc_enhancement_model_only_large_qmax(true, true, 8, Deadline::Realtime),
+            svc_enhancement_model_only_large_qmax(true, true, 3, 8, Deadline::Realtime),
+            Some(SVC_CPU8_NONREF_MODEL_ONLY_LARGE_QMAX)
+        );
+        assert_eq!(
+            svc_enhancement_model_only_large_qmax(true, true, 2, 8, Deadline::Realtime),
             None
         );
         assert_eq!(
-            svc_enhancement_model_only_large_qmax(true, false, 6, Deadline::Realtime),
+            svc_enhancement_model_only_large_qmax(true, false, 2, 6, Deadline::Realtime),
             None
         );
         assert_eq!(
-            svc_enhancement_model_only_large_qmax(false, false, 8, Deadline::Realtime),
+            svc_enhancement_model_only_large_qmax(true, true, 3, 6, Deadline::Realtime),
             None
         );
         assert_eq!(
-            svc_enhancement_model_only_large_qmax(true, false, 8, Deadline::Good),
+            svc_enhancement_model_only_large_qmax(false, false, 1, 8, Deadline::Realtime),
+            None
+        );
+        assert_eq!(
+            svc_enhancement_model_only_large_qmax(false, true, 3, 8, Deadline::Realtime),
+            None
+        );
+        assert_eq!(
+            svc_enhancement_model_only_large_qmax(true, true, 3, 8, Deadline::Good),
+            None
+        );
+        assert_eq!(
+            svc_enhancement_model_only_large_qmax(true, true, 3, 9, Deadline::Realtime),
             None
         );
     }
@@ -15165,9 +15182,18 @@ mod tests {
             inter_rd_calibration_for_segment(RcMode::Vbr, 7, Deadline::Realtime, true, 1, true);
         let aq_off =
             inter_rd_calibration_for_segment(RcMode::Vbr, 7, Deadline::Realtime, false, 1, true);
+        let boosted_cpu8 =
+            inter_rd_calibration_for_segment(RcMode::Vbr, 8, Deadline::Realtime, true, 1, true)
+                .with_model_only_large(true, SVC_CPU8_NONREF_MODEL_ONLY_LARGE_QMAX);
 
         assert!(baseline.hadamard_only && baseline.model_only);
         assert!(!boosted.hadamard_only && !boosted.model_only);
+        assert!(!boosted_cpu8.model_only);
+        assert!(boosted_cpu8.model_only_large);
+        assert_eq!(
+            boosted_cpu8.model_only_large_qmax,
+            SVC_CPU8_NONREF_MODEL_ONLY_LARGE_QMAX
+        );
         assert_eq!(aq_off, baseline, "AQ off ignores stale segment ids");
         assert_eq!((baseline.lambda_num, baseline.lambda_den), (0, 1));
         assert_eq!((boosted.lambda_num, boosted.lambda_den), (0, 1));

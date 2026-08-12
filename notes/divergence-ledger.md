@@ -24,6 +24,52 @@ Each entry:
 
 ## Entries
 
+### 2026-08-12 — Widen CPU8 large-block model RD only for T3 disposable pictures
+
+**Where:** `rvp9_encoder::svc_enhancement_model_only_large_qmax`,
+`rvp9_encoder::SVC_CPU8_NONREF_MODEL_ONLY_LARGE_QMAX`, and
+`rvp9_encoder::pick_and_simulate_inter_encode_partitions`; libvpx counterparts:
+`vp9/encoder/vp9_pickmode.c:797-808` and
+`vp9/encoder/vp9_speed_features.c:699-715,790-792`.
+
+**What libvpx does:** CPU8 realtime returns the simple luma model instead of
+the Hadamard/quantized result for every large block on every temporal-SVC
+enhancement picture.
+
+**What rvp9 does:** CPU8 keeps the existing Q140 boundary on
+reference-carrying enhancements and uses a wider Q155 boundary only on
+non-reference pictures in the three-layer hierarchy. Two-layer SVC,
+base-layer pictures, CPU6, non-realtime, and cyclic-refresh boosted segments
+keep their accepted exact-ranking behavior. CPU7 remains unbounded as recorded
+below. Final winner emission is unchanged.
+
+**Why:** matched phase counters attribute 44,997 large-block round trips and
+about 13.4 ms of sampled work to T3 non-reference pictures. The Q155 boundary
+covers about 94% of those calls while retaining exact ranking at higher Q.
+The same policy has no useful T2 mechanism and showed a `0.3--0.8%`
+separate-binary layout/timing loss, so it is deliberately T3-only.
+
+**Byte-parity impact:** intentional on CPU8 T3. The final 1,500-kbps VBR T3
+stream is `fa5ed02c...9fd4`; T2 remains byte-identical to the accepted stream
+at `7942dc9b...5ac9`. Across the six-point three-clip VBR and CBR sweeps, all
+144 affected full and retained-layer T3 streams decode byte-exactly through
+rvp9-decoder, pinned vpxdec, and ffmpeg. The broader diagnostic sweep covered
+252 T2/T3 streams without a mismatch.
+
+**Compression-efficiency impact:** three-clip T3 VBR aggregate TL0/TL1/TL2
+BD-rates are `-2.5991%/-2.0578%/-1.3681%`; the worst individual result is
+in-tree TL2 at `+1.0207%`, inside the explicit `+2%` clip guard. T3 CBR
+aggregates are `-16.6078%/-14.4951%/-14.1075%`. Every aggregate passes the
+final `+0.5%` gate.
+
+**Speed impact:** two reversed warmed fifteen-pair plain-release rotations
+measure paired T3 candidate/control ratios `0.978320x/0.978151x`; separate
+medians are `0.973476x/0.977497x`. A fresh production-PGO build and direct
+comparison with pinned vpxenc remain the retention gate.
+
+**Future plan:** retain only if production PGO reproduces the T3 gain without
+moving the byte-identical T2 guard outside its final relative-speed gate.
+
 ### 2026-08-11 — Bound keyframe RD for CPU8 two-layer VBR
 
 **Where:** `rvp9_encoder::frame_loop::exact_keyframe_sub8_enabled`,
@@ -75,7 +121,7 @@ absolute 720p30 budget.
 **Future plan:** retained after the PGO gain reproduced. Recover the remaining
 temporal-SVC cost from the measured inter-frame picker and NEWMV hotspots.
 
-### 2026-08-11 — Match CPU7 and bound CPU8 simple large-block SVC RD
+### 2026-08-11 — Initially match CPU7 and bound CPU8 simple large-block SVC RD
 
 **Where:** `rvp9_encoder::svc_enhancement_model_only_large_qmax`,
 `rvp9_encoder::SVC_CPU8_MODEL_ONLY_LARGE_QMAX`, and
@@ -87,7 +133,7 @@ temporal-SVC cost from the measured inter-frame picker and NEWMV hotspots.
 returns the luma model instead of the Hadamard/quantized result for every
 large block on every temporal-SVC enhancement picture.
 
-**What rvp9 does:** CPU7 realtime now matches that policy on every temporal
+**What rvp9 did at Unit 1116:** CPU7 realtime matched that policy on every temporal
 enhancement picture. CPU8 realtime uses model-only large-block ranking only
 on reference-carrying enhancements at Q index 140 or below. Base-layer,
 CPU6, non-realtime, and the excluded CPU8 pictures retain the real large-block
