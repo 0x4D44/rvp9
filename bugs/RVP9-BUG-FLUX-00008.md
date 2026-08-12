@@ -1,25 +1,25 @@
 # RVP9-BUG-FLUX-00008 — release core suite expects a debug-only assertion panic
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Could
 - **Severity:** Low
 - **Area:** tests/core mv-search
 - **Raised:** 2026-08-07T11:41:04Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260812T145350Z-p84799-n787877000-c1
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLUX-00008-run-fix-20260812T145350Z-p84799-n787877000-c1
-- **Owner base:** f33ad5076fcd8357bb7aa4f489d9ec9d9ef9a566
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-08-12T14:53:50Z
-- **Owner until:** 2026-08-12T16:53:50Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-07T11:41:04Z, raised via `deltic bugs new`)
+- **State history:** Open (2026-08-07T11:41:04Z, raised via `deltic bugs new`) -> Fixed (2026-08-12T14:56:56Z, deltic:auto role=fix run=fix-20260812T145350Z-p84799-n787877000-c1 branch=task/bug-RVP9-BUG-FLUX-00008-run-fix-20260812T145350Z-p84799-n787877000-c1 code=f7fd77ab gate=manual)
 
 ## Observation
 
