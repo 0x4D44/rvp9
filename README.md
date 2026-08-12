@@ -107,6 +107,53 @@ The build records its commit, toolchain, host, and exact matrix under
 `target/encoder-pgo/runs/<run-id>/manifest.txt`. Plain `cargo build --release`
 remains useful for development, but it is not the production speed artifact.
 
+### Encoder speed acceptance
+
+Use `encode-headtohead` for relative speed evidence. It runs warmed pairs in
+both arm orders, reverses clip order, reports per-clip medians and corpus
+geomeans, and requires both independent-median and paired-ratio gates to pass.
+It also removes inherited `RVP9_*` overrides, checks every IVF frame count and
+output hash, and records the executable, input, revision, host, command, and
+load evidence in the run directory.
+
+The temporal-SVC anchor uses the pinned adapter documented in
+`tools/libvpx_temporal_svc_reference/README.md`. Prepare equal-rate clip
+prefixes from the fetched corpus, then use a new empty run directory:
+
+```bash
+speed_corpus="$(mktemp -d)"
+ffmpeg -hide_banner -loglevel error \
+  -i tests/corpus/in_to_tree_420_720p50.y4m \
+  -vf fps=30 -frames:v 60 "$speed_corpus/in-tree.y4m"
+ffmpeg -hide_banner -loglevel error \
+  -i tests/corpus/ducks_take_off_420_720p50.y4m \
+  -vf fps=30 -frames:v 60 "$speed_corpus/ducks.y4m"
+ffmpeg -hide_banner -loglevel error \
+  -i tests/corpus/old_town_cross_420_720p50.y4m \
+  -vf fps=30 -frames:v 60 "$speed_corpus/oldtown.y4m"
+
+run_dir="$(mktemp -d)"
+cargo run --release -p rvp9-bench --bin encode-headtohead -- \
+  --anchor-encoder build/libvpx/vpx_temporal_svc_reference \
+  --test-encoder target/encoder-pgo/optimized/release/rvp9enc \
+  --anchor-kind temporal-svc --test-kind vpxenc \
+  --anchor-revision "$(git -C third_party/libvpx rev-parse HEAD)" \
+  --test-revision "$(git rev-parse HEAD)" \
+  --clip "in-tree=$speed_corpus/in-tree.y4m" \
+  --clip "ducks=$speed_corpus/ducks.y4m" \
+  --clip "oldtown=$speed_corpus/oldtown.y4m" \
+  --work-dir "$run_dir" \
+  --cpu-used 8 --target-bitrate 1500 --end-usage vbr \
+  --fps 30/1 --threads 1 --tile-columns 0 --temporal-layers 3 \
+  --aq-mode 0 --noise-sensitivity 0 --limit 60 \
+  --keyframe-interval 60 --warmups 2 --pairs 15 --rotations 2 \
+  --max-ratio 1.05 --max-load1 0.75
+```
+
+Treat `--max-load1` as a host qualification, not a tuning knob. Choose and
+record the idle-host threshold before the run; never raise it to admit a noisy
+result. `summary.csv`, `raw.csv`, and `manifest.txt` are the acceptance record.
+
 ## Licence
 
 BSD 3-Clause (see `ATTRIBUTION.md`). This project is a derivative of libvpx,
