@@ -351,7 +351,7 @@ fn multi_tile_dispatch_uses_worker_pool() {
     not(rvp9_conformance_vectors),
     ignore = "requires tests/conformance/vectors; run scripts/fetch-vectors.sh"
 )]
-fn parallel_tile_decode_reuses_isolated_scratch_buffers() {
+fn multi_tile_parallel_decode_reuses_isolated_scratch_buffers() {
     use std::sync::atomic::Ordering;
     let dir = vectors_dir();
     let path = dir.join("vp90-2-08-tile_1x8.webm");
@@ -377,12 +377,14 @@ fn parallel_tile_decode_reuses_isolated_scratch_buffers() {
             .parse_packet(packet_bytes)
             .unwrap_or_else(|error| panic!("packet {packet_idx}: parse failed: {error}"));
         for frame in parsed {
-            let before = rvp9_core::frame::RVP9_G5_2_SCRATCH_ALLOCS.load(Ordering::Relaxed);
+            let before = decoder.tile_scratch_pool_allocation_count();
             let _buf = decoder
                 .decode_frame(&frame)
                 .expect("tile_1x8 frame should decode");
-            let after = rvp9_core::frame::RVP9_G5_2_SCRATCH_ALLOCS.load(Ordering::Relaxed);
-            alloc_delta_by_frame.push(after.wrapping_sub(before));
+            let after = decoder.tile_scratch_pool_allocation_count();
+            alloc_delta_by_frame.push(
+                u32::try_from(after - before).expect("per-frame scratch allocations fit u32"),
+            );
             pool_count_by_frame.push(decoder.tile_scratch_pool_buffer_count());
             frame_idx += 1;
             // Bound the test runtime — we only need a few frames

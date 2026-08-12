@@ -976,6 +976,10 @@ pub struct Yv12ScratchPool {
     /// [`Self::put`]. Geometry is uniform across the Vec (a
     /// mismatched-geometry `take` discards the entire Vec).
     buffers: Vec<Yv12Buffer>,
+    /// Fresh buffers allocated by this pool over its lifetime. This is
+    /// instance-local so diagnostics can measure one decoder without racing
+    /// unrelated decoders that also use the process-wide counter.
+    allocations: u64,
 }
 
 impl Yv12ScratchPool {
@@ -990,6 +994,12 @@ impl Yv12ScratchPool {
     #[must_use]
     pub fn buffer_count(&self) -> usize {
         self.buffers.len()
+    }
+
+    /// Number of fresh frame buffers allocated by this pool.
+    #[must_use]
+    pub fn allocation_count(&self) -> u64 {
+        self.allocations
     }
 
     /// Hand out `n` owned scratch buffers with geometry matching
@@ -1036,6 +1046,7 @@ impl Yv12ScratchPool {
                 // path post-warmup.
                 let fresh = template.clone_geometry()?;
                 RVP9_G5_2_SCRATCH_ALLOCS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                self.allocations = self.allocations.saturating_add(1);
                 out.push(fresh);
             }
         }
@@ -2583,9 +2594,11 @@ mod tests {
         .unwrap();
         let mut pool = Yv12ScratchPool::new();
         assert_eq!(pool.buffer_count(), 0);
+        assert_eq!(pool.allocation_count(), 0);
 
         let bufs = pool.take(4, &template).expect("take 4");
         assert_eq!(bufs.len(), 4);
+        assert_eq!(pool.allocation_count(), 4);
         // Pool is empty while buffers are out.
         assert_eq!(pool.buffer_count(), 0);
 
@@ -2628,6 +2641,7 @@ mod tests {
         }
         let after = RVP9_G5_2_SCRATCH_ALLOCS.load(Ordering::Relaxed);
         assert_eq!(after, before, "warm pool must not allocate on take(3)");
+        assert_eq!(pool.allocation_count(), 3);
     }
 
     #[test]

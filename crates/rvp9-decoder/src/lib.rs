@@ -903,6 +903,15 @@ impl Decoder {
         self.tile_scratch_pool.buffer_count()
     }
 
+    /// Number of fresh buffers allocated by this decoder's tile scratch pool.
+    ///
+    /// Unlike the legacy process-wide counter, this diagnostic is isolated
+    /// from other decoder instances and is safe to compare across one decode.
+    #[must_use]
+    pub fn tile_scratch_pool_allocation_count(&self) -> u64 {
+        self.tile_scratch_pool.allocation_count()
+    }
+
     /// Internal helper: write `ref_frame_map[i] = Some(new_idx)`,
     /// keeping `frame_pool.ref_counts` in sync. If the slot already
     /// held `Some(old_idx)`, decrements that slot's ref-count first;
