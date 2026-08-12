@@ -1,17 +1,16 @@
 //! Packet-level plumbing for spatially layered VP9 access units.
 //!
-//! This first slice is intentionally keyframe-only. It proves the source
-//! pyramid, per-layer encoder ownership, low-to-high component order, and VP9
-//! superframe assembly without pretending that independent inter streams are
-//! spatial SVC. Inter pictures need a shared decoder reference-map schedule
-//! and cross-layer reconstruction injection; those land in the next slice.
+//! The stateful encoder shares decoder-visible reference and entropy state
+//! across otherwise independent per-layer encoders. Components are emitted
+//! low-to-high so enhancement pictures can use the freshly reconstructed base
+//! layer. A keyframe-only wrapper remains available for narrow callers.
 
 use rvp9_core::bitstream::superframe::SuperframeBuilder;
 
 use crate::EncodeError;
 use crate::frame_loop::{
-    EncodedFrame, EncoderConfig, EncoderParallelism, FrameKind, StreamEncoder, YuvFrameRef,
-    strided_plane_covers,
+    EncodedFrame, EncoderConfig, EncoderParallelism, FrameKind, SpatialFrameControl,
+    SpatialSharedState, StreamEncoder, YuvFrameRef, strided_plane_covers,
 };
 use crate::scale_source::{ScaleSourceError, ScaledI420, scale_i420_2x};
 use crate::svc::{SpatialLayerPlan, SpatialLayerSpec, SpatialSvcConfig, SpatialSvcConfigError};
@@ -50,7 +49,7 @@ impl core::fmt::Display for SpatialEncodeError {
             Self::Config(error) => write!(f, "invalid spatial configuration: {error}"),
             Self::UnsupportedLayerGeometry { width, height } => write!(
                 f,
-                "spatial layer {width}x{height} is outside the encoder's current multiple-of-64x8 geometry"
+                "spatial layer {width}x{height} is outside the encoder's current supported geometry"
             ),
             Self::UnsupportedMode(reason) => write!(f, "unsupported spatial encode mode: {reason}"),
             Self::InvalidInput(reason) => write!(f, "invalid spatial source frame: {reason}"),
@@ -101,6 +100,231 @@ pub struct SpatialAccessUnit {
     pub data: Vec<u8>,
     /// Per-component metadata in the same low-to-high order as `data`.
     pub layers: Vec<SpatialEncodedLayer>,
+}
+
+/// Stateful two-layer spatial-SVC encoder.
+///
+/// Components are emitted low-to-high in one VP9 superframe. The base layer
+/// refreshes map entry 0. The enhancement layer refreshes entry 1 and uses
+/// the freshly coded base reconstruction as its spatial reference. Later
+/// enhancement pictures also retain their prior same-resolution picture as
+/// LAST, matching pinned libvpx's fixed no-temporal-layer topology.
+pub struct SpatialEncoder {
+    plan: SpatialLayerPlan,
+    encoders: Vec<StreamEncoder>,
+    shared: SpatialSharedState,
+    keyframe_interval: u32,
+    access_unit_index: u32,
+    poisoned: bool,
+}
+
+impl SpatialEncoder {
+    /// Construct a two-layer spatial encoder using default parallelism.
+    ///
+    /// # Errors
+    ///
+    /// Rejects delayed, ALTREF, temporal-SVC, denoised, non-two-layer, and
+    /// non-inter-layer-prediction configurations in this first production
+    /// slice, plus invalid geometry or rate plans.
+    pub fn new(
+        template: EncoderConfig,
+        spatial: SpatialSvcConfig,
+    ) -> Result<Self, SpatialEncodeError> {
+        Self::new_with_parallelism(template, spatial, EncoderParallelism::default())
+    }
+
+    /// Construct with explicit per-layer worker and tile limits.
+    ///
+    /// # Errors
+    ///
+    /// Same as [`Self::new`].
+    pub fn new_with_parallelism(
+        template: EncoderConfig,
+        spatial: SpatialSvcConfig,
+        parallelism: EncoderParallelism,
+    ) -> Result<Self, SpatialEncodeError> {
+        if template.lag_in_frames != 0 {
+            return Err(SpatialEncodeError::UnsupportedMode(
+                "spatial access units require lag_in_frames == 0",
+            ));
+        }
+        if template.enable_alt_ref {
+            return Err(SpatialEncodeError::UnsupportedMode(
+                "spatial SVC is mutually exclusive with ALTREF",
+            ));
+        }
+        if template.temporal_layers != 1 {
+            return Err(SpatialEncodeError::UnsupportedMode(
+                "combined temporal and spatial SVC is not wired yet",
+            ));
+        }
+        if template.noise_sensitivity != 0 {
+            return Err(SpatialEncodeError::UnsupportedMode(
+                "spatial SVC denoiser state is not wired yet",
+            ));
+        }
+        if spatial.number_spatial_layers != 2 {
+            return Err(SpatialEncodeError::UnsupportedMode(
+                "the stateful spatial encoder currently requires exactly two layers",
+            ));
+        }
+        if !matches!(
+            spatial.inter_layer_pred,
+            crate::svc::InterLayerPred::On | crate::svc::InterLayerPred::OnConstrained
+        ) {
+            return Err(SpatialEncodeError::UnsupportedMode(
+                "the stateful spatial encoder currently requires inter-layer prediction",
+            ));
+        }
+
+        let keyframe_interval = template.gop_length;
+        let plan = SpatialLayerPlan::canonical(
+            spatial,
+            template.width,
+            template.height,
+            template.target_bitrate_bps,
+        )?;
+        let mut encoders = Vec::with_capacity(plan.layers.len());
+        for layer in &plan.layers {
+            if !layer.width.is_multiple_of(64)
+                || !layer.height.is_multiple_of(8)
+                || layer.height < 64
+            {
+                return Err(SpatialEncodeError::UnsupportedLayerGeometry {
+                    width: layer.width,
+                    height: layer.height,
+                });
+            }
+            let mut layer_config = template;
+            layer_config.width = layer.width;
+            layer_config.height = layer.height;
+            layer_config.target_bitrate_bps = layer.target_bitrate_bps;
+            encoders.push(
+                StreamEncoder::new_with_parallelism(layer_config, parallelism)
+                    .map_err(SpatialEncodeError::Encoder)?,
+            );
+        }
+        let base = plan
+            .layers
+            .first()
+            .expect("a validated two-layer plan has a base layer");
+        let base_dimensions = (base.width as usize, base.height as usize);
+        Ok(Self {
+            plan,
+            encoders,
+            shared: SpatialSharedState::new(base_dimensions.0, base_dimensions.1),
+            keyframe_interval,
+            access_unit_index: 0,
+            poisoned: false,
+        })
+    }
+
+    /// Validated canonical layer plan owned by this encoder.
+    #[must_use]
+    pub fn plan(&self) -> &SpatialLayerPlan {
+        &self.plan
+    }
+
+    /// Number of access units successfully encoded so far.
+    #[must_use]
+    pub const fn access_unit_index(&self) -> u32 {
+        self.access_unit_index
+    }
+
+    /// Encode one top-resolution source into a two-component spatial access
+    /// unit in decoder order.
+    ///
+    /// # Errors
+    ///
+    /// Returns an input, scale, bitstream, or component error. Any component
+    /// failure poisons the coordinator because lower layers may have already
+    /// advanced their private rate-control state.
+    pub fn encode_access_unit(
+        &mut self,
+        source: &YuvFrameRef<'_>,
+    ) -> Result<SpatialAccessUnit, SpatialEncodeError> {
+        if self.poisoned {
+            return Err(SpatialEncodeError::Poisoned);
+        }
+        let top = self
+            .plan
+            .layers
+            .last()
+            .expect("a validated spatial plan has a top layer");
+        let full = copy_tight_i420(source, top.width as usize, top.height as usize)?;
+        let sources = self
+            .plan
+            .layers
+            .iter()
+            .map(|layer| build_layer_source(&full, layer))
+            .collect::<Result<Vec<_>, _>>()?;
+        let key_access_unit = self
+            .access_unit_index
+            .is_multiple_of(self.keyframe_interval);
+
+        let mut builder = SuperframeBuilder::new();
+        let mut layers = Vec::with_capacity(self.encoders.len());
+        for (layer_index, ((encoder, layer), input)) in self
+            .encoders
+            .iter_mut()
+            .zip(&self.plan.layers)
+            .zip(&sources)
+            .enumerate()
+        {
+            let control = spatial_frame_control(layer_index, key_access_unit);
+            let view = YuvFrameRef {
+                y: &input.y,
+                u: &input.u,
+                v: &input.v,
+                y_stride: input.width,
+                u_stride: input.width / 2,
+                v_stride: input.width / 2,
+            };
+            encoder.swap_spatial_shared_state(&mut self.shared);
+            let encoded = encoder.encode_spatial_component(&view, control);
+            encoder.swap_spatial_shared_state(&mut self.shared);
+            let encoded = match encoded {
+                Ok(encoded) => encoded,
+                Err(error) => {
+                    self.poisoned = true;
+                    return Err(SpatialEncodeError::Encoder(error));
+                }
+            };
+            layers.push(layer_metadata(layer, &encoded));
+            if let Err(error) = builder.push_frame(encoded.data) {
+                self.poisoned = true;
+                return Err(SpatialEncodeError::Encoder(EncodeError::Bitstream(error)));
+            }
+        }
+        self.access_unit_index = self.access_unit_index.saturating_add(1);
+
+        Ok(SpatialAccessUnit {
+            data: builder.finish(),
+            layers,
+        })
+    }
+}
+
+fn spatial_frame_control(layer_index: usize, key_access_unit: bool) -> SpatialFrameControl {
+    match (layer_index, key_access_unit) {
+        (0, true) => SpatialFrameControl::Key,
+        (0, false) => SpatialFrameControl::Inter {
+            refresh_frame_flags: 0x01,
+            ref_frame_indices: [0, 0, 2],
+            allow_golden_ref: false,
+        },
+        (1, true) => SpatialFrameControl::Inter {
+            refresh_frame_flags: 0x02,
+            ref_frame_indices: [0, 1, 2],
+            allow_golden_ref: false,
+        },
+        (1, false) => SpatialFrameControl::Inter {
+            refresh_frame_flags: 0x02,
+            ref_frame_indices: [1, 0, 2],
+            allow_golden_ref: true,
+        },
+        _ => unreachable!("the stateful spatial encoder validates exactly two layers"),
+    }
 }
 
 /// Keyframe-only spatial access-unit encoder.
@@ -358,6 +582,40 @@ mod tests {
         (y, u, v)
     }
 
+    fn decoded_i420(frame: &rvp9_core::frame::FrameBuf) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+        fn tight(data: &[u8], stride: usize, row_width: usize, rows: usize) -> Vec<u8> {
+            let mut result = Vec::with_capacity(row_width * rows);
+            for row in 0..rows {
+                let offset = row * stride;
+                result.extend_from_slice(&data[offset..offset + row_width]);
+            }
+            result
+        }
+
+        let width = frame.width() as usize;
+        let height = frame.height() as usize;
+        (
+            tight(
+                frame.y_plane().data(),
+                frame.y_plane().stride(),
+                width,
+                height,
+            ),
+            tight(
+                frame.u_plane().data(),
+                frame.u_plane().stride(),
+                width / 2,
+                height / 2,
+            ),
+            tight(
+                frame.v_plane().data(),
+                frame.v_plane().stride(),
+                width / 2,
+                height / 2,
+            ),
+        )
+    }
+
     #[test]
     fn two_layer_keyframe_access_units_parse_and_decode_low_to_high() {
         let width = 128usize;
@@ -422,6 +680,106 @@ mod tests {
                 let decoded = decoder.decode_frame(component).unwrap();
                 assert_eq!(decoded.width(), want_width);
                 assert_eq!(decoded.height(), want_height);
+            }
+        }
+    }
+
+    #[test]
+    fn two_layer_inter_access_units_share_reference_map_and_decode_in_order() {
+        let width = 256usize;
+        let height = 128usize;
+        let mut template = EncoderConfig::new(width as u32, height as u32);
+        template.target_bitrate_bps = 100_000;
+        template.speed = 8;
+        template.gop_length = 3;
+        let mut encoder = SpatialEncoder::new(
+            template,
+            SpatialSvcConfig {
+                number_spatial_layers: 2,
+                inter_layer_pred: InterLayerPred::On,
+            },
+        )
+        .unwrap();
+        let mut decoder = Decoder::new();
+
+        for access_unit_index in 0..4usize {
+            let (mut y, mut u, mut v) = source(width, height);
+            for (index, value) in y.iter_mut().enumerate() {
+                *value =
+                    value.wrapping_add((access_unit_index * 19 + index / width + index % 7) as u8);
+            }
+            for value in &mut u {
+                *value = value.wrapping_add((access_unit_index * 11) as u8);
+            }
+            for value in &mut v {
+                *value = value.wrapping_add((access_unit_index * 17) as u8);
+            }
+            let access_unit = encoder
+                .encode_access_unit(&YuvFrameRef {
+                    y: &y,
+                    u: &u,
+                    v: &v,
+                    y_stride: width,
+                    u_stride: width / 2,
+                    v_stride: width / 2,
+                })
+                .unwrap();
+            assert_eq!(access_unit.layers.len(), 2);
+            assert_eq!(encoder.access_unit_index(), access_unit_index as u32 + 1);
+
+            let parsed = decoder.parse_packet(&access_unit.data).unwrap();
+            assert_eq!(parsed.count(), 2);
+            assert_eq!(parsed.output_frame_index(), Some(1));
+            let key_access_unit = access_unit_index.is_multiple_of(3);
+            let expected = if key_access_unit {
+                [(0xff, [0, 0, 0]), (0x02, [0, 1, 2])]
+            } else {
+                [(0x01, [0, 0, 2]), (0x02, [1, 0, 2])]
+            };
+
+            for (component_index, (component, &(want_width, want_height))) in parsed
+                .frames()
+                .iter()
+                .zip(&[(128, 64), (256, 128)])
+                .enumerate()
+            {
+                assert!(!component.header.error_resilient);
+                assert!(
+                    component
+                        .header
+                        .tail
+                        .as_ref()
+                        .expect("coded component has a header tail")
+                        .frame_parallel_decoding_mode
+                );
+                match component.header.kind {
+                    WireFrameKind::KeyFrame => {
+                        assert!(key_access_unit && component_index == 0);
+                    }
+                    WireFrameKind::InterFrame {
+                        refresh_frame_flags,
+                        ref_frame_indices,
+                        ..
+                    } => {
+                        assert_eq!(
+                            (refresh_frame_flags, ref_frame_indices),
+                            expected[component_index]
+                        );
+                    }
+                    kind => panic!("unexpected spatial component kind: {kind:?}"),
+                }
+                assert_eq!(component.header.width, want_width);
+                assert_eq!(component.header.height, want_height);
+                let decoded = decoder.decode_frame(component).unwrap();
+                assert_eq!(decoded.width(), want_width);
+                assert_eq!(decoded.height(), want_height);
+                let decoded = decoded_i420(&decoded);
+                let encoded = encoder
+                    .shared
+                    .named_reference_planes_for_test(component_index);
+                assert_eq!(decoded.0, encoded.0);
+                assert_eq!(decoded.1, encoded.1);
+                assert_eq!(decoded.2, encoded.2);
             }
         }
     }

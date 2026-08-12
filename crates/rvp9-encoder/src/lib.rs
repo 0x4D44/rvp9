@@ -249,7 +249,8 @@ pub use frame_loop::{
 // config literal without reaching into the `rate_control` submodule.
 pub use rate_control::RcMode;
 pub use spatial_encoder::{
-    SpatialAccessUnit, SpatialEncodeError, SpatialEncodedLayer, SpatialKeyframeEncoder,
+    SpatialAccessUnit, SpatialEncodeError, SpatialEncodedLayer, SpatialEncoder,
+    SpatialKeyframeEncoder,
 };
 
 /// Encoder configuration.

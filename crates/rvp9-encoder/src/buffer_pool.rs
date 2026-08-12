@@ -602,7 +602,7 @@ impl RefFramePool {
         self.exchange_new_frame_sized(self.width, self.height, recon)
     }
 
-    fn exchange_new_frame_sized(
+    pub(crate) fn exchange_new_frame_sized(
         &mut self,
         width: usize,
         height: usize,

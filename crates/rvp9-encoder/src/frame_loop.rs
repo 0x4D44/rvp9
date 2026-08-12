@@ -1732,6 +1732,99 @@ struct SvcFrameDecision {
     /// Pinned one-pass VBR keeps the ordinary SVC inter target but applies
     /// the compile-time 1.75x refresh Q-range ceiling on these frames.
     boosted_refresh: bool,
+    /// Whether the uncompressed header resets past coding state. Temporal
+    /// SVC uses this to make retained operating points independently
+    /// decodable; fixed spatial SVC keeps the shared cross-layer state.
+    error_resilient: bool,
+    /// Whether the decoder suppresses backward probability adaptation for
+    /// this frame. Spatial components share forward-updated state in decode
+    /// order, so they use frame-parallel mode without an error-resilient
+    /// reset.
+    frame_parallel_decoding_mode: bool,
+}
+
+/// Explicit frame topology supplied by the spatial access-unit coordinator.
+#[derive(Copy, Clone, Debug)]
+pub(crate) enum SpatialFrameControl {
+    /// The first component in a key access unit resets the shared reference
+    /// map and probability state.
+    Key,
+    /// An inter component reads and refreshes the shared decoder-visible map.
+    Inter {
+        /// Wire refresh mask for `ref_frame_map[8]`.
+        refresh_frame_flags: u8,
+        /// Logical LAST/GOLDEN/ALTREF selectors.
+        ref_frame_indices: [u8; 3],
+        /// Whether the picker may use the GOLDEN reference.
+        allow_golden_ref: bool,
+    },
+}
+
+impl SpatialFrameControl {
+    fn frame_kind(self) -> FrameKind {
+        match self {
+            Self::Key => FrameKind::Key,
+            Self::Inter { .. } => FrameKind::Inter,
+        }
+    }
+
+    fn layered_decision(self) -> Option<SvcFrameDecision> {
+        match self {
+            Self::Key => None,
+            Self::Inter {
+                refresh_frame_flags,
+                ref_frame_indices,
+                allow_golden_ref,
+            } => Some(SvcFrameDecision {
+                temporal_layer_id: 0,
+                refresh_frame_flags,
+                ref_frame_indices,
+                allow_golden_ref,
+                boosted_refresh: false,
+                error_resilient: false,
+                frame_parallel_decoding_mode: true,
+            }),
+        }
+    }
+}
+
+/// Decoder-visible state shared by every spatial component in decode order.
+///
+/// Rate control, source analysis, AQ, and encoder scratch remain layer-local.
+/// The reference map, entropy contexts, and previous-frame metadata move as
+/// one unit because the decoder has only one copy of each.
+pub(crate) struct SpatialSharedState {
+    ref_pool: crate::buffer_pool::RefFramePool,
+    frame_context: FrameContext,
+    decoder_fc_state: FrameContext,
+    decoder_fc_state_arf: FrameContext,
+    prev_mv_grid: Option<Vec<PrevFrameMvRef>>,
+    prev_mv_grid_dims: (usize, usize),
+    last_frame_was_key: bool,
+    last_show_frame: bool,
+}
+
+impl SpatialSharedState {
+    pub(crate) fn new(width: usize, height: usize) -> Self {
+        Self {
+            ref_pool: crate::buffer_pool::RefFramePool::new(width, height),
+            frame_context: FrameContext::new_default(),
+            decoder_fc_state: FrameContext::new_default(),
+            decoder_fc_state_arf: FrameContext::new_default(),
+            prev_mv_grid: None,
+            prev_mv_grid_dims: (0, 0),
+            last_frame_was_key: false,
+            last_show_frame: false,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn named_reference_planes_for_test(
+        &self,
+        map_index: usize,
+    ) -> (&[u8], &[u8], &[u8]) {
+        self.ref_pool.named_ref_planes(map_index)
+    }
 }
 
 // A14 — GOLDEN refresh period for the inter path moved to the GOP
@@ -2076,6 +2169,60 @@ impl StreamEncoder {
         self.parallelism
     }
 
+    /// Exchange the decoder-visible state used by spatial components.
+    ///
+    /// The coordinator calls this immediately before and after one component
+    /// encode. Every layer therefore keeps its private rate-control and
+    /// analysis state while observing one shared reference/context timeline.
+    pub(crate) fn swap_spatial_shared_state(&mut self, shared: &mut SpatialSharedState) {
+        core::mem::swap(&mut self.ref_pool, &mut shared.ref_pool);
+        core::mem::swap(&mut self.frame_context, &mut shared.frame_context);
+        core::mem::swap(&mut self.decoder_fc_state, &mut shared.decoder_fc_state);
+        core::mem::swap(
+            &mut self.decoder_fc_state_arf,
+            &mut shared.decoder_fc_state_arf,
+        );
+        core::mem::swap(&mut self.prev_mv_grid, &mut shared.prev_mv_grid);
+        core::mem::swap(&mut self.prev_mv_grid_dims, &mut shared.prev_mv_grid_dims);
+        core::mem::swap(&mut self.last_frame_was_key, &mut shared.last_frame_was_key);
+        core::mem::swap(&mut self.last_show_frame, &mut shared.last_show_frame);
+    }
+
+    /// Encode one tight I420 spatial component with coordinator-owned frame
+    /// topology. Spatial v1 is synchronous and bypasses delayed lookahead.
+    pub(crate) fn encode_spatial_component(
+        &mut self,
+        yuv: &YuvFrameRef<'_>,
+        control: SpatialFrameControl,
+    ) -> Result<EncodedFrame, EncodeError> {
+        if self.config.lag_in_frames != 0 {
+            return Err(EncodeError::InvalidConfig(
+                "spatial components require lag_in_frames == 0",
+            ));
+        }
+        let w = self.config.width as usize;
+        let h = self.config.height as usize;
+        let uvw = w / 2;
+        let uvh = h / 2;
+        if yuv.y_stride != w || yuv.u_stride != uvw || yuv.v_stride != uvw {
+            return Err(EncodeError::InvalidConfig(
+                "spatial component input must use tight I420 strides",
+            ));
+        }
+        if yuv.y.len() != w * h || yuv.u.len() != uvw * uvh || yuv.v.len() != uvw * uvh {
+            return Err(EncodeError::InvalidConfig(
+                "spatial component planes must match configured dimensions",
+            ));
+        }
+        if self.svc.is_some() {
+            return Err(EncodeError::InvalidConfig(
+                "spatial and temporal SVC controls cannot share one component encoder",
+            ));
+        }
+        self.lookahead.record_direct_push();
+        self.encode_one_source((yuv.y, yuv.u, yuv.v), None, Some(control))
+    }
+
     /// Stage 4a product diagnostic hook.
     ///
     /// Returns accumulated Block16 SPLIT admission stats since the previous
@@ -2264,6 +2411,7 @@ impl StreamEncoder {
                 .encode_one_source(
                     (&yuv.y[..w * h], &yuv.u[..uvw * uvh], &yuv.v[..uvw * uvh]),
                     None,
+                    None,
                 )
                 .map(Some);
         }
@@ -2339,7 +2487,7 @@ impl StreamEncoder {
             Some(entry) => entry.clone(),
             None => return Ok(None),
         };
-        self.encode_one_source((&popped.y, &popped.u, &popped.v), Some(&popped.y))
+        self.encode_one_source((&popped.y, &popped.u, &popped.v), Some(&popped.y), None)
             .map(Some)
     }
 
@@ -2347,6 +2495,7 @@ impl StreamEncoder {
         &mut self,
         source: (&[u8], &[u8], &[u8]),
         shared_source_y: Option<&std::sync::Arc<[u8]>>,
+        spatial_control: Option<SpatialFrameControl>,
     ) -> Result<EncodedFrame, EncodeError> {
         let (y_tight, u_tight, v_tight) = source;
 
@@ -2368,19 +2517,29 @@ impl StreamEncoder {
         // internal budgeting but isn't the right oracle for KF
         // placement.
         let frame_sched = self.gf_group.schedule(self.frame_idx);
-        let frame_kind = match frame_sched.update_type {
-            crate::gop::FrameUpdateType::KfUpdate => FrameKind::Key,
-            _ => FrameKind::Inter,
-        };
-        let rc_frame_kind = match frame_sched.update_type {
-            crate::gop::FrameUpdateType::KfUpdate => RcFrameKind::Key,
-            crate::gop::FrameUpdateType::GfUpdate
-                if self.config.temporal_layers == 1 && vbr_gf_rc_enabled(self.config.rc_mode) =>
-            {
-                RcFrameKind::Golden
-            }
-            _ => RcFrameKind::Inter,
-        };
+        let frame_kind = spatial_control.map_or_else(
+            || match frame_sched.update_type {
+                crate::gop::FrameUpdateType::KfUpdate => FrameKind::Key,
+                _ => FrameKind::Inter,
+            },
+            SpatialFrameControl::frame_kind,
+        );
+        let rc_frame_kind = spatial_control.map_or_else(
+            || match frame_sched.update_type {
+                crate::gop::FrameUpdateType::KfUpdate => RcFrameKind::Key,
+                crate::gop::FrameUpdateType::GfUpdate
+                    if self.config.temporal_layers == 1
+                        && vbr_gf_rc_enabled(self.config.rc_mode) =>
+                {
+                    RcFrameKind::Golden
+                }
+                _ => RcFrameKind::Inter,
+            },
+            |control| match control.frame_kind() {
+                FrameKind::Key => RcFrameKind::Key,
+                FrameKind::Inter => RcFrameKind::Inter,
+            },
+        );
 
         // A18 (SVC) — assign this frame's temporal layer before the
         // per-kind encode dispatch. For keyframes the layer is always tl0
@@ -2390,7 +2549,11 @@ impl StreamEncoder {
         // never fires for them. For inter frames this runs the scaffold's
         // temporal setter and records the (temporal_layer_id,
         // refresh_frame_flags) decision in `self.svc_frame`.
-        self.svc_assign_layer(frame_kind);
+        if let Some(control) = spatial_control {
+            self.svc_frame = control.layered_decision();
+        } else {
+            self.svc_assign_layer(frame_kind);
+        }
         let temporal_svc_inter_target = self.svc_prepare_rate_control(rc_frame_kind);
 
         // W2.1(vpxenc parity, A5 P0): update per-frame pre-analysis
@@ -2894,7 +3057,7 @@ impl StreamEncoder {
         // all resolve to the KF slot. The simulator reconstructs the KF
         // DIRECTLY into the committed slot (the prior code reconstructed
         // into `last_recon_*`, which was the LAST slot's storage).
-        self.ref_pool.keyframe_reset();
+        self.ref_pool.keyframe_reset_sized(w as usize, h as usize);
         let tile_count = 1usize << log2_tile_cols;
         let parallel_keyframe_tiles = tile_count > 1
             && self.parallelism.max_threads > 1
@@ -3241,6 +3404,8 @@ impl StreamEncoder {
             ref_frame_indices,
             allow_golden_ref,
             boosted_refresh,
+            error_resilient: true,
+            frame_parallel_decoding_mode: true,
         });
     }
 
@@ -3373,7 +3538,12 @@ impl StreamEncoder {
         // implicit `use_prev_frame_mvs` gate. A lower-layer decoder may
         // have skipped the immediately preceding enhancement packet, so
         // layered frames cannot depend on that packet's MV grid.
-        let error_resilient = self.svc_frame.is_some();
+        let error_resilient = self
+            .svc_frame
+            .is_some_and(|decision| decision.error_resilient);
+        let frame_parallel_decoding_mode = self
+            .svc_frame
+            .is_some_and(|decision| decision.frame_parallel_decoding_mode);
         if error_resilient {
             self.frame_context = FrameContext::new_default();
             self.decoder_fc_state = FrameContext::new_default();
@@ -4290,6 +4460,7 @@ impl StreamEncoder {
                     /* show_frame = */
                     true,
                     error_resilient,
+                    frame_parallel_decoding_mode,
                     // W-ALTREF — when the ALTREF picker candidate is live this
                     // show frame may name ALTREF in its ref set, so the ALTREF
                     // slot is sign-biased (it points at a FUTURE display-order
@@ -4453,11 +4624,11 @@ impl StreamEncoder {
         // (`rvp9-decoder/src/lib.rs:2342-2343`, `:3136-3142`). Using the
         // post-header `decoder_fc` here desynced under TWO_LOOP (the
         // partial coef update means post-header != pre-header).
-        if error_resilient {
-            // Error-resilient mode forces `refresh_frame_context = 0`
-            // and `frame_parallel_decoding_mode = 1`. The decoder keeps
-            // only the forward compressed-header updates and skips
-            // backward adaptation, so persist that exact bank state.
+        if error_resilient || frame_parallel_decoding_mode {
+            // Error-resilient mode and frame-parallel decoding both suppress
+            // backward adaptation. Spatial SVC uses the latter without the
+            // former, retaining shared cross-layer state while persisting the
+            // exact forward-updated bank the decoder will carry onward.
             self.decoder_fc_state = decoder_fc.clone();
             self.frame_context = decoder_fc;
         } else {
@@ -4513,9 +4684,17 @@ impl StreamEncoder {
         // `golden_recon.copy_from_slice(&last_recon)` GOLDEN-refresh
         // mirror — the map rotation does it by re-pointing
         // `ref_frame_map[GOLDEN_REF's idx]` at the committed slot.
-        let (_, displaced_recon) =
+        let current_dimensions = (w as usize, h as usize);
+        let (_, displaced_recon) = if self.ref_pool.dims() == current_dimensions {
             self.ref_pool
-                .exchange_new_frame((new_recon_y, new_recon_u, new_recon_v));
+                .exchange_new_frame((new_recon_y, new_recon_u, new_recon_v))
+        } else {
+            self.ref_pool.exchange_new_frame_sized(
+                current_dimensions.0,
+                current_dimensions.1,
+                (new_recon_y, new_recon_u, new_recon_v),
+            )
+        };
         self.inter_recon_scratch = Some(displaced_recon);
         self.ref_pool.update_reference_frames(refresh_flags);
 
@@ -4952,6 +5131,7 @@ impl StreamEncoder {
             /* refresh_frame_flags = */ 0x04,
             /* show_frame = */ false,
             /* error_resilient = */ false,
+            /* frame_parallel_decoding_mode = */ false,
             /* ref_frame_sign_biases = */ [false, false, false],
             // DRIFT-FIX (GOLDEN ref-index) — identity logical-ref map so a
             // GOLDEN-picked ARF block reads the decoder's GOLDEN slot
@@ -6449,6 +6629,10 @@ fn build_inter_packet_with_residuals<F>(
     // dependency and resets past coding state for single-context
     // temporal SVC. False for the legacy single-layer and ALTREF paths.
     error_resilient: bool,
+    // Spatial components suppress backward probability adaptation while
+    // retaining shared state across resolutions. Error-resilient temporal
+    // frames force this bit on in the parser.
+    frame_parallel_decoding_mode: bool,
     // W-ALTREF — per-logical-ref sign bias `[LAST, GOLDEN, ALTREF]`.
     // libvpx `vp9_encoder.c::set_ref_sign_bias` (:5034-5049): a ref is
     // "sign-biased" (backward) when `cur_frame_index <
@@ -6946,7 +7130,7 @@ where
     // documented rvp9-specific simplification; W0.5 retires it.
     let tail = HeaderTail {
         refresh_frame_context: true,
-        frame_parallel_decoding_mode: false,
+        frame_parallel_decoding_mode,
         frame_context_idx,
         loop_filter: LoopFilterParams {
             // F11.0 — emit the F11.0-picked filter_level (matches the
@@ -9097,6 +9281,7 @@ mod tests {
             &segmentation,
             0x01,
             true,
+            false,
             false,
             [false; 3],
             [0, 1, 2],
