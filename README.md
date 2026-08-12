@@ -17,17 +17,16 @@ with VBR or CBR rate control, cyclic-refresh AQ mode 3, denoising, and two- or
 three-layer temporal SVC. The qualified targets are 720p30, 1080p30, and
 1080p60. It emits 8-bit profile-0 IVF streams.
 
-The alpha decoder passes 4,796 displayed frames across 306 of the 307 pinned
-official vector files. The one excluded file,
-`vp90-2-22-svc_1280x720_3.ivf`, requires spatial SVC, which is not supported
-in this alpha. The supported vectors pass with native and forced-scalar
-dispatch and with one- and two-thread decoding.
+The published alpha decoder passed 4,796 displayed frames across 306 of the
+307 pinned official vector files. Current post-alpha source also passes the
+spatial-SVC vector: all 4,816 displayed frames across all 307 vectors pass
+with native and forced-scalar dispatch and with one- and two-thread decoding.
 
 Every stream in the 32-row encoder qualification matrix decodes byte-exactly
 under `rvp9dec`, pinned libvpx `vpxdec`, and ffmpeg. Run the same gates with:
 
 ```bash
-./scripts/qualify-alpha-conformance.sh
+./scripts/qualify-conformance.sh
 ./scripts/qualify-alpha-encoder.sh
 ```
 
@@ -103,8 +102,8 @@ cd rvp9-2
 # 4. Build the Rust workspace.
 cargo build --workspace --release --locked
 
-# 5. Run the alpha correctness gates.
-./scripts/qualify-alpha-conformance.sh
+# 5. Run the current correctness gates.
+./scripts/qualify-conformance.sh
 ./scripts/qualify-alpha-encoder.sh
 ```
 

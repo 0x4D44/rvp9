@@ -29,10 +29,13 @@
 //!
 //! Optional flags:
 //!   --limit N     Process only the first N vectors (sorted by name).
+//!   --official    Run the fail-closed complete-corpus gate: require exactly
+//!                 307 vectors and 4,816 displayed-frame matches.
 //!   --alpha-supported
 //!                 Run the v0.2.0-alpha.1 gate: require all 307 official
 //!                 vectors, visibly exclude the one tracked spatial-SVC
 //!                 stream, and require all 4,796 supported frames to pass.
+//!   --threads N   Construct each decoder with exactly N worker threads.
 //!   --verbose     Print one line per frame (default: per-vector
 //!                 summary only).
 //!   --strict      Treat skipped frames as failures (used by Stage 3
@@ -42,18 +45,21 @@
 
 use rvp9_decoder::{DecodeError, Decoder};
 use rvp9_harness::conformance_scope::{
-    ALPHA_SUPPORTED_FRAME_COUNT, ALPHA_UNSUPPORTED_SPATIAL_SVC_VECTOR, OFFICIAL_VECTOR_COUNT,
-    alpha_supported_vectors,
+    ALPHA_SUPPORTED_FRAME_COUNT, ALPHA_UNSUPPORTED_SPATIAL_SVC_VECTOR, OFFICIAL_FRAME_COUNT,
+    OFFICIAL_VECTOR_COUNT, alpha_supported_vectors,
 };
 use rvp9_harness::container::{ContainerError, read_packets};
 use rvp9_harness::md5file::{Md5Entry, Md5FileError, read_md5_file};
 use rvp9_harness::{hex16, md5_of_yv12_visible};
+use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 
 struct Args {
     vectors_dir: PathBuf,
     limit: Option<usize>,
+    official: bool,
     alpha_supported: bool,
+    threads: Option<NonZeroUsize>,
     verbose: bool,
     strict: bool,
     non_gating: bool,
@@ -72,11 +78,47 @@ fn parse_args() -> Args {
             .map(PathBuf::from)
             .expect("--vectors-dir required"),
         limit: value("--limit").map(|s| s.parse().expect("--limit usize")),
+        official: has("--official"),
         alpha_supported: has("--alpha-supported"),
+        threads: has("--threads").then(|| {
+            value("--threads")
+                .expect("--threads requires a value")
+                .parse()
+                .ok()
+                .and_then(NonZeroUsize::new)
+                .expect("--threads must be a positive integer")
+        }),
         verbose: has("--verbose"),
         strict: has("--strict"),
         non_gating: has("--non-gating"),
     }
+}
+
+fn validate_official_scope(
+    official: bool,
+    alpha_supported: bool,
+    limit: Option<usize>,
+    non_gating: bool,
+    vector_count: usize,
+) -> Result<(), String> {
+    if !official {
+        return Ok(());
+    }
+    if alpha_supported {
+        return Err("--official cannot be combined with --alpha-supported".to_string());
+    }
+    if limit.is_some() {
+        return Err("--official cannot be combined with --limit".to_string());
+    }
+    if non_gating {
+        return Err("--official cannot be combined with --non-gating".to_string());
+    }
+    if vector_count != OFFICIAL_VECTOR_COUNT {
+        return Err(format!(
+            "official mode requires {OFFICIAL_VECTOR_COUNT} vectors, found {vector_count}"
+        ));
+    }
+    Ok(())
 }
 
 /// Per-vector outcome counters.
@@ -111,6 +153,7 @@ fn run_one_vector(
     md5_path: &Path,
     verbose: bool,
     non_gating: bool,
+    threads: Option<NonZeroUsize>,
     skip_reasons: &mut SkipReasons,
 ) -> Result<VectorStats, String> {
     let (data, packets) = read_packets(vector_path).map_err(format_container_err)?;
@@ -120,7 +163,7 @@ fn run_one_vector(
         ..VectorStats::default()
     };
 
-    let mut decoder = Decoder::new();
+    let mut decoder = threads.map_or_else(Decoder::new, Decoder::with_threads);
     let mut shown_idx: usize = 0; // 0-based index into md5_entries
 
     for (packet_idx, range) in packets.iter().enumerate() {
@@ -280,6 +323,16 @@ fn main() {
         }
     };
     vectors.sort();
+    if let Err(error) = validate_official_scope(
+        args.official,
+        args.alpha_supported,
+        args.limit,
+        args.non_gating,
+        vectors.len(),
+    ) {
+        eprintln!("{error}");
+        std::process::exit(2);
+    }
     if args.alpha_supported && args.limit.is_some() {
         eprintln!("--alpha-supported cannot be combined with --limit");
         std::process::exit(2);
@@ -320,6 +373,14 @@ fn main() {
             "alpha-supported scope: excluded 1/{OFFICIAL_VECTOR_COUNT}: {ALPHA_UNSUPPORTED_SPATIAL_SVC_VECTOR}"
         );
     }
+    if args.official {
+        println!(
+            "official scope: {OFFICIAL_VECTOR_COUNT} vectors / {OFFICIAL_FRAME_COUNT} displayed frames"
+        );
+    }
+    if let Some(threads) = args.threads {
+        println!("decoder threads: {threads}");
+    }
     println!();
 
     let mut totals = VectorStats::default();
@@ -339,6 +400,7 @@ fn main() {
             &md5_path,
             args.verbose,
             args.non_gating,
+            args.threads,
             &mut skip_reasons,
         ) {
             Ok(stats) => {
@@ -382,12 +444,21 @@ fn main() {
     // - `Unimplemented` skips only fail in `--strict` mode.
     // - Unexpected parser/decoder errors reach this point as skips
     //   only when explicit `--non-gating` diagnostic mode is active.
-    let strict_skip_fail = (args.strict || args.alpha_supported) && totals.skipped > 0;
-    let expected_passed_fail = args.alpha_supported && totals.passed != ALPHA_SUPPORTED_FRAME_COUNT;
+    let strict_skip_fail =
+        (args.strict || args.official || args.alpha_supported) && totals.skipped > 0;
+    let expected_passed = if args.official {
+        Some(OFFICIAL_FRAME_COUNT)
+    } else if args.alpha_supported {
+        Some(ALPHA_SUPPORTED_FRAME_COUNT)
+    } else {
+        None
+    };
+    let expected_passed_fail = expected_passed.is_some_and(|expected| totals.passed != expected);
     if expected_passed_fail {
         eprintln!(
             "passed-frame gate failed: expected {}, observed {}",
-            ALPHA_SUPPORTED_FRAME_COUNT, totals.passed
+            expected_passed.expect("a failed expected-pass count has an expected value"),
+            totals.passed
         );
     }
     if totals.mismatched > 0 || vector_failures > 0 || strict_skip_fail || expected_passed_fail {
@@ -455,6 +526,7 @@ mod tests {
             &fixture.ledger,
             false,
             false,
+            None,
             &mut skip_reasons,
         );
 
@@ -471,6 +543,7 @@ mod tests {
             &fixture.ledger,
             false,
             true,
+            None,
             &mut skip_reasons,
         )
         .expect("explicit non-gating mode should preserve diagnostic skips");
@@ -492,6 +565,7 @@ mod tests {
             &fixture.ledger,
             false,
             true,
+            None,
             &mut skip_reasons,
         );
 
@@ -502,6 +576,30 @@ mod tests {
         assert!(
             error.contains("shown-frame count mismatch"),
             "unexpected rejection: {error}"
+        );
+    }
+
+    #[test]
+    fn official_scope_is_fail_closed() {
+        assert!(validate_official_scope(false, false, Some(1), true, 0).is_ok());
+        assert!(validate_official_scope(true, false, None, false, OFFICIAL_VECTOR_COUNT).is_ok());
+        assert_eq!(
+            validate_official_scope(true, true, None, false, OFFICIAL_VECTOR_COUNT).unwrap_err(),
+            "--official cannot be combined with --alpha-supported"
+        );
+        assert_eq!(
+            validate_official_scope(true, false, Some(1), false, OFFICIAL_VECTOR_COUNT)
+                .unwrap_err(),
+            "--official cannot be combined with --limit"
+        );
+        assert_eq!(
+            validate_official_scope(true, false, None, true, OFFICIAL_VECTOR_COUNT).unwrap_err(),
+            "--official cannot be combined with --non-gating"
+        );
+        assert_eq!(
+            validate_official_scope(true, false, None, false, OFFICIAL_VECTOR_COUNT - 1)
+                .unwrap_err(),
+            "official mode requires 307 vectors, found 306"
         );
     }
 }
