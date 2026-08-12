@@ -17,7 +17,7 @@ highbitdepth = ["rvp9-core/highbitdepth"]
 runtime-profiling = []
 
 [dependencies]
-rvp9-core = { path = "../rvp9-core" }
+rvp9-core = { version = "0.1.71", path = "../rvp9-core" }
 
 [dev-dependencies]
 # Used in integration tests that round-trip encoder output through the

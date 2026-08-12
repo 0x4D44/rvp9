@@ -11,9 +11,9 @@ encoding-related constants transcribed verbatim.
 - **Source:** https://chromium.googlesource.com/webm/libvpx
 - **Pinned version:** v1.14.1 (commit `12f3a2a`)
 - **License:** BSD 3-Clause (see `third_party/libvpx/LICENSE` after the
-  submodule is initialised, or below)
-- **Patent grant:** AOMedia Video Codec Patent License, see
-  `third_party/libvpx/PATENTS`
+  submodule is initialised, or the verbatim notice below)
+- **Patent grant:** Additional IP Rights Grant (Patents), see
+  `third_party/libvpx/PATENTS` and [`PATENTS`](./PATENTS)
 
 ### libvpx LICENSE text
 
@@ -57,6 +57,11 @@ Specification** published by Google / WebM. The spec is the unambiguous
 oracle for decoder conformance.
 
 - Spec: https://www.webmproject.org/vp9/
+- Specification patent licence: https://www.webmproject.org/license/bitstream/
+
+Google's patent grants are reproduced in [`PATENTS`](./PATENTS). They cover
+only the claims and uses described in those grants. They do not represent
+clearance of unrelated third-party patent rights.
 
 ## Test vectors
 

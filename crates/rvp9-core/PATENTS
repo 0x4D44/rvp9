@@ -1,0 +1,75 @@
+Patent notice for RVP9
+======================
+
+RVP9 is an open-source Rust implementation of VP9. Its source code is licensed
+under the BSD 3-Clause licence in LICENSE. That copyright licence contains no
+explicit patent grant.
+
+The WebM Project publishes the two patent grants reproduced below. They are
+included because RVP9 implements the VP9 specification and follows and partly
+transcribes Google's libvpx implementation. These grants are made by Google,
+not by the RVP9 project. This notice does not expand, replace, or reinterpret
+their terms.
+
+WebM Bitstream Specification License
+------------------------------------
+
+Google hereby grants to You a perpetual, worldwide, non-exclusive, no-charge,
+royalty-free, irrevocable (except as stated in this section) patent license to
+make, have made, use, offer to sell, sell, import, and otherwise transfer
+implementations of the WebM Specifications, where such license applies only to
+those patent claims, both currently owned by Google and acquired in the
+future, licensable by Google that are necessarily infringed by implementation
+of the WebM Specifications. If You or your agent or exclusive licensee
+institute or order or agree to the institution of patent litigation against
+any entity (including a cross-claim or counterclaim in a lawsuit) alleging
+that any implementation of the WebM Specifications constitutes direct or
+contributory patent infringement, or inducement of patent infringement, then
+any rights granted to You under the License for the WebM Specifications shall
+terminate as of the date such litigation is filed. "WebM Specifications" means
+the specifications to the WebM codecs as embodied in the source code to the
+WebM codecs or any written description of such specifications, in either case
+as distributed by Google.
+
+Source and attribution: the WebM Project,
+https://www.webmproject.org/license/bitstream/. The source page licenses this
+text under the Creative Commons Attribution 3.0 Unported License:
+https://creativecommons.org/licenses/by/3.0/
+
+Additional IP Rights Grant (Patents)
+------------------------------------
+
+"These implementations" means the copyrightable works that implement the WebM
+codecs distributed by Google as part of the WebM Project.
+
+Google hereby grants to you a perpetual, worldwide, non-exclusive, no-charge,
+royalty-free, irrevocable (except as stated in this section) patent license to
+make, have made, use, offer to sell, sell, import, transfer, and otherwise
+run, modify and propagate the contents of these implementations of WebM, where
+such license applies only to those patent claims, both currently owned by
+Google and acquired in the future, licensable by Google that are necessarily
+infringed by these implementations of WebM. This grant does not include claims
+that would be infringed only as a consequence of further modification of these
+implementations. If you or your agent or exclusive licensee institute or order
+or agree to the institution of patent litigation or any other patent
+enforcement activity against any entity (including a cross-claim or
+counterclaim in a lawsuit) alleging that any of these implementations of WebM
+or any code incorporated within any of these implementations of WebM
+constitutes direct or contributory patent infringement, or inducement of
+patent infringement, then any patent rights granted to you under this License
+for these implementations of WebM shall terminate as of the date such
+litigation is filed.
+
+Sources:
+
+- https://www.webmproject.org/license/additional/
+- libvpx v1.14.1 PATENTS
+
+Third-party rights and no indemnity
+-----------------------------------
+
+The WebM grants apply only to patent claims licensable by Google and only on
+the terms stated above. They do not represent clearance of unrelated
+third-party patent rights. RVP9 provides no patent warranty, patent-clearance
+assurance, or indemnity. Anyone distributing RVP9 as part of a product is
+responsible for assessing the rights and obligations that apply to that use.

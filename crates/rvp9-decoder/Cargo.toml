@@ -21,7 +21,7 @@ workspace = true
 profile-tiles = []
 
 [dependencies]
-rvp9-core = { path = "../rvp9-core" }
+rvp9-core = { version = "0.1.71", path = "../rvp9-core" }
 # Drift-catch for `Decoder: Send + Sync` — see lib.rs near the
 # `assert_impl_all!` invocation. `static_assertions` is a zero-cost
 # compile-time-only crate (all macros expand to unused fns).

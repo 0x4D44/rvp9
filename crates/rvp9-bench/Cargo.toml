@@ -6,6 +6,7 @@ license.workspace = true
 authors.workspace = true
 rust-version.workspace = true
 description = "Performance benchmarks: real-time latency (ms/frame) and BD-rate measurement against libvpx."
+publish = false
 
 # Intentionally NOT inheriting `[lints.workspace]` per HLD §G11
 # deliverable 1: benchmarks legitimately print results to stdout /

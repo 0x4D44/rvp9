@@ -1,8 +1,9 @@
-# rvp9-2
+# RVP9
 
-A Rust port of the [libvpx](https://chromium.googlesource.com/webm/libvpx)
-VP9 encoder and decoder, targeting **production-grade real-time encoding**
-for WebRTC and livestreaming.
+An open-source Rust implementation of the VP9 video codec, following the
+[libvpx](https://chromium.googlesource.com/webm/libvpx) reference encoder and
+decoder. RVP9 targets production-grade real-time encoding for WebRTC and
+livestreaming.
 
 > **Status:** early development. Stage 0 (foundation) in progress. See
 > [`PLAN.md`](./PLAN.md) for the multi-stage roadmap and
@@ -35,6 +36,8 @@ See [`PLAN.md`](./PLAN.md) §2 for the formal success criteria.
 ```
 rvp9-2/
 ├── PLAN.md                  # multi-stage plan
+├── LICENSE                  # BSD 3-Clause licence for RVP9
+├── PATENTS                  # WebM patent grants and their limits
 ├── ATTRIBUTION.md           # libvpx licence and acknowledgements
 ├── crates/
 │   ├── rvp9-core/           # shared primitives (bitstream, entropy, transforms, ...)
@@ -156,5 +159,10 @@ result. `summary.csv`, `raw.csv`, and `manifest.txt` are the acceptance record.
 
 ## Licence
 
-BSD 3-Clause (see `ATTRIBUTION.md`). This project is a derivative of libvpx,
-which is also BSD 3-Clause.
+RVP9 is available under the [BSD 3-Clause licence](./LICENSE). It follows and
+partly transcribes libvpx, whose copyright notice is preserved in
+[ATTRIBUTION.md](./ATTRIBUTION.md).
+
+Google offers VP9/WebM under separate no-charge patent terms. See
+[PATENTS](./PATENTS) for the grants and their limits. Third-party patent rights
+may exist. RVP9 provides no patent-clearance warranty or indemnity.
