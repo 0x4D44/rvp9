@@ -9,10 +9,11 @@
 //! 08203c2595bdb2d58ead6f921345d699  vp90-2-00-quantizer-00-352x288-0002.i420
 //! ```
 //!
-//! The filename column encodes the frame's resolution (`352x288`) and
-//! 1-based index (`0001`). Some vectors switch resolution mid-stream
-//! (e.g. `vp90-2-05-resize.ivf.md5`), so the width/height vary across
-//! lines for the same vector.
+//! The filename column normally encodes the frame's resolution
+//! (`352x288`) and 1-based index (`0001`). Some vectors switch
+//! resolution mid-stream (e.g. `vp90-2-05-resize.ivf.md5`), so the
+//! width/height vary across lines for the same vector. Two pinned skip
+//! vectors instead use ordinal-only names (`01.yuv`, `02.yuv`, ...).
 //!
 //! Counts only **displayed** frames — `show_frame == 0` frames have
 //! no entry. `ShowExistingFrame` headers DO have entries (they emit
@@ -39,8 +40,8 @@
 //!
 //! The `.md5` on-disk format is **not** widened — only the in-memory
 //! representation is — so parsing remains backward-compatible with the
-//! AOM-shipped fixtures. The parser requires the filename's one-based
-//! index to match each shown-frame row, then assigns `packet_index =
+//! AOM-shipped fixtures. The parser requires either filename form's
+//! one-based index to match each shown-frame row, then assigns `packet_index =
 //! row_index`, `sub_frame_index = 0`, `show_frame = true`, and
 //! `md5_visible = Some(_)`. Stream packets that carry multiple displayed
 //! sub-frames (atypical for the AOM corpus) are not representable from a
@@ -74,8 +75,13 @@ pub struct Md5Entry {
     /// reserved for hypothetical hidden-frame rows.
     pub md5_visible: Option<[u8; 16]>,
     /// Visible/displayed frame width, parsed from the filename.
+    ///
+    /// Zero when an official ledger uses an ordinal-only filename such
+    /// as `01.yuv` and therefore does not carry dimensions.
     pub width: u32,
     /// Visible/displayed frame height, parsed from the filename.
+    ///
+    /// Zero when an official ledger uses an ordinal-only filename.
     pub height: u32,
 }
 
@@ -124,8 +130,8 @@ pub enum Md5FileError {
         /// The original line text (trimmed).
         line: String,
     },
-    /// A line's filename column did not embed a `<W>x<H>-<NNNN>.i420`
-    /// resolution / index suffix.
+    /// A line's filename column was neither a dimension-bearing raw
+    /// frame name nor an ordinal-only `<NN>.yuv` name.
     BadFilename {
         /// 1-based line number.
         lineno: usize,
@@ -151,10 +157,9 @@ impl std::fmt::Display for Md5FileError {
         match self {
             Self::Io(e) => write!(f, "io: {e}"),
             Self::BadLine { lineno, line } => write!(f, "line {lineno}: bad format: {line:?}"),
-            Self::BadFilename { lineno, filename } => write!(
-                f,
-                "line {lineno}: filename does not encode WxH-NNNN: {filename:?}"
-            ),
+            Self::BadFilename { lineno, filename } => {
+                write!(f, "line {lineno}: unsupported frame filename: {filename:?}")
+            }
             Self::BadFrameIndex {
                 lineno,
                 filename,
@@ -190,8 +195,8 @@ impl From<std::io::Error> for Md5FileError {
 /// - [`Md5FileError::Io`] if the file can't be read.
 /// - [`Md5FileError::BadLine`] if a non-blank line doesn't match the
 ///   `<md5_hex>  <filename>` shape (two spaces).
-/// - [`Md5FileError::BadFilename`] if the filename column doesn't
-///   embed a `<W>x<H>-<NNNN>.i420` resolution / index suffix.
+/// - [`Md5FileError::BadFilename`] if the filename column is neither a
+///   dimension-bearing raw frame name nor an ordinal-only `<NN>.yuv` name.
 /// - [`Md5FileError::BadFrameIndex`] if the filename index is duplicated,
 ///   skipped, or reordered.
 pub fn read_md5_file(path: &Path) -> Result<Vec<Md5Entry>, Md5FileError> {
@@ -219,8 +224,9 @@ pub fn read_md5_file(path: &Path) -> Result<Vec<Md5Entry>, Md5FileError> {
                 line: line.to_string(),
             });
         }
-        let (w, h, idx) =
-            parse_resolution_index(fname).ok_or_else(|| Md5FileError::BadFilename {
+        let (w, h, idx) = parse_resolution_index(fname)
+            .or_else(|| parse_ordinal_index(fname).map(|idx| (0, 0, idx)))
+            .ok_or_else(|| Md5FileError::BadFilename {
                 lineno: i + 1,
                 filename: fname.to_string(),
             })?;
@@ -406,6 +412,18 @@ fn parse_resolution_index(filename: &str) -> Option<(u32, u32, u32)> {
     Some((w, h, idx))
 }
 
+/// Parse the ordinal-only filenames used by the pinned skip-vector
+/// ledgers (`01.yuv`, `02.yuv`, ...). These ledgers do not encode the
+/// frame dimensions, but the ordinal still lets us reject duplicated,
+/// skipped, or reordered rows.
+fn parse_ordinal_index(filename: &str) -> Option<u32> {
+    let stem = filename.strip_suffix(".yuv")?;
+    if stem.is_empty() || !stem.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    stem.parse().ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -442,6 +460,15 @@ mod tests {
         assert!(parse_resolution_index("no-extension").is_none());
         assert!(parse_resolution_index("missing-dim.i420").is_none());
         assert!(parse_resolution_index("nox-extension-0001.i420").is_none());
+    }
+
+    #[test]
+    fn parse_ordinal_index_accepts_only_numbered_yuv_names() {
+        assert_eq!(parse_ordinal_index("01.yuv"), Some(1));
+        assert_eq!(parse_ordinal_index("002.yuv"), Some(2));
+        assert_eq!(parse_ordinal_index("frame-01.yuv"), None);
+        assert_eq!(parse_ordinal_index("01.i420"), None);
+        assert_eq!(parse_ordinal_index(".yuv"), None);
     }
 
     #[test]
@@ -531,6 +558,22 @@ mod tests {
                 "{name}: {error}"
             );
         }
+    }
+
+    #[test]
+    fn read_md5_file_accepts_official_ordinal_only_filenames() {
+        let path = std::env::temp_dir().join("rvp9_test_md5_ordinal_only.md5");
+        std::fs::write(
+            &path,
+            "c3fbb7abbdb5bd4ed4a7e34768c17df1  01.yuv\n\
+             08203c2595bdb2d58ead6f921345d699  02.yuv\n",
+        )
+        .unwrap();
+
+        let entries = read_md5_file(&path).unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_eq!((entries[0].width, entries[0].height), (0, 0));
+        assert_eq!(entries[1].packet_index, 1);
     }
 
     /// Round-trip: parse a `.md5` row, format the digest back to hex,

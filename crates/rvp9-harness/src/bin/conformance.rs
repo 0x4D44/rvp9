@@ -170,9 +170,14 @@ fn run_one_vector(
                         Some(e) if e.md5_hex_visible().as_deref() == Some(got_hex.as_str()) => {
                             stats.passed += 1;
                             if verbose {
+                                let (width, height) = if e.width == 0 || e.height == 0 {
+                                    (buf.width(), buf.height())
+                                } else {
+                                    (e.width, e.height)
+                                };
                                 println!(
                                     "    frame {:>4}: PASS  ({}x{})",
-                                    display_idx, e.width, e.height
+                                    display_idx, width, height
                                 );
                             }
                         }
