@@ -102,13 +102,14 @@ pub struct SpatialAccessUnit {
     pub layers: Vec<SpatialEncodedLayer>,
 }
 
-/// Stateful two-layer spatial-SVC encoder.
+/// Stateful two- or three-layer spatial-SVC encoder.
 ///
 /// Components are emitted low-to-high in one VP9 superframe. The base layer
-/// refreshes map entry 0. The enhancement layer refreshes entry 1 and uses
-/// the freshly coded base reconstruction as its spatial reference. Later
-/// enhancement pictures also retain their prior same-resolution picture as
-/// LAST, matching pinned libvpx's fixed no-temporal-layer topology.
+/// refreshes map entry 0. Each enhancement layer refreshes its matching map
+/// entry and uses the freshly coded lower-layer reconstruction as its spatial
+/// reference. Later enhancement pictures also retain their prior
+/// same-resolution picture as LAST, matching pinned libvpx's fixed
+/// no-temporal-layer topology.
 pub struct SpatialEncoder {
     plan: SpatialLayerPlan,
     encoders: Vec<StreamEncoder>,
@@ -123,8 +124,8 @@ impl SpatialEncoder {
     ///
     /// # Errors
     ///
-    /// Rejects delayed, ALTREF, temporal-SVC, denoised, non-two-layer, and
-    /// non-inter-layer-prediction configurations in this first production
+    /// Rejects delayed, ALTREF, temporal-SVC, denoised, unsupported-layer,
+    /// and non-inter-layer-prediction configurations in this production
     /// slice, plus invalid geometry or rate plans.
     pub fn new(
         template: EncoderConfig,
@@ -163,9 +164,9 @@ impl SpatialEncoder {
                 "spatial SVC denoiser state is not wired yet",
             ));
         }
-        if spatial.number_spatial_layers != 2 {
+        if !matches!(spatial.number_spatial_layers, 2 | 3) {
             return Err(SpatialEncodeError::UnsupportedMode(
-                "the stateful spatial encoder currently requires exactly two layers",
+                "the stateful spatial encoder currently requires two or three layers",
             ));
         }
         if !matches!(
@@ -307,20 +308,25 @@ fn spatial_frame_control(layer_index: usize, key_access_unit: bool) -> SpatialFr
         (0, true) => SpatialFrameControl::Key,
         (0, false) => SpatialFrameControl::Inter {
             refresh_frame_flags: 0x01,
-            ref_frame_indices: [0, 0, 2],
+            ref_frame_indices: [0, 0, 0],
             allow_golden_ref: false,
         },
-        (1, true) => SpatialFrameControl::Inter {
-            refresh_frame_flags: 0x02,
-            ref_frame_indices: [0, 1, 2],
-            allow_golden_ref: false,
-        },
-        (1, false) => SpatialFrameControl::Inter {
-            refresh_frame_flags: 0x02,
-            ref_frame_indices: [1, 0, 2],
-            allow_golden_ref: true,
-        },
-        _ => unreachable!("the stateful spatial encoder validates exactly two layers"),
+        (_, true) => {
+            let map_index = layer_index as u8;
+            SpatialFrameControl::Inter {
+                refresh_frame_flags: 1 << map_index,
+                ref_frame_indices: [map_index - 1, map_index, map_index - 1],
+                allow_golden_ref: false,
+            }
+        }
+        (_, false) => {
+            let map_index = layer_index as u8;
+            SpatialFrameControl::Inter {
+                refresh_frame_flags: 1 << map_index,
+                ref_frame_indices: [map_index, map_index - 1, map_index],
+                allow_golden_ref: true,
+            }
+        }
     }
 }
 
@@ -705,10 +711,12 @@ mod tests {
         }
     }
 
-    #[test]
-    fn two_layer_inter_access_units_share_reference_map_and_decode_in_order() {
-        let width = 128usize;
-        let height = 64usize;
+    fn exercise_stateful_spatial_stream(
+        width: usize,
+        height: usize,
+        layer_count: u8,
+        layer_dimensions: &[(u32, u32)],
+    ) {
         let mut template = EncoderConfig::new(width as u32, height as u32);
         template.target_bitrate_bps = 100_000;
         template.speed = 8;
@@ -716,7 +724,7 @@ mod tests {
         let mut encoder = SpatialEncoder::new(
             template,
             SpatialSvcConfig {
-                number_spatial_layers: 2,
+                number_spatial_layers: layer_count,
                 inter_layer_pred: InterLayerPred::On,
             },
         )
@@ -745,24 +753,19 @@ mod tests {
                     v_stride: width / 2,
                 })
                 .unwrap();
-            assert_eq!(access_unit.layers.len(), 2);
+            assert_eq!(access_unit.layers.len(), usize::from(layer_count));
             assert_eq!(encoder.access_unit_index(), access_unit_index as u32 + 1);
 
             let parsed = decoder.parse_packet(&access_unit.data).unwrap();
-            assert_eq!(parsed.count(), 2);
-            assert_eq!(parsed.output_frame_index(), Some(1));
+            assert_eq!(parsed.count(), usize::from(layer_count));
+            assert_eq!(
+                parsed.output_frame_index(),
+                Some(usize::from(layer_count - 1))
+            );
             let key_access_unit = access_unit_index.is_multiple_of(3);
-            let expected = if key_access_unit {
-                [(0xff, [0, 0, 0]), (0x02, [0, 1, 2])]
-            } else {
-                [(0x01, [0, 0, 2]), (0x02, [1, 0, 2])]
-            };
 
-            for (component_index, (component, &(want_width, want_height))) in parsed
-                .frames()
-                .iter()
-                .zip(&[(64, 32), (128, 64)])
-                .enumerate()
+            for (component_index, (component, &(want_width, want_height))) in
+                parsed.frames().iter().zip(layer_dimensions).enumerate()
             {
                 assert!(!component.header.error_resilient);
                 assert!(
@@ -782,10 +785,15 @@ mod tests {
                         ref_frame_indices,
                         ..
                     } => {
-                        assert_eq!(
-                            (refresh_frame_flags, ref_frame_indices),
-                            expected[component_index]
-                        );
+                        let map_index = component_index as u8;
+                        let expected = if key_access_unit {
+                            (1 << map_index, [map_index - 1, map_index, map_index - 1])
+                        } else if component_index == 0 {
+                            (0x01, [0, 0, 0])
+                        } else {
+                            (1 << map_index, [map_index, map_index - 1, map_index])
+                        };
+                        assert_eq!((refresh_frame_flags, ref_frame_indices), expected);
                     }
                     kind => panic!("unexpected spatial component kind: {kind:?}"),
                 }
@@ -821,6 +829,16 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn two_layer_inter_access_units_share_reference_map_and_decode_in_order() {
+        exercise_stateful_spatial_stream(128, 64, 2, &[(64, 32), (128, 64)]);
+    }
+
+    #[test]
+    fn three_layer_inter_access_units_share_reference_map_and_decode_in_order() {
+        exercise_stateful_spatial_stream(256, 128, 3, &[(64, 32), (128, 64), (256, 128)]);
     }
 
     #[test]

@@ -3804,7 +3804,18 @@ impl StreamEncoder {
             };
         let tpl_rdmult_arg: Option<(&crate::tpl::TplDepFrame, f64)> =
             tpl_result.as_ref().map(|r| (&r.coded_frame, r.r0));
-        let golden_slot = self.ref_pool.named_ref_view(golden_ref_map_idx);
+        // Spatial SVC may name a map entry only because this component refreshes
+        // it.  Its old pixels are not a usable GOLDEN reference and can be at a
+        // scale unrelated to the current layer (for example, the top component
+        // of the first three-layer access unit refreshes a quarter-sized slot).
+        // Apply the availability gate before preparing analysis pixels.  The
+        // picker cannot select GOLDEN in this case, so aliasing its unused view
+        // to LAST avoids imposing a scale constraint on non-reference storage.
+        let golden_slot = if force_disable_golden_ref {
+            last_slot
+        } else {
+            self.ref_pool.named_ref_view(golden_ref_map_idx)
+        };
         let golden_scaled_reference = scaled_reference_for_analysis(
             golden_slot,
             self.config.width as usize,
