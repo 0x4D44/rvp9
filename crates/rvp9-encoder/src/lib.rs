@@ -229,6 +229,8 @@ pub mod predstat;
 pub mod rate_control;
 pub mod rdo;
 pub mod row_mt;
+#[allow(dead_code)] // Landed as a verified prerequisite before spatial coordinator wiring.
+mod scale_reference;
 pub mod scale_source;
 pub mod segmentation;
 pub mod skipstat;
