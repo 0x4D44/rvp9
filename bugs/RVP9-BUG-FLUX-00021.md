@@ -1,25 +1,25 @@
 # RVP9-BUG-FLUX-00021 — Decoder output mismatches every frame of the official Hantro subpixel vector
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Must
 - **Severity:** High
 - **Area:** decoder/inter prediction
 - **Raised:** 2026-08-12T14:08:04Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260812T141802Z-p14933-n235872000-c1
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLUX-00021-run-fix-20260812T141802Z-p14933-n235872000-c1
-- **Owner base:** b1e2be33d6b09175925faa456efdc5a426dafd3d
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-08-12T14:18:02Z
-- **Owner until:** 2026-08-12T16:18:02Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-12T14:08:04Z, raised via `deltic bugs new` model=gpt-5.6-sol@high)
+- **State history:** Open (2026-08-12T14:08:04Z, raised via `deltic bugs new` model=gpt-5.6-sol@high) -> Fixed (2026-08-12T14:31:46Z, deltic:auto role=fix run=fix-20260812T141802Z-p14933-n235872000-c1 branch=task/bug-RVP9-BUG-FLUX-00021-run-fix-20260812T141802Z-p14933-n235872000-c1 code=640625f3 gate=manual)
 
 ## Observation
 
