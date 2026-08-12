@@ -64,11 +64,15 @@ final `+0.5%` gate.
 
 **Speed impact:** two reversed warmed fifteen-pair plain-release rotations
 measure paired T3 candidate/control ratios `0.978320x/0.978151x`; separate
-medians are `0.973476x/0.977497x`. A fresh production-PGO build and direct
-comparison with pinned vpxenc remain the retention gate.
+medians are `0.973476x/0.977497x`. A fresh production-PGO build from the
+unchanged 22-row matrix measures direct CPU8/T3 ratios of
+`1.058873x/1.054339x` versus pinned vpxenc, down from `1.100888x`; the
+byte-identical T2 guard measures `1.046110x/1.047134x` and remains inside the
+final `1.05x` gate. Absolute candidate medians remain below `5.71 ms/frame`.
 
-**Future plan:** retain only if production PGO reproduces the T3 gain without
-moving the byte-identical T2 guard outside its final relative-speed gate.
+**Future plan:** retain. Close the remaining roughly `0.66%` CPU8/T3 speed gap
+through measured per-candidate implementation work, then repeat the complete
+temporal-SVC preset, resolution, and corpus matrix.
 
 ### 2026-08-11 — Bound keyframe RD for CPU8 two-layer VBR
 
