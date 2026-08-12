@@ -229,6 +229,7 @@ pub mod row_mt;
 pub mod scale_source;
 pub mod segmentation;
 pub mod skipstat;
+pub mod spatial_encoder;
 pub mod svc;
 pub mod temporal_filter;
 pub mod tpl;
@@ -243,6 +244,9 @@ pub use frame_loop::{
 // the crate root for callers (CLI, tests, benches) constructing a
 // config literal without reaching into the `rate_control` submodule.
 pub use rate_control::RcMode;
+pub use spatial_encoder::{
+    SpatialAccessUnit, SpatialEncodeError, SpatialEncodedLayer, SpatialKeyframeEncoder,
+};
 
 /// Encoder configuration.
 ///
