@@ -1810,6 +1810,15 @@ fn use_zero_mv_partition_predictor(
         && content_state != rvp9_core::mode_decision::inter::ContentStateSb::VeryHighSad
 }
 
+/// Match pinned libvpx's realtime min/max partition-spread policy.
+///
+/// CPU8 disables the check globally, while CPU6/7 also disable it on a
+/// temporal-SVC picture that refreshes no reference slot.
+#[inline]
+fn compute_minmax_partition_variance(speed: i32, svc_non_reference_frame: bool) -> bool {
+    speed < 8 && !svc_non_reference_frame
+}
+
 /// Per-leaf descriptor handed to
 /// [`simulate_dc_intra_encode_partitions`] — describes one intra leaf
 /// inside a 64×64 SB.
@@ -7254,7 +7263,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                 thresholds: thresholds.thresholds,
                                 minmax_threshold: thresholds.minmax_threshold,
                                 force_64x64_split: scene_change_detected_frame,
-                                compute_minmax_variance: true,
+                                compute_minmax_variance: compute_minmax_partition_variance(
+                                    speed,
+                                    svc_non_reference_frame,
+                                ),
                                 segment_is_boosted: segment_id != 0
                                     && seg_q_deltas[usize::from(segment_id)].is_some(),
                                 partition_ref_is_last: !sb_partition_use_golden,
@@ -17409,6 +17421,17 @@ mod tests {
 
         assert_eq!(exact_vbp_partition_qindex(100, 1280, 720, 8, true), 100);
         assert_eq!(exact_vbp_partition_qindex(250, 1920, 1080, 8, true), 250);
+    }
+
+    #[test]
+    fn realtime_minmax_partition_spread_matches_preset_and_svc_reference_policy() {
+        assert!(compute_minmax_partition_variance(6, false));
+        assert!(compute_minmax_partition_variance(7, false));
+        assert!(!compute_minmax_partition_variance(8, false));
+
+        assert!(!compute_minmax_partition_variance(6, true));
+        assert!(!compute_minmax_partition_variance(7, true));
+        assert!(!compute_minmax_partition_variance(8, true));
     }
 
     #[test]
