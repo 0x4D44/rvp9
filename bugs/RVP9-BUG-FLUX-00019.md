@@ -6,15 +6,15 @@
 - **Area:** harness/conformance
 - **Raised:** 2026-08-12T14:08:03Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
+- **Owner:** deltic:manual
+- **Owner role:** fix
+- **Owner run:** fix-20260812T140920Z-p98653-n291313000-c1
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-FLUX-00019-run-fix-20260812T140920Z-p98653-n291313000-c1
+- **Owner base:** 7919f1de66473c1fe6da1041d17f23d7378fb67c
 - **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner since:** 2026-08-12T14:09:20Z
+- **Owner until:** 2026-08-12T16:09:20Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
