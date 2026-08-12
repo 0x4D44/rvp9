@@ -5,12 +5,37 @@ An open-source Rust implementation of the VP9 video codec, following the
 decoder. RVP9 targets production-grade real-time encoding for WebRTC and
 livestreaming.
 
-> **Status:** early development. Stage 0 (foundation) in progress. See
-> [`PLAN.md`](./PLAN.md) for the multi-stage roadmap and
-> [`notes/divergence-ledger.md`](./notes/divergence-ledger.md) for any
-> deliberate departures from libvpx.
+> **Status:** `v0.2.0-alpha.1` is an 8-bit real-time preview. It is ready for
+> evaluation, not a production-parity release. See [`PLAN.md`](./PLAN.md) for
+> the remaining work and [`notes/divergence-ledger.md`](./notes/divergence-ledger.md)
+> for deliberate departures from libvpx.
 
-## Goals
+## Alpha scope
+
+The alpha encoder supports one-pass real-time VP9 at CPU-used 6, 7, and 8,
+with VBR or CBR rate control, cyclic-refresh AQ mode 3, denoising, and two- or
+three-layer temporal SVC. The qualified targets are 720p30, 1080p30, and
+1080p60. It emits 8-bit profile-0 IVF streams.
+
+The alpha decoder passes 4,796 displayed frames across 306 of the 307 pinned
+official vector files. The one excluded file,
+`vp90-2-22-svc_1280x720_3.ivf`, requires spatial SVC, which is not supported
+in this alpha. The supported vectors pass with native and forced-scalar
+dispatch and with one- and two-thread decoding.
+
+Every stream in the 32-row encoder qualification matrix decodes byte-exactly
+under `rvp9dec`, pinned libvpx `vpxdec`, and ffmpeg. Run the same gates with:
+
+```bash
+./scripts/qualify-alpha-conformance.sh
+./scripts/qualify-alpha-encoder.sh
+```
+
+Spatial SVC remains the next feature stage. CPU-used 8 three-layer temporal
+SVC speed is still provisional. This alpha does not claim final compression
+or speed parity with libvpx.
+
+## Project goals
 
 - **Correctness:** 100% pass on the official VP9 conformance test vectors;
   encoder output decodes cleanly under `vpxdec`, `ffmpeg`, and our decoder.
@@ -18,8 +43,8 @@ livestreaming.
   `--cpu-used` setting (6, 7, 8).
 - **Real-time:** 720p30, 1080p30, and 1080p60 all hit budget on commodity
   x86_64 hardware.
-- **Features:** 1-pass CBR/VBR, content-aware denoiser, adaptive
-  quantization (3 modes), full SVC (temporal + spatial).
+- **Features:** 1-pass CBR/VBR, content-aware denoiser, cyclic-refresh AQ,
+  and temporal plus spatial SVC.
 
 See [`PLAN.md`](./PLAN.md) §2 for the formal success criteria.
 
@@ -63,32 +88,28 @@ rvp9-2/
 
 ## Quick start
 
-```powershell
+```bash
 # 1. Clone with submodules (libvpx is a submodule).
 git clone --recurse-submodules <repo-url>
 cd rvp9-2
 
-# 2. Build the libvpx reference (Windows / MSYS2).
-./scripts/build-libvpx.ps1
+# 2. Build the pinned libvpx reference.
+./scripts/build-libvpx.sh
 
-# 3. Fetch test vectors + corpus (~hundreds of MB).
-./scripts/fetch-vectors.ps1
-./scripts/fetch-corpus.ps1
+# 3. Fetch the official vectors and encoder corpus (large downloads).
+./scripts/fetch-vectors.sh
+./scripts/fetch-corpus.sh
 
 # 4. Build the Rust workspace.
-cargo build --workspace --release
+cargo build --workspace --release --locked
 
-# 5. Sanity-check the harness against libvpx.
-cargo run --release --bin conformance -- `
-    --decoder build/libvpx/vpxdec.exe `
-    --vectors-dir tests/conformance/vectors `
-    --limit 5
-
-cargo run --release --bin realtime -- `
-    --encoder build/libvpx/vpxenc.exe `
-    --input tests/corpus/parkrun_720p.y4m `
-    --cpu-used 7 --budget-ms 33.333
+# 5. Run the alpha correctness gates.
+./scripts/qualify-alpha-conformance.sh
+./scripts/qualify-alpha-encoder.sh
 ```
+
+On Windows, run the `.sh` scripts in Git Bash, MSYS2, or WSL. A PowerShell
+corpus downloader is also available as `scripts/fetch-corpus.ps1`.
 
 ### Production encoder build
 

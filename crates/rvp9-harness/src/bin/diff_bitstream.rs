@@ -3595,7 +3595,7 @@ mod tests {
     /// Locate the conformance-vectors directory, if present. The
     /// workspace ships at most one `.ivf` here (the others are .webm).
     /// Returns `None` when the directory is missing (e.g. fresh
-    /// checkout that hasn't run `scripts/fetch-vectors.ps1`); callers
+    /// checkout that hasn't run `scripts/fetch-vectors.sh`); callers
     /// should skip the test gracefully in that case.
     fn conformance_vectors_dir() -> Option<PathBuf> {
         let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -3770,7 +3770,7 @@ mod tests {
             None => {
                 eprintln!(
                     "l4_identity_on_real_ivf: conformance vectors dir absent — \
-                     skipping (run scripts/fetch-vectors.ps1)"
+                     skipping (run scripts/fetch-vectors.sh)"
                 );
                 return;
             }

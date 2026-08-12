@@ -44,7 +44,7 @@ fn lossless_quantizer_00_decodes_bit_exact() {
     let md5_path = vectors_dir().join("vp90-2-00-quantizer-00.webm.md5");
     if !vector.exists() {
         eprintln!(
-            "skip: {} not present (run scripts/fetch-vectors.ps1)",
+            "skip: {} not present (run scripts/fetch-vectors.sh)",
             vector.display()
         );
         return;

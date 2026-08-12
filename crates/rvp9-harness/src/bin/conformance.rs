@@ -311,7 +311,7 @@ fn main() {
             "no .ivf/.webm vectors found in {}",
             args.vectors_dir.display()
         );
-        println!("(run scripts/fetch-vectors.ps1 to populate)");
+        println!("(run scripts/fetch-vectors.sh to populate)");
         std::process::exit(0);
     }
 

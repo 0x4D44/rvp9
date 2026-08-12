@@ -42,7 +42,7 @@ fn show_existing_frame_all_thirteen_shown_frames_match_reference() {
     let vector = vector_path();
     if !vector.exists() {
         eprintln!(
-            "vector {} not present — run scripts/fetch-vectors.ps1",
+            "vector {} not present — run scripts/fetch-vectors.sh",
             vector.display()
         );
         return;

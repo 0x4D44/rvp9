@@ -28,7 +28,7 @@ fn assert_vector_decodes_without_multi_tile_reject(vector_name: &str) {
     let path = vectors_dir().join(vector_name);
     if !path.exists() {
         eprintln!(
-            "skip: {} not present (run scripts/fetch-vectors.ps1)",
+            "skip: {} not present (run scripts/fetch-vectors.sh)",
             path.display()
         );
         return;

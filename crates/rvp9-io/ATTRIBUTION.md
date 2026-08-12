@@ -67,7 +67,7 @@ clearance of unrelated third-party patent rights.
 
 The official VP9 conformance test vectors used in `tests/conformance/` are
 distributed under the libvpx project's licence. Fetched by
-`scripts/fetch-vectors.ps1`.
+`scripts/fetch-vectors.sh`.
 
 ## Test corpus
 

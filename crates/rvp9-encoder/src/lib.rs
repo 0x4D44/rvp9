@@ -4,7 +4,7 @@
 //! WebRTC and livestream use cases. See `PLAN.md` for the staged buildout:
 //!
 //! - Stage 4a: 1-pass CBR MVP, single tile, 720p30 real-time.
-//! - Stage 4b: Adaptive quantization (3 modes).
+//! - Stage 4b: Adaptive quantization (cyclic-refresh mode 3).
 //! - Stage 4c: Content-aware denoiser.
 //! - Stage 4d: Temporal SVC (2- and 3-layer).
 //! - Stage 4e: Spatial SVC (2- and 3-layer).
