@@ -5678,10 +5678,11 @@ identical raw I420 under rvp9-decoder, pinned vpxdec, and ffmpeg, SHA-256
 old-town TL0 at `+0.5226%`, inside the `+2%` important-clip guard. CBR means
 are `-22.8243%/-22.3956%/-21.0150%`.
 
-**Speed impact:** two reversed fifteen-pair direct corpus rotations against
-pinned vpxenc measure `1.021923x/1.021015x` separate/paired geomeans. Every
-clip and order passes; candidate medians are `6.84--10.65 ms/frame`.
+**Speed impact:** exact post-commit PGO plus two reversed fifteen-pair direct
+corpus rotations against pinned vpxenc measure `1.017015x/1.017011x`
+separate/paired geomeans. Every clip and order passes; candidate medians are
+`6.766--10.521 ms/frame`.
 
-**Future plan:** retain only on CPU6 T3. Reconfirm with an exact committed PGO
-build, then run quiet-host p99 and 1080p acceptance. Do not generalize to
-single-layer or T2 without their own complete quality and speed evidence.
+**Future plan:** retain only on CPU6 T3. Run quiet-host p99 and 1080p
+acceptance. Do not generalize to single-layer or T2 without their own complete
+quality and speed evidence.
