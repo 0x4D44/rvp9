@@ -6,15 +6,15 @@
 - **Area:** decoder/tile entropy
 - **Raised:** 2026-08-12T14:08:04Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
-- **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner:** deltic:manual
+- **Owner role:** verify
+- **Owner run:** verify-20260812T154108Z-p87925-n351109000-c1
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-FLUX-00020-run-verify-20260812T154108Z-p87925-n351109000-c1
+- **Owner base:** 94a19c89818529f350f0c8787f9c6ffb07b1e0a0
+- **Owner fingerprint:** sha256:ba86e62547ee94061221d7bc95000cb1694fa4afb4bcad46b9439157855ed410
+- **Owner since:** 2026-08-12T15:41:08Z
+- **Owner until:** 2026-08-12T17:41:08Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
