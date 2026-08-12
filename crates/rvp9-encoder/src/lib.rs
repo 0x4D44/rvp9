@@ -5768,6 +5768,13 @@ fn realtime_emit_tx_rd_enabled(
     override_value.unwrap_or(exact_vbp_tree && speed < 8)
 }
 
+/// Retain the final realtime luma prediction where measurement shows that the
+/// saved emission rebuild outweighs picker buffer rotation. CPU7 keeps its
+/// established path; the environment override remains authoritative.
+fn realtime_output_backed_prediction_default(speed: i32) -> bool {
+    matches!(speed, 6 | 8)
+}
+
 /// Immutable snapshot of diagnostic and A/B environment knobs shared by all
 /// tile jobs for one frame.
 pub(crate) struct InterEncodeEnv {
@@ -6918,7 +6925,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     );
     let rt_emit_tx_rd =
         realtime_emit_tx_rd_enabled(env.rt_emit_tx_rd, exact_vbp_tree_enabled, speed);
-    let rt_output_backed_prediction = env.flag_or(env.rt_output_backed_prediction, speed == 8);
+    let rt_output_backed_prediction = env.flag_or(
+        env.rt_output_backed_prediction,
+        realtime_output_backed_prediction_default(speed),
+    );
     // libvpx speed >= 4 uses `quant_fp` for every inter frame. Preserve
     // `=0` as the regular-quantizer diagnostic without making the slower
     // good-quality quantizer the realtime default.
@@ -15803,6 +15813,15 @@ mod tests {
             TxSize::Tx16x16
         ));
         assert!(!realtime_inter_tx_candidate(TxSize::Tx32x32, TxSize::Tx8x8));
+    }
+
+    #[test]
+    fn realtime_output_backed_prediction_is_scoped_to_measured_presets() {
+        assert!(realtime_output_backed_prediction_default(6));
+        assert!(!realtime_output_backed_prediction_default(7));
+        assert!(realtime_output_backed_prediction_default(8));
+        assert!(!realtime_output_backed_prediction_default(5));
+        assert!(!realtime_output_backed_prediction_default(9));
     }
 
     #[test]
