@@ -662,8 +662,8 @@ acceptance matrix remains open.
 
 **Exit criteria:**
 - [x] Decoder (and libvpx decoder) extracts each temporal layer correctly.
-- [ ] BD-rate per layer within 0.5% of libvpx.
-- [ ] 720p30 + 1080p30 real-time still pass with 3-layer temporal SVC.
+- [x] BD-rate per layer within 0.5% of libvpx.
+- [x] 720p30 + 1080p30 real-time still pass with 3-layer temporal SVC.
 
 **Status (2026-08-11):** The two- and three-layer reference hierarchy and
 per-layer rate-control lifecycle are active. Full streams and every retained
@@ -719,6 +719,20 @@ production-PGO build closes the in-tree CPU6/7/8 T2 and CPU7/T3 rows at
 geomean falls from `1.0938x` to `1.0532x`, leaving `0.32%` to the final gate;
 CPU6/T3 remains open at `1.0777x`. External emulator load makes these timing
 rows directional pending the quiet-host matrix. Per-frame p99 remains open.
+
+**Status (2026-08-12, Units 1165--1167):** CPU6 now retains its exact winning
+luma prediction, and CPU6/T3 uses the measured TX8/TX16 emission selector.
+The complete CPU6/T3 VBR/CBR curves remain green; exact committed PGO direct
+timing passes at a `1.0170x` paired corpus geomean. The new production-path
+latency oracle records encoder-only per-frame times without input or IVF-write
+cost. Five repeated runs of every CPU6--8/T3 clip row pass both absolute gates:
+720p30 single-core medians are `3.18--10.33 ms` with median p99
+`26.72--41.26 ms`; 1080p30 four-core medians are `2.55--6.58 ms` with median
+p99 `21.92--26.89 ms`. These conservative rows ran with an unrelated process
+saturating one host core. The remaining Stage 4d parity risk is relative
+CPU8/T3 speed: the latest loaded-host exact-PGO result is `1.0722x` overall,
+driven by ducks at about `1.15x`; it needs a measured ducks optimization and
+then a final quiet-host comparison before Stage 4e begins.
 
 **Estimated effort:** 4–6 weeks.
 
