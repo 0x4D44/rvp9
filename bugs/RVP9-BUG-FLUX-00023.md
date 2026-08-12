@@ -1,25 +1,25 @@
 # RVP9-BUG-FLUX-00023 — Decoder output mismatches every frame at the official 226x210 edge size
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Must
 - **Severity:** High
 - **Area:** decoder/odd frame dimensions
 - **Raised:** 2026-08-12T14:15:51Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260812T145724Z-p26247-n379818000-c1
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLUX-00023-run-fix-20260812T145724Z-p26247-n379818000-c1
-- **Owner base:** f143af189cb39f00694997887d3b5ad6d1fc8b78
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-08-12T14:57:24Z
-- **Owner until:** 2026-08-12T16:57:24Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-12T14:15:51Z, raised via `deltic bugs new` model=gpt-5.6-sol@high)
+- **State history:** Open (2026-08-12T14:15:51Z, raised via `deltic bugs new` model=gpt-5.6-sol@high) -> Fixed (2026-08-12T15:06:43Z, deltic:auto role=fix run=fix-20260812T145724Z-p26247-n379818000-c1 branch=task/bug-RVP9-BUG-FLUX-00023-run-fix-20260812T145724Z-p26247-n379818000-c1 code=cf33cd3bf9855892084d1b65dae7c849d6acb4f1 gate=manual)
 
 ## Observation
 
