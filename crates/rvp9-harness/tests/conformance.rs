@@ -1,14 +1,18 @@
-//! End-to-end test: drives every conformance vector through our
-//! decoder and asserts the harness does not produce any *mismatches*.
+//! End-to-end test: drives the exact v0.2.0-alpha.1 supported subset of the
+//! complete official conformance corpus through our decoder.
 //!
-//! Skipped frames are expected (and counted) until the full decode
-//! path lands; they do NOT fail the test. Mismatches DO fail the
-//! test — that's the load-bearing gate.
+//! Every supported displayed frame must decode and match its official MD5.
+//! The one excluded spatial-SVC vector remains in the fetched corpus and the
+//! default conformance runner still exercises it.
 //!
 //! Vector / `.md5` parse failures (i.e. broken harness plumbing)
 //! also fail the test.
 
 use rvp9_decoder::{DecodeError, Decoder};
+use rvp9_harness::conformance_scope::{
+    ALPHA_SUPPORTED_FRAME_COUNT, ALPHA_SUPPORTED_VECTOR_COUNT,
+    ALPHA_UNSUPPORTED_SPATIAL_SVC_VECTOR, alpha_supported_vectors,
+};
 use rvp9_harness::container::read_packets;
 use rvp9_harness::md5file::read_md5_file;
 use rvp9_harness::{hex16, md5_of_yv12_visible};
@@ -65,7 +69,7 @@ fn vectors_dir() -> PathBuf {
     ignore = "requires scripts/fetch-vectors.sh"
 )]
 #[test]
-fn conformance_runner_walks_all_vectors() {
+fn conformance_runner_walks_alpha_supported_vectors() {
     let dir = vectors_dir();
     assert!(
         dir.is_dir(),
@@ -83,6 +87,11 @@ fn conformance_runner_walks_all_vectors() {
         })
         .collect();
     vectors.sort();
+    let vectors = alpha_supported_vectors(vectors).unwrap_or_else(|error| {
+        panic!("alpha conformance selection failed: {error}; run scripts/fetch-vectors.sh")
+    });
+    assert_eq!(vectors.len(), ALPHA_SUPPORTED_VECTOR_COUNT);
+    println!("alpha-supported scope excludes: {ALPHA_UNSUPPORTED_SPATIAL_SVC_VECTOR}");
 
     assert!(
         !vectors.is_empty(),
@@ -103,10 +112,8 @@ fn conformance_runner_walks_all_vectors() {
     // G7.0 review (2026-05-21): bucket `DecodeError::UnsupportedProfile`
     // separately from `Unimplemented`. Gated features (currently:
     // Profile 1 chroma via the G7.0 gate) are explicitly OK — they have
-    // a named follow-up task. We do NOT assert `total_gated == 0`; the
-    // supervisor expects this counter to climb during transitional
-    // periods (e.g. when a Profile 1 vector enters the corpus before
-    // G7.1 lands). Folding the gated-feature bucket back into
+    // a named follow-up task. The alpha gate asserts this is zero because its
+    // supported Profile 0/1 surface is complete. Folding the gated-feature bucket back into
     // `total_skipped` would resurrect exactly the K-5 silent-skip
     // failure mode (a future Profile 1 vector classified as a benign
     // skip rather than a flagged gating event).
@@ -260,13 +267,11 @@ fn conformance_runner_walks_all_vectors() {
     // Stage 3 EXIT — `total_mismatched == 0` is the final load-bearing
     // gate. With D.25's partial-bottom edge-clamp fix the last 16 mis-
     // matches lit up; we now assert hard zero instead of ratcheting.
-    // `MIN_PASSES` is kept as defense-in-depth so any future regression
-    // that drops `total_passed` (e.g. someone introduces an Unimplemented
-    // path) still trips the gate.
+    // The named alpha selection is exact, so pass and expected counts are
+    // fixed rather than a lower-bound ratchet.
     // Wave A R1 (2026-05-21): ratcheted 191 → 201 after G1 (frame_pool
     // sync) + G2 (WHT lossless) closed the last 10 skips. Full 14-vector
     // AOM corpus now passes bit-exact. Per HLD V6 §4 Wave A exit gate #3.
-    const MIN_PASSES: usize = 201;
     // D.24 (2026-05-19): fix scaled-MC for resize vectors. Two
     // distinct bugs (one Y, one chroma) that surface together on any
     // inter frame whose reference frame has a different size than the
@@ -428,9 +433,13 @@ fn conformance_runner_walks_all_vectors() {
     // frame 3 / 5 / 7 / etc. via MC. Lights up the final 16 mismatches
     // (8 tile_1x4 + 8 tile_1x8) → 175/16/10 → 191/0/10.
     // Pre-D.3.a baseline: 1/9/191.
-    assert!(
-        total_passed >= MIN_PASSES,
-        "regression: expected at least {MIN_PASSES} passed, got {total_passed}",
+    assert_eq!(
+        total_expected, ALPHA_SUPPORTED_FRAME_COUNT,
+        "alpha-supported official frame count drifted",
+    );
+    assert_eq!(
+        total_passed, ALPHA_SUPPORTED_FRAME_COUNT,
+        "every alpha-supported official frame must pass",
     );
     assert_eq!(
         total_mismatched, 0,
@@ -445,6 +454,14 @@ fn conformance_runner_walks_all_vectors() {
         "conformance harness saw {total_other_err} non-Unimplemented \
          decode errors; pre-K-5 the silent skip-folding bug would \
          have masked these as expected skips",
+    );
+    assert_eq!(
+        total_skipped, 0,
+        "alpha-supported frames may not be skipped"
+    );
+    assert_eq!(
+        total_gated, 0,
+        "alpha-supported corpus unexpectedly reached a gated profile"
     );
 }
 

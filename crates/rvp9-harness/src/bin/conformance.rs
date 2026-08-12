@@ -29,6 +29,10 @@
 //!
 //! Optional flags:
 //!   --limit N     Process only the first N vectors (sorted by name).
+//!   --alpha-supported
+//!                 Run the v0.2.0-alpha.1 gate: require all 307 official
+//!                 vectors, visibly exclude the one tracked spatial-SVC
+//!                 stream, and require all 4,796 supported frames to pass.
 //!   --verbose     Print one line per frame (default: per-vector
 //!                 summary only).
 //!   --strict      Treat skipped frames as failures (used by Stage 3
@@ -37,6 +41,10 @@
 //!                 errors as skips instead of failing the vector.
 
 use rvp9_decoder::{DecodeError, Decoder};
+use rvp9_harness::conformance_scope::{
+    ALPHA_SUPPORTED_FRAME_COUNT, ALPHA_UNSUPPORTED_SPATIAL_SVC_VECTOR, OFFICIAL_VECTOR_COUNT,
+    alpha_supported_vectors,
+};
 use rvp9_harness::container::{ContainerError, read_packets};
 use rvp9_harness::md5file::{Md5Entry, Md5FileError, read_md5_file};
 use rvp9_harness::{hex16, md5_of_yv12_visible};
@@ -45,6 +53,7 @@ use std::path::{Path, PathBuf};
 struct Args {
     vectors_dir: PathBuf,
     limit: Option<usize>,
+    alpha_supported: bool,
     verbose: bool,
     strict: bool,
     non_gating: bool,
@@ -63,6 +72,7 @@ fn parse_args() -> Args {
             .map(PathBuf::from)
             .expect("--vectors-dir required"),
         limit: value("--limit").map(|s| s.parse().expect("--limit usize")),
+        alpha_supported: has("--alpha-supported"),
         verbose: has("--verbose"),
         strict: has("--strict"),
         non_gating: has("--non-gating"),
@@ -275,6 +285,23 @@ fn main() {
         }
     };
     vectors.sort();
+    if args.alpha_supported && args.limit.is_some() {
+        eprintln!("--alpha-supported cannot be combined with --limit");
+        std::process::exit(2);
+    }
+    if args.alpha_supported && args.non_gating {
+        eprintln!("--alpha-supported cannot be combined with --non-gating");
+        std::process::exit(2);
+    }
+    if args.alpha_supported {
+        vectors = match alpha_supported_vectors(vectors) {
+            Ok(selected) => selected,
+            Err(error) => {
+                eprintln!("vector selection failed: {error}");
+                std::process::exit(2);
+            }
+        };
+    }
     if let Some(n) = args.limit {
         vectors.truncate(n);
     }
@@ -293,6 +320,11 @@ fn main() {
         vectors.len(),
         args.vectors_dir.display()
     );
+    if args.alpha_supported {
+        println!(
+            "alpha-supported scope: excluded 1/{OFFICIAL_VECTOR_COUNT}: {ALPHA_UNSUPPORTED_SPATIAL_SVC_VECTOR}"
+        );
+    }
     println!();
 
     let mut totals = VectorStats::default();
@@ -355,8 +387,15 @@ fn main() {
     // - `Unimplemented` skips only fail in `--strict` mode.
     // - Unexpected parser/decoder errors reach this point as skips
     //   only when explicit `--non-gating` diagnostic mode is active.
-    let strict_skip_fail = args.strict && totals.skipped > 0;
-    if totals.mismatched > 0 || vector_failures > 0 || strict_skip_fail {
+    let strict_skip_fail = (args.strict || args.alpha_supported) && totals.skipped > 0;
+    let expected_passed_fail = args.alpha_supported && totals.passed != ALPHA_SUPPORTED_FRAME_COUNT;
+    if expected_passed_fail {
+        eprintln!(
+            "passed-frame gate failed: expected {}, observed {}",
+            ALPHA_SUPPORTED_FRAME_COUNT, totals.passed
+        );
+    }
+    if totals.mismatched > 0 || vector_failures > 0 || strict_skip_fail || expected_passed_fail {
         std::process::exit(1);
     }
 }

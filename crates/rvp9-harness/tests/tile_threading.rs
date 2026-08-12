@@ -10,6 +10,7 @@
 //! becomes load-bearing).
 
 use rvp9_decoder::Decoder;
+use rvp9_harness::conformance_scope::{ALPHA_SUPPORTED_FRAME_COUNT, alpha_supported_vectors};
 use rvp9_harness::container::read_packets;
 use rvp9_harness::md5file::read_md5_file;
 use rvp9_harness::{hex16, md5_of_yv12_visible};
@@ -29,6 +30,23 @@ fn vectors_dir() -> PathBuf {
         .join("tests")
         .join("conformance")
         .join("vectors")
+}
+
+fn alpha_vectors() -> Vec<PathBuf> {
+    let dir = vectors_dir();
+    let mut vectors: Vec<PathBuf> = std::fs::read_dir(&dir)
+        .unwrap()
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| {
+            path.extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| matches!(extension, "ivf" | "webm"))
+        })
+        .collect();
+    vectors.sort();
+    alpha_supported_vectors(vectors).unwrap_or_else(|error| {
+        panic!("alpha conformance selection failed: {error}; run scripts/fetch-vectors.sh")
+    })
 }
 
 /// Decode every shown frame of `vector` at thread count `n`, returning
@@ -71,8 +89,8 @@ fn expected_shown_frames(vector: &Path) -> usize {
         .len()
 }
 
-/// HLD V6 §G5 oracle #1: conformance at N = 2. Re-runs the full
-/// conformance corpus (in shape — every vector + every shown frame)
+/// HLD V6 §G5 oracle #1: conformance at N = 2. Re-runs the exact
+/// alpha-supported official corpus (every selected vector + shown frame)
 /// through the decoder at `with_threads(2)`, comparing the MD5 of each
 /// frame against the .md5 reference. Asserts 0 mismatches.
 ///
@@ -90,18 +108,7 @@ fn expected_shown_frames(vector: &Path) -> usize {
     ignore = "requires tests/conformance/vectors; run scripts/fetch-vectors.sh"
 )]
 fn conformance_at_n_threads_2() {
-    let dir = vectors_dir();
-    let mut vectors: Vec<PathBuf> = std::fs::read_dir(&dir)
-        .unwrap()
-        .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| {
-            p.extension()
-                .and_then(|s| s.to_str())
-                .is_some_and(|x| matches!(x, "ivf" | "webm"))
-        })
-        .collect();
-    vectors.sort();
-    assert!(!vectors.is_empty(), "no vectors in {}", dir.display());
+    let vectors = alpha_vectors();
 
     let mut total_passed = 0usize;
     let mut total_mismatched = 0usize;
@@ -137,6 +144,7 @@ fn conformance_at_n_threads_2() {
         total_mismatched, 0,
         "G5 oracle #1: {total_passed} passed, {total_mismatched} mismatched at N=2"
     );
+    assert_eq!(total_passed, ALPHA_SUPPORTED_FRAME_COUNT);
 }
 
 /// HLD V6 §G5 oracle #2: inter-thread-count determinism. For each
@@ -155,18 +163,7 @@ fn conformance_at_n_threads_2() {
     ignore = "requires tests/conformance/vectors; run scripts/fetch-vectors.sh"
 )]
 fn determinism_n1_eq_n2() {
-    let dir = vectors_dir();
-    let mut vectors: Vec<PathBuf> = std::fs::read_dir(&dir)
-        .unwrap()
-        .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| {
-            p.extension()
-                .and_then(|s| s.to_str())
-                .is_some_and(|x| matches!(x, "ivf" | "webm"))
-        })
-        .collect();
-    vectors.sort();
-    assert!(!vectors.is_empty(), "no vectors in {}", dir.display());
+    let vectors = alpha_vectors();
 
     let mut total_checked = 0usize;
     for vector in &vectors {
@@ -212,7 +209,7 @@ fn determinism_n1_eq_n2() {
             total_checked += 1;
         }
     }
-    assert!(total_checked > 0, "G5 oracle #2: no frames decoded at all");
+    assert_eq!(total_checked, ALPHA_SUPPORTED_FRAME_COUNT);
     eprintln!("G5 oracle #2: {total_checked} shown frames byte-identical at N=1 vs N=2");
 }
 
