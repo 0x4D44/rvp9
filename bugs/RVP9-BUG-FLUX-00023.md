@@ -6,15 +6,15 @@
 - **Area:** decoder/odd frame dimensions
 - **Raised:** 2026-08-12T14:15:51Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
-- **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner:** deltic:manual
+- **Owner role:** verify
+- **Owner run:** verify-20260812T151212Z-p52381-n813694000-c1
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-FLUX-00023-run-verify-20260812T151212Z-p52381-n813694000-c1
+- **Owner base:** de034673a488bd33bd0f3139929d1fd3c9b24373
+- **Owner fingerprint:** sha256:0fd61b0040d1f43d996ba6bb0d1edcd213fa53bdc073f6134e25e37bf2287bf7
+- **Owner since:** 2026-08-12T15:12:12Z
+- **Owner until:** 2026-08-12T17:12:12Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
