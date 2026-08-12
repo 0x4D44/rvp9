@@ -5590,3 +5590,49 @@ plain-release run per operating point.
 **Future plan:** keep the measured default while closing TL0 through its
 source-backed CPU7 base-layer motion-search policy. Revisit only if a later
 coding change reverses this controlled result.
+
+### 2026-08-12 — Omit CPU7 temporal-enhancement intra fallback
+
+**Where:** `rvp9_encoder::realtime_intra_fallback_enabled` and
+`rvp9_encoder::pick_and_simulate_inter_encode_partitions`; libvpx counterpart:
+`vp9/encoder/vp9_pickmode.c:2514-2646`.
+
+**What libvpx does:** CPU7 may evaluate intra modes after the inter-mode loop
+when the size, content, skip, and adaptive-threshold gates admit the fallback,
+including temporal enhancement pictures.
+
+**What rvp9 does:** CPU7 temporal enhancement pictures return the selected
+inter winner without the final intra fallback. CPU7 base-layer and
+single-layer pictures retain it. CPU6 retains it on every realtime picture;
+CPU8 continues to omit it on every realtime picture under the earlier
+measured divergence.
+
+**Why:** an exact production profile assigns 2,327 of 41,514 weighted samples,
+or about 5.6% of the whole CPU7/T3 encode, to the fallback. Enhancement
+pictures already use the measured simple large-block YRD policy, so the
+fallback repeats prediction-model work after selecting an inter winner.
+
+**Byte-parity impact:** intentional on CPU7 temporal enhancement pictures.
+All 252 test full-stream and retained-operating-point IVFs from the complete
+T2/T3 VBR/CBR curve matrix decode to identical raw I420 under rvp9-decoder,
+pinned vpxdec, and ffmpeg. The cross-decoder ledger is
+`/private/tmp/rvp9-unit1161-cpu7-intra-crossdecode-all.csv`, SHA-256
+`48e0ad8a20675a2a151dc701c7812e60866462783597c3dd715a0b838d4134ff`.
+
+**Compression-efficiency impact:** three-clip VBR aggregate BD-rates are
+`-2.5562%/-3.2558%` for T2 and
+`-0.8207%/-1.6587%/-1.2247%` for T3. The worst individual clip/layer is
+`+0.7668%`, inside the `+2%` important-clip guard. CBR aggregates are
+`-29.2849%/-25.2448%` for T2 and
+`-28.6207%/-28.6297%/-26.8790%` for T3.
+
+**Speed impact:** the exact 22-row production-PGO build measures three-clip
+CPU7 corpus geomeans of `1.0289x` for T2 and `1.0376x` for T3 against pinned
+vpxenc. Both reversed rotations pass independently. The slowest candidate
+median is `10.286 ms/frame`, inside the absolute realtime budget. Three
+unrelated emulators occupied one core each, so a quiet-host final matrix is
+still required; paired and reversed medians preserve the retention signal.
+
+**Future plan:** retain. Reprofile the remaining CPU6/T3 and CPU8/T3 rows on
+this exact integrated image. Do not extend the omission to CPU6: the earlier
+broad CPU6 experiment failed its quality gate.

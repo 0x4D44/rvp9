@@ -700,6 +700,15 @@ CPU7 T3 remains red at `1.159796..1.161545x` for 720p and
 `1.066570..1.070168x` for 1080p. Per-frame p99 and the final quiet-host corpus
 matrix remain open.
 
+**Status (2026-08-12):** CPU7 temporal enhancement pictures now omit the
+profiled final intra fallback. Complete three-clip T2/T3 VBR and CBR curves
+pass every aggregate layer and important-clip gate, and all 252 candidate
+streams decode byte-exactly through rvp9-decoder, pinned vpxdec, and ffmpeg.
+The exact 22-row production-PGO build measures CPU7 corpus geomeans of
+`1.0289x` for T2 and `1.0376x` for T3, closing CPU7's focused 720p relative
+speed rows. CPU6/T3 remains red near `1.072x`; CPU8/T3 remains borderline at
+`1.052--1.055x`. The quiet-host matrix and per-frame p99 gate remain open.
+
 **Estimated effort:** 4–6 weeks.
 
 ---
