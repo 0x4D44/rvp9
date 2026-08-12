@@ -709,6 +709,17 @@ The exact 22-row production-PGO build measures CPU7 corpus geomeans of
 speed rows. CPU6/T3 remains red near `1.072x`; CPU8/T3 remains borderline at
 `1.052--1.055x`. The quiet-host matrix and per-frame p99 gate remain open.
 
+**Status (2026-08-12, Unit 1163):** Rvp9 now matches libvpx's rule that
+disables the VBP min/max force-split check at CPU8 and on non-reference SVC
+pictures. Complete CPU6-8 T2/T3 VBR and CBR curves remain green across all
+three clips; the worst individual VBR result is `+0.6791%`, and all 756 full
+and retained streams decode byte-exactly through all three decoders. The exact
+production-PGO build closes the in-tree CPU6/7/8 T2 and CPU7/T3 rows at
+`1.0447x/1.0054x/1.0083x/1.0304x` paired. The three-clip CPU8/T3 paired
+geomean falls from `1.0938x` to `1.0532x`, leaving `0.32%` to the final gate;
+CPU6/T3 remains open at `1.0777x`. External emulator load makes these timing
+rows directional pending the quiet-host matrix. Per-frame p99 remains open.
+
 **Estimated effort:** 4–6 weeks.
 
 ---

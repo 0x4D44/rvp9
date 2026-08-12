@@ -70,7 +70,17 @@ unchanged 22-row matrix measures direct CPU8/T3 ratios of
 byte-identical T2 guard measures `1.046110x/1.047134x` and remains inside the
 final `1.05x` gate. Absolute candidate medians remain below `5.71 ms/frame`.
 
-**Future plan:** retain. Close the remaining roughly `0.66%` CPU8/T3 speed gap
+**Composition update (2026-08-12):** after separately matching libvpx's CPU8
+min/max partition-spread rule, the complete T3 VBR aggregates improve to
+`-2.8318%/-2.2760%/-1.6284%`, CBR aggregates are
+`-16.9476%/-14.9419%/-14.6404%`, and the worst individual result is
+`+0.3111%`. The expanded CPU6-8 T2/T3 VBR/CBR cross-decoder ledger covers 756
+streams without a mismatch. Exact production-PGO CPU8/T3 corpus speed is now
+`1.053237x` paired versus pinned vpxenc on the busy host. This preserves the
+Q155 divergence's quality margin while leaving the final quiet-host speed
+gate open.
+
+**Future plan:** retain. Close the remaining roughly `0.32%` CPU8/T3 speed gap
 through measured per-candidate implementation work, then repeat the complete
 temporal-SVC preset, resolution, and corpus matrix.
 
