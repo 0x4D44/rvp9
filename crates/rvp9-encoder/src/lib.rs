@@ -226,6 +226,7 @@ pub mod predstat;
 pub mod rate_control;
 pub mod rdo;
 pub mod row_mt;
+pub mod scale_source;
 pub mod segmentation;
 pub mod skipstat;
 pub mod svc;
