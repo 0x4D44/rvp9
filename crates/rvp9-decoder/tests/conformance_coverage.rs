@@ -151,9 +151,10 @@ fn drive_vector(name: &str) {
 //   * Multi-tile (1×2 / 1×4 / 1×8 cols)                     (×3)
 //   * AQ mode 2 (segmentation + altref)                     (×1)
 //   * Show-existing-frame                                   (×1)
+//   * Segmentation disable/re-enable with inherited map     (×1)
 //
-// Total: 14 vectors — every shipped conformance vector. Each is a
-// distinct exercise of the decoder state machine.
+// Total: 15 focused vectors from the official suite. Each is a distinct
+// exercise of the decoder state machine.
 // ---------------------------------------------------------------------
 
 #[test]
@@ -280,4 +281,13 @@ fn vec_aq2() {
 )]
 fn vec_show_existing_frame() {
     drive_vector("vp90-2-10-show-existing-frame.webm");
+}
+
+#[test]
+#[cfg_attr(
+    not(rvp9_conformance_vectors),
+    ignore = "requires tests/conformance/vectors; run scripts/fetch-vectors.sh"
+)]
+fn vec_skip_02() {
+    drive_vector("vp90-2-19-skip-02.webm");
 }

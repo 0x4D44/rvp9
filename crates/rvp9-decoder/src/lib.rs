@@ -475,9 +475,10 @@ pub struct Decoder {
     /// `cm->last_frame_seg_map`, `vp9_decodemv.c:115-126`).
     ///
     /// D.10 (Wave 5) — populated at frame end by swapping the just-
-    /// decoded `current_segment_ids` slab into this field. Keyframes
-    /// and intra-only frames zero this field at frame end (mirroring
-    /// libvpx's `vp9_setup_past_independence` at
+    /// decoded `current_segment_ids` slab into this field when segmentation
+    /// is enabled. Disabled inter frames preserve the last enabled map.
+    /// Keyframes and intra-only frames zero this field at frame end
+    /// (mirroring libvpx's `vp9_setup_past_independence` at
     /// `vp9_entropymode.c:424-437`).
     ///
     /// Empty (`Vec::new`) before any frame has decoded; in that state
@@ -534,11 +535,11 @@ pub struct Decoder {
     /// allocate fresh on every frame). At frame start the decoder
     /// takes this Vec (leaving an empty placeholder), `clear` +
     /// `resize` it for the new frame's dimensions, fills it during
-    /// tile decode, then at frame end ROTATES: the just-decoded slab
-    /// becomes [`Self::prev_segment_ids`], the OLD `prev_segment_ids`
-    /// (already at the right capacity) becomes the new
-    /// `scratch_segment_ids`. Capacity is retained across frames at
-    /// no allocator cost.
+    /// tile decode, then at frame end ROTATES when segmentation is enabled:
+    /// the just-decoded slab becomes [`Self::prev_segment_ids`], while the
+    /// old slab becomes `scratch_segment_ids`. When segmentation is disabled,
+    /// the current slab returns directly to scratch. Capacity is retained
+    /// across frames at no allocator cost.
     ///
     /// Empty (`Vec::new()`) before the first frame; transient empty
     /// also occurs WHILE a frame is decoding (Vec is out at the
@@ -3117,10 +3118,10 @@ impl Decoder {
         } else {
             &[]
         };
-        // Finding-4 reuse: take the recycled `cur_segment_ids` slab
-        // out of the decoder, clear-and-resize for this frame. End-
-        // of-frame rotation puts the OLD `prev_segment_ids` back into
-        // the scratch so capacity is retained for the next frame.
+        // Finding-4 reuse: take the recycled `cur_segment_ids` slab out of
+        // the decoder and resize it for this frame. End-of-frame either
+        // rotates the old previous map into scratch (segmentation enabled)
+        // or returns this current slab directly (segmentation disabled).
         let mut cur_segment_ids = std::mem::take(&mut self.scratch_segment_ids);
         // Persist across frames when dims are unchanged (same argument as
         // `frame_mi_grid`): every block calls `splat_segment_id` over its
@@ -4050,8 +4051,6 @@ impl Decoder {
         self.last_show_frame = frame.header.show_frame;
         // D.10 — swap the just-decoded segment_id slab into
         // `prev_segment_ids` for the next frame's inheritance reads.
-        // Mirrors libvpx's seg-map double-buffer at end-of-frame
-        // (`vp9_alloccommon.c:vp9_swap_current_and_last_seg_map`).
         if crate::trace_flags::trace_flags().trace_seg {
             let nz = cur_segment_ids.iter().filter(|&&v| v != 0).count();
             eprintln!(
@@ -4070,13 +4069,12 @@ impl Decoder {
                 eprintln!("[rvp9_seg] inter row{r}:{}", row);
             }
         }
-        // Finding-4 rotation (inter path). Same pattern as the intra
-        // path: cycle the OLD `prev_segment_ids` / `last_frame_mi_grid`
-        // back into the scratch fields so the next frame inherits the
-        // allocator capacity.
-        let old_prev_seg = std::mem::replace(&mut self.prev_segment_ids, cur_segment_ids);
-        self.scratch_segment_ids = old_prev_seg;
-        self.prev_segment_ids_dims = (mi_rows, mi_cols);
+        // Libvpx swaps its current and last segment maps only while
+        // segmentation is enabled (`vp9_decoder.c:vp9_receive_compressed_data`).
+        // A disabled frame must preserve the last enabled map: a later frame
+        // may re-enable segmentation with `update_map == false` and inherit it.
+        // Keep the unused current slab as scratch in that case.
+        self.commit_inter_segment_map(cur_segment_ids, (mi_rows, mi_cols), resolved_seg.enabled);
         // Strategy A (Stage 4 design §9 commit 4) — publish the
         // stitched frame-wide mi grid for the bitstream-diff harness.
         let old_last_mi = std::mem::replace(&mut self.last_frame_mi_grid, frame_mi_grid);
@@ -4084,6 +4082,23 @@ impl Decoder {
         self.last_frame_mi_dims = (mi_rows as u32, mi_cols as u32);
         self.commit_stream_metadata(&frame.header);
         Ok(frame_buf)
+    }
+
+    /// Commit the current inter frame's segment map using libvpx's lifetime
+    /// rule: disabled frames preserve the last enabled map.
+    fn commit_inter_segment_map(
+        &mut self,
+        current_segment_ids: Vec<u8>,
+        dimensions: (usize, usize),
+        segmentation_enabled: bool,
+    ) {
+        if segmentation_enabled {
+            let old_prev_seg = std::mem::replace(&mut self.prev_segment_ids, current_segment_ids);
+            self.scratch_segment_ids = old_prev_seg;
+            self.prev_segment_ids_dims = dimensions;
+        } else {
+            self.scratch_segment_ids = current_segment_ids;
+        }
     }
 
     /// D.10 — resolve the per-frame segmentation by overlaying the
@@ -4912,6 +4927,32 @@ impl<'a> IntoIterator for PacketFrames<'a> {
 mod tests {
     use super::*;
     use rvp9_core::bitstream::{ColorSpace, FrameKind, Profile, RawBitWriter, frame::sync};
+
+    #[test]
+    fn disabled_inter_segmentation_preserves_last_enabled_map() {
+        let mut decoder = Decoder::new();
+        decoder.prev_segment_ids = vec![1, 2, 3, 4];
+        decoder.prev_segment_ids_dims = (2, 2);
+
+        decoder.commit_inter_segment_map(vec![0; 4], (2, 2), false);
+
+        assert_eq!(decoder.prev_segment_ids, [1, 2, 3, 4]);
+        assert_eq!(decoder.prev_segment_ids_dims, (2, 2));
+        assert_eq!(decoder.scratch_segment_ids, [0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn enabled_inter_segmentation_replaces_previous_map() {
+        let mut decoder = Decoder::new();
+        decoder.prev_segment_ids = vec![1, 2, 3, 4];
+        decoder.prev_segment_ids_dims = (2, 2);
+
+        decoder.commit_inter_segment_map(vec![4, 3, 2, 1], (1, 4), true);
+
+        assert_eq!(decoder.prev_segment_ids, [4, 3, 2, 1]);
+        assert_eq!(decoder.prev_segment_ids_dims, (1, 4));
+        assert_eq!(decoder.scratch_segment_ids, [1, 2, 3, 4]);
+    }
 
     /// KILN-00012: the panic guard must abort the LF-overlap worker when
     /// the decode path unwinds, so `LfBatchHandle::Drop` does not block
