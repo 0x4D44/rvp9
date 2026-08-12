@@ -2020,7 +2020,7 @@ fn pre_search_mv_is_zero(mode: InterMode, candidates: &MvCandidates) -> bool {
 /// (once per ref) and taking the argmin at the caller.
 #[must_use]
 pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult {
-    pick_inter_mode_impl(params, None, reuse_single_ref_params_enabled())
+    pick_inter_mode_impl::<false>(params, None, reuse_single_ref_params_enabled())
 }
 
 /// Run the dual-reference inter-mode search while retaining the winning luma
@@ -2041,14 +2041,15 @@ pub fn pick_inter_mode_with_output(
         usize::from(params.block_size.width()),
         usize::from(params.block_size.height()),
     );
-    pick_inter_mode_impl(params, Some(output), reuse_single_ref_params_enabled())
+    pick_inter_mode_impl::<true>(params, Some(output), reuse_single_ref_params_enabled())
 }
 
-fn pick_inter_mode_impl(
+fn pick_inter_mode_impl<const OUTPUT_BACKED: bool>(
     params: &PickInterModeParams<'_>,
     mut output: Option<&mut OutputBackedPredictionBuffer<'_>>,
     reuse_single_ref_params: bool,
 ) -> PickInterModeResult {
+    debug_assert_eq!(OUTPUT_BACKED, output.is_some());
     debug_assert!(
         params.inter_mode_ctx < INTER_MODE_CONTEXTS,
         "inter_mode_ctx {} out of [0, {INTER_MODE_CONTEXTS})",
@@ -2663,7 +2664,7 @@ fn pick_inter_mode_impl(
                 std::slice::from_ref(&fallback_filter)
             };
 
-            let prediction_slots = if output.is_some() {
+            let prediction_slots = if OUTPUT_BACKED {
                 candidate_prediction_slots(retained_prediction_slot, output_first_prediction_slot)
             } else {
                 [
@@ -2775,7 +2776,7 @@ fn pick_inter_mode_impl(
                 Some(prev) => biased_rd_cost < prev.best_rd_cost,
             };
             if is_new_best {
-                if output.is_some() {
+                if OUTPUT_BACKED {
                     retained_prediction_slot = Some(candidate_prediction_slot);
                 }
                 best = Some(PickInterModeResult {
@@ -2870,7 +2871,8 @@ fn pick_inter_mode_impl(
                 break;
             }
         }
-        if let Some(output) = output {
+        if OUTPUT_BACKED {
+            let output = output.expect("output-backed picker requires caller storage");
             let slot =
                 retained_prediction_slot.expect("an inter winner must retain a prediction slot");
             copy_prediction_slot_to_output(
@@ -8367,8 +8369,8 @@ mod tests {
         params.ref_frame_cost_last = 17;
         params.ref_frame_cost_golden = 29;
 
-        let per_candidate = pick_inter_mode_impl(&params, None, false);
-        let prebuilt = pick_inter_mode_impl(&params, None, true);
+        let per_candidate = pick_inter_mode_impl::<false>(&params, None, false);
+        let prebuilt = pick_inter_mode_impl::<false>(&params, None, true);
 
         assert_eq!(prebuilt, per_candidate);
     }
