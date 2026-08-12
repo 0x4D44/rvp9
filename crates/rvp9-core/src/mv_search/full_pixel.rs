@@ -216,11 +216,6 @@ pub struct FullPixelSearchParams<'a> {
     pub sad_per_bit: i32,
     /// MV-cost LUT bank (joint + per-axis).
     pub mv_costs: &'a MvCosts,
-    /// Fixed SAD-domain MV-cost LUT used only by full-pixel search.
-    ///
-    /// Pinned libvpx keeps this separate from the adaptive entropy/RD table in
-    /// [`Self::mv_costs`].
-    pub sad_mv_costs: &'a MvCosts,
     /// Maximum step iterations. Realtime path may cap this; pass
     /// `site_config.total_steps as i32` to disable.
     pub max_iters: i32,
@@ -548,7 +543,7 @@ fn diamond_search_sad_from_step(
                 fcenter_row,
                 fcenter_col,
                 params.sad_per_bit,
-                params.sad_mv_costs,
+                params.mv_costs,
             )
         }
         None => u32::MAX,
@@ -647,7 +642,7 @@ fn diamond_search_sad_from_step(
                             fcenter_row,
                             fcenter_col,
                             params.sad_per_bit,
-                            params.sad_mv_costs,
+                            params.mv_costs,
                         );
                     if augmented < bestsad {
                         bestsad = augmented;
@@ -683,7 +678,7 @@ fn diamond_search_sad_from_step(
                             fcenter_row,
                             fcenter_col,
                             params.sad_per_bit,
-                            params.sad_mv_costs,
+                            params.mv_costs,
                         );
                     if augmented < bestsad {
                         bestsad = augmented;
@@ -815,7 +810,7 @@ fn refining_search_sad(
                         fcenter_row,
                         fcenter_col,
                         params.sad_per_bit,
-                        params.sad_mv_costs,
+                        params.mv_costs,
                     ));
                     if augmented < best_sad {
                         best_sad = augmented;
@@ -846,7 +841,7 @@ fn refining_search_sad(
                         fcenter_row,
                         fcenter_col,
                         params.sad_per_bit,
-                        params.sad_mv_costs,
+                        params.mv_costs,
                     ));
                     if augmented < best_sad {
                         best_sad = augmented;
@@ -979,7 +974,7 @@ fn finish_fast_diamond_search<const WITH_COST_LIST: bool>(
                 fcenter_row,
                 fcenter_col,
                 params.sad_per_bit,
-                params.sad_mv_costs,
+                params.mv_costs,
             ));
             // Current VP9 block SAD and MV-rate domains cannot overflow i32.
             // Saturation only preserves the libvpx INT_MAX sentinel if a
@@ -1029,7 +1024,7 @@ fn fast_diamond_search_sad_impl<const WITH_COST_LIST: bool>(
             fcenter_row,
             fcenter_col,
             params.sad_per_bit,
-            params.sad_mv_costs,
+            params.mv_costs,
         ))
     });
     let mut cost_list = [i32::MAX; 5];
@@ -1073,7 +1068,7 @@ fn fast_diamond_search_sad_impl<const WITH_COST_LIST: bool>(
                     fcenter_row,
                     fcenter_col,
                     params.sad_per_bit,
-                    params.sad_mv_costs,
+                    params.mv_costs,
                 ));
                 if augmented < best_sad {
                     best_sad = augmented;
@@ -1109,7 +1104,7 @@ fn fast_diamond_search_sad_impl<const WITH_COST_LIST: bool>(
                     fcenter_row,
                     fcenter_col,
                     params.sad_per_bit,
-                    params.sad_mv_costs,
+                    params.mv_costs,
                 ));
                 if augmented < best_sad {
                     best_sad = augmented;
@@ -1167,7 +1162,7 @@ fn fast_diamond_search_sad_impl<const WITH_COST_LIST: bool>(
                     fcenter_row,
                     fcenter_col,
                     params.sad_per_bit,
-                    params.sad_mv_costs,
+                    params.mv_costs,
                 ));
                 if augmented < best_sad {
                     best_sad = augmented;
@@ -1198,7 +1193,7 @@ fn fast_diamond_search_sad_impl<const WITH_COST_LIST: bool>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cost::mv_cost::{MV_VALS, MvComponentCosts, build_nmv_cost_table};
+    use crate::cost::mv_cost::build_nmv_cost_table;
     use crate::entropy::mv_probs::DEFAULT_NMV_CONTEXT;
     use crate::mv_search::search_site::init_dsmotion_compensation;
 
@@ -1215,100 +1210,6 @@ mod tests {
             *slot = (state & 0xff) as u8;
         }
         buf
-    }
-
-    fn zero_mv_costs() -> MvCosts {
-        let axis = MvComponentCosts {
-            cost: vec![0; MV_VALS].into_boxed_slice(),
-        };
-        MvCosts {
-            joint_cost: [0; 4],
-            component_cost: [axis.clone(), axis],
-        }
-    }
-
-    #[test]
-    fn full_pixel_search_separates_sad_and_entropy_cost_domains() {
-        let width = 32usize;
-        let height = 32usize;
-        let reference = make_plane(width, height, 0x1180);
-        let mut source = vec![0u8; width * height];
-        for row in 0..height {
-            for col in 0..width - 1 {
-                source[row * width + col] = reference[row * width + col + 1];
-            }
-        }
-        let src_plane = PlaneRef {
-            data: &source,
-            stride: width,
-            width,
-            height,
-        };
-        let ref_plane = PlaneRef {
-            data: &reference,
-            stride: width,
-            width,
-            height,
-        };
-        let sites = SearchSiteConfig {
-            ss_mv: vec![(-1, 0), (1, 0), (0, -1), (0, 1)],
-            ss_os: vec![-(width as isize), width as isize, -1, 1],
-            searches_per_step: 4,
-            total_steps: 1,
-        };
-
-        let zero = zero_mv_costs();
-        let mut expensive = zero.clone();
-        let plus_one = (MV_MAX + 1) as usize;
-        let plus_one_q3 = (MV_MAX + 8) as usize;
-        expensive.component_cost[1].cost[plus_one] = 1_000_000;
-        expensive.component_cost[1].cost[plus_one_q3] = 1_000_000;
-
-        let base = FullPixelSearchParams {
-            block_size: BlockSize::Block8x8,
-            src_plane: &src_plane,
-            src_offset: (8, 8),
-            ref_plane: &ref_plane,
-            center_mv: Mv::ZERO,
-            start_mv: None,
-            mv_limits: MvLimits::new(-1, 1, -1, 1),
-            sad_per_bit: 512,
-            mv_costs: &expensive,
-            sad_mv_costs: &zero,
-            max_iters: 1,
-            site_config: &sites,
-        };
-        let zero_sad_winner = diamond_search_sad(&base);
-        assert_eq!(
-            (zero_sad_winner.best_mv_row, zero_sad_winner.best_mv_col),
-            (0, 1),
-            "full-pixel winner must follow the SAD-domain table"
-        );
-
-        let expensive_sad = FullPixelSearchParams {
-            sad_mv_costs: &expensive,
-            ..base
-        };
-        let expensive_sad_winner = diamond_search_sad(&expensive_sad);
-        assert_eq!(
-            (
-                expensive_sad_winner.best_mv_row,
-                expensive_sad_winner.best_mv_col
-            ),
-            (0, 0),
-            "adaptive entropy costs must not substitute for SAD costs"
-        );
-
-        let zero_entropy = FullPixelSearchParams {
-            mv_costs: &zero,
-            sad_mv_costs: &zero,
-            ..base
-        };
-        assert!(
-            full_pixel_variance_cost(&base, zero_sad_winner)
-                > full_pixel_variance_cost(&zero_entropy, zero_sad_winner),
-            "NSTEP variance ranking must retain the adaptive entropy table"
-        );
     }
 
     #[test]
@@ -1335,7 +1236,6 @@ mod tests {
             mv_limits: MvLimits::new(-32, 32, -32, 32),
             sad_per_bit: 16,
             mv_costs: &costs,
-            sad_mv_costs: &costs,
             max_iters: cfg.total_steps as i32,
             site_config: &cfg,
         };
@@ -1408,7 +1308,6 @@ mod tests {
             mv_limits: MvLimits::new(-16, 16, -16, 16),
             sad_per_bit: 19,
             mv_costs: &costs,
-            sad_mv_costs: &costs,
             max_iters: cfg.total_steps as i32,
             site_config: &cfg,
         };
@@ -1468,7 +1367,6 @@ mod tests {
             mv_limits: MvLimits::new(0, 16, 0, 16),
             sad_per_bit: 19,
             mv_costs: &costs,
-            sad_mv_costs: &costs,
             max_iters: cfg.total_steps as i32,
             site_config: &cfg,
         };
@@ -1538,7 +1436,6 @@ mod tests {
             mv_limits: MvLimits::new(-16, 16, -16, 16),
             sad_per_bit: 1, // small so cost doesn't dominate
             mv_costs: &costs,
-            sad_mv_costs: &costs,
             max_iters: cfg.total_steps as i32,
             site_config: &cfg,
         };
@@ -1595,7 +1492,6 @@ mod tests {
             mv_limits: MvLimits::new(-16, 16, -16, 16),
             sad_per_bit: 16,
             mv_costs: &costs,
-            sad_mv_costs: &costs,
             max_iters: 1,
             site_config: &cfg,
         };
@@ -1646,7 +1542,6 @@ mod tests {
             mv_limits: MvLimits::new(-16, 16, -16, 16),
             sad_per_bit: 1,
             mv_costs: &costs,
-            sad_mv_costs: &costs,
             max_iters: cfg.total_steps as i32,
             site_config: &cfg,
         };
@@ -1693,7 +1588,6 @@ mod tests {
             mv_limits: MvLimits::new(-8, 8, -8, 8),
             sad_per_bit: 1,
             mv_costs: &costs,
-            sad_mv_costs: &costs,
             max_iters: 0, // zero — loop body never runs
             site_config: &cfg,
         };
@@ -1738,7 +1632,6 @@ mod tests {
             mv_limits: MvLimits::new(-1, 1, -1, 1),
             sad_per_bit: 1,
             mv_costs: &costs,
-            sad_mv_costs: &costs,
             max_iters: cfg.total_steps as i32,
             site_config: &cfg,
         };
@@ -2003,7 +1896,6 @@ mod tests {
             mv_limits: MvLimits::new(0, 16, 0, 16),
             sad_per_bit: 16,
             mv_costs: &costs,
-            sad_mv_costs: &costs,
             max_iters: cfg.total_steps as i32,
             site_config: &cfg,
         };

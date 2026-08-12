@@ -3570,7 +3570,6 @@ fn run_newmv_search(
         mv_limits: params.mv_limits,
         sad_per_bit: sad_per_bit_16(params.q_index),
         mv_costs: params.mv_costs,
-        sad_mv_costs: crate::cost::mv_cost::nmv_sad_costs(),
         max_iters,
         site_config: params.site_config,
     };

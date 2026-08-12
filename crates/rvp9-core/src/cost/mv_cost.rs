@@ -1,9 +1,9 @@
 //! Motion-vector cost machinery.
 //!
 //! Mirrors libvpx `build_nmv_component_cost_table`,
-//! `vp9_build_nmv_cost_table`, the fixed SAD-domain tables used by
-//! full-pixel search, and the joint-then-per-axis MV-cost computation in
-//! `vp9_encode_mv` from `vp9/encoder/vp9_encodemv.c:69-237`.
+//! `vp9_build_nmv_cost_table`, and the joint-then-per-axis MV-cost
+//! computation in `vp9_encode_mv` from
+//! `vp9/encoder/vp9_encodemv.c:69-237`.
 //!
 //! ## Structure
 //!
@@ -232,40 +232,6 @@ pub fn build_nmv_cost_table(ctx: &NmvContext, usehp: bool) -> MvCosts {
     }
 }
 
-/// Return the fixed motion-vector costs used by full-pixel SAD search.
-///
-/// Pinned libvpx builds these separately from the adaptive entropy costs via
-/// `cal_nmvjointsadcost` and `cal_nmvsadcosts`
-/// (`vp9/encoder/vp9_encoder.c:2230-2256`). The component table is identical
-/// for both axes and even around zero. Its high-precision variant has the same
-/// values, so one immutable process-wide table serves both cases.
-#[must_use]
-pub fn nmv_sad_costs() -> &'static MvCosts {
-    static COSTS: std::sync::LazyLock<MvCosts> = std::sync::LazyLock::new(build_nmv_sad_cost_table);
-    &COSTS
-}
-
-fn build_nmv_sad_cost_table() -> MvCosts {
-    let mut cost = vec![0i32; MV_VALS].into_boxed_slice();
-    let zero_idx = MV_MAX as usize;
-
-    for magnitude in 1..=MV_MAX {
-        // Keep libvpx's operation types: log2f returns f32, then the `.6`
-        // double literal promotes the remaining arithmetic to f64 before the
-        // final truncating cast to int.
-        let log2 = ((8 * magnitude) as f32).log2();
-        let value = (256.0 * (2.0 * (f64::from(log2) + 0.6))) as i32;
-        cost[zero_idx + magnitude as usize] = value;
-        cost[zero_idx - magnitude as usize] = value;
-    }
-
-    let axis = MvComponentCosts { cost };
-    MvCosts {
-        joint_cost: [600, 300, 300, 300],
-        component_cost: [axis.clone(), axis],
-    }
-}
-
 /// Cost of encoding a single MV component value `comp` under
 /// `mv_comp_costs`. Convenience around the boxed slice.
 #[inline]
@@ -358,51 +324,5 @@ mod tests {
         for j in 0..MV_JOINTS {
             assert!(costs.joint_cost[j] > 0, "joint {j} cost should be positive");
         }
-    }
-
-    #[test]
-    fn sad_cost_table_matches_pinned_libvpx() {
-        let costs = nmv_sad_costs();
-        assert_eq!(costs.joint_cost, [600, 300, 300, 300]);
-        assert_eq!(costs.component_cost[0].cost.len(), MV_VALS);
-        assert_eq!(costs.component_cost[0], costs.component_cost[1]);
-        assert_eq!(costs.component_cost[0].lookup(0), 0);
-
-        // Values produced by pinned libvpx's log2f-based constructor on the
-        // acceptance host. These span the class boundaries and table edge.
-        for (magnitude, expected) in [
-            (1, 1843),
-            (2, 2355),
-            (3, 2654),
-            (4, 2867),
-            (7, 3280),
-            (8, 3379),
-            (16, 3891),
-            (255, 5936),
-            (1024, 6963),
-            (MV_MAX as i16, 9011),
-        ] {
-            assert_eq!(costs.component_cost[0].lookup(magnitude), expected);
-            assert_eq!(costs.component_cost[0].lookup(-magnitude), expected);
-        }
-
-        // FNV-1a over every positive little-endian i32 entry. This pins the
-        // entire table, including f32 log2 rounding between the spot checks.
-        let hash = (1..=MV_MAX).fold(0xcbf2_9ce4_8422_2325u64, |mut hash, magnitude| {
-            for byte in costs.component_cost[0]
-                .lookup(magnitude as i16)
-                .to_le_bytes()
-            {
-                hash ^= u64::from(byte);
-                hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
-            }
-            hash
-        });
-        assert_eq!(hash, 0x8be6_1980_544a_e1b0);
-    }
-
-    #[test]
-    fn sad_cost_table_is_process_wide() {
-        assert!(std::ptr::eq(nmv_sad_costs(), nmv_sad_costs()));
     }
 }

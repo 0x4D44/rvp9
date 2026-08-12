@@ -217,7 +217,6 @@ fn motion_search_and_predict(
         mv_limits,
         sad_per_bit: TPL_SAD_PER_BIT,
         mv_costs,
-        sad_mv_costs: rvp9_core::cost::mv_cost::nmv_sad_costs(),
         max_iters: site_config.total_steps as i32,
         site_config,
     };

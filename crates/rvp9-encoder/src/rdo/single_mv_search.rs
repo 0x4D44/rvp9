@@ -448,7 +448,6 @@ fn run_full_pel(
         mv_limits: params.mv_limits,
         sad_per_bit: params.sad_per_bit,
         mv_costs: params.mv_costs,
-        sad_mv_costs: rvp9_core::cost::mv_cost::nmv_sad_costs(),
         max_iters,
         site_config: params.site_config,
     };
