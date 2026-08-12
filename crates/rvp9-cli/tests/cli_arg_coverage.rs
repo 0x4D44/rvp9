@@ -52,8 +52,12 @@ fn tmp(tag: &str) -> PathBuf {
 /// Write `N_FRAMES` synthetic 64×64 I420 frames with per-frame motion
 /// so the encoder produces non-trivial inter frames.
 fn write_synthetic_raw(path: &Path) {
-    let mut buf = Vec::with_capacity(FRAME_BYTES * N_FRAMES);
-    for f in 0..N_FRAMES {
+    write_synthetic_raw_count(path, N_FRAMES);
+}
+
+fn write_synthetic_raw_count(path: &Path, frame_count: usize) {
+    let mut buf = Vec::with_capacity(FRAME_BYTES * frame_count);
+    for f in 0..frame_count {
         for y in 0..H {
             for x in 0..W {
                 buf.push(((x + y + f * 4) & 0xff) as u8);
@@ -67,7 +71,7 @@ fn write_synthetic_raw(path: &Path) {
             }
         }
     }
-    assert_eq!(buf.len(), FRAME_BYTES * N_FRAMES);
+    assert_eq!(buf.len(), FRAME_BYTES * frame_count);
     std::fs::write(path, &buf).expect("write synthetic raw");
 }
 
@@ -308,6 +312,113 @@ fn enc_passes_three_rejected() {
         stderr.contains("--passes") && stderr.contains("1 or 2"),
         "stderr must reject --passes=3 naming the valid range, got: {stderr}"
     );
+}
+
+#[test]
+fn enc_frame_time_csv_writes_one_row_per_temporal_svc_frame() {
+    let raw = tmp("frame_time_csv_in.yuv");
+    let ivf = tmp("frame_time_csv_out.ivf");
+    let csv = tmp("frame_time_csv.csv");
+    write_synthetic_raw_count(&raw, 4);
+    let out = Command::new(enc_bin())
+        .args([
+            "--temporal-layers",
+            "3",
+            "--lag-in-frames",
+            "0",
+            "--frame-time-csv",
+        ])
+        .arg(&csv)
+        .args(["-w", "64", "-h", "64", "--target-bitrate", "500", "-o"])
+        .arg(&ivf)
+        .arg(&raw)
+        .bounded_output()
+        .expect("run rvp9enc with frame timing diagnostic");
+    assert!(
+        out.status.success(),
+        "frame timing encode failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let csv_text = std::fs::read_to_string(&csv).expect("read frame timing CSV");
+    let lines: Vec<&str> = csv_text.lines().collect();
+    assert_eq!(
+        lines.first().copied(),
+        Some("frame_index,temporal_layer_id,encode_ns")
+    );
+    assert_eq!(lines.len(), 5, "header plus one row per source frame");
+    let rows: Vec<(usize, u8, u128)> = lines[1..]
+        .iter()
+        .map(|line| {
+            let fields: Vec<&str> = line.split(',').collect();
+            assert_eq!(fields.len(), 3, "CSV row must have three fields: {line}");
+            (
+                fields[0].parse().expect("frame index"),
+                fields[1].parse().expect("temporal layer id"),
+                fields[2].parse().expect("encode time"),
+            )
+        })
+        .collect();
+    assert_eq!(
+        rows.iter().map(|row| row.0).collect::<Vec<_>>(),
+        [0, 1, 2, 3]
+    );
+    assert_eq!(
+        rows.iter().map(|row| row.1).collect::<Vec<_>>(),
+        [0, 2, 1, 2],
+        "T3 timing rows must carry the emitted temporal layer IDs"
+    );
+    assert!(rows.iter().all(|row| row.2 > 0), "timings must be nonzero");
+
+    let ivf_bytes = std::fs::read(&ivf).expect("read timed IVF");
+    assert_eq!(
+        u32::from_le_bytes(ivf_bytes[24..28].try_into().expect("frame count")),
+        4,
+        "timed encode must still emit one IVF frame per source frame"
+    );
+    let _ = std::fs::remove_file(&raw);
+    let _ = std::fs::remove_file(&ivf);
+    let _ = std::fs::remove_file(&csv);
+}
+
+#[test]
+fn enc_frame_time_csv_rejects_two_pass() {
+    let csv = tmp("frame_time_csv_two_pass.csv");
+    let out = Command::new(enc_bin())
+        .args(["--frame-time-csv"])
+        .arg(&csv)
+        .args(["--passes", "2", "input.y4m"])
+        .bounded_output()
+        .expect("run invalid timed two-pass command");
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("--frame-time-csv")
+            && stderr.contains("one-pass")
+            && stderr.contains("two-pass"),
+        "timing diagnostic must reject two-pass encoding clearly, got: {stderr}"
+    );
+    assert!(!csv.exists(), "rejected timing command must not create CSV");
+}
+
+#[test]
+fn enc_frame_time_csv_rejects_nonzero_lag() {
+    let csv = tmp("frame_time_csv_lag.csv");
+    let out = Command::new(enc_bin())
+        .args(["--frame-time-csv"])
+        .arg(&csv)
+        .args(["--lag-in-frames", "1", "input.y4m"])
+        .bounded_output()
+        .expect("run invalid timed lag command");
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("--frame-time-csv")
+            && stderr.contains("lag-in-frames=0")
+            && stderr.contains("nonzero"),
+        "timing diagnostic must reject nonzero lag clearly, got: {stderr}"
+    );
+    assert!(!csv.exists(), "rejected timing command must not create CSV");
 }
 
 /// `--aq-mode` accepts 0 and 3 only — 2 must be rejected with the menu
@@ -1878,6 +1989,7 @@ fn enc_help_lists_every_wired_flag() {
         "--target-bitrate",
         "--end-usage",
         "--passes",
+        "--frame-time-csv",
         "--kf-max-dist",
         "--aq-mode",
         "--limit",

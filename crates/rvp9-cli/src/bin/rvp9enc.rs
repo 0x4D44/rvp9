@@ -24,6 +24,7 @@ use rvp9_io::y4m;
 use std::io::{BufReader, BufWriter, Read};
 use std::path::Path;
 use std::process::ExitCode;
+use std::time::Instant;
 
 /// Parsed encoder options (the config builder the flag table fills in).
 struct EncOpts {
@@ -82,6 +83,10 @@ struct EncOpts {
     enable_tpl: Option<bool>,
     /// `--lag-in-frames` (libvpx `vpxenc.c:220-221`).
     lag_in_frames: Option<u32>,
+    /// Benchmark diagnostic: optional per-source-frame encode timing CSV.
+    /// This is intentionally limited to the synchronous one-pass path so
+    /// each timed push maps to exactly one emitted packet.
+    frame_time_csv: Option<String>,
 }
 
 impl Default for EncOpts {
@@ -120,6 +125,7 @@ impl Default for EncOpts {
             passes: 1,
             enable_tpl: None,
             lag_in_frames: None,
+            frame_time_csv: None,
         }
     }
 }
@@ -648,6 +654,16 @@ fn flag_table() -> Vec<Flag<EncOpts>> {
             }),
         },
         Flag {
+            long: "frame-time-csv",
+            short: None,
+            arg: Arg::Required,
+            help: "benchmark diagnostic: per-frame encode times CSV",
+            apply: Some(|o, v| {
+                o.frame_time_csv = Some(req(v, "--frame-time-csv")?);
+                Ok(())
+            }),
+        },
+        Flag {
             long: "target-level",
             short: None,
             arg: Arg::Required,
@@ -801,6 +817,25 @@ fn parse_passes(v: Option<String>) -> Result<u32, String> {
     }
 }
 
+fn validate_frame_time_csv(opts: &EncOpts) -> Result<(), String> {
+    if opts.frame_time_csv.is_none() {
+        return Ok(());
+    }
+    if opts.passes != 1 {
+        return Err(
+            "--frame-time-csv requires one-pass encoding (--passes 1); two-pass encoding is not supported"
+                .to_string(),
+        );
+    }
+    if opts.lag_in_frames.unwrap_or(0) != 0 {
+        return Err(
+            "--frame-time-csv requires --lag-in-frames=0; nonzero lookahead cannot map push time to emitted frames"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
 const USAGE: &str = "rvp9enc [options] -o <out.ivf> <input.y4m|input.yuv>";
 
 fn main() -> ExitCode {
@@ -843,6 +878,8 @@ fn main() -> ExitCode {
 }
 
 fn run(opts: &EncOpts, positionals: &[String]) -> Result<(), String> {
+    validate_frame_time_csv(opts)?;
+
     let input = match positionals {
         [one] => Path::new(one),
         [] => return Err("no input file given".to_string()),
@@ -931,6 +968,7 @@ fn run(opts: &EncOpts, positionals: &[String]) -> Result<(), String> {
         .map_err(|e| format!("writing IVF header: {e}"))?;
     let mut total_bits: u64 = 0;
     let mut frame_count: usize = 0;
+    let mut frame_timings = Vec::new();
     {
         let mut encode_frame = |(y, u, v): &y4m::YuvFrameBuf| -> Result<(), String> {
             let view = YuvFrameRef {
@@ -941,15 +979,31 @@ fn run(opts: &EncOpts, positionals: &[String]) -> Result<(), String> {
                 u_stride: (info.coded_w / 2) as usize,
                 v_stride: (info.coded_w / 2) as usize,
             };
-            if let Some(enc) = encoder
+            let started = opts.frame_time_csv.as_ref().map(|_| Instant::now());
+            let encoded = encoder
                 .encode_frame_delayed(&view)
-                .map_err(|e| format!("encode_frame: {e}"))?
-            {
-                total_bits += u64::from(enc.actual_bits);
-                writer
-                    .write_packet(&enc.data)
-                    .map_err(|e| format!("writing IVF packet: {e}"))?;
+                .map_err(|e| format!("encode_frame: {e}"))?;
+            let encode_ns = started.map(|start| start.elapsed().as_nanos());
+            let Some(enc) = encoded else {
+                if opts.frame_time_csv.is_some() {
+                    return Err(format!(
+                        "--frame-time-csv expected one emitted packet for source frame {frame_count}, but lag-zero encode produced none"
+                    ));
+                }
+                frame_count += 1;
+                return Ok(());
+            };
+            if let Some(encode_ns) = encode_ns {
+                frame_timings.push(FrameTiming {
+                    frame_index: frame_count,
+                    temporal_layer_id: enc.temporal_layer_id,
+                    encode_ns,
+                });
             }
+            total_bits += u64::from(enc.actual_bits);
+            writer
+                .write_packet(&enc.data)
+                .map_err(|e| format!("writing IVF packet: {e}"))?;
             frame_count += 1;
             Ok(())
         };
@@ -966,6 +1020,12 @@ fn run(opts: &EncOpts, positionals: &[String]) -> Result<(), String> {
     // `encode_frame_delayed`).
     for r in encoder.flush() {
         let enc = r.map_err(|e| format!("encode_frame (flush): {e}"))?;
+        if opts.frame_time_csv.is_some() {
+            return Err(
+                "--frame-time-csv expected no delayed packets after the lag-zero encode loop"
+                    .to_string(),
+            );
+        }
         total_bits += u64::from(enc.actual_bits);
         writer
             .write_packet(&enc.data)
@@ -974,6 +1034,9 @@ fn run(opts: &EncOpts, positionals: &[String]) -> Result<(), String> {
     writer
         .finish()
         .map_err(|e| format!("finalizing IVF: {e}"))?;
+    if let Some(path) = opts.frame_time_csv.as_deref() {
+        write_frame_time_csv(path, &frame_timings)?;
+    }
 
     // C2-β — measurement-only fire-rate of the size-gated ML-partition
     // breakout. Reads the global counter exposed by the encoder; off
@@ -1001,6 +1064,23 @@ fn run(opts: &EncOpts, positionals: &[String]) -> Result<(), String> {
         );
     }
     Ok(())
+}
+
+struct FrameTiming {
+    frame_index: usize,
+    temporal_layer_id: u8,
+    encode_ns: u128,
+}
+
+fn write_frame_time_csv(path: &str, timings: &[FrameTiming]) -> Result<(), String> {
+    let mut csv = String::from("frame_index,temporal_layer_id,encode_ns\n");
+    for timing in timings {
+        csv.push_str(&format!(
+            "{},{},{}\n",
+            timing.frame_index, timing.temporal_layer_id, timing.encode_ns
+        ));
+    }
+    std::fs::write(path, csv).map_err(|e| format!("writing {path}: {e}"))
 }
 
 /// Two-pass VBR encode path (`--passes 2`).
@@ -1416,6 +1496,36 @@ mod tests {
             "rvp9enc",
         )
         .unwrap();
+    }
+
+    #[test]
+    fn frame_time_csv_parses_and_requires_synchronous_one_pass() {
+        let table = flag_table();
+        let mut opts = EncOpts::default();
+        args::parse(
+            &table,
+            &mut opts,
+            &s(&["--frame-time-csv=/tmp/frame-times.csv"]),
+            "rvp9enc",
+        )
+        .unwrap();
+        assert_eq!(opts.frame_time_csv.as_deref(), Some("/tmp/frame-times.csv"));
+        assert!(validate_frame_time_csv(&opts).is_ok());
+
+        opts.passes = 2;
+        let err = validate_frame_time_csv(&opts).unwrap_err();
+        assert!(
+            err.contains("one-pass") && err.contains("two-pass"),
+            "{err}"
+        );
+
+        opts.passes = 1;
+        opts.lag_in_frames = Some(1);
+        let err = validate_frame_time_csv(&opts).unwrap_err();
+        assert!(
+            err.contains("lag-in-frames=0") && err.contains("nonzero"),
+            "{err}"
+        );
     }
 
     #[test]
