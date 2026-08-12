@@ -5,6 +5,7 @@ Distilled, non-obvious gotchas future sessions need — dated one-liners.
 Durable project facts/conventions belong in `CLAUDE.md` / `AGENTS.md`, not here.
 Hard cap: 20 entries.
 
+- 2026-08-13: ffmpeg exposes each spatial component; keep filter state and select the final one (`w_svc_spatial_keyframe.rs`).
 - 2026-08-13: Spatial SVC shares decoder state, while RC and analysis stay layer-local (`frame_loop.rs:SpatialSharedState`).
 - 2026-08-12: Ref identity follows decoded slots, not temporary scaled/denoised buffers (`lib.rs:golden_distinct`).
 - 2026-08-12: SVC packets emit only the final component; decode every layer first (`lib.rs:PacketFrames::output_frame_index`).
