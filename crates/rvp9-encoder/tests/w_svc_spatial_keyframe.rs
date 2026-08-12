@@ -17,8 +17,6 @@ use sha2::{Digest, Sha256};
 
 const WIDTH: usize = 128;
 const HEIGHT: usize = 64;
-const INTER_WIDTH: usize = 128;
-const INTER_HEIGHT: usize = 64;
 const INTER_FRAME_COUNT: usize = 4;
 
 fn source_sized(width: usize, height: usize, frame_index: usize) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
@@ -73,30 +71,30 @@ fn encode_packets() -> Vec<Vec<u8>> {
         .collect()
 }
 
-fn encode_inter_packets() -> Vec<Vec<u8>> {
-    let mut template = EncoderConfig::new(INTER_WIDTH as u32, INTER_HEIGHT as u32);
+fn encode_inter_packets(width: usize, height: usize, layer_count: u8) -> Vec<Vec<u8>> {
+    let mut template = EncoderConfig::new(width as u32, height as u32);
     template.target_bitrate_bps = 300_000;
     template.speed = 8;
     template.gop_length = 3;
     let mut encoder = SpatialEncoder::new(
         template,
         SpatialSvcConfig {
-            number_spatial_layers: 2,
+            number_spatial_layers: layer_count,
             inter_layer_pred: InterLayerPred::On,
         },
     )
     .unwrap();
     (0..INTER_FRAME_COUNT)
         .map(|frame_index| {
-            let (y, u, v) = source_sized(INTER_WIDTH, INTER_HEIGHT, frame_index);
+            let (y, u, v) = source_sized(width, height, frame_index);
             encoder
                 .encode_access_unit(&YuvFrameRef {
                     y: &y,
                     u: &u,
                     v: &v,
-                    y_stride: INTER_WIDTH,
-                    u_stride: INTER_WIDTH / 2,
-                    v_stride: INTER_WIDTH / 2,
+                    y_stride: width,
+                    u_stride: width / 2,
+                    v_stride: width / 2,
                 })
                 .unwrap()
                 .data
@@ -250,19 +248,24 @@ fn keyframe_spatial_packet_top_layer_is_byte_exact_through_vpxdec() {
     let _ = std::fs::remove_file(ivf);
 }
 
-#[test]
-#[ignore = "external stateful spatial gate; requires ffmpeg and pinned vpxdec"]
-fn inter_spatial_stream_top_layer_is_byte_exact_through_ffmpeg_and_vpxdec() {
-    let packets = encode_inter_packets();
+fn exercise_inter_spatial_stream(width: usize, height: usize, layer_count: u8, label: &str) {
+    let packets = encode_inter_packets(width, height, layer_count);
     let (_, top_components, components) = decode_rvp9(&packets);
-    assert_eq!(components.len(), INTER_FRAME_COUNT * 2);
+    assert_eq!(
+        components.len(),
+        INTER_FRAME_COUNT * usize::from(layer_count)
+    );
     assert_eq!(
         top_components.len(),
-        INTER_FRAME_COUNT * INTER_WIDTH * INTER_HEIGHT * 3 / 2
+        INTER_FRAME_COUNT * width * height * 3 / 2
     );
 
-    let (ivf, ffmpeg_output) = temporary_paths("inter-ffmpeg");
-    write_packets(&ivf, &packets, INTER_WIDTH as u16, INTER_HEIGHT as u16);
+    let (ivf, ffmpeg_output) = temporary_paths(&format!("{label}-ffmpeg"));
+    write_packets(&ivf, &packets, width as u16, height as u16);
+    let top_component_filter = format!(
+        "select=eq(mod(n\\,{layer_count})\\,{}),setpts=N/FRAME_RATE/TB",
+        layer_count - 1
+    );
     let ffmpeg_process = Command::new("ffmpeg")
         .args([
             "-hide_banner",
@@ -274,18 +277,13 @@ fn inter_spatial_stream_top_layer_is_byte_exact_through_ffmpeg_and_vpxdec() {
             "-i",
         ])
         .arg(&ivf)
-        // ffmpeg exposes both shown spatial components as consecutive
-        // decoded frames. Select the final (top) component of each access
-        // unit and replace their duplicate component timestamps before the
+        // ffmpeg exposes all shown spatial components as consecutive decoded
+        // frames. Select the final (top) component of each access unit and
+        // replace their duplicate component timestamps before the
         // fixed-resolution rawvideo muxer sees them.
-        .args([
-            "-vf",
-            "select=eq(mod(n\\,2)\\,1),setpts=N/FRAME_RATE/TB",
-            "-f",
-            "rawvideo",
-            "-pix_fmt",
-            "yuv420p",
-        ])
+        .arg("-vf")
+        .arg(top_component_filter)
+        .args(["-f", "rawvideo", "-pix_fmt", "yuv420p"])
         .arg(&ffmpeg_output)
         .output()
         .expect("ffmpeg must be installed for this gate");
@@ -298,7 +296,7 @@ fn inter_spatial_stream_top_layer_is_byte_exact_through_ffmpeg_and_vpxdec() {
     assert_eq!(ffmpeg.len(), top_components.len());
     assert_eq!(Sha256::digest(&ffmpeg), Sha256::digest(&top_components));
 
-    let (_, vpxdec_output) = temporary_paths("inter-vpxdec");
+    let (_, vpxdec_output) = temporary_paths(&format!("{label}-vpxdec"));
     let vpxdec_process = Command::new("vpxdec")
         .args(["--codec=vp9", "--i420", "-o"])
         .arg(&vpxdec_output)
@@ -317,4 +315,16 @@ fn inter_spatial_stream_top_layer_is_byte_exact_through_ffmpeg_and_vpxdec() {
     let _ = std::fs::remove_file(vpxdec_output);
     let _ = std::fs::remove_file(ffmpeg_output);
     let _ = std::fs::remove_file(ivf);
+}
+
+#[test]
+#[ignore = "external stateful spatial gate; requires ffmpeg and pinned vpxdec"]
+fn two_layer_inter_spatial_stream_is_byte_exact_through_ffmpeg_and_vpxdec() {
+    exercise_inter_spatial_stream(128, 64, 2, "two-layer-inter");
+}
+
+#[test]
+#[ignore = "external stateful spatial gate; requires ffmpeg and pinned vpxdec"]
+fn three_layer_inter_spatial_stream_is_byte_exact_through_ffmpeg_and_vpxdec() {
+    exercise_inter_spatial_stream(256, 128, 3, "three-layer-inter");
 }
