@@ -153,75 +153,24 @@ fn run_one_vector(
             }
         };
 
-        for frame in parsed {
-            // A frame is "displayed" iff show_frame == true or
-            // it's a ShowExistingFrame (which always shows).
-            let shown = frame.header.show_frame
-                || matches!(
-                    frame.header.kind,
-                    rvp9_core::bitstream::FrameKind::ShowExistingFrame { .. }
-                );
+        // Libvpx decodes every superframe component but exposes only the
+        // final shown frame from one decode call (`vp9_dx_iface.c:377-415`).
+        // Spatial SVC uses one shown component per layer, ordered low to
+        // high, so the official ledger contains the final/top layer only.
+        let output_frame_index = parsed.output_frame_index();
+        let mut displayed = None;
+        let mut displayed_skip = None;
+        for (frame_index, frame) in parsed.into_iter().enumerate() {
             match decoder.decode_frame(&frame) {
                 Ok(buf) => {
-                    if !shown {
-                        // Not-shown frames don't have an .md5 ledger
-                        // entry; just continue.
-                        continue;
+                    if Some(frame_index) == output_frame_index && displayed_skip.is_none() {
+                        displayed = Some(buf);
                     }
-                    let got = md5_of_yv12_visible(&buf);
-                    let got_hex = hex16(got);
-                    let entry: Option<&Md5Entry> = md5_entries.get(shown_idx);
-                    // G8 in-memory ledger no longer carries a 1-based
-                    // `index` field — the libvpx `.md5` row position is
-                    // the displayed-frame index, so derive it from
-                    // `shown_idx + 1`.
-                    let display_idx = (shown_idx + 1) as u32;
-                    match entry {
-                        Some(e) if e.md5_hex_visible().as_deref() == Some(got_hex.as_str()) => {
-                            stats.passed += 1;
-                            if verbose {
-                                let (width, height) = if e.width == 0 || e.height == 0 {
-                                    (buf.width(), buf.height())
-                                } else {
-                                    (e.width, e.height)
-                                };
-                                println!(
-                                    "    frame {:>4}: PASS  ({}x{})",
-                                    display_idx, width, height
-                                );
-                            }
-                        }
-                        Some(e) => {
-                            stats.mismatched += 1;
-                            let want_hex = e
-                                .md5_hex_visible()
-                                .unwrap_or_else(|| "<no-visible-digest>".to_string());
-                            println!(
-                                "    frame {:>4}: MISMATCH  expected {}  got {}",
-                                display_idx, want_hex, got_hex
-                            );
-                        }
-                        None => {
-                            stats.mismatched += 1;
-                            println!(
-                                "    frame {:>4}: MISMATCH  (no .md5 entry; decoder produced extra frame)",
-                                display_idx
-                            );
-                        }
-                    }
-                    shown_idx += 1;
                 }
                 Err(DecodeError::Unimplemented { reason }) => {
-                    if shown {
-                        let tag = format!("unimplemented: {reason}");
-                        skip_reasons.record(&tag);
-                        if verbose {
-                            let label = (shown_idx + 1) as u32;
-                            println!("    frame {label:>4}: SKIP  {tag}");
-                        }
-                        stats.skipped += 1;
-                        shown_idx += 1;
-                    }
+                    displayed = None;
+                    displayed_skip.get_or_insert_with(|| format!("unimplemented: {reason}"));
+                    break;
                 }
                 Err(e) => {
                     if !non_gating {
@@ -232,19 +181,65 @@ fn run_one_vector(
                         ));
                     }
 
-                    if shown {
-                        let tag = format!("decode error: {e}");
-                        skip_reasons.record(&tag);
-                        if verbose {
-                            let label = (shown_idx + 1) as u32;
-                            println!("    frame {label:>4}: SKIP  {tag}");
-                        }
-                        stats.skipped += 1;
-                        shown_idx += 1;
-                    }
+                    displayed = None;
+                    displayed_skip.get_or_insert_with(|| format!("decode error: {e}"));
+                    break;
                 }
             }
         }
+
+        if let Some(tag) = displayed_skip {
+            skip_reasons.record(&tag);
+            if output_frame_index.is_some() {
+                if verbose {
+                    let label = (shown_idx + 1) as u32;
+                    println!("    frame {label:>4}: SKIP  {tag}");
+                }
+                stats.skipped += 1;
+                shown_idx += 1;
+            }
+            continue;
+        }
+        let Some(buf) = displayed else {
+            continue;
+        };
+
+        let got_hex = hex16(md5_of_yv12_visible(&buf));
+        let entry: Option<&Md5Entry> = md5_entries.get(shown_idx);
+        // G8 in-memory ledger no longer carries a 1-based `index` field —
+        // derive the displayed-frame index from the row position.
+        let display_idx = (shown_idx + 1) as u32;
+        match entry {
+            Some(e) if e.md5_hex_visible().as_deref() == Some(got_hex.as_str()) => {
+                stats.passed += 1;
+                if verbose {
+                    let (width, height) = if e.width == 0 || e.height == 0 {
+                        (buf.width(), buf.height())
+                    } else {
+                        (e.width, e.height)
+                    };
+                    println!("    frame {:>4}: PASS  ({}x{})", display_idx, width, height);
+                }
+            }
+            Some(e) => {
+                stats.mismatched += 1;
+                let want_hex = e
+                    .md5_hex_visible()
+                    .unwrap_or_else(|| "<no-visible-digest>".to_string());
+                println!(
+                    "    frame {:>4}: MISMATCH  expected {}  got {}",
+                    display_idx, want_hex, got_hex
+                );
+            }
+            None => {
+                stats.mismatched += 1;
+                println!(
+                    "    frame {:>4}: MISMATCH  (no .md5 entry; decoder produced extra frame)",
+                    display_idx
+                );
+            }
+        }
+        shown_idx += 1;
     }
 
     if shown_idx != md5_entries.len() {

@@ -5,6 +5,7 @@ Distilled, non-obvious gotchas future sessions need — dated one-liners.
 Durable project facts/conventions belong in `CLAUDE.md` / `AGENTS.md`, not here.
 Hard cap: 20 entries.
 
+- 2026-08-12: SVC packets emit only the final component; decode every layer first (`lib.rs:PacketFrames::output_frame_index`).
 - 2026-08-12: Re-test old quality prerequisites after later gains; CPU6/T3 can now drop TX4 (`lib.rs:realtime_tx4_candidate_enabled`).
 - 2026-08-12: CPU8 VBP minmax adds 8x8 leaves and ~4% corpus cost; disable it (`lib.rs:compute_minmax_partition_variance`).
 - 2026-08-12: CPU7 SVC intra fallback costs 5.6%; skip only proven enhancement frames (`lib.rs:realtime_intra_fallback_enabled`).

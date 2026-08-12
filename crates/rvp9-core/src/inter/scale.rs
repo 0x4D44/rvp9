@@ -153,7 +153,7 @@ impl ScaleFactors {
 }
 
 /// libvpx `valid_ref_frame_size` (`vp9_scale.h:61-65`). The spec'd
-/// envelope: ref dim must be in `[0.5 * cur, 16 * cur]` per axis.
+/// envelope: ref dim must be in `[cur / 16, 2 * cur]` per axis.
 /// References outside this range fail `vp9_setup_scale_factors_for_frame`
 /// and produce a [`REF_INVALID_SCALE`] [`ScaleFactors`].
 #[must_use]

@@ -4,6 +4,8 @@ use std::path::PathBuf;
 
 /// Number of 8-bit VP9 vectors selected from pinned libvpx v1.14.1.
 pub const OFFICIAL_VECTOR_COUNT: usize = 307;
+/// Expected displayed frames across the complete official corpus.
+pub const OFFICIAL_FRAME_COUNT: usize = 4_816;
 /// Official vector outside the v0.2.0-alpha.1 decoder surface.
 pub const ALPHA_UNSUPPORTED_SPATIAL_SVC_VECTOR: &str = "vp90-2-22-svc_1280x720_3.ivf";
 /// Number of official vectors in the v0.2.0-alpha.1 supported surface.

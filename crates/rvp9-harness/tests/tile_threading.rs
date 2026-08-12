@@ -10,7 +10,7 @@
 //! becomes load-bearing).
 
 use rvp9_decoder::Decoder;
-use rvp9_harness::conformance_scope::{ALPHA_SUPPORTED_FRAME_COUNT, alpha_supported_vectors};
+use rvp9_harness::conformance_scope::{OFFICIAL_FRAME_COUNT, OFFICIAL_VECTOR_COUNT};
 use rvp9_harness::container::read_packets;
 use rvp9_harness::md5file::read_md5_file;
 use rvp9_harness::{hex16, md5_of_yv12_visible};
@@ -32,7 +32,7 @@ fn vectors_dir() -> PathBuf {
         .join("vectors")
 }
 
-fn alpha_vectors() -> Vec<PathBuf> {
+fn official_vectors() -> Vec<PathBuf> {
     let dir = vectors_dir();
     let mut vectors: Vec<PathBuf> = std::fs::read_dir(&dir)
         .unwrap()
@@ -44,9 +44,12 @@ fn alpha_vectors() -> Vec<PathBuf> {
         })
         .collect();
     vectors.sort();
-    alpha_supported_vectors(vectors).unwrap_or_else(|error| {
-        panic!("alpha conformance selection failed: {error}; run scripts/fetch-vectors.sh")
-    })
+    assert_eq!(
+        vectors.len(),
+        OFFICIAL_VECTOR_COUNT,
+        "official vector count drifted; run scripts/fetch-vectors.sh"
+    );
+    vectors
 }
 
 /// Decode every shown frame of `vector` at thread count `n`, returning
@@ -61,18 +64,18 @@ fn decode_md5s(vector: &Path, n: NonZeroUsize) -> Result<Vec<String>, String> {
         let parsed = decoder
             .parse_packet(packet_bytes)
             .map_err(|error| format!("packet {packet_idx}: parse failed: {error}"))?;
+        let output_frame_index = parsed.output_frame_index();
+        let mut displayed = None;
         for (frame_idx, frame) in parsed.into_iter().enumerate() {
-            let shown = frame.header.show_frame
-                || matches!(
-                    frame.header.kind,
-                    rvp9_core::bitstream::FrameKind::ShowExistingFrame { .. }
-                );
             let buf = decoder.decode_frame(&frame).map_err(|error| {
                 format!("packet {packet_idx} frame {frame_idx}: decode failed: {error}")
             })?;
-            if shown {
-                md5s.push(hex16(md5_of_yv12_visible(&buf)));
+            if Some(frame_idx) == output_frame_index {
+                displayed = Some(buf);
             }
+        }
+        if let Some(buf) = displayed {
+            md5s.push(hex16(md5_of_yv12_visible(&buf)));
         }
     }
     Ok(md5s)
@@ -90,7 +93,7 @@ fn expected_shown_frames(vector: &Path) -> usize {
 }
 
 /// HLD V6 §G5 oracle #1: conformance at N = 2. Re-runs the exact
-/// alpha-supported official corpus (every selected vector + shown frame)
+/// complete official corpus (every vector + displayed frame)
 /// through the decoder at `with_threads(2)`, comparing the MD5 of each
 /// frame against the .md5 reference. Asserts 0 mismatches.
 ///
@@ -108,7 +111,7 @@ fn expected_shown_frames(vector: &Path) -> usize {
     ignore = "requires tests/conformance/vectors; run scripts/fetch-vectors.sh"
 )]
 fn conformance_at_n_threads_2() {
-    let vectors = alpha_vectors();
+    let vectors = official_vectors();
 
     let mut total_passed = 0usize;
     let mut total_mismatched = 0usize;
@@ -144,7 +147,7 @@ fn conformance_at_n_threads_2() {
         total_mismatched, 0,
         "G5 oracle #1: {total_passed} passed, {total_mismatched} mismatched at N=2"
     );
-    assert_eq!(total_passed, ALPHA_SUPPORTED_FRAME_COUNT);
+    assert_eq!(total_passed, OFFICIAL_FRAME_COUNT);
 }
 
 /// HLD V6 §G5 oracle #2: inter-thread-count determinism. For each
@@ -163,7 +166,7 @@ fn conformance_at_n_threads_2() {
     ignore = "requires tests/conformance/vectors; run scripts/fetch-vectors.sh"
 )]
 fn determinism_n1_eq_n2() {
-    let vectors = alpha_vectors();
+    let vectors = official_vectors();
 
     let mut total_checked = 0usize;
     for vector in &vectors {
@@ -209,7 +212,7 @@ fn determinism_n1_eq_n2() {
             total_checked += 1;
         }
     }
-    assert_eq!(total_checked, ALPHA_SUPPORTED_FRAME_COUNT);
+    assert_eq!(total_checked, OFFICIAL_FRAME_COUNT);
     eprintln!("G5 oracle #2: {total_checked} shown frames byte-identical at N=1 vs N=2");
 }
 

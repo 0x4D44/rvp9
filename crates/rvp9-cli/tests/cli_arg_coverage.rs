@@ -26,6 +26,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use common::CommandExt;
+use rvp9_io::container::{IvfHeader, read_packets, write_ivf};
 
 // ---- shared fixtures ----------------------------------------------------
 
@@ -99,6 +100,44 @@ fn encode_synthetic_ivf(tag: &str) -> PathBuf {
     assert!(status.success(), "rvp9enc failed for tag {tag}");
     let _ = std::fs::remove_file(&raw);
     ivf
+}
+
+/// Repack the first two frames from an IVF as one two-component VP9
+/// superframe packet. The original encode order is preserved, so the second
+/// inter frame can reference the first keyframe normally.
+fn repack_first_two_frames_as_superframe(input: &Path, tag: &str) -> PathBuf {
+    let (data, packets) = read_packets(input).expect("read source IVF");
+    assert!(packets.len() >= 2, "source IVF needs at least two frames");
+    let frames = [packets[0].slice(&data), packets[1].slice(&data)];
+    let max_size = frames.iter().map(|frame| frame.len()).max().unwrap();
+    let mag = match max_size {
+        0..=0xff => 1usize,
+        0x100..=0xffff => 2,
+        0x1_0000..=0xff_ffff => 3,
+        _ => 4,
+    };
+    let marker = 0xc0 | (((mag - 1) as u8) << 3) | 1;
+    let mut superframe =
+        Vec::with_capacity(frames.iter().map(|frame| frame.len()).sum::<usize>() + 6);
+    for frame in frames {
+        superframe.extend_from_slice(frame);
+    }
+    superframe.push(marker);
+    for frame in frames {
+        let encoded = (frame.len() as u32).to_le_bytes();
+        superframe.extend_from_slice(&encoded[..mag]);
+    }
+    superframe.push(marker);
+
+    let output = tmp(&format!("{tag}_superframe.ivf"));
+    let mut file = std::fs::File::create(&output).expect("create superframe IVF");
+    write_ivf(
+        &mut file,
+        &IvfHeader::vp9(W as u16, H as u16, 30, 1),
+        &[&superframe],
+    )
+    .expect("write superframe IVF");
+    output
 }
 
 // ========================================================================
@@ -1310,6 +1349,54 @@ fn dec_framemd5_indexed_lines() {
         );
     }
     let _ = std::fs::remove_file(&ivf);
+}
+
+/// One decoder call may contain several shown VP9 components (spatial-SVC
+/// layers). Match libvpx by decoding all components but emitting only the
+/// final component from the packet.
+#[test]
+fn dec_superframe_emits_only_final_shown_component() {
+    let source = encode_synthetic_ivf("shown_superframe_source");
+    let source_out = Command::new(dec_bin())
+        .args(["--md5", "--limit", "2"])
+        .arg(&source)
+        .bounded_output()
+        .expect("decode source frames");
+    assert!(
+        source_out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&source_out.stderr)
+    );
+    let source_md5s: Vec<&str> = std::str::from_utf8(&source_out.stdout)
+        .expect("source MD5 output is UTF-8")
+        .lines()
+        .collect();
+    assert_eq!(source_md5s.len(), 2);
+
+    let packed = repack_first_two_frames_as_superframe(&source, "shown_superframe");
+    let packed_out = Command::new(dec_bin())
+        .args(["--md5", "--summary"])
+        .arg(&packed)
+        .bounded_output()
+        .expect("decode packed superframe");
+    assert!(
+        packed_out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&packed_out.stderr)
+    );
+    let packed_md5s: Vec<&str> = std::str::from_utf8(&packed_out.stdout)
+        .expect("packed MD5 output is UTF-8")
+        .lines()
+        .collect();
+    assert_eq!(packed_md5s, [source_md5s[1]]);
+    let summary = String::from_utf8_lossy(&packed_out.stderr);
+    assert!(
+        summary.contains("1 decoded frames/1 showed frames"),
+        "unexpected summary: {summary}"
+    );
+
+    let _ = std::fs::remove_file(&source);
+    let _ = std::fs::remove_file(&packed);
 }
 
 /// `--noblit` decodes silently — no stdout output, exit 0.

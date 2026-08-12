@@ -421,7 +421,7 @@ fn run(opts: &DecOpts, positionals: &[String]) -> Result<(), String> {
     .map_err(|error| format!("creating decoder worker threads: {error}"))?;
     let mut shown: usize = 0; // displayed frames seen
     let mut emitted: usize = 0; // displayed frames written/limited
-    let mut frames_in: usize = 0; // decoded frames (= vpxdec's frame_in)
+    let mut frames_in: usize = 0; // decoder calls (= vpxdec's frame_in)
     // Accumulated microseconds spent strictly inside `decode_frame`.
     // Matches vpxdec's `dx_time` measurement scope (the decode call only;
     // not packet parsing, not pixel output). u128 has effectively unlimited
@@ -439,85 +439,90 @@ fn run(opts: &DecOpts, positionals: &[String]) -> Result<(), String> {
         let parsed = decoder
             .parse_packet(&pkt)
             .map_err(|e| format!("parse_packet: {e}"))?;
-        for frame in parsed {
-            let is_shown = frame.header.show_frame
-                || matches!(
-                    frame.header.kind,
-                    rvp9_core::bitstream::FrameKind::ShowExistingFrame { .. }
-                );
+        frames_in += 1;
+        // Libvpx decodes every component in a superframe packet, then its
+        // public decoder interface exposes only the final shown frame from
+        // that decode call (`vp9_dx_iface.c:377-415`). Spatial SVC packets
+        // rely on this: their shown components are ordered low to high, and
+        // the default output is the final/top layer.
+        let output_frame_index = parsed.output_frame_index();
+        let mut displayed = None;
+        for (frame_index, frame) in parsed.into_iter().enumerate() {
             let t0 = std::time::Instant::now();
             let decode_result = decoder.decode_frame(&frame);
             dx_time_us += t0.elapsed().as_micros();
             let buf = decode_result.map_err(|e| format!("decode_frame: {e:?}"))?;
-            frames_in += 1;
-            if !is_shown {
-                continue;
+            if Some(frame_index) == output_frame_index {
+                displayed = Some(buf);
             }
-            // --skip / --limit operate on displayed frames.
-            if shown < opts.skip {
-                shown += 1;
-                continue;
-            }
-            if let Some(lim) = opts.limit
-                && emitted >= lim
-            {
-                shown += 1;
-                continue;
-            }
-
-            if want_pixels {
-                let chroma = buf.chroma();
-                match fmt {
-                    OutFmt::RawI420 if chroma != ChromaFormat::Yuv420 => {
-                        return Err(format!(
-                            "I420/--i420/--rawvideo output requires decoded 4:2:0 chroma; \
-                             got {chroma:?}"
-                        ));
-                    }
-                    OutFmt::RawYv12 if chroma != ChromaFormat::Yuv420 => {
-                        return Err(format!(
-                            "YV12/--yv12 output requires decoded 4:2:0 chroma; got {chroma:?}"
-                        ));
-                    }
-                    OutFmt::Y4m if chroma == ChromaFormat::Yuv440 => {
-                        return Err(
-                            "--y4m output for 4:4:0 (Yuv440) is not representable in YUV4MPEG2; \
-                             use --noblit, --md5, or --framemd5"
-                                .to_string(),
-                        );
-                    }
-                    _ => {}
-                }
-            }
-
-            if emit && sink.is_none() {
-                sink = Some(BufWriter::new(open_output(opts.output.as_deref())?));
-            }
-            if let Some(w) = sink.as_mut() {
-                match opts.md5 {
-                    Md5Mode::PerFrame => {
-                        writeln!(w, "{}", hex16(md5_of_yv12_visible(&buf))).map_err(io_err)?;
-                    }
-                    Md5Mode::Indexed => {
-                        writeln!(w, "{}: {}", emitted, hex16(md5_of_yv12_visible(&buf)))
-                            .map_err(io_err)?;
-                    }
-                    Md5Mode::Off => {
-                        if want_pixels {
-                            write_frame(w, &buf, fmt, fps_num, fps_den, &mut y4m_header_written)?;
-                        }
-                    }
-                }
-            }
-
+        }
+        let Some(buf) = displayed else {
+            continue;
+        };
+        // --skip / --limit operate on displayed packet outputs.
+        if shown < opts.skip {
             shown += 1;
-            emitted += 1;
-            if opts.progress {
-                eprint!("\r[rvp9dec] {emitted} frames decoded");
+            continue;
+        }
+        if let Some(lim) = opts.limit
+            && emitted >= lim
+        {
+            shown += 1;
+            continue;
+        }
+
+        if want_pixels {
+            let chroma = buf.chroma();
+            match fmt {
+                OutFmt::RawI420 if chroma != ChromaFormat::Yuv420 => {
+                    return Err(format!(
+                        "I420/--i420/--rawvideo output requires decoded 4:2:0 chroma; \
+                         got {chroma:?}"
+                    ));
+                }
+                OutFmt::RawYv12 if chroma != ChromaFormat::Yuv420 => {
+                    return Err(format!(
+                        "YV12/--yv12 output requires decoded 4:2:0 chroma; got {chroma:?}"
+                    ));
+                }
+                OutFmt::Y4m if chroma == ChromaFormat::Yuv440 => {
+                    return Err(
+                        "--y4m output for 4:4:0 (Yuv440) is not representable in YUV4MPEG2; \
+                         use --noblit, --md5, or --framemd5"
+                            .to_string(),
+                    );
+                }
+                _ => {}
             }
-            if opts.limit == Some(emitted) {
-                break 'packets;
+        }
+
+        if emit && sink.is_none() {
+            sink = Some(BufWriter::new(open_output(opts.output.as_deref())?));
+        }
+        if let Some(w) = sink.as_mut() {
+            match opts.md5 {
+                Md5Mode::PerFrame => {
+                    writeln!(w, "{}", hex16(md5_of_yv12_visible(&buf))).map_err(io_err)?;
+                }
+                Md5Mode::Indexed => {
+                    writeln!(w, "{}: {}", emitted, hex16(md5_of_yv12_visible(&buf)))
+                        .map_err(io_err)?;
+                }
+                Md5Mode::Off => {
+                    if want_pixels {
+                        write_frame(w, &buf, fmt, fps_num, fps_den, &mut y4m_header_written)?;
+                    }
+                }
             }
+        }
+
+        shown += 1;
+        emitted += 1;
+        if opts.progress {
+            eprint!("\r[rvp9dec] {emitted} frames decoded");
+        }
+        if opts.limit == Some(emitted) {
+            break 'packets;
         }
     }
 
@@ -531,8 +536,9 @@ fn run(opts: &DecOpts, positionals: &[String]) -> Result<(), String> {
     if opts.summary {
         // Match vpxdec's `show_progress` format (printed to stderr):
         //   "<frame_in> decoded frames/<frame_out> showed frames in <us> us (<fps> fps)"
-        // — frame_in counts every frame fed to the decoder (incl. hidden /
-        //   show_existing_frame), frame_out counts displayed frames. fps is
+        // — frame_in counts compressed-data decode calls (one per transport
+        //   packet, including a packet containing several superframe
+        //   components), while frame_out counts displayed frames. fps is
         //   derived from displayed frames over decode-call wall time.
         // Guard against div-by-zero on empty inputs.
         let fps = if dx_time_us == 0 {

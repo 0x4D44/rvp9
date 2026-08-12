@@ -1,18 +1,15 @@
-//! End-to-end test: drives the exact v0.2.0-alpha.1 supported subset of the
-//! complete official conformance corpus through our decoder.
+//! End-to-end test: drives the complete official conformance corpus through
+//! our decoder.
 //!
 //! Every supported displayed frame must decode and match its official MD5.
-//! The one excluded spatial-SVC vector remains in the fetched corpus and the
-//! default conformance runner still exercises it.
+//! Spatial-SVC superframes decode every component and compare the final/top
+//! layer that libvpx exposes for each packet against the official ledger.
 //!
 //! Vector / `.md5` parse failures (i.e. broken harness plumbing)
 //! also fail the test.
 
 use rvp9_decoder::{DecodeError, Decoder};
-use rvp9_harness::conformance_scope::{
-    ALPHA_SUPPORTED_FRAME_COUNT, ALPHA_SUPPORTED_VECTOR_COUNT,
-    ALPHA_UNSUPPORTED_SPATIAL_SVC_VECTOR, alpha_supported_vectors,
-};
+use rvp9_harness::conformance_scope::{OFFICIAL_FRAME_COUNT, OFFICIAL_VECTOR_COUNT};
 use rvp9_harness::container::read_packets;
 use rvp9_harness::md5file::read_md5_file;
 use rvp9_harness::{hex16, md5_of_yv12_visible};
@@ -69,7 +66,7 @@ fn vectors_dir() -> PathBuf {
     ignore = "requires scripts/fetch-vectors.sh"
 )]
 #[test]
-fn conformance_runner_walks_alpha_supported_vectors() {
+fn conformance_runner_walks_all_official_vectors() {
     let dir = vectors_dir();
     assert!(
         dir.is_dir(),
@@ -87,11 +84,11 @@ fn conformance_runner_walks_alpha_supported_vectors() {
         })
         .collect();
     vectors.sort();
-    let vectors = alpha_supported_vectors(vectors).unwrap_or_else(|error| {
-        panic!("alpha conformance selection failed: {error}; run scripts/fetch-vectors.sh")
-    });
-    assert_eq!(vectors.len(), ALPHA_SUPPORTED_VECTOR_COUNT);
-    println!("alpha-supported scope excludes: {ALPHA_UNSUPPORTED_SPATIAL_SVC_VECTOR}");
+    assert_eq!(
+        vectors.len(),
+        OFFICIAL_VECTOR_COUNT,
+        "official vector count drifted; run scripts/fetch-vectors.sh"
+    );
 
     assert!(
         !vectors.is_empty(),
@@ -143,7 +140,7 @@ fn conformance_runner_walks_alpha_supported_vectors() {
         let mut v_skipped = 0usize;
 
         // Pin to one worker thread per G5 review (M2) — this loop
-        // constructs a fresh `Decoder` per vector (×201 vectors), and
+        // constructs a fresh `Decoder` per vector (×307 vectors), and
         // `Decoder::new()` would spawn `available_parallelism()`
         // threads each time. The conformance pipeline runs every tile
         // inline in the first-cut decoder, so additional workers sit
@@ -180,37 +177,26 @@ fn conformance_runner_walks_alpha_supported_vectors() {
                 decoded_sub_frames,
                 expected_sub_frames,
             );
-            for frame in parsed {
-                let shown = frame.header.show_frame
-                    || matches!(
-                        frame.header.kind,
-                        rvp9_core::bitstream::FrameKind::ShowExistingFrame { .. }
-                    );
+            // VP9's decoder interface exposes only the final shown component
+            // from a superframe packet. Spatial SVC orders shown layers from
+            // low to high, so the official MD5 row describes the final/top
+            // component even though every layer must decode successfully.
+            let mut displayed = None;
+            let mut packet_failed = false;
+            let mut packet_unimplemented = false;
+            let output_frame_index = parsed.output_frame_index();
+            for (frame_index, frame) in parsed.into_iter().enumerate() {
                 match decoder.decode_frame(&frame) {
                     Ok(buf) => {
-                        if !shown {
-                            continue;
+                        if Some(frame_index) == output_frame_index && !packet_failed {
+                            displayed = Some(buf);
                         }
-                        let got_hex = hex16(md5_of_yv12_visible(&buf));
-                        let want = md5_entries.get(shown_idx);
-                        match want {
-                            Some(e) if e.md5_hex_visible().as_deref() == Some(got_hex.as_str()) => {
-                                total_passed += 1;
-                                v_passed += 1;
-                            }
-                            _ => {
-                                total_mismatched += 1;
-                                v_mismatched += 1;
-                            }
-                        }
-                        shown_idx += 1;
                     }
                     Err(DecodeError::Unimplemented { .. }) => {
-                        if shown {
-                            total_skipped += 1;
-                            v_skipped += 1;
-                            shown_idx += 1;
-                        }
+                        displayed = None;
+                        packet_failed = true;
+                        packet_unimplemented = true;
+                        break;
                     }
                     Err(DecodeError::UnsupportedProfile { .. }) => {
                         // G7.0 review (2026-05-21): gated-feature
@@ -223,10 +209,10 @@ fn conformance_runner_walks_alpha_supported_vectors() {
                         // features. Still advance `shown_idx` so
                         // subsequent shown frames line up against the
                         // .md5 list.
-                        if shown {
-                            total_gated += 1;
-                            shown_idx += 1;
-                        }
+                        displayed = None;
+                        packet_failed = true;
+                        total_gated += 1;
+                        break;
                     }
                     Err(_) => {
                         // K-5: any non-`Unimplemented` decode error is a
@@ -234,13 +220,37 @@ fn conformance_runner_walks_alpha_supported_vectors() {
                         // separately so the post-loop assertion can hard-
                         // fail. Still advance `shown_idx` so subsequent
                         // shown frames line up against the .md5 list.
-                        if shown {
-                            total_other_err += 1;
-                            shown_idx += 1;
-                        }
+                        displayed = None;
+                        packet_failed = true;
+                        total_other_err += 1;
+                        break;
                     }
                 }
             }
+            if packet_failed {
+                if packet_unimplemented && output_frame_index.is_some() {
+                    total_skipped += 1;
+                    v_skipped += 1;
+                }
+                shown_idx += usize::from(output_frame_index.is_some());
+                continue;
+            }
+            let Some(buf) = displayed else {
+                continue;
+            };
+            let got_hex = hex16(md5_of_yv12_visible(&buf));
+            let want = md5_entries.get(shown_idx);
+            match want {
+                Some(e) if e.md5_hex_visible().as_deref() == Some(got_hex.as_str()) => {
+                    total_passed += 1;
+                    v_passed += 1;
+                }
+                _ => {
+                    total_mismatched += 1;
+                    v_mismatched += 1;
+                }
+            }
+            shown_idx += 1;
         }
         assert_eq!(
             shown_idx,
@@ -434,12 +444,12 @@ fn conformance_runner_walks_alpha_supported_vectors() {
     // (8 tile_1x4 + 8 tile_1x8) → 175/16/10 → 191/0/10.
     // Pre-D.3.a baseline: 1/9/191.
     assert_eq!(
-        total_expected, ALPHA_SUPPORTED_FRAME_COUNT,
-        "alpha-supported official frame count drifted",
+        total_expected, OFFICIAL_FRAME_COUNT,
+        "official frame count drifted",
     );
     assert_eq!(
-        total_passed, ALPHA_SUPPORTED_FRAME_COUNT,
-        "every alpha-supported official frame must pass",
+        total_passed, OFFICIAL_FRAME_COUNT,
+        "every official frame must pass",
     );
     assert_eq!(
         total_mismatched, 0,
@@ -455,13 +465,10 @@ fn conformance_runner_walks_alpha_supported_vectors() {
          decode errors; pre-K-5 the silent skip-folding bug would \
          have masked these as expected skips",
     );
-    assert_eq!(
-        total_skipped, 0,
-        "alpha-supported frames may not be skipped"
-    );
+    assert_eq!(total_skipped, 0, "official frames may not be skipped");
     assert_eq!(
         total_gated, 0,
-        "alpha-supported corpus unexpectedly reached a gated profile"
+        "official corpus unexpectedly reached a gated profile"
     );
 }
 

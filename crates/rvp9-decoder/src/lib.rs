@@ -2982,6 +2982,8 @@ impl Decoder {
         // invariants.
         let frame_scale_factors: [Option<rvp9_core::inter::scale::ScaleFactors>; 3] = {
             let mut sfs = [None, None, None];
+            let mut first_invalid = None;
+            let mut has_valid_ref = false;
             for (i, r) in refs_borrowed.iter().enumerate() {
                 if let Some(buf) = r {
                     let sf = rvp9_core::inter::scale::ScaleFactors::new(
@@ -2990,20 +2992,12 @@ impl Decoder {
                         cur_y_width,
                         cur_y_height,
                     );
-                    // G-A: reject an out-of-envelope active ref before any
-                    // block consumes its poisoned `ScaleFactors`. libvpx
-                    // performs this check at frame-header time
-                    // (`vp9_decodeframe.c:1589-1591`,
-                    // `VPX_CODEC_CORRUPT_FRAME "Referenced frame has
-                    // invalid size"`). We gate on `sf.is_valid()` — exactly
-                    // the predicate that poisons the SF with
-                    // `REF_INVALID_SCALE` (`scale.rs:91-98,117-119`) — so
-                    // the gate can never drift from `valid_ref_frame_size`.
-                    // Slot provenance mirrors `EmptyInterRef`: the
-                    // `ref_frame_map` index named by `ref_frame_indices[i]`,
-                    // not the loop counter `i`.
-                    if !sf.is_valid() {
-                        return Err(DecodeError::InvalidRefFrameSize {
+                    if sf.is_valid() {
+                        has_valid_ref = true;
+                    } else if first_invalid.is_none() {
+                        // Keep the first invalid reference for a precise
+                        // diagnostic if all three fail the envelope check.
+                        first_invalid = Some(DecodeError::InvalidRefFrameSize {
                             slot: ref_frame_indices[i],
                             ref_w: buf.width(),
                             ref_h: buf.height(),
@@ -3013,6 +3007,13 @@ impl Decoder {
                     }
                     sfs[i] = Some(sf);
                 }
+            }
+            // libvpx ORs validity across all three listed references in
+            // `setup_frame_size_with_refs` (`vp9_decodeframe.c:1580-1591`).
+            // It deliberately permits an unused invalid reference when at
+            // least one alternative is valid, as spatial-SVC streams do.
+            if !has_valid_ref {
+                return Err(first_invalid.expect("inter frames resolve three references"));
             }
             sfs
         };
@@ -4748,20 +4749,19 @@ pub enum DecodeError {
         /// The 3-bit slot index that was requested.
         slot: u8,
     },
-    /// An inter frame named a reference whose dimensions fall outside the
+    /// An inter frame has no listed reference whose dimensions fall inside the
     /// VP9 scaled-prediction envelope (each axis must satisfy
-    /// `0.5×cur ≤ ref ≤ 16×cur`; libvpx `valid_ref_frame_size`,
+    /// `cur/16 ≤ ref ≤ 2×cur`; libvpx `valid_ref_frame_size`,
     /// `vp9_scale.h:61-64`). Out-of-envelope refs cannot produce a valid
-    /// `ScaleFactors` — libvpx poisons them with `REF_INVALID_SCALE`
-    /// (`vp9_scale.c:53-57`) and rejects the frame in
+    /// `ScaleFactors` — libvpx poisons each invalid entry with
+    /// `REF_INVALID_SCALE` (`vp9_scale.c:53-57`) and rejects the frame only
+    /// when all three entries are invalid in
     /// `setup_frame_size_with_refs` with
     /// `vpx_internal_error(VPX_CODEC_CORRUPT_FRAME, "Referenced frame has
     /// invalid size")` (`vp9_decodeframe.c:1589-1591`). Like
-    /// [`Self::EmptyInterRef`], no well-formed stream ever names such a
-    /// ref (the encoder constrains resize ratios), so this is a
-    /// malformed-bitstream error, not an unimplemented-feature signal.
-    /// The payload carries the offending ref slot plus both dimension
-    /// pairs for diagnostics.
+    /// [`Self::EmptyInterRef`], this is a malformed-bitstream error, not an
+    /// unimplemented-feature signal. The payload carries the first offending
+    /// ref slot plus both dimension pairs for diagnostics.
     InvalidRefFrameSize {
         /// The 3-bit `ref_frame_map` slot index (from
         /// `ref_frame_indices`) that resolved to the out-of-envelope
@@ -4854,7 +4854,7 @@ impl core::fmt::Display for DecodeError {
             } => write!(
                 f,
                 "referenced frame in slot {slot} has invalid size {ref_w}x{ref_h} \
-                 for current frame {cur_w}x{cur_h} (outside [0.5x, 16x] envelope)"
+                 for current frame {cur_w}x{cur_h} (outside [1/16x, 2x] envelope)"
             ),
             Self::TruncatedCompressedHeader {
                 declared,
@@ -4912,6 +4912,23 @@ impl<'a> PacketFrames<'a> {
     #[must_use]
     pub fn frames(&self) -> &[ParsedFrame<'a>] {
         &self.frames
+    }
+
+    /// Index of the component exposed by the VP9 decoder interface after
+    /// this packet is decoded, or `None` when the final component is hidden.
+    ///
+    /// Every component must still be decoded in wire order to update decoder
+    /// state. Libvpx returns at most one image per decode call: the final
+    /// component when it is shown (`vp9_dx_iface.c:377-415`). Spatial-SVC
+    /// superframes order their shown layers low to high, so this selects the
+    /// default top-layer output.
+    #[must_use]
+    pub fn output_frame_index(&self) -> Option<usize> {
+        let index = self.frames.len().checked_sub(1)?;
+        let frame = &self.frames[index];
+        (frame.header.show_frame
+            || matches!(frame.header.kind, FrameKind::ShowExistingFrame { .. }))
+        .then_some(index)
     }
 }
 
@@ -5874,11 +5891,41 @@ mod tests {
         let mut dec = Decoder::new();
         let frames = dec.parse_packet(&packet).expect("valid superframe");
         assert_eq!(frames.count(), 2);
+        assert_eq!(frames.output_frame_index(), Some(1));
         for f in frames.frames() {
             assert_eq!(f.header.kind, FrameKind::KeyFrame);
             assert_eq!(f.header.width, 320);
             assert_eq!(f.header.height, 240);
         }
+    }
+
+    /// Packet output follows the final component, not the most recent shown
+    /// component. A trailing hidden frame suppresses output while still being
+    /// decoded for reference-state updates.
+    #[test]
+    fn packet_output_index_is_none_when_final_component_is_hidden() {
+        let shown_bytes = build_minimal_keyframe();
+        let hidden_bytes = build_minimal_intra_only(0, 0xFF, 16);
+        let mut dec = Decoder::new();
+        let shown = dec
+            .parse_packet(&shown_bytes)
+            .expect("shown frame")
+            .into_iter()
+            .next()
+            .expect("one shown frame");
+        let hidden = dec
+            .parse_packet(&hidden_bytes)
+            .expect("hidden frame")
+            .into_iter()
+            .next()
+            .expect("one hidden frame");
+        let packet = PacketFrames {
+            frames: vec![shown, hidden],
+        };
+
+        assert!(packet.frames()[0].header.show_frame);
+        assert!(!packet.frames()[1].header.show_frame);
+        assert_eq!(packet.output_frame_index(), None);
     }
 
     #[test]
@@ -6208,9 +6255,8 @@ mod tests {
         assert_eq!(err, DecodeError::EmptyInterRef { slot: 5 });
     }
 
-    /// G-A oracle: drive `decode_inter_frame` against an inter frame
-    /// whose active ref pool holds an out-of-envelope frame, and return
-    /// the resulting error.
+    /// Drive `decode_inter_frame` against a configurable logical-reference
+    /// mapping containing one out-of-envelope pool slot.
     ///
     /// The gate we exercise (`lib.rs`, the `frame_scale_factors` loop)
     /// runs *after* the compressed-header + tile-buffer parse, so a
@@ -6221,16 +6267,15 @@ mod tests {
     /// decodes the keyframe to prime the pool, then redirects two
     /// `ref_frame_map` slots: slot 0 → a valid 64×64 frame, and
     /// `bad_slot` → a frame of `(bad_w, bad_h)` that fails
-    /// `valid_ref_frame_size` against the 64×64 current frame. The inter
-    /// frame's `ref_frame_indices` are `[0, bad_slot, 0]`, so LAST
-    /// resolves to the valid ref (the tile bytes predict from LAST) but
-    /// GOLDEN resolves to the out-of-envelope ref — proving the gate
-    /// reports the `ref_frame_indices[i]` slot, not the loop index.
-    fn drive_inter_frame_with_oversized_golden_ref(
+    /// `valid_ref_frame_size` against the 64×64 current frame. Callers choose
+    /// whether the tile's LAST prediction resolves to the valid or invalid
+    /// slot, or whether every logical reference resolves to the invalid slot.
+    fn drive_inter_frame_with_out_of_envelope_ref(
+        ref_frame_indices: [u8; 3],
         bad_slot: u8,
         bad_w: u32,
         bad_h: u32,
-    ) -> DecodeError {
+    ) -> Result<FrameBuf, DecodeError> {
         use rvp9_core::bitstream::frame::ReferenceMode;
         use rvp9_core::bitstream::header::HeaderTail;
         use rvp9_core::bitstream::sub_parsers::{
@@ -6503,10 +6548,7 @@ mod tests {
             kind: FrameKind::InterFrame {
                 reset_frame_context: 0,
                 refresh_frame_flags: 0x00,
-                // LAST = slot 0 (valid), GOLDEN = `bad_slot`
-                // (out-of-envelope), ALTREF = slot 0 (valid). The gate
-                // must fail at iteration i=1 and report `slot: bad_slot`.
-                ref_frame_indices: [0, bad_slot, 0],
+                ref_frame_indices,
                 ref_frame_sign_biases: [false, false, false],
                 allow_high_precision_mv: false,
                 interp_filter: InterpFilter::EightTap,
@@ -6538,11 +6580,9 @@ mod tests {
         inter_packet.extend_from_slice(&inter_compressed_buf);
         inter_packet.extend_from_slice(&inter_tile_buf);
 
-        // Redirect the ref_frame_map so LAST/ALTREF (slot 0) point at a
-        // fresh in-envelope 64×64 frame and GOLDEN (`bad_slot`) points at
-        // the out-of-envelope frame. Park both in distinct frame-pool
-        // slots, then wire the ref_frame_map entries (same mechanism the
-        // `_reports_correct_slot` sibling test uses).
+        // Redirect slot 0 to a fresh in-envelope 64×64 frame and `bad_slot`
+        // to the out-of-envelope frame. Park both in distinct frame-pool
+        // slots, then let `ref_frame_indices` choose their logical roles.
         let alloc_buf = |w: u32, h: u32| -> FrameBuf {
             Arc::new(
                 Yv12Buffer::alloc(
@@ -6577,39 +6617,24 @@ mod tests {
             }
         };
         dec.decode_frame(&inter_parsed)
-            .expect_err("out-of-envelope ref must be rejected")
     }
 
-    /// G-A oracle (single-axis fail): a GOLDEN ref of 1056×64 against a
-    /// 64×64 current frame fails `valid_ref_frame_size` on the x-axis
-    /// only (`2*64 = 128 < 1056`), so it cannot produce a valid
-    /// `ScaleFactors`. The decoder must reject the frame with
-    /// `InvalidRefFrameSize`, reporting the `ref_frame_map` slot named
-    /// by `ref_frame_indices[1]` (slot 5), the offending ref dims, and
-    /// the current dims — not the loop index `i = 1`.
+    /// A spatial-SVC-style frame may list an out-of-envelope reference that
+    /// no coding block selects. Libvpx accepts the frame when any listed
+    /// reference is valid, so the valid LAST/ALTREF entries must let this
+    /// synthetic frame decode despite its oversized GOLDEN entry.
     #[test]
-    fn decode_inter_frame_out_of_envelope_ref_rejected_single_axis() {
-        let err = drive_inter_frame_with_oversized_golden_ref(5, 1056, 64);
-        assert_eq!(
-            err,
-            DecodeError::InvalidRefFrameSize {
-                slot: 5,
-                ref_w: 1056,
-                ref_h: 64,
-                cur_w: 64,
-                cur_h: 64,
-            }
-        );
+    fn decode_inter_frame_unused_out_of_envelope_ref_is_accepted() {
+        drive_inter_frame_with_out_of_envelope_ref([0, 5, 0], 5, 1056, 64)
+            .expect("a valid alternative reference permits the frame");
     }
 
-    /// G-A oracle (both-axis fail): a GOLDEN ref of 2×2 against a 64×64
-    /// current frame fails `valid_ref_frame_size` on both upper-bound
-    /// checks (`64 > 16*2 = 32` on x and y), the most degenerate
-    /// out-of-envelope shape. The decoder must reject it with
-    /// `InvalidRefFrameSize` carrying the correct slot (4) and dims.
+    /// When every listed reference is out of envelope, retain the corrupt-
+    /// frame rejection and report the first offending pool slot.
     #[test]
-    fn decode_inter_frame_out_of_envelope_ref_rejected_both_axes() {
-        let err = drive_inter_frame_with_oversized_golden_ref(4, 2, 2);
+    fn decode_inter_frame_all_out_of_envelope_refs_are_rejected() {
+        let err = drive_inter_frame_with_out_of_envelope_ref([4, 4, 4], 4, 2, 2)
+            .expect_err("all-invalid references must be rejected");
         assert_eq!(
             err,
             DecodeError::InvalidRefFrameSize {
@@ -6619,6 +6644,21 @@ mod tests {
                 cur_w: 64,
                 cur_h: 64,
             }
+        );
+    }
+
+    /// Accepting a mixed reference list must not let a corrupt block consume
+    /// an invalid scale. The synthetic tile selects LAST, which is wired to
+    /// the oversized slot while GOLDEN/ALTREF remain valid alternatives.
+    #[test]
+    fn decode_inter_frame_selected_out_of_envelope_ref_is_rejected() {
+        let err = drive_inter_frame_with_out_of_envelope_ref([5, 0, 0], 5, 1056, 64)
+            .expect_err("a selected invalid reference must be rejected");
+        assert_eq!(
+            err,
+            DecodeError::TileDecode(TileDecodeError::InvalidReferenceScale {
+                reference: rvp9_core::mode_info::RefFrame::LastFrame,
+            })
         );
     }
 

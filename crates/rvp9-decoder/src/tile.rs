@@ -117,6 +117,12 @@ pub enum TileDecodeError {
         /// The offending block's size (always `< Block8x8`).
         block_size: BlockSize,
     },
+    /// A decoded inter block selected a logical reference whose dimensions
+    /// cannot produce valid VP9 scale factors for the current frame.
+    InvalidReferenceScale {
+        /// Logical reference selected by the block.
+        reference: RefFrame,
+    },
 }
 
 impl core::fmt::Display for TileDecodeError {
@@ -138,6 +144,10 @@ impl core::fmt::Display for TileDecodeError {
             Self::Sub8SegSkip { block_size } => write!(
                 f,
                 "invalid usage of SEG_LVL_SKIP on sub-8x8 block ({block_size:?})"
+            ),
+            Self::InvalidReferenceScale { reference } => write!(
+                f,
+                "inter block selected {reference:?} with invalid frame scale factors"
             ),
         }
     }
@@ -2755,6 +2765,23 @@ fn decode_inter_block<D: TileFrameDst>(
             }
             _ => unreachable!("read_inter_block_mode_info must populate Inter"),
         };
+
+        // `setup_frame_size_with_refs` accepts a frame when at least one of
+        // its three listed references has a valid scale (libvpx
+        // `vp9_decodeframe.c:1580-1591`). Spatial-SVC packets rely on that:
+        // lower layers may retain a larger, out-of-envelope ALTREF slot that
+        // no block selects. Keep those frames legal, but reject a corrupt
+        // stream before a block can consume the poisoned scale factors.
+        if let BlockMode::Inter { ref_frames, .. } = mi.mode {
+            let active_refs = 1 + usize::from(ref_frames[1].is_inter());
+            for index in 0..active_refs {
+                if block_sfs[index].is_some_and(|sf| !sf.is_valid()) {
+                    return Err(TileDecodeError::InvalidReferenceScale {
+                        reference: ref_frames[index],
+                    });
+                }
+            }
+        }
 
         // 3. Per-plane recon. Skip if the primary ref is unresolvable
         //    (block leaves zero pixels; MD5 mismatch surfaces).
