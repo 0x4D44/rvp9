@@ -59,8 +59,8 @@ use core::arch::x86_64::{
 /// # Implementation
 ///
 /// Dispatches on `bs` to one of four hand-unrolled width-specialised
-/// blocks; any unexpected `bs` value (defensive — shouldn't happen)
-/// falls back to a scalar `copy_from_slice` loop.
+/// blocks. A 64×64 encoder prediction uses the scalar
+/// `copy_from_slice` fallback; other sizes are rejected by the safe wrapper.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
 unsafe fn v_predictor_avx2_inner(dst: &mut [u8], stride: usize, bs: usize, above: &[u8]) {
@@ -104,9 +104,10 @@ unsafe fn v_predictor_avx2_inner(dst: &mut [u8], stride: usize, bs: usize, above
             }
         }
         _ => {
-            // Defensive scalar fallback. VP9 only uses bs ∈ {4, 8, 16, 32};
-            // we should never reach this arm, but `unreachable_unchecked`
-            // would be UB if a future caller violates the contract.
+            // The encoder can evaluate whole-superblock V_PRED at 64×64.
+            // The safe wrapper rejects every other non-SIMD size before this
+            // target-feature function runs.
+            debug_assert_eq!(bs, 64);
             for r in 0..bs {
                 let row_start = r * stride;
                 dst[row_start..row_start + bs].copy_from_slice(&above[..bs]);
@@ -130,8 +131,16 @@ unsafe fn v_predictor_avx2_inner(dst: &mut [u8], stride: usize, bs: usize, above
 /// running CPU does not support AVX2.
 #[cfg(target_arch = "x86_64")]
 pub fn v_predictor_avx2(dst: &mut [u8], stride: usize, bs: usize, above: &[u8]) {
-    crate::dsp::validate_intra_predictor_layout(dst.len(), stride, bs, above.len())
-        .unwrap_or_else(|reason| panic!("v_predictor_avx2: {reason}"));
+    let layout = if bs == 64 {
+        // The realtime inter picker may evaluate a whole-superblock V_PRED.
+        // The AVX2 inner function deliberately handles that size through its
+        // checked scalar fallback; the fixed-width SIMD cases remain the four
+        // VP9 transform sizes accepted by the shared validator.
+        crate::dsp::validate_predictor_storage(dst.len(), stride, bs, above.len())
+    } else {
+        crate::dsp::validate_intra_predictor_layout(dst.len(), stride, bs, above.len())
+    };
+    layout.unwrap_or_else(|reason| panic!("v_predictor_avx2: {reason}"));
     assert!(
         is_x86_feature_detected!("avx2"),
         "v_predictor_avx2: running CPU does not support AVX2"
@@ -247,7 +256,7 @@ mod tests {
         caps_scalar.avx2 = false;
         let dispatch_scalar = SimdDispatch::build(caps_scalar);
 
-        for bs in [4usize, 8, 16, 32] {
+        for bs in [4usize, 8, 16, 32, 64] {
             // Deterministic input — `above[i] = i*7 + bs as u8`.
             let above: Vec<u8> = (0..bs).map(|i| (i as u32 * 7 + bs as u32) as u8).collect();
             let mut dst_avx2 = vec![0u8; bs * bs];

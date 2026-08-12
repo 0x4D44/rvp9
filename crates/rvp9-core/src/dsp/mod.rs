@@ -47,21 +47,18 @@ pub mod x86_64;
 pub use dispatch::{SimdDispatch, get, get_ref, init};
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
-pub(crate) fn validate_intra_predictor_layout(
+pub(crate) fn validate_predictor_storage(
     dst_len: usize,
     stride: usize,
     bs: usize,
     edge_len: usize,
 ) -> Result<usize, &'static str> {
-    if !matches!(bs, 4 | 8 | 16 | 32) {
-        return Err("unsupported block size");
-    }
+    let rows = bs.checked_sub(1).ok_or("unsupported block size")?;
     if stride < bs {
         return Err("stride shorter than block width");
     }
-    let required = bs
-        .checked_sub(1)
-        .and_then(|rows| rows.checked_mul(stride))
+    let required = rows
+        .checked_mul(stride)
         .and_then(|offset| offset.checked_add(bs))
         .ok_or("predictor layout overflow")?;
     if edge_len < bs {
@@ -73,9 +70,22 @@ pub(crate) fn validate_intra_predictor_layout(
     Ok(required)
 }
 
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
+pub(crate) fn validate_intra_predictor_layout(
+    dst_len: usize,
+    stride: usize,
+    bs: usize,
+    edge_len: usize,
+) -> Result<usize, &'static str> {
+    if !matches!(bs, 4 | 8 | 16 | 32) {
+        return Err("unsupported block size");
+    }
+    validate_predictor_storage(dst_len, stride, bs, edge_len)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::validate_intra_predictor_layout;
+    use super::{validate_intra_predictor_layout, validate_predictor_storage};
 
     #[test]
     fn intra_predictor_layout_rejects_non_vp9_block_size() {
@@ -98,6 +108,15 @@ mod tests {
         assert_eq!(
             validate_intra_predictor_layout(usize::MAX, usize::MAX, 32, 32),
             Err("predictor layout overflow")
+        );
+    }
+
+    #[test]
+    fn predictor_storage_accepts_checked_scalar_fallback_size() {
+        assert_eq!(validate_predictor_storage(64 * 64, 64, 64, 64), Ok(4096));
+        assert_eq!(
+            validate_predictor_storage(0, 0, 0, 0),
+            Err("unsupported block size")
         );
     }
 }
