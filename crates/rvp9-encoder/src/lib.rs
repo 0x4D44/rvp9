@@ -144,6 +144,61 @@ pub(crate) fn env_test_mutex() -> std::sync::MutexGuard<'static, ()> {
     MTX.lock().unwrap_or_else(|p| p.into_inner())
 }
 
+#[cfg(test)]
+thread_local! {
+    static TEST_RETAIN_EXACT_KEYFRAME_LUMA: std::cell::Cell<(Option<bool>, Option<bool>)> =
+        const { std::cell::Cell::new((None, None)) };
+}
+
+#[cfg(test)]
+pub(crate) fn with_test_exact_keyframe_luma_retention<T>(
+    retain_8x8: Option<bool>,
+    retain_sub8: Option<bool>,
+    operation: impl FnOnce() -> T,
+) -> T {
+    TEST_RETAIN_EXACT_KEYFRAME_LUMA.with(|overrides| {
+        struct Restore<'a> {
+            overrides: &'a std::cell::Cell<(Option<bool>, Option<bool>)>,
+            previous: (Option<bool>, Option<bool>),
+        }
+
+        impl Drop for Restore<'_> {
+            fn drop(&mut self) {
+                self.overrides.set(self.previous);
+            }
+        }
+
+        let previous = overrides.replace((retain_8x8, retain_sub8));
+        let _restore = Restore {
+            overrides,
+            previous,
+        };
+        operation()
+    })
+}
+
+fn retain_exact_keyframe_8x8_enabled() -> bool {
+    if crate::predstat::enabled() {
+        return false;
+    }
+    #[cfg(test)]
+    if let Some(enabled) = TEST_RETAIN_EXACT_KEYFRAME_LUMA.with(|value| value.get().0) {
+        return enabled;
+    }
+    std::env::var_os("RVP9_RETAIN_EXACT_KEYFRAME_8X8").is_none_or(|value| value != "0")
+}
+
+fn retain_exact_keyframe_sub8_enabled() -> bool {
+    if crate::predstat::enabled() {
+        return false;
+    }
+    #[cfg(test)]
+    if let Some(enabled) = TEST_RETAIN_EXACT_KEYFRAME_LUMA.with(|value| value.get().1) {
+        return enabled;
+    }
+    std::env::var_os("RVP9_RETAIN_EXACT_KEYFRAME_SUB8").is_none_or(|value| value != "0")
+}
+
 /// Frame-wide high-precision MV gate.
 ///
 /// This is off by default while Stage 4a recovery measures it. With
@@ -2053,6 +2108,7 @@ pub(crate) fn simulate_dc_intra_encode_partitions_no_zero(
         0,
         None,
         None,
+        None,
         &mut out,
     );
     out
@@ -2070,6 +2126,7 @@ fn simulate_dc_intra_encode_partitions_no_zero_with_tiles(
     log2_tile_cols: u8,
     active_leaf: Option<(usize, usize)>,
     retained_luma_8x8: Option<&crate::rdo::kf_intra8::PickIntra8x8Result>,
+    retained_luma_sub8: Option<&crate::rdo::sub8_kf_intra::PickIntraSub8x8Result>,
     out: &mut VecBackedIntraCoefSource,
 ) {
     use rvp9_core::intra_pred::{
@@ -2266,6 +2323,35 @@ fn simulate_dc_intra_encode_partitions_no_zero_with_tiles(
                                     0,
                                     &retained.qcoeff,
                                     usize::from(retained.eob),
+                                );
+                                tx_x4_local += tx_step_4x4;
+                                continue;
+                            }
+
+                            if plane == 0
+                                && let Some(retained) = retained_luma_sub8
+                            {
+                                debug_assert!(leaf_bsize < BlockSize::Block8x8);
+                                debug_assert_eq!(plane_tx, TxSize::Tx4x4);
+                                let sub_x = tx_x4_local;
+                                let sub_y = tx_y4_local;
+                                debug_assert!(sub_x < 2 && sub_y < 2);
+                                let sub_index = sub_y * 2 + sub_x;
+                                let winner = &retained.sub_winners[sub_index];
+                                for row in 0..4 {
+                                    let src_start = (sub_y * 4 + row) * 8 + sub_x * 4;
+                                    let dst_start = (tx_px_y + row) * plane_stride + tx_px_x;
+                                    recon_plane[dst_start..dst_start + 4]
+                                        .copy_from_slice(&retained.recon[src_start..src_start + 4]);
+                                }
+                                out.insert_i16(
+                                    leaf_mi_row,
+                                    leaf_mi_col,
+                                    0,
+                                    tx_x4_local,
+                                    tx_y4_local,
+                                    &winner.qcoeff,
+                                    usize::from(winner.eob),
                                 );
                                 tx_x4_local += tx_step_4x4;
                                 continue;
@@ -2612,8 +2698,8 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
     // lookup takes a process-global lock on macOS and this branch otherwise
     // runs once per leaf, even in ordinary production encodes.
     let diag_intra_enabled = std::env::var("RVP9_DIAG_INTRA").is_ok();
-    let retain_exact_keyframe_8x8 = !crate::predstat::enabled()
-        && std::env::var_os("RVP9_RETAIN_EXACT_KEYFRAME_8X8").is_none_or(|value| value != "0");
+    let retain_exact_keyframe_8x8 = retain_exact_keyframe_8x8_enabled();
+    let retain_exact_keyframe_sub8 = retain_exact_keyframe_sub8_enabled();
     let sb_cols = w / 64;
     let sb_rows = h.div_ceil(64);
     assert_eq!(
@@ -2796,6 +2882,7 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
                 let leaf_quantizer =
                     init_plane_quantizers(i32::from(leaf_qindex), QuantizerDeltas::Y);
                 let mut retained_luma_8x8 = None;
+                let mut retained_luma_sub8 = None;
                 let picked_y_modes = if leaf_bsize < BlockSize::Block8x8 {
                     let mut src = [0u8; 64];
                     for row in 0..8 {
@@ -2859,7 +2946,11 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
                     };
                     let result = pick_intra_sub_8x8_y_mode(&params)
                         .expect("unbounded sub-8 keyframe pick must choose four modes");
-                    core::array::from_fn(|index| result.sub_winners[index].mode)
+                    let modes = core::array::from_fn(|index| result.sub_winners[index].mode);
+                    if retain_exact_keyframe_sub8 {
+                        retained_luma_sub8 = Some(result);
+                    }
+                    modes
                 } else if exact_keyframe_sub8 && leaf_bsize == BlockSize::Block8x8 {
                     let mut above = [ABOVE_UNAVAILABLE_FILL; 16];
                     if have_above {
@@ -3062,6 +3153,7 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
                     log2_tile_cols,
                     Some((sb_idx, leaf_idx)),
                     retained_luma_8x8.as_ref(),
+                    retained_luma_sub8.as_ref(),
                     &mut coef_source,
                 );
                 sb_partitions[sb_idx][leaf_idx].skip = intra_leaf_all_zero(

@@ -8271,17 +8271,7 @@ mod tests {
         }
     }
 
-    #[test]
-    fn retained_exact_keyframe_8x8_matches_recomputed_stream() {
-        let _guard = env_test_mutex();
-        let exact_key = "RVP9_EXACT_KF_SUB8";
-        let retain_key = "RVP9_RETAIN_EXACT_KEYFRAME_8X8";
-        // SAFETY: the mutex above serialises all env_test_mutex callers.
-        unsafe {
-            std::env::set_var(exact_key, "1");
-            std::env::remove_var(retain_key);
-        }
-
+    fn assert_retained_exact_keyframe_luma_matches_recomputed_stream(expect_sub8: bool) {
         let new_encoder = || {
             StreamEncoder::new(EncoderConfig {
                 width: 64,
@@ -8297,7 +8287,7 @@ mod tests {
                 bit_depth: rvp9_core::BitDepth::Bd8,
                 lag_in_frames: 0,
                 enable_alt_ref: false,
-                rc_mode: RcMode::Cbr,
+                rc_mode: RcMode::Vbr,
                 cq_level: 0,
                 temporal_layers: 1,
                 enable_tpl: false,
@@ -8311,19 +8301,24 @@ mod tests {
         let u = vec![128u8; 32 * 32];
         let v = vec![128u8; 32 * 32];
 
-        let candidate = new_encoder()
-            .encode_frame(&yuv_view(&y, &u, &v, 64))
-            .unwrap();
-        // SAFETY: the mutex above serialises all env_test_mutex callers.
-        unsafe { std::env::set_var(retain_key, "0") };
-        let control = new_encoder()
-            .encode_frame(&yuv_view(&y, &u, &v, 64))
-            .unwrap();
-        // SAFETY: the mutex above serialises all env_test_mutex callers.
-        unsafe {
-            std::env::remove_var(exact_key);
-            std::env::remove_var(retain_key);
-        }
+        let candidate = crate::with_test_exact_keyframe_luma_retention(
+            (!expect_sub8).then_some(true),
+            expect_sub8.then_some(true),
+            || {
+                new_encoder()
+                    .encode_frame(&yuv_view(&y, &u, &v, 64))
+                    .unwrap()
+            },
+        );
+        let control = crate::with_test_exact_keyframe_luma_retention(
+            (!expect_sub8).then_some(false),
+            expect_sub8.then_some(false),
+            || {
+                new_encoder()
+                    .encode_frame(&yuv_view(&y, &u, &v, 64))
+                    .unwrap()
+            },
+        );
 
         assert_eq!(candidate.data, control.data);
         let mut decoder = Decoder::new();
@@ -8331,14 +8326,27 @@ mod tests {
         decoder
             .decode_frame(&frames[0])
             .expect("decoder must accept retained exact keyframe coefficients");
+        let exercised_target = decoder.last_frame_mi_grid().iter().flatten().any(|cell| {
+            if expect_sub8 {
+                cell.block_size < BlockSize::Block8x8
+            } else {
+                cell.block_size == BlockSize::Block8x8
+            }
+        });
         assert!(
-            decoder
-                .last_frame_mi_grid()
-                .iter()
-                .flatten()
-                .any(|cell| cell.block_size == BlockSize::Block8x8),
-            "fixture must exercise an exact 8x8 keyframe leaf"
+            exercised_target,
+            "fixture must exercise the retained leaf size"
         );
+    }
+
+    #[test]
+    fn retained_exact_keyframe_8x8_matches_recomputed_stream() {
+        assert_retained_exact_keyframe_luma_matches_recomputed_stream(false);
+    }
+
+    #[test]
+    fn retained_exact_keyframe_sub8_matches_recomputed_stream() {
+        assert_retained_exact_keyframe_luma_matches_recomputed_stream(true);
     }
 
     /// F10.1a — Flat input keeps the picker on `Block64x64` (the F8.2

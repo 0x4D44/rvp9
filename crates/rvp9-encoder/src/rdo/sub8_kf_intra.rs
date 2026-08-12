@@ -101,6 +101,10 @@ pub struct KfIntraSubWinner {
     pub coeff_ctx: usize,
     /// Whether the winning transform emitted any non-zero coefficient.
     pub eob_nonzero: bool,
+    /// Winning quantized coefficients in raster order.
+    pub qcoeff: [i16; SUB * SUB],
+    /// Winning end-of-block position in the mode's scan order.
+    pub eob: u16,
     /// Winning distortion (`block_error >> 2`).
     pub dist: i64,
     /// Winning RD (`RDCOST(rdmult, rate, dist)`).
@@ -294,6 +298,8 @@ pub fn pick_intra4x4_block(params: &PickIntra4x4Params<'_>) -> Option<Pick4x4Res
                     rate_y: ratey,
                     coeff_ctx: params.coeff_ctx,
                     eob_nonzero: eob > 0,
+                    qcoeff,
+                    eob,
                     dist: distortion,
                     rd: this_rd,
                 },
@@ -473,6 +479,8 @@ pub fn pick_intra_sub_8x8_y_mode(
             rate_y: 0,
             coeff_ctx: 0,
             eob_nonzero: false,
+            qcoeff: [0; SUB * SUB],
+            eob: 0,
             dist: 0,
             rd: i64::MAX,
         }; NUM_SUB_BLOCKS];
