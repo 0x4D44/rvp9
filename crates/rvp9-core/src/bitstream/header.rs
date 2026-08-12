@@ -1453,18 +1453,19 @@ mod tests {
     /// Parse the first keyframe out of `vp90-2-05-resize.ivf`, write
     /// it back via `write_uncompressed_header`, then parse the result
     /// again and assert the second parse equals the first. A clean
-    /// checkout skips this optional real-world oracle until the
+    /// checkout reports this optional oracle as ignored until the
     /// gitignored conformance vectors have been fetched.
+    #[cfg_attr(
+        not(rvp9_conformance_vectors),
+        ignore = "requires scripts/fetch-vectors.sh"
+    )]
     #[test]
     fn captured_header_round_trip() {
         // IVF: 32-byte file header, then per-frame (4-byte size LE +
         // 8-byte pts + payload). We just grab the first frame.
         let vector = "../../tests/conformance/vectors/vp90-2-05-resize.ivf";
-        let bytes = match std::fs::read(vector) {
-            Ok(bytes) => bytes,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
-            Err(error) => panic!("failed to read test vector {vector}: {error}"),
-        };
+        let bytes = std::fs::read(vector)
+            .unwrap_or_else(|error| panic!("failed to read test vector {vector}: {error}"));
         assert_eq!(&bytes[..4], b"DKIF", "not an IVF file");
         let frame_size =
             u32::from_le_bytes(bytes[32..36].try_into().expect("4 bytes available")) as usize;

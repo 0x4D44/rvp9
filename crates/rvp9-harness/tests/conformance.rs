@@ -60,16 +60,18 @@ fn vectors_dir() -> PathBuf {
         .join("vectors")
 }
 
+#[cfg_attr(
+    not(rvp9_conformance_vectors),
+    ignore = "requires scripts/fetch-vectors.sh"
+)]
 #[test]
 fn conformance_runner_walks_all_vectors() {
     let dir = vectors_dir();
-    if !dir.exists() {
-        eprintln!(
-            "vectors dir {} not present — run scripts/fetch-vectors.ps1",
-            dir.display()
-        );
-        return;
-    }
+    assert!(
+        dir.is_dir(),
+        "vectors dir {} not present — run scripts/fetch-vectors.sh",
+        dir.display()
+    );
 
     let mut vectors: Vec<PathBuf> = std::fs::read_dir(&dir)
         .unwrap()

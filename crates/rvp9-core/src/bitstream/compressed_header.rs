@@ -2444,9 +2444,13 @@ mod tests {
     /// strength (UB detection in computation-heavy paths) anyway —
     /// the round-trip arithmetic is exercised by the synthetic
     /// `write_compressed_header_*` tests in this same module. A clean
-    /// checkout likewise skips this optional real-world oracle until
-    /// the gitignored conformance vectors have been fetched.
+    /// checkout likewise reports this optional real-world oracle as ignored
+    /// until the gitignored conformance vectors have been fetched.
     #[cfg_attr(miri, ignore)]
+    #[cfg_attr(
+        not(rvp9_conformance_vectors),
+        ignore = "requires scripts/fetch-vectors.sh"
+    )]
     #[test]
     fn write_compressed_header_captured_frame_round_trip() {
         use crate::bitstream::header::FrameKind;
@@ -2454,11 +2458,8 @@ mod tests {
         use crate::bitstream::header::parse_uncompressed_header;
 
         let vector = "../../tests/conformance/vectors/vp90-2-05-resize.ivf";
-        let bytes = match std::fs::read(vector) {
-            Ok(bytes) => bytes,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
-            Err(error) => panic!("failed to read test vector {vector}: {error}"),
-        };
+        let bytes = std::fs::read(vector)
+            .unwrap_or_else(|error| panic!("failed to read test vector {vector}: {error}"));
         assert_eq!(&bytes[..4], b"DKIF");
         let frame_size =
             u32::from_le_bytes(bytes[32..36].try_into().expect("4 bytes available")) as usize;

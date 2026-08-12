@@ -6,20 +6,11 @@
 //! ledger. Per-clip statistics (total frames decoded, `show_frame=0`
 //! count, Profile 0/1 breakdown) are emitted to stdout.
 //!
-//! ## Skip behaviour
+//! ## Fixture requirement
 //!
-//! When `tests/corpus/fixtures/` is empty (the current G8.0 state —
-//! `vpxenc` is not on PATH in this sandbox so G8.1 has not landed),
-//! the test passes after printing a single skip line. Once fixtures
-//! land via the G8.1 follow-up (`scripts/fetch-corpus.ps1` +
-//! `scripts/encode-corpus.ps1`), the test starts running automatically
-//! — no harness code change required.
-//!
-//! ## Why no env var / feature flag?
-//!
-//! Per CLAUDE.md project policy (no feature flags) and the supervisor
-//! decision documented in `notes/g8-followups.md`. The skip-clean path
-//! makes the test cheap to keep enabled at all times.
+//! `tests/corpus/fixtures/` contains committed conformance fixtures. An empty
+//! fixture set is a broken checkout or packaging error and therefore fails;
+//! it must never report a green test that compared nothing.
 
 use rvp9_core::bitstream::Profile;
 use rvp9_decoder::Decoder;
@@ -74,14 +65,11 @@ fn real_world_corpus_decodes_bit_exact() {
         .collect();
     fixtures.sort();
 
-    if fixtures.is_empty() {
-        println!(
-            "real_world.rs: no in-repo fixtures present; skipping. \
-             Acquire via scripts/fetch-corpus.ps1 + \
-             scripts/encode-corpus.ps1 (G8.1)."
-        );
-        return;
-    }
+    assert!(
+        !fixtures.is_empty(),
+        "no committed .ivf/.webm fixtures found in {}",
+        dir.display()
+    );
 
     println!(
         "real_world.rs: walking {} fixture(s) in {}",
