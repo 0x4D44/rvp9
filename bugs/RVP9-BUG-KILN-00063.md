@@ -1,24 +1,24 @@
 # RVP9-BUG-KILN-00063 — Vector- and corpus-dependent tests still report green having asserted nothing
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** tests/false-green
 - **Raised:** 2026-07-31T10:21:56Z
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260812T144418Z-p60165-n787396000-c1
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KILN-00063-run-fix-20260812T144418Z-p60165-n787396000-c1
-- **Owner base:** 43126d7171de4be020a5fbbae1cca4934a2c9d40
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-08-12T14:44:18Z
-- **Owner until:** 2026-08-12T16:44:18Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-07-31T10:21:56Z, raised via `deltic bugs new` model=claude-opus-5@high)
+- **State history:** Open (2026-07-31T10:21:56Z, raised via `deltic bugs new` model=claude-opus-5@high) -> Fixed (2026-08-12T14:48:53Z, deltic:auto role=fix run=fix-20260812T144418Z-p60165-n787396000-c1 branch=task/bug-RVP9-BUG-KILN-00063-run-fix-20260812T144418Z-p60165-n787396000-c1 code=cb9b5f64 gate=manual)
 
 ## Observation
 
