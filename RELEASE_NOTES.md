@@ -42,6 +42,8 @@ Reproduce the codec-specific gates with:
   speed parity across the complete v1 matrix.
 - The supplied binary archive targets macOS on Apple Silicon. Other targets
   can build from source but are not release-qualified here.
+- The macOS binary archive is unsigned and not notarized. macOS may require
+  explicit user approval before running downloaded binaries.
 - The release host did not have cargo-fuzz or the nightly Miri component.
   A direct 2.39-million-iteration parser panic smoke completed without a
   crash, but that is not sanitizer or Miri evidence.
