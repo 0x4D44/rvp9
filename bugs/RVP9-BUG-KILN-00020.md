@@ -5,15 +5,15 @@
 - **Severity:** High
 - **Area:** core/dsp x86_64 SIMD API
 - **Raised:** 2026-07-07
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
+- **Owner:** deltic:manual
+- **Owner role:** fix
+- **Owner run:** fix-20260812T143904Z-p46812-n519221000-c1
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KILN-00020-run-fix-20260812T143904Z-p46812-n519221000-c1
+- **Owner base:** 73947be7fdc38307291a9009d664c4669e970f5e
 - **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner since:** 2026-08-12T14:39:04Z
+- **Owner until:** 2026-08-12T16:39:04Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
