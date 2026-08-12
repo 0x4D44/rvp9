@@ -229,7 +229,6 @@ pub mod predstat;
 pub mod rate_control;
 pub mod rdo;
 pub mod row_mt;
-#[allow(dead_code)] // Landed as a verified prerequisite before spatial coordinator wiring.
 mod scale_reference;
 pub mod scale_source;
 pub mod segmentation;
@@ -1743,6 +1742,19 @@ fn f5_uv_plane_block_size(bsize: BlockSize) -> BlockSize {
     }
 }
 
+/// One named reference's distinct analysis and decoder-visible views.
+#[derive(Clone, Copy)]
+pub(crate) struct InterReference<'a> {
+    /// Current-sized image used only by mode decision and motion search.
+    pub analysis_yuv: (&'a [u8], &'a [u8], &'a [u8]),
+    /// Decoder-visible reconstructed reference at its original dimensions.
+    pub reconstruction_yuv: (&'a [u8], &'a [u8], &'a [u8]),
+    /// Decoder-visible luma width.
+    pub width: usize,
+    /// Decoder-visible luma height.
+    pub height: usize,
+}
+
 /// Materialize the zero-motion LAST prediction for a leaf that bypasses the
 /// normal picker and reconstruction path.
 fn copy_last_ref_leaf_to_recon(
@@ -1751,9 +1763,10 @@ fn copy_last_ref_leaf_to_recon(
     mi_row: usize,
     mi_col: usize,
     bsize: BlockSize,
-    last_recon_yuv: (&[u8], &[u8], &[u8]),
+    last_ref: InterReference<'_>,
     recon_yuv_out: &mut InterReconPlanes<'_>,
 ) {
+    let mut pred_border = [0u8; MAX_INTER_PRED_BORDER_BYTES];
     for plane in 0..3 {
         let ss_x = F5_SUBSAMPLING_X[plane];
         let ss_y = F5_SUBSAMPLING_Y[plane];
@@ -1771,17 +1784,39 @@ fn copy_last_ref_leaf_to_recon(
         debug_assert!(pixel_x + block_width <= plane_width);
         debug_assert!(pixel_y + block_height <= plane_height);
         let src = match plane {
-            0 => last_recon_yuv.0,
-            1 => last_recon_yuv.1,
-            _ => last_recon_yuv.2,
+            0 => last_ref.reconstruction_yuv.0,
+            1 => last_ref.reconstruction_yuv.1,
+            _ => last_ref.reconstruction_yuv.2,
         };
-        recon_yuv_out.plane_mut(plane).copy_from_full_frame(
-            src,
-            pixel_x,
-            pixel_y,
-            block_width,
-            block_height,
-        );
+        if last_ref.width == width && last_ref.height == height {
+            // Preserve the long-standing identity path exactly. Besides being
+            // cheaper than filtering a zero-motion block, this keeps denoiser
+            // and single-layer output byte-identical while spatial SVC is off.
+            recon_yuv_out.plane_mut(plane).copy_from_full_frame(
+                src,
+                pixel_x,
+                pixel_y,
+                block_width,
+                block_height,
+            );
+        } else {
+            recon_yuv_out.plane_mut(plane).build_inter_prediction(
+                src,
+                last_ref.width >> ss_x,
+                last_ref.height >> ss_y,
+                mi_col * 8,
+                mi_row * 8,
+                pixel_x,
+                pixel_y,
+                block_width,
+                block_height,
+                0,
+                0,
+                rvp9_core::bitstream::frame::InterpFilter::EightTap,
+                false,
+                &mut pred_border,
+            );
+        }
     }
 }
 
@@ -4490,6 +4525,10 @@ impl<'a> InterReconPlane<'a> {
     fn build_inter_prediction(
         &mut self,
         reference: &[u8],
+        reference_width: usize,
+        reference_height: usize,
+        phase_x: usize,
+        phase_y: usize,
         global_x: usize,
         global_y: usize,
         width: usize,
@@ -4501,46 +4540,75 @@ impl<'a> InterReconPlane<'a> {
         pred_border: &mut [u8; MAX_INTER_PRED_BORDER_BYTES],
     ) {
         let layout = self.layout;
-        if layout.is_full() {
-            build_inter_pred_plane_unscaled(
-                reference,
-                layout.frame_width,
-                layout.frame_width,
-                layout.frame_height,
-                global_x,
-                global_y,
-                width,
-                height,
-                mv_q4_col,
-                mv_q4_row,
-                self.data,
-                layout.stride,
-                interp_filter,
-                is_compound_avg,
-                pred_border,
-            );
-        } else {
-            let (local_x, local_y) = layout.local_block(global_x, global_y, width, height);
-            build_inter_pred_plane_unscaled_at_dst(
-                reference,
-                layout.frame_width,
-                layout.frame_width,
-                layout.frame_height,
-                global_x,
-                global_y,
-                local_x,
-                local_y,
-                width,
-                height,
-                mv_q4_col,
-                mv_q4_row,
-                self.data,
-                layout.stride,
-                interp_filter,
-                is_compound_avg,
-                pred_border,
-            );
+        if reference_width == layout.frame_width && reference_height == layout.frame_height {
+            debug_assert_eq!(reference.len(), reference_width * reference_height);
+            if layout.is_full() {
+                build_inter_pred_plane_unscaled(
+                    reference,
+                    layout.frame_width,
+                    layout.frame_width,
+                    layout.frame_height,
+                    global_x,
+                    global_y,
+                    width,
+                    height,
+                    mv_q4_col,
+                    mv_q4_row,
+                    self.data,
+                    layout.stride,
+                    interp_filter,
+                    is_compound_avg,
+                    pred_border,
+                );
+            } else {
+                let (local_x, local_y) = layout.local_block(global_x, global_y, width, height);
+                build_inter_pred_plane_unscaled_at_dst(
+                    reference,
+                    layout.frame_width,
+                    layout.frame_width,
+                    layout.frame_height,
+                    global_x,
+                    global_y,
+                    local_x,
+                    local_y,
+                    width,
+                    height,
+                    mv_q4_col,
+                    mv_q4_row,
+                    self.data,
+                    layout.stride,
+                    interp_filter,
+                    is_compound_avg,
+                    pred_border,
+                );
+            }
+            return;
         }
+
+        let (local_x, local_y) = layout.local_block(global_x, global_y, width, height);
+        build_inter_pred_plane_at_dst(
+            reference,
+            reference_width,
+            reference_width,
+            reference_height,
+            layout.frame_width,
+            layout.frame_height,
+            global_x,
+            global_y,
+            phase_x,
+            phase_y,
+            local_x,
+            local_y,
+            width,
+            height,
+            mv_q4_col,
+            mv_q4_row,
+            self.data,
+            layout.stride,
+            interp_filter,
+            is_compound_avg,
+            pred_border,
+        );
     }
 }
 
@@ -6105,32 +6173,26 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     avg_inter_qindex: u8,
     seg_q_deltas: &[Option<i16>; 8],
     input_yuv: (&[u8], &[u8], &[u8]),
-    // Reference-buffer split — the LAST slot exposes TWO views to the
-    // picker:
+    // Reference-buffer split — each slot exposes TWO views:
     //
-    //   * `me_ref_yuv`: the ME-side reference (libvpx
+    //   * `analysis_yuv`: the current-sized ME-side reference (libvpx
     //     `vp9_denoiser.c:294-304` `running_avg_y`). Read by motion
     //     analysis paths only — `find_mv_refs`, motion search seeds,
     //     candidate SSE/RD, the diamond/subpel refinement, the chroma
     //     context the picker hands to `pick_inter_mode`. May diverge
-    //     from `last_recon_yuv` once the denoiser / filtered-ALTREF
-    //     wave fills it with filtered pixels; until then the caller
-    //     keeps them byte-identical.
+    //     from the decoder-visible reconstruction when denoising or spatial
+    //     scaling is active.
     //
-    //   * `last_recon_yuv`: the residual-coding reference (libvpx
+    //   * `reconstruction_yuv`: the residual-coding reference (libvpx
     //     `cm->frame_refs[]`). The bit-exact decoded pool the final MC
     //     prediction reads from before the residual IT-add. Must never
     //     diverge from the decoder — the cross-decoder gate verifies
-    //     this. Read by the up-front `recon_yuv_out` seed copy and the
-    //     per-leaf `build_inter_pred_plane_unscaled` plane selector
-    //     (the residual-coding MC).
+    //     this. Its original dimensions drive normative scaled MC.
     //
-    // Aliasing the same buffer for both would not be a real split; the
-    // caller allocates separate `Vec`s in `StreamEncoder`. See the
-    // `me_ref_y` field doc in `frame_loop.rs` and the
-    // `reference_split_me_and_pred_identical_initially` PROOF.
-    me_ref_yuv: (&[u8], &[u8], &[u8]),
-    last_recon_yuv: (&[u8], &[u8], &[u8]),
+    // Equal-size references alias the same storage at no cost. A lower-layer
+    // reference owns only its temporary analysis image; reconstruction keeps
+    // reading the shared original slot.
+    last_reference: InterReference<'_>,
     // A15 Phase B — GOLDEN ref planes for the widened picker
     // ({LAST,GOLDEN} × {ZERO,NEAREST,NEAR,NEW}). Step 2: used
     // only for `find_mv_refs(GOLDEN)` to build the GOLDEN
@@ -6140,7 +6202,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // `golden_recon_*` from `StreamEncoder` (post-A14 Phase A
     // they mirror what the decoder writes when reading
     // `refresh_frame_flags & 0x02`).
-    golden_recon_yuv: (&[u8], &[u8], &[u8]),
+    golden_reference: InterReference<'_>,
     // W-ALTREF — ALTREF (ref-pool slot 2) reference planes for the
     // single-ref ALTREF picker candidate. `Some(..)` ONLY when
     // `enable_alt_ref` is set AND a real ARF has already been emitted
@@ -6154,7 +6216,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // (`vp9_rdopt.c:2511`) wires the ALTREF buffer into the candidate
     // loop; `cpi->ref_frame_flags & VP9_ALT_FLAG` (`vp9_rdopt.c:3535`)
     // gates whether ALTREF is iterated.
-    altref_recon_yuv: Option<(&[u8], &[u8], &[u8])>,
+    altref_reference: Option<InterReference<'_>>,
     recon_yuv_out: (&mut [u8], &mut [u8], &mut [u8]),
     recon_layout: InterReconLayout,
     sb_partitions: &mut [Vec<InterPartitionLeafDesc>],
@@ -6279,6 +6341,13 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     worker_pool: Option<&mut rvp9_core::tile_threading::WorkerPool>,
     mut denoiser: Option<&mut crate::denoiser::Denoiser>,
 ) -> InterSimulationResult {
+    let me_ref_yuv = last_reference.analysis_yuv;
+    let last_recon_yuv = last_reference.reconstruction_yuv;
+    let golden_me_yuv = golden_reference.analysis_yuv;
+    let golden_recon_yuv = golden_reference.reconstruction_yuv;
+    let altref_me_yuv = altref_reference.map(|reference| reference.analysis_yuv);
+    let altref_recon_yuv = altref_reference.map(|reference| reference.reconstruction_yuv);
+    let altref_dimensions = altref_reference.map(|reference| (reference.width, reference.height));
     use rvp9_core::bitstream::frame::{InterpFilter as WireInterpFilter, MAX_INTER_REFS};
     use rvp9_core::bitstream::header::FrameKind as WireFrameKind;
     use rvp9_core::cost::symbol_costs::{
@@ -6482,7 +6551,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // encoder calls `pick_inter_mode_luma` once per ref-plane,
     // then takes the min-RD winner across both rankings.
     let ref_y_golden = PlaneRef {
-        data: golden_recon_yuv.0,
+        data: golden_me_yuv.0,
         stride: w,
         width: w,
         height: h,
@@ -6491,8 +6560,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // `altref_available` is the single gate: `true` only when the caller
     // passed `Some(..)` (= enable_alt_ref && ARF emitted). When `false`,
     // the picker never enumerates ALTREF and the bitstream is unchanged.
-    let altref_available = altref_recon_yuv.is_some();
-    let ref_y_altref = altref_recon_yuv.map(|(y, _, _)| PlaneRef {
+    let altref_available = altref_me_yuv.is_some();
+    let ref_y_altref = altref_me_yuv.map(|(y, _, _)| PlaneRef {
         data: y,
         stride: w,
         width: w,
@@ -7132,13 +7201,13 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         rvp9_core::dsp::get_ref().sad(BlockSize::Block64x64)(
                             &input_yuv.0[source_offset..],
                             w,
-                            &last_recon_yuv.0[source_offset..],
+                            &me_ref_yuv.0[source_offset..],
                             w,
                         )
                     } else {
                         zero_mv_sad64_edge_clamped(
                             input_yuv.0,
-                            last_recon_yuv.0,
+                            me_ref_yuv.0,
                             (w, h),
                             (sb_px_x, sb_px_y),
                         )
@@ -7177,6 +7246,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 // multiples of 64, so compute GOLDEN's zero-MV SAD once with the
                 // dispatched full-block kernel; the exact-tree path below reuses
                 // this result instead of scanning the superblock a second time.
+                // Distinctness is a reference-map property, not an analysis-
+                // buffer property. The denoiser and spatial scaler may give
+                // LAST and GOLDEN separate temporary analysis allocations even
+                // when both names still resolve to the same decoded slot.
                 let golden_distinct = golden_recon_yuv.0.as_ptr() != last_recon_yuv.0.as_ptr();
                 let sb_golden_sad =
                     if !rt_disable_golden_ref && golden_distinct && sb_px_y + 64 <= h {
@@ -7184,13 +7257,13 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         rvp9_core::dsp::get_ref().sad(BlockSize::Block64x64)(
                             &input_yuv.0[src_offset..],
                             w,
-                            &golden_recon_yuv.0[src_offset..],
+                            &golden_me_yuv.0[src_offset..],
                             w,
                         )
                     } else if !rt_disable_golden_ref && golden_distinct {
                         zero_mv_sad64_edge_clamped(
                             input_yuv.0,
-                            golden_recon_yuv.0,
+                            golden_me_yuv.0,
                             (w, h),
                             (sb_px_x, sb_px_y),
                         )
@@ -7207,17 +7280,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 let sb_partition_color_sensitivity = {
                     let (partition_ref_uv, partition_mv, selected_sad) = if sb_partition_use_golden
                     {
-                        (
-                            (golden_recon_yuv.1, golden_recon_yuv.2),
-                            Mv::ZERO,
-                            sb_golden_sad,
-                        )
+                        ((golden_me_yuv.1, golden_me_yuv.2), Mv::ZERO, sb_golden_sad)
                     } else {
-                        (
-                            (last_recon_yuv.1, last_recon_yuv.2),
-                            int_pro.mv,
-                            int_pro.best_sad,
-                        )
+                        ((me_ref_yuv.1, me_ref_yuv.2), int_pro.mv, int_pro.best_sad)
                     };
                     partition_color_sensitivity(
                         (input_yuv.1, input_yuv.2),
@@ -7327,9 +7392,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         // (the CBR short-circuit bias; VBR uses the unbiased SAD).
                         let (partition_ref, partition_mv, selected_sad) = if sb_partition_use_golden
                         {
-                            (golden_recon_yuv.0, Mv::ZERO, sb_golden_sad)
+                            (golden_me_yuv.0, Mv::ZERO, sb_golden_sad)
                         } else {
-                            (last_recon_yuv.0, partition_mv, last_partition_sad)
+                            (me_ref_yuv.0, partition_mv, last_partition_sad)
                         };
 
                         let mut predictor_block = [0u8; 64 * 64];
@@ -7888,8 +7953,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         // SSE/RD reads the ME-side LAST view.
                         last_ref_u: me_ref_yuv.1,
                         last_ref_v: me_ref_yuv.2,
-                        golden_ref_u: golden_recon_yuv.1,
-                        golden_ref_v: golden_recon_yuv.2,
+                        golden_ref_u: golden_me_yuv.1,
+                        golden_ref_v: golden_me_yuv.2,
                         uv_stride: uvw,
                         color_sensitivity: [false; 2],
                         uv_dc_quant: uv_dc_dq as u32,
@@ -8341,7 +8406,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             leaf_mi_row,
                             leaf_mi_col,
                             leaf_bsize,
-                            last_recon_yuv,
+                            last_reference,
                             recon_yuv_out,
                         );
                         // F.0.2 oracle — record the skip-fallback decision
@@ -8487,7 +8552,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             leaf_mi_row,
                             leaf_mi_col,
                             leaf_bsize,
-                            last_recon_yuv,
+                            last_reference,
                             recon_yuv_out,
                         );
                         // F.0.2 oracle — also record this degenerate-MV-
@@ -8957,8 +9022,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                 // `disable_golden_ref` speed-feature.
                                 available: !rt_disable_golden_ref,
                                 ref_y: &ref_y_golden,
-                                ref_u: golden_recon_yuv.1,
-                                ref_v: golden_recon_yuv.2,
+                                ref_u: golden_me_yuv.1,
+                                ref_v: golden_me_yuv.2,
                                 nearest: mvc_golden.nearest,
                                 near: mvc_golden.near,
                                 nearest_in_bounds: mv_in_bounds(mvc_golden.nearest),
@@ -8973,8 +9038,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             let altref_inputs = RefInputs {
                                 available: altref_available,
                                 ref_y: ref_y_altref.as_ref().unwrap_or(&ref_y),
-                                ref_u: altref_recon_yuv.map_or(me_ref_yuv.1, |(_, u, _)| u),
-                                ref_v: altref_recon_yuv.map_or(me_ref_yuv.2, |(_, _, v)| v),
+                                ref_u: altref_me_yuv.map_or(me_ref_yuv.1, |(_, u, _)| u),
+                                ref_v: altref_me_yuv.map_or(me_ref_yuv.2, |(_, _, v)| v),
                                 nearest: mvc_altref.nearest,
                                 near: mvc_altref.near,
                                 nearest_in_bounds: mv_in_bounds(mvc_altref.nearest),
@@ -9226,8 +9291,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     // reads the ME-side LAST view.
                     last_ref_u: me_ref_yuv.1,
                     last_ref_v: me_ref_yuv.2,
-                    golden_ref_u: golden_recon_yuv.1,
-                    golden_ref_v: golden_recon_yuv.2,
+                    golden_ref_u: golden_me_yuv.1,
+                    golden_ref_v: golden_me_yuv.2,
                     uv_stride: uvw,
                     color_sensitivity: sb_partition_color_sensitivity,
                     uv_dc_quant: uv_dc_dq as u32,
@@ -10206,34 +10271,88 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                  the picker must not select ALTREF unless its slot is available",
                                 )
                             };
-                            let (input_plane, ref_plane_data) = match (plane, picked_ref) {
-                                (0, RefFrame::AltrefFrame) => (
-                                    job_coding_source_y.as_deref().unwrap_or(input_yuv.0),
-                                    altref_yuv().0,
-                                ),
-                                (1, RefFrame::AltrefFrame) => (input_yuv.1, altref_yuv().1),
-                                (_, RefFrame::AltrefFrame) => (input_yuv.2, altref_yuv().2),
-                                (0, RefFrame::GoldenFrame) => (
-                                    job_coding_source_y.as_deref().unwrap_or(input_yuv.0),
-                                    golden_recon_yuv.0,
-                                ),
-                                (1, RefFrame::GoldenFrame) => (input_yuv.1, golden_recon_yuv.1),
-                                (_, RefFrame::GoldenFrame) => (input_yuv.2, golden_recon_yuv.2),
-                                (0, _) => (
-                                    job_coding_source_y.as_deref().unwrap_or(input_yuv.0),
-                                    last_recon_yuv.0,
-                                ),
-                                (1, _) => (input_yuv.1, last_recon_yuv.1),
-                                (_, _) => (input_yuv.2, last_recon_yuv.2),
-                            };
+                            let (input_plane, ref_plane_data, ref_luma_width, ref_luma_height) =
+                                match (plane, picked_ref) {
+                                    (0, RefFrame::AltrefFrame) => (
+                                        job_coding_source_y.as_deref().unwrap_or(input_yuv.0),
+                                        altref_yuv().0,
+                                        altref_dimensions
+                                            .expect("live ALTREF must carry dimensions")
+                                            .0,
+                                        altref_dimensions
+                                            .expect("live ALTREF must carry dimensions")
+                                            .1,
+                                    ),
+                                    (1, RefFrame::AltrefFrame) => (
+                                        input_yuv.1,
+                                        altref_yuv().1,
+                                        altref_dimensions
+                                            .expect("live ALTREF must carry dimensions")
+                                            .0,
+                                        altref_dimensions
+                                            .expect("live ALTREF must carry dimensions")
+                                            .1,
+                                    ),
+                                    (_, RefFrame::AltrefFrame) => (
+                                        input_yuv.2,
+                                        altref_yuv().2,
+                                        altref_dimensions
+                                            .expect("live ALTREF must carry dimensions")
+                                            .0,
+                                        altref_dimensions
+                                            .expect("live ALTREF must carry dimensions")
+                                            .1,
+                                    ),
+                                    (0, RefFrame::GoldenFrame) => (
+                                        job_coding_source_y.as_deref().unwrap_or(input_yuv.0),
+                                        golden_recon_yuv.0,
+                                        golden_reference.width,
+                                        golden_reference.height,
+                                    ),
+                                    (1, RefFrame::GoldenFrame) => (
+                                        input_yuv.1,
+                                        golden_recon_yuv.1,
+                                        golden_reference.width,
+                                        golden_reference.height,
+                                    ),
+                                    (_, RefFrame::GoldenFrame) => (
+                                        input_yuv.2,
+                                        golden_recon_yuv.2,
+                                        golden_reference.width,
+                                        golden_reference.height,
+                                    ),
+                                    (0, _) => (
+                                        job_coding_source_y.as_deref().unwrap_or(input_yuv.0),
+                                        last_recon_yuv.0,
+                                        last_reference.width,
+                                        last_reference.height,
+                                    ),
+                                    (1, _) => (
+                                        input_yuv.1,
+                                        last_recon_yuv.1,
+                                        last_reference.width,
+                                        last_reference.height,
+                                    ),
+                                    (_, _) => (
+                                        input_yuv.2,
+                                        last_recon_yuv.2,
+                                        last_reference.width,
+                                        last_reference.height,
+                                    ),
+                                };
+                            let ref_plane_width = ref_luma_width >> ss_x;
+                            let ref_plane_height = ref_luma_height >> ss_y;
+                            let selected_reference_is_scaled =
+                                ref_luma_width != w || ref_luma_height != h;
                             let recon_plane = recon_yuv_out.plane_mut(plane);
 
                             // Build the leaf's MC prediction into the recon
                             // plane region (mirrors the decoder's MC step that
                             // writes into `dst_slice` before the residual
-                            // IT-add). Uses the unscaled `inter_predictor` path
-                            // (encoder ref dims = current dims, so identity
-                            // scale).
+                            // IT-add). Equal-sized references retain the exact
+                            // unscaled predictor. A lower spatial reference uses
+                            // normative scaled MC from its original decoded
+                            // dimensions; its analysis image is never used here.
                             //
                             // W-COMPOUND — for a compound leaf this builds the
                             // slot-0 (LAST) prediction first (`is_compound_avg =
@@ -10249,9 +10368,17 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                     None
                                 };
                             let leaf_ref2 = sb_partitions[sb_idx][leaf_idx].picked_ref_frame2;
-                            if plane != 0 || !output_prediction_ready || leaf_ref2.is_inter() {
+                            if plane != 0
+                                || !output_prediction_ready
+                                || leaf_ref2.is_inter()
+                                || selected_reference_is_scaled
+                            {
                                 recon_plane.build_inter_prediction(
                                     ref_plane_data,
+                                    ref_plane_width,
+                                    ref_plane_height,
+                                    leaf_px_x,
+                                    leaf_px_y,
                                     plane_px_x,
                                     plane_px_y,
                                     block_w_px,
@@ -10296,8 +10423,14 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                     1 => altref_yuv().1,
                                     _ => altref_yuv().2,
                                 };
+                                let (ref2_luma_width, ref2_luma_height) = altref_dimensions
+                                    .expect("compound ALTREF must carry dimensions");
                                 recon_plane.build_inter_prediction(
                                     ref2_plane_data,
+                                    ref2_luma_width >> ss_x,
+                                    ref2_luma_height >> ss_y,
+                                    leaf_px_x,
+                                    leaf_px_y,
                                     plane_px_x,
                                     plane_px_y,
                                     block_w_px,
@@ -14100,7 +14233,12 @@ mod tests {
                 2,
                 6,
                 BlockSize::Block32x16,
-                (&y, &u, &v),
+                InterReference {
+                    analysis_yuv: (&y, &u, &v),
+                    reconstruction_yuv: (&y, &u, &v),
+                    width: W,
+                    height: H,
+                },
                 &mut recon,
             );
         }
@@ -14170,6 +14308,10 @@ mod tests {
             let mut border = [0u8; MAX_INTER_PRED_BORDER_BYTES];
             full_plane.build_inter_prediction(
                 &reference,
+                W,
+                H,
+                X,
+                Y,
                 X,
                 Y,
                 SIDE,
@@ -14182,6 +14324,10 @@ mod tests {
             );
             full_plane.build_inter_prediction(
                 &reference2,
+                W,
+                H,
+                X,
+                Y,
                 X,
                 Y,
                 SIDE,
@@ -14198,6 +14344,10 @@ mod tests {
             let mut border = [0u8; MAX_INTER_PRED_BORDER_BYTES];
             compact_plane.build_inter_prediction(
                 &reference,
+                W,
+                H,
+                X,
+                Y,
                 X,
                 Y,
                 SIDE,
@@ -14210,6 +14360,10 @@ mod tests {
             );
             compact_plane.build_inter_prediction(
                 &reference2,
+                W,
+                H,
+                X,
+                Y,
                 X,
                 Y,
                 SIDE,
@@ -15077,27 +15231,30 @@ mod tests {
                 let luma_x = mi_col * 8;
                 let luma_y = mi_row * 8;
                 let ref_y = reference.y_plane();
-                let mut encoder_y = [0u8; 16 * 16];
+                let mut tight_ref_y = vec![0u8; REF_W * REF_H];
+                for row in 0..REF_H {
+                    tight_ref_y[row * REF_W..(row + 1) * REF_W].copy_from_slice(
+                        &ref_y.data()[row * ref_y.stride()..row * ref_y.stride() + REF_W],
+                    );
+                }
+                let mut encoder_y = vec![0u8; CUR_W * CUR_H];
                 let mut pred_border = [0u8; MAX_INTER_PRED_BORDER_BYTES];
-                build_inter_pred_plane_at_dst(
-                    ref_y.data(),
-                    ref_y.stride(),
+                InterReconPlane::new(
+                    &mut encoder_y,
+                    InterReconLayout::full(CUR_W, CUR_H).plane(0),
+                )
+                .build_inter_prediction(
+                    &tight_ref_y,
                     REF_W,
                     REF_H,
-                    CUR_W,
-                    CUR_H,
                     luma_x,
                     luma_y,
                     luma_x,
                     luma_y,
-                    0,
-                    0,
                     16,
                     16,
                     i32::from(mv.col) * 2,
                     i32::from(mv.row) * 2,
-                    &mut encoder_y,
-                    16,
                     interp_filter,
                     false,
                     &mut pred_border,
@@ -15106,7 +15263,8 @@ mod tests {
                 for row in 0..16 {
                     let decoded_start = (luma_y + row) * decoded_y.stride() + luma_x;
                     assert_eq!(
-                        &encoder_y[row * 16..row * 16 + 16],
+                        &encoder_y
+                            [(luma_y + row) * CUR_W + luma_x..(luma_y + row) * CUR_W + luma_x + 16],
                         &decoded_y.data()[decoded_start..decoded_start + 16],
                         "luma mismatch at mi=({mi_row},{mi_col}) mv={mv:?} filter={interp_filter:?} row={row}",
                     );
@@ -15125,26 +15283,33 @@ mod tests {
                     } else {
                         decoded.v_plane()
                     };
-                    let mut encoder_chroma = [0u8; 8 * 8];
-                    build_inter_pred_plane_at_dst(
-                        ref_plane.data(),
-                        ref_plane.stride(),
+                    let ref_plane_width = REF_W / 2;
+                    let ref_plane_height = REF_H / 2;
+                    let mut tight_ref_plane = vec![0u8; ref_plane_width * ref_plane_height];
+                    for row in 0..ref_plane_height {
+                        tight_ref_plane[row * ref_plane_width..(row + 1) * ref_plane_width]
+                            .copy_from_slice(
+                                &ref_plane.data()[row * ref_plane.stride()
+                                    ..row * ref_plane.stride() + ref_plane_width],
+                            );
+                    }
+                    let mut encoder_chroma = vec![0u8; (CUR_W / 2) * (CUR_H / 2)];
+                    InterReconPlane::new(
+                        &mut encoder_chroma,
+                        InterReconLayout::full(CUR_W, CUR_H).plane(plane),
+                    )
+                    .build_inter_prediction(
+                        &tight_ref_plane,
                         REF_W / 2,
                         REF_H / 2,
-                        CUR_W / 2,
-                        CUR_H / 2,
-                        chroma_x,
-                        chroma_y,
                         luma_x,
                         luma_y,
-                        0,
-                        0,
+                        chroma_x,
+                        chroma_y,
                         8,
                         8,
                         i32::from(mv.col),
                         i32::from(mv.row),
-                        &mut encoder_chroma,
-                        8,
                         interp_filter,
                         false,
                         &mut pred_border,
@@ -15152,7 +15317,8 @@ mod tests {
                     for row in 0..8 {
                         let decoded_start = (chroma_y + row) * decoded_plane.stride() + chroma_x;
                         assert_eq!(
-                            &encoder_chroma[row * 8..row * 8 + 8],
+                            &encoder_chroma[(chroma_y + row) * (CUR_W / 2) + chroma_x
+                                ..(chroma_y + row) * (CUR_W / 2) + chroma_x + 8],
                             &decoded_plane.data()[decoded_start..decoded_start + 8],
                             "chroma plane {plane} mismatch at mi=({mi_row},{mi_col}) mv={mv:?} filter={interp_filter:?} row={row}",
                         );

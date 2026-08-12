@@ -99,11 +99,39 @@ use crate::rate_control::{
     CyclicRefreshRateModel, FirstPassStats, FrameKind as RcFrameKind, RateControl,
     RateControlConfig, RcMode, TemporalSvcRateControl, TwoPassState,
 };
+use crate::scale_reference::scale_reference_i420_2x;
+use crate::scale_source::ScaledI420;
 use crate::{
-    EncodeError, InterPartitionLeafDesc, InterSimulationMiGrid, PartitionLeafDesc,
+    EncodeError, InterPartitionLeafDesc, InterReference, InterSimulationMiGrid, PartitionLeafDesc,
     RecordedCoefTile, VecBackedInterCoefSource, VecBackedIntraCoefSource,
     pick_and_simulate_inter_encode_partitions, pick_and_simulate_intra_encode_partitions,
 };
+
+fn scaled_reference_for_analysis(
+    reference: crate::buffer_pool::RefSlotView<'_>,
+    current_width: usize,
+    current_height: usize,
+) -> Result<Option<ScaledI420>, EncodeError> {
+    if (reference.width, reference.height) == (current_width, current_height) {
+        return Ok(None);
+    }
+    if reference.width.checked_mul(2) != Some(current_width)
+        || reference.height.checked_mul(2) != Some(current_height)
+    {
+        return Err(EncodeError::InvalidConfig(
+            "spatial reference must equal the current layer or be exactly half-sized",
+        ));
+    }
+    scale_reference_i420_2x(
+        reference.y,
+        reference.u,
+        reference.v,
+        reference.width,
+        reference.height,
+    )
+    .map(Some)
+    .map_err(|_| EncodeError::InvalidConfig("spatial reference planes do not match dimensions"))
+}
 
 #[inline]
 const fn video_frame_chessboard_index(frame_idx: u32) -> u32 {
@@ -3385,6 +3413,22 @@ impl StreamEncoder {
         let last_ref_map_idx = usize::from(ref_frame_indices[0]);
         let golden_ref_map_idx = usize::from(ref_frame_indices[1]);
         let altref_ref_map_idx = usize::from(ref_frame_indices[2]);
+        let last_slot = self.ref_pool.named_ref_view(last_ref_map_idx);
+        let last_scaled_reference = scaled_reference_for_analysis(
+            last_slot,
+            self.config.width as usize,
+            self.config.height as usize,
+        )?;
+        let last_analysis_yuv = last_scaled_reference.as_ref().map_or(
+            (last_slot.y, last_slot.u, last_slot.v),
+            |scaled| {
+                (
+                    scaled.y.as_slice(),
+                    scaled.u.as_slice(),
+                    scaled.v.as_slice(),
+                )
+            },
+        );
         let force_disable_golden_ref = self
             .svc_frame
             .is_some_and(|decision| !decision.allow_golden_ref);
@@ -3409,7 +3453,7 @@ impl StreamEncoder {
             if self.denoiser.is_some() && last_ref_map_idx == crate::buffer_pool::LAST_REF {
                 self.me_ref_y.as_slice()
             } else {
-                self.ref_pool.named_ref_planes(last_ref_map_idx).0
+                last_analysis_yuv.0
             };
         let partition_input = FramePartitionInput {
             width_px: w as usize,
@@ -3565,8 +3609,6 @@ impl StreamEncoder {
         // layering setter. In particular, the second tl2 picture in a
         // three-layer pattern reads LAST from map entry 1, where tl1 was
         // refreshed.
-        let (last_y, last_u, last_v) = self.ref_pool.named_ref_planes(last_ref_map_idx);
-
         // A23 — run the TPL driver now that both the source window and
         // the LAST recon are in hand. `tpl_result` is `Some` only when
         // `enable_tpl` is on AND the window has >= 2 frames (so real
@@ -3581,7 +3623,7 @@ impl StreamEncoder {
                 }
                 Some(crate::tpl::run_single_gop_tpl(
                     &window,
-                    last_y,
+                    last_analysis_yuv.0,
                     w as usize,
                     h as usize,
                     i32::from(q_index),
@@ -3592,12 +3634,55 @@ impl StreamEncoder {
             };
         let tpl_rdmult_arg: Option<(&crate::tpl::TplDepFrame, f64)> =
             tpl_result.as_ref().map(|r| (&r.coded_frame, r.r0));
-        let (gld_y, gld_u, gld_v) = self.ref_pool.named_ref_planes(golden_ref_map_idx);
-        let altref_planes_for_picker: Option<(&[u8], &[u8], &[u8])> = if altref_picker_live {
-            Some(self.ref_pool.named_ref_planes(altref_ref_map_idx))
+        let golden_slot = self.ref_pool.named_ref_view(golden_ref_map_idx);
+        let golden_scaled_reference = scaled_reference_for_analysis(
+            golden_slot,
+            self.config.width as usize,
+            self.config.height as usize,
+        )?;
+        let golden_analysis_yuv = golden_scaled_reference.as_ref().map_or(
+            (golden_slot.y, golden_slot.u, golden_slot.v),
+            |scaled| {
+                (
+                    scaled.y.as_slice(),
+                    scaled.u.as_slice(),
+                    scaled.v.as_slice(),
+                )
+            },
+        );
+        let altref_slot = if altref_picker_live {
+            Some(self.ref_pool.named_ref_view(altref_ref_map_idx))
         } else {
             None
         };
+        let altref_scaled_reference = altref_slot
+            .map(|slot| {
+                scaled_reference_for_analysis(
+                    slot,
+                    self.config.width as usize,
+                    self.config.height as usize,
+                )
+            })
+            .transpose()?
+            .flatten();
+        let altref_reference = altref_slot.map(|slot| {
+            let analysis_yuv =
+                altref_scaled_reference
+                    .as_ref()
+                    .map_or((slot.y, slot.u, slot.v), |scaled| {
+                        (
+                            scaled.y.as_slice(),
+                            scaled.u.as_slice(),
+                            scaled.v.as_slice(),
+                        )
+                    });
+            InterReference {
+                analysis_yuv,
+                reconstruction_yuv: (slot.y, slot.u, slot.v),
+                width: slot.width,
+                height: slot.height,
+            }
+        });
 
         let mut stage4a_frame_split_stats = NonRdSplitStats::default();
         let avg_inter_qindex = self.rate_control.avg_frame_qindex_inter;
@@ -3619,8 +3704,20 @@ impl StreamEncoder {
             if self.denoiser.is_some() && last_ref_map_idx == crate::buffer_pool::LAST_REF {
                 (&self.me_ref_y[..], &self.me_ref_u[..], &self.me_ref_v[..])
             } else {
-                (last_y, last_u, last_v)
+                last_analysis_yuv
             };
+        let last_reference = InterReference {
+            analysis_yuv: me_ref_yuv,
+            reconstruction_yuv: (last_slot.y, last_slot.u, last_slot.v),
+            width: last_slot.width,
+            height: last_slot.height,
+        };
+        let golden_reference = InterReference {
+            analysis_yuv: golden_analysis_yuv,
+            reconstruction_yuv: (golden_slot.y, golden_slot.u, golden_slot.v),
+            width: golden_slot.width,
+            height: golden_slot.height,
+        };
         let frame_context = &self.frame_context;
         let frame_mv_costs = rvp9_core::cost::mv_cost::build_nmv_cost_table(
             &frame_context.nmvc,
@@ -3680,10 +3777,9 @@ impl StreamEncoder {
                     // Reference-buffer split — ME analysis reads the
                     // filtered view while residual coding reads the
                     // decoder-equivalent LAST slot.
-                    me_ref_yuv,
-                    (last_y, last_u, last_v),
-                    (gld_y, gld_u, gld_v),
-                    altref_planes_for_picker,
+                    last_reference,
+                    golden_reference,
+                    altref_reference,
                     ($recon_y, $recon_u, $recon_v),
                     $recon_layout,
                     $partitions,
@@ -4578,6 +4674,18 @@ impl StreamEncoder {
         let h_us = h as usize;
         let mi_rows_us = h_us / 8;
         let mi_cols_us = w_us / 8;
+        let last_slot = self.ref_pool.named_ref_view(crate::buffer_pool::LAST_REF);
+        let last_scaled_reference = scaled_reference_for_analysis(last_slot, w_us, h_us)?;
+        let last_analysis_yuv = last_scaled_reference.as_ref().map_or(
+            (last_slot.y, last_slot.u, last_slot.v),
+            |scaled| {
+                (
+                    scaled.y.as_slice(),
+                    scaled.u.as_slice(),
+                    scaled.v.as_slice(),
+                )
+            },
+        );
 
         // Real-RD partition decision on the FILTERED source, against the
         // LAST reconstruction (the ARF inter-predicts from LAST). Same
@@ -4587,9 +4695,7 @@ impl StreamEncoder {
         let partition_ref_y = if self.denoiser.is_some() {
             self.me_ref_y.as_slice()
         } else {
-            self.ref_pool
-                .named_ref_planes(crate::buffer_pool::LAST_REF)
-                .0
+            last_analysis_yuv.0
         };
         let sb_partitions_intra_shape = choose_partitions_for_frame(FramePartitionInput {
             width_px: w_us,
@@ -4676,15 +4782,35 @@ impl StreamEncoder {
         // its commit (`refresh_frame_flags = 0x04`, below) rotates ONLY
         // the ALTREF map entry, so reading LAST/GOLDEN here leaves the
         // show frame's references undisturbed.
-        let (last_y, last_u, last_v) = self.ref_pool.named_ref_planes(crate::buffer_pool::LAST_REF);
-        let (gld_y, gld_u, gld_v) = self
-            .ref_pool
-            .named_ref_planes(crate::buffer_pool::GOLDEN_REF);
+        let golden_slot = self.ref_pool.named_ref_view(crate::buffer_pool::GOLDEN_REF);
+        let golden_scaled_reference = scaled_reference_for_analysis(golden_slot, w_us, h_us)?;
+        let golden_analysis_yuv = golden_scaled_reference.as_ref().map_or(
+            (golden_slot.y, golden_slot.u, golden_slot.v),
+            |scaled| {
+                (
+                    scaled.y.as_slice(),
+                    scaled.u.as_slice(),
+                    scaled.v.as_slice(),
+                )
+            },
+        );
         let mut stage4a_frame_split_stats = NonRdSplitStats::default();
         let me_ref_yuv = if self.denoiser.is_some() {
             (&self.me_ref_y[..], &self.me_ref_u[..], &self.me_ref_v[..])
         } else {
-            (last_y, last_u, last_v)
+            last_analysis_yuv
+        };
+        let last_reference = InterReference {
+            analysis_yuv: me_ref_yuv,
+            reconstruction_yuv: (last_slot.y, last_slot.u, last_slot.v),
+            width: last_slot.width,
+            height: last_slot.height,
+        };
+        let golden_reference = InterReference {
+            analysis_yuv: golden_analysis_yuv,
+            reconstruction_yuv: (golden_slot.y, golden_slot.u, golden_slot.v),
+            width: golden_slot.width,
+            height: golden_slot.height,
         };
         let inter_env = crate::InterEncodeEnv::capture();
         let encoded = pick_and_simulate_inter_encode_partitions(
@@ -4695,9 +4821,8 @@ impl StreamEncoder {
             self.rate_control.avg_frame_qindex_inter,
             &seg_q_deltas,
             filtered_yuv,
-            me_ref_yuv,
-            (last_y, last_u, last_v),
-            (gld_y, gld_u, gld_v),
+            last_reference,
+            golden_reference,
             // W-ALTREF — the ARF itself predicts from LAST/GOLDEN only
             // (it cannot reference a future ARF); `None` disables the
             // ALTREF candidate for the ARF's own per-leaf coding. Matches
@@ -6993,6 +7118,38 @@ fn gather_coded_segments_and_skip(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn spatial_reference_analysis_accepts_identity_or_adjacent_lower_layer() {
+        let y = vec![37u8; 32 * 16];
+        let u = vec![83u8; 16 * 8];
+        let v = vec![191u8; 16 * 8];
+        let lower = crate::buffer_pool::RefSlotView {
+            width: 32,
+            height: 16,
+            y: &y,
+            u: &u,
+            v: &v,
+        };
+
+        assert!(
+            scaled_reference_for_analysis(lower, 32, 16)
+                .expect("identity reference")
+                .is_none()
+        );
+        let scaled = scaled_reference_for_analysis(lower, 64, 32)
+            .expect("adjacent lower layer")
+            .expect("lower layer must be scaled");
+        assert_eq!((scaled.width, scaled.height), (64, 32));
+        assert!(scaled.y.iter().all(|&sample| sample == 37));
+        assert!(scaled.u.iter().all(|&sample| sample == 83));
+        assert!(scaled.v.iter().all(|&sample| sample == 191));
+
+        assert!(matches!(
+            scaled_reference_for_analysis(lower, 128, 32),
+            Err(EncodeError::InvalidConfig(_))
+        ));
+    }
     use rvp9_decoder::{Decoder, ParsedFrame};
 
     #[test]
