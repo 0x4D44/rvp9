@@ -6,15 +6,15 @@
 - **Area:** decoder/spatial SVC
 - **Raised:** 2026-08-12T14:08:04Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
-- **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner:** deltic:manual
+- **Owner role:** verify
+- **Owner run:** verify-20260812T172201Z-p80631-n983536000-c1
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-FLUX-00022-run-verify-20260812T172201Z-p80631-n983536000-c1
+- **Owner base:** ff8fa82252217b76ada2f3356e7eaa8db750d854
+- **Owner fingerprint:** sha256:835b160d171259a26c4b1c1b07d0a06cc80bd3c47fd02cbc0e5c16f7df4a04c2
+- **Owner since:** 2026-08-12T17:22:01Z
+- **Owner until:** 2026-08-12T19:22:01Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
