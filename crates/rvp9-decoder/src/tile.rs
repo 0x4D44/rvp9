@@ -53,7 +53,9 @@ use rvp9_core::inter::mode_info::{
     InterModeReadParams, get_intra_inter_context, read_inter_block_mode_info,
 };
 use rvp9_core::inter::mv_ref::BlockBounds;
-use rvp9_core::intra_pred::{DcAvailability, EdgeBuffers, IntraMode, build_intra_predictors};
+use rvp9_core::intra_pred::{
+    DcAvailability, EdgeBuffers, IntraMode, build_intra_predictors_with_block_clipping,
+};
 use rvp9_core::mode_info::{
     BlockMode, BmiInfo, InterMode, ModeInfo, Mv, RefFrame, SegmentationReadParams,
     get_tx_size_context, read_inter_segment_id, read_intra_mode, read_is_inter, read_partition,
@@ -1370,7 +1372,7 @@ fn reconstruct_intra_planes<D: TileFrameDst>(
                     plane_intra_mode
                 };
 
-                build_intra_predictors(
+                build_intra_predictors_with_block_clipping(
                     plane_data,
                     plane_stride,
                     tx_px_x,
@@ -1382,6 +1384,8 @@ fn reconstruct_intra_planes<D: TileFrameDst>(
                     have_top,
                     have_left,
                     have_right,
+                    mb_to_right_edge_px < 0,
+                    mb_to_bottom_edge_px < 0,
                     &mut edges,
                 );
 

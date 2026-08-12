@@ -1043,6 +1043,48 @@ pub fn build_intra_predictors(
     edges: &mut EdgeBuffers,
 ) {
     let bs = tx_size.side();
+    build_intra_predictors_with_block_clipping(
+        dst_plane,
+        dst_stride,
+        px_x,
+        px_y,
+        plane_width,
+        plane_height,
+        tx_size,
+        mode,
+        have_top,
+        have_left,
+        have_right,
+        px_x + bs > plane_width,
+        px_y + bs > plane_height,
+        edges,
+    );
+}
+
+/// Populate intra-prediction edges with clipping inherited from the coding block.
+///
+/// libvpx selects its slow border-extension paths from the parent coding
+/// block's `mb_to_{right,bottom}_edge`, not solely from the current transform
+/// block's coordinates. A transform can therefore fit inside the padded frame
+/// while its parent block still requires reference extension.
+#[allow(clippy::too_many_arguments)] // mirrors libvpx 1:1
+pub fn build_intra_predictors_with_block_clipping(
+    dst_plane: &[u8],
+    dst_stride: usize,
+    px_x: usize,
+    px_y: usize,
+    plane_width: usize,
+    plane_height: usize,
+    tx_size: crate::transforms::TxSize,
+    mode: IntraMode,
+    have_top: bool,
+    have_left: bool,
+    have_right: bool,
+    block_right_clipped: bool,
+    block_bottom_clipped: bool,
+    edges: &mut EdgeBuffers,
+) {
+    let bs = tx_size.side();
     debug_assert!(bs <= MAX_BS);
     debug_assert!(px_x < plane_width, "block top-left must be in-frame (x)");
     debug_assert!(px_y < plane_height, "block top-left must be in-frame (y)");
@@ -1057,8 +1099,7 @@ pub fn build_intra_predictors(
             let base = px_y * dst_stride + px_x;
             // Slow path if the block extends past the frame bottom
             // (libvpx checks `xd->mb_to_bottom_edge < 0`, equivalent).
-            let extend_bottom_full = px_y + bs <= plane_height;
-            if extend_bottom_full {
+            if !block_bottom_clipped {
                 // Hot interior-block path (this loop runs per intra TX
                 // sub-block — the dominant decode cost). Bound-check the
                 // strided read span ONCE via a sub-slice, then walk it
@@ -1076,15 +1117,21 @@ pub fn build_intra_predictors(
                     *slot = px;
                 }
             } else {
-                let extend_bottom = plane_height - px_y;
-                for i in 0..extend_bottom {
-                    edges.left_col[i] = dst_plane[base + i * dst_stride - 1];
-                }
-                // Replicate the last in-frame sample down. Mirrors
-                // vp9_reconintra.c:310-311.
-                let last = dst_plane[base + (extend_bottom - 1) * dst_stride - 1];
-                for i in extend_bottom..bs {
-                    edges.left_col[i] = last;
+                if px_y + bs <= plane_height {
+                    for i in 0..bs {
+                        edges.left_col[i] = dst_plane[base + i * dst_stride - 1];
+                    }
+                } else {
+                    let extend_bottom = plane_height - px_y;
+                    for i in 0..extend_bottom {
+                        edges.left_col[i] = dst_plane[base + i * dst_stride - 1];
+                    }
+                    // Replicate the last in-frame sample down. Mirrors
+                    // vp9_reconintra.c:310-311.
+                    let last = dst_plane[base + (extend_bottom - 1) * dst_stride - 1];
+                    for i in extend_bottom..bs {
+                        edges.left_col[i] = last;
+                    }
                 }
             }
         } else {
@@ -1096,8 +1143,7 @@ pub fn build_intra_predictors(
     if (mask & NEED_ABOVE) != 0 {
         if have_top {
             let above_ref_start = (px_y - 1) * dst_stride + px_x;
-            let right_clipped = px_x + bs > plane_width;
-            if right_clipped {
+            if block_right_clipped {
                 // Slow path: copy what's in-frame and replicate the
                 // last in-frame sample to fill `bs`.
                 // libvpx vp9_reconintra.c:328-334. Note libvpx skips
@@ -1106,11 +1152,16 @@ pub fn build_intra_predictors(
                 // driver never asks intra-pred to predict a block whose
                 // top-left is outside the frame, so `px_x <= plane_width`
                 // holds.
-                let r = plane_width - px_x; // in [1, bs)
-                edges.above_data[16..16 + r]
-                    .copy_from_slice(&dst_plane[above_ref_start..above_ref_start + r]);
-                let last = edges.above_data[16 + r - 1];
-                edges.above_data[16 + r..16 + bs].fill(last);
+                if px_x + bs <= plane_width {
+                    edges.above_data[16..16 + bs]
+                        .copy_from_slice(&dst_plane[above_ref_start..above_ref_start + bs]);
+                } else {
+                    let r = plane_width - px_x; // in [1, bs)
+                    edges.above_data[16..16 + r]
+                        .copy_from_slice(&dst_plane[above_ref_start..above_ref_start + r]);
+                    let last = edges.above_data[16 + r - 1];
+                    edges.above_data[16 + r..16 + bs].fill(last);
+                }
             } else {
                 edges.above_data[16..16 + bs]
                     .copy_from_slice(&dst_plane[above_ref_start..above_ref_start + bs]);
@@ -1131,8 +1182,7 @@ pub fn build_intra_predictors(
     if (mask & NEED_ABOVERIGHT) != 0 {
         if have_top {
             let above_ref_start = (px_y - 1) * dst_stride + px_x;
-            let right_clipped = px_x + bs > plane_width;
-            if right_clipped {
+            if block_right_clipped {
                 // Three sub-cases per libvpx vp9_reconintra.c:355-376.
                 if px_x + 2 * bs <= plane_width {
                     // Full 2*bs above pixels are in-frame.
@@ -2853,6 +2903,55 @@ mod tests {
                 "above[{i}] should be plane byte (fast path)",
             );
         }
+    }
+
+    /// A transform that fits exactly inside the padded plane must still use
+    /// the slow above-right path when its parent coding block crosses the
+    /// frame edge. Pinned libvpx keys this decision from
+    /// `xd->mb_to_right_edge`, then replicates the last in-frame sample.
+    #[test]
+    fn build_intra_predictors_d63_4x4_parent_block_right_clipped() {
+        let stride = 32;
+        let width = 16;
+        let height = 16;
+        let mut plane = vec![0u8; stride * height];
+        for y in 0..height {
+            for x in 0..stride {
+                plane[y * stride + x] = (y * 17 + x * 11 + 5) as u8;
+            }
+        }
+
+        let mut edges = EdgeBuffers::new();
+        let bs = 4;
+        let (px_x, px_y) = (12, 4);
+        build_intra_predictors_with_block_clipping(
+            &plane,
+            stride,
+            px_x,
+            px_y,
+            width,
+            height,
+            TxSize::Tx4x4,
+            IntraMode::D63,
+            true,
+            true,
+            true,
+            true,
+            false,
+            &mut edges,
+        );
+
+        let above_ref_start = (px_y - 1) * stride + px_x;
+        let ctx = edges.pred_ctx(bs);
+        assert_eq!(
+            &ctx.above[..bs],
+            &plane[above_ref_start..above_ref_start + bs]
+        );
+        assert_eq!(
+            &ctx.above[bs..2 * bs],
+            &[plane[above_ref_start + bs - 1]; 4]
+        );
+        assert_ne!(ctx.above[bs], plane[above_ref_start + bs]);
     }
 
     /// `build_intra_predictors` NEED_ABOVERIGHT slow-path: the
