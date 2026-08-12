@@ -1,6 +1,6 @@
 # RVP9-BUG-FLUX-00018 — README references a missing fetch-vectors PowerShell script
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Could
 - **Severity:** Low
 - **Area:** docs/setup
@@ -19,7 +19,7 @@
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-12T13:59:40Z, raised via `deltic bugs new` model=gpt-5.6-sol@high)
+- **State history:** Open (2026-08-12T13:59:40Z, raised via `deltic bugs new` model=gpt-5.6-sol@high) -> Fixed (2026-08-12T16:17:40Z, manual release-preparation fix code=aec4b9fcfc21181a5f15c04efb5bf18a603d4621 model=gpt-5.6-sol@high)
 
 ## Observation
 
@@ -27,6 +27,17 @@ Observation #1, first reproduction: `ls scripts/fetch-vectors*` prints only `scr
 
 ## Fix
 
-<unfixed — raised only>
+Commit `aec4b9fcfc21181a5f15c04efb5bf18a603d4621` points the README,
+packaged attribution files, conformance CLI, and live harness diagnostics at
+the tracked `scripts/fetch-vectors.sh`. The README now tells Windows users to
+run shell scripts through Git Bash, MSYS2, or WSL instead of naming a missing
+PowerShell file.
+
+Focused validation passed:
+
+- `rg -n 'fetch-vectors\.ps1' README.md ATTRIBUTION.md crates --glob '!target/**'`
+  returned no matches.
+- `cargo test -p rvp9-harness --bin conformance --locked` passed 3/3 tests.
+- `cargo fmt --all --check` and `git diff --check` passed.
 
 ## Notes
