@@ -1,25 +1,25 @@
 # RVP9-BUG-FLUX-00019 — Official skip-vector ledgers with ordinal filenames fail the conformance harness
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Must
 - **Severity:** Low
 - **Area:** harness/conformance
 - **Raised:** 2026-08-12T14:08:03Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260812T140920Z-p98653-n291313000-c1
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLUX-00019-run-fix-20260812T140920Z-p98653-n291313000-c1
-- **Owner base:** 7919f1de66473c1fe6da1041d17f23d7378fb67c
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-08-12T14:09:20Z
-- **Owner until:** 2026-08-12T16:09:20Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-12T14:08:03Z, raised via `deltic bugs new` model=gpt-5.6-sol@high)
+- **State history:** Open (2026-08-12T14:08:03Z, raised via `deltic bugs new` model=gpt-5.6-sol@high) -> Fixed (2026-08-12T14:13:24Z, deltic:auto role=fix run=fix-20260812T140920Z-p98653-n291313000-c1 branch=task/bug-RVP9-BUG-FLUX-00019-run-fix-20260812T140920Z-p98653-n291313000-c1 code=ecaea8ba gate=manual)
 
 ## Observation
 
