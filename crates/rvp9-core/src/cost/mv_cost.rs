@@ -385,6 +385,20 @@ mod tests {
             assert_eq!(costs.component_cost[0].lookup(magnitude), expected);
             assert_eq!(costs.component_cost[0].lookup(-magnitude), expected);
         }
+
+        // FNV-1a over every positive little-endian i32 entry. This pins the
+        // entire table, including f32 log2 rounding between the spot checks.
+        let hash = (1..=MV_MAX).fold(0xcbf2_9ce4_8422_2325u64, |mut hash, magnitude| {
+            for byte in costs.component_cost[0]
+                .lookup(magnitude as i16)
+                .to_le_bytes()
+            {
+                hash ^= u64::from(byte);
+                hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+            }
+            hash
+        });
+        assert_eq!(hash, 0x8be6_1980_544a_e1b0);
     }
 
     #[test]
