@@ -5,15 +5,15 @@
 - **Severity:** High
 - **Area:** harness/tile threading tests
 - **Raised:** 2026-07-31T10:21:41Z
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
+- **Owner:** deltic:manual
+- **Owner role:** fix
+- **Owner run:** fix-20260812T144948Z-p77389-n527102000-c1
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KILN-00062-run-fix-20260812T144948Z-p77389-n527102000-c1
+- **Owner base:** e1ea8c76d8af3572050f8ee674526026ebf9f4d9
 - **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner since:** 2026-08-12T14:49:48Z
+- **Owner until:** 2026-08-12T16:49:48Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
