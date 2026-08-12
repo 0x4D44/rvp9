@@ -17,8 +17,8 @@ use sha2::{Digest, Sha256};
 
 const WIDTH: usize = 128;
 const HEIGHT: usize = 64;
-const INTER_WIDTH: usize = 256;
-const INTER_HEIGHT: usize = 128;
+const INTER_WIDTH: usize = 128;
+const INTER_HEIGHT: usize = 64;
 const INTER_FRAME_COUNT: usize = 4;
 
 fn source_sized(width: usize, height: usize, frame_index: usize) -> (Vec<u8>, Vec<u8>, Vec<u8>) {

@@ -1123,6 +1123,32 @@ fn sb_sad_and_var_dispatched(
     sad64: SadFn,
     variance64: VarFn,
 ) -> (u64, u64, u64) {
+    debug_assert!(stride >= 64);
+    debug_assert!(src.len().is_multiple_of(stride));
+    debug_assert_eq!(src.len(), last.len());
+    let height = src.len() / stride;
+    if sb_r_pix + 64 > height {
+        // Libvpx's source YV12 buffers carry an extended visible border, so
+        // a short bottom SB64 repeats its final source row. Rvp9 stores tight
+        // planes; materialize only this uncommon edge block before calling
+        // the same dispatched kernels. Width is a multiple of 64, so no
+        // horizontal extension is needed here.
+        let mut src_edge = [0u8; 64 * 64];
+        let mut last_edge = [0u8; 64 * 64];
+        for row in 0..64 {
+            let source_row = (sb_r_pix + row).min(height - 1);
+            let source_start = source_row * stride + sb_c_pix;
+            let destination_start = row * 64;
+            src_edge[destination_start..destination_start + 64]
+                .copy_from_slice(&src[source_start..source_start + 64]);
+            last_edge[destination_start..destination_start + 64]
+                .copy_from_slice(&last[source_start..source_start + 64]);
+        }
+        let sad = u64::from(sad64(&src_edge, 64, &last_edge, 64));
+        let (sum, sse) = variance64(&src_edge, 64, &last_edge, 64);
+        return (sad, sse, sum.unsigned_abs());
+    }
+
     let offset = sb_r_pix * stride + sb_c_pix;
     let src = &src[offset..];
     let last = &last[offset..];
@@ -1782,6 +1808,21 @@ mod tests {
         for c in &st.content_state_sb {
             assert_eq!(*c, ContentStateSb::LowSadLowSumdiff);
         }
+    }
+
+    #[test]
+    fn avg_source_sad_extends_a_short_bottom_edge_to_sb64() {
+        const WIDTH: usize = 64;
+        const HEIGHT: usize = 32;
+        let previous = vec![0u8; WIDTH * HEIGHT];
+        let current = vec![100u8; WIDTH * HEIGHT];
+        let mut state = PreAnalysisState::new(WIDTH as u32, HEIGHT as u32);
+        state.capture_last_source(&previous);
+
+        state.compute_avg_source_sad(&current, false);
+
+        assert_eq!(state.avg_source_sad, [100 * 64 * 64]);
+        assert_eq!(state.content_state_sb, [ContentStateSb::VeryHighSad]);
     }
 
     /// W2.2 PROOF — a large-magnitude per-SB diff lights up

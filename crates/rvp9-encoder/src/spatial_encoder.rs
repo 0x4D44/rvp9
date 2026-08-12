@@ -49,7 +49,7 @@ impl core::fmt::Display for SpatialEncodeError {
             Self::Config(error) => write!(f, "invalid spatial configuration: {error}"),
             Self::UnsupportedLayerGeometry { width, height } => write!(
                 f,
-                "spatial layer {width}x{height} is outside the encoder's current supported geometry"
+                "spatial layer {width}x{height} is outside the encoder's current multiple-of-64x8 geometry"
             ),
             Self::UnsupportedMode(reason) => write!(f, "unsupported spatial encode mode: {reason}"),
             Self::InvalidInput(reason) => write!(f, "invalid spatial source frame: {reason}"),
@@ -186,10 +186,7 @@ impl SpatialEncoder {
         )?;
         let mut encoders = Vec::with_capacity(plan.layers.len());
         for layer in &plan.layers {
-            if !layer.width.is_multiple_of(64)
-                || !layer.height.is_multiple_of(8)
-                || layer.height < 64
-            {
+            if !layer.width.is_multiple_of(64) || !layer.height.is_multiple_of(8) {
                 return Err(SpatialEncodeError::UnsupportedLayerGeometry {
                     width: layer.width,
                     height: layer.height,
@@ -616,6 +613,30 @@ mod tests {
         )
     }
 
+    fn assert_plane_exact(
+        decoded: &[u8],
+        encoded: &[u8],
+        access_unit_index: usize,
+        component_index: usize,
+        plane: &str,
+    ) {
+        assert_eq!(
+            decoded.len(),
+            encoded.len(),
+            "AU {access_unit_index} component {component_index} {plane} length"
+        );
+        if let Some(index) = decoded
+            .iter()
+            .zip(encoded)
+            .position(|(decoded, encoded)| decoded != encoded)
+        {
+            panic!(
+                "AU {access_unit_index} component {component_index} {plane} differs at {index}: decoder={} encoder={}",
+                decoded[index], encoded[index]
+            );
+        }
+    }
+
     #[test]
     fn two_layer_keyframe_access_units_parse_and_decode_low_to_high() {
         let width = 128usize;
@@ -686,8 +707,8 @@ mod tests {
 
     #[test]
     fn two_layer_inter_access_units_share_reference_map_and_decode_in_order() {
-        let width = 256usize;
-        let height = 128usize;
+        let width = 128usize;
+        let height = 64usize;
         let mut template = EncoderConfig::new(width as u32, height as u32);
         template.target_bitrate_bps = 100_000;
         template.speed = 8;
@@ -740,7 +761,7 @@ mod tests {
             for (component_index, (component, &(want_width, want_height))) in parsed
                 .frames()
                 .iter()
-                .zip(&[(128, 64), (256, 128)])
+                .zip(&[(64, 32), (128, 64)])
                 .enumerate()
             {
                 assert!(!component.header.error_resilient);
@@ -777,9 +798,27 @@ mod tests {
                 let encoded = encoder
                     .shared
                     .named_reference_planes_for_test(component_index);
-                assert_eq!(decoded.0, encoded.0);
-                assert_eq!(decoded.1, encoded.1);
-                assert_eq!(decoded.2, encoded.2);
+                assert_plane_exact(
+                    &decoded.0,
+                    encoded.0,
+                    access_unit_index,
+                    component_index,
+                    "Y",
+                );
+                assert_plane_exact(
+                    &decoded.1,
+                    encoded.1,
+                    access_unit_index,
+                    component_index,
+                    "U",
+                );
+                assert_plane_exact(
+                    &decoded.2,
+                    encoded.2,
+                    access_unit_index,
+                    component_index,
+                    "V",
+                );
             }
         }
     }

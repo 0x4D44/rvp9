@@ -584,8 +584,8 @@ pub(crate) fn build_kf_mi_grid_for_lf(
     let mi_cols_us = mi_cols as usize;
     let mut mi_grid: Vec<Option<ModeInfo>> = vec![None; mi_rows_us * mi_cols_us];
 
-    let sb_cols = mi_cols_us / 8;
-    let sb_rows = mi_rows_us / 8;
+    let sb_cols = mi_cols_us.div_ceil(8);
+    let sb_rows = mi_rows_us.div_ceil(8);
     for sb_row in 0..sb_rows {
         for sb_col in 0..sb_cols {
             let leaves = &sb_partitions[sb_row * sb_cols + sb_col];
@@ -632,11 +632,14 @@ fn splat_leaf(
 ) {
     let n_8x8_wide = leaf_bsize.n_8x8_wide() as usize;
     let n_8x8_high = leaf_bsize.n_8x8_high() as usize;
+    let mi_rows = mi_grid.len() / mi_cols;
     for dr in 0..n_8x8_high {
         for dc in 0..n_8x8_wide {
             let r = leaf_mi_row + dr;
             let c = leaf_mi_col + dc;
-            mi_grid[r * mi_cols + c] = Some(cell);
+            if r < mi_rows && c < mi_cols {
+                mi_grid[r * mi_cols + c] = Some(cell);
+            }
         }
     }
 }
