@@ -1,4 +1,5 @@
 version = 1
+version_bump = "release-only"
 fallback = [
   { program = "cargo", args = ["fmt", "--all", "--", "--check"] },
   { program = "cargo", args = ["clippy", "--workspace", "--all-targets", "--locked"] },
