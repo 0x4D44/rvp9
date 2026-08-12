@@ -3628,6 +3628,7 @@ impl StreamEncoder {
         );
         let frame_mv_costs_ref = &frame_mv_costs;
         let speed = self.config.speed;
+        let temporal_layers = self.config.temporal_layers;
         let deadline = self.config.deadline;
         let rc_mode = self.config.rc_mode;
         let svc_model_only_large_qmax = crate::svc_enhancement_model_only_large_qmax(
@@ -3697,6 +3698,7 @@ impl StreamEncoder {
                     force_disable_golden_ref,
                     force_nstep_motion_search,
                     source_aligned_cpu8_svc_partitions,
+                    temporal_layers,
                     svc_non_reference_frame,
                     svc_model_only_large_qmax,
                     chessboard_index,
@@ -4715,6 +4717,7 @@ impl StreamEncoder {
             false,
             false,
             false,
+            self.config.temporal_layers,
             false,
             None,
             self.frames_since_golden_refresh & 1,

@@ -5801,6 +5801,7 @@ pub(crate) struct InterEncodeEnv {
     live_ref_costs: Option<bool>,
     rt_emit_max_tx: Option<bool>,
     rt_emit_tx_rd: Option<bool>,
+    rt_emit_tx4: Option<bool>,
     rt_quant_fp: Option<bool>,
     rt_reuse_descent_pick: Option<bool>,
     a4_descent_cb_filter: Option<bool>,
@@ -5854,6 +5855,7 @@ impl InterEncodeEnv {
             live_ref_costs: bool_override("RVP9_LIVE_REF_COSTS"),
             rt_emit_max_tx: bool_override("RVP9_RT_EMIT_MAX_TX"),
             rt_emit_tx_rd: bool_override("RVP9_RT_EMIT_TX_RD"),
+            rt_emit_tx4: bool_override("RVP9_RT_EMIT_TX4"),
             rt_quant_fp: bool_override("RVP9_RT_QUANT_FP"),
             rt_reuse_descent_pick: bool_override("RVP9_RT_REUSE_DESCENT_PICK"),
             a4_descent_cb_filter: bool_override("RVP9_A4_DESCENT_CB_FILTER"),
@@ -6202,6 +6204,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // inputs on every temporal layer: coding Q without rvp9's single-layer
     // calibration and zero-MV LAST prediction on ordinary-resolution blocks.
     source_aligned_cpu8_svc_partitions: bool,
+    // Temporal topology scopes the CPU6 TX4 emit selector. Three-layer SVC
+    // keeps the measured TX8/TX16 subset; single-layer and T2 keep TX4.
+    temporal_layers: u32,
     // Pinned libvpx marks temporal-SVC pictures that refresh no reference
     // slot as non-reference frames. Their zero-fullpel NEWMV searches skip
     // fractional refinement (`vp9_pickmode.c:230-233`).
@@ -6925,6 +6930,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     );
     let rt_emit_tx_rd =
         realtime_emit_tx_rd_enabled(env.rt_emit_tx_rd, exact_vbp_tree_enabled, speed);
+    let rt_emit_tx4 = realtime_tx4_candidate_enabled(env.rt_emit_tx4, speed, temporal_layers);
     let rt_output_backed_prediction = env.flag_or(
         env.rt_output_backed_prediction,
         realtime_output_backed_prediction_default(speed),
@@ -10306,7 +10312,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             // model-RD TX decision, matching libvpx pickmode's
                             // stored `mi->tx_size`. Exact variance-tree frames
                             // redecide TX8/TX16 for TX16-capable leaves. CPU6
-                            // also admits TX4 through measured speed headroom;
+                            // also admits TX4 except in the measured T3 path;
                             // other leaf classes retain the picker transform.
                             // Other large-frame paths keep their established
                             // maximum-TX shortcut.
@@ -10341,7 +10347,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                         quant_fp: rt_quant_fp,
                                         scratch: inter_emit_scratch,
                                     },
-                                    realtime_tx4_candidate_enabled(speed),
+                                    rt_emit_tx4,
                                 );
                                 if let Some(t0) = emit_tx_select_start {
                                     *emit_profile_tx_select_time += t0.elapsed();
@@ -12825,8 +12831,12 @@ fn should_redecide_inter_luma_tx(force_max_tx: bool, tx_rd: bool, bsize: BlockSi
     !force_max_tx && tx_rd && rvp9_core::block::max_txsize(bsize) == TxSize::Tx16x16
 }
 
-fn realtime_tx4_candidate_enabled(speed: i32) -> bool {
-    speed == 6
+fn realtime_tx4_candidate_enabled(
+    override_value: Option<bool>,
+    speed: i32,
+    temporal_layers: u32,
+) -> bool {
+    override_value.unwrap_or(speed == 6 && temporal_layers != 3)
 }
 
 fn choose_inter_luma_tx_size(input: InterLumaTxInput<'_>, include_tx4: bool) -> TxSize {
@@ -15778,7 +15788,7 @@ mod tests {
     }
 
     #[test]
-    fn realtime_tx_redecision_adds_tx4_only_on_cpu6_tx16_leaves() {
+    fn realtime_tx_redecision_scopes_tx4_by_cpu_and_temporal_topology() {
         assert!(!realtime_emit_tx_rd_enabled(None, false, 7));
         assert!(realtime_emit_tx_rd_enabled(None, true, 7));
         assert!(!realtime_emit_tx_rd_enabled(None, true, 8));
@@ -15804,8 +15814,12 @@ mod tests {
             false,
             BlockSize::Block16x16,
         ));
-        assert!(realtime_tx4_candidate_enabled(6));
-        assert!(!realtime_tx4_candidate_enabled(7));
+        assert!(realtime_tx4_candidate_enabled(None, 6, 1));
+        assert!(realtime_tx4_candidate_enabled(None, 6, 2));
+        assert!(!realtime_tx4_candidate_enabled(None, 6, 3));
+        assert!(!realtime_tx4_candidate_enabled(None, 7, 3));
+        assert!(!realtime_tx4_candidate_enabled(Some(false), 6, 1));
+        assert!(realtime_tx4_candidate_enabled(Some(true), 7, 3));
         assert!(!realtime_inter_tx_candidate(TxSize::Tx16x16, TxSize::Tx4x4));
         assert!(realtime_inter_tx_candidate(TxSize::Tx16x16, TxSize::Tx8x8,));
         assert!(realtime_inter_tx_candidate(

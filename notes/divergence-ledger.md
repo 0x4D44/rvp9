@@ -5646,3 +5646,42 @@ still required; paired and reversed medians preserve the retention signal.
 **Future plan:** retain. Reprofile the remaining CPU6/T3 and CPU8/T3 rows on
 this exact integrated image. Do not extend the omission to CPU6: the earlier
 broad CPU6 experiment failed its quality gate.
+
+### 2026-08-12 — Omit TX4 redecision only on CPU6 three-layer SVC
+
+**Where:** `rvp9_encoder::realtime_tx4_candidate_enabled` and
+`rvp9_encoder::choose_inter_luma_tx_size`; libvpx counterpart:
+`vp9/encoder/vp9_pickmode.c:calculate_tx_size`.
+
+**What libvpx does:** realtime pickmode stores a modeled transform choice. It
+does not run rvp9's emission-time exhaustive TX16/TX8/TX4 RD selector.
+
+**What rvp9 does:** exact-tree CPU6 single-layer and T2 configurations retain
+the measured TX4/TX8/TX16 emission selector. CPU6 T3 instead evaluates only
+TX8/TX16. CPU7 keeps TX8/TX16 and CPU8 keeps its picker transform. The
+diagnostic `RVP9_RT_EMIT_TX4=1` restores TX4 on CPU6 T3.
+
+**Why:** the exact CPU6/T3 profile attributes `4,151` of `32,765` product-self
+samples to the selector. Disabling its rarely winning TX4 candidate improves
+the same-binary corpus paired geomean by `5.16%`. A source-backed libvpx-style
+breakout recovered only `1.02%`, which left the direct speed gate red. The
+full omission is topology-scoped and is now safe because later motion,
+partition, and rate-control work created sufficient T3 quality margin.
+
+**Byte-parity impact:** intentional only on CPU6 T3. CPU6 single-layer/T2 and
+CPU7/8 T3 controls remain byte-identical. A candidate ducks stream decodes to
+identical raw I420 under rvp9-decoder, pinned vpxdec, and ffmpeg, SHA-256
+`cbfd524435d6c84b96648cc686ce34cae47b0a99b2122a463304a0b21c1b0d8d`.
+
+**Compression-efficiency impact:** three-clip VBR corpus BD-rate means are
+`-0.7760%/-1.9180%/-1.9607%` for TL0/TL1/TL2. The worst individual result is
+old-town TL0 at `+0.5226%`, inside the `+2%` important-clip guard. CBR means
+are `-22.8243%/-22.3956%/-21.0150%`.
+
+**Speed impact:** two reversed fifteen-pair direct corpus rotations against
+pinned vpxenc measure `1.021923x/1.021015x` separate/paired geomeans. Every
+clip and order passes; candidate medians are `6.84--10.65 ms/frame`.
+
+**Future plan:** retain only on CPU6 T3. Reconfirm with an exact committed PGO
+build, then run quiet-host p99 and 1080p acceptance. Do not generalize to
+single-layer or T2 without their own complete quality and speed evidence.
