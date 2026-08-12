@@ -309,6 +309,10 @@ pub const ALTREF_REF: usize = 2;
 /// tight reconstruction in place).
 #[derive(Debug, Clone, Default)]
 pub struct RefSlotPlanes {
+    /// Visible luma width carried by this slot.
+    width: usize,
+    /// Visible luma height carried by this slot.
+    height: usize,
     /// Luma plane, `width * height`.
     pub y: Vec<u8>,
     /// Cb plane, `(width / 2) * (height / 2)`.
@@ -324,11 +328,38 @@ impl RefSlotPlanes {
         let uvw = width / 2;
         let uvh = height / 2;
         Self {
+            width,
+            height,
             y: vec![0u8; width * height],
             u: vec![0u8; uvw * uvh],
             v: vec![0u8; uvw * uvh],
         }
     }
+
+    fn resize_for_dimensions(&mut self, width: usize, height: usize) {
+        let y_len = width * height;
+        let uv_len = (width / 2) * (height / 2);
+        self.y.resize(y_len, 0);
+        self.u.resize(uv_len, 0);
+        self.v.resize(uv_len, 0);
+        self.width = width;
+        self.height = height;
+    }
+}
+
+/// Borrowed reference slot with the dimensions needed for scaled prediction.
+#[derive(Clone, Copy, Debug)]
+pub struct RefSlotView<'a> {
+    /// Visible luma width.
+    pub width: usize,
+    /// Visible luma height.
+    pub height: usize,
+    /// Tight-stride luma plane.
+    pub y: &'a [u8],
+    /// Tight-stride Cb plane.
+    pub u: &'a [u8],
+    /// Tight-stride Cr plane.
+    pub v: &'a [u8],
 }
 
 /// A10 — the full VP9 8-slot reference-frame buffer pool with
@@ -456,8 +487,26 @@ impl RefFramePool {
     /// named-ref → map-slot mapping rationale.
     #[must_use]
     pub fn named_ref_planes(&self, which: usize) -> (&[u8], &[u8], &[u8]) {
+        let view = self.named_ref_view(which);
+        (view.y, view.u, view.v)
+    }
+
+    /// Immutable planes and visible dimensions for one named reference.
+    ///
+    /// Spatial SVC may keep a lower-layer reconstruction and a current-layer
+    /// reconstruction in different map slots. Callers use these dimensions to
+    /// select identity or scaled motion compensation without inferring geometry
+    /// from a plane's byte length.
+    #[must_use]
+    pub fn named_ref_view(&self, which: usize) -> RefSlotView<'_> {
         let p = &self.slots[self.ref_frame_map[which]];
-        (&p.y, &p.u, &p.v)
+        RefSlotView {
+            width: p.width,
+            height: p.height,
+            y: &p.y,
+            u: &p.u,
+            v: &p.v,
+        }
     }
 
     /// libvpx `vp9_setup_past_independence` reference reset
@@ -478,8 +527,18 @@ impl RefFramePool {
     /// The caller writes the KF reconstruction into the new slot via
     /// [`Self::new_frame_planes_mut`] after this call returns.
     pub fn keyframe_reset(&mut self) {
+        self.keyframe_reset_sized(self.width, self.height);
+    }
+
+    /// Spatial counterpart of [`Self::keyframe_reset`]. The broadcast slot is
+    /// resized to the base layer before its reconstruction is written, while
+    /// later enhancement components may commit different dimensions into
+    /// other map entries.
+    pub(crate) fn keyframe_reset_sized(&mut self, width: usize, height: usize) {
+        validate_i420_dims(width, height);
         let new_idx = (self.new_fb_idx + 1) % REF_FRAMES;
         self.new_fb_idx = new_idx;
+        self.slots[new_idx].resize_for_dimensions(width, height);
         self.ref_frame_map = [new_idx; REF_FRAMES];
     }
 
@@ -507,9 +566,23 @@ impl RefFramePool {
     /// live (only possible with 8 distinct refs, which the default path
     /// never produces).
     pub fn commit_new_frame(&mut self, recon: (&[u8], &[u8], &[u8])) -> usize {
+        self.commit_new_frame_sized(self.width, self.height, recon)
+    }
+
+    /// Commit a reconstruction whose dimensions may differ from other live
+    /// slots. This is the shared-map operation spatial SVC needs when a lower
+    /// component and an enhancement component refresh different map entries.
+    pub(crate) fn commit_new_frame_sized(
+        &mut self,
+        width: usize,
+        height: usize,
+        recon: (&[u8], &[u8], &[u8]),
+    ) -> usize {
+        validate_i420_planes(width, height, recon);
         let new_idx = self.get_free_slot();
         self.new_fb_idx = new_idx;
         let p = &mut self.slots[new_idx];
+        p.resize_for_dimensions(width, height);
         p.y.copy_from_slice(recon.0);
         p.u.copy_from_slice(recon.1);
         p.v.copy_from_slice(recon.2);
@@ -526,20 +599,34 @@ impl RefFramePool {
     ///
     /// Panics if any plane length differs from the configured 4:2:0 size.
     pub(crate) fn exchange_new_frame(&mut self, recon: OwnedYuv420) -> (usize, OwnedYuv420) {
-        let expected_y = self.width * self.height;
-        let expected_uv = (self.width / 2) * (self.height / 2);
-        assert_eq!(recon.0.len(), expected_y, "owned Y plane size mismatch");
-        assert_eq!(recon.1.len(), expected_uv, "owned U plane size mismatch");
-        assert_eq!(recon.2.len(), expected_uv, "owned V plane size mismatch");
+        self.exchange_new_frame_sized(self.width, self.height, recon)
+    }
+
+    fn exchange_new_frame_sized(
+        &mut self,
+        width: usize,
+        height: usize,
+        recon: OwnedYuv420,
+    ) -> (usize, OwnedYuv420) {
+        validate_i420_planes(width, height, (&recon.0, &recon.1, &recon.2));
 
         let new_idx = self.get_free_slot();
         self.new_fb_idx = new_idx;
         let p = &mut self.slots[new_idx];
-        let displaced = (
+        p.width = width;
+        p.height = height;
+        let mut displaced = (
             std::mem::replace(&mut p.y, recon.0),
             std::mem::replace(&mut p.u, recon.1),
             std::mem::replace(&mut p.v, recon.2),
         );
+        // The returned storage is next-frame scratch. A heterogeneous slot
+        // may have different lengths, so normalize only on a dimension
+        // transition; the fixed-size production path remains allocation-free.
+        displaced.0.resize(width * height, 0);
+        let uv_len = (width / 2) * (height / 2);
+        displaced.1.resize(uv_len, 0);
+        displaced.2.resize(uv_len, 0);
         (new_idx, displaced)
     }
 
@@ -582,6 +669,26 @@ impl RefFramePool {
     pub fn dims(&self) -> (usize, usize) {
         (self.width, self.height)
     }
+}
+
+fn validate_i420_dims(width: usize, height: usize) {
+    assert!(
+        width > 0 && height > 0,
+        "reference dimensions must be non-zero"
+    );
+    assert!(
+        width.is_multiple_of(2) && height.is_multiple_of(2),
+        "4:2:0 reference dimensions must be even",
+    );
+}
+
+fn validate_i420_planes(width: usize, height: usize, planes: (&[u8], &[u8], &[u8])) {
+    validate_i420_dims(width, height);
+    let expected_y = width * height;
+    let expected_uv = (width / 2) * (height / 2);
+    assert_eq!(planes.0.len(), expected_y, "owned Y plane size mismatch");
+    assert_eq!(planes.1.len(), expected_uv, "owned U plane size mismatch");
+    assert_eq!(planes.2.len(), expected_uv, "owned V plane size mismatch");
 }
 
 #[cfg(test)]
@@ -808,6 +915,40 @@ mod tests {
         // GOLDEN still holds the KF slot's pixels (0s — never written).
         let (gy, _, _) = pool.named_ref_planes(GOLDEN_REF);
         assert!(gy.iter().all(|&p| p == 0));
+    }
+
+    #[test]
+    fn spatial_ref_map_preserves_heterogeneous_slot_dimensions() {
+        let mut pool = RefFramePool::new(128, 64);
+        pool.keyframe_reset_sized(64, 32);
+        {
+            let (y, u, v) = pool.new_frame_planes_mut();
+            y.fill(3);
+            u.fill(5);
+            v.fill(7);
+        }
+
+        let base_slot = pool.new_fb_idx();
+        let base = pool.named_ref_view(LAST_REF);
+        assert_eq!((base.width, base.height), (64, 32));
+        assert_eq!((base.y.len(), base.u.len(), base.v.len()), (2048, 512, 512));
+
+        let enhancement_y = vec![11; 128 * 64];
+        let enhancement_u = vec![13; 64 * 32];
+        let enhancement_v = vec![17; 64 * 32];
+        let enhancement_slot =
+            pool.commit_new_frame_sized(128, 64, (&enhancement_y, &enhancement_u, &enhancement_v));
+        pool.update_reference_frames(0x02);
+
+        assert_ne!(enhancement_slot, base_slot);
+        let last = pool.named_ref_view(LAST_REF);
+        let golden = pool.named_ref_view(GOLDEN_REF);
+        assert_eq!((last.width, last.height), (64, 32));
+        assert_eq!((golden.width, golden.height), (128, 64));
+        assert!(last.y.iter().all(|&pixel| pixel == 3));
+        assert!(golden.y.iter().all(|&pixel| pixel == 11));
+        assert_eq!(pool.ref_frame_map()[LAST_REF], base_slot);
+        assert_eq!(pool.ref_frame_map()[GOLDEN_REF], enhancement_slot);
     }
 
     #[test]
