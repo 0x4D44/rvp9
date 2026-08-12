@@ -1,68 +1,191 @@
 #!/usr/bin/env bash
-# Download official VP9 conformance test vectors into tests/conformance/vectors/.
-#
-# Source: WebM Project's public test data bucket.
-# Each vector ships with a .md5 file containing the expected decoded YUV MD5.
-#
-# Stage 0 seeds a small starter set (~50 MB) enough to validate the harness.
-# Stage 3 will extend this list to the full upstream conformance set.
+# Download every manifest-backed 8-bit VP9 conformance vector from the pinned
+# libvpx revision, together with its decoded-output MD5 ledger.
 
 set -euo pipefail
 
-REPO_ROOT="$(git rev-parse --show-toplevel)"
-DEST="$REPO_ROOT/tests/conformance/vectors"
-mkdir -p "$DEST"
-
+EXPECTED_LIBVPX_COMMIT="12f3a2ac603e8f10742105519e0cd03c3b8f71dd"
+EXPECTED_VECTOR_COUNT=307
 BASE_URL="https://storage.googleapis.com/downloads.webmproject.org/test_data/libvpx"
 
-# libvpx uses .webm containers for VP9 test vectors (not raw .ivf). Each
-# vector has a paired .md5 file containing the MD5 of the decoded YUV.
-# Full canonical list lives at third_party/libvpx/test/test-data.sha1 (~430
-# VP9 vectors). Stage 0 seeds a small representative set.
-VECTORS=(
-    "vp90-2-00-quantizer-00.webm"
-    "vp90-2-00-quantizer-26.webm"
-    "vp90-2-00-quantizer-63.webm"
-    "vp90-2-01-sharpness-1.webm"
-    "vp90-2-01-sharpness-7.webm"
-    "vp90-2-02-size-08x08.webm"
-    "vp90-2-02-size-32x32.webm"
-    "vp90-2-03-size-202x202.webm"
-    "vp90-2-03-deltaq.webm"
-    "vp90-2-05-resize.ivf"
-    "vp90-2-08-tile_1x2.webm"
-    "vp90-2-08-tile_1x4.webm"
-    "vp90-2-08-tile_1x8.webm"
-    "vp90-2-09-aq2.webm"
-    "vp90-2-10-show-existing-frame.webm"
-)
+usage() {
+    cat <<'EOF'
+Usage: scripts/fetch-vectors.sh [--list] [--jobs N]
 
-fetched=0
-skipped=0
-failed=0
+  --list    Print the pinned 8-bit VP9 vector names without downloading.
+  --jobs N  Download and verify up to N files concurrently (default: 8).
+EOF
+}
 
-for v in "${VECTORS[@]}"; do
-    for suffix in "" ".md5"; do
-        target="$DEST/$v$suffix"
-        if [ -s "$target" ]; then
-            skipped=$((skipped + 1))
-            continue
-        fi
-        printf "  fetch %s%s ... " "$v" "$suffix"
-        if curl -fsSL --retry 3 -o "$target" "$BASE_URL/$v$suffix"; then
-            echo "ok"
-            fetched=$((fetched + 1))
-        else
-            echo "FAILED"
-            rm -f "$target"
-            failed=$((failed + 1))
-        fi
-    done
+list_only=0
+jobs=8
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --list)
+            list_only=1
+            shift
+            ;;
+        --jobs)
+            if [ "$#" -lt 2 ]; then
+                echo "--jobs requires a positive integer" >&2
+                exit 2
+            fi
+            jobs="$2"
+            shift 2
+            ;;
+        --help|-h)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "unknown argument: $1" >&2
+            usage >&2
+            exit 2
+            ;;
+    esac
 done
 
-echo
-echo "Vectors: $fetched fetched, $skipped already present, $failed failed."
-echo "Stored in: $DEST"
-if [ "$failed" -gt 0 ]; then
+if ! [[ "$jobs" =~ ^[1-9][0-9]*$ ]]; then
+    echo "--jobs requires a positive integer, got: $jobs" >&2
+    exit 2
+fi
+
+repo_root="$(git rev-parse --show-toplevel)"
+libvpx_dir="$repo_root/third_party/libvpx"
+manifest="$libvpx_dir/test/test-data.sha1"
+dest="$repo_root/tests/conformance/vectors"
+
+if [ ! -f "$manifest" ]; then
+    echo "missing pinned libvpx test manifest: $manifest" >&2
+    echo "run: git submodule update --init third_party/libvpx" >&2
     exit 1
 fi
+
+actual_commit="$(git -C "$libvpx_dir" rev-parse HEAD)"
+if [ "$actual_commit" != "$EXPECTED_LIBVPX_COMMIT" ]; then
+    echo "libvpx pin mismatch: expected $EXPECTED_LIBVPX_COMMIT, got $actual_commit" >&2
+    exit 1
+fi
+
+file_table="$(mktemp "${TMPDIR:-/tmp}/rvp9-vectors.XXXXXX")"
+cleanup() {
+    rm -f "$file_table"
+}
+trap cleanup EXIT INT TERM
+
+# The pinned manifest also contains VP8, malformed-input, high-bit-depth, and
+# encoder-only media. Select every valid Profile 0/1 VP9 stream that has a
+# sibling decoded-output MD5 ledger. Emit both files with their pinned SHA-1.
+awk '
+    {
+        hash = $1
+        name = $2
+        sub(/^\*/, "", name)
+        hashes[name] = hash
+    }
+    END {
+        for (ledger in hashes) {
+            if (ledger !~ /^vp9[01].*\.(ivf|webm)\.md5$/) {
+                continue
+            }
+            vector = ledger
+            sub(/\.md5$/, "", vector)
+            if (vector in hashes) {
+                print hashes[vector], vector
+                print hashes[ledger], ledger
+            }
+        }
+    }
+' "$manifest" | LC_ALL=C sort -k2,2 > "$file_table"
+
+vector_count="$(awk '$2 !~ /\.md5$/ { count++ } END { print count + 0 }' "$file_table")"
+if [ "$vector_count" -ne "$EXPECTED_VECTOR_COUNT" ]; then
+    echo "pinned vector-set drift: expected $EXPECTED_VECTOR_COUNT, found $vector_count" >&2
+    exit 1
+fi
+
+if [ "$list_only" -eq 1 ]; then
+    awk '$2 !~ /\.md5$/ { print $2 }' "$file_table"
+    exit 0
+fi
+
+if command -v shasum >/dev/null 2>&1; then
+    sha1_file() {
+        shasum -a 1 "$1" | awk '{ print $1 }'
+    }
+elif command -v sha1sum >/dev/null 2>&1; then
+    sha1_file() {
+        sha1sum "$1" | awk '{ print $1 }'
+    }
+else
+    echo "need shasum or sha1sum to verify conformance downloads" >&2
+    exit 1
+fi
+
+mkdir -p "$dest"
+
+download_one() {
+    local expected="$1"
+    local name="$2"
+    local target="$dest/$name"
+    local actual
+    local partial
+
+    if [ -f "$target" ]; then
+        actual="$(sha1_file "$target")"
+        if [ "$actual" = "$expected" ]; then
+            printf '  verified %s\n' "$name"
+            return 0
+        fi
+        echo "checksum mismatch for existing $target" >&2
+        echo "expected $expected, got $actual" >&2
+        return 1
+    fi
+
+    partial="$(mktemp "$dest/.${name}.part.XXXXXX")"
+    if ! curl -fsSL --retry 3 -o "$partial" "$BASE_URL/$name"; then
+        rm -f "$partial"
+        echo "download failed: $name" >&2
+        return 1
+    fi
+    actual="$(sha1_file "$partial")"
+    if [ "$actual" != "$expected" ]; then
+        rm -f "$partial"
+        echo "download checksum mismatch for $name" >&2
+        echo "expected $expected, got $actual" >&2
+        return 1
+    fi
+    mv "$partial" "$target"
+    printf '  fetched  %s\n' "$name"
+}
+
+echo "Fetching $vector_count pinned 8-bit VP9 vectors and their MD5 ledgers."
+echo "libvpx: $actual_commit"
+echo "destination: $dest"
+
+pids=()
+failed=0
+while read -r expected name; do
+    download_one "$expected" "$name" &
+    pids+=("$!")
+    if [ "${#pids[@]}" -ge "$jobs" ]; then
+        for pid in "${pids[@]}"; do
+            if ! wait "$pid"; then
+                failed=1
+            fi
+        done
+        pids=()
+    fi
+done < "$file_table"
+for pid in "${pids[@]}"; do
+    if ! wait "$pid"; then
+        failed=1
+    fi
+done
+
+if [ "$failed" -ne 0 ]; then
+    echo "one or more conformance files failed download or verification" >&2
+    exit 1
+fi
+
+echo "Verified $vector_count vectors and $vector_count MD5 ledgers."
