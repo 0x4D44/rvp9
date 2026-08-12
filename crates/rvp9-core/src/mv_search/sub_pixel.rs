@@ -1683,6 +1683,7 @@ mod tests {
     /// `svf_for`'s `_ => None` arm. In release mode the search returns
     /// the center MV scaled to 1/8-pel units with zero distortion.
     /// In debug mode the debug_assert fires (test uses `should_panic`).
+    #[cfg_attr(not(debug_assertions), ignore = "requires debug assertions")]
     #[test]
     #[should_panic(expected = "sub_pixel_variance not ported")]
     fn sub_pixel_search_unsupported_block_size_panics_in_debug() {
