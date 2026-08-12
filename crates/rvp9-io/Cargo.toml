@@ -11,4 +11,4 @@ description = "Shared container (IVF/WebM) + Y4M readers/writers and MD5 helpers
 workspace = true
 
 [dependencies]
-rvp9-core = { version = "0.1.71", path = "../rvp9-core" }
+rvp9-core = { version = "0.2.0-alpha.1", path = "../rvp9-core" }
