@@ -82,7 +82,10 @@ use rvp9_core::transforms::{TxMode, TxSize};
 pub static TRELLIS_CHANGED_COEFFS: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(0);
 
-const MAX_INTER_PRED_BORDER_DIM: usize = 64 + (VP9_INTERP_EXTEND as usize * 2 - 1);
+// Libvpx's inclusive MC-border scratch extent is block + 2 * extend:
+// a 64-pixel subpel block needs 3 leading + 4 trailing taps plus the
+// one-past sample retained by `build_mc_border`, for 72 cells total.
+const MAX_INTER_PRED_BORDER_DIM: usize = 64 + VP9_INTERP_EXTEND as usize * 2;
 const MAX_INTER_PRED_BORDER_BYTES: usize = MAX_INTER_PRED_BORDER_DIM * MAX_INTER_PRED_BORDER_DIM;
 
 struct InterEmitScratch {
@@ -11848,9 +11851,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
 
 /// Build a `bw × bh` inter prediction at `(plane_px_x + mv)` into
 /// `dst[..]`, mirroring the decoder's unscaled
-/// `build_inter_predictor_with_mc_border` fast path (ref-dim == cur-dim,
-/// so [`ScaleFactors`] is identity). MVs are in Q4 (1/16-pel) units in
-/// the reference plane's coord system.
+/// `build_inter_predictor_with_mc_border` fast path. MVs are in Q4
+/// (1/16-pel) units in the reference plane's coord system.
 ///
 /// DRIFT-FIX — MVs whose convolve8 footprint spills past the visible
 /// plane edge are handled by an edge-replicated scratch (libvpx
@@ -11976,18 +11978,92 @@ fn build_inter_pred_plane_unscaled_at_dst(
     is_compound_avg: bool,
     pred_border: &mut [u8; MAX_INTER_PRED_BORDER_BYTES],
 ) {
+    build_inter_pred_plane_at_dst(
+        ref_plane,
+        ref_stride,
+        ref_w,
+        ref_h,
+        ref_w,
+        ref_h,
+        ref_px_x,
+        ref_px_y,
+        ref_px_x,
+        ref_px_y,
+        dst_px_x,
+        dst_px_y,
+        bw,
+        bh,
+        mv_q4_col,
+        mv_q4_row,
+        dst,
+        dst_stride,
+        interp_filter,
+        is_compound_avg,
+        pred_border,
+    );
+}
+
+/// Encoder-side inter predictor for an equal-size or lower spatial-layer
+/// reference. The coordinate mapping, scaled footprint, and edge replication
+/// match `rvp9-decoder::reconstruct_inter`.
+#[allow(clippy::too_many_arguments)]
+fn build_inter_pred_plane_at_dst(
+    ref_plane: &[u8],
+    ref_stride: usize,
+    ref_w: usize,
+    ref_h: usize,
+    cur_w: usize,
+    cur_h: usize,
+    plane_px_x: usize,
+    plane_px_y: usize,
+    phase_px_x: usize,
+    phase_px_y: usize,
+    dst_px_x: usize,
+    dst_px_y: usize,
+    bw: usize,
+    bh: usize,
+    mv_q4_col: i32,
+    mv_q4_row: i32,
+    dst: &mut [u8],
+    dst_stride: usize,
+    interp_filter: rvp9_core::bitstream::frame::InterpFilter,
+    is_compound_avg: bool,
+    pred_border: &mut [u8; MAX_INTER_PRED_BORDER_BYTES],
+) {
     use rvp9_core::inter::filter::{SUBPEL_BITS, SUBPEL_MASK};
     use rvp9_core::inter::scale::{ScaleFactors, inter_predictor_with_dispatch};
 
-    // Identity scale (ref dims = cur dims).
-    let sf = ScaleFactors::new(ref_w as u32, ref_h as u32, ref_w as u32, ref_h as u32);
-    debug_assert!(
-        !sf.is_scaled(),
-        "F10.1c v1 encoder assumes identity ref scale"
+    let sf = ScaleFactors::new(ref_w as u32, ref_h as u32, cur_w as u32, cur_h as u32);
+    assert!(
+        sf.is_valid(),
+        "encoder inter reference dimensions must be VP9-valid"
+    );
+    assert!(
+        sf.x_step_q4 <= 16 && sf.y_step_q4 <= 16,
+        "encoder spatial MC only accepts equal-size or lower-layer references",
     );
 
-    let total_x_q4 = sf.scaled_x_q4(ref_px_x as i32, mv_q4_col as i16);
-    let total_y_q4 = sf.scaled_y_q4(ref_px_y as i32, mv_q4_row as i16);
+    // Libvpx's scaled path is deliberately asymmetric: the integer reference
+    // origin comes from the plane coordinate, while the fractional phase is
+    // derived in luma coordinates. `phase_px_*` therefore differs from
+    // `plane_px_*` on subsampled chroma planes.
+    let (total_x_q4, total_y_q4) = if sf.is_scaled() {
+        let scaled_mv_col = enc_mul_q14(mv_q4_col, sf.x_scale_fp)
+            + (enc_mul_q14((phase_px_x as i32) << SUBPEL_BITS, sf.x_scale_fp) & SUBPEL_MASK);
+        let scaled_mv_row = enc_mul_q14(mv_q4_row, sf.y_scale_fp)
+            + (enc_mul_q14((phase_px_y as i32) << SUBPEL_BITS, sf.y_scale_fp) & SUBPEL_MASK);
+        let base_int_x = enc_mul_q14(plane_px_x as i32, sf.x_scale_fp);
+        let base_int_y = enc_mul_q14(plane_px_y as i32, sf.y_scale_fp);
+        (
+            (base_int_x << SUBPEL_BITS) + scaled_mv_col,
+            (base_int_y << SUBPEL_BITS) + scaled_mv_row,
+        )
+    } else {
+        (
+            sf.scaled_x_q4(plane_px_x as i32, mv_q4_col as i16),
+            sf.scaled_y_q4(plane_px_y as i32, mv_q4_row as i16),
+        )
+    };
     let int_x = total_x_q4 >> SUBPEL_BITS;
     let int_y = total_y_q4 >> SUBPEL_BITS;
     let subpel_x_q4 = total_x_q4 & SUBPEL_MASK;
@@ -12011,15 +12087,14 @@ fn build_inter_pred_plane_unscaled_at_dst(
     // edge-replicated scratch (libvpx `build_mc_border`) and predict
     // from that. The fast path (footprint fully inside) is byte-identical
     // to the prior code.
-    let x_pad = subpel_x_q4 != 0;
-    let y_pad = subpel_y_q4 != 0;
-    // Footprint (one-past-last touched sample) — same as the decoder's
-    // unscaled path: `x1 = int_x + bw`, extended by the 8-tap halo when
-    // the axis is sub-pel filtered.
+    let x_pad = subpel_x_q4 != 0 || sf.x_step_q4 != 16;
+    let y_pad = subpel_y_q4 != 0 || sf.y_step_q4 != 16;
+    let last_x_q4 = total_x_q4 + (bw as i32 - 1) * sf.x_step_q4;
+    let last_y_q4 = total_y_q4 + (bh as i32 - 1) * sf.y_step_q4;
     let mut x0 = int_x;
     let mut y0 = int_y;
-    let mut x1 = int_x + bw as i32;
-    let mut y1 = int_y + bh as i32;
+    let mut x1 = (last_x_q4 >> SUBPEL_BITS) + 1;
+    let mut y1 = (last_y_q4 >> SUBPEL_BITS) + 1;
     if x_pad {
         x0 -= VP9_INTERP_EXTEND - 1;
         x1 += VP9_INTERP_EXTEND;
@@ -12063,8 +12138,13 @@ fn build_inter_pred_plane_unscaled_at_dst(
     // the 8-tap halo); the scratch's top-left maps to footprint cell
     // `(x0, y0)`. The kernel then reads with its usual `-3` pre-shift
     // relative to the scratch origin where the axis is sub-pel filtered.
-    let b_w = (x1 - x0) as usize;
-    let b_h = (y1 - y0) as usize;
+    let b_w = (x1 - x0 + 1) as usize;
+    let b_h = (y1 - y0 + 1) as usize;
+    assert!(
+        b_w * b_h <= pred_border.len(),
+        "encoder MC scratch footprint {b_w}x{b_h} exceeds {} bytes",
+        pred_border.len(),
+    );
     let scratch = &mut pred_border[..b_w * b_h];
     enc_build_mc_border(
         ref_plane,
@@ -12078,14 +12158,8 @@ fn build_inter_pred_plane_unscaled_at_dst(
         ref_w as i32,
         ref_h as i32,
     );
-    // Within the scratch, the integer-pel base sits at `(int_x - x0,
-    // int_y - y0)`; the kernel pre-shift is folded into that offset.
-    let scratch_col = (int_x - x0) + if x_pad { -(VP9_INTERP_EXTEND - 1) } else { 0 };
-    let scratch_row = (int_y - y0) + if y_pad { -(VP9_INTERP_EXTEND - 1) } else { 0 };
-    let scratch_base = (scratch_row as usize) * b_w + (scratch_col as usize);
-
     inter_predictor_with_dispatch(
-        &scratch[scratch_base..],
+        scratch,
         b_w,
         &mut dst[dst_off..],
         dst_stride,
@@ -12098,6 +12172,11 @@ fn build_inter_pred_plane_unscaled_at_dst(
         is_compound_avg,
         rvp9_core::dsp::get_ref(),
     );
+}
+
+#[inline]
+fn enc_mul_q14(value: i32, scale_fp: i32) -> i32 {
+    ((i64::from(value) * i64::from(scale_fp)) >> 14) as i32
 }
 
 /// libvpx `build_mc_border` (`vp9_decodeframe.c:456-490`), encoder-side
@@ -14857,6 +14936,228 @@ mod tests {
         );
 
         assert_eq!(first, second);
+    }
+
+    #[test]
+    fn largest_subpel_block_fits_inter_pred_border_scratch() {
+        let width = 64usize;
+        let height = 64usize;
+        let reference: Vec<u8> = (0..width * height)
+            .map(|i| ((i * 41 + i / width * 13) & 0xff) as u8)
+            .collect();
+        let mut prediction = [0u8; 64 * 64];
+        let mut pred_border = [0u8; MAX_INTER_PRED_BORDER_BYTES];
+
+        build_inter_pred_block_unscaled(
+            &reference,
+            width,
+            width,
+            height,
+            0,
+            0,
+            64,
+            64,
+            -1,
+            -1,
+            &mut prediction,
+            64,
+            InterpFilter::EightTap,
+            &mut pred_border,
+        );
+
+        assert!(prediction.iter().any(|&pixel| pixel != 0));
+    }
+
+    #[test]
+    fn scaled_spatial_predictor_matches_decoder_for_luma_chroma_and_edges() {
+        use rvp9_core::bitstream::ChromaFormat;
+        use rvp9_core::block::BlockSize;
+        use rvp9_core::coef_ctx::TileCoefCtx;
+        use rvp9_core::entropy::BoolReader;
+        use rvp9_core::frame::{BorderUsage, ByteAlignment, Yv12Buffer};
+        use rvp9_core::mode_info::{BlockMode, BmiInfo, InterMode, ModeInfo, Mv, RefFrame};
+        use rvp9_decoder::reconstruct_inter::{InterBlockInputs, reconstruct_inter_block};
+
+        const REF_W: usize = 64;
+        const REF_H: usize = 32;
+        const CUR_W: usize = 128;
+        const CUR_H: usize = 64;
+
+        let mut reference = Yv12Buffer::alloc(
+            REF_W as u32,
+            REF_H as u32,
+            ChromaFormat::Yuv420,
+            BorderUsage::Decoder,
+            ByteAlignment::Legacy,
+        )
+        .expect("reference allocation");
+        let fill_plane = |mut plane: rvp9_core::frame::PlaneMut<'_>, plane_index: usize| {
+            let stride = plane.stride();
+            let width = plane.width();
+            let height = plane.height();
+            let data = plane.data_mut();
+            for row in 0..height {
+                for col in 0..width {
+                    data[row * stride + col] =
+                        ((row * 37 + col * 19 + row * col * 3 + plane_index * 71) & 0xff) as u8;
+                }
+            }
+        };
+        fill_plane(reference.y_plane_mut(), 0);
+        fill_plane(reference.u_plane_mut(), 1);
+        fill_plane(reference.v_plane_mut(), 2);
+        reference.extend_borders();
+
+        let cases = [
+            (2usize, 3usize, Mv { row: 5, col: -7 }),
+            (0, 0, Mv { row: -13, col: -11 }),
+            (6, 14, Mv { row: 11, col: 13 }),
+        ];
+        let filters = [
+            InterpFilter::EightTap,
+            InterpFilter::EightTapSmooth,
+            InterpFilter::EightTapSharp,
+            InterpFilter::Bilinear,
+        ];
+
+        for (mi_row, mi_col, mv) in cases {
+            for interp_filter in filters {
+                let mut decoded = Yv12Buffer::alloc(
+                    CUR_W as u32,
+                    CUR_H as u32,
+                    ChromaFormat::Yuv420,
+                    BorderUsage::Decoder,
+                    ByteAlignment::Legacy,
+                )
+                .expect("destination allocation");
+                let mut reader = BoolReader::new(&[0; 4]).expect("bool reader");
+                let mut coef_ctx = TileCoefCtx::new(CUR_W / 8);
+                let mi = ModeInfo {
+                    block_size: BlockSize::Block16x16,
+                    tx_size: TxSize::Tx16x16,
+                    skip: true,
+                    segment_id: 0,
+                    seg_id_predicted: false,
+                    mode: BlockMode::Inter {
+                        mode: InterMode::NearestMv,
+                        ref_frames: [RefFrame::LastFrame, RefFrame::NoRefFrame],
+                        mvs: [mv, Mv::ZERO],
+                        interp_filter,
+                    },
+                    bmi: [BmiInfo::default(); 4],
+                };
+                let inputs = InterBlockInputs {
+                    cur_y_width: CUR_W as u32,
+                    cur_y_height: CUR_H as u32,
+                    refs: [Some(&reference), None],
+                    sfs: [None, None],
+                    dequant_per_plane: [(8, 16); 3],
+                    lossless: false,
+                    mi_rows: CUR_H / 8,
+                    mi_cols: CUR_W / 8,
+                };
+                reconstruct_inter_block(
+                    &mut reader,
+                    &FrameContext::new_default(),
+                    None,
+                    &mut coef_ctx,
+                    &mi,
+                    mi_row,
+                    mi_col,
+                    mi_row,
+                    mi_col,
+                    mi_row % 8,
+                    &inputs,
+                    &mut decoded,
+                    rvp9_core::dsp::get_ref(),
+                );
+
+                let luma_x = mi_col * 8;
+                let luma_y = mi_row * 8;
+                let ref_y = reference.y_plane();
+                let mut encoder_y = [0u8; 16 * 16];
+                let mut pred_border = [0u8; MAX_INTER_PRED_BORDER_BYTES];
+                build_inter_pred_plane_at_dst(
+                    ref_y.data(),
+                    ref_y.stride(),
+                    REF_W,
+                    REF_H,
+                    CUR_W,
+                    CUR_H,
+                    luma_x,
+                    luma_y,
+                    luma_x,
+                    luma_y,
+                    0,
+                    0,
+                    16,
+                    16,
+                    i32::from(mv.col) * 2,
+                    i32::from(mv.row) * 2,
+                    &mut encoder_y,
+                    16,
+                    interp_filter,
+                    false,
+                    &mut pred_border,
+                );
+                let decoded_y = decoded.y_plane();
+                for row in 0..16 {
+                    let decoded_start = (luma_y + row) * decoded_y.stride() + luma_x;
+                    assert_eq!(
+                        &encoder_y[row * 16..row * 16 + 16],
+                        &decoded_y.data()[decoded_start..decoded_start + 16],
+                        "luma mismatch at mi=({mi_row},{mi_col}) mv={mv:?} filter={interp_filter:?} row={row}",
+                    );
+                }
+
+                let chroma_x = mi_col * 4;
+                let chroma_y = mi_row * 4;
+                for plane in 1..=2 {
+                    let ref_plane = if plane == 1 {
+                        reference.u_plane()
+                    } else {
+                        reference.v_plane()
+                    };
+                    let decoded_plane = if plane == 1 {
+                        decoded.u_plane()
+                    } else {
+                        decoded.v_plane()
+                    };
+                    let mut encoder_chroma = [0u8; 8 * 8];
+                    build_inter_pred_plane_at_dst(
+                        ref_plane.data(),
+                        ref_plane.stride(),
+                        REF_W / 2,
+                        REF_H / 2,
+                        CUR_W / 2,
+                        CUR_H / 2,
+                        chroma_x,
+                        chroma_y,
+                        luma_x,
+                        luma_y,
+                        0,
+                        0,
+                        8,
+                        8,
+                        i32::from(mv.col),
+                        i32::from(mv.row),
+                        &mut encoder_chroma,
+                        8,
+                        interp_filter,
+                        false,
+                        &mut pred_border,
+                    );
+                    for row in 0..8 {
+                        let decoded_start = (chroma_y + row) * decoded_plane.stride() + chroma_x;
+                        assert_eq!(
+                            &encoder_chroma[row * 8..row * 8 + 8],
+                            &decoded_plane.data()[decoded_start..decoded_start + 8],
+                            "chroma plane {plane} mismatch at mi=({mi_row},{mi_col}) mv={mv:?} filter={interp_filter:?} row={row}",
+                        );
+                    }
+                }
+            }
+        }
     }
 
     #[test]
