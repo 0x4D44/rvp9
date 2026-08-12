@@ -1,25 +1,25 @@
 # RVP9-BUG-FLUX-00022 — Decoder cannot decode the pinned spatial-SVC conformance vector
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** decoder/spatial SVC
 - **Raised:** 2026-08-12T14:08:04Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260812T163429Z-p42548-n323105000-c1
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLUX-00022-run-fix-20260812T163429Z-p42548-n323105000-c1
-- **Owner base:** 29612424473922311ed1e53c0358642024cafba8
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-08-12T16:34:29Z
-- **Owner until:** 2026-08-12T19:17:06Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-12T14:08:04Z, raised via `deltic bugs new` model=gpt-5.6-sol@high)
+- **State history:** Open (2026-08-12T14:08:04Z, raised via `deltic bugs new` model=gpt-5.6-sol@high) -> Fixed (2026-08-12T17:18:45Z, deltic:auto role=fix run=fix-20260812T163429Z-p42548-n323105000-c1 branch=task/bug-RVP9-BUG-FLUX-00022-run-fix-20260812T163429Z-p42548-n323105000-c1 code=d2be2f6dcc935270ea173d043275d178f8872687 gate=manual)
 
 ## Observation
 
