@@ -6402,6 +6402,22 @@ fn denoise_inter_leaf(
     }
 }
 
+fn take_denoiser_coding_source(
+    denoiser: &mut crate::denoiser::Denoiser,
+    input_y: &[u8],
+    visible_len: usize,
+) -> Vec<u8> {
+    assert!(
+        input_y.len() >= visible_len,
+        "denoiser source must cover the visible luma plane"
+    );
+    let mut coding_source =
+        std::mem::take(&mut denoiser.running_avg_y[crate::denoiser::INTRA_FRAME_IDX].y_buffer);
+    coding_source.resize(visible_len, 0);
+    coding_source.copy_from_slice(&input_y[..visible_len]);
+    coding_source
+}
+
 #[allow(clippy::too_many_arguments)] // AQ.1 added `seg_q_deltas`; the
 // remaining args are all load-bearing per-frame inputs that don't
 // reduce to a meaningful struct yet — revisit when AQ.3 lands.
@@ -6622,14 +6638,14 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // an explicit slot so a completed compact row can transfer ownership to
     // its bounded result before the coordinator merges it.
     let mut inter_emit_scratch = InterEmitScratch::new();
+    let w = width as usize;
+    let h = height as usize;
+    let uvw = w / 2;
+    let uvh = h / 2;
     let denoiser_enabled = denoiser.is_some();
-    let mut coding_source_y = denoiser.as_deref_mut().map(|denoiser| {
-        let mut coding_source =
-            std::mem::take(&mut denoiser.running_avg_y[crate::denoiser::INTRA_FRAME_IDX].y_buffer);
-        coding_source.resize(input_yuv.0.len(), 0);
-        coding_source.copy_from_slice(input_yuv.0);
-        coding_source
-    });
+    let mut coding_source_y = denoiser
+        .as_deref_mut()
+        .map(|denoiser| take_denoiser_coding_source(denoiser, input_yuv.0, w * h));
 
     // W0.4: compute the per-frame `SpeedFeatures` once. The dispatcher
     // is pure — no side effects on `cpi` like libvpx's
@@ -6698,10 +6714,6 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         .a4_descent_independent_mv
         .unwrap_or_else(|| a4_descent_independent_mv_default(rc_mode, speed, deadline));
 
-    let w = width as usize;
-    let h = height as usize;
-    let uvw = w / 2;
-    let uvh = h / 2;
     let low_resolution_ml_partition_enabled = low_resolution_ml_partition_enabled(
         env.rt_lowres_ml_partition,
         speed,
@@ -14305,6 +14317,21 @@ mod tests {
 
         assert!(coding[..16 * 16].iter().any(|&sample| sample != 102));
         assert!(coding[..16 * 16].iter().all(|&sample| sample >= 100));
+    }
+
+    #[test]
+    fn denoiser_coding_source_excludes_reference_padding() {
+        let (width, visible_height, storage_height) = (64usize, 72usize, 128usize);
+        let visible_len = width * visible_height;
+        let mut input = vec![19u8; width * storage_height];
+        input[visible_len..].fill(211);
+        let mut denoiser =
+            crate::denoiser::Denoiser::alloc(1, width as u32, visible_height as u32).unwrap();
+
+        let coding = take_denoiser_coding_source(&mut denoiser, &input, visible_len);
+
+        assert_eq!(coding.len(), visible_len);
+        assert!(coding.iter().all(|&sample| sample == 19));
     }
 
     #[test]
