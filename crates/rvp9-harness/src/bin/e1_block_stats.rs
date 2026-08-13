@@ -245,6 +245,9 @@ struct KeyframeAgreement {
     partial_sb_band_mode_info_mismatches: u64,
     partial_sb_band_recon_mismatches: u64,
     partial_sb_band_recon_luma_sse: u64,
+    /// Area-weighted decoded block-size pairs inside partial superblock bands.
+    /// First index is rvp9, second is libvpx.
+    partial_sb_band_block_size_pairs: [[u64; BLOCK_SIZES]; BLOCK_SIZES],
 }
 
 fn compare_keyframe_cells(rvp9: &Aggregate, libvpx: &Aggregate) -> KeyframeAgreement {
@@ -301,6 +304,10 @@ fn compare_keyframe_cells(rvp9: &Aggregate, libvpx: &Aggregate) -> KeyframeAgree
             agreement.partial_sb_band_cells += u64::from(in_partial_sb_band);
             agreement.partial_sb_band_mode_info_mismatches +=
                 u64::from(in_partial_sb_band && !exact_mode_info);
+            if in_partial_sb_band {
+                agreement.partial_sb_band_block_size_pairs[rvp9_mi.block_size.idx()]
+                    [libvpx_mi.block_size.idx()] += 1;
+            }
             let y_start = cell_row * 8;
             let x_start = cell_col * 8;
             let y_end = (y_start + 8).min(height);
@@ -1443,6 +1450,24 @@ fn emit_report(
                 |(row, col)| format!("mi_row={row}, mi_col={col}")
             )
         );
+        let _ = writeln!(
+            md,
+            "\nPartial-superblock decoded block-size pairs (area-weighted 8x8 cells):\n"
+        );
+        let _ = writeln!(md, "| rvp9 block | libvpx block | cells |\n|---|---|---:|");
+        for (rvp9_block, libvpx_counts) in key.partial_sb_band_block_size_pairs.iter().enumerate() {
+            for (libvpx_block, count) in libvpx_counts.iter().copied().enumerate() {
+                if count == 0 {
+                    continue;
+                }
+                let _ = writeln!(
+                    md,
+                    "| {} | {} | {count} |",
+                    block_label(rvp9_block),
+                    block_label(libvpx_block)
+                );
+            }
+        }
     }
 
     // ---- Keyframe diagnostic ----
@@ -2068,6 +2093,7 @@ mod tests {
         };
         let mut libvpx_frame = rvp9_frame.clone();
         libvpx_frame.mi_grid[1].as_mut().unwrap().block_size = BlockSize::Block16x16;
+        libvpx_frame.mi_grid[64].as_mut().unwrap().block_size = BlockSize::Block16x16;
         libvpx_frame.recon_y[15] = 12;
         libvpx_frame.recon_y[64 * 64] = 13;
 
@@ -2082,9 +2108,9 @@ mod tests {
 
         assert_eq!(agreement.comparable_frames, 1);
         assert_eq!(agreement.comparable_cells, 72);
-        assert_eq!(agreement.same_block_size, 71);
+        assert_eq!(agreement.same_block_size, 70);
         assert_eq!(agreement.same_prediction, 72);
-        assert_eq!(agreement.exact_mode_info, 71);
+        assert_eq!(agreement.exact_mode_info, 70);
         assert_eq!(agreement.comparable_luma_pixels, 4608);
         assert_eq!(agreement.exact_luma_pixels, 4606);
         assert_eq!(agreement.recon_luma_sse, 13);
@@ -2093,9 +2119,19 @@ mod tests {
         assert_eq!(agreement.first_differing_recon_cell, Some((0, 1)));
         assert_eq!(agreement.first_differing_mode_info_cell, Some((0, 1)));
         assert_eq!(agreement.partial_sb_band_cells, 8);
-        assert_eq!(agreement.partial_sb_band_mode_info_mismatches, 0);
+        assert_eq!(agreement.partial_sb_band_mode_info_mismatches, 1);
         assert_eq!(agreement.partial_sb_band_recon_mismatches, 1);
         assert_eq!(agreement.partial_sb_band_recon_luma_sse, 9);
+        assert_eq!(
+            agreement.partial_sb_band_block_size_pairs[BlockSize::Block8x8.idx()]
+                [BlockSize::Block8x8.idx()],
+            7
+        );
+        assert_eq!(
+            agreement.partial_sb_band_block_size_pairs[BlockSize::Block8x8.idx()]
+                [BlockSize::Block16x16.idx()],
+            1
+        );
     }
 
     #[test]
