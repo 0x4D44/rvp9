@@ -6165,3 +6165,50 @@ adapter changes decisions without adding search stages.
 
 **Future plan:** qualify the policies under repeated exact-PGO 1080p30/60
 timing, then retain only if the full CPU6--8 spatial speed matrix passes.
+
+### 2026-08-13 — Seed high-frame-rate CPU6 spatial layer-1 motion search
+
+**Where:**
+`rvp9_encoder::final_short_circuit_low_temp_var_level`; libvpx counterparts:
+`vp9/encoder/vp9_speed_features.c::set_rt_speed_feature_framesize_dependent`
+and `vp9/encoder/vp9_pickmode.c::vp9_pick_inter_mode`.
+
+**What libvpx does:** CPU6 realtime keeps level-1 low-temporal-variance
+short-circuiting in the final non-RD picker. Its native LAST reconstruction and
+motion-search history provide the reference state consumed by that flag.
+
+**What rvp9 does:** the partition proxy retains pinned level 1. Only the final
+picker disables the shortcut for the first sixteen post-key access units on
+the first spatial enhancement component when all of these hold: CBR, CPU6,
+50 fps or faster, and more than 1280x720 pixels. Later frames, 30 fps, CPU7/8,
+720p, other components, and non-CBR paths retain their prior policy.
+
+**Why:** a natural-CBR block oracle found 9,959 libvpx LAST/NEWMV cells absent
+only because rvp9's derived low-variance flag rejected the search. Rvp9's
+reconstructed LAST state is not source-identical, so applying the same shortcut
+before that state is seeded leaves the required 1080p60 CPU6/S2 In To Tree top
+curve at `+4.0400%`. Eight post-key frames still gave `+3.5746%`; sixteen gave
+`-0.8125%`. Disabling it for the whole GOP was faster to diagnose but missed
+the speed gate, at a `1.0943x` two-clip geomean.
+
+**Byte-parity impact:** intentional only in the scope above. A 30 fps control
+is byte-identical to the accepted baseline. All 84 affected S2/S3 curve streams
+decode successfully through rvp9-decoder, pinned vpxdec, and FFmpeg (252
+decoder runs, zero failures).
+
+**Compression-efficiency impact:** S2 base/top BD-rate is
+`-8.6587%/-0.8125%` on In To Tree and `-9.2544%/-7.7165%` on Old Town Cross.
+S3 SL0/SL1/SL2 is `-12.8649%/-13.4203%/-0.3551%` and
+`-13.7422%/-14.6236%/-4.7682%`, respectively.
+
+**Speed impact:** using the spatial-trained PGO profile, seven-pair alternating
+S2 ratios are `1.000052x` and `0.989494x` (`0.994759x` geomean); S3 ratios are
+`0.877792x` and `0.824487x` (`0.850722x` geomean). Each encoder produced one
+stable hash per clip. Exact quiet-host p99 remains part of final acceptance;
+the current two-core-contended diagnostic was green for both S2 rows and
+borderline for Old Town S3 at `25.02 ms`, where the maximum sample is the
+unchanged keyframe and the candidate stream matches the prior baseline hash.
+
+**Future plan:** keep the sixteen-frame bound as a measured compatibility
+adapter until rvp9's spatial LAST lifecycle and search history match libvpx.
+Remove it only after the same S2/S3 curves and paired timing remain green.

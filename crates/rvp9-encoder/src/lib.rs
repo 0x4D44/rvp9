@@ -5520,6 +5520,31 @@ fn spatial_block16_coef_rd_component(
     spatial_first_enhancement_component || spatial_key_enhancement_component
 }
 
+fn final_short_circuit_low_temp_var_level(
+    exact_vbp_tree_enabled: bool,
+    rc_mode: crate::rate_control::RcMode,
+    speed: i32,
+    frame_pixels: usize,
+    spatial_first_enhancement_component: bool,
+    spatial_high_frame_rate: bool,
+    frames_since_key: u32,
+) -> u8 {
+    let cpu6_high_resolution_spatial_layer_one = spatial_first_enhancement_component
+        && spatial_high_frame_rate
+        && speed.unsigned_abs() == 6
+        && frame_pixels > 1280 * 720
+        && frames_since_key <= 16;
+    u8::from(
+        exact_vbp_tree_enabled
+            && matches!(rc_mode, crate::rate_control::RcMode::Cbr)
+            // The partition proxy retains pinned level 1. During the first
+            // sixteen post-key access units, rvp9's reconstructed LAST state
+            // makes the final high-resolution layer-1 picker's derived 64x64
+            // low-variance flag over-prune NEWMV.
+            && !cpu6_high_resolution_spatial_layer_one,
+    )
+}
+
 fn block16_coef_rd_enabled(
     exact_vbp_tree_enabled: bool,
     rc_mode: crate::rate_control::RcMode,
@@ -6601,6 +6626,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // The first enhancement component (spatial layer 1). Pinned CPU7/8 keeps
     // real block-YRD on this layer while using the simple model above it.
     spatial_first_enhancement_component: bool,
+    // High-frame-rate spatial inputs need the measured CPU6 layer-1 NEWMV
+    // search correction. Lower-rate streams retain pinned level 1.
+    spatial_high_frame_rate: bool,
     // Temporal topology scopes the CPU6 TX4 emit selector. Three-layer SVC
     // keeps the measured TX8/TX16 subset; single-layer and T2 keep TX4.
     temporal_layers: u32,
@@ -9919,8 +9947,14 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             leaf_mi_col,
                             leaf_bsize,
                         ),
-                    short_circuit_low_temp_var: u8::from(
-                        exact_vbp_tree_enabled && rc_mode == crate::rate_control::RcMode::Cbr,
+                    short_circuit_low_temp_var: final_short_circuit_low_temp_var_level(
+                        exact_vbp_tree_enabled,
+                        rc_mode,
+                        speed,
+                        w.saturating_mul(h),
+                        spatial_first_enhancement_component,
+                        spatial_high_frame_rate,
+                        frames_since_key,
                     ),
                     // PHASE-3 integration: per-SB content_state from
                     // W2.2 avg_source_sad pass. Look up by SB grid.
@@ -16764,6 +16798,106 @@ mod tests {
         assert!(spatial_block16_coef_rd_component(true, false));
         assert!(spatial_block16_coef_rd_component(true, true));
         assert!(spatial_block16_coef_rd_component(false, true));
+    }
+
+    #[test]
+    fn cpu6_high_resolution_spatial_layer_one_seeds_newmv_after_key() {
+        assert_eq!(
+            final_short_circuit_low_temp_var_level(
+                true,
+                crate::rate_control::RcMode::Cbr,
+                6,
+                1920 * 1080,
+                true,
+                true,
+                16,
+            ),
+            0
+        );
+        assert_eq!(
+            final_short_circuit_low_temp_var_level(
+                true,
+                crate::rate_control::RcMode::Cbr,
+                6,
+                1920 * 1080,
+                true,
+                false,
+                16,
+            ),
+            1
+        );
+        assert_eq!(
+            final_short_circuit_low_temp_var_level(
+                true,
+                crate::rate_control::RcMode::Cbr,
+                7,
+                1920 * 1080,
+                true,
+                true,
+                16,
+            ),
+            1
+        );
+        assert_eq!(
+            final_short_circuit_low_temp_var_level(
+                true,
+                crate::rate_control::RcMode::Vbr,
+                6,
+                1920 * 1080,
+                true,
+                true,
+                16,
+            ),
+            0
+        );
+        assert_eq!(
+            final_short_circuit_low_temp_var_level(
+                true,
+                crate::rate_control::RcMode::Cbr,
+                6,
+                1920 * 1080,
+                true,
+                true,
+                17,
+            ),
+            1
+        );
+        assert_eq!(
+            final_short_circuit_low_temp_var_level(
+                true,
+                crate::rate_control::RcMode::Cbr,
+                6,
+                1280 * 720,
+                true,
+                true,
+                16,
+            ),
+            1
+        );
+        assert_eq!(
+            final_short_circuit_low_temp_var_level(
+                true,
+                crate::rate_control::RcMode::Cbr,
+                6,
+                1920 * 1080,
+                false,
+                true,
+                16,
+            ),
+            1
+        );
+        assert_eq!(
+            final_short_circuit_low_temp_var_level(
+                false,
+                crate::rate_control::RcMode::Cbr,
+                6,
+                1920 * 1080,
+                true,
+                true,
+                16,
+            ),
+            0
+        );
     }
 
     #[test]
