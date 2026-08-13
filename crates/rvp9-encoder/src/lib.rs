@@ -1911,14 +1911,24 @@ fn spatial_cbr_partition_qindex_bias(
 }
 
 #[inline]
+/// Match CPU8's ordinary-resolution variance-partition predictor.
+///
+/// The pinned realtime path uses zero-motion LAST for both the variance tree
+/// and the later predictor-SAD contest unless the block is low-resolution or
+/// has very high source SAD. Temporal VBR enables the source-aligned policy as
+/// a whole; spatial CBR needs the same motion rule without changing its
+/// separately measured partition-Q calibration.
 fn use_zero_mv_partition_predictor(
     source_aligned_cpu8_svc_partitions: bool,
+    spatial_component: bool,
+    rc_mode: crate::rate_control::RcMode,
     speed: i32,
     frame_width: usize,
     frame_height: usize,
     content_state: rvp9_core::mode_decision::inter::ContentStateSb,
 ) -> bool {
-    source_aligned_cpu8_svc_partitions
+    (source_aligned_cpu8_svc_partitions
+        || (spatial_component && rc_mode == crate::rate_control::RcMode::Cbr))
         && speed >= 8
         && !(frame_width <= 352 && frame_height <= 288)
         && content_state != rvp9_core::mode_decision::inter::ContentStateSb::VeryHighSad
@@ -7527,6 +7537,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     .unwrap_or(rvp9_core::mode_decision::inter::ContentStateSb::Normal);
                 let use_zero_mv_partition = use_zero_mv_partition_predictor(
                     source_aligned_cpu8_svc_partitions,
+                    spatial_component,
+                    rc_mode,
                     speed,
                     w,
                     h,
@@ -19274,18 +19286,32 @@ mod tests {
     }
 
     #[test]
-    fn cpu8_three_layer_vbr_zero_mv_policy_skips_int_pro_outside_exceptions() {
+    fn cpu8_svc_zero_mv_policy_skips_int_pro_outside_exceptions() {
+        use crate::rate_control::RcMode;
         use rvp9_core::mode_decision::inter::ContentStateSb;
 
         assert!(use_zero_mv_partition_predictor(
             true,
+            false,
+            RcMode::Vbr,
             8,
             1280,
             720,
             ContentStateSb::Normal,
         ));
+        assert!(use_zero_mv_partition_predictor(
+            false,
+            true,
+            RcMode::Cbr,
+            8,
+            960,
+            540,
+            ContentStateSb::Normal,
+        ));
         assert!(!use_zero_mv_partition_predictor(
             false,
+            false,
+            RcMode::Cbr,
             8,
             1280,
             720,
@@ -19293,6 +19319,8 @@ mod tests {
         ));
         assert!(!use_zero_mv_partition_predictor(
             true,
+            false,
+            RcMode::Vbr,
             7,
             1280,
             720,
@@ -19300,6 +19328,8 @@ mod tests {
         ));
         assert!(!use_zero_mv_partition_predictor(
             true,
+            false,
+            RcMode::Vbr,
             8,
             352,
             288,
@@ -19307,6 +19337,8 @@ mod tests {
         ));
         assert!(!use_zero_mv_partition_predictor(
             true,
+            false,
+            RcMode::Vbr,
             8,
             1280,
             720,
