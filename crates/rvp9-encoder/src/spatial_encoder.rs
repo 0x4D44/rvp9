@@ -198,7 +198,7 @@ impl SpatialEncoder {
             layer_config.height = layer.height;
             layer_config.target_bitrate_bps = layer.target_bitrate_bps;
             encoders.push(
-                StreamEncoder::new_with_parallelism(layer_config, parallelism)
+                StreamEncoder::new_spatial_with_parallelism(layer_config, parallelism)
                     .map_err(SpatialEncodeError::Encoder)?,
             );
         }
@@ -583,6 +583,33 @@ mod tests {
             .map(|index| ((index * 7 + 101) & 0xff) as u8)
             .collect();
         (y, u, v)
+    }
+
+    #[test]
+    fn spatial_cbr_layers_use_pinned_realtime_buffer_geometry() {
+        let mut template = EncoderConfig::new(1280, 720);
+        template.target_bitrate_bps = 2_100_000;
+        let encoder = SpatialEncoder::new(
+            template,
+            SpatialSvcConfig {
+                number_spatial_layers: 3,
+                inter_layer_pred: InterLayerPred::On,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            encoder
+                .encoders
+                .iter()
+                .map(StreamEncoder::rate_control_buffer_levels_for_test)
+                .collect::<Vec<_>>(),
+            [
+                (100_000, 50_000, 60_000),
+                (400_000, 200_000, 240_000),
+                (1_600_000, 800_000, 960_000),
+            ]
+        );
     }
 
     fn decoded_i420(frame: &rvp9_core::frame::FrameBuf) -> (Vec<u8>, Vec<u8>, Vec<u8>) {

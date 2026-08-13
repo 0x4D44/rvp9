@@ -296,6 +296,12 @@ const VBR_BUFFER_SIZE_MS: u32 = 240_000;
 const VBR_STARTING_BUFFER_MS: u32 = 60_000;
 const VBR_OPTIMAL_BUFFER_MS: u32 = 60_000;
 
+// The pinned spatial-SVC example overrides the normal vpxenc CBR geometry
+// in `examples/svc_encodeframe.c:499-501`.
+const SPATIAL_CBR_BUFFER_SIZE_MS: u32 = 1_000;
+const SPATIAL_CBR_STARTING_BUFFER_MS: u32 = 500;
+const SPATIAL_CBR_OPTIMAL_BUFFER_MS: u32 = 600;
+
 fn default_bits_per_mb_multiplier(rc_mode: RcMode, base_default: f64) -> f64 {
     match rc_mode {
         RcMode::Vbr => VBR_BITS_PER_MB_MULTIPLIER_DEFAULT,
@@ -1924,6 +1930,26 @@ impl StreamEncoder {
         config: EncoderConfig,
         parallelism: EncoderParallelism,
     ) -> Result<Self, EncodeError> {
+        Self::new_with_parallelism_and_buffer_geometry(config, parallelism, None)
+    }
+
+    pub(crate) fn new_spatial_with_parallelism(
+        config: EncoderConfig,
+        parallelism: EncoderParallelism,
+    ) -> Result<Self, EncodeError> {
+        let buffer_geometry = matches!(config.rc_mode, RcMode::Cbr).then_some((
+            SPATIAL_CBR_BUFFER_SIZE_MS,
+            SPATIAL_CBR_STARTING_BUFFER_MS,
+            SPATIAL_CBR_OPTIMAL_BUFFER_MS,
+        ));
+        Self::new_with_parallelism_and_buffer_geometry(config, parallelism, buffer_geometry)
+    }
+
+    fn new_with_parallelism_and_buffer_geometry(
+        config: EncoderConfig,
+        parallelism: EncoderParallelism,
+        buffer_geometry: Option<(u32, u32, u32)>,
+    ) -> Result<Self, EncodeError> {
         if parallelism.max_threads == 0 || parallelism.max_threads > 64 {
             return Err(EncodeError::InvalidConfig("max_threads must be in 1..=64"));
         }
@@ -1976,7 +2002,12 @@ impl StreamEncoder {
             return Err(EncodeError::InvalidConfig("target_bitrate_bps must be > 0"));
         }
 
-        let rc_config = config.to_rate_control_config();
+        let mut rc_config = config.to_rate_control_config();
+        if let Some((buffer_size_ms, starting_buffer_ms, optimal_buffer_ms)) = buffer_geometry {
+            rc_config.buffer_size_ms = buffer_size_ms;
+            rc_config.starting_buffer_ms = starting_buffer_ms;
+            rc_config.optimal_buffer_ms = optimal_buffer_ms;
+        }
         rc_config.validate().map_err(EncodeError::InvalidConfig)?;
         let vbr_gf_rc_is_enabled = vbr_gf_rc_enabled(config.rc_mode);
         let golden_refresh_period = if vbr_gf_rc_is_enabled {
@@ -2195,6 +2226,15 @@ impl StreamEncoder {
     #[must_use]
     pub fn config(&self) -> &EncoderConfig {
         &self.config
+    }
+
+    #[cfg(test)]
+    pub(crate) fn rate_control_buffer_levels_for_test(&self) -> (i64, i64, i64) {
+        (
+            self.rate_control.maximum_buffer_size,
+            self.rate_control.starting_buffer_level,
+            self.rate_control.optimal_buffer_level,
+        )
     }
 
     /// Read-only view of this stream's worker and tile configuration.
