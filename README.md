@@ -10,6 +10,10 @@ livestreaming.
 > the remaining work and [`notes/divergence-ledger.md`](./notes/divergence-ledger.md)
 > for deliberate departures from libvpx.
 
+> **Platform coverage:** Testing and release qualification to date have been
+> performed only on macOS on Apple Silicon (AArch64). RVP9 has not yet been
+> tested or qualified on x86, including x86_64, or on other platforms.
+
 ## Alpha scope
 
 The alpha encoder supports one-pass real-time VP9 at CPU-used 6, 7, and 8,
