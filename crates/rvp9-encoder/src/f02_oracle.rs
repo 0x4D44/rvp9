@@ -298,9 +298,16 @@ fn candidate_probes_tag(probes: &[CandidateProbe; 4]) -> String {
                     row: i16::MIN,
                     col: i16::MIN,
                 },
+                ref_mv: rvp9_core::mode_info::Mv {
+                    row: i16::MIN,
+                    col: i16::MIN,
+                },
+                error_per_bit: i32::MIN,
+                source_hash: 0,
+                reference_hash: 0,
             });
             format!(
-                "{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}",
+                "{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}",
                 u8::from(p.available),
                 p.mv_row,
                 p.mv_col,
@@ -319,6 +326,11 @@ fn candidate_probes_tag(probes: &[CandidateProbe; 4]) -> String {
                 trace.fullpel_mv.col,
                 trace.final_mv.row,
                 trace.final_mv.col,
+                trace.ref_mv.row,
+                trace.ref_mv.col,
+                trace.error_per_bit,
+                trace.source_hash,
+                trace.reference_hash,
             )
         })
         .collect::<Vec<_>>()

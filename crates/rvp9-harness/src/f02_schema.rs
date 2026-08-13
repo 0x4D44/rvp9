@@ -747,6 +747,21 @@ pub struct MatchingNewMvSearchStages {
     pub same_start_fullpel_diverged: usize,
     /// Same integer-pel result, but different fractional result.
     pub same_fullpel_final_diverged: usize,
+    /// Records with the same integer-pel result on both legs.
+    pub same_fullpel_records: usize,
+    /// Same-fullpel records with the same reference MV.
+    pub same_fullpel_ref_mv_matches: usize,
+    /// Same-fullpel records with the same fractional MV-cost multiplier.
+    pub same_fullpel_error_per_bit_matches: usize,
+    /// Same-fullpel records with the same visible source pixels.
+    pub same_fullpel_source_hash_matches: usize,
+    /// Same-fullpel records with the same fractional-search reference pixels.
+    pub same_fullpel_reference_hash_matches: usize,
+    /// Same-fullpel records where both pixel hashes, reference MV, and MV-cost
+    /// multiplier all match and both hashes are live.
+    pub exact_input_records: usize,
+    /// Exact-input records that produce the same final fractional MV.
+    pub exact_input_final_matches: usize,
 }
 
 /// Compare fresh LAST/NEWMV search stages on exact matching leaves.
@@ -788,6 +803,25 @@ pub fn compare_matching_newmv_search_stages(
         stages.final_matches += usize::from(same_final);
         stages.same_start_fullpel_diverged += usize::from(same_start && !same_fullpel);
         stages.same_fullpel_final_diverged += usize::from(same_fullpel && !same_final);
+        if same_fullpel {
+            stages.same_fullpel_records += 1;
+            let same_ref_mv = rvp9_search.ref_mv == libvpx_search.ref_mv;
+            let same_error_per_bit = rvp9_search.error_per_bit == libvpx_search.error_per_bit;
+            let same_source = rvp9_search.source_hash == libvpx_search.source_hash;
+            let same_reference = rvp9_search.reference_hash == libvpx_search.reference_hash;
+            stages.same_fullpel_ref_mv_matches += usize::from(same_ref_mv);
+            stages.same_fullpel_error_per_bit_matches += usize::from(same_error_per_bit);
+            stages.same_fullpel_source_hash_matches += usize::from(same_source);
+            stages.same_fullpel_reference_hash_matches += usize::from(same_reference);
+            let hashes_live = rvp9_search.source_hash != 0
+                && libvpx_search.source_hash != 0
+                && rvp9_search.reference_hash != 0
+                && libvpx_search.reference_hash != 0;
+            let exact_inputs =
+                hashes_live && same_ref_mv && same_error_per_bit && same_source && same_reference;
+            stages.exact_input_records += usize::from(exact_inputs);
+            stages.exact_input_final_matches += usize::from(exact_inputs && same_final);
+        }
     }
     stages
 }
@@ -988,7 +1022,7 @@ fn parse_candidate_probes(v: &str) -> Result<[CandidateProbe; 4], ParseError> {
     let mut probes = Vec::with_capacity(4);
     for encoded in raw.split('|') {
         let fields = encoded.split(':').collect::<Vec<_>>();
-        if !matches!(fields.len(), 11 | 12 | 18) {
+        if !matches!(fields.len(), 11 | 12 | 18 | 23) {
             return Err(ParseError::BadValue {
                 field: "last_candidates",
                 raw,
@@ -1013,7 +1047,7 @@ fn parse_candidate_probes(v: &str) -> Result<[CandidateProbe; 4], ParseError> {
                     raw: raw.clone(),
                 })
             })?;
-        let newmv_search = if fields.len() == 18 {
+        let newmv_search = if matches!(fields.len(), 18 | 23) {
             let values = fields[12..18]
                 .iter()
                 .map(|field| parse_num::<i16>(field, "last_candidates"))
@@ -1026,6 +1060,14 @@ fn parse_candidate_probes(v: &str) -> Result<[CandidateProbe; 4], ParseError> {
                     raw,
                 });
             } else {
+                let ref_mv = if fields.len() == 23 {
+                    Mv {
+                        row: parse_num(fields[18], "last_candidates")?,
+                        col: parse_num(fields[19], "last_candidates")?,
+                    }
+                } else {
+                    Mv::ZERO
+                };
                 Some(NewMvSearchTrace {
                     start_mv: Mv {
                         row: values[0],
@@ -1038,6 +1080,22 @@ fn parse_candidate_probes(v: &str) -> Result<[CandidateProbe; 4], ParseError> {
                     final_mv: Mv {
                         row: values[4],
                         col: values[5],
+                    },
+                    ref_mv,
+                    error_per_bit: if fields.len() == 23 {
+                        parse_num(fields[20], "last_candidates")?
+                    } else {
+                        0
+                    },
+                    source_hash: if fields.len() == 23 {
+                        parse_num(fields[21], "last_candidates")?
+                    } else {
+                        0
+                    },
+                    reference_hash: if fields.len() == 23 {
+                        parse_num(fields[22], "last_candidates")?
+                    } else {
+                        0
                     },
                 })
             }
@@ -1198,6 +1256,10 @@ mod tests {
                         start_mv: Mv { row: 8, col: -8 },
                         fullpel_mv: Mv { row: 16, col: -8 },
                         final_mv: Mv { row: 24, col: -8 },
+                        ref_mv: Mv { row: -8, col: 16 },
+                        error_per_bit: 321,
+                        source_hash: 123,
+                        reference_hash: 456,
                     }),
                 },
                 CandidateProbe::default(),
@@ -1539,12 +1601,20 @@ mod tests {
             start_mv: Mv { row: 8, col: 0 },
             fullpel_mv: Mv { row: 16, col: 0 },
             final_mv: Mv { row: 18, col: 0 },
+            ref_mv: Mv::ZERO,
+            error_per_bit: 100,
+            source_hash: 1,
+            reference_hash: 2,
         });
         let mut rvp9 = libvpx;
         rvp9.last_candidates[3].newmv_search = Some(NewMvSearchTrace {
             start_mv: Mv { row: 8, col: 0 },
             fullpel_mv: Mv { row: 24, col: 0 },
             final_mv: Mv { row: 26, col: 0 },
+            ref_mv: Mv::ZERO,
+            error_per_bit: 100,
+            source_hash: 1,
+            reference_hash: 2,
         });
 
         let stages = compare_matching_newmv_search_stages(&[rvp9], &[libvpx]);
@@ -1555,6 +1625,36 @@ mod tests {
         assert_eq!(stages.final_matches, 0);
         assert_eq!(stages.same_start_fullpel_diverged, 1);
         assert_eq!(stages.same_fullpel_final_diverged, 0);
+    }
+
+    #[test]
+    fn newmv_search_stage_comparison_requires_every_exact_input() {
+        let mut libvpx = sample_inter();
+        libvpx.last_candidates[3].newmv_search = Some(NewMvSearchTrace {
+            start_mv: Mv::ZERO,
+            fullpel_mv: Mv { row: 16, col: -8 },
+            final_mv: Mv { row: 18, col: -8 },
+            ref_mv: Mv { row: 8, col: 0 },
+            error_per_bit: 321,
+            source_hash: 123,
+            reference_hash: 456,
+        });
+        let mut rvp9 = libvpx;
+        rvp9.last_candidates[3].newmv_search = Some(NewMvSearchTrace {
+            final_mv: Mv { row: 16, col: -6 },
+            source_hash: 123,
+            ..libvpx.last_candidates[3].newmv_search.unwrap()
+        });
+
+        let stages = compare_matching_newmv_search_stages(&[rvp9], &[libvpx]);
+
+        assert_eq!(stages.same_fullpel_records, 1);
+        assert_eq!(stages.same_fullpel_ref_mv_matches, 1);
+        assert_eq!(stages.same_fullpel_error_per_bit_matches, 1);
+        assert_eq!(stages.same_fullpel_source_hash_matches, 1);
+        assert_eq!(stages.same_fullpel_reference_hash_matches, 1);
+        assert_eq!(stages.exact_input_records, 1);
+        assert_eq!(stages.exact_input_final_matches, 0);
     }
 
     #[test]

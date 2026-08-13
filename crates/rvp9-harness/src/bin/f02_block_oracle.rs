@@ -683,7 +683,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         if let Some(stages) = matching_newmv_search_stages {
             println!(
-                "  matching NEWMV search stages: {} exact leaves; start {}/{}, fullpel {}/{}, final {}/{}; same-start/fullpel-diverged {}, same-fullpel/final-diverged {}",
+                "  matching NEWMV search stages: {} exact leaves; start {}/{}, fullpel {}/{}, final {}/{}; same-start/fullpel-diverged {}, same-fullpel/final-diverged {}; same-fullpel inputs ref-mv {}/{}, error-per-bit {}/{}, source {}/{}, reference {}/{}; exact-input final {}/{}",
                 stages.records,
                 stages.start_matches,
                 stages.records,
@@ -693,6 +693,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 stages.records,
                 stages.same_start_fullpel_diverged,
                 stages.same_fullpel_final_diverged,
+                stages.same_fullpel_ref_mv_matches,
+                stages.same_fullpel_records,
+                stages.same_fullpel_error_per_bit_matches,
+                stages.same_fullpel_records,
+                stages.same_fullpel_source_hash_matches,
+                stages.same_fullpel_records,
+                stages.same_fullpel_reference_hash_matches,
+                stages.same_fullpel_records,
+                stages.exact_input_final_matches,
+                stages.exact_input_records,
             );
         }
 
@@ -944,6 +954,37 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 sf,
                 "Same-start/full-pel-diverged: {}; same-full-pel/final-diverged: {}.",
                 stages.same_start_fullpel_diverged, stages.same_fullpel_final_diverged
+            )?;
+            writeln!(sf)?;
+            writeln!(
+                sf,
+                "| equal-fullpel input | matching leaves | equal-fullpel leaves |"
+            )?;
+            writeln!(sf, "|---|---:|---:|")?;
+            writeln!(
+                sf,
+                "| reference MV | {} | {} |",
+                stages.same_fullpel_ref_mv_matches, stages.same_fullpel_records
+            )?;
+            writeln!(
+                sf,
+                "| error-per-bit | {} | {} |",
+                stages.same_fullpel_error_per_bit_matches, stages.same_fullpel_records
+            )?;
+            writeln!(
+                sf,
+                "| source-pixel hash | {} | {} |",
+                stages.same_fullpel_source_hash_matches, stages.same_fullpel_records
+            )?;
+            writeln!(
+                sf,
+                "| reference-footprint hash | {} | {} |",
+                stages.same_fullpel_reference_hash_matches, stages.same_fullpel_records
+            )?;
+            writeln!(
+                sf,
+                "| final MV on exact complete inputs | {} | {} |",
+                stages.exact_input_final_matches, stages.exact_input_records
             )?;
         }
         writeln!(

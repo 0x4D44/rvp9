@@ -1773,6 +1773,15 @@ pub struct NewMvSearchTrace {
     pub fullpel_mv: Mv,
     /// Final result after any allowed fractional refinement.
     pub final_mv: Mv,
+    /// MV used to price the fresh candidate, in 1/8-pel units.
+    pub ref_mv: Mv,
+    /// Variance-domain MV-cost multiplier used by fractional refinement.
+    pub error_per_bit: i32,
+    /// FNV-1a hash of the visible luma source block.
+    pub source_hash: u64,
+    /// FNV-1a hash of the edge-extended luma reference footprint needed by
+    /// half- and quarter-pel refinement around `fullpel_mv`.
+    pub reference_hash: u64,
 }
 
 impl NewMvGateReason {
@@ -3593,6 +3602,53 @@ struct NewMvSubpelGate {
 }
 
 #[inline]
+fn f02_hash_byte(mut hash: u64, value: u8) -> u64 {
+    const FNV_PRIME: u64 = 1_099_511_628_211;
+    hash ^= u64::from(value);
+    hash.wrapping_mul(FNV_PRIME)
+}
+
+fn f02_newmv_input_hashes(params: &InterModeSearchParams<'_>, fullpel_mv: Mv) -> (u64, u64) {
+    if !candidate_trace::is_enabled() {
+        return (0, 0);
+    }
+
+    const FNV_OFFSET: u64 = 14_695_981_039_346_656_037;
+    let width = usize::from(params.block_size.width());
+    let height = usize::from(params.block_size.height());
+    let (src_col, src_row) = params.src_offset;
+    let mut source_hash = FNV_OFFSET;
+    for row in src_row..src_row + height {
+        let start = row * params.src_plane.stride + src_col;
+        for &value in &params.src_plane.data[start..start + width] {
+            source_hash = f02_hash_byte(source_hash, value);
+        }
+    }
+
+    // Quarter-pel search can move six eighth-pel units from the integer
+    // center. With the bilinear right/bottom tap, [-1, extent] is therefore
+    // the complete reference footprint around that center.
+    let center_col = src_col as isize + isize::from(fullpel_mv.col >> 3);
+    let center_row = src_row as isize + isize::from(fullpel_mv.row >> 3);
+    let mut reference_hash = FNV_OFFSET;
+    for row_offset in -1..=height as isize {
+        let row = (center_row + row_offset)
+            .clamp(0, params.ref_plane.height.saturating_sub(1) as isize)
+            as usize;
+        for col_offset in -1..=width as isize {
+            let col = (center_col + col_offset)
+                .clamp(0, params.ref_plane.width.saturating_sub(1) as isize)
+                as usize;
+            reference_hash = f02_hash_byte(
+                reference_hash,
+                params.ref_plane.data[row * params.ref_plane.stride + col],
+            );
+        }
+    }
+    (source_hash, reference_hash)
+}
+
+#[inline]
 fn use_svc_pruned_evenmore_subpel(
     svc_non_reference_frame: bool,
     full_pixel_search_method: FullPixelSearchMethod,
@@ -3744,6 +3800,17 @@ fn run_newmv_search(
         row: (search_start.row >> 3).saturating_mul(8),
         col: (search_start.col >> 3).saturating_mul(8),
     };
+    let subpel_error_per_bit = error_per_bit(params.q_index, params.frame_kind);
+    let (source_hash, reference_hash) = f02_newmv_input_hashes(params, fullpel_mv);
+    let make_trace = |final_mv| NewMvSearchTrace {
+        start_mv: search_start_mv,
+        fullpel_mv,
+        final_mv,
+        ref_mv: params.mv_candidates.nearest,
+        error_per_bit: subpel_error_per_bit,
+        source_hash,
+        reference_hash,
+    };
     // Pinned libvpx rejects a fresh full-pel NEWMV result before fractional
     // refinement when its syntax cost alone already loses to the incumbent
     // (`vp9_pickmode.c:218-253`). Keep its strict `>` and 108/128 MV-rate
@@ -3754,11 +3821,7 @@ fn run_newmv_search(
         return NewMvSearchResult {
             best_mv: fullpel_mv,
             subpel_gate_rejected: true,
-            trace: NewMvSearchTrace {
-                start_mv: search_start_mv,
-                fullpel_mv,
-                final_mv: fullpel_mv,
-            },
+            trace: make_trace(fullpel_mv),
         };
     }
 
@@ -3819,11 +3882,7 @@ fn run_newmv_search(
         return NewMvSearchResult {
             best_mv: fullpel_mv,
             subpel_gate_rejected,
-            trace: NewMvSearchTrace {
-                start_mv: search_start_mv,
-                fullpel_mv,
-                final_mv: fullpel_mv,
-            },
+            trace: make_trace(fullpel_mv),
         };
     }
 
@@ -3842,7 +3901,7 @@ fn run_newmv_search(
         center_mv: center_mv_fp,
         ref_mv: params.mv_candidates.nearest,
         mv_limits: params.mv_limits,
-        error_per_bit: error_per_bit(params.q_index, params.frame_kind),
+        error_per_bit: subpel_error_per_bit,
         mv_costs: params.mv_costs,
         allow_hp: params.allow_hp,
         forced_stop,
@@ -3863,11 +3922,7 @@ fn run_newmv_search(
     NewMvSearchResult {
         best_mv: sub.best_mv,
         subpel_gate_rejected,
-        trace: NewMvSearchTrace {
-            start_mv: search_start_mv,
-            fullpel_mv,
-            final_mv: sub.best_mv,
-        },
+        trace: make_trace(sub.best_mv),
     }
 }
 
@@ -6342,6 +6397,10 @@ mod tests {
                     start_mv: Mv::ZERO,
                     fullpel_mv: Mv::ZERO,
                     final_mv: Mv::ZERO,
+                    ref_mv: Mv::ZERO,
+                    error_per_bit: error_per_bit(80, params.frame_kind),
+                    source_hash: 0,
+                    reference_hash: 0,
                 },
             },
         );
