@@ -39,7 +39,7 @@
 //! Add `--spatial-layers 2|3 --inter-layer-pred 0|3 --cbr --fixed-q Q`
 //! and point `--vpxenc` at the patched `vp9_spatial_svc_encoder` to drive
 //! real spatial state. The harness validates every component, then compares
-//! only the base spatial layer at its coded geometry.
+//! `--analysis-spatial-id` (the base layer by default) at its coded geometry.
 
 use rvp9_core::bitstream::ChromaFormat;
 use rvp9_core::mode_decision::inter::NewMvGateReason;
@@ -223,19 +223,26 @@ fn spatial_layer_bitrates(target_kbps: u32, spatial_layers: u8) -> Result<String
         .join(","))
 }
 
-fn spatial_base_geometry(
+fn spatial_layer_geometry(
     width: u32,
     height: u32,
     spatial_layers: u8,
+    spatial_id: u8,
 ) -> Result<(u32, u32), String> {
-    let divisor = match spatial_layers {
-        2 => 2,
-        3 => 4,
-        other => return Err(format!("--spatial-layers must be 2 or 3, got {other}")),
-    };
+    if !matches!(spatial_layers, 1..=3) {
+        return Err(format!(
+            "--spatial-layers must be 1, 2, or 3, got {spatial_layers}"
+        ));
+    }
+    if spatial_id >= spatial_layers {
+        return Err(format!(
+            "--analysis-spatial-id must be below --spatial-layers ({spatial_layers}), got {spatial_id}"
+        ));
+    }
+    let divisor = 1u32 << (spatial_layers - spatial_id - 1);
     if !width.is_multiple_of(divisor) || !height.is_multiple_of(divisor) {
         return Err(format!(
-            "{width}x{height} is not divisible by the {divisor}x spatial pyramid"
+            "{width}x{height} is not divisible by spatial layer {spatial_id}'s {divisor}x scale"
         ));
     }
     Ok((width / divisor, height / divisor))
@@ -305,6 +312,7 @@ fn ratio(numerator: u64, denominator: u64) -> f64 {
 fn spatial_analysis_records(
     records: &[BlockDecision],
     spatial_layers: u8,
+    analysis_spatial_id: u8,
     frames: u32,
     fixed_q: Option<u8>,
     label: &str,
@@ -353,7 +361,7 @@ fn spatial_analysis_records(
     Ok(records
         .iter()
         .copied()
-        .filter(|record| record.spatial_id == 0)
+        .filter(|record| record.spatial_id == analysis_spatial_id)
         .collect())
 }
 
@@ -418,6 +426,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if !(1..=3).contains(&spatial_layers) {
         return Err(format!("--spatial-layers must be 1, 2, or 3, got {spatial_layers}").into());
     }
+    let analysis_spatial_id: u8 = arg(&argv, "--analysis-spatial-id")
+        .map(|value| {
+            value
+                .parse::<u8>()
+                .map_err(|_| format!("--analysis-spatial-id must be an integer, got {value:?}"))
+        })
+        .transpose()?
+        .unwrap_or(0);
+    spatial_layer_geometry(width, height, spatial_layers, analysis_spatial_id)?;
     let inter_layer_pred: u8 = arg(&argv, "--inter-layer-pred")
         .map(|value| {
             value
@@ -518,6 +535,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  spatial   : {spatial_layers} layer(s)");
     if spatial_layers > 1 {
         println!("  inter pred: {inter_layer_pred}");
+        println!("  analysis  : spatial layer {analysis_spatial_id}");
     }
     println!(
         "  fixed Q   : {}",
@@ -614,15 +632,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        let rvp9_analysis_records =
-            spatial_analysis_records(&rvp9_records, spatial_layers, frames, fixed_q, "rvp9")?;
+        let rvp9_analysis_records = spatial_analysis_records(
+            &rvp9_records,
+            spatial_layers,
+            analysis_spatial_id,
+            frames,
+            fixed_q,
+            "rvp9",
+        )?;
         let libvpx_analysis_records = if no_libvpx {
             Vec::new()
         } else {
-            spatial_analysis_records(&libvpx_records, spatial_layers, frames, fixed_q, "libvpx")?
+            spatial_analysis_records(
+                &libvpx_records,
+                spatial_layers,
+                analysis_spatial_id,
+                frames,
+                fixed_q,
+                "libvpx",
+            )?
         };
         let (analysis_width, analysis_height) = if spatial_layers > 1 {
-            spatial_base_geometry(width, height, spatial_layers)?
+            spatial_layer_geometry(width, height, spatial_layers, analysis_spatial_id)?
         } else {
             (width, height)
         };
@@ -783,7 +814,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if spatial_layers > 1 {
             writeln!(
                 sf,
-                "Scope: validated {spatial_layers}-layer spatial SVC; comparisons below use only spatial layer 0 at {analysis_width}x{analysis_height}."
+                "Scope: validated {spatial_layers}-layer spatial SVC; comparisons below use only spatial layer {analysis_spatial_id} at {analysis_width}x{analysis_height}."
             )?;
             writeln!(sf)?;
         }
@@ -1619,7 +1650,7 @@ mod tests {
         encode.inter_layer_pred = 0;
 
         assert_eq!(spatial_layer_bitrates(420, 3).unwrap(), "20,80,320");
-        assert_eq!(spatial_base_geometry(1280, 720, 3).unwrap(), (320, 180));
+        assert_eq!(spatial_layer_geometry(1280, 720, 3, 0).unwrap(), (320, 180));
 
         let mut command = Command::new("vp9_spatial_svc_encoder");
         append_libvpx_spatial_args(
@@ -1660,6 +1691,17 @@ mod tests {
         assert!(command.get_envs().any(|(key, value)| {
             key == "VPX_F02_PRESERVE_LAYER_QUANTIZERS" && value.is_some_and(|value| value == "1")
         }));
-        assert!(spatial_analysis_records(&[], 3, 2, Some(148), "empty").is_err());
+        assert!(spatial_analysis_records(&[], 3, 0, 2, Some(148), "empty").is_err());
+    }
+
+    #[test]
+    fn spatial_analysis_layer_selects_its_coded_geometry() {
+        assert_eq!(spatial_layer_geometry(1280, 720, 3, 0).unwrap(), (320, 180));
+        assert_eq!(spatial_layer_geometry(1280, 720, 3, 1).unwrap(), (640, 360));
+        assert_eq!(
+            spatial_layer_geometry(1280, 720, 3, 2).unwrap(),
+            (1280, 720)
+        );
+        assert!(spatial_layer_geometry(1280, 720, 3, 3).is_err());
     }
 }
