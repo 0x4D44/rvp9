@@ -35,6 +35,7 @@ pub use pruners::{
     ml_predict_breakout, ml_prune_rect_partition, ml_pruning_partition,
 };
 pub use var_partition::{
-    MotionSearchOps, Mv, PlaneView, PlaneViewMut, PredBuffer, VarPartDecision, VarPartInput,
-    ml_predict_var_rd_partitioning, new_pred_buffer, predict_partition_size, simple_motion_search,
+    MlVarPartitionTreeInput, MotionSearchOps, Mv, PlaneView, PlaneViewMut, PredBuffer,
+    VarPartDecision, VarPartInput, choose_ml_var_partition_tree, ml_predict_var_rd_partitioning,
+    new_pred_buffer, predict_partition_size, simple_motion_search,
 };

@@ -29,10 +29,11 @@
 //! - **Variance is computed scalar.** SIMD parity for `vpx_variance*`
 //!   lands in a later wave.
 
-use rvp9_core::block::BlockSize;
+use rvp9_core::{block::BlockSize, mode_decision::partition::PartitionDecision};
 
 use super::nn_predict::{
-    NnConfig, PART_SPLIT_NN_CONFIG_16, PART_SPLIT_NN_CONFIG_32, PART_SPLIT_NN_CONFIG_64, nn_predict,
+    NnConfig, PART_SPLIT_NN_CONFIG_16, PART_SPLIT_NN_CONFIG_32, PART_SPLIT_NN_CONFIG_64,
+    VAR_PART_NN_CONFIG_16, VAR_PART_NN_CONFIG_32, VAR_PART_NN_CONFIG_64, nn_predict,
 };
 
 /// 64×64-pixel motion-prediction scratch buffer.
@@ -366,6 +367,131 @@ pub fn ml_predict_var_rd_partitioning(input: &VarPartInput<'_>) -> VarPartDecisi
     }
 }
 
+/// Inputs to pinned libvpx's low-resolution realtime
+/// `ml_predict_var_partitioning` controller.
+#[derive(Debug, Clone, Copy)]
+pub struct MlVarPartitionTreeInput<'a> {
+    /// Frame DC quantizer value.
+    pub dc_q: i32,
+    /// Encoder speed preset; speed 6 and above use a zero decision threshold.
+    pub speed: i32,
+    /// Edge-extended 64x64 source block.
+    pub src: &'a [u8],
+    /// Source stride in bytes.
+    pub src_stride: usize,
+    /// Estimated 64x64 inter prediction.
+    pub pred: &'a [u8],
+    /// Prediction stride in bytes.
+    pub pred_stride: usize,
+}
+
+fn ml_var_partition_score(
+    input: &MlVarPartitionTreeInput<'_>,
+    row_px: usize,
+    col_px: usize,
+    bsize: BlockSize,
+) -> Option<f32> {
+    let config = match bsize {
+        BlockSize::Block64x64 => &VAR_PART_NN_CONFIG_64,
+        BlockSize::Block32x32 => &VAR_PART_NN_CONFIG_32,
+        BlockSize::Block16x16 => &VAR_PART_NN_CONFIG_16,
+        _ => return None,
+    };
+    let width = usize::from(bsize.width());
+    let height = usize::from(bsize.height());
+    let source = &input.src[row_px * input.src_stride + col_px..];
+    let predictor = &input.pred[row_px * input.pred_stride + col_px..];
+    let (var, _) = variance(
+        source,
+        input.src_stride,
+        predictor,
+        input.pred_stride,
+        width,
+        height,
+    );
+    let factor = if var == 0 { 1.0 } else { 1.0 / var as f32 };
+    let mut features = [0.0f32; 6];
+    features[0] = ((input.dc_q * input.dc_q) as f32 / 256.0 + 1.0).ln();
+    features[1] = (var as f32 + 1.0).ln();
+    let sub_width = width / 2;
+    let sub_height = height / 2;
+    for quadrant in 0..4 {
+        let x = (quadrant & 1) * sub_width;
+        let y = (quadrant >> 1) * sub_height;
+        let (sub_var, _) = variance(
+            &source[y * input.src_stride + x..],
+            input.src_stride,
+            &predictor[y * input.pred_stride + x..],
+            input.pred_stride,
+            sub_width,
+            sub_height,
+        );
+        features[2 + quadrant] = if var == 0 {
+            1.0
+        } else {
+            factor * sub_var as f32
+        };
+    }
+    let mut score = [0.0f32; 1];
+    nn_predict(&features, config, &mut score);
+    Some(score[0])
+}
+
+/// Build the square-only fixed tree selected by pinned libvpx's CPU8
+/// low-resolution ML partition controller.
+///
+/// At CPU8 the model threshold is zero, so every 64x64, 32x32, and 16x16
+/// node selects either `NONE` or `SPLIT`. The 8x8 minimum is always retained.
+#[must_use]
+pub fn choose_ml_var_partition_tree(input: &MlVarPartitionTreeInput<'_>) -> PartitionDecision {
+    debug_assert!(input.src_stride >= 64);
+    debug_assert!(input.pred_stride >= 64);
+    debug_assert!(input.src.len() >= input.src_stride * 64);
+    debug_assert!(input.pred.len() >= input.pred_stride * 64);
+
+    fn stamp(decision: &mut PartitionDecision, row_8x8: usize, col_8x8: usize, bsize: BlockSize) {
+        let cells_wide = usize::from(bsize.n_8x8_wide());
+        let cells_high = usize::from(bsize.n_8x8_high());
+        for row in &mut decision.cells[row_8x8..row_8x8 + cells_high] {
+            row[col_8x8..col_8x8 + cells_wide].fill(bsize);
+        }
+    }
+
+    fn visit(
+        input: &MlVarPartitionTreeInput<'_>,
+        decision: &mut PartitionDecision,
+        row_8x8: usize,
+        col_8x8: usize,
+        bsize: BlockSize,
+    ) {
+        let Some(score) = ml_var_partition_score(input, row_8x8 * 8, col_8x8 * 8, bsize) else {
+            stamp(decision, row_8x8, col_8x8, bsize);
+            return;
+        };
+        let threshold = if input.speed <= 5 { 1.25 } else { 0.0 };
+        if score <= threshold {
+            stamp(decision, row_8x8, col_8x8, bsize);
+            return;
+        }
+        let child = match bsize {
+            BlockSize::Block64x64 => BlockSize::Block32x32,
+            BlockSize::Block32x32 => BlockSize::Block16x16,
+            BlockSize::Block16x16 => BlockSize::Block8x8,
+            _ => unreachable!("ML partition tree only visits square nodes"),
+        };
+        let half = usize::from(child.n_8x8_wide());
+        visit(input, decision, row_8x8, col_8x8, child);
+        visit(input, decision, row_8x8, col_8x8 + half, child);
+        visit(input, decision, row_8x8 + half, col_8x8, child);
+        visit(input, decision, row_8x8 + half, col_8x8 + half, child);
+    }
+
+    let mut decision = PartitionDecision::all_64x64();
+    visit(input, &mut decision, 0, 0, BlockSize::Block64x64);
+    debug_assert!(decision.is_valid_partition());
+    decision
+}
+
 /// Convenience helper: pick the *coarse* predicted partition size
 /// (NONE / SPLIT). Returns the parent `bsize` when NONE wins, or the
 /// SPLIT subsize when SPLIT wins. If both arms are allowed, returns
@@ -660,5 +786,36 @@ mod tests {
         };
         let small_dec = ml_predict_var_rd_partitioning(&small);
         assert!(small_dec.allow_none && small_dec.allow_split);
+    }
+
+    #[test]
+    fn low_resolution_var_model_builds_a_legal_recursive_tree() {
+        let flat = [128u8; 64 * 64];
+        let flat_tree = choose_ml_var_partition_tree(&MlVarPartitionTreeInput {
+            dc_q: 80,
+            speed: 8,
+            src: &flat,
+            src_stride: 64,
+            pred: &flat,
+            pred_stride: 64,
+        });
+        assert_eq!(flat_tree, PartitionDecision::all_64x64());
+
+        let mut texture = [0u8; 64 * 64];
+        for row in 0..64 {
+            for col in 0..64 {
+                texture[row * 64 + col] = if (row / 4 + col / 4) % 2 == 0 { 0 } else { 255 };
+            }
+        }
+        let texture_tree = choose_ml_var_partition_tree(&MlVarPartitionTreeInput {
+            dc_q: 80,
+            speed: 8,
+            src: &texture,
+            src_stride: 64,
+            pred: &flat,
+            pred_stride: 64,
+        });
+        assert!(texture_tree.is_valid_partition());
+        assert_ne!(texture_tree, PartitionDecision::all_64x64());
     }
 }
