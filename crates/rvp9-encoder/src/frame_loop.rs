@@ -5776,6 +5776,90 @@ fn choose_partitions_for_frame(input: FramePartitionInput<'_>) -> Vec<Vec<Partit
     choose_partitions_for_sb_cols(input, 0..input.width_px / 64)
 }
 
+/// Run the exact keyframe variance tree for a partial edge superblock, then
+/// retain only complete 32x32 and 16x16 subtrees that the coefficient writer
+/// supports.
+///
+/// Pinned libvpx represents an unavailable 4x4 average as a zero difference
+/// from the keyframe's flat-128 reference. Padding the analysis block with 128
+/// reproduces that tree while the legal edge cover protects crossing leaves.
+fn choose_supported_partial_keyframe_partition(
+    input: FramePartitionInput<'_>,
+    sb_row: usize,
+    sb_col: usize,
+) -> PartitionDecision {
+    let x = sb_col * 64;
+    let y = sb_row * 64;
+    let visible_width = (input.width_px - x).min(64);
+    let visible_height = (input.height_px - y).min(64);
+    debug_assert!(visible_width > 0 && visible_height > 0);
+    debug_assert!(visible_width < 64 || visible_height < 64);
+
+    let mut padded_source = [128u8; 64 * 64];
+    for row in 0..visible_height {
+        let source_start = (y + row) * input.width_px + x;
+        let padded_start = row * 64;
+        padded_source[padded_start..padded_start + visible_width]
+            .copy_from_slice(&input.src_y[source_start..source_start + visible_width]);
+    }
+    let plane = PlaneRef {
+        data: &padded_source,
+        stride: 64,
+        width: 64,
+        height: 64,
+    };
+    let exact = choose_partitioning_keyframe_sub8(&PartitionSearchParams {
+        src_plane: &plane,
+        src_offset_xy: (0, 0),
+        ref_plane: &plane,
+        ref_offset_xy: (0, 0),
+        is_keyframe: true,
+        q_index: vbp_qindex_for_partition(input.q_index, true),
+        frame_width: input.width_px,
+        frame_height: input.height_px,
+        avg_inter_qindex: input.avg_inter_qindex,
+        noise_threshold_scale: 1,
+    });
+    constrain_keyframe_tree_to_visible_leaves(
+        &exact,
+        visible_width.div_ceil(8),
+        visible_height.div_ceil(8),
+    )
+}
+
+fn constrain_keyframe_tree_to_visible_leaves(
+    exact: &PartitionDecision,
+    visible_mi_cols: usize,
+    visible_mi_rows: usize,
+) -> PartitionDecision {
+    let mut supported =
+        crate::constrain_fixed_tree_to_visible_leaves(exact, visible_mi_cols, visible_mi_rows);
+
+    // The inter path deliberately stops at complete 32x32 quadrants. Exact
+    // keyframe trees are square-only, so complete 16x16 descendants inside a
+    // crossing 32x32 quadrant are independently legal and safe to retain.
+    for row in (0usize..8).step_by(2) {
+        for col in (0usize..8).step_by(2) {
+            if row + 2 > visible_mi_rows || col + 2 > visible_mi_cols {
+                continue;
+            }
+            let subtree_local = exact.cells[row..row + 2].iter().all(|cells| {
+                cells[col..col + 2].iter().all(|bsize| {
+                    usize::from(bsize.n_8x8_wide()) <= 2 && usize::from(bsize.n_8x8_high()) <= 2
+                })
+            });
+            if subtree_local {
+                for local_row in 0..2 {
+                    supported.cells[row + local_row][col..col + 2]
+                        .copy_from_slice(&exact.cells[row + local_row][col..col + 2]);
+                }
+            }
+        }
+    }
+    debug_assert!(supported.is_valid_partition());
+    supported
+}
+
 fn choose_partitions_for_sb_cols(
     input: FramePartitionInput<'_>,
     sb_col_range: std::ops::Range<usize>,
@@ -5862,7 +5946,11 @@ fn choose_mapped_partitions_for_sb_cols_into<T, F>(
         for sb_col in sb_col_range.clone() {
             let visible_height = (height_px - sb_row * 64).min(64);
             let decision = if visible_height < 64 {
-                edge_partition_decision(8, visible_height.div_ceil(8))
+                if keyframe_sub8_enabled {
+                    choose_supported_partial_keyframe_partition(input, sb_row, sb_col)
+                } else {
+                    edge_partition_decision(8, visible_height.div_ceil(8))
+                }
             } else {
                 let params = PartitionSearchParams {
                     src_plane: &src_plane,
@@ -8752,6 +8840,66 @@ mod tests {
 
         // SAFETY: the mutex above serialises all env_test_mutex callers.
         unsafe { std::env::remove_var(key) };
+    }
+
+    #[test]
+    fn exact_keyframe_partitioning_analyzes_complete_partial_edge_quadrants() {
+        let width = 64usize;
+        let height = 52usize;
+        let mut source = vec![128u8; width * height];
+        for row in 0..height {
+            for col in 0..width {
+                source[row * width + col] = if (row / 4 + col / 4) % 2 == 0 { 0 } else { 255 };
+            }
+        }
+
+        let partitions = choose_partitions_for_frame(FramePartitionInput {
+            width_px: width,
+            height_px: height,
+            q_index: 148,
+            src_y: &source,
+            ref_y: &source,
+            is_keyframe: true,
+            exact_keyframe_sub8: true,
+            avg_inter_qindex: 148,
+            noise_threshold_scale: 1,
+        });
+
+        assert_eq!(partitions.len(), 1);
+        assert!(
+            partitions[0]
+                .iter()
+                .filter(|leaf| leaf.mi_row_in_sb < 4)
+                .all(|leaf| leaf.leaf_bsize < BlockSize::Block32x32),
+            "the complete top quadrants must use source-analyzed keyframe splits"
+        );
+        assert!(
+            partitions[0]
+                .iter()
+                .filter(|leaf| leaf.mi_row_in_sb < 6)
+                .all(|leaf| leaf.leaf_bsize < BlockSize::Block16x16),
+            "complete 16x16 blocks inside a partial quadrant must retain exact splits"
+        );
+        assert!(partitions[0].iter().all(|leaf| {
+            leaf.mi_row_in_sb + usize::from(leaf.leaf_bsize.n_8x8_high()) <= height.div_ceil(8)
+        }));
+
+        let large_width = 640usize;
+        let large_height = 360usize;
+        let large_source = vec![128u8; large_width * large_height];
+        let large_partitions = choose_partitions_for_frame(FramePartitionInput {
+            width_px: large_width,
+            height_px: large_height,
+            q_index: 148,
+            src_y: &large_source,
+            ref_y: &large_source,
+            is_keyframe: true,
+            exact_keyframe_sub8: true,
+            avg_inter_qindex: 148,
+            noise_threshold_scale: 1,
+        });
+        let bottom_left = &large_partitions[(large_height / 64) * (large_width / 64)];
+        assert_eq!(bottom_left[0].leaf_bsize, BlockSize::Block32x32);
     }
 
     #[test]

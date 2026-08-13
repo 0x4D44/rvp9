@@ -5768,3 +5768,46 @@ quiet-host speed gate.
 
 **Future plan:** retain for CPU8 realtime spatial CBR. Do not generalize until
 another topology has its own complete curve and speed evidence.
+
+### 2026-08-13 — Analyze supported subtrees on partial keyframe edges
+
+**Where:** `rvp9_encoder::frame_loop::choose_supported_partial_keyframe_partition`
+and `rvp9_encoder::frame_loop::constrain_keyframe_tree_to_visible_leaves`;
+libvpx counterpart: `vp9/encoder/vp9_encodeframe.c::choose_partitioning`.
+
+**What libvpx does:** keyframe variance analysis continues through partial
+superblocks. Unavailable 4x4 averages contribute zero difference from the
+flat-128 keyframe reference, and the partition writer handles leaves that
+touch the frame edge.
+
+**What rvp9 does:** partial keyframe analysis uses a flat-128-padded 64x64
+source block. It retains exact decisions for complete 32x32 and 16x16
+subtrees, then uses the existing legal edge cover for any remaining crossing
+leaves. The retained-token coefficient writer cannot yet traverse every
+crossing transform leaf safely.
+
+**Why:** the old fixed cover explained almost all of the 320x180 keyframe's
+excess 32x32 area. The constrained analysis reproduces the supported part of
+libvpx's tree without reopening the previously demonstrated truncated-tile
+failure on crossing leaves.
+
+**Byte-parity impact:** intentional on partial-edge CPU8 realtime spatial CBR
+keyframes. All five spatial gates decode to byte-exact output through
+rvp9-decoder, pinned vpxdec, and ffmpeg, including the canonical 720p
+three-layer key+inter case.
+
+**Compression-efficiency impact:** the canonical six-point curve moves from
+`+37.6658%/+20.2506%/-0.7184%` to
+`+36.3940%/+20.3365%/-0.9103%` for SL0/SL1/SL2. At fixed qindex 148,
+keyframe bits are `20,688` versus libvpx's `20,616`; rvp9's keyframe partition
+area is `16.5%/71.7%/10.0%/1.7%` for 4x4/8x8/16x16/32x32 versus
+`16.7%/72.0%/7.8%/3.5%` in libvpx.
+
+**Speed impact:** directional warmed measurements are
+`12.848--15.432 ms/frame`, effectively neutral against the preceding build.
+They are not final repeated quiet-host evidence.
+
+**Future plan:** retain the supported analysis. Widen normative frame-edge
+coefficient traversal before copying exact leaves that cross the visible MI
+boundary; require a separate corruption regression and full spatial curve for
+that change.
