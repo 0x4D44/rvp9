@@ -345,3 +345,15 @@ fn three_layer_inter_spatial_stream_is_byte_exact_through_ffmpeg_and_vpxdec() {
 fn canonical_720p_three_layer_key_and_inter_are_byte_exact_through_external_decoders() {
     exercise_inter_spatial_stream(1280, 720, 3, 2, "three-layer-720p");
 }
+
+#[test]
+#[ignore = "external canonical 1080p spatial gate; requires ffmpeg and pinned vpxdec"]
+fn canonical_1080p_three_layer_partial_base_is_byte_exact_through_external_decoders() {
+    exercise_inter_spatial_stream(1920, 1080, 3, 2, "three-layer-1080p");
+}
+
+#[test]
+#[ignore = "external canonical 1080p spatial gate; requires ffmpeg and pinned vpxdec"]
+fn canonical_1080p_two_layer_partial_bottom_is_byte_exact_through_external_decoders() {
+    exercise_inter_spatial_stream(1920, 1080, 2, 2, "two-layer-1080p");
+}

@@ -1290,25 +1290,16 @@ impl VecBackedInterCoefSource {
             mi_row_start <= mi_row_end && mi_row_end <= mi_rows,
             "inter coefficient tile rows must lie inside the frame",
         );
-        let luma_cols = width_usize.div_ceil(4);
-        let chroma_cols = width_usize.div_ceil(8);
-        let luma_rows = height_usize.div_ceil(4);
-        let chroma_rows = height_usize.div_ceil(8);
+        // VP9 codes complete 8x8 MI cells at a visible frame edge. Keep both
+        // luma 4x4 slots for the final partial MI even when the visible size
+        // contains only one of them.
         Self::new_for_plane_rect(
             width,
             height,
             [mi_row_start * 2, mi_row_start, mi_row_start],
-            [
-                (mi_row_end * 2).min(luma_rows),
-                mi_row_end.min(chroma_rows),
-                mi_row_end.min(chroma_rows),
-            ],
+            [mi_row_end * 2, mi_row_end, mi_row_end],
             [mi_col_start * 2, mi_col_start, mi_col_start],
-            [
-                (mi_col_end * 2).min(luma_cols),
-                mi_col_end.min(chroma_cols),
-                mi_col_end.min(chroma_cols),
-            ],
+            [mi_col_end * 2, mi_col_end, mi_col_end],
         )
     }
 
@@ -1377,22 +1368,10 @@ impl VecBackedInterCoefSource {
             mi_row_start <= mi_row_end && mi_row_end <= mi_rows,
             "inter coefficient tile rows must lie inside the frame",
         );
-        let luma_cols = width_usize.div_ceil(4);
-        let chroma_cols = width_usize.div_ceil(8);
-        let luma_rows = height_usize.div_ceil(4);
-        let chroma_rows = height_usize.div_ceil(8);
         let plane_row_starts = [mi_row_start * 2, mi_row_start, mi_row_start];
-        let plane_row_ends = [
-            (mi_row_end * 2).min(luma_rows),
-            mi_row_end.min(chroma_rows),
-            mi_row_end.min(chroma_rows),
-        ];
+        let plane_row_ends = [mi_row_end * 2, mi_row_end, mi_row_end];
         let plane_col_starts = [mi_col_start * 2, mi_col_start, mi_col_start];
-        let plane_col_ends = [
-            (mi_col_end * 2).min(luma_cols),
-            mi_col_end.min(chroma_cols),
-            mi_col_end.min(chroma_cols),
-        ];
+        let plane_col_ends = [mi_col_end * 2, mi_col_end, mi_col_end];
         let plane_rows = std::array::from_fn(|plane| {
             plane_row_ends[plane]
                 .checked_sub(plane_row_starts[plane])
@@ -2128,10 +2107,10 @@ fn inter_row_job_sb_columns(
         "inter row job does not belong to the active tile"
     );
     assert!(
-        tile.mi_col_start.is_multiple_of(8) && tile.mi_col_end.is_multiple_of(8),
-        "inter row jobs require superblock-aligned tile columns"
+        tile.mi_col_start.is_multiple_of(8),
+        "inter row jobs require a superblock-aligned tile start"
     );
-    tile.mi_col_start / 8..tile.mi_col_end / 8
+    tile.mi_col_start / 8..tile.mi_col_end.div_ceil(8)
 }
 
 /// `simulate_dc_intra_encode_partitions` without the up-front recon zeroing.
@@ -2198,7 +2177,7 @@ fn simulate_dc_intra_encode_partitions_no_zero_with_tiles(
     let uvw = w / 2;
     let uvh = h / 2;
 
-    let sb_cols = w / 64;
+    let sb_cols = w.div_ceil(64);
     let sb_rows = h.div_ceil(64);
     let tile_bounds_by_col = column_tile_bounds(h.div_ceil(8), w / 8, log2_tile_cols);
     assert_eq!(
@@ -2748,7 +2727,7 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
     let diag_intra_enabled = std::env::var("RVP9_DIAG_INTRA").is_ok();
     let retain_exact_keyframe_8x8 = retain_exact_keyframe_8x8_enabled();
     let retain_exact_keyframe_sub8 = retain_exact_keyframe_sub8_enabled();
-    let sb_cols = w / 64;
+    let sb_cols = w.div_ceil(64);
     let sb_rows = h.div_ceil(64);
     assert_eq!(
         sb_partitions.len(),
@@ -2768,8 +2747,7 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
     });
     let active_sb_cols = active_bounds.map_or(0..sb_cols, |bounds| {
         debug_assert_eq!(bounds.mi_col_start % 8, 0);
-        debug_assert_eq!(bounds.mi_col_end % 8, 0);
-        bounds.mi_col_start / 8..bounds.mi_col_end / 8
+        bounds.mi_col_start / 8..bounds.mi_col_end.div_ceil(8)
     });
     let mut picked_y_mode_grid: Vec<Option<[IntraMode; 4]>> = vec![None; mi_rows * mi_cols];
     let mut picked_skip_grid = nonrd_keyframe_8x8.then(|| vec![None::<bool>; mi_rows * mi_cols]);
@@ -4210,7 +4188,8 @@ impl CompactInterRowResult {
         coef_source.merge_from_reusable(&mut reusable_coefs);
         let sb_col_start = self.mi_col_start / 8;
         for (local_sb_col, partition) in self.partitions.drain(..).enumerate() {
-            let destination = self.job.sb_row * (frame_width / 64) + sb_col_start + local_sb_col;
+            let destination =
+                self.job.sb_row * frame_width.div_ceil(64) + sb_col_start + local_sb_col;
             assert!(
                 partitions[destination].is_empty(),
                 "compact partition result must have one exact owner"
@@ -4220,7 +4199,7 @@ impl CompactInterRowResult {
         let reusable_partitions = self.partitions;
         rd_thresh_tables[self.rd_table_index] = self.rd_thresh_table;
         if let Some(history) = self.vbp_history {
-            let sb_col_range = self.mi_col_start / 8..self.mi_col_end / 8;
+            let sb_col_range = self.mi_col_start / 8..self.mi_col_end.div_ceil(8);
             if let Some(history_destination) = vbp_history.as_mut() {
                 history_destination.restore_row(self.job.sb_row, sb_col_range, history);
             } else {
@@ -6821,7 +6800,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     let full_pixel_search_method =
         full_pixel_search_method_for_mode(speed, deadline, force_nstep_motion_search);
 
-    let sb_cols = w / 64;
+    let sb_cols = w.div_ceil(64);
     let sb_rows = h.div_ceil(64);
 
     // A1' — Frame-area gate on the Block8x8 inter picker. The
@@ -7319,7 +7298,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 bounds.mi_col_start.is_multiple_of(8) && bounds.mi_col_end.is_multiple_of(8),
                 "partition-history tile bounds must be superblock aligned",
             );
-            bounds.mi_col_start / 8..bounds.mi_col_end / 8
+            bounds.mi_col_start / 8..bounds.mi_col_end.div_ceil(8)
         });
         exact_vbp_history
             .as_ref()
@@ -8258,7 +8237,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         );
                         let leaf_prev_mv: Option<PrevFrameMvRef> = prev_mv_grid
                             .and_then(|g| g.get(leaf_mi_row * mi_cols_us + leaf_mi_col).copied());
-                        let sb_cols = (width / 64).max(1) as usize;
+                        let sb_cols = (width as usize).div_ceil(64);
                         let sb_idx = (leaf_mi_row / 8) * sb_cols + (leaf_mi_col / 8);
                         let content_state_sb = content_state_sb_grid
                             .get(sb_idx)
@@ -9896,7 +9875,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     // PHASE-3 integration: per-SB content_state from
                     // W2.2 avg_source_sad pass. Look up by SB grid.
                     content_state_sb: {
-                        let sb_cols = (width / 64).max(1) as usize;
+                        let sb_cols = (width as usize).div_ceil(64);
                         let sb_idx = (leaf_mi_row / 8) * sb_cols + (leaf_mi_col / 8);
                         content_state_sb_grid
                             .get(sb_idx)
@@ -11689,6 +11668,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         };
     let compact_recon_rows = denoiser.is_none()
         && env.compact_recon_rows_enabled()
+        // Compact row windows currently own whole SB columns. A canonical
+        // spatial base such as 480x270 uses the full-frame clipped-edge path.
+        && w.is_multiple_of(64)
         && h.is_multiple_of(8)
         && recon_layout == InterReconLayout::full(w, h);
     let frame_s2_gate = rvp9_core::mode_decision::inter::frame_s2_gate();
@@ -11716,7 +11698,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 let mut works = Vec::with_capacity(tile_bounds_by_col.len());
                 for (tile_col, &bounds) in tile_bounds_by_col.iter().enumerate() {
                     let tile_mi_cols = bounds.mi_col_end - bounds.mi_col_start;
-                    let sb_column_range = bounds.mi_col_start / 8..bounds.mi_col_end / 8;
+                    let sb_column_range = bounds.mi_col_start / 8..bounds.mi_col_end.div_ceil(8);
                     let rd_table_index = tile_col * sb_rows + sb_row;
                     let row_rd_thresh_table = std::mem::take(&mut rd_thresh_tables[rd_table_index]);
                     let vbp_history = compact_history_backing
@@ -11863,7 +11845,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                 &mut work.partitions,
                                 work.job.sb_row,
                                 work.mi_col_start / 8,
-                                (work.mi_col_end - work.mi_col_start) / 8,
+                                (work.mi_col_end - work.mi_col_start).div_ceil(8),
                                 sb_cols,
                             );
                             encode_job(
@@ -11970,7 +11952,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 let sb_row = job.sb_row;
                 let bounds = tile_bounds_by_col[tile_col];
                 let tile_mi_cols = bounds.mi_col_end - bounds.mi_col_start;
-                let sb_column_range = bounds.mi_col_start / 8..bounds.mi_col_end / 8;
+                let sb_column_range = bounds.mi_col_start / 8..bounds.mi_col_end.div_ceil(8);
                 let rd_table_index = if rd_tables_are_tile_local {
                     sb_row
                 } else {
@@ -17543,6 +17525,27 @@ mod tests {
             ]
         );
         assert_eq!(got_eob, 7);
+    }
+
+    #[test]
+    fn inter_coef_slots_cover_the_coded_extent_of_a_partial_bottom_mi() {
+        use rvp9_core::bitstream::InterCoefSource;
+
+        let qcoeff = [11_i16; 16];
+        let mut frame = VecBackedInterCoefSource::new(960, 540);
+        frame.insert_i16(67, 0, 0, 0, 1, &qcoeff, 3);
+        assert_eq!(
+            frame.get_block_coefs(67, 0, 0, 0, 1, TxSize::Tx4x4),
+            (qcoeff.as_slice(), 3),
+        );
+
+        let mut row = VecBackedInterCoefSource::new_for_mi_rect(960, 540, 0, 1, 0, 1);
+        row.reset_for_mi_rect(960, 540, 67, 68, 0, 1);
+        row.insert_i16(67, 0, 0, 0, 1, &qcoeff, 4);
+        assert_eq!(
+            row.get_block_coefs(67, 0, 0, 0, 1, TxSize::Tx4x4),
+            (qcoeff.as_slice(), 4),
+        );
     }
 
     #[test]

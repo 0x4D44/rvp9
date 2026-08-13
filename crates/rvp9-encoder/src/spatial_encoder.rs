@@ -21,8 +21,8 @@ use crate::{EncodeError, f02_oracle};
 pub enum SpatialEncodeError {
     /// The canonical layer plan is invalid.
     Config(SpatialSvcConfigError),
-    /// A canonical layer cannot yet be represented by the single-layer
-    /// encoder's current superblock geometry.
+    /// A canonical layer cannot be represented by the spatial encoder's
+    /// 4:2:0 MI geometry.
     UnsupportedLayerGeometry {
         /// Layer width in pixels.
         width: u32,
@@ -49,7 +49,7 @@ impl core::fmt::Display for SpatialEncodeError {
             Self::Config(error) => write!(f, "invalid spatial configuration: {error}"),
             Self::UnsupportedLayerGeometry { width, height } => write!(
                 f,
-                "spatial layer {width}x{height} is outside the encoder's current 64-pixel-width/even-height geometry"
+                "spatial layer {width}x{height} requires a positive 8-pixel-aligned width and positive even height"
             ),
             Self::UnsupportedMode(reason) => write!(f, "unsupported spatial encode mode: {reason}"),
             Self::InvalidInput(reason) => write!(f, "invalid spatial source frame: {reason}"),
@@ -187,7 +187,11 @@ impl SpatialEncoder {
         )?;
         let mut encoders = Vec::with_capacity(plan.layers.len());
         for layer in &plan.layers {
-            if !layer.width.is_multiple_of(64) || !layer.height.is_multiple_of(2) {
+            if layer.width == 0
+                || !layer.width.is_multiple_of(8)
+                || layer.height == 0
+                || !layer.height.is_multiple_of(2)
+            {
                 return Err(SpatialEncodeError::UnsupportedLayerGeometry {
                     width: layer.width,
                     height: layer.height,
@@ -197,8 +201,15 @@ impl SpatialEncoder {
             layer_config.width = layer.width;
             layer_config.height = layer.height;
             layer_config.target_bitrate_bps = layer.target_bitrate_bps;
+            let layer_parallelism = if layer.width.is_multiple_of(64) {
+                parallelism
+            } else {
+                // Row/tile-MT currently owns whole SB columns. Keep a partial
+                // right-edge component on the proven serial walker.
+                EncoderParallelism::SINGLE_THREADED
+            };
             encoders.push(
-                StreamEncoder::new_spatial_with_parallelism(layer_config, parallelism)
+                StreamEncoder::new_spatial_with_parallelism(layer_config, layer_parallelism)
                     .map_err(SpatialEncodeError::Encoder)?,
             );
         }
@@ -406,7 +417,11 @@ impl SpatialKeyframeEncoder {
         )?;
         let mut encoders = Vec::with_capacity(plan.layers.len());
         for layer in &plan.layers {
-            if !layer.width.is_multiple_of(64) || !layer.height.is_multiple_of(2) {
+            if layer.width == 0
+                || !layer.width.is_multiple_of(8)
+                || layer.height == 0
+                || !layer.height.is_multiple_of(2)
+            {
                 return Err(SpatialEncodeError::UnsupportedLayerGeometry {
                     width: layer.width,
                     height: layer.height,
@@ -417,9 +432,17 @@ impl SpatialKeyframeEncoder {
             layer_config.height = layer.height;
             layer_config.target_bitrate_bps = layer.target_bitrate_bps;
             layer_config.gop_length = 1;
+            let layer_parallelism = if layer.width.is_multiple_of(64) {
+                parallelism
+            } else {
+                EncoderParallelism::SINGLE_THREADED
+            };
             encoders.push(
-                StreamEncoder::new_with_parallelism(layer_config, parallelism)
-                    .map_err(SpatialEncodeError::Encoder)?,
+                StreamEncoder::new_spatial_keyframe_with_parallelism(
+                    layer_config,
+                    layer_parallelism,
+                )
+                .map_err(SpatialEncodeError::Encoder)?,
             );
         }
         Ok(Self {
@@ -938,6 +961,23 @@ mod tests {
     }
 
     #[test]
+    fn three_layer_partial_right_edge_stream_decodes_in_order() {
+        let _guard = crate::env_test_mutex();
+        // Prove that the opt-in compact-row path is rejected by geometry, not
+        // reached through a process-wide diagnostic override.
+        // SAFETY: env_test_mutex serialises every test that mutates the
+        // process-wide encoder environment.
+        unsafe {
+            std::env::set_var("RVP9_COMPACT_RECON_ROWS", "1");
+        }
+        exercise_stateful_spatial_stream(384, 192, 3, &[(96, 48), (192, 96), (384, 192)]);
+        // SAFETY: the mutex remains held while restoring the override.
+        unsafe {
+            std::env::remove_var("RVP9_COMPACT_RECON_ROWS");
+        }
+    }
+
+    #[test]
     fn base_spatial_operating_point_decodes_without_enhancement_components() {
         let width = 256usize;
         let height = 128usize;
@@ -1004,6 +1044,26 @@ mod tests {
             .map(|layer| (layer.width, layer.height))
             .collect();
         assert_eq!(dimensions, [(320, 180), (640, 360), (1280, 720)]);
+    }
+
+    #[test]
+    fn canonical_1080p_three_layer_geometry_constructs_partial_base_layer() {
+        let template = EncoderConfig::new(1920, 1080);
+        let encoder = SpatialEncoder::new(
+            template,
+            SpatialSvcConfig {
+                number_spatial_layers: 3,
+                inter_layer_pred: InterLayerPred::On,
+            },
+        )
+        .expect("canonical 1080p spatial pyramid");
+        let dimensions: Vec<_> = encoder
+            .plan()
+            .layers
+            .iter()
+            .map(|layer| (layer.width, layer.height))
+            .collect();
+        assert_eq!(dimensions, [(480, 270), (960, 540), (1920, 1080)]);
     }
 
     #[test]

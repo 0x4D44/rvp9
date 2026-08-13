@@ -5974,3 +5974,39 @@ speed evidence; exact-commit production PGO is required.
 **Future plan:** retain for CPU6 spatial SVC if the exact-PGO CPU6--8 S2/S3
 grid passes. Keep the non-spatial CPU6 TX4 extension until its own established
 quality evidence is superseded.
+
+### 2026-08-13 — Keep partial-right spatial components on the serial walker
+
+**Where:** `rvp9_encoder::spatial_encoder::{SpatialEncoder,SpatialKeyframeEncoder}`
+and `rvp9_encoder::frame_loop::StreamEncoder`; libvpx counterpart: spatial
+layer setup and tile/row workers below `vp9/encoder/vp9_svc_layercontext.c`.
+
+**What libvpx does:** its bordered frame storage and mature worker geometry
+encode canonical 1080p spatial layers, including the 480x270 base component,
+under the requested thread configuration.
+
+**What rvp9 does:** spatial-only stream construction accepts 8-pixel-aligned
+widths and even heights, but a component whose width is not a multiple of 64
+uses the serial full-frame walker. Complete-superblock components retain the
+requested thread and tile configuration. Ordinary single-layer construction
+still requires a 64-pixel-aligned width.
+
+**Why:** rvp9's compact row and parallel-tile workers currently assign whole
+superblock columns. The serial path already has clipped edge reconstruction
+and is a narrow correctness boundary for canonical 480x270. Extending worker
+ownership before high-resolution correctness and quality are established
+would couple a geometry fix to an unmeasured concurrency change.
+
+**Byte-parity impact:** none is claimed against libvpx. Canonical 1080p two-
+and three-layer streams decode byte-identically through rvp9-decoder, pinned
+vpxdec, and FFmpeg at the displayed top layer. Existing aligned spatial
+components retain their prior path.
+
+**Speed impact:** the 480-pixel base layer is deliberately serial, so its
+high-resolution contribution must be measured in the 1080p latency matrix.
+No speed result is inferred from the 720p curves.
+
+**Future plan:** keep the serial boundary until 1080p30/60 quality and absolute
+latency are measured. Parallelize partial superblock columns only if profiling
+attributes a material miss to this layer and a focused ownership oracle can
+prove disjoint reconstruction and history writes.

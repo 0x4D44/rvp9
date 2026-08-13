@@ -1985,7 +1985,7 @@ impl StreamEncoder {
         config: EncoderConfig,
         parallelism: EncoderParallelism,
     ) -> Result<Self, EncodeError> {
-        Self::new_with_parallelism_and_buffer_geometry(config, parallelism, None, false)
+        Self::new_with_parallelism_and_buffer_geometry(config, parallelism, None, false, false)
     }
 
     pub(crate) fn new_spatial_with_parallelism(
@@ -1997,7 +1997,20 @@ impl StreamEncoder {
             SPATIAL_CBR_STARTING_BUFFER_MS,
             SPATIAL_CBR_OPTIMAL_BUFFER_MS,
         ));
-        Self::new_with_parallelism_and_buffer_geometry(config, parallelism, buffer_geometry, true)
+        Self::new_with_parallelism_and_buffer_geometry(
+            config,
+            parallelism,
+            buffer_geometry,
+            true,
+            true,
+        )
+    }
+
+    pub(crate) fn new_spatial_keyframe_with_parallelism(
+        config: EncoderConfig,
+        parallelism: EncoderParallelism,
+    ) -> Result<Self, EncodeError> {
+        Self::new_with_parallelism_and_buffer_geometry(config, parallelism, None, false, true)
     }
 
     fn new_with_parallelism_and_buffer_geometry(
@@ -2005,6 +2018,7 @@ impl StreamEncoder {
         parallelism: EncoderParallelism,
         buffer_geometry: Option<(u32, u32, u32)>,
         spatial_svc: bool,
+        allow_partial_width: bool,
     ) -> Result<Self, EncodeError> {
         if parallelism.max_threads == 0 || parallelism.max_threads > 64 {
             return Err(EncodeError::InvalidConfig("max_threads must be in 1..=64"));
@@ -2014,10 +2028,18 @@ impl StreamEncoder {
                 "requested_log2_tile_cols must be in 0..=6",
             ));
         }
-        if !config.width.is_multiple_of(64) || config.width == 0 {
-            return Err(EncodeError::InvalidConfig(
-                "width must be a positive multiple of 64",
-            ));
+        if config.width == 0
+            || if allow_partial_width {
+                !config.width.is_multiple_of(8)
+            } else {
+                !config.width.is_multiple_of(64)
+            }
+        {
+            return Err(EncodeError::InvalidConfig(if allow_partial_width {
+                "spatial width must be a positive multiple of 8"
+            } else {
+                "width must be a positive multiple of 64"
+            }));
         }
         if !config.height.is_multiple_of(2) || config.height == 0 {
             return Err(EncodeError::InvalidConfig(
@@ -2100,7 +2122,9 @@ impl StreamEncoder {
                     recon_u: vec![0; uvw * storage_uvh],
                     recon_v: vec![0; uvw * storage_uvh],
                     mv_grid: vec![PrevFrameMvRef::default(); h.div_ceil(8) * (w / 8)],
-                    partitions: (0..h.div_ceil(64) * (w / 64)).map(|_| Vec::new()).collect(),
+                    partitions: (0..h.div_ceil(64) * w.div_ceil(64))
+                        .map(|_| Vec::new())
+                        .collect(),
                 })
                 .collect()
         } else {
@@ -2251,7 +2275,7 @@ impl StreamEncoder {
             ],
             vbp_partition_history: vec![
                 rvp9_core::mode_decision::partition::FixedTreeHistoryEntry::default();
-                (w / 64) * h.div_ceil(64)
+                w.div_ceil(64) * h.div_ceil(64)
             ],
             stage4a_split_stats: NonRdSplitStats::default(),
             // W5.5 — temporal denoiser (libvpx
@@ -3327,13 +3351,13 @@ impl StreamEncoder {
             let mut merged_coefs = VecBackedIntraCoefSource::new(w, h);
             let mi_rows = (h as usize).div_ceil(8);
             let mi_cols = w as usize / 8;
-            let sb_cols = w as usize / 64;
+            let sb_cols = (w as usize).div_ceil(64);
             let (ry, ru, rv) = self.ref_pool.new_frame_planes_mut();
             for result in tile_results {
                 let tile_col = result.tile_col;
                 let bounds = tile_bounds(mi_rows, mi_cols, 0, log2_tile_cols, 0, tile_col as u32);
                 let sb_col_start = bounds.mi_col_start / 8;
-                let sb_col_end = bounds.mi_col_end / 8;
+                let sb_col_end = bounds.mi_col_end.div_ceil(8);
                 for sb_row in 0..(h as usize).div_ceil(64) {
                     for sb_col in sb_col_start..sb_col_end {
                         let sb_idx = sb_row * sb_cols + sb_col;
@@ -3871,7 +3895,7 @@ impl StreamEncoder {
                 aq_active_this_frame,
             );
         let mut sb_partitions = if parallel_tile_picker {
-            (0..(h as usize).div_ceil(64) * (w as usize / 64))
+            (0..(h as usize).div_ceil(64) * (w as usize).div_ceil(64))
                 .map(|_| Vec::new())
                 .collect()
         } else if skip_legacy_vbp_prepass {
@@ -4280,10 +4304,12 @@ impl StreamEncoder {
                 )
                 .collect();
             let sb_rows = (h as usize).div_ceil(64);
-            let sb_cols = mi_cols_us / 8;
+            let sb_cols = mi_cols_us.div_ceil(8);
             let history_tile_ranges: Vec<_> = mi_tile_ranges
                 .iter()
-                .map(|&(mi_col_start, mi_col_end)| (mi_col_start / 8, mi_col_end / 8))
+                .map(|&(mi_col_start, mi_col_end)| {
+                    (mi_col_start / 8, mi_col_end.div_ceil(8))
+                })
                 .collect();
             let tile_histories: Vec<Option<crate::InterPartitionHistoryMut<'_>>> =
                 if exact_vbp_history_enabled {
@@ -4334,7 +4360,7 @@ impl StreamEncoder {
                             tile_col as u32,
                         );
                         let sb_col_start = bounds.mi_col_start / 8;
-                        let sb_col_end = bounds.mi_col_end / 8;
+                        let sb_col_end = bounds.mi_col_end.div_ceil(8);
                         let tile_mi_cols = bounds.mi_col_end - bounds.mi_col_start;
                         let tile_width = tile_mi_cols * 8;
                         let tile_recon_layout = crate::InterReconLayout::tile_column(
@@ -4515,7 +4541,7 @@ impl StreamEncoder {
                 Some(crate::InterPartitionHistoryMut::frame(
                     &mut self.vbp_partition_history,
                     (h as usize).div_ceil(64),
-                    mi_cols_us / 8,
+                    mi_cols_us.div_ceil(8),
                 )),
                 &mut stage4a_frame_split_stats,
                 record_coef_tokens,
@@ -5827,7 +5853,7 @@ struct FramePartitionInput<'a> {
 }
 
 fn choose_partitions_for_frame(input: FramePartitionInput<'_>) -> Vec<Vec<PartitionLeafDesc>> {
-    choose_partitions_for_sb_cols(input, 0..input.width_px / 64)
+    choose_partitions_for_sb_cols(input, 0..input.width_px.div_ceil(64))
 }
 
 /// Run the exact keyframe variance tree for a partial edge superblock, then
@@ -5919,9 +5945,10 @@ fn choose_partitions_for_sb_cols(
     sb_col_range: std::ops::Range<usize>,
 ) -> Vec<Vec<PartitionLeafDesc>> {
     let height_px = input.height_px;
-    choose_mapped_partitions_for_sb_cols(input, sb_col_range, |decision, sb_row, _| {
+    choose_mapped_partitions_for_sb_cols(input, sb_col_range, |decision, sb_row, sb_col| {
         let visible_mi_rows = (height_px - sb_row * 64).min(64).div_ceil(8);
-        leaves_from_decision_visible(decision, visible_mi_rows, 8)
+        let visible_mi_cols = (input.width_px - sb_col * 64).min(64).div_ceil(8);
+        leaves_from_decision_visible(decision, visible_mi_rows, visible_mi_cols)
     })
 }
 
@@ -5964,7 +5991,7 @@ fn choose_mapped_partitions_for_sb_cols_into<T, F>(
         avg_inter_qindex,
         noise_threshold_scale,
     } = input;
-    let sb_cols = width_px / 64;
+    let sb_cols = width_px.div_ceil(64);
     let sb_rows = height_px.div_ceil(64);
     let partition_cells = sb_rows * sb_cols;
     // Tile jobs retain this outer allocation. Clear even unowned cells so an
@@ -5998,12 +6025,13 @@ fn choose_mapped_partitions_for_sb_cols_into<T, F>(
     debug_assert!(sb_col_range.end <= sb_cols);
     for sb_row in 0..sb_rows {
         for sb_col in sb_col_range.clone() {
+            let visible_width = (width_px - sb_col * 64).min(64);
             let visible_height = (height_px - sb_row * 64).min(64);
-            let decision = if visible_height < 64 {
+            let decision = if visible_width < 64 || visible_height < 64 {
                 if keyframe_sub8_enabled {
                     choose_supported_partial_keyframe_partition(input, sb_row, sb_col)
                 } else {
-                    edge_partition_decision(8, visible_height.div_ceil(8))
+                    edge_partition_decision(visible_width.div_ceil(8), visible_height.div_ceil(8))
                 }
             } else {
                 let params = PartitionSearchParams {
@@ -6066,7 +6094,7 @@ fn inter_partitions_from_intra_shape(
     seg_map: &[u8],
     mi_cols: usize,
 ) -> Vec<Vec<InterPartitionLeafDesc>> {
-    let sb_cols = mi_cols / 8;
+    let sb_cols = mi_cols.div_ceil(8);
     intra_partitions
         .iter()
         .enumerate()
@@ -6080,27 +6108,28 @@ fn inter_partitions_from_intra_shape(
 
 /// Seed the per-SB storage consumed by the exact pinned-libvpx VBP path.
 /// Complete superblocks need only a placeholder because the exact tree
-/// replaces it before mode picking. A partial bottom superblock starts with
-/// the legal edge cover; the exact path may replace its complete 32x32
-/// quadrants after edge-extending the source.
+/// replaces it before mode picking. A partial edge superblock starts with the
+/// legal edge cover; the exact path may replace its complete 32x32 quadrants
+/// after edge-extending the source.
 fn exact_vbp_seed_partitions(
     width_px: usize,
     height_px: usize,
     seg_map: &[u8],
     mi_cols: usize,
 ) -> Vec<Vec<InterPartitionLeafDesc>> {
-    let sb_cols = width_px / 64;
+    let sb_cols = width_px.div_ceil(64);
     let sb_rows = height_px.div_ceil(64);
     let mut partitions = Vec::with_capacity(sb_rows * sb_cols);
     for sb_row in 0..sb_rows {
         let visible_mi_rows = (height_px - sb_row * 64).min(64).div_ceil(8);
-        let decision = if visible_mi_rows == 8 {
-            PartitionDecision::all_64x64()
-        } else {
-            edge_partition_decision(8, visible_mi_rows)
-        };
-        let leaves = leaves_from_decision_visible(&decision, visible_mi_rows, 8);
         for sb_col in 0..sb_cols {
+            let visible_mi_cols = (width_px - sb_col * 64).min(64).div_ceil(8);
+            let decision = if visible_mi_rows == 8 && visible_mi_cols == 8 {
+                PartitionDecision::all_64x64()
+            } else {
+                edge_partition_decision(visible_mi_cols, visible_mi_rows)
+            };
+            let leaves = leaves_from_decision_visible(&decision, visible_mi_rows, visible_mi_cols);
             partitions.push(inter_leaves_from_intra(
                 &leaves, sb_row, sb_col, seg_map, mi_cols,
             ));
@@ -6163,7 +6192,7 @@ fn return_parallel_partition_vectors_to_tile_scratch(
 ) {
     let tile_count = 1usize << log2_tile_cols;
     let sb_rows = mi_rows.div_ceil(8);
-    let sb_cols = mi_cols / 8;
+    let sb_cols = mi_cols.div_ceil(8);
     assert_eq!(tile_scratch.len(), tile_count);
     assert_eq!(frame_partitions.len(), sb_rows * sb_cols);
 
@@ -6173,7 +6202,7 @@ fn return_parallel_partition_vectors_to_tile_scratch(
         debug_assert_eq!(bounds.mi_col_start % 8, 0);
         debug_assert_eq!(bounds.mi_col_end % 8, 0);
         for sb_row in 0..sb_rows {
-            for sb_col in bounds.mi_col_start / 8..bounds.mi_col_end / 8 {
+            for sb_col in bounds.mi_col_start / 8..bounds.mi_col_end.div_ceil(8) {
                 let sb_index = sb_row * sb_cols + sb_col;
                 debug_assert!(scratch.partitions[sb_index].is_empty());
                 std::mem::swap(
@@ -6404,7 +6433,7 @@ fn build_kf_mi_grid(
     let mi_cols_us = mi_cols as usize;
     let mut mi_grid: Vec<Option<ModeInfo>> = vec![None; mi_rows_us * mi_cols_us];
 
-    let sb_cols = mi_cols_us / 8;
+    let sb_cols = mi_cols_us.div_ceil(8);
     let sb_rows = mi_rows_us.div_ceil(8);
     for sb_row in 0..sb_rows {
         for sb_col in 0..sb_cols {
@@ -6456,7 +6485,7 @@ fn build_inter_mi_grid_from_picker(
     let mi_cols_us = mi_cols as usize;
     let mut mi_grid: Vec<Option<ModeInfo>> = vec![None; mi_rows_us * mi_cols_us];
 
-    let sb_cols = mi_cols_us / 8;
+    let sb_cols = mi_cols_us.div_ceil(8);
     let sb_rows = mi_rows_us.div_ceil(8);
     for sb_row in 0..sb_rows {
         for sb_col in 0..sb_cols {
@@ -7601,7 +7630,7 @@ fn gather_coded_segments_and_skip(
 ) -> (Vec<u8>, Vec<bool>) {
     let mut coded_segments = vec![0u8; mi_rows * mi_cols];
     let mut coded_skip = vec![false; mi_rows * mi_cols];
-    let sb_cols = mi_cols / 8;
+    let sb_cols = mi_cols.div_ceil(8);
     let sb_rows = mi_rows.div_ceil(8);
     for sb_row in 0..sb_rows {
         for sb_col in 0..sb_cols {

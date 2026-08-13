@@ -177,7 +177,7 @@ impl PreAnalysisState {
         let mi_rows = (height as usize).div_ceil(8);
         let mi_cols = (width / 8) as usize;
         let sb_rows = height.div_ceil(64).max(1) as usize;
-        let sb_cols = (width / 64).max(1) as usize;
+        let sb_cols = (width as usize).div_ceil(64);
         let (ne_level, ne_thresh) = noise_estimate_init_params(width, height);
         Self {
             consec_zero_mv: vec![0u8; mi_rows * mi_cols],
@@ -316,7 +316,7 @@ impl PreAnalysisState {
         let h = self.height as usize;
         debug_assert_eq!(src_y_tight.len(), w * h);
         debug_assert_eq!(last.len(), w * h);
-        let sb_cols = (w / 64).max(1);
+        let sb_cols = w.div_ceil(64);
         let sb_rows = (h / 64).max(1);
         let dispatch = rvp9_core::dsp::get_ref();
         let sad64 = dispatch.sad(BlockSize::Block64x64);
@@ -356,7 +356,7 @@ impl PreAnalysisState {
         debug_assert_eq!(src_u_tight.len(), uvw * uvh);
         debug_assert_eq!(src_v_tight.len(), uvw * uvh);
 
-        let sb_cols = (w / 64).max(1);
+        let sb_cols = w.div_ceil(64);
         let sb_rows = (h / 64).max(1);
         let mi_cols = w / 8;
         let mi_rows = h.div_ceil(8);
@@ -513,7 +513,7 @@ impl PreAnalysisState {
         let h = self.height as usize;
         debug_assert_eq!(src_y_tight.len(), w * h);
         debug_assert_eq!(last.len(), w * h);
-        let sb_cols = (w / 64).max(1);
+        let sb_cols = w.div_ceil(64);
         let sb_rows = (h / 64).max(1);
 
         // Checkerboard sample, skipping the boundary SBs (libvpx
@@ -560,7 +560,7 @@ impl PreAnalysisState {
         }
         let w = self.width as usize;
         let h = self.height as usize;
-        let sb_cols = (w / 64).max(1);
+        let sb_cols = w.div_ceil(64);
         let sb_rows = (h / 64).max(1);
 
         let mut total_sad: u64 = 0;
@@ -1011,17 +1011,21 @@ impl PreAnalysisState {
             // 32×32 block for 4:2:0.
             let mut uv_sum: u64 = 0;
             for r in 0..32 {
-                let base = (uv_pix_r + r) * uvw + uv_pix_c;
+                let source_row = (uv_pix_r + r).min(uvh - 1);
+                let base = source_row * uvw;
                 for c in 0..32 {
-                    uv_sum += src_uv[base + c] as u64;
+                    let source_col = (uv_pix_c + c).min(uvw - 1);
+                    uv_sum += src_uv[base + source_col] as u64;
                 }
             }
             let uv_mean = (uv_sum / (32 * 32)) as u8;
             let mut uv_sad: u64 = 0;
             for r in 0..32 {
-                let base = (uv_pix_r + r) * uvw + uv_pix_c;
+                let source_row = (uv_pix_r + r).min(uvh - 1);
+                let base = source_row * uvw;
                 for c in 0..32 {
-                    let d = src_uv[base + c] as i32 - uv_mean as i32;
+                    let source_col = (uv_pix_c + c).min(uvw - 1);
+                    let d = src_uv[base + source_col] as i32 - uv_mean as i32;
                     uv_sad += d.unsigned_abs() as u64;
                 }
             }
@@ -1044,7 +1048,7 @@ impl PreAnalysisState {
     ) {
         let w = self.width as usize;
         let h = self.height as usize;
-        let sb_cols = (w / 64).max(1);
+        let sb_cols = w.div_ceil(64);
         let sb_rows = (h / 64).max(1);
         for sb_r in 0..sb_rows {
             for sb_c in 0..sb_cols {
@@ -1097,11 +1101,14 @@ fn sb_sad_and_var(
     let mut sad: u64 = 0;
     let mut sse: u64 = 0;
     let mut sum: i64 = 0;
+    let height = src.len() / stride;
     for r in 0..64 {
-        let base = (sb_r_pix + r) * stride + sb_c_pix;
+        let source_row = (sb_r_pix + r).min(height - 1);
+        let base = source_row * stride;
         for c in 0..64 {
-            let s = src[base + c] as i32;
-            let l = last[base + c] as i32;
+            let source_col = (sb_c_pix + c).min(stride - 1);
+            let s = src[base + source_col] as i32;
+            let l = last[base + source_col] as i32;
             let d = s - l;
             sad += d.unsigned_abs() as u64;
             sse += (d as i64 * d as i64) as u64;
@@ -1125,22 +1132,21 @@ fn sb_sad_and_var_dispatched(
     debug_assert!(src.len().is_multiple_of(stride));
     debug_assert_eq!(src.len(), last.len());
     let height = src.len() / stride;
-    if sb_r_pix + 64 > height {
+    if sb_r_pix + 64 > height || sb_c_pix + 64 > stride {
         // Libvpx's source YV12 buffers carry an extended visible border, so
-        // a short bottom SB64 repeats its final source row. Rvp9 stores tight
-        // planes; materialize only this uncommon edge block before calling
-        // the same dispatched kernels. Width is a multiple of 64, so no
-        // horizontal extension is needed here.
+        // a partial SB64 repeats its final source row and column. Rvp9 stores
+        // tight planes; materialize only this uncommon edge block before
+        // calling the same dispatched kernels.
         let mut src_edge = [0u8; 64 * 64];
         let mut last_edge = [0u8; 64 * 64];
         for row in 0..64 {
             let source_row = (sb_r_pix + row).min(height - 1);
-            let source_start = source_row * stride + sb_c_pix;
             let destination_start = row * 64;
-            src_edge[destination_start..destination_start + 64]
-                .copy_from_slice(&src[source_start..source_start + 64]);
-            last_edge[destination_start..destination_start + 64]
-                .copy_from_slice(&last[source_start..source_start + 64]);
+            for col in 0..64 {
+                let source_col = (sb_c_pix + col).min(stride - 1);
+                src_edge[destination_start + col] = src[source_row * stride + source_col];
+                last_edge[destination_start + col] = last[source_row * stride + source_col];
+            }
         }
         let sad = u64::from(sad64(&src_edge, 64, &last_edge, 64));
         let (sum, sse) = variance64(&src_edge, 64, &last_edge, 64);
@@ -1391,7 +1397,7 @@ fn compute_avg_source_sad_rows(
     sad_out: &mut [u64],
     state_out: &mut [ContentStateSb],
 ) {
-    let sb_cols = (stride / 64).max(1);
+    let sb_cols = stride.div_ceil(64);
     debug_assert_eq!(sad_out.len(), state_out.len());
     debug_assert_eq!(sad_out.len() % sb_cols, 0);
     for (local_index, (sad_slot, state_slot)) in
@@ -1826,6 +1832,26 @@ mod tests {
 
         assert_eq!(state.avg_source_sad, [100 * 64 * 64]);
         assert_eq!(state.content_state_sb, [ContentStateSb::VeryHighSad]);
+    }
+
+    #[test]
+    fn avg_source_sad_extends_a_short_right_edge_to_sb64() {
+        const WIDTH: usize = 96;
+        const HEIGHT: usize = 64;
+        let previous = vec![0u8; WIDTH * HEIGHT];
+        let mut current = vec![0u8; WIDTH * HEIGHT];
+        for row in current.chunks_exact_mut(WIDTH) {
+            row[64..].fill(100);
+        }
+        let mut state = PreAnalysisState::new(WIDTH as u32, HEIGHT as u32);
+        state.capture_last_source(&previous);
+
+        state.compute_avg_source_sad(&current, false);
+
+        assert_eq!(state.avg_source_sad.len(), 2);
+        assert_eq!(state.avg_source_sad[0], 0);
+        assert_eq!(state.avg_source_sad[1], 100 * 64 * 64);
+        assert_eq!(state.content_state_sb[1], ContentStateSb::VeryHighSad);
     }
 
     /// W2.2 PROOF — a large-magnitude per-SB diff lights up
