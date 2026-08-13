@@ -3808,6 +3808,10 @@ impl StreamEncoder {
     ) -> Result<Vec<u8>, EncodeError> {
         let w = self.config.width;
         let h = self.config.height;
+        let spatial_base_component = spatial_component
+            && self
+                .svc_frame
+                .is_some_and(|decision| decision.refresh_frame_flags == 0x01);
         let spatial_high_frame_rate = self.config.framerate >= 50.0;
         let log2_tile_cols = self.parallelism.effective_log2_tile_cols(w);
         let mi_rows_us = (h as usize).div_ceil(8);
@@ -4269,6 +4273,7 @@ impl StreamEncoder {
                     force_nstep_motion_search,
                     source_aligned_cpu8_svc_partitions,
                     spatial_component,
+                    spatial_base_component,
                     spatial_key_enhancement_component,
                     spatial_first_enhancement_component,
                     spatial_high_frame_rate,
@@ -5333,6 +5338,7 @@ impl StreamEncoder {
             &arf_mv_costs,
             &mut arf_rd_thresh,
             self.frames_since_golden_refresh,
+            false,
             false,
             false,
             false,

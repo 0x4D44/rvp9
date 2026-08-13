@@ -6296,3 +6296,41 @@ final `+0.5%` gate and is active work.
 **Future plan:** retain until the base-layer reconstructed-reference and
 winner-history gaps are aligned. Re-test the literal source-SAD lifecycle only
 after the same six-point curve stays at least Pareto-neutral.
+
+### 2026-08-14 — Restore CPU8 intra fallback on spatial CBR base components
+
+**Where:** `rvp9_encoder::realtime_intra_fallback_enabled` and
+`rvp9_encoder::pick_and_simulate_inter_encode_partitions`; libvpx counterpart:
+`vp9/encoder/vp9_pickmode.c::vp9_pick_inter_mode`.
+
+**What libvpx does:** CPU8 realtime may evaluate an intra mode after its inter
+candidate loop and select it when its modeled rate-distortion cost wins.
+
+**What rvp9 does:** the earlier measured CPU8 speed policy still omits this
+fallback on ordinary realtime pictures and spatial enhancement components.
+One-pass realtime spatial-CBR base components retain rvp9's existing complete
+intra fallback. Temporal enhancement pictures remain excluded.
+
+**Why:** after rate control and keyframe quality were excluded, the exact
+CPU8/S2 base census found no rvp9 intra area versus `1.7%` in libvpx. Restoring
+the fallback only on the lower-resolution base picker improves the required
+Ducks Take Off base/top curve from `+2.4081%/-3.9244%` to
+`+1.2701%/-4.1870%`. The matched-rate base result is a favourable
+`+0.0157 dB`, and the 2,835-kbps point uses fewer bits at about `+0.03 dB`.
+The CPU8/S3 control remains wide green at
+`-3.6187/-3.0782/-3.8590%`.
+
+**Byte-parity impact:** intentional on CPU8 spatial-CBR base inter pictures.
+The added intra candidate may change block modes and reconstruction. Canonical
+1080p S2/S3 streams remain byte-exact across rvp9-decoder, pinned vpxdec, and
+ffmpeg.
+
+**Speed impact:** the extra fallback runs only on the lower-resolution base
+component, not the dominant enhancement picker. Plain-release curve timings
+remain inside the prior warm envelope but are host-noisy; exact production-PGO
+paired medians remain required before final acceptance.
+
+**Future plan:** retain while localizing the remaining base gap. Rvp9 now
+selects `2.9%` intra area versus libvpx's `1.7%`, so do not broaden this
+exception. Profile its cost and recheck the complete speed matrix at the final
+spatial-PGO gate.

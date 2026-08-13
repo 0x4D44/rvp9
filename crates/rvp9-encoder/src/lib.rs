@@ -5609,9 +5609,17 @@ fn realtime_search_golden_filter(rc_mode: crate::rate_control::RcMode, speed: i3
 /// Keep the complete intra-in-inter fallback on CPU6 and ordinary CPU7
 /// pictures. CPU7 temporal enhancement pictures already use the source-backed
 /// simple block-YRD policy, so do not repeat an intra model after selecting an
-/// inter winner. CPU8 omits the fallback on every realtime picture.
-fn realtime_intra_fallback_enabled(speed: i32, svc_enhancement_frame: bool) -> bool {
-    speed.unsigned_abs() < 8 && !(speed.unsigned_abs() == 7 && svc_enhancement_frame)
+/// inter winner. CPU8 retains the measured speed cutoff except on a spatial
+/// CBR base component, where the lower-resolution picker is cheap and pinned
+/// libvpx still selects intra blocks.
+fn realtime_intra_fallback_enabled(
+    speed: i32,
+    svc_enhancement_frame: bool,
+    spatial_cbr_base_component: bool,
+) -> bool {
+    let preset = speed.unsigned_abs();
+    (preset < 8 && !(preset == 7 && svc_enhancement_frame))
+        || (preset == 8 && !svc_enhancement_frame && spatial_cbr_base_component)
 }
 
 fn retain_all_last_nearest_filter_search(rc_mode: crate::rate_control::RcMode, speed: i32) -> bool {
@@ -6630,6 +6638,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // partition leaves that VP9 can legally signal across a partial bottom
     // superblock. Single-layer and temporal paths retain their prior adapter.
     spatial_component: bool,
+    // Spatial layer zero inter component. Its lower-resolution picker may
+    // retain source-faithful CPU8 policies without charging the full top-layer
+    // picture.
+    spatial_base_component: bool,
     // The enhancement component paired with the base keyframe. Its
     // reconstruction becomes this layer's LAST reference for the key interval.
     spatial_key_enhancement_component: bool,
@@ -9847,6 +9859,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     enable_intra_fallback: realtime_intra_fallback_enabled(
                         speed,
                         svc_model_only_large_qmax.is_some(),
+                        spatial_base_component && matches!(rc_mode, crate::rate_control::RcMode::Cbr),
                     ),
                     intra_above_pixels: intra_above,
                     intra_left_pixels: intra_left,
@@ -17349,13 +17362,15 @@ mod tests {
     }
 
     #[test]
-    fn temporal_enhancement_intra_fallback_is_preset_scoped() {
-        assert!(realtime_intra_fallback_enabled(6, false));
-        assert!(realtime_intra_fallback_enabled(6, true));
-        assert!(realtime_intra_fallback_enabled(7, false));
-        assert!(!realtime_intra_fallback_enabled(7, true));
-        assert!(!realtime_intra_fallback_enabled(8, false));
-        assert!(!realtime_intra_fallback_enabled(8, true));
+    fn spatial_base_and_temporal_enhancement_intra_fallback_are_preset_scoped() {
+        assert!(realtime_intra_fallback_enabled(6, false, false));
+        assert!(realtime_intra_fallback_enabled(6, true, false));
+        assert!(realtime_intra_fallback_enabled(7, false, false));
+        assert!(!realtime_intra_fallback_enabled(7, true, false));
+        assert!(!realtime_intra_fallback_enabled(8, false, false));
+        assert!(!realtime_intra_fallback_enabled(8, true, false));
+        assert!(realtime_intra_fallback_enabled(8, false, true));
+        assert!(!realtime_intra_fallback_enabled(8, true, true));
     }
 
     #[test]
