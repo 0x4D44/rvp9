@@ -342,6 +342,35 @@ fn compare_keyframe_cells(rvp9: &Aggregate, libvpx: &Aggregate) -> KeyframeAgree
     agreement
 }
 
+fn partial_keyframe_bottom_block_grid(frame: &FrameStats) -> Vec<String> {
+    if frame.mi_rows == 0
+        || frame.mi_rows.is_multiple_of(8)
+        || frame.mi_cols == 0
+        || frame.mi_grid.len() != frame.mi_rows * frame.mi_cols
+    {
+        return Vec::new();
+    }
+
+    let first_partial_row = frame.mi_rows / 8 * 8;
+    (first_partial_row..frame.mi_rows)
+        .map(|row| {
+            let mut line = format!("mi_row={row}");
+            for col in 0..frame.mi_cols {
+                if col % 8 == 0 {
+                    line.push_str(" | ");
+                } else {
+                    line.push(',');
+                }
+                let label = frame.mi_grid[row * frame.mi_cols + col]
+                    .as_ref()
+                    .map_or("?", |mi| block_label(mi.block_size.idx()));
+                line.push_str(label);
+            }
+            line
+        })
+        .collect()
+}
+
 fn compare_inter_frame_cells(rvp9: &Aggregate, libvpx: &Aggregate) -> CellAgreement {
     let mut agreement = CellAgreement::default();
     for (rvp9_frame, libvpx_frame) in rvp9.frames.iter().zip(&libvpx.frames) {
@@ -1468,6 +1497,33 @@ fn emit_report(
                 );
             }
         }
+        let rvp9_bottom_grid = rvp9
+            .frames
+            .iter()
+            .find(|frame| frame.is_key)
+            .map(partial_keyframe_bottom_block_grid)
+            .unwrap_or_default();
+        let libvpx_bottom_grid = libvpx
+            .frames
+            .iter()
+            .find(|frame| frame.is_key)
+            .map(partial_keyframe_bottom_block_grid)
+            .unwrap_or_default();
+        if !rvp9_bottom_grid.is_empty() || !libvpx_bottom_grid.is_empty() {
+            let _ = writeln!(
+                md,
+                "\nPartial bottom-superblock decoded block-size grids (`|` separates 64-pixel superblocks):\n"
+            );
+            let _ = writeln!(md, "rvp9:\n```text");
+            for line in rvp9_bottom_grid {
+                let _ = writeln!(md, "{line}");
+            }
+            let _ = writeln!(md, "```\n\nlibvpx:\n```text");
+            for line in libvpx_bottom_grid {
+                let _ = writeln!(md, "{line}");
+            }
+            let _ = writeln!(md, "```");
+        }
     }
 
     // ---- Keyframe diagnostic ----
@@ -2131,6 +2187,26 @@ mod tests {
             agreement.partial_sb_band_block_size_pairs[BlockSize::Block8x8.idx()]
                 [BlockSize::Block16x16.idx()],
             1
+        );
+    }
+
+    #[test]
+    fn partial_keyframe_bottom_grid_preserves_coordinates_and_sb_groups() {
+        use rvp9_core::transforms::TxSize;
+
+        let mut frame = FrameStats {
+            is_key: true,
+            mi_rows: 9,
+            mi_cols: 10,
+            mi_grid: vec![Some(test_intra_mi(BlockSize::Block8x8, TxSize::Tx8x8)); 90],
+            ..Default::default()
+        };
+        frame.mi_grid[80].as_mut().unwrap().block_size = BlockSize::Block4x4;
+        frame.mi_grid[89].as_mut().unwrap().block_size = BlockSize::Block16x16;
+
+        assert_eq!(
+            partial_keyframe_bottom_block_grid(&frame),
+            vec!["mi_row=8 | 4x4,8x8,8x8,8x8,8x8,8x8,8x8,8x8 | 8x8,16x16"]
         );
     }
 
