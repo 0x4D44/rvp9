@@ -9734,10 +9734,11 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     }
 
                     let f02_last_candidates = if f02_oracle_enabled {
-                        rvp9_core::mode_decision::inter::candidate_trace::take(
-                            pick.candidate_trace_id,
-                        )
-                        .map(|candidate| {
+                        let (candidates, last_newmv_gate) =
+                            rvp9_core::mode_decision::inter::candidate_trace::take_with_gate(
+                                pick.candidate_trace_id,
+                            );
+                        let mut probes = candidates.map(|candidate| {
                             candidate.map_or_else(Default::default, |candidate| {
                                 crate::f02_oracle::CandidateProbe {
                                     available: true,
@@ -9755,9 +9756,13 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                         rvp9_core::mode_decision::model_rd::SkipTxfm::AcOnly => 1,
                                         rvp9_core::mode_decision::model_rd::SkipTxfm::AcDc => 2,
                                     },
+                                    newmv_gate:
+                                        rvp9_core::mode_decision::inter::NewMvGateReason::Unknown,
                                 }
                             })
-                        })
+                        });
+                        probes[3].newmv_gate = last_newmv_gate;
+                        probes
                     } else {
                         [Default::default(); 4]
                     };

@@ -24,6 +24,7 @@ pub use rvp9_encoder::f02_oracle::{
 use rvp9_core::bitstream::frame::InterpFilter;
 use rvp9_core::block::BlockSize;
 use rvp9_core::intra_pred::IntraMode;
+use rvp9_core::mode_decision::inter::NewMvGateReason;
 use rvp9_core::mode_info::{InterMode, RefFrame};
 use rvp9_core::transforms::TxSize;
 
@@ -448,6 +449,8 @@ pub struct NewMvCellAnalysis {
     pub rvp9_ambiguous_cells: usize,
     /// Target cells where rvp9 did not evaluate the LAST NEWMV candidate.
     pub rvp9_new_unavailable_cells: usize,
+    /// Unavailable cells by [`NewMvGateReason`] numeric code.
+    pub rvp9_new_unavailable_by_gate: [usize; 9],
     /// Target cells where rvp9's LAST NEWMV candidate was the zero vector.
     pub rvp9_new_zero_cells: usize,
     /// Target cells where rvp9 selected the same LAST NEWMV vector as libvpx.
@@ -589,6 +592,7 @@ pub fn analyze_newmv_cells(
         let candidate = rvp9.last_candidates[LAST_NEWMV_CANDIDATE];
         if !candidate.available {
             analysis.rvp9_new_unavailable_cells += 1;
+            analysis.rvp9_new_unavailable_by_gate[candidate.newmv_gate as usize] += 1;
             continue;
         }
         if candidate.mv_row == 0 && candidate.mv_col == 0 {
@@ -924,7 +928,7 @@ fn parse_candidate_probes(v: &str) -> Result<[CandidateProbe; 4], ParseError> {
     let mut probes = Vec::with_capacity(4);
     for encoded in raw.split('|') {
         let fields = encoded.split(':').collect::<Vec<_>>();
-        if fields.len() != 11 {
+        if !matches!(fields.len(), 11 | 12) {
             return Err(ParseError::BadValue {
                 field: "last_candidates",
                 raw,
@@ -940,6 +944,15 @@ fn parse_candidate_probes(v: &str) -> Result<[CandidateProbe; 4], ParseError> {
                 });
             }
         };
+        let newmv_gate = fields
+            .get(11)
+            .map_or(Ok(NewMvGateReason::Unknown), |field| {
+                let code = parse_num(field, "last_candidates")?;
+                NewMvGateReason::from_code(code).ok_or_else(|| ParseError::BadValue {
+                    field: "last_candidates",
+                    raw: raw.clone(),
+                })
+            })?;
         probes.push(CandidateProbe {
             available,
             mv_row: parse_num(fields[1], "last_candidates")?,
@@ -952,6 +965,7 @@ fn parse_candidate_probes(v: &str) -> Result<[CandidateProbe; 4], ParseError> {
             uv_rate: parse_num(fields[8], "last_candidates")?,
             uv_dist: parse_num(fields[9], "last_candidates")?,
             skip_txfm: parse_num(fields[10], "last_candidates")?,
+            newmv_gate,
         });
     }
     probes.try_into().map_err(|_| ParseError::BadValue {
@@ -1087,6 +1101,7 @@ mod tests {
                     uv_rate: 500,
                     uv_dist: 1_000,
                     skip_txfm: 1,
+                    newmv_gate: NewMvGateReason::Unknown,
                 },
                 CandidateProbe::default(),
                 CandidateProbe::default(),
@@ -1328,6 +1343,7 @@ mod tests {
         let mut unavailable = exact_lost;
         unavailable.mi_row += 2;
         unavailable.last_candidates[3] = CandidateProbe::default();
+        unavailable.last_candidates[3].newmv_gate = NewMvGateReason::AdaptiveRdThreshold;
 
         let analysis = analyze_newmv_cells(
             &[exact_selected, exact_lost, near_lost, unavailable],
@@ -1341,6 +1357,10 @@ mod tests {
         assert_eq!(analysis.rvp9_new_exact_lost_cells, 4);
         assert_eq!(analysis.rvp9_new_near_lost_cells, 4);
         assert_eq!(analysis.rvp9_new_unavailable_cells, 4);
+        assert_eq!(
+            analysis.rvp9_new_unavailable_by_gate[NewMvGateReason::AdaptiveRdThreshold as usize],
+            4
+        );
         assert_eq!(analysis.classified_cells(), 16);
     }
 

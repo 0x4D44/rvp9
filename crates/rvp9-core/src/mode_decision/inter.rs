@@ -1740,16 +1740,82 @@ pub struct PickInterModeResult {
 /// picker. Records exist only when explicitly enabled by the encoder's F.0.2
 /// oracle and remain thread-local, so normal encoding does not allocate or
 /// synchronise.
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
+#[repr(u8)]
+pub enum NewMvGateReason {
+    /// No LAST/NEWMV loop outcome was recorded.
+    #[default]
+    Unknown = 0,
+    /// The LAST/NEWMV candidate reached full prediction and RD evaluation.
+    Evaluated = 1,
+    /// The active per-block-size mode mask disabled NEWMV.
+    InterModeMask = 2,
+    /// The screen-content source-SAD/variance shortcut rejected NEWMV.
+    ScreenContent = 3,
+    /// The reference mask disabled LAST before mode evaluation.
+    ReferenceMask = 4,
+    /// The low-temporal-variance shortcut rejected LAST/NEWMV.
+    LowTemporalVariance = 5,
+    /// The adaptive RD threshold rejected NEWMV before motion search.
+    AdaptiveRdThreshold = 6,
+    /// The full-pel syntax lower bound rejected fractional-pel refinement.
+    SubpelSyntax = 7,
+    /// NEWMV duplicated an already evaluated LAST motion vector.
+    DuplicateMv = 8,
+}
+
+impl NewMvGateReason {
+    /// Decode the stable numeric F02 sidecar representation.
+    #[must_use]
+    pub const fn from_code(code: u8) -> Option<Self> {
+        Some(match code {
+            0 => Self::Unknown,
+            1 => Self::Evaluated,
+            2 => Self::InterModeMask,
+            3 => Self::ScreenContent,
+            4 => Self::ReferenceMask,
+            5 => Self::LowTemporalVariance,
+            6 => Self::AdaptiveRdThreshold,
+            7 => Self::SubpelSyntax,
+            8 => Self::DuplicateMv,
+            _ => return None,
+        })
+    }
+
+    /// Stable human-readable diagnostic tag.
+    #[must_use]
+    pub const fn as_tag(self) -> &'static str {
+        match self {
+            Self::Unknown => "unknown",
+            Self::Evaluated => "evaluated",
+            Self::InterModeMask => "inter_mode_mask",
+            Self::ScreenContent => "screen_content",
+            Self::ReferenceMask => "reference_mask",
+            Self::LowTemporalVariance => "low_temporal_variance",
+            Self::AdaptiveRdThreshold => "adaptive_rd_threshold",
+            Self::SubpelSyntax => "subpel_syntax",
+            Self::DuplicateMv => "duplicate_mv",
+        }
+    }
+}
+
+/// Thread-local F02 records for evaluated LAST candidates and NEWMV gates.
 pub mod candidate_trace {
-    use super::InterModeSearchResult;
+    use super::{InterModeSearchResult, NewMvGateReason};
     use std::cell::RefCell;
     use std::collections::HashMap;
+
+    #[derive(Default)]
+    struct TraceRecord {
+        candidates: [Option<InterModeSearchResult>; 4],
+        last_newmv_gate: NewMvGateReason,
+    }
 
     #[derive(Default)]
     struct State {
         enabled: bool,
         next_id: u64,
-        records: HashMap<u64, [Option<InterModeSearchResult>; 4]>,
+        records: HashMap<u64, TraceRecord>,
     }
 
     thread_local! {
@@ -1771,7 +1837,10 @@ pub mod candidate_trace {
         STATE.with(|state| state.borrow().enabled)
     }
 
-    pub(super) fn record(candidates: [Option<InterModeSearchResult>; 4]) -> u64 {
+    pub(super) fn record(
+        candidates: [Option<InterModeSearchResult>; 4],
+        last_newmv_gate: NewMvGateReason,
+    ) -> u64 {
         STATE.with(|state| {
             let mut state = state.borrow_mut();
             if !state.enabled {
@@ -1779,7 +1848,13 @@ pub mod candidate_trace {
             }
             let id = state.next_id;
             state.next_id = state.next_id.saturating_add(1).max(1);
-            state.records.insert(id, candidates);
+            state.records.insert(
+                id,
+                TraceRecord {
+                    candidates,
+                    last_newmv_gate,
+                },
+            );
             id
         })
     }
@@ -1788,10 +1863,19 @@ pub mod candidate_trace {
     /// all-unavailable set so diagnostic callers can remain branch-free.
     #[must_use]
     pub fn take(id: u64) -> [Option<InterModeSearchResult>; 4] {
+        take_with_gate(id).0
+    }
+
+    /// Take candidates plus the reason LAST/NEWMV was evaluated or gated.
+    #[must_use]
+    pub fn take_with_gate(id: u64) -> ([Option<InterModeSearchResult>; 4], NewMvGateReason) {
         if id == 0 {
-            return [None; 4];
+            return ([None; 4], NewMvGateReason::Unknown);
         }
-        STATE.with(|state| state.borrow_mut().records.remove(&id).unwrap_or([None; 4]))
+        STATE.with(|state| {
+            let record = state.borrow_mut().records.remove(&id).unwrap_or_default();
+            (record.candidates, record.last_newmv_gate)
+        })
     }
 }
 
@@ -2252,6 +2336,7 @@ fn pick_inter_mode_impl(
     let collect_candidate_trace =
         candidate_trace::is_enabled() || force_candidate_trace_bookkeeping();
     let mut last_candidates: [Option<InterModeSearchResult>; 4] = [None; 4];
+    let mut last_newmv_gate = NewMvGateReason::Unknown;
     let mut denoiser_zeromv: Option<(usize, DenoiserCandidateContext)> = None;
     let mut denoiser_zeromv_last: Option<(usize, DenoiserCandidateContext)> = None;
     let mut denoiser_nonzero: Option<(usize, DenoiserCandidateContext)> = None;
@@ -2284,6 +2369,9 @@ fn pick_inter_mode_impl(
             // bsize. Bit `m` of the per-bsize mask corresponds to
             // `InterMode::idx() = m` (NEAREST=0, NEAR=1, ZERO=2, NEW=3).
             if (params.inter_mode_mask[params.block_size.idx()] & (1u8 << mode.idx())) == 0 {
+                if ref_idx == 0 && mode == InterMode::NewMv {
+                    last_newmv_gate = NewMvGateReason::InterModeMask;
+                }
                 continue;
             }
 
@@ -2337,11 +2425,17 @@ fn pick_inter_mode_impl(
                                 && ref_frame == RefFrame::LastFrame
                                 && !zts)
                         {
+                            if ref_idx == 0 && mode == InterMode::NewMv {
+                                last_newmv_gate = NewMvGateReason::ScreenContent;
+                            }
                             continue;
                         }
                     }
                     None => {
                         if !probe_mv_zero && params.source_variance == 0 {
+                            if ref_idx == 0 && mode == InterMode::NewMv {
+                                last_newmv_gate = NewMvGateReason::ScreenContent;
+                            }
                             continue;
                         }
                     }
@@ -2359,6 +2453,9 @@ fn pick_inter_mode_impl(
                 _ => 0,
             };
             if ref_frame_skip_mask & ref_bit != 0 {
+                if ref_idx == 0 && mode == InterMode::NewMv {
+                    last_newmv_gate = NewMvGateReason::ReferenceMask;
+                }
                 continue;
             }
 
@@ -2432,6 +2529,9 @@ fn pick_inter_mode_impl(
                 ref_frame,
                 mode,
             ) {
+                if ref_idx == 0 && mode == InterMode::NewMv {
+                    last_newmv_gate = NewMvGateReason::LowTemporalVariance;
+                }
                 continue;
             }
 
@@ -2457,6 +2557,9 @@ fn pick_inter_mode_impl(
                         thresh
                     };
                     if b.best_rd_cost < biased_thresh {
+                        if ref_idx == 0 && mode == InterMode::NewMv {
+                            last_newmv_gate = NewMvGateReason::AdaptiveRdThreshold;
+                        }
                         continue;
                     }
                 }
@@ -2500,6 +2603,9 @@ fn pick_inter_mode_impl(
                             }),
                         );
                         if searched.subpel_gate_rejected {
+                            if ref_idx == 0 {
+                                last_newmv_gate = NewMvGateReason::SubpelSyntax;
+                            }
                             continue;
                         }
                         *cached = Some(searched.best_mv);
@@ -2589,6 +2695,9 @@ fn pick_inter_mode_impl(
                 skip_this = true;
             }
             if skip_this {
+                if ref_idx == 0 && mode == InterMode::NewMv {
+                    last_newmv_gate = NewMvGateReason::DuplicateMv;
+                }
                 continue;
             }
 
@@ -2745,6 +2854,9 @@ fn pick_inter_mode_impl(
                 let mut traced = candidate;
                 traced.best_rd_cost = biased_rd_cost;
                 last_candidates[slot] = Some(traced);
+            }
+            if ref_frame == RefFrame::LastFrame && mode == InterMode::NewMv {
+                last_newmv_gate = NewMvGateReason::Evaluated;
             }
             let denoiser_candidate = DenoiserCandidateContext {
                 sse: candidate.sse_y,
@@ -2939,7 +3051,7 @@ fn pick_inter_mode_impl(
         nonzero: denoiser_nonzero.map(|(_, candidate)| candidate),
     };
     best.candidate_trace_id = if collect_candidate_trace {
-        candidate_trace::record(last_candidates)
+        candidate_trace::record(last_candidates, last_newmv_gate)
     } else {
         0
     };
@@ -8479,7 +8591,8 @@ mod tests {
         assert_eq!(result.picked_ref_frame, RefFrame::LastFrame);
         assert_ne!(result.candidate_trace_id, 0);
 
-        let candidates = candidate_trace::take(result.candidate_trace_id);
+        let (candidates, newmv_gate) = candidate_trace::take_with_gate(result.candidate_trace_id);
+        assert_eq!(newmv_gate, NewMvGateReason::Evaluated);
         let slot = match result.best_mode {
             InterMode::ZeroMv => 0,
             InterMode::NearestMv => 1,
@@ -8501,6 +8614,12 @@ mod tests {
             [None; 4],
             "candidate traces are consumed exactly once"
         );
+
+        params.inter_mode_mask[BlockSize::Block16x16.idx()] &= !(1 << InterMode::NewMv.idx());
+        candidate_trace::reset(true);
+        let masked = pick_inter_mode(&params);
+        let (_, masked_gate) = candidate_trace::take_with_gate(masked.candidate_trace_id);
+        assert_eq!(masked_gate, NewMvGateReason::InterModeMask);
 
         candidate_trace::reset(false);
         let untraced = pick_inter_mode(&params);

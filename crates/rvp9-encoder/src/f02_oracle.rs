@@ -27,6 +27,7 @@ use std::io;
 use rvp9_core::bitstream::frame::InterpFilter;
 use rvp9_core::block::BlockSize;
 use rvp9_core::intra_pred::IntraMode;
+use rvp9_core::mode_decision::inter::NewMvGateReason;
 use rvp9_core::mode_info::{InterMode, RefFrame};
 use rvp9_core::transforms::TxSize;
 
@@ -103,6 +104,9 @@ pub struct CandidateProbe {
     pub uv_dist: i64,
     /// `SKIP_TXFM_*` state (`0=None`, `1=AcOnly`, `2=AcDc`).
     pub skip_txfm: u8,
+    /// Why LAST/NEWMV was evaluated or gated. Unknown for other slots and
+    /// legacy/pinned-libvpx records.
+    pub newmv_gate: NewMvGateReason,
 }
 
 /// One picker-decision record. HLD §3.4 schema.
@@ -279,7 +283,7 @@ fn candidate_probes_tag(probes: &[CandidateProbe; 4]) -> String {
         .iter()
         .map(|p| {
             format!(
-                "{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}",
+                "{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}",
                 u8::from(p.available),
                 p.mv_row,
                 p.mv_col,
@@ -291,6 +295,7 @@ fn candidate_probes_tag(probes: &[CandidateProbe; 4]) -> String {
                 p.uv_rate,
                 p.uv_dist,
                 p.skip_txfm,
+                p.newmv_gate as u8,
             )
         })
         .collect::<Vec<_>>()

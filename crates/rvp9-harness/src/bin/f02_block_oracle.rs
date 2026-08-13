@@ -42,6 +42,7 @@
 //! only the base spatial layer at its coded geometry.
 
 use rvp9_core::bitstream::ChromaFormat;
+use rvp9_core::mode_decision::inter::NewMvGateReason;
 use rvp9_encoder::f02_oracle::{self, BlockDecision};
 use rvp9_encoder::svc::{InterLayerPred, SpatialSvcConfig};
 use rvp9_encoder::{
@@ -642,6 +643,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 analysis.rvp9_new_rejected_higher_rd_cells,
                 analysis.rvp9_new_rejected_not_higher_rd_cells,
             );
+            let unavailable = [
+                NewMvGateReason::Unknown,
+                NewMvGateReason::InterModeMask,
+                NewMvGateReason::ScreenContent,
+                NewMvGateReason::ReferenceMask,
+                NewMvGateReason::LowTemporalVariance,
+                NewMvGateReason::AdaptiveRdThreshold,
+                NewMvGateReason::SubpelSyntax,
+                NewMvGateReason::DuplicateMv,
+            ]
+            .into_iter()
+            .filter_map(|reason| {
+                let count = analysis.rvp9_new_unavailable_by_gate[reason as usize];
+                (count > 0).then(|| format!("{}={count}", reason.as_tag()))
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+            println!("  unavailable LAST/NEWMV gates: {unavailable}");
         }
         if let Some(costs) = matching_newmv_costs {
             println!(
@@ -780,6 +799,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "| unavailable candidate | {} |",
                 analysis.rvp9_new_unavailable_cells
             )?;
+            for reason in [
+                NewMvGateReason::Unknown,
+                NewMvGateReason::InterModeMask,
+                NewMvGateReason::ScreenContent,
+                NewMvGateReason::ReferenceMask,
+                NewMvGateReason::LowTemporalVariance,
+                NewMvGateReason::AdaptiveRdThreshold,
+                NewMvGateReason::SubpelSyntax,
+                NewMvGateReason::DuplicateMv,
+            ] {
+                let count = analysis.rvp9_new_unavailable_by_gate[reason as usize];
+                if count > 0 {
+                    writeln!(sf, "| unavailable: {} | {count} |", reason.as_tag())?;
+                }
+            }
             writeln!(
                 sf,
                 "| missing or ambiguous rvp9 coverage | {} |",
