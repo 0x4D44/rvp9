@@ -124,6 +124,118 @@ fn scale_plane_2x(
     height: usize,
     kernel: &[i16; FILTER_TAPS],
 ) -> Result<Vec<u8>, ScaleSourceError> {
+    if kernel == &BILINEAR_KERNEL[HALF_PIXEL_PHASE] {
+        return scale_plane_bilinear_2x(input, width, height);
+    }
+    scale_plane_2x_scalar(input, width, height, kernel)
+}
+
+fn scale_plane_bilinear_2x(
+    input: &[u8],
+    width: usize,
+    height: usize,
+) -> Result<Vec<u8>, ScaleSourceError> {
+    let out_width = width / 2;
+    let out_height = height / 2;
+    let output_len = out_width
+        .checked_mul(out_height)
+        .ok_or(ScaleSourceError::InvalidDimensions)?;
+    let mut output = vec![0u8; output_len];
+
+    #[cfg(target_arch = "aarch64")]
+    {
+        // SAFETY: AArch64 always provides NEON. The input and output plane
+        // lengths were validated by `scale_i420_2x`; the inner loop uses
+        // exact-width chunks and leaves its tail to scalar code.
+        unsafe {
+            scale_plane_bilinear_2x_neon(
+                input.as_ptr(),
+                width,
+                output.as_mut_ptr(),
+                out_width,
+                out_height,
+            );
+        }
+    }
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        scale_plane_bilinear_2x_scalar(input, width, out_width, out_height, &mut output);
+    }
+    Ok(output)
+}
+
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+unsafe fn scale_plane_bilinear_2x_neon(
+    input: *const u8,
+    width: usize,
+    output: *mut u8,
+    out_width: usize,
+    out_height: usize,
+) {
+    use core::arch::aarch64::*;
+
+    // SAFETY: the caller proves complete input and output plane footprints.
+    // Each vector iteration consumes exactly 32 source bytes and produces 16
+    // destination bytes; the scalar tail stays within the same rows.
+    unsafe {
+        for y in 0..out_height {
+            let row0 = input.add(2 * y * width);
+            let row1 = row0.add(width);
+            let dst = output.add(y * out_width);
+            let mut x = 0;
+            while x + 16 <= out_width {
+                let source_x = x * 2;
+                let a = vld2q_u8(row0.add(source_x));
+                let b = vld2q_u8(row1.add(source_x));
+                let horizontal0 = vrhaddq_u8(a.0, a.1);
+                let horizontal1 = vrhaddq_u8(b.0, b.1);
+                vst1q_u8(dst.add(x), vrhaddq_u8(horizontal0, horizontal1));
+                x += 16;
+            }
+            while x < out_width {
+                let source_x = x * 2;
+                let horizontal0 =
+                    (u16::from(*row0.add(source_x)) + u16::from(*row0.add(source_x + 1)) + 1) >> 1;
+                let horizontal1 =
+                    (u16::from(*row1.add(source_x)) + u16::from(*row1.add(source_x + 1)) + 1) >> 1;
+                *dst.add(x) = ((horizontal0 + horizontal1 + 1) >> 1) as u8;
+                x += 1;
+            }
+        }
+    }
+}
+
+#[cfg(not(target_arch = "aarch64"))]
+fn scale_plane_bilinear_2x_scalar(
+    input: &[u8],
+    width: usize,
+    out_width: usize,
+    out_height: usize,
+    output: &mut [u8],
+) {
+    for y in 0..out_height {
+        for x in 0..out_width {
+            let source_x = x * 2;
+            let top = (u16::from(input[2 * y * width + source_x])
+                + u16::from(input[2 * y * width + source_x + 1])
+                + 1)
+                >> 1;
+            let bottom = (u16::from(input[(2 * y + 1) * width + source_x])
+                + u16::from(input[(2 * y + 1) * width + source_x + 1])
+                + 1)
+                >> 1;
+            output[y * out_width + x] = ((top + bottom + 1) >> 1) as u8;
+        }
+    }
+}
+
+fn scale_plane_2x_scalar(
+    input: &[u8],
+    width: usize,
+    height: usize,
+    kernel: &[i16; FILTER_TAPS],
+) -> Result<Vec<u8>, ScaleSourceError> {
     let out_width = width / 2;
     let out_height = height / 2;
 
@@ -223,6 +335,26 @@ mod tests {
             assert!(scaled.y.iter().all(|&sample| sample == 17));
             assert!(scaled.u.iter().all(|&sample| sample == 91));
             assert!(scaled.v.iter().all(|&sample| sample == 233));
+        }
+    }
+
+    #[test]
+    fn optimized_bilinear_plane_matches_scalar_across_shapes() {
+        let mut state = 0x12b1_1ea2u32;
+        for (width, height) in [(8, 8), (32, 12), (64, 36), (128, 64)] {
+            let input = (0..width * height)
+                .map(|_| {
+                    state ^= state << 13;
+                    state ^= state >> 17;
+                    state ^= state << 5;
+                    state as u8
+                })
+                .collect::<Vec<_>>();
+            let scalar =
+                scale_plane_2x_scalar(&input, width, height, &BILINEAR_KERNEL[HALF_PIXEL_PHASE])
+                    .unwrap();
+            let optimized = scale_plane_bilinear_2x(&input, width, height).unwrap();
+            assert_eq!(optimized, scalar, "{width}x{height}");
         }
     }
 
