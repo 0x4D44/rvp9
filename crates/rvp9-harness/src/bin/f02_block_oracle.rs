@@ -402,8 +402,18 @@ fn oracle_encoder_config(
     encode: OracleEncodeConfig,
     strict: bool,
     framerate: f64,
+    fixed_q: Option<u8>,
 ) -> EncoderConfig {
     let (gop_length, rc_mode) = rvp9_rate_config(encode.vbr);
+    let (min_qindex, max_qindex) = if let Some(qindex) = fixed_q {
+        (qindex, qindex)
+    } else if encode.spatial_layers > 1 && !encode.vbr {
+        // Match the production spatial harness and pinned example's 2..56
+        // CLI quantizer bounds, expressed as internal qindices.
+        (8, 224)
+    } else {
+        (4, 255)
+    };
     EncoderConfig {
         width: encode.width,
         height: encode.height,
@@ -423,8 +433,8 @@ fn oracle_encoder_config(
         temporal_layers: 1,
         enable_tpl: false,
         stage4a_product_split_override: split_override(strict),
-        min_qindex: 4,
-        max_qindex: 255,
+        min_qindex,
+        max_qindex,
     }
 }
 
@@ -1311,7 +1321,7 @@ fn drive_rvp9_leg(
         encode.frames as usize,
     )?;
     let fps = oracle_fps(encode, source_fps);
-    let cfg = oracle_encoder_config(encode, strict, fps);
+    let cfg = oracle_encoder_config(encode, strict, fps, None);
     let parallelism = oracle_parallelism(encode);
     let mut enc = StreamEncoder::new_with_parallelism(cfg, parallelism)?;
     let mut all_records = Vec::new();
@@ -1360,7 +1370,7 @@ fn drive_rvp9_spatial_leg(
         encode.frames as usize,
     )?;
     let fps = oracle_fps(encode, source_fps);
-    let config = oracle_encoder_config(encode, strict, fps);
+    let config = oracle_encoder_config(encode, strict, fps, fixed_q);
     let spatial = SpatialSvcConfig {
         number_spatial_layers: encode.spatial_layers,
         inter_layer_pred: inter_layer_pred(encode)?,
@@ -1761,6 +1771,23 @@ mod tests {
                 .get_envs()
                 .any(|(key, value)| key == "VPX_F02_PRESERVE_LAYER_QUANTIZERS" && value.is_some())
         );
+    }
+
+    #[test]
+    fn natural_cbr_spatial_rvp9_uses_canonical_quantizer_bounds() {
+        let mut encode = test_encode_config();
+        encode.width = 1920;
+        encode.height = 1080;
+        encode.vbr = false;
+        encode.spatial_layers = 2;
+
+        let config = oracle_encoder_config(encode, false, 30.0, None);
+        assert_eq!(config.min_qindex, 8);
+        assert_eq!(config.max_qindex, 224);
+
+        let fixed = oracle_encoder_config(encode, false, 30.0, Some(4));
+        assert_eq!(fixed.min_qindex, 4);
+        assert_eq!(fixed.max_qindex, 4);
     }
 
     #[test]
