@@ -1678,12 +1678,17 @@ impl<T: Clone> TightTileRowsMut<'_, T> {
             source_stride > 0,
             "tile copy source stride must be positive"
         );
-        assert_eq!(
-            source.len(),
-            source_stride * self.rows.len(),
-            "tile copy source must be a tight tile plane"
+        assert!(
+            source.len().is_multiple_of(source_stride),
+            "tile copy source must use a tight stride"
         );
-        for (row_index, destination) in self.rows.iter_mut().enumerate() {
+        let source_rows = source.len() / source_stride;
+        assert!(source_rows > 0, "tile copy source must contain a row");
+        assert!(
+            source_rows <= self.rows.len(),
+            "tile copy source cannot exceed destination height"
+        );
+        for (row_index, destination) in self.rows[..source_rows].iter_mut().enumerate() {
             assert_eq!(
                 destination.len(),
                 source_stride,
@@ -1691,6 +1696,16 @@ impl<T: Clone> TightTileRowsMut<'_, T> {
             );
             let start = row_index * source_stride;
             destination.clone_from_slice(&source[start..start + source_stride]);
+        }
+        let last_source_start = (source_rows - 1) * source_stride;
+        let last_source = &source[last_source_start..last_source_start + source_stride];
+        for destination in &mut self.rows[source_rows..] {
+            assert_eq!(
+                destination.len(),
+                source_stride,
+                "tile source and destination widths must match"
+            );
+            destination.clone_from_slice(last_source);
         }
     }
 }
@@ -4730,7 +4745,13 @@ impl StreamEncoder {
                 .lf_worker_pool
                 .as_ref()
                 .expect("multi-threaded encoder must own a loop-filter worker");
-            pad_packet_overlap_recon(w, h, &mut new_recon_y, &mut new_recon_u, &mut new_recon_v);
+            let truncate_overlap_recon = pad_packet_overlap_recon(
+                w,
+                h,
+                &mut new_recon_y,
+                &mut new_recon_u,
+                &mut new_recon_v,
+            );
             // SAFETY: the named handle is always consumed by `wait()` below;
             // it is never forgotten. That join completes the worker's borrows
             // of `mi_grid` and luma before this function can commit or drop
@@ -4764,6 +4785,7 @@ impl StreamEncoder {
                 &mut new_recon_y,
                 &mut new_recon_u,
                 &mut new_recon_v,
+                truncate_overlap_recon,
             );
             packet
         } else {
@@ -9777,6 +9799,24 @@ mod tests {
         );
         assert_eq!((left_coefs, left_eob), (&[3; 16][..], 1));
         assert_eq!((right_coefs, right_eob), (&[5; 16][..], 2));
+    }
+
+    #[test]
+    fn tight_tile_copy_extends_visible_rows_through_reference_padding() {
+        let mut frame = vec![0u8; 6 * 4];
+        let mut tiles = split_tight_plane_tiles_mut(&mut frame, 6, &[(0, 2), (2, 6)]);
+        tiles[0].copy_from_tight_tile(&[1, 2, 3, 4, 5, 6], 2);
+        tiles[1].copy_from_tight_tile(&[11, 12, 13, 14, 21, 22, 23, 24, 31, 32, 33, 34], 4);
+
+        assert_eq!(
+            frame,
+            [
+                1, 2, 11, 12, 13, 14, // visible row 0
+                3, 4, 21, 22, 23, 24, // visible row 1
+                5, 6, 31, 32, 33, 34, // visible row 2
+                5, 6, 31, 32, 33, 34, // replicated storage row
+            ]
+        );
     }
 
     #[test]

@@ -339,37 +339,49 @@ pub(crate) fn apply_loop_filter_to_tight_recon_parallel(
     }
 }
 
-/// Extend tight reconstruction storage through the final superblock row.
+/// Ensure tight reconstruction storage covers the final superblock row.
 ///
-/// The visible lengths are preserved by [`truncate_packet_overlap_recon`]
-/// after the independently scheduled luma and chroma passes have joined.
+/// Returns `true` when visible-length vectors were extended. Callers pass that
+/// result to [`truncate_packet_overlap_recon`] after the independently
+/// scheduled luma and chroma passes have joined. Reference-pool storage is
+/// already padded and therefore remains padded across the overlap.
 pub(crate) fn pad_packet_overlap_recon(
     width: u32,
     height: u32,
     recon_y: &mut Vec<u8>,
     recon_u: &mut Vec<u8>,
     recon_v: &mut Vec<u8>,
-) {
+) -> bool {
     let w = width as usize;
     let h = height as usize;
     let uvw = w / 2;
-    assert_eq!(recon_y.len(), w * h);
-    assert_eq!(recon_u.len(), uvw * (h / 2));
-    assert_eq!(recon_v.len(), uvw * (h / 2));
     let storage_h = h.next_multiple_of(64);
-    recon_y.resize(w * storage_h, 0);
-    recon_u.resize(uvw * (storage_h / 2), 0);
-    recon_v.resize(uvw * (storage_h / 2), 0);
+    let visible_lengths = (w * h, uvw * (h / 2), uvw * (h / 2));
+    let storage_lengths = (w * storage_h, uvw * (storage_h / 2), uvw * (storage_h / 2));
+    let lengths = (recon_y.len(), recon_u.len(), recon_v.len());
+    if lengths == visible_lengths {
+        recon_y.resize(storage_lengths.0, 0);
+        recon_u.resize(storage_lengths.1, 0);
+        recon_v.resize(storage_lengths.2, 0);
+        true
+    } else {
+        assert_eq!(lengths, storage_lengths);
+        false
+    }
 }
 
-/// Restore tight reconstruction vectors to their visible frame lengths.
+/// Restore vectors extended by [`pad_packet_overlap_recon`] to visible length.
 pub(crate) fn truncate_packet_overlap_recon(
     width: u32,
     height: u32,
     recon_y: &mut Vec<u8>,
     recon_u: &mut Vec<u8>,
     recon_v: &mut Vec<u8>,
+    truncate: bool,
 ) {
+    if !truncate {
+        return;
+    }
     let w = width as usize;
     let h = height as usize;
     let uvw = w / 2;
@@ -1025,7 +1037,7 @@ mod w7_4_tests {
             let mut overlap_y = source_y.clone();
             let mut overlap_u = source_u.clone();
             let mut overlap_v = source_v.clone();
-            pad_packet_overlap_recon(
+            let truncate_overlap_recon = pad_packet_overlap_recon(
                 w as u32,
                 h as u32,
                 &mut overlap_y,
@@ -1047,6 +1059,7 @@ mod w7_4_tests {
                 &mut overlap_y,
                 &mut overlap_u,
                 &mut overlap_v,
+                truncate_overlap_recon,
             );
 
             assert_ne!(serial_y, source_y, "fixture must exercise luma filtering");
@@ -1054,6 +1067,23 @@ mod w7_4_tests {
             assert_eq!(overlap_u, serial_u, "U differs at {w}x{h}");
             assert_eq!(overlap_v, serial_v, "V differs at {w}x{h}");
         }
+    }
+
+    #[test]
+    fn packet_overlap_preserves_existing_reference_storage_lengths() {
+        let (w, h) = (64usize, 72usize);
+        let storage_h = h.next_multiple_of(64);
+        let mut y = vec![0u8; w * storage_h];
+        let mut u = vec![0u8; (w / 2) * (storage_h / 2)];
+        let mut v = u.clone();
+
+        let truncate = pad_packet_overlap_recon(w as u32, h as u32, &mut y, &mut u, &mut v);
+        assert!(!truncate);
+        truncate_packet_overlap_recon(w as u32, h as u32, &mut y, &mut u, &mut v, truncate);
+
+        assert_eq!(y.len(), w * storage_h);
+        assert_eq!(u.len(), (w / 2) * (storage_h / 2));
+        assert_eq!(v.len(), (w / 2) * (storage_h / 2));
     }
 
     /// W7.4 PROOF — `search_filter_level` (`vp9_picklpf.c:78-157`).
