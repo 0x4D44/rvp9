@@ -312,6 +312,20 @@ index 6f2524b36..357fe98b9 100644
 +  }
 +  /* F.0.2 ORACLE END */
  }
+diff --git a/examples/svc_encodeframe.c b/examples/svc_encodeframe.c
+index 1dd731765..a48f8d570 100644
+--- a/examples/svc_encodeframe.c
++++ b/examples/svc_encodeframe.c
+@@ -505,7 +505,8 @@ vpx_codec_err_t vpx_svc_init(SvcContext *svc_ctx, vpx_codec_ctx_t *codec_ctx,
+     for (sl = 0; sl < svc_ctx->spatial_layers; ++sl) {
+       const int i = sl * svc_ctx->temporal_layers + tl;
+       if (enc_cfg->rc_end_usage == VPX_CBR &&
+-          enc_cfg->g_pass == VPX_RC_ONE_PASS) {
++          enc_cfg->g_pass == VPX_RC_ONE_PASS &&
++          getenv("VPX_F02_PRESERVE_LAYER_QUANTIZERS") == NULL) {
+         si->svc_params.max_quantizers[i] = enc_cfg->rc_max_quantizer;
+         si->svc_params.min_quantizers[i] = enc_cfg->rc_min_quantizer;
+       }
 diff --git a/vp9/encoder/vp9_pickmode.c b/vp9/encoder/vp9_pickmode.c
 index 357fe98b9..424961a6a 100644
 --- a/vp9/encoder/vp9_pickmode.c
