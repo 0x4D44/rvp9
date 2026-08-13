@@ -376,15 +376,28 @@ const VBR_KEYFRAME_8X8_MODE_CAP_QMAX: u8 = 65;
 const VBR_T2_KEYFRAME_8X8_MODE_CAP_QMAX: u8 = 120;
 const VBR_T2_NONRD_KEYFRAME_8X8_QMAX: u8 = 65;
 
-fn exact_keyframe_sub8_enabled(config: &EncoderConfig, q_index: u8) -> bool {
+fn exact_keyframe_sub8_product_policy(
+    config: &EncoderConfig,
+    q_index: u8,
+    spatial_svc: bool,
+) -> bool {
+    spatial_svc
+        && config.speed == 8
+        && matches!(config.rc_mode, RcMode::Cbr)
+        && matches!(config.deadline, Deadline::Realtime)
+        || (config.speed == 7
+            || config.temporal_layers == 3 && matches!(config.speed, 6 | 8)
+            || config.temporal_layers == 2 && matches!(config.speed, 6 | 8))
+            && q_index <= VBR_EXACT_KEYFRAME_SUB8_QMAX
+            && matches!(config.rc_mode, RcMode::Vbr)
+}
+
+fn exact_keyframe_sub8_enabled(config: &EncoderConfig, q_index: u8, spatial_svc: bool) -> bool {
     if std::env::var_os("RVP9_EXACT_KF_SUB8").is_some_and(|value| value != "0") {
         return true;
     }
 
-    (config.speed == 7
-        || config.temporal_layers == 3 && matches!(config.speed, 6 | 8)
-        || config.temporal_layers == 2 && matches!(config.speed, 6 | 8))
-        && q_index <= VBR_EXACT_KEYFRAME_SUB8_QMAX
+    exact_keyframe_sub8_product_policy(config, q_index, spatial_svc)
         && crate::InterEncodeEnv::capture().exact_vbp_tree_enabled(
             config.rc_mode,
             config.speed,
@@ -392,14 +405,13 @@ fn exact_keyframe_sub8_enabled(config: &EncoderConfig, q_index: u8) -> bool {
             rvp9_core::mode_decision::speed_features::ContentTier::Default,
             false,
         )
-        && matches!(config.rc_mode, RcMode::Vbr)
 }
 
 fn nonrd_keyframe_8x8_enabled(config: &EncoderConfig, q_index: u8) -> bool {
     if std::env::var_os("RVP9_EXACT_KF_SUB8").is_some_and(|value| value != "0") {
         return false;
     }
-    exact_keyframe_sub8_enabled(config, q_index)
+    exact_keyframe_sub8_enabled(config, q_index, false)
         && q_index <= VBR_T2_NONRD_KEYFRAME_8X8_QMAX
         && config.temporal_layers == 2
         && config.speed == 8
@@ -416,7 +428,7 @@ fn keyframe_8x8_mode_cap_enabled(config: &EncoderConfig, q_index: u8) -> bool {
         3 => VBR_KEYFRAME_8X8_MODE_CAP_QMAX,
         _ => return false,
     };
-    exact_keyframe_sub8_enabled(config, q_index)
+    exact_keyframe_sub8_enabled(config, q_index, false)
         && q_index <= qmax
         && config.speed == 8
         && matches!(config.rc_mode, RcMode::Vbr)
@@ -1291,6 +1303,10 @@ impl From<FrameKind> for RcFrameKind {
 pub struct StreamEncoder {
     config: EncoderConfig,
     parallelism: EncoderParallelism,
+    /// `true` only for per-layer encoders owned by [`crate::SpatialStreamEncoder`].
+    /// Spatial SVC keeps its measured realtime policies private so identical
+    /// single-stream configurations retain their established decisions.
+    spatial_svc: bool,
     /// Long-lived workers shared sequentially by inter tile picking,
     /// post-reconstruction loop filtering, and final tile writing. The
     /// pool is absent for the single-worker path.
@@ -1934,7 +1950,7 @@ impl StreamEncoder {
         config: EncoderConfig,
         parallelism: EncoderParallelism,
     ) -> Result<Self, EncodeError> {
-        Self::new_with_parallelism_and_buffer_geometry(config, parallelism, None)
+        Self::new_with_parallelism_and_buffer_geometry(config, parallelism, None, false)
     }
 
     pub(crate) fn new_spatial_with_parallelism(
@@ -1946,13 +1962,14 @@ impl StreamEncoder {
             SPATIAL_CBR_STARTING_BUFFER_MS,
             SPATIAL_CBR_OPTIMAL_BUFFER_MS,
         ));
-        Self::new_with_parallelism_and_buffer_geometry(config, parallelism, buffer_geometry)
+        Self::new_with_parallelism_and_buffer_geometry(config, parallelism, buffer_geometry, true)
     }
 
     fn new_with_parallelism_and_buffer_geometry(
         config: EncoderConfig,
         parallelism: EncoderParallelism,
         buffer_geometry: Option<(u32, u32, u32)>,
+        spatial_svc: bool,
     ) -> Result<Self, EncodeError> {
         if parallelism.max_threads == 0 || parallelism.max_threads > 64 {
             return Err(EncodeError::InvalidConfig("max_threads must be in 1..=64"));
@@ -2108,6 +2125,7 @@ impl StreamEncoder {
         Ok(Self {
             config,
             parallelism,
+            spatial_svc,
             frame_worker_pool,
             lf_worker_pool,
             inter_tile_scratch,
@@ -3153,7 +3171,8 @@ impl StreamEncoder {
         }
         self.vbp_partition_history
             .fill(rvp9_core::mode_decision::partition::FixedTreeHistoryEntry::default());
-        let exact_keyframe_sub8 = exact_keyframe_sub8_enabled(&self.config, q_index);
+        let exact_keyframe_sub8 =
+            exact_keyframe_sub8_enabled(&self.config, q_index, self.spatial_svc);
         let nonrd_keyframe_8x8 = nonrd_keyframe_8x8_enabled(&self.config, q_index);
         let keyframe_8x8_mode_cap = keyframe_8x8_mode_cap_enabled(&self.config, q_index);
 
@@ -8550,40 +8569,59 @@ mod tests {
 
         let mut config = EncoderConfig::new(1920, 1080);
         config.rc_mode = RcMode::Vbr;
-        assert!(exact_keyframe_sub8_enabled(&config, 120));
-        assert!(!exact_keyframe_sub8_enabled(&config, 121));
+        assert!(exact_keyframe_sub8_enabled(&config, 120, false));
+        assert!(!exact_keyframe_sub8_enabled(&config, 121, false));
 
         config.speed = 6;
-        assert!(!exact_keyframe_sub8_enabled(&config, 120));
+        assert!(!exact_keyframe_sub8_enabled(&config, 120, false));
         config.temporal_layers = 3;
-        assert!(exact_keyframe_sub8_enabled(&config, 120));
+        assert!(exact_keyframe_sub8_enabled(&config, 120, false));
         config.speed = 8;
-        assert!(exact_keyframe_sub8_enabled(&config, 120));
+        assert!(exact_keyframe_sub8_enabled(&config, 120, false));
         config.temporal_layers = 2;
-        assert!(exact_keyframe_sub8_enabled(&config, 120));
+        assert!(exact_keyframe_sub8_enabled(&config, 120, false));
         config.speed = 6;
-        assert!(exact_keyframe_sub8_enabled(&config, 120));
+        assert!(exact_keyframe_sub8_enabled(&config, 120, false));
         config.temporal_layers = 3;
         config.speed = 7;
         config.rc_mode = RcMode::Cbr;
-        assert!(!exact_keyframe_sub8_enabled(&config, 120));
+        assert!(!exact_keyframe_sub8_enabled(&config, 120, false));
 
         // The exact-tree negative control closes the whole product policy.
         config.rc_mode = RcMode::Vbr;
         // SAFETY: the mutex above serialises all env_test_mutex callers.
         unsafe { std::env::set_var(exact_tree_key, "0") };
-        assert!(!exact_keyframe_sub8_enabled(&config, 120));
+        assert!(!exact_keyframe_sub8_enabled(&config, 120, false));
 
         // Preserve the independent sub-8 syntax diagnostic for other modes.
         // SAFETY: the mutex above serialises all env_test_mutex callers.
         unsafe { std::env::set_var(sub8_key, "1") };
         config.rc_mode = RcMode::Cbr;
-        assert!(exact_keyframe_sub8_enabled(&config, 255));
+        assert!(exact_keyframe_sub8_enabled(&config, 255, false));
         // SAFETY: the mutex above serialises all env_test_mutex callers.
         unsafe {
             std::env::remove_var(exact_tree_key);
             std::env::remove_var(sub8_key);
         }
+    }
+
+    #[test]
+    fn exact_keyframe_sub8_product_policy_covers_cpu8_spatial_cbr() {
+        let mut config = EncoderConfig::new(320, 180);
+        config.deadline = Deadline::Realtime;
+        config.rc_mode = RcMode::Cbr;
+        config.speed = 8;
+        assert!(exact_keyframe_sub8_product_policy(&config, 255, true));
+        assert!(!exact_keyframe_sub8_product_policy(&config, 255, false));
+
+        config.speed = 7;
+        assert!(!exact_keyframe_sub8_product_policy(&config, 148, true));
+        config.speed = 8;
+        config.rc_mode = RcMode::Vbr;
+        assert!(!exact_keyframe_sub8_product_policy(&config, 148, true));
+        config.rc_mode = RcMode::Cbr;
+        config.deadline = Deadline::Good;
+        assert!(!exact_keyframe_sub8_product_policy(&config, 148, true));
     }
 
     #[test]
@@ -8625,7 +8663,7 @@ mod tests {
         unsafe { std::env::set_var(sub8_key, "1") };
         config.speed = 7;
         config.rc_mode = RcMode::Cbr;
-        assert!(exact_keyframe_sub8_enabled(&config, 255));
+        assert!(exact_keyframe_sub8_enabled(&config, 255, false));
         config.speed = 8;
         config.rc_mode = RcMode::Vbr;
         config.deadline = Deadline::Realtime;
@@ -8668,7 +8706,7 @@ mod tests {
         // SAFETY: the mutex above serialises all env_test_mutex callers.
         unsafe { std::env::set_var(sub8_key, "1") };
         config.deadline = Deadline::Realtime;
-        assert!(exact_keyframe_sub8_enabled(&config, 255));
+        assert!(exact_keyframe_sub8_enabled(&config, 255, false));
         assert!(!nonrd_keyframe_8x8_enabled(&config, 65));
 
         // SAFETY: the mutex above serialises all env_test_mutex callers.

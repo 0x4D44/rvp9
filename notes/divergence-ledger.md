@@ -5729,3 +5729,42 @@ final acceptance evidence.
 recording to normative frame-edge transform traversal before allowing
 crossing leaves, and require a separate cross-decoder and BD-rate unit for that
 change.
+
+### 2026-08-13 — Exact sub-8 keyframe search for CPU8 spatial CBR
+
+**Where:** `rvp9_encoder::frame_loop::exact_keyframe_sub8_enabled` and
+`rvp9_encoder::StreamEncoder::new_spatial_with_parallelism`; libvpx
+counterpart: the realtime keyframe partition and intra-mode search reached
+from `vp9/encoder/vp9_encodeframe.c::encode_rd_sb_row`.
+
+**What libvpx does:** the spatial example feeds each layer through the normal
+realtime keyframe picker, whose partition descent can reach sub-8 syntax and
+whose decisions remain coupled to libvpx's keyframe RD state.
+
+**What rvp9 does:** CPU8 realtime spatial CBR layers use rvp9's existing exact
+sub-8 keyframe partition and intra-mode search at every qindex while exact VBP
+is enabled. Identical single-stream, temporal-SVC, spatial VBR, CPU6/7, and
+non-realtime configurations keep their prior policy. The
+`RVP9_EXACT_KF_SUB8` environment diagnostic remains an explicit override.
+
+**Why:** after partial-edge inter variance analysis landed, enabling this
+already-tested search became a reproducible Pareto improvement at all six
+canonical spatial rates. A private spatial marker avoids inferring topology
+from the public single-stream configuration.
+
+**Byte-parity impact:** intentional on qualifying spatial keyframes only. All
+five spatial gates decode byte-exactly through rvp9-decoder, pinned vpxdec, and
+ffmpeg. Other encoder topologies remain policy-identical.
+
+**Compression-efficiency impact:** canonical CPU8 three-layer CBR BD-rate
+moves from `+41.0291%/+22.0938%/-0.0767%` to
+`+37.6658%/+20.2506%/-0.7184%` for SL0/SL1/SL2. A product run with both
+diagnostic variables unset reproduces the diagnostic stream metrics exactly.
+
+**Speed impact:** the fixed-q screen was neutral at `14.32--14.40 ms/frame`.
+The full product run measured `13.919--17.522 ms/frame` on the loaded host;
+those directional timings are noisy and do not replace the final repeated
+quiet-host speed gate.
+
+**Future plan:** retain for CPU8 realtime spatial CBR. Do not generalize until
+another topology has its own complete curve and speed evidence.
