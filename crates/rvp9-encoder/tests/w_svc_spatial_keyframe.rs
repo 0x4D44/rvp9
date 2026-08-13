@@ -138,12 +138,18 @@ fn decode_rvp9(packets: &[Vec<u8>]) -> (Vec<u8>, Vec<u8>, Vec<DecodedComponent>)
     let mut every_component = Vec::new();
     let mut top_components = Vec::new();
     let mut components = Vec::new();
-    for packet in packets {
+    for (packet_index, packet) in packets.iter().enumerate() {
         let parsed = decoder.parse_packet(packet).unwrap();
         let top_index = parsed.output_frame_index().unwrap();
         for (component_index, component) in parsed.frames().iter().enumerate() {
             let data = component.full_frame_data.to_vec();
-            let decoded = decoder.decode_frame(component).unwrap();
+            let decoded = decoder.decode_frame(component).unwrap_or_else(|error| {
+                panic!(
+                    "rvp9 decoder rejected access unit {packet_index} component {component_index} ({}x{}): {error:?}",
+                    component.header.width,
+                    component.header.height,
+                )
+            });
             let bytes = visible_i420(&decoded);
             every_component.extend_from_slice(&bytes);
             if component_index == top_index {

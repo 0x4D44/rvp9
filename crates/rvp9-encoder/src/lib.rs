@@ -1782,14 +1782,16 @@ fn copy_last_ref_leaf_to_recon(
         let block_height = usize::from(plane_bsize.height());
         let pixel_x = (mi_col * 8) >> ss_x;
         let pixel_y = (mi_row * 8) >> ss_y;
-        debug_assert!(pixel_x + block_width <= plane_width);
-        debug_assert!(pixel_y + block_height <= plane_height);
         let src = match plane {
             0 => last_ref.reconstruction_yuv.0,
             1 => last_ref.reconstruction_yuv.1,
             _ => last_ref.reconstruction_yuv.2,
         };
-        if last_ref.width == width && last_ref.height == height {
+        if last_ref.width == width
+            && last_ref.height == height
+            && pixel_x + block_width <= plane_width
+            && pixel_y + block_height <= plane_height
+        {
             // Preserve the long-standing identity path exactly. Besides being
             // cheaper than filtering a zero-motion block, this keeps denoiser
             // and single-layer output byte-identical while spatial SVC is off.
@@ -3644,14 +3646,14 @@ fn splat_inter_leaf_into_mi_grid(
         },
         bmi: Default::default(),
     };
+    debug_assert!(layout.index(leaf_mi_row, leaf_mi_col).is_some());
     for dr in 0..n_8x8_high {
         for dc in 0..n_8x8_wide {
             let mi_row = leaf_mi_row + dr;
             let mi_col = leaf_mi_col + dc;
-            let idx = layout
-                .index(mi_row, mi_col)
-                .expect("inter leaf must stay inside its causal MI grid");
-            mi_grid[idx] = Some(cell);
+            if let Some(idx) = layout.index(mi_row, mi_col) {
+                mi_grid[idx] = Some(cell);
+            }
         }
     }
 }
@@ -3794,18 +3796,18 @@ fn splat_final_inter_leaf_into_grids(
     let n_8x8_high = leaf.leaf_bsize.n_8x8_high() as usize;
     let mode_info = leaf.mode_info();
     let mv_ref = leaf.mv_ref();
+    debug_assert!(layout.index(leaf_mi_row, leaf_mi_col).is_some());
+    debug_assert!(out_layout.index(leaf_mi_row, leaf_mi_col).is_some());
     for dr in 0..n_8x8_high {
         for dc in 0..n_8x8_wide {
             let mi_row = leaf_mi_row + dr;
             let mi_col = leaf_mi_col + dc;
-            let local_index = layout
-                .index(mi_row, mi_col)
-                .expect("inter leaf must stay inside its causal MI grid");
-            mi_grid[local_index] = Some(mode_info);
-            let out_index = out_layout
-                .index(mi_row, mi_col)
-                .expect("inter leaf must stay inside its MV output grid");
-            out_mv_grid[out_index] = mv_ref;
+            if let Some(local_index) = layout.index(mi_row, mi_col) {
+                mi_grid[local_index] = Some(mode_info);
+            }
+            if let Some(out_index) = out_layout.index(mi_row, mi_col) {
+                out_mv_grid[out_index] = mv_ref;
+            }
         }
     }
 }
@@ -5622,6 +5624,82 @@ fn constrain_fixed_tree_to_visible_leaves(
     supported
 }
 
+/// Preserve a square ML partition tree at a partial bottom edge while mapping
+/// leaves that VP9's reduced edge syntax cannot signal to the mandatory
+/// horizontal partition.
+///
+/// A square leaf may cross the frame edge when the node's lower-half origin is
+/// still inside the MI grid. For example, a 32x32 leaf starting at local MI row
+/// 4 is legal in a seven-row superblock, while a 16x16 leaf starting at row 6
+/// is not: that node has no lower half and the bitstream can only signal HORZ
+/// or SPLIT. The ML controller emits square leaves only, so the latter maps
+/// exactly to two 16x8 leaves; the second is outside the visible grid and is
+/// omitted by the normal leaf visitor.
+fn constrain_square_tree_to_bottom_edge(
+    source: &rvp9_core::mode_decision::partition::PartitionDecision,
+    visible_mi_rows: usize,
+) -> rvp9_core::mode_decision::partition::PartitionDecision {
+    debug_assert!((1..=8).contains(&visible_mi_rows));
+    if visible_mi_rows == 8 {
+        return source.clone();
+    }
+
+    fn horizontal_subsize(side: usize) -> BlockSize {
+        match side {
+            8 => BlockSize::Block64x32,
+            4 => BlockSize::Block32x16,
+            2 => BlockSize::Block16x8,
+            _ => unreachable!("VP9 horizontal edge partition side"),
+        }
+    }
+
+    fn walk(
+        source: &rvp9_core::mode_decision::partition::PartitionDecision,
+        output: &mut rvp9_core::mode_decision::partition::PartitionDecision,
+        row: usize,
+        col: usize,
+        side: usize,
+        visible_mi_rows: usize,
+    ) {
+        if row >= visible_mi_rows || side == 1 {
+            return;
+        }
+
+        let leaf = source.cells[row][col];
+        let leaf_side = usize::from(leaf.n_8x8_wide());
+        debug_assert_eq!(leaf_side, usize::from(leaf.n_8x8_high()));
+        if leaf_side == side {
+            let half = side / 2;
+            if row + half >= visible_mi_rows {
+                let horizontal = horizontal_subsize(side);
+                for cells in &mut output.cells[row..row + side] {
+                    cells[col..col + side].fill(horizontal);
+                }
+            }
+            return;
+        }
+
+        debug_assert!(leaf_side < side);
+        let half = side / 2;
+        walk(source, output, row, col, half, visible_mi_rows);
+        walk(source, output, row, col + half, half, visible_mi_rows);
+        walk(source, output, row + half, col, half, visible_mi_rows);
+        walk(
+            source,
+            output,
+            row + half,
+            col + half,
+            half,
+            visible_mi_rows,
+        );
+    }
+
+    let mut output = source.clone();
+    walk(source, &mut output, 0, 0, 8, visible_mi_rows);
+    debug_assert!(output.is_valid_partition());
+    output
+}
+
 fn zero_mv_sad64_edge_clamped(
     src: &[u8],
     reference: &[u8],
@@ -6496,6 +6574,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // an explicit slot so a completed compact row can transfer ownership to
     // its bounded result before the coordinator merges it.
     let mut inter_emit_scratch = InterEmitScratch::new();
+    let denoiser_enabled = denoiser.is_some();
     let mut coding_source_y = denoiser.as_deref_mut().map(|denoiser| {
         let mut coding_source =
             std::mem::take(&mut denoiser.running_avg_y[crate::denoiser::INTRA_FRAME_IDX].y_buffer);
@@ -6575,6 +6654,26 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     let h = height as usize;
     let uvw = w / 2;
     let uvh = h / 2;
+    let low_resolution_ml_partition_enabled = low_resolution_ml_partition_enabled(
+        env.rt_lowres_ml_partition,
+        speed,
+        deadline,
+        content_tier,
+        w,
+        h,
+    );
+    let storage_h = crate::buffer_pool::reference_storage_height(h);
+    let storage_uvh = storage_h / 2;
+    let crossing_ml_leaves_supported = low_resolution_ml_partition_enabled
+        && w.is_multiple_of(64)
+        && !denoiser_enabled
+        && recon_layout == InterReconLayout::full(w, h)
+        && input_yuv.0.len() >= w * storage_h
+        && input_yuv.1.len() >= uvw * storage_uvh
+        && input_yuv.2.len() >= uvw * storage_uvh
+        && recon_yuv_out.0.len() >= w * storage_h
+        && recon_yuv_out.1.len() >= uvw * storage_uvh
+        && recon_yuv_out.2.len() >= uvw * storage_uvh;
     let (recon_y_out, recon_u_out, recon_v_out) = recon_yuv_out;
     let rt_large_recovery = matches!(deadline, sf_mod::Deadline::Realtime)
         && speed.unsigned_abs() >= 7
@@ -6652,7 +6751,11 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         data: input_yuv.0,
         stride: w,
         width: w,
-        height: h,
+        height: if crossing_ml_leaves_supported {
+            storage_h
+        } else {
+            h
+        },
     };
     let ref_y = PlaneRef {
         data: me_ref_yuv.0,
@@ -6964,14 +7067,6 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // when both are disabled (the default).
     let s2_xtab_enabled = env.s2_xtab;
     let f02_oracle_enabled = crate::f02_oracle::is_enabled();
-    let low_resolution_ml_partition_enabled = low_resolution_ml_partition_enabled(
-        env.rt_lowres_ml_partition,
-        speed,
-        deadline,
-        content_tier,
-        w,
-        h,
-    );
     rvp9_core::mode_decision::inter::candidate_trace::reset(f02_oracle_enabled);
     // win counts indexed [ZERO, NEAREST, NEAR, NEW].
     // A2.foreman - In-progress mi_grid for spatial MV-ref propagation
@@ -7778,11 +7873,16 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
 
                     let visible_mi_cols = (w - sb_px_x).min(64).div_ceil(8);
                     let visible_mi_rows = (h - sb_px_y).min(64).div_ceil(8);
-                    ml_decision = constrain_fixed_tree_to_visible_leaves(
-                        &ml_decision,
-                        visible_mi_cols,
-                        visible_mi_rows,
-                    );
+                    if crossing_ml_leaves_supported {
+                        ml_decision =
+                            constrain_square_tree_to_bottom_edge(&ml_decision, visible_mi_rows);
+                    } else {
+                        ml_decision = constrain_fixed_tree_to_visible_leaves(
+                            &ml_decision,
+                            visible_mi_cols,
+                            visible_mi_rows,
+                        );
+                    }
                     let segment_ids = segment_ids_for_hint_cells(&sb_partitions[sb_idx]);
                     sb_partitions[sb_idx].clear();
                     visit_fixed_tree_leaves(&ml_decision, |leaf| {
@@ -10535,6 +10635,14 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             // point. UV is capped to the Y size.
                             let plane_bw_4x4 = plane_bsize.n_4x4_wide() as usize;
                             let plane_bh_4x4 = plane_bsize.n_4x4_high() as usize;
+                            let frame_w4 = (mi_cols_us * 2) >> ss_x;
+                            let frame_h4 = (mi_rows_us * 2) >> ss_y;
+                            let frame_x4_base = (leaf_mi_col * 2) >> ss_x;
+                            let frame_y4_base = (leaf_mi_row * 2) >> ss_y;
+                            let max_blocks_wide =
+                                plane_bw_4x4.min(frame_w4.saturating_sub(frame_x4_base));
+                            let max_blocks_high =
+                                plane_bh_4x4.min(frame_h4.saturating_sub(frame_y4_base));
 
                             // Plane-pixel coord of leaf's top-left.
                             let plane_px_x = (leaf_mi_col * 8) >> ss_x;
@@ -10820,9 +10928,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                 && should_skip_realtime_luma_transform(rt_quant_fp, pick.skip_txfm)
                             {
                                 let mut tx_y4_local = 0usize;
-                                while tx_y4_local < plane_bh_4x4 {
+                                while tx_y4_local < max_blocks_high {
                                     let mut tx_x4_local = 0usize;
-                                    while tx_x4_local < plane_bw_4x4 {
+                                    while tx_x4_local < max_blocks_wide {
                                         let tx = PendingInterTx {
                                             plane,
                                             tx_x4_local,
@@ -10865,9 +10973,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             // Per-TX residual emission. Walk in plane 4×4
                             // raster (same order the writer walks).
                             let mut tx_y4_local = 0usize;
-                            while tx_y4_local < plane_bh_4x4 {
+                            while tx_y4_local < max_blocks_high {
                                 let mut tx_x4_local = 0usize;
-                                while tx_x4_local < plane_bw_4x4 {
+                                while tx_x4_local < max_blocks_wide {
                                     let tx_px_x = plane_px_x + tx_x4_local * 4;
                                     let tx_px_y = plane_px_y + tx_y4_local * 4;
                                     let recon_tx_px_x = recon_plane_px_x + tx_x4_local * 4;
@@ -15671,6 +15779,76 @@ mod tests {
                 }
             ));
         }
+    }
+
+    #[test]
+    fn causal_grid_clips_bottom_crossing_inter_leaf() {
+        let layout = InterPickerMiGridLayout::new(7, 0, 8);
+        let mut grid = vec![None; layout.mi_rows * layout.mi_cols];
+        splat_inter_leaf_into_mi_grid(
+            &mut grid,
+            layout,
+            4,
+            0,
+            BlockSize::Block32x32,
+            InterMode::ZeroMv,
+            Mv::ZERO,
+            0,
+            true,
+            RefFrame::LastFrame,
+            None,
+            InterpFilter::EightTap,
+        );
+
+        for row in 4..7 {
+            for col in 0..4 {
+                assert_eq!(
+                    grid[row * layout.mi_cols + col]
+                        .expect("visible crossing-leaf cell must be populated")
+                        .block_size,
+                    BlockSize::Block32x32,
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn bottom_edge_constraint_preserves_signalable_crossing_32x32_leaves() {
+        use rvp9_core::mode_decision::partition::PartitionDecision;
+
+        let source = PartitionDecision {
+            cells: [[BlockSize::Block32x32; 8]; 8],
+        };
+        let constrained = constrain_square_tree_to_bottom_edge(&source, 7);
+
+        assert_eq!(constrained, source);
+        assert!(constrained.is_valid_partition());
+    }
+
+    #[test]
+    fn bottom_edge_constraint_maps_unsignalable_16x16_leaf_to_16x8() {
+        use rvp9_core::mode_decision::partition::PartitionDecision;
+
+        let source = PartitionDecision {
+            cells: [[BlockSize::Block16x16; 8]; 8],
+        };
+        let constrained = constrain_square_tree_to_bottom_edge(&source, 7);
+
+        for row in 0..6 {
+            assert!(
+                constrained.cells[row]
+                    .iter()
+                    .all(|&cell| cell == BlockSize::Block16x16)
+            );
+        }
+        for row in 6..8 {
+            assert!(
+                constrained.cells[row]
+                    .iter()
+                    .all(|&cell| cell == BlockSize::Block16x8)
+            );
+        }
+        assert!(constrained.is_valid_partition());
     }
 
     #[test]
