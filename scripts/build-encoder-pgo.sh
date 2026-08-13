@@ -3,7 +3,7 @@
 #
 # The fixed training matrix covers the production realtime surface rather than
 # one benchmark row: cpu-used 6/7/8, native 720p and scaled 1080p, VBR, CBR
-# with cyclic-refresh AQ, denoising, temporal SVC, and bitrate extremes.
+# with cyclic-refresh AQ, denoising, temporal/spatial SVC, and bitrate extremes.
 # Generated profiles are compiler-, source-, and host-specific. They stay under
 # target/ and must be regenerated on the host that will run the encoder.
 
@@ -19,7 +19,7 @@ Options:
   --training-dir DIR     Directory containing the canonical 720p Y4M corpus
                          (default: tests/corpus)
   --frames N             Frames per training row (default: 60)
-  --print-training-plan  Print the fixed 22-row matrix and exit
+  --print-training-plan  Print the fixed 28-row matrix and exit
   --help                 Show this help
 
 Environment overrides:
@@ -111,10 +111,16 @@ training_rows=(
     "1080-old-town-high-rate|1080-old-town|7|6000|vbr|"
     "1080-old-town-temporal2|1080-old-town|7|2500|vbr|--temporal-layers=2"
     "1080-old-town-temporal3|1080-old-town|7|2500|vbr|--temporal-layers=3"
+    "1080-old-town-spatial2-cpu6|1080-old-town|6|2835|cbr|--spatial-layers=2 --inter-layer-pred=0"
+    "1080-old-town-spatial3-cpu6|1080-old-town|6|2835|cbr|--spatial-layers=3 --inter-layer-pred=0"
+    "1080-old-town-spatial2-cpu7|1080-old-town|7|2835|cbr|--spatial-layers=2 --inter-layer-pred=0"
+    "1080-old-town-spatial3-cpu7|1080-old-town|7|2835|cbr|--spatial-layers=3 --inter-layer-pred=0"
+    "1080-old-town-spatial2-cpu8|1080-old-town|8|2835|cbr|--spatial-layers=2 --inter-layer-pred=0"
+    "1080-old-town-spatial3-cpu8|1080-old-town|8|2835|cbr|--spatial-layers=3 --inter-layer-pred=0"
 )
 
-if [ "${#training_rows[@]}" -ne 22 ]; then
-    echo "internal error: encoder PGO training matrix must contain 22 rows" >&2
+if [ "${#training_rows[@]}" -ne 28 ]; then
+    echo "internal error: encoder PGO training matrix must contain 28 rows" >&2
     exit 1
 fi
 

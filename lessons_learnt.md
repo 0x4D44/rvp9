@@ -5,6 +5,7 @@ Distilled, non-obvious gotchas future sessions need — dated one-liners.
 Durable project facts/conventions belong in `CLAUDE.md` / `AGENTS.md`, not here.
 Hard cap: 20 entries.
 
+- 2026-08-13: A production PGO matrix must train spatial S2/S3 before judging spatial speed (`scripts/build-encoder-pgo.sh:training_rows`).
 - 2026-08-13: A 960x540 SVC temporary buffer allocates as 960x544, forcing pinned direct 4x source scaling (`spatial_encoder.rs:build_layer_sources`).
 - 2026-08-13: Tile workers emit visible rows; merge them into padded reference storage and retain that padding (`frame_loop.rs:TightTileRowsMut`).
 - 2026-08-13: Spatial CBR credits buffers before Q pick and caps enhancement Q from the base key (`cbr.rs:active_worst_quality_inter`).
