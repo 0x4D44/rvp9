@@ -127,6 +127,9 @@ fn scale_plane_2x(
     if kernel == &BILINEAR_KERNEL[HALF_PIXEL_PHASE] {
         return scale_plane_bilinear_2x(input, width, height);
     }
+    if kernel == &EIGHTTAP_SMOOTH_KERNEL[HALF_PIXEL_PHASE] {
+        return scale_plane_smooth_2x(input, width, height);
+    }
     scale_plane_2x_scalar(input, width, height, kernel)
 }
 
@@ -162,6 +165,222 @@ fn scale_plane_bilinear_2x(
         scale_plane_bilinear_2x_scalar(input, width, out_width, out_height, &mut output);
     }
     Ok(output)
+}
+
+fn scale_plane_smooth_2x(
+    input: &[u8],
+    width: usize,
+    height: usize,
+) -> Result<Vec<u8>, ScaleSourceError> {
+    #[cfg(target_arch = "aarch64")]
+    {
+        scale_plane_smooth_2x_neon(
+            input,
+            width,
+            height,
+            &EIGHTTAP_SMOOTH_KERNEL[HALF_PIXEL_PHASE],
+        )
+    }
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        scale_plane_2x_scalar(
+            input,
+            width,
+            height,
+            &EIGHTTAP_SMOOTH_KERNEL[HALF_PIXEL_PHASE],
+        )
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+fn scale_plane_smooth_2x_neon(
+    input: &[u8],
+    width: usize,
+    height: usize,
+    kernel: &[i16; FILTER_TAPS],
+) -> Result<Vec<u8>, ScaleSourceError> {
+    let out_width = width / 2;
+    let out_height = height / 2;
+    let intermediate_height = height
+        .checked_add(FILTER_TAPS - 1)
+        .ok_or(ScaleSourceError::InvalidDimensions)?;
+    let intermediate_len = out_width
+        .checked_mul(intermediate_height)
+        .ok_or(ScaleSourceError::InvalidDimensions)?;
+    let mut intermediate = vec![0u8; intermediate_len];
+
+    for source_y in 0..height {
+        let source_row = &input[source_y * width..(source_y + 1) * width];
+        let row_start = (source_y + FILTER_CENTER as usize) * out_width;
+        let output_row = &mut intermediate[row_start..row_start + out_width];
+        // SAFETY: AArch64 always provides NEON. Both slices cover the widths
+        // passed to the inner routine, which keeps full vector reads inside
+        // the visible row and handles replicated edges with scalar code.
+        unsafe { scale_smooth_horizontal_row_neon(source_row, output_row, kernel) };
+    }
+    for row in 0..FILTER_CENTER as usize {
+        intermediate.copy_within(
+            FILTER_CENTER as usize * out_width..(FILTER_CENTER as usize + 1) * out_width,
+            row * out_width,
+        );
+    }
+    let last_visible_row = height + FILTER_CENTER as usize - 1;
+    for row in height + FILTER_CENTER as usize..intermediate_height {
+        intermediate.copy_within(
+            last_visible_row * out_width..(last_visible_row + 1) * out_width,
+            row * out_width,
+        );
+    }
+
+    let output_len = out_width
+        .checked_mul(out_height)
+        .ok_or(ScaleSourceError::InvalidDimensions)?;
+    let mut output = vec![0u8; output_len];
+    for y in 0..out_height {
+        let intermediate_start = 2 * y * out_width;
+        let output_start = y * out_width;
+        // SAFETY: the intermediate contains `height + 7` complete rows. The
+        // filter reads rows `2 * y..2 * y + 7`, and the destination pointer
+        // addresses one complete output row.
+        unsafe {
+            scale_smooth_vertical_row_neon(
+                intermediate.as_ptr().add(intermediate_start),
+                out_width,
+                output.as_mut_ptr().add(output_start),
+                kernel,
+            );
+        }
+    }
+    Ok(output)
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline]
+#[target_feature(enable = "neon")]
+unsafe fn filter_decimated_smooth_8_neon(
+    base: *const u8,
+    kernel: &[i16; FILTER_TAPS],
+) -> core::arch::aarch64::uint8x8_t {
+    use core::arch::aarch64::*;
+
+    // SAFETY: callers prove that every sixteen-byte interleaved load stays
+    // within its source row. Arithmetic intrinsics do not access memory.
+    unsafe {
+        let first = vreinterpretq_s16_u16(vmovl_u8(vld2_u8(base).0));
+        let mut lo = vmull_s16(vget_low_s16(first), vdup_n_s16(kernel[0]));
+        let mut hi = vmull_s16(vget_high_s16(first), vdup_n_s16(kernel[0]));
+        for (tap, &coefficient) in kernel.iter().enumerate().skip(1) {
+            let samples = vreinterpretq_s16_u16(vmovl_u8(vld2_u8(base.add(tap)).0));
+            lo = vmlal_s16(lo, vget_low_s16(samples), vdup_n_s16(coefficient));
+            hi = vmlal_s16(hi, vget_high_s16(samples), vdup_n_s16(coefficient));
+        }
+        vqmovn_u16(vcombine_u16(
+            vqrshrun_n_s32::<7>(lo),
+            vqrshrun_n_s32::<7>(hi),
+        ))
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline]
+#[target_feature(enable = "neon")]
+unsafe fn filter_strided_smooth_8_neon(
+    base: *const u8,
+    stride: usize,
+    kernel: &[i16; FILTER_TAPS],
+) -> core::arch::aarch64::uint8x8_t {
+    use core::arch::aarch64::*;
+
+    // SAFETY: callers prove eight readable samples at each of the eight row
+    // offsets. Arithmetic intrinsics do not access memory.
+    unsafe {
+        let first = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(base)));
+        let mut lo = vmull_s16(vget_low_s16(first), vdup_n_s16(kernel[0]));
+        let mut hi = vmull_s16(vget_high_s16(first), vdup_n_s16(kernel[0]));
+        for (tap, &coefficient) in kernel.iter().enumerate().skip(1) {
+            let samples = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(base.add(tap * stride))));
+            lo = vmlal_s16(lo, vget_low_s16(samples), vdup_n_s16(coefficient));
+            hi = vmlal_s16(hi, vget_high_s16(samples), vdup_n_s16(coefficient));
+        }
+        vqmovn_u16(vcombine_u16(
+            vqrshrun_n_s32::<7>(lo),
+            vqrshrun_n_s32::<7>(hi),
+        ))
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+unsafe fn scale_smooth_horizontal_row_neon(
+    source: &[u8],
+    output: &mut [u8],
+    kernel: &[i16; FILTER_TAPS],
+) {
+    let width = source.len();
+    let mut x = 0;
+    while x < 2.min(output.len()) {
+        output[x] = smooth_horizontal_sample(source, x, kernel);
+        x += 1;
+    }
+    // SAFETY: the vector bound leaves three samples before the first tap and
+    // accounts for the extra byte read by the final interleaved load. Each
+    // store writes exactly eight remaining output samples.
+    unsafe {
+        while x + 8 <= output.len() && 2 * x + 20 <= width {
+            core::arch::aarch64::vst1_u8(
+                output.as_mut_ptr().add(x),
+                filter_decimated_smooth_8_neon(source.as_ptr().add(2 * x - 3), kernel),
+            );
+            x += 8;
+        }
+    }
+    while x < output.len() {
+        output[x] = smooth_horizontal_sample(source, x, kernel);
+        x += 1;
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+unsafe fn scale_smooth_vertical_row_neon(
+    intermediate: *const u8,
+    width: usize,
+    output: *mut u8,
+    kernel: &[i16; FILTER_TAPS],
+) {
+    let mut x = 0;
+    // SAFETY: the caller supplies eight readable intermediate rows and one
+    // writable output row, all with `width` samples. Vector chunks and the
+    // scalar tail partition that footprint exactly.
+    unsafe {
+        while x + 8 <= width {
+            core::arch::aarch64::vst1_u8(
+                output.add(x),
+                filter_strided_smooth_8_neon(intermediate.add(x), width, kernel),
+            );
+            x += 8;
+        }
+        while x < width {
+            let mut sum = 0i32;
+            for (tap, &coefficient) in kernel.iter().enumerate() {
+                sum += i32::from(*intermediate.add(tap * width + x)) * i32::from(coefficient);
+            }
+            *output.add(x) = round_and_clip(sum);
+            x += 1;
+        }
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+fn smooth_horizontal_sample(source: &[u8], output_x: usize, kernel: &[i16; FILTER_TAPS]) -> u8 {
+    let center = (output_x * 2) as isize;
+    let mut sum = 0i32;
+    for (tap, &coefficient) in kernel.iter().enumerate() {
+        let source_x =
+            (center + tap as isize - FILTER_CENTER).clamp(0, source.len() as isize - 1) as usize;
+        sum += i32::from(source[source_x]) * i32::from(coefficient);
+    }
+    round_and_clip(sum)
 }
 
 #[cfg(target_arch = "aarch64")]
@@ -354,6 +573,34 @@ mod tests {
                 scale_plane_2x_scalar(&input, width, height, &BILINEAR_KERNEL[HALF_PIXEL_PHASE])
                     .unwrap();
             let optimized = scale_plane_bilinear_2x(&input, width, height).unwrap();
+            assert_eq!(optimized, scalar, "{width}x{height}");
+        }
+    }
+
+    #[test]
+    fn optimized_smooth_plane_matches_scalar_across_shapes() {
+        let mut state = 0x58a1_e5cau32;
+        for (width, height) in [(8, 8), (20, 12), (64, 36), (128, 64)] {
+            let input = (0..width * height)
+                .map(|index| {
+                    state ^= state << 13;
+                    state ^= state >> 17;
+                    state ^= state << 5;
+                    match index % 17 {
+                        0 => 0,
+                        1 => 255,
+                        _ => state as u8,
+                    }
+                })
+                .collect::<Vec<_>>();
+            let scalar = scale_plane_2x_scalar(
+                &input,
+                width,
+                height,
+                &EIGHTTAP_SMOOTH_KERNEL[HALF_PIXEL_PHASE],
+            )
+            .unwrap();
+            let optimized = scale_plane_smooth_2x(&input, width, height).unwrap();
             assert_eq!(optimized, scalar, "{width}x{height}");
         }
     }
