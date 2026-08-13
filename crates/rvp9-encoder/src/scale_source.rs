@@ -257,55 +257,76 @@ fn scale_plane_smooth_2x_neon(
 #[cfg(target_arch = "aarch64")]
 #[inline]
 #[target_feature(enable = "neon")]
-unsafe fn filter_decimated_smooth_8_neon(
-    base: *const u8,
-    kernel: &[i16; FILTER_TAPS],
+unsafe fn filter_smooth_samples_8_libvpx(
+    samples: [core::arch::aarch64::uint8x8_t; FILTER_TAPS],
 ) -> core::arch::aarch64::uint8x8_t {
     use core::arch::aarch64::*;
 
+    const COEFFICIENTS: [i16; FILTER_TAPS] = [-1, -4, 14, 55, 55, 14, -4, -1];
+    let s0 = vreinterpretq_s16_u16(vmovl_u8(samples[0]));
+    let s1 = vreinterpretq_s16_u16(vmovl_u8(samples[1]));
+    let s2 = vreinterpretq_s16_u16(vmovl_u8(samples[2]));
+    let s3 = vreinterpretq_s16_u16(vmovl_u8(samples[3]));
+    let s4 = vreinterpretq_s16_u16(vmovl_u8(samples[4]));
+    let s5 = vreinterpretq_s16_u16(vmovl_u8(samples[5]));
+    let s6 = vreinterpretq_s16_u16(vmovl_u8(samples[6]));
+    let s7 = vreinterpretq_s16_u16(vmovl_u8(samples[7]));
+    let mut sum = vmulq_n_s16(s0, COEFFICIENTS[0]);
+    sum = vmlaq_n_s16(sum, s1, COEFFICIENTS[1]);
+    sum = vmlaq_n_s16(sum, s2, COEFFICIENTS[2]);
+    sum = vmlaq_n_s16(sum, s5, COEFFICIENTS[5]);
+    sum = vmlaq_n_s16(sum, s6, COEFFICIENTS[6]);
+    sum = vmlaq_n_s16(sum, s7, COEFFICIENTS[7]);
+    sum = vqaddq_s16(sum, vmulq_n_s16(s3, COEFFICIENTS[3]));
+    sum = vqaddq_s16(sum, vmulq_n_s16(s4, COEFFICIENTS[4]));
+    vqrshrun_n_s16::<7>(sum)
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline]
+#[target_feature(enable = "neon")]
+unsafe fn filter_decimated_smooth_8_libvpx_neon(base: *const u8) -> core::arch::aarch64::uint8x8_t {
+    use core::arch::aarch64::*;
+
     // SAFETY: callers prove that every sixteen-byte interleaved load stays
-    // within its source row. Arithmetic intrinsics do not access memory.
+    // within its source row. The accumulation order matches pinned libvpx's
+    // `scale_filter_8` and is exact for valid VP9 interpolation kernels.
     unsafe {
-        let first = vreinterpretq_s16_u16(vmovl_u8(vld2_u8(base).0));
-        let mut lo = vmull_s16(vget_low_s16(first), vdup_n_s16(kernel[0]));
-        let mut hi = vmull_s16(vget_high_s16(first), vdup_n_s16(kernel[0]));
-        for (tap, &coefficient) in kernel.iter().enumerate().skip(1) {
-            let samples = vreinterpretq_s16_u16(vmovl_u8(vld2_u8(base.add(tap)).0));
-            lo = vmlal_s16(lo, vget_low_s16(samples), vdup_n_s16(coefficient));
-            hi = vmlal_s16(hi, vget_high_s16(samples), vdup_n_s16(coefficient));
-        }
-        vqmovn_u16(vcombine_u16(
-            vqrshrun_n_s32::<7>(lo),
-            vqrshrun_n_s32::<7>(hi),
-        ))
+        filter_smooth_samples_8_libvpx([
+            vld2_u8(base).0,
+            vld2_u8(base.add(1)).0,
+            vld2_u8(base.add(2)).0,
+            vld2_u8(base.add(3)).0,
+            vld2_u8(base.add(4)).0,
+            vld2_u8(base.add(5)).0,
+            vld2_u8(base.add(6)).0,
+            vld2_u8(base.add(7)).0,
+        ])
     }
 }
 
 #[cfg(target_arch = "aarch64")]
 #[inline]
 #[target_feature(enable = "neon")]
-unsafe fn filter_strided_smooth_8_neon(
+unsafe fn filter_strided_smooth_8_libvpx_neon(
     base: *const u8,
     stride: usize,
-    kernel: &[i16; FILTER_TAPS],
 ) -> core::arch::aarch64::uint8x8_t {
     use core::arch::aarch64::*;
 
     // SAFETY: callers prove eight readable samples at each of the eight row
-    // offsets. Arithmetic intrinsics do not access memory.
+    // offsets. The shared arithmetic matches pinned libvpx's exact schedule.
     unsafe {
-        let first = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(base)));
-        let mut lo = vmull_s16(vget_low_s16(first), vdup_n_s16(kernel[0]));
-        let mut hi = vmull_s16(vget_high_s16(first), vdup_n_s16(kernel[0]));
-        for (tap, &coefficient) in kernel.iter().enumerate().skip(1) {
-            let samples = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(base.add(tap * stride))));
-            lo = vmlal_s16(lo, vget_low_s16(samples), vdup_n_s16(coefficient));
-            hi = vmlal_s16(hi, vget_high_s16(samples), vdup_n_s16(coefficient));
-        }
-        vqmovn_u16(vcombine_u16(
-            vqrshrun_n_s32::<7>(lo),
-            vqrshrun_n_s32::<7>(hi),
-        ))
+        filter_smooth_samples_8_libvpx([
+            vld1_u8(base),
+            vld1_u8(base.add(stride)),
+            vld1_u8(base.add(2 * stride)),
+            vld1_u8(base.add(3 * stride)),
+            vld1_u8(base.add(4 * stride)),
+            vld1_u8(base.add(5 * stride)),
+            vld1_u8(base.add(6 * stride)),
+            vld1_u8(base.add(7 * stride)),
+        ])
     }
 }
 
@@ -329,7 +350,7 @@ unsafe fn scale_smooth_horizontal_row_neon(
         while x + 8 <= output.len() && 2 * x + 20 <= width {
             core::arch::aarch64::vst1_u8(
                 output.as_mut_ptr().add(x),
-                filter_decimated_smooth_8_neon(source.as_ptr().add(2 * x - 3), kernel),
+                filter_decimated_smooth_8_libvpx_neon(source.as_ptr().add(2 * x - 3)),
             );
             x += 8;
         }
@@ -356,7 +377,7 @@ unsafe fn scale_smooth_vertical_row_neon(
         while x + 8 <= width {
             core::arch::aarch64::vst1_u8(
                 output.add(x),
-                filter_strided_smooth_8_neon(intermediate.add(x), width, kernel),
+                filter_strided_smooth_8_libvpx_neon(intermediate.add(x), width),
             );
             x += 8;
         }
@@ -602,6 +623,38 @@ mod tests {
             .unwrap();
             let optimized = scale_plane_smooth_2x(&input, width, height).unwrap();
             assert_eq!(optimized, scalar, "{width}x{height}");
+        }
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    #[test]
+    fn libvpx_neon_smooth_schedule_matches_scalar_extremes() {
+        use core::arch::aarch64::vget_lane_u8;
+
+        let kernel = &EIGHTTAP_SMOOTH_KERNEL[HALF_PIXEL_PHASE];
+        for stride in [1usize, 2] {
+            for mask in 0u16..256 {
+                let mut source = [17u8; 22];
+                for tap in 0..FILTER_TAPS {
+                    source[tap * stride] = if mask & (1 << tap) == 0 { 0 } else { 255 };
+                }
+                // SAFETY: `source` covers the helper's eight-byte load at
+                // every one of the eight tap offsets for both tested strides.
+                let vector =
+                    unsafe { filter_strided_smooth_8_libvpx_neon(source.as_ptr(), stride) };
+                // SAFETY: lane zero is present in every uint8x8 vector.
+                let actual = unsafe { vget_lane_u8::<0>(vector) };
+                let expected = round_and_clip(
+                    kernel
+                        .iter()
+                        .enumerate()
+                        .map(|(tap, &coefficient)| {
+                            i32::from(source[tap * stride]) * i32::from(coefficient)
+                        })
+                        .sum(),
+                );
+                assert_eq!(actual, expected, "stride={stride} mask={mask:#04x}");
+            }
         }
     }
 
