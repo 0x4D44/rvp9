@@ -199,6 +199,17 @@ struct CellAgreement {
     same_skip: u64,
     same_block_and_prediction: u64,
     exact_mode_info: u64,
+    both_inter_cells: u64,
+    same_inter_mode: u64,
+    same_reference_frames: u64,
+    same_motion_vectors: u64,
+    same_primary_mv: u64,
+    same_interp_filter: u64,
+    same_predictor_parameters: u64,
+    rvp_zero_lib_nonzero_mv: u64,
+    rvp_nonzero_lib_zero_mv: u64,
+    both_nonzero_different_mv: u64,
+    inter_mode_pairs: [[u64; 4]; 4],
     matched_bp_same_tx: u64,
     matched_bp_rvp_smaller_tx: u64,
     matched_bp_rvp_larger_tx: u64,
@@ -241,6 +252,46 @@ fn compare_inter_frame_cells(rvp9: &Aggregate, libvpx: &Aggregate) -> CellAgreem
             agreement.same_tx_size += u64::from(same_tx_size);
             agreement.same_skip += u64::from(same_skip);
             agreement.exact_mode_info += u64::from(rvp9_mi == libvpx_mi);
+
+            if let (
+                BlockMode::Inter {
+                    mode: rvp9_mode,
+                    ref_frames: rvp9_refs,
+                    mvs: rvp9_mvs,
+                    interp_filter: rvp9_filter,
+                },
+                BlockMode::Inter {
+                    mode: libvpx_mode,
+                    ref_frames: libvpx_refs,
+                    mvs: libvpx_mvs,
+                    interp_filter: libvpx_filter,
+                },
+            ) = (&rvp9_mi.mode, &libvpx_mi.mode)
+            {
+                agreement.both_inter_cells += 1;
+                agreement.inter_mode_pairs[rvp9_mode.idx()][libvpx_mode.idx()] += 1;
+                agreement.same_inter_mode += u64::from(rvp9_mode == libvpx_mode);
+                agreement.same_reference_frames += u64::from(rvp9_refs == libvpx_refs);
+                agreement.same_motion_vectors += u64::from(rvp9_mvs == libvpx_mvs);
+                agreement.same_primary_mv += u64::from(rvp9_mvs[0] == libvpx_mvs[0]);
+                agreement.same_interp_filter += u64::from(rvp9_filter == libvpx_filter);
+                agreement.same_predictor_parameters += u64::from(
+                    rvp9_refs == libvpx_refs
+                        && rvp9_mvs == libvpx_mvs
+                        && rvp9_filter == libvpx_filter,
+                );
+
+                let rvp9_zero = rvp9_mvs[0] == rvp9_core::mode_info::Mv::ZERO;
+                let libvpx_zero = libvpx_mvs[0] == rvp9_core::mode_info::Mv::ZERO;
+                match (rvp9_zero, libvpx_zero) {
+                    (true, false) => agreement.rvp_zero_lib_nonzero_mv += 1,
+                    (false, true) => agreement.rvp_nonzero_lib_zero_mv += 1,
+                    (false, false) if rvp9_mvs[0] != libvpx_mvs[0] => {
+                        agreement.both_nonzero_different_mv += 1;
+                    }
+                    _ => {}
+                }
+            }
 
             if !(same_block_size && same_prediction) {
                 continue;
@@ -1099,6 +1150,57 @@ fn emit_report(
             );
         }
 
+        let inter = agreement.both_inter_cells;
+        let _ = writeln!(
+            md,
+            "\nPrediction components independent of partition size, over {} cells where both streams code inter:\n",
+            inter
+        );
+        let _ = writeln!(md, "| prediction component | cells | % |\n|---|---:|---:|");
+        for (label, count) in [
+            ("same inter-mode symbol", agreement.same_inter_mode),
+            ("same reference frames", agreement.same_reference_frames),
+            ("same motion-vector pair", agreement.same_motion_vectors),
+            ("same primary motion vector", agreement.same_primary_mv),
+            ("same interpolation filter", agreement.same_interp_filter),
+            (
+                "same predictor parameters (refs + MVs + filter)",
+                agreement.same_predictor_parameters,
+            ),
+            (
+                "rvp9 zero MV / libvpx nonzero MV",
+                agreement.rvp_zero_lib_nonzero_mv,
+            ),
+            (
+                "rvp9 nonzero MV / libvpx zero MV",
+                agreement.rvp_nonzero_lib_zero_mv,
+            ),
+            (
+                "both nonzero, different primary MV",
+                agreement.both_nonzero_different_mv,
+            ),
+        ] {
+            let _ = writeln!(md, "| {label} | {count} | {:.1} |", pct(count, inter));
+        }
+
+        let mode_names = ["NEARESTMV", "NEARMV", "ZEROMV", "NEWMV"];
+        let _ = writeln!(
+            md,
+            "\nInter-mode pair matrix (cells; rvp9 rows, libvpx columns):\n"
+        );
+        let _ = writeln!(
+            md,
+            "| rvp9 \\ libvpx | NEARESTMV | NEARMV | ZEROMV | NEWMV |\n|---|---:|---:|---:|---:|"
+        );
+        for (rvp9_idx, name) in mode_names.iter().enumerate() {
+            let row = agreement.inter_mode_pairs[rvp9_idx];
+            let _ = writeln!(
+                md,
+                "| {name} | {} | {} | {} | {} |",
+                row[0], row[1], row[2], row[3]
+            );
+        }
+
         let matched = agreement.same_block_and_prediction;
         let _ = writeln!(
             md,
@@ -1716,6 +1818,20 @@ mod tests {
         }
     }
 
+    fn test_inter_mi(mode: InterMode, mv: rvp9_core::mode_info::Mv) -> ModeInfo {
+        let mut mi = test_intra_mi(
+            BlockSize::Block16x16,
+            rvp9_core::transforms::TxSize::Tx16x16,
+        );
+        mi.mode = BlockMode::Inter {
+            mode,
+            ref_frames: [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            mvs: [mv, rvp9_core::mode_info::Mv::ZERO],
+            interp_filter: rvp9_core::bitstream::InterpFilter::EightTap,
+        };
+        mi
+    }
+
     #[test]
     fn paired_cell_agreement_separates_prediction_transform_and_skip() {
         use rvp9_core::transforms::TxSize;
@@ -1759,6 +1875,63 @@ mod tests {
         assert_eq!(agreement.matched_bp_same_skip, 2);
         assert_eq!(agreement.matched_bp_rvp_nonskip_libskip, 1);
         assert_eq!(agreement.matched_bp_rvpskip_libnonskip, 0);
+    }
+
+    #[test]
+    fn paired_cell_agreement_separates_mode_syntax_from_motion_outcome() {
+        use rvp9_core::mode_info::Mv;
+
+        let rvp9_frame = FrameStats {
+            mi_rows: 1,
+            mi_cols: 4,
+            mi_grid: vec![
+                Some(test_inter_mi(InterMode::ZeroMv, Mv::ZERO)),
+                Some(test_inter_mi(InterMode::ZeroMv, Mv::ZERO)),
+                Some(test_inter_mi(InterMode::NewMv, Mv { row: 8, col: 0 })),
+                Some(test_inter_mi(InterMode::NewMv, Mv { row: 8, col: 0 })),
+            ],
+            ..Default::default()
+        };
+        let libvpx_frame = FrameStats {
+            mi_rows: 1,
+            mi_cols: 4,
+            mi_grid: vec![
+                Some(test_inter_mi(InterMode::NewMv, Mv::ZERO)),
+                Some(test_inter_mi(InterMode::NewMv, Mv { row: 8, col: 0 })),
+                Some(test_inter_mi(InterMode::ZeroMv, Mv::ZERO)),
+                Some(test_inter_mi(InterMode::NewMv, Mv { row: 16, col: 0 })),
+            ],
+            ..Default::default()
+        };
+
+        let agreement = compare_inter_frame_cells(
+            &Aggregate {
+                frames: vec![rvp9_frame],
+            },
+            &Aggregate {
+                frames: vec![libvpx_frame],
+            },
+        );
+
+        assert_eq!(agreement.both_inter_cells, 4);
+        assert_eq!(agreement.same_inter_mode, 1);
+        assert_eq!(agreement.same_predictor_parameters, 1);
+        assert_eq!(agreement.same_primary_mv, 1);
+        assert_eq!(agreement.rvp_zero_lib_nonzero_mv, 1);
+        assert_eq!(agreement.rvp_nonzero_lib_zero_mv, 1);
+        assert_eq!(agreement.both_nonzero_different_mv, 1);
+        assert_eq!(
+            agreement.inter_mode_pairs[InterMode::ZeroMv.idx()][InterMode::NewMv.idx()],
+            2
+        );
+        assert_eq!(
+            agreement.inter_mode_pairs[InterMode::NewMv.idx()][InterMode::ZeroMv.idx()],
+            1
+        );
+        assert_eq!(
+            agreement.inter_mode_pairs[InterMode::NewMv.idx()][InterMode::NewMv.idx()],
+            1
+        );
     }
 
     #[test]
