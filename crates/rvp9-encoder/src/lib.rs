@@ -5506,6 +5506,73 @@ fn partition_color_sensitivity(
     sensitivity
 }
 
+fn gather_edge_extended_64x64(
+    source: &[u8],
+    frame_width: usize,
+    frame_height: usize,
+    x: usize,
+    y: usize,
+    block: &mut [u8; 64 * 64],
+) {
+    assert!(frame_width > 0 && frame_height > 0);
+    assert!(source.len() >= frame_width * frame_height);
+    assert!(x < frame_width && y < frame_height);
+
+    let visible_width = (frame_width - x).min(64);
+    let visible_height = (frame_height - y).min(64);
+    for row in 0..visible_height {
+        let source_start = (y + row) * frame_width + x;
+        let block_start = row * 64;
+        block[block_start..block_start + visible_width]
+            .copy_from_slice(&source[source_start..source_start + visible_width]);
+        let edge = block[block_start + visible_width - 1];
+        block[block_start + visible_width..block_start + 64].fill(edge);
+    }
+    for row in visible_height..64 {
+        block.copy_within((visible_height - 1) * 64..visible_height * 64, row * 64);
+    }
+}
+
+fn constrain_fixed_tree_to_visible_leaves(
+    exact: &rvp9_core::mode_decision::partition::PartitionDecision,
+    visible_mi_cols: usize,
+    visible_mi_rows: usize,
+) -> rvp9_core::mode_decision::partition::PartitionDecision {
+    debug_assert!((1..=8).contains(&visible_mi_cols));
+    debug_assert!((1..=8).contains(&visible_mi_rows));
+    if visible_mi_cols == 8 && visible_mi_rows == 8 {
+        return exact.clone();
+    }
+
+    // The current coefficient writer requires every transform leaf to fit
+    // inside the visible MI grid. Retain exact VBP decisions for complete
+    // 32x32 quadrants and use the established legal edge cover elsewhere.
+    // A partial-frame root HORZ/VERT decision is not quadrant-local, so none
+    // of its cells are copied.
+    let mut supported =
+        crate::frame_loop::edge_partition_decision(visible_mi_cols, visible_mi_rows);
+    for row in [0usize, 4] {
+        for col in [0usize, 4] {
+            if row + 4 > visible_mi_rows || col + 4 > visible_mi_cols {
+                continue;
+            }
+            let quadrant_local = exact.cells[row..row + 4].iter().all(|cells| {
+                cells[col..col + 4].iter().all(|bsize| {
+                    usize::from(bsize.n_8x8_wide()) <= 4 && usize::from(bsize.n_8x8_high()) <= 4
+                })
+            });
+            if quadrant_local {
+                for local_row in 0..4 {
+                    supported.cells[row + local_row][col..col + 4]
+                        .copy_from_slice(&exact.cells[row + local_row][col..col + 4]);
+                }
+            }
+        }
+    }
+    debug_assert!(supported.is_valid_partition());
+    supported
+}
+
 fn zero_mv_sad64_edge_clamped(
     src: &[u8],
     reference: &[u8],
@@ -7297,7 +7364,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
 
                 let mut used_exact_vbp_tree = false;
                 let mut exact_variance_low = [false; 25];
-                if exact_vbp_tree_enabled && sb_px_y + 64 <= h {
+                if exact_vbp_tree_enabled {
                     use rvp9_core::bitstream::frame::InterpFilter;
                     use rvp9_core::mode_decision::partition::{
                         Cpu7InterVbpThresholdInput, FixedTreeCopyConditions, FixedTreeInterInput,
@@ -7350,7 +7417,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             None
                         };
 
-                    let (exact_decision, variance_low) = if let Some(copy) = low_source_copy {
+                    let (mut exact_decision, variance_low) = if let Some(copy) = low_source_copy {
                         (copy.decision, copy.variance_low)
                     } else {
                         // Pinned libvpx deliberately skips int-pro partition
@@ -7433,15 +7500,31 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         } else {
                             (i32::from(ac) << 3).max(8000) as u32
                         };
+                        let visible_width = (w - sb_px_x).min(64);
+                        let visible_height = (h - sb_px_y).min(64);
+                        let source_offset = sb_px_y * w + sb_px_x;
+                        let (partition_source, partition_source_stride): (&[u8], usize) =
+                            if visible_width == 64 && visible_height == 64 {
+                                (&input_yuv.0[source_offset..], w)
+                            } else {
+                                gather_edge_extended_64x64(
+                                    input_yuv.0,
+                                    w,
+                                    h,
+                                    sb_px_x,
+                                    sb_px_y,
+                                    &mut inter_emit_scratch.denoise_pred,
+                                );
+                                (&inter_emit_scratch.denoise_pred, 64)
+                            };
                         let choose_fresh_tree = || {
-                            let source_offset = sb_px_y * w + sb_px_x;
                             choose_fixed_tree_inter_selection(&FixedTreeInterInput {
-                                source: &input_yuv.0[source_offset..],
-                                source_stride: w,
+                                source: partition_source,
+                                source_stride: partition_source_stride,
                                 predictor: &predictor_block,
                                 predictor_stride: 64,
-                                visible_width: 64,
-                                visible_height: 64,
+                                visible_width,
+                                visible_height,
                                 frame_width: w,
                                 thresholds: thresholds.thresholds,
                                 minmax_threshold: thresholds.minmax_threshold,
@@ -7492,10 +7575,27 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             (selection.decision, selection.variance_low)
                         }
                     };
-                    exact_variance_low = variance_low;
+                    let visible_mi_cols = (w - sb_px_x).min(64).div_ceil(8);
+                    let visible_mi_rows = (h - sb_px_y).min(64).div_ceil(8);
+                    exact_decision = constrain_fixed_tree_to_visible_leaves(
+                        &exact_decision,
+                        visible_mi_cols,
+                        visible_mi_rows,
+                    );
+                    exact_variance_low = if visible_mi_cols == 8 && visible_mi_rows == 8 {
+                        variance_low
+                    } else {
+                        // The supported edge tree may replace crossing leaves
+                        // with smaller squares. Its leaf slots no longer match
+                        // the unconstrained selection's low-variance flags.
+                        [false; 25]
+                    };
                     let segment_ids = segment_ids_for_hint_cells(&sb_partitions[sb_idx]);
                     sb_partitions[sb_idx].clear();
                     visit_fixed_tree_leaves(&exact_decision, |leaf| {
+                        if leaf.row_8x8 >= visible_mi_rows || leaf.col_8x8 >= visible_mi_cols {
+                            return;
+                        }
                         sb_partitions[sb_idx].push(InterPartitionLeafDesc {
                             mi_row_in_sb: leaf.row_8x8,
                             mi_col_in_sb: leaf.col_8x8,
@@ -15368,6 +15468,28 @@ mod tests {
     }
 
     #[test]
+    fn partial_fixed_tree_preserves_supported_32x32_quadrants() {
+        use rvp9_core::mode_decision::partition::{PartitionDecision, visit_fixed_tree_leaves};
+
+        let exact = PartitionDecision {
+            cells: [[BlockSize::Block32x32; 8]; 8],
+        };
+        let supported = constrain_fixed_tree_to_visible_leaves(&exact, 8, 7);
+
+        assert!(supported.is_valid_partition());
+        assert_eq!(supported.cells[0][0], BlockSize::Block32x32);
+        assert_eq!(supported.cells[0][4], BlockSize::Block32x32);
+        assert_eq!(supported.cells[4][0], BlockSize::Block16x16);
+        assert_eq!(supported.cells[6][0], BlockSize::Block8x8);
+        visit_fixed_tree_leaves(&supported, |leaf| {
+            if leaf.row_8x8 < 7 && leaf.col_8x8 < 8 {
+                assert!(leaf.row_8x8 + usize::from(leaf.block_size.n_8x8_high()) <= 7);
+                assert!(leaf.col_8x8 + usize::from(leaf.block_size.n_8x8_wide()) <= 8);
+            }
+        });
+    }
+
+    #[test]
     fn tile_local_causal_grid_matches_full_grid_lookup_and_splat() {
         use rvp9_core::inter::mv_ref::{NeighbourLookup, Position};
 
@@ -15922,6 +16044,29 @@ mod tests {
             zero_mv_sad64_edge_clamped(&src, &reference, (80, 72), (64, 64)),
             64 * 64,
         );
+    }
+
+    #[test]
+    fn gather_edge_extended_64x64_replicates_right_and_bottom_samples() {
+        let width = 68usize;
+        let height = 67usize;
+        let source = (0..width * height)
+            .map(|index| ((index / width) * 17 + index % width) as u8)
+            .collect::<Vec<_>>();
+        let mut block = [0u8; 64 * 64];
+
+        gather_edge_extended_64x64(&source, width, height, 64, 64, &mut block);
+
+        for row in 0..64 {
+            let source_row = (64 + row).min(height - 1);
+            for col in 0..64 {
+                let source_col = (64 + col).min(width - 1);
+                assert_eq!(
+                    block[row * 64 + col],
+                    source[source_row * width + source_col]
+                );
+            }
+        }
     }
 
     #[test]

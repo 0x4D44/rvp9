@@ -5919,8 +5919,9 @@ fn inter_partitions_from_intra_shape(
 
 /// Seed the per-SB storage consumed by the exact pinned-libvpx VBP path.
 /// Complete superblocks need only a placeholder because the exact tree
-/// replaces it before mode picking. A partial bottom superblock retains the
-/// same legal edge shape as the legacy prepass, which the exact path excludes.
+/// replaces it before mode picking. A partial bottom superblock starts with
+/// the legal edge cover; the exact path may replace its complete 32x32
+/// quadrants after edge-extending the source.
 fn exact_vbp_seed_partitions(
     width_px: usize,
     height_px: usize,
@@ -6134,7 +6135,10 @@ fn leaves_from_decision(decision: &PartitionDecision) -> Vec<PartitionLeafDesc> 
 /// widths are SB aligned, so only the bottom edge is partial today; keeping
 /// both dimensions explicit makes the invariant testable and avoids encoding
 /// leaves whose top-left MI lies outside the visible frame.
-fn edge_partition_decision(visible_mi_cols: usize, visible_mi_rows: usize) -> PartitionDecision {
+pub(crate) fn edge_partition_decision(
+    visible_mi_cols: usize,
+    visible_mi_rows: usize,
+) -> PartitionDecision {
     debug_assert!((1..=8).contains(&visible_mi_cols));
     debug_assert!((1..=8).contains(&visible_mi_rows));
     let mut decision = PartitionDecision {

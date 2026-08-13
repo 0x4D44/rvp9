@@ -5686,3 +5686,46 @@ separate/paired geomeans. Every clip and order passes; candidate medians are
 **Future plan:** retain only on CPU6 T3. Run quiet-host p99 and 1080p
 acceptance. Do not generalize to single-layer or T2 without their own complete
 quality and speed evidence.
+
+### 2026-08-13 — Constrain partial-edge variance partitions to visible leaves
+
+**Where:** `rvp9_encoder::constrain_fixed_tree_to_visible_leaves` and the
+exact-tree adapter in `rvp9_encoder::pick_and_simulate_inter_encode_partitions`;
+libvpx counterpart: `vp9/encoder/vp9_encodeframe.c::choose_partitioning`.
+
+**What libvpx does:** edge-extends partial superblocks and may code partition
+leaves whose rectangular footprint crosses the visible frame boundary.
+
+**What rvp9 does:** edge-extends the same 64x64 source analysis block and keeps
+exact variance decisions for complete 32x32 quadrants. It retains the existing
+square-only legal edge cover for the remainder because rvp9's retained-token
+coefficient writer currently requires every transform leaf to fit the visible
+MI grid. Low-temporal-variance flags are disabled on the constrained block
+because their slots describe the unconstrained tree.
+
+**Why:** the old product path skipped variance analysis for every partial
+bottom superblock. At 320x180 this hard-coded 29% of each frame to the edge
+cover. Enabling unconstrained leaves exposed the coefficient-writer limitation
+and produced a cross-decoder truncation at the first inter frame; constraining
+only unsupported leaves keeps the stream valid while recovering the supported
+analysis area.
+
+**Byte-parity impact:** intentional on partial-edge inter superblocks when a
+complete 32x32 quadrant receives a different variance decision. All spatial
+cross-decoder gates remain required before retention.
+
+**Compression-efficiency impact:** the canonical CPU8 three-layer CBR curve
+moves SL0 from `+47.6971%` to `+41.0291%` BD-rate and SL1 from `+22.3826%` to
+`+22.0938%`. SL2 remains green, moving from `-0.2250%` to `-0.0767%`. At fixed
+qindex 148, SL0 improves from 132.684 kbps/34.563012 dB to
+128.100 kbps/34.681 dB.
+
+**Speed impact:** directional warmed wall times are effectively neutral:
+`12.886--15.467 ms/frame` across the six points versus
+`13.147--15.363 ms/frame` before the change. These loaded-host timings are not
+final acceptance evidence.
+
+**Future plan:** retain the constrained path. Widen retained coefficient
+recording to normative frame-edge transform traversal before allowing
+crossing leaves, and require a separate cross-decoder and BD-rate unit for that
+change.
