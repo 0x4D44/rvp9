@@ -5851,12 +5851,15 @@ PSNR delta is `+0.0151 dB` mean, `-0.0209 dB` minimum, and `+0.0661 dB`
 maximum. The final CSV is `/private/tmp/rvp9-w153-spatial-key-lambda101-final.csv`
 (SHA-256 `d368ad017dad75defff2a92cf9a5a1eb04f31b5baa4c56ddc6786ad602031ada`).
 
-**Speed impact:** plain-release timings were host-noisy and are not acceptance
-evidence. Only two components per key interval can change, but the exact
-accepted tree still requires a fresh production-PGO build and repeated warmed
-medians before Stage 4e speed can close.
+**Speed impact:** the unchanged 22-row production-PGO matrix built exact commit
+`4bc75dbe8a067c8b6ec76cf3cebe04aa03d0a56f`. Three warmed six-rate comparisons
+measure a median-per-target geomean of `1.024760x` against pinned libvpx, inside
+the focused `1.05x` gate. Per-target ratios from 420 through 3360 kb/s are
+`1.071595x`, `1.056805x`, `1.043979x`, `1.026431x`, `0.997662x`, and
+`0.956536x`. The PGO binary SHA-256 is
+`60ba90a49306dfe8f0aca89f252084cc175e6b4e9a0b7953fb9dd77760e87d53`.
 
 **Future plan:** retain only in the measured CPU8 realtime spatial CBR scope.
-Run production PGO next, then widen quality and speed independently across
-CPU6/7, two spatial layers, resolutions, frame rates, and representative
-content before considering any generalisation.
+Widen quality and speed independently across CPU6/7, two spatial layers,
+resolutions, frame rates, and representative content before considering any
+generalisation.
