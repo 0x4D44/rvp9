@@ -6084,3 +6084,84 @@ quiet-host measurements.
 `-11.4794%/-4.0531%/-5.2167%`. Retain only if the exact-PGO 1080p30/60 plus
 CPU6--8 spatial matrix also passes. Revisit the adapter if a future shared
 rate-control model makes rvp9's live Q trajectory source-identical.
+
+### 2026-08-13 — Make pinned non-normative 4x SVC scaling explicit
+
+**Where:** `rvp9_encoder::scale_source::scale_i420_nonnormative_4x` and
+`rvp9_encoder::spatial_encoder::build_layer_sources`; libvpx counterpart:
+`vp9/encoder/vp9_encoder.c::vp9_svc_twostage_scale` and
+`vp9/encoder/vp9_resize.c::vp9_resize_plane`.
+
+**What libvpx does:** it retains a half-resolution SVC source in storage whose
+dimensions are rounded up to eight pixels. For 1920x1080, the visible 960x540
+intermediate therefore has a 960x544 allocation. The two-stage guard rejects
+that intermediate, and the 480x270 base is resized directly from the full
+source through two clipped symmetric down-by-two passes per axis.
+
+**What rvp9 does:** the spatial source builder tests the equivalent visible
+half-resolution alignment condition directly. When a three-layer base would
+inherit a padded intermediate, rvp9 runs a byte-exact direct 4x scaler. Its
+AArch64 implementation uses NEON for the interior samples and the scalar
+clipped oracle at both edges; other architectures use the scalar path.
+
+**Why:** rvp9's former unconditional two-stage bilinear path differed from the
+pinned 480x270 source on 105,322 of 129,600 luma pixels. A fixed-Q Old Town
+diagnostic consequently found no matching source hashes in the first 97
+equal-fullpel comparisons. The exact direct path restores all 142 source-hash
+matches and reduces the matching-candidate RD ratio from `1.2108` to `0.9925`.
+
+**Byte-parity impact:** the generated 64x40 three-layer base matches a pinned
+libvpx source-dump SHA-256 oracle exactly. All seven external spatial streams
+decode byte-identically through rvp9-decoder and pinned vpxdec, and decode
+successfully through FFmpeg. The 720p path is unchanged because its retained
+640x360 intermediate is already eight-pixel aligned.
+
+**Compression-efficiency impact:** after the source fix and the separately
+recorded preset calibration, all 27 representative 1080p30 CPU6--8 S3
+clip/preset/layer BD-rate gates are at or below `+0.5%`.
+
+**Speed impact:** the extra scalar transpose would have been material, so the
+product path includes a scalar-exact NEON kernel. Plain-release curves are
+directionally faster than matched libvpx after cold start; formal speed
+acceptance still requires exact-commit production PGO.
+
+**Future plan:** retain the explicit compatibility rule even if rvp9 later
+adopts bordered source storage. Any storage redesign must preserve the pinned
+visible-pixel oracle rather than accidentally switching the scaling path.
+
+### 2026-08-13 — Calibrate high-resolution CPU6/7 spatial decisions
+
+**Where:** `rvp9_encoder::spatial_cbr_partition_qindex_bias` and
+`rvp9_encoder::block16_coef_rd_enabled`; libvpx counterparts:
+`vp9/encoder/vp9_encodeframe.c` realtime variance partitioning and
+`vp9/encoder/vp9_pickmode.c::block_yrd`.
+
+**What libvpx does:** its native spatial rate-control trajectory feeds both
+realtime partitioning and coefficient modeling without standalone preset
+adapters.
+
+**What rvp9 does:** spatial-CBR component encoders above 1280x720 add nine to
+CPU6's and thirty-six to CPU7's partition-only qindex. CPU6/7 also use rvp9's
+existing real non-skipped Block16 coefficient-RD subset on the first and
+opening enhancement components at those resolutions. Coding qindex, rate
+control, non-spatial streams, and 720p components remain unchanged.
+
+**Why:** the exact pinned source revealed smaller residual preset-specific
+decision gaps. The narrow policies close the only remaining representative
+CPU6 top-layer failure without sacrificing its two controls; CPU7's measured
+scope is likewise green across motion, texture, and mixed content.
+
+**Byte-parity impact:** intentional within the scoped decision set. Every
+resulting stream in the representative curves decodes successfully, and the
+seven external spatial gates remain green across all three decoders.
+
+**Compression-efficiency impact:** final CPU6 SL2 results are `+0.4399%` on
+Ducks Take Off, `-0.3103%` on In To Tree, and `-0.8007%` on Old Town Cross.
+CPU7's corresponding SL2 results are `-4.6519%`, `-1.4945%`, and `-2.9885%`.
+
+**Speed impact:** no exact-PGO result is claimed yet. The Block16 work is
+restricted to high-resolution enhancement components, and the partition
+adapter changes decisions without adding search stages.
+
+**Future plan:** qualify the policies under repeated exact-PGO 1080p30/60
+timing, then retain only if the full CPU6--8 spatial speed matrix passes.

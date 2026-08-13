@@ -11,7 +11,9 @@ use crate::frame_loop::{
     EncodedFrame, EncoderConfig, EncoderParallelism, FrameKind, SpatialFrameControl,
     SpatialSharedState, StreamEncoder, YuvFrameRef, strided_plane_covers,
 };
-use crate::scale_source::{ScaleSourceError, ScaledI420, scale_i420_2x};
+use crate::scale_source::{
+    ScaleSourceError, ScaledI420, scale_i420_2x, scale_i420_nonnormative_4x,
+};
 use crate::svc::{SpatialLayerPlan, SpatialLayerSpec, SpatialSvcConfig, SpatialSvcConfigError};
 use crate::{EncodeError, f02_oracle};
 
@@ -589,14 +591,27 @@ fn build_layer_sources(
         let filter = layers[layer_index]
             .source_filter
             .expect("non-top spatial layer has a source filter");
-        let scaled = scale_i420_2x(
-            &higher.y,
-            &higher.u,
-            &higher.v,
-            higher.width,
-            higher.height,
-            filter,
-        )?;
+        let scaled = if layer_index == 0
+            && top == 2
+            && (!higher.width.is_multiple_of(8) || !higher.height.is_multiple_of(8))
+        {
+            // libvpx allocates its retained half-resolution SVC source with
+            // dimensions rounded up to eight pixels. If either visible
+            // dimension needs padding, `vp9_svc_twostage_scale` rejects that
+            // intermediate and the 4x base takes `vp9_resize_plane` directly
+            // from the full source (`vp9_encoder.c:3990-4015`). Canonical
+            // 1080p reaches this branch because 540 rounds up to 544.
+            scale_i420_nonnormative_4x(&full.y, &full.u, &full.v, full.width, full.height)?
+        } else {
+            scale_i420_2x(
+                &higher.y,
+                &higher.u,
+                &higher.v,
+                higher.width,
+                higher.height,
+                filter,
+            )?
+        };
         if (scaled.width, scaled.height)
             != (
                 layers[layer_index].width as usize,
@@ -617,6 +632,7 @@ fn build_layer_sources(
 mod tests {
     use rvp9_core::bitstream::{FrameKind as WireFrameKind, Superframe, parse_superframe_index};
     use rvp9_decoder::Decoder;
+    use sha2::{Digest, Sha256};
 
     use super::*;
     use crate::svc::InterLayerPred;
@@ -632,6 +648,21 @@ mod tests {
         let v = (0..uv_len)
             .map(|index| ((index * 7 + 101) & 0xff) as u8)
             .collect();
+        (y, u, v)
+    }
+
+    fn random_source(width: usize, height: usize) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+        let mut state = 0x5ca1_ab1eu32;
+        let mut next = || {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            state as u8
+        };
+        let y = (0..width * height).map(|_| next()).collect();
+        let uv_len = width * height / 4;
+        let u = (0..uv_len).map(|_| next()).collect();
+        let v = (0..uv_len).map(|_| next()).collect();
         (y, u, v)
     }
 
@@ -1108,6 +1139,39 @@ mod tests {
         .unwrap();
 
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn unaligned_three_layer_intermediate_uses_pinned_nonnormative_base_scale() {
+        let plan = SpatialLayerPlan::canonical(
+            SpatialSvcConfig {
+                number_spatial_layers: 3,
+                inter_layer_pred: InterLayerPred::On,
+            },
+            64,
+            40,
+            210_000,
+        )
+        .unwrap();
+        let (y, u, v) = random_source(64, 40);
+        let full = ScaledI420 {
+            width: 64,
+            height: 40,
+            y,
+            u,
+            v,
+        };
+
+        let base = build_layer_sources(&full, &plan.layers).unwrap().remove(0);
+        let mut hasher = Sha256::new();
+        hasher.update(&base.y);
+        hasher.update(&base.u);
+        hasher.update(&base.v);
+
+        assert_eq!(
+            format!("{:x}", hasher.finalize()),
+            "81d022192e6444b2f150de4ea57e7ecf7b2d3e84dc08a06877b7d8b7bee57a6b"
+        );
     }
 
     #[test]

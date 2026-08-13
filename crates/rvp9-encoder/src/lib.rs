@@ -1878,12 +1878,12 @@ fn exact_vbp_partition_qindex(
     effective_qindex.saturating_add(bias)
 }
 
-/// Extra partition-only Q calibration for high-resolution CPU8 spatial CBR.
+/// Extra partition-only Q calibration for high-resolution CPU6-8 spatial CBR.
 ///
 /// Spatial CBR's live top-layer Q trajectory otherwise drives the exact VBP
 /// ladder toward smaller blocks than its matched libvpx operating points. The
-/// additional bias applies only to component encoders above 720p, leaving the
-/// already-qualified lower spatial layers and CPU6/7 presets unchanged.
+/// preset-specific bias applies only to component encoders above 720p, leaving
+/// already-qualified lower spatial layers and non-spatial encoders unchanged.
 #[inline]
 fn spatial_cbr_partition_qindex_bias(
     spatial_component: bool,
@@ -1892,13 +1892,19 @@ fn spatial_cbr_partition_qindex_bias(
     frame_height: usize,
     speed: i32,
 ) -> u8 {
+    const CPU6_LARGE_SPATIAL_CBR_BIAS: u8 = 9;
+    const CPU7_LARGE_SPATIAL_CBR_BIAS: u8 = 36;
     const CPU8_LARGE_SPATIAL_CBR_BIAS: u8 = 18;
     if spatial_component
         && rc_mode == crate::rate_control::RcMode::Cbr
-        && speed == 8
+        && matches!(speed, 6..=8)
         && frame_width.saturating_mul(frame_height) > 1280 * 720
     {
-        CPU8_LARGE_SPATIAL_CBR_BIAS
+        match speed {
+            6 => CPU6_LARGE_SPATIAL_CBR_BIAS,
+            7 => CPU7_LARGE_SPATIAL_CBR_BIAS,
+            _ => CPU8_LARGE_SPATIAL_CBR_BIAS,
+        }
     } else {
         0
     }
@@ -5518,6 +5524,8 @@ fn block16_coef_rd_enabled(
     exact_vbp_tree_enabled: bool,
     rc_mode: crate::rate_control::RcMode,
     speed: i32,
+    frame_width: usize,
+    frame_height: usize,
     spatial_first_enhancement_component: bool,
 ) -> bool {
     exact_vbp_tree_enabled
@@ -5528,7 +5536,9 @@ fn block16_coef_rd_enabled(
             // opening higher-layer components. Those opening reconstructions
             // seed each enhancement layer's LAST reference for the key interval.
             || (spatial_first_enhancement_component
-                && speed.unsigned_abs() == 8
+                && (speed.unsigned_abs() == 8
+                    || (matches!(speed.unsigned_abs(), 6..=7)
+                        && frame_width.saturating_mul(frame_height) > 1280 * 720))
                 && matches!(rc_mode, crate::rate_control::RcMode::Cbr)))
 }
 
@@ -9814,6 +9824,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             exact_vbp_tree_enabled,
                             rc_mode,
                             speed,
+                            w,
+                            h,
                             spatial_block16_coef_rd_component(
                                 spatial_first_enhancement_component,
                                 spatial_key_enhancement_component,
@@ -16614,22 +16626,136 @@ mod tests {
     }
 
     #[test]
-    fn block16_coefficient_rd_is_scoped_to_exact_cpu6_vbr_or_cpu8_spatial_cbr() {
-        assert!(block16_coef_rd_enabled(true, RcMode::Vbr, 6, false));
-        assert!(block16_coef_rd_enabled(true, RcMode::Vbr, -6, false));
-        assert!(!block16_coef_rd_enabled(false, RcMode::Vbr, 6, false));
-        assert!(!block16_coef_rd_enabled(true, RcMode::Vbr, 7, false));
-        assert!(!block16_coef_rd_enabled(true, RcMode::Vbr, 8, false));
-        assert!(!block16_coef_rd_enabled(true, RcMode::Cbr, 6, false));
-        assert!(!block16_coef_rd_enabled(true, RcMode::Cq, 6, false));
+    fn block16_coefficient_rd_is_scoped_to_exact_cpu6_vbr_or_spatial_cbr() {
+        assert!(block16_coef_rd_enabled(
+            true,
+            RcMode::Vbr,
+            6,
+            1280,
+            720,
+            false
+        ));
+        assert!(block16_coef_rd_enabled(
+            true,
+            RcMode::Vbr,
+            -6,
+            1280,
+            720,
+            false
+        ));
+        assert!(!block16_coef_rd_enabled(
+            false,
+            RcMode::Vbr,
+            6,
+            1280,
+            720,
+            false
+        ));
+        assert!(!block16_coef_rd_enabled(
+            true,
+            RcMode::Vbr,
+            7,
+            1920,
+            1080,
+            false
+        ));
+        assert!(!block16_coef_rd_enabled(
+            true,
+            RcMode::Vbr,
+            8,
+            1920,
+            1080,
+            false
+        ));
+        assert!(!block16_coef_rd_enabled(
+            true,
+            RcMode::Cbr,
+            6,
+            1920,
+            1080,
+            false
+        ));
+        assert!(!block16_coef_rd_enabled(
+            true,
+            RcMode::Cq,
+            6,
+            1920,
+            1080,
+            false
+        ));
 
-        assert!(block16_coef_rd_enabled(true, RcMode::Cbr, 8, true));
-        assert!(block16_coef_rd_enabled(true, RcMode::Cbr, -8, true));
-        assert!(!block16_coef_rd_enabled(false, RcMode::Cbr, 8, true));
-        assert!(!block16_coef_rd_enabled(true, RcMode::Cbr, 7, true));
-        assert!(!block16_coef_rd_enabled(true, RcMode::Cbr, 6, true));
-        assert!(!block16_coef_rd_enabled(true, RcMode::Vbr, 8, true));
-        assert!(!block16_coef_rd_enabled(true, RcMode::Cq, 8, true));
+        assert!(block16_coef_rd_enabled(
+            true,
+            RcMode::Cbr,
+            8,
+            1280,
+            720,
+            true
+        ));
+        assert!(block16_coef_rd_enabled(
+            true,
+            RcMode::Cbr,
+            -8,
+            1280,
+            720,
+            true
+        ));
+        assert!(!block16_coef_rd_enabled(
+            false,
+            RcMode::Cbr,
+            8,
+            1920,
+            1080,
+            true
+        ));
+        assert!(block16_coef_rd_enabled(
+            true,
+            RcMode::Cbr,
+            7,
+            1920,
+            1080,
+            true
+        ));
+        assert!(block16_coef_rd_enabled(
+            true,
+            RcMode::Cbr,
+            6,
+            1920,
+            1080,
+            true
+        ));
+        assert!(!block16_coef_rd_enabled(
+            true,
+            RcMode::Cbr,
+            7,
+            1280,
+            720,
+            true
+        ));
+        assert!(!block16_coef_rd_enabled(
+            true,
+            RcMode::Cbr,
+            6,
+            1280,
+            720,
+            true
+        ));
+        assert!(!block16_coef_rd_enabled(
+            true,
+            RcMode::Vbr,
+            8,
+            1920,
+            1080,
+            true
+        ));
+        assert!(!block16_coef_rd_enabled(
+            true,
+            RcMode::Cq,
+            8,
+            1920,
+            1080,
+            true
+        ));
     }
 
     #[test]
@@ -18973,19 +19099,23 @@ mod tests {
     }
 
     #[test]
-    fn spatial_cbr_partition_qindex_bias_is_scoped_to_large_cpu8_components() {
+    fn spatial_cbr_partition_qindex_bias_is_scoped_to_large_cpu6_to_cpu8_components() {
         use crate::rate_control::RcMode;
 
+        assert_eq!(
+            spatial_cbr_partition_qindex_bias(true, RcMode::Cbr, 1920, 1080, 6),
+            9
+        );
+        assert_eq!(
+            spatial_cbr_partition_qindex_bias(true, RcMode::Cbr, 1920, 1080, 7),
+            36
+        );
         assert_eq!(
             spatial_cbr_partition_qindex_bias(true, RcMode::Cbr, 1920, 1080, 8),
             18
         );
         assert_eq!(
             spatial_cbr_partition_qindex_bias(true, RcMode::Cbr, 1280, 720, 8),
-            0
-        );
-        assert_eq!(
-            spatial_cbr_partition_qindex_bias(true, RcMode::Cbr, 1920, 1080, 7),
             0
         );
         assert_eq!(

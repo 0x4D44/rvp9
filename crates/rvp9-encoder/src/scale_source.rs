@@ -118,6 +118,181 @@ pub fn scale_i420_2x(
     })
 }
 
+/// Downscale one tightly packed 8-bit I420 frame by exactly 4× with pinned
+/// libvpx's non-normative resize filter.
+///
+/// Pinned libvpx falls back to `vp9_resize_plane` when the intermediate buffer
+/// for its preferred two-stage SVC path has an aligned allocation larger than
+/// the visible half-resolution image. Exact 4× scaling performs two clipped
+/// symmetric down-by-two passes horizontally, then the same two passes
+/// vertically. Keeping this separate from [`scale_i420_2x`] makes that
+/// allocation-dependent compatibility rule explicit.
+pub(crate) fn scale_i420_nonnormative_4x(
+    y: &[u8],
+    u: &[u8],
+    v: &[u8],
+    width: usize,
+    height: usize,
+) -> Result<ScaledI420, ScaleSourceError> {
+    if width == 0 || height == 0 || !width.is_multiple_of(8) || !height.is_multiple_of(8) {
+        return Err(ScaleSourceError::InvalidDimensions);
+    }
+    let y_len = width
+        .checked_mul(height)
+        .ok_or(ScaleSourceError::InvalidDimensions)?;
+    let uv_width = width / 2;
+    let uv_height = height / 2;
+    let uv_len = uv_width
+        .checked_mul(uv_height)
+        .ok_or(ScaleSourceError::InvalidDimensions)?;
+    if y.len() != y_len || u.len() != uv_len || v.len() != uv_len {
+        return Err(ScaleSourceError::InvalidPlaneLength);
+    }
+
+    Ok(ScaledI420 {
+        width: width / 4,
+        height: height / 4,
+        y: scale_plane_nonnormative_4x(y, width, height)?,
+        u: scale_plane_nonnormative_4x(u, uv_width, uv_height)?,
+        v: scale_plane_nonnormative_4x(v, uv_width, uv_height)?,
+    })
+}
+
+fn scale_plane_nonnormative_4x(
+    input: &[u8],
+    width: usize,
+    height: usize,
+) -> Result<Vec<u8>, ScaleSourceError> {
+    if !width.is_multiple_of(4) || !height.is_multiple_of(4) {
+        return Err(ScaleSourceError::InvalidDimensions);
+    }
+    let out_width = width / 4;
+    let out_height = height / 4;
+    let horizontal_len = out_width
+        .checked_mul(height)
+        .ok_or(ScaleSourceError::InvalidDimensions)?;
+    let output_len = out_width
+        .checked_mul(out_height)
+        .ok_or(ScaleSourceError::InvalidDimensions)?;
+    let mut horizontal = vec![0u8; horizontal_len];
+    let mut half_row = vec![0u8; width / 2];
+    for row in 0..height {
+        let input_row = &input[row * width..(row + 1) * width];
+        down2_symeven(input_row, &mut half_row);
+        down2_symeven(
+            &half_row,
+            &mut horizontal[row * out_width..(row + 1) * out_width],
+        );
+    }
+
+    let mut output = vec![0u8; output_len];
+    let mut column = vec![0u8; height];
+    let mut half_column = vec![0u8; height / 2];
+    let mut output_column = vec![0u8; out_height];
+    for col in 0..out_width {
+        for row in 0..height {
+            column[row] = horizontal[row * out_width + col];
+        }
+        down2_symeven(&column, &mut half_column);
+        down2_symeven(&half_column, &mut output_column);
+        for row in 0..out_height {
+            output[row * out_width + col] = output_column[row];
+        }
+    }
+    Ok(output)
+}
+
+fn down2_symeven(input: &[u8], output: &mut [u8]) {
+    #[cfg(target_arch = "aarch64")]
+    {
+        // SAFETY: the helper checks slice lengths before using vector loads,
+        // handles both edges scalarly, and stores only complete eight-byte
+        // output groups.
+        unsafe { down2_symeven_neon(input, output) };
+    }
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        down2_symeven_scalar(input, output);
+    }
+}
+
+#[cfg(any(test, not(target_arch = "aarch64")))]
+fn down2_symeven_scalar(input: &[u8], output: &mut [u8]) {
+    debug_assert!(input.len().is_multiple_of(2));
+    debug_assert_eq!(output.len(), input.len() / 2);
+    for (output_index, output_value) in output.iter_mut().enumerate() {
+        *output_value = down2_symeven_sample(input, output_index);
+    }
+}
+
+#[inline]
+fn down2_symeven_sample(input: &[u8], output_index: usize) -> u8 {
+    const FILTER: [i32; 4] = [56, 12, -3, -1];
+    let last = input.len() - 1;
+    let center = output_index * 2;
+    let mut sum = 1 << (FILTER_BITS - 1);
+    for (distance, coefficient) in FILTER.into_iter().enumerate() {
+        let left = center.saturating_sub(distance);
+        let right = center.saturating_add(1 + distance).min(last);
+        sum += (i32::from(input[left]) + i32::from(input[right])) * coefficient;
+    }
+    (sum >> FILTER_BITS).clamp(0, 255) as u8
+}
+
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+unsafe fn down2_symeven_neon(input: &[u8], output: &mut [u8]) {
+    use core::arch::aarch64::{
+        int16x8_t, int32x4_t, vaddl_u8, vcombine_s16, vdupq_n_s32, vget_high_s16, vget_low_s16,
+        vld2_u8, vmlal_n_s16, vqmovn_s32, vqmovun_s16, vreinterpretq_s16_u16, vshrq_n_s32, vst1_u8,
+    };
+
+    debug_assert!(input.len().is_multiple_of(2));
+    debug_assert_eq!(output.len(), input.len() / 2);
+    let leading = output.len().min(2);
+    for (output_index, output_value) in output.iter_mut().take(leading).enumerate() {
+        *output_value = down2_symeven_sample(input, output_index);
+    }
+
+    let mut output_index = leading;
+    while output_index + 8 <= output.len() && output_index * 2 + 20 <= input.len() {
+        let input_index = output_index * 2;
+        let mut acc_low: int32x4_t = vdupq_n_s32(1 << (FILTER_BITS - 1));
+        let mut acc_high: int32x4_t = vdupq_n_s32(1 << (FILTER_BITS - 1));
+        // SAFETY: the loop condition leaves three readable bytes before the
+        // first requested sample and at least twenty bytes from `input_index`.
+        // Every `vld2_u8` therefore reads sixteen initialized input bytes, and
+        // the complete eight-byte store stays inside `output`.
+        unsafe {
+            for (distance, coefficient) in [56i16, 12, -3, -1].into_iter().enumerate() {
+                let left = if distance == 0 {
+                    vld2_u8(input.as_ptr().add(input_index)).0
+                } else {
+                    vld2_u8(input.as_ptr().add(input_index - distance)).0
+                };
+                let right = if distance == 0 {
+                    vld2_u8(input.as_ptr().add(input_index)).1
+                } else {
+                    vld2_u8(input.as_ptr().add(input_index + 1 + distance)).0
+                };
+                let pair: int16x8_t = vreinterpretq_s16_u16(vaddl_u8(left, right));
+                acc_low = vmlal_n_s16(acc_low, vget_low_s16(pair), coefficient);
+                acc_high = vmlal_n_s16(acc_high, vget_high_s16(pair), coefficient);
+            }
+            let packed = vcombine_s16(
+                vqmovn_s32(vshrq_n_s32::<7>(acc_low)),
+                vqmovn_s32(vshrq_n_s32::<7>(acc_high)),
+            );
+            vst1_u8(output.as_mut_ptr().add(output_index), vqmovun_s16(packed));
+        }
+        output_index += 8;
+    }
+    while output_index < output.len() {
+        output[output_index] = down2_symeven_sample(input, output_index);
+        output_index += 1;
+    }
+}
+
 fn scale_plane_2x(
     input: &[u8],
     width: usize,
@@ -623,6 +798,29 @@ mod tests {
             .unwrap();
             let optimized = scale_plane_smooth_2x(&input, width, height).unwrap();
             assert_eq!(optimized, scalar, "{width}x{height}");
+        }
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    #[test]
+    fn nonnormative_down2_neon_matches_scalar_across_shapes() {
+        let mut state = 0x4d32_4e45u32;
+        for length in [8usize, 16, 32, 40, 270, 540, 960, 1920] {
+            let input = (0..length)
+                .map(|_| {
+                    state ^= state << 13;
+                    state ^= state >> 17;
+                    state ^= state << 5;
+                    state as u8
+                })
+                .collect::<Vec<_>>();
+            let mut expected = vec![0u8; length / 2];
+            let mut actual = vec![0u8; length / 2];
+            down2_symeven_scalar(&input, &mut expected);
+            // SAFETY: the source and destination slices have the exact 2:1
+            // lengths required by the NEON helper.
+            unsafe { down2_symeven_neon(&input, &mut actual) };
+            assert_eq!(actual, expected, "length={length}");
         }
     }
 
