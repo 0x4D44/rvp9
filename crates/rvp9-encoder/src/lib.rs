@@ -4470,6 +4470,17 @@ impl<'a> InterReconPlane<'a> {
         destination.copy_from_slice(&self.data[start..start + destination.len()]);
     }
 
+    #[inline]
+    fn copy_column_to(&self, global_x: usize, global_y: usize, destination: &mut [u8]) {
+        let (local_x, local_y) = self
+            .layout
+            .local_block(global_x, global_y, 1, destination.len());
+        let start = local_y * self.layout.stride + local_x;
+        for (row, slot) in destination.iter_mut().enumerate() {
+            *slot = self.data[start + row * self.layout.stride];
+        }
+    }
+
     fn copy_from_full_frame(
         &mut self,
         source: &[u8],
@@ -9300,9 +9311,11 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         }
                         if intra_have_left {
                             let left_len = bh.min(h - leaf_px_y);
-                            for (row, slot) in intra_left_buf[..left_len].iter_mut().enumerate() {
-                                *slot = recon_y.get(leaf_px_x - 1, leaf_px_y + row);
-                            }
+                            recon_y.copy_column_to(
+                                leaf_px_x - 1,
+                                leaf_px_y,
+                                &mut intra_left_buf[..left_len],
+                            );
                             intra_left = Some(&intra_left_buf[..left_len]);
                         } else {
                             intra_left = None;
@@ -14719,6 +14732,25 @@ mod tests {
             InterReconPlaneLayout::window(W / 2, H / 2, 0, 256, 256, H / 2)
         );
         assert_eq!(layout.plane(2), layout.plane(1));
+    }
+
+    #[test]
+    fn compact_inter_recon_copies_a_global_column_in_one_layout_lookup() {
+        const W: usize = 128;
+        const H: usize = 128;
+        let layout = InterReconLayout::compact_row(W, H, 1, 8, 8).plane(0);
+        let mut storage: Vec<u8> = (0..layout.stride * layout.rows)
+            .map(|index| ((index * 37 + index / layout.stride * 11 + 19) & 0xff) as u8)
+            .collect();
+        let plane = InterReconPlane::new(&mut storage, layout);
+        let mut actual = [0u8; 32];
+        plane.copy_column_to(73, 72, &mut actual);
+
+        let (local_x, local_y) = layout.local_block(73, 72, 1, actual.len());
+        let expected: Vec<u8> = (0..actual.len())
+            .map(|row| plane.data[(local_y + row) * layout.stride + local_x])
+            .collect();
+        assert_eq!(actual.as_slice(), expected.as_slice());
     }
 
     #[test]
