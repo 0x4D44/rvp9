@@ -382,7 +382,7 @@ fn exact_keyframe_sub8_product_policy(
     spatial_svc: bool,
 ) -> bool {
     spatial_svc
-        && config.speed == 8
+        && matches!(config.speed, 6..=8)
         && matches!(config.rc_mode, RcMode::Cbr)
         && matches!(config.deadline, Deadline::Realtime)
         || (config.speed == 7
@@ -8757,7 +8757,7 @@ mod tests {
     }
 
     #[test]
-    fn exact_keyframe_sub8_product_policy_covers_cpu8_spatial_cbr() {
+    fn exact_keyframe_sub8_product_policy_covers_spatial_cbr_v1_presets() {
         let mut config = EncoderConfig::new(320, 180);
         config.deadline = Deadline::Realtime;
         config.rc_mode = RcMode::Cbr;
@@ -8766,7 +8766,9 @@ mod tests {
         assert!(!exact_keyframe_sub8_product_policy(&config, 255, false));
 
         config.speed = 7;
-        assert!(!exact_keyframe_sub8_product_policy(&config, 148, true));
+        assert!(exact_keyframe_sub8_product_policy(&config, 148, true));
+        config.speed = 6;
+        assert!(exact_keyframe_sub8_product_policy(&config, 148, true));
         config.speed = 8;
         config.rc_mode = RcMode::Vbr;
         assert!(!exact_keyframe_sub8_product_policy(&config, 148, true));

@@ -5863,3 +5863,47 @@ the focused `1.05x` gate. Per-target ratios from 420 through 3360 kb/s are
 Widen quality and speed independently across CPU6/7, two spatial layers,
 resolutions, frame rates, and representative content before considering any
 generalisation.
+
+### 2026-08-13 — Extend exact spatial keyframe search to CPU6/7
+
+**Where:** `rvp9_encoder::frame_loop::exact_keyframe_sub8_product_policy`;
+libvpx counterpart: the realtime keyframe partition and intra-mode search
+reached from `vp9/encoder/vp9_encodeframe.c::encode_rd_sb_row`.
+
+**What libvpx does:** every spatial layer's keyframe uses the normal realtime
+keyframe picker at CPU6--8, including sub-8 partition syntax and its coupled
+intra-mode decisions.
+
+**What rvp9 does:** the existing exact spatial keyframe path now covers all v1
+presets CPU6--8 for one-pass realtime spatial CBR. VBR, temporal-only,
+single-layer, and non-realtime policy remain unchanged.
+
+**Why:** the first complete preset/topology grid found only the 320x180 base
+layer of CPU6/7 three-layer spatial SVC outside the final gate, at `+2.4770%`
+and `+3.1225%`. The existing source-backed exact keyframe path moved those
+layers to `-0.4732%` and `-0.2255%`. The two-layer controls also improved:
+CPU6 became `-4.5103%/-2.8205%`, and CPU7 became
+`-4.7186%/-1.6884%`.
+
+**Byte-parity impact:** intentional on CPU6/7 realtime spatial CBR keyframes.
+The four product curves are byte-identical to the corresponding explicit
+diagnostic curves. All 84 full and cumulative-layer product IVFs decode to
+byte-identical raw I420 under rvp9-decoder and pinned vpxdec, and FFmpeg
+decodes every stream successfully.
+
+**Compression-efficiency impact:** canonical CPU6 three-layer BD-rate is
+`-0.4732%/-4.6124%/-1.2610%`; CPU7 is
+`-0.2255%/-3.7857%/-1.4238%`. Together with the previously qualified CPU8
+curve and the two-layer results above, all 15 layer gates in the CPU6--8 x
+two-/three-layer canonical matrix pass `+0.5%`.
+
+**Speed impact:** single plain-release curves are directional only. Their
+geomeans are `0.964207x/1.014030x` for CPU6 two/three layer and
+`0.885359x/1.106349x` for CPU7. The CPU7 three-layer row therefore requires a
+fresh exact-commit production-PGO build and repeated medians before retention
+is final.
+
+**Future plan:** retain provisionally because it closes a correctness-quality
+policy mismatch across the required presets. Rebuild production PGO and reject
+or optimize the CPU7 three-layer extension if its repeated aggregate remains
+above `1.05x`; then widen content and resolution coverage.
