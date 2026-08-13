@@ -1760,9 +1760,8 @@ struct SvcFrameDecision {
     /// decodable; fixed spatial SVC keeps the shared cross-layer state.
     error_resilient: bool,
     /// Whether the decoder suppresses backward probability adaptation for
-    /// this frame. Spatial components share forward-updated state in decode
-    /// order, so they use frame-parallel mode without an error-resilient
-    /// reset.
+    /// this frame. Layered frames use frame-parallel mode together with the
+    /// error-resilient reset so retained operating points remain independent.
     frame_parallel_decoding_mode: bool,
 }
 
@@ -1804,7 +1803,12 @@ impl SpatialFrameControl {
                 ref_frame_indices,
                 allow_golden_ref,
                 boosted_refresh: false,
-                error_resilient: false,
+                // Pinned libvpx forces error-resilient mode for its
+                // single-context spatial-SVC configuration. Without the
+                // reset, the next base component depends on entropy updates
+                // made by discarded enhancement components and a retained
+                // lower operating point becomes undecodable.
+                error_resilient: true,
                 frame_parallel_decoding_mode: true,
             }),
         }
@@ -4718,9 +4722,8 @@ impl StreamEncoder {
         // partial coef update means post-header != pre-header).
         if error_resilient || frame_parallel_decoding_mode {
             // Error-resilient mode and frame-parallel decoding both suppress
-            // backward adaptation. Spatial SVC uses the latter without the
-            // former, retaining shared cross-layer state while persisting the
-            // exact forward-updated bank the decoder will carry onward.
+            // backward adaptation. Layered streams persist the exact
+            // forward-updated bank that the matching decoder path carries.
             self.decoder_fc_state = decoder_fc.clone();
             self.frame_context = decoder_fc;
         } else {

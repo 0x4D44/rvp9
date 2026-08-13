@@ -767,7 +767,11 @@ mod tests {
             for (component_index, (component, &(want_width, want_height))) in
                 parsed.frames().iter().zip(layer_dimensions).enumerate()
             {
-                assert!(!component.header.error_resilient);
+                if key_access_unit && component_index == 0 {
+                    assert!(!component.header.error_resilient);
+                } else {
+                    assert!(component.header.error_resilient);
+                }
                 assert!(
                     component
                         .header
@@ -839,6 +843,55 @@ mod tests {
     #[test]
     fn three_layer_inter_access_units_share_reference_map_and_decode_in_order() {
         exercise_stateful_spatial_stream(256, 128, 3, &[(64, 32), (128, 64), (256, 128)]);
+    }
+
+    #[test]
+    fn base_spatial_operating_point_decodes_without_enhancement_components() {
+        let width = 256usize;
+        let height = 128usize;
+        let mut template = EncoderConfig::new(width as u32, height as u32);
+        template.target_bitrate_bps = 630_000;
+        template.speed = 8;
+        template.gop_length = 60;
+        let mut encoder = SpatialEncoder::new(
+            template,
+            SpatialSvcConfig {
+                number_spatial_layers: 3,
+                inter_layer_pred: InterLayerPred::On,
+            },
+        )
+        .unwrap();
+        let mut base_decoder = Decoder::new();
+
+        for access_unit_index in 0..4usize {
+            let (mut y, mut u, mut v) = source(width, height);
+            for value in &mut y {
+                *value = value.wrapping_add((access_unit_index * 19) as u8);
+            }
+            for value in &mut u {
+                *value = value.wrapping_add((access_unit_index * 11) as u8);
+            }
+            for value in &mut v {
+                *value = value.wrapping_add((access_unit_index * 17) as u8);
+            }
+            let access_unit = encoder
+                .encode_access_unit(&YuvFrameRef {
+                    y: &y,
+                    u: &u,
+                    v: &v,
+                    y_stride: width,
+                    u_stride: width / 2,
+                    v_stride: width / 2,
+                })
+                .unwrap();
+            let parsed = base_decoder.parse_packet(&access_unit.data).unwrap();
+            let decoded = base_decoder
+                .decode_frame(&parsed.frames()[0])
+                .unwrap_or_else(|error| {
+                    panic!("base component {access_unit_index} must decode alone: {error}")
+                });
+            assert_eq!((decoded.width(), decoded.height()), (64, 32));
+        }
     }
 
     #[test]
