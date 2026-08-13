@@ -159,6 +159,52 @@ pub struct SubPixelSearchResult {
     pub best_distortion: u32,
 }
 
+/// Candidate-cost signature for one ordinary sub-pixel search level.
+///
+/// The hashes cover the candidate coordinates in evaluation order and then
+/// either their pixel distortion or MV syntax cost. They are diagnostic-only:
+/// production search does not compute them unless the caller explicitly asks
+/// for [`diagnose_sub_pixel_tree`].
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct SubPixelLevelTrace {
+    /// Hash of evaluated candidate `(row, col)` coordinates.
+    pub coordinate_hash: u64,
+    /// Hash of candidate pixel distortions at those coordinates.
+    pub distortion_hash: u64,
+    /// Hash of candidate MV syntax costs at those coordinates.
+    pub mv_cost_hash: u64,
+    /// Winning MV after this precision level.
+    pub winner: Mv,
+}
+
+/// Diagnostic signature of the ordinary half/quarter-pel search tree.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct SubPixelSearchTrace {
+    /// Derived legal Q3 MV window.
+    pub limits: MvLimits,
+    /// Effective forced-stop policy.
+    pub forced_stop: i32,
+    /// Effective tree-extension policy.
+    pub iters_per_step: i32,
+    /// Frame-level high-precision MV permission.
+    pub allow_hp: bool,
+    /// Pixel distortion at the integer-pel center.
+    pub center_distortion: u32,
+    /// MV syntax cost at the integer-pel center.
+    pub center_mv_cost: u32,
+    /// Half-pel candidate signature.
+    pub half: SubPixelLevelTrace,
+    /// Quarter-pel candidate signature.
+    pub quarter: SubPixelLevelTrace,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct SubPixelCandidateCost {
+    total: u32,
+    distortion: u32,
+    mv_cost: u32,
+}
+
 /// Dispatch sub-pel-variance by block size.
 ///
 /// Resolves the `SimdDispatch::subpel_variance` slot for `bsize` (PR4): the
@@ -198,13 +244,49 @@ fn try_subpel(
     error_per_bit: i32,
     mv_costs: &MvCosts,
 ) -> u32 {
+    try_subpel_cost(
+        tr,
+        tc,
+        src_plane,
+        src_offset,
+        ref_plane,
+        svf,
+        bw,
+        bh,
+        subpel_limits,
+        ref_mv,
+        error_per_bit,
+        mv_costs,
+    )
+    .total
+}
+
+#[allow(clippy::too_many_arguments)]
+fn try_subpel_cost(
+    tr: i32,
+    tc: i32,
+    src_plane: &PlaneRef<'_>,
+    src_offset: (usize, usize),
+    ref_plane: &PlaneRef<'_>,
+    svf: SvfFn,
+    bw: usize,
+    bh: usize,
+    subpel_limits: &MvLimits,
+    ref_mv: Mv,
+    error_per_bit: i32,
+    mv_costs: &MvCosts,
+) -> SubPixelCandidateCost {
     // Sub-pel limits check.
     if tc < subpel_limits.col_min
         || tc > subpel_limits.col_max
         || tr < subpel_limits.row_min
         || tr > subpel_limits.row_max
     {
-        return u32::MAX;
+        return SubPixelCandidateCost {
+            total: u32::MAX,
+            distortion: u32::MAX,
+            mv_cost: u32::MAX,
+        };
     }
 
     // Integer pixel offset (libvpx `(r >> 3) * y_stride + (c >> 3)`).
@@ -218,12 +300,20 @@ fn try_subpel(
     let src_col = src_offset.0;
     let src_row = src_offset.1;
     if src_col + bw > src_plane.width || src_row + bh > src_plane.height {
-        return u32::MAX;
+        return SubPixelCandidateCost {
+            total: u32::MAX,
+            distortion: u32::MAX,
+            mv_cost: u32::MAX,
+        };
     }
     let src_start = src_row * src_plane.stride + src_col;
     let src_end = (src_row + bh - 1) * src_plane.stride + src_col + bw;
     if src_end > src_plane.data.len() {
-        return u32::MAX;
+        return SubPixelCandidateCost {
+            total: u32::MAX,
+            distortion: u32::MAX,
+            mv_cost: u32::MAX,
+        };
     }
     let src_slice = &src_plane.data[src_start..src_end];
 
@@ -285,7 +375,7 @@ fn try_subpel(
     // dsp/distortion.rs preserves that convention; we pass
     // `ref_slice` as the bilinear-filtered "src" and `src_slice`
     // as the variance "reference".
-    let cost = mv_err_cost(
+    let mv_cost = mv_err_cost(
         tr as i16,
         tc as i16,
         ref_mv.row,
@@ -293,7 +383,11 @@ fn try_subpel(
         error_per_bit,
         mv_costs,
     );
-    var.saturating_add(cost)
+    SubPixelCandidateCost {
+        total: var.saturating_add(mv_cost),
+        distortion: var,
+        mv_cost,
+    }
 }
 
 /// `vp9_find_best_sub_pixel_tree_pruned_more` (`vp9_mcomp.c:453-513`).
@@ -766,6 +860,193 @@ pub fn find_best_sub_pixel_tree(params: &SubPixelSearchParams<'_>) -> SubPixelSe
         },
         best_distortion: besterr,
     }
+}
+
+const SUBPEL_TRACE_HASH_OFFSET: u64 = 14_695_981_039_346_656_037;
+const SUBPEL_TRACE_HASH_PRIME: u64 = 1_099_511_628_211;
+
+#[inline]
+fn subpel_trace_hash_i32(hash: u64, value: i32) -> u64 {
+    (hash ^ u64::from(value as u32)).wrapping_mul(SUBPEL_TRACE_HASH_PRIME)
+}
+
+fn trace_subpel_candidate(
+    trace: &mut SubPixelLevelTrace,
+    row: i32,
+    col: i32,
+    cost: SubPixelCandidateCost,
+) {
+    trace.coordinate_hash = subpel_trace_hash_i32(trace.coordinate_hash, row);
+    trace.coordinate_hash = subpel_trace_hash_i32(trace.coordinate_hash, col);
+    trace.distortion_hash = subpel_trace_hash_i32(trace.distortion_hash, row);
+    trace.distortion_hash = subpel_trace_hash_i32(trace.distortion_hash, col);
+    trace.distortion_hash = subpel_trace_hash_i32(trace.distortion_hash, cost.distortion as i32);
+    trace.mv_cost_hash = subpel_trace_hash_i32(trace.mv_cost_hash, row);
+    trace.mv_cost_hash = subpel_trace_hash_i32(trace.mv_cost_hash, col);
+    trace.mv_cost_hash = subpel_trace_hash_i32(trace.mv_cost_hash, cost.mv_cost as i32);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn diagnose_subpel_level(
+    params: &SubPixelSearchParams<'_>,
+    svf: SvfFn,
+    bw: usize,
+    bh: usize,
+    subpel_limits: &MvLimits,
+    hstep: i32,
+    br: &mut i32,
+    bc: &mut i32,
+    besterr: &mut u32,
+) -> SubPixelLevelTrace {
+    let center_r = *br;
+    let center_c = *bc;
+    let mut trace = SubPixelLevelTrace {
+        coordinate_hash: SUBPEL_TRACE_HASH_OFFSET,
+        distortion_hash: SUBPEL_TRACE_HASH_OFFSET,
+        mv_cost_hash: SUBPEL_TRACE_HASH_OFFSET,
+        winner: Mv {
+            row: *br as i16,
+            col: *bc as i16,
+        },
+    };
+    let steps = [(0, -hstep), (0, hstep), (-hstep, 0), (hstep, 0)];
+    let mut cardinal_costs = [u32::MAX; 4];
+
+    for (index, (row_delta, col_delta)) in steps.into_iter().enumerate() {
+        let row = center_r + row_delta;
+        let col = center_c + col_delta;
+        let cost = try_subpel_cost(
+            row,
+            col,
+            params.src_plane,
+            params.src_offset,
+            params.ref_plane,
+            svf,
+            bw,
+            bh,
+            subpel_limits,
+            params.ref_mv,
+            params.error_per_bit,
+            params.mv_costs,
+        );
+        trace_subpel_candidate(&mut trace, row, col, cost);
+        cardinal_costs[index] = cost.total;
+        if cost.total < *besterr {
+            *besterr = cost.total;
+            *br = row;
+            *bc = col;
+        }
+    }
+
+    let diagonal_col = center_c
+        + if cardinal_costs[0] <= cardinal_costs[1] {
+            -hstep
+        } else {
+            hstep
+        };
+    let diagonal_row = center_r
+        + if cardinal_costs[2] <= cardinal_costs[3] {
+            -hstep
+        } else {
+            hstep
+        };
+    let diagonal_cost = try_subpel_cost(
+        diagonal_row,
+        diagonal_col,
+        params.src_plane,
+        params.src_offset,
+        params.ref_plane,
+        svf,
+        bw,
+        bh,
+        subpel_limits,
+        params.ref_mv,
+        params.error_per_bit,
+        params.mv_costs,
+    );
+    trace_subpel_candidate(&mut trace, diagonal_row, diagonal_col, diagonal_cost);
+    if diagonal_cost.total < *besterr {
+        *besterr = diagonal_cost.total;
+        *br = diagonal_row;
+        *bc = diagonal_col;
+    }
+    trace.winner = Mv {
+        row: *br as i16,
+        col: *bc as i16,
+    };
+    trace
+}
+
+/// Replay the scoped CPU6-8 ordinary quarter-pel tree and retain a compact
+/// signature of its inputs and evaluated candidate costs.
+///
+/// This is an explicitly requested diagnostic pass. It returns `None` for
+/// other policies so production callers cannot silently treat a partial trace
+/// as complete.
+#[must_use]
+pub fn diagnose_sub_pixel_tree(params: &SubPixelSearchParams<'_>) -> Option<SubPixelSearchTrace> {
+    if params.forced_stop != SubPixelForcedStop::QuarterPel || params.iters_per_step != 0 {
+        return None;
+    }
+    let svf = svf_for(params.block_size)?;
+    let bw = usize::from(params.block_size.width());
+    let bh = usize::from(params.block_size.height());
+    let mut limits = MvLimits::default();
+    set_subpel_mv_search_range(
+        &mut limits,
+        &params.mv_limits,
+        params.ref_mv.row,
+        params.ref_mv.col,
+    );
+    let mut br = i32::from(params.center_mv.row) * 8;
+    let mut bc = i32::from(params.center_mv.col) * 8;
+    let center = try_subpel_cost(
+        br,
+        bc,
+        params.src_plane,
+        params.src_offset,
+        params.ref_plane,
+        svf,
+        bw,
+        bh,
+        &limits,
+        params.ref_mv,
+        params.error_per_bit,
+        params.mv_costs,
+    );
+    let mut besterr = center.total;
+    let half = diagnose_subpel_level(
+        params,
+        svf,
+        bw,
+        bh,
+        &limits,
+        4,
+        &mut br,
+        &mut bc,
+        &mut besterr,
+    );
+    let quarter = diagnose_subpel_level(
+        params,
+        svf,
+        bw,
+        bh,
+        &limits,
+        2,
+        &mut br,
+        &mut bc,
+        &mut besterr,
+    );
+    Some(SubPixelSearchTrace {
+        limits,
+        forced_stop: params.forced_stop as i32,
+        iters_per_step: params.iters_per_step,
+        allow_hp: params.allow_hp,
+        center_distortion: center.distortion,
+        center_mv_cost: center.mv_cost,
+        half,
+        quarter,
+    })
 }
 
 /// One pyramid-level step: `FIRST_LEVEL_CHECKS` at `(br, bc)`, then
@@ -1243,6 +1524,21 @@ mod tests {
                 r.best_mv.col
             );
         }
+
+        let traced_params = SubPixelSearchParams {
+            iters_per_step: 0,
+            ..params
+        };
+        let result = find_best_sub_pixel_tree(&traced_params);
+        let trace = diagnose_sub_pixel_tree(&traced_params)
+            .expect("CPU6-8 quarter-pel policy should produce a complete trace");
+        assert_ne!(trace.half.coordinate_hash, 0);
+        assert_ne!(trace.half.distortion_hash, 0);
+        assert_ne!(trace.half.mv_cost_hash, 0);
+        assert_ne!(trace.quarter.coordinate_hash, 0);
+        assert_ne!(trace.quarter.distortion_hash, 0);
+        assert_ne!(trace.quarter.mv_cost_hash, 0);
+        assert_eq!(trace.quarter.winner, result.best_mv);
     }
 
     #[test]

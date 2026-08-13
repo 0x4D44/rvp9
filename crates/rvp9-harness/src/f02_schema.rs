@@ -26,6 +26,8 @@ use rvp9_core::block::BlockSize;
 use rvp9_core::intra_pred::IntraMode;
 use rvp9_core::mode_decision::inter::{NewMvGateReason, NewMvSearchTrace};
 use rvp9_core::mode_info::{InterMode, Mv, RefFrame};
+use rvp9_core::mv_search::mv_limits::MvLimits;
+use rvp9_core::mv_search::sub_pixel::{SubPixelLevelTrace, SubPixelSearchTrace};
 use rvp9_core::transforms::TxSize;
 
 /// Error type for the JSONL parser.
@@ -762,6 +764,32 @@ pub struct MatchingNewMvSearchStages {
     pub exact_input_records: usize,
     /// Exact-input records that produce the same final fractional MV.
     pub exact_input_final_matches: usize,
+    /// Exact-input records with a complete ordinary-tree trace on both legs.
+    pub exact_input_subpel_records: usize,
+    /// Complete traces with the same derived MV window.
+    pub subpel_limit_matches: usize,
+    /// Complete traces with the same forced-stop, extension, and HP policy.
+    pub subpel_policy_matches: usize,
+    /// Complete traces with the same integer-center pixel distortion.
+    pub subpel_center_distortion_matches: usize,
+    /// Complete traces with the same integer-center MV syntax cost.
+    pub subpel_center_mv_cost_matches: usize,
+    /// Complete traces with the same half-pel candidate coordinates.
+    pub subpel_half_coordinate_matches: usize,
+    /// Complete traces with the same half-pel pixel costs.
+    pub subpel_half_distortion_matches: usize,
+    /// Complete traces with the same half-pel MV syntax costs.
+    pub subpel_half_mv_cost_matches: usize,
+    /// Complete traces with the same half-pel winner.
+    pub subpel_half_winner_matches: usize,
+    /// Complete traces with the same quarter-pel candidate coordinates.
+    pub subpel_quarter_coordinate_matches: usize,
+    /// Complete traces with the same quarter-pel pixel costs.
+    pub subpel_quarter_distortion_matches: usize,
+    /// Complete traces with the same quarter-pel MV syntax costs.
+    pub subpel_quarter_mv_cost_matches: usize,
+    /// Complete traces with the same quarter-pel winner.
+    pub subpel_quarter_winner_matches: usize,
 }
 
 /// Compare fresh LAST/NEWMV search stages on exact matching leaves.
@@ -821,6 +849,44 @@ pub fn compare_matching_newmv_search_stages(
                 hashes_live && same_ref_mv && same_error_per_bit && same_source && same_reference;
             stages.exact_input_records += usize::from(exact_inputs);
             stages.exact_input_final_matches += usize::from(exact_inputs && same_final);
+            if exact_inputs
+                && let (Some(rvp9_subpel), Some(libvpx_subpel)) =
+                    (rvp9_search.subpel, libvpx_search.subpel)
+            {
+                stages.exact_input_subpel_records += 1;
+                stages.subpel_limit_matches +=
+                    usize::from(rvp9_subpel.limits == libvpx_subpel.limits);
+                stages.subpel_policy_matches += usize::from(
+                    rvp9_subpel.forced_stop == libvpx_subpel.forced_stop
+                        && rvp9_subpel.iters_per_step == libvpx_subpel.iters_per_step
+                        && rvp9_subpel.allow_hp == libvpx_subpel.allow_hp,
+                );
+                stages.subpel_center_distortion_matches +=
+                    usize::from(rvp9_subpel.center_distortion == libvpx_subpel.center_distortion);
+                stages.subpel_center_mv_cost_matches +=
+                    usize::from(rvp9_subpel.center_mv_cost == libvpx_subpel.center_mv_cost);
+                stages.subpel_half_coordinate_matches += usize::from(
+                    rvp9_subpel.half.coordinate_hash == libvpx_subpel.half.coordinate_hash,
+                );
+                stages.subpel_half_distortion_matches += usize::from(
+                    rvp9_subpel.half.distortion_hash == libvpx_subpel.half.distortion_hash,
+                );
+                stages.subpel_half_mv_cost_matches +=
+                    usize::from(rvp9_subpel.half.mv_cost_hash == libvpx_subpel.half.mv_cost_hash);
+                stages.subpel_half_winner_matches +=
+                    usize::from(rvp9_subpel.half.winner == libvpx_subpel.half.winner);
+                stages.subpel_quarter_coordinate_matches += usize::from(
+                    rvp9_subpel.quarter.coordinate_hash == libvpx_subpel.quarter.coordinate_hash,
+                );
+                stages.subpel_quarter_distortion_matches += usize::from(
+                    rvp9_subpel.quarter.distortion_hash == libvpx_subpel.quarter.distortion_hash,
+                );
+                stages.subpel_quarter_mv_cost_matches += usize::from(
+                    rvp9_subpel.quarter.mv_cost_hash == libvpx_subpel.quarter.mv_cost_hash,
+                );
+                stages.subpel_quarter_winner_matches +=
+                    usize::from(rvp9_subpel.quarter.winner == libvpx_subpel.quarter.winner);
+            }
         }
     }
     stages
@@ -1022,7 +1088,7 @@ fn parse_candidate_probes(v: &str) -> Result<[CandidateProbe; 4], ParseError> {
     let mut probes = Vec::with_capacity(4);
     for encoded in raw.split('|') {
         let fields = encoded.split(':').collect::<Vec<_>>();
-        if !matches!(fields.len(), 11 | 12 | 18 | 23) {
+        if !matches!(fields.len(), 11 | 12 | 18 | 23 | 42) {
             return Err(ParseError::BadValue {
                 field: "last_candidates",
                 raw,
@@ -1047,7 +1113,7 @@ fn parse_candidate_probes(v: &str) -> Result<[CandidateProbe; 4], ParseError> {
                     raw: raw.clone(),
                 })
             })?;
-        let newmv_search = if matches!(fields.len(), 18 | 23) {
+        let newmv_search = if matches!(fields.len(), 18 | 23 | 42) {
             let values = fields[12..18]
                 .iter()
                 .map(|field| parse_num::<i16>(field, "last_candidates"))
@@ -1060,13 +1126,67 @@ fn parse_candidate_probes(v: &str) -> Result<[CandidateProbe; 4], ParseError> {
                     raw,
                 });
             } else {
-                let ref_mv = if fields.len() == 23 {
+                let has_input_trace = matches!(fields.len(), 23 | 42);
+                let ref_mv = if has_input_trace {
                     Mv {
                         row: parse_num(fields[18], "last_candidates")?,
                         col: parse_num(fields[19], "last_candidates")?,
                     }
                 } else {
                     Mv::ZERO
+                };
+                let subpel = if fields.len() == 42 {
+                    let limits = fields[23..27]
+                        .iter()
+                        .map(|field| parse_num::<i32>(field, "last_candidates"))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    if limits.iter().all(|&value| value == i32::MIN) {
+                        None
+                    } else if limits.contains(&i32::MIN) {
+                        return Err(ParseError::BadValue {
+                            field: "last_candidates",
+                            raw,
+                        });
+                    } else {
+                        let allow_hp = match parse_num::<i32>(fields[29], "last_candidates")? {
+                            0 => false,
+                            1 => true,
+                            _ => {
+                                return Err(ParseError::BadValue {
+                                    field: "last_candidates",
+                                    raw,
+                                });
+                            }
+                        };
+                        Some(SubPixelSearchTrace {
+                            limits: MvLimits::new(limits[0], limits[1], limits[2], limits[3]),
+                            forced_stop: parse_num(fields[27], "last_candidates")?,
+                            iters_per_step: parse_num(fields[28], "last_candidates")?,
+                            allow_hp,
+                            center_distortion: parse_num(fields[30], "last_candidates")?,
+                            center_mv_cost: parse_num(fields[31], "last_candidates")?,
+                            half: SubPixelLevelTrace {
+                                coordinate_hash: parse_num(fields[32], "last_candidates")?,
+                                distortion_hash: parse_num(fields[33], "last_candidates")?,
+                                mv_cost_hash: parse_num(fields[34], "last_candidates")?,
+                                winner: Mv {
+                                    row: parse_num(fields[35], "last_candidates")?,
+                                    col: parse_num(fields[36], "last_candidates")?,
+                                },
+                            },
+                            quarter: SubPixelLevelTrace {
+                                coordinate_hash: parse_num(fields[37], "last_candidates")?,
+                                distortion_hash: parse_num(fields[38], "last_candidates")?,
+                                mv_cost_hash: parse_num(fields[39], "last_candidates")?,
+                                winner: Mv {
+                                    row: parse_num(fields[40], "last_candidates")?,
+                                    col: parse_num(fields[41], "last_candidates")?,
+                                },
+                            },
+                        })
+                    }
+                } else {
+                    None
                 };
                 Some(NewMvSearchTrace {
                     start_mv: Mv {
@@ -1082,21 +1202,22 @@ fn parse_candidate_probes(v: &str) -> Result<[CandidateProbe; 4], ParseError> {
                         col: values[5],
                     },
                     ref_mv,
-                    error_per_bit: if fields.len() == 23 {
+                    error_per_bit: if has_input_trace {
                         parse_num(fields[20], "last_candidates")?
                     } else {
                         0
                     },
-                    source_hash: if fields.len() == 23 {
+                    source_hash: if has_input_trace {
                         parse_num(fields[21], "last_candidates")?
                     } else {
                         0
                     },
-                    reference_hash: if fields.len() == 23 {
+                    reference_hash: if has_input_trace {
                         parse_num(fields[22], "last_candidates")?
                     } else {
                         0
                     },
+                    subpel,
                 })
             }
         } else {
@@ -1260,6 +1381,26 @@ mod tests {
                         error_per_bit: 321,
                         source_hash: 123,
                         reference_hash: 456,
+                        subpel: Some(SubPixelSearchTrace {
+                            limits: MvLimits::new(-128, 128, -64, 64),
+                            forced_stop: 1,
+                            iters_per_step: 0,
+                            allow_hp: false,
+                            center_distortion: 789,
+                            center_mv_cost: 12,
+                            half: SubPixelLevelTrace {
+                                coordinate_hash: 1_001,
+                                distortion_hash: 1_002,
+                                mv_cost_hash: 1_003,
+                                winner: Mv { row: 20, col: -8 },
+                            },
+                            quarter: SubPixelLevelTrace {
+                                coordinate_hash: 2_001,
+                                distortion_hash: 2_002,
+                                mv_cost_hash: 2_003,
+                                winner: Mv { row: 22, col: -8 },
+                            },
+                        }),
                     }),
                 },
                 CandidateProbe::default(),
@@ -1605,6 +1746,7 @@ mod tests {
             error_per_bit: 100,
             source_hash: 1,
             reference_hash: 2,
+            subpel: None,
         });
         let mut rvp9 = libvpx;
         rvp9.last_candidates[3].newmv_search = Some(NewMvSearchTrace {
@@ -1615,6 +1757,7 @@ mod tests {
             error_per_bit: 100,
             source_hash: 1,
             reference_hash: 2,
+            subpel: None,
         });
 
         let stages = compare_matching_newmv_search_stages(&[rvp9], &[libvpx]);
@@ -1638,6 +1781,7 @@ mod tests {
             error_per_bit: 321,
             source_hash: 123,
             reference_hash: 456,
+            subpel: None,
         });
         let mut rvp9 = libvpx;
         rvp9.last_candidates[3].newmv_search = Some(NewMvSearchTrace {

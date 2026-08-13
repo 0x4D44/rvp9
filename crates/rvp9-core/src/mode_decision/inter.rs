@@ -123,8 +123,8 @@ use crate::mv_search::full_pixel::{
 use crate::mv_search::mv_limits::MvLimits;
 use crate::mv_search::search_site::SearchSiteConfig;
 use crate::mv_search::sub_pixel::{
-    SubPixelForcedStop, SubPixelSearchParams, find_best_sub_pixel_tree,
-    find_best_sub_pixel_tree_pruned_evenmore,
+    SubPixelForcedStop, SubPixelSearchParams, SubPixelSearchTrace, diagnose_sub_pixel_tree,
+    find_best_sub_pixel_tree, find_best_sub_pixel_tree_pruned_evenmore,
 };
 use crate::quant::forward::{
     PlaneQuantizers, vp9_quantize_b_32x32_with_order, vp9_quantize_b_with_order,
@@ -1782,6 +1782,9 @@ pub struct NewMvSearchTrace {
     /// FNV-1a hash of the edge-extended luma reference footprint needed by
     /// half- and quarter-pel refinement around `fullpel_mv`.
     pub reference_hash: u64,
+    /// Exact ordinary-tree cost signature, present only under the F02
+    /// diagnostic sink when fractional refinement ran.
+    pub subpel: Option<SubPixelSearchTrace>,
 }
 
 impl NewMvGateReason {
@@ -3802,7 +3805,7 @@ fn run_newmv_search(
     };
     let subpel_error_per_bit = error_per_bit(params.q_index, params.frame_kind);
     let (source_hash, reference_hash) = f02_newmv_input_hashes(params, fullpel_mv);
-    let make_trace = |final_mv| NewMvSearchTrace {
+    let make_trace = |final_mv, subpel| NewMvSearchTrace {
         start_mv: search_start_mv,
         fullpel_mv,
         final_mv,
@@ -3810,6 +3813,7 @@ fn run_newmv_search(
         error_per_bit: subpel_error_per_bit,
         source_hash,
         reference_hash,
+        subpel,
     };
     // Pinned libvpx rejects a fresh full-pel NEWMV result before fractional
     // refinement when its syntax cost alone already loses to the incumbent
@@ -3821,7 +3825,7 @@ fn run_newmv_search(
         return NewMvSearchResult {
             best_mv: fullpel_mv,
             subpel_gate_rejected: true,
-            trace: make_trace(fullpel_mv),
+            trace: make_trace(fullpel_mv, None),
         };
     }
 
@@ -3882,7 +3886,7 @@ fn run_newmv_search(
         return NewMvSearchResult {
             best_mv: fullpel_mv,
             subpel_gate_rejected,
-            trace: make_trace(fullpel_mv),
+            trace: make_trace(fullpel_mv, None),
         };
     }
 
@@ -3919,10 +3923,13 @@ fn run_newmv_search(
     } else {
         find_best_sub_pixel_tree(&sub_params)
     };
+    let subpel_trace = (!use_pruned_evenmore && candidate_trace::is_enabled())
+        .then(|| diagnose_sub_pixel_tree(&sub_params))
+        .flatten();
     NewMvSearchResult {
         best_mv: sub.best_mv,
         subpel_gate_rejected,
-        trace: make_trace(sub.best_mv),
+        trace: make_trace(sub.best_mv, subpel_trace),
     }
 }
 
@@ -6401,6 +6408,7 @@ mod tests {
                     error_per_bit: error_per_bit(80, params.frame_kind),
                     source_hash: 0,
                     reference_hash: 0,
+                    subpel: None,
                 },
             },
         );

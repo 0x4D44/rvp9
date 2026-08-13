@@ -704,6 +704,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 stages.exact_input_final_matches,
                 stages.exact_input_records,
             );
+            if stages.exact_input_subpel_records > 0 {
+                println!(
+                    "  exact-input subpel traces: {} records; limits {}, policy {}, center distortion {}, center MV cost {}; half coords {}, distortion {}, MV cost {}, winner {}; quarter coords {}, distortion {}, MV cost {}, winner {}",
+                    stages.exact_input_subpel_records,
+                    stages.subpel_limit_matches,
+                    stages.subpel_policy_matches,
+                    stages.subpel_center_distortion_matches,
+                    stages.subpel_center_mv_cost_matches,
+                    stages.subpel_half_coordinate_matches,
+                    stages.subpel_half_distortion_matches,
+                    stages.subpel_half_mv_cost_matches,
+                    stages.subpel_half_winner_matches,
+                    stages.subpel_quarter_coordinate_matches,
+                    stages.subpel_quarter_distortion_matches,
+                    stages.subpel_quarter_mv_cost_matches,
+                    stages.subpel_quarter_winner_matches,
+                );
+            }
         }
 
         let comparison = if no_libvpx {
@@ -986,6 +1004,58 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "| final MV on exact complete inputs | {} | {} |",
                 stages.exact_input_final_matches, stages.exact_input_records
             )?;
+            if stages.exact_input_subpel_records > 0 {
+                writeln!(sf)?;
+                writeln!(
+                    sf,
+                    "| exact-input subpel field | matching leaves | traced leaves |"
+                )?;
+                writeln!(sf, "|---|---:|---:|")?;
+                for (name, matches) in [
+                    ("derived MV limits", stages.subpel_limit_matches),
+                    ("search policy", stages.subpel_policy_matches),
+                    (
+                        "center pixel distortion",
+                        stages.subpel_center_distortion_matches,
+                    ),
+                    (
+                        "center MV syntax cost",
+                        stages.subpel_center_mv_cost_matches,
+                    ),
+                    (
+                        "half-pel candidate coordinates",
+                        stages.subpel_half_coordinate_matches,
+                    ),
+                    (
+                        "half-pel pixel costs",
+                        stages.subpel_half_distortion_matches,
+                    ),
+                    (
+                        "half-pel MV syntax costs",
+                        stages.subpel_half_mv_cost_matches,
+                    ),
+                    ("half-pel winner", stages.subpel_half_winner_matches),
+                    (
+                        "quarter-pel candidate coordinates",
+                        stages.subpel_quarter_coordinate_matches,
+                    ),
+                    (
+                        "quarter-pel pixel costs",
+                        stages.subpel_quarter_distortion_matches,
+                    ),
+                    (
+                        "quarter-pel MV syntax costs",
+                        stages.subpel_quarter_mv_cost_matches,
+                    ),
+                    ("quarter-pel winner", stages.subpel_quarter_winner_matches),
+                ] {
+                    writeln!(
+                        sf,
+                        "| {name} | {matches} | {} |",
+                        stages.exact_input_subpel_records
+                    )?;
+                }
+            }
         }
         writeln!(
             sf,
