@@ -5177,6 +5177,24 @@ fn libvpx_inter_mv_limits(
     )
 }
 
+#[inline]
+fn rt_v1_umv_border_enabled(
+    _width: u32,
+    _height: u32,
+    speed: i32,
+    deadline: rvp9_core::mode_decision::speed_features::Deadline,
+    content_tier: rvp9_core::mode_decision::speed_features::ContentTier,
+) -> bool {
+    use rvp9_core::mode_decision::speed_features::{ContentTier, Deadline};
+
+    // Pinned libvpx uses its replicated unrestricted-MV border at every coded
+    // resolution. Keep dimensions in this policy boundary so the spatial base
+    // layers cannot accidentally regain the old 720p-only eligibility gate.
+    matches!(deadline, Deadline::Realtime)
+        && (6..=8).contains(&speed.unsigned_abs())
+        && matches!(content_tier, ContentTier::Default)
+}
+
 fn tight_inter_mv_limits(
     block_origin: (usize, usize),
     block_size: (usize, usize),
@@ -6544,10 +6562,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         && speed.unsigned_abs() >= 7
         && matches!(content_tier, sf_mod::ContentTier::Default)
         && u64::from(width) * u64::from(height) >= 700_000;
-    let rt_v1_umv_border = matches!(deadline, sf_mod::Deadline::Realtime)
-        && (6..=8).contains(&speed.unsigned_abs())
-        && matches!(content_tier, sf_mod::ContentTier::Default)
-        && u64::from(width) * u64::from(height) >= 700_000;
+    let rt_v1_umv_border = rt_v1_umv_border_enabled(width, height, speed, deadline, content_tier);
     // The exact pinned-libvpx VBP tree and source RD lambda form one measured
     // CPU7 VBR policy. The product path applies them together on every show
     // frame; non-show ALTREF coding passes no history and stays isolated.
@@ -15747,6 +15762,40 @@ mod tests {
             limits,
             rvp9_core::mv_search::MvLimits::new(-36, 1284, -36, 708)
         );
+    }
+
+    #[test]
+    fn realtime_v1_umv_border_is_not_resolution_gated() {
+        use rvp9_core::mode_decision::speed_features::{ContentTier, Deadline};
+
+        assert!(rt_v1_umv_border_enabled(
+            320,
+            180,
+            8,
+            Deadline::Realtime,
+            ContentTier::Default,
+        ));
+        assert!(rt_v1_umv_border_enabled(
+            1280,
+            720,
+            6,
+            Deadline::Realtime,
+            ContentTier::Default,
+        ));
+        assert!(!rt_v1_umv_border_enabled(
+            320,
+            180,
+            5,
+            Deadline::Realtime,
+            ContentTier::Default,
+        ));
+        assert!(!rt_v1_umv_border_enabled(
+            320,
+            180,
+            8,
+            Deadline::Good,
+            ContentTier::Default,
+        ));
     }
 
     #[test]

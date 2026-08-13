@@ -745,6 +745,12 @@ pub struct MatchingNewMvSearchStages {
     pub fullpel_matches: usize,
     /// Searches that produced the same final fractional result.
     pub final_matches: usize,
+    /// Searches with the same second causal MV-reference input.
+    pub near_mv_matches: usize,
+    /// Searches with the same optional superblock predictor input.
+    pub sb_pred_mv_matches: usize,
+    /// Searches with the same predictor-SAD winner before full-pel search.
+    pub mv_pred_mv_matches: usize,
     /// Same start, but different integer-pel result.
     pub same_start_fullpel_diverged: usize,
     /// Same integer-pel result, but different fractional result.
@@ -829,6 +835,11 @@ pub fn compare_matching_newmv_search_stages(
         stages.start_matches += usize::from(same_start);
         stages.fullpel_matches += usize::from(same_fullpel);
         stages.final_matches += usize::from(same_final);
+        stages.near_mv_matches += usize::from(rvp9_search.near_mv == libvpx_search.near_mv);
+        stages.sb_pred_mv_matches +=
+            usize::from(rvp9_search.sb_pred_mv == libvpx_search.sb_pred_mv);
+        stages.mv_pred_mv_matches +=
+            usize::from(rvp9_search.mv_pred_mv == libvpx_search.mv_pred_mv);
         stages.same_start_fullpel_diverged += usize::from(same_start && !same_fullpel);
         stages.same_fullpel_final_diverged += usize::from(same_fullpel && !same_final);
         if same_fullpel {
@@ -1088,7 +1099,7 @@ fn parse_candidate_probes(v: &str) -> Result<[CandidateProbe; 4], ParseError> {
     let mut probes = Vec::with_capacity(4);
     for encoded in raw.split('|') {
         let fields = encoded.split(':').collect::<Vec<_>>();
-        if !matches!(fields.len(), 11 | 12 | 18 | 23 | 42) {
+        if !matches!(fields.len(), 11 | 12 | 18 | 23 | 42 | 46 | 48) {
             return Err(ParseError::BadValue {
                 field: "last_candidates",
                 raw,
@@ -1113,7 +1124,7 @@ fn parse_candidate_probes(v: &str) -> Result<[CandidateProbe; 4], ParseError> {
                     raw: raw.clone(),
                 })
             })?;
-        let newmv_search = if matches!(fields.len(), 18 | 23 | 42) {
+        let newmv_search = if matches!(fields.len(), 18 | 23 | 42 | 46 | 48) {
             let values = fields[12..18]
                 .iter()
                 .map(|field| parse_num::<i16>(field, "last_candidates"))
@@ -1126,7 +1137,7 @@ fn parse_candidate_probes(v: &str) -> Result<[CandidateProbe; 4], ParseError> {
                     raw,
                 });
             } else {
-                let has_input_trace = matches!(fields.len(), 23 | 42);
+                let has_input_trace = matches!(fields.len(), 23 | 42 | 46 | 48);
                 let ref_mv = if has_input_trace {
                     Mv {
                         row: parse_num(fields[18], "last_candidates")?,
@@ -1135,7 +1146,7 @@ fn parse_candidate_probes(v: &str) -> Result<[CandidateProbe; 4], ParseError> {
                 } else {
                     Mv::ZERO
                 };
-                let subpel = if fields.len() == 42 {
+                let subpel = if matches!(fields.len(), 42 | 46 | 48) {
                     let limits = fields[23..27]
                         .iter()
                         .map(|field| parse_num::<i32>(field, "last_candidates"))
@@ -1202,6 +1213,38 @@ fn parse_candidate_probes(v: &str) -> Result<[CandidateProbe; 4], ParseError> {
                         col: values[5],
                     },
                     ref_mv,
+                    near_mv: if matches!(fields.len(), 46 | 48) {
+                        Mv {
+                            row: parse_num(fields[42], "last_candidates")?,
+                            col: parse_num(fields[43], "last_candidates")?,
+                        }
+                    } else {
+                        Mv::ZERO
+                    },
+                    sb_pred_mv: if matches!(fields.len(), 46 | 48) {
+                        let row = parse_num(fields[44], "last_candidates")?;
+                        let col = parse_num(fields[45], "last_candidates")?;
+                        match (row == i16::MIN, col == i16::MIN) {
+                            (true, true) => None,
+                            (false, false) => Some(Mv { row, col }),
+                            _ => {
+                                return Err(ParseError::BadValue {
+                                    field: "last_candidates",
+                                    raw,
+                                });
+                            }
+                        }
+                    } else {
+                        None
+                    },
+                    mv_pred_mv: if fields.len() == 48 {
+                        Mv {
+                            row: parse_num(fields[46], "last_candidates")?,
+                            col: parse_num(fields[47], "last_candidates")?,
+                        }
+                    } else {
+                        Mv::ZERO
+                    },
                     error_per_bit: if has_input_trace {
                         parse_num(fields[20], "last_candidates")?
                     } else {
@@ -1378,6 +1421,9 @@ mod tests {
                         fullpel_mv: Mv { row: 16, col: -8 },
                         final_mv: Mv { row: 24, col: -8 },
                         ref_mv: Mv { row: -8, col: 16 },
+                        near_mv: Mv { row: 0, col: 8 },
+                        sb_pred_mv: Some(Mv { row: 0, col: 48 }),
+                        mv_pred_mv: Mv { row: 0, col: 8 },
                         error_per_bit: 321,
                         source_hash: 123,
                         reference_hash: 456,
@@ -1743,6 +1789,9 @@ mod tests {
             fullpel_mv: Mv { row: 16, col: 0 },
             final_mv: Mv { row: 18, col: 0 },
             ref_mv: Mv::ZERO,
+            near_mv: Mv { row: 0, col: 8 },
+            sb_pred_mv: Some(Mv { row: 0, col: 48 }),
+            mv_pred_mv: Mv { row: 0, col: 8 },
             error_per_bit: 100,
             source_hash: 1,
             reference_hash: 2,
@@ -1754,6 +1803,9 @@ mod tests {
             fullpel_mv: Mv { row: 24, col: 0 },
             final_mv: Mv { row: 26, col: 0 },
             ref_mv: Mv::ZERO,
+            near_mv: Mv { row: 0, col: 8 },
+            sb_pred_mv: Some(Mv { row: 0, col: 48 }),
+            mv_pred_mv: Mv { row: 0, col: 8 },
             error_per_bit: 100,
             source_hash: 1,
             reference_hash: 2,
@@ -1768,6 +1820,9 @@ mod tests {
         assert_eq!(stages.final_matches, 0);
         assert_eq!(stages.same_start_fullpel_diverged, 1);
         assert_eq!(stages.same_fullpel_final_diverged, 0);
+        assert_eq!(stages.near_mv_matches, 1);
+        assert_eq!(stages.sb_pred_mv_matches, 1);
+        assert_eq!(stages.mv_pred_mv_matches, 1);
     }
 
     #[test]
@@ -1778,6 +1833,9 @@ mod tests {
             fullpel_mv: Mv { row: 16, col: -8 },
             final_mv: Mv { row: 18, col: -8 },
             ref_mv: Mv { row: 8, col: 0 },
+            near_mv: Mv { row: 0, col: 8 },
+            sb_pred_mv: Some(Mv { row: 0, col: 48 }),
+            mv_pred_mv: Mv { row: 0, col: 8 },
             error_per_bit: 321,
             source_hash: 123,
             reference_hash: 456,

@@ -241,7 +241,7 @@ index 6f2524b36..901336d7d 100644
  #include <math.h>
  #include <stdio.h>
 
-@@ -151,10 +152,37 @@ Done:
+@@ -151,10 +152,40 @@ Done:
    return const_motion;
  }
 
@@ -250,6 +250,9 @@ index 6f2524b36..901336d7d 100644
 +  MV fullpel;
 +  MV final;
 +  MV ref_mv;
++  MV near_mv;
++  MV pred_mv;
++  MV mv_pred_mv;
 +  int error_per_bit;
 +  uint64_t source_hash;
 +  uint64_t reference_hash;
@@ -280,8 +283,11 @@ index 6f2524b36..901336d7d 100644
    MACROBLOCKD *xd = &x->e_mbd;
    MODE_INFO *mi = xd->mi[0];
    struct buf_2d backup_yv12[MAX_MB_PLANE] = { { 0, 0 } };
-@@ -198,6 +226,8 @@ static int combined_motion_search(VP9_COMP *cpi, MACROBLOCK *x,
+@@ -198,6 +227,11 @@ static int combined_motion_search(VP9_COMP *cpi, MACROBLOCK *x,
 
++  trace_f02->near_mv = x->mbmi_ext->ref_mvs[ref][1].as_mv;
++  trace_f02->pred_mv = x->pred_mv[ref];
++  trace_f02->mv_pred_mv = mvp_full;
    mvp_full.col >>= 3;
    mvp_full.row >>= 3;
 +  trace_f02->start.row = mvp_full.row * 8;
@@ -289,7 +295,7 @@ index 6f2524b36..901336d7d 100644
 
    if (!use_base_mv)
      center_mv = ref_mv;
-@@ -218,6 +248,24 @@ static int combined_motion_search(VP9_COMP *cpi, MACROBLOCK *x,
+@@ -218,6 +250,24 @@ static int combined_motion_search(VP9_COMP *cpi, MACROBLOCK *x,
    // calculate the bit cost on motion vector
    mvp_full.row = tmp_mv->as_mv.row * 8;
    mvp_full.col = tmp_mv->as_mv.col * 8;
@@ -602,7 +608,7 @@ index 6f2524b36..901336d7d 100644
      return -1;
    }
 
-@@ -1746,6 +2003,34 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
+@@ -1746,6 +2005,36 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
    int skip_ref_find_pred[4] = { 0 };
    unsigned int sse_zeromv_normalized = UINT_MAX;
    unsigned int best_sse_sofar = UINT_MAX;
@@ -629,6 +635,8 @@ index 6f2524b36..901336d7d 100644
 +  int candidate_skip_f02[4] = { 0 };
 +  F02_NEWMV_TRACE last_newmv_trace_f02 = {
 +    { INT16_MIN, INT16_MIN }, { INT16_MIN, INT16_MIN },
++    { INT16_MIN, INT16_MIN },
++    { INT16_MIN, INT16_MIN }, { INT16_MIN, INT16_MIN },
 +    { INT16_MIN, INT16_MIN }, { INT16_MIN, INT16_MIN },
 +    INT_MIN, 0, 0, { { 0, 0, 0, 0 }, 0, 0, 0, 0, 0,
 +                     { 0, 0 }, { 0, 0 }, { 0, 0 },
@@ -637,11 +645,13 @@ index 6f2524b36..901336d7d 100644
    int gf_temporal_ref = 0;
    int force_test_gf_zeromv = 0;
  #if CONFIG_VP9_TEMPORAL_DENOISING
-@@ -2246,9 +2531,19 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
+@@ -2246,9 +2534,21 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
        if (frame_mv[this_mode][ref_frame].as_int != 0) continue;
 
      if (this_mode == NEWMV && !force_mv_inter_layer) {
 +      F02_NEWMV_TRACE ignored_trace_f02 = {
++        { INT16_MIN, INT16_MIN }, { INT16_MIN, INT16_MIN },
++        { INT16_MIN, INT16_MIN },
 +        { INT16_MIN, INT16_MIN }, { INT16_MIN, INT16_MIN },
 +        { INT16_MIN, INT16_MIN }, { INT16_MIN, INT16_MIN },
 +        INT_MIN, 0, 0, { { 0, 0, 0, 0 }, 0, 0, 0, 0, 0,
@@ -658,7 +668,7 @@ index 6f2524b36..901336d7d 100644
          continue;
      }
 
-@@ -2348,6 +2643,8 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
+@@ -2348,6 +2647,8 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
        this_sse = (int64_t)sse_y;
        block_yrd(cpi, x, &this_rdc, &is_skippable, &this_sse, bsize,
                  VPXMIN(mi->tx_size, TX_16X16), rd_computed, 0);
@@ -667,7 +677,7 @@ index 6f2524b36..901336d7d 100644
        x->skip_txfm[0] = is_skippable;
        if (is_skippable) {
          this_rdc.rate = vp9_cost_bit(vp9_get_skip_prob(cm, xd), 1);
-@@ -2373,7 +2670,12 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
+@@ -2373,7 +2674,12 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
        }
        this_rdc.rate += vp9_cost_bit(vp9_get_skip_prob(cm, xd), 1);
      }
@@ -681,7 +691,7 @@ index 6f2524b36..901336d7d 100644
      if (!this_early_term &&
          (x->color_sensitivity[0] || x->color_sensitivity[1])) {
        RD_COST rdc_uv;
-@@ -2387,6 +2689,8 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
+@@ -2387,6 +2693,8 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
          flag_preduv_computed[1] = 1;
        }
        model_rd_for_sb_uv(cpi, uv_bsize, x, xd, &rdc_uv, &var_y, &sse_y, 1, 2);
@@ -690,7 +700,7 @@ index 6f2524b36..901336d7d 100644
        this_rdc.rate += rdc_uv.rate;
        this_rdc.dist += rdc_uv.dist;
      }
-@@ -2443,11 +2747,41 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
+@@ -2443,11 +2751,41 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
  #else
      (void)ctx;
  #endif
@@ -733,7 +743,7 @@ index 6f2524b36..901336d7d 100644
        best_early_term = this_early_term;
        best_pickmode.best_mode = this_mode;
        best_pickmode.best_pred_filter = mi->interp_filter;
-@@ -2625,6 +2959,10 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
+@@ -2625,6 +2963,10 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
 
        if (this_rdc.rdcost < best_rdc.rdcost) {
          best_rdc = this_rdc;
@@ -744,7 +754,7 @@ index 6f2524b36..901336d7d 100644
          best_pickmode.best_mode = this_mode;
          best_pickmode.best_intra_tx_size = mi->tx_size;
          best_pickmode.best_ref_frame = INTRA_FRAME;
-@@ -2739,6 +3077,258 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
+@@ -2739,6 +3081,273 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
    }
 
    *rd_cost = best_rdc;
@@ -894,6 +904,18 @@ index 6f2524b36..901336d7d 100644
 +            candidate_idx_f02 == 3
 +                ? (unsigned long long)last_newmv_trace_f02.reference_hash
 +                : 0;
++        int trace_near_row_f02 =
++            candidate_idx_f02 == 3 ? last_newmv_trace_f02.near_mv.row : INT16_MIN;
++        int trace_near_col_f02 =
++            candidate_idx_f02 == 3 ? last_newmv_trace_f02.near_mv.col : INT16_MIN;
++        int trace_pred_row_f02 =
++            candidate_idx_f02 == 3 ? last_newmv_trace_f02.pred_mv.row : INT16_MIN;
++        int trace_pred_col_f02 =
++            candidate_idx_f02 == 3 ? last_newmv_trace_f02.pred_mv.col : INT16_MIN;
++        int trace_mv_pred_row_f02 =
++            candidate_idx_f02 == 3 ? last_newmv_trace_f02.mv_pred_mv.row : INT16_MIN;
++        int trace_mv_pred_col_f02 =
++            candidate_idx_f02 == 3 ? last_newmv_trace_f02.mv_pred_mv.col : INT16_MIN;
 +        const VP9_F02_SUBPEL_TRACE *subpel_f02 =
 +            candidate_idx_f02 == 3 && last_newmv_trace_f02.subpel_valid
 +                ? &last_newmv_trace_f02.subpel
@@ -901,7 +923,7 @@ index 6f2524b36..901336d7d 100644
 +        candidate_offset_f02 += snprintf(
 +            last_candidates_f02 + candidate_offset_f02,
 +            sizeof(last_candidates_f02) - candidate_offset_f02,
-+            "%s%d:%d:%d:%d:%lld:%lld:%d:%lld:%d:%lld:%d:0:%d:%d:%d:%d:%d:%d:%d:%d:%d:%llu:%llu:%d:%d:%d:%d:%d:%d:%d:%u:%u:%llu:%llu:%llu:%d:%d:%llu:%llu:%llu:%d:%d",
++            "%s%d:%d:%d:%d:%lld:%lld:%d:%lld:%d:%lld:%d:0:%d:%d:%d:%d:%d:%d:%d:%d:%d:%llu:%llu:%d:%d:%d:%d:%d:%d:%d:%u:%u:%llu:%llu:%llu:%d:%d:%llu:%llu:%llu:%d:%d:%d:%d:%d:%d:%d:%d",
 +            candidate_idx_f02 ? "|" : "",
 +            candidate_available_f02[candidate_idx_f02],
 +            candidate_mv_row_f02[candidate_idx_f02],
@@ -941,7 +963,10 @@ index 6f2524b36..901336d7d 100644
 +                ? (unsigned long long)subpel_f02->distortion_hash[1] : 0,
 +            subpel_f02 ? (unsigned long long)subpel_f02->mv_cost_hash[1] : 0,
 +            subpel_f02 ? subpel_f02->winner[1].row : INT16_MIN,
-+            subpel_f02 ? subpel_f02->winner[1].col : INT16_MIN);
++            subpel_f02 ? subpel_f02->winner[1].col : INT16_MIN,
++            trace_near_row_f02, trace_near_col_f02,
++            trace_pred_row_f02, trace_pred_col_f02,
++            trace_mv_pred_row_f02, trace_mv_pred_col_f02);
 +      }
 +      fprintf(vpx_f02_fp,
 +              "{\"frame_idx\":%u,\"spatial_id\":%d,\"mi_row\":%d,\"mi_col\":%d,"

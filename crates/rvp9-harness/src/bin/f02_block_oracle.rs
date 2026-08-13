@@ -699,13 +699,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         if let Some(stages) = matching_newmv_search_stages {
             println!(
-                "  matching NEWMV search stages: {} exact leaves; start {}/{}, fullpel {}/{}, final {}/{}; same-start/fullpel-diverged {}, same-fullpel/final-diverged {}; same-fullpel inputs ref-mv {}/{}, error-per-bit {}/{}, source {}/{}, reference {}/{}; exact-input final {}/{}",
+                "  matching NEWMV search stages: {} exact leaves; start {}/{}, fullpel {}/{}, final {}/{}; inputs near {}/{}, SB-pred {}/{}, pred-winner {}/{}; same-start/fullpel-diverged {}, same-fullpel/final-diverged {}; same-fullpel inputs ref-mv {}/{}, error-per-bit {}/{}, source {}/{}, reference {}/{}; exact-input final {}/{}",
                 stages.records,
                 stages.start_matches,
                 stages.records,
                 stages.fullpel_matches,
                 stages.records,
                 stages.final_matches,
+                stages.records,
+                stages.near_mv_matches,
+                stages.records,
+                stages.sb_pred_mv_matches,
+                stages.records,
+                stages.mv_pred_mv_matches,
                 stages.records,
                 stages.same_start_fullpel_diverged,
                 stages.same_fullpel_final_diverged,
@@ -982,6 +988,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 sf,
                 "| final fractional result | {} | {} |",
                 stages.final_matches, stages.records
+            )?;
+            writeln!(
+                sf,
+                "| second causal MV reference | {} | {} |",
+                stages.near_mv_matches, stages.records
+            )?;
+            writeln!(
+                sf,
+                "| superblock predictor input | {} | {} |",
+                stages.sb_pred_mv_matches, stages.records
+            )?;
+            writeln!(
+                sf,
+                "| predictor-SAD winner | {} | {} |",
+                stages.mv_pred_mv_matches, stages.records
             )?;
             writeln!(sf)?;
             writeln!(

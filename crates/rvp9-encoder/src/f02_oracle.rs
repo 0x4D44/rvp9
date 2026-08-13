@@ -362,6 +362,15 @@ fn candidate_probes_tag(probes: &[CandidateProbe; 4]) -> String {
                     row: i16::MIN,
                     col: i16::MIN,
                 },
+                near_mv: rvp9_core::mode_info::Mv {
+                    row: i16::MIN,
+                    col: i16::MIN,
+                },
+                sb_pred_mv: None,
+                mv_pred_mv: rvp9_core::mode_info::Mv {
+                    row: i16::MIN,
+                    col: i16::MIN,
+                },
                 error_per_bit: i32::MIN,
                 source_hash: 0,
                 reference_hash: 0,
@@ -433,8 +442,12 @@ fn candidate_probes_tag(probes: &[CandidateProbe; 4]) -> String {
                     )
                 },
             );
+            let sb_pred_mv = trace.sb_pred_mv.unwrap_or(rvp9_core::mode_info::Mv {
+                row: i16::MIN,
+                col: i16::MIN,
+            });
             format!(
-                "{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}",
+                "{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}",
                 u8::from(p.available),
                 p.mv_row,
                 p.mv_col,
@@ -477,6 +490,12 @@ fn candidate_probes_tag(probes: &[CandidateProbe; 4]) -> String {
                 quarter_mv_cost_hash,
                 quarter_winner_row,
                 quarter_winner_col,
+                trace.near_mv.row,
+                trace.near_mv.col,
+                sb_pred_mv.row,
+                sb_pred_mv.col,
+                trace.mv_pred_mv.row,
+                trace.mv_pred_mv.col,
             )
         })
         .collect::<Vec<_>>()

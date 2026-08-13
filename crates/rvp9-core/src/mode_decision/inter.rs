@@ -1775,6 +1775,12 @@ pub struct NewMvSearchTrace {
     pub final_mv: Mv,
     /// MV used to price the fresh candidate, in 1/8-pel units.
     pub ref_mv: Mv,
+    /// Second causal MV-reference candidate considered as a search start.
+    pub near_mv: Mv,
+    /// Superblock-level predictor considered as the optional third start.
+    pub sb_pred_mv: Option<Mv>,
+    /// Winner of the predictor-SAD comparison before the full-pel search.
+    pub mv_pred_mv: Mv,
     /// Variance-domain MV-cost multiplier used by fractional refinement.
     pub error_per_bit: i32,
     /// FNV-1a hash of the visible luma source block.
@@ -3810,6 +3816,9 @@ fn run_newmv_search(
         fullpel_mv,
         final_mv,
         ref_mv: params.mv_candidates.nearest,
+        near_mv: params.mv_candidates.near,
+        sb_pred_mv: params.newmv_seed,
+        mv_pred_mv: pred_mv,
         error_per_bit: subpel_error_per_bit,
         source_hash,
         reference_hash,
@@ -6405,6 +6414,9 @@ mod tests {
                     fullpel_mv: Mv::ZERO,
                     final_mv: Mv::ZERO,
                     ref_mv: Mv::ZERO,
+                    near_mv: Mv::ZERO,
+                    sb_pred_mv: None,
+                    mv_pred_mv: Mv::ZERO,
                     error_per_bit: error_per_bit(80, params.frame_kind),
                     source_hash: 0,
                     reference_hash: 0,
