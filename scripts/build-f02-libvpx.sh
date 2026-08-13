@@ -52,7 +52,7 @@ CFLAGS="-O3 -fomit-frame-pointer" \
 
 jobs="$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
 make -j"$jobs" target=libs libvpx.a
-make -j"$jobs" target=examples vpxenc vp9_spatial_svc_encoder
+make -j"$jobs" target=examples vpxenc examples/vp9_spatial_svc_encoder
 
 echo "F.0.2 oracle vpxenc: $build_dir/vpxenc"
 echo "F.0.2 spatial oracle: $build_dir/examples/vp9_spatial_svc_encoder"

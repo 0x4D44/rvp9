@@ -4,7 +4,8 @@
 # Adds output-only instrumentation to `vp9_pick_inter_mode`, gated by
 # `VPX_F02_ORACLE_OUT`. It emits the shared JSONL schema declared in
 # `crates/rvp9-encoder/src/f02_oracle.rs`, including live LAST-reference
-# candidate costs in `[ZERO, NEAREST, NEAR, NEW]` order. The independent
+# candidate costs in `[ZERO, NEAREST, NEAR, NEW]` order and fresh NEWMV
+# search start/full-pel/final stages. The independent
 # `VPX_F02_MODEL_ORACLE_OUT` path captures a bounded sample of exact inputs
 # and outputs for the regular luma model-RD function.
 # `VPX_F02_BLOCK_YRD_ORACLE_OUT` captures bounded, non-skippable per-tile
@@ -17,301 +18,6 @@
 # Apply from `third_party/libvpx`:
 #   git apply ../../third_party/libvpx-patches/f02_oracle.patch
 #
-diff --git a/vp9/encoder/vp9_pickmode.c b/vp9/encoder/vp9_pickmode.c
-index 6f2524b36..357fe98b9 100644
---- a/vp9/encoder/vp9_pickmode.c
-+++ b/vp9/encoder/vp9_pickmode.c
-@@ -12,2 +12,3 @@
- #include <limits.h>
-+#include <stdlib.h>
- #include <math.h>
-@@ -1748,2 +1749,23 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
-   unsigned int best_sse_sofar = UINT_MAX;
-+  unsigned int best_pred_sse_f02 = UINT_MAX;
-+  unsigned int best_model_var_f02 = UINT_MAX;
-+  int best_luma_rate_f02 = 0;
-+  int64_t best_luma_dist_f02 = 0;
-+  int best_uv_rate_f02 = 0;
-+  int64_t best_uv_dist_f02 = 0;
-+  int current_luma_rate_f02 = 0;
-+  int64_t current_luma_dist_f02 = 0;
-+  int current_uv_rate_f02 = 0;
-+  int64_t current_uv_dist_f02 = 0;
-+  int candidate_available_f02[4] = { 0 };
-+  int candidate_mv_row_f02[4] = { 0 };
-+  int candidate_mv_col_f02[4] = { 0 };
-+  int candidate_rate_f02[4] = { 0 };
-+  int64_t candidate_dist_f02[4] = { 0 };
-+  int64_t candidate_rd_f02[4] = { 0 };
-+  int candidate_luma_rate_f02[4] = { 0 };
-+  int64_t candidate_luma_dist_f02[4] = { 0 };
-+  int candidate_uv_rate_f02[4] = { 0 };
-+  int64_t candidate_uv_dist_f02[4] = { 0 };
-+  int candidate_skip_f02[4] = { 0 };
-   int gf_temporal_ref = 0;
-@@ -2350,2 +2372,4 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
-                 VPXMIN(mi->tx_size, TX_16X16), rd_computed, 0);
-+      current_luma_rate_f02 = this_rdc.rate;
-+      current_luma_dist_f02 = this_rdc.dist;
-       x->skip_txfm[0] = is_skippable;
-@@ -2374,4 +2398,9 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
-       this_rdc.rate += vp9_cost_bit(vp9_get_skip_prob(cm, xd), 1);
-     }
--
-+    if (this_early_term) {
-+      current_luma_rate_f02 = this_rdc.rate;
-+      current_luma_dist_f02 = this_rdc.dist;
-+    }
-+    current_uv_rate_f02 = 0;
-+    current_uv_dist_f02 = 0;
-     if (!this_early_term &&
-@@ -2389,2 +2419,4 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
-       model_rd_for_sb_uv(cpi, uv_bsize, x, xd, &rdc_uv, &var_y, &sse_y, 1, 2);
-+      current_uv_rate_f02 = rdc_uv.rate;
-+      current_uv_dist_f02 = rdc_uv.dist;
-       this_rdc.rate += rdc_uv.rate;
-@@ -2445,3 +2477,27 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
- #endif
--
-+    if (ref_frame == LAST_FRAME && second_ref_frame == NO_REF_FRAME) {
-+      int candidate_idx_f02 = -1;
-+      if (this_mode == ZEROMV) candidate_idx_f02 = 0;
-+      if (this_mode == NEARESTMV) candidate_idx_f02 = 1;
-+      if (this_mode == NEARMV) candidate_idx_f02 = 2;
-+      if (this_mode == NEWMV) candidate_idx_f02 = 3;
-+      if (candidate_idx_f02 >= 0) {
-+        candidate_available_f02[candidate_idx_f02] = 1;
-+        candidate_mv_row_f02[candidate_idx_f02] = mi->mv[0].as_mv.row;
-+        candidate_mv_col_f02[candidate_idx_f02] = mi->mv[0].as_mv.col;
-+        candidate_rate_f02[candidate_idx_f02] = this_rdc.rate;
-+        candidate_dist_f02[candidate_idx_f02] = this_rdc.dist;
-+        candidate_rd_f02[candidate_idx_f02] = this_rdc.rdcost;
-+        candidate_luma_rate_f02[candidate_idx_f02] =
-+            current_luma_rate_f02;
-+        candidate_luma_dist_f02[candidate_idx_f02] =
-+            current_luma_dist_f02;
-+        candidate_uv_rate_f02[candidate_idx_f02] = current_uv_rate_f02;
-+        candidate_uv_dist_f02[candidate_idx_f02] = current_uv_dist_f02;
-+        candidate_skip_f02[candidate_idx_f02] =
-+            x->skip_txfm[0] == SKIP_TXFM_AC_ONLY
-+                ? 1
-+                : (x->skip_txfm[0] == SKIP_TXFM_AC_DC ? 2 : 0);
-+      }
-+    }
-     mode_checked[this_mode][ref_frame] = 1;
-@@ -2450,2 +2507,8 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
-       best_rdc = this_rdc;
-+      best_pred_sse_f02 = sse_y;
-+      best_model_var_f02 = var_y;
-+      best_luma_rate_f02 = current_luma_rate_f02;
-+      best_luma_dist_f02 = current_luma_dist_f02;
-+      best_uv_rate_f02 = current_uv_rate_f02;
-+      best_uv_dist_f02 = current_uv_dist_f02;
-       best_early_term = this_early_term;
-@@ -2627,2 +2690,6 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
-         best_rdc = this_rdc;
-+        best_luma_rate_f02 = 0;
-+        best_luma_dist_f02 = 0;
-+        best_uv_rate_f02 = 0;
-+        best_uv_dist_f02 = 0;
-         best_pickmode.best_mode = this_mode;
-@@ -2741,2 +2808,196 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
-   *rd_cost = best_rdc;
-+
-+  /* F.0.2 ORACLE BEGIN — additive instrumentation only; no behaviour
-+   * change. Emits one JSONL line per coded block to the file named in
-+   * `VPX_F02_ORACLE_OUT`. Off-by-default; when the env var is unset
-+   * the patched binary is byte-identical to stock. See
-+   * `wrk_docs/Track_F/F0.2_HLD_per_block_oracle.md` §3.3 for the full
-+   * design rationale. */
-+  {
-+    static FILE *vpx_f02_fp = NULL;
-+    static int vpx_f02_state = 0; /* 0=not-tried, 1=open-ok, 2=open-failed */
-+    static const char *const vpx_f02_bsize_tag[BLOCK_SIZES] = {
-+      "4x4",   "4x8",   "8x4",   "8x8",   "8x16",  "16x8",  "16x16",
-+      "16x32", "32x16", "32x32", "32x64", "64x32", "64x64"
-+    };
-+    static const char *const vpx_f02_tx_size_tag[TX_SIZES] = {
-+      "4x4", "8x8", "16x16", "32x32"
-+    };
-+    static const char *const vpx_f02_mode_tag[MB_MODE_COUNT] = {
-+      "DC", "V", "H", "D45", "D135", "D117", "D153", "D207", "D63", "TM",
-+      "NEARESTMV", "NEARMV", "ZEROMV", "NEWMV"
-+    };
-+    if (vpx_f02_state == 0) {
-+      const char *out_path = getenv("VPX_F02_ORACLE_OUT");
-+      if (out_path != NULL && out_path[0] != '\0') {
-+        vpx_f02_fp = fopen(out_path, "w");
-+        if (vpx_f02_fp != NULL) {
-+          /* HLD §3.3 revision 6: line-buffered output so per-block
-+           * writes land atomically on Windows stdio (default _IOFBF
-+           * partial-flush interleaves when the harness drains stderr
-+           * concurrently). */
-+          setvbuf(vpx_f02_fp, NULL, _IOLBF, 0);
-+          vpx_f02_state = 1;
-+        } else {
-+          vpx_f02_state = 2;
-+        }
-+      } else {
-+        vpx_f02_state = 2; /* env not set — disabled for this run */
-+      }
-+    }
-+    if (vpx_f02_state == 1 && vpx_f02_fp != NULL) {
-+      const char *bsize_str = (bsize < BLOCK_SIZES)
-+                                  ? vpx_f02_bsize_tag[bsize] : "?";
-+      PREDICTION_MODE picked_mode = mi->mode;
-+      const char *mode_str = (picked_mode < MB_MODE_COUNT)
-+                                 ? vpx_f02_mode_tag[picked_mode] : "?";
-+      MV_REFERENCE_FRAME picked_ref = mi->ref_frame[0];
-+      const char *ref_str;
-+      switch (picked_ref) {
-+        case INTRA_FRAME: ref_str = "INTRA"; break;
-+        case LAST_FRAME:  ref_str = "LAST"; break;
-+        case GOLDEN_FRAME:ref_str = "GOLDEN"; break;
-+        case ALTREF_FRAME:ref_str = "ALTREF"; break;
-+        default: ref_str = "NONE"; break;
-+      }
-+      const char *filter_str = "NONE";
-+      if (picked_ref != INTRA_FRAME) {
-+        switch (mi->interp_filter) {
-+          case EIGHTTAP: filter_str = "EIGHTTAP"; break;
-+          case EIGHTTAP_SMOOTH: filter_str = "EIGHTTAP_SMOOTH"; break;
-+          case EIGHTTAP_SHARP: filter_str = "EIGHTTAP_SHARP"; break;
-+          case BILINEAR: filter_str = "BILINEAR"; break;
-+          default: filter_str = "NONE"; break;
-+        }
-+      }
-+      int mv_row = (picked_ref == INTRA_FRAME) ? 0
-+                                               : (int)mi->mv[0].as_mv.row;
-+      int mv_col = (picked_ref == INTRA_FRAME) ? 0
-+                                               : (int)mi->mv[0].as_mv.col;
-+      int mode_bits_est = picked_ref == INTRA_FRAME
-+                               ? 0
-+                               : cpi->inter_mode_cost
-+                                     [x->mbmi_ext->mode_context[picked_ref]]
-+                                     [INTER_OFFSET(picked_mode)];
-+      int mv_bits_est = 0;
-+      if (picked_ref != INTRA_FRAME && picked_mode == NEWMV) {
-+        mv_bits_est = vp9_mv_bit_cost(
-+            &mi->mv[0].as_mv, &x->mbmi_ext->ref_mvs[picked_ref][0].as_mv,
-+            x->nmvjointcost, x->mvcost, MV_COST_WEIGHT);
-+      }
-+      int ref_bits_est =
-+          picked_ref == INTRA_FRAME ? 0 : ref_frame_cost[picked_ref];
-+      int filter_bits_est =
-+          picked_ref != INTRA_FRAME && cm->interp_filter == SWITCHABLE &&
-+                  ((mi->mv[0].as_mv.row | mi->mv[0].as_mv.col) & 0x07)
-+              ? vp9_get_switchable_rate(cpi, xd)
-+              : 0;
-+      int skip_bits_est =
-+          picked_ref == INTRA_FRAME
-+              ? 0
-+              : vp9_cost_bit(vp9_get_skip_prob(cm, xd),
-+                             x->skip_txfm[0] != SKIP_TXFM_NONE);
-+      /* Winning candidate's pre-quant source-vs-prediction SSE. */
-+      unsigned long long sse_after_pred =
-+          picked_ref == INTRA_FRAME ? 0 : (unsigned long long)best_pred_sse_f02;
-+      int skip_flag = mi->skip;
-+      const char *tx_size_str = (mi->tx_size < TX_SIZES)
-+                                    ? vpx_f02_tx_size_tag[mi->tx_size] : "?";
-+      int luma_eob_nonzero =
-+          !skip_flag && x->skip_txfm[0] == SKIP_TXFM_NONE;
-+      int intra_inter_ctx_f02 = get_intra_inter_context(xd);
-+      int single_ref_p1_ctx_f02 =
-+          vp9_get_pred_context_single_ref_p1(xd);
-+      int single_ref_p2_ctx_f02 =
-+          vp9_get_pred_context_single_ref_p2(xd);
-+      int intra_inter_prob_f02 =
-+          cm->fc->intra_inter_prob[intra_inter_ctx_f02];
-+      int single_ref_p1_prob_f02 =
-+          cm->fc->single_ref_prob[single_ref_p1_ctx_f02][0];
-+      int single_ref_p2_prob_f02 =
-+          cm->fc->single_ref_prob[single_ref_p2_ctx_f02][1];
-+      /* Spatial SVC advances `current_video_frame` for every coded
-+       * component. `current_superframe` is the presentation-order index. */
-+      unsigned int frame_idx =
-+          cpi->use_svc ? (unsigned int)cpi->svc.current_superframe
-+                       : (unsigned int)cm->current_video_frame;
-+      char last_candidates_f02[1024];
-+      size_t candidate_offset_f02 = 0;
-+      int candidate_idx_f02;
-+      for (candidate_idx_f02 = 0; candidate_idx_f02 < 4;
-+           ++candidate_idx_f02) {
-+        candidate_offset_f02 += snprintf(
-+            last_candidates_f02 + candidate_offset_f02,
-+            sizeof(last_candidates_f02) - candidate_offset_f02,
-+            "%s%d:%d:%d:%d:%lld:%lld:%d:%lld:%d:%lld:%d",
-+            candidate_idx_f02 ? "|" : "",
-+            candidate_available_f02[candidate_idx_f02],
-+            candidate_mv_row_f02[candidate_idx_f02],
-+            candidate_mv_col_f02[candidate_idx_f02],
-+            candidate_rate_f02[candidate_idx_f02],
-+            (long long)candidate_dist_f02[candidate_idx_f02],
-+            (long long)candidate_rd_f02[candidate_idx_f02],
-+            candidate_luma_rate_f02[candidate_idx_f02],
-+            (long long)candidate_luma_dist_f02[candidate_idx_f02],
-+            candidate_uv_rate_f02[candidate_idx_f02],
-+            (long long)candidate_uv_dist_f02[candidate_idx_f02],
-+            candidate_skip_f02[candidate_idx_f02]);
-+      }
-+      fprintf(vpx_f02_fp,
-+              "{\"frame_idx\":%u,\"spatial_id\":%d,\"mi_row\":%d,\"mi_col\":%d,"
-+              "\"bsize\":\"%s\",\"mode\":\"%s\",\"ref_frame\":\"%s\","
-+              "\"mv_row\":%d,\"mv_col\":%d,"
-+              "\"mode_bits_est\":%d,\"mv_bits_est\":%d,"
-+              "\"ref_bits_est\":%d,\"filter_bits_est\":%d,"
-+              "\"skip_bits_est\":%d,\"coef_bits_est\":0,"
-+              "\"picker_rate\":%d,\"picker_dist\":%lld,"
-+              "\"picker_rd_cost\":%lld,\"model_var_y\":%u,"
-+              "\"model_tx_size\":\"%s\",\"model_skip_txfm\":%d,"
-+              "\"luma_coef_rate\":%d,\"luma_coef_dist\":%lld,"
-+              "\"uv_model_rate\":%d,\"uv_model_dist\":%lld,"
-+              "\"uv_u_sensitive\":%s,\"uv_v_sensitive\":%s,"
-+              "\"partition_u_sensitive\":%s,\"partition_v_sensitive\":%s,"
-+              "\"last_candidates\":\"%s\","
-+              "\"sse_after_pred\":%llu,\"interp_filter\":\"%s\","
-+              "\"skip_flag\":%s,\"q_index\":%d,\"tx_size\":\"%s\","
-+              "\"luma_eob_nonzero\":%s,"
-+              "\"intra_inter_ctx\":%d,\"single_ref_p1_ctx\":%d,"
-+              "\"single_ref_p2_ctx\":%d,\"intra_inter_prob\":%d,"
-+              "\"single_ref_p1_prob\":%d,\"single_ref_p2_prob\":%d,"
-+              "\"ref_cost_intra\":%d,\"ref_cost_last\":%d,"
-+              "\"ref_cost_golden\":%d,\"ref_cost_altref\":%d}\n",
-+              frame_idx, cpi->use_svc ? cpi->svc.spatial_layer_id : 0,
-+              mi_row, mi_col,
-+              bsize_str, mode_str, ref_str,
-+              mv_row, mv_col,
-+              mode_bits_est, mv_bits_est, ref_bits_est, filter_bits_est,
-+              skip_bits_est,
-+              best_rdc.rate, (long long)best_rdc.dist,
-+              (long long)best_rdc.rdcost,
-+              picked_ref == INTRA_FRAME ? 0 : best_model_var_f02,
-+              tx_size_str,
-+              x->skip_txfm[0] == SKIP_TXFM_AC_ONLY
-+                  ? 1
-+                  : (x->skip_txfm[0] == SKIP_TXFM_AC_DC ? 2 : 0),
-+              best_luma_rate_f02, (long long)best_luma_dist_f02,
-+              best_uv_rate_f02, (long long)best_uv_dist_f02,
-+              x->color_sensitivity[0] ? "true" : "false",
-+              x->color_sensitivity[1] ? "true" : "false",
-+              x->color_sensitivity[0] ? "true" : "false",
-+              x->color_sensitivity[1] ? "true" : "false",
-+              last_candidates_f02,
-+              sse_after_pred,
-+              filter_str,
-+              skip_flag ? "true" : "false",
-+              x->q_index,
-+              tx_size_str,
-+              luma_eob_nonzero ? "true" : "false",
-+              intra_inter_ctx_f02, single_ref_p1_ctx_f02,
-+              single_ref_p2_ctx_f02, intra_inter_prob_f02,
-+              single_ref_p1_prob_f02, single_ref_p2_prob_f02,
-+              ref_frame_cost[INTRA_FRAME], ref_frame_cost[LAST_FRAME],
-+              ref_frame_cost[GOLDEN_FRAME], ref_frame_cost[ALTREF_FRAME]);
-+    }
-+  }
-+  /* F.0.2 ORACLE END */
- }
 diff --git a/examples/svc_encodeframe.c b/examples/svc_encodeframe.c
 index 1dd731765..a48f8d570 100644
 --- a/examples/svc_encodeframe.c
@@ -327,10 +33,58 @@ index 1dd731765..a48f8d570 100644
          si->svc_params.min_quantizers[i] = enc_cfg->rc_min_quantizer;
        }
 diff --git a/vp9/encoder/vp9_pickmode.c b/vp9/encoder/vp9_pickmode.c
-index 357fe98b9..424961a6a 100644
+index 6f2524b36..e75db7528 100644
 --- a/vp9/encoder/vp9_pickmode.c
 +++ b/vp9/encoder/vp9_pickmode.c
-@@ -430,3 +430,78 @@ static void model_rd_for_sb_y_large(VP9_COMP *cpi, BLOCK_SIZE bsize,
+@@ -10,6 +10,7 @@
+
+ #include <assert.h>
+ #include <limits.h>
++#include <stdlib.h>
+ #include <math.h>
+ #include <stdio.h>
+
+@@ -154,7 +155,9 @@ Done:
+ static int combined_motion_search(VP9_COMP *cpi, MACROBLOCK *x,
+                                   BLOCK_SIZE bsize, int mi_row, int mi_col,
+                                   int_mv *tmp_mv, int *rate_mv,
+-                                  int64_t best_rd_sofar, int use_base_mv) {
++                                  int64_t best_rd_sofar, int use_base_mv,
++                                  MV *search_start_f02, MV *fullpel_f02,
++                                  MV *final_f02) {
+   MACROBLOCKD *xd = &x->e_mbd;
+   MODE_INFO *mi = xd->mi[0];
+   struct buf_2d backup_yv12[MAX_MB_PLANE] = { { 0, 0 } };
+@@ -198,6 +201,8 @@ static int combined_motion_search(VP9_COMP *cpi, MACROBLOCK *x,
+
+   mvp_full.col >>= 3;
+   mvp_full.row >>= 3;
++  search_start_f02->row = mvp_full.row * 8;
++  search_start_f02->col = mvp_full.col * 8;
+
+   if (!use_base_mv)
+     center_mv = ref_mv;
+@@ -218,6 +223,8 @@ static int combined_motion_search(VP9_COMP *cpi, MACROBLOCK *x,
+   // calculate the bit cost on motion vector
+   mvp_full.row = tmp_mv->as_mv.row * 8;
+   mvp_full.col = tmp_mv->as_mv.col * 8;
++  *fullpel_f02 = mvp_full;
++  *final_f02 = mvp_full;
+
+   *rate_mv = vp9_mv_bit_cost(&mvp_full, &ref_mv, x->nmvjointcost, x->mvcost,
+                              MV_COST_WEIGHT);
+@@ -251,6 +258,7 @@ static int combined_motion_search(VP9_COMP *cpi, MACROBLOCK *x,
+         cpi->sf.use_accurate_subpel_search);
+     *rate_mv = vp9_mv_bit_cost(&tmp_mv->as_mv, &ref_mv, x->nmvjointcost,
+                                x->mvcost, MV_COST_WEIGHT);
++    *final_f02 = tmp_mv->as_mv;
+   }
+
+   if (scaled_ref_frame) {
+@@ -426,6 +434,81 @@ static void compute_intra_yprediction(PREDICTION_MODE mode, BLOCK_SIZE bsize,
+   pd->dst.buf = dst_buf_base;
+ }
+
 +static void f02_model_rd_oracle(VP9_COMP *cpi, BLOCK_SIZE bsize,
 +                                MACROBLOCK *x, MACROBLOCKD *xd, int rate,
 +                                int64_t dist, unsigned int var,
@@ -409,7 +163,7 @@ index 357fe98b9..424961a6a 100644
  static void model_rd_for_sb_y_large(VP9_COMP *cpi, BLOCK_SIZE bsize,
                                      MACROBLOCK *x, MACROBLOCKD *xd,
                                      int *out_rate_sum, int64_t *out_dist_sum,
-@@ -683,5 +758,7 @@ static void model_rd_for_sb_y(VP9_COMP *cpi, BLOCK_SIZE bsize, MACROBLOCK *x,
+@@ -682,6 +765,8 @@ static void model_rd_for_sb_y(VP9_COMP *cpi, BLOCK_SIZE bsize, MACROBLOCK *x,
    if (x->skip_txfm[0] == SKIP_TXFM_AC_DC) {
      *out_rate_sum = 0;
      *out_dist_sum = sse << 4;
@@ -417,17 +171,15 @@ index 357fe98b9..424961a6a 100644
 +                        sse, is_intra);
      return;
    }
-@@ -715,3 +792,5 @@ static void model_rd_for_sb_y(VP9_COMP *cpi, BLOCK_SIZE bsize, MACROBLOCK *x,
+
+@@ -713,6 +798,133 @@ static void model_rd_for_sb_y(VP9_COMP *cpi, BLOCK_SIZE bsize, MACROBLOCK *x,
+
    *out_rate_sum += rate;
    *out_dist_sum += dist << 4;
 +  f02_model_rd_oracle(cpi, bsize, x, xd, *out_rate_sum, *out_dist_sum, var,
 +                      sse, is_intra);
- }
-diff --git a/vp9/encoder/vp9_pickmode.c b/vp9/encoder/vp9_pickmode.c
-index 3d381166b..65ff1942d 100644
---- a/vp9/encoder/vp9_pickmode.c
-+++ b/vp9/encoder/vp9_pickmode.c
-@@ -798,3 +798,128 @@ static void model_rd_for_sb_y(VP9_COMP *cpi, BLOCK_SIZE bsize, MACROBLOCK *x,
++}
++
 +static void f02_block_yrd_oracle(VP9_COMP *cpi, MACROBLOCK *x,
 +                                 BLOCK_SIZE bsize, TX_SIZE tx_size,
 +                                 const RD_COST *rdc, int skippable) {
@@ -551,14 +303,411 @@ index 3d381166b..65ff1942d 100644
 +  }
 +  fprintf(fp, "]}\n");
 +  ++count;
-+}
-+
+ }
+
  static void block_yrd(VP9_COMP *cpi, MACROBLOCK *x, RD_COST *this_rdc,
-                       int *skippable, int64_t *sse, BLOCK_SIZE bsize,
-                       TX_SIZE tx_size, int rd_computed, int is_intra) {
-@@ -921,4 +1046,5 @@ static void block_yrd(VP9_COMP *cpi, MACROBLOCK *x, RD_COST *this_rdc,
+@@ -841,6 +1053,7 @@ static void block_yrd(VP9_COMP *cpi, MACROBLOCK *x, RD_COST *this_rdc,
    // If skippable is set, rate gets clobbered later.
    this_rdc->rate <<= (2 + VP9_PROB_COST_SHIFT);
    this_rdc->rate += (eob_cost << VP9_PROB_COST_SHIFT);
 +  f02_block_yrd_oracle(cpi, x, bsize, tx_size, this_rdc, *skippable);
  }
+
+ static void model_rd_for_sb_uv(VP9_COMP *cpi, BLOCK_SIZE plane_bsize,
+@@ -1577,7 +1790,9 @@ static int search_new_mv(VP9_COMP *cpi, MACROBLOCK *x,
+                          MV_REFERENCE_FRAME ref_frame, int gf_temporal_ref,
+                          BLOCK_SIZE bsize, int mi_row, int mi_col,
+                          int best_pred_sad, int *rate_mv,
+-                         unsigned int best_sse_sofar, RD_COST *best_rdc) {
++                         unsigned int best_sse_sofar, RD_COST *best_rdc,
++                         MV *search_start_f02, MV *fullpel_f02,
++                         MV *final_f02) {
+   SVC *const svc = &cpi->svc;
+   MACROBLOCKD *const xd = &x->e_mbd;
+   MODE_INFO *const mi = xd->mi[0];
+@@ -1649,22 +1864,26 @@ static int search_new_mv(VP9_COMP *cpi, MACROBLOCK *x,
+           return -1;
+         if (!combined_motion_search(cpi, x, bsize, mi_row, mi_col,
+                                     &frame_mv[NEWMV][ref_frame], rate_mv,
+-                                    best_rdc->rdcost, 1)) {
++                                    best_rdc->rdcost, 1, search_start_f02,
++                                    fullpel_f02, final_f02)) {
+           return -1;
+         }
+       } else if (!combined_motion_search(cpi, x, bsize, mi_row, mi_col,
+                                          &frame_mv[NEWMV][ref_frame], rate_mv,
+-                                         best_rdc->rdcost, 0)) {
++                                         best_rdc->rdcost, 0, search_start_f02,
++                                         fullpel_f02, final_f02)) {
+         return -1;
+       }
+     } else if (!combined_motion_search(cpi, x, bsize, mi_row, mi_col,
+                                        &frame_mv[NEWMV][ref_frame], rate_mv,
+-                                       best_rdc->rdcost, 0)) {
++                                       best_rdc->rdcost, 0, search_start_f02,
++                                       fullpel_f02, final_f02)) {
+       return -1;
+     }
+   } else if (!combined_motion_search(cpi, x, bsize, mi_row, mi_col,
+                                      &frame_mv[NEWMV][ref_frame], rate_mv,
+-                                     best_rdc->rdcost, 0)) {
++                                     best_rdc->rdcost, 0, search_start_f02,
++                                     fullpel_f02, final_f02)) {
+     return -1;
+   }
+
+@@ -1746,6 +1965,30 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
+   int skip_ref_find_pred[4] = { 0 };
+   unsigned int sse_zeromv_normalized = UINT_MAX;
+   unsigned int best_sse_sofar = UINT_MAX;
++  unsigned int best_pred_sse_f02 = UINT_MAX;
++  unsigned int best_model_var_f02 = UINT_MAX;
++  int best_luma_rate_f02 = 0;
++  int64_t best_luma_dist_f02 = 0;
++  int best_uv_rate_f02 = 0;
++  int64_t best_uv_dist_f02 = 0;
++  int current_luma_rate_f02 = 0;
++  int64_t current_luma_dist_f02 = 0;
++  int current_uv_rate_f02 = 0;
++  int64_t current_uv_dist_f02 = 0;
++  int candidate_available_f02[4] = { 0 };
++  int candidate_mv_row_f02[4] = { 0 };
++  int candidate_mv_col_f02[4] = { 0 };
++  int candidate_rate_f02[4] = { 0 };
++  int64_t candidate_dist_f02[4] = { 0 };
++  int64_t candidate_rd_f02[4] = { 0 };
++  int candidate_luma_rate_f02[4] = { 0 };
++  int64_t candidate_luma_dist_f02[4] = { 0 };
++  int candidate_uv_rate_f02[4] = { 0 };
++  int64_t candidate_uv_dist_f02[4] = { 0 };
++  int candidate_skip_f02[4] = { 0 };
++  MV last_newmv_start_f02 = { INT16_MIN, INT16_MIN };
++  MV last_newmv_fullpel_f02 = { INT16_MIN, INT16_MIN };
++  MV last_newmv_final_f02 = { INT16_MIN, INT16_MIN };
+   int gf_temporal_ref = 0;
+   int force_test_gf_zeromv = 0;
+ #if CONFIG_VP9_TEMPORAL_DENOISING
+@@ -2246,9 +2489,20 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
+       if (frame_mv[this_mode][ref_frame].as_int != 0) continue;
+
+     if (this_mode == NEWMV && !force_mv_inter_layer) {
++      MV ignored_start_f02 = { INT16_MIN, INT16_MIN };
++      MV ignored_fullpel_f02 = { INT16_MIN, INT16_MIN };
++      MV ignored_final_f02 = { INT16_MIN, INT16_MIN };
++      MV *search_start_f02 = ref_frame == LAST_FRAME
++                                 ? &last_newmv_start_f02
++                                 : &ignored_start_f02;
++      MV *fullpel_f02 = ref_frame == LAST_FRAME
++                            ? &last_newmv_fullpel_f02
++                            : &ignored_fullpel_f02;
++      MV *final_f02 = ref_frame == LAST_FRAME ? &last_newmv_final_f02
++                                               : &ignored_final_f02;
+       if (search_new_mv(cpi, x, frame_mv, ref_frame, gf_temporal_ref, bsize,
+                         mi_row, mi_col, best_pred_sad, &rate_mv, best_sse_sofar,
+-                        &best_rdc))
++                        &best_rdc, search_start_f02, fullpel_f02, final_f02))
+         continue;
+     }
+
+@@ -2348,6 +2602,8 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
+       this_sse = (int64_t)sse_y;
+       block_yrd(cpi, x, &this_rdc, &is_skippable, &this_sse, bsize,
+                 VPXMIN(mi->tx_size, TX_16X16), rd_computed, 0);
++      current_luma_rate_f02 = this_rdc.rate;
++      current_luma_dist_f02 = this_rdc.dist;
+       x->skip_txfm[0] = is_skippable;
+       if (is_skippable) {
+         this_rdc.rate = vp9_cost_bit(vp9_get_skip_prob(cm, xd), 1);
+@@ -2373,7 +2629,12 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
+       }
+       this_rdc.rate += vp9_cost_bit(vp9_get_skip_prob(cm, xd), 1);
+     }
+-
++    if (this_early_term) {
++      current_luma_rate_f02 = this_rdc.rate;
++      current_luma_dist_f02 = this_rdc.dist;
++    }
++    current_uv_rate_f02 = 0;
++    current_uv_dist_f02 = 0;
+     if (!this_early_term &&
+         (x->color_sensitivity[0] || x->color_sensitivity[1])) {
+       RD_COST rdc_uv;
+@@ -2387,6 +2648,8 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
+         flag_preduv_computed[1] = 1;
+       }
+       model_rd_for_sb_uv(cpi, uv_bsize, x, xd, &rdc_uv, &var_y, &sse_y, 1, 2);
++      current_uv_rate_f02 = rdc_uv.rate;
++      current_uv_dist_f02 = rdc_uv.dist;
+       this_rdc.rate += rdc_uv.rate;
+       this_rdc.dist += rdc_uv.dist;
+     }
+@@ -2443,11 +2706,41 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
+ #else
+     (void)ctx;
+ #endif
+-
++    if (ref_frame == LAST_FRAME && second_ref_frame == NO_REF_FRAME) {
++      int candidate_idx_f02 = -1;
++      if (this_mode == ZEROMV) candidate_idx_f02 = 0;
++      if (this_mode == NEARESTMV) candidate_idx_f02 = 1;
++      if (this_mode == NEARMV) candidate_idx_f02 = 2;
++      if (this_mode == NEWMV) candidate_idx_f02 = 3;
++      if (candidate_idx_f02 >= 0) {
++        candidate_available_f02[candidate_idx_f02] = 1;
++        candidate_mv_row_f02[candidate_idx_f02] = mi->mv[0].as_mv.row;
++        candidate_mv_col_f02[candidate_idx_f02] = mi->mv[0].as_mv.col;
++        candidate_rate_f02[candidate_idx_f02] = this_rdc.rate;
++        candidate_dist_f02[candidate_idx_f02] = this_rdc.dist;
++        candidate_rd_f02[candidate_idx_f02] = this_rdc.rdcost;
++        candidate_luma_rate_f02[candidate_idx_f02] =
++            current_luma_rate_f02;
++        candidate_luma_dist_f02[candidate_idx_f02] =
++            current_luma_dist_f02;
++        candidate_uv_rate_f02[candidate_idx_f02] = current_uv_rate_f02;
++        candidate_uv_dist_f02[candidate_idx_f02] = current_uv_dist_f02;
++        candidate_skip_f02[candidate_idx_f02] =
++            x->skip_txfm[0] == SKIP_TXFM_AC_ONLY
++                ? 1
++                : (x->skip_txfm[0] == SKIP_TXFM_AC_DC ? 2 : 0);
++      }
++    }
+     mode_checked[this_mode][ref_frame] = 1;
+
+     if (this_rdc.rdcost < best_rdc.rdcost || x->skip) {
+       best_rdc = this_rdc;
++      best_pred_sse_f02 = sse_y;
++      best_model_var_f02 = var_y;
++      best_luma_rate_f02 = current_luma_rate_f02;
++      best_luma_dist_f02 = current_luma_dist_f02;
++      best_uv_rate_f02 = current_uv_rate_f02;
++      best_uv_dist_f02 = current_uv_dist_f02;
+       best_early_term = this_early_term;
+       best_pickmode.best_mode = this_mode;
+       best_pickmode.best_pred_filter = mi->interp_filter;
+@@ -2625,6 +2918,10 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
+
+       if (this_rdc.rdcost < best_rdc.rdcost) {
+         best_rdc = this_rdc;
++        best_luma_rate_f02 = 0;
++        best_luma_dist_f02 = 0;
++        best_uv_rate_f02 = 0;
++        best_uv_dist_f02 = 0;
+         best_pickmode.best_mode = this_mode;
+         best_pickmode.best_intra_tx_size = mi->tx_size;
+         best_pickmode.best_ref_frame = INTRA_FRAME;
+@@ -2739,6 +3036,215 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
+   }
+
+   *rd_cost = best_rdc;
++
++  /* F.0.2 ORACLE BEGIN — additive instrumentation only; no behaviour
++   * change. Emits one JSONL line per coded block to the file named in
++   * `VPX_F02_ORACLE_OUT`. Off-by-default; when the env var is unset
++   * the patched binary is byte-identical to stock. See
++   * `wrk_docs/Track_F/F0.2_HLD_per_block_oracle.md` §3.3 for the full
++   * design rationale. */
++  {
++    static FILE *vpx_f02_fp = NULL;
++    static int vpx_f02_state = 0; /* 0=not-tried, 1=open-ok, 2=open-failed */
++    static const char *const vpx_f02_bsize_tag[BLOCK_SIZES] = {
++      "4x4",   "4x8",   "8x4",   "8x8",   "8x16",  "16x8",  "16x16",
++      "16x32", "32x16", "32x32", "32x64", "64x32", "64x64"
++    };
++    static const char *const vpx_f02_tx_size_tag[TX_SIZES] = {
++      "4x4", "8x8", "16x16", "32x32"
++    };
++    static const char *const vpx_f02_mode_tag[MB_MODE_COUNT] = {
++      "DC", "V", "H", "D45", "D135", "D117", "D153", "D207", "D63", "TM",
++      "NEARESTMV", "NEARMV", "ZEROMV", "NEWMV"
++    };
++    if (vpx_f02_state == 0) {
++      const char *out_path = getenv("VPX_F02_ORACLE_OUT");
++      if (out_path != NULL && out_path[0] != '\0') {
++        vpx_f02_fp = fopen(out_path, "w");
++        if (vpx_f02_fp != NULL) {
++          /* HLD §3.3 revision 6: line-buffered output so per-block
++           * writes land atomically on Windows stdio (default _IOFBF
++           * partial-flush interleaves when the harness drains stderr
++           * concurrently). */
++          setvbuf(vpx_f02_fp, NULL, _IOLBF, 0);
++          vpx_f02_state = 1;
++        } else {
++          vpx_f02_state = 2;
++        }
++      } else {
++        vpx_f02_state = 2; /* env not set — disabled for this run */
++      }
++    }
++    if (vpx_f02_state == 1 && vpx_f02_fp != NULL) {
++      const char *bsize_str = (bsize < BLOCK_SIZES)
++                                  ? vpx_f02_bsize_tag[bsize] : "?";
++      PREDICTION_MODE picked_mode = mi->mode;
++      const char *mode_str = (picked_mode < MB_MODE_COUNT)
++                                 ? vpx_f02_mode_tag[picked_mode] : "?";
++      MV_REFERENCE_FRAME picked_ref = mi->ref_frame[0];
++      const char *ref_str;
++      switch (picked_ref) {
++        case INTRA_FRAME: ref_str = "INTRA"; break;
++        case LAST_FRAME:  ref_str = "LAST"; break;
++        case GOLDEN_FRAME:ref_str = "GOLDEN"; break;
++        case ALTREF_FRAME:ref_str = "ALTREF"; break;
++        default: ref_str = "NONE"; break;
++      }
++      const char *filter_str = "NONE";
++      if (picked_ref != INTRA_FRAME) {
++        switch (mi->interp_filter) {
++          case EIGHTTAP: filter_str = "EIGHTTAP"; break;
++          case EIGHTTAP_SMOOTH: filter_str = "EIGHTTAP_SMOOTH"; break;
++          case EIGHTTAP_SHARP: filter_str = "EIGHTTAP_SHARP"; break;
++          case BILINEAR: filter_str = "BILINEAR"; break;
++          default: filter_str = "NONE"; break;
++        }
++      }
++      int mv_row = (picked_ref == INTRA_FRAME) ? 0
++                                               : (int)mi->mv[0].as_mv.row;
++      int mv_col = (picked_ref == INTRA_FRAME) ? 0
++                                               : (int)mi->mv[0].as_mv.col;
++      int mode_bits_est = picked_ref == INTRA_FRAME
++                               ? 0
++                               : cpi->inter_mode_cost
++                                     [x->mbmi_ext->mode_context[picked_ref]]
++                                     [INTER_OFFSET(picked_mode)];
++      int mv_bits_est = 0;
++      if (picked_ref != INTRA_FRAME && picked_mode == NEWMV) {
++        mv_bits_est = vp9_mv_bit_cost(
++            &mi->mv[0].as_mv, &x->mbmi_ext->ref_mvs[picked_ref][0].as_mv,
++            x->nmvjointcost, x->mvcost, MV_COST_WEIGHT);
++      }
++      int ref_bits_est =
++          picked_ref == INTRA_FRAME ? 0 : ref_frame_cost[picked_ref];
++      int filter_bits_est =
++          picked_ref != INTRA_FRAME && cm->interp_filter == SWITCHABLE &&
++                  ((mi->mv[0].as_mv.row | mi->mv[0].as_mv.col) & 0x07)
++              ? vp9_get_switchable_rate(cpi, xd)
++              : 0;
++      int skip_bits_est =
++          picked_ref == INTRA_FRAME
++              ? 0
++              : vp9_cost_bit(vp9_get_skip_prob(cm, xd),
++                             x->skip_txfm[0] != SKIP_TXFM_NONE);
++      /* Winning candidate's pre-quant source-vs-prediction SSE. */
++      unsigned long long sse_after_pred =
++          picked_ref == INTRA_FRAME ? 0 : (unsigned long long)best_pred_sse_f02;
++      int skip_flag = mi->skip;
++      const char *tx_size_str = (mi->tx_size < TX_SIZES)
++                                    ? vpx_f02_tx_size_tag[mi->tx_size] : "?";
++      int luma_eob_nonzero =
++          !skip_flag && x->skip_txfm[0] == SKIP_TXFM_NONE;
++      int intra_inter_ctx_f02 = get_intra_inter_context(xd);
++      int single_ref_p1_ctx_f02 =
++          vp9_get_pred_context_single_ref_p1(xd);
++      int single_ref_p2_ctx_f02 =
++          vp9_get_pred_context_single_ref_p2(xd);
++      int intra_inter_prob_f02 =
++          cm->fc->intra_inter_prob[intra_inter_ctx_f02];
++      int single_ref_p1_prob_f02 =
++          cm->fc->single_ref_prob[single_ref_p1_ctx_f02][0];
++      int single_ref_p2_prob_f02 =
++          cm->fc->single_ref_prob[single_ref_p2_ctx_f02][1];
++      /* Spatial SVC advances `current_video_frame` for every coded
++       * component. `current_superframe` is the presentation-order index. */
++      unsigned int frame_idx =
++          cpi->use_svc ? (unsigned int)cpi->svc.current_superframe
++                       : (unsigned int)cm->current_video_frame;
++      char last_candidates_f02[1024];
++      size_t candidate_offset_f02 = 0;
++      int candidate_idx_f02;
++      for (candidate_idx_f02 = 0; candidate_idx_f02 < 4;
++           ++candidate_idx_f02) {
++        int trace_start_row_f02 =
++            candidate_idx_f02 == 3 ? last_newmv_start_f02.row : INT16_MIN;
++        int trace_start_col_f02 =
++            candidate_idx_f02 == 3 ? last_newmv_start_f02.col : INT16_MIN;
++        int trace_fullpel_row_f02 =
++            candidate_idx_f02 == 3 ? last_newmv_fullpel_f02.row : INT16_MIN;
++        int trace_fullpel_col_f02 =
++            candidate_idx_f02 == 3 ? last_newmv_fullpel_f02.col : INT16_MIN;
++        int trace_final_row_f02 =
++            candidate_idx_f02 == 3 ? last_newmv_final_f02.row : INT16_MIN;
++        int trace_final_col_f02 =
++            candidate_idx_f02 == 3 ? last_newmv_final_f02.col : INT16_MIN;
++        candidate_offset_f02 += snprintf(
++            last_candidates_f02 + candidate_offset_f02,
++            sizeof(last_candidates_f02) - candidate_offset_f02,
++            "%s%d:%d:%d:%d:%lld:%lld:%d:%lld:%d:%lld:%d:0:%d:%d:%d:%d:%d:%d",
++            candidate_idx_f02 ? "|" : "",
++            candidate_available_f02[candidate_idx_f02],
++            candidate_mv_row_f02[candidate_idx_f02],
++            candidate_mv_col_f02[candidate_idx_f02],
++            candidate_rate_f02[candidate_idx_f02],
++            (long long)candidate_dist_f02[candidate_idx_f02],
++            (long long)candidate_rd_f02[candidate_idx_f02],
++            candidate_luma_rate_f02[candidate_idx_f02],
++            (long long)candidate_luma_dist_f02[candidate_idx_f02],
++            candidate_uv_rate_f02[candidate_idx_f02],
++            (long long)candidate_uv_dist_f02[candidate_idx_f02],
++            candidate_skip_f02[candidate_idx_f02], trace_start_row_f02,
++            trace_start_col_f02, trace_fullpel_row_f02,
++            trace_fullpel_col_f02, trace_final_row_f02,
++            trace_final_col_f02);
++      }
++      fprintf(vpx_f02_fp,
++              "{\"frame_idx\":%u,\"spatial_id\":%d,\"mi_row\":%d,\"mi_col\":%d,"
++              "\"bsize\":\"%s\",\"mode\":\"%s\",\"ref_frame\":\"%s\","
++              "\"mv_row\":%d,\"mv_col\":%d,"
++              "\"mode_bits_est\":%d,\"mv_bits_est\":%d,"
++              "\"ref_bits_est\":%d,\"filter_bits_est\":%d,"
++              "\"skip_bits_est\":%d,\"coef_bits_est\":0,"
++              "\"picker_rate\":%d,\"picker_dist\":%lld,"
++              "\"picker_rd_cost\":%lld,\"model_var_y\":%u,"
++              "\"model_tx_size\":\"%s\",\"model_skip_txfm\":%d,"
++              "\"luma_coef_rate\":%d,\"luma_coef_dist\":%lld,"
++              "\"uv_model_rate\":%d,\"uv_model_dist\":%lld,"
++              "\"uv_u_sensitive\":%s,\"uv_v_sensitive\":%s,"
++              "\"partition_u_sensitive\":%s,\"partition_v_sensitive\":%s,"
++              "\"last_candidates\":\"%s\","
++              "\"sse_after_pred\":%llu,\"interp_filter\":\"%s\","
++              "\"skip_flag\":%s,\"q_index\":%d,\"tx_size\":\"%s\","
++              "\"luma_eob_nonzero\":%s,"
++              "\"intra_inter_ctx\":%d,\"single_ref_p1_ctx\":%d,"
++              "\"single_ref_p2_ctx\":%d,\"intra_inter_prob\":%d,"
++              "\"single_ref_p1_prob\":%d,\"single_ref_p2_prob\":%d,"
++              "\"ref_cost_intra\":%d,\"ref_cost_last\":%d,"
++              "\"ref_cost_golden\":%d,\"ref_cost_altref\":%d}\n",
++              frame_idx, cpi->use_svc ? cpi->svc.spatial_layer_id : 0,
++              mi_row, mi_col,
++              bsize_str, mode_str, ref_str,
++              mv_row, mv_col,
++              mode_bits_est, mv_bits_est, ref_bits_est, filter_bits_est,
++              skip_bits_est,
++              best_rdc.rate, (long long)best_rdc.dist,
++              (long long)best_rdc.rdcost,
++              picked_ref == INTRA_FRAME ? 0 : best_model_var_f02,
++              tx_size_str,
++              x->skip_txfm[0] == SKIP_TXFM_AC_ONLY
++                  ? 1
++                  : (x->skip_txfm[0] == SKIP_TXFM_AC_DC ? 2 : 0),
++              best_luma_rate_f02, (long long)best_luma_dist_f02,
++              best_uv_rate_f02, (long long)best_uv_dist_f02,
++              x->color_sensitivity[0] ? "true" : "false",
++              x->color_sensitivity[1] ? "true" : "false",
++              x->color_sensitivity[0] ? "true" : "false",
++              x->color_sensitivity[1] ? "true" : "false",
++              last_candidates_f02,
++              sse_after_pred,
++              filter_str,
++              skip_flag ? "true" : "false",
++              x->q_index,
++              tx_size_str,
++              luma_eob_nonzero ? "true" : "false",
++              intra_inter_ctx_f02, single_ref_p1_ctx_f02,
++              single_ref_p2_ctx_f02, intra_inter_prob_f02,
++              single_ref_p1_prob_f02, single_ref_p2_prob_f02,
++              ref_frame_cost[INTRA_FRAME], ref_frame_cost[LAST_FRAME],
++              ref_frame_cost[GOLDEN_FRAME], ref_frame_cost[ALTREF_FRAME]);
++    }
++  }
++  /* F.0.2 ORACLE END */
+ }
+
+ void vp9_pick_inter_mode_sub8x8(VP9_COMP *cpi, MACROBLOCK *x, int mi_row,

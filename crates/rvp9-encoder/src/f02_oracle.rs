@@ -27,7 +27,7 @@ use std::io;
 use rvp9_core::bitstream::frame::InterpFilter;
 use rvp9_core::block::BlockSize;
 use rvp9_core::intra_pred::IntraMode;
-use rvp9_core::mode_decision::inter::NewMvGateReason;
+use rvp9_core::mode_decision::inter::{NewMvGateReason, NewMvSearchTrace};
 use rvp9_core::mode_info::{InterMode, RefFrame};
 use rvp9_core::transforms::TxSize;
 
@@ -107,6 +107,9 @@ pub struct CandidateProbe {
     /// Why LAST/NEWMV was evaluated or gated. Unknown for other slots and
     /// legacy/pinned-libvpx records.
     pub newmv_gate: NewMvGateReason,
+    /// Fresh LAST/NEWMV search stages. `None` when search was gated, reused,
+    /// or produced by a legacy sidecar.
+    pub newmv_search: Option<NewMvSearchTrace>,
 }
 
 /// One picker-decision record. HLD §3.4 schema.
@@ -282,8 +285,22 @@ fn candidate_probes_tag(probes: &[CandidateProbe; 4]) -> String {
     probes
         .iter()
         .map(|p| {
+            let trace = p.newmv_search.unwrap_or(NewMvSearchTrace {
+                start_mv: rvp9_core::mode_info::Mv {
+                    row: i16::MIN,
+                    col: i16::MIN,
+                },
+                fullpel_mv: rvp9_core::mode_info::Mv {
+                    row: i16::MIN,
+                    col: i16::MIN,
+                },
+                final_mv: rvp9_core::mode_info::Mv {
+                    row: i16::MIN,
+                    col: i16::MIN,
+                },
+            });
             format!(
-                "{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}",
+                "{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}",
                 u8::from(p.available),
                 p.mv_row,
                 p.mv_col,
@@ -296,6 +313,12 @@ fn candidate_probes_tag(probes: &[CandidateProbe; 4]) -> String {
                 p.uv_dist,
                 p.skip_txfm,
                 p.newmv_gate as u8,
+                trace.start_mv.row,
+                trace.start_mv.col,
+                trace.fullpel_mv.row,
+                trace.fullpel_mv.col,
+                trace.final_mv.row,
+                trace.final_mv.col,
             )
         })
         .collect::<Vec<_>>()

@@ -9734,7 +9734,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     }
 
                     let f02_last_candidates = if f02_oracle_enabled {
-                        let (candidates, last_newmv_gate) =
+                        let (candidates, last_newmv_gate, last_newmv_search) =
                             rvp9_core::mode_decision::inter::candidate_trace::take_with_gate(
                                 pick.candidate_trace_id,
                             );
@@ -9758,10 +9758,12 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                     },
                                     newmv_gate:
                                         rvp9_core::mode_decision::inter::NewMvGateReason::Unknown,
+                                    newmv_search: None,
                                 }
                             })
                         });
                         probes[3].newmv_gate = last_newmv_gate;
+                        probes[3].newmv_search = last_newmv_search;
                         probes
                     } else {
                         [Default::default(); 4]

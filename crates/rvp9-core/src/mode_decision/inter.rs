@@ -1764,6 +1764,17 @@ pub enum NewMvGateReason {
     DuplicateMv = 8,
 }
 
+/// Diagnostic stages from one fresh LAST/NEWMV search, in 1/8-pel units.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct NewMvSearchTrace {
+    /// Full-pel search start selected from reference and integer-projection candidates.
+    pub start_mv: Mv,
+    /// Integer-pel search result before fractional refinement.
+    pub fullpel_mv: Mv,
+    /// Final result after any allowed fractional refinement.
+    pub final_mv: Mv,
+}
+
 impl NewMvGateReason {
     /// Decode the stable numeric F02 sidecar representation.
     #[must_use]
@@ -1801,7 +1812,7 @@ impl NewMvGateReason {
 
 /// Thread-local F02 records for evaluated LAST candidates and NEWMV gates.
 pub mod candidate_trace {
-    use super::{InterModeSearchResult, NewMvGateReason};
+    use super::{InterModeSearchResult, NewMvGateReason, NewMvSearchTrace};
     use std::cell::RefCell;
     use std::collections::HashMap;
 
@@ -1809,6 +1820,7 @@ pub mod candidate_trace {
     struct TraceRecord {
         candidates: [Option<InterModeSearchResult>; 4],
         last_newmv_gate: NewMvGateReason,
+        last_newmv_search: Option<NewMvSearchTrace>,
     }
 
     #[derive(Default)]
@@ -1840,6 +1852,7 @@ pub mod candidate_trace {
     pub(super) fn record(
         candidates: [Option<InterModeSearchResult>; 4],
         last_newmv_gate: NewMvGateReason,
+        last_newmv_search: Option<NewMvSearchTrace>,
     ) -> u64 {
         STATE.with(|state| {
             let mut state = state.borrow_mut();
@@ -1853,6 +1866,7 @@ pub mod candidate_trace {
                 TraceRecord {
                     candidates,
                     last_newmv_gate,
+                    last_newmv_search,
                 },
             );
             id
@@ -1866,15 +1880,25 @@ pub mod candidate_trace {
         take_with_gate(id).0
     }
 
-    /// Take candidates plus the reason LAST/NEWMV was evaluated or gated.
+    /// Take candidates, the LAST/NEWMV gate, and fresh-search stages.
     #[must_use]
-    pub fn take_with_gate(id: u64) -> ([Option<InterModeSearchResult>; 4], NewMvGateReason) {
+    pub fn take_with_gate(
+        id: u64,
+    ) -> (
+        [Option<InterModeSearchResult>; 4],
+        NewMvGateReason,
+        Option<NewMvSearchTrace>,
+    ) {
         if id == 0 {
-            return ([None; 4], NewMvGateReason::Unknown);
+            return ([None; 4], NewMvGateReason::Unknown, None);
         }
         STATE.with(|state| {
             let record = state.borrow_mut().records.remove(&id).unwrap_or_default();
-            (record.candidates, record.last_newmv_gate)
+            (
+                record.candidates,
+                record.last_newmv_gate,
+                record.last_newmv_search,
+            )
         })
     }
 }
@@ -2337,6 +2361,7 @@ fn pick_inter_mode_impl(
         candidate_trace::is_enabled() || force_candidate_trace_bookkeeping();
     let mut last_candidates: [Option<InterModeSearchResult>; 4] = [None; 4];
     let mut last_newmv_gate = NewMvGateReason::Unknown;
+    let mut last_newmv_search = None;
     let mut denoiser_zeromv: Option<(usize, DenoiserCandidateContext)> = None;
     let mut denoiser_zeromv_last: Option<(usize, DenoiserCandidateContext)> = None;
     let mut denoiser_nonzero: Option<(usize, DenoiserCandidateContext)> = None;
@@ -2602,6 +2627,9 @@ fn pick_inter_mode_impl(
                                     .map_or(i64::MAX, |incumbent| incumbent.best_rd_cost),
                             }),
                         );
+                        if ref_idx == 0 {
+                            last_newmv_search = Some(searched.trace);
+                        }
                         if searched.subpel_gate_rejected {
                             if ref_idx == 0 {
                                 last_newmv_gate = NewMvGateReason::SubpelSyntax;
@@ -3051,7 +3079,7 @@ fn pick_inter_mode_impl(
         nonzero: denoiser_nonzero.map(|(_, candidate)| candidate),
     };
     best.candidate_trace_id = if collect_candidate_trace {
-        candidate_trace::record(last_candidates, last_newmv_gate)
+        candidate_trace::record(last_candidates, last_newmv_gate, last_newmv_search)
     } else {
         0
     };
@@ -3555,6 +3583,7 @@ const RT_NEWMV_SUBPEL_FORCE_STOP: SubPixelForcedStop = SubPixelForcedStop::Quart
 struct NewMvSearchResult {
     best_mv: Mv,
     subpel_gate_rejected: bool,
+    trace: NewMvSearchTrace,
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -3710,6 +3739,11 @@ fn run_newmv_search(
         row: center_mv_fp.row.saturating_mul(8),
         col: center_mv_fp.col.saturating_mul(8),
     };
+    let search_start = start_mv.unwrap_or(ref_mv);
+    let search_start_mv = Mv {
+        row: (search_start.row >> 3).saturating_mul(8),
+        col: (search_start.col >> 3).saturating_mul(8),
+    };
     // Pinned libvpx rejects a fresh full-pel NEWMV result before fractional
     // refinement when its syntax cost alone already loses to the incumbent
     // (`vp9_pickmode.c:218-253`). Keep its strict `>` and 108/128 MV-rate
@@ -3720,6 +3754,11 @@ fn run_newmv_search(
         return NewMvSearchResult {
             best_mv: fullpel_mv,
             subpel_gate_rejected: true,
+            trace: NewMvSearchTrace {
+                start_mv: search_start_mv,
+                fullpel_mv,
+                final_mv: fullpel_mv,
+            },
         };
     }
 
@@ -3780,6 +3819,11 @@ fn run_newmv_search(
         return NewMvSearchResult {
             best_mv: fullpel_mv,
             subpel_gate_rejected,
+            trace: NewMvSearchTrace {
+                start_mv: search_start_mv,
+                fullpel_mv,
+                final_mv: fullpel_mv,
+            },
         };
     }
 
@@ -3819,6 +3863,11 @@ fn run_newmv_search(
     NewMvSearchResult {
         best_mv: sub.best_mv,
         subpel_gate_rejected,
+        trace: NewMvSearchTrace {
+            start_mv: search_start_mv,
+            fullpel_mv,
+            final_mv: sub.best_mv,
+        },
     }
 }
 
@@ -6289,6 +6338,11 @@ mod tests {
             NewMvSearchResult {
                 best_mv: Mv::ZERO,
                 subpel_gate_rejected: false,
+                trace: NewMvSearchTrace {
+                    start_mv: Mv::ZERO,
+                    fullpel_mv: Mv::ZERO,
+                    final_mv: Mv::ZERO,
+                },
             },
         );
     }
@@ -8591,8 +8645,11 @@ mod tests {
         assert_eq!(result.picked_ref_frame, RefFrame::LastFrame);
         assert_ne!(result.candidate_trace_id, 0);
 
-        let (candidates, newmv_gate) = candidate_trace::take_with_gate(result.candidate_trace_id);
+        let (candidates, newmv_gate, newmv_search) =
+            candidate_trace::take_with_gate(result.candidate_trace_id);
         assert_eq!(newmv_gate, NewMvGateReason::Evaluated);
+        let newmv_search = newmv_search.expect("evaluated LAST/NEWMV must retain search stages");
+        assert_eq!(newmv_search.final_mv, candidates[3].unwrap().best_mv);
         let slot = match result.best_mode {
             InterMode::ZeroMv => 0,
             InterMode::NearestMv => 1,
@@ -8618,8 +8675,10 @@ mod tests {
         params.inter_mode_mask[BlockSize::Block16x16.idx()] &= !(1 << InterMode::NewMv.idx());
         candidate_trace::reset(true);
         let masked = pick_inter_mode(&params);
-        let (_, masked_gate) = candidate_trace::take_with_gate(masked.candidate_trace_id);
+        let (_, masked_gate, masked_search) =
+            candidate_trace::take_with_gate(masked.candidate_trace_id);
         assert_eq!(masked_gate, NewMvGateReason::InterModeMask);
+        assert_eq!(masked_search, None);
 
         candidate_trace::reset(false);
         let untraced = pick_inter_mode(&params);

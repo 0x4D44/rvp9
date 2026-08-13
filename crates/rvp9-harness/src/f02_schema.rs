@@ -24,8 +24,8 @@ pub use rvp9_encoder::f02_oracle::{
 use rvp9_core::bitstream::frame::InterpFilter;
 use rvp9_core::block::BlockSize;
 use rvp9_core::intra_pred::IntraMode;
-use rvp9_core::mode_decision::inter::NewMvGateReason;
-use rvp9_core::mode_info::{InterMode, RefFrame};
+use rvp9_core::mode_decision::inter::{NewMvGateReason, NewMvSearchTrace};
+use rvp9_core::mode_info::{InterMode, Mv, RefFrame};
 use rvp9_core::transforms::TxSize;
 
 /// Error type for the JSONL parser.
@@ -732,6 +732,66 @@ pub fn compare_matching_newmv_candidates(
     costs
 }
 
+/// Stage agreement for fresh LAST/NEWMV searches on exact matching leaves.
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
+pub struct MatchingNewMvSearchStages {
+    /// Exact-origin, exact-size leaves with a fresh search trace on both legs.
+    pub records: usize,
+    /// Searches that chose the same full-pel start.
+    pub start_matches: usize,
+    /// Searches that produced the same integer-pel result.
+    pub fullpel_matches: usize,
+    /// Searches that produced the same final fractional result.
+    pub final_matches: usize,
+    /// Same start, but different integer-pel result.
+    pub same_start_fullpel_diverged: usize,
+    /// Same integer-pel result, but different fractional result.
+    pub same_fullpel_final_diverged: usize,
+}
+
+/// Compare fresh LAST/NEWMV search stages on exact matching leaves.
+#[must_use]
+pub fn compare_matching_newmv_search_stages(
+    rvp9: &[BlockDecision],
+    libvpx: &[BlockDecision],
+) -> MatchingNewMvSearchStages {
+    const LAST_NEWMV_CANDIDATE: usize = 3;
+
+    let mut rvp9_by_key = BTreeMap::<BlockKey, Vec<&BlockDecision>>::new();
+    for decision in rvp9 {
+        rvp9_by_key
+            .entry(BlockKey::from(decision))
+            .or_default()
+            .push(decision);
+    }
+    let mut stages = MatchingNewMvSearchStages::default();
+    for libvpx in libvpx {
+        let Some([rvp9]) = rvp9_by_key.get(&BlockKey::from(libvpx)).map(Vec::as_slice) else {
+            continue;
+        };
+        if rvp9.bsize != libvpx.bsize {
+            continue;
+        }
+        let Some(rvp9_search) = rvp9.last_candidates[LAST_NEWMV_CANDIDATE].newmv_search else {
+            continue;
+        };
+        let Some(libvpx_search) = libvpx.last_candidates[LAST_NEWMV_CANDIDATE].newmv_search else {
+            continue;
+        };
+
+        stages.records += 1;
+        let same_start = rvp9_search.start_mv == libvpx_search.start_mv;
+        let same_fullpel = rvp9_search.fullpel_mv == libvpx_search.fullpel_mv;
+        let same_final = rvp9_search.final_mv == libvpx_search.final_mv;
+        stages.start_matches += usize::from(same_start);
+        stages.fullpel_matches += usize::from(same_fullpel);
+        stages.final_matches += usize::from(same_final);
+        stages.same_start_fullpel_diverged += usize::from(same_start && !same_fullpel);
+        stages.same_fullpel_final_diverged += usize::from(same_fullpel && !same_final);
+    }
+    stages
+}
+
 /// Align and compare the fields that are live on both F.0.2 legs.
 ///
 /// The three rate-estimate fields remain present in paired diagnostics but are
@@ -928,7 +988,7 @@ fn parse_candidate_probes(v: &str) -> Result<[CandidateProbe; 4], ParseError> {
     let mut probes = Vec::with_capacity(4);
     for encoded in raw.split('|') {
         let fields = encoded.split(':').collect::<Vec<_>>();
-        if !matches!(fields.len(), 11 | 12) {
+        if !matches!(fields.len(), 11 | 12 | 18) {
             return Err(ParseError::BadValue {
                 field: "last_candidates",
                 raw,
@@ -953,6 +1013,37 @@ fn parse_candidate_probes(v: &str) -> Result<[CandidateProbe; 4], ParseError> {
                     raw: raw.clone(),
                 })
             })?;
+        let newmv_search = if fields.len() == 18 {
+            let values = fields[12..18]
+                .iter()
+                .map(|field| parse_num::<i16>(field, "last_candidates"))
+                .collect::<Result<Vec<_>, _>>()?;
+            if values.iter().all(|&value| value == i16::MIN) {
+                None
+            } else if values.contains(&i16::MIN) {
+                return Err(ParseError::BadValue {
+                    field: "last_candidates",
+                    raw,
+                });
+            } else {
+                Some(NewMvSearchTrace {
+                    start_mv: Mv {
+                        row: values[0],
+                        col: values[1],
+                    },
+                    fullpel_mv: Mv {
+                        row: values[2],
+                        col: values[3],
+                    },
+                    final_mv: Mv {
+                        row: values[4],
+                        col: values[5],
+                    },
+                })
+            }
+        } else {
+            None
+        };
         probes.push(CandidateProbe {
             available,
             mv_row: parse_num(fields[1], "last_candidates")?,
@@ -966,6 +1057,7 @@ fn parse_candidate_probes(v: &str) -> Result<[CandidateProbe; 4], ParseError> {
             uv_dist: parse_num(fields[9], "last_candidates")?,
             skip_txfm: parse_num(fields[10], "last_candidates")?,
             newmv_gate,
+            newmv_search,
         });
     }
     probes.try_into().map_err(|_| ParseError::BadValue {
@@ -1102,6 +1194,11 @@ mod tests {
                     uv_dist: 1_000,
                     skip_txfm: 1,
                     newmv_gate: NewMvGateReason::Unknown,
+                    newmv_search: Some(NewMvSearchTrace {
+                        start_mv: Mv { row: 8, col: -8 },
+                        fullpel_mv: Mv { row: 16, col: -8 },
+                        final_mv: Mv { row: 24, col: -8 },
+                    }),
                 },
                 CandidateProbe::default(),
                 CandidateProbe::default(),
@@ -1433,6 +1530,31 @@ mod tests {
         assert_eq!(costs.libvpx_dist_sum, 300);
         assert_eq!(costs.rvp9_rd_cost_sum, 380);
         assert_eq!(costs.libvpx_rd_cost_sum, 400);
+    }
+
+    #[test]
+    fn newmv_search_stage_comparison_localizes_first_divergence() {
+        let mut libvpx = sample_inter();
+        libvpx.last_candidates[3].newmv_search = Some(NewMvSearchTrace {
+            start_mv: Mv { row: 8, col: 0 },
+            fullpel_mv: Mv { row: 16, col: 0 },
+            final_mv: Mv { row: 18, col: 0 },
+        });
+        let mut rvp9 = libvpx;
+        rvp9.last_candidates[3].newmv_search = Some(NewMvSearchTrace {
+            start_mv: Mv { row: 8, col: 0 },
+            fullpel_mv: Mv { row: 24, col: 0 },
+            final_mv: Mv { row: 26, col: 0 },
+        });
+
+        let stages = compare_matching_newmv_search_stages(&[rvp9], &[libvpx]);
+
+        assert_eq!(stages.records, 1);
+        assert_eq!(stages.start_matches, 1);
+        assert_eq!(stages.fullpel_matches, 0);
+        assert_eq!(stages.final_matches, 0);
+        assert_eq!(stages.same_start_fullpel_diverged, 1);
+        assert_eq!(stages.same_fullpel_final_diverged, 0);
     }
 
     #[test]

@@ -51,7 +51,8 @@ use rvp9_encoder::{
 };
 use rvp9_harness::container::{IvfHeader, write_ivf};
 use rvp9_harness::f02_schema::{
-    analyze_newmv_cells, compare_decisions, compare_matching_newmv_candidates, parse_jsonl_stream,
+    analyze_newmv_cells, compare_decisions, compare_matching_newmv_candidates,
+    compare_matching_newmv_search_stages, parse_jsonl_stream,
 };
 use rvp9_harness::y4m::{read_cropped, write_frame, write_header};
 use std::fs::{File, OpenOptions};
@@ -627,6 +628,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 &libvpx_analysis_records,
             ))
         };
+        let matching_newmv_search_stages = if no_libvpx {
+            None
+        } else {
+            Some(compare_matching_newmv_search_stages(
+                &rvp9_analysis_records,
+                &libvpx_analysis_records,
+            ))
+        };
         if let Some(analysis) = newmv_analysis {
             println!(
                 "  NEWMV cells: libvpx LAST/nonzero {}; rvp9 exact selected {}, exact lost {}, near selected {}, near lost {}, different selected {}, different lost {}, zero {}, unavailable {}, missing/ambiguous {}; rejected higher-RD {}, rejected non-higher-RD {}",
@@ -670,6 +679,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 ratio(costs.rvp9_rate_sum, costs.libvpx_rate_sum),
                 ratio(costs.rvp9_dist_sum, costs.libvpx_dist_sum),
                 ratio(costs.rvp9_rd_cost_sum, costs.libvpx_rd_cost_sum),
+            );
+        }
+        if let Some(stages) = matching_newmv_search_stages {
+            println!(
+                "  matching NEWMV search stages: {} exact leaves; start {}/{}, fullpel {}/{}, final {}/{}; same-start/fullpel-diverged {}, same-fullpel/final-diverged {}",
+                stages.records,
+                stages.start_matches,
+                stages.records,
+                stages.fullpel_matches,
+                stages.records,
+                stages.final_matches,
+                stages.records,
+                stages.same_start_fullpel_diverged,
+                stages.same_fullpel_final_diverged,
             );
         }
 
@@ -741,7 +764,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )?;
         writeln!(
             sf,
-            "- `last_candidates`: live LAST-reference `[ZERO, NEAREST, NEAR, NEW]` candidate costs on both legs; skip-transform states use the shared `None=0, AcOnly=1, AcDc=2` numbering."
+            "- `last_candidates`: live LAST-reference `[ZERO, NEAREST, NEAR, NEW]` candidate costs on both legs; skip-transform states use the shared `None=0, AcOnly=1, AcDc=2` numbering. Fresh NEWMV entries append search start, full-pel result, and final fractional result."
         )?;
         writeln!(
             sf,
@@ -894,6 +917,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 ratio(costs.rvp9_rd_cost_sum, costs.libvpx_rd_cost_sum)
             )?;
             writeln!(sf)?;
+        }
+        if let Some(stages) = matching_newmv_search_stages {
+            writeln!(sf)?;
+            writeln!(sf, "### Exact-leaf NEWMV search stages")?;
+            writeln!(sf)?;
+            writeln!(sf, "| stage | matching leaves | compared leaves |")?;
+            writeln!(sf, "|---|---:|---:|")?;
+            writeln!(
+                sf,
+                "| full-pel start | {} | {} |",
+                stages.start_matches, stages.records
+            )?;
+            writeln!(
+                sf,
+                "| full-pel result | {} | {} |",
+                stages.fullpel_matches, stages.records
+            )?;
+            writeln!(
+                sf,
+                "| final fractional result | {} | {} |",
+                stages.final_matches, stages.records
+            )?;
+            writeln!(sf)?;
+            writeln!(
+                sf,
+                "Same-start/full-pel-diverged: {}; same-full-pel/final-diverged: {}.",
+                stages.same_start_fullpel_diverged, stages.same_fullpel_final_diverged
+            )?;
         }
         writeln!(
             sf,
