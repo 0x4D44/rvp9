@@ -5481,6 +5481,13 @@ fn svc_enhancement_model_only_large_qmax(
 const SVC_CPU8_MODEL_ONLY_LARGE_QMAX: u8 = 140;
 const SVC_CPU8_NONREF_MODEL_ONLY_LARGE_QMAX: u8 = 155;
 
+fn spatial_block16_coef_rd_component(
+    spatial_first_enhancement_component: bool,
+    spatial_key_enhancement_component: bool,
+) -> bool {
+    spatial_first_enhancement_component || spatial_key_enhancement_component
+}
+
 fn block16_coef_rd_enabled(
     exact_vbp_tree_enabled: bool,
     rc_mode: crate::rate_control::RcMode,
@@ -5490,11 +5497,10 @@ fn block16_coef_rd_enabled(
     exact_vbp_tree_enabled
         && ((speed.unsigned_abs() == 6
             && matches!(rc_mode, crate::rate_control::RcMode::Vbr))
-            // Pinned CPU7/8 keeps real block-YRD on spatial layer 1 and
-            // switches to the simple model only above it. Rvp9's measured
-            // subset evaluates real coefficient RD for non-skipped Block16
-            // candidates, which closes the CPU8 layer-1 content gap while
-            // retaining realtime speed.
+            // Rvp9's measured subset evaluates real coefficient RD for
+            // non-skipped Block16 candidates on spatial layer 1 and the
+            // opening higher-layer components. Those opening reconstructions
+            // seed each enhancement layer's LAST reference for the key interval.
             || (spatial_first_enhancement_component
                 && speed.unsigned_abs() == 8
                 && matches!(rc_mode, crate::rate_control::RcMode::Cbr)))
@@ -9779,7 +9785,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             exact_vbp_tree_enabled,
                             rc_mode,
                             speed,
-                            spatial_first_enhancement_component,
+                            spatial_block16_coef_rd_component(
+                                spatial_first_enhancement_component,
+                                spatial_key_enhancement_component,
+                            ),
                         ),
                     ),
                     last_const_motion,
@@ -16592,6 +16601,14 @@ mod tests {
         assert!(!block16_coef_rd_enabled(true, RcMode::Cbr, 6, true));
         assert!(!block16_coef_rd_enabled(true, RcMode::Vbr, 8, true));
         assert!(!block16_coef_rd_enabled(true, RcMode::Cq, 8, true));
+    }
+
+    #[test]
+    fn spatial_block16_coefficient_rd_covers_first_and_opening_top_components() {
+        assert!(!spatial_block16_coef_rd_component(false, false));
+        assert!(spatial_block16_coef_rd_component(true, false));
+        assert!(spatial_block16_coef_rd_component(true, true));
+        assert!(spatial_block16_coef_rd_component(false, true));
     }
 
     #[test]

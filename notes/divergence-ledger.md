@@ -6010,3 +6010,41 @@ No speed result is inferred from the 720p curves.
 latency are measured. Parallelize partial superblock columns only if profiling
 attributes a material miss to this layer and a focused ownership oracle can
 prove disjoint reconstruction and history writes.
+
+### 2026-08-13 — Extend real Block16 coefficient RD to opening spatial layers
+
+**Where:** `rvp9_encoder::spatial_block16_coef_rd_component` and the
+`InterRdCalibration::with_block16_coef_rd` call in
+`rvp9_encoder::pick_and_simulate_inter_encode_partitions`; libvpx counterpart:
+`vp9/encoder/vp9_pickmode.c::block_yrd`.
+
+**What libvpx does:** realtime `block_yrd` evaluates its configured coefficient
+model for the opening spatial-enhancement components. The resulting
+reconstructions become those layers' LAST references for the key interval.
+
+**What rvp9 does:** CPU8 one-pass realtime spatial CBR with exact VBP uses the
+existing real non-skipped Block16 coefficient-RD subset on spatial layer 1 and
+on every opening enhancement component. CPU6/7, non-spatial, non-CBR, and
+later spatial layer-2 components remain unchanged.
+
+**Why:** before this change the first runnable 1080p30 three-layer curve was
+`-0.6475%/-1.4866%/+12.4067%` for SL0/SL1/SL2. The top opening packet
+underspent libvpx by about 42% at the same qindex and poisoned the top LAST
+reference. The existing bounded Block16 model repairs that exact decision
+without widening the whole-frame real-RD path.
+
+**Byte-parity impact:** intentional on qualifying opening enhancement
+components. All seven external spatial gates pass through rvp9-decoder, pinned
+vpxdec, and FFmpeg, including canonical 720p and 1080p streams.
+
+**Compression-efficiency impact:** the 1080p30 CPU8 S3 top-layer result improves
+from `+12.4067%` to `+3.1397%`; SL0/SL1 are `-0.8322%/-1.6963%`. The 720p50
+control is `-11.4509%/-4.1374%/-4.9706%`. This is a measured prerequisite;
+1080p SL2 still fails the final `+0.5%` gate.
+
+**Speed impact:** plain-release 1080p per-target ratios after the first cold
+point are `0.8023x--0.7906x`, faster than the matched libvpx example. Formal
+speed acceptance awaits exact production PGO and repeated quiet-host runs.
+
+**Future plan:** keep the bounded scope and close the remaining approximately
+three-percent 1080p top-layer gap before widening to 1080p60.
