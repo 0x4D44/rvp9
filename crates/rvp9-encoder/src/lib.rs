@@ -3885,11 +3885,7 @@ pub(crate) struct InterSimulationResult {
 
 struct InterPartitionGrid<'a> {
     cells: &'a mut [Vec<InterPartitionLeafDesc>],
-    sb_row_start: usize,
-    sb_rows: usize,
-    sb_col_start: usize,
-    sb_cols: usize,
-    frame_sb_cols: usize,
+    frame_index_start: usize,
 }
 
 impl<'a> InterPartitionGrid<'a> {
@@ -3897,11 +3893,7 @@ impl<'a> InterPartitionGrid<'a> {
         assert_eq!(cells.len(), sb_rows * sb_cols);
         Self {
             cells,
-            sb_row_start: 0,
-            sb_rows,
-            sb_col_start: 0,
-            sb_cols,
-            frame_sb_cols: sb_cols,
+            frame_index_start: 0,
         }
     }
 
@@ -3916,28 +3908,19 @@ impl<'a> InterPartitionGrid<'a> {
         assert!(sb_cols > 0 && sb_col_start + sb_cols <= frame_sb_cols);
         Self {
             cells,
-            sb_row_start: sb_row,
-            sb_rows: 1,
-            sb_col_start,
-            sb_cols,
-            frame_sb_cols,
+            frame_index_start: sb_row * frame_sb_cols + sb_col_start,
         }
     }
 
     fn local_index(&self, frame_index: usize) -> usize {
-        let sb_row = frame_index / self.frame_sb_cols;
-        let sb_col = frame_index % self.frame_sb_cols;
-        let local_row = sb_row
-            .checked_sub(self.sb_row_start)
-            .expect("partition index precedes its row window");
-        let local_col = sb_col
-            .checked_sub(self.sb_col_start)
-            .expect("partition index precedes its column window");
+        let local_index = frame_index
+            .checked_sub(self.frame_index_start)
+            .expect("partition index precedes its compact window");
         assert!(
-            local_row < self.sb_rows && local_col < self.sb_cols,
+            local_index < self.cells.len(),
             "partition index exceeds its compact window"
         );
-        local_row * self.sb_cols + local_col
+        local_index
     }
 }
 
