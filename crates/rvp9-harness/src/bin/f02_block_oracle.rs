@@ -35,17 +35,24 @@
 //!     --strict \
 //!     --out target/track_f_oracle/
 //! ```
+//!
+//! Add `--spatial-layers 2|3 --inter-layer-pred 0|3 --cbr --fixed-q Q`
+//! and point `--vpxenc` at the patched `vp9_spatial_svc_encoder` to drive
+//! real spatial state. The harness validates every component, then compares
+//! only the base spatial layer at its coded geometry.
 
+use rvp9_core::bitstream::ChromaFormat;
 use rvp9_encoder::f02_oracle::{self, BlockDecision};
+use rvp9_encoder::svc::{InterLayerPred, SpatialSvcConfig};
 use rvp9_encoder::{
-    AqMode, EncoderConfig, EncoderParallelism, RcMode, Stage4aProductSplitOverride, StreamEncoder,
-    YuvFrameRef,
+    AqMode, EncoderConfig, EncoderParallelism, RcMode, SpatialEncoder, Stage4aProductSplitOverride,
+    StreamEncoder, YuvFrameRef,
 };
 use rvp9_harness::container::{IvfHeader, write_ivf};
 use rvp9_harness::f02_schema::{
     analyze_newmv_cells, compare_decisions, compare_matching_newmv_candidates, parse_jsonl_stream,
 };
-use rvp9_harness::y4m::read_cropped;
+use rvp9_harness::y4m::{read_cropped, write_frame, write_header};
 use std::fs::{File, OpenOptions};
 use std::io::{BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -68,6 +75,8 @@ struct OracleEncodeConfig {
     kbps: u32,
     vbr: bool,
     aq_mode: u8,
+    spatial_layers: u8,
+    inter_layer_pred: u8,
 }
 
 fn oracle_parallelism(encode: OracleEncodeConfig) -> EncoderParallelism {
@@ -193,11 +202,186 @@ fn append_libvpx_rate_args(command: &mut Command, vbr: bool, fixed_q: Option<u8>
     }
 }
 
+fn spatial_layer_bitrates(target_kbps: u32, spatial_layers: u8) -> Result<String, String> {
+    let weights: &[u32] = match spatial_layers {
+        2 => &[1, 4],
+        3 => &[1, 4, 16],
+        other => return Err(format!("--spatial-layers must be 2 or 3, got {other}")),
+    };
+    let total = weights.iter().sum::<u32>();
+    if !target_kbps.is_multiple_of(total) {
+        return Err(format!(
+            "spatial target bitrate {target_kbps} kbps must be divisible by {total}"
+        ));
+    }
+    Ok(weights
+        .iter()
+        .map(|weight| (target_kbps / total * weight).to_string())
+        .collect::<Vec<_>>()
+        .join(","))
+}
+
+fn spatial_base_geometry(
+    width: u32,
+    height: u32,
+    spatial_layers: u8,
+) -> Result<(u32, u32), String> {
+    let divisor = match spatial_layers {
+        2 => 2,
+        3 => 4,
+        other => return Err(format!("--spatial-layers must be 2 or 3, got {other}")),
+    };
+    if !width.is_multiple_of(divisor) || !height.is_multiple_of(divisor) {
+        return Err(format!(
+            "{width}x{height} is not divisible by the {divisor}x spatial pyramid"
+        ));
+    }
+    Ok((width / divisor, height / divisor))
+}
+
+fn inter_layer_pred(encode: OracleEncodeConfig) -> Result<InterLayerPred, String> {
+    match encode.inter_layer_pred {
+        0 => Ok(InterLayerPred::On),
+        3 => Ok(InterLayerPred::OnConstrained),
+        other => Err(format!("--inter-layer-pred must be 0 or 3, got {other}")),
+    }
+}
+
+fn append_libvpx_spatial_args(
+    command: &mut Command,
+    input: &Path,
+    output: &Path,
+    encode: OracleEncodeConfig,
+    fixed_q: u8,
+) -> Result<(), String> {
+    let cli_q = fixed_q_cli_range(fixed_q)
+        .ok_or_else(|| format!("invalid spatial fixed qindex {fixed_q}"))?
+        .0;
+    let scales = match encode.spatial_layers {
+        2 => "1/2,1/1",
+        3 => "1/4,1/2,1/1",
+        other => return Err(format!("--spatial-layers must be 2 or 3, got {other}")),
+    };
+    let rates = spatial_layer_bitrates(encode.kbps, encode.spatial_layers)?;
+    let quantizers = std::iter::repeat_n(cli_q.to_string(), usize::from(encode.spatial_layers))
+        .collect::<Vec<_>>()
+        .join(",");
+    command
+        .env("VPX_F02_PRESERVE_LAYER_QUANTIZERS", "1")
+        .arg(format!("--frames={}", encode.frames))
+        .arg(format!("--output={}", output.display()))
+        .arg(format!("--target-bitrate={}", encode.kbps))
+        .arg(format!("--speed={}", encode.cpu_used))
+        .arg(format!("--threads={}", encode.threads))
+        .arg(format!(
+            "--aqmode={}",
+            if encode.aq_mode == 3 { 1 } else { 0 }
+        ))
+        .arg(format!("--rc-end-usage={}", if encode.vbr { 0 } else { 1 }))
+        .arg(format!("--spatial-layers={}", encode.spatial_layers))
+        .arg("--temporal-layers=1")
+        .arg(format!("--kf-dist={PRODUCT_GOP_LENGTH}"))
+        .arg("--lag-in-frames=0")
+        .arg(format!("--scale-factors={scales}"))
+        .arg(format!("--bitrates={rates}"))
+        .arg(format!("--min-q={quantizers}"))
+        .arg(format!("--max-q={quantizers}"))
+        .arg("--tune-content=0")
+        .arg(format!("--inter-layer-pred={}", encode.inter_layer_pred))
+        .arg(input);
+    Ok(())
+}
+
 fn ratio(numerator: u64, denominator: u64) -> f64 {
     if denominator == 0 {
         f64::NAN
     } else {
         numerator as f64 / denominator as f64
+    }
+}
+
+fn spatial_analysis_records(
+    records: &[BlockDecision],
+    spatial_layers: u8,
+    frames: u32,
+    fixed_q: Option<u8>,
+    label: &str,
+) -> Result<Vec<BlockDecision>, String> {
+    if spatial_layers == 1 {
+        return Ok(records.to_vec());
+    }
+    if records.is_empty() {
+        return Err(format!("{label} spatial sidecar is empty"));
+    }
+    let expected_q = fixed_q.ok_or_else(|| "spatial analysis requires fixed Q".to_owned())?;
+    let mut seen = vec![false; usize::from(spatial_layers)];
+    for record in records {
+        if record.spatial_id >= spatial_layers {
+            return Err(format!(
+                "{label} sidecar has spatial_id {} outside 0..{}",
+                record.spatial_id,
+                spatial_layers - 1
+            ));
+        }
+        if record.frame_idx >= frames {
+            return Err(format!(
+                "{label} sidecar has frame_idx {} outside 0..{}",
+                record.frame_idx,
+                frames - 1
+            ));
+        }
+        if record.q_index != expected_q {
+            return Err(format!(
+                "{label} sidecar is not fixed qindex {expected_q}: spatial {} frame {} uses {}",
+                record.spatial_id, record.frame_idx, record.q_index
+            ));
+        }
+        seen[usize::from(record.spatial_id)] = true;
+    }
+    let missing = seen
+        .iter()
+        .enumerate()
+        .filter_map(|(spatial_id, &present)| (!present).then_some(spatial_id))
+        .collect::<Vec<_>>();
+    if !missing.is_empty() {
+        return Err(format!(
+            "{label} sidecar is missing spatial layer record(s): {missing:?}"
+        ));
+    }
+    Ok(records
+        .iter()
+        .copied()
+        .filter(|record| record.spatial_id == 0)
+        .collect())
+}
+
+fn oracle_encoder_config(
+    encode: OracleEncodeConfig,
+    strict: bool,
+    framerate: f64,
+) -> EncoderConfig {
+    let (gop_length, rc_mode) = rvp9_rate_config(encode.vbr);
+    EncoderConfig {
+        width: encode.width,
+        height: encode.height,
+        framerate,
+        target_bitrate_bps: encode.kbps * 1000,
+        gop_length,
+        aq_mode: encoder_aq_mode(encode.aq_mode),
+        use_prev_frame_mvs: false,
+        speed: encode.cpu_used,
+        deadline: rvp9_encoder::Deadline::Realtime,
+        noise_sensitivity: 0,
+        bit_depth: rvp9_core::BitDepth::Bd8,
+        lag_in_frames: 0,
+        enable_alt_ref: false,
+        rc_mode,
+        cq_level: 0,
+        temporal_layers: 1,
+        enable_tpl: false,
+        stage4a_product_split_override: split_override(strict),
+        min_qindex: 4,
+        max_qindex: 255,
     }
 }
 
@@ -221,6 +405,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let fps: Option<u32> = arg(&argv, "--fps").and_then(|s| s.parse().ok());
     let cpu_used = parse_cpu_used(&argv)?;
     let aq_mode = parse_aq_mode(&argv)?;
+    let spatial_layers: u8 = arg(&argv, "--spatial-layers")
+        .map(|value| {
+            value
+                .parse::<u8>()
+                .map_err(|_| format!("--spatial-layers must be 1, 2, or 3, got {value:?}"))
+        })
+        .transpose()?
+        .unwrap_or(1);
+    if !(1..=3).contains(&spatial_layers) {
+        return Err(format!("--spatial-layers must be 1, 2, or 3, got {spatial_layers}").into());
+    }
+    let inter_layer_pred: u8 = arg(&argv, "--inter-layer-pred")
+        .map(|value| {
+            value
+                .parse::<u8>()
+                .map_err(|_| format!("--inter-layer-pred must be 0 or 3, got {value:?}"))
+        })
+        .transpose()?
+        .unwrap_or(0);
+    if !matches!(inter_layer_pred, 0 | 3) {
+        return Err(format!("--inter-layer-pred must be 0 or 3, got {inter_layer_pred}").into());
+    }
     let threads: u32 = arg(&argv, "--threads")
         .and_then(|s| s.parse().ok())
         .unwrap_or(1)
@@ -255,6 +461,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // calibration. An explicit --cbr retains CBR calibration while bypassing
     // only the controller's chosen Q on both encoder legs.
     let vbr = parse_vbr(&argv, fixed_q)?;
+    if spatial_layers > 1 && (vbr || fixed_q.is_none() || aq_mode != 0) {
+        return Err(
+            "the exact spatial F02 mode requires --cbr --fixed-q QINDEX --aq-mode 0".into(),
+        );
+    }
+    if spatial_layers > 1 && frames < 2 {
+        return Err("the spatial F02 mode requires at least two frames".into());
+    }
     let strict = argv.iter().any(|a| a == "--strict");
 
     if !foreman_path.exists() {
@@ -267,7 +481,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if !no_libvpx && !vpxenc_path.exists() {
         eprintln!(
-            "ERROR: patched vpxenc.exe not found at {}",
+            "ERROR: patched libvpx encoder not found at {}",
             vpxenc_path.display()
         );
         eprintln!("  Build it with:");
@@ -299,6 +513,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  bitrates  : {:?} kbps", kbps_list);
     println!("  rate mode : {}", if vbr { "VBR" } else { "CBR" });
     println!("  AQ mode   : {aq_mode}");
+    println!("  spatial   : {spatial_layers} layer(s)");
+    if spatial_layers > 1 {
+        println!("  inter pred: {inter_layer_pred}");
+    }
     println!(
         "  fixed Q   : {}",
         fixed_q.map_or_else(|| "off".to_string(), |q| q.to_string())
@@ -344,8 +562,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             kbps,
             vbr,
             aq_mode,
+            spatial_layers,
+            inter_layer_pred,
         };
-        let rvp9_records = drive_rvp9_leg(&foreman_path, encode, strict, &rvp9_ivf)?;
+        let rvp9_records = if spatial_layers > 1 {
+            drive_rvp9_spatial_leg(&foreman_path, encode, strict, &rvp9_ivf, fixed_q.unwrap())?
+        } else {
+            drive_rvp9_leg(&foreman_path, encode, strict, &rvp9_ivf)?
+        };
         println!(
             "  rvp9: {} per-block decisions across {} frames",
             rvp9_records.len(),
@@ -356,28 +580,50 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let libvpx_records = if no_libvpx {
             Vec::new()
         } else {
-            drive_libvpx_leg(&vpxenc_path, &foreman_path, encode, &run_dir, fixed_q)?
+            if spatial_layers > 1 {
+                drive_libvpx_spatial_leg(
+                    &vpxenc_path,
+                    &foreman_path,
+                    encode,
+                    &run_dir,
+                    fixed_q.unwrap(),
+                )?
+            } else {
+                drive_libvpx_leg(&vpxenc_path, &foreman_path, encode, &run_dir, fixed_q)?
+            }
         };
         if !no_libvpx {
             println!("  libvpx: {} per-block decisions", libvpx_records.len());
         }
 
+        let rvp9_analysis_records =
+            spatial_analysis_records(&rvp9_records, spatial_layers, frames, fixed_q, "rvp9")?;
+        let libvpx_analysis_records = if no_libvpx {
+            Vec::new()
+        } else {
+            spatial_analysis_records(&libvpx_records, spatial_layers, frames, fixed_q, "libvpx")?
+        };
+        let (analysis_width, analysis_height) = if spatial_layers > 1 {
+            spatial_base_geometry(width, height, spatial_layers)?
+        } else {
+            (width, height)
+        };
         let newmv_analysis = if no_libvpx {
             None
         } else {
             Some(analyze_newmv_cells(
-                &rvp9_records,
-                &libvpx_records,
-                height.div_ceil(8) as u16,
-                width.div_ceil(8) as u16,
+                &rvp9_analysis_records,
+                &libvpx_analysis_records,
+                analysis_height.div_ceil(8) as u16,
+                analysis_width.div_ceil(8) as u16,
             ))
         };
         let matching_newmv_costs = if no_libvpx {
             None
         } else {
             Some(compare_matching_newmv_candidates(
-                &rvp9_records,
-                &libvpx_records,
+                &rvp9_analysis_records,
+                &libvpx_analysis_records,
             ))
         };
         if let Some(analysis) = newmv_analysis {
@@ -411,7 +657,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let comparison = if no_libvpx {
             None
         } else {
-            let comparison = compare_decisions(&rvp9_records, &libvpx_records);
+            let comparison = compare_decisions(&rvp9_analysis_records, &libvpx_analysis_records);
             let mismatches = comparison.mismatch_count();
             println!(
                 "  compare: {} matched / {} mismatched frame-block keys",
@@ -442,6 +688,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .open(&summary_path)?;
         writeln!(sf, "# F.0.2 oracle — {} kbps", kbps)?;
         writeln!(sf)?;
+        if spatial_layers > 1 {
+            writeln!(
+                sf,
+                "Scope: validated {spatial_layers}-layer spatial SVC; comparisons below use only spatial layer 0 at {analysis_width}x{analysis_height}."
+            )?;
+            writeln!(sf)?;
+        }
         writeln!(sf, "Schema liveness:")?;
         writeln!(
             sf,
@@ -614,11 +867,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )?;
         writeln!(sf, "|---|---|---|---|---|")?;
         let mut rvp9_by_frame = std::collections::BTreeMap::<u32, usize>::new();
-        for d in &rvp9_records {
+        for d in &rvp9_analysis_records {
             *rvp9_by_frame.entry(d.frame_idx).or_default() += 1;
         }
         let mut vpx_by_frame = std::collections::BTreeMap::<u32, usize>::new();
-        for d in &libvpx_records {
+        for d in &libvpx_analysis_records {
             *vpx_by_frame.entry(d.frame_idx).or_default() += 1;
         }
         let max_frame = rvp9_by_frame
@@ -700,7 +953,6 @@ fn drive_rvp9_leg(
     strict: bool,
     ivf_path: &Path,
 ) -> Result<Vec<BlockDecision>, Box<dyn std::error::Error>> {
-    let (gop_length, rc_mode) = rvp9_rate_config(encode.vbr);
     let (yuv_frames, source_fps) = read_cropped(
         foreman_path,
         encode.width,
@@ -708,28 +960,7 @@ fn drive_rvp9_leg(
         encode.frames as usize,
     )?;
     let fps = oracle_fps(encode, source_fps);
-    let cfg = EncoderConfig {
-        width: encode.width,
-        height: encode.height,
-        framerate: fps,
-        target_bitrate_bps: encode.kbps * 1000,
-        gop_length,
-        aq_mode: encoder_aq_mode(encode.aq_mode),
-        use_prev_frame_mvs: false,
-        speed: encode.cpu_used,
-        deadline: rvp9_encoder::Deadline::Realtime,
-        noise_sensitivity: 0,
-        bit_depth: rvp9_core::BitDepth::Bd8,
-        lag_in_frames: 0,
-        enable_alt_ref: false,
-        rc_mode,
-        cq_level: 0,
-        temporal_layers: 1,
-        enable_tpl: false,
-        stage4a_product_split_override: split_override(strict),
-        min_qindex: 4,
-        max_qindex: 255,
-    };
+    let cfg = oracle_encoder_config(encode, strict, fps);
     let parallelism = oracle_parallelism(encode);
     let mut enc = StreamEncoder::new_with_parallelism(cfg, parallelism)?;
     let mut all_records = Vec::new();
@@ -758,6 +989,68 @@ fn drive_rvp9_leg(
         1,
     );
     let packet_refs: Vec<&[u8]> = packets.iter().map(Vec::as_slice).collect();
+    write_ivf(&mut ivf, &header, &packet_refs)?;
+    Ok(all_records)
+}
+
+/// Drive the real packet-level spatial encoder and retain all component
+/// records. Analysis filters them only after layer/frame/Q validation.
+fn drive_rvp9_spatial_leg(
+    foreman_path: &Path,
+    encode: OracleEncodeConfig,
+    strict: bool,
+    ivf_path: &Path,
+    fixed_q: u8,
+) -> Result<Vec<BlockDecision>, Box<dyn std::error::Error>> {
+    let (yuv_frames, source_fps) = read_cropped(
+        foreman_path,
+        encode.width,
+        encode.height,
+        encode.frames as usize,
+    )?;
+    let fps = oracle_fps(encode, source_fps);
+    let config = oracle_encoder_config(encode, strict, fps);
+    let spatial = SpatialSvcConfig {
+        number_spatial_layers: encode.spatial_layers,
+        inter_layer_pred: inter_layer_pred(encode)?,
+    };
+    let mut encoder =
+        SpatialEncoder::new_with_parallelism(config, spatial, oracle_parallelism(encode))?;
+    let mut all_records = Vec::new();
+    let mut packets = Vec::with_capacity(yuv_frames.len());
+    let _ = f02_oracle::drain_frame();
+    for (y, u, v) in &yuv_frames {
+        let packet = encoder.encode_access_unit(&YuvFrameRef {
+            y,
+            u,
+            v,
+            y_stride: encode.width as usize,
+            u_stride: encode.width as usize / 2,
+            v_stride: encode.width as usize / 2,
+        })?;
+        if packet.layers.iter().any(|layer| layer.q_index != fixed_q) {
+            return Err(format!(
+                "rvp9 spatial access unit {} did not stay at fixed qindex {fixed_q}: {:?}",
+                encoder.access_unit_index() - 1,
+                packet
+                    .layers
+                    .iter()
+                    .map(|layer| layer.q_index)
+                    .collect::<Vec<_>>()
+            )
+            .into());
+        }
+        packets.push(packet.data);
+        all_records.extend(f02_oracle::drain_frame());
+    }
+    let mut ivf = File::create(ivf_path)?;
+    let header = IvfHeader::vp9(
+        encode.width as u16,
+        encode.height as u16,
+        fps.round() as u32,
+        1,
+    );
+    let packet_refs = packets.iter().map(Vec::as_slice).collect::<Vec<_>>();
     write_ivf(&mut ivf, &header, &packet_refs)?;
     Ok(all_records)
 }
@@ -838,6 +1131,66 @@ fn drive_libvpx_leg(
     Ok(records)
 }
 
+/// Drive pinned libvpx's spatial example over the same cropped top-layer
+/// frames as rvp9. The F02-only environment gate preserves the explicit
+/// per-layer quantizer bounds under CBR.
+fn drive_libvpx_spatial_leg(
+    anchor: &Path,
+    foreman: &Path,
+    encode: OracleEncodeConfig,
+    run_dir: &Path,
+    fixed_q: u8,
+) -> Result<Vec<BlockDecision>, Box<dyn std::error::Error>> {
+    let sidecar = run_dir.join(format!("foreman_{}kbps_libvpx.jsonl", encode.kbps));
+    let input = run_dir.join(format!("foreman_{}kbps_spatial_input.y4m", encode.kbps));
+    let output = run_dir.join(format!("foreman_{}kbps_libvpx.ivf", encode.kbps));
+    let (cropped, source_fps) =
+        read_cropped(foreman, encode.width, encode.height, encode.frames as usize)?;
+    let fps = oracle_fps(encode, source_fps).round() as u32;
+    {
+        let mut file = File::create(&input)?;
+        write_header(
+            &mut file,
+            encode.width,
+            encode.height,
+            fps,
+            1,
+            ChromaFormat::Yuv420,
+        )?;
+        for (y, u, v) in &cropped {
+            write_frame(&mut file, y, u, v)?;
+        }
+    }
+
+    let mut command = Command::new(anchor);
+    command
+        .env("VPX_F02_ORACLE_OUT", &sidecar)
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped());
+    append_libvpx_spatial_args(&mut command, &input, &output, encode, fixed_q)?;
+    let result = command.output()?;
+    let _ = std::fs::remove_file(&input);
+    if !result.status.success() {
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        return Err(format!(
+            "vp9_spatial_svc_encoder failed (exit {}): {}",
+            result.status.code().unwrap_or(-1),
+            stderr.lines().take(8).collect::<Vec<_>>().join("\n")
+        )
+        .into());
+    }
+    if !sidecar.exists() {
+        return Err(format!(
+            "libvpx spatial sidecar at {} was not produced; rebuild with scripts/build-f02-libvpx.sh",
+            sidecar.display()
+        )
+        .into());
+    }
+    let records = parse_jsonl_stream(BufReader::new(File::open(&sidecar)?))
+        .map_err(|error| format!("libvpx spatial sidecar parse failed: {error}"))?;
+    Ok(records)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -854,6 +1207,8 @@ mod tests {
             kbps: 1000,
             vbr: true,
             aq_mode: 0,
+            spatial_layers: 1,
+            inter_layer_pred: 0,
         }
     }
 
@@ -949,5 +1304,62 @@ mod tests {
         let mut source_rate = test_encode_config();
         source_rate.fps = None;
         assert_eq!(oracle_fps(source_rate, 50.0), 50.0);
+    }
+
+    #[test]
+    fn spatial_oracle_command_matches_canonical_three_layer_anchor() {
+        let mut encode = test_encode_config();
+        encode.width = 1280;
+        encode.height = 720;
+        encode.frames = 2;
+        encode.cpu_used = 8;
+        encode.kbps = 420;
+        encode.vbr = false;
+        encode.spatial_layers = 3;
+        encode.inter_layer_pred = 0;
+
+        assert_eq!(spatial_layer_bitrates(420, 3).unwrap(), "20,80,320");
+        assert_eq!(spatial_base_geometry(1280, 720, 3).unwrap(), (320, 180));
+
+        let mut command = Command::new("vp9_spatial_svc_encoder");
+        append_libvpx_spatial_args(
+            &mut command,
+            Path::new("input.y4m"),
+            Path::new("output.ivf"),
+            encode,
+            148,
+        )
+        .unwrap();
+        let arguments = command
+            .get_args()
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            arguments,
+            [
+                "--frames=2",
+                "--output=output.ivf",
+                "--target-bitrate=420",
+                "--speed=8",
+                "--threads=1",
+                "--aqmode=0",
+                "--rc-end-usage=1",
+                "--spatial-layers=3",
+                "--temporal-layers=1",
+                "--kf-dist=60",
+                "--lag-in-frames=0",
+                "--scale-factors=1/4,1/2,1/1",
+                "--bitrates=20,80,320",
+                "--min-q=37,37,37",
+                "--max-q=37,37,37",
+                "--tune-content=0",
+                "--inter-layer-pred=0",
+                "input.y4m",
+            ]
+        );
+        assert!(command.get_envs().any(|(key, value)| {
+            key == "VPX_F02_PRESERVE_LAYER_QUANTIZERS" && value.is_some_and(|value| value == "1")
+        }));
+        assert!(spatial_analysis_records(&[], 3, 2, Some(148), "empty").is_err());
     }
 }
