@@ -162,9 +162,8 @@ pub(crate) struct ParallelSourceMapConfig {
 
 impl PreAnalysisState {
     /// Allocate fresh state for a `width × height` encoder. Both
-    /// dimensions must be positive multiples of 8 (the mi-grid
-    /// resolution); the constructor panics otherwise to surface
-    /// configuration mistakes loudly.
+    /// Width must be a positive multiple of 8 and height must be positive and
+    /// even. A partial final luma MI row still owns one row of state.
     #[must_use]
     pub fn new(width: u32, height: u32) -> Self {
         assert!(
@@ -172,11 +171,10 @@ impl PreAnalysisState {
             "PreAnalysisState requires positive dims"
         );
         assert!(
-            width.is_multiple_of(8) && height.is_multiple_of(8),
-            "PreAnalysisState requires width/height to be multiples of 8 \
-             (the mi-grid resolution)"
+            width.is_multiple_of(8) && height.is_multiple_of(2),
+            "PreAnalysisState requires an 8-pixel-aligned width and even height"
         );
-        let mi_rows = (height / 8) as usize;
+        let mi_rows = (height as usize).div_ceil(8);
         let mi_cols = (width / 8) as usize;
         let sb_rows = height.div_ceil(64).max(1) as usize;
         let sb_cols = (width / 64).max(1) as usize;
@@ -361,7 +359,7 @@ impl PreAnalysisState {
         let sb_cols = (w / 64).max(1);
         let sb_rows = (h / 64).max(1);
         let mi_cols = w / 8;
-        let mi_rows = h / 8;
+        let mi_rows = h.div_ceil(8);
         // Preserve the existing total job count, but give every job one span
         // from each independent producer. Mixed jobs balance the caller and
         // OS workers without the eight-job coordination cost of splitting
@@ -1426,8 +1424,13 @@ fn compute_skin_map_rows(
 ) {
     let mi_cols = width / 8;
     let uv_width = width / 2;
+    let height = src_y.len() / width;
+    let uv_height = src_u.len() / uv_width;
     debug_assert_eq!(consecutive_zero_mv.len(), skin_out.len());
     debug_assert_eq!(skin_out.len() % mi_cols, 0);
+    debug_assert_eq!(src_y.len(), width * height);
+    debug_assert_eq!(src_u.len(), uv_width * uv_height);
+    debug_assert_eq!(src_v.len(), uv_width * uv_height);
     // libvpx `vp9_skin_detection.c:27-30` for BLOCK_8X8: the center
     // samples are (+4,+4) in luma and (+2,+2) in 4:2:0 chroma.
     const Y_CENTER: usize = 4;
@@ -1439,9 +1442,9 @@ fn compute_skin_map_rows(
     {
         let mi_row = mi_row_start + local_index / mi_cols;
         let mi_col = local_index % mi_cols;
-        let y_pix_row = mi_row * 8 + Y_CENTER;
+        let y_pix_row = (mi_row * 8 + Y_CENTER).min(height - 1);
         let y_pix_col = mi_col * 8 + Y_CENTER;
-        let uv_pix_row = mi_row * 4 + UV_CENTER;
+        let uv_pix_row = (mi_row * 4 + UV_CENTER).min(uv_height - 1);
         let uv_pix_col = mi_col * 4 + UV_CENTER;
         let ysource = src_y[y_pix_row * width + y_pix_col] as i32;
         let usource = src_u[uv_pix_row * uv_width + uv_pix_col] as i32;

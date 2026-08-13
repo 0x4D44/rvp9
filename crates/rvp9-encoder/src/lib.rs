@@ -2198,7 +2198,7 @@ fn simulate_dc_intra_encode_partitions_no_zero_with_tiles(
 
     let sb_cols = w / 64;
     let sb_rows = h.div_ceil(64);
-    let tile_bounds_by_col = column_tile_bounds(h / 8, w / 8, log2_tile_cols);
+    let tile_bounds_by_col = column_tile_bounds(h.div_ceil(8), w / 8, log2_tile_cols);
     assert_eq!(
         sb_partitions.len(),
         sb_rows * sb_cols,
@@ -2757,7 +2757,7 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
     );
 
     let mi_cols = w / 8;
-    let mi_rows = h / 8;
+    let mi_rows = h.div_ceil(8);
     let tile_bounds_by_col = column_tile_bounds(mi_rows, mi_cols, log2_tile_cols);
     let active_bounds = active_tile_col.map(|tile_col| {
         *tile_bounds_by_col
@@ -4225,11 +4225,11 @@ struct InterReconPlaneLayout {
 }
 
 impl InterReconPlaneLayout {
-    fn full(frame_width: usize, frame_height: usize) -> Self {
+    fn full_with_storage(frame_width: usize, frame_height: usize, storage_rows: usize) -> Self {
         assert!(frame_width > 0, "inter recon plane width must be positive");
         assert!(
-            frame_height > 0,
-            "inter recon plane height must be positive"
+            frame_height > 0 && storage_rows >= frame_height,
+            "inter recon storage must cover the visible plane"
         );
         Self {
             frame_width,
@@ -4237,7 +4237,7 @@ impl InterReconPlaneLayout {
             row_start: 0,
             col_start: 0,
             stride: frame_width,
-            rows: frame_height,
+            rows: storage_rows,
         }
     }
 
@@ -4274,7 +4274,7 @@ impl InterReconPlaneLayout {
         self.row_start == 0
             && self.col_start == 0
             && self.stride == self.frame_width
-            && self.rows == self.frame_height
+            && self.rows >= self.frame_height
     }
 
     #[inline]
@@ -4323,11 +4323,12 @@ impl InterReconLayout {
             height > 0 && height.is_multiple_of(2),
             "inter recon frame height must be positive and even"
         );
+        let storage_height = height.div_ceil(64) * 64;
         Self {
             planes: [
-                InterReconPlaneLayout::full(width, height),
-                InterReconPlaneLayout::full(width / 2, height / 2),
-                InterReconPlaneLayout::full(width / 2, height / 2),
+                InterReconPlaneLayout::full_with_storage(width, height, storage_height),
+                InterReconPlaneLayout::full_with_storage(width / 2, height / 2, storage_height / 2),
+                InterReconPlaneLayout::full_with_storage(width / 2, height / 2, storage_height / 2),
             ],
         }
     }
@@ -4469,10 +4470,9 @@ impl<'a> InterReconPlane<'a> {
         height: usize,
     ) {
         let layout = self.layout;
-        assert_eq!(
-            source.len(),
-            layout.frame_width * layout.frame_height,
-            "inter recon copy source must be a tight full-frame plane"
+        assert!(
+            source.len() >= layout.frame_width * layout.frame_height,
+            "inter recon copy source must cover the visible full-frame plane"
         );
         let (local_x, local_y) = layout.local_block(global_x, global_y, width, height);
         for row in 0..height {
@@ -4492,10 +4492,9 @@ impl<'a> InterReconPlane<'a> {
         height: usize,
     ) {
         let layout = self.layout;
-        assert_eq!(
-            destination.len(),
-            layout.frame_width * layout.frame_height,
-            "inter recon copy destination must be a tight full-frame plane"
+        assert!(
+            destination.len() >= layout.frame_width * layout.frame_height,
+            "inter recon copy destination must cover the visible full-frame plane"
         );
         let (local_x, local_y) = layout.local_block(global_x, global_y, width, height);
         for row in 0..height {
@@ -4542,7 +4541,7 @@ impl<'a> InterReconPlane<'a> {
     ) {
         let layout = self.layout;
         if reference_width == layout.frame_width && reference_height == layout.frame_height {
-            debug_assert_eq!(reference.len(), reference_width * reference_height);
+            debug_assert!(reference.len() >= reference_width * reference_height);
             if layout.is_full() {
                 build_inter_pred_plane_unscaled(
                     reference,
@@ -6879,7 +6878,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // scans that involve an ALTREF-referencing neighbour, which can only
     // exist once an ALTREF leaf is selected — impossible when ALTREF is
     // off — so the LAST/GOLDEN scans are unaffected regardless.
-    let mi_rows_us = h / 8;
+    let mi_rows_us = h.div_ceil(8);
     let mi_cols_us = w / 8;
     let tile_bounds_by_col = column_tile_bounds(mi_rows_us, mi_cols_us, log2_tile_cols);
     let rd_tables_are_tile_local = active_tile_col.is_some() && rd_thresh_tables.len() == sb_rows;
@@ -11150,6 +11149,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         };
     let compact_recon_rows = denoiser.is_none()
         && env.compact_recon_rows_enabled()
+        && h.is_multiple_of(8)
         && recon_layout == InterReconLayout::full(w, h);
     let frame_s2_gate = rvp9_core::mode_decision::inter::frame_s2_gate();
     if compact_recon_rows {

@@ -304,20 +304,20 @@ pub const ALTREF_REF: usize = 2;
 /// libvpx's `RefCntBuffer::buf` is a `YV12_BUFFER_CONFIG`
 /// (`vp9_onyxc_int.h:64-91`); rvp9 carries tight-stride Y/U/V plane
 /// `Vec<u8>`s at coded dimensions (4:2:0, 8-bit). Stride == width per
-/// plane (the encoder pins width/height to multiples of 64, so there is
-/// no border padding in these buffers — the loop filter operates on the
-/// tight reconstruction in place).
+/// plane. Storage extends the final visible row to a 64-pixel luma superblock
+/// boundary, matching the simulator's final-superblock writes while metadata
+/// and tight-plane accessors expose only the visible rows.
 #[derive(Debug, Clone, Default)]
 pub struct RefSlotPlanes {
     /// Visible luma width carried by this slot.
     width: usize,
     /// Visible luma height carried by this slot.
     height: usize,
-    /// Luma plane, `width * height`.
+    /// Luma plane, `width * align_up(height, 64)`.
     pub y: Vec<u8>,
-    /// Cb plane, `(width / 2) * (height / 2)`.
+    /// Cb plane, `(width / 2) * (align_up(height, 64) / 2)`.
     pub u: Vec<u8>,
-    /// Cr plane, `(width / 2) * (height / 2)`.
+    /// Cr plane, `(width / 2) * (align_up(height, 64) / 2)`.
     pub v: Vec<u8>,
 }
 
@@ -326,19 +326,21 @@ impl RefSlotPlanes {
     #[must_use]
     pub fn zeros(width: usize, height: usize) -> Self {
         let uvw = width / 2;
-        let uvh = height / 2;
+        let storage_height = reference_storage_height(height);
+        let uvh = storage_height / 2;
         Self {
             width,
             height,
-            y: vec![0u8; width * height],
+            y: vec![0u8; width * storage_height],
             u: vec![0u8; uvw * uvh],
             v: vec![0u8; uvw * uvh],
         }
     }
 
     fn resize_for_dimensions(&mut self, width: usize, height: usize) {
-        let y_len = width * height;
-        let uv_len = (width / 2) * (height / 2);
+        let storage_height = reference_storage_height(height);
+        let y_len = width * storage_height;
+        let uv_len = (width / 2) * (storage_height / 2);
         self.y.resize(y_len, 0);
         self.u.resize(uv_len, 0);
         self.v.resize(uv_len, 0);
@@ -354,11 +356,11 @@ pub struct RefSlotView<'a> {
     pub width: usize,
     /// Visible luma height.
     pub height: usize,
-    /// Tight-stride luma plane.
+    /// Luma storage with tight visible-row stride and possible bottom padding.
     pub y: &'a [u8],
-    /// Tight-stride Cb plane.
+    /// Cb storage with tight visible-row stride and possible bottom padding.
     pub u: &'a [u8],
-    /// Tight-stride Cr plane.
+    /// Cr storage with tight visible-row stride and possible bottom padding.
     pub v: &'a [u8],
 }
 
@@ -487,8 +489,10 @@ impl RefFramePool {
     /// named-ref → map-slot mapping rationale.
     #[must_use]
     pub fn named_ref_planes(&self, which: usize) -> (&[u8], &[u8], &[u8]) {
-        let view = self.named_ref_view(which);
-        (view.y, view.u, view.v)
+        let p = &self.slots[self.ref_frame_map[which]];
+        let y_len = p.width * p.height;
+        let uv_len = (p.width / 2) * (p.height / 2);
+        (&p.y[..y_len], &p.u[..uv_len], &p.v[..uv_len])
     }
 
     /// Immutable planes and visible dimensions for one named reference.
@@ -623,8 +627,9 @@ impl RefFramePool {
         // The returned storage is next-frame scratch. A heterogeneous slot
         // may have different lengths, so normalize only on a dimension
         // transition; the fixed-size production path remains allocation-free.
-        displaced.0.resize(width * height, 0);
-        let uv_len = (width / 2) * (height / 2);
+        let storage_height = reference_storage_height(height);
+        displaced.0.resize(width * storage_height, 0);
+        let uv_len = (width / 2) * (storage_height / 2);
         displaced.1.resize(uv_len, 0);
         displaced.2.resize(uv_len, 0);
         (new_idx, displaced)
@@ -682,10 +687,15 @@ fn validate_i420_dims(width: usize, height: usize) {
     );
 }
 
+pub(crate) const fn reference_storage_height(height: usize) -> usize {
+    height.div_ceil(64) * 64
+}
+
 fn validate_i420_planes(width: usize, height: usize, planes: (&[u8], &[u8], &[u8])) {
     validate_i420_dims(width, height);
-    let expected_y = width * height;
-    let expected_uv = (width / 2) * (height / 2);
+    let storage_height = reference_storage_height(height);
+    let expected_y = width * storage_height;
+    let expected_uv = (width / 2) * (storage_height / 2);
     assert_eq!(planes.0.len(), expected_y, "owned Y plane size mismatch");
     assert_eq!(planes.1.len(), expected_uv, "owned U plane size mismatch");
     assert_eq!(planes.2.len(), expected_uv, "owned V plane size mismatch");
@@ -931,7 +941,19 @@ mod tests {
         let base_slot = pool.new_fb_idx();
         let base = pool.named_ref_view(LAST_REF);
         assert_eq!((base.width, base.height), (64, 32));
-        assert_eq!((base.y.len(), base.u.len(), base.v.len()), (2048, 512, 512));
+        assert_eq!(
+            (base.y.len(), base.u.len(), base.v.len()),
+            (4096, 1024, 1024)
+        );
+        let base_visible = pool.named_ref_planes(LAST_REF);
+        assert_eq!(
+            (
+                base_visible.0.len(),
+                base_visible.1.len(),
+                base_visible.2.len()
+            ),
+            (2048, 512, 512)
+        );
 
         let enhancement_y = vec![11; 128 * 64];
         let enhancement_u = vec![13; 64 * 32];

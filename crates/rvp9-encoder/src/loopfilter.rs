@@ -189,7 +189,7 @@ pub(crate) fn apply_loop_filter_to_tight_recon_parallel(
     let h = height as usize;
     let uvw = w / 2;
     let uvh = h / 2;
-    let mi_rows = h / 8;
+    let mi_rows = h.div_ceil(8);
     let mi_cols = w / 8;
 
     let available_lf_workers = max_threads
@@ -393,7 +393,7 @@ fn apply_packet_overlap_plane(
     ),
 ) {
     assert!(filter_level > 0);
-    let mi_rows = height as usize / 8;
+    let mi_rows = (height as usize).div_ceil(8);
     let mi_cols = width as usize / 8;
     let sb_rows = mi_rows.div_ceil(SB_MI_SIZE);
     let sb_cols = mi_cols.div_ceil(SB_MI_SIZE);

@@ -7,8 +7,8 @@
 //!
 //! ## Scope (MVP)
 //!
-//! - Width is a multiple of 64 and height is a multiple of 8. The latter
-//!   permits the partial bottom superblock rows used by 720p and 1080p.
+//! - Width is a multiple of 64 and height is even. The latter permits partial
+//!   final 8x8 MI rows as well as the bottom superblock rows used by 720p.
 //! - 4:2:0 chroma (Profile 0), 8-bit depth.
 //! - Single tile (`tile_cols = tile_rows = 1`).
 //! - Single 64×64 SB grid per frame.
@@ -122,10 +122,12 @@ fn scaled_reference_for_analysis(
             "spatial reference must equal the current layer or be exactly half-sized",
         ));
     }
+    let visible_y_len = reference.width * reference.height;
+    let visible_uv_len = (reference.width / 2) * (reference.height / 2);
     scale_reference_i420_2x(
-        reference.y,
-        reference.u,
-        reference.v,
+        &reference.y[..visible_y_len],
+        &reference.u[..visible_uv_len],
+        &reference.v[..visible_uv_len],
         reference.width,
         reference.height,
     )
@@ -439,7 +441,7 @@ fn serial_inter_coef_recording_enabled(tile_count: usize, max_threads: u32) -> b
 pub struct EncoderConfig {
     /// Coded luma width in pixels. Must be a positive multiple of 64.
     pub width: u32,
-    /// Coded luma height in pixels. Must be a positive multiple of 8.
+    /// Visible luma height in pixels. Must be positive and even.
     pub height: u32,
     /// Frame-rate in Hz. Must be positive and finite.
     pub framerate: f64,
@@ -1200,6 +1202,24 @@ pub(crate) fn strided_plane_covers(
     }
 }
 
+fn extend_plane_bottom(
+    source: &[u8],
+    width: usize,
+    visible_height: usize,
+    storage_height: usize,
+    destination: &mut Vec<u8>,
+) {
+    debug_assert!(visible_height > 0 && storage_height >= visible_height);
+    debug_assert!(source.len() >= width * visible_height);
+    destination.resize(width * storage_height, 0);
+    destination[..width * visible_height].copy_from_slice(&source[..width * visible_height]);
+    let last_visible_row = (visible_height - 1) * width;
+    for row in visible_height..storage_height {
+        let destination_row = row * width;
+        destination.copy_within(last_visible_row..last_visible_row + width, destination_row);
+    }
+}
+
 /// Result of a successful [`StreamEncoder::encode_frame`] call.
 #[derive(Clone, Debug)]
 pub struct EncodedFrame {
@@ -1282,6 +1302,9 @@ pub struct StreamEncoder {
     /// reference-pool slot. `None` only after an interrupted encode; the next
     /// attempt then allocates a replacement and restores the reuse cycle.
     inter_recon_scratch: Option<crate::buffer_pool::OwnedYuv420>,
+    /// Bottom-edge-extended source storage for visible heights that end inside
+    /// an 8-pixel MI row. `None` only while one synchronous encode borrows it.
+    source_edge_scratch: Option<crate::buffer_pool::OwnedYuv420>,
     rate_control: RateControl,
     frame_idx: u32,
     /// GOP topology — the libvpx-faithful golden-frame-group schedule
@@ -1882,7 +1905,7 @@ impl StreamEncoder {
     /// # Errors
     ///
     /// Returns [`EncodeError::InvalidConfig`] if the configuration is
-    /// rejected (width not a multiple of 64, height not a multiple of 8,
+    /// rejected (width not a multiple of 64, height not positive and even,
     /// gop_length == 0, etc.).
     pub fn new(config: EncoderConfig) -> Result<Self, EncodeError> {
         Self::new_with_parallelism(config, EncoderParallelism::default())
@@ -1910,9 +1933,9 @@ impl StreamEncoder {
                 "width must be a positive multiple of 64",
             ));
         }
-        if !config.height.is_multiple_of(8) || config.height == 0 {
+        if !config.height.is_multiple_of(2) || config.height == 0 {
             return Err(EncodeError::InvalidConfig(
-                "height must be a positive multiple of 8",
+                "height must be positive and even for 4:2:0 encoding",
             ));
         }
         if config.bit_depth != BitDepth::Bd8 {
@@ -1964,8 +1987,10 @@ impl StreamEncoder {
 
         let w = config.width as usize;
         let h = config.height as usize;
+        let storage_h = crate::buffer_pool::reference_storage_height(h);
         let uvw = w / 2;
         let uvh = h / 2;
+        let storage_uvh = storage_h / 2;
         let tile_count = 1usize << parallelism.effective_log2_tile_cols(config.width);
         let frame_worker_count = (parallelism.max_threads as usize).min(tile_count);
         let frame_worker_pool = (frame_worker_count >= 2).then(|| {
@@ -1980,10 +2005,10 @@ impl StreamEncoder {
         let inter_tile_scratch = if frame_worker_pool.is_some() {
             (0..tile_count)
                 .map(|_| InterTileScratch {
-                    recon_y: vec![0; w * h],
-                    recon_u: vec![0; uvw * uvh],
-                    recon_v: vec![0; uvw * uvh],
-                    mv_grid: vec![PrevFrameMvRef::default(); (h / 8) * (w / 8)],
+                    recon_y: vec![0; w * storage_h],
+                    recon_u: vec![0; uvw * storage_uvh],
+                    recon_v: vec![0; uvw * storage_uvh],
+                    mv_grid: vec![PrevFrameMvRef::default(); h.div_ceil(8) * (w / 8)],
                     partitions: (0..h.div_ceil(64) * (w / 64)).map(|_| Vec::new()).collect(),
                 })
                 .collect()
@@ -1994,7 +2019,7 @@ impl StreamEncoder {
         let cyclic_refresh = match config.aq_mode {
             AqMode::Off => None,
             AqMode::CyclicRefresh => Some(CyclicRefresh::new(
-                h / 8,
+                h.div_ceil(8),
                 w / 8,
                 CyclicRefreshConfig::default(),
             )),
@@ -2048,9 +2073,14 @@ impl StreamEncoder {
             lf_worker_pool,
             inter_tile_scratch,
             inter_recon_scratch: Some((
-                vec![0u8; w * h],
-                vec![0u8; uvw * uvh],
-                vec![0u8; uvw * uvh],
+                vec![0u8; w * storage_h],
+                vec![0u8; uvw * storage_uvh],
+                vec![0u8; uvw * storage_uvh],
+            )),
+            source_edge_scratch: Some((
+                vec![0u8; w * storage_h],
+                vec![0u8; uvw * storage_uvh],
+                vec![0u8; uvw * storage_uvh],
             )),
             rate_control,
             frame_idx: 0,
@@ -2220,7 +2250,7 @@ impl StreamEncoder {
             ));
         }
         self.lookahead.record_direct_push();
-        self.encode_one_source((yuv.y, yuv.u, yuv.v), None, Some(control))
+        self.encode_one_source_edge_extended((yuv.y, yuv.u, yuv.v), None, Some(control))
     }
 
     /// Stage 4a product diagnostic hook.
@@ -2408,7 +2438,7 @@ impl StreamEncoder {
         {
             self.lookahead.record_direct_push();
             return self
-                .encode_one_source(
+                .encode_one_source_edge_extended(
                     (&yuv.y[..w * h], &yuv.u[..uvw * uvh], &yuv.v[..uvw * uvh]),
                     None,
                     None,
@@ -2487,8 +2517,44 @@ impl StreamEncoder {
             Some(entry) => entry.clone(),
             None => return Ok(None),
         };
-        self.encode_one_source((&popped.y, &popped.u, &popped.v), Some(&popped.y), None)
-            .map(Some)
+        self.encode_one_source_edge_extended(
+            (&popped.y, &popped.u, &popped.v),
+            Some(&popped.y),
+            None,
+        )
+        .map(Some)
+    }
+
+    fn encode_one_source_edge_extended(
+        &mut self,
+        source: (&[u8], &[u8], &[u8]),
+        shared_source_y: Option<&std::sync::Arc<[u8]>>,
+        spatial_control: Option<SpatialFrameControl>,
+    ) -> Result<EncodedFrame, EncodeError> {
+        let h = self.config.height as usize;
+        let storage_h = crate::buffer_pool::reference_storage_height(h);
+        if storage_h == h {
+            return self.encode_one_source(source, shared_source_y, spatial_control);
+        }
+
+        let w = self.config.width as usize;
+        let uvw = w / 2;
+        let uvh = h / 2;
+        let storage_uvh = storage_h / 2;
+        let mut scratch = self.source_edge_scratch.take().unwrap_or_else(|| {
+            (
+                vec![0; w * storage_h],
+                vec![0; uvw * storage_uvh],
+                vec![0; uvw * storage_uvh],
+            )
+        });
+        extend_plane_bottom(source.0, w, h, storage_h, &mut scratch.0);
+        extend_plane_bottom(source.1, uvw, uvh, storage_uvh, &mut scratch.1);
+        extend_plane_bottom(source.2, uvw, uvh, storage_uvh, &mut scratch.2);
+        let result =
+            self.encode_one_source((&scratch.0, &scratch.1, &scratch.2), None, spatial_control);
+        self.source_edge_scratch = Some(scratch);
+        result
     }
 
     fn encode_one_source(
@@ -2497,7 +2563,14 @@ impl StreamEncoder {
         shared_source_y: Option<&std::sync::Arc<[u8]>>,
         spatial_control: Option<SpatialFrameControl>,
     ) -> Result<EncodedFrame, EncodeError> {
-        let (y_tight, u_tight, v_tight) = source;
+        let (y_coded, u_coded, v_coded) = source;
+        let w = self.config.width as usize;
+        let h = self.config.height as usize;
+        let uvw = w / 2;
+        let uvh = h / 2;
+        let y_tight = &y_coded[..w * h];
+        let u_tight = &u_coded[..uvw * uvh];
+        let v_tight = &v_coded[..uvw * uvh];
 
         // F.0.2 oracle — stamp the current frame index on the thread-
         // local sink so picker-hook BlockDecisions carry the right
@@ -2844,11 +2917,11 @@ impl StreamEncoder {
 
         let mut packet = match frame_kind {
             FrameKind::Key => {
-                self.encode_keyframe_internal(q_index, (y_tight, u_tight, v_tight))?
+                self.encode_keyframe_internal(q_index, (y_coded, u_coded, v_coded))?
             }
             FrameKind::Inter => self.encode_inter_internal(
                 q_index,
-                (y_tight, u_tight, v_tight),
+                (y_coded, u_coded, v_coded),
                 aq_active_for_rate_control,
             )?,
         };
@@ -3003,7 +3076,7 @@ impl StreamEncoder {
         // simulator's seg_q_deltas stays all-`None` — preserving
         // Stage 4a behaviour on the KF.
         if self.cyclic_refresh.is_some() {
-            let mi_rows = (h as usize) / 8;
+            let mi_rows = (h as usize).div_ceil(8);
             let mi_cols = (w as usize) / 8;
             self.cyclic_refresh = Some(CyclicRefresh::new(
                 mi_rows,
@@ -3061,6 +3134,9 @@ impl StreamEncoder {
         let tile_count = 1usize << log2_tile_cols;
         let parallel_keyframe_tiles = tile_count > 1
             && self.parallelism.max_threads > 1
+            // Tile-local reconstruction still uses compact visible-height
+            // planes, whose row layout requires complete 8-pixel MI rows.
+            && h.is_multiple_of(8)
             // These diagnostics use thread-local sinks drained by the stream
             // thread. Keep their existing whole-frame ordering and ownership.
             && !crate::predstat::enabled()
@@ -3125,7 +3201,7 @@ impl StreamEncoder {
                 })
                 .collect();
             let mut merged_coefs = VecBackedIntraCoefSource::new(w, h);
-            let mi_rows = h as usize / 8;
+            let mi_rows = (h as usize).div_ceil(8);
             let mi_cols = w as usize / 8;
             let sb_cols = w as usize / 64;
             let (ry, ru, rv) = self.ref_pool.new_frame_planes_mut();
@@ -3195,7 +3271,7 @@ impl StreamEncoder {
         // `predstat::take_snapshot`) is a separate accumulator, untouched.
         self.diag_pred = Some(crate::predstat::take_pred_frame());
         if filter_level > 0 {
-            let mi_grid = build_kf_mi_grid_for_lf(h / 8, w / 8, &sb_partitions);
+            let mi_grid = build_kf_mi_grid_for_lf(h.div_ceil(8), w / 8, &sb_partitions);
             let max_threads = self.parallelism.max_threads as usize;
             let num_tile_cols = 1usize << log2_tile_cols;
             let worker_pool = self.frame_worker_pool.as_mut();
@@ -3271,7 +3347,7 @@ impl StreamEncoder {
         // type — KF disables salvage on the post-KF inter frame, so
         // technically this grid is never read. We populate it anyway
         // for parity with the decoder's bookkeeping.
-        let mi_rows = (h as usize) / 8;
+        let mi_rows = (h as usize).div_ceil(8);
         let mi_cols = (w as usize) / 8;
         let intra_cell = PrevFrameMvRef {
             mvs: [Mv::ZERO; 2],
@@ -3529,7 +3605,7 @@ impl StreamEncoder {
         let w = self.config.width;
         let h = self.config.height;
         let log2_tile_cols = self.parallelism.effective_log2_tile_cols(w);
-        let mi_rows_us = (h as usize) / 8;
+        let mi_rows_us = (h as usize).div_ceil(8);
         let mi_cols_us = (w as usize) / 8;
         // RVP9-BUG-KILN-00014 — this encoder has one temporal-SVC
         // probability context, so mirror libvpx's single-context SVC
@@ -3649,6 +3725,9 @@ impl StreamEncoder {
         let parallel_tile_picker = log2_tile_cols > 0
             && self.parallelism.max_threads > 1
             && self.denoiser.is_none()
+            // Tile-column reconstruction uses a compact visible-height layout
+            // whose row arithmetic requires complete 8-pixel MI rows.
+            && h.is_multiple_of(8)
             && !inter_env_snapshot.compact_recon_rows_enabled();
         let skip_legacy_vbp_prepass = !parallel_tile_picker
             && inter_env_snapshot.exact_vbp_skip_legacy_prepass_enabled(
@@ -3676,14 +3755,15 @@ impl StreamEncoder {
         // absent, so allocate one replacement and restore the cycle.
         let w_us = w as usize;
         let h_us = h as usize;
+        let storage_h_us = crate::buffer_pool::reference_storage_height(h_us);
         let uvw = w_us / 2;
-        let uvh = h_us / 2;
+        let storage_uvh = storage_h_us / 2;
         let (mut new_recon_y, mut new_recon_u, mut new_recon_v) =
             self.inter_recon_scratch.take().unwrap_or_else(|| {
                 (
-                    vec![0u8; w_us * h_us],
-                    vec![0u8; uvw * uvh],
-                    vec![0u8; uvw * uvh],
+                    vec![0u8; w_us * storage_h_us],
+                    vec![0u8; uvw * storage_uvh],
+                    vec![0u8; uvw * storage_uvh],
                 )
             });
 
@@ -4142,7 +4222,8 @@ impl StreamEncoder {
                                 sb_col_start..sb_col_end,
                                 &mut scratch.partitions,
                                 |decision, sb_row, sb_col, mapped_leaves| {
-                                    let visible_mi_rows = (h as usize - sb_row * 64).min(64) / 8;
+                                    let visible_mi_rows =
+                                        (h as usize - sb_row * 64).min(64).div_ceil(8);
                                     let leaves =
                                         leaves_from_decision_visible(decision, visible_mi_rows, 8);
                                     inter_leaves_from_intra_into(
@@ -4342,7 +4423,7 @@ impl StreamEncoder {
         // independent` `lpf_pick = LPF_PICK_FROM_Q`).
         debug_assert_eq!(
             mi_grid,
-            build_inter_mi_grid_from_picker(h / 8, w / 8, &sb_partitions),
+            build_inter_mi_grid_from_picker(h.div_ceil(8), w / 8, &sb_partitions),
             "picker-owned mi grid must match the descriptor rebuild",
         );
         let filter_level = if self.config.speed.unsigned_abs() <= 4 {
@@ -4862,7 +4943,7 @@ impl StreamEncoder {
         let log2_tile_cols = self.parallelism.effective_log2_tile_cols(w);
         let w_us = w as usize;
         let h_us = h as usize;
-        let mi_rows_us = h_us / 8;
+        let mi_rows_us = h_us.div_ceil(8);
         let mi_cols_us = w_us / 8;
         let last_slot = self.ref_pool.named_ref_view(crate::buffer_pool::LAST_REF);
         let last_scaled_reference = scaled_reference_for_analysis(last_slot, w_us, h_us)?;
@@ -5068,7 +5149,7 @@ impl StreamEncoder {
         // the same `filter_level` after IT-add, so the
         // encoder↔decoder bit-exact invariant survives LF. Mirrors the
         // show-frame path's LF block in `encode_inter_internal`.
-        let mi_grid = build_inter_mi_grid_from_picker(h / 8, w / 8, &sb_partitions);
+        let mi_grid = build_inter_mi_grid_from_picker(h.div_ceil(8), w / 8, &sb_partitions);
         let filter_level = if self.config.speed.unsigned_abs() <= 4 {
             crate::loopfilter::search_filter_level(&crate::loopfilter::SearchFilterLevelParams {
                 width: w,
@@ -5610,7 +5691,7 @@ fn choose_partitions_for_sb_cols(
 ) -> Vec<Vec<PartitionLeafDesc>> {
     let height_px = input.height_px;
     choose_mapped_partitions_for_sb_cols(input, sb_col_range, |decision, sb_row, _| {
-        let visible_mi_rows = (height_px - sb_row * 64).min(64) / 8;
+        let visible_mi_rows = (height_px - sb_row * 64).min(64).div_ceil(8);
         leaves_from_decision_visible(decision, visible_mi_rows, 8)
     })
 }
@@ -5690,7 +5771,7 @@ fn choose_mapped_partitions_for_sb_cols_into<T, F>(
         for sb_col in sb_col_range.clone() {
             let visible_height = (height_px - sb_row * 64).min(64);
             let decision = if visible_height < 64 {
-                edge_partition_decision(8, visible_height / 8)
+                edge_partition_decision(8, visible_height.div_ceil(8))
             } else {
                 let params = PartitionSearchParams {
                     src_plane: &src_plane,
@@ -5778,7 +5859,7 @@ fn exact_vbp_seed_partitions(
     let sb_rows = height_px.div_ceil(64);
     let mut partitions = Vec::with_capacity(sb_rows * sb_cols);
     for sb_row in 0..sb_rows {
-        let visible_mi_rows = (height_px - sb_row * 64).min(64) / 8;
+        let visible_mi_rows = (height_px - sb_row * 64).min(64).div_ceil(8);
         let decision = if visible_mi_rows == 8 {
             PartitionDecision::all_64x64()
         } else {
@@ -6291,7 +6372,7 @@ fn build_keyframe_packet_with_tiles(
     max_threads: usize,
     retain_coef_tokens: bool,
 ) -> Result<Vec<u8>, EncodeError> {
-    let mi_rows = height / 8;
+    let mi_rows = height.div_ceil(8);
     let mi_cols = width / 8;
     let mi_grid = build_kf_mi_grid(mi_rows, mi_cols, sb_partitions);
 
@@ -6723,7 +6804,7 @@ where
     F: FnOnce() + Send,
 {
     use rvp9_core::bitstream::SegmentationWriteParams;
-    let mi_rows = height / 8;
+    let mi_rows = height.div_ceil(8);
     let mi_cols = width / 8;
     debug_assert_eq!(mi_grid.len(), (mi_rows * mi_cols) as usize);
 
@@ -11812,7 +11893,7 @@ mod tests {
     }
 
     #[test]
-    fn stream_encoder_rejects_non_multiple_of_8_height() {
+    fn stream_encoder_rejects_odd_height() {
         let cfg = EncoderConfig {
             height: 65,
             ..baseline_config()
@@ -11858,6 +11939,76 @@ mod tests {
                 .decode_frame(&frames[0])
                 .expect("partial-height decoder round-trip");
         }
+    }
+
+    fn exercise_partial_final_mi_row_key_and_inter_decode(w: usize, h: usize, aq_mode: AqMode) {
+        let cfg = EncoderConfig {
+            width: w as u32,
+            height: h as u32,
+            aq_mode,
+            ..baseline_config()
+        };
+        let mut encoder = StreamEncoder::new(cfg).expect("partial-MI-height config");
+        let mut decoder = Decoder::new();
+        let (y, u, v) = gradient_frame(w, h);
+        let view = yuv_view(&y, &u, &v, w);
+
+        for expected_kind in [FrameKind::Key, FrameKind::Inter] {
+            let packet = encoder
+                .encode_frame(&view)
+                .expect("partial-MI-height encode");
+            assert_eq!(packet.frame_kind, expected_kind);
+            let frames = decode_packet(&mut decoder, &packet.data);
+            assert_eq!(frames.len(), 1);
+            let decoded = decoder
+                .decode_frame(&frames[0])
+                .expect("partial-MI-height decoder round-trip");
+            assert_eq!((decoded.width(), decoded.height()), (w as u32, h as u32));
+            let tight_plane =
+                |plane: rvp9_core::frame::PlaneRef<'_>, width: usize, height: usize| {
+                    let mut out = Vec::with_capacity(width * height);
+                    for row in 0..height {
+                        let start = row * plane.stride();
+                        out.extend_from_slice(&plane.data()[start..start + width]);
+                    }
+                    out
+                };
+            let assert_plane = |decoded: Vec<u8>, encoded: &[u8], plane: &str| {
+                assert_eq!(decoded.len(), encoded.len());
+                let mismatch = decoded.iter().zip(encoded).position(|(a, b)| a != b);
+                if let Some(index) = mismatch {
+                    panic!(
+                        "{expected_kind:?} {plane} reconstruction differs at {index}: decoded={} encoded={}",
+                        decoded[index], encoded[index]
+                    );
+                }
+            };
+            assert_plane(
+                tight_plane(decoded.y_plane(), w, h),
+                encoder.last_recon_y(),
+                "Y",
+            );
+            assert_plane(
+                tight_plane(decoded.u_plane(), w / 2, h / 2),
+                encoder.last_recon_u(),
+                "U",
+            );
+            assert_plane(
+                tight_plane(decoded.v_plane(), w / 2, h / 2),
+                encoder.last_recon_v(),
+                "V",
+            );
+        }
+    }
+
+    #[test]
+    fn stream_encoder_partial_final_mi_row_key_and_inter_decode() {
+        exercise_partial_final_mi_row_key_and_inter_decode(64, 68, AqMode::Off);
+    }
+
+    #[test]
+    fn stream_encoder_spatial_base_320x180_cyclic_aq_key_and_inter_decode() {
+        exercise_partial_final_mi_row_key_and_inter_decode(320, 180, AqMode::CyclicRefresh);
     }
 
     #[test]

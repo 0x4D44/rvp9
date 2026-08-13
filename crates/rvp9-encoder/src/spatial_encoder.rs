@@ -49,7 +49,7 @@ impl core::fmt::Display for SpatialEncodeError {
             Self::Config(error) => write!(f, "invalid spatial configuration: {error}"),
             Self::UnsupportedLayerGeometry { width, height } => write!(
                 f,
-                "spatial layer {width}x{height} is outside the encoder's current multiple-of-64x8 geometry"
+                "spatial layer {width}x{height} is outside the encoder's current 64-pixel-width/even-height geometry"
             ),
             Self::UnsupportedMode(reason) => write!(f, "unsupported spatial encode mode: {reason}"),
             Self::InvalidInput(reason) => write!(f, "invalid spatial source frame: {reason}"),
@@ -187,7 +187,7 @@ impl SpatialEncoder {
         )?;
         let mut encoders = Vec::with_capacity(plan.layers.len());
         for layer in &plan.layers {
-            if !layer.width.is_multiple_of(64) || !layer.height.is_multiple_of(8) {
+            if !layer.width.is_multiple_of(64) || !layer.height.is_multiple_of(2) {
                 return Err(SpatialEncodeError::UnsupportedLayerGeometry {
                     width: layer.width,
                     height: layer.height,
@@ -395,7 +395,7 @@ impl SpatialKeyframeEncoder {
         )?;
         let mut encoders = Vec::with_capacity(plan.layers.len());
         for layer in &plan.layers {
-            if !layer.width.is_multiple_of(64) || !layer.height.is_multiple_of(8) {
+            if !layer.width.is_multiple_of(64) || !layer.height.is_multiple_of(2) {
                 return Err(SpatialEncodeError::UnsupportedLayerGeometry {
                     width: layer.width,
                     height: layer.height,
@@ -842,24 +842,23 @@ mod tests {
     }
 
     #[test]
-    fn canonical_720p_three_layer_geometry_is_explicitly_deferred() {
+    fn canonical_720p_three_layer_geometry_constructs_every_layer() {
         let template = EncoderConfig::new(1280, 720);
-        let error = SpatialKeyframeEncoder::new(
+        let encoder = SpatialEncoder::new(
             template,
             SpatialSvcConfig {
                 number_spatial_layers: 3,
                 inter_layer_pred: InterLayerPred::On,
             },
         )
-        .err()
-        .expect("320x180 is not yet encodable");
-        assert!(matches!(
-            error,
-            SpatialEncodeError::UnsupportedLayerGeometry {
-                width: 320,
-                height: 180
-            }
-        ));
+        .expect("canonical 720p spatial pyramid");
+        let dimensions: Vec<_> = encoder
+            .plan()
+            .layers
+            .iter()
+            .map(|layer| (layer.width, layer.height))
+            .collect();
+        assert_eq!(dimensions, [(320, 180), (640, 360), (1280, 720)]);
     }
 
     #[test]
