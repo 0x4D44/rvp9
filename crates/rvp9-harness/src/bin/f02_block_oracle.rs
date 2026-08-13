@@ -42,7 +42,7 @@ use rvp9_encoder::{
     YuvFrameRef,
 };
 use rvp9_harness::container::{IvfHeader, write_ivf};
-use rvp9_harness::f02_schema::{compare_decisions, parse_jsonl_stream};
+use rvp9_harness::f02_schema::{analyze_newmv_cells, compare_decisions, parse_jsonl_stream};
 use rvp9_harness::y4m::read_cropped;
 use std::fs::{File, OpenOptions};
 use std::io::{BufReader, Write};
@@ -156,6 +156,41 @@ fn fixed_q_cli_range(qindex: u8) -> Option<(u8, u8)> {
     Some((cli_q, cli_q + 8))
 }
 
+fn parse_vbr(args: &[String], fixed_q: Option<u8>) -> Result<bool, String> {
+    let explicit_vbr = args.iter().any(|argument| argument == "--vbr");
+    let explicit_cbr = args.iter().any(|argument| argument == "--cbr");
+    if explicit_vbr && explicit_cbr {
+        return Err("--vbr and --cbr are mutually exclusive".to_owned());
+    }
+    Ok(if explicit_cbr {
+        false
+    } else {
+        explicit_vbr || fixed_q.is_some()
+    })
+}
+
+fn append_libvpx_rate_args(command: &mut Command, vbr: bool, fixed_q: Option<u8>) {
+    if let Some(qindex) = fixed_q {
+        let (cli_q, max_q) =
+            fixed_q_cli_range(qindex).expect("fixed q validated before libvpx invocation");
+        if vbr {
+            command
+                .arg("--end-usage=q")
+                .arg(format!("--cq-level={cli_q}"))
+                .arg(format!("--min-q={cli_q}"))
+                .arg(format!("--max-q={max_q}"));
+        } else {
+            command
+                .arg("--disable-warning-prompt")
+                .arg("--end-usage=cbr")
+                .arg(format!("--min-q={cli_q}"))
+                .arg(format!("--max-q={cli_q}"));
+        }
+    } else if !vbr {
+        command.arg("--end-usage=cbr");
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let foreman_path = PathBuf::from(
@@ -206,9 +241,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             format!("--fixed-q must be divisible by 4 and in 0..=220, got {qindex}").into(),
         );
     }
-    // Fixed-Q diagnostics must retain the production Stage 4a VBR picker
-    // calibration. RVP9_FIXED_Q bypasses only the controller's chosen Q.
-    let vbr = argv.iter().any(|a| a == "--vbr") || fixed_q.is_some();
+    // Fixed-Q diagnostics default to the production Stage 4a VBR picker
+    // calibration. An explicit --cbr retains CBR calibration while bypassing
+    // only the controller's chosen Q on both encoder legs.
+    let vbr = parse_vbr(&argv, fixed_q)?;
     let strict = argv.iter().any(|a| a == "--strict");
 
     if !foreman_path.exists() {
@@ -316,6 +352,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("  libvpx: {} per-block decisions", libvpx_records.len());
         }
 
+        let newmv_analysis = if no_libvpx {
+            None
+        } else {
+            Some(analyze_newmv_cells(
+                &rvp9_records,
+                &libvpx_records,
+                height.div_ceil(8) as u16,
+                width.div_ceil(8) as u16,
+            ))
+        };
+        if let Some(analysis) = newmv_analysis {
+            println!(
+                "  NEWMV cells: libvpx LAST/nonzero {}; rvp9 exact selected {}, exact lost {}, near selected {}, near lost {}, different selected {}, different lost {}, zero {}, unavailable {}, missing/ambiguous {}; rejected higher-RD {}, rejected non-higher-RD {}",
+                analysis.libvpx_last_nonzero_newmv_cells,
+                analysis.rvp9_new_exact_selected_cells,
+                analysis.rvp9_new_exact_lost_cells,
+                analysis.rvp9_new_near_selected_cells,
+                analysis.rvp9_new_near_lost_cells,
+                analysis.rvp9_new_different_selected_cells,
+                analysis.rvp9_new_different_lost_cells,
+                analysis.rvp9_new_zero_cells,
+                analysis.rvp9_new_unavailable_cells,
+                analysis.rvp9_missing_cells + analysis.rvp9_ambiguous_cells,
+                analysis.rvp9_new_rejected_higher_rd_cells,
+                analysis.rvp9_new_rejected_not_higher_rd_cells,
+            );
+        }
+
         let comparison = if no_libvpx {
             None
         } else {
@@ -384,6 +448,79 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "- `picker_dist`: rvp9 reports decoded-pixel SSE; libvpx reports its coefficient/model-RD ranking distortion."
         )?;
         writeln!(sf)?;
+        if let Some(analysis) = newmv_analysis {
+            writeln!(sf, "## Partition-independent LAST/NEWMV diagnosis")?;
+            writeln!(sf)?;
+            writeln!(
+                sf,
+                "Counts are visible 8x8 cells where libvpx selected a non-zero LAST/NEWMV vector. `exact` means the same q3 vector; `near` means each component is within one pixel."
+            )?;
+            writeln!(sf)?;
+            writeln!(sf, "| rvp9 outcome | cells |")?;
+            writeln!(sf, "|---|---:|")?;
+            writeln!(
+                sf,
+                "| libvpx LAST/nonzero NEWMV target | {} |",
+                analysis.libvpx_last_nonzero_newmv_cells
+            )?;
+            writeln!(
+                sf,
+                "| exact candidate selected | {} |",
+                analysis.rvp9_new_exact_selected_cells
+            )?;
+            writeln!(
+                sf,
+                "| exact candidate lost RD | {} |",
+                analysis.rvp9_new_exact_lost_cells
+            )?;
+            writeln!(
+                sf,
+                "| near candidate selected | {} |",
+                analysis.rvp9_new_near_selected_cells
+            )?;
+            writeln!(
+                sf,
+                "| near candidate lost RD | {} |",
+                analysis.rvp9_new_near_lost_cells
+            )?;
+            writeln!(
+                sf,
+                "| different non-zero candidate selected | {} |",
+                analysis.rvp9_new_different_selected_cells
+            )?;
+            writeln!(
+                sf,
+                "| different non-zero candidate lost RD | {} |",
+                analysis.rvp9_new_different_lost_cells
+            )?;
+            writeln!(sf, "| zero candidate | {} |", analysis.rvp9_new_zero_cells)?;
+            writeln!(
+                sf,
+                "| unavailable candidate | {} |",
+                analysis.rvp9_new_unavailable_cells
+            )?;
+            writeln!(
+                sf,
+                "| missing or ambiguous rvp9 coverage | {} |",
+                analysis.rvp9_missing_cells + analysis.rvp9_ambiguous_cells
+            )?;
+            writeln!(
+                sf,
+                "| classified target cells | {} |",
+                analysis.classified_cells()
+            )?;
+            writeln!(
+                sf,
+                "| rejected candidates with higher RD than winner | {} |",
+                analysis.rvp9_new_rejected_higher_rd_cells
+            )?;
+            writeln!(
+                sf,
+                "| rejected candidates without higher RD than winner | {} |",
+                analysis.rvp9_new_rejected_not_higher_rd_cells
+            )?;
+            writeln!(sf)?;
+        }
         writeln!(
             sf,
             "| frame_idx | rvp9 n_blocks | libvpx n_blocks | paired matches | mismatches |"
@@ -588,16 +725,7 @@ fn drive_libvpx_leg(
         .arg(&raw)
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
-    if let Some(qindex) = fixed_q {
-        let (cli_q, max_q) =
-            fixed_q_cli_range(qindex).expect("fixed q validated before libvpx invocation");
-        cmd.arg("--end-usage=q")
-            .arg(format!("--cq-level={cli_q}"))
-            .arg(format!("--min-q={cli_q}"))
-            .arg(format!("--max-q={max_q}"));
-    } else if !encode.vbr {
-        cmd.arg("--end-usage=cbr");
-    }
+    append_libvpx_rate_args(&mut cmd, encode.vbr, fixed_q);
     let out = cmd.output()?;
     let _ = std::fs::remove_file(&raw);
     if !out.status.success() {
@@ -666,6 +794,28 @@ mod tests {
         assert_eq!(fixed_q_cli_range(120), Some((30, 38)));
         assert_eq!(fixed_q_cli_range(121), None);
         assert_eq!(fixed_q_cli_range(224), None);
+    }
+
+    #[test]
+    fn explicit_cbr_retains_fixed_q_calibration() {
+        let args = vec!["--cbr".to_owned()];
+        assert!(!parse_vbr(&args, Some(148)).unwrap());
+
+        let mut command = Command::new("vpxenc");
+        append_libvpx_rate_args(&mut command, false, Some(148));
+        let arguments = command
+            .get_args()
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            arguments,
+            [
+                "--disable-warning-prompt",
+                "--end-usage=cbr",
+                "--min-q=37",
+                "--max-q=37"
+            ]
+        );
     }
 
     #[test]

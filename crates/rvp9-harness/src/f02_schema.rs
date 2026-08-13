@@ -421,6 +421,189 @@ impl std::fmt::Display for OracleMismatch {
 
 impl std::error::Error for OracleMismatch {}
 
+/// Visible-8x8-cell-weighted explanation of rvp9's LAST-reference NEWMV
+/// candidate wherever libvpx selected a non-zero LAST/NEWMV decision.
+///
+/// Exact-leaf comparison cannot answer this question when the encoders choose
+/// different partition trees. These counters first splat each leaf over its
+/// visible 8x8 cells, then compare the two records covering each shared cell.
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
+pub struct NewMvCellAnalysis {
+    /// Visible cells where libvpx selected LAST/NEWMV with a non-zero vector.
+    pub libvpx_last_nonzero_newmv_cells: usize,
+    /// Visible cells covered by more than one rvp9 record.
+    pub rvp9_overlapped_cells: usize,
+    /// Visible cells covered by more than one libvpx record.
+    pub libvpx_overlapped_cells: usize,
+    /// Target cells for which rvp9 emitted no covering decision.
+    pub rvp9_missing_cells: usize,
+    /// Target cells for which rvp9's covering decision was ambiguous.
+    pub rvp9_ambiguous_cells: usize,
+    /// Target cells where rvp9 did not evaluate the LAST NEWMV candidate.
+    pub rvp9_new_unavailable_cells: usize,
+    /// Target cells where rvp9's LAST NEWMV candidate was the zero vector.
+    pub rvp9_new_zero_cells: usize,
+    /// Target cells where rvp9 selected the same LAST NEWMV vector as libvpx.
+    pub rvp9_new_exact_selected_cells: usize,
+    /// Target cells where the same LAST NEWMV vector was available but lost.
+    pub rvp9_new_exact_lost_cells: usize,
+    /// Target cells where a nearby LAST NEWMV vector was selected by rvp9.
+    pub rvp9_new_near_selected_cells: usize,
+    /// Target cells where a nearby LAST NEWMV vector was available but lost.
+    pub rvp9_new_near_lost_cells: usize,
+    /// Target cells where a different non-zero LAST NEWMV vector was selected.
+    pub rvp9_new_different_selected_cells: usize,
+    /// Target cells where a different non-zero LAST NEWMV vector was available but lost.
+    pub rvp9_new_different_lost_cells: usize,
+    /// Rejected non-zero candidates whose RD cost exceeded the selected winner.
+    pub rvp9_new_rejected_higher_rd_cells: usize,
+    /// Rejected non-zero candidates whose RD cost did not exceed the selected winner.
+    pub rvp9_new_rejected_not_higher_rd_cells: usize,
+}
+
+impl NewMvCellAnalysis {
+    /// Number of libvpx target cells assigned to an rvp9 outcome category.
+    #[must_use]
+    pub const fn classified_cells(self) -> usize {
+        self.rvp9_missing_cells
+            + self.rvp9_ambiguous_cells
+            + self.rvp9_new_unavailable_cells
+            + self.rvp9_new_zero_cells
+            + self.rvp9_new_exact_selected_cells
+            + self.rvp9_new_exact_lost_cells
+            + self.rvp9_new_near_selected_cells
+            + self.rvp9_new_near_lost_cells
+            + self.rvp9_new_different_selected_cells
+            + self.rvp9_new_different_lost_cells
+    }
+}
+
+#[derive(Copy, Clone)]
+enum CellRecord<'a> {
+    One(&'a BlockDecision),
+    Overlap,
+}
+
+fn covered_cells<'a>(
+    records: &'a [BlockDecision],
+    mi_rows: u16,
+    mi_cols: u16,
+) -> BTreeMap<BlockKey, CellRecord<'a>> {
+    let mut cells = BTreeMap::new();
+    for decision in records {
+        let row_end = decision
+            .mi_row
+            .saturating_add(u16::from(decision.bsize.n_8x8_high()))
+            .min(mi_rows);
+        let col_end = decision
+            .mi_col
+            .saturating_add(u16::from(decision.bsize.n_8x8_wide()))
+            .min(mi_cols);
+        for mi_row in decision.mi_row.min(mi_rows)..row_end {
+            for mi_col in decision.mi_col.min(mi_cols)..col_end {
+                let key = BlockKey {
+                    frame_idx: decision.frame_idx,
+                    mi_row,
+                    mi_col,
+                };
+                cells
+                    .entry(key)
+                    .and_modify(|record| *record = CellRecord::Overlap)
+                    .or_insert(CellRecord::One(decision));
+            }
+        }
+    }
+    cells
+}
+
+/// Compare rvp9's LAST NEWMV search and selection over the visible cells where
+/// libvpx selected a non-zero LAST/NEWMV decision.
+///
+/// `mi_rows` and `mi_cols` are the visible frame dimensions in 8x8 units. A
+/// candidate is "near" when both q3 vector components differ by at most one
+/// pixel (8 q3 units).
+#[must_use]
+pub fn analyze_newmv_cells(
+    rvp9: &[BlockDecision],
+    libvpx: &[BlockDecision],
+    mi_rows: u16,
+    mi_cols: u16,
+) -> NewMvCellAnalysis {
+    const LAST_NEWMV_CANDIDATE: usize = 3;
+    const NEAR_MV_Q3: i32 = 8;
+
+    let rvp9_cells = covered_cells(rvp9, mi_rows, mi_cols);
+    let libvpx_cells = covered_cells(libvpx, mi_rows, mi_cols);
+    let mut analysis = NewMvCellAnalysis {
+        rvp9_overlapped_cells: rvp9_cells
+            .values()
+            .filter(|record| matches!(record, CellRecord::Overlap))
+            .count(),
+        libvpx_overlapped_cells: libvpx_cells
+            .values()
+            .filter(|record| matches!(record, CellRecord::Overlap))
+            .count(),
+        ..NewMvCellAnalysis::default()
+    };
+
+    for (key, libvpx_record) in libvpx_cells {
+        let CellRecord::One(libvpx) = libvpx_record else {
+            continue;
+        };
+        if libvpx.mode != BlockDecisionMode::Inter(InterMode::NewMv)
+            || libvpx.ref_frame != RefFrame::LastFrame
+            || (libvpx.mv_row == 0 && libvpx.mv_col == 0)
+        {
+            continue;
+        }
+        analysis.libvpx_last_nonzero_newmv_cells += 1;
+
+        let Some(rvp9_record) = rvp9_cells.get(&key) else {
+            analysis.rvp9_missing_cells += 1;
+            continue;
+        };
+        let CellRecord::One(rvp9) = rvp9_record else {
+            analysis.rvp9_ambiguous_cells += 1;
+            continue;
+        };
+        let candidate = rvp9.last_candidates[LAST_NEWMV_CANDIDATE];
+        if !candidate.available {
+            analysis.rvp9_new_unavailable_cells += 1;
+            continue;
+        }
+        if candidate.mv_row == 0 && candidate.mv_col == 0 {
+            analysis.rvp9_new_zero_cells += 1;
+            continue;
+        }
+
+        let exact = candidate.mv_row == libvpx.mv_row && candidate.mv_col == libvpx.mv_col;
+        let near = i32::from(candidate.mv_row).abs_diff(i32::from(libvpx.mv_row))
+            <= NEAR_MV_Q3 as u32
+            && i32::from(candidate.mv_col).abs_diff(i32::from(libvpx.mv_col)) <= NEAR_MV_Q3 as u32;
+        let selected = rvp9.mode == BlockDecisionMode::Inter(InterMode::NewMv)
+            && rvp9.ref_frame == RefFrame::LastFrame
+            && rvp9.mv_row == candidate.mv_row
+            && rvp9.mv_col == candidate.mv_col;
+        if !selected {
+            if candidate.rd_cost > rvp9.picker_rd_cost {
+                analysis.rvp9_new_rejected_higher_rd_cells += 1;
+            } else {
+                analysis.rvp9_new_rejected_not_higher_rd_cells += 1;
+            }
+        }
+        match (exact, near, selected) {
+            (true, _, true) => analysis.rvp9_new_exact_selected_cells += 1,
+            (true, _, false) => analysis.rvp9_new_exact_lost_cells += 1,
+            (false, true, true) => analysis.rvp9_new_near_selected_cells += 1,
+            (false, true, false) => analysis.rvp9_new_near_lost_cells += 1,
+            (false, false, true) => analysis.rvp9_new_different_selected_cells += 1,
+            (false, false, false) => analysis.rvp9_new_different_lost_cells += 1,
+        }
+    }
+
+    analysis
+}
+
 /// Align and compare the fields that are live on both F.0.2 legs.
 ///
 /// The three rate-estimate fields remain present in paired diagnostics but are
@@ -988,6 +1171,86 @@ mod tests {
         assert_eq!(missing.pairs[0].libvpx_records, 0);
         assert_eq!(duplicate.mismatch_count(), 1);
         assert_eq!(duplicate.pairs[0].rvp9_records, 2);
+    }
+
+    #[test]
+    fn newmv_analysis_aligns_different_partition_trees_by_covered_cell() {
+        let mut libvpx = sample_inter();
+        libvpx.bsize = BlockSize::Block32x32;
+
+        let mut exact_selected = sample_inter();
+        exact_selected.bsize = BlockSize::Block16x16;
+        exact_selected.last_candidates[3] = CandidateProbe {
+            available: true,
+            mv_row: libvpx.mv_row,
+            mv_col: libvpx.mv_col,
+            ..CandidateProbe::default()
+        };
+
+        let mut exact_lost = exact_selected;
+        exact_lost.mi_col += 2;
+        exact_lost.mode = BlockDecisionMode::Inter(InterMode::ZeroMv);
+        exact_lost.mv_row = 0;
+        exact_lost.mv_col = 0;
+
+        let mut near_lost = exact_lost;
+        near_lost.mi_row += 2;
+        near_lost.mi_col -= 2;
+        near_lost.last_candidates[3].mv_row += 4;
+        near_lost.last_candidates[3].mv_col += 4;
+
+        let mut unavailable = exact_lost;
+        unavailable.mi_row += 2;
+        unavailable.last_candidates[3] = CandidateProbe::default();
+
+        let analysis = analyze_newmv_cells(
+            &[exact_selected, exact_lost, near_lost, unavailable],
+            &[libvpx],
+            8,
+            16,
+        );
+
+        assert_eq!(analysis.libvpx_last_nonzero_newmv_cells, 16);
+        assert_eq!(analysis.rvp9_new_exact_selected_cells, 4);
+        assert_eq!(analysis.rvp9_new_exact_lost_cells, 4);
+        assert_eq!(analysis.rvp9_new_near_lost_cells, 4);
+        assert_eq!(analysis.rvp9_new_unavailable_cells, 4);
+        assert_eq!(analysis.classified_cells(), 16);
+    }
+
+    #[test]
+    fn newmv_analysis_distinguishes_different_and_zero_candidates() {
+        let mut libvpx_first = sample_inter();
+        libvpx_first.bsize = BlockSize::Block8x8;
+        let mut libvpx_second = libvpx_first;
+        libvpx_second.mi_col += 1;
+
+        let mut different = libvpx_first;
+        different.mv_row = 80;
+        different.mv_col = 80;
+        different.last_candidates[3] = CandidateProbe {
+            available: true,
+            mv_row: different.mv_row,
+            mv_col: different.mv_col,
+            ..CandidateProbe::default()
+        };
+
+        let mut zero = libvpx_second;
+        zero.mode = BlockDecisionMode::Inter(InterMode::ZeroMv);
+        zero.mv_row = 0;
+        zero.mv_col = 0;
+        zero.last_candidates[3] = CandidateProbe {
+            available: true,
+            ..CandidateProbe::default()
+        };
+
+        let analysis =
+            analyze_newmv_cells(&[different, zero], &[libvpx_first, libvpx_second], 8, 16);
+
+        assert_eq!(analysis.libvpx_last_nonzero_newmv_cells, 2);
+        assert_eq!(analysis.rvp9_new_different_selected_cells, 1);
+        assert_eq!(analysis.rvp9_new_zero_cells, 1);
+        assert_eq!(analysis.classified_cells(), 2);
     }
 
     #[test]
