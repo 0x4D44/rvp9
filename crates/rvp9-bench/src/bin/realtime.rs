@@ -22,11 +22,11 @@
 //!       --p99-budget-ms 50
 //!
 //! The encoder matrix controls (`--end-usage`, `--threads`,
-//! `--tile-columns`, `--temporal-layers`, `--aq-mode`,
-//! `--noise-sensitivity`, `--limit`, and `--kf-max-dist`) are forwarded in
-//! vpxenc-compatible form. Defaults are CBR, one thread, zero tile columns,
-//! AQ mode 0, denoiser 0, and keyframe distance 60; temporal layers are
-//! omitted unless explicitly selected.
+//! `--tile-columns`, `--temporal-layers`, `--spatial-layers`,
+//! `--inter-layer-pred`, `--aq-mode`, `--noise-sensitivity`, `--limit`, and
+//! `--kf-max-dist`) are forwarded in vpxenc-compatible form. Defaults are CBR,
+//! one thread, zero tile columns, AQ mode 0, denoiser 0, and keyframe distance
+//! 60; temporal and spatial layers are omitted unless explicitly selected.
 
 use std::ffi::OsString;
 use std::path::PathBuf;
@@ -48,6 +48,8 @@ struct Args {
     threads: u32,
     tile_columns: u8,
     temporal_layers: Option<u32>,
+    spatial_layers: Option<u32>,
+    inter_layer_pred: u32,
     aq_mode: u32,
     noise_sensitivity: u32,
     limit: Option<usize>,
@@ -123,6 +125,25 @@ fn parse_args_from(argv: &[String]) -> Args {
         );
         layers
     });
+    let spatial_layers = get("--spatial-layers").map(|s| {
+        let layers = s.parse::<u32>().expect("--spatial-layers must be u32");
+        assert!(
+            matches!(layers, 2 | 3),
+            "--spatial-layers must be 2 or 3 when provided"
+        );
+        layers
+    });
+    assert!(
+        temporal_layers.is_none() || spatial_layers.is_none(),
+        "--temporal-layers and --spatial-layers cannot be combined"
+    );
+    let inter_layer_pred = get("--inter-layer-pred")
+        .map(|s| s.parse::<u32>().expect("--inter-layer-pred must be u32"))
+        .unwrap_or(0);
+    assert!(
+        matches!(inter_layer_pred, 0 | 3),
+        "--inter-layer-pred must be 0 or 3"
+    );
     let aq_mode = get("--aq-mode")
         .map(|s| s.parse::<u32>().expect("--aq-mode must be u32"))
         .unwrap_or(0);
@@ -164,6 +185,8 @@ fn parse_args_from(argv: &[String]) -> Args {
         threads,
         tile_columns,
         temporal_layers,
+        spatial_layers,
+        inter_layer_pred,
         aq_mode,
         noise_sensitivity,
         limit,
@@ -275,6 +298,10 @@ fn encoder_args(args: &Args) -> Vec<OsString> {
     if let Some(layers) = args.temporal_layers {
         command_args.push(format!("--temporal-layers={layers}").into());
     }
+    if let Some(layers) = args.spatial_layers {
+        command_args.push(format!("--spatial-layers={layers}").into());
+        command_args.push(format!("--inter-layer-pred={}", args.inter_layer_pred).into());
+    }
     if let Some(limit) = args.limit {
         command_args.push(format!("--limit={limit}").into());
     }
@@ -306,6 +333,10 @@ fn main() {
     println!("tune-content:     default");
     if let Some(layers) = args.temporal_layers {
         println!("temporal-layers:  {layers}");
+    }
+    if let Some(layers) = args.spatial_layers {
+        println!("spatial-layers:   {layers}");
+        println!("inter-layer-pred: {}", args.inter_layer_pred);
     }
     if let Some(limit) = args.limit {
         println!("limit:            {limit}");
@@ -465,6 +496,8 @@ mod tests {
             threads: 1,
             tile_columns: 0,
             temporal_layers: None,
+            spatial_layers: None,
+            inter_layer_pred: 0,
             aq_mode: 0,
             noise_sensitivity: 0,
             limit: None,
@@ -547,5 +580,36 @@ mod tests {
                 .iter()
                 .any(|arg| arg.starts_with("--temporal-layers="))
         );
+    }
+
+    #[test]
+    fn parses_and_forwards_spatial_svc_controls() {
+        let argv = vec![
+            "realtime".to_string(),
+            "--input=input.y4m".to_string(),
+            "--spatial-layers=3".to_string(),
+            "--inter-layer-pred=0".to_string(),
+        ];
+        let args = parse_args_from(&argv);
+        let command_args = encoder_args(&args);
+        let command_args: Vec<String> = command_args
+            .iter()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+
+        for expected in ["--spatial-layers=3", "--inter-layer-pred=0"] {
+            assert!(command_args.iter().any(|arg| arg == expected), "{expected}");
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "--temporal-layers and --spatial-layers cannot be combined")]
+    fn rejects_combined_temporal_and_spatial_svc() {
+        parse_args_from(&[
+            "realtime".to_string(),
+            "--input=input.y4m".to_string(),
+            "--temporal-layers=3".to_string(),
+            "--spatial-layers=3".to_string(),
+        ]);
     }
 }
