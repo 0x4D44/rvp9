@@ -84,7 +84,7 @@ try {
     # iff the reverse-apply would clean — i.e. the patch's additions
     # are present in the tree. A non-zero exit just means "not
     # already applied".
-    & git apply -R --check $patchPath 2>$null
+    & git apply --unidiff-zero -R --check $patchPath 2>$null
     $alreadyApplied = ($LASTEXITCODE -eq 0)
     $global:LASTEXITCODE = 0
 
@@ -93,7 +93,7 @@ try {
     } else {
         if ($alreadyApplied -and $Force) {
             Write-Host "Reverting previously-applied patch (per -Force)..."
-            & git apply -R $patchPath
+            & git apply --unidiff-zero -R $patchPath
             if ($LASTEXITCODE -ne 0) {
                 Write-Host "ERROR: git apply -R failed; the working tree is dirty." -ForegroundColor Red
                 exit 1
@@ -101,14 +101,14 @@ try {
         }
         # (c) — patch must apply cleanly. Use `--check` first so we
         # don't leave the tree half-applied on a malformed patch.
-        & git apply --check $patchPath
+        & git apply --unidiff-zero --check $patchPath
         if ($LASTEXITCODE -ne 0) {
             Write-Host "ERROR: patch failed `git apply --check`." -ForegroundColor Red
             Write-Host "  Patch: $patchPath" -ForegroundColor Red
             Write-Host "  Inspect rejection list with: cd third_party/libvpx; git apply --reject ../libvpx-patches/f02_oracle.patch" -ForegroundColor Red
             exit 1
         }
-        & git apply $patchPath
+        & git apply --unidiff-zero $patchPath
         if ($LASTEXITCODE -ne 0) {
             Write-Host "ERROR: git apply failed (post-check)." -ForegroundColor Red
             exit 1

@@ -43,7 +43,7 @@
 
 use rvp9_core::bitstream::ChromaFormat;
 use rvp9_core::mode_decision::inter::NewMvGateReason;
-use rvp9_encoder::f02_oracle::{self, BlockDecision};
+use rvp9_encoder::f02_oracle::{self, BlockDecision, MlPartitionTrace};
 use rvp9_encoder::svc::{InterLayerPred, SpatialSvcConfig};
 use rvp9_encoder::{
     AqMode, EncoderConfig, EncoderParallelism, RcMode, SpatialEncoder, Stage4aProductSplitOverride,
@@ -567,6 +567,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             spatial_layers,
             inter_layer_pred,
         };
+        let _ = f02_oracle::drain_partition_traces();
         let rvp9_records = if spatial_layers > 1 {
             drive_rvp9_spatial_leg(&foreman_path, encode, strict, &rvp9_ivf, fixed_q.unwrap())?
         } else {
@@ -578,6 +579,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             frames
         );
         println!("  rvp9 IVF  → {}", rvp9_ivf.display());
+        let rvp9_partition_traces = f02_oracle::drain_partition_traces();
+        let rvp9_partition_path = run_dir.join(format!("foreman_{}kbps_partition_rvp9.tsv", kbps));
+        if !rvp9_partition_traces.is_empty() {
+            write_partition_traces(&rvp9_partition_path, &rvp9_partition_traces)?;
+            println!(
+                "  rvp9 ML partition: {} nodes → {}",
+                rvp9_partition_traces.len(),
+                rvp9_partition_path.display()
+            );
+        }
 
         let libvpx_records = if no_libvpx {
             Vec::new()
@@ -596,6 +607,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
         if !no_libvpx {
             println!("  libvpx: {} per-block decisions", libvpx_records.len());
+            let libvpx_partition_path =
+                run_dir.join(format!("foreman_{}kbps_partition_libvpx.tsv", kbps));
+            if !rvp9_partition_traces.is_empty() && libvpx_partition_path.exists() {
+                report_partition_trace_comparison(&rvp9_partition_path, &libvpx_partition_path)?;
+            }
         }
 
         let rvp9_analysis_records =
@@ -1127,6 +1143,70 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+fn write_partition_traces(
+    path: &Path,
+    traces: &[MlPartitionTrace],
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut file = File::create(path)?;
+    for trace in traces {
+        trace.write_tsv(&mut file)?;
+    }
+    Ok(())
+}
+
+fn report_partition_trace_comparison(
+    rvp9_path: &Path,
+    libvpx_path: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let rvp9 = std::fs::read_to_string(rvp9_path)?;
+    let libvpx = std::fs::read_to_string(libvpx_path)?;
+    let rvp9_lines = rvp9.lines().collect::<Vec<_>>();
+    let libvpx_lines = libvpx.lines().collect::<Vec<_>>();
+    let mut compared = 0usize;
+    let mut key = 0usize;
+    let mut dc_q = 0usize;
+    let mut source = 0usize;
+    let mut predictor = 0usize;
+    let mut variance = 0usize;
+    let mut features = 0usize;
+    let mut scores = 0usize;
+    let mut decisions = 0usize;
+    let mut first_causal_mismatch = None;
+    for (rvp9, libvpx) in rvp9_lines.iter().zip(&libvpx_lines) {
+        let rvp9 = rvp9.split('\t').collect::<Vec<_>>();
+        let libvpx = libvpx.split('\t').collect::<Vec<_>>();
+        if rvp9.len() != 21 || libvpx.len() != 21 {
+            return Err("ML partition trace record did not contain 21 fields".into());
+        }
+        compared += 1;
+        key += usize::from(rvp9[..5] == libvpx[..5]);
+        dc_q += usize::from(rvp9[5] == libvpx[5]);
+        source += usize::from(rvp9[6] == libvpx[6]);
+        predictor += usize::from(rvp9[7] == libvpx[7]);
+        variance += usize::from(rvp9[8..13] == libvpx[8..13]);
+        features += usize::from(rvp9[13..19] == libvpx[13..19]);
+        scores += usize::from(rvp9[19] == libvpx[19]);
+        decisions += usize::from(rvp9[20] == libvpx[20]);
+        if first_causal_mismatch.is_none() && (rvp9[..19] != libvpx[..19] || rvp9[20] != libvpx[20])
+        {
+            first_causal_mismatch = Some((rvp9.join("\t"), libvpx.join("\t")));
+        }
+    }
+    println!(
+        "  ML partition trace: {compared} paired nodes; rvp9 {} / libvpx {} total",
+        rvp9_lines.len(),
+        libvpx_lines.len()
+    );
+    println!(
+        "    key {key}/{compared}, dc_q {dc_q}/{compared}, source {source}/{compared}, predictor {predictor}/{compared}, variance {variance}/{compared}, features {features}/{compared}, score bits {scores}/{compared}, decisions {decisions}/{compared}"
+    );
+    if let Some((rvp9, libvpx)) = first_causal_mismatch {
+        println!("    first causal rvp9 : {rvp9}");
+        println!("    first causal libvpx: {libvpx}");
+    }
+    Ok(())
+}
+
 /// Approximation of an ISO-8601-ish stamp without pulling in `chrono`
 /// (workspace has no dep on it). Format `yyyymmdd_hhmmss` based on
 /// `SystemTime::now()`.
@@ -1359,8 +1439,11 @@ fn drive_libvpx_spatial_leg(
     }
 
     let mut command = Command::new(anchor);
+    let partition_sidecar =
+        run_dir.join(format!("foreman_{}kbps_partition_libvpx.tsv", encode.kbps));
     command
         .env("VPX_F02_ORACLE_OUT", &sidecar)
+        .env("VPX_F02_PARTITION_ORACLE_OUT", &partition_sidecar)
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
     append_libvpx_spatial_args(&mut command, &input, &output, encode, fixed_q)?;

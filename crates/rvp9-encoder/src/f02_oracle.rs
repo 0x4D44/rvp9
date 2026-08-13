@@ -205,6 +205,66 @@ pub struct BlockDecision {
     pub luma_eob_nonzero: bool,
 }
 
+/// One exact low-resolution ML partition-controller node.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct MlPartitionTrace {
+    /// Presentation-order frame index.
+    pub frame_idx: u32,
+    /// Spatial-layer identifier.
+    pub spatial_id: u8,
+    /// Absolute 8x8-cell row of this model node.
+    pub mi_row: u16,
+    /// Absolute 8x8-cell column of this model node.
+    pub mi_col: u16,
+    /// Square node size evaluated by the model.
+    pub bsize: BlockSize,
+    /// Frame DC quantizer value.
+    pub dc_q: i32,
+    /// FNV-1a hash of this node's source pixels.
+    pub source_hash: u64,
+    /// FNV-1a hash of this node's estimated-prediction pixels.
+    pub predictor_hash: u64,
+    /// Whole-node source-minus-prediction variance.
+    pub variance: u32,
+    /// Quadrant variances in raster order.
+    pub sub_variances: [u32; 4],
+    /// Exact IEEE-754 bits of the six model inputs.
+    pub feature_bits: [u32; 6],
+    /// Exact IEEE-754 bits of the model output.
+    pub score_bits: u32,
+    /// Whether the CPU8 zero-threshold controller chooses SPLIT.
+    pub split: bool,
+}
+
+impl MlPartitionTrace {
+    /// Write a stable tab-separated record shared with the pinned-libvpx
+    /// instrumentation. Integer and float-bit fields make `diff` exact.
+    pub fn write_tsv<W: io::Write>(&self, writer: &mut W) -> io::Result<()> {
+        write!(
+            writer,
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            self.frame_idx,
+            self.spatial_id,
+            self.mi_row,
+            self.mi_col,
+            bsize_tag(self.bsize),
+            self.dc_q,
+            self.source_hash,
+            self.predictor_hash,
+            self.variance,
+            self.sub_variances[0],
+            self.sub_variances[1],
+            self.sub_variances[2],
+            self.sub_variances[3],
+        )?;
+        for bits in self.feature_bits {
+            write!(writer, "\t{bits}")?;
+        }
+        write!(writer, "\t{}", self.score_bits)?;
+        writeln!(writer, "\t{}", u8::from(self.split))
+    }
+}
+
 impl BlockDecision {
     /// Serialise the record as one JSONL line (terminated by `\n`).
     ///
@@ -493,6 +553,11 @@ thread_local! {
 }
 
 thread_local! {
+    /// Exact low-resolution partition-model records for the current thread.
+    static PARTITION_SINK: RefCell<Vec<MlPartitionTrace>> = const { RefCell::new(Vec::new()) };
+}
+
+thread_local! {
     /// Per-thread "current frame index" the picker hooks attach to
     /// each recorded decision. Set by [`set_frame_idx`] at the top of
     /// each frame's encode loop.
@@ -564,6 +629,15 @@ pub fn record_decision(d: BlockDecision) {
     SINK.with(|s| s.borrow_mut().push(d));
 }
 
+/// Record one low-resolution partition-model node. No-op when disabled.
+#[inline]
+pub fn record_partition_trace(trace: MlPartitionTrace) {
+    if !is_enabled() {
+        return;
+    }
+    PARTITION_SINK.with(|sink| sink.borrow_mut().push(trace));
+}
+
 /// Drain the per-thread per-frame sink. Returns an empty `Vec` when
 /// the oracle is disabled.
 #[must_use]
@@ -572,6 +646,15 @@ pub fn drain_frame() -> Vec<BlockDecision> {
         return Vec::new();
     }
     SINK.with(|s| std::mem::take(&mut *s.borrow_mut()))
+}
+
+/// Drain exact low-resolution partition-model records from the current thread.
+#[must_use]
+pub fn drain_partition_traces() -> Vec<MlPartitionTrace> {
+    if !is_enabled() {
+        return Vec::new();
+    }
+    PARTITION_SINK.with(|sink| std::mem::take(&mut *sink.borrow_mut()))
 }
 
 /// Read the per-thread current frame index. Used by the picker hooks
@@ -736,6 +819,34 @@ mod tests {
         assert!(s.contains("\"mode\":\"DC\""), "intra DC tag");
         assert!(s.contains("\"ref_frame\":\"INTRA\""), "ref_frame INTRA tag");
         assert!(s.contains("\"skip_flag\":true"), "skip_flag true");
+    }
+
+    #[test]
+    fn ml_partition_tsv_preserves_float_bits_and_field_order() {
+        let trace = MlPartitionTrace {
+            frame_idx: 1,
+            spatial_id: 0,
+            mi_row: 2,
+            mi_col: 3,
+            bsize: BlockSize::Block32x32,
+            dc_q: 80,
+            source_hash: 11,
+            predictor_hash: 12,
+            variance: 13,
+            sub_variances: [14, 15, 16, 17],
+            feature_bits: [18, 19, 20, 21, 22, 23],
+            score_bits: 24,
+            split: true,
+        };
+        let mut output = Vec::new();
+        trace.write_tsv(&mut output).unwrap();
+        let line = String::from_utf8(output).unwrap();
+        let fields = line.trim_end().split('\t').collect::<Vec<_>>();
+        assert_eq!(fields.len(), 21);
+        assert_eq!(fields[4], "32x32");
+        assert_eq!(&fields[13..19], ["18", "19", "20", "21", "22", "23"]);
+        assert_eq!(fields[19], "24");
+        assert_eq!(fields[20], "1");
     }
 
     #[test]

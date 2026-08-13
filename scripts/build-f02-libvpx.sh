@@ -21,13 +21,13 @@ if ! git -C "$source_dir" diff --quiet || ! git -C "$source_dir" diff --cached -
     echo "third_party/libvpx is dirty; refusing an ambiguous oracle build" >&2
     exit 1
 fi
-git -C "$source_dir" apply --check "$patch_file"
+git -C "$source_dir" apply --unidiff-zero --check "$patch_file"
 
 scratch_root="$(mktemp -d "${TMPDIR:-/tmp}/rvp9-f02-libvpx.XXXXXX")"
 scratch_source="$scratch_root/libvpx"
 git clone --quiet --shared "$source_dir" "$scratch_source"
 git -C "$scratch_source" checkout --quiet --detach "$expected_commit"
-git -C "$scratch_source" apply "$patch_file"
+git -C "$scratch_source" apply --unidiff-zero "$patch_file"
 
 case "$(uname -s):$(uname -m)" in
     Darwin:arm64) target="arm64-darwin23-gcc" ;;

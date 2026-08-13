@@ -7309,6 +7309,93 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 } else {
                     Some(int_pro.mv)
                 };
+                // F02 low-resolution partition oracle. Pinned libvpx CPU8
+                // switches only coded layers at or below 352x288 to its
+                // six-feature ML partition controller. Rebuild the same single
+                // LAST/bilinear estimated predictor and retain exact node
+                // inputs without changing the production partition policy.
+                if crate::f02_oracle::is_enabled() && speed == 8 && w.saturating_mul(h) <= 352 * 288
+                {
+                    use crate::ml_partition::{
+                        MlVarPartitionTreeInput, trace_ml_var_partition_tree,
+                    };
+                    use rvp9_core::bitstream::frame::InterpFilter;
+
+                    let mut predictor_block = [0u8; 64 * 64];
+                    build_inter_pred_block_unscaled(
+                        me_ref_yuv.0,
+                        w,
+                        w,
+                        h,
+                        sb_px_x,
+                        sb_px_y,
+                        64,
+                        64,
+                        i32::from(int_pro.mv.col) * 2,
+                        i32::from(int_pro.mv.row) * 2,
+                        &mut predictor_block,
+                        64,
+                        InterpFilter::Bilinear,
+                        &mut inter_emit_scratch.pred_border,
+                    );
+                    let source_offset = sb_px_y * w + sb_px_x;
+                    let visible_width = (w - sb_px_x).min(64);
+                    let visible_height = (h - sb_px_y).min(64);
+                    let (partition_source, partition_source_stride): (&[u8], usize) =
+                        if visible_width == 64 && visible_height == 64 {
+                            (&input_yuv.0[source_offset..], w)
+                        } else {
+                            gather_edge_extended_64x64(
+                                input_yuv.0,
+                                w,
+                                h,
+                                sb_px_x,
+                                sb_px_y,
+                                &mut inter_emit_scratch.denoise_pred,
+                            );
+                            (&inter_emit_scratch.denoise_pred, 64)
+                        };
+                    let dc_q = i32::from(rvp9_core::quant::dc_quant(
+                        i32::from(base_qindex),
+                        0,
+                        BitDepth::Eight,
+                    ));
+                    let model_input = MlVarPartitionTreeInput {
+                        dc_q,
+                        speed,
+                        src: partition_source,
+                        src_stride: partition_source_stride,
+                        pred: &predictor_block,
+                        pred_stride: 64,
+                    };
+                    for trace in trace_ml_var_partition_tree(&model_input) {
+                        let node_mi_row = sb_row * 8 + trace.row_px / 8;
+                        let node_mi_col = sb_col * 8 + trace.col_px / 8;
+                        let half_mi = usize::from(trace.bsize.n_8x8_wide()) / 2;
+                        if node_mi_row + half_mi >= mi_rows_us
+                            || node_mi_col + half_mi >= mi_cols_us
+                        {
+                            continue;
+                        }
+                        crate::f02_oracle::record_partition_trace(
+                            crate::f02_oracle::MlPartitionTrace {
+                                frame_idx: crate::f02_oracle::current_frame_idx(),
+                                spatial_id: crate::f02_oracle::current_spatial_id(),
+                                mi_row: node_mi_row as u16,
+                                mi_col: node_mi_col as u16,
+                                bsize: trace.bsize,
+                                dc_q,
+                                source_hash: trace.source_hash,
+                                predictor_hash: trace.predictor_hash,
+                                variance: trace.variance,
+                                sub_variances: trace.sub_variances,
+                                feature_bits: trace.features.map(f32::to_bits),
+                                score_bits: trace.score.to_bits(),
+                                split: trace.score > 0.0,
+                            },
+                        );
+                    }
+                }
                 // The partition tree and its chroma-sensitivity probe select the
                 // same LAST-vs-GOLDEN predictor. Production dimensions are
                 // multiples of 64, so compute GOLDEN's zero-MV SAD once with the

@@ -1003,3 +1003,94 @@ index 6f2524b36..901336d7d 100644
  }
 
  void vp9_pick_inter_mode_sub8x8(VP9_COMP *cpi, MACROBLOCK *x, int mi_row,
+diff --git a/vp9/encoder/vp9_encodeframe.c b/vp9/encoder/vp9_encodeframe.c
+index e8f29d5d2..0708c01f3 100644
+--- a/vp9/encoder/vp9_encodeframe.c
++++ b/vp9/encoder/vp9_encodeframe.c
+@@ -14,0 +15 @@
++#include <stdlib.h>
+@@ -4853,0 +4855,68 @@ static void pred_pixel_ready_reset(PC_TREE *pc_tree, BLOCK_SIZE bsize) {
++static uint64_t f02_partition_hash_rect(const uint8_t *data, int stride,
++                                        int width, int height) {
++  uint64_t hash = 14695981039346656037ULL;
++  int row;
++  int col;
++  for (row = 0; row < height; ++row) {
++    for (col = 0; col < width; ++col) {
++      hash ^= data[row * stride + col];
++      hash *= 1099511628211ULL;
++    }
++  }
++  return hash;
++}
++
++static void f02_write_ml_partition_trace(
++    VP9_COMP *cpi, BLOCK_SIZE bsize, int mi_row, int mi_col, int dc_q,
++    const uint8_t *src, int src_stride, const uint8_t *pred, int pred_stride,
++    unsigned int var, const unsigned int sub_vars[4],
++    const float features[FEATURES], const float score[LABELS], float thresh) {
++  static FILE *fp = NULL;
++  static int state = 0;
++  static const char *const bsize_tag[BLOCK_SIZES] = {
++    "4x4",   "4x8",   "8x4",   "8x8",   "8x16",  "16x8",  "16x16",
++    "16x32", "32x16", "32x32", "32x64", "64x32", "64x64"
++  };
++  union {
++    float f;
++    uint32_t u;
++  } feature_bits[FEATURES], score_bits;
++  int i;
++  const int width = 4 << b_width_log2_lookup[bsize];
++  const int height = 4 << b_height_log2_lookup[bsize];
++
++  if (state == 0) {
++    const char *const path = getenv("VPX_F02_PARTITION_ORACLE_OUT");
++    if (path != NULL && path[0] != '\0') {
++      fp = fopen(path, "w");
++      if (fp != NULL) {
++        setvbuf(fp, NULL, _IOLBF, 0);
++        state = 1;
++      } else {
++        state = 2;
++      }
++    } else {
++      state = 2;
++    }
++  }
++  if (state != 1 || fp == NULL) return;
++
++  for (i = 0; i < FEATURES; ++i) feature_bits[i].f = features[i];
++  score_bits.f = score[0];
++  fprintf(fp,
++          "%u\t%d\t%d\t%d\t%s\t%d\t%llu\t%llu\t%u\t%u\t%u\t%u\t%u"
++          "\t%u\t%u\t%u\t%u\t%u\t%u\t%u\t%d\n",
++          cpi->use_svc ? (unsigned int)cpi->svc.current_superframe
++                       : (unsigned int)cpi->common.current_video_frame,
++          cpi->use_svc ? cpi->svc.spatial_layer_id : 0, mi_row, mi_col,
++          bsize_tag[bsize], dc_q,
++          (unsigned long long)f02_partition_hash_rect(src, src_stride, width,
++                                                       height),
++          (unsigned long long)f02_partition_hash_rect(pred, pred_stride, width,
++                                                       height),
++          var, sub_vars[0], sub_vars[1], sub_vars[2], sub_vars[3],
++          feature_bits[0].u, feature_bits[1].u, feature_bits[2].u,
++          feature_bits[3].u, feature_bits[4].u, feature_bits[5].u,
++          score_bits.u, score[0] > thresh);
++}
++
+@@ -4877,0 +4947,2 @@ static int ml_predict_var_partitioning(VP9_COMP *cpi, MACROBLOCK *x,
++    unsigned int var;
++    unsigned int sub_vars[4];
+@@ -4893,2 +4964 @@ static int ml_predict_var_partitioning(VP9_COMP *cpi, MACROBLOCK *x,
+-      const unsigned int var =
+-          cpi->fn_ptr[bsize].vf(src, src_stride, pred, pred_stride, &sse);
++      var = cpi->fn_ptr[bsize].vf(src, src_stride, pred, pred_stride, &sse);
+@@ -4906,0 +4977 @@ static int ml_predict_var_partitioning(VP9_COMP *cpi, MACROBLOCK *x,
++        sub_vars[i] = sub_var;
+@@ -4913,0 +4985,6 @@ static int ml_predict_var_partitioning(VP9_COMP *cpi, MACROBLOCK *x,
++    f02_write_ml_partition_trace(cpi, bsize, mi_row, mi_col, dc_q,
++                                 x->plane[0].src.buf,
++                                 x->plane[0].src.stride,
++                                 x->est_pred + 8 * (mi_row & 7) * 64 +
++                                     8 * (mi_col & 7),
++                                 64, var, sub_vars, features, score, thresh);

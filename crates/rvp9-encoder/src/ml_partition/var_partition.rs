@@ -385,12 +385,46 @@ pub struct MlVarPartitionTreeInput<'a> {
     pub pred_stride: usize,
 }
 
-fn ml_var_partition_score(
+/// Exact inputs and output for one visited node in the low-resolution
+/// realtime partition model.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MlVarPartitionNodeTrace {
+    /// Pixel row relative to the enclosing 64x64 superblock.
+    pub row_px: usize,
+    /// Pixel column relative to the enclosing 64x64 superblock.
+    pub col_px: usize,
+    /// Square node size evaluated by the model.
+    pub bsize: BlockSize,
+    /// FNV-1a hash of the visible source pixels used by the node.
+    pub source_hash: u64,
+    /// FNV-1a hash of the estimated-prediction pixels used by the node.
+    pub predictor_hash: u64,
+    /// Whole-node source-minus-prediction variance.
+    pub variance: u32,
+    /// Quadrant variances in raster order.
+    pub sub_variances: [u32; 4],
+    /// Exact six floating-point model inputs.
+    pub features: [f32; 6],
+    /// Single output produced by pinned libvpx's neural-network table.
+    pub score: f32,
+}
+
+fn hash_rect(data: &[u8], stride: usize, width: usize, height: usize) -> u64 {
+    let mut hash = 14_695_981_039_346_656_037u64;
+    for row in 0..height {
+        for &value in &data[row * stride..row * stride + width] {
+            hash = (hash ^ u64::from(value)).wrapping_mul(1_099_511_628_211);
+        }
+    }
+    hash
+}
+
+fn ml_var_partition_node_trace(
     input: &MlVarPartitionTreeInput<'_>,
     row_px: usize,
     col_px: usize,
     bsize: BlockSize,
-) -> Option<f32> {
+) -> Option<MlVarPartitionNodeTrace> {
     let config = match bsize {
         BlockSize::Block64x64 => &VAR_PART_NN_CONFIG_64,
         BlockSize::Block32x32 => &VAR_PART_NN_CONFIG_32,
@@ -410,6 +444,7 @@ fn ml_var_partition_score(
         height,
     );
     let factor = if var == 0 { 1.0 } else { 1.0 / var as f32 };
+    let mut sub_variances = [0u32; 4];
     let mut features = [0.0f32; 6];
     features[0] = ((input.dc_q * input.dc_q) as f32 / 256.0 + 1.0).ln();
     features[1] = (var as f32 + 1.0).ln();
@@ -426,6 +461,7 @@ fn ml_var_partition_score(
             sub_width,
             sub_height,
         );
+        sub_variances[quadrant] = sub_var;
         features[2 + quadrant] = if var == 0 {
             1.0
         } else {
@@ -434,7 +470,56 @@ fn ml_var_partition_score(
     }
     let mut score = [0.0f32; 1];
     nn_predict(&features, config, &mut score);
-    Some(score[0])
+    Some(MlVarPartitionNodeTrace {
+        row_px,
+        col_px,
+        bsize,
+        source_hash: hash_rect(source, input.src_stride, width, height),
+        predictor_hash: hash_rect(predictor, input.pred_stride, width, height),
+        variance: var,
+        sub_variances,
+        features,
+        score: score[0],
+    })
+}
+
+/// Trace every 64x64, 32x32, and 16x16 node visited by pinned libvpx's
+/// low-resolution realtime ML partition controller.
+#[must_use]
+pub fn trace_ml_var_partition_tree(
+    input: &MlVarPartitionTreeInput<'_>,
+) -> Vec<MlVarPartitionNodeTrace> {
+    fn visit(
+        input: &MlVarPartitionTreeInput<'_>,
+        traces: &mut Vec<MlVarPartitionNodeTrace>,
+        row_px: usize,
+        col_px: usize,
+        bsize: BlockSize,
+    ) {
+        let Some(trace) = ml_var_partition_node_trace(input, row_px, col_px, bsize) else {
+            return;
+        };
+        traces.push(trace);
+        let threshold = if input.speed <= 5 { 1.25 } else { 0.0 };
+        if trace.score <= threshold {
+            return;
+        }
+        let child = match bsize {
+            BlockSize::Block64x64 => BlockSize::Block32x32,
+            BlockSize::Block32x32 => BlockSize::Block16x16,
+            BlockSize::Block16x16 => return,
+            _ => unreachable!("ML partition tree only visits square nodes"),
+        };
+        let half = usize::from(child.width());
+        visit(input, traces, row_px, col_px, child);
+        visit(input, traces, row_px, col_px + half, child);
+        visit(input, traces, row_px + half, col_px, child);
+        visit(input, traces, row_px + half, col_px + half, child);
+    }
+
+    let mut traces = Vec::new();
+    visit(input, &mut traces, 0, 0, BlockSize::Block64x64);
+    traces
 }
 
 /// Build the square-only fixed tree selected by pinned libvpx's CPU8
@@ -464,12 +549,13 @@ pub fn choose_ml_var_partition_tree(input: &MlVarPartitionTreeInput<'_>) -> Part
         col_8x8: usize,
         bsize: BlockSize,
     ) {
-        let Some(score) = ml_var_partition_score(input, row_8x8 * 8, col_8x8 * 8, bsize) else {
+        let Some(trace) = ml_var_partition_node_trace(input, row_8x8 * 8, col_8x8 * 8, bsize)
+        else {
             stamp(decision, row_8x8, col_8x8, bsize);
             return;
         };
         let threshold = if input.speed <= 5 { 1.25 } else { 0.0 };
-        if score <= threshold {
+        if trace.score <= threshold {
             stamp(decision, row_8x8, col_8x8, bsize);
             return;
         }
@@ -817,5 +903,29 @@ mod tests {
         });
         assert!(texture_tree.is_valid_partition());
         assert_ne!(texture_tree, PartitionDecision::all_64x64());
+    }
+
+    #[test]
+    fn low_resolution_var_trace_exposes_exact_model_inputs() {
+        let flat = [128u8; 64 * 64];
+        let mut source = flat;
+        source[0] = 129;
+        let trace = trace_ml_var_partition_tree(&MlVarPartitionTreeInput {
+            dc_q: 80,
+            speed: 8,
+            src: &source,
+            src_stride: 64,
+            pred: &flat,
+            pred_stride: 64,
+        });
+
+        assert_eq!(trace.len(), 1);
+        assert_eq!(trace[0].row_px, 0);
+        assert_eq!(trace[0].col_px, 0);
+        assert_eq!(trace[0].bsize, BlockSize::Block64x64);
+        assert_ne!(trace[0].source_hash, trace[0].predictor_hash);
+        assert_eq!(trace[0].variance, 1);
+        assert_eq!(trace[0].sub_variances, [1, 0, 0, 0]);
+        assert_eq!(trace[0].features[2..], [1.0, 0.0, 0.0, 0.0]);
     }
 }
