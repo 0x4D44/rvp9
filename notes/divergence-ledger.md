@@ -5909,3 +5909,37 @@ the optimized binary SHA-256 is
 **Future plan:** retain across CPU6--8 realtime spatial CBR. Widen content,
 resolution, frame-rate, absolute-latency, and p99 coverage before closing Stage
 4e; do not infer those results from this single 720p source.
+
+### 2026-08-13 — Use real Block16 coefficient RD on spatial layer 1
+
+**Where:** `rvp9_encoder::block16_coef_rd_enabled` and
+`rvp9_encoder::frame_loop::SpatialFrameControl::spatial_layer_id`; libvpx
+counterpart: `vp9/encoder/vp9_speed_features.c:712-715` and
+`vp9/encoder/vp9_pickmode.c::block_yrd`.
+
+**What libvpx does:** CPU7/8 spatial SVC keeps full block-YRD on layer 1 and
+enables the simple block-YRD model only above it.
+
+**What rvp9 does:** CPU8 exact-VBP realtime spatial CBR evaluates the existing
+real coefficient-RD subset for non-skipped Block16 candidates on layer 1. It
+retains the cheaper model for other block sizes and for the top layer. CPU6/7,
+VBR/CQ, non-spatial, and non-exact paths remain unchanged.
+
+**Why:** the literal full-layer libvpx policy was too expensive for rvp9's
+current picker. The Block16 subset closes the measured layer-1 content gap:
+clean ducks/old-town/in-tree change from `+1.8360%/+1.1081%/+0.4795%` to
+`-1.1639%/+0.7137%/+0.4448%`. Across those clips and their noise12 variants,
+mean layer-1 BD-rate is `-0.0167%`, with no important CPU8 layer above `+2%`.
+
+**Byte-parity impact:** intentional on qualifying CPU8 layer-1 inter
+components. Final product IVFs reproduce the measured diagnostic output. All
+24 streams in the canonical reproduction decode byte-identically through
+rvp9-decoder and pinned vpxdec; FFmpeg decodes all successfully.
+
+**Speed impact:** the pre-commit production-PGO screen measured `1.049917x`
+for CPU8 three-layer spatial SVC. This is too close to the `1.05x` gate to
+qualify without an exact-commit quiet-host repetition.
+
+**Future plan:** keep the divergence only if exact-commit PGO passes repeated
+S2/S3 timing. Do not generalize it to CPU6/7 or the top spatial layer without
+separate quality and speed evidence.

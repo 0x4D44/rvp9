@@ -1864,6 +1864,16 @@ impl SpatialFrameControl {
             }
         )
     }
+
+    fn spatial_layer_id(self) -> u8 {
+        match self {
+            Self::Key => 0,
+            Self::Inter {
+                refresh_frame_flags,
+                ..
+            } => refresh_frame_flags.trailing_zeros() as u8,
+        }
+    }
 }
 
 /// Decoder-visible state shared by every spatial component in decode order.
@@ -3029,6 +3039,7 @@ impl StreamEncoder {
                 aq_active_for_rate_control,
                 spatial_control.is_some(),
                 spatial_control.is_some_and(SpatialFrameControl::is_key_enhancement_component),
+                spatial_control.is_some_and(|control| control.spatial_layer_id() == 1),
             )?,
         };
 
@@ -3722,6 +3733,7 @@ impl StreamEncoder {
         aq_active_this_frame: bool,
         spatial_component: bool,
         spatial_key_enhancement_component: bool,
+        spatial_first_enhancement_component: bool,
     ) -> Result<Vec<u8>, EncodeError> {
         let w = self.config.width;
         let h = self.config.height;
@@ -4178,6 +4190,7 @@ impl StreamEncoder {
                     source_aligned_cpu8_svc_partitions,
                     spatial_component,
                     spatial_key_enhancement_component,
+                    spatial_first_enhancement_component,
                     temporal_layers,
                     svc_non_reference_frame,
                     svc_model_only_large_qmax,
@@ -5237,6 +5250,7 @@ impl StreamEncoder {
             &arf_mv_costs,
             &mut arf_rd_thresh,
             self.frames_since_golden_refresh,
+            false,
             false,
             false,
             false,
@@ -7639,6 +7653,21 @@ mod tests {
             .is_key_enhancement_component()
         );
         assert!(!SpatialFrameControl::Key.is_key_enhancement_component());
+    }
+
+    #[test]
+    fn spatial_layer_id_follows_the_refreshed_reference_slot() {
+        let control = |refresh_frame_flags| SpatialFrameControl::Inter {
+            refresh_frame_flags,
+            ref_frame_indices: [0, 1, 2],
+            allow_golden_ref: true,
+            base_key_q: None,
+        };
+
+        assert_eq!(SpatialFrameControl::Key.spatial_layer_id(), 0);
+        assert_eq!(control(0x01).spatial_layer_id(), 0);
+        assert_eq!(control(0x02).spatial_layer_id(), 1);
+        assert_eq!(control(0x04).spatial_layer_id(), 2);
     }
 
     #[test]

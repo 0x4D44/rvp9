@@ -5506,10 +5506,19 @@ fn block16_coef_rd_enabled(
     exact_vbp_tree_enabled: bool,
     rc_mode: crate::rate_control::RcMode,
     speed: i32,
+    spatial_first_enhancement_component: bool,
 ) -> bool {
     exact_vbp_tree_enabled
-        && speed.unsigned_abs() == 6
-        && matches!(rc_mode, crate::rate_control::RcMode::Vbr)
+        && ((speed.unsigned_abs() == 6
+            && matches!(rc_mode, crate::rate_control::RcMode::Vbr))
+            // Pinned CPU7/8 keeps real block-YRD on spatial layer 1 and
+            // switches to the simple model only above it. Rvp9's measured
+            // subset evaluates real coefficient RD for non-skipped Block16
+            // candidates, which closes the CPU8 layer-1 content gap while
+            // retaining realtime speed.
+            || (spatial_first_enhancement_component
+                && speed.unsigned_abs() == 8
+                && matches!(rc_mode, crate::rate_control::RcMode::Cbr)))
 }
 
 fn golden_real_block_yrd_enabled(
@@ -6568,6 +6577,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // The enhancement component paired with the base keyframe. Its
     // reconstruction becomes this layer's LAST reference for the key interval.
     spatial_key_enhancement_component: bool,
+    // The first enhancement component (spatial layer 1). Pinned CPU7/8 keeps
+    // real block-YRD on this layer while using the simple model above it.
+    spatial_first_enhancement_component: bool,
     // Temporal topology scopes the CPU6 TX4 emit selector. Three-layer SVC
     // keeps the measured TX8/TX16 subset; single-layer and T2 keep TX4.
     temporal_layers: u32,
@@ -9783,7 +9795,12 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     skip_ctx,
                     skip_prob: frame_context.skip_probs[skip_ctx],
                     rd_calibration: leaf_rd_calibration.with_block16_coef_rd(
-                        block16_coef_rd_enabled(exact_vbp_tree_enabled, rc_mode, speed),
+                        block16_coef_rd_enabled(
+                            exact_vbp_tree_enabled,
+                            rc_mode,
+                            speed,
+                            spatial_first_enhancement_component,
+                        ),
                     ),
                     last_const_motion,
                     golden_const_motion,
@@ -16570,14 +16587,22 @@ mod tests {
     }
 
     #[test]
-    fn block16_coefficient_rd_is_scoped_to_exact_cpu6_vbr() {
-        assert!(block16_coef_rd_enabled(true, RcMode::Vbr, 6));
-        assert!(block16_coef_rd_enabled(true, RcMode::Vbr, -6));
-        assert!(!block16_coef_rd_enabled(false, RcMode::Vbr, 6));
-        assert!(!block16_coef_rd_enabled(true, RcMode::Vbr, 7));
-        assert!(!block16_coef_rd_enabled(true, RcMode::Vbr, 8));
-        assert!(!block16_coef_rd_enabled(true, RcMode::Cbr, 6));
-        assert!(!block16_coef_rd_enabled(true, RcMode::Cq, 6));
+    fn block16_coefficient_rd_is_scoped_to_exact_cpu6_vbr_or_cpu8_spatial_cbr() {
+        assert!(block16_coef_rd_enabled(true, RcMode::Vbr, 6, false));
+        assert!(block16_coef_rd_enabled(true, RcMode::Vbr, -6, false));
+        assert!(!block16_coef_rd_enabled(false, RcMode::Vbr, 6, false));
+        assert!(!block16_coef_rd_enabled(true, RcMode::Vbr, 7, false));
+        assert!(!block16_coef_rd_enabled(true, RcMode::Vbr, 8, false));
+        assert!(!block16_coef_rd_enabled(true, RcMode::Cbr, 6, false));
+        assert!(!block16_coef_rd_enabled(true, RcMode::Cq, 6, false));
+
+        assert!(block16_coef_rd_enabled(true, RcMode::Cbr, 8, true));
+        assert!(block16_coef_rd_enabled(true, RcMode::Cbr, -8, true));
+        assert!(!block16_coef_rd_enabled(false, RcMode::Cbr, 8, true));
+        assert!(!block16_coef_rd_enabled(true, RcMode::Cbr, 7, true));
+        assert!(!block16_coef_rd_enabled(true, RcMode::Cbr, 6, true));
+        assert!(!block16_coef_rd_enabled(true, RcMode::Vbr, 8, true));
+        assert!(!block16_coef_rd_enabled(true, RcMode::Cq, 8, true));
     }
 
     #[test]
