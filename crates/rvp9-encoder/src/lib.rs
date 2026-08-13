@@ -1878,6 +1878,32 @@ fn exact_vbp_partition_qindex(
     effective_qindex.saturating_add(bias)
 }
 
+/// Extra partition-only Q calibration for high-resolution CPU8 spatial CBR.
+///
+/// Spatial CBR's live top-layer Q trajectory otherwise drives the exact VBP
+/// ladder toward smaller blocks than its matched libvpx operating points. The
+/// additional bias applies only to component encoders above 720p, leaving the
+/// already-qualified lower spatial layers and CPU6/7 presets unchanged.
+#[inline]
+fn spatial_cbr_partition_qindex_bias(
+    spatial_component: bool,
+    rc_mode: crate::rate_control::RcMode,
+    frame_width: usize,
+    frame_height: usize,
+    speed: i32,
+) -> u8 {
+    const CPU8_LARGE_SPATIAL_CBR_BIAS: u8 = 18;
+    if spatial_component
+        && rc_mode == crate::rate_control::RcMode::Cbr
+        && speed == 8
+        && frame_width.saturating_mul(frame_height) > 1280 * 720
+    {
+        CPU8_LARGE_SPATIAL_CBR_BIAS
+    } else {
+        0
+    }
+}
+
 #[inline]
 fn use_zero_mv_partition_predictor(
     source_aligned_cpu8_svc_partitions: bool,
@@ -7717,12 +7743,15 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     let segment_id = segment_id_for_hint_cell(&sb_partitions[sb_idx], 0, 0);
                     let effective_qindex =
                         effective_qindex_for_segment(base_qindex, segment_id, seg_q_deltas);
-                    let partition_qindex = exact_vbp_partition_qindex(
+                    let mut partition_qindex = exact_vbp_partition_qindex(
                         effective_qindex,
                         w,
                         h,
                         speed,
                         source_aligned_cpu8_svc_partitions,
+                    );
+                    partition_qindex = partition_qindex.saturating_add(
+                        spatial_cbr_partition_qindex_bias(spatial_component, rc_mode, w, h, speed),
                     );
                     let thresholds = rt_inter_vbp_thresholds(
                         speed,
@@ -18941,6 +18970,32 @@ mod tests {
 
         assert_eq!(exact_vbp_partition_qindex(100, 1280, 720, 8, true), 100);
         assert_eq!(exact_vbp_partition_qindex(250, 1920, 1080, 8, true), 250);
+    }
+
+    #[test]
+    fn spatial_cbr_partition_qindex_bias_is_scoped_to_large_cpu8_components() {
+        use crate::rate_control::RcMode;
+
+        assert_eq!(
+            spatial_cbr_partition_qindex_bias(true, RcMode::Cbr, 1920, 1080, 8),
+            18
+        );
+        assert_eq!(
+            spatial_cbr_partition_qindex_bias(true, RcMode::Cbr, 1280, 720, 8),
+            0
+        );
+        assert_eq!(
+            spatial_cbr_partition_qindex_bias(true, RcMode::Cbr, 1920, 1080, 7),
+            0
+        );
+        assert_eq!(
+            spatial_cbr_partition_qindex_bias(true, RcMode::Vbr, 1920, 1080, 8),
+            0
+        );
+        assert_eq!(
+            spatial_cbr_partition_qindex_bias(false, RcMode::Cbr, 1920, 1080, 8),
+            0
+        );
     }
 
     #[test]

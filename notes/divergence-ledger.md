@@ -6048,3 +6048,39 @@ speed acceptance awaits exact production PGO and repeated quiet-host runs.
 
 **Future plan:** keep the bounded scope and close the remaining approximately
 three-percent 1080p top-layer gap before widening to 1080p60.
+
+### 2026-08-13 — Calibrate high-resolution CPU8 spatial-CBR partition Q
+
+**Where:** `rvp9_encoder::spatial_cbr_partition_qindex_bias` at the exact-VBP
+call in `rvp9_encoder::pick_and_simulate_inter_encode_partitions`; libvpx
+counterpart: the realtime variance partition thresholds in
+`vp9/encoder/vp9_encodeframe.c`.
+
+**What libvpx does:** its native spatial rate-control trajectory feeds its
+realtime partition thresholds without an equivalent standalone eighteen-point
+adapter.
+
+**What rvp9 does:** CPU8 spatial-CBR component encoders above 1280x720 add
+eighteen to the partition-only qindex after the existing large-frame CPU8
+calibration. Coefficient quantization and rate-control state still use the
+unmodified coding qindex. CPU6/7, VBR, non-spatial, 720p, and the lower
+components of a 1080p pyramid are unchanged.
+
+**Why:** rvp9's live spatial-CBR qindex trajectory is not source-identical to
+libvpx's. Using coding Q directly over-splits the exact-VBP tree and regresses
+the 1080p CPU8 three-layer top curve to `+16.6275%`. The narrowly scoped
+partition calibration produces `-0.6995%/-1.5322%/-0.2123%` BD-rate for
+SL0/SL1/SL2 on the six-point 1080p30 curve.
+
+**Byte-parity impact:** intentional only for CPU8 spatial CBR above 720p. The
+change affects partition decisions, so byte parity with prior rvp9 output and
+libvpx is not expected. Cross-decoder validity remains a required gate.
+
+**Speed impact:** plain-release ratios are directionally faster after the cold
+point, but formal acceptance awaits exact-commit production PGO and repeated
+quiet-host measurements.
+
+**Future plan:** the final-helper 720p control remains green at
+`-11.4794%/-4.0531%/-5.2167%`. Retain only if the exact-PGO 1080p30/60 plus
+CPU6--8 spatial matrix also passes. Revisit the adapter if a future shared
+rate-control model makes rvp9's live Q trajectory source-identical.
