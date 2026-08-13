@@ -459,6 +459,18 @@ pub struct NewMvCellAnalysis {
     pub rvp9_new_rejected_higher_rd_cells: usize,
     /// Rejected non-zero candidates whose RD cost did not exceed the selected winner.
     pub rvp9_new_rejected_not_higher_rd_cells: usize,
+    /// Exact/near rejected candidates whose winner was LAST/NEARESTMV.
+    pub rvp9_exact_or_near_lost_to_last_nearest_cells: usize,
+    /// Exact/near rejected candidates whose winner was LAST/NEARMV.
+    pub rvp9_exact_or_near_lost_to_last_near_cells: usize,
+    /// Exact/near rejected candidates whose winner was LAST/ZEROMV.
+    pub rvp9_exact_or_near_lost_to_last_zero_cells: usize,
+    /// Exact/near rejected candidates whose winner was another LAST/NEWMV.
+    pub rvp9_exact_or_near_lost_to_last_new_cells: usize,
+    /// Exact/near rejected candidates whose winner used another reference.
+    pub rvp9_exact_or_near_lost_to_other_ref_cells: usize,
+    /// Exact/near rejected candidates whose winner was intra.
+    pub rvp9_exact_or_near_lost_to_intra_cells: usize,
 }
 
 impl NewMvCellAnalysis {
@@ -590,6 +602,31 @@ pub fn analyze_newmv_cells(
             } else {
                 analysis.rvp9_new_rejected_not_higher_rd_cells += 1;
             }
+            if near {
+                match (rvp9.ref_frame, rvp9.mode) {
+                    (RefFrame::LastFrame, BlockDecisionMode::Inter(InterMode::NearestMv)) => {
+                        analysis.rvp9_exact_or_near_lost_to_last_nearest_cells += 1
+                    }
+                    (RefFrame::LastFrame, BlockDecisionMode::Inter(InterMode::NearMv)) => {
+                        analysis.rvp9_exact_or_near_lost_to_last_near_cells += 1;
+                    }
+                    (RefFrame::LastFrame, BlockDecisionMode::Inter(InterMode::ZeroMv)) => {
+                        analysis.rvp9_exact_or_near_lost_to_last_zero_cells += 1;
+                    }
+                    (RefFrame::LastFrame, BlockDecisionMode::Inter(InterMode::NewMv)) => {
+                        analysis.rvp9_exact_or_near_lost_to_last_new_cells += 1;
+                    }
+                    (RefFrame::LastFrame, BlockDecisionMode::Intra(_)) => {
+                        analysis.rvp9_exact_or_near_lost_to_intra_cells += 1;
+                    }
+                    (_, BlockDecisionMode::Inter(_)) => {
+                        analysis.rvp9_exact_or_near_lost_to_other_ref_cells += 1;
+                    }
+                    (_, BlockDecisionMode::Intra(_)) => {
+                        analysis.rvp9_exact_or_near_lost_to_intra_cells += 1;
+                    }
+                }
+            }
         }
         match (exact, near, selected) {
             (true, _, true) => analysis.rvp9_new_exact_selected_cells += 1,
@@ -602,6 +639,85 @@ pub fn analyze_newmv_cells(
     }
 
     analysis
+}
+
+/// Aggregate candidate costs for exact-origin, exact-size leaves where both
+/// encoders evaluated the same non-zero LAST/NEWMV vector selected by libvpx.
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
+pub struct MatchingNewMvCandidateCosts {
+    /// Number of matching candidate records.
+    pub records: usize,
+    /// Records where rvp9 did not select the matching candidate.
+    pub rejected_records: usize,
+    /// Sum of rvp9 candidate rates.
+    pub rvp9_rate_sum: u64,
+    /// Sum of libvpx candidate rates.
+    pub libvpx_rate_sum: u64,
+    /// Sum of non-negative rvp9 candidate distortions.
+    pub rvp9_dist_sum: u64,
+    /// Sum of non-negative libvpx candidate distortions.
+    pub libvpx_dist_sum: u64,
+    /// Sum of non-negative rvp9 candidate RD costs.
+    pub rvp9_rd_cost_sum: u64,
+    /// Sum of non-negative libvpx candidate RD costs.
+    pub libvpx_rd_cost_sum: u64,
+}
+
+/// Compare like-for-like LAST/NEWMV candidate costs on exact matching leaves.
+#[must_use]
+pub fn compare_matching_newmv_candidates(
+    rvp9: &[BlockDecision],
+    libvpx: &[BlockDecision],
+) -> MatchingNewMvCandidateCosts {
+    const LAST_NEWMV_CANDIDATE: usize = 3;
+
+    let mut rvp9_by_key = BTreeMap::<BlockKey, Vec<&BlockDecision>>::new();
+    for decision in rvp9 {
+        rvp9_by_key
+            .entry(BlockKey::from(decision))
+            .or_default()
+            .push(decision);
+    }
+    let mut costs = MatchingNewMvCandidateCosts::default();
+    for libvpx in libvpx {
+        if libvpx.mode != BlockDecisionMode::Inter(InterMode::NewMv)
+            || libvpx.ref_frame != RefFrame::LastFrame
+            || (libvpx.mv_row == 0 && libvpx.mv_col == 0)
+        {
+            continue;
+        }
+        let Some([rvp9]) = rvp9_by_key.get(&BlockKey::from(libvpx)).map(Vec::as_slice) else {
+            continue;
+        };
+        if rvp9.bsize != libvpx.bsize {
+            continue;
+        }
+        let rvp9_candidate = rvp9.last_candidates[LAST_NEWMV_CANDIDATE];
+        let libvpx_candidate = libvpx.last_candidates[LAST_NEWMV_CANDIDATE];
+        if !rvp9_candidate.available
+            || !libvpx_candidate.available
+            || rvp9_candidate.mv_row != libvpx.mv_row
+            || rvp9_candidate.mv_col != libvpx.mv_col
+            || libvpx_candidate.mv_row != libvpx.mv_row
+            || libvpx_candidate.mv_col != libvpx.mv_col
+        {
+            continue;
+        }
+
+        costs.records += 1;
+        let selected = rvp9.mode == BlockDecisionMode::Inter(InterMode::NewMv)
+            && rvp9.ref_frame == RefFrame::LastFrame
+            && rvp9.mv_row == rvp9_candidate.mv_row
+            && rvp9.mv_col == rvp9_candidate.mv_col;
+        costs.rejected_records += usize::from(!selected);
+        costs.rvp9_rate_sum += u64::from(rvp9_candidate.rate);
+        costs.libvpx_rate_sum += u64::from(libvpx_candidate.rate);
+        costs.rvp9_dist_sum += rvp9_candidate.dist.max(0) as u64;
+        costs.libvpx_dist_sum += libvpx_candidate.dist.max(0) as u64;
+        costs.rvp9_rd_cost_sum += rvp9_candidate.rd_cost.max(0) as u64;
+        costs.libvpx_rd_cost_sum += libvpx_candidate.rd_cost.max(0) as u64;
+    }
+    costs
 }
 
 /// Align and compare the fields that are live on both F.0.2 legs.
@@ -1251,6 +1367,42 @@ mod tests {
         assert_eq!(analysis.rvp9_new_different_selected_cells, 1);
         assert_eq!(analysis.rvp9_new_zero_cells, 1);
         assert_eq!(analysis.classified_cells(), 2);
+    }
+
+    #[test]
+    fn newmv_analysis_reports_the_winner_and_same_leaf_candidate_costs() {
+        let mut libvpx = sample_inter();
+        libvpx.bsize = BlockSize::Block16x16;
+        libvpx.last_candidates[3] = CandidateProbe {
+            available: true,
+            mv_row: libvpx.mv_row,
+            mv_col: libvpx.mv_col,
+            rate: 200,
+            dist: 300,
+            rd_cost: 400,
+            ..CandidateProbe::default()
+        };
+
+        let mut rvp9 = libvpx;
+        rvp9.mode = BlockDecisionMode::Inter(InterMode::NearestMv);
+        rvp9.mv_row = 0;
+        rvp9.mv_col = 0;
+        rvp9.last_candidates[3].rate = 180;
+        rvp9.last_candidates[3].dist = 290;
+        rvp9.last_candidates[3].rd_cost = 380;
+
+        let cells = analyze_newmv_cells(&[rvp9], &[libvpx], 8, 16);
+        let costs = compare_matching_newmv_candidates(&[rvp9], &[libvpx]);
+
+        assert_eq!(cells.rvp9_exact_or_near_lost_to_last_nearest_cells, 4);
+        assert_eq!(costs.records, 1);
+        assert_eq!(costs.rejected_records, 1);
+        assert_eq!(costs.rvp9_rate_sum, 180);
+        assert_eq!(costs.libvpx_rate_sum, 200);
+        assert_eq!(costs.rvp9_dist_sum, 290);
+        assert_eq!(costs.libvpx_dist_sum, 300);
+        assert_eq!(costs.rvp9_rd_cost_sum, 380);
+        assert_eq!(costs.libvpx_rd_cost_sum, 400);
     }
 
     #[test]

@@ -42,7 +42,9 @@ use rvp9_encoder::{
     YuvFrameRef,
 };
 use rvp9_harness::container::{IvfHeader, write_ivf};
-use rvp9_harness::f02_schema::{analyze_newmv_cells, compare_decisions, parse_jsonl_stream};
+use rvp9_harness::f02_schema::{
+    analyze_newmv_cells, compare_decisions, compare_matching_newmv_candidates, parse_jsonl_stream,
+};
 use rvp9_harness::y4m::read_cropped;
 use std::fs::{File, OpenOptions};
 use std::io::{BufReader, Write};
@@ -188,6 +190,14 @@ fn append_libvpx_rate_args(command: &mut Command, vbr: bool, fixed_q: Option<u8>
         }
     } else if !vbr {
         command.arg("--end-usage=cbr");
+    }
+}
+
+fn ratio(numerator: u64, denominator: u64) -> f64 {
+    if denominator == 0 {
+        f64::NAN
+    } else {
+        numerator as f64 / denominator as f64
     }
 }
 
@@ -362,6 +372,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 width.div_ceil(8) as u16,
             ))
         };
+        let matching_newmv_costs = if no_libvpx {
+            None
+        } else {
+            Some(compare_matching_newmv_candidates(
+                &rvp9_records,
+                &libvpx_records,
+            ))
+        };
         if let Some(analysis) = newmv_analysis {
             println!(
                 "  NEWMV cells: libvpx LAST/nonzero {}; rvp9 exact selected {}, exact lost {}, near selected {}, near lost {}, different selected {}, different lost {}, zero {}, unavailable {}, missing/ambiguous {}; rejected higher-RD {}, rejected non-higher-RD {}",
@@ -377,6 +395,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 analysis.rvp9_missing_cells + analysis.rvp9_ambiguous_cells,
                 analysis.rvp9_new_rejected_higher_rd_cells,
                 analysis.rvp9_new_rejected_not_higher_rd_cells,
+            );
+        }
+        if let Some(costs) = matching_newmv_costs {
+            println!(
+                "  matching NEWMV costs: {} exact leaves ({} rejected); rvp9/libvpx rate {:.4} dist {:.4} RD {:.4}",
+                costs.records,
+                costs.rejected_records,
+                ratio(costs.rvp9_rate_sum, costs.libvpx_rate_sum),
+                ratio(costs.rvp9_dist_sum, costs.libvpx_dist_sum),
+                ratio(costs.rvp9_rd_cost_sum, costs.libvpx_rd_cost_sum),
             );
         }
 
@@ -518,6 +546,65 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 sf,
                 "| rejected candidates without higher RD than winner | {} |",
                 analysis.rvp9_new_rejected_not_higher_rd_cells
+            )?;
+            writeln!(
+                sf,
+                "| exact/near rejected → LAST NEARESTMV | {} |",
+                analysis.rvp9_exact_or_near_lost_to_last_nearest_cells
+            )?;
+            writeln!(
+                sf,
+                "| exact/near rejected → LAST NEARMV | {} |",
+                analysis.rvp9_exact_or_near_lost_to_last_near_cells
+            )?;
+            writeln!(
+                sf,
+                "| exact/near rejected → LAST ZEROMV | {} |",
+                analysis.rvp9_exact_or_near_lost_to_last_zero_cells
+            )?;
+            writeln!(
+                sf,
+                "| exact/near rejected → another LAST NEWMV | {} |",
+                analysis.rvp9_exact_or_near_lost_to_last_new_cells
+            )?;
+            writeln!(
+                sf,
+                "| exact/near rejected → another reference | {} |",
+                analysis.rvp9_exact_or_near_lost_to_other_ref_cells
+            )?;
+            writeln!(
+                sf,
+                "| exact/near rejected → intra | {} |",
+                analysis.rvp9_exact_or_near_lost_to_intra_cells
+            )?;
+            writeln!(sf)?;
+        }
+        if let Some(costs) = matching_newmv_costs {
+            writeln!(sf, "### Exact-leaf, exact-vector NEWMV candidate costs")?;
+            writeln!(sf)?;
+            writeln!(
+                sf,
+                "This subset requires equal top-left, block size, and non-zero LAST/NEWMV candidate vector on both legs."
+            )?;
+            writeln!(sf)?;
+            writeln!(sf, "| metric | value |")?;
+            writeln!(sf, "|---|---:|")?;
+            writeln!(sf, "| matching records | {} |", costs.records)?;
+            writeln!(sf, "| rejected by rvp9 | {} |", costs.rejected_records)?;
+            writeln!(
+                sf,
+                "| rvp9/libvpx candidate rate | {:.6} |",
+                ratio(costs.rvp9_rate_sum, costs.libvpx_rate_sum)
+            )?;
+            writeln!(
+                sf,
+                "| rvp9/libvpx candidate distortion | {:.6} |",
+                ratio(costs.rvp9_dist_sum, costs.libvpx_dist_sum)
+            )?;
+            writeln!(
+                sf,
+                "| rvp9/libvpx candidate RD cost | {:.6} |",
+                ratio(costs.rvp9_rd_cost_sum, costs.libvpx_rd_cost_sum)
             )?;
             writeln!(sf)?;
         }
