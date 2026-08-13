@@ -16,8 +16,9 @@
 use rvp9_cli::args::{self, Arg, Flag};
 use rvp9_encoder::lookahead::MAX_LAG_BUFFERS;
 use rvp9_encoder::{
-    AqMode, Deadline, EncoderConfig, EncoderParallelism, RcMode, StreamEncoder, YuvFrameRef,
-    encode_two_pass,
+    AqMode, Deadline, EncoderConfig, EncoderParallelism, RcMode, SpatialEncoder, StreamEncoder,
+    YuvFrameRef, encode_two_pass,
+    svc::{InterLayerPred, SpatialSvcConfig},
 };
 use rvp9_io::container::{IvfHeader, IvfStreamWriter, write_ivf};
 use rvp9_io::y4m;
@@ -68,6 +69,11 @@ struct EncOpts {
     /// libvpx's equivalent is `--ts-number-layers` on the `vpxenc` SVC
     /// path; rvp9 exposes the temporal count directly.
     temporal_layers: Option<u32>,
+    /// Number of spatial SVC layers. `1` disables spatial SVC; `2` and `3`
+    /// select the canonical half/full or quarter/half/full pyramids.
+    spatial_layers: u8,
+    /// Same-access-unit enhancement-layer prediction policy.
+    inter_layer_pred: InterLayerPred,
     /// `--auto-alt-ref` (libvpx `vpxenc.c:436-438`). VP9 range 0..=6:
     /// 0 disables, 1 single ARF, 2+ enables multi-layer ARF.
     auto_alt_ref: Option<u32>,
@@ -119,6 +125,8 @@ impl Default for EncOpts {
             cq_level: None,
             noise_sensitivity: None,
             temporal_layers: None,
+            spatial_layers: 1,
+            inter_layer_pred: InterLayerPred::On,
             auto_alt_ref: None,
             // Default 1 pass (the one-pass regulators / cross-decoder gate
             // config). `--passes 2` opts into two-pass VBR.
@@ -185,7 +193,7 @@ fn flag_table() -> Vec<Flag<EncOpts>> {
             long: "height",
             short: Some('h'),
             arg: Arg::Required,
-            help: "coded height (mult of 8)",
+            help: "coded height (positive and even)",
             apply: Some(|o, v| {
                 o.height = Some(args::parse_value(v, "rvp9enc", "--height")?);
                 Ok(())
@@ -498,6 +506,26 @@ fn flag_table() -> Vec<Flag<EncOpts>> {
             }),
         },
         Flag {
+            long: "spatial-layers",
+            short: None,
+            arg: Arg::Required,
+            help: "spatial SVC layers (1..=3)",
+            apply: Some(|o, v| {
+                o.spatial_layers = parse_range(v, "--spatial-layers", 1, 3)? as u8;
+                Ok(())
+            }),
+        },
+        Flag {
+            long: "inter-layer-pred",
+            short: None,
+            arg: Arg::Required,
+            help: "spatial prediction (0=on, 3=constrained)",
+            apply: Some(|o, v| {
+                o.inter_layer_pred = parse_inter_layer_pred(v)?;
+                Ok(())
+            }),
+        },
+        Flag {
             long: "bit-depth",
             short: None,
             arg: Arg::Required,
@@ -796,6 +824,17 @@ fn parse_bool01(v: Option<String>, flag: &str) -> Result<bool, String> {
     }
 }
 
+fn parse_inter_layer_pred(v: Option<String>) -> Result<InterLayerPred, String> {
+    match v.as_deref() {
+        Some("0") => Ok(InterLayerPred::On),
+        Some("3") => Ok(InterLayerPred::OnConstrained),
+        Some(other) => Err(format!(
+            "rvp9enc: --inter-layer-pred={other} not understood (use 0 or 3)"
+        )),
+        None => Err("rvp9enc: --inter-layer-pred requires a value".to_string()),
+    }
+}
+
 fn parse_range(v: Option<String>, flag: &str, lo: u32, hi: u32) -> Result<u32, String> {
     let n: u32 = args::parse_value(v, "rvp9enc", flag)?;
     if n < lo || n > hi {
@@ -913,6 +952,9 @@ fn run(opts: &EncOpts, positionals: &[String]) -> Result<(), String> {
     // bitstream. libvpx `vpxenc.c:113-114 --passes`; driver:
     // `rvp9_encoder::encode_two_pass`. Kept entirely separate from the
     // one-pass synchronous path below so that path stays byte-identical.
+    if opts.spatial_layers > 1 && opts.passes != 1 {
+        return Err("spatial SVC requires one-pass encoding (--passes 1)".to_string());
+    }
     if opts.passes == 2 {
         let mut all_frames = vec![first_frame];
         while let Some(frame) = frames.next_frame()? {
@@ -938,10 +980,21 @@ fn run(opts: &EncOpts, positionals: &[String]) -> Result<(), String> {
     // the coded width by the encoder. Explicit `--threads=0` is treated
     // as one worker, matching the no-extra-worker interpretation.
     let parallelism = build_encoder_parallelism(opts);
+    if opts.spatial_layers > 1 {
+        return run_spatial_one_pass(
+            opts,
+            config,
+            parallelism,
+            &first_frame,
+            &mut frames,
+            info,
+            output,
+        );
+    }
     let mut encoder = StreamEncoder::new_with_parallelism(config, parallelism).map_err(|e| {
         format!(
             "{e} (note: coded width must be a multiple of 64 and coded \
-             height must be a multiple of 8 — use -w/-h to crop)"
+             height must be positive and even — use -w/-h to crop)"
         )
     })?;
 
@@ -1066,6 +1119,94 @@ fn run(opts: &EncOpts, positionals: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
+fn run_spatial_one_pass(
+    opts: &EncOpts,
+    config: EncoderConfig,
+    parallelism: EncoderParallelism,
+    first_frame: &y4m::YuvFrameBuf,
+    frames: &mut FrameSource,
+    info: InputInfo,
+    output: &str,
+) -> Result<(), String> {
+    let spatial = SpatialSvcConfig {
+        number_spatial_layers: opts.spatial_layers,
+        inter_layer_pred: opts.inter_layer_pred,
+    };
+    let mut encoder = SpatialEncoder::new_with_parallelism(config, spatial, parallelism)
+        .map_err(|error| format!("spatial SVC: {error}"))?;
+    let header = IvfHeader::vp9(
+        info.coded_w as u16,
+        info.coded_h as u16,
+        info.fps_num,
+        info.fps_den,
+    );
+    let out = std::fs::File::create(output).map_err(|e| format!("creating {output}: {e}"))?;
+    let mut writer = IvfStreamWriter::new(BufWriter::new(out), &header)
+        .map_err(|e| format!("writing IVF header: {e}"))?;
+    let mut total_bits = 0_u64;
+    let mut access_unit_count = 0_usize;
+    let mut frame_timings = Vec::new();
+    {
+        let mut encode_access_unit = |(y, u, v): &y4m::YuvFrameBuf| -> Result<(), String> {
+            let view = YuvFrameRef {
+                y,
+                u,
+                v,
+                y_stride: info.coded_w as usize,
+                u_stride: (info.coded_w / 2) as usize,
+                v_stride: (info.coded_w / 2) as usize,
+            };
+            let started = opts.frame_time_csv.as_ref().map(|_| Instant::now());
+            let encoded = encoder
+                .encode_access_unit(&view)
+                .map_err(|e| format!("encode spatial access unit: {e}"))?;
+            if let Some(started) = started {
+                frame_timings.push(FrameTiming {
+                    frame_index: access_unit_count,
+                    temporal_layer_id: 0,
+                    encode_ns: started.elapsed().as_nanos(),
+                });
+            }
+            total_bits += encoded
+                .layers
+                .iter()
+                .map(|layer| u64::from(layer.actual_bits))
+                .sum::<u64>();
+            writer
+                .write_packet(&encoded.data)
+                .map_err(|e| format!("writing spatial IVF packet: {e}"))?;
+            access_unit_count += 1;
+            Ok(())
+        };
+        encode_access_unit(first_frame)?;
+        let mut frame = y4m::YuvFrameBuf::default();
+        while frames.next_frame_into(&mut frame)? {
+            encode_access_unit(&frame)?;
+        }
+    }
+    writer
+        .finish()
+        .map_err(|e| format!("finalizing IVF: {e}"))?;
+    if let Some(path) = opts.frame_time_csv.as_deref() {
+        write_frame_time_csv(path, &frame_timings)?;
+    }
+
+    if opts.verbose {
+        let secs = access_unit_count as f64 * f64::from(info.fps_den) / f64::from(info.fps_num);
+        let kbps = if secs > 0.0 {
+            (total_bits as f64 / secs) / 1000.0
+        } else {
+            0.0
+        };
+        eprintln!(
+            "rvp9enc: spatial SVC encoded {} access unit(s), {} layer(s) at {}x{}, ~{:.1} kbps -> {output}",
+            access_unit_count, opts.spatial_layers, info.coded_w, info.coded_h, kbps
+        );
+    }
+    Ok(())
+}
+
 struct FrameTiming {
     frame_index: usize,
     temporal_layer_id: u8,
@@ -1116,7 +1257,7 @@ fn run_two_pass(
     let encoded = encode_two_pass(*config, &views).map_err(|e| {
         format!(
             "two-pass encode: {e} (note: coded width must be a multiple \
-             of 64 and coded height must be a multiple of 8 — use -w/-h to crop)"
+             of 64 and coded height must be positive and even — use -w/-h to crop)"
         )
     })?;
 
@@ -1483,6 +1624,33 @@ mod tests {
         let mut zero_threads = EncOpts::default();
         args::parse(&table, &mut zero_threads, &s(&["--threads=0"]), "rvp9enc").unwrap();
         assert_eq!(build_encoder_parallelism(&zero_threads).max_threads, 1);
+    }
+
+    #[test]
+    fn spatial_svc_flags_select_supported_topology_and_prediction() {
+        let table = flag_table();
+        let mut opts = EncOpts::default();
+        args::parse(
+            &table,
+            &mut opts,
+            &s(&["--spatial-layers=3", "--inter-layer-pred=3"]),
+            "rvp9enc",
+        )
+        .unwrap();
+        assert_eq!(opts.spatial_layers, 3);
+        assert_eq!(opts.inter_layer_pred, InterLayerPred::OnConstrained);
+
+        for unsupported in ["1", "2"] {
+            let mut invalid = EncOpts::default();
+            let error = args::parse(
+                &table,
+                &mut invalid,
+                &s(&[&format!("--inter-layer-pred={unsupported}")]),
+                "rvp9enc",
+            )
+            .unwrap_err();
+            assert!(error.contains("use 0 or 3"), "{error}");
+        }
     }
 
     #[test]

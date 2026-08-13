@@ -18,6 +18,8 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use common::CommandExt;
+use rvp9_decoder::Decoder;
+use rvp9_io::container::read_packets;
 
 const W: usize = 64;
 const H: usize = 64;
@@ -39,25 +41,97 @@ fn tmp(tag: &str) -> PathBuf {
 /// Write `N_FRAMES` synthetic 64×64 I420 frames with per-frame motion
 /// (a diagonal gradient that shifts each frame).
 fn write_synthetic_raw(path: &std::path::Path) {
-    let mut buf = Vec::with_capacity(FRAME_BYTES * N_FRAMES);
-    for f in 0..N_FRAMES {
+    write_synthetic_raw_dims(path, W, H, N_FRAMES);
+}
+
+fn write_synthetic_raw_dims(path: &std::path::Path, width: usize, height: usize, frames: usize) {
+    let frame_bytes = width * height * 3 / 2;
+    let mut buf = Vec::with_capacity(frame_bytes * frames);
+    for f in 0..frames {
         // Y plane.
-        for y in 0..H {
-            for x in 0..W {
+        for y in 0..height {
+            for x in 0..width {
                 buf.push(((x + y + f * 4) & 0xff) as u8);
             }
         }
         // U, V planes (half resolution).
         for _plane in 0..2 {
-            for y in 0..H / 2 {
-                for x in 0..W / 2 {
+            for y in 0..height / 2 {
+                for x in 0..width / 2 {
                     buf.push(((x * 2 + y + f) & 0xff) as u8);
                 }
             }
         }
     }
-    assert_eq!(buf.len(), FRAME_BYTES * N_FRAMES);
+    assert_eq!(buf.len(), frame_bytes * frames);
     std::fs::write(path, &buf).expect("write synthetic raw");
+}
+
+#[test]
+fn spatial_svc_cli_emits_three_component_access_units_and_decodes_top_layer() {
+    const SPATIAL_W: usize = 256;
+    const SPATIAL_H: usize = 128;
+    const SPATIAL_FRAMES: usize = 2;
+
+    let raw = tmp("spatial_in.yuv");
+    let ivf = tmp("spatial_out.ivf");
+    let yuv = tmp("spatial_dec.yuv");
+    write_synthetic_raw_dims(&raw, SPATIAL_W, SPATIAL_H, SPATIAL_FRAMES);
+
+    let status = Command::new(enc_bin())
+        .args([
+            "-w",
+            "256",
+            "-h",
+            "128",
+            "--fps",
+            "30/1",
+            "--target-bitrate",
+            "630",
+            "--end-usage",
+            "cbr",
+            "--cpu-used",
+            "8",
+            "--lag-in-frames",
+            "0",
+            "--spatial-layers",
+            "3",
+            "--inter-layer-pred",
+            "0",
+            "-o",
+        ])
+        .arg(&ivf)
+        .arg(&raw)
+        .bounded_status()
+        .expect("run spatial rvp9enc");
+    assert!(status.success(), "spatial rvp9enc failed");
+
+    let (ivf_bytes, packets) = read_packets(&ivf).expect("read spatial IVF");
+    assert_eq!(packets.len(), SPATIAL_FRAMES, "IVF access-unit count");
+    let mut decoder = Decoder::new();
+    let first = decoder
+        .parse_packet(packets[0].slice(&ivf_bytes))
+        .expect("parse first spatial access unit");
+    assert_eq!(first.count(), 3, "spatial components in first access unit");
+    assert_eq!(first.output_frame_index(), Some(2));
+
+    let status = Command::new(dec_bin())
+        .args(["--i420", "-o"])
+        .arg(&yuv)
+        .arg(&ivf)
+        .bounded_status()
+        .expect("run spatial rvp9dec");
+    assert!(status.success(), "spatial rvp9dec failed");
+    let decoded_bytes = std::fs::metadata(&yuv).expect("stat spatial decode").len() as usize;
+    assert_eq!(
+        decoded_bytes,
+        SPATIAL_W * SPATIAL_H * 3 / 2 * SPATIAL_FRAMES,
+        "only the top spatial layer is output per access unit"
+    );
+
+    let _ = std::fs::remove_file(&raw);
+    let _ = std::fs::remove_file(&ivf);
+    let _ = std::fs::remove_file(&yuv);
 }
 
 #[test]
