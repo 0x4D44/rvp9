@@ -174,12 +174,91 @@ struct FrameStats {
     /// `true` if the rvp9 decoder returned an error for this frame
     /// (so the mi-grid is STALE — stats must be treated as invalid).
     decode_failed: bool,
+    /// Visible decoder mode-info grid retained for same-coordinate
+    /// comparisons against a paired stream.
+    mi_rows: usize,
+    mi_cols: usize,
+    mi_grid: Vec<Option<ModeInfo>>,
 }
 
 /// Aggregate over a sequence, per encoder.
 #[derive(Default)]
 struct Aggregate {
     frames: Vec<FrameStats>,
+}
+
+/// Same-coordinate decoder-side agreement over paired inter-frame cells.
+#[derive(Debug, Default, Eq, PartialEq)]
+struct CellAgreement {
+    comparable_frames: u64,
+    skipped_frames: u64,
+    comparable_cells: u64,
+    same_block_size: u64,
+    same_prediction: u64,
+    same_tx_size: u64,
+    same_skip: u64,
+    same_block_and_prediction: u64,
+    exact_mode_info: u64,
+    matched_bp_same_tx: u64,
+    matched_bp_rvp_smaller_tx: u64,
+    matched_bp_rvp_larger_tx: u64,
+    matched_bp_same_skip: u64,
+    matched_bp_rvp_nonskip_libskip: u64,
+    matched_bp_rvpskip_libnonskip: u64,
+}
+
+fn compare_inter_frame_cells(rvp9: &Aggregate, libvpx: &Aggregate) -> CellAgreement {
+    let mut agreement = CellAgreement::default();
+    for (rvp9_frame, libvpx_frame) in rvp9.frames.iter().zip(&libvpx.frames) {
+        if rvp9_frame.is_key || libvpx_frame.is_key {
+            continue;
+        }
+        let grids_are_comparable = !rvp9_frame.decode_failed
+            && !libvpx_frame.decode_failed
+            && rvp9_frame.mi_rows > 0
+            && rvp9_frame.mi_rows == libvpx_frame.mi_rows
+            && rvp9_frame.mi_cols == libvpx_frame.mi_cols
+            && rvp9_frame.mi_grid.len() == rvp9_frame.mi_rows * rvp9_frame.mi_cols
+            && libvpx_frame.mi_grid.len() == rvp9_frame.mi_grid.len();
+        if !grids_are_comparable {
+            agreement.skipped_frames += 1;
+            continue;
+        }
+        agreement.comparable_frames += 1;
+
+        for (rvp9_mi, libvpx_mi) in rvp9_frame.mi_grid.iter().zip(&libvpx_frame.mi_grid) {
+            let (Some(rvp9_mi), Some(libvpx_mi)) = (rvp9_mi, libvpx_mi) else {
+                continue;
+            };
+            agreement.comparable_cells += 1;
+
+            let same_block_size = rvp9_mi.block_size == libvpx_mi.block_size;
+            let same_prediction = rvp9_mi.mode == libvpx_mi.mode;
+            let same_tx_size = rvp9_mi.tx_size == libvpx_mi.tx_size;
+            let same_skip = rvp9_mi.skip == libvpx_mi.skip;
+            agreement.same_block_size += u64::from(same_block_size);
+            agreement.same_prediction += u64::from(same_prediction);
+            agreement.same_tx_size += u64::from(same_tx_size);
+            agreement.same_skip += u64::from(same_skip);
+            agreement.exact_mode_info += u64::from(rvp9_mi == libvpx_mi);
+
+            if !(same_block_size && same_prediction) {
+                continue;
+            }
+            agreement.same_block_and_prediction += 1;
+            match rvp9_mi.tx_size.cmp(&libvpx_mi.tx_size) {
+                std::cmp::Ordering::Less => agreement.matched_bp_rvp_smaller_tx += 1,
+                std::cmp::Ordering::Equal => agreement.matched_bp_same_tx += 1,
+                std::cmp::Ordering::Greater => agreement.matched_bp_rvp_larger_tx += 1,
+            }
+            match (rvp9_mi.skip, libvpx_mi.skip) {
+                (false, false) | (true, true) => agreement.matched_bp_same_skip += 1,
+                (false, true) => agreement.matched_bp_rvp_nonskip_libskip += 1,
+                (true, false) => agreement.matched_bp_rvpskip_libnonskip += 1,
+            }
+        }
+    }
+    agreement
 }
 
 impl Aggregate {
@@ -720,6 +799,9 @@ fn decode_and_accumulate(dec: &mut Decoder, pkt: &[u8], fs: &mut FrameStats) {
     let (mi_rows, mi_cols) = dec.last_frame_mi_dims();
     let grid = dec.last_frame_mi_grid();
     if mi_rows > 0 && mi_cols > 0 && grid.len() == (mi_rows * mi_cols) as usize {
+        fs.mi_rows = mi_rows as usize;
+        fs.mi_cols = mi_cols as usize;
+        fs.mi_grid.extend_from_slice(grid);
         accumulate_grid(grid, mi_rows as usize, mi_cols as usize, fs);
     }
 }
@@ -985,6 +1067,62 @@ fn emit_report(
             format!("{:.0}/{:.0}/{:.0}/{:.0}", tx[0], tx[1], tx[2], tx[3])
         })
     );
+
+    if let Some(libvpx) = libvpx {
+        let agreement = compare_inter_frame_cells(rvp9, libvpx);
+        let pct = |count: u64, total: u64| 100.0 * count as f64 / total.max(1) as f64;
+        let _ = writeln!(
+            md,
+            "\n### Same-coordinate decoded decisions (inter frames)\n"
+        );
+        let _ = writeln!(
+            md,
+            "Compared {} visible 8x8 cells across {} paired frames; {} frames lacked comparable decoder grids. Prediction equality includes intra mode or inter mode, references, motion vectors, and interpolation filter.\n",
+            agreement.comparable_cells, agreement.comparable_frames, agreement.skipped_frames
+        );
+        let _ = writeln!(md, "| agreement | cells | % |\n|---|---:|---:|");
+        for (label, count) in [
+            ("same partition leaf size", agreement.same_block_size),
+            ("same prediction", agreement.same_prediction),
+            ("same luma TX size", agreement.same_tx_size),
+            ("same skip flag", agreement.same_skip),
+            (
+                "same partition size + prediction",
+                agreement.same_block_and_prediction,
+            ),
+            ("exact decoded ModeInfo", agreement.exact_mode_info),
+        ] {
+            let _ = writeln!(
+                md,
+                "| {label} | {count} | {:.1} |",
+                pct(count, agreement.comparable_cells)
+            );
+        }
+
+        let matched = agreement.same_block_and_prediction;
+        let _ = writeln!(
+            md,
+            "\nConditioned on the {} cells with the same partition size and prediction:\n",
+            matched
+        );
+        let _ = writeln!(md, "| residual decision | cells | % |\n|---|---:|---:|");
+        for (label, count) in [
+            ("same luma TX size", agreement.matched_bp_same_tx),
+            ("rvp9 smaller luma TX", agreement.matched_bp_rvp_smaller_tx),
+            ("rvp9 larger luma TX", agreement.matched_bp_rvp_larger_tx),
+            ("same skip flag", agreement.matched_bp_same_skip),
+            (
+                "rvp9 non-skip / libvpx skip",
+                agreement.matched_bp_rvp_nonskip_libskip,
+            ),
+            (
+                "rvp9 skip / libvpx non-skip",
+                agreement.matched_bp_rvpskip_libnonskip,
+            ),
+        ] {
+            let _ = writeln!(md, "| {label} | {count} | {:.1} |", pct(count, matched));
+        }
+    }
 
     // ---- Keyframe diagnostic ----
     let _ = writeln!(md, "\n### Keyframe bitstream decomposition\n");
@@ -1562,6 +1700,66 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_intra_mi(block_size: BlockSize, tx_size: rvp9_core::transforms::TxSize) -> ModeInfo {
+        ModeInfo {
+            block_size,
+            tx_size,
+            skip: false,
+            segment_id: 0,
+            seg_id_predicted: false,
+            mode: BlockMode::Intra {
+                y_mode: rvp9_core::intra_pred::IntraMode::Dc,
+                uv_mode: rvp9_core::intra_pred::IntraMode::Dc,
+            },
+            bmi: [rvp9_core::mode_info::BmiInfo::default(); 4],
+        }
+    }
+
+    #[test]
+    fn paired_cell_agreement_separates_prediction_transform_and_skip() {
+        use rvp9_core::transforms::TxSize;
+
+        let base = test_intra_mi(BlockSize::Block16x16, TxSize::Tx16x16);
+        let mut rvp9_frame = FrameStats {
+            mi_rows: 1,
+            mi_cols: 4,
+            mi_grid: vec![Some(base); 4],
+            ..Default::default()
+        };
+        let mut libvpx_frame = rvp9_frame.clone();
+
+        libvpx_frame.mi_grid[1].as_mut().unwrap().tx_size = TxSize::Tx8x8;
+        libvpx_frame.mi_grid[2].as_mut().unwrap().skip = true;
+        libvpx_frame.mi_grid[3].as_mut().unwrap().block_size = BlockSize::Block8x8;
+        rvp9_frame.mi_grid[3].as_mut().unwrap().mode = BlockMode::Intra {
+            y_mode: rvp9_core::intra_pred::IntraMode::V,
+            uv_mode: rvp9_core::intra_pred::IntraMode::Dc,
+        };
+
+        let agreement = compare_inter_frame_cells(
+            &Aggregate {
+                frames: vec![rvp9_frame],
+            },
+            &Aggregate {
+                frames: vec![libvpx_frame],
+            },
+        );
+
+        assert_eq!(agreement.comparable_cells, 4);
+        assert_eq!(agreement.same_block_size, 3);
+        assert_eq!(agreement.same_prediction, 3);
+        assert_eq!(agreement.same_tx_size, 3);
+        assert_eq!(agreement.same_skip, 3);
+        assert_eq!(agreement.same_block_and_prediction, 3);
+        assert_eq!(agreement.exact_mode_info, 1);
+        assert_eq!(agreement.matched_bp_same_tx, 2);
+        assert_eq!(agreement.matched_bp_rvp_larger_tx, 1);
+        assert_eq!(agreement.matched_bp_rvp_smaller_tx, 0);
+        assert_eq!(agreement.matched_bp_same_skip, 2);
+        assert_eq!(agreement.matched_bp_rvp_nonskip_libskip, 1);
+        assert_eq!(agreement.matched_bp_rvpskip_libnonskip, 0);
+    }
 
     #[test]
     fn scoped_temp_dirs_are_unique_and_removed_on_drop() {
