@@ -250,12 +250,7 @@ impl SpatialEncoder {
             .last()
             .expect("a validated spatial plan has a top layer");
         let full = copy_tight_i420(source, top.width as usize, top.height as usize)?;
-        let sources = self
-            .plan
-            .layers
-            .iter()
-            .map(|layer| build_layer_source(&full, layer))
-            .collect::<Result<Vec<_>, _>>()?;
+        let sources = build_layer_sources(&full, &self.plan.layers)?;
         let key_access_unit = self
             .access_unit_index
             .is_multiple_of(self.keyframe_interval);
@@ -462,12 +457,7 @@ impl SpatialKeyframeEncoder {
             .last()
             .expect("a validated spatial plan has at least one layer");
         let full = copy_tight_i420(source, top.width as usize, top.height as usize)?;
-        let sources = self
-            .plan
-            .layers
-            .iter()
-            .map(|layer| build_layer_source(&full, layer))
-            .collect::<Result<Vec<_>, _>>()?;
+        let sources = build_layer_sources(&full, &self.plan.layers)?;
 
         let mut builder = SuperframeBuilder::new();
         let mut layers = Vec::with_capacity(self.encoders.len());
@@ -555,28 +545,49 @@ fn copy_tight_i420(
     })
 }
 
-fn build_layer_source(
+fn build_layer_sources(
     full: &ScaledI420,
-    layer: &SpatialLayerSpec,
-) -> Result<ScaledI420, ScaleSourceError> {
-    let Some(filter) = layer.source_filter else {
-        return Ok(full.clone());
-    };
-    let mut scaled = scale_i420_2x(&full.y, &full.u, &full.v, full.width, full.height, filter)?;
-    while scaled.width > layer.width as usize || scaled.height > layer.height as usize {
-        scaled = scale_i420_2x(
-            &scaled.y,
-            &scaled.u,
-            &scaled.v,
-            scaled.width,
-            scaled.height,
+    layers: &[SpatialLayerSpec],
+) -> Result<Vec<ScaledI420>, ScaleSourceError> {
+    let top = layers
+        .len()
+        .checked_sub(1)
+        .expect("a validated spatial plan has a top layer");
+    let mut sources = vec![None; layers.len()];
+    sources[top] = Some(full.clone());
+    // Build top-down and retain each adjacent 2x result. Pinned libvpx's 4x
+    // path likewise produces layer 1 with layer 1's filter, then produces
+    // layer 0 from that saved image with layer 0's filter
+    // (`vp9_encoder.c:3990-4003`, `:4976-4998`).
+    for layer_index in (0..top).rev() {
+        let higher = sources[layer_index + 1]
+            .as_ref()
+            .expect("higher spatial source was built first");
+        let filter = layers[layer_index]
+            .source_filter
+            .expect("non-top spatial layer has a source filter");
+        let scaled = scale_i420_2x(
+            &higher.y,
+            &higher.u,
+            &higher.v,
+            higher.width,
+            higher.height,
             filter,
         )?;
+        if (scaled.width, scaled.height)
+            != (
+                layers[layer_index].width as usize,
+                layers[layer_index].height as usize,
+            )
+        {
+            return Err(ScaleSourceError::InvalidDimensions);
+        }
+        sources[layer_index] = Some(scaled);
     }
-    if scaled.width != layer.width as usize || scaled.height != layer.height as usize {
-        return Err(ScaleSourceError::InvalidDimensions);
-    }
-    Ok(scaled)
+    Ok(sources
+        .into_iter()
+        .map(|source| source.expect("every spatial source was built"))
+        .collect())
 }
 
 #[cfg(test)]
@@ -990,6 +1001,50 @@ mod tests {
             .map(|layer| (layer.width, layer.height))
             .collect();
         assert_eq!(dimensions, [(320, 180), (640, 360), (1280, 720)]);
+    }
+
+    #[test]
+    fn canonical_three_layer_base_source_uses_intermediate_layer_filter_first() {
+        let plan = SpatialLayerPlan::canonical(
+            SpatialSvcConfig {
+                number_spatial_layers: 3,
+                inter_layer_pred: InterLayerPred::On,
+            },
+            1280,
+            720,
+            1_500_000,
+        )
+        .unwrap();
+        let (y, u, v) = source(1280, 720);
+        let full = ScaledI420 {
+            width: 1280,
+            height: 720,
+            y,
+            u,
+            v,
+        };
+
+        let actual = build_layer_sources(&full, &plan.layers).unwrap().remove(0);
+        let intermediate = scale_i420_2x(
+            &full.y,
+            &full.u,
+            &full.v,
+            full.width,
+            full.height,
+            plan.layers[1].source_filter.unwrap(),
+        )
+        .unwrap();
+        let expected = scale_i420_2x(
+            &intermediate.y,
+            &intermediate.u,
+            &intermediate.v,
+            intermediate.width,
+            intermediate.height,
+            plan.layers[0].source_filter.unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(actual, expected);
     }
 
     #[test]
