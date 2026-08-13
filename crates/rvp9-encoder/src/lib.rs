@@ -4302,7 +4302,11 @@ impl InterReconPlaneLayout {
         );
         assert!(
             local_y + height <= self.rows,
-            "inter recon block exceeds its window height"
+            "inter recon block y={global_y} height={height} exceeds window row_start={} rows={} frame={}x{}",
+            self.row_start,
+            self.rows,
+            self.frame_width,
+            self.frame_height,
         );
         (local_x, local_y)
     }
@@ -5700,6 +5704,14 @@ fn constrain_square_tree_to_bottom_edge(
     output
 }
 
+#[inline]
+fn exact_vbp_crossing_square_enabled(spatial_component: bool, visible_mi_rows: usize) -> bool {
+    // Five visible MI rows are the first geometry where the 64x64 root's
+    // lower-half origin exists. Shallower bottom edges cannot retain the
+    // large crossing squares this policy is intended to recover.
+    spatial_component && visible_mi_rows >= 5
+}
+
 fn zero_mv_sad64_edge_clamped(
     src: &[u8],
     reference: &[u8],
@@ -6472,6 +6484,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // inputs on every temporal layer: coding Q without rvp9's single-layer
     // calibration and zero-MV LAST prediction on ordinary-resolution blocks.
     source_aligned_cpu8_svc_partitions: bool,
+    // Spatial components use padded full-frame storage, allowing square
+    // partition leaves that VP9 can legally signal across a partial bottom
+    // superblock. Single-layer and temporal paths retain their prior adapter.
+    spatial_component: bool,
     // Temporal topology scopes the CPU6 TX4 emit selector. Three-layer SVC
     // keeps the measured TX8/TX16 subset; single-layer and T2 keep TX4.
     temporal_layers: u32,
@@ -6664,17 +6680,6 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     );
     let storage_h = crate::buffer_pool::reference_storage_height(h);
     let storage_uvh = storage_h / 2;
-    let crossing_ml_leaves_supported = low_resolution_ml_partition_enabled
-        && w.is_multiple_of(64)
-        && !denoiser_enabled
-        && recon_layout == InterReconLayout::full(w, h)
-        && input_yuv.0.len() >= w * storage_h
-        && input_yuv.1.len() >= uvw * storage_uvh
-        && input_yuv.2.len() >= uvw * storage_uvh
-        && recon_yuv_out.0.len() >= w * storage_h
-        && recon_yuv_out.1.len() >= uvw * storage_uvh
-        && recon_yuv_out.2.len() >= uvw * storage_uvh;
-    let (recon_y_out, recon_u_out, recon_v_out) = recon_yuv_out;
     let rt_large_recovery = matches!(deadline, sf_mod::Deadline::Realtime)
         && speed.unsigned_abs() >= 7
         && matches!(content_tier, sf_mod::ContentTier::Default)
@@ -6691,6 +6696,18 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         content_tier,
         cyclic_refresh_active,
     ) && exact_vbp_history.is_some();
+    let crossing_square_leaves_supported = spatial_component
+        && (low_resolution_ml_partition_enabled || exact_vbp_tree_enabled)
+        && w.is_multiple_of(64)
+        && !denoiser_enabled
+        && recon_layout == InterReconLayout::full(w, h)
+        && input_yuv.0.len() >= w * storage_h
+        && input_yuv.1.len() >= uvw * storage_uvh
+        && input_yuv.2.len() >= uvw * storage_uvh
+        && recon_yuv_out.0.len() >= w * storage_h
+        && recon_yuv_out.1.len() >= uvw * storage_uvh
+        && recon_yuv_out.2.len() >= uvw * storage_uvh;
+    let (recon_y_out, recon_u_out, recon_v_out) = recon_yuv_out;
     let mut inter_rd_calibration = inter_rd_calibration_for_segment(
         rc_mode,
         speed,
@@ -6751,7 +6768,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         data: input_yuv.0,
         stride: w,
         width: w,
-        height: if crossing_ml_leaves_supported {
+        height: if crossing_square_leaves_supported {
             storage_h
         } else {
             h
@@ -7827,11 +7844,17 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     };
                     let visible_mi_cols = (w - sb_px_x).min(64).div_ceil(8);
                     let visible_mi_rows = (h - sb_px_y).min(64).div_ceil(8);
-                    exact_decision = constrain_fixed_tree_to_visible_leaves(
-                        &exact_decision,
-                        visible_mi_cols,
-                        visible_mi_rows,
-                    );
+                    exact_decision = if crossing_square_leaves_supported
+                        && exact_vbp_crossing_square_enabled(spatial_component, visible_mi_rows)
+                    {
+                        constrain_square_tree_to_bottom_edge(&exact_decision, visible_mi_rows)
+                    } else {
+                        constrain_fixed_tree_to_visible_leaves(
+                            &exact_decision,
+                            visible_mi_cols,
+                            visible_mi_rows,
+                        )
+                    };
                     exact_variance_low = if visible_mi_cols == 8 && visible_mi_rows == 8 {
                         variance_low
                     } else {
@@ -7873,7 +7896,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
 
                     let visible_mi_cols = (w - sb_px_x).min(64).div_ceil(8);
                     let visible_mi_rows = (h - sb_px_y).min(64).div_ceil(8);
-                    if crossing_ml_leaves_supported {
+                    if crossing_square_leaves_supported {
                         ml_decision =
                             constrain_square_tree_to_bottom_edge(&ml_decision, visible_mi_rows);
                     } else {
@@ -15849,6 +15872,13 @@ mod tests {
             );
         }
         assert!(constrained.is_valid_partition());
+    }
+
+    #[test]
+    fn exact_vbp_crossing_square_policy_is_spatial_and_requires_five_rows() {
+        assert!(exact_vbp_crossing_square_enabled(true, 5));
+        assert!(!exact_vbp_crossing_square_enabled(true, 4));
+        assert!(!exact_vbp_crossing_square_enabled(false, 7));
     }
 
     #[test]

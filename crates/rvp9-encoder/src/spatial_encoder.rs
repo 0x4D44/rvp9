@@ -641,6 +641,9 @@ mod tests {
 
     #[test]
     fn first_spatial_enhancement_components_use_base_key_q_ceiling() {
+        // This product encode reads the diagnostic partition overrides.
+        // Serialize it with the tests that mutate those process-global vars.
+        let _guard = crate::env_test_mutex();
         let width = 1280usize;
         let height = 720usize;
         let mut template = EncoderConfig::new(width as u32, height as u32);

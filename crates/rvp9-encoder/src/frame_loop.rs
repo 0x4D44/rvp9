@@ -3002,6 +3002,7 @@ impl StreamEncoder {
                 q_index,
                 (y_coded, u_coded, v_coded),
                 aq_active_for_rate_control,
+                spatial_control.is_some(),
             )?,
         };
 
@@ -3693,6 +3694,7 @@ impl StreamEncoder {
         q_index: u8,
         input_yuv: (&[u8], &[u8], &[u8]),
         aq_active_this_frame: bool,
+        spatial_component: bool,
     ) -> Result<Vec<u8>, EncodeError> {
         let w = self.config.width;
         let h = self.config.height;
@@ -4147,6 +4149,7 @@ impl StreamEncoder {
                     force_disable_golden_ref,
                     force_nstep_motion_search,
                     source_aligned_cpu8_svc_partitions,
+                    spatial_component,
                     temporal_layers,
                     svc_non_reference_frame,
                     svc_model_only_large_qmax,
@@ -5199,6 +5202,7 @@ impl StreamEncoder {
             &arf_mv_costs,
             &mut arf_rd_thresh,
             self.frames_since_golden_refresh,
+            false,
             false,
             false,
             false,
