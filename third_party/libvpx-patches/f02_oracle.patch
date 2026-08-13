@@ -754,7 +754,7 @@ index 6f2524b36..901336d7d 100644
          best_pickmode.best_mode = this_mode;
          best_pickmode.best_intra_tx_size = mi->tx_size;
          best_pickmode.best_ref_frame = INTRA_FRAME;
-@@ -2739,6 +3081,273 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
+@@ -2739,6 +3081,277 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
    }
 
    *rd_cost = best_rdc;
@@ -990,7 +990,9 @@ index 6f2524b36..901336d7d 100644
 +              "\"single_ref_p2_ctx\":%d,\"intra_inter_prob\":%d,"
 +              "\"single_ref_p1_prob\":%d,\"single_ref_p2_prob\":%d,"
 +              "\"ref_cost_intra\":%d,\"ref_cost_last\":%d,"
-+              "\"ref_cost_golden\":%d,\"ref_cost_altref\":%d}\n",
++              "\"ref_cost_golden\":%d,\"ref_cost_altref\":%d,"
++              "\"content_state_sb\":%d,\"sb_use_mv_part\":%s,"
++              "\"sb_mvrow_part\":%d,\"sb_mvcol_part\":%d}\n",
 +              frame_idx, cpi->use_svc ? cpi->svc.spatial_layer_id : 0,
 +              mi_row, mi_col,
 +              bsize_str, mode_str, ref_str,
@@ -1021,7 +1023,9 @@ index 6f2524b36..901336d7d 100644
 +              single_ref_p2_ctx_f02, intra_inter_prob_f02,
 +              single_ref_p1_prob_f02, single_ref_p2_prob_f02,
 +              ref_frame_cost[INTRA_FRAME], ref_frame_cost[LAST_FRAME],
-+              ref_frame_cost[GOLDEN_FRAME], ref_frame_cost[ALTREF_FRAME]);
++              ref_frame_cost[GOLDEN_FRAME], ref_frame_cost[ALTREF_FRAME],
++              x->content_state_sb, x->sb_use_mv_part ? "true" : "false",
++              x->sb_mvrow_part, x->sb_mvcol_part);
 +    }
 +  }
 +  /* F.0.2 ORACLE END */
