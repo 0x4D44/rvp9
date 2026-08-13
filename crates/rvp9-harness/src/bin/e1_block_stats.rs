@@ -239,7 +239,12 @@ struct KeyframeAgreement {
     recon_luma_sse: u64,
     exact_recon_cells: u64,
     exact_mode_info_and_recon_cells: u64,
+    first_differing_mode_info_cell: Option<(usize, usize)>,
     first_differing_recon_cell: Option<(usize, usize)>,
+    partial_sb_band_cells: u64,
+    partial_sb_band_mode_info_mismatches: u64,
+    partial_sb_band_recon_mismatches: u64,
+    partial_sb_band_recon_luma_sse: u64,
 }
 
 fn compare_keyframe_cells(rvp9: &Aggregate, libvpx: &Aggregate) -> KeyframeAgreement {
@@ -287,11 +292,21 @@ fn compare_keyframe_cells(rvp9: &Aggregate, libvpx: &Aggregate) -> KeyframeAgree
 
             let cell_row = cell_index / rvp9_frame.mi_cols;
             let cell_col = cell_index % rvp9_frame.mi_cols;
+            if !exact_mode_info && agreement.first_differing_mode_info_cell.is_none() {
+                agreement.first_differing_mode_info_cell = Some((cell_row, cell_col));
+            }
+            let in_partial_sb_band = (rvp9_frame.mi_rows % 8 != 0
+                && cell_row >= rvp9_frame.mi_rows / 8 * 8)
+                || (rvp9_frame.mi_cols % 8 != 0 && cell_col >= rvp9_frame.mi_cols / 8 * 8);
+            agreement.partial_sb_band_cells += u64::from(in_partial_sb_band);
+            agreement.partial_sb_band_mode_info_mismatches +=
+                u64::from(in_partial_sb_band && !exact_mode_info);
             let y_start = cell_row * 8;
             let x_start = cell_col * 8;
             let y_end = (y_start + 8).min(height);
             let x_end = (x_start + 8).min(width);
             let mut exact_recon = true;
+            let mut cell_recon_luma_sse = 0;
             for y in y_start..y_end {
                 for x in x_start..x_end {
                     let index = y * width + x;
@@ -299,12 +314,19 @@ fn compare_keyframe_cells(rvp9: &Aggregate, libvpx: &Aggregate) -> KeyframeAgree
                         - i32::from(libvpx_frame.recon_y[index]);
                     agreement.comparable_luma_pixels += 1;
                     agreement.exact_luma_pixels += u64::from(delta == 0);
-                    agreement.recon_luma_sse += (delta * delta) as u64;
+                    let squared_delta = (delta * delta) as u64;
+                    agreement.recon_luma_sse += squared_delta;
+                    cell_recon_luma_sse += squared_delta;
                     exact_recon &= delta == 0;
                 }
             }
             agreement.exact_recon_cells += u64::from(exact_recon);
             agreement.exact_mode_info_and_recon_cells += u64::from(exact_mode_info && exact_recon);
+            agreement.partial_sb_band_recon_mismatches +=
+                u64::from(in_partial_sb_band && !exact_recon);
+            if in_partial_sb_band {
+                agreement.partial_sb_band_recon_luma_sse += cell_recon_luma_sse;
+            }
             if !exact_recon && agreement.first_differing_recon_cell.is_none() {
                 agreement.first_differing_recon_cell = Some((cell_row, cell_col));
             }
@@ -1386,6 +1408,33 @@ fn emit_report(
             "\nReconstruction-to-reconstruction luma SSE: `{}`.",
             key.recon_luma_sse
         );
+        let interior_cells = key.comparable_cells - key.partial_sb_band_cells;
+        let mode_info_mismatches = key.comparable_cells - key.exact_mode_info;
+        let recon_mismatches = key.comparable_cells - key.exact_recon_cells;
+        let _ = writeln!(
+            md,
+            "Partial-superblock bands: `{}` cells, `{}` ModeInfo mismatches, `{}` reconstructed-cell mismatches, luma SSE `{}`.",
+            key.partial_sb_band_cells,
+            key.partial_sb_band_mode_info_mismatches,
+            key.partial_sb_band_recon_mismatches,
+            key.partial_sb_band_recon_luma_sse
+        );
+        let _ = writeln!(
+            md,
+            "Complete-superblock interior: `{}` cells, `{}` ModeInfo mismatches, `{}` reconstructed-cell mismatches, luma SSE `{}`.",
+            interior_cells,
+            mode_info_mismatches - key.partial_sb_band_mode_info_mismatches,
+            recon_mismatches - key.partial_sb_band_recon_mismatches,
+            key.recon_luma_sse - key.partial_sb_band_recon_luma_sse
+        );
+        let _ = writeln!(
+            md,
+            "First differing decoded ModeInfo cell: `{}`.",
+            key.first_differing_mode_info_cell.map_or_else(
+                || "none".to_owned(),
+                |(row, col)| format!("mi_row={row}, mi_col={col}")
+            )
+        );
         let _ = writeln!(
             md,
             "First differing reconstructed 8x8 cell: `{}`.",
@@ -2009,17 +2058,18 @@ mod tests {
         let base = test_intra_mi(BlockSize::Block8x8, TxSize::Tx8x8);
         let rvp9_frame = FrameStats {
             is_key: true,
-            mi_rows: 1,
-            mi_cols: 2,
-            mi_grid: vec![Some(base); 2],
-            recon_y_width: 16,
-            recon_y_height: 8,
-            recon_y: vec![10; 16 * 8],
+            mi_rows: 9,
+            mi_cols: 8,
+            mi_grid: vec![Some(base); 72],
+            recon_y_width: 64,
+            recon_y_height: 72,
+            recon_y: vec![10; 64 * 72],
             ..Default::default()
         };
         let mut libvpx_frame = rvp9_frame.clone();
         libvpx_frame.mi_grid[1].as_mut().unwrap().block_size = BlockSize::Block16x16;
         libvpx_frame.recon_y[15] = 12;
+        libvpx_frame.recon_y[64 * 64] = 13;
 
         let agreement = compare_keyframe_cells(
             &Aggregate {
@@ -2031,16 +2081,21 @@ mod tests {
         );
 
         assert_eq!(agreement.comparable_frames, 1);
-        assert_eq!(agreement.comparable_cells, 2);
-        assert_eq!(agreement.same_block_size, 1);
-        assert_eq!(agreement.same_prediction, 2);
-        assert_eq!(agreement.exact_mode_info, 1);
-        assert_eq!(agreement.comparable_luma_pixels, 128);
-        assert_eq!(agreement.exact_luma_pixels, 127);
-        assert_eq!(agreement.recon_luma_sse, 4);
-        assert_eq!(agreement.exact_recon_cells, 1);
-        assert_eq!(agreement.exact_mode_info_and_recon_cells, 1);
+        assert_eq!(agreement.comparable_cells, 72);
+        assert_eq!(agreement.same_block_size, 71);
+        assert_eq!(agreement.same_prediction, 72);
+        assert_eq!(agreement.exact_mode_info, 71);
+        assert_eq!(agreement.comparable_luma_pixels, 4608);
+        assert_eq!(agreement.exact_luma_pixels, 4606);
+        assert_eq!(agreement.recon_luma_sse, 13);
+        assert_eq!(agreement.exact_recon_cells, 70);
+        assert_eq!(agreement.exact_mode_info_and_recon_cells, 70);
         assert_eq!(agreement.first_differing_recon_cell, Some((0, 1)));
+        assert_eq!(agreement.first_differing_mode_info_cell, Some((0, 1)));
+        assert_eq!(agreement.partial_sb_band_cells, 8);
+        assert_eq!(agreement.partial_sb_band_mode_info_mismatches, 0);
+        assert_eq!(agreement.partial_sb_band_recon_mismatches, 1);
+        assert_eq!(agreement.partial_sb_band_recon_luma_sse, 9);
     }
 
     #[test]
