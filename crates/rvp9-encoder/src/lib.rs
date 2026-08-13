@@ -3798,17 +3798,55 @@ fn splat_final_inter_leaf_into_grids(
     let mv_ref = leaf.mv_ref();
     debug_assert!(layout.index(leaf_mi_row, leaf_mi_col).is_some());
     debug_assert!(out_layout.index(leaf_mi_row, leaf_mi_col).is_some());
-    for dr in 0..n_8x8_high {
-        for dc in 0..n_8x8_wide {
-            let mi_row = leaf_mi_row + dr;
-            let mi_col = leaf_mi_col + dc;
-            if let Some(local_index) = layout.index(mi_row, mi_col) {
-                mi_grid[local_index] = Some(mode_info);
-            }
-            if let Some(out_index) = out_layout.index(mi_row, mi_col) {
-                out_mv_grid[out_index] = mv_ref;
-            }
-        }
+    fill_inter_grid_rect(
+        mi_grid,
+        layout,
+        leaf_mi_row,
+        leaf_mi_col,
+        n_8x8_high,
+        n_8x8_wide,
+        Some(mode_info),
+    );
+    fill_inter_grid_rect(
+        out_mv_grid,
+        out_layout,
+        leaf_mi_row,
+        leaf_mi_col,
+        n_8x8_high,
+        n_8x8_wide,
+        mv_ref,
+    );
+}
+
+#[inline]
+#[allow(clippy::too_many_arguments)]
+fn fill_inter_grid_rect<T: Copy>(
+    grid: &mut [T],
+    layout: InterPickerMiGridLayout,
+    global_row: usize,
+    global_col: usize,
+    height: usize,
+    width: usize,
+    value: T,
+) {
+    let row_start = global_row.max(layout.mi_row_start);
+    let row_end = global_row
+        .saturating_add(height)
+        .min(layout.mi_row_start + layout.mi_rows);
+    let col_start = global_col.max(layout.mi_col_start);
+    let col_end = global_col
+        .saturating_add(width)
+        .min(layout.mi_col_start + layout.mi_cols);
+    if row_start >= row_end || col_start >= col_end {
+        return;
+    }
+
+    let local_row = row_start - layout.mi_row_start;
+    let local_col = col_start - layout.mi_col_start;
+    let write_width = col_end - col_start;
+    for row in 0..row_end - row_start {
+        let start = (local_row + row) * layout.mi_cols + local_col;
+        grid[start..start + write_width].fill(value);
     }
 }
 
@@ -14363,6 +14401,61 @@ mod tests {
             }
         }
         assert_eq!(out_mv_grid[0], PrevFrameMvRef::default());
+    }
+
+    #[test]
+    fn inter_row_grids_clip_final_leaf_to_each_compact_layout() {
+        let mi_layout = InterPickerMiGridLayout::new_rect(4, 5, 6, 4);
+        let out_layout = InterPickerMiGridLayout::new_rect(6, 3, 7, 3);
+        let mut out_mv_grid = vec![PrevFrameMvRef::default(); 9];
+        let leaf = InterPartitionLeafDesc {
+            mi_row_in_sb: 0,
+            mi_col_in_sb: 0,
+            leaf_bsize: BlockSize::Block64x64,
+            picked_mode: InterMode::NewMv,
+            picked_mv: Mv { row: 16, col: -24 },
+            skip: false,
+            segment_id: 2,
+            picked_ref_frame: RefFrame::GoldenFrame,
+            picked_interp_filter: InterpFilter::EightTapSmooth,
+            picked_intra_mode: None,
+            picked_ref_frame2: RefFrame::NoRefFrame,
+            picked_mv2: Mv::ZERO,
+            picked_tx_size: TxSize::Tx16x16,
+        };
+        let expected_mode = leaf.mode_info();
+        let expected_mv = leaf.mv_ref();
+        let mut grids = InterRowGrids::new_with_mi_grid(
+            mi_layout,
+            vec![None; 20],
+            &mut out_mv_grid,
+            out_layout,
+        );
+        grids.splat_final(7, 8, leaf);
+        let simulation = grids.into_simulation_grid();
+
+        for mi_row in 4..9 {
+            for mi_col in 6..10 {
+                let expected = (mi_row >= 7 && mi_col >= 8).then_some(expected_mode);
+                assert_eq!(
+                    simulation.cells[mi_layout.index(mi_row, mi_col).expect("MI cell")],
+                    expected,
+                );
+            }
+        }
+        for mi_row in 6..9 {
+            for mi_col in 7..10 {
+                let expected = if mi_row >= 7 && mi_col >= 8 {
+                    expected_mv
+                } else {
+                    PrevFrameMvRef::default()
+                };
+                assert_eq!(
+                    out_mv_grid[out_layout.index(mi_row, mi_col).expect("MV cell")],
+                    expected,
+                );
+            }
+        }
     }
 
     #[test]
