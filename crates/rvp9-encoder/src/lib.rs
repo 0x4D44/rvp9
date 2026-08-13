@@ -5456,7 +5456,7 @@ fn inter_rd_calibration_for_segment(
     )
 }
 
-/// Apply the measured key-access-unit leaf policy only to its qualified v1 path.
+/// Apply measured spatial leaf policies only to their qualified v1 paths.
 ///
 /// Exact VBP otherwise disables rvp9's natural-content lambda calibration. The
 /// opening enhancement reconstruction seeds that layer's LAST reference for the
@@ -5464,13 +5464,14 @@ fn inter_rd_calibration_for_segment(
 /// weight without changing partition descent, qindex, or any other topology.
 fn spatial_leaf_rd_calibration(
     calibration: rvp9_core::mode_decision::inter::InterRdCalibration,
+    spatial_component: bool,
     spatial_key_enhancement_component: bool,
     rc_mode: crate::rate_control::RcMode,
     speed: i32,
     deadline: rvp9_core::mode_decision::speed_features::Deadline,
     exact_vbp_tree_enabled: bool,
 ) -> rvp9_core::mode_decision::inter::InterRdCalibration {
-    if spatial_key_enhancement_component
+    let calibration = if spatial_key_enhancement_component
         && matches!(rc_mode, crate::rate_control::RcMode::Cbr)
         && speed.unsigned_abs() == 8
         && matches!(
@@ -5482,7 +5483,9 @@ fn spatial_leaf_rd_calibration(
         calibration.with_lambda_multiplier(101, 100)
     } else {
         calibration
-    }
+    };
+    calibration
+        .with_clear_simple_model_skip(spatial_component && matches!(speed.unsigned_abs(), 7 | 8))
 }
 
 fn svc_enhancement_model_only_large_qmax(
@@ -9393,6 +9396,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     );
                     leaf_rd_calibration = spatial_leaf_rd_calibration(
                         leaf_rd_calibration,
+                        spatial_component,
                         spatial_key_enhancement_component,
                         rc_mode,
                         speed,
@@ -16588,17 +16592,60 @@ mod tests {
     }
 
     #[test]
-    fn spatial_key_enhancement_uses_measured_leaf_lambda() {
+    fn spatial_leaf_calibration_scopes_key_lambda_and_simple_skip_clear() {
         use rvp9_core::mode_decision::speed_features::Deadline;
 
         let exact = inter_rd_calibration_for_frame(RcMode::Cbr, 8, Deadline::Realtime, false, true);
-        let ordinary =
-            spatial_leaf_rd_calibration(exact, false, RcMode::Cbr, 8, Deadline::Realtime, true);
-        let key_enhancement =
-            spatial_leaf_rd_calibration(exact, true, RcMode::Cbr, 8, Deadline::Realtime, true);
-        let cpu7_control =
-            spatial_leaf_rd_calibration(exact, true, RcMode::Cbr, 7, Deadline::Realtime, true);
+        let non_spatial = spatial_leaf_rd_calibration(
+            exact,
+            false,
+            false,
+            RcMode::Cbr,
+            8,
+            Deadline::Realtime,
+            true,
+        );
+        let ordinary = spatial_leaf_rd_calibration(
+            exact,
+            true,
+            false,
+            RcMode::Cbr,
+            8,
+            Deadline::Realtime,
+            true,
+        );
+        let key_enhancement = spatial_leaf_rd_calibration(
+            exact,
+            true,
+            true,
+            RcMode::Cbr,
+            8,
+            Deadline::Realtime,
+            true,
+        );
+        let cpu7_control = spatial_leaf_rd_calibration(
+            exact,
+            true,
+            true,
+            RcMode::Cbr,
+            7,
+            Deadline::Realtime,
+            true,
+        );
+        let cpu6_control = spatial_leaf_rd_calibration(
+            exact,
+            true,
+            false,
+            RcMode::Cbr,
+            6,
+            Deadline::Realtime,
+            true,
+        );
 
+        assert!(!non_spatial.clear_simple_model_skip);
+        assert!(ordinary.clear_simple_model_skip);
+        assert!(cpu7_control.clear_simple_model_skip);
+        assert!(!cpu6_control.clear_simple_model_skip);
         assert_eq!((ordinary.lambda_num, ordinary.lambda_den), (0, 1));
         assert_eq!((cpu7_control.lambda_num, cpu7_control.lambda_den), (0, 1));
         assert_eq!(

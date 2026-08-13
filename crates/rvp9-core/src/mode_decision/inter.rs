@@ -469,6 +469,9 @@ pub struct InterRdCalibration {
     pub model_dist: bool,
     /// Reuse the luma model's coefficient rate and skip classification.
     pub model_only: bool,
+    /// Clear the provisional model skip after the simple block-YRD path,
+    /// matching pinned libvpx before encode-side quantization.
+    pub clear_simple_model_skip: bool,
     /// Extend model-only ranking to blocks at least 32x32.
     ///
     /// Pinned libvpx enables this for temporal-SVC enhancement frames at
@@ -495,6 +498,7 @@ impl InterRdCalibration {
             hadamard_only: false,
             model_dist: false,
             model_only: false,
+            clear_simple_model_skip: false,
             model_only_large: false,
             model_only_large_qmax: u8::MAX,
             block16_coef_rd: false,
@@ -514,6 +518,7 @@ impl InterRdCalibration {
             hadamard_only: true,
             model_dist: true,
             model_only: true,
+            clear_simple_model_skip: false,
             model_only_large: false,
             model_only_large_qmax: u8::MAX,
             block16_coef_rd: false,
@@ -540,6 +545,13 @@ impl InterRdCalibration {
     pub const fn with_model_only_large(mut self, enabled: bool, qmax: u8) -> Self {
         self.model_only_large = enabled;
         self.model_only_large_qmax = qmax;
+        self
+    }
+
+    /// Select pinned simple block-YRD skip-state semantics.
+    #[must_use]
+    pub const fn with_clear_simple_model_skip(mut self, enabled: bool) -> Self {
+        self.clear_simple_model_skip = enabled;
         self
     }
 
@@ -4038,6 +4050,19 @@ fn luma_model_skip_thresholds(use_large: bool, quantizer: &PlaneQuantizers) -> (
     ((dc * dc) >> 6, (ac * ac) >> 6)
 }
 
+fn simple_block_yrd_result(model: &ModelRdResult, clear_provisional_skip: bool) -> BlockYrdResult {
+    // Pinned `block_yrd` reuses the already-computed luma model on this
+    // speed path, then deliberately clears `skippable` before returning.
+    // Keep the historical behavior available outside qualified paths until
+    // its small encode-time cost is covered by their complete speed matrix.
+    BlockYrdResult {
+        coef_rate: model.rate.max(0) as u64,
+        coef_dist: model.dist,
+        skippable: !clear_provisional_skip && model.skip_txfm == SkipTxfm::AcDc,
+        dct_eob_total: 0,
+    }
+}
+
 fn y_skip_tie_break_allowed(
     block_size: BlockSize,
     hadamard_only: bool,
@@ -4550,12 +4575,7 @@ fn evaluate_candidate_for_filter_with_pred(
                 && params.q_index <= params.rd_calibration.model_only_large_qmax))
         && !block16_coef_rd
     {
-        BlockYrdResult {
-            coef_rate: mrd.rate.max(0) as u64,
-            coef_dist: mrd.dist,
-            skippable: mrd.skip_txfm == SkipTxfm::AcDc,
-            dct_eob_total: 0,
-        }
+        simple_block_yrd_result(&mrd, params.rd_calibration.clear_simple_model_skip)
     } else {
         let recon_pixels = recon.as_mut().map_or(&mut [][..], |pixels| &mut pixels[..]);
         let use_model_dist = hadamard_only
@@ -6636,6 +6656,27 @@ mod tests {
         assert_ne!(coefficient_rd.coef_dist, result.coef_dist);
         assert_eq!(coefficient_rd.skip_txfm, result.skip_txfm);
         assert_eq!(coefficient_rd.dct_eob_total, 0);
+    }
+
+    #[test]
+    fn simple_block_yrd_clears_the_provisional_model_skip() {
+        let model = ModelRdResult {
+            rate: 1_234,
+            dist: 56_789,
+            var_y: 77,
+            sse_y: 88,
+            tx_size: TxSize::Tx8x8,
+            skip_txfm: SkipTxfm::AcDc,
+        };
+
+        let pinned = simple_block_yrd_result(&model, true);
+        let legacy = simple_block_yrd_result(&model, false);
+
+        assert_eq!(pinned.coef_rate, 1_234);
+        assert_eq!(pinned.coef_dist, 56_789);
+        assert!(!pinned.skippable);
+        assert_eq!(pinned.dct_eob_total, 0);
+        assert!(legacy.skippable);
     }
 
     #[test]

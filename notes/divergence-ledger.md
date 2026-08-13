@@ -6334,3 +6334,52 @@ paired medians remain required before final acceptance.
 selects `2.9%` intra area versus libvpx's `1.7%`, so do not broaden this
 exception. Profile its cost and recheck the complete speed matrix at the final
 spatial-PGO gate.
+
+### 2026-08-14 — Clear simple block-YRD skip state only for CPU7/8 spatial components
+
+**Where:** `rvp9_core::mode_decision::inter::simple_block_yrd_result` and
+`rvp9_encoder::spatial_leaf_rd_calibration`; libvpx counterpart:
+`vp9/encoder/vp9_pickmode.c::block_yrd`.
+
+**What libvpx does:** CPU7/8 realtime's simple block-YRD branch returns the
+already-computed luma model rate and distortion but explicitly clears its
+provisional `skippable` result. Final encode-side transform and quantization
+decide whether the emitted block is skipped. CPU6 does not enable this simple
+block-YRD shortcut.
+
+**What rvp9 does:** CPU7/8 realtime spatial components clear the provisional
+model skip at the same seam. Ordinary single-layer encoding retains the prior
+model skip, as do CPU6 spatial components. The rate and distortion used to rank
+the candidate are unchanged.
+
+**Why:** exact traces measured model skip on `19.3247%` of rvp9 base inter
+candidates versus `0.5816%` in pinned libvpx. Matching the pinned skip-state
+lifecycle closes both remaining required quality misses: CPU8/S2 Ducks moves
+from `+1.2701%/-4.1870%` to `-2.6845%/-4.0964%`, and CPU7/S3 In To Tree at
+1080p60 moves from `-9.4188%/-9.4667%/+0.5136%` to
+`-9.3863%/-10.3612%/-0.1665%`.
+
+The deliberate ordinary-path departure avoids a measured `1.6--1.9%` encode
+time cost where quality was already green. A scoped ordinary CPU8 VBR control
+is byte-identical and measures `0.998534x/0.996464x` by separate/paired
+medians. The CPU6 exclusion is also required: enabling the policy there moved
+the required 1080p60 S2 top layer from `-0.8125%` to `+5.2168%`; the final
+scope restores `-8.6587%/-0.8125%` exactly.
+
+**Byte-parity impact:** intentional on qualifying CPU7/8 spatial inter
+components. The final residual decision may change reconstruction. Canonical
+1080p S2/S3 streams remain decoded-byte exact across rvp9-decoder, pinned
+vpxdec, and ffmpeg.
+
+**Compression-efficiency impact:** final CPU8/S2 is
+`-2.6845%/-4.0964%`; CPU8/S3 is
+`-4.0159%/-3.9969%/-4.4047%`; the limiting CPU7/S3 1080p60 result is
+`-9.3863%/-10.3612%/-0.1665%`. All affected layer gates pass `+0.5%`.
+
+**Speed impact:** plain-release spatial curve timings remain inside the prior
+warm envelope. The ordinary path has no output or timing change. Exact-commit
+production-PGO repeated medians remain the final speed oracle.
+
+**Future plan:** retain the CPU7/8 spatial scope through the final PGO speed,
+absolute-latency, quality, and decoder matrix. Revisit the ordinary or CPU6
+departures only with a new complete Pareto result.
