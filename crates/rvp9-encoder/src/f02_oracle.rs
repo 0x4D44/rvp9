@@ -114,6 +114,8 @@ pub struct CandidateProbe {
 pub struct BlockDecision {
     /// 0-based IVF presentation-order frame index.
     pub frame_idx: u32,
+    /// Spatial-layer identifier. Ordinary single-stream records use zero.
+    pub spatial_id: u8,
     /// 8×8-cell row of the leaf's top-left mi cell (`0..frame_h/8`).
     pub mi_row: u16,
     /// 8×8-cell col of the leaf's top-left mi cell (`0..frame_w/8`).
@@ -215,7 +217,7 @@ impl BlockDecision {
         let mut s = String::with_capacity(256);
         writeln!(
             s,
-            "{{\"frame_idx\":{},\"mi_row\":{},\"mi_col\":{},\
+            "{{\"frame_idx\":{},\"spatial_id\":{},\"mi_row\":{},\"mi_col\":{},\
              \"bsize\":\"{}\",\"mode\":\"{}\",\"ref_frame\":\"{}\",\
              \"mv_row\":{},\"mv_col\":{},\
              \"mode_bits_est\":{},\"mv_bits_est\":{},\"ref_bits_est\":{},\
@@ -231,6 +233,7 @@ impl BlockDecision {
              \"sse_after_pred\":{},\"interp_filter\":\"{}\",\"skip_flag\":{},\
              \"q_index\":{},\"tx_size\":\"{}\",\"luma_eob_nonzero\":{}}}",
             self.frame_idx,
+            self.spatial_id,
             self.mi_row,
             self.mi_col,
             bsize_tag(self.bsize),
@@ -370,6 +373,34 @@ thread_local! {
     static FRAME_IDX: core::cell::Cell<u32> = const { core::cell::Cell::new(0) };
 }
 
+thread_local! {
+    /// Spatial component currently being encoded. Ordinary streams and code
+    /// outside a scoped spatial component use layer zero.
+    static SPATIAL_ID: core::cell::Cell<u8> = const { core::cell::Cell::new(0) };
+}
+
+/// Run `f` with the diagnostic spatial-layer tag set to `spatial_id`.
+/// Restores the prior tag even if `f` unwinds.
+pub(crate) fn with_spatial_id<T>(spatial_id: u8, f: impl FnOnce() -> T) -> T {
+    struct Restore(u8);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            SPATIAL_ID.with(|current| current.set(self.0));
+        }
+    }
+
+    let prior = SPATIAL_ID.with(|current| current.replace(spatial_id));
+    let _restore = Restore(prior);
+    f()
+}
+
+/// Read the current diagnostic spatial-layer identifier.
+#[inline]
+#[must_use]
+pub(crate) fn current_spatial_id() -> u8 {
+    SPATIAL_ID.with(core::cell::Cell::get)
+}
+
 /// Enable the oracle if `RVP9_F02_ORACLE` is set and non-zero.
 ///
 /// One relaxed-store; subsequent picker-hook calls observe the new
@@ -436,6 +467,7 @@ mod tests {
     fn sample_inter() -> BlockDecision {
         BlockDecision {
             frame_idx: 7,
+            spatial_id: 2,
             mi_row: 4,
             mi_col: 12,
             bsize: BlockSize::Block16x16,
@@ -476,6 +508,7 @@ mod tests {
     fn sample_intra() -> BlockDecision {
         BlockDecision {
             frame_idx: 0,
+            spatial_id: 0,
             mi_row: 0,
             mi_col: 0,
             bsize: BlockSize::Block8x8,
@@ -514,6 +547,24 @@ mod tests {
     }
 
     #[test]
+    fn spatial_scope_tags_records_and_restores_the_default_layer() {
+        let _guard = crate::env_test_mutex();
+        F02_ON.store(true, Ordering::Relaxed);
+        let _ = drain_frame();
+        assert_eq!(current_spatial_id(), 0);
+        with_spatial_id(2, || {
+            let mut decision = sample_inter();
+            decision.spatial_id = current_spatial_id();
+            record_decision(decision);
+        });
+        let records = drain_frame();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].spatial_id, 2);
+        assert_eq!(current_spatial_id(), 0);
+        F02_ON.store(false, Ordering::Relaxed);
+    }
+
+    #[test]
     fn jsonl_round_trip_shape() {
         // The schema's serialization must be parseable by the same
         // shape the libvpx-side patch emits.
@@ -523,6 +574,7 @@ mod tests {
         let s = String::from_utf8(buf).unwrap();
         assert!(s.ends_with('\n'), "JSONL line must end with newline");
         assert!(s.contains("\"frame_idx\":7"), "frame_idx field present");
+        assert!(s.contains("\"spatial_id\":2"), "spatial_id field present");
         assert!(s.contains("\"mi_row\":4"), "mi_row field present");
         assert!(s.contains("\"mi_col\":12"), "mi_col field present");
         assert!(s.contains("\"bsize\":\"16x16\""), "bsize tag");

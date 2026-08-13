@@ -323,6 +323,7 @@ fn block_decision_mode_variant_shape_is_stable() {
     }
     let _: BlockDecision = BlockDecision {
         frame_idx: 0,
+        spatial_id: 0,
         mi_row: 0,
         mi_col: 0,
         bsize: rvp9_core::block::BlockSize::Block8x8,

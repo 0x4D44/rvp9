@@ -7,13 +7,13 @@
 
 use rvp9_core::bitstream::superframe::SuperframeBuilder;
 
-use crate::EncodeError;
 use crate::frame_loop::{
     EncodedFrame, EncoderConfig, EncoderParallelism, FrameKind, SpatialFrameControl,
     SpatialSharedState, StreamEncoder, YuvFrameRef, strided_plane_covers,
 };
 use crate::scale_source::{ScaleSourceError, ScaledI420, scale_i420_2x};
 use crate::svc::{SpatialLayerPlan, SpatialLayerSpec, SpatialSvcConfig, SpatialSvcConfigError};
+use crate::{EncodeError, f02_oracle};
 
 /// Error returned by packet-level spatial encoding.
 #[derive(Debug)]
@@ -286,7 +286,9 @@ impl SpatialEncoder {
                 v_stride: input.width / 2,
             };
             encoder.swap_spatial_shared_state(&mut self.shared);
-            let encoded = encoder.encode_spatial_component(&view, control);
+            let encoded = f02_oracle::with_spatial_id(layer_index as u8, || {
+                encoder.encode_spatial_component(&view, control)
+            });
             encoder.swap_spatial_shared_state(&mut self.shared);
             let encoded = match encoded {
                 Ok(encoded) => encoded,

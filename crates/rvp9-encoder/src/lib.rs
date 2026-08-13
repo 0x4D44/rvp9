@@ -3232,6 +3232,7 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
                     );
                     crate::f02_oracle::record_decision(crate::f02_oracle::BlockDecision {
                         frame_idx: crate::f02_oracle::current_frame_idx(),
+                        spatial_id: crate::f02_oracle::current_spatial_id(),
                         mi_row: leaf_mi_row as u16,
                         mi_col: leaf_mi_col as u16,
                         bsize: leaf_bsize,
@@ -8516,6 +8517,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         if f02_oracle_enabled {
                             crate::f02_oracle::record_decision(crate::f02_oracle::BlockDecision {
                                 frame_idx: crate::f02_oracle::current_frame_idx(),
+                                spatial_id: crate::f02_oracle::current_spatial_id(),
                                 mi_row: leaf_mi_row as u16,
                                 mi_col: leaf_mi_col as u16,
                                 bsize: leaf_bsize,
@@ -8662,6 +8664,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         if f02_oracle_enabled {
                             crate::f02_oracle::record_decision(crate::f02_oracle::BlockDecision {
                                 frame_idx: crate::f02_oracle::current_frame_idx(),
+                                spatial_id: crate::f02_oracle::current_spatial_id(),
                                 mi_row: leaf_mi_row as u16,
                                 mi_col: leaf_mi_col as u16,
                                 bsize: leaf_bsize,
@@ -11116,6 +11119,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                 .min(u32::MAX as u64) as u32;
                         crate::f02_oracle::record_decision(crate::f02_oracle::BlockDecision {
                             frame_idx: crate::f02_oracle::current_frame_idx(),
+                            spatial_id: crate::f02_oracle::current_spatial_id(),
                             mi_row: leaf_mi_row as u16,
                             mi_col: leaf_mi_col as u16,
                             bsize: leaf_bsize,

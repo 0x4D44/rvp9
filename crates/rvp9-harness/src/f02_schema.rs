@@ -77,6 +77,7 @@ pub fn parse_jsonl_line(line: &str) -> Result<BlockDecision, ParseError> {
         .ok_or(ParseError::Malformed("expected outer braces"))?;
 
     let mut frame_idx: Option<u32> = None;
+    let mut spatial_id: Option<u8> = None;
     let mut mi_row: Option<u16> = None;
     let mut mi_col: Option<u16> = None;
     let mut bsize: Option<BlockSize> = None;
@@ -116,6 +117,7 @@ pub fn parse_jsonl_line(line: &str) -> Result<BlockDecision, ParseError> {
         let (k, v) = split_kv(kv)?;
         match k {
             "frame_idx" => frame_idx = Some(parse_num(v, "frame_idx")?),
+            "spatial_id" => spatial_id = Some(parse_num(v, "spatial_id")?),
             "mi_row" => mi_row = Some(parse_num(v, "mi_row")?),
             "mi_col" => mi_col = Some(parse_num(v, "mi_col")?),
             "bsize" => {
@@ -200,6 +202,7 @@ pub fn parse_jsonl_line(line: &str) -> Result<BlockDecision, ParseError> {
 
     Ok(BlockDecision {
         frame_idx: frame_idx.ok_or(ParseError::MissingField("frame_idx"))?,
+        spatial_id: spatial_id.unwrap_or(0),
         mi_row: mi_row.ok_or(ParseError::MissingField("mi_row"))?,
         mi_col: mi_col.ok_or(ParseError::MissingField("mi_col"))?,
         bsize: bsize.ok_or(ParseError::MissingField("bsize"))?,
@@ -294,6 +297,8 @@ pub fn parse_jsonl_stream<R: BufRead>(r: R) -> Result<Vec<BlockDecision>, ParseE
 pub struct BlockKey {
     /// 0-based presentation-order frame index.
     pub frame_idx: u32,
+    /// Spatial-layer identifier. Ordinary streams use zero.
+    pub spatial_id: u8,
     /// Top-left 8×8 mi-cell row.
     pub mi_row: u16,
     /// Top-left 8×8 mi-cell column.
@@ -304,6 +309,7 @@ impl From<&BlockDecision> for BlockKey {
     fn from(decision: &BlockDecision) -> Self {
         Self {
             frame_idx: decision.frame_idx,
+            spatial_id: decision.spatial_id,
             mi_row: decision.mi_row,
             mi_col: decision.mi_col,
         }
@@ -376,10 +382,11 @@ impl OracleComparison {
         for pair in &self.pairs {
             write!(
                 writer,
-                "{{\"frame_idx\":{},\"mi_row\":{},\"mi_col\":{},\
+                "{{\"frame_idx\":{},\"spatial_id\":{},\"mi_row\":{},\"mi_col\":{},\
                  \"status\":\"{}\",\"rvp9_records\":{},\"libvpx_records\":{},\
                  \"mismatched_fields\":[",
                 pair.key.frame_idx,
+                pair.key.spatial_id,
                 pair.key.mi_row,
                 pair.key.mi_col,
                 if pair.is_match() { "match" } else { "mismatch" },
@@ -515,6 +522,7 @@ fn covered_cells<'a>(
             for mi_col in decision.mi_col.min(mi_cols)..col_end {
                 let key = BlockKey {
                     frame_idx: decision.frame_idx,
+                    spatial_id: decision.spatial_id,
                     mi_row,
                     mi_col,
                 };
@@ -1038,6 +1046,7 @@ mod tests {
     fn sample_inter() -> BlockDecision {
         BlockDecision {
             frame_idx: 7,
+            spatial_id: 2,
             mi_row: 4,
             mi_col: 12,
             bsize: BlockSize::Block16x16,
@@ -1095,6 +1104,7 @@ mod tests {
     fn sample_intra() -> BlockDecision {
         BlockDecision {
             frame_idx: 0,
+            spatial_id: 0,
             mi_row: 0,
             mi_col: 0,
             bsize: BlockSize::Block8x8,

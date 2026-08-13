@@ -115,7 +115,7 @@ index 6f2524b36..357fe98b9 100644
 +        best_uv_rate_f02 = 0;
 +        best_uv_dist_f02 = 0;
          best_pickmode.best_mode = this_mode;
-@@ -2741,2 +2808,193 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
+@@ -2741,2 +2808,196 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
    *rd_cost = best_rdc;
 +
 +  /* F.0.2 ORACLE BEGIN — additive instrumentation only; no behaviour
@@ -227,9 +227,11 @@ index 6f2524b36..357fe98b9 100644
 +          cm->fc->single_ref_prob[single_ref_p1_ctx_f02][0];
 +      int single_ref_p2_prob_f02 =
 +          cm->fc->single_ref_prob[single_ref_p2_ctx_f02][1];
-+      /* `frame_idx` mirrors the harness binary's IVF-presentation-
-+       * order counter; libvpx tracks it as `cm->current_video_frame`. */
-+      unsigned int frame_idx = (unsigned int)cm->current_video_frame;
++      /* Spatial SVC advances `current_video_frame` for every coded
++       * component. `current_superframe` is the presentation-order index. */
++      unsigned int frame_idx =
++          cpi->use_svc ? (unsigned int)cpi->svc.current_superframe
++                       : (unsigned int)cm->current_video_frame;
 +      char last_candidates_f02[1024];
 +      size_t candidate_offset_f02 = 0;
 +      int candidate_idx_f02;
@@ -253,7 +255,7 @@ index 6f2524b36..357fe98b9 100644
 +            candidate_skip_f02[candidate_idx_f02]);
 +      }
 +      fprintf(vpx_f02_fp,
-+              "{\"frame_idx\":%u,\"mi_row\":%d,\"mi_col\":%d,"
++              "{\"frame_idx\":%u,\"spatial_id\":%d,\"mi_row\":%d,\"mi_col\":%d,"
 +              "\"bsize\":\"%s\",\"mode\":\"%s\",\"ref_frame\":\"%s\","
 +              "\"mv_row\":%d,\"mv_col\":%d,"
 +              "\"mode_bits_est\":%d,\"mv_bits_est\":%d,"
@@ -275,7 +277,8 @@ index 6f2524b36..357fe98b9 100644
 +              "\"single_ref_p1_prob\":%d,\"single_ref_p2_prob\":%d,"
 +              "\"ref_cost_intra\":%d,\"ref_cost_last\":%d,"
 +              "\"ref_cost_golden\":%d,\"ref_cost_altref\":%d}\n",
-+              frame_idx, mi_row, mi_col,
++              frame_idx, cpi->use_svc ? cpi->svc.spatial_layer_id : 0,
++              mi_row, mi_col,
 +              bsize_str, mode_str, ref_str,
 +              mv_row, mv_col,
 +              mode_bits_est, mv_bits_est, ref_bits_est, filter_bits_est,
