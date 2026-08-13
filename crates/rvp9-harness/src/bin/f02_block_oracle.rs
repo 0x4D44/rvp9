@@ -38,7 +38,8 @@
 //!
 //! Add `--spatial-layers 2|3 --inter-layer-pred 0|3 --cbr --fixed-q Q`
 //! and point `--vpxenc` at the patched `vp9_spatial_svc_encoder` to drive
-//! real spatial state. The harness validates every component, then compares
+//! exact fixed-Q spatial state. Omit `--fixed-q` and add `--report-only` for
+//! natural-CBR diagnosis. The harness validates every component, then compares
 //! `--analysis-spatial-id` (the base layer by default) at its coded geometry.
 
 use rvp9_core::bitstream::ChromaFormat;
@@ -182,6 +183,28 @@ fn parse_vbr(args: &[String], fixed_q: Option<u8>) -> Result<bool, String> {
     })
 }
 
+fn validate_spatial_oracle_mode(
+    spatial_layers: u8,
+    vbr: bool,
+    fixed_q: Option<u8>,
+    aq_mode: u8,
+    report_only: bool,
+) -> Result<(), String> {
+    if spatial_layers <= 1 {
+        return Ok(());
+    }
+    if vbr || aq_mode != 0 {
+        return Err("the spatial F02 mode requires --cbr --aq-mode 0".to_owned());
+    }
+    if fixed_q.is_none() && !report_only {
+        return Err(
+            "natural-CBR spatial analysis is diagnostic only; pass --report-only or select --fixed-q QINDEX"
+                .to_owned(),
+        );
+    }
+    Ok(())
+}
+
 fn append_libvpx_rate_args(command: &mut Command, vbr: bool, fixed_q: Option<u8>) {
     if let Some(qindex) = fixed_q {
         let (cli_q, max_q) =
@@ -261,22 +284,31 @@ fn append_libvpx_spatial_args(
     input: &Path,
     output: &Path,
     encode: OracleEncodeConfig,
-    fixed_q: u8,
+    fixed_q: Option<u8>,
 ) -> Result<(), String> {
-    let cli_q = fixed_q_cli_range(fixed_q)
-        .ok_or_else(|| format!("invalid spatial fixed qindex {fixed_q}"))?
-        .0;
     let scales = match encode.spatial_layers {
         2 => "1/2,1/1",
         3 => "1/4,1/2,1/1",
         other => return Err(format!("--spatial-layers must be 2 or 3, got {other}")),
     };
     let rates = spatial_layer_bitrates(encode.kbps, encode.spatial_layers)?;
-    let quantizers = std::iter::repeat_n(cli_q.to_string(), usize::from(encode.spatial_layers))
+    let (min_q, max_q) = if let Some(qindex) = fixed_q {
+        let cli_q = fixed_q_cli_range(qindex)
+            .ok_or_else(|| format!("invalid spatial fixed qindex {qindex}"))?
+            .0;
+        command.env("VPX_F02_PRESERVE_LAYER_QUANTIZERS", "1");
+        (cli_q, cli_q)
+    } else {
+        // Match the production spatial BD-rate harness and pinned example.
+        (2, 56)
+    };
+    let min_quantizers = std::iter::repeat_n(min_q.to_string(), usize::from(encode.spatial_layers))
+        .collect::<Vec<_>>()
+        .join(",");
+    let max_quantizers = std::iter::repeat_n(max_q.to_string(), usize::from(encode.spatial_layers))
         .collect::<Vec<_>>()
         .join(",");
     command
-        .env("VPX_F02_PRESERVE_LAYER_QUANTIZERS", "1")
         .arg(format!("--frames={}", encode.frames))
         .arg(format!("--output={}", output.display()))
         .arg(format!("--target-bitrate={}", encode.kbps))
@@ -293,8 +325,8 @@ fn append_libvpx_spatial_args(
         .arg("--lag-in-frames=0")
         .arg(format!("--scale-factors={scales}"))
         .arg(format!("--bitrates={rates}"))
-        .arg(format!("--min-q={quantizers}"))
-        .arg(format!("--max-q={quantizers}"))
+        .arg(format!("--min-q={min_quantizers}"))
+        .arg(format!("--max-q={max_quantizers}"))
         .arg("--tune-content=0")
         .arg(format!("--inter-layer-pred={}", encode.inter_layer_pred))
         .arg(input);
@@ -323,7 +355,6 @@ fn spatial_analysis_records(
     if records.is_empty() {
         return Err(format!("{label} spatial sidecar is empty"));
     }
-    let expected_q = fixed_q.ok_or_else(|| "spatial analysis requires fixed Q".to_owned())?;
     let mut seen = vec![false; usize::from(spatial_layers)];
     for record in records {
         if record.spatial_id >= spatial_layers {
@@ -340,7 +371,9 @@ fn spatial_analysis_records(
                 frames - 1
             ));
         }
-        if record.q_index != expected_q {
+        if let Some(expected_q) = fixed_q
+            && record.q_index != expected_q
+        {
             return Err(format!(
                 "{label} sidecar is not fixed qindex {expected_q}: spatial {} frame {} uses {}",
                 record.spatial_id, record.frame_idx, record.q_index
@@ -480,11 +513,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // calibration. An explicit --cbr retains CBR calibration while bypassing
     // only the controller's chosen Q on both encoder legs.
     let vbr = parse_vbr(&argv, fixed_q)?;
-    if spatial_layers > 1 && (vbr || fixed_q.is_none() || aq_mode != 0) {
-        return Err(
-            "the exact spatial F02 mode requires --cbr --fixed-q QINDEX --aq-mode 0".into(),
-        );
-    }
+    validate_spatial_oracle_mode(spatial_layers, vbr, fixed_q, aq_mode, report_only)?;
     if spatial_layers > 1 && frames < 2 {
         return Err("the spatial F02 mode requires at least two frames".into());
     }
@@ -587,7 +616,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
         let _ = f02_oracle::drain_partition_traces();
         let rvp9_records = if spatial_layers > 1 {
-            drive_rvp9_spatial_leg(&foreman_path, encode, strict, &rvp9_ivf, fixed_q.unwrap())?
+            drive_rvp9_spatial_leg(&foreman_path, encode, strict, &rvp9_ivf, fixed_q)?
         } else {
             drive_rvp9_leg(&foreman_path, encode, strict, &rvp9_ivf)?
         };
@@ -612,13 +641,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Vec::new()
         } else {
             if spatial_layers > 1 {
-                drive_libvpx_spatial_leg(
-                    &vpxenc_path,
-                    &foreman_path,
-                    encode,
-                    &run_dir,
-                    fixed_q.unwrap(),
-                )?
+                drive_libvpx_spatial_leg(&vpxenc_path, &foreman_path, encode, &run_dir, fixed_q)?
             } else {
                 drive_libvpx_leg(&vpxenc_path, &foreman_path, encode, &run_dir, fixed_q)?
             }
@@ -1328,7 +1351,7 @@ fn drive_rvp9_spatial_leg(
     encode: OracleEncodeConfig,
     strict: bool,
     ivf_path: &Path,
-    fixed_q: u8,
+    fixed_q: Option<u8>,
 ) -> Result<Vec<BlockDecision>, Box<dyn std::error::Error>> {
     let (yuv_frames, source_fps) = read_cropped(
         foreman_path,
@@ -1356,9 +1379,14 @@ fn drive_rvp9_spatial_leg(
             u_stride: encode.width as usize / 2,
             v_stride: encode.width as usize / 2,
         })?;
-        if packet.layers.iter().any(|layer| layer.q_index != fixed_q) {
+        if let Some(expected_q) = fixed_q
+            && packet
+                .layers
+                .iter()
+                .any(|layer| layer.q_index != expected_q)
+        {
             return Err(format!(
-                "rvp9 spatial access unit {} did not stay at fixed qindex {fixed_q}: {:?}",
+                "rvp9 spatial access unit {} did not stay at fixed qindex {expected_q}: {:?}",
                 encoder.access_unit_index() - 1,
                 packet
                     .layers
@@ -1467,7 +1495,7 @@ fn drive_libvpx_spatial_leg(
     foreman: &Path,
     encode: OracleEncodeConfig,
     run_dir: &Path,
-    fixed_q: u8,
+    fixed_q: Option<u8>,
 ) -> Result<Vec<BlockDecision>, Box<dyn std::error::Error>> {
     let sidecar = run_dir.join(format!("foreman_{}kbps_libvpx.jsonl", encode.kbps));
     let input = run_dir.join(format!("foreman_{}kbps_spatial_input.y4m", encode.kbps));
@@ -1658,7 +1686,7 @@ mod tests {
             Path::new("input.y4m"),
             Path::new("output.ivf"),
             encode,
-            148,
+            Some(148),
         )
         .unwrap();
         let arguments = command
@@ -1692,6 +1720,47 @@ mod tests {
             key == "VPX_F02_PRESERVE_LAYER_QUANTIZERS" && value.is_some_and(|value| value == "1")
         }));
         assert!(spatial_analysis_records(&[], 3, 0, 2, Some(148), "empty").is_err());
+    }
+
+    #[test]
+    fn report_only_spatial_oracle_accepts_natural_cbr() {
+        assert!(validate_spatial_oracle_mode(2, false, None, 0, true).is_ok());
+        assert!(validate_spatial_oracle_mode(2, false, None, 0, false).is_err());
+        assert!(validate_spatial_oracle_mode(2, true, None, 0, true).is_err());
+        assert!(validate_spatial_oracle_mode(2, false, None, 3, true).is_err());
+    }
+
+    #[test]
+    fn natural_cbr_spatial_anchor_uses_canonical_quantizer_bounds() {
+        let mut encode = test_encode_config();
+        encode.width = 1920;
+        encode.height = 1080;
+        encode.frames = 2;
+        encode.cpu_used = 6;
+        encode.kbps = 7_560;
+        encode.vbr = false;
+        encode.spatial_layers = 2;
+
+        let mut command = Command::new("vp9_spatial_svc_encoder");
+        append_libvpx_spatial_args(
+            &mut command,
+            Path::new("input.y4m"),
+            Path::new("output.ivf"),
+            encode,
+            None,
+        )
+        .unwrap();
+        let arguments = command
+            .get_args()
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert!(arguments.contains(&"--min-q=2,2".to_owned()));
+        assert!(arguments.contains(&"--max-q=56,56".to_owned()));
+        assert!(
+            !command
+                .get_envs()
+                .any(|(key, value)| key == "VPX_F02_PRESERVE_LAYER_QUANTIZERS" && value.is_some())
+        );
     }
 
     #[test]
