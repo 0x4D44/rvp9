@@ -5195,6 +5195,30 @@ fn rt_v1_umv_border_enabled(
         && matches!(content_tier, ContentTier::Default)
 }
 
+#[inline]
+fn low_resolution_ml_partition_enabled(
+    override_value: Option<bool>,
+    speed: i32,
+    deadline: rvp9_core::mode_decision::speed_features::Deadline,
+    content_tier: rvp9_core::mode_decision::speed_features::ContentTier,
+    width: usize,
+    height: usize,
+) -> bool {
+    use rvp9_core::mode_decision::speed_features::{ContentTier, Deadline};
+
+    // Pinned libvpx CPU8 switches each coded layer whose two dimensions are
+    // at most 352x288 from variance-based partitioning to its six-feature ML
+    // controller. This matters independently for a spatial base layer even
+    // when the source access unit is 720p or larger.
+    override_value.unwrap_or(
+        speed == 8
+            && matches!(deadline, Deadline::Realtime)
+            && matches!(content_tier, ContentTier::Default)
+            && width <= 352
+            && height <= 288,
+    )
+}
+
 fn tight_inter_mv_limits(
     block_origin: (usize, usize),
     block_size: (usize, usize),
@@ -5983,7 +6007,7 @@ pub(crate) struct InterEncodeEnv {
     a4_split_stats: bool,
     diag_intpro: bool,
     p8_stats: bool,
-    f02_force_ml_partition: bool,
+    rt_lowres_ml_partition: Option<bool>,
     compact_recon_rows: Option<bool>,
     compact_row_workers: Option<bool>,
     rt_output_backed_prediction: Option<bool>,
@@ -6040,7 +6064,7 @@ impl InterEncodeEnv {
             a4_split_stats: std::env::var_os("RVP9_A4_SPLIT_STATS").is_some(),
             diag_intpro: std::env::var("RVP9_DIAG_INTPRO").is_ok(),
             p8_stats: std::env::var_os("RVP9_P8_STATS").is_some(),
-            f02_force_ml_partition: bool_override("RVP9_F02_FORCE_ML_PARTITION") == Some(true),
+            rt_lowres_ml_partition: bool_override("RVP9_RT_LOWRES_ML_PARTITION"),
             compact_recon_rows: bool_override("RVP9_COMPACT_RECON_ROWS"),
             compact_row_workers: bool_override("RVP9_COMPACT_ROW_WORKERS"),
             rt_output_backed_prediction: bool_override("RVP9_RT_OUTPUT_BACKED_PRED"),
@@ -6105,18 +6129,6 @@ impl InterEncodeEnv {
     /// remains available for differential diagnostics.
     fn skip_integer_mv_filter_search(&self) -> bool {
         self.flag_or(self.rt_skip_intmv_filter_search, true)
-    }
-
-    /// Replace the product partition hints with the pinned low-resolution ML
-    /// tree only while the F02 differential oracle is active.
-    fn f02_force_ml_partition_enabled(
-        &self,
-        f02_enabled: bool,
-        speed: i32,
-        width: usize,
-        height: usize,
-    ) -> bool {
-        self.f02_force_ml_partition && f02_enabled && speed == 8 && width <= 352 && height <= 288
     }
 
     /// Use libvpx's chessboard filter-search proxy throughout realtime
@@ -6946,8 +6958,14 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // when both are disabled (the default).
     let s2_xtab_enabled = env.s2_xtab;
     let f02_oracle_enabled = crate::f02_oracle::is_enabled();
-    let f02_force_ml_partition_enabled =
-        env.f02_force_ml_partition_enabled(f02_oracle_enabled, speed, w, h);
+    let low_resolution_ml_partition_enabled = low_resolution_ml_partition_enabled(
+        env.rt_lowres_ml_partition,
+        speed,
+        deadline,
+        content_tier,
+        w,
+        h,
+    );
     rvp9_core::mode_decision::inter::candidate_trace::reset(f02_oracle_enabled);
     // win counts indexed [ZERO, NEAREST, NEAR, NEW].
     // A2.foreman - In-progress mi_grid for spatial MV-ref propagation
@@ -7340,13 +7358,14 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 } else {
                     Some(int_pro.mv)
                 };
-                // F02 low-resolution partition oracle. Pinned libvpx CPU8
+                // Low-resolution CPU8 partition controller and F02 oracle.
+                // Pinned libvpx CPU8
                 // switches only coded layers at or below 352x288 to its
                 // six-feature ML partition controller. Rebuild the same single
-                // LAST/bilinear estimated predictor and retain exact node
-                // inputs without changing the production partition policy.
-                let mut f02_ml_partition_decision = None;
-                if f02_oracle_enabled && speed == 8 && w <= 352 && h <= 288 {
+                // LAST/bilinear estimated predictor. F02 additionally retains
+                // exact node inputs for differential diagnosis.
+                let mut ml_partition_decision = None;
+                if low_resolution_ml_partition_enabled {
                     use crate::ml_partition::{
                         MlVarPartitionTreeInput, choose_ml_var_partition_tree,
                         trace_ml_var_partition_tree,
@@ -7400,36 +7419,35 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         pred: &predictor_block,
                         pred_stride: 64,
                     };
-                    if f02_force_ml_partition_enabled {
-                        f02_ml_partition_decision =
-                            Some(choose_ml_var_partition_tree(&model_input));
-                    }
-                    for trace in trace_ml_var_partition_tree(&model_input) {
-                        let node_mi_row = sb_row * 8 + trace.row_px / 8;
-                        let node_mi_col = sb_col * 8 + trace.col_px / 8;
-                        let half_mi = usize::from(trace.bsize.n_8x8_wide()) / 2;
-                        if node_mi_row + half_mi >= mi_rows_us
-                            || node_mi_col + half_mi >= mi_cols_us
-                        {
-                            continue;
+                    ml_partition_decision = Some(choose_ml_var_partition_tree(&model_input));
+                    if f02_oracle_enabled {
+                        for trace in trace_ml_var_partition_tree(&model_input) {
+                            let node_mi_row = sb_row * 8 + trace.row_px / 8;
+                            let node_mi_col = sb_col * 8 + trace.col_px / 8;
+                            let half_mi = usize::from(trace.bsize.n_8x8_wide()) / 2;
+                            if node_mi_row + half_mi >= mi_rows_us
+                                || node_mi_col + half_mi >= mi_cols_us
+                            {
+                                continue;
+                            }
+                            crate::f02_oracle::record_partition_trace(
+                                crate::f02_oracle::MlPartitionTrace {
+                                    frame_idx: crate::f02_oracle::current_frame_idx(),
+                                    spatial_id: crate::f02_oracle::current_spatial_id(),
+                                    mi_row: node_mi_row as u16,
+                                    mi_col: node_mi_col as u16,
+                                    bsize: trace.bsize,
+                                    dc_q,
+                                    source_hash: trace.source_hash,
+                                    predictor_hash: trace.predictor_hash,
+                                    variance: trace.variance,
+                                    sub_variances: trace.sub_variances,
+                                    feature_bits: trace.features.map(f32::to_bits),
+                                    score_bits: trace.score.to_bits(),
+                                    split: trace.score > 0.0,
+                                },
+                            );
                         }
-                        crate::f02_oracle::record_partition_trace(
-                            crate::f02_oracle::MlPartitionTrace {
-                                frame_idx: crate::f02_oracle::current_frame_idx(),
-                                spatial_id: crate::f02_oracle::current_spatial_id(),
-                                mi_row: node_mi_row as u16,
-                                mi_col: node_mi_col as u16,
-                                bsize: trace.bsize,
-                                dc_q,
-                                source_hash: trace.source_hash,
-                                predictor_hash: trace.predictor_hash,
-                                variance: trace.variance,
-                                sub_variances: trace.sub_variances,
-                                feature_bits: trace.features.map(f32::to_bits),
-                                score_bits: trace.score.to_bits(),
-                                split: trace.score > 0.0,
-                            },
-                        );
                     }
                 }
                 // The partition tree and its chroma-sensitivity probe select the
@@ -7488,7 +7506,12 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
 
                 let mut used_exact_vbp_tree = false;
                 let mut exact_variance_low = [false; 25];
-                if exact_vbp_tree_enabled {
+                // Low-resolution CPU8 uses the ML tree built above. The
+                // whole-frame exact-VBP policy still supplies the measured
+                // fixed-tree picker calibration, but computing and committing
+                // a second tree here would be dead work because ML replaces it
+                // before any leaf is picked.
+                if exact_vbp_tree_enabled && !low_resolution_ml_partition_enabled {
                     use rvp9_core::bitstream::frame::InterpFilter;
                     use rvp9_core::mode_decision::partition::{
                         Cpu7InterVbpThresholdInput, FixedTreeCopyConditions, FixedTreeInterInput,
@@ -7739,11 +7762,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     used_exact_vbp_tree = true;
                 }
 
-                // Diagnostic-only topology isolation. The model inputs and
-                // decisions above are already exact against pinned libvpx; use
-                // the owned tree here so the normal picker can be compared on
-                // identical leaves without changing the production default.
-                if let Some(mut ml_decision) = f02_ml_partition_decision {
+                // Pinned low-resolution topology. The same owned tree also
+                // gives F02 an exact-topology picker comparison.
+                if let Some(mut ml_decision) = ml_partition_decision {
                     use rvp9_core::bitstream::frame::InterpFilter;
                     use rvp9_core::mode_decision::partition::visit_fixed_tree_leaves;
 
@@ -16498,27 +16519,81 @@ mod tests {
     }
 
     #[test]
-    fn forced_ml_partition_tree_is_diagnostic_and_low_resolution_scoped() {
-        let _guard = env_test_mutex();
-        let key = "RVP9_F02_FORCE_ML_PARTITION";
-        // SAFETY: the mutex above serialises all encoder environment tests.
-        unsafe { std::env::remove_var(key) };
-        assert!(!InterEncodeEnv::capture().f02_force_ml_partition_enabled(true, 8, 320, 180));
+    fn low_resolution_ml_partition_is_cpu8_realtime_default_content_policy() {
+        use rvp9_core::mode_decision::speed_features::{ContentTier, Deadline};
 
-        // SAFETY: the mutex above serialises all encoder environment tests.
-        unsafe { std::env::set_var(key, "1") };
-        let env = InterEncodeEnv::capture();
-        assert!(!env.f02_force_ml_partition_enabled(false, 8, 320, 180));
-        assert!(!env.f02_force_ml_partition_enabled(true, 7, 320, 180));
-        assert!(!env.f02_force_ml_partition_enabled(true, 8, 640, 100));
-        assert!(!env.f02_force_ml_partition_enabled(true, 8, 640, 360));
-        assert!(env.f02_force_ml_partition_enabled(true, 8, 352, 288));
-
-        // SAFETY: the mutex above serialises all encoder environment tests.
-        unsafe { std::env::set_var(key, "0") };
-        assert!(!InterEncodeEnv::capture().f02_force_ml_partition_enabled(true, 8, 320, 180));
-        // SAFETY: the mutex above serialises all encoder environment tests.
-        unsafe { std::env::remove_var(key) };
+        assert!(low_resolution_ml_partition_enabled(
+            None,
+            8,
+            Deadline::Realtime,
+            ContentTier::Default,
+            320,
+            180,
+        ));
+        assert!(low_resolution_ml_partition_enabled(
+            None,
+            8,
+            Deadline::Realtime,
+            ContentTier::Default,
+            352,
+            288,
+        ));
+        assert!(!low_resolution_ml_partition_enabled(
+            None,
+            7,
+            Deadline::Realtime,
+            ContentTier::Default,
+            320,
+            180,
+        ));
+        assert!(!low_resolution_ml_partition_enabled(
+            None,
+            8,
+            Deadline::Good,
+            ContentTier::Default,
+            320,
+            180,
+        ));
+        assert!(!low_resolution_ml_partition_enabled(
+            None,
+            8,
+            Deadline::Realtime,
+            ContentTier::Screen,
+            320,
+            180,
+        ));
+        assert!(!low_resolution_ml_partition_enabled(
+            None,
+            8,
+            Deadline::Realtime,
+            ContentTier::Default,
+            640,
+            100,
+        ));
+        assert!(!low_resolution_ml_partition_enabled(
+            None,
+            8,
+            Deadline::Realtime,
+            ContentTier::Default,
+            640,
+            360,
+        ));
+        assert!(!low_resolution_ml_partition_enabled(
+            Some(false),
+            8,
+            Deadline::Realtime,
+            ContentTier::Default,
+            320,
+            180,
+        ));
+        assert!(low_resolution_ml_partition_enabled(
+            Some(true),
+            7,
+            Deadline::Good,
+            ContentTier::Screen,
+            640,
+            360,
+        ));
     }
 
     #[test]

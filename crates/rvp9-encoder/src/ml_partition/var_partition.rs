@@ -419,12 +419,26 @@ fn hash_rect(data: &[u8], stride: usize, width: usize, height: usize) -> u64 {
     hash
 }
 
-fn ml_var_partition_node_trace(
+#[derive(Debug, Clone, Copy)]
+struct MlVarPartitionNodeEval {
+    variance: u32,
+    sub_variances: [u32; 4],
+    features: [f32; 6],
+    score: f32,
+}
+
+#[inline]
+fn finish_variance(sum: i64, sse: u64, pixels: usize) -> u32 {
+    let mean_term = (sum * sum) as u64 / pixels as u64;
+    sse.saturating_sub(mean_term) as u32
+}
+
+fn ml_var_partition_node_eval(
     input: &MlVarPartitionTreeInput<'_>,
     row_px: usize,
     col_px: usize,
     bsize: BlockSize,
-) -> Option<MlVarPartitionNodeTrace> {
+) -> Option<MlVarPartitionNodeEval> {
     let config = match bsize {
         BlockSize::Block64x64 => &VAR_PART_NN_CONFIG_64,
         BlockSize::Block32x32 => &VAR_PART_NN_CONFIG_32,
@@ -435,51 +449,74 @@ fn ml_var_partition_node_trace(
     let height = usize::from(bsize.height());
     let source = &input.src[row_px * input.src_stride + col_px..];
     let predictor = &input.pred[row_px * input.pred_stride + col_px..];
-    let (var, _) = variance(
-        source,
-        input.src_stride,
-        predictor,
-        input.pred_stride,
-        width,
-        height,
-    );
-    let factor = if var == 0 { 1.0 } else { 1.0 / var as f32 };
-    let mut sub_variances = [0u32; 4];
-    let mut features = [0.0f32; 6];
-    features[0] = ((input.dc_q * input.dc_q) as f32 / 256.0 + 1.0).ln();
-    features[1] = (var as f32 + 1.0).ln();
     let sub_width = width / 2;
     let sub_height = height / 2;
-    for quadrant in 0..4 {
+    let sub_bsize = match bsize {
+        BlockSize::Block64x64 => BlockSize::Block32x32,
+        BlockSize::Block32x32 => BlockSize::Block16x16,
+        BlockSize::Block16x16 => BlockSize::Block8x8,
+        _ => unreachable!("validated ML partition node size"),
+    };
+    let reduce = rvp9_core::dsp::get_ref().variance(sub_bsize);
+    let mut total_sum = 0i64;
+    let mut total_sse = 0u64;
+    let mut sub_variances = [0u32; 4];
+    for (quadrant, sub_variance) in sub_variances.iter_mut().enumerate() {
         let x = (quadrant & 1) * sub_width;
         let y = (quadrant >> 1) * sub_height;
-        let (sub_var, _) = variance(
+        let (sum, sse) = reduce(
             &source[y * input.src_stride + x..],
             input.src_stride,
             &predictor[y * input.pred_stride + x..],
             input.pred_stride,
-            sub_width,
-            sub_height,
         );
-        sub_variances[quadrant] = sub_var;
-        features[2 + quadrant] = if var == 0 {
+        total_sum += sum;
+        total_sse += sse;
+        *sub_variance = finish_variance(sum, sse, sub_width * sub_height);
+    }
+    let var = finish_variance(total_sum, total_sse, width * height);
+    let factor = if var == 0 { 1.0 } else { 1.0 / var as f32 };
+    let mut features = [0.0f32; 6];
+    features[0] = ((input.dc_q * input.dc_q) as f32 / 256.0 + 1.0).ln();
+    features[1] = (var as f32 + 1.0).ln();
+    for (feature, &sub_variance) in features[2..].iter_mut().zip(&sub_variances) {
+        *feature = if var == 0 {
             1.0
         } else {
-            factor * sub_var as f32
+            factor * sub_variance as f32
         };
     }
     let mut score = [0.0f32; 1];
     nn_predict(&features, config, &mut score);
+    Some(MlVarPartitionNodeEval {
+        variance: var,
+        sub_variances,
+        features,
+        score: score[0],
+    })
+}
+
+fn ml_var_partition_node_trace(
+    input: &MlVarPartitionTreeInput<'_>,
+    row_px: usize,
+    col_px: usize,
+    bsize: BlockSize,
+) -> Option<MlVarPartitionNodeTrace> {
+    let eval = ml_var_partition_node_eval(input, row_px, col_px, bsize)?;
+    let width = usize::from(bsize.width());
+    let height = usize::from(bsize.height());
+    let source = &input.src[row_px * input.src_stride + col_px..];
+    let predictor = &input.pred[row_px * input.pred_stride + col_px..];
     Some(MlVarPartitionNodeTrace {
         row_px,
         col_px,
         bsize,
         source_hash: hash_rect(source, input.src_stride, width, height),
         predictor_hash: hash_rect(predictor, input.pred_stride, width, height),
-        variance: var,
-        sub_variances,
-        features,
-        score: score[0],
+        variance: eval.variance,
+        sub_variances: eval.sub_variances,
+        features: eval.features,
+        score: eval.score,
     })
 }
 
@@ -549,13 +586,12 @@ pub fn choose_ml_var_partition_tree(input: &MlVarPartitionTreeInput<'_>) -> Part
         col_8x8: usize,
         bsize: BlockSize,
     ) {
-        let Some(trace) = ml_var_partition_node_trace(input, row_8x8 * 8, col_8x8 * 8, bsize)
-        else {
+        let Some(eval) = ml_var_partition_node_eval(input, row_8x8 * 8, col_8x8 * 8, bsize) else {
             stamp(decision, row_8x8, col_8x8, bsize);
             return;
         };
         let threshold = if input.speed <= 5 { 1.25 } else { 0.0 };
-        if trace.score <= threshold {
+        if eval.score <= threshold {
             stamp(decision, row_8x8, col_8x8, bsize);
             return;
         }
