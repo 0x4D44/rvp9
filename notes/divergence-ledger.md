@@ -6259,3 +6259,40 @@ speed evidence still requires exact-commit production PGO and repeated runs.
 **Future plan:** retain the CPU7/8 scope while motion-predictor state is
 aligned. Reconsider the CPU6 exclusion only if its separate opening-motion
 adapter becomes unnecessary and the complete CPU6 matrix stays green.
+
+### 2026-08-14 — Retain previous-source classification on non-top spatial layers
+
+**Where:** `rvp9_encoder::pre_analysis::PreAnalysisState` and
+`rvp9_encoder::frame_loop::StreamEncoder::encode_one_source`; libvpx
+counterpart: `vp9/encoder/vp9_encoder.c:4039-4045`.
+
+**What libvpx does:** one-pass SVC disables `compute_source_sad_onepass` below
+the top spatial layer and throughout the first superframe. Those components
+therefore keep the neutral, zero-initialized superblock content state.
+
+**What rvp9 does:** each spatial layer's private stream encoder runs the
+previous-source SAD classifier when its own previous source exists. CPU8's
+ordinary-resolution zero-motion partition rule still applies to every
+non-`VeryHighSad` superblock, but measured high-motion base superblocks may
+retain rvp9's integer-projection seed.
+
+**Why:** the literal non-top gate moved the required CPU8/S2 Ducks base-layer
+BD-rate from `+2.4081%` to `+2.5785%` and weakened the top from `-3.9244%` to
+`-3.3661%`. Pairing it with libvpx's original-Q3 predictor-index behavior
+improved F02 search-stage agreement but further worsened the failing base
+layer to `+2.6169%`. The accepted behavior is therefore the better
+rate-distortion point while the remaining reference-state gap is resolved.
+
+**Byte-parity impact:** structural on moving non-top components. Content-state
+gates can change partition and motion decisions, though all accepted spatial
+streams remain cross-decoder valid and decoded-byte exact across the required
+decoders.
+
+**Compression-efficiency impact:** retaining the classifier preserves the
+Unit W120 CPU8/S2 Ducks result of `+2.4081%/-3.9244%`, a 0.1704-point base
+advantage over the literal source-SAD gate. The base layer remains outside the
+final `+0.5%` gate and is active work.
+
+**Future plan:** retain until the base-layer reconstructed-reference and
+winner-history gaps are aligned. Re-test the literal source-SAD lifecycle only
+after the same six-point curve stays at least Pareto-neutral.
