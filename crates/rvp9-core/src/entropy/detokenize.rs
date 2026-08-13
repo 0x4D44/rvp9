@@ -1685,6 +1685,39 @@ pub(crate) fn try_replay_retained_block(
     ref_type: usize,
     retained_pass: Option<&mut CoefTokenPass<'_>>,
 ) -> CoefReplayStatus {
+    let n = 1usize << (tx_size as usize);
+    try_replay_retained_block_clamped(
+        bw,
+        fc,
+        coef_ctx,
+        plane,
+        x4,
+        y4_in_sb,
+        tx_size,
+        ref_type,
+        n,
+        n,
+        retained_pass,
+    )
+}
+
+/// Consume one retained transform block with frame-edge-clamped coefficient
+/// context writeback.
+#[allow(clippy::too_many_arguments)]
+#[inline]
+pub(crate) fn try_replay_retained_block_clamped(
+    bw: &mut BoolWriter<'_>,
+    fc: &FrameContext,
+    coef_ctx: &mut TileCoefCtx,
+    plane: usize,
+    x4: usize,
+    y4_in_sb: usize,
+    tx_size: TxSize,
+    ref_type: usize,
+    above_cells: usize,
+    left_cells: usize,
+    retained_pass: Option<&mut CoefTokenPass<'_>>,
+) -> CoefReplayStatus {
     let Some(CoefTokenPass::Replay {
         retained,
         next_block,
@@ -1716,7 +1749,16 @@ pub(crate) fn try_replay_retained_block(
         *token_start = token_end;
         *next_block += 1;
         let n = 1usize << (tx_size as usize);
-        coef_ctx.set_coef_flags(plane, x4, y4_in_sb, n, n, nonzero);
+        coef_ctx.set_coef_flags_clamped(
+            plane,
+            x4,
+            y4_in_sb,
+            n,
+            n,
+            above_cells,
+            left_cells,
+            nonzero,
+        );
         return CoefReplayStatus::Replayed;
     }
 
@@ -1868,6 +1910,7 @@ pub fn write_block_tokens_with_retained(
     full_counts: Option<&mut crate::entropy::adapt::Coef12Bank>,
     retained_pass: Option<&mut CoefTokenPass<'_>>,
 ) {
+    let n = 1usize << (tx_size as usize);
     write_block_tokens_with_retained_impl(
         bw,
         fc,
@@ -1884,6 +1927,8 @@ pub fn write_block_tokens_with_retained(
         counts,
         full_counts,
         retained_pass,
+        n,
+        n,
     );
 }
 
@@ -1906,6 +1951,7 @@ pub fn write_block_tokens_with_retained_i16(
     full_counts: Option<&mut crate::entropy::adapt::Coef12Bank>,
     retained_pass: Option<&mut CoefTokenPass<'_>>,
 ) {
+    let n = 1usize << (tx_size as usize);
     write_block_tokens_with_retained_impl(
         bw,
         fc,
@@ -1922,6 +1968,51 @@ pub fn write_block_tokens_with_retained_i16(
         counts,
         full_counts,
         retained_pass,
+        n,
+        n,
+    );
+}
+
+/// [`write_block_tokens_with_retained_i16`] with frame-edge-clamped
+/// coefficient-context writeback.
+#[allow(clippy::too_many_arguments)]
+pub fn write_block_tokens_with_retained_i16_clamped(
+    bw: &mut BoolWriter<'_>,
+    fc: &FrameContext,
+    coef_ctx: &mut TileCoefCtx,
+    plane: usize,
+    x4: usize,
+    y4_in_sb: usize,
+    tx_size: TxSize,
+    tx_type: TxType,
+    ref_type: usize,
+    seg_eob: usize,
+    raw_coefs: &[i16],
+    eob: usize,
+    counts: Option<&mut CoefCountsBank>,
+    full_counts: Option<&mut crate::entropy::adapt::Coef12Bank>,
+    retained_pass: Option<&mut CoefTokenPass<'_>>,
+    above_cells: usize,
+    left_cells: usize,
+) {
+    write_block_tokens_with_retained_impl(
+        bw,
+        fc,
+        coef_ctx,
+        plane,
+        x4,
+        y4_in_sb,
+        tx_size,
+        tx_type,
+        ref_type,
+        seg_eob,
+        raw_coefs,
+        eob,
+        counts,
+        full_counts,
+        retained_pass,
+        above_cells,
+        left_cells,
     );
 }
 
@@ -1942,8 +2033,10 @@ fn write_block_tokens_with_retained_impl<T: EncodeCoef>(
     counts: Option<&mut CoefCountsBank>,
     full_counts: Option<&mut crate::entropy::adapt::Coef12Bank>,
     mut retained_pass: Option<&mut CoefTokenPass<'_>>,
+    above_cells: usize,
+    left_cells: usize,
 ) {
-    if try_replay_retained_block(
+    if try_replay_retained_block_clamped(
         bw,
         fc,
         coef_ctx,
@@ -1952,6 +2045,8 @@ fn write_block_tokens_with_retained_impl<T: EncodeCoef>(
         y4_in_sb,
         tx_size,
         ref_type,
+        above_cells,
+        left_cells,
         retained_pass.as_deref_mut(),
     ) == CoefReplayStatus::Replayed
     {
@@ -2064,7 +2159,7 @@ fn write_block_tokens_with_retained_impl<T: EncodeCoef>(
 
     // Writeback: splat `(eob > 0)` across the (n × n) sub-block
     // region. libvpx `vp9_detokenize.c:294/302/311/323`.
-    coef_ctx.set_coef_flags(plane, x4, y4_in_sb, n, n, eob > 0);
+    coef_ctx.set_coef_flags_clamped(plane, x4, y4_in_sb, n, n, above_cells, left_cells, eob > 0);
 }
 
 #[cfg(test)]

@@ -89,7 +89,8 @@ use crate::entropy::bitacct::{BitCategory, set_category};
 use crate::entropy::{
     BoolWriter, CoefReplayStatus, CoefTokenPass, FrameContext, FrameCounts, RetainedCoefTokens,
     VP9_KF_PARTITION_PROBS, VP9_KF_UV_MODE_PROB, VP9_KF_Y_MODE_PROB, try_replay_retained_block,
-    write_block_tokens_with_retained_i16,
+    try_replay_retained_block_clamped, write_block_tokens_with_retained_i16,
+    write_block_tokens_with_retained_i16_clamped,
 };
 use crate::inter::mode_info::{
     InterModeReadParams, InterModeWriteError, count_inter_block_mode_info, get_intra_inter_context,
@@ -3142,6 +3143,8 @@ fn write_inter_block_leaf(
             coef_source,
             mi_row,
             mi_col,
+            mi_rows,
+            mi_cols,
             tile_bounds.mi_col_start,
             leaf_bsize,
             effective_tx_size,
@@ -3290,6 +3293,8 @@ fn write_inter_block_leaf(
         coef_source,
         mi_row,
         mi_col,
+        mi_rows,
+        mi_cols,
         tile_bounds.mi_col_start,
         leaf_bsize,
         effective_tx_size,
@@ -3309,6 +3314,8 @@ fn write_or_reset_inter_residual(
     coef_source: &dyn InterCoefSource,
     mi_row: usize,
     mi_col: usize,
+    mi_rows: usize,
+    mi_cols: usize,
     tile_mi_col_start: usize,
     leaf_bsize: BlockSize,
     effective_tx_size: TxSize,
@@ -3343,6 +3350,8 @@ fn write_or_reset_inter_residual(
             coef_source,
             mi_row,
             mi_col,
+            mi_rows,
+            mi_cols,
             tile_mi_col_start,
             leaf_bsize,
             effective_tx_size,
@@ -3376,6 +3385,8 @@ pub fn record_inter_leaf_coefficients(
     coef_source: &dyn InterCoefSource,
     mi_row: usize,
     mi_col: usize,
+    mi_rows: usize,
+    mi_cols: usize,
     tile_mi_col_start: usize,
     leaf_bsize: BlockSize,
     mi: &ModeInfo,
@@ -3404,6 +3415,8 @@ pub fn record_inter_leaf_coefficients(
         coef_source,
         mi_row,
         mi_col,
+        mi_rows,
+        mi_cols,
         tile_mi_col_start,
         leaf_bsize,
         effective_tx_size,
@@ -3438,6 +3451,8 @@ pub fn record_inter_tx_coefficients_i16(
     coef_ctx: &mut TileCoefCtx,
     mi_row: usize,
     mi_col: usize,
+    mi_rows: usize,
+    mi_cols: usize,
     tile_mi_col_start: usize,
     plane: usize,
     tx_x4_local: usize,
@@ -3457,9 +3472,16 @@ pub fn record_inter_tx_coefficients_i16(
     let mi_row_in_sb = mi_row & MI_MASK;
     let x4 = ((mi_col_in_tile * 2) >> SUBSAMPLING_X[plane]) + tx_x4_local;
     let y4_in_sb = ((mi_row_in_sb * 2) >> SUBSAMPLING_Y[plane]) + tx_y4_local;
+    let n = 1usize << (tx_size as usize);
+    let frame_x4 = ((mi_col * 2) >> SUBSAMPLING_X[plane]) + tx_x4_local;
+    let frame_y4 = ((mi_row * 2) >> SUBSAMPLING_Y[plane]) + tx_y4_local;
+    let frame_w4 = (mi_cols * 2) >> SUBSAMPLING_X[plane];
+    let frame_h4 = (mi_rows * 2) >> SUBSAMPLING_Y[plane];
+    let above_cells = n.min(frame_w4.saturating_sub(frame_x4));
+    let left_cells = n.min(frame_h4.saturating_sub(frame_y4));
     let mut token_pass = CoefTokenPass::record(retained);
     let full_counts = counts.coef_full.as_deref_mut();
-    write_block_tokens_with_retained_i16(
+    write_block_tokens_with_retained_i16_clamped(
         bw,
         fc,
         coef_ctx,
@@ -3475,6 +3497,8 @@ pub fn record_inter_tx_coefficients_i16(
         Some(&mut counts.coef),
         full_counts,
         Some(&mut token_pass),
+        above_cells,
+        left_cells,
     );
 }
 
@@ -3597,7 +3621,9 @@ fn uv_plane_tx_size(bsize: BlockSize, luma_tx: TxSize) -> TxSize {
 /// `mi_row & MI_MASK` because tile rows are superblock-aligned.
 ///
 /// The caller must provide a partition tree whose leaves fit the visible
-/// frame. Partial superblocks are supported, but partial leaves are not.
+/// frame at least through the partition node's half-block edge. Transform
+/// origins and coefficient-context writeback are clipped to the visible MI
+/// grid, matching the decoder's partial-bottom / partial-right walk.
 #[allow(clippy::too_many_arguments)]
 fn write_inter_block_residual(
     bw: &mut BoolWriter<'_>,
@@ -3606,6 +3632,8 @@ fn write_inter_block_residual(
     coef_source: &dyn InterCoefSource,
     mi_row: usize,
     mi_col: usize,
+    mi_rows: usize,
+    mi_cols: usize,
     tile_mi_col_start: usize,
     leaf_bsize: BlockSize,
     luma_tx: TxSize,
@@ -3666,6 +3694,12 @@ fn write_inter_block_residual(
             )
         };
         let tx_step_4x4 = 1usize << (plane_tx as usize);
+        let frame_w4 = (mi_cols * 2) >> ss_x;
+        let frame_h4 = (mi_rows * 2) >> ss_y;
+        let frame_x4_base = (mi_col * 2) >> ss_x;
+        let frame_y4_base = (mi_row * 2) >> ss_y;
+        let max_blocks_wide = plane_bw_4x4.min(frame_w4.saturating_sub(frame_x4_base));
+        let max_blocks_high = plane_bh_4x4.min(frame_h4.saturating_sub(frame_y4_base));
 
         // Tile- / SB-relative 4x4 origin in the plane's coef-context
         // tables. Matches the decoder's `plane_x4_base` /
@@ -3678,10 +3712,13 @@ fn write_inter_block_residual(
         // Raster-order walk over TX positions inside this plane's
         // coding block.
         let mut tx_y4_local = 0usize;
-        while tx_y4_local < plane_bh_4x4 {
+        while tx_y4_local < max_blocks_high {
             let mut tx_x4_local = 0usize;
-            while tx_x4_local < plane_bw_4x4 {
-                let replay_status = try_replay_retained_block(
+            while tx_x4_local < max_blocks_wide {
+                let n = 1usize << (plane_tx as usize);
+                let above_cells = n.min(max_blocks_wide - tx_x4_local);
+                let left_cells = n.min(max_blocks_high - tx_y4_local);
+                let replay_status = try_replay_retained_block_clamped(
                     bw,
                     fc,
                     coef_ctx,
@@ -3690,6 +3727,8 @@ fn write_inter_block_residual(
                     plane_y4_in_sb_base + tx_y4_local,
                     plane_tx,
                     ref_type,
+                    above_cells,
+                    left_cells,
                     retained_pass.as_deref_mut(),
                 );
                 if replay_status == CoefReplayStatus::Replayed {
@@ -3720,7 +3759,7 @@ fn write_inter_block_residual(
                     plane,
                     plane_tx,
                 );
-                write_block_tokens_with_retained_i16(
+                write_block_tokens_with_retained_i16_clamped(
                     bw,
                     fc,
                     coef_ctx,
@@ -3740,6 +3779,8 @@ fn write_inter_block_residual(
                         CoefReplayStatus::Mismatch => None,
                         CoefReplayStatus::Replayed => unreachable!(),
                     },
+                    above_cells,
+                    left_cells,
                 );
                 tx_x4_local += tx_step_4x4;
             }
@@ -3931,6 +3972,8 @@ mod tests {
             &coef_source,
             0,
             8,
+            8,
+            16,
             8,
             BlockSize::Block64x64,
             TxSize::Tx32x32,
@@ -7999,6 +8042,90 @@ mod tests {
         assert_eq!(leaves[0].2.block_size, BlockSize::Block64x32);
     }
 
+    struct VisibleBottomCoefSource;
+
+    impl InterCoefSource for VisibleBottomCoefSource {
+        fn get_block_coefs(
+            &self,
+            mi_row: usize,
+            _mi_col: usize,
+            plane: usize,
+            _tx_x4_local: usize,
+            tx_y4_local: usize,
+            tx_size: TxSize,
+        ) -> (&[i16], usize) {
+            assert!(
+                mi_row != 4 || plane != 0 || tx_y4_local < 6,
+                "writer requested a transform whose origin is below the visible frame"
+            );
+            let n = tx_size.n_coeffs();
+            if mi_row == 4 && plane == 0 && tx_y4_local == 4 {
+                (&MIXED_INTER_NONZERO_COEFS[..n], 1)
+            } else {
+                (&MIXED_INTER_ZERO_COEFS[..n], 0)
+            }
+        }
+    }
+
+    /// A 32x32 leaf is legal when its top half is visible at the bottom edge.
+    /// Residual syntax visits only transform origins inside the frame and
+    /// clears coefficient-context cells covered by the invisible tail.
+    #[test]
+    fn s5_tile_inter_non_skip_bottom_crossing_32x32_clamps_residual_walk() {
+        let fc = FrameContext::new_default();
+        let params = s4c_default_params();
+        let mi_rows = 7u32;
+        let mi_cols = 8u32;
+        let mut cell = make_inter_cell(
+            BlockSize::Block32x32,
+            InterMode::ZeroMv,
+            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+            [Mv::ZERO; 2],
+            InterpFilter::EightTap,
+        );
+        cell.tx_size = TxSize::Tx8x8;
+        cell.skip = false;
+        let mut grid = vec![None; (mi_rows * mi_cols) as usize];
+        for row in [0usize, 4] {
+            for col in [0usize, 4] {
+                for leaf_row in row..(row + 4).min(mi_rows as usize) {
+                    for leaf_col in col..col + 4 {
+                        grid[leaf_row * mi_cols as usize + leaf_col] = Some(cell);
+                    }
+                }
+            }
+        }
+        let bounds = TileBounds {
+            mi_row_start: 0,
+            mi_row_end: mi_rows as usize,
+            mi_col_start: 0,
+            mi_col_end: mi_cols as usize,
+        };
+        let mut buf = vec![0u8; 64 * 1024];
+        let mut bw = BoolWriter::start_encode(&mut buf);
+        let mut coef_ctx = TileCoefCtx::new(mi_cols as usize);
+        write_tile_inter(
+            &mut bw,
+            &fc,
+            &params,
+            TxMode::TxModeSelect,
+            &grid,
+            mi_rows,
+            mi_cols,
+            bounds,
+            None,
+            None,
+            &mut coef_ctx,
+            &VisibleBottomCoefSource,
+            None,
+        )
+        .expect("bottom-crossing leaf must encode");
+        assert_eq!(coef_ctx.left_coef(0, 12), 1);
+        assert_eq!(coef_ctx.left_coef(0, 13), 1);
+        assert_eq!(coef_ctx.left_coef(0, 14), 0);
+        assert_eq!(coef_ctx.left_coef(0, 15), 0);
+    }
+
     /// `write_tile_inter` rejects tile bounds outside frame.
     #[test]
     fn s5_tile_inter_rejects_invalid_tile_bounds_out_of_frame() {
@@ -8159,6 +8286,8 @@ mod tests {
                         coef_ctx,
                         mi_row,
                         mi_col,
+                        8,
+                        8,
                         tile_mi_col_start,
                         plane,
                         tx_x4_local,
@@ -8395,6 +8524,8 @@ mod tests {
             &coef_source,
             0,
             0,
+            mi_rows as usize,
+            mi_cols as usize,
             0,
             BlockSize::Block64x64,
             &cell,
@@ -8443,6 +8574,8 @@ mod tests {
             &mixed_source,
             0,
             0,
+            mi_rows as usize,
+            mi_cols as usize,
             0,
             BlockSize::Block64x64,
             &cell,
