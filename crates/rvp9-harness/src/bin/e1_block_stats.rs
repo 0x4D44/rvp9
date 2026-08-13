@@ -179,6 +179,10 @@ struct FrameStats {
     mi_rows: usize,
     mi_cols: usize,
     mi_grid: Vec<Option<ModeInfo>>,
+    /// Tight visible decoded luma retained for keyframe-reference comparison.
+    recon_y_width: usize,
+    recon_y_height: usize,
+    recon_y: Vec<u8>,
 }
 
 /// Aggregate over a sequence, per encoder.
@@ -216,6 +220,97 @@ struct CellAgreement {
     matched_bp_same_skip: u64,
     matched_bp_rvp_nonskip_libskip: u64,
     matched_bp_rvpskip_libnonskip: u64,
+}
+
+/// Same-coordinate decoder-side agreement over paired keyframes, including
+/// the reconstructed luma that becomes LAST for the first inter frame.
+#[derive(Debug, Default, Eq, PartialEq)]
+struct KeyframeAgreement {
+    comparable_frames: u64,
+    skipped_frames: u64,
+    comparable_cells: u64,
+    same_block_size: u64,
+    same_prediction: u64,
+    same_tx_size: u64,
+    same_skip: u64,
+    exact_mode_info: u64,
+    comparable_luma_pixels: u64,
+    exact_luma_pixels: u64,
+    recon_luma_sse: u64,
+    exact_recon_cells: u64,
+    exact_mode_info_and_recon_cells: u64,
+    first_differing_recon_cell: Option<(usize, usize)>,
+}
+
+fn compare_keyframe_cells(rvp9: &Aggregate, libvpx: &Aggregate) -> KeyframeAgreement {
+    let mut agreement = KeyframeAgreement::default();
+    for (rvp9_frame, libvpx_frame) in rvp9.frames.iter().zip(&libvpx.frames) {
+        if !rvp9_frame.is_key || !libvpx_frame.is_key {
+            continue;
+        }
+        let frames_are_comparable = !rvp9_frame.decode_failed
+            && !libvpx_frame.decode_failed
+            && rvp9_frame.mi_rows > 0
+            && rvp9_frame.mi_rows == libvpx_frame.mi_rows
+            && rvp9_frame.mi_cols == libvpx_frame.mi_cols
+            && rvp9_frame.mi_grid.len() == rvp9_frame.mi_rows * rvp9_frame.mi_cols
+            && libvpx_frame.mi_grid.len() == rvp9_frame.mi_grid.len()
+            && rvp9_frame.recon_y_width > 0
+            && rvp9_frame.recon_y_width == libvpx_frame.recon_y_width
+            && rvp9_frame.recon_y_height == libvpx_frame.recon_y_height
+            && rvp9_frame.recon_y.len() == rvp9_frame.recon_y_width * rvp9_frame.recon_y_height
+            && libvpx_frame.recon_y.len() == rvp9_frame.recon_y.len();
+        if !frames_are_comparable {
+            agreement.skipped_frames += 1;
+            continue;
+        }
+        agreement.comparable_frames += 1;
+        let width = rvp9_frame.recon_y_width;
+        let height = rvp9_frame.recon_y_height;
+
+        for (cell_index, (rvp9_mi, libvpx_mi)) in rvp9_frame
+            .mi_grid
+            .iter()
+            .zip(&libvpx_frame.mi_grid)
+            .enumerate()
+        {
+            let (Some(rvp9_mi), Some(libvpx_mi)) = (rvp9_mi, libvpx_mi) else {
+                continue;
+            };
+            agreement.comparable_cells += 1;
+            let exact_mode_info = rvp9_mi == libvpx_mi;
+            agreement.same_block_size += u64::from(rvp9_mi.block_size == libvpx_mi.block_size);
+            agreement.same_prediction += u64::from(rvp9_mi.mode == libvpx_mi.mode);
+            agreement.same_tx_size += u64::from(rvp9_mi.tx_size == libvpx_mi.tx_size);
+            agreement.same_skip += u64::from(rvp9_mi.skip == libvpx_mi.skip);
+            agreement.exact_mode_info += u64::from(exact_mode_info);
+
+            let cell_row = cell_index / rvp9_frame.mi_cols;
+            let cell_col = cell_index % rvp9_frame.mi_cols;
+            let y_start = cell_row * 8;
+            let x_start = cell_col * 8;
+            let y_end = (y_start + 8).min(height);
+            let x_end = (x_start + 8).min(width);
+            let mut exact_recon = true;
+            for y in y_start..y_end {
+                for x in x_start..x_end {
+                    let index = y * width + x;
+                    let delta = i32::from(rvp9_frame.recon_y[index])
+                        - i32::from(libvpx_frame.recon_y[index]);
+                    agreement.comparable_luma_pixels += 1;
+                    agreement.exact_luma_pixels += u64::from(delta == 0);
+                    agreement.recon_luma_sse += (delta * delta) as u64;
+                    exact_recon &= delta == 0;
+                }
+            }
+            agreement.exact_recon_cells += u64::from(exact_recon);
+            agreement.exact_mode_info_and_recon_cells += u64::from(exact_mode_info && exact_recon);
+            if !exact_recon && agreement.first_differing_recon_cell.is_none() {
+                agreement.first_differing_recon_cell = Some((cell_row, cell_col));
+            }
+        }
+    }
+    agreement
 }
 
 fn compare_inter_frame_cells(rvp9: &Aggregate, libvpx: &Aggregate) -> CellAgreement {
@@ -824,7 +919,21 @@ fn decode_and_accumulate(dec: &mut Decoder, pkt: &[u8], fs: &mut FrameStats) {
         let shown = pf.header.show_frame
             || matches!(pf.header.kind, WireFrameKind::ShowExistingFrame { .. });
         match dec.decode_frame(pf) {
-            Ok(_) => {
+            Ok(decoded) => {
+                if shown && fs.is_key {
+                    let width = decoded.width() as usize;
+                    let height = decoded.height() as usize;
+                    let plane = decoded.y_plane();
+                    fs.recon_y_width = width;
+                    fs.recon_y_height = height;
+                    fs.recon_y.clear();
+                    fs.recon_y.reserve(width * height);
+                    for row in 0..height {
+                        let offset = row * plane.stride();
+                        fs.recon_y
+                            .extend_from_slice(&plane.data()[offset..offset + width]);
+                    }
+                }
                 if !matches!(pf.header.kind, WireFrameKind::ShowExistingFrame { .. }) {
                     accumulate_coef_counts(dec.last_frame_coef_counts(), fs);
                 }
@@ -1224,6 +1333,67 @@ fn emit_report(
         ] {
             let _ = writeln!(md, "| {label} | {count} | {:.1} |", pct(count, matched));
         }
+
+        let key = compare_keyframe_cells(rvp9, libvpx);
+        let _ = writeln!(md, "\n### Same-coordinate keyframe reference state\n");
+        let _ = writeln!(
+            md,
+            "Compared {} visible 8x8 cells and {} luma pixels across {} paired keyframes; {} keyframes lacked comparable decoder state.\n",
+            key.comparable_cells,
+            key.comparable_luma_pixels,
+            key.comparable_frames,
+            key.skipped_frames
+        );
+        let _ = writeln!(md, "| agreement | count | % |\n|---|---:|---:|");
+        for (label, count, total) in [
+            (
+                "same partition leaf size",
+                key.same_block_size,
+                key.comparable_cells,
+            ),
+            (
+                "same intra prediction",
+                key.same_prediction,
+                key.comparable_cells,
+            ),
+            ("same luma TX size", key.same_tx_size, key.comparable_cells),
+            ("same skip flag", key.same_skip, key.comparable_cells),
+            (
+                "exact decoded ModeInfo",
+                key.exact_mode_info,
+                key.comparable_cells,
+            ),
+            (
+                "exact reconstructed luma cell",
+                key.exact_recon_cells,
+                key.comparable_cells,
+            ),
+            (
+                "exact ModeInfo and reconstructed cell",
+                key.exact_mode_info_and_recon_cells,
+                key.comparable_cells,
+            ),
+            (
+                "exact reconstructed luma pixel",
+                key.exact_luma_pixels,
+                key.comparable_luma_pixels,
+            ),
+        ] {
+            let _ = writeln!(md, "| {label} | {count} | {:.1} |", pct(count, total));
+        }
+        let _ = writeln!(
+            md,
+            "\nReconstruction-to-reconstruction luma SSE: `{}`.",
+            key.recon_luma_sse
+        );
+        let _ = writeln!(
+            md,
+            "First differing reconstructed 8x8 cell: `{}`.",
+            key.first_differing_recon_cell.map_or_else(
+                || "none".to_owned(),
+                |(row, col)| format!("mi_row={row}, mi_col={col}")
+            )
+        );
     }
 
     // ---- Keyframe diagnostic ----
@@ -1830,6 +2000,47 @@ mod tests {
             interp_filter: rvp9_core::bitstream::InterpFilter::EightTap,
         };
         mi
+    }
+
+    #[test]
+    fn keyframe_agreement_separates_mode_info_from_reconstruction() {
+        use rvp9_core::transforms::TxSize;
+
+        let base = test_intra_mi(BlockSize::Block8x8, TxSize::Tx8x8);
+        let rvp9_frame = FrameStats {
+            is_key: true,
+            mi_rows: 1,
+            mi_cols: 2,
+            mi_grid: vec![Some(base); 2],
+            recon_y_width: 16,
+            recon_y_height: 8,
+            recon_y: vec![10; 16 * 8],
+            ..Default::default()
+        };
+        let mut libvpx_frame = rvp9_frame.clone();
+        libvpx_frame.mi_grid[1].as_mut().unwrap().block_size = BlockSize::Block16x16;
+        libvpx_frame.recon_y[15] = 12;
+
+        let agreement = compare_keyframe_cells(
+            &Aggregate {
+                frames: vec![rvp9_frame],
+            },
+            &Aggregate {
+                frames: vec![libvpx_frame],
+            },
+        );
+
+        assert_eq!(agreement.comparable_frames, 1);
+        assert_eq!(agreement.comparable_cells, 2);
+        assert_eq!(agreement.same_block_size, 1);
+        assert_eq!(agreement.same_prediction, 2);
+        assert_eq!(agreement.exact_mode_info, 1);
+        assert_eq!(agreement.comparable_luma_pixels, 128);
+        assert_eq!(agreement.exact_luma_pixels, 127);
+        assert_eq!(agreement.recon_luma_sse, 4);
+        assert_eq!(agreement.exact_recon_cells, 1);
+        assert_eq!(agreement.exact_mode_info_and_recon_cells, 1);
+        assert_eq!(agreement.first_differing_recon_cell, Some((0, 1)));
     }
 
     #[test]
