@@ -5943,3 +5943,34 @@ qualify without an exact-commit quiet-host repetition.
 **Future plan:** keep the divergence only if exact-commit PGO passes repeated
 S2/S3 timing. Do not generalize it to CPU6/7 or the top spatial layer without
 separate quality and speed evidence.
+
+### 2026-08-13 — Exclude spatial SVC from the CPU6 TX4 extension
+
+**Where:** `rvp9_encoder::realtime_tx4_candidate_enabled`; libvpx counterpart:
+`vp9/encoder/vp9_speed_features.c:581,613`.
+
+**What libvpx does:** realtime speed >= 4 uses `USE_TX_8X8` on inter frames,
+which does not admit TX4 in the measured spatial streams.
+
+**What rvp9 does:** its deliberate CPU6 TX4 extension remains enabled for
+single-layer and T2 video but is disabled for spatial SVC. The explicit
+diagnostic override remains authoritative.
+
+**Why:** CPU6 spatial SVC over-selected TX4 on low-resolution components. At
+the old-town 3360-kb/s base layer, rvp9 used 31 TX4 leaves and 1,499 EOB-branch
+attempts per inter frame versus libvpx's zero and 861. Removing TX4 lowers the
+counts to zero and 955, moves the important-clip BD-rate from `+3.1874%` to
+`+1.4025%`, and leaves the three-clip S3 base-layer mean at `-1.5948%`.
+
+**Byte-parity impact:** intentional on CPU6 spatial inter components. The
+product output exactly reproduces the explicit `RVP9_RT_EMIT_TX4=0`
+diagnostic. All 24 product streams in the old-town curve decode byte-identically
+through rvp9-decoder and pinned vpxdec; FFmpeg decodes all successfully.
+
+**Speed impact:** the change removes transform, quantization, and token work.
+Loaded-host plain-release curves are directionally faster but are not final
+speed evidence; exact-commit production PGO is required.
+
+**Future plan:** retain for CPU6 spatial SVC if the exact-PGO CPU6--8 S2/S3
+grid passes. Keep the non-spatial CPU6 TX4 extension until its own established
+quality evidence is superseded.

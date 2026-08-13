@@ -7334,7 +7334,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     );
     let rt_emit_tx_rd =
         realtime_emit_tx_rd_enabled(env.rt_emit_tx_rd, exact_vbp_tree_enabled, speed);
-    let rt_emit_tx4 = realtime_tx4_candidate_enabled(env.rt_emit_tx4, speed, temporal_layers);
+    let rt_emit_tx4 =
+        realtime_tx4_candidate_enabled(env.rt_emit_tx4, speed, temporal_layers, spatial_component);
     let rt_output_backed_prediction = env.flag_or(
         env.rt_output_backed_prediction,
         realtime_output_backed_prediction_default(speed),
@@ -10992,8 +10993,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             // model-RD TX decision, matching libvpx pickmode's
                             // stored `mi->tx_size`. Exact variance-tree frames
                             // redecide TX8/TX16 for TX16-capable leaves. CPU6
-                            // also admits TX4 except in the measured T3 path;
-                            // other leaf classes retain the picker transform.
+                            // also admits TX4 outside temporal T3 and spatial
+                            // SVC; other leaf classes retain the picker
+                            // transform.
                             // Other large-frame paths keep their established
                             // maximum-TX shortcut.
                             if plane == 0
@@ -13593,8 +13595,13 @@ fn realtime_tx4_candidate_enabled(
     override_value: Option<bool>,
     speed: i32,
     temporal_layers: u32,
+    spatial_component: bool,
 ) -> bool {
-    override_value.unwrap_or(speed == 6 && temporal_layers != 3)
+    // Pinned realtime speed >= 4 uses USE_TX_8X8. Rvp9 retains its measured
+    // CPU6 TX4 extension for single-layer and T2 video, but spatial SVC's
+    // low-resolution components otherwise over-select TX4 and lose both rate
+    // and quality.
+    override_value.unwrap_or(speed == 6 && temporal_layers != 3 && !spatial_component)
 }
 
 fn choose_inter_luma_tx_size(input: InterLumaTxInput<'_>, include_tx4: bool) -> TxSize {
@@ -17180,12 +17187,14 @@ mod tests {
             false,
             BlockSize::Block16x16,
         ));
-        assert!(realtime_tx4_candidate_enabled(None, 6, 1));
-        assert!(realtime_tx4_candidate_enabled(None, 6, 2));
-        assert!(!realtime_tx4_candidate_enabled(None, 6, 3));
-        assert!(!realtime_tx4_candidate_enabled(None, 7, 3));
-        assert!(!realtime_tx4_candidate_enabled(Some(false), 6, 1));
-        assert!(realtime_tx4_candidate_enabled(Some(true), 7, 3));
+        assert!(realtime_tx4_candidate_enabled(None, 6, 1, false));
+        assert!(realtime_tx4_candidate_enabled(None, 6, 2, false));
+        assert!(!realtime_tx4_candidate_enabled(None, 6, 3, false));
+        assert!(!realtime_tx4_candidate_enabled(None, 7, 3, false));
+        assert!(!realtime_tx4_candidate_enabled(None, 6, 1, true));
+        assert!(!realtime_tx4_candidate_enabled(None, 6, 2, true));
+        assert!(!realtime_tx4_candidate_enabled(Some(false), 6, 1, false));
+        assert!(realtime_tx4_candidate_enabled(Some(true), 7, 3, true));
         assert!(!realtime_inter_tx_candidate(TxSize::Tx16x16, TxSize::Tx4x4));
         assert!(realtime_inter_tx_candidate(TxSize::Tx16x16, TxSize::Tx8x8,));
         assert!(realtime_inter_tx_candidate(
