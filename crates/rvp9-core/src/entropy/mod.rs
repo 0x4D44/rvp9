@@ -67,9 +67,7 @@ pub use detokenize::{
     encode_coefs, write_block_tokens, write_block_tokens_i16, write_block_tokens_with_retained,
     write_block_tokens_with_retained_i16, write_block_tokens_with_retained_i16_clamped,
 };
-pub(crate) use detokenize::{
-    CoefReplayStatus, try_replay_retained_block, try_replay_retained_block_clamped,
-};
+pub(crate) use detokenize::{CoefReplayStatus, try_replay_retained_block_clamped};
 pub use diff_update::{DIFF_UPDATE_PROB, diff_update_prob, inv_remap_prob};
 pub use frame_context::{FRAME_CONTEXTS, FRAME_CONTEXTS_LOG2, FrameContext, TX_SIZES};
 pub use kf_probs::{VP9_KF_PARTITION_PROBS, VP9_KF_UV_MODE_PROB, VP9_KF_Y_MODE_PROB};

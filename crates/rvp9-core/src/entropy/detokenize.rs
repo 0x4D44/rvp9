@@ -1666,41 +1666,6 @@ pub(crate) enum CoefReplayStatus {
     Mismatch,
 }
 
-/// Consume one retained transform block before the writer fetches coefficients.
-///
-/// Retained replay needs only symbolic tokens and the recorded nonzero flag.
-/// Moving this check ahead of coefficient-source lookup avoids revisiting the
-/// coefficient arena during both the pre-header mode-count traversal and the
-/// final arithmetic-coder traversal.
-#[allow(clippy::too_many_arguments)]
-#[inline]
-pub(crate) fn try_replay_retained_block(
-    bw: &mut BoolWriter<'_>,
-    fc: &FrameContext,
-    coef_ctx: &mut TileCoefCtx,
-    plane: usize,
-    x4: usize,
-    y4_in_sb: usize,
-    tx_size: TxSize,
-    ref_type: usize,
-    retained_pass: Option<&mut CoefTokenPass<'_>>,
-) -> CoefReplayStatus {
-    let n = 1usize << (tx_size as usize);
-    try_replay_retained_block_clamped(
-        bw,
-        fc,
-        coef_ctx,
-        plane,
-        x4,
-        y4_in_sb,
-        tx_size,
-        ref_type,
-        n,
-        n,
-        retained_pass,
-    )
-}
-
 /// Consume one retained transform block with frame-edge-clamped coefficient
 /// context writeback.
 #[allow(clippy::too_many_arguments)]
