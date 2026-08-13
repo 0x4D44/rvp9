@@ -94,50 +94,37 @@ fn scale_plane_reference_2x_neon(
     let out_height = height
         .checked_mul(2)
         .ok_or(ScaleReferenceError::InvalidDimensions)?;
-    let intermediate_height = height
-        .checked_add(FILTER_TAPS - 1)
+    let output_len = out_width
+        .checked_mul(out_height)
         .ok_or(ScaleReferenceError::InvalidDimensions)?;
-    let intermediate_len = out_width
-        .checked_mul(intermediate_height)
-        .ok_or(ScaleReferenceError::InvalidDimensions)?;
-    let mut intermediate = vec![0u8; intermediate_len];
+    let mut output = vec![0u8; output_len];
 
+    // Horizontally expanded source rows are exactly the even output rows.
+    // Keep them in their final locations instead of staging and then copying
+    // a complete intermediate frame.
     for source_y in 0..height {
         let source_row = &input[source_y * width..(source_y + 1) * width];
-        let row_start = (source_y + 3) * out_width;
-        let output_row = &mut intermediate[row_start..row_start + out_width];
+        let row_start = 2 * source_y * out_width;
+        let output_row = &mut output[row_start..row_start + out_width];
         // SAFETY: AArch64 always provides NEON. Both row slices cover the
         // exact widths passed to the inner routine, whose vector loop only
         // reads full eight-sample chunks inside the visible source row.
         unsafe { upscale_reference_row_neon(source_row, output_row) };
     }
-    let first_visible = intermediate[3 * out_width..4 * out_width].to_vec();
-    for row in 0..3 {
-        intermediate[row * out_width..(row + 1) * out_width].copy_from_slice(&first_visible);
-    }
-    let last_visible_start = (height + 2) * out_width;
-    let last_visible = intermediate[last_visible_start..last_visible_start + out_width].to_vec();
-    for row in height + 3..intermediate_height {
-        intermediate[row * out_width..(row + 1) * out_width].copy_from_slice(&last_visible);
-    }
 
-    let output_len = out_width
-        .checked_mul(out_height)
-        .ok_or(ScaleReferenceError::InvalidDimensions)?;
-    let mut output = vec![0u8; output_len];
+    // Every vertical input is an already-written even row and every output is
+    // a distinct odd row. The helper applies visible-edge replication while
+    // loading those eight source rows.
     for source_y in 0..height {
-        let even_source_start = (source_y + 3) * out_width;
-        let even_output_start = 2 * source_y * out_width;
-        output[even_output_start..even_output_start + out_width]
-            .copy_from_slice(&intermediate[even_source_start..even_source_start + out_width]);
-        // SAFETY: the intermediate contains `height + 7` complete rows. The
-        // odd-row filter reads rows `source_y..source_y + 7`, and the output
-        // slice is one complete destination row.
+        // SAFETY: all even rows were initialized above. The helper reads only
+        // those rows and writes the disjoint odd row for `source_y`; its clamps
+        // keep every tap inside the `height` visible source rows.
         unsafe {
-            filter_reference_phase8_row_neon(
-                intermediate.as_ptr().add(source_y * out_width),
+            filter_reference_phase8_row_from_even_neon(
+                output.as_mut_ptr(),
                 out_width,
-                output.as_mut_ptr().add(even_output_start + out_width),
+                height,
+                source_y,
             );
         }
     }
@@ -151,6 +138,28 @@ unsafe fn filter_reference_phase8_8_libvpx(
     base: *const u8,
     stride: usize,
 ) -> core::arch::aarch64::uint8x8_t {
+    // SAFETY: callers prove that `base` starts an eight-row by eight-byte
+    // readable footprint with the supplied row stride.
+    unsafe {
+        filter_reference_phase8_8_rows_libvpx([
+            base,
+            base.add(stride),
+            base.add(2 * stride),
+            base.add(3 * stride),
+            base.add(4 * stride),
+            base.add(5 * stride),
+            base.add(6 * stride),
+            base.add(7 * stride),
+        ])
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline]
+#[target_feature(enable = "neon")]
+unsafe fn filter_reference_phase8_8_rows_libvpx(
+    rows: [*const u8; FILTER_TAPS],
+) -> core::arch::aarch64::uint8x8_t {
     use core::arch::aarch64::*;
 
     const COEFFICIENTS: [i16; 8] = [-1, 6, -19, 78, 78, -19, 6, -1];
@@ -159,14 +168,14 @@ unsafe fn filter_reference_phase8_8_libvpx(
     // the six outer taps wrap in i16, then the two dominant positive taps are
     // added with saturation. Its valid VP9 filter range is scalar-exact.
     unsafe {
-        let s0 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(base)));
-        let s1 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(base.add(stride))));
-        let s2 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(base.add(2 * stride))));
-        let s3 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(base.add(3 * stride))));
-        let s4 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(base.add(4 * stride))));
-        let s5 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(base.add(5 * stride))));
-        let s6 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(base.add(6 * stride))));
-        let s7 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(base.add(7 * stride))));
+        let s0 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(rows[0])));
+        let s1 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(rows[1])));
+        let s2 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(rows[2])));
+        let s3 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(rows[3])));
+        let s4 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(rows[4])));
+        let s5 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(rows[5])));
+        let s6 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(rows[6])));
+        let s7 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(rows[7])));
         let mut sum = vmulq_n_s16(s0, COEFFICIENTS[0]);
         sum = vmlaq_n_s16(sum, s1, COEFFICIENTS[1]);
         sum = vmlaq_n_s16(sum, s2, COEFFICIENTS[2]);
@@ -215,16 +224,30 @@ unsafe fn upscale_reference_row_neon(source: &[u8], output: &mut [u8]) {
 
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "neon")]
-unsafe fn filter_reference_phase8_row_neon(intermediate: *const u8, width: usize, output: *mut u8) {
+unsafe fn filter_reference_phase8_row_from_even_neon(
+    output: *mut u8,
+    width: usize,
+    height: usize,
+    source_y: usize,
+) {
+    let rows = std::array::from_fn(|tap| {
+        let row = (source_y as isize + tap as isize - 3).clamp(0, height as isize - 1) as usize;
+        // SAFETY: the caller provides a `2 * height * width` allocation, and
+        // `row` is clamped to a valid source row before this even-row offset.
+        unsafe { output.cast_const().add(2 * row * width) }
+    });
+    // SAFETY: `source_y < height`, so its odd-row destination lies inside the
+    // caller-provided `2 * height * width` allocation.
+    let destination = unsafe { output.add((2 * source_y + 1) * width) };
     let mut x = 0;
-    // SAFETY: the caller supplies eight readable intermediate rows and one
-    // writable output row, all with `width` bytes. Vector chunks and the
-    // scalar tail partition that exact footprint.
+    // SAFETY: the caller proves every clamped even-row input and the odd-row
+    // destination cover `width` bytes. Vector chunks and the scalar tail
+    // partition that exact footprint.
     unsafe {
         while x + 8 <= width {
             core::arch::aarch64::vst1_u8(
-                output.add(x),
-                filter_reference_phase8_8_libvpx(intermediate.add(x), width),
+                destination.add(x),
+                filter_reference_phase8_8_rows_libvpx(rows.map(|row| row.add(x))),
             );
             x += 8;
         }
@@ -232,9 +255,9 @@ unsafe fn filter_reference_phase8_row_neon(intermediate: *const u8, width: usize
         while x < width {
             let mut sum = 0i32;
             for (tap, &coefficient) in KERNEL.iter().enumerate() {
-                sum += i32::from(*intermediate.add(tap * width + x)) * i32::from(coefficient);
+                sum += i32::from(*rows[tap].add(x)) * i32::from(coefficient);
             }
-            *output.add(x) = round_and_clip(sum);
+            *destination.add(x) = round_and_clip(sum);
             x += 1;
         }
     }
