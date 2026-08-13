@@ -71,7 +71,12 @@ fn encode_packets() -> Vec<Vec<u8>> {
         .collect()
 }
 
-fn encode_inter_packets(width: usize, height: usize, layer_count: u8) -> Vec<Vec<u8>> {
+fn encode_inter_packets(
+    width: usize,
+    height: usize,
+    layer_count: u8,
+    frame_count: usize,
+) -> Vec<Vec<u8>> {
     let mut template = EncoderConfig::new(width as u32, height as u32);
     template.target_bitrate_bps = 300_000;
     template.speed = 8;
@@ -84,7 +89,7 @@ fn encode_inter_packets(width: usize, height: usize, layer_count: u8) -> Vec<Vec
         },
     )
     .unwrap();
-    (0..INTER_FRAME_COUNT)
+    (0..frame_count)
         .map(|frame_index| {
             let (y, u, v) = source_sized(width, height, frame_index);
             encoder
@@ -248,17 +253,17 @@ fn keyframe_spatial_packet_top_layer_is_byte_exact_through_vpxdec() {
     let _ = std::fs::remove_file(ivf);
 }
 
-fn exercise_inter_spatial_stream(width: usize, height: usize, layer_count: u8, label: &str) {
-    let packets = encode_inter_packets(width, height, layer_count);
+fn exercise_inter_spatial_stream(
+    width: usize,
+    height: usize,
+    layer_count: u8,
+    frame_count: usize,
+    label: &str,
+) {
+    let packets = encode_inter_packets(width, height, layer_count, frame_count);
     let (_, top_components, components) = decode_rvp9(&packets);
-    assert_eq!(
-        components.len(),
-        INTER_FRAME_COUNT * usize::from(layer_count)
-    );
-    assert_eq!(
-        top_components.len(),
-        INTER_FRAME_COUNT * width * height * 3 / 2
-    );
+    assert_eq!(components.len(), frame_count * usize::from(layer_count));
+    assert_eq!(top_components.len(), frame_count * width * height * 3 / 2);
 
     let (ivf, ffmpeg_output) = temporary_paths(&format!("{label}-ffmpeg"));
     write_packets(&ivf, &packets, width as u16, height as u16);
@@ -320,11 +325,17 @@ fn exercise_inter_spatial_stream(width: usize, height: usize, layer_count: u8, l
 #[test]
 #[ignore = "external stateful spatial gate; requires ffmpeg and pinned vpxdec"]
 fn two_layer_inter_spatial_stream_is_byte_exact_through_ffmpeg_and_vpxdec() {
-    exercise_inter_spatial_stream(128, 64, 2, "two-layer-inter");
+    exercise_inter_spatial_stream(128, 64, 2, INTER_FRAME_COUNT, "two-layer-inter");
 }
 
 #[test]
 #[ignore = "external stateful spatial gate; requires ffmpeg and pinned vpxdec"]
 fn three_layer_inter_spatial_stream_is_byte_exact_through_ffmpeg_and_vpxdec() {
-    exercise_inter_spatial_stream(256, 128, 3, "three-layer-inter");
+    exercise_inter_spatial_stream(256, 128, 3, INTER_FRAME_COUNT, "three-layer-inter");
+}
+
+#[test]
+#[ignore = "external canonical 720p spatial gate; requires ffmpeg and pinned vpxdec"]
+fn canonical_720p_three_layer_key_and_inter_are_byte_exact_through_external_decoders() {
+    exercise_inter_spatial_stream(1280, 720, 3, 2, "three-layer-720p");
 }
