@@ -1854,6 +1854,16 @@ impl SpatialFrameControl {
             }),
         }
     }
+
+    fn is_key_enhancement_component(self) -> bool {
+        matches!(
+            self,
+            Self::Inter {
+                base_key_q: Some(_),
+                ..
+            }
+        )
+    }
 }
 
 /// Decoder-visible state shared by every spatial component in decode order.
@@ -3018,6 +3028,7 @@ impl StreamEncoder {
                 (y_coded, u_coded, v_coded),
                 aq_active_for_rate_control,
                 spatial_control.is_some(),
+                spatial_control.is_some_and(SpatialFrameControl::is_key_enhancement_component),
             )?,
         };
 
@@ -3710,6 +3721,7 @@ impl StreamEncoder {
         input_yuv: (&[u8], &[u8], &[u8]),
         aq_active_this_frame: bool,
         spatial_component: bool,
+        spatial_key_enhancement_component: bool,
     ) -> Result<Vec<u8>, EncodeError> {
         let w = self.config.width;
         let h = self.config.height;
@@ -4165,6 +4177,7 @@ impl StreamEncoder {
                     force_nstep_motion_search,
                     source_aligned_cpu8_svc_partitions,
                     spatial_component,
+                    spatial_key_enhancement_component,
                     temporal_layers,
                     svc_non_reference_frame,
                     svc_model_only_large_qmax,
@@ -5224,6 +5237,7 @@ impl StreamEncoder {
             &arf_mv_costs,
             &mut arf_rd_thresh,
             self.frames_since_golden_refresh,
+            false,
             false,
             false,
             false,
@@ -7603,6 +7617,29 @@ fn gather_coded_segments_and_skip(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn spatial_key_enhancement_is_the_inter_component_with_base_key_q() {
+        assert!(
+            SpatialFrameControl::Inter {
+                refresh_frame_flags: 0x02,
+                ref_frame_indices: [0, 1, 0],
+                allow_golden_ref: false,
+                base_key_q: Some(224),
+            }
+            .is_key_enhancement_component()
+        );
+        assert!(
+            !SpatialFrameControl::Inter {
+                refresh_frame_flags: 0x02,
+                ref_frame_indices: [1, 0, 1],
+                allow_golden_ref: true,
+                base_key_q: None,
+            }
+            .is_key_enhancement_component()
+        );
+        assert!(!SpatialFrameControl::Key.is_key_enhancement_component());
+    }
 
     #[test]
     fn spatial_reference_analysis_accepts_identity_or_adjacent_lower_layer() {

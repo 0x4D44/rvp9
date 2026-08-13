@@ -552,6 +552,14 @@ impl InterRdCalibration {
         }
         self
     }
+
+    /// Replace the natural-content lambda multiplier.
+    #[must_use]
+    pub const fn with_lambda_multiplier(mut self, numerator: u64, denominator: u64) -> Self {
+        self.lambda_num = numerator;
+        self.lambda_den = denominator;
+        self
+    }
 }
 
 impl Default for InterRdCalibration {
@@ -8927,6 +8935,12 @@ mod tests {
         assert!(should_evaluate_intra_fallback(true, false, 101, 100));
         assert!(!should_evaluate_intra_fallback(true, false, 100, 100));
         assert!(!should_evaluate_intra_fallback(false, false, 101, 100));
+    }
+
+    #[test]
+    fn rd_calibration_replaces_the_lambda_multiplier() {
+        let calibrated = InterRdCalibration::realtime().with_lambda_multiplier(101, 100);
+        assert_eq!((calibrated.lambda_num, calibrated.lambda_den), (101, 100));
     }
 
     #[test]

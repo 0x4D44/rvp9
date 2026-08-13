@@ -5435,6 +5435,35 @@ fn inter_rd_calibration_for_segment(
     )
 }
 
+/// Apply the measured key-access-unit leaf policy only to its qualified v1 path.
+///
+/// Exact VBP otherwise disables rvp9's natural-content lambda calibration. The
+/// opening enhancement reconstruction seeds that layer's LAST reference for the
+/// key interval, so CPU8 spatial CBR uses the independently measured 1.01x rate
+/// weight without changing partition descent, qindex, or any other topology.
+fn spatial_leaf_rd_calibration(
+    calibration: rvp9_core::mode_decision::inter::InterRdCalibration,
+    spatial_key_enhancement_component: bool,
+    rc_mode: crate::rate_control::RcMode,
+    speed: i32,
+    deadline: rvp9_core::mode_decision::speed_features::Deadline,
+    exact_vbp_tree_enabled: bool,
+) -> rvp9_core::mode_decision::inter::InterRdCalibration {
+    if spatial_key_enhancement_component
+        && matches!(rc_mode, crate::rate_control::RcMode::Cbr)
+        && speed.unsigned_abs() == 8
+        && matches!(
+            deadline,
+            rvp9_core::mode_decision::speed_features::Deadline::Realtime
+        )
+        && exact_vbp_tree_enabled
+    {
+        calibration.with_lambda_multiplier(101, 100)
+    } else {
+        calibration
+    }
+}
+
 fn svc_enhancement_model_only_large_qmax(
     svc_enhancement_frame: bool,
     svc_non_reference_frame: bool,
@@ -6536,6 +6565,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // partition leaves that VP9 can legally signal across a partial bottom
     // superblock. Single-layer and temporal paths retain their prior adapter.
     spatial_component: bool,
+    // The enhancement component paired with the base keyframe. Its
+    // reconstruction becomes this layer's LAST reference for the key interval.
+    spatial_key_enhancement_component: bool,
     // Temporal topology scopes the CPU6 TX4 emit selector. Three-layer SVC
     // keeps the measured TX8/TX16 subset; single-layer and T2 keep TX4.
     temporal_layers: u32,
@@ -9258,7 +9290,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     let leaf_segment_id = sb_partitions[sb_idx][leaf_idx].segment_id;
                     let leaf_qindex =
                         effective_qindex_for_segment(base_qindex, leaf_segment_id, seg_q_deltas);
-                    let leaf_rd_calibration = inter_rd_calibration_for_segment(
+                    let mut leaf_rd_calibration = inter_rd_calibration_for_segment(
                         rc_mode,
                         speed,
                         deadline,
@@ -9269,6 +9301,14 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     .with_model_only_large(
                         svc_model_only_large_qmax.is_some(),
                         svc_model_only_large_qmax.unwrap_or(u8::MAX),
+                    );
+                    leaf_rd_calibration = spatial_leaf_rd_calibration(
+                        leaf_rd_calibration,
+                        spatial_key_enhancement_component,
+                        rc_mode,
+                        speed,
+                        deadline,
+                        exact_vbp_tree_enabled,
                     );
                     let quantizer =
                         init_plane_quantizers(i32::from(leaf_qindex), QuantizerDeltas::Y);
@@ -16429,6 +16469,26 @@ mod tests {
         assert_eq!(
             inter_rd_calibration_for_mode(RcMode::Cbr, 7, Deadline::Realtime, true),
             InterRdCalibration::default()
+        );
+    }
+
+    #[test]
+    fn spatial_key_enhancement_uses_measured_leaf_lambda() {
+        use rvp9_core::mode_decision::speed_features::Deadline;
+
+        let exact = inter_rd_calibration_for_frame(RcMode::Cbr, 8, Deadline::Realtime, false, true);
+        let ordinary =
+            spatial_leaf_rd_calibration(exact, false, RcMode::Cbr, 8, Deadline::Realtime, true);
+        let key_enhancement =
+            spatial_leaf_rd_calibration(exact, true, RcMode::Cbr, 8, Deadline::Realtime, true);
+        let cpu7_control =
+            spatial_leaf_rd_calibration(exact, true, RcMode::Cbr, 7, Deadline::Realtime, true);
+
+        assert_eq!((ordinary.lambda_num, ordinary.lambda_den), (0, 1));
+        assert_eq!((cpu7_control.lambda_num, cpu7_control.lambda_den), (0, 1));
+        assert_eq!(
+            (key_enhancement.lambda_num, key_enhancement.lambda_den),
+            (101, 100)
         );
     }
 

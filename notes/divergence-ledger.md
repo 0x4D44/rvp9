@@ -5811,3 +5811,52 @@ They are not final repeated quiet-host evidence.
 coefficient traversal before copying exact leaves that cross the visible MI
 boundary; require a separate corruption regression and full spatial curve for
 that change.
+
+### 2026-08-13 — Calibrate opening CPU8 spatial-enhancement leaf RD
+
+**Where:** `rvp9_encoder::spatial_leaf_rd_calibration` and
+`rvp9_core::mode_decision::inter::InterRdCalibration::with_lambda_multiplier`;
+libvpx counterparts: `vp9/encoder/vp9_rd.c::vp9_compute_rd_mult` and the
+`x->rdmult` uses in `vp9/encoder/vp9_pickmode.c`.
+
+**What libvpx does:** pinned realtime pickmode uses the qindex-derived frame or
+segment RD multiplier. It has no explicit one-percent adjustment for the
+enhancement components paired with a base keyframe.
+
+**What rvp9 does:** CPU8 one-pass realtime spatial CBR with exact VBP multiplies
+the inter picker's rate weight by `101/100` only for the opening enhancement
+components. The partition tree, qindex, transform selector, and every later
+component keep their existing policy. CPU6/7, spatial VBR, non-realtime,
+non-spatial, and exact-VBP-disabled controls are unchanged.
+
+**Why:** the canonical SL1 curve was `+0.5623%`, just outside the final
+`+0.5%` gate. A whole-qindex investment and the source's intra-in-inter policy
+both regressed SL1. The smaller leaf-only rate-weight correction changes mode
+allocation without changing the opening reference's quantizer or partition
+descent. Neighbour screens at `99/100` and `102/100` regressed SL1 to
+`+0.7859%` and `+0.7880%`, while `101/100` reproduced `+0.4795%` three times.
+
+**Byte-parity impact:** intentional only on qualifying natural-content opening
+enhancement components; the existing classifier leaves synthetic content
+byte-identical. All 24 full and cumulative-layer IVFs from the final six-rate
+curve decode to byte-identical raw I420 under rvp9-decoder and pinned vpxdec.
+FFmpeg decodes all 24 successfully; its cumulative-layer IVF presentation
+exposes every spatial component, so it is a decode-success oracle rather than
+the byte-exact presentation oracle for those files.
+
+**Compression-efficiency impact:** the final canonical CPU8/T1 three-spatial-
+layer CBR curve is `-4.8991%/+0.4795%/-0.7828%` for SL0/SL1/SL2, so every
+layer passes the `+0.5%` focused gate. SL1 matched-bitrate anchor-minus-test
+PSNR delta is `+0.0151 dB` mean, `-0.0209 dB` minimum, and `+0.0661 dB`
+maximum. The final CSV is `/private/tmp/rvp9-w153-spatial-key-lambda101-final.csv`
+(SHA-256 `d368ad017dad75defff2a92cf9a5a1eb04f31b5baa4c56ddc6786ad602031ada`).
+
+**Speed impact:** plain-release timings were host-noisy and are not acceptance
+evidence. Only two components per key interval can change, but the exact
+accepted tree still requires a fresh production-PGO build and repeated warmed
+medians before Stage 4e speed can close.
+
+**Future plan:** retain only in the measured CPU8 realtime spatial CBR scope.
+Run production PGO next, then widen quality and speed independently across
+CPU6/7, two spatial layers, resolutions, frame rates, and representative
+content before considering any generalisation.
