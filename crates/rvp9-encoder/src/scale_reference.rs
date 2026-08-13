@@ -147,7 +147,7 @@ fn scale_plane_reference_2x_neon(
 #[cfg(target_arch = "aarch64")]
 #[inline]
 #[target_feature(enable = "neon")]
-unsafe fn filter_reference_phase8_8(
+unsafe fn filter_reference_phase8_8_libvpx(
     base: *const u8,
     stride: usize,
 ) -> core::arch::aarch64::uint8x8_t {
@@ -155,20 +155,27 @@ unsafe fn filter_reference_phase8_8(
 
     const COEFFICIENTS: [i16; 8] = [-1, 6, -19, 78, 78, -19, 6, -1];
     // SAFETY: callers prove eight readable samples at every one of the eight
-    // tap offsets. The arithmetic intrinsics do not access memory.
+    // tap offsets. The accumulation order is pinned libvpx's `convolve8_8`:
+    // the six outer taps wrap in i16, then the two dominant positive taps are
+    // added with saturation. Its valid VP9 filter range is scalar-exact.
     unsafe {
-        let first = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(base)));
-        let mut lo = vmull_s16(vget_low_s16(first), vdup_n_s16(COEFFICIENTS[0]));
-        let mut hi = vmull_s16(vget_high_s16(first), vdup_n_s16(COEFFICIENTS[0]));
-        for (tap, &coefficient) in COEFFICIENTS.iter().enumerate().skip(1) {
-            let samples = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(base.add(tap * stride))));
-            lo = vmlal_s16(lo, vget_low_s16(samples), vdup_n_s16(coefficient));
-            hi = vmlal_s16(hi, vget_high_s16(samples), vdup_n_s16(coefficient));
-        }
-        vqmovn_u16(vcombine_u16(
-            vqrshrun_n_s32::<7>(lo),
-            vqrshrun_n_s32::<7>(hi),
-        ))
+        let s0 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(base)));
+        let s1 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(base.add(stride))));
+        let s2 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(base.add(2 * stride))));
+        let s3 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(base.add(3 * stride))));
+        let s4 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(base.add(4 * stride))));
+        let s5 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(base.add(5 * stride))));
+        let s6 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(base.add(6 * stride))));
+        let s7 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(base.add(7 * stride))));
+        let mut sum = vmulq_n_s16(s0, COEFFICIENTS[0]);
+        sum = vmlaq_n_s16(sum, s1, COEFFICIENTS[1]);
+        sum = vmlaq_n_s16(sum, s2, COEFFICIENTS[2]);
+        sum = vmlaq_n_s16(sum, s5, COEFFICIENTS[5]);
+        sum = vmlaq_n_s16(sum, s6, COEFFICIENTS[6]);
+        sum = vmlaq_n_s16(sum, s7, COEFFICIENTS[7]);
+        sum = vqaddq_s16(sum, vmulq_n_s16(s3, COEFFICIENTS[3]));
+        sum = vqaddq_s16(sum, vmulq_n_s16(s4, COEFFICIENTS[4]));
+        vqrshrun_n_s16::<7>(sum)
     }
 }
 
@@ -190,7 +197,7 @@ unsafe fn upscale_reference_row_neon(source: &[u8], output: &mut [u8]) {
     unsafe {
         while source_x + 11 < width {
             let even = vld1_u8(source.as_ptr().add(source_x));
-            let odd = filter_reference_phase8_8(source.as_ptr().add(source_x - 3), 1);
+            let odd = filter_reference_phase8_8_libvpx(source.as_ptr().add(source_x - 3), 1);
             vst1_u8(output.as_mut_ptr().add(2 * source_x), vzip1_u8(even, odd));
             vst1_u8(
                 output.as_mut_ptr().add(2 * source_x + 8),
@@ -217,7 +224,7 @@ unsafe fn filter_reference_phase8_row_neon(intermediate: *const u8, width: usize
         while x + 8 <= width {
             core::arch::aarch64::vst1_u8(
                 output.add(x),
-                filter_reference_phase8_8(intermediate.add(x), width),
+                filter_reference_phase8_8_libvpx(intermediate.add(x), width),
             );
             x += 8;
         }
@@ -372,6 +379,36 @@ mod tests {
             let scalar = scale_plane_reference_2x_scalar(&input, width, height).unwrap();
             let optimized = scale_plane_reference_2x(&input, width, height).unwrap();
             assert_eq!(optimized, scalar, "{width}x{height}");
+        }
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    #[test]
+    fn libvpx_neon_phase8_schedule_matches_scalar_extremes() {
+        use core::arch::aarch64::vget_lane_u8;
+
+        for stride in [1usize, 2] {
+            for mask in 0u16..256 {
+                let mut source = [17u8; 22];
+                for tap in 0..FILTER_TAPS {
+                    source[tap * stride] = if mask & (1 << tap) == 0 { 0 } else { 255 };
+                }
+                // SAFETY: `source` covers the helper's eight-byte load at
+                // every one of the eight tap offsets for both tested strides.
+                let vector = unsafe { filter_reference_phase8_8_libvpx(source.as_ptr(), stride) };
+                // SAFETY: lane zero is present in every uint8x8 vector.
+                let actual = unsafe { vget_lane_u8::<0>(vector) };
+                let expected = round_and_clip(
+                    EIGHTTAP_KERNEL[8]
+                        .iter()
+                        .enumerate()
+                        .map(|(tap, &coefficient)| {
+                            i32::from(source[tap * stride]) * i32::from(coefficient)
+                        })
+                        .sum(),
+                );
+                assert_eq!(actual, expected, "stride={stride} mask={mask:#04x}");
+            }
         }
     }
 
