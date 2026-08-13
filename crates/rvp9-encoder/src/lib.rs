@@ -7195,7 +7195,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 // 12 of 16 SBs on a 256×256 frame bailed outright.
                 let sb_px_x = sb_col * 64;
                 let sb_px_y = sb_row * 64;
-                let int_pro = if use_zero_mv_partition || sb_px_y + 64 > h {
+                let int_pro = if use_zero_mv_partition {
                     let best_sad = if sb_px_x + 64 <= w && sb_px_y + 64 <= h {
                         let source_offset = sb_px_y * w + sb_px_x;
                         rvp9_core::dsp::get_ref().sad(BlockSize::Block64x64)(

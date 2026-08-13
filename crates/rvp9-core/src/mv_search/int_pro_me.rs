@@ -83,7 +83,6 @@ use crate::mv_search::full_pixel::PlaneRef;
 /// plane clamps to the nearest edge pixel. This is the faithful
 /// equivalent of an extended-border frame and lets every SB — including
 /// the frame-edge SBs — get a valid motion seed instead of bailing.
-#[cfg(test)]
 #[inline]
 fn clamp_px(plane: &PlaneRef<'_>, y: i32, x: i32) -> u8 {
     let cy = y.clamp(0, plane.height as i32 - 1) as usize;
@@ -731,17 +730,13 @@ fn int_pro_motion_estimation_impl(
         );
 
         if bw >= 16 {
-            let mut idx = 0;
-            while idx < bw {
-                let off = sb_px_y * src_stride + sb_px_x + idx;
-                vpx_int_pro_row(
-                    &mut src_hbuf[idx..idx + 16],
-                    &src_plane.data[off..],
-                    src_stride,
-                    bh,
-                );
-                idx += 16;
-            }
+            fill_int_pro_rows(
+                &mut src_hbuf[..bw],
+                src_plane,
+                sb_px_y as i32,
+                sb_px_x as i32,
+                bh,
+            );
         } else {
             // Block8x8: libvpx doesn't use int_pro for 8x8 (variance
             // partitioner only descends to 16x16 for the SB seed
@@ -751,17 +746,23 @@ fn int_pro_motion_estimation_impl(
             for idx in 0..bw {
                 let mut sum: i32 = 0;
                 for i in 0..bh {
-                    sum += i32::from(src_plane.data[(sb_px_y + i) * src_stride + sb_px_x + idx]);
+                    sum += i32::from(clamp_px(
+                        src_plane,
+                        (sb_px_y + i) as i32,
+                        (sb_px_x + idx) as i32,
+                    ));
                 }
                 src_hbuf[idx] = (sum / row_norm) as i16;
             }
         }
-
-        for idx in 0..bh {
-            let row_off = (sb_px_y + idx) * src_stride + sb_px_x;
-            let sum = vpx_int_pro_col(&src_plane.data[row_off..], bw);
-            src_vbuf[idx] = (sum >> norm_factor) as i16;
-        }
+        fill_int_pro_cols(
+            &mut src_vbuf[..bh],
+            src_plane,
+            sb_px_y as i32,
+            sb_px_x as i32,
+            bw,
+            norm_factor,
+        );
     }
 
     // 1D matches → integer-pel MV offsets in `[-bw/2, bw/2]`.
@@ -771,8 +772,23 @@ fn int_pro_motion_estimation_impl(
     // 2D refinement: 4-pt diamond + 2-pt cross, both gated by
     // staying inside the ref plane (with the ±1 halo the diamond
     // needs).
-    let src_off = sb_px_y * src_stride + sb_px_x;
-    let src_slice = &src_plane.data[src_off..];
+    let mut source_edge_scratch = None;
+    let (src_slice, src_stride) =
+        if sb_px_x + bw <= src_plane.width && sb_px_y + bh <= src_plane.height {
+            let src_off = sb_px_y * src_stride + sb_px_x;
+            (&src_plane.data[src_off..], src_stride)
+        } else {
+            let scratch = source_edge_scratch.get_or_insert([0u8; 64 * 64]);
+            gather_clamped_block(
+                src_plane,
+                sb_px_y as i32,
+                sb_px_x as i32,
+                bw,
+                bh,
+                &mut scratch[..bw * bh],
+            );
+            (&scratch[..bw * bh], bw)
+        };
 
     // E10 — every 2D-SAD probe reads through the edge-clamped block
     // gather, mirroring libvpx's extended-border frame. The reference
@@ -784,7 +800,7 @@ fn int_pro_motion_estimation_impl(
     // probe below instead of paid per probe. `sad_block` keeps its own
     // fail-soft `match` so an unsupported `bsize` still returns `u32::MAX`.
     let sad_fn = crate::dsp::get_ref().sad(bsize);
-    let mut edge_scratch = None;
+    let mut ref_edge_scratch = None;
     let mut try_sad = |row: i32, col: i32| -> u32 {
         let abs_x = sb_px_x as i32 + col;
         let abs_y = sb_px_y as i32 + row;
@@ -795,7 +811,7 @@ fn int_pro_motion_estimation_impl(
             src_stride,
             ref_plane,
             (abs_y, abs_x),
-            &mut edge_scratch,
+            &mut ref_edge_scratch,
         )
     };
 
@@ -1374,6 +1390,35 @@ mod tests {
         assert!(
             col_fp.abs() <= 1,
             "edge-SB col MV should be ~0, got {col_fp} FP"
+        );
+    }
+
+    #[test]
+    fn partial_bottom_right_sb_uses_edge_extended_source() {
+        let w = 350;
+        let h = 180;
+        let buf: Vec<u8> = (0..w * h)
+            .map(|i| (((i * 73 + i / 13) ^ 0x5a) & 0xff) as u8)
+            .collect();
+        let src = PlaneRef {
+            data: &buf,
+            stride: w,
+            width: w,
+            height: h,
+        };
+        let reference = PlaneRef {
+            data: &buf,
+            stride: w,
+            width: w,
+            height: h,
+        };
+
+        let result = int_pro_motion_estimation(&src, &reference, 320, 128, BlockSize::Block64x64);
+        assert_ne!(result.best_sad, u32::MAX);
+        assert!(
+            i32::from(result.mv.row).abs() <= 8 && i32::from(result.mv.col).abs() <= 8,
+            "identical partial-edge source/reference should stay near zero: {:?}",
+            result.mv,
         );
     }
 
