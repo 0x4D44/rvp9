@@ -5897,13 +5897,15 @@ decodes every stream successfully.
 curve and the two-layer results above, all 15 layer gates in the CPU6--8 x
 two-/three-layer canonical matrix pass `+0.5%`.
 
-**Speed impact:** single plain-release curves are directional only. Their
-geomeans are `0.964207x/1.014030x` for CPU6 two/three layer and
-`0.885359x/1.106349x` for CPU7. The CPU7 three-layer row therefore requires a
-fresh exact-commit production-PGO build and repeated medians before retention
-is final.
+**Speed impact:** a fresh unchanged 22-row production-PGO build from exact
+commit `d5c88042e83ac8bfb62a9b4461af932950a82145` passes the complete focused
+grid. Median-per-target geomeans are `0.833984x/0.952503x` for CPU6 two/three
+layer, `0.824665x/1.043471x` for CPU7, and `0.859579x/1.014877x` for CPU8.
+The manifest SHA-256 is
+`dc6e924ae624efdf8561538d6da7c7e059dfa87003a5c741fcd88cdaba93207d`;
+the optimized binary SHA-256 is
+`e04d28d19d8d0f71c4cc591bd2b075fd7057c60721adff847309826f4fc60651`.
 
-**Future plan:** retain provisionally because it closes a correctness-quality
-policy mismatch across the required presets. Rebuild production PGO and reject
-or optimize the CPU7 three-layer extension if its repeated aggregate remains
-above `1.05x`; then widen content and resolution coverage.
+**Future plan:** retain across CPU6--8 realtime spatial CBR. Widen content,
+resolution, frame-rate, absolute-latency, and p99 coverage before closing Stage
+4e; do not infer those results from this single 720p source.
