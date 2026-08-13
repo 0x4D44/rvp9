@@ -6212,3 +6212,50 @@ unchanged keyframe and the candidate stream matches the prior baseline hash.
 **Future plan:** keep the sixteen-frame bound as a measured compatibility
 adapter until rvp9's spatial LAST lifecycle and search history match libvpx.
 Remove it only after the same S2/S3 curves and paired timing remain green.
+
+### 2026-08-13 — Mirror unbuilt spatial MV-cost banks on CPU7/8
+
+**Where:** `rvp9_encoder::frame_loop::SpatialMvCostCadence`; libvpx
+counterparts: `vp9/encoder/vp9_rd.c::vp9_initialize_rd_consts` and the
+`nmv_costs` allocation in `vp9/encoder/vp9_encoder.c`.
+
+**What libvpx does:** realtime mode refreshes the MV joint table and only the
+component-cost bank selected by the current high-precision policy on coded
+component indices where `index & 7 == 1`. Both precision banks begin as zeroed
+allocations. In spatial SVC this leaves the ordinary-precision component bank
+at zero during the first qindex-224 base frames, so those candidates pay the
+shared joint cost but no row/column component cost.
+
+**What rvp9 does:** CPU7/8 one-pass realtime spatial encoders share a coded
+component counter and two bank-ready bits across layers. Before the pinned
+precision bank has been built, rvp9 zeros only the component part of its
+otherwise normal MV-cost table. Rvp9 retains its deliberate quarter-pel wire
+format and uses the pinned qindex-200 split only to model bank availability.
+CPU6 and non-spatial encoders retain their prior behavior.
+
+**Why:** the natural-CBR oracle found an exact CPU8 base-layer NEWMV where all
+non-MV inputs matched but rvp9 charged `4003` MV bits versus libvpx's `555`.
+A direct pinned C oracle proved `4003` is the fully built table and `555` is
+the joint-only cost. Matching the allocation/refresh cadence removes that
+rate discrepancy. Applying it to CPU6 was rejected because its required
+1080p60 S2 top curve regressed from `-0.8125%` to `+4.8148%`.
+
+**Byte-parity impact:** intentional for qualifying early spatial components;
+motion decisions may change. The focused cadence test freezes the component
+schedule and CPU7/8-only scope. External cross-decoder validity remains a
+required gate.
+
+**Compression-efficiency impact:** CPU8/S2 Ducks base/top moves from
+`+3.9986%/-2.7647%` to `+3.0428%/-4.0028%`. CPU7/S3 In To Tree at 1080p60
+moves from `-8.9256%/-10.6873%/+1.1081%` to
+`-9.4188%/-9.4667%/+0.5136%`. CPU7/S2 and CPU8/S3 Ducks controls remain green;
+the excluded CPU6 control is restored exactly.
+
+**Speed impact:** the change updates two small readiness bits per component
+and zeros two fixed MV-cost arrays only during the opening cadence. Plain
+release curve timings are directionally within the existing envelope; final
+speed evidence still requires exact-commit production PGO and repeated runs.
+
+**Future plan:** retain the CPU7/8 scope while motion-predictor state is
+aligned. Reconsider the CPU6 exclusion only if its separate opening-motion
+adapter becomes unnecessary and the complete CPU6 matrix stays green.

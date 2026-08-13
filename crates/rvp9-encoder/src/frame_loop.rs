@@ -1329,6 +1329,9 @@ pub struct StreamEncoder {
     source_edge_scratch: Option<crate::buffer_pool::OwnedYuv420>,
     rate_control: RateControl,
     frame_idx: u32,
+    /// Pinned CPU6--8 refreshes realtime MV-cost tables only every eighth
+    /// coded component. Spatial layers share that cadence across one encoder.
+    spatial_mv_cost_cadence: SpatialMvCostCadence,
     /// GOP topology — the libvpx-faithful golden-frame-group schedule
     /// (`crate::gop::GfGroup`, modelling `GF_GROUP` from
     /// `vp9_firstpass.h:80-100`). Single source of truth for each
@@ -1890,6 +1893,41 @@ pub(crate) struct SpatialSharedState {
     prev_mv_grid_dims: (usize, usize),
     last_frame_was_key: bool,
     last_show_frame: bool,
+    spatial_mv_cost_cadence: SpatialMvCostCadence,
+}
+
+/// Pinned realtime MV-cost table availability across spatial components.
+///
+/// Libvpx allocates the high- and ordinary-precision component tables as zero,
+/// then refreshes only the bank selected by the current frame on coded
+/// component indices where `index & 7 == 1`. The joint table is shared and is
+/// refreshed at the same time. Rvp9 deliberately retains its quarter-pel wire
+/// format, but matching whether the selected component bank has ever been
+/// populated preserves the pinned realtime ranking cadence.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct SpatialMvCostCadence {
+    coded_components: u64,
+    ready: [bool; 2],
+}
+
+impl SpatialMvCostCadence {
+    /// Start one inter component and report whether its pinned precision bank
+    /// still contains the allocator's initial zero component costs.
+    fn begin_inter(&mut self, q_index: u8) -> bool {
+        let bank = usize::from(q_index < 200);
+        if self.coded_components & 7 == 1 {
+            self.ready[bank] = true;
+        }
+        !self.ready[bank]
+    }
+
+    fn finish_component(&mut self) {
+        self.coded_components = self.coded_components.saturating_add(1);
+    }
+}
+
+fn use_spatial_mv_cost_cadence(spatial_svc: bool, speed: i32) -> bool {
+    spatial_svc && (7..=8).contains(&speed)
 }
 
 impl SpatialSharedState {
@@ -1903,6 +1941,7 @@ impl SpatialSharedState {
             prev_mv_grid_dims: (0, 0),
             last_frame_was_key: false,
             last_show_frame: false,
+            spatial_mv_cost_cadence: SpatialMvCostCadence::default(),
         }
     }
 
@@ -2200,6 +2239,7 @@ impl StreamEncoder {
             )),
             rate_control,
             frame_idx: 0,
+            spatial_mv_cost_cadence: SpatialMvCostCadence::default(),
             gf_group,
             // W1.5(vpxenc parity, A19): source-frame lookahead.
             // Depth = `config.lag_in_frames` (libvpx
@@ -2341,6 +2381,10 @@ impl StreamEncoder {
         core::mem::swap(&mut self.prev_mv_grid_dims, &mut shared.prev_mv_grid_dims);
         core::mem::swap(&mut self.last_frame_was_key, &mut shared.last_frame_was_key);
         core::mem::swap(&mut self.last_show_frame, &mut shared.last_show_frame);
+        core::mem::swap(
+            &mut self.spatial_mv_cost_cadence,
+            &mut shared.spatial_mv_cost_cadence,
+        );
     }
 
     /// Encode one tight I420 spatial component with coordinator-owned frame
@@ -3170,6 +3214,9 @@ impl StreamEncoder {
             spatial_component,
         );
         self.frame_idx = self.frame_idx.saturating_add(1);
+        if spatial_component {
+            self.spatial_mv_cost_cadence.finish_component();
+        }
 
         // W2.1(vpxenc parity, A5 P0): capture this frame's source as
         // the next frame's Last_Source. libvpx
@@ -4138,10 +4185,18 @@ impl StreamEncoder {
             height: golden_slot.height,
         };
         let frame_context = &self.frame_context;
-        let frame_mv_costs = rvp9_core::cost::mv_cost::build_nmv_cost_table(
+        let use_unbuilt_spatial_mv_component_costs =
+            use_spatial_mv_cost_cadence(self.spatial_svc, self.config.speed)
+                && self.spatial_mv_cost_cadence.begin_inter(q_index);
+        let mut frame_mv_costs = rvp9_core::cost::mv_cost::build_nmv_cost_table(
             &frame_context.nmvc,
             crate::frame_allow_hp(q_index),
         );
+        if use_unbuilt_spatial_mv_component_costs {
+            for component in &mut frame_mv_costs.component_cost {
+                component.cost.fill(0);
+            }
+        }
         let frame_mv_costs_ref = &frame_mv_costs;
         let speed = self.config.speed;
         let temporal_layers = self.config.temporal_layers;
@@ -7700,6 +7755,33 @@ mod tests {
         assert_eq!(control(0x01).spatial_layer_id(), 0);
         assert_eq!(control(0x02).spatial_layer_id(), 1);
         assert_eq!(control(0x04).spatial_layer_id(), 2);
+    }
+
+    #[test]
+    fn spatial_mv_cost_cadence_preserves_the_unbuilt_precision_bank() {
+        assert!(!use_spatial_mv_cost_cadence(false, 7));
+        assert!(!use_spatial_mv_cost_cadence(true, 6));
+        assert!(use_spatial_mv_cost_cadence(true, 7));
+        assert!(use_spatial_mv_cost_cadence(true, 8));
+        assert!(!use_spatial_mv_cost_cadence(true, 9));
+
+        let mut cadence = SpatialMvCostCadence::default();
+
+        cadence.finish_component(); // Base keyframe: coded component 0.
+        assert!(!cadence.begin_inter(169)); // Component 1 builds the HP bank.
+        cadence.finish_component();
+
+        for component in 2..=8 {
+            assert!(
+                cadence.begin_inter(224),
+                "non-HP component costs must remain absent at component {component}"
+            );
+            cadence.finish_component();
+        }
+
+        assert!(!cadence.begin_inter(224)); // Component 9 builds the non-HP bank.
+        cadence.finish_component();
+        assert!(!cadence.begin_inter(169)); // The earlier HP bank remains available.
     }
 
     #[test]
