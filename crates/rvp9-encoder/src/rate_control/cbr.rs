@@ -709,8 +709,21 @@ pub(super) fn get_kf_active_quality(q: i32) -> i32 {
 /// Buffer-driven active worst-quality for inter frames. Mirrors
 /// `calc_active_worst_quality_one_pass_cbr` (`vp9_ratectrl.c:931-1000`)
 /// for the non-SVC, non-screen-content path.
-fn active_worst_quality_inter(rc: &RateControl) -> i32 {
-    active_worst_quality(rc, i32::from(rc.avg_frame_qindex_inter))
+fn active_worst_quality_inter(rc: &RateControl, spatial_base_key_q: Option<u8>) -> i32 {
+    let ambient_qp = spatial_base_key_q.map_or_else(
+        || i32::from(rc.avg_frame_qindex_inter),
+        |base_key_q| i32::from(rc.avg_frame_qindex_inter.min(base_key_q)),
+    );
+    let initial_active_worst = if spatial_base_key_q.is_some() {
+        // Pinned spatial SVC gives enhancement components in a key access
+        // unit the base layer's freshly coded keyframe Q as their ambient
+        // ceiling (`calc_active_worst_quality_one_pass_cbr`). Its 9/8 scale
+        // is deliberately tighter than the ordinary 5/4 ambient scale.
+        rc.worst_quality.min((ambient_qp * 9) >> 3)
+    } else {
+        rc.worst_quality.min((ambient_qp * 5) >> 2)
+    };
+    active_worst_quality_from_initial(rc, ambient_qp, initial_active_worst)
 }
 
 /// Buffer-driven active worst-quality, parameterised on the ambient Q
@@ -720,9 +733,16 @@ fn active_worst_quality_inter(rc: &RateControl) -> i32 {
 /// keyframe paths use this single buffer model — libvpx computes
 /// `active_worst_quality` once per frame from the same function.
 fn active_worst_quality(rc: &RateControl, ambient_qp: i32) -> i32 {
-    let critical_level = rc.optimal_buffer_level >> 3;
     let ambient_aw = (ambient_qp * 5) >> 2;
-    let mut active_worst = rc.worst_quality.min(ambient_aw);
+    active_worst_quality_from_initial(rc, ambient_qp, rc.worst_quality.min(ambient_aw))
+}
+
+fn active_worst_quality_from_initial(
+    rc: &RateControl,
+    ambient_qp: i32,
+    mut active_worst: i32,
+) -> i32 {
+    let critical_level = rc.optimal_buffer_level >> 3;
 
     if rc.buffer_level > rc.optimal_buffer_level {
         // Buffer above optimal: bring active_worst DOWN.
@@ -771,7 +791,7 @@ pub(super) fn pick_q_and_bounds_with_model(
     frame_kind: FrameKind,
     model: Option<CyclicRefreshRateModel>,
 ) -> (u8, u8, u8) {
-    pick_q_and_bounds_with_model_and_target(rc, frame_kind, model, None)
+    pick_q_and_bounds_with_model_and_target(rc, frame_kind, model, None, None)
 }
 
 pub(super) fn pick_q_and_bounds_with_model_and_target(
@@ -779,6 +799,7 @@ pub(super) fn pick_q_and_bounds_with_model_and_target(
     frame_kind: FrameKind,
     model: Option<CyclicRefreshRateModel>,
     target_override: Option<u32>,
+    spatial_base_key_q: Option<u8>,
 ) -> (u8, u8, u8) {
     // 1. Per-frame target bits.
     let target_bits = match frame_kind {
@@ -977,7 +998,7 @@ pub(super) fn pick_q_and_bounds_with_model_and_target(
             (best.min(worst), worst)
         }
         FrameKind::Inter | FrameKind::Golden => {
-            let worst = active_worst_quality_inter(rc);
+            let worst = active_worst_quality_inter(rc, spatial_base_key_q);
             // libvpx `rc_pick_q_and_bounds_one_pass_cbr:1057-1068`:
             //   if current_video_frame > 1:  ambient = avg_frame_qindex[INTER]
             //   else (stream's first inter): ambient = avg_frame_qindex[KEY]
@@ -1395,8 +1416,13 @@ mod tests {
         let target = calc_pframe_target_size_with_average(&rc, 20_000);
         assert_eq!(target, 20_000);
 
-        let _ =
-            pick_q_and_bounds_with_model_and_target(&mut rc, FrameKind::Inter, None, Some(target));
+        let _ = pick_q_and_bounds_with_model_and_target(
+            &mut rc,
+            FrameKind::Inter,
+            None,
+            Some(target),
+            None,
+        );
         assert_eq!(rc.this_frame_target, 20_000);
         assert_ne!(rc.this_frame_target, rc.avg_frame_bandwidth);
     }

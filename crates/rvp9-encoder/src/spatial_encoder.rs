@@ -269,7 +269,14 @@ impl SpatialEncoder {
             .zip(&sources)
             .enumerate()
         {
-            let control = spatial_frame_control(layer_index, key_access_unit);
+            let base_key_q = key_access_unit
+                .then(|| {
+                    layers
+                        .first()
+                        .map(|layer: &SpatialEncodedLayer| layer.q_index)
+                })
+                .flatten();
+            let control = spatial_frame_control(layer_index, key_access_unit, base_key_q);
             let view = YuvFrameRef {
                 y: &input.y,
                 u: &input.u,
@@ -303,13 +310,18 @@ impl SpatialEncoder {
     }
 }
 
-fn spatial_frame_control(layer_index: usize, key_access_unit: bool) -> SpatialFrameControl {
+fn spatial_frame_control(
+    layer_index: usize,
+    key_access_unit: bool,
+    base_key_q: Option<u8>,
+) -> SpatialFrameControl {
     match (layer_index, key_access_unit) {
         (0, true) => SpatialFrameControl::Key,
         (0, false) => SpatialFrameControl::Inter {
             refresh_frame_flags: 0x01,
             ref_frame_indices: [0, 0, 0],
             allow_golden_ref: false,
+            base_key_q: None,
         },
         (_, true) => {
             let map_index = layer_index as u8;
@@ -317,6 +329,7 @@ fn spatial_frame_control(layer_index: usize, key_access_unit: bool) -> SpatialFr
                 refresh_frame_flags: 1 << map_index,
                 ref_frame_indices: [map_index - 1, map_index, map_index - 1],
                 allow_golden_ref: false,
+                base_key_q,
             }
         }
         (_, false) => {
@@ -325,6 +338,7 @@ fn spatial_frame_control(layer_index: usize, key_access_unit: bool) -> SpatialFr
                 refresh_frame_flags: 1 << map_index,
                 ref_frame_indices: [map_index, map_index - 1, map_index],
                 allow_golden_ref: true,
+                base_key_q: None,
             }
         }
     }
@@ -610,6 +624,41 @@ mod tests {
                 (1_600_000, 800_000, 960_000),
             ]
         );
+    }
+
+    #[test]
+    fn first_spatial_enhancement_components_use_base_key_q_ceiling() {
+        let width = 1280usize;
+        let height = 720usize;
+        let mut template = EncoderConfig::new(width as u32, height as u32);
+        template.target_bitrate_bps = 2_100_000;
+        template.speed = 8;
+        template.min_qindex = 8;
+        template.max_qindex = 224;
+        let mut encoder = SpatialEncoder::new(
+            template,
+            SpatialSvcConfig {
+                number_spatial_layers: 3,
+                inter_layer_pred: InterLayerPred::On,
+            },
+        )
+        .unwrap();
+        let (y, u, v) = source(width, height);
+        let access_unit = encoder
+            .encode_access_unit(&YuvFrameRef {
+                y: &y,
+                u: &u,
+                v: &v,
+                y_stride: width,
+                u_stride: width / 2,
+                v_stride: width / 2,
+            })
+            .unwrap();
+
+        assert_eq!(access_unit.layers.len(), 3);
+        assert_eq!(access_unit.layers[0].q_index, 138);
+        assert_eq!(access_unit.layers[1].q_index, 148);
+        assert_eq!(access_unit.layers[2].q_index, 148);
     }
 
     fn decoded_i420(frame: &rvp9_core::frame::FrameBuf) -> (Vec<u8>, Vec<u8>, Vec<u8>) {

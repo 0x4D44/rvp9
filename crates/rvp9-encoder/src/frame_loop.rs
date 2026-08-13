@@ -1785,6 +1785,9 @@ pub(crate) enum SpatialFrameControl {
         ref_frame_indices: [u8; 3],
         /// Whether the picker may use the GOLDEN reference.
         allow_golden_ref: bool,
+        /// Fresh base-layer keyframe Q for enhancement components in this
+        /// key access unit. Pinned CBR uses it to tighten active-worst Q.
+        base_key_q: Option<u8>,
     },
 }
 
@@ -1803,6 +1806,7 @@ impl SpatialFrameControl {
                 refresh_frame_flags,
                 ref_frame_indices,
                 allow_golden_ref,
+                ..
             } => Some(SvcFrameDecision {
                 temporal_layer_id: 0,
                 refresh_frame_flags,
@@ -2672,6 +2676,15 @@ impl StreamEncoder {
             self.svc_assign_layer(frame_kind);
         }
         let temporal_svc_inter_target = self.svc_prepare_rate_control(rc_frame_kind);
+        let spatial_component = spatial_control.is_some();
+        if spatial_component {
+            // Pinned one-pass SVC credits this layer's per-frame bandwidth
+            // before Q selection, then debits only the coded size after the
+            // component. The ordinary single-layer path folds both into the
+            // postencode update, which leaves the same final buffer but gives
+            // spatial components a stale pre-credit fullness while picking Q.
+            self.rate_control.svc_preencode_buffer_update();
+        }
 
         // W2.1(vpxenc parity, A5 P0): update per-frame pre-analysis
         // gates. Mirrors libvpx `vp9_encoder.c:3984` —
@@ -2723,6 +2736,10 @@ impl StreamEncoder {
             rc_frame_kind,
             aq_rate_model,
             temporal_svc_inter_target,
+            spatial_control.and_then(|control| match control {
+                SpatialFrameControl::Key => None,
+                SpatialFrameControl::Inter { base_key_q, .. } => base_key_q,
+            }),
         );
         // -- E8 DIAG: inter active_worst / buffer-state trace --
         // Env-gated; captured immediately after the pick so it reflects
@@ -3065,7 +3082,13 @@ impl StreamEncoder {
         // Post-encode rate-control update + frame counter advance. Temporal
         // SVC saves the active layer and debits every higher cumulative
         // layer after the common feedback update.
-        self.svc_finalize_rate_control(actual_bits, rc_frame_kind, aq_postencode_model, q_index);
+        self.svc_finalize_rate_control(
+            actual_bits,
+            rc_frame_kind,
+            aq_postencode_model,
+            q_index,
+            spatial_component,
+        );
         self.frame_idx = self.frame_idx.saturating_add(1);
 
         // W2.1(vpxenc parity, A5 P0): capture this frame's source as
@@ -3578,10 +3601,16 @@ impl StreamEncoder {
         frame_kind: RcFrameKind,
         model: Option<CyclicRefreshRateModel>,
         q_index: u8,
+        spatial_component: bool,
     ) {
         let Some(svc) = self.svc.as_mut() else {
-            self.rate_control
-                .postencode_update_with_model(actual_bits, frame_kind, model);
+            if spatial_component {
+                self.rate_control
+                    .postencode_update_svc_with_model(actual_bits, frame_kind, model);
+            } else {
+                self.rate_control
+                    .postencode_update_with_model(actual_bits, frame_kind, model);
+            }
             self.rate_control.advance_frame();
             return;
         };

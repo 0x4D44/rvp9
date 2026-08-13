@@ -450,7 +450,7 @@ impl RateControl {
         frame_kind: FrameKind,
         model: Option<super::CyclicRefreshRateModel>,
     ) -> (u8, u8, u8) {
-        self.pick_q_and_bounds_with_model_and_target(frame_kind, model, None)
+        self.pick_q_and_bounds_with_model_and_target(frame_kind, model, None, None)
     }
 
     pub(crate) fn pick_q_and_bounds_with_model_and_target(
@@ -458,6 +458,7 @@ impl RateControl {
         frame_kind: FrameKind,
         model: Option<super::CyclicRefreshRateModel>,
         svc: Option<super::TemporalSvcRateControl>,
+        spatial_base_key_q: Option<u8>,
     ) -> (u8, u8, u8) {
         use super::RcMode;
         match self.config.rc_mode {
@@ -466,6 +467,7 @@ impl RateControl {
                 frame_kind,
                 model,
                 svc.map(|input| input.target_bits),
+                spatial_base_key_q,
             ),
             // One-pass VBR. Port of libvpx
             // `rc_pick_q_and_bounds_one_pass_vbr`

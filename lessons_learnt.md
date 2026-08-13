@@ -5,6 +5,7 @@ Distilled, non-obvious gotchas future sessions need — dated one-liners.
 Durable project facts/conventions belong in `CLAUDE.md` / `AGENTS.md`, not here.
 Hard cap: 20 entries.
 
+- 2026-08-13: Spatial CBR credits buffers before Q pick and caps enhancement Q from the base key (`cbr.rs:active_worst_quality_inter`).
 - 2026-08-13: Keep visible frame height separate from padded SB storage height (`lib.rs:InterReconLayout::full`).
 - 2026-08-13: Gate unusable spatial refs before scaling refreshed stale slots (`frame_loop.rs:encode_inter_internal`).
 - 2026-08-13: Partial KF SB rows need real MI modes, and tight SB64 analysis needs edge extension (`loopfilter.rs:build_kf_mi_grid_for_lf`).
