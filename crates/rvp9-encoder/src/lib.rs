@@ -5965,6 +5965,7 @@ pub(crate) struct InterEncodeEnv {
     a4_split_stats: bool,
     diag_intpro: bool,
     p8_stats: bool,
+    f02_force_ml_partition: bool,
     compact_recon_rows: Option<bool>,
     compact_row_workers: Option<bool>,
     rt_output_backed_prediction: Option<bool>,
@@ -6021,6 +6022,7 @@ impl InterEncodeEnv {
             a4_split_stats: std::env::var_os("RVP9_A4_SPLIT_STATS").is_some(),
             diag_intpro: std::env::var("RVP9_DIAG_INTPRO").is_ok(),
             p8_stats: std::env::var_os("RVP9_P8_STATS").is_some(),
+            f02_force_ml_partition: bool_override("RVP9_F02_FORCE_ML_PARTITION") == Some(true),
             compact_recon_rows: bool_override("RVP9_COMPACT_RECON_ROWS"),
             compact_row_workers: bool_override("RVP9_COMPACT_ROW_WORKERS"),
             rt_output_backed_prediction: bool_override("RVP9_RT_OUTPUT_BACKED_PRED"),
@@ -6085,6 +6087,18 @@ impl InterEncodeEnv {
     /// remains available for differential diagnostics.
     fn skip_integer_mv_filter_search(&self) -> bool {
         self.flag_or(self.rt_skip_intmv_filter_search, true)
+    }
+
+    /// Replace the product partition hints with the pinned low-resolution ML
+    /// tree only while the F02 differential oracle is active.
+    fn f02_force_ml_partition_enabled(
+        &self,
+        f02_enabled: bool,
+        speed: i32,
+        width: usize,
+        height: usize,
+    ) -> bool {
+        self.f02_force_ml_partition && f02_enabled && speed == 8 && width <= 352 && height <= 288
     }
 
     /// Use libvpx's chessboard filter-search proxy throughout realtime
@@ -6917,6 +6931,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // when both are disabled (the default).
     let s2_xtab_enabled = env.s2_xtab;
     let f02_oracle_enabled = crate::f02_oracle::is_enabled();
+    let f02_force_ml_partition_enabled =
+        env.f02_force_ml_partition_enabled(f02_oracle_enabled, speed, w, h);
     rvp9_core::mode_decision::inter::candidate_trace::reset(f02_oracle_enabled);
     // win counts indexed [ZERO, NEAREST, NEAR, NEW].
     // A2.foreman - In-progress mi_grid for spatial MV-ref propagation
@@ -7314,10 +7330,11 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                 // six-feature ML partition controller. Rebuild the same single
                 // LAST/bilinear estimated predictor and retain exact node
                 // inputs without changing the production partition policy.
-                if crate::f02_oracle::is_enabled() && speed == 8 && w.saturating_mul(h) <= 352 * 288
-                {
+                let mut f02_ml_partition_decision = None;
+                if f02_oracle_enabled && speed == 8 && w <= 352 && h <= 288 {
                     use crate::ml_partition::{
-                        MlVarPartitionTreeInput, trace_ml_var_partition_tree,
+                        MlVarPartitionTreeInput, choose_ml_var_partition_tree,
+                        trace_ml_var_partition_tree,
                     };
                     use rvp9_core::bitstream::frame::InterpFilter;
 
@@ -7368,6 +7385,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         pred: &predictor_block,
                         pred_stride: 64,
                     };
+                    if f02_force_ml_partition_enabled {
+                        f02_ml_partition_decision =
+                            Some(choose_ml_var_partition_tree(&model_input));
+                    }
                     for trace in trace_ml_var_partition_tree(&model_input) {
                         let node_mi_row = sb_row * 8 + trace.row_px / 8;
                         let node_mi_col = sb_col * 8 + trace.col_px / 8;
@@ -7700,6 +7721,47 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             picked_tx_size: rvp9_core::block::max_txsize(leaf.block_size),
                         });
                     });
+                    used_exact_vbp_tree = true;
+                }
+
+                // Diagnostic-only topology isolation. The model inputs and
+                // decisions above are already exact against pinned libvpx; use
+                // the owned tree here so the normal picker can be compared on
+                // identical leaves without changing the production default.
+                if let Some(mut ml_decision) = f02_ml_partition_decision {
+                    use rvp9_core::bitstream::frame::InterpFilter;
+                    use rvp9_core::mode_decision::partition::visit_fixed_tree_leaves;
+
+                    let visible_mi_cols = (w - sb_px_x).min(64).div_ceil(8);
+                    let visible_mi_rows = (h - sb_px_y).min(64).div_ceil(8);
+                    ml_decision = constrain_fixed_tree_to_visible_leaves(
+                        &ml_decision,
+                        visible_mi_cols,
+                        visible_mi_rows,
+                    );
+                    let segment_ids = segment_ids_for_hint_cells(&sb_partitions[sb_idx]);
+                    sb_partitions[sb_idx].clear();
+                    visit_fixed_tree_leaves(&ml_decision, |leaf| {
+                        if leaf.row_8x8 >= visible_mi_rows || leaf.col_8x8 >= visible_mi_cols {
+                            return;
+                        }
+                        sb_partitions[sb_idx].push(InterPartitionLeafDesc {
+                            mi_row_in_sb: leaf.row_8x8,
+                            mi_col_in_sb: leaf.col_8x8,
+                            leaf_bsize: leaf.block_size,
+                            picked_mode: InterMode::ZeroMv,
+                            picked_mv: Mv::ZERO,
+                            skip: true,
+                            segment_id: segment_ids[leaf.row_8x8 * 8 + leaf.col_8x8],
+                            picked_ref_frame: RefFrame::LastFrame,
+                            picked_interp_filter: InterpFilter::EightTap,
+                            picked_intra_mode: None,
+                            picked_ref_frame2: RefFrame::NoRefFrame,
+                            picked_mv2: Mv::ZERO,
+                            picked_tx_size: rvp9_core::block::max_txsize(leaf.block_size),
+                        });
+                    });
+                    exact_variance_low = [false; 25];
                     used_exact_vbp_tree = true;
                 }
 
@@ -16382,6 +16444,30 @@ mod tests {
             ContentTier::Default,
             false,
         ));
+        // SAFETY: the mutex above serialises all encoder environment tests.
+        unsafe { std::env::remove_var(key) };
+    }
+
+    #[test]
+    fn forced_ml_partition_tree_is_diagnostic_and_low_resolution_scoped() {
+        let _guard = env_test_mutex();
+        let key = "RVP9_F02_FORCE_ML_PARTITION";
+        // SAFETY: the mutex above serialises all encoder environment tests.
+        unsafe { std::env::remove_var(key) };
+        assert!(!InterEncodeEnv::capture().f02_force_ml_partition_enabled(true, 8, 320, 180));
+
+        // SAFETY: the mutex above serialises all encoder environment tests.
+        unsafe { std::env::set_var(key, "1") };
+        let env = InterEncodeEnv::capture();
+        assert!(!env.f02_force_ml_partition_enabled(false, 8, 320, 180));
+        assert!(!env.f02_force_ml_partition_enabled(true, 7, 320, 180));
+        assert!(!env.f02_force_ml_partition_enabled(true, 8, 640, 100));
+        assert!(!env.f02_force_ml_partition_enabled(true, 8, 640, 360));
+        assert!(env.f02_force_ml_partition_enabled(true, 8, 352, 288));
+
+        // SAFETY: the mutex above serialises all encoder environment tests.
+        unsafe { std::env::set_var(key, "0") };
+        assert!(!InterEncodeEnv::capture().f02_force_ml_partition_enabled(true, 8, 320, 180));
         // SAFETY: the mutex above serialises all encoder environment tests.
         unsafe { std::env::remove_var(key) };
     }
