@@ -374,8 +374,16 @@ fn a10_byte_identity_pre_vs_post_refactor() {
     // reproduce these bytes, while the sibling reference-pool decode oracle
     // remains green. The partition policy stays pinned above, so this golden
     // still isolates the pool implementation from later partition changes.
-    const GOLDEN_HASH: u64 = 0x3d6d_2810_a35c_d36d;
-    const GOLDEN_LEN: usize = 7078;
+    //
+    // Re-captured again (2026-08-14) after `e5a57f0a` deliberately enabled
+    // libvpx-style unrestricted MV borders at every realtime v1 resolution.
+    // An isolated bisect identified that commit as the first byte change. Two
+    // independent current-tree runs reproduce these bytes, and the sibling
+    // reference-pool decoder oracle remains green. The policy's own focused
+    // test pins the newly resolution-independent eligibility rule, so this
+    // golden continues to isolate the pool implementation.
+    const GOLDEN_HASH: u64 = 0x2079_3807_d02f_6e58;
+    const GOLDEN_LEN: usize = 6446;
 
     let stream = encode_fixed_clip();
     let hash = fnv1a(&stream);
