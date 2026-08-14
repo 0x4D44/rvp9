@@ -752,9 +752,19 @@ then a final quiet-host comparison before Stage 4e begins.
 4. Bitstream encoding of spatial layer metadata.
 
 **Exit criteria:**
-- [ ] Decoder extracts each spatial layer correctly.
-- [ ] BD-rate per layer within 0.5% of libvpx.
-- [ ] All target res/fps real-time gates pass with full SVC config.
+- [x] Decoder extracts each spatial layer correctly.
+- [x] BD-rate per layer within 0.5% of libvpx.
+- [x] All target res/fps real-time gates pass with full SVC config.
+
+**Status (2026-08-14, spatial acceptance matrix):** The exact committed
+AArch64 production-PGO encoder passes all 48 required two-/three-layer curves
+and all 120 per-layer BD-rate gates; the worst result is `+0.488431%`.
+Every one of 1,008 full and extracted streams decodes under rvp9-decoder,
+pinned vpxdec, and FFmpeg, and rvp9-decoder/vpxdec output is byte-identical.
+All 18 corpus relative-speed groups pass at `0.80308x..1.03943x` vpxenc, and
+all 48 five-run latency rows pass the 720p30, 1080p30, and 1080p60 p50/p99
+budgets. Exact evidence and artifact hashes are recorded in
+`wrk_journals/2026.08.12 - JRN - spatial SVC stage.md` Unit S7.
 
 **Estimated effort:** 6–8 weeks.
 
