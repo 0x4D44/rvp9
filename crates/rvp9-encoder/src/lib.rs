@@ -6205,15 +6205,57 @@ fn realtime_force_max_emit_tx(
     override_value.unwrap_or(large_frame_recovery && !exact_vbp_tree)
 }
 
-/// Reuse the realtime picker's transform on the approximate partition path and
-/// at CPU8. CPU7 exact-tree frames retain the measured quality-critical
-/// TX8/TX16 redecision; the explicit override remains authoritative.
+/// Reuse the realtime picker's transform on the approximate partition path,
+/// at CPU8, and on 720p three-layer spatial enhancement components. CPU7
+/// exact-tree frames retain the measured quality-critical TX8/TX16 redecision
+/// for single-layer, temporal-SVC, two-layer spatial SVC, spatial base, and
+/// higher-resolution components; the explicit override remains authoritative.
 fn realtime_emit_tx_rd_enabled(
     override_value: Option<bool>,
     exact_vbp_tree: bool,
     speed: i32,
+    spatial_720p_three_layer_enhancement: bool,
 ) -> bool {
-    override_value.unwrap_or(exact_vbp_tree && speed < 8)
+    override_value.unwrap_or(exact_vbp_tree && speed < 8 && !spatial_720p_three_layer_enhancement)
+}
+
+fn is_720p_three_layer_spatial_component(
+    three_layer_component: bool,
+    first_enhancement_component: bool,
+    width: usize,
+    height: usize,
+) -> bool {
+    three_layer_component
+        && if first_enhancement_component {
+            width <= 640 && height <= 360
+        } else {
+            width <= 1280 && height <= 720
+        }
+}
+
+/// Replace CPU7 spatial enhancement TX8/TX16 transform search with the
+/// picker's already-computed residual statistics. The exact selector favors
+/// TX16 once SSE exceeds variance by at least 12.5%; the other leaf
+/// classes keep the picker's transform. This preserves the selector on the
+/// small spatial base component while removing two full transform/quant walks
+/// from each eligible enhancement leaf.
+fn spatial_enhancement_model_luma_tx_size(
+    enabled: bool,
+    bsize: BlockSize,
+    picked_tx_size: TxSize,
+    residual_var: u32,
+    residual_sse: u32,
+) -> TxSize {
+    if enabled
+        && picked_tx_size == TxSize::Tx8x8
+        && rvp9_core::block::max_txsize(bsize) == TxSize::Tx16x16
+        && residual_var != 0
+        && u64::from(residual_sse) * 8 >= u64::from(residual_var) * 9
+    {
+        TxSize::Tx16x16
+    } else {
+        picked_tx_size
+    }
 }
 
 /// Retain the final realtime luma prediction where measurement shows that the
@@ -7436,8 +7478,20 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         rt_large_recovery,
         exact_vbp_tree_enabled,
     );
-    let rt_emit_tx_rd =
-        realtime_emit_tx_rd_enabled(env.rt_emit_tx_rd, exact_vbp_tree_enabled, speed);
+    let spatial_720p_three_layer_enhancement = spatial_component
+        && !spatial_base_component
+        && is_720p_three_layer_spatial_component(
+            spatial_three_layer_component,
+            spatial_first_enhancement_component,
+            w,
+            h,
+        );
+    let rt_emit_tx_rd = realtime_emit_tx_rd_enabled(
+        env.rt_emit_tx_rd,
+        exact_vbp_tree_enabled,
+        speed,
+        spatial_720p_three_layer_enhancement,
+    );
     let rt_emit_tx4 =
         realtime_tx4_candidate_enabled(env.rt_emit_tx4, speed, temporal_layers, spatial_component);
     let rt_output_backed_prediction = env.flag_or(
@@ -10882,6 +10936,15 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             rt_emit_max_tx,
                             leaf_bsize,
                             pick.picked_tx_size,
+                        );
+                        chosen_luma_tx = spatial_enhancement_model_luma_tx_size(
+                            env.rt_emit_tx_rd.is_none()
+                                && speed == 7
+                                && spatial_720p_three_layer_enhancement,
+                            leaf_bsize,
+                            chosen_luma_tx,
+                            pick.var_y,
+                            pick.sse_y,
                         );
                         for plane in 0..3 {
                             let ss_x = F5_SUBSAMPLING_X[plane];
@@ -17601,12 +17664,64 @@ mod tests {
     }
 
     #[test]
-    fn realtime_tx_redecision_scopes_tx4_by_cpu_and_temporal_topology() {
-        assert!(!realtime_emit_tx_rd_enabled(None, false, 7));
-        assert!(realtime_emit_tx_rd_enabled(None, true, 7));
-        assert!(!realtime_emit_tx_rd_enabled(None, true, 8));
-        assert!(realtime_emit_tx_rd_enabled(Some(true), false, 8));
-        assert!(!realtime_emit_tx_rd_enabled(Some(false), true, 7));
+    fn realtime_tx_redecision_scopes_by_preset_and_spatial_topology() {
+        assert!(!is_720p_three_layer_spatial_component(
+            false, false, 1280, 720
+        ));
+        assert!(is_720p_three_layer_spatial_component(true, true, 640, 360));
+        assert!(!is_720p_three_layer_spatial_component(true, true, 960, 540));
+        assert!(is_720p_three_layer_spatial_component(
+            true, false, 1280, 720
+        ));
+        assert!(!is_720p_three_layer_spatial_component(
+            true, false, 1920, 1080
+        ));
+        assert!(!realtime_emit_tx_rd_enabled(None, false, 7, false));
+        assert!(realtime_emit_tx_rd_enabled(None, true, 7, false));
+        assert!(!realtime_emit_tx_rd_enabled(None, true, 7, true));
+        assert!(!realtime_emit_tx_rd_enabled(None, true, 8, false));
+        assert!(realtime_emit_tx_rd_enabled(Some(true), false, 8, true));
+        assert!(!realtime_emit_tx_rd_enabled(Some(false), true, 7, false));
+        assert_eq!(
+            spatial_enhancement_model_luma_tx_size(
+                true,
+                BlockSize::Block16x16,
+                TxSize::Tx8x8,
+                80,
+                90,
+            ),
+            TxSize::Tx16x16,
+        );
+        assert_eq!(
+            spatial_enhancement_model_luma_tx_size(
+                true,
+                BlockSize::Block16x16,
+                TxSize::Tx8x8,
+                80,
+                89,
+            ),
+            TxSize::Tx8x8,
+        );
+        assert_eq!(
+            spatial_enhancement_model_luma_tx_size(
+                false,
+                BlockSize::Block16x16,
+                TxSize::Tx8x8,
+                80,
+                90,
+            ),
+            TxSize::Tx8x8,
+        );
+        assert_eq!(
+            spatial_enhancement_model_luma_tx_size(
+                true,
+                BlockSize::Block32x32,
+                TxSize::Tx8x8,
+                80,
+                90,
+            ),
+            TxSize::Tx8x8,
+        );
         assert!(should_redecide_inter_luma_tx(
             false,
             true,

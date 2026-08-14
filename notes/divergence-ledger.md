@@ -6426,3 +6426,45 @@ PGO and quiet-host repeated medians must pass before this stage closes.
 full CPU6--8 S2/S3 quality matrix, the `1.05x` relative speed gate, and all
 absolute 720p30/1080p30/1080p60 budgets. Broaden toward literal CPU6 only if
 a new corpus-wide Pareto result justifies the extra work.
+
+### 2026-08-14 — Model enhancement TX16 only for CPU7 720p three-layer spatial CBR
+
+**Where:** `rvp9_encoder::realtime_emit_tx_rd_enabled`,
+`rvp9_encoder::is_720p_three_layer_spatial_component`, and
+`rvp9_encoder::spatial_enhancement_model_luma_tx_size`; libvpx counterpart:
+`vp9/encoder/vp9_pickmode.c::block_yrd` and final block tokenization.
+
+**What libvpx does:** realtime spatial encoding carries the picker's selected
+transform through final block emission. It does not run rvp9's extra exact
+TX8/TX16 transform-and-quantization comparison at that boundary.
+
+**What rvp9 does:** CPU7 exact-partition paths keep the extra selector except
+for 720p three-layer spatial enhancement components. Those components retain
+the picker's TX8 choice unless the leaf supports TX16 and its already-measured
+residual satisfies `SSE * 8 >= variance * 9`; then they emit TX16. The base
+component, two-layer SVC, 1080p, CPU6, CPU8, single-layer, temporal SVC, and
+explicit diagnostic overrides retain their previous behavior.
+
+**Why:** matched profiles measured about 1.4 ms/frame in the two enhancement
+selectors on CPU7 Ducks Take Off. Removing them without a replacement failed
+the top quality gate at `+0.5952%`. The measured residual rule closes that
+layer at `+0.4384%`; the other affected 720p curves remain between `-3.7947%`
+and `-0.1629%`. Two repeated production-PGO speed gates improve the CPU7 S3
+corpus from `1.1162x` to `1.0295x` and `1.0356x` paired geomean.
+
+**Byte-parity impact:** intentional only on CPU7 720p three-layer spatial-CBR
+enhancement inter pictures. All 72 affected full and extracted streams decode
+successfully through rvp9-decoder, pinned vpxdec, and FFmpeg. Rvp9-decoder and
+pinned vpxdec produce byte-identical I420 for every stream.
+
+**Compression-efficiency impact:** all nine affected per-layer BD-rate gates
+pass `+0.5%`; Ducks top is limiting at `+0.4384%`. Two-layer and 1080p controls
+remain byte-identical to the accepted exact-selector path.
+
+**Speed impact:** final exact-source production-PGO paired geomean is
+`1.0356x` vpxenc for CPU7 720p30 S3, inside the `1.05x` gate. CPU8 is
+unchanged and remains open at `1.0596x`.
+
+**Future plan:** retain this narrow policy while profiling the separate CPU8
+gap. Re-run the complete spatial quality, absolute-latency, and decoder matrix
+on the final integrated tree before release.
