@@ -5,7 +5,7 @@ An open-source Rust implementation of the VP9 video codec, following the
 decoder. RVP9 targets production-grade real-time encoding for WebRTC and
 livestreaming.
 
-> **Status:** `v0.2.0-alpha.1` is an 8-bit real-time preview. It is ready for
+> **Status:** `v0.2.0-alpha.2` is an 8-bit real-time preview. It is ready for
 > evaluation, not a production-parity release. See [`PLAN.md`](./PLAN.md) for
 > the remaining work and [`notes/divergence-ledger.md`](./notes/divergence-ledger.md)
 > for deliberate departures from libvpx.
@@ -17,14 +17,13 @@ livestreaming.
 ## Alpha scope
 
 The alpha encoder supports one-pass real-time VP9 at CPU-used 6, 7, and 8,
-with VBR or CBR rate control, cyclic-refresh AQ mode 3, denoising, and two- or
-three-layer temporal SVC. The qualified targets are 720p30, 1080p30, and
-1080p60. It emits 8-bit profile-0 IVF streams.
+with VBR or CBR rate control, cyclic-refresh AQ mode 3, denoising, two- or
+three-layer temporal SVC, and two- or three-layer spatial SVC. The qualified
+targets are 720p30, 1080p30, and 1080p60. It emits 8-bit profile-0 IVF streams.
 
-The published alpha decoder passed 4,796 displayed frames across 306 of the
-307 pinned official vector files. Current post-alpha source also passes the
-spatial-SVC vector: all 4,816 displayed frames across all 307 vectors pass
-with native and forced-scalar dispatch and with one- and two-thread decoding.
+The alpha decoder passes all 4,816 displayed frames across all 307 pinned
+official vectors with native and forced-scalar dispatch and with one- and
+two-thread decoding.
 
 Every stream in the 32-row encoder qualification matrix decodes byte-exactly
 under `rvp9dec`, pinned libvpx `vpxdec`, and ffmpeg. Run the same gates with:
@@ -39,9 +38,10 @@ The reverse 24-row gate uses pinned `vpxenc` streams across CPU-used 6--8,
 CBR/VBR, AQ3, and denoising, then requires `rvp9dec` and pinned `vpxdec` to
 produce byte-identical decoded output.
 
-Spatial SVC remains the next feature stage. CPU-used 8 three-layer temporal
-SVC speed is still provisional. This alpha does not claim final compression
-or speed parity with libvpx.
+The complete spatial-SVC acceptance matrix passes its quality, relative-speed,
+latency, and cross-decoder gates. CPU-used 8 three-layer temporal-SVC relative
+speed still awaits its quiet-host confirmation. This alpha does not claim
+final compression or speed parity across the complete v1 matrix.
 
 ## Project goals
 

@@ -5,10 +5,11 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 rust-version.workspace = true
+repository.workspace = true
 description = "Shared container (IVF/WebM) + Y4M readers/writers and MD5 helpers used by the rvp9 CLIs and test harness."
 
 [lints]
 workspace = true
 
 [dependencies]
-rvp9-core = { version = "0.2.0-alpha.1", path = "../rvp9-core" }
+rvp9-core = { version = "0.2.0-alpha.2", path = "../rvp9-core" }
