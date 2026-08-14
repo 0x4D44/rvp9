@@ -6,15 +6,15 @@
 - **Area:** encoder/test infrastructure
 - **Raised:** 2026-08-14T22:48:39Z
 - **Discovery source:** Automation
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
+- **Owner:** deltic:manual
+- **Owner role:** fix
+- **Owner run:** fix-20260814T224910Z-p96012-n942909000-c1
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-FLUX-00025-run-fix-20260814T224910Z-p96012-n942909000-c1
+- **Owner base:** 350de1d1dc087d33a06cdcf233ea892fac72e42f
 - **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner since:** 2026-08-14T22:49:10Z
+- **Owner until:** 2026-08-15T00:49:10Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
