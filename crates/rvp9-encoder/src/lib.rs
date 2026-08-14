@@ -1887,6 +1887,7 @@ fn exact_vbp_partition_qindex(
 #[inline]
 fn spatial_cbr_partition_qindex_bias(
     spatial_component: bool,
+    spatial_three_layer_component: bool,
     rc_mode: crate::rate_control::RcMode,
     frame_width: usize,
     frame_height: usize,
@@ -1895,18 +1896,19 @@ fn spatial_cbr_partition_qindex_bias(
     const CPU6_LARGE_SPATIAL_CBR_BIAS: u8 = 9;
     const CPU7_LARGE_SPATIAL_CBR_BIAS: u8 = 36;
     const CPU8_LARGE_SPATIAL_CBR_BIAS: u8 = 18;
-    if spatial_component
-        && rc_mode == crate::rate_control::RcMode::Cbr
-        && matches!(speed, 6..=8)
-        && frame_width.saturating_mul(frame_height) > 1280 * 720
-    {
-        match speed {
-            6 => CPU6_LARGE_SPATIAL_CBR_BIAS,
-            7 => CPU7_LARGE_SPATIAL_CBR_BIAS,
-            _ => CPU8_LARGE_SPATIAL_CBR_BIAS,
-        }
-    } else {
-        0
+    let large = frame_width.saturating_mul(frame_height) > 1280 * 720;
+    match (
+        spatial_component,
+        spatial_three_layer_component,
+        rc_mode,
+        speed,
+        large,
+    ) {
+        (true, true, crate::rate_control::RcMode::Cbr, 6, false) => 18,
+        (true, _, crate::rate_control::RcMode::Cbr, 6, true) => CPU6_LARGE_SPATIAL_CBR_BIAS,
+        (true, _, crate::rate_control::RcMode::Cbr, 7, true) => CPU7_LARGE_SPATIAL_CBR_BIAS,
+        (true, _, crate::rate_control::RcMode::Cbr, 8, true) => CPU8_LARGE_SPATIAL_CBR_BIAS,
+        _ => 0,
     }
 }
 
@@ -5527,10 +5529,21 @@ const SVC_CPU8_MODEL_ONLY_LARGE_QMAX: u8 = 140;
 const SVC_CPU8_NONREF_MODEL_ONLY_LARGE_QMAX: u8 = 155;
 
 fn spatial_block16_coef_rd_component(
+    speed: i32,
+    spatial_component: bool,
+    spatial_three_layer_component: bool,
     spatial_first_enhancement_component: bool,
     spatial_key_enhancement_component: bool,
+    frame_width: usize,
+    frame_height: usize,
 ) -> bool {
-    spatial_first_enhancement_component || spatial_key_enhancement_component
+    let seed_component = spatial_first_enhancement_component || spatial_key_enhancement_component;
+    if speed.unsigned_abs() == 6 {
+        spatial_component && spatial_three_layer_component
+            || seed_component && frame_width.saturating_mul(frame_height) > 1280 * 720
+    } else {
+        seed_component
+    }
 }
 
 fn final_short_circuit_low_temp_var_level(
@@ -5564,7 +5577,7 @@ fn block16_coef_rd_enabled(
     speed: i32,
     frame_width: usize,
     frame_height: usize,
-    spatial_first_enhancement_component: bool,
+    spatial_coef_rd_component: bool,
 ) -> bool {
     exact_vbp_tree_enabled
         && ((speed.unsigned_abs() == 6
@@ -5573,11 +5586,25 @@ fn block16_coef_rd_enabled(
             // non-skipped Block16 candidates on spatial layer 1 and the
             // opening higher-layer components. Those opening reconstructions
             // seed each enhancement layer's LAST reference for the key interval.
-            || (spatial_first_enhancement_component
-                && (speed.unsigned_abs() == 8
-                    || (matches!(speed.unsigned_abs(), 6..=7)
+            || (spatial_coef_rd_component
+                && (matches!(speed.unsigned_abs(), 6 | 8)
+                    || (speed.unsigned_abs() == 7
                         && frame_width.saturating_mul(frame_height) > 1280 * 720))
                 && matches!(rc_mode, crate::rate_control::RcMode::Cbr)))
+}
+
+fn block8_coef_rd_enabled(
+    exact_vbp_tree_enabled: bool,
+    rc_mode: crate::rate_control::RcMode,
+    speed: i32,
+    spatial_component: bool,
+    spatial_three_layer_component: bool,
+) -> bool {
+    exact_vbp_tree_enabled
+        && spatial_component
+        && spatial_three_layer_component
+        && matches!(rc_mode, crate::rate_control::RcMode::Cbr)
+        && speed.unsigned_abs() == 6
 }
 
 fn golden_real_block_yrd_enabled(
@@ -6641,6 +6668,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // partition leaves that VP9 can legally signal across a partial bottom
     // superblock. Single-layer and temporal paths retain their prior adapter.
     spatial_component: bool,
+    // Three-layer spatial topology scopes CPU6's measured real small-block RD
+    // correction; the established two-layer picker remains unchanged.
+    spatial_three_layer_component: bool,
     // Spatial layer zero inter component. Its lower-resolution picker may
     // retain source-faithful CPU8 policies without charging the full top-layer
     // picture.
@@ -7815,9 +7845,15 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         speed,
                         source_aligned_cpu8_svc_partitions,
                     );
-                    partition_qindex = partition_qindex.saturating_add(
-                        spatial_cbr_partition_qindex_bias(spatial_component, rc_mode, w, h, speed),
-                    );
+                    partition_qindex =
+                        partition_qindex.saturating_add(spatial_cbr_partition_qindex_bias(
+                            spatial_component,
+                            spatial_three_layer_component,
+                            rc_mode,
+                            w,
+                            h,
+                            speed,
+                        ));
                     let thresholds = rt_inter_vbp_thresholds(
                         speed,
                         Cpu7InterVbpThresholdInput {
@@ -9876,19 +9912,30 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     search_golden_filter: realtime_search_golden_filter(rc_mode, speed),
                     skip_ctx,
                     skip_prob: frame_context.skip_probs[skip_ctx],
-                    rd_calibration: leaf_rd_calibration.with_block16_coef_rd(
-                        block16_coef_rd_enabled(
+                    rd_calibration: leaf_rd_calibration
+                        .with_block16_coef_rd(block16_coef_rd_enabled(
                             exact_vbp_tree_enabled,
                             rc_mode,
                             speed,
                             w,
                             h,
                             spatial_block16_coef_rd_component(
+                                speed,
+                                spatial_component,
+                                spatial_three_layer_component,
                                 spatial_first_enhancement_component,
                                 spatial_key_enhancement_component,
+                                w,
+                                h,
                             ),
-                        ),
-                    ),
+                        ))
+                        .with_block8_coef_rd(block8_coef_rd_enabled(
+                            exact_vbp_tree_enabled,
+                            rc_mode,
+                            speed,
+                            spatial_component,
+                            spatial_three_layer_component,
+                        )),
                     last_const_motion,
                     golden_const_motion,
                     // G1 — UV planes for chroma RD in the picker.
@@ -16838,7 +16885,7 @@ mod tests {
             720,
             true
         ));
-        assert!(!block16_coef_rd_enabled(
+        assert!(block16_coef_rd_enabled(
             true,
             RcMode::Cbr,
             6,
@@ -16865,11 +16912,42 @@ mod tests {
     }
 
     #[test]
-    fn spatial_block16_coefficient_rd_covers_first_and_opening_top_components() {
-        assert!(!spatial_block16_coef_rd_component(false, false));
-        assert!(spatial_block16_coef_rd_component(true, false));
-        assert!(spatial_block16_coef_rd_component(true, true));
-        assert!(spatial_block16_coef_rd_component(false, true));
+    fn spatial_block16_coefficient_rd_covers_cpu6_and_seed_components() {
+        assert!(!spatial_block16_coef_rd_component(
+            6, false, true, false, false, 1280, 720
+        ));
+        assert!(spatial_block16_coef_rd_component(
+            6, true, true, false, false, 1280, 720
+        ));
+        assert!(!spatial_block16_coef_rd_component(
+            6, true, false, false, false, 1280, 720
+        ));
+        assert!(!spatial_block16_coef_rd_component(
+            6, true, false, true, false, 1280, 720
+        ));
+        assert!(spatial_block16_coef_rd_component(
+            6, true, false, true, false, 1920, 1080
+        ));
+        assert!(spatial_block16_coef_rd_component(
+            7, true, false, true, false, 1280, 720
+        ));
+        assert!(spatial_block16_coef_rd_component(
+            8, true, false, false, true, 1280, 720
+        ));
+        assert!(!spatial_block16_coef_rd_component(
+            7, true, false, false, false, 1920, 1080
+        ));
+    }
+
+    #[test]
+    fn block8_coefficient_rd_is_scoped_to_exact_cpu6_spatial_cbr() {
+        assert!(block8_coef_rd_enabled(true, RcMode::Cbr, 6, true, true));
+        assert!(block8_coef_rd_enabled(true, RcMode::Cbr, -6, true, true));
+        assert!(!block8_coef_rd_enabled(false, RcMode::Cbr, 6, true, true));
+        assert!(!block8_coef_rd_enabled(true, RcMode::Vbr, 6, true, true));
+        assert!(!block8_coef_rd_enabled(true, RcMode::Cbr, 7, true, true));
+        assert!(!block8_coef_rd_enabled(true, RcMode::Cbr, 6, false, true));
+        assert!(!block8_coef_rd_enabled(true, RcMode::Cbr, 6, true, false));
     }
 
     #[test]
@@ -19307,31 +19385,39 @@ mod tests {
     }
 
     #[test]
-    fn spatial_cbr_partition_qindex_bias_is_scoped_to_large_cpu6_to_cpu8_components() {
+    fn spatial_cbr_partition_qindex_bias_covers_cpu6_and_large_components() {
         use crate::rate_control::RcMode;
 
         assert_eq!(
-            spatial_cbr_partition_qindex_bias(true, RcMode::Cbr, 1920, 1080, 6),
-            9
-        );
-        assert_eq!(
-            spatial_cbr_partition_qindex_bias(true, RcMode::Cbr, 1920, 1080, 7),
-            36
-        );
-        assert_eq!(
-            spatial_cbr_partition_qindex_bias(true, RcMode::Cbr, 1920, 1080, 8),
+            spatial_cbr_partition_qindex_bias(true, true, RcMode::Cbr, 1280, 720, 6),
             18
         );
         assert_eq!(
-            spatial_cbr_partition_qindex_bias(true, RcMode::Cbr, 1280, 720, 8),
+            spatial_cbr_partition_qindex_bias(true, false, RcMode::Cbr, 1280, 720, 6),
             0
         );
         assert_eq!(
-            spatial_cbr_partition_qindex_bias(true, RcMode::Vbr, 1920, 1080, 8),
+            spatial_cbr_partition_qindex_bias(true, false, RcMode::Cbr, 1920, 1080, 6),
+            9
+        );
+        assert_eq!(
+            spatial_cbr_partition_qindex_bias(true, false, RcMode::Cbr, 1920, 1080, 7),
+            36
+        );
+        assert_eq!(
+            spatial_cbr_partition_qindex_bias(true, false, RcMode::Cbr, 1920, 1080, 8),
+            18
+        );
+        assert_eq!(
+            spatial_cbr_partition_qindex_bias(true, true, RcMode::Cbr, 1280, 720, 8),
             0
         );
         assert_eq!(
-            spatial_cbr_partition_qindex_bias(false, RcMode::Cbr, 1920, 1080, 8),
+            spatial_cbr_partition_qindex_bias(true, true, RcMode::Vbr, 1920, 1080, 8),
+            0
+        );
+        assert_eq!(
+            spatial_cbr_partition_qindex_bias(false, false, RcMode::Cbr, 1920, 1080, 8),
             0
         );
     }

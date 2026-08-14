@@ -284,7 +284,12 @@ impl SpatialEncoder {
                         .map(|layer: &SpatialEncodedLayer| layer.q_index)
                 })
                 .flatten();
-            let control = spatial_frame_control(layer_index, key_access_unit, base_key_q);
+            let control = spatial_frame_control(
+                layer_index,
+                key_access_unit,
+                base_key_q,
+                self.plan.layers.len() as u8,
+            );
             let view = YuvFrameRef {
                 y: &input.y,
                 u: &input.u,
@@ -324,10 +329,12 @@ fn spatial_frame_control(
     layer_index: usize,
     key_access_unit: bool,
     base_key_q: Option<u8>,
+    number_spatial_layers: u8,
 ) -> SpatialFrameControl {
     match (layer_index, key_access_unit) {
         (0, true) => SpatialFrameControl::Key,
         (0, false) => SpatialFrameControl::Inter {
+            number_spatial_layers,
             refresh_frame_flags: 0x01,
             ref_frame_indices: [0, 0, 0],
             allow_golden_ref: false,
@@ -336,6 +343,7 @@ fn spatial_frame_control(
         (_, true) => {
             let map_index = layer_index as u8;
             SpatialFrameControl::Inter {
+                number_spatial_layers,
                 refresh_frame_flags: 1 << map_index,
                 ref_frame_indices: [map_index - 1, map_index, map_index - 1],
                 allow_golden_ref: false,
@@ -345,6 +353,7 @@ fn spatial_frame_control(
         (_, false) => {
             let map_index = layer_index as u8;
             SpatialFrameControl::Inter {
+                number_spatial_layers,
                 refresh_frame_flags: 1 << map_index,
                 ref_frame_indices: [map_index, map_index - 1, map_index],
                 allow_golden_ref: true,

@@ -6383,3 +6383,46 @@ production-PGO repeated medians remain the final speed oracle.
 **Future plan:** retain the CPU7/8 spatial scope through the final PGO speed,
 absolute-latency, quality, and decoder matrix. Revisit the ordinary or CPU6
 departures only with a new complete Pareto result.
+
+### 2026-08-14 — Use measured real small-block RD only for CPU6 three-layer spatial CBR
+
+**Where:** `rvp9_core::mode_decision::inter::InterRdCalibration`,
+`rvp9_encoder::spatial_block16_coef_rd_component`, and
+`rvp9_encoder::spatial_cbr_partition_qindex_bias`; libvpx counterparts:
+`vp9/encoder/vp9_speed_features.c::set_rt_speed_feature_framesize_independent`
+and `vp9/encoder/vp9_pickmode.c::block_yrd`.
+
+**What libvpx does:** CPU6 keeps `use_simple_block_yrd=0`, so `block_yrd`
+runs transform, quantization, and coefficient costing for every supported
+candidate. Its partition calibration follows the native reconstructed state
+and variance thresholds.
+
+**What rvp9 does:** CPU6 three-layer spatial CBR uses real coefficient rate
+and distortion only for non-AcDc Block8 and Block16 candidates. Other
+sub-32 candidates retain rvp9's measured model. At 720p or below, those same
+three-layer components add 18 to the existing partition-Q bias, for a total
+of 27. Two-layer, ordinary, temporal, non-CBR, and CPU7/8 paths retain their
+previous policies; the existing CPU6 high-resolution seed-component scope is
+unchanged.
+
+**Why:** the literal CPU6 policy spent work without improving the limiting
+720p curve. The measured subset closes all three reproducible CPU6/S3 misses:
+Old Town Cross 720p30 is `+0.4884/-3.9850/-1.3136%`, In To Tree 1080p30 is
+`-4.5943/-3.2406/-0.9221%`, and Ducks Take Off 1080p30 is
+`-12.6755/-7.8175/-4.3948%`. Applying it to S2 regressed In To Tree 1080p60
+top to `+4.0767%`; the topology scope restores `-0.8125%` exactly.
+
+**Byte-parity impact:** intentional only on CPU6 three-layer spatial-CBR
+inter components. Modes, partitions, and residuals may change. All seven
+canonical spatial external tests remain decoded-byte exact through
+rvp9-decoder, pinned vpxdec, and ffmpeg.
+
+**Speed impact:** the qualifying picker performs extra transform and
+quantization work on Block8/16 candidates. Plain-release curve timing is
+host-contended and is not acceptance evidence. Exact-commit spatial-trained
+PGO and quiet-host repeated medians must pass before this stage closes.
+
+**Future plan:** retain only if the exact committed PGO artifact passes the
+full CPU6--8 S2/S3 quality matrix, the `1.05x` relative speed gate, and all
+absolute 720p30/1080p30/1080p60 budgets. Broaden toward literal CPU6 only if
+a new corpus-wide Pareto result justifies the extra work.

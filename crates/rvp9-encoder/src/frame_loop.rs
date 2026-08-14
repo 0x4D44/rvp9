@@ -1813,6 +1813,8 @@ pub(crate) enum SpatialFrameControl {
     Key,
     /// An inter component reads and refreshes the shared decoder-visible map.
     Inter {
+        /// Total spatial layers in the access-unit topology.
+        number_spatial_layers: u8,
         /// Wire refresh mask for `ref_frame_map[8]`.
         refresh_frame_flags: u8,
         /// Logical LAST/GOLDEN/ALTREF selectors.
@@ -1868,6 +1870,16 @@ impl SpatialFrameControl {
         )
     }
 
+    fn has_three_spatial_layers(self) -> bool {
+        matches!(
+            self,
+            Self::Inter {
+                number_spatial_layers: 3,
+                ..
+            }
+        )
+    }
+
     fn spatial_layer_id(self) -> u8 {
         match self {
             Self::Key => 0,
@@ -1875,6 +1887,28 @@ impl SpatialFrameControl {
                 refresh_frame_flags,
                 ..
             } => refresh_frame_flags.trailing_zeros() as u8,
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug, Default)]
+struct SpatialInterScope {
+    component: bool,
+    three_layer_component: bool,
+    key_enhancement_component: bool,
+    first_enhancement_component: bool,
+}
+
+impl SpatialInterScope {
+    fn from_control(control: Option<SpatialFrameControl>) -> Self {
+        Self {
+            component: control.is_some(),
+            three_layer_component: control
+                .is_some_and(SpatialFrameControl::has_three_spatial_layers),
+            key_enhancement_component: control
+                .is_some_and(SpatialFrameControl::is_key_enhancement_component),
+            first_enhancement_component: control
+                .is_some_and(|control| control.spatial_layer_id() == 1),
         }
     }
 }
@@ -3097,6 +3131,7 @@ impl StreamEncoder {
             }
         }
 
+        let spatial_inter_scope = SpatialInterScope::from_control(spatial_control);
         let mut packet = match frame_kind {
             FrameKind::Key => {
                 self.encode_keyframe_internal(q_index, (y_coded, u_coded, v_coded))?
@@ -3105,9 +3140,7 @@ impl StreamEncoder {
                 q_index,
                 (y_coded, u_coded, v_coded),
                 aq_active_for_rate_control,
-                spatial_control.is_some(),
-                spatial_control.is_some_and(SpatialFrameControl::is_key_enhancement_component),
-                spatial_control.is_some_and(|control| control.spatial_layer_id() == 1),
+                spatial_inter_scope,
             )?,
         };
 
@@ -3802,10 +3835,14 @@ impl StreamEncoder {
         q_index: u8,
         input_yuv: (&[u8], &[u8], &[u8]),
         aq_active_this_frame: bool,
-        spatial_component: bool,
-        spatial_key_enhancement_component: bool,
-        spatial_first_enhancement_component: bool,
+        spatial_scope: SpatialInterScope,
     ) -> Result<Vec<u8>, EncodeError> {
+        let SpatialInterScope {
+            component: spatial_component,
+            three_layer_component: spatial_three_layer_component,
+            key_enhancement_component: spatial_key_enhancement_component,
+            first_enhancement_component: spatial_first_enhancement_component,
+        } = spatial_scope;
         let w = self.config.width;
         let h = self.config.height;
         let spatial_base_component = spatial_component
@@ -4273,6 +4310,7 @@ impl StreamEncoder {
                     force_nstep_motion_search,
                     source_aligned_cpu8_svc_partitions,
                     spatial_component,
+                    spatial_three_layer_component,
                     spatial_base_component,
                     spatial_key_enhancement_component,
                     spatial_first_enhancement_component,
@@ -5338,6 +5376,7 @@ impl StreamEncoder {
             &arf_mv_costs,
             &mut arf_rd_thresh,
             self.frames_since_golden_refresh,
+            false,
             false,
             false,
             false,
@@ -7729,6 +7768,7 @@ mod tests {
     fn spatial_key_enhancement_is_the_inter_component_with_base_key_q() {
         assert!(
             SpatialFrameControl::Inter {
+                number_spatial_layers: 3,
                 refresh_frame_flags: 0x02,
                 ref_frame_indices: [0, 1, 0],
                 allow_golden_ref: false,
@@ -7738,6 +7778,7 @@ mod tests {
         );
         assert!(
             !SpatialFrameControl::Inter {
+                number_spatial_layers: 2,
                 refresh_frame_flags: 0x02,
                 ref_frame_indices: [1, 0, 1],
                 allow_golden_ref: true,
@@ -7751,6 +7792,7 @@ mod tests {
     #[test]
     fn spatial_layer_id_follows_the_refreshed_reference_slot() {
         let control = |refresh_frame_flags| SpatialFrameControl::Inter {
+            number_spatial_layers: 3,
             refresh_frame_flags,
             ref_frame_indices: [0, 1, 2],
             allow_golden_ref: true,
@@ -7761,6 +7803,28 @@ mod tests {
         assert_eq!(control(0x01).spatial_layer_id(), 0);
         assert_eq!(control(0x02).spatial_layer_id(), 1);
         assert_eq!(control(0x04).spatial_layer_id(), 2);
+    }
+
+    #[test]
+    fn spatial_frame_control_preserves_topology_width() {
+        let control = |number_spatial_layers| SpatialFrameControl::Inter {
+            number_spatial_layers,
+            refresh_frame_flags: 0x01,
+            ref_frame_indices: [0, 0, 0],
+            allow_golden_ref: false,
+            base_key_q: None,
+        };
+
+        assert!(!SpatialFrameControl::Key.has_three_spatial_layers());
+        assert!(!control(2).has_three_spatial_layers());
+        assert!(control(3).has_three_spatial_layers());
+
+        let none = SpatialInterScope::from_control(None);
+        assert!(!none.component);
+        assert!(!none.three_layer_component);
+        let three = SpatialInterScope::from_control(Some(control(3)));
+        assert!(three.component);
+        assert!(three.three_layer_component);
     }
 
     #[test]
