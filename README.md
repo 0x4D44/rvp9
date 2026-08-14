@@ -133,8 +133,9 @@ rustup component add llvm-tools-preview
 target/encoder-pgo/optimized/release/rvp9enc --version
 ```
 
-The fixed 22-row training matrix covers cpu-used 6–8, 720p and 1080p, VBR,
-CBR with cyclic-refresh AQ, denoising, temporal SVC, and bitrate extremes.
+The fixed 28-row training matrix covers cpu-used 6–8, 720p and 1080p, VBR,
+CBR with cyclic-refresh AQ, denoising, temporal and spatial SVC, and bitrate
+extremes.
 It requires the canonical corpus from `scripts/fetch-corpus.sh` plus `ffmpeg`.
 The build records its commit, toolchain, host, and exact matrix under
 `target/encoder-pgo/runs/<run-id>/manifest.txt`. Plain `cargo build --release`
