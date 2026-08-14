@@ -7,6 +7,7 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 
 pub mod convolve8_neon;
+pub mod convolve8_scaled_neon;
 pub mod convolve_copy_neon;
 pub mod idct8x8_neon;
 pub mod int_pro_neon;
@@ -23,6 +24,7 @@ pub mod vbp_neon;
 
 pub use convolve_copy_neon::convolve_copy_neon;
 pub use convolve8_neon::{convolve8_horiz_neon, convolve8_neon, convolve8_vert_neon};
+pub use convolve8_scaled_neon::convolve8_scaled_neon;
 pub use idct8x8_neon::{idct8x8_12_add_neon, idct8x8_add_neon, iht8x8_add_neon};
 pub use int_pro_neon::{
     int_pro_64x64_fused_neon, vpx_int_pro_col_neon, vpx_int_pro_row_clamped_neon,

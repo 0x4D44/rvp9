@@ -1256,12 +1256,15 @@ pub struct SimdDispatch {
     /// Wave L L1 — scaled 2-D sub-pel convolution (reference frame a
     /// different size: resize / spatial SVC). Mirrors
     /// [`crate::inter::filter::convolve8_scaled`]. AVX2 on x86_64 hosts
-    /// reporting `caps.avx2`; scalar elsewhere.
+    /// reporting `caps.avx2`, NEON on AArch64 hosts reporting `caps.neon`,
+    /// and scalar elsewhere.
     pub(crate) convolve8_scaled: ScaledConvolveFn,
 
     /// Wave L L1 — scaled 2-D sub-pel convolution with compound average.
     /// Mirrors [`crate::inter::filter::convolve8_scaled_avg`]. AVX2 on
-    /// x86_64 when `caps.avx2`; scalar elsewhere.
+    /// x86_64 when `caps.avx2`; scalar elsewhere. AArch64 keeps this
+    /// compound-average sibling scalar because pinned libvpx exposes only
+    /// the non-avg scaled NEON kernel.
     pub(crate) convolve8_scaled_avg: ScaledConvolveFn,
 
     /// P1-B — per-size SAD (`Σ|a − b|`) for the full-pel motion search.
@@ -2112,8 +2115,14 @@ impl SimdDispatch {
         } else {
             crate::inter::filter::convolve8_scaled
         };
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         let convolve8_scaled: ScaledConvolveFn = crate::inter::filter::convolve8_scaled;
+        #[cfg(target_arch = "aarch64")]
+        let convolve8_scaled: ScaledConvolveFn = if caps.neon {
+            crate::dsp::aarch64::convolve8_scaled_neon
+        } else {
+            crate::inter::filter::convolve8_scaled
+        };
         #[cfg(target_arch = "x86_64")]
         let convolve8_scaled_avg: ScaledConvolveFn = if caps.avx2 {
             crate::dsp::x86_64::convolve8_scaled_avg_avx2
@@ -4988,6 +4997,43 @@ mod tests {
             d.convolve8_scaled_avg() as usize,
             avg as usize,
             "avx2=false must install scalar convolve8_scaled_avg"
+        );
+    }
+
+    /// Wave L L1 — AArch64 installs NEON for the full scaled path while the
+    /// compound-average sibling stays scalar, matching pinned libvpx.
+    #[cfg(target_arch = "aarch64")]
+    #[test]
+    fn convolve8_scaled_neon_and_scalar_routing() {
+        let mut neon_caps = detect();
+        neon_caps.neon = true;
+        let neon_dispatch = SimdDispatch::build(neon_caps);
+        let neon: ScaledConvolveFn = crate::dsp::aarch64::convolve8_scaled_neon;
+        let scalar: ScaledConvolveFn = crate::inter::filter::convolve8_scaled;
+        let scalar_avg: ScaledConvolveFn = crate::inter::filter::convolve8_scaled_avg;
+        assert_eq!(
+            neon_dispatch.convolve8_scaled() as usize,
+            neon as usize,
+            "neon=true must install convolve8_scaled_neon"
+        );
+        assert_eq!(
+            neon_dispatch.convolve8_scaled_avg() as usize,
+            scalar_avg as usize,
+            "scaled compound average must remain scalar on AArch64"
+        );
+
+        let mut scalar_caps = detect();
+        scalar_caps.neon = false;
+        let scalar_dispatch = SimdDispatch::build(scalar_caps);
+        assert_eq!(
+            scalar_dispatch.convolve8_scaled() as usize,
+            scalar as usize,
+            "neon=false must install scalar convolve8_scaled"
+        );
+        assert_eq!(
+            scalar_dispatch.convolve8_scaled_avg() as usize,
+            scalar_avg as usize,
+            "neon=false must install scalar convolve8_scaled_avg"
         );
     }
 
