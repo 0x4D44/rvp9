@@ -472,8 +472,16 @@ fn gop_topology_byte_identity() {
     // reproduce these bytes, and the sibling schedule-and-decode oracle still
     // passes all 40 frames. The exact partition tree remains pinned off in
     // this fixture, so the hash continues to isolate GOP topology.
-    const GOLDEN_HASH: u64 = 0x124b_0ed7_6b9e_627d;
-    const GOLDEN_LEN: usize = 24229;
+    //
+    // Re-captured again (2026-08-15) after the accepted unrestricted-motion
+    // policy enabled the libvpx-style UMV border at every realtime v1
+    // resolution (`e5a57f0a`). An isolated bisect identifies that commit as
+    // the first byte changer, and its stream exactly matches the current
+    // output. The sibling schedule-and-decode oracle still passes all 40
+    // frames, so this is the intended motion-search change rather than a GOP
+    // topology regression.
+    const GOLDEN_HASH: u64 = 0xea3e_4275_3795_d112;
+    const GOLDEN_LEN: usize = 22914;
 
     let stream = encode_fixed_clip();
     let hash = fnv1a(&stream);
