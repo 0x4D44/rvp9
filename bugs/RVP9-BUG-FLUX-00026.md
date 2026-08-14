@@ -1,25 +1,25 @@
 # RVP9-BUG-FLUX-00026 — GOP topology golden rejects accepted unrestricted-MV output
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Must
 - **Severity:** Low
 - **Area:** encoder/test infrastructure
 - **Raised:** 2026-08-14T23:02:42Z
 - **Discovery source:** Automation
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260814T230323Z-p28077-n811046000-c1
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLUX-00026-run-fix-20260814T230323Z-p28077-n811046000-c1
-- **Owner base:** 67c9cab7e659ae21770825acdfe140dad3ff72ff
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-08-14T23:03:23Z
-- **Owner until:** 2026-08-15T01:03:23Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-14T23:02:42Z, raised via `deltic bugs new` model=gpt-5.6-sol@high)
+- **State history:** Open (2026-08-14T23:02:42Z, raised via `deltic bugs new` model=gpt-5.6-sol@high) -> Fixed (2026-08-14T23:08:58Z, deltic:auto role=fix run=fix-20260814T230323Z-p28077-n811046000-c1 branch=task/bug-RVP9-BUG-FLUX-00026-run-fix-20260814T230323Z-p28077-n811046000-c1 code=982de73e gate=manual)
 
 ## Observation
 
