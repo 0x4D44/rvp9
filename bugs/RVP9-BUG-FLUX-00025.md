@@ -1,25 +1,25 @@
 # RVP9-BUG-FLUX-00025 — Buffer-pool golden rejects accepted unrestricted-MV output
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Must
 - **Severity:** Low
 - **Area:** encoder/test infrastructure
 - **Raised:** 2026-08-14T22:48:39Z
 - **Discovery source:** Automation
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260814T224910Z-p96012-n942909000-c1
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLUX-00025-run-fix-20260814T224910Z-p96012-n942909000-c1
-- **Owner base:** 350de1d1dc087d33a06cdcf233ea892fac72e42f
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-08-14T22:49:10Z
-- **Owner until:** 2026-08-15T00:49:10Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-14T22:48:39Z, raised via `deltic bugs new` model=gpt-5.6-sol@high)
+- **State history:** Open (2026-08-14T22:48:39Z, raised via `deltic bugs new` model=gpt-5.6-sol@high) -> Fixed (2026-08-14T22:53:16Z, deltic:auto role=fix run=fix-20260814T224910Z-p96012-n942909000-c1 branch=task/bug-RVP9-BUG-FLUX-00025-run-fix-20260814T224910Z-p96012-n942909000-c1 code=9105a73e249aeb3339258a2de5a2c33233c53fca gate=manual)
 
 ## Observation
 
