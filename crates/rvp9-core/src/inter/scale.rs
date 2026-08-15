@@ -30,7 +30,7 @@
 
 use super::filter::{
     SUBPEL_BITS, SUBPEL_MASK, SUBPEL_SHIFTS, convolve8_scaled_avg_horiz, convolve8_scaled_avg_vert,
-    convolve8_scaled_horiz, convolve8_scaled_vert, kernel_for,
+    convolve8_scaled_horiz, convolve8_scaled_vert, copy_edge_replicated_window, kernel_for,
 };
 use crate::bitstream::frame::InterpFilter;
 
@@ -420,6 +420,167 @@ pub fn inter_predictor_with_dispatch(
 /// [`super::filter`].
 pub const SUBPEL_MASK_Q4: i32 = SUBPEL_MASK;
 
+/// Inputs for decoder-exact inter prediction from a tight reference plane.
+///
+/// `plane_origin` is expressed in the destination plane's coordinates, while
+/// `phase_origin` is expressed in luma coordinates. They differ for subsampled
+/// chroma, matching libvpx's scaled-reference mapping.
+#[derive(Clone, Copy, Debug)]
+pub struct TightInterPredictionParams<'a> {
+    /// Visible, unbordered reference plane.
+    pub reference: &'a [u8],
+    /// Reference-plane row stride.
+    pub reference_stride: usize,
+    /// Visible reference-plane dimensions.
+    pub reference_dimensions: (usize, usize),
+    /// Current-plane dimensions.
+    pub current_dimensions: (usize, usize),
+    /// Block origin in current-plane coordinates.
+    pub plane_origin: (usize, usize),
+    /// Block origin used for fractional scaled phase calculation.
+    pub phase_origin: (usize, usize),
+    /// Prediction block dimensions.
+    pub block_dimensions: (usize, usize),
+    /// Motion vector in Q4 units, `(col, row)`.
+    pub mv_q4: (i32, i32),
+    /// Interpolation filter.
+    pub interp_filter: InterpFilter,
+    /// Whether to average the prediction into the destination.
+    pub is_compound_avg: bool,
+}
+
+/// Build one decoder-exact inter prediction from a tight reference plane.
+///
+/// The function owns scaled-coordinate mapping and visible-edge replication,
+/// so encoder mode decision and reconstruction can share the same pixel
+/// oracle without materializing a separately filtered analysis reference.
+pub fn build_inter_prediction_from_tight_plane(
+    params: TightInterPredictionParams<'_>,
+    dst: &mut [u8],
+    dst_stride: usize,
+    border_scratch: &mut [u8],
+) {
+    const VP9_INTERP_EXTEND: i32 = 4;
+
+    let (ref_w, ref_h) = params.reference_dimensions;
+    let (cur_w, cur_h) = params.current_dimensions;
+    let (plane_x, plane_y) = params.plane_origin;
+    let (phase_x, phase_y) = params.phase_origin;
+    let (bw, bh) = params.block_dimensions;
+    let (mv_q4_col, mv_q4_row) = params.mv_q4;
+    let sf = ScaleFactors::new(ref_w as u32, ref_h as u32, cur_w as u32, cur_h as u32);
+    assert!(
+        sf.is_valid(),
+        "inter reference dimensions must be VP9-valid"
+    );
+    assert!(
+        sf.x_step_q4 <= SUBPEL_SHIFTS as i32 && sf.y_step_q4 <= SUBPEL_SHIFTS as i32,
+        "tight-plane prediction only accepts equal-size or lower-layer references",
+    );
+    assert!(
+        params.reference.len()
+            >= params
+                .reference_stride
+                .saturating_mul(ref_h.saturating_sub(1))
+                .saturating_add(ref_w),
+        "tight reference plane is smaller than its declared dimensions",
+    );
+    assert!(
+        dst.len()
+            >= dst_stride
+                .saturating_mul(bh.saturating_sub(1))
+                .saturating_add(bw),
+        "prediction destination is smaller than the requested block",
+    );
+
+    let mul_q14 = |value: i32, scale_fp: i32| {
+        ((i64::from(value) * i64::from(scale_fp)) >> REF_SCALE_SHIFT) as i32
+    };
+    let (total_x_q4, total_y_q4) = if sf.is_scaled() {
+        let scaled_mv_col = mul_q14(mv_q4_col, sf.x_scale_fp)
+            + (mul_q14((phase_x as i32) << SUBPEL_BITS, sf.x_scale_fp) & SUBPEL_MASK);
+        let scaled_mv_row = mul_q14(mv_q4_row, sf.y_scale_fp)
+            + (mul_q14((phase_y as i32) << SUBPEL_BITS, sf.y_scale_fp) & SUBPEL_MASK);
+        let base_int_x = mul_q14(plane_x as i32, sf.x_scale_fp);
+        let base_int_y = mul_q14(plane_y as i32, sf.y_scale_fp);
+        (
+            (base_int_x << SUBPEL_BITS) + scaled_mv_col,
+            (base_int_y << SUBPEL_BITS) + scaled_mv_row,
+        )
+    } else {
+        (
+            sf.scaled_x_q4(plane_x as i32, mv_q4_col as i16),
+            sf.scaled_y_q4(plane_y as i32, mv_q4_row as i16),
+        )
+    };
+    let int_x = total_x_q4 >> SUBPEL_BITS;
+    let int_y = total_y_q4 >> SUBPEL_BITS;
+    let subpel_x_q4 = total_x_q4 & SUBPEL_MASK;
+    let subpel_y_q4 = total_y_q4 & SUBPEL_MASK;
+    let x_pad = subpel_x_q4 != 0 || sf.x_step_q4 != SUBPEL_SHIFTS as i32;
+    let y_pad = subpel_y_q4 != 0 || sf.y_step_q4 != SUBPEL_SHIFTS as i32;
+    let last_x_q4 = total_x_q4 + (bw as i32 - 1) * sf.x_step_q4;
+    let last_y_q4 = total_y_q4 + (bh as i32 - 1) * sf.y_step_q4;
+    let mut x0 = int_x;
+    let mut y0 = int_y;
+    let mut x1 = (last_x_q4 >> SUBPEL_BITS) + 1;
+    let mut y1 = (last_y_q4 >> SUBPEL_BITS) + 1;
+    if x_pad {
+        x0 -= VP9_INTERP_EXTEND - 1;
+        x1 += VP9_INTERP_EXTEND;
+    }
+    if y_pad {
+        y0 -= VP9_INTERP_EXTEND - 1;
+        y1 += VP9_INTERP_EXTEND;
+    }
+
+    let predict = |src: &[u8], src_stride: usize, dst: &mut [u8]| {
+        inter_predictor_with_dispatch(
+            src,
+            src_stride,
+            dst,
+            dst_stride,
+            subpel_x_q4,
+            subpel_y_q4,
+            &sf,
+            params.interp_filter,
+            bw,
+            bh,
+            params.is_compound_avg,
+            crate::dsp::get_ref(),
+        );
+    };
+    let needs_scratch = x0 < 0 || y0 < 0 || x1 > ref_w as i32 || y1 > ref_h as i32;
+    if !needs_scratch {
+        let row_pre = if y_pad { -(VP9_INTERP_EXTEND - 1) } else { 0 };
+        let col_pre = if x_pad { -(VP9_INTERP_EXTEND - 1) } else { 0 };
+        let src_base =
+            (int_y + row_pre) as usize * params.reference_stride + (int_x + col_pre) as usize;
+        predict(&params.reference[src_base..], params.reference_stride, dst);
+        return;
+    }
+
+    let scratch_w = (x1 - x0 + 1) as usize;
+    let scratch_h = (y1 - y0 + 1) as usize;
+    assert!(
+        scratch_w.saturating_mul(scratch_h) <= border_scratch.len(),
+        "inter prediction border scratch is too small for {scratch_w}x{scratch_h}",
+    );
+    copy_edge_replicated_window(
+        params.reference,
+        params.reference_stride,
+        ref_w,
+        ref_h,
+        x0 as isize,
+        y0 as isize,
+        scratch_w,
+        scratch_h,
+        border_scratch,
+        scratch_w,
+    );
+    predict(&border_scratch[..scratch_w * scratch_h], scratch_w, dst);
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::filter::{
@@ -435,6 +596,41 @@ mod tests {
         assert_eq!(REF_SCALE_SHIFT, 14);
         assert_eq!(REF_NO_SCALE, 1 << 14);
         assert_eq!(REF_INVALID_SCALE, -1);
+    }
+
+    #[test]
+    fn tight_scaled_prediction_matches_normative_fractional_pixels() {
+        const REF_W: usize = 64;
+        const REF_H: usize = 32;
+        let reference: Vec<u8> = (0..REF_W * REF_H)
+            .map(|index| ((index * 37 + index / REF_W * 19) & 0xff) as u8)
+            .collect();
+        let mut prediction = [0u8; 16 * 16];
+        let mut border = [0u8; 72 * 72];
+        build_inter_prediction_from_tight_plane(
+            TightInterPredictionParams {
+                reference: &reference,
+                reference_stride: REF_W,
+                reference_dimensions: (REF_W, REF_H),
+                current_dimensions: (REF_W * 2, REF_H * 2),
+                plane_origin: (32, 16),
+                phase_origin: (32, 16),
+                block_dimensions: (16, 16),
+                mv_q4: (-8, -8),
+                interp_filter: InterpFilter::EightTap,
+                is_compound_avg: false,
+            },
+            &mut prediction,
+            16,
+            &mut border,
+        );
+
+        assert_eq!(
+            &prediction[..16],
+            &[
+                255, 197, 88, 43, 69, 85, 63, 55, 67, 89, 106, 133, 180, 238, 255, 200
+            ]
+        );
     }
 
     #[test]

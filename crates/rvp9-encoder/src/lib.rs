@@ -12915,221 +12915,25 @@ fn build_inter_pred_plane_at_dst(
     is_compound_avg: bool,
     pred_border: &mut [u8; MAX_INTER_PRED_BORDER_BYTES],
 ) {
-    use rvp9_core::inter::filter::{SUBPEL_BITS, SUBPEL_MASK};
-    use rvp9_core::inter::scale::{ScaleFactors, inter_predictor_with_dispatch};
-
-    let sf = ScaleFactors::new(ref_w as u32, ref_h as u32, cur_w as u32, cur_h as u32);
-    assert!(
-        sf.is_valid(),
-        "encoder inter reference dimensions must be VP9-valid"
-    );
-    assert!(
-        sf.x_step_q4 <= 16 && sf.y_step_q4 <= 16,
-        "encoder spatial MC only accepts equal-size or lower-layer references",
-    );
-
-    // Libvpx's scaled path is deliberately asymmetric: the integer reference
-    // origin comes from the plane coordinate, while the fractional phase is
-    // derived in luma coordinates. `phase_px_*` therefore differs from
-    // `plane_px_*` on subsampled chroma planes.
-    let (total_x_q4, total_y_q4) = if sf.is_scaled() {
-        let scaled_mv_col = enc_mul_q14(mv_q4_col, sf.x_scale_fp)
-            + (enc_mul_q14((phase_px_x as i32) << SUBPEL_BITS, sf.x_scale_fp) & SUBPEL_MASK);
-        let scaled_mv_row = enc_mul_q14(mv_q4_row, sf.y_scale_fp)
-            + (enc_mul_q14((phase_px_y as i32) << SUBPEL_BITS, sf.y_scale_fp) & SUBPEL_MASK);
-        let base_int_x = enc_mul_q14(plane_px_x as i32, sf.x_scale_fp);
-        let base_int_y = enc_mul_q14(plane_px_y as i32, sf.y_scale_fp);
-        (
-            (base_int_x << SUBPEL_BITS) + scaled_mv_col,
-            (base_int_y << SUBPEL_BITS) + scaled_mv_row,
-        )
-    } else {
-        (
-            sf.scaled_x_q4(plane_px_x as i32, mv_q4_col as i16),
-            sf.scaled_y_q4(plane_px_y as i32, mv_q4_row as i16),
-        )
-    };
-    let int_x = total_x_q4 >> SUBPEL_BITS;
-    let int_y = total_y_q4 >> SUBPEL_BITS;
-    let subpel_x_q4 = total_x_q4 & SUBPEL_MASK;
-    let subpel_y_q4 = total_y_q4 & SUBPEL_MASK;
-
-    // Destination slice starts at the leaf's top-left in the plane.
     let dst_off = dst_px_y * dst_stride + dst_px_x;
 
-    // DRIFT-FIX — the encoder's reference planes are TIGHT (no border
-    // padding; see `buffer_pool::RefSlotPlanes`), but the DECODER reads
-    // from an edge-extended reference (`extend_borders` replicates edge
-    // pixels into a ±32 Y / ±16 UV border) and falls back to an
-    // edge-replicated scratch for any MV whose convolve footprint spills
-    // past that border (`build_inter_predictor_with_mc_border`). With a
-    // tight encoder plane, ANY footprint cell outside `[0, ref_w) × [0,
-    // ref_h)` would read the wrong (adjacent-row / out-of-bounds) pixel,
-    // producing a prediction that differs from the decoder's
-    // edge-replicated one — the source of the inter-frame drift. We
-    // mirror the decoder's algorithm exactly: compute the convolve
-    // footprint, and whenever it leaves the visible region, build an
-    // edge-replicated scratch (libvpx `build_mc_border`) and predict
-    // from that. The fast path (footprint fully inside) is byte-identical
-    // to the prior code.
-    let x_pad = subpel_x_q4 != 0 || sf.x_step_q4 != 16;
-    let y_pad = subpel_y_q4 != 0 || sf.y_step_q4 != 16;
-    let last_x_q4 = total_x_q4 + (bw as i32 - 1) * sf.x_step_q4;
-    let last_y_q4 = total_y_q4 + (bh as i32 - 1) * sf.y_step_q4;
-    let mut x0 = int_x;
-    let mut y0 = int_y;
-    let mut x1 = (last_x_q4 >> SUBPEL_BITS) + 1;
-    let mut y1 = (last_y_q4 >> SUBPEL_BITS) + 1;
-    if x_pad {
-        x0 -= VP9_INTERP_EXTEND - 1;
-        x1 += VP9_INTERP_EXTEND;
-    }
-    if y_pad {
-        y0 -= VP9_INTERP_EXTEND - 1;
-        y1 += VP9_INTERP_EXTEND;
-    }
-
-    let needs_scratch = x0 < 0 || y0 < 0 || x1 > ref_w as i32 || y1 > ref_h as i32;
-
-    if !needs_scratch {
-        // Fast path: footprint is fully inside the tight plane. Pre-shift
-        // the ref pointer by `(VP9_INTERP_EXTEND - 1) = 3` along each
-        // sub-pel axis (mirrors the decoder's fast path).
-        let row_pre = if y_pad { -(VP9_INTERP_EXTEND - 1) } else { 0 };
-        let col_pre = if x_pad { -(VP9_INTERP_EXTEND - 1) } else { 0 };
-        let row_base = (int_y + row_pre) as usize;
-        let col_base = (int_x + col_pre) as usize;
-        let src_base = row_base * ref_stride + col_base;
-
-        inter_predictor_with_dispatch(
-            &ref_plane[src_base..],
-            ref_stride,
-            &mut dst[dst_off..],
-            dst_stride,
-            subpel_x_q4,
-            subpel_y_q4,
-            &sf,
+    rvp9_core::inter::scale::build_inter_prediction_from_tight_plane(
+        rvp9_core::inter::scale::TightInterPredictionParams {
+            reference: ref_plane,
+            reference_stride: ref_stride,
+            reference_dimensions: (ref_w, ref_h),
+            current_dimensions: (cur_w, cur_h),
+            plane_origin: (plane_px_x, plane_px_y),
+            phase_origin: (phase_px_x, phase_px_y),
+            block_dimensions: (bw, bh),
+            mv_q4: (mv_q4_col, mv_q4_row),
             interp_filter,
-            bw,
-            bh,
             is_compound_avg,
-            rvp9_core::dsp::get_ref(),
-        );
-        return;
-    }
-
-    // Scratch path: replicate the decoder's `build_mc_border` +
-    // predict-from-scratch. `b_w × b_h` is the footprint size (including
-    // the 8-tap halo); the scratch's top-left maps to footprint cell
-    // `(x0, y0)`. The kernel then reads with its usual `-3` pre-shift
-    // relative to the scratch origin where the axis is sub-pel filtered.
-    let b_w = (x1 - x0 + 1) as usize;
-    let b_h = (y1 - y0 + 1) as usize;
-    assert!(
-        b_w * b_h <= pred_border.len(),
-        "encoder MC scratch footprint {b_w}x{b_h} exceeds {} bytes",
-        pred_border.len(),
-    );
-    let scratch = &mut pred_border[..b_w * b_h];
-    enc_build_mc_border(
-        ref_plane,
-        ref_stride,
-        scratch,
-        b_w,
-        x0,
-        y0,
-        b_w,
-        b_h,
-        ref_w as i32,
-        ref_h as i32,
-    );
-    inter_predictor_with_dispatch(
-        scratch,
-        b_w,
+        },
         &mut dst[dst_off..],
         dst_stride,
-        subpel_x_q4,
-        subpel_y_q4,
-        &sf,
-        interp_filter,
-        bw,
-        bh,
-        is_compound_avg,
-        rvp9_core::dsp::get_ref(),
+        pred_border,
     );
-}
-
-#[inline]
-fn enc_mul_q14(value: i32, scale_fp: i32) -> i32 {
-    ((i64::from(value) * i64::from(scale_fp)) >> 14) as i32
-}
-
-/// libvpx `build_mc_border` (`vp9_decodeframe.c:456-490`), encoder-side
-/// port for a TIGHT (unbordered) reference plane. Copies a `b_w × b_h`
-/// rectangle of reference pixels with top-left at visible-region
-/// coordinate `(x, y)` into `dst` (tight stride `dst_stride == b_w`),
-/// edge-replicating any cell that falls outside `[0, w) × [0, h)`. This
-/// matches the decoder's `build_mc_border` byte-for-byte; the only
-/// difference is that the decoder's source already carries a static
-/// edge-extended border, whereas here the visible region is the whole
-/// plane and all padding is produced by this replication.
-#[allow(clippy::too_many_arguments)] // mirrors libvpx's `build_mc_border` 1:1
-fn enc_build_mc_border(
-    src: &[u8],
-    src_stride: usize,
-    dst: &mut [u8],
-    dst_stride: usize,
-    x: i32,
-    mut y: i32,
-    b_w: usize,
-    b_h: usize,
-    w: i32,
-    h: i32,
-) {
-    let mut y_clamped = if y >= h {
-        h - 1
-    } else if y > 0 {
-        y
-    } else {
-        0
-    };
-
-    let mut dst_off = 0usize;
-    for _ in 0..b_h {
-        let left = if x < 0 { (-x) as usize } else { 0 };
-        let left = left.min(b_w);
-        let right_raw = x + b_w as i32 - w;
-        let right = if right_raw > 0 { right_raw as usize } else { 0 };
-        let right = right.min(b_w);
-        let copy = b_w.saturating_sub(left + right);
-
-        let row_base = (y_clamped as usize) * src_stride;
-        let row = &src[row_base..];
-
-        if left > 0 {
-            let fill = row[0];
-            for c in 0..left {
-                dst[dst_off + c] = fill;
-            }
-        }
-        if copy > 0 {
-            let src_start = (x + left as i32) as usize;
-            dst[dst_off + left..dst_off + left + copy]
-                .copy_from_slice(&row[src_start..src_start + copy]);
-        }
-        if right > 0 {
-            let fill = row[(w - 1) as usize];
-            for c in 0..right {
-                dst[dst_off + left + copy + c] = fill;
-            }
-        }
-
-        dst_off += dst_stride;
-        y += 1;
-        if y > 0 && y < h {
-            y_clamped = y;
-        }
-    }
 }
 
 /// Trellis context for the `RVP9_TRELLIS` post-quant coefficient
