@@ -667,6 +667,26 @@ pub struct MatchingNewMvCandidateCosts {
     pub rvp9_rate_sum: u64,
     /// Sum of libvpx candidate rates.
     pub libvpx_rate_sum: u64,
+    /// Sum of rvp9 luma model rates inside the matching candidates.
+    pub rvp9_luma_rate_sum: u64,
+    /// Sum of libvpx luma model rates inside the matching candidates.
+    pub libvpx_luma_rate_sum: u64,
+    /// Sum of rvp9 chroma model rates inside the matching candidates.
+    pub rvp9_uv_rate_sum: u64,
+    /// Sum of libvpx chroma model rates inside the matching candidates.
+    pub libvpx_uv_rate_sum: u64,
+    /// Matching-record counts indexed by `rvp9_skip * 3 + libvpx_skip`.
+    pub skip_pair_counts: [usize; 9],
+    /// Matching candidates whose source and reference-footprint hashes agree.
+    pub exact_input_records: usize,
+    /// Exact-input counts indexed by `rvp9_skip * 3 + libvpx_skip`.
+    pub exact_input_skip_pair_counts: [usize; 9],
+    /// Exact-input skip disagreements indexed by VP9 block-size enum value.
+    pub exact_input_skip_mismatch_by_bsize: [usize; 13],
+    /// Exact-input records where rvp9 also selected the matching candidate.
+    pub exact_input_selected_records: usize,
+    /// Exact-input selected records whose final interpolation filter agrees.
+    pub exact_input_selected_filter_matches: usize,
     /// Sum of non-negative rvp9 candidate distortions.
     pub rvp9_dist_sum: u64,
     /// Sum of non-negative libvpx candidate distortions.
@@ -726,6 +746,32 @@ pub fn compare_matching_newmv_candidates(
         costs.rejected_records += usize::from(!selected);
         costs.rvp9_rate_sum += u64::from(rvp9_candidate.rate);
         costs.libvpx_rate_sum += u64::from(libvpx_candidate.rate);
+        costs.rvp9_luma_rate_sum += rvp9_candidate.luma_rate;
+        costs.libvpx_luma_rate_sum += libvpx_candidate.luma_rate;
+        costs.rvp9_uv_rate_sum += u64::from(rvp9_candidate.uv_rate);
+        costs.libvpx_uv_rate_sum += u64::from(libvpx_candidate.uv_rate);
+        let skip_pair = usize::from(rvp9_candidate.skip_txfm.min(2)) * 3
+            + usize::from(libvpx_candidate.skip_txfm.min(2));
+        costs.skip_pair_counts[skip_pair] += 1;
+        if rvp9_candidate
+            .newmv_search
+            .zip(libvpx_candidate.newmv_search)
+            .is_some_and(|(rvp9_search, libvpx_search)| {
+                rvp9_search.source_hash == libvpx_search.source_hash
+                    && rvp9_search.reference_hash == libvpx_search.reference_hash
+            })
+        {
+            costs.exact_input_records += 1;
+            costs.exact_input_skip_pair_counts[skip_pair] += 1;
+            if selected {
+                costs.exact_input_selected_records += 1;
+                costs.exact_input_selected_filter_matches +=
+                    usize::from(rvp9.interp_filter == libvpx.interp_filter);
+            }
+            if rvp9_candidate.skip_txfm != libvpx_candidate.skip_txfm {
+                costs.exact_input_skip_mismatch_by_bsize[rvp9.bsize.idx()] += 1;
+            }
+        }
         costs.rvp9_dist_sum += rvp9_candidate.dist.max(0) as u64;
         costs.libvpx_dist_sum += libvpx_candidate.dist.max(0) as u64;
         costs.rvp9_rd_cost_sum += rvp9_candidate.rd_cost.max(0) as u64;
@@ -1756,6 +1802,9 @@ mod tests {
             rate: 200,
             dist: 300,
             rd_cost: 400,
+            luma_rate: 120,
+            uv_rate: 30,
+            skip_txfm: 1,
             ..CandidateProbe::default()
         };
 
@@ -1766,6 +1815,9 @@ mod tests {
         rvp9.last_candidates[3].rate = 180;
         rvp9.last_candidates[3].dist = 290;
         rvp9.last_candidates[3].rd_cost = 380;
+        rvp9.last_candidates[3].luma_rate = 100;
+        rvp9.last_candidates[3].uv_rate = 20;
+        rvp9.last_candidates[3].skip_txfm = 2;
 
         let cells = analyze_newmv_cells(&[rvp9], &[libvpx], 8, 16);
         let costs = compare_matching_newmv_candidates(&[rvp9], &[libvpx]);
@@ -1775,6 +1827,13 @@ mod tests {
         assert_eq!(costs.rejected_records, 1);
         assert_eq!(costs.rvp9_rate_sum, 180);
         assert_eq!(costs.libvpx_rate_sum, 200);
+        assert_eq!(costs.rvp9_luma_rate_sum, 100);
+        assert_eq!(costs.libvpx_luma_rate_sum, 120);
+        assert_eq!(costs.rvp9_uv_rate_sum, 20);
+        assert_eq!(costs.libvpx_uv_rate_sum, 30);
+        assert_eq!(costs.skip_pair_counts[7], 1);
+        assert_eq!(costs.exact_input_records, 0);
+        assert_eq!(costs.exact_input_selected_records, 0);
         assert_eq!(costs.rvp9_dist_sum, 290);
         assert_eq!(costs.libvpx_dist_sum, 300);
         assert_eq!(costs.rvp9_rd_cost_sum, 380);

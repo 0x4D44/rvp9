@@ -1026,6 +1026,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             )?;
             writeln!(
                 sf,
+                "| rvp9/libvpx luma model rate | {:.6} |",
+                ratio(costs.rvp9_luma_rate_sum, costs.libvpx_luma_rate_sum)
+            )?;
+            writeln!(
+                sf,
+                "| rvp9/libvpx chroma model rate | {:.6} |",
+                ratio(costs.rvp9_uv_rate_sum, costs.libvpx_uv_rate_sum)
+            )?;
+            let rvp9_syntax_rate = costs
+                .rvp9_rate_sum
+                .saturating_sub(costs.rvp9_luma_rate_sum)
+                .saturating_sub(costs.rvp9_uv_rate_sum);
+            let libvpx_syntax_rate = costs
+                .libvpx_rate_sum
+                .saturating_sub(costs.libvpx_luma_rate_sum)
+                .saturating_sub(costs.libvpx_uv_rate_sum);
+            writeln!(
+                sf,
+                "| rvp9/libvpx syntax-rate remainder | {:.6} |",
+                ratio(rvp9_syntax_rate, libvpx_syntax_rate)
+            )?;
+            writeln!(
+                sf,
                 "| rvp9/libvpx candidate distortion | {:.6} |",
                 ratio(costs.rvp9_dist_sum, costs.libvpx_dist_sum)
             )?;
@@ -1034,6 +1057,55 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "| rvp9/libvpx candidate RD cost | {:.6} |",
                 ratio(costs.rvp9_rd_cost_sum, costs.libvpx_rd_cost_sum)
             )?;
+            for rvp9_skip in 0..3 {
+                for libvpx_skip in 0..3 {
+                    let count = costs.skip_pair_counts[rvp9_skip * 3 + libvpx_skip];
+                    if count != 0 {
+                        writeln!(
+                            sf,
+                            "| skip-state pair rvp9 {rvp9_skip} / libvpx {libvpx_skip} | {count} |"
+                        )?;
+                    }
+                }
+            }
+            const BLOCK_SIZE_LABELS: [&str; 13] = [
+                "4x4", "4x8", "8x4", "8x8", "8x16", "16x8", "16x16", "16x32", "32x16", "32x32",
+                "32x64", "64x32", "64x64",
+            ];
+            for (label, count) in BLOCK_SIZE_LABELS
+                .iter()
+                .zip(costs.exact_input_skip_mismatch_by_bsize)
+            {
+                if count != 0 {
+                    writeln!(sf, "| exact-input skip disagreement {label} | {count} |")?;
+                }
+            }
+            writeln!(
+                sf,
+                "| exact source/reference inputs | {} |",
+                costs.exact_input_records
+            )?;
+            writeln!(
+                sf,
+                "| exact-input candidate selected by rvp9 | {} |",
+                costs.exact_input_selected_records
+            )?;
+            writeln!(
+                sf,
+                "| selected exact-input final filter matches | {} |",
+                costs.exact_input_selected_filter_matches
+            )?;
+            for rvp9_skip in 0..3 {
+                for libvpx_skip in 0..3 {
+                    let count = costs.exact_input_skip_pair_counts[rvp9_skip * 3 + libvpx_skip];
+                    if count != 0 {
+                        writeln!(
+                            sf,
+                            "| exact-input skip pair rvp9 {rvp9_skip} / libvpx {libvpx_skip} | {count} |"
+                        )?;
+                    }
+                }
+            }
             writeln!(sf)?;
         }
         if let Some(stages) = matching_newmv_search_stages {
