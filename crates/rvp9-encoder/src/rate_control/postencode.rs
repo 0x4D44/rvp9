@@ -390,11 +390,11 @@ mod tests {
         postencode_update_svc_with_model(&mut rc, 39_352, FrameKind::Inter, None);
         assert_eq!(rc.svc_rolling_target_bits, 6_219);
         assert_eq!(rc.svc_rolling_actual_bits, 9_838);
-        assert_eq!(rc.temporal_svc_vbr_active_worst_factor(), 140);
+        assert_eq!(rc.svc_vbr_active_worst_factor(), 140);
 
         rc.this_frame_target = 24_875;
         postencode_update_svc_with_model(&mut rc, 1_000, FrameKind::Inter, None);
-        assert_eq!(rc.temporal_svc_vbr_active_worst_factor(), 120);
+        assert_eq!(rc.svc_vbr_active_worst_factor(), 120);
     }
 
     #[test]

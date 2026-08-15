@@ -97,7 +97,7 @@ use crate::loopfilter::{
 };
 use crate::rate_control::{
     CyclicRefreshRateModel, FirstPassStats, FrameKind as RcFrameKind, RateControl,
-    RateControlConfig, RcMode, TemporalSvcRateControl, TwoPassState,
+    RateControlConfig, RcMode, SpatialVbrRateControl, TemporalSvcRateControl, TwoPassState,
 };
 use crate::scale_reference::scale_reference_i420_2x;
 use crate::scale_source::ScaledI420;
@@ -2184,6 +2184,32 @@ impl StreamEncoder {
             crate::gop::GOLDEN_REFRESH_PERIOD
         };
         let mut rate_control = RateControl::new(rc_config);
+        if spatial_svc && matches!(config.rc_mode, RcMode::Vbr) {
+            // The codec API converts one timebase unit to a truncated
+            // 10-MHz duration before `vp9_svc_adjust_frame_rate` sends its
+            // effective framerate through `vp9_rc_update_framerate`, which
+            // truncates target-bandwidth / framerate. Reproduce that
+            // ordering: at 30 fps, for example, 20 kbit/s becomes 666
+            // bits/frame rather than the ordinary rounded 667.
+            const TICKS_PER_SECOND: u64 = 10_000_000;
+            let duration_ticks = ((TICKS_PER_SECOND as f64 / config.framerate) as u64).max(1);
+            rate_control.avg_frame_bandwidth = (u64::from(config.target_bitrate_bps)
+                .saturating_mul(duration_ticks)
+                / TICKS_PER_SECOND)
+                .min(u64::from(u32::MAX)) as u32;
+            // The pinned spatial example creates each VBR layer context from
+            // the codec defaults (best=0, worst=255) before applying the
+            // per-layer min/max options. Those options constrain later picks
+            // but do not rewrite the initial Q histories.
+            rate_control.avg_frame_qindex_key = 127;
+            rate_control.avg_frame_qindex_inter = 127;
+            rate_control.last_q_keyframe = 0;
+            rate_control.last_q_inter = 0;
+            // The pinned spatial example applies
+            // `VP8E_SET_MAX_INTRA_BITRATE_PCT=900`, limiting each layer's
+            // keyframe target to nine times its average frame bandwidth.
+            rate_control.max_intra_bitrate_pct = 900;
+        }
         if vbr_gf_rc_is_enabled {
             rate_control.baseline_gf_interval = i64::from(golden_refresh_period);
         }
@@ -2849,6 +2875,20 @@ impl StreamEncoder {
         }
         let temporal_svc_inter_target = self.svc_prepare_rate_control(rc_frame_kind);
         let spatial_component = spatial_control.is_some();
+        let spatial_vbr_inter_target = (spatial_component
+            && matches!(self.config.rc_mode, RcMode::Vbr)
+            && !rc_frame_kind.is_key())
+        .then(|| self.rate_control.spatial_svc_vbr_inter_target());
+        let spatial_vbr = spatial_control.and_then(|control| {
+            Some(SpatialVbrRateControl {
+                target_bits: spatial_vbr_inter_target?,
+                key_enhancement_layer: control
+                    .is_key_enhancement_component()
+                    .then(|| control.spatial_layer_id()),
+                current_video_frame: control
+                    .vbr_current_video_frame(self.rate_control.current_video_frame)?,
+            })
+        });
         if spatial_component {
             // Pinned one-pass SVC credits this layer's per-frame bandwidth
             // before Q selection, then debits only the coded size after the
@@ -2908,12 +2948,10 @@ impl StreamEncoder {
             rc_frame_kind,
             aq_rate_model,
             temporal_svc_inter_target,
+            spatial_vbr,
             spatial_control.and_then(|control| match control {
                 SpatialFrameControl::Key => None,
                 SpatialFrameControl::Inter { base_key_q, .. } => base_key_q,
-            }),
-            spatial_control.and_then(|control| {
-                control.vbr_current_video_frame(self.rate_control.current_video_frame)
             }),
         );
         // -- E8 DIAG: inter active_worst / buffer-state trace --
@@ -12413,6 +12451,33 @@ mod tests {
             min_qindex: 4,
             max_qindex: 255,
         }
+    }
+
+    #[test]
+    fn spatial_vbr_preserves_pre_option_layer_q_history_seed() {
+        let config = EncoderConfig {
+            rc_mode: RcMode::Vbr,
+            target_bitrate_bps: 20_000,
+            min_qindex: 4,
+            max_qindex: 255,
+            ..baseline_config()
+        };
+        let encoder = StreamEncoder::new_spatial_with_parallelism(
+            config,
+            EncoderParallelism::SINGLE_THREADED,
+        )
+        .expect("valid spatial VBR configuration");
+
+        assert_eq!(encoder.rate_control.avg_frame_qindex_key, 127);
+        assert_eq!(encoder.rate_control.avg_frame_qindex_inter, 127);
+        assert_eq!(encoder.rate_control.last_q_keyframe, 0);
+        assert_eq!(encoder.rate_control.last_q_inter, 0);
+        assert_eq!(encoder.rate_control.avg_frame_bandwidth, 666);
+        assert_eq!(
+            encoder.rate_control.max_frame_bandwidth,
+            RateControl::new(*encoder.rate_control.config()).max_frame_bandwidth
+        );
+        assert_eq!(encoder.rate_control.max_intra_bitrate_pct, 900);
     }
 
     #[cfg(feature = "highbitdepth")]

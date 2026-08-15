@@ -117,6 +117,15 @@ pub(crate) struct TemporalSvcRateControl {
     pub(crate) boosted_refresh: bool,
 }
 
+/// Per-component spatial-VBR inputs that are not part of the saved layer
+/// rate-control context.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SpatialVbrRateControl {
+    pub(crate) target_bits: u32,
+    pub(crate) key_enhancement_layer: Option<u8>,
+    pub(crate) current_video_frame: u32,
+}
+
 /// Segment-weighted rate model for cyclic-refresh AQ.
 ///
 /// Libvpx prices boosted 8x8 cells at their segment Q while it chooses the

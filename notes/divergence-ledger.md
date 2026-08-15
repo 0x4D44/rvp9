@@ -6536,3 +6536,35 @@ cross-decoder gate remains the authority for decoded reconstruction.
 **Future plan:** investigate the remaining top-layer VBR target and q-bound
 accounting mismatch. Revisit the picker domain only if a later rate-control
 correction changes this measured interaction enough to justify a paired retest.
+
+### 2026-08-15 — Apply the spatial example's 900% intra cap only to VBR
+
+**Where:** `rvp9_encoder::frame_loop::StreamEncoder` spatial rate-control
+initialization and `rvp9_encoder::rate_control::vbr::calc_iframe_target_size_vbr`;
+libvpx counterpart: `examples/vp9_spatial_svc_encoder.c` control
+`VP8E_SET_MAX_INTRA_BITRATE_PCT` and
+`vp9/encoder/vp9_ratectrl.c::vp9_rc_clamp_iframe_target_size`.
+
+**What libvpx does:** the pinned spatial example sets a 900% maximum intra
+bitrate for every end-usage mode. Its shared key-target clamp can therefore
+bind in both VBR and CBR.
+
+**What rvp9 does:** spatial VBR sets and applies the exact 900% cap. Spatial
+CBR retains its already-qualified key-target path and does not apply this
+extra clamp. Temporal SVC and non-SVC VBR retain the disabled default.
+
+**Why:** the missing cap completely explained the open CPU6/S2 Ducks VBR base
+layer: the correction improves it from `+8.363823%` to `-9.063421%` BD-rate
+and reproduces the anchor's 1,260-kbit/s target/Q pair (`75,591` bits, Q151).
+The existing full spatial CBR matrix is already green across all 48 required
+curves and all 120 layer gates, including 1080p60, with a `-4.509478%` mean
+and `+0.488431%` worst result. Extending the cap into that accepted path would
+be a separate behavior change without a measured quality need.
+
+**Byte-parity impact:** intentional for spatial CBR keyframes where the 900%
+cap would bind. VBR target arithmetic now matches the pinned example; stream
+byte parity is not claimed.
+
+**Future plan:** retain the CBR departure while its full correctness, quality,
+and speed matrix remains green. Reconsider only as an isolated paired CBR
+experiment with all 48 curves, not as part of VBR cleanup.

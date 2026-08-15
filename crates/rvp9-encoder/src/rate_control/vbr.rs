@@ -274,14 +274,20 @@ fn active_best_quality_vbr_at_frame(
 ///
 /// ```text
 /// target = avg_frame_bandwidth * kf_ratio    // kf_ratio = 25
-/// clamp to max_frame_bandwidth (and rc_max_intra_bitrate_pct, NA)
+/// clamp to rc_max_intra_bitrate_pct when configured
+/// clamp to max_frame_bandwidth
 /// ```
 fn calc_iframe_target_size_vbr(rc: &RateControl) -> u32 {
     let avg = u64::from(rc.avg_frame_bandwidth);
     // Saturating-multiply to mirror libvpx's INT_MAX guard at line
     // 2043-2046.
     let raw = avg.saturating_mul(u64::from(KF_RATIO));
-    let clamped = raw.min(u64::from(rc.max_frame_bandwidth));
+    let intra_cap = if rc.max_intra_bitrate_pct == 0 {
+        u64::MAX
+    } else {
+        avg.saturating_mul(u64::from(rc.max_intra_bitrate_pct)) / 100
+    };
+    let clamped = raw.min(intra_cap).min(u64::from(rc.max_frame_bandwidth));
     (clamped.max(u64::from(FRAME_OVERHEAD_BITS))) as u32
 }
 
@@ -373,7 +379,7 @@ pub(super) fn pick_q_and_bounds_with_model(
     frame_kind: FrameKind,
     model: Option<CyclicRefreshRateModel>,
 ) -> (u8, u8, u8) {
-    pick_q_and_bounds_with_model_and_target(rc, frame_kind, model, None, None)
+    pick_q_and_bounds_with_model_and_target(rc, frame_kind, model, None, None, None, None)
 }
 
 pub(super) fn pick_q_and_bounds_with_model_and_target(
@@ -381,6 +387,8 @@ pub(super) fn pick_q_and_bounds_with_model_and_target(
     frame_kind: FrameKind,
     model: Option<CyclicRefreshRateModel>,
     svc: Option<TemporalSvcRateControl>,
+    spatial_key_enhancement_layer: Option<u8>,
+    spatial_target_bits: Option<u32>,
     spatial_current_video_frame: Option<u32>,
 ) -> (u8, u8, u8) {
     // libvpx resets the Golden-frame boost ratio at each group boundary,
@@ -404,6 +412,10 @@ pub(super) fn pick_q_and_bounds_with_model_and_target(
         FrameKind::Key => calc_iframe_target_size_vbr(rc),
         FrameKind::Inter => svc
             .map(|input| clamp_pframe_target_size_vbr(rc, i64::from(input.target_bits)))
+            .or_else(|| {
+                spatial_target_bits
+                    .map(|target| clamp_pframe_target_size_vbr(rc, i64::from(target)))
+            })
             .unwrap_or_else(|| calc_pframe_target_size_vbr(rc)),
         FrameKind::Golden => calc_golden_target_size_vbr(rc),
     };
@@ -411,18 +423,17 @@ pub(super) fn pick_q_and_bounds_with_model_and_target(
 
     // 2. Active worst-Q ceiling — VBR's ambient-driven model
     //    (libvpx `vp9_ratectrl.c:1146` + 905-928).
-    let active_worst = match (svc.is_some(), spatial_current_video_frame) {
+    let svc_rate_control = svc.is_some() || spatial_target_bits.is_some();
+    let active_worst = match (svc_rate_control, spatial_current_video_frame) {
         (true, Some(current_video_frame)) => active_worst_quality_vbr_at_frame(
             rc,
             frame_kind,
-            rc.temporal_svc_vbr_active_worst_factor(),
+            rc.svc_vbr_active_worst_factor(),
             current_video_frame,
         ),
-        (true, None) => active_worst_quality_vbr_with_factor(
-            rc,
-            frame_kind,
-            rc.temporal_svc_vbr_active_worst_factor(),
-        ),
+        (true, None) => {
+            active_worst_quality_vbr_with_factor(rc, frame_kind, rc.svc_vbr_active_worst_factor())
+        }
         (false, Some(current_video_frame)) => active_worst_quality_vbr_at_frame(
             rc,
             frame_kind,
@@ -433,7 +444,21 @@ pub(super) fn pick_q_and_bounds_with_model_and_target(
     };
 
     // 3. Active best-Q floor (libvpx `vp9_ratectrl.c:1167-1247`).
-    let active_best = if let Some(current_video_frame) = spatial_current_video_frame {
+    let active_best = if let Some(spatial_layer) = spatial_key_enhancement_layer {
+        // A key-access-unit enhancement component remains an INTER frame for
+        // target and active-worst selection, but pinned spatial SVC refreshes
+        // GOLDEN. The stream-global frames-since-key value is one before SL1
+        // and greater than one from SL2 onward, including repeated key AUs.
+        let q = if spatial_layer > 1 {
+            i32::from(rc.avg_frame_qindex_inter).min(active_worst)
+        } else {
+            i32::from(rc.avg_frame_qindex_key)
+        };
+        // `LAYER_CONTEXT.rc` starts zeroed and spatial SVC disables ordinary
+        // GF scheduling, so pinned enhancement contexts retain gfu_boost=0.
+        // The ordinary single-layer controller still owns the 2000 default.
+        get_gf_active_quality(q, 0)
+    } else if let Some(current_video_frame) = spatial_current_video_frame {
         active_best_quality_vbr_at_frame(rc, frame_kind, active_worst, current_video_frame)
     } else {
         active_best_quality_vbr(rc, frame_kind, active_worst)
@@ -449,8 +474,9 @@ pub(super) fn pick_q_and_bounds_with_model_and_target(
     // still-adapting rate model asks for a coarser Q. SVC deliberately keeps
     // the ordinary inter target and ambient bounds, but the compile-time
     // refresh ceiling still applies (`vp9_ratectrl.c:1260-1278`).
-    let boosted_refresh =
-        matches!(frame_kind, FrameKind::Golden) || svc.is_some_and(|input| input.boosted_refresh);
+    let boosted_refresh = matches!(frame_kind, FrameKind::Golden)
+        || svc.is_some_and(|input| input.boosted_refresh)
+        || spatial_key_enhancement_layer.is_some();
     let top_index = if boosted_refresh {
         let qdelta = vp9_compute_qdelta_by_rate(
             active_worst as u8,
@@ -579,6 +605,17 @@ mod tests {
         );
     }
 
+    #[test]
+    fn spatial_svc_iframe_target_honors_example_intra_rate_ceiling() {
+        let mut rc = RateControl::new(vbr_config());
+        rc.max_intra_bitrate_pct = 900;
+
+        assert_eq!(
+            calc_iframe_target_size_vbr(&rc),
+            rc.avg_frame_bandwidth.saturating_mul(9)
+        );
+    }
+
     /// Inter target = avg * 15 / 24 ≈ 0.625 * avg.
     #[test]
     fn pframe_target_is_avg_times_625_thousandths() {
@@ -611,6 +648,8 @@ mod tests {
                 boosted_refresh: false,
             }),
             None,
+            None,
+            None,
         );
         assert_eq!(rc.this_frame_target, 20_000);
         assert_ne!(rc.this_frame_target, calc_pframe_target_size_vbr(&rc));
@@ -634,6 +673,8 @@ mod tests {
                 boosted_refresh: false,
             }),
             None,
+            None,
+            None,
         );
         let (refresh_q, _, refresh_top) = pick_q_and_bounds_with_model_and_target(
             &mut refresh,
@@ -643,6 +684,8 @@ mod tests {
                 target_bits,
                 boosted_refresh: true,
             }),
+            None,
+            None,
             None,
         );
 
@@ -654,17 +697,31 @@ mod tests {
     }
 
     #[test]
-    fn spatial_vbr_uses_stream_global_component_age_without_changing_target() {
+    fn spatial_vbr_uses_precredit_cbr_target_and_global_age() {
         let mut layer_local = RateControl::new(vbr_config());
         layer_local.current_video_frame = 1;
         layer_local.avg_frame_bandwidth = 40_000;
+        layer_local.optimal_buffer_level = 40_000;
+        layer_local.maximum_buffer_size = 80_000;
+        layer_local.buffer_level = 0;
+        layer_local.bits_off_target = 0;
         layer_local.avg_frame_qindex_inter = 145;
+        let precredit_target = layer_local.spatial_svc_vbr_inter_target();
+        layer_local.svc_preencode_buffer_update();
+        let postcredit_target = layer_local.spatial_svc_vbr_inter_target();
         let mut stream_global = layer_local.clone();
-        let expected_target = calc_pframe_target_size_vbr(&layer_local);
+        let expected_global_top = active_worst_quality_vbr_at_frame(
+            &stream_global,
+            FrameKind::Inter,
+            stream_global.svc_vbr_active_worst_factor(),
+            4,
+        ) as u8;
 
         let (_, _, local_top) = pick_q_and_bounds_with_model_and_target(
             &mut layer_local,
             FrameKind::Inter,
+            None,
+            None,
             None,
             None,
             None,
@@ -674,15 +731,63 @@ mod tests {
             FrameKind::Inter,
             None,
             None,
+            None,
+            Some(precredit_target),
             Some(4),
         );
 
-        assert_eq!(layer_local.this_frame_target, expected_target);
-        assert_eq!(stream_global.this_frame_target, expected_target);
+        assert_eq!(precredit_target, 20_200);
+        assert_eq!(postcredit_target, 40_000);
+        assert_eq!(stream_global.this_frame_target, precredit_target);
         assert_eq!(local_top, 103, "layer-local frame 1 collapses the Q range");
+        assert_eq!(
+            global_top, expected_global_top,
+            "spatial VBR must use the layer-local SVC active-worst factor"
+        );
         assert!(
             global_top > local_top,
             "global component 4 must use ambient inter-Q history"
+        );
+    }
+
+    #[test]
+    fn spatial_key_enhancement_uses_golden_best_and_qrange() {
+        let mut plain = RateControl::new(vbr_config());
+        plain.avg_frame_bandwidth = 40_000;
+        plain.avg_frame_qindex_key = 127;
+        plain.avg_frame_qindex_inter = 127;
+        plain.frames_since_key = 1;
+        let target = plain.spatial_svc_vbr_inter_target();
+        let mut refresh = plain.clone();
+
+        let (_, plain_bottom, plain_top) = pick_q_and_bounds_with_model_and_target(
+            &mut plain,
+            FrameKind::Inter,
+            None,
+            None,
+            None,
+            Some(target),
+            Some(2),
+        );
+        let (_, refresh_bottom, refresh_top) = pick_q_and_bounds_with_model_and_target(
+            &mut refresh,
+            FrameKind::Inter,
+            None,
+            None,
+            Some(2),
+            Some(target),
+            Some(2),
+        );
+
+        assert_eq!(plain.this_frame_target, target);
+        assert_eq!(refresh.this_frame_target, target);
+        assert!(
+            refresh_bottom < plain_bottom,
+            "GOLDEN active-best must permit a finer key-enhancement Q"
+        );
+        assert!(
+            refresh_top < plain_top,
+            "the pinned 1.75x rate floor must tighten key-enhancement top Q"
         );
     }
 

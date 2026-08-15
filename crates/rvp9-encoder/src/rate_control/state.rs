@@ -52,6 +52,11 @@ pub struct RateControl {
     /// `starting_buffer_level / 2` instead of being clamped to ~4x avg.
     pub max_frame_bandwidth: u32,
 
+    /// Optional keyframe target ceiling as a percentage of the layer's
+    /// average frame bandwidth. Mirrors libvpx
+    /// `oxcf->rc_max_intra_bitrate_pct`; zero disables the extra ceiling.
+    pub(crate) max_intra_bitrate_pct: u32,
+
     /// Target for the most recent `pick_q_and_bounds` call. libvpx
     /// `rc->this_frame_target`. Stored so `postencode_update` can
     /// compute the per-frame deviation.
@@ -305,6 +310,7 @@ impl RateControl {
             avg_frame_bandwidth,
             min_frame_bandwidth,
             max_frame_bandwidth,
+            max_intra_bitrate_pct: 0,
             this_frame_target: avg_frame_bandwidth,
 
             // libvpx `vp9_rc_init`: CBR seeds avg_frame_qindex to
@@ -391,9 +397,10 @@ impl RateControl {
     }
 
     /// Return pinned libvpx's VBR-SVC `fac_active_worst_inter` for this
-    /// layer. The initial factor is 140; established underspend lowers it to
-    /// 120 and a greater-than-2x overspend raises it to 160.
-    pub(crate) fn temporal_svc_vbr_active_worst_factor(&self) -> i32 {
+    /// temporal or spatial layer. The initial factor is 140; established
+    /// underspend lowers it to 120 and a greater-than-2x overspend raises it
+    /// to 160.
+    pub(crate) fn svc_vbr_active_worst_factor(&self) -> i32 {
         if self.svc_rolling_target_bits <= 0 {
             return 140;
         }
@@ -458,8 +465,8 @@ impl RateControl {
         frame_kind: FrameKind,
         model: Option<super::CyclicRefreshRateModel>,
         svc: Option<super::TemporalSvcRateControl>,
+        spatial_vbr: Option<super::SpatialVbrRateControl>,
         spatial_base_key_q: Option<u8>,
-        spatial_vbr_current_video_frame: Option<u32>,
     ) -> (u8, u8, u8) {
         use super::RcMode;
         match self.config.rc_mode {
@@ -479,14 +486,17 @@ impl RateControl {
             // first-pass stats attached via `attach_two_pass`. The W1.6
             // one-pass VBR PROOF lives in `tests/w_vbr_rc_proof.rs`; the
             // two-pass PROOF in `tests/w_2pass_vbr.rs`.
-            RcMode::Vbr => match (model, svc, spatial_vbr_current_video_frame) {
-                (model, svc, Some(current_video_frame)) => {
+            RcMode::Vbr => match (model, svc, spatial_vbr) {
+                (model, svc, Some(spatial)) => {
+                    debug_assert!(svc.is_none());
                     vbr::pick_q_and_bounds_with_model_and_target(
                         self,
                         frame_kind,
                         model,
                         svc,
-                        Some(current_video_frame),
+                        spatial.key_enhancement_layer,
+                        Some(spatial.target_bits),
+                        Some(spatial.current_video_frame),
                     )
                 }
                 (model, Some(svc), None) => vbr::pick_q_and_bounds_with_model_and_target(
@@ -494,6 +504,8 @@ impl RateControl {
                     frame_kind,
                     model,
                     Some(svc),
+                    None,
+                    None,
                     None,
                 ),
                 (Some(model), None, None) => {
@@ -552,6 +564,13 @@ impl RateControl {
             super::RcMode::Cbr | super::RcMode::Vbr
         ));
         cbr::calc_pframe_target_size_with_average(self, avg_frame_size)
+    }
+
+    /// Calculate a spatial-SVC VBR inter target before the per-component
+    /// buffer credit, matching libvpx's one-pass SVC target ordering.
+    pub(crate) fn spatial_svc_vbr_inter_target(&self) -> u32 {
+        debug_assert!(matches!(self.config.rc_mode, super::RcMode::Vbr));
+        cbr::calc_pframe_target_size_with_average(self, self.avg_frame_bandwidth)
     }
 
     /// Update internal state after the frame has been encoded.
