@@ -36,10 +36,11 @@
 //!     --out target/track_f_oracle/
 //! ```
 //!
-//! Add `--spatial-layers 2|3 --inter-layer-pred 0|3 --cbr --fixed-q Q`
-//! and point `--vpxenc` at the patched `vp9_spatial_svc_encoder` to drive
-//! exact fixed-Q spatial state. Omit `--fixed-q` and add `--report-only` for
-//! natural-CBR diagnosis. The harness validates every component, then compares
+//! Add `--spatial-layers 2|3 --inter-layer-pred 0|3 --fixed-q Q` and point
+//! `--vpxenc` at the patched `vp9_spatial_svc_encoder` to drive exact fixed-Q
+//! spatial state. Select `--vbr` or `--cbr` to retain the corresponding picker
+//! calibration. Omit `--fixed-q` and add `--report-only` for natural-CBR
+//! diagnosis. The harness validates every component, then compares
 //! `--analysis-spatial-id` (the base layer by default) at its coded geometry.
 
 use rvp9_core::bitstream::ChromaFormat;
@@ -193,8 +194,11 @@ fn validate_spatial_oracle_mode(
     if spatial_layers <= 1 {
         return Ok(());
     }
-    if vbr || aq_mode != 0 {
-        return Err("the spatial F02 mode requires --cbr --aq-mode 0".to_owned());
+    if aq_mode != 0 {
+        return Err("the spatial F02 mode requires --aq-mode 0".to_owned());
+    }
+    if vbr && fixed_q.is_none() {
+        return Err("the spatial VBR F02 mode requires --fixed-q QINDEX".to_owned());
     }
     if fixed_q.is_none() && !report_only {
         return Err(
@@ -1738,6 +1742,11 @@ mod tests {
         assert!(validate_spatial_oracle_mode(2, false, None, 0, false).is_err());
         assert!(validate_spatial_oracle_mode(2, true, None, 0, true).is_err());
         assert!(validate_spatial_oracle_mode(2, false, None, 3, true).is_err());
+    }
+
+    #[test]
+    fn fixed_q_spatial_oracle_accepts_vbr_picker_calibration() {
+        assert!(validate_spatial_oracle_mode(3, true, Some(220), 0, false).is_ok());
     }
 
     #[test]
