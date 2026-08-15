@@ -5667,6 +5667,13 @@ fn newmv_diff_bias_for_mode(rc_mode: crate::rate_control::RcMode, env_enabled: b
     env_enabled && matches!(rc_mode, crate::rate_control::RcMode::Cbr)
 }
 
+/// Match pinned libvpx's rule that reference masking is only active with one
+/// spatial layer. Spatial enhancement references may be scaled, so their
+/// predictor SAD is not comparable to the same-resolution LAST reference.
+fn picker_reference_masking(spatial_component: bool) -> bool {
+    !spatial_component
+}
+
 fn partition_color_sensitivity(
     src_uv: (&[u8], &[u8]),
     ref_uv: (&[u8], &[u8]),
@@ -8651,7 +8658,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             skin_map.get(mi_idx).copied().unwrap_or(0) != 0
                         },
                         newmv_diff_bias_enabled,
-                        reference_masking: true,
+                        reference_masking: picker_reference_masking(spatial_component),
                         // P20 — disabled in the descent: the adaptive
                         // RD-threshold table is mutated post-pick by
                         // the per-leaf loop. Letting the descent
@@ -10029,11 +10036,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         skin_map.get(mi_idx).copied().unwrap_or(0) != 0
                     },
                     newmv_diff_bias_enabled,
-                    // P18 — `sf.reference_masking` default. libvpx
-                    // `vp9_speed_features.c:250 / 517` keeps this on
-                    // for the realtime single-spatial-layer path,
-                    // which is the rvp9 operating point.
-                    reference_masking: true,
+                    // P18 — `sf.reference_masking` default.
+                    reference_masking: picker_reference_masking(spatial_component),
                     // P20 — adaptive RD-threshold table, owned by the
                     // streaming encoder. Default ON (libvpx default
                     // at cpu-used 6+, vp9_speed_features.c:752 sets
@@ -17166,6 +17170,12 @@ mod tests {
         assert!(!newmv_diff_bias_for_mode(RcMode::Cq, true));
         assert!(!newmv_diff_bias_for_mode(RcMode::Q, true));
         assert!(!newmv_diff_bias_for_mode(RcMode::Cbr, false));
+    }
+
+    #[test]
+    fn spatial_svc_disables_reference_masking() {
+        assert!(picker_reference_masking(false));
+        assert!(!picker_reference_masking(true));
     }
 
     #[test]
