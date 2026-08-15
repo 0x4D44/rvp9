@@ -6504,3 +6504,35 @@ still agree exactly.
 normative predictor mismatch independently. Revisit partition analysis only
 if that correction changes the measured interaction enough to justify a new
 paired experiment.
+
+### 2026-08-15 — Keep current-sized references in the final spatial mode picker
+
+**Where:** `rvp9_encoder::pick_and_simulate_inter_encode_partitions` final
+`PickInterModeParams` construction and
+`rvp9_core::mode_decision::inter::pick_inter_mode_impl`; libvpx counterpart:
+`vp9/encoder/vp9_pickmode.c` spatial `force_mv_inter_layer` path.
+
+**What libvpx does:** the final realtime picker scores the decoder-visible
+scaled lower-layer reference. With phase-8 downsampling it restricts that
+reference to Q3 `(-4,-4)`, leaves searched-MV rate at zero, and forces EIGHTTAP
+for the spatial GOLDEN candidate.
+
+**What rvp9 does:** the final picker continues to score its current-sized
+pre-upscaled analysis reference and keeps the normal motion/filter search.
+Residual emission independently rebuilds the decoder-visible scaled predictor,
+so encoder reconstruction and decoder output remain exact even though the
+pick-domain proxy differs.
+
+**Why:** the complete final-picker-only libvpx bundle was measured on the
+pinned 60-frame In To Tree CPU8/S3 VBR curve. SL1 improved from `-5.0725%` to
+`-5.3962%`, but the limiting SL2 regressed from `+0.8997%` to `+1.3071%`.
+The candidate was removed under the Pareto rule; its CSV SHA-256 is
+`9216d1331c08f2fdb1300b379d964e505030a753672c9f3a82fe6e392586f034`.
+
+**Byte-parity impact:** this entry documents retained behavior; Unit 1197 left
+no source change. Spatial stream bytes intentionally differ from libvpx. The
+cross-decoder gate remains the authority for decoded reconstruction.
+
+**Future plan:** investigate the remaining top-layer VBR target and q-bound
+accounting mismatch. Revisit the picker domain only if a later rate-control
+correction changes this measured interaction enough to justify a paired retest.
