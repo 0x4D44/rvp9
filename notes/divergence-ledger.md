@@ -6614,3 +6614,32 @@ byte parity is not claimed.
 **Future plan:** retain the CBR departure while its full correctness, quality,
 and speed matrix remains green. Reconsider only as an isolated paired CBR
 experiment with all 48 curves, not as part of VBR cleanup.
+
+### 2026-08-15 — Scope the low-resolution high-Q partition cap to CPU6 S3 VBR
+
+**Where:** `rvp9_encoder::disable_16x16_split_nonkey_enabled` and
+`rvp9_core::mode_decision::partition::rt_inter_vbp_thresholds`; libvpx
+counterparts: `vp9/encoder/vp9_speed_features.c:816-823` and
+`vp9/encoder/vp9_encodeframe.c:set_vbp_thresholds`.
+
+**What libvpx does:** for every non-key variance-partition frame at cpu-used
+6 or above, it disables 16x16-to-8x8 splitting when coded area is at most
+320x240, average inter Q is above 208, and the stream frame index is above 8.
+
+**What rvp9 does:** the same threshold cap currently applies only to the
+exact-tree CPU6, three-layer spatial-VBR base component. CPU7/8, non-spatial,
+CBR, and other spatial topologies retain their qualified behavior.
+
+**Why:** the missing rule exactly explains the 320x180 S3 base layer's excess
+8x8 leaves. At fixed Q255 it moves In To Tree from 8.0% to 6.5% 8x8 area
+against libvpx's 6.6%, and Ducks from 14.4% to 8.1% against 8.3%. The adaptive
+Ducks curve becomes fully green at `+0.1962/+0.0246/-0.6106%` BD-rate. The
+other two clips improve without closing, so this is retained as a measured
+prerequisite rather than widened into already-qualified paths.
+
+**Byte-parity impact:** none is claimed. The cap deliberately changes CPU6/S3
+VBR stream decisions toward libvpx; decoder correctness remains independently
+gated.
+
+**Future plan:** widen only after the low-resolution single-layer and CPU7/8
+corpus gates show a Pareto improvement. Keep the narrow boundary until then.

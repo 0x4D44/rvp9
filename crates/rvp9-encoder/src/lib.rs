@@ -5657,6 +5657,30 @@ fn block8_coef_rd_enabled(
                 && matches!(rc_mode, crate::rate_control::RcMode::Cbr)))
 }
 
+/// Apply pinned libvpx's low-resolution, high-Q
+/// `disable_16x16part_nonkey` policy to the qualified spatial-VBR boundary.
+#[allow(clippy::too_many_arguments)] // Mirrors the independent libvpx speed-feature predicates.
+fn disable_16x16_split_nonkey_enabled(
+    exact_vbp_tree_enabled: bool,
+    rc_mode: crate::rate_control::RcMode,
+    speed: i32,
+    frame_width: usize,
+    frame_height: usize,
+    avg_inter_qindex: u8,
+    current_video_frame: u32,
+    spatial_three_layer_component: bool,
+    spatial_base_component: bool,
+) -> bool {
+    exact_vbp_tree_enabled
+        && matches!(rc_mode, crate::rate_control::RcMode::Vbr)
+        && speed.unsigned_abs() == 6
+        && frame_width.saturating_mul(frame_height) <= 320 * 240
+        && avg_inter_qindex > 208
+        && current_video_frame > 8
+        && spatial_three_layer_component
+        && spatial_base_component
+}
+
 fn golden_real_block_yrd_enabled(
     rc_mode: crate::rate_control::RcMode,
     speed: i32,
@@ -6828,6 +6852,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // Exact pinned-libvpx VBP copy eligibility and persistent show-frame
     // history. `None` isolates non-show ALTREF coding and disables the exact
     // adapter even if its diagnostic environment flag is set.
+    current_video_frame: u32,
     frames_since_key: u32,
     mut exact_vbp_history: Option<InterPartitionHistoryMut<'_>>,
     // A23 — opt-in TPL rdmult adjustment. `Some((tpl_frame, r0))` only
@@ -6987,6 +7012,17 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         content_tier,
         cyclic_refresh_active,
     ) && exact_vbp_history.is_some();
+    let disable_16x16_split = disable_16x16_split_nonkey_enabled(
+        exact_vbp_tree_enabled,
+        rc_mode,
+        speed,
+        w,
+        h,
+        avg_inter_qindex,
+        current_video_frame,
+        spatial_three_layer_component,
+        spatial_base_component,
+    );
     let crossing_square_leaves_supported = spatial_component
         && (low_resolution_ml_partition_enabled || exact_vbp_tree_enabled)
         && w.is_multiple_of(64)
@@ -7992,6 +8028,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             frame_height: h,
                             noise_estimate: noise_estimate_frame,
                             content_state,
+                            disable_16x16_split,
                         },
                     );
                     let history = history_state
@@ -16898,6 +16935,40 @@ mod tests {
                 block8_coef_rd_enabled(exact, mode, speed, spatial, three_layer, width, height,),
                 expected,
             );
+        }
+    }
+
+    #[test]
+    fn cpu6_spatial_vbr_base_disables_late_high_q_16x16_splits() {
+        assert!(disable_16x16_split_nonkey_enabled(
+            true,
+            RcMode::Vbr,
+            6,
+            320,
+            180,
+            209,
+            9,
+            true,
+            true,
+        ));
+    }
+
+    #[test]
+    fn cpu6_spatial_vbr_split_disable_preserves_scope_boundaries() {
+        let cases = [
+            (false, RcMode::Vbr, 6, 320, 180, 209, 9, true, true),
+            (true, RcMode::Cbr, 6, 320, 180, 209, 9, true, true),
+            (true, RcMode::Vbr, 7, 320, 180, 209, 9, true, true),
+            (true, RcMode::Vbr, 6, 640, 360, 209, 9, true, true),
+            (true, RcMode::Vbr, 6, 320, 180, 208, 9, true, true),
+            (true, RcMode::Vbr, 6, 320, 180, 209, 8, true, true),
+            (true, RcMode::Vbr, 6, 320, 180, 209, 9, false, true),
+            (true, RcMode::Vbr, 6, 320, 180, 209, 9, true, false),
+        ];
+        for (exact, mode, speed, width, height, avg_q, frame, s3, base) in cases {
+            assert!(!disable_16x16_split_nonkey_enabled(
+                exact, mode, speed, width, height, avg_q, frame, s3, base,
+            ));
         }
     }
 

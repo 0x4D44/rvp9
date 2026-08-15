@@ -217,6 +217,7 @@ fn compare_record(record: &OracleRecord) -> Result<FixedTreePartitionTrace, Stri
             level: noise_level,
         },
         content_state,
+        disable_16x16_split: false,
     });
     // Slot 3 is a keyframe-only 8x8 threshold retained from the most recent
     // frame-level setup; the inter helper rewrites only slots 0..=2.

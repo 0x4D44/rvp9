@@ -301,6 +301,8 @@ pub struct Cpu7InterVbpThresholdInput {
     pub noise_estimate: NoiseEstimate,
     /// Exact source-SAD content state for this superblock.
     pub content_state: ContentStateSb,
+    /// Whether the frame-level speed policy disables 16x16-to-8x8 splits.
+    pub disable_16x16_split: bool,
 }
 
 /// Exact per-superblock cpu-used 7 VBP thresholds.
@@ -353,7 +355,7 @@ pub fn rt_inter_vbp_thresholds(
         base = (5 * base) >> 2;
     }
 
-    let (t0, t1, t2) = if input.frame_width <= 352 && input.frame_height <= 288 {
+    let (t0, t1, mut t2) = if input.frame_width <= 352 && input.frame_height <= 288 {
         let mut t2 = base << 3;
         if input.avg_inter_qindex > 220 {
             t2 <<= 2;
@@ -376,6 +378,11 @@ pub fn rt_inter_vbp_thresholds(
         }
         (base, (5 * base) >> 1, t2)
     };
+    // Pinned libvpx `vp9_encodeframe.c:set_vbp_thresholds` replaces this
+    // threshold with `INT64_MAX` when `disable_16x16part_nonkey` is active.
+    if input.disable_16x16_split {
+        t2 = i64::MAX;
+    }
     Cpu7InterVbpThresholds {
         thresholds: [t0, t1, t2, raw_base * 80],
         minmax_threshold: (15 + (i32::from(input.q_index) >> 3))
@@ -2223,6 +2230,7 @@ mod tests {
                 frame_height: 256,
                 noise_estimate: NoiseEstimate::default(),
                 content_state,
+                disable_16x16_split: false,
             })
         };
 
@@ -2258,6 +2266,7 @@ mod tests {
             frame_height: 720,
             noise_estimate: NoiseEstimate::default(),
             content_state: ContentStateSb::Normal,
+            disable_16x16_split: false,
         };
 
         let cpu6 = rt_inter_vbp_thresholds(6, input);
@@ -2273,6 +2282,24 @@ mod tests {
     }
 
     #[test]
+    fn focused_rt_thresholds_can_disable_16x16_splits() {
+        let thresholds = rt_inter_vbp_thresholds(
+            6,
+            Cpu7InterVbpThresholdInput {
+                q_index: 224,
+                avg_inter_qindex: 224,
+                frame_width: 320,
+                frame_height: 180,
+                noise_estimate: NoiseEstimate::default(),
+                content_state: ContentStateSb::Normal,
+                disable_16x16_split: true,
+            },
+        );
+
+        assert_eq!(thresholds.thresholds[2], i64::MAX);
+    }
+
+    #[test]
     fn cpu7_thresholds_apply_large_frame_noise_before_content_scale() {
         let thresholds = cpu7_inter_vbp_thresholds(Cpu7InterVbpThresholdInput {
             q_index: 120,
@@ -2284,6 +2311,7 @@ mod tests {
                 level: NoiseLevel::Medium,
             },
             content_state: ContentStateSb::LowSadLowSumdiff,
+            disable_16x16_split: false,
         });
 
         // ac=152; medium noise doubles to 304; low-sumdiff scales 5/4

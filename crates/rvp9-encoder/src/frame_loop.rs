@@ -4309,6 +4309,7 @@ impl StreamEncoder {
             deadline,
         );
         let split_override = self.config.stage4a_product_split_override;
+        let current_video_frame = self.frame_idx;
         let inter_env = &inter_env_snapshot;
         let noise_estimate = self.pre_analysis.noise_estimate;
         let high_source_sad = self.pre_analysis.high_source_sad;
@@ -4386,6 +4387,7 @@ impl StreamEncoder {
                     content_state_sb,
                     skin_map,
                     consec_zero_mv,
+                    current_video_frame,
                     frames_since_key,
                     $history,
                     tpl_rdmult_arg,
@@ -5458,6 +5460,7 @@ impl StreamEncoder {
             &self.pre_analysis.content_state_sb,
             &self.pre_analysis.skin_map,
             &self.pre_analysis.consec_zero_mv,
+            self.frame_idx,
             0,
             None,
             // A23 — TPL is not wired into the non-show ARF's own coding in
