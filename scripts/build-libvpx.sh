@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Build libvpx from the submodule at third_party/libvpx.
 #
-# Targets: vpxenc, vpxdec, libvpx.a. Output: third_party/libvpx/build/.
+# Targets: vpxenc, vpxdec, vp9_spatial_svc_encoder, libvpx.a.
+# Output: third_party/libvpx/build/.
 #
 # Windows: invoke from Git Bash or MSYS2 mingw64 shell. Requires gcc, make,
 # yasm, perl on PATH. (Git Bash + MSYS2 mingw64 supplies all of these via
@@ -53,16 +54,31 @@ case "$(uname -s)" in
                     "/d/language/libvpx-stock" \
                     "/d/language/libvpx-build-release"; do
             if [ -n "$cand" ] && [ -x "$cand/vpxenc.exe" ] && [ -x "$cand/vpxdec.exe" ]; then
-                echo "Using prebuilt libvpx binaries from: $cand"
-                mkdir -p "$BUILD_DIR"
-                cp "$cand/vpxenc.exe" "$cand/vpxdec.exe" "$BUILD_DIR/"
-                ls -lh "$BUILD_DIR"
-                exit 0
+                spatial_prebuilt=""
+                for spatial_candidate in \
+                    "$cand/examples/vp9_spatial_svc_encoder.exe" \
+                    "$cand/vp9_spatial_svc_encoder.exe"; do
+                    if [ -x "$spatial_candidate" ]; then
+                        spatial_prebuilt="$spatial_candidate"
+                        break
+                    fi
+                done
+                if [ -n "$spatial_prebuilt" ]; then
+                    echo "Using prebuilt libvpx binaries from: $cand"
+                    mkdir -p "$BUILD_DIR/examples"
+                    cp "$cand/vpxenc.exe" "$cand/vpxdec.exe" "$BUILD_DIR/"
+                    cp "$spatial_prebuilt" \
+                        "$BUILD_DIR/examples/vp9_spatial_svc_encoder.exe"
+                    ls -lh "$BUILD_DIR/vpxenc.exe" "$BUILD_DIR/vpxdec.exe" \
+                        "$BUILD_DIR/examples/vp9_spatial_svc_encoder.exe"
+                    exit 0
+                fi
+                echo "Ignoring incomplete prebuilt set without vp9_spatial_svc_encoder.exe: $cand" >&2
             fi
         done
         echo "No prebuilt libvpx found; attempting build from submodule." >&2
-        echo "If this fails, build vpxenc/vpxdec manually under MSYS2"      >&2
-        echo "mingw64 shell and copy them to $BUILD_DIR."                   >&2
+        echo "If this fails, build vpxenc, vpxdec, and vp9_spatial_svc_encoder" >&2
+        echo "under MSYS2 mingw64 and place them under $BUILD_DIR."             >&2
         ;;
 esac
 
@@ -119,15 +135,18 @@ CFLAGS="-O3 -fomit-frame-pointer" \
 JOBS="$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
 echo "Building with -j$JOBS ..."
 # libvpx generates separate recursive make targets for libraries and examples.
-# Build the library first, then request the two distribution tools from the
-# examples target. A top-level `make vpxenc vpxdec` also asks the libs/tools
-# sub-makes for those names and fails because they do not define them.
+# Build the library first, then request the distribution tools and the spatial
+# SVC reference example from the examples target. A top-level `make vpxenc
+# vpxdec` also asks the libs/tools sub-makes for those names and fails because
+# they do not define them. The example's generated target keeps its `examples/`
+# prefix; a bare `vp9_spatial_svc_encoder` is not a target and fails.
 make -j"$JOBS" target=libs libvpx.a
-make -j"$JOBS" target=examples vpxenc vpxdec
+make -j"$JOBS" target=examples vpxenc vpxdec examples/vp9_spatial_svc_encoder
 
 echo
 echo "Build complete. Artifacts:"
-for f in vpxenc vpxdec vpxenc.exe vpxdec.exe; do
+for f in vpxenc vpxdec examples/vp9_spatial_svc_encoder \
+         vpxenc.exe vpxdec.exe examples/vp9_spatial_svc_encoder.exe; do
     if [ -f "$BUILD_DIR/$f" ]; then
         ls -lh "$BUILD_DIR/$f"
     fi

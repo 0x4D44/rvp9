@@ -5,6 +5,12 @@
 //! times, and gates the corpus geometric mean. The manifest binds every result
 //! to executable and input hashes. `--max-load1` makes acceptance runs fail
 //! closed when the host is not idle enough for a trustworthy comparison.
+//!
+//! The `temporal-svc` and `spatial-svc` kinds drive the matched SVC wrappers.
+//! Neither accepts a generic `--fps`, so both take the frame rate from the Y4M
+//! header. Every arm must emit one stable output hash;
+//! `--allow-anchor-hash-instability` is the single narrow exception, for the
+//! pinned threaded spatial example.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
@@ -21,6 +27,7 @@ use sha2::{Digest, Sha256};
 enum EncoderKind {
     Vpxenc,
     TemporalSvc,
+    SpatialSvc,
 }
 
 impl EncoderKind {
@@ -28,8 +35,9 @@ impl EncoderKind {
         match value {
             "vpxenc" => Ok(Self::Vpxenc),
             "temporal-svc" => Ok(Self::TemporalSvc),
+            "spatial-svc" => Ok(Self::SpatialSvc),
             _ => Err(format!(
-                "encoder kind must be vpxenc or temporal-svc, got `{value}`"
+                "encoder kind must be vpxenc, temporal-svc, or spatial-svc, got `{value}`"
             )),
         }
     }
@@ -38,7 +46,13 @@ impl EncoderKind {
         match self {
             Self::Vpxenc => "vpxenc",
             Self::TemporalSvc => "temporal-svc",
+            Self::SpatialSvc => "spatial-svc",
         }
+    }
+
+    /// Wrapper kinds take the frame rate from the Y4M header, not `--fps`.
+    fn is_svc_wrapper(self) -> bool {
+        matches!(self, Self::TemporalSvc | Self::SpatialSvc)
     }
 }
 
@@ -76,6 +90,8 @@ struct Args {
     threads: u32,
     tile_columns: u32,
     temporal_layers: Option<u32>,
+    spatial_layers: Option<u32>,
+    inter_layer_pred: u32,
     aq_mode: u32,
     noise_sensitivity: u32,
     limit: u32,
@@ -85,6 +101,7 @@ struct Args {
     rotations: u32,
     max_ratio: f64,
     max_load1: Option<f64>,
+    allow_anchor_hash_instability: bool,
     anchor_args: Vec<String>,
     test_args: Vec<String>,
 }
@@ -128,17 +145,70 @@ struct ClipSummary {
     samples: usize,
     test_sha256: String,
     anchor_sha256: String,
+    test_distinct_hashes: usize,
+    anchor_distinct_hashes: usize,
 }
 
 fn usage() -> String {
-    "Usage: encode-headtohead --anchor-encoder PATH --test-encoder PATH \\\n+  --anchor-kind {vpxenc,temporal-svc} --test-kind {vpxenc,temporal-svc} \\\n+  --anchor-revision REV --test-revision REV --clip NAME=PATH [--clip ...] \\\n+  --work-dir EMPTY_OR_MISSING_DIR [options]\n\n\
+    "Usage: encode-headtohead --anchor-encoder PATH --test-encoder PATH \\\n+  --anchor-kind {vpxenc,temporal-svc,spatial-svc} --test-kind {vpxenc,temporal-svc,spatial-svc} \\\n+  --anchor-revision REV --test-revision REV --clip NAME=PATH [--clip ...] \\\n+  --work-dir EMPTY_OR_MISSING_DIR [options]\n\n\
 Options:\n  --cpu-used {6,7,8} --target-bitrate KBPS --end-usage {cbr,vbr}\n  \
---fps NUM/DEN --threads N --tile-columns 0..6 --temporal-layers {2,3}\n  \
+--fps NUM/DEN --threads N --tile-columns 0..6\n  \
+--temporal-layers {2,3} | --spatial-layers {2,3} [--inter-layer-pred {0,3}]\n  \
 --aq-mode {0,3} --noise-sensitivity 0..6 --limit N\n  \
 --keyframe-interval N --warmups N --pairs ODD_N --rotations N\n  \
---max-ratio 1.05 [--max-load1 N]\n  \
+--max-ratio 1.05 [--max-load1 N] [--allow-anchor-hash-instability]\n  \
 --anchor-arg ARG [--anchor-arg ARG ...] --test-arg ARG\n"
         .to_owned()
+}
+
+/// Canonical libvpx spatial bitrate weights: each layer carries 4x the one
+/// below it, matching the 1/2 and 1/4 scale-factor ladders.
+fn spatial_layer_weights(spatial_layers: u32) -> Result<&'static [u32], String> {
+    match spatial_layers {
+        2 => Ok(&[1, 4]),
+        3 => Ok(&[1, 4, 16]),
+        _ => Err("--spatial-layers must be 2 or 3".to_owned()),
+    }
+}
+
+/// Splits the matched target across spatial layers, refusing any target that
+/// cannot be allocated exactly; an inexact split would silently change the
+/// bitrate the anchor actually encodes at.
+fn spatial_layer_bitrates(target_kbps: u32, spatial_layers: u32) -> Result<String, String> {
+    let weights = spatial_layer_weights(spatial_layers)?;
+    let total = weights.iter().sum::<u32>();
+    if !target_kbps.is_multiple_of(total) {
+        return Err(format!(
+            "spatial target bitrate {target_kbps} kbps must be divisible by {total}"
+        ));
+    }
+    Ok(weights
+        .iter()
+        .map(|weight| (target_kbps / total * weight).to_string())
+        .collect::<Vec<_>>()
+        .join(","))
+}
+
+fn spatial_scale_factors(spatial_layers: u32) -> Result<&'static str, String> {
+    match spatial_layers {
+        2 => Ok("1/2,1/1"),
+        3 => Ok("1/4,1/2,1/1"),
+        _ => Err("--spatial-layers must be 2 or 3".to_owned()),
+    }
+}
+
+/// Spatial Q bounds on the libvpx example's 0..=63 external scale.
+fn libvpx_spatial_q_bounds(end_usage: &str) -> (u32, u32) {
+    if end_usage == "cbr" { (2, 56) } else { (1, 63) }
+}
+
+/// The same bounds on the vpxenc-style 0..=255 qindex scale.
+fn rvp9_spatial_q_bounds(end_usage: &str) -> (u32, u32) {
+    if end_usage == "cbr" {
+        (8, 224)
+    } else {
+        (4, 255)
+    }
 }
 
 fn required_value(argv: &[String], index: &mut usize) -> Result<String, String> {
@@ -206,6 +276,19 @@ fn validate_extra_args(role: &str, extra: &[String]) -> Result<(), String> {
         "--output",
         "--quiet",
         "--ivf",
+        // Matched spatial controls, on both the vpxenc and libvpx-example
+        // spellings.
+        "--spatial-layers",
+        "--inter-layer-pred",
+        "--min-q",
+        "--max-q",
+        "--frames",
+        "--speed",
+        "--aqmode",
+        "--rc-end-usage",
+        "--kf-dist",
+        "--scale-factors",
+        "--bitrates",
     ];
     for argument in extra {
         let conflicts = argument == "-o"
@@ -252,6 +335,8 @@ fn parse_args_from(argv: &[String]) -> Result<Args, String> {
     let mut threads = 1;
     let mut tile_columns = 0;
     let mut temporal_layers = None;
+    let mut spatial_layers = None;
+    let mut inter_layer_pred = 0;
     let mut aq_mode = 0;
     let mut noise_sensitivity = 0;
     let mut limit = 60;
@@ -261,6 +346,7 @@ fn parse_args_from(argv: &[String]) -> Result<Args, String> {
     let mut rotations = 2;
     let mut max_ratio = 1.05;
     let mut max_load1 = None;
+    let mut allow_anchor_hash_instability = false;
     let mut anchor_args = Vec::new();
     let mut test_args = Vec::new();
 
@@ -291,6 +377,8 @@ fn parse_args_from(argv: &[String]) -> Result<Args, String> {
             "--threads" => threads = parse_u32(flag, &value(&mut index)?)?,
             "--tile-columns" => tile_columns = parse_u32(flag, &value(&mut index)?)?,
             "--temporal-layers" => temporal_layers = Some(parse_u32(flag, &value(&mut index)?)?),
+            "--spatial-layers" => spatial_layers = Some(parse_u32(flag, &value(&mut index)?)?),
+            "--inter-layer-pred" => inter_layer_pred = parse_u32(flag, &value(&mut index)?)?,
             "--aq-mode" => aq_mode = parse_u32(flag, &value(&mut index)?)?,
             "--noise-sensitivity" => noise_sensitivity = parse_u32(flag, &value(&mut index)?)?,
             "--limit" => limit = parse_u32(flag, &value(&mut index)?)?,
@@ -300,6 +388,12 @@ fn parse_args_from(argv: &[String]) -> Result<Args, String> {
             "--rotations" => rotations = parse_u32(flag, &value(&mut index)?)?,
             "--max-ratio" => max_ratio = parse_positive_f64(flag, &value(&mut index)?)?,
             "--max-load1" => max_load1 = Some(parse_positive_f64(flag, &value(&mut index)?)?),
+            "--allow-anchor-hash-instability" => {
+                if inline.is_some() {
+                    return Err(format!("{flag} does not take a value"));
+                }
+                allow_anchor_hash_instability = true;
+            }
             "--anchor-arg" => anchor_args.push(value(&mut index)?),
             "--test-arg" => test_args.push(value(&mut index)?),
             "--help" | "-h" => return Err(usage()),
@@ -329,6 +423,8 @@ fn parse_args_from(argv: &[String]) -> Result<Args, String> {
         threads,
         tile_columns,
         temporal_layers,
+        spatial_layers,
+        inter_layer_pred,
         aq_mode,
         noise_sensitivity,
         limit,
@@ -338,6 +434,7 @@ fn parse_args_from(argv: &[String]) -> Result<Args, String> {
         rotations,
         max_ratio,
         max_load1,
+        allow_anchor_hash_instability,
         anchor_args,
         test_args,
     };
@@ -373,8 +470,40 @@ fn validate_args(args: &Args) -> Result<(), String> {
     {
         return Err("temporal-svc encoders require --temporal-layers".to_owned());
     }
+    if args
+        .spatial_layers
+        .is_some_and(|layers| !matches!(layers, 2 | 3))
+    {
+        return Err("--spatial-layers must be 2 or 3".to_owned());
+    }
+    if !matches!(args.inter_layer_pred, 0 | 3) {
+        return Err("--inter-layer-pred must be 0 or 3".to_owned());
+    }
+    if args.temporal_layers.is_some() && args.spatial_layers.is_some() {
+        return Err("--temporal-layers and --spatial-layers are mutually exclusive".to_owned());
+    }
+    if args.spatial_layers.is_none() && args.inter_layer_pred != 0 {
+        return Err("--inter-layer-pred requires --spatial-layers".to_owned());
+    }
+    if (matches!(args.anchor_kind, EncoderKind::SpatialSvc)
+        || matches!(args.test_kind, EncoderKind::SpatialSvc))
+        && args.spatial_layers.is_none()
+    {
+        return Err("spatial-svc encoders require --spatial-layers".to_owned());
+    }
+    if let Some(layers) = args.spatial_layers {
+        spatial_layer_bitrates(args.target_bitrate, layers)?;
+    }
+    if args.allow_anchor_hash_instability && !matches!(args.anchor_kind, EncoderKind::SpatialSvc) {
+        return Err(
+            "--allow-anchor-hash-instability is accepted only for a spatial-svc anchor".to_owned(),
+        );
+    }
     if !matches!(args.aq_mode, 0 | 3) || args.noise_sensitivity > 6 {
         return Err("--aq-mode must be 0 or 3 and noise sensitivity must be in 0..=6".to_owned());
+    }
+    if args.spatial_layers.is_some() && args.noise_sensitivity != 0 {
+        return Err("spatial SVC requires --noise-sensitivity 0".to_owned());
     }
     if args.keyframe_interval == 0 || args.warmups == 0 {
         return Err("keyframe interval and warmups must be greater than zero".to_owned());
@@ -501,14 +630,15 @@ fn load_clips(args: &Args) -> Result<Vec<Clip>, String> {
     if clips.iter().any(|clip| clip.header != first) {
         return Err("all clips must have identical width, height, and frame rate".to_owned());
     }
-    let temporal_wrapper_used = matches!(args.anchor_kind, EncoderKind::TemporalSvc)
-        || matches!(args.test_kind, EncoderKind::TemporalSvc);
-    if temporal_wrapper_used
+    // Neither SVC wrapper accepts a generic `--fps`, so both silently encode at
+    // the Y4M header rate; a mismatch would make the arms incomparable.
+    let wrapper_used = args.anchor_kind.is_svc_wrapper() || args.test_kind.is_svc_wrapper();
+    if wrapper_used
         && u64::from(first.fps_num) * u64::from(args.fps_den)
             != u64::from(args.fps_num) * u64::from(first.fps_den)
     {
         return Err(format!(
-            "temporal-svc uses the Y4M frame rate {}/{}, which does not match --fps {}/{}",
+            "the SVC wrapper uses the Y4M frame rate {}/{}, which does not match --fps {}/{}",
             first.fps_num, first.fps_den, args.fps_num, args.fps_den
         ));
     }
@@ -524,6 +654,9 @@ fn command_args(
 ) -> Vec<OsString> {
     let mut result = Vec::<OsString>::new();
     let push = |result: &mut Vec<OsString>, value: String| result.push(value.into());
+    // The spatial example takes its input as the final positional argument, so
+    // it has to follow any role-specific extra arguments.
+    let mut trailing_input = None;
     match kind {
         EncoderKind::Vpxenc => {
             result.extend(
@@ -555,6 +688,16 @@ fn command_args(
             );
             if let Some(layers) = args.temporal_layers {
                 push(&mut result, format!("--temporal-layers={layers}"));
+            }
+            if let Some(layers) = args.spatial_layers {
+                let (min_q, max_q) = rvp9_spatial_q_bounds(&args.end_usage);
+                push(&mut result, format!("--spatial-layers={layers}"));
+                push(
+                    &mut result,
+                    format!("--inter-layer-pred={}", args.inter_layer_pred),
+                );
+                push(&mut result, format!("--min-q={min_q}"));
+                push(&mut result, format!("--max-q={max_q}"));
             }
             push(&mut result, format!("--limit={}", args.limit));
             push(
@@ -596,8 +739,59 @@ fn command_args(
                 result.push(value.to_string().into());
             }
         }
+        EncoderKind::SpatialSvc => {
+            let layers = args.spatial_layers.expect("validated spatial layers");
+            let rates = spatial_layer_bitrates(args.target_bitrate, layers)
+                .expect("validated spatial target bitrate");
+            let scales = spatial_scale_factors(layers).expect("validated spatial layer count");
+            let (min_q, max_q) = libvpx_spatial_q_bounds(&args.end_usage);
+            let per_layer = |value: u32| {
+                std::iter::repeat_n(value.to_string(), layers as usize)
+                    .collect::<Vec<_>>()
+                    .join(",")
+            };
+            push(&mut result, format!("--frames={}", args.limit));
+            let mut output_flag = OsString::from("--output=");
+            output_flag.push(output.as_os_str());
+            result.push(output_flag);
+            push(
+                &mut result,
+                format!("--target-bitrate={}", args.target_bitrate),
+            );
+            push(&mut result, format!("--speed={}", args.cpu_used));
+            push(&mut result, format!("--threads={}", args.threads));
+            // The example spells cyclic refresh `--aqmode=1`; vpxenc spells the
+            // same mode `--aq-mode=3`.
+            push(
+                &mut result,
+                format!("--aqmode={}", u32::from(args.aq_mode == 3)),
+            );
+            // The example takes the raw rate-control enum: 0 = VBR, 1 = CBR.
+            push(
+                &mut result,
+                format!("--rc-end-usage={}", u32::from(args.end_usage == "cbr")),
+            );
+            push(&mut result, format!("--spatial-layers={layers}"));
+            push(&mut result, "--temporal-layers=1".to_owned());
+            push(&mut result, format!("--kf-dist={}", args.keyframe_interval));
+            push(&mut result, "--lag-in-frames=0".to_owned());
+            push(&mut result, format!("--scale-factors={scales}"));
+            push(&mut result, format!("--bitrates={rates}"));
+            push(&mut result, format!("--min-q={}", per_layer(min_q)));
+            push(&mut result, format!("--max-q={}", per_layer(max_q)));
+            // The pinned example's enum parser accepts the raw
+            // VP9E_CONTENT_DEFAULT value (0); this is the same default mode as
+            // the human-readable `default` name vpxenc takes.
+            push(&mut result, "--tune-content=0".to_owned());
+            push(
+                &mut result,
+                format!("--inter-layer-pred={}", args.inter_layer_pred),
+            );
+            trailing_input = Some(input.as_os_str().to_owned());
+        }
     }
     result.extend(extra.iter().map(OsString::from));
+    result.extend(trailing_input);
     result
 }
 
@@ -711,7 +905,12 @@ fn geometric_mean(values: &[f64]) -> f64 {
     (values.iter().map(|value| value.ln()).sum::<f64>() / values.len() as f64).exp()
 }
 
-fn summarize(clips: &[Clip], rows: &[RawRow], limit: u32) -> Result<Vec<ClipSummary>, String> {
+fn summarize(
+    clips: &[Clip],
+    rows: &[RawRow],
+    limit: u32,
+    allow_anchor_hash_instability: bool,
+) -> Result<Vec<ClipSummary>, String> {
     let mut summaries = Vec::with_capacity(clips.len());
     for clip in clips {
         let measured = rows
@@ -749,22 +948,38 @@ fn summarize(clips: &[Clip], rows: &[RawRow], limit: u32) -> Result<Vec<ClipSumm
             })
             .collect::<Result<Vec<_>, &str>>()
             .map_err(|error| format!("{}: {error}", clip.name))?;
-        let stable_hash = |arm| -> Result<String, String> {
+        // Determinism is fail-closed. The one opt-in exception covers the
+        // pinned threaded spatial example on the anchor arm; the test arm must
+        // always be reproducible.
+        let representative_hash = |arm: Arm,
+                                   allow_instability: bool|
+         -> Result<(String, usize), String> {
             let hashes = rows
                 .iter()
                 .filter(|row| row.clip == clip.name && row.arm == arm)
                 .map(|row| row.sha256.as_str())
                 .collect::<BTreeSet<_>>();
-            if hashes.len() != 1 {
+            if hashes.len() != 1 && !allow_instability {
                 return Err(format!(
-                    "{} {} emitted {} distinct IVF hashes",
+                    "{} {} emitted {} distinct IVF hashes{}",
                     clip.name,
                     arm.name(),
-                    hashes.len()
+                    hashes.len(),
+                    if arm == Arm::Anchor {
+                        "; only a spatial-svc anchor may opt in with --allow-anchor-hash-instability"
+                    } else {
+                        ""
+                    }
                 ));
             }
-            Ok((*hashes.first().expect("one stable hash")).to_owned())
+            let first = hashes
+                .first()
+                .ok_or_else(|| format!("{} {} produced no outputs", clip.name, arm.name()))?;
+            Ok(((*first).to_owned(), hashes.len()))
         };
+        let (test_sha256, test_distinct_hashes) = representative_hash(Arm::Test, false)?;
+        let (anchor_sha256, anchor_distinct_hashes) =
+            representative_hash(Arm::Anchor, allow_anchor_hash_instability)?;
         let test_median = median(&test);
         let anchor_median = median(&anchor);
         summaries.push(ClipSummary {
@@ -776,8 +991,10 @@ fn summarize(clips: &[Clip], rows: &[RawRow], limit: u32) -> Result<Vec<ClipSumm
             test_ms_per_frame: 1000.0 * test_median / f64::from(limit),
             anchor_ms_per_frame: 1000.0 * anchor_median / f64::from(limit),
             samples: test.len(),
-            test_sha256: stable_hash(Arm::Test)?,
-            anchor_sha256: stable_hash(Arm::Anchor)?,
+            test_sha256,
+            anchor_sha256,
+            test_distinct_hashes,
+            anchor_distinct_hashes,
         });
     }
     Ok(summaries)
@@ -837,12 +1054,15 @@ fn write_summary(
     let mut writer = BufWriter::new(
         File::create(path).map_err(|error| format!("cannot create {}: {error}", path.display()))?,
     );
-    writeln!(writer, "clip,test_median,anchor_median,separate_ratio,paired_ratio,test_ms_per_frame,anchor_ms_per_frame,samples,test_sha256,anchor_sha256")
+    // `*_sha256` is the first of `*_distinct_hash_count` observed output
+    // hashes; a count above one is only ever possible on an anchor arm that
+    // opted in with --allow-anchor-hash-instability.
+    writeln!(writer, "clip,test_median,anchor_median,separate_ratio,paired_ratio,test_ms_per_frame,anchor_ms_per_frame,samples,test_sha256,anchor_sha256,test_distinct_hash_count,anchor_distinct_hash_count")
         .map_err(|error| error.to_string())?;
     for row in summaries {
         writeln!(
             writer,
-            "{},{:.9},{:.9},{:.9},{:.9},{:.9},{:.9},{},{},{}",
+            "{},{:.9},{:.9},{:.9},{:.9},{:.9},{:.9},{},{},{},{},{}",
             row.name,
             row.test_median,
             row.anchor_median,
@@ -852,13 +1072,15 @@ fn write_summary(
             row.anchor_ms_per_frame,
             row.samples,
             row.test_sha256,
-            row.anchor_sha256
+            row.anchor_sha256,
+            row.test_distinct_hashes,
+            row.anchor_distinct_hashes
         )
         .map_err(|error| error.to_string())?;
     }
     writeln!(
         writer,
-        "corpus,,,{separate_geomean:.9},{paired_geomean:.9},,,,,"
+        "corpus,,,{separate_geomean:.9},{paired_geomean:.9},,,,,,,"
     )
     .map_err(|error| error.to_string())?;
     writer.flush().map_err(|error| error.to_string())
@@ -930,6 +1152,8 @@ fn write_manifest(
     writeln!(writer, "threads={}", args.threads).map_err(|e| e.to_string())?;
     writeln!(writer, "tile_columns={}", args.tile_columns).map_err(|e| e.to_string())?;
     writeln!(writer, "temporal_layers={:?}", args.temporal_layers).map_err(|e| e.to_string())?;
+    writeln!(writer, "spatial_layers={:?}", args.spatial_layers).map_err(|e| e.to_string())?;
+    writeln!(writer, "inter_layer_pred={}", args.inter_layer_pred).map_err(|e| e.to_string())?;
     writeln!(writer, "aq_mode={}", args.aq_mode).map_err(|e| e.to_string())?;
     writeln!(writer, "noise_sensitivity={}", args.noise_sensitivity).map_err(|e| e.to_string())?;
     writeln!(writer, "limit={}", args.limit).map_err(|e| e.to_string())?;
@@ -949,6 +1173,12 @@ fn write_manifest(
         writer,
         "max_ratio={:.9} max_load1={:?}",
         args.max_ratio, args.max_load1
+    )
+    .map_err(|e| e.to_string())?;
+    writeln!(
+        writer,
+        "allow_anchor_hash_instability={}",
+        args.allow_anchor_hash_instability
     )
     .map_err(|e| e.to_string())?;
     for clip in clips {
@@ -1115,7 +1345,12 @@ fn run() -> Result<bool, String> {
         }
     }
     enforce_load(&args, "complete", &mut loads)?;
-    let summaries = summarize(&clips, &rows, args.limit)?;
+    let summaries = summarize(
+        &clips,
+        &rows,
+        args.limit,
+        args.allow_anchor_hash_instability,
+    )?;
     let separate_geomean = geometric_mean(
         &summaries
             .iter()
@@ -1158,6 +1393,14 @@ fn run() -> Result<bool, String> {
             row.anchor_ms_per_frame
         );
     }
+    for row in &summaries {
+        if row.anchor_distinct_hashes > 1 {
+            println!(
+                "{}: anchor emitted {} distinct IVF hashes under --allow-anchor-hash-instability",
+                row.name, row.anchor_distinct_hashes
+            );
+        }
+    }
     println!(
         "corpus: separate {separate_geomean:.6}x, paired {paired_geomean:.6}x (limit {:.6}x)",
         args.max_ratio
@@ -1198,6 +1441,8 @@ mod tests {
             threads: 1,
             tile_columns: 0,
             temporal_layers: Some(3),
+            spatial_layers: None,
+            inter_layer_pred: 0,
             aq_mode: 0,
             noise_sensitivity: 0,
             limit: 60,
@@ -1207,8 +1452,27 @@ mod tests {
             rotations: 2,
             max_ratio: 1.05,
             max_load1: None,
+            allow_anchor_hash_instability: false,
             anchor_args: vec![],
             test_args: vec![],
+        }
+    }
+
+    /// A spatial pair: no temporal layers, a 3-layer ladder, and a target the
+    /// 1:4:16 allocation divides exactly.
+    fn fake_spatial_args(end_usage: &str) -> Args {
+        Args {
+            anchor_kind: EncoderKind::SpatialSvc,
+            test_kind: EncoderKind::Vpxenc,
+            end_usage: end_usage.to_owned(),
+            temporal_layers: None,
+            spatial_layers: Some(3),
+            inter_layer_pred: 3,
+            target_bitrate: 210,
+            aq_mode: 3,
+            threads: 4,
+            keyframe_interval: 100,
+            ..fake_args(EncoderKind::SpatialSvc)
         }
     }
 
@@ -1217,6 +1481,54 @@ mod tests {
             .into_iter()
             .map(|value| value.into_string().unwrap())
             .collect()
+    }
+
+    /// Parses a minimal valid invocation plus `extra`. The work directory is
+    /// never created, so every test may share the same missing path.
+    fn parse_with(extra: &[&str]) -> Result<Args, String> {
+        let executable = std::env::current_exe().unwrap();
+        let work_dir = std::env::temp_dir().join(format!(
+            "rvp9-encode-headtohead-parse-{}-must-not-exist",
+            std::process::id()
+        ));
+        let mut argv = vec![
+            "encode-headtohead".to_owned(),
+            format!("--anchor-encoder={}", executable.display()),
+            format!("--test-encoder={}", executable.display()),
+            "--anchor-revision=anchor".to_owned(),
+            "--test-revision=test".to_owned(),
+            "--clip=clip=/not/read/by-parser.y4m".to_owned(),
+            format!("--work-dir={}", work_dir.display()),
+        ];
+        argv.extend(extra.iter().map(|item| (*item).to_owned()));
+        parse_args_from(&argv)
+    }
+
+    fn sample_clip() -> Clip {
+        Clip {
+            name: "c".into(),
+            path: PathBuf::from("c.y4m"),
+            header: Y4mHeader {
+                width: 8,
+                height: 8,
+                fps_num: 30,
+                fps_den: 1,
+            },
+            sha256: "input".into(),
+        }
+    }
+
+    fn raw_row(rotation: u32, iteration: &str, arm: Arm, seconds: f64, hash: &str) -> RawRow {
+        RawRow {
+            clip: "c".into(),
+            rotation,
+            iteration: iteration.into(),
+            arm,
+            order: 0,
+            seconds,
+            frames: 60,
+            sha256: hash.into(),
+        }
     }
 
     #[test]
@@ -1273,6 +1585,238 @@ mod tests {
     }
 
     #[test]
+    fn spatial_svc_cbr_command_pins_the_libvpx_example_surface() {
+        let args = fake_spatial_args("cbr");
+        let command = strings(command_args(
+            EncoderKind::SpatialSvc,
+            &args,
+            Path::new("input.y4m"),
+            Path::new("output.ivf"),
+            &["--extra".into()],
+        ));
+        for expected in [
+            "--frames=60",
+            "--output=output.ivf",
+            "--target-bitrate=210",
+            "--speed=8",
+            "--threads=4",
+            "--aqmode=1",
+            "--rc-end-usage=1",
+            "--spatial-layers=3",
+            "--temporal-layers=1",
+            "--kf-dist=100",
+            "--lag-in-frames=0",
+            "--scale-factors=1/4,1/2,1/1",
+            "--bitrates=10,40,160",
+            "--min-q=2,2,2",
+            "--max-q=56,56,56",
+            "--tune-content=0",
+            "--inter-layer-pred=3",
+        ] {
+            assert!(
+                command.contains(&expected.to_owned()),
+                "missing anchor {expected}"
+            );
+        }
+        // The example takes its input last, after any role-specific extras.
+        assert_eq!(&command[command.len() - 2..], ["--extra", "input.y4m"]);
+    }
+
+    #[test]
+    fn spatial_svc_cbr_command_pins_the_matched_rvp9_surface() {
+        let args = fake_spatial_args("cbr");
+        let command = strings(command_args(
+            EncoderKind::Vpxenc,
+            &args,
+            Path::new("input.y4m"),
+            Path::new("output.ivf"),
+            &[],
+        ));
+        for expected in [
+            "--codec=vp9",
+            "--rt",
+            "--cpu-used=8",
+            "--end-usage=cbr",
+            "--target-bitrate=210",
+            "--fps=30/1",
+            "--threads=4",
+            "--aq-mode=3",
+            "--spatial-layers=3",
+            "--inter-layer-pred=3",
+            "--min-q=8",
+            "--max-q=224",
+            "--kf-max-dist=100",
+        ] {
+            assert!(
+                command.contains(&expected.to_owned()),
+                "missing test {expected}"
+            );
+        }
+        assert!(
+            !command
+                .iter()
+                .any(|argument| argument.starts_with("--temporal-layers"))
+        );
+        assert_eq!(command.last().unwrap(), "input.y4m");
+    }
+
+    #[test]
+    fn spatial_svc_vbr_widens_the_q_bounds_on_both_arms() {
+        let args = fake_spatial_args("vbr");
+        let anchor = strings(command_args(
+            EncoderKind::SpatialSvc,
+            &args,
+            Path::new("input.y4m"),
+            Path::new("output.ivf"),
+            &[],
+        ));
+        let test = strings(command_args(
+            EncoderKind::Vpxenc,
+            &args,
+            Path::new("input.y4m"),
+            Path::new("output.ivf"),
+            &[],
+        ));
+        for expected in ["--rc-end-usage=0", "--min-q=1,1,1", "--max-q=63,63,63"] {
+            assert!(
+                anchor.contains(&expected.to_owned()),
+                "missing anchor {expected}"
+            );
+        }
+        for expected in ["--end-usage=vbr", "--min-q=4", "--max-q=255"] {
+            assert!(
+                test.contains(&expected.to_owned()),
+                "missing test {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn spatial_targets_must_split_exactly_across_layers() {
+        assert_eq!(spatial_layer_bitrates(210, 3).unwrap(), "10,40,160");
+        assert_eq!(spatial_layer_bitrates(1500, 2).unwrap(), "300,1200");
+        assert!(spatial_layer_bitrates(1500, 3).is_err());
+        assert!(spatial_layer_bitrates(211, 2).is_err());
+        assert_eq!(spatial_scale_factors(2).unwrap(), "1/2,1/1");
+        assert!(spatial_scale_factors(4).is_err());
+        let spatial = ["--anchor-kind=spatial-svc", "--test-kind=vpxenc"];
+        assert!(
+            parse_with(
+                &[
+                    spatial.as_slice(),
+                    &["--spatial-layers=3", "--target-bitrate=1500"]
+                ]
+                .concat()
+            )
+            .is_err()
+        );
+        assert!(
+            parse_with(
+                &[
+                    spatial.as_slice(),
+                    &["--spatial-layers=3", "--target-bitrate=1512"]
+                ]
+                .concat()
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn topologies_are_mutually_exclusive_and_matched_to_the_wrapper_kind() {
+        let spatial = [
+            "--anchor-kind=spatial-svc",
+            "--test-kind=vpxenc",
+            "--spatial-layers=2",
+        ];
+        let parsed = parse_with(&spatial).unwrap();
+        assert_eq!(parsed.spatial_layers, Some(2));
+        assert_eq!(parsed.temporal_layers, None);
+        assert_eq!(parsed.inter_layer_pred, 0);
+        for rejected in [
+            // Temporal and spatial layers cannot be combined.
+            [spatial.as_slice(), &["--temporal-layers=3"]].concat(),
+            // Each wrapper kind requires its own topology.
+            vec!["--anchor-kind=spatial-svc", "--test-kind=vpxenc"],
+            vec![
+                "--anchor-kind=temporal-svc",
+                "--test-kind=vpxenc",
+                "--spatial-layers=2",
+            ],
+            // Out-of-range spatial controls.
+            vec![
+                "--anchor-kind=vpxenc",
+                "--test-kind=vpxenc",
+                "--spatial-layers=4",
+            ],
+            [spatial.as_slice(), &["--inter-layer-pred=1"]].concat(),
+            vec![
+                "--anchor-kind=vpxenc",
+                "--test-kind=vpxenc",
+                "--inter-layer-pred=3",
+            ],
+            [spatial.as_slice(), &["--noise-sensitivity=1"]].concat(),
+        ] {
+            assert!(parse_with(&rejected).is_err(), "accepted {rejected:?}");
+        }
+    }
+
+    #[test]
+    fn anchor_hash_instability_is_a_narrow_opt_in() {
+        let spatial_anchor = [
+            "--anchor-kind=spatial-svc",
+            "--test-kind=vpxenc",
+            "--spatial-layers=2",
+            "--allow-anchor-hash-instability",
+        ];
+        assert!(
+            parse_with(&spatial_anchor)
+                .unwrap()
+                .allow_anchor_hash_instability
+        );
+        for rejected in [
+            // A spatial-svc test arm does not license anchor instability.
+            vec![
+                "--anchor-kind=vpxenc",
+                "--test-kind=spatial-svc",
+                "--spatial-layers=2",
+                "--allow-anchor-hash-instability",
+            ],
+            vec![
+                "--anchor-kind=temporal-svc",
+                "--test-kind=vpxenc",
+                "--temporal-layers=3",
+                "--allow-anchor-hash-instability",
+            ],
+            // The flag takes no value.
+            [
+                spatial_anchor.as_slice(),
+                &["--allow-anchor-hash-instability=false"],
+            ]
+            .concat(),
+        ] {
+            assert!(parse_with(&rejected).is_err(), "accepted {rejected:?}");
+        }
+
+        let clip = sample_clip();
+        let mut rows = vec![
+            raw_row(1, "1", Arm::Test, 2.0, "t"),
+            raw_row(1, "1", Arm::Anchor, 1.0, "a1"),
+            raw_row(2, "1", Arm::Test, 4.0, "t"),
+            raw_row(2, "1", Arm::Anchor, 2.0, "a2"),
+        ];
+        assert!(summarize(std::slice::from_ref(&clip), &rows, 60, false).is_err());
+        let summary = summarize(std::slice::from_ref(&clip), &rows, 60, true).unwrap();
+        assert_eq!(summary[0].anchor_distinct_hashes, 2);
+        assert_eq!(summary[0].anchor_sha256, "a1");
+        assert_eq!(summary[0].test_distinct_hashes, 1);
+        assert_eq!(summary[0].paired_ratio, 2.0);
+        // The opt-in never extends to the test arm.
+        rows[0].sha256 = "t2".into();
+        assert!(summarize(&[clip], &rows, 60, true).is_err());
+    }
+
+    #[test]
     fn parsing_requires_safe_unique_clips_and_odd_pairs() {
         assert!(parse_clip("ducks=/tmp/clip.y4m").is_ok());
         assert!(parse_clip("bad,name=/tmp/clip.y4m").is_err());
@@ -1323,6 +1867,24 @@ mod tests {
         assert!(validate_extra_args("anchor", &["--cpu-used=6".into()]).is_err());
         assert!(validate_extra_args("test", &["--output".into()]).is_err());
         assert!(validate_extra_args("test", &["-o".into()]).is_err());
+        for spatial in [
+            "--spatial-layers=2",
+            "--inter-layer-pred=3",
+            "--min-q=4",
+            "--max-q=255",
+            "--frames=10",
+            "--speed=8",
+            "--aqmode=1",
+            "--rc-end-usage=1",
+            "--kf-dist=60",
+            "--scale-factors=1/2,1/1",
+            "--bitrates=300,1200",
+        ] {
+            assert!(
+                validate_extra_args("anchor", &[spatial.into()]).is_err(),
+                "{spatial} must be refused"
+            );
+        }
     }
 
     #[test]
@@ -1354,37 +1916,19 @@ mod tests {
 
     #[test]
     fn summary_uses_paired_ratios_and_rejects_hash_instability() {
-        let clip = Clip {
-            name: "c".into(),
-            path: PathBuf::from("c.y4m"),
-            header: Y4mHeader {
-                width: 8,
-                height: 8,
-                fps_num: 30,
-                fps_den: 1,
-            },
-            sha256: "input".into(),
-        };
-        let make = |rotation, iteration: &str, arm, seconds, hash: &str| RawRow {
-            clip: "c".into(),
-            rotation,
-            iteration: iteration.into(),
-            arm,
-            order: 0,
-            seconds,
-            frames: 60,
-            sha256: hash.into(),
-        };
+        let clip = sample_clip();
         let mut rows = vec![
-            make(1, "1", Arm::Test, 2.0, "t"),
-            make(1, "1", Arm::Anchor, 1.0, "a"),
-            make(2, "1", Arm::Test, 4.0, "t"),
-            make(2, "1", Arm::Anchor, 2.0, "a"),
+            raw_row(1, "1", Arm::Test, 2.0, "t"),
+            raw_row(1, "1", Arm::Anchor, 1.0, "a"),
+            raw_row(2, "1", Arm::Test, 4.0, "t"),
+            raw_row(2, "1", Arm::Anchor, 2.0, "a"),
         ];
-        let summary = summarize(std::slice::from_ref(&clip), &rows, 60).unwrap();
+        let summary = summarize(std::slice::from_ref(&clip), &rows, 60, false).unwrap();
         assert_eq!(summary[0].separate_ratio, 2.0);
         assert_eq!(summary[0].paired_ratio, 2.0);
+        assert_eq!(summary[0].test_distinct_hashes, 1);
+        assert_eq!(summary[0].anchor_distinct_hashes, 1);
         rows[0].sha256 = "changed".into();
-        assert!(summarize(&[clip], &rows, 60).is_err());
+        assert!(summarize(&[clip], &rows, 60, false).is_err());
     }
 }
