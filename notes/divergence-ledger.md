@@ -6468,3 +6468,39 @@ unchanged and remains open at `1.0596x`.
 **Future plan:** retain this narrow policy while profiling the separate CPU8
 gap. Re-run the complete spatial quality, absolute-latency, and decoder matrix
 on the final integrated tree before release.
+
+### 2026-08-15 — Keep current-sized references in spatial partition analysis
+
+**Where:** `rvp9_encoder::frame_loop::StreamEncoder::encode_inter_internal`
+(`partition_ref_y`) and
+`rvp9_encoder::pick_and_simulate_inter_encode_partitions`
+(`sb_partition_use_golden`); libvpx counterparts:
+`vp9/encoder/vp9_encodeframe.c::choose_partitioning` and its scaled-LAST and
+spatial-GOLDEN gates.
+
+**What libvpx does:** when a key-enhancement component names a lower-sized
+LAST reference, variance partitioning uses keyframe-style source variance.
+On ordinary spatial enhancement it excludes GOLDEN and partitions against the
+same-sized LAST reference.
+
+**What rvp9 does:** partition analysis continues to use its current-sized
+analysis references. That may include the pre-upscaled inter-layer reference
+and the existing LAST-versus-GOLDEN superblock comparison. The final emitted
+prediction still comes from the decoder-visible reference and is unaffected
+by this partition-only policy.
+
+**Why:** the exact libvpx partition policy was isolated on the pinned 60-frame
+In To Tree CPU8/S3 VBR curve. SL0 stayed `-6.9157%`, but SL1 weakened from
+`-5.0725%` to `-4.3991%` and SL2 regressed from `+0.8997%` to `+3.1066%`.
+The candidate was removed; its CSV SHA-256 is
+`97be4bb09fb81ebe31cce8e4e3fd11b157981b1230557d34072e2f3c5f4b4205`.
+
+**Byte-parity impact:** this entry documents retained behavior; Unit 1196 left
+no source change. Spatial stream bytes intentionally remain different from
+libvpx, while rvp9's encoder reconstruction and all exercised decoders must
+still agree exactly.
+
+**Future plan:** correct the final mode picker's proven analysis-versus-
+normative predictor mismatch independently. Revisit partition analysis only
+if that correction changes the measured interaction enough to justify a new
+paired experiment.
