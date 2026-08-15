@@ -154,6 +154,20 @@ fn active_worst_quality_vbr_with_factor(
     frame_kind: FrameKind,
     fac_active_worst_inter: i32,
 ) -> i32 {
+    active_worst_quality_vbr_at_frame(
+        rc,
+        frame_kind,
+        fac_active_worst_inter,
+        rc.current_video_frame,
+    )
+}
+
+fn active_worst_quality_vbr_at_frame(
+    rc: &RateControl,
+    frame_kind: FrameKind,
+    fac_active_worst_inter: i32,
+    current_video_frame: u32,
+) -> i32 {
     let worst_quality = rc.worst_quality;
     let last_q_key = i32::from(rc.last_q_keyframe);
     let avg_inter = i32::from(rc.avg_frame_qindex_inter);
@@ -163,7 +177,7 @@ fn active_worst_quality_vbr_with_factor(
             // First-ever keyframe → no Q history; libvpx returns
             // worst_quality directly. Subsequent KFs use the previous
             // KF's Q doubled (`vp9_ratectrl.c:911-912`).
-            if rc.current_video_frame == 0 {
+            if current_video_frame == 0 {
                 worst_quality
             } else {
                 last_q_key.saturating_mul(2)
@@ -174,7 +188,7 @@ fn active_worst_quality_vbr_with_factor(
             // just after the first KF. Do not infer this from layer-local bit
             // totals: the first enhancement layer is still fresh here.
             // `vp9_ratectrl.c:921-924`.
-            if rc.current_video_frame == 1 {
+            if current_video_frame == 1 {
                 last_q_key.saturating_mul(2)
             } else {
                 // `avg_inter * 150 / 100` — drives active_worst above
@@ -190,7 +204,7 @@ fn active_worst_quality_vbr_with_factor(
             // deliberately not the smoothed inter-Q average used below to
             // derive active-best quality.
             // `vp9_ratectrl.c:914-919`.
-            if rc.current_video_frame == 1 {
+            if current_video_frame == 1 {
                 last_q_key.saturating_mul(5) >> 2
             } else {
                 (i32::from(rc.last_q_inter).saturating_mul(FAC_ACTIVE_WORST_GF)) / 100
@@ -206,6 +220,15 @@ fn active_worst_quality_vbr_with_factor(
 /// the GF/ARF and CQ/Q branches pruned (handled at higher level / out of
 /// scope per module comment).
 fn active_best_quality_vbr(rc: &RateControl, frame_kind: FrameKind, active_worst: i32) -> i32 {
+    active_best_quality_vbr_at_frame(rc, frame_kind, active_worst, rc.current_video_frame)
+}
+
+fn active_best_quality_vbr_at_frame(
+    rc: &RateControl,
+    frame_kind: FrameKind,
+    active_worst: i32,
+    current_video_frame: u32,
+) -> i32 {
     let avg_key = i32::from(rc.avg_frame_qindex_key);
     let avg_inter = i32::from(rc.avg_frame_qindex_inter);
 
@@ -223,7 +246,7 @@ fn active_best_quality_vbr(rc: &RateControl, frame_kind: FrameKind, active_worst
             // inter_minq[q]` (`vp9_ratectrl.c:1237-1242`). On the very
             // first inter (current_video_frame == 1) it instead uses
             // `inter_minq[avg_frame_qindex[KEY_FRAME]]`.
-            if rc.current_video_frame == 1 {
+            if current_video_frame == 1 {
                 inter_minq(avg_key)
             } else {
                 let q = avg_inter.min(active_worst);
@@ -350,7 +373,7 @@ pub(super) fn pick_q_and_bounds_with_model(
     frame_kind: FrameKind,
     model: Option<CyclicRefreshRateModel>,
 ) -> (u8, u8, u8) {
-    pick_q_and_bounds_with_model_and_target(rc, frame_kind, model, None)
+    pick_q_and_bounds_with_model_and_target(rc, frame_kind, model, None, None)
 }
 
 pub(super) fn pick_q_and_bounds_with_model_and_target(
@@ -358,6 +381,7 @@ pub(super) fn pick_q_and_bounds_with_model_and_target(
     frame_kind: FrameKind,
     model: Option<CyclicRefreshRateModel>,
     svc: Option<TemporalSvcRateControl>,
+    spatial_current_video_frame: Option<u32>,
 ) -> (u8, u8, u8) {
     // libvpx resets the Golden-frame boost ratio at each group boundary,
     // then retunes it after frame 30 from avg_frame_low_motion. The
@@ -387,18 +411,33 @@ pub(super) fn pick_q_and_bounds_with_model_and_target(
 
     // 2. Active worst-Q ceiling — VBR's ambient-driven model
     //    (libvpx `vp9_ratectrl.c:1146` + 905-928).
-    let active_worst = if svc.is_some() {
-        active_worst_quality_vbr_with_factor(
+    let active_worst = match (svc.is_some(), spatial_current_video_frame) {
+        (true, Some(current_video_frame)) => active_worst_quality_vbr_at_frame(
             rc,
             frame_kind,
             rc.temporal_svc_vbr_active_worst_factor(),
-        )
-    } else {
-        active_worst_quality_vbr(rc, frame_kind)
+            current_video_frame,
+        ),
+        (true, None) => active_worst_quality_vbr_with_factor(
+            rc,
+            frame_kind,
+            rc.temporal_svc_vbr_active_worst_factor(),
+        ),
+        (false, Some(current_video_frame)) => active_worst_quality_vbr_at_frame(
+            rc,
+            frame_kind,
+            FAC_ACTIVE_WORST_INTER,
+            current_video_frame,
+        ),
+        (false, None) => active_worst_quality_vbr(rc, frame_kind),
     };
 
     // 3. Active best-Q floor (libvpx `vp9_ratectrl.c:1167-1247`).
-    let active_best = active_best_quality_vbr(rc, frame_kind, active_worst);
+    let active_best = if let Some(current_video_frame) = spatial_current_video_frame {
+        active_best_quality_vbr_at_frame(rc, frame_kind, active_worst, current_video_frame)
+    } else {
+        active_best_quality_vbr(rc, frame_kind, active_worst)
+    };
 
     // 4. Mutual clamp (libvpx `vp9_ratectrl.c:1252-1255`).
     let active_best = active_best.clamp(rc.best_quality, rc.worst_quality);
@@ -571,6 +610,7 @@ mod tests {
                 target_bits: 20_000,
                 boosted_refresh: false,
             }),
+            None,
         );
         assert_eq!(rc.this_frame_target, 20_000);
         assert_ne!(rc.this_frame_target, calc_pframe_target_size_vbr(&rc));
@@ -593,6 +633,7 @@ mod tests {
                 target_bits,
                 boosted_refresh: false,
             }),
+            None,
         );
         let (refresh_q, _, refresh_top) = pick_q_and_bounds_with_model_and_target(
             &mut refresh,
@@ -602,6 +643,7 @@ mod tests {
                 target_bits,
                 boosted_refresh: true,
             }),
+            None,
         );
 
         assert_eq!(plain.this_frame_target, target_bits);
@@ -609,6 +651,39 @@ mod tests {
         assert_eq!(plain_top, 177);
         assert_eq!(refresh_top, 146);
         assert!(refresh_q <= refresh_top);
+    }
+
+    #[test]
+    fn spatial_vbr_uses_stream_global_component_age_without_changing_target() {
+        let mut layer_local = RateControl::new(vbr_config());
+        layer_local.current_video_frame = 1;
+        layer_local.avg_frame_bandwidth = 40_000;
+        layer_local.avg_frame_qindex_inter = 145;
+        let mut stream_global = layer_local.clone();
+        let expected_target = calc_pframe_target_size_vbr(&layer_local);
+
+        let (_, _, local_top) = pick_q_and_bounds_with_model_and_target(
+            &mut layer_local,
+            FrameKind::Inter,
+            None,
+            None,
+            None,
+        );
+        let (_, _, global_top) = pick_q_and_bounds_with_model_and_target(
+            &mut stream_global,
+            FrameKind::Inter,
+            None,
+            None,
+            Some(4),
+        );
+
+        assert_eq!(layer_local.this_frame_target, expected_target);
+        assert_eq!(stream_global.this_frame_target, expected_target);
+        assert_eq!(local_top, 103, "layer-local frame 1 collapses the Q range");
+        assert!(
+            global_top > local_top,
+            "global component 4 must use ambient inter-Q history"
+        );
     }
 
     #[test]

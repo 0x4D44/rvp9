@@ -1889,6 +1889,23 @@ impl SpatialFrameControl {
             } => refresh_frame_flags.trailing_zeros() as u8,
         }
     }
+
+    /// Return libvpx's stream-global component index for a spatial inter
+    /// frame. Each rvp9 spatial layer owns a layer-local frame counter, while
+    /// libvpx advances `current_video_frame` once per coded component.
+    fn vbr_current_video_frame(self, layer_frame_index: u32) -> Option<u32> {
+        match self {
+            Self::Key => None,
+            Self::Inter {
+                number_spatial_layers,
+                ..
+            } => Some(
+                layer_frame_index
+                    .saturating_mul(u32::from(number_spatial_layers))
+                    .saturating_add(u32::from(self.spatial_layer_id())),
+            ),
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug, Default)]
@@ -2894,6 +2911,9 @@ impl StreamEncoder {
             spatial_control.and_then(|control| match control {
                 SpatialFrameControl::Key => None,
                 SpatialFrameControl::Inter { base_key_q, .. } => base_key_q,
+            }),
+            spatial_control.and_then(|control| {
+                control.vbr_current_video_frame(self.rate_control.current_video_frame)
             }),
         );
         // -- E8 DIAG: inter active_worst / buffer-state trace --
@@ -7803,6 +7823,24 @@ mod tests {
         assert_eq!(control(0x01).spatial_layer_id(), 0);
         assert_eq!(control(0x02).spatial_layer_id(), 1);
         assert_eq!(control(0x04).spatial_layer_id(), 2);
+    }
+
+    #[test]
+    fn spatial_vbr_frame_age_counts_coded_components() {
+        let control = |refresh_frame_flags| SpatialFrameControl::Inter {
+            number_spatial_layers: 3,
+            refresh_frame_flags,
+            ref_frame_indices: [0, 1, 2],
+            allow_golden_ref: true,
+            base_key_q: None,
+        };
+
+        assert_eq!(SpatialFrameControl::Key.vbr_current_video_frame(0), None);
+        assert_eq!(control(0x02).vbr_current_video_frame(0), Some(1));
+        assert_eq!(control(0x04).vbr_current_video_frame(0), Some(2));
+        assert_eq!(control(0x01).vbr_current_video_frame(1), Some(3));
+        assert_eq!(control(0x02).vbr_current_video_frame(1), Some(4));
+        assert_eq!(control(0x04).vbr_current_video_frame(1), Some(5));
     }
 
     #[test]

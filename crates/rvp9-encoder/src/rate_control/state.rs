@@ -450,7 +450,7 @@ impl RateControl {
         frame_kind: FrameKind,
         model: Option<super::CyclicRefreshRateModel>,
     ) -> (u8, u8, u8) {
-        self.pick_q_and_bounds_with_model_and_target(frame_kind, model, None, None)
+        self.pick_q_and_bounds_with_model_and_target(frame_kind, model, None, None, None)
     }
 
     pub(crate) fn pick_q_and_bounds_with_model_and_target(
@@ -459,6 +459,7 @@ impl RateControl {
         model: Option<super::CyclicRefreshRateModel>,
         svc: Option<super::TemporalSvcRateControl>,
         spatial_base_key_q: Option<u8>,
+        spatial_vbr_current_video_frame: Option<u32>,
     ) -> (u8, u8, u8) {
         use super::RcMode;
         match self.config.rc_mode {
@@ -478,14 +479,27 @@ impl RateControl {
             // first-pass stats attached via `attach_two_pass`. The W1.6
             // one-pass VBR PROOF lives in `tests/w_vbr_rc_proof.rs`; the
             // two-pass PROOF in `tests/w_2pass_vbr.rs`.
-            RcMode::Vbr => match (model, svc) {
-                (model, Some(svc)) => {
-                    vbr::pick_q_and_bounds_with_model_and_target(self, frame_kind, model, Some(svc))
+            RcMode::Vbr => match (model, svc, spatial_vbr_current_video_frame) {
+                (model, svc, Some(current_video_frame)) => {
+                    vbr::pick_q_and_bounds_with_model_and_target(
+                        self,
+                        frame_kind,
+                        model,
+                        svc,
+                        Some(current_video_frame),
+                    )
                 }
-                (Some(model), None) => {
+                (model, Some(svc), None) => vbr::pick_q_and_bounds_with_model_and_target(
+                    self,
+                    frame_kind,
+                    model,
+                    Some(svc),
+                    None,
+                ),
+                (Some(model), None, None) => {
                     vbr::pick_q_and_bounds_with_model(self, frame_kind, Some(model))
                 }
-                (None, None) => vbr::pick_q_and_bounds(self, frame_kind),
+                (None, None, None) => vbr::pick_q_and_bounds(self, frame_kind),
             },
             // PHASE-3 integration: Constrained-Quality (CQ). Runs the
             // CBR regulator, then clamps the picked Q to be ≥
