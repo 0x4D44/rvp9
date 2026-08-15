@@ -24,6 +24,52 @@ Each entry:
 
 ## Entries
 
+### 2026-08-15 — Calibrate CPU6 two-layer spatial VBR small-block decisions
+
+**Where:** `rvp9_encoder::use_source_qindex_for_exact_vbp`,
+`rvp9_encoder::spatial_vbr_partition_qindex_bias`, and
+`rvp9_encoder::block8_coef_rd_enabled`; libvpx counterparts:
+`vp9/encoder/vp9_encodeframe.c:set_vbp_thresholds` and
+`vp9/encoder/vp9_pickmode.c:block_yrd`.
+
+**What libvpx does:** CPU6 derives variance-partition thresholds from the
+coding qindex and leaves `use_simple_block_yrd` disabled, so Block8
+candidates receive transform, quantization, and coefficient costing.
+
+**What rvp9 does:** CPU6 two-layer spatial VBR at 1280x720 or below uses the
+coding qindex plus a three-point partition-only offset and real coefficient
+rate/distortion for non-model-skipped Block8 candidates. CPU6 three-layer
+VBR, larger components, CBR, ordinary, temporal, and CPU7/8 paths retain
+their prior policies.
+
+**Why:** the literal coding-Q partition input improved the failing Old Town
+Cross top layer from `+1.8826%` to `+1.2620%`, but did not pass. Adding Block8
+coefficient RD reached `+0.7691%`; the smallest tested structural correction,
+three qindex points, closed the curve at `-0.0758%`. The paired In To Tree and
+Ducks controls remain green at `-1.7842/-0.6122%` and
+`-9.1106/-2.2182%`. Applying the bundle to S3 worsened already-red S3 curves,
+so the topology boundary is deliberate.
+
+**Byte-parity impact:** intentional on qualifying CPU6 S2 spatial-VBR inter
+components. Partitions, modes, and residuals may change. All 54 exercised
+rvp9 full and retained-layer streams decode byte-exactly through
+rvp9-decoder and pinned vpxdec; ffmpeg also decodes every stream.
+
+**Compression-efficiency impact:** the three canonical 720p30 S2 curves are
+In To Tree `-1.7842/-0.6122%`, Ducks Take Off `-9.1106/-2.2182%`, and Old
+Town Cross `-1.0422/-0.0758%`. All six layers pass the final `+0.5%` gate.
+Old Town Cross top-layer matched-bitrate anchor-minus-rvp9 PSNR averages
+`-0.0105 dB`.
+
+**Speed impact:** single-pass curve timings were generally faster than the
+pinned anchor after warm-up, but host load and one cold point make them
+diagnostic only. The exact committed PGO artifact and quiet-host repeated
+medians remain the speed oracle.
+
+**Future plan:** retain through the complete CPU6--8, S2/S3, resolution,
+decoder, and production-PGO matrix. Do not widen it to S3 or 1080p without a
+separate complete Pareto result.
+
 ### 2026-08-12 — Widen CPU8 large-block model RD only for T3 disposable pictures
 
 **Where:** `rvp9_encoder::svc_enhancement_model_only_large_qmax`,

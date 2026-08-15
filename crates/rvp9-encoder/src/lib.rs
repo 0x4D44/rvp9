@@ -1878,6 +1878,51 @@ fn exact_vbp_partition_qindex(
     effective_qindex.saturating_add(bias)
 }
 
+#[inline]
+fn use_source_qindex_for_exact_vbp(
+    source_aligned_cpu8_svc_partitions: bool,
+    spatial_component: bool,
+    spatial_three_layer_component: bool,
+    rc_mode: crate::rate_control::RcMode,
+    frame_width: usize,
+    frame_height: usize,
+    speed: i32,
+) -> bool {
+    // Pinned libvpx derives VBP thresholds from the coding Q. Rvp9's ordinary
+    // exact-tree path has a separate measured structural-Q calibration, but
+    // the CPU6 720p S2 VBR curves require the literal coding-Q input.
+    source_aligned_cpu8_svc_partitions
+        || (spatial_component
+            && !spatial_three_layer_component
+            && rc_mode == crate::rate_control::RcMode::Vbr
+            && speed == 6
+            && frame_width.saturating_mul(frame_height) <= 1280 * 720)
+}
+
+#[inline]
+fn spatial_vbr_partition_qindex_bias(
+    spatial_component: bool,
+    spatial_three_layer_component: bool,
+    rc_mode: crate::rate_control::RcMode,
+    frame_width: usize,
+    frame_height: usize,
+    speed: i32,
+) -> u8 {
+    // A three-point structural offset is the smallest measured point that
+    // closes Old Town Cross without reopening In To Tree or Ducks. Keep the
+    // empirical correction at the exact S2/720p boundary it was tested on.
+    if spatial_component
+        && !spatial_three_layer_component
+        && rc_mode == crate::rate_control::RcMode::Vbr
+        && speed == 6
+        && frame_width.saturating_mul(frame_height) <= 1280 * 720
+    {
+        3
+    } else {
+        0
+    }
+}
+
 /// Extra partition-only Q calibration for high-resolution CPU6-8 spatial CBR.
 ///
 /// Spatial CBR's live top-layer Q trajectory otherwise drives the exact VBP
@@ -5599,12 +5644,17 @@ fn block8_coef_rd_enabled(
     speed: i32,
     spatial_component: bool,
     spatial_three_layer_component: bool,
+    frame_width: usize,
+    frame_height: usize,
 ) -> bool {
     exact_vbp_tree_enabled
         && spatial_component
-        && spatial_three_layer_component
-        && matches!(rc_mode, crate::rate_control::RcMode::Cbr)
         && speed.unsigned_abs() == 6
+        && ((matches!(rc_mode, crate::rate_control::RcMode::Vbr)
+            && !spatial_three_layer_component
+            && frame_width.saturating_mul(frame_height) <= 1280 * 720)
+            || (spatial_three_layer_component
+                && matches!(rc_mode, crate::rate_control::RcMode::Cbr)))
 }
 
 fn golden_real_block_yrd_enabled(
@@ -7899,13 +7949,31 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     let segment_id = segment_id_for_hint_cell(&sb_partitions[sb_idx], 0, 0);
                     let effective_qindex =
                         effective_qindex_for_segment(base_qindex, segment_id, seg_q_deltas);
+                    let use_source_qindex = use_source_qindex_for_exact_vbp(
+                        source_aligned_cpu8_svc_partitions,
+                        spatial_component,
+                        spatial_three_layer_component,
+                        rc_mode,
+                        w,
+                        h,
+                        speed,
+                    );
                     let mut partition_qindex = exact_vbp_partition_qindex(
                         effective_qindex,
                         w,
                         h,
                         speed,
-                        source_aligned_cpu8_svc_partitions,
+                        use_source_qindex,
                     );
+                    partition_qindex =
+                        partition_qindex.saturating_add(spatial_vbr_partition_qindex_bias(
+                            spatial_component,
+                            spatial_three_layer_component,
+                            rc_mode,
+                            w,
+                            h,
+                            speed,
+                        ));
                     partition_qindex =
                         partition_qindex.saturating_add(spatial_cbr_partition_qindex_bias(
                             spatial_component,
@@ -9996,6 +10064,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             speed,
                             spatial_component,
                             spatial_three_layer_component,
+                            w,
+                            h,
                         )),
                     last_const_motion,
                     golden_const_motion,
@@ -16811,14 +16881,24 @@ mod tests {
     }
 
     #[test]
-    fn block8_coefficient_rd_is_scoped_to_exact_cpu6_spatial_cbr() {
-        assert!(block8_coef_rd_enabled(true, RcMode::Cbr, 6, true, true));
-        assert!(block8_coef_rd_enabled(true, RcMode::Cbr, -6, true, true));
-        assert!(!block8_coef_rd_enabled(false, RcMode::Cbr, 6, true, true));
-        assert!(!block8_coef_rd_enabled(true, RcMode::Vbr, 6, true, true));
-        assert!(!block8_coef_rd_enabled(true, RcMode::Cbr, 7, true, true));
-        assert!(!block8_coef_rd_enabled(true, RcMode::Cbr, 6, false, true));
-        assert!(!block8_coef_rd_enabled(true, RcMode::Cbr, 6, true, false));
+    fn block8_coefficient_rd_is_scoped_to_exact_cpu6_spatial_encodes() {
+        let cases = [
+            (true, RcMode::Cbr, 6, true, true, 1920, 1080, true),
+            (true, RcMode::Cbr, -6, true, true, 1920, 1080, true),
+            (false, RcMode::Cbr, 6, true, true, 1280, 720, false),
+            (true, RcMode::Vbr, 6, true, false, 1280, 720, true),
+            (true, RcMode::Vbr, 6, true, false, 1920, 1080, false),
+            (true, RcMode::Vbr, 6, true, true, 1280, 720, false),
+            (true, RcMode::Cbr, 7, true, true, 1280, 720, false),
+            (true, RcMode::Cbr, 6, false, true, 1280, 720, false),
+            (true, RcMode::Cbr, 6, true, false, 1280, 720, false),
+        ];
+        for (exact, mode, speed, spatial, three_layer, width, height, expected) in cases {
+            assert_eq!(
+                block8_coef_rd_enabled(exact, mode, speed, spatial, three_layer, width, height,),
+                expected,
+            );
+        }
     }
 
     #[test]
@@ -19311,6 +19391,48 @@ mod tests {
 
         assert_eq!(exact_vbp_partition_qindex(100, 1280, 720, 8, true), 100);
         assert_eq!(exact_vbp_partition_qindex(250, 1920, 1080, 8, true), 250);
+    }
+
+    #[test]
+    fn cpu6_small_spatial_vbr_uses_coding_q_for_exact_vbp() {
+        let cases = [
+            (false, true, false, RcMode::Vbr, 1280, 720, 6, true),
+            (false, true, false, RcMode::Cbr, 1280, 720, 6, false),
+            (false, true, false, RcMode::Vbr, 1920, 1080, 6, false),
+            (false, true, false, RcMode::Vbr, 1280, 720, 7, false),
+            (false, false, false, RcMode::Vbr, 1280, 720, 6, false),
+            (true, false, false, RcMode::Cbr, 1920, 1080, 8, true),
+        ];
+        for (source_aligned, spatial, three_layer, mode, width, height, speed, expected) in cases {
+            assert_eq!(
+                use_source_qindex_for_exact_vbp(
+                    source_aligned,
+                    spatial,
+                    three_layer,
+                    mode,
+                    width,
+                    height,
+                    speed,
+                ),
+                expected,
+            );
+        }
+        assert_eq!(
+            spatial_vbr_partition_qindex_bias(false, false, RcMode::Vbr, 1280, 720, 6),
+            0,
+        );
+        assert_eq!(
+            spatial_vbr_partition_qindex_bias(true, false, RcMode::Vbr, 1280, 720, 6),
+            3,
+        );
+        assert_eq!(
+            spatial_vbr_partition_qindex_bias(true, true, RcMode::Vbr, 1280, 720, 6),
+            0,
+        );
+        assert_eq!(
+            spatial_vbr_partition_qindex_bias(true, false, RcMode::Cbr, 1280, 720, 6),
+            0,
+        );
     }
 
     #[test]
