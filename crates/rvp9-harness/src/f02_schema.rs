@@ -687,6 +687,16 @@ pub struct MatchingNewMvCandidateCosts {
     pub exact_input_selected_records: usize,
     /// Exact-input selected records whose final interpolation filter agrees.
     pub exact_input_selected_filter_matches: usize,
+    /// Sum of rvp9 model variance on exact-input records.
+    pub exact_input_rvp9_var_sum: u64,
+    /// Sum of libvpx model variance on exact-input records.
+    pub exact_input_libvpx_var_sum: u64,
+    /// Sum of rvp9 model SSE on exact-input records.
+    pub exact_input_rvp9_sse_sum: u64,
+    /// Sum of libvpx model SSE on exact-input records.
+    pub exact_input_libvpx_sse_sum: u64,
+    /// Exact-input records with the same model transform size.
+    pub exact_input_tx_size_matches: usize,
     /// Sum of non-negative rvp9 candidate distortions.
     pub rvp9_dist_sum: u64,
     /// Sum of non-negative libvpx candidate distortions.
@@ -768,6 +778,12 @@ pub fn compare_matching_newmv_candidates(
                 costs.exact_input_selected_filter_matches +=
                     usize::from(rvp9.interp_filter == libvpx.interp_filter);
             }
+            costs.exact_input_rvp9_var_sum += u64::from(rvp9_candidate.model_var_y);
+            costs.exact_input_libvpx_var_sum += u64::from(libvpx_candidate.model_var_y);
+            costs.exact_input_rvp9_sse_sum += u64::from(rvp9_candidate.model_sse_y);
+            costs.exact_input_libvpx_sse_sum += u64::from(libvpx_candidate.model_sse_y);
+            costs.exact_input_tx_size_matches +=
+                usize::from(rvp9_candidate.model_tx_size == libvpx_candidate.model_tx_size);
             if rvp9_candidate.skip_txfm != libvpx_candidate.skip_txfm {
                 costs.exact_input_skip_mismatch_by_bsize[rvp9.bsize.idx()] += 1;
             }
@@ -1145,7 +1161,7 @@ fn parse_candidate_probes(v: &str) -> Result<[CandidateProbe; 4], ParseError> {
     let mut probes = Vec::with_capacity(4);
     for encoded in raw.split('|') {
         let fields = encoded.split(':').collect::<Vec<_>>();
-        if !matches!(fields.len(), 11 | 12 | 18 | 23 | 42 | 46 | 48) {
+        if !matches!(fields.len(), 11 | 12 | 18 | 23 | 42 | 46 | 48 | 51) {
             return Err(ParseError::BadValue {
                 field: "last_candidates",
                 raw,
@@ -1170,7 +1186,7 @@ fn parse_candidate_probes(v: &str) -> Result<[CandidateProbe; 4], ParseError> {
                     raw: raw.clone(),
                 })
             })?;
-        let newmv_search = if matches!(fields.len(), 18 | 23 | 42 | 46 | 48) {
+        let newmv_search = if matches!(fields.len(), 18 | 23 | 42 | 46 | 48 | 51) {
             let values = fields[12..18]
                 .iter()
                 .map(|field| parse_num::<i16>(field, "last_candidates"))
@@ -1183,7 +1199,7 @@ fn parse_candidate_probes(v: &str) -> Result<[CandidateProbe; 4], ParseError> {
                     raw,
                 });
             } else {
-                let has_input_trace = matches!(fields.len(), 23 | 42 | 46 | 48);
+                let has_input_trace = matches!(fields.len(), 23 | 42 | 46 | 48 | 51);
                 let ref_mv = if has_input_trace {
                     Mv {
                         row: parse_num(fields[18], "last_candidates")?,
@@ -1192,7 +1208,7 @@ fn parse_candidate_probes(v: &str) -> Result<[CandidateProbe; 4], ParseError> {
                 } else {
                     Mv::ZERO
                 };
-                let subpel = if matches!(fields.len(), 42 | 46 | 48) {
+                let subpel = if matches!(fields.len(), 42 | 46 | 48 | 51) {
                     let limits = fields[23..27]
                         .iter()
                         .map(|field| parse_num::<i32>(field, "last_candidates"))
@@ -1259,7 +1275,7 @@ fn parse_candidate_probes(v: &str) -> Result<[CandidateProbe; 4], ParseError> {
                         col: values[5],
                     },
                     ref_mv,
-                    near_mv: if matches!(fields.len(), 46 | 48) {
+                    near_mv: if matches!(fields.len(), 46 | 48 | 51) {
                         Mv {
                             row: parse_num(fields[42], "last_candidates")?,
                             col: parse_num(fields[43], "last_candidates")?,
@@ -1267,7 +1283,7 @@ fn parse_candidate_probes(v: &str) -> Result<[CandidateProbe; 4], ParseError> {
                     } else {
                         Mv::ZERO
                     },
-                    sb_pred_mv: if matches!(fields.len(), 46 | 48) {
+                    sb_pred_mv: if matches!(fields.len(), 46 | 48 | 51) {
                         let row = parse_num(fields[44], "last_candidates")?;
                         let col = parse_num(fields[45], "last_candidates")?;
                         match (row == i16::MIN, col == i16::MIN) {
@@ -1283,7 +1299,7 @@ fn parse_candidate_probes(v: &str) -> Result<[CandidateProbe; 4], ParseError> {
                     } else {
                         None
                     },
-                    mv_pred_mv: if fields.len() == 48 {
+                    mv_pred_mv: if matches!(fields.len(), 48 | 51) {
                         Mv {
                             row: parse_num(fields[46], "last_candidates")?,
                             col: parse_num(fields[47], "last_candidates")?,
@@ -1324,6 +1340,15 @@ fn parse_candidate_probes(v: &str) -> Result<[CandidateProbe; 4], ParseError> {
             uv_rate: parse_num(fields[8], "last_candidates")?,
             uv_dist: parse_num(fields[9], "last_candidates")?,
             skip_txfm: parse_num(fields[10], "last_candidates")?,
+            model_var_y: fields
+                .get(48)
+                .map_or(Ok(0), |field| parse_num(field, "last_candidates"))?,
+            model_sse_y: fields
+                .get(49)
+                .map_or(Ok(0), |field| parse_num(field, "last_candidates"))?,
+            model_tx_size: fields
+                .get(50)
+                .map_or(Ok(0), |field| parse_num(field, "last_candidates"))?,
             newmv_gate,
             newmv_search,
         });
@@ -1461,6 +1486,9 @@ mod tests {
                     uv_rate: 500,
                     uv_dist: 1_000,
                     skip_txfm: 1,
+                    model_var_y: 8_000,
+                    model_sse_y: 9_000,
+                    model_tx_size: 1,
                     newmv_gate: NewMvGateReason::Unknown,
                     newmv_search: Some(NewMvSearchTrace {
                         start_mv: Mv { row: 8, col: -8 },
@@ -1805,8 +1833,13 @@ mod tests {
             luma_rate: 120,
             uv_rate: 30,
             skip_txfm: 1,
+            model_var_y: 40,
+            model_sse_y: 50,
+            model_tx_size: 1,
             ..CandidateProbe::default()
         };
+        let exact_trace = sample_inter().last_candidates[0].newmv_search;
+        libvpx.last_candidates[3].newmv_search = exact_trace;
 
         let mut rvp9 = libvpx;
         rvp9.mode = BlockDecisionMode::Inter(InterMode::NearestMv);
@@ -1818,6 +1851,9 @@ mod tests {
         rvp9.last_candidates[3].luma_rate = 100;
         rvp9.last_candidates[3].uv_rate = 20;
         rvp9.last_candidates[3].skip_txfm = 2;
+        rvp9.last_candidates[3].model_var_y = 35;
+        rvp9.last_candidates[3].model_sse_y = 45;
+        rvp9.last_candidates[3].newmv_search = exact_trace;
 
         let cells = analyze_newmv_cells(&[rvp9], &[libvpx], 8, 16);
         let costs = compare_matching_newmv_candidates(&[rvp9], &[libvpx]);
@@ -1832,8 +1868,13 @@ mod tests {
         assert_eq!(costs.rvp9_uv_rate_sum, 20);
         assert_eq!(costs.libvpx_uv_rate_sum, 30);
         assert_eq!(costs.skip_pair_counts[7], 1);
-        assert_eq!(costs.exact_input_records, 0);
+        assert_eq!(costs.exact_input_records, 1);
         assert_eq!(costs.exact_input_selected_records, 0);
+        assert_eq!(costs.exact_input_rvp9_var_sum, 35);
+        assert_eq!(costs.exact_input_libvpx_var_sum, 40);
+        assert_eq!(costs.exact_input_rvp9_sse_sum, 45);
+        assert_eq!(costs.exact_input_libvpx_sse_sum, 50);
+        assert_eq!(costs.exact_input_tx_size_matches, 1);
         assert_eq!(costs.rvp9_dist_sum, 290);
         assert_eq!(costs.libvpx_dist_sum, 300);
         assert_eq!(costs.rvp9_rd_cost_sum, 380);

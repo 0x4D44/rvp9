@@ -104,6 +104,12 @@ pub struct CandidateProbe {
     pub uv_dist: i64,
     /// `SKIP_TXFM_*` state (`0=None`, `1=AcOnly`, `2=AcDc`).
     pub skip_txfm: u8,
+    /// Luma residual variance consumed by the candidate model.
+    pub model_var_y: u32,
+    /// Luma residual SSE consumed by the candidate model.
+    pub model_sse_y: u32,
+    /// Candidate model transform size as the VP9 `TX_SIZE` enum value.
+    pub model_tx_size: u8,
     /// Why LAST/NEWMV was evaluated or gated. Unknown for other slots and
     /// legacy/pinned-libvpx records.
     pub newmv_gate: NewMvGateReason,
@@ -447,7 +453,7 @@ fn candidate_probes_tag(probes: &[CandidateProbe; 4]) -> String {
                 col: i16::MIN,
             });
             format!(
-                "{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}",
+                "{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}",
                 u8::from(p.available),
                 p.mv_row,
                 p.mv_col,
@@ -496,6 +502,9 @@ fn candidate_probes_tag(probes: &[CandidateProbe; 4]) -> String {
                 sb_pred_mv.col,
                 trace.mv_pred_mv.row,
                 trace.mv_pred_mv.col,
+                p.model_var_y,
+                p.model_sse_y,
+                p.model_tx_size,
             )
         })
         .collect::<Vec<_>>()

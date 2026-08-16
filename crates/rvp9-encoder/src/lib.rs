@@ -10480,6 +10480,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                         rvp9_core::mode_decision::model_rd::SkipTxfm::AcOnly => 1,
                                         rvp9_core::mode_decision::model_rd::SkipTxfm::AcDc => 2,
                                     },
+                                    model_var_y: candidate.var_y,
+                                    model_sse_y: candidate.sse_y,
+                                    model_tx_size: candidate.picked_tx_size as u8,
                                     newmv_gate:
                                         rvp9_core::mode_decision::inter::NewMvGateReason::Unknown,
                                     newmv_search: None,

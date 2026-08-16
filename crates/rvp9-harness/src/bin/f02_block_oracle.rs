@@ -1095,6 +1095,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "| selected exact-input final filter matches | {} |",
                 costs.exact_input_selected_filter_matches
             )?;
+            writeln!(
+                sf,
+                "| exact-input rvp9/libvpx model variance | {:.6} |",
+                ratio(
+                    costs.exact_input_rvp9_var_sum,
+                    costs.exact_input_libvpx_var_sum
+                )
+            )?;
+            writeln!(
+                sf,
+                "| exact-input rvp9/libvpx model SSE | {:.6} |",
+                ratio(
+                    costs.exact_input_rvp9_sse_sum,
+                    costs.exact_input_libvpx_sse_sum
+                )
+            )?;
+            writeln!(
+                sf,
+                "| exact-input model TX-size matches | {} |",
+                costs.exact_input_tx_size_matches
+            )?;
             for rvp9_skip in 0..3 {
                 for libvpx_skip in 0..3 {
                     let count = costs.exact_input_skip_pair_counts[rvp9_skip * 3 + libvpx_skip];
