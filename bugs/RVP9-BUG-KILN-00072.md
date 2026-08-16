@@ -1,0 +1,32 @@
+# RVP9-BUG-KILN-00072 — Saturating stream counters stop GOP and keyframe cadence
+
+- **State:** Open
+- **Priority:** Could
+- **Severity:** Medium
+- **Area:** encoder/GOP cadence
+- **Raised:** 2026-08-16T08:19:23Z
+- **Discovery source:** Agent
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
+- **Verify retry after:** -
+- **Held branch:** -
+- **Legacy fixed run:** -
+- **Attempts:** fix=0, doubt=0, indeterminate=0
+- **State history:** Open (2026-08-16T08:19:23Z, raised via `deltic bugs new`)
+
+## Observation
+
+StreamEncoder increments its u32 frame_idx with saturating_add at D:\worktrees\rvp9-2\20260816-REV-RVP9-CDX@KILN-code-review-085355\crates\rvp9-encoder\src\frame_loop.rs:3239, while GfGroup derives the schedule with frame_idx modulo gop_length at gop.rs:199. After u32::MAX frames the offset freezes, so ordinary GOP and keyframe boundaries stop; for an interval dividing u32::MAX, every later frame can be a boundary. SpatialEncoder independently saturates its u32 access_unit_index at spatial_encoder.rs:319 and uses that value for keyframe cadence. At 60 fps the boundary occurs after about 2.27 years of continuous encoding.
+
+## Fix
+
+Use a non-saturating cadence representation, such as a u64 frame count or explicitly wrapped modulo counters, for both streaming paths. Add tests seeded near u32::MAX that cross the boundary and preserve normal keyframe, golden-frame, and ALTREF scheduling.
+
+## Notes
