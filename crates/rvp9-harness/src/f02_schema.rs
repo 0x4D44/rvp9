@@ -13,7 +13,7 @@
 //! tokeniser handles it. The unit tests below guarantee round-trip
 //! consistency with the canonical writer.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::{self, BufRead, Write};
 
 pub use rvp9_encoder::f02_oracle::{
@@ -539,6 +539,94 @@ fn covered_cells<'a>(
         }
     }
     cells
+}
+
+/// Cell-weighted classification of final picker-winner divergence.
+///
+/// Each encoder's leaf decisions are expanded over their visible 8x8 cells,
+/// so different partition trees do not hide the first differing winner field.
+/// The mismatch buckets are hierarchical and mutually exclusive:
+/// reference frame, then mode, motion vector, and interpolation filter.
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
+pub struct WinnerCellAnalysis {
+    /// Visible cells covered by more than one rvp9 record.
+    pub rvp9_overlapped_cells: usize,
+    /// Visible cells covered by more than one libvpx record.
+    pub libvpx_overlapped_cells: usize,
+    /// Cells present only in the libvpx decision stream.
+    pub rvp9_missing_cells: usize,
+    /// Cells present only in the rvp9 decision stream.
+    pub libvpx_missing_cells: usize,
+    /// Cells with one unambiguous covering decision from each encoder.
+    pub compared_cells: usize,
+    /// Compared cells whose covering leaf sizes agree.
+    pub bsize_matches: usize,
+    /// Compared cells whose first winner difference is the reference frame.
+    pub ref_frame_mismatch_cells: usize,
+    /// Compared cells with the same reference but different prediction modes.
+    pub ref_same_mode_mismatch_cells: usize,
+    /// Compared cells with the same reference and mode but different MVs.
+    pub ref_mode_same_mv_mismatch_cells: usize,
+    /// Compared cells differing only in the interpolation filter.
+    pub ref_mode_mv_same_filter_mismatch_cells: usize,
+    /// Compared cells with the same reference, mode, MV, and filter.
+    pub exact_winner_matches: usize,
+}
+
+/// Compare final picker winners after expanding both partition trees to their
+/// visible 8x8 cells.
+#[must_use]
+pub fn analyze_winner_cells(
+    rvp9: &[BlockDecision],
+    libvpx: &[BlockDecision],
+    mi_rows: u16,
+    mi_cols: u16,
+) -> WinnerCellAnalysis {
+    let rvp9_cells = covered_cells(rvp9, mi_rows, mi_cols);
+    let libvpx_cells = covered_cells(libvpx, mi_rows, mi_cols);
+    let keys = rvp9_cells
+        .keys()
+        .chain(libvpx_cells.keys())
+        .copied()
+        .collect::<BTreeSet<_>>();
+    let mut analysis = WinnerCellAnalysis {
+        rvp9_overlapped_cells: rvp9_cells
+            .values()
+            .filter(|record| matches!(record, CellRecord::Overlap))
+            .count(),
+        libvpx_overlapped_cells: libvpx_cells
+            .values()
+            .filter(|record| matches!(record, CellRecord::Overlap))
+            .count(),
+        ..WinnerCellAnalysis::default()
+    };
+
+    for key in keys {
+        match (rvp9_cells.get(&key), libvpx_cells.get(&key)) {
+            (None, Some(_)) => analysis.rvp9_missing_cells += 1,
+            (Some(_), None) => analysis.libvpx_missing_cells += 1,
+            (Some(CellRecord::One(rvp9)), Some(CellRecord::One(libvpx))) => {
+                analysis.compared_cells += 1;
+                analysis.bsize_matches += usize::from(rvp9.bsize == libvpx.bsize);
+                if rvp9.ref_frame != libvpx.ref_frame {
+                    analysis.ref_frame_mismatch_cells += 1;
+                } else if rvp9.mode != libvpx.mode {
+                    analysis.ref_same_mode_mismatch_cells += 1;
+                } else if rvp9.mv_row != libvpx.mv_row || rvp9.mv_col != libvpx.mv_col {
+                    analysis.ref_mode_same_mv_mismatch_cells += 1;
+                } else if rvp9.interp_filter != libvpx.interp_filter {
+                    analysis.ref_mode_mv_same_filter_mismatch_cells += 1;
+                } else {
+                    analysis.exact_winner_matches += 1;
+                }
+            }
+            (Some(CellRecord::Overlap), Some(_))
+            | (Some(_), Some(CellRecord::Overlap))
+            | (None, None) => {}
+        }
+    }
+
+    analysis
 }
 
 /// Compare rvp9's LAST NEWMV search and selection over the visible cells where
@@ -1933,6 +2021,41 @@ mod tests {
         assert_eq!(comparison.pairs[0].mismatched_fields, ["mv_col"]);
         assert!(comparison.require_match(false).is_err());
         assert!(comparison.require_match(true).is_ok());
+    }
+
+    #[test]
+    fn winner_cell_analysis_is_partition_independent_and_hierarchical() {
+        let mut rvp9 = sample_inter();
+        rvp9.mi_row = 0;
+        rvp9.mi_col = 0;
+        rvp9.bsize = BlockSize::Block32x16;
+
+        let mut libvpx = Vec::new();
+        for mi_row in 0..2 {
+            for mi_col in 0..4 {
+                let mut decision = rvp9;
+                decision.mi_row = mi_row;
+                decision.mi_col = mi_col;
+                decision.bsize = BlockSize::Block8x8;
+                libvpx.push(decision);
+            }
+        }
+        libvpx[1].ref_frame = RefFrame::GoldenFrame;
+        libvpx[2].mode = BlockDecisionMode::Inter(InterMode::NearestMv);
+        libvpx[3].mv_col += 8;
+        libvpx[4].interp_filter = Some(InterpFilter::EightTapSharp);
+
+        let analysis = analyze_winner_cells(&[rvp9], &libvpx, 2, 4);
+
+        assert_eq!(analysis.compared_cells, 8);
+        assert_eq!(analysis.bsize_matches, 0);
+        assert_eq!(analysis.ref_frame_mismatch_cells, 1);
+        assert_eq!(analysis.ref_same_mode_mismatch_cells, 1);
+        assert_eq!(analysis.ref_mode_same_mv_mismatch_cells, 1);
+        assert_eq!(analysis.ref_mode_mv_same_filter_mismatch_cells, 1);
+        assert_eq!(analysis.exact_winner_matches, 4);
+        assert_eq!(analysis.rvp9_missing_cells, 0);
+        assert_eq!(analysis.libvpx_missing_cells, 0);
     }
 
     #[test]

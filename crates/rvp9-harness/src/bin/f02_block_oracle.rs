@@ -53,8 +53,8 @@ use rvp9_encoder::{
 };
 use rvp9_harness::container::{IvfHeader, write_ivf};
 use rvp9_harness::f02_schema::{
-    analyze_newmv_cells, compare_decisions, compare_matching_newmv_candidates,
-    compare_matching_newmv_search_stages, parse_jsonl_stream,
+    analyze_newmv_cells, analyze_winner_cells, compare_decisions,
+    compare_matching_newmv_candidates, compare_matching_newmv_search_stages, parse_jsonl_stream,
 };
 use rvp9_harness::y4m::{read_cropped, write_frame, write_header};
 use std::fs::{File, OpenOptions};
@@ -704,6 +704,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 analysis_width.div_ceil(8) as u16,
             ))
         };
+        let winner_analysis = if no_libvpx {
+            None
+        } else {
+            Some(analyze_winner_cells(
+                &rvp9_analysis_records,
+                &libvpx_analysis_records,
+                analysis_height.div_ceil(8) as u16,
+                analysis_width.div_ceil(8) as u16,
+            ))
+        };
         let matching_newmv_costs = if no_libvpx {
             None
         } else {
@@ -754,6 +764,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .collect::<Vec<_>>()
             .join(", ");
             println!("  unavailable LAST/NEWMV gates: {unavailable}");
+        }
+        if let Some(analysis) = winner_analysis {
+            println!(
+                "  winner cells: {} compared; exact {}, reference mismatch {}, same-reference mode mismatch {}, same-reference/mode MV mismatch {}, filter-only mismatch {}; block-size matches {}; missing rvp9/libvpx {}/{}; overlaps rvp9/libvpx {}/{}",
+                analysis.compared_cells,
+                analysis.exact_winner_matches,
+                analysis.ref_frame_mismatch_cells,
+                analysis.ref_same_mode_mismatch_cells,
+                analysis.ref_mode_same_mv_mismatch_cells,
+                analysis.ref_mode_mv_same_filter_mismatch_cells,
+                analysis.bsize_matches,
+                analysis.rvp9_missing_cells,
+                analysis.libvpx_missing_cells,
+                analysis.rvp9_overlapped_cells,
+                analysis.libvpx_overlapped_cells,
+            );
         }
         if let Some(costs) = matching_newmv_costs {
             println!(
@@ -889,6 +915,55 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "- `picker_dist`: rvp9 reports decoded-pixel SSE; libvpx reports its coefficient/model-RD ranking distortion."
         )?;
         writeln!(sf)?;
+        if let Some(analysis) = winner_analysis {
+            writeln!(sf, "## Partition-independent winner diagnosis")?;
+            writeln!(sf)?;
+            writeln!(
+                sf,
+                "Both partition trees are expanded over visible 8x8 cells. Mismatch rows are hierarchical: the first differing field claims the cell."
+            )?;
+            writeln!(sf)?;
+            writeln!(sf, "| winner outcome | cells |")?;
+            writeln!(sf, "|---|---:|")?;
+            writeln!(sf, "| compared | {} |", analysis.compared_cells)?;
+            writeln!(sf, "| exact winner | {} |", analysis.exact_winner_matches)?;
+            writeln!(
+                sf,
+                "| reference mismatch | {} |",
+                analysis.ref_frame_mismatch_cells
+            )?;
+            writeln!(
+                sf,
+                "| same-reference mode mismatch | {} |",
+                analysis.ref_same_mode_mismatch_cells
+            )?;
+            writeln!(
+                sf,
+                "| same-reference/mode MV mismatch | {} |",
+                analysis.ref_mode_same_mv_mismatch_cells
+            )?;
+            writeln!(
+                sf,
+                "| filter-only mismatch | {} |",
+                analysis.ref_mode_mv_same_filter_mismatch_cells
+            )?;
+            writeln!(
+                sf,
+                "| covering block-size match | {} |",
+                analysis.bsize_matches
+            )?;
+            writeln!(
+                sf,
+                "| missing rvp9/libvpx | {}/{} |",
+                analysis.rvp9_missing_cells, analysis.libvpx_missing_cells
+            )?;
+            writeln!(
+                sf,
+                "| overlaps rvp9/libvpx | {}/{} |",
+                analysis.rvp9_overlapped_cells, analysis.libvpx_overlapped_cells
+            )?;
+            writeln!(sf)?;
+        }
         if let Some(analysis) = newmv_analysis {
             writeln!(sf, "## Partition-independent LAST/NEWMV diagnosis")?;
             writeln!(sf)?;
