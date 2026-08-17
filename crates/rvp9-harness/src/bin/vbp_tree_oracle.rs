@@ -128,6 +128,7 @@ fn noise_level(value: u8) -> Result<NoiseLevel, String> {
 
 fn content_state(value: u8) -> Result<ContentStateSb, String> {
     match value {
+        0 => Ok(ContentStateSb::Normal),
         1 => Ok(ContentStateSb::LowSadLowSumdiff),
         2 => Ok(ContentStateSb::LowSadHighSumdiff),
         3 => Ok(ContentStateSb::HighSadLowSumdiff),
@@ -545,6 +546,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn neutral_libvpx_content_state_maps_to_neutral_rvp9_state() {
+        assert_eq!(content_state(0), Ok(ContentStateSb::Normal));
+    }
 
     fn history_record(
         early_exit: &str,
