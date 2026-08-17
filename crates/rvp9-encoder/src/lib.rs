@@ -10464,6 +10464,37 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             );
                         let mut probes = candidates.map(|candidate| {
                             candidate.map_or_else(Default::default, |candidate| {
+                                let use_large = leaf_bsize >= BlockSize::Block32x32
+                                    && leaf_rd_calibration.large_block_model;
+                                let threshold_source = if use_large {
+                                    quantizer.dequant
+                                } else {
+                                    quantizer.zbin
+                                };
+                                let model_dc_thr = ((i64::from(threshold_source[0])
+                                    * i64::from(threshold_source[0]))
+                                    >> 6) as u32;
+                                let model_ac_thr = ((i64::from(threshold_source[1])
+                                    * i64::from(threshold_source[1]))
+                                    >> 6) as u32;
+                                let num_blk_log2 = (leaf_bsize.width_log2()
+                                    - candidate.picked_tx_size.block_size_log2())
+                                    + (leaf_bsize.height_log2()
+                                        - candidate.picked_tx_size.block_size_log2());
+                                let model_var_tx = candidate.var_y >> num_blk_log2;
+                                let model_sse_tx = candidate.sse_y >> num_blk_log2;
+                                let model_skip_txfm =
+                                    if model_var_tx < model_ac_thr || candidate.var_y == 0 {
+                                        if model_sse_tx - model_var_tx < model_dc_thr
+                                            || candidate.sse_y == candidate.var_y
+                                        {
+                                            2
+                                        } else {
+                                            1
+                                        }
+                                    } else {
+                                        0
+                                    };
                                 crate::f02_oracle::CandidateProbe {
                                     available: true,
                                     mv_row: candidate.best_mv.row,
@@ -10483,38 +10514,18 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                     model_var_y: candidate.var_y,
                                     model_sse_y: candidate.sse_y,
                                     model_tx_size: candidate.picked_tx_size as u8,
-                                    model_dc_thr: {
-                                        let source = if leaf_bsize >= BlockSize::Block32x32
-                                            && leaf_rd_calibration.large_block_model
-                                        {
-                                            quantizer.dequant[0]
-                                        } else {
-                                            quantizer.zbin[0]
-                                        };
-                                        ((i64::from(source) * i64::from(source)) >> 6) as u32
-                                    },
-                                    model_ac_thr: {
-                                        let source = if leaf_bsize >= BlockSize::Block32x32
-                                            && leaf_rd_calibration.large_block_model
-                                        {
-                                            quantizer.dequant[1]
-                                        } else {
-                                            quantizer.zbin[1]
-                                        };
-                                        ((i64::from(source) * i64::from(source)) >> 6) as u32
-                                    },
-                                    model_var_tx: candidate.var_y
-                                        >> ((leaf_bsize.width_log2()
-                                            - candidate.picked_tx_size.block_size_log2())
-                                            + (leaf_bsize.height_log2()
-                                                - candidate.picked_tx_size.block_size_log2())),
-                                    model_sse_tx: candidate.sse_y
-                                        >> ((leaf_bsize.width_log2()
-                                            - candidate.picked_tx_size.block_size_log2())
-                                            + (leaf_bsize.height_log2()
-                                                - candidate.picked_tx_size.block_size_log2())),
+                                    model_dc_thr,
+                                    model_ac_thr,
+                                    model_var_tx,
+                                    model_sse_tx,
                                     model_dc_quant: quantizer.dequant[0] as u32,
                                     model_ac_quant: quantizer.dequant[1] as u32,
+                                    yrd_dc_round: quantizer.round_fp[0] as u32,
+                                    yrd_ac_round: quantizer.round_fp[1] as u32,
+                                    yrd_dc_quant: quantizer.quant_fp[0] as u32,
+                                    yrd_ac_quant: quantizer.quant_fp[1] as u32,
+                                    model_skip_txfm,
+                                    yrd_skippable: candidate.yrd_skippable,
                                     newmv_gate:
                                         rvp9_core::mode_decision::inter::NewMvGateReason::Unknown,
                                     newmv_search: None,

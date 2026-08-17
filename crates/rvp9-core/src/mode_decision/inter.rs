@@ -984,6 +984,9 @@ pub struct InterModeSearchResult {
     /// path: luma transform blocks are written as zero-EOB; chroma still
     /// runs fast quantization.
     pub skip_txfm: SkipTxfm,
+    /// Whether the Hadamard/`quantize_fp` block-YRD found every luma
+    /// coefficient zero before the final skip-rate comparison.
+    pub yrd_skippable: bool,
     /// G4 — Y-plane variance from `model_rd_for_sb_y`. Surfaced for
     /// the encode-breakout test in `pick_inter_mode`.
     pub var_y: u32,
@@ -5085,6 +5088,7 @@ fn evaluate_candidate_for_filter_with_pred(
         picked_interp_filter: filter,
         picked_tx_size: tx_size,
         skip_txfm,
+        yrd_skippable: by.skippable,
         var_y: mrd.var_y,
         sse_y: mrd.sse_y,
         early_term,

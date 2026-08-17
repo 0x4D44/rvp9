@@ -1194,6 +1194,74 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     costs.exact_input_libvpx_ac_quant_sum
                 )
             )?;
+            writeln!(
+                sf,
+                "| exact-input DC round-fp matches | {} |",
+                costs.exact_input_dc_round_matches
+            )?;
+            writeln!(
+                sf,
+                "| exact-input rvp9/libvpx DC round-fp | {:.6} |",
+                ratio(
+                    costs.exact_input_rvp9_dc_round_sum,
+                    costs.exact_input_libvpx_dc_round_sum
+                )
+            )?;
+            writeln!(
+                sf,
+                "| exact-input AC round-fp matches | {} |",
+                costs.exact_input_ac_round_matches
+            )?;
+            writeln!(
+                sf,
+                "| exact-input rvp9/libvpx AC round-fp | {:.6} |",
+                ratio(
+                    costs.exact_input_rvp9_ac_round_sum,
+                    costs.exact_input_libvpx_ac_round_sum
+                )
+            )?;
+            writeln!(
+                sf,
+                "| exact-input DC quant-fp matches | {} |",
+                costs.exact_input_fp_dc_quant_matches
+            )?;
+            writeln!(
+                sf,
+                "| exact-input rvp9/libvpx DC quant-fp | {:.6} |",
+                ratio(
+                    costs.exact_input_rvp9_fp_dc_quant_sum,
+                    costs.exact_input_libvpx_fp_dc_quant_sum
+                )
+            )?;
+            writeln!(
+                sf,
+                "| exact-input AC quant-fp matches | {} |",
+                costs.exact_input_fp_ac_quant_matches
+            )?;
+            writeln!(
+                sf,
+                "| exact-input rvp9/libvpx AC quant-fp | {:.6} |",
+                ratio(
+                    costs.exact_input_rvp9_fp_ac_quant_sum,
+                    costs.exact_input_libvpx_fp_ac_quant_sum
+                )
+            )?;
+            writeln!(
+                sf,
+                "| exact-input model skip-state matches | {} |",
+                costs.exact_input_model_skip_matches
+            )?;
+            for rvp9_skip in 0..2 {
+                for libvpx_skip in 0..2 {
+                    let count = costs.exact_input_yrd_skip_pair_counts[rvp9_skip * 2 + libvpx_skip];
+                    if count != 0 {
+                        writeln!(
+                            sf,
+                            "| exact-input block-YRD skippable rvp9 {rvp9_skip} / libvpx {libvpx_skip} | {count} |"
+                        )?;
+                    }
+                }
+            }
             for rvp9_skip in 0..3 {
                 for libvpx_skip in 0..3 {
                     let count = costs.exact_input_skip_pair_counts[rvp9_skip * 3 + libvpx_skip];

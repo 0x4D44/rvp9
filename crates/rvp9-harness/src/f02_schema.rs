@@ -733,6 +733,34 @@ pub struct MatchingNewMvCandidateCosts {
     pub exact_input_rvp9_ac_quant_sum: u64,
     /// Sum of libvpx AC dequantizers on exact-input records.
     pub exact_input_libvpx_ac_quant_sum: u64,
+    /// Exact-input records with the same DC `quantize_fp` rounding input.
+    pub exact_input_dc_round_matches: usize,
+    /// Sum of rvp9 DC `quantize_fp` rounding inputs.
+    pub exact_input_rvp9_dc_round_sum: u64,
+    /// Sum of libvpx DC `quantize_fp` rounding inputs.
+    pub exact_input_libvpx_dc_round_sum: u64,
+    /// Exact-input records with the same AC `quantize_fp` rounding input.
+    pub exact_input_ac_round_matches: usize,
+    /// Sum of rvp9 AC `quantize_fp` rounding inputs.
+    pub exact_input_rvp9_ac_round_sum: u64,
+    /// Sum of libvpx AC `quantize_fp` rounding inputs.
+    pub exact_input_libvpx_ac_round_sum: u64,
+    /// Exact-input records with the same DC `quantize_fp` multiplier.
+    pub exact_input_fp_dc_quant_matches: usize,
+    /// Sum of rvp9 DC `quantize_fp` multipliers.
+    pub exact_input_rvp9_fp_dc_quant_sum: u64,
+    /// Sum of libvpx DC `quantize_fp` multipliers.
+    pub exact_input_libvpx_fp_dc_quant_sum: u64,
+    /// Exact-input records with the same AC `quantize_fp` multiplier.
+    pub exact_input_fp_ac_quant_matches: usize,
+    /// Sum of rvp9 AC `quantize_fp` multipliers.
+    pub exact_input_rvp9_fp_ac_quant_sum: u64,
+    /// Sum of libvpx AC `quantize_fp` multipliers.
+    pub exact_input_libvpx_fp_ac_quant_sum: u64,
+    /// Exact-input records with the same variance-model skip state.
+    pub exact_input_model_skip_matches: usize,
+    /// Exact-input counts indexed by `rvp9_yrd_skip * 2 + libvpx_yrd_skip`.
+    pub exact_input_yrd_skip_pair_counts: [usize; 4],
     /// Sum of non-negative rvp9 candidate distortions.
     pub rvp9_dist_sum: u64,
     /// Sum of non-negative libvpx candidate distortions.
@@ -844,6 +872,27 @@ pub fn compare_matching_newmv_candidates(
                 usize::from(rvp9_candidate.model_ac_quant == libvpx_candidate.model_ac_quant);
             costs.exact_input_rvp9_ac_quant_sum += u64::from(rvp9_candidate.model_ac_quant);
             costs.exact_input_libvpx_ac_quant_sum += u64::from(libvpx_candidate.model_ac_quant);
+            costs.exact_input_dc_round_matches +=
+                usize::from(rvp9_candidate.yrd_dc_round == libvpx_candidate.yrd_dc_round);
+            costs.exact_input_rvp9_dc_round_sum += u64::from(rvp9_candidate.yrd_dc_round);
+            costs.exact_input_libvpx_dc_round_sum += u64::from(libvpx_candidate.yrd_dc_round);
+            costs.exact_input_ac_round_matches +=
+                usize::from(rvp9_candidate.yrd_ac_round == libvpx_candidate.yrd_ac_round);
+            costs.exact_input_rvp9_ac_round_sum += u64::from(rvp9_candidate.yrd_ac_round);
+            costs.exact_input_libvpx_ac_round_sum += u64::from(libvpx_candidate.yrd_ac_round);
+            costs.exact_input_fp_dc_quant_matches +=
+                usize::from(rvp9_candidate.yrd_dc_quant == libvpx_candidate.yrd_dc_quant);
+            costs.exact_input_rvp9_fp_dc_quant_sum += u64::from(rvp9_candidate.yrd_dc_quant);
+            costs.exact_input_libvpx_fp_dc_quant_sum += u64::from(libvpx_candidate.yrd_dc_quant);
+            costs.exact_input_fp_ac_quant_matches +=
+                usize::from(rvp9_candidate.yrd_ac_quant == libvpx_candidate.yrd_ac_quant);
+            costs.exact_input_rvp9_fp_ac_quant_sum += u64::from(rvp9_candidate.yrd_ac_quant);
+            costs.exact_input_libvpx_fp_ac_quant_sum += u64::from(libvpx_candidate.yrd_ac_quant);
+            costs.exact_input_model_skip_matches +=
+                usize::from(rvp9_candidate.model_skip_txfm == libvpx_candidate.model_skip_txfm);
+            let yrd_skip_pair = usize::from(rvp9_candidate.yrd_skippable) * 2
+                + usize::from(libvpx_candidate.yrd_skippable);
+            costs.exact_input_yrd_skip_pair_counts[yrd_skip_pair] += 1;
             if rvp9_candidate.skip_txfm != libvpx_candidate.skip_txfm {
                 costs.exact_input_skip_mismatch_by_bsize[rvp9.bsize.idx()] += 1;
             }
@@ -1221,7 +1270,10 @@ fn parse_candidate_probes(v: &str) -> Result<[CandidateProbe; 4], ParseError> {
     let mut probes = Vec::with_capacity(4);
     for encoded in raw.split('|') {
         let fields = encoded.split(':').collect::<Vec<_>>();
-        if !matches!(fields.len(), 11 | 12 | 18 | 23 | 42 | 46 | 48 | 51 | 57) {
+        if !matches!(
+            fields.len(),
+            11 | 12 | 18 | 23 | 42 | 46 | 48 | 51 | 57 | 63
+        ) {
             return Err(ParseError::BadValue {
                 field: "last_candidates",
                 raw,
@@ -1246,7 +1298,7 @@ fn parse_candidate_probes(v: &str) -> Result<[CandidateProbe; 4], ParseError> {
                     raw: raw.clone(),
                 })
             })?;
-        let newmv_search = if matches!(fields.len(), 18 | 23 | 42 | 46 | 48 | 51 | 57) {
+        let newmv_search = if matches!(fields.len(), 18 | 23 | 42 | 46 | 48 | 51 | 57 | 63) {
             let values = fields[12..18]
                 .iter()
                 .map(|field| parse_num::<i16>(field, "last_candidates"))
@@ -1259,7 +1311,7 @@ fn parse_candidate_probes(v: &str) -> Result<[CandidateProbe; 4], ParseError> {
                     raw,
                 });
             } else {
-                let has_input_trace = matches!(fields.len(), 23 | 42 | 46 | 48 | 51 | 57);
+                let has_input_trace = matches!(fields.len(), 23 | 42 | 46 | 48 | 51 | 57 | 63);
                 let ref_mv = if has_input_trace {
                     Mv {
                         row: parse_num(fields[18], "last_candidates")?,
@@ -1268,7 +1320,7 @@ fn parse_candidate_probes(v: &str) -> Result<[CandidateProbe; 4], ParseError> {
                 } else {
                     Mv::ZERO
                 };
-                let subpel = if matches!(fields.len(), 42 | 46 | 48 | 51 | 57) {
+                let subpel = if matches!(fields.len(), 42 | 46 | 48 | 51 | 57 | 63) {
                     let limits = fields[23..27]
                         .iter()
                         .map(|field| parse_num::<i32>(field, "last_candidates"))
@@ -1335,7 +1387,7 @@ fn parse_candidate_probes(v: &str) -> Result<[CandidateProbe; 4], ParseError> {
                         col: values[5],
                     },
                     ref_mv,
-                    near_mv: if matches!(fields.len(), 46 | 48 | 51 | 57) {
+                    near_mv: if matches!(fields.len(), 46 | 48 | 51 | 57 | 63) {
                         Mv {
                             row: parse_num(fields[42], "last_candidates")?,
                             col: parse_num(fields[43], "last_candidates")?,
@@ -1343,7 +1395,7 @@ fn parse_candidate_probes(v: &str) -> Result<[CandidateProbe; 4], ParseError> {
                     } else {
                         Mv::ZERO
                     },
-                    sb_pred_mv: if matches!(fields.len(), 46 | 48 | 51 | 57) {
+                    sb_pred_mv: if matches!(fields.len(), 46 | 48 | 51 | 57 | 63) {
                         let row = parse_num(fields[44], "last_candidates")?;
                         let col = parse_num(fields[45], "last_candidates")?;
                         match (row == i16::MIN, col == i16::MIN) {
@@ -1359,7 +1411,7 @@ fn parse_candidate_probes(v: &str) -> Result<[CandidateProbe; 4], ParseError> {
                     } else {
                         None
                     },
-                    mv_pred_mv: if matches!(fields.len(), 48 | 51 | 57) {
+                    mv_pred_mv: if matches!(fields.len(), 48 | 51 | 57 | 63) {
                         Mv {
                             row: parse_num(fields[46], "last_candidates")?,
                             col: parse_num(fields[47], "last_candidates")?,
@@ -1427,6 +1479,29 @@ fn parse_candidate_probes(v: &str) -> Result<[CandidateProbe; 4], ParseError> {
             model_ac_quant: fields
                 .get(56)
                 .map_or(Ok(0), |field| parse_num(field, "last_candidates"))?,
+            yrd_dc_round: fields
+                .get(57)
+                .map_or(Ok(0), |field| parse_num(field, "last_candidates"))?,
+            yrd_ac_round: fields
+                .get(58)
+                .map_or(Ok(0), |field| parse_num(field, "last_candidates"))?,
+            yrd_dc_quant: fields
+                .get(59)
+                .map_or(Ok(0), |field| parse_num(field, "last_candidates"))?,
+            yrd_ac_quant: fields
+                .get(60)
+                .map_or(Ok(0), |field| parse_num(field, "last_candidates"))?,
+            model_skip_txfm: fields
+                .get(61)
+                .map_or(Ok(0), |field| parse_num(field, "last_candidates"))?,
+            yrd_skippable: fields.get(62).map_or(Ok(false), |field| match *field {
+                "0" => Ok(false),
+                "1" => Ok(true),
+                _ => Err(ParseError::BadValue {
+                    field: "last_candidates",
+                    raw: raw.clone(),
+                }),
+            })?,
             newmv_gate,
             newmv_search,
         });
@@ -1573,6 +1648,12 @@ mod tests {
                     model_sse_tx: 2_250,
                     model_dc_quant: 303,
                     model_ac_quant: 404,
+                    yrd_dc_round: 505,
+                    yrd_ac_round: 606,
+                    yrd_dc_quant: 707,
+                    yrd_ac_quant: 808,
+                    model_skip_txfm: 1,
+                    yrd_skippable: true,
                     newmv_gate: NewMvGateReason::Unknown,
                     newmv_search: Some(NewMvSearchTrace {
                         start_mv: Mv { row: 8, col: -8 },
@@ -1926,6 +2007,12 @@ mod tests {
             model_sse_tx: 12,
             model_dc_quant: 80,
             model_ac_quant: 90,
+            yrd_dc_round: 100,
+            yrd_ac_round: 110,
+            yrd_dc_quant: 120,
+            yrd_ac_quant: 130,
+            model_skip_txfm: 0,
+            yrd_skippable: true,
             ..CandidateProbe::default()
         };
         let exact_trace = sample_inter().last_candidates[0].newmv_search;
@@ -1949,6 +2036,12 @@ mod tests {
         rvp9.last_candidates[3].model_sse_tx = 11;
         rvp9.last_candidates[3].model_dc_quant = 80;
         rvp9.last_candidates[3].model_ac_quant = 85;
+        rvp9.last_candidates[3].yrd_dc_round = 100;
+        rvp9.last_candidates[3].yrd_ac_round = 105;
+        rvp9.last_candidates[3].yrd_dc_quant = 120;
+        rvp9.last_candidates[3].yrd_ac_quant = 125;
+        rvp9.last_candidates[3].model_skip_txfm = 0;
+        rvp9.last_candidates[3].yrd_skippable = false;
         rvp9.last_candidates[3].newmv_search = exact_trace;
 
         let cells = analyze_newmv_cells(&[rvp9], &[libvpx], 8, 16);
@@ -1989,6 +2082,20 @@ mod tests {
         assert_eq!(costs.exact_input_ac_quant_matches, 0);
         assert_eq!(costs.exact_input_rvp9_ac_quant_sum, 85);
         assert_eq!(costs.exact_input_libvpx_ac_quant_sum, 90);
+        assert_eq!(costs.exact_input_dc_round_matches, 1);
+        assert_eq!(costs.exact_input_rvp9_dc_round_sum, 100);
+        assert_eq!(costs.exact_input_libvpx_dc_round_sum, 100);
+        assert_eq!(costs.exact_input_ac_round_matches, 0);
+        assert_eq!(costs.exact_input_rvp9_ac_round_sum, 105);
+        assert_eq!(costs.exact_input_libvpx_ac_round_sum, 110);
+        assert_eq!(costs.exact_input_fp_dc_quant_matches, 1);
+        assert_eq!(costs.exact_input_rvp9_fp_dc_quant_sum, 120);
+        assert_eq!(costs.exact_input_libvpx_fp_dc_quant_sum, 120);
+        assert_eq!(costs.exact_input_fp_ac_quant_matches, 0);
+        assert_eq!(costs.exact_input_rvp9_fp_ac_quant_sum, 125);
+        assert_eq!(costs.exact_input_libvpx_fp_ac_quant_sum, 130);
+        assert_eq!(costs.exact_input_model_skip_matches, 1);
+        assert_eq!(costs.exact_input_yrd_skip_pair_counts[1], 1);
         assert_eq!(costs.rvp9_dist_sum, 290);
         assert_eq!(costs.libvpx_dist_sum, 300);
         assert_eq!(costs.rvp9_rd_cost_sum, 380);

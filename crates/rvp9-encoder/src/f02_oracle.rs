@@ -122,6 +122,18 @@ pub struct CandidateProbe {
     pub model_dc_quant: u32,
     /// AC dequantizer consumed by the luma model.
     pub model_ac_quant: u32,
+    /// DC rounding input consumed by `quantize_fp`.
+    pub yrd_dc_round: u32,
+    /// AC rounding input consumed by `quantize_fp`.
+    pub yrd_ac_round: u32,
+    /// DC multiplier consumed by `quantize_fp`.
+    pub yrd_dc_quant: u32,
+    /// AC multiplier consumed by `quantize_fp`.
+    pub yrd_ac_quant: u32,
+    /// Skip state chosen by the variance model before block YRD.
+    pub model_skip_txfm: u8,
+    /// Whether block YRD found an all-zero luma coefficient set.
+    pub yrd_skippable: bool,
     /// Why LAST/NEWMV was evaluated or gated. Unknown for other slots and
     /// legacy/pinned-libvpx records.
     pub newmv_gate: NewMvGateReason,
@@ -465,7 +477,7 @@ fn candidate_probes_tag(probes: &[CandidateProbe; 4]) -> String {
                 col: i16::MIN,
             });
             format!(
-                "{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}",
+                "{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}",
                 u8::from(p.available),
                 p.mv_row,
                 p.mv_col,
@@ -523,6 +535,12 @@ fn candidate_probes_tag(probes: &[CandidateProbe; 4]) -> String {
                 p.model_sse_tx,
                 p.model_dc_quant,
                 p.model_ac_quant,
+                p.yrd_dc_round,
+                p.yrd_ac_round,
+                p.yrd_dc_quant,
+                p.yrd_ac_quant,
+                p.model_skip_txfm,
+                u8::from(p.yrd_skippable),
             )
         })
         .collect::<Vec<_>>()
