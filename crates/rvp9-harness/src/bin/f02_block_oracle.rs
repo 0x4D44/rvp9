@@ -1116,6 +1116,84 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "| exact-input model TX-size matches | {} |",
                 costs.exact_input_tx_size_matches
             )?;
+            writeln!(
+                sf,
+                "| exact-input DC-threshold matches | {} |",
+                costs.exact_input_dc_thr_matches
+            )?;
+            writeln!(
+                sf,
+                "| exact-input rvp9/libvpx DC threshold | {:.6} |",
+                ratio(
+                    costs.exact_input_rvp9_dc_thr_sum,
+                    costs.exact_input_libvpx_dc_thr_sum
+                )
+            )?;
+            writeln!(
+                sf,
+                "| exact-input AC-threshold matches | {} |",
+                costs.exact_input_ac_thr_matches
+            )?;
+            writeln!(
+                sf,
+                "| exact-input rvp9/libvpx AC threshold | {:.6} |",
+                ratio(
+                    costs.exact_input_rvp9_ac_thr_sum,
+                    costs.exact_input_libvpx_ac_thr_sum
+                )
+            )?;
+            writeln!(
+                sf,
+                "| exact-input normalized-variance matches | {} |",
+                costs.exact_input_var_tx_matches
+            )?;
+            writeln!(
+                sf,
+                "| exact-input rvp9/libvpx normalized variance | {:.6} |",
+                ratio(
+                    costs.exact_input_rvp9_var_tx_sum,
+                    costs.exact_input_libvpx_var_tx_sum
+                )
+            )?;
+            writeln!(
+                sf,
+                "| exact-input normalized-SSE matches | {} |",
+                costs.exact_input_sse_tx_matches
+            )?;
+            writeln!(
+                sf,
+                "| exact-input rvp9/libvpx normalized SSE | {:.6} |",
+                ratio(
+                    costs.exact_input_rvp9_sse_tx_sum,
+                    costs.exact_input_libvpx_sse_tx_sum
+                )
+            )?;
+            writeln!(
+                sf,
+                "| exact-input DC-dequant matches | {} |",
+                costs.exact_input_dc_quant_matches
+            )?;
+            writeln!(
+                sf,
+                "| exact-input rvp9/libvpx DC dequant | {:.6} |",
+                ratio(
+                    costs.exact_input_rvp9_dc_quant_sum,
+                    costs.exact_input_libvpx_dc_quant_sum
+                )
+            )?;
+            writeln!(
+                sf,
+                "| exact-input AC-dequant matches | {} |",
+                costs.exact_input_ac_quant_matches
+            )?;
+            writeln!(
+                sf,
+                "| exact-input rvp9/libvpx AC dequant | {:.6} |",
+                ratio(
+                    costs.exact_input_rvp9_ac_quant_sum,
+                    costs.exact_input_libvpx_ac_quant_sum
+                )
+            )?;
             for rvp9_skip in 0..3 {
                 for libvpx_skip in 0..3 {
                     let count = costs.exact_input_skip_pair_counts[rvp9_skip * 3 + libvpx_skip];

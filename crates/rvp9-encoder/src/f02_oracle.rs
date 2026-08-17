@@ -110,6 +110,18 @@ pub struct CandidateProbe {
     pub model_sse_y: u32,
     /// Candidate model transform size as the VP9 `TX_SIZE` enum value.
     pub model_tx_size: u8,
+    /// DC full-skip threshold consumed by the luma model.
+    pub model_dc_thr: u32,
+    /// AC full-skip threshold consumed by the luma model.
+    pub model_ac_thr: u32,
+    /// Per-transform-block variance used by the skip classifier.
+    pub model_var_tx: u32,
+    /// Per-transform-block SSE used by the skip classifier.
+    pub model_sse_tx: u32,
+    /// DC dequantizer consumed by the luma model.
+    pub model_dc_quant: u32,
+    /// AC dequantizer consumed by the luma model.
+    pub model_ac_quant: u32,
     /// Why LAST/NEWMV was evaluated or gated. Unknown for other slots and
     /// legacy/pinned-libvpx records.
     pub newmv_gate: NewMvGateReason,
@@ -453,7 +465,7 @@ fn candidate_probes_tag(probes: &[CandidateProbe; 4]) -> String {
                 col: i16::MIN,
             });
             format!(
-                "{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}",
+                "{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}",
                 u8::from(p.available),
                 p.mv_row,
                 p.mv_col,
@@ -505,6 +517,12 @@ fn candidate_probes_tag(probes: &[CandidateProbe; 4]) -> String {
                 p.model_var_y,
                 p.model_sse_y,
                 p.model_tx_size,
+                p.model_dc_thr,
+                p.model_ac_thr,
+                p.model_var_tx,
+                p.model_sse_tx,
+                p.model_dc_quant,
+                p.model_ac_quant,
             )
         })
         .collect::<Vec<_>>()

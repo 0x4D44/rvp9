@@ -608,7 +608,7 @@ index 6f2524b36..901336d7d 100644
      return -1;
    }
 
-@@ -1746,6 +2005,41 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
+@@ -1746,6 +2005,47 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
    int skip_ref_find_pred[4] = { 0 };
    unsigned int sse_zeromv_normalized = UINT_MAX;
    unsigned int best_sse_sofar = UINT_MAX;
@@ -638,6 +638,12 @@ index 6f2524b36..901336d7d 100644
 +  unsigned int candidate_var_f02[4] = { 0 };
 +  unsigned int candidate_sse_f02[4] = { 0 };
 +  int candidate_tx_size_f02[4] = { 0 };
++  unsigned int candidate_dc_thr_f02[4] = { 0 };
++  unsigned int candidate_ac_thr_f02[4] = { 0 };
++  unsigned int candidate_var_tx_f02[4] = { 0 };
++  unsigned int candidate_sse_tx_f02[4] = { 0 };
++  unsigned int candidate_dc_quant_f02[4] = { 0 };
++  unsigned int candidate_ac_quant_f02[4] = { 0 };
 +  F02_NEWMV_TRACE last_newmv_trace_f02 = {
 +    { INT16_MIN, INT16_MIN }, { INT16_MIN, INT16_MIN },
 +    { INT16_MIN, INT16_MIN },
@@ -650,7 +656,7 @@ index 6f2524b36..901336d7d 100644
    int gf_temporal_ref = 0;
    int force_test_gf_zeromv = 0;
  #if CONFIG_VP9_TEMPORAL_DENOISING
-@@ -2246,9 +2539,21 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
+@@ -2246,9 +2545,21 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
        if (frame_mv[this_mode][ref_frame].as_int != 0) continue;
 
      if (this_mode == NEWMV && !force_mv_inter_layer) {
@@ -673,10 +679,10 @@ index 6f2524b36..901336d7d 100644
          continue;
      }
 
-@@ -2345,0 +2656,2 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
+@@ -2345,0 +2662,2 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
 +    current_model_var_f02 = var_y;
 +    current_model_sse_f02 = sse_y;
-@@ -2348,6 +2654,8 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
+@@ -2348,6 +2660,8 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
        this_sse = (int64_t)sse_y;
        block_yrd(cpi, x, &this_rdc, &is_skippable, &this_sse, bsize,
                  VPXMIN(mi->tx_size, TX_16X16), rd_computed, 0);
@@ -685,7 +691,7 @@ index 6f2524b36..901336d7d 100644
        x->skip_txfm[0] = is_skippable;
        if (is_skippable) {
          this_rdc.rate = vp9_cost_bit(vp9_get_skip_prob(cm, xd), 1);
-@@ -2373,7 +2681,12 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
+@@ -2373,7 +2687,12 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
        }
        this_rdc.rate += vp9_cost_bit(vp9_get_skip_prob(cm, xd), 1);
      }
@@ -699,7 +705,7 @@ index 6f2524b36..901336d7d 100644
      if (!this_early_term &&
          (x->color_sensitivity[0] || x->color_sensitivity[1])) {
        RD_COST rdc_uv;
-@@ -2387,6 +2700,8 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
+@@ -2387,6 +2706,8 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
          flag_preduv_computed[1] = 1;
        }
        model_rd_for_sb_uv(cpi, uv_bsize, x, xd, &rdc_uv, &var_y, &sse_y, 1, 2);
@@ -708,7 +714,7 @@ index 6f2524b36..901336d7d 100644
        this_rdc.rate += rdc_uv.rate;
        this_rdc.dist += rdc_uv.dist;
      }
-@@ -2443,11 +2758,44 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
+@@ -2443,11 +2764,60 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
  #else
      (void)ctx;
  #endif
@@ -739,6 +745,22 @@ index 6f2524b36..901336d7d 100644
 +        candidate_var_f02[candidate_idx_f02] = current_model_var_f02;
 +        candidate_sse_f02[candidate_idx_f02] = current_model_sse_f02;
 +        candidate_tx_size_f02[candidate_idx_f02] = mi->tx_size;
++        const BLOCK_SIZE unit_size_f02 = txsize_to_bsize[mi->tx_size];
++        const unsigned int num_blk_log2_f02 =
++            (b_width_log2_lookup[bsize] - b_width_log2_lookup[unit_size_f02]) +
++            (b_height_log2_lookup[bsize] - b_height_log2_lookup[unit_size_f02]);
++        candidate_dc_thr_f02[candidate_idx_f02] = use_model_yrd_large
++            ? (pd->dequant[0] * pd->dequant[0] >> 6)
++            : (unsigned int)(x->plane[0].quant_thred[0] >> 6);
++        candidate_ac_thr_f02[candidate_idx_f02] = use_model_yrd_large
++            ? (pd->dequant[1] * pd->dequant[1] >> 6)
++            : (unsigned int)(x->plane[0].quant_thred[1] >> 6);
++        candidate_var_tx_f02[candidate_idx_f02] =
++            current_model_var_f02 >> num_blk_log2_f02;
++        candidate_sse_tx_f02[candidate_idx_f02] =
++            current_model_sse_f02 >> num_blk_log2_f02;
++        candidate_dc_quant_f02[candidate_idx_f02] = pd->dequant[0];
++        candidate_ac_quant_f02[candidate_idx_f02] = pd->dequant[1];
 +      }
 +    }
      mode_checked[this_mode][ref_frame] = 1;
@@ -754,7 +776,7 @@ index 6f2524b36..901336d7d 100644
        best_early_term = this_early_term;
        best_pickmode.best_mode = this_mode;
        best_pickmode.best_pred_filter = mi->interp_filter;
-@@ -2625,6 +2973,10 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
+@@ -2625,6 +2995,10 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
 
        if (this_rdc.rdcost < best_rdc.rdcost) {
          best_rdc = this_rdc;
@@ -765,7 +787,7 @@ index 6f2524b36..901336d7d 100644
          best_pickmode.best_mode = this_mode;
          best_pickmode.best_intra_tx_size = mi->tx_size;
          best_pickmode.best_ref_frame = INTRA_FRAME;
-@@ -2739,6 +3091,280 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
+@@ -2739,6 +3113,286 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
    }
 
    *rd_cost = best_rdc;
@@ -934,7 +956,7 @@ index 6f2524b36..901336d7d 100644
 +        candidate_offset_f02 += snprintf(
 +            last_candidates_f02 + candidate_offset_f02,
 +            sizeof(last_candidates_f02) - candidate_offset_f02,
-+            "%s%d:%d:%d:%d:%lld:%lld:%d:%lld:%d:%lld:%d:0:%d:%d:%d:%d:%d:%d:%d:%d:%d:%llu:%llu:%d:%d:%d:%d:%d:%d:%d:%u:%u:%llu:%llu:%llu:%d:%d:%llu:%llu:%llu:%d:%d:%d:%d:%d:%d:%d:%d:%u:%u:%d",
++            "%s%d:%d:%d:%d:%lld:%lld:%d:%lld:%d:%lld:%d:0:%d:%d:%d:%d:%d:%d:%d:%d:%d:%llu:%llu:%d:%d:%d:%d:%d:%d:%d:%u:%u:%llu:%llu:%llu:%d:%d:%llu:%llu:%llu:%d:%d:%d:%d:%d:%d:%d:%d:%u:%u:%d:%u:%u:%u:%u:%u:%u",
 +            candidate_idx_f02 ? "|" : "",
 +            candidate_available_f02[candidate_idx_f02],
 +            candidate_mv_row_f02[candidate_idx_f02],
@@ -980,7 +1002,13 @@ index 6f2524b36..901336d7d 100644
 +            trace_mv_pred_row_f02, trace_mv_pred_col_f02,
 +            candidate_var_f02[candidate_idx_f02],
 +            candidate_sse_f02[candidate_idx_f02],
-+            candidate_tx_size_f02[candidate_idx_f02]);
++            candidate_tx_size_f02[candidate_idx_f02],
++            candidate_dc_thr_f02[candidate_idx_f02],
++            candidate_ac_thr_f02[candidate_idx_f02],
++            candidate_var_tx_f02[candidate_idx_f02],
++            candidate_sse_tx_f02[candidate_idx_f02],
++            candidate_dc_quant_f02[candidate_idx_f02],
++            candidate_ac_quant_f02[candidate_idx_f02]);
 +      }
 +      fprintf(vpx_f02_fp,
 +              "{\"frame_idx\":%u,\"spatial_id\":%d,\"mi_row\":%d,\"mi_col\":%d,"

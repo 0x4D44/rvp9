@@ -10483,6 +10483,38 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                     model_var_y: candidate.var_y,
                                     model_sse_y: candidate.sse_y,
                                     model_tx_size: candidate.picked_tx_size as u8,
+                                    model_dc_thr: {
+                                        let source = if leaf_bsize >= BlockSize::Block32x32
+                                            && leaf_rd_calibration.large_block_model
+                                        {
+                                            quantizer.dequant[0]
+                                        } else {
+                                            quantizer.zbin[0]
+                                        };
+                                        ((i64::from(source) * i64::from(source)) >> 6) as u32
+                                    },
+                                    model_ac_thr: {
+                                        let source = if leaf_bsize >= BlockSize::Block32x32
+                                            && leaf_rd_calibration.large_block_model
+                                        {
+                                            quantizer.dequant[1]
+                                        } else {
+                                            quantizer.zbin[1]
+                                        };
+                                        ((i64::from(source) * i64::from(source)) >> 6) as u32
+                                    },
+                                    model_var_tx: candidate.var_y
+                                        >> ((leaf_bsize.width_log2()
+                                            - candidate.picked_tx_size.block_size_log2())
+                                            + (leaf_bsize.height_log2()
+                                                - candidate.picked_tx_size.block_size_log2())),
+                                    model_sse_tx: candidate.sse_y
+                                        >> ((leaf_bsize.width_log2()
+                                            - candidate.picked_tx_size.block_size_log2())
+                                            + (leaf_bsize.height_log2()
+                                                - candidate.picked_tx_size.block_size_log2())),
+                                    model_dc_quant: quantizer.dequant[0] as u32,
+                                    model_ac_quant: quantizer.dequant[1] as u32,
                                     newmv_gate:
                                         rvp9_core::mode_decision::inter::NewMvGateReason::Unknown,
                                     newmv_search: None,
