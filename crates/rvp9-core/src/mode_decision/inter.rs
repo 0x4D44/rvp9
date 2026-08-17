@@ -128,9 +128,8 @@ use crate::mv_search::sub_pixel::{
 };
 use crate::quant::forward::{
     PlaneQuantizers, vp9_quantize_b_32x32_with_order, vp9_quantize_b_with_order,
+    vp9_quantize_fp_32x32_with_order, vp9_quantize_fp_with_order,
 };
-#[cfg(not(target_arch = "aarch64"))]
-use crate::quant::forward::{vp9_quantize_fp_32x32_with_order, vp9_quantize_fp_with_order};
 use crate::transforms::forward::{fdct8x8_libvpx_lowbd, fdct16x16, fdct32x32};
 use crate::transforms::inverse::{idct16x16_256_add, idct32x32_1024_add};
 use crate::transforms::scans::scan_for;
@@ -987,6 +986,14 @@ pub struct InterModeSearchResult {
     /// Whether the Hadamard/`quantize_fp` block-YRD found every luma
     /// coefficient zero before the final skip-rate comparison.
     pub yrd_skippable: bool,
+    /// F02 diagnostic hash of signed residual samples in tile order.
+    pub yrd_residual_hash: u64,
+    /// F02 diagnostic hash of Hadamard coefficients in tile order.
+    pub yrd_had_coeff_hash: u64,
+    /// F02 diagnostic hash of `quantize_fp` coefficients in tile order.
+    pub yrd_qcoeff_hash: u64,
+    /// F02 diagnostic count of non-zero `quantize_fp` coefficients.
+    pub yrd_qcoeff_nonzero: u32,
     /// G4 — Y-plane variance from `model_rd_for_sb_y`. Surfaced for
     /// the encode-breakout test in `pick_inter_mode`.
     pub var_y: u32,
@@ -3379,6 +3386,7 @@ fn evaluate_intra_fallback_with_scratch(
                     coef_dist: 0,
                     skippable: true,
                     dct_eob_total: 0,
+                    ..BlockYrdResult::default()
                 }
             } else if params.rd_calibration.model_only && params.block_size < BlockSize::Block32x32
             {
@@ -3392,6 +3400,7 @@ fn evaluate_intra_fallback_with_scratch(
                     coef_dist: mrd.dist,
                     skippable: false,
                     dct_eob_total: 0,
+                    ..BlockYrdResult::default()
                 }
             } else {
                 // We need an InterModeSearchParams to call
@@ -3650,6 +3659,14 @@ fn f02_hash_byte(mut hash: u64, value: u8) -> u64 {
     const FNV_PRIME: u64 = 1_099_511_628_211;
     hash ^= u64::from(value);
     hash.wrapping_mul(FNV_PRIME)
+}
+
+#[inline]
+fn f02_hash_i32(mut hash: u64, value: i32) -> u64 {
+    for byte in value.to_le_bytes() {
+        hash = f02_hash_byte(hash, byte);
+    }
+    hash
 }
 
 fn f02_newmv_input_hashes(params: &InterModeSearchParams<'_>, fullpel_mv: Mv) -> (u64, u64) {
@@ -4075,6 +4092,7 @@ fn simple_block_yrd_result(model: &ModelRdResult, clear_provisional_skip: bool) 
         coef_dist: model.dist,
         skippable: !clear_provisional_skip && model.skip_txfm == SkipTxfm::AcDc,
         dct_eob_total: 0,
+        ..BlockYrdResult::default()
     }
 }
 
@@ -4573,6 +4591,7 @@ fn evaluate_candidate_for_filter_with_pred(
             coef_dist: mrd.dist,
             skippable: true,
             dct_eob_total: 0,
+            ..BlockYrdResult::default()
         }
     } else if mrd.skip_txfm == SkipTxfm::AcDc && !s2_acdc_roundtrip_enabled() && !hadamard_only {
         // A/B only: restore the HEAD AcDc short-circuit (no DCT round-trip,
@@ -4582,6 +4601,7 @@ fn evaluate_candidate_for_filter_with_pred(
             coef_dist: 0,
             skippable: true,
             dct_eob_total: 0,
+            ..BlockYrdResult::default()
         }
     } else if hadamard_only
         && params.rd_calibration.model_only
@@ -5088,7 +5108,11 @@ fn evaluate_candidate_for_filter_with_pred(
         picked_interp_filter: filter,
         picked_tx_size: tx_size,
         skip_txfm,
-        yrd_skippable: by.skippable,
+        yrd_skippable: by.raw_skippable,
+        yrd_residual_hash: by.residual_hash,
+        yrd_had_coeff_hash: by.had_coeff_hash,
+        yrd_qcoeff_hash: by.qcoeff_hash,
+        yrd_qcoeff_nonzero: by.qcoeff_nonzero,
         var_y: mrd.var_y,
         sse_y: mrd.sse_y,
         early_term,
@@ -5420,6 +5444,15 @@ fn reconstruct_via_round_trip(
     let mut by_eob_cost: u32 = 0;
     let mut by_rate_satd: u32 = 0;
     let mut by_dist: i64 = 0;
+    let collect_f02_coeff_trace = candidate_trace::is_enabled();
+    let mut by_had_coeff_hash = if collect_f02_coeff_trace {
+        14_695_981_039_346_656_037
+    } else {
+        0
+    };
+    let mut by_residual_hash = by_had_coeff_hash;
+    let mut by_qcoeff_hash = by_had_coeff_hash;
+    let mut by_qcoeff_nonzero = 0u32;
     // S2 — sum of the DCT + `vp9_quantize_b` (reconstruction) eob across
     // tiles. This is the quantize outcome that matches the emit's
     // `inter_forward_quant_one_tx`, so it is the faithful Y-eob the
@@ -5553,6 +5586,44 @@ fn reconstruct_via_round_trip(
                 };
                 (eob != 0, rate_satd, dist)
             };
+            if collect_f02_coeff_trace {
+                let mut trace_coeff = [0i32; $n];
+                for (dst, &value) in trace_coeff.iter_mut().zip(had_coeff_i16.iter()) {
+                    *dst = i32::from(value);
+                    by_had_coeff_hash = f02_hash_i32(by_had_coeff_hash, i32::from(value));
+                }
+                let mut trace_qcoeff = [0i16; $n];
+                let mut trace_dqcoeff = [0i16; $n];
+                let trace_eob = if $is_32x32 {
+                    vp9_quantize_fp_32x32_with_order(
+                        &trace_coeff,
+                        false,
+                        &params.quantizer.round_fp,
+                        &params.quantizer.quant_fp,
+                        &mut trace_qcoeff,
+                        &mut trace_dqcoeff,
+                        &dequant_pair,
+                        &scan,
+                    )
+                } else {
+                    vp9_quantize_fp_with_order(
+                        &trace_coeff,
+                        $n,
+                        false,
+                        &params.quantizer.round_fp,
+                        &params.quantizer.quant_fp,
+                        &mut trace_qcoeff,
+                        &mut trace_dqcoeff,
+                        &dequant_pair,
+                        &scan,
+                    )
+                };
+                debug_assert_eq!(trace_eob != 0, had_nonzero);
+                for &value in &trace_qcoeff {
+                    by_qcoeff_hash = f02_hash_i32(by_qcoeff_hash, i32::from(value));
+                    by_qcoeff_nonzero = by_qcoeff_nonzero.saturating_add(u32::from(value != 0));
+                }
+            }
             (had_nonzero, rate_satd, dist)
         }};
     }
@@ -5597,11 +5668,33 @@ fn reconstruct_via_round_trip(
                 nonzero
             };
 
+            if collect_f02_coeff_trace {
+                for row in 0..tx_side {
+                    for col in 0..tx_side {
+                        let value = if reconstruct {
+                            residual[row * tx_side + col]
+                        } else {
+                            let source =
+                                src.data[(sy + off_y + row) * src.stride + sx + off_x + col];
+                            let predictor = pred[(off_y + row) * pred_stride + off_x + col];
+                            i16::from(source) - i16::from(predictor)
+                        };
+                        by_residual_hash = f02_hash_i32(by_residual_hash, i32::from(value));
+                    }
+                }
+            }
+
             // A pixel-exact prediction has zero Hadamard and DCT
             // coefficients. Preserve block_yrd's one-EOB-symbol charge while
             // avoiding both transform/quantize pipelines and their scratch.
             if reconstruct && !residual_nonzero {
                 by_eob_cost = by_eob_cost.saturating_add(1);
+                if collect_f02_coeff_trace {
+                    for _ in 0..n {
+                        by_had_coeff_hash = f02_hash_i32(by_had_coeff_hash, 0);
+                        by_qcoeff_hash = f02_hash_i32(by_qcoeff_hash, 0);
+                    }
+                }
                 continue;
             }
 
@@ -5763,7 +5856,12 @@ fn reconstruct_via_round_trip(
         coef_rate,
         coef_dist: by_dist,
         skippable: by_skippable,
+        raw_skippable: by_skippable,
         dct_eob_total: by_dct_eob,
+        residual_hash: by_residual_hash,
+        had_coeff_hash: by_had_coeff_hash,
+        qcoeff_hash: by_qcoeff_hash,
+        qcoeff_nonzero: by_qcoeff_nonzero,
     }
 }
 
@@ -6819,6 +6917,7 @@ mod tests {
             coef_dist: 312_787,
             skippable: false,
             dct_eob_total: 1,
+            ..BlockYrdResult::default()
         };
 
         test_gate_override::with(true, || {

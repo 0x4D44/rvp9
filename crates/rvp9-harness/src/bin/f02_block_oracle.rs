@@ -1251,6 +1251,53 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "| exact-input model skip-state matches | {} |",
                 costs.exact_input_model_skip_matches
             )?;
+            writeln!(
+                sf,
+                "| exact-input residual-hash matches | {} |",
+                costs.exact_input_residual_hash_matches
+            )?;
+            writeln!(
+                sf,
+                "| exact-input Hadamard coefficient-hash matches | {} |",
+                costs.exact_input_had_coeff_hash_matches
+            )?;
+            writeln!(
+                sf,
+                "| exact-input quantized coefficient-hash matches | {} |",
+                costs.exact_input_qcoeff_hash_matches
+            )?;
+            writeln!(
+                sf,
+                "| exact-input quantized nonzero-count matches | {} |",
+                costs.exact_input_qcoeff_nonzero_matches
+            )?;
+            writeln!(
+                sf,
+                "| exact-input rvp9/libvpx quantized nonzero count | {:.6} |",
+                ratio(
+                    costs.exact_input_rvp9_qcoeff_nonzero_sum,
+                    costs.exact_input_libvpx_qcoeff_nonzero_sum
+                )
+            )?;
+            const BLOCK_SIZE_TAGS: [&str; 13] = [
+                "4x4", "4x8", "8x4", "8x8", "8x16", "16x8", "16x16", "16x32", "32x16", "32x32",
+                "32x64", "64x32", "64x64",
+            ];
+            for (bsize_idx, ((rvp9_count, libvpx_count), matching_count)) in costs
+                .exact_input_rvp9_coeff_trace_by_bsize
+                .iter()
+                .zip(costs.exact_input_libvpx_coeff_trace_by_bsize)
+                .zip(costs.exact_input_matching_coeff_trace_by_bsize)
+                .enumerate()
+            {
+                if *rvp9_count != 0 || libvpx_count != 0 {
+                    writeln!(
+                        sf,
+                        "| exact-input coefficient traces {} rvp9 / libvpx / matching | {} / {} / {} |",
+                        BLOCK_SIZE_TAGS[bsize_idx], rvp9_count, libvpx_count, matching_count
+                    )?;
+                }
+            }
             for rvp9_skip in 0..2 {
                 for libvpx_skip in 0..2 {
                     let count = costs.exact_input_yrd_skip_pair_counts[rvp9_skip * 2 + libvpx_skip];

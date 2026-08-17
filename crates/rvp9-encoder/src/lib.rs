@@ -10526,6 +10526,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                     yrd_ac_quant: quantizer.quant_fp[1] as u32,
                                     model_skip_txfm,
                                     yrd_skippable: candidate.yrd_skippable,
+                                    yrd_residual_hash: candidate.yrd_residual_hash,
+                                    yrd_had_coeff_hash: candidate.yrd_had_coeff_hash,
+                                    yrd_qcoeff_hash: candidate.yrd_qcoeff_hash,
+                                    yrd_qcoeff_nonzero: candidate.yrd_qcoeff_nonzero,
                                     newmv_gate:
                                         rvp9_core::mode_decision::inter::NewMvGateReason::Unknown,
                                     newmv_search: None,

@@ -1,0 +1,160 @@
+# Applies after f02_oracle.patch to pinned libvpx v1.14.1.
+# Adds exact-input residual, Hadamard, and quantized-coefficient fingerprints.
+diff --git a/vp9/encoder/vp9_pickmode.c b/vp9/encoder/vp9_pickmode.c
+--- a/vp9/encoder/vp9_pickmode.c
++++ b/vp9/encoder/vp9_pickmode.c
+@@ -976,6 +976,23 @@
+   ++count;
+ }
+ 
++static int f02_current_coeff_trace;
++static uint64_t f02_current_residual_hash;
++static uint64_t f02_current_had_coeff_hash;
++static uint64_t f02_current_qcoeff_hash;
++static unsigned int f02_current_qcoeff_nonzero;
++
++static uint64_t f02_hash_coeff(uint64_t hash, tran_low_t value) {
++  uint32_t bits = (uint32_t)(int32_t)value;
++  int byte;
++  for (byte = 0; byte < 4; ++byte) {
++    hash ^= bits & 0xff;
++    hash *= 1099511628211ULL;
++    bits >>= 8;
++  }
++  return hash;
++}
++
+ static void block_yrd(VP9_COMP *cpi, MACROBLOCK *x, RD_COST *this_rdc,
+                       int *skippable, int64_t *sse, BLOCK_SIZE bsize,
+                       TX_SIZE tx_size, int rd_computed, int is_intra) {
+@@ -995,6 +1012,13 @@
+   const int bw = 4 * num_4x4_w;
+   const int bh = 4 * num_4x4_h;
+ 
++  f02_current_coeff_trace = getenv("VPX_F02_ORACLE_OUT") != NULL;
++  f02_current_residual_hash =
++      f02_current_coeff_trace ? 14695981039346656037ULL : 0;
++  f02_current_had_coeff_hash = f02_current_residual_hash;
++  f02_current_qcoeff_hash = f02_current_had_coeff_hash;
++  f02_current_qcoeff_nonzero = 0;
++
+   if (cpi->sf.use_simple_block_yrd && cpi->common.frame_type != KEY_FRAME &&
+       (bsize < BLOCK_32X32 ||
+        (cpi->use_svc &&
+@@ -1043,6 +1067,21 @@
+ 
+         // skip block condition should be handled before this is called.
+         assert(!x->skip_block);
++
++        if (f02_current_coeff_trace) {
++          int residual_row_f02;
++          int residual_col_f02;
++          const int tx_side_f02 = 4 << tx_size;
++          for (residual_row_f02 = 0; residual_row_f02 < tx_side_f02;
++               ++residual_row_f02) {
++            for (residual_col_f02 = 0; residual_col_f02 < tx_side_f02;
++                 ++residual_col_f02) {
++              f02_current_residual_hash = f02_hash_coeff(
++                  f02_current_residual_hash,
++                  src_diff[residual_row_f02 * diff_stride + residual_col_f02]);
++            }
++          }
++        }
+ 
+         switch (tx_size) {
+           case TX_16X16:
+@@ -1062,6 +1101,17 @@
+                             scan_order);
+             break;
+         }
++        if (f02_current_coeff_trace) {
++          int coeff_idx_f02;
++          for (coeff_idx_f02 = 0; coeff_idx_f02 < (step << 4);
++               ++coeff_idx_f02) {
++            f02_current_had_coeff_hash = f02_hash_coeff(
++                f02_current_had_coeff_hash, coeff[coeff_idx_f02]);
++            f02_current_qcoeff_hash = f02_hash_coeff(
++                f02_current_qcoeff_hash, qcoeff[coeff_idx_f02]);
++            f02_current_qcoeff_nonzero += qcoeff[coeff_idx_f02] != 0;
++          }
++        }
+         *skippable &= (*eob == 0);
+         eob_cost += 1;
+       }
+@@ -2023,6 +2073,10 @@
+   unsigned int current_model_sse_f02 = 0;
+   int current_model_skip_f02 = 0;
+   int current_yrd_skippable_f02 = 0;
++  uint64_t current_residual_hash_f02 = 0;
++  uint64_t current_had_coeff_hash_f02 = 0;
++  uint64_t current_qcoeff_hash_f02 = 0;
++  unsigned int current_qcoeff_nonzero_f02 = 0;
+   int candidate_available_f02[4] = { 0 };
+   int candidate_mv_row_f02[4] = { 0 };
+   int candidate_mv_col_f02[4] = { 0 };
+@@ -2049,6 +2103,10 @@
+   unsigned int candidate_fp_ac_quant_f02[4] = { 0 };
+   int candidate_model_skip_f02[4] = { 0 };
+   int candidate_yrd_skippable_f02[4] = { 0 };
++  uint64_t candidate_residual_hash_f02[4] = { 0 };
++  uint64_t candidate_had_coeff_hash_f02[4] = { 0 };
++  uint64_t candidate_qcoeff_hash_f02[4] = { 0 };
++  unsigned int candidate_qcoeff_nonzero_f02[4] = { 0 };
+   F02_NEWMV_TRACE last_newmv_trace_f02 = {
+     { INT16_MIN, INT16_MIN }, { INT16_MIN, INT16_MIN },
+     { INT16_MIN, INT16_MIN },
+@@ -2671,6 +2729,10 @@
+     current_model_sse_f02 = sse_y;
+     current_model_skip_f02 = x->skip_txfm[0];
+     current_yrd_skippable_f02 = 0;
++    current_residual_hash_f02 = 0;
++    current_had_coeff_hash_f02 = 0;
++    current_qcoeff_hash_f02 = 0;
++    current_qcoeff_nonzero_f02 = 0;
+ 
+     if (!this_early_term) {
+       this_sse = (int64_t)sse_y;
+@@ -2679,6 +2741,10 @@
+       current_luma_rate_f02 = this_rdc.rate;
+       current_luma_dist_f02 = this_rdc.dist;
+       current_yrd_skippable_f02 = is_skippable;
++      current_residual_hash_f02 = f02_current_residual_hash;
++      current_had_coeff_hash_f02 = f02_current_had_coeff_hash;
++      current_qcoeff_hash_f02 = f02_current_qcoeff_hash;
++      current_qcoeff_nonzero_f02 = f02_current_qcoeff_nonzero;
+       x->skip_txfm[0] = is_skippable;
+       if (is_skippable) {
+         this_rdc.rate = vp9_cost_bit(vp9_get_skip_prob(cm, xd), 1);
+@@ -2829,6 +2895,10 @@
+         candidate_fp_ac_quant_f02[candidate_idx_f02] = x->plane[0].quant_fp[1];
+         candidate_model_skip_f02[candidate_idx_f02] = current_model_skip_f02;
+         candidate_yrd_skippable_f02[candidate_idx_f02] = current_yrd_skippable_f02;
++        candidate_residual_hash_f02[candidate_idx_f02] = current_residual_hash_f02;
++        candidate_had_coeff_hash_f02[candidate_idx_f02] = current_had_coeff_hash_f02;
++        candidate_qcoeff_hash_f02[candidate_idx_f02] = current_qcoeff_hash_f02;
++        candidate_qcoeff_nonzero_f02[candidate_idx_f02] = current_qcoeff_nonzero_f02;
+       }
+     }
+     mode_checked[this_mode][ref_frame] = 1;
+@@ -3301,7 +3371,7 @@
+         candidate_offset_f02 += snprintf(
+             last_candidates_f02 + candidate_offset_f02,
+             sizeof(last_candidates_f02) - candidate_offset_f02,
+-            "%s%d:%d:%d:%d:%lld:%lld:%d:%lld:%d:%lld:%d:0:%d:%d:%d:%d:%d:%d:%d:%d:%d:%llu:%llu:%d:%d:%d:%d:%d:%d:%d:%u:%u:%llu:%llu:%llu:%d:%d:%llu:%llu:%llu:%d:%d:%d:%d:%d:%d:%d:%d:%u:%u:%d:%u:%u:%u:%u:%u:%u:%u:%u:%u:%u:%d:%d",
++            "%s%d:%d:%d:%d:%lld:%lld:%d:%lld:%d:%lld:%d:0:%d:%d:%d:%d:%d:%d:%d:%d:%d:%llu:%llu:%d:%d:%d:%d:%d:%d:%d:%u:%u:%llu:%llu:%llu:%d:%d:%llu:%llu:%llu:%d:%d:%d:%d:%d:%d:%d:%d:%u:%u:%d:%u:%u:%u:%u:%u:%u:%u:%u:%u:%u:%d:%d:%llu:%llu:%llu:%u",
+             candidate_idx_f02 ? "|" : "",
+             candidate_available_f02[candidate_idx_f02],
+             candidate_mv_row_f02[candidate_idx_f02],
+@@ -3359,7 +3429,11 @@
+             candidate_fp_dc_quant_f02[candidate_idx_f02],
+             candidate_fp_ac_quant_f02[candidate_idx_f02],
+             candidate_model_skip_f02[candidate_idx_f02],
+-            candidate_yrd_skippable_f02[candidate_idx_f02]);
++            candidate_yrd_skippable_f02[candidate_idx_f02],
++            (unsigned long long)candidate_residual_hash_f02[candidate_idx_f02],
++            (unsigned long long)candidate_had_coeff_hash_f02[candidate_idx_f02],
++            (unsigned long long)candidate_qcoeff_hash_f02[candidate_idx_f02],
++            candidate_qcoeff_nonzero_f02[candidate_idx_f02]);
+       }
+       fprintf(vpx_f02_fp,
+               "{\"frame_idx\":%u,\"spatial_id\":%d,\"mi_row\":%d,\"mi_col\":%d,"

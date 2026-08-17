@@ -134,6 +134,14 @@ pub struct CandidateProbe {
     pub model_skip_txfm: u8,
     /// Whether block YRD found an all-zero luma coefficient set.
     pub yrd_skippable: bool,
+    /// FNV-1a hash of sign-extended residual samples in tile order.
+    pub yrd_residual_hash: u64,
+    /// FNV-1a hash of sign-extended Hadamard coefficients in tile order.
+    pub yrd_had_coeff_hash: u64,
+    /// FNV-1a hash of sign-extended `quantize_fp` coefficients in tile order.
+    pub yrd_qcoeff_hash: u64,
+    /// Number of non-zero `quantize_fp` coefficients.
+    pub yrd_qcoeff_nonzero: u32,
     /// Why LAST/NEWMV was evaluated or gated. Unknown for other slots and
     /// legacy/pinned-libvpx records.
     pub newmv_gate: NewMvGateReason,
@@ -477,7 +485,7 @@ fn candidate_probes_tag(probes: &[CandidateProbe; 4]) -> String {
                 col: i16::MIN,
             });
             format!(
-                "{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}",
+                "{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}",
                 u8::from(p.available),
                 p.mv_row,
                 p.mv_col,
@@ -541,6 +549,10 @@ fn candidate_probes_tag(probes: &[CandidateProbe; 4]) -> String {
                 p.yrd_ac_quant,
                 p.model_skip_txfm,
                 u8::from(p.yrd_skippable),
+                p.yrd_residual_hash,
+                p.yrd_had_coeff_hash,
+                p.yrd_qcoeff_hash,
+                p.yrd_qcoeff_nonzero,
             )
         })
         .collect::<Vec<_>>()

@@ -759,6 +759,24 @@ pub struct MatchingNewMvCandidateCosts {
     pub exact_input_libvpx_fp_ac_quant_sum: u64,
     /// Exact-input records with the same variance-model skip state.
     pub exact_input_model_skip_matches: usize,
+    /// Exact-input records with the same signed-residual hash.
+    pub exact_input_residual_hash_matches: usize,
+    /// Exact-input records with the same Hadamard-coefficient hash.
+    pub exact_input_had_coeff_hash_matches: usize,
+    /// Exact-input records with the same quantized-coefficient hash.
+    pub exact_input_qcoeff_hash_matches: usize,
+    /// Exact-input records with the same non-zero quantized-coefficient count.
+    pub exact_input_qcoeff_nonzero_matches: usize,
+    /// Sum of rvp9 non-zero quantized-coefficient counts.
+    pub exact_input_rvp9_qcoeff_nonzero_sum: u64,
+    /// Sum of libvpx non-zero quantized-coefficient counts.
+    pub exact_input_libvpx_qcoeff_nonzero_sum: u64,
+    /// Exact-input rvp9 coefficient traces indexed by VP9 block-size enum value.
+    pub exact_input_rvp9_coeff_trace_by_bsize: [usize; 13],
+    /// Exact-input libvpx coefficient traces indexed by VP9 block-size enum value.
+    pub exact_input_libvpx_coeff_trace_by_bsize: [usize; 13],
+    /// Exact-input matching coefficient traces indexed by VP9 block-size enum value.
+    pub exact_input_matching_coeff_trace_by_bsize: [usize; 13],
     /// Exact-input counts indexed by `rvp9_yrd_skip * 2 + libvpx_yrd_skip`.
     pub exact_input_yrd_skip_pair_counts: [usize; 4],
     /// Sum of non-negative rvp9 candidate distortions.
@@ -890,6 +908,33 @@ pub fn compare_matching_newmv_candidates(
             costs.exact_input_libvpx_fp_ac_quant_sum += u64::from(libvpx_candidate.yrd_ac_quant);
             costs.exact_input_model_skip_matches +=
                 usize::from(rvp9_candidate.model_skip_txfm == libvpx_candidate.model_skip_txfm);
+            costs.exact_input_residual_hash_matches +=
+                usize::from(rvp9_candidate.yrd_residual_hash == libvpx_candidate.yrd_residual_hash);
+            costs.exact_input_had_coeff_hash_matches += usize::from(
+                rvp9_candidate.yrd_had_coeff_hash == libvpx_candidate.yrd_had_coeff_hash,
+            );
+            costs.exact_input_qcoeff_hash_matches +=
+                usize::from(rvp9_candidate.yrd_qcoeff_hash == libvpx_candidate.yrd_qcoeff_hash);
+            costs.exact_input_qcoeff_nonzero_matches += usize::from(
+                rvp9_candidate.yrd_qcoeff_nonzero == libvpx_candidate.yrd_qcoeff_nonzero,
+            );
+            costs.exact_input_rvp9_qcoeff_nonzero_sum +=
+                u64::from(rvp9_candidate.yrd_qcoeff_nonzero);
+            costs.exact_input_libvpx_qcoeff_nonzero_sum +=
+                u64::from(libvpx_candidate.yrd_qcoeff_nonzero);
+            let bsize_idx = rvp9.bsize.idx();
+            let rvp9_coeff_trace = rvp9_candidate.yrd_residual_hash != 0;
+            let libvpx_coeff_trace = libvpx_candidate.yrd_residual_hash != 0;
+            costs.exact_input_rvp9_coeff_trace_by_bsize[bsize_idx] += usize::from(rvp9_coeff_trace);
+            costs.exact_input_libvpx_coeff_trace_by_bsize[bsize_idx] +=
+                usize::from(libvpx_coeff_trace);
+            costs.exact_input_matching_coeff_trace_by_bsize[bsize_idx] += usize::from(
+                rvp9_coeff_trace
+                    && libvpx_coeff_trace
+                    && rvp9_candidate.yrd_residual_hash == libvpx_candidate.yrd_residual_hash
+                    && rvp9_candidate.yrd_had_coeff_hash == libvpx_candidate.yrd_had_coeff_hash
+                    && rvp9_candidate.yrd_qcoeff_hash == libvpx_candidate.yrd_qcoeff_hash,
+            );
             let yrd_skip_pair = usize::from(rvp9_candidate.yrd_skippable) * 2
                 + usize::from(libvpx_candidate.yrd_skippable);
             costs.exact_input_yrd_skip_pair_counts[yrd_skip_pair] += 1;
@@ -1272,7 +1317,7 @@ fn parse_candidate_probes(v: &str) -> Result<[CandidateProbe; 4], ParseError> {
         let fields = encoded.split(':').collect::<Vec<_>>();
         if !matches!(
             fields.len(),
-            11 | 12 | 18 | 23 | 42 | 46 | 48 | 51 | 57 | 63
+            11 | 12 | 18 | 23 | 42 | 46 | 48 | 51 | 57 | 63 | 66 | 67
         ) {
             return Err(ParseError::BadValue {
                 field: "last_candidates",
@@ -1298,7 +1343,10 @@ fn parse_candidate_probes(v: &str) -> Result<[CandidateProbe; 4], ParseError> {
                     raw: raw.clone(),
                 })
             })?;
-        let newmv_search = if matches!(fields.len(), 18 | 23 | 42 | 46 | 48 | 51 | 57 | 63) {
+        let newmv_search = if matches!(
+            fields.len(),
+            18 | 23 | 42 | 46 | 48 | 51 | 57 | 63 | 66 | 67
+        ) {
             let values = fields[12..18]
                 .iter()
                 .map(|field| parse_num::<i16>(field, "last_candidates"))
@@ -1311,7 +1359,8 @@ fn parse_candidate_probes(v: &str) -> Result<[CandidateProbe; 4], ParseError> {
                     raw,
                 });
             } else {
-                let has_input_trace = matches!(fields.len(), 23 | 42 | 46 | 48 | 51 | 57 | 63);
+                let has_input_trace =
+                    matches!(fields.len(), 23 | 42 | 46 | 48 | 51 | 57 | 63 | 66 | 67);
                 let ref_mv = if has_input_trace {
                     Mv {
                         row: parse_num(fields[18], "last_candidates")?,
@@ -1320,7 +1369,7 @@ fn parse_candidate_probes(v: &str) -> Result<[CandidateProbe; 4], ParseError> {
                 } else {
                     Mv::ZERO
                 };
-                let subpel = if matches!(fields.len(), 42 | 46 | 48 | 51 | 57 | 63) {
+                let subpel = if matches!(fields.len(), 42 | 46 | 48 | 51 | 57 | 63 | 66 | 67) {
                     let limits = fields[23..27]
                         .iter()
                         .map(|field| parse_num::<i32>(field, "last_candidates"))
@@ -1387,7 +1436,7 @@ fn parse_candidate_probes(v: &str) -> Result<[CandidateProbe; 4], ParseError> {
                         col: values[5],
                     },
                     ref_mv,
-                    near_mv: if matches!(fields.len(), 46 | 48 | 51 | 57 | 63) {
+                    near_mv: if matches!(fields.len(), 46 | 48 | 51 | 57 | 63 | 66 | 67) {
                         Mv {
                             row: parse_num(fields[42], "last_candidates")?,
                             col: parse_num(fields[43], "last_candidates")?,
@@ -1395,7 +1444,7 @@ fn parse_candidate_probes(v: &str) -> Result<[CandidateProbe; 4], ParseError> {
                     } else {
                         Mv::ZERO
                     },
-                    sb_pred_mv: if matches!(fields.len(), 46 | 48 | 51 | 57 | 63) {
+                    sb_pred_mv: if matches!(fields.len(), 46 | 48 | 51 | 57 | 63 | 66 | 67) {
                         let row = parse_num(fields[44], "last_candidates")?;
                         let col = parse_num(fields[45], "last_candidates")?;
                         match (row == i16::MIN, col == i16::MIN) {
@@ -1411,7 +1460,7 @@ fn parse_candidate_probes(v: &str) -> Result<[CandidateProbe; 4], ParseError> {
                     } else {
                         None
                     },
-                    mv_pred_mv: if matches!(fields.len(), 48 | 51 | 57 | 63) {
+                    mv_pred_mv: if matches!(fields.len(), 48 | 51 | 57 | 63 | 66 | 67) {
                         Mv {
                             row: parse_num(fields[46], "last_candidates")?,
                             col: parse_num(fields[47], "last_candidates")?,
@@ -1502,6 +1551,18 @@ fn parse_candidate_probes(v: &str) -> Result<[CandidateProbe; 4], ParseError> {
                     raw: raw.clone(),
                 }),
             })?,
+            yrd_residual_hash: fields
+                .get(63)
+                .map_or(Ok(0), |field| parse_num(field, "last_candidates"))?,
+            yrd_had_coeff_hash: fields
+                .get(64)
+                .map_or(Ok(0), |field| parse_num(field, "last_candidates"))?,
+            yrd_qcoeff_hash: fields
+                .get(65)
+                .map_or(Ok(0), |field| parse_num(field, "last_candidates"))?,
+            yrd_qcoeff_nonzero: fields
+                .get(66)
+                .map_or(Ok(0), |field| parse_num(field, "last_candidates"))?,
             newmv_gate,
             newmv_search,
         });
@@ -1654,6 +1715,10 @@ mod tests {
                     yrd_ac_quant: 808,
                     model_skip_txfm: 1,
                     yrd_skippable: true,
+                    yrd_residual_hash: 0xCAFE_BABE_1234_5678,
+                    yrd_had_coeff_hash: 0x1234_5678_9ABC_DEF0,
+                    yrd_qcoeff_hash: 0x0FED_CBA9_8765_4321,
+                    yrd_qcoeff_nonzero: 9,
                     newmv_gate: NewMvGateReason::Unknown,
                     newmv_search: Some(NewMvSearchTrace {
                         start_mv: Mv { row: 8, col: -8 },
@@ -2013,6 +2078,10 @@ mod tests {
             yrd_ac_quant: 130,
             model_skip_txfm: 0,
             yrd_skippable: true,
+            yrd_residual_hash: 5,
+            yrd_had_coeff_hash: 10,
+            yrd_qcoeff_hash: 20,
+            yrd_qcoeff_nonzero: 3,
             ..CandidateProbe::default()
         };
         let exact_trace = sample_inter().last_candidates[0].newmv_search;
@@ -2042,6 +2111,10 @@ mod tests {
         rvp9.last_candidates[3].yrd_ac_quant = 125;
         rvp9.last_candidates[3].model_skip_txfm = 0;
         rvp9.last_candidates[3].yrd_skippable = false;
+        rvp9.last_candidates[3].yrd_residual_hash = 5;
+        rvp9.last_candidates[3].yrd_had_coeff_hash = 10;
+        rvp9.last_candidates[3].yrd_qcoeff_hash = 21;
+        rvp9.last_candidates[3].yrd_qcoeff_nonzero = 4;
         rvp9.last_candidates[3].newmv_search = exact_trace;
 
         let cells = analyze_newmv_cells(&[rvp9], &[libvpx], 8, 16);
@@ -2095,6 +2168,24 @@ mod tests {
         assert_eq!(costs.exact_input_rvp9_fp_ac_quant_sum, 125);
         assert_eq!(costs.exact_input_libvpx_fp_ac_quant_sum, 130);
         assert_eq!(costs.exact_input_model_skip_matches, 1);
+        assert_eq!(costs.exact_input_residual_hash_matches, 1);
+        assert_eq!(costs.exact_input_had_coeff_hash_matches, 1);
+        assert_eq!(costs.exact_input_qcoeff_hash_matches, 0);
+        assert_eq!(costs.exact_input_qcoeff_nonzero_matches, 0);
+        assert_eq!(costs.exact_input_rvp9_qcoeff_nonzero_sum, 4);
+        assert_eq!(costs.exact_input_libvpx_qcoeff_nonzero_sum, 3);
+        assert_eq!(
+            costs.exact_input_rvp9_coeff_trace_by_bsize[BlockSize::Block16x16.idx()],
+            1
+        );
+        assert_eq!(
+            costs.exact_input_libvpx_coeff_trace_by_bsize[BlockSize::Block16x16.idx()],
+            1
+        );
+        assert_eq!(
+            costs.exact_input_matching_coeff_trace_by_bsize[BlockSize::Block16x16.idx()],
+            0
+        );
         assert_eq!(costs.exact_input_yrd_skip_pair_counts[1], 1);
         assert_eq!(costs.rvp9_dist_sum, 290);
         assert_eq!(costs.libvpx_dist_sum, 300);
