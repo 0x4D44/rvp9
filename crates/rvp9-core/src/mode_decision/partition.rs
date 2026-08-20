@@ -803,7 +803,7 @@ fn minmax_8x8_spread(input: &FixedTreeInterInput<'_>, x16: usize, y16: usize) ->
         }
         let source_index = y8 * input.source_stride + x8;
         let predictor_index = y8 * input.predictor_stride + x8;
-        #[cfg(target_arch = "aarch64")]
+        #[cfg(all(target_arch = "aarch64", not(miri)))]
         let (min_diff, max_diff) = {
             let (minimum, maximum) = crate::dsp::aarch64::minmax_8x8_neon(
                 &input.source[source_index..],
@@ -813,7 +813,7 @@ fn minmax_8x8_spread(input: &FixedTreeInterInput<'_>, x16: usize, y16: usize) ->
             );
             (i32::from(minimum), i32::from(maximum))
         };
-        #[cfg(not(target_arch = "aarch64"))]
+        #[cfg(any(not(target_arch = "aarch64"), miri))]
         let (min_diff, max_diff) = {
             let mut minimum = 255;
             let mut maximum = 0;
@@ -1064,7 +1064,7 @@ fn choose_fixed_tree_inter_impl<const DIAGNOSTICS: bool>(
     let mut min_16x16 = [i32::MAX; 4];
     force_split[0] = input.force_64x64_split;
 
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(all(target_arch = "aarch64", not(miri)))]
     let average_diff_8x8 = (input.visible_width == 64 && input.visible_height == 64).then(|| {
         crate::dsp::aarch64::avg_diff_8x8_grid_64x64_neon(
             input.source,
@@ -1082,7 +1082,7 @@ fn choose_fixed_tree_inter_impl<const DIAGNOSTICS: bool>(
             let y16 = y32 + (j >> 1) * 16;
             let index16 = i * 4 + j;
             let trace_index = 5 + index16;
-            #[cfg(target_arch = "aarch64")]
+            #[cfg(all(target_arch = "aarch64", not(miri)))]
             let split_8x8 = if let Some(averages) = &average_diff_8x8 {
                 let cell_row = y16 / 8;
                 let cell_col = x16 / 8;
@@ -1100,7 +1100,7 @@ fn choose_fixed_tree_inter_impl<const DIAGNOSTICS: bool>(
                     average_diff_var(input, x16 + 8, y16 + 8, 8),
                 ]
             };
-            #[cfg(not(target_arch = "aarch64"))]
+            #[cfg(any(not(target_arch = "aarch64"), miri))]
             let split_8x8 = [
                 average_diff_var(input, x16, y16, 8),
                 average_diff_var(input, x16 + 8, y16, 8),

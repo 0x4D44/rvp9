@@ -101,12 +101,12 @@ use crate::intra_pred::{
     intra_predict,
 };
 use crate::mode_decision::block_yrd::BlockYrdResult;
-#[cfg(not(target_arch = "aarch64"))]
+#[cfg(any(not(target_arch = "aarch64"), miri))]
 use crate::mode_decision::block_yrd::block_error_fp_i32;
-#[cfg(not(target_arch = "aarch64"))]
+#[cfg(any(not(target_arch = "aarch64"), miri))]
 use crate::mode_decision::block_yrd::satd_i16;
 use crate::mode_decision::hadamard::{hadamard_8x8, hadamard_16x16, hadamard_32x32};
-#[cfg(target_arch = "aarch64")]
+#[cfg(all(target_arch = "aarch64", not(miri)))]
 use crate::mode_decision::hadamard::{
     hadamard_8x8_subtract, hadamard_16x16_subtract, hadamard_32x32_subtract,
 };
@@ -5488,7 +5488,7 @@ fn reconstruct_via_round_trip(
             let had_coeff_i16: &mut [i16] = unsafe {
                 std::slice::from_raw_parts_mut(had_coeff_uninit.as_mut_ptr().cast::<i16>(), $n)
             };
-            #[cfg(target_arch = "aarch64")]
+            #[cfg(all(target_arch = "aarch64", not(miri)))]
             if reconstruct {
                 $transform(&residual[..$n], tx_side, had_coeff_i16);
             } else {
@@ -5500,10 +5500,10 @@ fn reconstruct_via_round_trip(
                     had_coeff_i16,
                 );
             }
-            #[cfg(not(target_arch = "aarch64"))]
+            #[cfg(any(not(target_arch = "aarch64"), miri))]
             $transform(&residual[..$n], tx_side, had_coeff_i16);
 
-            #[cfg(target_arch = "aarch64")]
+            #[cfg(all(target_arch = "aarch64", not(miri)))]
             let (had_nonzero, rate_satd, dist) = if collect_coef_dist {
                 let metrics = if $is_32x32 {
                     crate::dsp::aarch64::vp9_quantize_fp_32x32_i16_metrics_neon(
@@ -5540,7 +5540,7 @@ fn reconstruct_via_round_trip(
                 };
                 (metrics.nonzero, metrics.satd, 0)
             };
-            #[cfg(not(target_arch = "aarch64"))]
+            #[cfg(any(not(target_arch = "aarch64"), miri))]
             let (had_nonzero, rate_satd, dist) = {
                 let mut had_coeff = [0i32; $n];
                 for (dst, &src) in had_coeff.iter_mut().zip(had_coeff_i16.iter()) {
@@ -5636,7 +5636,7 @@ fn reconstruct_via_round_trip(
             let off_y = ty * tx_side;
             // 1. Build residual = src - pred for reconstruction. The
             // AArch64 Hadamard-only path fuses these loads into its transform.
-            #[cfg(target_arch = "aarch64")]
+            #[cfg(all(target_arch = "aarch64", not(miri)))]
             let residual_nonzero = if reconstruct {
                 crate::dsp::aarch64::subtract_square_neon_with_nonzero(
                     &src.data[(sy + off_y) * src.stride + sx + off_x..],
@@ -5649,7 +5649,7 @@ fn reconstruct_via_round_trip(
             } else {
                 true
             };
-            #[cfg(not(target_arch = "aarch64"))]
+            #[cfg(any(not(target_arch = "aarch64"), miri))]
             let residual_nonzero = {
                 let mut nonzero = false;
                 for r in 0..tx_side {

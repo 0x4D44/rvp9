@@ -200,7 +200,7 @@ pub fn vp9_quantize_b_with_order(
     dequant_ptr: &[i16; 2],
     order: &ScanOrder,
 ) -> u16 {
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(all(target_arch = "aarch64", not(miri)))]
     {
         crate::dsp::aarch64::vp9_quantize_b_neon(
             coeff_ptr,
@@ -216,7 +216,7 @@ pub fn vp9_quantize_b_with_order(
             order.iscan(),
         )
     }
-    #[cfg(not(target_arch = "aarch64"))]
+    #[cfg(any(not(target_arch = "aarch64"), miri))]
     {
         vp9_quantize_b(
             coeff_ptr,
@@ -356,7 +356,7 @@ pub fn vp9_quantize_b_32x32_with_order(
     dequant_ptr: &[i16; 2],
     order: &ScanOrder,
 ) -> u16 {
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(all(target_arch = "aarch64", not(miri)))]
     {
         crate::dsp::aarch64::vp9_quantize_b_32x32_neon(
             coeff_ptr,
@@ -371,7 +371,7 @@ pub fn vp9_quantize_b_32x32_with_order(
             order.iscan(),
         )
     }
-    #[cfg(not(target_arch = "aarch64"))]
+    #[cfg(any(not(target_arch = "aarch64"), miri))]
     {
         vp9_quantize_b_32x32(
             coeff_ptr,
@@ -469,7 +469,7 @@ pub fn vp9_quantize_fp_with_order(
     dequant_ptr: &[i16; 2],
     order: &ScanOrder,
 ) -> u16 {
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(all(target_arch = "aarch64", not(miri)))]
     {
         crate::dsp::aarch64::vp9_quantize_fp_neon(
             coeff_ptr,
@@ -483,7 +483,7 @@ pub fn vp9_quantize_fp_with_order(
             order.iscan(),
         )
     }
-    #[cfg(not(target_arch = "aarch64"))]
+    #[cfg(any(not(target_arch = "aarch64"), miri))]
     {
         vp9_quantize_fp(
             coeff_ptr,
@@ -579,7 +579,7 @@ pub fn vp9_quantize_fp_32x32_with_order(
     dequant_ptr: &[i16; 2],
     order: &ScanOrder,
 ) -> u16 {
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(all(target_arch = "aarch64", not(miri)))]
     {
         crate::dsp::aarch64::vp9_quantize_fp_32x32_neon(
             coeff_ptr,
@@ -592,7 +592,7 @@ pub fn vp9_quantize_fp_32x32_with_order(
             order.iscan(),
         )
     }
-    #[cfg(not(target_arch = "aarch64"))]
+    #[cfg(any(not(target_arch = "aarch64"), miri))]
     {
         vp9_quantize_fp_32x32(
             coeff_ptr,

@@ -20,7 +20,7 @@
 //! AArch64 dispatches to an integer-exact NEON port of libvpx's
 //! `vpx_hadamard_{8x8,16x16,32x32}_neon` kernels.
 
-#[cfg(target_arch = "aarch64")]
+#[cfg(all(target_arch = "aarch64", not(miri)))]
 #[path = "hadamard_neon.rs"]
 mod neon;
 
@@ -192,11 +192,11 @@ fn hadamard_32x32_scalar(src: &[i16], src_stride: usize, coeff: &mut [i16]) {
 
 /// 2-D Walsh-Hadamard transform of an 8×8 block.
 pub fn hadamard_8x8(src: &[i16], src_stride: usize, coeff: &mut [i16]) {
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(all(target_arch = "aarch64", not(miri)))]
     {
         neon::hadamard_8x8(src, src_stride, coeff);
     }
-    #[cfg(not(target_arch = "aarch64"))]
+    #[cfg(any(not(target_arch = "aarch64"), miri))]
     {
         hadamard_8x8_scalar(src, src_stride, coeff);
     }
@@ -204,18 +204,18 @@ pub fn hadamard_8x8(src: &[i16], src_stride: usize, coeff: &mut [i16]) {
 
 /// 2-D Walsh-Hadamard transform of a 16×16 block.
 pub fn hadamard_16x16(src: &[i16], src_stride: usize, coeff: &mut [i16]) {
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(all(target_arch = "aarch64", not(miri)))]
     {
         neon::hadamard_16x16(src, src_stride, coeff);
     }
-    #[cfg(not(target_arch = "aarch64"))]
+    #[cfg(any(not(target_arch = "aarch64"), miri))]
     {
         hadamard_16x16_scalar(src, src_stride, coeff);
     }
 }
 
 /// Fused AArch64 `src - pred` and 8×8 Walsh-Hadamard transform.
-#[cfg(target_arch = "aarch64")]
+#[cfg(all(target_arch = "aarch64", not(miri)))]
 pub fn hadamard_8x8_subtract(
     src: &[u8],
     src_stride: usize,
@@ -227,7 +227,7 @@ pub fn hadamard_8x8_subtract(
 }
 
 /// Fused AArch64 `src - pred` and 16×16 Walsh-Hadamard transform.
-#[cfg(target_arch = "aarch64")]
+#[cfg(all(target_arch = "aarch64", not(miri)))]
 pub fn hadamard_16x16_subtract(
     src: &[u8],
     src_stride: usize,
@@ -239,7 +239,7 @@ pub fn hadamard_16x16_subtract(
 }
 
 /// Fused AArch64 `src - pred` and 32×32 Walsh-Hadamard transform.
-#[cfg(target_arch = "aarch64")]
+#[cfg(all(target_arch = "aarch64", not(miri)))]
 pub fn hadamard_32x32_subtract(
     src: &[u8],
     src_stride: usize,
@@ -252,11 +252,11 @@ pub fn hadamard_32x32_subtract(
 
 /// 2-D Walsh-Hadamard transform of a 32×32 block.
 pub fn hadamard_32x32(src: &[i16], src_stride: usize, coeff: &mut [i16]) {
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(all(target_arch = "aarch64", not(miri)))]
     {
         neon::hadamard_32x32(src, src_stride, coeff);
     }
-    #[cfg(not(target_arch = "aarch64"))]
+    #[cfg(any(not(target_arch = "aarch64"), miri))]
     {
         hadamard_32x32_scalar(src, src_stride, coeff);
     }
@@ -281,8 +281,10 @@ pub fn hadamard_satd(coeff: &[i16]) -> u32 {
 mod tests {
     use super::*;
 
+    #[cfg(not(miri))]
     struct Lcg32(u32);
 
+    #[cfg(not(miri))]
     impl Lcg32 {
         fn residual(&mut self) -> i16 {
             self.0 = self.0.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
@@ -398,7 +400,7 @@ mod tests {
         assert!(coeff.iter().all(|&v| v == 0));
     }
 
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(all(target_arch = "aarch64", not(miri)))]
     #[test]
     fn neon_matches_scalar_for_random_residuals_and_stride_jitter() {
         let mut rng = Lcg32(0x4841_4441);
@@ -429,7 +431,7 @@ mod tests {
         }
     }
 
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(all(target_arch = "aarch64", not(miri)))]
     #[test]
     fn fused_subtract_matches_staged_hadamard_for_all_sizes_and_strides() {
         type Transform = fn(&[i16], usize, &mut [i16]);
@@ -481,7 +483,7 @@ mod tests {
         }
     }
 
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(all(target_arch = "aarch64", not(miri)))]
     #[test]
     fn neon_matches_scalar_for_residual_extremes() {
         for size in [8usize, 16, 32] {
