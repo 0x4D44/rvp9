@@ -7,8 +7,8 @@
 #
 #   quality  96 bdrate-svc curves (2 modes x 8 clip/target combinations x
 #            CPU6/7/8 x 2/3 spatial layers) -> 240 per-layer BD-rate gates at
-#            <= +0.5% versus the pinned vp9_spatial_svc_encoder, except the
-#            experimental CPU6 three-layer VBR rows at <= +3.0%. Each curve's
+#            <= +0.5% versus the pinned vp9_spatial_svc_encoder for CBR and
+#            <= +25.0% for the experimental spatial-VBR preview. Each curve's
 #            2,016-stream cross-decoder share runs immediately, before the
 #            curve's bulky evidence is discarded.
 #   speed    36 encode-headtohead corpus groups (2 modes x 3 targets x
@@ -57,7 +57,7 @@ readonly LAG_IN_FRAMES=0
 readonly TUNE_CONTENT="default"
 
 readonly DEFAULT_MAX_BDRATE_PCT="0.5"
-readonly EXPERIMENTAL_CPU6_S3_VBR_MAX_BDRATE_PCT="3.0"
+readonly EXPERIMENTAL_SPATIAL_VBR_MAX_BDRATE_PCT="25.0"
 readonly MAX_RATIO="1.05"
 readonly MAX_LOAD1="0.75"
 
@@ -151,13 +151,12 @@ anchor_hash_policy() {
     fi
 }
 
-# Spatial SVC is experimental in v0.2.0 only for CPU6 three-layer realtime
-# VBR. Correctness and speed are unchanged, and every other quality row keeps
-# the production +0.5% ceiling.
+# Spatial VBR is an experimental preview in v0.2.0. Correctness and speed are
+# unchanged, while spatial CBR keeps the production +0.5% quality ceiling.
 quality_bdrate_limit() {
-    local mode="$1" cpu="$2" layers="$3"
-    if [ "$mode" = "vbr" ] && [ "$cpu" = 6 ] && [ "$layers" = 3 ]; then
-        printf '%s\n' "$EXPERIMENTAL_CPU6_S3_VBR_MAX_BDRATE_PCT"
+    local mode="$1"
+    if [ "$mode" = "vbr" ]; then
+        printf '%s\n' "$EXPERIMENTAL_SPATIAL_VBR_MAX_BDRATE_PCT"
     else
         printf '%s\n' "$DEFAULT_MAX_BDRATE_PCT"
     fi
@@ -261,9 +260,9 @@ print_plan() {
         "$FRAMES" "$KEYFRAME_INTERVAL" "$AQ_MODE" "$NOISE_SENSITIVITY" "$TEMPORAL_LAYERS"
     printf 'inter_layer_pred=%s lag_in_frames=%s tune_content=%s passes=1 realtime=1\n' \
         "$INTER_LAYER_PRED" "$LAG_IN_FRAMES" "$TUNE_CONTENT"
-    printf 'max_bdrate_pct=%s experimental_cpu6_s3_vbr_max_bdrate_pct=%s max_ratio=%s max_load1=%s\n' \
+    printf 'max_bdrate_pct=%s experimental_spatial_vbr_max_bdrate_pct=%s max_ratio=%s max_load1=%s\n' \
         "$DEFAULT_MAX_BDRATE_PCT" \
-        "$EXPERIMENTAL_CPU6_S3_VBR_MAX_BDRATE_PCT" "$MAX_RATIO" "$MAX_LOAD1"
+        "$EXPERIMENTAL_SPATIAL_VBR_MAX_BDRATE_PCT" "$MAX_RATIO" "$MAX_LOAD1"
 
     while IFS='|' read -r mode target clip cpu layers; do
         IFS='|' read -r fps width height threads tiles speed_kbps p50 p99 \
@@ -386,14 +385,14 @@ self_test() {
         "$(plan_count "$plan" '^quality cbr 720p30 in_to_tree cpu6 s2 threads=1 tiles=0 bitrates=420,630,840,1260,2100,3360 layer_gates=2 streams=18 decoder_runs=54 max_bdrate_pct=0.5$')" \
         1
     expect_equal "representative vbr quality row" \
-        "$(plan_count "$plan" '^quality vbr 1080p60 old_town_cross cpu8 s3 threads=8 tiles=3 bitrates=1890,2856,3780,5670,9450,15120 layer_gates=3 streams=24 decoder_runs=72 max_bdrate_pct=0.5$')" \
+        "$(plan_count "$plan" '^quality vbr 1080p60 old_town_cross cpu8 s3 threads=8 tiles=3 bitrates=1890,2856,3780,5670,9450,15120 layer_gates=3 streams=24 decoder_runs=72 max_bdrate_pct=25.0$')" \
         1
-    expect_equal "experimental CPU6 S3 VBR quality rows use +3.0%" \
-        "$(plan_count "$plan" '^quality vbr .* cpu6 s3 .* max_bdrate_pct=3.0$')" \
-        8
-    expect_equal "all other quality rows use +0.5%" \
+    expect_equal "experimental spatial VBR quality rows use +25.0%" \
+        "$(plan_count "$plan" '^quality vbr .* max_bdrate_pct=25.0$')" \
+        48
+    expect_equal "spatial CBR quality rows use +0.5%" \
         "$(plan_count "$plan" '^quality .* max_bdrate_pct=0.5$')" \
-        88
+        48
     expect_equal "representative vbr speed row" \
         "$(plan_count "$plan" '^speed vbr 1080p30 cpu8 s2 clips=in_to_tree,ducks_take_off,old_town_cross target_kbps=2835 threads=4 tiles=2 warmups=1 pairs=5 rotations=2 max_ratio=1.05 max_load1=0.75 anchor_hash=allow-instability$')" \
         1

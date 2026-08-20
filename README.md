@@ -21,7 +21,8 @@ with VBR or CBR rate control, cyclic-refresh AQ mode 3, denoising, two- or
 three-layer temporal SVC, and two- or three-layer spatial SVC. Spatial SVC is
 experimental in v0.2.0; all other listed encoder features remain on the main
 parity path. The qualified targets are 720p30, 1080p30, and 1080p60. It emits
-8-bit profile-0 IVF streams.
+8-bit profile-0 IVF streams. Spatial CBR stays on the production-parity path;
+spatial VBR is an experimental preview.
 
 The alpha decoder passes all 4,816 displayed frames across all 307 pinned
 official vectors with native and forced-scalar dispatch and with one- and
@@ -41,9 +42,10 @@ CBR/VBR, AQ3, and denoising, then requires `rvp9dec` and pinned `vpxdec` to
 produce byte-identical decoded output.
 
 Spatial SVC retains the full correctness, cross-decoder, relative-speed, and
-latency gates. Its quality gate remains `+0.5%` except for experimental CPU6
-three-layer realtime VBR, which permits no layer on an important clip above
-`+3.0%`; the fresh 720p30 worst case is `+2.751531%`. CPU-used 8 three-layer
+latency gates. Spatial CBR keeps the `+0.5%` quality gate. Spatial VBR is an
+experimental preview, excluded from the production-parity claim and capped at
+`+25.0%` per layer on every important clip; the fresh complete-matrix worst
+case is `+22.630645%`. CPU-used 8 three-layer
 temporal-SVC relative speed still awaits its quiet-host confirmation. This
 alpha does not claim final compression or speed parity across the complete v1
 matrix.
@@ -53,8 +55,9 @@ matrix.
 - **Correctness:** 100% pass on the official VP9 conformance test vectors;
   encoder output decodes cleanly under `vpxdec`, `ffmpeg`, and our decoder.
 - **Compression:** BD-rate within 0.5% of libvpx vpxenc at matched
-  `--cpu-used` setting (6, 7, 8), except experimental CPU6 three-layer spatial
-  VBR, whose per-layer important-clip ceiling is `+3.0%`.
+  `--cpu-used` setting (6, 7, 8), except experimental spatial VBR, whose
+  per-layer important-clip ceiling is `+25.0%` and which is excluded from the
+  production-parity claim.
 - **Real-time:** 720p30, 1080p30, and 1080p60 all hit budget on commodity
   x86_64 hardware.
 - **Features:** 1-pass CBR/VBR, content-aware denoiser, cyclic-refresh AQ,

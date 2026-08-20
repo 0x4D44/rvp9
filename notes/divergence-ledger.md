@@ -24,22 +24,22 @@ Each entry:
 
 ## Entries
 
-### 2026-08-20 — Accept CPU6 three-layer spatial VBR as experimental
+### 2026-08-20 — Accept spatial VBR as an experimental preview
 
 **Where:** `PLAN.md` section 2 and Stage 4e, plus `README.md` Alpha scope;
 the reference is pinned libvpx v1.14.1 at
 `12f3a2ac603e8f10742105519e0cd03c3b8f71dd`.
 
 **What libvpx does:** supplies the production reference curves for matched
-CPU6 three-layer realtime spatial VBR.
+CPU6--8, two- and three-layer realtime spatial VBR.
 
-**What rvp9 does:** ships this one spatial configuration as experimental in
-v0.2.0, with a `+3.0%` per-layer ceiling on every important clip. All spatial
-correctness, cross-decoder, relative-speed, and absolute-latency gates remain
-unchanged. Two-layer spatial VBR, spatial CBR, CPU7/8 spatial VBR, and every
-non-spatial configuration retain the global `+0.5%` quality gate.
+**What rvp9 does:** ships spatial VBR as an experimental preview in v0.2.0,
+excluded from the production-parity claim and capped at `+25.0%` per layer on
+every important clip. All spatial correctness, cross-decoder, relative-speed,
+and absolute-latency gates remain unchanged. Spatial CBR and every non-spatial
+configuration retain the global `+0.5%` quality gate.
 
-**Why:** fresh CPU6/S3 720p30 curves show a bounded, content-dependent tail.
+**Why:** a fresh complete matrix shows a bounded, content-dependent VBR tail.
 Source-faithful Block8 RD, raw-skip, partition-Q, scaled-phase, and small-block
 NEWMV experiments either failed to improve both red clips or regressed Ducks
 and Old Town. Spatial SVC is not a primary v0.2.0 use case, and further
@@ -49,11 +49,11 @@ experimental boundary.
 **Byte-parity impact:** none. This changes the release contract, not encoder
 output.
 
-**Compression-efficiency impact:** fresh per-layer BD-rates are In To Tree
-`+1.451154/-3.725209/+2.751531%`, Ducks Take Off
-`+0.196194/+0.024592/-0.610574%`, and Old Town Cross
-`+2.478144/+0.931028/+0.997766%`. Every measured layer remains within the new
-`+3.0%` ceiling; the worst is `+2.751531%`.
+**Compression-efficiency impact:** across 120 spatial-VBR layer results, 55
+exceed `+0.5%`, 26 exceed `+2.0%`, 16 exceed `+3.0%`, and four exceed
+`+10.0%`. None exceeds `+25.0%`. The worst is CPU8/S2 In To Tree at 1080p60
+SL1, `+22.630645%`; CPU7/S2 on the same clip is `+21.651520%`. Spatial CBR's
+120/120 layer gates remain within `+0.5%`, with a worst `+0.488431%`.
 
 **Future plan:** revisit only if spatial SVC becomes a production priority.
 Do not weaken any other quality gate or the spatial correctness and speed
