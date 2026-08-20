@@ -1,0 +1,302 @@
+run_begin schema=1
+script=scripts/qualify-spatial-svc.sh
+phase=quality
+started_utc=2026-08-20T09:03:17Z
+git_commit=6f28d2a03a6398744ef7cccd839e2e163c060bc9
+git_status_clean=yes
+libvpx_commit=12f3a2ac603e8f10742105519e0cd03c3b8f71dd
+host=Darwin flux.home.arpa 25.5.0 Darwin Kernel Version 25.5.0: Tue Jun  9 22:28:34 PDT 2026; root:xnu-12377.121.10~1/RELEASE_ARM64_T6050 arm64
+host_triple=aarch64-apple-darwin
+rustc=rustc 1.95.0 (59807616e 2026-04-14)
+ffmpeg=ffmpeg version 8.1.2 Copyright (c) 2000-2026 the FFmpeg developers
+work_dir=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/rvp9-spatial-final25.h50SKk
+qualification_script_path=/Users/md/worktrees/rvp9-2/20260817-TSK-HUM-classify-spatial-svc-winner-divergence/scripts/qualify-spatial-svc.sh
+qualification_script_sha256=d2131dee2f7824a5fe315a208f0eede11a78b019aa2400e28ce8bf193a772b3b
+test_encoder_path=/Users/md/worktrees/rvp9-2/20260817-TSK-HUM-classify-spatial-svc-winner-divergence/target/encoder-pgo/optimized/release/rvp9enc
+test_encoder_sha256=b5ec30632988430e92f561ba588733c64d9486c3d8142928ee5dd1cc98fce21b
+spatial_anchor_path=/Users/md/worktrees/rvp9-2/20260817-TSK-HUM-classify-spatial-svc-winner-divergence/build/libvpx/examples/vp9_spatial_svc_encoder
+spatial_anchor_sha256=287e25f71a8583df5b041dbaa532b00b3f282d72ec2c7c89447b74e901064d95
+bdrate_svc_path=/Users/md/worktrees/rvp9-2/20260817-TSK-HUM-classify-spatial-svc-winner-divergence/target/release/bdrate-svc
+bdrate_svc_sha256=45848429e78333839e35a1acaa6c6c07b94126e8cccbc7ec691f3b8c05aa96e3
+encode_headtohead_path=/Users/md/worktrees/rvp9-2/20260817-TSK-HUM-classify-spatial-svc-winner-divergence/target/release/encode-headtohead
+encode_headtohead_sha256=97406ffc1ce231907c6db0ac803084d19c2b70078a21ced4e194cf7c003e211f
+realtime_path=/Users/md/worktrees/rvp9-2/20260817-TSK-HUM-classify-spatial-svc-winner-divergence/target/release/realtime
+realtime_sha256=2c85a385805e965199c62f32c863a355f2fa8b3c49ad83420c0a5c9b3762b1b7
+rvp9dec_path=/Users/md/worktrees/rvp9-2/20260817-TSK-HUM-classify-spatial-svc-winner-divergence/target/release/rvp9dec
+rvp9dec_sha256=1ad3687d8b90cacbc51b0093b26d9b192136b63e804b143a60e8527a2fd74720
+vpxdec_path=/Users/md/worktrees/rvp9-2/20260817-TSK-HUM-classify-spatial-svc-winner-divergence/build/libvpx/vpxdec
+vpxdec_sha256=08d8e3c7390b066bd9c0cceb1b84c9d6c27351ade85c6d0a7c741931d3fb1117
+ffmpeg_binary_path=/opt/homebrew/bin/ffmpeg
+ffmpeg_binary_sha256=2ce81b92499c1b6b96eb060c69723114bd0da13f1bfbd9da26dee24d099e644a
+source_in_to_tree_path=/Users/md/worktrees/rvp9-2/20260812-TSK-HUM-emit-first-two-layer-spatial-svc-inter-a/tests/corpus/in_to_tree_420_720p50.y4m
+source_in_to_tree_sha256=81166517a3054c789923535b5da23fbbb9bbd7fd4c28dac83918ac351e121e74
+source_ducks_take_off_path=/Users/md/worktrees/rvp9-2/20260812-TSK-HUM-emit-first-two-layer-spatial-svc-inter-a/tests/corpus/ducks_take_off_420_720p50.y4m
+source_ducks_take_off_sha256=0e09aa923ce72e2f6d1c978c3c1cc8dd9588d2ede819081f040213e361970efc
+source_old_town_cross_path=/Users/md/worktrees/rvp9-2/20260812-TSK-HUM-emit-first-two-layer-spatial-svc-inter-a/tests/corpus/old_town_cross_420_720p50.y4m
+source_old_town_cross_sha256=0fbc2ec0c552ad693528b2e49409c7449880b9230055a7696346473d1aaf4123
+matrix_begin
+plan schema=1
+libvpx_revision=12f3a2ac603e8f10742105519e0cd03c3b8f71dd
+frames=60 keyframe_interval=60 aq_mode=0 denoiser=0 temporal_layers=1
+inter_layer_pred=0 lag_in_frames=0 tune_content=default passes=1 realtime=1
+max_bdrate_pct=0.5 experimental_spatial_vbr_max_bdrate_pct=25.0 max_ratio=1.05 max_load1=0.75
+quality cbr 720p30 in_to_tree cpu6 s2 threads=1 tiles=0 bitrates=420,630,840,1260,2100,3360 layer_gates=2 streams=18 decoder_runs=54 max_bdrate_pct=0.5
+quality cbr 720p30 ducks_take_off cpu6 s2 threads=1 tiles=0 bitrates=420,630,840,1260,2100,3360 layer_gates=2 streams=18 decoder_runs=54 max_bdrate_pct=0.5
+quality cbr 720p30 old_town_cross cpu6 s2 threads=1 tiles=0 bitrates=420,630,840,1260,2100,3360 layer_gates=2 streams=18 decoder_runs=54 max_bdrate_pct=0.5
+quality cbr 720p30 in_to_tree cpu6 s3 threads=1 tiles=0 bitrates=420,630,840,1260,2100,3360 layer_gates=3 streams=24 decoder_runs=72 max_bdrate_pct=0.5
+quality cbr 720p30 ducks_take_off cpu6 s3 threads=1 tiles=0 bitrates=420,630,840,1260,2100,3360 layer_gates=3 streams=24 decoder_runs=72 max_bdrate_pct=0.5
+quality cbr 720p30 old_town_cross cpu6 s3 threads=1 tiles=0 bitrates=420,630,840,1260,2100,3360 layer_gates=3 streams=24 decoder_runs=72 max_bdrate_pct=0.5
+quality cbr 720p30 in_to_tree cpu7 s2 threads=1 tiles=0 bitrates=420,630,840,1260,2100,3360 layer_gates=2 streams=18 decoder_runs=54 max_bdrate_pct=0.5
+quality cbr 720p30 ducks_take_off cpu7 s2 threads=1 tiles=0 bitrates=420,630,840,1260,2100,3360 layer_gates=2 streams=18 decoder_runs=54 max_bdrate_pct=0.5
+quality cbr 720p30 old_town_cross cpu7 s2 threads=1 tiles=0 bitrates=420,630,840,1260,2100,3360 layer_gates=2 streams=18 decoder_runs=54 max_bdrate_pct=0.5
+quality cbr 720p30 in_to_tree cpu7 s3 threads=1 tiles=0 bitrates=420,630,840,1260,2100,3360 layer_gates=3 streams=24 decoder_runs=72 max_bdrate_pct=0.5
+quality cbr 720p30 ducks_take_off cpu7 s3 threads=1 tiles=0 bitrates=420,630,840,1260,2100,3360 layer_gates=3 streams=24 decoder_runs=72 max_bdrate_pct=0.5
+quality cbr 720p30 old_town_cross cpu7 s3 threads=1 tiles=0 bitrates=420,630,840,1260,2100,3360 layer_gates=3 streams=24 decoder_runs=72 max_bdrate_pct=0.5
+quality cbr 720p30 in_to_tree cpu8 s2 threads=1 tiles=0 bitrates=420,630,840,1260,2100,3360 layer_gates=2 streams=18 decoder_runs=54 max_bdrate_pct=0.5
+quality cbr 720p30 ducks_take_off cpu8 s2 threads=1 tiles=0 bitrates=420,630,840,1260,2100,3360 layer_gates=2 streams=18 decoder_runs=54 max_bdrate_pct=0.5
+quality cbr 720p30 old_town_cross cpu8 s2 threads=1 tiles=0 bitrates=420,630,840,1260,2100,3360 layer_gates=2 streams=18 decoder_runs=54 max_bdrate_pct=0.5
+quality cbr 720p30 in_to_tree cpu8 s3 threads=1 tiles=0 bitrates=420,630,840,1260,2100,3360 layer_gates=3 streams=24 decoder_runs=72 max_bdrate_pct=0.5
+quality cbr 720p30 ducks_take_off cpu8 s3 threads=1 tiles=0 bitrates=420,630,840,1260,2100,3360 layer_gates=3 streams=24 decoder_runs=72 max_bdrate_pct=0.5
+quality cbr 720p30 old_town_cross cpu8 s3 threads=1 tiles=0 bitrates=420,630,840,1260,2100,3360 layer_gates=3 streams=24 decoder_runs=72 max_bdrate_pct=0.5
+quality cbr 1080p30 in_to_tree cpu6 s2 threads=4 tiles=2 bitrates=950,1425,1890,2835,4725,7560 layer_gates=2 streams=18 decoder_runs=54 max_bdrate_pct=0.5
+quality cbr 1080p30 ducks_take_off cpu6 s2 threads=4 tiles=2 bitrates=950,1425,1890,2835,4725,7560 layer_gates=2 streams=18 decoder_runs=54 max_bdrate_pct=0.5
+quality cbr 1080p30 old_town_cross cpu6 s2 threads=4 tiles=2 bitrates=950,1425,1890,2835,4725,7560 layer_gates=2 streams=18 decoder_runs=54 max_bdrate_pct=0.5
+quality cbr 1080p30 in_to_tree cpu6 s3 threads=4 tiles=2 bitrates=945,1428,1890,2835,4725,7560 layer_gates=3 streams=24 decoder_runs=72 max_bdrate_pct=0.5
+quality cbr 1080p30 ducks_take_off cpu6 s3 threads=4 tiles=2 bitrates=945,1428,1890,2835,4725,7560 layer_gates=3 streams=24 decoder_runs=72 max_bdrate_pct=0.5
+quality cbr 1080p30 old_town_cross cpu6 s3 threads=4 tiles=2 bitrates=945,1428,1890,2835,4725,7560 layer_gates=3 streams=24 decoder_runs=72 max_bdrate_pct=0.5
+quality cbr 1080p30 in_to_tree cpu7 s2 threads=4 tiles=2 bitrates=950,1425,1890,2835,4725,7560 layer_gates=2 streams=18 decoder_runs=54 max_bdrate_pct=0.5
+quality cbr 1080p30 ducks_take_off cpu7 s2 threads=4 tiles=2 bitrates=950,1425,1890,2835,4725,7560 layer_gates=2 streams=18 decoder_runs=54 max_bdrate_pct=0.5
+quality cbr 1080p30 old_town_cross cpu7 s2 threads=4 tiles=2 bitrates=950,1425,1890,2835,4725,7560 layer_gates=2 streams=18 decoder_runs=54 max_bdrate_pct=0.5
+quality cbr 1080p30 in_to_tree cpu7 s3 threads=4 tiles=2 bitrates=945,1428,1890,2835,4725,7560 layer_gates=3 streams=24 decoder_runs=72 max_bdrate_pct=0.5
+quality cbr 1080p30 ducks_take_off cpu7 s3 threads=4 tiles=2 bitrates=945,1428,1890,2835,4725,7560 layer_gates=3 streams=24 decoder_runs=72 max_bdrate_pct=0.5
+quality cbr 1080p30 old_town_cross cpu7 s3 threads=4 tiles=2 bitrates=945,1428,1890,2835,4725,7560 layer_gates=3 streams=24 decoder_runs=72 max_bdrate_pct=0.5
+quality cbr 1080p30 in_to_tree cpu8 s2 threads=4 tiles=2 bitrates=950,1425,1890,2835,4725,7560 layer_gates=2 streams=18 decoder_runs=54 max_bdrate_pct=0.5
+quality cbr 1080p30 ducks_take_off cpu8 s2 threads=4 tiles=2 bitrates=950,1425,1890,2835,4725,7560 layer_gates=2 streams=18 decoder_runs=54 max_bdrate_pct=0.5
+quality cbr 1080p30 old_town_cross cpu8 s2 threads=4 tiles=2 bitrates=950,1425,1890,2835,4725,7560 layer_gates=2 streams=18 decoder_runs=54 max_bdrate_pct=0.5
+quality cbr 1080p30 in_to_tree cpu8 s3 threads=4 tiles=2 bitrates=945,1428,1890,2835,4725,7560 layer_gates=3 streams=24 decoder_runs=72 max_bdrate_pct=0.5
+quality cbr 1080p30 ducks_take_off cpu8 s3 threads=4 tiles=2 bitrates=945,1428,1890,2835,4725,7560 layer_gates=3 streams=24 decoder_runs=72 max_bdrate_pct=0.5
+quality cbr 1080p30 old_town_cross cpu8 s3 threads=4 tiles=2 bitrates=945,1428,1890,2835,4725,7560 layer_gates=3 streams=24 decoder_runs=72 max_bdrate_pct=0.5
+quality cbr 1080p60 in_to_tree cpu6 s2 threads=8 tiles=3 bitrates=1900,2850,3780,5670,9450,15120 layer_gates=2 streams=18 decoder_runs=54 max_bdrate_pct=0.5
+quality cbr 1080p60 old_town_cross cpu6 s2 threads=8 tiles=3 bitrates=1900,2850,3780,5670,9450,15120 layer_gates=2 streams=18 decoder_runs=54 max_bdrate_pct=0.5
+quality cbr 1080p60 in_to_tree cpu6 s3 threads=8 tiles=3 bitrates=1890,2856,3780,5670,9450,15120 layer_gates=3 streams=24 decoder_runs=72 max_bdrate_pct=0.5
+quality cbr 1080p60 old_town_cross cpu6 s3 threads=8 tiles=3 bitrates=1890,2856,3780,5670,9450,15120 layer_gates=3 streams=24 decoder_runs=72 max_bdrate_pct=0.5
+quality cbr 1080p60 in_to_tree cpu7 s2 threads=8 tiles=3 bitrates=1900,2850,3780,5670,9450,15120 layer_gates=2 streams=18 decoder_runs=54 max_bdrate_pct=0.5
+quality cbr 1080p60 old_town_cross cpu7 s2 threads=8 tiles=3 bitrates=1900,2850,3780,5670,9450,15120 layer_gates=2 streams=18 decoder_runs=54 max_bdrate_pct=0.5
+quality cbr 1080p60 in_to_tree cpu7 s3 threads=8 tiles=3 bitrates=1890,2856,3780,5670,9450,15120 layer_gates=3 streams=24 decoder_runs=72 max_bdrate_pct=0.5
+quality cbr 1080p60 old_town_cross cpu7 s3 threads=8 tiles=3 bitrates=1890,2856,3780,5670,9450,15120 layer_gates=3 streams=24 decoder_runs=72 max_bdrate_pct=0.5
+quality cbr 1080p60 in_to_tree cpu8 s2 threads=8 tiles=3 bitrates=1900,2850,3780,5670,9450,15120 layer_gates=2 streams=18 decoder_runs=54 max_bdrate_pct=0.5
+quality cbr 1080p60 old_town_cross cpu8 s2 threads=8 tiles=3 bitrates=1900,2850,3780,5670,9450,15120 layer_gates=2 streams=18 decoder_runs=54 max_bdrate_pct=0.5
+quality cbr 1080p60 in_to_tree cpu8 s3 threads=8 tiles=3 bitrates=1890,2856,3780,5670,9450,15120 layer_gates=3 streams=24 decoder_runs=72 max_bdrate_pct=0.5
+quality cbr 1080p60 old_town_cross cpu8 s3 threads=8 tiles=3 bitrates=1890,2856,3780,5670,9450,15120 layer_gates=3 streams=24 decoder_runs=72 max_bdrate_pct=0.5
+quality vbr 720p30 in_to_tree cpu6 s2 threads=1 tiles=0 bitrates=420,630,840,1260,2100,3360 layer_gates=2 streams=18 decoder_runs=54 max_bdrate_pct=25.0
+quality vbr 720p30 ducks_take_off cpu6 s2 threads=1 tiles=0 bitrates=420,630,840,1260,2100,3360 layer_gates=2 streams=18 decoder_runs=54 max_bdrate_pct=25.0
+quality vbr 720p30 old_town_cross cpu6 s2 threads=1 tiles=0 bitrates=420,630,840,1260,2100,3360 layer_gates=2 streams=18 decoder_runs=54 max_bdrate_pct=25.0
+quality vbr 720p30 in_to_tree cpu6 s3 threads=1 tiles=0 bitrates=420,630,840,1260,2100,3360 layer_gates=3 streams=24 decoder_runs=72 max_bdrate_pct=25.0
+quality vbr 720p30 ducks_take_off cpu6 s3 threads=1 tiles=0 bitrates=420,630,840,1260,2100,3360 layer_gates=3 streams=24 decoder_runs=72 max_bdrate_pct=25.0
+quality vbr 720p30 old_town_cross cpu6 s3 threads=1 tiles=0 bitrates=420,630,840,1260,2100,3360 layer_gates=3 streams=24 decoder_runs=72 max_bdrate_pct=25.0
+quality vbr 720p30 in_to_tree cpu7 s2 threads=1 tiles=0 bitrates=420,630,840,1260,2100,3360 layer_gates=2 streams=18 decoder_runs=54 max_bdrate_pct=25.0
+quality vbr 720p30 ducks_take_off cpu7 s2 threads=1 tiles=0 bitrates=420,630,840,1260,2100,3360 layer_gates=2 streams=18 decoder_runs=54 max_bdrate_pct=25.0
+quality vbr 720p30 old_town_cross cpu7 s2 threads=1 tiles=0 bitrates=420,630,840,1260,2100,3360 layer_gates=2 streams=18 decoder_runs=54 max_bdrate_pct=25.0
+quality vbr 720p30 in_to_tree cpu7 s3 threads=1 tiles=0 bitrates=420,630,840,1260,2100,3360 layer_gates=3 streams=24 decoder_runs=72 max_bdrate_pct=25.0
+quality vbr 720p30 ducks_take_off cpu7 s3 threads=1 tiles=0 bitrates=420,630,840,1260,2100,3360 layer_gates=3 streams=24 decoder_runs=72 max_bdrate_pct=25.0
+quality vbr 720p30 old_town_cross cpu7 s3 threads=1 tiles=0 bitrates=420,630,840,1260,2100,3360 layer_gates=3 streams=24 decoder_runs=72 max_bdrate_pct=25.0
+quality vbr 720p30 in_to_tree cpu8 s2 threads=1 tiles=0 bitrates=420,630,840,1260,2100,3360 layer_gates=2 streams=18 decoder_runs=54 max_bdrate_pct=25.0
+quality vbr 720p30 ducks_take_off cpu8 s2 threads=1 tiles=0 bitrates=420,630,840,1260,2100,3360 layer_gates=2 streams=18 decoder_runs=54 max_bdrate_pct=25.0
+quality vbr 720p30 old_town_cross cpu8 s2 threads=1 tiles=0 bitrates=420,630,840,1260,2100,3360 layer_gates=2 streams=18 decoder_runs=54 max_bdrate_pct=25.0
+quality vbr 720p30 in_to_tree cpu8 s3 threads=1 tiles=0 bitrates=420,630,840,1260,2100,3360 layer_gates=3 streams=24 decoder_runs=72 max_bdrate_pct=25.0
+quality vbr 720p30 ducks_take_off cpu8 s3 threads=1 tiles=0 bitrates=420,630,840,1260,2100,3360 layer_gates=3 streams=24 decoder_runs=72 max_bdrate_pct=25.0
+quality vbr 720p30 old_town_cross cpu8 s3 threads=1 tiles=0 bitrates=420,630,840,1260,2100,3360 layer_gates=3 streams=24 decoder_runs=72 max_bdrate_pct=25.0
+quality vbr 1080p30 in_to_tree cpu6 s2 threads=4 tiles=2 bitrates=950,1425,1890,2835,4725,7560 layer_gates=2 streams=18 decoder_runs=54 max_bdrate_pct=25.0
+quality vbr 1080p30 ducks_take_off cpu6 s2 threads=4 tiles=2 bitrates=950,1425,1890,2835,4725,7560 layer_gates=2 streams=18 decoder_runs=54 max_bdrate_pct=25.0
+quality vbr 1080p30 old_town_cross cpu6 s2 threads=4 tiles=2 bitrates=950,1425,1890,2835,4725,7560 layer_gates=2 streams=18 decoder_runs=54 max_bdrate_pct=25.0
+quality vbr 1080p30 in_to_tree cpu6 s3 threads=4 tiles=2 bitrates=945,1428,1890,2835,4725,7560 layer_gates=3 streams=24 decoder_runs=72 max_bdrate_pct=25.0
+quality vbr 1080p30 ducks_take_off cpu6 s3 threads=4 tiles=2 bitrates=945,1428,1890,2835,4725,7560 layer_gates=3 streams=24 decoder_runs=72 max_bdrate_pct=25.0
+quality vbr 1080p30 old_town_cross cpu6 s3 threads=4 tiles=2 bitrates=945,1428,1890,2835,4725,7560 layer_gates=3 streams=24 decoder_runs=72 max_bdrate_pct=25.0
+quality vbr 1080p30 in_to_tree cpu7 s2 threads=4 tiles=2 bitrates=950,1425,1890,2835,4725,7560 layer_gates=2 streams=18 decoder_runs=54 max_bdrate_pct=25.0
+quality vbr 1080p30 ducks_take_off cpu7 s2 threads=4 tiles=2 bitrates=950,1425,1890,2835,4725,7560 layer_gates=2 streams=18 decoder_runs=54 max_bdrate_pct=25.0
+quality vbr 1080p30 old_town_cross cpu7 s2 threads=4 tiles=2 bitrates=950,1425,1890,2835,4725,7560 layer_gates=2 streams=18 decoder_runs=54 max_bdrate_pct=25.0
+quality vbr 1080p30 in_to_tree cpu7 s3 threads=4 tiles=2 bitrates=945,1428,1890,2835,4725,7560 layer_gates=3 streams=24 decoder_runs=72 max_bdrate_pct=25.0
+quality vbr 1080p30 ducks_take_off cpu7 s3 threads=4 tiles=2 bitrates=945,1428,1890,2835,4725,7560 layer_gates=3 streams=24 decoder_runs=72 max_bdrate_pct=25.0
+quality vbr 1080p30 old_town_cross cpu7 s3 threads=4 tiles=2 bitrates=945,1428,1890,2835,4725,7560 layer_gates=3 streams=24 decoder_runs=72 max_bdrate_pct=25.0
+quality vbr 1080p30 in_to_tree cpu8 s2 threads=4 tiles=2 bitrates=950,1425,1890,2835,4725,7560 layer_gates=2 streams=18 decoder_runs=54 max_bdrate_pct=25.0
+quality vbr 1080p30 ducks_take_off cpu8 s2 threads=4 tiles=2 bitrates=950,1425,1890,2835,4725,7560 layer_gates=2 streams=18 decoder_runs=54 max_bdrate_pct=25.0
+quality vbr 1080p30 old_town_cross cpu8 s2 threads=4 tiles=2 bitrates=950,1425,1890,2835,4725,7560 layer_gates=2 streams=18 decoder_runs=54 max_bdrate_pct=25.0
+quality vbr 1080p30 in_to_tree cpu8 s3 threads=4 tiles=2 bitrates=945,1428,1890,2835,4725,7560 layer_gates=3 streams=24 decoder_runs=72 max_bdrate_pct=25.0
+quality vbr 1080p30 ducks_take_off cpu8 s3 threads=4 tiles=2 bitrates=945,1428,1890,2835,4725,7560 layer_gates=3 streams=24 decoder_runs=72 max_bdrate_pct=25.0
+quality vbr 1080p30 old_town_cross cpu8 s3 threads=4 tiles=2 bitrates=945,1428,1890,2835,4725,7560 layer_gates=3 streams=24 decoder_runs=72 max_bdrate_pct=25.0
+quality vbr 1080p60 in_to_tree cpu6 s2 threads=8 tiles=3 bitrates=1900,2850,3780,5670,9450,15120 layer_gates=2 streams=18 decoder_runs=54 max_bdrate_pct=25.0
+quality vbr 1080p60 old_town_cross cpu6 s2 threads=8 tiles=3 bitrates=1900,2850,3780,5670,9450,15120 layer_gates=2 streams=18 decoder_runs=54 max_bdrate_pct=25.0
+quality vbr 1080p60 in_to_tree cpu6 s3 threads=8 tiles=3 bitrates=1890,2856,3780,5670,9450,15120 layer_gates=3 streams=24 decoder_runs=72 max_bdrate_pct=25.0
+quality vbr 1080p60 old_town_cross cpu6 s3 threads=8 tiles=3 bitrates=1890,2856,3780,5670,9450,15120 layer_gates=3 streams=24 decoder_runs=72 max_bdrate_pct=25.0
+quality vbr 1080p60 in_to_tree cpu7 s2 threads=8 tiles=3 bitrates=1900,2850,3780,5670,9450,15120 layer_gates=2 streams=18 decoder_runs=54 max_bdrate_pct=25.0
+quality vbr 1080p60 old_town_cross cpu7 s2 threads=8 tiles=3 bitrates=1900,2850,3780,5670,9450,15120 layer_gates=2 streams=18 decoder_runs=54 max_bdrate_pct=25.0
+quality vbr 1080p60 in_to_tree cpu7 s3 threads=8 tiles=3 bitrates=1890,2856,3780,5670,9450,15120 layer_gates=3 streams=24 decoder_runs=72 max_bdrate_pct=25.0
+quality vbr 1080p60 old_town_cross cpu7 s3 threads=8 tiles=3 bitrates=1890,2856,3780,5670,9450,15120 layer_gates=3 streams=24 decoder_runs=72 max_bdrate_pct=25.0
+quality vbr 1080p60 in_to_tree cpu8 s2 threads=8 tiles=3 bitrates=1900,2850,3780,5670,9450,15120 layer_gates=2 streams=18 decoder_runs=54 max_bdrate_pct=25.0
+quality vbr 1080p60 old_town_cross cpu8 s2 threads=8 tiles=3 bitrates=1900,2850,3780,5670,9450,15120 layer_gates=2 streams=18 decoder_runs=54 max_bdrate_pct=25.0
+quality vbr 1080p60 in_to_tree cpu8 s3 threads=8 tiles=3 bitrates=1890,2856,3780,5670,9450,15120 layer_gates=3 streams=24 decoder_runs=72 max_bdrate_pct=25.0
+quality vbr 1080p60 old_town_cross cpu8 s3 threads=8 tiles=3 bitrates=1890,2856,3780,5670,9450,15120 layer_gates=3 streams=24 decoder_runs=72 max_bdrate_pct=25.0
+speed cbr 720p30 cpu6 s2 clips=in_to_tree,ducks_take_off,old_town_cross target_kbps=1260 threads=1 tiles=0 warmups=1 pairs=5 rotations=2 max_ratio=1.05 max_load1=0.75 anchor_hash=strict
+speed cbr 720p30 cpu6 s3 clips=in_to_tree,ducks_take_off,old_town_cross target_kbps=1260 threads=1 tiles=0 warmups=1 pairs=5 rotations=2 max_ratio=1.05 max_load1=0.75 anchor_hash=strict
+speed cbr 720p30 cpu7 s2 clips=in_to_tree,ducks_take_off,old_town_cross target_kbps=1260 threads=1 tiles=0 warmups=1 pairs=5 rotations=2 max_ratio=1.05 max_load1=0.75 anchor_hash=strict
+speed cbr 720p30 cpu7 s3 clips=in_to_tree,ducks_take_off,old_town_cross target_kbps=1260 threads=1 tiles=0 warmups=1 pairs=5 rotations=2 max_ratio=1.05 max_load1=0.75 anchor_hash=strict
+speed cbr 720p30 cpu8 s2 clips=in_to_tree,ducks_take_off,old_town_cross target_kbps=1260 threads=1 tiles=0 warmups=1 pairs=5 rotations=2 max_ratio=1.05 max_load1=0.75 anchor_hash=strict
+speed cbr 720p30 cpu8 s3 clips=in_to_tree,ducks_take_off,old_town_cross target_kbps=1260 threads=1 tiles=0 warmups=1 pairs=5 rotations=2 max_ratio=1.05 max_load1=0.75 anchor_hash=strict
+speed cbr 1080p30 cpu6 s2 clips=in_to_tree,ducks_take_off,old_town_cross target_kbps=2835 threads=4 tiles=2 warmups=1 pairs=5 rotations=2 max_ratio=1.05 max_load1=0.75 anchor_hash=strict
+speed cbr 1080p30 cpu6 s3 clips=in_to_tree,ducks_take_off,old_town_cross target_kbps=2835 threads=4 tiles=2 warmups=1 pairs=5 rotations=2 max_ratio=1.05 max_load1=0.75 anchor_hash=strict
+speed cbr 1080p30 cpu7 s2 clips=in_to_tree,ducks_take_off,old_town_cross target_kbps=2835 threads=4 tiles=2 warmups=1 pairs=5 rotations=2 max_ratio=1.05 max_load1=0.75 anchor_hash=strict
+speed cbr 1080p30 cpu7 s3 clips=in_to_tree,ducks_take_off,old_town_cross target_kbps=2835 threads=4 tiles=2 warmups=1 pairs=5 rotations=2 max_ratio=1.05 max_load1=0.75 anchor_hash=strict
+speed cbr 1080p30 cpu8 s2 clips=in_to_tree,ducks_take_off,old_town_cross target_kbps=2835 threads=4 tiles=2 warmups=1 pairs=5 rotations=2 max_ratio=1.05 max_load1=0.75 anchor_hash=allow-instability
+speed cbr 1080p30 cpu8 s3 clips=in_to_tree,ducks_take_off,old_town_cross target_kbps=2835 threads=4 tiles=2 warmups=1 pairs=5 rotations=2 max_ratio=1.05 max_load1=0.75 anchor_hash=allow-instability
+speed cbr 1080p60 cpu6 s2 clips=in_to_tree,old_town_cross target_kbps=5670 threads=8 tiles=3 warmups=1 pairs=5 rotations=2 max_ratio=1.05 max_load1=0.75 anchor_hash=strict
+speed cbr 1080p60 cpu6 s3 clips=in_to_tree,old_town_cross target_kbps=5670 threads=8 tiles=3 warmups=1 pairs=5 rotations=2 max_ratio=1.05 max_load1=0.75 anchor_hash=strict
+speed cbr 1080p60 cpu7 s2 clips=in_to_tree,old_town_cross target_kbps=5670 threads=8 tiles=3 warmups=1 pairs=5 rotations=2 max_ratio=1.05 max_load1=0.75 anchor_hash=strict
+speed cbr 1080p60 cpu7 s3 clips=in_to_tree,old_town_cross target_kbps=5670 threads=8 tiles=3 warmups=1 pairs=5 rotations=2 max_ratio=1.05 max_load1=0.75 anchor_hash=strict
+speed cbr 1080p60 cpu8 s2 clips=in_to_tree,old_town_cross target_kbps=5670 threads=8 tiles=3 warmups=1 pairs=5 rotations=2 max_ratio=1.05 max_load1=0.75 anchor_hash=allow-instability
+speed cbr 1080p60 cpu8 s3 clips=in_to_tree,old_town_cross target_kbps=5670 threads=8 tiles=3 warmups=1 pairs=5 rotations=2 max_ratio=1.05 max_load1=0.75 anchor_hash=allow-instability
+speed vbr 720p30 cpu6 s2 clips=in_to_tree,ducks_take_off,old_town_cross target_kbps=1260 threads=1 tiles=0 warmups=1 pairs=5 rotations=2 max_ratio=1.05 max_load1=0.75 anchor_hash=strict
+speed vbr 720p30 cpu6 s3 clips=in_to_tree,ducks_take_off,old_town_cross target_kbps=1260 threads=1 tiles=0 warmups=1 pairs=5 rotations=2 max_ratio=1.05 max_load1=0.75 anchor_hash=strict
+speed vbr 720p30 cpu7 s2 clips=in_to_tree,ducks_take_off,old_town_cross target_kbps=1260 threads=1 tiles=0 warmups=1 pairs=5 rotations=2 max_ratio=1.05 max_load1=0.75 anchor_hash=strict
+speed vbr 720p30 cpu7 s3 clips=in_to_tree,ducks_take_off,old_town_cross target_kbps=1260 threads=1 tiles=0 warmups=1 pairs=5 rotations=2 max_ratio=1.05 max_load1=0.75 anchor_hash=strict
+speed vbr 720p30 cpu8 s2 clips=in_to_tree,ducks_take_off,old_town_cross target_kbps=1260 threads=1 tiles=0 warmups=1 pairs=5 rotations=2 max_ratio=1.05 max_load1=0.75 anchor_hash=strict
+speed vbr 720p30 cpu8 s3 clips=in_to_tree,ducks_take_off,old_town_cross target_kbps=1260 threads=1 tiles=0 warmups=1 pairs=5 rotations=2 max_ratio=1.05 max_load1=0.75 anchor_hash=strict
+speed vbr 1080p30 cpu6 s2 clips=in_to_tree,ducks_take_off,old_town_cross target_kbps=2835 threads=4 tiles=2 warmups=1 pairs=5 rotations=2 max_ratio=1.05 max_load1=0.75 anchor_hash=strict
+speed vbr 1080p30 cpu6 s3 clips=in_to_tree,ducks_take_off,old_town_cross target_kbps=2835 threads=4 tiles=2 warmups=1 pairs=5 rotations=2 max_ratio=1.05 max_load1=0.75 anchor_hash=strict
+speed vbr 1080p30 cpu7 s2 clips=in_to_tree,ducks_take_off,old_town_cross target_kbps=2835 threads=4 tiles=2 warmups=1 pairs=5 rotations=2 max_ratio=1.05 max_load1=0.75 anchor_hash=strict
+speed vbr 1080p30 cpu7 s3 clips=in_to_tree,ducks_take_off,old_town_cross target_kbps=2835 threads=4 tiles=2 warmups=1 pairs=5 rotations=2 max_ratio=1.05 max_load1=0.75 anchor_hash=strict
+speed vbr 1080p30 cpu8 s2 clips=in_to_tree,ducks_take_off,old_town_cross target_kbps=2835 threads=4 tiles=2 warmups=1 pairs=5 rotations=2 max_ratio=1.05 max_load1=0.75 anchor_hash=allow-instability
+speed vbr 1080p30 cpu8 s3 clips=in_to_tree,ducks_take_off,old_town_cross target_kbps=2835 threads=4 tiles=2 warmups=1 pairs=5 rotations=2 max_ratio=1.05 max_load1=0.75 anchor_hash=allow-instability
+speed vbr 1080p60 cpu6 s2 clips=in_to_tree,old_town_cross target_kbps=5670 threads=8 tiles=3 warmups=1 pairs=5 rotations=2 max_ratio=1.05 max_load1=0.75 anchor_hash=strict
+speed vbr 1080p60 cpu6 s3 clips=in_to_tree,old_town_cross target_kbps=5670 threads=8 tiles=3 warmups=1 pairs=5 rotations=2 max_ratio=1.05 max_load1=0.75 anchor_hash=strict
+speed vbr 1080p60 cpu7 s2 clips=in_to_tree,old_town_cross target_kbps=5670 threads=8 tiles=3 warmups=1 pairs=5 rotations=2 max_ratio=1.05 max_load1=0.75 anchor_hash=strict
+speed vbr 1080p60 cpu7 s3 clips=in_to_tree,old_town_cross target_kbps=5670 threads=8 tiles=3 warmups=1 pairs=5 rotations=2 max_ratio=1.05 max_load1=0.75 anchor_hash=strict
+speed vbr 1080p60 cpu8 s2 clips=in_to_tree,old_town_cross target_kbps=5670 threads=8 tiles=3 warmups=1 pairs=5 rotations=2 max_ratio=1.05 max_load1=0.75 anchor_hash=allow-instability
+speed vbr 1080p60 cpu8 s3 clips=in_to_tree,old_town_cross target_kbps=5670 threads=8 tiles=3 warmups=1 pairs=5 rotations=2 max_ratio=1.05 max_load1=0.75 anchor_hash=allow-instability
+latency cbr 720p30 in_to_tree cpu6 s2 target_kbps=1260 threads=1 tiles=0 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency cbr 720p30 ducks_take_off cpu6 s2 target_kbps=1260 threads=1 tiles=0 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency cbr 720p30 old_town_cross cpu6 s2 target_kbps=1260 threads=1 tiles=0 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency cbr 720p30 in_to_tree cpu6 s3 target_kbps=1260 threads=1 tiles=0 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency cbr 720p30 ducks_take_off cpu6 s3 target_kbps=1260 threads=1 tiles=0 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency cbr 720p30 old_town_cross cpu6 s3 target_kbps=1260 threads=1 tiles=0 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency cbr 720p30 in_to_tree cpu7 s2 target_kbps=1260 threads=1 tiles=0 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency cbr 720p30 ducks_take_off cpu7 s2 target_kbps=1260 threads=1 tiles=0 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency cbr 720p30 old_town_cross cpu7 s2 target_kbps=1260 threads=1 tiles=0 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency cbr 720p30 in_to_tree cpu7 s3 target_kbps=1260 threads=1 tiles=0 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency cbr 720p30 ducks_take_off cpu7 s3 target_kbps=1260 threads=1 tiles=0 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency cbr 720p30 old_town_cross cpu7 s3 target_kbps=1260 threads=1 tiles=0 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency cbr 720p30 in_to_tree cpu8 s2 target_kbps=1260 threads=1 tiles=0 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency cbr 720p30 ducks_take_off cpu8 s2 target_kbps=1260 threads=1 tiles=0 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency cbr 720p30 old_town_cross cpu8 s2 target_kbps=1260 threads=1 tiles=0 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency cbr 720p30 in_to_tree cpu8 s3 target_kbps=1260 threads=1 tiles=0 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency cbr 720p30 ducks_take_off cpu8 s3 target_kbps=1260 threads=1 tiles=0 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency cbr 720p30 old_town_cross cpu8 s3 target_kbps=1260 threads=1 tiles=0 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency cbr 1080p30 in_to_tree cpu6 s2 target_kbps=2835 threads=4 tiles=2 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency cbr 1080p30 ducks_take_off cpu6 s2 target_kbps=2835 threads=4 tiles=2 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency cbr 1080p30 old_town_cross cpu6 s2 target_kbps=2835 threads=4 tiles=2 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency cbr 1080p30 in_to_tree cpu6 s3 target_kbps=2835 threads=4 tiles=2 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency cbr 1080p30 ducks_take_off cpu6 s3 target_kbps=2835 threads=4 tiles=2 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency cbr 1080p30 old_town_cross cpu6 s3 target_kbps=2835 threads=4 tiles=2 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency cbr 1080p30 in_to_tree cpu7 s2 target_kbps=2835 threads=4 tiles=2 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency cbr 1080p30 ducks_take_off cpu7 s2 target_kbps=2835 threads=4 tiles=2 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency cbr 1080p30 old_town_cross cpu7 s2 target_kbps=2835 threads=4 tiles=2 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency cbr 1080p30 in_to_tree cpu7 s3 target_kbps=2835 threads=4 tiles=2 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency cbr 1080p30 ducks_take_off cpu7 s3 target_kbps=2835 threads=4 tiles=2 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency cbr 1080p30 old_town_cross cpu7 s3 target_kbps=2835 threads=4 tiles=2 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency cbr 1080p30 in_to_tree cpu8 s2 target_kbps=2835 threads=4 tiles=2 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency cbr 1080p30 ducks_take_off cpu8 s2 target_kbps=2835 threads=4 tiles=2 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency cbr 1080p30 old_town_cross cpu8 s2 target_kbps=2835 threads=4 tiles=2 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency cbr 1080p30 in_to_tree cpu8 s3 target_kbps=2835 threads=4 tiles=2 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency cbr 1080p30 ducks_take_off cpu8 s3 target_kbps=2835 threads=4 tiles=2 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency cbr 1080p30 old_town_cross cpu8 s3 target_kbps=2835 threads=4 tiles=2 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency cbr 1080p60 in_to_tree cpu6 s2 target_kbps=5670 threads=8 tiles=3 warmup_runs=1 measured_runs=5 p50_budget_ms=16.667 p99_budget_ms=25
+latency cbr 1080p60 old_town_cross cpu6 s2 target_kbps=5670 threads=8 tiles=3 warmup_runs=1 measured_runs=5 p50_budget_ms=16.667 p99_budget_ms=25
+latency cbr 1080p60 in_to_tree cpu6 s3 target_kbps=5670 threads=8 tiles=3 warmup_runs=1 measured_runs=5 p50_budget_ms=16.667 p99_budget_ms=25
+latency cbr 1080p60 old_town_cross cpu6 s3 target_kbps=5670 threads=8 tiles=3 warmup_runs=1 measured_runs=5 p50_budget_ms=16.667 p99_budget_ms=25
+latency cbr 1080p60 in_to_tree cpu7 s2 target_kbps=5670 threads=8 tiles=3 warmup_runs=1 measured_runs=5 p50_budget_ms=16.667 p99_budget_ms=25
+latency cbr 1080p60 old_town_cross cpu7 s2 target_kbps=5670 threads=8 tiles=3 warmup_runs=1 measured_runs=5 p50_budget_ms=16.667 p99_budget_ms=25
+latency cbr 1080p60 in_to_tree cpu7 s3 target_kbps=5670 threads=8 tiles=3 warmup_runs=1 measured_runs=5 p50_budget_ms=16.667 p99_budget_ms=25
+latency cbr 1080p60 old_town_cross cpu7 s3 target_kbps=5670 threads=8 tiles=3 warmup_runs=1 measured_runs=5 p50_budget_ms=16.667 p99_budget_ms=25
+latency cbr 1080p60 in_to_tree cpu8 s2 target_kbps=5670 threads=8 tiles=3 warmup_runs=1 measured_runs=5 p50_budget_ms=16.667 p99_budget_ms=25
+latency cbr 1080p60 old_town_cross cpu8 s2 target_kbps=5670 threads=8 tiles=3 warmup_runs=1 measured_runs=5 p50_budget_ms=16.667 p99_budget_ms=25
+latency cbr 1080p60 in_to_tree cpu8 s3 target_kbps=5670 threads=8 tiles=3 warmup_runs=1 measured_runs=5 p50_budget_ms=16.667 p99_budget_ms=25
+latency cbr 1080p60 old_town_cross cpu8 s3 target_kbps=5670 threads=8 tiles=3 warmup_runs=1 measured_runs=5 p50_budget_ms=16.667 p99_budget_ms=25
+latency vbr 720p30 in_to_tree cpu6 s2 target_kbps=1260 threads=1 tiles=0 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency vbr 720p30 ducks_take_off cpu6 s2 target_kbps=1260 threads=1 tiles=0 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency vbr 720p30 old_town_cross cpu6 s2 target_kbps=1260 threads=1 tiles=0 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency vbr 720p30 in_to_tree cpu6 s3 target_kbps=1260 threads=1 tiles=0 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency vbr 720p30 ducks_take_off cpu6 s3 target_kbps=1260 threads=1 tiles=0 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency vbr 720p30 old_town_cross cpu6 s3 target_kbps=1260 threads=1 tiles=0 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency vbr 720p30 in_to_tree cpu7 s2 target_kbps=1260 threads=1 tiles=0 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency vbr 720p30 ducks_take_off cpu7 s2 target_kbps=1260 threads=1 tiles=0 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency vbr 720p30 old_town_cross cpu7 s2 target_kbps=1260 threads=1 tiles=0 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency vbr 720p30 in_to_tree cpu7 s3 target_kbps=1260 threads=1 tiles=0 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency vbr 720p30 ducks_take_off cpu7 s3 target_kbps=1260 threads=1 tiles=0 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency vbr 720p30 old_town_cross cpu7 s3 target_kbps=1260 threads=1 tiles=0 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency vbr 720p30 in_to_tree cpu8 s2 target_kbps=1260 threads=1 tiles=0 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency vbr 720p30 ducks_take_off cpu8 s2 target_kbps=1260 threads=1 tiles=0 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency vbr 720p30 old_town_cross cpu8 s2 target_kbps=1260 threads=1 tiles=0 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency vbr 720p30 in_to_tree cpu8 s3 target_kbps=1260 threads=1 tiles=0 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency vbr 720p30 ducks_take_off cpu8 s3 target_kbps=1260 threads=1 tiles=0 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency vbr 720p30 old_town_cross cpu8 s3 target_kbps=1260 threads=1 tiles=0 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency vbr 1080p30 in_to_tree cpu6 s2 target_kbps=2835 threads=4 tiles=2 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency vbr 1080p30 ducks_take_off cpu6 s2 target_kbps=2835 threads=4 tiles=2 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency vbr 1080p30 old_town_cross cpu6 s2 target_kbps=2835 threads=4 tiles=2 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency vbr 1080p30 in_to_tree cpu6 s3 target_kbps=2835 threads=4 tiles=2 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency vbr 1080p30 ducks_take_off cpu6 s3 target_kbps=2835 threads=4 tiles=2 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency vbr 1080p30 old_town_cross cpu6 s3 target_kbps=2835 threads=4 tiles=2 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency vbr 1080p30 in_to_tree cpu7 s2 target_kbps=2835 threads=4 tiles=2 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency vbr 1080p30 ducks_take_off cpu7 s2 target_kbps=2835 threads=4 tiles=2 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency vbr 1080p30 old_town_cross cpu7 s2 target_kbps=2835 threads=4 tiles=2 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency vbr 1080p30 in_to_tree cpu7 s3 target_kbps=2835 threads=4 tiles=2 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency vbr 1080p30 ducks_take_off cpu7 s3 target_kbps=2835 threads=4 tiles=2 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency vbr 1080p30 old_town_cross cpu7 s3 target_kbps=2835 threads=4 tiles=2 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency vbr 1080p30 in_to_tree cpu8 s2 target_kbps=2835 threads=4 tiles=2 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency vbr 1080p30 ducks_take_off cpu8 s2 target_kbps=2835 threads=4 tiles=2 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency vbr 1080p30 old_town_cross cpu8 s2 target_kbps=2835 threads=4 tiles=2 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency vbr 1080p30 in_to_tree cpu8 s3 target_kbps=2835 threads=4 tiles=2 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency vbr 1080p30 ducks_take_off cpu8 s3 target_kbps=2835 threads=4 tiles=2 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency vbr 1080p30 old_town_cross cpu8 s3 target_kbps=2835 threads=4 tiles=2 warmup_runs=1 measured_runs=5 p50_budget_ms=33.333 p99_budget_ms=50
+latency vbr 1080p60 in_to_tree cpu6 s2 target_kbps=5670 threads=8 tiles=3 warmup_runs=1 measured_runs=5 p50_budget_ms=16.667 p99_budget_ms=25
+latency vbr 1080p60 old_town_cross cpu6 s2 target_kbps=5670 threads=8 tiles=3 warmup_runs=1 measured_runs=5 p50_budget_ms=16.667 p99_budget_ms=25
+latency vbr 1080p60 in_to_tree cpu6 s3 target_kbps=5670 threads=8 tiles=3 warmup_runs=1 measured_runs=5 p50_budget_ms=16.667 p99_budget_ms=25
+latency vbr 1080p60 old_town_cross cpu6 s3 target_kbps=5670 threads=8 tiles=3 warmup_runs=1 measured_runs=5 p50_budget_ms=16.667 p99_budget_ms=25
+latency vbr 1080p60 in_to_tree cpu7 s2 target_kbps=5670 threads=8 tiles=3 warmup_runs=1 measured_runs=5 p50_budget_ms=16.667 p99_budget_ms=25
+latency vbr 1080p60 old_town_cross cpu7 s2 target_kbps=5670 threads=8 tiles=3 warmup_runs=1 measured_runs=5 p50_budget_ms=16.667 p99_budget_ms=25
+latency vbr 1080p60 in_to_tree cpu7 s3 target_kbps=5670 threads=8 tiles=3 warmup_runs=1 measured_runs=5 p50_budget_ms=16.667 p99_budget_ms=25
+latency vbr 1080p60 old_town_cross cpu7 s3 target_kbps=5670 threads=8 tiles=3 warmup_runs=1 measured_runs=5 p50_budget_ms=16.667 p99_budget_ms=25
+latency vbr 1080p60 in_to_tree cpu8 s2 target_kbps=5670 threads=8 tiles=3 warmup_runs=1 measured_runs=5 p50_budget_ms=16.667 p99_budget_ms=25
+latency vbr 1080p60 old_town_cross cpu8 s2 target_kbps=5670 threads=8 tiles=3 warmup_runs=1 measured_runs=5 p50_budget_ms=16.667 p99_budget_ms=25
+latency vbr 1080p60 in_to_tree cpu8 s3 target_kbps=5670 threads=8 tiles=3 warmup_runs=1 measured_runs=5 p50_budget_ms=16.667 p99_budget_ms=25
+latency vbr 1080p60 old_town_cross cpu8 s3 target_kbps=5670 threads=8 tiles=3 warmup_runs=1 measured_runs=5 p50_budget_ms=16.667 p99_budget_ms=25
+quality_curves=96
+quality_layer_gates=240
+cross_decoder_streams=2016
+cross_decoder_runs=6048
+speed_groups=36
+latency_rows=96
+latency_measured_runs=480
+matrix_end
+input_in_to_tree_720p30_path=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/rvp9-spatial-final25.h50SKk/inputs/in_to_tree_720p30.y4m
+input_in_to_tree_720p30_sha256=3053ddad95a66bb970685412d58ee807813319668a57cd5f8a6d00c07415a895
+input_ducks_take_off_720p30_path=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/rvp9-spatial-final25.h50SKk/inputs/ducks_take_off_720p30.y4m
+input_ducks_take_off_720p30_sha256=42235814fd03ffba9144d915bda7844902ccd9076bef7143e373fc6de0df170a
+input_old_town_cross_720p30_path=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/rvp9-spatial-final25.h50SKk/inputs/old_town_cross_720p30.y4m
+input_old_town_cross_720p30_sha256=752413cb08a572c5c571ac93903bcac961ed30a53ece26dcbc18d5fa3cbbc4d8
+input_in_to_tree_1080p30_path=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/rvp9-spatial-final25.h50SKk/inputs/in_to_tree_1080p30.y4m
+input_in_to_tree_1080p30_sha256=c1a5cd4f33bce2156b8501e414a5d7bac43265fbefa555130333bff09d0a2312
+input_ducks_take_off_1080p30_path=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/rvp9-spatial-final25.h50SKk/inputs/ducks_take_off_1080p30.y4m
+input_ducks_take_off_1080p30_sha256=67213e2b7024e9ce99c3be1ee541484193add373cd93e073497b3dc77dd368c0
+input_old_town_cross_1080p30_path=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/rvp9-spatial-final25.h50SKk/inputs/old_town_cross_1080p30.y4m
+input_old_town_cross_1080p30_sha256=76dd63ed6f64784d3ca55b15155883ed9a82e6e0c3daaf380fab5a8420665b35
+input_in_to_tree_1080p60_path=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/rvp9-spatial-final25.h50SKk/inputs/in_to_tree_1080p60.y4m
+input_in_to_tree_1080p60_sha256=14f1526c4b111f230c39e2512853ab10962bbde0657d5e81328f84821e2d34ae
+input_old_town_cross_1080p60_path=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/rvp9-spatial-final25.h50SKk/inputs/old_town_cross_1080p60.y4m
+input_old_town_cross_1080p60_sha256=b97a83f929378012b8e2f117a0fe11398a29496d6b02872a3b53a1b1147e3119
+quality_curves=96
+quality_layer_gates=240
+cross_decoder_streams=2016
+cross_decoder_runs=6048
+quality_summary_sha256=d3ec06ce62ff87ce7445dd2428a23f77038c7c9613fc54ceeac72487badd65d6
+cross_decoder_summary_sha256=cc58206237f400f135d9d42c9d16e530a9422d44aa15dbd452ba442f9cc7ad1f
+ended_utc=2026-08-20T11:29:54Z
+run_end status=pass
