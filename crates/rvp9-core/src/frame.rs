@@ -663,6 +663,53 @@ impl Yv12Buffer {
         }
     }
 
+    /// Mutable views of all three planes with disjoint provenance.
+    ///
+    /// Unlike three sequential calls to [`y_plane_mut`], [`u_plane_mut`], and
+    /// [`v_plane_mut`], this method splits the backing allocation once and
+    /// keeps the three mutable borrows live together. Callers that retain raw
+    /// pointers derived from the views therefore do not have an earlier
+    /// plane's pointer invalidated by a later whole-allocation retag.
+    ///
+    /// [`y_plane_mut`]: Self::y_plane_mut
+    /// [`u_plane_mut`]: Self::u_plane_mut
+    /// [`v_plane_mut`]: Self::v_plane_mut
+    #[inline]
+    pub(crate) fn yuv_planes_mut(&mut self) -> (PlaneMut<'_>, PlaneMut<'_>, PlaneMut<'_>) {
+        let y_len = self.y_data_len();
+        let uv_len = self.uv_data_len();
+        let y_offset = self.y_offset;
+        let u_offset = self.u_offset;
+        let v_offset = self.v_offset;
+
+        let (before_v, v_and_after) = self.buffer_alloc.split_at_mut(v_offset);
+        let (before_u, u_and_before_v) = before_v.split_at_mut(u_offset);
+        let y_data = &mut before_u[y_offset..y_offset + y_len];
+        let u_data = &mut u_and_before_v[..uv_len];
+        let v_data = &mut v_and_after[..uv_len];
+
+        (
+            PlaneMut {
+                data: y_data,
+                stride: self.y_stride as usize,
+                width: self.y_width as usize,
+                height: self.y_height as usize,
+            },
+            PlaneMut {
+                data: u_data,
+                stride: self.uv_stride as usize,
+                width: self.uv_width as usize,
+                height: self.uv_height as usize,
+            },
+            PlaneMut {
+                data: v_data,
+                stride: self.uv_stride as usize,
+                width: self.uv_width as usize,
+                height: self.uv_height as usize,
+            },
+        )
+    }
+
     /// Replicate edge pixels into each plane's border, so that
     /// motion-comp halos can read out-of-visible-region positions
     /// without bounds checks.

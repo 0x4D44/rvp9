@@ -5,6 +5,7 @@ Distilled, non-obvious gotchas future sessions need — dated one-liners.
 Durable project facts/conventions belong in `CLAUDE.md` / `AGENTS.md`, not here.
 Hard cap: 20 entries.
 
+- 2026-08-20: Raw plane pointers must derive from one disjoint backing split (`frame.rs:yuv_planes_mut`).
 - 2026-08-20: AArch64 Miri must compile direct SIMD dispatch to scalar, not merely skip SIMD tests (`forward.rs:fdct4x4`).
 - 2026-08-20: Bottom-edge exact-VBP adapters must accept rectangular leaves (`lib.rs:constrain_tree_to_bottom_edge`).
 - 2026-08-20: A strided 64x64 tail needs `63*stride+64` bytes, not `64*stride` (`var_partition.rs:choose_ml_var_partition_tree`).

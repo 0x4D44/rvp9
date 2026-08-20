@@ -172,20 +172,18 @@ impl SharedFrame {
     #[inline]
     pub fn from_yv12(yv12: &mut Yv12Buffer) -> Self {
         let chroma = yv12.chroma();
+        let (mut y, mut u, mut v) = yv12.yuv_planes_mut();
         let (y_ptr, y_len, y_stride) = {
-            let mut y = yv12.y_plane_mut();
             let stride = y.stride();
             let data = y.data_mut();
             (data.as_mut_ptr(), data.len(), stride)
         };
         let (u_ptr, u_len, uv_stride) = {
-            let mut u = yv12.u_plane_mut();
             let stride = u.stride();
             let data = u.data_mut();
             (data.as_mut_ptr(), data.len(), stride)
         };
         let (v_ptr, v_len, _) = {
-            let mut v = yv12.v_plane_mut();
             let stride = v.stride();
             let data = v.data_mut();
             (data.as_mut_ptr(), data.len(), stride)
@@ -4303,6 +4301,11 @@ mod tests {
     /// A hang shows up here as a `recv_timeout` failure rather than a
     /// hung test process: the worker runs on a detached thread and, if it
     /// never bails, is left to leak (the process exits at test end).
+    // This timeout regression deliberately detaches a potentially wedged
+    // worker and leaks its `'static` test state so the test process cannot
+    // hang. Miri correctly rejects those intentional leaks; native tests
+    // retain the timeout oracle.
+    #[cfg_attr(miri, ignore)]
     #[test]
     fn lf_worker_bails_promptly_when_aborted() {
         use std::sync::mpsc;

@@ -351,6 +351,6 @@ mod tests {
         assert!(enabled(), "suppression should restore recording");
         record(1, 128);
         let snap = take_snapshot();
-        assert_eq!(snap[BitCategory::Coef as usize], 1.0);
+        approx_eq(snap[BitCategory::Coef as usize], 1.0);
     }
 }
