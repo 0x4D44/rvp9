@@ -124,7 +124,7 @@ impl IntProMeResult {
 fn vpx_int_pro_row(hbuf: &mut [i16], ref_plane: &[u8], ref_stride: usize, height: usize) {
     debug_assert_eq!(hbuf.len(), 16);
     debug_assert!(height >= 2);
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(all(target_arch = "aarch64", not(miri)))]
     if matches!(height, 16 | 32 | 64) {
         crate::dsp::aarch64::vpx_int_pro_row_neon(hbuf, ref_plane, ref_stride, height);
         return;
@@ -155,7 +155,7 @@ fn vpx_int_pro_col_scalar(ref_row: &[u8], width: usize) -> i32 {
 
 #[inline]
 fn vpx_int_pro_col(ref_row: &[u8], width: usize) -> i32 {
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(all(target_arch = "aarch64", not(miri)))]
     if width >= 16 && width.is_multiple_of(16) {
         return crate::dsp::aarch64::vpx_int_pro_col_neon(ref_row, width);
     }
@@ -201,7 +201,7 @@ fn int_pro_row_clamped(
     let right = (base_x + chunk_width - plane_width).clamp(0, chunk_width) as usize;
     let middle_end = hbuf.len() - right;
 
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(all(target_arch = "aarch64", not(miri)))]
     if left == 0 && right == 0 && !direct_y && matches!(height, 16 | 32 | 64) {
         let start = base_x as usize;
         crate::dsp::aarch64::vpx_int_pro_row_clamped_neon(
@@ -313,7 +313,7 @@ fn fill_int_pro_cols(
 /// `bwl` ranges over `{2, 3, 4}` (16, 32, 64 vs the 16/32/64
 /// SB widths we care about). The result fits in i32 with margin
 /// (sse: 26 bits dynamic range per libvpx comment).
-#[cfg(not(target_arch = "aarch64"))]
+#[cfg(any(not(target_arch = "aarch64"), miri))]
 #[inline]
 fn vpx_vector_var_scalar(ref_vec: &[i16], src_vec: &[i16], bwl: u32) -> i32 {
     let width = 4usize << bwl;
@@ -331,11 +331,11 @@ fn vpx_vector_var_scalar(ref_vec: &[i16], src_vec: &[i16], bwl: u32) -> i32 {
 
 #[inline]
 fn vpx_vector_var(ref_vec: &[i16], src_vec: &[i16], bwl: u32) -> i32 {
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(all(target_arch = "aarch64", not(miri)))]
     {
         crate::dsp::aarch64::vpx_vector_var_neon(ref_vec, src_vec, bwl)
     }
-    #[cfg(not(target_arch = "aarch64"))]
+    #[cfg(any(not(target_arch = "aarch64"), miri))]
     {
         vpx_vector_var_scalar(ref_vec, src_vec, bwl)
     }
@@ -683,7 +683,7 @@ fn int_pro_motion_estimation_impl(
     // AArch64's common interior 64x64 path shares the central reference and
     // source loads between the row and column projections. The frame-edge
     // paths retain the exact edge-clamped helpers below.
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(all(target_arch = "aarch64", not(miri)))]
     let used_fused_projection = if bw == 64
         && bh == 64
         && base_x_row >= 0
@@ -709,7 +709,7 @@ fn int_pro_motion_estimation_impl(
     } else {
         false
     };
-    #[cfg(not(target_arch = "aarch64"))]
+    #[cfg(any(not(target_arch = "aarch64"), miri))]
     let used_fused_projection = false;
 
     if !used_fused_projection {
