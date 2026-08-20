@@ -279,7 +279,7 @@ fn parse_args_from(argv: &[String]) -> Result<Args, String> {
 }
 
 fn usage() -> String {
-    "Usage: bdrate-svc --anchor-encoder PATH --test-encoder PATH \\\n+\n  --decoder PATH --input CLIP.y4m [options]\n\n\
+    "Usage: bdrate-svc --anchor-encoder PATH --test-encoder PATH \\\n  --decoder PATH --input CLIP.y4m [options]\n\n\
 Options:\n  --reference-input CLEAN.y4m\n  --cpu-used {6,7,8}\n  \
 --bitrates 500,750,1000,1500,2500,4000\n  --end-usage {cbr,vbr}\n  \
 --svc-kind {temporal,spatial}\n  --spatial-layers {2,3} --inter-layer-pred {0,3}\n  \
@@ -287,6 +287,10 @@ Options:\n  --reference-input CLEAN.y4m\n  --cpu-used {6,7,8}\n  \
 --noise-sensitivity 0..6\n  --limit N --keyframe-interval N\n  \
 --max-bdrate-pct 0.5\n  --work-dir EMPTY_DIR --csv PATH\n"
         .to_owned()
+}
+
+fn help_requested(argv: &[String]) -> bool {
+    argv.iter().any(|arg| arg == "--help" || arg == "-h")
 }
 
 fn validate_args(args: &Args) -> Result<(), String> {
@@ -346,10 +350,6 @@ fn validate_args(args: &Args) -> Result<(), String> {
         }
     }
     Ok(())
-}
-
-fn parse_args() -> Result<Args, String> {
-    parse_args_from(&std::env::args().collect::<Vec<_>>())
 }
 
 fn temporal_id(frame_index: usize, temporal_layers: u32) -> u32 {
@@ -1308,7 +1308,12 @@ fn run(args: &Args) -> Result<bool, String> {
 }
 
 fn main() -> ExitCode {
-    let args = match parse_args() {
+    let argv = std::env::args().collect::<Vec<_>>();
+    if help_requested(&argv) {
+        print!("{}", usage());
+        return ExitCode::SUCCESS;
+    }
+    let args = match parse_args_from(&argv) {
         Ok(args) => args,
         Err(error) => {
             eprintln!("{error}");
@@ -1339,6 +1344,22 @@ mod tests {
         let three: Vec<u32> = (0..8).map(|index| temporal_id(index, 3)).collect();
         assert_eq!(two, [0, 1, 0, 1, 0, 1, 0, 1]);
         assert_eq!(three, [0, 2, 1, 2, 0, 2, 1, 2]);
+    }
+
+    #[test]
+    fn explicit_help_is_a_clean_capability_probe() {
+        assert!(help_requested(&argv(&["bdrate-svc", "--help"])));
+        assert!(help_requested(&argv(&["bdrate-svc", "-h"])));
+        assert!(!help_requested(&argv(&["bdrate-svc"])));
+        let help = usage();
+        assert!(help.starts_with("Usage: bdrate-svc"));
+        assert_eq!(
+            help.lines().nth(1),
+            Some("  --decoder PATH --input CLIP.y4m [options]")
+        );
+        assert!(!help.lines().any(|line| line == "+"));
+        assert!(help.contains("--work-dir EMPTY_DIR"));
+        assert!(help.contains("--svc-kind {temporal,spatial}"));
     }
 
     #[test]
