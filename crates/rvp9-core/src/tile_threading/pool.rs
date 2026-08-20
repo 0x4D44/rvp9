@@ -9,10 +9,30 @@ use std::thread::{self, JoinHandle};
 
 use super::scope::FrameScope;
 
-/// Type-erased job sent to a worker. The closure captures everything
-/// it needs, including a per-scope completion signal (a `Sender` of
-/// `thread::Result<()>`).
-pub(crate) type WorkerJob = Box<dyn FnOnce() + Send + 'static>;
+/// Type-erased job sent to a worker, plus a completion sender kept
+/// outside the lifetime-erased closure.
+pub(crate) struct WorkerJob {
+    run: Box<dyn FnOnce() + Send + 'static>,
+    done_tx: Sender<WorkerOutcome>,
+}
+
+impl WorkerJob {
+    pub(crate) fn new(
+        run: Box<dyn FnOnce() + Send + 'static>,
+        done_tx: Sender<WorkerOutcome>,
+    ) -> Self {
+        Self { run, done_tx }
+    }
+
+    fn execute(self) {
+        let Self { run, done_tx } = self;
+        // Consume and drop every lifetime-erased capture before publishing
+        // completion. The outer catch preserves the unconditional completion
+        // guarantee if bookkeeping inside `run` unwinds.
+        let _ = catch_unwind(AssertUnwindSafe(run));
+        let _ = done_tx.send(WorkerOutcome);
+    }
+}
 
 /// Long-lived worker pool. Construct once per codec instance via
 /// [`WorkerPool::new`]; joined on drop.
@@ -227,7 +247,7 @@ impl WorkerPool {
         // when the scope closure panicked: borrowed captures still require
         // the same unconditional completion guarantee as queued jobs.
         if let Some(job) = caller_job.into_inner().expect("caller-job mutex poisoned") {
-            job();
+            job.execute();
         }
 
         // Drain exactly one outcome per submitted job. We DON'T re-raise
@@ -309,18 +329,7 @@ impl Drop for WorkerPool {
 /// channel closes, executing each under `catch_unwind`.
 fn worker_loop(rx: Receiver<WorkerJob>) {
     while let Ok(job) = rx.recv() {
-        // Each job closure carries its own completion signalling
-        // logic (captures the per-scope `done_tx` clone). We just
-        // run it.
-        //
-        // Top-level catch_unwind catches panics from the job's own
-        // body in case the per-job wrapper (built in
-        // `FrameScope::submit`) ever misses one. The per-job
-        // wrapper IS supposed to wrap the user closure in
-        // catch_unwind and push the payload into the scope's
-        // panics Vec, so this outer catch is a belt-and-braces
-        // safety net.
-        let _ = catch_unwind(AssertUnwindSafe(job));
+        job.execute();
     }
 }
 

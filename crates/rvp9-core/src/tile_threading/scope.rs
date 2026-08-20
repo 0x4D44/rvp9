@@ -110,8 +110,7 @@ impl<'scope, 'frame> FrameScope<'scope, 'frame> {
         let panics_ref: &'static Mutex<Vec<(usize, Box<dyn Any + Send + 'static>)>> =
             unsafe { std::mem::transmute(self.panics) };
 
-        // Wrap the user closure in a panic-catching, completion-
-        // signalling shell.
+        // Wrap the user closure in a panic-catching bookkeeping shell.
         //
         // **Liveness invariant** (review M1 fix): `done_tx.send` MUST
         // run unconditionally, even if the wrapper body itself
@@ -121,37 +120,24 @@ impl<'scope, 'frame> FrameScope<'scope, 'frame> {
         // hang, NOT just a deadlock surfaced via `done_rx.recv()`'s
         // disconnect path. We therefore double-wrap: the INNER
         // `catch_unwind` catches user panics; the OUTER
-        // `catch_unwind` catches any wrapper panic (allocator OOM,
-        // Mutex poison). The `done_tx.send` runs after both — so
-        // `pending` always decrements to 0 within finite time. See
-        // SAFETY.md §2 link (d).
-        let job_with_signal = move || {
-            // Outer catch_unwind: protect against panics in the
-            // wrapper bookkeeping itself (mutex lock, Vec::push OOM).
-            let _ = catch_unwind(AssertUnwindSafe(|| {
-                let result: std::thread::Result<()> = catch_unwind(AssertUnwindSafe(job));
-                if let Err(payload) = result
-                    && let Ok(mut guard) = panics_ref.lock()
-                {
-                    // Mutex poisoning is essentially impossible
-                    // because `lock()`+`push` runs after the inner
-                    // catch_unwind; if it does occur, the panic
-                    // source is allocator OOM and we have bigger
-                    // problems. The outer catch_unwind ensures
-                    // `done_tx.send` still fires below.
-                    guard.push((submission_idx, payload));
-                }
-            }));
-            // Signal completion UNCONDITIONALLY. If the receiver is
-            // gone, the scope already unwound — best-effort send.
-            let _ = done_tx.send(WorkerOutcome);
+        // `WorkerJob::execute` catches any wrapper panic and sends completion
+        // only after this lifetime-erased closure has been consumed and
+        // dropped. This ordering is required before the scope can deallocate
+        // `panics_ref`.
+        let job_with_bookkeeping = move || {
+            let result: std::thread::Result<()> = catch_unwind(AssertUnwindSafe(job));
+            if let Err(payload) = result
+                && let Ok(mut guard) = panics_ref.lock()
+            {
+                guard.push((submission_idx, payload));
+            }
         };
 
         // Type-erase the closure: `Box<dyn FnOnce + Send + 'frame>`
         // → `Box<dyn FnOnce + Send + 'static>`. The transmute is
         // sound only because `WorkerPool::scope` joins every
         // submitted job before returning. See SAFETY.md.
-        let boxed_frame: Box<dyn FnOnce() + Send + 'frame> = Box::new(job_with_signal);
+        let boxed_frame: Box<dyn FnOnce() + Send + 'frame> = Box::new(job_with_bookkeeping);
         // SAFETY:
         // (a) The user closure `F: FnOnce() + Send + 'frame` may
         //     borrow data from the scope() caller's stack frame.
@@ -183,19 +169,20 @@ impl<'scope, 'frame> FrameScope<'scope, 'frame> {
         let boxed_static: Box<dyn FnOnce() + Send + 'static> =
             unsafe { std::mem::transmute(boxed_frame) };
 
+        let worker_job = WorkerJob::new(boxed_static, done_tx);
         if let Some(caller_job) = self.caller_job {
             let mut slot = caller_job
                 .lock()
                 .expect("rvp9 WorkerPool: caller-job mutex poisoned");
             if slot.is_none() {
-                *slot = Some(boxed_static as WorkerJob);
+                *slot = Some(worker_job);
                 return;
             }
         }
 
         self.pool
             .job_sender()
-            .send(boxed_static as WorkerJob)
+            .send(worker_job)
             .expect("rvp9 WorkerPool: job channel closed mid-scope (worker pool dropped?)");
     }
 
@@ -454,6 +441,16 @@ mod tests {
         let mut pool = WorkerPool::new(nz(2));
         let r = pool.scope(|_scope| 42u32);
         assert_eq!(r, 42);
+    }
+
+    /// Completion must not let a scope return while a worker still protects
+    /// one of the scope's lifetime-erased bookkeeping references.
+    #[test]
+    fn repeated_scopes_release_internal_borrows_before_return() {
+        let mut pool = WorkerPool::new(nz(1));
+        for _ in 0..256 {
+            pool.scope(|scope| scope.submit(|| {}));
+        }
     }
 
     /// The scope returns the closure's value when nothing panics.

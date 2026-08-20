@@ -73,14 +73,12 @@ Links:
   }
   ```
 
-  Each `FrameScope::submit` does `pending.fetch_add(1)` BEFORE either
-  enqueuing the job or reserving it for a caller-participating scope;
-  the job wrapper does
-  `done_tx.send(WorkerOutcome)` AFTER executing the user closure,
-  which causes the next iteration of the drain loop to decrement
-  `pending`. By induction, the drain loop only terminates when
-  `pending == 0`, which happens only after every submitted job's
-  user-closure body has finished.
+  Each `FrameScope::submit` assigns a submission index before either
+  enqueuing the job or reserving it for a caller-participating scope.
+  `WorkerJob::execute` consumes and drops the lifetime-erased closure,
+  then does `done_tx.send(WorkerOutcome)`. By induction, the drain loop
+  only terminates after every submitted job and all of its erased
+  captures have been destroyed.
 
 - **(d) Drain runs on panic too.** The user closure is run under
   `catch_unwind`. If it panics, the drain loop still runs (it sits
@@ -90,21 +88,13 @@ Links:
   done signal — so `pending` is still decremented and the drain
   loop terminates.
 
-  **Liveness invariant (M1).** The worker job wrapper in
-  `FrameScope::submit` is structured as a DOUBLE `catch_unwind`:
-  the inner catches user-closure panics; the outer catches any
-  panic in the wrapper bookkeeping itself (Mutex `lock()` failing
-  on poison, `Vec::push` failing on allocator OOM). The
-  `done_tx.send(WorkerOutcome)` runs UNCONDITIONALLY after both —
-  so `pending` always decrements to 0 within finite time, and the
-  drain loop in `WorkerPool::scope` cannot hang. Without this
-  double-wrap, a panic in the wrapper bookkeeping would escape to
-  `worker_loop`'s outer `catch_unwind` BEFORE the completion
-  signal fired, converting a deadlock into a silent infinite
-  hang. The pool's `worker_loop` outer `catch_unwind` is still
-  belt-and-braces: it prevents a runaway wrapper panic from
-  poisoning the worker thread, but the M1 invariant lives in the
-  wrapper itself.
+  **Liveness invariant (M1).** The inner `catch_unwind` in
+  `FrameScope::submit` catches user-closure panics. The outer
+  `catch_unwind` in `WorkerJob::execute` catches any panic in the
+  wrapper bookkeeping. `execute` then sends completion
+  unconditionally. Keeping that sender outside the erased closure is
+  also a safety invariant: the send cannot wake the scope until the
+  closure's extended `panics` reference has been destroyed.
 
 - **(e) Mutex reference lifetime.** The per-scope `Mutex<Vec<...>>`
   is a stack local in `WorkerPool::scope`'s frame. Its lifetime
