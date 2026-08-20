@@ -63,6 +63,26 @@ fn parse_args() -> Args {
     parse_args_from(&argv)
 }
 
+fn usage() -> String {
+    "Usage: realtime --input CLIP.y4m [options]\n\n\
+Options:\n  --encoder PATH --output PATH\n  \
+--cpu-used {6,7,8} --target-bitrate KBPS --end-usage {cbr,vbr,cq,q}\n  \
+--threads 1..256 --tile-columns 0..6\n  \
+--temporal-layers {2,3} | --spatial-layers {2,3} [--inter-layer-pred {0,3}]\n  \
+--aq-mode {0,3} --noise-sensitivity 0..6\n  \
+--limit N --kf-max-dist N\n  \
+--budget-ms 33.333\n  \
+--frame-time-csv PATH [--p99-budget-ms MS]\n"
+        .to_owned()
+}
+
+/// A capability probe: `--help` / `-h` anywhere in argv answers with usage and
+/// exits 0, so a caller can discover the flag surface without supplying
+/// `--input` or any other required argument.
+fn help_requested(argv: &[String]) -> bool {
+    argv.iter().any(|arg| arg == "--help" || arg == "-h")
+}
+
 fn parse_args_from(argv: &[String]) -> Args {
     let get = |flag: &str| -> Option<String> {
         argv.iter().enumerate().find_map(|(i, arg)| {
@@ -317,6 +337,11 @@ fn encoder_args(args: &Args) -> Vec<OsString> {
 }
 
 fn main() {
+    let argv: Vec<String> = std::env::args().collect();
+    if help_requested(&argv) {
+        print!("{}", usage());
+        return;
+    }
     let args = parse_args();
 
     println!("encoder:         {}", args.encoder.display());
@@ -430,6 +455,41 @@ mod tests {
             text.push_str(&format!("{index},{temporal_layer_id},{encode_ns}\n"));
         }
         text
+    }
+
+    #[test]
+    fn explicit_help_is_a_clean_capability_probe() {
+        let argv =
+            |items: &[&str]| -> Vec<String> { items.iter().map(ToString::to_string).collect() };
+        // Both spellings answer on an argv with no `--input`, which is exactly
+        // what a capability probe supplies.
+        assert!(help_requested(&argv(&["realtime", "--help"])));
+        assert!(help_requested(&argv(&["realtime", "-h"])));
+        assert!(!help_requested(&argv(&["realtime", "--input", "clip.y4m"])));
+
+        let help = usage();
+        assert!(help.starts_with("Usage: realtime --input CLIP.y4m"));
+        for flag in [
+            "--encoder",
+            "--output",
+            "--cpu-used",
+            "--target-bitrate",
+            "--end-usage",
+            "--threads",
+            "--tile-columns",
+            "--temporal-layers",
+            "--spatial-layers",
+            "--inter-layer-pred",
+            "--aq-mode",
+            "--noise-sensitivity",
+            "--limit",
+            "--kf-max-dist",
+            "--budget-ms",
+            "--frame-time-csv",
+            "--p99-budget-ms",
+        ] {
+            assert!(help.contains(flag), "usage must advertise {flag}");
+        }
     }
 
     #[test]

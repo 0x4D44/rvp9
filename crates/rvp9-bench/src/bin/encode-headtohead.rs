@@ -150,7 +150,7 @@ struct ClipSummary {
 }
 
 fn usage() -> String {
-    "Usage: encode-headtohead --anchor-encoder PATH --test-encoder PATH \\\n+  --anchor-kind {vpxenc,temporal-svc,spatial-svc} --test-kind {vpxenc,temporal-svc,spatial-svc} \\\n+  --anchor-revision REV --test-revision REV --clip NAME=PATH [--clip ...] \\\n+  --work-dir EMPTY_OR_MISSING_DIR [options]\n\n\
+    "Usage: encode-headtohead --anchor-encoder PATH --test-encoder PATH \\\n  --anchor-kind {vpxenc,temporal-svc,spatial-svc} --test-kind {vpxenc,temporal-svc,spatial-svc} \\\n  --anchor-revision REV --test-revision REV --clip NAME=PATH [--clip ...] \\\n  --work-dir EMPTY_OR_MISSING_DIR [options]\n\n\
 Options:\n  --cpu-used {6,7,8} --target-bitrate KBPS --end-usage {cbr,vbr}\n  \
 --fps NUM/DEN --threads N --tile-columns 0..6\n  \
 --temporal-layers {2,3} | --spatial-layers {2,3} [--inter-layer-pred {0,3}]\n  \
@@ -159,6 +159,13 @@ Options:\n  --cpu-used {6,7,8} --target-bitrate KBPS --end-usage {cbr,vbr}\n  \
 --max-ratio 1.05 [--max-load1 N] [--allow-anchor-hash-instability]\n  \
 --anchor-arg ARG [--anchor-arg ARG ...] --test-arg ARG\n"
         .to_owned()
+}
+
+/// A capability probe: `--help` / `-h` anywhere in argv answers with usage and
+/// exits 0, so a caller can discover the flag surface without supplying any of
+/// the required arguments.
+fn help_requested(argv: &[String]) -> bool {
+    argv.iter().any(|arg| arg == "--help" || arg == "-h")
 }
 
 /// Canonical libvpx spatial bitrate weights: each layer carries 4x the one
@@ -1409,6 +1416,11 @@ fn run() -> Result<bool, String> {
 }
 
 fn main() -> ExitCode {
+    let argv = std::env::args().collect::<Vec<_>>();
+    if help_requested(&argv) {
+        print!("{}", usage());
+        return ExitCode::SUCCESS;
+    }
     match run() {
         Ok(true) => ExitCode::SUCCESS,
         Ok(false) => ExitCode::FAILURE,
@@ -1502,6 +1514,63 @@ mod tests {
         ];
         argv.extend(extra.iter().map(|item| (*item).to_owned()));
         parse_args_from(&argv)
+    }
+
+    #[test]
+    fn explicit_help_is_a_clean_capability_probe() {
+        let argv =
+            |items: &[&str]| -> Vec<String> { items.iter().map(ToString::to_string).collect() };
+        // Both spellings answer on an argv that carries none of the required
+        // arguments, which is exactly what a capability probe supplies.
+        assert!(help_requested(&argv(&["encode-headtohead", "--help"])));
+        assert!(help_requested(&argv(&["encode-headtohead", "-h"])));
+        assert!(!help_requested(&argv(&["encode-headtohead"])));
+        // The parser itself refuses that same argv, so `main` answering the
+        // probe first is what makes `--help` exit 0.
+        assert_eq!(
+            parse_args_from(&argv(&["encode-headtohead", "--help"])).unwrap_err(),
+            usage()
+        );
+
+        let help = usage();
+        assert!(help.starts_with("Usage: encode-headtohead"));
+        assert!(
+            !help.lines().any(|line| line.trim_start().starts_with('+')),
+            "usage must not carry diff artifacts:\n{help}"
+        );
+        for flag in [
+            "--anchor-encoder",
+            "--test-encoder",
+            "--anchor-kind",
+            "--test-kind",
+            "--anchor-revision",
+            "--test-revision",
+            "--clip",
+            "--work-dir",
+            "--cpu-used",
+            "--target-bitrate",
+            "--end-usage",
+            "--fps",
+            "--threads",
+            "--tile-columns",
+            "--temporal-layers",
+            "--spatial-layers",
+            "--inter-layer-pred",
+            "--aq-mode",
+            "--noise-sensitivity",
+            "--limit",
+            "--keyframe-interval",
+            "--warmups",
+            "--pairs",
+            "--rotations",
+            "--max-ratio",
+            "--max-load1",
+            "--allow-anchor-hash-instability",
+            "--anchor-arg",
+            "--test-arg",
+        ] {
+            assert!(help.contains(flag), "usage must advertise {flag}");
+        }
     }
 
     fn sample_clip() -> Clip {
