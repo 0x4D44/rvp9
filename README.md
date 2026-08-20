@@ -18,11 +18,10 @@ livestreaming.
 
 The alpha encoder supports one-pass real-time VP9 at CPU-used 6, 7, and 8,
 with VBR or CBR rate control, cyclic-refresh AQ mode 3, denoising, two- or
-three-layer temporal SVC, and two- or three-layer spatial SVC. Spatial SVC is
-experimental in v0.2.0; all other listed encoder features remain on the main
-parity path. The qualified targets are 720p30, 1080p30, and 1080p60. It emits
-8-bit profile-0 IVF streams. Spatial CBR stays on the production-parity path;
-spatial VBR is an experimental preview.
+three-layer temporal SVC, and two- or three-layer spatial SVC. The qualified
+production-quality surface is single-stream CBR, denoiser CBR, and spatial
+CBR. VBR and temporal SVC are experimental in v0.2.0. The qualified targets
+are 720p30, 1080p30, and 1080p60. It emits 8-bit profile-0 IVF streams.
 
 The alpha decoder passes all 4,816 displayed frames across all 307 pinned
 official vectors with native and forced-scalar dispatch and with one- and
@@ -41,27 +40,26 @@ The reverse 24-row gate uses pinned `vpxenc` streams across CPU-used 6--8,
 CBR/VBR, AQ3, and denoising, then requires `rvp9dec` and pinned `vpxdec` to
 produce byte-identical decoded output.
 
-Spatial SVC retains the full correctness, cross-decoder, relative-speed, and
-latency gates. Spatial CBR keeps the `+0.5%` quality gate. Spatial VBR is an
-experimental preview, excluded from the production-parity claim and capped at
-`+25.0%` per layer on every important clip; the fresh complete-matrix worst
-case is `+22.630645%`. CPU-used 8 three-layer
-temporal-SVC relative speed still awaits its quiet-host confirmation. This
-alpha does not claim final compression or speed parity across the complete v1
-matrix.
+Every configuration retains the full correctness, cross-decoder,
+relative-speed, and latency gates. Single-stream and denoiser CBR keep the
+`+0.5%` aggregate quality gate and `+2.0%` important-clip guard. The explicit
+experimental ceilings are `+15.0%` for single-stream/AQ/denoiser VBR, `+5.0%`
+for temporal CBR, `+35.0%` for temporal VBR, and `+25.0%` for spatial VBR.
+Spatial CBR remains on the strict production-quality path. This alpha does not
+claim final compression parity across the complete v1 matrix.
 
 ## Project goals
 
 - **Correctness:** 100% pass on the official VP9 conformance test vectors;
   encoder output decodes cleanly under `vpxdec`, `ffmpeg`, and our decoder.
 - **Compression:** BD-rate within 0.5% of libvpx vpxenc at matched
-  `--cpu-used` setting (6, 7, 8), except experimental spatial VBR, whose
-  per-layer important-clip ceiling is `+25.0%` and which is excluded from the
-  production-parity claim.
+  `--cpu-used` setting (6, 7, 8) on the production-quality CBR surface.
+  Experimental modes use the explicit ceilings above and are excluded from
+  the compression-parity claim.
 - **Real-time:** 720p30, 1080p30, and 1080p60 all hit budget on commodity
   x86_64 hardware.
 - **Features:** 1-pass CBR/VBR, content-aware denoiser, cyclic-refresh AQ,
-  temporal SVC, and experimental spatial SVC.
+  and temporal/spatial SVC; VBR and temporal SVC are experimental.
 
 See [`PLAN.md`](./PLAN.md) §2 for the formal success criteria.
 

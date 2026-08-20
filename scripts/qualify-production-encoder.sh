@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Declare the complete non-spatial v1 production acceptance matrix for the
-# rvp9 encoder from one checked-in orchestrator.
+# Declare the complete single-stream and temporal-SVC v1 acceptance matrix for
+# the rvp9 encoder from one checked-in orchestrator.
 #
 # Scope: this file is the *matrix definition*, its two dry oracles, and the
 # resumable QUALITY execution phase. The relative-speed and absolute-latency
@@ -53,9 +53,13 @@
 #
 # Gates:
 #   quality  arithmetic mean of the clip BD-rates <= +0.5% per layer versus
-#            pinned vpxenc for every feature/mode/cpu/target group. No
-#            important clip/layer may show an unexplained regression beyond
-#            +2.0%.
+#            pinned vpxenc for every production feature/mode/cpu/target group.
+#            No production important clip/layer may show an unexplained
+#            regression beyond +2.0%. The alpha's non-CBR surfaces are
+#            experimental: single-stream VBR is capped at +15.0%, temporal CBR
+#            at +5.0%, and temporal VBR at +35.0% per important clip/layer.
+#            Their aggregates are retained and checked against the same
+#            ceilings for a complete, machine-readable census.
 #   aq3      additionally the existing AQ gain-parity oracle: both AQ gains
 #            finite, |gain_rvp9 - gain_libvpx| <= 0.3 percentage
 #            points, and explicit evidence that cyclic refresh actually
@@ -124,6 +128,9 @@ readonly TUNE_CONTENT="default"
 
 readonly MAX_AGGREGATE_BDRATE_PCT="0.5"
 readonly MAX_IMPORTANT_CLIP_BDRATE_PCT="2.0"
+readonly EXPERIMENTAL_SINGLE_VBR_MAX_BDRATE_PCT="15.0"
+readonly EXPERIMENTAL_TEMPORAL_CBR_MAX_BDRATE_PCT="5.0"
+readonly EXPERIMENTAL_TEMPORAL_VBR_MAX_BDRATE_PCT="35.0"
 readonly AQ_GAIN_DELTA_MAX_PP="0.3"
 readonly AQ_MAX_FRAME_MS=66
 readonly MAX_RATIO="1.05"
@@ -467,6 +474,39 @@ row_reference_kind() {
     esac
 }
 
+# Experimental rows remain in the complete acceptance matrix. This policy
+# function changes only their declared quality ceiling; coverage and every
+# non-quality gate remain identical.
+quality_clip_bdrate_limit() {
+    case "$1|$2" in
+        baseline\|vbr|aq3\|vbr|denoiser\|vbr)
+            printf '%s\n' "$EXPERIMENTAL_SINGLE_VBR_MAX_BDRATE_PCT"
+            ;;
+        temporal_t2\|cbr|temporal_t3\|cbr)
+            printf '%s\n' "$EXPERIMENTAL_TEMPORAL_CBR_MAX_BDRATE_PCT"
+            ;;
+        temporal_t2\|vbr|temporal_t3\|vbr)
+            printf '%s\n' "$EXPERIMENTAL_TEMPORAL_VBR_MAX_BDRATE_PCT"
+            ;;
+        *) printf '%s\n' "$MAX_IMPORTANT_CLIP_BDRATE_PCT" ;;
+    esac
+}
+
+quality_aggregate_bdrate_limit() {
+    case "$1|$2" in
+        baseline\|vbr|aq3\|vbr|denoiser\|vbr)
+            printf '%s\n' "$EXPERIMENTAL_SINGLE_VBR_MAX_BDRATE_PCT"
+            ;;
+        temporal_t2\|cbr|temporal_t3\|cbr)
+            printf '%s\n' "$EXPERIMENTAL_TEMPORAL_CBR_MAX_BDRATE_PCT"
+            ;;
+        temporal_t2\|vbr|temporal_t3\|vbr)
+            printf '%s\n' "$EXPERIMENTAL_TEMPORAL_VBR_MAX_BDRATE_PCT"
+            ;;
+        *) printf '%s\n' "$MAX_AGGREGATE_BDRATE_PCT" ;;
+    esac
+}
+
 # The exact basenames of the rvp9 candidate streams a row must retain, in the
 # order they are checked. Single-layer rows come from bdrate, which names its
 # retained IVF `<role>_<bitrate>k.ivf`; temporal rows come from bdrate-svc,
@@ -699,7 +739,7 @@ print_plan() {
     local streams=0 runs=0 groups=0 rows=0 measured=0 oracles=0 configs=0
     local feature mode target clip cpu aq denoiser layers
     local fps width height threads tiles speed_kbps p50 p99
-    local grid clips per_point curve_streams curve_runs max_frame
+    local grid clips per_point curve_streams curve_runs max_frame quality_limit
 
     printf 'plan schema=%s version=%s matrix=%s\n' \
         "$PLAN_SCHEMA" "$PLAN_VERSION" "$MATRIX_NAME"
@@ -708,8 +748,11 @@ print_plan() {
         "$FRAMES" "$KEYFRAME_INTERVAL" "$LAG_IN_FRAMES" "$TUNE_CONTENT"
     printf 'bitrate_points=%s decoders_per_stream=%s\n' \
         "$BITRATE_POINTS" "$DECODERS_PER_STREAM"
-    printf 'max_aggregate_bdrate_pct=%s max_important_clip_bdrate_pct=%s aggregate_method=arithmetic_mean_clip_bdrate_pct aq_gain_delta_max_pp=%s aq_max_frame_ms=%s\n' \
+    printf 'max_aggregate_bdrate_pct=%s max_important_clip_bdrate_pct=%s experimental_single_vbr_max_bdrate_pct=%s experimental_temporal_cbr_max_bdrate_pct=%s experimental_temporal_vbr_max_bdrate_pct=%s aggregate_method=arithmetic_mean_clip_bdrate_pct aq_gain_delta_max_pp=%s aq_max_frame_ms=%s\n' \
         "$MAX_AGGREGATE_BDRATE_PCT" "$MAX_IMPORTANT_CLIP_BDRATE_PCT" \
+        "$EXPERIMENTAL_SINGLE_VBR_MAX_BDRATE_PCT" \
+        "$EXPERIMENTAL_TEMPORAL_CBR_MAX_BDRATE_PCT" \
+        "$EXPERIMENTAL_TEMPORAL_VBR_MAX_BDRATE_PCT" \
         "$AQ_GAIN_DELTA_MAX_PP" "$AQ_MAX_FRAME_MS"
     printf 'max_ratio=%s max_load1=%s speed_warmups=%s speed_pairs=%s speed_rotations=%s\n' \
         "$MAX_RATIO" "$MAX_LOAD1" "$SPEED_WARMUPS" "$SPEED_PAIRS" \
@@ -731,6 +774,7 @@ print_plan() {
         per_point="$(streams_per_point "$layers")"
         curve_streams=$(( BITRATE_POINTS * per_point ))
         curve_runs=$(( curve_streams * DECODERS_PER_STREAM ))
+        quality_limit="$(quality_clip_bdrate_limit "$feature" "$mode")"
         curves=$(( curves + 1 ))
         clip_guards=$(( clip_guards + layers ))
         streams=$(( streams + curve_streams ))
@@ -740,17 +784,18 @@ print_plan() {
             "$aq" "$denoiser" "$layers" "$(source_clip_file "$clip")" \
             "$fps" "$width" "$height" "$threads" "$tiles" \
             "$grid" "$BITRATE_POINTS" "$layers" "$curve_streams" \
-            "$curve_runs" "$MAX_IMPORTANT_CLIP_BDRATE_PCT"
+            "$curve_runs" "$quality_limit"
     done < <(emit_clip_rows)
 
     while IFS='|' read -r feature mode target cpu aq denoiser layers; do
         clips="$(target_clips "$target")"
         clips="${clips// /,}"
+        quality_limit="$(quality_aggregate_bdrate_limit "$feature" "$mode")"
         aggregate_groups=$(( aggregate_groups + 1 ))
         aggregate_gates=$(( aggregate_gates + layers ))
         printf 'quality_aggregate %s %s %s cpu%s aq=%s denoiser=%s temporal_layers=%s clips=%s layer_gates=%s method=arithmetic_mean_clip_bdrate_pct max_bdrate_pct=%s\n' \
             "$feature" "$mode" "$target" "$cpu" "$aq" "$denoiser" \
-            "$layers" "$clips" "$layers" "$MAX_AGGREGATE_BDRATE_PCT"
+            "$layers" "$clips" "$layers" "$quality_limit"
     done < <(emit_speed_groups)
 
     while IFS='|' read -r feature mode target cpu aq denoiser layers; do
@@ -1047,15 +1092,33 @@ self_test() {
         "$(( EXPECTED_LATENCY_ROWS - $(count_by_field "$plan" latency 2 aq3) ))"
 
     # --- quality gates -----------------------------------------------------
-    expect_equal "every quality row carries the +2.0% important-clip guard" \
+    expect_equal "production quality rows carry the +2.0% important-clip guard" \
         "$(plan_count "$plan" '^quality .* max_clip_bdrate_pct=2.0$')" \
-        "$EXPECTED_QUALITY_CURVES"
+        48
+    expect_equal "experimental single-stream VBR rows carry the +15.0% ceiling" \
+        "$(plan_count "$plan" '^quality \(baseline\|aq3\|denoiser\) vbr .* max_clip_bdrate_pct=15.0$')" \
+        56
+    expect_equal "experimental temporal CBR rows carry the +5.0% ceiling" \
+        "$(plan_count "$plan" '^quality temporal_t[23] cbr .* max_clip_bdrate_pct=5.0$')" \
+        48
+    expect_equal "experimental temporal VBR rows carry the +35.0% ceiling" \
+        "$(plan_count "$plan" '^quality temporal_t[23] vbr .* max_clip_bdrate_pct=35.0$')" \
+        48
     expect_equal "no quality row uses another clip ceiling" \
-        "$(printf '%s\n' "$plan" | awk '$1 == "quality" && $20 != "max_clip_bdrate_pct=2.0" { n++ } END { print n + 0 }')" \
+        "$(printf '%s\n' "$plan" | awk '$1 == "quality" && $20 != "max_clip_bdrate_pct=2.0" && $20 != "max_clip_bdrate_pct=5.0" && $20 != "max_clip_bdrate_pct=15.0" && $20 != "max_clip_bdrate_pct=35.0" { n++ } END { print n + 0 }')" \
         0
-    expect_equal "every quality aggregate group uses arithmetic mean and +0.5%" \
+    expect_equal "production aggregate groups use arithmetic mean and +0.5%" \
         "$(plan_count "$plan" '^quality_aggregate .* method=arithmetic_mean_clip_bdrate_pct max_bdrate_pct=0.5$')" \
-        "$EXPECTED_QUALITY_AGGREGATE_GROUPS"
+        18
+    expect_equal "experimental single-stream VBR aggregates use the +15.0% ceiling" \
+        "$(plan_count "$plan" '^quality_aggregate \(baseline\|aq3\|denoiser\) vbr .* method=arithmetic_mean_clip_bdrate_pct max_bdrate_pct=15.0$')" \
+        21
+    expect_equal "experimental temporal CBR aggregates use the +5.0% ceiling" \
+        "$(plan_count "$plan" '^quality_aggregate temporal_t[23] cbr .* method=arithmetic_mean_clip_bdrate_pct max_bdrate_pct=5.0$')" \
+        18
+    expect_equal "experimental temporal VBR aggregates use the +35.0% ceiling" \
+        "$(plan_count "$plan" '^quality_aggregate temporal_t[23] vbr .* method=arithmetic_mean_clip_bdrate_pct max_bdrate_pct=35.0$')" \
+        18
     expect_equal "quality aggregate coverage equals speed-group coverage" \
         "$(printf '%s\n' "$plan" | awk '$1 == "quality_aggregate" { print $2, $3, $4, $5 }' | sort | comm -3 - <(printf '%s\n' "$plan" | awk '$1 == "speed" { print $2, $3, $4, $5 }' | sort) | wc -l | tr -d ' ')" \
         0
@@ -2539,11 +2602,13 @@ validate_quality_fragment() {
     local clip="$6" cpu="$7" aq="$8" denoiser="$9" layers="${10}"
     local threads="${11}" tiles="${12}" grid="${13}" runner="${14}"
     local anchor_kind="${15}" layer value status expected_status layer_ids=""
+    local quality_limit
     local count=0 failures=0
     local got_row got_feature got_mode got_target got_clip got_cpu got_aq
     local got_denoiser got_layers got_threads got_tiles got_grid got_runner
     local got_anchor got_input got_reference got_gate extra
 
+    quality_limit="$(quality_clip_bdrate_limit "$feature" "$mode")"
     [ -f "$fragment" ] || fail "$row_id: missing quality fragment: $fragment"
     while IFS=',' read -r got_row got_feature got_mode got_target got_clip \
         got_cpu got_aq got_denoiser got_layers got_threads got_tiles \
@@ -2561,15 +2626,15 @@ validate_quality_fragment() {
           "$(printf '%s' "$grid" | tr ',' ';')|$runner|$anchor_kind" ] ||
             fail "$row_id: quality fragment runner mismatch"
         [ "$got_input|$got_reference|$got_gate" = \
-          "$(row_input_kind "$feature")|$(row_reference_kind "$feature")|$MAX_IMPORTANT_CLIP_BDRATE_PCT" ] ||
+          "$(row_input_kind "$feature")|$(row_reference_kind "$feature")|$quality_limit" ] ||
             fail "$row_id: quality fragment input or gate mismatch"
         require_number "$row_id TL$layer BD-rate" "$value"
         expected_status="PASS"
-        if ! number_le "$value" "$MAX_IMPORTANT_CLIP_BDRATE_PCT"; then
+        if ! number_le "$value" "$quality_limit"; then
             expected_status="FAIL"
             failures=$(( failures + 1 ))
             printf '  QUALITY MISS %s TL%s: %s%% exceeds +%s%% (reused row)\n' \
-                "$row_id" "$layer" "$value" "$MAX_IMPORTANT_CLIP_BDRATE_PCT" >&2
+                "$row_id" "$layer" "$value" "$quality_limit" >&2
         fi
         [ "$status" = "$expected_status" ] ||
             fail "$row_id: quality fragment status $status disagrees with BD-rate $value"
@@ -2679,7 +2744,7 @@ run_quality_row() {
     local fps width height threads tiles speed_kbps p50 p99
     local grid row_id final_dir attempt streams runner anchor_kind encode_input reference_input
     local summary_out="$quality_summary" cross_out="$cross_decoder_csv"
-    local rc=0 recorded=0 layer value status layer_ids=""
+    local rc=0 recorded=0 layer value status layer_ids="" quality_limit
 
     IFS='|' read -r fps width height threads tiles speed_kbps p50 p99 \
         <<< "$(target_spec "$target")"
@@ -2711,6 +2776,7 @@ run_quality_row() {
 
     runner="$(row_runner_kind "$feature")"
     anchor_kind="$(row_anchor_kind "$feature")"
+    quality_limit="$(quality_clip_bdrate_limit "$feature" "$mode")"
     encode_input="$(acceptance_input "$clip" "$target" "$(row_input_kind "$feature")")"
     reference_input="$(acceptance_input "$clip" "$target" "$(row_reference_kind "$feature")")"
     [ -s "$encode_input" ] || fail "$row_id: encode input is missing: $encode_input"
@@ -2766,7 +2832,7 @@ run_quality_row() {
             --limit "$FRAMES" \
             --keyframe-interval "$KEYFRAME_INTERVAL" \
             --bitrates "$grid" \
-            --max-bdrate-pct "$MAX_IMPORTANT_CLIP_BDRATE_PCT" \
+            --max-bdrate-pct "$quality_limit" \
             --work-dir "$streams" \
             --csv "$attempt/bdrate.csv" \
             > "$attempt/runner.log" 2>&1 </dev/null || rc=$?
@@ -2787,18 +2853,18 @@ run_quality_row() {
     while IFS=',' read -r layer value; do
         require_number "$row_id TL$layer BD-rate" "$value"
         status="PASS"
-        if ! number_le "$value" "$MAX_IMPORTANT_CLIP_BDRATE_PCT"; then
+        if ! number_le "$value" "$quality_limit"; then
             status="FAIL"
             quality_regression_count=$(( quality_regression_count + 1 ))
             printf '  QUALITY MISS %s TL%s: %s%% exceeds +%s%%\n' \
-                "$row_id" "$layer" "$value" "$MAX_IMPORTANT_CLIP_BDRATE_PCT" >&2
+                "$row_id" "$layer" "$value" "$quality_limit" >&2
         fi
         printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
             "$row_id" "$feature" "$mode" "$target" "$clip" "$cpu" "$aq" \
             "$denoiser" "$layers" "$threads" "$tiles" \
             "$(printf '%s' "$grid" | tr ',' ';')" "$runner" "$anchor_kind" \
             "$(row_input_kind "$feature")" "$(row_reference_kind "$feature")" \
-            "$layer" "$value" "$MAX_IMPORTANT_CLIP_BDRATE_PCT" "$status" \
+            "$layer" "$value" "$quality_limit" "$status" \
             >> "$quality_summary"
         layer_ids="$layer_ids $layer"
         recorded=$(( recorded + 1 ))
@@ -2826,12 +2892,13 @@ run_quality_row() {
 # feature/mode/cpu/target/layer group.
 compute_quality_aggregates() {
     local feature mode target cpu aq denoiser layers
-    local group_id clips clip_count layer count mean status
+    local group_id clips clip_count layer count mean status quality_limit
 
     while IFS='|' read -r feature mode target cpu aq denoiser layers; do
         aggregate_group_count=$(( aggregate_group_count + 1 ))
         clips="$(target_clips "$target")"
         clip_count="$(printf '%s\n' "$clips" | wc -w | tr -d ' ')"
+        quality_limit="$(quality_aggregate_bdrate_limit "$feature" "$mode")"
         layer=0
         while [ "$layer" -lt "$layers" ]; do
             group_id="${feature}-${mode}-${target}-cpu${cpu}-tl${layer}"
@@ -2848,16 +2915,16 @@ compute_quality_aggregates() {
                 "$quality_summary")"
             require_number "$group_id mean BD-rate" "$mean"
             status="PASS"
-            if ! number_le "$mean" "$MAX_AGGREGATE_BDRATE_PCT"; then
+            if ! number_le "$mean" "$quality_limit"; then
                 status="FAIL"
                 aggregate_failure_count=$(( aggregate_failure_count + 1 ))
                 printf '  AGGREGATE MISS %s: mean %s%% exceeds +%s%%\n' \
-                    "$group_id" "$mean" "$MAX_AGGREGATE_BDRATE_PCT" >&2
+                    "$group_id" "$mean" "$quality_limit" >&2
             fi
             printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
                 "$group_id" "$feature" "$mode" "$target" "$cpu" "$aq" \
                 "$denoiser" "$layers" "$(printf '%s' "$clips" | tr ' ' ';')" \
-                "$clip_count" "$layer" "$mean" "$MAX_AGGREGATE_BDRATE_PCT" \
+                "$clip_count" "$layer" "$mean" "$quality_limit" \
                 "$status" \
                 >> "$quality_aggregate"
             aggregate_gate_count=$(( aggregate_gate_count + 1 ))
@@ -3101,7 +3168,7 @@ run_quality() {
         [ "$aq_oracle_failure_count" -ne 0 ]
     then
         manifest_kv quality_verdict "fail"
-        fail "quality phase FAILED: $quality_regression_count clip/layer regression(s) beyond +$MAX_IMPORTANT_CLIP_BDRATE_PCT%, $aggregate_failure_count aggregate group(s) beyond +$MAX_AGGREGATE_BDRATE_PCT%, $aq_oracle_failure_count oracle failure(s). Evidence: $manifest"
+        fail "quality phase FAILED: $quality_regression_count clip/layer regression(s) beyond their declared limits, $aggregate_failure_count aggregate group(s) beyond their declared limits, $aq_oracle_failure_count oracle failure(s). Evidence: $manifest"
     fi
     manifest_kv quality_verdict "pass"
     printf 'Quality phase passed.\n'

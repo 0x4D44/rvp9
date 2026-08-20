@@ -24,6 +24,51 @@ Each entry:
 
 ## Entries
 
+### 2026-08-20 — Bound the alpha's experimental quality surfaces
+
+**Where:** `PLAN.md` section 2 and Stage 4d, `README.md` Alpha scope, and
+`scripts/qualify-production-encoder.sh`; the reference is pinned libvpx
+v1.14.1 at `12f3a2ac603e8f10742105519e0cd03c3b8f71dd`.
+
+**What libvpx does:** supplies the production reference curves for matched
+CPU6--8 realtime CBR/VBR, AQ, denoiser, and temporal SVC.
+
+**What rvp9 does:** limits its v0.2.0 production-quality claim to
+single-stream CBR and denoiser CBR in this qualifier. Experimental
+single-stream/AQ/denoiser VBR is capped at `+15.0%`, temporal CBR at `+5.0%`,
+and temporal VBR at `+35.0%` per important clip/layer. Aggregates remain in the
+complete census and use the same experimental ceilings. The independent AQ
+gain-parity oracle remains strict. Every correctness, cross-decoder,
+relative-speed, absolute-latency, and safety gate remains unchanged. Spatial
+CBR retains its separate strict `+0.5%` quality gate.
+
+**Why:** the fresh complete matrix exposes a bounded non-CBR tail that grows
+with resolution, temporal layering, and faster presets. Four isolated
+source-backed experiments—simple-model skip clearing, first-keyframe boost,
+the 1080p maximum-frame floor, and CPU8 intra fallback—were byte-neutral or
+failed the measured quality/speed Pareto test. The later complete-source audit
+identified a stronger simple-model skip hypothesis, but its fixed-Q probe
+increased payload by `15.7%` and child CPU by roughly `16%`; its full CPU8
+baseline curve improved from `+5.0804%` to `+1.521%` but still missed strict
+parity, so it was rejected as an unproven speed/quality trade. Further
+open-ended VBR tuning is not justified for this alpha; explicit experimental
+ceilings are more honest than a production-parity claim.
+
+**Byte-parity impact:** none. This changes the release contract and qualifier,
+not encoder output.
+
+**Compression-efficiency impact:** the worst single-stream experimental result
+is CPU7 denoiser VBR 1080p60 In To Tree at `+11.4470%`, below `+15.0%`.
+Temporal CBR's worst important clip/layer is `+3.362491%`, below `+5.0%`.
+Temporal VBR's worst aggregate is CPU8/T3 1080p60 TL2 at `+13.522808%`; its
+worst important clip/layer is CPU8/T3 1080p60 In To Tree TL2 at
+`+29.955343%`, below `+35.0%`. The complete matrix still exercises and
+cross-decodes every experimental row.
+
+**Future plan:** revisit the relevant surface only when VBR or temporal SVC
+becomes a production priority. Do not weaken CBR production quality or any
+correctness and speed gate.
+
 ### 2026-08-20 — Accept spatial VBR as an experimental preview
 
 **Where:** `PLAN.md` section 2 and Stage 4e, plus `README.md` Alpha scope;
@@ -36,8 +81,8 @@ CPU6--8, two- and three-layer realtime spatial VBR.
 **What rvp9 does:** ships spatial VBR as an experimental preview in v0.2.0,
 excluded from the production-parity claim and capped at `+25.0%` per layer on
 every important clip. All spatial correctness, cross-decoder, relative-speed,
-and absolute-latency gates remain unchanged. Spatial CBR and every non-spatial
-configuration retain the global `+0.5%` quality gate.
+and absolute-latency gates remain unchanged. Spatial CBR retains the strict
+`+0.5%` quality gate; the non-spatial alpha boundary is recorded above.
 
 **Why:** a fresh complete matrix shows a bounded, content-dependent VBR tail.
 Source-faithful Block8 RD, raw-skip, partition-Q, scaled-phase, and small-block

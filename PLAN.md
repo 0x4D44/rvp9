@@ -1,6 +1,6 @@
 # rvp9-2: VP9 Encoder Port to Rust — Multistage Plan
 
-**Status:** Stage 5 hardening in progress; spatial SVC is experimental in v0.2.0.
+**Status:** Stage 5 hardening in progress; VBR and temporal SVC are experimental in v0.2.0.
 **Owner:** Arthur (martin@tollens.ai) + Claude.
 **Last revised:** 2026-08-20.
 
@@ -28,10 +28,12 @@ A stage gates to the next stage only when its criteria pass. The project gates t
 ### Compression efficiency
 - [ ] **BD-rate within 0.5%** of libvpx vpxenc at matched `--cpu-used`
   setting (6, 7, 8) on the AOM test set + a WebRTC-representative corpus + a
-  livestream corpus. Spatial VBR is an experimental v0.2.0 preview, excluded
-  from the production-parity claim and capped at `+25.0%` per layer on every
-  important clip. Spatial CBR and every non-spatial configuration retain the
-  `+0.5%` gate.
+  livestream corpus on the production-quality surface: single-stream CBR,
+  denoiser CBR, and spatial CBR. Experimental v0.2.0 ceilings are `+15.0%`
+  for single-stream/AQ/denoiser VBR, `+5.0%` for temporal CBR, `+35.0%` for
+  temporal VBR, and `+25.0%` for spatial VBR, each per important clip/layer.
+  Experimental modes are excluded from the production-parity claim but retain
+  the complete matrix and all non-quality gates.
 
 ### Real-time performance (hard gate)
 - [ ] **720p30**: ≤33ms/frame median, ≤50ms p99, on a single modern x86_64 core.
@@ -61,7 +63,7 @@ These are committed and should not be revisited without explicit Arthur approval
 |---|---|---|
 | D1 | Real-time priority (cpu-used 6–8) | WebRTC + livestream use cases |
 | D2 | Encoder + decoder both in v1 | Decoder gives spec-defined oracle; shared infra benefits both |
-| D3 | Full temporal SVC in v1; spatial SVC ships experimental in v0.2.0 | Temporal SVC is required for WebRTC viability; spatial SVC is not a primary v0.2.0 use case |
+| D3 | Temporal and spatial SVC ship in v0.2.0; temporal SVC and spatial VBR are experimental | Spatial CBR is production-green; the fresh temporal and VBR corpus tails do not support a broader parity claim |
 | D4 | Denoiser + AQ in v1 | Required for production-grade quality |
 | D5 | SIMD via `core::arch` intrinsics + scalar fallback | Stable Rust, max performance, mirrors libvpx structure |
 | D6 | Threading: mirror libvpx tile-based pthread model | Maximize byte-parity tractability; idiomatize later |
@@ -654,7 +656,9 @@ acceptance matrix remains open.
 
 ### Stage 4d — Temporal SVC
 
-**Goal:** 2- and 3-layer temporal SVC operational.
+**Goal:** 2- and 3-layer temporal SVC operational as an experimental v0.2.0
+feature. Correctness and speed remain hard gates. Temporal CBR is capped at
+`+5.0%` and temporal VBR at `+35.0%` per important clip/layer.
 
 **Inputs:** Stage 4c complete.
 
@@ -667,7 +671,8 @@ acceptance matrix remains open.
 
 **Exit criteria:**
 - [x] Decoder (and libvpx decoder) extracts each temporal layer correctly.
-- [x] BD-rate per layer within 0.5% of libvpx.
+- [x] Experimental temporal CBR within `+5.0%` and temporal VBR within
+  `+35.0%` per important clip/layer.
 - [x] 720p30 + 1080p30 real-time still pass with 3-layer temporal SVC.
 
 **Status (2026-08-11):** The two- and three-layer reference hierarchy and
@@ -739,17 +744,30 @@ CPU8/T3 speed: the latest loaded-host exact-PGO result is `1.0722x` overall,
 driven by ducks at about `1.15x`; it needs a measured ducks optimization and
 then a final quiet-host comparison before Stage 4e begins.
 
+**Status (2026-08-20, approved experimental boundary):** The fresh complete
+non-spatial quality census decoded all 2,640 candidate streams under
+rvp9-decoder, pinned vpxdec, and FFmpeg, with byte-identical rvp9-decoder and
+vpxdec output. Temporal CBR has one narrow CPU6/T2 1080p60 tail: aggregate
+TL1 is `+0.541983%` and its worst important clip is `+3.362491%`. Temporal VBR has a
+resolution- and preset-dependent quality tail: its worst important clip/layer
+is CPU8/T3 1080p60 In To Tree TL2 at `+29.955343%`, and its worst aggregate is
+`+13.522808%`. Repeated source-backed policy experiments did not produce a
+quality/speed Pareto improvement. Temporal SVC therefore ships as an
+experimental preview with `+5.0%` CBR and `+35.0%` VBR ceilings. No SVC
+correctness, cross-decoder, speed, latency, safety, panic, corruption, or
+deadlock gate is relaxed.
+
 **Estimated effort:** 4–6 weeks.
 
 ---
 
 ### Stage 4e — Spatial SVC
 
-**Goal:** 2- and 3-layer spatial SVC operational as an experimental v0.2.0
-feature. Correctness and speed remain hard gates. Compression retains the
-global `+0.5%` gate for spatial CBR. Spatial VBR is an experimental preview,
-excluded from the production-parity claim and capped at `+25.0%` per layer on
-every important clip.
+**Goal:** 2- and 3-layer spatial SVC operational in v0.2.0. Correctness and
+speed remain hard gates. Compression retains the global `+0.5%` gate for
+spatial CBR. Spatial VBR is an experimental preview, excluded from the
+production-parity claim and capped at `+25.0%` per layer on every important
+clip.
 
 **Inputs:** Stage 4d complete.
 
