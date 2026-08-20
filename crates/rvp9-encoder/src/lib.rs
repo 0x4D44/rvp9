@@ -5873,9 +5873,9 @@ fn constrain_fixed_tree_to_visible_leaves(
     supported
 }
 
-/// Preserve a square ML partition tree at a partial bottom edge while mapping
-/// leaves that VP9's reduced edge syntax cannot signal to the mandatory
-/// horizontal partition.
+/// Preserve an ML or exact-variance partition tree at a partial bottom edge
+/// while mapping leaves that VP9's reduced edge syntax cannot signal to the
+/// mandatory horizontal partition.
 ///
 /// A square leaf may cross the frame edge when the node's lower-half origin is
 /// still inside the MI grid. For example, a 32x32 leaf starting at local MI row
@@ -5883,8 +5883,11 @@ fn constrain_fixed_tree_to_visible_leaves(
 /// is not: that node has no lower half and the bitstream can only signal HORZ
 /// or SPLIT. The ML controller emits square leaves only, so the latter maps
 /// exactly to two 16x8 leaves; the second is outside the visible grid and is
-/// omitted by the normal leaf visitor.
-fn constrain_square_tree_to_bottom_edge(
+/// omitted by the normal leaf visitor. Exact variance trees can also contain
+/// horizontal and vertical leaves. Existing horizontal leaves are already the
+/// required edge shape; an unsignalable vertical leaf maps to the same
+/// horizontal fallback as a square leaf.
+fn constrain_tree_to_bottom_edge(
     source: &rvp9_core::mode_decision::partition::PartitionDecision,
     visible_mi_rows: usize,
 ) -> rvp9_core::mode_decision::partition::PartitionDecision {
@@ -5915,9 +5918,9 @@ fn constrain_square_tree_to_bottom_edge(
         }
 
         let leaf = source.cells[row][col];
-        let leaf_side = usize::from(leaf.n_8x8_wide());
-        debug_assert_eq!(leaf_side, usize::from(leaf.n_8x8_high()));
-        if leaf_side == side {
+        let leaf_width = usize::from(leaf.n_8x8_wide());
+        let leaf_height = usize::from(leaf.n_8x8_high());
+        if leaf_width == side && leaf_height == side {
             let half = side / 2;
             if row + half >= visible_mi_rows {
                 let horizontal = horizontal_subsize(side);
@@ -5928,7 +5931,20 @@ fn constrain_square_tree_to_bottom_edge(
             return;
         }
 
-        debug_assert!(leaf_side < side);
+        if leaf_width == side && leaf_height * 2 == side {
+            return;
+        }
+        if leaf_height == side && leaf_width * 2 == side {
+            if row + side / 2 >= visible_mi_rows {
+                let horizontal = horizontal_subsize(side);
+                for cells in &mut output.cells[row..row + side] {
+                    cells[col..col + side].fill(horizontal);
+                }
+            }
+            return;
+        }
+
+        debug_assert!(leaf_width < side && leaf_height < side);
         let half = side / 2;
         walk(source, output, row, col, half, visible_mi_rows);
         walk(source, output, row, col + half, half, visible_mi_rows);
@@ -8217,7 +8233,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     exact_decision = if crossing_square_leaves_supported
                         && exact_vbp_crossing_square_enabled(spatial_component, visible_mi_rows)
                     {
-                        constrain_square_tree_to_bottom_edge(&exact_decision, visible_mi_rows)
+                        constrain_tree_to_bottom_edge(&exact_decision, visible_mi_rows)
                     } else {
                         constrain_fixed_tree_to_visible_leaves(
                             &exact_decision,
@@ -8267,8 +8283,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     let visible_mi_cols = (w - sb_px_x).min(64).div_ceil(8);
                     let visible_mi_rows = (h - sb_px_y).min(64).div_ceil(8);
                     if crossing_square_leaves_supported {
-                        ml_decision =
-                            constrain_square_tree_to_bottom_edge(&ml_decision, visible_mi_rows);
+                        ml_decision = constrain_tree_to_bottom_edge(&ml_decision, visible_mi_rows);
                     } else {
                         ml_decision = constrain_fixed_tree_to_visible_leaves(
                             &ml_decision,
@@ -16211,7 +16226,7 @@ mod tests {
         let source = PartitionDecision {
             cells: [[BlockSize::Block32x32; 8]; 8],
         };
-        let constrained = constrain_square_tree_to_bottom_edge(&source, 7);
+        let constrained = constrain_tree_to_bottom_edge(&source, 7);
 
         assert_eq!(constrained, source);
         assert!(constrained.is_valid_partition());
@@ -16224,7 +16239,7 @@ mod tests {
         let source = PartitionDecision {
             cells: [[BlockSize::Block16x16; 8]; 8],
         };
-        let constrained = constrain_square_tree_to_bottom_edge(&source, 7);
+        let constrained = constrain_tree_to_bottom_edge(&source, 7);
 
         for row in 0..6 {
             assert!(
@@ -16238,6 +16253,45 @@ mod tests {
                 constrained.cells[row]
                     .iter()
                     .all(|&cell| cell == BlockSize::Block16x8)
+            );
+        }
+        assert!(constrained.is_valid_partition());
+    }
+
+    #[test]
+    fn bottom_edge_constraint_preserves_signalable_horizontal_leaves() {
+        use rvp9_core::mode_decision::partition::PartitionDecision;
+
+        let source = PartitionDecision {
+            cells: [[BlockSize::Block32x16; 8]; 8],
+        };
+        let constrained = constrain_tree_to_bottom_edge(&source, 7);
+
+        assert_eq!(constrained, source);
+        assert!(constrained.is_valid_partition());
+    }
+
+    #[test]
+    fn bottom_edge_constraint_maps_unsignalable_vertical_leaves_to_horizontal() {
+        use rvp9_core::mode_decision::partition::PartitionDecision;
+
+        let source = PartitionDecision {
+            cells: [[BlockSize::Block16x32; 8]; 8],
+        };
+        let constrained = constrain_tree_to_bottom_edge(&source, 6);
+
+        for row in 0..4 {
+            assert!(
+                constrained.cells[row]
+                    .iter()
+                    .all(|&cell| cell == BlockSize::Block16x32)
+            );
+        }
+        for row in 4..8 {
+            assert!(
+                constrained.cells[row]
+                    .iter()
+                    .all(|&cell| cell == BlockSize::Block32x16)
             );
         }
         assert!(constrained.is_valid_partition());
