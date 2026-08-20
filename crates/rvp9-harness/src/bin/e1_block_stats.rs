@@ -32,6 +32,12 @@
 //!     --libvpx-ivf target\tmp\e9_q80_libvpx_minq20.ivf \
 //!     --label "fixed-Q Q80 / libvpx min-q20" \
 //!     --fps 30 --out target\tmp\e9_q80_block_stats.md
+//!
+//! # Select one component from a spatial-SVC superframe while still decoding
+//! # every component low-to-high to preserve shared reference state:
+//! cargo run --release --bin e1_block_stats -- \
+//!     --rvp9-ivf rvp9_s3.ivf --libvpx-ivf libvpx_s3.ivf \
+//!     --spatial-id 1 --out target\tmp\spatial_sl1_stats.md
 //! ```
 
 use rvp9_core::bitstream::FrameKind as WireFrameKind;
@@ -1024,6 +1030,100 @@ fn decode_and_accumulate(dec: &mut Decoder, pkt: &[u8], fs: &mut FrameStats) {
     }
 }
 
+/// Decode every component in one spatial-SVC packet while accumulating only
+/// the selected low-to-high component. Decoding the other components keeps
+/// the shared reference state valid for later access units.
+fn decode_and_accumulate_spatial_component(
+    dec: &mut Decoder,
+    pkt: &[u8],
+    spatial_id: usize,
+    fs: &mut FrameStats,
+) -> Result<(), String> {
+    let parsed = dec
+        .parse_packet(pkt)
+        .map_err(|error| format!("parse spatial packet: {error}"))?;
+    let component_count = parsed.count();
+    if spatial_id >= component_count {
+        return Err(format!(
+            "spatial packet has {component_count} components; requested SL{spatial_id}"
+        ));
+    }
+    let frames: Vec<ParsedFrame> = parsed
+        .frames()
+        .iter()
+        .map(|pf| ParsedFrame {
+            header: pf.header.clone(),
+            header_end_byte: pf.header_end_byte,
+            full_frame_data: pf.full_frame_data,
+        })
+        .collect();
+
+    for (component_index, pf) in frames.iter().enumerate() {
+        let selected = component_index == spatial_id;
+        if selected {
+            fs.bits = (pf.full_frame_data.len() as u64) * 8;
+            if let Some(tail) = &pf.header.tail {
+                fs.base_qindex = u16::from(tail.quantization.base_qindex);
+                let compressed_header_bytes = usize::from(tail.first_partition_size);
+                fs.compressed_header_bits = (compressed_header_bytes as u64) * 8;
+                let tile_data_start = pf.header_end_byte.saturating_add(compressed_header_bytes);
+                let tile_data_bytes = pf.full_frame_data.len().saturating_sub(tile_data_start);
+                fs.tile_data_bits = (tile_data_bytes as u64) * 8;
+            }
+            fs.header_bits = (pf.header_end_byte as u64) * 8;
+            fs.is_key = matches!(
+                pf.header.kind,
+                WireFrameKind::KeyFrame | WireFrameKind::IntraOnly { .. }
+            );
+        }
+
+        let shown = pf.header.show_frame
+            || matches!(pf.header.kind, WireFrameKind::ShowExistingFrame { .. });
+        match dec.decode_frame(pf) {
+            Ok(decoded) => {
+                if !selected {
+                    continue;
+                }
+                if shown && fs.is_key {
+                    let width = decoded.width() as usize;
+                    let height = decoded.height() as usize;
+                    let plane = decoded.y_plane();
+                    fs.recon_y_width = width;
+                    fs.recon_y_height = height;
+                    fs.recon_y.clear();
+                    fs.recon_y.reserve(width * height);
+                    for row in 0..height {
+                        let offset = row * plane.stride();
+                        fs.recon_y
+                            .extend_from_slice(&plane.data()[offset..offset + width]);
+                    }
+                }
+                if !matches!(pf.header.kind, WireFrameKind::ShowExistingFrame { .. }) {
+                    accumulate_coef_counts(dec.last_frame_coef_counts(), fs);
+                    let (mi_rows, mi_cols) = dec.last_frame_mi_dims();
+                    let grid = dec.last_frame_mi_grid();
+                    if mi_rows > 0 && mi_cols > 0 && grid.len() == (mi_rows * mi_cols) as usize {
+                        fs.mi_rows = mi_rows as usize;
+                        fs.mi_cols = mi_cols as usize;
+                        fs.mi_grid.extend_from_slice(grid);
+                        accumulate_grid(grid, mi_rows as usize, mi_cols as usize, fs);
+                    }
+                }
+            }
+            Err(error) => {
+                fs.decode_failed = true;
+                if std::env::var_os("E1_VERBOSE").is_some() {
+                    eprintln!(
+                        "    [decode err] component={component_index} kind={:?} err={error:?}",
+                        pf.header.kind
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 fn yuv_view<'a>(y: &'a [u8], u: &'a [u8], v: &'a [u8], w: usize) -> YuvFrameRef<'a> {
     YuvFrameRef {
         y,
@@ -1169,6 +1269,20 @@ fn decode_ivf(path: &Path) -> Result<Aggregate, String> {
             ..Default::default()
         };
         decode_and_accumulate(&mut dec, slice, &mut fs);
+        agg.push(fs);
+    }
+    Ok(agg)
+}
+
+fn decode_spatial_component_ivf(path: &Path, spatial_id: usize) -> Result<Aggregate, String> {
+    let (data, packets) =
+        read_packets(path).map_err(|e| format!("read {}: {e:?}", path.display()))?;
+    let mut dec = Decoder::new();
+    let mut agg = Aggregate::default();
+    for (frame_index, range) in packets.iter().enumerate() {
+        let mut fs = FrameStats::default();
+        decode_and_accumulate_spatial_component(&mut dec, range.slice(&data), spatial_id, &mut fs)
+            .map_err(|error| format!("{} packet {frame_index}: {error}", path.display()))?;
         agg.push(fs);
     }
     Ok(agg)
@@ -1841,6 +1955,66 @@ fn emit_per_frame(md: &mut String, label: &str, rvp9: &Aggregate, libvpx: Option
         );
     }
 
+    let _ = writeln!(md, "\n### Per-frame emitted payload census ({label})\n");
+    let _ = writeln!(
+        md,
+        "| frame | rvp9 header/compressed/tile bits | rvp9 coef zero/one/two+/eob | rvp9 eob branches | rvp9 Y TX blocks 4/8/16/32 | libvpx header/compressed/tile bits | libvpx coef zero/one/two+/eob | libvpx eob branches | libvpx Y TX blocks 4/8/16/32 |\n|---:|---:|---:|---:|---:|---:|---:|---:|---:|"
+    );
+    for i in 0..n {
+        let r = &rvp9.frames[i];
+        let (l_sections, l_coef, l_eob_branch, l_tx) = libvpx
+            .and_then(|aggregate| aggregate.frames.get(i))
+            .map_or_else(
+                || {
+                    (
+                        "n/a".to_owned(),
+                        "n/a".to_owned(),
+                        "n/a".to_owned(),
+                        "n/a".to_owned(),
+                    )
+                },
+                |l| {
+                    (
+                        format!(
+                            "{}/{}/{}",
+                            l.header_bits, l.compressed_header_bits, l.tile_data_bits
+                        ),
+                        format!(
+                            "{}/{}/{}/{}",
+                            l.coef_zero_tokens,
+                            l.coef_one_tokens,
+                            l.coef_two_plus_tokens,
+                            l.coef_eob_tokens
+                        ),
+                        l.coef_eob_branch_attempts.to_string(),
+                        format!(
+                            "{}/{}/{}/{}",
+                            l.tx_y_block_count[0],
+                            l.tx_y_block_count[1],
+                            l.tx_y_block_count[2],
+                            l.tx_y_block_count[3]
+                        ),
+                    )
+                },
+            );
+        let _ = writeln!(
+            md,
+            "| {i} | {}/{}/{} | {}/{}/{}/{} | {} | {}/{}/{}/{} | {l_sections} | {l_coef} | {l_eob_branch} | {l_tx} |",
+            r.header_bits,
+            r.compressed_header_bits,
+            r.tile_data_bits,
+            r.coef_zero_tokens,
+            r.coef_one_tokens,
+            r.coef_two_plus_tokens,
+            r.coef_eob_tokens,
+            r.coef_eob_branch_attempts,
+            r.tx_y_block_count[0],
+            r.tx_y_block_count[1],
+            r.tx_y_block_count[2],
+            r.tx_y_block_count[3],
+        );
+    }
+
     let _ = writeln!(md, "\n### Per-frame partition area % ({label})\n");
     let _ = writeln!(
         md,
@@ -1923,6 +2097,11 @@ fn report_frame_count(
 fn run_ivf_mode(argv: &[String]) -> Option<()> {
     let rvp9_ivf = arg(argv, "--rvp9-ivf").map(PathBuf::from)?;
     let libvpx_ivf = arg(argv, "--libvpx-ivf").map(PathBuf::from);
+    let spatial_id = arg(argv, "--spatial-id").map(|value| {
+        value
+            .parse::<usize>()
+            .expect("--spatial-id must be an unsigned integer")
+    });
     let out = PathBuf::from(
         arg(argv, "--out").unwrap_or_else(|| r"target\tmp\e1_ivf_block_stats.md".into()),
     );
@@ -1943,15 +2122,25 @@ fn run_ivf_mode(argv: &[String]) -> Option<()> {
             .to_string()
     });
 
-    let rvp9 = decode_ivf(&rvp9_ivf).expect("decode rvp9 IVF");
+    let decode = |path: &Path| match spatial_id {
+        Some(spatial_id) => decode_spatial_component_ivf(path, spatial_id),
+        None => decode_ivf(path),
+    };
+    let rvp9 = decode(&rvp9_ivf).expect("decode rvp9 IVF");
     let libvpx = libvpx_ivf
         .as_deref()
-        .map(|path| decode_ivf(path).expect("decode libvpx IVF"));
+        .map(|path| decode(path).expect("decode libvpx IVF"));
     let n_frames = report_frame_count(&rvp9, libvpx.as_ref(), requested_frames)
         .expect("IVF frame count mismatch");
 
     let mut md = String::new();
     let _ = writeln!(md, "# E1 — rvp9 vs libvpx IVF block-stat comparison\n");
+    if let Some(spatial_id) = spatial_id {
+        let _ = writeln!(
+            md,
+            "Spatial component: `SL{spatial_id}` only; every packet component was still decoded low-to-high to preserve shared reference state.\n"
+        );
+    }
     let _ = writeln!(
         md,
         "rvp9 IVF: `{}`\n\nlibvpx IVF: `{}`\n\nBOTH bitstreams decoded through the SAME rvp9 decoder (oracle); all per-block stats use identical definitions.\n",
@@ -2130,6 +2319,70 @@ mod tests {
             interp_filter: rvp9_core::bitstream::InterpFilter::EightTap,
         };
         mi
+    }
+
+    #[test]
+    fn spatial_component_decode_reports_only_the_selected_layer() {
+        use rvp9_encoder::{
+            EncoderConfig, SpatialKeyframeEncoder,
+            svc::{InterLayerPred, SpatialSvcConfig},
+        };
+
+        let width = 128usize;
+        let height = 64usize;
+        let y = vec![96u8; width * height];
+        let u = vec![112u8; width * height / 4];
+        let v = vec![144u8; width * height / 4];
+        let mut template = EncoderConfig::new(width as u32, height as u32);
+        template.target_bitrate_bps = 100_000;
+        template.speed = 8;
+        let mut encoder = SpatialKeyframeEncoder::new(
+            template,
+            SpatialSvcConfig {
+                number_spatial_layers: 2,
+                inter_layer_pred: InterLayerPred::On,
+            },
+        )
+        .unwrap();
+        let access_unit = encoder
+            .encode_keyframe_access_unit(&YuvFrameRef {
+                y: &y,
+                u: &u,
+                v: &v,
+                y_stride: width,
+                u_stride: width / 2,
+                v_stride: width / 2,
+            })
+            .unwrap();
+
+        let mut base = FrameStats::default();
+        decode_and_accumulate_spatial_component(
+            &mut Decoder::new(),
+            &access_unit.data,
+            0,
+            &mut base,
+        )
+        .unwrap();
+        let mut enhancement = FrameStats::default();
+        decode_and_accumulate_spatial_component(
+            &mut Decoder::new(),
+            &access_unit.data,
+            1,
+            &mut enhancement,
+        )
+        .unwrap();
+
+        assert_eq!(base.bits, (access_unit.layers[0].byte_len * 8) as u64);
+        assert_eq!(
+            enhancement.bits,
+            (access_unit.layers[1].byte_len * 8) as u64
+        );
+        assert_eq!((base.mi_cols, base.mi_rows), (8, 4));
+        assert_eq!((enhancement.mi_cols, enhancement.mi_rows), (16, 8));
+        assert_eq!(base.total_area8, 32);
+        assert_eq!(enhancement.total_area8, 128);
+        assert!(base.is_key && enhancement.is_key);
+        assert!(!base.decode_failed && !enhancement.decode_failed);
     }
 
     #[test]
@@ -2371,15 +2624,33 @@ mod tests {
     fn per_frame_report_includes_partition_area_for_both_encoders() {
         let mut rvp9_frame = FrameStats {
             total_area8: 64,
+            header_bits: 8,
+            compressed_header_bits: 16,
+            tile_data_bits: 24,
+            coef_zero_tokens: 1,
+            coef_one_tokens: 2,
+            coef_two_plus_tokens: 3,
+            coef_eob_tokens: 4,
+            coef_eob_branch_attempts: 5,
             ..Default::default()
         };
         rvp9_frame.block_area8[BlockSize::Block8x8.idx()] = 16;
         rvp9_frame.block_area8[BlockSize::Block16x16.idx()] = 48;
+        rvp9_frame.tx_y_block_count = [6, 7, 8, 9];
         let mut libvpx_frame = FrameStats {
             total_area8: 64,
+            header_bits: 10,
+            compressed_header_bits: 20,
+            tile_data_bits: 30,
+            coef_zero_tokens: 11,
+            coef_one_tokens: 12,
+            coef_two_plus_tokens: 13,
+            coef_eob_tokens: 14,
+            coef_eob_branch_attempts: 15,
             ..Default::default()
         };
         libvpx_frame.block_area8[BlockSize::Block32x32.idx()] = 64;
+        libvpx_frame.tx_y_block_count = [16, 17, 18, 19];
 
         let rvp9 = Aggregate {
             frames: vec![rvp9_frame],
@@ -2392,6 +2663,10 @@ mod tests {
 
         assert!(report.contains("### Per-frame partition area % (test)"));
         assert!(report.contains("| 0 | 25.0 | 0.0 | 75.0 | 0.0 | 0.0 | 100.0 | 0.0 | 0.0 |"));
+        assert!(report.contains("### Per-frame emitted payload census (test)"));
+        assert!(report.contains(
+            "| 0 | 8/16/24 | 1/2/3/4 | 5 | 6/7/8/9 | 10/20/30 | 11/12/13/14 | 15 | 16/17/18/19 |"
+        ));
     }
 
     #[test]
