@@ -27,7 +27,17 @@
 //!       --end-usage     cbr --tune-content default \
 //!       [--aq-mode 3] [--noise-sensitivity 1] \
 //!       [--anchor-arg VALUE]... [--test-arg VALUE]... \
+//!       [--work-dir      run/artifacts] \
 //!       [--csv           bdrate.csv]
+//!
+//! With `--work-dir <dir>`, every IVF this run encodes and every Y4M it
+//! decodes is written beneath `<dir>` under a deterministic
+//! `<role>_<bitrate>k` name (`anchor_1500k.ivf`, `anchor_1500k.dec.y4m`, …)
+//! and is retained after the run, so a caller can cross-decode the exact
+//! bitstreams that were measured. The directory is created if missing;
+//! nothing already in it is read or removed. Without the flag the artifacts
+//! land in the system temp directory under a process-unique prefix, so
+//! concurrent runs cannot overwrite each other's encodes.
 //!
 //! With `--csv <path>`, also emits a machine-readable CSV with the schema
 //!   role,target_kbps,measured_kbps,psnr_db
@@ -56,6 +66,9 @@ struct Args {
     anchor_args: Vec<String>,
     test_args: Vec<String>,
     limit: Option<u32>,
+    /// Optional caller-owned directory that retains this run's encoded IVF
+    /// and decoded Y4M artifacts.
+    work_dir: Option<PathBuf>,
     /// Optional CSV output path for CI ingestion.
     csv: Option<PathBuf>,
 }
@@ -130,8 +143,101 @@ fn parse_args_from(argv: &[String]) -> Args {
         anchor_args: get_all("--anchor-arg"),
         test_args: get_all("--test-arg"),
         limit: get("--limit").map(|s| s.parse().expect("--limit u32")),
+        work_dir: get("--work-dir").map(PathBuf::from),
         csv: get("--csv").map(PathBuf::from),
     }
+}
+
+/// Where this run writes its generated IVF and decoded Y4M files, and how it
+/// names them.
+///
+/// With `--work-dir` the caller owns `dir`, the prefix is empty, and every
+/// artifact keeps a deterministic `<role>_<bitrate>k` name so the files stay
+/// identifiable after the run. Without it `dir` is the system temp directory
+/// and the prefix carries this process's id, so two concurrent runs cannot
+/// encode over each other.
+#[derive(Debug)]
+struct Artifacts {
+    dir: PathBuf,
+    prefix: String,
+}
+
+impl Artifacts {
+    /// Path of the IVF for one role (`anchor` / `test`) at one target bitrate.
+    fn ivf(&self, role: &str, bitrate_kbps: u32) -> PathBuf {
+        let name = format!("{}{role}_{bitrate_kbps}k.ivf", self.prefix);
+        self.dir.join(name)
+    }
+}
+
+/// Resolve the artifact location, creating a requested `--work-dir` if it is
+/// absent. Errors carry the directory so a failure names what to fix.
+fn prepare_artifacts(work_dir: Option<&Path>) -> Result<Artifacts, String> {
+    let Some(dir) = work_dir else {
+        return Ok(Artifacts {
+            dir: std::env::temp_dir(),
+            prefix: format!("rvp9_bdrate_{}_", std::process::id()),
+        });
+    };
+    std::fs::create_dir_all(dir)
+        .map_err(|error| format!("--work-dir {}: {error}", dir.display()))?;
+    check_writable(dir)?;
+    Ok(Artifacts {
+        dir: dir.to_path_buf(),
+        prefix: String::new(),
+    })
+}
+
+/// Reject an unwritable work directory up front, rather than failing deep
+/// inside the first encoder invocation minutes later.
+fn check_writable(dir: &Path) -> Result<(), String> {
+    let probe = dir.join(format!(".rvp9-bdrate-probe-{}", std::process::id()));
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&probe)
+    {
+        // Only ever remove the probe this process just created. Treat a
+        // cleanup failure as an unusable directory rather than leaving a
+        // hidden artifact in caller-owned storage.
+        Ok(file) => {
+            drop(file);
+            std::fs::remove_file(&probe).map_err(|error| {
+                format!(
+                    "--work-dir {} write probe cleanup failed: {error}",
+                    dir.display()
+                )
+            })
+        }
+        Err(error) => Err(format!(
+            "--work-dir {} is not writable: {error}",
+            dir.display()
+        )),
+    }
+}
+
+/// Decoded Y4M for `ivf`, kept beside it so `--work-dir` holds the whole set.
+fn decoded_y4m_path(ivf: &Path) -> PathBuf {
+    let stem = ivf
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("rvp9_bdrate_decode");
+    let name = format!("{stem}.dec.y4m");
+    match ivf.parent() {
+        Some(dir) => dir.join(name),
+        None => PathBuf::from(name),
+    }
+}
+
+/// Refuse to overwrite artifacts retained by an earlier or concurrent run.
+fn reject_existing_artifacts(paths: &[&Path]) -> Result<(), String> {
+    if let Some(path) = paths.iter().find(|path| path.exists()) {
+        return Err(format!(
+            "artifact {} already exists; choose an empty --work-dir",
+            path.display()
+        ));
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -192,22 +298,21 @@ fn encoder_command(
     command
 }
 
-/// Encode `input` with `encoder` at the given target bitrate. Returns the
-/// path to the resulting IVF.
+/// Encode `input` with `encoder` at the given target bitrate, writing the IVF
+/// to `out`. The file is left in place for the caller to measure and reuse.
 fn encode(
     encoder: &Path,
     input: &Path,
     cpu_used: u32,
     bitrate_kbps: u32,
-    tag: &str,
+    out: &Path,
     config: &EncodeConfig<'_>,
     extra_args: &[String],
-) -> PathBuf {
-    let out = std::env::temp_dir().join(format!("rvp9_bdrate_{tag}_{bitrate_kbps}k.ivf"));
+) {
     let status = encoder_command(
         encoder,
         input,
-        &out,
+        out,
         cpu_used,
         bitrate_kbps,
         config,
@@ -220,18 +325,13 @@ fn encode(
         "encoder {} failed at {bitrate_kbps}k",
         encoder.display()
     );
-    out
 }
 
-/// Decode `ivf` with `decoder` (writing a tmp Y4M), then compute the
+/// Decode `ivf` with `decoder` (writing the Y4M beside it), then compute the
 /// mean luma PSNR vs `source_y4m`. Returns `NaN` on any failure so the
 /// caller's NaN-guard can detect harness problems without aborting.
 fn decode_and_psnr(decoder: &Path, ivf: &Path, source_y4m: &Path) -> f64 {
-    let stem = ivf
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("rvp9_bdrate_decode");
-    let y4m_out = std::env::temp_dir().join(format!("{stem}.dec.y4m"));
+    let y4m_out = decoded_y4m_path(ivf);
     let status = Command::new(decoder)
         .arg("-o")
         .arg(&y4m_out)
@@ -370,11 +470,20 @@ fn polyfit3(pts: &[(f64, f64)]) -> [f64; 4] {
 fn main() -> ExitCode {
     let args = parse_args();
 
+    let artifacts = match prepare_artifacts(args.work_dir.as_deref()) {
+        Ok(artifacts) => artifacts,
+        Err(error) => {
+            eprintln!("error: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+
     println!("=== BD-rate sweep ===");
     println!("anchor: {}", args.anchor_encoder.display());
     println!("test:   {}", args.test_encoder.display());
     println!("input:  {}", args.input.display());
     println!("reference input: {}", args.reference_input.display());
+    println!("artifacts: {}", artifacts.dir.display());
     println!(
         "config: --rt --cpu-used={} --end-usage={} --fps={} --threads={} --tile-columns={} --lag-in-frames={} --tune-content={}{}{}{}",
         args.cpu_used,
@@ -423,21 +532,29 @@ fn main() -> ExitCode {
     let mut test_rd: Vec<RdPoint> = Vec::new();
 
     for &br in &args.bitrates_kbps {
-        let a_ivf = encode(
+        let a_ivf = artifacts.ivf("anchor", br);
+        let t_ivf = artifacts.ivf("test", br);
+        let a_y4m = decoded_y4m_path(&a_ivf);
+        let t_y4m = decoded_y4m_path(&t_ivf);
+        if let Err(error) = reject_existing_artifacts(&[&a_ivf, &t_ivf, &a_y4m, &t_y4m]) {
+            eprintln!("error: {error}");
+            return ExitCode::FAILURE;
+        }
+        encode(
             &args.anchor_encoder,
             &args.input,
             args.cpu_used,
             br,
-            "anchor",
+            &a_ivf,
             &encode_config,
             &args.anchor_args,
         );
-        let t_ivf = encode(
+        encode(
             &args.test_encoder,
             &args.input,
             args.cpu_used,
             br,
-            "test",
+            &t_ivf,
             &encode_config,
             &args.test_args,
         );
@@ -530,6 +647,128 @@ fn write_csv(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Per-test scratch root under the OS temp dir, unique per process so
+    /// concurrent runs of this suite cannot collide.
+    fn scratch_dir(tag: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("rvp9-bdrate-{tag}-{}", std::process::id()))
+    }
+
+    fn minimal_argv() -> Vec<String> {
+        [
+            "bdrate",
+            "--anchor-encoder",
+            "anchor",
+            "--test-encoder",
+            "test",
+            "--decoder",
+            "decoder",
+            "--input",
+            "input.y4m",
+        ]
+        .map(str::to_owned)
+        .to_vec()
+    }
+
+    #[test]
+    fn parser_defaults_the_work_directory_to_none_and_accepts_an_override() {
+        assert_eq!(parse_args_from(&minimal_argv()).work_dir, None);
+
+        let mut argv = minimal_argv();
+        argv.extend(["--work-dir".to_owned(), "run/artifacts".to_owned()]);
+
+        let args = parse_args_from(&argv);
+
+        assert_eq!(args.work_dir, Some(PathBuf::from("run/artifacts")));
+        assert_eq!(args.csv, None);
+        assert_eq!(args.input, PathBuf::from("input.y4m"));
+    }
+
+    #[test]
+    fn work_directory_artifacts_are_created_deterministic_and_collision_free() {
+        let root = scratch_dir("work-dir-artifacts");
+        let dir = root.join("nested");
+        assert!(!root.exists(), "unexpected stale test directory");
+
+        let artifacts = prepare_artifacts(Some(&dir)).unwrap();
+
+        assert!(dir.is_dir(), "--work-dir was not created");
+        let anchor_500 = artifacts.ivf("anchor", 500);
+        assert_eq!(anchor_500, dir.join("anchor_500k.ivf"));
+        assert_eq!(artifacts.ivf("test", 1500), dir.join("test_1500k.ivf"));
+        // Role and bitrate both have to reach the name, or two encodes of the
+        // sweep would overwrite one another.
+        assert_ne!(anchor_500, artifacts.ivf("test", 500));
+        assert_ne!(anchor_500, artifacts.ivf("anchor", 1500));
+        assert_eq!(
+            artifacts.ivf("anchor", 500),
+            anchor_500,
+            "not deterministic"
+        );
+        assert_eq!(
+            decoded_y4m_path(&anchor_500),
+            dir.join("anchor_500k.dec.y4m")
+        );
+        assert_eq!(
+            std::fs::read_dir(&dir).unwrap().count(),
+            0,
+            "preparing the work dir left a file behind"
+        );
+
+        std::fs::remove_dir(&dir).unwrap();
+        std::fs::remove_dir(&root).unwrap();
+    }
+
+    #[test]
+    fn default_artifacts_stay_in_the_temp_directory_under_a_process_unique_prefix() {
+        let artifacts = prepare_artifacts(None).unwrap();
+
+        let anchor_500 = artifacts.ivf("anchor", 500);
+        assert_eq!(anchor_500.parent().unwrap(), std::env::temp_dir());
+        let name = anchor_500.file_name().unwrap().to_str().unwrap();
+        assert_eq!(
+            name,
+            format!("rvp9_bdrate_{}_anchor_500k.ivf", std::process::id())
+        );
+        assert_ne!(anchor_500, artifacts.ivf("test", 500));
+        assert_ne!(anchor_500, artifacts.ivf("anchor", 1500));
+        assert_eq!(
+            decoded_y4m_path(&anchor_500).parent().unwrap(),
+            std::env::temp_dir()
+        );
+    }
+
+    #[test]
+    fn prepare_artifacts_reports_an_unusable_work_directory() {
+        let path = scratch_dir("unusable-work-dir");
+        assert!(!path.exists(), "unexpected stale test path");
+        std::fs::write(&path, b"a file, not a directory").unwrap();
+
+        let error = prepare_artifacts(Some(&path)).unwrap_err();
+
+        assert!(error.starts_with("--work-dir "), "{error}");
+        assert!(error.contains(&path.display().to_string()), "{error}");
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn retained_artifacts_are_never_overwritten() {
+        let dir = scratch_dir("existing-artifact");
+        assert!(!dir.exists(), "unexpected stale test directory");
+        std::fs::create_dir(&dir).unwrap();
+        let existing = dir.join("anchor_500k.ivf");
+        std::fs::write(&existing, b"retained").unwrap();
+        let unused = dir.join("test_500k.ivf");
+
+        let error = reject_existing_artifacts(&[&existing, &unused]).unwrap_err();
+
+        assert!(error.contains(&existing.display().to_string()), "{error}");
+        assert!(error.contains("empty --work-dir"), "{error}");
+        assert_eq!(std::fs::read(&existing).unwrap(), b"retained");
+        std::fs::remove_file(&existing).unwrap();
+        std::fs::remove_dir(&dir).unwrap();
+    }
 
     #[test]
     fn parser_preserves_repeated_role_specific_arguments() {
