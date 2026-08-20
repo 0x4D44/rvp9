@@ -149,6 +149,14 @@ fn sibling_vpxdec_path(vpxenc: &Path) -> PathBuf {
     vpxenc.with_file_name(filename)
 }
 
+fn libvpx_decoder_path(vpxenc: &Path) -> PathBuf {
+    libvpx_decoder_path_from(std::env::var_os("RVP9_VPXDEC").map(PathBuf::from), vpxenc)
+}
+
+fn libvpx_decoder_path_from(configured: Option<PathBuf>, vpxenc: &Path) -> PathBuf {
+    configured.unwrap_or_else(|| sibling_vpxdec_path(vpxenc))
+}
+
 #[test]
 fn sibling_vpxdec_path_matches_vpxenc_suffix() {
     assert_eq!(
@@ -158,6 +166,18 @@ fn sibling_vpxdec_path_matches_vpxenc_suffix() {
     assert_eq!(
         sibling_vpxdec_path(Path::new("/tmp/vpxenc.exe")),
         PathBuf::from("/tmp/vpxdec.exe")
+    );
+}
+
+#[test]
+fn configured_vpxdec_path_is_authoritative() {
+    let configured = PathBuf::from("/configured/pinned/vpxdec");
+    assert_eq!(
+        libvpx_decoder_path_from(
+            Some(configured.clone()),
+            Path::new("/different/tree/vpxenc"),
+        ),
+        configured
     );
 }
 
@@ -226,6 +246,10 @@ struct RdPoint {
     bitrate_kbps: f64,
     /// Average Y-plane PSNR over the decoded sequence, dB.
     psnr_db: f64,
+    /// Number of decoded mi-cells assigned to a non-base AQ segment.
+    boosted_mi_cells: usize,
+    /// Number of decoded frames containing at least one boosted mi-cell.
+    aq_active_frames: usize,
 }
 
 /// Drive rvp9 `StreamEncoder` over a multi-frame source at a given
@@ -271,6 +295,8 @@ fn measure_rvp9_point(
 
     let mut total_bits: u64 = 0;
     let mut psnr_sum = 0.0;
+    let mut boosted_mi_cells = 0usize;
+    let mut aq_active_frames = 0usize;
     let n = frames.len();
 
     for (y, u, v) in frames.iter() {
@@ -282,6 +308,14 @@ fn measure_rvp9_point(
         let parsed = decode_packet(&mut dec, &pkt.data);
         assert_eq!(parsed.len(), 1);
         let buf = dec.decode_frame(&parsed[0]).expect("decode_frame");
+
+        let frame_boosted_mi_cells = dec
+            .last_frame_mi_grid()
+            .iter()
+            .filter(|cell| cell.is_some_and(|cell| cell.segment_id != 0))
+            .count();
+        boosted_mi_cells += frame_boosted_mi_cells;
+        aq_active_frames += usize::from(frame_boosted_mi_cells != 0);
 
         let yp = buf.y_plane();
         let mut decoded_y = vec![0u8; (w * h) as usize];
@@ -298,6 +332,8 @@ fn measure_rvp9_point(
     RdPoint {
         bitrate_kbps,
         psnr_db: psnr_sum / n as f64,
+        boosted_mi_cells,
+        aq_active_frames,
     }
 }
 
@@ -405,7 +441,7 @@ fn measure_libvpx_point(
     // But for the libvpx-leg of the BD-rate curve we should decode WITH
     // libvpx-stock too (so any decoder asymmetry doesn't pollute the
     // comparison). Use vpxdec at the same path tree.
-    let vpxdec = sibling_vpxdec_path(vpxenc);
+    let vpxdec = libvpx_decoder_path(vpxenc);
     if !vpxdec.is_file() {
         eprintln!(
             "    [libvpx skipped] vpxdec missing at {}",
@@ -454,6 +490,8 @@ fn measure_libvpx_point(
     Some(RdPoint {
         bitrate_kbps: measured_bitrate_kbps,
         psnr_db: psnr_sum / frames.len() as f64,
+        boosted_mi_cells: 0,
+        aq_active_frames: 0,
     })
 }
 
@@ -960,8 +998,10 @@ fn rvp9_curve_sweep(
     target_bitrates_bps: &[u32],
     aq_mode: AqMode,
     frames: &[YuvFrameBuf],
-) -> Vec<(f64, f64)> {
+) -> (Vec<(f64, f64)>, usize, usize) {
     let mut curve = Vec::with_capacity(target_bitrates_bps.len());
+    let mut boosted_mi_cells = 0usize;
+    let mut aq_active_frames = 0usize;
     for &tb in target_bitrates_bps {
         let p = measure_rvp9_point(w, h, framerate, tb, aq_mode, frames);
         eprintln!(
@@ -971,8 +1011,35 @@ fn rvp9_curve_sweep(
             p.psnr_db,
         );
         curve.push((p.bitrate_kbps, p.psnr_db));
+        boosted_mi_cells += p.boosted_mi_cells;
+        aq_active_frames += p.aq_active_frames;
     }
-    curve
+    (curve, boosted_mi_cells, aq_active_frames)
+}
+
+#[test]
+fn aq_measurement_reports_decoded_vbr_activation() {
+    const W: usize = 128;
+    const H: usize = 128;
+    let frames: Vec<YuvFrameBuf> = (0..20)
+        .map(|frame| textured_foreground(W, H, frame))
+        .collect();
+
+    let off = measure_rvp9_point(W as u32, H as u32, 30.0, 500_000, AqMode::Off, &frames);
+    assert_eq!((off.boosted_mi_cells, off.aq_active_frames), (0, 0));
+
+    let aq = measure_rvp9_point(
+        W as u32,
+        H as u32,
+        30.0,
+        500_000,
+        AqMode::CyclicRefresh,
+        &frames,
+    );
+    assert!(
+        aq.boosted_mi_cells > 0 && aq.aq_active_frames > 0,
+        "VBR/CPU7 cyclic refresh emitted no decoded boosted cells: {aq:?}",
+    );
 }
 
 /// Build a curve of RD points by sweeping `target_bitrates_bps` on the
@@ -1028,7 +1095,7 @@ fn run_stage4b_aq_gate(
     // Curves 1 & 2 — rvp9 AQ off vs cyclic refresh.
     // -------------------------------------------------------------
     eprintln!("Curve 1: rvp9 AqMode::Off");
-    let rvp9_off = rvp9_curve_sweep(
+    let (rvp9_off, off_boosted_mi_cells, off_active_frames) = rvp9_curve_sweep(
         "rvp9-off ",
         w,
         h,
@@ -1039,7 +1106,7 @@ fn run_stage4b_aq_gate(
     );
 
     eprintln!("Curve 2: rvp9 AqMode::CyclicRefresh");
-    let rvp9_aq = rvp9_curve_sweep(
+    let (rvp9_aq, aq_boosted_mi_cells, aq_active_frames) = rvp9_curve_sweep(
         "rvp9-aq  ",
         w,
         h,
@@ -1047,6 +1114,18 @@ fn run_stage4b_aq_gate(
         target_bitrates_bps,
         AqMode::CyclicRefresh,
         frames,
+    );
+    assert_eq!(
+        (off_boosted_mi_cells, off_active_frames),
+        (0, 0),
+        "AQ-off emitted non-base segmentation cells",
+    );
+    assert!(
+        aq_boosted_mi_cells > 0 && aq_active_frames > 0,
+        "cyclic-refresh AQ emitted no boosted mi-cells across the measured curve",
+    );
+    eprintln!(
+        "AQ activation: boosted_mi_cells={aq_boosted_mi_cells} active_frames={aq_active_frames}"
     );
 
     // -------------------------------------------------------------

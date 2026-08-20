@@ -2,9 +2,16 @@
 # Declare the complete non-spatial v1 production acceptance matrix for the
 # rvp9 encoder from one checked-in orchestrator.
 #
-# Scope: this file is the *matrix definition* plus its two dry oracles. The
-# quality, relative-speed, and absolute-latency execution phases are NOT
-# implemented in this unit; an ordinary invocation fails loudly and says so.
+# Scope: this file is the *matrix definition*, its two dry oracles, and the
+# fresh-run QUALITY execution phase. The relative-speed and absolute-latency
+# execution phases are NOT implemented in this unit; asking for them (or for
+# `--phase all`) fails loudly and says so.
+#
+# Every real run is fresh. --work-dir must be outside the repository, its
+# parent must exist, and the directory itself must be absent or empty. The run
+# refuses to reuse anything already there; there is no resume, and nothing is
+# ever deleted to make room. One whole-directory check covers every phase
+# artifact, so no phase re-checks its own subdirectory.
 #
 # Spatial SVC is deliberately absent. It is qualified separately and on its
 # own experimental terms by scripts/qualify-spatial-svc.sh; no spatial row,
@@ -46,17 +53,44 @@
 #            important clip/layer may show an unexplained regression beyond
 #            +2.0%.
 #   aq3      additionally the existing AQ gain-parity oracle: both AQ gains
-#            finite and negative, and |gain_rvp9 - gain_libvpx| <= 0.3
-#            percentage points. That oracle is a separate required check,
-#            not a second BD-rate curve.
+#            finite, |gain_rvp9 - gain_libvpx| <= 0.3 percentage
+#            points, and explicit evidence that cyclic refresh actually
+#            engaged. That oracle is a separate required check, not a second
+#            BD-rate curve.
+#
+#            The real-content oracle reports the decoded count of non-base
+#            segmentation cells and active frames. Both counts must be
+#            non-zero, so an AQ-labelled no-op cannot pass by omission.
 #   speed    <= 1.05x pinned vpxenc wall time, host load1 <= 0.75, one warmup
 #            plus five measured pairs over two reversed rotations.
 #   latency  median p50 and median p99 inside the per-target frame budgets
 #            over five measured runs; AQ3 rows additionally cap max frame
 #            time at 66 ms.
 #
+# Cross-decoder checking is inseparable from the quality phase: every retained
+# rvp9 candidate stream must decode to an identical, non-empty I420 SHA-256
+# under rvp9dec and the pinned vpxdec, and must decode successfully under
+# ffmpeg. ffmpeg is a decode-success oracle only -- no byte identity is claimed
+# for it. A decoder failure or mismatch aborts the phase immediately; a quality
+# number that misses its ceiling does not, so the evidence stays complete.
+#
+# Disk: the phase deletes a row's generated Y4M as soon as that row's hashes
+# are recorded, so the decoded working set peaks at one row (roughly 2.5 GB for
+# a 1080p60 single-layer row and roughly 4.5 GB for a 1080p60 three-layer row).
+# Retained IVF, CSV, logs, and caller inputs are never deleted.
+#
+# The script builds nothing. It validates and hashes the exact binaries it is
+# handed, and it requires the PGO manifest that produced the encoder under test
+# so the acceptance artifact cannot silently drift from the source tree.
+#
+# A real run must name its phase explicitly. There is no default phase: a
+# release qualification states which contract it is measuring, and an operator
+# who omits it gets a refusal rather than a silently narrowed run.
+#
 #   scripts/qualify-production-encoder.sh --print-plan   # dry oracle, no I/O
 #   scripts/qualify-production-encoder.sh --self-test    # checks it, no I/O
+#   scripts/qualify-production-encoder.sh --work-dir DIR --phase quality \
+#       --pgo-manifest PATH [path options]
 #
 # Bash 3.2 compatible (macOS system bash): no associative arrays, no mapfile,
 # no Bash 4 syntax.
@@ -116,6 +150,110 @@ readonly EXPECTED_LATENCY_MEASURED_RUNS=1000
 readonly EXPECTED_REQUIRED_ORACLES=1
 
 # ---------------------------------------------------------------------------
+# Execution constants
+#
+# None of these change the matrix or a gate; they describe how the quality
+# phase runs the matrix it was already given.
+# ---------------------------------------------------------------------------
+
+# SHA-256 of the empty byte string; a decoder that emits nothing must not pass.
+readonly EMPTY_SHA256="e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+
+# Deterministic denoiser exercise. Applied after the scale/fps preprocessing so
+# the noisy input is pixel-aligned with the clean PSNR reference. The seed is
+# fixed, so the same clean input always yields the same noisy input.
+readonly NOISE_FILTER="noise=all_seed=48917:alls=12:allf=t+u"
+
+# Wall-clock bounds for every child process, in seconds. Sized for the slowest
+# 1080p60 three-layer work on a quiet host, with generous headroom.
+readonly TOOL_VERSION_TIMEOUT=60
+readonly PREPROCESS_TIMEOUT=1800
+readonly QUALITY_ROW_TIMEOUT=7200
+readonly DECODE_TIMEOUT=900
+readonly AQ_ORACLE_TIMEOUT=7200
+
+# The authoritative Stage 4b AQ gain-parity oracle, named exactly once so the
+# executor and the self-test cannot drift apart.
+readonly AQ_ORACLE_PACKAGE="rvp9-encoder"
+readonly AQ_ORACLE_TEST_TARGET="quality_gate"
+readonly AQ_ORACLE_TEST_NAME="bdrate_gate_stage4b_aq_realcontent"
+readonly AQ_ORACLE_CORPUS_ENV="RVP9_CORPUS_DIR"
+readonly AQ_ORACLE_VPXENC_ENV="RVP9_VPXENC"
+readonly AQ_ORACLE_VPXDEC_ENV="RVP9_VPXDEC"
+readonly AQ_ORACLE_GATE_LINE="Stage 4b literal gate (|delta| <= 0.3 %): PASS"
+
+# The oracle resolves its clip through RVP9_CORPUS_DIR, so this file must exist
+# under --source-dir. Without it the test prints "[skip] foreman_cif.y4m not
+# found" and returns success, which is exactly the pass-by-omission a release
+# gate must never accept -- so the run validates and hashes the clip up front.
+readonly AQ_ORACLE_SOURCE_FILE="foreman_cif.y4m"
+
+# Exact canonical source identities used by every accepted run. Basenames
+# alone are not evidence: a truncated or substituted Y4M can still encode and
+# yield finite curves.
+corpus_expected_sha256() {
+    case "$1" in
+        in_to_tree_420_720p50.y4m)
+            printf '81166517a3054c789923535b5da23fbbb9bbd7fd4c28dac83918ac351e121e74\n'
+            ;;
+        ducks_take_off_420_720p50.y4m)
+            printf '0e09aa923ce72e2f6d1c978c3c1cc8dd9588d2ede819081f040213e361970efc\n'
+            ;;
+        old_town_cross_420_720p50.y4m)
+            printf '0fbc2ec0c552ad693528b2e49409c7449880b9230055a7696346473d1aaf4123\n'
+            ;;
+        foreman_cif.y4m)
+            printf 'b0e3c35eff9fe1da91521a02eb9f0e3ef4bc5aec341ecef1567cd87f1711267b\n'
+            ;;
+        *) return 1 ;;
+    esac
+}
+
+corpus_expected_header() {
+    case "$1" in
+        in_to_tree_420_720p50.y4m|ducks_take_off_420_720p50.y4m|old_town_cross_420_720p50.y4m)
+            printf 'YUV4MPEG2 W1280 H720 F50:1 Ip A1:1\n'
+            ;;
+        foreman_cif.y4m)
+            printf 'YUV4MPEG2 W352 H288 F30000:1001 Ip A128:117\n'
+            ;;
+        *) return 1 ;;
+    esac
+}
+
+# A finite negative AQ gain on both sides shows AQ changed the rate-distortion
+# outcome; it does not show that cyclic refresh actually engaged in the encoder
+# under test. Those are different claims, and only the second one is what
+# "aq3 is qualified" means.
+#
+# crates/rvp9-encoder/tests/quality_gate.rs decodes every rvp9 point in the
+# exact VBR/CPU7/Foreman curve. It counts decoded mi-cells with a non-base
+# segment id and the frames containing them, then emits this exact shape:
+#
+#     AQ activation: boosted_mi_cells=N active_frames=M
+#
+# Both N and M must be positive. Missing, duplicate, malformed, or zero-valued
+# evidence fails closed.
+readonly AQ_ORACLE_ACTIVATION_PREFIX="AQ activation:"
+
+# The PGO manifest lines a real run reads. The binary line is what ties the
+# manifest to the file actually under test; without it the provenance chain
+# proves a commit but not which binary came out of it.
+readonly PGO_MANIFEST_COMMIT_KEY="git_commit"
+readonly PGO_MANIFEST_BINARY_KEY="optimized_binary"
+readonly PGO_MANIFEST_BINARY_SHA_KEY="optimized_binary_sha256"
+
+# Encoder-shipped paths. The PGO binary was built from one source commit; if
+# any of these moved between that commit and HEAD, the binary under test is not
+# the binary this tree describes. Test, doc, and bench-script changes after the
+# PGO source commit are deliberately allowed.
+readonly PGO_GUARDED_PATHS="crates/rvp9-core/src crates/rvp9-core/Cargo.toml \
+crates/rvp9-encoder/src crates/rvp9-encoder/Cargo.toml \
+crates/rvp9-cli/src crates/rvp9-cli/Cargo.toml \
+crates/rvp9-io/src crates/rvp9-io/Cargo.toml \
+Cargo.toml Cargo.lock .cargo/config.toml"
+
+# ---------------------------------------------------------------------------
 # Matrix tables
 #
 # Every consumer reads the matrix through these functions and the three row
@@ -157,6 +295,20 @@ source_clip_file() {
         old_town_cross) printf 'old_town_cross_420_720p50.y4m\n' ;;
         *) printf 'unknown clip: %s\n' "$1" >&2; return 1 ;;
     esac
+}
+
+# manifest_key|filename -- every corpus file a real run must find non-empty
+# under --source-dir, and the manifest key its SHA-256 is recorded under.
+# Validation and the evidence manifest both read this one list, so a required
+# input cannot be checked without being hashed or hashed without being checked.
+# The three 720p50 originals feed the broad matrix; foreman_cif feeds the AQ
+# gain-parity oracle.
+required_corpus_inputs() {
+    local clip
+    for clip in in_to_tree ducks_take_off old_town_cross; do
+        printf 'source_%s|%s\n' "$clip" "$(source_clip_file "$clip")"
+    done
+    printf 'source_foreman_cif|%s\n' "$AQ_ORACLE_SOURCE_FILE"
 }
 
 # --- per-feature axes -------------------------------------------------------
@@ -258,6 +410,138 @@ emit_speed_groups() {
     done < <(emit_configs)
 }
 
+# --- row command policy -----------------------------------------------------
+#
+# One place decides, per feature, which runner measures a row, which anchor it
+# is measured against, which preprocessed input both encoders consume, and
+# which input the PSNR reference comes from. The executor dispatches through
+# these functions and the self-test asserts on them, so a command-policy
+# assertion is an assertion about what actually runs.
+
+row_runner_kind() {
+    case "$1" in
+        baseline|aq3|denoiser)   printf 'bdrate\n' ;;
+        temporal_t2|temporal_t3) printf 'bdrate-svc\n' ;;
+        *) printf 'unknown feature: %s\n' "$1" >&2; return 1 ;;
+    esac
+}
+
+# The pinned temporal adapter exists because vpxenc cannot configure VP9
+# temporal SVC on its command line. It is the anchor for T2/T3 and for nothing
+# else; every single-layer row is anchored on pinned vpxenc itself.
+row_anchor_kind() {
+    case "$1" in
+        baseline|aq3|denoiser)   printf 'vpxenc\n' ;;
+        temporal_t2|temporal_t3) printf 'temporal-adapter\n' ;;
+        *) printf 'unknown feature: %s\n' "$1" >&2; return 1 ;;
+    esac
+}
+
+# Both encoders always consume the same input. Only the denoiser rows encode
+# the derived noisy input; everything else encodes the clean one.
+row_input_kind() {
+    case "$1" in
+        denoiser)                         printf 'noisy\n' ;;
+        baseline|aq3|temporal_t2|temporal_t3) printf 'clean\n' ;;
+        *) printf 'unknown feature: %s\n' "$1" >&2; return 1 ;;
+    esac
+}
+
+# PSNR is always measured against the clean source, including on the denoiser
+# rows -- measuring a denoiser against its own noisy input would reward
+# preserving the noise.
+row_reference_kind() {
+    case "$1" in
+        baseline|aq3|denoiser|temporal_t2|temporal_t3) printf 'clean\n' ;;
+        *) printf 'unknown feature: %s\n' "$1" >&2; return 1 ;;
+    esac
+}
+
+# The exact basenames of the rvp9 candidate streams a row must retain, in the
+# order they are checked. Single-layer rows come from bdrate, which names its
+# retained IVF `<role>_<bitrate>k.ivf`; temporal rows come from bdrate-svc,
+# which additionally writes one extracted operating point per layer.
+row_stream_names() {
+    local feature="$1" grid="$2" layers rate layer
+    layers="$(feature_temporal_layers "$feature")"
+    for rate in $(printf '%s' "$grid" | tr ',' ' '); do
+        if [ "$layers" -gt 1 ]; then
+            printf 'test_%sk_full.ivf\n' "$rate"
+            layer=0
+            while [ "$layer" -lt "$layers" ]; do
+                printf 'test_%sk_tl%s.ivf\n' "$rate" "$layer"
+                layer=$(( layer + 1 ))
+            done
+        else
+            printf 'test_%sk.ivf\n' "$rate"
+        fi
+    done
+}
+
+# Which execution phases this unit implements. Speed and latency (and the `all`
+# fan-out that includes them) are declared, not executed.
+phase_supported() {
+    case "$1" in
+        quality)          printf 'implemented\n' ;;
+        speed|latency|all) printf 'not-implemented\n' ;;
+        *)                printf 'unknown\n' ;;
+    esac
+}
+
+# --- external command policy ------------------------------------------------
+#
+# Every external command a real phase invokes, audited against the script body
+# rather than assumed. Anything not listed here is either a bash builtin
+# (printf, read, cd, pwd, command, test) or a caller-supplied binary validated
+# separately by path (--test-encoder, --vpxenc, --temporal-anchor, --bdrate,
+# --bdrate-svc, --rvp9dec, --vpxdec, --ffmpeg).
+#
+# Deliberately absent: sort, comm, uniq, and tail, which only --self-test
+# invokes, and ls, which nothing invokes any more. Requiring a command a phase
+# never runs would turn a healthy host into a spurious refusal. cat is listed
+# because usage() invokes it, even though every usage path precedes this check.
+#
+# --print-plan invokes nothing here -- it is printf and shell arithmetic only,
+# and stays runnable with an empty PATH.
+phase_required_commands() {
+    case "$1" in
+        quality)
+            printf 'awk basename cargo cat date deltic dirname env find git grep head mkdir rustc shasum tr uname wc\n'
+            ;;
+        speed|latency|all)
+            printf 'phase has no runner, so no command set: %s\n' "$1" >&2
+            return 1
+            ;;
+        *) printf 'unknown phase: %s\n' "$1" >&2; return 1 ;;
+    esac
+}
+
+# Why each required command is needed, so the list is an audit rather than a
+# copied incantation. The self-test asserts every listed command has a reason.
+command_purpose() {
+    case "$1" in
+        awk)      printf 'every numeric comparison, CSV aggregate, and log parse\n' ;;
+        basename) printf 'naming a retained candidate stream in the cross-decoder CSV\n' ;;
+        cargo)    printf 'the AQ gain-parity oracle runs through "cargo test"\n' ;;
+        cat)      printf 'printing the usage text on a refusal\n' ;;
+        date)     printf 'the manifest run start and end timestamps\n' ;;
+        deltic)   printf 'every child process runs under "deltic timeout"\n' ;;
+        dirname)  printf 'canonicalising the PGO manifest binary path\n' ;;
+        env)      printf 'passing the corpus and vpxenc overrides to the oracle\n' ;;
+        find)     printf 'counting retained streams, the work-dir emptiness check, per-row Y4M discard\n' ;;
+        git)      printf 'HEAD, the PGO source commit, and the pinned libvpx revision\n' ;;
+        grep)     printf 'the oracle log skip, gate, and result checks\n' ;;
+        head)     printf 'the recorded ffmpeg version line\n' ;;
+        mkdir)    printf 'creating the work, input, and per-row directories\n' ;;
+        rustc)    printf 'the host triple and the recorded toolchain version\n' ;;
+        shasum)   printf 'every artifact SHA-256 and both decoded-output hashes\n' ;;
+        tr)       printf 'flattening lists into manifest and CSV fields\n' ;;
+        uname)    printf 'the recorded host description\n' ;;
+        wc)       printf 'stream byte counts, clip counts, and git status entries\n' ;;
+        *)        printf '\n' ;;
+    esac
+}
+
 # ---------------------------------------------------------------------------
 # Small helpers
 # ---------------------------------------------------------------------------
@@ -265,6 +549,128 @@ emit_speed_groups() {
 fail() {
     printf '%s\n' "$*" >&2
     exit 1
+}
+
+is_number() {
+    [ -n "$1" ] &&
+        printf '%s\n' "$1" |
+            awk '{ ok = ($0 ~ /^[+-]?([0-9]+(\.[0-9]+)?|\.[0-9]+)$/) } END { exit !ok }'
+}
+
+require_number() {
+    is_number "$2" || fail "$1: expected a decimal number, got '$2'"
+}
+
+# True when $1 <= $2, both already validated as decimal numbers.
+number_le() {
+    awk -v a="$1" -v b="$2" 'BEGIN { exit !(a + 0 <= b + 0) }'
+}
+
+# True when abs($1) <= $2, both already validated as decimal numbers.
+number_abs_le() {
+    awk -v a="$1" -v b="$2" 'BEGIN { if (a < 0) a = -a; exit !(a <= b) }'
+}
+
+sha256_file() {
+    shasum -a 256 "$1" | awk '{ print $1 }'
+}
+
+utc_now() {
+    date -u '+%Y-%m-%dT%H:%M:%SZ'
+}
+
+# The value of the first `<key>=<value>` line, reading the manifest on stdin.
+# Everything after the first `=` is the value, so a path containing `=` survives
+# intact. Reading stdin rather than a path keeps this testable without a file.
+manifest_field() {
+    awk -v key="$1" '
+        index($0, key "=") == 1 {
+            print substr($0, length(key) + 2)
+            exit
+        }'
+}
+
+# An absolute path with the parent directory's symlinks resolved. macOS ships
+# no realpath and no `readlink -f`, so this is the portable form. It compares
+# two spellings of the same file; it deliberately does not resolve a symlinked
+# leaf, because the binary under test is the leaf the caller named.
+canonical_file() {
+    local dir base resolved
+    dir="$(dirname "$1")"
+    base="$(basename "$1")"
+    [ -d "$dir" ] || return 1
+    resolved="$(cd "$dir" && pwd -P)" || return 1
+    case "$resolved" in
+        */) printf '%s%s\n' "$resolved" "$base" ;;
+        *)  printf '%s/%s\n' "$resolved" "$base" ;;
+    esac
+}
+
+# Canonical spelling for a fresh output directory. Its parent must already
+# exist so `..` and symlink spellings cannot hide a path inside the source
+# worktree before the runner performs its containment check.
+canonical_output_dir() {
+    local parent base resolved
+    if [ -e "$1" ]; then
+        [ -d "$1" ] || fail "--work-dir exists and is not a directory: $1"
+        (cd "$1" && pwd -P) || fail "--work-dir cannot be resolved: $1"
+        return
+    fi
+    parent="$(dirname "$1")"
+    base="$(basename "$1")"
+    [ -d "$parent" ] ||
+        fail "--work-dir parent does not exist: $parent"
+    resolved="$(cd "$parent" && pwd -P)" ||
+        fail "--work-dir parent cannot be resolved: $parent"
+    case "$resolved" in
+        */) printf '%s%s\n' "$resolved" "$base" ;;
+        *)  printf '%s/%s\n' "$resolved" "$base" ;;
+    esac
+}
+
+# Whether a directory is safe to use as a fresh run root. Absent is fine,
+# empty is fine, anything else is refused -- nothing is ever deleted to make
+# room. An unreadable or unlistable directory is refused too: "I could not
+# look" must never read as "there was nothing there".
+require_absent_or_empty_dir() {
+    local what="$1" path="$2" entries
+    [ -e "$path" ] || return 0
+    [ -d "$path" ] || fail "$what exists and is not a directory: $path"
+    [ -r "$path" ] || fail "$what is not readable: $path"
+    entries="$(find "$path" -mindepth 1 -maxdepth 1)" ||
+        fail "$what could not be listed, so its contents are unknown: $path"
+    [ -z "$entries" ] ||
+        fail "refusing to reuse a non-empty $what: $path
+this unit runs fresh and has no resume, and it will not delete anything to make
+room. Point $what at a new or empty directory."
+}
+
+# Classify the cyclic-refresh activation evidence in an oracle log read on
+# stdin. Only one exact report with two positive counters is a pass.
+aq_activation_status() {
+    awk -v prefix="$1" '
+        index($0, prefix) == 1 {
+            seen++
+            value = substr($0, length(prefix) + 1)
+        }
+        END {
+            if (seen > 1) { print "ambiguous"; exit }
+            if (seen != 1) { print "not-reported"; exit }
+            gsub(/^[ \t]+/, "", value)
+            gsub(/[ \t]+$/, "", value)
+            if (value !~ /^boosted_mi_cells=[0-9]+ active_frames=[0-9]+$/) {
+                print "malformed"
+                exit
+            }
+            split(value, fields, " ")
+            split(fields[1], boosted, "=")
+            split(fields[2], frames, "=")
+            if (boosted[2] + 0 == 0 || frames[2] + 0 == 0) {
+                print "absent"
+            } else {
+                print "present"
+            }
+        }'
 }
 
 # ---------------------------------------------------------------------------
@@ -369,7 +775,7 @@ print_plan() {
     # four-curve test. It is a separate required check, not a reinterpretation
     # of the broad corpus rows above.
     oracles=$(( oracles + 1 ))
-    printf 'oracle aq_gain_parity feature=aq3 mode=vbr cpu=7 aq=0,3 denoiser=0 temporal_layers=1 source=tests/corpus/foreman_cif.y4m frames=64 crop=256x256+48+16 bitrates_bps=25000,50000,100000,250000 requires=gain_rvp9_finite_negative,gain_libvpx_finite_negative,aq_activation max_gain_delta_pp=%s implementation=crates/rvp9-encoder/tests/quality_gate.rs\n' \
+    printf 'oracle aq_gain_parity feature=aq3 mode=vbr cpu=7 aq=0,3 denoiser=0 temporal_layers=1 source=tests/corpus/foreman_cif.y4m frames=64 crop=256x256+48+16 bitrates_bps=25000,50000,100000,250000 requires=gain_rvp9_finite,gain_libvpx_finite,aq_activation max_gain_delta_pp=%s implementation=crates/rvp9-encoder/tests/quality_gate.rs\n' \
         "$AQ_GAIN_DELTA_MAX_PP"
 
     if [ "$configs" -ne "$EXPECTED_CONFIG_ROWS" ] ||
@@ -396,10 +802,16 @@ print_plan() {
 # ---------------------------------------------------------------------------
 # Self-test
 #
-# Creates nothing and launches nothing: it regenerates the plan from the same
-# iterators and asserts the totals, the exact target grids and settings, the
-# feature-combination guardrails, the absence of spatial rows, and the TOTALS
-# line's internal consistency.
+# Touches no path and starts no encoder, decoder, or build. It regenerates the
+# plan from the same iterators and asserts the totals, the exact target grids
+# and settings, the feature-combination guardrails, the absence of spatial rows,
+# the TOTALS line's internal consistency, and -- by driving the real functions
+# rather than restating them -- the CLI refusals, the corpus and PGO manifest
+# contracts, the external-command policy, and the AQ activation classifier.
+#
+# Unlike --print-plan it does use text tools (awk, sort, comm, uniq, tr, wc,
+# grep, tail, cat), so it is not PATH-free; "no I/O" means it writes nothing
+# and reads no file under test.
 # ---------------------------------------------------------------------------
 
 selftest_failures=0
@@ -428,6 +840,16 @@ plan_count() {
     printf '%s\n' "$1" | awk -v pattern="$2" '$0 ~ pattern { n++ } END { print n + 0 }'
 }
 
+# `refused` when refusal $1 begins with the literal prefix $2, else
+# `not-refused`. A helper rather than an inline `case`, so the assertions stay
+# one command substitution deep.
+refusal_starts_with() {
+    case "$1" in
+        "$2"*) printf 'refused\n' ;;
+        *)     printf 'not-refused\n' ;;
+    esac
+}
+
 # Count plan lines whose kind is $2 and whose field $3 equals $4.
 count_by_field() {
     printf '%s\n' "$1" |
@@ -436,7 +858,7 @@ count_by_field() {
 }
 
 self_test() {
-    local plan feature mode target cpu
+    local plan feature mode target clip cpu aq denoiser layers phase_name tool
 
     printf 'qualify-production-encoder self-test\n'
     if ! plan="$(print_plan)"; then
@@ -616,7 +1038,7 @@ self_test() {
 
     # --- AQ gain-parity oracle --------------------------------------------
     expect_equal "the AQ gain-parity oracle is present exactly once" \
-        "$(plan_count "$plan" '^oracle aq_gain_parity feature=aq3 mode=vbr cpu=7 aq=0,3 denoiser=0 temporal_layers=1 source=tests/corpus/foreman_cif.y4m frames=64 crop=256x256[+]48[+]16 bitrates_bps=25000,50000,100000,250000 requires=gain_rvp9_finite_negative,gain_libvpx_finite_negative,aq_activation max_gain_delta_pp=0.3 implementation=crates/rvp9-encoder/tests/quality_gate.rs$')" \
+        "$(plan_count "$plan" '^oracle aq_gain_parity feature=aq3 mode=vbr cpu=7 aq=0,3 denoiser=0 temporal_layers=1 source=tests/corpus/foreman_cif.y4m frames=64 crop=256x256[+]48[+]16 bitrates_bps=25000,50000,100000,250000 requires=gain_rvp9_finite,gain_libvpx_finite,aq_activation max_gain_delta_pp=0.3 implementation=crates/rvp9-encoder/tests/quality_gate.rs$')" \
         1
     expect_equal "the broad matrix still contains eight aq3 quality rows" \
         "$(count_by_field "$plan" quality 2 aq3)" 8
@@ -739,12 +1161,315 @@ self_test() {
         "$(plan_count "$plan" '^spatial_layers=excluded spatial_qualifier=scripts/qualify-spatial-svc.sh$')" \
         1
 
+    # --- row command policy -------------------------------------------------
+    #
+    # Which runner, which anchor, and which preprocessed input each feature
+    # uses. The executor dispatches on exactly these functions, so a change
+    # that re-points a feature at the wrong runner fails here.
+    for feature in baseline aq3 denoiser; do
+        expect_equal "$feature rows are measured by bdrate" \
+            "$(row_runner_kind "$feature")" "bdrate"
+        expect_equal "$feature rows are anchored on pinned vpxenc" \
+            "$(row_anchor_kind "$feature")" "vpxenc"
+    done
+    for feature in temporal_t2 temporal_t3; do
+        expect_equal "$feature rows are measured by bdrate-svc" \
+            "$(row_runner_kind "$feature")" "bdrate-svc"
+        expect_equal "$feature rows are anchored on the pinned temporal adapter" \
+            "$(row_anchor_kind "$feature")" "temporal-adapter"
+    done
+    expect_equal "no single-layer feature uses bdrate-svc" \
+        "$(for feature in $FEATURES; do
+              if [ "$(feature_temporal_layers "$feature")" -eq 1 ] &&
+                  [ "$(row_runner_kind "$feature")" != "bdrate" ]; then printf 'x'; fi
+          done | wc -c | tr -d ' ')" 0
+    expect_equal "no multi-layer feature uses bdrate" \
+        "$(for feature in $FEATURES; do
+              if [ "$(feature_temporal_layers "$feature")" -gt 1 ] &&
+                  [ "$(row_runner_kind "$feature")" != "bdrate-svc" ]; then printf 'x'; fi
+          done | wc -c | tr -d ' ')" 0
+    expect_equal "the temporal adapter anchors exactly the two temporal features" \
+        "$(for feature in $FEATURES; do
+              if [ "$(row_anchor_kind "$feature")" = "temporal-adapter" ]; then
+                  printf '%s,' "$feature"
+              fi
+          done)" \
+        "temporal_t2,temporal_t3,"
+
+    # --- clean versus noisy inputs ------------------------------------------
+    expect_equal "only the denoiser rows encode the noisy input" \
+        "$(for feature in $FEATURES; do
+              if [ "$(row_input_kind "$feature")" = "noisy" ]; then printf '%s,' "$feature"; fi
+          done)" \
+        "denoiser,"
+    expect_equal "the denoiser rows encode noisy and reference clean" \
+        "$(row_input_kind denoiser)/$(row_reference_kind denoiser)" "noisy/clean"
+    expect_equal "every feature measures PSNR against the clean source" \
+        "$(for feature in $FEATURES; do
+              if [ "$(row_reference_kind "$feature")" != "clean" ]; then printf 'x'; fi
+          done | wc -c | tr -d ' ')" 0
+    expect_equal "every non-denoiser feature encodes the clean input" \
+        "$(for feature in baseline aq3 temporal_t2 temporal_t3; do
+              printf '%s' "$(row_input_kind "$feature")"
+          done)" \
+        "cleancleancleanclean"
+    expect_equal "the noisy input is derived with the pinned deterministic seed" \
+        "$NOISE_FILTER" "noise=all_seed=48917:alls=12:allf=t+u"
+
+    # --- exact retained stream shape per row --------------------------------
+    #
+    # Written out literally. Deriving the names from the same helper the
+    # executor uses would let the helper agree with itself.
+    expect_equal "a single-layer 720p30 row retains six test_RATEk.ivf" \
+        "$(row_stream_names baseline "$(target_bitrates 720p30)" | tr '\n' ' ')" \
+        "test_420k.ivf test_630k.ivf test_840k.ivf test_1260k.ivf test_2100k.ivf test_3360k.ivf "
+    expect_equal "an aq3 row retains the same single-layer shape" \
+        "$(row_stream_names aq3 "$(target_bitrates 1080p30)" | tr '\n' ' ')" \
+        "test_950k.ivf test_1425k.ivf test_1890k.ivf test_2835k.ivf test_4725k.ivf test_7560k.ivf "
+    expect_equal "a denoiser row retains the same single-layer shape" \
+        "$(row_stream_names denoiser "$(target_bitrates 1080p60)" | tr '\n' ' ')" \
+        "test_1900k.ivf test_2850k.ivf test_3780k.ivf test_5670k.ivf test_9450k.ivf test_15120k.ivf "
+    expect_equal "a T2 point retains the full stream plus TL0 and TL1" \
+        "$(row_stream_names temporal_t2 420 | tr '\n' ' ')" \
+        "test_420k_full.ivf test_420k_tl0.ivf test_420k_tl1.ivf "
+    expect_equal "a T3 point retains the full stream plus TL0, TL1, and TL2" \
+        "$(row_stream_names temporal_t3 420 | tr '\n' ' ')" \
+        "test_420k_full.ivf test_420k_tl0.ivf test_420k_tl1.ivf test_420k_tl2.ivf "
+    expect_equal "a complete unordered T3 layer-id set is valid" \
+        "$(layer_id_set_status 3 '2 0 1')" "valid"
+    expect_equal "a duplicate temporal layer id is invalid" \
+        "$(layer_id_set_status 3 '0 1 1')" "invalid"
+    expect_equal "a missing temporal layer id is invalid" \
+        "$(layer_id_set_status 3 '0 2')" "invalid"
+    expect_equal "an out-of-range temporal layer id is invalid" \
+        "$(layer_id_set_status 3 '0 1 3')" "invalid"
+    expect_equal "a T3 1080p60 row retains 24 streams" \
+        "$(row_stream_names temporal_t3 "$(target_bitrates 1080p60)" | awk 'END { print NR + 0 }')" \
+        24
+    expect_equal "no expected stream name is an anchor artifact" \
+        "$(for feature in $FEATURES; do
+              row_stream_names "$feature" "$(target_bitrates 720p30)"
+          done | grep -c -v '^test_' | tr -d ' ')" 0
+    expect_equal "every expected stream name is unique inside its row" \
+        "$(for feature in $FEATURES; do
+              row_stream_names "$feature" "$(target_bitrates 720p30)" | sort |
+                  uniq -d
+          done | awk 'END { print NR + 0 }')" 0
+
+    # The enumerated names must reconstruct the declared stream total exactly,
+    # independently of the plan's own `streams=` arithmetic.
+    expect_equal "enumerated stream names sum to the declared candidate total" \
+        "$(while IFS='|' read -r feature mode target clip cpu aq denoiser layers; do
+              row_stream_names "$feature" "$(target_bitrates "$target")"
+          done < <(emit_clip_rows) | awk 'END { print NR + 0 }')" \
+        "$EXPECTED_CANDIDATE_STREAMS"
+
+    # --- AQ oracle command policy -------------------------------------------
+    expect_equal "the AQ oracle names the Foreman real-content test" \
+        "$AQ_ORACLE_TEST_NAME" "bdrate_gate_stage4b_aq_realcontent"
+    expect_equal "the AQ oracle runs in the rvp9-encoder quality_gate target" \
+        "$AQ_ORACLE_PACKAGE/$AQ_ORACLE_TEST_TARGET" "rvp9-encoder/quality_gate"
+    expect_equal "the AQ oracle overrides the corpus, vpxenc, and vpxdec by env" \
+        "$AQ_ORACLE_CORPUS_ENV,$AQ_ORACLE_VPXENC_ENV,$AQ_ORACLE_VPXDEC_ENV" \
+        "RVP9_CORPUS_DIR,RVP9_VPXENC,RVP9_VPXDEC"
+    expect_equal "the AQ oracle requires the literal 0.3 pp gate line" \
+        "$AQ_ORACLE_GATE_LINE" "Stage 4b literal gate (|delta| <= 0.3 %): PASS"
+
+    # --- phase availability -------------------------------------------------
+    expect_equal "the quality phase is implemented" \
+        "$(phase_supported quality)" "implemented"
+    for phase_name in speed latency all; do
+        expect_equal "the $phase_name phase is refused" \
+            "$(phase_supported "$phase_name")" "not-implemented"
+    done
+    expect_equal "an unknown phase is neither implemented nor merely unbuilt" \
+        "$(phase_supported nonsense)" "unknown"
+    expect_equal "exactly one phase is runnable in this unit" \
+        "$(for phase_name in quality speed latency all; do
+              if [ "$(phase_supported "$phase_name")" = "implemented" ]; then printf 'x'; fi
+          done | wc -c | tr -d ' ')" 1
+
+    # --- a real run must name its phase --------------------------------------
+    #
+    # These drive the real parser in a subshell, so they assert what an
+    # operator actually gets, not a restatement of the code. parse_args touches
+    # no path, which is why /w and /m need not exist.
+    expect_equal "a real run assumes no phase" "${phase:-<none>}" "<none>"
+    expect_equal "a real run refuses a missing --phase" \
+        "$(parse_args_error --work-dir /w --pgo-manifest /m)" \
+        "--phase is required for a real run: no phase is assumed. Pass --phase quality; speed, latency, and all are declared by --print-plan but have no runner here."
+    expect_equal "a real run accepts an explicit --phase quality" \
+        "$(parse_args_error --phase quality --work-dir /w --pgo-manifest /m)" \
+        "accepted"
+    expect_equal "a real run refuses an unknown --phase" \
+        "$(parse_args_error --phase nonsense --work-dir /w --pgo-manifest /m)" \
+        "--phase must be one of quality, speed, latency, all"
+    for phase_name in speed latency all; do
+        expect_equal "a real run refuses --phase $phase_name by name" \
+            "$(refusal_starts_with \
+                  "$(parse_args_error --phase "$phase_name" --work-dir /w --pgo-manifest /m)" \
+                  "--phase $phase_name is not implemented in this unit")" \
+            "refused"
+    done
+    expect_equal "--phase still requires a value" \
+        "$(parse_args_error --phase)" "--phase requires a value"
+    expect_equal "a real run still requires --work-dir" \
+        "$(parse_args_error --phase quality --pgo-manifest /m)" \
+        "--work-dir is required for a real run"
+    expect_equal "a real run still requires --pgo-manifest" \
+        "$(refusal_starts_with \
+              "$(parse_args_error --phase quality --work-dir /w)" \
+              "--pgo-manifest is required for a real run")" \
+        "refused"
+
+    # --- fresh-run work directory --------------------------------------------
+    #
+    # The emptiness check itself needs a filesystem, so what is asserted here is
+    # the contract the CLI states. Weakening the runner to resume, or to delete
+    # what it found, would have to edit these lines to stay consistent.
+    expect_equal "usage requires an absent or empty work directory" \
+        "$(plan_count "$(usage)" 'the directory itself must be absent or empty')" 1
+    expect_equal "usage keeps the work directory outside the repository" \
+        "$(plan_count "$(usage)" 'outside the repo, with an existing parent')" 1
+    expect_equal "usage states a real run has no resume" \
+        "$(plan_count "$(usage)" 'there is no resume')" 1
+    expect_equal "usage states nothing is deleted to make room" \
+        "$(plan_count "$(usage)" 'nothing is')" 1
+    expect_equal "usage states --phase is required and never assumed" \
+        "$(plan_count "$(usage)" 'required; no phase is assumed')" 1
+    expect_equal "usage states the PGO manifest binds the encoder under test" \
+        "$(plan_count "$(usage)" 'optimized_binary= and optimized_binary_sha256= must')" 1
+
+    # --- required corpus inputs ----------------------------------------------
+    #
+    # Written out literally: deriving the list from the same function the run
+    # validates and hashes with would let it agree with itself.
+    expect_equal "the AQ oracle clip is foreman_cif.y4m" \
+        "$AQ_ORACLE_SOURCE_FILE" "foreman_cif.y4m"
+    expect_equal "the required corpus inputs are the three originals plus the AQ oracle clip" \
+        "$(required_corpus_inputs | tr '\n' ' ')" \
+        "source_in_to_tree|in_to_tree_420_720p50.y4m source_ducks_take_off|ducks_take_off_420_720p50.y4m source_old_town_cross|old_town_cross_420_720p50.y4m source_foreman_cif|foreman_cif.y4m "
+    expect_equal "the canonical source SHA-256 allowlist is exact" \
+        "$(for corpus_file in in_to_tree_420_720p50.y4m ducks_take_off_420_720p50.y4m old_town_cross_420_720p50.y4m foreman_cif.y4m; do corpus_expected_sha256 "$corpus_file"; done | tr '\n' ' ')" \
+        "81166517a3054c789923535b5da23fbbb9bbd7fd4c28dac83918ac351e121e74 0e09aa923ce72e2f6d1c978c3c1cc8dd9588d2ede819081f040213e361970efc 0fbc2ec0c552ad693528b2e49409c7449880b9230055a7696346473d1aaf4123 b0e3c35eff9fe1da91521a02eb9f0e3ef4bc5aec341ecef1567cd87f1711267b "
+    expect_equal "the canonical source headers are exact" \
+        "$(for corpus_file in in_to_tree_420_720p50.y4m ducks_take_off_420_720p50.y4m old_town_cross_420_720p50.y4m foreman_cif.y4m; do corpus_expected_header "$corpus_file"; done | tr '\n' '|')" \
+        "YUV4MPEG2 W1280 H720 F50:1 Ip A1:1|YUV4MPEG2 W1280 H720 F50:1 Ip A1:1|YUV4MPEG2 W1280 H720 F50:1 Ip A1:1|YUV4MPEG2 W352 H288 F30000:1001 Ip A128:117|"
+    expect_equal "every required corpus input has its own manifest key" \
+        "$(required_corpus_inputs | awk -F'|' '{ print $1 }' | sort | uniq -d |
+              awk 'END { print NR + 0 }')" 0
+    expect_equal "the AQ oracle clip is a required corpus input" \
+        "$(required_corpus_inputs | awk -F'|' -v f="$AQ_ORACLE_SOURCE_FILE" \
+              '$2 == f { n++ } END { print n + 0 }')" 1
+    expect_equal "the plan's oracle row names the clip the run validates" \
+        "$(plan_count "$plan" "source=tests/corpus/$AQ_ORACLE_SOURCE_FILE ")" 1
+
+    # --- PGO manifest binding ------------------------------------------------
+    expect_equal "the PGO manifest keys bind source, binary path, and binary hash" \
+        "$PGO_MANIFEST_COMMIT_KEY,$PGO_MANIFEST_BINARY_KEY,$PGO_MANIFEST_BINARY_SHA_KEY" \
+        "git_commit,optimized_binary,optimized_binary_sha256"
+    expect_equal "the manifest parser reads the optimized binary path" \
+        "$(printf 'git_commit=abc123\noptimized_binary=/pgo/optimized/release/rvp9enc\n' |
+              manifest_field "$PGO_MANIFEST_BINARY_KEY")" \
+        "/pgo/optimized/release/rvp9enc"
+    expect_equal "the manifest parser reads the source commit" \
+        "$(printf 'git_commit=abc123\noptimized_binary=/pgo/rvp9enc\n' |
+              manifest_field "$PGO_MANIFEST_COMMIT_KEY")" \
+        "abc123"
+    expect_equal "the manifest parser reads the optimized binary hash" \
+        "$(printf 'optimized_binary_sha256=0123456789abcdef\n' |
+              manifest_field "$PGO_MANIFEST_BINARY_SHA_KEY")" \
+        "0123456789abcdef"
+    expect_equal "the manifest parser keeps an = inside a value" \
+        "$(printf 'optimized_binary=/o=pt/rvp9enc\n' |
+              manifest_field "$PGO_MANIFEST_BINARY_KEY")" \
+        "/o=pt/rvp9enc"
+    expect_equal "the manifest parser reports nothing for a missing key" \
+        "[$(printf 'git_commit=abc123\n' | manifest_field "$PGO_MANIFEST_BINARY_KEY")]" \
+        "[]"
+    expect_equal "the manifest parser does not match a key as a suffix" \
+        "[$(printf 'pgo_optimized_binary=/wrong\n' |
+              manifest_field "$PGO_MANIFEST_BINARY_KEY")]" \
+        "[]"
+    expect_equal "the manifest parser takes the first value, not the last" \
+        "$(printf 'optimized_binary=/first\noptimized_binary=/second\n' |
+              manifest_field "$PGO_MANIFEST_BINARY_KEY")" \
+        "/first"
+
+    # --- external command policy ---------------------------------------------
+    expect_equal "the quality phase declares the commands it invokes" \
+        "$(phase_required_commands quality)" \
+        "awk basename cargo cat date deltic dirname env find git grep head mkdir rustc shasum tr uname wc"
+    expect_equal "every required command declares why it is needed" \
+        "$(for tool in $(phase_required_commands quality); do
+              if [ -z "$(command_purpose "$tool")" ]; then printf 'x'; fi
+          done | wc -c | tr -d ' ')" 0
+    expect_equal "an uninvoked command declares no purpose" \
+        "[$(command_purpose sort)]" "[]"
+    expect_equal "a phase with no runner declares no command set" \
+        "$(for phase_name in speed latency all nonsense; do
+              if phase_required_commands "$phase_name" >/dev/null 2>&1; then printf 'x'; fi
+          done | wc -c | tr -d ' ')" 0
+
+    # --- AQ cyclic-refresh activation ----------------------------------------
+    #
+    # Required, and fail-closed: only one exact report with two positive
+    # counters is a pass.
+    expect_equal "the activation report prefix is the declared contract" \
+        "$AQ_ORACLE_ACTIVATION_PREFIX" "AQ activation:"
+    expect_equal "the plan declares AQ activation a required oracle input" \
+        "$(plan_count "$plan" 'requires=gain_rvp9_finite,gain_libvpx_finite,aq_activation ')" \
+        1
+    expect_equal "the AQ delta gate accepts either sign at the boundary" \
+        "$(for delta in -0.3 0.3; do number_abs_le "$delta" 0.3 && printf y; done)" \
+        "yy"
+    expect_equal "the AQ delta gate rejects either sign beyond the boundary" \
+        "$(for delta in -0.301 0.301; do number_abs_le "$delta" 0.3 || printf n; done)" \
+        "nn"
+    expect_equal "a log with no activation line is not-reported" \
+        "$(printf 'Curve 1: rvp9 AqMode::Off\nStage 4b literal gate (|delta| <= 0.3 %%): PASS\n' |
+              aq_activation_status "$AQ_ORACLE_ACTIVATION_PREFIX")" \
+        "not-reported"
+    expect_equal "a measured activation report is present" \
+        "$(printf 'AQ activation: boosted_mi_cells=812 active_frames=16\n' |
+              aq_activation_status "$AQ_ORACLE_ACTIVATION_PREFIX")" \
+        "present"
+    expect_equal "an empty activation report is malformed" \
+        "$(printf 'AQ activation:    \n' |
+              aq_activation_status "$AQ_ORACLE_ACTIVATION_PREFIX")" \
+        "malformed"
+    expect_equal "zero boosted cells are absent" \
+        "$(printf 'AQ activation: boosted_mi_cells=0 active_frames=16\n' |
+              aq_activation_status "$AQ_ORACLE_ACTIVATION_PREFIX")" \
+        "absent"
+    expect_equal "zero active frames are absent" \
+        "$(printf 'AQ activation: boosted_mi_cells=812 active_frames=0\n' |
+              aq_activation_status "$AQ_ORACLE_ACTIVATION_PREFIX")" \
+        "absent"
+    expect_equal "an informal activation report is malformed" \
+        "$(printf 'AQ activation: 812 blocks over 16 refresh cycles\n' |
+              aq_activation_status "$AQ_ORACLE_ACTIVATION_PREFIX")" \
+        "malformed"
+    expect_equal "a none activation report is malformed" \
+        "$(printf 'AQ activation: NONE\n' |
+              aq_activation_status "$AQ_ORACLE_ACTIVATION_PREFIX")" \
+        "malformed"
+    expect_equal "two activation reports are ambiguous, never a pass" \
+        "$(printf 'AQ activation: boosted_mi_cells=812 active_frames=16\nAQ activation: boosted_mi_cells=9 active_frames=1\n' |
+              aq_activation_status "$AQ_ORACLE_ACTIVATION_PREFIX")" \
+        "ambiguous"
+    expect_equal "an activation mention that is not the report line is not-reported" \
+        "$(printf 'note: AQ activation: 812 blocks\n' |
+              aq_activation_status "$AQ_ORACLE_ACTIVATION_PREFIX")" \
+        "not-reported"
+
     if [ "$selftest_failures" -ne 0 ]; then
         printf '\nself-test FAILED with %s mismatch(es)\n' "$selftest_failures" >&2
         return 1
     fi
     printf '\nself-test passed\n'
 }
+
 
 # ---------------------------------------------------------------------------
 # Option parsing
@@ -753,16 +1478,1116 @@ self_test() {
 usage() {
     cat <<'USAGE'
 Usage:
+  scripts/qualify-production-encoder.sh --work-dir PATH --phase quality \
+      --pgo-manifest PATH [path options]
   scripts/qualify-production-encoder.sh --print-plan
   scripts/qualify-production-encoder.sh --self-test
 
   --print-plan   emit the full non-spatial v1 acceptance matrix; no I/O
   --self-test    regenerate and validate the matrix; no I/O
 
-The quality, speed, and latency execution phases are not enabled yet, so a
-real run is rejected. Spatial SVC is qualified separately by
-scripts/qualify-spatial-svc.sh and is deliberately absent from this matrix.
+Real-run options:
+  --work-dir PATH        required; outside the repo, with an existing parent;
+                         the directory itself must be absent or empty
+  --phase PHASE          required; no phase is assumed. quality executes;
+                         speed, latency, and all are declared by the matrix
+                         but not implemented here.
+  --pgo-manifest PATH    required; the manifest scripts/build-encoder-pgo.sh
+                         wrote beside the rvp9enc under test. Its
+                         optimized_binary= and optimized_binary_sha256= must
+                         match the --test-encoder.
+
+Path options (repo-relative defaults, all validated before a real run):
+  --source-dir PATH      canonical 720p50 Y4M originals
+  --test-encoder PATH    production PGO rvp9enc
+  --vpxenc PATH          pinned libvpx vpxenc (single-layer anchor)
+  --temporal-anchor PATH pinned build/libvpx/vpx_temporal_svc_reference
+  --bdrate PATH          rvp9-bench bdrate (release)
+  --bdrate-svc PATH      rvp9-bench bdrate-svc (release)
+  --rvp9dec PATH         rvp9 decoder (release)
+  --vpxdec PATH          pinned libvpx vpxdec
+  --ffmpeg PATH          ffmpeg executable or name on PATH
+  --libvpx-source PATH   pinned libvpx checkout
+
+A real run is fresh-run only: --work-dir must be absent or empty, nothing is
+deleted to make room, and there is no resume. Spatial SVC is qualified
+separately by scripts/qualify-spatial-svc.sh and is deliberately absent from
+this matrix.
 USAGE
+}
+
+phase=""
+work_dir=""
+opt_pgo_manifest=""
+opt_source_dir=""
+opt_test_encoder=""
+opt_vpxenc=""
+opt_temporal_anchor=""
+opt_bdrate=""
+opt_bdrate_svc=""
+opt_rvp9dec=""
+opt_vpxdec=""
+opt_ffmpeg=""
+opt_libvpx_source=""
+
+parse_args() {
+    local flag
+    while [ "$#" -gt 0 ]; do
+        flag="$1"
+        case "$flag" in
+            --help|-h) usage; exit 0 ;;
+            --*) [ "$#" -ge 2 ] || fail "$flag requires a value" ;;
+            *) usage >&2; fail "unknown argument: $flag" ;;
+        esac
+        case "$flag" in
+            --phase)           phase="$2" ;;
+            --work-dir)        work_dir="$2" ;;
+            --pgo-manifest)    opt_pgo_manifest="$2" ;;
+            --source-dir)      opt_source_dir="$2" ;;
+            --test-encoder)    opt_test_encoder="$2" ;;
+            --vpxenc)          opt_vpxenc="$2" ;;
+            --temporal-anchor) opt_temporal_anchor="$2" ;;
+            --bdrate)          opt_bdrate="$2" ;;
+            --bdrate-svc)      opt_bdrate_svc="$2" ;;
+            --rvp9dec)         opt_rvp9dec="$2" ;;
+            --vpxdec)          opt_vpxdec="$2" ;;
+            --ffmpeg)          opt_ffmpeg="$2" ;;
+            --libvpx-source)   opt_libvpx_source="$2" ;;
+            *) usage >&2; fail "unknown argument: $flag" ;;
+        esac
+        shift 2
+    done
+
+    # A real run states its phase. Defaulting to quality would let an operator
+    # who meant "all" walk away believing the whole contract was measured.
+    if [ -z "$phase" ]; then
+        usage >&2
+        fail "--phase is required for a real run: no phase is assumed. Pass --phase quality; speed, latency, and all are declared by --print-plan but have no runner here."
+    fi
+
+    # Reject an unimplemented phase before anything is resolved, created, or
+    # launched, so the refusal is the same with or without a toolchain.
+    case "$(phase_supported "$phase")" in
+        implemented) ;;
+        not-implemented)
+            fail "--phase $phase is not implemented in this unit: only the quality phase executes. The relative-speed and absolute-latency phases (and the 'all' fan-out that includes them) are declared by --print-plan but have no runner here."
+            ;;
+        *) fail "--phase must be one of quality, speed, latency, all" ;;
+    esac
+    if [ -z "$work_dir" ]; then
+        usage >&2
+        fail "--work-dir is required for a real run"
+    fi
+    if [ -z "$opt_pgo_manifest" ]; then
+        usage >&2
+        fail "--pgo-manifest is required for a real run: the qualification records which source commit produced the encoder under test"
+    fi
+}
+
+# The self-test's window into the parser: run it in a subshell and report its
+# refusal, or `accepted`. parse_args only assigns globals and calls fail(), so
+# this resolves no path, launches nothing, and writes nothing; the subshell
+# keeps the parser's assignments out of the caller. The refusal is the last
+# stderr line, because some paths print the usage text first.
+parse_args_error() {
+    local captured
+    if captured="$( ( parse_args "$@" ) 2>&1 1>/dev/null )"; then
+        printf 'accepted\n'
+    else
+        printf '%s\n' "$captured" | tail -n 1
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# Environment validation
+# ---------------------------------------------------------------------------
+
+repo_root=""
+host_triple=""
+exe_suffix=""
+git_commit=""
+git_status_clean=""
+libvpx_revision=""
+pgo_manifest=""
+pgo_manifest_sha256=""
+pgo_source_commit=""
+pgo_optimized_binary=""
+pgo_optimized_binary_sha256=""
+source_dir=""
+test_encoder=""
+vpxenc=""
+temporal_anchor=""
+bdrate_bin=""
+bdrate_svc_bin=""
+rvp9dec=""
+vpxdec=""
+ffmpeg_bin=""
+libvpx_source=""
+libvpx_config_h=""
+libvpx_config_mk=""
+input_dir=""
+quality_dir=""
+quality_rows_dir=""
+quality_summary=""
+quality_aggregate=""
+cross_decoder_csv=""
+manifest=""
+
+default_path() {
+    if [ -n "$1" ]; then
+        printf '%s\n' "$1"
+    else
+        printf '%s\n' "$2"
+    fi
+}
+
+require_executable() {
+    if [ ! -f "$2" ] || [ ! -x "$2" ]; then
+        fail "$1 is not an executable file: $2"
+    fi
+}
+
+require_help_flag() {
+    local what="$1" binary="$2" flag="$3" help
+    help="$(deltic timeout "$TOOL_VERSION_TIMEOUT" "$binary" --help </dev/null 2>&1)" ||
+        fail "$what failed its --help capability probe: $binary"
+    printf '%s\n' "$help" | grep -Fq -- "$flag" ||
+        fail "$what is stale or incompatible; --help does not advertise $flag: $binary"
+}
+
+# Caller-supplied paths are relative to the caller's directory, not the repo
+# root the script changes into a moment later.
+absolute_path() {
+    case "$1" in
+        ''|/*) printf '%s\n' "$1" ;;
+        *)     printf '%s/%s\n' "$PWD" "$1" ;;
+    esac
+}
+
+# --ffmpeg alone may be a bare name looked up through PATH.
+absolute_program() {
+    case "$1" in
+        */*) absolute_path "$1" ;;
+        *)   printf '%s\n' "$1" ;;
+    esac
+}
+
+# The PGO binary was compiled from one source commit into one output file.
+# Record both, prove the commit exists here, prove the recorded output file is
+# the very binary handed to --test-encoder, and prove that no encoder-shipped
+# path moved between that commit and HEAD -- otherwise the binary under test is
+# not the tree being qualified.
+validate_pgo_manifest() {
+    local path drifted="" recorded recorded_sha recorded_canonical test_canonical actual_sha
+
+    [ -f "$pgo_manifest" ] || fail "--pgo-manifest is not a file: $pgo_manifest"
+    pgo_manifest_sha256="$(sha256_file "$pgo_manifest")"
+    pgo_source_commit="$(manifest_field "$PGO_MANIFEST_COMMIT_KEY" < "$pgo_manifest")"
+    [ -n "$pgo_source_commit" ] ||
+        fail "--pgo-manifest records no '$PGO_MANIFEST_COMMIT_KEY=' line: $pgo_manifest"
+    git cat-file -e "${pgo_source_commit}^{commit}" 2>/dev/null ||
+        fail "the PGO manifest's source commit is not in this repository: $pgo_source_commit"
+    pgo_source_commit="$(git rev-parse "${pgo_source_commit}^{commit}")"
+
+    # scripts/build-encoder-pgo.sh records the profile-guided binary it built.
+    # Without this, a manifest from one build could be presented alongside an
+    # unrelated rvp9enc and the whole provenance chain would still pass.
+    recorded="$(manifest_field "$PGO_MANIFEST_BINARY_KEY" < "$pgo_manifest")"
+    [ -n "$recorded" ] ||
+        fail "--pgo-manifest records no '$PGO_MANIFEST_BINARY_KEY=' line: $pgo_manifest
+this manifest predates the binary record, or the PGO build did not finish"
+    pgo_optimized_binary="$recorded"
+    recorded_canonical="$(canonical_file "$recorded")" ||
+        fail "the PGO manifest's $PGO_MANIFEST_BINARY_KEY does not resolve to an existing directory: $recorded"
+    test_canonical="$(canonical_file "$test_encoder")" ||
+        fail "--test-encoder does not resolve to an existing directory: $test_encoder"
+    if [ "$recorded_canonical" != "$test_canonical" ]; then
+        fail "the PGO manifest describes a different binary than --test-encoder:
+  manifest $PGO_MANIFEST_BINARY_KEY = $recorded_canonical
+  --test-encoder                    = $test_canonical
+qualify the binary the manifest was written for, or pass the matching manifest"
+    fi
+
+    recorded_sha="$(manifest_field "$PGO_MANIFEST_BINARY_SHA_KEY" < "$pgo_manifest")"
+    case "$recorded_sha" in
+        ''|*[!0-9a-f]*)
+            fail "--pgo-manifest records no valid '$PGO_MANIFEST_BINARY_SHA_KEY=' value: $pgo_manifest
+rebuild the PGO encoder with the current scripts/build-encoder-pgo.sh"
+            ;;
+    esac
+    [ "${#recorded_sha}" -eq 64 ] ||
+        fail "--pgo-manifest has a malformed $PGO_MANIFEST_BINARY_SHA_KEY: $recorded_sha"
+    actual_sha="$(sha256_file "$test_encoder")"
+    [ "$recorded_sha" = "$actual_sha" ] ||
+        fail "the PGO encoder hash does not match its build manifest:
+  manifest $PGO_MANIFEST_BINARY_SHA_KEY = $recorded_sha
+  actual --test-encoder SHA-256        = $actual_sha
+rebuild or restore the exact PGO binary before qualification"
+    pgo_optimized_binary_sha256="$recorded_sha"
+
+    for path in $PGO_GUARDED_PATHS; do
+        if ! git diff --quiet "$pgo_source_commit" HEAD -- "$path"; then
+            drifted="$drifted $path"
+        fi
+    done
+    if [ -n "$drifted" ]; then
+        fail "encoder-shipped paths changed between the PGO source commit $pgo_source_commit and HEAD $git_commit:$drifted
+rebuild the PGO encoder (scripts/build-encoder-pgo.sh) or qualify the commit it was built from"
+    fi
+}
+
+resolve_environment() {
+    local tool required_commands corpus_key corpus_file libvpx_root
+    local expected_sha actual_sha expected_header actual_header
+
+    work_dir="$(absolute_path "$work_dir")"
+    opt_pgo_manifest="$(absolute_path "$opt_pgo_manifest")"
+    opt_source_dir="$(absolute_path "$opt_source_dir")"
+    opt_libvpx_source="$(absolute_path "$opt_libvpx_source")"
+    opt_test_encoder="$(absolute_path "$opt_test_encoder")"
+    opt_vpxenc="$(absolute_path "$opt_vpxenc")"
+    opt_temporal_anchor="$(absolute_path "$opt_temporal_anchor")"
+    opt_bdrate="$(absolute_path "$opt_bdrate")"
+    opt_bdrate_svc="$(absolute_path "$opt_bdrate_svc")"
+    opt_rvp9dec="$(absolute_path "$opt_rvp9dec")"
+    opt_vpxdec="$(absolute_path "$opt_vpxdec")"
+    opt_ffmpeg="$(absolute_program "$opt_ffmpeg")"
+
+    # Everything the selected phase will actually invoke, checked before any
+    # work begins, each refusal naming why the command is needed. Resolving the
+    # list first means an undeclared phase fails loudly instead of silently
+    # checking nothing.
+    required_commands="$(phase_required_commands "$phase")" ||
+        fail "no external command set is declared for the $phase phase"
+    for tool in $required_commands; do
+        command -v "$tool" >/dev/null 2>&1 ||
+            fail "missing command required by the $phase phase: $tool ($(command_purpose "$tool"))"
+    done
+
+    work_dir="$(canonical_output_dir "$work_dir")"
+
+    # A real run is fresh. Refuse a work directory that already holds anything,
+    # before a single file is written into it.
+    require_absent_or_empty_dir "--work-dir" "$work_dir"
+
+    repo_root="$(git rev-parse --show-toplevel)"
+    cd "$repo_root"
+    case "$work_dir" in
+        "$repo_root"|"$repo_root"/*)
+            fail "--work-dir must be outside the repository worktree: $work_dir"
+            ;;
+    esac
+    git_commit="$(git rev-parse HEAD)"
+    if [ -z "$(git status --porcelain)" ]; then
+        git_status_clean="yes"
+    else
+        git_status_clean="no"
+        fail "the qualification worktree is dirty; commit the exact runner and test code before collecting release evidence"
+    fi
+    host_triple="$(rustc -vV | awk '/^host: / { print $2 }')"
+    case "$host_triple" in
+        *-windows-*) exe_suffix=".exe" ;;
+        *) exe_suffix="" ;;
+    esac
+
+    pgo_manifest="$opt_pgo_manifest"
+    source_dir="$(default_path "$opt_source_dir" "$repo_root/tests/corpus")"
+    test_encoder="$(default_path "$opt_test_encoder" \
+        "$repo_root/target/encoder-pgo/optimized/release/rvp9enc$exe_suffix")"
+    vpxenc="$(default_path "$opt_vpxenc" "$repo_root/build/libvpx/vpxenc$exe_suffix")"
+    temporal_anchor="$(default_path "$opt_temporal_anchor" \
+        "$repo_root/build/libvpx/vpx_temporal_svc_reference$exe_suffix")"
+    bdrate_bin="$(default_path "$opt_bdrate" "$repo_root/target/release/bdrate$exe_suffix")"
+    bdrate_svc_bin="$(default_path "$opt_bdrate_svc" \
+        "$repo_root/target/release/bdrate-svc$exe_suffix")"
+    rvp9dec="$(default_path "$opt_rvp9dec" "$repo_root/target/release/rvp9dec$exe_suffix")"
+    vpxdec="$(default_path "$opt_vpxdec" "$repo_root/build/libvpx/vpxdec$exe_suffix")"
+    ffmpeg_bin="$(default_path "$opt_ffmpeg" "ffmpeg")"
+    libvpx_source="$(default_path "$opt_libvpx_source" "$repo_root/third_party/libvpx")"
+
+    require_executable "--test-encoder" "$test_encoder"
+    require_executable "--vpxenc" "$vpxenc"
+    require_executable "--temporal-anchor" "$temporal_anchor"
+    require_executable "--bdrate" "$bdrate_bin"
+    require_executable "--bdrate-svc" "$bdrate_svc_bin"
+    require_executable "--rvp9dec" "$rvp9dec"
+    require_executable "--vpxdec" "$vpxdec"
+    command -v "$ffmpeg_bin" >/dev/null 2>&1 ||
+        fail "missing ffmpeg; install it or pass --ffmpeg"
+    ffmpeg_bin="$(command -v "$ffmpeg_bin")"
+    require_executable "--ffmpeg" "$ffmpeg_bin"
+    require_help_flag "--bdrate" "$bdrate_bin" "--work-dir"
+    require_help_flag "--bdrate" "$bdrate_bin" "--reference-input"
+    require_help_flag "--bdrate-svc" "$bdrate_svc_bin" "--work-dir"
+    require_help_flag "--bdrate-svc" "$bdrate_svc_bin" "--svc-kind"
+
+    validate_pgo_manifest
+
+    # The pinned checkout must be a standalone repository at the exact
+    # revision. Without the containment check an uninitialized submodule
+    # silently resolves to this superproject and reports the wrong revision.
+    [ -d "$libvpx_source" ] || fail "missing libvpx source: $libvpx_source"
+    libvpx_root="$(git -C "$libvpx_source" rev-parse --show-toplevel 2>/dev/null || true)"
+    if [ -z "$libvpx_root" ] ||
+        [ "$(cd "$libvpx_root" && pwd -P)" != "$(cd "$libvpx_source" && pwd -P)" ]
+    then
+        fail "libvpx source is not an initialized standalone checkout: $libvpx_source"
+    fi
+    libvpx_revision="$(git -C "$libvpx_source" rev-parse HEAD)"
+    if [ "$libvpx_revision" != "$PINNED_LIBVPX_REVISION" ]; then
+        fail "wrong libvpx revision: $libvpx_revision (expected $PINNED_LIBVPX_REVISION)"
+    fi
+    if ! git -C "$libvpx_source" diff --quiet ||
+        ! git -C "$libvpx_source" diff --cached --quiet
+    then
+        fail "libvpx source is dirty; the reference must be the exact pinned revision: $libvpx_source"
+    fi
+
+    libvpx_config_h="$(dirname "$vpxenc")/vpx_config.h"
+    libvpx_config_mk="$(dirname "$vpxenc")/config.mk"
+    [ -s "$libvpx_config_h" ] ||
+        fail "missing libvpx build configuration beside vpxenc: $libvpx_config_h"
+    [ -s "$libvpx_config_mk" ] ||
+        fail "missing libvpx build configuration beside vpxenc: $libvpx_config_mk"
+    grep -q '^#define CONFIG_VP9_ENCODER 1$' "$libvpx_config_h" ||
+        fail "libvpx reference was built without the VP9 encoder: $libvpx_config_h"
+    grep -q '^#define CONFIG_VP9_DECODER 1$' "$libvpx_config_h" ||
+        fail "libvpx reference was built without the VP9 decoder: $libvpx_config_h"
+    grep -q '^#define CONFIG_VP9_TEMPORAL_DENOISING 1$' "$libvpx_config_h" ||
+        fail "libvpx reference was built without VP9 temporal denoising: $libvpx_config_h"
+
+    # Every required corpus input, including the AQ oracle's foreman_cif clip.
+    # The oracle resolves that clip through RVP9_CORPUS_DIR and merely prints
+    # "[skip]" when it is absent, so an unchecked corpus turns the release's
+    # one AQ oracle into a silent no-op.
+    while IFS='|' read -r corpus_key corpus_file; do
+        if [ ! -s "$source_dir/$corpus_file" ]; then
+            fail "missing or empty corpus input ($corpus_key): $source_dir/$corpus_file
+run scripts/fetch-corpus.sh or pass --source-dir"
+        fi
+        expected_sha="$(corpus_expected_sha256 "$corpus_file")" ||
+            fail "no canonical SHA-256 is declared for corpus input: $corpus_file"
+        actual_sha="$(sha256_file "$source_dir/$corpus_file")"
+        [ "$actual_sha" = "$expected_sha" ] ||
+            fail "wrong corpus input SHA-256 for $corpus_file: $actual_sha (expected $expected_sha)"
+        expected_header="$(corpus_expected_header "$corpus_file")" ||
+            fail "no canonical Y4M header is declared for corpus input: $corpus_file"
+        actual_header="$(head -n 1 "$source_dir/$corpus_file")"
+        [ "$actual_header" = "$expected_header" ] ||
+            fail "wrong corpus Y4M header for $corpus_file: '$actual_header' (expected '$expected_header')"
+    done < <(required_corpus_inputs)
+
+    mkdir -p "$work_dir"
+    work_dir="$(cd "$work_dir" && pwd -P)"
+    input_dir="$work_dir/inputs"
+    quality_dir="$work_dir/quality"
+    quality_rows_dir="$quality_dir/rows"
+    quality_summary="$quality_dir/quality-summary.csv"
+    quality_aggregate="$quality_dir/quality-aggregate.csv"
+    cross_decoder_csv="$quality_dir/cross-decoder.csv"
+    manifest="$work_dir/manifest.txt"
+}
+
+# ---------------------------------------------------------------------------
+# Manifest
+# ---------------------------------------------------------------------------
+
+manifest_kv() {
+    printf '%s=%s\n' "$1" "$2" >> "$manifest"
+}
+
+manifest_artifact() {
+    manifest_kv "$1_path" "$2"
+    manifest_kv "$1_sha256" "$(sha256_file "$2")"
+}
+
+write_manifest_header() {
+    local corpus_key corpus_file
+    {
+        printf 'run_begin schema=%s\n' "$PLAN_SCHEMA"
+        printf 'script=scripts/qualify-production-encoder.sh\n'
+    } >> "$manifest"
+    manifest_kv matrix "$MATRIX_NAME"
+    manifest_kv phase "$phase"
+    manifest_kv started_utc "$(utc_now)"
+    manifest_kv git_commit "$git_commit"
+    manifest_kv git_status_clean "$git_status_clean"
+    manifest_kv git_status_entries "$(git status --porcelain | wc -l | tr -d ' ')"
+    manifest_kv libvpx_commit "$libvpx_revision"
+    manifest_kv host "$(uname -a)"
+    manifest_kv host_triple "$host_triple"
+    manifest_kv rustc \
+        "$(deltic timeout "$TOOL_VERSION_TIMEOUT" rustc --version </dev/null)"
+    manifest_kv cargo \
+        "$(deltic timeout "$TOOL_VERSION_TIMEOUT" cargo --version </dev/null)"
+    manifest_kv ffmpeg \
+        "$(deltic timeout "$TOOL_VERSION_TIMEOUT" "$ffmpeg_bin" -version </dev/null 2>/dev/null | head -n 1)"
+    manifest_kv work_dir "$work_dir"
+
+    # The PGO provenance chain: which manifest, which source commit, and the
+    # proof that no encoder-shipped path moved since.
+    manifest_kv pgo_manifest_path "$pgo_manifest"
+    manifest_kv pgo_manifest_sha256 "$pgo_manifest_sha256"
+    manifest_kv pgo_source_commit "$pgo_source_commit"
+    manifest_kv pgo_optimized_binary "$pgo_optimized_binary"
+    manifest_kv pgo_optimized_binary_sha256 "$pgo_optimized_binary_sha256"
+    manifest_kv pgo_optimized_binary_is_test_encoder "yes"
+    manifest_kv pgo_guarded_paths "$(printf '%s' "$PGO_GUARDED_PATHS" | tr -s ' \n' ';')"
+    manifest_kv pgo_guarded_paths_unchanged_since_source_commit "yes"
+
+    manifest_artifact qualification_script \
+        "$repo_root/scripts/qualify-production-encoder.sh"
+    manifest_artifact test_encoder "$test_encoder"
+    manifest_artifact vpxenc "$vpxenc"
+    manifest_artifact temporal_anchor "$temporal_anchor"
+    manifest_artifact libvpx_config_h "$libvpx_config_h"
+    manifest_artifact libvpx_config_mk "$libvpx_config_mk"
+    manifest_artifact bdrate "$bdrate_bin"
+    manifest_artifact bdrate_svc "$bdrate_svc_bin"
+    manifest_artifact rvp9dec "$rvp9dec"
+    manifest_artifact vpxdec "$vpxdec"
+    manifest_artifact ffmpeg_binary "$ffmpeg_bin"
+
+    # Every validated corpus input, hashed from the same list the validation
+    # walked -- the AQ oracle's foreman_cif clip included.
+    while IFS='|' read -r corpus_key corpus_file; do
+        manifest_artifact "$corpus_key" "$source_dir/$corpus_file"
+    done < <(required_corpus_inputs)
+
+    printf 'matrix_begin\n' >> "$manifest"
+    print_plan >> "$manifest"
+    printf 'matrix_end\n' >> "$manifest"
+}
+
+# ---------------------------------------------------------------------------
+# Acceptance inputs
+#
+# Eight clean 60-frame inputs -- one per target/clip pair -- scaled and
+# frame-rate converted exactly as scripts/qualify-spatial-svc.sh does, plus one
+# deterministic noisy derivative of each for the denoiser rows. The noise is
+# applied AFTER the scale/fps conversion so the noisy input stays pixel-aligned
+# with the clean PSNR reference.
+# ---------------------------------------------------------------------------
+
+acceptance_input() {
+    printf '%s/%s_%s_%s.y4m\n' "$input_dir" "$1" "$2" "$3"
+}
+
+validate_prepared_y4m() {
+    local target="$1" path="$2" fps width height threads tiles speed_kbps p50 p99
+    local header actual_bytes frame_bytes expected_bytes
+    IFS='|' read -r fps width height threads tiles speed_kbps p50 p99 \
+        <<< "$(target_spec "$target")"
+    [ -s "$path" ] || fail "prepared acceptance input is missing or empty: $path"
+    header="$(head -n 1 "$path")"
+    case " $header " in
+        " YUV4MPEG2 W${width} H${height} F${fps}:1 Ip "*" C420"*) ;;
+        *) fail "prepared acceptance input has the wrong Y4M shape for $target: '$header' ($path)" ;;
+    esac
+    frame_bytes=$(( width * height * 3 / 2 ))
+    expected_bytes=$(( ${#header} + 1 + FRAMES * (6 + frame_bytes) ))
+    actual_bytes="$(wc -c < "$path" | tr -d ' ')"
+    [ "$actual_bytes" -eq "$expected_bytes" ] ||
+        fail "prepared acceptance input is not exactly $FRAMES untagged I420 frames: $path has $actual_bytes bytes, expected $expected_bytes"
+}
+
+prepared_input_count=0
+
+prepare_inputs() {
+    local target clip src clean noisy filter
+    local fps width height threads tiles speed_kbps p50 p99
+
+    mkdir -p "$input_dir"
+    printf 'Preparing acceptance inputs in %s\n' "$input_dir"
+    for target in $TARGETS; do
+        IFS='|' read -r fps width height threads tiles speed_kbps p50 p99 \
+            <<< "$(target_spec "$target")"
+        if [ "$target" = "720p30" ]; then
+            filter="fps=$fps"
+        else
+            filter="scale=$width:$height:flags=bicubic,fps=$fps"
+        fi
+        for clip in $(target_clips "$target"); do
+            src="$source_dir/$(source_clip_file "$clip")"
+            clean="$(acceptance_input "$clip" "$target" clean)"
+            noisy="$(acceptance_input "$clip" "$target" noisy)"
+            if [ ! -s "$clean" ]; then
+                printf '  %s\n' "$clean"
+                deltic timeout "$PREPROCESS_TIMEOUT" "$ffmpeg_bin" \
+                    -hide_banner -loglevel error -nostdin -y -i "$src" \
+                    -vf "$filter" -frames:v "$FRAMES" -pix_fmt yuv420p "$clean" \
+                    </dev/null
+                [ -s "$clean" ] || fail "ffmpeg produced no output: $clean"
+            fi
+            validate_prepared_y4m "$target" "$clean"
+            if [ ! -s "$noisy" ]; then
+                printf '  %s\n' "$noisy"
+                deltic timeout "$PREPROCESS_TIMEOUT" "$ffmpeg_bin" \
+                    -hide_banner -loglevel error -nostdin -y -i "$clean" \
+                    -vf "$NOISE_FILTER" -frames:v "$FRAMES" -pix_fmt yuv420p "$noisy" \
+                    </dev/null
+                [ -s "$noisy" ] || fail "ffmpeg produced no output: $noisy"
+            fi
+            validate_prepared_y4m "$target" "$noisy"
+            prepared_input_count=$(( prepared_input_count + 2 ))
+        done
+    done
+}
+
+record_acceptance_inputs() {
+    local target clip kind input
+    for target in $TARGETS; do
+        for clip in $(target_clips "$target"); do
+            for kind in clean noisy; do
+                input="$(acceptance_input "$clip" "$target" "$kind")"
+                [ -s "$input" ] || fail "acceptance input is missing or empty: $input"
+                manifest_artifact "input_${kind}_${clip}_${target}" "$input"
+            done
+        done
+    done
+    manifest_kv acceptance_inputs "$prepared_input_count"
+}
+
+# ---------------------------------------------------------------------------
+# Quality phase, with its inseparable cross-decoder checks
+# ---------------------------------------------------------------------------
+
+quality_row_count=0
+quality_clip_gate_count=0
+quality_regression_count=0
+aggregate_group_count=0
+aggregate_gate_count=0
+aggregate_failure_count=0
+cross_stream_count=0
+cross_run_count=0
+aq_oracle_count=0
+aq_oracle_failure_count=0
+
+decode_sha_rvp9() {
+    deltic timeout "$DECODE_TIMEOUT" "$rvp9dec" --codec=vp9 --i420 "$1" \
+        </dev/null 2>>"$2" |
+        shasum -a 256 | awk '{ print $1 }'
+}
+
+decode_sha_vpx() {
+    deltic timeout "$DECODE_TIMEOUT" "$vpxdec" --codec=vp9 --i420 -o - "$1" \
+        </dev/null 2>>"$2" |
+        shasum -a 256 | awk '{ print $1 }'
+}
+
+# Which operating point a retained stream name denotes. Derived from the name
+# the runner actually wrote, so an unexpected shape cannot be silently binned.
+stream_kind() {
+    local name="$1" layer
+    case "$name" in
+        *_full.ivf)
+            printf 'full\n'
+            ;;
+        *_tl[0-9].ivf)
+            layer="${name##*_tl}"
+            printf 'tl%s\n' "${layer%.ivf}"
+            ;;
+        test_*k.ivf)
+            printf 'single\n'
+            ;;
+        *)
+            printf 'unknown stream shape: %s\n' "$name" >&2
+            return 1
+            ;;
+    esac
+}
+
+# One rvp9 candidate stream: rvp9dec and the pinned vpxdec must agree
+# byte-for-byte on non-empty I420, and ffmpeg must decode it. ffmpeg is a
+# decode-success oracle only. A failure here aborts the phase immediately --
+# a corrupt bitstream invalidates every number measured from it.
+cross_check_stream() {
+    local row_id="$1" ivf="$2" log="$3"
+    local name bytes stream_sha rvp9_sha vpx_sha ffmpeg_status kind
+    local identical="yes" status="PASS"
+
+    name="$(basename "$ivf")"
+    kind="$(stream_kind "$name")" ||
+        fail "$row_id: unrecognised retained stream name: $name"
+    [ -s "$ivf" ] || fail "$row_id: expected candidate stream is missing or empty: $ivf"
+    bytes="$(wc -c < "$ivf" | tr -d ' ')"
+    stream_sha="$(sha256_file "$ivf")"
+
+    if ! rvp9_sha="$(decode_sha_rvp9 "$ivf" "$log")"; then
+        fail "$row_id: rvp9dec failed on $name (log $log)"
+    fi
+    if ! vpx_sha="$(decode_sha_vpx "$ivf" "$log")"; then
+        fail "$row_id: pinned vpxdec failed on $name (log $log)"
+    fi
+    ffmpeg_status="ok"
+    if ! deltic timeout "$DECODE_TIMEOUT" "$ffmpeg_bin" \
+        -hide_banner -loglevel error -nostdin -c:v vp9 -i "$ivf" -f null - \
+        >>"$log" 2>&1 </dev/null
+    then
+        ffmpeg_status="failed"
+    fi
+    cross_stream_count=$(( cross_stream_count + 1 ))
+    cross_run_count=$(( cross_run_count + DECODERS_PER_STREAM ))
+
+    [ "$rvp9_sha" = "$vpx_sha" ] || { identical="no"; status="FAIL"; }
+    [ "$ffmpeg_status" = "ok" ] || status="FAIL"
+    if [ "$rvp9_sha" = "$EMPTY_SHA256" ] || [ "$vpx_sha" = "$EMPTY_SHA256" ]; then
+        identical="empty-decode"
+        status="FAIL"
+    fi
+
+    printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
+        "$row_id" "$name" "$kind" "$bytes" "$stream_sha" \
+        "$rvp9_sha" "$vpx_sha" "$identical" "$ffmpeg_status" "$status" \
+        >> "$cross_decoder_csv"
+
+    if [ "$status" != "PASS" ]; then
+        fail "$row_id: cross-decoder mismatch on $name (rvp9dec=$rvp9_sha vpxdec=$vpx_sha ffmpeg=$ffmpeg_status)"
+    fi
+}
+
+# Check the exact enumerated stream set. The glob count is a surplus guard, not
+# the oracle: the oracle is the name list row_stream_names() declares.
+cross_check_row() {
+    local row_id="$1" feature="$2" streams="$3" grid="$4" log="$5"
+    local name expected actual
+
+    expected="$(row_stream_names "$feature" "$grid" | awk 'END { print NR + 0 }')"
+    actual="$(find "$streams" -maxdepth 1 -type f -name 'test_*.ivf' | awk 'END { print NR + 0 }')"
+    if [ "$actual" -ne "$expected" ]; then
+        fail "$row_id: found $actual retained rvp9 candidate streams, expected $expected"
+    fi
+
+    while IFS= read -r name; do
+        cross_check_stream "$row_id" "$streams/$name" "$log"
+    done < <(row_stream_names "$feature" "$grid")
+}
+
+# Delete only this row's generated Y4M, and only from the row's own streams
+# directory inside the work dir. Retained IVF, CSV, logs, and the caller's
+# inputs are untouched.
+discard_row_y4m() {
+    local streams="$1" resolved rows_resolved
+
+    [ -d "$streams" ] || fail "row stream directory vanished: $streams"
+    resolved="$(cd "$streams" && pwd -P)"
+    rows_resolved="$(cd "$quality_rows_dir" && pwd -P)"
+    case "$resolved" in
+        "$rows_resolved"/*/streams) ;;
+        *) fail "refusing to delete outside the quality row tree: $resolved" ;;
+    esac
+    find "$resolved" -maxdepth 1 -type f -name '*.y4m' -delete
+}
+
+# Per-layer BD-rate percentages as `layer,value` lines. bdrate reports a single
+# curve; bdrate-svc reports one per temporal operating point.
+row_layer_bdrates() {
+    local runner="$1" csv="$2"
+    if [ "$runner" = "bdrate" ]; then
+        awk -F, '$1 == "bdrate_pct" { print "0," $2 }' "$csv"
+    else
+        awk -F, '$1 == "bdrate_pct" { print $2 "," $3 }' "$csv"
+    fi
+}
+
+row_bdrate_lines() {
+    awk -F, '$1 == "bdrate_pct" { n++ } END { print n + 0 }' "$1"
+}
+
+# Validate an unordered whitespace-separated layer-id set. Exactly one of
+# every id in 0..expected-1 must be present; duplicates, gaps, and out-of-range
+# ids are all invalid.
+layer_id_set_status() {
+    local expected="$1" ids="$2" id seen=" " count=0 want
+    for id in $ids; do
+        case "$id" in
+            ''|*[!0-9]*) printf 'invalid\n'; return ;;
+        esac
+        [ "$id" -lt "$expected" ] || { printf 'invalid\n'; return; }
+        case "$seen" in
+            *" $id "*) printf 'invalid\n'; return ;;
+        esac
+        seen="$seen$id "
+        count=$(( count + 1 ))
+    done
+    [ "$count" -eq "$expected" ] || { printf 'invalid\n'; return; }
+    want=0
+    while [ "$want" -lt "$expected" ]; do
+        case "$seen" in
+            *" $want "*) ;;
+            *) printf 'invalid\n'; return ;;
+        esac
+        want=$(( want + 1 ))
+    done
+    printf 'valid\n'
+}
+
+run_quality_row() {
+    local feature="$1" mode="$2" target="$3" clip="$4" cpu="$5"
+    local aq="$6" denoiser="$7" layers="$8"
+    local fps width height threads tiles speed_kbps p50 p99
+    local grid row_id dir streams runner anchor_kind encode_input reference_input
+    local rc=0 recorded=0 layer value status layer_ids=""
+
+    IFS='|' read -r fps width height threads tiles speed_kbps p50 p99 \
+        <<< "$(target_spec "$target")"
+    grid="$(target_bitrates "$target")"
+    row_id="${feature}-${mode}-${target}-${clip}-cpu${cpu}"
+    dir="$quality_rows_dir/$row_id"
+    streams="$dir/streams"
+    mkdir -p "$streams"
+
+    runner="$(row_runner_kind "$feature")"
+    anchor_kind="$(row_anchor_kind "$feature")"
+    encode_input="$(acceptance_input "$clip" "$target" "$(row_input_kind "$feature")")"
+    reference_input="$(acceptance_input "$clip" "$target" "$(row_reference_kind "$feature")")"
+    [ -s "$encode_input" ] || fail "$row_id: encode input is missing: $encode_input"
+    [ -s "$reference_input" ] || fail "$row_id: PSNR reference is missing: $reference_input"
+
+    quality_row_count=$(( quality_row_count + 1 ))
+    printf '[quality %3d/%d] %s (%s, %s anchor, %s input)\n' \
+        "$quality_row_count" "$EXPECTED_QUALITY_CURVES" "$row_id" \
+        "$runner" "$anchor_kind" "$(row_input_kind "$feature")"
+
+    if [ "$runner" = "bdrate" ]; then
+        deltic timeout "$QUALITY_ROW_TIMEOUT" "$bdrate_bin" \
+            --anchor-encoder "$vpxenc" \
+            --test-encoder "$test_encoder" \
+            --decoder "$vpxdec" \
+            --input "$encode_input" \
+            --reference-input "$reference_input" \
+            --cpu-used "$cpu" \
+            --bitrates "$grid" \
+            --end-usage "$mode" \
+            --fps "$fps/1" \
+            --threads "$threads" \
+            --tile-columns "$tiles" \
+            --lag-in-frames "$LAG_IN_FRAMES" \
+            --tune-content "$TUNE_CONTENT" \
+            --aq-mode "$aq" \
+            --noise-sensitivity "$denoiser" \
+            --limit "$FRAMES" \
+            --anchor-arg "--kf-max-dist=$KEYFRAME_INTERVAL" \
+            --test-arg "--kf-max-dist=$KEYFRAME_INTERVAL" \
+            --work-dir "$streams" \
+            --csv "$dir/bdrate.csv" \
+            > "$dir/runner.log" 2>&1 </dev/null || rc=$?
+        # bdrate gates nothing itself, so any non-zero exit is a harness or
+        # measurement failure, never a recorded quality miss.
+        [ "$rc" -eq 0 ] ||
+            fail "$row_id: bdrate failed (exit $rc, log $dir/runner.log)"
+    else
+        deltic timeout "$QUALITY_ROW_TIMEOUT" "$bdrate_svc_bin" \
+            --anchor-encoder "$temporal_anchor" \
+            --test-encoder "$test_encoder" \
+            --decoder "$vpxdec" \
+            --input "$encode_input" \
+            --reference-input "$reference_input" \
+            --svc-kind temporal \
+            --temporal-layers "$layers" \
+            --cpu-used "$cpu" \
+            --end-usage "$mode" \
+            --threads "$threads" \
+            --tile-columns "$tiles" \
+            --aq-mode "$aq" \
+            --noise-sensitivity "$denoiser" \
+            --limit "$FRAMES" \
+            --keyframe-interval "$KEYFRAME_INTERVAL" \
+            --bitrates "$grid" \
+            --max-bdrate-pct "$MAX_IMPORTANT_CLIP_BDRATE_PCT" \
+            --work-dir "$streams" \
+            --csv "$dir/bdrate.csv" \
+            > "$dir/runner.log" 2>&1 </dev/null || rc=$?
+        # bdrate-svc writes its CSV before returning its own gate verdict, so a
+        # non-zero exit with a complete CSV is a quality miss to record, while
+        # a short or absent CSV is a real failure.
+        if [ "$rc" -ne 0 ]; then
+            if [ ! -s "$dir/bdrate.csv" ] ||
+                [ "$(row_bdrate_lines "$dir/bdrate.csv")" -ne "$layers" ]
+            then
+                fail "$row_id: bdrate-svc failed before completing its measurement (exit $rc, log $dir/runner.log)"
+            fi
+        fi
+    fi
+
+    [ -s "$dir/bdrate.csv" ] || fail "$row_id: runner wrote no CSV: $dir/bdrate.csv"
+
+    while IFS=',' read -r layer value; do
+        require_number "$row_id TL$layer BD-rate" "$value"
+        status="PASS"
+        if ! number_le "$value" "$MAX_IMPORTANT_CLIP_BDRATE_PCT"; then
+            status="FAIL"
+            quality_regression_count=$(( quality_regression_count + 1 ))
+            printf '  QUALITY MISS %s TL%s: %s%% exceeds +%s%%\n' \
+                "$row_id" "$layer" "$value" "$MAX_IMPORTANT_CLIP_BDRATE_PCT" >&2
+        fi
+        printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
+            "$row_id" "$feature" "$mode" "$target" "$clip" "$cpu" "$aq" \
+            "$denoiser" "$layers" "$threads" "$tiles" \
+            "$(printf '%s' "$grid" | tr ',' ';')" "$runner" "$anchor_kind" \
+            "$(row_input_kind "$feature")" "$(row_reference_kind "$feature")" \
+            "$layer" "$value" "$MAX_IMPORTANT_CLIP_BDRATE_PCT" "$status" \
+            >> "$quality_summary"
+        layer_ids="$layer_ids $layer"
+        recorded=$(( recorded + 1 ))
+        quality_clip_gate_count=$(( quality_clip_gate_count + 1 ))
+    done < <(row_layer_bdrates "$runner" "$dir/bdrate.csv")
+
+    [ "$recorded" -eq "$layers" ] ||
+        fail "$row_id: recorded $recorded layer BD-rates, expected $layers"
+    [ "$(layer_id_set_status "$layers" "$layer_ids")" = "valid" ] ||
+        fail "$row_id: runner reported an invalid layer-id set '$layer_ids' (expected exactly 0..$(( layers - 1 )))"
+
+    cross_check_row "$row_id" "$feature" "$streams" "$grid" "$dir/cross-decoder.log"
+    discard_row_y4m "$streams"
+}
+
+# Equal-weight arithmetic mean of the per-clip BD-rate percentages, one gate per
+# feature/mode/cpu/target/layer group.
+compute_quality_aggregates() {
+    local feature mode target cpu aq denoiser layers
+    local group_id clips clip_count layer count mean status
+
+    while IFS='|' read -r feature mode target cpu aq denoiser layers; do
+        aggregate_group_count=$(( aggregate_group_count + 1 ))
+        clips="$(target_clips "$target")"
+        clip_count="$(printf '%s\n' "$clips" | wc -w | tr -d ' ')"
+        layer=0
+        while [ "$layer" -lt "$layers" ]; do
+            group_id="${feature}-${mode}-${target}-cpu${cpu}-tl${layer}"
+            count="$(awk -F, -v f="$feature" -v m="$mode" -v t="$target" \
+                -v c="$cpu" -v l="$layer" \
+                'NR > 1 && $2 == f && $3 == m && $4 == t && $6 == c && $17 == l { n++ } END { print n + 0 }' \
+                "$quality_summary")"
+            [ "$count" -eq "$clip_count" ] ||
+                fail "$group_id: aggregated $count clip BD-rates, expected $clip_count"
+            mean="$(awk -F, -v f="$feature" -v m="$mode" -v t="$target" \
+                -v c="$cpu" -v l="$layer" \
+                'NR > 1 && $2 == f && $3 == m && $4 == t && $6 == c && $17 == l { s += $18; n++ }
+                 END { if (n > 0) printf "%.6f\n", s / n }' \
+                "$quality_summary")"
+            require_number "$group_id mean BD-rate" "$mean"
+            status="PASS"
+            if ! number_le "$mean" "$MAX_AGGREGATE_BDRATE_PCT"; then
+                status="FAIL"
+                aggregate_failure_count=$(( aggregate_failure_count + 1 ))
+                printf '  AGGREGATE MISS %s: mean %s%% exceeds +%s%%\n' \
+                    "$group_id" "$mean" "$MAX_AGGREGATE_BDRATE_PCT" >&2
+            fi
+            printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
+                "$group_id" "$feature" "$mode" "$target" "$cpu" "$aq" \
+                "$denoiser" "$layers" "$(printf '%s' "$clips" | tr ' ' ';')" \
+                "$clip_count" "$layer" "$mean" "$MAX_AGGREGATE_BDRATE_PCT" \
+                "$status" \
+                >> "$quality_aggregate"
+            aggregate_gate_count=$(( aggregate_gate_count + 1 ))
+            layer=$(( layer + 1 ))
+        done
+    done < <(emit_speed_groups)
+}
+
+# ---------------------------------------------------------------------------
+# AQ gain-parity oracle
+#
+# The authoritative Stage 4b Foreman four-curve test, run once after the corpus
+# curves. It is a separate required check, not a reinterpretation of the broad
+# aq3 rows: those measure rvp9-vs-libvpx BD-rate, this measures whether AQ
+# earns the same gain in both encoders.
+# ---------------------------------------------------------------------------
+
+# Count log lines exactly equal to a literal. It always exits 0: `grep -c`
+# exits 1 when it counts nothing, which under `set -e` would abort the run
+# before the count could be turned into a reason.
+count_lines_exact() {
+    awk -v want="$2" '$0 == want { n++ } END { print n + 0 }' "$1"
+}
+
+# The trailing `: <value> %` of the last line matching a pattern. The pattern
+# must not contain a backslash escape: `awk -v` expands escapes inside the
+# assignment, so a `\(` reaches the regex engine as an unbalanced `(`.
+oracle_metric() {
+    awk -v pat="$2" '$0 ~ pat { line = $0 }
+        END {
+            if (line != "") {
+                n = split(line, parts, ":")
+                value = parts[n]
+                gsub(/[ %]/, "", value)
+                sub(/^\+/, "", value)
+                print value
+            }
+        }' "$1"
+}
+
+run_aq_oracle() {
+    local log="$quality_dir/aq-oracle.log"
+    local summary="$quality_dir/aq-oracle-summary.csv"
+    local rc=0 status="PASS" gate_lines gain_rvp9 gain_libvpx delta
+    local activation_status
+    local -a reasons
+
+    aq_oracle_count=$(( aq_oracle_count + 1 ))
+    printf '[oracle %d/%d] %s\n' \
+        "$aq_oracle_count" "$EXPECTED_REQUIRED_ORACLES" "$AQ_ORACLE_TEST_NAME"
+
+    env "$AQ_ORACLE_CORPUS_ENV=$source_dir" "$AQ_ORACLE_VPXENC_ENV=$vpxenc" \
+        "$AQ_ORACLE_VPXDEC_ENV=$vpxdec" \
+        deltic timeout "$AQ_ORACLE_TIMEOUT" \
+        cargo test --release -p "$AQ_ORACLE_PACKAGE" \
+        --test "$AQ_ORACLE_TEST_TARGET" "$AQ_ORACLE_TEST_NAME" \
+        -- --exact --ignored --nocapture --test-threads=1 \
+        > "$log" 2>&1 </dev/null || rc=$?
+
+    reasons=()
+    [ "$rc" -eq 0 ] || reasons+=("cargo test exited $rc")
+    grep -q '^test result: ok\.' "$log" ||
+        reasons+=("the log carries no 'test result: ok.' line")
+
+    # An unmeasurable or skipped run is a failure, not a pass by omission.
+    if grep -E 'NOT MEASURABLE|\[skip\]|\[libvpx skipped\]|libvpx-stock not available|Curves 3/4 skipped' \
+        "$log" >/dev/null
+    then
+        reasons+=("the log reports a skipped or unmeasurable curve")
+    fi
+
+    gain_rvp9="$(oracle_metric "$log" 'rvp9 +AQ gain :')"
+    gain_libvpx="$(oracle_metric "$log" 'libvpx +AQ gain :')"
+    delta="$(oracle_metric "$log" '^Delta .*gain_rvp9')"
+
+    # Both encoders must report finite gains before their parity delta means
+    # anything. PLAN.md's Stage 4b exit is parity within 0.3 percentage point;
+    # the pinned encoder itself shows a positive AQ penalty on this slice.
+    if ! is_number "$gain_rvp9"; then
+        reasons+=("rvp9 AQ gain is not a finite number: '${gain_rvp9:-absent}'")
+        gain_rvp9="unavailable"
+    fi
+    if ! is_number "$gain_libvpx"; then
+        reasons+=("libvpx AQ gain is not a finite number: '${gain_libvpx:-absent}'")
+        gain_libvpx="unavailable"
+    fi
+    if ! is_number "$delta"; then
+        reasons+=("the log reports no numeric gain delta: '${delta:-absent}'")
+        delta="unavailable"
+    elif ! number_abs_le "$delta" "$AQ_GAIN_DELTA_MAX_PP"; then
+        reasons+=("AQ gain delta $delta exceeds $AQ_GAIN_DELTA_MAX_PP percentage point")
+    fi
+
+    # Cyclic-refresh activation is REQUIRED, and its absence is a failure --
+    # never a pass by omission. A negative AQ gain says AQ moved the numbers;
+    # only an activation report says cyclic refresh actually engaged.
+    #
+    activation_status="$(aq_activation_status "$AQ_ORACLE_ACTIVATION_PREFIX" < "$log")"
+    case "$activation_status" in
+        present) ;;
+        absent)
+            reasons+=("the log reports '$AQ_ORACLE_ACTIVATION_PREFIX' with no activation")
+            ;;
+        ambiguous)
+            reasons+=("the log reports '$AQ_ORACLE_ACTIVATION_PREFIX' more than once, so activation is ambiguous")
+            ;;
+        malformed)
+            reasons+=("the log's '$AQ_ORACLE_ACTIVATION_PREFIX' line is malformed; expected positive boosted_mi_cells and active_frames counters")
+            ;;
+        *)
+            reasons+=("the log carries no '$AQ_ORACLE_ACTIVATION_PREFIX' line, so cyclic-refresh activation is unproven")
+            ;;
+    esac
+
+    gate_lines="$(count_lines_exact "$log" "$AQ_ORACLE_GATE_LINE")"
+    [ "$gate_lines" -eq 1 ] ||
+        reasons+=("the literal <=0.3 pp gate line is not present exactly once (found $gate_lines)")
+
+    if [ "${#reasons[@]}" -ne 0 ]; then
+        status="FAIL"
+        aq_oracle_failure_count=$(( aq_oracle_failure_count + 1 ))
+        printf '  AQ ORACLE FAILED (%s): %s\n' "$log" \
+            "$(printf '%s; ' ${reasons[@]+"${reasons[@]}"})" >&2
+    fi
+
+    printf 'oracle,test,gain_rvp9_pct,gain_libvpx_pct,delta_pp,max_delta_pp,activation,exit_code,status\n' \
+        > "$summary"
+    printf 'aq_gain_parity,%s,%s,%s,%s,%s,%s,%s,%s\n' \
+        "$AQ_ORACLE_TEST_NAME" "$gain_rvp9" "$gain_libvpx" "$delta" \
+        "$AQ_GAIN_DELTA_MAX_PP" "$activation_status" "$rc" "$status" \
+        >> "$summary"
+
+    manifest_kv aq_oracle_status "$status"
+    manifest_kv aq_oracle_exit_code "$rc"
+    manifest_kv aq_oracle_gain_rvp9_pct "$gain_rvp9"
+    manifest_kv aq_oracle_gain_libvpx_pct "$gain_libvpx"
+    manifest_kv aq_oracle_delta_pp "$delta"
+    manifest_kv aq_oracle_activation "$activation_status"
+    manifest_kv aq_oracle_log_sha256 "$(sha256_file "$log")"
+    manifest_kv aq_oracle_summary_sha256 "$(sha256_file "$summary")"
+    printf '  rvp9 AQ gain %s%%, libvpx AQ gain %s%%, delta %s pp, activation %s: %s\n' \
+        "$gain_rvp9" "$gain_libvpx" "$delta" "$activation_status" "$status"
+}
+
+run_quality() {
+    local feature mode target clip cpu aq denoiser layers
+
+    # No freshness check here: resolve_environment already refused a work
+    # directory that held anything, so every phase directory under it is new.
+    mkdir -p "$quality_rows_dir"
+
+    printf 'row_id,feature,mode,target,clip,cpu_used,aq_mode,noise_sensitivity,temporal_layers,threads,tile_columns,bitrates_kbps,runner,anchor,input_kind,reference_kind,layer,bdrate_pct,gate_pct,status\n' \
+        > "$quality_summary"
+    printf 'group_id,feature,mode,target,cpu_used,aq_mode,noise_sensitivity,temporal_layers,clips,clip_count,layer,mean_bdrate_pct,gate_pct,status\n' \
+        > "$quality_aggregate"
+    printf 'row_id,stream,kind,bytes,stream_sha256,rvp9dec_sha256,vpxdec_sha256,decoders_identical,ffmpeg_decode,status\n' \
+        > "$cross_decoder_csv"
+
+    while IFS='|' read -r feature mode target clip cpu aq denoiser layers; do
+        run_quality_row "$feature" "$mode" "$target" "$clip" "$cpu" \
+            "$aq" "$denoiser" "$layers"
+    done < <(emit_clip_rows)
+
+    compute_quality_aggregates
+    run_aq_oracle
+
+    # Exact totals. A phase that measured the wrong amount of the matrix has
+    # not qualified the release, whatever its numbers say.
+    [ "$quality_row_count" -eq "$EXPECTED_QUALITY_CURVES" ] ||
+        fail "ran $quality_row_count quality curves, expected $EXPECTED_QUALITY_CURVES"
+    [ "$quality_clip_gate_count" -eq "$EXPECTED_QUALITY_CLIP_LAYER_GUARDS" ] ||
+        fail "recorded $quality_clip_gate_count clip/layer checks, expected $EXPECTED_QUALITY_CLIP_LAYER_GUARDS"
+    [ "$aggregate_group_count" -eq "$EXPECTED_QUALITY_AGGREGATE_GROUPS" ] ||
+        fail "aggregated $aggregate_group_count groups, expected $EXPECTED_QUALITY_AGGREGATE_GROUPS"
+    [ "$aggregate_gate_count" -eq "$EXPECTED_QUALITY_AGGREGATE_LAYER_GATES" ] ||
+        fail "recorded $aggregate_gate_count aggregate layer gates, expected $EXPECTED_QUALITY_AGGREGATE_LAYER_GATES"
+    [ "$cross_stream_count" -eq "$EXPECTED_CANDIDATE_STREAMS" ] ||
+        fail "checked $cross_stream_count candidate streams, expected $EXPECTED_CANDIDATE_STREAMS"
+    [ "$cross_run_count" -eq "$EXPECTED_DECODER_RUNS" ] ||
+        fail "ran $cross_run_count decoder runs, expected $EXPECTED_DECODER_RUNS"
+    [ "$aq_oracle_count" -eq "$EXPECTED_REQUIRED_ORACLES" ] ||
+        fail "ran $aq_oracle_count required oracles, expected $EXPECTED_REQUIRED_ORACLES"
+
+    manifest_kv quality_curves "$quality_row_count"
+    manifest_kv quality_clip_layer_checks "$quality_clip_gate_count"
+    manifest_kv quality_clip_layer_failures "$quality_regression_count"
+    manifest_kv quality_aggregate_groups "$aggregate_group_count"
+    manifest_kv quality_aggregate_layer_gates "$aggregate_gate_count"
+    manifest_kv quality_aggregate_failures "$aggregate_failure_count"
+    manifest_kv candidate_streams "$cross_stream_count"
+    manifest_kv decoder_runs "$cross_run_count"
+    manifest_kv required_oracles "$aq_oracle_count"
+    manifest_kv quality_summary_sha256 "$(sha256_file "$quality_summary")"
+    manifest_kv quality_aggregate_sha256 "$(sha256_file "$quality_aggregate")"
+    manifest_kv cross_decoder_summary_sha256 "$(sha256_file "$cross_decoder_csv")"
+
+    printf '\nQuality phase measured %s curves, %s clip/layer checks, %s aggregate groups (%s layer gates), %s candidate streams, %s decoder runs, %s oracle.\n' \
+        "$quality_row_count" "$quality_clip_gate_count" \
+        "$aggregate_group_count" "$aggregate_gate_count" \
+        "$cross_stream_count" "$cross_run_count" "$aq_oracle_count"
+
+    if [ "$quality_regression_count" -ne 0 ] ||
+        [ "$aggregate_failure_count" -ne 0 ] ||
+        [ "$aq_oracle_failure_count" -ne 0 ]
+    then
+        manifest_kv quality_verdict "fail"
+        fail "quality phase FAILED: $quality_regression_count clip/layer regression(s) beyond +$MAX_IMPORTANT_CLIP_BDRATE_PCT%, $aggregate_failure_count aggregate group(s) beyond +$MAX_AGGREGATE_BDRATE_PCT%, $aq_oracle_failure_count oracle failure(s). Evidence: $manifest"
+    fi
+    manifest_kv quality_verdict "pass"
+    printf 'Quality phase passed.\n'
 }
 
 # ---------------------------------------------------------------------------
@@ -791,8 +2616,18 @@ main() {
             ;;
     esac
 
-    usage >&2
-    fail "execution phases (quality, speed, latency) are not enabled in this unit: '$1' cannot start a real run. Only --print-plan and --self-test are implemented; the matrix they describe has not been executed by this script."
+    parse_args "$@"
+    resolve_environment
+
+    write_manifest_header
+    prepare_inputs
+    record_acceptance_inputs
+    run_quality
+
+    manifest_kv ended_utc "$(utc_now)"
+    printf 'run_end status=pass\n' >> "$manifest"
+    printf '\nNon-spatial v1 acceptance phase "%s" passed.\nEvidence: %s\n' \
+        "$phase" "$manifest"
 }
 
 main "$@"

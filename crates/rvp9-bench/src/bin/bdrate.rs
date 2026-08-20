@@ -73,6 +73,16 @@ struct Args {
     csv: Option<PathBuf>,
 }
 
+const USAGE: &str = "Usage: bdrate --anchor-encoder PATH --test-encoder PATH --decoder PATH \\
+  --input INPUT.y4m [--reference-input CLEAN.y4m] [options]\n\n\
+Options:\n\
+  --cpu-used N --bitrates LIST --end-usage cbr|vbr --fps NUM/DEN\n\
+  --threads N --tile-columns N --lag-in-frames N --tune-content NAME\n\
+  --aq-mode N --noise-sensitivity N --limit N\n\
+  --anchor-arg ARG --test-arg ARG\n\
+  --work-dir PATH   retain deterministic anchor/test IVF and decoded Y4M files\n\
+  --csv PATH        write machine-readable measurements\n";
+
 fn parse_args() -> Args {
     let argv: Vec<String> = std::env::args().collect();
     parse_args_from(&argv)
@@ -468,6 +478,10 @@ fn polyfit3(pts: &[(f64, f64)]) -> [f64; 4] {
 }
 
 fn main() -> ExitCode {
+    if std::env::args().any(|arg| arg == "--help" || arg == "-h") {
+        print!("{USAGE}");
+        return ExitCode::SUCCESS;
+    }
     let args = parse_args();
 
     let artifacts = match prepare_artifacts(args.work_dir.as_deref()) {
@@ -647,6 +661,12 @@ fn write_csv(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn usage_advertises_retained_artifact_inputs() {
+        assert!(USAGE.contains("--work-dir PATH"));
+        assert!(USAGE.contains("--reference-input CLEAN.y4m"));
+    }
 
     /// Per-test scratch root under the OS temp dir, unique per process so
     /// concurrent runs of this suite cannot collide.

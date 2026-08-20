@@ -130,7 +130,7 @@ if [ "$print_training_plan" -eq 1 ]; then
     exit 0
 fi
 
-for tool in cargo rustc git; do
+for tool in awk cargo git rustc sed shasum; do
     command -v "$tool" >/dev/null 2>&1 || { echo "missing required tool: $tool" >&2; exit 1; }
 done
 
@@ -307,6 +307,7 @@ fi
     echo "profdata=$profdata"
     echo "raw_profile_count=${#raw_profiles[@]}"
     echo "optimized_binary=$optimized_bin"
+    echo "optimized_binary_sha256=$(shasum -a 256 "$optimized_bin" | awk '{ print $1 }')"
 } >> "$manifest"
 
 echo "[encoder PGO done] $optimized_bin"
