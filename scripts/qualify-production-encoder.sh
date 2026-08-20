@@ -6,11 +6,13 @@
 # execution phases -- the resumable QUALITY phase, the relative-SPEED phase,
 # the absolute-LATENCY phase, and the ALL fan-out that runs the three in order.
 #
-# Only the quality phase is resumable. Speed and latency measure wall time, and
-# a resumed timing campaign would splice measurements taken on two different
-# host states into one verdict, so --resume is refused for them by name. For
-# trustworthy cold-host timing, run speed and latency as their own fresh runs
-# rather than as the tail of an --phase all campaign.
+# Quality rows are resumable. Speed and latency permit only a sealed restart
+# before their first measurement, so deterministic input preparation can finish
+# and the host can cool before timing begins. A timing attempt or published
+# result makes resume fail closed; measurements from two host states are never
+# spliced. The `all` fan-out is never resumable. For trustworthy cold-host
+# timing, run speed and latency as their own runs rather than as the tail of an
+# `--phase all` campaign.
 #
 # A normal real run is fresh. --work-dir must be outside the repository, its
 # parent must exist, and the directory itself must be absent or empty. An
@@ -613,16 +615,16 @@ phase_supported() {
     esac
 }
 
-# Which phases a --resume may reopen. Only quality: its rows are sealed,
-# content-addressed evidence that a fresh decode can revalidate. A timing phase
-# measures the host, and splicing runs taken across two host states -- different
-# thermal state, different background load, possibly a reboot -- into one median
-# would produce a number no single host ever exhibited.
+# Which phases a --resume may reopen. Quality rows are sealed, content-addressed
+# evidence that a fresh decode can revalidate. Speed and latency may reopen only
+# before the first timing attempt, to reuse sealed deterministic inputs after
+# the fresh run's load check refuses a host warmed by preprocessing.
 phase_resumable() {
     case "$1" in
-        quality)           printf 'resumable\n' ;;
-        speed|latency|all) printf 'not-resumable\n' ;;
-        *)                 printf 'unknown\n' ;;
+        quality)       printf 'resumable\n' ;;
+        speed|latency) printf 'pre-measurement-only\n' ;;
+        all)           printf 'not-resumable\n' ;;
+        *)             printf 'unknown\n' ;;
     esac
 }
 
@@ -1681,10 +1683,12 @@ self_test() {
               fi
           done)" \
         "quality,"
-    for phase_name in speed latency all; do
-        expect_equal "the $phase_name phase is not resumable" \
-            "$(phase_resumable "$phase_name")" "not-resumable"
+    for phase_name in speed latency; do
+        expect_equal "the $phase_name phase permits only a pre-measurement restart" \
+            "$(phase_resumable "$phase_name")" "pre-measurement-only"
     done
+    expect_equal "the all phase is not resumable" \
+        "$(phase_resumable all)" "not-resumable"
 
     # --- a real run must name its phase --------------------------------------
     #
@@ -1713,14 +1717,17 @@ self_test() {
         "$(parse_args_error --phase nonsense --work-dir /w --pgo-manifest /m)" \
         "--phase must be one of quality, speed, latency, all"
 
-    # Timing cannot be spliced across host states, so resume is quality-only.
-    for phase_name in speed latency all; do
-        expect_equal "--resume is refused for --phase $phase_name" \
-            "$(refusal_starts_with \
-                  "$(parse_args_error --resume --phase "$phase_name" --work-dir /w --pgo-manifest /m)" \
-                  "--resume is supported only for --phase quality")" \
-            "refused"
-    done
+    expect_equal "--resume accepts a sealed pre-measurement speed restart" \
+        "$(parse_args_error --resume --phase speed --work-dir /w --pgo-manifest /m)" \
+        "accepted"
+    expect_equal "--resume accepts a sealed pre-measurement latency restart" \
+        "$(parse_args_error --resume --phase latency --work-dir /w --pgo-manifest /m)" \
+        "accepted"
+    expect_equal "--resume still refuses the all fan-out" \
+        "$(refusal_starts_with \
+              "$(parse_args_error --resume --phase all --work-dir /w --pgo-manifest /m)" \
+              "--resume is not supported for --phase all")" \
+        "refused"
     expect_equal "--phase still requires a value" \
         "$(parse_args_error --phase)" "--phase requires a value"
     expect_equal "the new timing path options take a value" \
@@ -1758,8 +1765,8 @@ self_test() {
         "$(plan_count "$(usage)" 'optimized_binary= and optimized_binary_sha256= must')" 1
     expect_equal "usage states all four phases execute" \
         "$(plan_count "$(usage)" 'All four execute:')" 1
-    expect_equal "usage confines resume to the quality phase" \
-        "$(plan_count "$(usage)" 'Accepted for --phase quality only')" 1
+    expect_equal "usage confines timing resume to the pre-measurement boundary" \
+        "$(plan_count "$(usage)" 'any timing attempt or result makes resume refuse')" 1
     expect_equal "usage recommends separate fresh runs for cold-host timing" \
         "$(plan_count "$(usage)" 'run --phase speed and --phase latency as')" 1
     expect_equal "usage says why --phase all is warm rather than wrong" \
@@ -2239,9 +2246,10 @@ Usage:
 Real-run options:
   --work-dir PATH        required; outside the repo, with an existing parent;
                          absent or empty unless --resume is explicit
-  --resume               reopen this exact sealed run; completed rows are
+  --resume               reopen this exact sealed run. Quality rows are
                          validated and cross-decoded again before reuse.
-                         Accepted for --phase quality only.
+                         Speed/latency accept only a pre-measurement restart;
+                         any timing attempt or result makes resume refuse.
   --phase PHASE          required; no phase is assumed. All four execute:
                          quality, speed, latency, and the all fan-out.
   --pgo-manifest PATH    required; the manifest scripts/build-encoder-pgo.sh
@@ -2264,7 +2272,8 @@ Path options (repo-relative defaults, all validated before a real run):
   --libvpx-source PATH     pinned libvpx checkout
 
 A normal real run is fresh. --resume accepts only a sealed matching run,
-leaves partial attempts untouched, and never reuses an unsealed row.
+leaves partial attempts untouched, and never reuses an unsealed row or any
+timing measurement.
 
 For trustworthy cold-host timing, run --phase speed and --phase latency as
 their own fresh runs. --phase all is exact and complete, but it measures wall
@@ -2343,12 +2352,12 @@ parse_args() {
         *) fail "--phase must be one of quality, speed, latency, all" ;;
     esac
 
-    # Timing cannot be spliced across host states, so resume is quality-only.
-    # Refusing here, before any path is resolved, means an operator who meant
-    # to continue a timing campaign is told to restart it rather than handed a
-    # median over two different machines-in-time.
-    if [ "$resume" = "yes" ] && [ "$(phase_resumable "$phase")" != "resumable" ]; then
-        fail "--resume is supported only for --phase quality: the $phase phase measures wall time, and splicing runs taken under two host states would produce a median no host ever exhibited. Start a fresh --work-dir for a timing phase."
+    # The all fan-out cannot distinguish a completed quality phase from a
+    # not-yet-started timing phase. Individual timing phases may reopen their
+    # sealed inputs, but validate_resume_contract refuses as soon as a timing
+    # attempt exists, so no measurements can cross host states.
+    if [ "$resume" = "yes" ] && [ "$(phase_resumable "$phase")" = "not-resumable" ]; then
+        fail "--resume is not supported for --phase $phase; resume quality rows directly, or restart one sealed speed/latency phase before its first measurement"
     fi
     if [ -z "$work_dir" ]; then
         usage >&2
@@ -3068,8 +3077,27 @@ validate_resume_inputs() {
     done
 }
 
+# A timing restart is safe only before its first attempt directory exists.
+# Input preparation and manifest sealing are deterministic setup, not timing;
+# anything under the phase result directory is evidence that measurement may
+# have begun and therefore makes a cross-host-state restart ambiguous.
+timing_resume_state() {
+    local dir="$1" entries
+    [ ! -e "$dir/completed" ] || { printf 'published\n'; return; }
+    if [ ! -d "$dir" ]; then
+        printf 'clean\n'
+        return
+    fi
+    entries="$(find "$dir" -mindepth 1 -maxdepth 1 -print | awk 'END { print NR + 0 }')"
+    if [ "$entries" -eq 0 ]; then
+        printf 'clean\n'
+    else
+        printf 'existing-evidence\n'
+    fi
+}
+
 validate_resume_contract() {
-    local recorded
+    local recorded timing_dir timing_state
     [ -f "$manifest" ] ||
         fail "--resume found no sealed manifest: $manifest"
     [ "$(manifest_key_count acceptance_inputs_sealed "$manifest")" -eq 1 ] &&
@@ -3079,8 +3107,24 @@ validate_resume_contract() {
         fail "--resume requires exactly one run_fingerprint_sha256 record in $manifest"
     [ "$(grep -c '^run_end ' "$manifest" || true)" -eq 0 ] ||
         fail "--resume refuses a run that already has a run_end record: $manifest"
-    [ ! -e "$quality_dir/completed" ] ||
-        fail "--resume found a published quality result without run_end; finalization is ambiguous: $quality_dir/completed"
+    case "$phase" in
+        quality)
+            [ ! -e "$quality_dir/completed" ] ||
+                fail "--resume found a published quality result without run_end; finalization is ambiguous: $quality_dir/completed"
+            ;;
+        speed|latency)
+            if [ "$phase" = "speed" ]; then
+                timing_dir="$speed_dir"
+            else
+                timing_dir="$latency_dir"
+            fi
+            timing_state="$(timing_resume_state "$timing_dir")"
+            [ "$timing_state" = "clean" ] ||
+                fail "--resume refuses the $phase phase after timing may have begun ($timing_state): $timing_dir
+start a fresh --work-dir; timing samples from separate host states are never combined"
+            ;;
+        *) fail "--resume has no contract for phase: $phase" ;;
+    esac
 
     validate_resume_inputs
     recorded="$(manifest_field run_fingerprint_sha256 < "$manifest")"
@@ -4064,6 +4108,11 @@ run_speed() {
     local feature mode target cpu aq denoiser layers
     local completed_dir invocation_id
 
+    # Check before creating any result path. If deterministic preprocessing
+    # warmed the host, the sealed run remains eligible for a later
+    # pre-measurement --resume after the host cools.
+    enforce_load "speed-start"
+
     completed_dir="$speed_dir/completed"
     [ ! -e "$completed_dir" ] ||
         fail "relative-speed result is already published: $completed_dir"
@@ -4080,7 +4129,6 @@ run_speed() {
     printf 'group_id,feature,mode,target,cpu_used,aq_mode,noise_sensitivity,temporal_layers,input_kind,anchor_kind,test_kind,clips,clip_count,target_kbps,threads,tile_columns,warmups,pairs,rotations,corpus_separate_ratio,corpus_paired_ratio,max_ratio,max_load1,runner_exit_code,status,failure_reason\n' \
         > "$speed_summary"
 
-    enforce_load "speed-start"
     while IFS='|' read -r feature mode target cpu aq denoiser layers; do
         run_speed_group "$feature" "$mode" "$target" "$cpu" \
             "$aq" "$denoiser" "$layers"
@@ -4317,6 +4365,10 @@ run_latency() {
     local feature mode target clip cpu aq denoiser layers
     local completed_dir invocation_id group previous_group=""
 
+    # As in speed, refuse a busy host before any timing result path exists so
+    # the sealed deterministic inputs can be reopened after the host cools.
+    enforce_load "latency-start"
+
     completed_dir="$latency_dir/completed"
     [ ! -e "$completed_dir" ] ||
         fail "absolute-latency result is already published: $completed_dir"
@@ -4339,7 +4391,6 @@ run_latency() {
     # `realtime` has no load check of its own, so this phase performs the one
     # the speed runner performs for itself: at the start, whenever the group
     # changes, and at completion.
-    enforce_load "latency-start"
     while IFS='|' read -r feature mode target clip cpu aq denoiser layers; do
         group="${feature}-${mode}-${target}-cpu${cpu}"
         if [ "$group" != "$previous_group" ]; then
@@ -4388,7 +4439,7 @@ run_latency() {
 # corpus, repository artifact, or caller path is touched.
 resume_self_test() {
     local test_root row_id row_dir rate artifact_sha changed_sha attempt_dir
-    local lock_work temp_parent bytes stream_sha
+    local lock_work temp_parent bytes stream_sha timing_fixture
     [ -n "${TMPDIR-}" ] || fail "--self-test-resume requires TMPDIR"
     temp_parent="${TMPDIR%/}"
     test_root="$(mktemp -d "$temp_parent/rvp9-qualify-resume.XXXXXX")" ||
@@ -4422,6 +4473,21 @@ resume_self_test() {
         fail "resume self-test: a second invocation acquired the same lock"
     fi
     release_run_lock
+
+    # Timing setup may be reopened only before any result path exists. These
+    # fixtures exercise all three filesystem states without running a timer.
+    timing_fixture="$test_root/timing-restart"
+    [ "$(timing_resume_state "$timing_fixture")" = "clean" ] ||
+        fail "resume self-test: absent timing directory was not restartable"
+    mkdir -p "$timing_fixture/.result-attempt-test"
+    [ "$(timing_resume_state "$timing_fixture")" = "existing-evidence" ] ||
+        fail "resume self-test: partial timing evidence was restartable"
+    rmdir "$timing_fixture/.result-attempt-test"
+    mkdir "$timing_fixture/completed"
+    [ "$(timing_resume_state "$timing_fixture")" = "published" ] ||
+        fail "resume self-test: published timing evidence was restartable"
+    rmdir "$timing_fixture/completed"
+    rmdir "$timing_fixture"
 
     row_id="baseline-cbr-720p30-in_to_tree-cpu6"
     quality_rows_dir="$test_root/rows"
