@@ -8,14 +8,21 @@
 pub use rvp9_io::y4m::*;
 
 fn workspace_corpus_dir() -> std::path::PathBuf {
-    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
-        .join("tests")
-        .join("corpus")
+    corpus_dir_from(std::env::var_os("RVP9_CORPUS_DIR"))
 }
 
-/// Return a corpus path anchored to the workspace that built this harness.
+fn corpus_dir_from(configured: Option<std::ffi::OsString>) -> std::path::PathBuf {
+    configured.map(std::path::PathBuf::from).unwrap_or_else(|| {
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("tests")
+            .join("corpus")
+    })
+}
+
+/// Return a corpus path anchored to `RVP9_CORPUS_DIR` when set, otherwise to
+/// the workspace that built this harness.
 #[must_use]
 pub fn workspace_corpus_file(name: &str) -> std::path::PathBuf {
     workspace_corpus_dir().join(name)
@@ -107,5 +114,15 @@ mod tests {
 
         assert_eq!(candidates.len(), 1);
         assert!(candidates.iter().all(|path| path.starts_with(&workspace)));
+    }
+
+    #[test]
+    fn configured_corpus_directory_overrides_the_workspace_default() {
+        let configured = std::ffi::OsString::from("acceptance-corpus");
+
+        assert_eq!(
+            corpus_dir_from(Some(configured)),
+            std::path::PathBuf::from("acceptance-corpus")
+        );
     }
 }

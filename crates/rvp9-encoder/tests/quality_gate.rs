@@ -79,12 +79,21 @@ const TRACK_F_PSNR_DELTA_THRESHOLD_DB: f64 = 9.1;
 /// metric lives on foreman.
 const TRACK_F_PSNR_DELTA_THRESHOLD_TESTSRC_DB: f64 = 50.0;
 
-/// Probe for libvpx-stock's `vpxenc` at a known path.
+/// Probe for libvpx-stock's `vpxenc` at `RVP9_VPXENC`, then known paths.
 ///
-/// Returns `Some(path)` if the binary exists and is executable on this
-/// host; `None` otherwise. The harness short-circuits the libvpx side
-/// of the comparison if `None`.
+/// Returns `Some(path)` when an explicit or known candidate is a file, or a
+/// PATH candidate can be launched; the encode leg reports any later launch
+/// failure. The harness short-circuits the libvpx side when this returns
+/// `None`. An explicit but invalid `RVP9_VPXENC` fails closed instead of
+/// falling back to a different binary.
 fn libvpx_stock_available() -> Option<PathBuf> {
+    libvpx_stock_available_from(std::env::var_os("RVP9_VPXENC").map(PathBuf::from))
+}
+
+fn libvpx_stock_available_from(configured: Option<PathBuf>) -> Option<PathBuf> {
+    if let Some(path) = configured {
+        return path.is_file().then_some(path);
+    }
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let candidates = [
         root.join("build/libvpx/vpxenc"),
@@ -111,6 +120,21 @@ fn libvpx_stock_available() -> Option<PathBuf> {
         }
     }
     None
+}
+
+#[test]
+fn configured_vpxenc_path_is_authoritative() {
+    let path =
+        std::env::temp_dir().join(format!("rvp9-quality-gate-vpxenc-{}", std::process::id()));
+    assert!(!path.exists(), "unexpected stale test file");
+    std::fs::write(&path, b"test executable placeholder").unwrap();
+
+    assert_eq!(
+        libvpx_stock_available_from(Some(path.clone())),
+        Some(path.clone())
+    );
+    std::fs::remove_file(&path).unwrap();
+    assert_eq!(libvpx_stock_available_from(Some(path)), None);
 }
 
 fn sibling_vpxdec_path(vpxenc: &Path) -> PathBuf {
