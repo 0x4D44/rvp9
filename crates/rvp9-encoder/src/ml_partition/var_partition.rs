@@ -568,8 +568,20 @@ pub fn trace_ml_var_partition_tree(
 pub fn choose_ml_var_partition_tree(input: &MlVarPartitionTreeInput<'_>) -> PartitionDecision {
     debug_assert!(input.src_stride >= 64);
     debug_assert!(input.pred_stride >= 64);
-    debug_assert!(input.src.len() >= input.src_stride * 64);
-    debug_assert!(input.pred.len() >= input.pred_stride * 64);
+    let required_src_len = input.src_stride.saturating_mul(63).saturating_add(64);
+    let required_pred_len = input.pred_stride.saturating_mul(63).saturating_add(64);
+    debug_assert!(
+        input.src.len() >= required_src_len,
+        "ML source len {} is shorter than a 64x64 tail view at stride {}",
+        input.src.len(),
+        input.src_stride
+    );
+    debug_assert!(
+        input.pred.len() >= required_pred_len,
+        "ML predictor len {} is shorter than a 64x64 tail view at stride {}",
+        input.pred.len(),
+        input.pred_stride
+    );
 
     fn stamp(decision: &mut PartitionDecision, row_8x8: usize, col_8x8: usize, bsize: BlockSize) {
         let cells_wide = usize::from(bsize.n_8x8_wide());
@@ -939,6 +951,39 @@ mod tests {
         });
         assert!(texture_tree.is_valid_partition());
         assert_ne!(texture_tree, PartitionDecision::all_64x64());
+    }
+
+    #[test]
+    fn low_resolution_var_model_accepts_a_right_edge_tail_view() {
+        let mut wide_source = [0u8; 128 * 64];
+        let mut contiguous_source = [0u8; 64 * 64];
+        for row in 0..64 {
+            for col in 0..64 {
+                let sample = ((row * 11 + col * 7) & 0xff) as u8;
+                wide_source[row * 128 + 64 + col] = sample;
+                contiguous_source[row * 64 + col] = sample;
+            }
+        }
+        let predictor = [128u8; 64 * 64];
+
+        let tail_tree = choose_ml_var_partition_tree(&MlVarPartitionTreeInput {
+            dc_q: 80,
+            speed: 8,
+            src: &wide_source[64..],
+            src_stride: 128,
+            pred: &predictor,
+            pred_stride: 64,
+        });
+        let contiguous_tree = choose_ml_var_partition_tree(&MlVarPartitionTreeInput {
+            dc_q: 80,
+            speed: 8,
+            src: &contiguous_source,
+            src_stride: 64,
+            pred: &predictor,
+            pred_stride: 64,
+        });
+
+        assert_eq!(tail_tree, contiguous_tree);
     }
 
     #[test]
