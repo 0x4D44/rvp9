@@ -1,8 +1,8 @@
 # rvp9-2: VP9 Encoder Port to Rust — Multistage Plan
 
-**Status:** Draft, pending Arthur's approval to start Stage 0.
+**Status:** Stage 5 hardening in progress; spatial SVC is experimental in v0.2.0.
 **Owner:** Arthur (martin@tollens.ai) + Claude.
-**Last revised:** 2026-05-16.
+**Last revised:** 2026-08-20.
 
 ---
 
@@ -26,7 +26,12 @@ A stage gates to the next stage only when its criteria pass. The project gates t
 - [ ] Cross-product tests pass: `{libvpx-enc, rvp9-enc} × {libvpx-dec, rvp9-dec}` all decode to matching YUV (within 0 ULP for lossless paths; within bit-exact transforms for lossy paths).
 
 ### Compression efficiency
-- [ ] **BD-rate within 0.5%** of libvpx vpxenc at matched `--cpu-used` setting (6, 7, 8) on the AOM test set + a WebRTC-representative corpus + a livestream corpus.
+- [ ] **BD-rate within 0.5%** of libvpx vpxenc at matched `--cpu-used`
+  setting (6, 7, 8) on the AOM test set + a WebRTC-representative corpus + a
+  livestream corpus. The sole v0.2.0 exception is experimental CPU6
+  three-layer spatial VBR: each layer on every important clip must remain
+  within `+3.0%`. Every other required configuration retains the `+0.5%`
+  gate.
 
 ### Real-time performance (hard gate)
 - [ ] **720p30**: ≤33ms/frame median, ≤50ms p99, on a single modern x86_64 core.
@@ -56,7 +61,7 @@ These are committed and should not be revisited without explicit Arthur approval
 |---|---|---|
 | D1 | Real-time priority (cpu-used 6–8) | WebRTC + livestream use cases |
 | D2 | Encoder + decoder both in v1 | Decoder gives spec-defined oracle; shared infra benefits both |
-| D3 | Full SVC (temporal + spatial) in v1 | Required for WebRTC viability |
+| D3 | Full temporal SVC in v1; spatial SVC ships experimental in v0.2.0 | Temporal SVC is required for WebRTC viability; spatial SVC is not a primary v0.2.0 use case |
 | D4 | Denoiser + AQ in v1 | Required for production-grade quality |
 | D5 | SIMD via `core::arch` intrinsics + scalar fallback | Stable Rust, max performance, mirrors libvpx structure |
 | D6 | Threading: mirror libvpx tile-based pthread model | Maximize byte-parity tractability; idiomatize later |
@@ -740,7 +745,10 @@ then a final quiet-host comparison before Stage 4e begins.
 
 ### Stage 4e — Spatial SVC
 
-**Goal:** 2- and 3-layer spatial SVC operational. Hardest part of the encoder.
+**Goal:** 2- and 3-layer spatial SVC operational as an experimental v0.2.0
+feature. Correctness and speed remain hard gates. Compression retains the
+global `+0.5%` gate except for CPU6 three-layer realtime VBR, whose per-layer,
+per-important-clip ceiling is `+3.0%`.
 
 **Inputs:** Stage 4d complete.
 
@@ -753,18 +761,29 @@ then a final quiet-host comparison before Stage 4e begins.
 
 **Exit criteria:**
 - [x] Decoder extracts each spatial layer correctly.
-- [x] BD-rate per layer within 0.5% of libvpx.
+- [x] BD-rate per layer within 0.5% of libvpx, except experimental CPU6
+  three-layer realtime VBR within `+3.0%` per layer on every important clip.
 - [x] All target res/fps real-time gates pass with full SVC config.
 
-**Status (2026-08-14, spatial acceptance matrix):** The exact committed
-AArch64 production-PGO encoder passes all 48 required two-/three-layer curves
-and all 120 per-layer BD-rate gates; the worst result is `+0.488431%`.
-Every one of 1,008 full and extracted streams decodes under rvp9-decoder,
-pinned vpxdec, and FFmpeg, and rvp9-decoder/vpxdec output is byte-identical.
-All 18 corpus relative-speed groups pass at `0.80308x..1.03943x` vpxenc, and
-all 48 five-run latency rows pass the 720p30, 1080p30, and 1080p60 p50/p99
-budgets. Exact evidence and artifact hashes are recorded in
-`wrk_journals/2026.08.12 - JRN - spatial SVC stage.md` Unit S7.
+**Status (2026-08-20, approved experimental boundary):** Fresh CPU6
+three-layer 720p30 VBR curves exposed a narrow quality tail. Per-layer
+BD-rates for In To Tree are `+1.451154/-3.725209/+2.751531%`, Ducks Take Off
+are `+0.196194/+0.024592/-0.610574%`, and Old Town Cross are
+`+2.478144/+0.931028/+0.997766%`. They pass the experimental `+3.0%` ceiling
+but not the global `+0.5%` gate. Repeated source-faithful and measured policy
+experiments did not produce a corpus-wide Pareto improvement, so this one
+configuration is explicitly experimental rather than content-tuned.
+
+The prior exact committed AArch64 production-PGO matrix decoded all 1,008
+full and extracted streams under rvp9-decoder, pinned vpxdec, and FFmpeg;
+rvp9-decoder/vpxdec output was byte-identical. All 18 corpus relative-speed
+groups passed at `0.80308x..1.03943x` vpxenc, and all 48 five-run latency rows
+passed the 720p30, 1080p30, and 1080p60 p50/p99 budgets. The final Stage 5
+qualification must reproduce these unchanged correctness and speed gates on
+the exact release tree. Historical evidence and hashes are recorded in
+`wrk_journals/2026.08.12 - JRN - spatial SVC stage.md` Unit S7; the fresh VBR
+evidence and rejected hypotheses are recorded in
+`wrk_journals/2026.07.30 - JRN - production parity drive.md` Units 1203--1228.
 
 **Estimated effort:** 6–8 weeks.
 

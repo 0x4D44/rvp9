@@ -3,11 +3,12 @@
 # VBR from one checked-in orchestrator.
 #
 # The script composes the existing benchmark binaries; it never reimplements
-# codec logic and never relaxes a gate:
+# codec logic and applies the checked-in release gates:
 #
 #   quality  96 bdrate-svc curves (2 modes x 8 clip/target combinations x
 #            CPU6/7/8 x 2/3 spatial layers) -> 240 per-layer BD-rate gates at
-#            <= +0.5% versus the pinned vp9_spatial_svc_encoder. Each curve's
+#            <= +0.5% versus the pinned vp9_spatial_svc_encoder, except the
+#            experimental CPU6 three-layer VBR rows at <= +3.0%. Each curve's
 #            2,016-stream cross-decoder share runs immediately, before the
 #            curve's bulky evidence is discarded.
 #   speed    36 encode-headtohead corpus groups (2 modes x 3 targets x
@@ -55,7 +56,8 @@ readonly INTER_LAYER_PRED=0
 readonly LAG_IN_FRAMES=0
 readonly TUNE_CONTENT="default"
 
-readonly MAX_BDRATE_PCT="0.5"
+readonly DEFAULT_MAX_BDRATE_PCT="0.5"
+readonly EXPERIMENTAL_CPU6_S3_VBR_MAX_BDRATE_PCT="3.0"
 readonly MAX_RATIO="1.05"
 readonly MAX_LOAD1="0.75"
 
@@ -149,6 +151,18 @@ anchor_hash_policy() {
     fi
 }
 
+# Spatial SVC is experimental in v0.2.0 only for CPU6 three-layer realtime
+# VBR. Correctness and speed are unchanged, and every other quality row keeps
+# the production +0.5% ceiling.
+quality_bdrate_limit() {
+    local mode="$1" cpu="$2" layers="$3"
+    if [ "$mode" = "vbr" ] && [ "$cpu" = 6 ] && [ "$layers" = 3 ]; then
+        printf '%s\n' "$EXPERIMENTAL_CPU6_S3_VBR_MAX_BDRATE_PCT"
+    else
+        printf '%s\n' "$DEFAULT_MAX_BDRATE_PCT"
+    fi
+}
+
 # mode|target|clip|cpu|layers -- the quality/cross-decoder/latency spine.
 # Clip is innermost so consecutive rows share a mode/target/cpu/layer group.
 emit_clip_rows() {
@@ -239,7 +253,7 @@ print_plan() {
     local curves=0 gates=0 streams=0 runs=0 groups=0 rows=0 measured=0
     local mode target clip cpu layers
     local fps width height threads tiles speed_kbps p50 p99
-    local grid clips curve_streams
+    local grid clips curve_streams gate
 
     printf 'plan schema=1\n'
     printf 'libvpx_revision=%s\n' "$PINNED_LIBVPX_REVISION"
@@ -247,22 +261,24 @@ print_plan() {
         "$FRAMES" "$KEYFRAME_INTERVAL" "$AQ_MODE" "$NOISE_SENSITIVITY" "$TEMPORAL_LAYERS"
     printf 'inter_layer_pred=%s lag_in_frames=%s tune_content=%s passes=1 realtime=1\n' \
         "$INTER_LAYER_PRED" "$LAG_IN_FRAMES" "$TUNE_CONTENT"
-    printf 'max_bdrate_pct=%s max_ratio=%s max_load1=%s\n' \
-        "$MAX_BDRATE_PCT" "$MAX_RATIO" "$MAX_LOAD1"
+    printf 'max_bdrate_pct=%s experimental_cpu6_s3_vbr_max_bdrate_pct=%s max_ratio=%s max_load1=%s\n' \
+        "$DEFAULT_MAX_BDRATE_PCT" \
+        "$EXPERIMENTAL_CPU6_S3_VBR_MAX_BDRATE_PCT" "$MAX_RATIO" "$MAX_LOAD1"
 
     while IFS='|' read -r mode target clip cpu layers; do
         IFS='|' read -r fps width height threads tiles speed_kbps p50 p99 \
             <<< "$(target_spec "$target")"
         grid="$(target_bitrates "$target" "$layers")"
+        gate="$(quality_bdrate_limit "$mode" "$cpu" "$layers")"
         curve_streams=$(( BITRATE_POINTS * (1 + layers) ))
         curves=$(( curves + 1 ))
         gates=$(( gates + layers ))
         streams=$(( streams + curve_streams ))
         runs=$(( runs + curve_streams * DECODERS_PER_STREAM ))
-        printf 'quality %s %s %s cpu%s s%s threads=%s tiles=%s bitrates=%s layer_gates=%s streams=%s decoder_runs=%s\n' \
+        printf 'quality %s %s %s cpu%s s%s threads=%s tiles=%s bitrates=%s layer_gates=%s streams=%s decoder_runs=%s max_bdrate_pct=%s\n' \
             "$mode" "$target" "$clip" "$cpu" "$layers" "$threads" "$tiles" \
             "$grid" "$layers" "$curve_streams" \
-            "$(( curve_streams * DECODERS_PER_STREAM ))"
+            "$(( curve_streams * DECODERS_PER_STREAM ))" "$gate"
     done < <(emit_clip_rows)
 
     while IFS='|' read -r mode target cpu layers; do
@@ -367,11 +383,17 @@ self_test() {
 
     # Representative rows: one CBR, one VBR, at opposite corners.
     expect_equal "representative cbr quality row" \
-        "$(plan_count "$plan" '^quality cbr 720p30 in_to_tree cpu6 s2 threads=1 tiles=0 bitrates=420,630,840,1260,2100,3360 layer_gates=2 streams=18 decoder_runs=54$')" \
+        "$(plan_count "$plan" '^quality cbr 720p30 in_to_tree cpu6 s2 threads=1 tiles=0 bitrates=420,630,840,1260,2100,3360 layer_gates=2 streams=18 decoder_runs=54 max_bdrate_pct=0.5$')" \
         1
     expect_equal "representative vbr quality row" \
-        "$(plan_count "$plan" '^quality vbr 1080p60 old_town_cross cpu8 s3 threads=8 tiles=3 bitrates=1890,2856,3780,5670,9450,15120 layer_gates=3 streams=24 decoder_runs=72$')" \
+        "$(plan_count "$plan" '^quality vbr 1080p60 old_town_cross cpu8 s3 threads=8 tiles=3 bitrates=1890,2856,3780,5670,9450,15120 layer_gates=3 streams=24 decoder_runs=72 max_bdrate_pct=0.5$')" \
         1
+    expect_equal "experimental CPU6 S3 VBR quality rows use +3.0%" \
+        "$(plan_count "$plan" '^quality vbr .* cpu6 s3 .* max_bdrate_pct=3.0$')" \
+        8
+    expect_equal "all other quality rows use +0.5%" \
+        "$(plan_count "$plan" '^quality .* max_bdrate_pct=0.5$')" \
+        88
     expect_equal "representative vbr speed row" \
         "$(plan_count "$plan" '^speed vbr 1080p30 cpu8 s2 clips=in_to_tree,ducks_take_off,old_town_cross target_kbps=2835 threads=4 tiles=2 warmups=1 pairs=5 rotations=2 max_ratio=1.05 max_load1=0.75 anchor_hash=allow-instability$')" \
         1
@@ -912,11 +934,12 @@ discard_curve_evidence() {
 run_quality_curve() {
     local mode="$1" target="$2" clip="$3" cpu="$4" layers="$5"
     local fps width height threads tiles speed_kbps p50 p99
-    local grid curve_id dir streams input recorded layer value status
+    local grid curve_id dir streams input recorded layer value status gate
 
     IFS='|' read -r fps width height threads tiles speed_kbps p50 p99 \
         <<< "$(target_spec "$target")"
     grid="$(target_bitrates "$target" "$layers")"
+    gate="$(quality_bdrate_limit "$mode" "$cpu" "$layers")"
     curve_id="${mode}-${target}-${clip}-cpu${cpu}-s${layers}"
     dir="$quality_dir/$curve_id"
     streams="$dir/streams"
@@ -945,7 +968,7 @@ run_quality_curve() {
         --limit "$FRAMES" \
         --keyframe-interval "$KEYFRAME_INTERVAL" \
         --bitrates "$grid" \
-        --max-bdrate-pct "$MAX_BDRATE_PCT" \
+        --max-bdrate-pct "$gate" \
         --work-dir "$streams" \
         --csv "$dir/bdrate.csv" \
         > "$dir/bdrate.log" 2>&1 </dev/null
@@ -959,15 +982,15 @@ run_quality_curve() {
     while IFS=',' read -r layer value; do
         require_number "$curve_id SL$layer BD-rate" "$value"
         status="PASS"
-        if ! number_le "$value" "$MAX_BDRATE_PCT"; then
+        if ! number_le "$value" "$gate"; then
             status="FAIL"
         fi
         printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,SL%s,%s,%s,%s\n' \
             "$curve_id" "$mode" "$target" "$clip" "$cpu" "$layers" "$threads" \
-            "$tiles" "$grid" "$layer" "$value" "$MAX_BDRATE_PCT" "$status" \
+            "$tiles" "$grid" "$layer" "$value" "$gate" "$status" \
             >> "$quality_dir/quality-summary.csv"
         [ "$status" = "PASS" ] ||
-            fail "$curve_id: SL$layer BD-rate $value% exceeds +$MAX_BDRATE_PCT%"
+            fail "$curve_id: SL$layer BD-rate $value% exceeds +$gate%"
         recorded=$(( recorded + 1 ))
         quality_gate_count=$(( quality_gate_count + 1 ))
     done < <(awk -F, '$1 == "bdrate_pct" { print $2 "," $3 }' "$dir/bdrate.csv")

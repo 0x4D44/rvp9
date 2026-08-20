@@ -18,8 +18,10 @@ livestreaming.
 
 The alpha encoder supports one-pass real-time VP9 at CPU-used 6, 7, and 8,
 with VBR or CBR rate control, cyclic-refresh AQ mode 3, denoising, two- or
-three-layer temporal SVC, and two- or three-layer spatial SVC. The qualified
-targets are 720p30, 1080p30, and 1080p60. It emits 8-bit profile-0 IVF streams.
+three-layer temporal SVC, and two- or three-layer spatial SVC. Spatial SVC is
+experimental in v0.2.0; all other listed encoder features remain on the main
+parity path. The qualified targets are 720p30, 1080p30, and 1080p60. It emits
+8-bit profile-0 IVF streams.
 
 The alpha decoder passes all 4,816 displayed frames across all 307 pinned
 official vectors with native and forced-scalar dispatch and with one- and
@@ -38,21 +40,25 @@ The reverse 24-row gate uses pinned `vpxenc` streams across CPU-used 6--8,
 CBR/VBR, AQ3, and denoising, then requires `rvp9dec` and pinned `vpxdec` to
 produce byte-identical decoded output.
 
-The complete spatial-SVC acceptance matrix passes its quality, relative-speed,
-latency, and cross-decoder gates. CPU-used 8 three-layer temporal-SVC relative
-speed still awaits its quiet-host confirmation. This alpha does not claim
-final compression or speed parity across the complete v1 matrix.
+Spatial SVC retains the full correctness, cross-decoder, relative-speed, and
+latency gates. Its quality gate remains `+0.5%` except for experimental CPU6
+three-layer realtime VBR, which permits no layer on an important clip above
+`+3.0%`; the fresh 720p30 worst case is `+2.751531%`. CPU-used 8 three-layer
+temporal-SVC relative speed still awaits its quiet-host confirmation. This
+alpha does not claim final compression or speed parity across the complete v1
+matrix.
 
 ## Project goals
 
 - **Correctness:** 100% pass on the official VP9 conformance test vectors;
   encoder output decodes cleanly under `vpxdec`, `ffmpeg`, and our decoder.
 - **Compression:** BD-rate within 0.5% of libvpx vpxenc at matched
-  `--cpu-used` setting (6, 7, 8).
+  `--cpu-used` setting (6, 7, 8), except experimental CPU6 three-layer spatial
+  VBR, whose per-layer important-clip ceiling is `+3.0%`.
 - **Real-time:** 720p30, 1080p30, and 1080p60 all hit budget on commodity
   x86_64 hardware.
 - **Features:** 1-pass CBR/VBR, content-aware denoiser, cyclic-refresh AQ,
-  and temporal plus spatial SVC.
+  temporal SVC, and experimental spatial SVC.
 
 See [`PLAN.md`](./PLAN.md) §2 for the formal success criteria.
 

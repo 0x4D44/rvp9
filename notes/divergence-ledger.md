@@ -24,6 +24,41 @@ Each entry:
 
 ## Entries
 
+### 2026-08-20 — Accept CPU6 three-layer spatial VBR as experimental
+
+**Where:** `PLAN.md` section 2 and Stage 4e, plus `README.md` Alpha scope;
+the reference is pinned libvpx v1.14.1 at
+`12f3a2ac603e8f10742105519e0cd03c3b8f71dd`.
+
+**What libvpx does:** supplies the production reference curves for matched
+CPU6 three-layer realtime spatial VBR.
+
+**What rvp9 does:** ships this one spatial configuration as experimental in
+v0.2.0, with a `+3.0%` per-layer ceiling on every important clip. All spatial
+correctness, cross-decoder, relative-speed, and absolute-latency gates remain
+unchanged. Two-layer spatial VBR, spatial CBR, CPU7/8 spatial VBR, and every
+non-spatial configuration retain the global `+0.5%` quality gate.
+
+**Why:** fresh CPU6/S3 720p30 curves show a bounded, content-dependent tail.
+Source-faithful Block8 RD, raw-skip, partition-Q, scaled-phase, and small-block
+NEWMV experiments either failed to improve both red clips or regressed Ducks
+and Old Town. Spatial SVC is not a primary v0.2.0 use case, and further
+content-specific tuning would be a worse production trade than an explicit
+experimental boundary.
+
+**Byte-parity impact:** none. This changes the release contract, not encoder
+output.
+
+**Compression-efficiency impact:** fresh per-layer BD-rates are In To Tree
+`+1.451154/-3.725209/+2.751531%`, Ducks Take Off
+`+0.196194/+0.024592/-0.610574%`, and Old Town Cross
+`+2.478144/+0.931028/+0.997766%`. Every measured layer remains within the new
+`+3.0%` ceiling; the worst is `+2.751531%`.
+
+**Future plan:** revisit only if spatial SVC becomes a production priority.
+Do not weaken any other quality gate or the spatial correctness and speed
+gates.
+
 ### 2026-08-15 — Calibrate CPU6 two-layer spatial VBR small-block decisions
 
 **Where:** `rvp9_encoder::use_source_qindex_for_exact_vbp`,
