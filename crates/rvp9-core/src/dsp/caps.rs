@@ -106,9 +106,19 @@ pub struct AArch64Caps {
 impl AArch64Caps {
     /// Detect the running CPU's aarch64 ISA support.
     pub fn detect() -> Self {
-        Self {
-            neon: std::arch::is_aarch64_feature_detected!("neon"),
-            dotprod: std::arch::is_aarch64_feature_detected!("dotprod"),
+        #[cfg(miri)]
+        {
+            // Miri cannot execute AArch64 SIMD intrinsics. Keep its runtime
+            // dispatch on the scalar oracle while still checking every
+            // non-SIMD path on native AArch64 hosts.
+            Self::default()
+        }
+        #[cfg(not(miri))]
+        {
+            Self {
+                neon: std::arch::is_aarch64_feature_detected!("neon"),
+                dotprod: std::arch::is_aarch64_feature_detected!("dotprod"),
+            }
         }
     }
 }
@@ -171,7 +181,7 @@ mod tests {
     }
 
     /// On aarch64 NEON is mandatory.
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(all(target_arch = "aarch64", not(miri)))]
     #[test]
     fn aarch64_neon_always_present() {
         let caps = AArch64Caps::detect();

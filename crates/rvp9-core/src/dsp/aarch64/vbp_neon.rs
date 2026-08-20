@@ -76,7 +76,7 @@ pub fn avg_diff_8x8_grid_64x64_neon(
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::avg_diff_8x8_grid_64x64_neon;
 

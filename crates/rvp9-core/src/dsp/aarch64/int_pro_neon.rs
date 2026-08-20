@@ -365,7 +365,7 @@ pub fn vpx_vector_var_neon(reference: &[i16], source: &[i16], bwl: u32) -> i32 {
     unsafe { vpx_vector_var_neon_inner(reference.as_ptr(), source.as_ptr(), width, bwl + 2) }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
 

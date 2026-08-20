@@ -48,7 +48,7 @@ use super::constants::{
 };
 use super::types::TxType;
 
-#[cfg(target_arch = "aarch64")]
+#[cfg(all(target_arch = "aarch64", not(miri)))]
 #[path = "inverse_neon.rs"]
 mod neon;
 
@@ -602,11 +602,11 @@ fn idct16x16_add_scalar(input: &[i32; 256], dest: &mut [u8], stride: usize, acti
 /// kernel when available, retaining [`idct16x16_add_scalar`] as the
 /// portable oracle.
 pub fn idct16x16_256_add(input: &[i32; 256], dest: &mut [u8], stride: usize) {
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(all(target_arch = "aarch64", not(miri)))]
     {
         neon::idct16x16_add(input, dest, stride, 16);
     }
-    #[cfg(not(target_arch = "aarch64"))]
+    #[cfg(any(not(target_arch = "aarch64"), miri))]
     {
         idct16x16_add_scalar(input, dest, stride, 16);
     }
@@ -628,11 +628,11 @@ pub fn idct16x16_256_add(input: &[i32; 256], dest: &mut [u8], stride: usize) {
 /// ignored and the output diverges from the full kernel. Callers are
 /// responsible for the eob bucket gate.
 pub fn idct16x16_10_add(input: &[i32; 256], dest: &mut [u8], stride: usize) {
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(all(target_arch = "aarch64", not(miri)))]
     {
         neon::idct16x16_add(input, dest, stride, 4);
     }
-    #[cfg(not(target_arch = "aarch64"))]
+    #[cfg(any(not(target_arch = "aarch64"), miri))]
     {
         idct16x16_add_scalar(input, dest, stride, 4);
     }
@@ -652,11 +652,11 @@ pub fn idct16x16_10_add(input: &[i32; 256], dest: &mut [u8], stride: usize) {
 /// ignored and the output diverges from the full kernel. Callers are
 /// responsible for the eob bucket gate.
 pub fn idct16x16_38_add(input: &[i32; 256], dest: &mut [u8], stride: usize) {
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(all(target_arch = "aarch64", not(miri)))]
     {
         neon::idct16x16_add(input, dest, stride, 8);
     }
-    #[cfg(not(target_arch = "aarch64"))]
+    #[cfg(any(not(target_arch = "aarch64"), miri))]
     {
         idct16x16_add_scalar(input, dest, stride, 8);
     }
@@ -2301,7 +2301,7 @@ mod tests {
         assert!(any_above && any_below, "AC should produce both signs");
     }
 
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(all(target_arch = "aarch64", not(miri)))]
     #[test]
     fn idct16x16_neon_matches_scalar_for_all_eob_buckets() {
         for &active_rows in &[4usize, 8, 16] {

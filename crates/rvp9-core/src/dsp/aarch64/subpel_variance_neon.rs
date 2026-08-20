@@ -769,7 +769,7 @@ subpel_var_dotprod_fn!(vpx_sub_pixel_variance32x64_dotprod, 32, 64);
 subpel_var_dotprod_fn!(vpx_sub_pixel_variance64x32_dotprod, 64, 32);
 subpel_var_dotprod_fn!(vpx_sub_pixel_variance64x64_dotprod, 64, 64);
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use crate::block::BlockSize;

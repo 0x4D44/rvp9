@@ -1177,7 +1177,7 @@ pub fn vp9_quantize_b_32x32_neon(
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use crate::mode_decision::block_yrd::{block_error_fp_i32, satd_i16};

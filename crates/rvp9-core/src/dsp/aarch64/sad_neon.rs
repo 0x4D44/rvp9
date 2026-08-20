@@ -149,7 +149,7 @@ sad_neon_fn!(vpx_sad32x64_neon, 32, 64);
 sad_neon_fn!(vpx_sad64x32_neon, 64, 32);
 sad_neon_fn!(vpx_sad64x64_neon, 64, 64);
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use crate::block::BlockSize;

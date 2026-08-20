@@ -193,7 +193,7 @@ sad4d_dotprod_fn!(vpx_sad32x64x4d_dotprod, 32, 64);
 sad4d_dotprod_fn!(vpx_sad64x32x4d_dotprod, 64, 32);
 sad4d_dotprod_fn!(vpx_sad64x64x4d_dotprod, 64, 64);
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use crate::block::BlockSize;

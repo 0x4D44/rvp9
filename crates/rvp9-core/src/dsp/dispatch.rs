@@ -3437,7 +3437,7 @@ mod tests {
 
     /// AArch64 selects the dense NEON 8x8 inverse-DCT kernel only when
     /// runtime capability detection reports NEON.
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(all(target_arch = "aarch64", not(miri)))]
     #[test]
     fn neon_caps_select_dense_idct8x8_kernel() {
         let mut caps = detect();
@@ -3455,7 +3455,7 @@ mod tests {
 
     /// AArch64 selects the sparse NEON 8x8 inverse-DCT kernel only when
     /// runtime capability detection reports NEON.
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(all(target_arch = "aarch64", not(miri)))]
     #[test]
     fn neon_caps_select_sparse_idct8x8_12_kernel() {
         let mut caps = detect();
@@ -3473,7 +3473,7 @@ mod tests {
 
     /// AArch64 selects the dense NEON 8×8 hybrid inverse-transform kernel
     /// only when runtime capability detection reports NEON.
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(all(target_arch = "aarch64", not(miri)))]
     #[test]
     fn neon_caps_select_hybrid_iht8x8_kernel() {
         let mut caps = detect();
@@ -4468,7 +4468,7 @@ mod tests {
         assert_eq!(d.lpf_horizontal_16() as usize, h16 as usize);
     }
 
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(all(target_arch = "aarch64", not(miri)))]
     #[test]
     fn loopfilter_4_8_and_16_dispatch_to_neon() {
         type Lpf = fn(&mut [u8], usize, usize, u8, u8, u8);
@@ -5002,7 +5002,7 @@ mod tests {
 
     /// Wave L L1 — AArch64 installs NEON for the full scaled path while the
     /// compound-average sibling stays scalar, matching pinned libvpx.
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(all(target_arch = "aarch64", not(miri)))]
     #[test]
     fn convolve8_scaled_neon_and_scalar_routing() {
         let mut neon_caps = detect();

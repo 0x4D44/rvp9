@@ -1289,7 +1289,7 @@ pub fn lpf_vertical_16_dual_neon(
     lpf_vertical_16_neon(pixels, s_index + 8 * pitch, pitch, blimit, limit, thresh);
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use crate::loopfilter::{

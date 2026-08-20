@@ -676,7 +676,7 @@ pub fn var_sum_sse_8x8_grid_dotprod(
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use crate::block::BlockSize;

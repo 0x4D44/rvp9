@@ -124,7 +124,7 @@ pub fn subtract_square_neon_with_nonzero(
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
 

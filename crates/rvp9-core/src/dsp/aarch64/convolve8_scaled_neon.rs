@@ -444,7 +444,7 @@ pub fn convolve8_scaled_neon(
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::convolve8_scaled_neon;
     use crate::inter::filter::{

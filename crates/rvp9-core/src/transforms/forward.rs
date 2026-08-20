@@ -36,7 +36,7 @@ use super::constants::{
 };
 use super::types::TxType;
 
-#[cfg(target_arch = "aarch64")]
+#[cfg(all(target_arch = "aarch64", not(miri)))]
 #[path = "forward_neon.rs"]
 mod neon;
 
@@ -209,11 +209,11 @@ fn fdct4x4_scalar(input: &[i16], output: &mut [i32; 16], stride: usize) {
 /// Dispatch the 4x4 forward DCT to the exact AArch64 vector kernel when
 /// available, retaining [`fdct4x4_scalar`] as the portable oracle.
 pub fn fdct4x4(input: &[i16], output: &mut [i32; 16], stride: usize) {
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(all(target_arch = "aarch64", not(miri)))]
     {
         neon::fdct4x4(input, output, stride);
     }
-    #[cfg(not(target_arch = "aarch64"))]
+    #[cfg(any(not(target_arch = "aarch64"), miri))]
     {
         fdct4x4_scalar(input, output, stride);
     }
@@ -292,11 +292,11 @@ pub fn fht4x4(input: &[i16], output: &mut [i32; 16], stride: usize, tx_type: TxT
         fdct4x4(input, output, stride);
         return;
     }
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(all(target_arch = "aarch64", not(miri)))]
     {
         neon::fht4x4(input, output, stride, tx_type);
     }
-    #[cfg(not(target_arch = "aarch64"))]
+    #[cfg(any(not(target_arch = "aarch64"), miri))]
     {
         fht4x4_scalar(input, output, stride, tx_type);
     }
@@ -495,11 +495,11 @@ fn fdct8x8_scalar(input: &[i16], output: &mut [i32; 64], stride: usize) {
 /// Dispatch the 8x8 forward DCT to the exact AArch64 vector kernel when
 /// available, retaining [`fdct8x8_scalar`] as the portable oracle.
 pub fn fdct8x8(input: &[i16], output: &mut [i32; 64], stride: usize) {
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(all(target_arch = "aarch64", not(miri)))]
     {
         neon::fdct8x8(input, output, stride);
     }
-    #[cfg(not(target_arch = "aarch64"))]
+    #[cfg(any(not(target_arch = "aarch64"), miri))]
     {
         fdct8x8_scalar(input, output, stride);
     }
@@ -511,11 +511,11 @@ pub fn fdct8x8(input: &[i16], output: &mut [i32; 64], stride: usize) {
 /// i16 second pass. The regular [`fdct8x8`] retains its scalar-equivalent
 /// behavior for general callers. Other architectures use that implementation.
 pub fn fdct8x8_libvpx_lowbd(input: &[i16], output: &mut [i32; 64], stride: usize) {
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(all(target_arch = "aarch64", not(miri)))]
     {
         neon::fdct8x8_libvpx_lowbd(input, output, stride);
     }
-    #[cfg(not(target_arch = "aarch64"))]
+    #[cfg(any(not(target_arch = "aarch64"), miri))]
     {
         fdct8x8(input, output, stride);
     }
@@ -643,11 +643,11 @@ pub fn fht8x8(input: &[i16], output: &mut [i32; 64], stride: usize, tx_type: TxT
         fdct8x8(input, output, stride);
         return;
     }
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(all(target_arch = "aarch64", not(miri)))]
     {
         neon::fht8x8(input, output, stride, tx_type);
     }
-    #[cfg(not(target_arch = "aarch64"))]
+    #[cfg(any(not(target_arch = "aarch64"), miri))]
     {
         fht8x8_scalar(input, output, stride, tx_type);
     }
@@ -1081,11 +1081,11 @@ fn fdct16x16_scalar(input: &[i16], output: &mut [i32; 256], stride: usize) {
 /// Dispatch the 16x16 forward DCT to the exact AArch64 vector kernel when
 /// available, retaining [`fdct16x16_scalar`] as the portable oracle.
 pub fn fdct16x16(input: &[i16], output: &mut [i32; 256], stride: usize) {
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(all(target_arch = "aarch64", not(miri)))]
     {
         neon::fdct16x16(input, output, stride);
     }
-    #[cfg(not(target_arch = "aarch64"))]
+    #[cfg(any(not(target_arch = "aarch64"), miri))]
     {
         fdct16x16_scalar(input, output, stride);
     }
@@ -1164,11 +1164,11 @@ pub fn fht16x16(input: &[i16], output: &mut [i32; 256], stride: usize, tx_type: 
         fdct16x16(input, output, stride);
         return;
     }
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(all(target_arch = "aarch64", not(miri)))]
     {
         neon::fht16x16(input, output, stride, tx_type);
     }
-    #[cfg(not(target_arch = "aarch64"))]
+    #[cfg(any(not(target_arch = "aarch64"), miri))]
     {
         fht16x16_scalar(input, output, stride, tx_type);
     }
@@ -1521,11 +1521,11 @@ fn fdct32x32_scalar(input: &[i16], output: &mut [i32; 1024], stride: usize) {
 /// Dispatch the 32x32 forward DCT to the exact AArch64 vector kernel when
 /// available, retaining [`fdct32x32_scalar`] as the portable oracle.
 pub fn fdct32x32(input: &[i16], output: &mut [i32; 1024], stride: usize) {
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(all(target_arch = "aarch64", not(miri)))]
     {
         neon::fdct32x32(input, output, stride);
     }
-    #[cfg(not(target_arch = "aarch64"))]
+    #[cfg(any(not(target_arch = "aarch64"), miri))]
     {
         fdct32x32_scalar(input, output, stride);
     }
@@ -2305,7 +2305,7 @@ mod tests {
         }
     }
 
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(all(target_arch = "aarch64", not(miri)))]
     #[test]
     fn fdct4x4_neon_matches_scalar_valid_residuals() {
         let mut state = 0x4d44_31a7_25c6_09bf_u64;
@@ -2348,7 +2348,7 @@ mod tests {
         assert_eq!(vector, scalar, "alternating extreme residual");
     }
 
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(all(target_arch = "aarch64", not(miri)))]
     #[test]
     fn fdct8x8_neon_matches_scalar_valid_residuals() {
         let mut state = 0x8d31_e74a_25c6_09bf_u64;
@@ -2391,7 +2391,7 @@ mod tests {
         assert_eq!(vector, scalar, "alternating residual extremes");
     }
 
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(all(target_arch = "aarch64", not(miri)))]
     #[test]
     fn fdct8x8_libvpx_lowbd_preserves_neon_wrap_semantics() {
         let extreme = [-255i16; 64];
@@ -2408,7 +2408,7 @@ mod tests {
         assert_eq!(lowbd, safe, "ordinary residuals use the same coefficients");
     }
 
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(all(target_arch = "aarch64", not(miri)))]
     #[test]
     fn fht4x4_neon_matches_scalar_all_tx_types() {
         let mut state = 0xf4a4_31a7_25c6_09bf_u64;
@@ -2462,7 +2462,7 @@ mod tests {
         }
     }
 
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(all(target_arch = "aarch64", not(miri)))]
     #[test]
     fn fht8x8_neon_matches_scalar_all_tx_types() {
         let mut state = 0xfad5_8a4c_72ce_903b_u64;
@@ -2516,7 +2516,7 @@ mod tests {
         }
     }
 
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(all(target_arch = "aarch64", not(miri)))]
     #[test]
     fn fht16x16_neon_matches_scalar_valid_residuals() {
         let mut state = 0xfad5_16a4_72ce_903b_u64;
@@ -2553,7 +2553,7 @@ mod tests {
         }
     }
 
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(all(target_arch = "aarch64", not(miri)))]
     #[test]
     fn fdct16x16_neon_matches_scalar_valid_residuals() {
         let mut state = 0x25d6_37b4_1a90_ce83_u64;
@@ -2596,7 +2596,7 @@ mod tests {
         assert_eq!(vector, scalar, "alternating residual extremes");
     }
 
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(all(target_arch = "aarch64", not(miri)))]
     #[test]
     fn fdct32x32_neon_matches_scalar_valid_residuals() {
         let mut state = 0x6d5a_56da_3c91_7f29_u64;

@@ -146,7 +146,7 @@ pub fn dc_predict_full_neon(dst: &mut [u8], stride: usize, bs: usize, above: &[u
     unsafe { store_constant_block_neon_inner(dst.as_mut_ptr(), stride, bs, dc) }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use crate::intra_pred::{PredCtx, dc_predictor, h_predictor, v_predictor};

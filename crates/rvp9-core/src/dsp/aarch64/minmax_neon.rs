@@ -69,7 +69,7 @@ pub fn minmax_8x8_neon(
     unsafe { minmax_8x8_neon_inner(first.as_ptr(), first_stride, second.as_ptr(), second_stride) }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::minmax_8x8_neon;
 

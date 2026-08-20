@@ -127,7 +127,7 @@ pub fn convolve_copy_neon(
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
 
