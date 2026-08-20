@@ -1,5 +1,5 @@
 rvp9 v0.2.0-alpha.2 encoder qualification
-git_commit=a3942e6fa8ed89ab3a36b13522071481fe8085d6
+git_commit=f10941fc0a23c9fd2422bc4a109330086b558328
 host_triple=aarch64-apple-darwin
 rustc=rustc 1.95.0 (59807616e 2026-04-14)
 cargo=cargo 1.95.0 (f2d3ce0bd 2026-03-21)

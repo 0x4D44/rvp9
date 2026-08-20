@@ -1,5 +1,5 @@
 rvp9 reverse reference-decoder qualification
-git_commit=a3942e6fa8ed89ab3a36b13522071481fe8085d6
+git_commit=f10941fc0a23c9fd2422bc4a109330086b558328
 host=Darwin flux.home.arpa 25.5.0 Darwin Kernel Version 25.5.0: Tue Jun  9 22:28:34 PDT 2026; root:xnu-12377.121.10~1/RELEASE_ARM64_T6050 arm64
 host_triple=aarch64-apple-darwin
 rustc=rustc 1.95.0 (59807616e 2026-04-14)
@@ -13,7 +13,7 @@ vpxenc_sha256=de4f634550bc9d5b6f5ebb1aa0d883346bb1afb4bbdec7b15368a50f153e0b7f
 vpxdec_path=/Users/md/worktrees/rvp9-2/20260817-TSK-HUM-classify-spatial-svc-winner-divergence/build/libvpx/vpxdec
 vpxdec_sha256=08d8e3c7390b066bd9c0cceb1b84c9d6c27351ade85c6d0a7c741931d3fb1117
 rvp9dec_path=/Users/md/worktrees/rvp9-2/20260817-TSK-HUM-classify-spatial-svc-winner-divergence/target/release/rvp9dec
-rvp9dec_sha256=1ad3687d8b90cacbc51b0093b26d9b192136b63e804b143a60e8527a2fd74720
+rvp9dec_sha256=49497257e4d72e12cdb10db454db2d5eea9bce7b5fdcb8cefc87bffb0ba3cdfa
 width=128
 height=64
 fps=30/1
@@ -21,7 +21,7 @@ frames=12
 target_bitrate_kbps=512
 kf_max_dist=12
 expected_decoded_i420_bytes=147456
-source_path=/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T//rvp9-reference-decoder.ZGFcpC/source-128x64-12f.y4m
+source_path=/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T//rvp9-reference-decoder.orkqKQ/source-128x64-12f.y4m
 source_sha256=1a4871b2afc72e7191c36d74c0f9a5699f852f98e93f2e9be5edd4565967c5ec
 matrix_rows=24
 encode_flags=--codec=vp9 --rt --passes=1 --lag-in-frames=0 --tune-content=default --target-bitrate=512 --kf-max-dist=12 --ivf
