@@ -6,15 +6,15 @@
 - **Area:** core
 - **Raised:** 2026-08-20T20:38:47Z
 - **Discovery source:** Automation
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
+- **Owner:** deltic:manual
+- **Owner role:** fix
+- **Owner run:** fix-20260820T203942Z-cc03dd2a
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-FLU-00027-run-fix-20260820T203942Z-cc03dd2a
+- **Owner base:** 35da52d403fa03aec7cc713496e513adc3775217
 - **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner since:** 2026-08-20T20:39:42Z
+- **Owner until:** 2026-08-20T22:39:42Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
