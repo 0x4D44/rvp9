@@ -3,15 +3,19 @@
 # rvp9 encoder from one checked-in orchestrator.
 #
 # Scope: this file is the *matrix definition*, its two dry oracles, and the
-# fresh-run QUALITY execution phase. The relative-speed and absolute-latency
+# resumable QUALITY execution phase. The relative-speed and absolute-latency
 # execution phases are NOT implemented in this unit; asking for them (or for
 # `--phase all`) fails loudly and says so.
 #
-# Every real run is fresh. --work-dir must be outside the repository, its
-# parent must exist, and the directory itself must be absent or empty. The run
-# refuses to reuse anything already there; there is no resume, and nothing is
-# ever deleted to make room. One whole-directory check covers every phase
-# artifact, so no phase re-checks its own subdirectory.
+# A normal real run is fresh. --work-dir must be outside the repository, its
+# parent must exist, and the directory itself must be absent or empty. An
+# explicit --resume reopens only a run whose sealed fingerprint matches the
+# exact committed tree, matrix, tools, corpus, and prepared inputs. Rows publish
+# atomically after their retained artifacts and result fragments are sealed.
+# Partial attempts are never deleted or reused. Reused rows are decoded again;
+# a receipt is not permission to trust an old decoder observation. Receipts are
+# checksums for a trusted local evidence tree, not signatures against a
+# malicious editor; the sealed quality measurement itself is replayed.
 #
 # Spatial SVC is deliberately absent. It is qualified separately and on its
 # own experimental terms by scripts/qualify-spatial-svc.sh; no spatial row,
@@ -74,10 +78,11 @@
 # for it. A decoder failure or mismatch aborts the phase immediately; a quality
 # number that misses its ceiling does not, so the evidence stays complete.
 #
-# Disk: the phase deletes a row's generated Y4M as soon as that row's hashes
-# are recorded, so the decoded working set peaks at one row (roughly 2.5 GB for
-# a 1080p60 single-layer row and roughly 4.5 GB for a 1080p60 three-layer row).
-# Retained IVF, CSV, logs, and caller inputs are never deleted.
+# Disk: the phase deletes a completed row's generated Y4M as soon as that row's
+# hashes are recorded, so successful progress adds only retained IVF/CSV/logs.
+# An interrupted attempt deliberately remains untouched and may retain roughly
+# 2.5 GB (1080p60 single-layer) or 4.5 GB (three-layer); its exact hidden attempt
+# directory is evidence to inspect or move aside after the campaign.
 #
 # The script builds nothing. It validates and hashes the exact binaries it is
 # handed, and it requires the PGO manifest that produced the encoder under test
@@ -134,6 +139,10 @@ readonly LATENCY_MEASURED_RUNS=5
 readonly BITRATE_POINTS=6
 readonly DECODERS_PER_STREAM=3
 
+# Receipt schema for resumable quality rows. Bump whenever the receipt or
+# artifact-fingerprint contract changes.
+readonly QUALITY_RECEIPT_SCHEMA=1
+
 # Expected totals. These are asserted against what the iterators actually
 # produce, so any matrix edit fails loudly instead of quietly rescoping the
 # release contract.
@@ -144,6 +153,7 @@ readonly EXPECTED_QUALITY_AGGREGATE_LAYER_GATES=129
 readonly EXPECTED_QUALITY_CLIP_LAYER_GUARDS=344
 readonly EXPECTED_CANDIDATE_STREAMS=2640
 readonly EXPECTED_DECODER_RUNS=7920
+readonly EXPECTED_PREPARED_INPUTS=16
 readonly EXPECTED_SPEED_GROUPS=75
 readonly EXPECTED_LATENCY_ROWS=200
 readonly EXPECTED_LATENCY_MEASURED_RUNS=1000
@@ -506,7 +516,7 @@ phase_supported() {
 phase_required_commands() {
     case "$1" in
         quality)
-            printf 'awk basename cargo cat date deltic dirname env find git grep head mkdir rustc shasum tr uname wc\n'
+            printf 'awk basename cargo cat cmp date deltic dirname env find git grep head mkdir mv rmdir rustc shasum tr uname unlink wc\n'
             ;;
         speed|latency|all)
             printf 'phase has no runner, so no command set: %s\n' "$1" >&2
@@ -523,7 +533,8 @@ command_purpose() {
         awk)      printf 'every numeric comparison, CSV aggregate, and log parse\n' ;;
         basename) printf 'naming a retained candidate stream in the cross-decoder CSV\n' ;;
         cargo)    printf 'the AQ gain-parity oracle runs through "cargo test"\n' ;;
-        cat)      printf 'printing the usage text on a refusal\n' ;;
+        cat)      printf 'printing usage and replaying sealed row fragments\n' ;;
+        cmp)      printf 'proving fresh decoder observations match a sealed row\n' ;;
         date)     printf 'the manifest run start and end timestamps\n' ;;
         deltic)   printf 'every child process runs under "deltic timeout"\n' ;;
         dirname)  printf 'canonicalising the PGO manifest binary path\n' ;;
@@ -533,10 +544,13 @@ command_purpose() {
         grep)     printf 'the oracle log skip, gate, and result checks\n' ;;
         head)     printf 'the recorded ffmpeg version line\n' ;;
         mkdir)    printf 'creating the work, input, and per-row directories\n' ;;
+        mv)       printf 'atomically publishing row receipts and complete result directories\n' ;;
+        rmdir)    printf 'releasing the exact invocation lock directory\n' ;;
         rustc)    printf 'the host triple and the recorded toolchain version\n' ;;
         shasum)   printf 'every artifact SHA-256 and both decoded-output hashes\n' ;;
         tr)       printf 'flattening lists into manifest and CSV fields\n' ;;
         uname)    printf 'the recorded host description\n' ;;
+        unlink)   printf 'releasing the exact invocation lock owner file\n' ;;
         wc)       printf 'stream byte counts, clip counts, and git status entries\n' ;;
         *)        printf '\n' ;;
     esac
@@ -641,8 +655,8 @@ require_absent_or_empty_dir() {
         fail "$what could not be listed, so its contents are unknown: $path"
     [ -z "$entries" ] ||
         fail "refusing to reuse a non-empty $what: $path
-this unit runs fresh and has no resume, and it will not delete anything to make
-room. Point $what at a new or empty directory."
+normal mode runs fresh and will not delete anything to make room. Point $what
+at a new or empty directory, or pass --resume for a sealed matching run."
 }
 
 # Classify the cyclic-refresh activation evidence in an oracle log read on
@@ -810,7 +824,7 @@ print_plan() {
 # contracts, the external-command policy, and the AQ activation classifier.
 #
 # Unlike --print-plan it does use text tools (awk, sort, comm, uniq, tr, wc,
-# grep, tail, cat), so it is not PATH-free; "no I/O" means it writes nothing
+# grep, tail, cat, sed), so it is not PATH-free; "no I/O" means it writes nothing
 # and reads no file under test.
 # ---------------------------------------------------------------------------
 
@@ -859,6 +873,7 @@ count_by_field() {
 
 self_test() {
     local plan feature mode target clip cpu aq denoiser layers phase_name tool
+    local prepared_inputs=0 kind
 
     printf 'qualify-production-encoder self-test\n'
     if ! plan="$(print_plan)"; then
@@ -889,6 +904,15 @@ self_test() {
         "$(totals_field "$plan" latency_measured_runs)" "$EXPECTED_LATENCY_MEASURED_RUNS"
     expect_equal "required_oracles" \
         "$(totals_field "$plan" required_oracles)" "$EXPECTED_REQUIRED_ORACLES"
+    for target in $TARGETS; do
+        for clip in $(target_clips "$target"); do
+            for kind in clean noisy; do
+                prepared_inputs=$(( prepared_inputs + 1 ))
+            done
+        done
+    done
+    expect_equal "prepared inputs follow the target/clip matrix" \
+        "$prepared_inputs" "$EXPECTED_PREPARED_INPUTS"
 
     # --- TOTALS consistency: the line must agree with the emitted rows -----
     expect_equal "TOTALS is the final plan line" \
@@ -1301,6 +1325,15 @@ self_test() {
     expect_equal "a real run accepts an explicit --phase quality" \
         "$(parse_args_error --phase quality --work-dir /w --pgo-manifest /m)" \
         "accepted"
+    expect_equal "a real run accepts explicit resume" \
+        "$(parse_args_error --resume --phase quality --work-dir /w --pgo-manifest /m)" \
+        "accepted"
+    expect_equal "resume is a valueless flag in any position" \
+        "$(parse_args_error --phase quality --work-dir /w --resume --pgo-manifest /m)" \
+        "accepted"
+    expect_equal "duplicate resume is refused" \
+        "$(parse_args_error --resume --phase quality --resume --work-dir /w --pgo-manifest /m)" \
+        "--resume may be passed only once"
     expect_equal "a real run refuses an unknown --phase" \
         "$(parse_args_error --phase nonsense --work-dir /w --pgo-manifest /m)" \
         "--phase must be one of quality, speed, latency, all"
@@ -1322,19 +1355,19 @@ self_test() {
               "--pgo-manifest is required for a real run")" \
         "refused"
 
-    # --- fresh-run work directory --------------------------------------------
+    # --- fresh and resumed work directories ----------------------------------
     #
     # The emptiness check itself needs a filesystem, so what is asserted here is
-    # the contract the CLI states. Weakening the runner to resume, or to delete
-    # what it found, would have to edit these lines to stay consistent.
-    expect_equal "usage requires an absent or empty work directory" \
-        "$(plan_count "$(usage)" 'the directory itself must be absent or empty')" 1
+    # the contract the CLI states. Resume is explicit and receipt-bound; normal
+    # mode remains fresh and never deletes what it finds.
+    expect_equal "usage keeps normal mode absent or empty" \
+        "$(plan_count "$(usage)" 'absent or empty unless --resume is explicit')" 1
     expect_equal "usage keeps the work directory outside the repository" \
         "$(plan_count "$(usage)" 'outside the repo, with an existing parent')" 1
-    expect_equal "usage states a real run has no resume" \
-        "$(plan_count "$(usage)" 'there is no resume')" 1
-    expect_equal "usage states nothing is deleted to make room" \
-        "$(plan_count "$(usage)" 'nothing is')" 1
+    expect_equal "usage states resume requires a sealed matching run" \
+        "$(plan_count "$(usage)" 'reopen this exact sealed run')" 1
+    expect_equal "usage states resumed rows are decoded again" \
+        "$(plan_count "$(usage)" 'cross-decoded again before reuse')" 1
     expect_equal "usage states --phase is required and never assumed" \
         "$(plan_count "$(usage)" 'required; no phase is assumed')" 1
     expect_equal "usage states the PGO manifest binds the encoder under test" \
@@ -1396,10 +1429,32 @@ self_test() {
               manifest_field "$PGO_MANIFEST_BINARY_KEY")" \
         "/first"
 
+    # --- resumable row receipts ---------------------------------------------
+    local receipt_fixture
+    receipt_fixture="$(printf 'receipt_schema=1\nrun_fingerprint_sha256=run123\nrow_id=row-a\nartifact_sha256=artifact456\ncompleted_utc=now\n')"
+    expect_equal "a receipt binds one run, row, and artifact tree" \
+        "$(printf '%s\n' "$receipt_fixture" |
+              receipt_consistency_status run123 row-a artifact456)" "valid"
+    expect_equal "a duplicate receipt binding is ambiguous" \
+        "$(printf '%s\nrun_fingerprint_sha256=run123\n' "$receipt_fixture" |
+              receipt_consistency_status run123 row-a artifact456)" "ambiguous"
+    expect_equal "a receipt from another run is rejected" \
+        "$(printf '%s\n' "$receipt_fixture" |
+              receipt_consistency_status other row-a artifact456)" "wrong-run"
+    expect_equal "a receipt for another row is rejected" \
+        "$(printf '%s\n' "$receipt_fixture" |
+              receipt_consistency_status run123 row-b artifact456)" "wrong-row"
+    expect_equal "a receipt for changed artifacts is rejected" \
+        "$(printf '%s\n' "$receipt_fixture" |
+              receipt_consistency_status run123 row-a changed)" "wrong-artifact"
+    expect_equal "an old receipt schema is rejected" \
+        "$(printf '%s\n' "$receipt_fixture" | sed 's/receipt_schema=1/receipt_schema=0/' |
+              receipt_consistency_status run123 row-a artifact456)" "wrong-schema"
+
     # --- external command policy ---------------------------------------------
     expect_equal "the quality phase declares the commands it invokes" \
         "$(phase_required_commands quality)" \
-        "awk basename cargo cat date deltic dirname env find git grep head mkdir rustc shasum tr uname wc"
+        "awk basename cargo cat cmp date deltic dirname env find git grep head mkdir mv rmdir rustc shasum tr uname unlink wc"
     expect_equal "every required command declares why it is needed" \
         "$(for tool in $(phase_required_commands quality); do
               if [ -z "$(command_purpose "$tool")" ]; then printf 'x'; fi
@@ -1482,13 +1537,19 @@ Usage:
       --pgo-manifest PATH [path options]
   scripts/qualify-production-encoder.sh --print-plan
   scripts/qualify-production-encoder.sh --self-test
+  scripts/qualify-production-encoder.sh --self-test-resume
 
   --print-plan   emit the full non-spatial v1 acceptance matrix; no I/O
   --self-test    regenerate and validate the matrix; no I/O
+  --self-test-resume
+                 exercise receipt publication, reuse counters, tamper refusal,
+                 attempt cleanup bounds, and the invocation lock in OS temp
 
 Real-run options:
   --work-dir PATH        required; outside the repo, with an existing parent;
-                         the directory itself must be absent or empty
+                         absent or empty unless --resume is explicit
+  --resume               reopen this exact sealed run; completed rows are
+                         validated and cross-decoded again before reuse
   --phase PHASE          required; no phase is assumed. quality executes;
                          speed, latency, and all are declared by the matrix
                          but not implemented here.
@@ -1509,15 +1570,16 @@ Path options (repo-relative defaults, all validated before a real run):
   --ffmpeg PATH          ffmpeg executable or name on PATH
   --libvpx-source PATH   pinned libvpx checkout
 
-A real run is fresh-run only: --work-dir must be absent or empty, nothing is
-deleted to make room, and there is no resume. Spatial SVC is qualified
-separately by scripts/qualify-spatial-svc.sh and is deliberately absent from
-this matrix.
+A normal real run is fresh. --resume accepts only a sealed matching run,
+leaves partial attempts untouched, and never reuses an unsealed row. Spatial
+SVC is qualified separately by scripts/qualify-spatial-svc.sh and is
+deliberately absent from this matrix.
 USAGE
 }
 
 phase=""
 work_dir=""
+resume="no"
 opt_pgo_manifest=""
 opt_source_dir=""
 opt_test_encoder=""
@@ -1536,6 +1598,12 @@ parse_args() {
         flag="$1"
         case "$flag" in
             --help|-h) usage; exit 0 ;;
+            --resume)
+                [ "$resume" = "no" ] || fail "--resume may be passed only once"
+                resume="yes"
+                shift
+                continue
+                ;;
             --*) [ "$#" -ge 2 ] || fail "$flag requires a value" ;;
             *) usage >&2; fail "unknown argument: $flag" ;;
         esac
@@ -1632,6 +1700,13 @@ quality_summary=""
 quality_aggregate=""
 cross_decoder_csv=""
 manifest=""
+run_fingerprint=""
+quality_output_dir=""
+quality_recheck_dir=""
+quality_lock_dir=""
+quality_lock_owner=""
+quality_lock_acquired="no"
+active_quality_attempt=""
 
 default_path() {
     if [ -n "$1" ]; then
@@ -1766,9 +1841,14 @@ resolve_environment() {
 
     work_dir="$(canonical_output_dir "$work_dir")"
 
-    # A real run is fresh. Refuse a work directory that already holds anything,
-    # before a single file is written into it.
-    require_absent_or_empty_dir "--work-dir" "$work_dir"
+    if [ "$resume" = "yes" ]; then
+        [ -d "$work_dir" ] ||
+            fail "--resume requires an existing --work-dir: $work_dir"
+    else
+        # A normal real run is fresh. Refuse a work directory that already
+        # holds anything before a single file is written into it.
+        require_absent_or_empty_dir "--work-dir" "$work_dir"
+    fi
 
     repo_root="$(git rev-parse --show-toplevel)"
     cd "$repo_root"
@@ -1886,6 +1966,51 @@ run scripts/fetch-corpus.sh or pass --source-dir"
     quality_aggregate="$quality_dir/quality-aggregate.csv"
     cross_decoder_csv="$quality_dir/cross-decoder.csv"
     manifest="$work_dir/manifest.txt"
+}
+
+# A fixed atomic mkdir prevents two fresh/resumed invocations from sharing a
+# row tree or manifest. A killed process may leave this small lock directory;
+# the next invocation fails with the recorded owner rather than guessing that
+# it is stale and risking a PID-reuse or cross-host race.
+release_quality_lock() {
+    local recorded=""
+    if [ -n "$active_quality_attempt" ] && [ -d "$active_quality_attempt" ]; then
+        printf 'interrupted quality attempt retained for inspection: %s\n' \
+            "$active_quality_attempt" >&2
+    fi
+    [ "$quality_lock_acquired" = "yes" ] || return 0
+    if [ -f "$quality_lock_dir/owner" ]; then
+        recorded="$(cat "$quality_lock_dir/owner")"
+        [ "$recorded" = "$quality_lock_owner" ] || {
+            printf 'refusing to release a quality lock now owned by %s\n' "$recorded" >&2
+            return 1
+        }
+        unlink "$quality_lock_dir/owner"
+    fi
+    rmdir "$quality_lock_dir"
+    quality_lock_acquired="no"
+}
+
+acquire_quality_lock() {
+    local recorded="unrecorded"
+    quality_lock_dir="$work_dir/.quality-run.lock"
+    if ! mkdir "$quality_lock_dir" 2>/dev/null; then
+        if [ -f "$quality_lock_dir/owner" ]; then
+            recorded="$(cat "$quality_lock_dir/owner")"
+        fi
+        fail "another quality invocation owns --work-dir $work_dir: $recorded
+if that process was killed, verify the recorded owner is gone and move the exact lock directory aside before --resume"
+    fi
+    quality_lock_owner="$(uname -n)|pid=$$|started=$(utc_now)|commit=$git_commit"
+    quality_lock_acquired="yes"
+    printf '%s\n' "$quality_lock_owner" > "$quality_lock_dir/owner"
+}
+
+install_quality_lock_traps() {
+    trap release_quality_lock EXIT
+    trap 'exit 129' HUP
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
 }
 
 # ---------------------------------------------------------------------------
@@ -2048,11 +2173,151 @@ record_acceptance_inputs() {
     manifest_kv acceptance_inputs "$prepared_input_count"
 }
 
+# Stable identity of everything that may affect a quality row. The printed
+# plan binds every matrix row and gate; the remaining lines bind the committed
+# runner, encoder/reference tools, corpus, generated inputs, and host. Paths
+# are included as well as hashes because helper binaries may resolve adjacent
+# files at runtime.
+run_fingerprint_payload() {
+    local target clip kind input corpus_key corpus_file path
+
+    printf 'receipt_schema=%s\n' "$QUALITY_RECEIPT_SCHEMA"
+    printf 'phase=%s\n' "$phase"
+    printf 'work_dir=%s\n' "$work_dir"
+    printf 'git_commit=%s\n' "$git_commit"
+    printf 'host_triple=%s\n' "$host_triple"
+    printf 'host=%s\n' "$(uname -a)"
+    printf 'plan_sha256=%s\n' "$(print_plan | shasum -a 256 | awk '{ print $1 }')"
+    printf 'noise_filter=%s\n' "$NOISE_FILTER"
+    printf 'pgo_manifest=%s|%s\n' "$pgo_manifest" "$pgo_manifest_sha256"
+    printf 'pgo_source_commit=%s\n' "$pgo_source_commit"
+    printf 'libvpx_revision=%s\n' "$libvpx_revision"
+
+    for path in \
+        "$repo_root/scripts/qualify-production-encoder.sh" \
+        "$test_encoder" "$vpxenc" "$temporal_anchor" \
+        "$libvpx_config_h" "$libvpx_config_mk" \
+        "$bdrate_bin" "$bdrate_svc_bin" "$rvp9dec" "$vpxdec" \
+        "$ffmpeg_bin"
+    do
+        printf 'artifact=%s|%s\n' "$path" "$(sha256_file "$path")"
+    done
+
+    while IFS='|' read -r corpus_key corpus_file; do
+        path="$source_dir/$corpus_file"
+        printf 'corpus=%s|%s|%s\n' "$corpus_key" "$path" "$(sha256_file "$path")"
+    done < <(required_corpus_inputs)
+
+    for target in $TARGETS; do
+        for clip in $(target_clips "$target"); do
+            for kind in clean noisy; do
+                input="$(acceptance_input "$clip" "$target" "$kind")"
+                printf 'input=%s|%s\n' "$input" "$(sha256_file "$input")"
+            done
+        done
+    done
+}
+
+current_run_fingerprint() {
+    run_fingerprint_payload | shasum -a 256 | awk '{ print $1 }'
+}
+
+manifest_key_count() {
+    awk -v key="$1" 'index($0, key "=") == 1 { n++ } END { print n + 0 }' "$2"
+}
+
+# Pure-text receipt oracle. Exactly one copy of every binding key must agree;
+# a duplicate is ambiguity, not a later value overriding an earlier one.
+receipt_consistency_status() {
+    local expected_run="$1" expected_row="$2" expected_artifact="$3"
+    awk -v schema="$QUALITY_RECEIPT_SCHEMA" -v run="$expected_run" \
+        -v row="$expected_row" -v artifact="$expected_artifact" '
+        index($0, "receipt_schema=") == 1 {
+            schema_n++; schema_v = substr($0, 16)
+        }
+        index($0, "run_fingerprint_sha256=") == 1 {
+            run_n++; run_v = substr($0, 24)
+        }
+        index($0, "row_id=") == 1 {
+            row_n++; row_v = substr($0, 8)
+        }
+        index($0, "artifact_sha256=") == 1 {
+            artifact_n++; artifact_v = substr($0, 17)
+        }
+        END {
+            if (schema_n != 1 || run_n != 1 || row_n != 1 || artifact_n != 1) {
+                print "ambiguous"; exit
+            }
+            if (schema_v != schema) { print "wrong-schema"; exit }
+            if (run_v != run) { print "wrong-run"; exit }
+            if (row_v != row) { print "wrong-row"; exit }
+            if (artifact_v != artifact) { print "wrong-artifact"; exit }
+            print "valid"
+        }'
+}
+
+seal_fresh_run() {
+    [ "$prepared_input_count" -eq "$EXPECTED_PREPARED_INPUTS" ] ||
+        fail "prepared $prepared_input_count acceptance inputs before sealing, expected $EXPECTED_PREPARED_INPUTS"
+    run_fingerprint="$(current_run_fingerprint)"
+    manifest_kv run_fingerprint_sha256 "$run_fingerprint"
+    manifest_kv acceptance_inputs_sealed "yes"
+}
+
+# Resume never repairs or regenerates an input. Every prepared input must still
+# have the exact shape and hash recorded before the original row campaign
+# started. A run interrupted during preparation is cheap to restart fresh and
+# deliberately cannot be resumed.
+validate_resume_inputs() {
+    local target clip kind input key recorded actual
+    prepared_input_count=0
+    for target in $TARGETS; do
+        for clip in $(target_clips "$target"); do
+            for kind in clean noisy; do
+                input="$(acceptance_input "$clip" "$target" "$kind")"
+                validate_prepared_y4m "$target" "$input"
+                key="input_${kind}_${clip}_${target}_sha256"
+                [ "$(manifest_key_count "$key" "$manifest")" -eq 1 ] ||
+                    fail "--resume requires exactly one $key record in $manifest"
+                recorded="$(manifest_field "$key" < "$manifest")"
+                actual="$(sha256_file "$input")"
+                [ "$actual" = "$recorded" ] ||
+                    fail "--resume input hash mismatch for $input: $actual (sealed $recorded)"
+                prepared_input_count=$(( prepared_input_count + 1 ))
+            done
+        done
+    done
+}
+
+validate_resume_contract() {
+    local recorded
+    [ -f "$manifest" ] ||
+        fail "--resume found no sealed manifest: $manifest"
+    [ "$(manifest_key_count acceptance_inputs_sealed "$manifest")" -eq 1 ] &&
+        [ "$(manifest_field acceptance_inputs_sealed < "$manifest")" = "yes" ] ||
+        fail "--resume requires one acceptance_inputs_sealed=yes record in $manifest"
+    [ "$(manifest_key_count run_fingerprint_sha256 "$manifest")" -eq 1 ] ||
+        fail "--resume requires exactly one run_fingerprint_sha256 record in $manifest"
+    [ "$(grep -c '^run_end ' "$manifest" || true)" -eq 0 ] ||
+        fail "--resume refuses a run that already has a run_end record: $manifest"
+    [ ! -e "$quality_dir/completed" ] ||
+        fail "--resume found a published quality result without run_end; finalization is ambiguous: $quality_dir/completed"
+
+    validate_resume_inputs
+    recorded="$(manifest_field run_fingerprint_sha256 < "$manifest")"
+    run_fingerprint="$(current_run_fingerprint)"
+    [ "$run_fingerprint" = "$recorded" ] ||
+        fail "--resume fingerprint mismatch: current $run_fingerprint, sealed $recorded
+use the exact committed tree, tools, corpus, inputs, host, and work directory that started this run"
+    manifest_kv resumed_utc "$(utc_now)"
+}
+
 # ---------------------------------------------------------------------------
 # Quality phase, with its inseparable cross-decoder checks
 # ---------------------------------------------------------------------------
 
 quality_row_count=0
+reused_row_count=0
 quality_clip_gate_count=0
 quality_regression_count=0
 aggregate_group_count=0
@@ -2062,6 +2327,14 @@ cross_stream_count=0
 cross_run_count=0
 aq_oracle_count=0
 aq_oracle_failure_count=0
+aq_result_status=""
+aq_result_exit_code=""
+aq_result_gain_rvp9=""
+aq_result_gain_libvpx=""
+aq_result_delta=""
+aq_result_activation=""
+aq_result_log_sha256=""
+aq_result_summary_sha256=""
 
 decode_sha_rvp9() {
     deltic timeout "$DECODE_TIMEOUT" "$rvp9dec" --codec=vp9 --i420 "$1" \
@@ -2166,16 +2439,30 @@ cross_check_row() {
 # Delete only this row's generated Y4M, and only from the row's own streams
 # directory inside the work dir. Retained IVF, CSV, logs, and the caller's
 # inputs are untouched.
-discard_row_y4m() {
-    local streams="$1" resolved rows_resolved
-
-    [ -d "$streams" ] || fail "row stream directory vanished: $streams"
+row_attempt_path_status() {
+    local streams="$1" resolved rows_resolved attempt_dir attempt_name
+    [ -d "$streams" ] || { printf 'missing\n'; return; }
     resolved="$(cd "$streams" && pwd -P)"
     rows_resolved="$(cd "$quality_rows_dir" && pwd -P)"
-    case "$resolved" in
-        "$rows_resolved"/*/streams) ;;
-        *) fail "refusing to delete outside the quality row tree: $resolved" ;;
+    attempt_dir="$(dirname "$resolved")"
+    attempt_name="$(basename "$attempt_dir")"
+    if [ "$(dirname "$attempt_dir")" != "$rows_resolved" ]; then
+        printf 'not-direct\n'
+        return
+    fi
+    case "$attempt_name" in
+        .*.attempt.*) printf 'valid\n' ;;
+        *) printf 'not-attempt\n' ;;
     esac
+}
+
+discard_row_y4m() {
+    local streams="$1" status
+    status="$(row_attempt_path_status "$streams")"
+    [ "$status" = "valid" ] ||
+        fail "refusing to delete generated Y4M from an invalid row path ($status): $streams"
+    local resolved
+    resolved="$(cd "$streams" && pwd -P)"
     find "$resolved" -maxdepth 1 -type f -name '*.y4m' -delete
 }
 
@@ -2222,20 +2509,205 @@ layer_id_set_status() {
     printf 'valid\n'
 }
 
-run_quality_row() {
+# Hash every retained artifact whose contents justify reusing a completed row.
+# The ordered stream-name oracle makes missing, surplus, or renamed IVF files
+# visible even if a receipt itself is present.
+row_artifact_fingerprint() {
+    local feature="$1" grid="$2" dir="$3" name path
+    for name in bdrate.csv runner.log quality-fragment.csv \
+        cross-decoder-fragment.csv cross-decoder.log
+    do
+        path="$dir/$name"
+        [ -f "$path" ] || return 1
+        printf '%s|%s|%s\n' "$name" "$(wc -c < "$path" | tr -d ' ')" \
+            "$(sha256_file "$path")"
+    done
+    while IFS= read -r name; do
+        path="$dir/streams/$name"
+        [ -f "$path" ] || return 1
+        printf 'streams/%s|%s|%s\n' "$name" \
+            "$(wc -c < "$path" | tr -d ' ')" "$(sha256_file "$path")"
+    done < <(row_stream_names "$feature" "$grid")
+}
+
+row_artifact_sha256() {
+    row_artifact_fingerprint "$@" | shasum -a 256 | awk '{ print $1 }'
+}
+
+validate_quality_fragment() {
+    local fragment="$1" row_id="$2" feature="$3" mode="$4" target="$5"
+    local clip="$6" cpu="$7" aq="$8" denoiser="$9" layers="${10}"
+    local threads="${11}" tiles="${12}" grid="${13}" runner="${14}"
+    local anchor_kind="${15}" layer value status expected_status layer_ids=""
+    local count=0 failures=0
+    local got_row got_feature got_mode got_target got_clip got_cpu got_aq
+    local got_denoiser got_layers got_threads got_tiles got_grid got_runner
+    local got_anchor got_input got_reference got_gate extra
+
+    [ -f "$fragment" ] || fail "$row_id: missing quality fragment: $fragment"
+    while IFS=',' read -r got_row got_feature got_mode got_target got_clip \
+        got_cpu got_aq got_denoiser got_layers got_threads got_tiles \
+        got_grid got_runner got_anchor got_input got_reference layer value \
+        got_gate status extra
+    do
+        [ -z "$extra" ] || fail "$row_id: quality fragment has surplus columns"
+        [ "$got_row|$got_feature|$got_mode|$got_target|$got_clip" = \
+          "$row_id|$feature|$mode|$target|$clip" ] ||
+            fail "$row_id: quality fragment identity mismatch"
+        [ "$got_cpu|$got_aq|$got_denoiser|$got_layers|$got_threads|$got_tiles" = \
+          "$cpu|$aq|$denoiser|$layers|$threads|$tiles" ] ||
+            fail "$row_id: quality fragment configuration mismatch"
+        [ "$got_grid|$got_runner|$got_anchor" = \
+          "$(printf '%s' "$grid" | tr ',' ';')|$runner|$anchor_kind" ] ||
+            fail "$row_id: quality fragment runner mismatch"
+        [ "$got_input|$got_reference|$got_gate" = \
+          "$(row_input_kind "$feature")|$(row_reference_kind "$feature")|$MAX_IMPORTANT_CLIP_BDRATE_PCT" ] ||
+            fail "$row_id: quality fragment input or gate mismatch"
+        require_number "$row_id TL$layer BD-rate" "$value"
+        expected_status="PASS"
+        if ! number_le "$value" "$MAX_IMPORTANT_CLIP_BDRATE_PCT"; then
+            expected_status="FAIL"
+            failures=$(( failures + 1 ))
+            printf '  QUALITY MISS %s TL%s: %s%% exceeds +%s%% (reused row)\n' \
+                "$row_id" "$layer" "$value" "$MAX_IMPORTANT_CLIP_BDRATE_PCT" >&2
+        fi
+        [ "$status" = "$expected_status" ] ||
+            fail "$row_id: quality fragment status $status disagrees with BD-rate $value"
+        layer_ids="$layer_ids $layer"
+        count=$(( count + 1 ))
+    done < "$fragment"
+
+    [ "$count" -eq "$layers" ] ||
+        fail "$row_id: quality fragment has $count layer rows, expected $layers"
+    [ "$(layer_id_set_status "$layers" "$layer_ids")" = "valid" ] ||
+        fail "$row_id: quality fragment has invalid layer ids '$layer_ids'"
+    [ "$(awk -F, '{ print $17 "," $18 }' "$fragment")" = \
+      "$(row_layer_bdrates "$runner" "$quality_rows_dir/$row_id/bdrate.csv")" ] ||
+        fail "$row_id: quality fragment disagrees with its retained BD-rate CSV"
+
+    quality_clip_gate_count=$(( quality_clip_gate_count + count ))
+    quality_regression_count=$(( quality_regression_count + failures ))
+}
+
+publish_row_receipt() {
+    local row_id="$1" feature="$2" grid="$3" dir="$4" receipt artifact_sha
+    receipt="$dir/receipt"
+    artifact_sha="$(row_artifact_sha256 "$feature" "$grid" "$dir")" ||
+        fail "$row_id: cannot fingerprint the completed row artifacts"
+    {
+        printf 'receipt_schema=%s\n' "$QUALITY_RECEIPT_SCHEMA"
+        printf 'run_fingerprint_sha256=%s\n' "$run_fingerprint"
+        printf 'row_id=%s\n' "$row_id"
+        printf 'artifact_sha256=%s\n' "$artifact_sha"
+        printf 'completed_utc=%s\n' "$(utc_now)"
+    } > "$dir/receipt.partial"
+    mv "$dir/receipt.partial" "$receipt"
+}
+
+completed_row_receipt_status() {
+    local expected_run="$1" row_id="$2" feature="$3" grid="$4" dir="$5"
+    local artifact_sha
+    [ -f "$dir/receipt" ] || { printf 'missing\n'; return; }
+    if ! artifact_sha="$(row_artifact_sha256 "$feature" "$grid" "$dir")"; then
+        printf 'incomplete\n'
+        return
+    fi
+    receipt_consistency_status "$expected_run" "$row_id" "$artifact_sha" \
+        < "$dir/receipt"
+}
+
+decoder_recheck_status() {
+    if cmp -s "$1" "$2"; then
+        printf 'match\n'
+    else
+        printf 'mismatch\n'
+    fi
+}
+
+reuse_quality_row() {
     local feature="$1" mode="$2" target="$3" clip="$4" cpu="$5"
     local aq="$6" denoiser="$7" layers="$8"
-    local fps width height threads tiles speed_kbps p50 p99
-    local grid row_id dir streams runner anchor_kind encode_input reference_input
-    local rc=0 recorded=0 layer value status layer_ids=""
+    local fps width height threads tiles speed_kbps p50 p99 grid row_id dir
+    local receipt_status summary_out cross_out recheck log
+    local actual_streams expected_streams
 
     IFS='|' read -r fps width height threads tiles speed_kbps p50 p99 \
         <<< "$(target_spec "$target")"
     grid="$(target_bitrates "$target")"
     row_id="${feature}-${mode}-${target}-${clip}-cpu${cpu}"
     dir="$quality_rows_dir/$row_id"
-    streams="$dir/streams"
-    mkdir -p "$streams"
+    receipt_status="$(completed_row_receipt_status \
+        "$run_fingerprint" "$row_id" "$feature" "$grid" "$dir")"
+    [ "$receipt_status" = "valid" ] ||
+        fail "$row_id: completed row receipt is not reusable ($receipt_status)"
+    [ -z "$(find "$dir/streams" -maxdepth 1 -type f -name '*.y4m' -print)" ] ||
+        fail "$row_id: completed row still contains generated Y4M output"
+    expected_streams="$(row_stream_names "$feature" "$grid" | awk 'END { print NR + 0 }')"
+    actual_streams="$(find "$dir/streams" -maxdepth 1 -type f -name 'test_*.ivf' | awk 'END { print NR + 0 }')"
+    [ "$actual_streams" -eq "$expected_streams" ] ||
+        fail "$row_id: completed row has $actual_streams streams, expected $expected_streams"
+
+    validate_quality_fragment "$dir/quality-fragment.csv" "$row_id" \
+        "$feature" "$mode" "$target" "$clip" "$cpu" "$aq" "$denoiser" \
+        "$layers" "$threads" "$tiles" "$grid" "$(row_runner_kind "$feature")" \
+        "$(row_anchor_kind "$feature")"
+
+    summary_out="$quality_summary"
+    cross_out="$cross_decoder_csv"
+    recheck="$quality_recheck_dir/$row_id.csv"
+    log="$quality_recheck_dir/$row_id.log"
+    [ ! -e "$recheck" ] && [ ! -e "$log" ] ||
+        fail "$row_id: recheck output path already exists"
+    : > "$recheck"
+    local cross_decoder_csv="$recheck"
+    cross_check_row "$row_id" "$feature" "$dir/streams" "$grid" "$log"
+    [ "$(decoder_recheck_status "$recheck" "$dir/cross-decoder-fragment.csv")" = "match" ] ||
+        fail "$row_id: fresh decoder observations disagree with the sealed row"
+
+    cat "$dir/quality-fragment.csv" >> "$summary_out"
+    cat "$dir/cross-decoder-fragment.csv" >> "$cross_out"
+    quality_row_count=$(( quality_row_count + 1 ))
+    reused_row_count=$(( reused_row_count + 1 ))
+    printf '[quality %3d/%d] %s (reused; all candidate streams re-decoded)\n' \
+        "$quality_row_count" "$EXPECTED_QUALITY_CURVES" "$row_id"
+    return 0
+}
+
+run_quality_row() {
+    local feature="$1" mode="$2" target="$3" clip="$4" cpu="$5"
+    local aq="$6" denoiser="$7" layers="$8"
+    local fps width height threads tiles speed_kbps p50 p99
+    local grid row_id final_dir attempt streams runner anchor_kind encode_input reference_input
+    local summary_out="$quality_summary" cross_out="$cross_decoder_csv"
+    local rc=0 recorded=0 layer value status layer_ids=""
+
+    IFS='|' read -r fps width height threads tiles speed_kbps p50 p99 \
+        <<< "$(target_spec "$target")"
+    grid="$(target_bitrates "$target")"
+    row_id="${feature}-${mode}-${target}-${clip}-cpu${cpu}"
+    final_dir="$quality_rows_dir/$row_id"
+    if [ -e "$final_dir" ]; then
+        [ -f "$final_dir/receipt" ] ||
+            fail "$row_id: row directory exists without a receipt: $final_dir"
+        # Call directly, not as an `if` condition: Bash disables `errexit` for
+        # the full dynamic subtree of a conditional function call.
+        reuse_quality_row "$feature" "$mode" "$target" "$clip" "$cpu" \
+            "$aq" "$denoiser" "$layers"
+        return 0
+    fi
+    attempt="$quality_rows_dir/.${row_id}.attempt.$(date -u '+%Y%m%dT%H%M%SZ')-$$"
+    [ ! -e "$attempt" ] || fail "$row_id: attempt path already exists: $attempt"
+    mkdir "$attempt"
+    active_quality_attempt="$attempt"
+    streams="$attempt/streams"
+    mkdir "$streams"
+
+    # Called functions see these dynamically scoped paths, so a row writes
+    # only private fragments until its receipt and directory publish.
+    local quality_summary="$attempt/quality-fragment.csv"
+    local cross_decoder_csv="$attempt/cross-decoder-fragment.csv"
+    : > "$quality_summary"
+    : > "$cross_decoder_csv"
 
     runner="$(row_runner_kind "$feature")"
     anchor_kind="$(row_anchor_kind "$feature")"
@@ -2270,12 +2742,12 @@ run_quality_row() {
             --anchor-arg "--kf-max-dist=$KEYFRAME_INTERVAL" \
             --test-arg "--kf-max-dist=$KEYFRAME_INTERVAL" \
             --work-dir "$streams" \
-            --csv "$dir/bdrate.csv" \
-            > "$dir/runner.log" 2>&1 </dev/null || rc=$?
+            --csv "$attempt/bdrate.csv" \
+            > "$attempt/runner.log" 2>&1 </dev/null || rc=$?
         # bdrate gates nothing itself, so any non-zero exit is a harness or
         # measurement failure, never a recorded quality miss.
         [ "$rc" -eq 0 ] ||
-            fail "$row_id: bdrate failed (exit $rc, log $dir/runner.log)"
+            fail "$row_id: bdrate failed (exit $rc, log $attempt/runner.log)"
     else
         deltic timeout "$QUALITY_ROW_TIMEOUT" "$bdrate_svc_bin" \
             --anchor-encoder "$temporal_anchor" \
@@ -2296,21 +2768,21 @@ run_quality_row() {
             --bitrates "$grid" \
             --max-bdrate-pct "$MAX_IMPORTANT_CLIP_BDRATE_PCT" \
             --work-dir "$streams" \
-            --csv "$dir/bdrate.csv" \
-            > "$dir/runner.log" 2>&1 </dev/null || rc=$?
+            --csv "$attempt/bdrate.csv" \
+            > "$attempt/runner.log" 2>&1 </dev/null || rc=$?
         # bdrate-svc writes its CSV before returning its own gate verdict, so a
         # non-zero exit with a complete CSV is a quality miss to record, while
         # a short or absent CSV is a real failure.
         if [ "$rc" -ne 0 ]; then
-            if [ ! -s "$dir/bdrate.csv" ] ||
-                [ "$(row_bdrate_lines "$dir/bdrate.csv")" -ne "$layers" ]
+            if [ ! -s "$attempt/bdrate.csv" ] ||
+                [ "$(row_bdrate_lines "$attempt/bdrate.csv")" -ne "$layers" ]
             then
-                fail "$row_id: bdrate-svc failed before completing its measurement (exit $rc, log $dir/runner.log)"
+                fail "$row_id: bdrate-svc failed before completing its measurement (exit $rc, log $attempt/runner.log)"
             fi
         fi
     fi
 
-    [ -s "$dir/bdrate.csv" ] || fail "$row_id: runner wrote no CSV: $dir/bdrate.csv"
+    [ -s "$attempt/bdrate.csv" ] || fail "$row_id: runner wrote no CSV: $attempt/bdrate.csv"
 
     while IFS=',' read -r layer value; do
         require_number "$row_id TL$layer BD-rate" "$value"
@@ -2331,15 +2803,23 @@ run_quality_row() {
         layer_ids="$layer_ids $layer"
         recorded=$(( recorded + 1 ))
         quality_clip_gate_count=$(( quality_clip_gate_count + 1 ))
-    done < <(row_layer_bdrates "$runner" "$dir/bdrate.csv")
+    done < <(row_layer_bdrates "$runner" "$attempt/bdrate.csv")
 
     [ "$recorded" -eq "$layers" ] ||
         fail "$row_id: recorded $recorded layer BD-rates, expected $layers"
     [ "$(layer_id_set_status "$layers" "$layer_ids")" = "valid" ] ||
         fail "$row_id: runner reported an invalid layer-id set '$layer_ids' (expected exactly 0..$(( layers - 1 )))"
 
-    cross_check_row "$row_id" "$feature" "$streams" "$grid" "$dir/cross-decoder.log"
+    cross_check_row "$row_id" "$feature" "$streams" "$grid" "$attempt/cross-decoder.log"
     discard_row_y4m "$streams"
+    publish_row_receipt "$row_id" "$feature" "$grid" "$attempt"
+    mv "$attempt" "$final_dir"
+    [ -f "$final_dir/receipt" ] &&
+        [ ! -e "$final_dir/$(basename "$attempt")" ] ||
+        fail "$row_id: row publication nested instead of replacing the absent final path"
+    active_quality_attempt=""
+    cat "$final_dir/quality-fragment.csv" >> "$summary_out"
+    cat "$final_dir/cross-decoder-fragment.csv" >> "$cross_out"
 }
 
 # Equal-weight arithmetic mean of the per-clip BD-rate percentages, one gate per
@@ -2419,8 +2899,8 @@ oracle_metric() {
 }
 
 run_aq_oracle() {
-    local log="$quality_dir/aq-oracle.log"
-    local summary="$quality_dir/aq-oracle-summary.csv"
+    local log="$quality_output_dir/aq-oracle.log"
+    local summary="$quality_output_dir/aq-oracle-summary.csv"
     local rc=0 status="PASS" gate_lines gain_rvp9 gain_libvpx delta
     local activation_status
     local -a reasons
@@ -2510,24 +2990,38 @@ run_aq_oracle() {
         "$AQ_GAIN_DELTA_MAX_PP" "$activation_status" "$rc" "$status" \
         >> "$summary"
 
-    manifest_kv aq_oracle_status "$status"
-    manifest_kv aq_oracle_exit_code "$rc"
-    manifest_kv aq_oracle_gain_rvp9_pct "$gain_rvp9"
-    manifest_kv aq_oracle_gain_libvpx_pct "$gain_libvpx"
-    manifest_kv aq_oracle_delta_pp "$delta"
-    manifest_kv aq_oracle_activation "$activation_status"
-    manifest_kv aq_oracle_log_sha256 "$(sha256_file "$log")"
-    manifest_kv aq_oracle_summary_sha256 "$(sha256_file "$summary")"
+    # Keep these in memory until every phase total is proven and the complete
+    # result directory publishes. An interrupted invocation must not append a
+    # stale first copy of a manifest key that a later resume would duplicate.
+    aq_result_status="$status"
+    aq_result_exit_code="$rc"
+    aq_result_gain_rvp9="$gain_rvp9"
+    aq_result_gain_libvpx="$gain_libvpx"
+    aq_result_delta="$delta"
+    aq_result_activation="$activation_status"
+    aq_result_log_sha256="$(sha256_file "$log")"
+    aq_result_summary_sha256="$(sha256_file "$summary")"
     printf '  rvp9 AQ gain %s%%, libvpx AQ gain %s%%, delta %s pp, activation %s: %s\n' \
         "$gain_rvp9" "$gain_libvpx" "$delta" "$activation_status" "$status"
 }
 
 run_quality() {
-    local feature mode target clip cpu aq denoiser layers
+    local feature mode target clip cpu aq denoiser layers completed_dir invocation_id
 
-    # No freshness check here: resolve_environment already refused a work
-    # directory that held anything, so every phase directory under it is new.
+    completed_dir="$quality_dir/completed"
+    [ ! -e "$completed_dir" ] ||
+        fail "quality result is already published: $completed_dir"
     mkdir -p "$quality_rows_dir"
+    invocation_id="$(date -u '+%Y%m%dT%H%M%SZ')-$$"
+    quality_output_dir="$quality_dir/.result-attempt-$invocation_id"
+    quality_recheck_dir="$quality_output_dir/decoder-rechecks"
+    [ ! -e "$quality_output_dir" ] ||
+        fail "quality result attempt already exists: $quality_output_dir"
+    mkdir "$quality_output_dir"
+    mkdir "$quality_recheck_dir"
+    quality_summary="$quality_output_dir/quality-summary.csv"
+    quality_aggregate="$quality_output_dir/quality-aggregate.csv"
+    cross_decoder_csv="$quality_output_dir/cross-decoder.csv"
 
     printf 'row_id,feature,mode,target,clip,cpu_used,aq_mode,noise_sensitivity,temporal_layers,threads,tile_columns,bitrates_kbps,runner,anchor,input_kind,reference_kind,layer,bdrate_pct,gate_pct,status\n' \
         > "$quality_summary"
@@ -2561,7 +3055,21 @@ run_quality() {
     [ "$aq_oracle_count" -eq "$EXPECTED_REQUIRED_ORACLES" ] ||
         fail "ran $aq_oracle_count required oracles, expected $EXPECTED_REQUIRED_ORACLES"
 
+    # One directory rename publishes the complete result set. Interrupted
+    # invocation directories remain private evidence and are never overwritten.
+    mv "$quality_output_dir" "$completed_dir"
+    [ -f "$completed_dir/quality-summary.csv" ] &&
+        [ ! -e "$completed_dir/$(basename "$quality_output_dir")" ] ||
+        fail "quality result publication nested instead of replacing the absent completed path"
+    quality_output_dir="$completed_dir"
+    quality_recheck_dir="$completed_dir/decoder-rechecks"
+    quality_summary="$completed_dir/quality-summary.csv"
+    quality_aggregate="$completed_dir/quality-aggregate.csv"
+    cross_decoder_csv="$completed_dir/cross-decoder.csv"
+
     manifest_kv quality_curves "$quality_row_count"
+    manifest_kv quality_rows_reused "$reused_row_count"
+    manifest_kv quality_rows_encoded_this_invocation "$(( quality_row_count - reused_row_count ))"
     manifest_kv quality_clip_layer_checks "$quality_clip_gate_count"
     manifest_kv quality_clip_layer_failures "$quality_regression_count"
     manifest_kv quality_aggregate_groups "$aggregate_group_count"
@@ -2570,12 +3078,21 @@ run_quality() {
     manifest_kv candidate_streams "$cross_stream_count"
     manifest_kv decoder_runs "$cross_run_count"
     manifest_kv required_oracles "$aq_oracle_count"
+    manifest_kv aq_oracle_status "$aq_result_status"
+    manifest_kv aq_oracle_exit_code "$aq_result_exit_code"
+    manifest_kv aq_oracle_gain_rvp9_pct "$aq_result_gain_rvp9"
+    manifest_kv aq_oracle_gain_libvpx_pct "$aq_result_gain_libvpx"
+    manifest_kv aq_oracle_delta_pp "$aq_result_delta"
+    manifest_kv aq_oracle_activation "$aq_result_activation"
+    manifest_kv aq_oracle_log_sha256 "$aq_result_log_sha256"
+    manifest_kv aq_oracle_summary_sha256 "$aq_result_summary_sha256"
     manifest_kv quality_summary_sha256 "$(sha256_file "$quality_summary")"
     manifest_kv quality_aggregate_sha256 "$(sha256_file "$quality_aggregate")"
     manifest_kv cross_decoder_summary_sha256 "$(sha256_file "$cross_decoder_csv")"
 
-    printf '\nQuality phase measured %s curves, %s clip/layer checks, %s aggregate groups (%s layer gates), %s candidate streams, %s decoder runs, %s oracle.\n' \
-        "$quality_row_count" "$quality_clip_gate_count" \
+    printf '\nQuality phase qualified %s curves (%s reused with fresh decoder checks), %s clip/layer checks, %s aggregate groups (%s layer gates), %s candidate streams, %s decoder runs, %s oracle.\n' \
+        "$quality_row_count" "$reused_row_count" \
+        "$quality_clip_gate_count" \
         "$aggregate_group_count" "$aggregate_gate_count" \
         "$cross_stream_count" "$cross_run_count" "$aq_oracle_count"
 
@@ -2588,6 +3105,134 @@ run_quality() {
     fi
     manifest_kv quality_verdict "pass"
     printf 'Quality phase passed.\n'
+}
+
+# Focused filesystem exercise for the resume boundary. It uses only synthetic
+# text/IVF placeholders and a private mktemp directory; no encoder, decoder,
+# corpus, repository artifact, or caller path is touched.
+resume_self_test() {
+    local test_root row_id row_dir rate artifact_sha changed_sha attempt_dir
+    local lock_work temp_parent bytes stream_sha
+    [ -n "${TMPDIR-}" ] || fail "--self-test-resume requires TMPDIR"
+    temp_parent="${TMPDIR%/}"
+    test_root="$(mktemp -d "$temp_parent/rvp9-qualify-resume.XXXXXX")" ||
+        fail "could not create resume self-test directory under TMPDIR"
+
+    cleanup_resume_self_test() {
+        local resolved
+        [ -d "$test_root" ] || return 0
+        resolved="$(cd "$test_root" && pwd -P)"
+        case "$resolved" in
+            "$(cd "$temp_parent" && pwd -P)"/rvp9-qualify-resume.*) ;;
+            *) printf 'refusing to clean unexpected resume self-test path: %s\n' "$resolved" >&2; return 1 ;;
+        esac
+        find "$resolved" -depth -type f -exec unlink {} \;
+        find "$resolved" -depth -type d -exec rmdir {} \;
+    }
+    trap cleanup_resume_self_test EXIT
+    trap 'exit 129' HUP
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+
+    # The fixed mkdir lock is acquired and released without touching any
+    # caller-owned directory.
+    lock_work="$test_root/lock-work"
+    mkdir "$lock_work"
+    work_dir="$lock_work"
+    git_commit="resume-self-test"
+    acquire_quality_lock
+    [ -s "$quality_lock_dir/owner" ] || fail "resume self-test: lock has no owner"
+    if mkdir "$quality_lock_dir" 2>/dev/null; then
+        fail "resume self-test: a second invocation acquired the same lock"
+    fi
+    release_quality_lock
+
+    row_id="baseline-cbr-720p30-in_to_tree-cpu6"
+    quality_rows_dir="$test_root/rows"
+    row_dir="$quality_rows_dir/$row_id"
+    mkdir -p "$row_dir/streams"
+    run_fingerprint="run123"
+    printf 'bdrate_pct,0.400000\n' > "$row_dir/bdrate.csv"
+    printf 'runner evidence\n' > "$row_dir/runner.log"
+    printf '%s,baseline,cbr,720p30,in_to_tree,6,0,0,1,1,0,420;630;840;1260;2100;3360,bdrate,vpxenc,clean,clean,0,0.400000,2.0,PASS\n' \
+        "$row_id" > "$row_dir/quality-fragment.csv"
+    : > "$row_dir/cross-decoder-fragment.csv"
+    printf 'decoder evidence\n' > "$row_dir/cross-decoder.log"
+    for rate in 420 630 840 1260 2100 3360; do
+        printf 'ivf-%s' "$rate" > "$row_dir/streams/test_${rate}k.ivf"
+        bytes="$(wc -c < "$row_dir/streams/test_${rate}k.ivf" | tr -d ' ')"
+        stream_sha="$(sha256_file "$row_dir/streams/test_${rate}k.ivf")"
+        printf '%s,test_%sk.ivf,single,%s,%s,decodehash,decodehash,yes,ok,PASS\n' \
+            "$row_id" "$rate" "$bytes" "$stream_sha" \
+            >> "$row_dir/cross-decoder-fragment.csv"
+    done
+    artifact_sha="$(row_artifact_sha256 baseline '420,630,840,1260,2100,3360' "$row_dir")" ||
+        fail "resume self-test: cannot fingerprint fixture"
+    publish_row_receipt "$row_id" baseline \
+        '420,630,840,1260,2100,3360' "$row_dir"
+    [ "$(receipt_consistency_status run123 "$row_id" "$artifact_sha" < "$row_dir/receipt")" = "valid" ] ||
+        fail "resume self-test: published receipt is invalid"
+
+    # Replace only the expensive decoder operation with a deterministic
+    # observation; reuse_quality_row still executes its real receipt, artifact,
+    # fragment, counter, and byte-comparison paths.
+    cross_check_row() {
+        local reused_id="$1" streams="$3" rate ivf observed_bytes observed_sha
+        for rate in 420 630 840 1260 2100 3360; do
+            ivf="$streams/test_${rate}k.ivf"
+            observed_bytes="$(wc -c < "$ivf" | tr -d ' ')"
+            observed_sha="$(sha256_file "$ivf")"
+            printf '%s,test_%sk.ivf,single,%s,%s,decodehash,decodehash,yes,ok,PASS\n' \
+                "$reused_id" "$rate" "$observed_bytes" "$observed_sha" \
+                >> "$cross_decoder_csv"
+            cross_stream_count=$(( cross_stream_count + 1 ))
+            cross_run_count=$(( cross_run_count + 3 ))
+        done
+    }
+    quality_summary="$test_root/replayed-quality.csv"
+    cross_decoder_csv="$test_root/replayed-cross.csv"
+    quality_recheck_dir="$test_root/rechecks"
+    mkdir "$quality_recheck_dir"
+    : > "$quality_summary"
+    : > "$cross_decoder_csv"
+    quality_row_count=0
+    reused_row_count=0
+    quality_clip_gate_count=0
+    quality_regression_count=0
+    cross_stream_count=0
+    cross_run_count=0
+    reuse_quality_row baseline cbr 720p30 in_to_tree 6 0 0 1
+    [ "$quality_row_count|$reused_row_count|$quality_clip_gate_count|$quality_regression_count|$cross_stream_count|$cross_run_count" = \
+      "1|1|1|0|6|18" ] ||
+        fail "resume self-test: reused counters diverged"
+    printf 'deliberate mismatch\n' > "$test_root/decoder-mismatch.csv"
+    [ "$(decoder_recheck_status "$test_root/decoder-mismatch.csv" \
+          "$row_dir/cross-decoder-fragment.csv")" = "mismatch" ] ||
+        fail "resume self-test: decoder mismatch classifier passed unequal evidence"
+
+    printf 'changed' >> "$row_dir/streams/test_420k.ivf"
+    changed_sha="$(row_artifact_sha256 baseline '420,630,840,1260,2100,3360' "$row_dir")"
+    [ "$changed_sha" != "$artifact_sha" ] &&
+        [ "$(completed_row_receipt_status run123 "$row_id" baseline \
+              '420,630,840,1260,2100,3360' "$row_dir")" = "wrong-artifact" ] ||
+        fail "resume self-test: changed stream did not invalidate receipt"
+
+    attempt_dir="$quality_rows_dir/.guard-test.attempt.now-$$"
+    mkdir -p "$attempt_dir/streams"
+    mkdir -p "$quality_rows_dir/not-an-attempt/streams"
+    mkdir -p "$quality_rows_dir/nested/child/streams"
+    [ "$(row_attempt_path_status "$quality_rows_dir/not-an-attempt/streams")" = "not-attempt" ] ||
+        fail "resume self-test: non-attempt direct row passed deletion guard"
+    [ "$(row_attempt_path_status "$quality_rows_dir/nested/child/streams")" = "not-direct" ] ||
+        fail "resume self-test: nested row passed deletion guard"
+    printf 'generated' > "$attempt_dir/streams/test.y4m"
+    discard_row_y4m "$attempt_dir/streams"
+    [ ! -e "$attempt_dir/streams/test.y4m" ] ||
+        fail "resume self-test: bounded Y4M discard left its exact fixture"
+
+    cleanup_resume_self_test
+    trap - EXIT HUP INT TERM
+    printf 'resume filesystem self-test passed\n'
 }
 
 # ---------------------------------------------------------------------------
@@ -2610,6 +3255,11 @@ main() {
             self_test
             return 0
             ;;
+        --self-test-resume)
+            [ "$#" -eq 1 ] || fail "--self-test-resume must be the only argument"
+            resume_self_test
+            return 0
+            ;;
         "")
             usage >&2
             fail "no arguments; try --help"
@@ -2618,10 +3268,20 @@ main() {
 
     parse_args "$@"
     resolve_environment
+    acquire_quality_lock
+    install_quality_lock_traps
 
-    write_manifest_header
-    prepare_inputs
-    record_acceptance_inputs
+    if [ "$resume" = "yes" ]; then
+        validate_resume_contract
+    else
+        # Preprocessing is bounded and cheap next to the row campaign. Seal
+        # only after every prepared input exists, so an interrupted prepare is
+        # restarted in a new directory instead of being mistaken for evidence.
+        prepare_inputs
+        write_manifest_header
+        record_acceptance_inputs
+        seal_fresh_run
+    fi
     run_quality
 
     manifest_kv ended_utc "$(utc_now)"
