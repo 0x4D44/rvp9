@@ -1,0 +1,2 @@
+oracle,test,gain_rvp9_pct,gain_libvpx_pct,delta_pp,max_delta_pp,activation,exit_code,status
+aq_gain_parity,bdrate_gate_stage4b_aq_realcontent,4.977,4.714,0.263,0.3,present,0,PASS
