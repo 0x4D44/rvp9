@@ -2,10 +2,15 @@
 # Declare the complete single-stream and temporal-SVC v1 acceptance matrix for
 # the rvp9 encoder from one checked-in orchestrator.
 #
-# Scope: this file is the *matrix definition*, its two dry oracles, and the
-# resumable QUALITY execution phase. The relative-speed and absolute-latency
-# execution phases are NOT implemented in this unit; asking for them (or for
-# `--phase all`) fails loudly and says so.
+# Scope: this file is the *matrix definition*, its dry oracles, and all four
+# execution phases -- the resumable QUALITY phase, the relative-SPEED phase,
+# the absolute-LATENCY phase, and the ALL fan-out that runs the three in order.
+#
+# Only the quality phase is resumable. Speed and latency measure wall time, and
+# a resumed timing campaign would splice measurements taken on two different
+# host states into one verdict, so --resume is refused for them by name. For
+# trustworthy cold-host timing, run speed and latency as their own fresh runs
+# rather than as the tail of an --phase all campaign.
 #
 # A normal real run is fresh. --work-dir must be outside the repository, its
 # parent must exist, and the directory itself must be absent or empty. An
@@ -69,11 +74,25 @@
 #            The real-content oracle reports the decoded count of non-base
 #            segmentation cells and active frames. Both counts must be
 #            non-zero, so an AQ-labelled no-op cannot pass by omission.
-#   speed    <= 1.05x pinned vpxenc wall time, host load1 <= 0.75, one warmup
-#            plus five measured pairs over two reversed rotations.
+#   speed    <= 1.05x the pinned anchor's wall time on BOTH the corpus separate
+#            and corpus paired geometric mean, host load1 <= 0.75, one warmup
+#            plus five measured pairs over two reversed rotations. Single-layer
+#            groups are anchored on pinned vpxenc; T2/T3 groups on the pinned
+#            temporal adapter, which is the only anchor that can configure VP9
+#            temporal SVC at all.
 #   latency  median p50 and median p99 inside the per-target frame budgets
-#            over five measured runs; AQ3 rows additionally cap max frame
-#            time at 66 ms.
+#            over five measured runs; AQ3 rows additionally cap the maximum
+#            frame time of every measured run at 66 ms. The maximum comes from
+#            the validated per-frame timing CSV and is never medianed: a row
+#            that stalls one frame past budget in one run has missed it.
+#
+# Timing verdicts are recorded, not thrown. A group or row that misses its
+# declared budget is written to the phase summary with its status and reason
+# and the campaign continues, so the final evidence is a complete census rather
+# than a prefix ending at the first miss. A *measurement* failure is the
+# opposite and aborts at once: a host-load refusal, missing or malformed
+# evidence, a child timeout, an encoder failure, unstable output hashes, or a
+# runner verdict that contradicts its own recorded numbers.
 #
 # Cross-decoder checking is inseparable from the quality phase: every retained
 # rvp9 candidate stream must decode to an identical, non-empty I420 SHA-256
@@ -98,8 +117,8 @@
 #
 #   scripts/qualify-production-encoder.sh --print-plan   # dry oracle, no I/O
 #   scripts/qualify-production-encoder.sh --self-test    # checks it, no I/O
-#   scripts/qualify-production-encoder.sh --work-dir DIR --phase quality \
-#       --pgo-manifest PATH [path options]
+#   scripts/qualify-production-encoder.sh --work-dir DIR \
+#       --phase {quality,speed,latency,all} --pgo-manifest PATH [path options]
 #
 # Bash 3.2 compatible (macOS system bash): no associative arrays, no mapfile,
 # no Bash 4 syntax.
@@ -148,7 +167,12 @@ readonly DECODERS_PER_STREAM=3
 
 # Receipt schema for resumable quality rows. Bump whenever the receipt or
 # artifact-fingerprint contract changes.
-readonly QUALITY_RECEIPT_SCHEMA=1
+#
+# Schema 2 adds the timing runners (encode-headtohead, realtime) to the run
+# fingerprint. They are validated, hashed, and bound by every real run now that
+# the timing phases execute, so a schema-1 receipt was sealed against a strictly
+# smaller identity and must not be reused.
+readonly QUALITY_RECEIPT_SCHEMA=2
 
 # Expected totals. These are asserted against what the iterators actually
 # produce, so any matrix edit fails loudly instead of quietly rescoping the
@@ -188,6 +212,25 @@ readonly PREPROCESS_TIMEOUT=1800
 readonly QUALITY_ROW_TIMEOUT=7200
 readonly DECODE_TIMEOUT=900
 readonly AQ_ORACLE_TIMEOUT=7200
+readonly SPEED_GROUP_TIMEOUT=14400
+readonly LATENCY_RUN_TIMEOUT=900
+
+# The exact header `realtime` writes and re-reads for its per-frame timing CSV.
+# The latency phase validates that file itself rather than trusting the runner's
+# own summary, because the AQ3 max-frame gate is computed from those rows.
+readonly FRAME_TIME_CSV_HEADER="frame_index,temporal_layer_id,encode_ns"
+
+# The highest temporal layer id `realtime` accepts in a timing CSV row.
+readonly FRAME_TIME_MAX_LAYER_ID=2
+
+# `realtime` exit codes that are a recorded budget verdict rather than a
+# measurement failure: 3 = average frame time over --budget-ms, 4 = p99 over
+# --p99-budget-ms. Both still write the complete log, IVF, and timing CSV, so
+# the row's evidence is intact and this script re-derives the gate itself. Any
+# other non-zero exit (1 encoder failure, 2 no frames or invalid timing CSV, a
+# timeout, a signal) is a measurement failure and aborts the phase.
+readonly REALTIME_EXIT_OVER_BUDGET=3
+readonly REALTIME_EXIT_OVER_P99=4
 
 # The authoritative Stage 4b AQ gain-parity oracle, named exactly once so the
 # executor and the self-test cannot drift apart.
@@ -454,6 +497,40 @@ row_anchor_kind() {
     esac
 }
 
+# The anchor kind `encode-headtohead` is told to drive for a speed group. It is
+# the same anchor choice row_anchor_kind() makes for quality, spelled in the
+# runner's own vocabulary: the head-to-head runner calls the pinned temporal
+# adapter `temporal-svc`, and the quality runner calls it `temporal-adapter`.
+# Both arms of every group are matched, and the rvp9 test arm is always driven
+# through the runner's `vpxenc` command surface, because rvp9enc mirrors it.
+speed_anchor_kind() {
+    case "$1" in
+        baseline|aq3|denoiser)   printf 'vpxenc\n' ;;
+        temporal_t2|temporal_t3) printf 'temporal-svc\n' ;;
+        *) printf 'unknown feature: %s\n' "$1" >&2; return 1 ;;
+    esac
+}
+
+# The test arm of every timing measurement is the production PGO rvp9enc,
+# driven through the runner's vpxenc-compatible command surface.
+speed_test_kind() {
+    case "$1" in
+        baseline|aq3|denoiser|temporal_t2|temporal_t3) printf 'vpxenc\n' ;;
+        *) printf 'unknown feature: %s\n' "$1" >&2; return 1 ;;
+    esac
+}
+
+# The temporal-layer count a timing runner must be given, or empty when the
+# flag must be omitted entirely. Both runners reject `--temporal-layers 1`:
+# a single-layer encode is the absence of the flag, not the value 1.
+timing_temporal_layers_arg() {
+    local layers
+    layers="$(feature_temporal_layers "$1")" || return 1
+    if [ "$layers" -gt 1 ]; then
+        printf '%s\n' "$layers"
+    fi
+}
+
 # Both encoders always consume the same input. Only the denoiser rows encode
 # the derived noisy input; everything else encodes the clean one.
 row_input_kind() {
@@ -528,13 +605,24 @@ row_stream_names() {
     done
 }
 
-# Which execution phases this unit implements. Speed and latency (and the `all`
-# fan-out that includes them) are declared, not executed.
+# Which execution phases this script implements. All four execute.
 phase_supported() {
     case "$1" in
-        quality)          printf 'implemented\n' ;;
-        speed|latency|all) printf 'not-implemented\n' ;;
-        *)                printf 'unknown\n' ;;
+        quality|speed|latency|all) printf 'implemented\n' ;;
+        *)                         printf 'unknown\n' ;;
+    esac
+}
+
+# Which phases a --resume may reopen. Only quality: its rows are sealed,
+# content-addressed evidence that a fresh decode can revalidate. A timing phase
+# measures the host, and splicing runs taken across two host states -- different
+# thermal state, different background load, possibly a reboot -- into one median
+# would produce a number no single host ever exhibited.
+phase_resumable() {
+    case "$1" in
+        quality)           printf 'resumable\n' ;;
+        speed|latency|all) printf 'not-resumable\n' ;;
+        *)                 printf 'unknown\n' ;;
     esac
 }
 
@@ -551,16 +639,26 @@ phase_supported() {
 # never runs would turn a healthy host into a spurious refusal. cat is listed
 # because usage() invokes it, even though every usage path precedes this check.
 #
+# sysctl is absent on purpose too: the host-load reader prefers /proc/loadavg
+# and falls back to sysctl only where that file does not exist, so demanding it
+# up front would refuse a healthy Linux host. A host where neither works fails
+# closed at the first load check, which is the correct place for that refusal.
+#
+# The timing phases add no command of their own -- both drive one checked-in
+# runner binary and parse its output with awk -- so their sets are the common
+# real-run set. Every phase records the Cargo toolchain in its manifest.
+# Quality additionally uses cmp and env for the AQ oracle and resumed-row
+# decoder recheck, which makes the `all` set exactly quality's.
+#
 # --print-plan invokes nothing here -- it is printf and shell arithmetic only,
 # and stays runnable with an empty PATH.
 phase_required_commands() {
     case "$1" in
-        quality)
+        quality|all)
             printf 'awk basename cargo cat cmp date deltic dirname env find git grep head mkdir mv rmdir rustc shasum tr uname unlink wc\n'
             ;;
-        speed|latency|all)
-            printf 'phase has no runner, so no command set: %s\n' "$1" >&2
-            return 1
+        speed|latency)
+            printf 'awk basename cargo cat date deltic dirname find git grep head mkdir mv rmdir rustc shasum tr uname unlink wc\n'
             ;;
         *) printf 'unknown phase: %s\n' "$1" >&2; return 1 ;;
     esac
@@ -570,24 +668,24 @@ phase_required_commands() {
 # copied incantation. The self-test asserts every listed command has a reason.
 command_purpose() {
     case "$1" in
-        awk)      printf 'every numeric comparison, CSV aggregate, and log parse\n' ;;
+        awk)      printf 'every numeric comparison, median, CSV aggregate, and log parse\n' ;;
         basename) printf 'naming a retained candidate stream in the cross-decoder CSV\n' ;;
-        cargo)    printf 'the AQ gain-parity oracle runs through "cargo test"\n' ;;
+        cargo)    printf 'the manifest records the Cargo toolchain; quality also runs the AQ oracle through "cargo test"\n' ;;
         cat)      printf 'printing usage and replaying sealed row fragments\n' ;;
         cmp)      printf 'proving fresh decoder observations match a sealed row\n' ;;
-        date)     printf 'the manifest run start and end timestamps\n' ;;
+        date)     printf 'the manifest timestamps and the private attempt directory names\n' ;;
         deltic)   printf 'every child process runs under "deltic timeout"\n' ;;
         dirname)  printf 'canonicalising the PGO manifest binary path\n' ;;
         env)      printf 'passing the corpus and vpxenc overrides to the oracle\n' ;;
         find)     printf 'counting retained streams, the work-dir emptiness check, per-row Y4M discard\n' ;;
         git)      printf 'HEAD, the PGO source commit, and the pinned libvpx revision\n' ;;
-        grep)     printf 'the oracle log skip, gate, and result checks\n' ;;
+        grep)     printf 'the oracle log checks and the timing runner help probes\n' ;;
         head)     printf 'the recorded ffmpeg version line\n' ;;
-        mkdir)    printf 'creating the work, input, and per-row directories\n' ;;
+        mkdir)    printf 'creating the work, input, per-row, and per-group directories\n' ;;
         mv)       printf 'atomically publishing row receipts and complete result directories\n' ;;
         rmdir)    printf 'releasing the exact invocation lock directory\n' ;;
         rustc)    printf 'the host triple and the recorded toolchain version\n' ;;
-        shasum)   printf 'every artifact SHA-256 and both decoded-output hashes\n' ;;
+        shasum)   printf 'every artifact SHA-256, both decoded-output hashes, and per-run IVF stability\n' ;;
         tr)       printf 'flattening lists into manifest and CSV fields\n' ;;
         uname)    printf 'the recorded host description\n' ;;
         unlink)   printf 'releasing the exact invocation lock owner file\n' ;;
@@ -623,6 +721,106 @@ number_le() {
 # True when abs($1) <= $2, both already validated as decimal numbers.
 number_abs_le() {
     awk -v a="$1" -v b="$2" 'BEGIN { if (a < 0) a = -a; exit !(a <= b) }'
+}
+
+# Median of the decimal arguments, sorted numerically inside awk.
+#
+# `sort -n` is deliberately not used in any runtime path: its collation of a
+# decimal point is locale-dependent, so on a host whose locale spells the
+# decimal separator `,` it can order 9.9 after 10.1 and hand back the wrong
+# sample as the median. awk's own numeric coercion is the portable comparison,
+# and the sample counts here are five, so an insertion sort is the right size.
+numeric_median() {
+    [ "$#" -gt 0 ] || return 1
+    printf '%s\n' "$@" |
+        awk '
+            { value[n++] = $0 + 0 }
+            END {
+                if (n == 0) { exit 1 }
+                for (i = 1; i < n; i++) {
+                    key = value[i]
+                    j = i - 1
+                    while (j >= 0 && value[j] > key) {
+                        value[j + 1] = value[j]
+                        j--
+                    }
+                    value[j + 1] = key
+                }
+                if (n % 2 == 1) {
+                    printf "%.6f\n", value[(n - 1) / 2]
+                } else {
+                    printf "%.6f\n", (value[n / 2 - 1] + value[n / 2]) / 2
+                }
+            }'
+}
+
+# Largest of the decimal arguments. The AQ3 frame-time gate reads this and
+# never a median: one frame past 66 ms is the failure that gate exists for.
+numeric_max() {
+    [ "$#" -gt 0 ] || return 1
+    printf '%s\n' "$@" |
+        awk 'NR == 1 || $0 + 0 > peak { peak = $0 + 0 } END { printf "%.6f\n", peak }'
+}
+
+# How many distinct values the arguments hold, compared as exact strings.
+#
+# The `$0 ""` concatenation forces a string subscript. Without it an awk that
+# treats a numeric-looking input line as a number would fold `00` and `0` into
+# one key -- and these are SHA-256 hex digests, where two different digests
+# collapsing into one reads as "the encoder was reproducible".
+distinct_count() {
+    [ "$#" -gt 0 ] || return 1
+    printf '%s\n' "$@" | awk '!seen[$0 ""]++ { n++ } END { print n + 0 }'
+}
+
+# --- timing gate classifiers ------------------------------------------------
+#
+# Pure functions over already-validated numbers, so the exact boundary of every
+# timing gate is assertable without running an encoder. Each boundary is
+# inclusive: a group measured at exactly 1.05x passes, and a frame measured at
+# exactly 66 ms passes. `number_le` is the single comparison underneath, so the
+# gates cannot drift apart from the quality gates' notion of "within limit".
+
+speed_ratio_status() {
+    local separate="$1" paired="$2" over=""
+    number_le "$separate" "$MAX_RATIO" || over="separate"
+    if ! number_le "$paired" "$MAX_RATIO"; then
+        if [ -n "$over" ]; then over="separate+paired"; else over="paired"; fi
+    fi
+    if [ -n "$over" ]; then
+        printf 'over-ratio:%s\n' "$over"
+    else
+        printf 'pass\n'
+    fi
+}
+
+latency_budget_status() {
+    local median_p50="$1" p50_budget="$2" median_p99="$3" p99_budget="$4" over=""
+    number_le "$median_p50" "$p50_budget" || over="p50"
+    if ! number_le "$median_p99" "$p99_budget"; then
+        if [ -n "$over" ]; then over="p50+p99"; else over="p99"; fi
+    fi
+    if [ -n "$over" ]; then
+        printf 'over-budget:%s\n' "$over"
+    else
+        printf 'pass\n'
+    fi
+}
+
+# The AQ3-only cap. `none` is the correct answer for every other feature: a row
+# with no max-frame budget has not passed one, and must not be recorded as
+# though it had.
+aq_max_frame_status() {
+    local aq="$1" max_frame_ms="$2"
+    if [ "$aq" -eq 0 ]; then
+        printf 'none\n'
+        return
+    fi
+    if number_le "$max_frame_ms" "$AQ_MAX_FRAME_MS"; then
+        printf 'pass\n'
+    else
+        printf 'over-max-frame\n'
+    fi
 }
 
 sha256_file() {
@@ -724,6 +922,83 @@ aq_activation_status() {
             } else {
                 print "present"
             }
+        }'
+}
+
+# Classify a `realtime` per-frame timing CSV read on stdin, and report the
+# largest frame time it holds, as `<status> <max_ms>`.
+#
+# The runner already validates this file and exits 2 when it is wrong, so this
+# is not a second-guess of the runner: it is what makes the AQ3 max-frame gate
+# an independent measurement rather than a restatement of the runner's own p99.
+# The checks mirror the runner's exactly -- literal header, dense zero-based
+# frame_index, temporal_layer_id in 0..=2, positive integer encode_ns, and the
+# expected row count -- so a file this accepts is a file the runner accepted.
+frame_time_csv_status() {
+    awk -v header="$1" -v expected="$2" -v max_layer="$3" '
+        NR == 1 {
+            if ($0 != header) { print "bad-header 0.000000"; bad = 1; exit }
+            next
+        }
+        {
+            if (split($0, field, ",") != 3) { print "malformed 0.000000"; bad = 1; exit }
+            if (field[1] !~ /^[0-9]+$/ || field[1] + 0 != rows) {
+                print "malformed 0.000000"; bad = 1; exit
+            }
+            if (field[2] !~ /^[0-9]+$/ || field[2] + 0 > max_layer + 0) {
+                print "malformed 0.000000"; bad = 1; exit
+            }
+            if (field[3] !~ /^[0-9]+$/ || field[3] + 0 <= 0) {
+                print "malformed 0.000000"; bad = 1; exit
+            }
+            frame_ms = (field[3] + 0) / 1000000
+            if (frame_ms > peak) { peak = frame_ms }
+            rows++
+        }
+        END {
+            if (bad) { exit }
+            if (NR == 0) { print "empty 0.000000"; exit }
+            if (rows != expected + 0) { printf "wrong-row-count %.6f\n", peak; exit }
+            printf "valid %.6f\n", peak
+        }'
+}
+
+# The `corpus` row of an encode-headtohead summary.csv is its verdict line:
+# `corpus,,,<separate geomean>,<paired geomean>,,,,,,,`. Report exactly one
+# well-formed copy as `<separate> <paired>`, and anything else as a reason, so
+# a truncated or duplicated summary can never be read as a measurement.
+headtohead_corpus_ratios() {
+    awk -F, '
+        $1 == "corpus" { seen++; separate = $4; paired = $5 }
+        END {
+            if (seen == 0) { print "absent"; exit }
+            if (seen > 1) { print "ambiguous"; exit }
+            if (separate !~ /^[0-9]+(\.[0-9]+)?$/ || paired !~ /^[0-9]+(\.[0-9]+)?$/) {
+                print "malformed"
+                exit
+            }
+            print separate, paired
+        }'
+}
+
+# Per-clip hash stability, read from the same summary. Both arms must have
+# emitted exactly one distinct IVF hash across every warmup and measured run;
+# this script never opts a group out of that. Reports `stable`, or the reason.
+headtohead_hash_stability() {
+    awk -F, '
+        NR == 1 { next }
+        $1 == "corpus" { next }
+        NF < 12 { bad = "malformed"; exit }
+        {
+            clips++
+            if ($11 !~ /^[0-9]+$/ || $12 !~ /^[0-9]+$/) { bad = "malformed"; exit }
+            if ($11 + 0 != 1) { bad = "test-unstable:" $1; exit }
+            if ($12 + 0 != 1) { bad = "anchor-unstable:" $1; exit }
+        }
+        END {
+            if (bad != "") { print bad; exit }
+            if (clips == 0) { print "no-clips"; exit }
+            print "stable"
         }'
 }
 
@@ -914,6 +1189,32 @@ count_by_field() {
     printf '%s\n' "$1" |
         awk -v kind="$2" -v idx="$3" -v want="$4" \
             '$1 == kind && $idx == want { n++ } END { print n + 0 }'
+}
+
+# How many rows of an iterator the per-feature policy function $1 answers $2
+# for. Driving the real policy function over the real iterator is what makes a
+# coverage count an assertion about what the executor will do, rather than a
+# restatement of a number written elsewhere.
+count_speed_groups_where() {
+    local policy="$1" want="$2" n=0
+    local feature mode target cpu aq denoiser layers
+    while IFS='|' read -r feature mode target cpu aq denoiser layers; do
+        if [ "$("$policy" "$feature")" = "$want" ]; then
+            n=$(( n + 1 ))
+        fi
+    done < <(emit_speed_groups)
+    printf '%s\n' "$n"
+}
+
+count_clip_rows_where() {
+    local policy="$1" want="$2" n=0
+    local feature mode target clip cpu aq denoiser layers
+    while IFS='|' read -r feature mode target clip cpu aq denoiser layers; do
+        if [ "$("$policy" "$feature")" = "$want" ]; then
+            n=$(( n + 1 ))
+        fi
+    done < <(emit_clip_rows)
+    printf '%s\n' "$n"
 }
 
 self_test() {
@@ -1363,18 +1664,27 @@ self_test() {
         "$AQ_ORACLE_GATE_LINE" "Stage 4b literal gate (|delta| <= 0.3 %): PASS"
 
     # --- phase availability -------------------------------------------------
-    expect_equal "the quality phase is implemented" \
-        "$(phase_supported quality)" "implemented"
-    for phase_name in speed latency all; do
-        expect_equal "the $phase_name phase is refused" \
-            "$(phase_supported "$phase_name")" "not-implemented"
+    for phase_name in quality speed latency all; do
+        expect_equal "the $phase_name phase is implemented" \
+            "$(phase_supported "$phase_name")" "implemented"
     done
-    expect_equal "an unknown phase is neither implemented nor merely unbuilt" \
+    expect_equal "an unknown phase is not implemented by accident" \
         "$(phase_supported nonsense)" "unknown"
-    expect_equal "exactly one phase is runnable in this unit" \
+    expect_equal "all four phases are runnable" \
         "$(for phase_name in quality speed latency all; do
               if [ "$(phase_supported "$phase_name")" = "implemented" ]; then printf 'x'; fi
-          done | wc -c | tr -d ' ')" 1
+          done | wc -c | tr -d ' ')" 4
+    expect_equal "only the quality phase is resumable" \
+        "$(for phase_name in quality speed latency all; do
+              if [ "$(phase_resumable "$phase_name")" = "resumable" ]; then
+                  printf '%s,' "$phase_name"
+              fi
+          done)" \
+        "quality,"
+    for phase_name in speed latency all; do
+        expect_equal "the $phase_name phase is not resumable" \
+            "$(phase_resumable "$phase_name")" "not-resumable"
+    done
 
     # --- a real run must name its phase --------------------------------------
     #
@@ -1384,11 +1694,13 @@ self_test() {
     expect_equal "a real run assumes no phase" "${phase:-<none>}" "<none>"
     expect_equal "a real run refuses a missing --phase" \
         "$(parse_args_error --work-dir /w --pgo-manifest /m)" \
-        "--phase is required for a real run: no phase is assumed. Pass --phase quality; speed, latency, and all are declared by --print-plan but have no runner here."
-    expect_equal "a real run accepts an explicit --phase quality" \
-        "$(parse_args_error --phase quality --work-dir /w --pgo-manifest /m)" \
-        "accepted"
-    expect_equal "a real run accepts explicit resume" \
+        "--phase is required for a real run: no phase is assumed. Pass one of quality, speed, latency, all."
+    for phase_name in quality speed latency all; do
+        expect_equal "a real run accepts an explicit --phase $phase_name" \
+            "$(parse_args_error --phase "$phase_name" --work-dir /w --pgo-manifest /m)" \
+            "accepted"
+    done
+    expect_equal "a real run accepts explicit resume for quality" \
         "$(parse_args_error --resume --phase quality --work-dir /w --pgo-manifest /m)" \
         "accepted"
     expect_equal "resume is a valueless flag in any position" \
@@ -1400,15 +1712,24 @@ self_test() {
     expect_equal "a real run refuses an unknown --phase" \
         "$(parse_args_error --phase nonsense --work-dir /w --pgo-manifest /m)" \
         "--phase must be one of quality, speed, latency, all"
+
+    # Timing cannot be spliced across host states, so resume is quality-only.
     for phase_name in speed latency all; do
-        expect_equal "a real run refuses --phase $phase_name by name" \
+        expect_equal "--resume is refused for --phase $phase_name" \
             "$(refusal_starts_with \
-                  "$(parse_args_error --phase "$phase_name" --work-dir /w --pgo-manifest /m)" \
-                  "--phase $phase_name is not implemented in this unit")" \
+                  "$(parse_args_error --resume --phase "$phase_name" --work-dir /w --pgo-manifest /m)" \
+                  "--resume is supported only for --phase quality")" \
             "refused"
     done
     expect_equal "--phase still requires a value" \
         "$(parse_args_error --phase)" "--phase requires a value"
+    expect_equal "the new timing path options take a value" \
+        "$(parse_args_error --encode-headtohead)/$(parse_args_error --realtime)" \
+        "--encode-headtohead requires a value/--realtime requires a value"
+    expect_equal "the timing path options are accepted on a real run" \
+        "$(parse_args_error --phase all --work-dir /w --pgo-manifest /m \
+              --encode-headtohead /h --realtime /r)" \
+        "accepted"
     expect_equal "a real run still requires --work-dir" \
         "$(parse_args_error --phase quality --pgo-manifest /m)" \
         "--work-dir is required for a real run"
@@ -1435,6 +1756,19 @@ self_test() {
         "$(plan_count "$(usage)" 'required; no phase is assumed')" 1
     expect_equal "usage states the PGO manifest binds the encoder under test" \
         "$(plan_count "$(usage)" 'optimized_binary= and optimized_binary_sha256= must')" 1
+    expect_equal "usage states all four phases execute" \
+        "$(plan_count "$(usage)" 'All four execute:')" 1
+    expect_equal "usage confines resume to the quality phase" \
+        "$(plan_count "$(usage)" 'Accepted for --phase quality only')" 1
+    expect_equal "usage recommends separate fresh runs for cold-host timing" \
+        "$(plan_count "$(usage)" 'run --phase speed and --phase latency as')" 1
+    expect_equal "usage says why --phase all is warm rather than wrong" \
+        "$(plan_count "$(usage)" 'timing numbers describe a warm host')" 1
+    expect_equal "usage offers both timing runner paths" \
+        "$(plan_count "$(usage)" '^  --encode-headtohead PATH ')$(plan_count "$(usage)" '^  --realtime PATH ')" \
+        "11"
+    expect_equal "usage offers the timing self-test" \
+        "$(plan_count "$(usage)" '^  --self-test-timing$')" 1
 
     # --- required corpus inputs ----------------------------------------------
     #
@@ -1493,8 +1827,14 @@ self_test() {
         "/first"
 
     # --- resumable row receipts ---------------------------------------------
+    #
+    # The schema is 2 because the run fingerprint now binds the two timing
+    # runners as well. A schema-1 receipt was sealed against a strictly smaller
+    # identity, so it is rejected rather than silently reused.
     local receipt_fixture
-    receipt_fixture="$(printf 'receipt_schema=1\nrun_fingerprint_sha256=run123\nrow_id=row-a\nartifact_sha256=artifact456\ncompleted_utc=now\n')"
+    expect_equal "the quality receipt schema covers the timing runners" \
+        "$QUALITY_RECEIPT_SCHEMA" 2
+    receipt_fixture="$(printf 'receipt_schema=%s\nrun_fingerprint_sha256=run123\nrow_id=row-a\nartifact_sha256=artifact456\ncompleted_utc=now\n' "$QUALITY_RECEIPT_SCHEMA")"
     expect_equal "a receipt binds one run, row, and artifact tree" \
         "$(printf '%s\n' "$receipt_fixture" |
               receipt_consistency_status run123 row-a artifact456)" "valid"
@@ -1511,23 +1851,307 @@ self_test() {
         "$(printf '%s\n' "$receipt_fixture" |
               receipt_consistency_status run123 row-a changed)" "wrong-artifact"
     expect_equal "an old receipt schema is rejected" \
-        "$(printf '%s\n' "$receipt_fixture" | sed 's/receipt_schema=1/receipt_schema=0/' |
+        "$(printf '%s\n' "$receipt_fixture" |
+              sed "s/receipt_schema=$QUALITY_RECEIPT_SCHEMA/receipt_schema=1/" |
               receipt_consistency_status run123 row-a artifact456)" "wrong-schema"
 
     # --- external command policy ---------------------------------------------
+    #
+    # Written out literally per phase. Deriving one phase's set from another's
+    # would let a phase silently stop declaring a command it still invokes.
     expect_equal "the quality phase declares the commands it invokes" \
         "$(phase_required_commands quality)" \
         "awk basename cargo cat cmp date deltic dirname env find git grep head mkdir mv rmdir rustc shasum tr uname unlink wc"
-    expect_equal "every required command declares why it is needed" \
+    expect_equal "the speed phase declares the commands it invokes" \
+        "$(phase_required_commands speed)" \
+        "awk basename cargo cat date deltic dirname find git grep head mkdir mv rmdir rustc shasum tr uname unlink wc"
+    expect_equal "the latency phase declares the commands it invokes" \
+        "$(phase_required_commands latency)" \
+        "awk basename cargo cat date deltic dirname find git grep head mkdir mv rmdir rustc shasum tr uname unlink wc"
+    expect_equal "the all phase declares the union of the three" \
+        "$(phase_required_commands all)" \
+        "awk basename cargo cat cmp date deltic dirname env find git grep head mkdir mv rmdir rustc shasum tr uname unlink wc"
+    expect_equal "the timing phases add no command the quality phase lacks" \
+        "$(for tool in $(phase_required_commands speed) $(phase_required_commands latency); do
+              printf '%s\n' "$(phase_required_commands quality)" |
+                  tr ' ' '\n' | grep -qx "$tool" || printf 'x'
+          done | wc -c | tr -d ' ')" 0
+    expect_equal "the all set is exactly the quality set" \
+        "$(phase_required_commands all)" "$(phase_required_commands quality)"
+    expect_equal "only the quality-side commands are absent from a timing phase" \
         "$(for tool in $(phase_required_commands quality); do
-              if [ -z "$(command_purpose "$tool")" ]; then printf 'x'; fi
+              printf '%s\n' "$(phase_required_commands speed)" |
+                  tr ' ' '\n' | grep -qx "$tool" || printf '%s,' "$tool"
+          done)" \
+        "cmp,env,"
+    expect_equal "every required command of every phase declares why it is needed" \
+        "$(for phase_name in quality speed latency all; do
+              for tool in $(phase_required_commands "$phase_name"); do
+                  if [ -z "$(command_purpose "$tool")" ]; then printf 'x'; fi
+              done
           done | wc -c | tr -d ' ')" 0
     expect_equal "an uninvoked command declares no purpose" \
         "[$(command_purpose sort)]" "[]"
-    expect_equal "a phase with no runner declares no command set" \
-        "$(for phase_name in speed latency all nonsense; do
-              if phase_required_commands "$phase_name" >/dev/null 2>&1; then printf 'x'; fi
+    expect_equal "sort is never required by a real phase, so no locale can order a median" \
+        "$(for phase_name in quality speed latency all; do
+              printf '%s\n' "$(phase_required_commands "$phase_name")" |
+                  tr ' ' '\n' | grep -qx sort && printf 'x'
           done | wc -c | tr -d ' ')" 0
+    expect_equal "an unknown phase declares no command set" \
+        "$(if phase_required_commands nonsense >/dev/null 2>&1; then
+              printf 'declared'
+          else
+              printf 'refused'
+          fi)" \
+        "refused"
+
+    # --- timing command policy ------------------------------------------------
+    #
+    # Which anchor each timing arm is measured against, spelled in the runner's
+    # own vocabulary, and whether the temporal-layer flag is passed at all.
+    for feature in baseline aq3 denoiser; do
+        expect_equal "$feature timing groups are anchored on pinned vpxenc" \
+            "$(speed_anchor_kind "$feature")" "vpxenc"
+    done
+    for feature in temporal_t2 temporal_t3; do
+        expect_equal "$feature timing groups are anchored on the pinned temporal adapter" \
+            "$(speed_anchor_kind "$feature")" "temporal-svc"
+    done
+    expect_equal "every timing test arm is driven through the vpxenc surface" \
+        "$(for feature in $FEATURES; do printf '%s,' "$(speed_test_kind "$feature")"; done)" \
+        "vpxenc,vpxenc,vpxenc,vpxenc,vpxenc,"
+    expect_equal "the temporal adapter anchors exactly the two temporal features" \
+        "$(for feature in $FEATURES; do
+              if [ "$(speed_anchor_kind "$feature")" = "temporal-svc" ]; then
+                  printf '%s,' "$feature"
+              fi
+          done)" \
+        "temporal_t2,temporal_t3,"
+    expect_equal "the quality and timing anchors name the same two arms" \
+        "$(for feature in $FEATURES; do
+              if [ "$(row_anchor_kind "$feature")" = "temporal-adapter" ] &&
+                  [ "$(speed_anchor_kind "$feature")" != "temporal-svc" ]; then printf 'x'; fi
+              if [ "$(row_anchor_kind "$feature")" = "vpxenc" ] &&
+                  [ "$(speed_anchor_kind "$feature")" != "vpxenc" ]; then printf 'x'; fi
+          done | wc -c | tr -d ' ')" 0
+
+    # `--temporal-layers 1` is rejected by both runners; the single-layer case
+    # is the absence of the flag, and this is where that is decided.
+    expect_equal "single-layer features pass no temporal-layer flag" \
+        "$(for feature in baseline aq3 denoiser; do
+              printf '[%s]' "$(timing_temporal_layers_arg "$feature")"
+          done)" \
+        "[][][]"
+    expect_equal "temporal_t2 passes two layers and temporal_t3 three" \
+        "$(timing_temporal_layers_arg temporal_t2)/$(timing_temporal_layers_arg temporal_t3)" \
+        "2/3"
+    expect_equal "no feature ever passes a temporal-layer count of 1" \
+        "$(for feature in $FEATURES; do
+              if [ "$(timing_temporal_layers_arg "$feature")" = "1" ]; then printf 'x'; fi
+          done | wc -c | tr -d ' ')" 0
+
+    # --- clean and noisy timing coverage ---------------------------------------
+    #
+    # Both arms of a group always encode the same prepared input, so these
+    # counts are of groups and rows, not of arms. Written out literally: the
+    # single-layer/temporal split is 39/36 on speed and 104/96 on latency.
+    expect_equal "speed groups measured on the clean input" \
+        "$(count_speed_groups_where row_input_kind clean)" 57
+    expect_equal "speed groups measured on the noisy input" \
+        "$(count_speed_groups_where row_input_kind noisy)" 18
+    expect_equal "speed groups anchored on pinned vpxenc" \
+        "$(count_speed_groups_where speed_anchor_kind vpxenc)" 39
+    expect_equal "speed groups anchored on the pinned temporal adapter" \
+        "$(count_speed_groups_where speed_anchor_kind temporal-svc)" 36
+    expect_equal "speed groups passing two temporal layers" \
+        "$(count_speed_groups_where timing_temporal_layers_arg 2)" 18
+    expect_equal "speed groups passing three temporal layers" \
+        "$(count_speed_groups_where timing_temporal_layers_arg 3)" 18
+    expect_equal "speed groups passing no temporal-layer flag" \
+        "$(count_speed_groups_where timing_temporal_layers_arg '')" 39
+    expect_equal "latency rows measured on the clean input" \
+        "$(count_clip_rows_where row_input_kind clean)" 152
+    expect_equal "latency rows measured on the noisy input" \
+        "$(count_clip_rows_where row_input_kind noisy)" 48
+    expect_equal "latency rows passing two temporal layers" \
+        "$(count_clip_rows_where timing_temporal_layers_arg 2)" 48
+    expect_equal "latency rows passing three temporal layers" \
+        "$(count_clip_rows_where timing_temporal_layers_arg 3)" 48
+    expect_equal "latency rows passing no temporal-layer flag" \
+        "$(count_clip_rows_where timing_temporal_layers_arg '')" 104
+    expect_equal "latency rows carrying the AQ3 max-frame cap" \
+        "$(count_clip_rows_where feature_aq_mode 3)" 8
+    expect_equal "the clean and noisy speed groups account for the whole phase" \
+        "$(( $(count_speed_groups_where row_input_kind clean) + $(count_speed_groups_where row_input_kind noisy) ))" \
+        "$EXPECTED_SPEED_GROUPS"
+    expect_equal "the vpxenc and temporal anchors account for the whole phase" \
+        "$(( $(count_speed_groups_where speed_anchor_kind vpxenc) + $(count_speed_groups_where speed_anchor_kind temporal-svc) ))" \
+        "$EXPECTED_SPEED_GROUPS"
+    expect_equal "the clean and noisy latency rows account for the whole phase" \
+        "$(( $(count_clip_rows_where row_input_kind clean) + $(count_clip_rows_where row_input_kind noisy) ))" \
+        "$EXPECTED_LATENCY_ROWS"
+    expect_equal "the noisy input is used by exactly the denoiser feature" \
+        "$(for feature in $FEATURES; do
+              if [ "$(row_input_kind "$feature")" = "noisy" ]; then
+                  printf '%s,' "$feature"
+              fi
+          done)" \
+        "denoiser,"
+
+    # --- numeric helpers -------------------------------------------------------
+    #
+    # `sort -n` is deliberately absent from the runtime path, so these prove the
+    # awk reductions on their own. The distinct counter compares exact strings,
+    # because it is applied to SHA-256 hex where numeric coercion is wrong.
+    expect_equal "the median of five is the third smallest, not the third given" \
+        "$(numeric_median 13.00 9.00 11.00 12.00 10.00)" "11.000000"
+    expect_equal "the median is insensitive to input order" \
+        "$(numeric_median 9 10 11 12 13)/$(numeric_median 13 12 11 10 9)" \
+        "11.000000/11.000000"
+    expect_equal "the median compares numerically, not lexically" \
+        "$(numeric_median 9.9 10.1 100.0 2.0 3.0)" "9.900000"
+    expect_equal "an even sample averages the two middle values" \
+        "$(numeric_median 1 2 3 4)" "2.500000"
+    expect_equal "a single sample is its own median" \
+        "$(numeric_median 16.667)" "16.667000"
+    expect_equal "an empty median is refused rather than reported as zero" \
+        "$(if numeric_median >/dev/null 2>&1; then printf 'reported'; else printf 'refused'; fi)" \
+        "refused"
+    expect_equal "the maximum compares numerically, not lexically" \
+        "$(numeric_max 9.9 10.1 2.0)" "10.100000"
+    expect_equal "the maximum of one spike is the spike" \
+        "$(numeric_max 1.0 1.0 90.0 1.0 1.0)" "90.000000"
+    expect_equal "an empty maximum is refused" \
+        "$(if numeric_max >/dev/null 2>&1; then printf 'reported'; else printf 'refused'; fi)" \
+        "refused"
+    expect_equal "identical hashes count as one distinct value" \
+        "$(distinct_count aa aa aa aa aa aa)" 1
+    expect_equal "one differing hash out of six is visible" \
+        "$(distinct_count aa aa aa bb aa aa)" 2
+    expect_equal "distinct counting compares strings, never numbers" \
+        "$(distinct_count 00 0)" 2
+    expect_equal "an empty distinct count is refused rather than reported as one" \
+        "$(if distinct_count >/dev/null 2>&1; then printf 'reported'; else printf 'refused'; fi)" \
+        "refused"
+
+    # --- timing gate boundaries ------------------------------------------------
+    #
+    # Every timing boundary is inclusive, and named by which side missed.
+    expect_equal "a group at exactly 1.05x on both ratios passes" \
+        "$(speed_ratio_status 1.05 1.05)" "pass"
+    expect_equal "a separate ratio just past 1.05x is named" \
+        "$(speed_ratio_status 1.050001 1.0)" "over-ratio:separate"
+    expect_equal "a paired ratio just past 1.05x is named" \
+        "$(speed_ratio_status 1.0 1.050001)" "over-ratio:paired"
+    expect_equal "both ratios past 1.05x are named as both" \
+        "$(speed_ratio_status 1.06 1.07)" "over-ratio:separate+paired"
+    expect_equal "a row exactly on both frame budgets passes" \
+        "$(latency_budget_status 33.333 33.333 50 50)" "pass"
+    expect_equal "a p50 median one thousandth past budget is named" \
+        "$(latency_budget_status 33.334 33.333 50 50)" "over-budget:p50"
+    expect_equal "a p99 median one past budget is named" \
+        "$(latency_budget_status 33.333 33.333 51 50)" "over-budget:p99"
+    expect_equal "both medians past budget are named as both" \
+        "$(latency_budget_status 40 33.333 60 50)" "over-budget:p50+p99"
+    expect_equal "the 1080p60 budgets are the tighter pair" \
+        "$(latency_budget_status 16.667 16.667 25 25)/$(latency_budget_status 16.668 16.667 25 25)" \
+        "pass/over-budget:p50"
+    expect_equal "an AQ3 max frame of exactly 66 ms passes" \
+        "$(aq_max_frame_status 3 66)" "pass"
+    expect_equal "an AQ3 max frame one microsecond past 66 ms fails" \
+        "$(aq_max_frame_status 3 66.000001)" "over-max-frame"
+    expect_equal "a non-AQ row has no max-frame verdict to pass" \
+        "$(aq_max_frame_status 0 900)" "none"
+    expect_equal "the declared AQ max-frame budget is 66 ms" \
+        "$AQ_MAX_FRAME_MS" 66
+
+    # --- per-frame timing CSV validation ---------------------------------------
+    #
+    # The AQ3 max-frame gate reads this file directly, so a file this accepts
+    # must be exactly what `realtime` itself accepts: literal header, dense
+    # zero-based frame_index, temporal_layer_id in 0..=2, positive integer
+    # encode_ns, and the expected row count.
+    expect_equal "the timing CSV header is the runner's exact header" \
+        "$FRAME_TIME_CSV_HEADER" "frame_index,temporal_layer_id,encode_ns"
+    expect_equal "a well-formed timing CSV reports its largest frame in ms" \
+        "$(printf '%s\n0,0,1000000\n1,1,66000000\n2,2,2000000\n' "$FRAME_TIME_CSV_HEADER" |
+              frame_time_csv_status "$FRAME_TIME_CSV_HEADER" 3 2)" \
+        "valid 66.000000"
+    expect_equal "an empty timing CSV is empty, never a zero maximum that passes" \
+        "$(printf '' | frame_time_csv_status "$FRAME_TIME_CSV_HEADER" 3 2)" \
+        "empty 0.000000"
+    expect_equal "a header-only timing CSV has the wrong row count" \
+        "$(printf '%s\n' "$FRAME_TIME_CSV_HEADER" |
+              frame_time_csv_status "$FRAME_TIME_CSV_HEADER" 3 2)" \
+        "wrong-row-count 0.000000"
+    expect_equal "a short timing CSV has the wrong row count" \
+        "$(printf '%s\n0,0,1000000\n' "$FRAME_TIME_CSV_HEADER" |
+              frame_time_csv_status "$FRAME_TIME_CSV_HEADER" 3 2)" \
+        "wrong-row-count 1.000000"
+    expect_equal "a wrong header is rejected" \
+        "$(printf 'frame,layer,ns\n0,0,1000000\n' |
+              frame_time_csv_status "$FRAME_TIME_CSV_HEADER" 1 2)" \
+        "bad-header 0.000000"
+    expect_equal "a non-dense frame index is malformed" \
+        "$(printf '%s\n1,0,1000000\n' "$FRAME_TIME_CSV_HEADER" |
+              frame_time_csv_status "$FRAME_TIME_CSV_HEADER" 1 2)" \
+        "malformed 0.000000"
+    expect_equal "an out-of-range temporal layer id is malformed" \
+        "$(printf '%s\n0,3,1000000\n' "$FRAME_TIME_CSV_HEADER" |
+              frame_time_csv_status "$FRAME_TIME_CSV_HEADER" 1 2)" \
+        "malformed 0.000000"
+    expect_equal "a zero encode time is malformed" \
+        "$(printf '%s\n0,0,0\n' "$FRAME_TIME_CSV_HEADER" |
+              frame_time_csv_status "$FRAME_TIME_CSV_HEADER" 1 2)" \
+        "malformed 0.000000"
+    expect_equal "a non-numeric encode time is malformed" \
+        "$(printf '%s\n0,0,nope\n' "$FRAME_TIME_CSV_HEADER" |
+              frame_time_csv_status "$FRAME_TIME_CSV_HEADER" 1 2)" \
+        "malformed 0.000000"
+    expect_equal "a row with the wrong field count is malformed" \
+        "$(printf '%s\n0,0\n' "$FRAME_TIME_CSV_HEADER" |
+              frame_time_csv_status "$FRAME_TIME_CSV_HEADER" 1 2)" \
+        "malformed 0.000000"
+    expect_equal "a 60-frame timing CSV at exactly 66 ms is valid" \
+        "$(awk -v header="$FRAME_TIME_CSV_HEADER" -v rows="$FRAMES" '
+              BEGIN {
+                  print header
+                  for (i = 0; i < rows; i++) { print i ",0," (i == 7 ? 66000000 : 1000000) }
+              }' |
+              frame_time_csv_status "$FRAME_TIME_CSV_HEADER" "$FRAMES" 2)" \
+        "valid 66.000000"
+
+    # --- head-to-head evidence readers -----------------------------------------
+    expect_equal "the corpus verdict row reports both geometric means" \
+        "$(printf 'clip,a\nin_to_tree,1,1,0.99,0.98,1,1,10,t,a,1,1\ncorpus,,,0.990000,0.980000,,,,,,,\n' |
+              headtohead_corpus_ratios)" \
+        "0.990000 0.980000"
+    expect_equal "a summary with no corpus row is absent, never a pass" \
+        "$(printf 'clip,a\nin_to_tree,1,1,0.99,0.98,1,1,10,t,a,1,1\n' |
+              headtohead_corpus_ratios)" \
+        "absent"
+    expect_equal "two corpus rows are ambiguous, never a later value winning" \
+        "$(printf 'corpus,,,1.0,1.0,,,,,,,\ncorpus,,,2.0,2.0,,,,,,,\n' |
+              headtohead_corpus_ratios)" \
+        "ambiguous"
+    expect_equal "a corpus row with a non-numeric ratio is malformed" \
+        "$(printf 'corpus,,,nan,1.0,,,,,,,\n' | headtohead_corpus_ratios)" \
+        "malformed"
+    expect_equal "one hash per arm per clip is stable" \
+        "$(printf 'clip,a\nin_to_tree,1,1,1,1,1,1,10,t,a,1,1\nold_town_cross,1,1,1,1,1,1,10,t,a,1,1\ncorpus,,,1,1,,,,,,,\n' |
+              headtohead_hash_stability)" \
+        "stable"
+    expect_equal "an unstable test arm is named with its clip" \
+        "$(printf 'clip,a\nin_to_tree,1,1,1,1,1,1,10,t,a,2,1\ncorpus,,,1,1,,,,,,,\n' |
+              headtohead_hash_stability)" \
+        "test-unstable:in_to_tree"
+    expect_equal "an unstable anchor arm is named with its clip" \
+        "$(printf 'clip,a\nold_town_cross,1,1,1,1,1,1,10,t,a,1,4\ncorpus,,,1,1,,,,,,,\n' |
+              headtohead_hash_stability)" \
+        "anchor-unstable:old_town_cross"
+    expect_equal "a summary with no clip rows is not stable by omission" \
+        "$(printf 'clip,a\ncorpus,,,1,1,,,,,,,\n' | headtohead_hash_stability)" \
+        "no-clips"
 
     # --- AQ cyclic-refresh activation ----------------------------------------
     #
@@ -1596,46 +2220,58 @@ self_test() {
 usage() {
     cat <<'USAGE'
 Usage:
-  scripts/qualify-production-encoder.sh --work-dir PATH --phase quality \
-      --pgo-manifest PATH [path options]
+  scripts/qualify-production-encoder.sh --work-dir PATH \
+      --phase {quality,speed,latency,all} --pgo-manifest PATH [path options]
   scripts/qualify-production-encoder.sh --print-plan
   scripts/qualify-production-encoder.sh --self-test
   scripts/qualify-production-encoder.sh --self-test-resume
+  scripts/qualify-production-encoder.sh --self-test-timing
 
   --print-plan   emit the full non-spatial v1 acceptance matrix; no I/O
   --self-test    regenerate and validate the matrix; no I/O
   --self-test-resume
                  exercise receipt publication, reuse counters, tamper refusal,
                  attempt cleanup bounds, and the invocation lock in OS temp
+  --self-test-timing
+                 exercise the speed and latency recording, classification, and
+                 abort paths against stubbed child observations, in OS temp
 
 Real-run options:
   --work-dir PATH        required; outside the repo, with an existing parent;
                          absent or empty unless --resume is explicit
   --resume               reopen this exact sealed run; completed rows are
-                         validated and cross-decoded again before reuse
-  --phase PHASE          required; no phase is assumed. quality executes;
-                         speed, latency, and all are declared by the matrix
-                         but not implemented here.
+                         validated and cross-decoded again before reuse.
+                         Accepted for --phase quality only.
+  --phase PHASE          required; no phase is assumed. All four execute:
+                         quality, speed, latency, and the all fan-out.
   --pgo-manifest PATH    required; the manifest scripts/build-encoder-pgo.sh
                          wrote beside the rvp9enc under test. Its
                          optimized_binary= and optimized_binary_sha256= must
                          match the --test-encoder.
 
 Path options (repo-relative defaults, all validated before a real run):
-  --source-dir PATH      canonical 720p50 Y4M originals
-  --test-encoder PATH    production PGO rvp9enc
-  --vpxenc PATH          pinned libvpx vpxenc (single-layer anchor)
-  --temporal-anchor PATH pinned build/libvpx/vpx_temporal_svc_reference
-  --bdrate PATH          rvp9-bench bdrate (release)
-  --bdrate-svc PATH      rvp9-bench bdrate-svc (release)
-  --rvp9dec PATH         rvp9 decoder (release)
-  --vpxdec PATH          pinned libvpx vpxdec
-  --ffmpeg PATH          ffmpeg executable or name on PATH
-  --libvpx-source PATH   pinned libvpx checkout
+  --source-dir PATH        canonical 720p50 Y4M originals
+  --test-encoder PATH      production PGO rvp9enc
+  --vpxenc PATH            pinned libvpx vpxenc (single-layer anchor)
+  --temporal-anchor PATH   pinned build/libvpx/vpx_temporal_svc_reference
+  --bdrate PATH            rvp9-bench bdrate (release)
+  --bdrate-svc PATH        rvp9-bench bdrate-svc (release)
+  --encode-headtohead PATH rvp9-bench encode-headtohead (release)
+  --realtime PATH          rvp9-bench realtime (release)
+  --rvp9dec PATH           rvp9 decoder (release)
+  --vpxdec PATH            pinned libvpx vpxdec
+  --ffmpeg PATH            ffmpeg executable or name on PATH
+  --libvpx-source PATH     pinned libvpx checkout
 
 A normal real run is fresh. --resume accepts only a sealed matching run,
-leaves partial attempts untouched, and never reuses an unsealed row. Spatial
-SVC is qualified separately by scripts/qualify-spatial-svc.sh and is
+leaves partial attempts untouched, and never reuses an unsealed row.
+
+For trustworthy cold-host timing, run --phase speed and --phase latency as
+their own fresh runs. --phase all is exact and complete, but it measures wall
+time on a host that has just spent hours running the quality campaign, so its
+timing numbers describe a warm host rather than the release condition.
+
+Spatial SVC is qualified separately by scripts/qualify-spatial-svc.sh and is
 deliberately absent from this matrix.
 USAGE
 }
@@ -1650,6 +2286,8 @@ opt_vpxenc=""
 opt_temporal_anchor=""
 opt_bdrate=""
 opt_bdrate_svc=""
+opt_headtohead=""
+opt_realtime=""
 opt_rvp9dec=""
 opt_vpxdec=""
 opt_ffmpeg=""
@@ -1680,6 +2318,8 @@ parse_args() {
             --temporal-anchor) opt_temporal_anchor="$2" ;;
             --bdrate)          opt_bdrate="$2" ;;
             --bdrate-svc)      opt_bdrate_svc="$2" ;;
+            --encode-headtohead) opt_headtohead="$2" ;;
+            --realtime)        opt_realtime="$2" ;;
             --rvp9dec)         opt_rvp9dec="$2" ;;
             --vpxdec)          opt_vpxdec="$2" ;;
             --ffmpeg)          opt_ffmpeg="$2" ;;
@@ -1693,18 +2333,23 @@ parse_args() {
     # who meant "all" walk away believing the whole contract was measured.
     if [ -z "$phase" ]; then
         usage >&2
-        fail "--phase is required for a real run: no phase is assumed. Pass --phase quality; speed, latency, and all are declared by --print-plan but have no runner here."
+        fail "--phase is required for a real run: no phase is assumed. Pass one of quality, speed, latency, all."
     fi
 
-    # Reject an unimplemented phase before anything is resolved, created, or
+    # Reject an unknown phase before anything is resolved, created, or
     # launched, so the refusal is the same with or without a toolchain.
     case "$(phase_supported "$phase")" in
         implemented) ;;
-        not-implemented)
-            fail "--phase $phase is not implemented in this unit: only the quality phase executes. The relative-speed and absolute-latency phases (and the 'all' fan-out that includes them) are declared by --print-plan but have no runner here."
-            ;;
         *) fail "--phase must be one of quality, speed, latency, all" ;;
     esac
+
+    # Timing cannot be spliced across host states, so resume is quality-only.
+    # Refusing here, before any path is resolved, means an operator who meant
+    # to continue a timing campaign is told to restart it rather than handed a
+    # median over two different machines-in-time.
+    if [ "$resume" = "yes" ] && [ "$(phase_resumable "$phase")" != "resumable" ]; then
+        fail "--resume is supported only for --phase quality: the $phase phase measures wall time, and splicing runs taken under two host states would produce a median no host ever exhibited. Start a fresh --work-dir for a timing phase."
+    fi
     if [ -z "$work_dir" ]; then
         usage >&2
         fail "--work-dir is required for a real run"
@@ -1750,6 +2395,8 @@ vpxenc=""
 temporal_anchor=""
 bdrate_bin=""
 bdrate_svc_bin=""
+headtohead_bin=""
+realtime_bin=""
 rvp9dec=""
 vpxdec=""
 ffmpeg_bin=""
@@ -1757,6 +2404,8 @@ libvpx_source=""
 libvpx_config_h=""
 libvpx_config_mk=""
 input_dir=""
+speed_dir=""
+latency_dir=""
 quality_dir=""
 quality_rows_dir=""
 quality_summary=""
@@ -1766,10 +2415,10 @@ manifest=""
 run_fingerprint=""
 quality_output_dir=""
 quality_recheck_dir=""
-quality_lock_dir=""
-quality_lock_owner=""
-quality_lock_acquired="no"
-active_quality_attempt=""
+run_lock_dir=""
+run_lock_owner=""
+run_lock_acquired="no"
+active_attempt_dir=""
 
 default_path() {
     if [ -n "$1" ]; then
@@ -1887,6 +2536,8 @@ resolve_environment() {
     opt_temporal_anchor="$(absolute_path "$opt_temporal_anchor")"
     opt_bdrate="$(absolute_path "$opt_bdrate")"
     opt_bdrate_svc="$(absolute_path "$opt_bdrate_svc")"
+    opt_headtohead="$(absolute_path "$opt_headtohead")"
+    opt_realtime="$(absolute_path "$opt_realtime")"
     opt_rvp9dec="$(absolute_path "$opt_rvp9dec")"
     opt_vpxdec="$(absolute_path "$opt_vpxdec")"
     opt_ffmpeg="$(absolute_program "$opt_ffmpeg")"
@@ -1943,6 +2594,10 @@ resolve_environment() {
     bdrate_bin="$(default_path "$opt_bdrate" "$repo_root/target/release/bdrate$exe_suffix")"
     bdrate_svc_bin="$(default_path "$opt_bdrate_svc" \
         "$repo_root/target/release/bdrate-svc$exe_suffix")"
+    headtohead_bin="$(default_path "$opt_headtohead" \
+        "$repo_root/target/release/encode-headtohead$exe_suffix")"
+    realtime_bin="$(default_path "$opt_realtime" \
+        "$repo_root/target/release/realtime$exe_suffix")"
     rvp9dec="$(default_path "$opt_rvp9dec" "$repo_root/target/release/rvp9dec$exe_suffix")"
     vpxdec="$(default_path "$opt_vpxdec" "$repo_root/build/libvpx/vpxdec$exe_suffix")"
     ffmpeg_bin="$(default_path "$opt_ffmpeg" "ffmpeg")"
@@ -1953,6 +2608,8 @@ resolve_environment() {
     require_executable "--temporal-anchor" "$temporal_anchor"
     require_executable "--bdrate" "$bdrate_bin"
     require_executable "--bdrate-svc" "$bdrate_svc_bin"
+    require_executable "--encode-headtohead" "$headtohead_bin"
+    require_executable "--realtime" "$realtime_bin"
     require_executable "--rvp9dec" "$rvp9dec"
     require_executable "--vpxdec" "$vpxdec"
     command -v "$ffmpeg_bin" >/dev/null 2>&1 ||
@@ -1963,6 +2620,20 @@ resolve_environment() {
     require_help_flag "--bdrate" "$bdrate_bin" "--reference-input"
     require_help_flag "--bdrate-svc" "$bdrate_svc_bin" "--work-dir"
     require_help_flag "--bdrate-svc" "$bdrate_svc_bin" "--svc-kind"
+
+    # The timing runners are probed for the exact flags this script depends on.
+    # A stale encode-headtohead without --max-load1 would silently measure an
+    # unqualified busy host; a stale realtime without --frame-time-csv would
+    # leave the AQ3 max-frame gate with nothing to read.
+    require_help_flag "--encode-headtohead" "$headtohead_bin" "--anchor-kind"
+    require_help_flag "--encode-headtohead" "$headtohead_bin" "--temporal-layers"
+    require_help_flag "--encode-headtohead" "$headtohead_bin" "--max-load1"
+    require_help_flag "--encode-headtohead" "$headtohead_bin" "--rotations"
+    require_help_flag "--encode-headtohead" "$headtohead_bin" "--work-dir"
+    require_help_flag "--realtime" "$realtime_bin" "--frame-time-csv"
+    require_help_flag "--realtime" "$realtime_bin" "--p99-budget-ms"
+    require_help_flag "--realtime" "$realtime_bin" "--budget-ms"
+    require_help_flag "--realtime" "$realtime_bin" "--temporal-layers"
 
     validate_pgo_manifest
 
@@ -2023,6 +2694,8 @@ run scripts/fetch-corpus.sh or pass --source-dir"
     mkdir -p "$work_dir"
     work_dir="$(cd "$work_dir" && pwd -P)"
     input_dir="$work_dir/inputs"
+    speed_dir="$work_dir/speed"
+    latency_dir="$work_dir/latency"
     quality_dir="$work_dir/quality"
     quality_rows_dir="$quality_dir/rows"
     quality_summary="$quality_dir/quality-summary.csv"
@@ -2032,48 +2705,88 @@ run scripts/fetch-corpus.sh or pass --source-dir"
 }
 
 # A fixed atomic mkdir prevents two fresh/resumed invocations from sharing a
-# row tree or manifest. A killed process may leave this small lock directory;
-# the next invocation fails with the recorded owner rather than guessing that
-# it is stale and risking a PID-reuse or cross-host race.
-release_quality_lock() {
+# row tree, a timing result tree, or a manifest. A killed process may leave this
+# small lock directory; the next invocation fails with the recorded owner rather
+# than guessing that it is stale and risking a PID-reuse or cross-host race.
+#
+# One lock covers the whole work directory rather than one per phase: two
+# concurrent phases in one directory would append to the same manifest and, for
+# the timing phases, load the same host while claiming an idle one.
+release_run_lock() {
     local recorded=""
-    if [ -n "$active_quality_attempt" ] && [ -d "$active_quality_attempt" ]; then
-        printf 'interrupted quality attempt retained for inspection: %s\n' \
-            "$active_quality_attempt" >&2
+    if [ -n "$active_attempt_dir" ] && [ -d "$active_attempt_dir" ]; then
+        printf 'interrupted attempt retained for inspection: %s\n' \
+            "$active_attempt_dir" >&2
     fi
-    [ "$quality_lock_acquired" = "yes" ] || return 0
-    if [ -f "$quality_lock_dir/owner" ]; then
-        recorded="$(cat "$quality_lock_dir/owner")"
-        [ "$recorded" = "$quality_lock_owner" ] || {
-            printf 'refusing to release a quality lock now owned by %s\n' "$recorded" >&2
+    [ "$run_lock_acquired" = "yes" ] || return 0
+    if [ -f "$run_lock_dir/owner" ]; then
+        recorded="$(cat "$run_lock_dir/owner")"
+        [ "$recorded" = "$run_lock_owner" ] || {
+            printf 'refusing to release a run lock now owned by %s\n' "$recorded" >&2
             return 1
         }
-        unlink "$quality_lock_dir/owner"
+        unlink "$run_lock_dir/owner"
     fi
-    rmdir "$quality_lock_dir"
-    quality_lock_acquired="no"
+    rmdir "$run_lock_dir"
+    run_lock_acquired="no"
 }
 
-acquire_quality_lock() {
+acquire_run_lock() {
     local recorded="unrecorded"
-    quality_lock_dir="$work_dir/.quality-run.lock"
-    if ! mkdir "$quality_lock_dir" 2>/dev/null; then
-        if [ -f "$quality_lock_dir/owner" ]; then
-            recorded="$(cat "$quality_lock_dir/owner")"
+    run_lock_dir="$work_dir/.qualify-run.lock"
+    if ! mkdir "$run_lock_dir" 2>/dev/null; then
+        if [ -f "$run_lock_dir/owner" ]; then
+            recorded="$(cat "$run_lock_dir/owner")"
         fi
-        fail "another quality invocation owns --work-dir $work_dir: $recorded
+        fail "another qualification invocation owns --work-dir $work_dir: $recorded
 if that process was killed, verify the recorded owner is gone and move the exact lock directory aside before --resume"
     fi
-    quality_lock_owner="$(uname -n)|pid=$$|started=$(utc_now)|commit=$git_commit"
-    quality_lock_acquired="yes"
-    printf '%s\n' "$quality_lock_owner" > "$quality_lock_dir/owner"
+    run_lock_owner="$(uname -n)|pid=$$|started=$(utc_now)|commit=$git_commit"
+    run_lock_acquired="yes"
+    printf '%s\n' "$run_lock_owner" > "$run_lock_dir/owner"
 }
 
-install_quality_lock_traps() {
-    trap release_quality_lock EXIT
+install_run_lock_traps() {
+    trap release_run_lock EXIT
     trap 'exit 129' HUP
     trap 'exit 130' INT
     trap 'exit 143' TERM
+}
+
+# ---------------------------------------------------------------------------
+# Host load
+#
+# The head-to-head runner performs its own load checks and fails closed on
+# --max-load1, which this script always passes. `realtime` has none, so the
+# latency phase reads the load itself at the same three points -- start, each
+# new group, and completion -- with the same limit and the same fail-closed
+# behaviour when the load cannot be read at all.
+# ---------------------------------------------------------------------------
+
+read_load1() {
+    if [ -r /proc/loadavg ]; then
+        awk '{ print $1 }' /proc/loadavg
+        return 0
+    fi
+    if command -v sysctl >/dev/null 2>&1; then
+        sysctl -n vm.loadavg 2>/dev/null | tr -d '{}' | awk '{ print $1 }'
+        return 0
+    fi
+    return 1
+}
+
+enforce_load() {
+    local point="$1" load
+    load="$(read_load1 || true)"
+    if [ -z "$load" ]; then
+        fail "cannot read host one-minute load at '$point'; the timing gate fails closed"
+    fi
+    require_number "one-minute load at '$point'" "$load"
+    manifest_kv "load_observation_$point" "$load"
+    if ! number_le "$load" "$MAX_LOAD1"; then
+        fail "host one-minute load $load exceeds $MAX_LOAD1 at '$point'; a timing measurement on a loaded host is not evidence"
+    fi
+    printf '  host load at %s: %s (limit %s)\n' "$point" "$load" "$MAX_LOAD1"
 }
 
 # ---------------------------------------------------------------------------
@@ -2132,6 +2845,8 @@ write_manifest_header() {
     manifest_artifact libvpx_config_mk "$libvpx_config_mk"
     manifest_artifact bdrate "$bdrate_bin"
     manifest_artifact bdrate_svc "$bdrate_svc_bin"
+    manifest_artifact encode_headtohead "$headtohead_bin"
+    manifest_artifact realtime "$realtime_bin"
     manifest_artifact rvp9dec "$rvp9dec"
     manifest_artifact vpxdec "$vpxdec"
     manifest_artifact ffmpeg_binary "$ffmpeg_bin"
@@ -2260,7 +2975,8 @@ run_fingerprint_payload() {
         "$repo_root/scripts/qualify-production-encoder.sh" \
         "$test_encoder" "$vpxenc" "$temporal_anchor" \
         "$libvpx_config_h" "$libvpx_config_mk" \
-        "$bdrate_bin" "$bdrate_svc_bin" "$rvp9dec" "$vpxdec" \
+        "$bdrate_bin" "$bdrate_svc_bin" "$headtohead_bin" "$realtime_bin" \
+        "$rvp9dec" "$vpxdec" \
         "$ffmpeg_bin"
     do
         printf 'artifact=%s|%s\n' "$path" "$(sha256_file "$path")"
@@ -2763,7 +3479,7 @@ run_quality_row() {
     attempt="$quality_rows_dir/.${row_id}.attempt.$(date -u '+%Y%m%dT%H%M%SZ')-$$"
     [ ! -e "$attempt" ] || fail "$row_id: attempt path already exists: $attempt"
     mkdir "$attempt"
-    active_quality_attempt="$attempt"
+    active_attempt_dir="$attempt"
     streams="$attempt/streams"
     mkdir "$streams"
 
@@ -2883,7 +3599,7 @@ run_quality_row() {
     [ -f "$final_dir/receipt" ] &&
         [ ! -e "$final_dir/$(basename "$attempt")" ] ||
         fail "$row_id: row publication nested instead of replacing the absent final path"
-    active_quality_attempt=""
+    active_attempt_dir=""
     cat "$final_dir/quality-fragment.csv" >> "$summary_out"
     cat "$final_dir/cross-decoder-fragment.csv" >> "$cross_out"
 }
@@ -3174,6 +3890,499 @@ run_quality() {
     printf 'Quality phase passed.\n'
 }
 
+# ---------------------------------------------------------------------------
+# Relative-speed phase
+#
+# One encode-headtohead corpus group per feature/mode/cpu/target. Both arms are
+# matched and driven over the same prepared inputs; only the encoder binary and
+# its command surface differ. The runner owns the alternation, the rotations,
+# the per-clip median, the corpus geometric means, and its own fail-closed host
+# load check; this phase owns the evidence, the classification, and the census.
+# ---------------------------------------------------------------------------
+
+speed_group_count=0
+speed_failure_count=0
+speed_output_dir=""
+speed_summary=""
+
+# The single child invocation, isolated so --self-test-timing can substitute a
+# deterministic observation while every recording, validation, classification,
+# and abort path below still executes for real.
+invoke_headtohead() {
+    local log="$1"
+    shift
+    deltic timeout "$SPEED_GROUP_TIMEOUT" "$headtohead_bin" "$@" \
+        > "$log" 2>&1 </dev/null
+}
+
+# A measurement failure, as distinct from a recorded gate miss. The host-load
+# refusal is named explicitly because it is the one abort an operator can fix
+# by waiting, and it otherwise reads as a generic runner error.
+speed_measurement_failure() {
+    local group_id="$1" log="$2" detail="$3" hint=""
+    if [ -f "$log" ] && grep -q 'one-minute load' "$log"; then
+        hint="
+the runner refused the host load; it fails closed at --max-load1 $MAX_LOAD1. Re-run the speed phase on an idle host."
+    fi
+    fail "$group_id: relative-speed measurement failed: $detail (log $log)$hint"
+}
+
+run_speed_group() {
+    local feature="$1" mode="$2" target="$3" cpu="$4"
+    local aq="$5" denoiser="$6" layers="$7"
+    local fps width height threads tiles speed_kbps p50 p99
+    local group_id dir run_dir log anchor_bin anchor_kind test_kind input_kind
+    local clip input clip_list="" clip_count=0 layers_arg
+    local ratios separate paired stability gate status reason rc=0
+    local -a clip_args
+    local -a layer_args
+
+    IFS='|' read -r fps width height threads tiles speed_kbps p50 p99 \
+        <<< "$(target_spec "$target")"
+    group_id="${feature}-${mode}-${target}-cpu${cpu}"
+    dir="$speed_output_dir/groups/$group_id"
+    run_dir="$dir/run"
+    log="$dir/headtohead.log"
+    [ ! -e "$dir" ] ||
+        fail "$group_id: speed group directory already exists: $dir"
+    mkdir -p "$dir"
+
+    anchor_kind="$(speed_anchor_kind "$feature")"
+    test_kind="$(speed_test_kind "$feature")"
+    case "$anchor_kind" in
+        vpxenc)       anchor_bin="$vpxenc" ;;
+        temporal-svc) anchor_bin="$temporal_anchor" ;;
+        *) fail "$group_id: unknown speed anchor kind: $anchor_kind" ;;
+    esac
+
+    # Both arms consume the identical prepared input, so the comparison is of
+    # two encoders and not of two workloads. Only the denoiser groups use the
+    # noisy derivative, and then both arms use it.
+    input_kind="$(row_input_kind "$feature")"
+    clip_args=()
+    for clip in $(target_clips "$target"); do
+        input="$(acceptance_input "$clip" "$target" "$input_kind")"
+        [ -s "$input" ] || fail "$group_id: encode input is missing: $input"
+        clip_args+=(--clip "$clip=$input")
+        if [ -z "$clip_list" ]; then
+            clip_list="$clip"
+        else
+            clip_list="$clip_list;$clip"
+        fi
+        clip_count=$(( clip_count + 1 ))
+    done
+
+    # Both runners reject `--temporal-layers 1`; a single-layer encode is the
+    # absence of the flag. Bash 3.2 has no way to expand an empty array under
+    # `set -u`, hence the `${array[@]+...}` guard at the call site.
+    layer_args=()
+    layers_arg="$(timing_temporal_layers_arg "$feature")"
+    [ -z "$layers_arg" ] || layer_args+=(--temporal-layers "$layers_arg")
+
+    speed_group_count=$(( speed_group_count + 1 ))
+    printf '[speed %2d/%d] %s (%s clips, %s anchor, %s input)\n' \
+        "$speed_group_count" "$EXPECTED_SPEED_GROUPS" "$group_id" \
+        "$clip_count" "$anchor_kind" "$input_kind"
+
+    # The test arm's recorded revision is the PGO source commit, not HEAD: that
+    # commit is what produced the binary being timed. The outer manifest still
+    # records HEAD and proves no encoder-shipped path moved in between.
+    invoke_headtohead "$log" \
+        --anchor-encoder "$anchor_bin" --anchor-kind "$anchor_kind" \
+        --anchor-revision "$libvpx_revision" \
+        --test-encoder "$test_encoder" --test-kind "$test_kind" \
+        --test-revision "$pgo_source_commit" \
+        "${clip_args[@]}" \
+        --work-dir "$run_dir" \
+        --cpu-used "$cpu" --target-bitrate "$speed_kbps" --end-usage "$mode" \
+        --fps "$fps/1" --threads "$threads" --tile-columns "$tiles" \
+        ${layer_args[@]+"${layer_args[@]}"} \
+        --aq-mode "$aq" --noise-sensitivity "$denoiser" \
+        --limit "$FRAMES" --keyframe-interval "$KEYFRAME_INTERVAL" \
+        --warmups "$SPEED_WARMUPS" --pairs "$SPEED_PAIRS" \
+        --rotations "$SPEED_ROTATIONS" --max-ratio "$MAX_RATIO" \
+        --max-load1 "$MAX_LOAD1" || rc=$?
+
+    # encode-headtohead exits non-zero both for a ratio miss and for a genuine
+    # measurement failure, so the exit code alone cannot separate them. What
+    # separates them is the evidence: a ratio miss still writes a complete
+    # summary.csv, while every failure path returns before that file exists.
+    [ -f "$run_dir/summary.csv" ] ||
+        speed_measurement_failure "$group_id" "$log" \
+            "the runner wrote no summary.csv, so no comparison completed (exit $rc)"
+    ratios="$(headtohead_corpus_ratios < "$run_dir/summary.csv")"
+    case "$ratios" in
+        absent|ambiguous|malformed)
+            speed_measurement_failure "$group_id" "$log" \
+                "the summary.csv corpus verdict is $ratios"
+            ;;
+    esac
+    separate="${ratios%% *}"
+    paired="${ratios##* }"
+    require_number "$group_id corpus separate ratio" "$separate"
+    require_number "$group_id corpus paired ratio" "$paired"
+
+    # This script never opts a group out of hash stability, so both arms must
+    # have emitted exactly one distinct IVF hash across every run.
+    stability="$(headtohead_hash_stability < "$run_dir/summary.csv")"
+    [ "$stability" = "stable" ] ||
+        speed_measurement_failure "$group_id" "$log" \
+            "the encoders did not produce reproducible output ($stability)"
+
+    gate="$(speed_ratio_status "$separate" "$paired")"
+    if [ "$gate" = "pass" ] && [ "$rc" -ne 0 ]; then
+        speed_measurement_failure "$group_id" "$log" \
+            "the runner exited $rc while its own recorded ratios (separate $separate, paired $paired) are within ${MAX_RATIO}x, so its verdict and its evidence disagree"
+    fi
+    if [ "$gate" != "pass" ] && [ "$rc" -eq 0 ]; then
+        speed_measurement_failure "$group_id" "$log" \
+            "the runner exited 0 while its own recorded ratios (separate $separate, paired $paired) exceed ${MAX_RATIO}x, so its verdict and its evidence disagree"
+    fi
+
+    if [ "$gate" = "pass" ]; then
+        status="PASS"
+        reason="none"
+    else
+        status="FAIL"
+        reason="$gate"
+        speed_failure_count=$(( speed_failure_count + 1 ))
+        printf '  SPEED MISS %s: separate %sx, paired %sx exceed %sx (%s)\n' \
+            "$group_id" "$separate" "$paired" "$MAX_RATIO" "$reason" >&2
+    fi
+
+    printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
+        "$group_id" "$feature" "$mode" "$target" "$cpu" "$aq" "$denoiser" \
+        "$layers" "$input_kind" "$anchor_kind" "$test_kind" "$clip_list" \
+        "$clip_count" "$speed_kbps" "$threads" "$tiles" \
+        "$SPEED_WARMUPS" "$SPEED_PAIRS" "$SPEED_ROTATIONS" \
+        "$separate" "$paired" "$MAX_RATIO" "$MAX_LOAD1" "$rc" \
+        "$status" "$reason" \
+        >> "$speed_summary"
+}
+
+run_speed() {
+    local feature mode target cpu aq denoiser layers
+    local completed_dir invocation_id
+
+    completed_dir="$speed_dir/completed"
+    [ ! -e "$completed_dir" ] ||
+        fail "relative-speed result is already published: $completed_dir"
+    mkdir -p "$speed_dir"
+    invocation_id="$(date -u '+%Y%m%dT%H%M%SZ')-$$"
+    speed_output_dir="$speed_dir/.result-attempt-$invocation_id"
+    [ ! -e "$speed_output_dir" ] ||
+        fail "relative-speed result attempt already exists: $speed_output_dir"
+    mkdir "$speed_output_dir"
+    mkdir "$speed_output_dir/groups"
+    active_attempt_dir="$speed_output_dir"
+    speed_summary="$speed_output_dir/speed-summary.csv"
+
+    printf 'group_id,feature,mode,target,cpu_used,aq_mode,noise_sensitivity,temporal_layers,input_kind,anchor_kind,test_kind,clips,clip_count,target_kbps,threads,tile_columns,warmups,pairs,rotations,corpus_separate_ratio,corpus_paired_ratio,max_ratio,max_load1,runner_exit_code,status,failure_reason\n' \
+        > "$speed_summary"
+
+    enforce_load "speed-start"
+    while IFS='|' read -r feature mode target cpu aq denoiser layers; do
+        run_speed_group "$feature" "$mode" "$target" "$cpu" \
+            "$aq" "$denoiser" "$layers"
+    done < <(emit_speed_groups)
+    enforce_load "speed-complete"
+
+    [ "$speed_group_count" -eq "$EXPECTED_SPEED_GROUPS" ] ||
+        fail "ran $speed_group_count relative-speed groups, expected $EXPECTED_SPEED_GROUPS"
+
+    # One directory rename publishes the complete result set, so an interrupted
+    # campaign leaves a hidden attempt directory and never a `completed` tree
+    # that is missing groups.
+    mv "$speed_output_dir" "$completed_dir"
+    [ -f "$completed_dir/speed-summary.csv" ] &&
+        [ ! -e "$completed_dir/$(basename "$speed_output_dir")" ] ||
+        fail "relative-speed publication nested instead of replacing the absent completed path"
+    active_attempt_dir=""
+    speed_output_dir="$completed_dir"
+    speed_summary="$completed_dir/speed-summary.csv"
+
+    manifest_kv speed_groups "$speed_group_count"
+    manifest_kv speed_group_failures "$speed_failure_count"
+    manifest_kv speed_max_ratio "$MAX_RATIO"
+    manifest_kv speed_max_load1 "$MAX_LOAD1"
+    manifest_kv speed_summary_sha256 "$(sha256_file "$speed_summary")"
+
+    printf '\nRelative-speed phase measured %s corpus groups against %sx (%s miss(es)).\n' \
+        "$speed_group_count" "$MAX_RATIO" "$speed_failure_count"
+
+    if [ "$speed_failure_count" -ne 0 ]; then
+        manifest_kv speed_verdict "fail"
+        fail "relative-speed phase FAILED: $speed_failure_count of $speed_group_count corpus group(s) exceeded ${MAX_RATIO}x. Evidence: $manifest"
+    fi
+    manifest_kv speed_verdict "pass"
+    printf 'Relative-speed phase passed.\n'
+}
+
+# ---------------------------------------------------------------------------
+# Absolute-latency phase
+#
+# One warmup plus five measured `realtime` runs per quality row, on the same
+# prepared input the quality row encoded. The gate is the median p50 and median
+# p99 of the five measured runs against the target's frame budgets; AQ3 rows
+# additionally cap the largest single frame of every measured run at 66 ms.
+#
+# The max-frame figure is a maximum over maxima, never a median of them. A row
+# that stalls one frame past budget in one run out of five has missed the gate
+# that exists to catch exactly that; a median would hide four such runs.
+# ---------------------------------------------------------------------------
+
+latency_row_count=0
+latency_measured_count=0
+latency_failure_count=0
+latency_output_dir=""
+latency_raw=""
+latency_summary=""
+
+invoke_realtime() {
+    local log="$1"
+    shift
+    deltic timeout "$LATENCY_RUN_TIMEOUT" "$realtime_bin" "$@" \
+        > "$log" 2>&1 </dev/null
+}
+
+run_latency_row() {
+    local feature="$1" mode="$2" target="$3" clip="$4" cpu="$5"
+    local aq="$6" denoiser="$7" layers="$8"
+    local fps width height threads tiles speed_kbps p50_budget p99_budget
+    local row_id dir input input_kind layers_arg max_frame_budget
+    local run role log ivf frametimes rc p50 p99 observed csv_status run_max
+    local run_status distinct median_p50 median_p99 max_frame
+    local budget_status frame_status status reason
+    local -a layer_args
+    local -a p50_samples
+    local -a p99_samples
+    local -a max_samples
+    local -a hashes
+
+    IFS='|' read -r fps width height threads tiles speed_kbps p50_budget p99_budget \
+        <<< "$(target_spec "$target")"
+    row_id="${feature}-${mode}-${target}-${clip}-cpu${cpu}"
+    dir="$latency_output_dir/rows/$row_id"
+    [ ! -e "$dir" ] || fail "$row_id: latency row directory already exists: $dir"
+    mkdir -p "$dir"
+
+    input_kind="$(row_input_kind "$feature")"
+    input="$(acceptance_input "$clip" "$target" "$input_kind")"
+    [ -s "$input" ] || fail "$row_id: encode input is missing: $input"
+
+    layer_args=()
+    layers_arg="$(timing_temporal_layers_arg "$feature")"
+    [ -z "$layers_arg" ] || layer_args+=(--temporal-layers "$layers_arg")
+
+    if [ "$aq" -ne 0 ]; then
+        max_frame_budget="$AQ_MAX_FRAME_MS"
+    else
+        max_frame_budget="none"
+    fi
+
+    latency_row_count=$(( latency_row_count + 1 ))
+    printf '[latency %3d/%d] %s (%s input, max frame budget %s)\n' \
+        "$latency_row_count" "$EXPECTED_LATENCY_ROWS" "$row_id" \
+        "$input_kind" "$max_frame_budget"
+
+    p50_samples=()
+    p99_samples=()
+    max_samples=()
+    hashes=()
+
+    run=0
+    while [ "$run" -lt "$(( LATENCY_WARMUP_RUNS + LATENCY_MEASURED_RUNS ))" ]; do
+        if [ "$run" -lt "$LATENCY_WARMUP_RUNS" ]; then
+            role="warmup"
+        else
+            role="measured"
+        fi
+        log="$dir/run$run.log"
+        ivf="$dir/run$run.ivf"
+        frametimes="$dir/run$run.frame-times.csv"
+        rc=0
+
+        invoke_realtime "$log" \
+            --encoder "$test_encoder" --input "$input" \
+            --cpu-used "$cpu" --end-usage "$mode" \
+            --target-bitrate "$speed_kbps" \
+            --threads "$threads" --tile-columns "$tiles" \
+            ${layer_args[@]+"${layer_args[@]}"} \
+            --aq-mode "$aq" --noise-sensitivity "$denoiser" \
+            --limit "$FRAMES" --kf-max-dist "$KEYFRAME_INTERVAL" \
+            --budget-ms "$p50_budget" --p99-budget-ms "$p99_budget" \
+            --frame-time-csv "$frametimes" --output "$ivf" || rc=$?
+
+        # Exits 3 and 4 are the runner reporting a budget miss over complete
+        # evidence, which this phase records and continues past. Everything
+        # else -- encoder failure, empty output, an invalid timing CSV, a
+        # timeout, a signal -- is a measurement failure and aborts now.
+        case "$rc" in
+            0|"$REALTIME_EXIT_OVER_BUDGET"|"$REALTIME_EXIT_OVER_P99") ;;
+            *)
+                fail "$row_id run$run ($role): realtime failed with exit $rc, which is not a budget verdict; the measurement is unusable (log $log)"
+                ;;
+        esac
+
+        [ -s "$ivf" ] ||
+            fail "$row_id run$run ($role): realtime produced no output IVF: $ivf"
+        p50="$(awk '/^encode p50:/ { print $3 }' "$log")"
+        p99="$(awk '/^encode p99:/ { print $3 }' "$log")"
+        [ -n "$p50" ] && [ -n "$p99" ] ||
+            fail "$row_id run$run ($role): realtime reported no encoder p50/p99 line (log $log)"
+        require_number "$row_id run$run p50" "$p50"
+        require_number "$row_id run$run p99" "$p99"
+
+        # The AQ3 gate is an independent reading of the runner's own per-frame
+        # evidence, so the file is validated here rather than assumed valid.
+        [ -f "$frametimes" ] ||
+            fail "$row_id run$run ($role): realtime wrote no per-frame timing CSV: $frametimes"
+        observed="$(frame_time_csv_status "$FRAME_TIME_CSV_HEADER" "$FRAMES" \
+            "$FRAME_TIME_MAX_LAYER_ID" < "$frametimes")"
+        csv_status="${observed%% *}"
+        run_max="${observed##* }"
+        [ "$csv_status" = "valid" ] ||
+            fail "$row_id run$run ($role): per-frame timing CSV is $csv_status, expected $FRAMES valid rows: $frametimes"
+        require_number "$row_id run$run max frame time" "$run_max"
+
+        hashes+=("$(sha256_file "$ivf")")
+        case "$rc" in
+            0) run_status="PASS" ;;
+            "$REALTIME_EXIT_OVER_BUDGET") run_status="OVER-BUDGET" ;;
+            "$REALTIME_EXIT_OVER_P99") run_status="OVER-P99" ;;
+            *) fail "$row_id run$run ($role): unclassified realtime exit $rc" ;;
+        esac
+        if [ "$run" -ge "$LATENCY_WARMUP_RUNS" ]; then
+            p50_samples+=("$p50")
+            p99_samples+=("$p99")
+            max_samples+=("$run_max")
+            latency_measured_count=$(( latency_measured_count + 1 ))
+        fi
+
+        printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
+            "$row_id" "$feature" "$mode" "$target" "$clip" "$cpu" "$aq" \
+            "$denoiser" "$layers" "$input_kind" "$run" "$role" "$rc" \
+            "$p50" "$p99" "$run_max" "$run_status" \
+            >> "$latency_raw"
+        run=$(( run + 1 ))
+    done
+
+    # Every encode of one row must be byte-identical, warmup included. Timing
+    # samples drawn from encoders that produced different bitstreams are not
+    # five measurements of one thing.
+    distinct="$(distinct_count "${hashes[@]}")"
+    [ "$distinct" -eq 1 ] ||
+        fail "$row_id: the $(( LATENCY_WARMUP_RUNS + LATENCY_MEASURED_RUNS )) encodes produced $distinct distinct IVF hashes; timing samples over unstable output are not a measurement"
+    [ "${#p50_samples[@]}" -eq "$LATENCY_MEASURED_RUNS" ] ||
+        fail "$row_id: collected ${#p50_samples[@]} measured samples, expected $LATENCY_MEASURED_RUNS"
+
+    median_p50="$(numeric_median "${p50_samples[@]}")"
+    median_p99="$(numeric_median "${p99_samples[@]}")"
+    max_frame="$(numeric_max "${max_samples[@]}")"
+    budget_status="$(latency_budget_status "$median_p50" "$p50_budget" \
+        "$median_p99" "$p99_budget")"
+    frame_status="$(aq_max_frame_status "$aq" "$max_frame")"
+
+    status="PASS"
+    reason="none"
+    if [ "$budget_status" != "pass" ]; then
+        status="FAIL"
+        reason="$budget_status"
+    fi
+    if [ "$frame_status" = "over-max-frame" ]; then
+        status="FAIL"
+        if [ "$reason" = "none" ]; then
+            reason="$frame_status"
+        else
+            reason="$reason;$frame_status"
+        fi
+    fi
+    if [ "$status" != "PASS" ]; then
+        latency_failure_count=$(( latency_failure_count + 1 ))
+        printf '  LATENCY MISS %s: median p50 %s/%s ms, median p99 %s/%s ms, max frame %s/%s ms (%s)\n' \
+            "$row_id" "$median_p50" "$p50_budget" "$median_p99" "$p99_budget" \
+            "$max_frame" "$max_frame_budget" "$reason" >&2
+    fi
+
+    printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
+        "$row_id" "$feature" "$mode" "$target" "$clip" "$cpu" "$aq" \
+        "$denoiser" "$layers" "$input_kind" "$threads" "$tiles" \
+        "$speed_kbps" "$LATENCY_WARMUP_RUNS" "$LATENCY_MEASURED_RUNS" \
+        "$median_p50" "$p50_budget" "$median_p99" "$p99_budget" \
+        "$max_frame" "$max_frame_budget" "$distinct" "$status" "$reason" \
+        >> "$latency_summary"
+}
+
+run_latency() {
+    local feature mode target clip cpu aq denoiser layers
+    local completed_dir invocation_id group previous_group=""
+
+    completed_dir="$latency_dir/completed"
+    [ ! -e "$completed_dir" ] ||
+        fail "absolute-latency result is already published: $completed_dir"
+    mkdir -p "$latency_dir"
+    invocation_id="$(date -u '+%Y%m%dT%H%M%SZ')-$$"
+    latency_output_dir="$latency_dir/.result-attempt-$invocation_id"
+    [ ! -e "$latency_output_dir" ] ||
+        fail "absolute-latency result attempt already exists: $latency_output_dir"
+    mkdir "$latency_output_dir"
+    mkdir "$latency_output_dir/rows"
+    active_attempt_dir="$latency_output_dir"
+    latency_raw="$latency_output_dir/latency-raw.csv"
+    latency_summary="$latency_output_dir/latency-summary.csv"
+
+    printf 'row_id,feature,mode,target,clip,cpu_used,aq_mode,noise_sensitivity,temporal_layers,input_kind,run_index,role,exit_code,p50_ms,p99_ms,max_frame_ms,status\n' \
+        > "$latency_raw"
+    printf 'row_id,feature,mode,target,clip,cpu_used,aq_mode,noise_sensitivity,temporal_layers,input_kind,threads,tile_columns,target_kbps,warmup_runs,measured_runs,median_p50_ms,p50_budget_ms,median_p99_ms,p99_budget_ms,max_frame_ms,max_frame_budget_ms,distinct_ivf_hashes,status,failure_reason\n' \
+        > "$latency_summary"
+
+    # `realtime` has no load check of its own, so this phase performs the one
+    # the speed runner performs for itself: at the start, whenever the group
+    # changes, and at completion.
+    enforce_load "latency-start"
+    while IFS='|' read -r feature mode target clip cpu aq denoiser layers; do
+        group="${feature}-${mode}-${target}-cpu${cpu}"
+        if [ "$group" != "$previous_group" ]; then
+            enforce_load "latency-group-$group"
+            previous_group="$group"
+        fi
+        run_latency_row "$feature" "$mode" "$target" "$clip" "$cpu" \
+            "$aq" "$denoiser" "$layers"
+    done < <(emit_clip_rows)
+    enforce_load "latency-complete"
+
+    [ "$latency_row_count" -eq "$EXPECTED_LATENCY_ROWS" ] ||
+        fail "ran $latency_row_count latency rows, expected $EXPECTED_LATENCY_ROWS"
+    [ "$latency_measured_count" -eq "$EXPECTED_LATENCY_MEASURED_RUNS" ] ||
+        fail "ran $latency_measured_count measured latency runs, expected $EXPECTED_LATENCY_MEASURED_RUNS"
+
+    mv "$latency_output_dir" "$completed_dir"
+    [ -f "$completed_dir/latency-summary.csv" ] &&
+        [ ! -e "$completed_dir/$(basename "$latency_output_dir")" ] ||
+        fail "absolute-latency publication nested instead of replacing the absent completed path"
+    active_attempt_dir=""
+    latency_output_dir="$completed_dir"
+    latency_raw="$completed_dir/latency-raw.csv"
+    latency_summary="$completed_dir/latency-summary.csv"
+
+    manifest_kv latency_rows "$latency_row_count"
+    manifest_kv latency_measured_runs "$latency_measured_count"
+    manifest_kv latency_row_failures "$latency_failure_count"
+    manifest_kv latency_aq_max_frame_ms "$AQ_MAX_FRAME_MS"
+    manifest_kv latency_raw_sha256 "$(sha256_file "$latency_raw")"
+    manifest_kv latency_summary_sha256 "$(sha256_file "$latency_summary")"
+
+    printf '\nAbsolute-latency phase measured %s rows over %s measured runs (%s miss(es)).\n' \
+        "$latency_row_count" "$latency_measured_count" "$latency_failure_count"
+
+    if [ "$latency_failure_count" -ne 0 ]; then
+        manifest_kv latency_verdict "fail"
+        fail "absolute-latency phase FAILED: $latency_failure_count of $latency_row_count row(s) missed their frame budgets. Evidence: $manifest"
+    fi
+    manifest_kv latency_verdict "pass"
+    printf 'Absolute-latency phase passed.\n'
+}
+
 # Focused filesystem exercise for the resume boundary. It uses only synthetic
 # text/IVF placeholders and a private mktemp directory; no encoder, decoder,
 # corpus, repository artifact, or caller path is touched.
@@ -3207,12 +4416,12 @@ resume_self_test() {
     mkdir "$lock_work"
     work_dir="$lock_work"
     git_commit="resume-self-test"
-    acquire_quality_lock
-    [ -s "$quality_lock_dir/owner" ] || fail "resume self-test: lock has no owner"
-    if mkdir "$quality_lock_dir" 2>/dev/null; then
+    acquire_run_lock
+    [ -s "$run_lock_dir/owner" ] || fail "resume self-test: lock has no owner"
+    if mkdir "$run_lock_dir" 2>/dev/null; then
         fail "resume self-test: a second invocation acquired the same lock"
     fi
-    release_quality_lock
+    release_run_lock
 
     row_id="baseline-cbr-720p30-in_to_tree-cpu6"
     quality_rows_dir="$test_root/rows"
@@ -3302,6 +4511,584 @@ resume_self_test() {
     printf 'resume filesystem self-test passed\n'
 }
 
+# Focused filesystem exercise for the two timing phases. Only the child
+# observation is stubbed -- the argv the runners would have received, their
+# summary/log/IVF/timing-CSV evidence, and their exit codes. Everything above
+# that is the real code: evidence validation, hash stability, median and max
+# reduction, gate classification, CSV recording, counters, and every abort.
+#
+# It runs entirely inside a private mktemp directory under TMPDIR and creates
+# no file in the repository or in any caller path.
+timing_self_test() {
+    local test_root temp_parent target clip kind path
+    local argv_file
+    local stub_mode stub_separate stub_paired stub_test_hashes stub_anchor_hashes
+    local stub_rc stub_run stub_p50_list stub_p99_list stub_peak_list
+    local stub_rc_list stub_payload_list stub_load
+
+    [ -n "${TMPDIR-}" ] || fail "--self-test-timing requires TMPDIR"
+    temp_parent="${TMPDIR%/}"
+    test_root="$(mktemp -d "$temp_parent/rvp9-qualify-timing.XXXXXX")" ||
+        fail "could not create timing self-test directory under TMPDIR"
+
+    cleanup_timing_self_test() {
+        local resolved
+        [ -d "$test_root" ] || return 0
+        resolved="$(cd "$test_root" && pwd -P)"
+        case "$resolved" in
+            "$(cd "$temp_parent" && pwd -P)"/rvp9-qualify-timing.*) ;;
+            *)
+                printf 'refusing to clean unexpected timing self-test path: %s\n' \
+                    "$resolved" >&2
+                return 1
+                ;;
+        esac
+        find "$resolved" -depth -type f -exec unlink {} \;
+        find "$resolved" -depth -type d -exec rmdir {} \;
+    }
+    trap cleanup_timing_self_test EXIT
+    trap 'exit 129' HUP
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+
+    printf 'qualify-production-encoder timing self-test\n'
+
+    # --- a private stand-in for every path a real run resolves ---------------
+    work_dir="$test_root/work"
+    input_dir="$work_dir/inputs"
+    speed_dir="$work_dir/speed"
+    latency_dir="$work_dir/latency"
+    manifest="$work_dir/manifest.txt"
+    mkdir -p "$input_dir"
+    : > "$manifest"
+
+    test_encoder="$test_root/bin/rvp9enc"
+    vpxenc="$test_root/bin/vpxenc"
+    temporal_anchor="$test_root/bin/vpx_temporal_svc_reference"
+    headtohead_bin="$test_root/bin/encode-headtohead"
+    realtime_bin="$test_root/bin/realtime"
+    mkdir -p "$test_root/bin"
+    for kind in rvp9enc vpxenc vpx_temporal_svc_reference encode-headtohead realtime; do
+        printf 'stub\n' > "$test_root/bin/$kind"
+    done
+    libvpx_revision="libvpx-rev-stub"
+    pgo_source_commit="pgo-source-commit-stub"
+    git_commit="head-commit-stub"
+
+    # Every prepared input the matrix names, so the real existence checks run.
+    for target in $TARGETS; do
+        for clip in $(target_clips "$target"); do
+            for kind in clean noisy; do
+                printf 'prepared %s %s %s\n' "$clip" "$target" "$kind" \
+                    > "$(acceptance_input "$clip" "$target" "$kind")"
+            done
+        done
+    done
+
+    argv_file="$test_root/last-argv.txt"
+
+    # --- stubbed child observations -----------------------------------------
+    stub_mode="normal"
+    stub_separate="1.000000"
+    stub_paired="1.000000"
+    stub_test_hashes=1
+    stub_anchor_hashes=1
+    stub_rc=0
+
+    invoke_headtohead() {
+        local log="$1" arg next="" work=""
+        shift
+        : > "$argv_file"
+        for arg in "$@"; do
+            printf '%s\n' "$arg" >> "$argv_file"
+            if [ "$next" = "work" ]; then
+                work="$arg"
+                next=""
+            elif [ "$arg" = "--work-dir" ]; then
+                next="work"
+            fi
+        done
+        printf 'stub encode-headtohead mode=%s\n' "$stub_mode" > "$log"
+        case "$stub_mode" in
+            no-summary)
+                return 1
+                ;;
+            load-refusal)
+                printf 'host one-minute load 1.230 exceeds --max-load1 0.750 at `start`\n' \
+                    >> "$log"
+                return 1
+                ;;
+        esac
+        mkdir -p "$work"
+        {
+            printf 'clip,test_median,anchor_median,separate_ratio,paired_ratio,test_ms_per_frame,anchor_ms_per_frame,samples,test_sha256,anchor_sha256,test_distinct_hash_count,anchor_distinct_hash_count\n'
+            printf 'in_to_tree,1.000,1.000,%s,%s,10.000,10.000,10,t1,a1,%s,%s\n' \
+                "$stub_separate" "$stub_paired" "$stub_test_hashes" "$stub_anchor_hashes"
+            printf 'corpus,,,%s,%s,,,,,,,\n' "$stub_separate" "$stub_paired"
+        } > "$work/summary.csv"
+        printf 'stub manifest\n' > "$work/manifest.txt"
+        return "$stub_rc"
+    }
+
+    # Six space-separated per-run observations: warmup first, then the five
+    # measured runs. Driving the runs from a list is what lets a single row
+    # exercise a median over unequal samples and a one-run max-frame spike.
+    stub_run=0
+    stub_p50_list="10.00 10.00 12.00 11.00 13.00 9.00"
+    stub_p99_list="20.00 20.00 22.00 21.00 23.00 19.00"
+    stub_peak_list="1000000 1000000 1000000 1000000 1000000 1000000"
+    stub_rc_list="0 0 0 0 0 0"
+    stub_payload_list="ivf ivf ivf ivf ivf ivf"
+
+    stub_list_item() {
+        printf '%s\n' "$1" | awk -v index_wanted="$(( $2 + 1 ))" \
+            '{ print $index_wanted }'
+    }
+
+    invoke_realtime() {
+        local log="$1" arg next="" out="" csv="" p50 p99 peak rc payload
+        shift
+        : > "$argv_file"
+        for arg in "$@"; do
+            printf '%s\n' "$arg" >> "$argv_file"
+            if [ "$next" = "out" ]; then
+                out="$arg"
+                next=""
+            elif [ "$next" = "csv" ]; then
+                csv="$arg"
+                next=""
+            elif [ "$arg" = "--output" ]; then
+                next="out"
+            elif [ "$arg" = "--frame-time-csv" ]; then
+                next="csv"
+            fi
+        done
+        p50="$(stub_list_item "$stub_p50_list" "$stub_run")"
+        p99="$(stub_list_item "$stub_p99_list" "$stub_run")"
+        peak="$(stub_list_item "$stub_peak_list" "$stub_run")"
+        rc="$(stub_list_item "$stub_rc_list" "$stub_run")"
+        payload="$(stub_list_item "$stub_payload_list" "$stub_run")"
+        stub_run=$(( stub_run + 1 ))
+        {
+            printf 'stub realtime run %s\n' "$stub_run"
+            printf 'encode p50:      %s ms\n' "$p50"
+            printf 'encode p90:      %s ms\n' "$p50"
+            printf 'encode p99:      %s ms\n' "$p99"
+        } > "$log"
+        printf '%s' "$payload" > "$out"
+        if [ "$peak" != "skip-csv" ]; then
+            awk -v header="$FRAME_TIME_CSV_HEADER" -v rows="$FRAMES" -v peak="$peak" '
+                BEGIN {
+                    print header
+                    for (i = 0; i < rows + 0; i++) {
+                        print i "," 0 "," (i == 0 ? peak : 1000000)
+                    }
+                }' > "$csv"
+        fi
+        return "$rc"
+    }
+
+    read_load1() {
+        printf '%s\n' "$stub_load"
+    }
+
+    argv_holds() {
+        if grep -Fxq -- "$1" "$argv_file"; then
+            printf 'yes\n'
+        else
+            printf 'no\n'
+        fi
+    }
+
+    argv_value_after() {
+        awk -v flag="$1" '$0 == flag { getline; print; exit }' "$argv_file"
+    }
+
+    # Run "$@" in a subshell and report `completed` or the first refusal line.
+    abort_reason() {
+        local captured
+        if captured="$( ( "$@" ) 2>&1 1>/dev/null )"; then
+            printf 'completed\n'
+        else
+            printf '%s\n' "$captured" | head -n 1
+        fi
+    }
+
+    # --- speed: a passing single-layer group --------------------------------
+    speed_output_dir="$test_root/speed-attempt"
+    mkdir -p "$speed_output_dir/groups"
+    speed_summary="$speed_output_dir/speed-summary.csv"
+    : > "$speed_summary"
+    speed_group_count=0
+    speed_failure_count=0
+
+    run_speed_group baseline cbr 720p30 6 0 0 1
+    expect_equal "a passing baseline speed group records PASS" \
+        "$(awk -F, '$1 == "baseline-cbr-720p30-cpu6" { print $25 "," $26 }' "$speed_summary")" \
+        "PASS,none"
+    expect_equal "a baseline speed group is anchored on pinned vpxenc" \
+        "$(argv_value_after --anchor-kind)/$(argv_value_after --anchor-encoder)" \
+        "vpxenc/$vpxenc"
+    expect_equal "the rvp9 test arm is driven through the vpxenc surface" \
+        "$(argv_value_after --test-kind)/$(argv_value_after --test-encoder)" \
+        "vpxenc/$test_encoder"
+    expect_equal "the test arm is recorded at the PGO source commit" \
+        "$(argv_value_after --test-revision)" "$pgo_source_commit"
+    expect_equal "the anchor arm is recorded at the pinned libvpx revision" \
+        "$(argv_value_after --anchor-revision)" "$libvpx_revision"
+    expect_equal "a single-layer speed group omits --temporal-layers" \
+        "$(argv_holds --temporal-layers)" "no"
+    expect_equal "a baseline speed group encodes the clean input" \
+        "$(argv_holds "in_to_tree=$(acceptance_input in_to_tree 720p30 clean)")" "yes"
+    expect_equal "a baseline speed group passes the whole 720p30 corpus" \
+        "$(awk '$0 == "--clip" { n++ } END { print n + 0 }' "$argv_file")" 3
+    expect_equal "every speed group states the host-load limit" \
+        "$(argv_value_after --max-load1)" "$MAX_LOAD1"
+    expect_equal "every speed group states the declared pairing" \
+        "$(argv_value_after --warmups)/$(argv_value_after --pairs)/$(argv_value_after --rotations)" \
+        "1/5/2"
+
+    # --- speed: a temporal group and the denoiser's noisy input -------------
+    run_speed_group temporal_t2 vbr 1080p60 8 0 0 2
+    expect_equal "a T2 speed group is anchored on the pinned temporal adapter" \
+        "$(argv_value_after --anchor-kind)/$(argv_value_after --anchor-encoder)" \
+        "temporal-svc/$temporal_anchor"
+    expect_equal "a T2 speed group passes two temporal layers" \
+        "$(argv_value_after --temporal-layers)" "2"
+    expect_equal "a 1080p60 speed group passes the two-clip corpus" \
+        "$(awk '$0 == "--clip" { n++ } END { print n + 0 }' "$argv_file")" 2
+
+    run_speed_group temporal_t3 cbr 720p30 7 0 0 3
+    expect_equal "a T3 speed group passes three temporal layers" \
+        "$(argv_value_after --temporal-layers)" "3"
+
+    run_speed_group denoiser vbr 1080p30 7 0 1 1
+    expect_equal "a denoiser speed group encodes the noisy input on both arms" \
+        "$(argv_holds "in_to_tree=$(acceptance_input in_to_tree 1080p30 noisy)")" "yes"
+    expect_equal "a denoiser speed group never encodes the clean input" \
+        "$(argv_holds "in_to_tree=$(acceptance_input in_to_tree 1080p30 clean)")" "no"
+    expect_equal "a denoiser speed group enables the denoiser" \
+        "$(argv_value_after --noise-sensitivity)" "1"
+    expect_equal "a denoiser speed group omits --temporal-layers" \
+        "$(argv_holds --temporal-layers)" "no"
+
+    run_speed_group aq3 vbr 720p30 7 3 0 1
+    expect_equal "an aq3 speed group passes AQ mode 3" \
+        "$(argv_value_after --aq-mode)" "3"
+
+    # --- speed: the ratio boundary and a recorded miss ----------------------
+    stub_separate="1.050000"
+    stub_paired="1.050000"
+    stub_rc=0
+    run_speed_group baseline vbr 720p30 6 0 0 1
+    expect_equal "a speed group at exactly 1.05x passes" \
+        "$(awk -F, '$1 == "baseline-vbr-720p30-cpu6" { print $25 "," $26 }' "$speed_summary")" \
+        "PASS,none"
+
+    stub_separate="1.050001"
+    stub_paired="1.000000"
+    stub_rc=1
+    run_speed_group baseline cbr 1080p30 6 0 0 1
+    expect_equal "a speed group just past 1.05x records a separate-ratio miss" \
+        "$(awk -F, '$1 == "baseline-cbr-1080p30-cpu6" { print $25 "," $26 }' "$speed_summary")" \
+        "FAIL,over-ratio:separate"
+
+    stub_separate="1.000000"
+    stub_paired="1.050001"
+    run_speed_group baseline cbr 1080p60 6 0 0 1
+    expect_equal "a paired-ratio miss is recorded and named" \
+        "$(awk -F, '$1 == "baseline-cbr-1080p60-cpu6" { print $25 "," $26 }' "$speed_summary")" \
+        "FAIL,over-ratio:paired"
+
+    stub_separate="1.100000"
+    stub_paired="1.200000"
+    run_speed_group baseline cbr 1080p30 7 0 0 1
+    expect_equal "both ratios missing is named as both" \
+        "$(awk -F, '$1 == "baseline-cbr-1080p30-cpu7" { print $26 }' "$speed_summary")" \
+        "over-ratio:separate+paired"
+
+    expect_equal "the speed phase kept measuring past every miss" \
+        "$speed_group_count" 9
+    expect_equal "three speed groups were recorded as misses" \
+        "$speed_failure_count" 3
+    expect_equal "every measured speed group is in the census" \
+        "$(awk 'END { print NR + 0 }' "$speed_summary")" 9
+
+    # --- speed: measurement failures abort ----------------------------------
+    stub_separate="1.000000"
+    stub_paired="1.000000"
+    stub_rc=0
+
+    stub_mode="no-summary"
+    expect_equal "a speed group with no summary.csv aborts" \
+        "$(refusal_starts_with \
+              "$(abort_reason run_speed_group baseline vbr 1080p30 8 0 0 1)" \
+              "baseline-vbr-1080p30-cpu8: relative-speed measurement failed: the runner wrote no summary.csv")" \
+        "refused"
+
+    stub_mode="load-refusal"
+    expect_equal "a host-load refusal aborts and is named" \
+        "$(abort_reason run_speed_group baseline vbr 1080p60 8 0 0 1 |
+              awk 'END { print ($0 ~ /relative-speed measurement failed/) ? "refused" : "not-refused" }')" \
+        "refused"
+
+    stub_mode="normal"
+    stub_test_hashes=2
+    expect_equal "an unstable test-arm hash aborts" \
+        "$(refusal_starts_with \
+              "$(abort_reason run_speed_group baseline cbr 720p30 7 0 0 1)" \
+              "baseline-cbr-720p30-cpu7: relative-speed measurement failed: the encoders did not produce reproducible output (test-unstable:in_to_tree)")" \
+        "refused"
+    stub_test_hashes=1
+    stub_anchor_hashes=3
+    expect_equal "an unstable anchor-arm hash aborts" \
+        "$(refusal_starts_with \
+              "$(abort_reason run_speed_group baseline cbr 720p30 8 0 0 1)" \
+              "baseline-cbr-720p30-cpu8: relative-speed measurement failed: the encoders did not produce reproducible output (anchor-unstable:in_to_tree)")" \
+        "refused"
+    stub_anchor_hashes=1
+
+    stub_rc=1
+    expect_equal "a refusal contradicting its own passing ratios aborts" \
+        "$(abort_reason run_speed_group denoiser cbr 720p30 6 0 1 1 |
+              awk 'END { print ($0 ~ /verdict and its evidence disagree/) ? "refused" : "not-refused" }')" \
+        "refused"
+    stub_rc=0
+    stub_separate="1.500000"
+    expect_equal "a success contradicting its own missing ratios aborts" \
+        "$(abort_reason run_speed_group denoiser cbr 1080p30 6 0 1 1 |
+              awk 'END { print ($0 ~ /verdict and its evidence disagree/) ? "refused" : "not-refused" }')" \
+        "refused"
+    stub_separate="1.000000"
+
+    # --- latency: a passing row ---------------------------------------------
+    latency_output_dir="$test_root/latency-attempt"
+    mkdir -p "$latency_output_dir/rows"
+    latency_raw="$latency_output_dir/latency-raw.csv"
+    latency_summary="$latency_output_dir/latency-summary.csv"
+    : > "$latency_raw"
+    : > "$latency_summary"
+    latency_row_count=0
+    latency_measured_count=0
+    latency_failure_count=0
+
+    stub_run=0
+    run_latency_row baseline cbr 720p30 in_to_tree 6 0 0 1
+    expect_equal "a passing latency row records PASS" \
+        "$(awk -F, '$1 == "baseline-cbr-720p30-in_to_tree-cpu6" { print $23 "," $24 }' "$latency_summary")" \
+        "PASS,none"
+    expect_equal "the median is taken over the five measured runs, not all six" \
+        "$(awk -F, '$1 == "baseline-cbr-720p30-in_to_tree-cpu6" { print $16 "," $18 }' "$latency_summary")" \
+        "11.000000,21.000000"
+    expect_equal "a latency row runs one warmup and five measured runs" \
+        "$(awk -F, '$1 == "baseline-cbr-720p30-in_to_tree-cpu6" { print $12 }' "$latency_raw" |
+              tr '\n' ',')" \
+        "warmup,measured,measured,measured,measured,measured,"
+    expect_equal "a single-layer latency row omits --temporal-layers" \
+        "$(argv_holds --temporal-layers)" "no"
+    expect_equal "a baseline latency row encodes the clean input" \
+        "$(argv_value_after --input)" "$(acceptance_input in_to_tree 720p30 clean)"
+    expect_equal "a latency row states both frame budgets" \
+        "$(argv_value_after --budget-ms)/$(argv_value_after --p99-budget-ms)" \
+        "33.333/50"
+    expect_equal "every latency run is measured through the PGO encoder" \
+        "$(argv_value_after --encoder)" "$test_encoder"
+    expect_equal "a non-AQ row records no max-frame budget" \
+        "$(awk -F, '$1 == "baseline-cbr-720p30-in_to_tree-cpu6" { print $21 }' "$latency_summary")" \
+        "none"
+    expect_equal "all six encodes hashed identically" \
+        "$(awk -F, '$1 == "baseline-cbr-720p30-in_to_tree-cpu6" { print $22 }' "$latency_summary")" \
+        1
+
+    # --- latency: temporal and denoiser command policy ----------------------
+    stub_run=0
+    run_latency_row temporal_t3 vbr 1080p60 old_town_cross 8 0 0 3
+    expect_equal "a T3 latency row passes three temporal layers" \
+        "$(argv_value_after --temporal-layers)" "3"
+    expect_equal "a 1080p60 latency row states the 60fps budgets" \
+        "$(argv_value_after --budget-ms)/$(argv_value_after --p99-budget-ms)" \
+        "16.667/25"
+
+    stub_run=0
+    run_latency_row denoiser cbr 1080p30 ducks_take_off 7 0 1 1
+    expect_equal "a denoiser latency row encodes the noisy input" \
+        "$(argv_value_after --input)" \
+        "$(acceptance_input ducks_take_off 1080p30 noisy)"
+    expect_equal "a denoiser latency row enables the denoiser" \
+        "$(argv_value_after --noise-sensitivity)" "1"
+
+    # --- latency: the AQ3 max-frame boundary --------------------------------
+    #
+    # 66 ms exactly passes. One nanosecond more, in one measured run out of
+    # five, fails -- which is the whole point of taking a maximum.
+    stub_run=0
+    stub_peak_list="1000000 1000000 1000000 66000000 1000000 1000000"
+    run_latency_row aq3 vbr 720p30 in_to_tree 7 3 0 1
+    expect_equal "an AQ3 row at exactly 66 ms passes" \
+        "$(awk -F, '$1 == "aq3-vbr-720p30-in_to_tree-cpu7" { print $20 "," $21 "," $23 "," $24 }' "$latency_summary")" \
+        "66.000000,66,PASS,none"
+
+    stub_run=0
+    stub_peak_list="1000000 1000000 1000000 66000001 1000000 1000000"
+    run_latency_row aq3 vbr 1080p30 in_to_tree 7 3 0 1
+    expect_equal "one measured frame past 66 ms fails the AQ3 row" \
+        "$(awk -F, '$1 == "aq3-vbr-1080p30-in_to_tree-cpu7" { print $20 "," $23 "," $24 }' "$latency_summary")" \
+        "66.000001,FAIL,over-max-frame"
+
+    # A spike in the warmup is not a measured frame and must not gate.
+    stub_run=0
+    stub_peak_list="99000000 1000000 1000000 1000000 1000000 1000000"
+    run_latency_row aq3 vbr 1080p60 old_town_cross 7 3 0 1
+    expect_equal "a warmup spike does not gate an AQ3 row" \
+        "$(awk -F, '$1 == "aq3-vbr-1080p60-old_town_cross-cpu7" { print $20 "," $23 }' "$latency_summary")" \
+        "1.000000,PASS"
+
+    # The maximum is never medianed: three clean runs cannot outvote one spike.
+    stub_run=0
+    stub_peak_list="1000000 1000000 1000000 90000000 1000000 1000000"
+    run_latency_row aq3 vbr 1080p30 ducks_take_off 7 3 0 1
+    expect_equal "a single spiking run is not medianed away" \
+        "$(awk -F, '$1 == "aq3-vbr-1080p30-ducks_take_off-cpu7" { print $20 "," $23 "," $24 }' "$latency_summary")" \
+        "90.000000,FAIL,over-max-frame"
+    stub_peak_list="1000000 1000000 1000000 1000000 1000000 1000000"
+
+    # A non-AQ row measures the same maximum and is never gated on it.
+    stub_run=0
+    stub_peak_list="1000000 1000000 1000000 90000000 1000000 1000000"
+    run_latency_row baseline cbr 1080p30 in_to_tree 8 0 0 1
+    expect_equal "a non-AQ row records its max frame without gating on it" \
+        "$(awk -F, '$1 == "baseline-cbr-1080p30-in_to_tree-cpu8" { print $20 "," $21 "," $23 }' "$latency_summary")" \
+        "90.000000,none,PASS"
+    stub_peak_list="1000000 1000000 1000000 1000000 1000000 1000000"
+
+    # --- latency: the p50 and p99 budget boundaries -------------------------
+    stub_run=0
+    stub_p50_list="10.00 33.333 33.333 33.333 33.333 33.333"
+    stub_p99_list="20.00 50 50 50 50 50"
+    stub_rc_list="0 3 3 3 3 3"
+    run_latency_row baseline vbr 720p30 ducks_take_off 6 0 0 1
+    expect_equal "a row sitting exactly on both budgets passes" \
+        "$(awk -F, '$1 == "baseline-vbr-720p30-ducks_take_off-cpu6" { print $23 "," $24 }' "$latency_summary")" \
+        "PASS,none"
+
+    stub_run=0
+    stub_p50_list="10.00 33.334 33.334 33.334 33.334 33.334"
+    run_latency_row baseline vbr 720p30 old_town_cross 6 0 0 1
+    expect_equal "a p50 median past budget records a p50 miss" \
+        "$(awk -F, '$1 == "baseline-vbr-720p30-old_town_cross-cpu6" { print $23 "," $24 }' "$latency_summary")" \
+        "FAIL,over-budget:p50"
+
+    stub_run=0
+    stub_p50_list="10.00 10.00 10.00 10.00 10.00 10.00"
+    stub_p99_list="20.00 51 51 51 51 51"
+    stub_rc_list="0 4 4 4 4 4"
+    run_latency_row baseline vbr 1080p30 old_town_cross 6 0 0 1
+    expect_equal "a p99 median past budget records a p99 miss" \
+        "$(awk -F, '$1 == "baseline-vbr-1080p30-old_town_cross-cpu6" { print $23 "," $24 }' "$latency_summary")" \
+        "FAIL,over-budget:p99"
+
+    stub_run=0
+    stub_p50_list="10.00 40 40 40 40 40"
+    run_latency_row baseline vbr 1080p60 old_town_cross 6 0 0 1
+    expect_equal "both budgets missed is named as both" \
+        "$(awk -F, '$1 == "baseline-vbr-1080p60-old_town_cross-cpu6" { print $24 }' "$latency_summary")" \
+        "over-budget:p50+p99"
+
+    stub_p50_list="10.00 10.00 12.00 11.00 13.00 9.00"
+    stub_p99_list="20.00 20.00 22.00 21.00 23.00 19.00"
+    stub_rc_list="0 0 0 0 0 0"
+
+    expect_equal "the latency phase kept measuring past every miss" \
+        "$latency_row_count" 12
+    expect_equal "every latency row contributed five measured runs" \
+        "$latency_measured_count" "$(( 12 * LATENCY_MEASURED_RUNS ))"
+    expect_equal "five latency rows were recorded as misses" \
+        "$latency_failure_count" 5
+    expect_equal "every measured latency row is in the census" \
+        "$(awk 'END { print NR + 0 }' "$latency_summary")" 12
+    expect_equal "every latency run is in the raw census" \
+        "$(awk 'END { print NR + 0 }' "$latency_raw")" \
+        "$(( 12 * (LATENCY_WARMUP_RUNS + LATENCY_MEASURED_RUNS) ))"
+
+    # --- latency: measurement failures abort --------------------------------
+    stub_run=0
+    stub_rc_list="0 0 1 0 0 0"
+    expect_equal "an encoder failure aborts the latency row" \
+        "$(abort_reason run_latency_row baseline cbr 720p30 old_town_cross 7 0 0 1 |
+              awk 'END { print ($0 ~ /which is not a budget verdict/) ? "refused" : "not-refused" }')" \
+        "refused"
+
+    stub_run=0
+    stub_rc_list="0 0 2 0 0 0"
+    expect_equal "an invalid-timing-CSV exit aborts the latency row" \
+        "$(abort_reason run_latency_row baseline cbr 720p30 ducks_take_off 7 0 0 1 |
+              awk 'END { print ($0 ~ /which is not a budget verdict/) ? "refused" : "not-refused" }')" \
+        "refused"
+
+    stub_rc_list="0 0 0 0 0 0"
+    stub_run=0
+    stub_payload_list="ivf ivf ivf other ivf ivf"
+    expect_equal "unstable output across the six encodes aborts the row" \
+        "$(abort_reason run_latency_row baseline cbr 1080p60 in_to_tree 7 0 0 1 |
+              awk 'END { print ($0 ~ /distinct IVF hashes/) ? "refused" : "not-refused" }')" \
+        "refused"
+
+    stub_payload_list="ivf ivf ivf ivf ivf ivf"
+    stub_run=0
+    stub_peak_list="1000000 1000000 skip-csv 1000000 1000000 1000000"
+    expect_equal "a missing per-frame timing CSV aborts the row" \
+        "$(abort_reason run_latency_row baseline cbr 1080p30 ducks_take_off 8 0 0 1 |
+              awk 'END { print ($0 ~ /wrote no per-frame timing CSV/) ? "refused" : "not-refused" }')" \
+        "refused"
+    stub_peak_list="1000000 1000000 1000000 1000000 1000000 1000000"
+
+    # --- host load fails closed ---------------------------------------------
+    stub_load="0.750000"
+    enforce_load "self-test-boundary" > /dev/null
+    expect_equal "a load of exactly 0.75 is accepted" \
+        "$(manifest_field load_observation_self-test-boundary < "$manifest")" \
+        "0.750000"
+    stub_load="0.750001"
+    expect_equal "a load past 0.75 fails closed" \
+        "$(abort_reason enforce_load self-test-over |
+              awk 'END { print ($0 ~ /exceeds 0.75/) ? "refused" : "not-refused" }')" \
+        "refused"
+    stub_load=""
+    expect_equal "an unreadable load fails closed" \
+        "$(abort_reason enforce_load self-test-unreadable |
+              awk 'END { print ($0 ~ /fails closed/) ? "refused" : "not-refused" }')" \
+        "refused"
+
+    # --- nothing left the private temp directory ----------------------------
+    #
+    # Every path this self-test wrote through is one of these four. Asserting
+    # their containment is what makes "creates no repo file" checkable rather
+    # than merely intended.
+    expect_equal "every timing self-test path stayed under its own temp root" \
+        "$(for path in "$work_dir" "$speed_output_dir" "$latency_output_dir" \
+              "$argv_file" "$manifest"
+          do
+              if [ "${path#"$test_root"/}" = "$path" ]; then
+                  printf 'escaped:%s ' "$path"
+              fi
+          done)" \
+        ""
+    expect_equal "the timing self-test did actually write into its temp root" \
+        "$(if [ -s "$manifest" ] && [ -s "$argv_file" ] &&
+              [ -s "$speed_summary" ] && [ -s "$latency_summary" ]
+          then printf 'wrote'; else printf 'empty'; fi)" \
+        "wrote"
+
+    cleanup_timing_self_test
+    trap - EXIT HUP INT TERM
+
+    if [ "$selftest_failures" -ne 0 ]; then
+        printf '\ntiming self-test FAILED with %s mismatch(es)\n' "$selftest_failures" >&2
+        return 1
+    fi
+    printf '\ntiming filesystem self-test passed\n'
+}
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
@@ -3327,6 +5114,11 @@ main() {
             resume_self_test
             return 0
             ;;
+        --self-test-timing)
+            [ "$#" -eq 1 ] || fail "--self-test-timing must be the only argument"
+            timing_self_test
+            return 0
+            ;;
         "")
             usage >&2
             fail "no arguments; try --help"
@@ -3335,8 +5127,8 @@ main() {
 
     parse_args "$@"
     resolve_environment
-    acquire_quality_lock
-    install_quality_lock_traps
+    acquire_run_lock
+    install_run_lock_traps
 
     if [ "$resume" = "yes" ]; then
         validate_resume_contract
@@ -3349,7 +5141,22 @@ main() {
         record_acceptance_inputs
         seal_fresh_run
     fi
-    run_quality
+
+    # `all` is explicit and ordered: quality first, because it is the phase a
+    # resumed run can recover, then the two timing phases. Each phase publishes
+    # its own complete result directory, so a later phase failing never
+    # retracts an earlier phase's evidence.
+    case "$phase" in
+        quality) run_quality ;;
+        speed)   run_speed ;;
+        latency) run_latency ;;
+        all)
+            run_quality
+            run_speed
+            run_latency
+            ;;
+        *) fail "no runner is wired for phase: $phase" ;;
+    esac
 
     manifest_kv ended_utc "$(utc_now)"
     printf 'run_end status=pass\n' >> "$manifest"
