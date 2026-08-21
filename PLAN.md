@@ -831,7 +831,7 @@ evidence and rejected hypotheses are recorded in
   complete without a crash or sanitizer report.
 - [x] Bounded encode/decode soak smoke completes without an error.
 - [ ] CI gates BD-rate and latency regressions.
-- [ ] Security review report logged.
+- [x] Security review report logged.
 
 **Deferred Intel assurance (not a current release blocker, approved
 2026-08-21):** the billion-iteration fuzz campaign and 72-hour monitored soak
