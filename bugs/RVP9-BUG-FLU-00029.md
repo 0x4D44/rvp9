@@ -1,25 +1,25 @@
 # RVP9-BUG-FLU-00029 — Legal empty VP9 tile row panics decoder
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Must
 - **Severity:** High
 - **Area:** decoder/tiles
 - **Raised:** 2026-08-21T14:18:04Z
 - **Discovery source:** Automation
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260821T221548Z-53d0861b
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLU-00029-run-fix-20260821T221548Z-53d0861b
-- **Owner base:** bd22f9f47f63b627813234569ff751657d392b4f
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-08-21T22:15:48Z
-- **Owner until:** 2026-08-22T00:15:48Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-21T14:18:04Z, raised via `deltic bugs new` model=gpt-5.6-sol@high)
+- **State history:** Open (2026-08-21T14:18:04Z, raised via `deltic bugs new` model=gpt-5.6-sol@high) -> Fixed (2026-08-21T22:16:29Z, deltic:auto role=fix run=fix-20260821T221548Z-53d0861b branch=task/bug-RVP9-BUG-FLU-00029-run-fix-20260821T221548Z-53d0861b code=c9316971e1393c2270f29673efb64aa5b1c49f8c gate=manual)
 
 ## Observation
 
