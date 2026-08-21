@@ -70,7 +70,7 @@ fn report(name: &str, scalar_ns: f64, avx2_ns: f64) {
 
 #[cfg(target_arch = "x86_64")]
 fn run() {
-    use rvp9_core::dsp::x86_64::{
+    use rvp9_core::dsp::accelerated::{
         convolve8_avx2, convolve8_scaled_avx2, convolve8_vert_avx2, d117_predictor_avx2,
         d153_predictor_avx2,
     };
@@ -96,7 +96,11 @@ fn run() {
             convolve8_vert(black_box(&src), stride, black_box(&mut dst), w, filt, w, h);
         });
         let a = bench_min_ns(batches, iters, || {
-            convolve8_vert_avx2(black_box(&src), stride, black_box(&mut dst), w, filt, w, h);
+            // SAFETY: the host AVX2 check above passed and these allocated
+            // buffers cover the complete benchmark footprint.
+            unsafe {
+                convolve8_vert_avx2(black_box(&src), stride, black_box(&mut dst), w, filt, w, h);
+            }
         });
         report(&format!("convolve8_vert {w}x{h}"), s, a);
 
@@ -113,16 +117,20 @@ fn run() {
             );
         });
         let a = bench_min_ns(batches, iters, || {
-            convolve8_avx2(
-                black_box(&src),
-                stride,
-                black_box(&mut dst),
-                w,
-                filt,
-                filt,
-                w,
-                h,
-            );
+            // SAFETY: the host AVX2 check above passed and these allocated
+            // buffers cover the complete benchmark footprint.
+            unsafe {
+                convolve8_avx2(
+                    black_box(&src),
+                    stride,
+                    black_box(&mut dst),
+                    w,
+                    filt,
+                    filt,
+                    w,
+                    h,
+                );
+            }
         });
         report(&format!("convolve8 (2D) {w}x{h}"), s, a);
     }
@@ -154,19 +162,23 @@ fn run() {
                 );
             });
             let a = bench_min_ns(batches, iters, || {
-                convolve8_scaled_avx2(
-                    black_box(&src),
-                    stride,
-                    black_box(&mut dst),
-                    w,
-                    kernel,
-                    0,
-                    step,
-                    0,
-                    step,
-                    w,
-                    h,
-                );
+                // SAFETY: the host AVX2 check above passed and these
+                // allocated buffers cover the scaled benchmark footprint.
+                unsafe {
+                    convolve8_scaled_avx2(
+                        black_box(&src),
+                        stride,
+                        black_box(&mut dst),
+                        w,
+                        kernel,
+                        0,
+                        step,
+                        0,
+                        step,
+                        w,
+                        h,
+                    );
+                }
             });
             report(&format!("convolve8_scaled {w}x{h}"), s, a);
         }
@@ -190,7 +202,11 @@ fn run() {
             d117_predictor(black_box(&mut dst), stride, bs, black_box(ctx));
         });
         let a = bench_min_ns(batches, iters, || {
-            d117_predictor_avx2(black_box(&mut dst), stride, bs, &above, &left, al);
+            // SAFETY: the host AVX2 check above passed and the fixed buffers
+            // satisfy the predictor's block-size layout.
+            unsafe {
+                d117_predictor_avx2(black_box(&mut dst), stride, bs, &above, &left, al);
+            }
         });
         report(&format!("d117_predictor {bs}x{bs}"), s, a);
 
@@ -198,7 +214,11 @@ fn run() {
             d153_predictor(black_box(&mut dst), stride, bs, black_box(ctx));
         });
         let a = bench_min_ns(batches, iters, || {
-            d153_predictor_avx2(black_box(&mut dst), stride, bs, &above, &left, al);
+            // SAFETY: the host AVX2 check above passed and the fixed buffers
+            // satisfy the predictor's block-size layout.
+            unsafe {
+                d153_predictor_avx2(black_box(&mut dst), stride, bs, &above, &left, al);
+            }
         });
         report(&format!("d153_predictor {bs}x{bs}"), s, a);
     }

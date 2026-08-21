@@ -70,3 +70,11 @@ test = false
 doc = false
 bench = false
 doctest = false
+
+[[bin]]
+name = "fuzz_decode_frame"
+path = "fuzz_targets/fuzz_decode_frame.rs"
+test = false
+doc = false
+bench = false
+doctest = false

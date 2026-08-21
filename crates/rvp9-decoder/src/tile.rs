@@ -3723,6 +3723,26 @@ mod tests {
         assert_eq!(b.mi_row_end, 30);
     }
 
+    /// A one-superblock-high frame split into two tile rows has a legal
+    /// leading empty tile. This matches libvpx's integer tile-offset formula.
+    #[test]
+    fn tile_bounds_allow_leading_empty_row() {
+        let info = TileInfo {
+            log2_tile_cols: 0,
+            log2_tile_rows: 1,
+        };
+
+        let leading = tile_bounds(&info, 8, 8, 0, 0);
+        assert_eq!(leading.mi_col_start, 0);
+        assert_eq!(leading.mi_col_end, 8);
+        assert_eq!(leading.mi_row_start, 0);
+        assert_eq!(leading.mi_row_end, 0);
+
+        let trailing = tile_bounds(&info, 8, 8, 1, 0);
+        assert_eq!(trailing.mi_row_start, 0);
+        assert_eq!(trailing.mi_row_end, 8);
+    }
+
     /// `mi_aligned_to_sb` rounds up to the next multiple of 8.
     #[test]
     fn mi_aligned_to_sb_round_up() {

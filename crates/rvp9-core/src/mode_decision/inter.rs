@@ -5482,12 +5482,12 @@ fn reconstruct_via_round_trip(
     // Tx32x32 tile even though only the prefix could be read.
     macro_rules! hadamard_metrics {
         ($n:literal, $transform:path, $subtract:path, $is_32x32:literal, $off_x:expr, $off_y:expr) => {{
-            let mut had_coeff_uninit = std::mem::MaybeUninit::<[i16; $n]>::uninit();
-            // SAFETY: every supported Hadamard transform and subtract kernel
-            // writes all `$n` output coefficients before this slice is read.
-            let had_coeff_i16: &mut [i16] = unsafe {
-                std::slice::from_raw_parts_mut(had_coeff_uninit.as_mut_ptr().cast::<i16>(), $n)
-            };
+            // The transform overwrites every coefficient. Initialising the
+            // array first nevertheless keeps the safe output slice valid;
+            // a reference to uninitialised `i16` values would itself violate
+            // Rust's validity rules before the kernel performs those writes.
+            let mut had_coeff = [0i16; $n];
+            let had_coeff_i16: &mut [i16] = &mut had_coeff;
             #[cfg(all(target_arch = "aarch64", not(miri)))]
             if reconstruct {
                 $transform(&residual[..$n], tx_side, had_coeff_i16);

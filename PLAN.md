@@ -1,8 +1,8 @@
 # rvp9-2: VP9 Encoder Port to Rust — Multistage Plan
 
-**Status:** Stage 5 hardening in progress; VBR and temporal SVC are experimental in v0.2.0.
+**Status:** Stage 5 release wrap in progress; VBR and temporal SVC are experimental in v0.2.0.
 **Owner:** Arthur (martin@tollens.ai) + Claude.
-**Last revised:** 2026-08-20.
+**Last revised:** 2026-08-21.
 
 ---
 
@@ -825,12 +825,22 @@ evidence and rejected hypotheses are recorded in
 7. Security review (consider invoking `security-review` skill).
 8. Documentation pass: `rustdoc` for public APIs, README polish.
 
-**Exit criteria:**
+**Current release exit criteria:**
 - [ ] All success criteria from §2 pass.
-- [ ] No new crashes from 1B fuzz iterations.
-- [ ] No leaks or drift in 72-hour soak.
+- [x] Bounded AddressSanitizer parser and full-frame decoder fuzz campaigns
+  complete without a crash or sanitizer report.
+- [x] Bounded encode/decode soak smoke completes without an error.
 - [ ] CI gates BD-rate and latency regressions.
 - [ ] Security review report logged.
+
+**Deferred Intel assurance (not a current release blocker, approved
+2026-08-21):** the billion-iteration fuzz campaign and 72-hour monitored soak
+are parked for Arthur's Intel fleet because Mac capacity is constrained. They
+remain required before making the stronger long-duration assurance claim, but
+do not block the current production-CBR release boundary.
+
+- [ ] No new crashes from 1B fuzz iterations on the Intel fleet.
+- [ ] No leaks or drift in a 72-hour monitored Intel soak.
 
 **Estimated effort:** 4–6 weeks.
 

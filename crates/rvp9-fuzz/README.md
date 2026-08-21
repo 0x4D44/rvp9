@@ -12,12 +12,13 @@ in the first 50 bytes of `parse_packet`).
 | Target              | Status            | Catches                          |
 |---------------------|-------------------|----------------------------------|
 | `fuzz_parse_packet` | **G9 (now)**      | parser panics / UB               |
-| `fuzz_decode_frame` | G9.1 (deferred)   | reconstruction-path crashes      |
+| `fuzz_decode_frame` | **G9.1 (now)**    | reconstruction-path crashes      |
 | `fuzz_full_stream`  | G9.2 (deferred)   | stateful (ref-map, FC) bugs      |
 
-G9.1 / G9.2 require a structured-encoder good enough to round-trip
-plausible-bit-exact frames through `parse_packet` → `decode_frame`.
-That capability lands with Stage 4a.
+`fuzz_decode_frame` consumes raw packets and relies on valid encoder and
+conformance seeds to reach the compressed-header, tile, mode, coefficient,
+motion-compensation, transform, and loop-filter paths. `fuzz_full_stream`
+remains deferred because it needs a stateful multi-packet corpus shape.
 
 ## One-time setup
 
@@ -59,6 +60,9 @@ The fuzz crate is NOT a member of the parent workspace (see the
 ```powershell
 # 30-second smoke (proves the target runs; useful in a hot loop).
 cargo +nightly fuzz run --fuzz-dir crates/rvp9-fuzz fuzz_parse_packet -- -max_total_time=30 -dict=crates/rvp9-fuzz/fuzz.dict
+
+# Reconstruction-path smoke; seed CORPUS with raw VP9 packet payloads.
+cargo +nightly fuzz run --fuzz-dir crates/rvp9-fuzz fuzz_decode_frame CORPUS -- -max_total_time=30 -dict=crates/rvp9-fuzz/fuzz.dict
 
 # 5-minute smoke (matches CI cadence from HLD §G9).
 cargo +nightly fuzz run --fuzz-dir crates/rvp9-fuzz fuzz_parse_packet -- -max_total_time=300 -dict=crates/rvp9-fuzz/fuzz.dict
@@ -116,7 +120,8 @@ crates/rvp9-fuzz/
 ├── README.md
 ├── fuzz.dict                  # libFuzzer dictionary (committed)
 ├── fuzz_targets/
-│   └── fuzz_parse_packet.rs   # target body
+│   ├── fuzz_parse_packet.rs   # uncompressed-header parser target
+│   └── fuzz_decode_frame.rs   # full frame reconstruction target
 ├── corpus/                    # GITIGNORED — populated by setup script
 │   └── fuzz_parse_packet/
 └── artifacts/                 # GITIGNORED — libFuzzer crash output

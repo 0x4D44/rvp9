@@ -58,10 +58,8 @@ use rvp9_core::transforms::inverse::{
 use rvp9_core::transforms::types::{TxSize, TxType};
 
 use crate::detokenize::decode_block_tokens;
+use crate::reconstruct::DQ_COEFS_BUF;
 use crate::tile_ctx::TileCoefCtx;
-
-/// Maximum coefficient count at any TX size (`Tx32x32 = 32 * 32 = 1024`).
-const MAX_TX_COEFFS: usize = 1024;
 
 /// Per-plane chroma subsampling derived from a [`ChromaFormat`].
 /// Plane 0 (luma) is always full-resolution `(0, 0)`; chroma planes
@@ -573,19 +571,6 @@ pub fn reconstruct_inter_block<D: TileFrameDst>(
 
                     let tx_type = TxType::DctDct; // inter blocks always use DctDct
                     let seg_eob = plane_tx.n_coeffs();
-                    // R.10: MaybeUninit eliminates the 4KB stack zero per
-                    // TX iteration. `decode_block_tokens` -> `decode_coefs`
-                    // zeros `[..seg_eob]` internally (`detokenize.rs:305-307`),
-                    // and only `[..seg_eob]` is read afterwards
-                    // (`inverse_transform_add_dct(coefs, ...)` line 568,
-                    // n = seg_eob in this caller per Tx*.n_coeffs()).
-                    let mut dq_coefs_uninit: std::mem::MaybeUninit<[i32; MAX_TX_COEFFS]> =
-                        std::mem::MaybeUninit::uninit();
-                    // SAFETY: decode_block_tokens fully writes
-                    // dq_coefs[..seg_eob] (via its zero pass); subsequent
-                    // reads stay within that range.
-                    let dq_coefs: &mut [i32; MAX_TX_COEFFS] =
-                        unsafe { dq_coefs_uninit.assume_init_mut() };
                     // Frame-edge clamp for the entropy-context writeback
                     // (libvpx `vp9_set_contexts`, `vp9_blockd.c:87-122`):
                     // the in-frame above/left cell counts for this TX are
@@ -598,41 +583,43 @@ pub fn reconstruct_inter_block<D: TileFrameDst>(
                     let left_cells = (max_blocks_high as isize - loff as isize)
                         .clamp(0, tx_step_4x4 as isize)
                         as usize;
-                    let eob = decode_block_tokens(
-                        reader,
-                        fc,
-                        coef_counts.as_deref_mut(),
-                        coef_ctx,
-                        plane,
-                        plane_x4_base + aoff,
-                        plane_y4_in_sb_base + loff,
-                        plane_tx,
-                        tx_type,
-                        /* ref_type = */ 1, // inter
-                        seg_eob,
-                        plane_dequant_pair,
-                        &mut dq_coefs[..seg_eob],
-                        above_cells,
-                        left_cells,
-                    );
-
-                    if eob > 0 {
-                        // G2 (decoder-hardening V6 §G2): pass
-                        // `inputs.lossless` so the 4×4 site can pick
-                        // the inverse Walsh-Hadamard family
-                        // (`iwht4x4_*_add`) instead of the standard
-                        // IDCT when the frame is lossless. Larger TX
-                        // sizes are not legal in lossless mode.
-                        inverse_transform_add_dct(
+                    DQ_COEFS_BUF.with_borrow_mut(|dq_coefs| {
+                        let eob = decode_block_tokens(
+                            reader,
+                            fc,
+                            coef_counts.as_deref_mut(),
+                            coef_ctx,
+                            plane,
+                            plane_x4_base + aoff,
+                            plane_y4_in_sb_base + loff,
                             plane_tx,
-                            &dq_coefs[..seg_eob],
-                            eob,
-                            tx_dst,
-                            dst_stride,
-                            inputs.lossless,
-                            dispatch,
+                            tx_type,
+                            /* ref_type = */ 1, // inter
+                            seg_eob,
+                            plane_dequant_pair,
+                            &mut dq_coefs[..seg_eob],
+                            above_cells,
+                            left_cells,
                         );
-                    }
+
+                        if eob > 0 {
+                            // G2 (decoder-hardening V6 §G2): pass
+                            // `inputs.lossless` so the 4×4 site can pick
+                            // the inverse Walsh-Hadamard family
+                            // (`iwht4x4_*_add`) instead of the standard
+                            // IDCT when the frame is lossless. Larger TX
+                            // sizes are not legal in lossless mode.
+                            inverse_transform_add_dct(
+                                plane_tx,
+                                &dq_coefs[..seg_eob],
+                                eob,
+                                tx_dst,
+                                dst_stride,
+                                inputs.lossless,
+                                dispatch,
+                            );
+                        }
+                    });
 
                     aoff += tx_step_4x4;
                 }
@@ -1197,21 +1184,10 @@ fn build_inter_predictor_with_mc_border(
         b_w <= MC_BORDER_SCRATCH_MAX && b_h <= MC_BORDER_SCRATCH_MAX,
         "MC scratch footprint {b_w}×{b_h} exceeds MC_BORDER_SCRATCH_MAX = {MC_BORDER_SCRATCH_MAX}",
     );
-    // R.9: 25 KB uninit scratch. `build_mc_border` writes every cell
-    // of `&mut scratch[..scratch_used]` (left fill + copy + right fill
-    // sum to exactly `b_w` per row × `b_h` rows = `scratch_used`), so
-    // `assume_init_mut` is sound — every cell we read post-call has
-    // been written. Replaces `[0u8; ...]` whose compiler-emitted
-    // memset at this declaration was wasted work (the buffer is
-    // immediately overwritten by build_mc_border).
-    let mut scratch_uninit: std::mem::MaybeUninit<
-        [u8; MC_BORDER_SCRATCH_MAX * MC_BORDER_SCRATCH_MAX],
-    > = std::mem::MaybeUninit::uninit();
-    // SAFETY: every byte of `scratch[..scratch_used]` is written by
-    // `build_mc_border` below before any read; reads outside that
-    // range never happen (the convolve only indexes `[..scratch_used]`).
-    let scratch: &mut [u8; MC_BORDER_SCRATCH_MAX * MC_BORDER_SCRATCH_MAX] =
-        unsafe { scratch_uninit.assume_init_mut() };
+    // This fallback is rare. Keep the temporary fully initialised so safe
+    // slice references never cover uninitialised bytes; `build_mc_border`
+    // overwrites the exact prefix consumed by the convolve.
+    let mut scratch = [0u8; MC_BORDER_SCRATCH_MAX * MC_BORDER_SCRATCH_MAX];
     let scratch_stride = b_w;
     let scratch_used = b_h * scratch_stride;
 
@@ -1251,7 +1227,7 @@ fn build_inter_predictor_with_mc_border(
     // window horizontally). The kernel never indexes past
     // `b_w - 1`.
     rvp9_core::inter::inter_predictor_with_dispatch(
-        &scratch[..],
+        &scratch[..scratch_used],
         scratch_stride,
         dst,
         dst_stride,

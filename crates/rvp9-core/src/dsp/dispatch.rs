@@ -847,7 +847,7 @@ pub struct SimdDispatch {
     /// Signature mirrors the scalar reference
     /// [`crate::transforms::inverse::idct8x8_64_add`]. On x86_64 AVX2
     /// CPUs this points at the safe wrapper
-    /// [`crate::dsp::x86_64::idct8x8_add_avx2`]; otherwise it points
+    /// [`crate::dsp::x86_64::idct8x8_avx2::idct8x8_add_avx2`]; otherwise it points
     /// at the scalar reference.
     pub(crate) idct8x8_add: fn(input: &[i32; 64], dst: &mut [u8], stride: usize),
 
@@ -907,7 +907,7 @@ pub struct SimdDispatch {
     /// mirrors the scalar reference
     /// [`crate::transforms::inverse::idct32x32_34_add`]. On x86_64
     /// AVX2 CPUs this points at the safe wrapper
-    /// [`crate::dsp::x86_64::idct32x32_34_add_avx2`]; otherwise it
+    /// [`crate::dsp::x86_64::idct32x32_34_avx2::idct32x32_34_add_avx2`]; otherwise it
     /// points at the scalar reference. Same finisher as the
     /// `idct32x32_add` AVX2 kernel — only the row count differs
     /// (Stage 1 runs for the first 8 rows only). Caller must respect
@@ -919,7 +919,7 @@ pub struct SimdDispatch {
     /// mirrors the scalar reference
     /// [`crate::transforms::inverse::idct32x32_135_add`]. On x86_64
     /// AVX2 CPUs this points at the safe wrapper
-    /// [`crate::dsp::x86_64::idct32x32_135_add_avx2`]; otherwise it
+    /// [`crate::dsp::x86_64::idct32x32_135_avx2::idct32x32_135_add_avx2`]; otherwise it
     /// points at the scalar reference. Same finisher as the
     /// `idct32x32_add` AVX2 kernel — only the row count differs
     /// (Stage 1 runs for the first 16 rows only). Caller must respect
@@ -931,7 +931,7 @@ pub struct SimdDispatch {
     /// mirrors the scalar reference
     /// [`crate::transforms::inverse::idct16x16_10_add`]. On x86_64 AVX2
     /// CPUs this points at the safe wrapper
-    /// [`crate::dsp::x86_64::idct16x16_10_add_avx2`] (finisher-only
+    /// [`crate::dsp::x86_64::idct16x16_10_avx2::idct16x16_10_add_avx2`] (finisher-only
     /// port: row pass reduced to 4 rows, Stage 3 reused from
     /// `idct16x16_add_avx2`); otherwise it points at the scalar
     /// reference.
@@ -942,7 +942,7 @@ pub struct SimdDispatch {
     /// mirrors the scalar reference
     /// [`crate::transforms::inverse::idct16x16_38_add`]. On x86_64 AVX2
     /// CPUs this points at the safe wrapper
-    /// [`crate::dsp::x86_64::idct16x16_38_add_avx2`] (finisher-only
+    /// [`crate::dsp::x86_64::idct16x16_38_avx2::idct16x16_38_add_avx2`] (finisher-only
     /// port: row pass reduced to 8 rows, Stage 3 reused from
     /// `idct16x16_add_avx2`); otherwise it points at the scalar
     /// reference.

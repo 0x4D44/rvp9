@@ -39,9 +39,9 @@ pub use lpf16_neon::{
 };
 pub use minmax_neon::minmax_8x8_neon;
 pub use quantize_neon::{
-    HadamardQuantMetrics, HadamardQuantRateMetrics, vp9_quantize_b_32x32_neon, vp9_quantize_b_neon,
-    vp9_quantize_fp_32x32_i16_metrics_neon, vp9_quantize_fp_32x32_i16_rate_metrics_neon,
-    vp9_quantize_fp_32x32_neon, vp9_quantize_fp_all_zero_neon, vp9_quantize_fp_i16_metrics_neon,
+    vp9_quantize_b_32x32_neon, vp9_quantize_b_neon, vp9_quantize_fp_32x32_i16_metrics_neon,
+    vp9_quantize_fp_32x32_i16_rate_metrics_neon, vp9_quantize_fp_32x32_neon,
+    vp9_quantize_fp_all_zero_neon, vp9_quantize_fp_i16_metrics_neon,
     vp9_quantize_fp_i16_rate_metrics_neon, vp9_quantize_fp_neon,
 };
 pub use sad_neon::{

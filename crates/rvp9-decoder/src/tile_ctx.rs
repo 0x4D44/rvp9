@@ -248,17 +248,14 @@ impl TileDecodeCtx {
     ///
     /// # Panics
     ///
-    /// If `tile_mi_cols == 0` or `tile_mi_rows == 0` — every legal
-    /// VP9 tile spans at least one SB row and column.
+    /// If `tile_mi_cols == 0`. VP9 can describe a leading tile row with
+    /// zero MI rows when the tile-row count exceeds the frame's SB-row count;
+    /// that legal tile performs zero block iterations.
     #[must_use]
     pub fn new_with_grid(tile_mi_cols: usize, tile_mi_rows: usize) -> Self {
         assert!(
             tile_mi_cols > 0,
             "tile must span at least one 8×8 mode-info column"
-        );
-        assert!(
-            tile_mi_rows > 0,
-            "tile must span at least one 8×8 mode-info row"
         );
         Self {
             tile_mi_cols,
@@ -286,10 +283,6 @@ impl TileDecodeCtx {
         assert!(
             tile_mi_cols > 0,
             "tile must span at least one 8\u{00d7}8 mode-info column"
-        );
-        assert!(
-            tile_mi_rows > 0,
-            "tile must span at least one 8\u{00d7}8 mode-info row"
         );
         Self {
             tile_mi_cols,
@@ -853,6 +846,30 @@ mod tests {
         assert_eq!(ctx.above(0, 3), Some(&above));
         assert_eq!(ctx.mi_at_relative(0, 3, -1, 0), Some(&above));
         assert!(ctx.left(0, 0).is_none(), "tile column remains isolated");
+    }
+
+    /// VP9 permits more tile rows than the frame has superblock rows. The
+    /// resulting leading tile can cover zero MI rows; libvpx simply performs
+    /// zero block iterations for it.
+    #[test]
+    fn frame_view_accepts_a_legal_empty_tile_row() {
+        let stride = 8;
+        let mut frame_grid = vec![None; stride * 8];
+        let bounds = TileBounds {
+            mi_row_start: 0,
+            mi_row_end: 0,
+            mi_col_start: 0,
+            mi_col_end: 8,
+        };
+        // SAFETY: the empty view covers no cells, the backing allocation
+        // outlives it, and there is no overlapping live mutable view.
+        let view =
+            unsafe { TileMiView::new(frame_grid.as_mut_ptr(), frame_grid.len(), stride, &bounds) };
+        let ctx = TileDecodeCtx::new_with_view(8, 0, view, 0, 0);
+
+        assert_eq!(ctx.tile_mi_cols(), 8);
+        assert_eq!(ctx.tile_mi_rows(), 0);
+        assert!(ctx.mi_at(0, 0).is_none());
     }
 
     /// `TileDecodeCtx::new` (no grid) is a degenerate legacy/test

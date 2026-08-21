@@ -53,18 +53,25 @@ pub mod dc_predict_full_avx2;
 pub mod dc_predict_left_avx2;
 pub mod dc_predict_top_avx2;
 pub mod h_predictor_avx2;
+#[cfg(any(test, doc))]
 pub mod idct16x16_10_avx2;
+#[cfg(any(test, doc))]
 pub mod idct16x16_38_avx2;
+#[cfg(any(test, doc))]
 pub mod idct16x16_avx2;
 pub mod idct16x16_sse2_256;
+#[cfg(any(test, doc))]
 pub mod idct32x32_135_avx2;
+#[cfg(any(test, doc))]
 pub mod idct32x32_34_avx2;
+#[cfg(any(test, doc))]
 pub mod idct32x32_avx2;
 pub mod idct32x32_avx2_1024;
 pub mod idct32x32_avx2_135;
 pub mod idct32x32_sse2_1024;
 pub mod idct4x4_avx2;
 pub mod idct8x8_12_sse2;
+#[cfg(any(test, doc))]
 pub mod idct8x8_avx2;
 pub mod idct8x8_sse2_64;
 pub mod iht16x16_avx2;
@@ -114,17 +121,12 @@ pub use dc_predict_top_avx2::dc_predict_top_avx2;
 pub use h_predictor_avx2::h_predictor_avx2;
 pub use idct4x4_avx2::idct4x4_add_avx2;
 pub use idct8x8_12_sse2::idct8x8_add_sse2_12;
-pub use idct8x8_avx2::idct8x8_add_avx2;
 pub use idct8x8_sse2_64::idct8x8_add_sse2_64;
-pub use idct16x16_10_avx2::idct16x16_10_add_avx2;
-pub use idct16x16_38_avx2::idct16x16_38_add_avx2;
+#[cfg(any(test, doc))]
 pub use idct16x16_avx2::idct16x16_add_avx2;
 pub use idct16x16_sse2_256::{
     idct16x16_add_sse2_10, idct16x16_add_sse2_38, idct16x16_add_sse2_256,
 };
-pub use idct32x32_34_avx2::idct32x32_34_add_avx2;
-pub use idct32x32_135_avx2::idct32x32_135_add_avx2;
-pub use idct32x32_avx2::idct32x32_add_avx2;
 pub use idct32x32_avx2_135::idct32x32_add_avx2_135;
 pub use idct32x32_avx2_1024::idct32x32_add_avx2_1024;
 pub use idct32x32_sse2_1024::{
@@ -171,5 +173,5 @@ pub use variance_avx2::{
     get_var_sse_8x8_avx2, var_sum_sse_4x4_avx2, var_sum_sse_4x8_avx2, var_sum_sse_8x4_avx2,
     var_sum_sse_8x8_avx2, var_sum_sse_8x16_avx2, var_sum_sse_16x8_avx2, var_sum_sse_16x16_avx2,
     var_sum_sse_16x32_avx2, var_sum_sse_32x16_avx2, var_sum_sse_32x32_avx2, var_sum_sse_32x64_avx2,
-    var_sum_sse_64x32_avx2, var_sum_sse_64x64_avx2, var_sum_sse_avx2,
+    var_sum_sse_64x32_avx2, var_sum_sse_64x64_avx2,
 };

@@ -281,10 +281,10 @@ pub fn hadamard_satd(coeff: &[i16]) -> u32 {
 mod tests {
     use super::*;
 
-    #[cfg(not(miri))]
+    #[cfg(all(target_arch = "aarch64", not(miri)))]
     struct Lcg32(u32);
 
-    #[cfg(not(miri))]
+    #[cfg(all(target_arch = "aarch64", not(miri)))]
     impl Lcg32 {
         fn residual(&mut self) -> i16 {
             self.0 = self.0.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);

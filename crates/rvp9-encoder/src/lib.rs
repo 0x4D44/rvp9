@@ -10950,6 +10950,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                         left_available: have_left,
                                     };
 
+                                    #[cfg(target_arch = "aarch64")]
                                     let input_off = tx_px_y * input_stride + tx_px_x;
                                     let dst_off = recon_tx_px_y * recon_stride + recon_tx_px_x;
                                     intra_predict(
@@ -10982,7 +10983,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                     |residual, quant_scratch| {
                                         #[cfg(target_arch = "aarch64")]
                                         if matches!(tx_side, 8 | 16 | 32) {
-                                            let _ = rvp9_core::dsp::aarch64::subtract_square_neon_with_nonzero(
+                                            let _ = rvp9_core::dsp::accelerated::subtract_square_neon_with_nonzero(
                                                 &input_plane[input_off..],
                                                 input_stride,
                                                 &recon_data[dst_off..],
@@ -11486,6 +11487,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                     let tx_px_y = plane_px_y + tx_y4_local * 4;
                                     let recon_tx_px_x = recon_plane_px_x + tx_x4_local * 4;
                                     let recon_tx_px_y = recon_plane_px_y + tx_y4_local * 4;
+                                    #[cfg(target_arch = "aarch64")]
                                     let input_off = tx_px_y * input_stride + tx_px_x;
                                     let dst_off = recon_tx_px_y * recon_stride + recon_tx_px_x;
 
@@ -11517,7 +11519,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                         };
                                         #[cfg(target_arch = "aarch64")]
                                         let residual_nonzero = if matches!(tx_side, 8 | 16 | 32) {
-                                            rvp9_core::dsp::aarch64::subtract_square_neon_with_nonzero(
+                                            rvp9_core::dsp::accelerated::subtract_square_neon_with_nonzero(
                                                 &input_plane[input_off..],
                                                 input_stride,
                                                 &recon_data[dst_off..],
@@ -13187,7 +13189,7 @@ fn inter_forward_quant_one_tx_with_scratch<R>(
             #[cfg(target_arch = "aarch64")]
             if trellis.is_none()
                 && !matches!(plane_tx, TxSize::Tx32x32)
-                && rvp9_core::dsp::aarch64::vp9_quantize_fp_all_zero_neon(
+                && rvp9_core::dsp::accelerated::vp9_quantize_fp_all_zero_neon(
                     coefs,
                     n,
                     &quantizer.round_fp,
@@ -13849,7 +13851,7 @@ fn choose_inter_luma_tx_size_impl<const PRUNE: bool>(
     if block_w_px == block_h_px {
         let input_offset = input_px_y * input_stride + input_px_x;
         let recon_offset = recon_px_y * recon_stride + recon_px_x;
-        rvp9_core::dsp::aarch64::subtract_square_neon(
+        rvp9_core::dsp::accelerated::subtract_square_neon(
             &input_plane[input_offset..],
             input_stride,
             &recon_plane[recon_offset..],
