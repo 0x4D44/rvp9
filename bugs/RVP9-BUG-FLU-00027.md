@@ -1,25 +1,25 @@
 # RVP9-BUG-FLU-00027 — Loop-filter SharedFrame invalidates plane pointer provenance
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Must
 - **Severity:** High
 - **Area:** core
 - **Raised:** 2026-08-20T20:38:47Z
 - **Discovery source:** Automation
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260821T221759Z-56a3c2e3
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLU-00027-run-fix-20260821T221759Z-56a3c2e3
-- **Owner base:** cb2a82deda50e9ce5fc6934ff3db933b732455f9
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-08-21T22:17:59Z
-- **Owner until:** 2026-08-22T00:17:59Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-20T20:38:47Z, raised via `deltic bugs new` model=gpt-5.6@xhigh)
+- **State history:** Open (2026-08-20T20:38:47Z, raised via `deltic bugs new` model=gpt-5.6@xhigh) -> Fixed (2026-08-21T22:18:40Z, deltic:auto role=fix run=fix-20260821T221759Z-56a3c2e3 branch=task/bug-RVP9-BUG-FLU-00027-run-fix-20260821T221759Z-56a3c2e3 code=3196ff31 gate=manual)
 
 ## Observation
 
