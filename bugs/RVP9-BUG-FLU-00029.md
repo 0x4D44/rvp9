@@ -6,15 +6,15 @@
 - **Area:** decoder/tiles
 - **Raised:** 2026-08-21T14:18:04Z
 - **Discovery source:** Automation
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
+- **Owner:** deltic:manual
+- **Owner role:** fix
+- **Owner run:** fix-20260821T221548Z-53d0861b
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-FLU-00029-run-fix-20260821T221548Z-53d0861b
+- **Owner base:** bd22f9f47f63b627813234569ff751657d392b4f
 - **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner since:** 2026-08-21T22:15:48Z
+- **Owner until:** 2026-08-22T00:15:48Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
