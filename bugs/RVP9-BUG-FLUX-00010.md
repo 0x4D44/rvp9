@@ -1,25 +1,25 @@
 # RVP9-BUG-FLUX-00010 — BD-rate runs collide through fixed temporary filenames
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Must
 - **Severity:** High
 - **Area:** bench/bdrate
 - **Raised:** 2026-08-09T13:33:20Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260822T130927Z-501b37bd
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLUX-00010-run-fix-20260822T130927Z-501b37bd
-- **Owner base:** 9999d67421355758975d18fab831a10ada5223ef
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-08-22T13:09:27Z
-- **Owner until:** 2026-08-22T15:09:27Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-09T13:33:20Z, raised via `deltic bugs new` model=gpt-5.6@xhigh)
+- **State history:** Open (2026-08-09T13:33:20Z, raised via `deltic bugs new` model=gpt-5.6@xhigh) -> Fixed (2026-08-22T13:10:53Z, deltic:auto role=fix run=fix-20260822T130927Z-501b37bd branch=task/bug-RVP9-BUG-FLUX-00010-run-fix-20260822T130927Z-501b37bd code=0fdff494e gate=manual)
 
 ## Observation
 
