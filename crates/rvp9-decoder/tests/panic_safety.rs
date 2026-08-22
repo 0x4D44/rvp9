@@ -387,32 +387,11 @@ fn mid_tile_failure_then_valid_inter_decodes() {
         header_end_byte: inter2_end,
         full_frame_data: &inter2_bytes,
     };
-    let result = dec.decode_frame(&good_inter);
-    match result {
-        Ok(buf) => {
-            // Best case: ref-map survived AND bank poisoning didn't
-            // unrecoverably break the inter path.
-            assert_eq!(buf.y_plane().width(), 64);
-            assert_eq!(buf.y_plane().height(), 64);
-        }
-        Err(DecodeError::EmptyInterRef { slot }) => {
-            panic!(
-                "ref_frame_map was corrupted by the failed inter: \
-                 inter #2's ref_frame_indices = [0,0,0] but slot {slot} \
-                 is unresolvable. This is the bug G12 R2's per-slot \
-                 refcount was supposed to prevent.",
-            );
-        }
-        Err(_) => {
-            // Bank poisoning surfacing as a non-EmptyInterRef decode
-            // error is documented-accepted behavior per the V6 §G12
-            // contract. The test value is in distinguishing this case
-            // from the EmptyInterRef case above — i.e. ref-map
-            // preserved, banks poisoned. The arm intentionally does
-            // nothing: the panic above pins the strong contract;
-            // accepting Err here pins the weak (documented) contract.
-        }
-    }
+    let buf = dec
+        .decode_frame(&good_inter)
+        .expect("valid inter after a failed inter decodes");
+    assert_eq!(buf.y_plane().width(), 64);
+    assert_eq!(buf.y_plane().height(), 64);
 }
 
 /// Sanity check the assertion subjects of the two panic-safety
