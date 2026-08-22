@@ -707,7 +707,21 @@ require_empty_phase_dir() {
 # Host load
 # ---------------------------------------------------------------------------
 
+windows_load1() {
+    # Windows has no Unix load average. Measure a full minute of aggregate
+    # processor time and normalize it to busy logical cores, preserving the
+    # existing 0.75 ceiling's "less than one busy core" meaning.
+    command -v powershell.exe >/dev/null 2>&1 || return 1
+    powershell.exe -NoProfile -NonInteractive -Command \
+        '$ErrorActionPreference = "Stop"; $values = @((Get-Counter -Counter "\Processor(_Total)\% Processor Time" -SampleInterval 5 -MaxSamples 13).CounterSamples | Select-Object -Skip 1 -ExpandProperty CookedValue); if ($values.Count -ne 12) { exit 2 }; $meanPercent = ($values | Measure-Object -Average).Average; $busyCores = $meanPercent * [Environment]::ProcessorCount / 100.0; [Console]::Out.WriteLine($busyCores.ToString("0.######", [Globalization.CultureInfo]::InvariantCulture))' |
+        tr -d '\r'
+    return ${PIPESTATUS[0]}
+}
+
 read_load1() {
+    case "$(uname -s)" in
+        MINGW*|MSYS*|CYGWIN*) windows_load1; return $? ;;
+    esac
     if [ -r /proc/loadavg ]; then
         awk '{ print $1 }' /proc/loadavg
         return 0
@@ -717,6 +731,17 @@ read_load1() {
         return 0
     fi
     return 1
+}
+
+load_metric_name() {
+    case "$(uname -s)" in
+        MINGW*|MSYS*|CYGWIN*) printf 'windows_60s_mean_busy_logical_cores\n'; return ;;
+    esac
+    if [ -r /proc/loadavg ] || command -v sysctl >/dev/null 2>&1; then
+        printf 'unix_one_minute_load_average\n'
+    else
+        printf 'unavailable\n'
+    fi
 }
 
 enforce_load() {
@@ -759,6 +784,7 @@ write_manifest_header() {
     manifest_kv libvpx_commit "$libvpx_revision"
     manifest_kv host "$(uname -a)"
     manifest_kv host_triple "$host_triple"
+    manifest_kv host_load_metric "$(load_metric_name)"
     manifest_kv rustc "$(rustc --version)"
     manifest_kv ffmpeg \
         "$(deltic timeout 60 "$ffmpeg_bin" -version </dev/null 2>/dev/null | head -n 1)"

@@ -858,6 +858,7 @@ fn parse_load1(text: &str) -> Option<f64> {
     .find_map(|part| part.parse::<f64>().ok())
 }
 
+#[cfg(not(windows))]
 fn current_load1() -> Option<f64> {
     if let Ok(text) = fs::read_to_string("/proc/loadavg") {
         return parse_load1(&text);
@@ -870,6 +871,47 @@ fn current_load1() -> Option<f64> {
         return None;
     }
     parse_load1(&String::from_utf8_lossy(&output.stdout))
+}
+
+#[cfg(windows)]
+fn current_load1() -> Option<f64> {
+    // Windows has no Unix load average. Sample aggregate processor time for a
+    // full minute and convert it to normalized busy logical cores, so the
+    // existing 0.75 ceiling keeps the same "less than one busy core" meaning.
+    // Thirteen five-second PDH samples span sixty seconds after discarding the
+    // first sample, whose baseline may predate this invocation.
+    const SCRIPT: &str = r#"
+$ErrorActionPreference = "Stop"
+$values = @((Get-Counter -Counter '\Processor(_Total)\% Processor Time' -SampleInterval 5 -MaxSamples 13).CounterSamples | Select-Object -Skip 1 -ExpandProperty CookedValue)
+if ($values.Count -ne 12) { exit 2 }
+$meanPercent = ($values | Measure-Object -Average).Average
+$busyCores = $meanPercent * [Environment]::ProcessorCount / 100.0
+[Console]::Out.WriteLine($busyCores.ToString("0.######", [Globalization.CultureInfo]::InvariantCulture))
+"#;
+    let powershell = PathBuf::from(std::env::var_os("SystemRoot")?)
+        .join("System32/WindowsPowerShell/v1.0/powershell.exe");
+    let output = Command::new(powershell)
+        .args(["-NoProfile", "-NonInteractive", "-Command", SCRIPT])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    parse_load1(&String::from_utf8_lossy(&output.stdout)).filter(|load| {
+        load.is_finite()
+            && *load >= 0.0
+            && *load <= std::thread::available_parallelism().map_or(f64::MAX, |n| n.get() as f64)
+    })
+}
+
+#[cfg(windows)]
+fn load_metric_name() -> &'static str {
+    "windows_60s_mean_busy_logical_cores"
+}
+
+#[cfg(not(windows))]
+fn load_metric_name() -> &'static str {
+    "unix_one_minute_load_average"
 }
 
 fn enforce_load(
@@ -1234,6 +1276,7 @@ fn write_manifest(
         )
     )
     .map_err(|e| e.to_string())?;
+    writeln!(writer, "host_load_metric={}", load_metric_name()).map_err(|e| e.to_string())?;
     for (point, load) in results.loads {
         writeln!(writer, "load1_{point}={load:.6}").map_err(|e| e.to_string())?;
     }
@@ -1598,6 +1641,15 @@ mod tests {
             frames: 60,
             sha256: hash.into(),
         }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_idle_guard_produces_a_normalized_load_measurement() {
+        let load = current_load1().expect("Windows host load should be measurable");
+        assert!(load.is_finite());
+        assert!(load >= 0.0);
+        assert!(load <= std::thread::available_parallelism().unwrap().get() as f64);
     }
 
     #[test]
