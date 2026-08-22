@@ -77,6 +77,7 @@ pub mod idct8x8_sse2_64;
 pub mod iht16x16_avx2;
 pub mod iht4x4_avx2;
 pub mod iht8x8_avx2;
+pub mod int_pro_sse2;
 pub mod intra_directional_common_avx2;
 pub mod lpf_horizontal_16_avx2;
 pub mod lpf_horizontal_16_dual_avx2;

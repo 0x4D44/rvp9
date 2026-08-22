@@ -313,7 +313,7 @@ fn fill_int_pro_cols(
 /// `bwl` ranges over `{2, 3, 4}` (16, 32, 64 vs the 16/32/64
 /// SB widths we care about). The result fits in i32 with margin
 /// (sse: 26 bits dynamic range per libvpx comment).
-#[cfg(any(not(target_arch = "aarch64"), miri))]
+#[cfg(any(not(any(target_arch = "aarch64", target_arch = "x86_64")), miri))]
 #[inline]
 fn vpx_vector_var_scalar(ref_vec: &[i16], src_vec: &[i16], bwl: u32) -> i32 {
     let width = 4usize << bwl;
@@ -337,7 +337,14 @@ fn vpx_vector_var(ref_vec: &[i16], src_vec: &[i16], bwl: u32) -> i32 {
     }
     #[cfg(any(not(target_arch = "aarch64"), miri))]
     {
-        vpx_vector_var_scalar(ref_vec, src_vec, bwl)
+        #[cfg(all(target_arch = "x86_64", not(miri)))]
+        {
+            crate::dsp::x86_64::int_pro_sse2::vpx_vector_var_sse2(ref_vec, src_vec, bwl)
+        }
+        #[cfg(any(not(target_arch = "x86_64"), miri))]
+        {
+            vpx_vector_var_scalar(ref_vec, src_vec, bwl)
+        }
     }
 }
 
@@ -683,7 +690,7 @@ fn int_pro_motion_estimation_impl(
     // AArch64's common interior 64x64 path shares the central reference and
     // source loads between the row and column projections. The frame-edge
     // paths retain the exact edge-clamped helpers below.
-    #[cfg(all(target_arch = "aarch64", not(miri)))]
+    #[cfg(all(any(target_arch = "aarch64", target_arch = "x86_64"), not(miri)))]
     let used_fused_projection = if bw == 64
         && bh == 64
         && base_x_row >= 0
@@ -695,7 +702,19 @@ fn int_pro_motion_estimation_impl(
     {
         let ref_start = base_y_col as usize * ref_plane.stride + base_x_row as usize;
         let src_start = sb_px_y * src_stride + sb_px_x;
+        #[cfg(target_arch = "aarch64")]
         crate::dsp::aarch64::int_pro_64x64_fused_neon(
+            &mut hbuf,
+            &mut vbuf,
+            &mut src_hbuf,
+            &mut src_vbuf,
+            &ref_plane.data[ref_start..],
+            ref_plane.stride,
+            &src_plane.data[src_start..],
+            src_stride,
+        );
+        #[cfg(target_arch = "x86_64")]
+        crate::dsp::x86_64::int_pro_sse2::int_pro_64x64_fused_sse2(
             &mut hbuf,
             &mut vbuf,
             &mut src_hbuf,
@@ -709,7 +728,7 @@ fn int_pro_motion_estimation_impl(
     } else {
         false
     };
-    #[cfg(any(not(target_arch = "aarch64"), miri))]
+    #[cfg(any(not(any(target_arch = "aarch64", target_arch = "x86_64")), miri))]
     let used_fused_projection = false;
 
     if !used_fused_projection {
