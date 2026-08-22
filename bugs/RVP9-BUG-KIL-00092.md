@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00092 — Additional vector-dependent tests report green without fixtures
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** tests/false-green
 - **Raised:** 2026-08-22T13:20:54Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260822T133005Z-22df6bc2
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00092-run-fix-20260822T133005Z-22df6bc2
-- **Owner base:** 024b1dc99db1bebe27b7126de201fd5f6564686f
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-08-22T13:30:05Z
-- **Owner until:** 2026-08-22T15:30:05Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T13:20:54Z, raised via `deltic bugs new`)
+- **State history:** Open (2026-08-22T13:20:54Z, raised via `deltic bugs new`) -> Fixed (2026-08-22T13:33:14Z, deltic:auto role=fix run=fix-20260822T133005Z-22df6bc2 branch=task/bug-RVP9-BUG-KIL-00092-run-fix-20260822T133005Z-22df6bc2 code=e9f7adf9 gate=manual)
 
 ## Observation
 
