@@ -556,12 +556,12 @@ pub struct Decoder {
     /// `Mutex<Option<Vec<u8>>>` seg-ids slots. Replaces the
     /// per-frame `vec![0u8; mi_rows * mi_cols]` allocation at each
     /// `InterTileSlot` / `TileSlot` construction site. The pool grows
-    /// lazily to `max(n_tiles_seen)` and persists across frames; each
-    /// frame the parallel path takes `n_tiles` Vecs out, hands them to
+    /// lazily to `max(parallel_tiles_seen)` and persists across frames; each
+    /// frame the parallel path takes one Vec per tile, hands them to
     /// the slot structs, then puts them back during the merge loop
     /// (where the slot's seg_ids Vec is already in hand). On the
-    /// fallback (single-thread / single-tile) path the pool is
-    /// untouched.
+    /// fallback (single-thread, single-tile, or more tiles than workers) path
+    /// the pool is untouched.
     tile_seg_id_pool: Vec<Vec<u8>>,
     /// Wave-4 per-tile scratch pool for the parallel inter-decode
     /// path's `Mutex<Option<Vec<PrevFrameMvRef>>>` mv-grid slots.
@@ -642,7 +642,8 @@ pub struct Decoder {
     /// G5.1 per-tile fresh-`clone_geometry()` allocation pattern,
     /// which at 1080p × 8 tiles × 60 fps was ~1.44 GB/s of allocator
     /// churn + zero-init traffic. The pool persists across frames
-    /// and grows lazily to `max(n_tiles_seen)`; per-frame the
+    /// and grows lazily to the largest eligible parallel tile count, which is
+    /// capped by [`Self::num_threads`]; per-frame the
     /// parallel-dispatch path calls
     /// [`Yv12ScratchPool::take(n_tiles, &yv12)`](Yv12ScratchPool::take)
     /// before `scope.submit` and
@@ -1804,12 +1805,15 @@ impl Decoder {
         //     inline path (no benefit to dispatching one job).
         //   * `num_threads > 1` — the worker-pool size knob; respects
         //     `Decoder::with_threads(1)` as the deterministic path.
+        //   * `num_tiles <= num_threads` — every full-frame scratch belongs
+        //     to an active worker slot. Larger grids stay inline so valid
+        //     bitstreams cannot make retained scratch scale past worker count.
         //
-        // For ineligible frames (tile_rows > 1 OR single tile OR
-        // single-threaded knob), we keep the inline path: every tile
-        // runs sequentially on the caller thread, sharing the
-        // decoder's `coef_counts` accumulator and the destination
-        // `yv12`. This is the pre-G5.1 shape.
+        // For ineligible frames (tile_rows > 1, single tile/thread, or
+        // more tiles than worker slots), we keep the inline path: every
+        // tile runs sequentially on the caller thread, sharing the decoder's
+        // `coef_counts` accumulator and the destination `yv12`. This is the
+        // pre-G5.1 shape and allocates no full-frame tile scratch.
         //
         // For eligible frames we allocate per-tile scratch buffers,
         // fan-out into the pool, and merge results column-range-wise
@@ -1823,7 +1827,8 @@ impl Decoder {
         // lookup may read the completed row above. Keep multi-row
         // frames on the raster-order inline path until row barriers and
         // shared reconstruction surfaces exist.
-        let parallel = tile_rows == 1 && buffers.len() > 1 && self.num_threads.get() > 1;
+        let parallel =
+            parallel_tile_decode_enabled(tile_rows as usize, buffers.len(), self.num_threads.get());
 
         // T-5 — per-frame timing bucket, populated only on the
         // parallel path under the `profile-tiles` feature. Dropped at
@@ -1885,6 +1890,7 @@ impl Decoder {
             // YV12 and the per-tile counts bank; the main thread
             // merges after the scope closes.
             let num_tiles = buffers.len();
+            debug_assert!(num_tiles <= self.num_threads.get());
             let mut per_tile_bounds: Vec<tile::TileBounds> = Vec::with_capacity(num_tiles);
             for tile_buf in &buffers {
                 per_tile_bounds.push(tile_bounds(
@@ -1924,7 +1930,7 @@ impl Decoder {
             let scratch_buffers = self
                 .tile_scratch_pool
                 .take(num_tiles, &yv12)
-                .expect("scratch Yv12Buffer allocation");
+                .map_err(|_| DecodeError::FrameAlloc)?;
             // Phase 2: construct per-tile TileMiViews from frame_mi_grid.
             // SAFETY: bounds are non-overlapping by VP9 spec (tile
             // boundaries are SB-aligned); frame_mi_grid lives through
@@ -3182,7 +3188,8 @@ impl Decoder {
         // As on the intra path, tile rows have prediction dependencies
         // on the completed row above. Only a single tile row is safe for
         // the worker-owned scratch-frame dispatch.
-        let parallel = tile_rows == 1 && buffers.len() > 1 && self.num_threads.get() > 1;
+        let parallel =
+            parallel_tile_decode_enabled(tile_rows as usize, buffers.len(), self.num_threads.get());
 
         // T-5 — per-frame timing bucket; see the matching declaration
         // in `decode_intra_frame_inner`.
@@ -3252,6 +3259,7 @@ impl Decoder {
             #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
             let t_setup_start = profile::now_cycles();
             let num_tiles = buffers.len();
+            debug_assert!(num_tiles <= self.num_threads.get());
             let mut per_tile_bounds: Vec<tile::TileBounds> = Vec::with_capacity(num_tiles);
             for tile_buf in &buffers {
                 per_tile_bounds.push(tile_bounds(
@@ -3280,7 +3288,7 @@ impl Decoder {
             let scratch_buffers = self
                 .tile_scratch_pool
                 .take(num_tiles, &yv12)
-                .expect("scratch Yv12Buffer allocation");
+                .map_err(|_| DecodeError::FrameAlloc)?;
             // Phase 2: construct per-tile TileMiViews (inter path).
             let mi_views: Vec<crate::tile_ctx::TileMiView> = per_tile_bounds
                 .iter()
@@ -4441,6 +4449,14 @@ fn lf_pool_size(num_decode_threads: std::num::NonZeroUsize) -> Option<std::num::
     } else {
         None
     }
+}
+
+/// Whether a tile grid can use the worker-owned full-frame scratch path.
+///
+/// Multi-row grids remain serial because prediction can depend on the completed
+/// row above. A single tile or thread has no useful parallel work.
+fn parallel_tile_decode_enabled(tile_rows: usize, num_tiles: usize, num_threads: usize) -> bool {
+    tile_rows == 1 && num_tiles > 1 && num_threads > 1 && num_tiles <= num_threads
 }
 
 /// Top-level LF dispatcher — picks between the serial path and the
@@ -10329,6 +10345,18 @@ mod tests {
     fn tile_scratch_pool_starts_empty() {
         let dec = Decoder::new();
         assert_eq!(dec.tile_scratch_pool_buffer_count(), 0);
+    }
+
+    /// The full-frame scratch path must never retain more buffers than workers
+    /// can use concurrently. High-tile-count streams fall back to inline decode.
+    #[test]
+    fn parallel_tile_scratch_is_bounded_by_worker_count() {
+        assert!(!parallel_tile_decode_enabled(1, 64, 2));
+        assert!(parallel_tile_decode_enabled(1, 2, 2));
+        assert!(parallel_tile_decode_enabled(1, 4, 8));
+        assert!(!parallel_tile_decode_enabled(2, 4, 8));
+        assert!(!parallel_tile_decode_enabled(1, 1, 8));
+        assert!(!parallel_tile_decode_enabled(1, 4, 1));
     }
 
     /// `merge_lf_params` with mixed Some/None applies only the Some
