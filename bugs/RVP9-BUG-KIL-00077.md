@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00077 — Mode-decision 16x16 and 32x32 IDCT bypass SIMD dispatch
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** core/mode-decision transforms
 - **Raised:** 2026-08-22T08:56:35Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260822T131414Z-6ea9886c
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00077-run-fix-20260822T131414Z-6ea9886c
-- **Owner base:** 16f7af6eb1c1be4aba7da659c5c5f43f68ab2225
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-08-22T13:14:14Z
-- **Owner until:** 2026-08-22T15:14:14Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T08:56:35Z, raised via `deltic bugs new`)
+- **State history:** Open (2026-08-22T08:56:35Z, raised via `deltic bugs new`) -> Fixed (2026-08-22T13:20:45Z, deltic:auto role=fix run=fix-20260822T131414Z-6ea9886c branch=task/bug-RVP9-BUG-KIL-00077-run-fix-20260822T131414Z-6ea9886c code=daae16aa gate=manual)
 
 ## Observation
 
