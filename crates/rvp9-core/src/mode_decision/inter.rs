@@ -131,7 +131,6 @@ use crate::quant::forward::{
     vp9_quantize_fp_32x32_with_order, vp9_quantize_fp_with_order,
 };
 use crate::transforms::forward::{fdct8x8_libvpx_lowbd, fdct16x16, fdct32x32};
-use crate::transforms::inverse::{idct16x16_256_add, idct32x32_1024_add};
 use crate::transforms::scans::scan_for;
 use crate::transforms::{TxMode, TxSize, TxType};
 
@@ -5402,6 +5401,44 @@ struct RoundTripBuffers<'a> {
     scratch: &'a mut RoundTripScratch,
 }
 
+/// Dense inverse-transform slots used by realtime candidate reconstruction.
+/// Keeping the three slots together makes it impossible for a transform-size
+/// arm to silently bypass the runtime dispatch table.
+struct RoundTripIdctDispatch {
+    tx8x8: fn(&[i32; 64], &mut [u8], usize),
+    tx16x16: fn(&[i32; 256], &mut [u8], usize),
+    tx32x32: fn(&[i32; 1024], &mut [u8], usize),
+}
+
+impl RoundTripIdctDispatch {
+    fn from_simd(dsp: &crate::dsp::SimdDispatch) -> Self {
+        Self {
+            tx8x8: dsp.idct8x8_add(),
+            tx16x16: dsp.idct16x16_add(),
+            tx32x32: dsp.idct32x32_add(),
+        }
+    }
+
+    fn add(&self, tx_size: TxSize, input: &[i32; 1024], dst: &mut [u8], stride: usize) {
+        match tx_size {
+            TxSize::Tx8x8 => {
+                let input = (&input[..64])
+                    .try_into()
+                    .expect("8x8 coefficient prefix has 64 elements");
+                (self.tx8x8)(input, dst, stride);
+            }
+            TxSize::Tx16x16 => {
+                let input = (&input[..256])
+                    .try_into()
+                    .expect("16x16 coefficient prefix has 256 elements");
+                (self.tx16x16)(input, dst, stride);
+            }
+            TxSize::Tx32x32 => (self.tx32x32)(input, dst, stride),
+            TxSize::Tx4x4 => unreachable!(),
+        }
+    }
+}
+
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 struct RoundTripOptions {
     reconstruct: bool,
@@ -5416,7 +5453,7 @@ fn reconstruct_via_round_trip(
     tx_size: TxSize,
     options: RoundTripOptions,
 ) -> BlockYrdResult {
-    let dsp = crate::dsp::get_ref();
+    let inverse_dispatch = RoundTripIdctDispatch::from_simd(crate::dsp::get_ref());
     let RoundTripBuffers {
         pred,
         pred_stride,
@@ -5807,33 +5844,10 @@ fn reconstruct_via_round_trip(
                 // a 64x64 block needs no contiguous staging copy.
                 if eob > 0 {
                     let recon_start = off_y * recon_stride + off_x;
-                    match tx_size {
-                        TxSize::Tx8x8 => {
-                            for (dst, &src) in coefs[..64].iter_mut().zip(&dqcoeff[..64]) {
-                                *dst = i32::from(src);
-                            }
-                            let input: &[i32; 64] = (&coefs[..64])
-                                .try_into()
-                                .expect("8x8 coefficient prefix has 64 elements");
-                            (dsp.idct8x8_add())(input, &mut recon[recon_start..], recon_stride);
-                        }
-                        TxSize::Tx16x16 => {
-                            for (dst, &src) in coefs[..256].iter_mut().zip(&dqcoeff[..256]) {
-                                *dst = i32::from(src);
-                            }
-                            let input: &[i32; 256] = (&coefs[..256])
-                                .try_into()
-                                .expect("16x16 coefficient prefix has 256 elements");
-                            idct16x16_256_add(input, &mut recon[recon_start..], recon_stride);
-                        }
-                        TxSize::Tx32x32 => {
-                            for (dst, &src) in coefs[..1024].iter_mut().zip(&dqcoeff[..1024]) {
-                                *dst = i32::from(src);
-                            }
-                            idct32x32_1024_add(coefs, &mut recon[recon_start..], recon_stride);
-                        }
-                        TxSize::Tx4x4 => unreachable!(),
+                    for (dst, &src) in coefs[..n].iter_mut().zip(&dqcoeff[..n]) {
+                        *dst = i32::from(src);
                     }
+                    inverse_dispatch.add(tx_size, coefs, &mut recon[recon_start..], recon_stride);
                 }
             }
         }
@@ -7134,6 +7148,35 @@ mod tests {
             after, before,
             "reused prediction scratch must not expose pixels from a prior wider block"
         );
+    }
+
+    #[test]
+    fn round_trip_idct_dispatch_routes_each_realtime_tx_size() {
+        fn mark8(_: &[i32; 64], dst: &mut [u8], _: usize) {
+            dst[0] = 8;
+        }
+        fn mark16(_: &[i32; 256], dst: &mut [u8], _: usize) {
+            dst[0] = 16;
+        }
+        fn mark32(_: &[i32; 1024], dst: &mut [u8], _: usize) {
+            dst[0] = 32;
+        }
+
+        let dispatch = RoundTripIdctDispatch {
+            tx8x8: mark8,
+            tx16x16: mark16,
+            tx32x32: mark32,
+        };
+        let input = [0i32; 1024];
+        let mut dst = [0u8; 32 * 32];
+        for (tx_size, marker) in [
+            (TxSize::Tx8x8, 8),
+            (TxSize::Tx16x16, 16),
+            (TxSize::Tx32x32, 32),
+        ] {
+            dispatch.add(tx_size, &input, &mut dst, 32);
+            assert_eq!(dst[0], marker);
+        }
     }
 
     #[test]
