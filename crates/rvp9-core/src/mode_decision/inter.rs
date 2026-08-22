@@ -106,7 +106,7 @@ use crate::mode_decision::block_yrd::block_error_fp_i32;
 #[cfg(any(not(target_arch = "aarch64"), miri))]
 use crate::mode_decision::block_yrd::satd_i16;
 use crate::mode_decision::hadamard::{hadamard_8x8, hadamard_16x16, hadamard_32x32};
-#[cfg(all(target_arch = "aarch64", not(miri)))]
+#[cfg(all(any(target_arch = "aarch64", target_arch = "x86_64"), not(miri)))]
 use crate::mode_decision::hadamard::{
     hadamard_8x8_subtract, hadamard_16x16_subtract, hadamard_32x32_subtract,
 };
@@ -5525,7 +5525,7 @@ fn reconstruct_via_round_trip(
             // Rust's validity rules before the kernel performs those writes.
             let mut had_coeff = [0i16; $n];
             let had_coeff_i16: &mut [i16] = &mut had_coeff;
-            #[cfg(all(target_arch = "aarch64", not(miri)))]
+            #[cfg(all(any(target_arch = "aarch64", target_arch = "x86_64"), not(miri)))]
             if reconstruct {
                 $transform(&residual[..$n], tx_side, had_coeff_i16);
             } else {
@@ -5537,7 +5537,7 @@ fn reconstruct_via_round_trip(
                     had_coeff_i16,
                 );
             }
-            #[cfg(any(not(target_arch = "aarch64"), miri))]
+            #[cfg(any(all(not(target_arch = "aarch64"), not(target_arch = "x86_64")), miri))]
             $transform(&residual[..$n], tx_side, had_coeff_i16);
 
             #[cfg(all(target_arch = "aarch64", not(miri)))]
@@ -5686,7 +5686,24 @@ fn reconstruct_via_round_trip(
             } else {
                 true
             };
-            #[cfg(any(not(target_arch = "aarch64"), miri))]
+            #[cfg(all(target_arch = "x86_64", not(miri)))]
+            let residual_nonzero = if reconstruct {
+                let mut nonzero = false;
+                for r in 0..tx_side {
+                    for c in 0..tx_side {
+                        let source =
+                            src.data[(sy + off_y + r) * src.stride + sx + off_x + c] as i16;
+                        let prediction = recon[(off_y + r) * recon_stride + off_x + c] as i16;
+                        let value = source - prediction;
+                        residual[r * tx_side + c] = value;
+                        nonzero |= value != 0;
+                    }
+                }
+                nonzero
+            } else {
+                true
+            };
+            #[cfg(any(all(not(target_arch = "aarch64"), not(target_arch = "x86_64")), miri))]
             let residual_nonzero = {
                 let mut nonzero = false;
                 for r in 0..tx_side {

@@ -24,6 +24,10 @@
 #[path = "hadamard_neon.rs"]
 mod neon;
 
+#[cfg(all(target_arch = "x86_64", not(miri)))]
+#[path = "hadamard_sse2.rs"]
+mod sse2;
+
 /// Walsh-Hadamard 1-D transform of 8 i16 inputs, stored at
 /// `src[i * src_stride]` for `i ∈ [0, 8)`. Output `coeff[0..8]` is
 /// the 8-point transform.
@@ -33,7 +37,11 @@ mod neon;
 /// intentionally skipped for SATD purposes — coefficient ORDER
 /// doesn't matter for sum-of-absolute-values).
 #[inline]
-#[cfg(any(not(target_arch = "aarch64"), test))]
+#[cfg(any(
+    test,
+    miri,
+    all(not(target_arch = "aarch64"), not(target_arch = "x86_64"))
+))]
 fn hadamard_col8(src: &[i16], src_stride: usize, coeff: &mut [i16; 8]) {
     let b0 = src[0] + src[src_stride];
     let b1 = src[0] - src[src_stride];
@@ -71,7 +79,11 @@ fn hadamard_col8(src: &[i16], src_stride: usize, coeff: &mut [i16; 8]) {
 ///
 /// The transform is two passes of `hadamard_col8` — first columns,
 /// then rows of the column-pass output.
-#[cfg(any(not(target_arch = "aarch64"), test))]
+#[cfg(any(
+    test,
+    miri,
+    all(not(target_arch = "aarch64"), not(target_arch = "x86_64"))
+))]
 fn hadamard_8x8_scalar(src: &[i16], src_stride: usize, coeff: &mut [i16]) {
     debug_assert!(coeff.len() >= 64, "coeff must be at least 64 elements");
     let mut buffer = [0i16; 64];
@@ -108,7 +120,11 @@ fn hadamard_8x8_scalar(src: &[i16], src_stride: usize, coeff: &mut [i16]) {
 /// The 16×16 transform is computed as 4× 8×8 Hadamard sub-transforms
 /// followed by a single 2×2-Hadamard combination pass across the
 /// four sub-block top-left coefficients.
-#[cfg(any(not(target_arch = "aarch64"), test))]
+#[cfg(any(
+    test,
+    miri,
+    all(not(target_arch = "aarch64"), not(target_arch = "x86_64"))
+))]
 fn hadamard_16x16_scalar(src: &[i16], src_stride: usize, coeff: &mut [i16]) {
     debug_assert!(coeff.len() >= 256, "coeff must be at least 256 elements");
     // Four 8×8 sub-blocks. Layout follows libvpx:
@@ -160,7 +176,11 @@ fn hadamard_16x16_scalar(src: &[i16], src_stride: usize, coeff: &mut [i16]) {
 /// 4× 16×16 sub-transforms + 2×2 cross-combination. The output is
 /// stored as 4×256 sub-blocks; the 2×2 combination is on the
 /// top-left coefficients of each.
-#[cfg(any(not(target_arch = "aarch64"), test))]
+#[cfg(any(
+    test,
+    miri,
+    all(not(target_arch = "aarch64"), not(target_arch = "x86_64"))
+))]
 fn hadamard_32x32_scalar(src: &[i16], src_stride: usize, coeff: &mut [i16]) {
     debug_assert!(coeff.len() >= 1024, "coeff must be at least 1024 elements");
     for sb in 0..4 {
@@ -196,7 +216,11 @@ pub fn hadamard_8x8(src: &[i16], src_stride: usize, coeff: &mut [i16]) {
     {
         neon::hadamard_8x8(src, src_stride, coeff);
     }
-    #[cfg(any(not(target_arch = "aarch64"), miri))]
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    {
+        sse2::hadamard_8x8(src, src_stride, coeff);
+    }
+    #[cfg(any(all(not(target_arch = "aarch64"), not(target_arch = "x86_64")), miri))]
     {
         hadamard_8x8_scalar(src, src_stride, coeff);
     }
@@ -208,14 +232,18 @@ pub fn hadamard_16x16(src: &[i16], src_stride: usize, coeff: &mut [i16]) {
     {
         neon::hadamard_16x16(src, src_stride, coeff);
     }
-    #[cfg(any(not(target_arch = "aarch64"), miri))]
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    {
+        sse2::hadamard_16x16(src, src_stride, coeff);
+    }
+    #[cfg(any(all(not(target_arch = "aarch64"), not(target_arch = "x86_64")), miri))]
     {
         hadamard_16x16_scalar(src, src_stride, coeff);
     }
 }
 
-/// Fused AArch64 `src - pred` and 8×8 Walsh-Hadamard transform.
-#[cfg(all(target_arch = "aarch64", not(miri)))]
+/// Fused SIMD `src - pred` and 8×8 Walsh-Hadamard transform.
+#[cfg(all(any(target_arch = "aarch64", target_arch = "x86_64"), not(miri)))]
 pub fn hadamard_8x8_subtract(
     src: &[u8],
     src_stride: usize,
@@ -223,11 +251,14 @@ pub fn hadamard_8x8_subtract(
     pred_stride: usize,
     coeff: &mut [i16],
 ) {
+    #[cfg(target_arch = "aarch64")]
     neon::hadamard_8x8_subtract(src, src_stride, pred, pred_stride, coeff);
+    #[cfg(target_arch = "x86_64")]
+    sse2::hadamard_8x8_subtract(src, src_stride, pred, pred_stride, coeff);
 }
 
-/// Fused AArch64 `src - pred` and 16×16 Walsh-Hadamard transform.
-#[cfg(all(target_arch = "aarch64", not(miri)))]
+/// Fused SIMD `src - pred` and 16×16 Walsh-Hadamard transform.
+#[cfg(all(any(target_arch = "aarch64", target_arch = "x86_64"), not(miri)))]
 pub fn hadamard_16x16_subtract(
     src: &[u8],
     src_stride: usize,
@@ -235,11 +266,14 @@ pub fn hadamard_16x16_subtract(
     pred_stride: usize,
     coeff: &mut [i16],
 ) {
+    #[cfg(target_arch = "aarch64")]
     neon::hadamard_16x16_subtract(src, src_stride, pred, pred_stride, coeff);
+    #[cfg(target_arch = "x86_64")]
+    sse2::hadamard_16x16_subtract(src, src_stride, pred, pred_stride, coeff);
 }
 
-/// Fused AArch64 `src - pred` and 32×32 Walsh-Hadamard transform.
-#[cfg(all(target_arch = "aarch64", not(miri)))]
+/// Fused SIMD `src - pred` and 32×32 Walsh-Hadamard transform.
+#[cfg(all(any(target_arch = "aarch64", target_arch = "x86_64"), not(miri)))]
 pub fn hadamard_32x32_subtract(
     src: &[u8],
     src_stride: usize,
@@ -247,7 +281,10 @@ pub fn hadamard_32x32_subtract(
     pred_stride: usize,
     coeff: &mut [i16],
 ) {
+    #[cfg(target_arch = "aarch64")]
     neon::hadamard_32x32_subtract(src, src_stride, pred, pred_stride, coeff);
+    #[cfg(target_arch = "x86_64")]
+    sse2::hadamard_32x32_subtract(src, src_stride, pred, pred_stride, coeff);
 }
 
 /// 2-D Walsh-Hadamard transform of a 32×32 block.
@@ -256,7 +293,11 @@ pub fn hadamard_32x32(src: &[i16], src_stride: usize, coeff: &mut [i16]) {
     {
         neon::hadamard_32x32(src, src_stride, coeff);
     }
-    #[cfg(any(not(target_arch = "aarch64"), miri))]
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    {
+        sse2::hadamard_32x32(src, src_stride, coeff);
+    }
+    #[cfg(any(all(not(target_arch = "aarch64"), not(target_arch = "x86_64")), miri))]
     {
         hadamard_32x32_scalar(src, src_stride, coeff);
     }
@@ -281,10 +322,10 @@ pub fn hadamard_satd(coeff: &[i16]) -> u32 {
 mod tests {
     use super::*;
 
-    #[cfg(all(target_arch = "aarch64", not(miri)))]
+    #[cfg(all(any(target_arch = "aarch64", target_arch = "x86_64"), not(miri)))]
     struct Lcg32(u32);
 
-    #[cfg(all(target_arch = "aarch64", not(miri)))]
+    #[cfg(all(any(target_arch = "aarch64", target_arch = "x86_64"), not(miri)))]
     impl Lcg32 {
         fn residual(&mut self) -> i16 {
             self.0 = self.0.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
@@ -400,18 +441,30 @@ mod tests {
         assert!(coeff.iter().all(|&v| v == 0));
     }
 
-    #[cfg(all(target_arch = "aarch64", not(miri)))]
+    #[cfg(all(any(target_arch = "aarch64", target_arch = "x86_64"), not(miri)))]
     #[test]
-    fn neon_matches_scalar_for_random_residuals_and_stride_jitter() {
+    fn simd_matches_scalar_for_random_residuals_and_stride_jitter() {
         let mut rng = Lcg32(0x4841_4441);
+        #[cfg(target_arch = "aarch64")]
+        let simd = [
+            neon::hadamard_8x8 as fn(&[i16], usize, &mut [i16]),
+            neon::hadamard_16x16,
+            neon::hadamard_32x32,
+        ];
+        #[cfg(target_arch = "x86_64")]
+        let simd = [
+            sse2::hadamard_8x8 as fn(&[i16], usize, &mut [i16]),
+            sse2::hadamard_16x16,
+            sse2::hadamard_32x32,
+        ];
         for (size, scalar, simd) in [
             (
                 8usize,
                 hadamard_8x8_scalar as fn(&[i16], usize, &mut [i16]),
-                neon::hadamard_8x8 as fn(&[i16], usize, &mut [i16]),
+                simd[0],
             ),
-            (16, hadamard_16x16_scalar, neon::hadamard_16x16),
-            (32, hadamard_32x32_scalar, neon::hadamard_32x32),
+            (16, hadamard_16x16_scalar, simd[1]),
+            (32, hadamard_32x32_scalar, simd[2]),
         ] {
             for jitter in 0..9 {
                 let stride = size + jitter;
@@ -425,13 +478,13 @@ mod tests {
                 simd(&src, stride, &mut actual);
                 assert_eq!(
                     actual, expected,
-                    "NEON mismatch for {size}x{size}, stride jitter {jitter}"
+                    "SIMD mismatch for {size}x{size}, stride jitter {jitter}"
                 );
             }
         }
     }
 
-    #[cfg(all(target_arch = "aarch64", not(miri)))]
+    #[cfg(all(any(target_arch = "aarch64", target_arch = "x86_64"), not(miri)))]
     #[test]
     fn fused_subtract_matches_staged_hadamard_for_all_sizes_and_strides() {
         type Transform = fn(&[i16], usize, &mut [i16]);
@@ -483,9 +536,9 @@ mod tests {
         }
     }
 
-    #[cfg(all(target_arch = "aarch64", not(miri)))]
+    #[cfg(all(any(target_arch = "aarch64", target_arch = "x86_64"), not(miri)))]
     #[test]
-    fn neon_matches_scalar_for_residual_extremes() {
+    fn simd_matches_scalar_for_residual_extremes() {
         for size in [8usize, 16, 32] {
             let stride = size + 5;
             for (low, high) in [(0, 0), (-255, 255), (255, -255)] {
@@ -503,19 +556,28 @@ mod tests {
                 match size {
                     8 => {
                         hadamard_8x8_scalar(&src, stride, &mut expected);
+                        #[cfg(target_arch = "aarch64")]
                         neon::hadamard_8x8(&src, stride, &mut actual);
+                        #[cfg(target_arch = "x86_64")]
+                        sse2::hadamard_8x8(&src, stride, &mut actual);
                     }
                     16 => {
                         hadamard_16x16_scalar(&src, stride, &mut expected);
+                        #[cfg(target_arch = "aarch64")]
                         neon::hadamard_16x16(&src, stride, &mut actual);
+                        #[cfg(target_arch = "x86_64")]
+                        sse2::hadamard_16x16(&src, stride, &mut actual);
                     }
                     32 => {
                         hadamard_32x32_scalar(&src, stride, &mut expected);
+                        #[cfg(target_arch = "aarch64")]
                         neon::hadamard_32x32(&src, stride, &mut actual);
+                        #[cfg(target_arch = "x86_64")]
+                        sse2::hadamard_32x32(&src, stride, &mut actual);
                     }
                     _ => unreachable!(),
                 }
-                assert_eq!(actual, expected, "NEON mismatch for {size}x{size}");
+                assert_eq!(actual, expected, "SIMD mismatch for {size}x{size}");
             }
         }
     }
