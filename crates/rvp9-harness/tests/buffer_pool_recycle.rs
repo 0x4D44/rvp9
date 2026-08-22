@@ -37,16 +37,16 @@ fn vector(name: &str) -> PathBuf {
         .join(name)
 }
 
+#[cfg_attr(
+    not(rvp9_conformance_vectors),
+    ignore = "requires tests/conformance/vectors; run scripts/fetch-vectors.sh"
+)]
 #[test]
 fn decode_target_buffer_is_pooled_after_warmup() {
     // 100-frame constant-resolution clip — long enough that the pool
     // working set (≤ DECODER_FRAME_BUFFERS slots) fills within the first
     // handful of frames and every subsequent frame recycles.
     let path = vector("vp90-2-09-aq2.webm");
-    if !path.exists() {
-        eprintln!("skip: {} not present", path.display());
-        return;
-    }
     let (data, packets) = read_packets(&path).expect("container parse");
     let mut decoder = Decoder::with_threads(NonZeroUsize::new(1).expect("1 != 0"));
 

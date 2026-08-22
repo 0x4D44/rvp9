@@ -26,13 +26,6 @@ fn vectors_dir() -> PathBuf {
 
 fn assert_vector_decodes_without_multi_tile_reject(vector_name: &str) {
     let path = vectors_dir().join(vector_name);
-    if !path.exists() {
-        eprintln!(
-            "skip: {} not present (run scripts/fetch-vectors.sh)",
-            path.display()
-        );
-        return;
-    }
     let (data, packets) = read_packets(&path).expect("container parse");
     // Pin to one worker (G5 review M2 — avoid thread amplification).
     let mut dec = Decoder::with_threads(NonZeroUsize::new(1).expect("1 is non-zero"));
@@ -66,18 +59,30 @@ fn assert_vector_decodes_without_multi_tile_reject(vector_name: &str) {
 
 /// E.2.b — 1x2 (one row, two cols) tile vector. 1920×1080 inter-
 /// prediction stream; previously skipped at the multi-tile gate.
+#[cfg_attr(
+    not(rvp9_conformance_vectors),
+    ignore = "requires tests/conformance/vectors; run scripts/fetch-vectors.sh"
+)]
 #[test]
 fn vp90_2_08_tile_1x2_decodes_after_e2() {
     assert_vector_decodes_without_multi_tile_reject("vp90-2-08-tile_1x2.webm");
 }
 
 /// E.2.b — 1x4 (one row, four cols) tile vector.
+#[cfg_attr(
+    not(rvp9_conformance_vectors),
+    ignore = "requires tests/conformance/vectors; run scripts/fetch-vectors.sh"
+)]
 #[test]
 fn vp90_2_08_tile_1x4_decodes_after_e2() {
     assert_vector_decodes_without_multi_tile_reject("vp90-2-08-tile_1x4.webm");
 }
 
 /// E.2.b — 1x8 (one row, eight cols) tile vector.
+#[cfg_attr(
+    not(rvp9_conformance_vectors),
+    ignore = "requires tests/conformance/vectors; run scripts/fetch-vectors.sh"
+)]
 #[test]
 fn vp90_2_08_tile_1x8_decodes_after_e2() {
     assert_vector_decodes_without_multi_tile_reject("vp90-2-08-tile_1x8.webm");

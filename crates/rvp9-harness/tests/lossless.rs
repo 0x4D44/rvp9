@@ -38,18 +38,14 @@ fn vectors_dir() -> PathBuf {
 /// every shown frame's reconstructed planes hash to the libvpx-
 /// published digest. No skips, no mismatches: the WHT path must close
 /// both keyframe (`lib.rs:734`) and inter (`lib.rs:1113`) sites.
+#[cfg_attr(
+    not(rvp9_conformance_vectors),
+    ignore = "requires tests/conformance/vectors; run scripts/fetch-vectors.sh"
+)]
 #[test]
 fn lossless_quantizer_00_decodes_bit_exact() {
     let vector = vectors_dir().join("vp90-2-00-quantizer-00.webm");
     let md5_path = vectors_dir().join("vp90-2-00-quantizer-00.webm.md5");
-    if !vector.exists() {
-        eprintln!(
-            "skip: {} not present (run scripts/fetch-vectors.sh)",
-            vector.display()
-        );
-        return;
-    }
-
     let (data, packets) = read_packets(&vector).expect("container parse");
     let md5_entries = read_md5_file(&md5_path).expect(".md5 parse");
 

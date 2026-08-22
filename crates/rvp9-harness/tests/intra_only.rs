@@ -37,16 +37,13 @@ fn vector_path() -> PathBuf {
 /// G1 acceptance test: every shown frame in `vp90-2-10-show-existing-frame.webm`
 /// matches its libvpx-reference MD5. Before G1: 5 pass, 8 skipped
 /// (IntraOnly `Unimplemented`). After G1: 13 pass, 0 skipped.
+#[cfg_attr(
+    not(rvp9_conformance_vectors),
+    ignore = "requires tests/conformance/vectors; run scripts/fetch-vectors.sh"
+)]
 #[test]
 fn show_existing_frame_all_thirteen_shown_frames_match_reference() {
     let vector = vector_path();
-    if !vector.exists() {
-        eprintln!(
-            "vector {} not present — run scripts/fetch-vectors.sh",
-            vector.display()
-        );
-        return;
-    }
     let md5_path = vector.with_extension("webm.md5");
     let (data, packets) = read_packets(&vector).expect("container parse");
     let md5_entries = read_md5_file(&md5_path).expect(".md5 parse");
