@@ -6,15 +6,15 @@
 - **Area:** decoder/panic-safety tests
 - **Raised:** 2026-08-22T10:24:37Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
+- **Owner:** deltic:manual
+- **Owner role:** fix
+- **Owner run:** fix-20260822T131153Z-3ad51f2d
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KIL-00083-run-fix-20260822T131153Z-3ad51f2d
+- **Owner base:** f3d544800f6109ecaaed67f0a6f7867748052f50
 - **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner since:** 2026-08-22T13:11:53Z
+- **Owner until:** 2026-08-22T15:11:53Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
