@@ -78,6 +78,17 @@ pub enum BitstreamError {
         log2_tile_cols: u8,
     },
 
+    /// The public tile-info writer received a tile grid that cannot be
+    /// represented for the supplied frame geometry.
+    InvalidTileInfo {
+        /// Frame width in 8-pixel mode-info columns.
+        mi_cols: i32,
+        /// Requested `log2(tile_cols)`.
+        log2_tile_cols: u8,
+        /// Requested `log2(tile_rows)`.
+        log2_tile_rows: u8,
+    },
+
     /// A public tile-buffer helper received dimensions outside VP9's
     /// `1..=64` columns and `1..=4` rows limits.
     InvalidTileDimensions {
@@ -217,6 +228,14 @@ impl fmt::Display for BitstreamError {
             Self::InvalidTileCols { log2_tile_cols } => {
                 write!(f, "invalid log2_tile_cols: {log2_tile_cols} (max 6)")
             }
+            Self::InvalidTileInfo {
+                mi_cols,
+                log2_tile_cols,
+                log2_tile_rows,
+            } => write!(
+                f,
+                "tile grid log2(cols)={log2_tile_cols}, log2(rows)={log2_tile_rows} is invalid for mi_cols={mi_cols}"
+            ),
             Self::InvalidTileDimensions {
                 tile_cols,
                 tile_rows,

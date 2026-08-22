@@ -571,12 +571,23 @@ pub fn write_tile_info(
     tile: &TileInfo,
     mi_cols: i32,
 ) -> Result<(), BitstreamError> {
+    let invalid = || BitstreamError::InvalidTileInfo {
+        mi_cols,
+        log2_tile_cols: tile.log2_tile_cols,
+        log2_tile_rows: tile.log2_tile_rows,
+    };
+    // `mi_cols_aligned_to_sb` adds seven before rounding. Reject invalid public
+    // geometry before that arithmetic or any bit write.
+    if !(1..=i32::MAX - 7).contains(&mi_cols) {
+        return Err(invalid());
+    }
     let (min_log2_tile_cols, max_log2_tile_cols) = get_tile_n_bits(mi_cols);
     let log2_tile_cols = tile.log2_tile_cols as i32;
-    debug_assert!(
-        log2_tile_cols >= min_log2_tile_cols && log2_tile_cols <= max_log2_tile_cols,
-        "write_tile_info: log2_tile_cols={log2_tile_cols} out of [{min_log2_tile_cols}, {max_log2_tile_cols}] for mi_cols={mi_cols}"
-    );
+    if !(min_log2_tile_cols..=max_log2_tile_cols).contains(&log2_tile_cols)
+        || tile.log2_tile_rows > 2
+    {
+        return Err(invalid());
+    }
 
     // columns: write (log2_tile_cols - min_log2_tile_cols) 1-bits...
     let mut ones = log2_tile_cols - min_log2_tile_cols;
@@ -1049,5 +1060,50 @@ mod tests {
                 40,
             );
         }
+    }
+
+    fn assert_invalid_tile_info(tile: TileInfo, mi_cols: i32) {
+        let mut buf = [0xa5; 4];
+        let original = buf;
+        let err = {
+            let mut writer = RawBitWriter::new(&mut buf);
+            write_tile_info(&mut writer, &tile, mi_cols).expect_err("invalid tile info must fail")
+        };
+        assert_eq!(
+            err,
+            BitstreamError::InvalidTileInfo {
+                mi_cols,
+                log2_tile_cols: tile.log2_tile_cols,
+                log2_tile_rows: tile.log2_tile_rows,
+            }
+        );
+        assert_eq!(buf, original, "validation must happen before writing bits");
+    }
+
+    #[test]
+    fn write_tile_info_rejects_invalid_geometry_before_writing() {
+        assert_eq!(get_tile_n_bits(1024), (1, 5));
+        assert_invalid_tile_info(
+            TileInfo {
+                log2_tile_cols: 0,
+                log2_tile_rows: 0,
+            },
+            1024,
+        );
+        assert_invalid_tile_info(
+            TileInfo {
+                log2_tile_cols: 1,
+                log2_tile_rows: 0,
+            },
+            40,
+        );
+        assert_invalid_tile_info(
+            TileInfo {
+                log2_tile_cols: 0,
+                log2_tile_rows: 3,
+            },
+            40,
+        );
+        assert_invalid_tile_info(TileInfo::default(), 0);
     }
 }
