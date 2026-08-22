@@ -344,8 +344,8 @@ fn multi_tile_dispatch_uses_worker_pool() {
 ///
 /// Vector choice: `tile_1x8.webm` has the largest tile count in the
 /// conformance corpus that we have hands-on multi-tile parallel-
-/// dispatch eligibility for, so this catches fallback-to-inline,
-/// missing isolation, and lost scratch reuse.
+/// dispatch eligibility when the decoder has eight workers, so this
+/// catches fallback-to-inline, missing isolation, and lost scratch reuse.
 #[test]
 #[cfg_attr(
     not(rvp9_conformance_vectors),
@@ -357,7 +357,9 @@ fn multi_tile_parallel_decode_reuses_isolated_scratch_buffers() {
     let path = dir.join("vp90-2-08-tile_1x8.webm");
     assert!(path.exists(), "required vector missing: {}", path.display());
     let (data, packets) = rvp9_harness::container::read_packets(&path).expect("container parse");
-    let mut decoder = Decoder::with_threads(nz(2));
+    // The bounded-scratch policy only dispatches when every tile has a worker;
+    // use eight workers so this eight-tile fixture exercises that path.
+    let mut decoder = Decoder::with_threads(nz(8));
 
     // Before any decode, the pool should be empty.
     assert_eq!(
