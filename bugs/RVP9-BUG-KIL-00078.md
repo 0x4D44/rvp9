@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00078 — Tile-info writer accepts invalid geometry in release builds
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** core/bitstream header writer
 - **Raised:** 2026-08-22T08:56:49Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260822T132113Z-b15a1b7a
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00078-run-fix-20260822T132113Z-b15a1b7a
-- **Owner base:** 9d980c537926989dc7b6f33fdfcbe97bbc06bed1
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-08-22T13:21:13Z
-- **Owner until:** 2026-08-22T15:21:13Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T08:56:49Z, raised via `deltic bugs new`)
+- **State history:** Open (2026-08-22T08:56:49Z, raised via `deltic bugs new`) -> Fixed (2026-08-22T13:26:41Z, deltic:auto role=fix run=fix-20260822T132113Z-b15a1b7a branch=task/bug-RVP9-BUG-KIL-00078-run-fix-20260822T132113Z-b15a1b7a code=bdb22b49 gate=manual)
 
 ## Observation
 
