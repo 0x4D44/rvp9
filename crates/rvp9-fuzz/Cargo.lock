@@ -125,14 +125,14 @@ checksum = "69cdb34c158ceb288df11e18b4bd39de994f6657d83847bdffdbd7f346754b0f"
 
 [[package]]
 name = "rvp9-core"
-version = "0.2.0-alpha.2"
+version = "0.2.0-alpha.3"
 dependencies = [
  "crossbeam-channel",
 ]
 
 [[package]]
 name = "rvp9-decoder"
-version = "0.2.0-alpha.2"
+version = "0.2.0-alpha.3"
 dependencies = [
  "rvp9-core",
  "static_assertions",

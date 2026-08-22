@@ -7,6 +7,9 @@ authors.workspace = true
 rust-version.workspace = true
 repository.workspace = true
 description = "Command-line tools: rvp9enc (encoder) and rvp9dec (decoder). Mirror libvpx vpxenc/vpxdec interfaces where practical."
+readme = "README.md"
+keywords = ["vp9", "video", "encoder", "decoder", "cli"]
+categories = ["multimedia::video", "command-line-utilities", "encoding"]
 
 # Intentionally NOT inheriting `[lints.workspace]` per HLD §G11
 # deliverable 1: this is a CLI tool where `eprintln!` / `println!` is
@@ -33,7 +36,7 @@ name = "rvp9dec"
 path = "src/bin/rvp9dec.rs"
 
 [dependencies]
-rvp9-core = { version = "0.2.0-alpha.2", path = "../rvp9-core" }
-rvp9-io = { version = "0.2.0-alpha.2", path = "../rvp9-io" }
-rvp9-decoder = { version = "0.2.0-alpha.2", path = "../rvp9-decoder" }
-rvp9-encoder = { version = "0.2.0-alpha.2", path = "../rvp9-encoder" }
+rvp9-core = { version = "0.2.0-alpha.3", path = "../rvp9-core" }
+rvp9-io = { version = "0.2.0-alpha.3", path = "../rvp9-io" }
+rvp9-decoder = { version = "0.2.0-alpha.3", path = "../rvp9-decoder" }
+rvp9-encoder = { version = "0.2.0-alpha.3", path = "../rvp9-encoder" }

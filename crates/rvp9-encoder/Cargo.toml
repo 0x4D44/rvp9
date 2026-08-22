@@ -7,6 +7,9 @@ authors.workspace = true
 rust-version.workspace = true
 repository.workspace = true
 description = "VP9 real-time video encoder. Mirrors libvpx tile-threaded architecture; targets WebRTC and livestream use cases."
+readme = "README.md"
+keywords = ["vp9", "video", "encoder", "codec", "webrtc"]
+categories = ["multimedia::video", "encoding"]
 
 [lints]
 workspace = true
@@ -18,7 +21,7 @@ highbitdepth = ["rvp9-core/highbitdepth"]
 runtime-profiling = []
 
 [dependencies]
-rvp9-core = { version = "0.2.0-alpha.2", path = "../rvp9-core" }
+rvp9-core = { version = "0.2.0-alpha.3", path = "../rvp9-core" }
 
 [dev-dependencies]
 # Used in integration tests that round-trip encoder output through the

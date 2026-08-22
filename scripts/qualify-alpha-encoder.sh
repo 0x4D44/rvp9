@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Qualify the v0.2.0-alpha.2 encoder surface across the supported real-time
+# Qualify the v0.2.0-alpha.3 encoder surface across the supported real-time
 # configuration matrix. Every produced stream must decode byte-exactly with
 # rvp9dec, pinned libvpx vpxdec, and ffmpeg.
 
@@ -170,7 +170,7 @@ if [ "${#rows[@]}" -ne 32 ]; then
 fi
 
 {
-    echo "rvp9 v0.2.0-alpha.2 encoder qualification"
+    echo "rvp9 v0.2.0-alpha.3 encoder qualification"
     echo "git_commit=$(git rev-parse HEAD)"
     echo "host_triple=$host_triple"
     echo "rustc=$(rustc --version)"

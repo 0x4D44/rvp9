@@ -5,7 +5,7 @@ An open-source Rust implementation of the VP9 video codec, following the
 decoder. RVP9 targets production-grade real-time encoding for WebRTC and
 livestreaming.
 
-> **Status:** `v0.2.0-alpha.2` is an 8-bit real-time preview. It is ready for
+> **Status:** `v0.2.0-alpha.3` is an 8-bit real-time preview. It is ready for
 > evaluation, not a production-parity release. See [`PLAN.md`](./PLAN.md) for
 > the remaining work and [`notes/divergence-ledger.md`](./notes/divergence-ledger.md)
 > for deliberate departures from libvpx.

@@ -7,6 +7,9 @@ authors.workspace = true
 rust-version.workspace = true
 repository.workspace = true
 description = "Shared VP9 codec primitives: bitstream, entropy, transforms, intra prediction, loop filter, frame buffers, and per-arch SIMD kernels."
+readme = "README.md"
+keywords = ["vp9", "video", "codec", "multimedia", "simd"]
+categories = ["multimedia::video", "encoding"]
 
 [lints]
 workspace = true

@@ -8,6 +8,9 @@ rust-version.workspace = true
 repository.workspace = true
 build = "build.rs"
 description = "VP9 video decoder. Spec-conformant; validated against the official VP9 test vectors."
+readme = "README.md"
+keywords = ["vp9", "video", "decoder", "codec", "multimedia"]
+categories = ["multimedia::video", "encoding"]
 
 [lints]
 workspace = true
@@ -22,7 +25,7 @@ workspace = true
 profile-tiles = []
 
 [dependencies]
-rvp9-core = { version = "0.2.0-alpha.2", path = "../rvp9-core" }
+rvp9-core = { version = "0.2.0-alpha.3", path = "../rvp9-core" }
 # Drift-catch for `Decoder: Send + Sync` — see lib.rs near the
 # `assert_impl_all!` invocation. `static_assertions` is a zero-cost
 # compile-time-only crate (all macros expand to unused fns).
