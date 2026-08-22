@@ -91,6 +91,7 @@ pub mod lpf_vertical_4_dual_avx2;
 pub mod lpf_vertical_8_avx2;
 pub mod lpf_vertical_8_dual_avx2;
 pub mod plane_dequant_finisher_avx2;
+pub mod quantize_metrics_sse2;
 pub mod sad4d_avx2;
 pub mod sad_avx2;
 pub mod subpel_variance_avx2;
