@@ -1,25 +1,25 @@
 # RVP9-BUG-FLU-00030 — Timing qualifiers cannot enforce the idle-host gate on Windows
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Must
 - **Severity:** High
 - **Area:** benchmark
 - **Raised:** 2026-08-22T18:08:12Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260822T180840Z-795f80a2
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLU-00030-run-fix-20260822T180840Z-795f80a2
-- **Owner base:** b7142cf499949b3c7bd5f9ebcad0ff644cee02c5
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-08-22T18:08:40Z
-- **Owner until:** 2026-08-22T20:08:40Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T18:08:12Z, raised via `deltic bugs new` model=gpt-5.6-sol@xhigh)
+- **State history:** Open (2026-08-22T18:08:12Z, raised via `deltic bugs new` model=gpt-5.6-sol@xhigh) -> Fixed (2026-08-22T18:20:49Z, deltic:auto role=fix run=fix-20260822T180840Z-795f80a2 branch=task/bug-RVP9-BUG-FLU-00030-run-fix-20260822T180840Z-795f80a2 code=36eec127 gate=manual)
 
 ## Observation
 
