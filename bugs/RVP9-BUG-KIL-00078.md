@@ -6,15 +6,15 @@
 - **Area:** core/bitstream header writer
 - **Raised:** 2026-08-22T08:56:49Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
+- **Owner:** deltic:manual
+- **Owner role:** fix
+- **Owner run:** fix-20260822T132113Z-b15a1b7a
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KIL-00078-run-fix-20260822T132113Z-b15a1b7a
+- **Owner base:** 9d980c537926989dc7b6f33fdfcbe97bbc06bed1
 - **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner since:** 2026-08-22T13:21:13Z
+- **Owner until:** 2026-08-22T15:21:13Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
