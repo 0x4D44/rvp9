@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00081 — TileMiView geometry can drive safe methods out of bounds
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Must
 - **Severity:** High
 - **Area:** decoder/tile context API
 - **Raised:** 2026-08-22T10:24:23Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260822T123644Z-5dab34f7
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00081-run-fix-20260822T123644Z-5dab34f7
-- **Owner base:** 3790ef245514164655d38501c665b0959b1f8e03
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-08-22T12:36:44Z
-- **Owner until:** 2026-08-22T14:36:44Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T10:24:23Z, raised via `deltic bugs new` model=gpt-5.6-sol@xhigh)
+- **State history:** Open (2026-08-22T10:24:23Z, raised via `deltic bugs new` model=gpt-5.6-sol@xhigh) -> Fixed (2026-08-22T12:44:28Z, deltic:auto role=fix run=fix-20260822T123644Z-5dab34f7 branch=task/bug-RVP9-BUG-KIL-00081-run-fix-20260822T123644Z-5dab34f7 code=f91347d9 gate=manual)
 
 ## Observation
 
