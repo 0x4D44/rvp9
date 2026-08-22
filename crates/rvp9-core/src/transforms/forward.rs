@@ -40,6 +40,10 @@ use super::types::TxType;
 #[path = "forward_neon.rs"]
 mod neon;
 
+#[cfg(all(target_arch = "x86_64", not(miri)))]
+#[path = "forward_sse2.rs"]
+mod sse2;
+
 /// Function pointer for a 1D 4-point forward transform — either
 /// [`fdct4`] or [`fadst4`]. Used by the [`fht4x4`] dispatcher to pick
 /// per-axis kernels via the FHT_4 table.
@@ -1000,7 +1004,7 @@ pub fn fadst16(input: &[i32; 16], output: &mut [i32; 16]) {
 /// `(x + 1) >> 2` IS the reduction).
 ///
 /// Mirrors libvpx `vpx_fdct16x16_c` (`vpx_dsp/fwd_txfm.c:183-361`).
-#[cfg(any(not(target_arch = "aarch64"), test))]
+#[cfg(any(not(any(target_arch = "aarch64", target_arch = "x86_64")), test, miri))]
 fn fdct16x16_scalar(input: &[i16], output: &mut [i32; 256], stride: usize) {
     debug_assert!(
         input.len() >= 15 * stride + 16,
@@ -1078,8 +1082,9 @@ fn fdct16x16_scalar(input: &[i16], output: &mut [i32; 256], stride: usize) {
     }
 }
 
-/// Dispatch the 16x16 forward DCT to the exact AArch64 vector kernel when
-/// available, retaining [`fdct16x16_scalar`] as the portable oracle.
+/// Dispatch the 16x16 forward DCT to an exact architecture-specific vector
+/// kernel when available, retaining [`fdct16x16_scalar`] as the portable
+/// oracle.
 pub fn fdct16x16(input: &[i16], output: &mut [i32; 256], stride: usize) {
     #[cfg(all(target_arch = "aarch64", not(miri)))]
     {
@@ -1087,7 +1092,14 @@ pub fn fdct16x16(input: &[i16], output: &mut [i32; 256], stride: usize) {
     }
     #[cfg(any(not(target_arch = "aarch64"), miri))]
     {
-        fdct16x16_scalar(input, output, stride);
+        #[cfg(all(target_arch = "x86_64", not(miri)))]
+        {
+            sse2::fdct16x16(input, output, stride);
+        }
+        #[cfg(any(not(target_arch = "x86_64"), miri))]
+        {
+            fdct16x16_scalar(input, output, stride);
+        }
     }
 }
 
