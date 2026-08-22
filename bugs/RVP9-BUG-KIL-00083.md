@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00083 — Panic-safety inter recovery test accepts decode failure
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** decoder/panic-safety tests
 - **Raised:** 2026-08-22T10:24:37Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260822T131153Z-3ad51f2d
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00083-run-fix-20260822T131153Z-3ad51f2d
-- **Owner base:** f3d544800f6109ecaaed67f0a6f7867748052f50
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-08-22T13:11:53Z
-- **Owner until:** 2026-08-22T15:11:53Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T10:24:37Z, raised via `deltic bugs new` model=gpt-5.6-sol@xhigh)
+- **State history:** Open (2026-08-22T10:24:37Z, raised via `deltic bugs new` model=gpt-5.6-sol@xhigh) -> Fixed (2026-08-22T13:13:44Z, deltic:auto role=fix run=fix-20260822T131153Z-3ad51f2d branch=task/bug-RVP9-BUG-KIL-00083-run-fix-20260822T131153Z-3ad51f2d code=267e292b gate=manual)
 
 ## Observation
 
