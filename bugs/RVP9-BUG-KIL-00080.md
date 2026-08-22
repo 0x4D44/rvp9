@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00080 — Parallel decoder retains one full-frame scratch buffer per tile
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** High
 - **Area:** core/frame decoder tile scratch
 - **Raised:** 2026-08-22T09:00:46Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260822T130204Z-1abda903
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00080-run-fix-20260822T130204Z-1abda903
-- **Owner base:** e0c58dcb2727149d5ed32344c76ed49e7ebae1f0
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-08-22T13:02:04Z
-- **Owner until:** 2026-08-22T15:02:04Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T09:00:46Z, raised via `deltic bugs new`)
+- **State history:** Open (2026-08-22T09:00:46Z, raised via `deltic bugs new`) -> Fixed (2026-08-22T13:08:16Z, deltic:auto role=fix run=fix-20260822T130204Z-1abda903 branch=task/bug-RVP9-BUG-KIL-00080-run-fix-20260822T130204Z-1abda903 code=706f1637 gate=manual)
 
 ## Observation
 
