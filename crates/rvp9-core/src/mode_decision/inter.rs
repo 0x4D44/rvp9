@@ -5728,18 +5728,14 @@ fn reconstruct_via_round_trip(
             };
             #[cfg(all(target_arch = "x86_64", not(miri)))]
             let residual_nonzero = if reconstruct {
-                let mut nonzero = false;
-                for r in 0..tx_side {
-                    for c in 0..tx_side {
-                        let source =
-                            src.data[(sy + off_y + r) * src.stride + sx + off_x + c] as i16;
-                        let prediction = recon[(off_y + r) * recon_stride + off_x + c] as i16;
-                        let value = source - prediction;
-                        residual[r * tx_side + c] = value;
-                        nonzero |= value != 0;
-                    }
-                }
-                nonzero
+                crate::dsp::x86_64::subtract_square_sse2_with_nonzero(
+                    &src.data[(sy + off_y) * src.stride + sx + off_x..],
+                    src.stride,
+                    &recon[off_y * recon_stride + off_x..],
+                    recon_stride,
+                    residual,
+                    tx_side,
+                )
             } else {
                 true
             };
