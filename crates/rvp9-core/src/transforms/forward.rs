@@ -503,7 +503,11 @@ pub fn fdct8x8(input: &[i16], output: &mut [i32; 64], stride: usize) {
     {
         neon::fdct8x8(input, output, stride);
     }
-    #[cfg(any(not(target_arch = "aarch64"), miri))]
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    {
+        sse2::fdct8x8(input, output, stride);
+    }
+    #[cfg(any(all(not(target_arch = "aarch64"), not(target_arch = "x86_64")), miri))]
     {
         fdct8x8_scalar(input, output, stride);
     }
