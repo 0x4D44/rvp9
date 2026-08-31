@@ -904,6 +904,13 @@ $busyCores = $meanPercent * [Environment]::ProcessorCount / 100.0
     })
 }
 
+fn load_with_retry<F>(mut read: F) -> Option<f64>
+where
+    F: FnMut() -> Option<f64>,
+{
+    read().or_else(read)
+}
+
 #[cfg(windows)]
 fn load_metric_name() -> &'static str {
     "windows_60s_mean_busy_logical_cores"
@@ -925,7 +932,7 @@ fn enforce_load(
         }
         return Ok(());
     };
-    let load = current_load1().ok_or_else(|| {
+    let load = load_with_retry(current_load1).ok_or_else(|| {
         format!("cannot read host one-minute load at `{point}`; --max-load1 fails closed")
     })?;
     observations.push((point.to_owned(), load));
@@ -2033,6 +2040,39 @@ mod tests {
         assert_eq!(parse_load1("{ 2.75 3.0 4.0 }"), Some(2.75));
         assert_eq!(parse_load1("1.25 0.5 0.2 1/100 42"), Some(1.25));
         assert_eq!(parse_load1("unavailable"), None);
+    }
+
+    #[test]
+    fn load_retry_recovers_after_one_transient_failure() {
+        let mut calls = 0;
+        let load = load_with_retry(|| {
+            calls += 1;
+            (calls == 2).then_some(0.5)
+        });
+        assert_eq!(load, Some(0.5));
+        assert_eq!(calls, 2);
+    }
+
+    #[test]
+    fn load_retry_fails_closed_after_two_failures() {
+        let mut calls = 0;
+        let load = load_with_retry(|| {
+            calls += 1;
+            None
+        });
+        assert_eq!(load, None);
+        assert_eq!(calls, 2);
+    }
+
+    #[test]
+    fn load_retry_does_not_repeat_a_valid_reading() {
+        let mut calls = 0;
+        let load = load_with_retry(|| {
+            calls += 1;
+            Some(0.5)
+        });
+        assert_eq!(load, Some(0.5));
+        assert_eq!(calls, 1);
     }
 
     #[test]
