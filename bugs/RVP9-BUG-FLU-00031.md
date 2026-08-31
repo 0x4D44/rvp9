@@ -1,25 +1,25 @@
 # RVP9-BUG-FLU-00031 — Windows load sampling discards benchmarks on transient PDH failures
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Must
 - **Severity:** Medium
 - **Area:** bench/encode-headtohead
 - **Raised:** 2026-08-31T15:05:29Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260831T150649Z-e1f6214c
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLU-00031-run-fix-20260831T150649Z-e1f6214c
-- **Owner base:** 41386273530069b4bcc271eeeaac701857905c24
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-08-31T15:06:49Z
-- **Owner until:** 2026-08-31T17:06:49Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-31T15:05:29Z, raised via `deltic bugs new` model=gpt-5.6-sol@high)
+- **State history:** Open (2026-08-31T15:05:29Z, raised via `deltic bugs new` model=gpt-5.6-sol@high) -> Fixed (2026-08-31T15:12:46Z, deltic:auto role=fix run=fix-20260831T150649Z-e1f6214c branch=task/bug-RVP9-BUG-FLU-00031-run-fix-20260831T150649Z-e1f6214c code=b437da2e gate=manual)
 
 ## Observation
 
