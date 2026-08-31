@@ -1074,6 +1074,16 @@ fn choose_fixed_tree_inter_impl<const DIAGNOSTICS: bool>(
         )
     });
 
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    let average_diff_8x8 = (input.visible_width == 64 && input.visible_height == 64).then(|| {
+        crate::dsp::x86_64::avg_diff_8x8_grid_64x64_sse2(
+            input.source,
+            input.source_stride,
+            input.predictor,
+            input.predictor_stride,
+        )
+    });
+
     for i in 0..4 {
         let x32 = (i & 1) * 32;
         let y32 = (i >> 1) * 32;
@@ -1100,7 +1110,25 @@ fn choose_fixed_tree_inter_impl<const DIAGNOSTICS: bool>(
                     average_diff_var(input, x16 + 8, y16 + 8, 8),
                 ]
             };
-            #[cfg(any(not(target_arch = "aarch64"), miri))]
+            #[cfg(all(target_arch = "x86_64", not(miri)))]
+            let split_8x8 = if let Some(averages) = &average_diff_8x8 {
+                let cell_row = y16 / 8;
+                let cell_col = x16 / 8;
+                [
+                    FixedVar::sample(i32::from(averages[cell_row * 8 + cell_col])),
+                    FixedVar::sample(i32::from(averages[cell_row * 8 + cell_col + 1])),
+                    FixedVar::sample(i32::from(averages[(cell_row + 1) * 8 + cell_col])),
+                    FixedVar::sample(i32::from(averages[(cell_row + 1) * 8 + cell_col + 1])),
+                ]
+            } else {
+                [
+                    average_diff_var(input, x16, y16, 8),
+                    average_diff_var(input, x16 + 8, y16, 8),
+                    average_diff_var(input, x16, y16 + 8, 8),
+                    average_diff_var(input, x16 + 8, y16 + 8, 8),
+                ]
+            };
+            #[cfg(any(miri, all(not(target_arch = "aarch64"), not(target_arch = "x86_64"))))]
             let split_8x8 = [
                 average_diff_var(input, x16, y16, 8),
                 average_diff_var(input, x16 + 8, y16, 8),

@@ -100,6 +100,7 @@ pub mod subtract_sse2;
 pub mod tm_predictor_avx2;
 pub mod v_predictor_avx2;
 pub mod variance_avx2;
+pub mod vbp_sse2;
 
 pub use convolve_avg_avx2::convolve_avg_avx2;
 pub use convolve_copy_avx2::convolve_copy_avx2;
@@ -179,3 +180,4 @@ pub use variance_avx2::{
     var_sum_sse_16x32_avx2, var_sum_sse_32x16_avx2, var_sum_sse_32x32_avx2, var_sum_sse_32x64_avx2,
     var_sum_sse_64x32_avx2, var_sum_sse_64x64_avx2,
 };
+pub use vbp_sse2::avg_diff_8x8_grid_64x64_sse2;
