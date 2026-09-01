@@ -46,6 +46,34 @@ use core::arch::x86_64::{
 #[cfg(target_arch = "x86_64")]
 const FILTER_BITS: i32 = 7;
 
+#[cfg(target_arch = "x86_64")]
+const MAX_SUBPEL_WIDTH: usize = 64;
+#[cfg(target_arch = "x86_64")]
+const MAX_SUBPEL_HEIGHT: usize = 64;
+
+#[cfg(target_arch = "x86_64")]
+struct SubPixelVarianceScratch {
+    fdata: [i16; (MAX_SUBPEL_HEIGHT + 1) * MAX_SUBPEL_WIDTH],
+    temp: [u8; MAX_SUBPEL_HEIGHT * MAX_SUBPEL_WIDTH],
+}
+
+#[cfg(target_arch = "x86_64")]
+struct BilinearBuffers<'a> {
+    fdata: &'a mut [i16],
+    temp: &'a mut [u8],
+}
+
+#[cfg(target_arch = "x86_64")]
+thread_local! {
+    /// Reused by the AVX2 sub-pixel-variance wrappers on one search worker.
+    /// Each call overwrites both complete active prefixes before reading them.
+    static SUBPEL_VARIANCE_SCRATCH: std::cell::RefCell<SubPixelVarianceScratch> =
+        const { std::cell::RefCell::new(SubPixelVarianceScratch {
+            fdata: [0; (MAX_SUBPEL_HEIGHT + 1) * MAX_SUBPEL_WIDTH],
+            temp: [0; MAX_SUBPEL_HEIGHT * MAX_SUBPEL_WIDTH],
+        }) };
+}
+
 /// 2-tap bilinear filters — verbatim copy of
 /// `crate::dsp::distortion::BILINEAR_FILTERS` (private there).
 #[cfg(target_arch = "x86_64")]
@@ -102,9 +130,11 @@ unsafe fn bilinear_to_u8_temp(
     yoffset: usize,
     w: usize,
     h: usize,
-    temp: &mut [u8],
+    buffers: BilinearBuffers<'_>,
 ) {
+    let BilinearBuffers { fdata, temp } = buffers;
     debug_assert!(xoffset < 8 && yoffset < 8);
+    debug_assert!(fdata.len() >= (h + 1) * w);
     debug_assert!(temp.len() >= h * w);
 
     let xf = BILINEAR_FILTERS[xoffset];
@@ -117,7 +147,6 @@ unsafe fn bilinear_to_u8_temp(
 
     // First pass: horizontal bilinear → (h+1) × w i16 buffer (`fdata`).
     // Each output row holds w i16 values in [0, 255].
-    let mut fdata = vec![0i16; (h + 1) * w];
     for i in 0..(h + 1) {
         let row_base = i * src_stride;
         let mut j = 0usize;
@@ -233,19 +262,34 @@ pub fn sub_pixel_variance_avx2(
     w: usize,
     h: usize,
 ) -> (u32, u32) {
-    let mut temp = vec![0u8; h * w];
-    // SAFETY: installed only on AVX2 hosts by `SimdDispatch::build` (caps.avx2).
-    unsafe {
-        bilinear_to_u8_temp(src, src_stride, xoffset, yoffset, w, h, &mut temp);
-    }
-    // Surface (b): variance of the byte-identical temp vs `reference`. We use
-    // the proven AVX2 (sum, sse) reduction and apply the EXACT finisher the
-    // scalar `distortion::variance` uses (i64 sub + max(0)).
-    let (sum, sse) = super::variance_avx2::var_sum_sse_avx2(&temp, w, reference, ref_stride, w, h);
-    let n = (w * h) as i64;
-    let sum_sq = sum * sum;
-    let var = ((sse as i64) - sum_sq / n).max(0) as u32;
-    (var, sse as u32)
+    debug_assert!(w <= MAX_SUBPEL_WIDTH && h <= MAX_SUBPEL_HEIGHT);
+    SUBPEL_VARIANCE_SCRATCH.with_borrow_mut(|scratch| {
+        let SubPixelVarianceScratch { fdata, temp } = scratch;
+        let fdata = &mut fdata[..(h + 1) * w];
+        let temp = &mut temp[..h * w];
+        // SAFETY: installed only on AVX2 hosts by `SimdDispatch::build`
+        // (caps.avx2). The fixed scratch covers every supported VP9 block.
+        unsafe {
+            bilinear_to_u8_temp(
+                src,
+                src_stride,
+                xoffset,
+                yoffset,
+                w,
+                h,
+                BilinearBuffers { fdata, temp },
+            );
+        }
+        // Surface (b): variance of the byte-identical temp vs `reference`. We
+        // use the proven AVX2 (sum, sse) reduction and apply the EXACT scalar
+        // finisher (i64 sub + max(0)).
+        let (sum, sse) =
+            super::variance_avx2::var_sum_sse_avx2(temp, w, reference, ref_stride, w, h);
+        let n = (w * h) as i64;
+        let sum_sq = sum * sum;
+        let var = ((sse as i64) - sum_sq / n).max(0) as u32;
+        (var, sse as u32)
+    })
 }
 
 /// Generate the 11 per-size AVX2 sub-pixel-variance safe wrappers (the 5
@@ -401,11 +445,23 @@ mod tests {
                 for xoff in 0..8 {
                     let scalar = scalar_bilinear_temp(&src, src_stride, xoff, yoff, w, h);
                     let mut avx2 = vec![0u8; h * w];
+                    let mut fdata = vec![0i16; (h + 1) * w];
                     // SAFETY: guarded by the `require_avx2!()` check at the top of
                     // this test, which returns early unless the running CPU
                     // supports AVX2.
                     unsafe {
-                        bilinear_to_u8_temp(&src, src_stride, xoff, yoff, w, h, &mut avx2);
+                        bilinear_to_u8_temp(
+                            &src,
+                            src_stride,
+                            xoff,
+                            yoff,
+                            w,
+                            h,
+                            BilinearBuffers {
+                                fdata: &mut fdata,
+                                temp: &mut avx2,
+                            },
+                        );
                     }
                     assert_eq!(
                         scalar, avx2,
@@ -470,6 +526,32 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn production_wrapper_reuses_thread_local_scratch() {
+        require_avx2!();
+        let w = MAX_SUBPEL_WIDTH;
+        let h = MAX_SUBPEL_HEIGHT;
+        let src_stride = w + 1;
+        let ref_stride = w;
+        let src = vec![73u8; (h + 1) * src_stride];
+        let reference = vec![191u8; h * ref_stride];
+        let (fdata_ptr, temp_ptr) = SUBPEL_VARIANCE_SCRATCH.with_borrow_mut(|scratch| {
+            scratch.fdata.fill(i16::MIN);
+            scratch.temp.fill(u8::MAX);
+            (scratch.fdata.as_ptr(), scratch.temp.as_ptr())
+        });
+
+        let actual = sub_pixel_variance_avx2(&src, src_stride, &reference, ref_stride, 3, 5, w, h);
+        let expected = scalar_svf(&src, src_stride, &reference, ref_stride, 3, 5, w, h);
+        assert_eq!(actual, expected);
+        SUBPEL_VARIANCE_SCRATCH.with_borrow(|scratch| {
+            assert_eq!(scratch.fdata.as_ptr(), fdata_ptr);
+            assert_eq!(scratch.temp.as_ptr(), temp_ptr);
+            assert_ne!(scratch.fdata[0], i16::MIN);
+            assert_ne!(scratch.temp[0], u8::MAX);
+        });
     }
 
     /// Forced-caps dispatch round-trip for the subpel_variance slot family.
