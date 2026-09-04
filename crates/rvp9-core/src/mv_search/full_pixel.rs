@@ -27,7 +27,7 @@
 
 use crate::block::BlockSize;
 use crate::cost::mv_cost::{MV_MAX, MvCosts, mv_cost, mv_joint};
-use crate::dsp::dispatch::{Sad4dFn, SadFn};
+use crate::dsp::dispatch::{Sad4dFn, SadFn, VarFn};
 use crate::mode_info::Mv;
 use crate::mv_search::mv_limits::{MvLimits, is_mv_in};
 use crate::mv_search::search_site::SearchSiteConfig;
@@ -722,6 +722,7 @@ fn diamond_search_sad_from_step(
 fn full_pixel_variance_cost(
     params: &FullPixelSearchParams<'_>,
     result: FullPixelSearchResult,
+    variance_fn: VarFn,
 ) -> u32 {
     let width = usize::from(params.block_size.width());
     let height = usize::from(params.block_size.height());
@@ -743,8 +744,7 @@ fn full_pixel_variance_cost(
     ) else {
         return u32::MAX;
     };
-    let (sum, sum_sq) =
-        (crate::dsp::get_ref().variance(params.block_size))(src, src_stride, reference, ref_stride);
+    let (sum, sum_sq) = variance_fn(src, src_stride, reference, ref_stride);
     let samples = (width * height) as u64;
     let mean_sq = ((sum * sum) as u64) / samples;
     let variance = sum_sq.saturating_sub(mean_sq).min(u64::from(u32::MAX)) as u32;
@@ -880,10 +880,14 @@ pub fn nstep_search_sad(params: &FullPixelSearchParams<'_>) -> FullPixelSearchRe
     if effective_steps <= STEP_PARAM {
         return diamond_search_sad_from_step(params, effective_steps).0;
     }
+    // The variance kernel is fixed for the block size throughout this
+    // search. Resolve the dispatch slot once instead of reloading the
+    // process-wide DSP table for each restart comparison.
+    let variance_fn = crate::dsp::get_ref().variance(params.block_size);
     let start_step = STEP_PARAM.min(effective_steps);
     let further_steps = effective_steps.saturating_sub(start_step + 1);
     let (mut best, mut n) = diamond_search_sad_from_step(params, start_step);
-    let mut best_cost = full_pixel_variance_cost(params, best);
+    let mut best_cost = full_pixel_variance_cost(params, best, variance_fn);
     let mut num00 = 0usize;
     let mut do_refine = n <= further_steps;
 
@@ -896,7 +900,7 @@ pub fn nstep_search_sad(params: &FullPixelSearchParams<'_>) -> FullPixelSearchRe
 
         let (candidate, candidate_num00) = diamond_search_sad_from_step(params, start_step + n);
         num00 = candidate_num00;
-        let candidate_cost = full_pixel_variance_cost(params, candidate);
+        let candidate_cost = full_pixel_variance_cost(params, candidate, variance_fn);
         if candidate_cost < best_cost {
             best = candidate;
             best_cost = candidate_cost;
@@ -910,7 +914,7 @@ pub fn nstep_search_sad(params: &FullPixelSearchParams<'_>) -> FullPixelSearchRe
         return best;
     }
     let refined = refining_search_sad(params, best, 8);
-    if full_pixel_variance_cost(params, refined) < best_cost {
+    if full_pixel_variance_cost(params, refined, variance_fn) < best_cost {
         refined
     } else {
         best
