@@ -139,6 +139,41 @@ pub fn mv_err_cost(
     rounded.max(0) as u32
 }
 
+/// `mv_err_cost` for the encoder's legal sub-pel search window. The search
+/// range keeps the candidate and reference MVs within [`MV_MAX`] of each
+/// other, so the component tables can be indexed directly without the
+/// defensive clamps and zero-component branches in the public helper.
+#[inline]
+#[must_use]
+pub(crate) fn mv_err_cost_in_range(
+    this_mv_row: i16,
+    this_mv_col: i16,
+    ref_mv_row: i16,
+    ref_mv_col: i16,
+    error_per_bit: i32,
+    mv_costs: &MvCosts,
+) -> u32 {
+    let diff_row = i32::from(this_mv_row) - i32::from(ref_mv_row);
+    let diff_col = i32::from(this_mv_col) - i32::from(ref_mv_col);
+    debug_assert!(
+        (-MV_MAX..=MV_MAX).contains(&diff_row),
+        "sub-pel row diff {diff_row} must fit the libvpx MV cost table"
+    );
+    debug_assert!(
+        (-MV_MAX..=MV_MAX).contains(&diff_col),
+        "sub-pel col diff {diff_col} must fit the libvpx MV cost table"
+    );
+
+    let diff_row = diff_row as i16;
+    let diff_col = diff_col as i16;
+    let raw = mv_costs.joint_cost[mv_joint(diff_row, diff_col)]
+        + mv_costs.component_cost[0].cost[(i32::from(diff_row) + MV_MAX) as usize]
+        + mv_costs.component_cost[1].cost[(i32::from(diff_col) + MV_MAX) as usize];
+    let prod = (raw as i64).saturating_mul(error_per_bit as i64);
+    let rounded = (prod + (1i64 << 13)) >> 14;
+    rounded.max(0) as u32
+}
+
 /// Dispatch SAD by block size. Returns a function pointer suitable
 /// for use in the search loop.
 ///
@@ -1668,6 +1703,59 @@ mod tests {
         let costs = build_nmv_cost_table(&DEFAULT_NMV_CONTEXT, true);
         let c = mv_err_cost(0, 0, 0, 0, 16, &costs);
         assert!(c < 1000, "zero-diff cost should be tiny; got {c}");
+    }
+
+    /// The sub-pel direct-table helper must match the defensive public
+    /// helper across legal table edges and representative search deltas.
+    #[test]
+    fn mv_err_cost_in_range_matches_public_at_boundaries() {
+        let costs = build_nmv_cost_table(&DEFAULT_NMV_CONTEXT, true);
+        assert_eq!(
+            costs.component_cost[0].cost[MV_MAX as usize], 0,
+            "vertical zero slot is part of the direct-index invariant"
+        );
+        assert_eq!(
+            costs.component_cost[1].cost[MV_MAX as usize], 0,
+            "horizontal zero slot is part of the direct-index invariant"
+        );
+
+        let centers = [-16_000, -8_192, -1_024, 0, 1_024, 8_191, 16_000];
+        let diffs = [-MV_MAX, -8_184, -1_024, -1, 0, 1, 1_024, 8_184, MV_MAX];
+        let error_per_bits = [0, 1, 16, 256, i32::MAX];
+
+        for &center_row in &centers {
+            for &center_col in &centers {
+                for &diff_row in &diffs {
+                    for &diff_col in &diffs {
+                        let this_row = (center_row + diff_row) as i16;
+                        let this_col = (center_col + diff_col) as i16;
+                        for &error_per_bit in &error_per_bits {
+                            let direct = mv_err_cost_in_range(
+                                this_row,
+                                this_col,
+                                center_row as i16,
+                                center_col as i16,
+                                error_per_bit,
+                                &costs,
+                            );
+                            let expected = mv_err_cost(
+                                this_row,
+                                this_col,
+                                center_row as i16,
+                                center_col as i16,
+                                error_per_bit,
+                                &costs,
+                            );
+                            assert_eq!(
+                                direct, expected,
+                                "direct cost differs at center=({},{}), diff=({},{}), error_per_bit={}",
+                                center_row, center_col, diff_row, diff_col, error_per_bit
+                            );
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// `mvsad_err_cost` scales monotonically with `sad_per_bit`: same
