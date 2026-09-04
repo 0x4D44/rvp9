@@ -423,6 +423,29 @@ pub fn raw_sad_at_mv(
     mv_col: i16,
 ) -> Option<u32> {
     let sad_fn = sad_for(block_size);
+    raw_sad_at_mv_with_sad_fn(
+        block_size, sad_fn, src_plane, src_offset, ref_plane, mv_row, mv_col,
+    )
+}
+
+/// Raw SAD using a caller-resolved block-size kernel.
+///
+/// The public [`raw_sad_at_mv`] wrapper resolves the process-wide dispatch
+/// table for each call because it is also used by diagnostic callers. Hot
+/// callers that evaluate several MVs for one block can resolve [`SadFn`]
+/// once and use this crate-local seam instead; the bounds checks and SAD
+/// result are identical.
+#[inline]
+#[must_use]
+pub(crate) fn raw_sad_at_mv_with_sad_fn(
+    block_size: BlockSize,
+    sad_fn: SadFn,
+    src_plane: &PlaneRef<'_>,
+    src_offset: (usize, usize),
+    ref_plane: &PlaneRef<'_>,
+    mv_row: i16,
+    mv_col: i16,
+) -> Option<u32> {
     sad_at(
         block_size, sad_fn, src_plane, src_offset, ref_plane, mv_row, mv_col,
     )
@@ -1760,6 +1783,32 @@ mod tests {
         // In-range MV (0, 0): identical block → SAD = 0.
         let sad_in = raw_sad_at_mv(BlockSize::Block4x4, &plane, (4, 4), &plane, 0, 0);
         assert_eq!(sad_in, Some(0), "identical block, zero MV → SAD = 0");
+    }
+
+    #[test]
+    fn raw_sad_at_mv_with_sad_fn_matches_dispatch_wrapper() {
+        let width = 16;
+        let height = 16;
+        let src_data = vec![10; width * height];
+        let ref_data = vec![20; width * height];
+        let src = PlaneRef {
+            data: &src_data,
+            stride: width,
+            width,
+            height,
+        };
+        let reference = PlaneRef {
+            data: &ref_data,
+            stride: width,
+            width,
+            height,
+        };
+        let sad_fn = sad_for(BlockSize::Block4x4);
+        let direct =
+            raw_sad_at_mv_with_sad_fn(BlockSize::Block4x4, sad_fn, &src, (4, 4), &reference, 1, -1);
+        let wrapped = raw_sad_at_mv(BlockSize::Block4x4, &src, (4, 4), &reference, 1, -1);
+        assert_eq!(direct, Some(160));
+        assert_eq!(direct, wrapped);
     }
 
     /// `raw_sad_at_mv` returns Some for in-range MV; the `negative

@@ -14,8 +14,9 @@
 //! diamond search).
 
 use crate::block::BlockSize;
+use crate::dsp::dispatch::SadFn;
 use crate::mode_info::Mv;
-use crate::mv_search::full_pixel::{PlaneRef, raw_sad_at_mv};
+use crate::mv_search::full_pixel::{PlaneRef, raw_sad_at_mv_with_sad_fn};
 
 /// Round a 1/8-pel MV component to full-pel using libvpx's biased
 /// rounding: `(val + 3 + (val >= 0)) >> 3`. This rounds toward
@@ -58,6 +59,10 @@ pub fn mv_pred_sad_seed(
     let mut best_mv = Mv::ZERO;
     let mut best_sad = u32::MAX;
     let mut zero_seen = false;
+    // Every candidate in this seed search uses the same block size. Resolve
+    // the dispatch slot once instead of paying the process-wide OnceLock
+    // lookup for each candidate SAD.
+    let sad_fn: SadFn = crate::dsp::get_ref().sad(block_size);
 
     for (i, cand) in mv_candidates.iter().enumerate() {
         // Skip INT16_MAX sentinel values (libvpx convention for
@@ -91,9 +96,9 @@ pub fn mv_pred_sad_seed(
         // Evaluate SAD. `raw_sad_at_mv` returns `None` if the
         // reference block falls outside the plane — skip that
         // candidate.
-        if let Some(sad) =
-            raw_sad_at_mv(block_size, src_plane, src_offset, ref_plane, fp_row, fp_col)
-            && sad < best_sad
+        if let Some(sad) = raw_sad_at_mv_with_sad_fn(
+            block_size, sad_fn, src_plane, src_offset, ref_plane, fp_row, fp_col,
+        ) && sad < best_sad
         {
             best_sad = sad;
             best_mv = Mv {
