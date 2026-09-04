@@ -86,6 +86,7 @@
 //!    libvpx `RDCOST` macro at `vp9_rd.h:29-30`.
 
 use crate::Pixel;
+use crate::bitstream::BitDepth;
 use crate::bitstream::frame::InterpFilter;
 use crate::bitstream::header::FrameKind;
 use crate::block::{BLOCK_SIZES, BlockSize};
@@ -707,21 +708,14 @@ const F1_DEFAULT_SKIP_CTX: usize = 1;
 /// Qindex-derived `sadperbit16` for full-pel MV search. Mirrors
 /// libvpx's 8-bit motion-estimation LUT initialization in
 /// `vp9_rd.c:init_me_luts_bd`.
-const SAD_PER_BIT_16: [u8; 256] = [
-    2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
-    2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3,
-    3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3,
-    3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 4, 4, 4, 4, 4, 4, 4,
-    4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
-    5, 5, 5, 5, 5, 5, 5, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 8,
-    8, 8, 8, 8, 8, 8, 8, 8, 9, 9, 9, 9, 9, 9, 9, 10, 10, 10, 10, 10, 10, 10, 11, 11, 11, 11, 11,
-    11, 12, 12, 12, 12, 12, 13, 13, 13, 13, 13, 14, 14, 14, 14, 15, 15, 15, 15, 16, 16, 16, 16, 17,
-    17, 17, 18, 18, 18, 19, 19, 19, 20, 20, 20, 21, 21,
-];
-
 #[inline]
 fn sad_per_bit_16(q_index: u8) -> i32 {
-    i32::from(SAD_PER_BIT_16[q_index as usize])
+    let q = f64::from(crate::quant::ac_quant(
+        i32::from(q_index),
+        0,
+        BitDepth::Eight,
+    )) / 4.0;
+    (0.0418 * q + 2.4107) as i32
 }
 
 /// Qindex-derived `errorperbit` for sub-pel refinement. Mirrors
@@ -6303,7 +6297,6 @@ fn frame_type_for_rd(kind: FrameKind) -> FrameTypeForRd {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bitstream::BitDepth;
     use crate::bitstream::frame::{InterpFilter, MAX_INTER_REFS};
     use crate::cost::SwitchableInterpCosts;
     use crate::cost::mv_cost::build_nmv_cost_table;
@@ -6333,19 +6326,6 @@ mod tests {
         let frame_kind = synthetic_inter_frame_kind();
         assert_eq!(sad_per_bit_16(200), 9);
         assert_eq!(error_per_bit(200, frame_kind), 10_285);
-    }
-
-    #[test]
-    fn sad_per_bit_16_lut_matches_formula_for_all_q_indices() {
-        for q_index in 0..=u8::MAX {
-            let q = f64::from(crate::quant::ac_quant(
-                i32::from(q_index),
-                0,
-                BitDepth::Eight,
-            )) / 4.0;
-            let expected = (0.0418 * q + 2.4107) as i32;
-            assert_eq!(sad_per_bit_16(q_index), expected, "q_index={q_index}");
-        }
     }
 
     #[test]
