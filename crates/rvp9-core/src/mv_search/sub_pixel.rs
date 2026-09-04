@@ -38,7 +38,7 @@ use crate::block::BlockSize;
 use crate::cost::mv_cost::MvCosts;
 use crate::inter::mv::use_mv_hp;
 use crate::mode_info::Mv;
-use crate::mv_search::full_pixel::{FullPixelCostList, PlaneRef, mv_err_cost_in_range};
+use crate::mv_search::full_pixel::{FullPixelCostList, PlaneRef, mv_err_cost};
 use crate::mv_search::mv_limits::{MvLimits, set_subpel_mv_search_range};
 
 /// Sub-pel-only kernel signature: `(src, src_stride, xoffset,
@@ -375,7 +375,7 @@ fn try_subpel_cost(
     // dsp/distortion.rs preserves that convention; we pass
     // `ref_slice` as the bilinear-filtered "src" and `src_slice`
     // as the variance "reference".
-    let mv_cost = mv_err_cost_in_range(
+    let mv_cost = mv_err_cost(
         tr as i16,
         tc as i16,
         ref_mv.row,
