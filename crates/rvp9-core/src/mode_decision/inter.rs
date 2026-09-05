@@ -4213,6 +4213,29 @@ fn copy_prediction_slot_to_output(
     }
 }
 
+/// Copy the active prediction rectangle into tight reconstruction scratch.
+///
+/// TLS candidate buffers use a tight row stride, so collapse that common case
+/// to one contiguous copy. Caller-owned output buffers may have padding and
+/// retain the row-wise fallback.
+#[inline]
+fn copy_prediction_to_recon(
+    pred: &[u8],
+    pred_stride: usize,
+    bw: usize,
+    bh: usize,
+    recon: &mut [u8; 64 * 64],
+) {
+    if pred_stride == bw {
+        recon[..bw * bh].copy_from_slice(&pred[..bw * bh]);
+    } else {
+        for row in 0..bh {
+            recon[row * bw..row * bw + bw]
+                .copy_from_slice(&pred[row * pred_stride..row * pred_stride + bw]);
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn select_interp_filter_by_luma_model(
     params: &InterModeSearchParams<'_>,
@@ -4578,10 +4601,7 @@ fn evaluate_candidate_for_filter_with_pred(
         None
     } else {
         let mut pixels = [0u8; 64 * 64];
-        for row in 0..bh {
-            pixels[row * bw..row * bw + bw]
-                .copy_from_slice(&pred[row * pred_stride..row * pred_stride + bw]);
-        }
+        copy_prediction_to_recon(pred, pred_stride, bw, bh, &mut pixels);
         Some(pixels)
     };
     let by = if yuv_early_term {
@@ -6305,6 +6325,28 @@ mod tests {
     use crate::entropy::mv_probs::DEFAULT_NMV_CONTEXT;
     use crate::mv_search::init_dsmotion_compensation;
     use crate::quant::forward::{QuantizerDeltas, init_plane_quantizers};
+
+    #[test]
+    fn prediction_to_recon_copy_matches_rowwise_reference_for_tight_and_padded() {
+        for (bw, bh, stride) in [(8, 5, 8), (13, 4, 19)] {
+            let pred: Vec<u8> = (0..stride * bh)
+                .map(|index| ((index * 37 + 11) & 0xff) as u8)
+                .collect();
+            let mut actual = [0xa5; 64 * 64];
+            copy_prediction_to_recon(&pred, stride, bw, bh, &mut actual);
+
+            let mut expected = [0xa5; 64 * 64];
+            for row in 0..bh {
+                expected[row * bw..row * bw + bw]
+                    .copy_from_slice(&pred[row * stride..row * stride + bw]);
+            }
+
+            assert_eq!(
+                actual, expected,
+                "copy mismatch for {bw}x{bh} stride {stride}"
+            );
+        }
+    }
 
     /// Build a minimal InterFrame `FrameKind` for tests — only the
     /// variant matters for [`pick_inter_mode_luma`]'s downstream
