@@ -38,8 +38,9 @@
 
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::{
-    __m128i, __m256i, _mm256_add_epi16, _mm256_cvtepu8_epi16, _mm256_loadu_si256,
-    _mm256_mullo_epi16, _mm256_set1_epi16, _mm256_srai_epi16, _mm256_storeu_si256,
+    __m128i, __m256i, _mm_packus_epi16, _mm_storeu_si128, _mm256_add_epi16, _mm256_castsi256_si128,
+    _mm256_cvtepu8_epi16, _mm256_extracti128_si256, _mm256_loadu_si256, _mm256_mullo_epi16,
+    _mm256_set1_epi16, _mm256_srai_epi16, _mm256_storeu_si256,
 };
 
 /// Number of fractional bits in the bilinear filter taps (FILTER_BITS).
@@ -189,6 +190,17 @@ unsafe fn bilinear_to_u8_temp(
 #[target_feature(enable = "avx2")]
 unsafe fn load_bytes_bounded(src: &[u8], off: usize, count: usize) -> __m128i {
     debug_assert!(count <= 16);
+    // The production shapes are all 16-byte multiples, so keep their common
+    // path as one unaligned load. Retain the checked copy for narrow tails
+    // and malformed callers; it preserves the old panic behaviour instead of
+    // turning a bad footprint into an out-of-bounds SIMD read.
+    if count == 16
+        && let Some(end) = off.checked_add(16)
+        && end <= src.len()
+    {
+        // SAFETY: the checked end offset proves all 16 bytes are in `src`.
+        return core::arch::x86_64::_mm_loadu_si128(src.as_ptr().add(off) as *const __m128i);
+    }
     let mut buf = [0u8; 16];
     buf[..count].copy_from_slice(&src[off..off + count]);
     core::arch::x86_64::_mm_loadu_si128(buf.as_ptr() as *const __m128i)
@@ -231,10 +243,17 @@ unsafe fn store_i16_chunk(v: __m256i, dst: &mut [i16], count: usize) {
 #[target_feature(enable = "avx2")]
 unsafe fn store_u8_chunk(v: __m256i, dst: &mut [u8], count: usize) {
     let n = count.min(16);
-    let mut buf = [0i16; 16];
-    _mm256_storeu_si256(buf.as_mut_ptr() as *mut __m256i, v);
-    for k in 0..n {
-        dst[k] = buf[k] as u8;
+    // Bilinear output is proven to be in [0, 255]. Packing the two i16
+    // halves therefore narrows exactly like the scalar `as u8` conversion,
+    // while avoiding a 32-byte stack spill and one scalar store per pixel.
+    let packed = _mm_packus_epi16(_mm256_castsi256_si128(v), _mm256_extracti128_si256(v, 1));
+    if n == 16 {
+        // SAFETY: the caller's active prefix has at least 16 output bytes.
+        _mm_storeu_si128(dst.as_mut_ptr() as *mut __m128i, packed);
+    } else {
+        let mut buf = [0u8; 16];
+        _mm_storeu_si128(buf.as_mut_ptr() as *mut __m128i, packed);
+        dst[..n].copy_from_slice(&buf[..n]);
     }
 }
 
