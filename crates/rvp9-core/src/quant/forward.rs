@@ -483,7 +483,38 @@ pub fn vp9_quantize_fp_with_order(
             order.iscan(),
         )
     }
-    #[cfg(any(not(target_arch = "aarch64"), miri))]
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    {
+        let dispatch = crate::dsp::get_ref();
+        if dispatch.caps.avx2 && order.scan().first() == Some(&0) {
+            // The dispatch table reports AVX2 support detected once at
+            // process initialisation, and `ScanOrder` supplies a complete
+            // standard permutation beginning at raster coefficient zero.
+            return crate::dsp::x86_64::vp9_quantize_fp_avx2(
+                coeff_ptr,
+                n_coeffs,
+                skip_block,
+                round_ptr,
+                quant_ptr,
+                qcoeff_ptr,
+                dqcoeff_ptr,
+                dequant_ptr,
+                order.scan(),
+            );
+        }
+        vp9_quantize_fp(
+            coeff_ptr,
+            n_coeffs,
+            skip_block,
+            round_ptr,
+            quant_ptr,
+            qcoeff_ptr,
+            dqcoeff_ptr,
+            dequant_ptr,
+            order.scan(),
+        )
+    }
+    #[cfg(any(all(not(target_arch = "aarch64"), not(target_arch = "x86_64")), miri))]
     {
         vp9_quantize_fp(
             coeff_ptr,
