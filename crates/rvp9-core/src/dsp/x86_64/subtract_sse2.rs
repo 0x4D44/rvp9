@@ -1,48 +1,52 @@
 //! SSE2 pixel subtraction for VP9 transform residuals.
 //!
-//! This mirrors the square-block portion of libvpx's
-//! `vpx_subtract_block_sse2` for the 8×8, 16×16, 32×32, and 64×64 transform
-//! tiles used by the mode-decision round-trip path. The byte subtraction is
-//! widened to i16 before subtracting, so every result in `[-255, 255]` is
-//! represented exactly. The nonzero variant folds the widened differences
-//! while storing them, avoiding a second pass over the residual.
+//! This mirrors the low-bit-depth portion of libvpx's
+//! `vpx_subtract_block_sse2` for the 8-, 16-, 32-, and 64-pixel-wide
+//! transform blocks used by mode decision. The byte subtraction is widened to
+//! i16 before subtracting, so every result in `[-255, 255]` is represented
+//! exactly. The nonzero variant folds the widened differences while storing
+//! them, avoiding a second pass over the residual.
 
 use core::arch::x86_64::{
     _mm_cmpeq_epi16, _mm_loadl_epi64, _mm_loadu_si128, _mm_movemask_epi8, _mm_or_si128,
     _mm_setzero_si128, _mm_storeu_si128, _mm_sub_epi16, _mm_unpackhi_epi8, _mm_unpacklo_epi8,
 };
 
-/// SSE2 implementation of square byte subtraction.
+/// SSE2 implementation of packed byte subtraction.
 ///
-/// The 8×8 case uses 8-byte loads because a row is exactly eight bytes wide;
-/// larger supported tiles are processed as 16-byte chunks. All loads and
+/// An 8-byte row uses one 8-byte load; larger supported rows are processed as
+/// 16-byte chunks. The output is packed at `dst_stride`, which may differ from
+/// the source and prediction strides for rectangular leaves. All loads and
 /// stores are unaligned because frame and temporary-plane strides are not
 /// required to be aligned.
 ///
 /// # Safety
 ///
 /// The caller must guarantee SSE2 support. `src` and `pred` must each cover
-/// `(side - 1) * stride + side` bytes, and `dst` must cover `side * side`
-/// i16 values. `side` must be one of 8, 16, 32, or 64.
+/// `(height - 1) * stride + width` bytes, and `dst` must cover
+/// `(height - 1) * dst_stride + width` i16 values. `width` must be one of 8,
+/// 16, 32, or 64.
 // G4: loads from `src` / `pred` / `dst` use _mm_loadu_si128 / _mm_loadl_epi64 (unaligned)
 #[target_feature(enable = "sse2")]
-unsafe fn subtract_square_sse2_inner<const TRACK_NONZERO: bool>(
+unsafe fn subtract_block_sse2_inner<const TRACK_NONZERO: bool>(
     src: *const u8,
     src_stride: usize,
     pred: *const u8,
     pred_stride: usize,
     dst: *mut i16,
-    side: usize,
+    dst_stride: usize,
+    width: usize,
+    height: usize,
 ) -> bool {
     let zero = _mm_setzero_si128();
     let mut nonzero = zero;
 
-    for row in 0..side {
+    for row in 0..height {
         let src_row = src.add(row * src_stride);
         let pred_row = pred.add(row * pred_stride);
-        let dst_row = dst.add(row * side);
+        let dst_row = dst.add(row * dst_stride);
 
-        if side == 8 {
+        if width == 8 {
             let src_values = _mm_loadl_epi64(src_row.cast());
             let pred_values = _mm_loadl_epi64(pred_row.cast());
             let diff = _mm_sub_epi16(
@@ -54,7 +58,7 @@ unsafe fn subtract_square_sse2_inner<const TRACK_NONZERO: bool>(
             }
             _mm_storeu_si128(dst_row.cast(), diff);
         } else {
-            for col in (0..side).step_by(16) {
+            for col in (0..width).step_by(16) {
                 let src_values = _mm_loadu_si128(src_row.add(col).cast());
                 let pred_values = _mm_loadu_si128(pred_row.add(col).cast());
                 let src_lo = _mm_unpacklo_epi8(src_values, zero);
@@ -76,6 +80,81 @@ unsafe fn subtract_square_sse2_inner<const TRACK_NONZERO: bool>(
     !TRACK_NONZERO || _mm_movemask_epi8(_mm_cmpeq_epi16(nonzero, zero)) != 0xffff
 }
 
+/// Subtracts a packed prediction block with an 8/16/32/64-pixel row width.
+#[cfg(target_arch = "x86_64")]
+pub fn subtract_block_sse2(
+    src: &[u8],
+    src_stride: usize,
+    pred: &[u8],
+    pred_stride: usize,
+    dst: &mut [i16],
+    dst_stride: usize,
+    width: usize,
+    height: usize,
+) {
+    assert!(matches!(width, 8 | 16 | 32 | 64));
+    assert!(height > 0);
+    assert!(src_stride >= width);
+    assert!(pred_stride >= width);
+    assert!(dst_stride >= width);
+    assert!(src.len() >= (height - 1) * src_stride + width);
+    assert!(pred.len() >= (height - 1) * pred_stride + width);
+    assert!(dst.len() >= (height - 1) * dst_stride + width);
+
+    // SAFETY: SSE2 is mandatory on x86-64. The assertions prove that every
+    // unaligned input load and residual store stays within its slice.
+    unsafe {
+        let _ = subtract_block_sse2_inner::<false>(
+            src.as_ptr(),
+            src_stride,
+            pred.as_ptr(),
+            pred_stride,
+            dst.as_mut_ptr(),
+            dst_stride,
+            width,
+            height,
+        );
+    }
+}
+
+/// Subtracts a packed prediction block and reports whether any residual is
+/// non-zero without reading the completed residual buffer again.
+#[cfg(target_arch = "x86_64")]
+pub fn subtract_block_sse2_with_nonzero(
+    src: &[u8],
+    src_stride: usize,
+    pred: &[u8],
+    pred_stride: usize,
+    dst: &mut [i16],
+    dst_stride: usize,
+    width: usize,
+    height: usize,
+) -> bool {
+    assert!(matches!(width, 8 | 16 | 32 | 64));
+    assert!(height > 0);
+    assert!(src_stride >= width);
+    assert!(pred_stride >= width);
+    assert!(dst_stride >= width);
+    assert!(src.len() >= (height - 1) * src_stride + width);
+    assert!(pred.len() >= (height - 1) * pred_stride + width);
+    assert!(dst.len() >= (height - 1) * dst_stride + width);
+
+    // SAFETY: SSE2 is mandatory on x86-64. The assertions prove every input
+    // load and residual store; OR reduction observes each exact i16 result.
+    unsafe {
+        subtract_block_sse2_inner::<true>(
+            src.as_ptr(),
+            src_stride,
+            pred.as_ptr(),
+            pred_stride,
+            dst.as_mut_ptr(),
+            dst_stride,
+            width,
+            height,
+        )
+    }
+}
+
 /// Subtracts a square 8/16/32/64 prediction block from source pixels.
 #[cfg(target_arch = "x86_64")]
 #[allow(dead_code)]
@@ -94,18 +173,7 @@ pub fn subtract_square_sse2(
     assert!(pred.len() >= (side - 1) * pred_stride + side);
     assert!(dst.len() >= side * side);
 
-    // SAFETY: SSE2 is mandatory on x86-64. The assertions prove that every
-    // unaligned input load and residual store stays within its slice.
-    unsafe {
-        let _ = subtract_square_sse2_inner::<false>(
-            src.as_ptr(),
-            src_stride,
-            pred.as_ptr(),
-            pred_stride,
-            dst.as_mut_ptr(),
-            side,
-        );
-    }
+    subtract_block_sse2(src, src_stride, pred, pred_stride, dst, side, side, side);
 }
 
 /// Subtracts a square prediction block and reports whether any residual is
@@ -126,18 +194,7 @@ pub fn subtract_square_sse2_with_nonzero(
     assert!(pred.len() >= (side - 1) * pred_stride + side);
     assert!(dst.len() >= side * side);
 
-    // SAFETY: SSE2 is mandatory on x86-64. The assertions prove every input
-    // load and residual store; OR reduction observes each exact i16 result.
-    unsafe {
-        subtract_square_sse2_inner::<true>(
-            src.as_ptr(),
-            src_stride,
-            pred.as_ptr(),
-            pred_stride,
-            dst.as_mut_ptr(),
-            side,
-        )
-    }
+    subtract_block_sse2_with_nonzero(src, src_stride, pred, pred_stride, dst, side, side, side)
 }
 
 #[cfg(all(test, target_arch = "x86_64", not(miri)))]
@@ -164,6 +221,24 @@ mod tests {
         for row in 0..side {
             for col in 0..side {
                 dst[row * side + col] = i16::from(src[row * src_stride + col])
+                    - i16::from(pred[row * pred_stride + col]);
+            }
+        }
+    }
+
+    fn subtract_block_scalar(
+        src: &[u8],
+        src_stride: usize,
+        pred: &[u8],
+        pred_stride: usize,
+        dst: &mut [i16],
+        dst_stride: usize,
+        width: usize,
+        height: usize,
+    ) {
+        for row in 0..height {
+            for col in 0..width {
+                dst[row * dst_stride + col] = i16::from(src[row * src_stride + col])
                     - i16::from(pred[row * pred_stride + col]);
             }
         }
@@ -218,6 +293,83 @@ mod tests {
                     "nonzero mismatch at {side}x{side}, stride jitter {jitter}"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn differential_rectangular_blocks_and_strides() {
+        assert!(is_x86_feature_detected!("sse2"));
+        let mut rng = Lcg32(0xC0DE_128A);
+        for &(width, height) in &[
+            (8, 16),
+            (8, 32),
+            (8, 64),
+            (16, 8),
+            (16, 32),
+            (32, 8),
+            (32, 16),
+            (32, 64),
+            (64, 8),
+            (64, 32),
+        ] {
+            let src_stride = width + 5;
+            let pred_stride = width + 9;
+            let dst_stride = width + 3;
+            let src: Vec<u8> = (0..(height - 1) * src_stride + width + 7)
+                .map(|_| rng.byte())
+                .collect();
+            let pred: Vec<u8> = (0..(height - 1) * pred_stride + width + 11)
+                .map(|_| rng.byte())
+                .collect();
+            let dst_len = (height - 1) * dst_stride + width + 6;
+            let mut expected = vec![i16::MIN; dst_len];
+            let mut actual = expected.clone();
+            subtract_block_scalar(
+                &src[7..],
+                src_stride,
+                &pred[11..],
+                pred_stride,
+                &mut expected,
+                dst_stride,
+                width,
+                height,
+            );
+            subtract_block_sse2(
+                &src[7..],
+                src_stride,
+                &pred[11..],
+                pred_stride,
+                &mut actual,
+                dst_stride,
+                width,
+                height,
+            );
+            assert_eq!(actual, expected, "SSE2 mismatch at {width}x{height}");
+
+            actual.fill(i16::MIN);
+            let reported_nonzero = subtract_block_sse2_with_nonzero(
+                &src[7..],
+                src_stride,
+                &pred[11..],
+                pred_stride,
+                &mut actual,
+                dst_stride,
+                width,
+                height,
+            );
+            assert_eq!(
+                actual, expected,
+                "nonzero residual mismatch at {width}x{height}"
+            );
+            assert_eq!(
+                reported_nonzero,
+                expected
+                    .chunks_exact(dst_stride)
+                    .take(height)
+                    .flat_map(|row| row[..width].iter())
+                    .any(|&value| value != 0),
+                "nonzero mismatch at {width}x{height}"
+            );
         }
     }
 
