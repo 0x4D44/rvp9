@@ -879,10 +879,20 @@ fn find_realtime_refs_nearest_near_mvs_with_context<N: NeighbourLookup, const RE
         };
         any_neighbour = true;
 
+        // The realtime picker resolves the same neighbour's two reference
+        // slots and MVs several times below. Copy the tiny inter payload once
+        // so the hot walk does not repeatedly match on `BlockMode`.
+        let (candidate_refs, candidate_mvs) = match candidate_mi.mode {
+            crate::mode_info::BlockMode::Inter {
+                ref_frames, mvs, ..
+            } => (ref_frames, mvs),
+            crate::mode_info::BlockMode::Intra { .. } => ([RefFrame::IntraFrame; 2], [Mv::ZERO; 2]),
+        };
+
         if position_index < 2 {
             mode_context_sum += mode_context_counter(candidate_mi);
-            let slot0_ref = candidate_ref(candidate_mi, 0);
-            let slot0_mv = candidate_mv(candidate_mi, 0);
+            let slot0_ref = candidate_refs[0];
+            let slot0_mv = candidate_mvs[0];
             for (ref_index, &ref_frame) in ref_frames.iter().enumerate() {
                 if slot0_ref == ref_frame {
                     match first_slot0[ref_index] {
@@ -898,10 +908,10 @@ fn find_realtime_refs_nearest_near_mvs_with_context<N: NeighbourLookup, const RE
             if counts[ref_index] == MAX_MV_REF_CANDIDATES {
                 continue;
             }
-            let mv = if candidate_ref(candidate_mi, 0) == ref_frame {
-                Some(candidate_mv(candidate_mi, 0))
-            } else if candidate_ref(candidate_mi, 1) == ref_frame {
-                Some(candidate_mv(candidate_mi, 1))
+            let mv = if candidate_refs[0] == ref_frame {
+                Some(candidate_mvs[0])
+            } else if candidate_refs[1] == ref_frame {
+                Some(candidate_mvs[1])
             } else {
                 None
             };
@@ -934,17 +944,22 @@ fn find_realtime_refs_nearest_near_mvs_with_context<N: NeighbourLookup, const RE
             let Some(candidate_mi) = neighbours.get(mv_ref) else {
                 continue;
             };
-            if !is_inter_block(candidate_mi) {
+            let crate::mode_info::BlockMode::Inter {
+                ref_frames: candidate_refs,
+                mvs: candidate_mvs,
+                ..
+            } = candidate_mi.mode
+            else {
                 continue;
-            }
+            };
             for (ref_index, &ref_frame) in ref_frames.iter().enumerate() {
                 if counts[ref_index] == MAX_MV_REF_CANDIDATES {
                     continue;
                 }
-                let r0 = candidate_ref(candidate_mi, 0);
+                let r0 = candidate_refs[0];
                 if r0 != ref_frame
                     && add_mv_ref_list_eb(
-                        scale_mv(r0, ref_frame, sign_bias, candidate_mv(candidate_mi, 0)),
+                        scale_mv(r0, ref_frame, sign_bias, candidate_mvs[0]),
                         &mut lists[ref_index],
                         &mut counts[ref_index],
                         false,
@@ -952,10 +967,10 @@ fn find_realtime_refs_nearest_near_mvs_with_context<N: NeighbourLookup, const RE
                 {
                     continue;
                 }
-                if has_second_ref(candidate_mi) {
-                    let r1 = candidate_ref(candidate_mi, 1);
-                    let mv0 = candidate_mv(candidate_mi, 0);
-                    let mv1 = candidate_mv(candidate_mi, 1);
+                if candidate_refs[1].is_inter() {
+                    let r1 = candidate_refs[1];
+                    let mv0 = candidate_mvs[0];
+                    let mv1 = candidate_mvs[1];
                     if r1 != ref_frame && mv1 != mv0 {
                         add_mv_ref_list_eb(
                             scale_mv(r1, ref_frame, sign_bias, mv1),
