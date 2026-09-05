@@ -419,14 +419,16 @@ pub fn vp9_quantize_fp(
     assert!(dqcoeff_ptr.len() >= n_coeffs);
     assert!(scan.len() >= n_coeffs);
 
-    for slot in &mut qcoeff_ptr[..n_coeffs] {
-        *slot = 0;
-    }
-    for slot in &mut dqcoeff_ptr[..n_coeffs] {
-        *slot = 0;
-    }
-
     if skip_block {
+        // The non-skip loop below writes both output slots for every scan
+        // position. Keep the full clears only for the folded skip-block
+        // contract, where no quantization loop runs.
+        for slot in &mut qcoeff_ptr[..n_coeffs] {
+            *slot = 0;
+        }
+        for slot in &mut dqcoeff_ptr[..n_coeffs] {
+            *slot = 0;
+        }
         return 0;
     }
 
@@ -1399,6 +1401,31 @@ mod tests {
             16,
             true,
             &[4, 4],
+            &[16384, 16384],
+            &mut qcoeff,
+            &mut dqcoeff,
+            &[8, 8],
+            scan.scan(),
+        );
+        assert_eq!(eob, 0);
+        assert!(qcoeff.iter().all(|&v| v == 0));
+        assert!(dqcoeff.iter().all(|&v| v == 0));
+    }
+
+    /// The non-skip fast path writes every raster slot, including slots whose
+    /// coefficient quantizes to zero. This keeps reused scratch buffers
+    /// independent of their previous contents.
+    #[test]
+    fn vp9_quantize_fp_non_skip_overwrites_reused_outputs() {
+        let coeff = [0i32; 16];
+        let mut qcoeff = [99i16; 16];
+        let mut dqcoeff = [99i16; 16];
+        let scan = default_scan_4x4();
+        let eob = vp9_quantize_fp(
+            &coeff,
+            16,
+            false,
+            &[0, 0],
             &[16384, 16384],
             &mut qcoeff,
             &mut dqcoeff,
