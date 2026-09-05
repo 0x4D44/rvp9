@@ -91,6 +91,7 @@ pub mod lpf_vertical_4_avx2;
 pub mod lpf_vertical_4_dual_avx2;
 pub mod lpf_vertical_8_avx2;
 pub mod lpf_vertical_8_dual_avx2;
+pub mod minmax_sse2;
 pub mod plane_dequant_finisher_avx2;
 pub mod quantize_fp_avx2;
 pub mod quantize_metrics_sse2;
@@ -152,6 +153,7 @@ pub use lpf_vertical_8_avx2::lpf_vertical_8_avx2;
 pub use lpf_vertical_8_dual_avx2::lpf_vertical_8_dual_avx2;
 pub use lpf_vertical_16_avx2::lpf_vertical_16_avx2;
 pub use lpf_vertical_16_dual_avx2::lpf_vertical_16_dual_avx2;
+pub use minmax_sse2::minmax_8x8_sse2;
 pub use plane_dequant_finisher_avx2::plane_dequant_finisher_avx2;
 pub use quantize_fp_avx2::vp9_quantize_fp_avx2;
 pub use sad_avx2::{

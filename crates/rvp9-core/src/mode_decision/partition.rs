@@ -813,7 +813,17 @@ fn minmax_8x8_spread(input: &FixedTreeInterInput<'_>, x16: usize, y16: usize) ->
             );
             (i32::from(minimum), i32::from(maximum))
         };
-        #[cfg(any(not(target_arch = "aarch64"), miri))]
+        #[cfg(all(target_arch = "x86_64", not(miri)))]
+        let (min_diff, max_diff) = {
+            let (minimum, maximum) = crate::dsp::x86_64::minmax_8x8_sse2(
+                &input.source[source_index..],
+                input.source_stride,
+                &input.predictor[predictor_index..],
+                input.predictor_stride,
+            );
+            (i32::from(minimum), i32::from(maximum))
+        };
+        #[cfg(any(miri, all(not(target_arch = "aarch64"), not(target_arch = "x86_64"))))]
         let (min_diff, max_diff) = {
             let mut minimum = 255;
             let mut maximum = 0;
