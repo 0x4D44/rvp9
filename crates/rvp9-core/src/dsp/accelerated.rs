@@ -18,6 +18,9 @@ pub use super::aarch64::{
 #[cfg(target_arch = "x86_64")]
 use crate::inter::filter::SUBPEL_SHIFTS;
 
+#[cfg(target_arch = "x86_64")]
+pub use super::x86_64::subtract_square_sse2;
+
 /// Run the AVX2 vertical eight-tap convolution.
 ///
 /// # Safety

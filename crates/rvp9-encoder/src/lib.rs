@@ -13803,6 +13803,67 @@ fn choose_inter_luma_tx_size(input: InterLumaTxInput<'_>, include_tx4: bool) -> 
     }
 }
 
+/// Build the luma residual used by the inter transform-size RD loop.
+///
+/// Square transform leaves use the architecture-specific subtraction kernel;
+/// rectangular leaves retain the scalar row walk because the SIMD kernels only
+/// accept square tiles. The supported square sizes match the DSP entry points.
+#[allow(clippy::too_many_arguments)]
+fn subtract_inter_luma_residual(
+    input_plane: &[u8],
+    input_stride: usize,
+    input_px_x: usize,
+    input_px_y: usize,
+    recon_plane: &[u8],
+    recon_stride: usize,
+    recon_px_x: usize,
+    recon_px_y: usize,
+    leaf_residual: &mut [i16],
+    block_w_px: usize,
+    block_h_px: usize,
+) {
+    #[cfg(target_arch = "aarch64")]
+    if block_w_px == block_h_px && matches!(block_w_px, 8 | 16 | 32 | 64) {
+        let input_offset = input_px_y * input_stride + input_px_x;
+        let recon_offset = recon_px_y * recon_stride + recon_px_x;
+        rvp9_core::dsp::accelerated::subtract_square_neon(
+            &input_plane[input_offset..],
+            input_stride,
+            &recon_plane[recon_offset..],
+            recon_stride,
+            leaf_residual,
+            block_w_px,
+        );
+        return;
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    if block_w_px == block_h_px && matches!(block_w_px, 8 | 16 | 32 | 64) {
+        let input_offset = input_px_y * input_stride + input_px_x;
+        let recon_offset = recon_px_y * recon_stride + recon_px_x;
+        rvp9_core::dsp::accelerated::subtract_square_sse2(
+            &input_plane[input_offset..],
+            input_stride,
+            &recon_plane[recon_offset..],
+            recon_stride,
+            leaf_residual,
+            block_w_px,
+        );
+        return;
+    }
+
+    for r in 0..block_h_px {
+        let src_row = (input_px_y + r) * input_stride + input_px_x;
+        let recon_row = (recon_px_y + r) * recon_stride + recon_px_x;
+        let dst_row = r * block_w_px;
+        for c in 0..block_w_px {
+            let s = i16::from(input_plane[src_row + c]);
+            let p = i16::from(recon_plane[recon_row + c]);
+            leaf_residual[dst_row + c] = s - p;
+        }
+    }
+}
+
 fn choose_inter_luma_tx_size_impl<const PRUNE: bool>(
     input: InterLumaTxInput<'_>,
     realtime_candidate_subset: bool,
@@ -13847,41 +13908,19 @@ fn choose_inter_luma_tx_size_impl<const PRUNE: bool>(
         residual, quant, ..
     } = scratch;
     let leaf_residual = &mut residual[..block_w_px * block_h_px];
-    #[cfg(target_arch = "aarch64")]
-    if block_w_px == block_h_px {
-        let input_offset = input_px_y * input_stride + input_px_x;
-        let recon_offset = recon_px_y * recon_stride + recon_px_x;
-        rvp9_core::dsp::accelerated::subtract_square_neon(
-            &input_plane[input_offset..],
-            input_stride,
-            &recon_plane[recon_offset..],
-            recon_stride,
-            leaf_residual,
-            block_w_px,
-        );
-    } else {
-        for r in 0..block_h_px {
-            let src_row = (input_px_y + r) * input_stride + input_px_x;
-            let recon_row = (recon_px_y + r) * recon_stride + recon_px_x;
-            let dst_row = r * block_w_px;
-            for c in 0..block_w_px {
-                let s = i16::from(input_plane[src_row + c]);
-                let p = i16::from(recon_plane[recon_row + c]);
-                leaf_residual[dst_row + c] = s - p;
-            }
-        }
-    }
-    #[cfg(not(target_arch = "aarch64"))]
-    for r in 0..block_h_px {
-        let src_row = (input_px_y + r) * input_stride + input_px_x;
-        let recon_row = (recon_px_y + r) * recon_stride + recon_px_x;
-        let dst_row = r * block_w_px;
-        for c in 0..block_w_px {
-            let s = i16::from(input_plane[src_row + c]);
-            let p = i16::from(recon_plane[recon_row + c]);
-            leaf_residual[dst_row + c] = s - p;
-        }
-    }
+    subtract_inter_luma_residual(
+        input_plane,
+        input_stride,
+        input_px_x,
+        input_px_y,
+        recon_plane,
+        recon_stride,
+        recon_px_x,
+        recon_px_y,
+        leaf_residual,
+        block_w_px,
+        block_h_px,
+    );
 
     // libvpx `RDCOST(RM, DM, R, D) = ((RM * R + 256) >> 9) + (D << 7)`.
     let rdcost = |rate: u32, dist: i64| -> i64 {
@@ -14334,6 +14373,56 @@ fn intra_inverse_transform_add(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inter_luma_residual_subtraction_matches_scalar_for_square_and_rectangular() {
+        const INPUT_STRIDE: usize = 101;
+        const RECON_STRIDE: usize = 107;
+        const HEIGHT: usize = 128;
+        let input: Vec<u8> = (0..INPUT_STRIDE * HEIGHT)
+            .map(|index| ((index * 29 + index / INPUT_STRIDE * 17 + 13) & 0xff) as u8)
+            .collect();
+        let recon: Vec<u8> = (0..RECON_STRIDE * HEIGHT)
+            .map(|index| ((index * 11 + index / RECON_STRIDE * 31 + 97) & 0xff) as u8)
+            .collect();
+
+        for (block_w, block_h, x, y) in [
+            (8, 8, 7, 11),
+            (16, 16, 13, 17),
+            (32, 32, 19, 23),
+            (16, 8, 31, 29),
+            (8, 16, 37, 41),
+        ] {
+            let mut actual = vec![i16::MIN; block_w * block_h + 5];
+            subtract_inter_luma_residual(
+                &input,
+                INPUT_STRIDE,
+                x,
+                y,
+                &recon,
+                RECON_STRIDE,
+                x,
+                y,
+                &mut actual[..block_w * block_h],
+                block_w,
+                block_h,
+            );
+
+            let mut expected = vec![i16::MIN; block_w * block_h + 5];
+            for row in 0..block_h {
+                for col in 0..block_w {
+                    let src = i16::from(input[(y + row) * INPUT_STRIDE + x + col]);
+                    let pred = i16::from(recon[(y + row) * RECON_STRIDE + x + col]);
+                    expected[row * block_w + col] = src - pred;
+                }
+            }
+
+            assert_eq!(
+                actual, expected,
+                "residual mismatch for {block_w}x{block_h}"
+            );
+        }
+    }
 
     fn test_recorded_coef_tile() -> RecordedCoefTile {
         RecordedCoefTile {
