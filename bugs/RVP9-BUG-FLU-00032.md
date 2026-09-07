@@ -30,3 +30,12 @@ On x86_64 release builds, subtract_square_sse2 and subtract_square_sse2_with_non
 <unfixed — raised only>
 
 ## Notes
+
+2026-09-08 — The rectangular performance experiment was rejected and reverted
+by `a4483295`; this bug remains Open. Candidate commit `1b7849e2` contains a
+checked-span implementation and focused overflow regression that can be
+extracted for a standalone fix without the rectangular API. Its predecessor
+`52df6546` was tested on native Windows release and under Rosetta. The regression
+checks the specific overflow panic with otherwise adequate buffers; a temporary
+unchecked-arithmetic mutation and pre-unsafe sentinel made it fail on its own
+assertion. Do not mark Fixed until a standalone correction lands and is tested.
