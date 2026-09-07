@@ -12,20 +12,27 @@ use core::arch::x86_64::{
     _mm_setzero_si128, _mm_storeu_si128, _mm_sub_epi16, _mm_unpackhi_epi8, _mm_unpacklo_epi8,
 };
 
+fn checked_block_span(height: usize, stride: usize, width: usize) -> usize {
+    height
+        .checked_sub(1)
+        .and_then(|rows| rows.checked_mul(stride))
+        .and_then(|offset| offset.checked_add(width))
+        .expect("subtraction block layout overflow")
+}
+
 /// SSE2 implementation of packed byte subtraction.
 ///
 /// An 8-byte row uses one 8-byte load; larger supported rows are processed as
-/// 16-byte chunks. The output is packed at `dst_stride`, which may differ from
-/// the source and prediction strides for rectangular leaves. All loads and
-/// stores are unaligned because frame and temporary-plane strides are not
-/// required to be aligned.
+/// 16-byte chunks. The output rows are packed at the block width, even when
+/// source and prediction strides include padding. All loads and stores are
+/// unaligned because frame and temporary-plane strides are not required to be
+/// aligned.
 ///
 /// # Safety
 ///
 /// The caller must guarantee SSE2 support. `src` and `pred` must each cover
 /// `(height - 1) * stride + width` bytes, and `dst` must cover
-/// `(height - 1) * dst_stride + width` i16 values. `width` must be one of 8,
-/// 16, 32, or 64.
+/// `height * width` i16 values. `width` must be one of 8, 16, 32, or 64.
 // G4: loads from `src` / `pred` / `dst` use _mm_loadu_si128 / _mm_loadl_epi64 (unaligned)
 #[target_feature(enable = "sse2")]
 unsafe fn subtract_block_sse2_inner<const TRACK_NONZERO: bool>(
@@ -34,7 +41,6 @@ unsafe fn subtract_block_sse2_inner<const TRACK_NONZERO: bool>(
     pred: *const u8,
     pred_stride: usize,
     dst: *mut i16,
-    dst_stride: usize,
     width: usize,
     height: usize,
 ) -> bool {
@@ -44,7 +50,7 @@ unsafe fn subtract_block_sse2_inner<const TRACK_NONZERO: bool>(
     for row in 0..height {
         let src_row = src.add(row * src_stride);
         let pred_row = pred.add(row * pred_stride);
-        let dst_row = dst.add(row * dst_stride);
+        let dst_row = dst.add(row * width);
 
         if width == 8 {
             let src_values = _mm_loadl_epi64(src_row.cast());
@@ -88,7 +94,6 @@ pub fn subtract_block_sse2(
     pred: &[u8],
     pred_stride: usize,
     dst: &mut [i16],
-    dst_stride: usize,
     width: usize,
     height: usize,
 ) {
@@ -96,10 +101,12 @@ pub fn subtract_block_sse2(
     assert!(height > 0);
     assert!(src_stride >= width);
     assert!(pred_stride >= width);
-    assert!(dst_stride >= width);
-    assert!(src.len() >= (height - 1) * src_stride + width);
-    assert!(pred.len() >= (height - 1) * pred_stride + width);
-    assert!(dst.len() >= (height - 1) * dst_stride + width);
+    assert!(src.len() >= checked_block_span(height, src_stride, width));
+    assert!(pred.len() >= checked_block_span(height, pred_stride, width));
+    let dst_len = width
+        .checked_mul(height)
+        .expect("subtraction destination layout overflow");
+    assert!(dst.len() >= dst_len);
 
     // SAFETY: SSE2 is mandatory on x86-64. The assertions prove that every
     // unaligned input load and residual store stays within its slice.
@@ -110,48 +117,9 @@ pub fn subtract_block_sse2(
             pred.as_ptr(),
             pred_stride,
             dst.as_mut_ptr(),
-            dst_stride,
             width,
             height,
         );
-    }
-}
-
-/// Subtracts a packed prediction block and reports whether any residual is
-/// non-zero without reading the completed residual buffer again.
-#[cfg(target_arch = "x86_64")]
-pub fn subtract_block_sse2_with_nonzero(
-    src: &[u8],
-    src_stride: usize,
-    pred: &[u8],
-    pred_stride: usize,
-    dst: &mut [i16],
-    dst_stride: usize,
-    width: usize,
-    height: usize,
-) -> bool {
-    assert!(matches!(width, 8 | 16 | 32 | 64));
-    assert!(height > 0);
-    assert!(src_stride >= width);
-    assert!(pred_stride >= width);
-    assert!(dst_stride >= width);
-    assert!(src.len() >= (height - 1) * src_stride + width);
-    assert!(pred.len() >= (height - 1) * pred_stride + width);
-    assert!(dst.len() >= (height - 1) * dst_stride + width);
-
-    // SAFETY: SSE2 is mandatory on x86-64. The assertions prove every input
-    // load and residual store; OR reduction observes each exact i16 result.
-    unsafe {
-        subtract_block_sse2_inner::<true>(
-            src.as_ptr(),
-            src_stride,
-            pred.as_ptr(),
-            pred_stride,
-            dst.as_mut_ptr(),
-            dst_stride,
-            width,
-            height,
-        )
     }
 }
 
@@ -169,11 +137,23 @@ pub fn subtract_square_sse2(
     assert!(matches!(side, 8 | 16 | 32 | 64));
     assert!(src_stride >= side);
     assert!(pred_stride >= side);
-    assert!(src.len() >= (side - 1) * src_stride + side);
-    assert!(pred.len() >= (side - 1) * pred_stride + side);
+    assert!(src.len() >= checked_block_span(side, src_stride, side));
+    assert!(pred.len() >= checked_block_span(side, pred_stride, side));
     assert!(dst.len() >= side * side);
 
-    subtract_block_sse2(src, src_stride, pred, pred_stride, dst, side, side, side);
+    // SAFETY: the square dimensions and checked slice assertions above prove
+    // every input load and residual store stays within its slice.
+    unsafe {
+        let _ = subtract_block_sse2_inner::<false>(
+            src.as_ptr(),
+            src_stride,
+            pred.as_ptr(),
+            pred_stride,
+            dst.as_mut_ptr(),
+            side,
+            side,
+        );
+    }
 }
 
 /// Subtracts a square prediction block and reports whether any residual is
@@ -190,11 +170,23 @@ pub fn subtract_square_sse2_with_nonzero(
     assert!(matches!(side, 8 | 16 | 32 | 64));
     assert!(src_stride >= side);
     assert!(pred_stride >= side);
-    assert!(src.len() >= (side - 1) * src_stride + side);
-    assert!(pred.len() >= (side - 1) * pred_stride + side);
+    assert!(src.len() >= checked_block_span(side, src_stride, side));
+    assert!(pred.len() >= checked_block_span(side, pred_stride, side));
     assert!(dst.len() >= side * side);
 
-    subtract_block_sse2_with_nonzero(src, src_stride, pred, pred_stride, dst, side, side, side)
+    // SAFETY: the square dimensions and checked slice assertions above prove
+    // every input load and residual store; OR reduction observes each result.
+    unsafe {
+        subtract_block_sse2_inner::<true>(
+            src.as_ptr(),
+            src_stride,
+            pred.as_ptr(),
+            pred_stride,
+            dst.as_mut_ptr(),
+            side,
+            side,
+        )
+    }
 }
 
 #[cfg(all(test, target_arch = "x86_64", not(miri)))]
@@ -232,13 +224,12 @@ mod tests {
         pred: &[u8],
         pred_stride: usize,
         dst: &mut [i16],
-        dst_stride: usize,
         width: usize,
         height: usize,
     ) {
         for row in 0..height {
             for col in 0..width {
-                dst[row * dst_stride + col] = i16::from(src[row * src_stride + col])
+                dst[row * width + col] = i16::from(src[row * src_stride + col])
                     - i16::from(pred[row * pred_stride + col]);
             }
         }
@@ -314,23 +305,20 @@ mod tests {
         ] {
             let src_stride = width + 5;
             let pred_stride = width + 9;
-            let dst_stride = width + 3;
             let src: Vec<u8> = (0..(height - 1) * src_stride + width + 7)
                 .map(|_| rng.byte())
                 .collect();
             let pred: Vec<u8> = (0..(height - 1) * pred_stride + width + 11)
                 .map(|_| rng.byte())
                 .collect();
-            let dst_len = (height - 1) * dst_stride + width + 6;
-            let mut expected = vec![i16::MIN; dst_len];
+            let mut expected = vec![i16::MIN; width * height + 13];
             let mut actual = expected.clone();
             subtract_block_scalar(
                 &src[7..],
                 src_stride,
                 &pred[11..],
                 pred_stride,
-                &mut expected,
-                dst_stride,
+                &mut expected[7..],
                 width,
                 height,
             );
@@ -339,37 +327,74 @@ mod tests {
                 src_stride,
                 &pred[11..],
                 pred_stride,
-                &mut actual,
-                dst_stride,
+                &mut actual[7..],
                 width,
                 height,
             );
             assert_eq!(actual, expected, "SSE2 mismatch at {width}x{height}");
+        }
+    }
 
-            actual.fill(i16::MIN);
-            let reported_nonzero = subtract_block_sse2_with_nonzero(
-                &src[7..],
-                src_stride,
-                &pred[11..],
-                pred_stride,
-                &mut actual,
-                dst_stride,
-                width,
-                height,
+    #[test]
+    fn reject_overflowing_stride_layouts() {
+        let side = 8;
+        let overflowing_stride = usize::MAX / (side - 1);
+        let pixels = [0u8; 64];
+        let mut residual = [0i16; 64];
+
+        fn assert_layout_overflow(operation: impl FnOnce()) {
+            let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(operation))
+                .expect_err("overflowing layout must panic before entering SSE2");
+            let message = if let Some(message) = panic.downcast_ref::<&str>() {
+                *message
+            } else if let Some(message) = panic.downcast_ref::<String>() {
+                message.as_str()
+            } else {
+                "<non-string panic>"
+            };
+            assert!(
+                message.contains("layout overflow"),
+                "unexpected panic payload: {message}"
             );
-            assert_eq!(
-                actual, expected,
-                "nonzero residual mismatch at {width}x{height}"
-            );
-            assert_eq!(
-                reported_nonzero,
-                expected
-                    .chunks_exact(dst_stride)
-                    .take(height)
-                    .flat_map(|row| row[..width].iter())
-                    .any(|&value| value != 0),
-                "nonzero mismatch at {width}x{height}"
-            );
+        }
+
+        for &src_stride in &[overflowing_stride, side] {
+            for &pred_stride in &[overflowing_stride, side] {
+                if src_stride == side && pred_stride == side {
+                    continue;
+                }
+                assert_layout_overflow(|| {
+                    subtract_square_sse2(
+                        &pixels,
+                        src_stride,
+                        &pixels,
+                        pred_stride,
+                        &mut residual,
+                        side,
+                    );
+                });
+                assert_layout_overflow(|| {
+                    subtract_square_sse2_with_nonzero(
+                        &pixels,
+                        src_stride,
+                        &pixels,
+                        pred_stride,
+                        &mut residual,
+                        side,
+                    );
+                });
+                assert_layout_overflow(|| {
+                    subtract_block_sse2(
+                        &pixels,
+                        src_stride,
+                        &pixels,
+                        pred_stride,
+                        &mut residual,
+                        side,
+                        side,
+                    );
+                });
+            }
         }
     }
 

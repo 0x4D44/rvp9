@@ -13805,9 +13805,9 @@ fn choose_inter_luma_tx_size(input: InterLumaTxInput<'_>, include_tx4: bool) -> 
 
 /// Build the luma residual used by the inter transform-size RD loop.
 ///
-/// Supported 8/16/32/64-pixel-wide leaves use the architecture-specific
-/// subtraction kernel; narrower leaves retain the scalar row walk. The packed
-/// residual stride remains the leaf width, including for rectangular leaves.
+/// On x86-64, supported 8/16/32/64-pixel-wide leaves use the SSE2 subtraction
+/// kernel; AArch64 keeps its existing square-only NEON path. Other leaves
+/// retain the scalar row walk. The SIMD output is packed at the leaf width.
 #[allow(clippy::too_many_arguments)]
 fn subtract_inter_luma_residual(
     input_plane: &[u8],
@@ -13847,7 +13847,6 @@ fn subtract_inter_luma_residual(
             &recon_plane[recon_offset..],
             recon_stride,
             leaf_residual,
-            block_w_px,
             block_w_px,
             block_h_px,
         );
