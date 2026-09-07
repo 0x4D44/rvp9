@@ -13805,9 +13805,9 @@ fn choose_inter_luma_tx_size(input: InterLumaTxInput<'_>, include_tx4: bool) -> 
 
 /// Build the luma residual used by the inter transform-size RD loop.
 ///
-/// On x86-64, supported 8/16/32/64-pixel-wide leaves use the SSE2 subtraction
-/// kernel; AArch64 keeps its existing square-only NEON path. Other leaves
-/// retain the scalar row walk. The SIMD output is packed at the leaf width.
+/// Square transform leaves use the architecture-specific subtraction kernel;
+/// rectangular leaves retain the scalar row walk because the SIMD kernels only
+/// accept square tiles. The supported square sizes match the DSP entry points.
 #[allow(clippy::too_many_arguments)]
 fn subtract_inter_luma_residual(
     input_plane: &[u8],
@@ -13838,17 +13838,16 @@ fn subtract_inter_luma_residual(
     }
 
     #[cfg(target_arch = "x86_64")]
-    if matches!(block_w_px, 8 | 16 | 32 | 64) {
+    if block_w_px == block_h_px && matches!(block_w_px, 8 | 16 | 32 | 64) {
         let input_offset = input_px_y * input_stride + input_px_x;
         let recon_offset = recon_px_y * recon_stride + recon_px_x;
-        rvp9_core::dsp::accelerated::subtract_block_sse2(
+        rvp9_core::dsp::accelerated::subtract_square_sse2(
             &input_plane[input_offset..],
             input_stride,
             &recon_plane[recon_offset..],
             recon_stride,
             leaf_residual,
             block_w_px,
-            block_h_px,
         );
         return;
     }

@@ -175,9 +175,7 @@ pub use subpel_variance_avx2::{
     vpx_sub_pixel_variance32x64_avx2, vpx_sub_pixel_variance64x32_avx2,
     vpx_sub_pixel_variance64x64_avx2,
 };
-pub use subtract_sse2::{
-    subtract_block_sse2, subtract_square_sse2, subtract_square_sse2_with_nonzero,
-};
+pub use subtract_sse2::{subtract_square_sse2, subtract_square_sse2_with_nonzero};
 pub use tm_predictor_avx2::tm_predictor_avx2;
 pub use v_predictor_avx2::v_predictor_avx2;
 pub use variance_avx2::{
