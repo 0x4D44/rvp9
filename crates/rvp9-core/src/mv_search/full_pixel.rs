@@ -423,22 +423,6 @@ pub fn raw_sad_at_mv(
     mv_col: i16,
 ) -> Option<u32> {
     let sad_fn = sad_for(block_size);
-    raw_sad_at_mv_with_fn(
-        block_size, sad_fn, src_plane, src_offset, ref_plane, mv_row, mv_col,
-    )
-}
-
-/// Raw SAD helper for callers that already resolved the block-size dispatch.
-#[inline]
-pub(crate) fn raw_sad_at_mv_with_fn(
-    block_size: BlockSize,
-    sad_fn: SadFn,
-    src_plane: &PlaneRef<'_>,
-    src_offset: (usize, usize),
-    ref_plane: &PlaneRef<'_>,
-    mv_row: i16,
-    mv_col: i16,
-) -> Option<u32> {
     sad_at(
         block_size, sad_fn, src_plane, src_offset, ref_plane, mv_row, mv_col,
     )
