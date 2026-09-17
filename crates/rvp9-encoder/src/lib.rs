@@ -11487,7 +11487,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                     let tx_px_y = plane_px_y + tx_y4_local * 4;
                                     let recon_tx_px_x = recon_plane_px_x + tx_x4_local * 4;
                                     let recon_tx_px_y = recon_plane_px_y + tx_y4_local * 4;
-                                    #[cfg(target_arch = "aarch64")]
+                                    #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
                                     let input_off = tx_px_y * input_stride + tx_px_x;
                                     let dst_off = recon_tx_px_y * recon_stride + recon_tx_px_x;
 
@@ -11544,7 +11544,39 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                             }
                                             residual.iter().any(|&value| value != 0)
                                         };
-                                        #[cfg(not(target_arch = "aarch64"))]
+                                        #[cfg(target_arch = "x86_64")]
+                                        let residual_nonzero = if matches!(tx_side, 8 | 16 | 32 | 64) {
+                                            rvp9_core::dsp::accelerated::subtract_square_sse2_with_nonzero(
+                                                &input_plane[input_off..],
+                                                input_stride,
+                                                &recon_data[dst_off..],
+                                                recon_stride,
+                                                residual,
+                                                tx_side,
+                                            )
+                                        } else {
+                                            let mut nonzero = false;
+                                            for r in 0..tx_side {
+                                                for c in 0..tx_side {
+                                                    let input_index = (tx_px_y + r) * input_stride
+                                                        + tx_px_x
+                                                        + c;
+                                                    let recon_index = (recon_tx_px_y + r)
+                                                        * recon_stride
+                                                        + recon_tx_px_x
+                                                        + c;
+                                                    let value = input_plane[input_index] as i16
+                                                        - recon_data[recon_index] as i16;
+                                                    residual[r * tx_side + c] = value;
+                                                    nonzero |= value != 0;
+                                                }
+                                            }
+                                            nonzero
+                                        };
+                                        #[cfg(not(any(
+                                            target_arch = "aarch64",
+                                            target_arch = "x86_64"
+                                        )))]
                                         let residual_nonzero = {
                                             let mut nonzero = false;
                                             for r in 0..tx_side {
