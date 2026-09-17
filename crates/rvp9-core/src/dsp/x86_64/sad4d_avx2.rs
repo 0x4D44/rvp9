@@ -88,29 +88,27 @@ unsafe fn hsum128(sum: __m128i) -> u32 {
     _mm_cvtsi128_si32(s) as u32
 }
 
-/// `(w, h)`-generic AVX2 4-reference SAD core. Computes `Σ|src − ref_k|`
-/// for `k ∈ 0..4` and writes the four results into `out`.
+/// Const-size AVX2 4-reference SAD core. Computes `Σ|src − ref_k|` for
+/// `k ∈ 0..4` and writes the four results into `out`.
 ///
 /// # Safety
 ///
 /// Caller must guarantee the running CPU supports AVX2. `src` must hold at
-/// least `(h - 1) * src_stride + w` bytes; each `refs[k]` at least
-/// `(h - 1) * ref_stride + w`. `w` must be one of `{4, 8, 16, 32, 64}` for
+/// least `(H - 1) * src_stride + W` bytes; each `refs[k]` at least
+/// `(H - 1) * ref_stride + W`. `W` must be one of `{4, 8, 16, 32, 64}` for
 /// the SIMD fast path; any other width is delegated to the scalar reference.
 // G4: loads from `src` / `refs[k]` use _mm256_loadu_si256 / _mm_loadu_si128 / _mm_loadl_epi64 / read_unaligned (unaligned)
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
-unsafe fn sad4d_avx2_inner(
+unsafe fn sad4d_avx2_inner<const W: usize, const H: usize>(
     src: &[u8],
     src_stride: usize,
     refs: &[&[u8]; 4],
     ref_stride: usize,
-    w: usize,
-    h: usize,
     out: &mut [u32; 4],
 ) {
-    debug_assert!(matches!(w, 4 | 8 | 16 | 32 | 64));
-    debug_assert!(src.len() >= h.saturating_sub(1) * src_stride + w);
+    debug_assert!(matches!(W, 4 | 8 | 16 | 32 | 64));
+    debug_assert!(src.len() >= H.saturating_sub(1) * src_stride + W);
 
     let src_ptr = src.as_ptr();
     let rp = [
@@ -120,10 +118,10 @@ unsafe fn sad4d_avx2_inner(
         refs[3].as_ptr(),
     ];
 
-    match w {
+    match W {
         4 => {
             let mut acc = [_mm_setzero_si128(); 4];
-            for r in 0..h {
+            for r in 0..H {
                 let s = core::ptr::read_unaligned(src_ptr.add(r * src_stride) as *const u32);
                 // Upper 12 bytes are zero on both sides → contribute 0 to SAD.
                 let sv = core::mem::transmute::<[u32; 4], __m128i>([s, 0, 0, 0]);
@@ -139,7 +137,7 @@ unsafe fn sad4d_avx2_inner(
         }
         8 => {
             let mut acc = [_mm_setzero_si128(); 4];
-            for r in 0..h {
+            for r in 0..H {
                 let sv = _mm_loadl_epi64(src_ptr.add(r * src_stride) as *const __m128i);
                 for k in 0..4 {
                     let rv = _mm_loadl_epi64(rp[k].add(r * ref_stride) as *const __m128i);
@@ -152,7 +150,7 @@ unsafe fn sad4d_avx2_inner(
         }
         16 => {
             let mut acc = [_mm_setzero_si128(); 4];
-            for r in 0..h {
+            for r in 0..H {
                 let sv = _mm_loadu_si128(src_ptr.add(r * src_stride) as *const __m128i);
                 for k in 0..4 {
                     let rv = _mm_loadu_si128(rp[k].add(r * ref_stride) as *const __m128i);
@@ -165,7 +163,7 @@ unsafe fn sad4d_avx2_inner(
         }
         32 => {
             let mut acc = [_mm256_setzero_si256(); 4];
-            for r in 0..h {
+            for r in 0..H {
                 let sv = _mm256_loadu_si256(src_ptr.add(r * src_stride) as *const __m256i);
                 for k in 0..4 {
                     let rv = _mm256_loadu_si256(rp[k].add(r * ref_stride) as *const __m256i);
@@ -178,7 +176,7 @@ unsafe fn sad4d_avx2_inner(
         }
         64 => {
             let mut acc = [_mm256_setzero_si256(); 4];
-            for r in 0..h {
+            for r in 0..H {
                 let s_row = src_ptr.add(r * src_stride);
                 let sv0 = _mm256_loadu_si256(s_row as *const __m256i);
                 let sv1 = _mm256_loadu_si256(s_row.add(32) as *const __m256i);
@@ -197,7 +195,7 @@ unsafe fn sad4d_avx2_inner(
         _ => {
             // Unexpected width — fall back to four scalar SADs for correctness.
             for k in 0..4 {
-                out[k] = crate::dsp::distortion::sad(src, src_stride, refs[k], ref_stride, w, h);
+                out[k] = crate::dsp::distortion::sad(src, src_stride, refs[k], ref_stride, W, H);
             }
         }
     }
@@ -228,7 +226,7 @@ macro_rules! sad4d_avx2_fn {
             // init time and are monotonic for the process lifetime. Test
             // paths gate each call on a runtime `is_x86_feature_detected!`
             // check.
-            unsafe { sad4d_avx2_inner(src, src_stride, refs, ref_stride, $w, $h, out) }
+            unsafe { sad4d_avx2_inner::<$w, $h>(src, src_stride, refs, ref_stride, out) }
         }
     };
 }
