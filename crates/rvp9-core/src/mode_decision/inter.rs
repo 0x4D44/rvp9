@@ -5949,16 +5949,32 @@ fn sse_block(
     bh: usize,
 ) -> u64 {
     let (sx, sy) = src_offset;
-    let mut sse: u64 = 0;
-    for r in 0..bh {
-        for c in 0..bw {
-            let s = src_plane.data[(sy + r) * src_plane.stride + (sx + c)] as i32;
-            let d = dst[r * dst_stride + c] as i32;
-            let diff = s - d;
-            sse += (diff * diff) as u64;
-        }
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    {
+        let src_start = sy * src_plane.stride + sx;
+        return crate::dsp::x86_64::sse_block_sse2::sse_block_sse2(
+            &src_plane.data[src_start..],
+            src_plane.stride,
+            dst,
+            dst_stride,
+            bw,
+            bh,
+        );
     }
-    sse
+
+    #[cfg(not(all(target_arch = "x86_64", not(miri))))]
+    {
+        let mut sse: u64 = 0;
+        for r in 0..bh {
+            for c in 0..bw {
+                let s = src_plane.data[(sy + r) * src_plane.stride + (sx + c)] as i32;
+                let d = dst[r * dst_stride + c] as i32;
+                let diff = s - d;
+                sse += (diff * diff) as u64;
+            }
+        }
+        sse
+    }
 }
 
 // ============================================================================

@@ -97,6 +97,7 @@ pub mod quantize_fp_avx2;
 pub mod quantize_metrics_sse2;
 pub mod sad4d_avx2;
 pub mod sad_avx2;
+pub mod sse_block_sse2;
 pub mod subpel_variance_avx2;
 pub mod subtract_sse2;
 pub mod tm_predictor_avx2;
