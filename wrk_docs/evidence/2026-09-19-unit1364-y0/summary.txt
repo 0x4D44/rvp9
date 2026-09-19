@@ -1,0 +1,44 @@
+RVP9 Unit 1364 x86 AVX2 zero-vertical-phase sub-pel shortcut
+
+Candidate: Unit 1363 source (including the integer-centre and zero-horizontal
+shortcuts) plus `horizontal_bilinear_to_u8_temp` in
+`crates/rvp9-core/src/dsp/x86_64/subpel_variance_avx2.rs`.
+
+When `yoffset == 0`, the vertical bilinear taps are `[128, 0]`, so the second
+pass is the identity. The candidate computes the horizontal bilinear result
+directly into the byte temp and skips the extra widened row and vertical pass.
+
+## Incremental Crucible screen
+
+The anchor is a release binary built from committed Unit 1363 source; the test
+adds only the zero-vertical-phase shortcut. Protocol: one-thread CPU-used-6
+CBR, 1280×720@30, 1260 kbps, 60 frames, one warmup, 15 paired samples, two
+rotations, three clips, under the relaxed Crucible load policy.
+
+| Clip | Separate | Paired | Candidate ms/frame | Unit 1363 ms/frame | Hashes |
+| --- | ---: | ---: | ---: | ---: | --- |
+| ducks_take_off | 1.007404x | 0.998333x | 21.891 | 21.730 | identical |
+| in_to_tree | 0.972416x | 0.984161x | 14.090 | 14.489 | identical |
+| old_town_cross | 1.002494x | 0.992186x | 12.850 | 12.818 | identical |
+| corpus | 0.993984x | 0.991543x | — | — | all identical |
+
+The paired corpus ratio is 0.85% faster than Unit 1363 and remains below the
+1.05 retention bar. Crucible reported 7.13 busy logical cores at completion.
+The manifest, raw rows, and summary CSV are retained beside this file.
+
+## Correctness and validation
+
+The deliberate red mutation shifted the new helper's right-neighbour load by
+one byte; the focused x86 differential failed at `w=4, h=4, xoff=1, yoff=0`.
+Restoring the load made the same test pass.
+
+The full x86 release core suite passed 2053 tests with 3 ignored. The local
+AArch64 release core suite passed 1717 tests with 3 ignored. Rustfmt passed.
+The x86_64 Windows target check passed. Clippy reports only the existing
+`quantize_fp_avx2.rs:141` and `mode_decision/inter.rs:5955` warnings.
+
+## Limits
+
+This unit has fresh plain-release incremental evidence only. It does not rerun
+the longer PGO qualification or direct pinned-libvpx comparison; those remain
+resume checks after integration.
