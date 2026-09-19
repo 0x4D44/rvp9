@@ -1,0 +1,56 @@
+RVP9 Unit 1366 — integrated x86-64 Crucible profile
+
+Source commit: 517981c03f36ab4e5fe8f0cf45181d6138cf0f59 (integrated Unit
+1364, including the accepted x86 sub-pel phase shortcuts).
+
+The exact release binary ran twenty serial 60-frame CPU-used-6 CBR encodes of
+`ducks_take_off_720p30.y4m` under Windows Performance Recorder's CPU profile.
+xperf decoded the ETL with the matching rvp9enc symbols. The report contains
+2,133 symbolized `rvp9enc.exe!` rows and 25,767,506 aggregate weighted samples.
+This is source attribution, not a timing ratio.
+
+| Symbol | Samples | Share |
+| --- | ---: | ---: |
+| `rvp9_encoder::pick_and_simulate_inter_encode_partitions::closure$10` | 3,026,729 | 11.746% |
+| `rvp9_core::dsp::x86_64::quantize_fp_avx2::vp9_quantize_fp_avx2_inner` | 2,390,792 | 9.278% |
+| `rvp9_core::dsp::x86_64::subpel_variance_avx2::vpx_sub_pixel_variance16x16_avx2` | 1,795,268 | 6.967% |
+| `rvp9_core::transforms::forward::fdct16_butterfly` | 1,280,195 | 4.968% |
+| `rvp9_core::mode_decision::inter::pick_inter_mode_impl` | 1,073,513 | 4.166% |
+| `rvp9_core::mv_search::full_pixel::diamond_search_sad_from_step` | 945,385 | 3.669% |
+| `rvp9_core::dsp::x86_64::variance_avx2::var_sum_sse_16x16_avx2` | 889,534 | 3.452% |
+| `rvp9_core::dsp::x86_64::sad4d_avx2::vpx_sad16x16x4d_avx2` | 866,671 | 3.363% |
+| `rvp9_core::mode_decision::inter::evaluate_candidate_with_slots` | 862,773 | 3.348% |
+| `rvp9_core::dsp::x86_64::convolve8_horiz_avx2::convolve8_horiz_avx2` | 741,530 | 2.878% |
+| `rvp9_core::transforms::forward::fdct8x8` | 730,932 | 2.837% |
+| `rvp9_core::inter::mv_ref::find_realtime_refs_nearest_near_mvs_with_context` | 696,077 | 2.701% |
+
+The accepted phase-specific sub-pel work moved that family below 7% of the
+profile. The next sensible Tesco-sized screens are therefore picker/quantizer
+or transform changes, but prior production-PGO screens already rejected the
+obvious quantizer packing, fixed-shape variance, fused sub-pel, and fdct16
+second-pass candidates.
+
+A fresh direct timing screen compared this exact integrated binary with the
+pinned libvpx `vpxenc` reference. It used the same CPU-used-6 CBR settings as
+the local harness, ten alternating pairs per clip, and median-of-middle-two
+timings. Output hashes remained deterministic for both encoders.
+
+| Clip | libvpx seconds | RVP9 seconds | RVP9 / libvpx |
+| --- | ---: | ---: | ---: |
+| ducks_take_off | 1.474263 | 2.043471 | 1.386096304 |
+| in_to_tree | 0.802770 | 1.322576 | 1.647514305 |
+| old_town_cross | 0.882310 | 1.246112 | 1.412328193 |
+
+The three-clip geometric mean is 1.47747x. This is a direct timing baseline,
+not the harness's load-gated retention score; the earlier full harness attempt
+was abandoned because its PDH load sampler still ran despite relaxed limits.
+
+Timing-screen output hashes (SHA-256):
+
+- `ducks_take_off`: libvpx `900ab70250c92408cd46cbc1bf3dc948e2927201beb3b2a838df70cfcb0d459e`; RVP9 `cd91837d5e2ac1ef9f21fcba16611e874268534ca182b0445c650f1204970d7c`
+- `in_to_tree`: libvpx `6d8d231daee0ca2f4683461640620fd0a4aaf8d96e22e71c6c106d37bb1cddd8`; RVP9 `3fd208dce514c4da95776b40bab3a9ddf98707462209e76954538f7f64534aec`
+- `old_town_cross`: libvpx `cce959eb80b0d8fd8edba7f069bb3c8afecbfe426f5798d18a4d7c595c5d685a`; RVP9 `94d5cb953836e9f028eb716c30e81a0f78818d4f3f3d786431fa28f6a57daef3`
+
+ETL SHA-256: `D7E43BAB99AF62F3A0511A84D020717F2FDC83AF6081291B742B4A61C6D5A66C`.
+Decoded report SHA-256: `74f42ce95ca9e5a25b87d10831d070f3ccf8340ed965b96dfa987676d34767c4`.
+Integrated release binary SHA-256: `dccce1c972904ed7649ddde92f385851f6aba87969f8124dfa02333b0b448169`.

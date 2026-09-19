@@ -1,0 +1,21 @@
+rvp9 x86-64 Crucible CPU profile manifest
+source_commit=517981c03f36ab4e5fe8f0cf45181d6138cf0f59
+source_tree=integrated-unit1364
+host=Crucible Windows x86-64
+binary=D:\\worktrees\\rvp9-2\\unit1364-integrated\\target\\release\\rvp9enc.exe
+binary_sha256=dccce1c972904ed7649ddde92f385851f6aba87969f8124dfa02333b0b448169
+input=C:\\Users\\marti\\AppData\\Local\\Temp\\rvp9-unit1292-structural-screen\\inputs\\ducks_take_off_720p30.y4m
+frames=60
+runs=20
+cpu_used=6
+target_bitrate_kbps=1260
+end_usage=cbr
+fps=30/1
+threads=1
+tile_columns=0
+wpr_profile=CPU,filemode
+xperf_decode=symbols verbose,profile -detail
+etl=C:\\Users\\marti\\AppData\\Local\\Temp\\rvp9-unit1366-profile\\rvp9-cpu6.etl
+etl_sha256=D7E43BAB99AF62F3A0511A84D020717F2FDC83AF6081291B742B4A61C6D5A66C
+report=C:\\Users\\marti\\AppData\\Local\\Temp\\rvp9-unit1366-profile\\rvp9-cpu6-profile-verbose.txt
+report_sha256=74f42ce95ca9e5a25b87d10831d070f3ccf8340ed965b96dfa987676d34767c4

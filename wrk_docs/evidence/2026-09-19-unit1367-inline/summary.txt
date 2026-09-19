@@ -1,0 +1,29 @@
+RVP9 Unit 1367 — fixed-shape sub-pel wrapper inline hint (rejected)
+
+Base: integrated Unit 1364 source, commit 517981c03f36ab4e5fe8f0cf45181d6138cf0f59.
+
+Candidate: add `#[inline]` to the eleven generated fixed-shape AVX2
+`vpx_sub_pixel_variance{W}x{H}_avx2` wrappers. The intent was to expose the
+constant width and height to `sub_pixel_variance_avx2` without changing its
+arithmetic or dispatch ABI.
+
+Correctness:
+
+- Crucible x86-64 release focused suite: 5 passed, 0 failed.
+- Candidate and control hashes matched for all three clips in the timing
+  screen.
+
+Plain Crucible timing used CPU-used 6, CBR 1260 kbps, 720p30, one thread,
+tile-columns 0, AQ 0, noise 0, 60 frames, and ten alternating candidate/control
+pairs per clip. The relaxed load policy was used.
+
+| Clip | Control seconds | Candidate seconds | Ratio |
+| --- | ---: | ---: | ---: |
+| ducks_take_off | 1.269481 | 1.293719 | 1.019093158 |
+| in_to_tree | 0.859203 | 0.852527 | 0.992229719 |
+| old_town_cross | 0.787597 | 0.788395 | 1.001013145 |
+
+The three-clip geometric mean is approximately 1.004x (about 0.4% slower).
+The first 20-pair ducks-only screen also regressed at 1.003225652x. The
+candidate is therefore rejected; the source change was removed before this
+commit.

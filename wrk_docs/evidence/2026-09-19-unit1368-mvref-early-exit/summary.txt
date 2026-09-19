@@ -1,0 +1,32 @@
+RVP9 Unit 1368 — realtime MV-reference full-list early exit (rejected)
+
+Base: integrated Unit 1364 source, commit 517981c03f36ab4e5fe8f0cf45181d6138cf0f59.
+
+Candidate: break the second realtime neighbour walk once every requested
+reference list contains two distinct MVs. The lists are capped at two entries;
+mode context and `const_motion` come only from the first two spatial positions,
+so later neighbours cannot affect a full list.
+
+Correctness:
+
+- Local AArch64 release MV-reference suite: 57 passed, 0 failed after restore.
+- Deliberately replacing the full-list predicate with `any_neighbour` made
+  `paired_last_golden_walk_matches_four_independent_queries` fail (`(0, 0)`
+  versus `(24, -28)`); the mutation was restored.
+- The x86 release build completed successfully and all output hashes matched
+  the control in the timing screen.
+
+Plain Crucible timing used CPU-used 6, CBR 1260 kbps, 720p30, one thread,
+tile-columns 0, AQ 0, noise 0, 60 frames, and ten alternating pairs per clip.
+The relaxed load policy was used.
+
+| Clip | Control seconds | Candidate seconds | Ratio |
+| --- | ---: | ---: | ---: |
+| ducks_take_off | 2.096387 | 2.084307 | 0.994237706 |
+| in_to_tree | 1.638541 | 1.691134 | 1.032097336 |
+| old_town_cross | 1.286008 | 1.341741 | 1.043337830 |
+
+The three-clip geometric mean is approximately 1.023x (about 2.3% slower).
+The candidate is rejected and the source change was removed before commit.
+The host was busy during this screen, but the two natural-content regressions
+were large enough that no production-PGO qualification was warranted.
