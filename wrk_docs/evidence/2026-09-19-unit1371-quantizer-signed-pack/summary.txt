@@ -1,0 +1,52 @@
+RVP9 Unit 1371 — AVX2 qcoeff signed pack (rejected)
+
+Base: integrated trunk commit 690bb74d97ced794ac4bbe82defad01433802a2a.
+
+Candidate: qcoeff values are in the signed i16 range for valid VP9
+`PlaneQuantizers`, so store them with `_mm_packs_epi32` instead of masking
+each 32-bit lane and using unsigned packing. The dqcoeff path deliberately
+keeps the existing low-16-bit truncating store because scalar VP9 semantics
+cast the 32-bit product to `i16`.
+
+Correctness:
+
+- Crucible x86-64 release AVX2 quantizer suite: 4 passed, 0 failed.
+- A deliberate red mutation replacing the signed pack with unsigned packing
+  failed `scalar_equivalence_random_coefficients` on negative qcoeff values.
+  The signed implementation was restored and all 4 tests passed again.
+- Local AArch64 release forward-quantizer suite: 24 passed, 0 failed.
+- Candidate and control output hashes matched on both full screens:
+  `ducks_take_off` `cd91837d5e2ac1ef9f21fcba16611e874268534ca182b0445c650f1204970d7c`,
+  `in_to_tree` `3fd208dce514c4da95776b40bab3a9ddf98707462209e76954538f7f64534aec`,
+  `old_town_cross` `94d5cb953836e9f028eb716c30e81a0f78818d4f3f3d786431fa28f6a57daef3`.
+
+Plain Crucible timing used CPU-used 6, CBR 1260 kbps, 720p30, one thread,
+tile-columns 0, AQ 0, noise 0, 60 frames, and twenty alternating candidate /
+control pairs per clip. The relaxed load policy was used. Ratios are
+candidate/control; values above 1.0 are slower.
+
+Run A:
+
+| Clip | Control seconds | Candidate seconds | Ratio |
+| --- | ---: | ---: | ---: |
+| ducks_take_off | 1.300308 | 1.333623 | 1.025621323 |
+| in_to_tree | 0.818371 | 0.832892 | 1.017743422 |
+| old_town_cross | 0.748319 | 0.747005 | 0.998244264 |
+
+Geometric mean: 1.013804x (1.38% slower).
+
+Run B:
+
+| Clip | Control seconds | Candidate seconds | Ratio |
+| --- | ---: | ---: | ---: |
+| ducks_take_off | 1.300533 | 1.318925 | 1.014141819 |
+| in_to_tree | 0.980358 | 1.063884 | 1.085199207 |
+| old_town_cross | 1.203367 | 1.192862 | 0.991270163 |
+
+Geometric mean: 1.029438x (2.94% slower). Across all six clip pairs the
+geometric mean is 1.021591x, or about 2.16% slower.
+
+Decision: reject. The arithmetic-preserving qcoeff store is output-exact but
+slower in both full screens, so no production-PGO or candidate-vs-pinned-
+libvpx qualification is warranted. The source change was removed from the
+task branch after the evidence was captured.
