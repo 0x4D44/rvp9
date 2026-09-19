@@ -9964,20 +9964,21 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     // overrides; the cpu<=4 RDO path runs its own search.
                     let descent_context = descent_pick_cache
                         .as_ref()
-                        .and_then(|cache| cache.get(leaf_mi_row, leaf_mi_col, leaf_bsize));
-                    let descent_context_matches =
-                        descent_context.is_some_and(|(_, desc_mvc_last, desc_mvc_golden)| {
+                        .and_then(|cache| cache.get(leaf_mi_row, leaf_mi_col, leaf_bsize))
+                        .map(|(cached, desc_mvc_last, desc_mvc_golden)| {
+                            (*cached, *desc_mvc_last, *desc_mvc_golden)
+                        });
+                    let descent_context_matches = descent_context.as_ref().is_some_and(
+                        |(_, desc_mvc_last, desc_mvc_golden)| {
                             mvc.nearest == desc_mvc_last.nearest
                                 && mvc.near == desc_mvc_last.near
                                 && mvc_golden.nearest == desc_mvc_golden.nearest
                                 && mvc_golden.near == desc_mvc_golden.near
-                        });
+                        },
+                    );
                     let (phase2_override_last, phase2_override_golden) =
                         if phase2_reuse_enabled && rdo_unified.is_none() {
-                            match descent_pick_cache
-                                .as_ref()
-                                .and_then(|cache| cache.get(leaf_mi_row, leaf_mi_col, leaf_bsize))
-                            {
+                            match descent_context.as_ref() {
                                 Some((cached, _, _)) => {
                                     // MATCH GUARD (R2): only reuse the descent's
                                     // NEWMV when the final pass's CAUSAL
@@ -10027,18 +10028,15 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     let mut final_inter_mode_mask = rt_inter_mode_mask;
                     if matches!(leaf_bsize, BlockSize::Block16x16)
                         && a4_breakout_16_dist_qmul.is_some_and(|dist_qmul| {
-                            descent_pick_cache
-                                .as_ref()
-                                .and_then(|cache| cache.get(leaf_mi_row, leaf_mi_col, leaf_bsize))
-                                .is_some_and(|(cached, _, _)| {
-                                    stage4a_suppress_final_newmv(
-                                        leaf_bsize,
-                                        cached.best_mode,
-                                        cached.partition_distortion,
-                                        base_qindex,
-                                        dist_qmul,
-                                    )
-                                })
+                            descent_context.as_ref().is_some_and(|(cached, _, _)| {
+                                stage4a_suppress_final_newmv(
+                                    leaf_bsize,
+                                    cached.best_mode,
+                                    cached.partition_distortion,
+                                    base_qindex,
+                                    dist_qmul,
+                                )
+                            })
                         })
                     {
                         final_inter_mode_mask[leaf_bsize.idx()] &= !(1u8 << InterMode::NewMv.idx());
@@ -10286,13 +10284,12 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         rt_reuse_descent_pick,
                         rdo_unified.is_some(),
                         descent_context_matches,
-                        descent_context.map(|(cached, _, _)| cached.best_mode),
+                        descent_context
+                            .as_ref()
+                            .map(|(cached, _, _)| cached.best_mode),
                     ) && job_denoiser.is_none()
                     {
-                        descent_pick_cache
-                            .as_ref()
-                            .and_then(|cache| cache.get(leaf_mi_row, leaf_mi_col, leaf_bsize))
-                            .map(|(cached, _, _)| *cached)
+                        descent_context.as_ref().map(|(cached, _, _)| *cached)
                     } else {
                         None
                     };
