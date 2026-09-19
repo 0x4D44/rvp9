@@ -308,6 +308,20 @@ pub fn sub_pixel_variance_avx2(
     h: usize,
 ) -> (u32, u32) {
     debug_assert!(w <= MAX_SUBPEL_WIDTH && h <= MAX_SUBPEL_HEIGHT);
+
+    // At the integer centre the bilinear filter is the identity. The search
+    // evaluates this phase once per refinement, so skip both interpolation
+    // passes and reduce the source directly. This is byte-identical to the
+    // `(0, 0)` bilinear path: the scalar filter taps are `[128, 0]` in both
+    // directions, hence every output byte is exactly `src[row * stride + col]`.
+    if xoffset == 0 && yoffset == 0 {
+        let (sum, sse) =
+            super::variance_avx2::var_sum_sse_avx2(src, src_stride, reference, ref_stride, w, h);
+        let n = (w * h) as i64;
+        let var = ((sse as i64) - (sum * sum) / n).max(0) as u32;
+        return (var, sse as u32);
+    }
+
     SUBPEL_VARIANCE_SCRATCH.with_borrow_mut(|scratch| {
         let SubPixelVarianceScratch { fdata, temp } = scratch;
         let fdata = &mut fdata[..(h + 1) * w];

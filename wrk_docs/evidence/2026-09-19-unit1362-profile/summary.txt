@@ -1,0 +1,30 @@
+RVP9 Unit 1362 fresh Crucible x86-64 CPU profile
+
+base_source=Unit1361 candidate source (commit 8117b1cc; source hash
+0c5b935d0ce82008c8720d9d68166e4274409b34981fb07c61363c7521d717f1)
+etl_sha256=D6DBA38D8FE0015EB8FE703D7148513B913F8CBAEAE716A8809B29C54A1246AF
+symbol_report_sha256=34c85513bc1468da85a09fe50491ed4cc1721a54d8eae6e9fa78721d99596a79
+
+The exact Unit 1361 release source ran twenty serial 60-frame CPU-used-6
+CBR encodes of ducks_take_off_720p30.y4m under Windows Performance Recorder's
+CPU profile. xperf decoded the ETL with the matching rvp9enc symbols. The
+aggregate report sums weighted samples over the twenty encoder processes; it
+is source attribution, not a timing ratio.
+
+| Symbol | Samples | Share |
+| --- | ---: | ---: |
+| rvp9_core::dsp::x86_64::subpel_variance_avx2::sub_pixel_variance_avx2 | 6,017,353 | 18.579% |
+| rvp9_encoder::pick_and_simulate_inter_encode_partitions::closure$10 | 3,533,634 | 10.911% |
+| rvp9_core::dsp::x86_64::quantize_fp_avx2::vp9_quantize_fp_avx2_inner | 2,680,625 | 8.277% |
+| rvp9_core::mode_decision::inter::pick_inter_mode_impl | 1,295,526 | 4.000% |
+| rvp9_core::transforms::forward::fdct16_butterfly | 1,239,926 | 3.828% |
+| rvp9_core::mv_search::full_pixel::diamond_search_sad_from_step | 1,011,999 | 3.125% |
+| rvp9_core::dsp::x86_64::sad4d_avx2::vpx_sad16x16x4d_avx2 | 921,211 | 2.844% |
+| rvp9_core::dsp::x86_64::variance_avx2::var_sum_sse_16x16_avx2 | 915,089 | 2.825% |
+| rvp9_core::inter::mv_ref::find_realtime_refs_nearest_near_mvs_with_context<rvp9_encoder::InterPickerMiGridLookup,2> | 877,696 | 2.710% |
+| rvp9_core::transforms::forward::fdct8x8 | 845,093 | 2.609% |
+
+The profile kept sub-pel variance as the largest exact kernel surface. The
+next bounded candidate therefore targets a phase-specific identity case,
+not a picker policy change: `(xoffset, yoffset) == (0, 0)` can reduce the
+source directly because both bilinear taps are `[128, 0]`.

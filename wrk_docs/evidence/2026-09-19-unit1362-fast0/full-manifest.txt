@@ -1,0 +1,55 @@
+rvp9 encode-headtohead manifest schema=1
+argv=["D:\\worktrees\\rvp9-2\\acceptance-d639c265\\target\\release\\encode-headtohead.exe", "--anchor-encoder", "D:\\worktrees\\rvp9-2\\20260919-TSK-HUM-x86-subpel-tail-load-stores-control\\target\\release\\rvp9enc.exe", "--test-encoder", "D:\\worktrees\\rvp9-2\\20260919-TSK-HUM-x86-subpel-tail-load-stores\\target\\release\\rvp9enc.exe", "--anchor-kind", "vpxenc", "--test-kind", "vpxenc", "--anchor-revision", "unit1361-control", "--test-revision", "unit1362-fast0", "--clip", "ducks_take_off=C:\\Users\\marti\\AppData\\Local\\Temp\\rvp9-unit1292-structural-screen\\inputs\\ducks_take_off_720p30.y4m", "--clip", "in_to_tree=C:\\Users\\marti\\AppData\\Local\\Temp\\rvp9-unit1292-structural-screen\\inputs\\in_to_tree_720p30.y4m", "--clip", "old_town_cross=C:\\Users\\marti\\AppData\\Local\\Temp\\rvp9-unit1292-structural-screen\\inputs\\old_town_cross_720p30.y4m", "--work-dir", "C:\\Users\\marti\\AppData\\Local\\Temp\\rvp9-unit1362-fast0-full", "--cpu-used", "6", "--target-bitrate", "1260", "--end-usage", "cbr", "--fps", "30/1", "--threads", "1", "--tile-columns", "0", "--aq-mode", "0", "--noise-sensitivity", "0", "--limit", "60", "--keyframe-interval", "60", "--warmups", "1", "--pairs", "15", "--rotations", "2", "--max-ratio", "1.05"]
+git_commit=unavailable
+host=unavailable
+rustc=rustc 1.95.0 (59807616e 2026-04-14)
+available_parallelism=32
+anchor_encoder=D:\worktrees\rvp9-2\20260919-TSK-HUM-x86-subpel-tail-load-stores-control\target\release\rvp9enc.exe
+anchor_kind=vpxenc
+anchor_revision=unit1361-control
+anchor_sha256=1d09da4c956514062e9f38c49906298869a0be8c7e02eeb2a5d4c5efd7f78999
+anchor_extra_args=[]
+test_encoder=D:\worktrees\rvp9-2\20260919-TSK-HUM-x86-subpel-tail-load-stores\target\release\rvp9enc.exe
+test_kind=vpxenc
+test_revision=unit1362-fast0
+test_sha256=30d1e7b5f0cc3659ce6bc06997bab37907e4d8b4a2470e5177afcd3726ece525
+test_extra_args=[]
+cpu_used=6
+target_bitrate_kbps=1260
+end_usage=cbr
+fps=30/1
+threads=1
+tile_columns=0
+temporal_layers=None
+spatial_layers=None
+inter_layer_pred=0
+aq_mode=0
+noise_sensitivity=0
+limit=60
+keyframe_interval=60
+warmups=1 pairs=15 rotations=2
+ordering=even rotations reverse clips; every pair alternates first arm
+max_ratio=1.050000000 max_load1=None
+allow_anchor_hash_instability=false
+clip_ducks_take_off_path=C:\Users\marti\AppData\Local\Temp\rvp9-unit1292-structural-screen\inputs\ducks_take_off_720p30.y4m
+clip_ducks_take_off_sha256=42235814fd03ffba9144d915bda7844902ccd9076bef7143e373fc6de0df170a
+clip_ducks_take_off_video=1280x720@30/1
+clip_in_to_tree_path=C:\Users\marti\AppData\Local\Temp\rvp9-unit1292-structural-screen\inputs\in_to_tree_720p30.y4m
+clip_in_to_tree_sha256=3053ddad95a66bb970685412d58ee807813319668a57cd5f8a6d00c07415a895
+clip_in_to_tree_video=1280x720@30/1
+clip_old_town_cross_path=C:\Users\marti\AppData\Local\Temp\rvp9-unit1292-structural-screen\inputs\old_town_cross_720p30.y4m
+clip_old_town_cross_sha256=752413cb08a572c5c571ac93903bcac961ed30a53ece26dcbc18d5fa3cbbc4d8
+clip_old_town_cross_video=1280x720@30/1
+anchor_command="D:\\worktrees\\rvp9-2\\20260919-TSK-HUM-x86-subpel-tail-load-stores-control\\target\\release\\rvp9enc.exe" "--codec=vp9" "--passes=1" "--rt" "--cpu-used=6" "--end-usage=cbr" "--target-bitrate=1260" "--fps=30/1" "--threads=1" "--tile-columns=0" "--lag-in-frames=0" "--tune-content=default" "--aq-mode=0" "--noise-sensitivity=0" "--limit=60" "--kf-max-dist=60" "--quiet" "--ivf" "-o" "<OUTPUT>" "C:\\Users\\marti\\AppData\\Local\\Temp\\rvp9-unit1292-structural-screen\\inputs\\ducks_take_off_720p30.y4m"
+test_command="D:\\worktrees\\rvp9-2\\20260919-TSK-HUM-x86-subpel-tail-load-stores\\target\\release\\rvp9enc.exe" "--codec=vp9" "--passes=1" "--rt" "--cpu-used=6" "--end-usage=cbr" "--target-bitrate=1260" "--fps=30/1" "--threads=1" "--tile-columns=0" "--lag-in-frames=0" "--tune-content=default" "--aq-mode=0" "--noise-sensitivity=0" "--limit=60" "--kf-max-dist=60" "--quiet" "--ivf" "-o" "<OUTPUT>" "C:\\Users\\marti\\AppData\\Local\\Temp\\rvp9-unit1292-structural-screen\\inputs\\ducks_take_off_720p30.y4m"
+host_load_metric=windows_60s_mean_busy_logical_cores
+load1_preflight=8.330096
+load1_rotation1_ducks_take_off=11.754885
+load1_rotation1_in_to_tree=11.409205
+load1_rotation1_old_town_cross=24.357459
+load1_rotation2_old_town_cross=22.175509
+load1_rotation2_in_to_tree=23.993363
+load1_rotation2_ducks_take_off=16.898237
+load1_complete=6.472969
+corpus_separate_ratio=0.972765087
+corpus_paired_ratio=0.972632969

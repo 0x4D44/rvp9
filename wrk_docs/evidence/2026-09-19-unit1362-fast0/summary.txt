@@ -1,0 +1,44 @@
+RVP9 Unit 1362 `(0,0)` sub-pel identity fast path
+
+Candidate: working-tree source after Unit 1361 plus the direct integer-centre
+path in `crates/rvp9-core/src/dsp/x86_64/subpel_variance_avx2.rs`.
+
+The path is exact: at `(xoffset, yoffset) == (0, 0)`, the scalar bilinear
+filters are `[128, 0]` in both directions, so the interpolated block equals
+the source block byte for byte. The AVX2 path therefore calls the existing
+exact `(sum, sse)` variance reduction directly and applies the same scalar
+variance finisher.
+
+## Plain Crucible screen
+
+Protocol: pinned one-thread CPU-used-6 CBR, 1280×720@30, 1260 kbps, 60
+frames, one warmup, 15 paired samples, two rotations, three clips. The
+relaxed Crucible load policy was used. The tested candidate binary was
+`30d1e7b5f0cc3659ce6bc06997bab37907e4d8b4a2470e5177afcd3726ece525`; the
+trunk control was
+`1d09da4c956514062e9f38c49906298869a0be8c7e02eeb2a5d4c5efd7f78999`.
+
+| Clip | Separate | Paired | Candidate ms/frame | Control ms/frame | Hashes |
+| --- | ---: | ---: | ---: | ---: | --- |
+| ducks_take_off | 0.985575x | 0.975009x | 25.185 | 25.553 | identical |
+| in_to_tree | 0.967606x | 0.983696x | 22.731 | 23.492 | identical |
+| old_town_cross | 0.965241x | 0.959351x | 14.055 | 14.561 | identical |
+| corpus | 0.972765x | 0.972633x | — | — | all identical |
+
+The candidate was faster on every clip in the separate medians. The paired
+corpus result is 2.74% faster than control and remains below the 1.05 retention
+bar. The complete manifest, raw rows, and summary CSV are retained beside
+this file. Crucible load was 6.47 busy logical cores at completion.
+
+## Correctness and validation
+
+The deliberate red mutation changed the direct path's source stride to
+`src_stride + 1`; `differential_var_sse` failed at `w=4, h=4, xoff=0, yoff=0`
+with `(var,sse)` mismatch. Restoring the source made the same test pass.
+
+The full x86 release core suite passed 2053 tests with 3 ignored. The local
+AArch64 release core suite passed 1717 tests with 3 ignored. The x86_64
+Apple target type-checked with the existing x87 ABI warning. `cargo fmt
+--all -- --check` passed. Existing workspace clippy diagnostics remain in
+`quantize_fp_avx2.rs:141` and `mode_decision/inter.rs:5955`; this change adds
+no new clippy diagnostic.
