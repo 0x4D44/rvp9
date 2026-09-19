@@ -1,0 +1,42 @@
+RVP9 Unit 1369 — AVX2 quantizer clamp-constant hoist (rejected)
+
+Base: integrated trunk commit 8dc22c2339390bae0b349dc319667ff54abdbb54.
+
+Candidate: construct the AVX2 `INT16_MIN` and `INT16_MAX` clamp vectors once
+per quantizer call, outside the AC coefficient loop, then reuse them for every
+eight-coefficient chunk. The candidate changes no arithmetic, scan order, or
+output representation. It was selected from the Unit 1366 Crucible profile,
+where `vp9_quantize_fp_avx2_inner` accounted for 9.278% of weighted samples.
+
+Correctness:
+
+- Crucible x86-64 release focused suite: 4 passed, 0 failed.
+- A deliberately mutated `max_i16` vector set the clamp ceiling to zero. The
+  same focused scalar differential failed in `Tx4x4` (`qcoeff` mismatch),
+  proving the test exercises the clamp path.
+- After restoring `INT16_MAX_I32`, the x86 suite passed again: 4/4.
+- Local AArch64 release scalar quantizer tests passed: 6/6.
+
+Plain Crucible timing used CPU-used 6, CBR 1260 kbps, 720p30, one thread,
+tile-columns 0, AQ 0, noise 0, 60 frames, and twenty alternating candidate /
+control pairs per clip. The relaxed load policy was used. Timings are the
+average of the two middle samples after sorting each side.
+
+| Clip | Control seconds | Candidate seconds | Ratio |
+| --- | ---: | ---: | ---: |
+| ducks_take_off | 1.959346 | 2.115193 | 1.079540363 |
+| in_to_tree | 1.040382 | 1.148082 | 1.103519414 |
+| old_town_cross | 0.863798 | 0.862027 | 0.997948942 |
+
+The three-clip geometric mean is 1.05936x (5.94% slower). Candidate and
+control output hashes matched on all clips:
+
+- `ducks_take_off`: `cd91837d5e2ac1ef9f21fcba16611e874268534ca182b0445c650f1204970d7c`
+- `in_to_tree`: `3fd208dce514c4da95776b40bab3a9ddf98707462209e76954538f7f64534aec`
+- `old_town_cross`: `94d5cb953836e9f028eb716c30e81a0f78818d4f3f3d786431fa28f6a57daef3`
+
+Decision: reject. Despite removing two vector-constant constructions from the
+source loop, the whole encoder regressed materially on two clips. The likely
+mechanism is increased register pressure or altered loop scheduling; no PGO
+qualification is warranted for a clear plain-release loss. The source change
+was removed from the task branch after this evidence was captured.
