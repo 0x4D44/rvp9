@@ -1,0 +1,41 @@
+RVP9 Unit 1363 x86 AVX2 zero-horizontal-phase sub-pel shortcut
+
+Candidate: Unit 1362 source plus `vertical_bilinear_from_source` in
+`crates/rvp9-core/src/dsp/x86_64/subpel_variance_avx2.rs`.
+
+When `xoffset == 0`, the horizontal bilinear filter is `[128, 0]`, so it is
+the identity. The candidate skips the intermediate widened rows and applies
+the vertical filter directly to adjacent source rows, preserving the exact
+rounded byte temp before the existing variance reduction.
+
+## Incremental Crucible screen
+
+The anchor is a release binary built from the committed Unit 1362 source
+(including the `(0,0)` identity path); the test adds only the zero-horizontal
+phase shortcut. Protocol: one-thread CPU-used-6 CBR, 1280×720@30, 1260 kbps,
+60 frames, one warmup, 15 paired samples, two rotations, three clips, under
+the relaxed Crucible load policy.
+
+| Clip | Separate | Paired | Candidate ms/frame | Unit 1362 ms/frame | Hashes |
+| --- | ---: | ---: | ---: | ---: | --- |
+| ducks_take_off | 0.918930x | 0.909654x | 23.274 | 25.327 | identical |
+| in_to_tree | 0.920616x | 0.952396x | 17.358 | 18.855 | identical |
+| old_town_cross | 0.940804x | 0.949068x | 13.164 | 13.992 | identical |
+| corpus | 0.926730x | 0.936836x | — | — | all identical |
+
+The incremental paired corpus ratio is 6.32% faster than Unit 1362 and is
+below the 1.05 retention bar. Crucible load was 7.39 busy logical cores at
+completion. The full and corrected short-screen manifests, raw rows, and
+summary CSVs are retained beside this file.
+
+## Correctness and validation
+
+The deliberate red mutation shifted the helper's bottom-row load by one byte;
+the focused x86 differential failed at `w=4, h=4, xoff=0, yoff=1`. Restoring
+the load made the same test pass.
+
+The full x86 release core suite passed 2053 tests with 3 ignored. The local
+AArch64 release core suite passed 1717 tests with 3 ignored. The x86_64 Apple
+target type-checked with the existing x87 ABI warning, and rustfmt passed.
+Workspace clippy still reports only the existing `quantize_fp_avx2.rs:141`
+and `mode_decision/inter.rs:5955` warnings.

@@ -1,0 +1,45 @@
+rvp9 encode-headtohead manifest schema=1
+argv=["D:\\worktrees\\rvp9-2\\acceptance-d639c265\\target\\release\\encode-headtohead.exe", "--anchor-encoder", "D:\\worktrees\\rvp9-2\\unit1362-fast0-control\\target\\release\\rvp9enc.exe", "--test-encoder", "D:\\worktrees\\rvp9-2\\20260919-TSK-HUM-x86-subpel-tail-load-stores\\target\\release\\rvp9enc.exe", "--anchor-kind", "vpxenc", "--test-kind", "vpxenc", "--anchor-revision", "unit1362-fast0", "--test-revision", "unit1363-x0", "--clip", "ducks_take_off=C:\\Users\\marti\\AppData\\Local\\Temp\\rvp9-unit1292-structural-screen\\inputs\\ducks_take_off_720p30.y4m", "--work-dir", "C:\\Users\\marti\\AppData\\Local\\Temp\\rvp9-unit1363-x0-correct-screen", "--cpu-used", "6", "--target-bitrate", "1260", "--end-usage", "cbr", "--fps", "30/1", "--threads", "1", "--tile-columns", "0", "--aq-mode", "0", "--noise-sensitivity", "0", "--limit", "60", "--keyframe-interval", "60", "--warmups", "1", "--pairs", "7", "--rotations", "2", "--max-ratio", "1.05"]
+git_commit=unavailable
+host=unavailable
+rustc=rustc 1.95.0 (59807616e 2026-04-14)
+available_parallelism=32
+anchor_encoder=D:\worktrees\rvp9-2\unit1362-fast0-control\target\release\rvp9enc.exe
+anchor_kind=vpxenc
+anchor_revision=unit1362-fast0
+anchor_sha256=170f218601fdb72ab2a13242f0883416e5ca8c05ab1e3603287008bc12c941d0
+anchor_extra_args=[]
+test_encoder=D:\worktrees\rvp9-2\20260919-TSK-HUM-x86-subpel-tail-load-stores\target\release\rvp9enc.exe
+test_kind=vpxenc
+test_revision=unit1363-x0
+test_sha256=1f525f13d0db4fe0653aaf1fbf53157687550da1e6ece8c4fc2d0936ebb559ab
+test_extra_args=[]
+cpu_used=6
+target_bitrate_kbps=1260
+end_usage=cbr
+fps=30/1
+threads=1
+tile_columns=0
+temporal_layers=None
+spatial_layers=None
+inter_layer_pred=0
+aq_mode=0
+noise_sensitivity=0
+limit=60
+keyframe_interval=60
+warmups=1 pairs=7 rotations=2
+ordering=even rotations reverse clips; every pair alternates first arm
+max_ratio=1.050000000 max_load1=None
+allow_anchor_hash_instability=false
+clip_ducks_take_off_path=C:\Users\marti\AppData\Local\Temp\rvp9-unit1292-structural-screen\inputs\ducks_take_off_720p30.y4m
+clip_ducks_take_off_sha256=42235814fd03ffba9144d915bda7844902ccd9076bef7143e373fc6de0df170a
+clip_ducks_take_off_video=1280x720@30/1
+anchor_command="D:\\worktrees\\rvp9-2\\unit1362-fast0-control\\target\\release\\rvp9enc.exe" "--codec=vp9" "--passes=1" "--rt" "--cpu-used=6" "--end-usage=cbr" "--target-bitrate=1260" "--fps=30/1" "--threads=1" "--tile-columns=0" "--lag-in-frames=0" "--tune-content=default" "--aq-mode=0" "--noise-sensitivity=0" "--limit=60" "--kf-max-dist=60" "--quiet" "--ivf" "-o" "<OUTPUT>" "C:\\Users\\marti\\AppData\\Local\\Temp\\rvp9-unit1292-structural-screen\\inputs\\ducks_take_off_720p30.y4m"
+test_command="D:\\worktrees\\rvp9-2\\20260919-TSK-HUM-x86-subpel-tail-load-stores\\target\\release\\rvp9enc.exe" "--codec=vp9" "--passes=1" "--rt" "--cpu-used=6" "--end-usage=cbr" "--target-bitrate=1260" "--fps=30/1" "--threads=1" "--tile-columns=0" "--lag-in-frames=0" "--tune-content=default" "--aq-mode=0" "--noise-sensitivity=0" "--limit=60" "--kf-max-dist=60" "--quiet" "--ivf" "-o" "<OUTPUT>" "C:\\Users\\marti\\AppData\\Local\\Temp\\rvp9-unit1292-structural-screen\\inputs\\ducks_take_off_720p30.y4m"
+host_load_metric=windows_60s_mean_busy_logical_cores
+load1_preflight=30.582252
+load1_rotation1_ducks_take_off=18.493260
+load1_rotation2_ducks_take_off=19.881442
+load1_complete=15.669017
+corpus_separate_ratio=0.906272344
+corpus_paired_ratio=0.909363674

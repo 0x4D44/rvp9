@@ -183,6 +183,48 @@ unsafe fn bilinear_to_u8_temp(
     }
 }
 
+/// AVX2 vertical bilinear pass directly from the source when the horizontal
+/// phase is zero. The horizontal `[128, 0]` filter is the identity, so this
+/// produces the same byte-identical temp as [`bilinear_to_u8_temp`] without
+/// materialising the intermediate `i16` rows.
+///
+/// # Safety
+///
+/// Caller must guarantee AVX2 support. `src` must cover `(h+1)` rows ×
+/// `(w+1)` columns at `src_stride`, and `temp.len()` must be `≥ h * w`.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn vertical_bilinear_from_source(
+    src: &[u8],
+    src_stride: usize,
+    yoffset: usize,
+    w: usize,
+    h: usize,
+    temp: &mut [u8],
+) {
+    debug_assert!(yoffset < 8);
+    debug_assert!(temp.len() >= h * w);
+
+    let yf = BILINEAR_FILTERS[yoffset];
+    let yf0 = _mm256_set1_epi16(yf[0] as i16);
+    let yf1 = _mm256_set1_epi16(yf[1] as i16);
+    let round = _mm256_set1_epi16(1 << (FILTER_BITS - 1));
+
+    for i in 0..h {
+        let top = i * src_stride;
+        let bot = (i + 1) * src_stride;
+        let mut j = 0usize;
+        while j < w {
+            let count = (w - j).min(16);
+            let a = _mm256_cvtepu8_epi16(load_bytes_bounded(src, top + j, count));
+            let b = _mm256_cvtepu8_epi16(load_bytes_bounded(src, bot + j, count));
+            let out = bil_round(a, b, yf0, yf1, round);
+            store_u8_chunk(out, &mut temp[i * w + j..], count);
+            j += 16;
+        }
+    }
+}
+
 /// Copy `count` (≤ 16) bytes from `src[off..off+count]` into the low lanes of
 /// a zero-padded xmm, so `cvtepu8_epi16` widens exactly those bytes (the
 /// zero-padded high lanes give diff/products that the masked store discards).
@@ -320,6 +362,25 @@ pub fn sub_pixel_variance_avx2(
         let n = (w * h) as i64;
         let var = ((sse as i64) - (sum * sum) / n).max(0) as u32;
         return (var, sse as u32);
+    }
+
+    // With zero horizontal phase, the first bilinear pass is also the
+    // identity. Keep only the vertical pass and write its byte result into
+    // the existing scratch temp before the exact variance reduction.
+    if xoffset == 0 {
+        return SUBPEL_VARIANCE_SCRATCH.with_borrow_mut(|scratch| {
+            let temp = &mut scratch.temp[..h * w];
+            // SAFETY: installed only on AVX2 hosts by `SimdDispatch::build`;
+            // the source footprint and scratch temp cover the active block.
+            unsafe {
+                vertical_bilinear_from_source(src, src_stride, yoffset, w, h, temp);
+            }
+            let (sum, sse) =
+                super::variance_avx2::var_sum_sse_avx2(temp, w, reference, ref_stride, w, h);
+            let n = (w * h) as i64;
+            let var = ((sse as i64) - (sum * sum) / n).max(0) as u32;
+            (var, sse as u32)
+        });
     }
 
     SUBPEL_VARIANCE_SCRATCH.with_borrow_mut(|scratch| {
