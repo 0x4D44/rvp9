@@ -12,10 +12,11 @@
 //! the encoder. Callers retain the scalar path for any non-standard order.
 
 use core::arch::x86_64::{
-    _mm_and_si128, _mm_packus_epi32, _mm_set1_epi32, _mm_storeu_si128, _mm256_add_epi32,
-    _mm256_castsi256_si128, _mm256_extracti128_si256, _mm256_loadu_si256, _mm256_max_epi32,
-    _mm256_min_epi32, _mm256_mullo_epi32, _mm256_set1_epi32, _mm256_slli_epi32, _mm256_srai_epi32,
-    _mm256_sub_epi32, _mm256_xor_si256,
+    _mm_and_si128, _mm_loadu_si128, _mm_packus_epi32, _mm_set1_epi32, _mm_storeu_si128,
+    _mm256_add_epi32, _mm256_and_si256, _mm256_castsi256_si128, _mm256_cmpeq_epi32,
+    _mm256_cvtepi16_epi32, _mm256_extracti128_si256, _mm256_loadu_si256, _mm256_max_epi32,
+    _mm256_min_epi32, _mm256_mullo_epi32, _mm256_set1_epi32, _mm256_setzero_si256,
+    _mm256_slli_epi32, _mm256_srai_epi32, _mm256_storeu_si256, _mm256_sub_epi32, _mm256_xor_si256,
 };
 
 const INT16_MIN_I32: i32 = i16::MIN as i32;
@@ -43,6 +44,32 @@ fn quantize_one(coeff: i32, round: i16, quant: i16, dequant: i16) -> (i16, i16, 
     (qcoeff, dqcoeff, tmp != 0)
 }
 
+/// Reduce raster-order quantized coefficients to the one-past-last scan
+/// position using the inverse scan table.  The vector path is worthwhile for
+/// 8×8 and 16×16 blocks; the 4×4 case remains with the scalar reverse scan so
+/// its fixed setup cost does not dominate the small block.
+#[inline]
+#[target_feature(enable = "avx2")]
+unsafe fn eob_from_iscan(qcoeff: &[i16], n_coeffs: usize, iscan: &[i16]) -> u16 {
+    debug_assert!(n_coeffs >= 64);
+    debug_assert!(qcoeff.len() >= n_coeffs);
+    debug_assert!(iscan.len() >= n_coeffs);
+
+    let zero = _mm256_setzero_si256();
+    let all_ones = _mm256_set1_epi32(-1);
+    let mut max_position = zero;
+    for offset in (0..n_coeffs).step_by(8) {
+        let values = _mm256_cvtepi16_epi32(_mm_loadu_si128(qcoeff.as_ptr().add(offset).cast()));
+        let positions = _mm256_cvtepi16_epi32(_mm_loadu_si128(iscan.as_ptr().add(offset).cast()));
+        let nonzero = _mm256_xor_si256(_mm256_cmpeq_epi32(values, zero), all_ones);
+        max_position = _mm256_max_epi32(max_position, _mm256_and_si256(positions, nonzero));
+    }
+
+    let mut lanes = [0i32; 8];
+    _mm256_storeu_si256(lanes.as_mut_ptr().cast(), max_position);
+    lanes.into_iter().max().unwrap_or(0) as u16
+}
+
 /// Quantize a standard 4×4, 8×8, or 16×16 VP9 block with AVX2.
 ///
 /// # Safety
@@ -62,12 +89,16 @@ unsafe fn vp9_quantize_fp_avx2_inner(
     dqcoeff: &mut [i16],
     dequant: &[i16; 2],
     scan: &[i16],
+    iscan: Option<&[i16]>,
 ) -> u16 {
     debug_assert!(matches!(n_coeffs, 16 | 64 | 256));
     debug_assert!(coeff.len() >= n_coeffs);
     debug_assert!(qcoeff.len() >= n_coeffs);
     debug_assert!(dqcoeff.len() >= n_coeffs);
     debug_assert!(scan.len() >= n_coeffs);
+    if let Some(iscan) = iscan {
+        debug_assert!(iscan.len() >= n_coeffs);
+    }
     debug_assert_eq!(scan[0], 0);
 
     if skip_block {
@@ -107,6 +138,20 @@ unsafe fn vp9_quantize_fp_avx2_inner(
         dqcoeff[offset] = dq;
     }
 
+    if let Some(iscan) = iscan {
+        if n_coeffs >= 64 {
+            // Dense blocks are common and the scalar reverse scan normally
+            // finds their EOB in its first few positions.  Probe that tail
+            // before paying the fixed cost of the full raster reduction.
+            for i in (n_coeffs.saturating_sub(16)..n_coeffs).rev() {
+                if qcoeff[scan[i] as usize] != 0 {
+                    return (i + 1) as u16;
+                }
+            }
+            return eob_from_iscan(qcoeff, n_coeffs, iscan);
+        }
+    }
+
     // `tmp != 0` is equivalent to qcoeff != 0 for valid PlaneQuantizers.
     // The reverse scan reproduces the scalar loop's last-nonzero position.
     let mut eob = 0usize;
@@ -125,7 +170,7 @@ unsafe fn vp9_quantize_fp_avx2_inner(
 /// dispatch table, which guarantees AVX2 support. The safe wrapper follows
 /// the same dispatch invariant as the other x86 SIMD kernels.
 #[allow(clippy::too_many_arguments)]
-pub fn vp9_quantize_fp_avx2(
+pub(crate) fn vp9_quantize_fp_avx2(
     coeff: &[i32],
     n_coeffs: usize,
     skip_block: bool,
@@ -147,7 +192,47 @@ pub fn vp9_quantize_fp_avx2(
     // the standard scan precondition required by the AVX2 inner kernel.
     unsafe {
         vp9_quantize_fp_avx2_inner(
-            coeff, n_coeffs, skip_block, round, quant, qcoeff, dqcoeff, dequant, scan,
+            coeff, n_coeffs, skip_block, round, quant, qcoeff, dqcoeff, dequant, scan, None,
+        )
+    }
+}
+
+/// Internal production wrapper that uses the complete scan order's inverse
+/// table to vectorize the EOB reduction after raster-order quantization.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn vp9_quantize_fp_avx2_with_order(
+    coeff: &[i32],
+    n_coeffs: usize,
+    skip_block: bool,
+    round: &[i16; 2],
+    quant: &[i16; 2],
+    qcoeff: &mut [i16],
+    dqcoeff: &mut [i16],
+    dequant: &[i16; 2],
+    scan: &[i16],
+    iscan: &[i16],
+) -> u16 {
+    assert!(matches!(n_coeffs, 16 | 64 | 256));
+    assert!(coeff.len() >= n_coeffs);
+    assert!(qcoeff.len() >= n_coeffs);
+    assert!(dqcoeff.len() >= n_coeffs);
+    assert!(scan.len() >= n_coeffs);
+    assert!(iscan.len() >= n_coeffs);
+    assert_eq!(scan[0], 0);
+    // SAFETY: Callers reach this wrapper through the AVX2 dispatch table; the
+    // assertions above prove all slice and standard-scan preconditions.
+    unsafe {
+        vp9_quantize_fp_avx2_inner(
+            coeff,
+            n_coeffs,
+            skip_block,
+            round,
+            quant,
+            qcoeff,
+            dqcoeff,
+            dequant,
+            scan,
+            Some(iscan),
         )
     }
 }
@@ -191,7 +276,7 @@ mod tests {
                 &qp.dequant,
                 scan.scan(),
             );
-            let actual_eob = vp9_quantize_fp_avx2(
+            let actual_eob = vp9_quantize_fp_avx2_with_order(
                 &coeff[..n],
                 n,
                 false,
@@ -201,7 +286,97 @@ mod tests {
                 &mut actual_dq,
                 &qp.dequant,
                 scan.scan(),
+                scan.iscan(),
             );
+            assert_eq!(actual_eob, expected_eob, "{tx_size:?} eob");
+            assert_eq!(actual_q, expected_q, "{tx_size:?} qcoeff");
+            assert_eq!(actual_dq, expected_dq, "{tx_size:?} dqcoeff");
+        }
+    }
+
+    #[test]
+    fn iscan_eob_reduction_handles_sparse_boundaries() {
+        require_avx2();
+        let qp = init_plane_quantizers(60, QuantizerDeltas::Y);
+        for (tx_size, n) in [(TxSize::Tx8x8, 64), (TxSize::Tx16x16, 256)] {
+            for tx_type in [TxType::DctDct, TxType::DctAdst, TxType::AdstDct] {
+                let order = scan_for(tx_size, tx_type);
+                let mut coeff = vec![0i32; n];
+                for &raster in [0usize, n / 2, n - 1].iter() {
+                    coeff[raster] = 32_000;
+                }
+                let mut expected_q = vec![0i16; n];
+                let mut expected_dq = vec![0i16; n];
+                let mut actual_q = vec![0i16; n];
+                let mut actual_dq = vec![0i16; n];
+                let expected_eob = vp9_quantize_fp(
+                    &coeff,
+                    n,
+                    false,
+                    &qp.round_fp,
+                    &qp.quant_fp,
+                    &mut expected_q,
+                    &mut expected_dq,
+                    &qp.dequant,
+                    order.scan(),
+                );
+                let actual_eob = vp9_quantize_fp_avx2_with_order(
+                    &coeff,
+                    n,
+                    false,
+                    &qp.round_fp,
+                    &qp.quant_fp,
+                    &mut actual_q,
+                    &mut actual_dq,
+                    &qp.dequant,
+                    order.scan(),
+                    order.iscan(),
+                );
+                assert_eq!(actual_eob, expected_eob, "{tx_size:?} {tx_type:?} eob");
+                assert_eq!(actual_q, expected_q, "{tx_size:?} {tx_type:?} qcoeff");
+                assert_eq!(actual_dq, expected_dq, "{tx_size:?} {tx_type:?} dqcoeff");
+            }
+        }
+    }
+
+    #[test]
+    fn iscan_eob_vector_fallback_is_exercised() {
+        require_avx2();
+        let qp = init_plane_quantizers(60, QuantizerDeltas::Y);
+        for (tx_size, n) in [(TxSize::Tx8x8, 64), (TxSize::Tx16x16, 256)] {
+            let order = scan_for(tx_size, TxType::DctDct);
+            let mut coeff = vec![0i32; n];
+            for &scan_position in [0usize, n / 2].iter() {
+                coeff[order.scan()[scan_position] as usize] = 32_000;
+            }
+            let mut expected_q = vec![0i16; n];
+            let mut expected_dq = vec![0i16; n];
+            let mut actual_q = vec![0i16; n];
+            let mut actual_dq = vec![0i16; n];
+            let expected_eob = vp9_quantize_fp(
+                &coeff,
+                n,
+                false,
+                &qp.round_fp,
+                &qp.quant_fp,
+                &mut expected_q,
+                &mut expected_dq,
+                &qp.dequant,
+                order.scan(),
+            );
+            let actual_eob = vp9_quantize_fp_avx2_with_order(
+                &coeff,
+                n,
+                false,
+                &qp.round_fp,
+                &qp.quant_fp,
+                &mut actual_q,
+                &mut actual_dq,
+                &qp.dequant,
+                order.scan(),
+                order.iscan(),
+            );
+            assert_eq!(expected_eob, (n / 2 + 1) as u16, "{tx_size:?} oracle eob");
             assert_eq!(actual_eob, expected_eob, "{tx_size:?} eob");
             assert_eq!(actual_q, expected_q, "{tx_size:?} qcoeff");
             assert_eq!(actual_dq, expected_dq, "{tx_size:?} dqcoeff");

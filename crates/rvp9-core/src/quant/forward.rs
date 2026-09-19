@@ -490,7 +490,20 @@ pub fn vp9_quantize_fp_with_order(
             // The dispatch table reports AVX2 support detected once at
             // process initialisation, and `ScanOrder` supplies a complete
             // standard permutation beginning at raster coefficient zero.
-            return crate::dsp::x86_64::vp9_quantize_fp_avx2(
+            if n_coeffs < 64 {
+                return crate::dsp::x86_64::vp9_quantize_fp_avx2(
+                    coeff_ptr,
+                    n_coeffs,
+                    skip_block,
+                    round_ptr,
+                    quant_ptr,
+                    qcoeff_ptr,
+                    dqcoeff_ptr,
+                    dequant_ptr,
+                    order.scan(),
+                );
+            }
+            return crate::dsp::x86_64::vp9_quantize_fp_avx2_with_order(
                 coeff_ptr,
                 n_coeffs,
                 skip_block,
@@ -500,6 +513,7 @@ pub fn vp9_quantize_fp_with_order(
                 dqcoeff_ptr,
                 dequant_ptr,
                 order.scan(),
+                order.iscan(),
             );
         }
         vp9_quantize_fp(

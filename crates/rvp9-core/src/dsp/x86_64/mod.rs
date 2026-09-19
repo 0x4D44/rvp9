@@ -156,7 +156,8 @@ pub use lpf_vertical_16_avx2::lpf_vertical_16_avx2;
 pub use lpf_vertical_16_dual_avx2::lpf_vertical_16_dual_avx2;
 pub use minmax_sse2::minmax_8x8_sse2;
 pub use plane_dequant_finisher_avx2::plane_dequant_finisher_avx2;
-pub use quantize_fp_avx2::vp9_quantize_fp_avx2;
+pub(crate) use quantize_fp_avx2::vp9_quantize_fp_avx2;
+pub(crate) use quantize_fp_avx2::vp9_quantize_fp_avx2_with_order;
 pub use sad_avx2::{
     vpx_sad4x4_avx2, vpx_sad4x8_avx2, vpx_sad8x4_avx2, vpx_sad8x8_avx2, vpx_sad8x16_avx2,
     vpx_sad16x8_avx2, vpx_sad16x16_avx2, vpx_sad16x32_avx2, vpx_sad32x16_avx2, vpx_sad32x32_avx2,
