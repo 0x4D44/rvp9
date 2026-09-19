@@ -1,0 +1,48 @@
+RVP9 Unit 1372 — packed AVX2 dqcoeff multiply (rejected)
+
+Base: integrated trunk commit b72f42db37957e7badba3341d5fdc83ac3b2097d.
+
+Candidate: pack the eight qcoeff lanes once, then compute dqcoeff with
+`_mm_mullo_epi16`. The low 16 bits of a 16-bit product match the scalar
+`(qcoeff * dequant) as i16` cast, including intentional wrap. This removes
+the vector qcoeff sign-extension and 32-bit dequant multiply from the AC
+loop while retaining exact qcoeff packing.
+
+Correctness:
+
+- Crucible x86-64 release AVX2 quantizer suite: 4 passed, 0 failed.
+- A deliberate red mutation replacing the dequant multiplier with `1`
+  failed `scalar_equivalence_random_coefficients` on `dqcoeff`. The restored
+  candidate passed all 4 tests again.
+- Local AArch64 release forward-quantizer suite: 24 passed, 0 failed.
+- Candidate and control output hashes matched on all three clips in all three
+  screens:
+  `ducks_take_off` `cd91837d5e2ac1ef9f21fcba16611e874268534ca182b0445c650f1204970d7c`,
+  `in_to_tree` `3fd208dce514c4da95776b40bab3a9ddf98707462209e76954538f7f64534aec`,
+  `old_town_cross` `94d5cb953836e9f028eb716c30e81a0f78818d4f3f3d786431fa28f6a57daef3`.
+
+Plain Crucible timing used CPU-used 6, CBR 1260 kbps, 720p30, one thread,
+tile-columns 0, lag-in-frames 0, AQ 0, noise 0, 60 frames, keyframe interval
+60, one warmup per binary, and twenty alternating candidate/control pairs per
+clip. The relaxed load policy was used. Ratios are candidate/control; values
+above 1.0 are slower.
+
+| Run | Ducks | In-tree | Old-town | Three-clip geomean |
+| --- | ---: | ---: | ---: | ---: |
+| A | 1.005340245 | 1.009608757 | 1.008552813 | 1.007832303 |
+| B | 0.867110568 | 1.010365890 | 1.032804923 | 0.967216771 |
+| C | 0.986357537 | 1.009829475 | 0.987523417 | 0.994511794 |
+
+Run B's apparent gain is one 13.3% ducks outlier (anchor 1.564454 s versus
+the usual roughly 1.3 s); the other two clips regressed. Taking the median
+ratio per clip across the three runs gives ducks 0.986357537, in-tree
+1.009829475, and old-town 1.008552813, for a corpus geometric mean of
+1.001522x (about 0.15% slower). The all-nine-pair geometric mean is 0.989709x,
+but is not a reproducible candidate gain because it is dominated by that
+single outlier.
+
+Decision: reject. The packed arithmetic is output-exact, but repeated plain
+screens are neutral to slower and show no stable 1% retention-bar gain. No
+production-PGO or candidate-vs-pinned-libvpx qualification is warranted. The
+source change was removed from the task branch after the evidence was
+captured.
