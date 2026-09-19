@@ -38,9 +38,11 @@
 
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::{
-    __m128i, __m256i, _mm_packus_epi16, _mm_storeu_si128, _mm256_add_epi16, _mm256_castsi256_si128,
-    _mm256_cvtepu8_epi16, _mm256_extracti128_si256, _mm256_loadu_si256, _mm256_mullo_epi16,
-    _mm256_set1_epi16, _mm256_srai_epi16, _mm256_storeu_si256,
+    __m128i, __m256i, _mm_cvtsi32_si128, _mm_cvtsi128_si32, _mm_loadl_epi64, _mm_loadu_si128,
+    _mm_packus_epi16, _mm_storel_epi64, _mm_storeu_si128, _mm256_add_epi16, _mm256_castsi256_si128,
+    _mm256_cvtepu8_epi16, _mm256_extracti128_si256, _mm256_inserti128_si256, _mm256_loadu_si256,
+    _mm256_mullo_epi16, _mm256_set1_epi16, _mm256_setzero_si256, _mm256_srai_epi16,
+    _mm256_storeu_si256,
 };
 
 /// Number of fractional bits in the bilinear filter taps (FILTER_BITS).
@@ -190,16 +192,26 @@ unsafe fn bilinear_to_u8_temp(
 #[target_feature(enable = "avx2")]
 unsafe fn load_bytes_bounded(src: &[u8], off: usize, count: usize) -> __m128i {
     debug_assert!(count <= 16);
-    // The production shapes are all 16-byte multiples, so keep their common
-    // path as one unaligned load. Retain the checked copy for narrow tails
-    // and malformed callers; it preserves the old panic behaviour instead of
-    // turning a bad footprint into an out-of-bounds SIMD read.
-    if count == 16
-        && let Some(end) = off.checked_add(16)
+    // Use exact-width unaligned loads for the common 4-, 8-, and 16-byte
+    // tails. Retain the checked copy for other narrow tails and malformed
+    // callers; it preserves the old panic behaviour instead of turning a bad
+    // footprint into an out-of-bounds SIMD read.
+    if let Some(end) = off.checked_add(count)
         && end <= src.len()
     {
-        // SAFETY: the checked end offset proves all 16 bytes are in `src`.
-        return core::arch::x86_64::_mm_loadu_si128(src.as_ptr().add(off) as *const __m128i);
+        // SAFETY: the checked end offset proves the selected narrow read is in
+        // `src`; each intrinsic reads exactly its matching byte count.
+        let ptr = src.as_ptr().add(off) as *const __m128i;
+        return match count {
+            16 => _mm_loadu_si128(ptr),
+            8 => _mm_loadl_epi64(ptr),
+            4 => _mm_cvtsi32_si128(core::ptr::read_unaligned(ptr as *const i32)),
+            _ => {
+                let mut buf = [0u8; 16];
+                buf[..count].copy_from_slice(&src[off..end]);
+                _mm_loadu_si128(buf.as_ptr() as *const __m128i)
+            }
+        };
     }
     let mut buf = [0u8; 16];
     buf[..count].copy_from_slice(&src[off..off + count]);
@@ -216,6 +228,12 @@ unsafe fn load_bytes_bounded(src: &[u8], off: usize, count: usize) -> __m128i {
 unsafe fn load_i16_chunk(s: &[i16], count: usize) -> __m256i {
     if count >= 16 {
         _mm256_loadu_si256(s.as_ptr() as *const __m256i)
+    } else if count == 8 {
+        let low = _mm_loadu_si128(s.as_ptr() as *const __m128i);
+        _mm256_inserti128_si256::<0>(_mm256_setzero_si256(), low)
+    } else if count == 4 {
+        let low = _mm_loadl_epi64(s.as_ptr() as *const __m128i);
+        _mm256_inserti128_si256::<0>(_mm256_setzero_si256(), low)
     } else {
         let mut buf = [0i16; 16];
         buf[..count].copy_from_slice(&s[..count]);
@@ -230,6 +248,10 @@ unsafe fn store_i16_chunk(v: __m256i, dst: &mut [i16], count: usize) {
     let n = count.min(16);
     if n == 16 {
         _mm256_storeu_si256(dst.as_mut_ptr() as *mut __m256i, v);
+    } else if n == 8 {
+        _mm_storeu_si128(dst.as_mut_ptr() as *mut __m128i, _mm256_castsi256_si128(v));
+    } else if n == 4 {
+        _mm_storel_epi64(dst.as_mut_ptr() as *mut __m128i, _mm256_castsi256_si128(v));
     } else {
         let mut buf = [0i16; 16];
         _mm256_storeu_si256(buf.as_mut_ptr() as *mut __m256i, v);
@@ -250,6 +272,10 @@ unsafe fn store_u8_chunk(v: __m256i, dst: &mut [u8], count: usize) {
     if n == 16 {
         // SAFETY: the caller's active prefix has at least 16 output bytes.
         _mm_storeu_si128(dst.as_mut_ptr() as *mut __m128i, packed);
+    } else if n == 8 {
+        _mm_storel_epi64(dst.as_mut_ptr() as *mut __m128i, packed);
+    } else if n == 4 {
+        core::ptr::write_unaligned(dst.as_mut_ptr() as *mut i32, _mm_cvtsi128_si32(packed));
     } else {
         let mut buf = [0u8; 16];
         _mm_storeu_si128(buf.as_mut_ptr() as *mut __m128i, packed);
