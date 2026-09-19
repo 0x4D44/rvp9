@@ -1,0 +1,69 @@
+RVP9 Unit 1370 — picker evaluated-candidate counter (rejected)
+
+Base: integrated trunk commit 4186dc05b6b4e9d6238112672f70f25d37fb2c0f.
+
+Candidate: replace the G6 early-termination gate's repeated
+`mode_checked.iter().flatten().filter(|&&c| c).count()` with a counter that
+increments when a candidate is actually evaluated. The gate still requires
+more than one evaluated candidate before it can break. This is a small
+bookkeeping-only Tesco selected from the Unit 1366 picker profile.
+
+Correctness:
+
+- Local AArch64 release `rvp9-core` inter-mode suite: 95 passed, 0 failed.
+- Crucible x86-64 release `rvp9-core` inter-mode suite: 95 passed, 0 failed.
+- Deliberately changing the gate to `> 0` left the unit suite green, but a
+  real 60-frame Crucible ducks encode changed the output hash:
+  control `CD91837D5E2AC1EF9F21FCBA16611E874268534CA182B0445C650F1204970D7C`,
+  mutated `7B2130F4815A2E30349AAA2D98AD2CCE1C00040876309DC1D34A340E05CDE94C`.
+  Restoring `> 1` restored the exact candidate output hashes below.
+
+Plain Crucible timing used CPU-used 6, CBR 1260 kbps, 720p30, one thread,
+tile-columns 0, AQ 0, noise 0, 60 frames, and twenty alternating candidate /
+control pairs per clip. The relaxed load policy was used. Ratios are
+candidate/control; values below 1.0 are faster.
+
+Run A:
+
+| Clip | Control seconds | Candidate seconds | Ratio |
+| --- | ---: | ---: | ---: |
+| ducks_take_off | 1.321449 | 1.295556 | 0.980405151 |
+| in_to_tree | 0.856872 | 0.853470 | 0.996030328 |
+| old_town_cross | 0.947311 | 0.950846 | 1.003731402 |
+
+Geometric mean: 0.993341x (0.67% faster).
+
+Run B:
+
+| Clip | Control seconds | Candidate seconds | Ratio |
+| --- | ---: | ---: | ---: |
+| ducks_take_off | 1.307180 | 1.331565 | 1.018654200 |
+| in_to_tree | 0.857450 | 0.856011 | 0.998321827 |
+| old_town_cross | 0.791995 | 0.773461 | 0.976598333 |
+
+Geometric mean: 0.997710x (0.23% faster).
+
+Run C:
+
+| Clip | Control seconds | Candidate seconds | Ratio |
+| --- | ---: | ---: | ---: |
+| ducks_take_off | 1.335369 | 1.457993 | 1.091827567 |
+| in_to_tree | 0.853812 | 0.855578 | 1.002068194 |
+| old_town_cross | 0.813482 | 0.798604 | 0.981710422 |
+
+Geometric mean: 1.024106x (2.41% slower). Across all nine clip pairs the
+geometric mean is 1.004961x, or about 0.5% slower. The per-clip signs also
+flip between runs, so the apparent sub-1% gains are measurement noise rather
+than a retained speedup.
+
+Candidate and control output hashes matched on every restored run:
+
+- `ducks_take_off`: `cd91837d5e2ac1ef9f21fcba16611e874268534ca182b0445c650f1204970d7c`
+- `in_to_tree`: `3fd208dce514c4da95776b40bab3a9ddf98707462209e76954538f7f64534aec`
+- `old_town_cross`: `94d5cb953836e9f028eb716c30e81a0f78818d4f3f3d786431fa28f6a57daef3`
+
+Decision: reject. The change is output-exact, but it does not clear the
+repository's approximately 1% plain-release retention bar. No production-PGO
+or candidate-vs-pinned-libvpx qualification was warranted for a neutral/
+regressing screen. The source change was removed from the task branch after
+the evidence was captured.
