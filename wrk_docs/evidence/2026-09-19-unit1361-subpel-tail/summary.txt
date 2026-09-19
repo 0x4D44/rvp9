@@ -1,0 +1,63 @@
+RVP9 Unit 1361 x86-64 AVX2 sub-pel narrow-tail screen
+
+Base: 525b514543cd695500c7342cdc4fb3157d169b2b
+Candidate: 8117b1cc (perf(x86): streamline subpel narrow tails)
+Host: Crucible, Windows x86-64, Ryzen 9 9950X3D, 32 logical processors
+
+Change
+
+`sub_pixel_variance_avx2` already used checked SIMD loads for full 16-byte
+chunks. The 4- and 8-pixel tails still copied through stack buffers. This
+candidate uses exact-width checked loads for 4/8-byte source tails, direct
+4/8-lane i16 loads and stores for the vertical pass, and direct 4/8-byte
+stores for the packed u8 result. Other narrow widths and malformed callers
+keep the checked copy fallback. Arithmetic, dispatch, and public signatures
+are unchanged.
+
+Correctness
+
+- Crucible x86-64 release core suite: 2,053 passed, 0 failed, 3 ignored;
+  the focused differential filter within it covered 50 tests.
+- A deliberate `dst.add(1)` store mutation failed
+  `differential_temp_byte_identical` at 4x4 before restoration; see
+  `red-test.txt`.
+- Local AArch64 release core suite: 1,717 passed, 0 failed, 3 ignored.
+- Local x86 cross-target check for `x86_64-apple-darwin`: passed with the
+  existing x87 ABI warning.
+- Every plain and PGO pair produced identical stream SHA-256 values for all
+  three clips.
+
+Performance protocol
+
+All screens used the exact relaxed Crucible protocol: CPU-used 6, one thread,
+720p30 CBR at 1260 kbps, no tiles, 60 frames, one warmup, 15 paired samples,
+two rotations, and no max-load cap.
+
+- Plain release: paired corpus `0.983497739x`; separate corpus `0.961392072x`.
+- Production PGO screen A: paired corpus `0.982765864x`; separate corpus
+  `0.975967734x`.
+- Production PGO screen B: paired corpus `0.981170620x`; separate corpus
+  `0.968874012x`.
+- PGO paired geomean across the two screens: `0.981967918x` (about 1.8%
+  faster).
+
+The plain candidate/control binaries were
+`f45706c5e494ceb1f550eb124000f07f0b298dfeee9c191956eb39c38e595803` and
+`1d09da4c956514062e9f38c49906298869a0be8c7e02eeb2a5d4c5efd7f78999`.
+The PGO candidate/control binaries were
+`2c76d606cc005b54871ce1c890d1da621e67a456bc62dda829450644409c8c7d` and
+`2483ec74a8117ff4fe17505214204aef7e31ae5116ff05512a7db39cb7b76fa2`.
+
+The Crucible harness recorded 21.34 busy logical cores at plain completion,
+12.52 for PGO screen A, and 22.58 for PGO screen B. This stayed within the
+current relaxed operator policy. The PGO manifests were generated from a
+staged Crucible copy whose source-file SHA-256 was
+`0c5b935d0ce82008c8720d9d68166e4274409b34981fb07c61363c7521d717f1`, equal
+to the committed candidate source; the staging worktree itself still reported
+the base commit as dirty.
+
+Decision
+
+Retain. This is a bounded, output-exact Tesco-sized improvement that survives
+both plain release and two independent production-PGO screens. It is ready for
+integration; the integrated trunk remains unchanged until that explicit go.

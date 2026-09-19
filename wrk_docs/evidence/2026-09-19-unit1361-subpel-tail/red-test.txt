@@ -1,0 +1,16 @@
+Unit 1361 deliberate red test
+
+Mutation: in `store_i16_chunk`, the count-4 fast path was temporarily changed
+from `dst.as_mut_ptr()` to `dst.as_mut_ptr().add(1)` before the low 64-bit
+store.
+
+Command:
+
+`cargo test --release -p rvp9-core differential_temp_byte_identical --lib`
+
+Observed failure on Crucible x86-64:
+
+`differential_temp_byte_identical` failed at `w=4, h=4, xoff=0, yoff=0`, with
+the candidate output shifted by one byte (`left` began `48,25,26,8`; `right`
+began `0,48,25,26`). The correct destination pointer was restored before all
+timing screens and the test passed.
