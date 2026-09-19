@@ -1,0 +1,34 @@
+RVP9 Unit 1357 fresh Crucible x86-64 CPU profile
+
+base_commit=033bbd35c0549cc5c6db2ec71ff748fb2619d404
+binary_source=Unit1356 source commit 8d079130 (plain release image)
+binary_sha256=ff1eb82e7ee39803d45ff2a2e881e3ea04a67e4146d123dce2e6625be51e06f8
+etl_sha256=c843486e609da7f88b3549585ec90d15440fb4ddadf8a3474636fe99ad06d5c1
+report_sha256=82bcab7fc0a790bfd8d1c8ac2f4607ae96308dbe5eaba290aaa49a12d4ce4399
+
+The release encoder ran twenty serial 60-frame CPU-used-6 CBR encodes of
+ducks_take_off_720p30.y4m under Windows Performance Recorder's CPU profile.
+The ETL was decoded with xperf's symbol mode using the matching rvp9enc PDB.
+The report contains 28,919,526 weighted user samples mapped to rvp9enc symbols.
+
+| Symbol | Samples | Share |
+| --- | ---: | ---: |
+| rvp9_core::dsp::x86_64::subpel_variance_avx2::sub_pixel_variance_avx2 | 5,223,052 | 18.06% |
+| rvp9_encoder::pick_and_simulate_inter_encode_partitions::closure$10 | 3,220,244 | 11.14% |
+| rvp9_core::dsp::x86_64::quantize_fp_avx2::vp9_quantize_fp_avx2_inner | 2,450,513 | 8.47% |
+| rvp9_core::transforms::forward::fdct16_butterfly | 1,219,882 | 4.22% |
+| rvp9_core::mode_decision::inter::pick_inter_mode_impl | 992,941 | 3.43% |
+| rvp9_core::mv_search::full_pixel::diamond_search_sad_from_step | 964,759 | 3.34% |
+| rvp9_core::dsp::x86_64::variance_avx2::var_sum_sse_16x16_avx2 | 963,171 | 3.33% |
+| rvp9_core::dsp::x86_64::sad4d_avx2::vpx_sad16x16x4d_avx2 | 922,020 | 3.19% |
+| rvp9_core::mode_decision::inter::evaluate_candidate_with_slots | 811,725 | 2.81% |
+| rvp9_core::transforms::forward::fdct8x8 | 775,382 | 2.68% |
+
+This profile makes the next decision explicit. Prediction search still owns
+the largest required work, while the AVX2 sub-pel kernel is the largest exact
+kernel surface. Picker policy shortcuts remain unsuitable because they change
+strict decisions. The earlier mixed DC/AC quantizer screen is retained as a
+negative result; its three-run PGO geomean was 0.996991x with one regression.
+The earlier fused sub-pel screen was also rejected at 1.004094x paired corpus
+on plain release. A future sub-pel change therefore needs a materially deeper
+rewrite or new line-level evidence, not a repeat of either rejected patch.

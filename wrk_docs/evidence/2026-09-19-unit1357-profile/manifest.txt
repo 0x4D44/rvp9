@@ -1,0 +1,15 @@
+rvp9 fresh Crucible CPU profile manifest schema=1
+base_commit=033bbd35c0549cc5c6db2ec71ff748fb2619d404
+source_commit=8d079130
+binary=C:\\Users\\marti\\AppData\\Local\\Temp\\rvp9-unit1356-eob-src\\target\\release\\rvp9enc.exe
+binary_sha256=ff1eb82e7ee39803d45ff2a2e881e3ea04a67e4146d123dce2e6625be51e06f8
+clip=C:\\Users\\marti\\AppData\\Local\\Temp\\rvp9-unit1292-structural-screen\\inputs\\ducks_take_off_720p30.y4m
+protocol=20 serial encodes; CPU-used 6; CBR 1260 kbps; 30 fps; 1 thread; tile-columns 0; 60 frames; keyframe interval 60
+wpr_profile=CPU -filemode
+xperf=xperf -symbols -i rvp9-cpu6.etl -a profile -detail
+symbol_path=C:\\Users\\marti\\AppData\\Local\\Temp\\rvp9-unit1356-eob-src\\target\\release
+etl=C:\\Users\\marti\\AppData\\Local\\Temp\\rvp9-unit1357-profile\\rvp9-cpu6.etl
+etl_sha256=c843486e609da7f88b3549585ec90d15440fb4ddadf8a3474636fe99ad06d5c1
+report=C:\\Users\\marti\\AppData\\Local\\Temp\\rvp9-unit1357-profile\\rvp9-cpu6-profile-symbols.txt
+report_sha256=82bcab7fc0a790bfd8d1c8ac2f4607ae96308dbe5eaba290aaa49a12d4ce4399
+weighted_rvp9_user_samples=28919526
