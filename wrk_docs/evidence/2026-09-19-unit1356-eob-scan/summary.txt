@@ -1,0 +1,104 @@
+Unit 1356 — x86 AVX2 quantizer EOB scan
+Date: 2026-09-19
+Branch commit: 8d079130
+
+Scope
+
+The AVX2 fixed-point quantizer already writes qcoeff in raster order, then
+walks the scan permutation backwards to find EOB.  This candidate passes the
+complete ScanOrder inverse table into the production x86 dispatch.  For 8x8
+and 16x16 blocks it computes the maximum iscan value with AVX2 loads; a
+16-entry reverse scan probe preserves the cheap dense-block case.  4x4 and
+the existing direct wrapper retain the scalar reverse scan.
+
+Correctness
+
+- `cargo fmt --all -- --check`, `git diff --check`, and
+  `cargo check --locked --target x86_64-apple-darwin -p rvp9-core` passed.
+  The only cross-target warning is the repository's existing x87 ABI warning.
+- Local AArch64 NEON focused tests passed: 10/10.
+- Crucible native x86 release focused tests passed: 4/4, including random
+  coefficients, sparse scan boundaries, the explicit vector-fallback case,
+  and reused-output clearing.
+- A deliberate red mutation replacing the vector non-zero mask with zero
+  failed `iscan_eob_vector_fallback_is_exercised` (`actual eob 0`, expected
+  `33`).  The source was restored and the clean 4-test suite passed again.
+- Plain and production-PGO candidate/control output hashes matched for all
+  three clips:
+  `cd91837d5e2ac1ef9f21fcba16611e874268534ca182b0445c650f1204970d7c`,
+  `3fd208dce514c4da95776b40bab3a9ddf98707462209e76954538f7f64534aec`, and
+  `94d5cb953836e9f028eb716c30e81a0f78818d4f3f3d786431fa28f6a57daef3`.
+
+Focused ruler
+
+The synthetic `dsp-microbench quantize_fp` is not uniformly positive.  Final
+candidate versus integrated control dispatch times were:
+
+| block | candidate | control |
+| --- | ---: | ---: |
+| 4x4 | 17.6 ns | 15.5 ns |
+| 8x8 | 19.1 ns | 17.9 ns |
+| 16x16 | 37.5 ns | 38.7 ns |
+
+This is why the end-to-end and production-PGO screens are required; the
+candidate trades a small 8x8 reduction overhead for a larger-block win.
+
+Relaxed plain Crucible screen
+
+CPU-used 6, CBR 1260 kbps, 720p30, one thread, tile-columns 0, 60 frames,
+keyframe interval 60, one warmup, 15 paired samples, two rotations, and no
+`--max-load1` gate.  The anchor was integrated `ee1ab2dd`.
+
+| clip | separate | paired |
+| --- | ---: | ---: |
+| ducks take off | 1.041647x | 0.999863x |
+| in to tree | 1.001068x | 0.975426x |
+| old town cross | 0.962074x | 0.971030x |
+| corpus geomean | 1.001070x | **0.982025x** |
+
+Production-PGO qualification
+
+The candidate and control were independently built with the fixed 28-row,
+60-frame production matrix.  Three exact paired screens used the relaxed
+Crucible protocol above; the same PGO binaries were repeated to expose timing
+noise.
+
+| run | ducks | in to tree | old town | corpus paired |
+| --- | ---: | ---: | ---: | ---: |
+| A | 0.944484x | 0.970708x | 0.956180x | 0.957064x |
+| B | 0.944435x | 0.956443x | 0.954106x | 0.951647x |
+| C | 0.965502x | 0.962427x | 0.942590x | 0.956785x |
+| 3-run geomean | — | — | — | **0.955162x** |
+
+Pinned libvpx comparison
+
+Against `build/libvpx/vpxenc.exe` from pinned revision `12f3a2ac`, using the
+production-PGO candidate and the same clips/protocol with `--max-ratio 2.0`:
+
+| clip | separate | paired |
+| --- | ---: | ---: |
+| ducks take off | 1.237954x | 1.245688x |
+| in to tree | 1.106624x | 1.192870x |
+| old town cross | 1.132901x | 1.225187x |
+| corpus geomean | 1.157797x | **1.221054x** |
+
+Decision
+
+This is an integration-quality performance candidate.  The production-PGO
+gain is repeatable across three screens and all output hashes are stable.  The
+branch is committed but not integrated; keep it ready for an explicit landing
+decision.  It does not by itself reach the parity goal: the current PGO corpus
+ratio is about 0.955x versus the integrated control and 1.221x versus pinned
+libvpx.
+
+Remote scratch used for this screen (not part of the repository):
+
+- `C:\Users\marti\AppData\Local\Temp\rvp9-unit1356-eob-src`
+- `C:\Users\marti\AppData\Local\Temp\rvp9-unit1356-eob-control`
+- `C:\Users\marti\AppData\Local\Temp\rvp9-unit1356-plain`
+- `C:\Users\marti\AppData\Local\Temp\rvp9-unit1356-pgo-a`
+- `C:\Users\marti\AppData\Local\Temp\rvp9-unit1356-pgo-control-a`
+- `C:\Users\marti\AppData\Local\Temp\rvp9-unit1356-pgo-screen-a`
+- `C:\Users\marti\AppData\Local\Temp\rvp9-unit1356-pgo-screen-b`
+- `C:\Users\marti\AppData\Local\Temp\rvp9-unit1356-pgo-screen-c`
+- `C:\Users\marti\AppData\Local\Temp\rvp9-unit1356-vpx-screen`
