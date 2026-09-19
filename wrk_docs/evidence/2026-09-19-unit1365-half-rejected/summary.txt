@@ -1,0 +1,23 @@
+RVP9 Unit 1365 rejected half-pel bilinear specialization
+
+The experiment replaced the generic `[64, 64]` bilinear multiply-and-shift
+with AVX2 `avg_epu16` for half-pel phases in the generic and identity-axis
+helpers. It was evaluated against the committed Unit 1364 binary.
+
+The short ducks-only screen looked promising (`0.985645x` paired,
+`0.985767x` separate), but the full three-clip screen regressed:
+
+| Clip | Separate | Paired | Candidate ms/frame | Unit 1364 ms/frame | Hashes |
+| --- | ---: | ---: | ---: | ---: | --- |
+| ducks_take_off | 1.003004x | 1.013379x | 26.484 | 26.405 | identical |
+| in_to_tree | 1.021697x | 1.010956x | 15.505 | 15.176 | identical |
+| old_town_cross | 1.032482x | 1.006037x | 19.220 | 18.616 | identical |
+| corpus | 1.018988x | 1.010119x | — | — | all identical |
+
+The full protocol was one-thread CPU-used-6 CBR, 1280×720@30, 1260 kbps, 60
+frames, one warmup, 15 paired samples, two rotations, and three clips. Crucible
+was busy during this run (28.30 busy logical cores at preflight), but both
+paired and separate corpus ratios regressed, so the specialization is not kept.
+
+The experiment was removed; the task worktree is back at committed Unit 1364
+`ecfb17ff`. Raw manifest, rows, and summary CSV remain beside this file.
