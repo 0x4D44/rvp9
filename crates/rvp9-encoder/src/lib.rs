@@ -8471,6 +8471,11 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     //    The borrow is re-acquired inline so it expires before
                     //    the per-leaf loop needs mutable access.
                     let mi_grid_ro = row_grids.as_slice();
+                    // The descent callback visits several block sizes at the
+                    // same 8x8 cell. Materialise the hint's segment id once
+                    // for this superblock instead of rescanning every leaf
+                    // descriptor for each callback invocation.
+                    let sb_segment_ids = segment_ids_for_hint_cells(&sb_partitions[sb_idx]);
                     let mut descent_picker = |sb_local_x_8x8: usize,
                                               sb_local_y_8x8: usize,
                                               bs: BS| {
@@ -8554,8 +8559,6 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         );
                         let leaf_prev_mv: Option<PrevFrameMvRef> = prev_mv_grid
                             .and_then(|g| g.get(leaf_mi_row * mi_cols_us + leaf_mi_col).copied());
-                        let sb_cols = (width as usize).div_ceil(64);
-                        let sb_idx = (leaf_mi_row / 8) * sb_cols + (leaf_mi_col / 8);
                         let content_state_sb = content_state_sb_grid
                             .get(sb_idx)
                             .copied()
@@ -8621,11 +8624,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
 
                         // Per-leaf segment_id from the variance hint leaf
                         // covering this candidate's top-left cell.
-                        let seg = segment_id_for_hint_cell(
-                            &sb_partitions[sb_idx],
-                            sb_local_y_8x8,
-                            sb_local_x_8x8,
-                        );
+                        let seg = sb_segment_ids[sb_local_y_8x8 * 8 + sb_local_x_8x8];
                         let leaf_qindex =
                             effective_qindex_for_segment(base_qindex, seg, seg_q_deltas);
                         let descent_rd_calibration = inter_rd_calibration_for_segment(
