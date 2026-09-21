@@ -356,18 +356,45 @@ unsafe fn convolve8_horiz_avx2_inner(
         y += 2;
     }
 
-    // Tail: 1, 2, or 3 remaining rows, the last of which is the last
-    // row of the buffer and may not have an OOB-safe byte after it.
-    // Process each via the 1-row 128-bit path. For all but the last
-    // row, read `src` directly; for the last row, stage into a zeroed
-    // scratch first so the 16-byte load never escapes the contract.
+    // The loop leaves either one row (odd `h`) or the final pair (even
+    // `h`). Keep the pair on the 2-row AVX2 path, staging only its last
+    // row because that row may not have an OOB-safe byte after it.
+    if y + 1 < h && w >= 8 {
+        let row_a = src_ptr.add(y * src_stride);
+        let dst_a = dst_ptr.add(y * dst_stride);
+        let dst_b = dst_ptr.add((y + 1) * dst_stride);
+        let mut scratch = [0u8; 80];
+        let base = (y + 1) * src_stride;
+        scratch[..w + 7].copy_from_slice(&src[base..base + w + 7]);
+
+        let mut x = 0usize;
+        while x < w {
+            let s_a = _mm_loadu_si128(row_a.add(x) as *const _);
+            let s_b = _mm_loadu_si128(scratch.as_ptr().add(x) as *const _);
+            let s = _mm256_inserti128_si256::<1>(_mm256_castsi128_si256(s_a), s_b);
+
+            let res16 = convolve8_8x2(s, f01_256, f23_256, f45_256, f67_256);
+            let res8 = _mm256_packus_epi16(res16, res16);
+            let lo = _mm256_castsi256_si128(res8);
+            let hi = _mm256_extracti128_si256::<1>(res8);
+
+            debug_assert!(w - x >= 8);
+            _mm_storel_epi64(dst_a.add(x) as *mut _, lo);
+            _mm_storel_epi64(dst_b.add(x) as *mut _, hi);
+            x += 8;
+        }
+        y += 2;
+    }
+
+    // At most one row remains (odd `h`) when the pair path is active.
+    // For w==4, the pair path is disabled and the final two rows still
+    // use the original direct-row / staged-last-row split.
     while y < h {
         let dst_row = dst_ptr.add(y * dst_stride);
         if y < h - 1 {
             let row = src_ptr.add(y * src_stride);
             process_row(row, dst_row, w, f01, f23, f45, f67);
         } else {
-            // Last row — copy footprint into a zeroed scratch.
             let mut scratch = [0u8; 80];
             let base = y * src_stride;
             scratch[..w + 7].copy_from_slice(&src[base..base + w + 7]);
@@ -530,6 +557,9 @@ mod tests {
         //     overran the contract by 1 byte (would crash under MIRI,
         //     OOB on a tight allocation)
         //   - (4, 2, 4) — minimal tight-stride w==4 with h >= 2
+        //   - (8, 2) / (8, 4) — tight final-pair path at the smallest
+        //     SIMD width (including the minimal h==2 case)
+        //   - (16, 2) / (16, 4) — tight final-pair path at w==16
         //   - (8, 5, 8) — tight stride at the next-narrower width
         //   - (16, 8, 16) — tight stride at w==16 (exercises pair
         //     loop's right-edge load, which is safe by contract)
@@ -545,6 +575,10 @@ mod tests {
             // Tight-stride cases (no slack):
             (4, 6, 4),
             (4, 2, 4),
+            (8, 2, 8),
+            (8, 4, 8),
+            (16, 2, 16),
+            (16, 4, 16),
             (8, 5, 8),
             (16, 8, 16),
         ];
