@@ -1,0 +1,7 @@
+argv=["D:\\worktrees\\rvp9-2\\acceptance-d639c265\\target\\release\\encode-headtohead.exe", "--anchor-encoder", "D:\\worktrees\\rvp9-2\\unit1391-profile-src\\target\\release\\rvp9enc.exe", "--test-encoder", "D:\\worktrees\\rvp9-2\\unit1392-profile-src\\target\\release\\rvp9enc.exe", "--anchor-kind", "vpxenc", "--test-kind", "vpxenc", "--anchor-revision", "56aebd72-control", "--test-revision", "unit1392-neighbour-cache", "--clip", "ducks=D:\\worktrees\\rvp9-2\\unit1391-ducks.y4m", "--clip", "intree=D:\\worktrees\\rvp9-2\\unit1392-intree.y4m", "--clip", "oldtown=D:\\worktrees\\rvp9-2\\unit1392-oldtown.y4m", "--work-dir", "D:\\worktrees\\rvp9-2\\unit1392-screen", "--cpu-used", "6", "--target-bitrate", "1260", "--end-usage", "cbr", "--fps", "30/1", "--threads", "1", "--tile-columns", "0", "--aq-mode", "0", "--noise-sensitivity", "0", "--limit", "60", "--keyframe-interval", "60", "--warmups", "1", "--pairs", "15", "--rotations", "2"]
+clip_ducks_sha256=42235814FD03FFBA9144D915BDA7844902CCD9076BEF7143E373FC6DE0DF170A
+clip_intree_sha256=recorded on Crucible; generated from pinned in_to_tree_420_720p50.y4m at 30 fps, 60 frames
+clip_oldtown_sha256=recorded on Crucible; generated from pinned old_town_cross_420_720p50.y4m at 30 fps, 60 frames
+control_binary_sha256=5A59C8F2763C2AED84C638C10DAFC3DDEE55F0E25F971157ED723E0A3E50AA2A
+candidate_binary_sha256=AA2EF0D9C9ABACCCE0A0D20D759AB72091192B9735329A6D11FFAC98AEDDD9B8
+protocol=relaxed Crucible load policy; 15 pairs; 2 rotations; three clips

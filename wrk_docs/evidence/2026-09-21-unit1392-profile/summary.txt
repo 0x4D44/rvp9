@@ -1,0 +1,12 @@
+RVP9 Unit 1392 fresh Crucible x86-64 CPU profile
+
+The integrated trunk at `56aebd72` ran twenty serial 60-frame CPU-used-6 CBR
+encodes of the canonical 1280x720@30 ducks clip under Windows Performance
+Recorder's CPU profile. `xperf -symbols -a profile -detail` decoded the ETL
+with the matching release PDB. The report contains 47,670,251 weighted user
+samples mapped to `rvp9enc` symbols.
+
+The next bounded experiment targets the 3.515% realtime-reference resolver
+(`find_realtime_refs_nearest_near_mvs_with_context`). Its scaled-candidate pass
+revisited the same eight spatial positions after the direct-reference pass;
+Unit 1392 caches those resolved `ModeInfo` entries while preserving order.

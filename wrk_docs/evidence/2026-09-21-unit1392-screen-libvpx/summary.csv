@@ -1,0 +1,5 @@
+clip,separate_ratio,paired_ratio,rvp9_ms_per_frame,libvpx_ms_per_frame
+ducks,1.370012,1.446280,25.841,18.862
+intree,1.481574,1.507166,13.476,9.096
+oldtown,1.359513,1.362071,12.254,9.013
+corpus,1.402632,1.437268,,
