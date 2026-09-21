@@ -1,0 +1,14 @@
+rvp9 Unit 1406 A4 calibration-cache build manifest
+base_commit=1ae7c8f6c908e3af147735a63325277ac8fda7ec
+candidate_commit=a84e3f1e
+revert_commit=437e5360
+control_archive_sha256=25a8490e4b72b356772bdbfeb6e8be6dc923a49dbb59a28df1662a212d911c98
+candidate_archive_sha256=6f0863e4fea6fd92847b33ad7038def596a8fbdf0d748cc533f576792d6c7963
+control_binary_sha256=FBA4DDF1838AAD39B2BEA9F2EE7A3CA9C7FEF1844768543F3194644E95CCB6B2
+candidate_binary_sha256=6627893EC64EE23CF97A886F2B678051A6C2474D457312D43D9DCF3588D1A292
+focused_test=cargo test --locked -p rvp9-encoder a4_rd_calibration_cache_selects_baseline_only_for_segment_zero -- --nocapture
+focused_test_result=pass (1 test; clean source after restore)
+deliberate_red=swap a4_rd_calibration_for_segment selector arms
+deliberate_red_result=fail (exit 101), then restored
+local_format=cargo fmt --all --check
+local_diff_check=pass
