@@ -1,0 +1,5 @@
+clip,separate_ratio,paired_ratio,candidate_ms_per_frame,control_ms_per_frame,stream_hashes
+ducks,1.012747,1.019505,18.398,18.167,identical
+intree,1.003272,1.005273,11.977,11.938,identical
+oldtown,1.015482,1.011250,10.948,10.781,identical
+corpus,1.010487,1.011992,,,all paired outputs identical
