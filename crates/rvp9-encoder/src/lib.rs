@@ -6226,6 +6226,48 @@ fn active_single_ref_frame_costs(
     .single
 }
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+struct DescentCellPickerContext {
+    ref_frame_costs: [u32; 4],
+    switchable_interp_ctx: usize,
+    filter_ref: InterpFilter,
+    skip_ctx: usize,
+    above_mv: Option<Mv>,
+    left_mv: Option<Mv>,
+}
+
+#[inline]
+fn descent_cell_picker_context(
+    frame_context: &FrameContext,
+    above: Option<ModeInfo>,
+    left: Option<ModeInfo>,
+    live_ref_costs_enabled: bool,
+) -> DescentCellPickerContext {
+    let above_ref = above.as_ref();
+    let left_ref = left.as_ref();
+    let ref_frame_costs = if live_ref_costs_enabled {
+        active_single_ref_frame_costs(frame_context, above_ref, left_ref)
+    } else {
+        [0; 4]
+    };
+    let neighbour_mv = |mi: Option<&ModeInfo>| -> Option<Mv> {
+        match mi.map(|m| m.mode) {
+            Some(BlockMode::Inter { mvs, .. }) => Some(mvs[0]),
+            _ => None,
+        }
+    };
+    DescentCellPickerContext {
+        ref_frame_costs,
+        switchable_interp_ctx: rvp9_core::inter::get_pred_context_switchable_interp(
+            above_ref, left_ref,
+        ),
+        filter_ref: rvp9_core::inter::get_pred_filter_ref(above_ref, left_ref),
+        skip_ctx: rvp9_core::inter::get_pred_context_skip(above_ref, left_ref),
+        above_mv: neighbour_mv(above_ref),
+        left_mv: neighbour_mv(left_ref),
+    }
+}
+
 const DESCENT_CACHE_SLOTS: usize = 8 * 8 * rvp9_core::block::BLOCK_SIZES;
 const DESCENT_CACHE_EMPTY: u16 = u16::MAX;
 
@@ -8509,6 +8551,11 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     // for this superblock instead of rescanning every leaf
                     // descriptor for each callback invocation.
                     let sb_segment_ids = segment_ids_for_hint_cells(&sb_partitions[sb_idx]);
+                    // Above/left-derived picker context is independent of the
+                    // candidate block size. Cache it lazily per 8x8 cell so
+                    // the recursive descent does not repeat compact-grid
+                    // lookups and context derivation for each size visit.
+                    let mut descent_cell_contexts = [[None; 8]; 8];
                     let mut descent_picker = |sb_local_x_8x8: usize,
                                               sb_local_y_8x8: usize,
                                               bs: BS| {
@@ -8675,29 +8722,48 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             },
                         );
 
-                        // Neighbour mi-grid context predicates.
-                        let nb_above = if leaf_mi_row > 0 {
-                            row_grids
-                                .layout
-                                .get(mi_grid_ro, leaf_mi_row - 1, leaf_mi_col)
-                        } else {
-                            None
-                        };
-                        let nb_left = if leaf_mi_col > current_tile.mi_col_start {
-                            row_grids
-                                .layout
-                                .get(mi_grid_ro, leaf_mi_row, leaf_mi_col - 1)
-                        } else {
-                            None
-                        };
+                        // Neighbour mi-grid context predicates. These values
+                        // are fixed for the cell while the descent explores
+                        // multiple block sizes, so retain the copied context
+                        // and derive the references from the local copy.
+                        let cell_context =
+                            match descent_cell_contexts[sb_local_y_8x8][sb_local_x_8x8] {
+                                Some(context) => context,
+                                None => {
+                                    let above = if leaf_mi_row > 0 {
+                                        row_grids
+                                            .layout
+                                            .get(mi_grid_ro, leaf_mi_row - 1, leaf_mi_col)
+                                            .copied()
+                                    } else {
+                                        None
+                                    };
+                                    let left = if leaf_mi_col > current_tile.mi_col_start {
+                                        row_grids
+                                            .layout
+                                            .get(mi_grid_ro, leaf_mi_row, leaf_mi_col - 1)
+                                            .copied()
+                                    } else {
+                                        None
+                                    };
+                                    let context = descent_cell_picker_context(
+                                        frame_context,
+                                        above,
+                                        left,
+                                        live_ref_costs_enabled,
+                                    );
+                                    descent_cell_contexts[sb_local_y_8x8][sb_local_x_8x8] =
+                                        Some(context);
+                                    context
+                                }
+                            };
                         let (
                             ref_frame_cost_intra,
                             ref_frame_cost_last,
                             ref_frame_cost_golden,
                             _ref_frame_cost_altref,
                         ) = if live_ref_costs_enabled {
-                            let costs =
-                                active_single_ref_frame_costs(frame_context, nb_above, nb_left);
+                            let costs = cell_context.ref_frame_costs;
                             (costs[0], costs[1], costs[2], costs[3])
                         } else {
                             (
@@ -8707,23 +8773,13 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                 ref_frame_cost_altref,
                             )
                         };
-                        let switchable_interp_ctx =
-                            get_pred_context_switchable_interp(nb_above, nb_left);
-                        let filter_ref = get_pred_filter_ref(nb_above, nb_left);
-                        let skip_ctx = rvp9_core::inter::get_pred_context_skip(nb_above, nb_left);
+                        let switchable_interp_ctx = cell_context.switchable_interp_ctx;
+                        let filter_ref = cell_context.filter_ref;
+                        let skip_ctx = cell_context.skip_ctx;
                         let last_const_motion = last_ref_mvs.const_motion;
                         let golden_const_motion = golden_ref_mvs.const_motion;
-                        let neighbour_mv =
-                            |mi: Option<&rvp9_core::mode_info::ModeInfo>| -> Option<Mv> {
-                                match mi.map(|m| m.mode) {
-                                    Some(rvp9_core::mode_info::BlockMode::Inter {
-                                        mvs, ..
-                                    }) => Some(mvs[0]),
-                                    _ => None,
-                                }
-                            };
-                        let above_mv_p13 = neighbour_mv(nb_above);
-                        let left_mv_p13 = neighbour_mv(nb_left);
+                        let above_mv_p13 = cell_context.above_mv;
+                        let left_mv_p13 = cell_context.left_mv;
 
                         let pick_params = PickInterModeParams {
                         block_size: bs,
@@ -17778,6 +17834,51 @@ mod tests {
         assert!(realtime_search_golden_filter(RcMode::Vbr, 7));
         assert!(!realtime_search_golden_filter(RcMode::Vbr, 8));
         assert!(!realtime_search_golden_filter(RcMode::Cbr, 7));
+    }
+
+    #[test]
+    fn descent_cell_picker_context_matches_direct_neighbours() {
+        let frame_context = FrameContext::new_default();
+        let above = ModeInfo {
+            block_size: BlockSize::Block16x16,
+            tx_size: TxSize::Tx16x16,
+            skip: true,
+            segment_id: 0,
+            seg_id_predicted: false,
+            mode: BlockMode::Inter {
+                mode: InterMode::NearestMv,
+                ref_frames: [RefFrame::LastFrame, RefFrame::NoRefFrame],
+                mvs: [Mv { row: 6, col: -10 }, Mv::ZERO],
+                interp_filter: InterpFilter::EightTapSmooth,
+            },
+            bmi: [BmiInfo::default(); 4],
+        };
+        let left = ModeInfo {
+            block_size: BlockSize::Block8x8,
+            tx_size: TxSize::Tx8x8,
+            skip: false,
+            segment_id: 1,
+            seg_id_predicted: false,
+            mode: BlockMode::Intra {
+                y_mode: IntraMode::Dc,
+                uv_mode: IntraMode::Dc,
+            },
+            bmi: [BmiInfo::default(); 4],
+        };
+        let cached = descent_cell_picker_context(&frame_context, Some(above), Some(left), true);
+        assert_eq!(
+            cached.ref_frame_costs,
+            active_single_ref_frame_costs(&frame_context, Some(&above), Some(&left))
+        );
+        assert_eq!(cached.switchable_interp_ctx, 1);
+        assert_eq!(cached.filter_ref, InterpFilter::EightTapSmooth);
+        assert_eq!(cached.skip_ctx, 1);
+        assert_eq!(cached.above_mv, Some(Mv { row: 6, col: -10 }));
+        assert_eq!(cached.left_mv, None);
+
+        let static_costs =
+            descent_cell_picker_context(&frame_context, Some(above), Some(left), false);
+        assert_eq!(static_costs.ref_frame_costs, [0; 4]);
     }
 
     #[test]
