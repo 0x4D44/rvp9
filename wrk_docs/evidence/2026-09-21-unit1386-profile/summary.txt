@@ -1,0 +1,24 @@
+RVP9 Unit 1386 fresh Crucible x86-64 CPU profile and rejected screen
+
+The integrated trunk at `a94c8ce8` ran twenty serial 60-frame CPU-used-6 CBR
+encodes of the canonical 1280×720@30 ducks clip under Windows Performance
+Recorder's CPU profile. The symbolized report contains 19,597,341 weighted
+RVP9 user samples.
+
+| Symbol | Samples | Share |
+| --- | ---: | ---: |
+| `rvp9_encoder::pick_and_simulate_inter_encode_partitions::closure$10` | 2,458,047 | 12.543% |
+| `rvp9_core::dsp::x86_64::quantize_fp_avx2::vp9_quantize_fp_avx2_inner` | 2,078,082 | 10.604% |
+| `rvp9_core::dsp::x86_64::variance_avx2::var_sum_sse_16x16_inner` | 980,041 | 5.001% |
+| `rvp9_core::mv_search::full_pixel::diamond_search_sad_from_step` | 844,970 | 4.312% |
+| `rvp9_core::mode_decision::inter::pick_inter_mode_impl` | 842,043 | 4.297% |
+| `rvp9_core::transforms::forward::fdct16_butterfly` | 757,034 | 3.863% |
+| `rvp9_core::dsp::x86_64::subpel_variance_avx2::vpx_sub_pixel_variance16x16_avx2` | 746,012 | 3.807% |
+| `rvp9_core::dsp::x86_64::sad4d_avx2::vpx_sad16x16x4d_avx2` | 728,980 | 3.720% |
+
+The next experiment reused the two frame-level A4 calibration values for the
+final picker leaves. It was output-exact in the focused tests, but the relaxed
+three-clip screen was consistently slower and was rejected before any pinned
+libvpx comparison.
+
+The raw profile and screen manifests/CSV are retained beside this summary.
