@@ -1,0 +1,31 @@
+rvp9 user-mode weighted profile aggregate; module filter rvp9enc.exe; samples=20024434
+percent  samples  symbol
+11.036986 2210094 rvp9_encoder::pick_and_simulate_inter_encode_partitions::closure$10
+6.452192 1292015 rvp9_core::dsp::x86_64::quantize_fp_avx2::vp9_quantize_fp_avx2_inner
+4.959151 993042 rvp9_core::dsp::x86_64::variance_avx2::var_sum_sse_16x16_inner
+4.899469 981091 rvp9_core::mode_decision::inter::pick_inter_mode_impl
+4.664362 934012 rvp9_core::transforms::forward::fdct16_butterfly
+4.614922 924112 rvp9_core::dsp::x86_64::sad4d_avx2::vpx_sad16x16x4d_avx2
+4.465315 894154 rvp9_core::dsp::x86_64::subpel_variance_avx2::vpx_sub_pixel_variance16x16_avx2
+4.228794 846792 rvp9_core::transforms::forward::fdct4x4
+3.724814 745873 rvp9_core::mv_search::full_pixel::diamond_search_sad_from_step
+3.475794 696008 rvp9_core::transforms::forward::fdct8x8
+2.936048 587927 rvp9_core::mv_search::full_pixel::sad4d_at_from_source
+2.756692 552012 rvp9_core::mode_decision::inter::evaluate_candidate_with_slots
+2.637033 528051 rvp9_core::mode_decision::model_rd::model_rd_for_sb_y
+2.621897 525020 rvp9_core::dsp::x86_64::convolve8_horiz_avx2::convolve8_horiz_avx2
+2.411993 482988 rvp9_core::mode_decision::inter::run_newmv_search
+2.177630 436058 rvp9_core::mode_decision::inter::evaluate_candidate_for_filter_with_pred
+2.122642 425047 rvp9_core::inter::mv_ref::find_realtime_refs_nearest_near_mvs_with_context<rvp9_encoder::InterPickerMiGridLookup
+1.777828 356000 rvp9_core::transforms::forward::fdct16x16
+1.588290 318046 rvp9_core::dsp::x86_64::convolve8_vert_avx2::convolve8_vert_avx2
+1.488077 297979 rvp9_core::quant::forward::vp9_quantize_fp_with_order
+1.368853 274105 rvp9_core::entropy::detokenize::write_block_tokens_with_retained_impl<i16>
+1.148662 230013 rvp9_core::dsp::x86_64::sad_avx2::vpx_sad16x16_avx2
+1.053673 210992 rvp9_core::entropy::detokenize::replay_retained_coefs
+0.993886 199020 rvp9_core::mv_search::sub_pixel::try_subpel_cost
+0.943532 188937 rvp9_core::inter::scale::build_inter_prediction_from_tight_plane
+
+The report was decoded from the ETL with the matching release symbol path.
+The first xperf decode emitted non-fatal symbol-server diagnostics for system
+modules; rvp9enc symbols resolved and are the rows aggregated above.

@@ -1,0 +1,18 @@
+# Unit 1405 fresh x86-64 Crucible profile
+
+The integrated trunk at `8bf671ad` was built on Crucible and profiled with
+20 serial 60-frame CPU-used-6 CBR encodes of the canonical 1280x720@30 clip.
+The WPR CPU ETL contains 20,024,434 weighted `rvp9enc.exe` user samples.
+
+The Unit 1404 quantizer-tail change reduced the quantizer symbol to 6.452% of
+the fresh profile. The next largest bounded SIMD kernel is
+`var_sum_sse_16x16_inner` at 4.959%; the already-integrated four-way
+accumulator remains the active implementation. The largest scalar transform
+symbol is `fdct16_butterfly` at 4.664%, used by the x86 non-DCT 16x16 hybrid
+path. `sad4d` and 16x16 sub-pel variance follow at 4.615% and 4.465%.
+
+The raw symbolized xperf output, profile manifest, and aggregate are retained
+in this directory. The next experiment should avoid the already-rejected
+quantizer setup/packing and sub-pel fusion variants, and should first establish
+whether an x86 DCT-axis batch for the hybrid 16x16 path can reuse the existing
+SSE2 `fdct16x8` schedule without changing output bytes.

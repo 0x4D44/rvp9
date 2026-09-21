@@ -1,0 +1,14 @@
+﻿rvp9 fresh Crucible CPU profile manifest schema=1
+base_commit=8bf671adaca047f6418ec80b652203b6e591a0de
+source_archive_sha256=5603D1E756A047D292F0CC4CD74735DE59400BEAAC1F7C8360EBD4EB76C40CFB
+binary=D:\worktrees\rvp9-2\unit1405-profile-src\target\release\rvp9enc.exe
+binary_sha256=95AC2FD457F0E256B81EE4317FC6EFB5C345BDFD848CE51AC159F971481CB03A
+clip=D:\worktrees\rvp9-2\unit1405-profile-run\ducks.y4m
+clip_sha256=42235814FD03FFBA9144D915BDA7844902CCD9076BEF7143E373FC6DE0DF170A
+protocol=20 serial encodes; CPU-used 6; CBR 1260 kbps; 30 fps; 1 thread; tile-columns 0; lag-in-frames 0; AQ 0; noise sensitivity 0; 60 frames; keyframe interval 60
+host=Crucible x86-64 Windows; CPU 6 affinity
+wpr_profile=wpr.exe -start CPU -filemode
+etl=D:\worktrees\rvp9-2\unit1405-profile-run\rvp9-cpu6.etl
+etl_sha256=763F8A522DBB161A8DF957B0561F38087751850D085F510D19890E333E618680
+authoritative_report=D:\worktrees\rvp9-2\unit1405-profile-run\rvp9-cpu6-profile.txt
+authoritative_xperf=xperf.exe -symbols verbose -i rvp9-cpu6.etl -a profile -detail with _NT_SYMBOL_PATH=target\release and _NT_SYMCACHE_PATH=profile-run\symcache
