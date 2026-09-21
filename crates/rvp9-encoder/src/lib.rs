@@ -5503,6 +5503,15 @@ fn inter_rd_calibration_for_segment(
     )
 }
 
+#[inline]
+fn a4_rd_calibration_for_segment(
+    baseline: rvp9_core::mode_decision::inter::InterRdCalibration,
+    boosted: rvp9_core::mode_decision::inter::InterRdCalibration,
+    segment_id: u8,
+) -> rvp9_core::mode_decision::inter::InterRdCalibration {
+    if segment_id == 0 { baseline } else { boosted }
+}
+
 /// Apply measured spatial leaf policies only to their qualified v1 paths.
 ///
 /// Exact VBP otherwise disables rvp9's natural-content lambda calibration. The
@@ -7639,6 +7648,30 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
 
     let mut full_history = exact_vbp_history.take();
     let mut frame_diagnostics = CompactInterRowDiagnostics::default();
+    // Cyclic-refresh calibration has only two segment variants: baseline
+    // (segment 0) and boosted (any nonzero segment). Complete both values
+    // once per frame; the A4 descent reuses them for every leaf.
+    let a4_rd_calibration_zero = inter_rd_calibration_for_segment(
+        rc_mode,
+        speed,
+        deadline,
+        cyclic_refresh_active,
+        0,
+        exact_vbp_tree_enabled,
+    )
+    .with_model_only_large(
+        svc_model_only_large_qmax.is_some(),
+        svc_model_only_large_qmax.unwrap_or(u8::MAX),
+    );
+    let a4_rd_calibration_nonzero = if cyclic_refresh_active {
+        inter_rd_calibration_for_segment(rc_mode, speed, deadline, true, 1, exact_vbp_tree_enabled)
+            .with_model_only_large(
+                svc_model_only_large_qmax.is_some(),
+                svc_model_only_large_qmax.unwrap_or(u8::MAX),
+            )
+    } else {
+        a4_rd_calibration_zero
+    };
     let encode_job =
         |job: crate::row_mt::RowJob,
          recon_yuv_out: &mut InterReconPlanes<'_>,
@@ -8627,17 +8660,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         let seg = sb_segment_ids[sb_local_y_8x8 * 8 + sb_local_x_8x8];
                         let leaf_qindex =
                             effective_qindex_for_segment(base_qindex, seg, seg_q_deltas);
-                        let descent_rd_calibration = inter_rd_calibration_for_segment(
-                            rc_mode,
-                            speed,
-                            deadline,
-                            cyclic_refresh_active,
+                        let descent_rd_calibration = a4_rd_calibration_for_segment(
+                            a4_rd_calibration_zero,
+                            a4_rd_calibration_nonzero,
                             seg,
-                            exact_vbp_tree_enabled,
-                        )
-                        .with_model_only_large(
-                            svc_model_only_large_qmax.is_some(),
-                            svc_model_only_large_qmax.unwrap_or(u8::MAX),
                         );
                         let quantizer =
                             init_plane_quantizers(i32::from(leaf_qindex), QuantizerDeltas::Y);
@@ -16977,6 +17003,23 @@ mod tests {
         assert_eq!(aq_off, baseline, "AQ off ignores stale segment ids");
         assert_eq!((baseline.lambda_num, baseline.lambda_den), (0, 1));
         assert_eq!((boosted.lambda_num, boosted.lambda_den), (0, 1));
+    }
+
+    #[test]
+    fn a4_rd_calibration_cache_selects_baseline_only_for_segment_zero() {
+        use rvp9_core::mode_decision::speed_features::Deadline;
+
+        let baseline =
+            inter_rd_calibration_for_segment(RcMode::Vbr, 7, Deadline::Realtime, true, 0, true);
+        let boosted =
+            inter_rd_calibration_for_segment(RcMode::Vbr, 7, Deadline::Realtime, true, 1, true);
+
+        assert_eq!(
+            a4_rd_calibration_for_segment(baseline, boosted, 0),
+            baseline
+        );
+        assert_eq!(a4_rd_calibration_for_segment(baseline, boosted, 1), boosted);
+        assert_eq!(a4_rd_calibration_for_segment(baseline, boosted, 7), boosted);
     }
 
     #[test]
