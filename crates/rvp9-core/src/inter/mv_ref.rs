@@ -872,9 +872,15 @@ fn find_realtime_refs_nearest_near_mvs_with_context<N: NeighbourLookup, const RE
     let mut const_motion = [true; REF_COUNT];
     let mut any_neighbour = false;
     let mut mode_context_sum = 0;
+    // The scaled-candidate pass revisits the same eight positions after the
+    // direct-reference pass. Keep the resolved entries so a grid lookup (and
+    // its tile/frame bounds checks) is paid only once per position.
+    let mut neighbour_cache: [Option<&ModeInfo>; MVREF_NEIGHBOURS] = [None; MVREF_NEIGHBOURS];
 
     for (position_index, &mv_ref) in mv_ref_search.iter().enumerate() {
-        let Some(candidate_mi) = neighbours.get(mv_ref) else {
+        let candidate_mi = neighbours.get(mv_ref);
+        neighbour_cache[position_index] = candidate_mi;
+        let Some(candidate_mi) = candidate_mi else {
             continue;
         };
         any_neighbour = true;
@@ -930,10 +936,7 @@ fn find_realtime_refs_nearest_near_mvs_with_context<N: NeighbourLookup, const RE
     }
 
     if any_neighbour {
-        for &mv_ref in mv_ref_search.iter().take(MVREF_NEIGHBOURS) {
-            let Some(candidate_mi) = neighbours.get(mv_ref) else {
-                continue;
-            };
+        for candidate_mi in neighbour_cache.into_iter().flatten() {
             if !is_inter_block(candidate_mi) {
                 continue;
             }
