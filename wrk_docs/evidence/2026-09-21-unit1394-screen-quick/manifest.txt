@@ -1,0 +1,14 @@
+RVP9 Unit 1394 A4 descent quantizer cache screen manifest
+candidate_commit=fb57f526 perf(enc): cache A4 descent quantizer setup
+revert_commit=cd8c5d66
+control_commit=3862376270cbe8bccff1a69875424ee0b42829f9
+candidate_binary_sha256=01CF9D3A2F75D5B1A3BF15FC997436AB4D24735FC80C56B47FD6A460F036CC4B
+control_binary_sha256=933FD4BCFA61F1C3B10811E0DC7841659B127D4B17C5C72F9764D4014AFD0420
+protocol=relaxed Crucible load policy; CPU-used 6; CBR 1260 kbps; 30 fps; 1 thread; tile-columns 0; AQ 0; 60 frames; keyframe interval 60; one warmup; 3 alternating pairs; 2 rotations; no max-load1 cap
+clip_ducks_sha256=42235814FD03FFBA9144D915BDA7844902CCD9076BEF7143E373FC6DE0DF170A
+clip_intree_sha256=3053DDAD95A66BB970685412D58EE807813319668A57CD5F8A6D00C07415A895
+clip_oldtown_sha256=752413CB08A572C5C571AC93903BCAC961ED30A53ECE26DCBC18D5FA3CBBC4D8
+run1_summary=run1/summary.csv; separate corpus 0.997910631x; paired corpus 1.002416119x
+run2_summary=run2/summary.csv; separate corpus 1.000807865x; paired corpus 1.000047426x
+stream_hashes=all candidate/control pairs identical in both runs; ducks CD91837D5E2AC1EF9F21FCBA16611E874268534CA182B0445C650F1204970D7C; intree 3FD208DCE514C4DA95776B40BAB3A9DDF98707462209E76954538F7F64534AEC; oldtown 94D5CB953836E9F028EB716C30E81A0F78818D4F3F3D786431FA28F6A57DAEF3
+decision=reject; two short repeats are neutral to slightly slower on paired corpus, so no full screen or libvpx comparison was warranted
