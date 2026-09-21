@@ -9680,17 +9680,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     let leaf_segment_id = sb_partitions[sb_idx][leaf_idx].segment_id;
                     let leaf_qindex =
                         effective_qindex_for_segment(base_qindex, leaf_segment_id, seg_q_deltas);
-                    let mut leaf_rd_calibration = inter_rd_calibration_for_segment(
-                        rc_mode,
-                        speed,
-                        deadline,
-                        cyclic_refresh_active,
+                    let mut leaf_rd_calibration = a4_rd_calibration_for_segment(
+                        a4_rd_calibration_zero,
+                        a4_rd_calibration_nonzero,
                         leaf_segment_id,
-                        exact_vbp_tree_enabled,
-                    )
-                    .with_model_only_large(
-                        svc_model_only_large_qmax.is_some(),
-                        svc_model_only_large_qmax.unwrap_or(u8::MAX),
                     );
                     leaf_rd_calibration = spatial_leaf_rd_calibration(
                         leaf_rd_calibration,
