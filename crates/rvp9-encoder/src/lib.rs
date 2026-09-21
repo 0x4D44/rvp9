@@ -5757,46 +5757,6 @@ fn picker_reference_masking(spatial_component: bool) -> bool {
     !spatial_component
 }
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-struct DescentStaticPickerConfig {
-    search_golden_filter: bool,
-    reference_masking: bool,
-    cb_pred_filter_search: bool,
-    allow_golden_ref: bool,
-    disable_golden_ref: bool,
-    short_circuit_low_temp_var: u8,
-    skin_mi_cols: usize,
-    content_state: rvp9_core::mode_decision::inter::ContentStateSb,
-}
-
-#[inline]
-fn descent_static_picker_config(
-    rc_mode: crate::rate_control::RcMode,
-    speed: i32,
-    spatial_component: bool,
-    cb_pred_filter_search: bool,
-    a4_descent_cb_filter_search: bool,
-    force_disable_golden_ref: bool,
-    rt_disable_golden_ref: bool,
-    a4_descent_disable_golden: bool,
-    exact_vbp_tree_enabled: bool,
-    content_state: rvp9_core::mode_decision::inter::ContentStateSb,
-    width: u32,
-) -> DescentStaticPickerConfig {
-    DescentStaticPickerConfig {
-        search_golden_filter: realtime_search_golden_filter(rc_mode, speed),
-        reference_masking: picker_reference_masking(spatial_component),
-        cb_pred_filter_search: cb_pred_filter_search || a4_descent_cb_filter_search,
-        allow_golden_ref: !force_disable_golden_ref,
-        disable_golden_ref: rt_disable_golden_ref || a4_descent_disable_golden,
-        short_circuit_low_temp_var: u8::from(
-            exact_vbp_tree_enabled && rc_mode == crate::rate_control::RcMode::Cbr,
-        ),
-        skin_mi_cols: (width / 8) as usize,
-        content_state,
-    }
-}
-
 fn partition_color_sensitivity(
     src_uv: (&[u8], &[u8]),
     ref_uv: (&[u8], &[u8]),
@@ -8544,23 +8504,6 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     //    The borrow is re-acquired inline so it expires before
                     //    the per-leaf loop needs mutable access.
                     let mi_grid_ro = row_grids.as_slice();
-                    // These picker fields are fixed for the whole SB. Keep
-                    // their policy decisions out of the hot descent callback
-                    // so each speculative block only computes geometry and
-                    // causal context.
-                    let descent_static = descent_static_picker_config(
-                        rc_mode,
-                        speed,
-                        spatial_component,
-                        sf.cb_pred_filter_search,
-                        a4_descent_cb_filter_search,
-                        force_disable_golden_ref,
-                        rt_disable_golden_ref,
-                        a4_descent_disable_golden,
-                        exact_vbp_tree_enabled,
-                        content_state,
-                        width,
-                    );
                     // The descent callback visits several block sizes at the
                     // same 8x8 cell. Materialise the hint's segment id once
                     // for this superblock instead of rescanning every leaf
@@ -8649,7 +8592,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         );
                         let leaf_prev_mv: Option<PrevFrameMvRef> = prev_mv_grid
                             .and_then(|g| g.get(leaf_mi_row * mi_cols_us + leaf_mi_col).copied());
-                        let content_state_sb = descent_static.content_state;
+                        let content_state_sb = content_state_sb_grid
+                            .get(sb_idx)
+                            .copied()
+                            .unwrap_or(rvp9_core::mode_decision::inter::ContentStateSb::Normal);
                         let (last_ref_mvs, golden_ref_mvs, inter_mode_ctx) =
                             if force_disable_golden_ref
                                 || (a4_descent_disable_golden
@@ -8814,7 +8760,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         switchable_interp_costs: &sic,
                         switchable_interp_ctx,
                         filter_ref,
-                        search_golden_filter: descent_static.search_golden_filter,
+                        search_golden_filter: realtime_search_golden_filter(rc_mode, speed),
                         skip_ctx,
                         skip_prob: frame_context.skip_probs[skip_ctx],
                         rd_calibration: descent_rd_calibration,
@@ -8852,12 +8798,12 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         // PHASE-3 integration: per-mi skin bit from
                         // W2.5 skin detector.
                         is_skin: {
-                            let mi_idx =
-                                leaf_mi_row * descent_static.skin_mi_cols + leaf_mi_col;
+                            let mi_cols = (width / 8) as usize;
+                            let mi_idx = leaf_mi_row * mi_cols + leaf_mi_col;
                             skin_map.get(mi_idx).copied().unwrap_or(0) != 0
                         },
                         newmv_diff_bias_enabled,
-                        reference_masking: descent_static.reference_masking,
+                        reference_masking: picker_reference_masking(spatial_component),
                         // P20 — disabled in the descent: the adaptive
                         // RD-threshold table is mutated post-pick by
                         // the per-leaf loop. Letting the descent
@@ -8877,7 +8823,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                 leaf_mi_col,
                                 bs,
                             ),
-                        short_circuit_low_temp_var: descent_static.short_circuit_low_temp_var,
+                        short_circuit_low_temp_var: u8::from(
+                            exact_vbp_tree_enabled
+                                && rc_mode == crate::rate_control::RcMode::Cbr,
+                        ),
                         // PHASE-3 integration: per-SB content_state
                         // from W2.2 avg_source_sad pass. Index via
                         // (leaf_mi_row/8, leaf_mi_col/8) — the SB
@@ -8899,19 +8848,20 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         // partition proxy. The final emitted picker below
                         // keeps the resolution-gated libvpx speed feature and
                         // therefore performs the full small-frame search.
-                        cb_pred_filter_search: descent_static.cb_pred_filter_search,
+                        cb_pred_filter_search: sf.cb_pred_filter_search
+                            || a4_descent_cb_filter_search,
                         skip_integer_mv_filter_search: rt_skip_integer_mv_filter_search,
                         retain_all_last_nearest_filter_search: false,
                         retain_last_near_eighttap_filter_search: false,
                         mi_row: leaf_mi_row as u32,
                         mi_col: leaf_mi_col as u32,
                         chessboard_index,
-                        allow_golden_ref: descent_static.allow_golden_ref,
+                        allow_golden_ref: !force_disable_golden_ref,
                         // The speculative partition proxy follows the normal
                         // LAST/GOLDEN search by default. Set the diagnostic
                         // override to disable GOLDEN when profiling the
                         // cheaper LAST-only proxy.
-                        disable_golden_ref: descent_static.disable_golden_ref,
+                        disable_golden_ref: rt_disable_golden_ref || a4_descent_disable_golden,
                         max_intra_bsize: sf.max_intra_bsize,
                         rt_intra_dc_only_low_content: sf.rt_intra_dc_only_low_content,
                         // Phase-2 option-A: the descent computes the
@@ -17828,61 +17778,6 @@ mod tests {
         assert!(realtime_search_golden_filter(RcMode::Vbr, 7));
         assert!(!realtime_search_golden_filter(RcMode::Vbr, 8));
         assert!(!realtime_search_golden_filter(RcMode::Cbr, 7));
-    }
-
-    #[test]
-    fn descent_static_picker_config_preserves_frame_and_sb_policies() {
-        let ordinary = descent_static_picker_config(
-            RcMode::Vbr,
-            7,
-            false,
-            true,
-            false,
-            false,
-            false,
-            false,
-            false,
-            rvp9_core::mode_decision::inter::ContentStateSb::Normal,
-            1280,
-        );
-        assert_eq!(
-            ordinary,
-            DescentStaticPickerConfig {
-                search_golden_filter: true,
-                reference_masking: true,
-                cb_pred_filter_search: true,
-                allow_golden_ref: true,
-                disable_golden_ref: false,
-                short_circuit_low_temp_var: 0,
-                skin_mi_cols: 160,
-                content_state: rvp9_core::mode_decision::inter::ContentStateSb::Normal,
-            }
-        );
-
-        let cbr_spatial = descent_static_picker_config(
-            RcMode::Cbr,
-            6,
-            true,
-            false,
-            true,
-            true,
-            true,
-            false,
-            true,
-            rvp9_core::mode_decision::inter::ContentStateSb::VeryHighSad,
-            1920,
-        );
-        assert_eq!(cbr_spatial.search_golden_filter, false);
-        assert_eq!(cbr_spatial.reference_masking, false);
-        assert_eq!(cbr_spatial.cb_pred_filter_search, true);
-        assert_eq!(cbr_spatial.allow_golden_ref, false);
-        assert_eq!(cbr_spatial.disable_golden_ref, true);
-        assert_eq!(cbr_spatial.short_circuit_low_temp_var, 1);
-        assert_eq!(cbr_spatial.skin_mi_cols, 240);
-        assert_eq!(
-            cbr_spatial.content_state,
-            rvp9_core::mode_decision::inter::ContentStateSb::VeryHighSad
-        );
     }
 
     #[test]
