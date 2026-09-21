@@ -1,0 +1,14 @@
+rvp9 fresh Crucible CPU profile manifest schema=1
+base_commit=2595e969dc5e938fcd96cf8ddc06f3681984da89
+binary=D:\\worktrees\\rvp9-2\\unit1385-profile-src\\target\\release\\rvp9enc.exe
+binary_sha256=249F42D78E500F675AF56413A94B9834ADD7E45567F72339C3341C63CB47781E
+clip=D:\\worktrees\\rvp9-2\\unit1385-ducks.y4m
+clip_sha256=42235814FD03FFBA9144D915BDA7844902CCD9076BEF7143E373FC6DE0DF170A
+protocol=20 serial encodes; CPU-used 6; CBR 1260 kbps; 30 fps; 1 thread; tile-columns 0; 60 frames; keyframe interval 60
+wpr_profile=CPU -filemode
+xperf=xperf -i rvp9-cpu6.etl -symbols -a profile -detail
+etl=D:\\worktrees\\rvp9-2\\unit1385-profile\\rvp9-cpu6.etl
+etl_sha256=0E8DEB2B8D3F1789FB5B6C74D9D17BE1800569D22C4C4EBDC8376025E80E19D
+report=D:\\worktrees\\rvp9-2\\unit1385-profile\\rvp9-cpu6-profile-symbols.txt
+report_sha256=C5AEF127E6302902700234F14F7D6C88E3DB0C26813A1C83C188E8F3B11DFFE
+weighted_rvp9_user_samples=20048075

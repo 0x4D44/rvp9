@@ -108,6 +108,15 @@ unsafe fn accumulate_diff(
     *sse_acc = _mm256_add_epi32(*sse_acc, _mm256_madd_epi16(diff, diff));
 }
 
+/// Load and widen one 16-byte row of `src − pred`.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn load_diff_16(src: *const u8, pred: *const u8) -> __m256i {
+    let sw = _mm256_cvtepu8_epi16(_mm_loadu_si128(src.cast()));
+    let pw = _mm256_cvtepu8_epi16(_mm_loadu_si128(pred.cast()));
+    _mm256_sub_epi16(sw, pw)
+}
+
 /// `(w, h)`-generic AVX2 `(sum, sse)` reduction over `src − pred`.
 ///
 /// Returns `(sum, sse)` with `sum = Σ(src − pred)` (signed) and
@@ -190,6 +199,65 @@ unsafe fn var_sum_sse_inner(
     (sum, sse)
 }
 
+/// Four-way 16×16 AVX2 reduction with independent dependency chains.
+///
+/// The generic kernel is intentionally retained for every other shape. The
+/// 16×16 shape is hot enough to justify keeping four `(sum, sse)` pairs live:
+/// each pair covers four rows, so the final fold remains well within the
+/// exact i32 ranges documented above.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn var_sum_sse_16x16_inner(
+    src: &[u8],
+    src_stride: usize,
+    pred: &[u8],
+    pred_stride: usize,
+) -> (i64, u64) {
+    debug_assert!(src.len() >= 15 * src_stride + 16);
+    debug_assert!(pred.len() >= 15 * pred_stride + 16);
+
+    let src_ptr = src.as_ptr();
+    let pred_ptr = pred.as_ptr();
+    let ones16 = _mm256_set1_epi16(1);
+    let zero = _mm256_setzero_si256();
+    let mut sum0 = zero;
+    let mut sum1 = zero;
+    let mut sum2 = zero;
+    let mut sum3 = zero;
+    let mut sse0 = zero;
+    let mut sse1 = zero;
+    let mut sse2 = zero;
+    let mut sse3 = zero;
+
+    // Interleave four independent chains. This leaves the multiply/add
+    // latency of one chain available while the next row is being widened.
+    for r in 0..4 {
+        let row0 = r * src_stride;
+        let row1 = (r + 4) * src_stride;
+        let row2 = (r + 8) * src_stride;
+        let row3 = (r + 12) * src_stride;
+        let pred_row0 = r * pred_stride;
+        let pred_row1 = (r + 4) * pred_stride;
+        let pred_row2 = (r + 8) * pred_stride;
+        let pred_row3 = (r + 12) * pred_stride;
+
+        let diff0 = load_diff_16(src_ptr.add(row0), pred_ptr.add(pred_row0));
+        accumulate_diff(diff0, ones16, &mut sum0, &mut sse0);
+        let diff1 = load_diff_16(src_ptr.add(row1), pred_ptr.add(pred_row1));
+        accumulate_diff(diff1, ones16, &mut sum1, &mut sse1);
+        let diff2 = load_diff_16(src_ptr.add(row2), pred_ptr.add(pred_row2));
+        accumulate_diff(diff2, ones16, &mut sum2, &mut sse2);
+        let diff3 = load_diff_16(src_ptr.add(row3), pred_ptr.add(pred_row3));
+        accumulate_diff(diff3, ones16, &mut sum3, &mut sse3);
+    }
+
+    let sum_acc = _mm256_add_epi32(_mm256_add_epi32(sum0, sum1), _mm256_add_epi32(sum2, sum3));
+    let sse_acc = _mm256_add_epi32(_mm256_add_epi32(sse0, sse1), _mm256_add_epi32(sse2, sse3));
+    let sum = hsum256_epi32(sum_acc) as i64;
+    let sse = hsum256_epi32(sse_acc) as u32 as u64;
+    (sum, sse)
+}
+
 /// AVX2 block-level `(sum, sse)` reduction over `src − pred`. Byte-exact with
 /// the scalar accumulation in `crate::mode_decision::model_rd::compute_variance`
 /// (which then applies its own scalar `saturating_sub` finisher).
@@ -209,7 +277,15 @@ pub fn var_sum_sse_avx2(
     // `caps.avx2 == true`. Caps are detected once at OnceLock init time
     // (see `crate::dsp::dispatch::init`) and are monotonic for the process
     // lifetime.
-    unsafe { var_sum_sse_inner(src, src_stride, pred, pred_stride, w, h) }
+    if w == 16 && h == 16 {
+        // SAFETY: The same AVX2 dispatch invariant as the generic path; the
+        // specialized kernel has the identical slice bounds contract.
+        unsafe { var_sum_sse_16x16_inner(src, src_stride, pred, pred_stride) }
+    } else {
+        // SAFETY: `SimdDispatch::build(caps)` only installs this wrapper when
+        // `caps.avx2 == true`.
+        unsafe { var_sum_sse_inner(src, src_stride, pred, pred_stride, w, h) }
+    }
 }
 
 /// Generate the 13 per-size AVX2 block `(sum, sse)` safe wrappers. Each
@@ -242,8 +318,18 @@ var_sum_sse_avx2_fn!(var_sum_sse_8x8_avx2, 8, 8);
 var_sum_sse_avx2_fn!(var_sum_sse_8x16_avx2, 8, 16);
 #[cfg(target_arch = "x86_64")]
 var_sum_sse_avx2_fn!(var_sum_sse_16x8_avx2, 16, 8);
+/// AVX2 `(sum, sse)` reduction for a 16×16 block using four independent
+/// accumulator pairs. Byte-exact with the scalar reduction.
 #[cfg(target_arch = "x86_64")]
-var_sum_sse_avx2_fn!(var_sum_sse_16x16_avx2, 16, 16);
+pub fn var_sum_sse_16x16_avx2(
+    src: &[u8],
+    src_stride: usize,
+    pred: &[u8],
+    pred_stride: usize,
+) -> (i64, u64) {
+    // SAFETY: installed only on AVX2 hosts by `SimdDispatch::build`.
+    unsafe { var_sum_sse_16x16_inner(src, src_stride, pred, pred_stride) }
+}
 #[cfg(target_arch = "x86_64")]
 var_sum_sse_avx2_fn!(var_sum_sse_16x32_avx2, 16, 32);
 #[cfg(target_arch = "x86_64")]

@@ -1,0 +1,26 @@
+RVP9 Unit 1385 fresh Crucible x86-64 CPU profile
+
+The integrated trunk at `2595e969` ran twenty serial 60-frame CPU-used-6 CBR
+encodes of the canonical 1280×720@30 ducks clip under Windows Performance
+Recorder's CPU profile. `xperf -symbols -a profile -detail` decoded the ETL
+with the matching release PDB. The report contains 20,048,075 weighted user
+samples mapped to `rvp9enc` symbols.
+
+| Symbol | Samples | Share |
+| --- | ---: | ---: |
+| `rvp9_encoder::pick_and_simulate_inter_encode_partitions::closure$10` | 2,547,195 | 12.705% |
+| `rvp9_core::dsp::x86_64::quantize_fp_avx2::vp9_quantize_fp_avx2_inner` | 2,066,125 | 10.306% |
+| `rvp9_core::dsp::x86_64::subpel_variance_avx2::vpx_sub_pixel_variance16x16_avx2` | 1,584,894 | 7.905% |
+| `rvp9_core::dsp::x86_64::variance_avx2::var_sum_sse_16x16_avx2` | 841,048 | 4.195% |
+| `rvp9_core::mode_decision::inter::pick_inter_mode_impl` | 823,944 | 4.110% |
+| `rvp9_core::mv_search::full_pixel::diamond_search_sad_from_step` | 806,999 | 4.025% |
+| `rvp9_core::dsp::x86_64::sad4d_avx2::vpx_sad16x16x4d_avx2` | 733,992 | 3.661% |
+| `rvp9_core::transforms::forward::fdct16_butterfly` | 719,016 | 3.586% |
+| `rvp9_core::transforms::forward::fdct8x8` | 637,017 | 3.177% |
+| `rvp9_core::mode_decision::inter::evaluate_candidate_with_slots` | 627,940 | 3.132% |
+
+The next bounded experiment targets the 16×16 variance reduction's serialized
+single accumulator. Four independent `(sum, sse)` accumulator pairs should
+expose instruction-level parallelism while preserving integer-exact results.
+This is distinct from the rejected constant-size wrapper specialization: the
+candidate changes dependency chains inside the active kernel.
