@@ -1,0 +1,55 @@
+rvp9 encode-headtohead manifest schema=1
+argv=["D:\\worktrees\\rvp9-2\\acceptance-d639c265\\target\\release\\encode-headtohead.exe", "--anchor-encoder", "D:\\worktrees\\rvp9-2\\unit1389-control-src\\target\\release\\rvp9enc.exe", "--test-encoder", "D:\\worktrees\\rvp9-2\\unit1389-candidate-src\\target\\release\\rvp9enc.exe", "--anchor-kind", "vpxenc", "--test-kind", "vpxenc", "--anchor-revision", "40df3a2e-control", "--test-revision", "unit1389-descent-cell-context-cache", "--clip", "ducks=D:\\worktrees\\rvp9-2\\unit1389-ducks.y4m", "--clip", "intree=D:\\worktrees\\rvp9-2\\unit1389-intree.y4m", "--clip", "oldtown=D:\\worktrees\\rvp9-2\\unit1389-oldtown.y4m", "--work-dir", "D:\\worktrees\\rvp9-2\\unit1389-screen-a", "--cpu-used", "6", "--target-bitrate", "1260", "--end-usage", "cbr", "--fps", "30/1", "--threads", "1", "--tile-columns", "0", "--aq-mode", "0", "--noise-sensitivity", "0", "--limit", "60", "--keyframe-interval", "60", "--warmups", "1", "--pairs", "15", "--rotations", "2"]
+git_commit=d639c26539116487d7b61f53f1011d380085fd0f
+host=unavailable
+rustc=rustc 1.95.0 (59807616e 2026-04-14)
+available_parallelism=32
+anchor_encoder=D:\worktrees\rvp9-2\unit1389-control-src\target\release\rvp9enc.exe
+anchor_kind=vpxenc
+anchor_revision=40df3a2e-control
+anchor_sha256=416a39bf4934e6d4e4198c4580c468a835789b879f766cd0b87710cc6df45880
+anchor_extra_args=[]
+test_encoder=D:\worktrees\rvp9-2\unit1389-candidate-src\target\release\rvp9enc.exe
+test_kind=vpxenc
+test_revision=unit1389-descent-cell-context-cache
+test_sha256=6f9eabfdf2775935999a541513b732c67bec40ebb2bdf31435ccc7f9128db8c1
+test_extra_args=[]
+cpu_used=6
+target_bitrate_kbps=1260
+end_usage=cbr
+fps=30/1
+threads=1
+tile_columns=0
+temporal_layers=None
+spatial_layers=None
+inter_layer_pred=0
+aq_mode=0
+noise_sensitivity=0
+limit=60
+keyframe_interval=60
+warmups=1 pairs=15 rotations=2
+ordering=even rotations reverse clips; every pair alternates first arm
+max_ratio=1.050000000 max_load1=None
+allow_anchor_hash_instability=false
+clip_ducks_path=D:\worktrees\rvp9-2\unit1389-ducks.y4m
+clip_ducks_sha256=42235814fd03ffba9144d915bda7844902ccd9076bef7143e373fc6de0df170a
+clip_ducks_video=1280x720@30/1
+clip_intree_path=D:\worktrees\rvp9-2\unit1389-intree.y4m
+clip_intree_sha256=3053ddad95a66bb970685412d58ee807813319668a57cd5f8a6d00c07415a895
+clip_intree_video=1280x720@30/1
+clip_oldtown_path=D:\worktrees\rvp9-2\unit1389-oldtown.y4m
+clip_oldtown_sha256=752413cb08a572c5c571ac93903bcac961ed30a53ece26dcbc18d5fa3cbbc4d8
+clip_oldtown_video=1280x720@30/1
+anchor_command="D:\\worktrees\\rvp9-2\\unit1389-control-src\\target\\release\\rvp9enc.exe" "--codec=vp9" "--passes=1" "--rt" "--cpu-used=6" "--end-usage=cbr" "--target-bitrate=1260" "--fps=30/1" "--threads=1" "--tile-columns=0" "--lag-in-frames=0" "--tune-content=default" "--aq-mode=0" "--noise-sensitivity=0" "--limit=60" "--kf-max-dist=60" "--quiet" "--ivf" "-o" "<OUTPUT>" "D:\\worktrees\\rvp9-2\\unit1389-ducks.y4m"
+test_command="D:\\worktrees\\rvp9-2\\unit1389-candidate-src\\target\\release\\rvp9enc.exe" "--codec=vp9" "--passes=1" "--rt" "--cpu-used=6" "--end-usage=cbr" "--target-bitrate=1260" "--fps=30/1" "--threads=1" "--tile-columns=0" "--lag-in-frames=0" "--tune-content=default" "--aq-mode=0" "--noise-sensitivity=0" "--limit=60" "--kf-max-dist=60" "--quiet" "--ivf" "-o" "<OUTPUT>" "D:\\worktrees\\rvp9-2\\unit1389-ducks.y4m"
+host_load_metric=windows_60s_mean_busy_logical_cores
+load1_preflight=20.346016
+load1_rotation1_ducks=21.851653
+load1_rotation1_intree=20.056387
+load1_rotation1_oldtown=18.470640
+load1_rotation2_oldtown=21.045560
+load1_rotation2_intree=22.704571
+load1_rotation2_ducks=0.847507
+load1_complete=0.877387
+corpus_separate_ratio=0.897408959
+corpus_paired_ratio=0.997308439
