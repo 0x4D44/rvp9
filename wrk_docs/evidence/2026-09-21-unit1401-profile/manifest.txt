@@ -1,0 +1,20 @@
+rvp9 fresh Crucible CPU profile manifest schema=1
+base_commit=32d0a9f71d52b60c6ad365e00ad2e62a35b1e80e
+source_archive_sha256=c0ce91c4e9e86332303ba1aaf8a0a5644c04f499178a10fda30d8437b6baa8dc
+binary=D:\worktrees\rvp9-2\unit1401-profile-src\target\release\rvp9enc.exe
+binary_sha256=A949F65B016CD2571279B1D2826C7F924705EDEFAE6DB52C1751E17B38289502
+clip=D:\worktrees\rvp9-2\unit1401-profile-run\ducks.y4m
+clip_sha256=42235814FD03FFBA9144D915BDA7844902CCD9076BEF7143E373FC6DE0DF170A
+protocol=20 serial encodes; CPU-used 6; CBR 1260 kbps; 30 fps; 1 thread; tile-columns 0; lag-in-frames 0; AQ 0; noise sensitivity 0; 60 frames; keyframe interval 60
+host=Crucible x86-64 Windows; CPU 6 affinity
+wpr_profile=wpr.exe -start CPU -filemode
+etl=D:\worktrees\rvp9-2\unit1401-profile-run\rvp9-cpu6.etl
+etl_sha256=538FBD337F02A5BBEF42D72C49D29A417830BC1862C9BF2A4BD9A1917ADD13F1
+initial_xperf_report_sha256=082473E90FD976307E66A50855FDD75C7984B0F17D571B1E1E141DC470F3465E
+authoritative_report=rvp9-cpu6-profile-symbols.txt
+authoritative_source_report_sha256=3C72C18C996CDF3BD4B2A87041ACA418BB6C199114DCA35FAE57EB5B521E350B
+authoritative_report_sha256=967FC00E9D9ECD052BD79839C1726718F73F48DBDB09759E2DB46A6F7350826A
+authoritative_report_rows=rvp9enc.exe rows only; trailing xperf column padding removed
+authoritative_xperf=xperf.exe -symbols verbose -i rvp9-cpu6.etl -a profile -detail with _NT_SYMBOL_PATH=target\release and _NT_SYMCACHE_PATH=profile-run\symcache
+note=The first xperf decode lacked the release symbol path; the authoritative report is the later symbolized decode.
+weighted_rvp9_user_samples=19945089

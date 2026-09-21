@@ -1,0 +1,27 @@
+rvp9 user-mode weighted profile aggregate; module filter rvp9enc.exe; samples=19945089; symbols=176
+percent  samples  symbol
+13.200989 2632949 rvp9_encoder::pick_and_simulate_inter_encode_partitions::closure$10
+9.943515 1983243 rvp9_core::dsp::x86_64::quantize_fp_avx2::vp9_quantize_fp_avx2_inner
+4.492194 895972 rvp9_core::mode_decision::inter::pick_inter_mode_impl
+4.401229 877829 rvp9_core::dsp::x86_64::variance_avx2::var_sum_sse_16x16_inner
+4.131689 824069 rvp9_core::dsp::x86_64::sad4d_avx2::vpx_sad16x16x4d_avx2
+3.945257 786885 rvp9_core::mv_search::full_pixel::diamond_search_sad_from_step
+3.820660 762034 rvp9_core::dsp::x86_64::subpel_variance_avx2::vpx_sub_pixel_variance16x16_avx2
+3.569896 712019 rvp9_core::transforms::forward::fdct8x8
+3.488979 695880 rvp9_core::transforms::forward::fdct16_butterfly
+3.329381 664048 rvp9_core::mode_decision::inter::evaluate_candidate_with_slots
+3.003942 599139 rvp9_core::dsp::x86_64::convolve8_horiz_avx2::convolve8_horiz_avx2
+2.832442 564933 rvp9_core::transforms::forward::fdct16x16
+2.757355 549957 rvp9_core::mode_decision::model_rd::model_rd_for_sb_y
+2.590873 516752 rvp9_core::mv_search::full_pixel::sad4d_at_from_source
+2.467018 492049 rvp9_core::mode_decision::inter::run_newmv_search
+2.291968 457135 rvp9_core::mode_decision::inter::evaluate_candidate_for_filter_with_pred
+1.739481 346941 rvp9_core::inter::mv_ref::find_realtime_refs_nearest_near_mvs_with_context<rvp9_encoder::InterPickerMiGridLookup,2>
+1.563919 311925 rvp9_core::transforms::forward::fdct4x4
+1.489133 297009 rvp9_core::mv_search::sub_pixel::try_subpel_cost
+1.308467 260975 rvp9_core::dsp::x86_64::convolve8_vert_avx2::convolve8_vert_avx2
+1.274153 254131 rvp9_core::entropy::detokenize::write_block_tokens_with_retained_impl<i16>
+1.193241 237993 rvp9_core::entropy::detokenize::replay_retained_coefs
+1.057649 210949 rvp9_core::dsp::x86_64::sad_avx2::vpx_sad16x16_avx2
+0.947817 189043 rvp9_core::inter::scale::build_inter_prediction_from_tight_plane
+0.772501 154076 rvp9_core::intra_pred::intra_predict

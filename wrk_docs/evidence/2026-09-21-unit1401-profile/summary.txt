@@ -1,0 +1,25 @@
+Unit 1401 fresh x86 Crucible profile
+
+The fresh profile selected `sad4d_at_from_source` (2.590873% of weighted
+rvp9enc.exe user samples; 3.945257% for its enclosing diamond-search helper)
+for a bounded experiment. The profile was captured from integrated commit
+32d0a9f7 on Crucible CPU 6 with 20 serial 720p30 CBR encodes.
+
+The experiment validated a four-lane union rectangle once, then derived each
+lane without four repeated block bounds walks. A clipped union retained the
+old per-lane fallback. The focused AArch64 test passed 20/20. A deliberate
+one-column mutation made the new in-plane differential fail with an out-of-
+range panic (`range end index 577 out of range for slice of length 576`), then
+the mutation was restored. The candidate x86 focused test passed 20/20.
+
+The candidate emitted byte-identical IVF hashes to its control on every clip.
+It nevertheless regressed timing in both relaxed-load paired screens:
+
+* Screen A: paired geomean 1.006035223x; separate geomean 1.006794617x.
+* Screen B: paired geomean 1.001172866x; separate geomean 1.001907767x.
+
+Ratios are test/control, so values above 1.0 are slower. The candidate was
+reverted in commit 7d9642cc. No libvpx comparison was run because it failed the
+control screen; the prior integrated Unit 1400 libvpx result remains the parity
+reference. Screen manifests, raw samples, summaries, and the symbolized xperf
+report are stored beside this file.
