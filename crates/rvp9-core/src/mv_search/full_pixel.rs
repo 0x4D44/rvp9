@@ -268,28 +268,12 @@ fn block_at<'a>(
     if col + w > plane.width || row + h > plane.height {
         return None;
     }
+    let start = row * plane.stride + col;
     let end = (row + h - 1) * plane.stride + col + w;
     if end > plane.data.len() {
         return None;
     }
-    Some(block_at_in_bounds(plane, col, row, w, h))
-}
-
-/// Read a block after a caller has proved that the complete rectangle is
-/// inside the plane. Keeping this separate lets a batched SAD call validate
-/// the union of four reference blocks once, then derive each lane slice
-/// without repeating the same plane bounds checks.
-#[inline]
-fn block_at_in_bounds<'a>(
-    plane: &'a PlaneRef<'a>,
-    col: usize,
-    row: usize,
-    w: usize,
-    h: usize,
-) -> (&'a [u8], usize) {
-    let start = row * plane.stride + col;
-    let end = (row + h - 1) * plane.stride + col + w;
-    (&plane.data[start..end], plane.stride)
+    Some((&plane.data[start..end], plane.stride))
 }
 
 /// Compute SAD for the block at `(src_offset + mv)` in `ref_plane`
@@ -394,36 +378,29 @@ fn sad4d_at_from_source(
         return [None; 4];
     };
 
-    // The four candidates often form a small rectangle entirely inside the
-    // reference plane. Check that union once; deriving each lane from the
-    // proven-in-bounds union avoids four repeated block_at() bounds walks.
-    let ref_positions = mvs.map(|(mv_row, mv_col)| {
-        (
-            src_offset.0 as isize + isize::from(mv_col),
-            src_offset.1 as isize + isize::from(mv_row),
-        )
-    });
-    let min_col = ref_positions.iter().map(|&(col, _)| col).min().unwrap();
-    let max_col = ref_positions.iter().map(|&(col, _)| col).max().unwrap();
-    let min_row = ref_positions.iter().map(|&(_, row)| row).min().unwrap();
-    let max_row = ref_positions.iter().map(|&(_, row)| row).max().unwrap();
-    let union = if min_col >= 0 && min_row >= 0 {
-        let union_w = (max_col as usize)
-            .saturating_sub(min_col as usize)
-            .saturating_add(w);
-        let union_h = (max_row as usize)
-            .saturating_sub(min_row as usize)
-            .saturating_add(h);
-        block_at(ref_plane, min_col, min_row, union_w, union_h)
-    } else {
-        None
-    };
+    // Resolve each candidate's reference block (or `None` if clipped).
+    let mut ref_slices: [Option<&[u8]>; 4] = [None; 4];
+    let mut all_in_plane = true;
+    for t in 0..4 {
+        let ref_col = src_offset.0 as isize + isize::from(mvs[t].1);
+        let ref_row = src_offset.1 as isize + isize::from(mvs[t].0);
+        match block_at(ref_plane, ref_col, ref_row, w, h) {
+            // Every candidate shares `ref_plane.stride`, so we keep only the
+            // slice and use that single stride below.
+            Some((slice, _stride)) => ref_slices[t] = Some(slice),
+            None => all_in_plane = false,
+        }
+    }
 
-    if union.is_some() {
+    if all_in_plane {
         // Fast path: one batched call. All four references share the plane
         // stride; each lane equals the single-SAD `sad_fn` result.
-        let refs: [&[u8]; 4] = ref_positions
-            .map(|(col, row)| block_at_in_bounds(ref_plane, col as usize, row as usize, w, h).0);
+        let refs: [&[u8]; 4] = [
+            ref_slices[0].unwrap(),
+            ref_slices[1].unwrap(),
+            ref_slices[2].unwrap(),
+            ref_slices[3].unwrap(),
+        ];
         let mut out_sads = [0u32; 4];
         sad4d_fn(
             src_slice,
@@ -439,14 +416,13 @@ fn sad4d_at_from_source(
             Some(out_sads[3]),
         ]
     } else {
-        // Slow path: the union crosses the plane edge. Per lane, the
-        // in-plane ones get the same scalar `sad_fn` as `sad_at`; the clipped
-        // ones stay `None` — byte-identical to `sad_at` per site.
+        // Slow path: at least one reference clipped. Per lane, the in-plane
+        // ones get the same scalar `sad_fn` as `sad_at`; the clipped ones
+        // stay `None` — byte-identical to `sad_at` per site.
         let mut out = [None; 4];
         for t in 0..4 {
-            let (ref_col, ref_row) = ref_positions[t];
-            if let Some((slice, ref_stride)) = block_at(ref_plane, ref_col, ref_row, w, h) {
-                out[t] = Some(sad_fn(src_slice, src_stride, slice, ref_stride));
+            if let Some(slice) = ref_slices[t] {
+                out[t] = Some(sad_fn(src_slice, src_stride, slice, ref_plane.stride));
             }
         }
         out
@@ -1982,6 +1958,7 @@ mod tests {
             height: width,
         };
         let src_offset = (8, 8);
+        let mvs = [(0, 0), (1, -1), (8, 8), (-20, 0)];
         let sad_fn = sad_for(block_size);
         let sad4d_fn = sad4d_for(block_size);
         let source = block_at(
@@ -1991,39 +1968,14 @@ mod tests {
             usize::from(block_size.width()),
             usize::from(block_size.height()),
         );
-        let in_plane_mvs = [(0, 0), (1, -1), (8, 8), (-1, 2)];
         let actual = sad4d_at_from_source(
-            block_size,
-            sad_fn,
-            sad4d_fn,
-            source,
-            src_offset,
-            &plane,
-            &in_plane_mvs,
+            block_size, sad_fn, sad4d_fn, source, src_offset, &plane, &mvs,
         );
-        for (index, &(row, col)) in in_plane_mvs.iter().enumerate() {
+        for (index, &(row, col)) in mvs.iter().enumerate() {
             assert_eq!(
                 actual[index],
                 sad_at(block_size, sad_fn, &plane, src_offset, &plane, row, col,),
                 "hoisted lane {index} differs from scalar SAD",
-            );
-        }
-
-        let clipped_mvs = [(0, 0), (1, -1), (8, 8), (-20, 0)];
-        let clipped = sad4d_at_from_source(
-            block_size,
-            sad_fn,
-            sad4d_fn,
-            source,
-            src_offset,
-            &plane,
-            &clipped_mvs,
-        );
-        for (index, &(row, col)) in clipped_mvs.iter().enumerate() {
-            assert_eq!(
-                clipped[index],
-                sad_at(block_size, sad_fn, &plane, src_offset, &plane, row, col,),
-                "clipped lane {index} differs from scalar SAD",
             );
         }
 
@@ -2036,7 +1988,7 @@ mod tests {
                 invalid_source,
                 (20, 20),
                 &plane,
-                &clipped_mvs,
+                &mvs,
             ),
             [None; 4],
             "an invalid source block must keep every SAD lane invalid",
