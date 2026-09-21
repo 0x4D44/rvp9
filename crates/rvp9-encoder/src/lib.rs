@@ -6236,15 +6236,6 @@ struct DescentCellPickerContext {
     left_mv: Option<Mv>,
 }
 
-#[derive(Copy, Clone, Debug)]
-struct DescentCellQuantizerContext {
-    leaf_qindex: u8,
-    rd_calibration: rvp9_core::mode_decision::inter::InterRdCalibration,
-    quantizer: rvp9_core::quant::forward::PlaneQuantizers,
-    uv_dc_dq: i16,
-    uv_ac_dq: i16,
-}
-
 #[inline]
 fn descent_cell_picker_context(
     frame_context: &FrameContext,
@@ -8565,11 +8556,6 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     // the recursive descent does not repeat compact-grid
                     // lookups and context derivation for each size visit.
                     let mut descent_cell_contexts = [[None; 8]; 8];
-                    // Quantizer setup depends only on the leaf cell's
-                    // segment, not on the candidate block size. Cache it
-                    // alongside the neighbour context so a cell visited at
-                    // several sizes does not rebuild the same quantizer pack.
-                    let mut descent_cell_quantizers = [[None; 8]; 8];
                     let mut descent_picker = |sb_local_x_8x8: usize,
                                               sb_local_y_8x8: usize,
                                               bs: BS| {
@@ -8719,46 +8705,22 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         // Per-leaf segment_id from the variance hint leaf
                         // covering this candidate's top-left cell.
                         let seg = sb_segment_ids[sb_local_y_8x8 * 8 + sb_local_x_8x8];
-                        let quantizer_context = match descent_cell_quantizers[sb_local_y_8x8]
-                            [sb_local_x_8x8]
-                        {
-                            Some(context) => context,
-                            None => {
-                                let leaf_qindex =
-                                    effective_qindex_for_segment(base_qindex, seg, seg_q_deltas);
-                                let (uv_dc_dq, uv_ac_dq) = plane_dequant_pair(
-                                    i32::from(leaf_qindex),
-                                    QuantizerDeltas {
-                                        dc_delta: 0,
-                                        ac_delta: 0,
-                                    },
-                                );
-                                let context = DescentCellQuantizerContext {
-                                    leaf_qindex,
-                                    rd_calibration: a4_rd_calibration_for_segment(
-                                        a4_rd_calibration_zero,
-                                        a4_rd_calibration_nonzero,
-                                        seg,
-                                    ),
-                                    quantizer: init_plane_quantizers(
-                                        i32::from(leaf_qindex),
-                                        QuantizerDeltas::Y,
-                                    ),
-                                    uv_dc_dq,
-                                    uv_ac_dq,
-                                };
-                                descent_cell_quantizers[sb_local_y_8x8][sb_local_x_8x8] =
-                                    Some(context);
-                                context
-                            }
-                        };
-                        let DescentCellQuantizerContext {
-                            leaf_qindex,
-                            rd_calibration: descent_rd_calibration,
-                            quantizer,
-                            uv_dc_dq,
-                            uv_ac_dq,
-                        } = quantizer_context;
+                        let leaf_qindex =
+                            effective_qindex_for_segment(base_qindex, seg, seg_q_deltas);
+                        let descent_rd_calibration = a4_rd_calibration_for_segment(
+                            a4_rd_calibration_zero,
+                            a4_rd_calibration_nonzero,
+                            seg,
+                        );
+                        let quantizer =
+                            init_plane_quantizers(i32::from(leaf_qindex), QuantizerDeltas::Y);
+                        let (uv_dc_dq, uv_ac_dq) = plane_dequant_pair(
+                            i32::from(leaf_qindex),
+                            QuantizerDeltas {
+                                dc_delta: 0,
+                                ac_delta: 0,
+                            },
+                        );
 
                         // Neighbour mi-grid context predicates. These values
                         // are fixed for the cell while the descent explores
