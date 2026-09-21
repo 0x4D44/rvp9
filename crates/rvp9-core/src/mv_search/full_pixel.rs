@@ -294,15 +294,42 @@ fn sad_at(
     mv_row: i16,
     mv_col: i16,
 ) -> Option<u32> {
-    let w = usize::from(block_size.width());
-    let h = usize::from(block_size.height());
     let (src_slice, src_stride) = block_at(
         src_plane,
         src_offset.0 as isize,
         src_offset.1 as isize,
-        w,
-        h,
+        usize::from(block_size.width()),
+        usize::from(block_size.height()),
     )?;
+    sad_at_from_source(
+        block_size,
+        sad_fn,
+        Some((src_slice, src_stride)),
+        src_offset,
+        ref_plane,
+        mv_row,
+        mv_col,
+    )
+}
+
+/// Compute SAD when the source block has already been bounds-checked.
+///
+/// Full-pel search revisits the same source block for every candidate. The
+/// source slice is invariant across those candidates, so callers that keep it
+/// hoisted avoid repeating the source-side `block_at` bounds and index work.
+#[inline]
+fn sad_at_from_source(
+    block_size: BlockSize,
+    sad_fn: SadFn,
+    source: Option<(&[u8], usize)>,
+    src_offset: (usize, usize),
+    ref_plane: &PlaneRef<'_>,
+    mv_row: i16,
+    mv_col: i16,
+) -> Option<u32> {
+    let (src_slice, src_stride) = source?;
+    let w = usize::from(block_size.width());
+    let h = usize::from(block_size.height());
     let ref_col = src_offset.0 as isize + isize::from(mv_col);
     let ref_row = src_offset.1 as isize + isize::from(mv_row);
     let (ref_slice, ref_stride) = block_at(ref_plane, ref_col, ref_row, w, h)?;
@@ -333,29 +360,21 @@ fn sad_at(
 /// `all_in` decision loop is byte-for-byte unchanged (same in-order scan,
 /// same mid-loop strict-`<` running-best mutation, same `mvsad_err_cost`
 /// augmentation). See `crate::mv_search::full_pixel::diamond_search_sad`.
+/// Compute four SADs when the source block has already been bounds-checked.
 #[inline]
 #[allow(clippy::too_many_arguments)]
-fn sad4d_at(
+fn sad4d_at_from_source(
     block_size: BlockSize,
     sad_fn: SadFn,
     sad4d_fn: Sad4dFn,
-    src_plane: &PlaneRef<'_>,
+    source: Option<(&[u8], usize)>,
     src_offset: (usize, usize),
     ref_plane: &PlaneRef<'_>,
     mvs: &[(i16, i16); 4],
 ) -> [Option<u32>; 4] {
     let w = usize::from(block_size.width());
     let h = usize::from(block_size.height());
-
-    // Source block — identical for all four candidates. If it is out of the
-    // source plane, every `sad_at` would short-circuit to `None`.
-    let Some((src_slice, src_stride)) = block_at(
-        src_plane,
-        src_offset.0 as isize,
-        src_offset.1 as isize,
-        w,
-        h,
-    ) else {
+    let Some((src_slice, src_stride)) = source else {
         return [None; 4];
     };
 
@@ -506,6 +525,13 @@ fn diamond_search_sad_from_step(
     // slow path; `sad4d_fn` serves the `all_in` fast path's four axis sites.
     let sad_fn = sad_for(params.block_size);
     let sad4d_fn = sad4d_for(params.block_size);
+    let source = block_at(
+        params.src_plane,
+        params.src_offset.0 as isize,
+        params.src_offset.1 as isize,
+        usize::from(params.block_size.width()),
+        usize::from(params.block_size.height()),
+    );
 
     // Convert center_mv (1/8-pel) to fcenter_mv (full-pel). This is the
     // cost-attractor / rate-reference MV (libvpx `ref_mv`).
@@ -527,10 +553,10 @@ fn diamond_search_sad_from_step(
 
     // Initial SAD; if out-of-bounds, fall back to u32::MAX so any
     // valid step is preferred.
-    let mut bestsad: u32 = match sad_at(
+    let mut bestsad: u32 = match sad_at_from_source(
         params.block_size,
         sad_fn,
-        params.src_plane,
+        source,
         params.src_offset,
         params.ref_plane,
         best_row,
@@ -610,11 +636,11 @@ fn diamond_search_sad_from_step(
                     (best_row + dr, best_col + dc)
                 },
             ];
-            let sads = sad4d_at(
+            let sads = sad4d_at_from_source(
                 params.block_size,
                 sad_fn,
                 sad4d_fn,
-                params.src_plane,
+                source,
                 params.src_offset,
                 params.ref_plane,
                 &mvs,
@@ -661,10 +687,10 @@ fn diamond_search_sad_from_step(
                 }
                 let tr = this_row as i16;
                 let tc = this_col as i16;
-                if let Some(thissad) = sad_at(
+                if let Some(thissad) = sad_at_from_source(
                     params.block_size,
                     sad_fn,
-                    params.src_plane,
+                    source,
                     params.src_offset,
                     params.ref_plane,
                     tr,
@@ -769,6 +795,13 @@ fn refining_search_sad(
 
     let sad_fn = sad_for(params.block_size);
     let sad4d_fn = sad4d_for(params.block_size);
+    let source = block_at(
+        params.src_plane,
+        params.src_offset.0 as isize,
+        params.src_offset.1 as isize,
+        usize::from(params.block_size.width()),
+        usize::from(params.block_size.height()),
+    );
     let fcenter_row = params.center_mv.row >> 3;
     let fcenter_col = params.center_mv.col >> 3;
     let mut best_row = initial.best_mv_row;
@@ -790,11 +823,11 @@ fn refining_search_sad(
 
         if all_in {
             let mvs = candidates.map(|(row, col)| (row as i16, col as i16));
-            let sads = sad4d_at(
+            let sads = sad4d_at_from_source(
                 params.block_size,
                 sad_fn,
                 sad4d_fn,
-                params.src_plane,
+                source,
                 params.src_offset,
                 params.ref_plane,
                 &mvs,
@@ -825,10 +858,10 @@ fn refining_search_sad(
                 }
                 let candidate_row = candidate_row as i16;
                 let candidate_col = candidate_col as i16;
-                if let Some(raw_sad) = sad_at(
+                if let Some(raw_sad) = sad_at_from_source(
                     params.block_size,
                     sad_fn,
-                    params.src_plane,
+                    source,
                     params.src_offset,
                     params.ref_plane,
                     candidate_row,
@@ -1001,6 +1034,13 @@ fn fast_diamond_search_sad_impl<const WITH_COST_LIST: bool>(
 
     let sad_fn = sad_for(params.block_size);
     let sad4d_fn = sad4d_for(params.block_size);
+    let source = block_at(
+        params.src_plane,
+        params.src_offset.0 as isize,
+        params.src_offset.1 as isize,
+        usize::from(params.block_size.width()),
+        usize::from(params.block_size.height()),
+    );
     let fcenter_row = params.center_mv.row >> 3;
     let fcenter_col = params.center_mv.col >> 3;
     let start_mv = params.start_mv.unwrap_or(params.center_mv);
@@ -1008,10 +1048,10 @@ fn fast_diamond_search_sad_impl<const WITH_COST_LIST: bool>(
         .clamp(params.mv_limits.row_min, params.mv_limits.row_max) as i16;
     let mut best_col = (i32::from(start_mv.col >> 3))
         .clamp(params.mv_limits.col_min, params.mv_limits.col_max) as i16;
-    let mut best_sad = sad_at(
+    let mut best_sad = sad_at_from_source(
         params.block_size,
         sad_fn,
-        params.src_plane,
+        source,
         params.src_offset,
         params.ref_plane,
         best_row,
@@ -1045,11 +1085,11 @@ fn fast_diamond_search_sad_impl<const WITH_COST_LIST: bool>(
     let mut initial_direction = None;
     if all_in {
         let mvs = candidates.map(|(row, col)| (row as i16, col as i16));
-        let sads = sad4d_at(
+        let sads = sad4d_at_from_source(
             params.block_size,
             sad_fn,
             sad4d_fn,
-            params.src_plane,
+            source,
             params.src_offset,
             params.ref_plane,
             &mvs,
@@ -1083,10 +1123,10 @@ fn fast_diamond_search_sad_impl<const WITH_COST_LIST: bool>(
             }
             let candidate_row = candidate_row as i16;
             let candidate_col = candidate_col as i16;
-            let raw_sad = sad_at(
+            let raw_sad = sad_at_from_source(
                 params.block_size,
                 sad_fn,
-                params.src_plane,
+                source,
                 params.src_offset,
                 params.ref_plane,
                 candidate_row,
@@ -1141,10 +1181,10 @@ fn fast_diamond_search_sad_impl<const WITH_COST_LIST: bool>(
             }
             let candidate_row = candidate_row as i16;
             let candidate_col = candidate_col as i16;
-            let raw_sad = sad_at(
+            let raw_sad = sad_at_from_source(
                 params.block_size,
                 sad_fn,
-                params.src_plane,
+                source,
                 params.src_offset,
                 params.ref_plane,
                 candidate_row,
@@ -1904,5 +1944,54 @@ mod tests {
         // No panic = success; the MV must lie inside the limits.
         assert!(r.best_mv_row as i32 >= 0 && r.best_mv_row as i32 <= 16);
         assert!(r.best_mv_col as i32 >= 0 && r.best_mv_col as i32 <= 16);
+    }
+
+    #[test]
+    fn hoisted_sad_source_matches_scalar_lanes_and_oob_source() {
+        let block_size = BlockSize::Block8x8;
+        let width = 24;
+        let data = make_plane(width, width, 0x9137);
+        let plane = PlaneRef {
+            data: &data,
+            stride: width,
+            width,
+            height: width,
+        };
+        let src_offset = (8, 8);
+        let mvs = [(0, 0), (1, -1), (8, 8), (-20, 0)];
+        let sad_fn = sad_for(block_size);
+        let sad4d_fn = sad4d_for(block_size);
+        let source = block_at(
+            &plane,
+            src_offset.0 as isize,
+            src_offset.1 as isize,
+            usize::from(block_size.width()),
+            usize::from(block_size.height()),
+        );
+        let actual = sad4d_at_from_source(
+            block_size, sad_fn, sad4d_fn, source, src_offset, &plane, &mvs,
+        );
+        for (index, &(row, col)) in mvs.iter().enumerate() {
+            assert_eq!(
+                actual[index],
+                sad_at(block_size, sad_fn, &plane, src_offset, &plane, row, col,),
+                "hoisted lane {index} differs from scalar SAD",
+            );
+        }
+
+        let invalid_source = block_at(&plane, 20, 20, 8, 8);
+        assert_eq!(
+            sad4d_at_from_source(
+                block_size,
+                sad_fn,
+                sad4d_fn,
+                invalid_source,
+                (20, 20),
+                &plane,
+                &mvs,
+            ),
+            [None; 4],
+            "an invalid source block must keep every SAD lane invalid",
+        );
     }
 }
