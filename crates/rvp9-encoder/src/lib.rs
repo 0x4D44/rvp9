@@ -1837,6 +1837,46 @@ pub(crate) fn effective_qindex_for_segment(
     }
 }
 
+/// Per-segment values reused by the final inter-leaf picker.
+///
+/// A frame's segmentation map can select at most eight effective qindices.
+/// These values are immutable for the frame, so rebuilding the quantizer,
+/// chroma dequant pair, and TX-RD multiplier for every committed leaf only
+/// repeats table lookups and fixed-point setup.
+#[derive(Copy, Clone)]
+struct FinalLeafQuantizerEntry {
+    q_index: u8,
+    quantizer: rvp9_core::quant::forward::PlaneQuantizers,
+    uv_dequant: (i16, i16),
+    tx_rd_rdmult: i64,
+}
+
+#[inline]
+fn build_final_leaf_quantizer_entries(
+    base_qindex: u8,
+    seg_q_deltas: &[Option<i16>; 8],
+) -> [FinalLeafQuantizerEntry; 8] {
+    std::array::from_fn(|segment_id| {
+        let q_index = effective_qindex_for_segment(base_qindex, segment_id as u8, seg_q_deltas);
+        let q_index_i32 = i32::from(q_index);
+        FinalLeafQuantizerEntry {
+            q_index,
+            quantizer: rvp9_core::quant::forward::init_plane_quantizers(
+                q_index_i32,
+                rvp9_core::quant::forward::QuantizerDeltas::Y,
+            ),
+            uv_dequant: rvp9_core::quant::forward::plane_dequant_pair(
+                q_index_i32,
+                rvp9_core::quant::forward::QuantizerDeltas::Y,
+            ),
+            tx_rd_rdmult: i64::from(rvp9_core::cost::compute_rd_mult(
+                q_index_i32,
+                rvp9_core::cost::FrameTypeForRd::Inter,
+            )),
+        }
+    })
+}
+
 /// Partition-only Q calibration for the CPU6-8 VBR exact-tree product path.
 ///
 /// Rvp9's live VBR trajectory reaches matched operating points at a finer
@@ -7672,6 +7712,12 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     } else {
         a4_rd_calibration_zero
     };
+    // AQ.1 — the final leaf loop selects from the same eight segment IDs for
+    // the whole frame. Materialise the immutable q/dequant/RD tuple once;
+    // the A4 descent keeps its own setup path unchanged because it evaluates
+    // speculative leaves with different lifetime and policy inputs.
+    let final_leaf_quantizer_entries =
+        build_final_leaf_quantizer_entries(base_qindex, seg_q_deltas);
     let encode_job =
         |job: crate::row_mt::RowJob,
          recon_yuv_out: &mut InterReconPlanes<'_>,
@@ -9622,8 +9668,9 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     // forward-quant `quantizer` used in
                     // `inter_forward_quant_one_tx` below.
                     let leaf_segment_id = sb_partitions[sb_idx][leaf_idx].segment_id;
-                    let leaf_qindex =
-                        effective_qindex_for_segment(base_qindex, leaf_segment_id, seg_q_deltas);
+                    let final_leaf_quantizer_entry =
+                        final_leaf_quantizer_entries[leaf_segment_id as usize];
+                    let leaf_qindex = final_leaf_quantizer_entry.q_index;
                     let mut leaf_rd_calibration = inter_rd_calibration_for_segment(
                         rc_mode,
                         speed,
@@ -9645,23 +9692,13 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         deadline,
                         exact_vbp_tree_enabled,
                     );
-                    let quantizer =
-                        init_plane_quantizers(i32::from(leaf_qindex), QuantizerDeltas::Y);
+                    let quantizer = final_leaf_quantizer_entry.quantizer;
                     // Track-F iter7 — rdmult for the per-block TX-size RD loop
                     // (`choose_inter_luma_tx_size`). libvpx `compute_rd_mult`
                     // at the leaf's effective qindex (inter frame).
-                    let tx_rd_rdmult = i64::from(rvp9_core::cost::compute_rd_mult(
-                        i32::from(leaf_qindex),
-                        rvp9_core::cost::FrameTypeForRd::Inter,
-                    ));
+                    let tx_rd_rdmult = final_leaf_quantizer_entry.tx_rd_rdmult;
                     // G1 — UV dequant pair for chroma model_rd.
-                    let (uv_dc_dq, uv_ac_dq) = plane_dequant_pair(
-                        i32::from(leaf_qindex),
-                        QuantizerDeltas {
-                            dc_delta: 0,
-                            ac_delta: 0,
-                        },
-                    );
+                    let (uv_dc_dq, uv_ac_dq) = final_leaf_quantizer_entry.uv_dequant;
 
                     // A2.foreman — reject causal MV references outside libvpx's
                     // per-block UMV window. The prediction paths safely handle
@@ -19880,6 +19917,64 @@ mod tests {
             720,
             ContentStateSb::VeryHighSad,
         ));
+    }
+
+    #[test]
+    fn final_leaf_quantizer_entries_match_direct_segment_setup() {
+        let base_qindex = 117;
+        let seg_q_deltas = [
+            None,
+            Some(-20),
+            Some(11),
+            None,
+            Some(-117),
+            None,
+            Some(138),
+            None,
+        ];
+        let entries = build_final_leaf_quantizer_entries(base_qindex, &seg_q_deltas);
+
+        for (segment_id, entry) in entries.iter().enumerate() {
+            use rvp9_core::quant::forward::{
+                QuantizerDeltas, init_plane_quantizers, plane_dequant_pair,
+            };
+
+            let expected_q_index =
+                effective_qindex_for_segment(base_qindex, segment_id as u8, &seg_q_deltas);
+            let expected_q_index_i32 = i32::from(expected_q_index);
+            let expected_quantizer =
+                init_plane_quantizers(expected_q_index_i32, QuantizerDeltas::Y);
+            let expected_uv_dequant = plane_dequant_pair(expected_q_index_i32, QuantizerDeltas::Y);
+            let expected_tx_rd_rdmult = i64::from(rvp9_core::cost::compute_rd_mult(
+                expected_q_index_i32,
+                rvp9_core::cost::FrameTypeForRd::Inter,
+            ));
+
+            assert_eq!(
+                entry.q_index, expected_q_index,
+                "segment {segment_id} qindex"
+            );
+            assert_eq!(
+                entry.quantizer.quant, expected_quantizer.quant,
+                "segment {segment_id} quant"
+            );
+            assert_eq!(
+                entry.quantizer.round_fp, expected_quantizer.round_fp,
+                "segment {segment_id} round"
+            );
+            assert_eq!(
+                entry.quantizer.dequant, expected_quantizer.dequant,
+                "segment {segment_id} dequant"
+            );
+            assert_eq!(
+                entry.uv_dequant, expected_uv_dequant,
+                "segment {segment_id} UV dequant"
+            );
+            assert_eq!(
+                entry.tx_rd_rdmult, expected_tx_rd_rdmult,
+                "segment {segment_id} RD multiplier"
+            );
+        }
     }
 
     /// AQ.1 KEY ORACLE — run the simulator on two equally-shaped 8×8
