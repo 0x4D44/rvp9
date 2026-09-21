@@ -1,0 +1,19 @@
+Unit 1402 direct full-pixel SAD union check
+
+Candidate commit `58cb9b65` replaced the iterator-based union check rejected
+by Unit 1401 with direct scalar min/max and checked rectangle arithmetic. It
+kept the same per-lane fallback for clipped references. The candidate passed
+the local focused 20-test suite, a deliberate one-column red mutation failed
+with the expected out-of-range panic, and the x86 Crucible focused suite passed
+20/20. The restored tree also passed the focused 20-test suite.
+
+Both screens used control `65411bb8`, candidate `58cb9b65`, three canonical
+1280×720@30/1 clips, 60 frames, CPU-used 6, CBR 1260, one thread, zero tiles,
+AQ 0, noise 0, one warmup, three pairs, two rotations, and no `--max-load1`.
+All candidate/control IVF hashes matched on every clip.
+
+Screen A: paired geomean `0.996882961x`; separate geomean `0.996397160x`.
+Screen B: paired geomean `1.002722700x`; separate geomean `1.000641819x`.
+Ratios are test/control. The screens straddled parity, so the apparent A gain
+was not reproducible. The candidate was reverted in `372e5bde`; no libvpx run
+was needed. The raw CSVs and manifests beside this file preserve the evidence.
