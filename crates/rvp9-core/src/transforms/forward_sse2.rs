@@ -103,18 +103,10 @@ unsafe fn fdct8x8_pass(input: &[__m128i; 8], output: &mut [__m128i; 8]) {
 unsafe fn pass1_is_safe(rows: &[__m128i; 8]) -> bool {
     let lower = _mm_set1_epi16(-4096);
     let upper = _mm_set1_epi16(4095);
-    let outside = |row| _mm_or_si128(_mm_cmpgt_epi16(row, upper), _mm_cmpgt_epi16(lower, row));
-    let outside = _mm_or_si128(
-        _mm_or_si128(outside(rows[0]), outside(rows[1])),
-        _mm_or_si128(
-            _mm_or_si128(outside(rows[2]), outside(rows[3])),
-            _mm_or_si128(
-                _mm_or_si128(outside(rows[4]), outside(rows[5])),
-                _mm_or_si128(outside(rows[6]), outside(rows[7])),
-            ),
-        ),
-    );
-    _mm_movemask_epi8(outside) == 0
+    rows.iter().all(|&row| {
+        let outside = _mm_or_si128(_mm_cmpgt_epi16(row, upper), _mm_cmpgt_epi16(lower, row));
+        _mm_movemask_epi8(outside) == 0
+    })
 }
 
 #[target_feature(enable = "sse2")]
