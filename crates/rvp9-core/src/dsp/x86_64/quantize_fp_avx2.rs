@@ -108,14 +108,15 @@ unsafe fn vp9_quantize_fp_avx2_inner(
     }
 
     let (dc_q, dc_dq, _) = quantize_one(coeff[0], round[0], quant[0], dequant[0]);
-    qcoeff[0] = dc_q;
-    dqcoeff[0] = dc_dq;
 
     let round_ac = _mm256_set1_epi32(i32::from(round[1]));
     let quant_ac = _mm256_set1_epi32(i32::from(quant[1]));
     let dequant_ac = _mm256_set1_epi32(i32::from(dequant[1]));
-    let vector_end = 1 + ((n_coeffs - 1) / 8) * 8;
-    for offset in (1..vector_end).step_by(8) {
+    // All supported block sizes are multiples of eight. Starting at raster
+    // zero removes the seven-element scalar AC tail; the lane-0 AC result is
+    // overwritten with the separately-quantized DC value below.
+    let vector_end = n_coeffs & !7;
+    for offset in (0..vector_end).step_by(8) {
         // G4: loads from `coeff` use _mm256_loadu_si256 (unaligned)
         let values = _mm256_loadu_si256(coeff.as_ptr().add(offset).cast());
         let sign = _mm256_srai_epi32(values, 31);
@@ -137,6 +138,9 @@ unsafe fn vp9_quantize_fp_avx2_inner(
         qcoeff[offset] = q;
         dqcoeff[offset] = dq;
     }
+
+    qcoeff[0] = dc_q;
+    dqcoeff[0] = dc_dq;
 
     if let Some(iscan) = iscan {
         if n_coeffs >= 64 {
