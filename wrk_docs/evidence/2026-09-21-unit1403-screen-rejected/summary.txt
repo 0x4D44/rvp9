@@ -1,0 +1,18 @@
+Unit 1403 x86 fdct8 safety-mask unroll
+
+Candidate `e3816d2b` replaced the eight-row iterator in the x86 SSE2 fdct8
+pass-one range check with one OR-reduced SSE2 mask. The candidate passed the
+portable transform tests (5/5) and the x86 differential (1/1). A deliberate
+mutation that checked row 0 twice instead of row 7 failed the x86 extreme-axis
+case; the mutation was restored before timing. Both screens emitted exact
+candidate/control IVF hashes.
+
+The paired screens used control `31e930fa`, candidate `e3816d2b`, three
+canonical 1280×720@30/1 clips, 60 frames, CPU-used 6, CBR 1260, one thread,
+zero tiles, AQ 0, noise 0, one warmup, three pairs, two rotations, and no
+`--max-load1` ceiling.
+
+Screen A: paired geomean `0.999805937x`; separate geomean `0.998153320x`.
+Screen B: paired geomean `1.001374153x`; separate geomean `1.003365779x`.
+Ratios are test/control. The tiny A edge was not reproduced by B, so the
+candidate was reverted in `b442e1c3`; no libvpx comparison was needed.
