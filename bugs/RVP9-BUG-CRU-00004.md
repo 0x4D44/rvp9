@@ -6,15 +6,15 @@
 - **Area:** core/transforms forward
 - **Raised:** 2026-08-23T17:09:50Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260921T081636Z-99dbde25
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-CRU-00004-run-fix-20260921T081636Z-99dbde25
-- **Owner base:** b69ae1269b2a5f062127b4f42af0770fd1e37591
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-09-21T08:16:36Z
-- **Owner until:** 2026-09-21T10:16:36Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
