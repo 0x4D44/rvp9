@@ -3,6 +3,211 @@
 use core::arch::x86_64::*;
 
 #[target_feature(enable = "sse2")]
+unsafe fn vpx_int_pro_row_sse2_inner<const SHIFT: i32>(
+    output: *mut i16,
+    reference: *const u8,
+    reference_stride: usize,
+    height: usize,
+) {
+    let zero = _mm_setzero_si128();
+    let mut sum_lo_0 = zero;
+    let mut sum_lo_1 = zero;
+    let mut sum_hi_0 = zero;
+    let mut sum_hi_1 = zero;
+
+    for row in (0..height).step_by(4) {
+        // G4: loads from `reference` use _mm_loadu_si128 (unaligned).
+        let row_0 = _mm_loadu_si128(reference.add(row * reference_stride).cast());
+        let row_1 = _mm_loadu_si128(reference.add((row + 1) * reference_stride).cast());
+        let row_2 = _mm_loadu_si128(reference.add((row + 2) * reference_stride).cast());
+        let row_3 = _mm_loadu_si128(reference.add((row + 3) * reference_stride).cast());
+
+        sum_lo_0 = _mm_add_epi16(
+            sum_lo_0,
+            _mm_add_epi16(
+                _mm_unpacklo_epi8(row_0, zero),
+                _mm_unpacklo_epi8(row_1, zero),
+            ),
+        );
+        sum_hi_0 = _mm_add_epi16(
+            sum_hi_0,
+            _mm_add_epi16(
+                _mm_unpackhi_epi8(row_0, zero),
+                _mm_unpackhi_epi8(row_1, zero),
+            ),
+        );
+        sum_lo_1 = _mm_add_epi16(
+            sum_lo_1,
+            _mm_add_epi16(
+                _mm_unpacklo_epi8(row_2, zero),
+                _mm_unpacklo_epi8(row_3, zero),
+            ),
+        );
+        sum_hi_1 = _mm_add_epi16(
+            sum_hi_1,
+            _mm_add_epi16(
+                _mm_unpackhi_epi8(row_2, zero),
+                _mm_unpackhi_epi8(row_3, zero),
+            ),
+        );
+    }
+
+    let average_lo = _mm_srli_epi16(_mm_add_epi16(sum_lo_0, sum_lo_1), SHIFT);
+    let average_hi = _mm_srli_epi16(_mm_add_epi16(sum_hi_0, sum_hi_1), SHIFT);
+    _mm_storeu_si128(output.cast(), average_lo);
+    _mm_storeu_si128(output.add(8).cast(), average_hi);
+}
+
+/// Reduces 16 reference columns over a 16/32/64-row projection window.
+pub fn vpx_int_pro_row_sse2(
+    output: &mut [i16],
+    reference: &[u8],
+    reference_stride: usize,
+    height: usize,
+) {
+    assert_eq!(output.len(), 16);
+    assert!(matches!(height, 16 | 32 | 64));
+    assert!(reference_stride >= 16);
+    assert!(reference.len() >= (height - 1) * reference_stride + 16);
+
+    // SAFETY: SSE2 is mandatory on x86-64. The assertions prove every
+    // unaligned 16-byte row load and both output stores. A lane sums at most
+    // 64 * 255 = 16,320, within unsigned 16-bit range.
+    unsafe {
+        match height {
+            16 => vpx_int_pro_row_sse2_inner::<3>(
+                output.as_mut_ptr(),
+                reference.as_ptr(),
+                reference_stride,
+                height,
+            ),
+            32 => vpx_int_pro_row_sse2_inner::<4>(
+                output.as_mut_ptr(),
+                reference.as_ptr(),
+                reference_stride,
+                height,
+            ),
+            64 => vpx_int_pro_row_sse2_inner::<5>(
+                output.as_mut_ptr(),
+                reference.as_ptr(),
+                reference_stride,
+                height,
+            ),
+            _ => unreachable!("validated projection height"),
+        }
+    }
+}
+
+#[target_feature(enable = "sse2")]
+unsafe fn vpx_int_pro_row_clamped_sse2_inner<const SHIFT: i32>(
+    output: *mut i16,
+    reference: *const u8,
+    reference_stride: usize,
+    frame_height: usize,
+    base_y: i32,
+    height: usize,
+) {
+    let zero = _mm_setzero_si128();
+    let mut sum_lo_0 = zero;
+    let mut sum_lo_1 = zero;
+    let mut sum_hi_0 = zero;
+    let mut sum_hi_1 = zero;
+
+    for row in (0..height).step_by(4) {
+        let clamped_row = |offset: usize| {
+            (base_y + (row + offset) as i32).clamp(0, frame_height as i32 - 1) as usize
+        };
+        // G4: loads from `reference` use _mm_loadu_si128 (unaligned).
+        let row_0 = _mm_loadu_si128(reference.add(clamped_row(0) * reference_stride).cast());
+        let row_1 = _mm_loadu_si128(reference.add(clamped_row(1) * reference_stride).cast());
+        let row_2 = _mm_loadu_si128(reference.add(clamped_row(2) * reference_stride).cast());
+        let row_3 = _mm_loadu_si128(reference.add(clamped_row(3) * reference_stride).cast());
+
+        sum_lo_0 = _mm_add_epi16(
+            sum_lo_0,
+            _mm_add_epi16(
+                _mm_unpacklo_epi8(row_0, zero),
+                _mm_unpacklo_epi8(row_1, zero),
+            ),
+        );
+        sum_hi_0 = _mm_add_epi16(
+            sum_hi_0,
+            _mm_add_epi16(
+                _mm_unpackhi_epi8(row_0, zero),
+                _mm_unpackhi_epi8(row_1, zero),
+            ),
+        );
+        sum_lo_1 = _mm_add_epi16(
+            sum_lo_1,
+            _mm_add_epi16(
+                _mm_unpacklo_epi8(row_2, zero),
+                _mm_unpacklo_epi8(row_3, zero),
+            ),
+        );
+        sum_hi_1 = _mm_add_epi16(
+            sum_hi_1,
+            _mm_add_epi16(
+                _mm_unpackhi_epi8(row_2, zero),
+                _mm_unpackhi_epi8(row_3, zero),
+            ),
+        );
+    }
+
+    let average_lo = _mm_srli_epi16(_mm_add_epi16(sum_lo_0, sum_lo_1), SHIFT);
+    let average_hi = _mm_srli_epi16(_mm_add_epi16(sum_hi_0, sum_hi_1), SHIFT);
+    _mm_storeu_si128(output.cast(), average_lo);
+    _mm_storeu_si128(output.add(8).cast(), average_hi);
+}
+
+/// Reduces 16 columns while replicating rows outside the visible frame.
+pub fn vpx_int_pro_row_clamped_sse2(
+    output: &mut [i16],
+    reference: &[u8],
+    reference_stride: usize,
+    frame_height: usize,
+    base_y: i32,
+    height: usize,
+) {
+    assert_eq!(output.len(), 16);
+    assert!(matches!(height, 16 | 32 | 64));
+    assert!(frame_height > 0);
+    assert!(reference_stride >= 16);
+    assert!(reference.len() >= (frame_height - 1) * reference_stride + 16);
+
+    // SAFETY: the assertions prove every clamped 16-byte row load and both
+    // output stores. Lane sums remain below 64 * 255.
+    unsafe {
+        match height {
+            16 => vpx_int_pro_row_clamped_sse2_inner::<3>(
+                output.as_mut_ptr(),
+                reference.as_ptr(),
+                reference_stride,
+                frame_height,
+                base_y,
+                height,
+            ),
+            32 => vpx_int_pro_row_clamped_sse2_inner::<4>(
+                output.as_mut_ptr(),
+                reference.as_ptr(),
+                reference_stride,
+                frame_height,
+                base_y,
+                height,
+            ),
+            64 => vpx_int_pro_row_clamped_sse2_inner::<5>(
+                output.as_mut_ptr(),
+                reference.as_ptr(),
+                reference_stride,
+                frame_height,
+                base_y,
+                height,
+            ),
+            _ => unreachable!("validated projection height"),
+        }
+    }
+}
+
+#[target_feature(enable = "sse2")]
 unsafe fn sum_64_bytes_sse2(input: *const u8) -> i32 {
     let zero = _mm_setzero_si128();
     let mut sum = zero;
@@ -182,6 +387,118 @@ mod tests {
         fn byte(&mut self) -> u8 {
             self.0 = self.0.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
             (self.0 >> 24) as u8
+        }
+    }
+
+    fn row_projection_oracle(
+        reference: &[u8],
+        reference_stride: usize,
+        height: usize,
+    ) -> [i16; 16] {
+        let divisor = (height >> 1) as i32;
+        let mut output = [0i16; 16];
+        for (column, slot) in output.iter_mut().enumerate() {
+            let sum: i32 = (0..height)
+                .map(|row| i32::from(reference[row * reference_stride + column]))
+                .sum();
+            *slot = (sum / divisor) as i16;
+        }
+        output
+    }
+
+    #[test]
+    fn row_projection_sse2_matches_scalar_random_strides_and_unaligned_starts() {
+        let mut rng = Lcg32(0x1a7e_6a0b);
+        for height in [16, 32, 64] {
+            for jitter in 0..17 {
+                let stride = 16 + jitter;
+                for pattern in 0..18 {
+                    let mut input = vec![0u8; height * stride + 3];
+                    for (index, value) in input.iter_mut().enumerate() {
+                        *value = match pattern {
+                            0 => 0,
+                            1 => u8::MAX,
+                            _ => rng.byte(),
+                        };
+                        if pattern == 2 {
+                            *value = ((index * 37 + index / stride * 19) & 0xff) as u8;
+                        }
+                    }
+                    let reference = &input[3..];
+                    let expected = row_projection_oracle(reference, stride, height);
+                    let mut actual = [i16::MIN; 16];
+                    vpx_int_pro_row_sse2(&mut actual, reference, stride, height);
+                    assert_eq!(
+                        actual, expected,
+                        "height={height} stride={stride} pattern={pattern}"
+                    );
+                }
+            }
+        }
+    }
+
+    fn clamped_row_projection_oracle(
+        reference: &[u8],
+        reference_stride: usize,
+        frame_height: usize,
+        base_y: i32,
+        height: usize,
+    ) -> [i16; 16] {
+        let divisor = (height >> 1) as i32;
+        let mut output = [0i16; 16];
+        for (column, slot) in output.iter_mut().enumerate() {
+            let sum: i32 = (0..height)
+                .map(|row| {
+                    let y = (base_y + row as i32).clamp(0, frame_height as i32 - 1) as usize;
+                    i32::from(reference[y * reference_stride + column])
+                })
+                .sum();
+            *slot = (sum / divisor) as i16;
+        }
+        output
+    }
+
+    #[test]
+    fn clamped_row_projection_sse2_matches_scalar_edge_rows() {
+        let frame_height = 83;
+        let mut rng = Lcg32(0x6a0b_4d44);
+        for stride in [16, 17, 32, 104] {
+            for pattern in 0..4 {
+                let mut input = vec![0u8; frame_height * stride + 3];
+                for (index, value) in input.iter_mut().enumerate() {
+                    *value = match pattern {
+                        0 => 0,
+                        1 => u8::MAX,
+                        2 => ((index * 37 + index / stride * 19) & 0xff) as u8,
+                        _ => rng.byte(),
+                    };
+                }
+                let reference = &input[3..];
+                for height in [16, 32, 64] {
+                    for base_y in [-70, -3, 0, 31, 80, 100] {
+                        let expected = clamped_row_projection_oracle(
+                            reference,
+                            stride,
+                            frame_height,
+                            base_y,
+                            height,
+                        );
+                        let mut actual = [i16::MIN; 16];
+                        vpx_int_pro_row_clamped_sse2(
+                            &mut actual,
+                            reference,
+                            stride,
+                            frame_height,
+                            base_y,
+                            height,
+                        );
+                        assert_eq!(
+                            actual, expected,
+                            "stride={stride} pattern={pattern} height={height} base_y={base_y}"
+                        );
+                    }
+                }
+            }
         }
     }
 

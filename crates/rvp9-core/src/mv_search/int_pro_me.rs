@@ -129,6 +129,11 @@ fn vpx_int_pro_row(hbuf: &mut [i16], ref_plane: &[u8], ref_stride: usize, height
         crate::dsp::aarch64::vpx_int_pro_row_neon(hbuf, ref_plane, ref_stride, height);
         return;
     }
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    if matches!(height, 16 | 32 | 64) {
+        crate::dsp::x86_64::int_pro_sse2::vpx_int_pro_row_sse2(hbuf, ref_plane, ref_stride, height);
+        return;
+    }
 
     let norm_factor = (height >> 1) as i32;
     for idx in 0..16 {
@@ -205,6 +210,19 @@ fn int_pro_row_clamped(
     if left == 0 && right == 0 && !direct_y && matches!(height, 16 | 32 | 64) {
         let start = base_x as usize;
         crate::dsp::aarch64::vpx_int_pro_row_clamped_neon(
+            hbuf,
+            &plane.data[start..],
+            plane.stride,
+            plane.height,
+            base_y,
+            height,
+        );
+        return;
+    }
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    if left == 0 && right == 0 && !direct_y && matches!(height, 16 | 32 | 64) {
+        let start = base_x as usize;
+        crate::dsp::x86_64::int_pro_sse2::vpx_int_pro_row_clamped_sse2(
             hbuf,
             &plane.data[start..],
             plane.stride,
