@@ -99,12 +99,11 @@ unsafe fn convolve8_8(
     f23: __m128i,
     f45: __m128i,
     f67: __m128i,
+    m01: __m128i,
+    m23: __m128i,
+    m45: __m128i,
+    m67: __m128i,
 ) -> __m128i {
-    let m01 = _mm_setr_epi8(0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8);
-    let m23 = _mm_setr_epi8(2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10);
-    let m45 = _mm_setr_epi8(4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12);
-    let m67 = _mm_setr_epi8(6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13, 14);
-
     let x0 = _mm_maddubs_epi16(_mm_shuffle_epi8(s, m01), f01);
     let x1 = _mm_maddubs_epi16(_mm_shuffle_epi8(s, m23), f23);
     let x2 = _mm_maddubs_epi16(_mm_shuffle_epi8(s, m45), f45);
@@ -134,22 +133,11 @@ unsafe fn convolve8_8x2(
     f23: __m256i,
     f45: __m256i,
     f67: __m256i,
+    m01: __m256i,
+    m23: __m256i,
+    m45: __m256i,
+    m67: __m256i,
 ) -> __m256i {
-    // Shuffle masks replicated across both 128-bit lanes — the same
-    // four tap-pair gathers used by `convolve8_8`, broadcast.
-    let m01 = bcast_mask(_mm_setr_epi8(
-        0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8,
-    ));
-    let m23 = bcast_mask(_mm_setr_epi8(
-        2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10,
-    ));
-    let m45 = bcast_mask(_mm_setr_epi8(
-        4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12,
-    ));
-    let m67 = bcast_mask(_mm_setr_epi8(
-        6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13, 14,
-    ));
-
     let x0 = _mm256_maddubs_epi16(_mm256_shuffle_epi8(s, m01), f01);
     let x1 = _mm256_maddubs_epi16(_mm256_shuffle_epi8(s, m23), f23);
     let x2 = _mm256_maddubs_epi16(_mm256_shuffle_epi8(s, m45), f45);
@@ -190,8 +178,12 @@ unsafe fn store_row_8(
     f23: __m128i,
     f45: __m128i,
     f67: __m128i,
+    m01: __m128i,
+    m23: __m128i,
+    m45: __m128i,
+    m67: __m128i,
 ) {
-    let res16 = convolve8_8(s, f01, f23, f45, f67);
+    let res16 = convolve8_8(s, f01, f23, f45, f67, m01, m23, m45, m67);
     let res8 = _mm_packus_epi16(res16, res16);
     if remaining >= 8 {
         _mm_storel_epi64(dst_row.add(x) as *mut _, res8);
@@ -218,12 +210,18 @@ unsafe fn process_row(
     f23: __m128i,
     f45: __m128i,
     f67: __m128i,
+    m01: __m128i,
+    m23: __m128i,
+    m45: __m128i,
+    m67: __m128i,
 ) {
     let mut x = 0usize;
     while x < w {
         let s = _mm_loadu_si128(scratch_ptr.add(x) as *const _);
         let remaining = w - x;
-        store_row_8(dst_row, x, remaining, s, f01, f23, f45, f67);
+        store_row_8(
+            dst_row, x, remaining, s, f01, f23, f45, f67, m01, m23, m45, m67,
+        );
         x += 8;
     }
 }
@@ -295,6 +293,18 @@ unsafe fn convolve8_horiz_avx2_inner(
     let f45 = _mm256_castsi256_si128(f45_256);
     let f67 = _mm256_castsi256_si128(f67_256);
 
+    // These gathers are invariant across every output column and row. Build
+    // them once per kernel call instead of reconstructing four masks in each
+    // inlined output helper.
+    let m01 = _mm_setr_epi8(0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8);
+    let m23 = _mm_setr_epi8(2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10);
+    let m45 = _mm_setr_epi8(4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12);
+    let m67 = _mm_setr_epi8(6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13, 14);
+    let m01_256 = bcast_mask(m01);
+    let m23_256 = bcast_mask(m23);
+    let m45_256 = bcast_mask(m45);
+    let m67_256 = bcast_mask(m67);
+
     let src_ptr = src.as_ptr();
     let dst_ptr = dst.as_mut_ptr();
 
@@ -330,7 +340,9 @@ unsafe fn convolve8_horiz_avx2_inner(
             let s_b = _mm_loadu_si128(row_b.add(x) as *const _);
             let s = _mm256_inserti128_si256::<1>(_mm256_castsi128_si256(s_a), s_b);
 
-            let res16 = convolve8_8x2(s, f01_256, f23_256, f45_256, f67_256);
+            let res16 = convolve8_8x2(
+                s, f01_256, f23_256, f45_256, f67_256, m01_256, m23_256, m45_256, m67_256,
+            );
             // Pack 16-bit → 8-bit. `_mm256_packus_epi16(a, a)` packs
             // each 128-bit lane independently, so the low lane's 8
             // useful bytes land at positions 0..8 of the low lane and
@@ -373,7 +385,9 @@ unsafe fn convolve8_horiz_avx2_inner(
             let s_b = _mm_loadu_si128(scratch.as_ptr().add(x) as *const _);
             let s = _mm256_inserti128_si256::<1>(_mm256_castsi128_si256(s_a), s_b);
 
-            let res16 = convolve8_8x2(s, f01_256, f23_256, f45_256, f67_256);
+            let res16 = convolve8_8x2(
+                s, f01_256, f23_256, f45_256, f67_256, m01_256, m23_256, m45_256, m67_256,
+            );
             let res8 = _mm256_packus_epi16(res16, res16);
             let lo = _mm256_castsi256_si128(res8);
             let hi = _mm256_extracti128_si256::<1>(res8);
@@ -393,12 +407,24 @@ unsafe fn convolve8_horiz_avx2_inner(
         let dst_row = dst_ptr.add(y * dst_stride);
         if y < h - 1 {
             let row = src_ptr.add(y * src_stride);
-            process_row(row, dst_row, w, f01, f23, f45, f67);
+            process_row(row, dst_row, w, f01, f23, f45, f67, m01, m23, m45, m67);
         } else {
             let mut scratch = [0u8; 80];
             let base = y * src_stride;
             scratch[..w + 7].copy_from_slice(&src[base..base + w + 7]);
-            process_row(scratch.as_ptr(), dst_row, w, f01, f23, f45, f67);
+            process_row(
+                scratch.as_ptr(),
+                dst_row,
+                w,
+                f01,
+                f23,
+                f45,
+                f67,
+                m01,
+                m23,
+                m45,
+                m67,
+            );
         }
         y += 1;
     }
