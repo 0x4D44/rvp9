@@ -709,7 +709,7 @@ pub fn fdct16(input: &[i32; 16], output: &mut [i32; 16]) {
 ///
 /// Mirrors the body at `vp9/encoder/vp9_dct.c:120-232` and
 /// `vpx_dsp/fwd_txfm.c:245-352`.
-#[inline]
+#[inline(always)]
 fn fdct16_butterfly(in_half: &[i64; 8], step1: &[i64; 8], output: &mut [i32], base: usize) {
     // ---- Even outputs (indices 0, 2, 4, 6, 8, 10, 12, 14): fdct8 sub-block on in_half ----
     let s0 = in_half[0] + in_half[7];
