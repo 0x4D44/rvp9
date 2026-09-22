@@ -1,0 +1,9 @@
+source_commit=12ed1adf
+profile_protocol=20 serial encodes; 60 frames each; 1920x1080@30; CPU-used 6; CBR 1260 kb/s; one thread; tile-columns 0; AQ0; noise 0; lag 0; KF60
+input_sha256=6d2d866613f7a8c7b11bd2c27374f7637cd4a0748ff6fea4a671b23cfbcde6d7
+source_archive_sha256=cd30128b174775ed41873c2c10acdef07fed2cf56a8ed641235c16584ff61191
+binary_sha256=0263f40c5bdd51ec6bfccb45861d2c685e952bbfd79e4497b3610437e44de70f
+output_ivf_sha256=8d0458b89ca00cbfb96961e1c16e6018bf88b18790ea7e9d6eeb8c80bd659089
+profile_etl_sha256=841dabbac8e05a1a8e54e6fa9060bcfababb3fed3045d527f9c0d52a9464690b
+profile_symbol_report_sha256=a8c58cdff36b30cf0e21de349175dd1ed9079a480b77181c56201ab52b549484
+profile_symbol_samples=38993365
