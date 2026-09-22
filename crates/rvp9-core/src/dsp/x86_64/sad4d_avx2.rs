@@ -149,6 +149,35 @@ unsafe fn sad4d_avx2_inner<const W: usize, const H: usize>(
             }
         }
         16 => {
+            if H == 16 {
+                // Keep independent dependency chains for the even and odd
+                // rows. The four-reference kernel is hot for 16x16 blocks,
+                // and striping the rows exposes more ILP without changing
+                // any loads or the per-lane SAD arithmetic.
+                let mut even_acc = [_mm_setzero_si128(); 4];
+                let mut odd_acc = [_mm_setzero_si128(); 4];
+                for pair in 0..(H / 2) {
+                    let even_row = pair * 2;
+                    let odd_row = even_row + 1;
+                    let sv_even =
+                        _mm_loadu_si128(src_ptr.add(even_row * src_stride) as *const __m128i);
+                    let sv_odd =
+                        _mm_loadu_si128(src_ptr.add(odd_row * src_stride) as *const __m128i);
+                    for k in 0..4 {
+                        let rv_even =
+                            _mm_loadu_si128(rp[k].add(even_row * ref_stride) as *const __m128i);
+                        let rv_odd =
+                            _mm_loadu_si128(rp[k].add(odd_row * ref_stride) as *const __m128i);
+                        even_acc[k] = _mm_add_epi32(even_acc[k], _mm_sad_epu8(sv_even, rv_even));
+                        odd_acc[k] = _mm_add_epi32(odd_acc[k], _mm_sad_epu8(sv_odd, rv_odd));
+                    }
+                }
+                for k in 0..4 {
+                    out[k] = hsum128(_mm_add_epi32(even_acc[k], odd_acc[k]));
+                }
+                return;
+            }
+
             let mut acc = [_mm_setzero_si128(); 4];
             for r in 0..H {
                 let sv = _mm_loadu_si128(src_ptr.add(r * src_stride) as *const __m128i);
@@ -344,6 +373,53 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+
+    /// The 16x16 dependency-striped path must consume every distinct source
+    /// and reference row, including odd rows, with non-tight strides.
+    #[test]
+    fn differential_16x16_row_parity() {
+        require_avx2!();
+        const W: usize = 16;
+        const H: usize = 16;
+        let src_stride = 23;
+        let ref_stride = 29;
+        let src_len = (H - 1) * src_stride + W;
+        let ref_len = (H - 1) * ref_stride + W;
+        let src: Vec<u8> = (0..src_len)
+            .map(|index| {
+                let row = index / src_stride;
+                let col = index % src_stride;
+                (row * 37 + col * 11 + 5) as u8
+            })
+            .collect();
+        let refs_owned: Vec<Vec<u8>> = (0..4)
+            .map(|reference| {
+                (0..ref_len)
+                    .map(|index| {
+                        let row = index / ref_stride;
+                        let col = index % ref_stride;
+                        (reference * 53 + row * 19 + col * 7 + 13) as u8
+                    })
+                    .collect()
+            })
+            .collect();
+        let refs: [&[u8]; 4] = [
+            &refs_owned[0],
+            &refs_owned[1],
+            &refs_owned[2],
+            &refs_owned[3],
+        ];
+
+        let mut out = [0u32; 4];
+        vpx_sad16x16x4d_avx2(&src, src_stride, &refs, ref_stride, &mut out);
+        for k in 0..4 {
+            assert_eq!(
+                out[k],
+                scalar_sad(&src, src_stride, refs[k], ref_stride, W, H),
+                "AVX2 16x16 sad4d lane {k} != scalar SAD"
+            );
         }
     }
 
