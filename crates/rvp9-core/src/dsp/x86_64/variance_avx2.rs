@@ -207,7 +207,6 @@ unsafe fn var_sum_sse_inner(
 /// exact i32 ranges documented above.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
-#[inline]
 unsafe fn var_sum_sse_16x16_inner(
     src: &[u8],
     src_stride: usize,

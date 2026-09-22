@@ -1,0 +1,16 @@
+candidate_commit=59767dda
+control_commit=9e882a46
+protocol=1080p30; 60 frames; CPU-used 6; CBR 1260 kb/s; one thread; tile 0; AQ0; noise 0; warmup 1; pairs 5; rotations 2; max_load1 omitted
+ducks_take_off paired_ratio=0.998444998 test_ms_per_frame=36.904820 anchor_ms_per_frame=37.182613 sha256=8d0458b89ca00cbfb96961e1c16e6018bf88b18790ea7e9d6eeb8c80bd659089
+in_to_tree paired_ratio=0.989857257 test_ms_per_frame=19.433399 anchor_ms_per_frame=19.895466 sha256=5e3ce26ae1c1394d1e096502add7d87cc38559e7f86265004900580582641b41
+old_town_cross paired_ratio=1.018742064 test_ms_per_frame=19.450475 anchor_ms_per_frame=18.838523 sha256=4c5e8ffa47656109df76e05ac0165a0509366dd2453d06ea690f403fdd65027f
+corpus_separate_ratio=1.000323353
+corpus_paired_ratio=1.002275202
+load1_preflight=4.222434
+load1_rotation1_ducks_take_off=3.222181
+load1_rotation1_in_to_tree=2.531094
+load1_rotation1_old_town_cross=2.173024
+load1_rotation2_old_town_cross=2.799498
+load1_rotation2_in_to_tree=6.842356
+load1_rotation2_ducks_take_off=6.098745
+load1_complete=4.483508

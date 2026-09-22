@@ -1,0 +1,5 @@
+mutation=replace the single specialized-kernel line `let row2 = (r + 8) * src_stride;` with `let row2 = (r + 9) * src_stride;`
+command=cargo test --locked --release -p rvp9-core --lib dsp::x86_64::variance_avx2::tests::differential_random_all_sizes -- --exact --nocapture
+result=expected failure (exit 101)
+observation=assertion failed at w=16, h=16: AVX2/scalar (sum,sse) mismatch; left (1071, 2474939), right (664, 2755668)
+interpretation=the focused differential test detects a fixed-shape source-row regression, so the correctness oracle is effective for this candidate
