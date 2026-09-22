@@ -1,0 +1,7 @@
+candidate_commit=7d66bf08
+green_command=cargo test --locked --release -p rvp9-core --lib dsp::x86_64::sad4d_avx2 -- --nocapture
+green_result=5 passed, 0 failed on Crucible x86-64
+mutation=replace the single `let odd_row = even_row + 1;` with `let odd_row = even_row;` in an isolated candidate archive
+red_command=cargo test --locked --release -p rvp9-core --lib dsp::x86_64::sad4d_avx2::tests::differential_16x16_row_parity -- --exact --nocapture
+red_result=expected failure, exit 101; lane 0 candidate 19248 versus scalar SAD 20088
+local_aarch64=deltic timeout 300 cargo test --locked --release -p rvp9-core --lib dsp -- --nocapture; 88 passed
