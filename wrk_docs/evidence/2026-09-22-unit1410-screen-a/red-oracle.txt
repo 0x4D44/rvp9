@@ -1,0 +1,11 @@
+Unit 1410 AVX2 EOB oracle, Rust 1.95.0, Crucible x86-64
+
+Green candidate: cargo test --locked --release -p rvp9-core --lib dsp::x86_64::quantize_fp_avx2 -- --nocapture
+Result: 4 passed, 0 failed. The lead repeated this command on the exact committed candidate archive: 4 passed, 0 failed.
+
+Deliberate red mutation: replace _mm256_andnot_si256(zero_mask, positions) with _mm256_and_si256(zero_mask, positions), so zero coefficients contribute positions and nonzero coefficients do not.
+Focused oracle: iscan_eob_vector_fallback_is_exercised
+Observed failure reported by the scoped worker: Tx8x8 eob left 64, right 33.
+The mutation was removed before the committed candidate and all timing runs.
+
+Native AArch64 quantizer tests on the restored candidate: 52 passed, 0 failed.
