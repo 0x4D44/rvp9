@@ -12,11 +12,11 @@
 //! the encoder. Callers retain the scalar path for any non-standard order.
 
 use core::arch::x86_64::{
-    _mm_and_si128, _mm_loadu_si128, _mm_packus_epi32, _mm_set1_epi32, _mm_storeu_si128,
-    _mm256_add_epi32, _mm256_and_si256, _mm256_castsi256_si128, _mm256_cmpeq_epi32,
-    _mm256_cvtepi16_epi32, _mm256_extracti128_si256, _mm256_loadu_si256, _mm256_max_epi32,
-    _mm256_min_epi32, _mm256_mullo_epi32, _mm256_set1_epi32, _mm256_setzero_si256,
-    _mm256_slli_epi32, _mm256_srai_epi32, _mm256_storeu_si256, _mm256_sub_epi32, _mm256_xor_si256,
+    _mm_and_si128, _mm_packus_epi32, _mm_set1_epi32, _mm_storeu_si128, _mm256_add_epi32,
+    _mm256_andnot_si256, _mm256_castsi256_si128, _mm256_cmpeq_epi16, _mm256_extracti128_si256,
+    _mm256_loadu_si256, _mm256_max_epi16, _mm256_max_epi32, _mm256_min_epi32, _mm256_mullo_epi32,
+    _mm256_set1_epi32, _mm256_setzero_si256, _mm256_slli_epi32, _mm256_srai_epi32,
+    _mm256_storeu_si256, _mm256_sub_epi32, _mm256_xor_si256,
 };
 
 const INT16_MIN_I32: i32 = i16::MIN as i32;
@@ -56,16 +56,18 @@ unsafe fn eob_from_iscan(qcoeff: &[i16], n_coeffs: usize, iscan: &[i16]) -> u16 
     debug_assert!(iscan.len() >= n_coeffs);
 
     let zero = _mm256_setzero_si256();
-    let all_ones = _mm256_set1_epi32(-1);
+    // Standard iscan entries are one-based positions in [1, n_coeffs], and
+    // this helper only serves the supported 8x8/16x16 sizes (64 or 256).
     let mut max_position = zero;
-    for offset in (0..n_coeffs).step_by(8) {
-        let values = _mm256_cvtepi16_epi32(_mm_loadu_si128(qcoeff.as_ptr().add(offset).cast()));
-        let positions = _mm256_cvtepi16_epi32(_mm_loadu_si128(iscan.as_ptr().add(offset).cast()));
-        let nonzero = _mm256_xor_si256(_mm256_cmpeq_epi32(values, zero), all_ones);
-        max_position = _mm256_max_epi32(max_position, _mm256_and_si256(positions, nonzero));
+    for offset in (0..n_coeffs).step_by(16) {
+        let values = _mm256_loadu_si256(qcoeff.as_ptr().add(offset).cast());
+        let positions = _mm256_loadu_si256(iscan.as_ptr().add(offset).cast());
+        let zero_mask = _mm256_cmpeq_epi16(values, zero);
+        let nonzero_positions = _mm256_andnot_si256(zero_mask, positions);
+        max_position = _mm256_max_epi16(max_position, nonzero_positions);
     }
 
-    let mut lanes = [0i32; 8];
+    let mut lanes = [0i16; 16];
     _mm256_storeu_si256(lanes.as_mut_ptr().cast(), max_position);
     lanes.into_iter().max().unwrap_or(0) as u16
 }
