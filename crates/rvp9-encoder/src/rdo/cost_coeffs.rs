@@ -236,6 +236,29 @@ pub fn cost_coeffs(
         ) as u32;
     }
 
+    // With one emitted coefficient, the generic loop below prices only the
+    // DC token, then the band-1 EOB token. Keep that exact order and use
+    // saturating arithmetic so malformed callers see the same result.
+    if eob == 1 {
+        let dc_token = vp9_get_token(i32::from(qcoeff[scan[0] as usize]));
+        let dc_cost = token_cost(
+            costs, tx_size, plane_type, ref_type, 0, coeff_ctx, dc_token, false,
+        );
+        let eob_cost = token_cost(
+            costs,
+            tx_size,
+            plane_type,
+            ref_type,
+            1,
+            usize::from(dc_token != 0),
+            EOB_TOKEN,
+            false,
+        );
+        return dc_cost
+            .saturating_add(extra_bits_cost(dc_token))
+            .saturating_add(eob_cost);
+    }
+
     // libvpx `cost_coeffs` fast path (lines 388-417). The DC slot is
     // band 0 (`band_counts[t][0] = 1`); after the DC the walker
     // iterates `band_counts[t][1..]`.
@@ -629,6 +652,103 @@ mod tests {
             one_cost > zero_cost,
             "single-coeff cost ({one_cost}) must exceed all-zero cost ({zero_cost})",
         );
+    }
+
+    // Independent table-lookup oracle for the eob == 1 shape. This mirrors
+    // the generic path's two emissions without calling `cost_coeffs` or its
+    // token-cost wrapper, so the fast path cannot agree with itself.
+    fn direct_eob_one_cost(
+        qcoeff: &[i16],
+        scan: &[i16],
+        tx_size: TxSize,
+        plane_type: usize,
+        ref_type: usize,
+        coeff_ctx: usize,
+        costs: &CoefCostTable,
+    ) -> u32 {
+        let dc_token = vp9_get_token(i32::from(qcoeff[scan[0] as usize]));
+        let dc_cost = coef_token_cost(
+            costs,
+            CoefCostIndex {
+                tx_size: tx_size as usize,
+                plane_type,
+                ref_type,
+                band: 0,
+                ctx: coeff_ctx,
+                token: dc_token,
+                skip_eob: false,
+            },
+        ) as u32;
+        let eob_cost = coef_token_cost(
+            costs,
+            CoefCostIndex {
+                tx_size: tx_size as usize,
+                plane_type,
+                ref_type,
+                band: 1,
+                ctx: usize::from(dc_token != 0),
+                token: EOB_TOKEN,
+                skip_eob: false,
+            },
+        ) as u32;
+        dc_cost
+            .saturating_add(extra_bits_cost(dc_token))
+            .saturating_add(eob_cost)
+    }
+
+    #[test]
+    fn cost_coeffs_eob_one_matches_direct_reference_all_tx_sizes_and_tokens() {
+        // One representative positive and negative value for every token:
+        // ZERO, ONE, TWO, THREE, FOUR, CAT1..CAT6.
+        const VALUES: [i16; 22] = [
+            0, 1, -1, 2, -2, 3, -3, 4, -4, 5, -5, 7, -7, 11, -11, 19, -19, 35, -35, 67, -67, 100,
+        ];
+        let costs = build_coef_cost_table(&FrameContext::new_default());
+
+        for tx_size in [
+            TxSize::Tx4x4,
+            TxSize::Tx8x8,
+            TxSize::Tx16x16,
+            TxSize::Tx32x32,
+        ] {
+            let scan = scan_for(tx_size, TxType::DctDct);
+            let n = tx_size.n_coeffs();
+            for plane_type in 0..2 {
+                for ref_type in 0..2 {
+                    for coeff_ctx in 0..3 {
+                        for &value in &VALUES {
+                            // Non-DC values are deliberately non-zero: an
+                            // eob == 1 call must not inspect them.
+                            let mut qcoeff = vec![-100i16; n];
+                            qcoeff[scan.scan()[0] as usize] = value;
+                            let actual = cost_coeffs(
+                                &qcoeff,
+                                scan.scan(),
+                                1,
+                                tx_size,
+                                plane_type,
+                                ref_type,
+                                coeff_ctx,
+                                &costs,
+                            );
+                            let expected = direct_eob_one_cost(
+                                &qcoeff,
+                                scan.scan(),
+                                tx_size,
+                                plane_type,
+                                ref_type,
+                                coeff_ctx,
+                                &costs,
+                            );
+                            assert_eq!(
+                                actual, expected,
+                                "eob=1 mismatch for {tx_size:?}, plane={plane_type}, ref={ref_type}, ctx={coeff_ctx}, value={value}",
+                            );
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// Regression for the first exact CPU7 keyframe 4x4 RD mismatch found on

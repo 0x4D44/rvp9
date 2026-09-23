@@ -1,0 +1,61 @@
+rvp9 encode-headtohead manifest schema=1
+argv=["D:\\worktrees\\rvp9-2\\acceptance-d639c265\\target\\release\\encode-headtohead.exe", "--anchor-encoder", "D:\\worktrees\\rvp9-2\\unit1412-profile-run\\rvp9enc.exe", "--test-encoder", "D:\\worktrees\\rvp9-2\\20260923-TSK-HUM-selector-eob-diagnostic\\.scratch\\target\\release\\rvp9enc.exe", "--anchor-kind", "vpxenc", "--test-kind", "vpxenc", "--anchor-revision", "3976a03a", "--test-revision", "unit1414-eob1", "--clip", "ducks_take_off=D:\\worktrees\\rvp9-2\\acceptance-d639c265\\target\\encoder-pgo\\inputs\\ducks_take_off_420_1080p30_60f.y4m", "--clip", "in_to_tree=D:\\worktrees\\rvp9-2\\acceptance-d639c265\\target\\encoder-pgo\\inputs\\in_to_tree_420_1080p30_60f.y4m", "--clip", "old_town_cross=D:\\worktrees\\rvp9-2\\acceptance-d639c265\\target\\encoder-pgo\\inputs\\old_town_cross_420_1080p30_60f.y4m", "--work-dir", "D:\\worktrees\\rvp9-2\\20260923-TSK-HUM-selector-eob-diagnostic\\.scratch\\screen-b", "--cpu-used", "6", "--target-bitrate", "1260", "--end-usage", "cbr", "--fps", "30/1", "--threads", "1", "--tile-columns", "0", "--aq-mode", "0", "--noise-sensitivity", "0", "--limit", "60", "--keyframe-interval", "60", "--warmups", "1", "--pairs", "5", "--rotations", "4", "--max-ratio", "1.05"]
+git_commit=unavailable
+host=unavailable
+rustc=rustc 1.95.0 (59807616e 2026-04-14)
+available_parallelism=32
+anchor_encoder=D:\worktrees\rvp9-2\unit1412-profile-run\rvp9enc.exe
+anchor_kind=vpxenc
+anchor_revision=3976a03a
+anchor_sha256=adf2da0757c6d9a9f1f37f028159f476ddd5c3055629eb254b2490634935d677
+anchor_extra_args=[]
+test_encoder=D:\worktrees\rvp9-2\20260923-TSK-HUM-selector-eob-diagnostic\.scratch\target\release\rvp9enc.exe
+test_kind=vpxenc
+test_revision=unit1414-eob1
+test_sha256=347409ce75d70d7ac088fe598f61f244cb70ad5f3c005b03535cb0c28a41e66b
+test_extra_args=[]
+cpu_used=6
+target_bitrate_kbps=1260
+end_usage=cbr
+fps=30/1
+threads=1
+tile_columns=0
+temporal_layers=None
+spatial_layers=None
+inter_layer_pred=0
+aq_mode=0
+noise_sensitivity=0
+limit=60
+keyframe_interval=60
+warmups=1 pairs=5 rotations=4
+ordering=even rotations reverse clips; every pair alternates first arm
+max_ratio=1.050000000 max_load1=None
+allow_anchor_hash_instability=false
+clip_ducks_take_off_path=D:\worktrees\rvp9-2\acceptance-d639c265\target\encoder-pgo\inputs\ducks_take_off_420_1080p30_60f.y4m
+clip_ducks_take_off_sha256=6d2d866613f7a8c7b11bd2c27374f7637cd4a0748ff6fea4a671b23cfbcde6d7
+clip_ducks_take_off_video=1920x1080@30/1
+clip_in_to_tree_path=D:\worktrees\rvp9-2\acceptance-d639c265\target\encoder-pgo\inputs\in_to_tree_420_1080p30_60f.y4m
+clip_in_to_tree_sha256=ead3aef191242b03cc6019f0527c71bc3d11e856ba4f9f92b926fe804582f791
+clip_in_to_tree_video=1920x1080@30/1
+clip_old_town_cross_path=D:\worktrees\rvp9-2\acceptance-d639c265\target\encoder-pgo\inputs\old_town_cross_420_1080p30_60f.y4m
+clip_old_town_cross_sha256=b738b8068d1200f8a3119c72f1edc844424d3fe96d8b28acb9af11497ed7c909
+clip_old_town_cross_video=1920x1080@30/1
+anchor_command="D:\\worktrees\\rvp9-2\\unit1412-profile-run\\rvp9enc.exe" "--codec=vp9" "--passes=1" "--rt" "--cpu-used=6" "--end-usage=cbr" "--target-bitrate=1260" "--fps=30/1" "--threads=1" "--tile-columns=0" "--lag-in-frames=0" "--tune-content=default" "--aq-mode=0" "--noise-sensitivity=0" "--limit=60" "--kf-max-dist=60" "--quiet" "--ivf" "-o" "<OUTPUT>" "D:\\worktrees\\rvp9-2\\acceptance-d639c265\\target\\encoder-pgo\\inputs\\ducks_take_off_420_1080p30_60f.y4m"
+test_command="D:\\worktrees\\rvp9-2\\20260923-TSK-HUM-selector-eob-diagnostic\\.scratch\\target\\release\\rvp9enc.exe" "--codec=vp9" "--passes=1" "--rt" "--cpu-used=6" "--end-usage=cbr" "--target-bitrate=1260" "--fps=30/1" "--threads=1" "--tile-columns=0" "--lag-in-frames=0" "--tune-content=default" "--aq-mode=0" "--noise-sensitivity=0" "--limit=60" "--kf-max-dist=60" "--quiet" "--ivf" "-o" "<OUTPUT>" "D:\\worktrees\\rvp9-2\\acceptance-d639c265\\target\\encoder-pgo\\inputs\\ducks_take_off_420_1080p30_60f.y4m"
+host_load_metric=windows_60s_mean_busy_logical_cores
+load1_preflight=16.431178
+load1_rotation1_ducks_take_off=13.248929
+load1_rotation1_in_to_tree=18.759773
+load1_rotation1_old_town_cross=14.570843
+load1_rotation2_old_town_cross=21.891045
+load1_rotation2_in_to_tree=14.627859
+load1_rotation2_ducks_take_off=13.365617
+load1_rotation3_ducks_take_off=9.365098
+load1_rotation3_in_to_tree=15.770796
+load1_rotation3_old_town_cross=15.480301
+load1_rotation4_old_town_cross=22.067240
+load1_rotation4_in_to_tree=14.106879
+load1_rotation4_ducks_take_off=17.108434
+load1_complete=15.204438
+corpus_separate_ratio=0.988746893
+corpus_paired_ratio=0.980597271
