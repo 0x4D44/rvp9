@@ -1,0 +1,9 @@
+Unit 1415 candidate diff archive
+source=crates/rvp9-core/src/mv_search/full_pixel.rs
+base_commit=5e8426acab3e3a89e7afd7906e6f4090d23c397e
+base_blob=b643f0e113a8f608cbc6caba4e09b84cd9700078
+raw_diff_bytes=11168
+raw_diff_sha256=c46f059d4a4d277120c0c73c672617136f2e1ae0580af07e0a1f93bf2dcde77d
+compressed_patch=unit1415-full-pixel.diff.gz
+compressed_patch_bytes=3395
+compressed_patch_sha256=20aa821410db1ddaee0ad225adcd02c06471096c5de11caf9cf36a4d3a199c3f
