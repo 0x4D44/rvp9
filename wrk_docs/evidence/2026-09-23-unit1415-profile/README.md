@@ -45,3 +45,22 @@ and measured 1.023270 paired: Ducks 1.057438, in-to-tree 1.008883,
 old-town-cross 1.004327. Both screens therefore favour the control. Their
 complete raw rows, summaries, and manifests are adjacent to this file.
 The candidate is rejected; the source change will not land.
+
+## Fresh pinned-libvpx comparison
+
+The unchanged integrated control was compared with the pinned libvpx
+`12f3a2ac603e8f10742105519e0cd03c3b8f71dd` build (vpxenc SHA-256
+`88ba702de16af47327490a7d016002fd05169e074c6c6657b9e9ff7a8d4a135d`).
+The same three clips and operating point used one warmup, three pairs, and
+two clip-order rotations. Every arm produced one stable output hash per clip.
+The paired RVP9/libvpx ratios were 1.352682 for Ducks, 1.225778 for
+in-to-tree, and 1.124863 for old-town-cross: 1.230937 for the equal-clip
+corpus. Full raw rows, summary, and manifest are `libvpx-*` beside this file.
+
+The 60-second host-load samples ranged from 4.12 to 16.78 busy logical cores
+of 32, with no load ceiling. The raw rows contain asymmetric stalls: one Ducks
+RVP9 encode took 7.81 seconds against a 1.71-second reference; an in-to-tree
+reference encode took 13.80 seconds; one old-town-cross RVP9 encode took
+4.02 seconds. The paired median is therefore directional rather than a
+precise trend estimate. It is close to Unit 1410's earlier 1.227734 ratio,
+and remains well above the 1.05 parity target.
