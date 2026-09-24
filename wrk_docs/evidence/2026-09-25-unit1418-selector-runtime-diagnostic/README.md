@@ -77,5 +77,35 @@ of those rows among TX4 transform, quantizer, `block_error`, `cost_coeffs`, or
 the loop. The 3.72% sampled callsite remains an unsplit attribution ceiling,
 not proof of duplicate selected-emission work.
 
-No source edit, output mismatch, or timing result beyond these diagnostic
-sums was found.
+The baseline profiling run made no source edit and had no output mismatch.
+The separate toggle below deliberately changes the encoded output.
+
+## TX4-off toggle follow-up
+
+Using the same feature executable (`6d695a341f671169372237a416e8104ca634bef8b9306cc1069df7f6a0da1334`)
+and protocol, I ran three distinct outputs with
+`RVP9_RT_EMIT_TX4=0 RVP9_EMIT_PROFILE=1 RVP9_RT_PROFILE=1`. The source parses
+the `=0` value as `Some(false)` and passes it to
+`realtime_tx4_candidate_enabled`; no source was changed. Raw files remain in
+the same `.scratch/unit1418-runs` directory:
+
+| Clip | Toggle IVF bytes | Toggle IVF SHA-256 | Toggle log SHA-256 | Equal to baseline? |
+|---|---:|---|---|---|
+| Ducks | 527,906 | `b91073b1e51b8f1e8874f058f39e6061272376c6a6732f836ac2fb554cb605c4` | `2d4d69dffa278592af86bf52fca459e7e42fb658e82957e6a38fe454574354b1` | No |
+| In To Tree | 339,035 | `5f11acee3f6a99534cf491f02c52e851d727d7cb7b56f09cdb958a2eef0d5387` | `366d023f314922fb2af2fbbb59ad7bc1307f881b245ff5046cb3c9efd2e89b6c` | No |
+| Old Town | 350,068 | `5cda8037a64e9d9c74d81a7ed7d44f856ecc2b2e8d703543886b8b5693da850f` | `2d6242773f9812de5a08b5facd53a31a167827ea119870d95ebed1519fa2703f` | No |
+
+Each toggle log again has 59 `RT_PROFILE` and 59 `EMIT_PROFILE` records. The
+same-binary baseline versus toggle sums are:
+
+| Clip | Baseline RT → toggle RT (ms) | Baseline `tx_select` → toggle (ms) | Toggle `tx_select / RT` | First RT (ms) | First `tx_select` (ms) |
+|---|---:|---:|---:|---:|---:|
+| Ducks | 2,237.04 → 2,045.46 | 369.75 → 234.51 (−36.576%) | 11.465% | 22.21 → 21.03 | 3.79 → 2.81 |
+| In To Tree | 1,066.46 → 1,123.49 | 41.94 → 26.92 (−35.813%) | 2.396% | 9.13 → 8.29 | 0.38 → 0.29 |
+| Old Town | 1,084.74 → 976.18 | 43.83 → 24.38 (−44.376%) | 2.497% | 9.55 → 11.85 | 0.42 → 0.46 |
+
+The changed IVF hashes show that disabling TX4 changes encoded decisions, so
+this is only a directional TX4-off ceiling. Profiling branches perturb the
+timer values, and the output change removes exact-output and quality parity;
+the whole-encode RT differences are not speed claims or a recommendation for
+a code change.
