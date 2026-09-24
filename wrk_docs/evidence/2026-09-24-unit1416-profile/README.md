@@ -63,7 +63,15 @@ old-town-cross 0.994702; equal-clip corpus 0.998938. Load samples ranged
 from 1.67 to 6.69 busy logical cores of 32, with no ceiling.
 
 That approximately 0.1% apparent corpus gain is smaller than the
-between-pair variation and mixed across clips. It is *inconclusive*, not
-retained. The raw rows, summary, and manifest are `screen-a-*` beside this
-file. A second, larger paired screen is required before deciding whether
-the candidate belongs on trunk.
+between-pair variation and mixed across clips. Screen B repeated the same
+protocol with five pairs per clip. It measured Ducks 1.007265,
+in-to-tree 1.001365, and old-town-cross 0.999263; equal-clip corpus
+1.002625. Its load samples ranged from 0.81 to 2.18 busy logical cores.
+All IVF hashes again matched control and stayed stable. The two screens
+do not establish a speed gain, and the larger, quieter repeat favours the
+control. Reject the candidate.
+
+The raw rows, summaries, and manifests are `screen-a-*` and `screen-b-*`
+beside this file. The exact rejected source diff is archived as
+`unit1416-equal-stride.diff.gz`, with hashes in
+`unit1416-equal-stride-diff.sha256`. No candidate source change is retained.
