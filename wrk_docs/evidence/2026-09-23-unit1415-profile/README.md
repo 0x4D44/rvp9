@@ -14,8 +14,14 @@ values `a894a7a37b738aae11e3ab460a3ffcf4882aadf7885cb93b6f1dbccab54c6c70`,
 `6d2d866613f7a8c7b11bd2c27374f7637cd4a0748ff6fea4a671b23cfbcde6d7`,
 `bfc2c37e912699892a5a8f475d2bca8fe3e3d148d145f7605135b7e614b57dd4`,
 and `4d386dd9a577f7120fbbb0e3c8ffee05c54135c12d9b11a3cfd360521e8321b9`
-respectively. The matching artifacts remain under
+respectively. The matching artifacts were recorded under
 `D:\worktrees\rvp9-2\20260923-TSK-HUM-x86-unit1415-profile\.scratch\profile\`.
+
+Update, 2026-09-24: that Crucible profile directory is now absent. The hashes
+above still identify the measured run, but the ETL, PDB, and executable cannot
+currently be reprocessed for source-line attribution. The saved aggregate
+results below remain the available evidence; obtaining new exact IP attribution
+requires a fresh matched profile.
 
 The symbol report gives 1,503,616 weighted self samples to
 `sad4d_at_from_source` and 1,998,136 to its caller
