@@ -75,3 +75,23 @@ The raw rows, summaries, and manifests are `screen-a-*` and `screen-b-*`
 beside this file. The exact rejected source diff is archived as
 `unit1416-equal-stride.diff.gz`, with hashes in
 `unit1416-equal-stride-diff.sha256`. No candidate source change is retained.
+
+## Instruction-level follow-up
+
+The retained exact executable and PDB resolved all 183 unique RVAs and
+2,080 direct sample rows in the 16×16 SAD4D symbol. The archived
+`rvp9-cpu6-sad4d16x16_avx2-instruction-attribution.json` and
+`rvp9-cpu6-sad4d16x16_avx2-disassembly-with-bytes.txt` give the
+instruction mapping. The JSON was normalized to LF after transfer
+(SHA-256 `ba411738c774ee6bf6d94b3f6629f09a6f60d0df59af159eddff393df764062b`);
+the disassembly SHA-256 is
+`f8a93b567cccc93d165c11e28d2af50434becc90dc04ea995183bb2623d5be42`.
+
+Weighted direct rows were 726 (34.9%) in fused `vpsadbw` loads/arithmetic,
+674 (32.4%) in `vpaddd` reductions, 232 (11.2%) in address calculation,
+and 191 (9.2%) in standalone loads. No stack spill carried sampled
+weight. Callee-saved register traffic plus one argument reload accounted
+for at most 110 of 2,080 direct rows; even removing all of it would have
+an approximate 0.27% whole-encode sampled-weight ceiling. That is an
+upper bound, not a measured speedup, and does not justify a broader
+dispatch rewrite on this evidence alone.
