@@ -1,0 +1,16 @@
+weight,share_of_target,file,line
+429,0.3289877300613497,D:\worktrees\rvp9-2\20260924-TSK-HUM-fresh-x86-motion-search-attribution-unit\crates\rvp9-core\src\mv_search\full_pixel.rs,387
+364,0.2791411042944785,D:\worktrees\rvp9-2\20260924-TSK-HUM-fresh-x86-motion-search-attribution-unit\crates\rvp9-core\src\mv_search\full_pixel.rs,412
+127,0.09739263803680982,D:\worktrees\rvp9-2\20260924-TSK-HUM-fresh-x86-motion-search-attribution-unit\crates\rvp9-core\src\mv_search\full_pixel.rs,377
+85,0.0651840490797546,D:\worktrees\rvp9-2\20260924-TSK-HUM-fresh-x86-motion-search-attribution-unit\crates\rvp9-core\src\mv_search\full_pixel.rs,385
+84,0.06441717791411043,D:\worktrees\rvp9-2\20260924-TSK-HUM-fresh-x86-motion-search-attribution-unit\crates\rvp9-core\src\mv_search\full_pixel.rs,386
+57,0.04371165644171779,D:\worktrees\rvp9-2\20260924-TSK-HUM-fresh-x86-motion-search-attribution-unit\crates\rvp9-core\src\mv_search\full_pixel.rs,398
+53,0.040644171779141106,D:\worktrees\rvp9-2\20260924-TSK-HUM-fresh-x86-motion-search-attribution-unit\crates\rvp9-core\src\mv_search\full_pixel.rs,366
+29,0.02223926380368098,D:\worktrees\rvp9-2\20260924-TSK-HUM-fresh-x86-motion-search-attribution-unit\crates\rvp9-core\src\mv_search\full_pixel.rs,430
+29,0.02223926380368098,D:\worktrees\rvp9-2\20260924-TSK-HUM-fresh-x86-motion-search-attribution-unit\crates\rvp9-core\src\mv_search\full_pixel.rs,405
+18,0.013803680981595092,D:\worktrees\rvp9-2\20260924-TSK-HUM-fresh-x86-motion-search-attribution-unit\crates\rvp9-core\src\mv_search\full_pixel.rs,399
+15,0.011503067484662576,D:\worktrees\rvp9-2\20260924-TSK-HUM-fresh-x86-motion-search-attribution-unit\crates\rvp9-core\src\mv_search\full_pixel.rs,404
+6,0.004601226993865031,D:\worktrees\rvp9-2\20260924-TSK-HUM-fresh-x86-motion-search-attribution-unit\crates\rvp9-core\src\mv_search\full_pixel.rs,401
+5,0.003834355828220859,D:\worktrees\rvp9-2\20260924-TSK-HUM-fresh-x86-motion-search-attribution-unit\crates\rvp9-core\src\mv_search\full_pixel.rs,424
+2,0.0015337423312883436,D:\worktrees\rvp9-2\20260924-TSK-HUM-fresh-x86-motion-search-attribution-unit\crates\rvp9-core\src\mv_search\full_pixel.rs,413
+1,0.0007668711656441718,D:\worktrees\rvp9-2\20260924-TSK-HUM-fresh-x86-motion-search-attribution-unit\crates\rvp9-core\src\mv_search\full_pixel.rs,425

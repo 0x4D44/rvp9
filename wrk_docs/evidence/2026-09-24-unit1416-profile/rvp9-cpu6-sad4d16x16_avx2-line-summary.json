@@ -1,0 +1,223 @@
+{
+  "aggregate_csv_sha256": "E746919DB4CF409BB6DFC6167B03B19321E9B5F2ED099BF6C652E3D807C195D1",
+  "dbghelp_loaded_base": "0x7ff7bcd10000",
+  "direct_rows": 40989,
+  "direct_weight": 40989,
+  "etl_sha256": "E7E4C331F99DE00B532905E509F5C04B041BAF3DBB70D72535EE544A86E9C0A8",
+  "exe_sha256": "8D175C1BFFBA875F8381461A7BE447335AD8EC77847EF83BB07B965474B29F6E",
+  "function_report_rows": 20,
+  "function_report_unique_pids": 19,
+  "image_events_sha256": "AD18CD52A59D56BCA9F2B4D7D1DD7BFE2CED9FB0CB27000B83C2E75D73A8D746",
+  "input_sha256": "6D2D866613F7A8C7B11BD2C27374F7637CD4A0748FF6FEA4A671B23CFBCDE6D7",
+  "ivf_count": 20,
+  "ivf_sha256": "8D0458B89CA00CBFB96961E1C16E6018BF88B18790EA7E9D6EEB8C80BD659089",
+  "line_cache_entries": 635,
+  "mapped_csv_sha256": "6D8D0A903A11C36E5431F723A518BEE9EF5CC22CA0F8035062C55CCA9EA823AD",
+  "mapped_target_unique_ips": 183,
+  "missing_pid_rows": 0,
+  "module_bases": {
+    "11380": {
+      "base": "0x7ff7bcd10000",
+      "end": "0x7ff7bcee9000"
+    },
+    "20772": {
+      "base": "0x7ff7bcd10000",
+      "end": "0x7ff7bcee9000"
+    },
+    "24816": {
+      "base": "0x7ff7bcd10000",
+      "end": "0x7ff7bcee9000"
+    },
+    "30944": {
+      "base": "0x7ff7bcd10000",
+      "end": "0x7ff7bcee9000"
+    },
+    "32184": {
+      "base": "0x7ff7bcd10000",
+      "end": "0x7ff7bcee9000"
+    },
+    "36832": {
+      "base": "0x7ff7bcd10000",
+      "end": "0x7ff7bcee9000"
+    },
+    "37656": {
+      "base": "0x7ff7bcd10000",
+      "end": "0x7ff7bcee9000"
+    },
+    "39284": {
+      "base": "0x7ff7bcd10000",
+      "end": "0x7ff7bcee9000"
+    },
+    "42864": {
+      "base": "0x7ff7bcd10000",
+      "end": "0x7ff7bcee9000"
+    },
+    "43720": {
+      "base": "0x7ff7bcd10000",
+      "end": "0x7ff7bcee9000"
+    },
+    "46000": {
+      "base": "0x7ff7bcd10000",
+      "end": "0x7ff7bcee9000"
+    },
+    "48448": {
+      "base": "0x7ff7bcd10000",
+      "end": "0x7ff7bcee9000"
+    },
+    "492": {
+      "base": "0x7ff7bcd10000",
+      "end": "0x7ff7bcee9000"
+    },
+    "49944": {
+      "base": "0x7ff7bcd10000",
+      "end": "0x7ff7bcee9000"
+    },
+    "51340": {
+      "base": "0x7ff7bcd10000",
+      "end": "0x7ff7bcee9000"
+    },
+    "52936": {
+      "base": "0x7ff7bcd10000",
+      "end": "0x7ff7bcee9000"
+    },
+    "53644": {
+      "base": "0x7ff7bcd10000",
+      "end": "0x7ff7bcee9000"
+    },
+    "56204": {
+      "base": "0x7ff7bcd10000",
+      "end": "0x7ff7bcee9000"
+    },
+    "57304": {
+      "base": "0x7ff7bcd10000",
+      "end": "0x7ff7bcee9000"
+    }
+  },
+  "outside_module_rows": 0,
+  "outside_module_weight": 0,
+  "pdb_sha256": "5DCA6F9DCA6CBC1ECBF924B090231B5FD86A149F590DEC3985C3234D41014F2E",
+  "pid_count": 19,
+  "profile_encoder_weight": 40988965,
+  "profile_report_sha256": "967A5EA885D6212122767F1FA33F2FD80456968DCC1B46E55D686A835FF0CB58",
+  "profile_target_share_of_encoder_weight": 0.050745487230526555,
+  "profile_target_weight": 2080005,
+  "raw_image_event_exe_lines": 20,
+  "raw_image_event_unique_pids": 19,
+  "raw_ip_windows": [
+    "0..5000000",
+    "5000000..60000000"
+  ],
+  "sampled_sha256": "DBDAC3437818FADCA0C3065CCB9EB5D6A71289C0555F003D43869765221CB8B1",
+  "source_line_mapper": "DbgHelp SymGetLineFromAddr64 with exact copied executable/PDB",
+  "symbol_totals_top20": [
+    {
+      "symbol": "rvp9_encoder::pick_and_simulate_inter_encode_partitions::closure$10",
+      "weight": 5274
+    },
+    {
+      "symbol": "rvp9_core::dsp::x86_64::quantize_fp_avx2::vp9_quantize_fp_avx2_inner",
+      "weight": 2807
+    },
+    {
+      "symbol": "rvp9_core::dsp::x86_64::sad4d_avx2::vpx_sad16x16x4d_avx2",
+      "weight": 2080
+    },
+    {
+      "symbol": "rvp9_core::mode_decision::inter::pick_inter_mode_impl",
+      "weight": 1865
+    },
+    {
+      "symbol": "rvp9_core::mv_search::full_pixel::diamond_search_sad_from_step",
+      "weight": 1757
+    },
+    {
+      "symbol": "rvp9_core::transforms::forward::fdct16x16",
+      "weight": 1754
+    },
+    {
+      "symbol": "rvp9_core::dsp::x86_64::variance_avx2::var_sum_sse_16x16_inner",
+      "weight": 1720
+    },
+    {
+      "symbol": "rvp9_core::dsp::x86_64::subpel_variance_avx2::vpx_sub_pixel_variance16x16_avx2",
+      "weight": 1528
+    },
+    {
+      "symbol": "rvp9_core::transforms::forward::fdct8x8",
+      "weight": 1509
+    },
+    {
+      "symbol": "rvp9_core::mode_decision::inter::evaluate_candidate_with_slots",
+      "weight": 1450
+    },
+    {
+      "symbol": "rvp9_core::inter::mv_ref::find_realtime_refs_nearest_near_mvs_with_context<rvp9_encoder::InterPickerMiGridLookup,2>",
+      "weight": 1354
+    },
+    {
+      "symbol": "rvp9_core::quant::forward::vp9_quantize_fp_with_order",
+      "weight": 1339
+    },
+    {
+      "symbol": "rvp9_core::mv_search::full_pixel::sad4d_at_from_source",
+      "weight": 1304
+    },
+    {
+      "symbol": "rvp9_core::mode_decision::inter::run_newmv_search",
+      "weight": 1172
+    },
+    {
+      "symbol": "rvp9_core::mode_decision::inter::evaluate_candidate_for_filter_with_pred",
+      "weight": 1030
+    },
+    {
+      "symbol": "rvp9_core::mode_decision::model_rd::model_rd_for_sb_y",
+      "weight": 921
+    },
+    {
+      "symbol": "rvp9_core::inter::scale::build_inter_prediction_from_tight_plane",
+      "weight": 604
+    },
+    {
+      "symbol": "rvp9_core::dsp::x86_64::sad_avx2::vpx_sad16x16_avx2",
+      "weight": 592
+    },
+    {
+      "symbol": "rvp9_core::transforms::forward::fdct4x4",
+      "weight": 540
+    },
+    {
+      "symbol": "rvp9_core::mv_search::sub_pixel::try_subpel_cost",
+      "weight": 539
+    }
+  ],
+  "target": "sad4d16x16_avx2",
+  "target_lines": [
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260924-TSK-HUM-fresh-x86-motion-search-attribution-unit\\crates\\rvp9-core\\src\\dsp\\x86_64\\sad4d_avx2.rs",
+      "line": 229,
+      "weight": 1991
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260924-TSK-HUM-fresh-x86-motion-search-attribution-unit\\crates\\rvp9-core\\src\\dsp\\x86_64\\sad4d_avx2.rs",
+      "line": 217,
+      "weight": 65
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260924-TSK-HUM-fresh-x86-motion-search-attribution-unit\\crates\\rvp9-core\\src\\dsp\\x86_64\\sad4d_avx2.rs",
+      "line": 230,
+      "weight": 24
+    }
+  ],
+  "target_needle": "vpx_sad16x16x4d_avx2",
+  "target_rows": 2080,
+  "target_share_of_direct_weight": 0.0507453219156359,
+  "target_symbols": [
+    {
+      "symbol": "rvp9_core::dsp::x86_64::sad4d_avx2::vpx_sad16x16x4d_avx2",
+      "weight": 2080
+    }
+  ],
+  "target_unique_ips": 183,
+  "target_weight": 2080
+}

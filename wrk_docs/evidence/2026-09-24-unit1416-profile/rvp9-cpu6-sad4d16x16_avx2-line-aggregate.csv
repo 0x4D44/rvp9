@@ -1,0 +1,4 @@
+weight,share_of_target,file,line
+1991,0.9572115384615385,D:\worktrees\rvp9-2\20260924-TSK-HUM-fresh-x86-motion-search-attribution-unit\crates\rvp9-core\src\dsp\x86_64\sad4d_avx2.rs,229
+65,0.03125,D:\worktrees\rvp9-2\20260924-TSK-HUM-fresh-x86-motion-search-attribution-unit\crates\rvp9-core\src\dsp\x86_64\sad4d_avx2.rs,217
+24,0.011538461538461539,D:\worktrees\rvp9-2\20260924-TSK-HUM-fresh-x86-motion-search-attribution-unit\crates\rvp9-core\src\dsp\x86_64\sad4d_avx2.rs,230
