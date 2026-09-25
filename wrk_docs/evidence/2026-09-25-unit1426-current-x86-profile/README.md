@@ -74,3 +74,12 @@ after that attribution; then run differential tests with a deliberate red,
 both-architecture validation, and paired pinned-libvpx timing once the host
 can yield stable measurements. This unit claims no retained speedup and does
 not revise Unit 1422's provisional libvpx ratio.
+
+The bounded source-line follow-up stopped without an attribution result. The
+saved xperf reports expose function aggregates, not sampled instruction
+addresses. Reading the Unit 1426 ETLs through `Get-WinEvent` yielded opaque
+providerless events, so the Unit 1417 DbgHelp mapper had no per-IP input.
+No line counts can be inferred from the function percentages. A future
+capture or extractor must first preserve validated sampled-IP rows with
+the exact image base and PDB; the retained ETLs are still available in
+Crucible task scratch for a read-only extraction attempt.
