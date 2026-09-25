@@ -1,0 +1,3 @@
+clip,test_median,anchor_median,separate_ratio,paired_ratio,test_ms_per_frame,anchor_ms_per_frame,samples,test_sha256,anchor_sha256,test_distinct_hash_count,anchor_distinct_hash_count
+ducks_take_off,5.696653400,3.429965150,1.660848770,1.685294211,94.944223333,57.166085833,6,8d0458b89ca00cbfb96961e1c16e6018bf88b18790ea7e9d6eeb8c80bd659089,8d0458b89ca00cbfb96961e1c16e6018bf88b18790ea7e9d6eeb8c80bd659089,1,1
+corpus,,,1.660848770,1.685294211,,,,,,,
