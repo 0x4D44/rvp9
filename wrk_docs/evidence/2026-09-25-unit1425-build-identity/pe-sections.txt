@@ -1,0 +1,27 @@
+Method: PowerShell reads PE e_lfanew and COFF/optional headers with BitConverter, walks each IMAGE_SECTION_HEADER, and SHA-256 hashes exactly SizeOfRawData bytes from PointerToRawData. CodeView directory index 6 is mapped through section RVAs to extract the RSDS PDB path, GUID, and age; adjacent PDB files are separately hashed. This is read-only.
+Command: deltic timeout 120 powershell.exe -NoProfile -File D:\worktrees\rvp9-2\20260925-TSK-HUM@CRUCIBLE-unit1423-fresh-old-build-identity\.scratch\unit1423-screen\pe-sections.ps1 -OutputPath D:\worktrees\rvp9-2\20260925-TSK-HUM@CRUCIBLE-unit1423-fresh-old-build-identity\.scratch\unit1423-screen\pe-sections.txt
+section fields: name,rva,virtual_size,raw_offset,raw_size,characteristics,raw_sha256
+image=retained-old,path=D:\worktrees\rvp9-2\20260924-TSK-HUM-fresh-x86-motion-search-attribution-unit\.scratch\profile\rvp9enc.exe,size=1915904,sha256=8d175c1bffba875f8381461a7be447335ad8ec77847ef83bb07b965474b29f6e,machine=0x8664,coff_timestamp=1790286393
+pdb_path=rvp9enc.pdb,pdb_guid=acd1f197-ebcc-74bd-4c4c-44205044422e,pdb_age=1,pdb_sha256=5dca6f9dca6cbc1ecbf924b090231b5fd86a149f590dec3985c3234d41014f2e
+.text,0x00001000,1612726,0x00000400,1612800,0x60000020,330eb35734a45985a9ca24acc2dce7388fdb56abdbce7d6f3f107141603c7753
+.rdata,0x0018B000,232004,0x0018A000,232448,0x40000040,591858ef30bc667b288e8762c8543d8ca5bdec37529cd636706765744e5ab45b
+.data,0x001C4000,9840,0x001C2C00,1024,0xC0000040,a802c71388845a738222f6efba32c51ddbee7c678a97c18fba198d51a42a72d4
+.pdata,0x001C7000,15480,0x001C3000,15872,0x40000040,df084156dd96d0c510f190c886461999ffb34a3c105cd6066d22b905055b1dce
+.tls,0x001CB000,47265,0x001C6E00,47616,0xC0000040,42fb35943660eaf52afd6c40f8eca68739b47edfa922935b84b10c07b49725af
+.reloc,0x001D7000,5116,0x001D2800,5120,0x42000040,289cd908d4904ddbffc1b4934cca928d1ecd827299fd16fbbc3e00a98c3f6a9a
+image=fresh-old,path=D:\worktrees\rvp9-2\20260925-TSK-HUM@CRUCIBLE-unit1423-fresh-old-build-identity\.scratch\profile\release\rvp9enc.exe,size=1915904,sha256=1b7034b27c3d1267f6e3924d9cc3bd02ba54d4d54bcb2ee6e6a60233885c17ac,machine=0x8664,coff_timestamp=1790327527
+pdb_path=rvp9enc.pdb,pdb_guid=fa2571da-40b8-2d82-4c4c-44205044422e,pdb_age=1,pdb_sha256=8445d3d126f56d2d86bc192479cd7bb82fd0ec0924cafbfd65ce3ef6195e1048
+.text,0x00001000,1612726,0x00000400,1612800,0x60000020,330eb35734a45985a9ca24acc2dce7388fdb56abdbce7d6f3f107141603c7753
+.rdata,0x0018B000,232004,0x0018A000,232448,0x40000040,315b8ba90219213da64eeaea7db68aec4d0b1826a0a3f7b7e1bb3758290b2849
+.data,0x001C4000,9840,0x001C2C00,1024,0xC0000040,a802c71388845a738222f6efba32c51ddbee7c678a97c18fba198d51a42a72d4
+.pdata,0x001C7000,15480,0x001C3000,15872,0x40000040,df084156dd96d0c510f190c886461999ffb34a3c105cd6066d22b905055b1dce
+.tls,0x001CB000,47265,0x001C6E00,47616,0xC0000040,42fb35943660eaf52afd6c40f8eca68739b47edfa922935b84b10c07b49725af
+.reloc,0x001D7000,5116,0x001D2800,5120,0x42000040,289cd908d4904ddbffc1b4934cca928d1ecd827299fd16fbbc3e00a98c3f6a9a
+image=fresh-current,path=D:\worktrees\rvp9-2\20260925-TSK-HUM-unit1423-current-vs-control-x86-check\.scratch\profile\release\rvp9enc.exe,size=1918976,sha256=99dfdf7e38d8f34399dddd9fc96374f75e8a115d141c2eec8068b9dc7a5178e1,machine=0x8664,coff_timestamp=1790327739
+pdb_path=rvp9enc.pdb,pdb_guid=0ec32180-c79c-66d7-4c4c-44205044422e,pdb_age=1,pdb_sha256=bcc3b4bfeab47d9fdd5e7ceb84e0c99de74671fb85ec855a57ed0137486fcfcd
+.text,0x00001000,1612678,0x00000400,1612800,0x60000020,b77766890bc036b92db757becb04874799d1f66a185292e4d77ac83a953a77cd
+.rdata,0x0018B000,235284,0x0018A000,235520,0x40000040,599a98d17a7033e68ae1269def59641c9d70aa28eceaf8c97e2770684528712a
+.data,0x001C5000,9840,0x001C3800,1024,0xC0000040,7c075585fe62fa3712c6fcd8cdd70ae4f467aece7fc2b1e2d0305a469bfbb4ac
+.pdata,0x001C8000,15480,0x001C3C00,15872,0x40000040,4ca29c2a49988740afe2905262b1d374713ef05256c8883c51e0bb847cdf8d8b
+.tls,0x001CC000,47265,0x001C7A00,47616,0xC0000040,42fb35943660eaf52afd6c40f8eca68739b47edfa922935b84b10c07b49725af
+.reloc,0x001D8000,5092,0x001D3400,5120,0x42000040,720b522ec6f9f736aa6d353d4872f4c9ca2bb1fe572598563d48a4aa919b16f4

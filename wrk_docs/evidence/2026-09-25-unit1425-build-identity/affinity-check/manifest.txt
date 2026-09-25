@@ -1,0 +1,17 @@
+RVP9 pinned affinity diagnostic schema=1
+host=CRUCIBLE; Windows x86_64; AMD Ryzen 9 9950X3D; 32 logical processors
+old_source=5b6822c05c8d7ff3005902715d618f0ecbfbfd2c
+current_source=8759316a93e467c036d19a23e379fcc692f9f829
+old_encoder=D:\worktrees\rvp9-2\20260925-TSK-HUM@CRUCIBLE-unit1423-fresh-old-build-identity\.scratch\unit1423-screen\bin\fresh-old\rvp9enc.exe
+old_encoder_sha256=1b7034b27c3d1267f6e3924d9cc3bd02ba54d4d54bcb2ee6e6a60233885c17ac
+current_encoder=D:\worktrees\rvp9-2\20260925-TSK-HUM@CRUCIBLE-unit1423-fresh-old-build-identity\.scratch\unit1423-screen\bin\fresh-current\rvp9enc.exe
+current_encoder_sha256=99dfdf7e38d8f34399dddd9fc96374f75e8a115d141c2eec8068b9dc7a5178e1
+timing=Stopwatch starts immediately before ResumeThread; CreateProcess uses CREATE_SUSPENDED; SetProcessAffinityMask is set and verified before first instruction
+die0_mask=0x0000000000005555 (one SMT sibling from each of 8 cores)
+die1_mask=0x0000000055550000 (one SMT sibling from each of 8 cores)
+clips=3; limit=60; cpu-used=6; target-bitrate=1260; end-usage=cbr; fps=30/1; threads=1; tile-columns=0; aq-mode=0; noise-sensitivity=0; keyframe-interval=60
+warmups=1 per arm/clip/die; measured_pairs=4 per clip/die; pair order AB,BA,AB,BA; total_encoder_runs=60
+encoder_args=--codec=vp9 --passes=1 --rt --cpu-used=6 --end-usage=cbr --target-bitrate=1260 --fps=30/1 --threads=1 --tile-columns=0 --lag-in-frames=0 --tune-content=default --aq-mode=0 --noise-sensitivity=0 --limit=60 --kf-max-dist=60 --quiet --ivf -o <OUTPUT> <INPUT>
+clip_ducks_take_off_sha256=6d2d866613f7a8c7b11bd2c27374f7637cd4a0748ff6fea4a671b23cfbcde6d7
+clip_in_to_tree_sha256=ead3aef191242b03cc6019f0527c71bc3d11e856ba4f9f92b926fe804582f791
+clip_old_town_cross_sha256=b738b8068d1200f8a3119c72f1edc844424d3fe96d8b28acb9af11497ed7c909

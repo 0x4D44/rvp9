@@ -1,0 +1,35 @@
+Unit 1425 Crucible build-identity capture — 2026-09-25
+
+Host: Crucible, Windows x86_64, AMD Ryzen 9 9950X3D (16 cores / 32 logical processors).
+Toolchain: rustc 1.95.0 (59807616e 2026-04-14), host x86_64-pc-windows-msvc, LLVM 22.1.2.
+
+Sources:
+- Fresh old: 5b6822c05c8d7ff3005902715d618f0ecbfbfd2c
+- Fresh current: 8759316a93e467c036d19a23e379fcc692f9f829
+- The only shipped-source difference between these commits is crates/rvp9-core/src/transforms/forward_sse2.rs.
+
+Both fresh builds ran from clean isolated task worktrees with the same command and current toolchain/config:
+  CARGO_PROFILE_RELEASE_DEBUG=2 deltic timeout 900 cargo build --release -p rvp9-cli --bin rvp9enc --target-dir .scratch\profile -vv
+
+Effective rustc arguments observed in verbose build output:
+  -C opt-level=3 -C panic=abort -C lto=fat -C codegen-units=1 -C debuginfo=2 -C linker=rust-lld -C target-cpu=native
+
+The workspace release profile sets opt-level=3, fat LTO, one codegen unit, and panic=abort. `.cargo/config.toml` sets target-cpu=native. No PGO was used. The build environment had no RUSTFLAGS, CARGO_ENCODED_RUSTFLAGS, CARGO_TARGET_DIR, or CARGO_PROFILE_RELEASE_* overrides beyond CARGO_PROFILE_RELEASE_DEBUG=2.
+
+Encoder files used in the screens:
+- Retained old: D:\worktrees\rvp9-2\20260924-TSK-HUM-fresh-x86-motion-search-attribution-unit\.scratch\profile\rvp9enc.exe; 1,915,904 bytes; SHA256 8d175c1bffba875f8381461a7be447335ad8ec77847ef83bb07b965474b29f6e.
+- Fresh old: D:\worktrees\rvp9-2\20260925-TSK-HUM@CRUCIBLE-unit1423-fresh-old-build-identity\.scratch\profile\release\rvp9enc.exe; 1,915,904 bytes; SHA256 1b7034b27c3d1267f6e3924d9cc3bd02ba54d4d54bcb2ee6e6a60233885c17ac.
+- Fresh current: D:\worktrees\rvp9-2\20260925-TSK-HUM-unit1423-current-vs-control-x86-check\.scratch\profile\release\rvp9enc.exe; 1,918,976 bytes; SHA256 99dfdf7e38d8f34399dddd9fc96374f75e8a115d141c2eec8068b9dc7a5178e1.
+
+PE `.text` raw-section inspection:
+- Retained old and fresh old: virtual size 1,612,726; raw size 1,612,800; SHA256 330eb35734a45985a9ca24acc2dce7388fdb56abdbce7d6f3f107141603c7753 (identical machine-code section bytes).
+- Fresh current: virtual size 1,612,678; raw size 1,612,800; SHA256 b77766890bc036b92db757becb04874799d1f66a185292e4d77ac83a953a77cd.
+
+Embedded CodeView/PDB IDs (PDB sidecars are named rvp9enc.pdb):
+- Retained old: GUID acd1f197-ebcc-74bd-4c4c-44205044422e, age 1; PDB SHA256 5dca6f9dca6cbc1ecbf924b090231b5fd86a149f590dec3985c3234d41014f2e.
+- Fresh old: GUID fa2571da-40b8-2d82-4c4c-44205044422e, age 1; PDB SHA256 8445d3d126f56d2d86bc192479cd7bb82fd0ec0924cafbfd65ce3ef6195e1048.
+- Fresh current: GUID 0ec32180-c79c-66d7-4c4c-44205044422e, age 1; PDB SHA256 bcc3b4bfeab47d9fdd5e7ceb84e0c99de74671fb85ec855a57ed0137486fcfcd.
+
+Identity caveats: the fresh-current file does not match the previously retained current executable SHA256 e56466e554d816282b742f0c3805abb4f812968fd539324cf7e507ce1180528a, despite rebuilding its source commit with the current toolchain, flags, and historical output layout. The retained-old build's original effective flags are not recoverable from its binary alone. The old-vs-old screen's whole-file hashes differ while `.text` is identical; the timing screen was load-contaminated, so it does not establish an intrinsic speed difference.
+
+Paired screen manifests, raw rows, and summaries are in `fresh-old-vs-retained/` and `fresh-old-vs-current/` beside this file.

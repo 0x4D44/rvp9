@@ -1,0 +1,14 @@
+Fresh-old versus fresh-current, pre-start pinned affinity spot check
+
+The screen ran on Crucible on 2026-09-25 from 10:26:50Z to 10:29:11Z. It made 60 encoder runs: 12 warmups and 48 measured runs (24 paired old/current comparisons), with four AB/BA pairs per clip per die. The runner created each process suspended, set and verified its process affinity, then started the Stopwatch immediately before resuming it. Affinity masks selected one SMT sibling from each physical core on each die: 0x5555 and 0x55550000. See `manifest.txt` and `raw.csv` for commands, every elapsed time, PID, verified mask, output hash, and encoder hash.
+
+Pre/post aggregate load samples were 9.526% (3.048 busy logical cores) and 11.093% (3.550 busy logical cores). All 24 measured pairs produced identical old/current IVF SHA-256 hashes for their clip.
+
+Paired geometric current/old ratios by die and clip:
+
+| Die / mask | Ducks take off | In to tree | Old town cross |
+|---|---:|---:|---:|
+| die0 / 0x5555 | 1.4233574 | 0.4075575 | 1.0656045 |
+| die1 / 0x55550000 | 0.9078040 | 1.1361209 | 0.6800349 |
+
+These measurements do not support a causal speed claim. Ratios vary in direction by die and clip, and individual runs still show large isolated stalls despite low pre/post aggregate load. Examples include die0 `in_to_tree` old at 9.108s and 5.800s versus nearby runs near 1.15–1.24s; die0 `ducks_take_off` current at 7.009s versus nearby runs near 2.27–3.53s; and die1 `old_town_cross` old at 4.216s versus nearby runs near 1.14–1.36s. The 4-pair cells are too small to estimate a reliable performance difference under this observed variance.
