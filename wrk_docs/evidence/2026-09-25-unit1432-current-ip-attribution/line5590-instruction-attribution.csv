@@ -1,0 +1,61 @@
+rva,raw_count,preferred_vma,instruction_address,instruction_bytes,mnemonic,operands,category,exact_ip
+0x87a80,1,0x140087a80,0x140087a80,c5 e9 f9 d4,vpsubw,"xmm2,xmm2,xmm4",arithmetic,1
+0x87a84,2,0x140087a84,0x140087a84,62 e1 6d 08 d5 54 24,vpmullw,"xmm18,xmm2,XMMWORD PTR [rsp+0x390]",arithmetic,1
+0x87aab,1,0x140087aab,0x140087aab,62 b1 6d 00 69 d3,vpunpckhwd,"xmm2,xmm18,xmm19",arithmetic,1
+0x87ab1,1,0x140087ab1,0x140087ab1,c5 d1 fa d2,vpsubd,"xmm2,xmm5,xmm2",arithmetic,1
+0x87ab5,1,0x140087ab5,0x140087ab5,62 b1 6d 00 61 eb,vpunpcklwd,"xmm5,xmm18,xmm19",arithmetic,1
+0x87abf,1,0x140087abf,0x140087abf,c4 e2 79 1e da,vpabsd,"xmm3,xmm2",other,1
+0x87ac9,1,0x140087ac9,0x140087ac9,c5 f9 70 d3 f5,vpshufd,"xmm2,xmm3,0xf5",arithmetic,1
+0x87af0,2,0x140087af0,0x140087af0,62 e1 fd 08 6f 4c 44,vmovdqa64,"xmm17,XMMWORD PTR [rsp+rax*2+0x3a0]",load,1
+0x87b11,1,0x140087b11,0x140087b11,62 a2 7d 28 33 d2,vpmovzxwd,"ymm18,xmm18",other,1
+0x87b1d,2,0x140087b1d,0x140087b1d,62 a2 7e 28 33 d2,vpmovdw,"xmm18,ymm18",other,1
+0x87b29,1,0x140087b29,0x140087b29,62 a2 7d 08 33 ea,vpmovzxwd,"xmm21,xmm18",other,1
+0x87b3b,1,0x140087b3b,0x140087b3b,62 a1 7d 00 fe c2,vpaddd,"xmm16,xmm16,xmm18",arithmetic,1
+0x87b41,1,0x140087b41,0x140087b41,62 c1 5d 00 d5 e3,vpmullw,"xmm20,xmm20,xmm11",arithmetic,1
+0x87b4d,3,0x140087b4d,0x140087b4d,62 a1 75 00 61 eb,vpunpcklwd,"xmm21,xmm17,xmm19",arithmetic,1
+0x87b53,3,0x140087b53,0x140087b53,62 a1 75 00 69 cb,vpunpckhwd,"xmm17,xmm17,xmm19",arithmetic,1
+0x87b59,4,0x140087b59,0x140087b59,62 b1 6d 00 71 e4 0f,vpsraw,"xmm18,xmm20,0xf",arithmetic,1
+0x87b66,4,0x140087b66,0x140087b66,62 a1 5d 00 69 d2,vpunpckhwd,"xmm18,xmm20,xmm18",arithmetic,1
+0x87b6c,7,0x140087b6c,0x140087b6c,62 a1 55 00 fa ee,vpsubd,"xmm21,xmm21,xmm22",arithmetic,1
+0x87b72,5,0x140087b72,0x140087b72,62 a1 75 00 fa ca,vpsubd,"xmm17,xmm17,xmm18",arithmetic,1
+0x87b78,2,0x140087b78,0x140087b78,62 a2 7d 08 1e d5,vpabsd,"xmm18,xmm21",other,1
+0x87b7e,1,0x140087b7e,0x140087b7e,62 a2 7d 08 1e c9,vpabsd,"xmm17,xmm17",other,1
+0x87b84,4,0x140087b84,0x140087b84,62 a1 ed 00 f4 da,vpmuludq,"xmm19,xmm18,xmm18",arithmetic,1
+0x87b8a,12,0x140087b8a,0x140087b8a,62 a1 7d 08 70 d2 f5,vpshufd,"xmm18,xmm18,0xf5",arithmetic,1
+0x87b91,2,0x140087b91,0x140087b91,62 a1 ed 00 f4 d2,vpmuludq,"xmm18,xmm18,xmm18",arithmetic,1
+0x87b97,7,0x140087b97,0x140087b97,62 f1 e5 00 d4 ed,vpaddq,"xmm5,xmm19,xmm5",arithmetic,1
+0x87b9d,3,0x140087b9d,0x140087b9d,62 a1 f5 00 f4 d9,vpmuludq,"xmm19,xmm17,xmm17",arithmetic,1
+0x87ba3,1,0x140087ba3,0x140087ba3,62 a1 7d 08 70 c9 f5,vpshufd,"xmm17,xmm17,0xf5",arithmetic,1
+0x87bb0,1,0x140087bb0,0x140087bb0,62 f1 ed 00 d4 e4,vpaddq,"xmm4,xmm18,xmm4",arithmetic,1
+0x87bb6,2,0x140087bb6,0x140087bb6,62 f1 e5 00 d4 db,vpaddq,"xmm3,xmm19,xmm3",arithmetic,1
+0x87bbc,3,0x140087bbc,0x140087bbc,62 f1 f5 00 d4 d2,vpaddq,"xmm2,xmm17,xmm2",arithmetic,1
+0x87bc2,1,0x140087bc2,0x140087bc2,48 83 f8 37,cmp,"rax,0x37",compare/control,1
+0x87bc6,2,0x140087bc6,0x140087bc6,0f 87 31 0c 00 00,ja,0x1400887fd,branch,1
+0x87be5,4,0x140087be5,0x140087be5,62 a1 75 00 ee d2,vpmaxsw,"xmm18,xmm17,xmm18",other,1
+0x87beb,1,0x140087beb,0x140087beb,62 e1 6d 00 ed d0,vpaddsw,"xmm18,xmm18,xmm0",arithmetic,1
+0x87bfd,1,0x140087bfd,0x140087bfd,62 a2 7e 28 33 d2,vpmovdw,"xmm18,ymm18",other,1
+0x87c03,1,0x140087c03,0x140087c03,62 a1 e5 00 ef e2,vpxorq,"xmm20,xmm19,xmm18",arithmetic,1
+0x87c09,1,0x140087c09,0x140087c09,62 a2 7d 08 33 ea,vpmovzxwd,"xmm21,xmm18",other,1
+0x87c15,1,0x140087c15,0x140087c15,62 a1 5d 00 f9 e3,vpsubw,"xmm20,xmm20,xmm19",arithmetic,1
+0x87c1b,2,0x140087c1b,0x140087c1b,62 c1 5d 00 d5 e3,vpmullw,"xmm20,xmm20,xmm11",arithmetic,1
+0x87c21,1,0x140087c21,0x140087c21,62 a1 6d 00 fe d5,vpaddd,"xmm18,xmm18,xmm21",arithmetic,1
+0x87c27,2,0x140087c27,0x140087c27,62 a1 75 00 61 eb,vpunpcklwd,"xmm21,xmm17,xmm19",arithmetic,1
+0x87c2d,2,0x140087c2d,0x140087c2d,62 a1 75 00 69 cb,vpunpckhwd,"xmm17,xmm17,xmm19",arithmetic,1
+0x87c33,2,0x140087c33,0x140087c33,62 a1 7d 00 fe c2,vpaddd,"xmm16,xmm16,xmm18",arithmetic,1
+0x87c40,2,0x140087c40,0x140087c40,62 a1 5d 00 61 f2,vpunpcklwd,"xmm22,xmm20,xmm18",arithmetic,1
+0x87c46,6,0x140087c46,0x140087c46,62 a1 5d 00 69 d2,vpunpckhwd,"xmm18,xmm20,xmm18",arithmetic,1
+0x87c4c,8,0x140087c4c,0x140087c4c,62 a1 55 00 fa ee,vpsubd,"xmm21,xmm21,xmm22",arithmetic,1
+0x87c52,2,0x140087c52,0x140087c52,62 a1 75 00 fa ca,vpsubd,"xmm17,xmm17,xmm18",arithmetic,1
+0x87c58,1,0x140087c58,0x140087c58,62 a2 7d 08 1e d5,vpabsd,"xmm18,xmm21",other,1
+0x87c5e,3,0x140087c5e,0x140087c5e,62 a2 7d 08 1e c9,vpabsd,"xmm17,xmm17",other,1
+0x87c64,3,0x140087c64,0x140087c64,62 a1 ed 00 f4 da,vpmuludq,"xmm19,xmm18,xmm18",arithmetic,1
+0x87c6a,4,0x140087c6a,0x140087c6a,62 a1 7d 08 70 d2 f5,vpshufd,"xmm18,xmm18,0xf5",arithmetic,1
+0x87c71,1,0x140087c71,0x140087c71,62 a1 ed 00 f4 d2,vpmuludq,"xmm18,xmm18,xmm18",arithmetic,1
+0x87c77,2,0x140087c77,0x140087c77,62 f1 e5 00 d4 ed,vpaddq,"xmm5,xmm19,xmm5",arithmetic,1
+0x87c7d,1,0x140087c7d,0x140087c7d,62 a1 f5 00 f4 d9,vpmuludq,"xmm19,xmm17,xmm17",arithmetic,1
+0x87c83,2,0x140087c83,0x140087c83,62 a1 7d 08 70 c9 f5,vpshufd,"xmm17,xmm17,0xf5",arithmetic,1
+0x87c90,2,0x140087c90,0x140087c90,62 f1 ed 00 d4 e4,vpaddq,"xmm4,xmm18,xmm4",arithmetic,1
+0x87c9c,1,0x140087c9c,0x140087c9c,62 f1 f5 00 d4 d2,vpaddq,"xmm2,xmm17,xmm2",arithmetic,1
+0x88801,1,0x140088801,0x140088801,c5 f9 d4 c2,vpaddq,"xmm0,xmm0,xmm2",arithmetic,1
+0x88805,1,0x140088805,0x140088805,c5 f9 d4 c4,vpaddq,"xmm0,xmm0,xmm4",arithmetic,1
+0x88809,1,0x140088809,0x140088809,c5 f9 70 c8 ee,vpshufd,"xmm1,xmm0,0xee",arithmetic,1

@@ -44,3 +44,31 @@ The 238,589,788-byte full dumper output was deliberately not checked in;
 its SHA-256 was `7f1d8d7ee3219f3168c7d094e30741d39f5639f055e7e3a4c1806cf474cad73f`.
 The first attempt to stream-filter the older 1 GB Unit 1426 trace timed out
 with partial rows, so no old-trace line weights were accepted.
+
+## Bounded instruction attribution of `inter.rs:5590`
+
+Using only the saved IP map and the exact EXE/PDB, DbgHelp resolved the
+enclosing `reconstruct_via_round_trip` symbol at runtime address
+`0x00007ff66d535ad0`, size `0x3fae`. Its 77 line-5590 IP rows collapsed
+to 60 distinct instruction-start RVAs with 142 direct counts; all 142
+matched exact instruction starts in a bounded `objdump` of that symbol.
+I independently summed `line5590-instruction-attribution.csv`: 119 counts
+on packed arithmetic, 18 on other vector abs/conversion/max instructions,
+and only five on loads, compare, or branch. The dense RVA
+`0x87a80`–`0x87c9c` sequence contains `vpunpck*`, `vpsubd`, `vpabsd`,
+`vpmuludq`, and `vpaddq`, consistent with the inlined squared-error path
+in `MetricAccumulator::add`. This is opcode/source-pattern inference, not
+PDB proof of each inline frame; the PDB reports the enclosing source line.
+The sampled native binary used EVEX-encoded 128-bit instructions and
+extended XMM registers, so these counts do not predict AVX2-only codegen.
+
+The two small CSVs were transferred with SHA-256 values
+`56d0eb8e43161d7eb0fc1670751e6e672f28913727c02898a410f8b38375913e`
+and `3b60509d2151646d59d0a119636f389c099772d83752eb8072be8bbffc143066`.
+The checked-in LF-normalized RVA and instruction CSVs have SHA-256 values
+`d06603b512566ff506a6b52bd691b266902dfd29219663fe173e9d20a98c5b8a`
+and `7b7b499d78e4c54fdb891e0cb8b2942ff07aad5c3aef8fe45a21aa7d1fc7ef75`.
+The unchanged extraction script has SHA-256
+`8eff55f09924f46346a189596775f6770414c9f98b62bc6e0e7c54d59c5462fd` and names
+its original registered Crucible scratch and must be reparameterized to
+rerun after that scratch is removed; the archived tables are self-contained.
