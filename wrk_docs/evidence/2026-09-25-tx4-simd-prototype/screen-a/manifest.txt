@@ -1,0 +1,31 @@
+﻿experiment=TX4 SIMD candidate vs integrated e588d13f process-CPU A/B
+started_utc=2026-09-25T20:27:26.5766568Z
+runner_path=C:\Users\marti\AppData\Local\Temp\deltic-scratch\tx4-simd-cpu-screen-a-b2ebdea7\run-ab.ps1
+runner_sha256=a6b8d20f1c10bb3d376b738b0bcf0eacb71d2818f29f226d0023a60fb68461ae
+host=CRUCIBLE
+current_encoder=D:\worktrees\rvp9-2\20260925-TSK-CDX@CRUCIBLE-unit1421-cpu-profile\.scratch\target\release\rvp9enc.exe
+tx4_encoder=D:\worktrees\rvp9-2\20260925-TSK-HUM-validate-tx4-simd-batch\target\release\rvp9enc.exe
+tx4_encoder_source_sha256=ca90e6776960cfde5cdf5b8b6151fdaf5c586d83828cd763e360dbb08ff036bb
+tx4_core_source_sha256=6a4872d33775a875fa087ab1b7e58f2d809fe25a9fae0b5a63d5c97732d69bec
+tx4_avx2_source_sha256=28a31f0d5fd46e8ac25a21b16b27c3a91df98de3628ef7ec48bc8aa41bcc783b
+tx4_mod_source_sha256=352be584364eba12ffbf16c6511a109d068a24c4aacd34f0e383a5a1a15ad2bb
+tx4_base_commit=44a406ce
+inputs=D:\worktrees\rvp9-2\acceptance-d639c265\target\encoder-pgo\inputs\ducks_take_off_420_1080p30_60f.y4m;D:\worktrees\rvp9-2\acceptance-d639c265\target\encoder-pgo\inputs\in_to_tree_420_1080p30_60f.y4m;D:\worktrees\rvp9-2\acceptance-d639c265\target\encoder-pgo\inputs\old_town_cross_420_1080p30_60f.y4m
+settings=CPU6 CBR1260 fps30/1 threads1 tile0 AQ0 noise0 lag0 limit60 KF60
+warmups=one per arm per clip; measured_pairs=15 per clip; odd current/tx4, even tx4/current
+clip_order=odd pairs ducks/tree/town; even pairs town/tree/ducks; ratios=tx4 divided by current; all rows retained
+process_timeout_seconds=90
+total_timeout_seconds=1200
+host_counter=\Processor(_Total)\% Processor Time
+counter_preflight=15.48
+counter_enabled=True
+smoke_only=False
+identity_csv=C:\Users\marti\AppData\Local\Temp\deltic-scratch\tx4-simd-cpu-screen-a-b2ebdea7\identity.csv
+raw_csv=C:\Users\marti\AppData\Local\Temp\deltic-scratch\tx4-simd-cpu-screen-a-b2ebdea7\raw.csv
+load_csv=C:\Users\marti\AppData\Local\Temp\deltic-scratch\tx4-simd-cpu-screen-a-b2ebdea7\load.csv
+summary_csv=C:\Users\marti\AppData\Local\Temp\deltic-scratch\tx4-simd-cpu-screen-a-b2ebdea7\summary.csv
+output_stability_csv=C:\Users\marti\AppData\Local\Temp\deltic-scratch\tx4-simd-cpu-screen-a-b2ebdea7\output-stability.csv
+completed_utc=2026-09-25T20:30:43.9042447Z
+total_elapsed_seconds=197.323
+measured_rows=90
+warmup_rows=6
