@@ -1,0 +1,497 @@
+﻿{
+    "Unit":  "1427 screen A",
+    "RunnerSha256":  "1d877ac7041cb00c80e9c4ab7e826531c729984c3514ac44ac2f49f0ec2a4176",
+    "PostprocessSha256":  "65b24f9bb74b61097386e361c065457eaef811574f3b22d4de372137706bf10b",
+    "ControlExeSha256":  "c371d472690baba94dc1374b9ce4b65dddd3f3ac2381feca362efa25e55f0d98",
+    "ControlPdbSha256":  "a3995992a6eb0ce343fed14f01830737ce577b708dde8379d6913902c7ae67fc",
+    "CandidateExeSha256":  "3c595758037fc5d557ff3f8ce48288e9c92d7092d68171da715fe5869b10b4f2",
+    "CandidatePdbSha256":  "896a3f5bed8da4da62c4ca337ad6d40bd4f93f9c2fc2be5767b559742a7ae534",
+    "Inputs":  [
+                   {
+                       "Clip":  "ducks",
+                       "File":  "ducks_take_off_420_1080p30_60f.y4m",
+                       "Sha256":  "6d2d866613f7a8c7b11bd2c27374f7637cd4a0748ff6fea4a671b23cfbcde6d7"
+                   },
+                   {
+                       "Clip":  "tree",
+                       "File":  "in_to_tree_420_1080p30_60f.y4m",
+                       "Sha256":  "ead3aef191242b03cc6019f0527c71bc3d11e856ba4f9f92b926fe804582f791"
+                   },
+                   {
+                       "Clip":  "town",
+                       "File":  "old_town_cross_420_1080p30_60f.y4m",
+                       "Sha256":  "b738b8068d1200f8a3119c72f1edc844424d3fe96d8b28acb9af11497ed7c909"
+                   }
+               ],
+    "ExactArgv":  "--codec=vp9 --passes=1 --rt --cpu-used=6 --end-usage=cbr --target-bitrate=1260 --fps=30/1 --threads=1 --tile-columns=0 --lag-in-frames=0 --tune-content=default --aq-mode=0 --noise-sensitivity=0 --limit=60 --kf-max-dist=60 --quiet --ivf -o \u003cunique-output.ivf\u003e \u003ccanonical-input.y4m\u003e",
+    "WarmupOrder":  "ducks control,candidate; tree candidate,control; town control,candidate",
+    "PairOrderByRound":  [
+                             "forward AB",
+                             "forward BA",
+                             "forward AB",
+                             "forward BA",
+                             "reverse AB",
+                             "reverse BA",
+                             "reverse AB"
+                         ],
+    "ClipOrder":  "rounds 1-4: ducks, tree, town; rounds 5-7: town, tree, ducks",
+    "WarmupCount":  6,
+    "MeasuredRuns":  42,
+    "MeasuredPairs":  21,
+    "PrePostCounterStatus":  [
+                                 {
+                                     "Window":  "pre",
+                                     "Status":  "recorded 15 counter values"
+                                 },
+                                 {
+                                     "Window":  "post",
+                                     "Status":  "recorded 15 counter values"
+                                 }
+                             ],
+    "RunnerCounterStatusLines":  [
+
+                                 ],
+    "BackgroundSampler":  "not run per lead direction; pre/post counters only",
+    "WarmupsCsvSha256":  "eb88657ba23d13d1e772bf4976bd43d83760ca1b68a05d6b1a33c6d10a7cc6a5",
+    "MeasuredCsvSha256":  "5e420805f041e3b9db49b9874d95349f13ab00af7a449a883387f5bfe167511c",
+    "PairedRatiosCsvSha256":  "17a711c45e46cc19480178ef95b0ea7c2269090b049713d09a57fdb09fbabcc5",
+    "SummaryCsvSha256":  "cc5427d298130fda7b90667b5d845e231e61aebf343b8bfd9706df1c6555c875",
+    "CounterSamplesCsvSha256":  "b8632ad9d2957b91647137c0eaa8f3062208f25f56fdb77b9f571f1483d762a0",
+    "CounterSummaryCsvSha256":  "25dad6f25c54cee1bf2852d8e561ca0f7a27502b199b4d50ee9204b2323202eb",
+    "TranscriptSha256":  "36509a9d18e8667c27848fb4288fba77e2ed4ab6ac7fca40e5cf098f6ec0b775",
+    "OutputIdentities":  [
+                             {
+                                 "Phase":  "warmup",
+                                 "PairId":  "warmup-ducks",
+                                 "Clip":  "ducks",
+                                 "Arm":  "control",
+                                 "Bytes":  529682,
+                                 "Sha256":  "8d0458b89ca00cbfb96961e1c16e6018bf88b18790ea7e9d6eeb8c80bd659089",
+                                 "Path":  "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\unit1427-cpu-fast-19ad1e1f\\outputs-screen-a\\warmup-ducks-control.ivf"
+                             },
+                             {
+                                 "Phase":  "warmup",
+                                 "PairId":  "warmup-ducks",
+                                 "Clip":  "ducks",
+                                 "Arm":  "candidate",
+                                 "Bytes":  529682,
+                                 "Sha256":  "8d0458b89ca00cbfb96961e1c16e6018bf88b18790ea7e9d6eeb8c80bd659089",
+                                 "Path":  "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\unit1427-cpu-fast-19ad1e1f\\outputs-screen-a\\warmup-ducks-candidate.ivf"
+                             },
+                             {
+                                 "Phase":  "warmup",
+                                 "PairId":  "warmup-tree",
+                                 "Clip":  "tree",
+                                 "Arm":  "candidate",
+                                 "Bytes":  337194,
+                                 "Sha256":  "5e3ce26ae1c1394d1e096502add7d87cc38559e7f86265004900580582641b41",
+                                 "Path":  "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\unit1427-cpu-fast-19ad1e1f\\outputs-screen-a\\warmup-tree-candidate.ivf"
+                             },
+                             {
+                                 "Phase":  "warmup",
+                                 "PairId":  "warmup-tree",
+                                 "Clip":  "tree",
+                                 "Arm":  "control",
+                                 "Bytes":  337194,
+                                 "Sha256":  "5e3ce26ae1c1394d1e096502add7d87cc38559e7f86265004900580582641b41",
+                                 "Path":  "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\unit1427-cpu-fast-19ad1e1f\\outputs-screen-a\\warmup-tree-control.ivf"
+                             },
+                             {
+                                 "Phase":  "warmup",
+                                 "PairId":  "warmup-town",
+                                 "Clip":  "town",
+                                 "Arm":  "control",
+                                 "Bytes":  358110,
+                                 "Sha256":  "4c5e8ffa47656109df76e05ac0165a0509366dd2453d06ea690f403fdd65027f",
+                                 "Path":  "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\unit1427-cpu-fast-19ad1e1f\\outputs-screen-a\\warmup-town-control.ivf"
+                             },
+                             {
+                                 "Phase":  "warmup",
+                                 "PairId":  "warmup-town",
+                                 "Clip":  "town",
+                                 "Arm":  "candidate",
+                                 "Bytes":  358110,
+                                 "Sha256":  "4c5e8ffa47656109df76e05ac0165a0509366dd2453d06ea690f403fdd65027f",
+                                 "Path":  "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\unit1427-cpu-fast-19ad1e1f\\outputs-screen-a\\warmup-town-candidate.ivf"
+                             },
+                             {
+                                 "Phase":  "measured",
+                                 "PairId":  "ducks-p1",
+                                 "Clip":  "ducks",
+                                 "Arm":  "control",
+                                 "Bytes":  529682,
+                                 "Sha256":  "8d0458b89ca00cbfb96961e1c16e6018bf88b18790ea7e9d6eeb8c80bd659089",
+                                 "Path":  "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\unit1427-cpu-fast-19ad1e1f\\outputs-screen-a\\r01-forward-ducks-control.ivf"
+                             },
+                             {
+                                 "Phase":  "measured",
+                                 "PairId":  "ducks-p1",
+                                 "Clip":  "ducks",
+                                 "Arm":  "candidate",
+                                 "Bytes":  529682,
+                                 "Sha256":  "8d0458b89ca00cbfb96961e1c16e6018bf88b18790ea7e9d6eeb8c80bd659089",
+                                 "Path":  "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\unit1427-cpu-fast-19ad1e1f\\outputs-screen-a\\r01-forward-ducks-candidate.ivf"
+                             },
+                             {
+                                 "Phase":  "measured",
+                                 "PairId":  "tree-p1",
+                                 "Clip":  "tree",
+                                 "Arm":  "control",
+                                 "Bytes":  337194,
+                                 "Sha256":  "5e3ce26ae1c1394d1e096502add7d87cc38559e7f86265004900580582641b41",
+                                 "Path":  "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\unit1427-cpu-fast-19ad1e1f\\outputs-screen-a\\r01-forward-tree-control.ivf"
+                             },
+                             {
+                                 "Phase":  "measured",
+                                 "PairId":  "tree-p1",
+                                 "Clip":  "tree",
+                                 "Arm":  "candidate",
+                                 "Bytes":  337194,
+                                 "Sha256":  "5e3ce26ae1c1394d1e096502add7d87cc38559e7f86265004900580582641b41",
+                                 "Path":  "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\unit1427-cpu-fast-19ad1e1f\\outputs-screen-a\\r01-forward-tree-candidate.ivf"
+                             },
+                             {
+                                 "Phase":  "measured",
+                                 "PairId":  "town-p1",
+                                 "Clip":  "town",
+                                 "Arm":  "control",
+                                 "Bytes":  358110,
+                                 "Sha256":  "4c5e8ffa47656109df76e05ac0165a0509366dd2453d06ea690f403fdd65027f",
+                                 "Path":  "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\unit1427-cpu-fast-19ad1e1f\\outputs-screen-a\\r01-forward-town-control.ivf"
+                             },
+                             {
+                                 "Phase":  "measured",
+                                 "PairId":  "town-p1",
+                                 "Clip":  "town",
+                                 "Arm":  "candidate",
+                                 "Bytes":  358110,
+                                 "Sha256":  "4c5e8ffa47656109df76e05ac0165a0509366dd2453d06ea690f403fdd65027f",
+                                 "Path":  "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\unit1427-cpu-fast-19ad1e1f\\outputs-screen-a\\r01-forward-town-candidate.ivf"
+                             },
+                             {
+                                 "Phase":  "measured",
+                                 "PairId":  "ducks-p2",
+                                 "Clip":  "ducks",
+                                 "Arm":  "candidate",
+                                 "Bytes":  529682,
+                                 "Sha256":  "8d0458b89ca00cbfb96961e1c16e6018bf88b18790ea7e9d6eeb8c80bd659089",
+                                 "Path":  "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\unit1427-cpu-fast-19ad1e1f\\outputs-screen-a\\r02-forward-ducks-candidate.ivf"
+                             },
+                             {
+                                 "Phase":  "measured",
+                                 "PairId":  "ducks-p2",
+                                 "Clip":  "ducks",
+                                 "Arm":  "control",
+                                 "Bytes":  529682,
+                                 "Sha256":  "8d0458b89ca00cbfb96961e1c16e6018bf88b18790ea7e9d6eeb8c80bd659089",
+                                 "Path":  "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\unit1427-cpu-fast-19ad1e1f\\outputs-screen-a\\r02-forward-ducks-control.ivf"
+                             },
+                             {
+                                 "Phase":  "measured",
+                                 "PairId":  "tree-p2",
+                                 "Clip":  "tree",
+                                 "Arm":  "candidate",
+                                 "Bytes":  337194,
+                                 "Sha256":  "5e3ce26ae1c1394d1e096502add7d87cc38559e7f86265004900580582641b41",
+                                 "Path":  "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\unit1427-cpu-fast-19ad1e1f\\outputs-screen-a\\r02-forward-tree-candidate.ivf"
+                             },
+                             {
+                                 "Phase":  "measured",
+                                 "PairId":  "tree-p2",
+                                 "Clip":  "tree",
+                                 "Arm":  "control",
+                                 "Bytes":  337194,
+                                 "Sha256":  "5e3ce26ae1c1394d1e096502add7d87cc38559e7f86265004900580582641b41",
+                                 "Path":  "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\unit1427-cpu-fast-19ad1e1f\\outputs-screen-a\\r02-forward-tree-control.ivf"
+                             },
+                             {
+                                 "Phase":  "measured",
+                                 "PairId":  "town-p2",
+                                 "Clip":  "town",
+                                 "Arm":  "candidate",
+                                 "Bytes":  358110,
+                                 "Sha256":  "4c5e8ffa47656109df76e05ac0165a0509366dd2453d06ea690f403fdd65027f",
+                                 "Path":  "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\unit1427-cpu-fast-19ad1e1f\\outputs-screen-a\\r02-forward-town-candidate.ivf"
+                             },
+                             {
+                                 "Phase":  "measured",
+                                 "PairId":  "town-p2",
+                                 "Clip":  "town",
+                                 "Arm":  "control",
+                                 "Bytes":  358110,
+                                 "Sha256":  "4c5e8ffa47656109df76e05ac0165a0509366dd2453d06ea690f403fdd65027f",
+                                 "Path":  "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\unit1427-cpu-fast-19ad1e1f\\outputs-screen-a\\r02-forward-town-control.ivf"
+                             },
+                             {
+                                 "Phase":  "measured",
+                                 "PairId":  "ducks-p3",
+                                 "Clip":  "ducks",
+                                 "Arm":  "control",
+                                 "Bytes":  529682,
+                                 "Sha256":  "8d0458b89ca00cbfb96961e1c16e6018bf88b18790ea7e9d6eeb8c80bd659089",
+                                 "Path":  "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\unit1427-cpu-fast-19ad1e1f\\outputs-screen-a\\r03-forward-ducks-control.ivf"
+                             },
+                             {
+                                 "Phase":  "measured",
+                                 "PairId":  "ducks-p3",
+                                 "Clip":  "ducks",
+                                 "Arm":  "candidate",
+                                 "Bytes":  529682,
+                                 "Sha256":  "8d0458b89ca00cbfb96961e1c16e6018bf88b18790ea7e9d6eeb8c80bd659089",
+                                 "Path":  "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\unit1427-cpu-fast-19ad1e1f\\outputs-screen-a\\r03-forward-ducks-candidate.ivf"
+                             },
+                             {
+                                 "Phase":  "measured",
+                                 "PairId":  "tree-p3",
+                                 "Clip":  "tree",
+                                 "Arm":  "control",
+                                 "Bytes":  337194,
+                                 "Sha256":  "5e3ce26ae1c1394d1e096502add7d87cc38559e7f86265004900580582641b41",
+                                 "Path":  "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\unit1427-cpu-fast-19ad1e1f\\outputs-screen-a\\r03-forward-tree-control.ivf"
+                             },
+                             {
+                                 "Phase":  "measured",
+                                 "PairId":  "tree-p3",
+                                 "Clip":  "tree",
+                                 "Arm":  "candidate",
+                                 "Bytes":  337194,
+                                 "Sha256":  "5e3ce26ae1c1394d1e096502add7d87cc38559e7f86265004900580582641b41",
+                                 "Path":  "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\unit1427-cpu-fast-19ad1e1f\\outputs-screen-a\\r03-forward-tree-candidate.ivf"
+                             },
+                             {
+                                 "Phase":  "measured",
+                                 "PairId":  "town-p3",
+                                 "Clip":  "town",
+                                 "Arm":  "control",
+                                 "Bytes":  358110,
+                                 "Sha256":  "4c5e8ffa47656109df76e05ac0165a0509366dd2453d06ea690f403fdd65027f",
+                                 "Path":  "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\unit1427-cpu-fast-19ad1e1f\\outputs-screen-a\\r03-forward-town-control.ivf"
+                             },
+                             {
+                                 "Phase":  "measured",
+                                 "PairId":  "town-p3",
+                                 "Clip":  "town",
+                                 "Arm":  "candidate",
+                                 "Bytes":  358110,
+                                 "Sha256":  "4c5e8ffa47656109df76e05ac0165a0509366dd2453d06ea690f403fdd65027f",
+                                 "Path":  "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\unit1427-cpu-fast-19ad1e1f\\outputs-screen-a\\r03-forward-town-candidate.ivf"
+                             },
+                             {
+                                 "Phase":  "measured",
+                                 "PairId":  "ducks-p4",
+                                 "Clip":  "ducks",
+                                 "Arm":  "candidate",
+                                 "Bytes":  529682,
+                                 "Sha256":  "8d0458b89ca00cbfb96961e1c16e6018bf88b18790ea7e9d6eeb8c80bd659089",
+                                 "Path":  "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\unit1427-cpu-fast-19ad1e1f\\outputs-screen-a\\r04-forward-ducks-candidate.ivf"
+                             },
+                             {
+                                 "Phase":  "measured",
+                                 "PairId":  "ducks-p4",
+                                 "Clip":  "ducks",
+                                 "Arm":  "control",
+                                 "Bytes":  529682,
+                                 "Sha256":  "8d0458b89ca00cbfb96961e1c16e6018bf88b18790ea7e9d6eeb8c80bd659089",
+                                 "Path":  "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\unit1427-cpu-fast-19ad1e1f\\outputs-screen-a\\r04-forward-ducks-control.ivf"
+                             },
+                             {
+                                 "Phase":  "measured",
+                                 "PairId":  "tree-p4",
+                                 "Clip":  "tree",
+                                 "Arm":  "candidate",
+                                 "Bytes":  337194,
+                                 "Sha256":  "5e3ce26ae1c1394d1e096502add7d87cc38559e7f86265004900580582641b41",
+                                 "Path":  "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\unit1427-cpu-fast-19ad1e1f\\outputs-screen-a\\r04-forward-tree-candidate.ivf"
+                             },
+                             {
+                                 "Phase":  "measured",
+                                 "PairId":  "tree-p4",
+                                 "Clip":  "tree",
+                                 "Arm":  "control",
+                                 "Bytes":  337194,
+                                 "Sha256":  "5e3ce26ae1c1394d1e096502add7d87cc38559e7f86265004900580582641b41",
+                                 "Path":  "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\unit1427-cpu-fast-19ad1e1f\\outputs-screen-a\\r04-forward-tree-control.ivf"
+                             },
+                             {
+                                 "Phase":  "measured",
+                                 "PairId":  "town-p4",
+                                 "Clip":  "town",
+                                 "Arm":  "candidate",
+                                 "Bytes":  358110,
+                                 "Sha256":  "4c5e8ffa47656109df76e05ac0165a0509366dd2453d06ea690f403fdd65027f",
+                                 "Path":  "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\unit1427-cpu-fast-19ad1e1f\\outputs-screen-a\\r04-forward-town-candidate.ivf"
+                             },
+                             {
+                                 "Phase":  "measured",
+                                 "PairId":  "town-p4",
+                                 "Clip":  "town",
+                                 "Arm":  "control",
+                                 "Bytes":  358110,
+                                 "Sha256":  "4c5e8ffa47656109df76e05ac0165a0509366dd2453d06ea690f403fdd65027f",
+                                 "Path":  "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\unit1427-cpu-fast-19ad1e1f\\outputs-screen-a\\r04-forward-town-control.ivf"
+                             },
+                             {
+                                 "Phase":  "measured",
+                                 "PairId":  "town-p5",
+                                 "Clip":  "town",
+                                 "Arm":  "control",
+                                 "Bytes":  358110,
+                                 "Sha256":  "4c5e8ffa47656109df76e05ac0165a0509366dd2453d06ea690f403fdd65027f",
+                                 "Path":  "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\unit1427-cpu-fast-19ad1e1f\\outputs-screen-a\\r05-reverse-town-control.ivf"
+                             },
+                             {
+                                 "Phase":  "measured",
+                                 "PairId":  "town-p5",
+                                 "Clip":  "town",
+                                 "Arm":  "candidate",
+                                 "Bytes":  358110,
+                                 "Sha256":  "4c5e8ffa47656109df76e05ac0165a0509366dd2453d06ea690f403fdd65027f",
+                                 "Path":  "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\unit1427-cpu-fast-19ad1e1f\\outputs-screen-a\\r05-reverse-town-candidate.ivf"
+                             },
+                             {
+                                 "Phase":  "measured",
+                                 "PairId":  "tree-p5",
+                                 "Clip":  "tree",
+                                 "Arm":  "control",
+                                 "Bytes":  337194,
+                                 "Sha256":  "5e3ce26ae1c1394d1e096502add7d87cc38559e7f86265004900580582641b41",
+                                 "Path":  "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\unit1427-cpu-fast-19ad1e1f\\outputs-screen-a\\r05-reverse-tree-control.ivf"
+                             },
+                             {
+                                 "Phase":  "measured",
+                                 "PairId":  "tree-p5",
+                                 "Clip":  "tree",
+                                 "Arm":  "candidate",
+                                 "Bytes":  337194,
+                                 "Sha256":  "5e3ce26ae1c1394d1e096502add7d87cc38559e7f86265004900580582641b41",
+                                 "Path":  "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\unit1427-cpu-fast-19ad1e1f\\outputs-screen-a\\r05-reverse-tree-candidate.ivf"
+                             },
+                             {
+                                 "Phase":  "measured",
+                                 "PairId":  "ducks-p5",
+                                 "Clip":  "ducks",
+                                 "Arm":  "control",
+                                 "Bytes":  529682,
+                                 "Sha256":  "8d0458b89ca00cbfb96961e1c16e6018bf88b18790ea7e9d6eeb8c80bd659089",
+                                 "Path":  "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\unit1427-cpu-fast-19ad1e1f\\outputs-screen-a\\r05-reverse-ducks-control.ivf"
+                             },
+                             {
+                                 "Phase":  "measured",
+                                 "PairId":  "ducks-p5",
+                                 "Clip":  "ducks",
+                                 "Arm":  "candidate",
+                                 "Bytes":  529682,
+                                 "Sha256":  "8d0458b89ca00cbfb96961e1c16e6018bf88b18790ea7e9d6eeb8c80bd659089",
+                                 "Path":  "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\unit1427-cpu-fast-19ad1e1f\\outputs-screen-a\\r05-reverse-ducks-candidate.ivf"
+                             },
+                             {
+                                 "Phase":  "measured",
+                                 "PairId":  "town-p6",
+                                 "Clip":  "town",
+                                 "Arm":  "candidate",
+                                 "Bytes":  358110,
+                                 "Sha256":  "4c5e8ffa47656109df76e05ac0165a0509366dd2453d06ea690f403fdd65027f",
+                                 "Path":  "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\unit1427-cpu-fast-19ad1e1f\\outputs-screen-a\\r06-reverse-town-candidate.ivf"
+                             },
+                             {
+                                 "Phase":  "measured",
+                                 "PairId":  "town-p6",
+                                 "Clip":  "town",
+                                 "Arm":  "control",
+                                 "Bytes":  358110,
+                                 "Sha256":  "4c5e8ffa47656109df76e05ac0165a0509366dd2453d06ea690f403fdd65027f",
+                                 "Path":  "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\unit1427-cpu-fast-19ad1e1f\\outputs-screen-a\\r06-reverse-town-control.ivf"
+                             },
+                             {
+                                 "Phase":  "measured",
+                                 "PairId":  "tree-p6",
+                                 "Clip":  "tree",
+                                 "Arm":  "candidate",
+                                 "Bytes":  337194,
+                                 "Sha256":  "5e3ce26ae1c1394d1e096502add7d87cc38559e7f86265004900580582641b41",
+                                 "Path":  "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\unit1427-cpu-fast-19ad1e1f\\outputs-screen-a\\r06-reverse-tree-candidate.ivf"
+                             },
+                             {
+                                 "Phase":  "measured",
+                                 "PairId":  "tree-p6",
+                                 "Clip":  "tree",
+                                 "Arm":  "control",
+                                 "Bytes":  337194,
+                                 "Sha256":  "5e3ce26ae1c1394d1e096502add7d87cc38559e7f86265004900580582641b41",
+                                 "Path":  "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\unit1427-cpu-fast-19ad1e1f\\outputs-screen-a\\r06-reverse-tree-control.ivf"
+                             },
+                             {
+                                 "Phase":  "measured",
+                                 "PairId":  "ducks-p6",
+                                 "Clip":  "ducks",
+                                 "Arm":  "candidate",
+                                 "Bytes":  529682,
+                                 "Sha256":  "8d0458b89ca00cbfb96961e1c16e6018bf88b18790ea7e9d6eeb8c80bd659089",
+                                 "Path":  "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\unit1427-cpu-fast-19ad1e1f\\outputs-screen-a\\r06-reverse-ducks-candidate.ivf"
+                             },
+                             {
+                                 "Phase":  "measured",
+                                 "PairId":  "ducks-p6",
+                                 "Clip":  "ducks",
+                                 "Arm":  "control",
+                                 "Bytes":  529682,
+                                 "Sha256":  "8d0458b89ca00cbfb96961e1c16e6018bf88b18790ea7e9d6eeb8c80bd659089",
+                                 "Path":  "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\unit1427-cpu-fast-19ad1e1f\\outputs-screen-a\\r06-reverse-ducks-control.ivf"
+                             },
+                             {
+                                 "Phase":  "measured",
+                                 "PairId":  "town-p7",
+                                 "Clip":  "town",
+                                 "Arm":  "control",
+                                 "Bytes":  358110,
+                                 "Sha256":  "4c5e8ffa47656109df76e05ac0165a0509366dd2453d06ea690f403fdd65027f",
+                                 "Path":  "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\unit1427-cpu-fast-19ad1e1f\\outputs-screen-a\\r07-reverse-town-control.ivf"
+                             },
+                             {
+                                 "Phase":  "measured",
+                                 "PairId":  "town-p7",
+                                 "Clip":  "town",
+                                 "Arm":  "candidate",
+                                 "Bytes":  358110,
+                                 "Sha256":  "4c5e8ffa47656109df76e05ac0165a0509366dd2453d06ea690f403fdd65027f",
+                                 "Path":  "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\unit1427-cpu-fast-19ad1e1f\\outputs-screen-a\\r07-reverse-town-candidate.ivf"
+                             },
+                             {
+                                 "Phase":  "measured",
+                                 "PairId":  "tree-p7",
+                                 "Clip":  "tree",
+                                 "Arm":  "control",
+                                 "Bytes":  337194,
+                                 "Sha256":  "5e3ce26ae1c1394d1e096502add7d87cc38559e7f86265004900580582641b41",
+                                 "Path":  "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\unit1427-cpu-fast-19ad1e1f\\outputs-screen-a\\r07-reverse-tree-control.ivf"
+                             },
+                             {
+                                 "Phase":  "measured",
+                                 "PairId":  "tree-p7",
+                                 "Clip":  "tree",
+                                 "Arm":  "candidate",
+                                 "Bytes":  337194,
+                                 "Sha256":  "5e3ce26ae1c1394d1e096502add7d87cc38559e7f86265004900580582641b41",
+                                 "Path":  "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\unit1427-cpu-fast-19ad1e1f\\outputs-screen-a\\r07-reverse-tree-candidate.ivf"
+                             },
+                             {
+                                 "Phase":  "measured",
+                                 "PairId":  "ducks-p7",
+                                 "Clip":  "ducks",
+                                 "Arm":  "control",
+                                 "Bytes":  529682,
+                                 "Sha256":  "8d0458b89ca00cbfb96961e1c16e6018bf88b18790ea7e9d6eeb8c80bd659089",
+                                 "Path":  "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\unit1427-cpu-fast-19ad1e1f\\outputs-screen-a\\r07-reverse-ducks-control.ivf"
+                             },
+                             {
+                                 "Phase":  "measured",
+                                 "PairId":  "ducks-p7",
+                                 "Clip":  "ducks",
+                                 "Arm":  "candidate",
+                                 "Bytes":  529682,
+                                 "Sha256":  "8d0458b89ca00cbfb96961e1c16e6018bf88b18790ea7e9d6eeb8c80bd659089",
+                                 "Path":  "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\unit1427-cpu-fast-19ad1e1f\\outputs-screen-a\\r07-reverse-ducks-candidate.ivf"
+                             }
+                         ],
+    "Notes":  "The 48 encodes completed and each run row passed exact output checks. The original driver exited during post-run aggregation because it also emitted progress strings into the object return stream. This manifest derives from the intact raw CSVs; no encodes were repeated."
+}

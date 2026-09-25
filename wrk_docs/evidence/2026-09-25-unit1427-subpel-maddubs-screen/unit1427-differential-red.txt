@@ -1,0 +1,31 @@
+deltic :    Compiling rvp9-core v0.2.0-alpha.3
+(D:\worktrees\rvp9-2\20260925-TSK-CDX@CRUCIBLE-unit1427-x86-subpel-candidate-validation\crates\rvp9-core)
+At line:6 char:9
++ $null | deltic timeout 300 cargo test -p rvp9-core differential_horiz ...
++         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (   Compiling rv...ates\rvp9-core):String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+
+    Finished `test` profile [optimized + debuginfo] target(s) in 8.54s
+     Running unittests src\lib.rs (.scratch\target\debug\deps\rvp9_core-723784432df0dbbb.exe)
+
+running 1 test
+test dsp::x86_64::subpel_variance_avx2::tests::differential_horizontal_general_and_zero_yoffset_tight_strides ... FAILED
+
+failures:
+
+---- dsp::x86_64::subpel_variance_avx2::tests::differential_horizontal_general_and_zero_yoffset_tight_strides stdout ----
+
+thread 'dsp::x86_64::subpel_variance_avx2::tests::differential_horizontal_general_and_zero_yoffset_tight_strides' (10496) panicked at crates\rvp9-core\src\dsp\x86_64\subpel_variance_avx2.rs:723:21:
+assertion `left == right` failed: zero-y temp mismatch at w=4, h=4, xoff=0, src_stride=5
+  left: [223, 127, 216, 83, 239, 113, 252, 4, 189, 83, 214, 215, 88, 252, 174, 225]
+ right: [222, 127, 216, 83, 239, 113, 252, 4, 189, 83, 214, 215, 88, 252, 174, 225]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    dsp::x86_64::subpel_variance_avx2::tests::differential_horizontal_general_and_zero_yoffset_tight_strides
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2060 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p rvp9-core --lib`
