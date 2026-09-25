@@ -1,0 +1,26 @@
+﻿experiment=Unit1429 old 5b6822c0 vs current e588d13f process-CPU A/B
+started_utc=2026-09-25T15:49:10.6224230Z
+runner_path=C:\Users\marti\AppData\Local\Temp\deltic-scratch\u1429-cpu-ab-d2814479\run-ab.ps1
+runner_sha256=ceed28f5b69cd744d5400fd21e0eb2e8a71278f94a800a06e93586e4a3ae18e4
+host=CRUCIBLE
+old_encoder=D:\worktrees\rvp9-2\20260924-TSK-HUM-fresh-x86-motion-search-attribution-unit\.scratch\profile\rvp9enc.exe
+current_encoder=D:\worktrees\rvp9-2\20260925-TSK-CDX@CRUCIBLE-unit1421-cpu-profile\.scratch\target\release\rvp9enc.exe
+inputs=D:\worktrees\rvp9-2\acceptance-d639c265\target\encoder-pgo\inputs\ducks_take_off_420_1080p30_60f.y4m;D:\worktrees\rvp9-2\acceptance-d639c265\target\encoder-pgo\inputs\in_to_tree_420_1080p30_60f.y4m;D:\worktrees\rvp9-2\acceptance-d639c265\target\encoder-pgo\inputs\old_town_cross_420_1080p30_60f.y4m
+settings=CPU6 CBR1260 fps30/1 threads1 tile0 AQ0 noise0 lag0 limit60 KF60
+warmups=one per arm per clip; measured_pairs=15 per clip; odd old/current, even current/old
+clip_order=odd pairs ducks/tree/town; even pairs town/tree/ducks; ratios=current divided by old; all rows retained
+process_timeout_seconds=90
+total_timeout_seconds=1200
+host_counter=\Processor(_Total)\% Processor Time
+counter_preflight=15.46
+counter_enabled=True
+libvpx hashed for identity only; not executed
+identity_csv=C:\Users\marti\AppData\Local\Temp\deltic-scratch\u1429-cpu-ab-d2814479\identity.csv
+raw_csv=C:\Users\marti\AppData\Local\Temp\deltic-scratch\u1429-cpu-ab-d2814479\raw.csv
+load_csv=C:\Users\marti\AppData\Local\Temp\deltic-scratch\u1429-cpu-ab-d2814479\load.csv
+summary_csv=C:\Users\marti\AppData\Local\Temp\deltic-scratch\u1429-cpu-ab-d2814479\summary.csv
+output_stability_csv=C:\Users\marti\AppData\Local\Temp\deltic-scratch\u1429-cpu-ab-d2814479\output-stability.csv
+completed_utc=2026-09-25T15:51:56.1682901Z
+total_elapsed_seconds=165.543
+measured_rows=90
+warmup_rows=6
