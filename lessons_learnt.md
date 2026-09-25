@@ -5,6 +5,7 @@ Distilled, non-obvious gotchas future sessions need — dated one-liners.
 Durable project facts/conventions belong in `CLAUDE.md` / `AGENTS.md`, not here.
 Hard cap: 20 entries.
 
+- 2026-09-25: TX4 scalar 2×2 staging cost 2.9% on CPU6; batch the kernel (`lib.rs:prepare_inter_tx4_batch_region`).
 - 2026-09-25: PE SHA may differ while code matches; hash `.text` before blaming codegen (`pe-sections.txt:.text`).
 - 2026-09-25: Six-pair Crucible screens can lie; check raw pairs (`unit1420-quant16-screen/README.md:Performance`).
 - 2026-08-31: SSE2 8x8 grids need `psadbw` lane sums, not widened bytes plus scalar reduction (`vbp_sse2.rs`).

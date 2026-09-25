@@ -1,0 +1,28 @@
+﻿experiment=TX4 candidate vs integrated e588d13f process-CPU A/B
+started_utc=2026-09-25T18:10:06.7196328Z
+runner_path=C:\Users\marti\AppData\Local\Temp\deltic-scratch\tx4-cpu-screen-a-5a1850d6\tx4-run-ab.ps1
+runner_sha256=6a2d032cfc842d6d5833d3612512ee6ac0c880a42fad3e2d7c623c70e3b616b6
+host=CRUCIBLE
+current_encoder=D:\worktrees\rvp9-2\20260925-TSK-CDX@CRUCIBLE-unit1421-cpu-profile\.scratch\target\release\rvp9enc.exe
+tx4_encoder=D:\worktrees\rvp9-2\20260925-TSK-HUM-tx4-batch-crucible-validation\target\release\rvp9enc.exe
+tx4_source_lib_rs_sha256=beae5d05a910cff6c1a2573efa3612759b3eaf831b8897712455dfb583d73a6e
+tx4_base_origin_main=4718a4aa
+inputs=D:\worktrees\rvp9-2\acceptance-d639c265\target\encoder-pgo\inputs\ducks_take_off_420_1080p30_60f.y4m;D:\worktrees\rvp9-2\acceptance-d639c265\target\encoder-pgo\inputs\in_to_tree_420_1080p30_60f.y4m;D:\worktrees\rvp9-2\acceptance-d639c265\target\encoder-pgo\inputs\old_town_cross_420_1080p30_60f.y4m
+settings=CPU6 CBR1260 fps30/1 threads1 tile0 AQ0 noise0 lag0 limit60 KF60
+warmups=one per arm per clip; measured_pairs=15 per clip; odd current/tx4, even tx4/current
+clip_order=odd pairs ducks/tree/town; even pairs town/tree/ducks; ratios=tx4 divided by current; all rows retained
+process_timeout_seconds=90
+total_timeout_seconds=1200
+host_counter=\Processor(_Total)\% Processor Time
+counter_preflight=10
+counter_enabled=True
+smoke_only=False
+identity_csv=C:\Users\marti\AppData\Local\Temp\deltic-scratch\tx4-cpu-screen-a-5a1850d6\identity.csv
+raw_csv=C:\Users\marti\AppData\Local\Temp\deltic-scratch\tx4-cpu-screen-a-5a1850d6\raw.csv
+load_csv=C:\Users\marti\AppData\Local\Temp\deltic-scratch\tx4-cpu-screen-a-5a1850d6\load.csv
+summary_csv=C:\Users\marti\AppData\Local\Temp\deltic-scratch\tx4-cpu-screen-a-5a1850d6\summary.csv
+output_stability_csv=C:\Users\marti\AppData\Local\Temp\deltic-scratch\tx4-cpu-screen-a-5a1850d6\output-stability.csv
+completed_utc=2026-09-25T18:13:48.6289731Z
+total_elapsed_seconds=221.909
+measured_rows=90
+warmup_rows=6
