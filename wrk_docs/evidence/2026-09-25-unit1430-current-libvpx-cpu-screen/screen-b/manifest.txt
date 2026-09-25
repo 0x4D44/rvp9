@@ -1,0 +1,26 @@
+﻿experiment=Unit1430 current e588d13f vs pinned libvpx v1.14.1 process-CPU A/B
+started_utc=2026-09-25T16:14:27.8149281Z
+runner_path=C:\Users\marti\AppData\Local\Temp\deltic-scratch\u1431-cpu-ab-30815c9c\run-ab.ps1
+runner_sha256=adf6514686f544541129eccc9d5e33bffde5d20e071a1578f50add0d425bf72e
+host=CRUCIBLE
+current_encoder=D:\worktrees\rvp9-2\20260925-TSK-CDX@CRUCIBLE-unit1421-cpu-profile\.scratch\target\release\rvp9enc.exe
+pinned_libvpx=D:\worktrees\rvp9-2\acceptance-d639c265\build\libvpx\vpxenc.exe
+inputs=D:\worktrees\rvp9-2\acceptance-d639c265\target\encoder-pgo\inputs\ducks_take_off_420_1080p30_60f.y4m;D:\worktrees\rvp9-2\acceptance-d639c265\target\encoder-pgo\inputs\in_to_tree_420_1080p30_60f.y4m;D:\worktrees\rvp9-2\acceptance-d639c265\target\encoder-pgo\inputs\old_town_cross_420_1080p30_60f.y4m
+settings=CPU6 CBR1260 fps30/1 threads1 tile0 AQ0 noise0 lag0 limit60 KF60
+warmups=one per arm per clip; measured_pairs=15 per clip; odd current/libvpx, even libvpx/current
+clip_order=odd pairs ducks/tree/town; even pairs town/tree/ducks; ratios=current divided by libvpx; all rows retained
+process_timeout_seconds=90
+total_timeout_seconds=1200
+host_counter=\Processor(_Total)\% Processor Time
+counter_preflight=7.37
+counter_enabled=True
+smoke_only=False
+identity_csv=C:\Users\marti\AppData\Local\Temp\deltic-scratch\u1431-cpu-ab-30815c9c\identity.csv
+raw_csv=C:\Users\marti\AppData\Local\Temp\deltic-scratch\u1431-cpu-ab-30815c9c\raw.csv
+load_csv=C:\Users\marti\AppData\Local\Temp\deltic-scratch\u1431-cpu-ab-30815c9c\load.csv
+summary_csv=C:\Users\marti\AppData\Local\Temp\deltic-scratch\u1431-cpu-ab-30815c9c\summary.csv
+output_stability_csv=C:\Users\marti\AppData\Local\Temp\deltic-scratch\u1431-cpu-ab-30815c9c\output-stability.csv
+completed_utc=2026-09-25T16:17:07.0956180Z
+total_elapsed_seconds=159.278
+measured_rows=90
+warmup_rows=6
