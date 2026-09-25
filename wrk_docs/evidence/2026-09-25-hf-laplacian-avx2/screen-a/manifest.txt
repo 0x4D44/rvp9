@@ -1,0 +1,28 @@
+﻿experiment=LAPLACIAN candidate vs integrated e588d13f process-CPU A/B
+started_utc=2026-09-25T19:33:02.1691027Z
+runner_path=C:\Users\marti\AppData\Local\Temp\deltic-scratch\laplacian-avx2-cpu-screen-a-bb90a2db\laplacian-run-ab.ps1
+runner_sha256=6887581f341fbcdec240f6cbcddaf3b55fb68bc20bf904d77188f41e094e2fd6
+host=CRUCIBLE
+current_encoder=D:\worktrees\rvp9-2\20260925-TSK-CDX@CRUCIBLE-unit1421-cpu-profile\.scratch\target\release\rvp9enc.exe
+lap_encoder=D:\worktrees\rvp9-2\20260925-TSK-HUM-validate-hf-laplacian-avx2\target\release\rvp9enc.exe
+lap_source_sha256=505489f04fea3c732180db294cf6c629bfa9dc5b8553f17f5742034a347ce221
+lap_base_origin_main=cf76e9fe
+inputs=D:\worktrees\rvp9-2\acceptance-d639c265\target\encoder-pgo\inputs\ducks_take_off_420_1080p30_60f.y4m;D:\worktrees\rvp9-2\acceptance-d639c265\target\encoder-pgo\inputs\in_to_tree_420_1080p30_60f.y4m;D:\worktrees\rvp9-2\acceptance-d639c265\target\encoder-pgo\inputs\old_town_cross_420_1080p30_60f.y4m
+settings=CPU6 CBR1260 fps30/1 threads1 tile0 AQ0 noise0 lag0 limit60 KF60
+warmups=one per arm per clip; measured_pairs=15 per clip; odd current/lap, even lap/current
+clip_order=odd pairs ducks/tree/town; even pairs town/tree/ducks; ratios=lap divided by current; all rows retained
+process_timeout_seconds=90
+total_timeout_seconds=1200
+host_counter=\Processor(_Total)\% Processor Time
+counter_preflight=5.97
+counter_enabled=True
+smoke_only=False
+identity_csv=C:\Users\marti\AppData\Local\Temp\deltic-scratch\laplacian-avx2-cpu-screen-a-bb90a2db\identity.csv
+raw_csv=C:\Users\marti\AppData\Local\Temp\deltic-scratch\laplacian-avx2-cpu-screen-a-bb90a2db\raw.csv
+load_csv=C:\Users\marti\AppData\Local\Temp\deltic-scratch\laplacian-avx2-cpu-screen-a-bb90a2db\load.csv
+summary_csv=C:\Users\marti\AppData\Local\Temp\deltic-scratch\laplacian-avx2-cpu-screen-a-bb90a2db\summary.csv
+output_stability_csv=C:\Users\marti\AppData\Local\Temp\deltic-scratch\laplacian-avx2-cpu-screen-a-bb90a2db\output-stability.csv
+completed_utc=2026-09-25T19:35:52.4918109Z
+total_elapsed_seconds=170.319
+measured_rows=90
+warmup_rows=6

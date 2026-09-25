@@ -1,0 +1,26 @@
+﻿experiment=HF Laplacian AVX2 prototype cf76e9fe vs pinned libvpx v1.14.1 process-CPU A/B
+started_utc=2026-09-25T19:41:30.7523919Z
+runner_path=C:\Users\marti\AppData\Local\Temp\deltic-scratch\laplacian-avx2-vs-libvpx-8220cdc0\run-ab.ps1
+runner_sha256=c562a92d07502dddd5dfbef27254cb787ae4126029636c41765bc916a08b29c1
+host=CRUCIBLE
+lap_encoder=D:\worktrees\rvp9-2\20260925-TSK-HUM-validate-hf-laplacian-avx2\target\release\rvp9enc.exe
+pinned_libvpx=D:\worktrees\rvp9-2\acceptance-d639c265\build\libvpx\vpxenc.exe
+inputs=D:\worktrees\rvp9-2\acceptance-d639c265\target\encoder-pgo\inputs\ducks_take_off_420_1080p30_60f.y4m;D:\worktrees\rvp9-2\acceptance-d639c265\target\encoder-pgo\inputs\in_to_tree_420_1080p30_60f.y4m;D:\worktrees\rvp9-2\acceptance-d639c265\target\encoder-pgo\inputs\old_town_cross_420_1080p30_60f.y4m
+settings=CPU6 CBR1260 fps30/1 threads1 tile0 AQ0 noise0 lag0 limit60 KF60
+warmups=one per arm per clip; measured_pairs=15 per clip; odd lap/libvpx, even libvpx/lap
+clip_order=odd pairs ducks/tree/town; even pairs town/tree/ducks; ratios=lap divided by libvpx; all rows retained
+process_timeout_seconds=90
+total_timeout_seconds=1200
+host_counter=\Processor(_Total)\% Processor Time
+counter_preflight=26.42
+counter_enabled=True
+smoke_only=False
+identity_csv=C:\Users\marti\AppData\Local\Temp\deltic-scratch\laplacian-avx2-vs-libvpx-8220cdc0\identity.csv
+raw_csv=C:\Users\marti\AppData\Local\Temp\deltic-scratch\laplacian-avx2-vs-libvpx-8220cdc0\raw.csv
+load_csv=C:\Users\marti\AppData\Local\Temp\deltic-scratch\laplacian-avx2-vs-libvpx-8220cdc0\load.csv
+summary_csv=C:\Users\marti\AppData\Local\Temp\deltic-scratch\laplacian-avx2-vs-libvpx-8220cdc0\summary.csv
+output_stability_csv=C:\Users\marti\AppData\Local\Temp\deltic-scratch\laplacian-avx2-vs-libvpx-8220cdc0\output-stability.csv
+completed_utc=2026-09-25T19:44:32.3445275Z
+total_elapsed_seconds=181.588
+measured_rows=90
+warmup_rows=6

@@ -1,0 +1,5 @@
+﻿"Clip","PairCount","CpuGeoMeanLapOverLibvpx","CpuMedian","CpuMin","CpuMax","CpuMad","TukeyOutlierCountDescriptive","WallGeoMeanLapOverLibvpx","AllRowsIncluded"
+"ducks","15","1.316331","1.293578","1.109489","1.695238","0.034319","2","1.431601","True"
+"tree","15","1.202904","1.178082","1.082192","1.550725","0.037457","2","0.988233","True"
+"town","15","1.04431","1.061538","0.842697","1.25641","0.031688","3","1.118935","True"
+"corpus_equal_clip","45","1.18252","1.178082","0.842697","1.695238","","","1.165455","True"
