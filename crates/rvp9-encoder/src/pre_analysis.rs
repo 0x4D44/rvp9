@@ -1198,7 +1198,18 @@ fn frame_hf_laplacian_sum_rows_with_step(
         // plane length and bounds every vector load to one complete row.
         unsafe { frame_hf_laplacian_sum_rows_neon(y, width, row_start, row_end, row_step) }
     }
-    #[cfg(not(target_arch = "aarch64"))]
+    #[cfg(target_arch = "x86_64")]
+    {
+        if std::is_x86_feature_detected!("avx2") {
+            // SAFETY: Runtime feature detection proves AVX2 is available;
+            // the validated dimensions and loop bound keep each load within
+            // its row and within `y`.
+            unsafe { frame_hf_laplacian_sum_rows_avx2(y, width, row_start, row_end, row_step) }
+        } else {
+            frame_hf_laplacian_sum_rows_scalar(y, width, row_start, row_end, row_step)
+        }
+    }
+    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
     {
         frame_hf_laplacian_sum_rows_scalar(y, width, row_start, row_end, row_step)
     }
@@ -1280,6 +1291,90 @@ fn frame_hf_laplacian_sum_rows_scalar(
             let above = i32::from(y[up + column]);
             let below = i32::from(y[down + column]);
             laplacian_sum += u64::from((4 * pixel - left - right - above - below).unsigned_abs());
+        }
+    }
+    laplacian_sum
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn frame_hf_laplacian_sum_rows_avx2(
+    y: &[u8],
+    width: usize,
+    row_start: usize,
+    row_end: usize,
+    row_step: usize,
+) -> u64 {
+    use std::arch::x86_64::*;
+
+    const MAX_VECTOR_BATCHES: usize = 1 << 15;
+    let one = _mm256_set1_epi16(1);
+    let mut laplacian_sum = 0u64;
+    for row_index in (row_start..row_end).step_by(row_step) {
+        let row = row_index * width;
+        let up = row - width;
+        let down = row + width;
+        let mut column = 1usize;
+        // SAFETY: Runtime dispatch proves AVX2 is available. This loop only
+        // runs when all 16 interior pixels and their left/right neighbours
+        // fit in the row; the checked frame length and interior row bounds
+        // prove the vertical loads fit too. Each madd lane accumulates at
+        // most 2,040 per block, and this batch limit stays below i32::MAX.
+        unsafe {
+            let mut vector_sum = _mm256_setzero_si256();
+            let mut vector_batches = 0usize;
+            while column + 16 < width {
+                let base = y.as_ptr();
+                let pixel = _mm_loadu_si128(base.add(row + column).cast());
+                let left = _mm_loadu_si128(base.add(row + column - 1).cast());
+                let right = _mm_loadu_si128(base.add(row + column + 1).cast());
+                let above = _mm_loadu_si128(base.add(up + column).cast());
+                let below = _mm_loadu_si128(base.add(down + column).cast());
+
+                let pixel = _mm256_cvtepu8_epi16(pixel);
+                let left = _mm256_cvtepu8_epi16(left);
+                let right = _mm256_cvtepu8_epi16(right);
+                let above = _mm256_cvtepu8_epi16(above);
+                let below = _mm256_cvtepu8_epi16(below);
+
+                // `4*p` and the four-neighbour sum are each in 0..=1020;
+                // their difference fits in signed i16, including its abs.
+                let pixel_times_four = _mm256_slli_epi16::<2>(pixel);
+                let neighbours = _mm256_add_epi16(
+                    _mm256_add_epi16(left, right),
+                    _mm256_add_epi16(above, below),
+                );
+                let absolute = _mm256_abs_epi16(_mm256_sub_epi16(pixel_times_four, neighbours));
+                vector_sum = _mm256_add_epi32(vector_sum, _mm256_madd_epi16(absolute, one));
+                vector_batches += 1;
+                if vector_batches == MAX_VECTOR_BATCHES {
+                    let lower = _mm256_castsi256_si128(vector_sum);
+                    let upper = _mm256_extracti128_si256::<1>(vector_sum);
+                    let halves = _mm_add_epi32(lower, upper);
+                    let mut lanes = [0i32; 4];
+                    _mm_storeu_si128(lanes.as_mut_ptr().cast(), halves);
+                    laplacian_sum += lanes.into_iter().map(|lane| lane as u64).sum::<u64>();
+                    vector_sum = _mm256_setzero_si256();
+                    vector_batches = 0;
+                }
+                column += 16;
+            }
+
+            let lower = _mm256_castsi256_si128(vector_sum);
+            let upper = _mm256_extracti128_si256::<1>(vector_sum);
+            let halves = _mm_add_epi32(lower, upper);
+            let mut lanes = [0i32; 4];
+            _mm_storeu_si128(lanes.as_mut_ptr().cast(), halves);
+            laplacian_sum += lanes.into_iter().map(|lane| lane as u64).sum::<u64>();
+        }
+        while column < width - 1 {
+            let pixel = i32::from(y[row + column]);
+            let left = i32::from(y[row + column - 1]);
+            let right = i32::from(y[row + column + 1]);
+            let above = i32::from(y[up + column]);
+            let below = i32::from(y[down + column]);
+            laplacian_sum += u64::from((4 * pixel - left - right - above - below).unsigned_abs());
+            column += 1;
         }
     }
     laplacian_sum
@@ -2130,6 +2225,136 @@ mod tests {
                 exact >= THRESHOLD,
                 "classifier changed: exact={exact}, sampled={sampled}",
             );
+        }
+    }
+
+    #[test]
+    fn hf_laplacian_rows_match_scalar_for_steps_spans_and_tight_tails() {
+        for &(width, height) in &[
+            (3, 3),
+            (4, 5),
+            (17, 7),
+            (31, 9),
+            (32, 10),
+            (33, 11),
+            (47, 17),
+            (48, 18),
+            (49, 19),
+            (63, 17),
+            (64, 18),
+            (65, 19),
+            (127, 35),
+            (191, 33),
+        ] {
+            for content in 0..6 {
+                let mut random_state =
+                    0x9e37_79b9u32 ^ width as u32 ^ (height as u32).rotate_left(11);
+                let plane = (0..width * height)
+                    .map(|index| {
+                        let row = index / width;
+                        let column = index % width;
+                        match content {
+                            0 => 0,
+                            1 => 255,
+                            2 => {
+                                if (row + column) & 1 == 0 {
+                                    0
+                                } else {
+                                    255
+                                }
+                            }
+                            3 => {
+                                if column < width / 2 {
+                                    17
+                                } else {
+                                    239
+                                }
+                            }
+                            4 => {
+                                if row == height / 2 || column == width / 2 {
+                                    255
+                                } else {
+                                    0
+                                }
+                            }
+                            _ => {
+                                random_state = random_state
+                                    .wrapping_mul(1_664_525)
+                                    .wrapping_add(1_013_904_223);
+                                (random_state >> 24) as u8
+                            }
+                        }
+                    })
+                    .collect::<Vec<_>>();
+
+                for row_step in [1, 4] {
+                    for (row_start, row_end) in [
+                        (0, height + 1),
+                        (1, height - 1),
+                        (height / 3, height - 1),
+                        (height / 2, height),
+                        (height - 1, height + 1),
+                        (height, height + 1),
+                    ] {
+                        let clamped_start = row_start.max(1);
+                        let clamped_end = row_end.min(height - 1);
+                        let expected = if clamped_start < clamped_end {
+                            frame_hf_laplacian_sum_rows_scalar(
+                                &plane,
+                                width,
+                                clamped_start,
+                                clamped_end,
+                                row_step,
+                            )
+                        } else {
+                            0
+                        };
+                        assert_eq!(
+                            frame_hf_laplacian_sum_rows_with_step(
+                                &plane, width, height, row_start, row_end, row_step,
+                            ),
+                            expected,
+                            "width={width} height={height} content={content} rows={row_start}..{row_end} step={row_step}",
+                        );
+                    }
+
+                    let full = frame_hf_laplacian_sum_rows_with_step(
+                        &plane,
+                        width,
+                        height,
+                        1,
+                        height - 1,
+                        row_step,
+                    );
+                    let boundaries = [1, height / 3, (2 * height) / 3, height - 1];
+                    let mut partitioned = 0u64;
+                    for span in boundaries.windows(2) {
+                        let mut span_start = span[0].max(1);
+                        let span_end = span[1].min(height - 1);
+                        let phase = (span_start - 1) % row_step;
+                        if phase != 0 {
+                            span_start += row_step - phase;
+                        }
+                        if span_start < span_end {
+                            let dispatched = frame_hf_laplacian_sum_rows_with_step(
+                                &plane, width, height, span_start, span_end, row_step,
+                            );
+                            let expected = frame_hf_laplacian_sum_rows_scalar(
+                                &plane, width, span_start, span_end, row_step,
+                            );
+                            assert_eq!(
+                                dispatched, expected,
+                                "partition width={width} height={height} content={content} rows={span_start}..{span_end} step={row_step}",
+                            );
+                            partitioned += dispatched;
+                        }
+                    }
+                    assert_eq!(
+                        partitioned, full,
+                        "partition sum width={width} height={height} content={content} step={row_step}",
+                    );
+                }
+            }
         }
     }
 
