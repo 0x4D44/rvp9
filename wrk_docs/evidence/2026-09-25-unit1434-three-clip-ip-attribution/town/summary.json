@@ -1,0 +1,105 @@
+{
+  "source_mode": "etl",
+  "source_path": "D:\\worktrees\\rvp9-2\\20260925-TSK-HUM-unit1434-integrated-ip-profile\\.scratch\\unit1434-ip-profile\\town\\capture.etl",
+  "exe_path": "D:\\worktrees\\rvp9-2\\20260925-TSK-HUM-unit1434-integrated-ip-profile\\.scratch\\target\\release\\rvp9enc.exe",
+  "exe_sha256": "1b64fc5f3de6dc3cfe9d486f6b2515be7a44354eeb0b025ca28e6e9903d1470a",
+  "pdb_path": "D:\\worktrees\\rvp9-2\\20260925-TSK-HUM-unit1434-integrated-ip-profile\\.scratch\\target\\release\\rvp9enc.pdb",
+  "pdb_sha256": "27c0b186f4a2a5b2edd19a665ccf8cc1bff1786c90df3a906ed9a1a6e58f72b4",
+  "pdb_pairing": {
+    "method": "PE RSDS GUID/age matched against PDB MSF information stream; DbgHelp loaded path checked",
+    "embedded_pdb_name": "rvp9enc.pdb",
+    "guid": "06cab2e0-f241-1b35-4c4c-44205044422e",
+    "age": 1
+  },
+  "pe": {
+    "preferred_base": "0x0000000140000000",
+    "size_of_image": "0x1da000"
+  },
+  "images": [
+    {
+      "pid": 42648,
+      "base": "0x00007ff7c6070000",
+      "end_exclusive": "0x00007ff7c624a000",
+      "size": "0x1da000",
+      "source": "I-Start"
+    }
+  ],
+  "counts": {
+    "dumper_sampled_profile_rows_all_processes": 236140,
+    "target_process_sampled_profile_rows": 1102,
+    "pid_filtered_rows": 0,
+    "target_process_other_module_rows": 155,
+    "retained_target_executable_rows": 947,
+    "retained_direct_count": 947,
+    "unique_ips": 679,
+    "unique_pid_ip_pairs": 679,
+    "resolved_unique_symbols": 98,
+    "nonzero_source_line_direct_count": 939,
+    "nonzero_source_line_unique_ips": 675,
+    "nonzero_source_line_pid_ip_pairs": 675
+  },
+  "xperf": {
+    "dumper": {
+      "command": [
+        "xperf.exe",
+        "-i",
+        "D:\\worktrees\\rvp9-2\\20260925-TSK-HUM-unit1434-integrated-ip-profile\\.scratch\\unit1434-ip-profile\\town\\capture.etl",
+        "-a",
+        "dumper",
+        "-add_fieldnames"
+      ],
+      "exit_code": 0
+    },
+    "reports": {
+      "tracestats": {
+        "exit_code": 0,
+        "report": "xperf-tracestats.txt",
+        "diagnostic_lines": [
+          "Total # Lost Buffers : 0",
+          "Total # Lost Events  : 0",
+          "# Lost Buffers       : 0",
+          "# Lost Events        : 0"
+        ]
+      },
+      "profile": {
+        "exit_code": 0,
+        "report": "xperf-profile.txt",
+        "diagnostic_lines": []
+      }
+    },
+    "loss_or_warning_lines_from_dumper": [
+      "OS Version: 10.0.26200, Trace Size: 124928KB, Events Lost: 0, Buffers lost: 0, Trace Start: 134348457722502162, Trace Length: 24 sec, PointerSize: 8, Trace Name: D:\\worktrees\\rvp9-2\\20260925-TSK-HUM-unit1434-integrated-ip-profile\\.scratch\\unit1434-ip-profile\\town\\capture.etl",
+      "FileVersion,   23264408, 0x0001d000,    0xd5240205, \"pshed.dll\", \"Platform Specific Hardware Error Driver\", \"10.0.26100.8972 (WinBuild.160101.0800)\", \"10.0.26100.8972\", \"1033\", \"Microsoft® Windows® Operating System\", \"Microsoft Corporation\", \"10.0.26100.8972\", \"\", \"\"",
+      "FileVersion,   23264412, 0x00017000,    0xa6edf41c, \"werkernel.sys\", \"Windows Error Reporting Kernel Driver\", \"10.0.26100.8972 (WinBuild.160101.0800)\", \"10.0.26100.8972\", \"1033\", \"Microsoft® Windows® Operating System\", \"Microsoft Corporation\", \"10.0.26100.8972\", \"\", \"\"",
+      "FileVersion,   23276570, 0x000f6000,    0x30a05512, \"wer.dll\", \"Windows Error Reporting DLL\", \"10.0.26100.9444 (WinBuild.160101.0800)\", \"10.0.26100.9444\", \"1033\", \"Microsoft® Windows® Operating System\", \"Microsoft Corporation\", \"10.0.26100.9444\", \"\", \"\"",
+      "FileVersion,   23700309, 0x00053000,    0x855d5407, \"wersvc.dll\", \"Windows Error Reporting Service\", \"10.0.26100.9278 (WinBuild.160101.0800)\", \"10.0.26100.9278\", \"1033\", \"Microsoft® Windows® Operating System\", \"Microsoft Corporation\", \"10.0.26100.9278\", \"\", \"\""
+    ],
+    "loss_or_warning_lines_from_reports": [
+      {
+        "action": "tracestats",
+        "line": "Total # Lost Buffers : 0"
+      },
+      {
+        "action": "tracestats",
+        "line": "Total # Lost Events  : 0"
+      },
+      {
+        "action": "tracestats",
+        "line": "# Lost Buffers       : 0"
+      },
+      {
+        "action": "tracestats",
+        "line": "# Lost Events        : 0"
+      }
+    ],
+    "loss_interpretation": "verbatim matching lines are recorded; an empty list is not a zero-loss assertion"
+  },
+  "outputs": {
+    "samples_csv": "D:\\worktrees\\rvp9-2\\20260925-TSK-HUM-unit1434-integrated-ip-profile\\.scratch\\unit1434-ip-profile\\town\\attribution\\samples.csv",
+    "unique_ip_map_csv": "D:\\worktrees\\rvp9-2\\20260925-TSK-HUM-unit1434-integrated-ip-profile\\.scratch\\unit1434-ip-profile\\town\\attribution\\ip-symbols.csv",
+    "other_process_modules_csv": "D:\\worktrees\\rvp9-2\\20260925-TSK-HUM-unit1434-integrated-ip-profile\\.scratch\\unit1434-ip-profile\\town\\attribution\\other-process-modules.csv",
+    "summary_by_symbol_csv": "D:\\worktrees\\rvp9-2\\20260925-TSK-HUM-unit1434-integrated-ip-profile\\.scratch\\unit1434-ip-profile\\town\\attribution\\summary-by-symbol.csv",
+    "summary_by_source_line_csv": "D:\\worktrees\\rvp9-2\\20260925-TSK-HUM-unit1434-integrated-ip-profile\\.scratch\\unit1434-ip-profile\\town\\attribution\\summary-by-source-line.csv"
+  },
+  "comparison": null
+}

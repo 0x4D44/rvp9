@@ -1,0 +1,73 @@
+{
+  "source_mode": "raw-csv-replay",
+  "source_path": "D:\\worktrees\\rvp9-2\\20260925-TSK-HUM-unit1434-integrated-ip-profile\\.scratch\\pid-41068-rvp9enc-samples.offline.csv",
+  "exe_path": "D:\\worktrees\\rvp9-2\\20260925-TSK-CDX@CRUCIBLE-unit1421-cpu-profile\\.scratch\\target\\release\\rvp9enc.exe",
+  "exe_sha256": "c371d472690baba94dc1374b9ce4b65dddd3f3ac2381feca362efa25e55f0d98",
+  "pdb_path": "D:\\worktrees\\rvp9-2\\20260925-TSK-CDX@CRUCIBLE-unit1421-cpu-profile\\.scratch\\target\\release\\rvp9enc.pdb",
+  "pdb_sha256": "a3995992a6eb0ce343fed14f01830737ce577b708dde8379d6913902c7ae67fc",
+  "pdb_pairing": {
+    "method": "PE RSDS GUID/age matched against PDB MSF information stream; DbgHelp loaded path checked",
+    "embedded_pdb_name": "rvp9enc.pdb",
+    "guid": "56e454cb-d547-f20b-4c4c-44205044422e",
+    "age": 1
+  },
+  "pe": {
+    "preferred_base": "0x0000000140000000",
+    "size_of_image": "0x1da000"
+  },
+  "images": [
+    {
+      "pid": 41068,
+      "base": "0x00007ff66d4b0000",
+      "end_exclusive": "0x00007ff66d68a000",
+      "size": "0x1da000",
+      "source": "caller-supplied replay base"
+    }
+  ],
+  "counts": {
+    "dumper_sampled_profile_rows_all_processes": 1067,
+    "target_process_sampled_profile_rows": 1067,
+    "pid_filtered_rows": 0,
+    "target_process_other_module_rows": 0,
+    "retained_target_executable_rows": 1067,
+    "retained_direct_count": 1067,
+    "unique_ips": 747,
+    "unique_pid_ip_pairs": 747,
+    "resolved_unique_symbols": 100,
+    "nonzero_source_line_direct_count": 1065,
+    "nonzero_source_line_unique_ips": 746,
+    "nonzero_source_line_pid_ip_pairs": 746
+  },
+  "xperf": {
+    "dumper": {
+      "exit_code": null,
+      "not_run": "raw CSV replay"
+    },
+    "reports": {},
+    "loss_or_warning_lines_from_dumper": [],
+    "loss_or_warning_lines_from_reports": [],
+    "loss_interpretation": "verbatim matching lines are recorded; an empty list is not a zero-loss assertion"
+  },
+  "outputs": {
+    "samples_csv": "D:\\worktrees\\rvp9-2\\20260925-TSK-HUM-unit1434-integrated-ip-profile\\.scratch\\unit1432-independent-replay\\samples.csv",
+    "unique_ip_map_csv": "D:\\worktrees\\rvp9-2\\20260925-TSK-HUM-unit1434-integrated-ip-profile\\.scratch\\unit1432-independent-replay\\ip-symbols.csv",
+    "other_process_modules_csv": "D:\\worktrees\\rvp9-2\\20260925-TSK-HUM-unit1434-integrated-ip-profile\\.scratch\\unit1432-independent-replay\\other-process-modules.csv",
+    "summary_by_symbol_csv": "D:\\worktrees\\rvp9-2\\20260925-TSK-HUM-unit1434-integrated-ip-profile\\.scratch\\unit1432-independent-replay\\summary-by-symbol.csv",
+    "summary_by_source_line_csv": "D:\\worktrees\\rvp9-2\\20260925-TSK-HUM-unit1434-integrated-ip-profile\\.scratch\\unit1432-independent-replay\\summary-by-source-line.csv"
+  },
+  "comparison": {
+    "actual_unique_ips": 747,
+    "expected_unique_ips": 747,
+    "mismatch_count": 0,
+    "mismatches": [],
+    "ignored_archived_line_ok_mismatch_count": 1,
+    "comparison_fields": [
+      "module_base",
+      "rva",
+      "raw_count",
+      "symbol",
+      "file",
+      "numeric line"
+    ]
+  }
+}

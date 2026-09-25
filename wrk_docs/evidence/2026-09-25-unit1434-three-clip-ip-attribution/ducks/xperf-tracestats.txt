@@ -1,0 +1,23 @@
+Number of Processors : 32
+CPU Speed            : 4300 MHz
+OS Version           : 10.00.00.00
+OS Build Number      : 26200
+Clock type           : PerfCounter
+Boot time            : 2026/09/21:09:32:14.5000000
+Native Pointer Size  : 8 (64bit)
+Start time (UTC)     : 2026/09/25:21:30:56.0846570
+End time (UTC)       : 2026/09/25:21:31:21.3053888  (+         0:00:00:25.2207318)
+Total # Lost Buffers : 0
+Total # Lost Events  : 0
+
+Number of Traces     : 1
+
+Trace name: D:\worktrees\rvp9-2\20260925-TSK-HUM-unit1434-integrated-ip-profile\.scratch\unit1434-ip-profile\ducks\capture.etl
+    Log file mode        : Sequential Relogged
+    Pointer size         : 8 (64bit)
+    Start time (UTC)     : 2026/09/25:21:30:56.0846570
+    End time (UTC)       : 2026/09/25:21:31:21.3053888  (+         0:00:00:25.2207318)
+    Start time (Local)   : 2026/09/25:22:30:56.0846570
+    End time (Local)     : 2026/09/25:22:31:21.3053888
+    # Lost Buffers       : 0
+    # Lost Events        : 0
