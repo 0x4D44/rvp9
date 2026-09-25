@@ -1,0 +1,28 @@
+﻿experiment=AVX2 candidate vs integrated e588d13f process-CPU A/B
+started_utc=2026-09-25T18:57:43.6368785Z
+runner_path=C:\Users\marti\AppData\Local\Temp\deltic-scratch\avx2-metrics-ab-repeat-d12d07db\avx2-run-ab.ps1
+runner_sha256=182dcd6e47246b37e207df38ce4c5dc8e96ee9eae0baf03eb2dd5a40cb599721
+host=CRUCIBLE
+current_encoder=D:\worktrees\rvp9-2\20260925-TSK-CDX@CRUCIBLE-unit1421-cpu-profile\.scratch\target\release\rvp9enc.exe
+avx2_encoder=D:\worktrees\rvp9-2\20260925-TSK-HUM@CRUCIBLE-avx2-hadamard-metrics-differential\target\release\rvp9enc.exe
+avx2_source_sha256=695a2b631516bea760c7571165e94a99153b9a6c3a99b2ad7ea00768b90dbc1b
+avx2_base_origin_main=f8e05e2b
+inputs=D:\worktrees\rvp9-2\acceptance-d639c265\target\encoder-pgo\inputs\ducks_take_off_420_1080p30_60f.y4m;D:\worktrees\rvp9-2\acceptance-d639c265\target\encoder-pgo\inputs\in_to_tree_420_1080p30_60f.y4m;D:\worktrees\rvp9-2\acceptance-d639c265\target\encoder-pgo\inputs\old_town_cross_420_1080p30_60f.y4m
+settings=CPU6 CBR1260 fps30/1 threads1 tile0 AQ0 noise0 lag0 limit60 KF60
+warmups=one per arm per clip; measured_pairs=15 per clip; odd current/avx2, even avx2/current
+clip_order=odd pairs ducks/tree/town; even pairs town/tree/ducks; ratios=avx2 divided by current; all rows retained
+process_timeout_seconds=90
+total_timeout_seconds=1200
+host_counter=\Processor(_Total)\% Processor Time
+counter_preflight=7.38
+counter_enabled=True
+smoke_only=False
+identity_csv=C:\Users\marti\AppData\Local\Temp\deltic-scratch\avx2-metrics-ab-repeat-d12d07db\identity.csv
+raw_csv=C:\Users\marti\AppData\Local\Temp\deltic-scratch\avx2-metrics-ab-repeat-d12d07db\raw.csv
+load_csv=C:\Users\marti\AppData\Local\Temp\deltic-scratch\avx2-metrics-ab-repeat-d12d07db\load.csv
+summary_csv=C:\Users\marti\AppData\Local\Temp\deltic-scratch\avx2-metrics-ab-repeat-d12d07db\summary.csv
+output_stability_csv=C:\Users\marti\AppData\Local\Temp\deltic-scratch\avx2-metrics-ab-repeat-d12d07db\output-stability.csv
+completed_utc=2026-09-25T19:01:09.4076070Z
+total_elapsed_seconds=205.768
+measured_rows=90
+warmup_rows=6
