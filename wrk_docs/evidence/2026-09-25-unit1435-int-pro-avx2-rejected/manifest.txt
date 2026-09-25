@@ -1,0 +1,34 @@
+﻿experiment=int-pro 64x64 AVX2 candidate vs integrated 88644d86 process-CPU A/B
+started_utc=2026-09-25T22:06:59.2406711Z
+runner_path=D:\worktrees\rvp9-2\20260925-TSK-HUM-x86-int-pro-64x64-avx2-prototype\.scratch\int-pro-run-ab.ps1
+runner_sha256=197e2069ab5c525aedae8443a2e0452dac9adcbab2b80898d37acc6ccef3b566
+host=CRUCIBLE
+baseline_encoder=D:\worktrees\rvp9-2\20260925-TSK-HUM-unit1434-integrated-ip-profile\.scratch\target\release\rvp9enc.exe
+baseline_exe_sha256=1b64fc5f3de6dc3cfe9d486f6b2515be7a44354eeb0b025ca28e6e9903d1470a
+baseline_pdb=D:\worktrees\rvp9-2\20260925-TSK-HUM-unit1434-integrated-ip-profile\.scratch\target\release\rvp9enc.pdb
+baseline_pdb_sha256=27c0b186f4a2a5b2edd19a665ccf8cc1bff1786c90df3a906ed9a1a6e58f72b4
+candidate_revision=unit1435-int-pro-avx2-prototype
+candidate_worktree=D:\worktrees\rvp9-2\20260925-TSK-HUM-x86-int-pro-64x64-avx2-prototype
+candidate_encoder=D:\worktrees\rvp9-2\20260925-TSK-HUM-x86-int-pro-64x64-avx2-prototype\.scratch\target\release\rvp9enc.exe
+candidate_exe_sha256=c481b8d351bbe9ca95f31cb6699e0f7df1d8d7e754b7d3a5d2ad081299ac90f4
+candidate_sources=crates\rvp9-core\src\dsp\x86_64\int_pro_64x64_avx2.rs=4da9271e8c68d7bcd19575f23474ac54dd9f16bcd8b6a06d6fe3f171ed00b68d;crates\rvp9-core\src\dsp\x86_64\mod.rs=449701071ec28e650adf17a45267ed472f2900763717d528390d9d264e0a18e9;crates\rvp9-core\src\mv_search\int_pro_me.rs=ae1fee227dcdb1d12bdd94aaa80067c02cf4485bb5a143eedc0ca6f117446042
+inputs=D:\worktrees\rvp9-2\acceptance-d639c265\target\encoder-pgo\inputs\ducks_take_off_420_1080p30_60f.y4m;D:\worktrees\rvp9-2\acceptance-d639c265\target\encoder-pgo\inputs\in_to_tree_420_1080p30_60f.y4m;D:\worktrees\rvp9-2\acceptance-d639c265\target\encoder-pgo\inputs\old_town_cross_420_1080p30_60f.y4m
+settings=CPU6 CBR1260 fps30/1 threads1 tile0 AQ0 noise0 lag0 limit60 KF60
+warmups=one per arm per clip; measured_pairs=15 per clip; odd baseline/candidate, even candidate/baseline
+clip_order=odd pairs ducks/tree/town; even pairs town/tree/ducks; ratios=candidate divided by baseline; all rows retained; host load is diagnostic only
+process_timeout_seconds=90
+total_timeout_seconds=1200
+host_counter=\Processor(_Total)\% Processor Time
+counter_preflight=30.56
+counter_enabled=True
+identity_csv=D:\worktrees\rvp9-2\20260925-TSK-HUM-x86-int-pro-64x64-avx2-prototype\.scratch\int-pro-run-ab\run-20260925T220657.320Z\identity.csv
+raw_csv=D:\worktrees\rvp9-2\20260925-TSK-HUM-x86-int-pro-64x64-avx2-prototype\.scratch\int-pro-run-ab\run-20260925T220657.320Z\raw.csv
+load_csv=D:\worktrees\rvp9-2\20260925-TSK-HUM-x86-int-pro-64x64-avx2-prototype\.scratch\int-pro-run-ab\run-20260925T220657.320Z\load.csv
+summary_csv=D:\worktrees\rvp9-2\20260925-TSK-HUM-x86-int-pro-64x64-avx2-prototype\.scratch\int-pro-run-ab\run-20260925T220657.320Z\summary.csv
+output_stability_csv=D:\worktrees\rvp9-2\20260925-TSK-HUM-x86-int-pro-64x64-avx2-prototype\.scratch\int-pro-run-ab\run-20260925T220657.320Z\output-stability.csv
+completed_utc=2026-09-25T22:10:13.8491217Z
+total_elapsed_seconds=194.507
+raw_rows=96
+measured_rows=90
+warmup_rows=6
+run_error=
