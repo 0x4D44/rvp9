@@ -2867,7 +2867,8 @@ fn pick_inter_mode_impl(
                     FilterPredictionSlot::Alternate,
                 ]
             };
-            let (candidate, candidate_prediction_slot) = evaluate_candidate_with_slots(
+            let mut candidate_prediction_slot = prediction_slots[0];
+            let candidate = evaluate_candidate_with_slots(
                 single_params,
                 mode,
                 mv,
@@ -2877,6 +2878,7 @@ fn pick_inter_mode_impl(
                 scratch,
                 &mut output,
                 prediction_slots,
+                &mut candidate_prediction_slot,
             );
 
             mode_checked[ref_idx][mode.idx()] = true;
@@ -4310,6 +4312,7 @@ fn evaluate_candidate_with_filter_set_with_scratch(
     scratch: &mut CandidatePredScratch,
 ) -> InterModeSearchResult {
     let mut output = None;
+    let mut selected_slot = FilterPredictionSlot::Candidate;
     evaluate_candidate_with_slots(
         params,
         mode,
@@ -4323,8 +4326,8 @@ fn evaluate_candidate_with_filter_set_with_scratch(
             FilterPredictionSlot::Candidate,
             FilterPredictionSlot::Alternate,
         ],
+        &mut selected_slot,
     )
-    .0
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -4338,7 +4341,8 @@ fn evaluate_candidate_with_slots(
     scratch: &mut CandidatePredScratch,
     output: &mut Option<&mut OutputBackedPredictionBuffer<'_>>,
     prediction_slots: [FilterPredictionSlot; 2],
-) -> (InterModeSearchResult, FilterPredictionSlot) {
+    selected_slot: &mut FilterPredictionSlot,
+) -> InterModeSearchResult {
     let CandidatePredScratch {
         primary,
         alternate,
@@ -4348,8 +4352,9 @@ fn evaluate_candidate_with_slots(
     } = scratch;
     if filter_set.len() == 1 {
         let slot = prediction_slots[0];
+        *selected_slot = slot;
         let bw = usize::from(params.block_size.width());
-        let result = with_prediction_slot(
+        with_prediction_slot(
             primary,
             alternate,
             output.as_deref_mut(),
@@ -4371,8 +4376,7 @@ fn evaluate_candidate_with_slots(
                     None,
                 )
             },
-        );
-        (result, slot)
+        )
     } else {
         let filters: &[InterpFilter; 2] = filter_set
             .try_into()
@@ -4387,8 +4391,9 @@ fn evaluate_candidate_with_slots(
             output,
             prediction_slots,
         );
+        *selected_slot = slot;
         let bw = usize::from(params.block_size.width());
-        let result = with_prediction_slot(
+        with_prediction_slot(
             primary,
             alternate,
             output.as_deref_mut(),
@@ -4410,8 +4415,7 @@ fn evaluate_candidate_with_slots(
                     Some(model),
                 )
             },
-        );
-        (result, slot)
+        )
     }
 }
 
@@ -8429,7 +8433,8 @@ mod tests {
         };
         let (actual, winning_slot) = {
             let mut output_ref = Some(&mut output);
-            evaluate_candidate_with_slots(
+            let mut winning_slot = prediction_slots[0];
+            let actual = evaluate_candidate_with_slots(
                 &params,
                 InterMode::NearestMv,
                 mvc.nearest,
@@ -8439,7 +8444,9 @@ mod tests {
                 &mut scratch,
                 &mut output_ref,
                 prediction_slots,
-            )
+                &mut winning_slot,
+            );
+            (actual, winning_slot)
         };
         copy_prediction_slot_to_output(&scratch, &mut output, winning_slot, bw, bh);
         assert_eq!(actual, baseline);
