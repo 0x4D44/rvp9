@@ -1,0 +1,481 @@
+[FULLPEL_CENSUS] frame totals
+golden_newmv_fresh=0 fullpel_entries=0 search_rejected=0 deduplicated=0 inter_lost=0 intra_replaced=0 chosen=0 terminal_total=0 reconciled=true matches_entries=true cached_full_picks=0 golden_override_consumed=0
+origin=final_pass shape=8x8 ref=LAST method=NSTEP entries=162 diamond_starts=313 local_seed_full_sads=162 sad4_batches=1137 scalar_sads=802 refinements=110 variance_evaluations=297
+origin=final_pass shape=16x16 ref=LAST method=NSTEP entries=4381 diamond_starts=8341 local_seed_full_sads=4143 sad4_batches=32505 scalar_sads=14350 refinements=3178 variance_evaluations=7827
+origin=final_pass shape=32x32 ref=LAST method=NSTEP entries=107 diamond_starts=171 local_seed_full_sads=100 sad4_batches=704 scalar_sads=322 refinements=68 variance_evaluations=159
+
+[FULLPEL_CENSUS] frame totals
+golden_newmv_fresh=7456 fullpel_entries=7456 search_rejected=419 deduplicated=184 inter_lost=5820 intra_replaced=169 chosen=864 terminal_total=7456 reconciled=true matches_entries=true cached_full_picks=0 golden_override_consumed=0
+origin=final_pass shape=8x8 ref=LAST method=NSTEP entries=296 diamond_starts=889 local_seed_full_sads=289 sad4_batches=2975 scalar_sads=1690 refinements=262 variance_evaluations=868
+origin=final_pass shape=8x8 ref=GOLDEN method=NSTEP entries=376 diamond_starts=1208 local_seed_full_sads=369 sad4_batches=3627 scalar_sads=3511 refinements=332 variance_evaluations=1171
+origin=final_pass shape=16x16 ref=LAST method=NSTEP entries=6908 diamond_starts=18400 local_seed_full_sads=6803 sad4_batches=67101 scalar_sads=28316 refinements=5815 variance_evaluations=17995
+origin=final_pass shape=16x16 ref=GOLDEN method=NSTEP entries=7038 diamond_starts=20769 local_seed_full_sads=6931 sad4_batches=74274 scalar_sads=30766 refinements=6271 variance_evaluations=20292
+origin=final_pass shape=32x32 ref=LAST method=NSTEP entries=113 diamond_starts=214 local_seed_full_sads=112 sad4_batches=812 scalar_sads=428 refinements=75 variance_evaluations=203
+origin=final_pass shape=32x32 ref=GOLDEN method=NSTEP entries=42 diamond_starts=97 local_seed_full_sads=42 sad4_batches=338 scalar_sads=193 refinements=37 variance_evaluations=85
+
+[FULLPEL_CENSUS] frame totals
+golden_newmv_fresh=3365 fullpel_entries=3365 search_rejected=1366 deduplicated=154 inter_lost=1845 intra_replaced=0 chosen=0 terminal_total=3365 reconciled=true matches_entries=true cached_full_picks=0 golden_override_consumed=0
+origin=final_pass shape=8x8 ref=LAST method=NSTEP entries=84 diamond_starts=178 local_seed_full_sads=80 sad4_batches=675 scalar_sads=330 refinements=66 variance_evaluations=178
+origin=final_pass shape=8x8 ref=GOLDEN method=NSTEP entries=106 diamond_starts=357 local_seed_full_sads=102 sad4_batches=901 scalar_sads=1459 refinements=92 variance_evaluations=330
+origin=final_pass shape=16x16 ref=LAST method=NSTEP entries=4391 diamond_starts=7403 local_seed_full_sads=3747 sad4_batches=29754 scalar_sads=13450 refinements=2742 variance_evaluations=6995
+origin=final_pass shape=16x16 ref=GOLDEN method=NSTEP entries=3256 diamond_starts=10008 local_seed_full_sads=2844 sad4_batches=34703 scalar_sads=15247 refinements=2869 variance_evaluations=9691
+origin=final_pass shape=32x32 ref=LAST method=NSTEP entries=161 diamond_starts=218 local_seed_full_sads=137 sad4_batches=962 scalar_sads=443 refinements=65 variance_evaluations=213
+origin=final_pass shape=32x32 ref=GOLDEN method=NSTEP entries=3 diamond_starts=9 local_seed_full_sads=2 sad4_batches=29 scalar_sads=17 refinements=2 variance_evaluations=10
+
+[FULLPEL_CENSUS] frame totals
+golden_newmv_fresh=5024 fullpel_entries=5024 search_rejected=1445 deduplicated=12 inter_lost=3442 intra_replaced=16 chosen=109 terminal_total=5024 reconciled=true matches_entries=true cached_full_picks=0 golden_override_consumed=0
+origin=final_pass shape=8x8 ref=LAST method=NSTEP entries=361 diamond_starts=1063 local_seed_full_sads=347 sad4_batches=3674 scalar_sads=1581 refinements=289 variance_evaluations=1010
+origin=final_pass shape=8x8 ref=GOLDEN method=NSTEP entries=250 diamond_starts=918 local_seed_full_sads=237 sad4_batches=2904 scalar_sads=1969 refinements=231 variance_evaluations=912
+origin=final_pass shape=16x16 ref=LAST method=NSTEP entries=5840 diamond_starts=14716 local_seed_full_sads=5685 sad4_batches=53243 scalar_sads=23666 refinements=4688 variance_evaluations=14189
+origin=final_pass shape=16x16 ref=GOLDEN method=NSTEP entries=4771 diamond_starts=18927 local_seed_full_sads=4655 sad4_batches=64767 scalar_sads=27086 refinements=4521 variance_evaluations=18987
+origin=final_pass shape=32x32 ref=LAST method=NSTEP entries=23 diamond_starts=43 local_seed_full_sads=21 sad4_batches=174 scalar_sads=64 refinements=16 variance_evaluations=43
+origin=final_pass shape=32x32 ref=GOLDEN method=NSTEP entries=3 diamond_starts=13 local_seed_full_sads=3 sad4_batches=51 scalar_sads=16 refinements=3 variance_evaluations=14
+
+[FULLPEL_CENSUS] frame totals
+golden_newmv_fresh=4293 fullpel_entries=4293 search_rejected=1243 deduplicated=8 inter_lost=2932 intra_replaced=15 chosen=95 terminal_total=4293 reconciled=true matches_entries=true cached_full_picks=0 golden_override_consumed=0
+origin=final_pass shape=8x8 ref=LAST method=NSTEP entries=427 diamond_starts=1289 local_seed_full_sads=419 sad4_batches=4440 scalar_sads=1859 refinements=325 variance_evaluations=1239
+origin=final_pass shape=8x8 ref=GOLDEN method=NSTEP entries=266 diamond_starts=1038 local_seed_full_sads=263 sad4_batches=3137 scalar_sads=2394 refinements=240 variance_evaluations=1041
+origin=final_pass shape=16x16 ref=LAST method=NSTEP entries=6281 diamond_starts=16512 local_seed_full_sads=6089 sad4_batches=58933 scalar_sads=26497 refinements=5066 variance_evaluations=15895
+origin=final_pass shape=16x16 ref=GOLDEN method=NSTEP entries=4026 diamond_starts=16897 local_seed_full_sads=3900 sad4_batches=57512 scalar_sads=24153 refinements=3810 variance_evaluations=17097
+origin=final_pass shape=32x32 ref=LAST method=NSTEP entries=16 diamond_starts=39 local_seed_full_sads=15 sad4_batches=139 scalar_sads=54 refinements=15 variance_evaluations=38
+origin=final_pass shape=32x32 ref=GOLDEN method=NSTEP entries=1 diamond_starts=2 local_seed_full_sads=1 sad4_batches=7 scalar_sads=3 refinements=1 variance_evaluations=1
+
+[FULLPEL_CENSUS] frame totals
+golden_newmv_fresh=1705 fullpel_entries=1705 search_rejected=211 deduplicated=6 inter_lost=1478 intra_replaced=1 chosen=9 terminal_total=1705 reconciled=true matches_entries=true cached_full_picks=0 golden_override_consumed=0
+origin=final_pass shape=8x8 ref=LAST method=NSTEP entries=320 diamond_starts=755 local_seed_full_sads=307 sad4_batches=2742 scalar_sads=1195 refinements=195 variance_evaluations=720
+origin=final_pass shape=8x8 ref=GOLDEN method=NSTEP entries=34 diamond_starts=129 local_seed_full_sads=29 sad4_batches=428 scalar_sads=215 refinements=31 variance_evaluations=129
+origin=final_pass shape=16x16 ref=LAST method=NSTEP entries=5830 diamond_starts=13102 local_seed_full_sads=5277 sad4_batches=47878 scalar_sads=22210 refinements=4001 variance_evaluations=12461
+origin=final_pass shape=16x16 ref=GOLDEN method=NSTEP entries=1671 diamond_starts=7082 local_seed_full_sads=1510 sad4_batches=23586 scalar_sads=10733 refinements=1555 variance_evaluations=7180
+origin=final_pass shape=32x32 ref=LAST method=NSTEP entries=21 diamond_starts=39 local_seed_full_sads=19 sad4_batches=161 scalar_sads=58 refinements=14 variance_evaluations=40
+
+[FULLPEL_CENSUS] frame totals
+golden_newmv_fresh=2452 fullpel_entries=2452 search_rejected=292 deduplicated=5 inter_lost=2087 intra_replaced=14 chosen=54 terminal_total=2452 reconciled=true matches_entries=true cached_full_picks=0 golden_override_consumed=0
+origin=final_pass shape=8x8 ref=LAST method=NSTEP entries=613 diamond_starts=1680 local_seed_full_sads=597 sad4_batches=5936 scalar_sads=2510 refinements=433 variance_evaluations=1594
+origin=final_pass shape=8x8 ref=GOLDEN method=NSTEP entries=144 diamond_starts=609 local_seed_full_sads=131 sad4_batches=2030 scalar_sads=824 refinements=132 variance_evaluations=598
+origin=final_pass shape=16x16 ref=LAST method=NSTEP entries=6153 diamond_starts=16681 local_seed_full_sads=5912 sad4_batches=58900 scalar_sads=26462 refinements=4759 variance_evaluations=16079
+origin=final_pass shape=16x16 ref=GOLDEN method=NSTEP entries=2308 diamond_starts=10042 local_seed_full_sads=2200 sad4_batches=33708 scalar_sads=14496 refinements=2174 variance_evaluations=10200
+origin=final_pass shape=32x32 ref=LAST method=NSTEP entries=13 diamond_starts=32 local_seed_full_sads=12 sad4_batches=111 scalar_sads=59 refinements=11 variance_evaluations=31
+
+[FULLPEL_CENSUS] frame totals
+golden_newmv_fresh=2199 fullpel_entries=2199 search_rejected=228 deduplicated=7 inter_lost=1914 intra_replaced=6 chosen=44 terminal_total=2199 reconciled=true matches_entries=true cached_full_picks=0 golden_override_consumed=0
+origin=final_pass shape=8x8 ref=LAST method=NSTEP entries=569 diamond_starts=1554 local_seed_full_sads=549 sad4_batches=5526 scalar_sads=2228 refinements=414 variance_evaluations=1505
+origin=final_pass shape=8x8 ref=GOLDEN method=NSTEP entries=125 diamond_starts=449 local_seed_full_sads=119 sad4_batches=1540 scalar_sads=571 refinements=105 variance_evaluations=451
+origin=final_pass shape=16x16 ref=LAST method=NSTEP entries=6338 diamond_starts=16615 local_seed_full_sads=6082 sad4_batches=59139 scalar_sads=26674 refinements=4805 variance_evaluations=16107
+origin=final_pass shape=16x16 ref=GOLDEN method=NSTEP entries=2074 diamond_starts=8939 local_seed_full_sads=1985 sad4_batches=30057 scalar_sads=13034 refinements=1922 variance_evaluations=9132
+origin=final_pass shape=32x32 ref=LAST method=NSTEP entries=11 diamond_starts=30 local_seed_full_sads=11 sad4_batches=111 scalar_sads=41 refinements=9 variance_evaluations=29
+
+[FULLPEL_CENSUS] frame totals
+golden_newmv_fresh=0 fullpel_entries=0 search_rejected=0 deduplicated=0 inter_lost=0 intra_replaced=0 chosen=0 terminal_total=0 reconciled=true matches_entries=true cached_full_picks=0 golden_override_consumed=0
+origin=final_pass shape=8x8 ref=LAST method=NSTEP entries=333 diamond_starts=788 local_seed_full_sads=329 sad4_batches=2911 scalar_sads=1168 refinements=206 variance_evaluations=755
+origin=final_pass shape=16x16 ref=LAST method=NSTEP entries=5963 diamond_starts=13608 local_seed_full_sads=5529 sad4_batches=49682 scalar_sads=22788 refinements=4021 variance_evaluations=13023
+origin=final_pass shape=32x32 ref=LAST method=NSTEP entries=16 diamond_starts=36 local_seed_full_sads=15 sad4_batches=134 scalar_sads=66 refinements=9 variance_evaluations=35
+
+[FULLPEL_CENSUS] frame totals
+golden_newmv_fresh=7903 fullpel_entries=7903 search_rejected=1583 deduplicated=145 inter_lost=6103 intra_replaced=7 chosen=65 terminal_total=7903 reconciled=true matches_entries=true cached_full_picks=0 golden_override_consumed=0
+origin=final_pass shape=8x8 ref=LAST method=NSTEP entries=171 diamond_starts=465 local_seed_full_sads=171 sad4_batches=1676 scalar_sads=636 refinements=122 variance_evaluations=456
+origin=final_pass shape=8x8 ref=GOLDEN method=NSTEP entries=282 diamond_starts=932 local_seed_full_sads=267 sad4_batches=2729 scalar_sads=2642 refinements=229 variance_evaluations=889
+origin=final_pass shape=16x16 ref=LAST method=NSTEP entries=6327 diamond_starts=16789 local_seed_full_sads=6173 sad4_batches=59223 scalar_sads=26572 refinements=4670 variance_evaluations=16095
+origin=final_pass shape=16x16 ref=GOLDEN method=NSTEP entries=7620 diamond_starts=23065 local_seed_full_sads=7444 sad4_batches=80049 scalar_sads=34616 refinements=6050 variance_evaluations=22340
+origin=final_pass shape=32x32 ref=LAST method=NSTEP entries=5 diamond_starts=16 local_seed_full_sads=5 sad4_batches=53 scalar_sads=21 refinements=4 variance_evaluations=14
+origin=final_pass shape=32x32 ref=GOLDEN method=NSTEP entries=1 diamond_starts=1 local_seed_full_sads=1 sad4_batches=5 scalar_sads=2 refinements=0 variance_evaluations=1
+
+[FULLPEL_CENSUS] frame totals
+golden_newmv_fresh=7224 fullpel_entries=7224 search_rejected=1686 deduplicated=39 inter_lost=5436 intra_replaced=7 chosen=56 terminal_total=7224 reconciled=true matches_entries=true cached_full_picks=0 golden_override_consumed=0
+origin=final_pass shape=8x8 ref=LAST method=NSTEP entries=445 diamond_starts=1182 local_seed_full_sads=436 sad4_batches=4176 scalar_sads=1690 refinements=288 variance_evaluations=1101
+origin=final_pass shape=8x8 ref=GOLDEN method=NSTEP entries=416 diamond_starts=1443 local_seed_full_sads=395 sad4_batches=4577 scalar_sads=3070 refinements=334 variance_evaluations=1412
+origin=final_pass shape=16x16 ref=LAST method=NSTEP entries=6495 diamond_starts=17056 local_seed_full_sads=6339 sad4_batches=60767 scalar_sads=26769 refinements=4727 variance_evaluations=16438
+origin=final_pass shape=16x16 ref=GOLDEN method=NSTEP entries=6808 diamond_starts=24701 local_seed_full_sads=6642 sad4_batches=83898 scalar_sads=35624 refinements=5957 variance_evaluations=24202
+origin=final_pass shape=32x32 ref=LAST method=NSTEP entries=11 diamond_starts=37 local_seed_full_sads=11 sad4_batches=126 scalar_sads=48 refinements=9 variance_evaluations=35
+
+[FULLPEL_CENSUS] frame totals
+golden_newmv_fresh=4995 fullpel_entries=4995 search_rejected=1369 deduplicated=15 inter_lost=3605 intra_replaced=0 chosen=6 terminal_total=4995 reconciled=true matches_entries=true cached_full_picks=0 golden_override_consumed=0
+origin=final_pass shape=8x8 ref=LAST method=NSTEP entries=336 diamond_starts=818 local_seed_full_sads=327 sad4_batches=2990 scalar_sads=1199 refinements=208 variance_evaluations=772
+origin=final_pass shape=8x8 ref=GOLDEN method=NSTEP entries=266 diamond_starts=949 local_seed_full_sads=241 sad4_batches=2864 scalar_sads=2403 refinements=220 variance_evaluations=937
+origin=final_pass shape=16x16 ref=LAST method=NSTEP entries=6021 diamond_starts=13612 local_seed_full_sads=5611 sad4_batches=49555 scalar_sads=22973 refinements=3859 variance_evaluations=12980
+origin=final_pass shape=16x16 ref=GOLDEN method=NSTEP entries=4729 diamond_starts=18831 local_seed_full_sads=4427 sad4_batches=62614 scalar_sads=27521 refinements=4293 variance_evaluations=18602
+origin=final_pass shape=32x32 ref=LAST method=NSTEP entries=14 diamond_starts=39 local_seed_full_sads=12 sad4_batches=133 scalar_sads=66 refinements=10 variance_evaluations=34
+
+[FULLPEL_CENSUS] frame totals
+golden_newmv_fresh=5027 fullpel_entries=5027 search_rejected=1314 deduplicated=6 inter_lost=3629 intra_replaced=8 chosen=70 terminal_total=5027 reconciled=true matches_entries=true cached_full_picks=0 golden_override_consumed=0
+origin=final_pass shape=8x8 ref=LAST method=NSTEP entries=496 diamond_starts=1371 local_seed_full_sads=487 sad4_batches=4866 scalar_sads=2050 refinements=358 variance_evaluations=1313
+origin=final_pass shape=8x8 ref=GOLDEN method=NSTEP entries=291 diamond_starts=1116 local_seed_full_sads=270 sad4_batches=3475 scalar_sads=2379 refinements=247 variance_evaluations=1095
+origin=final_pass shape=16x16 ref=LAST method=NSTEP entries=6313 diamond_starts=16647 local_seed_full_sads=6108 sad4_batches=59012 scalar_sads=26561 refinements=4465 variance_evaluations=16022
+origin=final_pass shape=16x16 ref=GOLDEN method=NSTEP entries=4735 diamond_starts=19819 local_seed_full_sads=4570 sad4_batches=66138 scalar_sads=28863 refinements=4360 variance_evaluations=19827
+origin=final_pass shape=32x32 ref=LAST method=NSTEP entries=9 diamond_starts=25 local_seed_full_sads=9 sad4_batches=89 scalar_sads=34 refinements=7 variance_evaluations=23
+origin=final_pass shape=32x32 ref=GOLDEN method=NSTEP entries=1 diamond_starts=5 local_seed_full_sads=1 sad4_batches=16 scalar_sads=6 refinements=1 variance_evaluations=5
+
+[FULLPEL_CENSUS] frame totals
+golden_newmv_fresh=2789 fullpel_entries=2789 search_rejected=212 deduplicated=9 inter_lost=2507 intra_replaced=12 chosen=49 terminal_total=2789 reconciled=true matches_entries=true cached_full_picks=0 golden_override_consumed=0
+origin=final_pass shape=8x8 ref=LAST method=NSTEP entries=458 diamond_starts=1163 local_seed_full_sads=453 sad4_batches=4228 scalar_sads=1649 refinements=306 variance_evaluations=1123
+origin=final_pass shape=8x8 ref=GOLDEN method=NSTEP entries=135 diamond_starts=516 local_seed_full_sads=134 sad4_batches=1783 scalar_sads=650 refinements=108 variance_evaluations=517
+origin=final_pass shape=16x16 ref=LAST method=NSTEP entries=6321 diamond_starts=16327 local_seed_full_sads=6160 sad4_batches=58172 scalar_sads=26518 refinements=4487 variance_evaluations=15778
+origin=final_pass shape=16x16 ref=GOLDEN method=NSTEP entries=2653 diamond_starts=11336 local_seed_full_sads=2567 sad4_batches=37817 scalar_sads=16689 refinements=2450 variance_evaluations=11449
+origin=final_pass shape=32x32 ref=LAST method=NSTEP entries=11 diamond_starts=32 local_seed_full_sads=10 sad4_batches=126 scalar_sads=42 refinements=8 variance_evaluations=33
+origin=final_pass shape=32x32 ref=GOLDEN method=NSTEP entries=1 diamond_starts=3 local_seed_full_sads=0 sad4_batches=9 scalar_sads=3 refinements=1 variance_evaluations=3
+
+[FULLPEL_CENSUS] frame totals
+golden_newmv_fresh=1587 fullpel_entries=1587 search_rejected=169 deduplicated=4 inter_lost=1409 intra_replaced=0 chosen=5 terminal_total=1587 reconciled=true matches_entries=true cached_full_picks=0 golden_override_consumed=0
+origin=final_pass shape=8x8 ref=LAST method=NSTEP entries=290 diamond_starts=688 local_seed_full_sads=265 sad4_batches=2522 scalar_sads=1025 refinements=168 variance_evaluations=649
+origin=final_pass shape=8x8 ref=GOLDEN method=NSTEP entries=46 diamond_starts=167 local_seed_full_sads=38 sad4_batches=571 scalar_sads=208 refinements=37 variance_evaluations=157
+origin=final_pass shape=16x16 ref=LAST method=NSTEP entries=5934 diamond_starts=13354 local_seed_full_sads=5308 sad4_batches=48839 scalar_sads=22250 refinements=3699 variance_evaluations=12852
+origin=final_pass shape=16x16 ref=GOLDEN method=NSTEP entries=1539 diamond_starts=6564 local_seed_full_sads=1362 sad4_batches=21563 scalar_sads=10147 refinements=1383 variance_evaluations=6594
+origin=final_pass shape=32x32 ref=LAST method=NSTEP entries=37 diamond_starts=85 local_seed_full_sads=36 sad4_batches=296 scalar_sads=163 refinements=28 variance_evaluations=80
+origin=final_pass shape=32x32 ref=GOLDEN method=NSTEP entries=2 diamond_starts=8 local_seed_full_sads=1 sad4_batches=25 scalar_sads=9 refinements=2 variance_evaluations=8
+
+[FULLPEL_CENSUS] frame totals
+golden_newmv_fresh=2400 fullpel_entries=2400 search_rejected=285 deduplicated=7 inter_lost=2051 intra_replaced=10 chosen=47 terminal_total=2400 reconciled=true matches_entries=true cached_full_picks=0 golden_override_consumed=0
+origin=final_pass shape=8x8 ref=LAST method=NSTEP entries=619 diamond_starts=1664 local_seed_full_sads=600 sad4_batches=5958 scalar_sads=2441 refinements=411 variance_evaluations=1577
+origin=final_pass shape=8x8 ref=GOLDEN method=NSTEP entries=171 diamond_starts=677 local_seed_full_sads=160 sad4_batches=2300 scalar_sads=843 refinements=137 variance_evaluations=662
+origin=final_pass shape=16x16 ref=LAST method=NSTEP entries=6318 diamond_starts=16479 local_seed_full_sads=6125 sad4_batches=58574 scalar_sads=26606 refinements=4583 variance_evaluations=15958
+origin=final_pass shape=16x16 ref=GOLDEN method=NSTEP entries=2228 diamond_starts=9622 local_seed_full_sads=2132 sad4_batches=31980 scalar_sads=14504 refinements=2044 variance_evaluations=9835
+origin=final_pass shape=32x32 ref=LAST method=NSTEP entries=7 diamond_starts=17 local_seed_full_sads=7 sad4_batches=64 scalar_sads=24 refinements=7 variance_evaluations=18
+origin=final_pass shape=32x32 ref=GOLDEN method=NSTEP entries=1 diamond_starts=3 local_seed_full_sads=1 sad4_batches=9 scalar_sads=4 refinements=1 variance_evaluations=3
+
+[FULLPEL_CENSUS] frame totals
+golden_newmv_fresh=0 fullpel_entries=0 search_rejected=0 deduplicated=0 inter_lost=0 intra_replaced=0 chosen=0 terminal_total=0 reconciled=true matches_entries=true cached_full_picks=0 golden_override_consumed=0
+origin=final_pass shape=8x8 ref=LAST method=NSTEP entries=461 diamond_starts=1269 local_seed_full_sads=442 sad4_batches=4454 scalar_sads=2089 refinements=318 variance_evaluations=1211
+origin=final_pass shape=16x16 ref=LAST method=NSTEP entries=6476 diamond_starts=16764 local_seed_full_sads=6311 sad4_batches=59622 scalar_sads=27028 refinements=4604 variance_evaluations=16135
+origin=final_pass shape=32x32 ref=LAST method=NSTEP entries=8 diamond_starts=10 local_seed_full_sads=7 sad4_batches=53 scalar_sads=17 refinements=7 variance_evaluations=12
+
+[FULLPEL_CENSUS] frame totals
+golden_newmv_fresh=7456 fullpel_entries=7456 search_rejected=1371 deduplicated=103 inter_lost=5975 intra_replaced=0 chosen=7 terminal_total=7456 reconciled=true matches_entries=true cached_full_picks=0 golden_override_consumed=0
+origin=final_pass shape=8x8 ref=LAST method=NSTEP entries=117 diamond_starts=305 local_seed_full_sads=103 sad4_batches=1075 scalar_sads=522 refinements=80 variance_evaluations=292
+origin=final_pass shape=8x8 ref=GOLDEN method=NSTEP entries=241 diamond_starts=786 local_seed_full_sads=216 sad4_batches=2168 scalar_sads=2851 refinements=169 variance_evaluations=765
+origin=final_pass shape=16x16 ref=LAST method=NSTEP entries=6076 diamond_starts=13588 local_seed_full_sads=5406 sad4_batches=49850 scalar_sads=22833 refinements=3864 variance_evaluations=13106
+origin=final_pass shape=16x16 ref=GOLDEN method=NSTEP entries=7212 diamond_starts=22241 local_seed_full_sads=6535 sad4_batches=76956 scalar_sads=33216 refinements=5578 variance_evaluations=21473
+origin=final_pass shape=32x32 ref=LAST method=NSTEP entries=15 diamond_starts=29 local_seed_full_sads=10 sad4_batches=108 scalar_sads=54 refinements=7 variance_evaluations=24
+origin=final_pass shape=32x32 ref=GOLDEN method=NSTEP entries=3 diamond_starts=7 local_seed_full_sads=1 sad4_batches=18 scalar_sads=35 refinements=2 variance_evaluations=6
+
+[FULLPEL_CENSUS] frame totals
+golden_newmv_fresh=7396 fullpel_entries=7396 search_rejected=1633 deduplicated=29 inter_lost=5654 intra_replaced=9 chosen=71 terminal_total=7396 reconciled=true matches_entries=true cached_full_picks=0 golden_override_consumed=0
+origin=final_pass shape=8x8 ref=LAST method=NSTEP entries=468 diamond_starts=1364 local_seed_full_sads=466 sad4_batches=4736 scalar_sads=2178 refinements=320 variance_evaluations=1307
+origin=final_pass shape=8x8 ref=GOLDEN method=NSTEP entries=459 diamond_starts=1625 local_seed_full_sads=434 sad4_batches=5152 scalar_sads=3556 refinements=373 variance_evaluations=1590
+origin=final_pass shape=16x16 ref=LAST method=NSTEP entries=6348 diamond_starts=16839 local_seed_full_sads=6202 sad4_batches=59521 scalar_sads=27175 refinements=4582 variance_evaluations=16253
+origin=final_pass shape=16x16 ref=GOLDEN method=NSTEP entries=6937 diamond_starts=25351 local_seed_full_sads=6776 sad4_batches=86134 scalar_sads=36963 refinements=5983 variance_evaluations=24919
+origin=final_pass shape=32x32 ref=LAST method=NSTEP entries=3 diamond_starts=4 local_seed_full_sads=3 sad4_batches=20 scalar_sads=7 refinements=2 variance_evaluations=4
+
+[FULLPEL_CENSUS] frame totals
+golden_newmv_fresh=5936 fullpel_entries=5936 search_rejected=1414 deduplicated=19 inter_lost=4441 intra_replaced=10 chosen=52 terminal_total=5936 reconciled=true matches_entries=true cached_full_picks=0 golden_override_consumed=0
+origin=final_pass shape=8x8 ref=LAST method=NSTEP entries=477 diamond_starts=1272 local_seed_full_sads=474 sad4_batches=4579 scalar_sads=1881 refinements=313 variance_evaluations=1215
+origin=final_pass shape=8x8 ref=GOLDEN method=NSTEP entries=401 diamond_starts=1466 local_seed_full_sads=380 sad4_batches=4636 scalar_sads=3049 refinements=315 variance_evaluations=1427
+origin=final_pass shape=16x16 ref=LAST method=NSTEP entries=6509 diamond_starts=17046 local_seed_full_sads=6378 sad4_batches=60681 scalar_sads=27271 refinements=4698 variance_evaluations=16447
+origin=final_pass shape=16x16 ref=GOLDEN method=NSTEP entries=5535 diamond_starts=21982 local_seed_full_sads=5418 sad4_batches=74181 scalar_sads=31451 refinements=4974 variance_evaluations=21804
+origin=final_pass shape=32x32 ref=LAST method=NSTEP entries=3 diamond_starts=6 local_seed_full_sads=3 sad4_batches=24 scalar_sads=9 refinements=3 variance_evaluations=6
+
+[FULLPEL_CENSUS] frame totals
+golden_newmv_fresh=3816 fullpel_entries=3816 search_rejected=1187 deduplicated=8 inter_lost=2612 intra_replaced=0 chosen=9 terminal_total=3816 reconciled=true matches_entries=true cached_full_picks=0 golden_override_consumed=0
+origin=final_pass shape=8x8 ref=LAST method=NSTEP entries=166 diamond_starts=417 local_seed_full_sads=155 sad4_batches=1442 scalar_sads=815 refinements=87 variance_evaluations=393
+origin=final_pass shape=8x8 ref=GOLDEN method=NSTEP entries=181 diamond_starts=717 local_seed_full_sads=166 sad4_batches=1956 scalar_sads=2260 refinements=152 variance_evaluations=687
+origin=final_pass shape=16x16 ref=LAST method=NSTEP entries=6028 diamond_starts=13479 local_seed_full_sads=5548 sad4_batches=49130 scalar_sads=23192 refinements=3700 variance_evaluations=12837
+origin=final_pass shape=16x16 ref=GOLDEN method=NSTEP entries=3634 diamond_starts=15059 local_seed_full_sads=3369 sad4_batches=49964 scalar_sads=22073 refinements=3308 variance_evaluations=15011
+origin=final_pass shape=32x32 ref=LAST method=NSTEP entries=21 diamond_starts=47 local_seed_full_sads=17 sad4_batches=182 scalar_sads=64 refinements=14 variance_evaluations=47
+origin=final_pass shape=32x32 ref=GOLDEN method=NSTEP entries=1 diamond_starts=1 local_seed_full_sads=1 sad4_batches=6 scalar_sads=2 refinements=1 variance_evaluations=1
+
+[FULLPEL_CENSUS] frame totals
+golden_newmv_fresh=2872 fullpel_entries=2872 search_rejected=242 deduplicated=7 inter_lost=2562 intra_replaced=10 chosen=51 terminal_total=2872 reconciled=true matches_entries=true cached_full_picks=0 golden_override_consumed=0
+origin=final_pass shape=8x8 ref=LAST method=NSTEP entries=418 diamond_starts=1183 local_seed_full_sads=405 sad4_batches=4145 scalar_sads=1785 refinements=276 variance_evaluations=1131
+origin=final_pass shape=8x8 ref=GOLDEN method=NSTEP entries=125 diamond_starts=478 local_seed_full_sads=116 sad4_batches=1620 scalar_sads=594 refinements=103 variance_evaluations=465
+origin=final_pass shape=16x16 ref=LAST method=NSTEP entries=6334 diamond_starts=16603 local_seed_full_sads=6171 sad4_batches=59057 scalar_sads=26335 refinements=4496 variance_evaluations=16025
+origin=final_pass shape=16x16 ref=GOLDEN method=NSTEP entries=2745 diamond_starts=11878 local_seed_full_sads=2664 sad4_batches=39619 scalar_sads=16918 refinements=2556 variance_evaluations=12008
+origin=final_pass shape=32x32 ref=LAST method=NSTEP entries=12 diamond_starts=41 local_seed_full_sads=11 sad4_batches=142 scalar_sads=52 refinements=11 variance_evaluations=40
+origin=final_pass shape=32x32 ref=GOLDEN method=NSTEP entries=2 diamond_starts=7 local_seed_full_sads=1 sad4_batches=23 scalar_sads=8 refinements=2 variance_evaluations=7
+
+[FULLPEL_CENSUS] frame totals
+golden_newmv_fresh=2359 fullpel_entries=2359 search_rejected=205 deduplicated=4 inter_lost=2099 intra_replaced=5 chosen=46 terminal_total=2359 reconciled=true matches_entries=true cached_full_picks=0 golden_override_consumed=0
+origin=final_pass shape=8x8 ref=LAST method=NSTEP entries=408 diamond_starts=1104 local_seed_full_sads=397 sad4_batches=3923 scalar_sads=1653 refinements=284 variance_evaluations=1072
+origin=final_pass shape=8x8 ref=GOLDEN method=NSTEP entries=112 diamond_starts=451 local_seed_full_sads=110 sad4_batches=1502 scalar_sads=579 refinements=99 variance_evaluations=448
+origin=final_pass shape=16x16 ref=LAST method=NSTEP entries=6444 diamond_starts=16647 local_seed_full_sads=6240 sad4_batches=59372 scalar_sads=26893 refinements=4538 variance_evaluations=16068
+origin=final_pass shape=16x16 ref=GOLDEN method=NSTEP entries=2247 diamond_starts=9730 local_seed_full_sads=2162 sad4_batches=32284 scalar_sads=14373 refinements=2048 variance_evaluations=9824
+origin=final_pass shape=32x32 ref=LAST method=NSTEP entries=9 diamond_starts=18 local_seed_full_sads=9 sad4_batches=69 scalar_sads=27 refinements=4 variance_evaluations=19
+
+[FULLPEL_CENSUS] frame totals
+golden_newmv_fresh=1508 fullpel_entries=1508 search_rejected=204 deduplicated=9 inter_lost=1294 intra_replaced=0 chosen=1 terminal_total=1508 reconciled=true matches_entries=true cached_full_picks=0 golden_override_consumed=0
+origin=final_pass shape=8x8 ref=LAST method=NSTEP entries=264 diamond_starts=673 local_seed_full_sads=262 sad4_batches=2442 scalar_sads=959 refinements=171 variance_evaluations=637
+origin=final_pass shape=8x8 ref=GOLDEN method=NSTEP entries=45 diamond_starts=169 local_seed_full_sads=44 sad4_batches=573 scalar_sads=213 refinements=31 variance_evaluations=170
+origin=final_pass shape=16x16 ref=LAST method=NSTEP entries=6068 diamond_starts=13812 local_seed_full_sads=5590 sad4_batches=50338 scalar_sads=23198 refinements=3749 variance_evaluations=13285
+origin=final_pass shape=16x16 ref=GOLDEN method=NSTEP entries=1462 diamond_starts=6226 local_seed_full_sads=1349 sad4_batches=20530 scalar_sads=9640 refinements=1318 variance_evaluations=6262
+origin=final_pass shape=32x32 ref=LAST method=NSTEP entries=15 diamond_starts=33 local_seed_full_sads=15 sad4_batches=118 scalar_sads=63 refinements=9 variance_evaluations=29
+origin=final_pass shape=32x32 ref=GOLDEN method=NSTEP entries=1 diamond_starts=5 local_seed_full_sads=1 sad4_batches=17 scalar_sads=6 refinements=1 variance_evaluations=5
+
+[FULLPEL_CENSUS] frame totals
+golden_newmv_fresh=0 fullpel_entries=0 search_rejected=0 deduplicated=0 inter_lost=0 intra_replaced=0 chosen=0 terminal_total=0 reconciled=true matches_entries=true cached_full_picks=0 golden_override_consumed=0
+origin=final_pass shape=8x8 ref=LAST method=NSTEP entries=509 diamond_starts=1372 local_seed_full_sads=505 sad4_batches=4916 scalar_sads=2060 refinements=358 variance_evaluations=1321
+origin=final_pass shape=16x16 ref=LAST method=NSTEP entries=6392 diamond_starts=17017 local_seed_full_sads=6268 sad4_batches=60257 scalar_sads=27045 refinements=4623 variance_evaluations=16421
+origin=final_pass shape=32x32 ref=LAST method=NSTEP entries=5 diamond_starts=17 local_seed_full_sads=5 sad4_batches=64 scalar_sads=22 refinements=4 variance_evaluations=20
+
+[FULLPEL_CENSUS] frame totals
+golden_newmv_fresh=7719 fullpel_entries=7719 search_rejected=1515 deduplicated=61 inter_lost=6091 intra_replaced=6 chosen=46 terminal_total=7719 reconciled=true matches_entries=true cached_full_picks=0 golden_override_consumed=0
+origin=final_pass shape=8x8 ref=LAST method=NSTEP entries=251 diamond_starts=747 local_seed_full_sads=249 sad4_batches=2614 scalar_sads=1104 refinements=185 variance_evaluations=727
+origin=final_pass shape=8x8 ref=GOLDEN method=NSTEP entries=394 diamond_starts=1355 local_seed_full_sads=363 sad4_batches=3865 scalar_sads=4147 refinements=277 variance_evaluations=1320
+origin=final_pass shape=16x16 ref=LAST method=NSTEP entries=6436 diamond_starts=16665 local_seed_full_sads=6312 sad4_batches=59100 scalar_sads=26797 refinements=4520 variance_evaluations=15978
+origin=final_pass shape=16x16 ref=GOLDEN method=NSTEP entries=7325 diamond_starts=24472 local_seed_full_sads=7181 sad4_batches=83833 scalar_sads=36149 refinements=5937 variance_evaluations=23753
+origin=final_pass shape=32x32 ref=LAST method=NSTEP entries=4 diamond_starts=9 local_seed_full_sads=4 sad4_batches=38 scalar_sads=22 refinements=3 variance_evaluations=10
+
+[FULLPEL_CENSUS] frame totals
+golden_newmv_fresh=5930 fullpel_entries=5930 search_rejected=1330 deduplicated=23 inter_lost=4571 intra_replaced=0 chosen=6 terminal_total=5930 reconciled=true matches_entries=true cached_full_picks=0 golden_override_consumed=0
+origin=final_pass shape=8x8 ref=LAST method=NSTEP entries=154 diamond_starts=391 local_seed_full_sads=149 sad4_batches=1410 scalar_sads=600 refinements=98 variance_evaluations=363
+origin=final_pass shape=8x8 ref=GOLDEN method=NSTEP entries=265 diamond_starts=900 local_seed_full_sads=246 sad4_batches=2407 scalar_sads=3332 refinements=185 variance_evaluations=862
+origin=final_pass shape=16x16 ref=LAST method=NSTEP entries=6094 diamond_starts=13906 local_seed_full_sads=5690 sad4_batches=50449 scalar_sads=23383 refinements=3868 variance_evaluations=13223
+origin=final_pass shape=16x16 ref=GOLDEN method=NSTEP entries=5664 diamond_starts=21388 local_seed_full_sads=5326 sad4_batches=71822 scalar_sads=31377 refinements=4989 variance_evaluations=20920
+origin=final_pass shape=32x32 ref=LAST method=NSTEP entries=18 diamond_starts=47 local_seed_full_sads=17 sad4_batches=178 scalar_sads=64 refinements=15 variance_evaluations=47
+origin=final_pass shape=32x32 ref=GOLDEN method=NSTEP entries=1 diamond_starts=4 local_seed_full_sads=0 sad4_batches=14 scalar_sads=4 refinements=1 variance_evaluations=4
+
+[FULLPEL_CENSUS] frame totals
+golden_newmv_fresh=5659 fullpel_entries=5659 search_rejected=1367 deduplicated=9 inter_lost=4225 intra_replaced=12 chosen=46 terminal_total=5659 reconciled=true matches_entries=true cached_full_picks=0 golden_override_consumed=0
+origin=final_pass shape=8x8 ref=LAST method=NSTEP entries=273 diamond_starts=831 local_seed_full_sads=263 sad4_batches=2884 scalar_sads=1151 refinements=216 variance_evaluations=791
+origin=final_pass shape=8x8 ref=GOLDEN method=NSTEP entries=274 diamond_starts=1019 local_seed_full_sads=246 sad4_batches=2848 scalar_sads=3154 refinements=209 variance_evaluations=984
+origin=final_pass shape=16x16 ref=LAST method=NSTEP entries=6338 diamond_starts=16860 local_seed_full_sads=6181 sad4_batches=59656 scalar_sads=26677 refinements=4602 variance_evaluations=16199
+origin=final_pass shape=16x16 ref=GOLDEN method=NSTEP entries=5384 diamond_starts=21827 local_seed_full_sads=5250 sad4_batches=73223 scalar_sads=31114 refinements=4893 variance_evaluations=21767
+origin=final_pass shape=32x32 ref=LAST method=NSTEP entries=12 diamond_starts=45 local_seed_full_sads=11 sad4_batches=155 scalar_sads=62 refinements=11 variance_evaluations=42
+origin=final_pass shape=32x32 ref=GOLDEN method=NSTEP entries=1 diamond_starts=3 local_seed_full_sads=1 sad4_batches=10 scalar_sads=4 refinements=1 variance_evaluations=3
+
+[FULLPEL_CENSUS] frame totals
+golden_newmv_fresh=4622 fullpel_entries=4622 search_rejected=1184 deduplicated=5 inter_lost=3370 intra_replaced=6 chosen=57 terminal_total=4622 reconciled=true matches_entries=true cached_full_picks=0 golden_override_consumed=0
+origin=final_pass shape=8x8 ref=LAST method=NSTEP entries=398 diamond_starts=1156 local_seed_full_sads=394 sad4_batches=4067 scalar_sads=1640 refinements=286 variance_evaluations=1096
+origin=final_pass shape=8x8 ref=GOLDEN method=NSTEP entries=303 diamond_starts=1174 local_seed_full_sads=287 sad4_batches=3345 scalar_sads=3344 refinements=229 variance_evaluations=1188
+origin=final_pass shape=16x16 ref=LAST method=NSTEP entries=6458 diamond_starts=16915 local_seed_full_sads=6293 sad4_batches=60252 scalar_sads=26795 refinements=4646 variance_evaluations=16369
+origin=final_pass shape=16x16 ref=GOLDEN method=NSTEP entries=4319 diamond_starts=18254 local_seed_full_sads=4216 sad4_batches=60955 scalar_sads=25929 refinements=3932 variance_evaluations=18298
+origin=final_pass shape=32x32 ref=LAST method=NSTEP entries=8 diamond_starts=22 local_seed_full_sads=8 sad4_batches=80 scalar_sads=30 refinements=5 variance_evaluations=21
+
+[FULLPEL_CENSUS] frame totals
+golden_newmv_fresh=1791 fullpel_entries=1791 search_rejected=175 deduplicated=8 inter_lost=1597 intra_replaced=2 chosen=9 terminal_total=1791 reconciled=true matches_entries=true cached_full_picks=0 golden_override_consumed=0
+origin=final_pass shape=8x8 ref=LAST method=NSTEP entries=280 diamond_starts=709 local_seed_full_sads=266 sad4_batches=2549 scalar_sads=1035 refinements=166 variance_evaluations=666
+origin=final_pass shape=8x8 ref=GOLDEN method=NSTEP entries=41 diamond_starts=172 local_seed_full_sads=38 sad4_batches=582 scalar_sads=210 refinements=34 variance_evaluations=175
+origin=final_pass shape=16x16 ref=LAST method=NSTEP entries=6184 diamond_starts=13838 local_seed_full_sads=5768 sad4_batches=50555 scalar_sads=23545 refinements=3836 variance_evaluations=13258
+origin=final_pass shape=16x16 ref=GOLDEN method=NSTEP entries=1749 diamond_starts=7382 local_seed_full_sads=1601 sad4_batches=24089 scalar_sads=11441 refinements=1591 variance_evaluations=7368
+origin=final_pass shape=32x32 ref=LAST method=NSTEP entries=17 diamond_starts=45 local_seed_full_sads=17 sad4_batches=169 scalar_sads=68 refinements=13 variance_evaluations=45
+origin=final_pass shape=32x32 ref=GOLDEN method=NSTEP entries=1 diamond_starts=4 local_seed_full_sads=1 sad4_batches=14 scalar_sads=5 refinements=1 variance_evaluations=4
+
+[FULLPEL_CENSUS] frame totals
+golden_newmv_fresh=2462 fullpel_entries=2462 search_rejected=268 deduplicated=6 inter_lost=2137 intra_replaced=9 chosen=42 terminal_total=2462 reconciled=true matches_entries=true cached_full_picks=0 golden_override_consumed=0
+origin=final_pass shape=8x8 ref=LAST method=NSTEP entries=411 diamond_starts=1162 local_seed_full_sads=405 sad4_batches=4091 scalar_sads=1642 refinements=289 variance_evaluations=1112
+origin=final_pass shape=8x8 ref=GOLDEN method=NSTEP entries=114 diamond_starts=476 local_seed_full_sads=113 sad4_batches=1600 scalar_sads=589 refinements=103 variance_evaluations=471
+origin=final_pass shape=16x16 ref=LAST method=NSTEP entries=6388 diamond_starts=16786 local_seed_full_sads=6128 sad4_batches=59548 scalar_sads=26839 refinements=4554 variance_evaluations=16186
+origin=final_pass shape=16x16 ref=GOLDEN method=NSTEP entries=2348 diamond_starts=10354 local_seed_full_sads=2220 sad4_batches=34367 scalar_sads=15037 refinements=2196 variance_evaluations=10550
+origin=final_pass shape=32x32 ref=LAST method=NSTEP entries=6 diamond_starts=20 local_seed_full_sads=6 sad4_batches=65 scalar_sads=26 refinements=5 variance_evaluations=18
+
+[FULLPEL_CENSUS] frame totals
+golden_newmv_fresh=2288 fullpel_entries=2288 search_rejected=218 deduplicated=5 inter_lost=2029 intra_replaced=6 chosen=30 terminal_total=2288 reconciled=true matches_entries=true cached_full_picks=0 golden_override_consumed=0
+origin=final_pass shape=8x8 ref=LAST method=NSTEP entries=460 diamond_starts=1305 local_seed_full_sads=453 sad4_batches=4570 scalar_sads=1950 refinements=325 variance_evaluations=1246
+origin=final_pass shape=8x8 ref=GOLDEN method=NSTEP entries=133 diamond_starts=515 local_seed_full_sads=130 sad4_batches=1752 scalar_sads=695 refinements=114 variance_evaluations=503
+origin=final_pass shape=16x16 ref=LAST method=NSTEP entries=6432 diamond_starts=16844 local_seed_full_sads=6279 sad4_batches=59559 scalar_sads=27062 refinements=4680 variance_evaluations=16139
+origin=final_pass shape=16x16 ref=GOLDEN method=NSTEP entries=2155 diamond_starts=9365 local_seed_full_sads=2092 sad4_batches=31105 scalar_sads=13888 refinements=1968 variance_evaluations=9543
+origin=final_pass shape=32x32 ref=LAST method=NSTEP entries=5 diamond_starts=15 local_seed_full_sads=5 sad4_batches=46 scalar_sads=44 refinements=5 variance_evaluations=14
+
+[FULLPEL_CENSUS] frame totals
+golden_newmv_fresh=0 fullpel_entries=0 search_rejected=0 deduplicated=0 inter_lost=0 intra_replaced=0 chosen=0 terminal_total=0 reconciled=true matches_entries=true cached_full_picks=0 golden_override_consumed=0
+origin=final_pass shape=8x8 ref=LAST method=NSTEP entries=216 diamond_starts=555 local_seed_full_sads=200 sad4_batches=1976 scalar_sads=923 refinements=144 variance_evaluations=533
+origin=final_pass shape=16x16 ref=LAST method=NSTEP entries=6117 diamond_starts=13918 local_seed_full_sads=5585 sad4_batches=50675 scalar_sads=23377 refinements=3915 variance_evaluations=13323
+origin=final_pass shape=32x32 ref=LAST method=NSTEP entries=10 diamond_starts=17 local_seed_full_sads=10 sad4_batches=65 scalar_sads=42 refinements=4 variance_evaluations=17
+
+[FULLPEL_CENSUS] frame totals
+golden_newmv_fresh=7941 fullpel_entries=7941 search_rejected=1333 deduplicated=137 inter_lost=6407 intra_replaced=7 chosen=57 terminal_total=7941 reconciled=true matches_entries=true cached_full_picks=0 golden_override_consumed=0
+origin=final_pass shape=8x8 ref=LAST method=NSTEP entries=229 diamond_starts=650 local_seed_full_sads=229 sad4_batches=2281 scalar_sads=1005 refinements=176 variance_evaluations=626
+origin=final_pass shape=8x8 ref=GOLDEN method=NSTEP entries=367 diamond_starts=1217 local_seed_full_sads=367 sad4_batches=3554 scalar_sads=3571 refinements=281 variance_evaluations=1166
+origin=final_pass shape=16x16 ref=LAST method=NSTEP entries=6470 diamond_starts=17246 local_seed_full_sads=6319 sad4_batches=60997 scalar_sads=27587 refinements=4707 variance_evaluations=16569
+origin=final_pass shape=16x16 ref=GOLDEN method=NSTEP entries=7574 diamond_starts=22962 local_seed_full_sads=7418 sad4_batches=79688 scalar_sads=34739 refinements=5783 variance_evaluations=22268
+origin=final_pass shape=32x32 ref=LAST method=NSTEP entries=6 diamond_starts=10 local_seed_full_sads=6 sad4_batches=36 scalar_sads=31 refinements=3 variance_evaluations=10
+
+[FULLPEL_CENSUS] frame totals
+golden_newmv_fresh=7354 fullpel_entries=7354 search_rejected=1603 deduplicated=43 inter_lost=5647 intra_replaced=5 chosen=56 terminal_total=7354 reconciled=true matches_entries=true cached_full_picks=0 golden_override_consumed=0
+origin=final_pass shape=8x8 ref=LAST method=NSTEP entries=489 diamond_starts=1386 local_seed_full_sads=452 sad4_batches=4898 scalar_sads=1931 refinements=330 variance_evaluations=1328
+origin=final_pass shape=8x8 ref=GOLDEN method=NSTEP entries=540 diamond_starts=1827 local_seed_full_sads=508 sad4_batches=5700 scalar_sads=4254 refinements=413 variance_evaluations=1794
+origin=final_pass shape=16x16 ref=LAST method=NSTEP entries=6468 diamond_starts=16925 local_seed_full_sads=6302 sad4_batches=60299 scalar_sads=26785 refinements=4630 variance_evaluations=16393
+origin=final_pass shape=16x16 ref=GOLDEN method=NSTEP entries=6813 diamond_starts=24633 local_seed_full_sads=6657 sad4_batches=84264 scalar_sads=35486 refinements=5849 variance_evaluations=24324
+origin=final_pass shape=32x32 ref=LAST method=NSTEP entries=8 diamond_starts=21 local_seed_full_sads=8 sad4_batches=84 scalar_sads=29 refinements=6 variance_evaluations=21
+origin=final_pass shape=32x32 ref=GOLDEN method=NSTEP entries=1 diamond_starts=3 local_seed_full_sads=1 sad4_batches=10 scalar_sads=4 refinements=1 variance_evaluations=3
+
+[FULLPEL_CENSUS] frame totals
+golden_newmv_fresh=5155 fullpel_entries=5155 search_rejected=1237 deduplicated=15 inter_lost=3894 intra_replaced=0 chosen=9 terminal_total=5155 reconciled=true matches_entries=true cached_full_picks=0 golden_override_consumed=0
+origin=final_pass shape=8x8 ref=LAST method=NSTEP entries=232 diamond_starts=588 local_seed_full_sads=215 sad4_batches=2104 scalar_sads=845 refinements=147 variance_evaluations=561
+origin=final_pass shape=8x8 ref=GOLDEN method=NSTEP entries=251 diamond_starts=947 local_seed_full_sads=241 sad4_batches=2625 scalar_sads=3023 refinements=203 variance_evaluations=935
+origin=final_pass shape=16x16 ref=LAST method=NSTEP entries=6166 diamond_starts=13986 local_seed_full_sads=5741 sad4_batches=51117 scalar_sads=23552 refinements=3851 variance_evaluations=13457
+origin=final_pass shape=16x16 ref=GOLDEN method=NSTEP entries=4902 diamond_starts=19263 local_seed_full_sads=4638 sad4_batches=64567 scalar_sads=28177 refinements=4386 variance_evaluations=19044
+origin=final_pass shape=32x32 ref=LAST method=NSTEP entries=7 diamond_starts=19 local_seed_full_sads=7 sad4_batches=60 scalar_sads=47 refinements=5 variance_evaluations=18
+origin=final_pass shape=32x32 ref=GOLDEN method=NSTEP entries=2 diamond_starts=8 local_seed_full_sads=2 sad4_batches=32 scalar_sads=10 refinements=2 variance_evaluations=7
+
+[FULLPEL_CENSUS] frame totals
+golden_newmv_fresh=5163 fullpel_entries=5163 search_rejected=1254 deduplicated=12 inter_lost=3816 intra_replaced=16 chosen=65 terminal_total=5163 reconciled=true matches_entries=true cached_full_picks=0 golden_override_consumed=0
+origin=final_pass shape=8x8 ref=LAST method=NSTEP entries=533 diamond_starts=1534 local_seed_full_sads=493 sad4_batches=5425 scalar_sads=2213 refinements=361 variance_evaluations=1460
+origin=final_pass shape=8x8 ref=GOLDEN method=NSTEP entries=399 diamond_starts=1522 local_seed_full_sads=363 sad4_batches=4628 scalar_sads=3421 refinements=326 variance_evaluations=1465
+origin=final_pass shape=16x16 ref=LAST method=NSTEP entries=6353 diamond_starts=16853 local_seed_full_sads=6199 sad4_batches=59790 scalar_sads=26702 refinements=4496 variance_evaluations=16255
+origin=final_pass shape=16x16 ref=GOLDEN method=NSTEP entries=4763 diamond_starts=19870 local_seed_full_sads=4637 sad4_batches=66361 scalar_sads=28577 refinements=4345 variance_evaluations=19818
+origin=final_pass shape=32x32 ref=LAST method=NSTEP entries=6 diamond_starts=15 local_seed_full_sads=6 sad4_batches=54 scalar_sads=33 refinements=5 variance_evaluations=15
+origin=final_pass shape=32x32 ref=GOLDEN method=NSTEP entries=1 diamond_starts=5 local_seed_full_sads=1 sad4_batches=7 scalar_sads=36 refinements=1 variance_evaluations=5
+
+[FULLPEL_CENSUS] frame totals
+golden_newmv_fresh=2911 fullpel_entries=2911 search_rejected=259 deduplicated=5 inter_lost=2563 intra_replaced=15 chosen=69 terminal_total=2911 reconciled=true matches_entries=true cached_full_picks=0 golden_override_consumed=0
+origin=final_pass shape=8x8 ref=LAST method=NSTEP entries=536 diamond_starts=1591 local_seed_full_sads=530 sad4_batches=5578 scalar_sads=2325 refinements=366 variance_evaluations=1530
+origin=final_pass shape=8x8 ref=GOLDEN method=NSTEP entries=193 diamond_starts=819 local_seed_full_sads=187 sad4_batches=2742 scalar_sads=1093 refinements=164 variance_evaluations=820
+origin=final_pass shape=16x16 ref=LAST method=NSTEP entries=6383 diamond_starts=16746 local_seed_full_sads=6236 sad4_batches=59417 scalar_sads=26611 refinements=4439 variance_evaluations=15975
+origin=final_pass shape=16x16 ref=GOLDEN method=NSTEP entries=2718 diamond_starts=11615 local_seed_full_sads=2635 sad4_batches=38548 scalar_sads=16822 refinements=2474 variance_evaluations=11608
+origin=final_pass shape=32x32 ref=LAST method=NSTEP entries=3 diamond_starts=13 local_seed_full_sads=3 sad4_batches=41 scalar_sads=16 refinements=2 variance_evaluations=11
+
+[FULLPEL_CENSUS] frame totals
+golden_newmv_fresh=1779 fullpel_entries=1779 search_rejected=189 deduplicated=8 inter_lost=1564 intra_replaced=10 chosen=8 terminal_total=1779 reconciled=true matches_entries=true cached_full_picks=0 golden_override_consumed=0
+origin=final_pass shape=8x8 ref=LAST method=NSTEP entries=325 diamond_starts=908 local_seed_full_sads=319 sad4_batches=3206 scalar_sads=1308 refinements=222 variance_evaluations=854
+origin=final_pass shape=8x8 ref=GOLDEN method=NSTEP entries=73 diamond_starts=288 local_seed_full_sads=71 sad4_batches=974 scalar_sads=359 refinements=65 variance_evaluations=283
+origin=final_pass shape=16x16 ref=LAST method=NSTEP entries=6115 diamond_starts=14064 local_seed_full_sads=5595 sad4_batches=50907 scalar_sads=23499 refinements=3749 variance_evaluations=13472
+origin=final_pass shape=16x16 ref=GOLDEN method=NSTEP entries=1706 diamond_starts=7158 local_seed_full_sads=1555 sad4_batches=23467 scalar_sads=11079 refinements=1505 variance_evaluations=7190
+origin=final_pass shape=32x32 ref=LAST method=NSTEP entries=7 diamond_starts=13 local_seed_full_sads=7 sad4_batches=51 scalar_sads=20 refinements=6 variance_evaluations=14
+
+[FULLPEL_CENSUS] frame totals
+golden_newmv_fresh=2539 fullpel_entries=2539 search_rejected=233 deduplicated=3 inter_lost=2254 intra_replaced=14 chosen=35 terminal_total=2539 reconciled=true matches_entries=true cached_full_picks=0 golden_override_consumed=0
+origin=final_pass shape=8x8 ref=LAST method=NSTEP entries=536 diamond_starts=1595 local_seed_full_sads=522 sad4_batches=5654 scalar_sads=2297 refinements=399 variance_evaluations=1548
+origin=final_pass shape=8x8 ref=GOLDEN method=NSTEP entries=196 diamond_starts=798 local_seed_full_sads=193 sad4_batches=2679 scalar_sads=1060 refinements=185 variance_evaluations=801
+origin=final_pass shape=16x16 ref=LAST method=NSTEP entries=6379 diamond_starts=17078 local_seed_full_sads=6265 sad4_batches=60450 scalar_sads=27352 refinements=4607 variance_evaluations=16543
+origin=final_pass shape=16x16 ref=GOLDEN method=NSTEP entries=2343 diamond_starts=10226 local_seed_full_sads=2297 sad4_batches=33934 scalar_sads=15107 refinements=2165 variance_evaluations=10409
+origin=final_pass shape=32x32 ref=LAST method=NSTEP entries=4 diamond_starts=14 local_seed_full_sads=4 sad4_batches=51 scalar_sads=18 refinements=4 variance_evaluations=13
+
+[FULLPEL_CENSUS] frame totals
+golden_newmv_fresh=0 fullpel_entries=0 search_rejected=0 deduplicated=0 inter_lost=0 intra_replaced=0 chosen=0 terminal_total=0 reconciled=true matches_entries=true cached_full_picks=0 golden_override_consumed=0
+origin=final_pass shape=8x8 ref=LAST method=NSTEP entries=505 diamond_starts=1511 local_seed_full_sads=500 sad4_batches=5277 scalar_sads=2167 refinements=372 variance_evaluations=1451
+origin=final_pass shape=16x16 ref=LAST method=NSTEP entries=6445 diamond_starts=17116 local_seed_full_sads=6291 sad4_batches=60670 scalar_sads=27409 refinements=4607 variance_evaluations=16561
+origin=final_pass shape=32x32 ref=LAST method=NSTEP entries=5 diamond_starts=14 local_seed_full_sads=5 sad4_batches=49 scalar_sads=19 refinements=3 variance_evaluations=13
+
+[FULLPEL_CENSUS] frame totals
+golden_newmv_fresh=7496 fullpel_entries=7496 search_rejected=1416 deduplicated=123 inter_lost=5939 intra_replaced=2 chosen=16 terminal_total=7496 reconciled=true matches_entries=true cached_full_picks=0 golden_override_consumed=0
+origin=final_pass shape=8x8 ref=LAST method=NSTEP entries=207 diamond_starts=534 local_seed_full_sads=207 sad4_batches=1925 scalar_sads=816 refinements=134 variance_evaluations=512
+origin=final_pass shape=8x8 ref=GOLDEN method=NSTEP entries=355 diamond_starts=1207 local_seed_full_sads=340 sad4_batches=3389 scalar_sads=3988 refinements=258 variance_evaluations=1189
+origin=final_pass shape=16x16 ref=LAST method=NSTEP entries=6066 diamond_starts=14070 local_seed_full_sads=5606 sad4_batches=50815 scalar_sads=23742 refinements=3858 variance_evaluations=13413
+origin=final_pass shape=16x16 ref=GOLDEN method=NSTEP entries=7140 diamond_starts=22309 local_seed_full_sads=6676 sad4_batches=76675 scalar_sads=33721 refinements=5535 variance_evaluations=21573
+origin=final_pass shape=32x32 ref=LAST method=NSTEP entries=10 diamond_starts=18 local_seed_full_sads=10 sad4_batches=74 scalar_sads=28 refinements=6 variance_evaluations=17
+origin=final_pass shape=32x32 ref=GOLDEN method=NSTEP entries=1 diamond_starts=4 local_seed_full_sads=1 sad4_batches=12 scalar_sads=5 refinements=1 variance_evaluations=3
+
+[FULLPEL_CENSUS] frame totals
+golden_newmv_fresh=7494 fullpel_entries=7494 search_rejected=1484 deduplicated=33 inter_lost=5887 intra_replaced=16 chosen=74 terminal_total=7494 reconciled=true matches_entries=true cached_full_picks=0 golden_override_consumed=0
+origin=final_pass shape=8x8 ref=LAST method=NSTEP entries=587 diamond_starts=1848 local_seed_full_sads=564 sad4_batches=6382 scalar_sads=2595 refinements=421 variance_evaluations=1782
+origin=final_pass shape=8x8 ref=GOLDEN method=NSTEP entries=592 diamond_starts=2192 local_seed_full_sads=558 sad4_batches=6897 scalar_sads=4670 refinements=486 variance_evaluations=2165
+origin=final_pass shape=16x16 ref=LAST method=NSTEP entries=6353 diamond_starts=17169 local_seed_full_sads=6180 sad4_batches=60565 scalar_sads=27332 refinements=4687 variance_evaluations=16583
+origin=final_pass shape=16x16 ref=GOLDEN method=NSTEP entries=6902 diamond_starts=25263 local_seed_full_sads=6705 sad4_batches=85757 scalar_sads=37001 refinements=5944 variance_evaluations=24873
+origin=final_pass shape=32x32 ref=LAST method=NSTEP entries=5 diamond_starts=9 local_seed_full_sads=5 sad4_batches=37 scalar_sads=14 refinements=2 variance_evaluations=9
+
+[FULLPEL_CENSUS] frame totals
+golden_newmv_fresh=6115 fullpel_entries=6115 search_rejected=1291 deduplicated=14 inter_lost=4706 intra_replaced=19 chosen=85 terminal_total=6115 reconciled=true matches_entries=true cached_full_picks=0 golden_override_consumed=0
+origin=final_pass shape=8x8 ref=LAST method=NSTEP entries=679 diamond_starts=2100 local_seed_full_sads=671 sad4_batches=7350 scalar_sads=2801 refinements=472 variance_evaluations=2040
+origin=final_pass shape=8x8 ref=GOLDEN method=NSTEP entries=557 diamond_starts=2122 local_seed_full_sads=545 sad4_batches=6739 scalar_sads=4194 refinements=446 variance_evaluations=2079
+origin=final_pass shape=16x16 ref=LAST method=NSTEP entries=6354 diamond_starts=16996 local_seed_full_sads=6187 sad4_batches=60020 scalar_sads=27204 refinements=4602 variance_evaluations=16401
+origin=final_pass shape=16x16 ref=GOLDEN method=NSTEP entries=5556 diamond_starts=22346 local_seed_full_sads=5395 sad4_batches=74938 scalar_sads=31993 refinements=5023 variance_evaluations=22173
+origin=final_pass shape=32x32 ref=LAST method=NSTEP entries=8 diamond_starts=19 local_seed_full_sads=8 sad4_batches=74 scalar_sads=27 refinements=6 variance_evaluations=19
+origin=final_pass shape=32x32 ref=GOLDEN method=NSTEP entries=2 diamond_starts=9 local_seed_full_sads=2 sad4_batches=28 scalar_sads=11 refinements=2 variance_evaluations=7
+
+[FULLPEL_CENSUS] frame totals
+golden_newmv_fresh=4048 fullpel_entries=4048 search_rejected=1088 deduplicated=11 inter_lost=2934 intra_replaced=7 chosen=8 terminal_total=4048 reconciled=true matches_entries=true cached_full_picks=0 golden_override_consumed=0
+origin=final_pass shape=8x8 ref=LAST method=NSTEP entries=431 diamond_starts=1170 local_seed_full_sads=403 sad4_batches=4196 scalar_sads=1603 refinements=282 variance_evaluations=1122
+origin=final_pass shape=8x8 ref=GOLDEN method=NSTEP entries=315 diamond_starts=1178 local_seed_full_sads=292 sad4_batches=3619 scalar_sads=2756 refinements=252 variance_evaluations=1165
+origin=final_pass shape=16x16 ref=LAST method=NSTEP entries=6097 diamond_starts=14220 local_seed_full_sads=5699 sad4_batches=51369 scalar_sads=23922 refinements=3916 variance_evaluations=13578
+origin=final_pass shape=16x16 ref=GOLDEN method=NSTEP entries=3731 diamond_starts=15594 local_seed_full_sads=3495 sad4_batches=51635 scalar_sads=22803 refinements=3367 variance_evaluations=15462
+origin=final_pass shape=32x32 ref=LAST method=NSTEP entries=16 diamond_starts=37 local_seed_full_sads=15 sad4_batches=128 scalar_sads=70 refinements=13 variance_evaluations=38
+origin=final_pass shape=32x32 ref=GOLDEN method=NSTEP entries=2 diamond_starts=10 local_seed_full_sads=2 sad4_batches=25 scalar_sads=42 refinements=2 variance_evaluations=10
+
+[FULLPEL_CENSUS] frame totals
+golden_newmv_fresh=3325 fullpel_entries=3325 search_rejected=283 deduplicated=11 inter_lost=2912 intra_replaced=33 chosen=86 terminal_total=3325 reconciled=true matches_entries=true cached_full_picks=0 golden_override_consumed=0
+origin=final_pass shape=8x8 ref=LAST method=NSTEP entries=757 diamond_starts=2385 local_seed_full_sads=752 sad4_batches=8314 scalar_sads=3230 refinements=566 variance_evaluations=2352
+origin=final_pass shape=8x8 ref=GOLDEN method=NSTEP entries=324 diamond_starts=1293 local_seed_full_sads=324 sad4_batches=4416 scalar_sads=1626 refinements=278 variance_evaluations=1280
+origin=final_pass shape=16x16 ref=LAST method=NSTEP entries=6304 diamond_starts=17316 local_seed_full_sads=6203 sad4_batches=60984 scalar_sads=27294 refinements=4573 variance_evaluations=16695
+origin=final_pass shape=16x16 ref=GOLDEN method=NSTEP entries=3001 diamond_starts=12849 local_seed_full_sads=2943 sad4_batches=42855 scalar_sads=18606 refinements=2763 variance_evaluations=12918
+origin=final_pass shape=32x32 ref=LAST method=NSTEP entries=9 diamond_starts=19 local_seed_full_sads=9 sad4_batches=75 scalar_sads=28 refinements=5 variance_evaluations=19
+
+[FULLPEL_CENSUS] frame totals
+golden_newmv_fresh=2923 fullpel_entries=2923 search_rejected=285 deduplicated=11 inter_lost=2494 intra_replaced=43 chosen=90 terminal_total=2923 reconciled=true matches_entries=true cached_full_picks=0 golden_override_consumed=0
+origin=final_pass shape=8x8 ref=LAST method=NSTEP entries=834 diamond_starts=2624 local_seed_full_sads=822 sad4_batches=9087 scalar_sads=3623 refinements=608 variance_evaluations=2522
+origin=final_pass shape=8x8 ref=GOLDEN method=NSTEP entries=347 diamond_starts=1372 local_seed_full_sads=344 sad4_batches=4712 scalar_sads=1737 refinements=312 variance_evaluations=1378
+origin=final_pass shape=16x16 ref=LAST method=NSTEP entries=6285 diamond_starts=17154 local_seed_full_sads=6132 sad4_batches=60649 scalar_sads=26708 refinements=4512 variance_evaluations=16595
+origin=final_pass shape=16x16 ref=GOLDEN method=NSTEP entries=2576 diamond_starts=10950 local_seed_full_sads=2494 sad4_batches=36453 scalar_sads=15888 refinements=2321 variance_evaluations=11051
+origin=final_pass shape=32x32 ref=LAST method=NSTEP entries=6 diamond_starts=11 local_seed_full_sads=6 sad4_batches=48 scalar_sads=17 refinements=6 variance_evaluations=12
+
+[FULLPEL_CENSUS] frame totals
+golden_newmv_fresh=1988 fullpel_entries=1988 search_rejected=206 deduplicated=7 inter_lost=1740 intra_replaced=7 chosen=28 terminal_total=1988 reconciled=true matches_entries=true cached_full_picks=0 golden_override_consumed=0
+origin=final_pass shape=8x8 ref=LAST method=NSTEP entries=614 diamond_starts=1830 local_seed_full_sads=606 sad4_batches=6404 scalar_sads=2628 refinements=406 variance_evaluations=1771
+origin=final_pass shape=8x8 ref=GOLDEN method=NSTEP entries=228 diamond_starts=879 local_seed_full_sads=223 sad4_batches=3001 scalar_sads=1162 refinements=190 variance_evaluations=876
+origin=final_pass shape=16x16 ref=LAST method=NSTEP entries=5965 diamond_starts=14393 local_seed_full_sads=5477 sad4_batches=51483 scalar_sads=23660 refinements=3857 variance_evaluations=13810
+origin=final_pass shape=16x16 ref=GOLDEN method=NSTEP entries=1760 diamond_starts=7413 local_seed_full_sads=1593 sad4_batches=24641 scalar_sads=10802 refinements=1541 variance_evaluations=7483
+origin=final_pass shape=32x32 ref=LAST method=NSTEP entries=7 diamond_starts=11 local_seed_full_sads=6 sad4_batches=39 scalar_sads=38 refinements=3 variance_evaluations=11
+
+[FULLPEL_CENSUS] frame totals
+golden_newmv_fresh=0 fullpel_entries=0 search_rejected=0 deduplicated=0 inter_lost=0 intra_replaced=0 chosen=0 terminal_total=0 reconciled=true matches_entries=true cached_full_picks=0 golden_override_consumed=0
+origin=final_pass shape=8x8 ref=LAST method=NSTEP entries=745 diamond_starts=2234 local_seed_full_sads=740 sad4_batches=7896 scalar_sads=3127 refinements=521 variance_evaluations=2183
+origin=final_pass shape=16x16 ref=LAST method=NSTEP entries=6147 diamond_starts=17219 local_seed_full_sads=5946 sad4_batches=60334 scalar_sads=26956 refinements=4465 variance_evaluations=16610
+origin=final_pass shape=32x32 ref=LAST method=NSTEP entries=8 diamond_starts=25 local_seed_full_sads=8 sad4_batches=89 scalar_sads=33 refinements=7 variance_evaluations=23
+
+[FULLPEL_CENSUS] frame totals
+golden_newmv_fresh=7897 fullpel_entries=7897 search_rejected=1601 deduplicated=86 inter_lost=6099 intra_replaced=33 chosen=78 terminal_total=7897 reconciled=true matches_entries=true cached_full_picks=0 golden_override_consumed=0
+origin=final_pass shape=8x8 ref=LAST method=NSTEP entries=686 diamond_starts=2293 local_seed_full_sads=674 sad4_batches=7886 scalar_sads=3117 refinements=514 variance_evaluations=2222
+origin=final_pass shape=8x8 ref=GOLDEN method=NSTEP entries=749 diamond_starts=2773 local_seed_full_sads=730 sad4_batches=8774 scalar_sads=5647 refinements=586 variance_evaluations=2714
+origin=final_pass shape=16x16 ref=LAST method=NSTEP entries=6236 diamond_starts=17295 local_seed_full_sads=6029 sad4_batches=60591 scalar_sads=27382 refinements=4547 variance_evaluations=16759
+origin=final_pass shape=16x16 ref=GOLDEN method=NSTEP entries=7148 diamond_starts=24691 local_seed_full_sads=6926 sad4_batches=83891 scalar_sads=36439 refinements=5902 variance_evaluations=24078
+origin=final_pass shape=32x32 ref=LAST method=NSTEP entries=6 diamond_starts=17 local_seed_full_sads=6 sad4_batches=58 scalar_sads=23 refinements=6 variance_evaluations=16
+
+[FULLPEL_CENSUS] frame totals
+golden_newmv_fresh=6225 fullpel_entries=6225 search_rejected=1450 deduplicated=24 inter_lost=4708 intra_replaced=14 chosen=29 terminal_total=6225 reconciled=true matches_entries=true cached_full_picks=0 golden_override_consumed=0
+origin=final_pass shape=8x8 ref=LAST method=NSTEP entries=545 diamond_starts=1635 local_seed_full_sads=544 sad4_batches=5756 scalar_sads=2293 refinements=389 variance_evaluations=1574
+origin=final_pass shape=8x8 ref=GOLDEN method=NSTEP entries=499 diamond_starts=1771 local_seed_full_sads=466 sad4_batches=5451 scalar_sads=4176 refinements=374 variance_evaluations=1732
+origin=final_pass shape=16x16 ref=LAST method=NSTEP entries=5951 diamond_starts=14563 local_seed_full_sads=5637 sad4_batches=52258 scalar_sads=23957 refinements=3893 variance_evaluations=14001
+origin=final_pass shape=16x16 ref=GOLDEN method=NSTEP entries=5724 diamond_starts=21534 local_seed_full_sads=5453 sad4_batches=72271 scalar_sads=31429 refinements=4891 variance_evaluations=21155
+origin=final_pass shape=32x32 ref=LAST method=NSTEP entries=6 diamond_starts=11 local_seed_full_sads=4 sad4_batches=45 scalar_sads=24 refinements=3 variance_evaluations=12
+origin=final_pass shape=32x32 ref=GOLDEN method=NSTEP entries=2 diamond_starts=10 local_seed_full_sads=2 sad4_batches=32 scalar_sads=12 refinements=2 variance_evaluations=10
+
+[FULLPEL_CENSUS] frame totals
+golden_newmv_fresh=6257 fullpel_entries=6257 search_rejected=1349 deduplicated=28 inter_lost=4755 intra_replaced=36 chosen=89 terminal_total=6257 reconciled=true matches_entries=true cached_full_picks=0 golden_override_consumed=0
+origin=final_pass shape=8x8 ref=LAST method=NSTEP entries=833 diamond_starts=2782 local_seed_full_sads=825 sad4_batches=9556 scalar_sads=3775 refinements=627 variance_evaluations=2725
+origin=final_pass shape=8x8 ref=GOLDEN method=NSTEP entries=664 diamond_starts=2516 local_seed_full_sads=648 sad4_batches=8189 scalar_sads=4387 refinements=532 variance_evaluations=2481
+origin=final_pass shape=16x16 ref=LAST method=NSTEP entries=6148 diamond_starts=17410 local_seed_full_sads=5956 sad4_batches=60818 scalar_sads=27336 refinements=4516 variance_evaluations=16811
+origin=final_pass shape=16x16 ref=GOLDEN method=NSTEP entries=5589 diamond_starts=22466 local_seed_full_sads=5410 sad4_batches=75424 scalar_sads=31955 refinements=4990 variance_evaluations=22237
+origin=final_pass shape=32x32 ref=LAST method=NSTEP entries=7 diamond_starts=10 local_seed_full_sads=7 sad4_batches=41 scalar_sads=35 refinements=4 variance_evaluations=13
+origin=final_pass shape=32x32 ref=GOLDEN method=NSTEP entries=4 diamond_starts=17 local_seed_full_sads=4 sad4_batches=61 scalar_sads=21 refinements=4 variance_evaluations=19
+
+[FULLPEL_CENSUS] frame totals
+golden_newmv_fresh=5200 fullpel_entries=5200 search_rejected=1214 deduplicated=14 inter_lost=3848 intra_replaced=41 chosen=83 terminal_total=5200 reconciled=true matches_entries=true cached_full_picks=0 golden_override_consumed=0
+origin=final_pass shape=8x8 ref=LAST method=NSTEP entries=782 diamond_starts=2614 local_seed_full_sads=782 sad4_batches=9011 scalar_sads=3645 refinements=603 variance_evaluations=2569
+origin=final_pass shape=8x8 ref=GOLDEN method=NSTEP entries=549 diamond_starts=2117 local_seed_full_sads=539 sad4_batches=6859 scalar_sads=3664 refinements=452 variance_evaluations=2100
+origin=final_pass shape=16x16 ref=LAST method=NSTEP entries=6293 diamond_starts=17714 local_seed_full_sads=6222 sad4_batches=62155 scalar_sads=27765 refinements=4658 variance_evaluations=17208
+origin=final_pass shape=16x16 ref=GOLDEN method=NSTEP entries=4650 diamond_starts=19431 local_seed_full_sads=4576 sad4_batches=64779 scalar_sads=27728 refinements=4204 variance_evaluations=19439
+origin=final_pass shape=32x32 ref=LAST method=NSTEP entries=7 diamond_starts=10 local_seed_full_sads=7 sad4_batches=42 scalar_sads=23 refinements=4 variance_evaluations=9
+origin=final_pass shape=32x32 ref=GOLDEN method=NSTEP entries=1 diamond_starts=4 local_seed_full_sads=1 sad4_batches=12 scalar_sads=5 refinements=1 variance_evaluations=3
+
+[FULLPEL_CENSUS] frame totals
+golden_newmv_fresh=2485 fullpel_entries=2485 search_rejected=331 deduplicated=13 inter_lost=2092 intra_replaced=15 chosen=34 terminal_total=2485 reconciled=true matches_entries=true cached_full_picks=0 golden_override_consumed=0
+origin=final_pass shape=8x8 ref=LAST method=NSTEP entries=604 diamond_starts=1920 local_seed_full_sads=591 sad4_batches=6618 scalar_sads=2673 refinements=450 variance_evaluations=1864
+origin=final_pass shape=8x8 ref=GOLDEN method=NSTEP entries=232 diamond_starts=909 local_seed_full_sads=226 sad4_batches=3109 scalar_sads=1180 refinements=193 variance_evaluations=899
+origin=final_pass shape=16x16 ref=LAST method=NSTEP entries=5892 diamond_starts=14690 local_seed_full_sads=5582 sad4_batches=52720 scalar_sads=23718 refinements=4068 variance_evaluations=14260
+origin=final_pass shape=16x16 ref=GOLDEN method=NSTEP entries=2253 diamond_starts=9468 local_seed_full_sads=2124 sad4_batches=31339 scalar_sads=13710 refinements=2051 variance_evaluations=9531
+origin=final_pass shape=32x32 ref=LAST method=NSTEP entries=5 diamond_starts=6 local_seed_full_sads=5 sad4_batches=22 scalar_sads=26 refinements=1 variance_evaluations=6
+
+[FULLPEL_CENSUS] frame totals
+golden_newmv_fresh=3120 fullpel_entries=3120 search_rejected=297 deduplicated=6 inter_lost=2672 intra_replaced=60 chosen=85 terminal_total=3120 reconciled=true matches_entries=true cached_full_picks=0 golden_override_consumed=0
+origin=final_pass shape=8x8 ref=LAST method=NSTEP entries=979 diamond_starts=3249 local_seed_full_sads=969 sad4_batches=11247 scalar_sads=4485 refinements=755 variance_evaluations=3185
+origin=final_pass shape=8x8 ref=GOLDEN method=NSTEP entries=458 diamond_starts=1866 local_seed_full_sads=453 sad4_batches=6293 scalar_sads=2436 refinements=392 variance_evaluations=1868
+origin=final_pass shape=16x16 ref=LAST method=NSTEP entries=6198 diamond_starts=17924 local_seed_full_sads=6088 sad4_batches=62664 scalar_sads=27497 refinements=4535 variance_evaluations=17335
+origin=final_pass shape=16x16 ref=GOLDEN method=NSTEP entries=2662 diamond_starts=11374 local_seed_full_sads=2609 sad4_batches=37930 scalar_sads=16052 refinements=2395 variance_evaluations=11473
+origin=final_pass shape=32x32 ref=LAST method=NSTEP entries=4 diamond_starts=14 local_seed_full_sads=4 sad4_batches=50 scalar_sads=18 refinements=3 variance_evaluations=15
+
+[FULLPEL_CENSUS] frame totals
+golden_newmv_fresh=2832 fullpel_entries=2832 search_rejected=153 deduplicated=4 inter_lost=2531 intra_replaced=60 chosen=84 terminal_total=2832 reconciled=true matches_entries=true cached_full_picks=0 golden_override_consumed=0
+origin=final_pass shape=8x8 ref=LAST method=NSTEP entries=827 diamond_starts=2652 local_seed_full_sads=817 sad4_batches=9277 scalar_sads=3727 refinements=614 variance_evaluations=2601
+origin=final_pass shape=8x8 ref=GOLDEN method=NSTEP entries=371 diamond_starts=1400 local_seed_full_sads=363 sad4_batches=4776 scalar_sads=1811 refinements=286 variance_evaluations=1357
+origin=final_pass shape=16x16 ref=LAST method=NSTEP entries=6401 diamond_starts=18421 local_seed_full_sads=6277 sad4_batches=64407 scalar_sads=28787 refinements=4563 variance_evaluations=17900
+origin=final_pass shape=16x16 ref=GOLDEN method=NSTEP entries=2461 diamond_starts=10433 local_seed_full_sads=2408 sad4_batches=34935 scalar_sads=14994 refinements=2208 variance_evaluations=10603
+origin=final_pass shape=32x32 ref=LAST method=NSTEP entries=5 diamond_starts=20 local_seed_full_sads=5 sad4_batches=68 scalar_sads=25 refinements=4 variance_evaluations=20
+
+[FULLPEL_CENSUS] frame totals
+golden_newmv_fresh=0 fullpel_entries=0 search_rejected=0 deduplicated=0 inter_lost=0 intra_replaced=0 chosen=0 terminal_total=0 reconciled=true matches_entries=true cached_full_picks=0 golden_override_consumed=0
+origin=final_pass shape=8x8 ref=LAST method=NSTEP entries=546 diamond_starts=1728 local_seed_full_sads=535 sad4_batches=5931 scalar_sads=2537 refinements=382 variance_evaluations=1684
+origin=final_pass shape=16x16 ref=LAST method=NSTEP entries=6120 diamond_starts=15381 local_seed_full_sads=5754 sad4_batches=55044 scalar_sads=25306 refinements=4010 variance_evaluations=14874
+origin=final_pass shape=32x32 ref=LAST method=NSTEP entries=8 diamond_starts=19 local_seed_full_sads=7 sad4_batches=68 scalar_sads=26 refinements=3 variance_evaluations=18
+
+[FULLPEL_CENSUS] frame totals
+golden_newmv_fresh=8117 fullpel_entries=8117 search_rejected=1485 deduplicated=151 inter_lost=6295 intra_replaced=66 chosen=120 terminal_total=8117 reconciled=true matches_entries=true cached_full_picks=0 golden_override_consumed=0
+origin=final_pass shape=8x8 ref=LAST method=NSTEP entries=739 diamond_starts=2504 local_seed_full_sads=722 sad4_batches=8624 scalar_sads=3517 refinements=560 variance_evaluations=2471
+origin=final_pass shape=8x8 ref=GOLDEN method=NSTEP entries=815 diamond_starts=2878 local_seed_full_sads=785 sad4_batches=9304 scalar_sads=5531 refinements=614 variance_evaluations=2833
+origin=final_pass shape=16x16 ref=LAST method=NSTEP entries=6283 diamond_starts=18071 local_seed_full_sads=6141 sad4_batches=63154 scalar_sads=28434 refinements=4499 variance_evaluations=17446
+origin=final_pass shape=16x16 ref=GOLDEN method=NSTEP entries=7302 diamond_starts=23020 local_seed_full_sads=7141 sad4_batches=79336 scalar_sads=34945 refinements=5527 variance_evaluations=22401
+origin=final_pass shape=32x32 ref=LAST method=NSTEP entries=5 diamond_starts=16 local_seed_full_sads=5 sad4_batches=57 scalar_sads=21 refinements=5 variance_evaluations=14
+
+[FULLPEL_CENSUS] frame totals
+golden_newmv_fresh=7569 fullpel_entries=7569 search_rejected=1543 deduplicated=54 inter_lost=5775 intra_replaced=67 chosen=130 terminal_total=7569 reconciled=true matches_entries=true cached_full_picks=0 golden_override_consumed=0
+origin=final_pass shape=8x8 ref=LAST method=NSTEP entries=820 diamond_starts=2781 local_seed_full_sads=804 sad4_batches=9545 scalar_sads=3899 refinements=616 variance_evaluations=2707
+origin=final_pass shape=8x8 ref=GOLDEN method=NSTEP entries=831 diamond_starts=2976 local_seed_full_sads=803 sad4_batches=9798 scalar_sads=5194 refinements=647 variance_evaluations=2927
+origin=final_pass shape=16x16 ref=LAST method=NSTEP entries=6323 diamond_starts=18139 local_seed_full_sads=6226 sad4_batches=63301 scalar_sads=28514 refinements=4589 variance_evaluations=17667
+origin=final_pass shape=16x16 ref=GOLDEN method=NSTEP entries=6737 diamond_starts=24486 local_seed_full_sads=6637 sad4_batches=83109 scalar_sads=36008 refinements=5715 variance_evaluations=24212
+origin=final_pass shape=32x32 ref=LAST method=NSTEP entries=8 diamond_starts=20 local_seed_full_sads=8 sad4_batches=71 scalar_sads=31 refinements=8 variance_evaluations=20
+origin=final_pass shape=32x32 ref=GOLDEN method=NSTEP entries=1 diamond_starts=5 local_seed_full_sads=1 sad4_batches=16 scalar_sads=6 refinements=1 variance_evaluations=5
