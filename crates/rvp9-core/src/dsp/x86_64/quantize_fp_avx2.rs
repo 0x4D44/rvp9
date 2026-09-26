@@ -15,7 +15,7 @@ use core::arch::x86_64::{
     _mm_and_si128, _mm_packus_epi32, _mm_set1_epi32, _mm_storeu_si128, _mm256_add_epi32,
     _mm256_andnot_si256, _mm256_castsi256_si128, _mm256_cmpeq_epi16, _mm256_extracti128_si256,
     _mm256_loadu_si256, _mm256_max_epi16, _mm256_max_epi32, _mm256_min_epi32, _mm256_mullo_epi32,
-    _mm256_set1_epi32, _mm256_setzero_si256, _mm256_slli_epi32, _mm256_srai_epi32,
+    _mm256_or_si256, _mm256_set1_epi32, _mm256_setzero_si256, _mm256_slli_epi32, _mm256_srai_epi32,
     _mm256_storeu_si256, _mm256_sub_epi32, _mm256_testz_si256, _mm256_xor_si256,
 };
 
@@ -47,6 +47,13 @@ fn quantize_one(coeff: i32, round: i16, quant: i16, dequant: i16) -> (i16, i16, 
 #[inline(always)]
 fn skip_zero_chunk(testz_result: i32) -> bool {
     testz_result != 0
+}
+
+#[inline(always)]
+fn can_return_zero_eob(provisional_ac_all_zero: bool, dc_q: i16) -> bool {
+    // Raster lane zero was quantized with AC parameters before scalar DC
+    // replacement. Its provisional value can only suppress this shortcut.
+    provisional_ac_all_zero && dc_q == 0
 }
 
 /// Reduce raster-order quantized coefficients to the one-past-last scan
@@ -91,7 +98,7 @@ unsafe fn eob_from_iscan(qcoeff: &[i16], n_coeffs: usize, iscan: &[i16]) -> u16 
 /// the raster coefficients. The slices must have at least `n_coeffs` entries.
 #[target_feature(enable = "avx2")]
 #[allow(clippy::too_many_arguments)]
-unsafe fn vp9_quantize_fp_avx2_inner(
+unsafe fn vp9_quantize_fp_avx2_inner<const TRACK_ZERO_EOB: bool>(
     coeff: &[i32],
     n_coeffs: usize,
     skip_block: bool,
@@ -128,6 +135,7 @@ unsafe fn vp9_quantize_fp_avx2_inner(
     // zero removes the seven-element scalar AC tail; the lane-0 AC result is
     // overwritten with the separately-quantized DC value below.
     let vector_end = n_coeffs & !7;
+    let mut provisional_ac_nonzero = _mm256_setzero_si256();
     for offset in (0..vector_end).step_by(8) {
         // G4: loads from `coeff` use _mm256_loadu_si256 (unaligned)
         let values = _mm256_loadu_si256(coeff.as_ptr().add(offset).cast());
@@ -141,6 +149,12 @@ unsafe fn vp9_quantize_fp_avx2_inner(
         let magnitude = _mm256_srai_epi32(_mm256_mullo_epi32(rounded, quant_ac), 16);
         let signed = _mm256_sub_epi32(_mm256_xor_si256(magnitude, sign), sign);
         let q_i16_sign_extended = _mm256_srai_epi32(_mm256_slli_epi32(signed, 16), 16);
+        if TRACK_ZERO_EOB {
+            // These are the exact i16 values written below, sign-extended to
+            // i32. Keep one OR across the production TX8/TX16 chunks; the
+            // no-iscan and TX4 instantiations compile this work out.
+            provisional_ac_nonzero = _mm256_or_si256(provisional_ac_nonzero, q_i16_sign_extended);
+        }
         let dq = _mm256_mullo_epi32(q_i16_sign_extended, dequant_ac);
         store_i16x8(signed, qcoeff.as_mut_ptr().add(offset));
         store_i16x8(dq, dqcoeff.as_mut_ptr().add(offset));
@@ -153,6 +167,15 @@ unsafe fn vp9_quantize_fp_avx2_inner(
 
     qcoeff[0] = dc_q;
     dqcoeff[0] = dc_dq;
+
+    if TRACK_ZERO_EOB
+        && can_return_zero_eob(
+            _mm256_testz_si256(provisional_ac_nonzero, provisional_ac_nonzero) != 0,
+            dc_q,
+        )
+    {
+        return 0;
+    }
 
     if let Some(iscan) = iscan {
         if n_coeffs >= 64 {
@@ -207,7 +230,7 @@ pub(crate) fn vp9_quantize_fp_avx2(
     // table reports AVX2 support; the assertions above prove all slices and
     // the standard scan precondition required by the AVX2 inner kernel.
     unsafe {
-        vp9_quantize_fp_avx2_inner(
+        vp9_quantize_fp_avx2_inner::<false>(
             coeff, n_coeffs, skip_block, round, quant, qcoeff, dqcoeff, dequant, scan, None,
         )
     }
@@ -238,18 +261,33 @@ pub(crate) fn vp9_quantize_fp_avx2_with_order(
     // SAFETY: Callers reach this wrapper through the AVX2 dispatch table; the
     // assertions above prove all slice and standard-scan preconditions.
     unsafe {
-        vp9_quantize_fp_avx2_inner(
-            coeff,
-            n_coeffs,
-            skip_block,
-            round,
-            quant,
-            qcoeff,
-            dqcoeff,
-            dequant,
-            scan,
-            Some(iscan),
-        )
+        if n_coeffs >= 64 {
+            vp9_quantize_fp_avx2_inner::<true>(
+                coeff,
+                n_coeffs,
+                skip_block,
+                round,
+                quant,
+                qcoeff,
+                dqcoeff,
+                dequant,
+                scan,
+                Some(iscan),
+            )
+        } else {
+            vp9_quantize_fp_avx2_inner::<false>(
+                coeff,
+                n_coeffs,
+                skip_block,
+                round,
+                quant,
+                qcoeff,
+                dqcoeff,
+                dequant,
+                scan,
+                Some(iscan),
+            )
+        }
     }
 }
 
@@ -261,6 +299,101 @@ mod tests {
 
     fn require_avx2() {
         assert!(is_x86_feature_detected!("avx2"));
+    }
+
+    #[test]
+    fn zero_eob_shortcut_requires_zero_dc_and_zero_vector() {
+        assert!(can_return_zero_eob(true, 0));
+        assert!(!can_return_zero_eob(true, 1));
+        assert!(!can_return_zero_eob(false, 0));
+    }
+
+    #[test]
+    fn zero_eob_shortcut_matches_scalar_with_late_nonzero_and_reused_outputs() {
+        require_avx2();
+        for (tx_size, n) in [
+            (TxSize::Tx4x4, 16),
+            (TxSize::Tx8x8, 64),
+            (TxSize::Tx16x16, 256),
+        ] {
+            for tx_type in [TxType::DctDct, TxType::DctAdst, TxType::AdstDct] {
+                let order = scan_for(tx_size, tx_type);
+                for case in 0..5 {
+                    let mut coeff = vec![0i32; n];
+                    let mut quant = [16_000i16, 30_000i16];
+                    let skip_block = case == 4;
+                    match case {
+                        1 => coeff[n - 1] = 32_000, // Final eight-lane chunk.
+                        2 => coeff[0] = 32_000,     // DC only.
+                        3 => {
+                            coeff[0] = 32_000;
+                            quant[0] = 0; // Provisional AC lane 0 is nonzero; real DC is zero.
+                        }
+                        4 => coeff[n - 1] = 32_000,
+                        _ => {} // All coefficients quantize to zero.
+                    }
+                    let round = [0i16, 0i16];
+                    let dequant = [31i16, 57i16];
+                    let mut expected_q = vec![99i16; n];
+                    let mut expected_dq = vec![99i16; n];
+                    let expected_eob = vp9_quantize_fp(
+                        &coeff,
+                        n,
+                        skip_block,
+                        &round,
+                        &quant,
+                        &mut expected_q,
+                        &mut expected_dq,
+                        &dequant,
+                        order.scan(),
+                    );
+                    let mut actual_q = vec![99i16; n];
+                    let mut actual_dq = vec![99i16; n];
+                    let actual_eob = vp9_quantize_fp_avx2_with_order(
+                        &coeff,
+                        n,
+                        skip_block,
+                        &round,
+                        &quant,
+                        &mut actual_q,
+                        &mut actual_dq,
+                        &dequant,
+                        order.scan(),
+                        order.iscan(),
+                    );
+                    assert_eq!(
+                        actual_eob, expected_eob,
+                        "{tx_size:?} {tx_type:?} case {case}"
+                    );
+                    assert_eq!(actual_q, expected_q, "{tx_size:?} {tx_type:?} case {case}");
+                    assert_eq!(
+                        actual_dq, expected_dq,
+                        "{tx_size:?} {tx_type:?} case {case}"
+                    );
+                    actual_q.fill(99);
+                    actual_dq.fill(99);
+                    let direct_eob = vp9_quantize_fp_avx2(
+                        &coeff,
+                        n,
+                        skip_block,
+                        &round,
+                        &quant,
+                        &mut actual_q,
+                        &mut actual_dq,
+                        &dequant,
+                        order.scan(),
+                    );
+                    assert_eq!(direct_eob, expected_eob, "direct {tx_size:?} case {case}");
+                    assert_eq!(actual_q, expected_q, "direct {tx_size:?} case {case}");
+                    assert_eq!(actual_dq, expected_dq, "direct {tx_size:?} case {case}");
+                    if case == 0 || case >= 3 {
+                        assert_eq!(expected_eob, 0, "{tx_size:?} {tx_type:?} case {case}");
+                    } else {
+                        assert_ne!(expected_eob, 0, "{tx_size:?} {tx_type:?} case {case}");
+                    }
+                }
+            }
+        }
     }
 
     #[test]
