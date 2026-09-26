@@ -1,0 +1,234 @@
+diff --git a/crates/rvp9-core/src/mode_decision/inter.rs b/crates/rvp9-core/src/mode_decision/inter.rs
+index 78844348..f4027be6 100644
+--- a/crates/rvp9-core/src/mode_decision/inter.rs
++++ b/crates/rvp9-core/src/mode_decision/inter.rs
+@@ -2187,7 +2187,7 @@ fn pre_search_mv_is_zero(mode: InterMode, candidates: &MvCandidates) -> bool {
+ /// (once per ref) and taking the argmin at the caller.
+ #[must_use]
+ pub fn pick_inter_mode(params: &PickInterModeParams<'_>) -> PickInterModeResult {
+-    pick_inter_mode_impl(params, None, reuse_single_ref_params_enabled())
++    pick_inter_mode_impl(params, None, reuse_single_ref_params_enabled(), true)
+ }
+
+ /// Run the dual-reference inter-mode search while retaining the winning luma
+@@ -2208,13 +2208,39 @@ pub fn pick_inter_mode_with_output(
+         usize::from(params.block_size.width()),
+         usize::from(params.block_size.height()),
+     );
+-    pick_inter_mode_impl(params, Some(output), reuse_single_ref_params_enabled())
++    pick_inter_mode_impl(
++        params,
++        Some(output),
++        reuse_single_ref_params_enabled(),
++        true,
++    )
++}
++
++/// Run the output-backed inter picker when no temporal denoiser consumes its
++/// candidate statistics. The mode decision and retained prediction match
++/// [`pick_inter_mode_with_output`], while the returned denoiser context is empty.
++#[must_use]
++pub fn pick_inter_mode_with_output_without_denoiser(
++    params: &PickInterModeParams<'_>,
++    output: &mut OutputBackedPredictionBuffer<'_>,
++) -> PickInterModeResult {
++    output.assert_capacity(
++        usize::from(params.block_size.width()),
++        usize::from(params.block_size.height()),
++    );
++    pick_inter_mode_impl(
++        params,
++        Some(output),
++        reuse_single_ref_params_enabled(),
++        false,
++    )
+ }
+
+ fn pick_inter_mode_impl(
+     params: &PickInterModeParams<'_>,
+     mut output: Option<&mut OutputBackedPredictionBuffer<'_>>,
+     reuse_single_ref_params: bool,
++    collect_denoiser_context: bool,
+ ) -> PickInterModeResult {
+     debug_assert!(
+         params.inter_mode_ctx < INTER_MODE_CONTEXTS,
+@@ -2947,28 +2973,31 @@ fn pick_inter_mode_impl(
+             if ref_frame == RefFrame::LastFrame && mode == InterMode::NewMv {
+                 last_newmv_gate = NewMvGateReason::Evaluated;
+             }
+-            let denoiser_candidate = DenoiserCandidateContext {
+-                sse: candidate.sse_y,
+-                mv: candidate.best_mv,
+-                interp_filter: candidate.picked_interp_filter,
+-                ref_frame,
+-            };
+-            let candidate_priority = ref_idx * 4 + slot;
+-            let update_minimum = |minimum: &mut Option<(usize, DenoiserCandidateContext)>| {
+-                if minimum.is_none_or(|(priority, current)| {
+-                    denoiser_candidate.sse < current.sse
+-                        || (denoiser_candidate.sse == current.sse && candidate_priority < priority)
+-                }) {
+-                    *minimum = Some((candidate_priority, denoiser_candidate));
+-                }
+-            };
+-            if candidate.best_mv == Mv::ZERO {
+-                update_minimum(&mut denoiser_zeromv);
+-                if ref_frame == RefFrame::LastFrame {
+-                    update_minimum(&mut denoiser_zeromv_last);
++            if collect_denoiser_context {
++                let denoiser_candidate = DenoiserCandidateContext {
++                    sse: candidate.sse_y,
++                    mv: candidate.best_mv,
++                    interp_filter: candidate.picked_interp_filter,
++                    ref_frame,
++                };
++                let candidate_priority = ref_idx * 4 + slot;
++                let update_minimum = |minimum: &mut Option<(usize, DenoiserCandidateContext)>| {
++                    if minimum.is_none_or(|(priority, current)| {
++                        denoiser_candidate.sse < current.sse
++                            || (denoiser_candidate.sse == current.sse
++                                && candidate_priority < priority)
++                    }) {
++                        *minimum = Some((candidate_priority, denoiser_candidate));
++                    }
++                };
++                if candidate.best_mv == Mv::ZERO {
++                    update_minimum(&mut denoiser_zeromv);
++                    if ref_frame == RefFrame::LastFrame {
++                        update_minimum(&mut denoiser_zeromv_last);
++                    }
++                } else {
++                    update_minimum(&mut denoiser_nonzero);
+                 }
+-            } else {
+-                update_minimum(&mut denoiser_nonzero);
+             }
+
+             let is_new_best = match best.as_ref() {
+@@ -3134,10 +3163,14 @@ fn pick_inter_mode_impl(
+     // when the intra fallback replaced `best`.
+     best.newmv_search_last = newmv_last;
+     best.newmv_search_golden = newmv_golden;
+-    best.denoiser = DenoiserPickContext {
+-        zeromv: denoiser_zeromv.map(|(_, candidate)| candidate),
+-        zeromv_last: denoiser_zeromv_last.map(|(_, candidate)| candidate),
+-        nonzero: denoiser_nonzero.map(|(_, candidate)| candidate),
++    best.denoiser = if collect_denoiser_context {
++        DenoiserPickContext {
++            zeromv: denoiser_zeromv.map(|(_, candidate)| candidate),
++            zeromv_last: denoiser_zeromv_last.map(|(_, candidate)| candidate),
++            nonzero: denoiser_nonzero.map(|(_, candidate)| candidate),
++        }
++    } else {
++        DenoiserPickContext::default()
+     };
+     best.candidate_trace_id = if collect_candidate_trace {
+         candidate_trace::record(last_candidates, last_newmv_gate, last_newmv_search)
+@@ -8902,8 +8935,8 @@ mod tests {
+         params.ref_frame_cost_last = 17;
+         params.ref_frame_cost_golden = 29;
+
+-        let per_candidate = pick_inter_mode_impl(&params, None, false);
+-        let prebuilt = pick_inter_mode_impl(&params, None, true);
++        let per_candidate = pick_inter_mode_impl(&params, None, false, true);
++        let prebuilt = pick_inter_mode_impl(&params, None, true, true);
+
+         assert_eq!(prebuilt, per_candidate);
+     }
+@@ -9115,6 +9148,71 @@ mod tests {
+         assert!(best_zero.sse < last_zero.sse);
+     }
+
++    #[test]
++    fn output_backed_without_denoiser_preserves_pick_and_prediction() {
++        let width = 64;
++        let src_data = make_plane(width, width, 73);
++        let last_data = make_plane(width, width, 19);
++        let golden_data = src_data.clone();
++        let src_plane = PlaneRef {
++            data: &src_data,
++            stride: width,
++            width,
++            height: width,
++        };
++        let last_plane = PlaneRef {
++            data: &last_data,
++            stride: width,
++            width,
++            height: width,
++        };
++        let golden_plane = PlaneRef {
++            data: &golden_data,
++            stride: width,
++            width,
++            height: width,
++        };
++        let harness = TestHarness::new(width, 80);
++        let fc = FrameContext::new_default();
++        let intra_costs = crate::cost::symbol_costs::intra_y_mode_costs_inter(&fc);
++        let mvc = MvCandidates {
++            nearest: Mv { row: 0, col: 8 },
++            near: Mv { row: 8, col: 0 },
++        };
++        let mut params = make_dual_ref_params(
++            &harness,
++            &intra_costs[0],
++            BlockSize::Block16x16,
++            &src_plane,
++            &last_plane,
++            (16, 16),
++            &mvc,
++            &mvc,
++            MvLimits::new(-4, 4, -4, 4),
++            80,
++        );
++        params.golden_ref_plane = &golden_plane;
++        params.enable_intra_fallback = false;
++        params.reference_masking = false;
++
++        let mut normal_prediction = [0u8; 16 * 16];
++        let normal = {
++            let mut output = OutputBackedPredictionBuffer::new(&mut normal_prediction, 16);
++            pick_inter_mode_with_output(&params, &mut output)
++        };
++        let mut off_prediction = [0u8; 16 * 16];
++        let mut without_denoiser = {
++            let mut output = OutputBackedPredictionBuffer::new(&mut off_prediction, 16);
++            pick_inter_mode_with_output_without_denoiser(&params, &mut output)
++        };
++
++        assert_ne!(normal.denoiser, DenoiserPickContext::default());
++        assert_eq!(without_denoiser.denoiser, DenoiserPickContext::default());
++        without_denoiser.denoiser = normal.denoiser;
++        assert_eq!(without_denoiser, normal);
++        assert_eq!(off_prediction, normal_prediction);
++    }
++
+     /// `pick_inter_mode`: when `intra_above_pixels` is `Some` and a
+     /// noisy block at high q_index makes inter expensive, the intra
+     /// fallback gets evaluated. We assert that the picker either
+diff --git a/crates/rvp9-encoder/src/lib.rs b/crates/rvp9-encoder/src/lib.rs
+index f6fa73e6..ed9519f0 100644
+--- a/crates/rvp9-encoder/src/lib.rs
++++ b/crates/rvp9-encoder/src/lib.rs
+@@ -6959,7 +6959,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
+     use rvp9_core::inter::{get_pred_context_switchable_interp, get_pred_filter_ref};
+     use rvp9_core::mode_decision::inter::{
+         InterModeSearchParams, MvCandidates, PickInterModeParams, pick_inter_mode,
+-        pick_inter_mode_with_output,
++        pick_inter_mode_with_output_without_denoiser,
+     };
+     use rvp9_core::mode_decision::nonrd_partition::{
+         NonRdDescentParams, PartitionRdCandidate, nonrd_pick_partition_with_pruners,
+@@ -10394,7 +10394,10 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
+                                 usize::from(leaf_bsize.width()),
+                                 usize::from(leaf_bsize.height()),
+                             );
+-                            let picked = pick_inter_mode_with_output(&pick_params, &mut output);
++                            let picked = pick_inter_mode_with_output_without_denoiser(
++                                &pick_params,
++                                &mut output,
++                            );
+                             output_prediction_ready = picked.picked_ref_frame.is_inter();
+                             picked
+                         }
