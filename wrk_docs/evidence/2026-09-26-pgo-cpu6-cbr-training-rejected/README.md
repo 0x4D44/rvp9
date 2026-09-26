@@ -1,0 +1,12 @@
+# Single-thread CPU6 CBR PGO training: rejected
+
+This scratch experiment tested whether the production PGO profile's four-thread/two-tile emphasis caused its weak Ducks result. The existing 28 training rows were retained; three 60-frame 1080p CPU6/CBR1500, **one-thread/no-tile** rows for Tree, Ducks, and Town were added. They are representative settings, not the benchmark's CBR1260 bitrate. The exact tested [build script](build-encoder-pgo-cbr1.sh) (SHA-256 `83f034dd34067f440636bfee919d7cddce3f97f526cea9481ef9721fd5040533`) and [31-row manifest](build-manifest.txt) preserve the recipe. The source commit was unchanged at `48cab42d2dba1a46c502a5da2faf907d79d78ac1`; the build produced 34 raw profiles without an observed profile-use warning.
+
+Current production PGO EXE SHA-256: `0fa1028b1310fee93b22731794dcb3fdc14e9b5e05dbe428f3e112c4b30cb395`. Added-CBR-row PGO EXE SHA-256: `7708de301843271aee6b85201d7c75b55a6925db863562805a5250180591fe24`. The [paired runner](pgo-cbr1-screen.ps1) SHA-256 `52dc24f6de9766a86489ef3abb2674ada65f7654ca2bd057259f3cf32c9ea31f` matched the Crucible copy. It used the same pinned 60-frame 1080p CPU6/CBR1260, one-thread/no-tile, AQ0/noise0/lag0/KF60 screen as the current [PGO parity result](../2026-09-26-encoder-pgo-parity/README.md). Each screen warmed both arms and alternated arm and clip order. All **132 encodes** exited zero and reproduced the established RVP9 IVF hashes. `identity.csv`, `raw.csv`, and `summary.csv` preserve every pair; independent parsing of `raw.csv` reproduced the reported per-clip geometric means. Lower candidate/current process-CPU ratio is better.
+
+| Added-CBR rows / current PGO CPU | Ducks | Tree | Town | Equal-clip overall |
+| --- | ---: | ---: | ---: | ---: |
+| Screen 01, 5 pairs | 0.963025× | 1.043868× | 1.026606× | **1.010560×** |
+| Screen 02, independent 15 pairs | 1.057199× | 1.022330× | 1.040772× | **1.040003×** |
+
+The five-pair Ducks appearance reversed in the longer run, while both screens regressed overall. Crucible had transient host-speed and wall-time swings; no pairs were discarded. This does **not** meet the repeatable-gain rule, so the added-row recipe is rejected and the shipped PGO script remains unchanged. No pinned-libvpx screen was spent on a slower build. The direct current-PGO/libvpx result remains **1.096110×** equal-clip process CPU. The training set still contains the three benchmark source clips, so neither screen is held-out-content evidence.
