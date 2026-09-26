@@ -1,0 +1,72 @@
+|--- a/vp9/encoder/vp9_mcomp.c
+|+++ b/vp9/encoder/vp9_mcomp.c
+|@@ -11,7 +11,9 @@
+| #include <assert.h>
+| #include <limits.h>
+| #include <math.h>
+|+#include <stdint.h>
+| #include <stdio.h>
+|+#include <stdlib.h>
+|_
+| #include "./vpx_config.h"
+| #include "./vpx_dsp_rtcd.h"
+|@@ -28,6 +30,49 @@
+| #include "vp9/encoder/vp9_mcomp.h"
+|_
+| // #define NEW_DIAMOND_SEARCH
+|+
+|+#if defined(RVP9_DIAG_LIBVPX_SVF_CENSUS)
+|+// Single-thread diagnostic: count full-tree searches separately from the
+|+// SVF calls counted by the encoder's existing per-shape wrappers.
+|+static uint64_t subpel_searches;
+|+static uint64_t subpel_searches_by_ref[BLOCK_SIZES + 1][MAX_REF_FRAMES + 1];
+|+static int subpel_searches_enabled = -1;
+|+
+|+static void subpel_searches_report(void) {
+|+  int bsize, ref;
+|+  fprintf(stderr, "LIBVPX_SUBPEL_SEARCHES,total,%llu\n",
+|+          (unsigned long long)subpel_searches);
+|+  for (bsize = 0; bsize <= BLOCK_SIZES; ++bsize) {
+|+    for (ref = 0; ref <= MAX_REF_FRAMES; ++ref) {
+|+      if (subpel_searches_by_ref[bsize][ref] != 0) {
+|+        fprintf(stderr, "LIBVPX_SUBPEL_REF_SHAPE,%d,%d,%llu\n", bsize, ref,
+|+                (unsigned long long)subpel_searches_by_ref[bsize][ref]);
+|+      }
+|+    }
+|+  }
+|+}
+|+
+|+static void subpel_searches_count(const MACROBLOCK *x) {
+|+  if (subpel_searches_enabled < 0) {
+|+    const char *enabled = getenv("RVP9_DIAG_LIBVPX_SVF_CENSUS");
+|+    subpel_searches_enabled =
+|+        enabled != NULL && enabled[0] == '1' && enabled[1] == '\0';
+|+    if (subpel_searches_enabled && atexit(subpel_searches_report) != 0) {
+|+      fprintf(stderr, "LIBVPX_SUBPEL_SEARCHES could not register exit report\n");
+|+      subpel_searches_enabled = 0;
+|+    }
+|+  }
+|+  if (subpel_searches_enabled) {
+|+    const MODE_INFO *const mi = x->e_mbd.mi[0];
+|+    int bsize = mi != NULL ? mi->sb_type : BLOCK_SIZES;
+|+    int ref = mi != NULL ? mi->ref_frame[0] : MAX_REF_FRAMES;
+|+    if (bsize < 0 || bsize >= BLOCK_SIZES) bsize = BLOCK_SIZES;
+|+    if (ref < 0 || ref >= MAX_REF_FRAMES) ref = MAX_REF_FRAMES;
+|+    ++subpel_searches;
+|+    ++subpel_searches_by_ref[bsize][ref];
+|+  }
+|+}
+|+#endif  // RVP9_DIAG_LIBVPX_SVF_CENSUS
+|_
+| void vp9_set_mv_search_range(MvLimits *mv_limits, const MV *mv) {
+|   int col_min = (mv->col >> 3) - MAX_FULL_PEL_VAL + (mv->col & 7 ? 1 : 0);
+|@@ -762,6 +807,9 @@
+|                         : vp9_filter_kernels[EIGHTTAP_SHARP]))
+|           : vp9_filter_kernels[BILINEAR];
+|_
+|+#if defined(RVP9_DIAG_LIBVPX_SVF_CENSUS)
+|+  subpel_searches_count(x);
+|+#endif
+|   vp9_set_subpel_mv_search_range(&subpel_mv_limits, &x->mv_limits, ref_mv);
+|   minc = subpel_mv_limits.col_min;
+|   maxc = subpel_mv_limits.col_max;
