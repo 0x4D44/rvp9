@@ -1,0 +1,18 @@
+# Zero-EOB transform-selector distortion: exact prototype and CPU screen
+
+The unintegrated code commit `fdc79c2d` takes an exact zero-dequantized-coefficient path in the inter-luma transform selector. When `eob == 0`, quantization wrote zero `dqcoeff`, so `vp9_block_error(coeff, dqcoeff).0` equals `sum(i64(coeff)^2)`. The selector does not change pruning, rate calculation, or tie handling. A debug assertion checks the zero-`dqcoeff` premise. This candidate was chosen because the pinned Ducks census found EOB0 in 5,621,385 of 6,471,286 selector tiles (86.87%); the selector's distortion callsite received 100 of 2,505 direct Ducks encoder samples in the exact integrated IP profile. Neither figure predicts speedup.
+
+The candidate was built on Crucible from the two source files in `fdc79c2d`, copied into its own worktree. Its binary SHA-256 is `c37aa0e1987c9180fe070079e92011e329d448f11df9900962bb336fb209d14a`. The control binary SHA-256 is `c0db2195fa6d2ab722fbfbd9828c4c6541942f42080e65231ea861714f8540b56`, built at `07edb682`; `git diff 07edb682..c356ea22 -- crates` was empty, so this is the current integrated product code. Pinned libvpx v1.14.1 SHA-256 is `88ba702de16af47327490a7d016002fd05169e074c6c6657b9e9ff7a8d4a135d`. Each run's `identity.csv` records the exact executable and input hashes.
+
+All runs use the three pinned 60-frame 1080p Y4Ms with CPU6, CBR 1260 kb/s, one thread, no tiles, AQ0, noise0, lag0, and KF60. Each complete run has one warmup per arm per clip, then 15 alternating-order pairs per clip (96 encodes). All 384 encodes exited zero and matched their arm's expected IVF SHA-256. `raw.csv` retains every pair, including outliers. Ratios are geometric means of paired process-CPU seconds; lower is better for candidate/control. The current `zero-eob-screen.ps1` reproduces the A/B protocol and affinity run. The first two A/B runs used its predecessor without the optional affinity parameter; encode arguments and ordering were unchanged. The `zero-eob-libvpx.ps1` runner uses the pinned libvpx output hashes.
+
+| Run | Ducks | Tree | Town | Equal-clip overall |
+| --- | ---: | ---: | ---: | ---: |
+| A, candidate/control | 0.983068 | 0.978276 | 0.975264 | 0.978864 |
+| B, candidate/control | 0.996724 | 0.976112 | 0.989972 | 0.987565 |
+| One-core affinity, candidate/control | 0.976867 | 0.990080 | 0.986742 | 0.984547 |
+| Fresh candidate/libvpx | 1.324356 | 1.181813 | 1.055332 | 1.182082 |
+
+The candidate beat the current encoder on the equal-clip process-CPU measure in all three full A/B runs, though the per-clip benefit varied. The one-core run pinned both arms to logical processor 0 to reduce CCD migration as a confounder. Crucible lacks `deltic quiet`; no strict 25% host-load threshold was applied. Some wall times stalled (up to 11.57 seconds in run B and 5.40 seconds in the affinity run), so wall time is not evidence of a gain here. The CPU screen did not record a continuous host-load trace. Fresh candidate/libvpx parity is still about 1.182×, essentially the previous 1.183× overall gap; this is not a parity breakthrough. Do not infer a direct before/after parity delta from separate libvpx runs.
+
+Validation: the new TX4/TX8/TX16 zero-`dqcoeff` differential failed under a deliberate `+1` mutation, then passed after restoration. On AArch64, the focused helper test and both `inter_tx_size_` selector tests passed; `cargo check --locked -p rvp9-encoder`, `cargo fmt --all --check`, and `git diff --check` passed. On x86 Crucible, the helper test and both selector tests passed, and the release encoder built. Pinned IVF equality covers the output path end to end. The candidate remains unintegrated pending explicit permission for a code push.
