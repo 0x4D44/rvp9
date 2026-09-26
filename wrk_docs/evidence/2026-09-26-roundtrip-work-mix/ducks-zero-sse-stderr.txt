@@ -1,0 +1,3 @@
+rvp9enc: roundtrip-mix total_calls=1575 total_tiles=25044 rows=2
+rvp9enc: roundtrip-mix block=32x32 tx=8x8 reconstruct=false collect_coef_dist=true calls=1562 tiles=24992 dct_eob_zero_calls=0 dct_eob_nonzero_calls=0 model_sse_zero_calls=0
+rvp9enc: roundtrip-mix block=32x32 tx=16x16 reconstruct=false collect_coef_dist=true calls=13 tiles=52 dct_eob_zero_calls=0 dct_eob_nonzero_calls=0 model_sse_zero_calls=0

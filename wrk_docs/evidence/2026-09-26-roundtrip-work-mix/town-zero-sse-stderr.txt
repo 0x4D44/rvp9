@@ -1,0 +1,6 @@
+rvp9enc: roundtrip-mix total_calls=211363 total_tiles=4014756 rows=5
+rvp9enc: roundtrip-mix block=32x32 tx=8x8 reconstruct=false collect_coef_dist=true calls=197374 tiles=3157984 dct_eob_zero_calls=0 dct_eob_nonzero_calls=0 model_sse_zero_calls=0
+rvp9enc: roundtrip-mix block=32x32 tx=16x16 reconstruct=false collect_coef_dist=true calls=609 tiles=2436 dct_eob_zero_calls=0 dct_eob_nonzero_calls=0 model_sse_zero_calls=0
+rvp9enc: roundtrip-mix block=32x64 tx=8x8 reconstruct=false collect_coef_dist=true calls=5 tiles=160 dct_eob_zero_calls=0 dct_eob_nonzero_calls=0 model_sse_zero_calls=0
+rvp9enc: roundtrip-mix block=64x32 tx=8x8 reconstruct=false collect_coef_dist=true calls=57 tiles=1824 dct_eob_zero_calls=0 dct_eob_nonzero_calls=0 model_sse_zero_calls=0
+rvp9enc: roundtrip-mix block=64x64 tx=8x8 reconstruct=false collect_coef_dist=true calls=13318 tiles=852352 dct_eob_zero_calls=0 dct_eob_nonzero_calls=0 model_sse_zero_calls=0
