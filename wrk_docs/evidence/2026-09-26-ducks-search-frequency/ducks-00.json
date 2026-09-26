@@ -1,0 +1,95 @@
+{
+  "label": "canonical-ducks-60",
+  "framerate": 30.0,
+  "frames_requested": 60,
+  "rvp9_ivf": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-measure-combined-integrated-parity-after\\.scratch\\integrated-three-gains-libvpx-01\\ducks-00-candidate.ivf",
+  "libvpx_ivf": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-measure-combined-integrated-parity-after\\.scratch\\integrated-three-gains-libvpx-01\\ducks-00-control.ivf",
+  "rvp9": {
+    "frames": 60,
+    "inter_frames": 59,
+    "decode_failed": 0,
+    "total_bits": 4231440,
+    "key_bits": 996944,
+    "inter_bits": 3234496,
+    "achieved_kbps": 2115.72,
+    "avg_inter_frame_bits": 54821.96610169492,
+    "avg_inter_q": 251.74576271186442,
+    "partition_area_pct": [
+      {
+        "block": "8x8",
+        "count": 46216,
+        "area_pct": 2.417660598451559
+      },
+      {
+        "block": "16x16",
+        "count": 453190,
+        "area_pct": 94.82946223059217
+      },
+      {
+        "block": "32x32",
+        "count": 3281,
+        "area_pct": 2.7461812094580456
+      },
+      {
+        "block": "64x64",
+        "count": 2,
+        "area_pct": 0.006695961498221385
+      }
+    ],
+    "mode_area_pct": {
+      "intra": 3.0639255074283325,
+      "nearest_mv": 54.307177233730904,
+      "near_mv": 19.046714793889937,
+      "zero_mv": 10.308798911906257,
+      "new_mv": 13.27338355304457,
+      "ref_last": 95.51412429378531,
+      "ref_golden": 1.421950198786357,
+      "ref_altref": 0.0
+    },
+    "skip_pct": 72.495658087466
+  },
+  "libvpx": {
+    "frames": 60,
+    "inter_frames": 59,
+    "decode_failed": 0,
+    "total_bits": 5476640,
+    "key_bits": 2720448,
+    "inter_bits": 2756192,
+    "achieved_kbps": 2738.32,
+    "avg_inter_frame_bits": 46715.1186440678,
+    "avg_inter_q": 252.9322033898305,
+    "partition_area_pct": [
+      {
+        "block": "8x8",
+        "count": 50672,
+        "area_pct": 2.6507637581083907
+      },
+      {
+        "block": "16x16",
+        "count": 454966,
+        "area_pct": 95.20108809374346
+      },
+      {
+        "block": "32x32",
+        "count": 2712,
+        "area_pct": 2.1414521866499268
+      },
+      {
+        "block": "64x64",
+        "count": 2,
+        "area_pct": 0.006695961498221385
+      }
+    ],
+    "mode_area_pct": {
+      "intra": 1.8864302155262607,
+      "nearest_mv": 59.85310734463277,
+      "near_mv": 17.517419962335218,
+      "zero_mv": 10.157721280602637,
+      "new_mv": 10.585321196903118,
+      "ref_last": 97.58056078677548,
+      "ref_golden": 0.5330089976982633,
+      "ref_altref": 0.0
+    },
+    "skip_pct": 81.36880100439423
+  }
+}
