@@ -1,0 +1,45 @@
+rvp9 encoder PGO training manifest
+git_commit=b1673592ca5aa5a3a709c4a3dcb04e549051ec8d
+git_describe=v0.2.0-alpha.2-387-gb1673592c-dirty
+host_triple=x86_64-pc-windows-msvc
+rustc=rustc 1.95.0 (59807616e 2026-04-14)
+cargo=cargo 1.95.0 (f2d3ce0bd 2026-03-21)
+llvm_profdata=LLVM (http://llvm.org/):
+ffmpeg=ffmpeg version 8.1.1-full_build-www.gyan.dev Copyright (c) 2000-2026 the FFmpeg developers
+frames_per_row=60
+training_rows=28
+rustflags=-Ctarget-cpu=native -Cprofile-use=<generated-profdata>
+training_plan_begin
+1080-in-tree-cpu6|1080-in-tree|6|2500|vbr|
+1080-ducks-cpu6|1080-ducks|6|2500|vbr|
+1080-old-town-cpu6|1080-old-town|6|2500|vbr|
+1080-in-tree-cpu7|1080-in-tree|7|2500|vbr|
+1080-ducks-cpu7|1080-ducks|7|2500|vbr|
+1080-old-town-cpu7|1080-old-town|7|2500|vbr|
+1080-in-tree-cpu8|1080-in-tree|8|2500|vbr|
+1080-ducks-cpu8|1080-ducks|8|2500|vbr|
+1080-old-town-cpu8|1080-old-town|8|2500|vbr|
+720-in-tree-cpu7|720-in-tree|7|1500|vbr|
+720-ducks-cpu7|720-ducks|7|1500|vbr|
+720-old-town-cpu7|720-old-town|7|1500|vbr|
+1080-in-tree-cbr-aq3|1080-in-tree|7|2500|cbr|--aq-mode=3
+1080-ducks-cbr-aq3|1080-ducks|7|2500|cbr|--aq-mode=3
+1080-old-town-cbr-aq3|1080-old-town|7|2500|cbr|--aq-mode=3
+1080-in-tree-denoise|1080-in-tree|7|2500|vbr|--noise-sensitivity=1
+1080-ducks-denoise|1080-ducks|7|2500|vbr|--noise-sensitivity=1
+1080-old-town-denoise|1080-old-town|7|2500|vbr|--noise-sensitivity=1
+1080-old-town-low-rate|1080-old-town|7|500|vbr|
+1080-old-town-high-rate|1080-old-town|7|6000|vbr|
+1080-old-town-temporal2|1080-old-town|7|2500|vbr|--temporal-layers=2
+1080-old-town-temporal3|1080-old-town|7|2500|vbr|--temporal-layers=3
+1080-old-town-spatial2-cpu6|1080-old-town|6|2835|cbr|--spatial-layers=2 --inter-layer-pred=0
+1080-old-town-spatial3-cpu6|1080-old-town|6|2835|cbr|--spatial-layers=3 --inter-layer-pred=0
+1080-old-town-spatial2-cpu7|1080-old-town|7|2835|cbr|--spatial-layers=2 --inter-layer-pred=0
+1080-old-town-spatial3-cpu7|1080-old-town|7|2835|cbr|--spatial-layers=3 --inter-layer-pred=0
+1080-old-town-spatial2-cpu8|1080-old-town|8|2835|cbr|--spatial-layers=2 --inter-layer-pred=0
+1080-old-town-spatial3-cpu8|1080-old-town|8|2835|cbr|--spatial-layers=3 --inter-layer-pred=0
+training_plan_end
+profdata=D:/worktrees/rvp9-2/20260926-TSK-HUM-prototype-avx2-subpel-footprint-check-ho/.scratch/encoder-pgo-footprint/runs/20260926T164843Z-2767904/encoder.profdata
+raw_profile_count=31
+optimized_binary=D:/worktrees/rvp9-2/20260926-TSK-HUM-prototype-avx2-subpel-footprint-check-ho/.scratch/encoder-pgo-footprint/optimized/release/rvp9enc.exe
+optimized_binary_sha256=926da796415c7e91796b2a0574e77a5b11f268ac3f9b8f353ada7e0ff911bfa1

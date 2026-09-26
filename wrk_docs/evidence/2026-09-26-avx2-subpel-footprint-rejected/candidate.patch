@@ -1,0 +1,177 @@
+diff --git a/crates/rvp9-core/src/dsp/x86_64/subpel_variance_avx2.rs b/crates/rvp9-core/src/dsp/x86_64/subpel_variance_avx2.rs
+index 5aaac4a8..85017ecb 100644
+--- a/crates/rvp9-core/src/dsp/x86_64/subpel_variance_avx2.rs
++++ b/crates/rvp9-core/src/dsp/x86_64/subpel_variance_avx2.rs
+@@ -129 +129 @@ unsafe fn bil_round(a: __m256i, b: __m256i, f0: __m256i, f1: __m256i, round: __m
+-unsafe fn bilinear_to_u8_temp(
++unsafe fn bilinear_to_u8_temp<const PROVEN: bool>(
+@@ -162,2 +162,2 @@ unsafe fn bilinear_to_u8_temp(
+-            let a = _mm256_cvtepu8_epi16(load_bytes_bounded(src, row_base + j, count));
+-            let b = _mm256_cvtepu8_epi16(load_bytes_bounded(src, row_base + j + 1, count));
++            let a = _mm256_cvtepu8_epi16(load_bytes::<PROVEN>(src, row_base + j, count));
++            let b = _mm256_cvtepu8_epi16(load_bytes::<PROVEN>(src, row_base + j + 1, count));
+@@ -197 +197 @@ unsafe fn bilinear_to_u8_temp(
+-unsafe fn vertical_bilinear_from_source(
++unsafe fn vertical_bilinear_from_source<const PROVEN: bool>(
+@@ -219,2 +219,2 @@ unsafe fn vertical_bilinear_from_source(
+-            let a = _mm256_cvtepu8_epi16(load_bytes_bounded(src, top + j, count));
+-            let b = _mm256_cvtepu8_epi16(load_bytes_bounded(src, bot + j, count));
++            let a = _mm256_cvtepu8_epi16(load_bytes::<PROVEN>(src, top + j, count));
++            let b = _mm256_cvtepu8_epi16(load_bytes::<PROVEN>(src, bot + j, count));
+@@ -239 +239 @@ unsafe fn vertical_bilinear_from_source(
+-unsafe fn horizontal_bilinear_to_u8_temp(
++unsafe fn horizontal_bilinear_to_u8_temp<const PROVEN: bool>(
+@@ -260,2 +260,2 @@ unsafe fn horizontal_bilinear_to_u8_temp(
+-            let a = _mm256_cvtepu8_epi16(load_bytes_bounded(src, row_base + j, count));
+-            let b = _mm256_cvtepu8_epi16(load_bytes_bounded(src, row_base + j + 1, count));
++            let a = _mm256_cvtepu8_epi16(load_bytes::<PROVEN>(src, row_base + j, count));
++            let b = _mm256_cvtepu8_epi16(load_bytes::<PROVEN>(src, row_base + j + 1, count));
+@@ -303,0 +304,31 @@ unsafe fn load_bytes_bounded(src: &[u8], off: usize, count: usize) -> __m128i {
++/// The greatest source offset used by an interpolation pass is in its last
++/// row. A successful checked extent also proves every intermediate row and
++/// chunk offset can be formed without overflow, even when rows overlap.
++#[cfg(target_arch = "x86_64")]
++fn source_footprint_fits(src_len: usize, stride: usize, rows: usize, row_width: usize) -> bool {
++    rows.checked_sub(1)
++        .and_then(|last_row| last_row.checked_mul(stride))
++        .and_then(|base| base.checked_add(row_width))
++        .is_some_and(|end| end <= src_len)
++}
++
++/// Load an exact-width chunk after one whole-pass footprint proof. The
++/// checked specialization retains the original malformed-input behaviour.
++#[cfg(target_arch = "x86_64")]
++#[target_feature(enable = "avx2")]
++unsafe fn load_bytes<const PROVEN: bool>(src: &[u8], off: usize, count: usize) -> __m128i {
++    if !PROVEN {
++        return load_bytes_bounded(src, off, count);
++    }
++    // SAFETY: the caller selected PROVEN only after checking the entire
++    // source footprint. Every chunk reads at most `count` bytes within its
++    // row, including the right-neighbour byte and an exact-width tail.
++    let ptr = src.as_ptr().add(off) as *const __m128i;
++    match count {
++        16 => _mm_loadu_si128(ptr),
++        8 => _mm_loadl_epi64(ptr),
++        4 => _mm_cvtsi32_si128(core::ptr::read_unaligned(ptr as *const i32)),
++        _ => load_bytes_bounded(src, off, count),
++    }
++}
++
+@@ -414,2 +445,3 @@ pub fn sub_pixel_variance_avx2(
+-            // SAFETY: installed only on AVX2 hosts by `SimdDispatch::build`;
+-            // the source footprint and scratch temp cover the active block.
++            let proven = source_footprint_fits(src.len(), src_stride, h + 1, w);
++            // SAFETY: installed only on AVX2 hosts by `SimdDispatch::build`.
++            // `proven` covers all source loads; the fallback checks each one.
+@@ -417 +449,5 @@ pub fn sub_pixel_variance_avx2(
+-                vertical_bilinear_from_source(src, src_stride, yoffset, w, h, temp);
++                if proven {
++                    vertical_bilinear_from_source::<true>(src, src_stride, yoffset, w, h, temp);
++                } else {
++                    vertical_bilinear_from_source::<false>(src, src_stride, yoffset, w, h, temp);
++                }
+@@ -433,2 +469,3 @@ pub fn sub_pixel_variance_avx2(
+-            // SAFETY: installed only on AVX2 hosts by `SimdDispatch::build`;
+-            // the source footprint and scratch temp cover the active block.
++            let proven = source_footprint_fits(src.len(), src_stride, h, w + 1);
++            // SAFETY: installed only on AVX2 hosts by `SimdDispatch::build`.
++            // `proven` covers all source loads; the fallback checks each one.
+@@ -436 +473,5 @@ pub fn sub_pixel_variance_avx2(
+-                horizontal_bilinear_to_u8_temp(src, src_stride, xoffset, w, h, temp);
++                if proven {
++                    horizontal_bilinear_to_u8_temp::<true>(src, src_stride, xoffset, w, h, temp);
++                } else {
++                    horizontal_bilinear_to_u8_temp::<false>(src, src_stride, xoffset, w, h, temp);
++                }
+@@ -449,0 +491 @@ pub fn sub_pixel_variance_avx2(
++        let proven = source_footprint_fits(src.len(), src_stride, h + 1, w + 1);
+@@ -453,9 +495,21 @@ pub fn sub_pixel_variance_avx2(
+-            bilinear_to_u8_temp(
+-                src,
+-                src_stride,
+-                xoffset,
+-                yoffset,
+-                w,
+-                h,
+-                BilinearBuffers { fdata, temp },
+-            );
++            if proven {
++                bilinear_to_u8_temp::<true>(
++                    src,
++                    src_stride,
++                    xoffset,
++                    yoffset,
++                    w,
++                    h,
++                    BilinearBuffers { fdata, temp },
++                );
++            } else {
++                bilinear_to_u8_temp::<false>(
++                    src,
++                    src_stride,
++                    xoffset,
++                    yoffset,
++                    w,
++                    h,
++                    BilinearBuffers { fdata, temp },
++                );
++            }
+@@ -633 +687 @@ mod tests {
+-                        bilinear_to_u8_temp(
++                        bilinear_to_u8_temp::<true>(
+@@ -682,0 +737,54 @@ mod tests {
++    /// The fast path must read no more than the phase's actual footprint.
++    /// Compare against the scalar oracle on an extended copy because that
++    /// oracle conservatively requires the full two-dimensional footprint.
++    #[test]
++    fn differential_exact_source_footprints() {
++        require_avx2!();
++        let mut rng = Lcg32::new(0x5A_1E_2026);
++        for &(w, h) in SHAPES {
++            for stride_extra in [0, 3] {
++                let src_stride = w + 1 + stride_extra;
++                let ref_stride = w + 2;
++                let reference: Vec<u8> = (0..(h - 1) * ref_stride + w)
++                    .map(|_| rng.next_byte())
++                    .collect();
++                for yoff in 0..8 {
++                    for xoff in 0..8 {
++                        let rows = if yoff == 0 { h } else { h + 1 };
++                        let row_width = if xoff == 0 { w } else { w + 1 };
++                        let exact_len = (rows - 1) * src_stride + row_width;
++                        let src: Vec<u8> = (0..exact_len).map(|_| rng.next_byte()).collect();
++                        let mut extended = src.clone();
++                        extended.resize(h * src_stride + w + 1, 0xA7);
++                        let expected = scalar_svf(
++                            &extended, src_stride, &reference, ref_stride, xoff, yoff, w, h,
++                        );
++                        let actual = sub_pixel_variance_avx2(
++                            &src, src_stride, &reference, ref_stride, xoff, yoff, w, h,
++                        );
++                        assert_eq!(actual, expected, "shape={w}x{h} phase={xoff},{yoff}");
++                    }
++                }
++            }
++        }
++    }
++
++    #[test]
++    fn truncated_source_uses_checked_fallback() {
++        require_avx2!();
++        let (w, h) = (4, 4);
++        let stride = w + 1;
++        let reference = vec![3u8; w * h];
++        for (xoff, yoff, rows, row_width) in
++            [(1, 0, h, w + 1), (0, 1, h + 1, w), (1, 1, h + 1, w + 1)]
++        {
++            let exact_len = (rows - 1) * stride + row_width;
++            let src = vec![17u8; exact_len - 1];
++            let result = std::panic::catch_unwind(|| {
++                sub_pixel_variance_avx2(&src, stride, &reference, w, xoff, yoff, w, h)
++            });
++            assert!(result.is_err(), "short source escaped phase={xoff},{yoff}");
++        }
++        assert!(!source_footprint_fits(usize::MAX, usize::MAX, 4, 4));
++    }
++
