@@ -1,0 +1,2 @@
+rvp9enc: hadamard-metric-census n=64 groups=199936 zero_magnitude=190471 narrow_difference=199936 both=190471
+rvp9enc: hadamard-metric-census n=256 groups=1664 zero_magnitude=1600 narrow_difference=1664 both=1600
