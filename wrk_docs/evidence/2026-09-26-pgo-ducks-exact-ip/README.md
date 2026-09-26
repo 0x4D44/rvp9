@@ -1,0 +1,16 @@
+# Exact PGO-image Ducks CPU samples
+
+Three fresh-process Crucible WPR CPU captures profiled the current-source **PGO** `rvp9enc.exe`, not the plain-release image. The source commit is `48cab42d2dba1a46c502a5da2faf907d79d78ac1`; the EXE SHA-256 is `0fa1028b1310fee93b22731794dcb3fdc14e9b5e05dbe428f3e112c4b30cb395` and the PDB SHA-256 is `c53cd2fcbe4a21cd17016c57d8e0c85cc255de3e5b4e9f13b9ba930993f76c6f`. The extractor verified the PE/PDB GUID `4ab7db25-1081-3047-4c4c-44205044422e`, age 1, and image size `0x211000` on each capture. All three encodes of the pinned 60-frame CPU6/CBR1260 Ducks Y4M exited zero and reproduced IVF SHA-256 `8d0458b89ca00cbfb96961e1c16e6018bf88b18790ea7e9d6eeb8c80bd659089`.
+
+The three independent runs retained 17,131, 18,008, and 17,279 direct encoder samples, **52,418 total**. Each xperf trace reported zero lost buffers and events. Each run's `capture.log`, `verification.txt`, `xperf-tracestats.txt`, and extraction summary is under `runs/`. The identity-checked aggregate contains per-run counts, per-RVA counts, source-line groups, and its own summary. Raw ETLs and extracted full-IP rows remain on Crucible under `D:\worktrees\rvp9-2\20260926-TSK-HUM-crucible-profile-after-zero-eob\.scratch\pgo-ducks-ip\`; the local copy of `full-ip-counts.csv` has SHA-256 `72aeeb838fa46ebb6034b26df61018c7daa9f761d8c40e4379fb2c74d3911878`. Individual ETL SHA-256 values are in the run verification records. They are not committed because the three ETLs total about 454 MB.
+
+| Exact RVA | Direct samples; run 01/02/03 | Disassembled sampled instruction | Broad source mapping |
+| --- | ---: | --- | --- |
+| `0xe322d` | 1,312; 456/468/388 | `movl 0xe40(%rsp), %r15d` | `inter.rs:2428`, mode-picker closure |
+| `0xaa825` | 1,184; 373/420/391 | `movl 0x2000(%r13), %eax` | `lib.rs:11471`, partition/emit closure |
+| `0xa73c8` | 678; 331/345/2 | `addq %rax, 0x3b8(%rsp)` | same partition/emit closure |
+| `0x152ed1` | 502; 232/230/40 | `vmovdqu 0x30(%rcx), %xmm1` | `scale.rs:499`, inter-prediction setup |
+
+The first two RVAs recur strongly, but a sampled load is not a measured cost of that single instruction: cache misses, dependency chains, and sampling skid can charge a nearby IP. The latter two vary sharply across runs. The broad closure source lines group hundreds of RVAs; `lib.rs:11471` alone contains 9,269 samples across 1,159 RVAs. Thus this profile does **not** yet establish a bounded, exact-output code change. It redirects kernel selection to instruction-level/caller attribution on the PGO image, especially the partition-closure load and picker state, rather than reusing the earlier plain-release hot-IP ranking. Profiling CPU time is not a new parity speed measurement; the separate direct PGO/libvpx result is 1.096110× in `../2026-09-26-encoder-pgo-parity/README.md`.
+
+Capture reused `../2026-09-26-repeated-ducks-profile/capture-repeats.ps1` against its hash-pinned original WPR script, with only PGO EXE/PDB paths/hashes and artifact root adapted in scratch. Extraction reused that evidence's exact-image extractor; aggregation reused its tested count/identity/loss oracle with the PGO PE/PDB identity constants. No production files were changed. The xperf stack report still lacks reliable encoder caller stacks, so source lines and RVAs must not be treated as caller cost shares.
