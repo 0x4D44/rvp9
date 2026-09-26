@@ -385,14 +385,30 @@ def parse_dumper_rows(
             fields = next(csv.reader([raw_line], skipinitialspace=True, strict=True))
         except csv.Error as error:
             if raw_line.lstrip().startswith("SampledProfile"):
-                # xperf also prints non-CSV quoting in unrelated process rows
-                # (for example, an Unknown process with embedded quotes).
-                # Keep target rows strict, but do not let unrelated rows abort
-                # exact target-executable attribution.
-                result.sampled_profile_rows += 1
-                if exe_name.casefold() in raw_line.casefold():
+                if exe_name.casefold() not in raw_line.casefold():
+                    # Unrelated process rows can contain non-CSV quoting.
+                    result.sampled_profile_rows += 1
+                    continue
+                # xperf also emits quoted kernel-module names such as
+                # '"Unknown"!0xffff...' under the target process. Accept
+                # only a well-formed *non-encoder* kernel IP after relaxed
+                # parsing; malformed user-mode target rows stay fatal.
+                relaxed = next(csv.reader([raw_line], skipinitialspace=True, strict=False))
+                continue_parsing = False
+                if len(relaxed) >= 10 and _looks_like_target_process(relaxed[2], exe_name):
+                    try:
+                        ip = _hex_address(relaxed[4], "sample IP", line_number)
+                        module, module_ip = _sample_module(relaxed[7], line_number)
+                    except ExtractError:
+                        pass
+                    else:
+                        if ip >> 48 == 0xFFFF and module != exe_name and module_ip == ip:
+                            fields = relaxed
+                            continue_parsing = True
+                if not continue_parsing:
                     raise ExtractError(f"malformed target CSV at dumper line {line_number}: {error}") from error
-            continue
+            else:
+                continue
         if not fields:
             continue
         event = fields[0].strip().lstrip("\ufeff")

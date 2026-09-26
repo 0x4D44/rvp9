@@ -1,0 +1,23 @@
+Number of Processors : 32
+CPU Speed            : 4300 MHz
+OS Version           : 10.00.00.00
+OS Build Number      : 26200
+Clock type           : PerfCounter
+Boot time            : 2026/09/21:09:32:14.5000000
+Native Pointer Size  : 8 (64bit)
+Start time (UTC)     : 2026/09/26:16:22:54.4049753
+End time (UTC)       : 2026/09/26:16:23:19.5896479  (+         0:00:00:25.1846726)
+Total # Lost Buffers : 0
+Total # Lost Events  : 0
+
+Number of Traces     : 1
+
+Trace name: D:\worktrees\rvp9-2\20260926-TSK-HUM-prototype-nstep-duplicate-variance-score\.scratch\pgo-nstep-ducks-ip\run-01\capture.etl
+    Log file mode        : Sequential Relogged
+    Pointer size         : 8 (64bit)
+    Start time (UTC)     : 2026/09/26:16:22:54.4049753
+    End time (UTC)       : 2026/09/26:16:23:19.5896479  (+         0:00:00:25.1846726)
+    Start time (Local)   : 2026/09/26:17:22:54.4049753
+    End time (Local)     : 2026/09/26:17:23:19.5896479
+    # Lost Buffers       : 0
+    # Lost Events        : 0
