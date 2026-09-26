@@ -52,9 +52,14 @@ search policy while keeping its output.
 
 The `scripts/` directory pins source/binary/input/output identities and exact
 capture commands. Instrumented outputs and CSV are intentionally small; no
-large IVF or input corpus is committed. The next step is to attribute Ducks
-16×16 entries to caller conditions and look for demonstrably duplicate work,
-then screen any bounded exact-output-safe change against native release CPU.
+large IVF or input corpus is committed. Ducks' extra 16×16 entries need caller
+attribution before anyone calls them redundant. A previous *exact* 16×16 AVX2
+interpolation/variance fusion, including one-axis phases, was neutral in two
+paired screens (`wrk_journals/2026.09.21 - JRN - Unit 1380 fused 16x16 subpel
+rejected.md`); the census does not justify repeating it. The narrower next
+discriminator is whether candidate-invariant source setup remains in the
+compiled subpixel search routine, followed by an exact-output paired CPU
+screen only if it does.
 
 The four `.patch.txt` diffs prefix each line with `|` so unified-diff blank
 context lines do not register as trailing whitespace in this docs commit.
