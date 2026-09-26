@@ -1,0 +1,13 @@
+# AVX2 DC-in-lane quantizer prototype: exact, not retained
+
+The candidate replaced scalar DC quantization and its lane-zero overwrite in `crates/rvp9-core/src/dsp/x86_64/quantize_fp_avx2.rs` with DC-specific round, quant, and dequant values inserted into lane zero of the first eight-wide AVX2 chunk. Later chunks remained AC-only. It was based on integrated trunk `802e9cf3` (code-identical to `ae569e16`; the intervening commit archived the [current x86 IP map](../2026-09-26-latest-integrated-three-clip-ip/README.md)). The one-file candidate source SHA-256 was `c42f50c8d7fd819e6fecb981fb57670b65cbe4789a94a4ac5bc67837ebdd920e`. Crucible candidate EXE SHA-256 was `54d76b7a83bf88f36e2ae1066e0d7188f46f9fa728ea55c05d7141d1c85be324`; clean integrated control EXE SHA-256 was `004844ee055dde9dbfd17c849f83da74c4dbd8aaf3762b40939b0b4a970018ca`.
+
+The new x86 differential covered TX4/TX8/TX16, distinct DC/AC parameters, zero/DC-only/tail-only/signed-extreme coefficients, multiple standard scans, and skip-block reuse. All six `quantize_fp_avx2` tests passed on actual Crucible AVX2; AArch64 core/encoder/CLI checks, formatting, and diff checks passed. A deliberate mutation giving DC lane AC quant parameters made the new test fail: DC-only TX4 expected qcoeff 512 but got 256. Restoring the candidate returned all six tests to green. Three complete screens then ran 15 alternating-order candidate/control pairs per clip, plus one warmup per arm and clip. All **288 encodes** exited zero and matched the pinned Ducks, Tree, and Town IVF hashes; `raw.csv` and `identity.csv` preserve per-encode process CPU, wall time, output and asset hashes.
+
+| Screen | Affinity | Ducks candidate/control CPU | Tree | Town | Equal-clip overall |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 01 | logical CPU 0 | 0.991994 | 0.988720 | 0.986938 | 0.989215 |
+| 02 | unpinned | 1.034283 | 1.014285 | 0.960991 | 1.002704 |
+| 03 | logical CPU 0 | 1.010569 | 1.017849 | 0.996312 | 1.008204 |
+
+Lower is better. The combined geometric mean of the three overall ratios is **1.000009**: no reproducible gain. Screen 02 collided with 11 Rust compiler processes and contained large CPU outliers; screen 03 also had early CPU spikes despite fewer compilers. Wall stalls were larger, so wall time was not the retention signal. These observations do not justify selecting only calm-looking pairs. The candidate **stays out of `origin/main`**; the last accepted pinned-libvpx comparison remains [1.168613× process CPU](../2026-09-26-guarded-hadamard-pairwise/README.md). The next profile-backed experiment should target Ducks' full-pixel search or TX-selection work rather than revisit this DC setup cost.
