@@ -53,3 +53,16 @@ runner and IVFs remain in Crucible's task-owned `.scratch/roundtrip-zero-sse`.
 Thus an exact `mrd.sse_y == 0` whole-call bypass has no opportunity on this
 measured set. This is a hit-rate rejection, not a new speed measurement or a
 claim about other content.
+
+## Monotone skip-bound screen
+
+The [design and rejection](../../2026.09.26%20-%20HLD%20-%20monotone%20round-trip%20skip%20bound.md)
+record the exact-bound argument and aggregate result. Temporary diagnostic
+commit `a4fe24c0` added `crossing_calls`, `savable_tiles`, and
+`final_skip_mismatches` without stopping any tile. Its Crucible release EXE
+SHA-256 was
+`7868fff159bb27dc1407156f83fdccc74cae0748181811524241beef7357645a`;
+copied source hashes matched the local commit. Every pinned input and IVF hash
+matched the earlier rows in this document. The three `*-bound-stderr.txt`
+files preserve exact per-shape counts. The runner and IVFs remain under the
+same Crucible task worktree's `.scratch/roundtrip-bound` directory.

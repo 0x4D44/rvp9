@@ -1,0 +1,6 @@
+rvp9enc: roundtrip-mix total_calls=261124 total_tiles=5479240 rows=5
+rvp9enc: roundtrip-mix block=32x32 tx=8x8 reconstruct=false collect_coef_dist=true calls=233141 tiles=3730256 dct_eob_zero_calls=0 dct_eob_nonzero_calls=0 model_sse_zero_calls=0 crossing_calls=75617 savable_tiles=37231 final_skip_mismatches=0
+rvp9enc: roundtrip-mix block=32x32 tx=16x16 reconstruct=false collect_coef_dist=true calls=670 tiles=2680 dct_eob_zero_calls=0 dct_eob_nonzero_calls=0 model_sse_zero_calls=0 crossing_calls=0 savable_tiles=0 final_skip_mismatches=0
+rvp9enc: roundtrip-mix block=32x64 tx=8x8 reconstruct=false collect_coef_dist=true calls=21 tiles=672 dct_eob_zero_calls=0 dct_eob_nonzero_calls=0 model_sse_zero_calls=0 crossing_calls=0 savable_tiles=0 final_skip_mismatches=0
+rvp9enc: roundtrip-mix block=64x32 tx=8x8 reconstruct=false collect_coef_dist=true calls=33 tiles=1056 dct_eob_zero_calls=0 dct_eob_nonzero_calls=0 model_sse_zero_calls=0 crossing_calls=0 savable_tiles=0 final_skip_mismatches=0
+rvp9enc: roundtrip-mix block=64x64 tx=8x8 reconstruct=false collect_coef_dist=true calls=27259 tiles=1744576 dct_eob_zero_calls=0 dct_eob_nonzero_calls=0 model_sse_zero_calls=0 crossing_calls=16337 savable_tiles=66727 final_skip_mismatches=0
