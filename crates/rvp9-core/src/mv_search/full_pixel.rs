@@ -929,10 +929,15 @@ pub fn nstep_search_sad(params: &FullPixelSearchParams<'_>) -> FullPixelSearchRe
 
         let (candidate, candidate_num00) = diamond_search_sad_from_step(params, start_step + n);
         num00 = candidate_num00;
-        let candidate_cost = full_pixel_variance_cost(params, candidate);
-        if candidate_cost < best_cost {
-            best = candidate;
-            best_cost = candidate_cost;
+        // Different diamond starts can reach the same full-pel position.
+        // Its variance-domain cost depends on the position, not the path or
+        // SAD iteration count, and an equal cost cannot win the strict tie.
+        if (candidate.best_mv_row, candidate.best_mv_col) != (best.best_mv_row, best.best_mv_col) {
+            let candidate_cost = full_pixel_variance_cost(params, candidate);
+            if candidate_cost < best_cost {
+                best = candidate;
+                best_cost = candidate_cost;
+            }
         }
         if num00 > further_steps - n {
             do_refine = false;
@@ -943,7 +948,9 @@ pub fn nstep_search_sad(params: &FullPixelSearchParams<'_>) -> FullPixelSearchRe
         return best;
     }
     let refined = refining_search_sad(params, best, 8);
-    if full_pixel_variance_cost(params, refined) < best_cost {
+    if (refined.best_mv_row, refined.best_mv_col) != (best.best_mv_row, best.best_mv_col)
+        && full_pixel_variance_cost(params, refined) < best_cost
+    {
         refined
     } else {
         best
@@ -1250,6 +1257,107 @@ mod tests {
             *slot = (state & 0xff) as u8;
         }
         buf
+    }
+
+    // Keep the former unconditional variance scoring as an independent
+    // oracle for the duplicate-position fast path. Return how often it
+    // actually scores a position it has already scored as the best.
+    fn nstep_uncached_reference(
+        params: &FullPixelSearchParams<'_>,
+    ) -> (FullPixelSearchResult, usize) {
+        const STEP_PARAM: usize = 6;
+        let effective_steps =
+            (params.max_iters.max(0) as usize).min(params.site_config.total_steps as usize);
+        if effective_steps <= STEP_PARAM {
+            return (diamond_search_sad_from_step(params, effective_steps).0, 0);
+        }
+        let further_steps = effective_steps.saturating_sub(STEP_PARAM + 1);
+        let (mut best, mut n) = diamond_search_sad_from_step(params, STEP_PARAM);
+        let mut best_cost = full_pixel_variance_cost(params, best);
+        let mut num00 = 0usize;
+        let mut do_refine = n <= further_steps;
+        let mut duplicates = 0;
+        while n < further_steps {
+            n += 1;
+            if num00 != 0 {
+                num00 -= 1;
+                continue;
+            }
+            let (candidate, candidate_num00) = diamond_search_sad_from_step(params, STEP_PARAM + n);
+            num00 = candidate_num00;
+            duplicates += usize::from(
+                (candidate.best_mv_row, candidate.best_mv_col)
+                    == (best.best_mv_row, best.best_mv_col),
+            );
+            let candidate_cost = full_pixel_variance_cost(params, candidate);
+            if candidate_cost < best_cost {
+                best = candidate;
+                best_cost = candidate_cost;
+            }
+            if num00 > further_steps - n {
+                do_refine = false;
+            }
+        }
+        if !do_refine {
+            return (best, duplicates);
+        }
+        let refined = refining_search_sad(params, best, 8);
+        duplicates += usize::from(
+            (refined.best_mv_row, refined.best_mv_col) == (best.best_mv_row, best.best_mv_col),
+        );
+        if full_pixel_variance_cost(params, refined) < best_cost {
+            (refined, duplicates)
+        } else {
+            (best, duplicates)
+        }
+    }
+
+    #[test]
+    fn nstep_duplicate_variance_score_preserves_uncached_result() {
+        let costs = build_nmv_cost_table(&DEFAULT_NMV_CONTEXT, true);
+        let width = 64usize;
+        let height = 64usize;
+        let cfg = init_dsmotion_compensation(width as i32);
+        let mut duplicates = 0;
+        for (seed, shift_row, shift_col) in [(7, 0, 0), (17, 1, 2), (29, 3, 4), (43, 5, 1)] {
+            let reference = make_plane(width, height, seed);
+            let mut source = reference.clone();
+            for row in 0..16 {
+                for col in 0..16 {
+                    source[(24 + row) * width + 24 + col] =
+                        reference[(24 + row + shift_row) * width + 24 + col + shift_col];
+                }
+            }
+            let src_plane = PlaneRef {
+                data: &source,
+                stride: width,
+                width,
+                height,
+            };
+            let ref_plane = PlaneRef {
+                data: &reference,
+                stride: width,
+                width,
+                height,
+            };
+            let params = FullPixelSearchParams {
+                block_size: BlockSize::Block16x16,
+                src_plane: &src_plane,
+                src_offset: (24, 24),
+                ref_plane: &ref_plane,
+                center_mv: Mv::ZERO,
+                start_mv: None,
+                mv_limits: MvLimits::new(-16, 16, -16, 16),
+                sad_per_bit: 1,
+                mv_costs: &costs,
+                max_iters: cfg.total_steps as i32,
+                site_config: &cfg,
+            };
+            let (uncached, repeated) = nstep_uncached_reference(&params);
+            duplicates += repeated;
+            assert_eq!(nstep_search_sad(&params), uncached, "seed {seed}");
+        }
+        assert!(duplicates > 0, "fixtures must score a duplicate position");
     }
 
     #[test]
