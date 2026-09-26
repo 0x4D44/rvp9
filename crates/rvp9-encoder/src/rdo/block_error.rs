@@ -64,6 +64,21 @@ pub fn vp9_block_error(coeff: &[i32], dqcoeff: &[i16]) -> (i64, i64) {
     (error, sqcoeff)
 }
 
+/// Coefficient-domain error when quantization produced no coefficients.
+///
+/// With `eob == 0`, every dequantized coefficient is zero, so the error
+/// returned by [`vp9_block_error`] is exactly the sum of squared coefficients.
+#[inline]
+#[must_use]
+pub(crate) fn vp9_block_error_zero_dq(coeff: &[i32]) -> i64 {
+    let mut error = 0i64;
+    for &c in coeff {
+        let c = i64::from(c);
+        error += c * c;
+    }
+    error
+}
+
 /// Pixel-domain sum-of-squared-error over a `side × side` region.
 ///
 /// Mirrors the inner kernel of libvpx `pixel_sse`
@@ -95,6 +110,34 @@ pub fn pixel_sse(src: &[u8], src_stride: usize, dst: &[u8], dst_stride: usize, s
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn zero_dq_error_matches_block_error_for_realtime_tx_sizes() {
+        for ncoeff in [16, 64, 256] {
+            let patterns = [
+                vec![0; ncoeff],
+                (0..ncoeff)
+                    .map(|index| if index % 2 == 0 { 255 } else { -255 })
+                    .collect(),
+                (0..ncoeff)
+                    .map(|index| match index % 4 {
+                        0 => 32_767,
+                        1 => -32_768,
+                        2 => 131_071,
+                        _ => -131_072,
+                    })
+                    .collect(),
+            ];
+            let zeros = vec![0i16; ncoeff];
+            for coeff in patterns {
+                assert_eq!(
+                    vp9_block_error_zero_dq(&coeff),
+                    vp9_block_error(&coeff, &zeros).0,
+                    "zero-dq error must match the full reducer for {ncoeff} coefficients"
+                );
+            }
+        }
+    }
 
     /// PROOF W4.2 — `vp9_block_error` returns `(0, ssz)` when `coeff
     /// == dqcoeff` for every position. libvpx

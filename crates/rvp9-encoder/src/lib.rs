@@ -14168,8 +14168,13 @@ fn choose_inter_luma_tx_size_impl<const PRUNE: bool>(
                     }
                 };
                 // Transform-domain distortion: vp9_block_error >> shift.
-                let (err, _ssz) =
-                    crate::rdo::block_error::vp9_block_error(&coefs[..ncoef], &dqcoeff[..ncoef]);
+                // A zero EOB means quantization wrote only zero dqcoeffs.
+                let err = if eob == 0 {
+                    debug_assert!(dqcoeff[..ncoef].iter().all(|&value| value == 0));
+                    crate::rdo::block_error::vp9_block_error_zero_dq(&coefs[..ncoef])
+                } else {
+                    crate::rdo::block_error::vp9_block_error(&coefs[..ncoef], &dqcoeff[..ncoef]).0
+                };
                 total_dist += err >> shift;
 
                 // Coefficient rate via cost_coeffs with the leaf-local
