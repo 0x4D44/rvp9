@@ -1,0 +1,56 @@
+diff --git a/crates/rvp9-core/src/dsp/x86_64/subpel_variance_avx2.rs b/crates/rvp9-core/src/dsp/x86_64/subpel_variance_avx2.rs
+index 5aaac4a8..a4ac4990 100644
+--- a/crates/rvp9-core/src/dsp/x86_64/subpel_variance_avx2.rs
++++ b/crates/rvp9-core/src/dsp/x86_64/subpel_variance_avx2.rs
+@@ -210,6 +210,20 @@ unsafe fn vertical_bilinear_from_source(
+     let yf1 = _mm256_set1_epi16(yf[1] as i16);
+     let round = _mm256_set1_epi16(1 << (FILTER_BITS - 1));
+
++    if w == 16 && h != 0 {
++        // Each bottom row becomes the next output's top row. Keep its widened
++        // pixels in a register instead of loading and widening them twice.
++        // The bounded loader still checks every source row before reading it.
++        let mut top = _mm256_cvtepu8_epi16(load_bytes_bounded(src, 0, 16));
++        for i in 0..h {
++            let bottom = _mm256_cvtepu8_epi16(load_bytes_bounded(src, (i + 1) * src_stride, 16));
++            let out = bil_round(top, bottom, yf0, yf1, round);
++            store_u8_chunk(out, &mut temp[i * 16..], 16);
++            top = bottom;
++        }
++        return;
++    }
++
+     for i in 0..h {
+         let top = i * src_stride;
+         let bot = (i + 1) * src_stride;
+@@ -652,6 +666,30 @@ mod tests {
+         }
+     }
+
++    /// The 16-wide direct vertical pass must retain the scalar temp even
++    /// when the final source row ends exactly at the bilinear footprint.
++    #[test]
++    fn differential_vertical_16_row_carry_tight_source() {
++        require_avx2!();
++        let mut rng = Lcg32::new(0x16_7011);
++        for h in [8, 16, 32] {
++            for src_stride in [17, 23] {
++                let src_len = h * src_stride + 17;
++                let src: Vec<u8> = (0..src_len).map(|_| rng.next_byte()).collect();
++                for yoff in 0..8 {
++                    let expected = scalar_bilinear_temp(&src, src_stride, 0, yoff, 16, h);
++                    let mut actual = vec![0u8; h * 16];
++                    // SAFETY: the AVX2 check above guards this call. The source
++                    // has all h+1 rows, including the final 17-byte footprint.
++                    unsafe {
++                        vertical_bilinear_from_source(&src, src_stride, yoff, 16, h, &mut actual);
++                    }
++                    assert_eq!(actual, expected, "h={h}, stride={src_stride}, yoff={yoff}");
++                }
++            }
++        }
++    }
++
+     /// Surface (b): the final `(var, sse)` equals the scalar
+     /// `sub_pixel_variance` for every (xoffset, yoffset) and shape.
+     #[test]
