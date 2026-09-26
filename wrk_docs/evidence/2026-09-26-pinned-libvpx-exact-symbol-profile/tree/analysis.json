@@ -1,0 +1,82 @@
+{
+  "method": "xperf SampledProfile direct IP -> PID-specific image base -> RVA -> exact PE nm T/t function start",
+  "interval_limit": "nm gives starts without sizes; next function start is an attribution upper bound",
+  "label_policy": "nm global T text starts are retained, including assembly functions omitted by COFF type 20; lowercase t starts require COFF type 20; section markers and classified assembly-local labels are excluded",
+  "source_lines": "not available for libvpx functions; no DWARF line claims made",
+  "replay_from": "D:\\worktrees\\rvp9-2\\20260925-TSK-HUM-unit1434-integrated-ip-profile\\.scratch\\pinned-libvpx-profile\\tree",
+  "exe_path": "D:\\worktrees\\rvp9-2\\acceptance-d639c265\\build\\libvpx\\vpxenc.exe",
+  "exe_sha256": "88ba702de16af47327490a7d016002fd05169e074c6c6657b9e9ff7a8d4a135d",
+  "etl_path": "D:\\worktrees\\rvp9-2\\20260925-TSK-HUM-unit1434-integrated-ip-profile\\.scratch\\pinned-libvpx-profile\\tree\\capture.etl",
+  "etl_sha256": "638bb7ce1089696c49238cc35505fbaf568a0de4119502cae0a1deec90b4e4ad",
+  "pid": 30092,
+  "preferred_image_base": "0x140000000",
+  "loaded_image_base": "0x7ff6fc200000",
+  "image_size": "0x3c1000",
+  "image_record": {
+    "base": 140698768637952,
+    "size": 3936256,
+    "event": "ImageId",
+    "path": "vpxenc.exe"
+  },
+  "lost_buffers": 0,
+  "lost_events": 0,
+  "all_loss_rows": [
+    [
+      "buffers",
+      0
+    ],
+    [
+      "events",
+      0
+    ],
+    [
+      "buffers",
+      0
+    ],
+    [
+      "events",
+      0
+    ]
+  ],
+  "process_cpu_seconds": 1.09375,
+  "encoder_wall_seconds": 1.127661,
+  "etl_trace_seconds": 23.1564559,
+  "process_cpu_over_wall": 0.9699280191475984,
+  "frames": 60,
+  "sampled_exe_rows": 1002,
+  "sampled_exe_direct_count": 1002,
+  "sampled_process_direct_count": 1118,
+  "process_samples_per_cpu_second": 1022.1714285714286,
+  "sampled_other_modules_direct_count": 116,
+  "unresolved_exe_direct_count": 0,
+  "malformed_non_target_rows": 103668,
+  "symbol_counts": {
+    "objdump_function_rows": 3981,
+    "unique_function_starts": 4040,
+    "nm_defined_symbols": 13647,
+    "nm_text_rows": 5106,
+    "nm_section_markers_excluded": 449,
+    "nm_local_labels_excluded": 516,
+    "nm_global_assembly_rows_added": 160,
+    "nm_unclassified_local_labels": 0,
+    "reconciled_function_rows": 3981,
+    "reconciliation_mismatches": 0
+  },
+  "normalization": "estimated function CPU = function direct count / all target-process direct count * measured process CPU; sampling estimate, not timed function duration",
+  "archival_text_normalization": "Checked-in text artifacts use LF and one terminal newline; raw Windows hashes below are preserved separately.",
+  "original_artifact_sha256": {
+    "tracestats": "213824cfb672d90bd6a0bd24a7696e2cc0d1d2d3ee4cc34924ec875bd99de73b",
+    "profile": "2412b8bc2f5b3d73e4cb3b5bbbbd4d5b51a5e47e303eba42c988be18d6c335fc",
+    "sampled_ips": "fcaebbd7875283507bb9aad872c982e30ebbdfb43474a1431bc7a067954eefbf",
+    "summary_by_function": "e9ecbd25eb6d3be385c0dae84d76ae479c6e5b08c48c67114565950057b47a20"
+  },
+  "artifacts_sha256": {
+    "tracestats": "0e0f7cccb86d0b1ec2d5ab187a431e0a57ab37e2f1606704f8f97dd0876c611e",
+    "profile": "67aeefb746d8cdc95627e96ab497fe2ecb9364f4d6eebfcb8c7e4d4a6b6508f2",
+    "dumper": "ad1ca81b751b0ee7d9ecfe2965f56d7b4e7ca692afeb4da45e1202cdfeecefd3",
+    "nm": "db0ae4c7fcd5c024b57a546bb91cf81ea0015559328e0af165ebc1ac9f6b2914",
+    "objdump": "e4b540092156806e01aca052e79012720872f06173783d3330cefba1959baed9",
+    "sampled_ips": "a54ed75027a7427a42695b2bc7f9025902ccfcb35d0f79f1e089584697b4574d",
+    "summary_by_function": "26439ffb9fe6efd8e27b0118501191f0f31b37abee3a382e37bd7379e9ed7888"
+  }
+}

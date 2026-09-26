@@ -1,0 +1,19 @@
+# Pinned libvpx: exact-binary x86 CPU attribution
+
+This is a **hotspot map, not a new speed comparison**. On Crucible, three 60-frame CPU6/CBR1260 one-thread encodes used the same pinned `vpxenc.exe` as the last paired RVP9/libvpx screen (SHA-256 `88ba702de16af47327490a7d016002fd05169e074c6c6657b9e9ff7a8d4a135d`). Each reproduced its archived exact IVF SHA-256. The capture runner, corrected analyzer, per-clip manifests, direct IPs, symbol summaries, and numeric xperf reports are here. The ETLs remain in `D:\worktrees\rvp9-2\20260925-TSK-HUM-unit1434-integrated-ip-profile\.scratch\pinned-libvpx-profile\`; their hashes are in each `analysis.json`.
+
+| Clip | Direct libvpx EXE samples | All process samples | Unresolved EXE samples | Lost buffers / events | ETL SHA-256 |
+| --- | ---: | ---: | ---: | ---: | --- |
+| Ducks | 2,589 | 2,784 | 0 | 0 / 0 | `e33dbc18d8c7eb819aec3af85bb5b9f4de0111a3b2502d4731f55240ed42921e` |
+| Tree | 1,002 | 1,118 | 0 | 0 / 0 | `638bb7ce1089696c49238cc35505fbaf568a0de4119502cae0a1deec90b4e4ad` |
+| Town | 1,081 | 1,207 | 0 | 0 / 0 | `1d557c3ecbe1659f806c80794526256f9a59a3e867bc9185c02c1289ca8cf2b9` |
+
+The analyzer verifies the executable hash and PE image size, uses the target PID's loaded image base, and reconciles function addresses against both `nm` and `objdump`. Its first version used only COFF `ty 20` symbols. That omitted global assembly routines and falsely attributed 184 Ducks samples to the tiny `vpx_clear_system_state`. The corrected version adds 160 global text symbols, including SSE2 SAD routines: of those 184 samples, 122 map to `vpx_sad16x16x4d_sse2` and 47 to `vpx_sad16x16_sse2`. The raw Ducks IP/count/base/RVA tuples are unchanged; the other 15 samples split among three SAD routines. Tree and Town also replayed from their original dumps. COFF and `nm` provide starts, not function sizes, so an interval ends at the next known start. Libvpx source lines are unavailable in this binary; these are function-level self samples only.
+
+The checked-in CSV, JSON, and xperf text copies were normalized from Windows CRLF to LF. Each `analysis.json` preserves the raw Windows hashes and records the hashes of the checked-in normalized copies separately.
+
+The most useful contrast with the already integrated [Unit 1434 RVP9 exact-IP map](../2026-09-25-unit1434-three-clip-ip-attribution/README.md) is sub-pixel work. By matching symbol names, RVP9 has 127/2,505 Ducks, 206/1,274 Tree, and 135/947 Town direct EXE samples (5.1%, 16.2%, 14.3%). Libvpx's `sub_pix`/`sub_pixel` functions have 137/2,589, 68/1,002, and 78/1,081 (5.3%, 6.8%, 7.2%). The implementations and encoded streams differ, and related convolution work can sit under other symbols; these shares are a directional lead, **not** an exact component-time or call-count comparison. The Tree difference is large enough to justify a narrow probe-reuse diagnostic before changing code. Ducks instead has substantial SAD, quantization, and inter-mode work on both sides.
+
+The retained paired benchmark remains **1.182520×** RVP9/libvpx process CPU overall (Ducks 1.316331×, Tree 1.202904×, Town 1.044310×); see [Laplacian evidence](../2026-09-25-hf-laplacian-avx2/README.md). Do not derive a fresh parity ratio from these unpaired WPR runs: the first Ducks trace used 2.71875 process-CPU seconds and a repeat used 2.1875, versus 1.6875 median in the paired screen. The `estimated_cpu_ms` fields in the symbol CSVs describe each trace only.
+
+Next diagnostic: count RVP9 sub-pixel probes by block shape and phase, and count repeated horizontal-row keys within a search. The current two-pass AVX2 kernel rebuilds horizontal rows for each call. Only if the eligible repetition and its sampled horizontal-pass share support a useful whole-encode ceiling should cross-probe reuse be prototyped. An exact differential must then preserve every phase result, search winner/tie order, and canonical IVF hash before any paired Crucible timing.
