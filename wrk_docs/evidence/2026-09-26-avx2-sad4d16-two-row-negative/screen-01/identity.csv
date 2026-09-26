@@ -1,0 +1,6 @@
+﻿"Name","Path","Sha256"
+"control","D:\worktrees\rvp9-2\20260926-TSK-HUM-profile-latest-integrated-x86-hot-kernel\.scratch\target\release\rvp9enc.exe","004844ee055dde9dbfd17c849f83da74c4dbd8aaf3762b40939b0b4a970018ca"
+"candidate","D:\worktrees\rvp9-2\20260926-TSK-HUM-prototype-two-row-avx2-sad4d16\.scratch\target\release\rvp9enc.exe","117dee9bf5215f06d03f66c29950e260c99bd7aa3160fb7b4488579409da0a92"
+"ducks","D:\worktrees\rvp9-2\acceptance-d639c265\target\encoder-pgo\inputs\ducks_take_off_420_1080p30_60f.y4m","6d2d866613f7a8c7b11bd2c27374f7637cd4a0748ff6fea4a671b23cfbcde6d7"
+"tree","D:\worktrees\rvp9-2\acceptance-d639c265\target\encoder-pgo\inputs\in_to_tree_420_1080p30_60f.y4m","ead3aef191242b03cc6019f0527c71bc3d11e856ba4f9f92b926fe804582f791"
+"town","D:\worktrees\rvp9-2\acceptance-d639c265\target\encoder-pgo\inputs\old_town_cross_420_1080p30_60f.y4m","b738b8068d1200f8a3119c72f1edc844424d3fe96d8b28acb9af11497ed7c909"
