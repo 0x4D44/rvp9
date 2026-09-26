@@ -1,0 +1,207 @@
+diff --git a/crates/rvp9-encoder/src/lib.rs b/crates/rvp9-encoder/src/lib.rs
+index f6fa73e6..b24e964e 100644
+--- a/crates/rvp9-encoder/src/lib.rs
++++ b/crates/rvp9-encoder/src/lib.rs
+@@ -4010,0 +4011,84 @@ const E3_DIAG_SAMPLE_LIMIT: usize = 40;
++/// Aggregate counters for the optional transform-selector reuse-ceiling
++/// diagnostic. These counters are kept separate from codec state so the
++/// diagnostic cannot affect bitstream decisions or entropy order.
++#[derive(Debug, Default, Eq, PartialEq)]
++struct TxReuseCeilingDiagnostics {
++    selector_calls: usize,
++    chosen_tx: [usize; 4],
++    luma_skip_leaves: [usize; 4],
++    luma_traversed_leaves: [usize; 4],
++    luma_tiles: [usize; 4],
++    luma_nonzero_tiles: [usize; 4],
++    final_skip_leaves: [usize; 4],
++}
++
++impl TxReuseCeilingDiagnostics {
++    #[inline]
++    fn record_selector(&mut self, tx_size: TxSize) -> usize {
++        let index = tx_size as usize;
++        debug_assert!(index < self.chosen_tx.len());
++        self.selector_calls += 1;
++        self.chosen_tx[index] += 1;
++        index
++    }
++
++    #[inline]
++    fn record_luma_skip(&mut self, tx_index: usize) {
++        self.luma_skip_leaves[tx_index] += 1;
++    }
++
++    #[inline]
++    fn record_luma_traversed(&mut self, tx_index: usize) {
++        self.luma_traversed_leaves[tx_index] += 1;
++    }
++
++    #[inline]
++    fn record_luma_tile(&mut self, tx_index: usize) {
++        self.luma_tiles[tx_index] += 1;
++    }
++
++    #[inline]
++    fn record_luma_nonzero_tile(&mut self, tx_index: usize) {
++        self.luma_nonzero_tiles[tx_index] += 1;
++    }
++
++    #[inline]
++    fn record_final_skip(&mut self, tx_index: usize) {
++        self.final_skip_leaves[tx_index] += 1;
++    }
++
++    fn merge_from(&mut self, other: Self) {
++        self.selector_calls += other.selector_calls;
++        for (dst, src) in self.chosen_tx.iter_mut().zip(other.chosen_tx) {
++            *dst += src;
++        }
++        for (dst, src) in self.luma_skip_leaves.iter_mut().zip(other.luma_skip_leaves) {
++            *dst += src;
++        }
++        for (dst, src) in self
++            .luma_traversed_leaves
++            .iter_mut()
++            .zip(other.luma_traversed_leaves)
++        {
++            *dst += src;
++        }
++        for (dst, src) in self.luma_tiles.iter_mut().zip(other.luma_tiles) {
++            *dst += src;
++        }
++        for (dst, src) in self
++            .luma_nonzero_tiles
++            .iter_mut()
++            .zip(other.luma_nonzero_tiles)
++        {
++            *dst += src;
++        }
++        for (dst, src) in self
++            .final_skip_leaves
++            .iter_mut()
++            .zip(other.final_skip_leaves)
++        {
++            *dst += src;
++        }
++    }
++}
++
+@@ -4047,0 +4132 @@ struct CompactInterRowDiagnostics {
++    tx_reuse_ceiling: TxReuseCeilingDiagnostics,
+@@ -4104,0 +4190 @@ impl CompactInterRowDiagnostics {
++        self.tx_reuse_ceiling.merge_from(other.tx_reuse_ceiling);
+@@ -6453,0 +6540 @@ pub(crate) struct InterEncodeEnv {
++    tx_reuse_ceiling: bool,
+@@ -6510,0 +6598,2 @@ impl InterEncodeEnv {
++            tx_reuse_ceiling: std::env::var_os("RVP9_DIAG_TX_REUSE_CEILING")
++                .is_some_and(|value| value != "0"),
+@@ -7675,0 +7765 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
++    let tx_reuse_ceiling_enabled = env.tx_reuse_ceiling;
+@@ -7764,0 +7855 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
++            let tx_reuse_ceiling = &mut diagnostics.tx_reuse_ceiling;
+@@ -11189,0 +11281 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
++                        let mut tx_reuse_ceiling_index = None;
+@@ -11493,0 +11586,4 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
++                                if tx_reuse_ceiling_enabled {
++                                    tx_reuse_ceiling_index =
++                                        Some(tx_reuse_ceiling.record_selector(chosen_luma_tx));
++                                }
+@@ -11514,0 +11611,3 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
++                                if let Some(tx_index) = tx_reuse_ceiling_index {
++                                    tx_reuse_ceiling.record_luma_skip(tx_index);
++                                }
+@@ -11556,0 +11656,5 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
++                            if plane == 0 {
++                                if let Some(tx_index) = tx_reuse_ceiling_index {
++                                    tx_reuse_ceiling.record_luma_traversed(tx_index);
++                                }
++                            }
+@@ -11573,0 +11678,5 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
++                                    if plane == 0 {
++                                        if let Some(tx_index) = tx_reuse_ceiling_index {
++                                            tx_reuse_ceiling.record_luma_tile(tx_index);
++                                        }
++                                    }
+@@ -11753,0 +11863,6 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
++                                        if plane == 0 {
++                                            if let Some(tx_index) = tx_reuse_ceiling_index {
++                                                tx_reuse_ceiling.record_luma_nonzero_tile(tx_index);
++                                            }
++                                        }
++
+@@ -11874,0 +11990,5 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
++                        if let Some(tx_index) = tx_reuse_ceiling_index {
++                            if sb_partitions[sb_idx][leaf_idx].skip {
++                                tx_reuse_ceiling.record_final_skip(tx_index);
++                            }
++                        }
+@@ -12745,0 +12866,35 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
++    if tx_reuse_ceiling_enabled {
++        let counters = &frame_diagnostics.tx_reuse_ceiling;
++        #[allow(clippy::print_stderr)]
++        {
++            eprintln!(
++                "[TX_REUSE_CEILING] frame={} selector_calls={} tx4={} tx8={} tx16={} tx32={} luma_skip_tx4={} luma_skip_tx8={} luma_skip_tx16={} luma_skip_tx32={} luma_traversed_leaves_tx4={} luma_traversed_leaves_tx8={} luma_traversed_leaves_tx16={} luma_traversed_leaves_tx32={} luma_tiles_tx4={} luma_tiles_tx8={} luma_tiles_tx16={} luma_tiles_tx32={} luma_nonzero_tiles_tx4={} luma_nonzero_tiles_tx8={} luma_nonzero_tiles_tx16={} luma_nonzero_tiles_tx32={} final_skip_tx4={} final_skip_tx8={} final_skip_tx16={} final_skip_tx32={}",
++                current_video_frame,
++                counters.selector_calls,
++                counters.chosen_tx[0],
++                counters.chosen_tx[1],
++                counters.chosen_tx[2],
++                counters.chosen_tx[3],
++                counters.luma_skip_leaves[0],
++                counters.luma_skip_leaves[1],
++                counters.luma_skip_leaves[2],
++                counters.luma_skip_leaves[3],
++                counters.luma_traversed_leaves[0],
++                counters.luma_traversed_leaves[1],
++                counters.luma_traversed_leaves[2],
++                counters.luma_traversed_leaves[3],
++                counters.luma_tiles[0],
++                counters.luma_tiles[1],
++                counters.luma_tiles[2],
++                counters.luma_tiles[3],
++                counters.luma_nonzero_tiles[0],
++                counters.luma_nonzero_tiles[1],
++                counters.luma_nonzero_tiles[2],
++                counters.luma_nonzero_tiles[3],
++                counters.final_skip_leaves[0],
++                counters.final_skip_leaves[1],
++                counters.final_skip_leaves[2],
++                counters.final_skip_leaves[3],
++            );
++        }
++    }
+@@ -15173,0 +15329,32 @@ mod tests {
++    #[test]
++    fn tx_reuse_ceiling_counter_aggregation_is_deterministic() {
++        let mut first = TxReuseCeilingDiagnostics::default();
++        let tx4 = first.record_selector(TxSize::Tx4x4);
++        first.record_luma_skip(tx4);
++        first.record_final_skip(tx4);
++        let tx8 = first.record_selector(TxSize::Tx8x8);
++        first.record_luma_traversed(tx8);
++        // The residual walk records each tile once, then records nonzero
++        // residuals through the separate counter path.
++        first.record_luma_tile(tx8);
++        first.record_luma_tile(tx8);
++        first.record_luma_nonzero_tile(tx8);
++
++        let mut second = TxReuseCeilingDiagnostics::default();
++        let tx16 = second.record_selector(TxSize::Tx16x16);
++        second.record_luma_traversed(tx16);
++        second.record_luma_tile(tx16);
++        second.record_luma_nonzero_tile(tx16);
++        second.record_final_skip(tx16);
++
++        first.merge_from(second);
++
++        assert_eq!(first.selector_calls, 3);
++        assert_eq!(first.chosen_tx, [1, 1, 1, 0]);
++        assert_eq!(first.luma_skip_leaves, [1, 0, 0, 0]);
++        assert_eq!(first.luma_traversed_leaves, [0, 1, 1, 0]);
++        assert_eq!(first.luma_tiles, [0, 2, 1, 0]);
++        assert_eq!(first.luma_nonzero_tiles, [0, 1, 1, 0]);
++        assert_eq!(first.final_skip_leaves, [1, 0, 1, 0]);
++    }
++
