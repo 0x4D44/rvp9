@@ -1,0 +1,23 @@
+Number of Processors : 32
+CPU Speed            : 4300 MHz
+OS Version           : 10.00.00.00
+OS Build Number      : 26200
+Clock type           : PerfCounter
+Boot time            : 2026/09/21:09:32:14.5000000
+Native Pointer Size  : 8 (64bit)
+Start time (UTC)     : 2026/09/26:08:17:51.0389598
+End time (UTC)       : 2026/09/26:08:18:13.8076375  (+         0:00:00:22.7686777)
+Total # Lost Buffers : 0
+Total # Lost Events  : 0
+
+Number of Traces     : 1
+
+Trace name: D:\worktrees\rvp9-2\20260926-TSK-HUM-crucible-profile-after-zero-eob\.scratch\after-zero-eob-ip\town\capture.etl
+    Log file mode        : Sequential Relogged
+    Pointer size         : 8 (64bit)
+    Start time (UTC)     : 2026/09/26:08:17:51.0389598
+    End time (UTC)       : 2026/09/26:08:18:13.8076375  (+         0:00:00:22.7686777)
+    Start time (Local)   : 2026/09/26:09:17:51.0389598
+    End time (Local)     : 2026/09/26:09:18:13.8076375
+    # Lost Buffers       : 0
+    # Lost Events        : 0
