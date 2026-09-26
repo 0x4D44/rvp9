@@ -1,8 +1,8 @@
-param([int]$Pairs = 15, [string]$RunLabel = 'libvpx-result-forward', [long]$AffinityMask = 0)
+param([int]$Pairs = 15, [string]$RunLabel = 'libvpx-result-forward', [long]$AffinityMask = 0, [string]$CandidatePath = '')
 $ErrorActionPreference = 'Stop'
 $root = 'D:\worktrees\rvp9-2\20260926-TSK-HUM-prototype-direct-one-filter-result-forwa\.scratch'
 $control = 'D:\worktrees\rvp9-2\acceptance-d639c265\build\libvpx\vpxenc.exe'
-$candidate = Join-Path $root 'target\release\rvp9enc.exe'
+$candidate = if ($CandidatePath) { $CandidatePath } else { Join-Path $root 'target\release\rvp9enc.exe' }
 $inputRoot = 'D:\worktrees\rvp9-2\acceptance-d639c265\target\encoder-pgo\inputs'
 $clips = @(
     [pscustomobject]@{Name='ducks'; File='ducks_take_off_420_1080p30_60f.y4m'; Input='6d2d866613f7a8c7b11bd2c27374f7637cd4a0748ff6fea4a671b23cfbcde6d7'; Output='8d0458b89ca00cbfb96961e1c16e6018bf88b18790ea7e9d6eeb8c80bd659089'; LibvpxOutput='b24234d8db46c22e03585f1973b27c2e62315f0464da392a2ecd2769d2124fa8'},
