@@ -1,0 +1,25 @@
+# Paired Ducks full-pel search-entry census
+
+This is an exact-output **work count, not a speed measurement**. On x86-64 Crucible, separate diagnostic builds of integrated RVP9 and pinned libvpx v1.14.1 encoded the same 60-frame 1080p Ducks Y4M with CPU6/CBR1260, one thread, no tiles, AQ0, noise0, lag0 and KF60. The input SHA-256 was `6d2d866613f7a8c7b11bd2c27374f7637cd4a0748ff6fea4a671b23cfbcde6d7`. Each codec reproduced its own canonical IVF SHA-256: RVP9 `8d0458b89ca00cbfb96961e1c16e6018bf88b18790ea7e9d6eeb8c80bd659089`, libvpx `b24234d8db46c22e03585f1973b27c2e62315f0464da392a2ecd2769d2124fa8`. The two codecs are not expected to have identical IVFs.
+
+| Actual full-pel search entries | RVP9 | libvpx |
+| --- | ---: | ---: |
+| 8×8 LAST | 27,311 | 33,079 |
+| 16×16 LAST | 365,131 | 342,868 |
+| 32×32 LAST | 922 | 2,066 |
+| All LAST | **393,364** | **378,013** |
+| 8×8 GOLDEN | 15,901 | 0 |
+| 16×16 GOLDEN | 220,183 | 0 |
+| 32×32 GOLDEN | 82 | 0 |
+| All GOLDEN | **236,166** | **0** |
+| Total | **629,530** | **378,013** |
+
+The RVP9/libvpx entry ratio is **1.665×**, or 251,517 more RVP9 entries. RVP9's LAST-only count is **1.041×** libvpx's total. The 236,166 RVP9 GOLDEN entries are numerically 93.9% of the total entry difference. This identifies a reference-mix discrepancy worth investigating; it does **not** show that GOLDEN searches are redundant or that copying libvpx's search policy would preserve RVP9's output or quality. Entries do not price CPU cost. Both encoders have other integer-motion-estimation paths outside the counted full-pel wrappers.
+
+RVP9's temporary diagnostic is local commit `e8433538`, reproduced as Crucible commit `1950542f` with identical tree `3090f9649d6420c0ea914aea79e3a814258a1853`. The [base64-encoded source patch](rvp9-source.patch.b64), [raw per-frame stderr](rvp9-ducks-stderr.txt), [six-row totals](rvp9-ducks-totals.csv), [identity and commands](rvp9-ducks-identity.txt), and [runner](rvp9-run.ps1) preserve the experiment. The x86 release census test and CLI build passed. On AArch64, core/encoder checks and 21 full-pel tests passed; the new counter test was deliberately made red before passing, and a three-frame gate-off/on encode was byte-identical. An independent parse verified the six CSV rows sum to 629,530 entries and 1,903,948 diamond starts, with 59 inter-frame reports. All RVP9 entries were labelled `final_pass`/NSTEP: that label describes invocation context, **not** proof of an emitted winner. The RVP9 diagnostic also counted 6,609,344 four-way SAD batches, 2,962,895 scalar SAD calls, 481,135 refinement calls and 1,858,626 variance evaluations; these are not directly comparable to libvpx's entry-only data. Its 604,324 `local_seed_full_sads` exclude predictors evaluated before `run_newmv_search` and SB integer-projection probes.
+
+The pinned libvpx source is `12f3a2ac603e8f10742105519e0cd03c3b8f71dd`. Its [base64-encoded source patch](libvpx-entry.patch.b64) decodes to SHA-256 `dd5df8c9c7de79d3f3e8257032a135272551d786c4d1de79da0aecebd74343ff`; the x86 diagnostic `vpxenc.exe` SHA-256 is `47c980ab935698cf6f83bba21133a0f370d79fe8ed4ebd1e13e6378f8b010719`. [Raw entry CSV](libvpx-ducks-entries.csv), [manifest](libvpx-ducks-manifest.txt), [build log](libvpx-build.log), [run log](libvpx-run.log), [corrected build wrapper](libvpx-build.sh), and [run wrapper](libvpx-run.ps1) preserve its result. The build wrapper uses a relative configure path; an earlier absolute Git-Bash path generated an include path native `gmake` could not resolve, before compilation. The source patch counts `vp9_full_pixel_search` entries by shape/method and marks two real-time picker calls with their LAST/GOLDEN reference; all three observed rows were `rt_pick`/NSTEP/LAST. It does not separate emitted leaves from discarded partition trials or count executed SADs. Its single-thread diagnostic uses process-global counters and is not suitable for a multithreaded count.
+
+Both patches are encoded solely to preserve byte-exact patch content without trailing-whitespace failures in this docs branch. On macOS, decode with `base64 -d -i FILE > PATCH`; on Windows PowerShell, write `[Convert]::FromBase64String((Get-Content FILE -Raw))` with `WriteAllBytes`. Decoding and hashing both archived patches reproduced their originals. The raw run logs had CRLF normalized to LF for Git, with values unchanged.
+
+**Next discriminator:** count which RVP9 GOLDEN NEWMV searches occur on ultimately emitted leaves and which can affect the winning mode, then compare the corresponding libvpx reference decision. Only a bounded, output-exact optimization with repeatable paired production-PGO CPU gain could be integrated. No diagnostic code is integrated. The last uninstrumented direct integrated-code RVP9/libvpx result remains [1.099305× equal-clip process CPU](../2026-09-26-nstep-duplicate-variance-pgo/README.md), above the ≤1.05× target; its Ducks ratio was 1.308692×. Neither instrumented encoder supplies a fresh perf ratio.

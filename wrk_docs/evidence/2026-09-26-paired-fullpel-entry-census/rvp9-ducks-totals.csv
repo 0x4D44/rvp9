@@ -1,0 +1,7 @@
+﻿"origin","shape","ref","method","entries","diamond_starts","local_seed_full_sads","sad4_batches","scalar_sads","refinements","variance_evaluations"
+"final_pass","16x16","GOLDEN","NSTEP","220183","831465","211750","2808525","1217109","191814","824251"
+"final_pass","16x16","LAST","NSTEP","365131","931328","349731","3325877","1503118","256474","897117"
+"final_pass","32x32","GOLDEN","NSTEP","82","247","75","826","469","74","232"
+"final_pass","32x32","LAST","NSTEP","922","1909","861","7283","3326","600","1849"
+"final_pass","8x8","GOLDEN","NSTEP","15901","58678","15213","185100","122651","12803","57663"
+"final_pass","8x8","LAST","NSTEP","27311","80321","26694","281733","116222","19370","77514"

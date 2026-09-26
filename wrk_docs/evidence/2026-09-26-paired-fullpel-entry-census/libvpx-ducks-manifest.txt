@@ -1,0 +1,11 @@
+source=12f3a2ac603e8f10742105519e0cd03c3b8f71dd
+patch_sha256=dd5df8c9c7de79d3f3e8257032a135272551d786c4d1de79da0aecebd74343ff
+binary_sha256=47c980ab935698cf6f83bba21133a0f370d79fe8ed4ebd1e13e6378f8b010719
+input_sha256=6d2d866613f7a8c7b11bd2c27374f7637cd4a0748ff6fea4a671b23cfbcde6d7
+output_sha256=b24234d8db46c22e03585f1973b27c2e62315f0464da392a2ecd2769d2124fa8
+expected_output_sha256=b24234d8db46c22e03585f1973b27c2e62315f0464da392a2ecd2769d2124fa8
+rows=3
+total=378013
+other=0
+rt_pick=378013
+command=D:\worktrees\rvp9-2\20260926-TSK-CDX@CRUCIBLE-libvpx-fullpel-entry-census-x86\.scratch\libvpx-fullpel-build-relative\vpxenc.exe --codec=vp9 --passes=1 --rt --cpu-used=6 --end-usage=cbr --target-bitrate=1260 --fps=30/1 --threads=1 --tile-columns=0 --lag-in-frames=0 --tune-content=default --aq-mode=0 --noise-sensitivity=0 --limit=60 --kf-max-dist=60 --quiet --ivf -o "D:\worktrees\rvp9-2\20260926-TSK-CDX@CRUCIBLE-libvpx-fullpel-entry-census-x86\.scratch\libvpx-fullpel-ducks\ducks.ivf" "D:\worktrees\rvp9-2\acceptance-d639c265\target\encoder-pgo\inputs\ducks_take_off_420_1080p30_60f.y4m"

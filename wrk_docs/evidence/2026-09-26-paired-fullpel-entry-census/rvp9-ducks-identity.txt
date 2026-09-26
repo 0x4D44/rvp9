@@ -1,0 +1,18 @@
+host=CRUCIBLE
+remote_worktree=D:\worktrees\rvp9-2\20260926-TSK-CDX@CRUCIBLE-verify-full-pel-census-crucible
+commit=1950542f963d5b288bc43403028dfa3cffa22b9a
+tree=3090f9649d6420c0ea914aea79e3a814258a1853
+rustc=rustc 1.95.0 (59807616e 2026-04-14)
+cargo_target=D:\worktrees\rvp9-2\20260926-TSK-CDX@CRUCIBLE-verify-full-pel-census-crucible\.scratch\target
+input=D:\worktrees\rvp9-2\acceptance-d639c265\target\encoder-pgo\inputs\ducks_take_off_420_1080p30_60f.y4m
+input_sha256=6d2d866613f7a8c7b11bd2c27374f7637cd4a0748ff6fea4a671b23cfbcde6d7
+exe=D:\worktrees\rvp9-2\20260926-TSK-CDX@CRUCIBLE-verify-full-pel-census-crucible\.scratch\target\release\rvp9enc.exe
+exe_sha256=3f306a74a4459e809b0dad2c545d2022bbff0e081e961dc6206c52dd8f948046
+output=D:\worktrees\rvp9-2\20260926-TSK-CDX@CRUCIBLE-verify-full-pel-census-crucible\.scratch\fullpel-census\ducks-census.ivf
+output_sha256=8d0458b89ca00cbfb96961e1c16e6018bf88b18790ea7e9d6eeb8c80bd659089
+expected_output_sha256=8d0458b89ca00cbfb96961e1c16e6018bf88b18790ea7e9d6eeb8c80bd659089
+census_inter_frames=59
+test=deltic timeout 900 cargo test --locked --release -p rvp9-core full_pel_census_reconciles_search_and_seed_calls -- --ignored
+build=deltic timeout 1800 cargo build --locked --release -p rvp9-cli --bin rvp9enc
+encode=deltic timeout 900 "D:\worktrees\rvp9-2\20260926-TSK-CDX@CRUCIBLE-verify-full-pel-census-crucible\.scratch\target\release\rvp9enc.exe" --codec=vp9 --passes=1 --rt --cpu-used=6 --end-usage=cbr --target-bitrate=1260 --fps=30/1 --threads=1 --tile-columns=0 --lag-in-frames=0 --tune-content=default --aq-mode=0 --noise-sensitivity=0 --limit=60 --kf-max-dist=60 --quiet --ivf -o "D:\worktrees\rvp9-2\20260926-TSK-CDX@CRUCIBLE-verify-full-pel-census-crucible\.scratch\fullpel-census\ducks-census.ivf" "D:\worktrees\rvp9-2\acceptance-d639c265\target\encoder-pgo\inputs\ducks_take_off_420_1080p30_60f.y4m"
+env=RVP9_FULLPEL_CENSUS=1
