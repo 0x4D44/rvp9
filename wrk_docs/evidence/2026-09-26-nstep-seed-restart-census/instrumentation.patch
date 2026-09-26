@@ -1,0 +1,42 @@
+diff --git a/crates/rvp9-cli/src/bin/rvp9enc.rs b/crates/rvp9-cli/src/bin/rvp9enc.rs
+index 79537766..6572f9af 100644
+--- a/crates/rvp9-cli/src/bin/rvp9enc.rs
++++ b/crates/rvp9-cli/src/bin/rvp9enc.rs
+@@ -910 +910,7 @@ fn main() -> ExitCode {
+-    match run(&opts, &positionals) {
++    let result = run(&opts, &positionals);
++    let (calls, starts, max_extra) = rvp9_core::mv_search::full_pixel::nstep_seed_census();
++    eprintln!(
++        "NSTEP_SEED_CENSUS calls={calls} starts={starts} repeated_starts={} max_extra_starts={max_extra}",
++        starts.saturating_sub(calls)
++    );
++    match result {
+diff --git a/crates/rvp9-core/src/mv_search/full_pixel.rs b/crates/rvp9-core/src/mv_search/full_pixel.rs
+index 678a3c26..c499b145 100644
+--- a/crates/rvp9-core/src/mv_search/full_pixel.rs
++++ b/crates/rvp9-core/src/mv_search/full_pixel.rs
+@@ -33,0 +34,17 @@ use crate::mv_search::search_site::SearchSiteConfig;
++use std::sync::atomic::{AtomicU64, Ordering};
++
++// Temporary census for this task branch only; no codec decision reads it.
++static NSTEP_CALLS: AtomicU64 = AtomicU64::new(0);
++static NSTEP_DIAMOND_STARTS: AtomicU64 = AtomicU64::new(0);
++static NSTEP_MAX_EXTRA_STARTS: AtomicU64 = AtomicU64::new(0);
++
++/// Snapshot the temporary NSTEP start census: calls, actual diamond starts,
++/// and the upper bound on extra starts allowed by the step budget.
++#[must_use]
++pub fn nstep_seed_census() -> (u64, u64, u64) {
++    (
++        NSTEP_CALLS.load(Ordering::Relaxed),
++        NSTEP_DIAMOND_STARTS.load(Ordering::Relaxed),
++        NSTEP_MAX_EXTRA_STARTS.load(Ordering::Relaxed),
++    )
++}
+@@ -912,0 +930,2 @@ pub fn nstep_search_sad(params: &FullPixelSearchParams<'_>) -> FullPixelSearchRe
++    NSTEP_CALLS.fetch_add(1, Ordering::Relaxed);
++    NSTEP_DIAMOND_STARTS.fetch_add(1, Ordering::Relaxed);
+@@ -917,0 +937 @@ pub fn nstep_search_sad(params: &FullPixelSearchParams<'_>) -> FullPixelSearchRe
++    NSTEP_MAX_EXTRA_STARTS.fetch_add(further_steps as u64, Ordering::Relaxed);
+@@ -929,0 +950 @@ pub fn nstep_search_sad(params: &FullPixelSearchParams<'_>) -> FullPixelSearchRe
++        NSTEP_DIAMOND_STARTS.fetch_add(1, Ordering::Relaxed);
