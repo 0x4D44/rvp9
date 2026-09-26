@@ -29,10 +29,17 @@ estimates; they do not justify coding to a projected gain.
 The larger, measured discrepancy is search volume. The [direct reference
 census](../2026-09-26-libvpx-ducks-reference-census/README.md) found 554,931
 RVP9 full-tree subpixel entries against 370,507 in pinned libvpx for Ducks.
-Of the 184,424 extra entries, 175,844 are GOLDEN-reference entries. This
-count does not prove which policy is correct or how much CPU can be saved.
-The next bounded diagnostic is to attribute GOLDEN full-tree CPU on the
-current exact PGO image and reconcile the upstream admission/rejection path
-against pinned libvpx. Only an oracle that preserves the winning search result
-and exact output should support an early-exit code change; count reduction
-alone is not a correctness or performance result.
+Of the 184,424 extra entries, 175,844 are GOLDEN-reference entries. **This
+lead was already timed**: the [GOLDEN search timing
+diagnostic](../2026-09-26-ducks-golden-subpel-time/README.md) measured about
+2.7% of gross Ducks process CPU inside *all* GOLDEN fractional searches in an
+instrumented plain-release build, including timer overhead. This is not a
+current-PGO cost ceiling. Libvpx's temporal-GOLDEN CBR path can reject a
+candidate using integer-projection SAD before fractional search
+(`third_party/libvpx/vp9/encoder/vp9_pickmode.c:1586-1615`), but copying its
+policy would not preserve RVP9's winning search result. Neither an additional
+GOLDEN timer nor a policy port is the next exact-output optimization step.
+
+Return to larger exact-output hot paths: NSTEP full-pixel search and emit-side
+partition/TX work. Each needs a new bounded operation-level hypothesis; their
+broad inlined source-line sample counts alone do not identify removable work.
