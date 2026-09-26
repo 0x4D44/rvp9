@@ -1,0 +1,17 @@
+# Current-source encoder PGO parity screen
+
+The existing 28-row production PGO recipe in `scripts/build-encoder-pgo.sh` completed on Crucible from clean source `48cab42d2dba1a46c502a5da2faf907d79d78ac1` (the current integrated production source; later trunk commits were documentation only). The build used Rust 1.95.0, native x86-64 code generation, 60 frames per training row, 31 raw profiles, and an `llvm-profdata` merge. The [build manifest](build-manifest.txt) records the matrix and host/tool identities. No source or build-script change was made. Git Bash lacked `shasum`, so the scratch invocation supplied `shasum -a 256` through its available `sha256sum`; the manifest's optimized-binary hash independently matched PowerShell `Get-FileHash`.
+
+Plain release EXE SHA-256: `c4b24b2c5b16add984a2dd6d32e5a7080037290e58b254aff838a0dcf26d63c1`. Current-source PGO EXE SHA-256: `0fa1028b1310fee93b22731794dcb3fdc14e9b5e05dbe428f3e112c4b30cb395`. Pinned libvpx v1.14.1 EXE SHA-256: `88ba702de16af47327490a7d016002fd05169e074c6c6657b9e9ff7a8d4a135d`.
+
+All three screens used the pinned 60-frame 1080p Ducks, In-to-Tree, and Old-Town Y4Ms at CPU6/CBR1260, one thread, no tiles, AQ0, noise0, lag0, KF60. Each clip had a warmup per arm, then alternating-order pairs. The two RVP9 arms and pinned libvpx reproduced their established, arm-specific IVF SHA-256 values: all **228 encodes** exited zero with exact expected output. `identity.csv`, `raw.csv`, and `summary.csv` under each screen retain the inputs/binaries, per-encode process CPU/wall time, and all pairs. I independently recomputed each clip's geometric mean from `raw.csv` and checked row counts, exit codes, and output hashes. No pairs were excluded. Crucible had occasional wall-time stalls; paired **process CPU** is the signal.
+
+| Screen / PGO over control process-CPU | Ducks | Tree | Town | Equal-clip overall |
+| --- | ---: | ---: | ---: | ---: |
+| Plain release, 5 pairs | 1.004472× | 0.903262× | 0.912505× | **0.938993×** |
+| Plain release, independent 15 pairs | 1.015392× | 0.900790× | 0.889047× | **0.933385×** |
+| Pinned libvpx, direct 15 pairs | 1.319757× | 1.040598× | 0.958928× | **1.096110×** |
+
+PGO repeatedly saves roughly 6–7% equal-clip RVP9 CPU against plain release, but its Ducks result is neutral to slightly slower. The fresh direct PGO/libvpx parity result is **1.096110×**, still above the ≤1.05× target; reaching that bar from this PGO binary needs about 4.4% less equal-clip CPU. Do **not** multiply the PGO/plain ratio by the prior separate 1.134647× plain/libvpx screen: host CPU times shifted between runs. The direct PGO/libvpx screen is the citable current PGO parity number.
+
+The [PGO/plain runner](pgo-plain-screen.ps1) is archived here; the direct libvpx runner is `../2026-09-26-combined-integrated-parity/combined-integrated-libvpx.ps1` with its existing `-CandidatePath` and `-RootPath` parameters. The 28-row training matrix contains these three source clips and trains multi-thread/tiled configurations; these screens are therefore not independent holdout generalization evidence. No AArch64 PGO build, full workspace suite, or BD-rate gate was run because this was a build/measurement comparison on unchanged production source. The next production optimization should profile the **PGO image** itself on Crucible; its machine-code hot spots can differ from plain release, and Ducks remains the largest clip gap.
