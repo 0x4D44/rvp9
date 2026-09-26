@@ -1,0 +1,41 @@
+diff --git a/crates/rvp9-core/src/inter/mv_ref.rs b/crates/rvp9-core/src/inter/mv_ref.rs
+index 6f863f25..057135b7 100644
+--- a/crates/rvp9-core/src/inter/mv_ref.rs
++++ b/crates/rvp9-core/src/inter/mv_ref.rs
+@@ -938 +938,3 @@ fn find_realtime_refs_nearest_near_mvs_with_context<N: NeighbourLookup, const RE
+-    if any_neighbour {
++    // Scaled candidates cannot change a list once both capped slots are full.
++    let all_ref_lists_full = counts.iter().all(|&count| count == MAX_MV_REF_CANDIDATES);
++    if any_neighbour && !all_ref_lists_full {
+@@ -1521 +1523,2 @@ mod tests {
+-        let neighbours = ListNeighbours::new()
++        // Both requested lists are full after the direct-neighbour pass.
++        let all_full = ListNeighbours::new()
+@@ -1526 +1529,19 @@ mod tests {
+-        let different_ref = ListNeighbours::new().with(Position { row: -1, col: 0 }, &altref);
++        // LAST is full after the direct-neighbour pass, while GOLDEN needs
++        // the scaled-candidate pass. An incorrect `any`-full entry guard
++        // skips that pass and disagrees with the independent GOLDEN walk.
++        let last_only_above = inter_mi(
++            BlockSize::Block16x16,
++            RefFrame::LastFrame,
++            Mv { row: 9, col: -13 },
++        );
++        let last_only_left = inter_mi(
++            BlockSize::Block16x16,
++            RefFrame::LastFrame,
++            Mv { row: -17, col: 5 },
++        );
++        let one_full = ListNeighbours::new()
++            .with(Position { row: -1, col: 0 }, &last_only_above)
++            .with(Position { row: 0, col: -1 }, &last_only_left);
++        // Neither requested list has a direct candidate; both need the
++        // scaled-candidate pass.
++        let neither_full = ListNeighbours::new().with(Position { row: -1, col: 0 }, &altref);
+@@ -1590,2 +1611,4 @@ mod tests {
+-        assert_equivalent(&neighbours, Some(previous));
+-        assert_equivalent(&different_ref, None);
++        assert_equivalent(&all_full, None);
++        assert_equivalent(&all_full, Some(previous));
++        assert_equivalent(&one_full, None);
++        assert_equivalent(&neither_full, None);
