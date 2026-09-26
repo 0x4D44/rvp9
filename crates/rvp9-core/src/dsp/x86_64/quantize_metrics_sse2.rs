@@ -72,6 +72,12 @@ unsafe fn dc_ac(values: &[i16; 2]) -> __m128i {
     )
 }
 
+#[inline]
+#[target_feature(enable = "sse2")]
+unsafe fn difference_fits_i16(coeff: __m128i, dq: __m128i, diff: __m128i) -> bool {
+    _mm_movemask_epi8(_mm_cmpeq_epi16(diff, _mm_subs_epi16(coeff, dq))) == 0xffff
+}
+
 struct MetricAccumulator {
     satd: __m128i,
     error_even_lo: __m128i,
@@ -105,6 +111,17 @@ impl MetricAccumulator {
                 _mm_unpackhi_epi16(abs_q, zero),
             ),
         );
+
+        let narrow_diff = _mm_sub_epi16(coeff, dq);
+        if difference_fits_i16(coeff, dq, narrow_diff) {
+            let pair_squares = _mm_madd_epi16(narrow_diff, narrow_diff);
+            // A pair of i16::MIN values squares to 0x80000000, so widen as u32.
+            self.error_even_lo =
+                _mm_add_epi64(self.error_even_lo, _mm_unpacklo_epi32(pair_squares, zero));
+            self.error_odd_lo =
+                _mm_add_epi64(self.error_odd_lo, _mm_unpackhi_epi32(pair_squares, zero));
+            return;
+        }
 
         let coeff_sign = _mm_srai_epi16(coeff, 15);
         let dq_sign = _mm_srai_epi16(dq, 15);
@@ -387,6 +404,52 @@ mod tests {
         vp9_quantize_fp_with_order,
     };
     use crate::transforms::{TxSize, TxType, scan_for};
+
+    #[test]
+    fn pairwise_error_matches_scalar_and_falls_back_on_overflow() {
+        let cases: [([i16; 8], [i16; 8], [i16; 8], bool); 3] = [
+            (
+                [15, -25, 1000, -1000, 321, -321, i16::MAX, i16::MIN],
+                [5, -5, 500, -500, 1, -1, i16::MAX - 1, i16::MIN + 1],
+                [1, 2, 3, 4, 5, 6, 7, 8],
+                true,
+            ),
+            ([i16::MIN, i16::MIN, 0, 1, 2, 3, 4, 5], [0; 8], [0; 8], true),
+            (
+                [i16::MAX, i16::MIN, 1, -2, 3, -4, 5, -6],
+                [-1, i16::MAX, 0, 0, 0, 0, 0, 0],
+                [9, 0, 0, 1, 0, 2, 0, 3],
+                false,
+            ),
+        ];
+        let mut expected_error = 0i64;
+        let mut expected_satd = 0u32;
+        // SAFETY: x86-64 guarantees SSE2, and each array provides eight i16 lanes.
+        let actual = unsafe {
+            let mut accumulator = MetricAccumulator::new();
+            for (coeff, dq, abs_q, expected_narrow) in cases {
+                let coeff_v = _mm_loadu_si128(coeff.as_ptr().cast());
+                let dq_v = _mm_loadu_si128(dq.as_ptr().cast());
+                let abs_q_v = _mm_loadu_si128(abs_q.as_ptr().cast());
+                let diff = _mm_sub_epi16(coeff_v, dq_v);
+                assert_eq!(difference_fits_i16(coeff_v, dq_v, diff), expected_narrow);
+                accumulator.add(coeff_v, dq_v, abs_q_v);
+                expected_error += coeff
+                    .into_iter()
+                    .zip(dq)
+                    .map(|(c, d)| {
+                        let difference = i64::from(c) - i64::from(d);
+                        difference * difference
+                    })
+                    .sum::<i64>();
+                expected_satd += abs_q.into_iter().map(|q| q as u32).sum::<u32>();
+            }
+            accumulator.finish()
+        };
+        assert_eq!(actual.error, expected_error);
+        assert_eq!(actual.satd, expected_satd);
+        assert!(actual.nonzero);
+    }
 
     fn scalar_metrics(coeff: &[i16], tx_size: TxSize, q_index: i32) -> HadamardQuantMetrics {
         let quantizer = init_plane_quantizers(q_index, QuantizerDeltas::Y);
