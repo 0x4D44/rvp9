@@ -1,0 +1,216 @@
+diff --git a/crates/rvp9-core/src/mv_search/full_pixel.rs b/crates/rvp9-core/src/mv_search/full_pixel.rs
+index 678a3c26..1ce6a57e 100644
+--- a/crates/rvp9-core/src/mv_search/full_pixel.rs
++++ b/crates/rvp9-core/src/mv_search/full_pixel.rs
+@@ -510,19 +510,25 @@ pub fn diamond_search_sad(params: &FullPixelSearchParams<'_>) -> FullPixelSearch
+     diamond_search_sad_from_step(params, 0).0
+ }
+ 
+-fn diamond_search_sad_from_step(
+-    params: &FullPixelSearchParams<'_>,
+-    start_step: usize,
+-) -> (FullPixelSearchResult, usize) {
+-    let site_config = params.site_config;
+-    debug_assert_eq!(site_config.searches_per_step, 4);
+-    let searches_per_step = site_config.searches_per_step as usize;
++/// The NSTEP restarts differ only in their starting step. Every other input
++/// to the initial SAD and its rate cost is fixed for the whole NSTEP call.
++#[derive(Clone, Copy)]
++struct DiamondSeed<'a> {
++    sad_fn: SadFn,
++    sad4d_fn: Sad4dFn,
++    source: Option<(&'a [u8], usize)>,
++    fcenter_row: i16,
++    fcenter_col: i16,
++    initial_row: i16,
++    initial_col: i16,
++    initial_sad: u32,
++}
+ 
+-    // Resolve the SAD kernels once per search call (P1-B / PR3 hoist): the
+-    // dispatch `get_ref()` OnceLock load is amortized over every SAD in the
+-    // diamond instead of paid per-SAD. Byte-identical to the per-call
+-    // resolution it replaces. `sad_fn` serves the initial/cross SADs and the
+-    // slow path; `sad4d_fn` serves the `all_in` fast path's four axis sites.
++fn prepare_diamond_seed<'a>(params: &FullPixelSearchParams<'a>) -> DiamondSeed<'a> {
++    debug_assert_eq!(params.site_config.searches_per_step, 4);
++    // Resolve dispatch and validate the unchanging source once. The initial
++    // SAD is reused only by NSTEP restarts; the standalone diamond still
++    // prepares it once for its sole search.
+     let sad_fn = sad_for(params.block_size);
+     let sad4d_fn = sad4d_for(params.block_size);
+     let source = block_at(
+@@ -544,28 +550,26 @@ fn diamond_search_sad_from_step(
+     // never begins out of the legal window. libvpx clamps `mvp_full`
+     // identically inside `full_pixel_diamond` (`vp9_mcomp.c:2500`).
+     let start_mv = params.start_mv.unwrap_or(params.center_mv);
+-    let mut best_row = (i32::from(start_mv.row >> 3))
++    let initial_row = (i32::from(start_mv.row >> 3))
+         .clamp(params.mv_limits.row_min, params.mv_limits.row_max) as i16;
+-    let mut best_col = (i32::from(start_mv.col >> 3))
++    let initial_col = (i32::from(start_mv.col >> 3))
+         .clamp(params.mv_limits.col_min, params.mv_limits.col_max) as i16;
+-    let initial_row = best_row;
+-    let initial_col = best_col;
+ 
+     // Initial SAD; if out-of-bounds, fall back to u32::MAX so any
+     // valid step is preferred.
+-    let mut bestsad: u32 = match sad_at_from_source(
++    let initial_sad = match sad_at_from_source(
+         params.block_size,
+         sad_fn,
+         source,
+         params.src_offset,
+         params.ref_plane,
+-        best_row,
+-        best_col,
++        initial_row,
++        initial_col,
+     ) {
+         Some(s) => {
+             s + mvsad_err_cost_in_range(
+-                best_row,
+-                best_col,
++                initial_row,
++                initial_col,
+                 fcenter_row,
+                 fcenter_col,
+                 params.sad_per_bit,
+@@ -574,6 +578,44 @@ fn diamond_search_sad_from_step(
+         }
+         None => u32::MAX,
+     };
++    DiamondSeed {
++        sad_fn,
++        sad4d_fn,
++        source,
++        fcenter_row,
++        fcenter_col,
++        initial_row,
++        initial_col,
++        initial_sad,
++    }
++}
++
++fn diamond_search_sad_from_step(
++    params: &FullPixelSearchParams<'_>,
++    start_step: usize,
++) -> (FullPixelSearchResult, usize) {
++    let seed = prepare_diamond_seed(params);
++    diamond_search_sad_from_step_with_seed(params, start_step, &seed)
++}
++
++fn diamond_search_sad_from_step_with_seed(
++    params: &FullPixelSearchParams<'_>,
++    start_step: usize,
++    seed: &DiamondSeed<'_>,
++) -> (FullPixelSearchResult, usize) {
++    let site_config = params.site_config;
++    debug_assert_eq!(site_config.searches_per_step, 4);
++    let searches_per_step = site_config.searches_per_step as usize;
++    let sad_fn = seed.sad_fn;
++    let sad4d_fn = seed.sad4d_fn;
++    let source = seed.source;
++    let fcenter_row = seed.fcenter_row;
++    let fcenter_col = seed.fcenter_col;
++    let mut best_row = seed.initial_row;
++    let mut best_col = seed.initial_col;
++    let initial_row = seed.initial_row;
++    let initial_col = seed.initial_col;
++    let mut bestsad = seed.initial_sad;
+ 
+     let mut last_site: i32 = -1;
+     let mut iters_used = 0i32;
+@@ -915,7 +957,8 @@ pub fn nstep_search_sad(params: &FullPixelSearchParams<'_>) -> FullPixelSearchRe
+     }
+     let start_step = STEP_PARAM.min(effective_steps);
+     let further_steps = effective_steps.saturating_sub(start_step + 1);
+-    let (mut best, mut n) = diamond_search_sad_from_step(params, start_step);
++    let seed = prepare_diamond_seed(params);
++    let (mut best, mut n) = diamond_search_sad_from_step_with_seed(params, start_step, &seed);
+     let mut best_cost = full_pixel_variance_cost(params, best);
+     let mut num00 = 0usize;
+     let mut do_refine = n <= further_steps;
+@@ -927,7 +970,8 @@ pub fn nstep_search_sad(params: &FullPixelSearchParams<'_>) -> FullPixelSearchRe
+             continue;
+         }
+ 
+-        let (candidate, candidate_num00) = diamond_search_sad_from_step(params, start_step + n);
++        let (candidate, candidate_num00) =
++            diamond_search_sad_from_step_with_seed(params, start_step + n, &seed);
+         num00 = candidate_num00;
+         // Different diamond starts can reach the same full-pel position.
+         // Its variance-domain cost depends on the position, not the path or
+@@ -1360,6 +1404,72 @@ mod tests {
+         assert!(duplicates > 0, "fixtures must score a duplicate position");
+     }
+ 
++    #[test]
++    fn prepared_seed_matches_fresh_diamond_at_every_nstep_start() {
++        let costs = build_nmv_cost_table(&DEFAULT_NMV_CONTEXT, true);
++        let width = 64usize;
++        let height = 64usize;
++        let cfg = init_dsmotion_compensation(width as i32);
++        let reference = make_plane(width, height, 0x5EED);
++        let mut source = reference.clone();
++        for row in 0..16 {
++            for col in 0..16 {
++                source[(24 + row) * width + 24 + col] = reference[(25 + row) * width + 26 + col];
++            }
++        }
++        let src_plane = PlaneRef {
++            data: &source,
++            stride: width,
++            width,
++            height,
++        };
++        let ref_plane = PlaneRef {
++            data: &reference,
++            stride: width,
++            width,
++            height,
++        };
++        let mut checks = 0;
++        for (offset, start_mv) in [
++            ((24, 24), Some(Mv::ZERO)),
++            ((0, 0), Some(Mv { row: -8, col: -8 })),
++        ] {
++            let params = FullPixelSearchParams {
++                block_size: BlockSize::Block16x16,
++                src_plane: &src_plane,
++                src_offset: offset,
++                ref_plane: &ref_plane,
++                center_mv: Mv::ZERO,
++                start_mv,
++                mv_limits: MvLimits::new(-16, 16, -16, 16),
++                sad_per_bit: 1,
++                mv_costs: &costs,
++                max_iters: cfg.total_steps as i32,
++                site_config: &cfg,
++            };
++            let prepared = prepare_diamond_seed(&params);
++            if offset == (0, 0) {
++                assert_eq!(prepared.initial_sad, u32::MAX);
++            } else {
++                assert_ne!(prepared.initial_sad, u32::MAX);
++            }
++            for start_step in 6..cfg.total_steps as usize {
++                let fresh = diamond_search_sad_from_step(&params, start_step);
++                let reused = diamond_search_sad_from_step_with_seed(&params, start_step, &prepared);
++                assert_eq!(reused, fresh, "offset={offset:?} start_step={start_step}");
++                checks += 1;
++            }
++            assert_eq!(
++                nstep_search_sad(&params),
++                nstep_uncached_reference(&params).0
++            );
++        }
++        assert_eq!(
++            checks, 10,
++            "both valid and clipped seeds must reach every start"
++        );
++    }
++
+     #[test]
+     fn diamond_search_finds_zero_mv_on_identical_planes() {
+         let costs = build_nmv_cost_table(&DEFAULT_NMV_CONTEXT, false);
