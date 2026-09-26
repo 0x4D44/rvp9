@@ -1,0 +1,1 @@
+rvp9enc: eob_chunk_census tx8_fallback_calls=3030342 tx8_chunks=12121368 tx8_zero_chunks=11636651 tx8_zero_blocks=2556502 tx16_fallback_calls=505382 tx16_chunks=8086112 tx16_zero_chunks=7592934 tx16_zero_blocks=240537
