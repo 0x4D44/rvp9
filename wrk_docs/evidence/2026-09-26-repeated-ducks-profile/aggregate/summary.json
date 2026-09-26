@@ -1,0 +1,967 @@
+{
+  "identity": {
+    "exe_sha256": "c4b24b2c5b16add984a2dd6d32e5a7080037290e58b254aff838a0dcf26d63c1",
+    "pdb_age": 1,
+    "pdb_guid": "8a90f52a-43f5-cf3e-4c4c-44205044422e",
+    "pdb_sha256": "085c7c7cc7f724ed7674797dc88bf27011e6662d27d7661e9758677004bd8f9c",
+    "pe_size_of_image": 1941504
+  },
+  "interpretation": "Full IP is run-specific; RVA is the exact ASLR-stable instruction location. Source lines are broad attribution groups, not operations or disassembled instructions. Variability is descriptive, not a significance test.",
+  "outputs": [
+    "runs.csv",
+    "full-ip-counts.csv",
+    "rva-counts.csv",
+    "source-lines.csv",
+    "summary.json"
+  ],
+  "run_ids": [
+    "run-01",
+    "run-02",
+    "run-03",
+    "run-04",
+    "run-05",
+    "run-06",
+    "run-07",
+    "run-08",
+    "run-09",
+    "run-10"
+  ],
+  "runs": [
+    {
+      "direct_count": 2156,
+      "lost_buffers": 0,
+      "lost_events": 0,
+      "run": "run-01",
+      "sample_rows": 2156,
+      "unique_full_ips": 1480,
+      "unique_rvas": 1480
+    },
+    {
+      "direct_count": 2454,
+      "lost_buffers": 0,
+      "lost_events": 0,
+      "run": "run-02",
+      "sample_rows": 2454,
+      "unique_full_ips": 1585,
+      "unique_rvas": 1585
+    },
+    {
+      "direct_count": 2292,
+      "lost_buffers": 0,
+      "lost_events": 0,
+      "run": "run-03",
+      "sample_rows": 2292,
+      "unique_full_ips": 1523,
+      "unique_rvas": 1523
+    },
+    {
+      "direct_count": 2449,
+      "lost_buffers": 0,
+      "lost_events": 0,
+      "run": "run-04",
+      "sample_rows": 2449,
+      "unique_full_ips": 1600,
+      "unique_rvas": 1600
+    },
+    {
+      "direct_count": 2510,
+      "lost_buffers": 0,
+      "lost_events": 0,
+      "run": "run-05",
+      "sample_rows": 2510,
+      "unique_full_ips": 1596,
+      "unique_rvas": 1596
+    },
+    {
+      "direct_count": 2013,
+      "lost_buffers": 0,
+      "lost_events": 0,
+      "run": "run-06",
+      "sample_rows": 2013,
+      "unique_full_ips": 1403,
+      "unique_rvas": 1403
+    },
+    {
+      "direct_count": 1989,
+      "lost_buffers": 0,
+      "lost_events": 0,
+      "run": "run-07",
+      "sample_rows": 1989,
+      "unique_full_ips": 1392,
+      "unique_rvas": 1392
+    },
+    {
+      "direct_count": 2002,
+      "lost_buffers": 0,
+      "lost_events": 0,
+      "run": "run-08",
+      "sample_rows": 2002,
+      "unique_full_ips": 1414,
+      "unique_rvas": 1414
+    },
+    {
+      "direct_count": 2008,
+      "lost_buffers": 0,
+      "lost_events": 0,
+      "run": "run-09",
+      "sample_rows": 2008,
+      "unique_full_ips": 1376,
+      "unique_rvas": 1376
+    },
+    {
+      "direct_count": 3334,
+      "lost_buffers": 0,
+      "lost_events": 0,
+      "run": "run-10",
+      "sample_rows": 3334,
+      "unique_full_ips": 2256,
+      "unique_rvas": 2256
+    }
+  ],
+  "top_rva_variability": [
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-crucible-profile-after-zero-eob\\crates\\rvp9-core\\src\\mode_decision\\inter.rs",
+      "line": 2428,
+      "per_run_direct_count": {
+        "run-01": 36,
+        "run-02": 59,
+        "run-03": 36,
+        "run-04": 47,
+        "run-05": 60,
+        "run-06": 34,
+        "run-07": 40,
+        "run-08": 29,
+        "run-09": 33,
+        "run-10": 34
+      },
+      "population_variance_share_pp_squared": 0.16056106,
+      "range_share_percentage_points": 1.38444194,
+      "rva": "0x7d0ca",
+      "symbol": "rvp9_core::mode_decision::inter::pick_inter_mode_impl",
+      "total_direct_count": 408
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-crucible-profile-after-zero-eob\\crates\\rvp9-core\\src\\quant\\forward.rs",
+      "line": 494,
+      "per_run_direct_count": {
+        "run-01": 30,
+        "run-02": 44,
+        "run-03": 35,
+        "run-04": 35,
+        "run-05": 47,
+        "run-06": 18,
+        "run-07": 13,
+        "run-08": 14,
+        "run-09": 15,
+        "run-10": 18
+      },
+      "population_variance_share_pp_squared": 0.22632549,
+      "range_share_percentage_points": 1.33261794,
+      "rva": "0x8aaf1",
+      "symbol": "rvp9_core::quant::forward::vp9_quantize_fp_with_order",
+      "total_direct_count": 269
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-crucible-profile-after-zero-eob\\crates\\rvp9-core\\src\\inter\\scale.rs",
+      "line": 499,
+      "per_run_direct_count": {
+        "run-01": 18,
+        "run-02": 26,
+        "run-03": 31,
+        "run-04": 30,
+        "run-05": 27,
+        "run-06": 23,
+        "run-07": 28,
+        "run-08": 16,
+        "run-09": 19,
+        "run-10": 12
+      },
+      "population_variance_share_pp_squared": 0.0846788,
+      "range_share_percentage_points": 1.04781457,
+      "rva": "0xa4352",
+      "symbol": "rvp9_core::inter::scale::build_inter_prediction_from_tight_plane",
+      "total_direct_count": 230
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-crucible-profile-after-zero-eob\\crates\\rvp9-core\\src\\mode_decision\\inter.rs",
+      "line": 3850,
+      "per_run_direct_count": {
+        "run-01": 15,
+        "run-02": 29,
+        "run-03": 10,
+        "run-04": 9,
+        "run-05": 16,
+        "run-06": 11,
+        "run-07": 6,
+        "run-08": 9,
+        "run-09": 16,
+        "run-10": 14
+      },
+      "population_variance_share_pp_squared": 0.06127392,
+      "range_share_percentage_points": 0.88008497,
+      "rva": "0x80f04",
+      "symbol": "rvp9_core::mode_decision::inter::run_newmv_search",
+      "total_direct_count": 135
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-crucible-profile-after-zero-eob\\crates\\rvp9-encoder\\src\\lib.rs",
+      "line": 0,
+      "per_run_direct_count": {
+        "run-01": 16,
+        "run-02": 21,
+        "run-03": 16,
+        "run-04": 20,
+        "run-05": 28,
+        "run-06": 17,
+        "run-07": 9,
+        "run-08": 18,
+        "run-09": 6,
+        "run-10": 13
+      },
+      "population_variance_share_pp_squared": 0.05899315,
+      "range_share_percentage_points": 0.81673307,
+      "rva": "0x137c56",
+      "symbol": "rvp9_encoder::pick_and_simulate_inter_encode_partitions::closure$10",
+      "total_direct_count": 164
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-crucible-profile-after-zero-eob\\crates\\rvp9-core\\src\\mv_search\\sub_pixel.rs",
+      "line": 391,
+      "per_run_direct_count": {
+        "run-01": 1,
+        "run-02": 0,
+        "run-03": 10,
+        "run-04": 19,
+        "run-05": 13,
+        "run-06": 0,
+        "run-07": 0,
+        "run-08": 0,
+        "run-09": 0,
+        "run-10": 0
+      },
+      "population_variance_share_pp_squared": 0.07470932,
+      "range_share_percentage_points": 0.77582687,
+      "rva": "0x91a59",
+      "symbol": "rvp9_core::mv_search::sub_pixel::try_subpel_cost",
+      "total_direct_count": 43
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-crucible-profile-after-zero-eob\\crates\\rvp9-core\\src\\mode_decision\\inter.rs",
+      "line": 5118,
+      "per_run_direct_count": {
+        "run-01": 10,
+        "run-02": 20,
+        "run-03": 11,
+        "run-04": 18,
+        "run-05": 17,
+        "run-06": 4,
+        "run-07": 3,
+        "run-08": 7,
+        "run-09": 5,
+        "run-10": 9
+      },
+      "population_variance_share_pp_squared": 0.05015025,
+      "range_share_percentage_points": 0.66416636,
+      "rva": "0x8e50d",
+      "symbol": "rvp9_core::mode_decision::inter::evaluate_candidate_for_filter_with_pred",
+      "total_direct_count": 104
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-crucible-profile-after-zero-eob\\crates\\rvp9-core\\src\\quant\\forward.rs",
+      "line": 494,
+      "per_run_direct_count": {
+        "run-01": 6,
+        "run-02": 3,
+        "run-03": 4,
+        "run-04": 0,
+        "run-05": 3,
+        "run-06": 11,
+        "run-07": 13,
+        "run-08": 3,
+        "run-09": 2,
+        "run-10": 3
+      },
+      "population_variance_share_pp_squared": 0.04042958,
+      "range_share_percentage_points": 0.65359477,
+      "rva": "0x8aa8b",
+      "symbol": "rvp9_core::quant::forward::vp9_quantize_fp_with_order",
+      "total_direct_count": 48
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-crucible-profile-after-zero-eob\\crates\\rvp9-core\\src\\dsp\\x86_64\\convolve8_horiz_avx2.rs",
+      "line": 428,
+      "per_run_direct_count": {
+        "run-01": 16,
+        "run-02": 11,
+        "run-03": 12,
+        "run-04": 7,
+        "run-05": 10,
+        "run-06": 6,
+        "run-07": 8,
+        "run-08": 6,
+        "run-09": 10,
+        "run-10": 4
+      },
+      "population_variance_share_pp_squared": 0.02561239,
+      "range_share_percentage_points": 0.62213902,
+      "rva": "0x4cc9c",
+      "symbol": "rvp9_core::dsp::x86_64::convolve8_horiz_avx2::convolve8_horiz_avx2",
+      "total_direct_count": 90
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-crucible-profile-after-zero-eob\\crates\\rvp9-core\\src\\dsp\\x86_64\\sad4d_avx2.rs",
+      "line": 217,
+      "per_run_direct_count": {
+        "run-01": 2,
+        "run-02": 3,
+        "run-03": 2,
+        "run-04": 5,
+        "run-05": 3,
+        "run-06": 2,
+        "run-07": 0,
+        "run-08": 0,
+        "run-09": 2,
+        "run-10": 20
+      },
+      "population_variance_share_pp_squared": 0.02637765,
+      "range_share_percentage_points": 0.59988002,
+      "rva": "0x45c64",
+      "symbol": "rvp9_core::dsp::x86_64::sad4d_avx2::vpx_sad16x16x4d_avx2",
+      "total_direct_count": 39
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-crucible-profile-after-zero-eob\\crates\\rvp9-core\\src\\inter\\mv_ref.rs",
+      "line": 881,
+      "per_run_direct_count": {
+        "run-01": 6,
+        "run-02": 8,
+        "run-03": 10,
+        "run-04": 20,
+        "run-05": 13,
+        "run-06": 5,
+        "run-07": 5,
+        "run-08": 9,
+        "run-09": 12,
+        "run-10": 25
+      },
+      "population_variance_share_pp_squared": 0.03729402,
+      "range_share_percentage_points": 0.56827437,
+      "rva": "0x151d04",
+      "symbol": "rvp9_core::inter::mv_ref::find_realtime_refs_nearest_near_mvs_with_context<rvp9_encoder::InterPickerMiGridLookup,2>",
+      "total_direct_count": 113
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-crucible-profile-after-zero-eob\\crates\\rvp9-core\\src\\quant\\forward.rs",
+      "line": 506,
+      "per_run_direct_count": {
+        "run-01": 8,
+        "run-02": 12,
+        "run-03": 18,
+        "run-04": 8,
+        "run-05": 16,
+        "run-06": 5,
+        "run-07": 9,
+        "run-08": 8,
+        "run-09": 8,
+        "run-10": 16
+      },
+      "population_variance_share_pp_squared": 0.02165265,
+      "range_share_percentage_points": 0.53695482,
+      "rva": "0x8b07d",
+      "symbol": "rvp9_core::quant::forward::vp9_quantize_fp_with_order",
+      "total_direct_count": 108
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-crucible-profile-after-zero-eob\\crates\\rvp9-core\\src\\quant\\forward.rs",
+      "line": 506,
+      "per_run_direct_count": {
+        "run-01": 7,
+        "run-02": 9,
+        "run-03": 18,
+        "run-04": 16,
+        "run-05": 12,
+        "run-06": 8,
+        "run-07": 5,
+        "run-08": 7,
+        "run-09": 9,
+        "run-10": 15
+      },
+      "population_variance_share_pp_squared": 0.02295063,
+      "range_share_percentage_points": 0.53395771,
+      "rva": "0x8b46a",
+      "symbol": "rvp9_core::quant::forward::vp9_quantize_fp_with_order",
+      "total_direct_count": 106
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-crucible-profile-after-zero-eob\\crates\\rvp9-encoder\\src\\lib.rs",
+      "line": 11471,
+      "per_run_direct_count": {
+        "run-01": 8,
+        "run-02": 8,
+        "run-03": 11,
+        "run-04": 3,
+        "run-05": 7,
+        "run-06": 10,
+        "run-07": 9,
+        "run-08": 5,
+        "run-09": 13,
+        "run-10": 4
+      },
+      "population_variance_share_pp_squared": 0.02579747,
+      "range_share_percentage_points": 0.52743435,
+      "rva": "0x13ef74",
+      "symbol": "rvp9_encoder::pick_and_simulate_inter_encode_partitions::closure$10",
+      "total_direct_count": 78
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-crucible-profile-after-zero-eob\\crates\\rvp9-core\\src\\mode_decision\\partition.rs",
+      "line": 1375,
+      "per_run_direct_count": {
+        "run-01": 1,
+        "run-02": 14,
+        "run-03": 9,
+        "run-04": 6,
+        "run-05": 5,
+        "run-06": 4,
+        "run-07": 6,
+        "run-08": 5,
+        "run-09": 1,
+        "run-10": 7
+      },
+      "population_variance_share_pp_squared": 0.02139891,
+      "range_share_percentage_points": 0.52411496,
+      "rva": "0x9bb84",
+      "symbol": "rvp9_core::mode_decision::partition::choose_fixed_tree_inter_selection",
+      "total_direct_count": 58
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-crucible-profile-after-zero-eob\\crates\\rvp9-core\\src\\quant\\forward.rs",
+      "line": 506,
+      "per_run_direct_count": {
+        "run-01": 5,
+        "run-02": 10,
+        "run-03": 6,
+        "run-04": 4,
+        "run-05": 10,
+        "run-06": 12,
+        "run-07": 2,
+        "run-08": 4,
+        "run-09": 6,
+        "run-10": 9
+      },
+      "population_variance_share_pp_squared": 0.01839124,
+      "range_share_percentage_points": 0.49557214,
+      "rva": "0x8b008",
+      "symbol": "rvp9_core::quant::forward::vp9_quantize_fp_with_order",
+      "total_direct_count": 68
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-crucible-profile-after-zero-eob\\crates\\rvp9-core\\src\\mode_decision\\inter.rs",
+      "line": 4038,
+      "per_run_direct_count": {
+        "run-01": 5,
+        "run-02": 12,
+        "run-03": 5,
+        "run-04": 5,
+        "run-05": 4,
+        "run-06": 1,
+        "run-07": 1,
+        "run-08": 2,
+        "run-09": 0,
+        "run-10": 0
+      },
+      "population_variance_share_pp_squared": 0.01968135,
+      "range_share_percentage_points": 0.48899756,
+      "rva": "0x8fb62",
+      "symbol": "rvp9_core::mode_decision::inter::luma_model_rd",
+      "total_direct_count": 35
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-crucible-profile-after-zero-eob\\crates\\rvp9-core\\src\\mv_search\\full_pixel.rs",
+      "line": 412,
+      "per_run_direct_count": {
+        "run-01": 17,
+        "run-02": 11,
+        "run-03": 18,
+        "run-04": 10,
+        "run-05": 16,
+        "run-06": 10,
+        "run-07": 14,
+        "run-08": 8,
+        "run-09": 11,
+        "run-10": 10
+      },
+      "population_variance_share_pp_squared": 0.02619768,
+      "range_share_percentage_points": 0.48855721,
+      "rva": "0x93d4e",
+      "symbol": "rvp9_core::mv_search::full_pixel::sad4d_at_from_source",
+      "total_direct_count": 125
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-crucible-profile-after-zero-eob\\crates\\rvp9-core\\src\\quant\\forward.rs",
+      "line": 506,
+      "per_run_direct_count": {
+        "run-01": 7,
+        "run-02": 14,
+        "run-03": 2,
+        "run-04": 6,
+        "run-05": 6,
+        "run-06": 2,
+        "run-07": 4,
+        "run-08": 7,
+        "run-09": 3,
+        "run-10": 14
+      },
+      "population_variance_share_pp_squared": 0.02054745,
+      "range_share_percentage_points": 0.48323711,
+      "rva": "0x8b0eb",
+      "symbol": "rvp9_core::quant::forward::vp9_quantize_fp_with_order",
+      "total_direct_count": 65
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-crucible-profile-after-zero-eob\\crates\\rvp9-core\\src\\inter\\mv_ref.rs",
+      "line": 939,
+      "per_run_direct_count": {
+        "run-01": 5,
+        "run-02": 7,
+        "run-03": 7,
+        "run-04": 13,
+        "run-05": 9,
+        "run-06": 3,
+        "run-07": 2,
+        "run-08": 1,
+        "run-09": 4,
+        "run-10": 13
+      },
+      "population_variance_share_pp_squared": 0.01889864,
+      "range_share_percentage_points": 0.48087886,
+      "rva": "0x15204e",
+      "symbol": "rvp9_core::inter::mv_ref::find_realtime_refs_nearest_near_mvs_with_context<rvp9_encoder::InterPickerMiGridLookup,2>",
+      "total_direct_count": 64
+    }
+  ],
+  "top_source_line_variability": [
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-crucible-profile-after-zero-eob\\crates\\rvp9-core\\src\\dsp\\x86_64\\sad4d_avx2.rs",
+      "line": 229,
+      "per_run_direct_count": {
+        "run-01": 100,
+        "run-02": 112,
+        "run-03": 116,
+        "run-04": 92,
+        "run-05": 105,
+        "run-06": 92,
+        "run-07": 109,
+        "run-08": 93,
+        "run-09": 86,
+        "run-10": 99
+      },
+      "population_variance_share_pp_squared": 0.42954914,
+      "range_share_percentage_points": 2.51073466,
+      "symbol": "rvp9_core::dsp::x86_64::sad4d_avx2::vpx_sad16x16x4d_avx2",
+      "total_direct_count": 1004,
+      "unique_rvas": 165
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-crucible-profile-after-zero-eob\\crates\\rvp9-core\\src\\mode_decision\\inter.rs",
+      "line": 2428,
+      "per_run_direct_count": {
+        "run-01": 130,
+        "run-02": 158,
+        "run-03": 128,
+        "run-04": 130,
+        "run-05": 174,
+        "run-06": 113,
+        "run-07": 110,
+        "run-08": 94,
+        "run-09": 122,
+        "run-10": 183
+      },
+      "population_variance_share_pp_squared": 0.35220177,
+      "range_share_percentage_points": 2.23696622,
+      "symbol": "rvp9_core::mode_decision::inter::pick_inter_mode_impl",
+      "total_direct_count": 1342,
+      "unique_rvas": 310
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-crucible-profile-after-zero-eob\\crates\\rvp9-core\\src\\quant\\forward.rs",
+      "line": 494,
+      "per_run_direct_count": {
+        "run-01": 73,
+        "run-02": 89,
+        "run-03": 81,
+        "run-04": 85,
+        "run-05": 95,
+        "run-06": 61,
+        "run-07": 50,
+        "run-08": 43,
+        "run-09": 48,
+        "run-10": 53
+      },
+      "population_variance_share_pp_squared": 0.49609431,
+      "range_share_percentage_points": 2.19517849,
+      "symbol": "rvp9_core::quant::forward::vp9_quantize_fp_with_order",
+      "total_direct_count": 678,
+      "unique_rvas": 53
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-crucible-profile-after-zero-eob\\crates\\rvp9-core\\src\\quant\\forward.rs",
+      "line": 506,
+      "per_run_direct_count": {
+        "run-01": 58,
+        "run-02": 98,
+        "run-03": 104,
+        "run-04": 98,
+        "run-05": 95,
+        "run-06": 69,
+        "run-07": 56,
+        "run-08": 69,
+        "run-09": 65,
+        "run-10": 121
+      },
+      "population_variance_share_pp_squared": 0.28392991,
+      "range_share_percentage_points": 1.84735484,
+      "symbol": "rvp9_core::quant::forward::vp9_quantize_fp_with_order",
+      "total_direct_count": 833,
+      "unique_rvas": 79
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-crucible-profile-after-zero-eob\\crates\\rvp9-core\\src\\transforms\\forward.rs",
+      "line": 508,
+      "per_run_direct_count": {
+        "run-01": 76,
+        "run-02": 75,
+        "run-03": 85,
+        "run-04": 92,
+        "run-05": 99,
+        "run-06": 69,
+        "run-07": 89,
+        "run-08": 89,
+        "run-09": 85,
+        "run-10": 96
+      },
+      "population_variance_share_pp_squared": 0.26751371,
+      "range_share_percentage_points": 1.59518624,
+      "symbol": "rvp9_core::transforms::forward::fdct8x8",
+      "total_direct_count": 855,
+      "unique_rvas": 222
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-crucible-profile-after-zero-eob\\crates\\rvp9-core\\src\\dsp\\x86_64\\subpel_variance_avx2.rs",
+      "line": 493,
+      "per_run_direct_count": {
+        "run-01": 57,
+        "run-02": 82,
+        "run-03": 75,
+        "run-04": 83,
+        "run-05": 102,
+        "run-06": 71,
+        "run-07": 71,
+        "run-08": 76,
+        "run-09": 56,
+        "run-10": 132
+      },
+      "population_variance_share_pp_squared": 0.19080602,
+      "range_share_percentage_points": 1.41996023,
+      "symbol": "rvp9_core::dsp::x86_64::subpel_variance_avx2::vpx_sub_pixel_variance16x16_avx2",
+      "total_direct_count": 805,
+      "unique_rvas": 208
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-crucible-profile-after-zero-eob\\crates\\rvp9-core\\src\\transforms\\forward.rs",
+      "line": 222,
+      "per_run_direct_count": {
+        "run-01": 45,
+        "run-02": 37,
+        "run-03": 38,
+        "run-04": 47,
+        "run-05": 49,
+        "run-06": 53,
+        "run-07": 58,
+        "run-08": 55,
+        "run-09": 49,
+        "run-10": 83
+      },
+      "population_variance_share_pp_squared": 0.20549116,
+      "range_share_percentage_points": 1.40829575,
+      "symbol": "rvp9_core::transforms::forward::fdct4x4",
+      "total_direct_count": 514,
+      "unique_rvas": 119
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-crucible-profile-after-zero-eob\\crates\\rvp9-core\\src\\transforms\\forward.rs",
+      "line": 1101,
+      "per_run_direct_count": {
+        "run-01": 80,
+        "run-02": 92,
+        "run-03": 71,
+        "run-04": 95,
+        "run-05": 64,
+        "run-06": 75,
+        "run-07": 72,
+        "run-08": 72,
+        "run-09": 61,
+        "run-10": 100
+      },
+      "population_variance_share_pp_squared": 0.17466037,
+      "range_share_percentage_points": 1.32933354,
+      "symbol": "rvp9_core::transforms::forward::fdct16x16",
+      "total_direct_count": 782,
+      "unique_rvas": 234
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-crucible-profile-after-zero-eob\\crates\\rvp9-core\\src\\mv_search\\sub_pixel.rs",
+      "line": 391,
+      "per_run_direct_count": {
+        "run-01": 3,
+        "run-02": 3,
+        "run-03": 15,
+        "run-04": 31,
+        "run-05": 15,
+        "run-06": 4,
+        "run-07": 2,
+        "run-08": 2,
+        "run-09": 6,
+        "run-10": 3
+      },
+      "population_variance_share_pp_squared": 0.13065026,
+      "range_share_percentage_points": 1.17584078,
+      "symbol": "rvp9_core::mv_search::sub_pixel::try_subpel_cost",
+      "total_direct_count": 84,
+      "unique_rvas": 8
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-crucible-profile-after-zero-eob\\crates\\rvp9-core\\src\\dsp\\x86_64\\lpf_vertical_8_avx2.rs",
+      "line": 590,
+      "per_run_direct_count": {
+        "run-01": 18,
+        "run-02": 23,
+        "run-03": 23,
+        "run-04": 19,
+        "run-05": 18,
+        "run-06": 24,
+        "run-07": 23,
+        "run-08": 12,
+        "run-09": 34,
+        "run-10": 33
+      },
+      "population_variance_share_pp_squared": 0.08630319,
+      "range_share_percentage_points": 1.09382649,
+      "symbol": "rvp9_core::dsp::x86_64::lpf_vertical_8_avx2::lpf_vertical_8_avx2",
+      "total_direct_count": 227,
+      "unique_rvas": 92
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-crucible-profile-after-zero-eob\\crates\\rvp9-core\\src\\mv_search\\int_pro_me.rs",
+      "line": 735,
+      "per_run_direct_count": {
+        "run-01": 9,
+        "run-02": 28,
+        "run-03": 19,
+        "run-04": 23,
+        "run-05": 15,
+        "run-06": 16,
+        "run-07": 10,
+        "run-08": 20,
+        "run-09": 21,
+        "run-10": 49
+      },
+      "population_variance_share_pp_squared": 0.09064914,
+      "range_share_percentage_points": 1.05226636,
+      "symbol": "rvp9_core::mv_search::int_pro_me::int_pro_motion_estimation_impl",
+      "total_direct_count": 210,
+      "unique_rvas": 51
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-crucible-profile-after-zero-eob\\crates\\rvp9-core\\src\\inter\\scale.rs",
+      "line": 499,
+      "per_run_direct_count": {
+        "run-01": 18,
+        "run-02": 27,
+        "run-03": 31,
+        "run-04": 31,
+        "run-05": 28,
+        "run-06": 23,
+        "run-07": 28,
+        "run-08": 16,
+        "run-09": 19,
+        "run-10": 13
+      },
+      "population_variance_share_pp_squared": 0.08350127,
+      "range_share_percentage_points": 1.01782057,
+      "symbol": "rvp9_core::inter::scale::build_inter_prediction_from_tight_plane",
+      "total_direct_count": 234,
+      "unique_rvas": 4
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-crucible-profile-after-zero-eob\\crates\\rvp9-core\\src\\dsp\\x86_64\\sad_avx2.rs",
+      "line": 198,
+      "per_run_direct_count": {
+        "run-01": 17,
+        "run-02": 23,
+        "run-03": 16,
+        "run-04": 16,
+        "run-05": 33,
+        "run-06": 12,
+        "run-07": 18,
+        "run-08": 15,
+        "run-09": 8,
+        "run-10": 27
+      },
+      "population_variance_share_pp_squared": 0.05301268,
+      "range_share_percentage_points": 0.91633466,
+      "symbol": "rvp9_core::dsp::x86_64::sad_avx2::vpx_sad64x64_avx2",
+      "total_direct_count": 185,
+      "unique_rvas": 46
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-crucible-profile-after-zero-eob\\crates\\rvp9-core\\src\\dsp\\x86_64\\sad_avx2.rs",
+      "line": 198,
+      "per_run_direct_count": {
+        "run-01": 26,
+        "run-02": 30,
+        "run-03": 35,
+        "run-04": 23,
+        "run-05": 16,
+        "run-06": 21,
+        "run-07": 24,
+        "run-08": 30,
+        "run-09": 27,
+        "run-10": 31
+      },
+      "population_variance_share_pp_squared": 0.06798341,
+      "range_share_percentage_points": 0.88960041,
+      "symbol": "rvp9_core::dsp::x86_64::sad_avx2::vpx_sad16x16_avx2",
+      "total_direct_count": 263,
+      "unique_rvas": 55
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-crucible-profile-after-zero-eob\\crates\\rvp9-core\\src\\dsp\\x86_64\\sad4d_avx2.rs",
+      "line": 217,
+      "per_run_direct_count": {
+        "run-01": 8,
+        "run-02": 5,
+        "run-03": 2,
+        "run-04": 9,
+        "run-05": 7,
+        "run-06": 4,
+        "run-07": 1,
+        "run-08": 1,
+        "run-09": 7,
+        "run-10": 29
+      },
+      "population_variance_share_pp_squared": 0.05237504,
+      "range_share_percentage_points": 0.81987598,
+      "symbol": "rvp9_core::dsp::x86_64::sad4d_avx2::vpx_sad16x16x4d_avx2",
+      "total_direct_count": 73,
+      "unique_rvas": 9
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-crucible-profile-after-zero-eob\\crates\\rvp9-encoder\\src\\lib.rs",
+      "line": 11471,
+      "per_run_direct_count": {
+        "run-01": 67,
+        "run-02": 63,
+        "run-03": 69,
+        "run-04": 74,
+        "run-05": 67,
+        "run-06": 62,
+        "run-07": 67,
+        "run-08": 67,
+        "run-09": 61,
+        "run-10": 93
+      },
+      "population_variance_share_pp_squared": 0.06169328,
+      "range_share_percentage_points": 0.80128973,
+      "symbol": "rvp9_encoder::pick_and_simulate_inter_encode_partitions::closure$10",
+      "total_direct_count": 690,
+      "unique_rvas": 218
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-crucible-profile-after-zero-eob\\crates\\rvp9-encoder\\src\\lib.rs",
+      "line": 12115,
+      "per_run_direct_count": {
+        "run-01": 9,
+        "run-02": 27,
+        "run-03": 12,
+        "run-04": 25,
+        "run-05": 8,
+        "run-06": 15,
+        "run-07": 10,
+        "run-08": 12,
+        "run-09": 13,
+        "run-10": 22
+      },
+      "population_variance_share_pp_squared": 0.05533175,
+      "range_share_percentage_points": 0.7815194,
+      "symbol": "rvp9_encoder::pick_and_simulate_inter_encode_partitions::closure$10",
+      "total_direct_count": 153,
+      "unique_rvas": 58
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-crucible-profile-after-zero-eob\\crates\\rvp9-encoder\\src\\lib.rs",
+      "line": 11588,
+      "per_run_direct_count": {
+        "run-01": 22,
+        "run-02": 19,
+        "run-03": 24,
+        "run-04": 16,
+        "run-05": 24,
+        "run-06": 21,
+        "run-07": 16,
+        "run-08": 23,
+        "run-09": 16,
+        "run-10": 13
+      },
+      "population_variance_share_pp_squared": 0.04650013,
+      "range_share_percentage_points": 0.75892913,
+      "symbol": "rvp9_encoder::pick_and_simulate_inter_encode_partitions::closure$10",
+      "total_direct_count": 194,
+      "unique_rvas": 114
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-crucible-profile-after-zero-eob\\crates\\rvp9-core\\src\\dsp\\x86_64\\convolve8_horiz_avx2.rs",
+      "line": 428,
+      "per_run_direct_count": {
+        "run-01": 33,
+        "run-02": 23,
+        "run-03": 33,
+        "run-04": 30,
+        "run-05": 33,
+        "run-06": 25,
+        "run-07": 20,
+        "run-08": 26,
+        "run-09": 20,
+        "run-10": 26
+      },
+      "population_variance_share_pp_squared": 0.05117751,
+      "range_share_percentage_points": 0.75076821,
+      "symbol": "rvp9_core::dsp::x86_64::convolve8_horiz_avx2::convolve8_horiz_avx2",
+      "total_direct_count": 269,
+      "unique_rvas": 59
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-crucible-profile-after-zero-eob\\crates\\rvp9-core\\src\\mv_search\\full_pixel.rs",
+      "line": 665,
+      "per_run_direct_count": {
+        "run-01": 32,
+        "run-02": 43,
+        "run-03": 43,
+        "run-04": 37,
+        "run-05": 38,
+        "run-06": 35,
+        "run-07": 31,
+        "run-08": 40,
+        "run-09": 38,
+        "run-10": 42
+      },
+      "population_variance_share_pp_squared": 0.04746142,
+      "range_share_percentage_points": 0.73825395,
+      "symbol": "rvp9_core::mv_search::full_pixel::diamond_search_sad_from_step",
+      "total_direct_count": 379,
+      "unique_rvas": 90
+    }
+  ],
+  "total_direct_count": 23207,
+  "unique_rvas": 7386
+}

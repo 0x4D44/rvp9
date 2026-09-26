@@ -1,0 +1,104 @@
+{
+  "source_mode": "etl",
+  "source_path": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-crucible-profile-after-zero-eob\\.scratch\\repeated-ducks-ip\\run-05\\capture.etl",
+  "exe_path": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-crucible-profile-after-zero-eob\\.scratch\\target\\release\\rvp9enc.exe",
+  "exe_sha256": "c4b24b2c5b16add984a2dd6d32e5a7080037290e58b254aff838a0dcf26d63c1",
+  "pdb_path": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-crucible-profile-after-zero-eob\\.scratch\\target\\release\\rvp9enc.pdb",
+  "pdb_sha256": "085c7c7cc7f724ed7674797dc88bf27011e6662d27d7661e9758677004bd8f9c",
+  "pdb_pairing": {
+    "method": "PE RSDS GUID/age matched against PDB MSF information stream; DbgHelp loaded path checked",
+    "embedded_pdb_name": "rvp9enc.pdb",
+    "guid": "8a90f52a-43f5-cf3e-4c4c-44205044422e",
+    "age": 1
+  },
+  "pe": {
+    "preferred_base": "0x0000000140000000",
+    "size_of_image": "0x1da000"
+  },
+  "images": [
+    {
+      "pid": 44072,
+      "base": "0x00007ff6db0e0000",
+      "end_exclusive": "0x00007ff6db2ba000",
+      "size": "0x1da000",
+      "source": "I-Start"
+    }
+  ],
+  "counts": {
+    "dumper_sampled_profile_rows_all_processes": 65226,
+    "target_process_sampled_profile_rows": 2797,
+    "pid_filtered_rows": 0,
+    "target_process_other_module_rows": 287,
+    "retained_target_executable_rows": 2510,
+    "retained_direct_count": 2510,
+    "unique_ips": 1596,
+    "unique_pid_ip_pairs": 1596,
+    "resolved_unique_symbols": 119,
+    "nonzero_source_line_direct_count": 2479,
+    "nonzero_source_line_unique_ips": 1592,
+    "nonzero_source_line_pid_ip_pairs": 1592
+  },
+  "xperf": {
+    "dumper": {
+      "command": [
+        "xperf.exe",
+        "-i",
+        "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-crucible-profile-after-zero-eob\\.scratch\\repeated-ducks-ip\\run-05\\capture.etl",
+        "-a",
+        "dumper",
+        "-add_fieldnames"
+      ],
+      "exit_code": 0
+    },
+    "reports": {
+      "tracestats": {
+        "exit_code": 0,
+        "report": "xperf-tracestats.txt",
+        "diagnostic_lines": [
+          "Total # Lost Buffers : 0",
+          "Total # Lost Events  : 0",
+          "# Lost Buffers       : 0",
+          "# Lost Events        : 0"
+        ]
+      },
+      "profile": {
+        "exit_code": 0,
+        "report": "xperf-profile.txt",
+        "diagnostic_lines": []
+      }
+    },
+    "loss_or_warning_lines_from_dumper": [
+      "OS Version: 10.0.26200, Trace Size: 133120KB, Events Lost: 0, Buffers lost: 0, Trace Start: 134348896207064667, Trace Length: 23 sec, PointerSize: 8, Trace Name: D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-crucible-profile-after-zero-eob\\.scratch\\repeated-ducks-ip\\run-05\\capture.etl",
+      "FileVersion,   23446824, 0x0001d000,    0xd5240205, \"pshed.dll\", \"Platform Specific Hardware Error Driver\", \"10.0.26100.8972 (WinBuild.160101.0800)\", \"10.0.26100.8972\", \"1033\", \"Microsoft® Windows® Operating System\", \"Microsoft Corporation\", \"10.0.26100.8972\", \"\", \"\"",
+      "FileVersion,   23446828, 0x00017000,    0xa6edf41c, \"werkernel.sys\", \"Windows Error Reporting Kernel Driver\", \"10.0.26100.8972 (WinBuild.160101.0800)\", \"10.0.26100.8972\", \"1033\", \"Microsoft® Windows® Operating System\", \"Microsoft Corporation\", \"10.0.26100.8972\", \"\", \"\"",
+      "FileVersion,   23456055, 0x000f6000,    0x30a05512, \"wer.dll\", \"Windows Error Reporting DLL\", \"10.0.26100.9444 (WinBuild.160101.0800)\", \"10.0.26100.9444\", \"1033\", \"Microsoft® Windows® Operating System\", \"Microsoft Corporation\", \"10.0.26100.9444\", \"\", \"\""
+    ],
+    "loss_or_warning_lines_from_reports": [
+      {
+        "action": "tracestats",
+        "line": "Total # Lost Buffers : 0"
+      },
+      {
+        "action": "tracestats",
+        "line": "Total # Lost Events  : 0"
+      },
+      {
+        "action": "tracestats",
+        "line": "# Lost Buffers       : 0"
+      },
+      {
+        "action": "tracestats",
+        "line": "# Lost Events        : 0"
+      }
+    ],
+    "loss_interpretation": "verbatim matching lines are recorded; an empty list is not a zero-loss assertion"
+  },
+  "outputs": {
+    "samples_csv": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-crucible-profile-after-zero-eob\\.scratch\\repeated-ducks-ip\\run-05\\extracted\\samples.csv",
+    "unique_ip_map_csv": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-crucible-profile-after-zero-eob\\.scratch\\repeated-ducks-ip\\run-05\\extracted\\ip-symbols.csv",
+    "other_process_modules_csv": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-crucible-profile-after-zero-eob\\.scratch\\repeated-ducks-ip\\run-05\\extracted\\other-process-modules.csv",
+    "summary_by_symbol_csv": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-crucible-profile-after-zero-eob\\.scratch\\repeated-ducks-ip\\run-05\\extracted\\summary-by-symbol.csv",
+    "summary_by_source_line_csv": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-crucible-profile-after-zero-eob\\.scratch\\repeated-ducks-ip\\run-05\\extracted\\summary-by-source-line.csv"
+  },
+  "comparison": null
+}
