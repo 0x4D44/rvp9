@@ -1,0 +1,78 @@
+{
+  "clips": {
+    "ducks": {
+      "libvpx": {
+        "binary_sha256": "9ccd50552a167560af44f2fb867d60813006ef5587a58f86ecdac72ff1107985",
+        "census_rows": 45,
+        "expected_output_sha256": "b24234d8db46c22e03585f1973b27c2e62315f0464da392a2ecd2769d2124fa8",
+        "input_sha256": "6d2d866613f7a8c7b11bd2c27374f7637cd4a0748ff6fea4a671b23cfbcde6d7",
+        "output_sha256": "b24234d8db46c22e03585f1973b27c2e62315f0464da392a2ecd2769d2124fa8",
+        "search_entry_binary_sha256": "ff5357bba10b5e72aaf79dd67fea1d155f44134e467cb28246ade76fb92aa2d4",
+        "searches": 370507,
+        "svf_rows_match_original": true
+      },
+      "rvp9": {
+        "binary_sha256": "b8e3219e948241dc109408c86fab5f8cd1f1f4e671b3796d57381ce1dddc5580",
+        "census_rows": 48,
+        "expected_output_sha256": "8d0458b89ca00cbfb96961e1c16e6018bf88b18790ea7e9d6eeb8c80bd659089",
+        "input_sha256": "6d2d866613f7a8c7b11bd2c27374f7637cd4a0748ff6fea4a671b23cfbcde6d7",
+        "output_sha256": "8d0458b89ca00cbfb96961e1c16e6018bf88b18790ea7e9d6eeb8c80bd659089",
+        "search_entry_binary_sha256": "d2637a286b0ee911309ae45b3ff7551166481b7457244bbc0a3a5bb90b9246b4",
+        "search_rows": 3,
+        "searches": 554931,
+        "svf_rows_match_original": true
+      }
+    },
+    "town": {
+      "libvpx": {
+        "binary_sha256": "9ccd50552a167560af44f2fb867d60813006ef5587a58f86ecdac72ff1107985",
+        "census_rows": 88,
+        "expected_output_sha256": "e05daf970ff4f9888a64b6edc2f4a2cd7151cf0ee2bc0b1de4170cce5f1b24bb",
+        "input_sha256": "b738b8068d1200f8a3119c72f1edc844424d3fe96d8b28acb9af11497ed7c909",
+        "output_sha256": "e05daf970ff4f9888a64b6edc2f4a2cd7151cf0ee2bc0b1de4170cce5f1b24bb",
+        "search_entry_binary_sha256": "ff5357bba10b5e72aaf79dd67fea1d155f44134e467cb28246ade76fb92aa2d4",
+        "searches": 200604,
+        "svf_rows_match_original": true
+      },
+      "rvp9": {
+        "binary_sha256": "b8e3219e948241dc109408c86fab5f8cd1f1f4e671b3796d57381ce1dddc5580",
+        "census_rows": 91,
+        "expected_output_sha256": "4c5e8ffa47656109df76e05ac0165a0509366dd2453d06ea690f403fdd65027f",
+        "input_sha256": "b738b8068d1200f8a3119c72f1edc844424d3fe96d8b28acb9af11497ed7c909",
+        "output_sha256": "4c5e8ffa47656109df76e05ac0165a0509366dd2453d06ea690f403fdd65027f",
+        "search_entry_binary_sha256": "d2637a286b0ee911309ae45b3ff7551166481b7457244bbc0a3a5bb90b9246b4",
+        "search_rows": 6,
+        "searches": 120450,
+        "svf_rows_match_original": true
+      }
+    },
+    "tree": {
+      "libvpx": {
+        "binary_sha256": "9ccd50552a167560af44f2fb867d60813006ef5587a58f86ecdac72ff1107985",
+        "census_rows": 90,
+        "expected_output_sha256": "b930800c5bac04a67aa0a25b3344031c5aebe6f3efe4ba569d354301bf238964",
+        "input_sha256": "ead3aef191242b03cc6019f0527c71bc3d11e856ba4f9f92b926fe804582f791",
+        "output_sha256": "b930800c5bac04a67aa0a25b3344031c5aebe6f3efe4ba569d354301bf238964",
+        "search_entry_binary_sha256": "ff5357bba10b5e72aaf79dd67fea1d155f44134e467cb28246ade76fb92aa2d4",
+        "searches": 177041,
+        "svf_rows_match_original": true
+      },
+      "rvp9": {
+        "binary_sha256": "b8e3219e948241dc109408c86fab5f8cd1f1f4e671b3796d57381ce1dddc5580",
+        "census_rows": 107,
+        "expected_output_sha256": "5e3ce26ae1c1394d1e096502add7d87cc38559e7f86265004900580582641b41",
+        "input_sha256": "ead3aef191242b03cc6019f0527c71bc3d11e856ba4f9f92b926fe804582f791",
+        "output_sha256": "5e3ce26ae1c1394d1e096502add7d87cc38559e7f86265004900580582641b41",
+        "search_entry_binary_sha256": "d2637a286b0ee911309ae45b3ff7551166481b7457244bbc0a3a5bb90b9246b4",
+        "search_rows": 7,
+        "searches": 124474,
+        "svf_rows_match_original": true
+      }
+    }
+  },
+  "comparison_note": "Fractional svf call and pixel totals are descriptive only, not like-for-like time or search-policy equivalence. RVP9 (0,0) center work is shown separately and excluded only from fractional totals; libvpx svf has no center row. Per-search figures use explicit full-tree search entries. RVP9 has per-family/shape denominators; libvpx has only a clip-wide denominator.",
+  "errors": [],
+  "hash_check_note": "Manifest-recorded input and IVF output SHA-256 values match pinned script constants. The source media, IVF files, and binaries are not included here and were not rehashed.",
+  "summary_rows": 121,
+  "valid": true
+}

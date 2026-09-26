@@ -1,0 +1,56 @@
+|diff --git a/vp9/encoder/vp9_mcomp.c b/vp9/encoder/vp9_mcomp.c
+|index cbe1c4029..482a02143 100644
+|--- a/vp9/encoder/vp9_mcomp.c
+|+++ b/vp9/encoder/vp9_mcomp.c
+|@@ -11,7 +11,9 @@
+| #include <assert.h>
+| #include <limits.h>
+| #include <math.h>
+|+#include <stdint.h>
+| #include <stdio.h>
+|+#include <stdlib.h>
+|
+| #include "./vpx_config.h"
+| #include "./vpx_dsp_rtcd.h"
+|@@ -29,6 +31,31 @@
+|
+| // #define NEW_DIAMOND_SEARCH
+|
+|+#if defined(RVP9_DIAG_LIBVPX_SVF_CENSUS)
+|+// Single-thread diagnostic: count full-tree searches separately from the
+|+// SVF calls counted by the encoder's existing per-shape wrappers.
+|+static uint64_t subpel_searches;
+|+static int subpel_searches_enabled = -1;
+|+
+|+static void subpel_searches_report(void) {
+|+  fprintf(stderr, "LIBVPX_SUBPEL_SEARCHES,total,%llu\n",
+|+          (unsigned long long)subpel_searches);
+|+}
+|+
+|+static void subpel_searches_count(void) {
+|+  if (subpel_searches_enabled < 0) {
+|+    const char *enabled = getenv("RVP9_DIAG_LIBVPX_SVF_CENSUS");
+|+    subpel_searches_enabled =
+|+        enabled != NULL && enabled[0] == '1' && enabled[1] == '\0';
+|+    if (subpel_searches_enabled && atexit(subpel_searches_report) != 0) {
+|+      fprintf(stderr, "LIBVPX_SUBPEL_SEARCHES could not register exit report\n");
+|+      subpel_searches_enabled = 0;
+|+    }
+|+  }
+|+  if (subpel_searches_enabled) ++subpel_searches;
+|+}
+|+#endif  // RVP9_DIAG_LIBVPX_SVF_CENSUS
+|+
+| void vp9_set_mv_search_range(MvLimits *mv_limits, const MV *mv) {
+|   int col_min = (mv->col >> 3) - MAX_FULL_PEL_VAL + (mv->col & 7 ? 1 : 0);
+|   int row_min = (mv->row >> 3) - MAX_FULL_PEL_VAL + (mv->row & 7 ? 1 : 0);
+|@@ -762,6 +789,9 @@ uint32_t vp9_find_best_sub_pixel_tree(
+|                         : vp9_filter_kernels[EIGHTTAP_SHARP]))
+|           : vp9_filter_kernels[BILINEAR];
+|
+|+#if defined(RVP9_DIAG_LIBVPX_SVF_CENSUS)
+|+  subpel_searches_count();
+|+#endif
+|   vp9_set_subpel_mv_search_range(&subpel_mv_limits, &x->mv_limits, ref_mv);
+|   minc = subpel_mv_limits.col_min;
+|   maxc = subpel_mv_limits.col_max;

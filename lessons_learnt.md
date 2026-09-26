@@ -5,6 +5,7 @@ Distilled, non-obvious gotchas future sessions need — dated one-liners.
 Durable project facts/conventions belong in `CLAUDE.md` / `AGENTS.md`, not here.
 Hard cap: 20 entries.
 
+- 2026-09-26: Cross-codec SVF centres differ; count search entries directly (`sub_pixel.rs:subpel_search_census_rows`).
 - 2026-09-26: A hot TLS source line was denoiser bookkeeping; resolve exact RVAs before editing (`inter.rs:2428`).
 - 2026-09-26: PE COFF `ty 20` misses asm kernels; bound IPs with `nm` global T labels (`analyze-pinned-libvpx-etl.py:function_table`).
 - 2026-09-26: Native EVEX can erase wider AVX2 gains; gate exact metrics on paired CPU (`quantize_metrics_sse2.rs:add_error_avx2`).

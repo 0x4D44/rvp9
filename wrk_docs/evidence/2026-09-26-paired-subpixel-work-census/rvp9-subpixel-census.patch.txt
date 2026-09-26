@@ -1,0 +1,360 @@
+|diff --git a/crates/rvp9-cli/src/bin/rvp9enc.rs b/crates/rvp9-cli/src/bin/rvp9enc.rs
+|index 79537766..0b5cb8e9 100644
+|--- a/crates/rvp9-cli/src/bin/rvp9enc.rs
+|+++ b/crates/rvp9-cli/src/bin/rvp9enc.rs
+|@@ -1091,6 +1091,16 @@ fn run(opts: &EncOpts, positionals: &[String]) -> Result<(), String> {
+|         write_frame_time_csv(path, &frame_timings)?;
+|     }
+|
+|+    if rvp9_core::mv_search::sub_pixel::subpel_census_enabled() {
+|+        eprintln!("subpel_census,family,width,height,xoff,yoff,calls,pixels");
+|+        for row in rvp9_core::mv_search::sub_pixel::subpel_census_rows() {
+|+            eprintln!(
+|+                "subpel_census,{},{},{},{},{},{},{}",
+|+                row.family, row.width, row.height, row.xoffset, row.yoffset, row.calls, row.pixels,
+|+            );
+|+        }
+|+    }
+|+
+|     // C2-β — measurement-only fire-rate of the size-gated ML-partition
+|     // breakout. Reads the global counter exposed by the encoder; off
+|     // unless `RVP9_C2B_STATS=1`. Proves the size gate: high on large
+|diff --git a/crates/rvp9-core/src/mv_search/sub_pixel.rs b/crates/rvp9-core/src/mv_search/sub_pixel.rs
+|index 35b53bfa..c04d92ba 100644
+|--- a/crates/rvp9-core/src/mv_search/sub_pixel.rs
+|+++ b/crates/rvp9-core/src/mv_search/sub_pixel.rs
+|@@ -40,6 +40,9 @@ use crate::inter::mv::use_mv_hp;
+| use crate::mode_info::Mv;
+| use crate::mv_search::full_pixel::{FullPixelCostList, PlaneRef, mv_err_cost};
+| use crate::mv_search::mv_limits::{MvLimits, set_subpel_mv_search_range};
+|+use std::cell::Cell;
+|+use std::sync::OnceLock;
+|+use std::sync::atomic::{AtomicU64, Ordering};
+|
+| /// Sub-pel-only kernel signature: `(src, src_stride, xoffset,
+| /// yoffset, reference, ref_stride) -> (variance, sse)`.
+|@@ -47,6 +50,189 @@ type SvfFn = fn(&[u8], usize, usize, usize, &[u8], usize) -> (u32, u32);
+|
+| const MAX_SUBPEL_FETCH: usize = 64 + 1;
+|
+|+const CENSUS_PHASES: usize = 8;
+|+const CENSUS_SHAPES: [BlockSize; 13] = [
+|+    BlockSize::Block4x4,
+|+    BlockSize::Block4x8,
+|+    BlockSize::Block8x4,
+|+    BlockSize::Block8x8,
+|+    BlockSize::Block8x16,
+|+    BlockSize::Block16x8,
+|+    BlockSize::Block16x16,
+|+    BlockSize::Block16x32,
+|+    BlockSize::Block32x16,
+|+    BlockSize::Block32x32,
+|+    BlockSize::Block32x64,
+|+    BlockSize::Block64x32,
+|+    BlockSize::Block64x64,
+|+];
+|+
+|+#[derive(Clone, Copy)]
+|+#[repr(usize)]
+|+enum CensusFamily {
+|+    FullTree,
+|+    PrunedMore,
+|+    PrunedEvenMore,
+|+}
+|+
+|+impl CensusFamily {
+|+    const ALL: [Self; 3] = [Self::FullTree, Self::PrunedMore, Self::PrunedEvenMore];
+|+
+|+    const fn label(self) -> &'static str {
+|+        match self {
+|+            Self::FullTree => "full_tree",
+|+            Self::PrunedMore => "pruned_more",
+|+            Self::PrunedEvenMore => "pruned_evenmore",
+|+        }
+|+    }
+|+
+|+    const fn index(self) -> usize {
+|+        self as usize
+|+    }
+|+}
+|+
+|+#[derive(Clone, Copy)]
+|+struct CensusContext {
+|+    family: CensusFamily,
+|+    shape: usize,
+|+}
+|+
+|+static CENSUS_ON: OnceLock<bool> = OnceLock::new();
+|+static CENSUS_CALLS: OnceLock<Box<[AtomicU64]>> = OnceLock::new();
+|+
+|+thread_local! {
+|+    static CENSUS_CONTEXT: Cell<Option<CensusContext>> = const { Cell::new(None) };
+|+    #[cfg(test)]
+|+    static CENSUS_TEST_ON: Cell<bool> = const { Cell::new(false) };
+|+}
+|+
+|+/// Whether `RVP9_SUBPEL_CENSUS=1` enables the diagnostic work census.
+|+#[must_use]
+|+pub fn subpel_census_enabled() -> bool {
+|+    #[cfg(test)]
+|+    if CENSUS_TEST_ON.with(Cell::get) {
+|+        return true;
+|+    }
+|+    *CENSUS_ON.get_or_init(|| std::env::var_os("RVP9_SUBPEL_CENSUS").is_some_and(|v| v != "0"))
+|+}
+|+
+|+/// One production sub-pixel-variance kernel bucket.
+|+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+|+pub struct SubpelCensusRow {
+|+    /// Search algorithm that requested the kernel.
+|+    pub family: &'static str,
+|+    /// Physical kernel block width in pixels.
+|+    pub width: u8,
+|+    /// Physical kernel block height in pixels.
+|+    pub height: u8,
+|+    /// Horizontal bilinear phase in eighth-pixel units (`0..8`).
+|+    pub xoffset: u8,
+|+    /// Vertical bilinear phase in eighth-pixel units (`0..8`).
+|+    pub yoffset: u8,
+|+    /// Number of actual kernel invocations.
+|+    pub calls: u64,
+|+    /// Total pixels examined by those invocations.
+|+    pub pixels: u64,
+|+}
+|+
+|+/// Read nonzero production kernel buckets in stable family/shape/phase order.
+|+///
+|+/// The diagnostic replay in [`diagnose_sub_pixel_tree`] has no search-family
+|+/// scope and cannot enter this census. The counters cover all threads in the
+|+/// process; the intended CLI report runs after encoding has finished.
+|+#[must_use]
+|+pub fn subpel_census_rows() -> Vec<SubpelCensusRow> {
+|+    let Some(calls) = CENSUS_CALLS.get() else {
+|+        return Vec::new();
+|+    };
+|+    let mut rows = Vec::new();
+|+    for family in CensusFamily::ALL {
+|+        for (shape, bsize) in CENSUS_SHAPES.iter().enumerate() {
+|+            for xoffset in 0..CENSUS_PHASES {
+|+                for yoffset in 0..CENSUS_PHASES {
+|+                    let n = calls[census_index(family, shape, xoffset, yoffset)]
+|+                        .load(Ordering::Relaxed);
+|+                    if n != 0 {
+|+                        let width = bsize.width();
+|+                        let height = bsize.height();
+|+                        rows.push(SubpelCensusRow {
+|+                            family: family.label(),
+|+                            width,
+|+                            height,
+|+                            xoffset: xoffset as u8,
+|+                            yoffset: yoffset as u8,
+|+                            calls: n,
+|+                            pixels: n.saturating_mul(u64::from(width) * u64::from(height)),
+|+                        });
+|+                    }
+|+                }
+|+            }
+|+        }
+|+    }
+|+    rows
+|+}
+|+
+|+const fn census_index(family: CensusFamily, shape: usize, xoffset: usize, yoffset: usize) -> usize {
+|+    (((family.index() * CENSUS_SHAPES.len() + shape) * CENSUS_PHASES + xoffset) * CENSUS_PHASES)
+|+        + yoffset
+|+}
+|+
+|+struct CensusScope {
+|+    previous: Option<CensusContext>,
+|+    active: bool,
+|+}
+|+
+|+impl CensusScope {
+|+    fn enter(family: CensusFamily, block_size: BlockSize) -> Self {
+|+        if !subpel_census_enabled() {
+|+            return Self {
+|+                previous: None,
+|+                active: false,
+|+            };
+|+        }
+|+        let Some(shape) = CENSUS_SHAPES.iter().position(|&b| b == block_size) else {
+|+            return Self {
+|+                previous: None,
+|+                active: false,
+|+            };
+|+        };
+|+        let previous =
+|+            CENSUS_CONTEXT.with(|cell| cell.replace(Some(CensusContext { family, shape })));
+|+        Self {
+|+            previous,
+|+            active: true,
+|+        }
+|+    }
+|+}
+|+
+|+impl Drop for CensusScope {
+|+    fn drop(&mut self) {
+|+        if self.active {
+|+            CENSUS_CONTEXT.with(|cell| cell.set(self.previous));
+|+        }
+|+    }
+|+}
+|+
+|+#[inline]
+|+fn record_subpel_kernel(xoffset: usize, yoffset: usize) {
+|+    if !subpel_census_enabled() {
+|+        return;
+|+    }
+|+    CENSUS_CONTEXT.with(|cell| {
+|+        let Some(context) = cell.get() else {
+|+            return;
+|+        };
+|+        let calls = CENSUS_CALLS.get_or_init(|| {
+|+            (0..CensusFamily::ALL.len() * CENSUS_SHAPES.len() * CENSUS_PHASES * CENSUS_PHASES)
+|+                .map(|_| AtomicU64::new(0))
+|+                .collect::<Vec<_>>()
+|+                .into_boxed_slice()
+|+        });
+|+        calls[census_index(context.family, context.shape, xoffset, yoffset)]
+|+            .fetch_add(1, Ordering::Relaxed);
+|+    });
+|+}
+|+
+| thread_local! {
+|     /// Edge-replicated bilinear footprint reused by one search worker.
+|     /// Every scratch-path call overwrites the complete active prefix.
+|@@ -333,6 +519,9 @@ fn try_subpel_cost(
+|         && ref_row_i >= 0
+|         && ref_col_i + fetch_w as isize <= ref_plane.width as isize
+|         && ref_row_i + fetch_h as isize <= ref_plane.height as isize;
+|+    // Both arms below call exactly one kernel. Count after all candidate
+|+    // validity checks so clipped probes never appear as processed work.
+|+    record_subpel_kernel(xoff, yoff);
+|     let (var, _sse) = if fetch_in_bounds {
+|         let ref_start = ref_row_i as usize * ref_plane.stride + ref_col_i as usize;
+|         svf(
+|@@ -419,6 +608,7 @@ pub fn find_best_sub_pixel_tree_pruned_more(
+|     };
+|     let bw = usize::from(params.block_size.width());
+|     let bh = usize::from(params.block_size.height());
+|+    let _census_scope = CensusScope::enter(CensusFamily::PrunedMore, params.block_size);
+|
+|     // Derive sub-pel limits.
+|     let mut subpel_limits = MvLimits::default();
+|@@ -582,6 +772,7 @@ pub fn find_best_sub_pixel_tree_pruned_evenmore(
+|     };
+|     let bw = usize::from(params.block_size.width());
+|     let bh = usize::from(params.block_size.height());
+|+    let _census_scope = CensusScope::enter(CensusFamily::PrunedEvenMore, params.block_size);
+|     let mut subpel_limits = MvLimits::default();
+|     set_subpel_mv_search_range(
+|         &mut subpel_limits,
+|@@ -677,6 +868,7 @@ pub fn find_best_sub_pixel_tree(params: &SubPixelSearchParams<'_>) -> SubPixelSe
+|     };
+|     let bw = usize::from(params.block_size.width());
+|     let bh = usize::from(params.block_size.height());
+|+    let _census_scope = CensusScope::enter(CensusFamily::FullTree, params.block_size);
+|
+|     let mut subpel_limits = MvLimits::default();
+|     set_subpel_mv_search_range(
+|@@ -1366,6 +1558,100 @@ mod tests {
+|     use crate::cost::mv_cost::build_nmv_cost_table;
+|     use crate::entropy::mv_probs::DEFAULT_NMV_CONTEXT;
+|
+|+    #[test]
+|+    fn census_counts_only_executed_full_tree_kernels() {
+|+        let costs = build_nmv_cost_table(&DEFAULT_NMV_CONTEXT, true);
+|+        let data = make_plane(64, 64, 13);
+|+        let plane = PlaneRef {
+|+            data: &data,
+|+            stride: 64,
+|+            width: 64,
+|+            height: 64,
+|+        };
+|+        let params = SubPixelSearchParams {
+|+            block_size: BlockSize::Block8x8,
+|+            src_plane: &plane,
+|+            src_offset: (24, 24),
+|+            ref_plane: &plane,
+|+            center_mv: Mv::ZERO,
+|+            ref_mv: Mv::ZERO,
+|+            mv_limits: MvLimits::new(-16, 16, -16, 16),
+|+            error_per_bit: 1,
+|+            mv_costs: &costs,
+|+            allow_hp: false,
+|+            forced_stop: SubPixelForcedStop::QuarterPel,
+|+            iters_per_step: 0,
+|+        };
+|+
+|+        CENSUS_TEST_ON.with(|on| on.set(true));
+|+        let before = subpel_census_rows();
+|+        let _ = find_best_sub_pixel_tree(&params);
+|+        let after = subpel_census_rows();
+|+        let count = |rows: &[SubpelCensusRow], x: u8, y: u8| {
+|+            rows.iter()
+|+                .find(|row| {
+|+                    row.family == "full_tree"
+|+                        && row.width == 8
+|+                        && row.height == 8
+|+                        && row.xoffset == x
+|+                        && row.yoffset == y
+|+                })
+|+                .map_or(0, |row| row.calls)
+|+        };
+|+        let pixels = |rows: &[SubpelCensusRow]| {
+|+            rows.iter()
+|+                .filter(|row| row.family == "full_tree" && row.width == 8 && row.height == 8)
+|+                .map(|row| row.pixels)
+|+                .sum::<u64>()
+|+        };
+|+        let mut calls = 0;
+|+        for x in 0..8 {
+|+            for y in 0..8 {
+|+                calls += count(&after, x, y) - count(&before, x, y);
+|+            }
+|+        }
+|+        // One integer centre, five half-pel probes, five quarter-pel probes.
+|+        assert_eq!(calls, 11);
+|+        assert_eq!(pixels(&after) - pixels(&before), 704);
+|+        assert_eq!(count(&after, 0, 0) - count(&before, 0, 0), 1);
+|+        assert_eq!(count(&after, 0, 4) - count(&before, 0, 4), 2);
+|+        assert_eq!(count(&after, 4, 0) - count(&before, 4, 0), 2);
+|+
+|+        // F02 replays the tree only to hash costs; it is not production work.
+|+        let _ = diagnose_sub_pixel_tree(&params);
+|+        assert_eq!(subpel_census_rows(), after);
+|+        CENSUS_TEST_ON.with(|on| on.set(false));
+|+    }
+|+
+|+    #[test]
+|+    fn census_has_buckets_for_sub_eight_rectangles() {
+|+        CENSUS_TEST_ON.with(|on| on.set(true));
+|+        for (bsize, width, height) in [(BlockSize::Block4x8, 4, 8), (BlockSize::Block8x4, 8, 4)] {
+|+            let before = subpel_census_rows().into_iter().find(|row| {
+|+                row.family == "full_tree"
+|+                    && row.width == width
+|+                    && row.height == height
+|+                    && row.xoffset == 3
+|+                    && row.yoffset == 5
+|+            });
+|+            let _scope = CensusScope::enter(CensusFamily::FullTree, bsize);
+|+            record_subpel_kernel(3, 5);
+|+            let after = subpel_census_rows()
+|+                .into_iter()
+|+                .find(|row| {
+|+                    row.family == "full_tree"
+|+                        && row.width == width
+|+                        && row.height == height
+|+                        && row.xoffset == 3
+|+                        && row.yoffset == 5
+|+                })
+|+                .expect("rectangular census bucket");
+|+            assert_eq!(after.calls - before.map_or(0, |row| row.calls), 1);
+|+            assert_eq!(after.pixels - before.map_or(0, |row| row.pixels), 32);
+|+        }
+|+        CENSUS_TEST_ON.with(|on| on.set(false));
+|+    }
+|+
+|     /// Deterministic content with smooth-ish gradient (so the bilinear
+|     /// filter has something meaningful to interpolate).
+|     fn make_plane(width: usize, height: usize, seed: u32) -> Vec<u8> {

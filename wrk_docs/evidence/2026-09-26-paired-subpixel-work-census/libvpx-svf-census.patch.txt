@@ -1,0 +1,128 @@
+|diff --git a/vp9/encoder/vp9_encoder.c b/vp9/encoder/vp9_encoder.c
+|index 42a2770d1..ee0c36b4e 100644
+|--- a/vp9/encoder/vp9_encoder.c
+|+++ b/vp9/encoder/vp9_encoder.c
+|@@ -98,6 +98,112 @@
+| #define FRAME_SIZE_FACTOR 128  // empirical params for context model threshold
+| #define FRAME_RATE_FACTOR 8
+|
+|+// Throwaway, single-encoder diagnostic. Compile with
+|+// -DRVP9_DIAG_LIBVPX_SVF_CENSUS=1 and set RVP9_DIAG_LIBVPX_SVF_CENSUS=1 at run
+|+// time. The original RTCD-selected functions still produce every result.
+|+#if defined(RVP9_DIAG_LIBVPX_SVF_CENSUS)
+|+static int svf_census_installed;
+|+static vpx_subpixvariance_fn_t svf_census_original[BLOCK_SIZES];
+|+static uint64_t svf_census_calls[BLOCK_SIZES][8][8];
+|+static uint64_t svf_census_invalid_phase[BLOCK_SIZES];
+|+
+|+static unsigned int svf_census_call(BLOCK_SIZE bsize, const uint8_t *src,
+|+                                    int src_stride, int x_phase, int y_phase,
+|+                                    const uint8_t *ref, int ref_stride,
+|+                                    unsigned int *sse) {
+|+  const unsigned int result = svf_census_original[bsize](
+|+      src, src_stride, x_phase, y_phase, ref, ref_stride, sse);
+|+  if ((unsigned int)x_phase < 8 && (unsigned int)y_phase < 8)
+|+    ++svf_census_calls[bsize][x_phase][y_phase];
+|+  else
+|+    ++svf_census_invalid_phase[bsize];
+|+  return result;
+|+}
+|+
+|+#define SVF_CENSUS_WRAPPER(BT)                                                \
+|+  static unsigned int svf_census_##BT(                                        \
+|+      const uint8_t *src, int src_stride, int x_phase, int y_phase,           \
+|+      const uint8_t *ref, int ref_stride, unsigned int *sse) {                \
+|+    return svf_census_call(BT, src, src_stride, x_phase, y_phase, ref,        \
+|+                           ref_stride, sse);                                  \
+|+  }
+|+
+|+SVF_CENSUS_WRAPPER(BLOCK_4X4)
+|+SVF_CENSUS_WRAPPER(BLOCK_4X8)
+|+SVF_CENSUS_WRAPPER(BLOCK_8X4)
+|+SVF_CENSUS_WRAPPER(BLOCK_8X8)
+|+SVF_CENSUS_WRAPPER(BLOCK_8X16)
+|+SVF_CENSUS_WRAPPER(BLOCK_16X8)
+|+SVF_CENSUS_WRAPPER(BLOCK_16X16)
+|+SVF_CENSUS_WRAPPER(BLOCK_16X32)
+|+SVF_CENSUS_WRAPPER(BLOCK_32X16)
+|+SVF_CENSUS_WRAPPER(BLOCK_32X32)
+|+SVF_CENSUS_WRAPPER(BLOCK_32X64)
+|+SVF_CENSUS_WRAPPER(BLOCK_64X32)
+|+SVF_CENSUS_WRAPPER(BLOCK_64X64)
+|+
+|+static const vpx_subpixvariance_fn_t svf_census_wrapper[BLOCK_SIZES] = {
+|+  [BLOCK_4X4] = svf_census_BLOCK_4X4,
+|+  [BLOCK_4X8] = svf_census_BLOCK_4X8,
+|+  [BLOCK_8X4] = svf_census_BLOCK_8X4,
+|+  [BLOCK_8X8] = svf_census_BLOCK_8X8,
+|+  [BLOCK_8X16] = svf_census_BLOCK_8X16,
+|+  [BLOCK_16X8] = svf_census_BLOCK_16X8,
+|+  [BLOCK_16X16] = svf_census_BLOCK_16X16,
+|+  [BLOCK_16X32] = svf_census_BLOCK_16X32,
+|+  [BLOCK_32X16] = svf_census_BLOCK_32X16,
+|+  [BLOCK_32X32] = svf_census_BLOCK_32X32,
+|+  [BLOCK_32X64] = svf_census_BLOCK_32X64,
+|+  [BLOCK_64X32] = svf_census_BLOCK_64X32,
+|+  [BLOCK_64X64] = svf_census_BLOCK_64X64,
+|+};
+|+
+|+static void svf_census_report(void);
+|+
+|+static void svf_census_install(VP9_COMP *cpi) {
+|+  const char *enabled = getenv("RVP9_DIAG_LIBVPX_SVF_CENSUS");
+|+  int bsize;
+|+  if (!enabled || strcmp(enabled, "1") != 0) return;
+|+  if (svf_census_installed) {
+|+    fprintf(stderr, "LIBVPX_SVF_CENSUS requires one encoder instance\n");
+|+    return;
+|+  }
+|+  if (atexit(svf_census_report) != 0) {
+|+    fprintf(stderr, "LIBVPX_SVF_CENSUS could not register exit report\n");
+|+    return;
+|+  }
+|+  memset(svf_census_calls, 0, sizeof(svf_census_calls));
+|+  memset(svf_census_invalid_phase, 0, sizeof(svf_census_invalid_phase));
+|+  for (bsize = 0; bsize < BLOCK_SIZES; ++bsize) {
+|+    svf_census_original[bsize] = cpi->fn_ptr[bsize].svf;
+|+    cpi->fn_ptr[bsize].svf = svf_census_wrapper[bsize];
+|+  }
+|+  svf_census_installed = 1;
+|+}
+|+
+|+static void svf_census_report(void) {
+|+  int bsize, x_phase, y_phase;
+|+  fprintf(stderr, "LIBVPX_SVF_CENSUS,shape,x_phase,y_phase,calls,pixels\n");
+|+  for (bsize = 0; bsize < BLOCK_SIZES; ++bsize) {
+|+    const int width = 4 << b_width_log2_lookup[bsize];
+|+    const int height = 4 << b_height_log2_lookup[bsize];
+|+    for (x_phase = 0; x_phase < 8; ++x_phase) {
+|+      for (y_phase = 0; y_phase < 8; ++y_phase) {
+|+        const uint64_t calls = svf_census_calls[bsize][x_phase][y_phase];
+|+        if (calls != 0) {
+|+          fprintf(stderr, "LIBVPX_SVF_CENSUS,%dx%d,%d,%d,%llu,%llu\n", width,
+|+                  height, x_phase, y_phase, (unsigned long long)calls,
+|+                  (unsigned long long)(calls * width * height));
+|+        }
+|+      }
+|+    }
+|+    if (svf_census_invalid_phase[bsize] != 0)
+|+      fprintf(stderr, "LIBVPX_SVF_CENSUS_INVALID,%dx%d,%llu\n", width,
+|+              height, (unsigned long long)svf_census_invalid_phase[bsize]);
+|+  }
+|+}
+|+#endif  // RVP9_DIAG_LIBVPX_SVF_CENSUS
+|+
+| #ifdef OUTPUT_YUV_DENOISED
+| FILE *yuv_denoised_file = NULL;
+| #endif
+|@@ -2727,6 +2833,10 @@ VP9_COMP *vp9_create_compressor(const VP9EncoderConfig *oxcf,
+|   highbd_set_var_fns(cpi);
+| #endif
+|
+|+#if defined(RVP9_DIAG_LIBVPX_SVF_CENSUS)
+|+  svf_census_install(cpi);
+|+#endif
+|+
+|   /* vp9_init_quantizer() is first called here. Add check in
+|    * vp9_frame_init_quantizer() so that vp9_init_quantizer is only
+|    * called later when needed. This will avoid unnecessary calls of

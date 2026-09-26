@@ -1,0 +1,223 @@
+|diff --git a/crates/rvp9-cli/src/bin/rvp9enc.rs b/crates/rvp9-cli/src/bin/rvp9enc.rs
+|index 0b5cb8e9..62bdf1b9 100644
+|--- a/crates/rvp9-cli/src/bin/rvp9enc.rs
+|+++ b/crates/rvp9-cli/src/bin/rvp9enc.rs
+|@@ -1099,6 +1099,13 @@ fn run(opts: &EncOpts, positionals: &[String]) -> Result<(), String> {
+|                 row.family, row.width, row.height, row.xoffset, row.yoffset, row.calls, row.pixels,
+|             );
+|         }
+|+        eprintln!("subpel_searches,family,width,height,searches");
+|+        for row in rvp9_core::mv_search::sub_pixel::subpel_search_census_rows() {
+|+            eprintln!(
+|+                "subpel_searches,{},{},{},{}",
+|+                row.family, row.width, row.height, row.searches,
+|+            );
+|+        }
+|     }
+|
+|     // C2-β — measurement-only fire-rate of the size-gated ML-partition
+|diff --git a/crates/rvp9-core/src/mv_search/sub_pixel.rs b/crates/rvp9-core/src/mv_search/sub_pixel.rs
+|index c04d92ba..c71f6841 100644
+|--- a/crates/rvp9-core/src/mv_search/sub_pixel.rs
+|+++ b/crates/rvp9-core/src/mv_search/sub_pixel.rs
+|@@ -99,6 +99,7 @@ struct CensusContext {
+|
+| static CENSUS_ON: OnceLock<bool> = OnceLock::new();
+| static CENSUS_CALLS: OnceLock<Box<[AtomicU64]>> = OnceLock::new();
+|+static CENSUS_SEARCHES: OnceLock<Box<[AtomicU64]>> = OnceLock::new();
+|
+| thread_local! {
+|     static CENSUS_CONTEXT: Cell<Option<CensusContext>> = const { Cell::new(None) };
+|@@ -135,6 +136,19 @@ pub struct SubpelCensusRow {
+|     pub pixels: u64,
+| }
+|
+|+/// One production sub-pixel search-entry bucket.
+|+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+|+pub struct SubpelSearchCensusRow {
+|+    /// Search algorithm entered after its fallback and unsupported-size gates.
+|+    pub family: &'static str,
+|+    /// Search block width in pixels.
+|+    pub width: u8,
+|+    /// Search block height in pixels.
+|+    pub height: u8,
+|+    /// Number of production searches entered.
+|+    pub searches: u64,
+|+}
+|+
+| /// Read nonzero production kernel buckets in stable family/shape/phase order.
+| ///
+| /// The diagnostic replay in [`diagnose_sub_pixel_tree`] has no search-family
+|@@ -172,6 +186,32 @@ pub fn subpel_census_rows() -> Vec<SubpelCensusRow> {
+|     rows
+| }
+|
+|+/// Read nonzero production search entries in stable family/shape order.
+|+///
+|+/// Diagnostic replays do not enter this census. Fallbacks are attributed to
+|+/// the search family that actually runs.
+|+#[must_use]
+|+pub fn subpel_search_census_rows() -> Vec<SubpelSearchCensusRow> {
+|+    let Some(searches) = CENSUS_SEARCHES.get() else {
+|+        return Vec::new();
+|+    };
+|+    let mut rows = Vec::new();
+|+    for family in CensusFamily::ALL {
+|+        for (shape, bsize) in CENSUS_SHAPES.iter().enumerate() {
+|+            let n = searches[family.index() * CENSUS_SHAPES.len() + shape].load(Ordering::Relaxed);
+|+            if n != 0 {
+|+                rows.push(SubpelSearchCensusRow {
+|+                    family: family.label(),
+|+                    width: bsize.width(),
+|+                    height: bsize.height(),
+|+                    searches: n,
+|+                });
+|+            }
+|+        }
+|+    }
+|+    rows
+|+}
+|+
+| const fn census_index(family: CensusFamily, shape: usize, xoffset: usize, yoffset: usize) -> usize {
+|     (((family.index() * CENSUS_SHAPES.len() + shape) * CENSUS_PHASES + xoffset) * CENSUS_PHASES)
+|         + yoffset
+|@@ -203,6 +243,24 @@ impl CensusScope {
+|             active: true,
+|         }
+|     }
+|+
+|+    fn enter_search(family: CensusFamily, block_size: BlockSize) -> Self {
+|+        let scope = Self::enter(family, block_size);
+|+        if scope.active {
+|+            CENSUS_CONTEXT.with(|cell| {
+|+                let context = cell.get().expect("active census scope has a context");
+|+                let searches = CENSUS_SEARCHES.get_or_init(|| {
+|+                    (0..CensusFamily::ALL.len() * CENSUS_SHAPES.len())
+|+                        .map(|_| AtomicU64::new(0))
+|+                        .collect::<Vec<_>>()
+|+                        .into_boxed_slice()
+|+                });
+|+                searches[context.family.index() * CENSUS_SHAPES.len() + context.shape]
+|+                    .fetch_add(1, Ordering::Relaxed);
+|+            });
+|+        }
+|+        scope
+|+    }
+| }
+|
+| impl Drop for CensusScope {
+|@@ -608,7 +666,7 @@ pub fn find_best_sub_pixel_tree_pruned_more(
+|     };
+|     let bw = usize::from(params.block_size.width());
+|     let bh = usize::from(params.block_size.height());
+|-    let _census_scope = CensusScope::enter(CensusFamily::PrunedMore, params.block_size);
+|+    let _census_scope = CensusScope::enter_search(CensusFamily::PrunedMore, params.block_size);
+|
+|     // Derive sub-pel limits.
+|     let mut subpel_limits = MvLimits::default();
+|@@ -772,7 +830,7 @@ pub fn find_best_sub_pixel_tree_pruned_evenmore(
+|     };
+|     let bw = usize::from(params.block_size.width());
+|     let bh = usize::from(params.block_size.height());
+|-    let _census_scope = CensusScope::enter(CensusFamily::PrunedEvenMore, params.block_size);
+|+    let _census_scope = CensusScope::enter_search(CensusFamily::PrunedEvenMore, params.block_size);
+|     let mut subpel_limits = MvLimits::default();
+|     set_subpel_mv_search_range(
+|         &mut subpel_limits,
+|@@ -868,7 +926,7 @@ pub fn find_best_sub_pixel_tree(params: &SubPixelSearchParams<'_>) -> SubPixelSe
+|     };
+|     let bw = usize::from(params.block_size.width());
+|     let bh = usize::from(params.block_size.height());
+|-    let _census_scope = CensusScope::enter(CensusFamily::FullTree, params.block_size);
+|+    let _census_scope = CensusScope::enter_search(CensusFamily::FullTree, params.block_size);
+|
+|     let mut subpel_limits = MvLimits::default();
+|     set_subpel_mv_search_range(
+|@@ -1558,6 +1616,74 @@ mod tests {
+|     use crate::cost::mv_cost::build_nmv_cost_table;
+|     use crate::entropy::mv_probs::DEFAULT_NMV_CONTEXT;
+|
+|+    #[test]
+|+    fn census_counts_search_entries_by_actual_family_not_kernel_phase() {
+|+        let costs = build_nmv_cost_table(&DEFAULT_NMV_CONTEXT, true);
+|+        let data = make_plane(64, 64, 13);
+|+        let plane = PlaneRef {
+|+            data: &data,
+|+            stride: 64,
+|+            width: 64,
+|+            height: 64,
+|+        };
+|+        let params = SubPixelSearchParams {
+|+            block_size: BlockSize::Block16x16,
+|+            src_plane: &plane,
+|+            src_offset: (24, 24),
+|+            ref_plane: &plane,
+|+            center_mv: Mv::ZERO,
+|+            ref_mv: Mv::ZERO,
+|+            mv_limits: MvLimits::new(-16, 16, -16, 16),
+|+            error_per_bit: 1,
+|+            mv_costs: &costs,
+|+            allow_hp: false,
+|+            forced_stop: SubPixelForcedStop::QuarterPel,
+|+            iters_per_step: 0,
+|+        };
+|+        let count = |family: &str| {
+|+            subpel_search_census_rows()
+|+                .into_iter()
+|+                .find(|row| row.family == family && row.width == 16 && row.height == 16)
+|+                .map_or(0, |row| row.searches)
+|+        };
+|+
+|+        CENSUS_TEST_ON.with(|on| on.set(true));
+|+        let before = [
+|+            count("full_tree"),
+|+            count("pruned_more"),
+|+            count("pruned_evenmore"),
+|+        ];
+|+        let _ = find_best_sub_pixel_tree(&params);
+|+        let _ = find_best_sub_pixel_tree_pruned_more(&params);
+|+        let _ = find_best_sub_pixel_tree_pruned_evenmore(&params, Some(&[10, 12, 20, 20, 20]));
+|+        // A missing cost surface falls back to one pruned-more search, not
+|+        // an evenmore entry followed by a pruned-more entry.
+|+        let _ = find_best_sub_pixel_tree_pruned_evenmore(&params, None);
+|+        let after = [
+|+            count("full_tree"),
+|+            count("pruned_more"),
+|+            count("pruned_evenmore"),
+|+        ];
+|+        assert_eq!(
+|+            [
+|+                after[0] - before[0],
+|+                after[1] - before[1],
+|+                after[2] - before[2],
+|+            ],
+|+            [1, 2, 1],
+|+        );
+|+        let _ = diagnose_sub_pixel_tree(&params);
+|+        assert_eq!(
+|+            [
+|+                count("full_tree"),
+|+                count("pruned_more"),
+|+                count("pruned_evenmore")
+|+            ],
+|+            after,
+|+        );
+|+        CENSUS_TEST_ON.with(|on| on.set(false));
+|+    }
+|+
+|     #[test]
+|     fn census_counts_only_executed_full_tree_kernels() {
+|         let costs = build_nmv_cost_table(&DEFAULT_NMV_CONTEXT, true);
+|@@ -1619,7 +1745,12 @@ mod tests {
+|
+|         // F02 replays the tree only to hash costs; it is not production work.
+|         let _ = diagnose_sub_pixel_tree(&params);
+|-        assert_eq!(subpel_census_rows(), after);
+|+        let replayed = subpel_census_rows();
+|+        for x in 0..8 {
+|+            for y in 0..8 {
+|+                assert_eq!(count(&replayed, x, y), count(&after, x, y));
+|+            }
+|+        }
+|         CENSUS_TEST_ON.with(|on| on.set(false));
+|     }
