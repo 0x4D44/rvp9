@@ -1,0 +1,20 @@
+# Unit 1436 — x86 error-only AVX2 metrics prototype rejected
+
+The exact Unit 1434 Crucible IP map put 157/1,274 Tree and 109/947 Town direct samples at `mode_decision/inter.rs:5590`, the inlined Hadamard full-metrics quantizer. Ducks had only 3/2,505 there. Disassembly of the pinned integrated EXE showed native EVEX-encoded vector arithmetic, not a scalar loop. The earlier full-metrics AVX2 rewrite was neutral overall, so this experiment changed only the squared-coefficient-error reducer while retaining the eight-coefficient SSE2 quantization, sign restoration, and SATD path.
+
+The prototype is saved only as local WIP commit `3cb77ef9` on `task/20260925-TSK-HUM-x86-error-only-metrics-avx2-prototype`; **no encoder code was pushed or integrated**. Its source SHA-256 is `e18e88cc54cd4d34657e6041f5e24ef1e812b38f97d46d5eb9f39b3ae2c380dd`. The native Crucible candidate EXE/PDB hashes are `36428a623037f7e26912b1af4544427bcaa10e6ff86d22e0eb3a729969306991` / `8be743ff608182fab264e36ee585d61e860ac1f28f0ce7a0f3bbe339f7911b45`. The integrated `88644d86` baseline EXE/PDB hashes are `1b64fc5f3de6dc3cfe9d486f6b2515be7a44354eeb0b025ca28e6e9903d1470a` / `27c0b186f4a2a5b2edd19a665ccf8cc1bff1786c90df3a906ed9a1a6e58f72b4`; intervening trunk changes were docs-only.
+
+Validation: `cargo fmt --all --check` and native AArch64 `deltic timeout 300 cargo check --locked -p rvp9-core` passed. On Crucible, the release scalar differential `sse2_matches_scalar_across_sizes_quantizers_and_extremes` passed, then failed after deliberately replacing the AVX2 odd-lane square with the even-lane square (`Tx8x8`, q=0: error 72 versus expected 87), then passed again after restoring the SHA-matched source. The release `hadamard_only_round_trip_covers_each_realtime_tx_size` test and warning-clean candidate encoder build also passed. An initial `--exact` test invocation selected zero tests and is not counted as validation.
+
+Two independent 15-pair-per-clip alternating-order screens used one warmup per arm, CPU6/CBR1260, one thread, and the pinned 60-frame Ducks, In-to-tree, and Old-town-cross inputs. All 192 runs (180 measured plus 12 warmups) exited zero, had no timeout, and matched their pinned IVF hashes. Both screens had 7/7 asset identities and 6/6 output-stability rows correct. No rows were excluded. Ratios are candidate divided by integrated baseline, geometric mean of paired **process CPU**:
+
+| Clip | Screen A | Screen B | Combined 30 pairs |
+| --- | ---: | ---: | ---: |
+| Ducks | 1.018501× | 1.016257× | **1.017378×** |
+| Tree | 1.005059× | 0.998173× | 1.001610× |
+| Town | 0.993578× | 1.008806× | 1.001163× |
+| Equal-clip corpus | 1.005661× | 1.007718× | **1.006689×** |
+
+Independent recomputation from both raw CSVs produced the table. Screen A's first seven/last eight pair groups were 1.021458×/0.992039× overall; Screen B's were 1.010570×/1.005229×. Odd/even order was above 1.0× in both screens. Host-load samples averaged 16.35% in A (maximum 81.25%, with a pair-9 wall stall) and 13.21% in B (maximum 26.42%); load and wall time are diagnostics, not row filters. The runner is [runner.ps1](runner.ps1); its checked-in SHA-256 is `44d5f51679d8f9d1e1f4bd9f0b4f18887bd868982357d3ac718d46af2596dcea` after removing one extra final blank line, while each run's manifest records the executed file's SHA-256 `32721c78505cd3db9e8250c41d8925dabd4f75cdc20c481d52c4581ed14ee859`. The script content and all CSV/text captures are otherwise byte-identical after CRLF-to-LF normalization. Each screen retains raw timings, identity checks, output stability, load samples, summary, and manifest under [screen-a](screen-a/) and [screen-b](screen-b/). Encoded IVFs remain in Crucible's task worktree `.scratch/error-only-metrics-run-ab/run-20260925T235858.862Z/` and `run-20260926T000349.391Z/`; the retained per-run hashes prove their output identity.
+
+This exact candidate is repeatably **slower**, especially on Ducks, so it fails the retention test. No fresh pinned-libvpx run was warranted; production remains the integrated baseline at **1.182520×** pinned-libvpx process CPU against the ≤1.05× goal.

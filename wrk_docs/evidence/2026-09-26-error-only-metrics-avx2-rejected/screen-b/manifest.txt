@@ -1,0 +1,34 @@
+﻿experiment=error-only metrics candidate vs integrated 88644d86 process-CPU A/B
+started_utc=2026-09-26T00:03:51.1927285Z
+runner_path=D:\worktrees\rvp9-2\20260925-TSK-HUM-x86-error-only-metrics-avx2-screen\.scratch\error-only-metrics-run-ab.ps1
+runner_sha256=32721c78505cd3db9e8250c41d8925dabd4f75cdc20c481d52c4581ed14ee859
+host=CRUCIBLE
+baseline_encoder=D:\worktrees\rvp9-2\20260925-TSK-HUM-unit1434-integrated-ip-profile\.scratch\target\release\rvp9enc.exe
+baseline_exe_sha256=1b64fc5f3de6dc3cfe9d486f6b2515be7a44354eeb0b025ca28e6e9903d1470a
+baseline_pdb=D:\worktrees\rvp9-2\20260925-TSK-HUM-unit1434-integrated-ip-profile\.scratch\target\release\rvp9enc.pdb
+baseline_pdb_sha256=27c0b186f4a2a5b2edd19a665ccf8cc1bff1786c90df3a906ed9a1a6e58f72b4
+candidate_revision=3cb77ef9
+candidate_worktree=D:\worktrees\rvp9-2\20260925-TSK-HUM-x86-error-only-metrics-avx2-screen
+candidate_encoder=D:\worktrees\rvp9-2\20260925-TSK-HUM-x86-error-only-metrics-avx2-screen\.scratch\target\release\rvp9enc.exe
+candidate_exe_sha256=36428a623037f7e26912b1af4544427bcaa10e6ff86d22e0eb3a729969306991
+candidate_sources=crates\rvp9-core\src\dsp\x86_64\quantize_metrics_sse2.rs=e18e88cc54cd4d34657e6041f5e24ef1e812b38f97d46d5eb9f39b3ae2c380dd
+inputs=D:\worktrees\rvp9-2\acceptance-d639c265\target\encoder-pgo\inputs\ducks_take_off_420_1080p30_60f.y4m;D:\worktrees\rvp9-2\acceptance-d639c265\target\encoder-pgo\inputs\in_to_tree_420_1080p30_60f.y4m;D:\worktrees\rvp9-2\acceptance-d639c265\target\encoder-pgo\inputs\old_town_cross_420_1080p30_60f.y4m
+settings=CPU6 CBR1260 fps30/1 threads1 tile0 AQ0 noise0 lag0 limit60 KF60
+warmups=one per arm per clip; measured_pairs=15 per clip; odd baseline/candidate, even candidate/baseline
+clip_order=odd pairs ducks/tree/town; even pairs town/tree/ducks; ratios=candidate divided by baseline; all rows retained; host load is diagnostic only
+process_timeout_seconds=90
+total_timeout_seconds=1200
+host_counter=\Processor(_Total)\% Processor Time
+counter_preflight=16.87
+counter_enabled=True
+identity_csv=D:\worktrees\rvp9-2\20260925-TSK-HUM-x86-error-only-metrics-avx2-screen\.scratch\error-only-metrics-run-ab\run-20260926T000349.391Z\identity.csv
+raw_csv=D:\worktrees\rvp9-2\20260925-TSK-HUM-x86-error-only-metrics-avx2-screen\.scratch\error-only-metrics-run-ab\run-20260926T000349.391Z\raw.csv
+load_csv=D:\worktrees\rvp9-2\20260925-TSK-HUM-x86-error-only-metrics-avx2-screen\.scratch\error-only-metrics-run-ab\run-20260926T000349.391Z\load.csv
+summary_csv=D:\worktrees\rvp9-2\20260925-TSK-HUM-x86-error-only-metrics-avx2-screen\.scratch\error-only-metrics-run-ab\run-20260926T000349.391Z\summary.csv
+output_stability_csv=D:\worktrees\rvp9-2\20260925-TSK-HUM-x86-error-only-metrics-avx2-screen\.scratch\error-only-metrics-run-ab\run-20260926T000349.391Z\output-stability.csv
+completed_utc=2026-09-26T00:06:28.2771756Z
+total_elapsed_seconds=156.988
+raw_rows=96
+measured_rows=90
+warmup_rows=6
+run_error=
