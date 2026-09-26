@@ -1,0 +1,104 @@
+{
+  "source_mode": "etl",
+  "source_path": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-capture-current-pgo-tree-and-town-exact\\.scratch\\pgo-current-tree-ip\\run-02\\capture.etl",
+  "exe_path": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-prototype-nstep-duplicate-variance-score\\.scratch\\encoder-pgo-nstep\\optimized\\release\\rvp9enc.exe",
+  "exe_sha256": "3caee3f4416087ffe13069b4280f48fe92435bc32c9c0a41bebb7c187a73b3ee",
+  "pdb_path": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-prototype-nstep-duplicate-variance-score\\.scratch\\encoder-pgo-nstep\\optimized\\release\\rvp9enc.pdb",
+  "pdb_sha256": "7672ad045a634a9278d7b9255e1a0b665e9e729f6a480438e9b22c50d330bc13",
+  "pdb_pairing": {
+    "method": "PE RSDS GUID/age matched against PDB MSF information stream; DbgHelp loaded path checked",
+    "embedded_pdb_name": "rvp9enc.pdb",
+    "guid": "d13af019-ee7e-d008-4c4c-44205044422e",
+    "age": 1
+  },
+  "pe": {
+    "preferred_base": "0x0000000140000000",
+    "size_of_image": "0x211000"
+  },
+  "images": [
+    {
+      "pid": 55652,
+      "base": "0x00007ff6549c0000",
+      "end_exclusive": "0x00007ff654bd1000",
+      "size": "0x211000",
+      "source": "I-Start"
+    }
+  ],
+  "counts": {
+    "dumper_sampled_profile_rows_all_processes": 1106578,
+    "target_process_sampled_profile_rows": 11195,
+    "pid_filtered_rows": 0,
+    "target_process_other_module_rows": 1858,
+    "retained_target_executable_rows": 9337,
+    "retained_direct_count": 9337,
+    "unique_ips": 4504,
+    "unique_pid_ip_pairs": 4504,
+    "resolved_unique_symbols": 147,
+    "nonzero_source_line_direct_count": 9284,
+    "nonzero_source_line_unique_ips": 4497,
+    "nonzero_source_line_pid_ip_pairs": 4497
+  },
+  "xperf": {
+    "dumper": {
+      "command": [
+        "xperf.exe",
+        "-i",
+        "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-capture-current-pgo-tree-and-town-exact\\.scratch\\pgo-current-tree-ip\\run-02\\capture.etl",
+        "-a",
+        "dumper",
+        "-add_fieldnames"
+      ],
+      "exit_code": 0
+    },
+    "reports": {
+      "tracestats": {
+        "exit_code": 0,
+        "report": "xperf-tracestats.txt",
+        "diagnostic_lines": [
+          "Total # Lost Buffers : 0",
+          "Total # Lost Events  : 0",
+          "# Lost Buffers       : 0",
+          "# Lost Events        : 0"
+        ]
+      },
+      "profile": {
+        "exit_code": 0,
+        "report": "xperf-profile.txt",
+        "diagnostic_lines": []
+      }
+    },
+    "loss_or_warning_lines_from_dumper": [
+      "OS Version: 10.0.26200, Trace Size: 155648KB, Events Lost: 0, Buffers lost: 0, Trace Start: 134349313586895807, Trace Length: 22 sec, PointerSize: 8, Trace Name: D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-capture-current-pgo-tree-and-town-exact\\.scratch\\pgo-current-tree-ip\\run-02\\capture.etl",
+      "FileVersion,   22223350, 0x0001d000,    0xd5240205, \"pshed.dll\", \"Platform Specific Hardware Error Driver\", \"10.0.26100.8972 (WinBuild.160101.0800)\", \"10.0.26100.8972\", \"1033\", \"Microsoft® Windows® Operating System\", \"Microsoft Corporation\", \"10.0.26100.8972\", \"\", \"\"",
+      "FileVersion,   22223352, 0x00017000,    0xa6edf41c, \"werkernel.sys\", \"Windows Error Reporting Kernel Driver\", \"10.0.26100.8972 (WinBuild.160101.0800)\", \"10.0.26100.8972\", \"1033\", \"Microsoft® Windows® Operating System\", \"Microsoft Corporation\", \"10.0.26100.8972\", \"\", \"\"",
+      "FileVersion,   22229067, 0x000f6000,    0x30a05512, \"wer.dll\", \"Windows Error Reporting DLL\", \"10.0.26100.9444 (WinBuild.160101.0800)\", \"10.0.26100.9444\", \"1033\", \"Microsoft® Windows® Operating System\", \"Microsoft Corporation\", \"10.0.26100.9444\", \"\", \"\""
+    ],
+    "loss_or_warning_lines_from_reports": [
+      {
+        "action": "tracestats",
+        "line": "Total # Lost Buffers : 0"
+      },
+      {
+        "action": "tracestats",
+        "line": "Total # Lost Events  : 0"
+      },
+      {
+        "action": "tracestats",
+        "line": "# Lost Buffers       : 0"
+      },
+      {
+        "action": "tracestats",
+        "line": "# Lost Events        : 0"
+      }
+    ],
+    "loss_interpretation": "verbatim matching lines are recorded; an empty list is not a zero-loss assertion"
+  },
+  "outputs": {
+    "samples_csv": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-capture-current-pgo-tree-and-town-exact\\.scratch\\pgo-current-tree-ip\\run-02\\extracted-nstep-fixed\\samples.csv",
+    "unique_ip_map_csv": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-capture-current-pgo-tree-and-town-exact\\.scratch\\pgo-current-tree-ip\\run-02\\extracted-nstep-fixed\\ip-symbols.csv",
+    "other_process_modules_csv": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-capture-current-pgo-tree-and-town-exact\\.scratch\\pgo-current-tree-ip\\run-02\\extracted-nstep-fixed\\other-process-modules.csv",
+    "summary_by_symbol_csv": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-capture-current-pgo-tree-and-town-exact\\.scratch\\pgo-current-tree-ip\\run-02\\extracted-nstep-fixed\\summary-by-symbol.csv",
+    "summary_by_source_line_csv": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-capture-current-pgo-tree-and-town-exact\\.scratch\\pgo-current-tree-ip\\run-02\\extracted-nstep-fixed\\summary-by-source-line.csv"
+  },
+  "comparison": null
+}

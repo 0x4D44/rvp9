@@ -1,0 +1,617 @@
+{
+  "identity": {
+    "exe_sha256": "3caee3f4416087ffe13069b4280f48fe92435bc32c9c0a41bebb7c187a73b3ee",
+    "pdb_age": 1,
+    "pdb_guid": "d13af019-ee7e-d008-4c4c-44205044422e",
+    "pdb_sha256": "7672ad045a634a9278d7b9255e1a0b665e9e729f6a480438e9b22c50d330bc13",
+    "pe_size_of_image": 2166784
+  },
+  "interpretation": "Full IP is run-specific; RVA is the exact ASLR-stable instruction location. Source lines are broad attribution groups, not operations or disassembled instructions. Variability is descriptive, not a significance test.",
+  "outputs": [
+    "runs.csv",
+    "full-ip-counts.csv",
+    "rva-counts.csv",
+    "source-lines.csv",
+    "summary.json"
+  ],
+  "run_ids": [
+    "run-01",
+    "run-02",
+    "run-03"
+  ],
+  "runs": [
+    {
+      "direct_count": 7491,
+      "lost_buffers": 0,
+      "lost_events": 0,
+      "run": "run-01",
+      "sample_rows": 7491,
+      "unique_full_ips": 3922,
+      "unique_rvas": 3922
+    },
+    {
+      "direct_count": 11771,
+      "lost_buffers": 0,
+      "lost_events": 0,
+      "run": "run-02",
+      "sample_rows": 11771,
+      "unique_full_ips": 5969,
+      "unique_rvas": 5969
+    },
+    {
+      "direct_count": 7966,
+      "lost_buffers": 0,
+      "lost_events": 0,
+      "run": "run-03",
+      "sample_rows": 7966,
+      "unique_full_ips": 4209,
+      "unique_rvas": 4209
+    }
+  ],
+  "top_rva_variability": [
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-prototype-nstep-duplicate-variance-score\\crates\\rvp9-core\\src\\inter\\scale.rs",
+      "line": 499,
+      "per_run_direct_count": {
+        "run-01": 82,
+        "run-02": 58,
+        "run-03": 89
+      },
+      "population_variance_share_pp_squared": 0.08364692,
+      "range_share_percentage_points": 0.62451192,
+      "rva": "0x153251",
+      "symbol": "rvp9_core::inter::scale::build_inter_prediction_from_tight_plane",
+      "total_direct_count": 229
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-prototype-nstep-duplicate-variance-score\\crates\\rvp9-core\\src\\mode_decision\\inter.rs",
+      "line": 2428,
+      "per_run_direct_count": {
+        "run-01": 85,
+        "run-02": 73,
+        "run-03": 74
+      },
+      "population_variance_share_pp_squared": 0.04471273,
+      "range_share_percentage_points": 0.51452676,
+      "rva": "0xe3d33",
+      "symbol": "rvp9_core::mode_decision::inter::pick_inter_mode_impl",
+      "total_direct_count": 232
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-prototype-nstep-duplicate-variance-score\\crates\\rvp9-core\\src\\mode_decision\\inter.rs",
+      "line": 4627,
+      "per_run_direct_count": {
+        "run-01": 65,
+        "run-02": 43,
+        "run-03": 68
+      },
+      "population_variance_share_pp_squared": 0.05456301,
+      "range_share_percentage_points": 0.50240335,
+      "rva": "0xf4dd1",
+      "symbol": "rvp9_core::mode_decision::inter::evaluate_candidate_for_filter_with_pred",
+      "total_direct_count": 176
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-prototype-nstep-duplicate-variance-score\\crates\\rvp9-core\\src\\mode_decision\\inter.rs",
+      "line": 4627,
+      "per_run_direct_count": {
+        "run-01": 60,
+        "run-02": 46,
+        "run-03": 69
+      },
+      "population_variance_share_pp_squared": 0.04427658,
+      "range_share_percentage_points": 0.47539034,
+      "rva": "0xf4ddf",
+      "symbol": "rvp9_core::mode_decision::inter::evaluate_candidate_for_filter_with_pred",
+      "total_direct_count": 175
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-prototype-nstep-duplicate-variance-score\\crates\\rvp9-core\\src\\mode_decision\\inter.rs",
+      "line": 4627,
+      "per_run_direct_count": {
+        "run-01": 102,
+        "run-02": 109,
+        "run-03": 102
+      },
+      "population_variance_share_pp_squared": 0.03577677,
+      "range_share_percentage_points": 0.43562937,
+      "rva": "0xf4de5",
+      "symbol": "rvp9_core::mode_decision::inter::evaluate_candidate_for_filter_with_pred",
+      "total_direct_count": 313
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-prototype-nstep-duplicate-variance-score\\crates\\rvp9-core\\src\\mode_decision\\inter.rs",
+      "line": 4627,
+      "per_run_direct_count": {
+        "run-01": 34,
+        "run-02": 33,
+        "run-03": 43
+      },
+      "population_variance_share_pp_squared": 0.01164498,
+      "range_share_percentage_points": 0.25944411,
+      "rva": "0xf4ddb",
+      "symbol": "rvp9_core::mode_decision::inter::evaluate_candidate_for_filter_with_pred",
+      "total_direct_count": 110
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-prototype-nstep-duplicate-variance-score\\crates\\rvp9-encoder\\src\\lib.rs",
+      "line": 11588,
+      "per_run_direct_count": {
+        "run-01": 38,
+        "run-02": 36,
+        "run-03": 45
+      },
+      "population_variance_share_pp_squared": 0.01233475,
+      "range_share_percentage_points": 0.25906445,
+      "rva": "0x99f7a",
+      "symbol": "rvp9_encoder::pick_and_simulate_inter_encode_partitions::closure$10",
+      "total_direct_count": 119
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-prototype-nstep-duplicate-variance-score\\crates\\rvp9-core\\src\\mode_decision\\inter.rs",
+      "line": 4627,
+      "per_run_direct_count": {
+        "run-01": 33,
+        "run-02": 27,
+        "run-03": 38
+      },
+      "population_variance_share_pp_squared": 0.0119164,
+      "range_share_percentage_points": 0.24765008,
+      "rva": "0xf4e13",
+      "symbol": "rvp9_core::mode_decision::inter::evaluate_candidate_for_filter_with_pred",
+      "total_direct_count": 98
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-prototype-nstep-duplicate-variance-score\\crates\\rvp9-core\\src\\mode_decision\\inter.rs",
+      "line": 4627,
+      "per_run_direct_count": {
+        "run-01": 8,
+        "run-02": 41,
+        "run-03": 24
+      },
+      "population_variance_share_pp_squared": 0.01092979,
+      "range_share_percentage_points": 0.24151883,
+      "rva": "0xf4d4a",
+      "symbol": "rvp9_core::mode_decision::inter::evaluate_candidate_for_filter_with_pred",
+      "total_direct_count": 73
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-prototype-nstep-duplicate-variance-score\\crates\\rvp9-encoder\\src\\lib.rs",
+      "line": 9611,
+      "per_run_direct_count": {
+        "run-01": 9,
+        "run-02": 41,
+        "run-03": 19
+      },
+      "population_variance_share_pp_squared": 0.00868097,
+      "range_share_percentage_points": 0.22816948,
+      "rva": "0x96fea",
+      "symbol": "rvp9_encoder::pick_and_simulate_inter_encode_partitions::closure$10",
+      "total_direct_count": 69
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-prototype-nstep-duplicate-variance-score\\crates\\rvp9-encoder\\src\\pre_analysis.rs",
+      "line": 1207,
+      "per_run_direct_count": {
+        "run-01": 3,
+        "run-02": 15,
+        "run-03": 21
+      },
+      "population_variance_share_pp_squared": 0.00846309,
+      "range_share_percentage_points": 0.22357233,
+      "rva": "0x8873d",
+      "symbol": "rvp9_encoder::pre_analysis::frame_hf_laplacian_sum_rows_with_step",
+      "total_direct_count": 39
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-prototype-nstep-duplicate-variance-score\\crates\\rvp9-core\\src\\mode_decision\\inter.rs",
+      "line": 4627,
+      "per_run_direct_count": {
+        "run-01": 21,
+        "run-02": 7,
+        "run-03": 12
+      },
+      "population_variance_share_pp_squared": 0.00821291,
+      "range_share_percentage_points": 0.22086822,
+      "rva": "0xf4df7",
+      "symbol": "rvp9_core::mode_decision::inter::evaluate_candidate_for_filter_with_pred",
+      "total_direct_count": 40
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-prototype-nstep-duplicate-variance-score\\crates\\rvp9-encoder\\src\\pre_analysis.rs",
+      "line": 1207,
+      "per_run_direct_count": {
+        "run-01": 9,
+        "run-02": 23,
+        "run-03": 27
+      },
+      "population_variance_share_pp_squared": 0.00823775,
+      "range_share_percentage_points": 0.21879632,
+      "rva": "0x88754",
+      "symbol": "rvp9_encoder::pre_analysis::frame_hf_laplacian_sum_rows_with_step",
+      "total_direct_count": 59
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-prototype-nstep-duplicate-variance-score\\crates\\rvp9-core\\src\\mode_decision\\model_rd.rs",
+      "line": 835,
+      "per_run_direct_count": {
+        "run-01": 25,
+        "run-02": 25,
+        "run-03": 34
+      },
+      "population_variance_share_pp_squared": 0.00770759,
+      "range_share_percentage_points": 0.21442759,
+      "rva": "0x100a90",
+      "symbol": "rvp9_core::mode_decision::model_rd::model_rd_for_sb_y_large",
+      "total_direct_count": 84
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-prototype-nstep-duplicate-variance-score\\crates\\rvp9-core\\src\\inter\\scale.rs",
+      "line": 457,
+      "per_run_direct_count": {
+        "run-01": 0,
+        "run-02": 24,
+        "run-03": 1
+      },
+      "population_variance_share_pp_squared": 0.00870435,
+      "range_share_percentage_points": 0.20389092,
+      "rva": "0x1530a0",
+      "symbol": "rvp9_core::inter::scale::build_inter_prediction_from_tight_plane",
+      "total_direct_count": 25
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-prototype-nstep-duplicate-variance-score\\crates\\rvp9-core\\src\\mode_decision\\inter.rs",
+      "line": 3119,
+      "per_run_direct_count": {
+        "run-01": 19,
+        "run-02": 6,
+        "run-03": 6
+      },
+      "population_variance_share_pp_squared": 0.00816256,
+      "range_share_percentage_points": 0.20266497,
+      "rva": "0xe9038",
+      "symbol": "rvp9_core::mode_decision::inter::pick_inter_mode_impl",
+      "total_direct_count": 31
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-prototype-nstep-duplicate-variance-score\\crates\\rvp9-encoder\\src\\pre_analysis.rs",
+      "line": 1207,
+      "per_run_direct_count": {
+        "run-01": 11,
+        "run-02": 21,
+        "run-03": 27
+      },
+      "population_variance_share_pp_squared": 0.00707438,
+      "range_share_percentage_points": 0.19209762,
+      "rva": "0x88725",
+      "symbol": "rvp9_encoder::pre_analysis::frame_hf_laplacian_sum_rows_with_step",
+      "total_direct_count": 59
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-prototype-nstep-duplicate-variance-score\\crates\\rvp9-core\\src\\mv_search\\int_pro_me.rs",
+      "line": 735,
+      "per_run_direct_count": {
+        "run-01": 19,
+        "run-02": 17,
+        "run-03": 5
+      },
+      "population_variance_share_pp_squared": 0.00611415,
+      "range_share_percentage_points": 0.19087094,
+      "rva": "0xce41b",
+      "symbol": "rvp9_core::mv_search::int_pro_me::int_pro_motion_estimation_impl",
+      "total_direct_count": 41
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-prototype-nstep-duplicate-variance-score\\crates\\rvp9-core\\src\\mv_search\\int_pro_me.rs",
+      "line": 735,
+      "per_run_direct_count": {
+        "run-01": 6,
+        "run-02": 23,
+        "run-03": 1
+      },
+      "population_variance_share_pp_squared": 0.00569858,
+      "range_share_percentage_points": 0.18284211,
+      "rva": "0xce5f0",
+      "symbol": "rvp9_core::mv_search::int_pro_me::int_pro_motion_estimation_impl",
+      "total_direct_count": 30
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-prototype-nstep-duplicate-variance-score\\crates\\rvp9-core\\src\\inter\\mv_ref.rs",
+      "line": 939,
+      "per_run_direct_count": {
+        "run-01": 25,
+        "run-02": 18,
+        "run-03": 19
+      },
+      "population_variance_share_pp_squared": 0.00545419,
+      "range_share_percentage_points": 0.18081563,
+      "rva": "0x14cbdd",
+      "symbol": "rvp9_core::inter::mv_ref::find_realtime_refs_nearest_near_mvs_with_context<rvp9_encoder::InterPickerMiGridLookup,2>",
+      "total_direct_count": 62
+    }
+  ],
+  "top_source_line_variability": [
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-prototype-nstep-duplicate-variance-score\\crates\\rvp9-encoder\\src\\lib.rs",
+      "line": 11588,
+      "per_run_direct_count": {
+        "run-01": 687,
+        "run-02": 883,
+        "run-03": 726
+      },
+      "population_variance_share_pp_squared": 0.59887904,
+      "range_share_percentage_points": 1.6695185,
+      "symbol": "rvp9_encoder::pick_and_simulate_inter_encode_partitions::closure$10",
+      "total_direct_count": 2296,
+      "unique_rvas": 639
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-prototype-nstep-duplicate-variance-score\\crates\\rvp9-core\\src\\mode_decision\\inter.rs",
+      "line": 4627,
+      "per_run_direct_count": {
+        "run-01": 638,
+        "run-02": 868,
+        "run-03": 684
+      },
+      "population_variance_share_pp_squared": 0.30899058,
+      "range_share_percentage_points": 1.21243771,
+      "symbol": "rvp9_core::mode_decision::inter::evaluate_candidate_for_filter_with_pred",
+      "total_direct_count": 2190,
+      "unique_rvas": 234
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-prototype-nstep-duplicate-variance-score\\crates\\rvp9-encoder\\src\\pre_analysis.rs",
+      "line": 1207,
+      "per_run_direct_count": {
+        "run-01": 100,
+        "run-02": 165,
+        "run-03": 179
+      },
+      "population_variance_share_pp_squared": 0.17232771,
+      "range_share_percentage_points": 0.91211471,
+      "symbol": "rvp9_encoder::pre_analysis::frame_hf_laplacian_sum_rows_with_step",
+      "total_direct_count": 444,
+      "unique_rvas": 33
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-prototype-nstep-duplicate-variance-score\\crates\\rvp9-core\\src\\dsp\\x86_64\\lpf_vertical_16_avx2.rs",
+      "line": 1046,
+      "per_run_direct_count": {
+        "run-01": 209,
+        "run-02": 243,
+        "run-03": 178
+      },
+      "population_variance_share_pp_squared": 0.09600643,
+      "range_share_percentage_points": 0.72561914,
+      "symbol": "rvp9_core::dsp::x86_64::lpf_vertical_16_avx2::lpf_vertical_16_avx2",
+      "total_direct_count": 630,
+      "unique_rvas": 242
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-prototype-nstep-duplicate-variance-score\\crates\\rvp9-core\\src\\inter\\scale.rs",
+      "line": 499,
+      "per_run_direct_count": {
+        "run-01": 88,
+        "run-02": 62,
+        "run-03": 91
+      },
+      "population_variance_share_pp_squared": 0.0888882,
+      "range_share_percentage_points": 0.64802482,
+      "symbol": "rvp9_core::inter::scale::build_inter_prediction_from_tight_plane",
+      "total_direct_count": 241,
+      "unique_rvas": 3
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-prototype-nstep-duplicate-variance-score\\crates\\rvp9-core\\src\\mode_decision\\inter.rs",
+      "line": 3119,
+      "per_run_direct_count": {
+        "run-01": 267,
+        "run-02": 411,
+        "run-03": 322
+      },
+      "population_variance_share_pp_squared": 0.05964112,
+      "range_share_percentage_points": 0.55054728,
+      "symbol": "rvp9_core::mode_decision::inter::pick_inter_mode_impl",
+      "total_direct_count": 1000,
+      "unique_rvas": 391
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-prototype-nstep-duplicate-variance-score\\crates\\rvp9-core\\src\\mode_decision\\model_rd.rs",
+      "line": 835,
+      "per_run_direct_count": {
+        "run-01": 257,
+        "run-02": 404,
+        "run-03": 232
+      },
+      "population_variance_share_pp_squared": 0.05988049,
+      "range_share_percentage_points": 0.51978619,
+      "symbol": "rvp9_core::mode_decision::model_rd::model_rd_for_sb_y_large",
+      "total_direct_count": 893,
+      "unique_rvas": 131
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-prototype-nstep-duplicate-variance-score\\crates\\rvp9-core\\src\\dsp\\x86_64\\sad_avx2.rs",
+      "line": 198,
+      "per_run_direct_count": {
+        "run-01": 143,
+        "run-02": 278,
+        "run-03": 167
+      },
+      "population_variance_share_pp_squared": 0.03450506,
+      "range_share_percentage_points": 0.45277906,
+      "symbol": "rvp9_core::dsp::x86_64::sad_avx2::vpx_sad64x64_avx2",
+      "total_direct_count": 588,
+      "unique_rvas": 58
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-prototype-nstep-duplicate-variance-score\\crates\\rvp9-core\\src\\inter\\scale.rs",
+      "line": 457,
+      "per_run_direct_count": {
+        "run-01": 2,
+        "run-02": 56,
+        "run-03": 4
+      },
+      "population_variance_share_pp_squared": 0.04258594,
+      "range_share_percentage_points": 0.44904677,
+      "symbol": "rvp9_core::inter::scale::build_inter_prediction_from_tight_plane",
+      "total_direct_count": 62,
+      "unique_rvas": 9
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-prototype-nstep-duplicate-variance-score\\crates\\rvp9-core\\src\\mv_search\\int_pro_me.rs",
+      "line": 735,
+      "per_run_direct_count": {
+        "run-01": 171,
+        "run-02": 314,
+        "run-03": 180
+      },
+      "population_variance_share_pp_squared": 0.03500792,
+      "range_share_percentage_points": 0.40796953,
+      "symbol": "rvp9_core::mv_search::int_pro_me::int_pro_motion_estimation_impl",
+      "total_direct_count": 665,
+      "unique_rvas": 117
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-prototype-nstep-duplicate-variance-score\\crates\\rvp9-encoder\\src\\lib.rs",
+      "line": 12115,
+      "per_run_direct_count": {
+        "run-01": 92,
+        "run-02": 126,
+        "run-03": 71
+      },
+      "population_variance_share_pp_squared": 0.0189371,
+      "range_share_percentage_points": 0.33685246,
+      "symbol": "rvp9_encoder::pick_and_simulate_inter_encode_partitions::closure$10",
+      "total_direct_count": 289,
+      "unique_rvas": 112
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-prototype-nstep-duplicate-variance-score\\crates\\rvp9-core\\src\\loopfilter\\apply.rs",
+      "line": 1905,
+      "per_run_direct_count": {
+        "run-01": 97,
+        "run-02": 133,
+        "run-03": 80
+      },
+      "population_variance_share_pp_squared": 0.01416266,
+      "range_share_percentage_points": 0.29061906,
+      "symbol": "rvp9_core::loopfilter::apply::filter_selectively_vert_row2_inner",
+      "total_direct_count": 310,
+      "unique_rvas": 148
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-prototype-nstep-duplicate-variance-score\\crates\\rvp9-core\\src\\dsp\\x86_64\\subpel_variance_avx2.rs",
+      "line": 412,
+      "per_run_direct_count": {
+        "run-01": 30,
+        "run-02": 52,
+        "run-03": 53
+      },
+      "population_variance_share_pp_squared": 0.01353657,
+      "range_share_percentage_points": 0.26484707,
+      "symbol": "rvp9_core::dsp::x86_64::subpel_variance_avx2::sub_pixel_variance_avx2",
+      "total_direct_count": 135,
+      "unique_rvas": 43
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-prototype-nstep-duplicate-variance-score\\crates\\rvp9-encoder\\src\\lib.rs",
+      "line": 11471,
+      "per_run_direct_count": {
+        "run-01": 361,
+        "run-02": 566,
+        "run-03": 403
+      },
+      "population_variance_share_pp_squared": 0.01338286,
+      "range_share_percentage_points": 0.25057326,
+      "symbol": "rvp9_encoder::pick_and_simulate_inter_encode_partitions::closure$10",
+      "total_direct_count": 1330,
+      "unique_rvas": 541
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-prototype-nstep-duplicate-variance-score\\crates\\rvp9-core\\src\\mode_decision\\inter.rs",
+      "line": 2284,
+      "per_run_direct_count": {
+        "run-01": 23,
+        "run-02": 22,
+        "run-03": 34
+      },
+      "population_variance_share_pp_squared": 0.00959312,
+      "range_share_percentage_points": 0.23991395,
+      "symbol": "rvp9_core::mode_decision::inter::pick_inter_mode_impl",
+      "total_direct_count": 79,
+      "unique_rvas": 62
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-prototype-nstep-duplicate-variance-score\\crates\\rvp9-encoder\\src\\lib.rs",
+      "line": 11563,
+      "per_run_direct_count": {
+        "run-01": 55,
+        "run-02": 114,
+        "run-03": 63
+      },
+      "population_variance_share_pp_squared": 0.00995991,
+      "range_share_percentage_points": 0.23426747,
+      "symbol": "rvp9_encoder::pick_and_simulate_inter_encode_partitions::closure$10",
+      "total_direct_count": 232,
+      "unique_rvas": 94
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-prototype-nstep-duplicate-variance-score\\crates\\rvp9-core\\src\\mode_decision\\inter.rs",
+      "line": 5238,
+      "per_run_direct_count": {
+        "run-01": 88,
+        "run-02": 160,
+        "run-03": 90
+      },
+      "population_variance_share_pp_squared": 0.00985866,
+      "range_share_percentage_points": 0.22947113,
+      "symbol": "rvp9_core::mode_decision::inter::build_inter_prediction",
+      "total_direct_count": 338,
+      "unique_rvas": 179
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-prototype-nstep-duplicate-variance-score\\crates\\rvp9-encoder\\src\\lib.rs",
+      "line": 8049,
+      "per_run_direct_count": {
+        "run-01": 17,
+        "run-02": 46,
+        "run-03": 13
+      },
+      "population_variance_share_pp_squared": 0.00919017,
+      "range_share_percentage_points": 0.22759735,
+      "symbol": "rvp9_encoder::pick_and_simulate_inter_encode_partitions::closure$10",
+      "total_direct_count": 76,
+      "unique_rvas": 40
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-prototype-nstep-duplicate-variance-score\\crates\\rvp9-encoder\\src\\lib.rs",
+      "line": 9611,
+      "per_run_direct_count": {
+        "run-01": 10,
+        "run-02": 42,
+        "run-03": 20
+      },
+      "population_variance_share_pp_squared": 0.00831942,
+      "range_share_percentage_points": 0.22331558,
+      "symbol": "rvp9_encoder::pick_and_simulate_inter_encode_partitions::closure$10",
+      "total_direct_count": 72,
+      "unique_rvas": 3
+    },
+    {
+      "file": "D:\\worktrees\\rvp9-2\\20260926-TSK-HUM-prototype-nstep-duplicate-variance-score\\crates\\rvp9-core\\src\\inter\\mv_ref.rs",
+      "line": 881,
+      "per_run_direct_count": {
+        "run-01": 46,
+        "run-02": 88,
+        "run-03": 42
+      },
+      "population_variance_share_pp_squared": 0.0082142,
+      "range_share_percentage_points": 0.22035926,
+      "symbol": "rvp9_core::inter::mv_ref::find_realtime_refs_nearest_near_mvs_with_context<rvp9_encoder::InterPickerMiGridLookup,2>",
+      "total_direct_count": 176,
+      "unique_rvas": 25
+    }
+  ],
+  "total_direct_count": 27228,
+  "unique_rvas": 9936
+}
