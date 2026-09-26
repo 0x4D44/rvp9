@@ -5,6 +5,7 @@ Distilled, non-obvious gotchas future sessions need — dated one-liners.
 Durable project facts/conventions belong in `CLAUDE.md` / `AGENTS.md`, not here.
 Hard cap: 20 entries.
 
+- 2026-09-26: 84–89% zero Tx8 groups still made an SSE2 zero branch slower on CPU6 (`quantize_metrics_sse2.rs:metrics_inner`).
 - 2026-09-26: ETW sample intervals change; check `xperf -ProfInt` before comparing profile counts (`capture-tree-repeats.ps1`).
 - 2026-09-26: Cross-codec SVF centres differ; count search entries directly (`sub_pixel.rs:subpel_search_census_rows`).
 - 2026-09-26: A hot TLS source line was denoiser bookkeeping; resolve exact RVAs before editing (`inter.rs:2428`).

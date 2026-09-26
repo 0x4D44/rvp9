@@ -1,0 +1,122 @@
+diff --git a/crates/rvp9-core/src/dsp/x86_64/quantize_metrics_sse2.rs b/crates/rvp9-core/src/dsp/x86_64/quantize_metrics_sse2.rs
+index 6cb717f7..309a5fcb 100644
+--- a/crates/rvp9-core/src/dsp/x86_64/quantize_metrics_sse2.rs
++++ b/crates/rvp9-core/src/dsp/x86_64/quantize_metrics_sse2.rs
+@@ -163,0 +164,12 @@ impl MetricAccumulator {
++    #[inline]
++    #[target_feature(enable = "sse2")]
++    unsafe fn add_zero(&mut self, coeff: __m128i) {
++        let zero = _mm_setzero_si128();
++        let pair_squares = _mm_madd_epi16(coeff, coeff);
++        // Two i16::MIN squares can set bit 31; widen the pair as unsigned.
++        self.error_even_lo =
++            _mm_add_epi64(self.error_even_lo, _mm_unpacklo_epi32(pair_squares, zero));
++        self.error_odd_lo =
++            _mm_add_epi64(self.error_odd_lo, _mm_unpackhi_epi32(pair_squares, zero));
++    }
++
+@@ -210,3 +222,7 @@ unsafe fn metrics_inner(
+-        let q = restore_sign(magnitude, values);
+-        let dq = _mm_mullo_epi16(q, dequant_values);
+-        accumulator.add(values, dq, magnitude);
++        if _mm_movemask_epi8(_mm_cmpeq_epi16(magnitude, _mm_setzero_si128())) == 0xffff {
++            accumulator.add_zero(values);
++        } else {
++            let q = restore_sign(magnitude, values);
++            let dq = _mm_mullo_epi16(q, dequant_values);
++            accumulator.add(values, dq, magnitude);
++        }
+@@ -492,0 +509,93 @@ mod tests {
++    #[target_feature(enable = "sse2")]
++    unsafe fn metrics_without_zero_branch(
++        coeff: &[i16; 64],
++        round: &[i16; 2],
++        quant: &[i16; 2],
++        dequant: &[i16; 2],
++    ) -> (HadamardQuantMetrics, usize) {
++        let mut accumulator = MetricAccumulator::new();
++        let mut zero_groups = 0;
++        for offset in (0..64).step_by(8) {
++            // SAFETY: Every eight-lane load lies within the 64-element array.
++            let values = unsafe { _mm_loadu_si128(coeff.as_ptr().add(offset).cast()) };
++            let (round_values, quant_values, dequant_values) = if offset == 0 {
++                (dc_ac(round), dc_ac(quant), dc_ac(dequant))
++            } else {
++                (
++                    _mm_set1_epi16(round[1]),
++                    _mm_set1_epi16(quant[1]),
++                    _mm_set1_epi16(dequant[1]),
++                )
++            };
++            let magnitude = quantize_fp_magnitude(values, round_values, quant_values);
++            zero_groups += usize::from(
++                _mm_movemask_epi8(_mm_cmpeq_epi16(magnitude, _mm_setzero_si128())) == 0xffff,
++            );
++            let q = restore_sign(magnitude, values);
++            let dq = _mm_mullo_epi16(q, dequant_values);
++            accumulator.add(values, dq, magnitude);
++        }
++        (accumulator.finish(), zero_groups)
++    }
++
++    #[test]
++    fn zero_group_shortcut_matches_old_path_and_scalar() {
++        let small = core::array::from_fn(|i| if i % 3 == 0 { 1 } else { -1 });
++        let mut mixed = small;
++        mixed[8] = i16::MAX;
++        mixed[15] = i16::MIN;
++        mixed[32] = 16_320;
++        mixed[39] = -16_320;
++        let extremes = core::array::from_fn(|i| if i % 2 == 0 { i16::MIN } else { i16::MAX });
++        for q_index in [0, 31, 127, 255] {
++            let quantizer = init_plane_quantizers(q_index, QuantizerDeltas::Y);
++            for (name, coeff, expected_zero_groups) in [
++                ("all zero", [0; 64], 8),
++                ("small", small, 8),
++                ("mixed", mixed, 6),
++                ("extremes", extremes, 0),
++            ] {
++                // SAFETY: x86-64 guarantees SSE2 and the input has 64 coefficients.
++                let (old, zero_groups) = unsafe {
++                    metrics_without_zero_branch(
++                        &coeff,
++                        &quantizer.round_fp,
++                        &quantizer.quant_fp,
++                        &quantizer.dequant,
++                    )
++                };
++                assert_eq!(zero_groups, expected_zero_groups, "{name}, q={q_index}");
++                let actual = vp9_quantize_fp_i16_metrics_sse2(
++                    &coeff,
++                    64,
++                    &quantizer.round_fp,
++                    &quantizer.quant_fp,
++                    &quantizer.dequant,
++                );
++                assert_eq!(actual, old, "old path mismatch: {name}, q={q_index}");
++                assert_eq!(
++                    actual,
++                    scalar_metrics(&coeff, TxSize::Tx8x8, q_index),
++                    "scalar mismatch: {name}, q={q_index}"
++                );
++            }
++        }
++
++        // Zero quantization also drives i16::MIN through the zero-group
++        // square path, where a pair must be widened as unsigned u32.
++        let zero_quant = [0; 2];
++        // SAFETY: x86-64 guarantees SSE2 and the input has 64 coefficients.
++        let (old, zero_groups) = unsafe {
++            metrics_without_zero_branch(&extremes, &zero_quant, &zero_quant, &zero_quant)
++        };
++        let actual =
++            vp9_quantize_fp_i16_metrics_sse2(&extremes, 64, &zero_quant, &zero_quant, &zero_quant);
++        let expected_error = extremes
++            .into_iter()
++            .map(|coeff| i64::from(coeff) * i64::from(coeff))
++            .sum::<i64>();
++        assert_eq!(zero_groups, 8);
++        assert_eq!(actual, old);
++        assert_eq!(actual.error, expected_error);
++    }
++
