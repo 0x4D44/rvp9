@@ -7,6 +7,7 @@ they do **not** measure a cache or update the paired RVP9/libvpx performance rat
 
 | 60-frame clip | Target-process sampled rows | Retained RVP9 EXE rows | AVX2 sub-pixel-family rows | Full two-pass horizontal first-pass rows | Share of process samples |
 | --- | ---: | ---: | ---: | ---: | ---: |
+| Ducks | 2,224 | 1,994 | 69 | 19 | 0.85% |
 | Tree | 1,611 | 1,375 | 219 | 45 | 2.79% |
 | Town | 1,457 | 1,232 | 192 | 40 | 2.75% |
 
@@ -56,6 +57,27 @@ unassigned.
 | Variance | 60 (33) | 58 (27) |
 | Ambiguous setup | 5 (5) | 0 |
 | **Total** | **219 (123)** | **192 (97)** |
+
+A later exact-image Ducks capture adds **19 (15 RVAs)** full two-pass
+horizontal, **6 (5)** full vertical, **19 (16)** vertical-only, **15 (11)**
+horizontal-only, **6 (4)** variance, and **4 (3)** ambiguous wrapper/setup
+samples. These sum to 69 (54 unique RVAs). The hash-matched PE/PDB and the
+same instruction intervals and wrapper-boundary method were used. The Ducks
+ETL SHA-256 is `09fd6209ba3be5926458a34b8005669f6e102495bd2e01cb54185ffbe3e8b598`;
+the pinned output IVF SHA-256 is
+`8d0458b89ca00cbfb96961e1c16e6018bf88b18790ea7e9d6eeb8c80bd659089`.
+The capture had zero lost events/buffers despite concurrent unrelated
+`px-server` tests. Its one-off CPU/wall time is not a performance comparison.
+
+The one-entry reuse census found immediate different-vertical-phase repeats in
+only 8.62% of Ducks, 13.25% of Tree, and 12.93% of Town two-dimensional
+calls. Even eliminating *all* horizontal first-pass work would have a sampled
+self-work ceiling of 0.85%/2.79%/2.75%, respectively. Multiplying those shares
+by call hit rates gives just 0.07%/0.37%/0.36% as a rough uniform-cost
+illustration, **not** a bound: block shapes and per-call costs vary. A cache
+would also pay lookup and invalidation on misses. This does not justify adding
+cross-probe state without stronger cost-weighted evidence; no cache prototype
+was made.
 
 The generic inlined routine's RVA intervals are: `0x6a3c0–0x6a712` full
 horizontal, `0x6a713–0x6aa2f` vertical-only, `0x6aa30–0x6acb7` full vertical,
