@@ -1,0 +1,7 @@
+deltic.exe : RVP9_DIAG_SAD4D_EARLY batched_16x16=400826 all_four_prefix4_ge_best=3962
+At D:\worktrees\rvp9-2\20260926-TSK-HUM-measure-nstep-sad4d-early-exit-opportuni\.scratch\run-sad4d-census.ps1:26
+char:13
++             & deltic timeout 120 $encoder @encodeArgs 2> $stderrPath
++             ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (RVP9_DIAG_SAD4D...x4_ge_best=3962:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
