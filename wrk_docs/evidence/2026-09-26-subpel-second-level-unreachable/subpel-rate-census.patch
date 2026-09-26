@@ -1,0 +1,171 @@
+diff --git a/crates/rvp9-cli/src/bin/rvp9enc.rs b/crates/rvp9-cli/src/bin/rvp9enc.rs
+index 79537766..bd530cdb 100644
+--- a/crates/rvp9-cli/src/bin/rvp9enc.rs
++++ b/crates/rvp9-cli/src/bin/rvp9enc.rs
+@@ -908,7 +908,22 @@ fn main() -> ExitCode {
+     }
+ 
+     match run(&opts, &positionals) {
+-        Ok(()) => ExitCode::SUCCESS,
++        Ok(()) => {
++            if std::env::var_os("RVP9_DIAG_SUBPEL_RATE").is_some() {
++                for (block_idx, [attempts, valid, rate_rejects]) in
++                    rvp9_core::mv_search::sub_pixel::second_level_rate_reject_census()
++                        .into_iter()
++                        .enumerate()
++                {
++                    if attempts != 0 {
++                        eprintln!(
++                            "subpel_rate block={block_idx} attempts={attempts} valid={valid} rate_rejects={rate_rejects}"
++                        );
++                    }
++                }
++            }
++            ExitCode::SUCCESS
++        }
+         Err(e) => {
+             eprintln!("rvp9enc: {e}");
+             ExitCode::FAILURE
+diff --git a/crates/rvp9-core/src/mv_search/sub_pixel.rs b/crates/rvp9-core/src/mv_search/sub_pixel.rs
+index 35b53bfa..931801a2 100644
+--- a/crates/rvp9-core/src/mv_search/sub_pixel.rs
++++ b/crates/rvp9-core/src/mv_search/sub_pixel.rs
+@@ -40,6 +40,23 @@ use crate::inter::mv::use_mv_hp;
+ use crate::mode_info::Mv;
+ use crate::mv_search::full_pixel::{FullPixelCostList, PlaneRef, mv_err_cost};
+ use crate::mv_search::mv_limits::{MvLimits, set_subpel_mv_search_range};
++use std::sync::atomic::{AtomicU64, Ordering};
++
++static SECOND_LEVEL_ATTEMPTS: [AtomicU64; 13] = [const { AtomicU64::new(0) }; 13];
++static SECOND_LEVEL_VALID: [AtomicU64; 13] = [const { AtomicU64::new(0) }; 13];
++static SECOND_LEVEL_RATE_REJECTS: [AtomicU64; 13] = [const { AtomicU64::new(0) }; 13];
++
++/// Diagnostic counts by VP9 block-size index: attempted, MV-valid, and
++/// candidates whose MV cost alone cannot beat the current best score.
++pub fn second_level_rate_reject_census() -> [[u64; 3]; 13] {
++    std::array::from_fn(|i| {
++        [
++            SECOND_LEVEL_ATTEMPTS[i].load(Ordering::Relaxed),
++            SECOND_LEVEL_VALID[i].load(Ordering::Relaxed),
++            SECOND_LEVEL_RATE_REJECTS[i].load(Ordering::Relaxed),
++        ]
++    })
++}
+ 
+ /// Sub-pel-only kernel signature: `(src, src_stride, xoffset,
+ /// yoffset, reference, ref_stride) -> (variance, sse)`.
+@@ -1207,7 +1224,7 @@ fn second_level_checks(
+         // Diagonal won.
+         let kr = br_in - tr;
+         let kc = bc_in - tc;
+-        let _ = check(
++        let _ = check_second_level(
+             tr + kr,
+             tc + 2 * kc,
+             br,
+@@ -1219,7 +1236,7 @@ fn second_level_checks(
+             bh,
+             subpel_limits,
+         );
+-        let _ = check(
++        let _ = check_second_level(
+             tr + 2 * kr,
+             tc + kc,
+             br,
+@@ -1234,7 +1251,7 @@ fn second_level_checks(
+     } else if tr == br_in && tc != bc_in {
+         // Horizontal cardinal won.
+         let kc = bc_in - tc;
+-        let _ = check(
++        let _ = check_second_level(
+             tr + hstep,
+             tc + 2 * kc,
+             br,
+@@ -1246,7 +1263,7 @@ fn second_level_checks(
+             bh,
+             subpel_limits,
+         );
+-        let _ = check(
++        let _ = check_second_level(
+             tr - hstep,
+             tc + 2 * kc,
+             br,
+@@ -1260,7 +1277,7 @@ fn second_level_checks(
+         );
+         // whichdir 0/1: up-direction; 2/3: down-direction.
+         let extra_r = if whichdir < 2 { tr + hstep } else { tr - hstep };
+-        let _ = check(
++        let _ = check_second_level(
+             extra_r,
+             tc + kc,
+             br,
+@@ -1275,7 +1292,7 @@ fn second_level_checks(
+     } else if tr != br_in && tc == bc_in {
+         // Vertical cardinal won.
+         let kr = br_in - tr;
+-        let _ = check(
++        let _ = check_second_level(
+             tr + 2 * kr,
+             tc + hstep,
+             br,
+@@ -1287,7 +1304,7 @@ fn second_level_checks(
+             bh,
+             subpel_limits,
+         );
+-        let _ = check(
++        let _ = check_second_level(
+             tr + 2 * kr,
+             tc - hstep,
+             br,
+@@ -1305,7 +1322,7 @@ fn second_level_checks(
+         } else {
+             tc - hstep
+         };
+-        let _ = check(
++        let _ = check_second_level(
+             tr + kr,
+             extra_c,
+             br,
+@@ -1322,6 +1339,42 @@ fn second_level_checks(
+     // macro silently no-ops here).
+ }
+ 
++#[allow(clippy::too_many_arguments)]
++fn check_second_level(
++    r: i32,
++    c: i32,
++    br: &mut i32,
++    bc: &mut i32,
++    besterr: &mut u32,
++    params: &SubPixelSearchParams<'_>,
++    svf: SvfFn,
++    bw: usize,
++    bh: usize,
++    subpel_limits: &MvLimits,
++) -> u32 {
++    let idx = params.block_size.idx();
++    SECOND_LEVEL_ATTEMPTS[idx].fetch_add(1, Ordering::Relaxed);
++    if r >= subpel_limits.row_min
++        && r <= subpel_limits.row_max
++        && c >= subpel_limits.col_min
++        && c <= subpel_limits.col_max
++    {
++        SECOND_LEVEL_VALID[idx].fetch_add(1, Ordering::Relaxed);
++        let rate = mv_err_cost(
++            r as i16,
++            c as i16,
++            params.ref_mv.row,
++            params.ref_mv.col,
++            params.error_per_bit,
++            params.mv_costs,
++        );
++        if rate >= *besterr {
++            SECOND_LEVEL_RATE_REJECTS[idx].fetch_add(1, Ordering::Relaxed);
++        }
++    }
++    check(r, c, br, bc, besterr, params, svf, bw, bh, subpel_limits)
++}
++
+ /// CHECK_BETTER expansion: compute (variance + cost) at `(r, c)`,
+ /// update `(br, bc, besterr)` if better. Returns the candidate's
+ /// score (or `u32::MAX` if out of bounds).
