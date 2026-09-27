@@ -1,0 +1,17 @@
+# Controlled integrated-PGO sub-pel IP recapture
+
+Three fresh Ducks captures of the **same integrated production-PGO image** resolve the earlier sampled-IP anomaly. RVA `0x19b478` contributed 169, 222 and 220 direct samples, or 1.142%, 1.208% and 1.181% of the respective EXE totals. The five-run survey had one 10-sample outlier followed by four 131–238-sample captures. This repeat supports a stable hot region, not a removable-CPU estimate or a speed gain.
+
+The encoder EXE SHA-256 was `3c294166213bce7dc707734bf6fbe86e2387b23ef533c16ed16acf4780aaf3ad`; its paired PDB was `c41525ee2ccd56d6bda7e4e9e0880452437d5ac7981bc2af4f1b7c34a71943f8`. Each run checked source HEAD `75c23fe224eedb26c9a014040c42b67e3a1b5fa1`, pinned Ducks input `6d2d866613f7a8c7b11bd2c27374f7637cd4a0748ff6fea4a671b23cfbcde6d7`, and complete output IVF `8d0458b89ca00cbfb96961e1c16e6018bf88b18790ea7e9d6eeb8c80bd659089`. All encodes exited zero. WPR was idle before each capture and after each stop. `xperf -ProfInt` read 1221 ticks (0.1221 ms) before and after every capture; no in-recording interval read was made, so this does not prove WPR held it unchanged inside the trace. `xperf -a tracestats` reported zero lost buffers and events for all three ETLs.
+
+| Run | Direct EXE samples | `0x19b478` | `sub_pixel::check` symbol | `sub_pixel::try_subpel_cost` symbol | ETL SHA-256 |
+| --- | ---: | ---: | ---: | ---: | --- |
+| A | 14,802 | 169 (1.142%) | 360 | 117 | `0c88b88551a4c07c8de0440fc03e103169792891dafe92917e98d935befbf6df` |
+| B | 18,379 | 222 (1.208%) | 417 | 135 | `e4b0a842adc28b5c96c7368f7102aaaa5d6f1b9d533a953e7d621bb74f03179e` |
+| C | 18,631 | 220 (1.181%) | 410 | 150 | `141abd5cd62faacebd3b73f20946603a01781bb54a5e2ea3790b48fa0efd2427` |
+
+The exact EXE disassembly maps RVA `0x19b478` to `addq $0x20, %rcx`, immediately after an AVX2 `vmovdqu` stores one row of widened horizontal bilinear output. The loop widens two 16-byte source loads, applies the two x-phase tap weights, rounds, and writes 16 `i16` values for each of 17 rows. It is the two-axis, 16×16 AVX2 sub-pixel-variance first pass in `crates/rvp9-core/src/dsp/x86_64/subpel_variance_avx2.rs:bilinear_to_u8_temp`, inlined under `sub_pixel::check` and attributed by PDB to `sub_pixel.rs:1341`. Its second pass reads that intermediate buffer and writes a byte temp for variance. The sampled increment is loop bookkeeping, not a claim that removing an increment saves 1.18% CPU.
+
+A bounded next experiment is to compute the same two rounded bilinear stages with a rolling pair of 16-wide intermediate rows, then write each completed output row to the existing temp. This would avoid filling and rereading the full widened `fdata` buffer for two-axis 16×16 calls. It must preserve exact temp bytes, variance, source bounds and panic behavior; first prove a focused differential red/green on native AVX2, then check whole-encoder output and paired PGO CPU. The prior [checked-source-footprint prototype](../2026-09-27-subpel-footprint-rejected/README.md) made a kernel faster yet regressed whole-encoder CPU, so a microbenchmark alone cannot retain this change.
+
+The exact capture, extraction and summary adapters, three ETLs, raw IP maps, per-run capture logs and `xperf` trace statistics remain in `D:/worktrees/rvp9-2/20260927-TSK-HUM-fresh-integrated-production-pgo-direct-s/.scratch/controlled-subpel-ip-{a,b,c}` on Crucible. Bulky traces are not committed. The integrated RVP9/libvpx equal-clip process-CPU ratio remains **1.057638×**; no code changed in this experiment.
