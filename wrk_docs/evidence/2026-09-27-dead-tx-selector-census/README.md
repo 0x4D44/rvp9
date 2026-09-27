@@ -31,3 +31,15 @@ Follow-up diagnostic commit `3e66e8f0`, archived in `alt/0001-diag-enc-count-alt
 | Old-Town | 7,509 | 7,188 | 321 | 95.73% |
 
 Every clip again produced the canonical IVF SHA-256 with zero exit status. `alt/` holds 59 raw counter lines per clip and the matching binary/input/output identities; `run-dead-selector-alt.ps1` records the exact command. The new AArch64 test was deliberately red before restoration; all three focused diagnostic tests passed on AArch64 and native Crucible x86. The local three-frame diagnostic on/off IVF was byte-identical. This is a strong *eligibility* result for a dual-TX chroma proof, not a process-CPU gain: an early production probe must also pay chroma prediction, TX8/TX4 work, fallback and ownership costs. The three diagnostic encodes' unpaired process CPU is not a speed comparison and does not change 1.099305× parity.
+
+## Timed alternative-TX probe: partial cost only
+
+Diagnostic commit `c9336c5a`, archived in `timed/0001-diag-enc-time-alternate-chroma-TX-probe.patch.gz`, added a timer around the *post-emit* alternative-TX quant probe. Two runs of the same plain-release diagnostic binary on Crucible gave these sums across 59 inter frames per clip:
+
+| Clip | Run 1 dead-selector wall time | Run 1 alt-probe wall time | Run 2 dead-selector wall time | Run 2 alt-probe wall time |
+| --- | ---: | ---: | ---: | ---: |
+| Ducks | 295.102 ms | 163.323 ms | 219.762 ms | 117.885 ms |
+| In-to-Tree | 50.493 ms | 20.794 ms | 39.603 ms | 16.247 ms |
+| Old-Town | 7.110 ms | 3.324 ms | 6.645 ms | 3.036 ms |
+
+The probe cost was about 54–55% of the dead-selector timer on Ducks, 41% on Tree, and 45–47% on Town. The eligible and zero-EOB counts were identical in both runs to the table above. All six outputs matched the canonical IVF hashes. `timed/run-01/` and `timed/run-02/` retain raw stderr, identities and results; `timed/run-02.ps1` is the second run's exact command. Unpaired process CPU varied substantially (Ducks 3.547 vs 2.359 s), so neither run is a speed comparison. These instrumented wall timers exclude early chroma prediction, the chosen-TX proof, fallback and scratch ownership. They price only one component of a proposed path; no product CPU gain or new parity number has been measured.
