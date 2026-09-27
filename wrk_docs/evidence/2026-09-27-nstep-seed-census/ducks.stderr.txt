@@ -1,0 +1,1 @@
+[NSTEP_CENSUS] nstep_calls=629530 diamond_entries=1903948 repeated_restart_entries=1274418 initial_seed_sad_evaluations=1903948 num00_skipped_restarts=122575

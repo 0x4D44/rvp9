@@ -1,0 +1,7 @@
+nstep_calls: every entry to nstep_search_sad
+diamond_entries: every entry to diamond_search_sad_from_step, including the first start and later restarts
+repeated_restart_entries: each NSTEP diamond restart actually entered after the first; every such entry recomputes the identical clamped initial seed
+initial_seed_sad_evaluations: every diamond entry reaching the initial sad_at_from_source attempt; diagnostic placement makes this equal diamond_entries
+num00_skipped_restarts: restart-loop iterations skipped by a nonzero num00 countdown
+reusable_identical_seed_evaluations: repeated_restart_entries; these use the same params/start_mv seed with only start_step changed
+timing: diagnostic only; no CPU timing is valid
