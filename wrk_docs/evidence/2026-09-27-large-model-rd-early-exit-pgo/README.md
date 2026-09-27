@@ -1,0 +1,14 @@
+# Large-model RD TX-cell early exit: exact but slower
+
+The [operation census](../2026-09-27-large-model-rd-skip-loop-census/README.md) found that an early break could avoid 29.90% of Tree and 23.31% of Town large-model TX-cell checks, but only 3.25% of Ducks checks. A clean prototype on local commit `78846baa` stops the TX-cell loop only after both monotone AC/DC skip tests fail. It does not reorder or change earlier calculations. A test-only full-loop variant compared all six `ModelRdResult` fields across 32×32/64×64 blocks, TX8/TX16/TX32 modes, and both-fail/one-fail/flat patterns. Disabling the break made the positive-visit assertion fail; restoring it passed. All 11 focused large-model tests, crate check, and formatting passed on AArch64 and native Crucible x86-64. The prototype code branch is unpushed.
+
+Crucible copied the exact prototype `model_rd.rs` SHA-256 `4417907c441e6b33ef26d0768a77a0f030d465ddf11df93ec7338731d20c3300` into a separate worktree based on integrated `9b4a35f9`. The unchanged [28-row/60-frame production-PGO recipe](../../../scripts/build-encoder-pgo.sh) yielded profile SHA-256 `e94b593f462016bd0239f1b6100b4ee1dd082d1d76657c34d7702306517a8f7e` and candidate EXE SHA-256 `563a9a7e9e40b66ff4d3bcfd456be74d7a70a1a8b43046d96e8c7389f01ccc98`. Control was the exact integrated production-PGO EXE SHA-256 `3c294166213bce7dc707734bf6fbe86e2387b23ef533c16ed16acf4780aaf3ad`. The [build manifest](build-manifest.txt), [build wrapper](build-large-model-pgo.sh), and [paired runner](screen-large-model.ps1) preserve their inputs and commands.
+
+The paired runner checked both EXEs and canonical 60-frame 1080p inputs, warmed each arm, alternated arm and clip order, retained every pair, and required each encode's canonical IVF hash. Crucible's quiet lease was granted with two pre-existing heavy-build processes, but host load was 4% immediately before the lease. The two screens ran under that lease; no pair was discarded. CPU is process CPU, not wall time.
+
+| Candidate/integrated-control CPU | Ducks | Tree | Town | Equal-clip |
+| --- | ---: | ---: | ---: | ---: |
+| Screen 1, 5 pairs/clip | 1.045805 | 1.009300 | 1.030434 | **1.028404** |
+| Screen 2, 15 pairs/clip | 1.044841 | 1.014917 | 1.015976 | **1.025152** |
+
+All 132 encodes (including 12 warmups) exited zero and matched canonical output hashes. The raw, summary, and binary/input identity CSVs for each screen are retained here. The measured regression is larger than the remaining parity gap and repeats on all three clips. The census's avoidable-cell percentage was not a whole-encoder speed estimate: saved loop work lost to the changed control flow and/or different PGO/code layout. **Do not integrate this prototype.** Integrated parity remains 1.054068× pinned libvpx equal-clip process CPU; there was no direct libvpx screen of this rejected candidate.
