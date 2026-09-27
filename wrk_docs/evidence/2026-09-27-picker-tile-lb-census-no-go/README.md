@@ -1,0 +1,15 @@
+# Picker tile-loser bound census: no-go
+
+The exact opt-in census did not clear the pre-registered prototype gate. A tile-prefix lower bound could avoid 32.56% of eligible weighted round-trip tile work on Ducks, but only 13.51% on Tree and 9.89% on Town. The [design gate](../../2026.09.27%20-%20HLD%20-%20picker%20tile%20loser%20certificate.md) required about 15% on both Tree and Town before building a production shortcut. Do not integrate the diagnostic code or infer a process-CPU gain from these counts.
+
+The instrumented code is committed only on the unpushed task branch as `87d58770` (`diag(enc): census exact picker tile loser bounds`). The build ran in Crucible's isolated `D:/worktrees/rvp9-2/20260927-TSK-HUM-census-exact-picker-tile-loser-bound-on` worktree. Its release EXE SHA-256 was `0699ee9d9d7d941d64eddeddb4e2aefb4392c8335ab386f1d8831655b0f5bdb5`; the instrumented source file hashes were `e90fc738d33df2c9112321805d62910c175aed202d4e7b94d1928571ed5fe9cb` (`inter.rs`) and `087e4e3e830b04d195f5fe9a17003ee236ccad83a0cd5f20ba47fd4544cbfb02` (`rvp9enc.rs`).
+
+| 60-frame clip | Eligible candidates | Weighted tiles | Certifiable losers | Avoidable weighted tiles | Avoidable share | Avoidable UV models | Unreachable skip bound | False certificates | IVF SHA-256 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| Ducks | 814 | 13,024 | 539 | 4,241 | 32.563% | 7 | 242 | 0 | `8d0458b89ca00cbfb96961e1c16e6018bf88b18790ea7e9d6eeb8c80bd659089` |
+| Tree | 141,570 | 3,143,200 | 55,905 | 424,476 | 13.505% | 1 | 80,114 | 0 | `5e3ce26ae1c1394d1e096502add7d87cc38559e7f86265004900580582641b41` |
+| Town | 105,670 | 2,072,896 | 27,108 | 205,035 | 9.891% | 0 | 75,047 | 0 | `4c5e8ffa47656109df76e05ac0165a0509366dd2453d06ea690f403fdd65027f` |
+
+Every encode exited zero and matched the pinned integrated encoder's full IVF SHA-256. The input SHA-256 values were Ducks `6d2d866613f7a8c7b11bd2c27374f7637cd4a0748ff6fea4a671b23cfbcde6d7`, Tree `ead3aef191242b03cc6019f0527c71bc3d11e856ba4f9f92b926fe804582f791`, and Town `b738b8068d1200f8a3119c72f1edc844424d3fe96d8b28acb9af11497ed7c909`. The command for each was the baseline's CPU6/CBR 60-frame single-thread command in [the pinned direct runner](../2026-09-27-fresh-integrated-pgo-direct/direct-integrated-pgo.ps1), with `RVP9_DIAG_TILE_LB=1` set for the diagnostic process. The exact scratch runner, per-clip stderr and CSV are in the isolated Crucible worktree's `.scratch/tile-lb-census-20260927`; those bulky IVFs are not committed.
+
+The focused bound/counter test was deliberately red at `avoidable_tiles` (actual 3, expected 2), restored, and passed on AArch64 and native Crucible x86. AArch64 core+CLI check and formatting passed. A local two-frame CPU6 CBR diagnostic on/off encode produced identical IVF SHA-256 `1974223cbb8f90d89cc54220685885cf2601b93e07326e3b58f2f8bd2d184a2e`. The three Crucible runs reported `ORACLE_VIOLATION=0`. No paired process-CPU measurement was made because this is diagnostic-only instrumentation, not a production candidate.
