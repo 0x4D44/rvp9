@@ -1,0 +1,4 @@
+[NSTEP_FINAL_BATCH_OVERLAP] nstep_calls=629530 refinement_calls=481135 winning_final_batches=481135 winning_final_sad4d_batches=476431 first_refinement_sad4d_batches=475652 position_matches=97071 eligible_matches=95690
+[NSTEP_FINAL_BATCH_OVERLAP_SHAPE] block_size_index=3 position_matches=7501 eligible_matches=7403
+[NSTEP_FINAL_BATCH_OVERLAP_SHAPE] block_size_index=6 position_matches=89463 eligible_matches=88181
+[NSTEP_FINAL_BATCH_OVERLAP_SHAPE] block_size_index=9 position_matches=107 eligible_matches=106

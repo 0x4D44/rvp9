@@ -1,0 +1,3 @@
+chroma_variance_overlap block_size=9 probe_calls=22441 veto_u=1 veto_v=0 all_skippable=22440 duplicated_u=1 duplicated_v=0 duplicated_pixels=256
+chroma_variance_overlap block_size=11 probe_calls=7 veto_u=0 veto_v=0 all_skippable=7 duplicated_u=0 duplicated_v=0 duplicated_pixels=0
+chroma_variance_overlap block_size=12 probe_calls=3096 veto_u=0 veto_v=0 all_skippable=3096 duplicated_u=0 duplicated_v=0 duplicated_pixels=0

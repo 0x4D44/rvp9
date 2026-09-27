@@ -1,0 +1,4 @@
+commit=415de176d02e051a67b89e7dde3c7459ccdd0bf5
+exe_sha256=6f60f09846b4b308de3821b0f03c9d31eefcced4e0434985efef074a1b2016eb
+options=CPU6 CBR1260 1080p60f threads1 tiles0 aq0 noise0 lag0 kf60
+env=RVP9_DIAG_CHROMA_VARIANCE_OVERLAP=1
