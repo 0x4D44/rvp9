@@ -1,0 +1,6 @@
+"Name","Path","Sha256"
+"control","D:\worktrees\rvp9-2\20260927-TSK-HUM-profile-integrated-early-chroma-parity\.scratch\encoder-pgo-control\optimized\release\rvp9enc.exe","ce0b5bc008ab9700abacad99ea3445691e1a3ca8b5f114b9ce682e15d27730f2"
+"candidate","D:\worktrees\rvp9-2\20260927-TSK-HUM-profile-integrated-early-chroma-parity\.scratch\..\..\20260927-TSK-HUM-chroma-energy-certificate-pgo\.scratch\encoder-pgo-energy-control-profile\release\rvp9enc.exe","93120058f371a36a0b94321b796eaed363e6e5f030c95d06056c66877a79a022"
+"ducks","D:\worktrees\rvp9-2\acceptance-d639c265\target\encoder-pgo\inputs\ducks_take_off_420_1080p30_60f.y4m","6d2d866613f7a8c7b11bd2c27374f7637cd4a0748ff6fea4a671b23cfbcde6d7"
+"tree","D:\worktrees\rvp9-2\acceptance-d639c265\target\encoder-pgo\inputs\in_to_tree_420_1080p30_60f.y4m","ead3aef191242b03cc6019f0527c71bc3d11e856ba4f9f92b926fe804582f791"
+"town","D:\worktrees\rvp9-2\acceptance-d639c265\target\encoder-pgo\inputs\old_town_cross_420_1080p30_60f.y4m","b738b8068d1200f8a3119c72f1edc844424d3fe96d8b28acb9af11497ed7c909"
