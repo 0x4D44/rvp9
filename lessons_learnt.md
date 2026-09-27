@@ -5,6 +5,7 @@ Distilled, non-obvious gotchas future sessions need — dated one-liners.
 Durable project facts/conventions belong in `CLAUDE.md` / `AGENTS.md`, not here.
 Hard cap: 20 entries.
 
+- 2026-09-27: Rosetta skips AVX2; run SIMD red/green on Crucible (`subpel_variance_avx2.rs:load_bytes_proven`).
 - 2026-09-27: libvpx GOLDEN uses int-pro, not full-pel; compare paths (`vp9_pickmode.c:search_new_mv`).
 - 2026-09-26: 84–89% zero Tx8 groups still made an SSE2 zero branch slower on CPU6 (`quantize_metrics_sse2.rs:metrics_inner`).
 - 2026-09-26: ETW sample intervals change; check `xperf -ProfInt` before comparing profile counts (`capture-tree-repeats.ps1`).
