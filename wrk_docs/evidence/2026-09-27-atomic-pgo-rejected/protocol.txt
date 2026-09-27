@@ -1,0 +1,13 @@
+﻿source_commit_remote=cef7895fce53d40315946069324e8ff58324d902
+source_shipped_tree_identical_to=edc9e7e0
+source_sha256_lf=f26ab81338156b0710fc8db8d8f392617c029133417482e05e9504ff27ecc98a
+candidate_training_change=atomic LLVM profile counters in instrumented build only
+raw_profile_count=31
+training_rows=28
+frames_per_training_row=60
+pairs_per_clip=15
+warmups_per_arm_per_clip=1
+host_load_policy=relaxed; no row exclusions
+measurement=paired process TotalProcessorTime seconds
+order=alternate arm and reverse clip order by pair parity
+encode=--codec=vp9 --passes=1 --rt --cpu-used=6 --end-usage=cbr --target-bitrate=1260 --fps=30/1 --threads=1 --tile-columns=0 --lag-in-frames=0 --tune-content=default --aq-mode=0 --noise-sensitivity=0 --limit=60 --kf-max-dist=60 --quiet --ivf
