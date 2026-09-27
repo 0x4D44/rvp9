@@ -5,6 +5,7 @@ Distilled, non-obvious gotchas future sessions need — dated one-liners.
 Durable project facts/conventions belong in `CLAUDE.md` / `AGENTS.md`, not here.
 Hard cap: 20 entries.
 
+- 2026-09-27: Hot `lock`-adjacent samples overstated proof-counter cost; require paired PGO CPU (`lib.rs:PHASE2_NEWMV_REUSED`).
 - 2026-09-27: A 5x SSE2 tile microgain lost 2.36% encoder CPU; gate whole PGO (`lib.rs:prove_inter_chroma_zero_eob`).
 - 2026-09-27: Same-source PGO parity shifted 1.062→1.103×; cross profiles before landing (`build-encoder-pgo.sh`).
 - 2026-09-27: Rosetta skips AVX2; run SIMD red/green on Crucible (`subpel_variance_avx2.rs:load_bytes_proven`).
