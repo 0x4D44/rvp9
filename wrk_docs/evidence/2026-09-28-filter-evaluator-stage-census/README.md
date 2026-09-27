@@ -23,3 +23,19 @@ Every run produced identical counts per clip. Branch counts sum to logical candi
 These are arithmetic means of three same-image runs; the [raw reports](three-runs-stderr.tar.gz) retain every block shape, call count and exact cycle total. The three Ducks luma-model totals were 390,270,838 / 389,445,195 / 392,771,589 cycles. Luma prediction and model timers are separate call-site spans; chroma skip-probe time is inclusive and must not be added to possible child work. `LFENCE;RDTSC`, timer call overhead, the diagnostic atomics outside spans, PGO trained with the gate off, and different branch mixes all limit comparisons. These cycles are **not** whole-encoder process CPU and are not a speed gain. There is no code candidate to integrate from this census alone.
 
 The focused counter-reconciliation test passed on AArch64 and native x86. Omitting the selector-trial increment made the test fail (`0` versus expected `2`); restoring it passed. Formatting, diff checks, CLI build, and AArch64 gate-off/on tiny-IVF comparison passed. The next discriminator is to split the hot Ducks 16×16 luma-model call into variance reduction versus DC/AC model arithmetic before selecting a narrow exact-output kernel change. Prior dispatch-handle hoisting was CPU-neutral and is not reopened by this broad stage total.
+
+## Follow-up: Ducks 16×16 inner model
+
+The diagnostic-only branch now also has commit `b05099eb`, adding opt-in `RVP9_DIAG_MODEL16_INNER=1` counters and deterministic 1/64 sampled cycle spans in `model_rd_for_sb_y`. Its [incremental patch](model16-inner.patch.b64) decodes to SHA-256 `237b4b3c5256628a92d22adce473edef49b21c751ad0eb4601fdcd24cf69fa3c` and applies after `090607ac`; it is **not** integrated. The focused counter test passed on AArch64 and native x86, including a deliberately failing omitted-counter check. Formatting, diff checks, CLI build, and tiny gate-off/on IVF equality passed. A fresh matched 28-row production-PGO build on Crucible emitted no control-flow mismatch warning; the diagnostic EXE SHA-256 was `2f87f98409646a4d4f6793c78a1a9db69fe0bb2d432e120a5940775979f1160b`.
+
+Three Ducks CPU6/CBR1260, 60-frame encodes with **both** diagnostic gates enabled each matched the canonical IVF SHA-256 `8d0458b89ca00cbfb96961e1c16e6018bf88b18790ea7e9d6eeb8c80bd659089`. Every run counted 2,858,463 calls to the 16×16 model: 1,106,799 `AcDc` skips, 111,739 `AcOnly` skips, and 1,639,925 `None`; 1,124,179 skipped DC work. The model attempted 627,485 DC and 1,751,664 AC Laplacian calculations, with zero zero-variance cases in each. The 16×16 model call count exceeds the 2,295,392 calls seen inside the filter-evaluator's luma-model timer because the model also has other call sites; the two counts must not be equated.
+
+| Sampled span | Samples | Cycles, runs 1 / 2 / 3 | Mean cycles/sample |
+|---|---:|---:|---:|
+| Dispatch lookup | 44,663 | 2,164,663 / 2,219,531 / 2,165,996 | 48.9 |
+| Variance reduction | 44,663 | 4,268,438 / 4,319,694 / 4,266,202 | 95.9 |
+| Variance finish | 44,663 | 3,363,331 / 3,396,441 / 3,363,675 | 75.6 |
+| DC Laplacian | 9,835 | 559,129 / 567,858 / 557,452 | 57.1 |
+| AC Laplacian | 27,559 | 1,530,284 / 1,538,970 / 1,515,062 | 55.4 |
+
+Variance reduction and finish are the largest measured inner spans, but the existing 16×16 reducer is already AVX2 and a previous dispatch-hoist experiment was CPU-neutral. `LFENCE;RDTSC` overhead matters especially for ~50-cycle spans; periodic sampling may bias mode mix. These numbers do **not** estimate removable CPU or revise the uninstrumented 1.057638× parity result. The next useful step is a narrow, exact-output variance-path hypothesis with paired production-PGO CPU screening; absent one, this evidence argues against another broad selector or dispatch rewrite.
