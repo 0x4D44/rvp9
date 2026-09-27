@@ -1,0 +1,4 @@
+LIBVPX_FULLPEL_WORK,context,shape,method,ref,entries,diamond_calls,diamond_steps,all_in_steps,diamond_sdx4df_calls,diamond_scalar_sdf_calls,diamond_restarts,num00_skips,diamond_replays,variance_calls,refine_calls
+LIBVPX_FULLPEL_WORK,rt_pick,8x8,NSTEP,LAST,33079,108582,334408,328188,656376,33067,75503,7804,0,135913,27331
+LIBVPX_FULLPEL_WORK,rt_pick,16x16,NSTEP,LAST,342868,984713,3052413,3048035,6096070,24166,641845,54879,0,1269745,285032
+LIBVPX_FULLPEL_WORK,rt_pick,32x32,NSTEP,LAST,2066,6173,19006,18997,37994,72,4107,153,0,7968,1795

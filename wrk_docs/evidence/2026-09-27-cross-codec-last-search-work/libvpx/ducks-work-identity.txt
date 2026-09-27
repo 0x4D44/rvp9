@@ -1,0 +1,5 @@
+exe=421f91fb690f05291d74f9dfed0bd4c81a837ec346a88f502290c60530f8868c
+input=6d2d866613f7a8c7b11bd2c27374f7637cd4a0748ff6fea4a671b23cfbcde6d7
+output=b24234d8db46c22e03585f1973b27c2e62315f0464da392a2ecd2769d2124fa8
+last_nstep_entries=378013
+command=C:\Users\marti\AppData\Local\Temp\deltic-scratch\libvpx-search-ops-census-f50573b0\build\vpxenc.exe --codec=vp9 --passes=1 --rt --cpu-used=6 --end-usage=cbr --target-bitrate=1260 --fps=30/1 --threads=1 --tile-columns=0 --lag-in-frames=0 --tune-content=default --aq-mode=0 --noise-sensitivity=0 --limit=60 --kf-max-dist=60 --quiet --ivf -o "C:\Users\marti\AppData\Local\Temp\deltic-scratch\libvpx-search-ops-census-f50573b0\ducks-work.ivf" "D:/worktrees/rvp9-2/acceptance-d639c265/target/encoder-pgo/inputs/ducks_take_off_420_1080p30_60f.y4m"
