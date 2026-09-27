@@ -43,3 +43,18 @@ Diagnostic commit `c9336c5a`, archived in `timed/0001-diag-enc-time-alternate-ch
 | Old-Town | 7.110 ms | 3.324 ms | 6.645 ms | 3.036 ms |
 
 The probe cost was about 54–55% of the dead-selector timer on Ducks, 41% on Tree, and 45–47% on Town. The eligible and zero-EOB counts were identical in both runs to the table above. All six outputs matched the canonical IVF hashes. `timed/run-01/` and `timed/run-02/` retain raw stderr, identities and results; `timed/run-02.ps1` is the second run's exact command. Unpaired process CPU varied substantially (Ducks 3.547 vs 2.359 s), so neither run is a speed comparison. These instrumented wall timers exclude early chroma prediction, the chosen-TX proof, fallback and scratch ownership. They price only one component of a proposed path; no product CPU gain or new parity number has been measured.
+
+## Existing chroma prediction cost on eligible leaves
+
+Diagnostic commit `6d2b22e8`, archived in `pred/0001-diag-enc-time-eligible-chroma-prediction-work.patch.gz`, also timed the existing U+V prediction for selector-called, luma-skip, final-skip, alternate-TX-eligible leaves. The timer includes primary and compound prediction, but excludes the selector, residual coding, reconstruction and alternative-TX probe. Two more runs of the same plain-release diagnostic binary on Crucible gave these 59-inter-frame sums:
+
+| Clip | Run | Dead-selector wall | Existing U+V prediction wall | Alternative-TX probe wall |
+| --- | ---: | ---: | ---: | ---: |
+| Ducks | 1 | 218.149 ms | 39.388 ms | 117.016 ms |
+| Ducks | 2 | 220.161 ms | 39.907 ms | 116.566 ms |
+| In-to-Tree | 1 | 39.343 ms | 6.395 ms | 16.292 ms |
+| In-to-Tree | 2 | 38.619 ms | 6.541 ms | 15.829 ms |
+| Old-Town | 1 | 6.477 ms | 1.149 ms | 2.921 ms |
+| Old-Town | 2 | 6.401 ms | 1.125 ms | 2.909 ms |
+
+The eligible counts and alternate EOB0 counts were unchanged in both runs: Ducks `300,732/298,591`, Tree `41,858/40,054`, Town `7,509/7,188`. All six encodes exited zero and reproduced canonical IVF hashes. `pred/run-01/` and `pred/run-02/` retain raw counters, input/binary identities and unpaired process CPU; the two scripts record their exact commands. The focused counter test was deliberately red once, then passed on AArch64 and native x86; AArch64 checks and a three-frame diagnostic on/off hash comparison passed. The existing chroma prediction could be **moved and reused** in an early-proof design; counting it as added cost assumes duplicate work. Neither assumption is implemented or measured. These component wall timers cannot establish a net process-CPU gain, and integrated parity remains 1.099305× libvpx.
