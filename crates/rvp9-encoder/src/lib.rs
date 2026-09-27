@@ -4755,6 +4755,70 @@ impl<'a> InterReconPlanes<'a> {
     }
 }
 
+#[derive(Clone, Copy)]
+struct InterPredictionSource<'a> {
+    reference: &'a [u8],
+    reference_width: usize,
+    reference_height: usize,
+    mv_q4_col: i32,
+    mv_q4_row: i32,
+}
+
+/// Emit the primary inter prediction and, when present, average the compound
+/// prediction into the same destination. `None` for the primary preserves the
+/// output-backed luma prediction that was already written by mode picking.
+#[allow(clippy::too_many_arguments)]
+fn emit_inter_prediction(
+    recon_plane: &mut InterReconPlane<'_>,
+    primary: Option<InterPredictionSource<'_>>,
+    compound: Option<InterPredictionSource<'_>>,
+    phase_x: usize,
+    phase_y: usize,
+    global_x: usize,
+    global_y: usize,
+    width: usize,
+    height: usize,
+    interp_filter: InterpFilter,
+    pred_border: &mut [u8; MAX_INTER_PRED_BORDER_BYTES],
+) {
+    if let Some(source) = primary {
+        recon_plane.build_inter_prediction(
+            source.reference,
+            source.reference_width,
+            source.reference_height,
+            phase_x,
+            phase_y,
+            global_x,
+            global_y,
+            width,
+            height,
+            source.mv_q4_col,
+            source.mv_q4_row,
+            interp_filter,
+            /* is_compound_avg = */ false,
+            pred_border,
+        );
+    }
+    if let Some(source) = compound {
+        recon_plane.build_inter_prediction(
+            source.reference,
+            source.reference_width,
+            source.reference_height,
+            phase_x,
+            phase_y,
+            global_x,
+            global_y,
+            width,
+            height,
+            source.mv_q4_col,
+            source.mv_q4_row,
+            interp_filter,
+            /* is_compound_avg = */ true,
+            pred_border,
+        );
+    }
+}
+
 pub(crate) enum InterPartitionHistoryMut<'a> {
     Frame {
         entries: &'a mut [rvp9_core::mode_decision::partition::FixedTreeHistoryEntry],
@@ -11363,28 +11427,21 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                     None
                                 };
                             let leaf_ref2 = sb_partitions[sb_idx][leaf_idx].picked_ref_frame2;
-                            if plane != 0
+                            let primary_prediction = if plane != 0
                                 || !output_prediction_ready
                                 || leaf_ref2.is_inter()
                                 || selected_reference_is_scaled
                             {
-                                recon_plane.build_inter_prediction(
-                                    ref_plane_data,
-                                    ref_plane_width,
-                                    ref_plane_height,
-                                    leaf_px_x,
-                                    leaf_px_y,
-                                    plane_px_x,
-                                    plane_px_y,
-                                    block_w_px,
-                                    block_h_px,
+                                Some(InterPredictionSource {
+                                    reference: ref_plane_data,
+                                    reference_width: ref_plane_width,
+                                    reference_height: ref_plane_height,
                                     mv_q4_col,
                                     mv_q4_row,
-                                    sb_partitions[sb_idx][leaf_idx].picked_interp_filter,
-                                    /* is_compound_avg = */ false,
-                                    &mut inter_emit_scratch.pred_border,
-                                );
-                            }
+                                })
+                            } else {
+                                None
+                            };
 
                             // W-COMPOUND — second-reference averaging pass. A
                             // compound leaf carries `picked_ref_frame2 ==
@@ -11398,7 +11455,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             // guaranteed available (a leaf can only carry a
                             // compound second ref when the picker's `altref`
                             // bundle — gated on `altref_available` — was live).
-                            if leaf_ref2.is_inter() {
+                            let compound_prediction = if leaf_ref2.is_inter() {
                                 debug_assert_eq!(
                                     leaf_ref2,
                                     RefFrame::AltrefFrame,
@@ -11420,23 +11477,29 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                 };
                                 let (ref2_luma_width, ref2_luma_height) = altref_dimensions
                                     .expect("compound ALTREF must carry dimensions");
-                                recon_plane.build_inter_prediction(
-                                    ref2_plane_data,
-                                    ref2_luma_width >> ss_x,
-                                    ref2_luma_height >> ss_y,
-                                    leaf_px_x,
-                                    leaf_px_y,
-                                    plane_px_x,
-                                    plane_px_y,
-                                    block_w_px,
-                                    block_h_px,
-                                    mv2_q4_col,
-                                    mv2_q4_row,
-                                    sb_partitions[sb_idx][leaf_idx].picked_interp_filter,
-                                    /* is_compound_avg = */ true,
-                                    &mut inter_emit_scratch.pred_border,
-                                );
-                            }
+                                Some(InterPredictionSource {
+                                    reference: ref2_plane_data,
+                                    reference_width: ref2_luma_width >> ss_x,
+                                    reference_height: ref2_luma_height >> ss_y,
+                                    mv_q4_col: mv2_q4_col,
+                                    mv_q4_row: mv2_q4_row,
+                                })
+                            } else {
+                                None
+                            };
+                            emit_inter_prediction(
+                                recon_plane,
+                                primary_prediction,
+                                compound_prediction,
+                                leaf_px_x,
+                                leaf_px_y,
+                                plane_px_x,
+                                plane_px_y,
+                                block_w_px,
+                                block_h_px,
+                                sb_partitions[sb_idx][leaf_idx].picked_interp_filter,
+                                &mut inter_emit_scratch.pred_border,
+                            );
                             if let Some(t0) = emit_pred_start {
                                 *emit_profile_pred_time += t0.elapsed();
                             }
@@ -15309,6 +15372,122 @@ mod tests {
             .map(|row| plane.data[(local_y + row) * layout.stride + local_x])
             .collect();
         assert_eq!(actual.as_slice(), expected.as_slice());
+    }
+
+    #[test]
+    fn inter_prediction_helper_matches_single_and_compound_writes() {
+        use rvp9_core::bitstream::frame::InterpFilter;
+
+        const W: usize = 96;
+        const H: usize = 96;
+        const X: usize = 32;
+        const Y: usize = 32;
+        const SIDE: usize = 16;
+        let reference: Vec<u8> = (0..W * H)
+            .map(|index| ((index * 17 + index / W * 29 + 43) & 0xff) as u8)
+            .collect();
+        let reference2: Vec<u8> = (0..W * H)
+            .map(|index| ((index * 31 + index / W * 7 + 101) & 0xff) as u8)
+            .collect();
+        let layout = InterReconLayout::full(W, H).plane(0);
+        let run = |use_helper: bool,
+                   primary_mv: (i32, i32),
+                   compound: Option<(&[u8], (i32, i32))>,
+                   filter: InterpFilter|
+         -> Vec<u8> {
+            let mut output = vec![0x5a; layout.stride * layout.rows];
+            let mut plane = InterReconPlane::new(&mut output, layout);
+            let mut pred_border = [0u8; MAX_INTER_PRED_BORDER_BYTES];
+            let primary = InterPredictionSource {
+                reference: &reference,
+                reference_width: W,
+                reference_height: H,
+                mv_q4_col: primary_mv.0,
+                mv_q4_row: primary_mv.1,
+            };
+            let second =
+                compound.map(
+                    |(reference, (mv_q4_col, mv_q4_row))| InterPredictionSource {
+                        reference,
+                        reference_width: W,
+                        reference_height: H,
+                        mv_q4_col,
+                        mv_q4_row,
+                    },
+                );
+            if use_helper {
+                emit_inter_prediction(
+                    &mut plane,
+                    Some(primary),
+                    second,
+                    X,
+                    Y,
+                    X,
+                    Y,
+                    SIDE,
+                    SIDE,
+                    filter,
+                    &mut pred_border,
+                );
+            } else {
+                plane.build_inter_prediction(
+                    primary.reference,
+                    primary.reference_width,
+                    primary.reference_height,
+                    X,
+                    Y,
+                    X,
+                    Y,
+                    SIDE,
+                    SIDE,
+                    primary.mv_q4_col,
+                    primary.mv_q4_row,
+                    filter,
+                    false,
+                    &mut pred_border,
+                );
+                if let Some(second) = second {
+                    plane.build_inter_prediction(
+                        second.reference,
+                        second.reference_width,
+                        second.reference_height,
+                        X,
+                        Y,
+                        X,
+                        Y,
+                        SIDE,
+                        SIDE,
+                        second.mv_q4_col,
+                        second.mv_q4_row,
+                        filter,
+                        true,
+                        &mut pred_border,
+                    );
+                }
+            }
+            output
+        };
+
+        assert_eq!(
+            run(false, (13, -7), None, InterpFilter::EightTapSmooth),
+            run(true, (13, -7), None, InterpFilter::EightTapSmooth),
+            "single-ref prediction differs"
+        );
+        assert_eq!(
+            run(
+                false,
+                (11, -5),
+                Some((&reference2, (-9, 7))),
+                InterpFilter::EightTapSharp,
+            ),
+            run(
+                true,
+                (11, -5),
+                Some((&reference2, (-9, 7))),
+                InterpFilter::EightTapSharp,
+            ),
+            "compound prediction differs"
+        );
     }
 
     #[test]
