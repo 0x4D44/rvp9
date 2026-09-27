@@ -82,6 +82,11 @@ use rvp9_core::transforms::{TxMode, TxSize};
 pub static TRELLIS_CHANGED_COEFFS: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(0);
 
+/// Test-only positive control for the early exact U/V zero-EOB proof.
+#[cfg(test)]
+static EARLY_INTER_CHROMA_PROOF_HITS: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
 // Libvpx's inclusive MC-border scratch extent is block + 2 * extend:
 // a 64-pixel subpel block needs 3 leading + 4 trailing taps plus the
 // one-past sample retained by `build_mc_border`, for 72 cells total.
@@ -137,6 +142,15 @@ struct InterEmitQuantScratch {
 #[must_use]
 pub fn trellis_changed_count() -> u64 {
     TRELLIS_CHANGED_COEFFS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+fn early_inter_chroma_proof_enabled() -> bool {
+    std::env::var_os("RVP9_EARLY_INTER_CHROMA_PROOF").is_none_or(|value| value != "0")
+}
+
+#[cfg(test)]
+fn early_inter_chroma_proof_hit_count() -> u64 {
+    EARLY_INTER_CHROMA_PROOF_HITS.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Serial guard for unit tests that mutate or depend on process-global
@@ -4819,6 +4833,59 @@ fn emit_inter_prediction(
     }
 }
 
+/// Check that a complete candidate U/V leaf fits in both compact recon
+/// windows. The caller runs this before prebuilding prediction; the proof
+/// reuses the returned local origins after prediction is already present.
+fn inter_chroma_proof_recon_origins(
+    recon: &InterReconPlanes<'_>,
+    uv_width: usize,
+    uv_height: usize,
+    leaf_mi_col: usize,
+    leaf_mi_row: usize,
+    leaf_bsize: BlockSize,
+) -> Option<(usize, usize, usize, usize, [(usize, usize); 2])> {
+    let uv_bsize = f5_uv_plane_block_size(leaf_bsize);
+    let block_w = (uv_bsize.n_4x4_wide() as usize).checked_mul(4)?;
+    let block_h = (uv_bsize.n_4x4_high() as usize).checked_mul(4)?;
+    if rvp9_core::block::max_txsize(uv_bsize) != TxSize::Tx8x8
+        || block_w < TxSize::Tx8x8.side()
+        || block_h < TxSize::Tx8x8.side()
+    {
+        return None;
+    }
+    let px_x = leaf_mi_col.checked_mul(4)?;
+    let px_y = leaf_mi_row.checked_mul(4)?;
+    if px_x > uv_width
+        || px_y > uv_height
+        || block_w > uv_width - px_x
+        || block_h > uv_height - px_y
+    {
+        return None;
+    }
+
+    let mut local_origins = [(0usize, 0usize); 2];
+    for (plane_index, local_origin) in local_origins.iter_mut().enumerate() {
+        let recon_plane = recon.plane(plane_index + 1);
+        let layout = recon_plane.layout;
+        if layout.frame_width != uv_width || layout.frame_height != uv_height {
+            return None;
+        }
+        let local_x = px_x.checked_sub(layout.col_start)?;
+        let local_y = px_y.checked_sub(layout.row_start)?;
+        let local_end_x = local_x.checked_add(block_w)?;
+        let local_end_y = local_y.checked_add(block_h)?;
+        if local_end_x > layout.stride || local_end_y > layout.rows {
+            return None;
+        }
+        let storage_len = layout.stride.checked_mul(layout.rows)?;
+        if recon_plane.data.len() < storage_len {
+            return None;
+        }
+        *local_origin = (local_x, local_y);
+    }
+    Some((px_x, px_y, block_w, block_h, local_origins))
+}
+
 /// Prove that every U/V TX has zero quantized EOB for the candidate chroma
 /// sizes. This only reads the already-built prediction and mutates the caller's
 /// scratch prefixes; it never writes reconstruction or coefficient state.
@@ -4841,27 +4908,17 @@ fn prove_inter_chroma_zero_eob(
     quant_fp: bool,
     scratch: &mut InterEmitScratch,
 ) -> bool {
-    let uv_bsize = f5_uv_plane_block_size(leaf_bsize);
-    let block_w = (uv_bsize.n_4x4_wide() as usize).saturating_mul(4);
-    let block_h = (uv_bsize.n_4x4_high() as usize).saturating_mul(4);
-    let Some(px_x) = leaf_mi_col.checked_mul(4) else {
+    let Some((px_x, px_y, block_w, block_h, local_origins)) = inter_chroma_proof_recon_origins(
+        recon,
+        uv_width,
+        uv_height,
+        leaf_mi_col,
+        leaf_mi_row,
+        leaf_bsize,
+    ) else {
         return false;
     };
-    let Some(px_y) = leaf_mi_row.checked_mul(4) else {
-        return false;
-    };
-
-    // The selector path this proof serves has UV TX8 as its largest candidate.
-    // Reject larger or smaller UV blocks until their candidate set is proved.
-    if rvp9_core::block::max_txsize(uv_bsize) != TxSize::Tx8x8
-        || block_w < TxSize::Tx8x8.side()
-        || block_h < TxSize::Tx8x8.side()
-        || input_stride < uv_width
-        || px_x > uv_width
-        || px_y > uv_height
-        || block_w > uv_width - px_x
-        || block_h > uv_height - px_y
-    {
+    if input_stride < uv_width {
         return false;
     }
 
@@ -4870,36 +4927,6 @@ fn prove_inter_chroma_zero_eob(
     };
     if input.iter().any(|source| source.len() < input_len) {
         return false;
-    }
-
-    let mut local_origins = [(0usize, 0usize); 2];
-    for (plane_index, local_origin) in local_origins.iter_mut().enumerate() {
-        let layout = recon.plane(plane_index + 1).layout;
-        if layout.frame_width != uv_width || layout.frame_height != uv_height {
-            return false;
-        }
-        let Some(local_x) = px_x.checked_sub(layout.col_start) else {
-            return false;
-        };
-        let Some(local_y) = px_y.checked_sub(layout.row_start) else {
-            return false;
-        };
-        let Some(local_end_x) = local_x.checked_add(block_w) else {
-            return false;
-        };
-        let Some(local_end_y) = local_y.checked_add(block_h) else {
-            return false;
-        };
-        if local_end_x > layout.stride || local_end_y > layout.rows {
-            return false;
-        }
-        let Some(storage_len) = layout.stride.checked_mul(layout.rows) else {
-            return false;
-        };
-        if recon.plane(plane_index + 1).data.len() < storage_len {
-            return false;
-        }
-        *local_origin = (local_x, local_y);
     }
 
     let tx_sizes: &[TxSize] = if allow_tx4 {
@@ -7684,6 +7711,8 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // when both are disabled (the default).
     let s2_xtab_enabled = env.s2_xtab;
     let f02_oracle_enabled = crate::f02_oracle::is_enabled();
+    let early_chroma_proof_enabled = early_inter_chroma_proof_enabled();
+    let predstat_enabled = crate::predstat::enabled();
     rvp9_core::mode_decision::inter::candidate_trace::reset(f02_oracle_enabled);
     // win counts indexed [ZERO, NEAREST, NEAR, NEW].
     // A2.foreman - In-progress mi_grid for spatial MV-ref propagation
@@ -11545,7 +11574,6 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             let ref_plane_height = ref_luma_height >> ss_y;
                             let selected_reference_is_scaled =
                                 ref_luma_width != w || ref_luma_height != h;
-                            let recon_plane = recon_yuv_out.plane_mut(plane);
 
                             // Build the leaf's MC prediction into the recon
                             // plane region (mirrors the decoder's MC step that
@@ -11630,7 +11658,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                                 None
                             };
                             emit_inter_prediction(
-                                recon_plane,
+                                recon_yuv_out.plane_mut(plane),
                                 primary_prediction,
                                 compound_prediction,
                                 leaf_px_x,
@@ -11645,6 +11673,120 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                             if let Some(t0) = emit_pred_start {
                                 *emit_profile_pred_time += t0.elapsed();
                             }
+                            // The early chroma proof owns only the narrow
+                            // single-ref, full-visible, unscaled path. It
+                            // prebuilds U/V after Y MC, then either skips the
+                            // existing transform walk on proof success or
+                            // leaves the old loop to rebuild U/V unchanged.
+                            let early_chroma_eligible = plane == 0
+                                && early_chroma_proof_enabled
+                                && should_redecide_inter_luma_tx(
+                                    rt_emit_max_tx,
+                                    rt_emit_tx_rd,
+                                    leaf_bsize,
+                                )
+                                && should_skip_realtime_luma_transform(rt_quant_fp, pick.skip_txfm)
+                                && !trellis_enabled
+                                && !s2_xtab_enabled
+                                && !f02_oracle_enabled
+                                && !predstat_enabled
+                                && !diag_golden_enabled
+                                && !diag_picker_enabled
+                                && !diag_intpro_sb_enabled
+                                && !e3_diag_enabled
+                                && !env.diag_intpro
+                                && !emit_profile_enabled
+                                && !rt_profile_enabled
+                                && !a4_profile_enabled
+                                && !variance_hint_dump_enabled
+                                && !a4_split_stats_enabled
+                                && !leaf_ref2.is_inter()
+                                && !selected_reference_is_scaled
+                                && rvp9_core::block::max_txsize(f5_uv_plane_block_size(leaf_bsize))
+                                    == TxSize::Tx8x8;
+                            if early_chroma_eligible {
+                                let uv_bsize = f5_uv_plane_block_size(leaf_bsize);
+                                let uv_block_w = (uv_bsize.n_4x4_wide() as usize) * 4;
+                                let uv_block_h = (uv_bsize.n_4x4_high() as usize) * 4;
+                                let uv_geometry_supported = leaf_mi_col
+                                    .checked_mul(4)
+                                    .zip(leaf_mi_row.checked_mul(4))
+                                    .is_some_and(|(uv_x, uv_y)| {
+                                        uv_x <= uvw
+                                            && uv_y <= uvh
+                                            && uv_block_w <= uvw - uv_x
+                                            && uv_block_h <= uvh - uv_y
+                                    });
+                                if uv_geometry_supported
+                                    && inter_chroma_proof_recon_origins(
+                                        recon_yuv_out,
+                                        uvw,
+                                        uvh,
+                                        leaf_mi_col,
+                                        leaf_mi_row,
+                                        leaf_bsize,
+                                    )
+                                    .is_some()
+                                {
+                                    for uv_plane in 1..3 {
+                                        let uv_ss_x = F5_SUBSAMPLING_X[uv_plane];
+                                        let uv_ss_y = F5_SUBSAMPLING_Y[uv_plane];
+                                        let uv_ref = match (uv_plane, picked_ref) {
+                                            (1, RefFrame::AltrefFrame) => altref_yuv().1,
+                                            (_, RefFrame::AltrefFrame) => altref_yuv().2,
+                                            (1, RefFrame::GoldenFrame) => golden_recon_yuv.1,
+                                            (_, RefFrame::GoldenFrame) => golden_recon_yuv.2,
+                                            (1, _) => last_recon_yuv.1,
+                                            (_, _) => last_recon_yuv.2,
+                                        };
+                                        let uv_mv_q4_col = i32::from(pick.best_mv.col)
+                                            * (1i32 << (1 - uv_ss_x as i32));
+                                        let uv_mv_q4_row = i32::from(pick.best_mv.row)
+                                            * (1i32 << (1 - uv_ss_y as i32));
+                                        emit_inter_prediction(
+                                            recon_yuv_out.plane_mut(uv_plane),
+                                            Some(InterPredictionSource {
+                                                reference: uv_ref,
+                                                reference_width: ref_luma_width >> uv_ss_x,
+                                                reference_height: ref_luma_height >> uv_ss_y,
+                                                mv_q4_col: uv_mv_q4_col,
+                                                mv_q4_row: uv_mv_q4_row,
+                                            }),
+                                            None,
+                                            leaf_px_x,
+                                            leaf_px_y,
+                                            (leaf_mi_col * 8) >> uv_ss_x,
+                                            (leaf_mi_row * 8) >> uv_ss_y,
+                                            uv_block_w,
+                                            uv_block_h,
+                                            sb_partitions[sb_idx][leaf_idx].picked_interp_filter,
+                                            &mut inter_emit_scratch.pred_border,
+                                        );
+                                    }
+                                    let uv_zero = prove_inter_chroma_zero_eob(
+                                        [input_yuv.1, input_yuv.2],
+                                        uvw,
+                                        uvw,
+                                        uvh,
+                                        recon_yuv_out,
+                                        leaf_mi_col,
+                                        leaf_mi_row,
+                                        leaf_bsize,
+                                        rt_emit_tx4,
+                                        &quantizer,
+                                        rt_quant_fp,
+                                        inter_emit_scratch,
+                                    );
+                                    if uv_zero {
+                                        #[cfg(test)]
+                                        EARLY_INTER_CHROMA_PROOF_HITS
+                                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                        leaf_total_eob = 0;
+                                        break;
+                                    }
+                                }
+                            }
+                            let recon_plane = recon_yuv_out.plane_mut(plane);
                             let recon_layout = recon_plane.layout;
                             let (recon_plane_px_x, recon_plane_px_y) = recon_layout
                                 .local_block(plane_px_x, plane_px_y, block_w_px, block_h_px);
@@ -19206,6 +19348,67 @@ mod tests {
         }
         crate::f02_oracle::init_from_env();
         assert!(!crate::f02_oracle::is_enabled());
+    }
+
+    #[test]
+    fn early_inter_chroma_proof_matches_env_opt_out() {
+        let _guard = env_test_mutex();
+        let y = textured_luma_64(0x9e37_79b9);
+        let mut shifted_y = vec![0u8; 64 * 64];
+        let mut shifted_twice_y = vec![0u8; 64 * 64];
+        for row in 0..64 {
+            for col in 0..64 {
+                shifted_y[row * 64 + col] = y[row * 64 + (col + 1).min(63)];
+                shifted_twice_y[row * 64 + col] = y[row * 64 + (col + 2).min(63)];
+            }
+        }
+        let uv = vec![128u8; 32 * 32];
+
+        let encode = |enabled: bool| {
+            // SAFETY: this test holds env_test_mutex for its complete run.
+            unsafe {
+                if enabled {
+                    std::env::remove_var("RVP9_EARLY_INTER_CHROMA_PROOF");
+                } else {
+                    std::env::set_var("RVP9_EARLY_INTER_CHROMA_PROOF", "0");
+                }
+                std::env::set_var("RVP9_RT_EMIT_TX_RD", "1");
+                std::env::remove_var("RVP9_RT_EMIT_MAX_TX");
+                std::env::set_var("RVP9_EXACT_VBP_TREE", "0");
+                std::env::remove_var("RVP9_F02_ORACLE");
+            }
+            crate::f02_oracle::init_from_env();
+            EARLY_INTER_CHROMA_PROOF_HITS.store(0, std::sync::atomic::Ordering::Relaxed);
+            let mut enc = frame_loop::StreamEncoder::new(streaming_config()).unwrap();
+            let mut packets = Vec::new();
+            for frame in [&y, &shifted_y, &shifted_twice_y] {
+                packets.push(
+                    enc.encode_frame(&yuv_view_64(frame, &uv, &uv))
+                        .unwrap()
+                        .data,
+                );
+            }
+            (packets, early_inter_chroma_proof_hit_count())
+        };
+
+        let (enabled_packets, enabled_hits) = encode(true);
+        let (disabled_packets, disabled_hits) = encode(false);
+
+        // SAFETY: this test holds env_test_mutex for its complete run.
+        unsafe {
+            std::env::remove_var("RVP9_EARLY_INTER_CHROMA_PROOF");
+            std::env::remove_var("RVP9_RT_EMIT_TX_RD");
+            std::env::remove_var("RVP9_EXACT_VBP_TREE");
+            std::env::remove_var("RVP9_F02_ORACLE");
+        }
+        crate::f02_oracle::init_from_env();
+
+        assert!(
+            enabled_hits > 0,
+            "the exact early chroma path must prove at least one leaf"
+        );
+        assert_eq!(disabled_hits, 0, "the opt-out must suppress proof hits");
+        assert_eq!(enabled_packets, disabled_packets);
     }
 
     #[test]
