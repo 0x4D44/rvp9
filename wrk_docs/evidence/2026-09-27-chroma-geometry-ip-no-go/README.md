@@ -1,0 +1,7 @@
+# Repeated chroma geometry checks: exact-IP no-go
+
+The encoder checks inter-chroma leaf geometry before prediction and again inside `prove_inter_chroma_zero_eob`. The duplicate looked attractive because the proof ran about 304,058 times on the canonical Ducks clip. Exact integrated production-PGO instruction samples do **not** support a pass-through-geometry optimization yet.
+
+The [exact integrated image profile](../2026-09-27-fresh-integrated-pgo-ip/README.md) uses EXE SHA-256 `3c294166213bce7dc707734bf6fbe86e2387b23ef533c16ed16acf4780aaf3ad`; its raw `ip-symbols.csv` maps remain on Crucible at `D:\worktrees\rvp9-2\20260927-TSK-HUM-fresh-integrated-production-pgo-direct-s\.scratch\fresh-integrated-pgo-ip\<clip>\extracted`. The first geometry call's source label (`lib.rs:11778`) has 8/18,127 Ducks samples, 1/8,195 Tree, and none on Town. Disassembly of the second proof call shows its entry and checked geometry path around RVA `0x10d0a8–0x10d1da`; **that entire range**, including setup not removable by reusing geometry, has only 4 Ducks samples and none on Tree/Town.
+
+Together the two broad observed ranges are about 0.026% equal-clip sampled CPU, before accounting for non-removable instructions. This is not a mathematical bound on every out-of-line or cold branch. It is enough to reject a source-level pass-through tuple on this evidence: the change would need to preserve input/recon layout and length invariants across intervening prediction writes for a likely sub-noise CPU saving. No shipped code changed.
