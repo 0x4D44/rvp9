@@ -1,0 +1,105 @@
+{
+  "source_mode": "etl",
+  "source_path": "D:\\worktrees\\rvp9-2\\20260927-TSK-HUM-fresh-integrated-production-pgo-direct-s\\.scratch\\fresh-integrated-pgo-ip\\town\\capture.etl",
+  "exe_path": "D:\\worktrees\\rvp9-2\\20260927-TSK-HUM-fresh-integrated-production-pgo-direct-s\\.scratch\\fresh-integrated-pgo\\optimized\\release\\rvp9enc.exe",
+  "exe_sha256": "3c294166213bce7dc707734bf6fbe86e2387b23ef533c16ed16acf4780aaf3ad",
+  "pdb_path": "D:\\worktrees\\rvp9-2\\20260927-TSK-HUM-fresh-integrated-production-pgo-direct-s\\.scratch\\fresh-integrated-pgo\\optimized\\release\\rvp9enc.pdb",
+  "pdb_sha256": "c41525ee2ccd56d6bda7e4e9e0880452437d5ac7981bc2af4f1b7c34a71943f8",
+  "pdb_pairing": {
+    "method": "PE RSDS GUID/age matched against PDB MSF information stream; DbgHelp loaded path checked",
+    "embedded_pdb_name": "rvp9enc.pdb",
+    "guid": "f615f4ff-a877-e7c8-4c4c-44205044422e",
+    "age": 1
+  },
+  "pe": {
+    "preferred_base": "0x0000000140000000",
+    "size_of_image": "0x263000"
+  },
+  "images": [
+    {
+      "pid": 66556,
+      "base": "0x00007ff626790000",
+      "end_exclusive": "0x00007ff6269f3000",
+      "size": "0x263000",
+      "source": "I-Start"
+    }
+  ],
+  "counts": {
+    "dumper_sampled_profile_rows_all_processes": 213192,
+    "target_process_sampled_profile_rows": 10282,
+    "pid_filtered_rows": 0,
+    "target_process_other_module_rows": 1653,
+    "retained_target_executable_rows": 8629,
+    "retained_direct_count": 8629,
+    "unique_ips": 4261,
+    "unique_pid_ip_pairs": 4261,
+    "resolved_unique_symbols": 130,
+    "nonzero_source_line_direct_count": 8577,
+    "nonzero_source_line_unique_ips": 4253,
+    "nonzero_source_line_pid_ip_pairs": 4253
+  },
+  "xperf": {
+    "dumper": {
+      "command": [
+        "xperf.exe",
+        "-i",
+        "D:\\worktrees\\rvp9-2\\20260927-TSK-HUM-fresh-integrated-production-pgo-direct-s\\.scratch\\fresh-integrated-pgo-ip\\town\\capture.etl",
+        "-a",
+        "dumper",
+        "-add_fieldnames"
+      ],
+      "exit_code": 0
+    },
+    "reports": {
+      "tracestats": {
+        "exit_code": 0,
+        "report": "xperf-tracestats.txt",
+        "diagnostic_lines": [
+          "Total # Lost Buffers : 0",
+          "Total # Lost Events  : 0",
+          "# Lost Buffers       : 0",
+          "# Lost Events        : 0"
+        ]
+      },
+      "profile": {
+        "exit_code": 0,
+        "report": "xperf-profile.txt",
+        "diagnostic_lines": []
+      }
+    },
+    "loss_or_warning_lines_from_dumper": [
+      "OS Version: 10.0.26200, Trace Size: 99328KB, Events Lost: 0, Buffers lost: 0, Trace Start: 134349820990086498, Trace Length: 22 sec, PointerSize: 8, Trace Name: D:\\worktrees\\rvp9-2\\20260927-TSK-HUM-fresh-integrated-production-pgo-direct-s\\.scratch\\fresh-integrated-pgo-ip\\town\\capture.etl",
+      "FileVersion,   22162862, 0x0001d000,    0xd5240205, \"pshed.dll\", \"Platform Specific Hardware Error Driver\", \"10.0.26100.8972 (WinBuild.160101.0800)\", \"10.0.26100.8972\", \"1033\", \"Microsoft® Windows® Operating System\", \"Microsoft Corporation\", \"10.0.26100.8972\", \"\", \"\"",
+      "FileVersion,   22162865, 0x00017000,    0xa6edf41c, \"werkernel.sys\", \"Windows Error Reporting Kernel Driver\", \"10.0.26100.8972 (WinBuild.160101.0800)\", \"10.0.26100.8972\", \"1033\", \"Microsoft® Windows® Operating System\", \"Microsoft Corporation\", \"10.0.26100.8972\", \"\", \"\"",
+      "FileVersion,   22168728, 0x000f6000,    0x30a05512, \"wer.dll\", \"Windows Error Reporting DLL\", \"10.0.26100.9444 (WinBuild.160101.0800)\", \"10.0.26100.9444\", \"1033\", \"Microsoft® Windows® Operating System\", \"Microsoft Corporation\", \"10.0.26100.9444\", \"\", \"\"",
+      "FileVersion,   22385860, 0x00053000,    0x855d5407, \"wersvc.dll\", \"Windows Error Reporting Service\", \"10.0.26100.9278 (WinBuild.160101.0800)\", \"10.0.26100.9278\", \"1033\", \"Microsoft® Windows® Operating System\", \"Microsoft Corporation\", \"10.0.26100.9278\", \"\", \"\""
+    ],
+    "loss_or_warning_lines_from_reports": [
+      {
+        "action": "tracestats",
+        "line": "Total # Lost Buffers : 0"
+      },
+      {
+        "action": "tracestats",
+        "line": "Total # Lost Events  : 0"
+      },
+      {
+        "action": "tracestats",
+        "line": "# Lost Buffers       : 0"
+      },
+      {
+        "action": "tracestats",
+        "line": "# Lost Events        : 0"
+      }
+    ],
+    "loss_interpretation": "verbatim matching lines are recorded; an empty list is not a zero-loss assertion"
+  },
+  "outputs": {
+    "samples_csv": "D:\\worktrees\\rvp9-2\\20260927-TSK-HUM-fresh-integrated-production-pgo-direct-s\\.scratch\\fresh-integrated-pgo-ip\\town\\extracted\\samples.csv",
+    "unique_ip_map_csv": "D:\\worktrees\\rvp9-2\\20260927-TSK-HUM-fresh-integrated-production-pgo-direct-s\\.scratch\\fresh-integrated-pgo-ip\\town\\extracted\\ip-symbols.csv",
+    "other_process_modules_csv": "D:\\worktrees\\rvp9-2\\20260927-TSK-HUM-fresh-integrated-production-pgo-direct-s\\.scratch\\fresh-integrated-pgo-ip\\town\\extracted\\other-process-modules.csv",
+    "summary_by_symbol_csv": "D:\\worktrees\\rvp9-2\\20260927-TSK-HUM-fresh-integrated-production-pgo-direct-s\\.scratch\\fresh-integrated-pgo-ip\\town\\extracted\\summary-by-symbol.csv",
+    "summary_by_source_line_csv": "D:\\worktrees\\rvp9-2\\20260927-TSK-HUM-fresh-integrated-production-pgo-direct-s\\.scratch\\fresh-integrated-pgo-ip\\town\\extracted\\summary-by-source-line.csv"
+  },
+  "comparison": null
+}

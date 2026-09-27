@@ -1,0 +1,161 @@
+=== 0x1401a3c30 0x1401a3c80 ===
+
+D:\worktrees\rvp9-2\20260927-TSK-HUM-fresh-integrated-production-pgo-direct-s\.scratch\fresh-integrated-pgo\optimized\release\rvp9enc.exe:	file format coff-x86-64
+
+Disassembly of section .text:
+
+0000000140001000 <.text>:
+1401a3c30:     	cmovel	%esi, %r9d
+1401a3c34:     	cmpb	$0x0, 0xf0(%rsp)
+1401a3c3c:     	cmovel	%edx, %r9d
+1401a3c40:     	movl	%r9d, 0x130(%rsp)
+1401a3c48:     	movq	0x220(%rsp), %rdx
+1401a3c50:     	movq	0xde8(%rsp), %r13
+1401a3c58:     	movl	0xe00(%rsp), %ebx
+1401a3c5f:     	movb	0xe04(%rsp), %sil
+1401a3c67:     	movl	0xf8(%rsp), %r12d
+1401a3c6f:     	leaq	(%rcx,%rdx,4), %rcx
+1401a3c73:     	movl	%r13d, %ebp
+1401a3c76:     	shrl	$0x10, %ebp
+1401a3c79:     	testl	%r13d, %r13d
+1401a3c7c:     	je	0x1401a3f99 <.text+0x1a2f99>
+=== 0x140181c70 0x140181cc0 ===
+
+D:\worktrees\rvp9-2\20260927-TSK-HUM-fresh-integrated-production-pgo-direct-s\.scratch\fresh-integrated-pgo\optimized\release\rvp9enc.exe:	file format coff-x86-64
+
+Disassembly of section .text:
+
+0000000140001000 <.text>:
+140181c70:     	addq	0x88(%rsp), %rax
+140181c78:     	movq	$-0x1, %rdx
+140181c7f:     	cmovaeq	%rax, %rdx
+140181c83:     	cmpq	%rdx, %r8
+140181c86:     	jb	0x140182f2c <.text+0x181f2c>
+140181c8c:     	vmovdqu	0x20(%rcx), %xmm0
+140181c91:     	vmovdqu	0x30(%rcx), %xmm1
+140181c96:     	vmovq	0x68(%rcx), %xmm2
+140181c9b:     	movq	%r10, 0xd0(%rsp)
+140181ca3:     	cmpl	$0x4000, %r11d          # imm = 0x4000
+140181caa:     	jne	0x140182d48 <.text+0x181d48>
+140181cb0:     	cmpl	$0x4000, %ebp           # imm = 0x4000
+140181cb6:     	jne	0x140182d48 <.text+0x181d48>
+140181cbc:     	vpshufd	$0xe8, %xmm0, %xmm0     # xmm0 = xmm0[0,2,2,3]
+=== 0x140188390 0x140188470 ===
+
+D:\worktrees\rvp9-2\20260927-TSK-HUM-fresh-integrated-production-pgo-direct-s\.scratch\fresh-integrated-pgo\optimized\release\rvp9enc.exe:	file format coff-x86-64
+
+Disassembly of section .text:
+
+0000000140001000 <.text>:
+140188390:     	vpmovdw	%ymm16, %xmm16
+140188396:     	vpxorq	%xmm16, %xmm18, %xmm19
+14018839c:     	vpsubw	%xmm18, %xmm19, %xmm19
+1401883a2:     	vpmullw	%xmm7, %xmm19, %xmm19
+1401883a8:     	vpsubsw	%xmm19, %xmm17, %xmm15
+1401883ae:     	vpsubw	%xmm19, %xmm17, %xmm14
+1401883b4:     	vpcmpeqw	%xmm15, %xmm14, %xmm15
+1401883b9:     	vpcmpgtb	%xmm11, %xmm15, %k0
+1401883bf:     	kortestw	%k0, %k0
+1401883c3:     	jne	0x14018d45e <.text+0x18c45e>
+1401883c9:     	vpmaddwd	%xmm14, %xmm14, %xmm18
+1401883cf:     	vpmovzxdq	%xmm18, %xmm17  # xmm17 = xmm18[0],zero,xmm18[1],zero
+1401883d5:     	vpunpckhdq	%xmm9, %xmm18, %xmm18 # xmm18 = xmm18[2],xmm9[2],xmm18[3],xmm9[3]
+1401883db:     	vpaddq	%xmm3, %xmm18, %xmm3
+1401883e1:     	vpmovzxwd	%xmm16, %xmm18  # xmm18 = xmm16[0],zero,xmm16[1],zero,xmm16[2],zero,xmm16[3],zero
+1401883e7:     	vpunpckhwd	%xmm9, %xmm16, %xmm16 # xmm16 = xmm16[4],xmm9[4],xmm16[5],xmm9[5],xmm16[6],xmm9[6],xmm16[7],xmm9[7]
+1401883ed:     	vpaddq	%xmm2, %xmm17, %xmm2
+1401883f3:     	addq	$0x8, %rax
+1401883f7:     	vpaddd	%xmm16, %xmm6, %xmm16
+1401883fd:     	vpaddd	%xmm18, %xmm16, %xmm6
+140188403:     	cmpq	$0x38, %rax
+140188407:     	jb	0x140188363 <.text+0x187363>
+14018840d:     	vpaddq	%xmm2, %xmm3, %xmm1
+140188411:     	vpaddq	%xmm5, %xmm4, %xmm0
+140188415:     	vphaddd	%xmm6, %xmm6, %xmm2
+14018841a:     	vpaddq	%xmm1, %xmm0, %xmm0
+14018841e:     	vpshufd	$0xee, %xmm0, %xmm1     # xmm1 = xmm0[2,3,2,3]
+140188423:     	vpaddq	%xmm1, %xmm0, %xmm0
+140188427:     	vmovq	%xmm0, %rdi
+14018842c:     	vphaddd	%xmm2, %xmm2, %xmm0
+140188431:     	sarq	$0x2, %rdi
+140188435:     	vmovd	%xmm0, %r15d
+14018843a:     	testl	%r15d, %r15d
+14018843d:     	setne	%r14b
+140188441:     	cmpb	$0x0, 0xd8(%rsp)
+140188449:     	jne	0x14018d6f8 <.text+0x18c6f8>
+14018844f:     	movl	0x180(%rsp), %ecx
+140188456:     	leaq	(%rsi,%rdi), %rax
+14018845a:     	sarq	$0x3f, %rax
+14018845e:     	btcq	$0x3f, %rax
+140188463:     	addq	%rdi, %rsi
+140188466:     	cmovoq	%rax, %rsi
+14018846a:     	testb	$0x1, %r14b
+14018846e:     	movl	$0x0, %eax
+=== 0x14010c990 0x14010c9f0 ===
+
+D:\worktrees\rvp9-2\20260927-TSK-HUM-fresh-integrated-production-pgo-direct-s\.scratch\fresh-integrated-pgo\optimized\release\rvp9enc.exe:	file format coff-x86-64
+
+Disassembly of section .text:
+
+0000000140001000 <.text>:
+14010c990:     	addb	%cl, -0x77(%rcx)
+14010c993:     	fisttpll	-0x3d(%rcx,%rcx,4)
+14010c997:     	movswl	0x8966(%rbp), %r8d
+14010c99f:     	vpbroadcastd	0x107a67(%rip), %ymm17 # 0x140214410
+14010c9a9:     	vpbroadcastd	0x107a61(%rip), %ymm18 # 0x140214414
+14010c9b3:     	vmovdqu	0x2020(%r12), %ymm4
+14010c9bd:     	movl	0x2000(%r12), %eax
+14010c9c5:     	movswl	0x8964(%rbp), %edx
+14010c9cc:     	vpxor	%xmm6, %xmm6, %xmm6
+14010c9d0:     	movq	%rsi, %r14
+14010c9d3:     	movq	%r9, %rsi
+14010c9d6:     	movswl	0x895c(%rbp), %ecx
+14010c9dd:     	vpbroadcastd	%r8d, %ymm0
+14010c9e3:     	movswl	0x895e(%rbp), %r8d
+14010c9eb:     	vpsrld	$0x1f, %ymm3, %ymm5
+=== 0x1400f82d0 0x1400f8320 ===
+
+D:\worktrees\rvp9-2\20260927-TSK-HUM-fresh-integrated-production-pgo-direct-s\.scratch\fresh-integrated-pgo\optimized\release\rvp9enc.exe:	file format coff-x86-64
+
+Disassembly of section .text:
+
+0000000140001000 <.text>:
+1400f82d0:     	sti
+1400f82d1:     	popq	%rdi
+1400f82d2:     	orl	$0x11c089, %eax         # imm = 0x11C089
+1400f82d7:     	vminsd	0x11c089(%rip), %xmm1, %xmm1 # 0x140214368
+1400f82df:     	vucomisd	%xmm0, %xmm0
+1400f82e3:     	vxorpd	%xmm0, %xmm0, %xmm0
+1400f82e7:     	vmovupd	%zmm0, 0x1980(%rbp)
+1400f82ee:     	vmovupd	%zmm0, 0x4b50(%rbp)
+1400f82f8:     	vcvttsd2si	%xmm1, %ecx
+1400f82fc:     	cmovpl	%eax, %ecx
+1400f82ff:     	movq	0x68a0(%rbp), %rax
+1400f8306:     	cmpl	$0x2, %ecx
+1400f8309:     	cmovll	%esi, %ecx
+1400f830c:     	movq	0x8430(%rbp), %rsi
+1400f8313:     	movq	%rcx, 0x80a8(%rbp)
+1400f831a:     	movq	%rax, 0x8210(%rbp)
+=== 0x1400f8ad0 0x1400f8b20 ===
+
+D:\worktrees\rvp9-2\20260927-TSK-HUM-fresh-integrated-production-pgo-direct-s\.scratch\fresh-integrated-pgo\optimized\release\rvp9enc.exe:	file format coff-x86-64
+
+Disassembly of section .text:
+
+0000000140001000 <.text>:
+1400f8ad0:     	leal	0x1547da(%rip), %eax    # 0x14024d2b0
+1400f8ad6:     	movl	%r8d, %ecx
+1400f8ad9:     	movl	%r8d, 0x8654(%rbp)
+1400f8ae0:     	movl	$0x0, 0x86f8(%rbp)
+1400f8aea:     	je	0x1400f8aff <.text+0xf7aff>
+1400f8aec:     	lock
+1400f8aed:     	incq	(%rax)
+1400f8af0:     	movb	$0x1, %r9b
+1400f8af3:     	movl	%ecx, 0x8654(%rbp)
+1400f8af9:     	movl	%edx, 0x86f8(%rbp)
+1400f8aff:     	movq	0x61d0(%rbp), %rcx
+1400f8b06:     	cmpb	$0x6, 0x8828(%rbp)
+1400f8b0d:     	movb	%r9b, 0x8af0(%rbp)
+1400f8b14:     	movzwl	0x4(%rcx), %eax
+1400f8b18:     	movw	%ax, 0x7b34(%rbp)
+1400f8b1f:     	movl	(%rcx), %eax
