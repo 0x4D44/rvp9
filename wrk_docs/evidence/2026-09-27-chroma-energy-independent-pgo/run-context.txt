@@ -1,0 +1,1 @@
+screen_start_utc=2026-09-27T11:51:26.9614539+01:00 cpu_percent=8.884 process_affinity=default (existing runner does not set ProcessorAffinity) quiet_lease=none (quiet unavailable; low-load run)

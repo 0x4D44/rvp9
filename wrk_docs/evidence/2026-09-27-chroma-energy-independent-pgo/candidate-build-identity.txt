@@ -1,0 +1,36 @@
+recorded_utc=2026-09-27T10:46:46Z
+source_worktree=/d/worktrees/rvp9-2/20260927-TSK-HUM-chroma-energy-certificate-pgo
+source_commit=cf9282faf96277d8089781ab0951aaa9d5b21acb
+source_tree=442148352e8ec20b2203aa0c2f01e6394be27bbd
+source_describe=v0.2.0-alpha.2-430-gcf9282faf
+source_status=
+recipe_sha256=2d335a8b02c41a3dc370238add4b894d2f9d27900ee9e657dcc3b9e7ba2d54e5 */d/worktrees/rvp9-2/20260927-TSK-HUM-chroma-energy-certificate-pgo/scripts/build-encoder-pgo.sh
+training_dir=/d/worktrees/rvp9-2/acceptance-d639c265/tests/corpus
+input_720p_in_to_tree_420_720p50.y4m=81166517a3054c789923535b5da23fbbb9bbd7fd4c28dac83918ac351e121e74 */d/worktrees/rvp9-2/acceptance-d639c265/tests/corpus/in_to_tree_420_720p50.y4m
+input_720p_ducks_take_off_420_720p50.y4m=0e09aa923ce72e2f6d1c978c3c1cc8dd9588d2ede819081f040213e361970efc */d/worktrees/rvp9-2/acceptance-d639c265/tests/corpus/ducks_take_off_420_720p50.y4m
+input_720p_old_town_cross_420_720p50.y4m=0fbc2ec0c552ad693528b2e49409c7449880b9230055a7696346473d1aaf4123 */d/worktrees/rvp9-2/acceptance-d639c265/tests/corpus/old_town_cross_420_720p50.y4m
+input_1080p_in_to_tree_420_1080p30_60f.y4m=ead3aef191242b03cc6019f0527c71bc3d11e856ba4f9f92b926fe804582f791 */d/worktrees/rvp9-2/20260927-TSK-HUM-chroma-energy-certificate-pgo/.scratch/encoder-pgo-retention-candidate-cf928/inputs/in_to_tree_420_1080p30_60f.y4m
+input_1080p_ducks_take_off_420_1080p30_60f.y4m=6d2d866613f7a8c7b11bd2c27374f7637cd4a0748ff6fea4a671b23cfbcde6d7 */d/worktrees/rvp9-2/20260927-TSK-HUM-chroma-energy-certificate-pgo/.scratch/encoder-pgo-retention-candidate-cf928/inputs/ducks_take_off_420_1080p30_60f.y4m
+input_1080p_old_town_cross_420_1080p30_60f.y4m=b738b8068d1200f8a3119c72f1edc844424d3fe96d8b28acb9af11497ed7c909 */d/worktrees/rvp9-2/20260927-TSK-HUM-chroma-energy-certificate-pgo/.scratch/encoder-pgo-retention-candidate-cf928/inputs/old_town_cross_420_1080p30_60f.y4m
+manifest=/d/worktrees/rvp9-2/20260927-TSK-HUM-chroma-energy-certificate-pgo/.scratch/encoder-pgo-retention-candidate-cf928/runs/20260927T104353Z-3230467/manifest.txt
+profdata=/d/worktrees/rvp9-2/20260927-TSK-HUM-chroma-energy-certificate-pgo/.scratch/encoder-pgo-retention-candidate-cf928/runs/20260927T104353Z-3230467/encoder.profdata
+profdata_sha256=3f4c740d0b378789a48025491d79c54c46bf42febb20969457c46ac9cb80a50f */d/worktrees/rvp9-2/20260927-TSK-HUM-chroma-energy-certificate-pgo/.scratch/encoder-pgo-retention-candidate-cf928/runs/20260927T104353Z-3230467/encoder.profdata
+optimized_binary=/d/worktrees/rvp9-2/20260927-TSK-HUM-chroma-energy-certificate-pgo/.scratch/encoder-pgo-retention-candidate-cf928/optimized/release/rvp9enc.exe
+optimized_binary_sha256=c0dc53bc3a3b8ede9d9c45e8606d0f4b09ab0f60c10e7e300d790e79d8b7bfbb */d/worktrees/rvp9-2/20260927-TSK-HUM-chroma-energy-certificate-pgo/.scratch/encoder-pgo-retention-candidate-cf928/optimized/release/rvp9enc.exe
+rustc_version=rustc 1.95.0 (59807616e 2026-04-14)
+cargo_version=cargo 1.95.0 (f2d3ce0bd 2026-03-21)
+rustc_verbose_begin
+rustc 1.95.0 (59807616e 2026-04-14)
+binary: rustc
+commit-hash: 59807616e1fa2540724bfbac14d7976d7e4a3860
+commit-date: 2026-04-14
+host: x86_64-pc-windows-msvc
+release: 1.95.0
+LLVM version: 22.1.2
+rustc_verbose_end
+llvm_profdata_path=C:\Users\marti\.rustup\toolchains\stable-x86_64-pc-windows-msvc/lib/rustlib/x86_64-pc-windows-msvc/bin/llvm-profdata.exe
+llvm_profdata_version=LLVM (http://llvm.org/):
+ffmpeg_version=ffmpeg version 8.1.1-full_build-www.gyan.dev Copyright (c) 2000-2026 the FFmpeg developers
+frames_per_row=60
+training_rows=28
+rustflags=-Ctarget-cpu=native -Cprofile-generate=<run-profile-dir> then -Cprofile-use=<profdata>
