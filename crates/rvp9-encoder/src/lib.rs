@@ -4929,6 +4929,63 @@ fn prove_inter_chroma_zero_eob(
         return false;
     }
 
+    // The checked 8-bit transform bound certifies both TX8 and TX4 when every
+    // complete 8x8 residual tile stays below this strict energy threshold.
+    // Any guard or tile miss falls through to the original proof below.
+    if quant_fp && block_w.is_multiple_of(8) && block_h.is_multiple_of(8) {
+        let threshold = quantizer
+            .quant_fp
+            .into_iter()
+            .zip(quantizer.round_fp)
+            .try_fold(u64::MAX, |threshold, (quant_fp, round_fp)| {
+                let quant_fp = u64::try_from(quant_fp).ok()?;
+                let round_fp = u64::try_from(round_fp).ok()?;
+                let band_threshold = ((1u64 << 16) + quant_fp - 1)
+                    .checked_div(quant_fp)?
+                    .checked_sub(round_fp)?;
+                Some(threshold.min(band_threshold))
+            })
+            .map(|threshold| threshold.min(837));
+        if let Some(threshold) = threshold.filter(|&threshold| threshold > 4) {
+            let margin = threshold - 4;
+            let bound = margin * margin;
+            let mut all_tiles_zero = true;
+            for (plane_index, source) in input.iter().enumerate() {
+                let recon_plane = recon.plane(plane_index + 1);
+                let layout = recon_plane.layout;
+                let (recon_x, recon_y) = local_origins[plane_index];
+                for tile_y in (0..block_h).step_by(8) {
+                    for tile_x in (0..block_w).step_by(8) {
+                        let mut sse = 0u64;
+                        for row in 0..8 {
+                            let source_start = (px_y + tile_y + row) * input_stride + px_x + tile_x;
+                            let recon_start =
+                                (recon_y + tile_y + row) * layout.stride + recon_x + tile_x;
+                            for col in 0..8 {
+                                let residual = i32::from(source[source_start + col])
+                                    - i32::from(recon_plane.data[recon_start + col]);
+                                sse += (residual * residual) as u64;
+                            }
+                        }
+                        if 65 * sse >= bound {
+                            all_tiles_zero = false;
+                            break;
+                        }
+                    }
+                    if !all_tiles_zero {
+                        break;
+                    }
+                }
+                if !all_tiles_zero {
+                    break;
+                }
+            }
+            if all_tiles_zero {
+                return true;
+            }
+        }
+    }
+
     let tx_sizes: &[TxSize] = if allow_tx4 {
         &[TxSize::Tx8x8, TxSize::Tx4x4]
     } else {
@@ -15883,6 +15940,211 @@ mod tests {
             true,
             &mut scratch,
         ));
+    }
+
+    #[test]
+    fn inter_chroma_energy_certificate_matches_old_transform_proof() {
+        use rvp9_core::quant::forward::{QuantizerDeltas, init_plane_quantizers};
+
+        const W: usize = 64;
+        const H: usize = 64;
+        const UV_W: usize = W / 2;
+        const UV_H: usize = H / 2;
+
+        let layout = InterReconLayout::full(W, H);
+        let mut recon_y = vec![128u8; layout.plane(0).stride * layout.plane(0).rows];
+        let mut recon_u = vec![128u8; layout.plane(1).stride * layout.plane(1).rows];
+        let mut recon_v = vec![128u8; layout.plane(2).stride * layout.plane(2).rows];
+        let recon = InterReconPlanes::new((&mut recon_y, &mut recon_u, &mut recon_v), layout);
+
+        let flat = vec![128u8; UV_W * UV_H];
+        let nonlinear: Vec<u8> = (0..UV_W * UV_H)
+            .map(|index| {
+                let x = index % UV_W;
+                let y = index / UV_W;
+                let residual = ((x * x + 3 * y * y + 5 * x * y + 7 * x + 11 * y) % 31) as i16 - 15;
+                u8::try_from(128i16 + residual).expect("nonlinear residual fits 8-bit source")
+            })
+            .collect();
+        let mut impulses = flat.clone();
+        impulses[0] = 255;
+        impulses[7 * UV_W + 7] = 0;
+        impulses[8 * UV_W + 8] = 191;
+        impulses[15 * UV_W + 15] = 65;
+        let patterns = [
+            ("flat", flat),
+            ("nonlinear", nonlinear),
+            ("impulses", impulses),
+        ];
+
+        let old_path = |recon: &InterReconPlanes<'_>,
+                        source: &[u8],
+                        input_stride: usize,
+                        uv_width: usize,
+                        uv_height: usize,
+                        leaf_mi_col: usize,
+                        leaf_mi_row: usize,
+                        leaf_bsize: BlockSize,
+                        allow_tx4: bool,
+                        quantizer: &rvp9_core::quant::forward::PlaneQuantizers,
+                        scratch: &mut InterEmitScratch| {
+            let Some((px_x, px_y, block_w, block_h, local_origins)) =
+                inter_chroma_proof_recon_origins(
+                    recon,
+                    uv_width,
+                    uv_height,
+                    leaf_mi_col,
+                    leaf_mi_row,
+                    leaf_bsize,
+                )
+            else {
+                return false;
+            };
+            if input_stride < uv_width {
+                return false;
+            }
+            let Some(input_len) = input_stride.checked_mul(uv_height) else {
+                return false;
+            };
+            if source.len() < input_len {
+                return false;
+            }
+            let tx_sizes: &[TxSize] = if allow_tx4 {
+                &[TxSize::Tx8x8, TxSize::Tx4x4]
+            } else {
+                &[TxSize::Tx8x8]
+            };
+            for &tx_size in tx_sizes {
+                let tx_side = tx_size.side();
+                for (plane_index, source) in [source, source].into_iter().enumerate() {
+                    let recon_plane = recon.plane(plane_index + 1);
+                    let layout = recon_plane.layout;
+                    let (recon_x, recon_y) = local_origins[plane_index];
+                    for tile_y in (0..block_h).step_by(tx_side) {
+                        for tile_x in (0..block_w).step_by(tx_side) {
+                            let tile_zero =
+                                scratch.with_len(tx_side * tx_side, |residual, quant_scratch| {
+                                    for row in 0..tx_side {
+                                        let source_start =
+                                            (px_y + tile_y + row) * input_stride + px_x + tile_x;
+                                        let recon_start = (recon_y + tile_y + row) * layout.stride
+                                            + recon_x
+                                            + tile_x;
+                                        for col in 0..tx_side {
+                                            residual[row * tx_side + col] =
+                                                i16::from(source[source_start + col])
+                                                    - i16::from(
+                                                        recon_plane.data[recon_start + col],
+                                                    );
+                                        }
+                                    }
+                                    inter_forward_quant_one_tx_with_scratch(
+                                        quant_scratch,
+                                        residual,
+                                        tx_side,
+                                        tx_size,
+                                        quantizer,
+                                        1,
+                                        None,
+                                        true,
+                                        |_, _, eob| eob == 0,
+                                    )
+                                });
+                            if !tile_zero {
+                                return false;
+                            }
+                        }
+                    }
+                }
+            }
+            true
+        };
+
+        for q_index in 0..=255i32 {
+            let quantizer = init_plane_quantizers(q_index, QuantizerDeltas::Y);
+            for (pattern_name, source) in &patterns {
+                for allow_tx4 in [false, true] {
+                    let expected = old_path(
+                        &recon,
+                        source,
+                        UV_W,
+                        UV_W,
+                        UV_H,
+                        0,
+                        0,
+                        BlockSize::Block32x16,
+                        allow_tx4,
+                        &quantizer,
+                        &mut InterEmitScratch::new(),
+                    );
+                    let actual = prove_inter_chroma_zero_eob(
+                        [source, source],
+                        UV_W,
+                        UV_W,
+                        UV_H,
+                        &recon,
+                        0,
+                        0,
+                        BlockSize::Block32x16,
+                        allow_tx4,
+                        &quantizer,
+                        true,
+                        &mut InterEmitScratch::new(),
+                    );
+                    assert_eq!(
+                        actual, expected,
+                        "energy certificate changed q={q_index} pattern={pattern_name} \
+                         allow_tx4={allow_tx4}"
+                    );
+                }
+            }
+        }
+
+        const EDGE_H: usize = 72;
+        const EDGE_UV_H: usize = EDGE_H / 2;
+        let edge_layout = InterReconLayout::full(W, EDGE_H);
+        let mut edge_recon_y = vec![128u8; edge_layout.plane(0).stride * edge_layout.plane(0).rows];
+        let mut edge_recon_u = vec![128u8; edge_layout.plane(1).stride * edge_layout.plane(1).rows];
+        let mut edge_recon_v = vec![128u8; edge_layout.plane(2).stride * edge_layout.plane(2).rows];
+        let edge_recon = InterReconPlanes::new(
+            (&mut edge_recon_y, &mut edge_recon_u, &mut edge_recon_v),
+            edge_layout,
+        );
+        let edge_source = vec![128u8; UV_W * EDGE_UV_H];
+        let edge_quantizer = init_plane_quantizers(80, QuantizerDeltas::Y);
+        for allow_tx4 in [false, true] {
+            let expected = old_path(
+                &edge_recon,
+                &edge_source,
+                UV_W,
+                UV_W,
+                EDGE_UV_H,
+                0,
+                8,
+                BlockSize::Block32x16,
+                allow_tx4,
+                &edge_quantizer,
+                &mut InterEmitScratch::new(),
+            );
+            let actual = prove_inter_chroma_zero_eob(
+                [&edge_source, &edge_source],
+                UV_W,
+                UV_W,
+                EDGE_UV_H,
+                &edge_recon,
+                0,
+                8,
+                BlockSize::Block32x16,
+                allow_tx4,
+                &edge_quantizer,
+                true,
+                &mut InterEmitScratch::new(),
+            );
+            assert_eq!(
+                actual, expected,
+                "partial edge changed allow_tx4={allow_tx4}"
+            );
+        }
     }
 
     #[test]
