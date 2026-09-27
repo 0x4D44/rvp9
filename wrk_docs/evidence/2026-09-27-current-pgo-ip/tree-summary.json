@@ -1,0 +1,104 @@
+{
+  "source_mode": "etl",
+  "source_path": ".scratch\\after-early-chroma-pgo-ip\\tree\\capture.etl",
+  "exe_path": ".scratch\\encoder-pgo-control\\optimized\\release\\rvp9enc.exe",
+  "exe_sha256": "ce0b5bc008ab9700abacad99ea3445691e1a3ca8b5f114b9ce682e15d27730f2",
+  "pdb_path": ".scratch\\encoder-pgo-control\\optimized\\release\\rvp9enc.pdb",
+  "pdb_sha256": "7dbf06fcda772d00e99403a86ab4811e20d2a96607392e527c18e5cf251c832d",
+  "pdb_pairing": {
+    "method": "PE RSDS GUID/age matched against PDB MSF information stream; DbgHelp loaded path checked",
+    "embedded_pdb_name": "rvp9enc.pdb",
+    "guid": "5833ef28-73b7-fd29-4c4c-44205044422e",
+    "age": 1
+  },
+  "pe": {
+    "preferred_base": "0x0000000140000000",
+    "size_of_image": "0x25a000"
+  },
+  "images": [
+    {
+      "pid": 48760,
+      "base": "0x00007ff75db90000",
+      "end_exclusive": "0x00007ff75ddea000",
+      "size": "0x25a000",
+      "source": "I-Start"
+    }
+  ],
+  "counts": {
+    "dumper_sampled_profile_rows_all_processes": 185001,
+    "target_process_sampled_profile_rows": 10943,
+    "pid_filtered_rows": 0,
+    "target_process_other_module_rows": 1642,
+    "retained_target_executable_rows": 9301,
+    "retained_direct_count": 9301,
+    "unique_ips": 4269,
+    "unique_pid_ip_pairs": 4269,
+    "resolved_unique_symbols": 145,
+    "nonzero_source_line_direct_count": 9233,
+    "nonzero_source_line_unique_ips": 4256,
+    "nonzero_source_line_pid_ip_pairs": 4256
+  },
+  "xperf": {
+    "dumper": {
+      "command": [
+        "xperf.exe",
+        "-i",
+        ".scratch\\after-early-chroma-pgo-ip\\tree\\capture.etl",
+        "-a",
+        "dumper",
+        "-add_fieldnames"
+      ],
+      "exit_code": 0
+    },
+    "reports": {
+      "tracestats": {
+        "exit_code": 0,
+        "report": "xperf-tracestats.txt",
+        "diagnostic_lines": [
+          "Total # Lost Buffers : 0",
+          "Total # Lost Events  : 0",
+          "# Lost Buffers       : 0",
+          "# Lost Events        : 0"
+        ]
+      },
+      "profile": {
+        "exit_code": 0,
+        "report": "xperf-profile.txt",
+        "diagnostic_lines": []
+      }
+    },
+    "loss_or_warning_lines_from_dumper": [
+      "OS Version: 10.0.26200, Trace Size: 101376KB, Events Lost: 0, Buffers lost: 0, Trace Start: 134349712863637543, Trace Length: 22 sec, PointerSize: 8, Trace Name: .scratch\\after-early-chroma-pgo-ip\\tree\\capture.etl",
+      "FileVersion,   22091764, 0x0001d000,    0xd5240205, \"pshed.dll\", \"Platform Specific Hardware Error Driver\", \"10.0.26100.8972 (WinBuild.160101.0800)\", \"10.0.26100.8972\", \"1033\", \"Microsoft® Windows® Operating System\", \"Microsoft Corporation\", \"10.0.26100.8972\", \"\", \"\"",
+      "FileVersion,   22091766, 0x00017000,    0xa6edf41c, \"werkernel.sys\", \"Windows Error Reporting Kernel Driver\", \"10.0.26100.8972 (WinBuild.160101.0800)\", \"10.0.26100.8972\", \"1033\", \"Microsoft® Windows® Operating System\", \"Microsoft Corporation\", \"10.0.26100.8972\", \"\", \"\"",
+      "FileVersion,   22097470, 0x000f6000,    0x30a05512, \"wer.dll\", \"Windows Error Reporting DLL\", \"10.0.26100.9444 (WinBuild.160101.0800)\", \"10.0.26100.9444\", \"1033\", \"Microsoft® Windows® Operating System\", \"Microsoft Corporation\", \"10.0.26100.9444\", \"\", \"\""
+    ],
+    "loss_or_warning_lines_from_reports": [
+      {
+        "action": "tracestats",
+        "line": "Total # Lost Buffers : 0"
+      },
+      {
+        "action": "tracestats",
+        "line": "Total # Lost Events  : 0"
+      },
+      {
+        "action": "tracestats",
+        "line": "# Lost Buffers       : 0"
+      },
+      {
+        "action": "tracestats",
+        "line": "# Lost Events        : 0"
+      }
+    ],
+    "loss_interpretation": "verbatim matching lines are recorded; an empty list is not a zero-loss assertion"
+  },
+  "outputs": {
+    "samples_csv": ".scratch\\after-early-chroma-pgo-ip\\tree\\extracted\\samples.csv",
+    "unique_ip_map_csv": ".scratch\\after-early-chroma-pgo-ip\\tree\\extracted\\ip-symbols.csv",
+    "other_process_modules_csv": ".scratch\\after-early-chroma-pgo-ip\\tree\\extracted\\other-process-modules.csv",
+    "summary_by_symbol_csv": ".scratch\\after-early-chroma-pgo-ip\\tree\\extracted\\summary-by-symbol.csv",
+    "summary_by_source_line_csv": ".scratch\\after-early-chroma-pgo-ip\\tree\\extracted\\summary-by-source-line.csv"
+  },
+  "comparison": null
+}

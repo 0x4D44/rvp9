@@ -1,0 +1,23 @@
+Number of Processors : 32
+CPU Speed            : 4300 MHz
+OS Version           : 10.00.00.00
+OS Build Number      : 26200
+Clock type           : PerfCounter
+Boot time            : 2026/09/21:09:32:14.5000000
+Native Pointer Size  : 8 (64bit)
+Start time (UTC)     : 2026/09/27:08:28:06.3637543
+End time (UTC)       : 2026/09/27:08:28:28.9173911  (+         0:00:00:22.5536368)
+Total # Lost Buffers : 0
+Total # Lost Events  : 0
+
+Number of Traces     : 1
+
+Trace name: .scratch\after-early-chroma-pgo-ip\tree\capture.etl
+    Log file mode        : Sequential Relogged
+    Pointer size         : 8 (64bit)
+    Start time (UTC)     : 2026/09/27:08:28:06.3637543
+    End time (UTC)       : 2026/09/27:08:28:28.9173911  (+         0:00:00:22.5536368)
+    Start time (Local)   : 2026/09/27:09:28:06.3637543
+    End time (Local)     : 2026/09/27:09:28:28.9173911
+    # Lost Buffers       : 0
+    # Lost Events        : 0
