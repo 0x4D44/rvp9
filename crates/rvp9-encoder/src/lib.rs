@@ -4819,6 +4819,148 @@ fn emit_inter_prediction(
     }
 }
 
+/// Prove that every U/V TX has zero quantized EOB for the candidate chroma
+/// sizes. This only reads the already-built prediction and mutates the caller's
+/// scratch prefixes; it never writes reconstruction or coefficient state.
+///
+/// A false result also covers geometry this proof does not safely own yet:
+/// visible-edge partial leaves, unsupported UV block sizes, and compact-row
+/// windows that do not contain the complete leaf.
+#[allow(dead_code, clippy::too_many_arguments)]
+fn prove_inter_chroma_zero_eob(
+    input: [&[u8]; 2],
+    input_stride: usize,
+    uv_width: usize,
+    uv_height: usize,
+    recon: &InterReconPlanes<'_>,
+    leaf_mi_col: usize,
+    leaf_mi_row: usize,
+    leaf_bsize: BlockSize,
+    allow_tx4: bool,
+    quantizer: &rvp9_core::quant::forward::PlaneQuantizers,
+    quant_fp: bool,
+    scratch: &mut InterEmitScratch,
+) -> bool {
+    let uv_bsize = f5_uv_plane_block_size(leaf_bsize);
+    let block_w = (uv_bsize.n_4x4_wide() as usize).saturating_mul(4);
+    let block_h = (uv_bsize.n_4x4_high() as usize).saturating_mul(4);
+    let Some(px_x) = leaf_mi_col.checked_mul(4) else {
+        return false;
+    };
+    let Some(px_y) = leaf_mi_row.checked_mul(4) else {
+        return false;
+    };
+
+    // The selector path this proof serves has UV TX8 as its largest candidate.
+    // Reject larger or smaller UV blocks until their candidate set is proved.
+    if rvp9_core::block::max_txsize(uv_bsize) != TxSize::Tx8x8
+        || block_w < TxSize::Tx8x8.side()
+        || block_h < TxSize::Tx8x8.side()
+        || input_stride < uv_width
+        || px_x > uv_width
+        || px_y > uv_height
+        || block_w > uv_width - px_x
+        || block_h > uv_height - px_y
+    {
+        return false;
+    }
+
+    let Some(input_len) = input_stride.checked_mul(uv_height) else {
+        return false;
+    };
+    if input.iter().any(|source| source.len() < input_len) {
+        return false;
+    }
+
+    let mut local_origins = [(0usize, 0usize); 2];
+    for (plane_index, local_origin) in local_origins.iter_mut().enumerate() {
+        let layout = recon.plane(plane_index + 1).layout;
+        if layout.frame_width != uv_width || layout.frame_height != uv_height {
+            return false;
+        }
+        let Some(local_x) = px_x.checked_sub(layout.col_start) else {
+            return false;
+        };
+        let Some(local_y) = px_y.checked_sub(layout.row_start) else {
+            return false;
+        };
+        let Some(local_end_x) = local_x.checked_add(block_w) else {
+            return false;
+        };
+        let Some(local_end_y) = local_y.checked_add(block_h) else {
+            return false;
+        };
+        if local_end_x > layout.stride || local_end_y > layout.rows {
+            return false;
+        }
+        let Some(storage_len) = layout.stride.checked_mul(layout.rows) else {
+            return false;
+        };
+        if recon.plane(plane_index + 1).data.len() < storage_len {
+            return false;
+        }
+        *local_origin = (local_x, local_y);
+    }
+
+    let tx_sizes: &[TxSize] = if allow_tx4 {
+        &[TxSize::Tx8x8, TxSize::Tx4x4]
+    } else {
+        &[TxSize::Tx8x8]
+    };
+    for &tx_size in tx_sizes {
+        let tx_side = tx_size.side();
+        if !block_w.is_multiple_of(tx_side) || !block_h.is_multiple_of(tx_side) {
+            return false;
+        }
+        for (plane_index, source) in input.into_iter().enumerate() {
+            let recon_plane = recon.plane(plane_index + 1);
+            let layout = recon_plane.layout;
+            let (recon_x, recon_y) = local_origins[plane_index];
+            for tile_y in (0..block_h).step_by(tx_side) {
+                for tile_x in (0..block_w).step_by(tx_side) {
+                    let source_x = px_x + tile_x;
+                    let source_y = px_y + tile_y;
+                    let recon_x = recon_x + tile_x;
+                    let recon_y = recon_y + tile_y;
+                    let tile_zero =
+                        scratch.with_len(tx_side * tx_side, |residual, quant_scratch| {
+                            let mut residual_nonzero = false;
+                            for row in 0..tx_side {
+                                let source_start = (source_y + row) * input_stride + source_x;
+                                let recon_start = (recon_y + row) * layout.stride + recon_x;
+                                for col in 0..tx_side {
+                                    let value = i16::from(source[source_start + col])
+                                        - i16::from(recon_plane.data[recon_start + col]);
+                                    residual[row * tx_side + col] = value;
+                                    residual_nonzero |= value != 0;
+                                }
+                            }
+                            if !residual_nonzero {
+                                true
+                            } else {
+                                inter_forward_quant_one_tx_with_scratch(
+                                    quant_scratch,
+                                    residual,
+                                    tx_side,
+                                    tx_size,
+                                    quantizer,
+                                    1,
+                                    None,
+                                    quant_fp,
+                                    |_, _, eob| eob == 0,
+                                )
+                            }
+                        });
+                    if !tile_zero {
+                        return false;
+                    }
+                }
+            }
+        }
+    }
+    true
+}
+
 pub(crate) enum InterPartitionHistoryMut<'a> {
     Frame {
         entries: &'a mut [rvp9_core::mode_decision::partition::FixedTreeHistoryEntry],
@@ -15488,6 +15630,117 @@ mod tests {
             ),
             "compound prediction differs"
         );
+    }
+
+    #[test]
+    fn inter_chroma_zero_eob_proof_checks_both_sizes_and_geometry() {
+        use rvp9_core::quant::forward::{QuantizerDeltas, init_plane_quantizers};
+
+        const W: usize = 64;
+        const H: usize = 64;
+        const UV_W: usize = W / 2;
+        const UV_H: usize = H / 2;
+        let layout = InterReconLayout::full(W, H);
+        let mut y = vec![0u8; layout.plane(0).stride * layout.plane(0).rows];
+        let mut u = vec![128u8; layout.plane(1).stride * layout.plane(1).rows];
+        let mut v = vec![128u8; layout.plane(2).stride * layout.plane(2).rows];
+        let recon = InterReconPlanes::new((&mut y, &mut u, &mut v), layout);
+        let mut source_u = vec![128u8; UV_W * UV_H];
+        let source_v = vec![128u8; UV_W * UV_H];
+        let quantizer = init_plane_quantizers(117, QuantizerDeltas::Y);
+        let mut scratch = InterEmitScratch::new();
+        let probe = |source_u: &[u8], allow_tx4: bool, scratch: &mut InterEmitScratch| {
+            prove_inter_chroma_zero_eob(
+                [source_u, &source_v],
+                UV_W,
+                UV_W,
+                UV_H,
+                &recon,
+                0,
+                0,
+                BlockSize::Block16x16,
+                allow_tx4,
+                &quantizer,
+                true,
+                scratch,
+            )
+        };
+
+        assert!(probe(&source_u, true, &mut scratch));
+
+        // This one-pixel residual quantizes to EOB0 at TX8 but retains an EOB
+        // at TX4. If the production proof drops its TX4 candidate, this
+        // assertion turns red.
+        source_u[0] = 158;
+        assert!(probe(&source_u, false, &mut scratch));
+        assert!(!probe(&source_u, true, &mut scratch));
+
+        const COMPACT_H: usize = 128;
+        const COMPACT_UV_H: usize = COMPACT_H / 2;
+        let compact_layout = InterReconLayout::compact_row(W, COMPACT_H, 1, 0, 8);
+        let mut compact_y =
+            vec![128u8; compact_layout.plane(0).stride * compact_layout.plane(0).rows];
+        let mut compact_u =
+            vec![128u8; compact_layout.plane(1).stride * compact_layout.plane(1).rows];
+        let mut compact_v =
+            vec![128u8; compact_layout.plane(2).stride * compact_layout.plane(2).rows];
+        let compact_recon = InterReconPlanes::new(
+            (&mut compact_y, &mut compact_u, &mut compact_v),
+            compact_layout,
+        );
+        let compact_source = vec![128u8; UV_W * COMPACT_UV_H];
+        assert!(prove_inter_chroma_zero_eob(
+            [&compact_source, &compact_source],
+            UV_W,
+            UV_W,
+            COMPACT_UV_H,
+            &compact_recon,
+            0,
+            8,
+            BlockSize::Block16x16,
+            true,
+            &quantizer,
+            true,
+            &mut scratch,
+        ));
+        assert!(!prove_inter_chroma_zero_eob(
+            [&compact_source, &compact_source],
+            UV_W,
+            UV_W,
+            COMPACT_UV_H,
+            &compact_recon,
+            0,
+            0,
+            BlockSize::Block16x16,
+            true,
+            &quantizer,
+            true,
+            &mut scratch,
+        ));
+
+        const EDGE_H: usize = 72;
+        const EDGE_UV_H: usize = EDGE_H / 2;
+        let edge_layout = InterReconLayout::full(W, EDGE_H);
+        let mut edge_y = vec![128u8; edge_layout.plane(0).stride * edge_layout.plane(0).rows];
+        let mut edge_u = vec![128u8; edge_layout.plane(1).stride * edge_layout.plane(1).rows];
+        let mut edge_v = vec![128u8; edge_layout.plane(2).stride * edge_layout.plane(2).rows];
+        let edge_recon =
+            InterReconPlanes::new((&mut edge_y, &mut edge_u, &mut edge_v), edge_layout);
+        let edge_source = vec![128u8; UV_W * EDGE_UV_H];
+        assert!(!prove_inter_chroma_zero_eob(
+            [&edge_source, &edge_source],
+            UV_W,
+            UV_W,
+            EDGE_UV_H,
+            &edge_recon,
+            0,
+            8,
+            BlockSize::Block16x16,
+            true,
+            &quantizer,
+            true,
+            &mut scratch,
+        ));
     }
 
     #[test]
