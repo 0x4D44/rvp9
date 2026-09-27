@@ -1,0 +1,8 @@
+recorded_utc=2026-09-27T11:24:39.7562761Z
+host=CRUCIBLE
+cpu=AMD Ryzen 9 9950X3D 16-Core Processor
+initial_prebuild_load_percent=0
+screen02_start_load_percent=2
+final_load_percent=
+load_policy=Arthur accepts 25%+; no rows filtered
+signal=paired process CPU; wall time non-citable
