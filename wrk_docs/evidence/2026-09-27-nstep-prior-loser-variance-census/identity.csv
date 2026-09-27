@@ -1,0 +1,4 @@
+﻿"Name","Path","Sha256"
+"exe","D:\worktrees\rvp9-2\20260927-TSK-HUM-nstep-variance-census\target\release\rvp9enc.exe","f53bf34b9f6bb46c753035f758b4cc50201fcfd49b2a1854b85d0912d85f2e4e"
+"core_source","D:\worktrees\rvp9-2\20260927-TSK-HUM-nstep-variance-census\crates\rvp9-core\src\mv_search\full_pixel.rs","1ce9a00b2be1c2b8d032a1d1acf74fa0dae05790bce96acf6d643cfe9eb4eac4"
+"cli_source","D:\worktrees\rvp9-2\20260927-TSK-HUM-nstep-variance-census\crates\rvp9-cli\src\bin\rvp9enc.rs","4c6552767d946f191a99b499607c7eea686f055434228e2d195b273f5ec65708"
