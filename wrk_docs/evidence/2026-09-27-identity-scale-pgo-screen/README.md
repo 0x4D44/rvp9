@@ -1,0 +1,13 @@
+# Exact identity-scale prototype: paired production-PGO screen
+
+The exact-image [instruction profile](../2026-09-27-fresh-integrated-pgo-ip/README.md) assigned 486/18,127 direct Ducks samples to tight-plane inter prediction. Those samples did not prove that scale setup was costly. A one-file prototype (`74359df8` on unpushed branch `task/20260927-TSK-HUM-prototype-exact-identity-inter-scale-pat`) avoids scale-factor division and Q14 coordinate multiplication when both reference dimensions equal the current dimensions. It preserves the general scaled path, `i16` motion-vector truncation, border handling, and predictor dispatch. Its old-algorithm differential failed under a deliberate one-Q4-coordinate mutation, then passed after restoration. All 21 focused AArch64 and native x86 scale tests passed; AArch64 formatting passed.
+
+Crucible built the candidate from exact source SHA-256 `1dac582bb6e5b7ce749538bff557e3f3e6797458093abf38e860aab18764e4b6` on base `a2c3bf16` with the unchanged [28-row/60-frame production-PGO recipe](../../../scripts/build-encoder-pgo.sh), SHA-256 `2d335a8b02c41a3dc370238add4b894d2f9d27900ee9e657dcc3b9e7ba2d54e5`. The 31 raw profiles produced candidate EXE SHA-256 `4099b0ca6595c230bc9b108924d021db80291c4610d350e2eb40dff2f42b13db`. The exact integrated control EXE SHA-256 was `3c294166213bce7dc707734bf6fbe86e2387b23ef533c16ed16acf4780aaf3ad`. The [identity](identity.csv), [manifest](pgo-manifest.txt), and [protocol](protocol.txt) preserve source, binary, input, and training details.
+
+| Candidate/control process CPU, 15 pairs/clip | Ducks | Tree | Town | Equal-clip |
+| --- | ---: | ---: | ---: | ---: |
+| Fresh production PGO | 1.039353 | 1.007726 | 1.020591 | **1.022475** |
+
+The [raw paired rows](raw.csv) and [summary](summary.csv) retain all 90 timed encodes and six warmups. The runner alternated arms and reversed clip order by pair parity under a quiet lease with zero heavy builds. An independent recomputation found 96 rows, zero exit or output-hash failures, all 45 measured pairs, and the ratios above. No row was excluded. The lease ended after the screen.
+
+**Decision:** reject the code. It makes every clip slower, especially Ducks. The hot data-load RVA did not indicate removable scale arithmetic, and an exact shortcut still changes PGO/code layout; counting profile samples as a predicted saving would have been unsound. The committed code remains unpushed for forensic review, not integration. The goal stays open at the last [exact integrated direct result](../2026-09-27-fresh-integrated-pgo-direct/README.md), 1.054068× pinned libvpx equal-clip process CPU.
