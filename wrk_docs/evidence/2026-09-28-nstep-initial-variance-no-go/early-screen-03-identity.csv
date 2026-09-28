@@ -1,0 +1,6 @@
+﻿"Name","Path","Sha256"
+"control","D:\worktrees\rvp9-2\20260927-TSK-HUM-fresh-integrated-production-pgo-direct-s\.scratch\fresh-integrated-pgo\optimized\release\rvp9enc.exe","3c294166213bce7dc707734bf6fbe86e2387b23ef533c16ed16acf4780aaf3ad"
+"candidate","D:\worktrees\rvp9-2\20260928-TSK-HUM-skip-nstep-score-on-direct-early-return\.scratch\encoder-pgo-nstep-early\optimized\release\rvp9enc.exe","d2a36272264f9128a9e4626d09378228c5abff564a0289b923c799527f74b2ff"
+"ducks","D:\worktrees\rvp9-2\acceptance-d639c265\target\encoder-pgo\inputs\ducks_take_off_420_1080p30_60f.y4m","6d2d866613f7a8c7b11bd2c27374f7637cd4a0748ff6fea4a671b23cfbcde6d7"
+"tree","D:\worktrees\rvp9-2\acceptance-d639c265\target\encoder-pgo\inputs\in_to_tree_420_1080p30_60f.y4m","ead3aef191242b03cc6019f0527c71bc3d11e856ba4f9f92b926fe804582f791"
+"town","D:\worktrees\rvp9-2\acceptance-d639c265\target\encoder-pgo\inputs\old_town_cross_420_1080p30_60f.y4m","b738b8068d1200f8a3119c72f1edc844424d3fe96d8b28acb9af11497ed7c909"
