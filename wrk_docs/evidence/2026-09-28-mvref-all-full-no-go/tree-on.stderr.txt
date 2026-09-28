@@ -1,0 +1,2 @@
+RVP9_DIAG_MVREF_FULL refs=1 entries=0 all_full_entries=0 cached_neighbour_visits=0 all_full_neighbour_visits=0 scaled_add_attempts=0 all_full_scaled_add_attempts=0
+RVP9_DIAG_MVREF_FULL refs=2 entries=143679 all_full_entries=183 cached_neighbour_visits=1127626 all_full_neighbour_visits=1462 scaled_add_attempts=522917 all_full_scaled_add_attempts=0
