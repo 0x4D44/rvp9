@@ -1,0 +1,15 @@
+# Pre-tile transform-size lower bound: no-go
+
+On the current canonical CPU6/CBR1260 workload, a strict signaling-rate lower bound before the first smaller-TX tile almost never excludes a candidate. Ducks had **17 TX4 hits among 141,013 visits** (0.0121%), hypothetically avoiding 272 TX4 tiles; TX8 had no hits. Tree and Town had no hits at either size. A full production-PGO prototype is not justified, especially because an earlier exact implementation was neutral-to-slower on a different CPU6/T3 workload. The integrated production-PGO RVP9/libvpx ratio remains **1.057638×** equal-clip process CPU against the ≤1.05× target. These count-only encodes are not speed comparisons.
+
+| 59 inter frames | TX8 visits | TX8 hits | TX4 visits | TX4 hits | TX4 tiles avoidable |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Ducks | 141,013 | 0 | 141,013 | 17 | 272 |
+| Tree | 3,763 | 0 | 3,763 | 0 | 0 |
+| Town | 34,362 | 0 | 34,362 | 0 | 0 |
+
+The candidate is sound but inert in practice: after a complete larger-size `best_rd` exists, `RDCOST(tx_size_cost[smaller], 0) >= best_rd` proves that the smaller candidate cannot win the strict `<` comparison because all subsequent coefficient-rate and distortion terms are nonnegative. Current code already has a per-tile lower-bound prune. The [diagnostic patch](0001-diag-enc-count-pre-tile-TX-selector-bound-hits.patch) adds only an opt-in `RVP9_DIAG_TX_PRETILE_LOWER_BOUND` census at the candidate entry; it does not prune or change scoring. It is committed locally as `eadb814c` on `task/20260928-TSK-HUM-count-pre-tile-tx-selector-lower-bound` and applied to Crucible's isolated x86 worktree, but **not integrated** into shipped code.
+
+Crucible built a normal native x86 release diagnostic EXE, SHA-256 `bf3b3991887a81fc94fd09de01ac6e3273805ba0cf38ad23b98f158b9ae1b6ec`. The [raw census](census.csv) records the EXE, all pinned input and output hashes, exit codes, 59 per-frame reports per clip, and the counts. Each 60-frame one-thread `--codec=vp9 --passes=1 --rt --cpu-used=6 --end-usage=cbr --target-bitrate=1260 --fps=30/1 --threads=1 --tile-columns=0 --lag-in-frames=0 --tune-content=default --aq-mode=0 --noise-sensitivity=0 --limit=60 --kf-max-dist=60 --quiet --ivf` encode exited zero and matched the integrated canonical IVF hash. The script, stderr rows and IVFs remain in the Crucible task worktree's `.scratch/pre-tile-bound-60f/`.
+
+The focused bound/counter test was deliberately made red by a bad assertion, restored, and passed on AArch64. All 789 encoder library tests, formatting and the 12-frame gate-off/on exact IVF check passed locally. The lead reran the focused test. Native x86 ran the same focused test and the release build. Strict Clippy remains blocked by an existing unrelated `type_complexity` warning at `lib.rs:4876`; the scoped check passed with that warning allowed. This result does not reopen the older Unit 1165 pre-tile optimization: the current CPU6/CBR selector retains the same signaling-cost and quantization model, and its observed hit rate is negligible.

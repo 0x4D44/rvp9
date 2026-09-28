@@ -1,0 +1,294 @@
+From eadb814c867c45cd48bc9b4e14b6d4f30693a1d5 Mon Sep 17 00:00:00 2001
+From: 0x4D44 <martingdavidson@gmail.com>
+Date: Mon, 28 Sep 2026 03:20:19 +0100
+Subject: [PATCH] diag(enc): count pre-tile TX selector bound hits
+
+Observe whether signaling cost alone excludes smaller transform sizes
+before any tile work on the current CPU6 CBR workload. Do not prune.
+
+Co-Authored-By: GPT-5.6 Luna <noreply@openai.com>
+---
+ crates/rvp9-encoder/src/lib.rs | 166 +++++++++++++++++++++++++++++++++
+ 1 file changed, 166 insertions(+)
+
+diff --git a/crates/rvp9-encoder/src/lib.rs b/crates/rvp9-encoder/src/lib.rs
+index 28b3ba32..8148d293 100644
+--- a/crates/rvp9-encoder/src/lib.rs
++++ b/crates/rvp9-encoder/src/lib.rs
+@@ -4022,6 +4022,33 @@ impl std::ops::IndexMut<usize> for InterPartitionGrid<'_> {
+ 
+ const E3_DIAG_SAMPLE_LIMIT: usize = 40;
+ 
++/// Count-only census for the pre-tile transform-size RD lower bound.
++/// Index zero is TX8 and index one is TX4.
++#[derive(Default)]
++struct TxPreTileLowerBoundDiagnostics {
++    candidate_visits_with_best: [usize; 2],
++    prebound_hits: [usize; 2],
++    tiles_avoided: [usize; 2],
++}
++
++impl TxPreTileLowerBoundDiagnostics {
++    fn merge_from(&mut self, other: Self) {
++        for (dst, src) in self
++            .candidate_visits_with_best
++            .iter_mut()
++            .zip(other.candidate_visits_with_best)
++        {
++            *dst += src;
++        }
++        for (dst, src) in self.prebound_hits.iter_mut().zip(other.prebound_hits) {
++            *dst += src;
++        }
++        for (dst, src) in self.tiles_avoided.iter_mut().zip(other.tiles_avoided) {
++            *dst += src;
++        }
++    }
++}
++
+ /// Diagnostic counters and profiles produced while picking one inter row.
+ ///
+ /// These values are deliberately separate from codec state. A compact row can
+@@ -4059,6 +4086,7 @@ struct CompactInterRowDiagnostics {
+     emit_profile_nonzero_tx_blocks: usize,
+     emit_profile_eob_sum: usize,
+     emit_profile_plane_tx_blocks: [usize; 3],
++    tx_pre_tile_lower_bound: TxPreTileLowerBoundDiagnostics,
+     a4_profile_calls: [usize; rvp9_core::block::BLOCK_SIZES],
+     a4_profile_pick_time: [std::time::Duration; rvp9_core::block::BLOCK_SIZES],
+     a4_profile_committed: [usize; rvp9_core::block::BLOCK_SIZES],
+@@ -4109,6 +4137,8 @@ impl CompactInterRowDiagnostics {
+         self.emit_profile_tx_blocks += other.emit_profile_tx_blocks;
+         self.emit_profile_nonzero_tx_blocks += other.emit_profile_nonzero_tx_blocks;
+         self.emit_profile_eob_sum += other.emit_profile_eob_sum;
++        self.tx_pre_tile_lower_bound
++            .merge_from(other.tx_pre_tile_lower_bound);
+         for (dst, src) in self
+             .emit_profile_plane_tx_blocks
+             .iter_mut()
+@@ -6741,6 +6771,7 @@ pub(crate) struct InterEncodeEnv {
+     rt_min_partition32: Option<bool>,
+     golden_real_block_yrd: Option<bool>,
+     emit_profile: bool,
++    diag_tx_pre_tile_lower_bound: bool,
+     a4_profile: bool,
+     variance_hint_dump: bool,
+     a4_rect_disable: bool,
+@@ -6798,6 +6829,8 @@ impl InterEncodeEnv {
+             rt_min_partition32: bool_override("RVP9_RT_MIN_PARTITION32"),
+             golden_real_block_yrd: bool_override("RVP9_GOLDEN_REAL_BLOCK_YRD"),
+             emit_profile: std::env::var_os("RVP9_EMIT_PROFILE").is_some(),
++            diag_tx_pre_tile_lower_bound: std::env::var_os("RVP9_DIAG_TX_PRETILE_LOWER_BOUND")
++                .is_some(),
+             a4_profile: std::env::var_os("RVP9_A4_PROFILE").is_some(),
+             variance_hint_dump: bool_override("RVP9_VARIANCE_HINT_DUMP") == Some(true),
+             a4_rect_disable: std::env::var_os("RVP9_A4_RECT_DISABLE").is_some(),
+@@ -7965,6 +7998,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
+     // small-frame quality gates untouched. `=0` restores the full descent.
+     let rt_min_partition32 = env.flag_or(env.rt_min_partition32, rt_large_recovery);
+     let emit_profile_enabled = runtime_profiling_enabled(env.emit_profile);
++    let diag_tx_pre_tile_lower_bound_enabled = env.diag_tx_pre_tile_lower_bound;
+     let a4_profile_enabled = env.a4_profile;
+     let variance_hint_dump_enabled = env.variance_hint_dump;
+     let a4_rect_disable = env.a4_rect_disable;
+@@ -8054,6 +8088,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
+             let emit_profile_nonzero_tx_blocks = &mut diagnostics.emit_profile_nonzero_tx_blocks;
+             let emit_profile_eob_sum = &mut diagnostics.emit_profile_eob_sum;
+             let emit_profile_plane_tx_blocks = &mut diagnostics.emit_profile_plane_tx_blocks;
++            let tx_pre_tile_lower_bound = &mut diagnostics.tx_pre_tile_lower_bound;
+             let a4_profile_calls = &mut diagnostics.a4_profile_calls;
+             let a4_profile_pick_time = &mut diagnostics.a4_profile_pick_time;
+             let a4_profile_committed = &mut diagnostics.a4_profile_committed;
+@@ -11888,6 +11923,12 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
+                                         rdmult: tx_rd_rdmult,
+                                         tx_size_cost: rdo_tx_size_cost,
+                                         quant_fp: rt_quant_fp,
++                                        tx_pre_tile_lower_bound:
++                                            if diag_tx_pre_tile_lower_bound_enabled {
++                                                Some(&mut *tx_pre_tile_lower_bound)
++                                            } else {
++                                                None
++                                            },
+                                         scratch: inter_emit_scratch,
+                                     },
+                                     rt_emit_tx4,
+@@ -13147,6 +13188,21 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
+             );
+         }
+     }
++    if diag_tx_pre_tile_lower_bound_enabled {
++        let stats = &frame_diagnostics.tx_pre_tile_lower_bound;
++        #[allow(clippy::print_stderr)]
++        {
++            eprintln!(
++                "[TX_PRETILE_LOWER_BOUND] tx8_best_known={} tx8_hits={} tx8_tiles_avoided={} tx4_best_known={} tx4_hits={} tx4_tiles_avoided={}",
++                stats.candidate_visits_with_best[0],
++                stats.prebound_hits[0],
++                stats.tiles_avoided[0],
++                stats.candidate_visits_with_best[1],
++                stats.prebound_hits[1],
++                stats.tiles_avoided[1],
++            );
++        }
++    }
+     if a4_profile_enabled {
+         let labels = [
+             "4x4", "4x8", "8x4", "8x8", "8x16", "16x8", "16x16", "16x32", "32x16", "32x32",
+@@ -14281,9 +14337,44 @@ struct InterLumaTxInput<'a> {
+     rdmult: i64,
+     tx_size_cost: [u32; 4],
+     quant_fp: bool,
++    tx_pre_tile_lower_bound: Option<&'a mut TxPreTileLowerBoundDiagnostics>,
+     scratch: &'a mut InterEmitScratch,
+ }
+ 
++#[inline]
++fn tx_pre_tile_rd_cost(rdmult: i64, tx_size_cost: u32) -> i64 {
++    (rdmult.saturating_mul(i64::from(tx_size_cost)) + 256) >> 9
++}
++
++#[inline]
++fn observe_tx_pre_tile_lower_bound(
++    diagnostics: &mut TxPreTileLowerBoundDiagnostics,
++    tx_size: TxSize,
++    plane_bw_4x4: usize,
++    plane_bh_4x4: usize,
++    rdmult: i64,
++    tx_size_cost: u32,
++    best_rd: i64,
++) -> bool {
++    let index = match tx_size {
++        TxSize::Tx8x8 => 0,
++        TxSize::Tx4x4 => 1,
++        _ => return false,
++    };
++    if best_rd == i64::MAX {
++        return false;
++    }
++    diagnostics.candidate_visits_with_best[index] += 1;
++    let lower_bound = tx_pre_tile_rd_cost(rdmult, tx_size_cost);
++    if lower_bound < best_rd {
++        return false;
++    }
++    diagnostics.prebound_hits[index] += 1;
++    let tx_step_4x4 = 1usize << (tx_size as usize);
++    diagnostics.tiles_avoided[index] += (plane_bw_4x4 / tx_step_4x4) * (plane_bh_4x4 / tx_step_4x4);
++    true
++}
++
+ fn realtime_inter_tx_candidate(max_tx: TxSize, candidate: TxSize) -> bool {
+     max_tx == TxSize::Tx16x16 && matches!(candidate, TxSize::Tx8x8 | TxSize::Tx16x16)
+ }
+@@ -14405,6 +14496,7 @@ fn choose_inter_luma_tx_size_impl<const PRUNE: bool>(
+         rdmult,
+         tx_size_cost,
+         quant_fp,
++        mut tx_pre_tile_lower_bound,
+         scratch,
+     } = input;
+ 
+@@ -14457,6 +14549,17 @@ fn choose_inter_luma_tx_size_impl<const PRUNE: bool>(
+         if realtime_candidate_subset && !realtime_inter_tx_candidate(max_tx, tx_size) {
+             continue;
+         }
++        if let Some(diagnostics) = tx_pre_tile_lower_bound.as_deref_mut() {
++            observe_tx_pre_tile_lower_bound(
++                diagnostics,
++                tx_size,
++                plane_bw_4x4,
++                plane_bh_4x4,
++                rdmult,
++                tx_size_cost[tx_size as usize],
++                best_rd,
++            );
++        }
+         let tx_step_4x4 = 1usize << (tx_size as usize);
+         let ncoef = tx_size.n_coeffs();
+         let scan = scan_for(tx_size, TxType::DctDct);
+@@ -16712,6 +16815,7 @@ mod tests {
+                 rdmult,
+                 tx_size_cost: [0, 17, 31, 47],
+                 quant_fp,
++                tx_pre_tile_lower_bound: None,
+                 scratch,
+             };
+             if prune {
+@@ -16780,6 +16884,7 @@ mod tests {
+                             rdmult,
+                             tx_size_cost: [0, 17, 31, 47],
+                             quant_fp,
++                            tx_pre_tile_lower_bound: None,
+                             scratch,
+                         };
+                         if prune {
+@@ -16799,6 +16904,67 @@ mod tests {
+         }
+     }
+ 
++    #[test]
++    fn inter_tx_pre_tile_lower_bound_counts_strict_floor_and_tiles() {
++        let mut diagnostics = TxPreTileLowerBoundDiagnostics::default();
++        let rdmult = 512;
++        let tx8_cost = 17;
++        let tx8_floor = tx_pre_tile_rd_cost(rdmult, tx8_cost);
++        assert_eq!(tx8_floor, 17);
++        assert!(observe_tx_pre_tile_lower_bound(
++            &mut diagnostics,
++            TxSize::Tx8x8,
++            8,
++            8,
++            rdmult,
++            tx8_cost,
++            tx8_floor,
++        ));
++
++        let tx4_cost = 4;
++        let tx4_floor = tx_pre_tile_rd_cost(rdmult, tx4_cost);
++        assert!(!observe_tx_pre_tile_lower_bound(
++            &mut diagnostics,
++            TxSize::Tx4x4,
++            8,
++            8,
++            rdmult,
++            tx4_cost,
++            tx4_floor + 1,
++        ));
++        assert!(observe_tx_pre_tile_lower_bound(
++            &mut diagnostics,
++            TxSize::Tx4x4,
++            8,
++            8,
++            rdmult,
++            tx4_cost,
++            tx4_floor,
++        ));
++        assert!(!observe_tx_pre_tile_lower_bound(
++            &mut diagnostics,
++            TxSize::Tx16x16,
++            8,
++            8,
++            rdmult,
++            31,
++            0,
++        ));
++        assert!(!observe_tx_pre_tile_lower_bound(
++            &mut diagnostics,
++            TxSize::Tx8x8,
++            8,
++            8,
++            rdmult,
++            tx8_cost,
++            i64::MAX,
++        ));
++
++        assert_eq!(diagnostics.candidate_visits_with_best, [1, 2]);
++        assert_eq!(diagnostics.prebound_hits, [1, 1]);
++        assert_eq!(diagnostics.tiles_avoided, [16, 64]);
++    }
++
+     #[test]
+     fn intra_emit_quant_scratch_is_independent_of_prior_contents() {
+         use rvp9_core::quant::forward::{QuantizerDeltas, init_plane_quantizers};
+-- 
+2.50.1 (Apple Git-155)
+
