@@ -1,0 +1,15 @@
+# Pinned libvpx small-model branch mix
+
+The Ducks 16×16 luma-model gap is **not a simple excess of RVP9 DC/AC model calls**. On the canonical 60-frame Ducks input, pinned libvpx made 700,802 DC and 1,933,112 AC Laplacian calls inside `model_rd_for_sb_y`; the separate RVP9 diagnostic counted 627,485 DC and 1,751,664 AC calls. Libvpx made about 11.7% more DC and 10.4% more AC calls, while integrated RVP9 remains slower on Ducks. These are source-level operation counts across different picker paths, not equal-cost calls or a CPU attribution. The next discriminator must measure per-operation cost at matching decision boundaries or find a different hot path; this census does not justify a production edit.
+
+The diagnostic extended the pinned libvpx submodule `12f3a2ac603e8f10742105519e0cd03c3b8f71dd` in the isolated Crucible worktree `D:\worktrees\rvp9-2\20260928-TSK-HUM-count-pinned-libvpx-model-rd-calls`. The compile-time `RVP9_DIAG_LIBVPX_MODEL_RD_CENSUS` gate counted each small-model skip class and actual DC/AC model call without changing codec decisions. The modified `vp9_pickmode.c` SHA-256 was `c0d77b4fa0d35120f2f08a0931fa56cce1d553c10323e8d333accfe828b1c859`; the rebuilt `vpxenc.exe` SHA-256 was `7527a7cba32e317ab2233a85720f957722e436fc8dd2996694e4d460c1574e21`. The [incremental diagnostic patch](incremental.patch) applies after the [entry-count patch](../2026-09-28-pinned-libvpx-model-rd-census/diagnostic.patch.b64). No production source changed.
+
+| Clip, 16×16 small model | Entries | AC+DC skip | AC-only skip | No skip | DC skipped | DC calls | AC calls |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Ducks | 3,014,184 | 1,081,072 | 142,561 | 1,790,551 | 1,232,310 | 700,802 | 1,933,112 |
+| Tree | 615,184 | 30,634 | 1,478 | 583,072 | 371,074 | 213,476 | 584,550 |
+| Town | 787,384 | 21,218 | 787 | 765,379 | 446,911 | 319,255 | 766,166 |
+
+Both zero-variance counters were zero for all three clips. Every reported shape reconciled: entries equal the three skip classes, AC calls equal entries minus AC+DC skips, and DC calls equal AC calls minus DC skips. The repeated Ducks encode produced identical rows. All four IVFs matched the pinned canonical SHA-256: Ducks `b24234d8db46c22e03585f1973b27c2e62315f0464da392a2ecd2769d2124fa8`, Tree `b930800c5bac04a67aa0a25b3344031c5aebe6f3efe4ba569d354301bf238964`, and Town `e05daf970ff4f9888a64b6edc2f4a2cd7151cf0ee2bc0b1de4170cce5f1b24bb`. The one-thread CPU6/CBR1260 command used the same 60-frame PGO inputs and flags as the [entry census](../2026-09-28-pinned-libvpx-model-rd-census/README.md); raw stderr and IVFs remain under `.scratch/libvpx-model-rd-branch-*` in the isolated Crucible worktree.
+
+This is **not** a performance screen. The latest direct uninstrumented integrated-PGO result remains [1.057638× equal-clip CPU](../2026-09-27-integrated-pgo-direct-repeat/README.md) against pinned libvpx, above the ≤1.05× target; Ducks remains 1.169951×. The [RVP9 16×16 operation census](../2026-09-28-filter-evaluator-stage-census/README.md) used a different diagnostic branch, so no per-call speed claim follows from comparing these rows.

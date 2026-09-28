@@ -1,0 +1,96 @@
+--- a/vp9/encoder/vp9_pickmode.c
++++ b/vp9/encoder/vp9_pickmode.c
+@@ -40,6 +40,17 @@
+ #include <stdlib.h>
+ 
+ static uint64_t model_rd_census_calls[2][BLOCK_SIZES];
++typedef struct {
++  uint64_t skip_ac_dc;
++  uint64_t skip_ac_only;
++  uint64_t skip_none;
++  uint64_t skip_dc;
++  uint64_t dc_calls;
++  uint64_t ac_calls;
++  uint64_t dc_zero_var;
++  uint64_t ac_zero_var;
++} MODEL_RD_SMALL_CENSUS;
++static MODEL_RD_SMALL_CENSUS model_rd_small_census[BLOCK_SIZES];
+ static int model_rd_census_report_registered;
+ 
+ static void model_rd_census_report(void) {
+@@ -55,6 +66,24 @@
+               kind == 0 ? "small" : "large", width, height,
+               (unsigned long long)calls);
+     }
++  }
++  fprintf(stderr,
++          "LIBVPX_MODEL_RD_SMALL_BRANCH,shape,calls,skip_ac_dc,skip_ac_only,"
++          "skip_none,skip_dc,dc_calls,ac_calls,dc_zero_var,ac_zero_var\n");
++  for (bsize = 0; bsize < BLOCK_SIZES; ++bsize) {
++    const MODEL_RD_SMALL_CENSUS *const c = &model_rd_small_census[bsize];
++    const int width = 4 << b_width_log2_lookup[bsize];
++    const int height = 4 << b_height_log2_lookup[bsize];
++    fprintf(stderr,
++            "LIBVPX_MODEL_RD_SMALL_BRANCH,%dx%d,%llu,%llu,%llu,%llu,%llu,"
++            "%llu,%llu,%llu,%llu\n",
++            width, height, (unsigned long long)model_rd_census_calls[0][bsize],
++            (unsigned long long)c->skip_ac_dc,
++            (unsigned long long)c->skip_ac_only,
++            (unsigned long long)c->skip_none, (unsigned long long)c->skip_dc,
++            (unsigned long long)c->dc_calls, (unsigned long long)c->ac_calls,
++            (unsigned long long)c->dc_zero_var,
++            (unsigned long long)c->ac_zero_var);
+   }
+ }
+ 
+@@ -66,6 +95,18 @@
+   if ((unsigned int)kind < 2 && (unsigned int)bsize < BLOCK_SIZES)
+     ++model_rd_census_calls[kind][bsize];
+ }
++
++static INLINE void model_rd_census_small_branch(BLOCK_SIZE bsize,
++                                                int skip_txfm, int skip_dc) {
++  MODEL_RD_SMALL_CENSUS *const c = &model_rd_small_census[bsize];
++  if (skip_txfm == SKIP_TXFM_AC_DC)
++    ++c->skip_ac_dc;
++  else if (skip_txfm == SKIP_TXFM_AC_ONLY)
++    ++c->skip_ac_only;
++  else
++    ++c->skip_none;
++  if (skip_dc) ++c->skip_dc;
++}
+ #endif  // RVP9_DIAG_LIBVPX_MODEL_RD_CENSUS
+ typedef struct {
+   uint8_t *data;
+@@ -717,6 +758,9 @@
+     }
+   }
+ 
++#if defined(RVP9_DIAG_LIBVPX_MODEL_RD_CENSUS)
++  model_rd_census_small_branch(bsize, x->skip_txfm[0], skip_dc);
++#endif
+   if (x->skip_txfm[0] == SKIP_TXFM_AC_DC) {
+     *out_rate_sum = 0;
+     *out_dist_sum = sse << 4;
+@@ -724,6 +768,10 @@
+   }
+ 
+   if (!skip_dc) {
++#if defined(RVP9_DIAG_LIBVPX_MODEL_RD_CENSUS)
++    ++model_rd_small_census[bsize].dc_calls;
++    if (sse == var) ++model_rd_small_census[bsize].dc_zero_var;
++#endif
+ #if CONFIG_VP9_HIGHBITDEPTH
+     vp9_model_rd_from_var_lapndz(sse - var, num_pels_log2_lookup[bsize],
+                                  dc_quant >> (xd->bd - 5), &rate, &dist);
+@@ -741,6 +789,10 @@
+     *out_dist_sum = (sse - var) << 4;
+   }
+ 
++#if defined(RVP9_DIAG_LIBVPX_MODEL_RD_CENSUS)
++  ++model_rd_small_census[bsize].ac_calls;
++  if (var == 0) ++model_rd_small_census[bsize].ac_zero_var;
++#endif
+ #if CONFIG_VP9_HIGHBITDEPTH
+   vp9_model_rd_from_var_lapndz(var, num_pels_log2_lookup[bsize],
+                                ac_quant >> (xd->bd - 5), &rate, &dist);
