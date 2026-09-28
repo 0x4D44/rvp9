@@ -1,0 +1,252 @@
+From f83cd772731c85f26dd3d9faa6a0f298977f1541 Mon Sep 17 00:00:00 2001
+From: 0x4D44 <martingdavidson@gmail.com>
+Date: Mon, 28 Sep 2026 02:37:47 +0100
+Subject: [PATCH] diag(enc): count equal dual-filter luma predictions
+
+Add an opt-in census of two-filter selector pairs whose active luma
+predictions are byte-identical. Keep scoring and emission unchanged.
+
+Co-Authored-By: GPT-5.6 Luna <noreply@openai.com>
+---
+ crates/rvp9-cli/src/bin/rvp9enc.rs          |   9 +-
+ crates/rvp9-core/src/mode_decision/inter.rs | 183 ++++++++++++++++++++
+ 2 files changed, 191 insertions(+), 1 deletion(-)
+
+diff --git a/crates/rvp9-cli/src/bin/rvp9enc.rs b/crates/rvp9-cli/src/bin/rvp9enc.rs
+index 79537766..1ea93a1d 100644
+--- a/crates/rvp9-cli/src/bin/rvp9enc.rs
++++ b/crates/rvp9-cli/src/bin/rvp9enc.rs
+@@ -907,7 +907,14 @@ fn main() -> ExitCode {
+         return ExitCode::SUCCESS;
+     }
+ 
+-    match run(&opts, &positionals) {
++    let result = run(&opts, &positionals);
++    if result.is_ok()
++        && let Some(report) =
++            rvp9_core::mode_decision::inter::dual_filter_luma_prediction_census_report()
++    {
++        eprintln!("rvp9enc: {report}");
++    }
++    match result {
+         Ok(()) => ExitCode::SUCCESS,
+         Err(e) => {
+             eprintln!("rvp9enc: {e}");
+diff --git a/crates/rvp9-core/src/mode_decision/inter.rs b/crates/rvp9-core/src/mode_decision/inter.rs
+index 78844348..b4c4ba1b 100644
+--- a/crates/rvp9-core/src/mode_decision/inter.rs
++++ b/crates/rvp9-core/src/mode_decision/inter.rs
+@@ -228,6 +228,90 @@ thread_local! {
+         const { std::cell::RefCell::new([0; MAX_MC_FOOTPRINT * MAX_MC_FOOTPRINT]) };
+ }
+ 
++// ---------------------------------------------------------------------
++// Opt-in two-filter luma-prediction equality census. The selector is called
++// from tile workers, so the diagnostic uses process-wide relaxed atomics. The
++// default path performs no predictor comparison and does not touch a counter.
++
++const DUAL_FILTER_LUMA_PREDICTION_DIAG_ENV: &str = "RVP9_DIAG_DUAL_FILTER_EQUALITY";
++
++/// Aggregate counts from the opt-in two-filter luma-prediction census.
++#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
++pub struct DualFilterLumaPredictionCounts {
++    /// Two-filter candidate pairs for which both luma predictors were built.
++    pub evaluated_pairs: u64,
++    /// Evaluated pairs whose active luma predictor bytes were identical.
++    pub identical_pairs: u64,
++}
++
++struct DualFilterLumaPredictionCounters {
++    evaluated_pairs: std::sync::atomic::AtomicU64,
++    identical_pairs: std::sync::atomic::AtomicU64,
++}
++
++impl DualFilterLumaPredictionCounters {
++    const fn new() -> Self {
++        Self {
++            evaluated_pairs: std::sync::atomic::AtomicU64::new(0),
++            identical_pairs: std::sync::atomic::AtomicU64::new(0),
++        }
++    }
++}
++
++static DUAL_FILTER_LUMA_PREDICTION_COUNTERS: DualFilterLumaPredictionCounters =
++    DualFilterLumaPredictionCounters::new();
++
++#[inline]
++fn dual_filter_luma_prediction_diag_enabled() -> bool {
++    use std::sync::OnceLock;
++    static ENABLED: OnceLock<bool> = OnceLock::new();
++    *ENABLED.get_or_init(|| std::env::var_os(DUAL_FILTER_LUMA_PREDICTION_DIAG_ENV).is_some())
++}
++
++#[inline]
++fn record_dual_filter_luma_prediction_pair(identical: bool) {
++    if !dual_filter_luma_prediction_diag_enabled() {
++        return;
++    }
++    use std::sync::atomic::Ordering;
++    DUAL_FILTER_LUMA_PREDICTION_COUNTERS
++        .evaluated_pairs
++        .fetch_add(1, Ordering::Relaxed);
++    if identical {
++        DUAL_FILTER_LUMA_PREDICTION_COUNTERS
++            .identical_pairs
++            .fetch_add(1, Ordering::Relaxed);
++    }
++}
++
++/// Return the opt-in two-filter luma-prediction census as one CLI report.
++/// `None` means `RVP9_DIAG_DUAL_FILTER_EQUALITY` was not set.
++#[must_use]
++pub fn dual_filter_luma_prediction_census_report() -> Option<String> {
++    if !dual_filter_luma_prediction_diag_enabled() {
++        return None;
++    }
++    let counts = dual_filter_luma_prediction_counts();
++    Some(format!(
++        "dual_filter_luma_prediction evaluated_pairs={} identical_pairs={}",
++        counts.evaluated_pairs, counts.identical_pairs,
++    ))
++}
++
++/// Read the opt-in two-filter luma-prediction counters without resetting them.
++#[must_use]
++pub fn dual_filter_luma_prediction_counts() -> DualFilterLumaPredictionCounts {
++    use std::sync::atomic::Ordering;
++    DualFilterLumaPredictionCounts {
++        evaluated_pairs: DUAL_FILTER_LUMA_PREDICTION_COUNTERS
++            .evaluated_pairs
++            .load(Ordering::Relaxed),
++        identical_pairs: DUAL_FILTER_LUMA_PREDICTION_COUNTERS
++            .identical_pairs
++            .load(Ordering::Relaxed),
++    }
++}
++
+ // ---------------------------------------------------------------------
+ // S2/S3 measurement toggles (env-read once, cached). These exist ONLY
+ // to let one binary produce the before/after A/B the HLD's test plan
+@@ -4215,6 +4299,35 @@ fn copy_prediction_slot_to_output(
+     }
+ }
+ 
++/// Compare the active luma pixels in two filter-prediction slots. Scratch
++/// slots are tight (`bw` stride); the caller-owned output may have padding,
++/// which is intentionally excluded from the equality census.
++fn dual_filter_luma_predictions_equal(
++    primary: &[u8; 64 * 64],
++    alternate: &[u8; 64 * 64],
++    output: Option<&OutputBackedPredictionBuffer<'_>>,
++    prediction_slots: [FilterPredictionSlot; 2],
++    bw: usize,
++    bh: usize,
++) -> bool {
++    for row in 0..bh {
++        for col in 0..bw {
++            let pixel = |slot| match slot {
++                FilterPredictionSlot::Candidate => primary[row * bw + col],
++                FilterPredictionSlot::Alternate => alternate[row * bw + col],
++                FilterPredictionSlot::Output => {
++                    let output = output.expect("output slot requires output-backed picker");
++                    output.data[row * output.stride + col]
++                }
++            };
++            if pixel(prediction_slots[0]) != pixel(prediction_slots[1]) {
++                return false;
++            }
++        }
++    }
++    true
++}
++
+ #[allow(clippy::too_many_arguments)]
+ fn select_interp_filter_by_luma_model(
+     params: &InterModeSearchParams<'_>,
+@@ -4272,6 +4385,17 @@ fn select_interp_filter_by_luma_model(
+             best_slot = slot;
+         }
+     }
++    if dual_filter_luma_prediction_diag_enabled() {
++        let identical = dual_filter_luma_predictions_equal(
++            primary,
++            alternate,
++            output.as_deref(),
++            prediction_slots,
++            bw,
++            bh,
++        );
++        record_dual_filter_luma_prediction_pair(identical);
++    }
+     (
+         best_filter,
+         best_model.expect("filter search set is non-empty"),
+@@ -8515,6 +8639,65 @@ mod tests {
+         );
+     }
+ 
++    #[test]
++    fn dual_filter_luma_prediction_equality_ignores_output_padding() {
++        use FilterPredictionSlot::{Alternate, Candidate, Output};
++
++        let bw = 4;
++        let bh = 3;
++        let stride = 7;
++        let mut primary = [0u8; 64 * 64];
++        let mut alternate = [0u8; 64 * 64];
++        let mut output_storage = vec![0xA5; stride * bh];
++        for row in 0..bh {
++            for col in 0..bw {
++                let pixel = (row * bw + col) as u8;
++                primary[row * bw + col] = pixel;
++                alternate[row * bw + col] = pixel;
++                output_storage[row * stride + col] = pixel;
++            }
++        }
++        let output = OutputBackedPredictionBuffer::new(&mut output_storage, stride);
++
++        for slots in [
++            [Candidate, Alternate],
++            [Output, Candidate],
++            [Candidate, Output],
++            [Output, Alternate],
++            [Alternate, Output],
++        ] {
++            assert!(dual_filter_luma_predictions_equal(
++                &primary,
++                &alternate,
++                Some(&output),
++                slots,
++                bw,
++                bh,
++            ));
++        }
++
++        // Row padding is intentionally different, but it is outside the
++        // active `bw × bh` predictor and must not affect the census.
++        output.data[4] = 0x5A;
++        assert!(dual_filter_luma_predictions_equal(
++            &primary,
++            &alternate,
++            Some(&output),
++            [Output, Candidate],
++            bw,
++            bh,
++        ));
++        output.data[stride + 2] ^= 1;
++        assert!(!dual_filter_luma_predictions_equal(
++            &primary,
++            &alternate,
++            Some(&output),
++            [Output, Candidate],
++            bw,
++            bh,
++        ));
++    }
++
+     #[test]
+     fn output_backed_one_filter_preserves_result_and_poisoned_stride() {
+         assert_output_backed_candidate_matches(
+-- 
+2.50.1 (Apple Git-155)
+
