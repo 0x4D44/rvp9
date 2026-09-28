@@ -222,18 +222,16 @@ pub(crate) fn apply_loop_filter_to_tight_recon_parallel(
 
     let storage_h = h.next_multiple_of(64);
     let direct_storage = (w * storage_h, uvw * (storage_h / 2), uvw * (storage_h / 2));
-    // The split-edge helper currently derives its MI height with floor
-    // division and its luma stride with whole 64-pixel columns. Restrict the
-    // serial direct route to partial SB rows until those assumptions are true,
-    // and require the backing planes to expose the complete final SB row that
-    // its fixed-width kernels can address. Visible-only or irregular storage
-    // keeps the bordered path.
+    // The packet-overlap walker requires whole MI rows, and this direct route
+    // keeps whole 64-pixel luma columns. Require complete final SB-row backing
+    // storage so its fixed-width kernels can address the padded planes;
+    // visible-only or irregular storage keeps the bordered path.
     let direct_serial_eligible = !height.is_multiple_of(64)
         && width.is_multiple_of(64)
         && height.is_multiple_of(8)
         && (recon_y.len(), recon_u.len(), recon_v.len()) == direct_storage;
     if direct_serial_eligible {
-        apply_loop_filter_to_tight_recon_split_edge_preserving_tails(
+        apply_packet_overlap_to_tight_recon_preserving_tails(
             width,
             height,
             filter_level,
@@ -241,7 +239,6 @@ pub(crate) fn apply_loop_filter_to_tight_recon_parallel(
             recon_y,
             recon_u,
             recon_v,
-            num_tile_cols,
         );
         return;
     }
@@ -571,12 +568,12 @@ pub(crate) fn apply_loop_filter_to_tight_recon_split_edge(
     }
 }
 
-/// Run the split-edge filter on a partial-SB padded reconstruction while
+/// Run the packet-overlap filter on a partial-SB padded reconstruction while
 /// preserving the caller's addressable tail bytes. The core kernels may write
 /// into the final padded chroma rows even though those rows are outside the
 /// visible MI grid; the bordered adapter leaves them untouched.
 #[allow(clippy::too_many_arguments)]
-fn apply_loop_filter_to_tight_recon_split_edge_preserving_tails(
+fn apply_packet_overlap_to_tight_recon_preserving_tails(
     width: u32,
     height: u32,
     filter_level: u8,
@@ -584,7 +581,6 @@ fn apply_loop_filter_to_tight_recon_split_edge_preserving_tails(
     recon_y: &mut [u8],
     recon_u: &mut [u8],
     recon_v: &mut [u8],
-    num_tile_cols: usize,
 ) {
     let w = width as usize;
     let h = height as usize;
@@ -597,7 +593,7 @@ fn apply_loop_filter_to_tight_recon_split_edge_preserving_tails(
     assert_eq!(
         (recon_y.len(), recon_u.len(), recon_v.len()),
         storage_lengths,
-        "partial split-edge filter requires SB-rounded backing storage"
+        "partial packet-overlap filter requires SB-rounded backing storage"
     );
 
     let tail_y_len = storage_lengths.0 - visible_y_len;
@@ -607,16 +603,8 @@ fn apply_loop_filter_to_tight_recon_split_edge_preserving_tails(
     tails.extend_from_slice(&recon_u[visible_uv_len..]);
     tails.extend_from_slice(&recon_v[visible_uv_len..]);
 
-    apply_loop_filter_to_tight_recon_split_edge(
-        width,
-        height,
-        filter_level,
-        mi_grid,
-        recon_y,
-        recon_u,
-        recon_v,
-        num_tile_cols,
-    );
+    apply_packet_overlap_luma(width, height, filter_level, mi_grid, recon_y);
+    apply_packet_overlap_chroma(width, height, filter_level, mi_grid, recon_u, recon_v);
 
     let (tail_y, tail_uv) = tails.split_at(tail_y_len);
     let (tail_u, tail_v) = tail_uv.split_at(tail_uv_len);
@@ -1202,7 +1190,7 @@ mod w7_4_tests {
     }
 
     #[test]
-    fn serial_split_edge_filter_matches_bordered_fallback_for_padded_inter_recon() {
+    fn serial_packet_overlap_filter_matches_bordered_fallback_for_padded_inter_recon() {
         let mut backing_mismatches = Vec::new();
         for (width, height) in [(1920usize, 1080usize), (320, 72)] {
             let (original_y, original_u, original_v, mi_grid) =
@@ -1226,7 +1214,7 @@ mod w7_4_tests {
             // Force the bordered reference path with visible-only vectors,
             // then put its filtered visible rows back beside the original
             // poisoned tails. Full backing-vector equality below therefore
-            // checks both filter output and direct-path tail discipline.
+            // checks both packet-overlap output and direct-path tail discipline.
             let mut fallback_y = original_y.clone();
             let mut fallback_u = original_u.clone();
             let mut fallback_v = original_v.clone();
