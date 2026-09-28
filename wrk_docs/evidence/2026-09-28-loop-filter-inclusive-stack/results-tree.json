@@ -1,0 +1,171 @@
+{
+  "method": "two-pass xperf dumper replay; target SampledProfile keys joined to Stack timestamp/TID; paired PDB via DbgHelp",
+  "xperf_command": [
+    "xperf.exe",
+    "-i",
+    "<clip>\\capture.etl",
+    "-a",
+    "dumper",
+    "-add_fieldnames"
+  ],
+  "image": {
+    "base": "0x7ff626790000",
+    "size": "0x263000",
+    "end_exclusive": "0x7ff6269f3000"
+  },
+  "exe_name": "rvp9enc.exe",
+  "exe_sha256": "3c294166213bce7dc707734bf6fbe86e2387b23ef533c16ed16acf4780aaf3ad",
+  "pdb_sha256": "c41525ee2ccd56d6bda7e4e9e0880452437d5ac7981bc2af4f1b7c34a71943f8",
+  "loopfilter_source_ranges": {
+    "alloc_or_zero_source": "loopfilter.rs:229-236",
+    "copy_in_source": "loopfilter.rs:238-262",
+    "filter_source": "loopfilter.rs:264-313",
+    "copy_back_source": "loopfilter.rs:314-321",
+    "exact_fallback_callsite": "frame_loop.rs:5005",
+    "fallback_call_block": "frame_loop.rs:5003-5018"
+  },
+  "clips": {
+    "tree": {
+      "clip": "tree",
+      "pid": 45240,
+      "etl": "D:\\worktrees\\rvp9-2\\20260927-TSK-HUM-fresh-integrated-production-pgo-direct-s\\.scratch\\fresh-integrated-pgo-ip\\tree\\capture.etl",
+      "exe": "D:\\worktrees\\rvp9-2\\20260927-TSK-HUM-fresh-integrated-production-pgo-direct-s\\.scratch\\fresh-integrated-pgo\\optimized\\release\\rvp9enc.exe",
+      "pdb": "D:\\worktrees\\rvp9-2\\20260927-TSK-HUM-fresh-integrated-production-pgo-direct-s\\.scratch\\fresh-integrated-pgo\\optimized\\release\\rvp9enc.pdb",
+      "expected_target_sample_rows": 9698,
+      "expected_direct_sample_rows": 8195,
+      "etl_sha256": "ff0ec450487f7f6dd2f4ffdb35150c131db7333b43771c8586658920a7c118ad",
+      "exe_sha256": "3c294166213bce7dc707734bf6fbe86e2387b23ef533c16ed16acf4780aaf3ad",
+      "pdb_sha256": "c41525ee2ccd56d6bda7e4e9e0880452437d5ac7981bc2af4f1b7c34a71943f8",
+      "target_process_rows": 9698,
+      "target_process_raw_count": 9698,
+      "direct_exe_rows": 8195,
+      "direct_exe_raw_count": 8195,
+      "target_tids": [
+        24616,
+        29800,
+        47552
+      ],
+      "sample_keys": 9698,
+      "stack_rows_total": 1653849,
+      "stack_keys_joined": 9698,
+      "stack_key_coverage": 1.0,
+      "unique_rvp9_stack_addresses": 4316,
+      "resolved_unique_rvp9_stack_addresses": 4316,
+      "unresolved_unique_rvp9_stack_addresses": 0,
+      "line_resolved_unique_rvp9_stack_addresses": 4303,
+      "line_unresolved_unique_rvp9_stack_addresses": 13,
+      "attribution": {
+        "joined_sample_rows": 9698,
+        "joined_raw_count": 9698,
+        "stack_depth_min": 1,
+        "stack_depth_median": 14.0,
+        "stack_depth_max": 59,
+        "resolved_exe_frame_rows": 118095,
+        "unresolved_exe_frame_rows": 0,
+        "line_resolved_exe_frame_rows": 108489,
+        "line_unresolved_exe_frame_rows": 9606,
+        "line_unresolved_sample_rows": 9432,
+        "line_unresolved_outside_call_block_rows": 8224,
+        "counts": {
+          "alloc_or_zero_source": {
+            "rows": 192,
+            "raw_count": 192
+          },
+          "alloc_or_zero_with_runtime_frame": {
+            "rows": 191,
+            "raw_count": 191
+          },
+          "copy_back_source": {
+            "rows": 73,
+            "raw_count": 73
+          },
+          "copy_in_source": {
+            "rows": 828,
+            "raw_count": 828
+          },
+          "fallback_chain_call_block": {
+            "rows": 1143,
+            "raw_count": 1143
+          },
+          "fallback_chain_exact_5005": {
+            "rows": 1143,
+            "raw_count": 1143
+          },
+          "filter_source": {
+            "rows": 50,
+            "raw_count": 50
+          },
+          "frame_loop_5005_exact": {
+            "rows": 1208,
+            "raw_count": 1208
+          },
+          "frame_loop_call_block": {
+            "rows": 1208,
+            "raw_count": 1208
+          },
+          "loopfilter_block_any_callsite": {
+            "rows": 1166,
+            "raw_count": 1166
+          }
+        },
+        "top_resolved_loopfilter_lines": [
+          {
+            "file": "d:\\worktrees\\rvp9-2\\20260927-tsk-hum-fresh-integrated-production-pgo-direct-s\\crates\\rvp9-encoder\\src\\loopfilter.rs",
+            "line": 243,
+            "symbol": "rvp9_encoder::loopfilter::apply_loop_filter_to_tight_recon_parallel",
+            "joined_sample_rows": 812
+          },
+          {
+            "file": "d:\\worktrees\\rvp9-2\\20260927-tsk-hum-fresh-integrated-production-pgo-direct-s\\crates\\rvp9-encoder\\src\\loopfilter.rs",
+            "line": 236,
+            "symbol": "rvp9_encoder::loopfilter::apply_loop_filter_to_tight_recon_parallel",
+            "joined_sample_rows": 195
+          },
+          {
+            "file": "d:\\worktrees\\rvp9-2\\20260927-tsk-hum-fresh-integrated-production-pgo-direct-s\\crates\\rvp9-encoder\\src\\loopfilter.rs",
+            "line": 320,
+            "symbol": "rvp9_encoder::loopfilter::apply_loop_filter_to_tight_recon_parallel",
+            "joined_sample_rows": 73
+          },
+          {
+            "file": "d:\\worktrees\\rvp9-2\\20260927-tsk-hum-fresh-integrated-production-pgo-direct-s\\crates\\rvp9-encoder\\src\\loopfilter.rs",
+            "line": 281,
+            "symbol": "rvp9_encoder::loopfilter::apply_loop_filter_to_tight_recon_parallel",
+            "joined_sample_rows": 22
+          },
+          {
+            "file": "d:\\worktrees\\rvp9-2\\20260927-tsk-hum-fresh-integrated-production-pgo-direct-s\\crates\\rvp9-encoder\\src\\loopfilter.rs",
+            "line": 259,
+            "symbol": "rvp9_encoder::loopfilter::apply_loop_filter_to_tight_recon_parallel",
+            "joined_sample_rows": 22
+          },
+          {
+            "file": "d:\\worktrees\\rvp9-2\\20260927-tsk-hum-fresh-integrated-production-pgo-direct-s\\crates\\rvp9-encoder\\src\\loopfilter.rs",
+            "line": 300,
+            "symbol": "rvp9_encoder::loopfilter::apply_loop_filter_to_tight_recon_parallel",
+            "joined_sample_rows": 19
+          },
+          {
+            "file": "d:\\worktrees\\rvp9-2\\20260927-tsk-hum-fresh-integrated-production-pgo-direct-s\\crates\\rvp9-encoder\\src\\loopfilter.rs",
+            "line": 251,
+            "symbol": "rvp9_encoder::loopfilter::apply_loop_filter_to_tight_recon_parallel",
+            "joined_sample_rows": 12
+          },
+          {
+            "file": "d:\\worktrees\\rvp9-2\\20260927-tsk-hum-fresh-integrated-production-pgo-direct-s\\crates\\rvp9-encoder\\src\\loopfilter.rs",
+            "line": 285,
+            "symbol": "rvp9_encoder::loopfilter::apply_loop_filter_to_tight_recon_parallel",
+            "joined_sample_rows": 10
+          },
+          {
+            "file": "d:\\worktrees\\rvp9-2\\20260927-tsk-hum-fresh-integrated-production-pgo-direct-s\\crates\\rvp9-encoder\\src\\loopfilter.rs",
+            "line": 321,
+            "symbol": "rvp9_encoder::loopfilter::apply_loop_filter_to_tight_recon_parallel",
+            "joined_sample_rows": 1
+          }
+        ]
+      },
+      "stack_join_complete": true
+    }
+  }
+}
