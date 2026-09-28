@@ -196,10 +196,9 @@ pub(crate) fn apply_loop_filter_to_tight_recon_parallel(
         .min(num_tile_cols.max(1))
         .min(mi_rows.div_ceil(SB_MI_SIZE))
         .max(1);
-    // The direct split-edge path operates on tight planes and its SIMD
-    // kernels intentionally touch a complete final SB row. Partial bottom
-    // rows therefore use the existing bordered Yv12 path below, matching the
-    // decoder's allocation and avoiding reads beyond visible storage.
+    // Keep the existing direct split-edge dispatch for complete SB rows.
+    // Partial rows use the serial path below only when their padded backing
+    // storage and MI geometry satisfy the helper's addressability contract.
     if height.is_multiple_of(64)
         && available_lf_workers >= 2
         && let Some(worker_pool) = worker_pool
@@ -218,6 +217,32 @@ pub(crate) fn apply_loop_filter_to_tight_recon_parallel(
                 );
             });
         });
+        return;
+    }
+
+    let storage_h = h.next_multiple_of(64);
+    let direct_storage = (w * storage_h, uvw * (storage_h / 2), uvw * (storage_h / 2));
+    // The split-edge helper currently derives its MI height with floor
+    // division and its luma stride with whole 64-pixel columns. Restrict the
+    // serial direct route to partial SB rows until those assumptions are true,
+    // and require the backing planes to expose the complete final SB row that
+    // its fixed-width kernels can address. Visible-only or irregular storage
+    // keeps the bordered path.
+    let direct_serial_eligible = !height.is_multiple_of(64)
+        && width.is_multiple_of(64)
+        && height.is_multiple_of(8)
+        && (recon_y.len(), recon_u.len(), recon_v.len()) == direct_storage;
+    if direct_serial_eligible {
+        apply_loop_filter_to_tight_recon_split_edge_preserving_tails(
+            width,
+            height,
+            filter_level,
+            mi_grid,
+            recon_y,
+            recon_u,
+            recon_v,
+            num_tile_cols,
+        );
         return;
     }
 
@@ -546,6 +571,60 @@ pub(crate) fn apply_loop_filter_to_tight_recon_split_edge(
     }
 }
 
+/// Run the split-edge filter on a partial-SB padded reconstruction while
+/// preserving the caller's addressable tail bytes. The core kernels may write
+/// into the final padded chroma rows even though those rows are outside the
+/// visible MI grid; the bordered adapter leaves them untouched.
+#[allow(clippy::too_many_arguments)]
+fn apply_loop_filter_to_tight_recon_split_edge_preserving_tails(
+    width: u32,
+    height: u32,
+    filter_level: u8,
+    mi_grid: &[Option<ModeInfo>],
+    recon_y: &mut [u8],
+    recon_u: &mut [u8],
+    recon_v: &mut [u8],
+    num_tile_cols: usize,
+) {
+    let w = width as usize;
+    let h = height as usize;
+    let uvw = w / 2;
+    let uvh = h / 2;
+    let storage_h = h.next_multiple_of(64);
+    let visible_y_len = w * h;
+    let visible_uv_len = uvw * uvh;
+    let storage_lengths = (w * storage_h, uvw * (storage_h / 2), uvw * (storage_h / 2));
+    assert_eq!(
+        (recon_y.len(), recon_u.len(), recon_v.len()),
+        storage_lengths,
+        "partial split-edge filter requires SB-rounded backing storage"
+    );
+
+    let tail_y_len = storage_lengths.0 - visible_y_len;
+    let tail_uv_len = storage_lengths.1 - visible_uv_len;
+    let mut tails = Vec::with_capacity(tail_y_len + 2 * tail_uv_len);
+    tails.extend_from_slice(&recon_y[visible_y_len..]);
+    tails.extend_from_slice(&recon_u[visible_uv_len..]);
+    tails.extend_from_slice(&recon_v[visible_uv_len..]);
+
+    apply_loop_filter_to_tight_recon_split_edge(
+        width,
+        height,
+        filter_level,
+        mi_grid,
+        recon_y,
+        recon_u,
+        recon_v,
+        num_tile_cols,
+    );
+
+    let (tail_y, tail_uv) = tails.split_at(tail_y_len);
+    let (tail_u, tail_v) = tail_uv.split_at(tail_uv_len);
+    recon_y[visible_y_len..].copy_from_slice(tail_y);
+    recon_u[visible_uv_len..].copy_from_slice(tail_u);
+    recon_v[visible_uv_len..].copy_from_slice(tail_v);
+}
+
 /// Placeholder ModeInfo cell. Used to backfill `None` slots in the
 /// `mi_grid` that the encoder's partition picker didn't write. The
 /// loop-filter partition walker only reads the top-left MI of each
@@ -869,6 +948,8 @@ pub fn search_filter_level(params: &SearchFilterLevelParams<'_>) -> u8 {
 #[cfg(test)]
 mod w7_4_tests {
     use super::*;
+    use rvp9_core::bitstream::InterpFilter;
+    use rvp9_core::mode_info::{InterMode, Mv, RefFrame};
 
     #[test]
     fn complete_filter_grid_borrows_populated_input_and_repairs_holes() {
@@ -913,6 +994,119 @@ mod w7_4_tests {
             bmi: Default::default(),
         };
         vec![Some(cell); mi_rows * mi_cols]
+    }
+
+    /// Build a complete inter-frame MI grid with distinct mode/reference
+    /// combinations. The loop-filter mask depends on the inter reference and
+    /// mode deltas, so this keeps the differential fixture from accidentally
+    /// proving only the all-intra path.
+    fn build_mixed_inter_mi_grid(mi_rows: usize, mi_cols: usize) -> Vec<Option<ModeInfo>> {
+        (0..mi_rows)
+            .flat_map(|mi_row| {
+                (0..mi_cols).map(move |mi_col| {
+                    let variant = (mi_row * 3 + mi_col) % 4;
+                    let (mode, ref_frames, mvs) = match variant {
+                        0 => (
+                            InterMode::ZeroMv,
+                            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+                            [Mv::ZERO, Mv::ZERO],
+                        ),
+                        1 => (
+                            InterMode::NearestMv,
+                            [RefFrame::GoldenFrame, RefFrame::NoRefFrame],
+                            [Mv { row: 0, col: 8 }, Mv::ZERO],
+                        ),
+                        2 => (
+                            InterMode::NearMv,
+                            [RefFrame::AltrefFrame, RefFrame::NoRefFrame],
+                            [Mv { row: -8, col: 0 }, Mv::ZERO],
+                        ),
+                        _ => (
+                            InterMode::NewMv,
+                            [RefFrame::LastFrame, RefFrame::NoRefFrame],
+                            [Mv { row: 8, col: -8 }, Mv::ZERO],
+                        ),
+                    };
+                    Some(ModeInfo {
+                        block_size: BlockSize::Block8x8,
+                        tx_size: max_txsize(BlockSize::Block8x8),
+                        skip: variant == 0,
+                        segment_id: ((mi_row + mi_col) as u8) & 1,
+                        seg_id_predicted: false,
+                        mode: BlockMode::Inter {
+                            mode,
+                            ref_frames,
+                            mvs,
+                            interp_filter: if variant == 3 {
+                                InterpFilter::EightTapSmooth
+                            } else {
+                                InterpFilter::EightTap
+                            },
+                        },
+                        bmi: Default::default(),
+                    })
+                })
+            })
+            .collect()
+    }
+
+    /// Fill visible rows with small, filterable luma/chroma steps and retain
+    /// deliberately distinct non-zero poison in the padded SB-row tails.
+    fn padded_inter_recon_fixture(
+        width: usize,
+        height: usize,
+    ) -> (Vec<u8>, Vec<u8>, Vec<u8>, Vec<Option<ModeInfo>>) {
+        let storage_height = height.next_multiple_of(64);
+        let uv_width = width / 2;
+        let uv_visible_height = height / 2;
+        let uv_storage_height = storage_height / 2;
+        let mut y = vec![0u8; width * storage_height];
+        let mut u = vec![0u8; uv_width * uv_storage_height];
+        let mut v = vec![0u8; uv_width * uv_storage_height];
+
+        for row in 0..height {
+            for col in 0..width {
+                let step = (((row / 8) + (col / 8)) & 1) as u8;
+                y[row * width + col] = 112 + step * 12;
+            }
+        }
+        for row in 0..uv_visible_height {
+            for col in 0..uv_width {
+                let step = (((row / 4) + (col / 4)) & 1) as u8;
+                u[row * uv_width + col] = 96 + step * 12;
+                v[row * uv_width + col] = 160 - step * 12;
+            }
+        }
+        for (index, value) in y[width * height..].iter_mut().enumerate() {
+            *value = 0x51u8.wrapping_add(index as u8 % 37);
+        }
+        for (index, value) in u[uv_width * uv_visible_height..].iter_mut().enumerate() {
+            *value = 0xa2u8.wrapping_add(index as u8 % 29);
+        }
+        for (index, value) in v[uv_width * uv_visible_height..].iter_mut().enumerate() {
+            *value = 0xe3u8.wrapping_add(index as u8 % 23);
+        }
+
+        let mi_grid = build_mixed_inter_mi_grid(height / 8, width / 8);
+        assert!(mi_grid.iter().flatten().any(|mi| {
+            matches!(
+                mi.mode,
+                BlockMode::Inter {
+                    mode: InterMode::NewMv,
+                    ..
+                }
+            )
+        }));
+        assert!(mi_grid.iter().flatten().any(|mi| {
+            matches!(
+                mi.mode,
+                BlockMode::Inter {
+                    ref_frames: [RefFrame::AltrefFrame, ..],
+                    ..
+                }
+            )
+        }));
+        (y, u, v, mi_grid)
     }
 
     /// Generate a noisy recon + a clean (smooth) source. The encoder
@@ -1005,6 +1199,88 @@ mod w7_4_tests {
             assert_eq!(parallel_u, serial_u, "U differs at {w}x{h}");
             assert_eq!(parallel_v, serial_v, "V differs at {w}x{h}");
         }
+    }
+
+    #[test]
+    fn serial_split_edge_filter_matches_bordered_fallback_for_padded_inter_recon() {
+        let mut backing_mismatches = Vec::new();
+        for (width, height) in [(1920usize, 1080usize), (320, 72)] {
+            let (original_y, original_u, original_v, mi_grid) =
+                padded_inter_recon_fixture(width, height);
+            let mut direct_y = original_y.clone();
+            let mut direct_u = original_u.clone();
+            let mut direct_v = original_v.clone();
+            apply_loop_filter_to_tight_recon_parallel(
+                width as u32,
+                height as u32,
+                30,
+                &mi_grid,
+                &mut direct_y,
+                &mut direct_u,
+                &mut direct_v,
+                None,
+                1,
+                1,
+            );
+
+            // Force the bordered reference path with visible-only vectors,
+            // then put its filtered visible rows back beside the original
+            // poisoned tails. Full backing-vector equality below therefore
+            // checks both filter output and direct-path tail discipline.
+            let mut fallback_y = original_y.clone();
+            let mut fallback_u = original_u.clone();
+            let mut fallback_v = original_v.clone();
+            let mut visible_y = fallback_y[..width * height].to_vec();
+            let mut visible_u = fallback_u[..(width / 2) * (height / 2)].to_vec();
+            let mut visible_v = fallback_v[..(width / 2) * (height / 2)].to_vec();
+            apply_loop_filter_to_tight_recon(
+                width as u32,
+                height as u32,
+                30,
+                &mi_grid,
+                &mut visible_y,
+                &mut visible_u,
+                &mut visible_v,
+            );
+            fallback_y[..width * height].copy_from_slice(&visible_y);
+            fallback_u[..(width / 2) * (height / 2)].copy_from_slice(&visible_u);
+            fallback_v[..(width / 2) * (height / 2)].copy_from_slice(&visible_v);
+
+            assert_ne!(
+                &direct_y[..width * height],
+                &original_y[..width * height],
+                "{width}x{height} fixture must exercise luma filtering"
+            );
+            assert_ne!(
+                &direct_u[..(width / 2) * (height / 2)],
+                &original_u[..(width / 2) * (height / 2)],
+                "{width}x{height} fixture must exercise U filtering"
+            );
+            assert_ne!(
+                &direct_v[..(width / 2) * (height / 2)],
+                &original_v[..(width / 2) * (height / 2)],
+                "{width}x{height} fixture must exercise V filtering"
+            );
+            let first_y_diff = direct_y
+                .iter()
+                .zip(&fallback_y)
+                .position(|(direct, fallback)| direct != fallback);
+            let first_u_diff = direct_u
+                .iter()
+                .zip(&fallback_u)
+                .position(|(direct, fallback)| direct != fallback);
+            let first_v_diff = direct_v
+                .iter()
+                .zip(&fallback_v)
+                .position(|(direct, fallback)| direct != fallback);
+            if (first_y_diff, first_u_diff, first_v_diff) != (None, None, None) {
+                backing_mismatches.push((width, height, first_y_diff, first_u_diff, first_v_diff));
+            }
+        }
+        assert!(
+            backing_mismatches.is_empty(),
+            "complete backing differs: {backing_mismatches:?}"
+        );
     }
 
     #[test]
