@@ -1091,7 +1091,7 @@ fn frame_content_signals(y: &[u8], last: Option<&[u8]>, w: usize, h: usize) -> F
 /// `|4p - up - down - left - right|` over a tight-stride luma plane. This is
 /// the cheap production discriminator; threshold-adjacent estimates are
 /// replaced by [`frame_hf_energy_exact`] before the caller decides.
-#[cfg(test)]
+#[cfg(all(test, target_arch = "aarch64"))]
 fn frame_hf_energy(y: &[u8], w: usize, h: usize) -> f64 {
     if w < 3 || h < 3 || y.len() < w * h {
         return 0.0;

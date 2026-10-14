@@ -1462,7 +1462,7 @@ unsafe fn frame_hf_laplacian_sum_rows_neon(
     laplacian_sum
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_arch = "aarch64"))]
 pub(crate) fn frame_hf_laplacian_sum_scalar(y: &[u8], width: usize, height: usize) -> u64 {
     if width < 3 || height < 3 || y.len() < width * height {
         return 0;

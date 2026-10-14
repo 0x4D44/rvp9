@@ -5956,14 +5956,14 @@ fn sse_block(
     #[cfg(all(target_arch = "x86_64", not(miri)))]
     {
         let src_start = sy * src_plane.stride + sx;
-        return crate::dsp::x86_64::sse_block_sse2::sse_block_sse2(
+        crate::dsp::x86_64::sse_block_sse2::sse_block_sse2(
             &src_plane.data[src_start..],
             src_plane.stride,
             dst,
             dst_stride,
             bw,
             bh,
-        );
+        )
     }
 
     #[cfg(not(all(target_arch = "x86_64", not(miri))))]

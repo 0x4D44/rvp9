@@ -177,18 +177,18 @@ unsafe fn vp9_quantize_fp_avx2_inner<const TRACK_ZERO_EOB: bool>(
         return 0;
     }
 
-    if let Some(iscan) = iscan {
-        if n_coeffs >= 64 {
-            // Dense blocks are common and the scalar reverse scan normally
-            // finds their EOB in its first few positions.  Probe that tail
-            // before paying the fixed cost of the full raster reduction.
-            for i in (n_coeffs.saturating_sub(16)..n_coeffs).rev() {
-                if qcoeff[scan[i] as usize] != 0 {
-                    return (i + 1) as u16;
-                }
+    if let Some(iscan) = iscan
+        && n_coeffs >= 64
+    {
+        // Dense blocks are common and the scalar reverse scan normally
+        // finds their EOB in its first few positions.  Probe that tail
+        // before paying the fixed cost of the full raster reduction.
+        for i in (n_coeffs.saturating_sub(16)..n_coeffs).rev() {
+            if qcoeff[scan[i] as usize] != 0 {
+                return (i + 1) as u16;
             }
-            return eob_from_iscan(qcoeff, n_coeffs, iscan);
         }
+        return eob_from_iscan(qcoeff, n_coeffs, iscan);
     }
 
     // `tmp != 0` is equivalent to qcoeff != 0 for valid PlaneQuantizers.

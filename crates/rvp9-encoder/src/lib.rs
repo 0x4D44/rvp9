@@ -4833,6 +4833,10 @@ fn emit_inter_prediction(
     }
 }
 
+/// Chroma leaf geometry for the zero-EOB proof: frame pixel x, frame pixel y,
+/// block width, block height, and the U/V local recon origins.
+type ChromaProofOrigins = (usize, usize, usize, usize, [(usize, usize); 2]);
+
 /// Check that a complete candidate U/V leaf fits in both compact recon
 /// windows. The caller runs this before prebuilding prediction; the proof
 /// reuses the returned local origins after prediction is already present.
@@ -4843,7 +4847,7 @@ fn inter_chroma_proof_recon_origins(
     leaf_mi_col: usize,
     leaf_mi_row: usize,
     leaf_bsize: BlockSize,
-) -> Option<(usize, usize, usize, usize, [(usize, usize); 2])> {
+) -> Option<ChromaProofOrigins> {
     let uv_bsize = f5_uv_plane_block_size(leaf_bsize);
     let block_w = (uv_bsize.n_4x4_wide() as usize).checked_mul(4)?;
     let block_h = (uv_bsize.n_4x4_high() as usize).checked_mul(4)?;

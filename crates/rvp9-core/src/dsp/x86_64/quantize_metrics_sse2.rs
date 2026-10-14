@@ -407,7 +407,9 @@ mod tests {
 
     #[test]
     fn pairwise_error_matches_scalar_and_falls_back_on_overflow() {
-        let cases: [([i16; 8], [i16; 8], [i16; 8], bool); 3] = [
+        /// (coeff, dqcoeff, |qcoeff|, whether coeff - dqcoeff fits in i16)
+        type PairwiseCase = ([i16; 8], [i16; 8], [i16; 8], bool);
+        let cases: [PairwiseCase; 3] = [
             (
                 [15, -25, 1000, -1000, 321, -321, i16::MAX, i16::MIN],
                 [5, -5, 500, -500, 1, -1, i16::MAX - 1, i16::MIN + 1],
