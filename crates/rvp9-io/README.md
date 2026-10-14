@@ -12,7 +12,7 @@ only need to encode or decode VP9 should normally use
 
 ## Status
 
-`0.2.0-alpha.3` is an evaluation release. The supported video pipeline is
+`0.2.0-alpha.4` is an evaluation release. The supported video pipeline is
 8-bit VP9 profile 0 with 4:2:0 input and output.
 
 RVP9 is BSD-3-Clause licensed. See the repository's

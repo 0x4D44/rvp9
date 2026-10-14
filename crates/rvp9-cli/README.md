@@ -9,7 +9,7 @@ Command-line VP9 encoder and decoder tools from the
 Install both binaries from crates.io:
 
 ```console
-cargo install rvp9-cli --version '=0.2.0-alpha.3' --locked
+cargo install rvp9-cli --version '=0.2.0-alpha.4' --locked
 rvp9enc --help
 rvp9dec --help
 ```
@@ -28,7 +28,7 @@ when the corresponding behaviour is not implemented.
 
 ## Status
 
-`0.2.0-alpha.3` is ready for evaluation, not a final production-parity
+`0.2.0-alpha.4` is ready for evaluation, not a final production-parity
 release. See the [project README](https://github.com/0x4D44/rvp9#alpha-scope)
 for qualification evidence, experimental quality bounds, platform coverage,
 and current limits.

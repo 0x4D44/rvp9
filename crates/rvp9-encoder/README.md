@@ -12,14 +12,14 @@ for the production-quality and experimental quality boundaries.
 
 ```toml
 [dependencies]
-rvp9-encoder = "0.2.0-alpha.3"
+rvp9-encoder = "0.2.0-alpha.4"
 ```
 
 The public API is documented on [docs.rs](https://docs.rs/rvp9-encoder).
 
 ## Status
 
-`0.2.0-alpha.3` is ready for evaluation, not a final production-parity
+`0.2.0-alpha.4` is ready for evaluation, not a final production-parity
 release. It emits 8-bit profile-0 VP9; CPU-used 0–5, hardware encoding, and
 high-bit-depth output are outside the current scope.
 

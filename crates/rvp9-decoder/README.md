@@ -11,12 +11,12 @@ two decoder threads. The public API is documented on
 
 ```toml
 [dependencies]
-rvp9-decoder = "0.2.0-alpha.3"
+rvp9-decoder = "0.2.0-alpha.4"
 ```
 
 ## Status
 
-`0.2.0-alpha.3` is an evaluation release. It supports the project's qualified
+`0.2.0-alpha.4` is an evaluation release. It supports the project's qualified
 8-bit profile-0 surface; high-bit-depth decoding is not available.
 
 For IVF/WebM input and Y4M/raw output, install the companion

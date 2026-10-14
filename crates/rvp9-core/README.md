@@ -13,7 +13,7 @@ documented on [docs.rs](https://docs.rs/rvp9-core).
 
 ## Status
 
-`0.2.0-alpha.3` is an 8-bit VP9 preview. The project currently qualifies
+`0.2.0-alpha.4` is an 8-bit VP9 preview. The project currently qualifies
 one-pass real-time encoding at CPU-used 6–8 and validates decoding against the
 official VP9 conformance vectors. High-bit-depth support is only a scaffold.
 

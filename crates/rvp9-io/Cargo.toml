@@ -15,4 +15,4 @@ categories = ["multimedia::video", "encoding"]
 workspace = true
 
 [dependencies]
-rvp9-core = { version = "0.2.0-alpha.3", path = "../rvp9-core" }
+rvp9-core = { version = "0.2.0-alpha.4", path = "../rvp9-core" }
