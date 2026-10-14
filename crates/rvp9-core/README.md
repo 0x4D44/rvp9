@@ -1,6 +1,6 @@
 # rvp9-core
 
-Shared VP9 codec primitives for the [RVP9](https://github.com/0x4D44/rvp9-2)
+Shared VP9 codec primitives for the [RVP9](https://github.com/0x4D44/rvp9)
 encoder and decoder. This crate contains the bitstream and entropy machinery,
 transforms, prediction, loop filtering, frame storage, motion search, and
 scalar/SIMD kernels used by the higher-level crates.
@@ -18,5 +18,5 @@ one-pass real-time encoding at CPU-used 6–8 and validates decoding against the
 official VP9 conformance vectors. High-bit-depth support is only a scaffold.
 
 RVP9 is BSD-3-Clause licensed. See the repository's
-[licensing and patent notices](https://github.com/0x4D44/rvp9-2#licence)
+[licensing and patent notices](https://github.com/0x4D44/rvp9#licence)
 before redistribution.

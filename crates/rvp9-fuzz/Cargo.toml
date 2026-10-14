@@ -29,7 +29,7 @@ name = "rvp9-fuzz"
 version = "0.1.0"
 edition = "2024"
 license = "BSD-3-Clause"
-authors = ["Arthur <martin@tollens.ai>"]
+authors = ["0x4D44 <martingdavidson@gmail.com>"]
 publish = false
 
 [package.metadata]

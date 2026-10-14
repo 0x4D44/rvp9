@@ -74,7 +74,7 @@ See [`PLAN.md`](./PLAN.md) §2 for the formal success criteria.
 ## Workspace layout
 
 ```
-rvp9-2/
+rvp9/
 ├── PLAN.md                  # multi-stage plan
 ├── LICENSE                  # BSD 3-Clause licence for RVP9
 ├── PATENTS                  # WebM patent grants and their limits
@@ -105,8 +105,8 @@ rvp9-2/
 
 ```bash
 # 1. Clone with submodules (libvpx is a submodule).
-git clone --recurse-submodules <repo-url>
-cd rvp9-2
+git clone --recurse-submodules https://github.com/0x4D44/rvp9
+cd rvp9
 
 # 2. Build the pinned libvpx reference.
 ./scripts/build-libvpx.sh

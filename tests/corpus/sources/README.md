@@ -12,8 +12,9 @@ or re-fetch via the corpus fetch scripts:
 
 Per HLD V6 §G8 the source list draws from (in priority order):
 
-1. **Derf's collection** — `media.xiph.org/video/derf/`. Public,
-   CC-licensed. Several hundred MB per clip.
+1. **Derf's collection** — `media.xiph.org/video/derf/`. Publicly
+   downloadable; licence terms vary by clip and many state none, so
+   check before redistributing. Several hundred MB per clip.
 2. **Blender Open Movies** — Big Buck Bunny, Sintel, Tears of Steel,
    Cosmos Laundromat. CC-BY.
 3. **Self-recorded** — screen captures (ffmpeg `gdigrab` /

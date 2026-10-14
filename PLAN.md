@@ -1,7 +1,7 @@
 # rvp9-2: VP9 Encoder Port to Rust — Multistage Plan
 
 **Status:** Stage 5 release wrap in progress; VBR and temporal SVC are experimental in v0.2.0.
-**Owner:** Arthur (martin@tollens.ai) + Claude.
+**Owner:** Arthur (0x4D44) + Claude.
 **Last revised:** 2026-08-21.
 
 ---

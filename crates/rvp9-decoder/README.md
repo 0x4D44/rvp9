@@ -1,7 +1,7 @@
 # rvp9-decoder
 
 An 8-bit VP9 video decoder from the
-[RVP9](https://github.com/0x4D44/rvp9-2) project. It implements the VP9
+[RVP9](https://github.com/0x4D44/rvp9) project. It implements the VP9
 bitstream and decoding process and supports tile-threaded decoding.
 
 All 4,816 displayed frames across the project's 307 pinned official VP9
@@ -23,5 +23,5 @@ For IVF/WebM input and Y4M/raw output, install the companion
 [`rvp9-cli`](https://crates.io/crates/rvp9-cli) package.
 
 RVP9 is BSD-3-Clause licensed. See the repository's
-[licensing and patent notices](https://github.com/0x4D44/rvp9-2#licence)
+[licensing and patent notices](https://github.com/0x4D44/rvp9#licence)
 before redistribution.

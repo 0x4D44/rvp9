@@ -33,9 +33,9 @@ members = [
 version = "0.2.0-alpha.3"
 edition = "2024"
 license = "BSD-3-Clause"
-authors = ["Arthur <martin@tollens.ai>"]
+authors = ["0x4D44 <martingdavidson@gmail.com>"]
 rust-version = "1.95"
-repository = "https://github.com/0x4D44/rvp9-2"
+repository = "https://github.com/0x4D44/rvp9"
 
 # Library-crate lints (Wave A G11 — see HLD §G11 deliverable 1).
 #
