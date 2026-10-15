@@ -423,6 +423,7 @@ mod tests {
 
     #[test]
     fn fdct8x8_sse2_matches_scalar_valid_residuals() {
+        // Random and extreme inputs verify wrapper dispatch, including scalar fallback cases.
         let mut state = 0x8d31_e74a_25c6_09bf_u64;
         for case in 0..512 {
             let stride = 8 + case % 23;
@@ -450,8 +451,20 @@ mod tests {
             let mut scalar = [0i32; 64];
             let mut vector = [0i32; 64];
             super::super::fdct8x8_scalar(&residual, &mut scalar, 8);
+            // SAFETY: The arrays cover the 8x8 input and 64 outputs. SSE2 is mandatory on x86-64.
+            let used_sse2 = unsafe { fdct8x8_inner(residual.as_ptr(), vector.as_mut_ptr(), 8) };
+            assert_eq!(
+                used_sse2,
+                value == 0,
+                "constant residual {value} expected {}",
+                if value == 0 {
+                    "SSE2"
+                } else {
+                    "scalar fallback"
+                }
+            );
             fdct8x8(&residual, &mut vector, 8);
-            assert_eq!(vector, scalar, "constant residual {value}");
+            assert_eq!(vector, scalar, "constant residual {value} wrapper parity");
         }
 
         for axis in [0, 1] {
@@ -462,8 +475,17 @@ mod tests {
             let mut scalar = [0i32; 64];
             let mut vector = [0i32; 64];
             super::super::fdct8x8_scalar(&residual, &mut scalar, 8);
+            // SAFETY: The arrays cover the 8x8 input and 64 outputs. SSE2 is mandatory on x86-64.
+            let used_sse2 = unsafe { fdct8x8_inner(residual.as_ptr(), vector.as_mut_ptr(), 8) };
+            assert!(
+                !used_sse2,
+                "axis {axis} residual extremes should take scalar fallback"
+            );
             fdct8x8(&residual, &mut vector, 8);
-            assert_eq!(vector, scalar, "axis {axis} residual extremes");
+            assert_eq!(
+                vector, scalar,
+                "axis {axis} residual extremes fallback parity"
+            );
         }
 
         for index in 0..64 {
@@ -472,9 +494,114 @@ mod tests {
             let mut scalar = [0i32; 64];
             let mut vector = [0i32; 64];
             super::super::fdct8x8_scalar(&residual, &mut scalar, 8);
+            // SAFETY: The arrays cover the 8x8 input and 64 outputs. SSE2 is mandatory on x86-64.
+            let used_sse2 = unsafe { fdct8x8_inner(residual.as_ptr(), vector.as_mut_ptr(), 8) };
+            assert!(
+                !used_sse2,
+                "extreme impulse index {index} should take scalar fallback"
+            );
             fdct8x8(&residual, &mut vector, 8);
-            assert_eq!(vector, scalar, "extreme impulse index {index}");
+            assert_eq!(
+                vector, scalar,
+                "extreme impulse index {index} fallback parity"
+            );
         }
+    }
+
+    fn residual_8x8_with_stride(
+        stride: usize,
+        mut sample: impl FnMut(usize, usize) -> i16,
+    ) -> Vec<i16> {
+        let mut residual = vec![i16::MAX; 7 * stride + 8];
+        for row in 0..8 {
+            for column in 0..8 {
+                residual[row * stride + column] = sample(row, column);
+            }
+        }
+        residual
+    }
+
+    #[test]
+    fn fdct8x8_sse2_near_guard_inputs_run_kernel_and_match_scalar() {
+        let stride = 13;
+        for value in [-181i16, 181] {
+            let residual = residual_8x8_with_stride(stride, |_, _| value);
+            let mut scalar = [0i32; 64];
+            let mut vector = [0i32; 64];
+            super::super::fdct8x8_scalar(&residual, &mut scalar, stride);
+            // SAFETY: The strided input holds 8 rows of 8 values; output holds 64 coefficients.
+            // The x86-64 target guarantees SSE2.
+            let used_sse2 =
+                unsafe { fdct8x8_inner(residual.as_ptr(), vector.as_mut_ptr(), stride) };
+            assert!(
+                used_sse2,
+                "constant residual {value} should hit the inclusive pass-one guard near 4095"
+            );
+            assert_eq!(
+                vector, scalar,
+                "constant residual {value} SSE2 output near the pass-one guard"
+            );
+        }
+
+        let alternating_columns =
+            residual_8x8_with_stride(stride, |_, column| if column & 1 == 0 { 181 } else { -181 });
+        let mut scalar = [0i32; 64];
+        let mut vector = [0i32; 64];
+        super::super::fdct8x8_scalar(&alternating_columns, &mut scalar, stride);
+        // SAFETY: The strided input holds 8 rows of 8 values; output holds 64 coefficients.
+        // The x86-64 target guarantees SSE2.
+        let used_sse2 =
+            unsafe { fdct8x8_inner(alternating_columns.as_ptr(), vector.as_mut_ptr(), stride) };
+        assert!(
+            used_sse2,
+            "alternating-column ±181 residuals should exercise both pass-one signs near the guard"
+        );
+        assert_eq!(
+            vector, scalar,
+            "alternating-column ±181 residual SSE2 output near the pass-one guard"
+        );
+    }
+
+    #[test]
+    fn fdct8x8_sse2_outside_guard_inputs_fall_back_and_match_scalar() {
+        let stride = 13;
+        for value in [-182i16, 182] {
+            let residual = residual_8x8_with_stride(stride, |_, _| value);
+            let mut direct = [0i32; 64];
+            // SAFETY: The strided input holds 8 rows of 8 values; output holds 64 coefficients.
+            // The x86-64 target guarantees SSE2.
+            let used_sse2 =
+                unsafe { fdct8x8_inner(residual.as_ptr(), direct.as_mut_ptr(), stride) };
+            assert!(
+                !used_sse2,
+                "constant residual {value} should be outside the pass-one guard"
+            );
+
+            let mut scalar = [0i32; 64];
+            let mut dispatched = [0i32; 64];
+            super::super::fdct8x8_scalar(&residual, &mut scalar, stride);
+            fdct8x8(&residual, &mut dispatched, stride);
+            assert_eq!(
+                dispatched, scalar,
+                "constant residual {value} wrapper fallback output"
+            );
+        }
+    }
+
+    fn pass1_is_safe_for_repeated_lane(value: i16) -> bool {
+        // SAFETY: SSE2 is mandatory on x86-64, and set1 initializes every lane checked below.
+        unsafe {
+            let rows = [_mm_set1_epi16(value); 8];
+            pass1_is_safe(&rows)
+        }
+    }
+
+    #[test]
+    fn fdct8x8_sse2_guard_includes_exact_signed_lane_boundaries() {
+        assert!(pass1_is_safe_for_repeated_lane(-4096));
+        assert!(pass1_is_safe_for_repeated_lane(4095));
+        assert!(!pass1_is_safe_for_repeated_lane(-4097));
+        assert!(!pass1_is_safe_for_repeated_lane(4096));
     }
 
     #[test]
