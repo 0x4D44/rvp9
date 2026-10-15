@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00112 — Benchmark tools wait forever for external encoders and decoders
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** bench/external process reliability
 - **Raised:** 2026-08-22T19:31:25Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261015T230256Z-adabc6af
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00112-run-fix-20261015T230256Z-adabc6af
-- **Owner base:** 1dcac85f86c15703f30f114eecd7c69530775de3
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-15T23:02:56Z
-- **Owner until:** 2026-10-16T03:02:56Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T19:31:25Z, raised via `deltic bugs new` model=gpt-5.6-sol@xhigh)
+- **State history:** Open (2026-08-22T19:31:25Z, raised via `deltic bugs new` model=gpt-5.6-sol@xhigh) -> Fixed (2026-10-15T23:13:31Z, deltic:auto role=fix run=fix-20261015T230256Z-adabc6af branch=task/bug-RVP9-BUG-KIL-00112-run-fix-20261015T230256Z-adabc6af code=31149e12c745c51d35245072ed6fc97d2d785817 gate=manual)
 
 ## Observation
 
