@@ -1287,6 +1287,33 @@ pub fn temporal_filter_iterate_row(
     for mb_col in mb_col_start..mb_col_end {
         let block_x = mb_col * BW;
         let block_y = mb_row * BH;
+        let visible_width = BW.min(frame_width - block_x);
+        let visible_height = BH.min(frame_height - block_y);
+
+        // libvpx filters full macroblocks against its replicated source
+        // border (vp9_temporal_filter.c:802-846). Materialise that border
+        // only for a partial block; motion search/prediction already clamp
+        // their reads to the visible source dimensions.
+        let mut edge_source = [0u8; BLK_PELS * 3];
+        let partial = visible_width != BW || visible_height != BH;
+        if partial {
+            temporal_filter_predictors_mb(
+                arf.y,
+                arf.u,
+                arf.v,
+                y_stride,
+                uv_stride,
+                frame_width,
+                frame_height,
+                block_x,
+                block_y,
+                0,
+                0,
+                &[Mv::default(); NUM_SUB_BLOCKS],
+                true,
+                &mut edge_source,
+            );
+        }
 
         let mut accumulator = vec![0u32; BLK_PELS * 3];
         let mut count = vec![0u16; BLK_PELS * 3];
@@ -1410,16 +1437,24 @@ pub fn temporal_filter_iterate_row(
                     &mut predictor,
                 );
 
-                // ARF source slices for the block (handle frame edge
-                // clamping by limiting the slab to the valid
-                // footprint; libvpx relies on its border padding,
-                // we materialise the block from the canonical row
-                // stride and assume the frame dimensions are
-                // multiples of BW/BH — the ARF construction enforces
-                // this upstream).
-                let arf_y_block = &arf.y[mb_y_offset..];
-                let arf_u_block = &arf.u[mb_uv_offset..];
-                let arf_v_block = &arf.v[mb_uv_offset..];
+                let (arf_y_block, arf_u_block, arf_v_block, source_y_stride, source_uv_stride) =
+                    if partial {
+                        (
+                            &edge_source[..BLK_PELS],
+                            &edge_source[BLK_PELS..2 * BLK_PELS],
+                            &edge_source[2 * BLK_PELS..],
+                            BW,
+                            mb_uv_width,
+                        )
+                    } else {
+                        (
+                            &arf.y[mb_y_offset..],
+                            &arf.u[mb_uv_offset..],
+                            &arf.v[mb_uv_offset..],
+                            y_stride,
+                            uv_stride,
+                        )
+                    };
 
                 let (pred_y, pred_uv) = predictor.split_at(BLK_PELS);
                 let (pred_u, pred_v) = pred_uv.split_at(BLK_PELS);
@@ -1431,12 +1466,12 @@ pub fn temporal_filter_iterate_row(
 
                 apply_temporal_filter(
                     arf_y_block,
-                    y_stride,
+                    source_y_stride,
                     pred_y,
                     BW,
                     arf_u_block,
                     arf_v_block,
-                    uv_stride,
+                    source_uv_stride,
                     pred_u,
                     pred_v,
                     mb_uv_width,
@@ -1461,8 +1496,8 @@ pub fn temporal_filter_iterate_row(
         // accumulator to 8-bit output.
         let mut byte = mb_y_offset;
         let mut k = 0usize;
-        for _i in 0..BH {
-            for _j in 0..BW {
+        for i in 0..BH {
+            for j in 0..BW {
                 let c = count[k] as usize;
                 let pval = if c > 0 {
                     let v = (accumulator[k] + (count[k] as u32 >> 1)) * fixed_divide[c];
@@ -1470,17 +1505,19 @@ pub fn temporal_filter_iterate_row(
                 } else {
                     0
                 };
-                out_y[byte] = pval;
+                if i < visible_height && j < visible_width {
+                    out_y[byte] = pval;
+                }
                 byte += 1;
                 k += 1;
             }
-            byte += y_stride - BW;
+            byte = mb_y_offset + (i + 1) * y_stride;
         }
 
         let mut byte = mb_uv_offset;
         let mut k = BLK_PELS;
-        for _i in 0..mb_uv_height {
-            for _j in 0..mb_uv_width {
+        for i in 0..mb_uv_height {
+            for j in 0..mb_uv_width {
                 let m = k + BLK_PELS;
                 let cu = count[k] as usize;
                 let cv = count[m] as usize;
@@ -1496,12 +1533,14 @@ pub fn temporal_filter_iterate_row(
                 } else {
                     0
                 };
-                out_u[byte] = pu;
-                out_v[byte] = pv;
+                if i < visible_height / 2 && j < visible_width / 2 {
+                    out_u[byte] = pu;
+                    out_v[byte] = pv;
+                }
                 byte += 1;
                 k += 1;
             }
-            byte += uv_stride - mb_uv_width;
+            byte = mb_uv_offset + (i + 1) * uv_stride;
         }
 
         mb_y_offset += BW;
@@ -1521,9 +1560,8 @@ pub fn temporal_filter_iterate_row(
 /// # Panics
 ///
 /// Panics if `data.frames` is empty, dimensions differ across
-/// frames, or `width % BW != 0` / `height % BH != 0`. libvpx pads to
-/// `BW`/`BH` multiples via the source frame border; rvp9's reference
-/// requires aligned dimensions for simplicity.
+/// frames, or dimensions are zero or odd. Partial macroblocks use
+/// replicated source edges, matching libvpx's source frame border.
 #[must_use]
 pub fn vp9_temporal_filter(data: &ArnrFilterData<'_>) -> FilteredArnrFrame {
     assert!(!data.frames.is_empty(), "temporal filter needs ≥1 frame");
@@ -1531,8 +1569,8 @@ pub fn vp9_temporal_filter(data: &ArnrFilterData<'_>) -> FilteredArnrFrame {
     let width = arf.width as usize;
     let height = arf.height as usize;
     assert!(
-        width.is_multiple_of(BW) && height.is_multiple_of(BH),
-        "rvp9 temporal filter requires BW/BH-aligned dimensions"
+        width > 0 && height > 0 && width.is_multiple_of(2) && height.is_multiple_of(2),
+        "rvp9 temporal filter requires positive even 4:2:0 dimensions"
     );
     for f in &data.frames {
         assert_eq!(f.width, arf.width, "all frames must share width");
@@ -1541,12 +1579,14 @@ pub fn vp9_temporal_filter(data: &ArnrFilterData<'_>) -> FilteredArnrFrame {
 
     let uv_w = width / 2;
     let uv_h = height / 2;
-    let mut out_y = vec![0u8; width * height];
-    let mut out_u = vec![0u8; uv_w * uv_h];
-    let mut out_v = vec![0u8; uv_w * uv_h];
+    // The row API writes using the source strides. Pack those rows back
+    // to the tight-stride output promised by FilteredArnrFrame below.
+    let mut out_y = vec![0u8; arf.y_stride * height];
+    let mut out_u = vec![0u8; arf.uv_stride * uv_h];
+    let mut out_v = vec![0u8; arf.uv_stride * uv_h];
 
-    let mb_rows = height / BH;
-    let mb_cols = width / BW;
+    let mb_rows = height.div_ceil(BH);
+    let mb_cols = width.div_ceil(BW);
     let fixed_divide = fixed_divide_table();
 
     for mb_row in 0..mb_rows {
@@ -1562,10 +1602,21 @@ pub fn vp9_temporal_filter(data: &ArnrFilterData<'_>) -> FilteredArnrFrame {
         );
     }
 
+    fn pack_rows(plane: Vec<u8>, stride: usize, width: usize) -> Vec<u8> {
+        if stride == width {
+            plane
+        } else {
+            plane
+                .chunks_exact(stride)
+                .flat_map(|row| row[..width].iter().copied())
+                .collect()
+        }
+    }
+
     FilteredArnrFrame {
-        y: out_y,
-        u: out_u,
-        v: out_v,
+        y: pack_rows(out_y, arf.y_stride, width),
+        u: pack_rows(out_u, arf.uv_stride, uv_w),
+        v: pack_rows(out_v, arf.uv_stride, uv_w),
         width: arf.width,
         height: arf.height,
     }

@@ -5338,12 +5338,14 @@ impl StreamEncoder {
 
         // Local scratch reconstruction — the ARF's real decoded output.
         // Never aliases `last_recon_*` (state isolation); captured into
-        // slot 2 below.
+        // slot 2 below. Match InterReconLayout::full and the reference
+        // pool's SB-padded storage while keeping the visible height `h`.
         let uvw = w_us / 2;
-        let uvh = h_us / 2;
-        let mut arf_recon_y = vec![0u8; w_us * h_us];
-        let mut arf_recon_u = vec![0u8; uvw * uvh];
-        let mut arf_recon_v = vec![0u8; uvw * uvh];
+        let storage_h = crate::buffer_pool::reference_storage_height(h_us);
+        let storage_uvh = storage_h / 2;
+        let mut arf_recon_y = vec![0u8; w_us * storage_h];
+        let mut arf_recon_u = vec![0u8; uvw * storage_uvh];
+        let mut arf_recon_v = vec![0u8; uvw * storage_uvh];
 
         // Local per-leaf MV grid (discarded — the ARF must not become
         // the next show frame's `prev_mv_grid`). The ARF still reads the
