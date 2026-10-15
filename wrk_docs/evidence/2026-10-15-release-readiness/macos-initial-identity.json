@@ -1,0 +1,55 @@
+{
+  "candidate": "1a84f60a24e8d82e8e6454743fbb80521280df0e",
+  "documentation_head": "23162998476b2b410f10e4502793e9f06c124a56",
+  "platform": "macOS-26.6.2-arm64-arm-64bit",
+  "machine": "arm64",
+  "rustc": "rustc 1.95.0 (59807616e 2026-04-14)\nbinary: rustc\ncommit-hash: 59807616e1fa2540724bfbac14d7976d7e4a3860\ncommit-date: 2026-04-14\nhost: aarch64-apple-darwin\nrelease: 1.95.0\nLLVM version: 22.1.2\n",
+  "artifacts": [
+    {
+      "path": "target/release/conformance",
+      "bytes": 1031088,
+      "sha256": "d35355f1f0574cad1cfcd18b315f8f04e120618ead444b658faaaf39148ab884"
+    },
+    {
+      "path": "target/release/rvp9enc",
+      "bytes": 1864872,
+      "sha256": "bb730f5b917f780ad813e0ed1e4c39270001987a68f5eca0c7020b086c95da15"
+    },
+    {
+      "path": "target/release/rvp9dec",
+      "bytes": 1076744,
+      "sha256": "dfa08c448b636e73739e456c732ebf0a588773b60886c2f890f190150bfde622"
+    },
+    {
+      "path": "build/libvpx/vpxenc",
+      "bytes": 2516392,
+      "sha256": "de4f634550bc9d5b6f5ebb1aa0d883346bb1afb4bbdec7b15368a50f153e0b7f"
+    },
+    {
+      "path": "build/libvpx/vpxdec",
+      "bytes": 2397592,
+      "sha256": "08d8e3c7390b066bd9c0cceb1b84c9d6c27351ade85c6d0a7c741931d3fb1117"
+    },
+    {
+      "path": "build/libvpx/examples/vp9_spatial_svc_encoder",
+      "bytes": 2104232,
+      "sha256": "287e25f71a8583df5b041dbaa532b00b3f282d72ec2c7c89447b74e901064d95"
+    },
+    {
+      "path": "tests/corpus/in_to_tree_420_720p50.y4m",
+      "bytes": 691203035,
+      "sha256": "81166517a3054c789923535b5da23fbbb9bbd7fd4c28dac83918ac351e121e74"
+    },
+    {
+      "path": "tests/corpus/ducks_take_off_420_720p50.y4m",
+      "bytes": 691203035,
+      "sha256": "0e09aa923ce72e2f6d1c978c3c1cc8dd9588d2ede819081f040213e361970efc"
+    },
+    {
+      "path": "tests/corpus/old_town_cross_420_720p50.y4m",
+      "bytes": 691203035,
+      "sha256": "0fbc2ec0c552ad693528b2e49409c7449880b9230055a7696346473d1aaf4123"
+    }
+  ],
+  "note": "No shipped-source changes from candidate. Plain release artifacts; PGO not yet built."
+}
