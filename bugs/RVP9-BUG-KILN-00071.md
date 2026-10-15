@@ -1,25 +1,25 @@
 # RVP9-BUG-KILN-00071 — Legacy Encoder accepts dimensions that overflow derived geometry
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** encoder/synthetic API
 - **Raised:** 2026-08-16T08:19:15Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261015T222840Z-dc59d6d8
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KILN-00071-run-fix-20261015T222840Z-dc59d6d8
-- **Owner base:** 64062b59e6ea6322d62b7431249fe1a6d865ef88
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-15T22:28:40Z
-- **Owner until:** 2026-10-16T02:28:40Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-16T08:19:15Z, raised via `deltic bugs new`)
+- **State history:** Open (2026-08-16T08:19:15Z, raised via `deltic bugs new`) -> Fixed (2026-10-15T22:41:36Z, deltic:auto role=fix run=fix-20261015T222840Z-dc59d6d8 branch=task/bug-RVP9-BUG-KILN-00071-run-fix-20261015T222840Z-dc59d6d8 code=32a5c6147257e2358f107bd35c447594809ed2ee gate=manual)
 
 ## Observation
 
