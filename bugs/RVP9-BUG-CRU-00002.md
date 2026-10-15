@@ -1,25 +1,25 @@
 # RVP9-BUG-CRU-00002 — fdct8x8 SSE2 extreme-residual tests are vacuous: every extreme case takes the scalar fallback
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** core/transforms forward_sse2
 - **Raised:** 2026-08-23T17:09:45Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261015T232621Z-604f2624
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-CRU-00002-run-fix-20261015T232621Z-604f2624
-- **Owner base:** 440950dec2c11789537d132596bb3f2bc0382746
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-15T23:26:21Z
-- **Owner until:** 2026-10-16T03:26:21Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-23T17:09:45Z, raised via `deltic bugs new` model=claude-opus-5@high)
+- **State history:** Open (2026-08-23T17:09:45Z, raised via `deltic bugs new` model=claude-opus-5@high) -> Fixed (2026-10-15T23:35:11Z, deltic:auto role=fix run=fix-20261015T232621Z-604f2624 branch=task/bug-RVP9-BUG-CRU-00002-run-fix-20261015T232621Z-604f2624 code=485d2e829f25e5d6221c3cc0a0e54b8a9b567005 gate=manual)
 
 ## Observation
 
