@@ -280,4 +280,3 @@ test bitstream::tile::tests::write_tile_buffers_zero_dimensions_are_rejected ...
 test bitstream::tile::tests::zero_tile_dims_are_rejected ... ok
 
 test result: ok. 276 passed; 0 failed; 0 ignored; 0 measured; 1446 filtered out; finished in 0.03s
-

@@ -1,1 +1,1 @@
-﻿RUSTUP_TOOLCHAIN=1.95.0 RVP9_CORPUS_DIR=.scratch/windows-release-readiness/corpus TEMP/TMP=.scratch/windows-release-readiness deltic timeout 2400 cargo +1.95.0 test --locked --release -p rvp9-encoder --test cross_decoder_gate cross_decoder_gate_vpxdec_ffmpeg -- --ignored --nocapture
+RUSTUP_TOOLCHAIN=1.95.0 RVP9_CORPUS_DIR=.scratch/windows-release-readiness/corpus TEMP/TMP=.scratch/windows-release-readiness deltic timeout 2400 cargo +1.95.0 test --locked --release -p rvp9-encoder --test cross_decoder_gate cross_decoder_gate_vpxdec_ffmpeg -- --ignored --nocapture

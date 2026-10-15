@@ -1,4 +1,4 @@
-﻿rustup_installed_toolchains:
+rustup_installed_toolchains:
 stable-x86_64-pc-windows-msvc
 nightly-x86_64-pc-windows-msvc
 nightly-2026-04-08-x86_64-pc-windows-msvc

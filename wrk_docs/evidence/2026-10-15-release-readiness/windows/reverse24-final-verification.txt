@@ -1,4 +1,4 @@
-﻿Independent reverse24 artifact verification.
+Independent reverse24 artifact verification.
 manifest_pass_rows=
 24
 decoded_output_files=

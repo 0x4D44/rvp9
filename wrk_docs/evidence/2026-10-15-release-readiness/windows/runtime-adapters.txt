@@ -1,4 +1,4 @@
-﻿Final process-local Git Bash adapters; no repository script changes.
+Final process-local Git Bash adapters; no repository script changes.
 shasum() { shift 2; command sha256sum $1; }
 stat() { if [ $1 = -f ] && [ $2 = %z ]; then command stat -c %s $3; else command stat $@; fi; }
 Passed via bash.exe -c then source of existing qualification script.

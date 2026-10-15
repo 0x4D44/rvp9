@@ -94,7 +94,7 @@ ok    a missing per-frame timing CSV aborts the row = refused
 ok    a load of exactly 0.75 is accepted = 0.750000
 ok    a load past 0.75 fails closed = refused
 ok    an unreadable load fails closed = refused
-ok    every timing self-test path stayed under its own temp root = 
+ok    every timing self-test path stayed under its own temp root =
 ok    the timing self-test did actually write into its temp root = wrote
 
 timing filesystem self-test passed

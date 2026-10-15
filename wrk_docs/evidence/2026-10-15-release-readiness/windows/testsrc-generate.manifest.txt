@@ -1,4 +1,4 @@
-﻿exit_code=0
+exit_code=0
 corpus_dir=D:\worktrees\rvp9-2\20261015-TSK-HUM-final-release-native-correctness-qualifi\.scratch\windows-release-readiness\corpus
 source=ffmpeg lavfi testsrc2; generated locally, no corpus reused
 frames=8

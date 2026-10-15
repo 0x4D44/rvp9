@@ -15,4 +15,3 @@ test threads_zero_means_one_thread ... ok
 test threads_invalid_rejected ... ok
 
 test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.87s
-

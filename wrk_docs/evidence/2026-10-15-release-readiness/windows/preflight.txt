@@ -1,4 +1,4 @@
-﻿observed_utc=2026-10-15T22:28:53Z
+observed_utc=2026-10-15T22:28:53Z
 candidate_expected=1a84f60a24e8d82e8e6454743fbb80521280df0e
 task_worktree=D:\worktrees\rvp9-2\20261015-TSK-HUM-final-release-native-correctness-qualifi
 task_head=1a84f60a24e8d82e8e6454743fbb80521280df0e
