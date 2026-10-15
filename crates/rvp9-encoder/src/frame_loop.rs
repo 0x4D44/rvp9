@@ -1613,12 +1613,42 @@ type InterPickerFrameOutput = (
     Vec<Option<ModeInfo>>,
 );
 
+/// Allocation lengths shared by construction and the non-allocating geometry check.
+pub(crate) struct InterTileScratchPlan {
+    pub(crate) keyframe_mode_cells: usize,
+    recon_y: usize,
+    recon_uv: usize,
+    mv_cells: usize,
+    partition_cells: usize,
+}
+
+impl InterTileScratchPlan {
+    pub(crate) fn new(width: usize, height: usize, log2_tile_cols: u8, tile_col: usize) -> Self {
+        let bounds = tile_bounds(
+            height.div_ceil(8),
+            width / 8,
+            0,
+            log2_tile_cols,
+            0,
+            tile_col as u32,
+        );
+        let tile_mi_cols = bounds.mi_col_end - bounds.mi_col_start;
+        Self {
+            keyframe_mode_cells: height.div_ceil(8) * tile_mi_cols,
+            recon_y: tile_mi_cols * 8 * height,
+            recon_uv: tile_mi_cols * 4 * (height / 2),
+            mv_cells: height.div_ceil(8) * tile_mi_cols,
+            partition_cells: height.div_ceil(64) * tile_mi_cols.div_ceil(8),
+        }
+    }
+}
+
 struct InterTileScratch {
     recon_y: Vec<u8>,
     recon_u: Vec<u8>,
     recon_v: Vec<u8>,
     mv_grid: Vec<PrevFrameMvRef>,
-    // The outer frame grid survives across inter frames. Owned leaf vectors
+    // The tile-local outer grid survives across inter frames. Owned leaf vectors
     // move into the final grid, and the next refill clears every cell first.
     partitions: Vec<Vec<InterPartitionLeafDesc>>,
 }
@@ -1659,23 +1689,6 @@ struct TightTileRowsMut<'a, T> {
 }
 
 impl<T: Clone> TightTileRowsMut<'_, T> {
-    fn copy_from_full_frame(&mut self, source: &[T], source_stride: usize) {
-        assert!(
-            source_stride > 0,
-            "tile copy source stride must be positive"
-        );
-        assert_eq!(
-            source.len(),
-            source_stride * self.rows.len(),
-            "tile copy source must be a tight full-frame plane"
-        );
-        for (row_index, destination) in self.rows.iter_mut().enumerate() {
-            let start = row_index * source_stride + self.col_start;
-            let end = start + destination.len();
-            destination.clone_from_slice(&source[start..end]);
-        }
-    }
-
     fn copy_from_tight_tile(&mut self, source: &[T], source_stride: usize) {
         assert!(
             source_stride > 0,
@@ -2233,14 +2246,20 @@ impl StreamEncoder {
             .then(|| rvp9_core::tile_threading::LfWorkerPool::new(std::num::NonZeroUsize::MIN));
         let inter_tile_scratch = if frame_worker_pool.is_some() {
             (0..tile_count)
-                .map(|_| InterTileScratch {
-                    recon_y: vec![0; w * storage_h],
-                    recon_u: vec![0; uvw * storage_uvh],
-                    recon_v: vec![0; uvw * storage_uvh],
-                    mv_grid: vec![PrevFrameMvRef::default(); h.div_ceil(8) * (w / 8)],
-                    partitions: (0..h.div_ceil(64) * w.div_ceil(64))
-                        .map(|_| Vec::new())
-                        .collect(),
+                .map(|tile_col| {
+                    let plan = InterTileScratchPlan::new(
+                        w,
+                        h,
+                        parallelism.effective_log2_tile_cols(config.width),
+                        tile_col,
+                    );
+                    InterTileScratch {
+                        recon_y: vec![0; plan.recon_y],
+                        recon_u: vec![0; plan.recon_uv],
+                        recon_v: vec![0; plan.recon_uv],
+                        mv_grid: vec![PrevFrameMvRef::default(); plan.mv_cells],
+                        partitions: (0..plan.partition_cells).map(|_| Vec::new()).collect(),
+                    }
                 })
                 .collect()
         } else {
@@ -3432,15 +3451,6 @@ impl StreamEncoder {
             let mut result_slots: Vec<Option<KeyframeTileJobResult>> =
                 (0..tile_count).map(|_| None).collect();
             let tile_scratch = &mut self.inter_tile_scratch;
-            for scratch in tile_scratch.iter_mut() {
-                scratch.recon_y.resize(w as usize * h as usize, 0);
-                scratch
-                    .recon_u
-                    .resize((w as usize / 2) * (h as usize / 2), 0);
-                scratch
-                    .recon_v
-                    .resize((w as usize / 2) * (h as usize / 2), 0);
-            }
             self.frame_worker_pool
                 .as_mut()
                 .expect("parallel keyframe tiles require the frame worker pool")
@@ -3450,26 +3460,54 @@ impl StreamEncoder {
                         .zip(tile_scratch.iter_mut())
                         .enumerate()
                     {
-                        let mut tile_partitions = initial_partitions.clone();
+                        let bounds = tile_bounds(
+                            (h as usize).div_ceil(8),
+                            w as usize / 8,
+                            0,
+                            log2_tile_cols,
+                            0,
+                            tile_col as u32,
+                        );
+                        let frame_sb_cols = (w as usize).div_ceil(64);
+                        let tile_sb_start = bounds.mi_col_start / 8;
+                        let tile_sb_end = bounds.mi_col_end.div_ceil(8);
+                        let mut tile_partitions: Vec<_> = initial_partitions
+                            .chunks_exact(frame_sb_cols)
+                            .flat_map(|row| row[tile_sb_start..tile_sb_end].iter().cloned())
+                            .collect();
+                        let plan = InterTileScratchPlan::new(
+                            w as usize,
+                            h as usize,
+                            log2_tile_cols,
+                            tile_col,
+                        );
+                        assert_eq!(tile_partitions.len(), plan.partition_cells);
                         scope.submit(move || {
-                            let coefs = pick_and_simulate_intra_encode_partitions(
-                                w,
-                                h,
-                                q_index,
-                                &seg_q_deltas,
-                                input_yuv,
-                                (
-                                    &mut scratch.recon_y,
-                                    &mut scratch.recon_u,
-                                    &mut scratch.recon_v,
-                                ),
-                                &mut tile_partitions,
-                                log2_tile_cols,
-                                Some(tile_col),
-                                exact_keyframe_sub8,
-                                nonrd_keyframe_8x8,
-                                keyframe_8x8_mode_cap,
-                            );
+                            let coefs =
+                                crate::pick_and_simulate_intra_encode_partitions_with_layout(
+                                    w,
+                                    h,
+                                    q_index,
+                                    &seg_q_deltas,
+                                    input_yuv,
+                                    (
+                                        &mut scratch.recon_y,
+                                        &mut scratch.recon_u,
+                                        &mut scratch.recon_v,
+                                    ),
+                                    crate::InterReconLayout::tile_column(
+                                        w as usize,
+                                        h as usize,
+                                        bounds.mi_col_start,
+                                        bounds.mi_col_end - bounds.mi_col_start,
+                                    ),
+                                    &mut tile_partitions,
+                                    log2_tile_cols,
+                                    Some(tile_col),
+                                    exact_keyframe_sub8,
+                                    nonrd_keyframe_8x8,
+                                    keyframe_8x8_mode_cap,
+                                );
                             *result_slot = Some(KeyframeTileJobResult {
                                 tile_col,
                                 partitions: tile_partitions,
@@ -3499,14 +3537,18 @@ impl StreamEncoder {
                 for sb_row in 0..(h as usize).div_ceil(64) {
                     for sb_col in sb_col_start..sb_col_end {
                         let sb_idx = sb_row * sb_cols + sb_col;
-                        sb_partitions[sb_idx] = result.partitions[sb_idx].clone();
+                        let local_idx =
+                            sb_row * (sb_col_end - sb_col_start) + sb_col - sb_col_start;
+                        sb_partitions[sb_idx] = result.partitions[local_idx].clone();
                     }
                 }
                 let scratch = &tile_scratch[tile_col];
                 for row in 0..h as usize {
                     let start = row * w as usize + bounds.mi_col_start * 8;
                     let end = row * w as usize + bounds.mi_col_end * 8;
-                    ry[start..end].copy_from_slice(&scratch.recon_y[start..end]);
+                    let local_start = row * (end - start);
+                    ry[start..end]
+                        .copy_from_slice(&scratch.recon_y[local_start..local_start + end - start]);
                 }
                 let uv_width = w as usize / 2;
                 let uv_col_start = bounds.mi_col_start * 4;
@@ -3514,8 +3556,11 @@ impl StreamEncoder {
                 for row in 0..h as usize / 2 {
                     let start = row * uv_width + uv_col_start;
                     let end = row * uv_width + uv_col_end;
-                    ru[start..end].copy_from_slice(&scratch.recon_u[start..end]);
-                    rv[start..end].copy_from_slice(&scratch.recon_v[start..end]);
+                    let local_start = row * (end - start);
+                    ru[start..end]
+                        .copy_from_slice(&scratch.recon_u[local_start..local_start + end - start]);
+                    rv[start..end]
+                        .copy_from_slice(&scratch.recon_v[local_start..local_start + end - start]);
                 }
                 merged_coefs.merge_from(result.coefs);
             }
@@ -4539,8 +4584,9 @@ impl StreamEncoder {
                         let seg_map = seg_map.as_slice();
                         scope.submit(move || {
                             rvp9_core::mode_decision::inter::set_frame_s2_gate(s2_frame_gate);
-                            choose_mapped_partitions_for_sb_cols_into(
+                            choose_mapped_partitions_for_sb_cols_into_window(
                                 partition_input,
+                                sb_col_start..sb_col_end,
                                 sb_col_start..sb_col_end,
                                 &mut scratch.partitions,
                                 |decision, sb_row, sb_col, mapped_leaves| {
@@ -4588,7 +4634,7 @@ impl StreamEncoder {
                                 .copy_from_tight_tile(&scratch.recon_v, tile_width / 2);
                             output
                                 .mv_grid
-                                .copy_from_full_frame(&scratch.mv_grid, mi_cols_us);
+                                .copy_from_tight_tile(&scratch.mv_grid, tile_mi_cols);
                             let result = InterTileJobResult {
                                 claimed_jobs: (0..(h as usize).div_ceil(64))
                                     .map(|sb_row| crate::row_mt::RowJob { sb_row, tile_col })
@@ -4655,12 +4701,12 @@ impl StreamEncoder {
             }
             debug_assert_eq!(merged_mi_grid.len(), mi_rows_us * mi_cols_us);
             for (job, worker_id) in row_owners.iter() {
-                row_owners.move_job_rect(
-                    &mut sb_partitions,
-                    &mut tile_scratch[worker_id].partitions,
-                    job,
-                    1,
-                );
+                let bounds = tile_bounds(mi_rows_us, mi_cols_us, 0, log2_tile_cols, 0, job.tile_col as u32);
+                let start = bounds.mi_col_start / 8;
+                let tile_cols = tile_sb_cols[job.tile_col];
+                for col in 0..tile_cols {
+                    std::mem::swap(&mut sb_partitions[job.sb_row * sb_cols + start + col], &mut tile_scratch[worker_id].partitions[job.sb_row * tile_cols + col]);
+                }
             }
             let mut tile_coef_sources = Vec::with_capacity(tile_count);
             for (result, (mi_col_start, mi_col_end)) in tile_results.into_iter().zip(mi_tile_ranges)
@@ -6142,6 +6188,25 @@ fn choose_mapped_partitions_for_sb_cols_into<T, F>(
     input: FramePartitionInput<'_>,
     sb_col_range: std::ops::Range<usize>,
     out: &mut Vec<Vec<T>>,
+    map_decision: F,
+) where
+    F: FnMut(&PartitionDecision, usize, usize, &mut Vec<T>),
+{
+    let storage_cols = 0..input.width_px.div_ceil(64);
+    choose_mapped_partitions_for_sb_cols_into_window(
+        input,
+        sb_col_range,
+        storage_cols,
+        out,
+        map_decision,
+    );
+}
+
+fn choose_mapped_partitions_for_sb_cols_into_window<T, F>(
+    input: FramePartitionInput<'_>,
+    sb_col_range: std::ops::Range<usize>,
+    storage_cols: std::ops::Range<usize>,
+    out: &mut Vec<Vec<T>>,
     mut map_decision: F,
 ) where
     F: FnMut(&PartitionDecision, usize, usize, &mut Vec<T>),
@@ -6159,7 +6224,8 @@ fn choose_mapped_partitions_for_sb_cols_into<T, F>(
     } = input;
     let sb_cols = width_px.div_ceil(64);
     let sb_rows = height_px.div_ceil(64);
-    let partition_cells = sb_rows * sb_cols;
+    let partition_cells = sb_rows * storage_cols.len();
+    assert!(storage_cols.start <= sb_col_range.start && sb_col_range.end <= storage_cols.end);
     // Tile jobs retain this outer allocation. Clear even unowned cells so an
     // interrupted or poisoned prior fill cannot leak stale partition state.
     if out.len() == partition_cells {
@@ -6249,7 +6315,7 @@ fn choose_mapped_partitions_for_sb_cols_into<T, F>(
                 &decision,
                 sb_row,
                 sb_col,
-                &mut out[sb_row * sb_cols + sb_col],
+                &mut out[sb_row * storage_cols.len() + sb_col - storage_cols.start],
             );
         }
     }
@@ -6363,17 +6429,19 @@ fn return_parallel_partition_vectors_to_tile_scratch(
     assert_eq!(frame_partitions.len(), sb_rows * sb_cols);
 
     for (tile_col, scratch) in tile_scratch.iter_mut().enumerate() {
-        assert_eq!(scratch.partitions.len(), frame_partitions.len());
         let bounds = tile_bounds(mi_rows, mi_cols, 0, log2_tile_cols, 0, tile_col as u32);
+        let tile_sb_cols = (bounds.mi_col_end - bounds.mi_col_start).div_ceil(8);
+        assert_eq!(scratch.partitions.len(), sb_rows * tile_sb_cols);
         debug_assert_eq!(bounds.mi_col_start % 8, 0);
         debug_assert_eq!(bounds.mi_col_end % 8, 0);
         for sb_row in 0..sb_rows {
             for sb_col in bounds.mi_col_start / 8..bounds.mi_col_end.div_ceil(8) {
                 let sb_index = sb_row * sb_cols + sb_col;
-                debug_assert!(scratch.partitions[sb_index].is_empty());
+                let local_index = sb_row * tile_sb_cols + sb_col - bounds.mi_col_start / 8;
+                debug_assert!(scratch.partitions[local_index].is_empty());
                 std::mem::swap(
                     &mut frame_partitions[sb_index],
-                    &mut scratch.partitions[sb_index],
+                    &mut scratch.partitions[local_index],
                 );
             }
         }
@@ -8096,6 +8164,111 @@ mod tests {
             capture_diag_prelf_recon(true, (&y, &u, &v)),
             Some((y.to_vec(), u.to_vec(), v.to_vec())),
         );
+    }
+
+    #[test]
+    fn parallel_tile_scratch_plan_bounds_maximum_geometry() {
+        let width = 16384usize;
+        let height = 4096usize;
+        let plans: Vec<_> = (0..64)
+            .map(|col| InterTileScratchPlan::new(width, height, 6, col))
+            .collect();
+        assert_eq!(
+            plans.iter().map(|p| p.recon_y).sum::<usize>(),
+            width * height,
+            "tile scratch must retain only one frame of luma across 64 tiles"
+        );
+        assert_eq!(
+            plans.iter().map(|p| p.recon_uv * 2).sum::<usize>(),
+            width * height / 2
+        );
+        assert_eq!(
+            plans.iter().map(|p| p.mv_cells).sum::<usize>(),
+            width / 8 * height.div_ceil(8)
+        );
+        assert_eq!(
+            plans.iter().map(|p| p.keyframe_mode_cells).sum::<usize>(),
+            width / 8 * height.div_ceil(8),
+            "keyframe mode and skip shadows must collectively cover one MI frame"
+        );
+        assert_eq!(
+            plans.iter().map(|p| p.partition_cells).sum::<usize>(),
+            width.div_ceil(64) * height.div_ceil(64)
+        );
+    }
+
+    #[test]
+    fn parallel_tile_scratch_retains_local_capacity_after_keyframe_and_interframes() {
+        let _guard = env_test_mutex();
+        for (w, h) in [(1920usize, 72usize), (480usize, 72usize)] {
+            let parallelism = EncoderParallelism {
+                max_threads: 2,
+                requested_log2_tile_cols: 2,
+            };
+            let mut encoder = StreamEncoder::new_spatial_keyframe_with_parallelism(
+                EncoderConfig::new(w as u32, h as u32),
+                parallelism,
+            )
+            .unwrap();
+            let mut serial = StreamEncoder::new_spatial_keyframe_with_parallelism(
+                EncoderConfig::new(w as u32, h as u32),
+                EncoderParallelism {
+                    max_threads: 1,
+                    ..parallelism
+                },
+            )
+            .unwrap();
+            let y: Vec<_> = (0..w * h)
+                .map(|i| (i.wrapping_mul(13) & 255) as u8)
+                .collect();
+            let uv = vec![128; w * h / 4];
+            // Partial-width spatial inter tile picking has a separate existing
+            // whole-SB restriction. Preserve its supported parallel KF path.
+            let frames = if w.is_multiple_of(64) { 3 } else { 1 };
+            for frame in 0..frames {
+                let view = yuv_view(&y, &uv, &uv, w);
+                let packet = encoder.encode_frame(&view).unwrap();
+                let serial_packet = serial.encode_frame(&view).unwrap();
+                assert_eq!(
+                    packet.data, serial_packet.data,
+                    "uneven tiles with partial bottom SB must be thread-count independent at frame {frame}"
+                );
+                let retained_y = encoder
+                    .inter_tile_scratch
+                    .iter()
+                    .map(|s| s.recon_y.capacity())
+                    .sum::<usize>();
+                assert_eq!(
+                    retained_y,
+                    w * h,
+                    "tile scratch must retain one frame of luma after frame {frame}"
+                );
+                assert_eq!(
+                    encoder
+                        .inter_tile_scratch
+                        .iter()
+                        .map(|s| s.recon_u.capacity() + s.recon_v.capacity())
+                        .sum::<usize>(),
+                    w * h / 2
+                );
+                assert_eq!(
+                    encoder
+                        .inter_tile_scratch
+                        .iter()
+                        .map(|s| s.mv_grid.capacity())
+                        .sum::<usize>(),
+                    w / 8 * h.div_ceil(8)
+                );
+                assert_eq!(
+                    encoder
+                        .inter_tile_scratch
+                        .iter()
+                        .map(|s| s.partitions.capacity())
+                        .sum::<usize>(),
+                    w.div_ceil(64) * h.div_ceil(64)
+                );
+            }
+        }
     }
 
     #[test]

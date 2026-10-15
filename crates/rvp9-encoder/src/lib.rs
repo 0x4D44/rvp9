@@ -2348,6 +2348,11 @@ pub(crate) fn simulate_dc_intra_encode_partitions_no_zero(
     sb_partitions: &[Vec<PartitionLeafDesc>],
 ) -> VecBackedIntraCoefSource {
     let mut out = VecBackedIntraCoefSource::new(width, height);
+    let recon_layout = InterReconLayout::intra_full(
+        width as usize,
+        height as usize,
+        recon_yuv_out.0.len() / width as usize,
+    );
     simulate_dc_intra_encode_partitions_no_zero_with_tiles(
         width,
         height,
@@ -2355,6 +2360,7 @@ pub(crate) fn simulate_dc_intra_encode_partitions_no_zero(
         seg_q_deltas,
         input_yuv,
         recon_yuv_out,
+        recon_layout,
         sb_partitions,
         0,
         None,
@@ -2373,6 +2379,7 @@ fn simulate_dc_intra_encode_partitions_no_zero_with_tiles(
     seg_q_deltas: &[Option<i16>; 8],
     input_yuv: (&[u8], &[u8], &[u8]),
     recon_yuv_out: (&mut [u8], &mut [u8], &mut [u8]),
+    recon_layout: InterReconLayout,
     sb_partitions: &[Vec<PartitionLeafDesc>],
     log2_tile_cols: u8,
     active_leaf: Option<(usize, usize)>,
@@ -2404,13 +2411,6 @@ fn simulate_dc_intra_encode_partitions_no_zero_with_tiles(
     let sb_cols = w.div_ceil(64);
     let sb_rows = h.div_ceil(64);
     let tile_bounds_by_col = column_tile_bounds(h.div_ceil(8), w / 8, log2_tile_cols);
-    assert_eq!(
-        sb_partitions.len(),
-        sb_rows * sb_cols,
-        "sb_partitions must have one entry per 64x64 SB ({} rows × {} cols)",
-        sb_rows,
-        sb_cols,
-    );
 
     let active_sb = active_leaf.map(|(sb_idx, _)| sb_idx);
     assert!(
@@ -2424,7 +2424,13 @@ fn simulate_dc_intra_encode_partitions_no_zero_with_tiles(
         let sb_col_end = active_sb.map_or(sb_cols, |sb_idx| sb_idx % sb_cols + 1);
         for sb_col in sb_col_start..sb_col_end {
             let current_tile = tile_for_mi_col(&tile_bounds_by_col, sb_col * 8);
-            let leaves = &sb_partitions[sb_row * sb_cols + sb_col];
+            let layout = recon_layout.plane(0);
+            let partition_cols = if layout.col_start > 0 || layout.stride < w {
+                layout.stride.div_ceil(64)
+            } else {
+                sb_cols
+            };
+            let leaves = &sb_partitions[sb_row * partition_cols + sb_col - layout.col_start / 64];
             let leaf_start = active_leaf.map_or(0, |(_, leaf_idx)| leaf_idx);
             let leaf_end = active_leaf.map_or(leaves.len(), |(_, leaf_idx)| leaf_idx + 1);
             assert!(leaf_end <= leaves.len(), "active intra leaf must exist");
@@ -2523,7 +2529,8 @@ fn simulate_dc_intra_encode_partitions_no_zero_with_tiles(
                         1 => (input_yuv.1, &mut *recon_yuv_out.1),
                         _ => (input_yuv.2, &mut *recon_yuv_out.2),
                     };
-                    let plane_stride = plane_w;
+                    let plane_layout = recon_layout.plane(plane);
+                    let plane_stride = plane_layout.stride;
 
                     // Dequant pair / quantizer params: Y uses qp_y, UV
                     // uses qp_uv (delta-q zero → identical today).
@@ -2554,6 +2561,8 @@ fn simulate_dc_intra_encode_partitions_no_zero_with_tiles(
                         while tx_x4_local < plane_bw_4x4 {
                             let tx_px_x = leaf_plane_px_x + tx_x4_local * 4;
                             let tx_px_y = leaf_plane_px_y + tx_y4_local * 4;
+                            let (dst_x, dst_y) =
+                                plane_layout.local_block(tx_px_x, tx_px_y, tx_side, tx_side);
 
                             if plane == 0
                                 && let Some(retained) = retained_luma_8x8
@@ -2562,7 +2571,7 @@ fn simulate_dc_intra_encode_partitions_no_zero_with_tiles(
                                 debug_assert_eq!(plane_tx, TxSize::Tx8x8);
                                 debug_assert_eq!((tx_x4_local, tx_y4_local), (0, 0));
                                 for row in 0..8 {
-                                    let dst_start = (tx_px_y + row) * plane_stride + tx_px_x;
+                                    let dst_start = (dst_y + row) * plane_stride + dst_x;
                                     recon_plane[dst_start..dst_start + 8]
                                         .copy_from_slice(&retained.recon[row * 8..row * 8 + 8]);
                                 }
@@ -2591,7 +2600,7 @@ fn simulate_dc_intra_encode_partitions_no_zero_with_tiles(
                                 let winner = &retained.sub_winners[sub_index];
                                 for row in 0..4 {
                                     let src_start = (sub_y * 4 + row) * 8 + sub_x * 4;
-                                    let dst_start = (tx_px_y + row) * plane_stride + tx_px_x;
+                                    let dst_start = (dst_y + row) * plane_stride + dst_x;
                                     recon_plane[dst_start..dst_start + 4]
                                         .copy_from_slice(&retained.recon[src_start..src_start + 4]);
                                 }
@@ -2623,10 +2632,10 @@ fn simulate_dc_intra_encode_partitions_no_zero_with_tiles(
                             build_intra_predictors(
                                 recon_plane,
                                 plane_stride,
-                                tx_px_x,
-                                tx_px_y,
-                                plane_w,
-                                plane_h,
+                                dst_x,
+                                dst_y,
+                                plane_layout.stride,
+                                plane_layout.rows.min(plane_h),
                                 plane_tx,
                                 plane_mode,
                                 have_top,
@@ -2641,7 +2650,7 @@ fn simulate_dc_intra_encode_partitions_no_zero_with_tiles(
                             };
 
                             // 2. Run prediction into recon.
-                            let dst_off = tx_px_y * plane_stride + tx_px_x;
+                            let dst_off = dst_y * plane_stride + dst_x;
                             let dst = &mut recon_plane[dst_off..];
                             intra_predict(
                                 plane_mode,
@@ -2659,8 +2668,9 @@ fn simulate_dc_intra_encode_partitions_no_zero_with_tiles(
                                 for c in 0..tx_side {
                                     let px_x = tx_px_x + c;
                                     let px_y = tx_px_y + r;
-                                    let in_off = px_y * plane_stride + px_x;
-                                    let pred = recon_plane[in_off] as i16;
+                                    let in_off = px_y * plane_w + px_x;
+                                    let pred =
+                                        recon_plane[(dst_y + r) * plane_stride + dst_x + c] as i16;
                                     let inp = input_plane[in_off] as i16;
                                     residual[r * tx_side + c] = inp - pred;
                                 }
@@ -2916,6 +2926,44 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
     nonrd_keyframe_8x8: bool,
     keyframe_8x8_mode_cap: bool,
 ) -> VecBackedIntraCoefSource {
+    let recon_layout = InterReconLayout::intra_full(
+        width as usize,
+        height as usize,
+        recon_yuv_out.0.len() / width as usize,
+    );
+    pick_and_simulate_intra_encode_partitions_with_layout(
+        width,
+        height,
+        base_qindex,
+        seg_q_deltas,
+        input_yuv,
+        recon_yuv_out,
+        recon_layout,
+        sb_partitions,
+        log2_tile_cols,
+        active_tile_col,
+        exact_keyframe_sub8,
+        nonrd_keyframe_8x8,
+        keyframe_8x8_mode_cap,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn pick_and_simulate_intra_encode_partitions_with_layout(
+    width: u32,
+    height: u32,
+    base_qindex: u8,
+    seg_q_deltas: &[Option<i16>; 8],
+    input_yuv: (&[u8], &[u8], &[u8]),
+    recon_yuv_out: (&mut [u8], &mut [u8], &mut [u8]),
+    recon_layout: InterReconLayout,
+    sb_partitions: &mut [Vec<PartitionLeafDesc>],
+    log2_tile_cols: u8,
+    active_tile_col: Option<usize>,
+    exact_keyframe_sub8: bool,
+    nonrd_keyframe_8x8: bool,
+    keyframe_8x8_mode_cap: bool,
+) -> VecBackedIntraCoefSource {
     use rvp9_core::coef_ctx::combine_entropy_contexts;
     use rvp9_core::cost::{
         FrameTypeForRd, coef_cost::build_coef_cost_table, compute_rd_mult,
@@ -2953,13 +3001,6 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
     let retain_exact_keyframe_sub8 = retain_exact_keyframe_sub8_enabled();
     let sb_cols = w.div_ceil(64);
     let sb_rows = h.div_ceil(64);
-    assert_eq!(
-        sb_partitions.len(),
-        sb_rows * sb_cols,
-        "sb_partitions must have one entry per 64x64 SB ({} rows × {} cols)",
-        sb_rows,
-        sb_cols,
-    );
 
     let mi_cols = w / 8;
     let mi_rows = h.div_ceil(8);
@@ -2973,8 +3014,34 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
         debug_assert_eq!(bounds.mi_col_start % 8, 0);
         bounds.mi_col_start / 8..bounds.mi_col_end.div_ceil(8)
     });
-    let mut picked_y_mode_grid: Vec<Option<[IntraMode; 4]>> = vec![None; mi_rows * mi_cols];
-    let mut picked_skip_grid = nonrd_keyframe_8x8.then(|| vec![None::<bool>; mi_rows * mi_cols]);
+    let grid_layout = active_bounds.map_or_else(
+        || InterPickerMiGridLayout::new(mi_rows, 0, mi_cols),
+        |bounds| {
+            InterPickerMiGridLayout::new(
+                mi_rows,
+                bounds.mi_col_start,
+                bounds.mi_col_end - bounds.mi_col_start,
+            )
+        },
+    );
+    let local_partitions = recon_layout.plane(0).stride < w;
+    let mut sb_partitions = if local_partitions {
+        InterPartitionGrid::tile_columns(
+            sb_partitions,
+            sb_rows,
+            active_sb_cols.start,
+            active_sb_cols.len(),
+            sb_cols,
+        )
+    } else {
+        InterPartitionGrid::full(sb_partitions, sb_rows, sb_cols)
+    };
+    let mode_cells = active_tile_col.map_or(mi_rows * mi_cols, |tile_col| {
+        frame_loop::InterTileScratchPlan::new(w, h, log2_tile_cols, tile_col).keyframe_mode_cells
+    });
+    assert_eq!(mode_cells, grid_layout.mi_rows * grid_layout.mi_cols);
+    let mut picked_y_mode_grid: Vec<Option<[IntraMode; 4]>> = vec![None; mode_cells];
+    let mut picked_skip_grid = nonrd_keyframe_8x8.then(|| vec![None::<bool>; mode_cells]);
 
     // First pass: walk SBs/leaves in raster, run the simulator one
     // leaf at a time, prepended by a picker call. The simulator
@@ -2989,6 +3056,7 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
 
     let y_mode_costs = intra_y_mode_costs_kf_table();
     let coef_costs = sb_partitions
+        .cells
         .iter()
         .flatten()
         .any(|leaf| {
@@ -3077,31 +3145,39 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
                 let have_left = leaf_mi_col > current_tile.mi_col_start;
                 if have_above {
                     let above_row_y = leaf_px_y - 1;
-                    let row_off = above_row_y * w + leaf_px_x;
-                    above_pixels[..prediction_side]
-                        .copy_from_slice(&recon_yuv_out.0[row_off..row_off + prediction_side]);
+                    InterReconPlane::new(recon_yuv_out.0, recon_layout.plane(0)).copy_row_to(
+                        leaf_px_x,
+                        above_row_y,
+                        &mut above_pixels[..prediction_side],
+                    );
                 }
                 if have_left {
-                    let left_col_x = leaf_px_x - 1;
-                    for (r, slot) in left_pixels[..prediction_side].iter_mut().enumerate() {
-                        *slot = recon_yuv_out.0[(leaf_px_y + r) * w + left_col_x];
-                    }
+                    InterReconPlane::new(recon_yuv_out.0, recon_layout.plane(0)).copy_column_to(
+                        leaf_px_x - 1,
+                        leaf_px_y,
+                        &mut left_pixels[..prediction_side],
+                    );
                 }
                 let top_left_pixel = if have_above && have_left {
-                    recon_yuv_out.0[(leaf_px_y - 1) * w + (leaf_px_x - 1)]
+                    InterReconPlane::new(recon_yuv_out.0, recon_layout.plane(0))
+                        .get(leaf_px_x - 1, leaf_px_y - 1)
                 } else {
                     0u8
                 };
 
                 let above_modes = if leaf_mi_row > 0 {
-                    picked_y_mode_grid[(leaf_mi_row - 1) * mi_cols + leaf_mi_col]
-                        .unwrap_or([IntraMode::Dc; 4])
+                    picked_y_mode_grid[grid_layout
+                        .index(leaf_mi_row - 1, leaf_mi_col)
+                        .expect("above tile cell")]
+                    .unwrap_or([IntraMode::Dc; 4])
                 } else {
                     [IntraMode::Dc; 4]
                 };
                 let left_modes = if leaf_mi_col > current_tile.mi_col_start {
-                    picked_y_mode_grid[leaf_mi_row * mi_cols + (leaf_mi_col - 1)]
-                        .unwrap_or([IntraMode::Dc; 4])
+                    picked_y_mode_grid[grid_layout
+                        .index(leaf_mi_row, leaf_mi_col - 1)
+                        .expect("left tile cell")]
+                    .unwrap_or([IntraMode::Dc; 4])
                 } else {
                     [IntraMode::Dc; 4]
                 };
@@ -3142,9 +3218,16 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
                     }
                     let mut above = [ABOVE_UNAVAILABLE_FILL; 16];
                     if have_above {
-                        let above_start = (leaf_px_y - 1) * w;
+                        let layout = recon_layout.plane(0);
+                        let recon = InterReconPlane::new(recon_yuv_out.0, layout);
                         for (column, slot) in above.iter_mut().enumerate() {
-                            *slot = recon_yuv_out.0[above_start + (leaf_px_x + column).min(w - 1)];
+                            let x = (leaf_px_x + column).min(w - 1);
+                            // Unowned columns were zero in the full-frame tile shadow.
+                            *slot = if x < layout.col_start + layout.stride {
+                                recon.get(x, leaf_px_y - 1)
+                            } else {
+                                0
+                            };
                         }
                     }
                     let mut left = [LEFT_UNAVAILABLE_FILL; 8];
@@ -3204,9 +3287,10 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
                 } else if exact_keyframe_sub8 && leaf_bsize == BlockSize::Block8x8 {
                     let mut above = [ABOVE_UNAVAILABLE_FILL; 16];
                     if have_above {
-                        let above_start = (leaf_px_y - 1) * w;
-                        above[..8].copy_from_slice(
-                            &recon_yuv_out.0[above_start + leaf_px_x..above_start + leaf_px_x + 8],
+                        InterReconPlane::new(recon_yuv_out.0, recon_layout.plane(0)).copy_row_to(
+                            leaf_px_x,
+                            leaf_px_y - 1,
+                            &mut above[..8],
                         );
                         // A Block8x8 leaf contains one Tx8x8, so there is no
                         // causally available transform to its right. VP9
@@ -3231,10 +3315,15 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
                             .as_ref()
                             .expect("CPU8 non-RD keyframes retain skip neighbours");
                         let above_skip = leaf_mi_row > 0
-                            && skip_grid[(leaf_mi_row - 1) * mi_cols + leaf_mi_col]
-                                .unwrap_or(false);
+                            && skip_grid[grid_layout
+                                .index(leaf_mi_row - 1, leaf_mi_col)
+                                .expect("above tile cell")]
+                            .unwrap_or(false);
                         let left_skip = leaf_mi_col > current_tile.mi_col_start
-                            && skip_grid[leaf_mi_row * mi_cols + leaf_mi_col - 1].unwrap_or(false);
+                            && skip_grid[grid_layout
+                                .index(leaf_mi_row, leaf_mi_col - 1)
+                                .expect("left tile cell")]
+                            .unwrap_or(false);
                         let skip_ctx = usize::from(above_skip) + usize::from(left_skip);
                         let src_plane = PlaneRef {
                             data: input_yuv.0,
@@ -3368,7 +3457,9 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
                     for dc in 0..n_8x8 {
                         let mi_r = leaf_mi_row + dr;
                         let mi_c = leaf_mi_col + dc;
-                        picked_y_mode_grid[mi_r * mi_cols + mi_c] = Some(picked_y_modes);
+                        picked_y_mode_grid
+                            [grid_layout.index(mi_r, mi_c).expect("owned tile cell")] =
+                            Some(picked_y_modes);
                     }
                 }
 
@@ -3399,7 +3490,8 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
                         &mut *recon_yuv_out.1,
                         &mut *recon_yuv_out.2,
                     ),
-                    sb_partitions,
+                    recon_layout,
+                    sb_partitions.cells,
                     log2_tile_cols,
                     Some((sb_idx, leaf_idx)),
                     retained_luma_8x8.as_ref(),
@@ -3420,7 +3512,8 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions(
                         for dc in 0..n_8x8 {
                             let mi_r = leaf_mi_row + dr;
                             let mi_c = leaf_mi_col + dc;
-                            skip_grid[mi_r * mi_cols + mi_c] = Some(leaf_skip);
+                            skip_grid[grid_layout.index(mi_r, mi_c).expect("owned tile cell")] =
+                                Some(leaf_skip);
                         }
                     }
                 }
@@ -4085,22 +4178,44 @@ pub(crate) struct InterSimulationResult {
     pub(crate) mi_grid: InterSimulationMiGrid,
 }
 
-struct InterPartitionGrid<'a> {
-    cells: &'a mut [Vec<InterPartitionLeafDesc>],
+// Translate frame SB indices into full, row-local, or tile-column storage.
+struct InterPartitionGrid<'a, T = InterPartitionLeafDesc> {
+    cells: &'a mut [Vec<T>],
     frame_index_start: usize,
+    frame_sb_cols: usize,
+    local_sb_cols: usize,
 }
 
-impl<'a> InterPartitionGrid<'a> {
-    fn full(cells: &'a mut [Vec<InterPartitionLeafDesc>], sb_rows: usize, sb_cols: usize) -> Self {
+impl<'a, T> InterPartitionGrid<'a, T> {
+    fn full(cells: &'a mut [Vec<T>], sb_rows: usize, sb_cols: usize) -> Self {
         assert_eq!(cells.len(), sb_rows * sb_cols);
         Self {
             cells,
             frame_index_start: 0,
+            frame_sb_cols: sb_cols,
+            local_sb_cols: sb_cols,
+        }
+    }
+
+    fn tile_columns(
+        cells: &'a mut [Vec<T>],
+        sb_rows: usize,
+        sb_col_start: usize,
+        sb_cols: usize,
+        frame_sb_cols: usize,
+    ) -> Self {
+        assert_eq!(cells.len(), sb_rows * sb_cols);
+        assert!(sb_cols > 0 && sb_col_start + sb_cols <= frame_sb_cols);
+        Self {
+            cells,
+            frame_index_start: sb_col_start,
+            frame_sb_cols,
+            local_sb_cols: sb_cols,
         }
     }
 
     fn compact_row(
-        cells: &'a mut [Vec<InterPartitionLeafDesc>],
+        cells: &'a mut [Vec<T>],
         sb_row: usize,
         sb_col_start: usize,
         sb_cols: usize,
@@ -4111,13 +4226,28 @@ impl<'a> InterPartitionGrid<'a> {
         Self {
             cells,
             frame_index_start: sb_row * frame_sb_cols + sb_col_start,
+            frame_sb_cols,
+            local_sb_cols: sb_cols,
         }
     }
 
     fn local_index(&self, frame_index: usize) -> usize {
-        let local_index = frame_index
+        let offset = frame_index
             .checked_sub(self.frame_index_start)
             .expect("partition index precedes its compact window");
+        if self.local_sb_cols == self.frame_sb_cols || self.cells.len() == self.local_sb_cols {
+            assert!(
+                offset < self.cells.len(),
+                "partition index exceeds its compact window"
+            );
+            return offset;
+        }
+        let col = offset % self.frame_sb_cols;
+        assert!(
+            col < self.local_sb_cols,
+            "partition column exceeds its compact window"
+        );
+        let local_index = (offset / self.frame_sb_cols) * self.local_sb_cols + col;
         assert!(
             local_index < self.cells.len(),
             "partition index exceeds its compact window"
@@ -4126,15 +4256,15 @@ impl<'a> InterPartitionGrid<'a> {
     }
 }
 
-impl std::ops::Index<usize> for InterPartitionGrid<'_> {
-    type Output = Vec<InterPartitionLeafDesc>;
+impl<T> std::ops::Index<usize> for InterPartitionGrid<'_, T> {
+    type Output = Vec<T>;
 
     fn index(&self, frame_index: usize) -> &Self::Output {
         &self.cells[self.local_index(frame_index)]
     }
 }
 
-impl std::ops::IndexMut<usize> for InterPartitionGrid<'_> {
+impl<T> std::ops::IndexMut<usize> for InterPartitionGrid<'_, T> {
     fn index_mut(&mut self, frame_index: usize) -> &mut Self::Output {
         let local_index = self.local_index(frame_index);
         &mut self.cells[local_index]
@@ -4547,6 +4677,16 @@ pub(crate) struct InterReconLayout {
 }
 
 impl InterReconLayout {
+    fn intra_full(width: usize, height: usize, storage_height: usize) -> Self {
+        Self {
+            planes: [
+                InterReconPlaneLayout::full_with_storage(width, height, storage_height),
+                InterReconPlaneLayout::full_with_storage(width / 2, height / 2, storage_height / 2),
+                InterReconPlaneLayout::full_with_storage(width / 2, height / 2, storage_height / 2),
+            ],
+        }
+    }
+
     pub(crate) fn full(width: usize, height: usize) -> Self {
         assert!(
             width > 0 && width.is_multiple_of(2),
@@ -4623,16 +4763,16 @@ impl InterReconLayout {
         mi_cols: usize,
     ) -> Self {
         assert!(
-            width > 0 && width.is_multiple_of(64),
-            "tile inter recon frame width must be a positive multiple of 64"
+            width > 0 && width.is_multiple_of(8),
+            "tile recon frame width must be a positive multiple of 8"
         );
         assert!(
             height > 0 && height.is_multiple_of(8),
             "tile inter recon frame height must be a positive multiple of 8"
         );
         assert!(
-            mi_cols > 0 && mi_cols.is_multiple_of(8),
-            "tile inter recon width must contain whole superblocks"
+            mi_cols > 0 && (mi_cols.is_multiple_of(8) || mi_col_start + mi_cols == width / 8),
+            "tile recon width must contain whole superblocks or reach the frame edge"
         );
         assert!(
             mi_col_start.is_multiple_of(8) && mi_col_start + mi_cols <= width / 8,
@@ -7555,9 +7695,18 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     // Block8x8 leaf at 720p (the variance partitioner descends
     // densely on natural-content frames).
     //
+    let tile_partition_cols = active_tile_col
+        .filter(|_| recon_layout != InterReconLayout::full(w, h))
+        .map(|tile_col| {
+            let bounds = tile_bounds(h.div_ceil(8), w / 8, 0, log2_tile_cols, 0, tile_col as u32);
+            bounds.mi_col_start / 8..bounds.mi_col_end.div_ceil(8)
+        });
     assert_eq!(
         sb_partitions.len(),
-        sb_rows * sb_cols,
+        sb_rows
+            * tile_partition_cols
+                .as_ref()
+                .map_or(sb_cols, |cols| cols.len()),
         "sb_partitions must have one entry per 64x64 SB ({} rows × {} cols)",
         sb_rows,
         sb_cols,
@@ -8001,12 +8150,12 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     });
     let mut coef_record_sink = [];
     let mut coef_record_bw = BoolWriter::start_count_only(&mut coef_record_sink);
-    debug_assert_eq!(out_mv_grid.len(), mi_rows_us * mi_cols_us);
-    let mut row_grids = InterRowGrids::new(
-        mi_grid_layout,
-        out_mv_grid,
-        InterPickerMiGridLayout::new(mi_rows_us, 0, mi_cols_us),
-    );
+    let out_mv_layout = if out_mv_grid.len() == mi_rows_us * mi_cols_us {
+        InterPickerMiGridLayout::new(mi_rows_us, 0, mi_cols_us)
+    } else {
+        mi_grid_layout
+    };
+    let mut row_grids = InterRowGrids::new(mi_grid_layout, out_mv_grid, out_mv_layout);
     let sign_bias = sign_bias_from_header(&[false, false, altref_available]);
     let (count_comp_fixed_ref, count_comp_var_ref) = setup_compound_reference_mode(&sign_bias);
     let direct_count_params = InterModeReadParams {
@@ -13157,7 +13306,17 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     } else {
         let mut recon_yuv_out =
             InterReconPlanes::new((recon_y_out, recon_u_out, recon_v_out), recon_layout);
-        let mut partition_grid = InterPartitionGrid::full(sb_partitions, sb_rows, sb_cols);
+        let mut partition_grid = if let Some(cols) = tile_partition_cols {
+            InterPartitionGrid::tile_columns(
+                sb_partitions,
+                sb_rows,
+                cols.start,
+                cols.len(),
+                sb_cols,
+            )
+        } else {
+            InterPartitionGrid::full(sb_partitions, sb_rows, sb_cols)
+        };
         if let Some(tile_col) = active_tile_col {
             for sb_row in 0..sb_rows {
                 let rd_table_index = if rd_tables_are_tile_local {
