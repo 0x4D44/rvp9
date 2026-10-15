@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00101 — Q-mode lossless request is silently encoded at qindex 1
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** encoder/rate-control integration
 - **Raised:** 2026-08-22T18:32:48Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261015T233958Z-f4ab4ecc
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00101-run-fix-20261015T233958Z-f4ab4ecc
-- **Owner base:** 8263d139e4a967e55eb40b74b97e345fb006dacb
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-15T23:39:58Z
-- **Owner until:** 2026-10-16T03:39:58Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T18:32:48Z, raised via `deltic bugs new`)
+- **State history:** Open (2026-08-22T18:32:48Z, raised via `deltic bugs new`) -> Fixed (2026-10-15T23:49:43Z, deltic:auto role=fix run=fix-20261015T233958Z-f4ab4ecc branch=task/bug-RVP9-BUG-KIL-00101-run-fix-20261015T233958Z-f4ab4ecc code=b6d3afc00423438c5026cdd0cb812acf5e4f8a97 gate=manual)
 
 ## Observation
 
