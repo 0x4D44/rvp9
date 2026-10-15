@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00093 — Unknown-size WebM Clusters are mistaken for nested containers
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** High
 - **Area:** io/webm packet reader
 - **Raised:** 2026-08-22T14:33:24Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261015T225626Z-402753f6
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00093-run-fix-20261015T225626Z-402753f6
-- **Owner base:** 1cf2af0260190c87771914412a8768e52a2dd4e5
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-15T22:56:26Z
-- **Owner until:** 2026-10-16T02:56:26Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T14:33:24Z, raised via `deltic bugs new`)
+- **State history:** Open (2026-08-22T14:33:24Z, raised via `deltic bugs new`) -> Fixed (2026-10-15T23:02:21Z, deltic:auto role=fix run=fix-20261015T225626Z-402753f6 branch=task/bug-RVP9-BUG-KIL-00093-run-fix-20261015T225626Z-402753f6 code=0359a602e11b758090db28644b08b19f77713dcf gate=manual)
 
 ## Observation
 
