@@ -1,25 +1,25 @@
 # RVP9-BUG-FLU-00032 — SSE2 square subtraction stride arithmetic can wrap before unsafe loads
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** High
 - **Area:** core/dsp/subtract_sse2
 - **Raised:** 2026-09-07T19:53:47Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261015T233530Z-803bc9fe
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLU-00032-run-fix-20261015T233530Z-803bc9fe
-- **Owner base:** cd09c079e853bfc6a93402b95a0b6cfe93b62379
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-15T23:35:30Z
-- **Owner until:** 2026-10-16T03:35:30Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-09-07T19:53:47Z, raised via `deltic bugs new`)
+- **State history:** Open (2026-09-07T19:53:47Z, raised via `deltic bugs new`) -> Fixed (2026-10-15T23:39:40Z, deltic:auto role=fix run=fix-20261015T233530Z-803bc9fe branch=task/bug-RVP9-BUG-FLU-00032-run-fix-20261015T233530Z-803bc9fe code=65fd7a30561c7b2bf065e48141e6a0b1e0d90ae8 gate=manual)
 
 ## Observation
 
