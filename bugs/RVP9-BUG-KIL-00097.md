@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00097 — Y4M writer emits headers rejected by its reader
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** io/y4m writer
 - **Raised:** 2026-08-22T14:34:05Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261015T234959Z-a7a363cd
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00097-run-fix-20261015T234959Z-a7a363cd
-- **Owner base:** cfbda57360fcfdd40124ab73d7b7d6c3772433f7
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-15T23:49:59Z
-- **Owner until:** 2026-10-16T03:49:59Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T14:34:05Z, raised via `deltic bugs new`)
+- **State history:** Open (2026-08-22T14:34:05Z, raised via `deltic bugs new`) -> Fixed (2026-10-15T23:54:39Z, deltic:auto role=fix run=fix-20261015T234959Z-a7a363cd branch=task/bug-RVP9-BUG-KIL-00097-run-fix-20261015T234959Z-a7a363cd code=c7356aab42551b93f72dfd887caa0e235179a640 gate=manual)
 
 ## Observation
 
