@@ -1,0 +1,16 @@
+[fetch] parkrun_ter_720p50.y4m (several hundred MB; large download)
+
+curl: (22) The requested URL returned error: 404
+  FAILED.
+[fetch] in_to_tree_420_720p50.y4m (several hundred MB; large download)
+
+  done.
+[fetch] old_town_cross_420_720p50.y4m (several hundred MB; large download)
+
+  done.
+[fetch] ducks_take_off_420_720p50.y4m (several hundred MB; large download)
+
+  done.
+
+Corpus: 3 fetched, 0 already present, 1 failed.
+Stored in: /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/tests/corpus

@@ -1,0 +1,57 @@
+Usage:
+  scripts/qualify-production-encoder.sh --work-dir PATH \
+      --phase {quality,speed,latency,all} --pgo-manifest PATH [path options]
+  scripts/qualify-production-encoder.sh --print-plan
+  scripts/qualify-production-encoder.sh --self-test
+  scripts/qualify-production-encoder.sh --self-test-resume
+  scripts/qualify-production-encoder.sh --self-test-timing
+
+  --print-plan   emit the full non-spatial v1 acceptance matrix; no I/O
+  --self-test    regenerate and validate the matrix; no I/O
+  --self-test-resume
+                 exercise receipt publication, reuse counters, tamper refusal,
+                 attempt cleanup bounds, and the invocation lock in OS temp
+  --self-test-timing
+                 exercise the speed and latency recording, classification, and
+                 abort paths against stubbed child observations, in OS temp
+
+Real-run options:
+  --work-dir PATH        required; outside the repo, with an existing parent;
+                         absent or empty unless --resume is explicit
+  --resume               reopen this exact sealed run. Quality rows are
+                         validated and cross-decoded again before reuse.
+                         Speed/latency accept only a pre-measurement restart;
+                         any timing attempt or result makes resume refuse.
+  --phase PHASE          required; no phase is assumed. All four execute:
+                         quality, speed, latency, and the all fan-out.
+  --pgo-manifest PATH    required; the manifest scripts/build-encoder-pgo.sh
+                         wrote beside the rvp9enc under test. Its
+                         optimized_binary= and optimized_binary_sha256= must
+                         match the --test-encoder.
+
+Path options (repo-relative defaults, all validated before a real run):
+  --source-dir PATH        canonical 720p50 Y4M originals
+  --test-encoder PATH      production PGO rvp9enc
+  --vpxenc PATH            pinned libvpx vpxenc (single-layer anchor)
+  --temporal-anchor PATH   pinned build/libvpx/vpx_temporal_svc_reference
+  --bdrate PATH            rvp9-bench bdrate (release)
+  --bdrate-svc PATH        rvp9-bench bdrate-svc (release)
+  --encode-headtohead PATH rvp9-bench encode-headtohead (release)
+  --realtime PATH          rvp9-bench realtime (release)
+  --rvp9dec PATH           rvp9 decoder (release)
+  --vpxdec PATH            pinned libvpx vpxdec
+  --ffmpeg PATH            ffmpeg executable or name on PATH
+  --libvpx-source PATH     pinned libvpx checkout
+
+A normal real run is fresh. --resume accepts only a sealed matching run,
+leaves partial attempts untouched, and never reuses an unsealed row or any
+timing measurement.
+
+For trustworthy cold-host timing, run --phase speed and --phase latency as
+their own fresh runs. --phase all is exact and complete, but it measures wall
+time on a host that has just spent hours running the quality campaign, so its
+timing numbers describe a warm host rather than the release condition.
+
+Spatial SVC is qualified separately by scripts/qualify-spatial-svc.sh and is
+deliberately absent from this matrix.
+--phase is required for a real run: no phase is assumed. Pass one of quality, speed, latency, all.
