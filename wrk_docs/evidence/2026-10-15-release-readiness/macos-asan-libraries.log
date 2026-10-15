@@ -1,0 +1,549 @@
+   Compiling compiler_builtins v0.1.160 (/Users/md/.rustup/toolchains/nightly-aarch64-apple-darwin/lib/rustlib/src/rust/library/compiler-builtins/compiler-builtins)
+   Compiling core v0.0.0 (/Users/md/.rustup/toolchains/nightly-aarch64-apple-darwin/lib/rustlib/src/rust/library/core)
+   Compiling libc v0.2.185
+   Compiling object v0.37.3
+   Compiling std v0.0.0 (/Users/md/.rustup/toolchains/nightly-aarch64-apple-darwin/lib/rustlib/src/rust/library/std)
+   Compiling test v0.0.0 (/Users/md/.rustup/toolchains/nightly-aarch64-apple-darwin/lib/rustlib/src/rust/library/test)
+   Compiling libc v0.2.186
+   Compiling crossbeam-utils v0.8.21
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-core)
+   Compiling version_check v0.9.5
+   Compiling getrandom v0.3.4
+   Compiling proc-macro2 v1.0.106
+   Compiling unicode-ident v1.0.24
+   Compiling quote v1.0.45
+   Compiling getrandom v0.4.2
+   Compiling rustix v1.1.4
+   Compiling zerocopy v0.8.48
+   Compiling serde_core v1.0.228
+   Compiling autocfg v1.5.0
+   Compiling zmij v1.0.21
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-decoder)
+   Compiling serde v1.0.228
+   Compiling serde_json v1.0.149
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-harness)
+   Compiling generic-array v0.14.7
+   Compiling num-traits v0.2.19
+   Compiling syn v2.0.117
+   Compiling serde_derive v1.0.228
+   Compiling rustc-std-workspace-core v1.99.0 (/Users/md/.rustup/toolchains/nightly-aarch64-apple-darwin/lib/rustlib/src/rust/library/rustc-std-workspace-core)
+   Compiling alloc v0.0.0 (/Users/md/.rustup/toolchains/nightly-aarch64-apple-darwin/lib/rustlib/src/rust/library/alloc)
+   Compiling adler2 v2.0.1
+   Compiling memchr v2.7.6
+   Compiling rustc-demangle v0.1.27
+   Compiling cfg-if v1.0.4
+   Compiling panic_abort v0.0.0 (/Users/md/.rustup/toolchains/nightly-aarch64-apple-darwin/lib/rustlib/src/rust/library/panic_abort)
+   Compiling rustc-literal-escaper v0.0.8
+   Compiling unwind v0.0.0 (/Users/md/.rustup/toolchains/nightly-aarch64-apple-darwin/lib/rustlib/src/rust/library/unwind)
+   Compiling rustc-std-workspace-alloc v1.99.0 (/Users/md/.rustup/toolchains/nightly-aarch64-apple-darwin/lib/rustlib/src/rust/library/rustc-std-workspace-alloc)
+   Compiling panic_unwind v0.0.0 (/Users/md/.rustup/toolchains/nightly-aarch64-apple-darwin/lib/rustlib/src/rust/library/panic_unwind)
+   Compiling gimli v0.32.3
+   Compiling hashbrown v0.17.1
+   Compiling miniz_oxide v0.8.9
+   Compiling std_detect v0.1.5 (/Users/md/.rustup/toolchains/nightly-aarch64-apple-darwin/lib/rustlib/src/rust/library/std_detect)
+   Compiling addr2line v0.25.1
+   Compiling rustc-std-workspace-std v1.99.0 (/Users/md/.rustup/toolchains/nightly-aarch64-apple-darwin/lib/rustlib/src/rust/library/rustc-std-workspace-std)
+   Compiling proc_macro v0.0.0 (/Users/md/.rustup/toolchains/nightly-aarch64-apple-darwin/lib/rustlib/src/rust/library/proc_macro)
+   Compiling getopts v0.2.24
+   Compiling typenum v1.20.1
+   Compiling bitflags v2.11.1
+   Compiling fastrand v2.4.1
+   Compiling static_assertions v1.1.0
+   Compiling once_cell v1.21.4
+   Compiling fnv v1.0.7
+   Compiling quick-error v1.2.3
+   Compiling bit-vec v0.8.0
+   Compiling itoa v1.0.18
+   Compiling memchr v2.8.0
+   Compiling bit-set v0.8.0
+   Compiling unarray v0.1.4
+   Compiling rand_core v0.9.5
+   Compiling errno v0.3.14
+   Compiling crossbeam-channel v0.5.15
+   Compiling wait-timeout v0.2.1
+   Compiling rand_xorshift v0.4.0
+   Compiling rand v0.9.4
+   Compiling cpufeatures v0.2.17
+   Compiling regex-syntax v0.8.10
+   Compiling crypto-common v0.1.7
+   Compiling block-buffer v0.10.4
+   Compiling digest v0.10.7
+   Compiling sha2 v0.10.9
+   Compiling tempfile v3.27.0
+   Compiling rusty-fork v0.3.1
+   Compiling ppv-lite86 v0.2.21
+   Compiling rand_chacha v0.9.0
+   Compiling proptest v1.11.0
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-io)
+    Finished `test` profile [optimized + debuginfo] target(s) in 4m 52s
+     Running unittests src/lib.rs (.scratch/asan-target/aarch64-apple-darwin/debug/deps/rvp9_core-2d881a3939735aba)
+
+running 1722 tests
+test bit_depth_scaffold_tests::bd8_bits_is_eight ... ok
+test bitstream::compressed_header::tests::band_coeff_contexts_pins_libvpx ... ok
+test bitstream::compressed_header::tests::parse_compressed_header_bad_marker_returns_invalid_marker ... ok
+test bitstream::compressed_header::tests::parse_compressed_header_inter_no_update_compound_disallowed ... ok
+test bitstream::compressed_header::tests::parse_compressed_header_inter_select_with_hp_no_update ... ok
+test bitstream::compressed_header::tests::parse_compressed_header_lossless_intra_only_no_update ... ok
+test bitstream::compressed_header::tests::parse_compressed_header_non_lossless_intra_only_tx4x4 ... ok
+test bitstream::compressed_header::tests::parse_compressed_header_tx_mode_select_visits_tx_mode_probs ... ok
+test bitstream::compressed_header::tests::read_coef_probs_4x4_first_slot_updated ... ok
+test bitstream::compressed_header::tests::read_coef_probs_4x4_gate_set_but_all_slots_skip ... ok
+test bitstream::compressed_header::tests::read_coef_probs_only_4x4_no_update ... ok
+test bitstream::compressed_header::tests::read_coef_probs_tx_mode_select_all_gates_zero ... ok
+test bitstream::compressed_header::tests::read_frame_reference_mode_compound_disallowed ... ok
+test bitstream::compressed_header::tests::read_frame_reference_mode_probs_select_visits_all ... ok
+test bitstream::compressed_header::tests::read_frame_reference_mode_probs_single_visits_only_single_ref ... ok
+test bitstream::compressed_header::tests::read_frame_reference_mode_wire_format ... ok
+test bitstream::compressed_header::tests::read_inter_mode_probs_no_update ... ok
+test bitstream::compressed_header::tests::read_intra_inter_probs_no_update ... ok
+test bitstream::compressed_header::tests::read_mv_probs_first_joint_update_v0_v127 ... ok
+test bitstream::compressed_header::tests::read_mv_probs_no_update_no_hp ... ok
+test bitstream::compressed_header::tests::read_mv_probs_no_update_with_hp ... ok
+test bitstream::compressed_header::tests::read_partition_probs_no_update ... ok
+test bitstream::compressed_header::tests::read_skip_probs_no_update ... ok
+test bitstream::compressed_header::tests::read_skip_probs_partial_update ... ok
+test bitstream::compressed_header::tests::read_switchable_interp_probs_no_update ... ok
+test bitstream::compressed_header::tests::read_tx_mode_probs_no_update_when_all_zero_bits ... ok
+test bitstream::compressed_header::tests::read_tx_mode_round_trip_all_5_values ... ok
+test bitstream::compressed_header::tests::read_y_mode_probs_no_update ... ok
+test bitstream::compressed_header::tests::tx_mode_to_biggest_tx_size_mapping ... ok
+test bitstream::compressed_header::tests::tx_size_contexts_constant ... ok
+test bitstream::compressed_header::tests::write_compressed_header_captured_frame_round_trip ... ok
+test bitstream::compressed_header::tests::write_compressed_header_every_reference_mode_round_trip ... ok
+test bitstream::compressed_header::tests::write_compressed_header_every_tx_mode_round_trip ... ok
+test bitstream::compressed_header::tests::write_compressed_header_identity_inter_select_with_hp ... ok
+test bitstream::compressed_header::tests::write_compressed_header_identity_lossless_intra_only ... ok
+test bitstream::compressed_header::tests::write_compressed_header_intra_only_skips_inter_branch ... ok
+test bitstream::compressed_header::tests::write_compressed_header_lossless_skips_tx_mode_bits ... ok
+test bitstream::compressed_header::tests::write_compressed_header_perturbs_intra_probs ... ok
+test bitstream::compressed_header::tests::write_compressed_header_perturbs_multiple_sections ... ok
+test bitstream::compressed_header::tests::write_compressed_header_perturbs_skip_probs ... ok
+test bitstream::compressed_header::tests::write_frame_reference_mode_round_trip_all_variants ... ok
+test bitstream::compressed_header::tests::write_mv_probs_round_trip_with_odd_targets ... ok
+test bitstream::compressed_header::tests::write_tx_mode_round_trip_every_variant ... ok
+test bitstream::frame::tests::chroma_format_from_subsampling ... ok
+test bitstream::frame::tests::chroma_format_subsampling_round_trip ... ok
+test bitstream::frame::tests::color_range_from_bit_and_default ... ok
+test bitstream::frame::tests::color_space_round_trip ... ok
+test bitstream::frame::tests::frame_type_from_bit ... ok
+test bitstream::frame::tests::interp_filter_discriminants_match_libvpx ... ok
+test bitstream::frame::tests::interp_filter_literal_map_matches_libvpx ... ok
+test bitstream::frame::tests::profile_chroma_classification ... ok
+test bitstream::frame::tests::profile_round_trip ... ok
+test bitstream::frame::tests::ref_frame_constants ... ok
+test bitstream::frame::tests::sync_constants_are_libvpx_values ... ok
+test bitstream::header::tests::captured_header_round_trip ... ok
+test bitstream::header::tests::inter_frame_inherits_size_from_ref ... ok
+test bitstream::header::tests::inter_frame_interp_filter_all_literals ... ok
+test bitstream::header::tests::inter_frame_no_refs_reads_fresh_size ... ok
+test bitstream::header::tests::inter_frame_size_in_found_with_missing_ref_errors ... ok
+test bitstream::header::tests::intra_only_inherits_profile0_defaults ... ok
+test bitstream::header::tests::intra_only_profile2_reads_full_color_config ... ok
+test bitstream::header::tests::invalid_first_partition_size_rejected ... ok
+test bitstream::header::tests::invalid_frame_marker_rejected ... ok
+test bitstream::header::tests::keyframe_error_resilient_forces_fpdm_true ... ok
+test bitstream::header::tests::keyframe_invalid_sync_code_rejected ... ok
+test bitstream::header::tests::keyframe_minimal_decode ... ok
+test bitstream::header::tests::keyframe_profile0_srgb_rejected_as_inconsistent ... ok
+test bitstream::header::tests::keyframe_profile1_4_2_2_subsampling ... ok
+test bitstream::header::tests::keyframe_profile1_non_srgb_reserved_bit_one_rejected ... ok
+test bitstream::header::tests::keyframe_profile1_srgb_color_space ... ok
+test bitstream::header::tests::keyframe_profile1_srgb_reserved_bit_one_rejected ... ok
+test bitstream::header::tests::keyframe_profile2_bit_depth_10 ... ok
+test bitstream::header::tests::keyframe_profile3_bit_depth_12_4_4_4 ... ok
+test bitstream::header::tests::keyframe_truncated_frame_size_returns_truncated ... ok
+test bitstream::header::tests::keyframe_with_render_size ... ok
+test bitstream::header::tests::show_existing_frame_returns_slot ... ok
+test bitstream::header::tests::unsupported_profile_4_rejected ... ok
+test bitstream::header::tests::write_inter_frame_all_interp_filters ... ok
+test bitstream::header::tests::write_inter_frame_error_resilient_round_trip ... ok
+test bitstream::header::tests::write_inter_frame_high_precision_mv ... ok
+test bitstream::header::tests::write_inter_frame_show_frame_false_round_trip ... ok
+test bitstream::header::tests::write_intra_only_error_resilient_round_trip ... ok
+test bitstream::header::tests::write_intra_only_refresh_flags ... ok
+test bitstream::header::tests::write_keyframe_common_resolutions ... ok
+test bitstream::header::tests::write_keyframe_error_resilient ... ok
+test bitstream::header::tests::write_keyframe_with_render_size ... ok
+test bitstream::header::tests::write_show_existing_frame_all_slots ... ok
+test bitstream::header::tests::write_uncompressed_header_buffer_full_returns_error ... ok
+test bitstream::header::tests::write_uncompressed_header_rejects_non_profile_0 ... ok
+test bitstream::inter_coef_source::tests::all_zero_coef_source_returns_zero_slice_per_tx_size ... ok
+test bitstream::intra_coef_source::tests::all_zero_intra_coef_source_returns_zero_slice_per_tx_size ... ok
+test bitstream::modes_writer::tests::infer_partition_horz ... ok
+test bitstream::modes_writer::tests::infer_partition_none ... ok
+test bitstream::modes_writer::tests::infer_partition_recognises_sub8_partitioning ... ok
+test bitstream::modes_writer::tests::infer_partition_split ... ok
+test bitstream::modes_writer::tests::infer_partition_vert ... ok
+test bitstream::modes_writer::tests::inter_residual_uses_tile_local_coefficient_columns ... ok
+test bitstream::modes_writer::tests::keyframe_block4x4_partition_and_bmi_modes_round_trip ... ok
+test bitstream::modes_writer::tests::keyframe_residual_uses_tile_local_coefficient_columns ... ok
+test bitstream::modes_writer::tests::keyframe_retained_tokens_match_direct_qcoeff_serialization ... ok
+test bitstream::modes_writer::tests::keyframe_skip_resets_luma_and_chroma_coefficient_contexts ... ok
+test bitstream::modes_writer::tests::partition_full_recursion_to_8x8 ... ok
+test bitstream::modes_writer::tests::partition_horz_64x64_round_trip ... ok
+test bitstream::modes_writer::tests::partition_split_64x64_round_trip ... ok
+test bitstream::modes_writer::tests::partition_split_then_split_round_trip ... ok
+test bitstream::modes_writer::tests::partition_vert_64x64_round_trip ... ok
+test bitstream::modes_writer::tests::phase_2b_accepts_intra_leaf ... ok
+test bitstream::modes_writer::tests::rejects_inconsistent_partition_tree ... ok
+test bitstream::modes_writer::tests::s4_16c_rejects_missing_cell ... ok
+test bitstream::modes_writer::tests::s4_16c_rejects_nonzero_segment_id ... ok
+test bitstream::modes_writer::tests::s4_16c_round_trip_8x8_grain_dense_sb ... ok
+test bitstream::modes_writer::tests::s4_16c_round_trip_inter_horz ... ok
+test bitstream::modes_writer::tests::s4_16c_round_trip_inter_new_mv ... ok
+test bitstream::modes_writer::tests::s4_16c_round_trip_inter_partition_none_zero_mv ... ok
+test bitstream::modes_writer::tests::s4_16c_round_trip_inter_partition_split ... ok
+test bitstream::modes_writer::tests::s4_16c_round_trip_inter_vert ... ok
+test bitstream::modes_writer::tests::s4_16c_round_trips_partial_bottom_sb ... ok
+test bitstream::modes_writer::tests::s4_16f_round_trip_block8x8_horz_into_8x4_at_corner ... ok
+test bitstream::modes_writer::tests::s4_16f_round_trip_block8x8_split_into_4x4_at_corner ... ok
+test bitstream::modes_writer::tests::s4_16f_round_trip_block8x8_vert_into_4x8_at_corner ... ok
+test bitstream::modes_writer::tests::s4_16g_accepts_non_skip_leaf_with_all_zero_coefs ... ok
+test bitstream::modes_writer::tests::s4_16g_round_trip_non_skip_all_zero_coefs ... ok
+test bitstream::modes_writer::tests::s4_16g_round_trip_non_skip_one_per_y_coef ... ok
+test bitstream::modes_writer::tests::s5_infer_inter_partition_block8x8_split_into_4x4 ... ok
+test bitstream::modes_writer::tests::s5_infer_inter_partition_rejects_inconsistent_at_non_block8x8 ... ok
+test bitstream::modes_writer::tests::s5_infer_inter_partition_rejects_inconsistent_block8x8_leaf ... ok
+test bitstream::modes_writer::tests::s5_infer_partition_rejects_inconsistent_keyframe ... ok
+test bitstream::modes_writer::tests::s5_inter_block_leaf_rejects_seg_id_predicted ... ok
+test bitstream::modes_writer::tests::s5_intra_keyframe_non_skip_block8x8_grain ... ok
+test bitstream::modes_writer::tests::s5_intra_keyframe_rejects_nonzero_seg_id_without_seg_params ... ok
+test bitstream::modes_writer::tests::s5_intra_keyframe_rejects_seg_id_predicted ... ok
+test bitstream::modes_writer::tests::s5_modes_writer_error_display_buffer_overflow ... ok
+test bitstream::modes_writer::tests::s5_modes_writer_error_display_inconsistent_partition_tree ... ok
+test bitstream::modes_writer::tests::s5_modes_writer_error_display_inter_mode_write ... ok
+test bitstream::modes_writer::tests::s5_modes_writer_error_display_invalid_tile_bounds ... ok
+test bitstream::modes_writer::tests::s5_modes_writer_error_display_missing_cell ... ok
+test bitstream::modes_writer::tests::s5_modes_writer_error_display_non_multiple_of_sb ... ok
+test bitstream::modes_writer::tests::s5_modes_writer_error_display_unsupported_block_mode ... ok
+test bitstream::modes_writer::tests::s5_modes_writer_error_display_unsupported_block_size ... ok
+test bitstream::modes_writer::tests::s5_modes_writer_error_display_unsupported_intra_in_inter ... ok
+test bitstream::modes_writer::tests::s5_modes_writer_error_display_unsupported_non_skip ... ok
+test bitstream::modes_writer::tests::s5_modes_writer_error_display_unsupported_segmentation ... ok
+test bitstream::modes_writer::tests::s5_modes_writer_error_into_bitstream_error ... ok
+test bitstream::modes_writer::tests::s5_round_trip_non_skip_inter_horz_via_replay ... ok
+test bitstream::modes_writer::tests::s5_round_trip_non_skip_inter_split_via_replay ... ok
+test bitstream::modes_writer::tests::s5_round_trip_non_skip_inter_vert_via_replay ... ok
+test bitstream::modes_writer::tests::s5_tile_inter_block16x16_dense_round_trip ... ok
+test bitstream::modes_writer::tests::s5_tile_inter_block16x16_split_with_counts ... ok
+test bitstream::modes_writer::tests::s5_tile_inter_block16x8_horz_round_trip ... ok
+test bitstream::modes_writer::tests::s5_tile_inter_block32x32_new_mv_split_round_trip ... ok
+test bitstream::modes_writer::tests::s5_tile_inter_block32x64_vert_root_round_trip ... ok
+test bitstream::modes_writer::tests::s5_tile_inter_block64x32_horz_root_round_trip ... ok
+test bitstream::modes_writer::tests::s5_tile_inter_block8x16_vert_round_trip ... ok
+test bitstream::modes_writer::tests::s5_tile_inter_block8x8_with_counts ... ok
+test bitstream::modes_writer::tests::s5_tile_inter_buffer_overflow ... ok
+test bitstream::modes_writer::tests::s5_tile_inter_compound_new_mv_round_trip ... ok
+test bitstream::modes_writer::tests::s5_tile_inter_compound_with_switchable_filter_round_trip ... ok
+test bitstream::modes_writer::tests::s5_tile_inter_compound_zero_mv_round_trip ... ok
+test bitstream::modes_writer::tests::s5_tile_inter_count_only_matches_emit_across_probability_updates ... ok
+test bitstream::modes_writer::tests::s5_tile_inter_horz_accumulates_frame_counts ... ok
+test bitstream::modes_writer::tests::s5_tile_inter_horz_partition_missing_bottom_leaf ... ok
+test bitstream::modes_writer::tests::s5_tile_inter_intra_in_inter_accumulates_counts ... ok
+test bitstream::modes_writer::tests::s5_tile_inter_intra_in_inter_block16x16_size_group2 ... ok
+test bitstream::modes_writer::tests::s5_tile_inter_intra_in_inter_block8x8_size_group1 ... ok
+test bitstream::modes_writer::tests::s5_tile_inter_intra_in_inter_non_skip ... ok
+test bitstream::modes_writer::tests::s5_tile_inter_intra_in_inter_non_skip_16x16_y_tx_type ... ok
+test bitstream::modes_writer::tests::s5_tile_inter_intra_in_inter_round_trip ... ok
+test bitstream::modes_writer::tests::s5_tile_inter_intra_in_inter_sub8_size_group0 ... ok
+test bitstream::modes_writer::tests::s5_tile_inter_intra_in_inter_tx_mode_select ... ok
+test bitstream::modes_writer::tests::s5_tile_inter_new_mv_both_axes_nonzero_round_trip ... ok
+test bitstream::modes_writer::tests::s5_tile_inter_new_mv_col_only_round_trip ... ok
+test bitstream::modes_writer::tests::s5_tile_inter_new_mv_zero_diff_round_trip ... ok
+test bitstream::modes_writer::tests::s5_tile_inter_non_skip_16x16_with_counts ... ok
+test bitstream::modes_writer::tests::s5_tile_inter_non_skip_16x32_exercise_uv_sizes ... ok
+test bitstream::modes_writer::tests::s5_tile_inter_non_skip_32x16_uv_plane ... ok
+test bitstream::modes_writer::tests::s5_tile_inter_non_skip_64x64_with_tx16x16_cap ... ok
+test bitstream::modes_writer::tests::s5_tile_inter_non_skip_bottom_crossing_32x32_clamps_residual_walk ... ok
+test bitstream::modes_writer::tests::s5_tile_inter_non_skip_sub8_block4x4 ... ok
+test bitstream::modes_writer::tests::s5_tile_inter_propagates_inter_mode_write_error ... ok
+test bitstream::modes_writer::tests::s5_tile_inter_reference_mode_select_compound_round_trip ... ok
+test bitstream::modes_writer::tests::s5_tile_inter_reference_mode_select_single_round_trip ... ok
+test bitstream::modes_writer::tests::s5_tile_inter_rejects_invalid_grid_length ... ok
+test bitstream::modes_writer::tests::s5_tile_inter_rejects_invalid_prev_mv_grid_len ... ok
+test bitstream::modes_writer::tests::s5_tile_inter_rejects_invalid_tile_bounds_out_of_frame ... ok
+test bitstream::modes_writer::tests::s5_tile_inter_rejects_unsupported_block_size_mismatch ... ok
+test bitstream::modes_writer::tests::s5_tile_inter_round_trips_half_height_bottom_sb ... ok
+test bitstream::modes_writer::tests::s5_tile_inter_single_altref_new_mv_round_trip ... ok
+test bitstream::modes_writer::tests::s5_tile_inter_single_golden_new_mv_round_trip ... ok
+test bitstream::modes_writer::tests::s5_tile_inter_split_accumulates_frame_counts ... ok
+test bitstream::modes_writer::tests::s5_tile_inter_sub8_with_counts ... ok
+test bitstream::modes_writer::tests::s5_tile_inter_switchable_filter_sharp_round_trip ... ok
+test bitstream::modes_writer::tests::s5_tile_inter_switchable_filter_smooth_round_trip ... ok
+test bitstream::modes_writer::tests::s5_tile_inter_vert_accumulates_frame_counts ... ok
+test bitstream::modes_writer::tests::s5_tile_inter_vert_partition_missing_right_leaf ... ok
+test bitstream::modes_writer::tests::s5_tile_intra_keyframe_buffer_overflow ... ok
+test bitstream::modes_writer::tests::s5_tile_intra_keyframe_horz_partition_missing_bottom_leaf ... ok
+test bitstream::modes_writer::tests::s5_tile_intra_keyframe_rejects_invalid_grid_length ... ok
+test bitstream::modes_writer::tests::s5_tile_intra_keyframe_rejects_invalid_tile_bounds ... ok
+test bitstream::modes_writer::tests::s5_tile_intra_keyframe_vert_partition_missing_right_leaf ... ok
+test bitstream::modes_writer::tests::tile_bounds_follow_superblock_aligned_libvpx_geometry ... ok
+test bitstream::modes_writer::tests::tile_neighbour_lookup_hides_frame_neighbour_across_column_boundary ... ok
+test bitstream::modes_writer::tests::write_block_intra_keyframe_accepts_all_intra_modes ... ok
+test bitstream::modes_writer::tests::write_block_intra_keyframe_emits_nonzero_segment_id ... ok
+test bitstream::modes_writer::tests::write_block_intra_keyframe_round_trips_dc_dc_skip ... ok
+test bitstream::modes_writer::tests::write_intra_mode_round_trips_for_all_10_modes ... ok
+test bitstream::modes_writer::tests::write_partition_none_round_trips_to_partition_none ... ok
+test bitstream::modes_writer::tests::write_partition_round_trips_each_type ... ok
+test bitstream::modes_writer::tests::write_tile_inter_emits_nonzero_segment_id ... ok
+test bitstream::modes_writer::tests::write_tile_inter_rejects_seg_id_predicted ... ok
+test bitstream::modes_writer::tests::write_tile_intra_keyframe_accepts_max_segment_id ... ok
+test bitstream::modes_writer::tests::write_tile_intra_keyframe_accepts_non_skip_with_all_zero_coefs ... ok
+test bitstream::modes_writer::tests::write_tile_intra_keyframe_bottom_crossing_32x32_clamps_residual_context ... ok
+test bitstream::modes_writer::tests::write_tile_intra_keyframe_multi_segment_split_sb ... ok
+test bitstream::modes_writer::tests::write_tile_intra_keyframe_rejects_inconsistent_mixed_sizes ... ok
+test bitstream::modes_writer::tests::write_tile_intra_keyframe_rejects_inter_mode ... ok
+test bitstream::modes_writer::tests::write_tile_intra_keyframe_rejects_missing_cell ... ok
+test bitstream::modes_writer::tests::write_tile_intra_keyframe_round_trip_2x2_sb_via_per_symbol_readers ... ok
+test bitstream::modes_writer::tests::write_tile_intra_keyframe_round_trip_segment_ids_0_to_7 ... ok
+test bitstream::modes_writer::tests::write_tile_intra_keyframe_round_trips_partial_bottom_sb ... ok
+test bitstream::raw::tests::bytes_written_rounds_up ... ok
+test bitstream::raw::tests::differential_known_sequence ... ok
+test bitstream::raw::tests::overflow_poisons_writer ... ok
+test bitstream::raw::tests::reader_eof_returns_truncated ... ok
+test bitstream::raw::tests::round_trip_inv_signed ... ok
+test bitstream::raw::tests::round_trip_literal ... ok
+test bitstream::raw::tests::write_inv_signed_negative ... ok
+test bitstream::raw::tests::write_inv_signed_positive ... ok
+test bitstream::raw::tests::write_literal_msb_first ... ok
+test bitstream::raw::tests::write_single_bit_msb_first ... ok
+test bitstream::sub_parsers::tests::get_unsigned_bits_matches_libvpx ... ok
+test bitstream::sub_parsers::tests::loopfilter_disabled_deltas ... ok
+test bitstream::sub_parsers::tests::loopfilter_partial_delta_update ... ok
+test bitstream::sub_parsers::tests::quantization_lossless ... ok
+test bitstream::sub_parsers::tests::quantization_with_deltas ... ok
+test bitstream::sub_parsers::tests::segmentation_disabled ... ok
+test bitstream::sub_parsers::tests::segmentation_feature_data_signed_and_unsigned ... ok
+test bitstream::sub_parsers::tests::segmentation_map_update_no_data ... ok
+test bitstream::sub_parsers::tests::tile_info_helpers_match_libvpx ... ok
+test bitstream::sub_parsers::tests::tile_info_increment_to_max ... ok
+test bitstream::sub_parsers::tests::tile_info_min_only ... ok
+test bitstream::sub_parsers::tests::write_loopfilter_all_delta_combos ... ok
+test bitstream::sub_parsers::tests::write_quantization_delta_extremes ... ok
+test bitstream::sub_parsers::tests::write_segmentation_various_patterns ... ok
+test bitstream::sub_parsers::tests::write_tile_info_all_combinations ... ok
+test bitstream::sub_parsers::tests::write_tile_info_rejects_invalid_geometry_before_writing ... ok
+test bitstream::superframe::tests::builder_byte_layout_matches_legacy_helper ... ok
+test bitstream::superframe::tests::builder_empty_finish_yields_empty_vec ... ok
+test bitstream::superframe::tests::builder_multi_frame_round_trips_through_parser ... ok
+test bitstream::superframe::tests::builder_picks_mag_2_when_a_frame_exceeds_255_bytes ... ok
+test bitstream::superframe::tests::builder_picks_mag_3_then_4_at_thresholds ... ok
+test bitstream::superframe::tests::builder_rejects_empty_frame ... ok
+test bitstream::superframe::tests::builder_rejects_ninth_frame ... ok
+test bitstream::superframe::tests::builder_round_trips_max_frames ... ok
+test bitstream::superframe::tests::builder_single_frame_emits_no_index ... ok
+test bitstream::superframe::tests::eight_frame_superframe_mag_4 ... ok
+test bitstream::superframe::tests::empty_buffer_rejected ... ok
+test bitstream::superframe::tests::marker_mismatch_rejected ... ok
+test bitstream::superframe::tests::multi_byte_size_round_trip ... ok
+test bitstream::superframe::tests::single_frame_no_index ... ok
+test bitstream::superframe::tests::single_frame_with_payload_ending_in_co_byte_safe_if_not_marker_pattern ... ok
+test bitstream::superframe::tests::truncated_index_rejected ... ok
+test bitstream::superframe::tests::two_frame_superframe_mag_1 ... ok
+test bitstream::tile::tests::declared_tile_size_exceeds_buffer_rejected ... ok
+test bitstream::tile::tests::empty_tile_payload_ok ... ok
+test bitstream::tile::tests::four_tile_grid_row_major_indexing ... ok
+test bitstream::tile::tests::single_tile_takes_whole_buffer ... ok
+test bitstream::tile::tests::tile_dimensions_beyond_vp9_limits_are_rejected ... ok
+test bitstream::tile::tests::truncated_size_prefix_rejected ... ok
+test bitstream::tile::tests::two_rows_one_col ... ok
+test bitstream::tile::tests::two_tiles_row_major ... ok
+test bitstream::tile::tests::write_tile_buffers_byte_identical_to_legacy_helper ... ok
+test bitstream::tile::tests::write_tile_buffers_rejects_payload_count_mismatch ... ok
+test bitstream::tile::tests::write_tile_buffers_round_trips_through_parse ... ok
+test bitstream::tile::tests::write_tile_buffers_row_major_layout ... ok
+test bitstream::tile::tests::write_tile_buffers_single_tile_emits_no_prefix ... ok
+test bitstream::tile::tests::write_tile_buffers_zero_dimensions_are_rejected ... ok
+test bitstream::tile::tests::zero_tile_dims_are_rejected ... ok
+test block::tests::block_size_indices_match_libvpx ... ok
+test block::tests::dimensions ... ok
+test block::tests::from_dimensions_rejects_illegal ... ok
+test block::tests::from_dimensions_round_trip ... ok
+test block::tests::idx_matches_repr ... ok
+test block::tests::log2_dimensions ... ok
+test block::tests::max_txsize_pin_libvpx ... ok
+test block::tests::partition_type_from_u8 ... ok
+test block::tests::partition_type_indices_match_libvpx ... ok
+test block::tests::ss_size_lookup_pins_libvpx ... ok
+test block::tests::subsize_legal_parents ... ok
+test block::tests::subsize_rejects_illegal_combinations ... ok
+test block::tests::uv_plane_block_size_420_reproduces_old_match ... ok
+test block::tests::uv_plane_block_size_444_identity ... ok
+test block::tests::uv_plane_tx_size_420_caps ... ok
+test coef_ctx::tests::coef_ctx_drives_combine_entropy_contexts ... ok
+test coef_ctx::tests::combine_entropy_contexts_matches_libvpx ... ok
+test coef_ctx::tests::fresh_coef_ctx_is_all_zero ... ok
+test coef_ctx::tests::new_with_ss_444_chroma_matches_luma ... ok
+test coef_ctx::tests::new_zero_tile_panics - should panic ... ok
+test coef_ctx::tests::out_of_range_coef_access_returns_zero ... ok
+test coef_ctx::tests::reset_left_coef_preserves_above_coef ... ok
+test coef_ctx::tests::set_coef_flags_at_end_index_is_noop ... ok
+test coef_ctx::tests::set_coef_flags_clamps_at_edges ... ok
+test coef_ctx::tests::set_coef_flags_out_of_range_plane_is_noop ... ok
+test coef_ctx::tests::set_coef_flags_tx8x8_writes_2x2_region ... ok
+test coef_ctx::tests::set_coef_flags_zero_clears ... ok
+test coef_ctx::tests::uv_dimensions_are_half_of_y_under_4_2_0 ... ok
+test cost::coef_cost::tests::coef_token_cost_lookup_matches_table ... ok
+test cost::coef_cost::tests::eob_costs_equal_across_skip_variants ... ok
+test cost::coef_cost::tests::fixed_coef_paths_match_generic_tree_walk ... ok
+test cost::coef_cost::tests::model_to_full_zero_pivot_yields_zero_tail ... ok
+test cost::coef_cost::tests::table_built_from_default_fc_is_finite_and_nonzero ... ok
+test cost::mv_cost::tests::component_cost_table_shape ... ok
+test cost::mv_cost::tests::cost_grows_with_magnitude ... ok
+test cost::mv_cost::tests::highprec_increases_component_cost_when_v_minus_one_lsb_is_set ... ok
+test cost::mv_cost::tests::joint_cost_table_sane ... ok
+test cost::mv_cost::tests::zero_diff_costs_only_joint_zero ... ok
+test cost::prob_cost::tests::cost_at_half_is_one_bit ... ok
+test cost::prob_cost::tests::cost_one_is_symmetric_to_cost_zero ... ok
+test cost::prob_cost::tests::cost_zero_monotone_in_prob ... ok
+test cost::prob_cost::tests::high_prob_zero_is_cheap_one_is_expensive ... ok
+test cost::prob_cost::tests::low_prob_zero_is_expensive_one_is_cheap ... ok
+test cost::prob_cost::tests::table_shape_matches_libvpx ... ok
+test cost::rd_mult::tests::arf_q0_matches_hand_derivation ... ok
+test cost::rd_mult::tests::high_q_yields_large_positive_value ... ok
+test cost::rd_mult::tests::inter_q0_matches_hand_derivation ... ok
+test cost::rd_mult::tests::intra_cost_penalty_monotone ... ok
+test cost::rd_mult::tests::intra_cost_penalty_q0_block64 ... ok
+test cost::rd_mult::tests::intra_cost_penalty_q128_block16 ... ok
+test cost::rd_mult::tests::intra_cost_penalty_q128_block32 ... ok
+test cost::rd_mult::tests::key_arf_inter_ordering ... ok
+test cost::rd_mult::tests::key_q0_matches_hand_derivation ... ok
+test cost::rd_mult::tests::monotone_in_qindex_inter ... ok
+test cost::rd_mult::tests::q128_within_expected_range ... ok
+test cost::symbol_costs::tests::inter_mode_costs_finite_and_nonzero ... ok
+test cost::symbol_costs::tests::kf_intra_mode_costs_finite ... ok
+test cost::symbol_costs::tests::partition_costs_finite_and_nonzero ... ok
+test cost::symbol_costs::tests::skip_costs_match_cost_bit ... ok
+test cost::symbol_costs::tests::switchable_interp_costs_finite_and_nonzero ... ok
+test cost::symbol_costs::tests::tx_size_costs_default_nonzero_for_valid_cells ... ok
+test cost::symbol_costs::tests::uv_mode_costs_inter_default_finite_and_nonzero ... ok
+test cost::symbol_costs::tests::y_mode_costs_inter_default_finite_and_nonzero ... ok
+test cost::tree_cost::tests::asymmetric_prob_costs_differ ... ok
+test cost::tree_cost::tests::deep_unbalanced_tree ... ok
+test cost::tree_cost::tests::skip_variant ... ok
+test cost::tree_cost::tests::three_leaf_tree ... ok
+test cost::tree_cost::tests::two_leaf_tree ... ok
+test dsp::aarch64::convolve8_neon::tests::dispatch_routes_neon_and_scalar_caps ... ok
+test dsp::aarch64::convolve8_neon::tests::single_axis_matches_scalar_all_filters_and_shapes ... =================================================================
+==58979==ERROR: AddressSanitizer: heap-buffer-overflow on address 0x60600003ca18 at pc 0x0001002bed04 bp 0x00016fec1460 sp 0x00016fec1458
+READ of size 4 at 0x60600003ca18 thread T347
+    #0 0x0001002bed00 in _RINvNtCsfxCcAtNUPok_4core3ptr19copy_nonoverlappinghECsiGrZATKzpjo_9rvp9_core mod.rs:551
+    #1 0x0001002bed00 in _RINvNtCsfxCcAtNUPok_4core3ptr14read_unalignedmECsiGrZATKzpjo_9rvp9_core mod.rs:1821
+    #2 0x0001002bed00 in _RNvMNtNtCsfxCcAtNUPok_4core3ptr9const_ptrPm14read_unalignedCsiGrZATKzpjo_9rvp9_core const_ptr.rs:1194
+    #3 0x0001002bed00 in _RNvNtNtNtCsiGrZATKzpjo_9rvp9_core3dsp7aarch6414convolve8_neon18load_four_repeated convolve8_neon.rs:52
+    #4 0x0001002bed00 in _RNvNtNtNtCsiGrZATKzpjo_9rvp9_core3dsp7aarch6414convolve8_neon28convolve8_horiz_i8mm_4_inner convolve8_neon.rs:319
+    #5 0x0001002bed00 in _RNvNtNtNtCsiGrZATKzpjo_9rvp9_core3dsp7aarch6414convolve8_neon20convolve8_horiz_neon convolve8_neon.rs:654
+    #6 0x00010052c1d8 in _RNvNtNtNtNtCsiGrZATKzpjo_9rvp9_core3dsp7aarch6414convolve8_neon5testss_49single_axis_matches_scalar_all_filters_and_shapes convolve8_neon.rs:909
+    #7 0x0001001be930 in _RNCNvNtNtNtNtCsiGrZATKzpjo_9rvp9_core3dsp7aarch6414convolve8_neon5tests49single_axis_matches_scalar_all_filters_and_shapes0Bb_ convolve8_neon.rs:885
+    #8 0x0001001be930 in _RNvYNCNvNtNtNtNtCsiGrZATKzpjo_9rvp9_core3dsp7aarch6414convolve8_neon5tests49single_axis_matches_scalar_all_filters_and_shapes0INtNtNtCsfxCcAtNUPok_4core3ops8function6FnOnceuE9call_onceBe_ function.rs:250
+    #9 0x000100671a70 in _RINvCs3eBF0u53h4I_4test28___rust_begin_short_backtraceINtNtCsfxCcAtNUPok_4core6result6ResultuNtNtCsfzfv31rCD8u_5alloc6string6StringEFEBQ_EB2_+0x10 (rvp9_core-2d881a3939735aba:arm64+0x10052da70)
+    #10 0x000100693944 in _RNvMs2_NtCs3eBF0u53h4I_4test5typesNtB5_12RunnableTest3run+0xdc (rvp9_core-2d881a3939735aba:arm64+0x10054f944)
+    #11 0x0001006a7cd4 in _RINvNvNtCsaZvxEtYv4hZ_3std9panicking12catch_unwind7do_callINtNtNtCsfxCcAtNUPok_4core5panic11unwind_safe16AssertUnwindSafeNCNvCs3eBF0u53h4I_4test19run_test_in_process0EINtNtB11_6result6ResultuNtNtCsfzfv31rCD8u_5alloc6string6StringEEB1Z_+0xd8 (rvp9_core-2d881a3939735aba:arm64+0x100563cd4)
+    #12 0x0001006ad3f0 in __rust_try+0x1c (rvp9_core-2d881a3939735aba:arm64+0x1005693f0)
+    #13 0x0001006a5b48 in _RINvNtCsaZvxEtYv4hZ_3std9panicking12catch_unwindINtNtCsfxCcAtNUPok_4core6result6ResultuNtNtCsfzfv31rCD8u_5alloc6string6StringEINtNtNtBP_5panic11unwind_safe16AssertUnwindSafeNCNvCs3eBF0u53h4I_4test19run_test_in_process0EEB2P_+0xd0 (rvp9_core-2d881a3939735aba:arm64+0x100561b48)
+    #14 0x000100678d10 in _RNvCs3eBF0u53h4I_4test19run_test_in_process+0x2f4 (rvp9_core-2d881a3939735aba:arm64+0x100534d10)
+    #15 0x0001006a7188 in _RINvNtNtCsaZvxEtYv4hZ_3std3sys9backtrace28___rust_begin_short_backtraceNCNvCs3eBF0u53h4I_4test8run_tests_0uEB1b_+0x314 (rvp9_core-2d881a3939735aba:arm64+0x100563188)
+    #16 0x0001006a7b00 in _RINvNvNtCsaZvxEtYv4hZ_3std9panicking12catch_unwind7do_callINtNtNtCsfxCcAtNUPok_4core5panic11unwind_safe16AssertUnwindSafeNCNCINvNtNtB6_6thread9lifecycle15spawn_uncheckedNCNvCs3eBF0u53h4I_4test8run_tests_0uEs_00EuEB2L_+0xfc (rvp9_core-2d881a3939735aba:arm64+0x100563b00)
+    #17 0x0001006ad3f0 in __rust_try+0x1c (rvp9_core-2d881a3939735aba:arm64+0x1005693f0)
+    #18 0x0001006a5cec in _RINvNtCsaZvxEtYv4hZ_3std9panicking12catch_unwinduINtNtNtCsfxCcAtNUPok_4core5panic11unwind_safe16AssertUnwindSafeNCNCINvNtNtB4_6thread9lifecycle15spawn_uncheckedNCNvCs3eBF0u53h4I_4test8run_tests_0uEs_00EEB2C_+0xc0 (rvp9_core-2d881a3939735aba:arm64+0x100561cec)
+    #19 0x0001006d4ddc in _RNSNvYNCINvNtNtCsaZvxEtYv4hZ_3std6thread9lifecycle15spawn_uncheckedNCNvCs3eBF0u53h4I_4test8run_tests_0uEs_0INtNtNtCsfxCcAtNUPok_4core3ops8function6FnOnceuE9call_once6vtableB17_+0xe8 (rvp9_core-2d881a3939735aba:arm64+0x100590ddc)
+    #20 0x0001007be4bc in _RNvXst_NtCsfzfv31rCD8u_5alloc5boxedINtB5_3BoxDINtNtNtCsfxCcAtNUPok_4core3ops8function6FnOnceuEp6OutputuNtNtBP_6marker4SendEL_EIBJ_uE9call_onceCsaZvxEtYv4hZ_3std+0x44 (rvp9_core-2d881a3939735aba:arm64+0x10067a4bc)
+    #21 0x0001007a8de8 in _RNvNvMs0_NtNtNtCsaZvxEtYv4hZ_3std3sys6thread4unixNtB7_6Thread3new12thread_start+0x1a8 (rvp9_core-2d881a3939735aba:arm64+0x100664de8)
+    #22 0x0001021cef58 in asan_thread_start(void*)+0x48 (librustc-nightly_rt.asan.dylib:arm64+0x3af58)
+    #23 0x000184da7c54 in _pthread_start+0x84 (libsystem_pthread.dylib:arm64e+0x6c54)
+    #24 0x000184da2c18 in thread_start+0x4 (libsystem_pthread.dylib:arm64e+0x1c18)
+
+0x60600003ca18 is located 0 bytes after 56-byte region [0x60600003c9e0,0x60600003ca18)
+allocated by thread T347 here:
+    #0 0x0001021d2bd8 in malloc+0x6c (librustc-nightly_rt.asan.dylib:arm64+0x3ebd8)
+    #1 0x0001007b7d88 in _RNvCsjqZHWK35Smt_7___rustc11___rdl_alloc+0xc4 (rvp9_core-2d881a3939735aba:arm64+0x100673d88)
+    #2 0x0001007fc3b0 in _RNvMs5_NtCsfzfv31rCD8u_5alloc7raw_vecNtB5_11RawVecInner15try_allocate_inB7_+0x150 (rvp9_core-2d881a3939735aba:arm64+0x1006b83b0)
+    #3 0x000100498b10 in _RNvMs5_NtCsfzfv31rCD8u_5alloc7raw_vecNtB5_11RawVecInner16with_capacity_inCsiGrZATKzpjo_9rvp9_core mod.rs:435
+    #4 0x000100498b10 in _RNvMs4_NtCsfzfv31rCD8u_5alloc7raw_vecINtB5_6RawVechE16with_capacity_inCsiGrZATKzpjo_9rvp9_core mod.rs:177
+    #5 0x000100498b10 in _RNvMsF_NtCsfzfv31rCD8u_5alloc3vecINtB5_3VechE16with_capacity_inCsiGrZATKzpjo_9rvp9_core mod.rs:975
+    #6 0x000100498b10 in _RNvMNtCsfzfv31rCD8u_5alloc3vecINtB2_3VechE13with_capacityCsiGrZATKzpjo_9rvp9_core mod.rs:522
+    #7 0x000100498b10 in _RNvXs_NtNtCsfzfv31rCD8u_5alloc3vec21spec_from_iter_nestedINtB6_3VechEINtB4_18SpecFromIterNestedhINtNtNtNtCsfxCcAtNUPok_4core4iter8adapters3map3MapINtNtNtB1F_3ops5range5RangejENCNvNtNtNtNtCsiGrZATKzpjo_9rvp9_core3dsp7aarch6414convolve8_neon5testss_49single_axis_matches_scalar_all_filters_and_shapes0EE9from_iterB2Z_ spec_from_iter_nested.rs:52
+    #8 0x000100498b10 in _RNvXNtNtCsfzfv31rCD8u_5alloc3vec14spec_from_iterINtB4_3VechEINtB2_12SpecFromIterhINtNtNtNtCsfxCcAtNUPok_4core4iter8adapters3map3MapINtNtNtB1q_3ops5range5RangejENCNvNtNtNtNtCsiGrZATKzpjo_9rvp9_core3dsp7aarch6414convolve8_neon5testss_49single_axis_matches_scalar_all_filters_and_shapes0EE9from_iterB2K_ spec_from_iter.rs:33
+    #9 0x00010052c07c in _RINvXse_NtCsfzfv31rCD8u_5alloc3vecINtB6_3VechEINtNtNtNtCsfxCcAtNUPok_4core4iter6traits7collect12FromIteratorhE9from_iterINtNtNtBP_8adapters3map3MapINtNtNtBR_3ops5range5RangejENCNvNtNtNtNtCsiGrZATKzpjo_9rvp9_core3dsp7aarch6414convolve8_neon5testss_49single_axis_matches_scalar_all_filters_and_shapes0EEB2Z_ mod.rs:3937
+    #10 0x00010052c07c in _RINvYINtNtNtNtCsfxCcAtNUPok_4core4iter8adapters3map3MapINtNtNtBc_3ops5range5RangejENCNvNtNtNtNtCsiGrZATKzpjo_9rvp9_core3dsp7aarch6414convolve8_neon5testss_49single_axis_matches_scalar_all_filters_and_shapes0ENtNtNtBa_6traits8iterator8Iterator7collectINtNtCsfzfv31rCD8u_5alloc3vec3VechEEB1v_ iterator.rs:2090
+    #11 0x00010052c07c in _RNvNtNtNtNtCsiGrZATKzpjo_9rvp9_core3dsp7aarch6414convolve8_neon5testss_49single_axis_matches_scalar_all_filters_and_shapes convolve8_neon.rs:901
+    #12 0x0001001be930 in _RNCNvNtNtNtNtCsiGrZATKzpjo_9rvp9_core3dsp7aarch6414convolve8_neon5tests49single_axis_matches_scalar_all_filters_and_shapes0Bb_ convolve8_neon.rs:885
+    #13 0x0001001be930 in _RNvYNCNvNtNtNtNtCsiGrZATKzpjo_9rvp9_core3dsp7aarch6414convolve8_neon5tests49single_axis_matches_scalar_all_filters_and_shapes0INtNtNtCsfxCcAtNUPok_4core3ops8function6FnOnceuE9call_onceBe_ function.rs:250
+    #14 0x000100671a70 in _RINvCs3eBF0u53h4I_4test28___rust_begin_short_backtraceINtNtCsfxCcAtNUPok_4core6result6ResultuNtNtCsfzfv31rCD8u_5alloc6string6StringEFEBQ_EB2_+0x10 (rvp9_core-2d881a3939735aba:arm64+0x10052da70)
+    #15 0x000100693944 in _RNvMs2_NtCs3eBF0u53h4I_4test5typesNtB5_12RunnableTest3run+0xdc (rvp9_core-2d881a3939735aba:arm64+0x10054f944)
+    #16 0x0001006a7cd4 in _RINvNvNtCsaZvxEtYv4hZ_3std9panicking12catch_unwind7do_callINtNtNtCsfxCcAtNUPok_4core5panic11unwind_safe16AssertUnwindSafeNCNvCs3eBF0u53h4I_4test19run_test_in_process0EINtNtB11_6result6ResultuNtNtCsfzfv31rCD8u_5alloc6string6StringEEB1Z_+0xd8 (rvp9_core-2d881a3939735aba:arm64+0x100563cd4)
+    #17 0x0001006ad3f0 in __rust_try+0x1c (rvp9_core-2d881a3939735aba:arm64+0x1005693f0)
+    #18 0x0001006a5b48 in _RINvNtCsaZvxEtYv4hZ_3std9panicking12catch_unwindINtNtCsfxCcAtNUPok_4core6result6ResultuNtNtCsfzfv31rCD8u_5alloc6string6StringEINtNtNtBP_5panic11unwind_safe16AssertUnwindSafeNCNvCs3eBF0u53h4I_4test19run_test_in_process0EEB2P_+0xd0 (rvp9_core-2d881a3939735aba:arm64+0x100561b48)
+    #19 0x000100678d10 in _RNvCs3eBF0u53h4I_4test19run_test_in_process+0x2f4 (rvp9_core-2d881a3939735aba:arm64+0x100534d10)
+    #20 0x0001006a7188 in _RINvNtNtCsaZvxEtYv4hZ_3std3sys9backtrace28___rust_begin_short_backtraceNCNvCs3eBF0u53h4I_4test8run_tests_0uEB1b_+0x314 (rvp9_core-2d881a3939735aba:arm64+0x100563188)
+    #21 0x0001006a7b00 in _RINvNvNtCsaZvxEtYv4hZ_3std9panicking12catch_unwind7do_callINtNtNtCsfxCcAtNUPok_4core5panic11unwind_safe16AssertUnwindSafeNCNCINvNtNtB6_6thread9lifecycle15spawn_uncheckedNCNvCs3eBF0u53h4I_4test8run_tests_0uEs_00EuEB2L_+0xfc (rvp9_core-2d881a3939735aba:arm64+0x100563b00)
+    #22 0x0001006ad3f0 in __rust_try+0x1c (rvp9_core-2d881a3939735aba:arm64+0x1005693f0)
+    #23 0x0001006a5cec in _RINvNtCsaZvxEtYv4hZ_3std9panicking12catch_unwinduINtNtNtCsfxCcAtNUPok_4core5panic11unwind_safe16AssertUnwindSafeNCNCINvNtNtB4_6thread9lifecycle15spawn_uncheckedNCNvCs3eBF0u53h4I_4test8run_tests_0uEs_00EEB2C_+0xc0 (rvp9_core-2d881a3939735aba:arm64+0x100561cec)
+    #24 0x0001006d4ddc in _RNSNvYNCINvNtNtCsaZvxEtYv4hZ_3std6thread9lifecycle15spawn_uncheckedNCNvCs3eBF0u53h4I_4test8run_tests_0uEs_0INtNtNtCsfxCcAtNUPok_4core3ops8function6FnOnceuE9call_once6vtableB17_+0xe8 (rvp9_core-2d881a3939735aba:arm64+0x100590ddc)
+    #25 0x0001007be4bc in _RNvXst_NtCsfzfv31rCD8u_5alloc5boxedINtB5_3BoxDINtNtNtCsfxCcAtNUPok_4core3ops8function6FnOnceuEp6OutputuNtNtBP_6marker4SendEL_EIBJ_uE9call_onceCsaZvxEtYv4hZ_3std+0x44 (rvp9_core-2d881a3939735aba:arm64+0x10067a4bc)
+    #26 0x0001007a8de8 in _RNvNvMs0_NtNtNtCsaZvxEtYv4hZ_3std3sys6thread4unixNtB7_6Thread3new12thread_start+0x1a8 (rvp9_core-2d881a3939735aba:arm64+0x100664de8)
+    #27 0x0001021cef58 in asan_thread_start(void*)+0x48 (librustc-nightly_rt.asan.dylib:arm64+0x3af58)
+    #28 0x000184da7c54 in _pthread_start+0x84 (libsystem_pthread.dylib:arm64e+0x6c54)
+    #29 0x000184da2c18 in thread_start+0x4 (libsystem_pthread.dylib:arm64e+0x1c18)
+
+Thread T347 created by T0 here:
+    #0 0x0001021c9e3c in pthread_create+0x58 (librustc-nightly_rt.asan.dylib:arm64+0x35e3c)
+    #1 0x0001007a4910 in _RNvMs0_NtNtNtCsaZvxEtYv4hZ_3std3sys6thread4unixNtB5_6Thread3new+0x200 (rvp9_core-2d881a3939735aba:arm64+0x100660910)
+    #2 0x0001006d3cc4 in _RINvNtNtCsaZvxEtYv4hZ_3std6thread9lifecycle15spawn_uncheckedNCNvCs3eBF0u53h4I_4test8run_tests_0uEB10_+0x54c (rvp9_core-2d881a3939735aba:arm64+0x10058fcc4)
+    #3 0x0001006ebc10 in _RINvMNtNtCsaZvxEtYv4hZ_3std6thread7builderNtB3_7Builder5spawnNCNvCs3eBF0u53h4I_4test8run_tests_0uEB11_+0x128 (rvp9_core-2d881a3939735aba:arm64+0x1005a7c10)
+    #4 0x00010067a868 in _RNvCs3eBF0u53h4I_4test8run_test+0x7ac (rvp9_core-2d881a3939735aba:arm64+0x100536868)
+    #5 0x000100672a90 in _RINvCs3eBF0u53h4I_4test9run_testsNCNvNtB2_7console17run_tests_consoles0_0EB2_+0xf24 (rvp9_core-2d881a3939735aba:arm64+0x10052ea90)
+    #6 0x0001006fa090 in _RNvNtCs3eBF0u53h4I_4test7console17run_tests_console+0x4fc (rvp9_core-2d881a3939735aba:arm64+0x1005b6090)
+    #7 0x000100671758 in _RINvCs3eBF0u53h4I_4test15test_main_innerNCNvB2_16test_main_static0EB2_+0x2c8 (rvp9_core-2d881a3939735aba:arm64+0x10052d758)
+    #8 0x0001006788c4 in _RNvCs3eBF0u53h4I_4test16test_main_static+0x180 (rvp9_core-2d881a3939735aba:arm64+0x1005348c4)
+    #9 0x0001004e0d04 in _RNvYFEuINtNtNtCsfxCcAtNUPok_4core3ops8function6FnOnceuE9call_onceCsiGrZATKzpjo_9rvp9_core function.rs:250
+    #10 0x0001004e0d04 in _RINvNtNtCsaZvxEtYv4hZ_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECsiGrZATKzpjo_9rvp9_core backtrace.rs:166
+    #11 0x00010032beac in _RNCINvNtCsaZvxEtYv4hZ_3std2rt10lang_startuE0CsiGrZATKzpjo_9rvp9_core rt.rs:206
+    #12 0x000100736758 in _RINvNvNtCsaZvxEtYv4hZ_3std9panicking12catch_unwind7do_callRDINtNtNtCsfxCcAtNUPok_4core3ops8function2FnuEp6OutputlNtNtNtB13_5panic11unwind_safe13RefUnwindSafeNtNtB13_6marker4SyncEL_lEB6_+0x68 (rvp9_core-2d881a3939735aba:arm64+0x1005f2758)
+    #13 0x00010073d690 in __rust_try+0x1c (rvp9_core-2d881a3939735aba:arm64+0x1005f9690)
+    #14 0x000100736508 in _RINvNvNtCsaZvxEtYv4hZ_3std9panicking12catch_unwind7do_callNCNvNtB6_2rt19lang_start_internal0iEB6_+0x1ac (rvp9_core-2d881a3939735aba:arm64+0x1005f2508)
+    #15 0x00010073d690 in __rust_try+0x1c (rvp9_core-2d881a3939735aba:arm64+0x1005f9690)
+    #16 0x000100738498 in _RNvNtCsaZvxEtYv4hZ_3std2rt19lang_start_internal+0xd8 (rvp9_core-2d881a3939735aba:arm64+0x1005f4498)
+    #17 0x00010032be24 in _RINvNtCsaZvxEtYv4hZ_3std2rt10lang_startuECsiGrZATKzpjo_9rvp9_core rt.rs:205
+    #18 0x0001001bed64 in main+0x1c (rvp9_core-2d881a3939735aba:arm64+0x10007ad64)
+    #19 0x0001849dc4e0 in start+0x1b4c (dyld:arm64e+0x204e0)
+
+SUMMARY: AddressSanitizer: heap-buffer-overflow mod.rs:551 in _RINvNtCsfxCcAtNUPok_4core3ptr19copy_nonoverlappinghECsiGrZATKzpjo_9rvp9_core
+Shadow bytes around the buggy address:
+  0x60600003c780: fa fa fa fa fd fd fd fd fd fd fd fd fa fa fa fa
+  0x60600003c800: 00 00 00 00 00 00 00 00 fa fa fa fa 00 00 00 00
+  0x60600003c880: 00 00 00 00 fa fa fa fa 00 00 00 00 00 00 00 fa
+  0x60600003c900: fa fa fa fa fd fd fd fd fd fd fd fa fa fa fa fa
+  0x60600003c980: fd fd fd fd fd fd fd fa fa fa fa fa 00 00 00 00
+=>0x60600003ca00: 00 00 00[fa]fa fa fa fa fa fa fa fa fa fa fa fa
+  0x60600003ca80: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+  0x60600003cb00: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+  0x60600003cb80: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+  0x60600003cc00: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+  0x60600003cc80: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+Shadow byte legend (one shadow byte represents 8 application bytes):
+  Addressable:           00
+  Partially addressable: 01 02 03 04 05 06 07 
+  Heap left redzone:       fa
+  Freed heap region:       fd
+  Stack left redzone:      f1
+  Stack mid redzone:       f2
+  Stack right redzone:     f3
+  Stack after return:      f5
+  Stack use after scope:   f8
+  Global redzone:          f9
+  Global init order:       f6
+  Poisoned by user:        f7
+  Container overflow:      fc
+  Array cookie:            ac
+  Intra object redzone:    bb
+  ASan internal:           fe
+  Left alloca redzone:     ca
+  Right alloca redzone:    cb
+==58979==ABORTING
+error: test failed, to rerun pass `-p rvp9-core --lib`
+
+Caused by:
+  process didn't exit successfully: `/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/.scratch/asan-target/aarch64-apple-darwin/debug/deps/rvp9_core-2d881a3939735aba --test-threads=1` (signal: 6, SIGABRT: process abort signal)

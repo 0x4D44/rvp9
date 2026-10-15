@@ -1,0 +1,18 @@
+﻿candidate=1a84f60a24e8d82e8e6454743fbb80521280df0e
+task_worktree=D:/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi
+tracked_status=clean; toolchain=rustc/cargo 1.95.0 x86_64-pc-windows-msvc
+fmt=PASS cargo +1.95.0 fmt --all -- --check
+harness_build=PASS cargo +1.95.0 build --release --locked -p rvp9-harness --bin conformance
+official_vectors=native-1,native-2,scalar-1,scalar-2 all PASS 4816/4816, 0 mismatched, 0 skipped
+limited_cross_decoder=PASS synthetic 8-frame fixture; RVP9 decoder/vpxdec/ffmpeg byte-exact
+reverse24=PASS 24/24; independent check: 48 outputs each 147456 bytes and 24 paired hashes equal
+alpha_encoder=PASS 32/32 unique rows, default 60 frames; exact candidate in qualification manifest
+alpha_source_sha256=Tree 81166517a3054c789923535b5da23fbbb9bbd7fd4c28dac83918ac351e121e74
+alpha_source_sha256=Ducks 0e09aa923ce72e2f6d1c978c3c1cc8dd9588d2ede819081f040213e361970efc
+alpha_source_sha256=Town 0fbc2ec0c552ad693528b2e49409c7449880b9230055a7696346473d1aaf4123
+libvpx=12f3a2ac603e8f10742105519e0cd03c3b8f71dd; vpxenc=88ba702de16af47327490a7d016002fd05169e074c6c6657b9e9ff7a8d4a135d; vpxdec=91eb8ab65f62f1d63d750878b20b6b75a2882f75814e623ab54acf22b9ad02b6
+fetch-corpus.sh fetched required three clips with matching hashes; unused Parkrun URL returned HTTP 404
+Git Bash compatibility used inline process-local shasum/stat adapters; repo scripts unchanged
+primary_alpha=.scratch/windows-release-readiness/alpha-encoder-verified/qualification.txt
+primary_reverse24=.scratch/windows-release-readiness/reverse24-final/qualification.txt
+logs_and_manifests=.scratch/windows-release-readiness/

@@ -1489,25 +1489,23 @@ same bitrate — but that's by design (different operating point).
 with `lag_in_frames=4` and a few hundred ms of buffered latency is
 ever added. Decision: D-13.
 
-### 2026-05-16 — EXT_RATECTRL plug-in interface always available
-**Where:** `rvp9-encoder::ratectrl::ext::ExtRateControl` trait,
-always-on, no Cargo feature gate. libvpx counterpart:
+### 2026-05-16 — EXT_RATECTRL plug-in interface planned, not implemented
+**Where:** the proposed `ExtRateControl` trait has no implementation in the
+current Rust crates (verified 2026-10-15). libvpx counterpart:
 `vp9/encoder/vp9_ext_ratectrl.c` behind `CONFIG_RATE_CTRL`.
 **What libvpx does:** EXT_RATECTRL is a build-time configurable
 feature (`CONFIG_RATE_CTRL=1`) used primarily by libwebrtc. Default
 libvpx builds ship without it.
-**What rvp9 does:** ships the trait surface unconditionally. The
-default `ExtRateControl` impl is a no-op (delegate to the built-in
-RC); consumers (libwebrtc) implement the trait for custom control.
-**Why:** libwebrtc integration is a v1 success criterion (PLAN.md D3).
-Shipping the trait always-on means the API surface doesn't
-re-stabilise post-v1.
-**Byte-parity impact:** none when the default no-op impl is used —
-the built-in RC runs unchanged. Custom impls produce intentionally
-different bitstreams.
-**Compression-efficiency impact:** none with default impl.
-**Future plan:** stable trait API by v1 release; expand callback set
-in v1.x non-breakingly. Decision: R-06.
+**What rvp9 does:** uses built-in rate control. The earlier text described
+design intent as shipped behavior; no trait or default implementation exists.
+**Why:** external rate control remains a roadmap requirement, not an accepted
+implementation. An explicit release-boundary decision is required before
+deferring that requirement or implementing it in a separate task.
+**Byte-parity impact:** no external callback path exists to compare. Matched
+built-in rate-control configurations retain their own parity evidence.
+**Compression-efficiency impact:** no claim for external rate control.
+**Future plan:** resolve the final-release boundary with Arthur; do not claim
+libwebrtc external-rate-control integration is available. Design reference: R-06.
 
 ### 2026-05-16 — Trellis-quantization (`vp9_optimize_b`) not ported
 **Where:** `rvp9-encoder::quant` ships no trellis-quant path. libvpx

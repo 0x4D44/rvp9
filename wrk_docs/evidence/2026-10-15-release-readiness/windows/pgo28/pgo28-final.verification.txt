@@ -1,0 +1,65 @@
+rvp9 native Windows PGO independent verification
+candidate_sha=1a84f60a24e8d82e8e6454743fbb80521280df0e
+tracked_status=clean
+build_script_sha256=2d335a8b02c41a3dc370238add4b894d2f9d27900ee9e657dcc3b9e7ba2d54e5
+manifest_sha256=5774ceb2b1c31bb263199a20b0f2414d2a3910209414bf798a4f5434a8986685
+binary_sha256=7041b038768f407d2251bc535dbd3cb9ae2fdab03675aa7bcbfb7b9a85a750cf
+binary_bytes=2489344
+profile_sha256=1e7e0e498d4ee98c414043d46d006e4e561e0280f37499c9ab503895f2083607
+profile_bytes=641320
+raw_profile_count=31
+binary_help_exit=0
+binary_help_stdout_sha256=e2f3cee9f241bae4a9811c206f529b473afbec79e2d6108fa0ab5f4930f6a916
+llvm_profdata_show:
+Instrumentation level: IR  entry_first = 0  instrument_loop_entries = 0
+Total functions: 2104
+Maximum function count: 10245657600
+Maximum internal block count: 10245657600
+Total number of blocks: 31256
+Total count: 108773902649
+manifest:
+rvp9 encoder PGO training manifest
+git_commit=1a84f60a24e8d82e8e6454743fbb80521280df0e
+git_describe=1a84f60a2
+host_triple=x86_64-pc-windows-msvc
+rustc=rustc 1.95.0 (59807616e 2026-04-14)
+cargo=cargo 1.95.0 (f2d3ce0bd 2026-03-21)
+llvm_profdata=LLVM (http://llvm.org/):
+ffmpeg=ffmpeg version 8.1.1-full_build-www.gyan.dev Copyright (c) 2000-2026 the FFmpeg developers
+frames_per_row=60
+training_rows=28
+rustflags=-Ctarget-cpu=native -Cprofile-use=<generated-profdata>
+training_plan_begin
+1080-in-tree-cpu6|1080-in-tree|6|2500|vbr|
+1080-ducks-cpu6|1080-ducks|6|2500|vbr|
+1080-old-town-cpu6|1080-old-town|6|2500|vbr|
+1080-in-tree-cpu7|1080-in-tree|7|2500|vbr|
+1080-ducks-cpu7|1080-ducks|7|2500|vbr|
+1080-old-town-cpu7|1080-old-town|7|2500|vbr|
+1080-in-tree-cpu8|1080-in-tree|8|2500|vbr|
+1080-ducks-cpu8|1080-ducks|8|2500|vbr|
+1080-old-town-cpu8|1080-old-town|8|2500|vbr|
+720-in-tree-cpu7|720-in-tree|7|1500|vbr|
+720-ducks-cpu7|720-ducks|7|1500|vbr|
+720-old-town-cpu7|720-old-town|7|1500|vbr|
+1080-in-tree-cbr-aq3|1080-in-tree|7|2500|cbr|--aq-mode=3
+1080-ducks-cbr-aq3|1080-ducks|7|2500|cbr|--aq-mode=3
+1080-old-town-cbr-aq3|1080-old-town|7|2500|cbr|--aq-mode=3
+1080-in-tree-denoise|1080-in-tree|7|2500|vbr|--noise-sensitivity=1
+1080-ducks-denoise|1080-ducks|7|2500|vbr|--noise-sensitivity=1
+1080-old-town-denoise|1080-old-town|7|2500|vbr|--noise-sensitivity=1
+1080-old-town-low-rate|1080-old-town|7|500|vbr|
+1080-old-town-high-rate|1080-old-town|7|6000|vbr|
+1080-old-town-temporal2|1080-old-town|7|2500|vbr|--temporal-layers=2
+1080-old-town-temporal3|1080-old-town|7|2500|vbr|--temporal-layers=3
+1080-old-town-spatial2-cpu6|1080-old-town|6|2835|cbr|--spatial-layers=2 --inter-layer-pred=0
+1080-old-town-spatial3-cpu6|1080-old-town|6|2835|cbr|--spatial-layers=3 --inter-layer-pred=0
+1080-old-town-spatial2-cpu7|1080-old-town|7|2835|cbr|--spatial-layers=2 --inter-layer-pred=0
+1080-old-town-spatial3-cpu7|1080-old-town|7|2835|cbr|--spatial-layers=3 --inter-layer-pred=0
+1080-old-town-spatial2-cpu8|1080-old-town|8|2835|cbr|--spatial-layers=2 --inter-layer-pred=0
+1080-old-town-spatial3-cpu8|1080-old-town|8|2835|cbr|--spatial-layers=3 --inter-layer-pred=0
+training_plan_end
+profdata=/d/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi/.scratch/windows-release-readiness/pgo28-final/runs/20261015T225747Z-680/encoder.profdata
+raw_profile_count=31
+optimized_binary=/d/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi/.scratch/windows-release-readiness/pgo28-final/optimized/release/rvp9enc.exe
+optimized_binary_sha256=7041b038768f407d2251bc535dbd3cb9ae2fdab03675aa7bcbfb7b9a85a750cf

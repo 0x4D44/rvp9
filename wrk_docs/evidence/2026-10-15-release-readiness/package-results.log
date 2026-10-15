@@ -1,0 +1,30 @@
+rvp9-core package exit=0
+rvp9-io package exit=0
+rvp9-decoder package exit=0
+rvp9-encoder package exit=0
+decoder extracted panic_safety exit=101
+decoder extracted panic_safety repeat exit=101
+rvp9-cli package exit=0
+decoder standalone panic_safety attempt=1 exit=101
+decoder standalone panic_safety attempt=2 exit=101
+encoder standalone quality_gate attempt=1 exit=101
+encoder standalone quality_gate attempt=2 exit=101
+rvp9-core standalone build exit=0
+rvp9-io standalone build exit=0
+rvp9-decoder standalone build exit=0
+rvp9-encoder standalone build exit=0
+rvp9-core standalone test exit=0
+rvp9-cli standalone build exit=0
+rvp9-io standalone test exit=0
+rvp9-cli standalone test exit=101
+cli standalone fixture repeat exit=101
+cli standalone cli_roundtrip exit=0
+cli standalone command_helper exit=0
+rvp9-decoder standalone lib-test exit=0
+rvp9-encoder standalone lib-test exit=101
+shipped-path diff exit=0
+registered scratch cleanup exit=0
+cli unchanged archive full tests canonical fixture exit=101
+cli unchanged archive full tests canonical fixture fresh target exit=0
+cli fixture scratch cleanup exit=0
+final shipped-path diff exit=0

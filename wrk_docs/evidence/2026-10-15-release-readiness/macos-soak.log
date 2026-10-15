@@ -1,0 +1,19 @@
+=== rvp9 soak harness (D3) ===
+duration_secs    : 60
+iterations       : 0
+frames_per_iter  : 30
+report_every_secs: 10
+cross_decode     : true
+vpxdec_path      : /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/build/libvpx/vpxdec
+sources:
+  - synthetic-gradient(256x256)
+
+[start] wall=0.0s iter=0 rss=0.0 MiB
+[report] wall=   10.3s iter=    17 avg=  603.2 ms/iter frames=    510 (  49.7 fps) br=   36.9 kbps last_iter=  598.4 ms rss=0.0 MiB errors=0 cksum=ad9c644ee41e65e9
+[report] wall=   20.3s iter=    36 avg=  562.9 ms/iter frames=   1080 (  53.3 fps) br=   39.5 kbps last_iter=  538.1 ms rss=0.0 MiB errors=0 cksum=0000000000000000
+[report] wall=   30.7s iter=    56 avg=  548.3 ms/iter frames=   1680 (  54.7 fps) br=   40.6 kbps last_iter=  503.6 ms rss=0.0 MiB errors=0 cksum=0000000000000000
+[report] wall=   41.0s iter=    77 avg=  532.2 ms/iter frames=   2310 (  56.4 fps) br=   41.8 kbps last_iter=  461.9 ms rss=0.0 MiB errors=0 cksum=ad9c644ee41e65e9
+[report] wall=   51.4s iter=   100 avg=  514.1 ms/iter frames=   3000 (  58.4 fps) br=   43.3 kbps last_iter=  452.4 ms rss=0.0 MiB errors=0 cksum=0000000000000000
+
+=== soak complete ===
+[report] wall=   60.4s iter=   120 avg=  503.1 ms/iter frames=   3600 (  59.6 fps) br=   44.2 kbps last_iter=    0.0 ms rss=0.0 MiB errors=0 cksum=0000000000000000

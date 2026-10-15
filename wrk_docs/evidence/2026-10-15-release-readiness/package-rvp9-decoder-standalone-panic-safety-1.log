@@ -1,0 +1,15 @@
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-package-audit-284b9a1a/rvp9-decoder-0.2.0-alpha.4)
+error[E0432]: unresolved import `rvp9_encoder`
+  --> tests/panic_safety.rs:29:5
+   |
+29 | use rvp9_encoder::{Config, Encoder};
+   |     ^^^^^^^^^^^^ use of unresolved module or unlinked crate `rvp9_encoder`
+   |
+help: there is a crate or module with a similar name
+   |
+29 - use rvp9_encoder::{Config, Encoder};
+29 + use rvp9_decoder::{Config, Encoder};
+   |
+
+For more information about this error, try `rustc --explain E0432`.
+error: could not compile `rvp9-decoder` (test "panic_safety") due to 1 previous error

@@ -1,0 +1,39 @@
+{
+  "native-1": {
+    "displayed_frames": 4816,
+    "exit": 0,
+    "mismatches": 0,
+    "skips": 0
+  },
+  "native-2": {
+    "displayed_frames": 4816,
+    "exit": 0,
+    "mismatches": 0,
+    "skips": 0
+  },
+  "scalar-1": {
+    "displayed_frames": 4816,
+    "exit": 0,
+    "mismatches": 0,
+    "skips": 0
+  },
+  "scalar-2": {
+    "displayed_frames": 4816,
+    "exit": 0,
+    "mismatches": 0,
+    "skips": 0
+  },
+  "alpha32": {
+    "unique_pass_rows": 32,
+    "results_end": true,
+    "candidate": "1a84f60a24e8d82e8e6454743fbb80521280df0e"
+  },
+  "reverse24": {
+    "unique_pass_rows": 24,
+    "results_end": true,
+    "candidate": "1a84f60a24e8d82e8e6454743fbb80521280df0e",
+    "independent_output_files": 48
+  },
+  "export_archive_sha256": "422e353526dcfd49c6bfc10f3caf8138d881b84325ddd36b5fedc8b75512dc9f",
+  "runtime_adapters": "Explicit process-local Git Bash shasum/stat functions; invalid unadapted reverse run excluded."
+}

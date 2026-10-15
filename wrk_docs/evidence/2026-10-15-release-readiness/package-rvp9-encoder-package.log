@@ -1,0 +1,6 @@
+   Packaging rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-encoder)
+    Updating crates.io index
+    Packaged 113 files, 3.8MiB (920.4KiB compressed)
+   Verifying rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-encoder)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/.scratch/package-target/package/rvp9-encoder-0.2.0-alpha.4)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 28.22s

@@ -1,0 +1,294 @@
+   Compiling rvp9-core v0.2.0-alpha.4 (D:\worktrees\rvp9-2\20261015-TSK-HUM-final-release-native-correctness-qualifi\crates\rvp9-core)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (D:\worktrees\rvp9-2\20261015-TSK-HUM-final-release-native-correctness-qualifi\crates\rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (D:\worktrees\rvp9-2\20261015-TSK-HUM-final-release-native-correctness-qualifi\crates\rvp9-io)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (D:\worktrees\rvp9-2\20261015-TSK-HUM-final-release-native-correctness-qualifi\crates\rvp9-decoder)
+   Compiling rvp9-cli v0.2.0-alpha.4 (D:\worktrees\rvp9-2\20261015-TSK-HUM-final-release-native-correctness-qualifi\crates\rvp9-cli)
+    Finished `release` profile [optimized + debuginfo] target(s) in 20.01s
+scripts/qualify-reference-decoder.sh: line 219: [:   File: "/d/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi/.scratch/windows-release-readiness/reverse24/cpu6-cbr-baseline.rvp9.i420"
+    ID: 102ff43b00000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976750079  Free: 561055980  Available: 561055980
+Inodes: Total: 18446744073709551615 Free: -1
+147456: integer expression expected
+scripts/qualify-reference-decoder.sh: line 219: [:   File: "/d/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi/.scratch/windows-release-readiness/reverse24/cpu6-cbr-baseline.vpx.i420"
+    ID: 102ff43b00000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976750079  Free: 561055980  Available: 561055980
+Inodes: Total: 18446744073709551615 Free: -1
+147456: integer expression expected
+scripts/qualify-reference-decoder.sh: line 219: [:   File: "/d/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi/.scratch/windows-release-readiness/reverse24/cpu6-cbr-aq3.rvp9.i420"
+    ID: 102ff43b00000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976750079  Free: 561055904  Available: 561055904
+Inodes: Total: 18446744073709551615 Free: -1
+147456: integer expression expected
+scripts/qualify-reference-decoder.sh: line 219: [:   File: "/d/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi/.scratch/windows-release-readiness/reverse24/cpu6-cbr-aq3.vpx.i420"
+    ID: 102ff43b00000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976750079  Free: 561055904  Available: 561055904
+Inodes: Total: 18446744073709551615 Free: -1
+147456: integer expression expected
+scripts/qualify-reference-decoder.sh: line 219: [:   File: "/d/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi/.scratch/windows-release-readiness/reverse24/cpu6-cbr-denoiser.rvp9.i420"
+    ID: 102ff43b00000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976750079  Free: 561055830  Available: 561055830
+Inodes: Total: 18446744073709551615 Free: -1
+147456: integer expression expected
+scripts/qualify-reference-decoder.sh: line 219: [:   File: "/d/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi/.scratch/windows-release-readiness/reverse24/cpu6-cbr-denoiser.vpx.i420"
+    ID: 102ff43b00000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976750079  Free: 561055830  Available: 561055830
+Inodes: Total: 18446744073709551615 Free: -1
+147456: integer expression expected
+scripts/qualify-reference-decoder.sh: line 219: [:   File: "/d/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi/.scratch/windows-release-readiness/reverse24/cpu6-cbr-combined.rvp9.i420"
+    ID: 102ff43b00000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976750079  Free: 561055755  Available: 561055755
+Inodes: Total: 18446744073709551615 Free: -1
+147456: integer expression expected
+scripts/qualify-reference-decoder.sh: line 219: [:   File: "/d/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi/.scratch/windows-release-readiness/reverse24/cpu6-cbr-combined.vpx.i420"
+    ID: 102ff43b00000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976750079  Free: 561055755  Available: 561055755
+Inodes: Total: 18446744073709551615 Free: -1
+147456: integer expression expected
+scripts/qualify-reference-decoder.sh: line 219: [:   File: "/d/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi/.scratch/windows-release-readiness/reverse24/cpu6-vbr-baseline.rvp9.i420"
+    ID: 102ff43b00000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976750079  Free: 561055678  Available: 561055678
+Inodes: Total: 18446744073709551615 Free: -1
+147456: integer expression expected
+scripts/qualify-reference-decoder.sh: line 219: [:   File: "/d/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi/.scratch/windows-release-readiness/reverse24/cpu6-vbr-baseline.vpx.i420"
+    ID: 102ff43b00000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976750079  Free: 561055678  Available: 561055678
+Inodes: Total: 18446744073709551615 Free: -1
+147456: integer expression expected
+scripts/qualify-reference-decoder.sh: line 219: [:   File: "/d/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi/.scratch/windows-release-readiness/reverse24/cpu6-vbr-aq3.rvp9.i420"
+    ID: 102ff43b00000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976750079  Free: 561055602  Available: 561055602
+Inodes: Total: 18446744073709551615 Free: -1
+147456: integer expression expected
+scripts/qualify-reference-decoder.sh: line 219: [:   File: "/d/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi/.scratch/windows-release-readiness/reverse24/cpu6-vbr-aq3.vpx.i420"
+    ID: 102ff43b00000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976750079  Free: 561055602  Available: 561055602
+Inodes: Total: 18446744073709551615 Free: -1
+147456: integer expression expected
+scripts/qualify-reference-decoder.sh: line 219: [:   File: "/d/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi/.scratch/windows-release-readiness/reverse24/cpu6-vbr-denoiser.rvp9.i420"
+    ID: 102ff43b00000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976750079  Free: 561055526  Available: 561055526
+Inodes: Total: 18446744073709551615 Free: -1
+147456: integer expression expected
+scripts/qualify-reference-decoder.sh: line 219: [:   File: "/d/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi/.scratch/windows-release-readiness/reverse24/cpu6-vbr-denoiser.vpx.i420"
+    ID: 102ff43b00000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976750079  Free: 561055526  Available: 561055526
+Inodes: Total: 18446744073709551615 Free: -1
+147456: integer expression expected
+scripts/qualify-reference-decoder.sh: line 219: [:   File: "/d/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi/.scratch/windows-release-readiness/reverse24/cpu6-vbr-combined.rvp9.i420"
+    ID: 102ff43b00000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976750079  Free: 561055450  Available: 561055450
+Inodes: Total: 18446744073709551615 Free: -1
+147456: integer expression expected
+scripts/qualify-reference-decoder.sh: line 219: [:   File: "/d/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi/.scratch/windows-release-readiness/reverse24/cpu6-vbr-combined.vpx.i420"
+    ID: 102ff43b00000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976750079  Free: 561055450  Available: 561055450
+Inodes: Total: 18446744073709551615 Free: -1
+147456: integer expression expected
+scripts/qualify-reference-decoder.sh: line 219: [:   File: "/d/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi/.scratch/windows-release-readiness/reverse24/cpu7-cbr-baseline.rvp9.i420"
+    ID: 102ff43b00000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976750079  Free: 561055374  Available: 561055374
+Inodes: Total: 18446744073709551615 Free: -1
+147456: integer expression expected
+scripts/qualify-reference-decoder.sh: line 219: [:   File: "/d/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi/.scratch/windows-release-readiness/reverse24/cpu7-cbr-baseline.vpx.i420"
+    ID: 102ff43b00000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976750079  Free: 561055374  Available: 561055374
+Inodes: Total: 18446744073709551615 Free: -1
+147456: integer expression expected
+scripts/qualify-reference-decoder.sh: line 219: [:   File: "/d/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi/.scratch/windows-release-readiness/reverse24/cpu7-cbr-aq3.rvp9.i420"
+    ID: 102ff43b00000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976750079  Free: 561055297  Available: 561055297
+Inodes: Total: 18446744073709551615 Free: -1
+147456: integer expression expected
+scripts/qualify-reference-decoder.sh: line 219: [:   File: "/d/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi/.scratch/windows-release-readiness/reverse24/cpu7-cbr-aq3.vpx.i420"
+    ID: 102ff43b00000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976750079  Free: 561055297  Available: 561055297
+Inodes: Total: 18446744073709551615 Free: -1
+147456: integer expression expected
+scripts/qualify-reference-decoder.sh: line 219: [:   File: "/d/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi/.scratch/windows-release-readiness/reverse24/cpu7-cbr-denoiser.rvp9.i420"
+    ID: 102ff43b00000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976750079  Free: 561055222  Available: 561055222
+Inodes: Total: 18446744073709551615 Free: -1
+147456: integer expression expected
+scripts/qualify-reference-decoder.sh: line 219: [:   File: "/d/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi/.scratch/windows-release-readiness/reverse24/cpu7-cbr-denoiser.vpx.i420"
+    ID: 102ff43b00000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976750079  Free: 561055222  Available: 561055222
+Inodes: Total: 18446744073709551615 Free: -1
+147456: integer expression expected
+scripts/qualify-reference-decoder.sh: line 219: [:   File: "/d/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi/.scratch/windows-release-readiness/reverse24/cpu7-cbr-combined.rvp9.i420"
+    ID: 102ff43b00000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976750079  Free: 561055147  Available: 561055147
+Inodes: Total: 18446744073709551615 Free: -1
+147456: integer expression expected
+scripts/qualify-reference-decoder.sh: line 219: [:   File: "/d/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi/.scratch/windows-release-readiness/reverse24/cpu7-cbr-combined.vpx.i420"
+    ID: 102ff43b00000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976750079  Free: 561055147  Available: 561055147
+Inodes: Total: 18446744073709551615 Free: -1
+147456: integer expression expected
+scripts/qualify-reference-decoder.sh: line 219: [:   File: "/d/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi/.scratch/windows-release-readiness/reverse24/cpu7-vbr-baseline.rvp9.i420"
+    ID: 102ff43b00000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976750079  Free: 561055071  Available: 561055071
+Inodes: Total: 18446744073709551615 Free: -1
+147456: integer expression expected
+scripts/qualify-reference-decoder.sh: line 219: [:   File: "/d/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi/.scratch/windows-release-readiness/reverse24/cpu7-vbr-baseline.vpx.i420"
+    ID: 102ff43b00000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976750079  Free: 561055071  Available: 561055071
+Inodes: Total: 18446744073709551615 Free: -1
+147456: integer expression expected
+scripts/qualify-reference-decoder.sh: line 219: [:   File: "/d/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi/.scratch/windows-release-readiness/reverse24/cpu7-vbr-aq3.rvp9.i420"
+    ID: 102ff43b00000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976750079  Free: 561054995  Available: 561054995
+Inodes: Total: 18446744073709551615 Free: -1
+147456: integer expression expected
+scripts/qualify-reference-decoder.sh: line 219: [:   File: "/d/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi/.scratch/windows-release-readiness/reverse24/cpu7-vbr-aq3.vpx.i420"
+    ID: 102ff43b00000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976750079  Free: 561054995  Available: 561054995
+Inodes: Total: 18446744073709551615 Free: -1
+147456: integer expression expected
+scripts/qualify-reference-decoder.sh: line 219: [:   File: "/d/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi/.scratch/windows-release-readiness/reverse24/cpu7-vbr-denoiser.rvp9.i420"
+    ID: 102ff43b00000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976750079  Free: 561054918  Available: 561054918
+Inodes: Total: 18446744073709551615 Free: -1
+147456: integer expression expected
+scripts/qualify-reference-decoder.sh: line 219: [:   File: "/d/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi/.scratch/windows-release-readiness/reverse24/cpu7-vbr-denoiser.vpx.i420"
+    ID: 102ff43b00000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976750079  Free: 561054918  Available: 561054918
+Inodes: Total: 18446744073709551615 Free: -1
+147456: integer expression expected
+scripts/qualify-reference-decoder.sh: line 219: [:   File: "/d/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi/.scratch/windows-release-readiness/reverse24/cpu7-vbr-combined.rvp9.i420"
+    ID: 102ff43b00000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976750079  Free: 561054842  Available: 561054842
+Inodes: Total: 18446744073709551615 Free: -1
+147456: integer expression expected
+scripts/qualify-reference-decoder.sh: line 219: [:   File: "/d/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi/.scratch/windows-release-readiness/reverse24/cpu7-vbr-combined.vpx.i420"
+    ID: 102ff43b00000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976750079  Free: 561054842  Available: 561054842
+Inodes: Total: 18446744073709551615 Free: -1
+147456: integer expression expected
+scripts/qualify-reference-decoder.sh: line 219: [:   File: "/d/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi/.scratch/windows-release-readiness/reverse24/cpu8-cbr-baseline.rvp9.i420"
+    ID: 102ff43b00000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976750079  Free: 561054767  Available: 561054767
+Inodes: Total: 18446744073709551615 Free: -1
+147456: integer expression expected
+scripts/qualify-reference-decoder.sh: line 219: [:   File: "/d/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi/.scratch/windows-release-readiness/reverse24/cpu8-cbr-baseline.vpx.i420"
+    ID: 102ff43b00000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976750079  Free: 561054763  Available: 561054763
+Inodes: Total: 18446744073709551615 Free: -1
+147456: integer expression expected
+scripts/qualify-reference-decoder.sh: line 219: [:   File: "/d/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi/.scratch/windows-release-readiness/reverse24/cpu8-cbr-aq3.rvp9.i420"
+    ID: 102ff43b00000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976750079  Free: 561054687  Available: 561054687
+Inodes: Total: 18446744073709551615 Free: -1
+147456: integer expression expected
+scripts/qualify-reference-decoder.sh: line 219: [:   File: "/d/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi/.scratch/windows-release-readiness/reverse24/cpu8-cbr-aq3.vpx.i420"
+    ID: 102ff43b00000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976750079  Free: 561054687  Available: 561054687
+Inodes: Total: 18446744073709551615 Free: -1
+147456: integer expression expected
+scripts/qualify-reference-decoder.sh: line 219: [:   File: "/d/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi/.scratch/windows-release-readiness/reverse24/cpu8-cbr-denoiser.rvp9.i420"
+    ID: 102ff43b00000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976750079  Free: 561054612  Available: 561054612
+Inodes: Total: 18446744073709551615 Free: -1
+147456: integer expression expected
+scripts/qualify-reference-decoder.sh: line 219: [:   File: "/d/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi/.scratch/windows-release-readiness/reverse24/cpu8-cbr-denoiser.vpx.i420"
+    ID: 102ff43b00000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976750079  Free: 561054612  Available: 561054612
+Inodes: Total: 18446744073709551615 Free: -1
+147456: integer expression expected
+scripts/qualify-reference-decoder.sh: line 219: [:   File: "/d/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi/.scratch/windows-release-readiness/reverse24/cpu8-cbr-combined.rvp9.i420"
+    ID: 102ff43b00000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976750079  Free: 561054536  Available: 561054536
+Inodes: Total: 18446744073709551615 Free: -1
+147456: integer expression expected
+scripts/qualify-reference-decoder.sh: line 219: [:   File: "/d/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi/.scratch/windows-release-readiness/reverse24/cpu8-cbr-combined.vpx.i420"
+    ID: 102ff43b00000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976750079  Free: 561054536  Available: 561054536
+Inodes: Total: 18446744073709551615 Free: -1
+147456: integer expression expected
+scripts/qualify-reference-decoder.sh: line 219: [:   File: "/d/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi/.scratch/windows-release-readiness/reverse24/cpu8-vbr-baseline.rvp9.i420"
+    ID: 102ff43b00000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976750079  Free: 561054458  Available: 561054458
+Inodes: Total: 18446744073709551615 Free: -1
+147456: integer expression expected
+scripts/qualify-reference-decoder.sh: line 219: [:   File: "/d/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi/.scratch/windows-release-readiness/reverse24/cpu8-vbr-baseline.vpx.i420"
+    ID: 102ff43b00000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976750079  Free: 561054458  Available: 561054458
+Inodes: Total: 18446744073709551615 Free: -1
+147456: integer expression expected
+scripts/qualify-reference-decoder.sh: line 219: [:   File: "/d/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi/.scratch/windows-release-readiness/reverse24/cpu8-vbr-aq3.rvp9.i420"
+    ID: 102ff43b00000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976750079  Free: 561054381  Available: 561054381
+Inodes: Total: 18446744073709551615 Free: -1
+147456: integer expression expected
+scripts/qualify-reference-decoder.sh: line 219: [:   File: "/d/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi/.scratch/windows-release-readiness/reverse24/cpu8-vbr-aq3.vpx.i420"
+    ID: 102ff43b00000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976750079  Free: 561054381  Available: 561054381
+Inodes: Total: 18446744073709551615 Free: -1
+147456: integer expression expected
+scripts/qualify-reference-decoder.sh: line 219: [:   File: "/d/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi/.scratch/windows-release-readiness/reverse24/cpu8-vbr-denoiser.rvp9.i420"
+    ID: 102ff43b00000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976750079  Free: 561054304  Available: 561054304
+Inodes: Total: 18446744073709551615 Free: -1
+147456: integer expression expected
+scripts/qualify-reference-decoder.sh: line 219: [:   File: "/d/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi/.scratch/windows-release-readiness/reverse24/cpu8-vbr-denoiser.vpx.i420"
+    ID: 102ff43b00000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976750079  Free: 561054304  Available: 561054304
+Inodes: Total: 18446744073709551615 Free: -1
+147456: integer expression expected
+scripts/qualify-reference-decoder.sh: line 219: [:   File: "/d/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi/.scratch/windows-release-readiness/reverse24/cpu8-vbr-combined.rvp9.i420"
+    ID: 102ff43b00000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976750079  Free: 561054227  Available: 561054227
+Inodes: Total: 18446744073709551615 Free: -1
+147456: integer expression expected
+scripts/qualify-reference-decoder.sh: line 219: [:   File: "/d/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi/.scratch/windows-release-readiness/reverse24/cpu8-vbr-combined.vpx.i420"
+    ID: 102ff43b00000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976750079  Free: 561054227  Available: 561054227
+Inodes: Total: 18446744073709551615 Free: -1
+147456: integer expression expected

@@ -1,0 +1,21 @@
+bugs/RVP9-BUG-FLU-00027.md:26:On AArch64 macOS, MIRIFLAGS=-Zmiri-disable-isolation cargo miri test --package rvp9-core --lib loopfilter::apply::tests::empty_mask_grid_no_op reports Undefined Behavior at SharedFrame::y_slice: the Y pointer tag was invalidated by a later unique retag in Yv12Buffer::u_plane_mut. Expected: the empty-mask loop-filter path completes without an aliasing violation. Actual: Miri aborts while reconstructing the Y slice.
+bugs/RVP9-BUG-KILN-00024.md:51:`profile1_tile2_parallel_scratch_decodes_bit_exact` both observed passing.
+bugs/RVP9-BUG-KILN-00057.md:47:`missing_explicit_fixture_exits_nonzero` and `csv_append_failure_exits_nonzero` both observed
+bugs/RVP9-BUG-FLUX-00018.md:31:packaged attribution files, conformance CLI, and live harness diagnostics at
+bugs/RVP9-BUG-FLUX-00018.md:47:An independent Luna-max packaging auditor verified the fix on current
+bugs/RVP9-BUG-KILN-00031.md:6:- **Area:** decoder/profile1 segmentation
+bugs/RVP9-BUG-KILN-00031.md:25:`crates/rvp9-harness/tests/profile1_decode.rs:337` documents a real decoder bug in the Profile-1 AQ2 path: cyclic-refresh segmentation activates segment-id-based quantization and the non-420 decode path produces incorrect output. The comments record 9/12 mismatches on `foreman_c444_aq2.ivf` and 8/12 mismatches on `testsrc_c444_720p_aq2.ivf`.
+bugs/RVP9-BUG-KILN-00031.md:27:Both follow-up tests remain ignored at `crates/rvp9-harness/tests/profile1_decode.rs:349` and `crates/rvp9-harness/tests/profile1_decode.rs:360`, and they still assert `mismatched > 0` rather than gating the expected zero-mismatch behavior.
+bugs/RVP9-BUG-KILN-00031.md:50:`profile1_444_aq2_follow_up` and `profile1_720p_aq2_follow_up` had their `#[ignore]` REMOVED and
+bugs/RVP9-BUG-KILN-00031.md:51:now assert `mismatched == 0`; both observed passing, as is `profile1_vectors_decode_bit_exact`,
+bugs/RVP9-BUG-KILN-00054.md:48:`dec_i420_and_yv12_reject_profile1_444` observed passing. It spawns the real
+bugs/RVP9-BUG-KILN-00054.md:50:`tests/corpus/profile1/foreman_c444_kfonly.ivf` (confirmed present, 288 KB), so it is not
+bugs/RVP9-BUG-KILN-00007.md:21:- **State history:** 2026-06-19 Opened by Claude from the track2 decoder-fix harvest review pass. 2026-06-21 Fixed by Claude (task/fix-kfonly-tests): un-ignored the three kfonly follow-up tests in `crates/rvp9-harness/tests/profile1_decode.rs`, flipped the inverted `assert!(mismatched > 0)` self-check to `assert_eq!(mismatched, 0)`, renamed them to `profile1_{444,422,440}_kfonly_decodes_bit_exact`, and rewrote the stale doc comment. They now decode bit-exact and run by default (verified mismatched==0 first). Test-only; no version bump. Awaiting two-eyes verification → Closed. -> 2026-06-23 Closed by Codex (task/20260623-TSK-HUM-verify-fixed-bugs): independently verified the original observation is resolved. The three kfonly Profile-1 regression tests are active, not ignored, and `$null | mdtimeout 300 cargo test -p rvp9-harness --test profile1_decode --release kfonly -- --nocapture` passed all 3 tests with `mismatched == 0`.
+bugs/RVP9-BUG-KILN-00007.md:25:`crates/rvp9-harness/tests/profile1_decode.rs:313-345` keeps
+bugs/RVP9-BUG-KILN-00007.md:26:`profile1_444_kfonly_follow_up`, `profile1_422_kfonly_follow_up`, and
+bugs/RVP9-BUG-KILN-00007.md:27:`profile1_440_kfonly_follow_up` `#[ignore]d`. Each carries the comment
+bugs/RVP9-BUG-KILN-00007.md:36:(`cargo test -p rvp9-harness --test profile1_decode --release -- --ignored kfonly`)
+bugs/RVP9-BUG-KILN-00007.md:47:exercised end-to-end on every default run by the keyframe-0 of `foreman_c444.ivf`
+bugs/RVP9-BUG-KILN-00007.md:58:file (it added the SIG4 fix-lock `profile1_422_440_inter_decodes_bit_exact_sig4`),
+bugs/RVP9-BUG-KILN-00007.md:70:fixed by SIG1+SIG2. Only the `profile1_444_aq2_follow_up` / `profile1_720p_aq2_follow_up`
+bugs/RVP9-BUG-KILN-00026.md:51:canary is `profile1_vectors_decode_bit_exact` (real checked-in streams through both tile paths),

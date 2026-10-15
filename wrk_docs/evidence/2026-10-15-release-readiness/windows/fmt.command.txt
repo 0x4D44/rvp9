@@ -1,0 +1,1 @@
+﻿deltic timeout 120 cargo +1.95.0 fmt --all -- --check

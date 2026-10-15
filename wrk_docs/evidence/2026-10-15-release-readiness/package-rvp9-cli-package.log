@@ -1,0 +1,11 @@
+   Packaging rvp9-cli v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-cli)
+    Updating crates.io index
+    Packaged 16 files, 228.7KiB (51.1KiB compressed)
+   Verifying rvp9-cli v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-cli)
+ Downloading crates ...
+  Downloaded rvp9-io v0.2.0-alpha.4
+   Compiling rvp9-decoder v0.2.0-alpha.4
+   Compiling rvp9-io v0.2.0-alpha.4
+   Compiling rvp9-encoder v0.2.0-alpha.4
+   Compiling rvp9-cli v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/.scratch/package-target/package/rvp9-cli-0.2.0-alpha.4)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 44.06s

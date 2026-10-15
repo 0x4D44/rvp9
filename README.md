@@ -10,9 +10,10 @@ livestreaming.
 > the remaining work and [`notes/divergence-ledger.md`](./notes/divergence-ledger.md)
 > for deliberate departures from libvpx.
 
-> **Platform coverage:** Testing and release qualification to date have been
-> performed only on macOS on Apple Silicon (AArch64). RVP9 has not yet been
-> tested or qualified on x86, including x86_64, or on other platforms.
+> **Platform coverage:** Alpha.4 release qualification covers Windows x86-64.
+> Earlier releases were qualified on macOS Apple Silicon (AArch64); the full
+> macOS release matrix was not rerun for alpha.4. See
+> [`RELEASE_NOTES.md`](./RELEASE_NOTES.md) for the evidence and limits.
 
 ## Alpha scope
 
@@ -62,6 +63,9 @@ claim final compression parity across the complete v1 matrix.
   and temporal/spatial SVC; VBR and temporal SVC are experimental.
 
 See [`PLAN.md`](./PLAN.md) §2 for the formal success criteria.
+The [final-release checklist](<wrk_docs/2026.10.15 - STATUS - final release readiness.md>)
+and [local qualification runbook](<wrk_docs/2026.10.15 - RUN - local release qualification.md>)
+separate recorded results from outstanding release gates.
 
 ## Non-goals (v1)
 

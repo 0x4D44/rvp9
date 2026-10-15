@@ -1,0 +1,8 @@
+   Packaging rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-core)
+    Updating crates.io index
+    Packaged 188 files, 6.1MiB (1.3MiB compressed)
+   Verifying rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-core)
+   Compiling crossbeam-utils v0.8.21
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/.scratch/package-target/package/rvp9-core-0.2.0-alpha.4)
+   Compiling crossbeam-channel v0.5.15
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 23.83s

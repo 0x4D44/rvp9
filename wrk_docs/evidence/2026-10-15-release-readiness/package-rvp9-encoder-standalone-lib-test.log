@@ -1,0 +1,100 @@
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-package-audit-284b9a1a/rvp9-encoder-0.2.0-alpha.4)
+error[E0432]: unresolved import `rvp9_decoder`
+    --> src/frame_loop.rs:7967:9
+     |
+7967 |     use rvp9_decoder::{Decoder, ParsedFrame};
+     |         ^^^^^^^^^^^^ use of unresolved module or unlinked crate `rvp9_decoder`
+     |
+help: there is a crate or module with a similar name
+     |
+7967 -     use rvp9_decoder::{Decoder, ParsedFrame};
+7967 +     use rvp9_core::{Decoder, ParsedFrame};
+     |
+
+error[E0433]: cannot find module or crate `rvp9_decoder` in this scope
+     --> src/lib.rs:17003:13
+      |
+17003 |         use rvp9_decoder::reconstruct_inter::{InterBlockInputs, reconstruct_inter_block};
+      |             ^^^^^^^^^^^^ use of unresolved module or unlinked crate `rvp9_decoder`
+      |
+help: there is a crate or module with a similar name
+      |
+17003 -         use rvp9_decoder::reconstruct_inter::{InterBlockInputs, reconstruct_inter_block};
+17003 +         use rvp9_core::reconstruct_inter::{InterBlockInputs, reconstruct_inter_block};
+      |
+
+error[E0432]: unresolved import `rvp9_decoder`
+   --> src/spatial_encoder.rs:643:9
+    |
+643 |     use rvp9_decoder::Decoder;
+    |         ^^^^^^^^^^^^ use of unresolved module or unlinked crate `rvp9_decoder`
+    |
+help: there is a crate or module with a similar name
+    |
+643 -     use rvp9_decoder::Decoder;
+643 +     use rvp9_core::Decoder;
+    |
+
+error[E0432]: unresolved import `rvp9_decoder`
+     --> src/lib.rs:20152:13
+      |
+20152 |         use rvp9_decoder::{Decoder, ParsedFrame};
+      |             ^^^^^^^^^^^^ use of unresolved module or unlinked crate `rvp9_decoder`
+      |
+help: there is a crate or module with a similar name
+      |
+20152 -         use rvp9_decoder::{Decoder, ParsedFrame};
+20152 +         use rvp9_core::{Decoder, ParsedFrame};
+      |
+
+error[E0432]: unresolved import `rvp9_decoder`
+     --> src/lib.rs:20223:13
+      |
+20223 |         use rvp9_decoder::{Decoder, ParsedFrame};
+      |             ^^^^^^^^^^^^ use of unresolved module or unlinked crate `rvp9_decoder`
+      |
+help: there is a crate or module with a similar name
+      |
+20223 -         use rvp9_decoder::{Decoder, ParsedFrame};
+20223 +         use rvp9_core::{Decoder, ParsedFrame};
+      |
+
+error[E0432]: unresolved import `rvp9_decoder`
+     --> src/lib.rs:20299:13
+      |
+20299 |         use rvp9_decoder::{Decoder, ParsedFrame};
+      |             ^^^^^^^^^^^^ use of unresolved module or unlinked crate `rvp9_decoder`
+      |
+help: there is a crate or module with a similar name
+      |
+20299 -         use rvp9_decoder::{Decoder, ParsedFrame};
+20299 +         use rvp9_core::{Decoder, ParsedFrame};
+      |
+
+error[E0432]: unresolved import `rvp9_decoder`
+     --> src/lib.rs:20580:13
+      |
+20580 |         use rvp9_decoder::{Decoder, ParsedFrame};
+      |             ^^^^^^^^^^^^ use of unresolved module or unlinked crate `rvp9_decoder`
+      |
+help: there is a crate or module with a similar name
+      |
+20580 -         use rvp9_decoder::{Decoder, ParsedFrame};
+20580 +         use rvp9_core::{Decoder, ParsedFrame};
+      |
+
+error[E0432]: unresolved import `rvp9_decoder`
+     --> src/lib.rs:20623:13
+      |
+20623 |         use rvp9_decoder::{Decoder, ParsedFrame};
+      |             ^^^^^^^^^^^^ use of unresolved module or unlinked crate `rvp9_decoder`
+      |
+help: there is a crate or module with a similar name
+      |
+20623 -         use rvp9_decoder::{Decoder, ParsedFrame};
+20623 +         use rvp9_core::{Decoder, ParsedFrame};
+      |
+
+Some errors have detailed explanations: E0432, E0433.
+For more information about an error, try `rustc --explain E0432`.
+error: could not compile `rvp9-encoder` (lib test) due to 8 previous errors

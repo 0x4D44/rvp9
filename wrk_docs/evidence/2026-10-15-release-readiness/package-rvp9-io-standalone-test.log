@@ -1,0 +1,140 @@
+   Compiling rvp9-io v0.2.0-alpha.4 (/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-package-audit-284b9a1a/rvp9-io-0.2.0-alpha.4)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.14s
+     Running unittests src/lib.rs (.scratch/package-target/debug/deps/rvp9_io-f4314b28fae5e6be)
+
+running 53 tests
+test container::tests::ivf_rejects_short_header ... ok
+test container::tests::ebml_vint_examples ... ok
+test container::tests::ivf_roundtrip_two_packets ... ok
+test container::tests::ivf_roundtrip_empty_stream ... ok
+test container::tests::ivf_rejects_truncated_frame ... ok
+test container::tests::ivf_header_vp9_builder_uses_vp90_fourcc ... ok
+test container::tests::ebml_id_examples ... ok
+test container::tests::ivf_minimal_two_frames ... ok
+test container::tests::packet_range_helpers ... ok
+test container::tests::read_ebml_id_eof_inside_id ... ok
+test container::tests::ivf_rejects_bad_magic ... ok
+test container::tests::read_ebml_id_eof_arm ... ok
+test container::tests::read_ebml_id_zero_first_byte_arm ... ok
+test container::tests::read_ebml_vint_eof_arm ... ok
+test container::tests::container_error_display_covers_each_variant ... ok
+test container::tests::read_ebml_vint_eof_inside_value ... ok
+test container::tests::read_ebml_vint_zero_first_byte_arm ... ok
+test container::tests::read_packets_unknown_extension_errors ... ok
+test container::tests::stream_writer_patches_count_and_preserves_packets ... ok
+test container::tests::webm_parse_block_lacing_is_rejected ... ok
+test container::tests::webm_parse_block_missing_timecode_flags ... ok
+test container::tests::webm_parse_block_too_small ... ok
+test container::tests::webm_parse_block_zero_frame_bytes ... ok
+test container::tests::webm_payload_runs_past_parent ... ok
+test container::tests::write_ivf_empty_payload_then_read_back ... ok
+test container::tests::write_ivf_too_many_packets_overflows ... ok
+test md5::tests::md5_abc ... ok
+test md5::tests::md5_empty ... ok
+test md5::tests::md5_quick_brown_fox ... ok
+test y4m::tests::header_framerate_returns_ratio ... ok
+test md5::tests::md5_of_yv12_visible_handles_all_chroma_formats ... ok
+test container::tests::read_packets_truly_unknown_extension ... ok
+test y4m::tests::write_header_emits_correct_chroma_tag ... ok
+test y4m::tests::write_header_rejects_unrepresentable_yuv440_without_output ... ok
+test y4m::tests::parse_header_rejects_missing_magic ... ok
+test y4m::tests::incremental_reader_stops_before_unread_bad_frame_tag ... ok
+test y4m::tests::parse_header_rejects_unsupported_chroma ... ok
+test y4m::tests::read_cropped_missing_frame_tag_errors ... ok
+test y4m::tests::read_cropped_rejects_oversize_crop ... ok
+test y4m::tests::parse_header_rejects_missing_w_h_f ... ok
+test y4m::tests::read_cropped_frame_params_eof_errors ... ok
+test y4m::tests::read_cropped_rejects_unallocatable_frame_count_without_panicking ... ok
+test y4m::tests::read_cropped_eof_before_frame_breaks_loop ... ok
+test y4m::tests::read_cropped_centre_crop_offset_is_correct ... ok
+test y4m::tests::read_cropped_frame_with_params_consumes_until_newline ... ok
+test y4m::tests::read_cropped_zero_n_returns_empty_immediately ... ok
+test y4m::tests::read_cropped_rejects_odd_crop ... ok
+test y4m::tests::y4m_cropped_next_frame_into_reuses_planes_after_frame_params ... ok
+test y4m::tests::y4m_write_read_roundtrip ... ok
+test y4m::tests::parse_header_rejects_odd_or_oversized_420_geometry ... ok
+test y4m::tests::parse_header_accepts_c420jpeg_c420paldv_c420mpeg2 ... ok
+test y4m::tests::w6_2_parse_header_rejects_hbd_chroma_with_precise_error ... ok
+test y4m::tests::parse_header_rejects_zero_geometry_and_framerate ... ok
+
+test result: ok. 53 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/error_paths.rs (.scratch/package-target/debug/deps/error_paths-32ca9604b6ed7654)
+
+running 65 tests
+test ivf_header_vp9_constructor_sets_fourcc ... ok
+test ivf_writer_rejects_packets_too_large_for_u32 ... ok
+test ivf_truncated_below_header_size_reports_truncated ... ok
+test packet_range_slice_len_is_empty_agree ... ok
+test ivf_frame_payload_running_past_eof_is_bad_frame_size ... ok
+test ivf_frame_size_overflow_is_bad_frame_size ... ok
+test ivf_rejects_bad_magic_with_dedicated_variant ... ok
+test ivf_roundtrip_preserves_payloads_byte_for_byte ... ok
+test container_error_display_covers_every_variant ... ok
+test ivf_truncated_frame_record_header_is_rejected ... ok
+test packet_reader_webm_yields_video_blocks_incrementally ... ok
+test packet_reader_ivf_stops_before_unread_malformed_tail ... ok
+test read_cropped_centre_crop_extracts_inner_region ... ok
+test read_cropped_full_frame_passthrough_preserves_bytes ... ok
+test read_cropped_consumes_extended_frame_params_to_newline ... ok
+test webm_bare_block_at_top_level_is_skipped_not_recursed ... ok
+test read_cropped_missing_frame_tag_rejected ... ok
+test webm_bare_block_with_lacing_inside_cluster_is_rejected ... ok
+test webm_block_group_at_top_level_is_skipped_not_recursed ... ok
+test webm_block_group_inside_cluster_recurses_to_block ... ok
+test read_packets_missing_file_is_io_error ... ok
+test read_cropped_eof_in_frame_params_rejected ... ok
+test webm_block_missing_timecode_and_flags_rejected ... ok
+test webm_block_payload_smaller_than_4_bytes_rejected ... ok
+test webm_block_with_lacing_set_is_rejected ... ok
+test webm_block_with_zero_frame_bytes_rejected_as_bad_frame_size ... ok
+test webm_cluster_with_simple_block_yields_one_packet ... ok
+test webm_ebml_header_element_is_recursed_into ... ok
+test webm_element_payload_running_past_parent_end_rejected ... ok
+test webm_empty_buffer_yields_no_packets ... ok
+test webm_filters_other_tracks_and_returns_only_the_vp9_track ... ok
+test webm_id_eof_inside_id_rejected ... ok
+test webm_id_wider_than_4_bytes_rejected ... ok
+test webm_excessive_container_depth_is_rejected ... ok
+test webm_id_zero_first_byte_rejected ... ok
+test webm_non_vp9_track_is_rejected ... ok
+test webm_segment_wraps_cluster_and_yields_packet ... ok
+test webm_simple_block_outside_cluster_is_skipped_not_returned ... ok
+test webm_unknown_element_is_skipped ... ok
+test read_cropped_partial_frame_header_is_rejected ... ok
+test read_packets_rejects_unknown_extension_before_filesystem_read ... ok
+test webm_unknown_size_segment_runs_to_eof ... ok
+test webm_vint_eof_at_size_position ... ok
+test webm_vint_eof_inside_vint_rejected ... ok
+test read_packets_no_extension_returns_unknown_extension_empty ... ok
+test webm_vint_zero_first_byte_rejected ... ok
+test read_cropped_rejects_odd_crop_dimensions ... ok
+test read_cropped_rejects_crop_exceeding_source_dims ... ok
+test y4m_header_framerate_helper_returns_quotient ... ok
+test read_cropped_truncated_frame_body_propagates_read_exact_error ... ok
+test read_packets_unknown_extension_returns_unknown_extension ... ok
+test read_packets_dispatches_ivf_extension_to_ivf_reader ... ok
+test read_packets_dispatches_webm_extension_to_webm_reader ... ok
+test read_cropped_eof_before_any_frame_returns_empty ... ok
+test read_cropped_rejects_height_only_exceeding_source ... ok
+test read_packets_dispatches_uppercase_extension_case_insensitively ... ok
+test read_cropped_rejects_odd_height_only ... ok
+test y4m_chroma_omitted_treated_as_acceptable ... ok
+test y4m_unsupported_chroma_format_rejected ... ok
+test y4m_missing_required_field_rejected ... ok
+test y4m_chroma_jpeg_variant_accepted ... ok
+test y4m_missing_magic_is_invalid_data ... ok
+test y4m_oversized_header_is_rejected ... ok
+test y4m_writer_reader_roundtrip_preserves_bytes ... ok
+test y4m_unterminated_header_is_rejected ... ok
+
+test result: ok. 65 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests rvp9_io
+
+running 1 test
+test src/container.rs - container (line 21) ... ignored
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+all doctests ran in 0.41s; merged doctests compilation took 0.16s

@@ -1,0 +1,21 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.01s
+     Running tests/cli_arg_coverage.rs (.scratch/package-target/debug/deps/cli_arg_coverage-10d1104e45e349e9)
+
+running 1 test
+test dec_i420_and_yv12_reject_profile1_444 ... FAILED
+
+failures:
+
+---- dec_i420_and_yv12_reject_profile1_444 stdout ----
+
+thread 'dec_i420_and_yv12_reject_profile1_444' (169823387) panicked at tests/cli_arg_coverage.rs:1957:5:
+missing Profile-1 fixture: /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-package-audit-284b9a1a/rvp9-cli-0.2.0-alpha.4/../../tests/corpus/profile1/foreman_c444_kfonly.ivf
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    dec_i420_and_yv12_reject_profile1_444
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 93 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--test cli_arg_coverage`

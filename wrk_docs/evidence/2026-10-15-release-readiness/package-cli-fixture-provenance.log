@@ -1,0 +1,8 @@
+source /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/tests/corpus/profile1/foreman_c444_kfonly.ivf
+source_commit 3dd780ccfb04358dcbb1dab0bfe766041e071cd1
+source_matches_git_HEAD True
+destination /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-package-cli-fixture-85f97b3a/tests/corpus/profile1/foreman_c444_kfonly.ivf
+sha256 bfed2bc7971987ef21c9e6167c187d9382326ecaee7e82ed5ef3865e68b13069
+bytes 288377
+archive /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/.scratch/package-artifacts/rvp9-cli-0.2.0-alpha.4.crate
+archive_sha256 cce32cfa0a685e21f67fb56ed395dc6688831d2646fdfe579cf57b0fb77665ce

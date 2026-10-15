@@ -1,0 +1,183 @@
+   Compiling crossbeam-utils v0.8.21
+   Compiling rvp9-core v0.2.0-alpha.4
+   Compiling rvp9-decoder v0.2.0-alpha.4
+   Compiling static_assertions v1.1.0
+   Compiling crossbeam-channel v0.5.15
+   Compiling rvp9-encoder v0.2.0-alpha.4
+   Compiling rvp9-io v0.2.0-alpha.4
+   Compiling rvp9-cli v0.2.0-alpha.4 (/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-package-cli-fixture-85f97b3a/crates/rvp9-cli-0.2.0-alpha.4)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 18.91s
+     Running unittests src/lib.rs (.scratch/package-target/cli-with-fixture/debug/deps/rvp9_cli-8732675de994b13a)
+
+running 8 tests
+test args::tests::boolean_flag_sets_and_rejects_value ... ok
+test args::tests::long_eq_form ... ok
+test args::tests::long_space_form_and_short_attached ... ok
+test args::tests::missing_value_errors ... ok
+test args::tests::help_tag_derived_from_handler_presence ... ok
+test args::tests::short_space_form ... ok
+test args::tests::unknown_flag_errors ... ok
+test args::tests::unsupported_flag_errors_not_silently_ignored ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/rvp9dec.rs (.scratch/package-target/cli-with-fixture/debug/deps/rvp9dec-81c8e0436c658968)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/rvp9enc.rs (.scratch/package-target/cli-with-fixture/debug/deps/rvp9enc-87c08c2e128e0e45)
+
+running 14 tests
+test tests::frame_time_csv_parses_and_requires_synchronous_one_pass ... ok
+test tests::w0_1_cpu_used_range_enforced ... ok
+test tests::w7_8_arnr_type_remains_out_of_scope ... ok
+test tests::w7_8_auto_alt_ref_range_enforced ... ok
+test tests::w0_1_deadline_good_and_best_distinct_from_rt ... ok
+test tests::matched_default_content_and_quiet_are_supported ... ok
+test tests::reaudit3_auto_alt_ref_plumbs_into_encoder_config ... ok
+test tests::non_default_content_tuning_remains_unsupported ... ok
+test tests::threads_and_tile_columns_reach_encoder_parallelism ... ok
+test tests::spatial_svc_flags_select_supported_topology_and_prediction ... ok
+test tests::w0_2_cpu_used_and_deadline_plumb_into_encoder_config ... ok
+test tests::w7_8_q_range_plumbs_into_encoder_config ... ok
+test tests::reaudit3_end_usage_plumbs_into_rate_control ... ok
+test tests::w5_1_noise_sensitivity_plumbs_into_encoder_config ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/cli_arg_coverage.rs (.scratch/package-target/cli-with-fixture/debug/deps/cli_arg_coverage-10d1104e45e349e9)
+
+running 94 tests
+test dec_invalid_vp9_preserves_existing_output_file ... ok
+test dec_ivf_zero_den_uses_default_framerate ... ok
+test dec_codec_missing_value_rejected ... ok
+test dec_ivf_frame_size_past_eof_rejected ... ok
+test dec_empty_webm_decodes_zero_frames ... ok
+test dec_help_short_circuits_before_validation ... ok
+test dec_frame_buffers_missing_value_rejected ... ok
+test dec_codec_vp8_rejected ... ok
+test dec_bad_ivf_magic_rejected ... ok
+test dec_help_lists_every_wired_flag ... ok
+test dec_ivf_zero_framerate_uses_default ... ok
+test dec_limit_non_numeric_rejected ... ok
+test dec_missing_input_rejected ... ok
+test dec_no_args_emits_usage ... ok
+test dec_output_bit_depth_missing_value_rejected ... ok
+test dec_i420_and_yv12_reject_profile1_444 ... ok
+test dec_noblit_emits_no_output ... ok
+test dec_output_path_is_directory_rejected ... ok
+test dec_no_output_uses_stdout ... ok
+test dec_framemd5_indexed_lines ... ok
+test dec_error_concealment_accepted_with_warning ... ok
+test dec_codec_vp9_accepted ... ok
+test dec_output_bit_depth_ten_warns ... ok
+test dec_format_flags_last_wins ... ok
+test dec_default_format_for_unknown_extension ... ok
+test dec_rawvideo_equivalent_to_i420 ... ok
+test dec_frame_buffers_accepted_with_warning ... ok
+test dec_i420_output_has_no_container ... ok
+test dec_skip_negative_rejected ... ok
+test dec_limit_caps_output_frame_count ... ok
+test dec_truncated_ivf_header_rejected ... ok
+test dec_two_inputs_errors ... ok
+test dec_output_bit_depth_eight_silent ... ok
+test dec_unknown_extension_rejected ... ok
+test dec_version_prints_and_exits ... ok
+test dec_postproc_silent_noop ... ok
+test dec_webm_large_non_ivf_data_uses_default_framerate ... ok
+test dec_unknown_long_flag_rejected ... ok
+test enc_aq_mode_missing_value_rejected ... ok
+test dec_scale_accepted_with_warning ... ok
+test enc_codec_missing_value_rejected ... ok
+test dec_scale_short_form_accepted ... ok
+test enc_aq_mode_unsupported_value_rejected ... ok
+test dec_skip_more_than_available_yields_empty ... ok
+test dec_skip_drops_leading_frames ... ok
+test dec_summary_emits_summary_line ... ok
+test dec_progress_emits_per_frame_marker ... ok
+test enc_codec_vp8_rejected ... ok
+test dec_summary_reports_skipped_and_emitted_counts ... ok
+test enc_end_usage_unknown_rejected ... ok
+test enc_fps_bad_denominator_rejected ... ok
+test enc_fps_bad_single_value_rejected ... ok
+test enc_fps_bad_numerator_rejected ... ok
+test enc_fps_zero_denominator_rejected ... ok
+test enc_frame_time_csv_rejects_nonzero_lag ... ok
+test enc_frame_time_csv_rejects_two_pass ... ok
+test dec_superframe_emits_only_final_shown_component ... ok
+test dec_skip_then_limit_combines ... ok
+test dec_limit_does_not_read_trailing_bad_ivf_record ... ok
+test dec_y4m_inferred_from_extension ... ok
+test dec_y4m_output_has_yuv4mpeg2_magic ... ok
+test dec_y4m_single_header_then_per_frame_tags ... ok
+test enc_explicit_ivf_flag_is_noop ... ok
+test enc_fps_single_integer_accepted ... ok
+test enc_missing_output_errors ... ok
+test enc_help_short_circuits_before_validation ... ok
+test enc_help_lists_every_wired_flag ... ok
+test enc_frame_time_csv_writes_one_row_per_temporal_svc_frame ... ok
+test enc_limit_truncates_output ... ok
+test enc_no_input_with_flags_errors ... ok
+test enc_no_args_emits_usage ... ok
+test enc_passes_three_rejected ... ok
+test enc_passes_two_accepted_at_parse_time ... ok
+test enc_unknown_long_flag_rejected ... ok
+test enc_two_inputs_errors ... ok
+test enc_raw_input_requires_width ... ok
+test enc_raw_empty_input_rejected ... ok
+test enc_raw_input_requires_height ... ok
+test dec_yv12_swaps_u_and_v_vs_i420 ... ok
+test enc_raw_limit_does_not_read_trailing_partial_frame ... ok
+test enc_kf_max_dist_accepted ... ok
+test enc_aq_mode_three_accepted_and_encodes ... ok
+test enc_unknown_short_flag_rejected ... ok
+test enc_raw_partial_frame_rejected ... ok
+test enc_version_prints_and_exits ... ok
+test enc_webm_rejected_before_creating_ivf_output ... ok
+test enc_y4m_coded_larger_than_source_rejected ... ok
+test enc_y4m_limit_truncates ... ok
+test enc_y4m_fps_override_wins ... ok
+test enc_y4m_height_larger_than_source_rejected ... ok
+test enc_verbose_emits_summary_line ... ok
+test enc_y4m_input_encodes_successfully ... ok
+test enc_passes_two_still_writes_complete_ivf ... ok
+test enc_parse_only_flags_reject_and_are_tagged_not_yet ... ok
+
+test result: ok. 94 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.98s
+
+     Running tests/cli_roundtrip.rs (.scratch/package-target/cli-with-fixture/debug/deps/cli_roundtrip-39c94d045fb6a30c)
+
+running 11 tests
+test unsupported_flag_fails_loudly ... ok
+test threads_help_tag_supported ... ok
+test non_multiple_of_64_rejected_clearly ... ok
+test help_lists_supported_and_not_yet_tags ... ok
+test encode_decode_roundtrip_raw_input ... ok
+test threads_unallocatable_count_returns_error_without_panicking ... ok
+test md5_is_deterministic_and_per_frame ... ok
+test threads_zero_means_one_thread ... ok
+test threads_flag_accepted ... ok
+test threads_invalid_rejected ... ok
+test spatial_svc_cli_emits_three_component_access_units_and_decodes_top_layer ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+
+     Running tests/command_helper.rs (.scratch/package-target/cli-with-fixture/debug/deps/command_helper-68a8049a8c116fb3)
+
+running 5 tests
+test output_child ... ok
+test timeout_child ... ok
+test bounded_status_uses_the_same_runner ... ok
+test bounded_output_caps_but_drains_each_stream ... ok
+test bounded_output_kills_a_timed_out_child ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+   Doc-tests rvp9_cli
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

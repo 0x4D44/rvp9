@@ -1,0 +1,20 @@
+   Compiling crossbeam-utils v0.8.21
+   Compiling proc-macro2 v1.0.106
+   Compiling rvp9-core v0.2.0-alpha.4 (D:\worktrees\rvp9-2\20261015-TSK-HUM-final-release-native-correctness-qualifi\crates\rvp9-core)
+   Compiling unicode-ident v1.0.24
+   Compiling quote v1.0.45
+   Compiling serde_core v1.0.228
+   Compiling zmij v1.0.21
+   Compiling rvp9-decoder v0.2.0-alpha.4 (D:\worktrees\rvp9-2\20261015-TSK-HUM-final-release-native-correctness-qualifi\crates\rvp9-decoder)
+   Compiling serde_json v1.0.149
+   Compiling serde v1.0.228
+   Compiling rvp9-harness v0.2.0-alpha.4 (D:\worktrees\rvp9-2\20261015-TSK-HUM-final-release-native-correctness-qualifi\crates\rvp9-harness)
+   Compiling memchr v2.8.0
+   Compiling itoa v1.0.18
+   Compiling static_assertions v1.1.0
+   Compiling crossbeam-channel v0.5.15
+   Compiling syn v2.0.117
+   Compiling serde_derive v1.0.228
+   Compiling rvp9-io v0.2.0-alpha.4 (D:\worktrees\rvp9-2\20261015-TSK-HUM-final-release-native-correctness-qualifi\crates\rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (D:\worktrees\rvp9-2\20261015-TSK-HUM-final-release-native-correctness-qualifi\crates\rvp9-encoder)
+    Finished `release` profile [optimized + debuginfo] target(s) in 25.30s

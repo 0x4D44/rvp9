@@ -1,0 +1,10 @@
+﻿exit_code=0
+corpus_dir=D:\worktrees\rvp9-2\20261015-TSK-HUM-final-release-native-correctness-qualifi\.scratch\windows-release-readiness\corpus
+source=ffmpeg lavfi testsrc2; generated locally, no corpus reused
+frames=8
+dimensions=1280x720
+rate=30
+pixel_format=yuv420p
+size=11059307
+sha256=b07d18fac4f0bcdabb292d7a321c56151860c10615bef4bccd90d26b47c46b51
+header=YUV4MPEG2 W1280 H720 F30:1 Ip A1:1 C420jpeg XYSCSS=420JPEG

@@ -1,0 +1,11 @@
+[fetch] parkrun_ter_720p50.y4m (several hundred MB; large download)
+  FAILED.
+[fetch] in_to_tree_420_720p50.y4m (several hundred MB; large download)
+  done.
+[fetch] old_town_cross_420_720p50.y4m (several hundred MB; large download)
+  done.
+[fetch] ducks_take_off_420_720p50.y4m (several hundred MB; large download)
+  done.
+
+Corpus: 3 fetched, 0 already present, 1 failed.
+Stored in: D:/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi/tests/corpus

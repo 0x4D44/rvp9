@@ -1,0 +1,1 @@
+﻿deltic timeout 300 git submodule update --init third_party/libvpx

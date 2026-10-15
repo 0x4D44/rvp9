@@ -1,0 +1,194 @@
+﻿rustup_installed_toolchains:
+stable-x86_64-pc-windows-msvc
+nightly-x86_64-pc-windows-msvc
+nightly-2026-04-08-x86_64-pc-windows-msvc
+nightly-2026-04-12-x86_64-pc-windows-msvc
+1.85.0-x86_64-pc-windows-msvc
+1.85.1-x86_64-pc-windows-msvc
+1.87-x86_64-pc-windows-msvc
+1.87.0-x86_64-pc-windows-msvc
+1.93.0-x86_64-pc-windows-msvc
+1.93.1-x86_64-pc-windows-msvc
+1.95.0-x86_64-pc-windows-msvc
+1.96.0-x86_64-pc-windows-msvc
+1.98-x86_64-pc-windows-msvc (active, default)
+1.98.1-x86_64-pc-windows-msvc
+source_worktree_head=d639c26539116487d7b61f53f1011d380085fd0f
+source_worktree_status:
+## HEAD (no branch)
+ M crates/rvp9-core/src/mode_decision/hadamard.rs
+ M crates/rvp9-core/src/mode_decision/inter.rs
+?? crates/rvp9-core/src/mode_decision/hadamard_sse2.rs
+source_libvpx_submodule:
+ 12f3a2ac603e8f10742105519e0cd03c3b8f71dd third_party/libvpx (v1.14.1)
+source_libvpx_actual=12f3a2ac603e8f10742105519e0cd03c3b8f71dd
+source_vpxdec_size=4268881
+source_vpxdec_sha256=91eb8ab65f62f1d63d750878b20b6b75a2882f75814e623ab54acf22b9ad02b6
+source_vpxdec_version:
+Error: Unrecognized option --version
+System.Management.Automation.RemoteException
+Usage: D:\worktrees\rvp9-2\acceptance-d639c265\build\libvpx\vpxdec.exe <options> filename
+System.Management.Automation.RemoteException
+Use --help to see the full list of options.
+source_corpus_files:
+ducks_take_off_420_720p50.y4m size=691203035
+foreman_cif.y4m size=45621044
+in_to_tree_420_720p50.y4m size=691203035
+old_town_cross_420_720p50.y4m size=691203035
+known_make_path_candidates:
+reference_root=D:\language\libvpx-stock exists=False
+reference_root=D:\language\libvpx-build-release exists=False
+reference_root=D:\worktrees\rvp9-2\acceptance-d639c265 exists=True
+binary=D:\worktrees\rvp9-2\acceptance-d639c265\build\libvpx\vpxenc.exe size=4431431 sha256=88ba702de16af47327490a7d016002fd05169e074c6c6657b9e9ff7a8d4a135d
+binary=D:\worktrees\rvp9-2\acceptance-d639c265\build\libvpx\vpxdec.exe size=4268881 sha256=91eb8ab65f62f1d63d750878b20b6b75a2882f75814e623ab54acf22b9ad02b6
+binary=D:\worktrees\rvp9-2\acceptance-d639c265\build\libvpx\examples\vp9_spatial_svc_encoder.exe size=3628258 sha256=9276c29c54f9c866a2a1e2b60f80083749b7ff7cdcef183456a6243df83a097b
+libvpx_actual=12f3a2ac603e8f10742105519e0cd03c3b8f71dd
+git_head=d639c26539116487d7b61f53f1011d380085fd0f
+git_submodule= 12f3a2ac603e8f10742105519e0cd03c3b8f71dd third_party/libvpx (v1.14.1)
+source_build_files:
+args.c.d
+args.c.o
+config.log
+config.mk
+examples-x86_64-win64-gcc.mk
+ivfdec.c.d
+ivfdec.c.o
+ivfenc.c.d
+ivfenc.c.o
+libs-x86_64-win64-gcc.mk
+libvpx.a
+libvpx_g.a
+Makefile
+md5_utils.c.d
+md5_utils.c.o
+rate_hist.c.d
+rate_hist.c.o
+tools-x86_64-win64-gcc.mk
+tools_common.c.d
+tools_common.c.o
+video_reader.c.d
+video_writer.c.d
+video_writer.c.o
+vp9_rtcd.h
+vpxdec.c.d
+vpxdec.c.o
+vpxdec.exe
+vpxenc.c.d
+vpxenc.c.o
+vpxenc.exe
+vpxstats.c.d
+vpxstats.c.o
+vpx_config.asm
+vpx_config.c
+vpx_config.c.d
+vpx_config.c.o
+vpx_config.h
+vpx_dsp_rtcd.h
+vpx_scale_rtcd.h
+vpx_temporal_svc_reference.exe
+source_build_config_settings:
+config_file=config.mk
+TOOLCHAIN := x86_64-win64-gcc
+ALL_TARGETS += libs
+ALL_TARGETS += examples
+ALL_TARGETS += tools
+CONFIGURE_ARGS=--target=x86_64-win64-gcc --enable-vp9 --disable-vp8 --enable-vp9-highbitdepth --enable-vp9-temporal-denoising --enable-pic --disable-docs --disable-unit-tests
+CONFIGURE_ARGS?=--target=x86_64-win64-gcc --enable-vp9 --disable-vp8 --enable-vp9-highbitdepth --enable-vp9-temporal-denoising --enable-pic --disable-docs --disable-unit-tests
+config_file=config.log
+# ../../third_party/libvpx/configure --target=x86_64-win64-gcc --enable-vp9 --disable-vp8 --enable-vp9-highbitdepth --enable-vp9-temporal-denoising --enable-pic --disable-docs --disable-unit-tests
+Configuring for target 'x86_64-win64-gcc'
+check_cflags -mmmx
+check_cflags -msse
+check_cflags -msse2
+check_cflags -msse3
+check_cflags -mssse3
+check_cflags -msse4
+check_cflags -mavx
+check_cflags -mavx2
+check_cflags -mavx512f -mavx512cd -mavx512bw -mavx512dq -mavx512vl
+check_cflags -DNDEBUG
+check_cflags -O3
+check_cflags -fPIC
+check_cflags -Wall
+check_cflags -Wdisabled-optimization
+check_cflags -Wextra-semi
+check_cflags -Wextra-semi-stmt
+check_cflags -Wfloat-conversion
+check_cflags -Wformat=2
+check_cflags -Wparentheses-equality
+check_cflags -Wpointer-arith
+check_cflags -Wtype-limits
+check_cflags -Wcast-qual
+check_cflags -Wvla
+check_cflags -Wimplicit-function-declaration
+check_cflags -Wmissing-declarations
+check_cflags -Wmissing-prototypes
+check_cflags -Wshadow
+check_cflags -Wuninitialized
+config_file=vpx_config.h
+#define CONFIG_PIC 1
+#define CONFIG_VP9_POSTPROC 0
+#define CONFIG_VP8_ENCODER 0
+#define CONFIG_VP8_DECODER 0
+#define CONFIG_VP9_ENCODER 1
+#define CONFIG_VP9_DECODER 1
+#define CONFIG_VP8 0
+#define CONFIG_VP9 1
+#define CONFIG_TEMPORAL_DENOISING 1
+#define CONFIG_VP9_TEMPORAL_DENOISING 1
+#define CONFIG_VP9_HIGHBITDEPTH 1
+config_file=Makefile
+ifeq ($(target),)
+# If a target wasn't specified, invoke for all enabled targets.
+@for t in $(ALL_TARGETS); do \
+$(MAKE) --no-print-directory target=$$t $(MAKECMDGOALS) || exit $$?;\
+@for t in $(ALL_TARGETS); do \
+$(MAKE) --no-print-directory target=$$t $(MAKECMDGOALS) || exit $$?;\
+# Since we invoke make recursively for multiple targets we need to include the
+# .mk file for the correct target, but only when $(target) is non-empty.
+ifneq ($(target),)
+include $(target)-$(TOOLCHAIN).mk
+CFLAGS+=-I$(BUILD_PFX)$(BUILD_ROOT) -I$(SRC_PATH)
+if [ -z "$(target)" ]; then \
+rm -f $(target)-$(TOOLCHAIN).mk; \
+CFLAGS += -mstackrealign
+$(BUILD_PFX)%_mmx.c.d: CFLAGS += -mmmx
+$(BUILD_PFX)%_mmx.c.o: CFLAGS += -mmmx
+$(BUILD_PFX)%_sse2.c.d: CFLAGS += -msse2
+$(BUILD_PFX)%_sse2.c.o: CFLAGS += -msse2
+$(BUILD_PFX)%_sse3.c.d: CFLAGS += -msse3
+$(BUILD_PFX)%_sse3.c.o: CFLAGS += -msse3
+$(BUILD_PFX)%_ssse3.c.d: CFLAGS += -mssse3
+$(BUILD_PFX)%_ssse3.c.o: CFLAGS += -mssse3
+$(BUILD_PFX)%_sse4.c.d: CFLAGS += -msse4.1
+$(BUILD_PFX)%_sse4.c.o: CFLAGS += -msse4.1
+$(BUILD_PFX)%_avx.c.d: CFLAGS += -mavx
+$(BUILD_PFX)%_avx.c.o: CFLAGS += -mavx
+$(BUILD_PFX)%_avx2.c.d: CFLAGS += -mavx2
+$(BUILD_PFX)%_avx2.c.o: CFLAGS += -mavx2
+$(BUILD_PFX)%_avx512.c.d: CFLAGS += -mavx512f -mavx512cd -mavx512bw -mavx512dq -mavx512vl
+$(BUILD_PFX)%_avx512.c.o: CFLAGS += -mavx512f -mavx512cd -mavx512bw -mavx512dq -mavx512vl
+build_script_hashes:
+D:\worktrees\rvp9-2\acceptance-d639c265\scripts\build-libvpx.sh sha256=346a839f44693b01112bc8603ef9134d5ee301279df453840dbaed7ffd2337ae
+D:\worktrees\rvp9-2\20261015-TSK-HUM-final-release-native-correctness-qualifi\scripts\build-libvpx.sh sha256=346a839f44693b01112bc8603ef9134d5ee301279df453840dbaed7ffd2337ae
+vpxdec_help_head:
+Usage: D:\worktrees\rvp9-2\acceptance-d639c265\build\libvpx\vpxdec.exe <options> filename
+
+Options:
+            --help                     	Show usage options and exit
+            --codec=<arg>              	Codec to use
+            --yv12                     	Output raw YV12 frames
+            --i420                     	Output raw I420 frames
+            --flipuv                   	Flip the chroma planes in the output
+            --rawvideo                 	Output raw YUV frames
+            --noblit                   	Don't process the decoded frames
+            --progress                 	Show progress after each frame decodes
+            --limit=<arg>              	Stop decoding after n frames
+task_libvpx_submodule= 12f3a2ac603e8f10742105519e0cd03c3b8f71dd third_party/libvpx (v1.14.1)
+task_vector_ivf_count=7
+task_vector_webm_count=300
+task_vector_ledger_count=307
+binary=vpxenc.exe source_sha256=88ba702de16af47327490a7d016002fd05169e074c6c6657b9e9ff7a8d4a135d task_sha256=88ba702de16af47327490a7d016002fd05169e074c6c6657b9e9ff7a8d4a135d equal=True
+binary=vpxdec.exe source_sha256=91eb8ab65f62f1d63d750878b20b6b75a2882f75814e623ab54acf22b9ad02b6 task_sha256=91eb8ab65f62f1d63d750878b20b6b75a2882f75814e623ab54acf22b9ad02b6 equal=True
+binary=examples/vp9_spatial_svc_encoder.exe source_sha256=9276c29c54f9c866a2a1e2b60f80083749b7ff7cdcef183456a6243df83a097b task_sha256=9276c29c54f9c866a2a1e2b60f80083749b7ff7cdcef183456a6243df83a097b equal=True
+task_status=## task/20261015-TSK-HUM-final-release-native-correctness-qualifi

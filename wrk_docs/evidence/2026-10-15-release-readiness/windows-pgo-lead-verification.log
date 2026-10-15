@@ -1,0 +1,17 @@
+#< CLIXML
+1a84f60a24e8d82e8e6454743fbb80521280df0e
+
+
+Algorithm : SHA256
+Hash      : 7041B038768F407D2251BC535DBD3CB9AE2FDAB03675AA7BCBFB7B9A85A750CF
+Path      : D:\worktrees\rvp9-2\20261015-TSK-HUM-final-release-native-correctness-qualifi\.scratch\windows-release-read
+            iness\pgo28-final\optimized\release\rvp9enc.exe
+
+Algorithm : SHA256
+Hash      : 1E7E0E498D4EE98C414043D46D006E4E561E0280F37499C9AB503895F2083607
+Path      : D:\worktrees\rvp9-2\20261015-TSK-HUM-final-release-native-correctness-qualifi\.scratch\windows-release-read
+            iness\pgo28-final\runs\20261015T225747Z-680\encoder.profdata
+
+
+
+<Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com/powershell/2004/04"><Obj S="progress" RefId="0"><TN RefId="0"><T>System.Management.Automation.PSCustomObject</T><T>System.Object</T></TN><MS><I64 N="SourceId">1</I64><PR N="Record"><AV>Preparing modules for first use.</AV><AI>0</AI><Nil /><PI>-1</PI><PC>-1</PC><T>Completed</T><SR>-1</SR><SD> </SD></PR></MS></Obj><Obj S="progress" RefId="1"><TNRef RefId="0" /><MS><I64 N="SourceId">1</I64><PR N="Record"><AV>Preparing modules for first use.</AV><AI>0</AI><Nil /><PI>-1</PI><PC>-1</PC><T>Completed</T><SR>-1</SR><SD> </SD></PR></MS></Obj></Objs>

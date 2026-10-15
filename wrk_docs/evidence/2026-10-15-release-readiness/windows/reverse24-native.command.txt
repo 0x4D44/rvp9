@@ -1,0 +1,1 @@
+﻿RUSTUP_TOOLCHAIN=1.95.0 RVP9_REFERENCE_DECODER_WORK_DIR=.scratch/windows-release-readiness/reverse24; bash -c runtime shasum adapter -> sha256sum; deltic timeout 3600; source scripts/qualify-reference-decoder.sh

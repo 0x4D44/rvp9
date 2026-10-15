@@ -1,0 +1,54 @@
+   Compiling version_check v0.9.5
+   Compiling typenum v1.20.1
+   Compiling itoa v1.0.18
+   Compiling memchr v2.8.0
+   Compiling static_assertions v1.1.0
+   Compiling cfg-if v1.0.4
+   Compiling cpufeatures v0.2.17
+   Compiling crossbeam-utils v0.8.21
+   Compiling rvp9-core v0.2.0-alpha.4 (D:\worktrees\rvp9-2\20261015-TSK-HUM-final-release-native-correctness-qualifi\crates\rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (D:\worktrees\rvp9-2\20261015-TSK-HUM-final-release-native-correctness-qualifi\crates\rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (D:\worktrees\rvp9-2\20261015-TSK-HUM-final-release-native-correctness-qualifi\crates\rvp9-harness)
+   Compiling serde_core v1.0.228
+   Compiling zmij v1.0.21
+   Compiling generic-array v0.14.7
+   Compiling crossbeam-channel v0.5.15
+   Compiling crypto-common v0.1.7
+   Compiling block-buffer v0.10.4
+   Compiling digest v0.10.7
+   Compiling sha2 v0.10.9
+   Compiling serde v1.0.228
+   Compiling serde_json v1.0.149
+   Compiling rvp9-encoder v0.2.0-alpha.4 (D:\worktrees\rvp9-2\20261015-TSK-HUM-final-release-native-correctness-qualifi\crates\rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (D:\worktrees\rvp9-2\20261015-TSK-HUM-final-release-native-correctness-qualifi\crates\rvp9-io)
+    Finished `release` profile [optimized + debuginfo] target(s) in 41.71s
+     Running tests\cross_decoder_gate.rs (target\release\deps\cross_decoder_gate-24eb10cf9400639c.exe)
+RC.4 Cross-Decoder Gate — Stage 4a Exit Criterion #3
+====================================================
+Frames: 8 @ 256x256 30 fps, target 1000000 bps
+
+Source: D:\worktrees\rvp9-2\20261015-TSK-HUM-final-release-native-correctness-qualifi\.scratch\windows-release-readiness\corpus\testsrc_720p30.y4m (framerate 30 fps)
+  encoded frame 0: kind=Key q=38 bytes=109
+  encoded frame 1: kind=Inter q=150 bytes=92
+  encoded frame 2: kind=Inter q=171 bytes=143
+  encoded frame 3: kind=Inter q=161 bytes=288
+  encoded frame 4: kind=Inter q=151 bytes=367
+  encoded frame 5: kind=Inter q=141 bytes=361
+  encoded frame 6: kind=Inter q=132 bytes=468
+  encoded frame 7: kind=Inter q=124 bytes=411
+Total encoded bytes: 2239
+
+IVF written to D:\worktrees\rvp9-2\20261015-TSK-HUM-final-release-native-correctness-qualifi\.scratch\windows-release-readiness\rvp9_cross_decoder_gate.ivf
+rvp9-decoder: produced 786432 bytes (8 frames * 98304 bytes)
+
+vpxdec available at: vpxdec
+rvp9-decoder vs vpxdec: BYTE-EXACT (both VP9 spec implementations agree).
+
+ffmpeg available on PATH.
+rvp9-decoder vs ffmpeg: BYTE-EXACT.
+
+Cross-decoder verification on 8-frame 256x256 testsrc encode:
+  rvp9-decoder vs vpxdec  : BYTE-EXACT
+  rvp9-decoder vs ffmpeg  : BYTE-EXACT
+
+Stage 4a cross-decoder gate: PASS (all available decoders agree)

@@ -810,7 +810,7 @@ evidence and rejected hypotheses are recorded in
 
 ### Stage 5 — Hardening
 
-**Goal:** Production-ready. Soak tests, fuzzing, perf regression CI, security audit of `unsafe`.
+**Goal:** Production-ready. Soak tests, fuzzing, local performance regression gates, security audit of `unsafe`.
 
 **Inputs:** All of Stage 4 complete.
 
@@ -818,7 +818,8 @@ evidence and rejected hypotheses are recorded in
 
 1. `cargo fuzz` for decoder against malformed bitstreams.
 2. 72-hour soak test: encode + decode varied content, monitor for leaks, crashes, perf drift.
-3. CI: BD-rate regression gates, ms/frame regression gates.
+3. Local-first BD-rate and frame-latency regression gates, with retained evidence
+   from the checked-in qualification scripts. Do not add hosted CI workflows.
 4. Manual review of every `unsafe` block, with safety-comment audit.
 5. Miri runs for all non-SIMD paths.
 6. Address-sanitizer runs for SIMD paths.
@@ -830,7 +831,8 @@ evidence and rejected hypotheses are recorded in
 - [x] Bounded AddressSanitizer parser and full-frame decoder fuzz campaigns
   complete without a crash or sanitizer report.
 - [x] Bounded encode/decode soak smoke completes without an error.
-- [ ] CI gates BD-rate and latency regressions.
+- [ ] Local BD-rate and latency regression commands are documented and pass on
+  the release candidate; see the [local qualification runbook](<wrk_docs/2026.10.15 - RUN - local release qualification.md>).
 - [x] Security review report logged.
 
 **Deferred Intel assurance (not a current release blocker, approved

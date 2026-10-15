@@ -1,0 +1,83 @@
+[encoder PGO 1/4] Preparing representative training inputs...
+[encoder PGO 2/4] Building instrumented rvp9enc...
+   Compiling crossbeam-utils v0.8.21
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-decoder)
+   Compiling static_assertions v1.1.0
+   Compiling crossbeam-channel v0.5.15
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-io)
+   Compiling rvp9-cli v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-cli)
+    Finished `release` profile [optimized + debuginfo] target(s) in 2m 24s
+[encoder PGO 3/4] Training 28 production rows...
+  [01/28] 1080-in-tree-cpu6
+  [02/28] 1080-ducks-cpu6
+  [03/28] 1080-old-town-cpu6
+  [04/28] 1080-in-tree-cpu7
+  [05/28] 1080-ducks-cpu7
+  [06/28] 1080-old-town-cpu7
+  [07/28] 1080-in-tree-cpu8
+  [08/28] 1080-ducks-cpu8
+  [09/28] 1080-old-town-cpu8
+  [10/28] 720-in-tree-cpu7
+  [11/28] 720-ducks-cpu7
+  [12/28] 720-old-town-cpu7
+  [13/28] 1080-in-tree-cbr-aq3
+  [14/28] 1080-ducks-cbr-aq3
+  [15/28] 1080-old-town-cbr-aq3
+  [16/28] 1080-in-tree-denoise
+  [17/28] 1080-ducks-denoise
+  [18/28] 1080-old-town-denoise
+  [19/28] 1080-old-town-low-rate
+  [20/28] 1080-old-town-high-rate
+  [21/28] 1080-old-town-temporal2
+  [22/28] 1080-old-town-temporal3
+  [23/28] 1080-old-town-spatial2-cpu6
+LLVM Profile Warning: Unable to track new values: Running out of static counters.  Consider using option -mllvm -vp-counters-per-site=<n> to allocate more value profile counters at compile time. 
+LLVM Profile Warning: Unable to track new values: Running out of static counters.  Consider using option -mllvm -vp-counters-per-site=<n> to allocate more value profile counters at compile time. 
+LLVM Profile Warning: Unable to track new values: Running out of static counters.  Consider using option -mllvm -vp-counters-per-site=<n> to allocate more value profile counters at compile time. 
+LLVM Profile Warning: Unable to track new values: Running out of static counters.  Consider using option -mllvm -vp-counters-per-site=<n> to allocate more value profile counters at compile time. 
+LLVM Profile Warning: Unable to track new values: Running out of static counters.  Consider using option -mllvm -vp-counters-per-site=<n> to allocate more value profile counters at compile time. 
+LLVM Profile Warning: Unable to track new values: Running out of static counters.  Consider using option -mllvm -vp-counters-per-site=<n> to allocate more value profile counters at compile time. 
+LLVM Profile Warning: Unable to track new values: Running out of static counters.  Consider using option -mllvm -vp-counters-per-site=<n> to allocate more value profile counters at compile time. 
+LLVM Profile Warning: Unable to track new values: Running out of static counters.  Consider using option -mllvm -vp-counters-per-site=<n> to allocate more value profile counters at compile time. 
+LLVM Profile Warning: Unable to track new values: Running out of static counters.  Consider using option -mllvm -vp-counters-per-site=<n> to allocate more value profile counters at compile time. 
+LLVM Profile Warning: Unable to track new values: Running out of static counters.  Consider using option -mllvm -vp-counters-per-site=<n> to allocate more value profile counters at compile time. 
+  [24/28] 1080-old-town-spatial3-cpu6
+LLVM Profile Warning: Unable to track new values: Running out of static counters.  Consider using option -mllvm -vp-counters-per-site=<n> to allocate more value profile counters at compile time. 
+LLVM Profile Warning: Unable to track new values: Running out of static counters.  Consider using option -mllvm -vp-counters-per-site=<n> to allocate more value profile counters at compile time. 
+LLVM Profile Warning: Unable to track new values: Running out of static counters.  Consider using option -mllvm -vp-counters-per-site=<n> to allocate more value profile counters at compile time. 
+LLVM Profile Warning: Unable to track new values: Running out of static counters.  Consider using option -mllvm -vp-counters-per-site=<n> to allocate more value profile counters at compile time. 
+LLVM Profile Warning: Unable to track new values: Running out of static counters.  Consider using option -mllvm -vp-counters-per-site=<n> to allocate more value profile counters at compile time. 
+LLVM Profile Warning: Unable to track new values: Running out of static counters.  Consider using option -mllvm -vp-counters-per-site=<n> to allocate more value profile counters at compile time. 
+LLVM Profile Warning: Unable to track new values: Running out of static counters.  Consider using option -mllvm -vp-counters-per-site=<n> to allocate more value profile counters at compile time. 
+LLVM Profile Warning: Unable to track new values: Running out of static counters.  Consider using option -mllvm -vp-counters-per-site=<n> to allocate more value profile counters at compile time. 
+LLVM Profile Warning: Unable to track new values: Running out of static counters.  Consider using option -mllvm -vp-counters-per-site=<n> to allocate more value profile counters at compile time. 
+LLVM Profile Warning: Unable to track new values: Running out of static counters.  Consider using option -mllvm -vp-counters-per-site=<n> to allocate more value profile counters at compile time. 
+  [25/28] 1080-old-town-spatial2-cpu7
+  [26/28] 1080-old-town-spatial3-cpu7
+LLVM Profile Warning: Unable to track new values: Running out of static counters.  Consider using option -mllvm -vp-counters-per-site=<n> to allocate more value profile counters at compile time. 
+LLVM Profile Warning: Unable to track new values: Running out of static counters.  Consider using option -mllvm -vp-counters-per-site=<n> to allocate more value profile counters at compile time. 
+LLVM Profile Warning: Unable to track new values: Running out of static counters.  Consider using option -mllvm -vp-counters-per-site=<n> to allocate more value profile counters at compile time. 
+LLVM Profile Warning: Unable to track new values: Running out of static counters.  Consider using option -mllvm -vp-counters-per-site=<n> to allocate more value profile counters at compile time. 
+LLVM Profile Warning: Unable to track new values: Running out of static counters.  Consider using option -mllvm -vp-counters-per-site=<n> to allocate more value profile counters at compile time. 
+LLVM Profile Warning: Unable to track new values: Running out of static counters.  Consider using option -mllvm -vp-counters-per-site=<n> to allocate more value profile counters at compile time. 
+LLVM Profile Warning: Unable to track new values: Running out of static counters.  Consider using option -mllvm -vp-counters-per-site=<n> to allocate more value profile counters at compile time. 
+LLVM Profile Warning: Unable to track new values: Running out of static counters.  Consider using option -mllvm -vp-counters-per-site=<n> to allocate more value profile counters at compile time. 
+LLVM Profile Warning: Unable to track new values: Running out of static counters.  Consider using option -mllvm -vp-counters-per-site=<n> to allocate more value profile counters at compile time. 
+LLVM Profile Warning: Unable to track new values: Running out of static counters.  Consider using option -mllvm -vp-counters-per-site=<n> to allocate more value profile counters at compile time. 
+  [27/28] 1080-old-town-spatial2-cpu8
+  [28/28] 1080-old-town-spatial3-cpu8
+[encoder PGO 4/4] Building profile-guided rvp9enc...
+   Compiling crossbeam-utils v0.8.21
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-decoder)
+   Compiling static_assertions v1.1.0
+   Compiling crossbeam-channel v0.5.15
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-encoder)
+   Compiling rvp9-cli v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-cli)
+    Finished `release` profile [optimized + debuginfo] target(s) in 2m 46s
+[encoder PGO done] /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/target/encoder-pgo/optimized/release/rvp9enc
+Training manifest: /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/target/encoder-pgo/runs/20261015T222941Z-2847/manifest.txt
+Profiles are host/source/compiler specific; regenerate after any of them changes.

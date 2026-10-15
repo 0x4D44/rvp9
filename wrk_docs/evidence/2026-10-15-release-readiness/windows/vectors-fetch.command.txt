@@ -1,0 +1,1 @@
+﻿deltic timeout 1800 bash.exe scripts/fetch-vectors.sh --jobs 8 (Git Bash path prepended for child)

@@ -1,0 +1,4 @@
+Using prebuilt libvpx binaries from: /d/worktrees/rvp9-2/acceptance-d639c265/build/libvpx
+-rwxr-xr-x 1 marti 197121 3.5M Oct 15 23:34 D:/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi/build/libvpx/examples/vp9_spatial_svc_encoder.exe
+-rwxr-xr-x 1 marti 197121 4.1M Oct 15 23:34 D:/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi/build/libvpx/vpxdec.exe
+-rwxr-xr-x 1 marti 197121 4.3M Oct 15 23:34 D:/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi/build/libvpx/vpxenc.exe

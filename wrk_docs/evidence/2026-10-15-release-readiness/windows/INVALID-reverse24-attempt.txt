@@ -1,0 +1,5 @@
+﻿INVALID ATTEMPT; NOT A QUALIFICATION PASS
+reverse24-native.* and reverse24-first-attempt-qualification.txt preserve the first run without stat adapter.
+The runner reported 24/24 and exit 0, but Git Bash stat -f returned filesystem metadata; integer-expression errors show decoded-size assertions were skipped.
+Use reverse24-final-qualification.txt and reverse24-final-verification.txt for the valid rerun with the stat adapter plus independent byte/hash checks.
+This false-success points to a Windows portability defect; no ledger entry was created in this qualification-only task.

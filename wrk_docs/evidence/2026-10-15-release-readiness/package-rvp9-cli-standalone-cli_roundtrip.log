@@ -1,0 +1,18 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.00s
+     Running tests/cli_roundtrip.rs (.scratch/package-target/debug/deps/cli_roundtrip-39c94d045fb6a30c)
+
+running 11 tests
+test non_multiple_of_64_rejected_clearly ... ok
+test unsupported_flag_fails_loudly ... ok
+test threads_unallocatable_count_returns_error_without_panicking ... ok
+test threads_help_tag_supported ... ok
+test help_lists_supported_and_not_yet_tags ... ok
+test encode_decode_roundtrip_raw_input ... ok
+test spatial_svc_cli_emits_three_component_access_units_and_decodes_top_layer ... ok
+test md5_is_deterministic_and_per_frame ... ok
+test threads_flag_accepted ... ok
+test threads_zero_means_one_thread ... ok
+test threads_invalid_rejected ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.87s
+

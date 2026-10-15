@@ -1,0 +1,38 @@
+{
+  "workspace-tests": {
+    "reported_test_runs": 114,
+    "passed": 3335,
+    "failed": 0,
+    "ignored": 63
+  },
+  "miri-retry": {
+    "reported_test_runs": 1,
+    "passed": 160,
+    "failed": 0,
+    "ignored": 0
+  },
+  "asan-dependent-libraries": {
+    "reported_test_runs": 1,
+    "passed": 226,
+    "failed": 0,
+    "ignored": 0
+  },
+  "soak": {
+    "reported_test_runs": 0,
+    "passed": 0,
+    "failed": 0,
+    "ignored": 0
+  },
+  "soak-foreman": {
+    "reported_test_runs": 0,
+    "passed": 0,
+    "failed": 0,
+    "ignored": 0
+  },
+  "pgo": {
+    "source_manifest": "target/encoder-pgo/runs/20261015T222941Z-2847/manifest.txt",
+    "manifest_sha256": "1080217d648b3bfaed68b36b0fe9b94bf513a1ab6468d25ec4b10e362f44fb1e",
+    "binary_sha256": "cec75b2ee57b832e08cdf1153774401ab2df8ba7a8aa2c962f02053215c67b80",
+    "profile_sha256": "ab0d45e046557cf6e505e0f17e454ea44689670d01040c811538617eea555389"
+  }
+}

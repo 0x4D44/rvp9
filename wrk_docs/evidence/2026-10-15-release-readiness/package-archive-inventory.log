@@ -1,0 +1,10 @@
+rvp9-cli-0.2.0-alpha.4.crate compressed_bytes 52288 files 16 source {'git': {'sha1': '3dd780ccfb04358dcbb1dab0bfe766041e071cd1'}, 'path_in_vcs': 'crates/rvp9-cli'}
+test_files 4
+rvp9-core-0.2.0-alpha.4.crate compressed_bytes 1356603 files 188 source {'git': {'sha1': '3dd780ccfb04358dcbb1dab0bfe766041e071cd1'}, 'path_in_vcs': 'crates/rvp9-core'}
+test_files 1
+rvp9-decoder-0.2.0-alpha.4.crate compressed_bytes 228997 files 19 source {'git': {'sha1': '3dd780ccfb04358dcbb1dab0bfe766041e071cd1'}, 'path_in_vcs': 'crates/rvp9-decoder'}
+test_files 2
+rvp9-encoder-0.2.0-alpha.4.crate compressed_bytes 942507 files 113 source {'git': {'sha1': '3dd780ccfb04358dcbb1dab0bfe766041e071cd1'}, 'path_in_vcs': 'crates/rvp9-encoder'}
+test_files 50
+rvp9-io-0.2.0-alpha.4.crate compressed_bytes 40950 files 13 source {'git': {'sha1': '3dd780ccfb04358dcbb1dab0bfe766041e071cd1'}, 'path_in_vcs': 'crates/rvp9-io'}
+test_files 1

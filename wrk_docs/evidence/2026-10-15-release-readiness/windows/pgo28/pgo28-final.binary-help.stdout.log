@@ -1,0 +1,75 @@
+rvp9enc
+
+Usage: rvp9enc [options] -o <out.ivf> <input.y4m|input.yuv>
+
+Options:
+  --help                     [supported]  show this help and exit
+  --version                  [supported]  print version and exit
+  --codec <arg>              [supported]  codec to use (vp9)
+  --output, -o <arg>         [supported]  output IVF file
+  --width, -w <arg>          [supported]  coded width (mult of 64)
+  --height, -h <arg>         [supported]  coded height (positive and even)
+  --fps <arg>                [supported]  frame rate num/den (e.g. 30/1)
+  --target-bitrate <arg>     [supported]  target bitrate in kbps
+  --end-usage <arg>          [supported]  rate control mode (cbr/vbr/cq/q)
+  --passes, -p <arg>         [supported]  number of passes (1 or 2)
+  --kf-max-dist <arg>        [supported]  max keyframe interval
+  --aq-mode <arg>            [supported]  adaptive quant (0=off, 3=cyclic)
+  --limit <arg>              [supported]  stop after N frames
+  --ivf                      [supported]  output IVF (the only container)
+  --verbose, -v              [supported]  verbose progress
+  --profile <arg>            [not yet]    bitstream profile (0..=3)
+  --rt                       [supported]  real-time deadline
+  --good                     [supported]  good-quality deadline
+  --best                     [supported]  best-quality deadline
+  --cpu-used <arg>           [supported]  speed/quality tradeoff (-9..=9)
+  --threads, -t <arg>        [supported]  encode threads
+  --tile-columns <arg>       [supported]  log2 tile columns (0..=6)
+  --tile-rows <arg>          [not yet]    log2 tile rows (0..=2)
+  --kf-min-dist <arg>        [not yet]    min keyframe interval
+  --disable-kf               [not yet]    disable keyframes
+  --min-q <arg>              [supported]  minimum quantizer
+  --max-q <arg>              [supported]  maximum quantizer
+  --cq-level <arg>           [supported]  constant/constrained quality level
+  --buf-sz <arg>             [not yet]    client buffer size (ms)
+  --buf-initial-sz <arg>     [not yet]    initial buffer size (ms)
+  --buf-optimal-sz <arg>     [not yet]    optimal buffer size (ms)
+  --undershoot-pct <arg>     [not yet]    datarate undershoot %
+  --overshoot-pct <arg>      [not yet]    datarate overshoot %
+  --lossless <arg>           [not yet]    lossless coding (0/1)
+  --frame-parallel <arg>     [not yet]    frame-parallel decoding (0/1)
+  --error-resilient <arg>    [not yet]    error resilient mode
+  --tune <arg>               [not yet]    distortion metric to tune (psnr/ssim)
+  --tune-content <arg>       [supported]  content type to tune (default)
+  --noise-sensitivity <arg>  [supported]  denoiser strength
+  --svc                      [not yet]    scalable video coding
+  --temporal-layers <arg>    [supported]  temporal SVC layers (1..=3)
+  --spatial-layers <arg>     [supported]  spatial SVC layers (1..=3)
+  --inter-layer-pred <arg>   [supported]  spatial prediction (0=on, 3=constrained)
+  --bit-depth <arg>          [not yet]    bit depth (8/10/12)
+  --psnr                     [not yet]    report PSNR
+  --webm                     [not yet]    WebM output (not supported yet)
+  --auto-alt-ref <arg>       [supported]  auto alt-ref frames (0..=6)
+  --arnr-maxframes <arg>     [not yet]    AltRef max frames (0..=15)
+  --arnr-strength <arg>      [not yet]    AltRef filter strength (0..=6)
+  --pass <arg>               [not yet]    pass to execute (1 or 2)
+  --fpf <arg>                [not yet]    first-pass statistics file
+  --rate-hist <arg>          [not yet]    rate histogram bucket count
+  --q-hist <arg>             [not yet]    quantizer histogram bucket count
+  --test-decode <arg>        [not yet]    encode/decode mismatch test (off/warn/fatal)
+  --enable-tpl <arg>         [supported]  enable temporal dependency model (0/1)
+  --frame-boost <arg>        [not yet]    frame periodic boost (0/1)
+  --max-inter-rate <arg>     [not yet]    max P-frame bitrate (pct)
+  --min-gf-interval <arg>    [not yet]    min gf/arf frame interval
+  --max-gf-interval <arg>    [not yet]    max gf/arf frame interval
+  --color-space <arg>        [not yet]    color space of input content
+  --alt-ref-aq <arg>         [not yet]    adaptive quant for alt-ref (0/1)
+  --input-bit-depth <arg>    [not yet]    input bit depth (8/10/12)
+  --lag-in-frames <arg>      [supported]  max frames to lag
+  --frame-time-csv <arg>     [supported]  benchmark diagnostic: per-frame encode times CSV
+  --target-level <arg>       [not yet]    target level (0/255 + 10..=62)
+  --row-mt <arg>             [not yet]    row-based MT in VP9 (0/1)
+  --resize-allowed <arg>     [not yet]    spatial resampling (0/1)
+  --resize-width <arg>       [not yet]    resized encoded width
+  --resize-height <arg>      [not yet]    resized encoded height
+  --quiet, -q                [supported]  do not print encode progress

@@ -1,0 +1,30 @@
+﻿observed_utc=2026-10-15T22:28:53Z
+candidate_expected=1a84f60a24e8d82e8e6454743fbb80521280df0e
+task_worktree=D:\worktrees\rvp9-2\20261015-TSK-HUM-final-release-native-correctness-qualifi
+task_head=1a84f60a24e8d82e8e6454743fbb80521280df0e
+task_branch=task/20261015-TSK-HUM-final-release-native-correctness-qualifi
+task_status:
+## task/20261015-TSK-HUM-final-release-native-correctness-qualifi
+tool_versions:
+rustc=rustc 1.98.1 (48a229cea 2026-09-01)
+cargo=cargo 1.98.1 (797e8a9bc 2026-08-05)
+ffmpeg=ffmpeg version 8.1.1-full_build-www.gyan.dev Copyright (c) 2000-2026 the FFmpeg developers
+tool_paths:
+bash.exe=C:\WINDOWS\system32\bash.exe
+cargo.exe=C:\Users\marti\.cargo\bin\cargo.exe
+rustc.exe=C:\Users\marti\.cargo\bin\rustc.exe
+ffmpeg.exe=C:\Users\marti\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.1.1-full_build\bin\ffmpeg.exe
+gcc.exe=C:\Strawberry\c\bin\gcc.exe
+yasm.exe=C:\Strawberry\c\bin\yasm.exe
+perl.exe=C:\Strawberry\perl\bin\perl.exe
+pinned_submodule_state:
+-12f3a2ac603e8f10742105519e0cd03c3b8f71dd third_party/libvpx
+existing_worktree_data_candidates:
+corpus_present=D:/language/rvp9-2 top_level_file_count=1
+corpus_present=D:/worktrees/rvp9-2/acceptance-d639c265 top_level_file_count=4
+vpxdec_present=D:\worktrees\rvp9-2\acceptance-d639c265\build\libvpx\vpxdec.exe
+vectors_dir_exists=False
+fetch_failure_log:
+deltic timeout: command not found: C:\Program
+task_status:
+## task/20261015-TSK-HUM-final-release-native-correctness-qualifi

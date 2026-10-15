@@ -1,0 +1,183 @@
+   Compiling libc v0.2.186
+   Compiling cfg-if v1.0.4
+   Compiling crossbeam-utils v0.8.21
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-core)
+   Compiling proc-macro2 v1.0.106
+   Compiling version_check v0.9.5
+   Compiling getrandom v0.3.4
+   Compiling quote v1.0.45
+   Compiling unicode-ident v1.0.24
+   Compiling getrandom v0.4.2
+   Compiling zerocopy v0.8.48
+   Compiling rustix v1.1.4
+   Compiling serde_core v1.0.228
+   Compiling typenum v1.20.1
+   Compiling autocfg v1.5.0
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-decoder)
+   Compiling bitflags v2.11.1
+   Compiling zmij v1.0.21
+   Compiling fastrand v2.4.1
+   Compiling serde v1.0.228
+   Compiling serde_json v1.0.149
+   Compiling once_cell v1.21.4
+   Compiling static_assertions v1.1.0
+   Compiling generic-array v0.14.7
+   Compiling num-traits v0.2.19
+   Compiling quick-error v1.2.3
+   Compiling memchr v2.8.0
+   Compiling itoa v1.0.18
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-harness)
+   Compiling bit-vec v0.8.0
+   Compiling fnv v1.0.7
+   Compiling bit-set v0.8.0
+   Compiling regex-syntax v0.8.10
+   Compiling unarray v0.1.4
+   Compiling errno v0.3.14
+   Compiling wait-timeout v0.2.1
+   Compiling cpufeatures v0.2.17
+   Compiling crossbeam-channel v0.5.15
+   Compiling rand_core v0.9.5
+   Compiling rand_xorshift v0.4.0
+   Compiling rand v0.9.4
+   Compiling syn v2.0.117
+   Compiling tempfile v3.27.0
+   Compiling block-buffer v0.10.4
+   Compiling crypto-common v0.1.7
+warning: unused imports: `int_pro_64x64_fused_neon`, `vpx_int_pro_col_neon`, `vpx_int_pro_row_clamped_neon`, `vpx_int_pro_row_neon`, and `vpx_vector_var_neon`
+  --> crates/rvp9-core/src/dsp/aarch64/mod.rs:30:5
+   |
+30 |     int_pro_64x64_fused_neon, vpx_int_pro_col_neon, vpx_int_pro_row_clamped_neon,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+31 |     vpx_int_pro_row_neon, vpx_vector_var_neon,
+   |     ^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `minmax_neon::minmax_8x8_neon`
+  --> crates/rvp9-core/src/dsp/aarch64/mod.rs:40:9
+   |
+40 | pub use minmax_neon::minmax_8x8_neon;
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `vp9_quantize_b_32x32_neon`, `vp9_quantize_b_neon`, `vp9_quantize_fp_32x32_i16_metrics_neon`, `vp9_quantize_fp_32x32_i16_rate_metrics_neon`, `vp9_quantize_fp_32x32_neon`, `vp9_quantize_fp_i16_metrics_neon`, `vp9_quantize_fp_i16_rate_metrics_neon`, and `vp9_quantize_fp_neon`
+  --> crates/rvp9-core/src/dsp/aarch64/mod.rs:42:5
+   |
+42 |     vp9_quantize_b_32x32_neon, vp9_quantize_b_neon, vp9_quantize_fp_32x32_i16_metrics_neon,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+43 |     vp9_quantize_fp_32x32_i16_rate_metrics_neon, vp9_quantize_fp_32x32_neon,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^^^^^
+44 |     vp9_quantize_fp_all_zero_neon, vp9_quantize_fp_i16_metrics_neon,
+   |                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+45 |     vp9_quantize_fp_i16_rate_metrics_neon, vp9_quantize_fp_neon,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `vbp_neon::avg_diff_8x8_grid_64x64_neon`
+  --> crates/rvp9-core/src/dsp/aarch64/mod.rs:85:9
+   |
+85 | pub use vbp_neon::avg_diff_8x8_grid_64x64_neon;
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+   Compiling rusty-fork v0.3.1
+   Compiling digest v0.10.7
+   Compiling sha2 v0.10.9
+   Compiling serde_derive v1.0.228
+error[E0425]: cannot find function `fdct4x4_scalar` in this scope
+   --> crates/rvp9-core/src/transforms/forward.rs:222:9
+    |
+222 |         fdct4x4_scalar(input, output, stride);
+    |         ^^^^^^^^^^^^^^
+...
+457 | fn fdct8x8_scalar(input: &[i16], output: &mut [i32; 64], stride: usize) {
+    | ----------------------------------------------------------------------- similarly named function `fdct8x8_scalar` defined here
+    |
+help: a function with a similar name exists
+    |
+222 -         fdct4x4_scalar(input, output, stride);
+222 +         fdct8x8_scalar(input, output, stride);
+    |
+
+error[E0425]: cannot find function `fht4x4_scalar` in this scope
+   --> crates/rvp9-core/src/transforms/forward.rs:305:9
+    |
+305 |         fht4x4_scalar(input, output, stride, tx_type);
+    |         ^^^^^^^^^^^^^
+...
+457 | fn fdct8x8_scalar(input: &[i16], output: &mut [i32; 64], stride: usize) {
+    | ----------------------------------------------------------------------- similarly named function `fdct8x8_scalar` defined here
+    |
+help: a function with a similar name exists
+    |
+305 -         fht4x4_scalar(input, output, stride, tx_type);
+305 +         fdct8x8_scalar(input, output, stride, tx_type);
+    |
+
+error[E0425]: cannot find function `fht8x8_scalar` in this scope
+   --> crates/rvp9-core/src/transforms/forward.rs:660:9
+    |
+457 | fn fdct8x8_scalar(input: &[i16], output: &mut [i32; 64], stride: usize) {
+    | ----------------------------------------------------------------------- similarly named function `fdct8x8_scalar` defined here
+...
+660 |         fht8x8_scalar(input, output, stride, tx_type);
+    |         ^^^^^^^^^^^^^
+    |
+help: a function with a similar name exists
+    |
+660 -         fht8x8_scalar(input, output, stride, tx_type);
+660 +         fdct8x8_scalar(input, output, stride, tx_type);
+    |
+
+error[E0425]: cannot find function `fht16x16_scalar` in this scope
+    --> crates/rvp9-core/src/transforms/forward.rs:1189:9
+     |
+1012 | fn fdct16x16_scalar(input: &[i16], output: &mut [i32; 256], stride: usize) {
+     | -------------------------------------------------------------------------- similarly named function `fdct16x16_scalar` defined here
+...
+1189 |         fht16x16_scalar(input, output, stride, tx_type);
+     |         ^^^^^^^^^^^^^^^
+     |
+help: a function with a similar name exists
+     |
+1189 -         fht16x16_scalar(input, output, stride, tx_type);
+1189 +         fdct16x16_scalar(input, output, stride, tx_type);
+     |
+
+error[E0425]: cannot find function `fdct32x32_scalar` in this scope
+    --> crates/rvp9-core/src/transforms/forward.rs:1546:9
+     |
+1012 | fn fdct16x16_scalar(input: &[i16], output: &mut [i32; 256], stride: usize) {
+     | -------------------------------------------------------------------------- similarly named function `fdct16x16_scalar` defined here
+...
+1546 |         fdct32x32_scalar(input, output, stride);
+     |         ^^^^^^^^^^^^^^^^
+     |
+help: a function with a similar name exists
+     |
+1546 -         fdct32x32_scalar(input, output, stride);
+1546 +         fdct16x16_scalar(input, output, stride);
+     |
+
+error[E0425]: cannot find function `idct16x16_add_scalar` in this scope
+   --> crates/rvp9-core/src/transforms/inverse.rs:611:9
+    |
+611 |         idct16x16_add_scalar(input, dest, stride, 16);
+    |         ^^^^^^^^^^^^^^^^^^^^ not found in this scope
+
+error[E0425]: cannot find function `idct16x16_add_scalar` in this scope
+   --> crates/rvp9-core/src/transforms/inverse.rs:637:9
+    |
+637 |         idct16x16_add_scalar(input, dest, stride, 4);
+    |         ^^^^^^^^^^^^^^^^^^^^ not found in this scope
+
+error[E0425]: cannot find function `idct16x16_add_scalar` in this scope
+   --> crates/rvp9-core/src/transforms/inverse.rs:661:9
+    |
+661 |         idct16x16_add_scalar(input, dest, stride, 8);
+    |         ^^^^^^^^^^^^^^^^^^^^ not found in this scope
+
+   Compiling ppv-lite86 v0.2.21
+   Compiling rand_chacha v0.9.0
+   Compiling proptest v1.11.0
+For more information about this error, try `rustc --explain E0425`.
+warning: `rvp9-core` (lib) generated 4 warnings
+error: could not compile `rvp9-core` (lib) due to 8 previous errors; 4 warnings emitted
+warning: build failed, waiting for other jobs to finish...

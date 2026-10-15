@@ -1,0 +1,1 @@
+﻿deltic timeout 1800 target/release/conformance.exe --vectors-dir tests/conformance/vectors --official --strict --threads 1

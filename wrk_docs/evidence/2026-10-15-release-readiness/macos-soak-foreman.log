@@ -1,0 +1,19 @@
+=== rvp9 soak harness (D3) ===
+duration_secs    : 60
+iterations       : 0
+frames_per_iter  : 30
+report_every_secs: 10
+cross_decode     : true
+vpxdec_path      : /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/build/libvpx/vpxdec
+sources:
+  - y4m(tests/corpus/foreman_cif.y4m, 256x256)
+  - synthetic-gradient(256x256)
+
+[start] wall=0.0s iter=0 rss=0.0 MiB
+[report] wall=   15.6s iter=     3 avg= 5195.8 ms/iter frames=     90 (   5.8 fps) br=  111.9 kbps last_iter= 6529.9 ms rss=0.0 MiB errors=0 cksum=ad9c644ee41e65e9
+[report] wall=   28.7s iter=     7 avg= 4094.0 ms/iter frames=    210 (   7.3 fps) br=  122.5 kbps last_iter= 5550.0 ms rss=0.0 MiB errors=0 cksum=ad9c644ee41e65e9
+[report] wall=   46.1s iter=    11 avg= 4190.8 ms/iter frames=    330 (   7.2 fps) br=  114.5 kbps last_iter= 7587.9 ms rss=0.0 MiB errors=0 cksum=ad9c644ee41e65e9
+[report] wall=   61.5s iter=    15 avg= 4099.9 ms/iter frames=    450 (   7.3 fps) br=  114.6 kbps last_iter= 6202.2 ms rss=0.0 MiB errors=0 cksum=ad9c644ee41e65e9
+
+=== soak complete ===
+[report] wall=   61.5s iter=    15 avg= 4099.9 ms/iter frames=    450 (   7.3 fps) br=  114.6 kbps last_iter=    0.0 ms rss=0.0 MiB errors=0 cksum=ad9c644ee41e65e9

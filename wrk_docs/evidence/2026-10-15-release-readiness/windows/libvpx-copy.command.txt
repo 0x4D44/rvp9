@@ -1,0 +1,1 @@
+﻿deltic timeout 300 bash.exe scripts/build-libvpx.sh; prebuilt=/d/worktrees/rvp9-2/acceptance-d639c265/build/libvpx

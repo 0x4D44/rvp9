@@ -1,0 +1,1 @@
+﻿deltic timeout 1800 cargo +1.95.0 build --release --locked -p rvp9-harness --bin conformance

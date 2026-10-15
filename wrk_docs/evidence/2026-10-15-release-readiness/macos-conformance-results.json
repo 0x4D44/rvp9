@@ -1,0 +1,58 @@
+[
+  {
+    "name": "conformance-native-1",
+    "command": [
+      "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/target/release/conformance",
+      "--vectors-dir",
+      "tests/conformance/vectors",
+      "--official",
+      "--strict",
+      "--threads",
+      "1"
+    ],
+    "exit": 0,
+    "seconds": 82.22693514823914
+  },
+  {
+    "name": "conformance-native-2",
+    "command": [
+      "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/target/release/conformance",
+      "--vectors-dir",
+      "tests/conformance/vectors",
+      "--official",
+      "--strict",
+      "--threads",
+      "2"
+    ],
+    "exit": 0,
+    "seconds": 104.57765197753906
+  },
+  {
+    "name": "conformance-scalar-1",
+    "command": [
+      "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/target/release/conformance",
+      "--vectors-dir",
+      "tests/conformance/vectors",
+      "--official",
+      "--strict",
+      "--threads",
+      "1"
+    ],
+    "exit": 0,
+    "seconds": 125.17057681083679
+  },
+  {
+    "name": "conformance-scalar-2",
+    "command": [
+      "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/target/release/conformance",
+      "--vectors-dir",
+      "tests/conformance/vectors",
+      "--official",
+      "--strict",
+      "--threads",
+      "2"
+    ],
+    "exit": 0,
+    "seconds": 209.68166518211365
+  }
+]

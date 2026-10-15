@@ -1,0 +1,5 @@
+﻿Final process-local Git Bash adapters; no repository script changes.
+shasum() { shift 2; command sha256sum $1; }
+stat() { if [ $1 = -f ] && [ $2 = %z ]; then command stat -c %s $3; else command stat $@; fi; }
+Passed via bash.exe -c then source of existing qualification script.
+Final alpha used POSIX vpxdec path /d/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi/build/libvpx/vpxdec.exe.
