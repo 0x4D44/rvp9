@@ -512,10 +512,12 @@ pub struct EncoderConfig {
     /// Defaults to `0` (denoiser off), matching vpxenc's CLI default.
     pub noise_sensitivity: u8,
     /// Best (lowest) allowed Q-index. Mirrors libvpx
-    /// `oxcf.best_allowed_q` (CLI: `--min-q`). The CBR Q controller
-    /// won't pick anything below this. `0` defaults to the
-    /// [`RateControlConfig::min_qindex`] production default (4).
-    /// Range: `0..=max_qindex`.
+    /// `oxcf.best_allowed_q` (CLI: `--min-q`). The bitrate regulators
+    /// won't pick anything below this. Defaults to 4.
+    /// Range: `0..=max_qindex`. [`StreamEncoder`] rejects zero in
+    /// CBR / VBR / two-pass VBR, and in CQ unless `cq_level > 0`,
+    /// because lossless encoding is unsupported. Q mode ignores this
+    /// bound; see [`Self::cq_level`].
     pub min_qindex: u8,
     /// Worst (highest) allowed Q-index. Mirrors libvpx
     /// `oxcf.worst_allowed_q` (CLI: `--max-q`). The CBR Q controller
@@ -592,13 +594,16 @@ pub struct EncoderConfig {
     /// `vp9_encoder.h::VP9EncoderConfig::cq_level`). The quality target
     /// consumed when [`Self::rc_mode`] is [`RcMode::Cq`] (a quality
     /// FLOOR the regulator may exceed for bitrate) or [`RcMode::Q`]
-    /// (the constant quantizer pinned for every frame). Ignored for
+    /// (the inter-frame quantizer, reduced by eight for keyframes). Ignored for
     /// [`RcMode::Cbr`] / [`RcMode::Vbr`]. Range `0..=255` (a VP9
     /// q-index). Threaded onto [`RateControlConfig::cq_level`] in
     /// `to_rate_control_config`.
     ///
     /// Default `0` — matches the [`RateControlConfig`] default and is
     /// inert under the default [`RcMode::Cbr`].
+    /// [`StreamEncoder`] requires at least 9 in Q mode so the keyframe
+    /// boost cannot request unsupported lossless qindex 0. CQ permits
+    /// zero only when [`Self::min_qindex`] is positive.
     pub cq_level: u8,
     /// A18 (SVC) — number of TEMPORAL layers for frame-rate scalability.
     /// `1` (the default) disables SVC: the encoder runs the legacy
@@ -2197,6 +2202,17 @@ impl StreamEncoder {
             rc_config.optimal_buffer_ms = optimal_buffer_ms;
         }
         rc_config.validate().map_err(EncodeError::InvalidConfig)?;
+        let can_pick_lossless = match config.rc_mode {
+            RcMode::Cbr | RcMode::Vbr | RcMode::VbrTwoPass => config.min_qindex == 0,
+            RcMode::Cq => config.min_qindex == 0 && config.cq_level == 0,
+            // Q bypasses min_qindex; its keyframes receive an eight-index boost.
+            RcMode::Q => config.cq_level <= 8,
+        };
+        if can_pick_lossless {
+            return Err(EncodeError::InvalidConfig(
+                "lossless qindex 0 is unsupported; use cq_level >= 9 in Q mode, a positive CQ floor, or min_qindex >= 1",
+            ));
+        }
         let vbr_gf_rc_is_enabled = vbr_gf_rc_enabled(config.rc_mode);
         let golden_refresh_period = if vbr_gf_rc_is_enabled {
             rc_config.one_pass_vbr_gf_interval()
@@ -3006,10 +3022,13 @@ impl StreamEncoder {
             _ => q_index,
         };
 
-        // The CBR controller may legitimately pick `q == 0` when the
-        // buffer is over-full; the F5.1 simulator's quantizer math
-        // doesn't support lossless (qindex 0), so we clamp to 1.
-        let q_index = q_index.max(1);
+        // Construction excludes configurations that can pick lossless Q.
+        // Keep any unexpected zero explicit rather than silently encoding at Q=1.
+        if q_index == 0 {
+            return Err(EncodeError::InvalidConfig(
+                "lossless qindex 0 is unsupported by StreamEncoder",
+            ));
+        }
 
         // W2.2(vpxenc parity, A5 P1): run the avg-source-SAD pass
         // against the previous source frame (libvpx
