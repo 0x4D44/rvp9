@@ -6,15 +6,15 @@
 - **Area:** core/transforms forward_sse2
 - **Raised:** 2026-08-23T17:09:45Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
+- **Owner:** deltic:manual
+- **Owner role:** fix
+- **Owner run:** fix-20261015T232621Z-604f2624
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-CRU-00002-run-fix-20261015T232621Z-604f2624
+- **Owner base:** 440950dec2c11789537d132596bb3f2bc0382746
 - **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner since:** 2026-10-15T23:26:21Z
+- **Owner until:** 2026-10-16T03:26:21Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
