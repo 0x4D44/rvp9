@@ -48,6 +48,7 @@
 //! encoder's public API will widen to cover those shapes as the
 //! mode-decision driver lands.
 
+use crate::rate_control::config::coded_dimensions_supported;
 use rvp9_core::bitstream::frame::{MAX_INTER_REFS, ReferenceMode};
 use rvp9_core::bitstream::header::HeaderTail;
 use rvp9_core::bitstream::sub_parsers::{
@@ -74,6 +75,9 @@ use rvp9_core::inter::mv_ref::sign_bias_from_header;
 use rvp9_core::intra_pred::IntraMode;
 use rvp9_core::mode_info::{BlockMode, BmiInfo, InterMode, ModeInfo, Mv, RefFrame};
 use rvp9_core::transforms::{TxMode, TxSize};
+
+const LEGACY_COMPRESSED_HEADER_CAPACITY: usize = 16 * 1024;
+const LEGACY_UNCOMPRESSED_HEADER_CAPACITY: usize = 256;
 
 /// Positive-control counter for the `RVP9_TRELLIS` coefficient
 /// optimizer: total number of (qcoeff) coefficients the trellis CHANGED
@@ -272,7 +276,11 @@ pub use spatial_encoder::{
 /// v1 is intentionally tiny — Stage 4a tasks 2-8 will widen this with
 /// rate-control / partition / mode-decision / AQ / SVC knobs. For now the
 /// only knobs that affect the (synthetic) output are `width`, `height`,
-/// and `base_qindex`.
+/// and `base_qindex`. The coded dimensions must be multiples of 64, each no
+/// greater than [`MAX_CODED_DIMENSION`](crate::rate_control::config::MAX_CODED_DIMENSION),
+/// and together contain at most
+/// [`MAX_CODED_LUMA_PIXELS`](crate::rate_control::config::MAX_CODED_LUMA_PIXELS)
+/// luma pixels.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Config {
     /// Coded luma frame width in pixels. Must be a multiple of 64
@@ -338,16 +346,123 @@ impl From<ModesWriterError> for EncodeError {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+struct LegacyFrameGeometry {
+    mi_rows: u32,
+    mi_cols: u32,
+    mi_rows_usize: usize,
+    mi_cols_usize: usize,
+    mi_cell_count: usize,
+    luma_plane_len: usize,
+    chroma_plane_len: usize,
+    sb_count: usize,
+    keyframe_tile_capacity: usize,
+    residual_tile_capacity: usize,
+}
+
+impl LegacyFrameGeometry {
+    fn checked(width: u32, height: u32) -> Result<Self, EncodeError> {
+        let invalid_geometry = || {
+            EncodeError::InvalidConfig("derived frame geometry exceeds supported allocation size")
+        };
+        let width_usize = usize::try_from(width).map_err(|_| invalid_geometry())?;
+        let height_usize = usize::try_from(height).map_err(|_| invalid_geometry())?;
+        let luma_plane_len = width_usize
+            .checked_mul(height_usize)
+            .ok_or_else(invalid_geometry)?;
+        let chroma_plane_len = (width_usize / 2)
+            .checked_mul(height_usize / 2)
+            .ok_or_else(invalid_geometry)?;
+
+        let mi_rows = height / 8;
+        let mi_cols = width / 8;
+        let mi_rows_usize = usize::try_from(mi_rows).map_err(|_| invalid_geometry())?;
+        let mi_cols_usize = usize::try_from(mi_cols).map_err(|_| invalid_geometry())?;
+        let mi_cell_count = mi_rows_usize
+            .checked_mul(mi_cols_usize)
+            .ok_or_else(invalid_geometry)?;
+        mi_cell_count
+            .checked_mul(std::mem::size_of::<Option<ModeInfo>>())
+            .ok_or_else(invalid_geometry)?;
+
+        let keyframe_tile_capacity = mi_cell_count
+            .checked_mul(8)
+            .and_then(|capacity| capacity.checked_add(1024))
+            .ok_or_else(invalid_geometry)?;
+        let residual_tile_capacity = mi_cell_count
+            .checked_mul(64)
+            .and_then(|capacity| capacity.checked_add(16 * 1024))
+            .ok_or_else(invalid_geometry)?;
+        let max_packet_capacity = LEGACY_UNCOMPRESSED_HEADER_CAPACITY
+            .checked_add(LEGACY_COMPRESSED_HEADER_CAPACITY)
+            .and_then(|capacity| capacity.checked_add(residual_tile_capacity))
+            .ok_or_else(invalid_geometry)?;
+        u32::try_from(max_packet_capacity).map_err(|_| invalid_geometry())?;
+        max_packet_capacity
+            .checked_mul(2)
+            .and_then(|capacity| capacity.checked_add(10))
+            .ok_or_else(invalid_geometry)?;
+
+        let sb_rows = usize::try_from(height / 64).map_err(|_| invalid_geometry())?;
+        let sb_cols = usize::try_from(width / 64).map_err(|_| invalid_geometry())?;
+        let sb_count = sb_rows.checked_mul(sb_cols).ok_or_else(invalid_geometry)?;
+        sb_count
+            .checked_mul(std::mem::size_of::<Vec<PartitionLeafDesc>>())
+            .ok_or_else(invalid_geometry)?;
+        sb_count
+            .checked_mul(std::mem::size_of::<PartitionLeafDesc>())
+            .ok_or_else(invalid_geometry)?;
+
+        // The legacy residual simulator creates one physical slot for each
+        // 4x4 luma/chroma position, then reserves 16 coefficients per slot.
+        let coef_slot_count = mi_cell_count.checked_mul(6).ok_or_else(invalid_geometry)?;
+        coef_slot_count
+            .checked_mul(std::mem::size_of::<u32>())
+            .ok_or_else(invalid_geometry)?;
+        coef_slot_count
+            .checked_mul(std::mem::size_of::<IntraCoefBlockValue>())
+            .ok_or_else(invalid_geometry)?;
+        coef_slot_count
+            .checked_mul(16)
+            .and_then(|count| count.checked_mul(std::mem::size_of::<i16>()))
+            .ok_or_else(invalid_geometry)?;
+
+        Ok(Self {
+            mi_rows,
+            mi_cols,
+            mi_rows_usize,
+            mi_cols_usize,
+            mi_cell_count,
+            luma_plane_len,
+            chroma_plane_len,
+            sb_count,
+            keyframe_tile_capacity,
+            residual_tile_capacity,
+        })
+    }
+}
+
+fn checked_packet_capacity(
+    header_len: usize,
+    compressed_header_len: usize,
+    tile_len: usize,
+) -> Result<usize, EncodeError> {
+    header_len
+        .checked_add(compressed_header_len)
+        .and_then(|capacity| capacity.checked_add(tile_len))
+        .ok_or(EncodeError::InvalidConfig(
+            "encoded packet size exceeds supported allocation size",
+        ))
+}
+
 /// VP9 encoder.
 ///
-/// At v1 the encoder holds nothing but its configuration. As
-/// rate-control / frame-context tracking land, this grows fields for
-/// (a) the 4 `FrameContext` banks, (b) the rate-control state, and
-/// (c) the reference-frame management. For now every call to an encode
-/// method is self-contained.
+/// The legacy encoder retains its configuration and the checked frame
+/// geometry derived from it. Every encode call remains self-contained.
 #[derive(Clone, Copy, Debug)]
 pub struct Encoder {
     config: Config,
+    geometry: LegacyFrameGeometry,
 }
 
 impl Encoder {
@@ -355,10 +470,9 @@ impl Encoder {
     ///
     /// # Errors
     ///
-    /// Returns [`EncodeError::InvalidConfig`] if `width` or `height`
-    /// is not a multiple of 64 — the synthetic encoder only emits
-    /// PARTITION_NONE 64×64 super-blocks, so non-aligned dimensions
-    /// can't be expressed.
+    /// Returns [`EncodeError::InvalidConfig`] if the coded dimensions
+    /// are not multiples of 64, exceed the supported frame-size limits,
+    /// or produce unrepresentable derived storage sizes.
     pub fn new(config: Config) -> Result<Self, EncodeError> {
         if !config.width.is_multiple_of(64) {
             return Err(EncodeError::InvalidConfig(
@@ -378,7 +492,13 @@ impl Encoder {
                 "base_qindex must be non-zero (v1 does not support lossless)",
             ));
         }
-        Ok(Self { config })
+        if !coded_dimensions_supported(config.width, config.height) {
+            return Err(EncodeError::InvalidConfig(
+                "width / height exceed supported maximum",
+            ));
+        }
+        let geometry = LegacyFrameGeometry::checked(config.width, config.height)?;
+        Ok(Self { config, geometry })
     }
 
     /// Return the encoder configuration.
@@ -461,21 +581,19 @@ impl Encoder {
         input_yuv: (&[u8], &[u8], &[u8]),
         recon_yuv_out: (&mut [u8], &mut [u8], &mut [u8]),
     ) -> Result<Vec<u8>, EncodeError> {
-        let w = self.config.width as usize;
-        let h = self.config.height as usize;
-        let uvw = w / 2;
-        let uvh = h / 2;
-        if input_yuv.0.len() != w * h
-            || input_yuv.1.len() != uvw * uvh
-            || input_yuv.2.len() != uvw * uvh
+        let luma_plane_len = self.geometry.luma_plane_len;
+        let chroma_plane_len = self.geometry.chroma_plane_len;
+        if input_yuv.0.len() != luma_plane_len
+            || input_yuv.1.len() != chroma_plane_len
+            || input_yuv.2.len() != chroma_plane_len
         {
             return Err(EncodeError::InvalidConfig(
                 "input_yuv plane lengths must match (w*h, w/2*h/2, w/2*h/2)",
             ));
         }
-        if recon_yuv_out.0.len() != w * h
-            || recon_yuv_out.1.len() != uvw * uvh
-            || recon_yuv_out.2.len() != uvw * uvh
+        if recon_yuv_out.0.len() != luma_plane_len
+            || recon_yuv_out.1.len() != chroma_plane_len
+            || recon_yuv_out.2.len() != chroma_plane_len
         {
             return Err(EncodeError::InvalidConfig(
                 "recon_yuv_out plane lengths must match (w*h, w/2*h/2, w/2*h/2)",
@@ -489,6 +607,7 @@ impl Encoder {
         let coef_source = simulate_dc_intra_encode(
             self.config.width,
             self.config.height,
+            self.geometry.sb_count,
             self.config.base_qindex,
             input_yuv,
             recon_yuv_out,
@@ -597,8 +716,8 @@ impl Encoder {
         refresh_frame_context: bool,
         coef_source: &dyn rvp9_core::bitstream::IntraCoefSource,
     ) -> Result<Vec<u8>, EncodeError> {
-        let mi_rows = self.config.height / 8;
-        let mi_cols = self.config.width / 8;
+        let mi_rows = self.geometry.mi_rows;
+        let mi_cols = self.geometry.mi_cols;
         let cell = ModeInfo {
             block_size: BlockSize::Block64x64,
             tx_size: TxSize::Tx32x32,
@@ -611,7 +730,7 @@ impl Encoder {
             },
             bmi: Default::default(),
         };
-        let mi_grid: Vec<Option<ModeInfo>> = vec![Some(cell); (mi_rows * mi_cols) as usize];
+        let mi_grid: Vec<Option<ModeInfo>> = vec![Some(cell); self.geometry.mi_cell_count];
 
         let pre_fc_template = FrameContext::new_default();
         let mut pre_fc = pre_fc_template.clone();
@@ -628,7 +747,7 @@ impl Encoder {
             reference_mode: ReferenceMode::Single,
         };
 
-        let mut compressed_buf = vec![0u8; 16 * 1024];
+        let mut compressed_buf = vec![0u8; LEGACY_COMPRESSED_HEADER_CAPACITY];
         let compressed_len = {
             let mut bw = BoolWriter::start_encode(&mut compressed_buf);
             write_compressed_header(&mut bw, &mut pre_fc, &post_fc, opts, &target, None)?;
@@ -639,11 +758,11 @@ impl Encoder {
 
         let tile_bounds = ModesTileBounds {
             mi_row_start: 0,
-            mi_row_end: mi_rows as usize,
+            mi_row_end: self.geometry.mi_rows_usize,
             mi_col_start: 0,
-            mi_col_end: mi_cols as usize,
+            mi_col_end: self.geometry.mi_cols_usize,
         };
-        let mut tile_buf = vec![0u8; (mi_rows as usize) * (mi_cols as usize) * 64 + 16 * 1024];
+        let mut tile_buf = vec![0u8; self.geometry.residual_tile_capacity];
         let tile_len = {
             let mut bw = BoolWriter::start_encode(&mut tile_buf);
             let tile_mi_cols = (tile_bounds.mi_col_end - tile_bounds.mi_col_start).max(1);
@@ -714,7 +833,7 @@ impl Encoder {
             tail: Some(tail),
         };
 
-        let mut hdr_buf = vec![0u8; 256];
+        let mut hdr_buf = vec![0u8; LEGACY_UNCOMPRESSED_HEADER_CAPACITY];
         let hdr_len = {
             let mut wb = RawBitWriter::new(&mut hdr_buf);
             write_uncompressed_header(&mut wb, &hdr, compressed_len as u16)?;
@@ -723,7 +842,8 @@ impl Encoder {
         };
         hdr_buf.truncate(hdr_len);
 
-        let mut packet = Vec::with_capacity(hdr_len + compressed_len + tile_len);
+        let mut packet =
+            Vec::with_capacity(checked_packet_capacity(hdr_len, compressed_len, tile_len)?);
         packet.extend_from_slice(&hdr_buf);
         packet.extend_from_slice(&compressed_buf);
         packet.extend_from_slice(&tile_buf);
@@ -742,8 +862,8 @@ impl Encoder {
     /// [`encode_synthetic_two_frame_kf_inter`]: Self::encode_synthetic_two_frame_kf_inter
     fn build_keyframe_payload(&self, refresh_frame_context: bool) -> Result<Vec<u8>, EncodeError> {
         // mi grid: 8 mi cells per 64-pixel SB row (8x8 mi units).
-        let mi_rows = self.config.height / 8;
-        let mi_cols = self.config.width / 8;
+        let mi_rows = self.geometry.mi_rows;
+        let mi_cols = self.geometry.mi_cols;
         let cell = ModeInfo {
             block_size: BlockSize::Block64x64,
             tx_size: TxSize::Tx32x32,
@@ -756,7 +876,7 @@ impl Encoder {
             },
             bmi: Default::default(),
         };
-        let mi_grid: Vec<Option<ModeInfo>> = vec![Some(cell); (mi_rows * mi_cols) as usize];
+        let mi_grid: Vec<Option<ModeInfo>> = vec![Some(cell); self.geometry.mi_cell_count];
 
         // Compressed header. tx_mode = AllowTx32x32 forces Tx32x32 on
         // every block without consuming bits. pre == post emits only
@@ -776,7 +896,7 @@ impl Encoder {
             reference_mode: ReferenceMode::Single,
         };
 
-        let mut compressed_buf = vec![0u8; 16 * 1024];
+        let mut compressed_buf = vec![0u8; LEGACY_COMPRESSED_HEADER_CAPACITY];
         let compressed_len = {
             let mut bw = BoolWriter::start_encode(&mut compressed_buf);
             write_compressed_header(&mut bw, &mut pre_fc, &post_fc, opts, &target, None)?;
@@ -789,11 +909,11 @@ impl Encoder {
         // frame; (mi_rows, mi_cols) is the full mi grid.
         let tile_bounds = ModesTileBounds {
             mi_row_start: 0,
-            mi_row_end: mi_rows as usize,
+            mi_row_end: self.geometry.mi_rows_usize,
             mi_col_start: 0,
-            mi_col_end: mi_cols as usize,
+            mi_col_end: self.geometry.mi_cols_usize,
         };
-        let mut tile_buf = vec![0u8; (mi_rows as usize) * (mi_cols as usize) * 8 + 1024];
+        let mut tile_buf = vec![0u8; self.geometry.keyframe_tile_capacity];
         let tile_len = {
             let mut bw = BoolWriter::start_encode(&mut tile_buf);
             let tile_mi_cols = (tile_bounds.mi_col_end - tile_bounds.mi_col_start).max(1);
@@ -868,7 +988,7 @@ impl Encoder {
             tail: Some(tail),
         };
 
-        let mut hdr_buf = vec![0u8; 256];
+        let mut hdr_buf = vec![0u8; LEGACY_UNCOMPRESSED_HEADER_CAPACITY];
         let hdr_len = {
             let mut wb = RawBitWriter::new(&mut hdr_buf);
             write_uncompressed_header(&mut wb, &hdr, compressed_len as u16)?;
@@ -879,7 +999,8 @@ impl Encoder {
 
         // Assemble: uncompressed_header + compressed_header + tile_data.
         // No superframe trailer for a single-frame payload.
-        let mut packet = Vec::with_capacity(hdr_len + compressed_len + tile_len);
+        let mut packet =
+            Vec::with_capacity(checked_packet_capacity(hdr_len, compressed_len, tile_len)?);
         packet.extend_from_slice(&hdr_buf);
         packet.extend_from_slice(&compressed_buf);
         packet.extend_from_slice(&tile_buf);
@@ -901,8 +1022,8 @@ impl Encoder {
         &self,
         inter_skip: bool,
     ) -> Result<Vec<u8>, EncodeError> {
-        let mi_rows = self.config.height / 8;
-        let mi_cols = self.config.width / 8;
+        let mi_rows = self.geometry.mi_rows;
+        let mi_cols = self.geometry.mi_cols;
 
         // mi_grid: every 8×8 cell carries the same Inter cell. The
         // PARTITION_NONE 64×64 walker splats one ModeInfo across all
@@ -921,7 +1042,7 @@ impl Encoder {
             },
             bmi: Default::default(),
         };
-        let mi_grid: Vec<Option<ModeInfo>> = vec![Some(inter_cell); (mi_rows * mi_cols) as usize];
+        let mi_grid: Vec<Option<ModeInfo>> = vec![Some(inter_cell); self.geometry.mi_cell_count];
 
         // Compressed header. pre == post == new_default() so every
         // prob-diff-update emits a "no-update" gate bit. `tx_mode =
@@ -941,7 +1062,7 @@ impl Encoder {
             reference_mode: ReferenceMode::Single,
         };
 
-        let mut compressed_buf = vec![0u8; 16 * 1024];
+        let mut compressed_buf = vec![0u8; LEGACY_COMPRESSED_HEADER_CAPACITY];
         let compressed_len = {
             let mut bw = BoolWriter::start_encode(&mut compressed_buf);
             write_compressed_header(&mut bw, &mut pre_fc, &post_fc, opts, &target, None)?;
@@ -953,9 +1074,9 @@ impl Encoder {
         // Per-tile inter-frame mode-info partition.
         let tile_bounds = ModesTileBounds {
             mi_row_start: 0,
-            mi_row_end: mi_rows as usize,
+            mi_row_end: self.geometry.mi_rows_usize,
             mi_col_start: 0,
-            mi_col_end: mi_cols as usize,
+            mi_col_end: self.geometry.mi_cols_usize,
         };
         // `InterModeReadParams` for a single-ref ZEROMV frame. The
         // compound-ref derivation is syntactically valid even though
@@ -974,7 +1095,7 @@ impl Encoder {
             seg_skip: false,
         };
 
-        let mut tile_buf = vec![0u8; (mi_rows as usize) * (mi_cols as usize) * 8 + 1024];
+        let mut tile_buf = vec![0u8; self.geometry.keyframe_tile_capacity];
         let tile_len = {
             let mut bw = BoolWriter::start_encode(&mut tile_buf);
             let tile_mi_cols = (tile_bounds.mi_col_end - tile_bounds.mi_col_start).max(1);
@@ -1059,7 +1180,7 @@ impl Encoder {
             tail: Some(tail),
         };
 
-        let mut hdr_buf = vec![0u8; 256];
+        let mut hdr_buf = vec![0u8; LEGACY_UNCOMPRESSED_HEADER_CAPACITY];
         let hdr_len = {
             let mut wb = RawBitWriter::new(&mut hdr_buf);
             write_uncompressed_header(&mut wb, &hdr, compressed_len as u16)?;
@@ -1068,7 +1189,8 @@ impl Encoder {
         };
         hdr_buf.truncate(hdr_len);
 
-        let mut packet = Vec::with_capacity(hdr_len + compressed_len + tile_len);
+        let mut packet =
+            Vec::with_capacity(checked_packet_capacity(hdr_len, compressed_len, tile_len)?);
         packet.extend_from_slice(&hdr_buf);
         packet.extend_from_slice(&compressed_buf);
         packet.extend_from_slice(&tile_buf);
@@ -2103,15 +2225,14 @@ impl PartitionLeafDesc {
 pub(crate) fn simulate_dc_intra_encode(
     width: u32,
     height: u32,
+    sb_count: usize,
     base_qindex: u8,
     input_yuv: (&[u8], &[u8], &[u8]),
     recon_yuv_out: (&mut [u8], &mut [u8], &mut [u8]),
 ) -> VecBackedIntraCoefSource {
     // Single Block64x64 leaf per SB; SBs walked in raster order.
-    let sb_cols = (width as usize) / 64;
-    let sb_rows = (height as usize) / 64;
-    let mut sb_partitions: Vec<Vec<PartitionLeafDesc>> = Vec::with_capacity(sb_rows * sb_cols);
-    for _ in 0..(sb_rows * sb_cols) {
+    let mut sb_partitions: Vec<Vec<PartitionLeafDesc>> = Vec::with_capacity(sb_count);
+    for _ in 0..sb_count {
         sb_partitions.push(vec![PartitionLeafDesc {
             mi_row_in_sb: 0,
             mi_col_in_sb: 0,
@@ -19067,6 +19188,44 @@ mod tests {
             EncodeError::InvalidConfig(_) => {}
             other => panic!("expected InvalidConfig, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn encoder_rejects_dimensions_above_stream_encoder_maximum_before_allocating() {
+        let width_above_maximum = Encoder::new(Config::new(16_448, 64, 50));
+        let height_above_maximum = Encoder::new(Config::new(64, 16_448, 50));
+        assert!(
+            matches!(
+                width_above_maximum,
+                Err(EncodeError::InvalidConfig(message))
+                    if message.contains("supported maximum")
+            ),
+            "legacy Encoder must reject an oversized width before allocating frame storage",
+        );
+        assert!(
+            matches!(
+                height_above_maximum,
+                Err(EncodeError::InvalidConfig(message))
+                    if message.contains("supported maximum")
+            ),
+            "legacy Encoder must reject an oversized height before allocating frame storage",
+        );
+        assert!(
+            Encoder::new(Config::new(16_384, 4_096, 50)).is_ok(),
+            "legacy Encoder must accept the exact coded-dimension and luma-area limits",
+        );
+    }
+
+    #[test]
+    fn encoder_rejects_luma_area_above_stream_encoder_maximum_before_allocating() {
+        assert!(
+            matches!(
+                Encoder::new(Config::new(16_384, 16_384, 50)),
+                Err(EncodeError::InvalidConfig(message))
+                    if message.contains("supported maximum")
+            ),
+            "legacy Encoder must reject a luma area above the supported maximum before allocating frame storage",
+        );
     }
 
     #[test]

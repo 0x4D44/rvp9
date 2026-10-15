@@ -277,7 +277,7 @@ const fn ceil_div_16(value: u32) -> u32 {
     (value / 16) + if value.is_multiple_of(16) { 0 } else { 1 }
 }
 
-const fn coded_dimensions_supported(width: u32, height: u32) -> bool {
+pub(crate) const fn coded_dimensions_supported(width: u32, height: u32) -> bool {
     if width == 0 || height == 0 {
         return false;
     }
