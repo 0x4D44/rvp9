@@ -6,15 +6,15 @@
 - **Area:** encoder/parallel scratch
 - **Raised:** 2026-08-16T08:19:07Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
+- **Owner:** deltic:manual
+- **Owner role:** fix
+- **Owner run:** fix-20261015T224158Z-d8168bcd
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KILN-00070-run-fix-20261015T224158Z-d8168bcd
+- **Owner base:** 466fe287d36d5cc5d9af0ac3ca3f34d33cd7737c
 - **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner since:** 2026-10-15T22:41:58Z
+- **Owner until:** 2026-10-16T02:41:58Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
