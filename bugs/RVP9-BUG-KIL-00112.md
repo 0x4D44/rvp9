@@ -6,15 +6,15 @@
 - **Area:** bench/external process reliability
 - **Raised:** 2026-08-22T19:31:25Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
+- **Owner:** deltic:manual
+- **Owner role:** fix
+- **Owner run:** fix-20261015T230256Z-adabc6af
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KIL-00112-run-fix-20261015T230256Z-adabc6af
+- **Owner base:** 1dcac85f86c15703f30f114eecd7c69530775de3
 - **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner since:** 2026-10-15T23:02:56Z
+- **Owner until:** 2026-10-16T03:02:56Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
