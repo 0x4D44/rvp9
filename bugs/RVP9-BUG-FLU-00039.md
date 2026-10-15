@@ -30,3 +30,9 @@ On Apple M5 Max/aarch64-apple-darwin at candidate code 1a84f60a24e8d82e8e6454743
 <unfixed — raised only>
 
 ## Notes
+
+### Additional qualification evidence (2026-10-16)
+
+The separately run native encoder ASan library also aborts in existing `frame_loop::tests::arf_decoder_fc_bank_one_stays_synced_after_non_show_frame`. Its stack reaches `build_inter_prediction_from_tight_plane -> convolve8_neon -> convolve8_horiz_neon`. Source/disassembly review identifies the same four-byte width4I8MM load at row+8. The reference allocation is4096bytes. This test uses CPU7CBR with lag5 and ALTREF; do not extrapolate it to lag-zero production reachability. Raw `macos-asan-dependent-libraries.log` is retained with the original reports.
+
+Repair-scope note from source review: wider I8MM/dotprod horizontal paths load16bytes per eight outputs while validation may guarantee only15 on the last group of widths divisible by8. This wider mismatch has not been separately reproduced at runtime; inspect it rather than fixing only the observed width4 case. No fix or suppression was made in this task.
