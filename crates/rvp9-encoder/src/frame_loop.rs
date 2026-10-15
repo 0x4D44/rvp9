@@ -150,7 +150,7 @@ fn lf_packet_overlap_enabled() -> bool {
     use std::sync::OnceLock;
     static ENABLED: OnceLock<bool> = OnceLock::new();
     *ENABLED.get_or_init(|| {
-        lf_packet_overlap_policy(std::env::var_os("RVP9_LF_PACKET_OVERLAP").as_deref())
+        lf_packet_overlap_policy(crate::diagnostic_env::var_os("RVP9_LF_PACKET_OVERLAP").as_deref())
     })
 }
 
@@ -185,7 +185,7 @@ fn filter_nonreference_recon_override() -> bool {
 
     static ENABLED: OnceLock<bool> = OnceLock::new();
     *ENABLED.get_or_init(|| {
-        std::env::var_os("RVP9_FILTER_NONREF_RECON").is_some_and(|value| value != "0")
+        crate::diagnostic_env::var_os("RVP9_FILTER_NONREF_RECON").is_some_and(|value| value != "0")
     })
 }
 
@@ -333,7 +333,7 @@ fn vbr_gf_rc_policy(value: Option<&std::ffi::OsStr>) -> bool {
 #[inline]
 fn vbr_gf_rc_enabled(rc_mode: RcMode) -> bool {
     matches!(rc_mode, RcMode::Vbr)
-        && vbr_gf_rc_policy(std::env::var_os("RVP9_VBR_GF_RC").as_deref())
+        && vbr_gf_rc_policy(crate::diagnostic_env::var_os("RVP9_VBR_GF_RC").as_deref())
 }
 
 fn temporal_svc_cumulative_targets(
@@ -393,7 +393,7 @@ fn exact_keyframe_sub8_product_policy(
 }
 
 fn exact_keyframe_sub8_enabled(config: &EncoderConfig, q_index: u8, spatial_svc: bool) -> bool {
-    if std::env::var_os("RVP9_EXACT_KF_SUB8").is_some_and(|value| value != "0") {
+    if crate::diagnostic_env::var_os("RVP9_EXACT_KF_SUB8").is_some_and(|value| value != "0") {
         return true;
     }
 
@@ -408,7 +408,7 @@ fn exact_keyframe_sub8_enabled(config: &EncoderConfig, q_index: u8, spatial_svc:
 }
 
 fn nonrd_keyframe_8x8_enabled(config: &EncoderConfig, q_index: u8) -> bool {
-    if std::env::var_os("RVP9_EXACT_KF_SUB8").is_some_and(|value| value != "0") {
+    if crate::diagnostic_env::var_os("RVP9_EXACT_KF_SUB8").is_some_and(|value| value != "0") {
         return false;
     }
     exact_keyframe_sub8_enabled(config, q_index, false)
@@ -420,7 +420,7 @@ fn nonrd_keyframe_8x8_enabled(config: &EncoderConfig, q_index: u8) -> bool {
 }
 
 fn keyframe_8x8_mode_cap_enabled(config: &EncoderConfig, q_index: u8) -> bool {
-    if std::env::var_os("RVP9_EXACT_KF_SUB8").is_some_and(|value| value != "0") {
+    if crate::diagnostic_env::var_os("RVP9_EXACT_KF_SUB8").is_some_and(|value| value != "0") {
         return false;
     }
     let qmax = match config.temporal_layers {
@@ -446,7 +446,7 @@ fn source_aligned_cpu8_svc_partitions_enabled(config: &EncoderConfig, has_svc_fr
 fn serial_inter_coef_recording_enabled(tile_count: usize, max_threads: u32) -> bool {
     tile_count == 1
         && max_threads <= 1
-        && std::env::var_os("RVP9_RETAIN_INTER_COEFS").is_none_or(|value| value != "0")
+        && crate::diagnostic_env::var_os("RVP9_RETAIN_INTER_COEFS").is_none_or(|value| value != "0")
 }
 
 /// Public configuration for the F10.0 streaming encoder.
@@ -744,7 +744,7 @@ impl EncoderConfig {
         // for A10-class diagnostic experiments only.
         let default_bits_per_mb_multiplier =
             default_bits_per_mb_multiplier(self.rc_mode, defaults.bits_per_mb_multiplier);
-        let bits_per_mb_multiplier = std::env::var("RVP9_BPM_MULTIPLIER")
+        let bits_per_mb_multiplier = crate::diagnostic_env::var("RVP9_BPM_MULTIPLIER")
             .ok()
             .and_then(|s| s.parse::<f64>().ok())
             .filter(|v| v.is_finite() && *v > 0.0)
@@ -1148,7 +1148,11 @@ fn guarded_frame_hf_energy(
 fn three_d_enabled() -> bool {
     use std::sync::OnceLock;
     static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| std::env::var("RVP9_3D").map(|v| v != "0").unwrap_or(true))
+    *ON.get_or_init(|| {
+        crate::diagnostic_env::var("RVP9_3D")
+            .map(|v| v != "0")
+            .unwrap_or(true)
+    })
 }
 
 /// Lever-3b / 3D — the source-HF-energy threshold separating "natural"
@@ -1160,7 +1164,7 @@ fn three_d_thresh() -> f64 {
     use std::sync::OnceLock;
     static T: OnceLock<f64> = OnceLock::new();
     *T.get_or_init(|| {
-        std::env::var("RVP9_3D_THRESH")
+        crate::diagnostic_env::var("RVP9_3D_THRESH")
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(7.0)
@@ -2980,7 +2984,7 @@ impl StreamEncoder {
         // Env-gated; captured immediately after the pick so it reflects
         // the buffer state that drove THIS frame's Q. The actual bits are
         // appended below once the frame is coded.
-        let e8_trace = if std::env::var_os("RVP9_E8_TRACE").is_some_and(|v| v != "0") {
+        let e8_trace = if crate::diagnostic_env::var_os("RVP9_E8_TRACE").is_some_and(|v| v != "0") {
             Some(self.rate_control.e8_trace_snapshot())
         } else {
             None
@@ -2994,7 +2998,7 @@ impl StreamEncoder {
         // match libvpx `--end-usage=q --cq-level=<q>` so PSNR/bit
         // differences isolate prediction + transform + entropy from
         // rate control. No-op when unset (production paths unaffected).
-        let q_index = match std::env::var("RVP9_FIXED_Q")
+        let q_index = match crate::diagnostic_env::var("RVP9_FIXED_Q")
             .ok()
             .and_then(|s| s.parse::<u8>().ok())
         {
@@ -3102,7 +3106,7 @@ impl StreamEncoder {
         // motion) and testsrc (synthetic high-freq) separate at the
         // frame level. No-op unless `RVP9_3D_DUMP` is set; never touches
         // the bitstream.
-        if std::env::var_os("RVP9_3D_DUMP").is_some() {
+        if crate::diagnostic_env::var_os("RVP9_3D_DUMP").is_some() {
             let w = self.pre_analysis.width as usize;
             let h = self.pre_analysis.height as usize;
             let sig =
@@ -3258,7 +3262,7 @@ impl StreamEncoder {
         // the actual bit count, then the ratio actual/predicted.
         // Mean of the ratio sets the empirical `bits_per_mb_multiplier`
         // needed to close the gap on this content.
-        if std::env::var_os("RVP9_DIAG_BPM_VERIFY").is_some_and(|v| v != "0") {
+        if crate::diagnostic_env::var_os("RVP9_DIAG_BPM_VERIFY").is_some_and(|v| v != "0") {
             let predicted = self.rate_control.predicted_bits_at_picked_q(rc_frame_kind);
             let q_picked = u32::from(self.rate_control.last_picked_qindex);
             let ratio = if predicted > 0 {
@@ -3485,7 +3489,7 @@ impl StreamEncoder {
                             tile_col,
                         );
                         assert_eq!(tile_partitions.len(), plan.partition_cells);
-                        scope.submit(move || {
+                        scope.submit(crate::diagnostic_env::inherit(move || {
                             let coefs =
                                 crate::pick_and_simulate_intra_encode_partitions_with_layout(
                                     w,
@@ -3516,7 +3520,7 @@ impl StreamEncoder {
                                 partitions: tile_partitions,
                                 coefs,
                             });
-                        });
+                        }));
                     }
                 });
 
@@ -4585,7 +4589,7 @@ impl StreamEncoder {
                             .recon_v
                             .resize((tile_width / 2) * (h as usize / 2), 0);
                         let seg_map = seg_map.as_slice();
-                        scope.submit(move || {
+                        scope.submit(crate::diagnostic_env::inherit(move || {
                             rvp9_core::mode_decision::inter::set_frame_s2_gate(s2_frame_gate);
                             choose_mapped_partitions_for_sb_cols_into_window(
                                 partition_input,
@@ -4648,7 +4652,7 @@ impl StreamEncoder {
                                 mi_grid: tile_encode.mi_grid,
                             };
                             *result_slot = Some(result);
-                        });
+                        }));
                     }
                 });
             let tile_results: Vec<InterTileJobResult> = result_slots
@@ -6250,10 +6254,11 @@ fn choose_mapped_partitions_for_sb_cols_into_window<T, F>(
         width: width_px,
         height: height_px,
     };
-    let vbp_force_split_enabled =
-        !is_keyframe && std::env::var_os("RVP9_VBP_FORCE_SPLIT").is_some_and(|v| v != "0");
+    let vbp_force_split_enabled = !is_keyframe
+        && crate::diagnostic_env::var_os("RVP9_VBP_FORCE_SPLIT").is_some_and(|v| v != "0");
     let keyframe_sub8_enabled = is_keyframe && exact_keyframe_sub8;
-    let partition_histogram_enabled = !is_keyframe && std::env::var_os("RVP9_PART_HIST").is_some();
+    let partition_histogram_enabled =
+        !is_keyframe && crate::diagnostic_env::var_os("RVP9_PART_HIST").is_some();
     let vbp_qindex = vbp_qindex_for_partition(q_index, is_keyframe);
     let vbp_avg_inter_qindex = vbp_avg_inter_qindex_for_partition(avg_inter_qindex, is_keyframe);
 
@@ -6456,7 +6461,7 @@ fn vbp_qindex_for_partition(q_index: u8, is_keyframe: bool) -> u8 {
     if is_keyframe {
         return q_index;
     }
-    std::env::var("RVP9_VBP_QINDEX")
+    crate::diagnostic_env::var("RVP9_VBP_QINDEX")
         .ok()
         .and_then(|v| v.parse::<u8>().ok())
         .unwrap_or(q_index)
@@ -6466,7 +6471,7 @@ fn vbp_avg_inter_qindex_for_partition(avg_inter_qindex: u8, is_keyframe: bool) -
     if is_keyframe {
         return avg_inter_qindex;
     }
-    std::env::var("RVP9_VBP_AVG_QINDEX")
+    crate::diagnostic_env::var("RVP9_VBP_AVG_QINDEX")
         .ok()
         .and_then(|v| v.parse::<u8>().ok())
         .unwrap_or(avg_inter_qindex)
@@ -6972,9 +6977,9 @@ fn build_keyframe_packet_with_tiles(
             .scope(|scope| {
                 for (tile_col, result_slot) in result_slots.iter_mut().enumerate() {
                     let count_tile = &count_tile;
-                    scope.submit(move || {
+                    scope.submit(crate::diagnostic_env::inherit(move || {
                         *result_slot = Some(count_tile(tile_col));
-                    });
+                    }));
                 }
             });
         for (tile_col, result) in result_slots.into_iter().enumerate() {
@@ -7093,9 +7098,9 @@ fn build_keyframe_packet_with_tiles(
             .scope(|scope| {
                 for (tile_col, result_slot) in result_slots.iter_mut().enumerate() {
                     let encode_tile = &encode_tile;
-                    scope.submit(move || {
+                    scope.submit(crate::diagnostic_env::inherit(move || {
                         *result_slot = Some(encode_tile(tile_col));
-                    });
+                    }));
                 }
             });
         for (tile_col, result) in result_slots.into_iter().enumerate() {
@@ -7314,7 +7319,7 @@ where
     // Match libvpx's current-frame compressed-header adaptation. The opt-out
     // exists only for differential diagnosis against the retired behaviour.
     let forward_mode_probs =
-        std::env::var("RVP9_FORWARD_MODE_PROBS").map_or(true, |value| value != "0");
+        crate::diagnostic_env::var("RVP9_FORWARD_MODE_PROBS").map_or(true, |value| value != "0");
 
     // P0b — `decoder_fc` is the decoder's current FC bank state,
     // mirrored by the caller. The compressed header diff-encodes
@@ -7646,7 +7651,7 @@ where
             .expect("parallel tile writing requires the frame worker pool")
             .scope(|scope| {
                 if let Some(job) = parallel_aux_job.take() {
-                    scope.submit(job);
+                    scope.submit(crate::diagnostic_env::inherit(job));
                 }
                 let (tile_zero_slot, later_slots) = result_slots
                     .split_first_mut()
@@ -7658,16 +7663,16 @@ where
                 for (offset, result_slot) in later_slots.iter_mut().enumerate() {
                     let tile_col = offset + 1;
                     let encode_tile = &encode_tile;
-                    scope.submit(move || {
+                    scope.submit(crate::diagnostic_env::inherit(move || {
                         let result = encode_tile(tile_col);
                         *result_slot = Some(result);
-                    });
+                    }));
                 }
                 let encode_tile = &encode_tile;
-                scope.submit(move || {
+                scope.submit(crate::diagnostic_env::inherit(move || {
                     let result = encode_tile(0);
                     *tile_zero_slot = Some(result);
-                });
+                }));
             });
         for (tile_col, result_slot) in result_slots.into_iter().enumerate() {
             let (tile_buf, tile_counts) = result_slot
@@ -9182,11 +9187,8 @@ mod tests {
         let _guard = env_test_mutex();
         let exact_tree_key = "RVP9_EXACT_VBP_TREE";
         let sub8_key = "RVP9_EXACT_KF_SUB8";
-        // SAFETY: the mutex above serialises all env_test_mutex callers.
-        unsafe {
-            std::env::remove_var(exact_tree_key);
-            std::env::remove_var(sub8_key);
-        }
+        crate::diagnostic_env::remove_var(exact_tree_key);
+        crate::diagnostic_env::remove_var(sub8_key);
 
         let mut config = EncoderConfig::new(1920, 1080);
         config.rc_mode = RcMode::Vbr;
@@ -9210,20 +9212,15 @@ mod tests {
 
         // The exact-tree negative control closes the whole product policy.
         config.rc_mode = RcMode::Vbr;
-        // SAFETY: the mutex above serialises all env_test_mutex callers.
-        unsafe { std::env::set_var(exact_tree_key, "0") };
+        crate::diagnostic_env::set_var(exact_tree_key, "0");
         assert!(!exact_keyframe_sub8_enabled(&config, 120, false));
 
         // Preserve the independent sub-8 syntax diagnostic for other modes.
-        // SAFETY: the mutex above serialises all env_test_mutex callers.
-        unsafe { std::env::set_var(sub8_key, "1") };
+        crate::diagnostic_env::set_var(sub8_key, "1");
         config.rc_mode = RcMode::Cbr;
         assert!(exact_keyframe_sub8_enabled(&config, 255, false));
-        // SAFETY: the mutex above serialises all env_test_mutex callers.
-        unsafe {
-            std::env::remove_var(exact_tree_key);
-            std::env::remove_var(sub8_key);
-        }
+        crate::diagnostic_env::remove_var(exact_tree_key);
+        crate::diagnostic_env::remove_var(sub8_key);
     }
 
     #[test]
@@ -9251,8 +9248,7 @@ mod tests {
     fn keyframe_8x8_mode_cap_is_cpu8_temporal_svc_realtime_vbr_only() {
         let _guard = env_test_mutex();
         let sub8_key = "RVP9_EXACT_KF_SUB8";
-        // SAFETY: the mutex above serialises all env_test_mutex callers.
-        unsafe { std::env::remove_var(sub8_key) };
+        crate::diagnostic_env::remove_var(sub8_key);
 
         let mut config = EncoderConfig::new(1280, 720);
         config.deadline = Deadline::Realtime;
@@ -9282,8 +9278,7 @@ mod tests {
 
         // The explicit exact-sub8 diagnostic still enables the full-RD path
         // outside the product boundary and disables the cap inside it.
-        // SAFETY: the mutex above serialises all env_test_mutex callers.
-        unsafe { std::env::set_var(sub8_key, "1") };
+        crate::diagnostic_env::set_var(sub8_key, "1");
         config.speed = 7;
         config.rc_mode = RcMode::Cbr;
         assert!(exact_keyframe_sub8_enabled(&config, 255, false));
@@ -9292,16 +9287,14 @@ mod tests {
         config.deadline = Deadline::Realtime;
         assert!(!keyframe_8x8_mode_cap_enabled(&config, 65));
 
-        // SAFETY: the mutex above serialises all env_test_mutex callers.
-        unsafe { std::env::remove_var(sub8_key) };
+        crate::diagnostic_env::remove_var(sub8_key);
     }
 
     #[test]
     fn nonrd_keyframe_8x8_policy_is_cpu8_two_layer_realtime_vbr_only() {
         let _guard = env_test_mutex();
         let sub8_key = "RVP9_EXACT_KF_SUB8";
-        // SAFETY: the mutex above serialises all env_test_mutex callers.
-        unsafe { std::env::remove_var(sub8_key) };
+        crate::diagnostic_env::remove_var(sub8_key);
 
         let mut config = EncoderConfig::new(1280, 720);
         config.deadline = Deadline::Realtime;
@@ -9326,14 +9319,12 @@ mod tests {
         assert!(!nonrd_keyframe_8x8_enabled(&config, 65));
 
         // The explicit exact-sub8 diagnostic still selects the full-RD path.
-        // SAFETY: the mutex above serialises all env_test_mutex callers.
-        unsafe { std::env::set_var(sub8_key, "1") };
+        crate::diagnostic_env::set_var(sub8_key, "1");
         config.deadline = Deadline::Realtime;
         assert!(exact_keyframe_sub8_enabled(&config, 255, false));
         assert!(!nonrd_keyframe_8x8_enabled(&config, 65));
 
-        // SAFETY: the mutex above serialises all env_test_mutex callers.
-        unsafe { std::env::remove_var(sub8_key) };
+        crate::diagnostic_env::remove_var(sub8_key);
     }
 
     #[test]
@@ -9361,20 +9352,17 @@ mod tests {
     fn serial_inter_coef_recording_requires_one_thread_and_one_tile() {
         let _guard = env_test_mutex();
         let key = "RVP9_RETAIN_INTER_COEFS";
-        // SAFETY: the mutex above serialises all env_test_mutex callers.
-        unsafe { std::env::remove_var(key) };
+        crate::diagnostic_env::remove_var(key);
 
         assert!(serial_inter_coef_recording_enabled(1, 1));
         assert!(!serial_inter_coef_recording_enabled(2, 1));
         assert!(!serial_inter_coef_recording_enabled(1, 2));
 
         // The negative control preserves the old packet-side recording pass.
-        // SAFETY: the mutex above serialises all env_test_mutex callers.
-        unsafe { std::env::set_var(key, "0") };
+        crate::diagnostic_env::set_var(key, "0");
         assert!(!serial_inter_coef_recording_enabled(1, 1));
 
-        // SAFETY: the mutex above serialises all env_test_mutex callers.
-        unsafe { std::env::remove_var(key) };
+        crate::diagnostic_env::remove_var(key);
     }
 
     #[test]
@@ -9441,10 +9429,7 @@ mod tests {
     fn exact_keyframe_sub8_path_round_trips_bmi_modes() {
         let _guard = env_test_mutex();
         let key = "RVP9_EXACT_KF_SUB8";
-        // SAFETY: the mutex above serialises all env_test_mutex callers.
-        unsafe {
-            std::env::set_var(key, "1");
-        }
+        crate::diagnostic_env::set_var(key, "1");
 
         let mut enc = StreamEncoder::new(EncoderConfig {
             width: 64,
@@ -9474,10 +9459,7 @@ mod tests {
         let v = vec![128u8; 32 * 32];
 
         let packet = enc.encode_frame(&yuv_view(&y, &u, &v, 64)).unwrap();
-        // SAFETY: the mutex above serialises all env_test_mutex callers.
-        unsafe {
-            std::env::remove_var(key);
-        }
+        crate::diagnostic_env::remove_var(key);
 
         let mut decoder = Decoder::new();
         let frames = decode_packet(&mut decoder, &packet.data);
@@ -10201,7 +10183,7 @@ mod tests {
             assert_eq!(decoded_row, &y[row * w as usize..][..w as usize]);
         }
 
-        if std::env::var_os("RVP9_CROSS_DECODER_GATE").is_some() {
+        if crate::diagnostic_env::var_os("RVP9_CROSS_DECODER_GATE").is_some() {
             use std::process::Command;
 
             let packets = [&keyframe[..], &inter[..]];
@@ -10231,10 +10213,11 @@ mod tests {
                 .parent()
                 .and_then(std::path::Path::parent)
                 .expect("workspace root");
-            let vpxdec = std::env::var_os("RVP9_VPXDEC")
+            let vpxdec = crate::diagnostic_env::var_os("RVP9_VPXDEC")
                 .map(std::path::PathBuf::from)
                 .unwrap_or_else(|| repo_root.join("build/libvpx/vpxdec"));
-            let ffmpeg = std::env::var_os("RVP9_FFMPEG").unwrap_or_else(|| "ffmpeg".into());
+            let ffmpeg =
+                crate::diagnostic_env::var_os("RVP9_FFMPEG").unwrap_or_else(|| "ffmpeg".into());
 
             let vpx_status = Command::new(vpxdec)
                 .arg("--i420")
@@ -10383,10 +10366,7 @@ mod tests {
 
     #[test]
     fn stream_encoder_four_tile_output_is_thread_count_independent_and_bit_exact() {
-        // Several encoder tests temporarily change process-wide RVP9_*
-        // diagnostic and partition overrides. This test reads those knobs
-        // throughout three encoders, so it must share their serialization
-        // guard or a parallel override can make only one encoder diverge.
+        // Serialize shared diagnostic counters; overrides themselves are local.
         let _guard = env_test_mutex();
         assert_four_tile_output_is_thread_count_independent_and_bit_exact();
     }
@@ -10395,39 +10375,26 @@ mod tests {
     fn stream_encoder_four_tile_exact_vbp_history_is_thread_count_independent() {
         let _guard = env_test_mutex();
         let key = "RVP9_EXACT_VBP_TREE";
-        // SAFETY: the mutex above serialises all env_test_mutex callers.
-        unsafe {
-            std::env::set_var(key, "1");
-        }
+        crate::diagnostic_env::set_var(key, "1");
         assert_four_tile_output_is_thread_count_independent_and_bit_exact();
-        // SAFETY: the mutex above serialises all env_test_mutex callers.
-        unsafe {
-            std::env::remove_var(key);
-        }
+        crate::diagnostic_env::remove_var(key);
     }
 
     #[test]
     fn stream_encoder_compact_row_workers_are_thread_count_independent() {
         let _guard = env_test_mutex();
-        // SAFETY: env_test_mutex serialises every test that mutates the
-        // process-wide encoder environment.
-        unsafe {
-            std::env::set_var("RVP9_COMPACT_RECON_ROWS", "1");
-            std::env::set_var("RVP9_COMPACT_ROW_WORKERS", "1");
-        }
+        crate::diagnostic_env::set_var("RVP9_COMPACT_RECON_ROWS", "1");
+        crate::diagnostic_env::set_var("RVP9_COMPACT_ROW_WORKERS", "1");
         assert_four_tile_output_is_thread_count_independent_and_bit_exact();
-        // SAFETY: the mutex above remains held while restoring both knobs.
-        unsafe {
-            std::env::remove_var("RVP9_COMPACT_ROW_WORKERS");
-            std::env::remove_var("RVP9_COMPACT_RECON_ROWS");
-        }
+        crate::diagnostic_env::remove_var("RVP9_COMPACT_ROW_WORKERS");
+        crate::diagnostic_env::remove_var("RVP9_COMPACT_RECON_ROWS");
     }
 
     fn assert_four_tile_output_is_thread_count_independent_and_bit_exact() {
         let w = 1280usize;
         let h = 128usize;
         let exact_vbp_tree_enabled =
-            std::env::var_os("RVP9_EXACT_VBP_TREE").is_some_and(|value| value != "0");
+            crate::diagnostic_env::var_os("RVP9_EXACT_VBP_TREE").is_some_and(|value| value != "0");
         let cfg = EncoderConfig::new(w as u32, h as u32);
         let tile_layout = |max_threads| EncoderParallelism {
             max_threads,
@@ -10487,7 +10454,8 @@ mod tests {
             let two_worker_packet = two_workers.encode_frame(&view).expect("two-worker encode");
             let threaded_packet = threaded.encode_frame(&view).expect("threaded encode");
             if frame_idx >= 1
-                && std::env::var_os("RVP9_COMPACT_RECON_ROWS").is_none_or(|value| value == "0")
+                && crate::diagnostic_env::var_os("RVP9_COMPACT_RECON_ROWS")
+                    .is_none_or(|value| value == "0")
             {
                 let partition_leaf_allocations: Vec<Vec<_>> = threaded
                     .inter_tile_scratch
@@ -13682,11 +13650,8 @@ mod tests {
         assert_eq!(grid.len(), 8 * 8);
     }
 
-    /// Serial guard for env-mutating tests. The encoder reads several
-    /// `RVP9_*` env vars at run-time; tests that flip those vars must
-    /// not race against other tests reading them. We use a global
-    /// `Mutex<()>` to serialize the env-mutating tests below.
-    fn env_test_mutex() -> std::sync::MutexGuard<'static, ()> {
+    /// Scope test-local overrides; retain serialization for diagnostic counters.
+    fn env_test_mutex() -> crate::TestEnvGuard {
         crate::env_test_mutex()
     }
 
@@ -13697,17 +13662,11 @@ mod tests {
         // bypasses the rate controller's pick.
         let _guard = env_test_mutex();
         let key = "RVP9_FIXED_Q";
-        // SAFETY: the mutex above serialises all env_test_mutex callers.
-        unsafe {
-            std::env::set_var(key, "100");
-        }
+        crate::diagnostic_env::set_var(key, "100");
         let mut enc = StreamEncoder::new(baseline_config()).unwrap();
         let (y, u, v) = gradient_frame(64, 64);
         let f = enc.encode_frame(&yuv_view(&y, &u, &v, 64)).unwrap();
-        // SAFETY: the mutex above serialises all env_test_mutex callers.
-        unsafe {
-            std::env::remove_var(key);
-        }
+        crate::diagnostic_env::remove_var(key);
         assert_eq!(f.q_index, 100, "RVP9_FIXED_Q must pin frame Q to 100");
     }
 
@@ -13716,17 +13675,11 @@ mod tests {
         // Drive the RVP9_E8_TRACE env-gated diagnostic branch.
         let _guard = env_test_mutex();
         let key = "RVP9_E8_TRACE";
-        // SAFETY: the mutex above serialises all env_test_mutex callers.
-        unsafe {
-            std::env::set_var(key, "1");
-        }
+        crate::diagnostic_env::set_var(key, "1");
         let mut enc = StreamEncoder::new(baseline_config()).unwrap();
         let (y, u, v) = gradient_frame(64, 64);
         let f = enc.encode_frame(&yuv_view(&y, &u, &v, 64)).unwrap();
-        // SAFETY: the mutex above serialises all env_test_mutex callers.
-        unsafe {
-            std::env::remove_var(key);
-        }
+        crate::diagnostic_env::remove_var(key);
         assert!(f.actual_bits > 0, "encode must succeed under E8 trace");
     }
 
@@ -13735,17 +13688,11 @@ mod tests {
         // Drive the RVP9_DIAG_BPM_VERIFY env-gated diagnostic branch.
         let _guard = env_test_mutex();
         let key = "RVP9_DIAG_BPM_VERIFY";
-        // SAFETY: the mutex above serialises all env_test_mutex callers.
-        unsafe {
-            std::env::set_var(key, "1");
-        }
+        crate::diagnostic_env::set_var(key, "1");
         let mut enc = StreamEncoder::new(baseline_config()).unwrap();
         let (y, u, v) = gradient_frame(64, 64);
         let f = enc.encode_frame(&yuv_view(&y, &u, &v, 64)).unwrap();
-        // SAFETY: the mutex above serialises all env_test_mutex callers.
-        unsafe {
-            std::env::remove_var(key);
-        }
+        crate::diagnostic_env::remove_var(key);
         assert!(f.actual_bits > 0, "encode must succeed under BPM verify");
     }
 
@@ -13756,18 +13703,12 @@ mod tests {
         // Only fires on inter frames; encode KF + inter.
         let _guard = env_test_mutex();
         let key = "RVP9_PART_HIST";
-        // SAFETY: the mutex above serialises all env_test_mutex callers.
-        unsafe {
-            std::env::set_var(key, "1");
-        }
+        crate::diagnostic_env::set_var(key, "1");
         let mut enc = StreamEncoder::new(baseline_config()).unwrap();
         let (y, u, v) = gradient_frame(64, 64);
         let _ = enc.encode_frame(&yuv_view(&y, &u, &v, 64)).unwrap();
         let inter = enc.encode_frame(&yuv_view(&y, &u, &v, 64)).unwrap();
-        // SAFETY: the mutex above serialises all env_test_mutex callers.
-        unsafe {
-            std::env::remove_var(key);
-        }
+        crate::diagnostic_env::remove_var(key);
         assert_eq!(inter.frame_kind, FrameKind::Inter);
     }
 
@@ -13776,11 +13717,8 @@ mod tests {
         let _guard = env_test_mutex();
         let q_key = "RVP9_VBP_QINDEX";
         let avg_key = "RVP9_VBP_AVG_QINDEX";
-        // SAFETY: the mutex above serialises all env_test_mutex callers.
-        unsafe {
-            std::env::set_var(q_key, "205");
-            std::env::set_var(avg_key, "180");
-        }
+        crate::diagnostic_env::set_var(q_key, "205");
+        crate::diagnostic_env::set_var(avg_key, "180");
         assert_eq!(
             vbp_qindex_for_partition(236, false),
             205,
@@ -13791,19 +13729,13 @@ mod tests {
             236,
             "keyframe VBP must ignore the inter-only threshold-q override"
         );
-        // SAFETY: the mutex above serialises all env_test_mutex callers.
-        unsafe {
-            std::env::set_var(q_key, "not-a-qindex");
-        }
+        crate::diagnostic_env::set_var(q_key, "not-a-qindex");
         assert_eq!(
             vbp_qindex_for_partition(211, false),
             211,
             "invalid threshold-q override values fall back to the frame qindex"
         );
-        // SAFETY: the mutex above serialises all env_test_mutex callers.
-        unsafe {
-            std::env::remove_var(q_key);
-        }
+        crate::diagnostic_env::remove_var(q_key);
         assert_eq!(
             vbp_avg_inter_qindex_for_partition(236, false),
             180,
@@ -13814,19 +13746,13 @@ mod tests {
             236,
             "keyframe VBP must ignore the inter-only avg-q override"
         );
-        // SAFETY: the mutex above serialises all env_test_mutex callers.
-        unsafe {
-            std::env::set_var(avg_key, "not-a-qindex");
-        }
+        crate::diagnostic_env::set_var(avg_key, "not-a-qindex");
         assert_eq!(
             vbp_avg_inter_qindex_for_partition(211, false),
             211,
             "invalid override values fall back to the rate-control average"
         );
-        // SAFETY: the mutex above serialises all env_test_mutex callers.
-        unsafe {
-            std::env::remove_var(avg_key);
-        }
+        crate::diagnostic_env::remove_var(avg_key);
     }
 
     #[test]
@@ -14530,6 +14456,46 @@ mod tests {
             tail.is_empty(),
             "flush() at lag=0 must drain zero frames; got {} tail packets",
             tail.len(),
+        );
+    }
+
+    #[test]
+    fn diagnostic_override_does_not_change_another_threads_encoder() {
+        use std::sync::mpsc::sync_channel;
+
+        // Construct and encode only while the competing diagnostic fixture is
+        // active. Channels order the overlap without sleeps or repeated runs.
+        let encode = || {
+            let mut encoder = StreamEncoder::new(baseline_config()).unwrap();
+            let (y, u, v) = gradient_frame(64, 64);
+            encoder.encode_frame(&yuv_view(&y, &u, &v, 64)).unwrap()
+        };
+        let clean = std::thread::spawn(encode).join().unwrap();
+        let (ready_tx, ready_rx) = sync_channel(0);
+        let (done_tx, done_rx) = sync_channel(0);
+        let fixture = std::thread::spawn(move || {
+            let _scope = crate::diagnostic_env::scope();
+            // Choose a Q unlike the clean packet so contamination is certain.
+            let forced_q = if clean.q_index == 100 { 101 } else { 100 };
+            crate::diagnostic_env::set_var("RVP9_FIXED_Q", forced_q.to_string());
+            ready_tx.send(()).unwrap();
+            let observed = encode();
+            assert_eq!(observed.q_index, forced_q, "override must affect its owner");
+            done_rx.recv().unwrap();
+        });
+        ready_rx.recv().unwrap();
+        let unaffected = std::thread::spawn(encode).join().unwrap();
+        // Release and join before assertions so a failing test cannot leave the
+        // competing fixture blocked on a channel.
+        done_tx.send(()).unwrap();
+        fixture.join().unwrap();
+        assert_eq!(
+            unaffected.q_index, clean.q_index,
+            "another test changed frame Q"
+        );
+        assert_eq!(
+            unaffected.data, clean.data,
+            "another test changed packet bytes"
         );
     }
 

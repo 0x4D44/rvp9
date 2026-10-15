@@ -149,7 +149,7 @@ pub fn trellis_changed_count() -> u64 {
 }
 
 fn early_inter_chroma_proof_enabled() -> bool {
-    std::env::var_os("RVP9_EARLY_INTER_CHROMA_PROOF").is_none_or(|value| value != "0")
+    crate::diagnostic_env::var_os("RVP9_EARLY_INTER_CHROMA_PROOF").is_none_or(|value| value != "0")
 }
 
 #[cfg(test)]
@@ -157,13 +157,18 @@ fn early_inter_chroma_proof_hit_count() -> u64 {
     EARLY_INTER_CHROMA_PROOF_HITS.load(std::sync::atomic::Ordering::Relaxed)
 }
 
-/// Serial guard for unit tests that mutate or depend on process-global
-/// encoder environment variables.
+/// Preserve diagnostic-counter serialization and restore test-local overrides.
 #[cfg(test)]
-pub(crate) fn env_test_mutex() -> std::sync::MutexGuard<'static, ()> {
+pub(crate) fn env_test_mutex() -> TestEnvGuard {
     static MTX: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    MTX.lock().unwrap_or_else(|p| p.into_inner())
+    (
+        MTX.lock().unwrap_or_else(|p| p.into_inner()),
+        diagnostic_env::scope(),
+    )
 }
+
+#[cfg(test)]
+pub(crate) type TestEnvGuard = (std::sync::MutexGuard<'static, ()>, diagnostic_env::Scope);
 
 #[cfg(test)]
 thread_local! {
@@ -206,7 +211,7 @@ fn retain_exact_keyframe_8x8_enabled() -> bool {
     if let Some(enabled) = TEST_RETAIN_EXACT_KEYFRAME_LUMA.with(|value| value.get().0) {
         return enabled;
     }
-    std::env::var_os("RVP9_RETAIN_EXACT_KEYFRAME_8X8").is_none_or(|value| value != "0")
+    crate::diagnostic_env::var_os("RVP9_RETAIN_EXACT_KEYFRAME_8X8").is_none_or(|value| value != "0")
 }
 
 fn retain_exact_keyframe_sub8_enabled() -> bool {
@@ -217,7 +222,8 @@ fn retain_exact_keyframe_sub8_enabled() -> bool {
     if let Some(enabled) = TEST_RETAIN_EXACT_KEYFRAME_LUMA.with(|value| value.get().1) {
         return enabled;
     }
-    std::env::var_os("RVP9_RETAIN_EXACT_KEYFRAME_SUB8").is_none_or(|value| value != "0")
+    crate::diagnostic_env::var_os("RVP9_RETAIN_EXACT_KEYFRAME_SUB8")
+        .is_none_or(|value| value != "0")
 }
 
 /// Frame-wide high-precision MV gate.
@@ -227,7 +233,7 @@ fn retain_exact_keyframe_sub8_enabled() -> bool {
 /// eighth-pel MVs; every MV-precision site must derive from this function.
 #[must_use]
 pub(crate) fn frame_allow_hp(q_index: u8) -> bool {
-    std::env::var_os("RVP9_HIGHMV").is_some_and(|v| v != "0") && q_index < 200
+    crate::diagnostic_env::var_os("RVP9_HIGHMV").is_some_and(|v| v != "0") && q_index < 200
 }
 
 pub mod aq_cyclic_refresh;
@@ -235,6 +241,7 @@ pub mod bitstream_gates;
 pub mod buffer_pool;
 pub mod compound;
 pub mod denoiser;
+mod diagnostic_env;
 pub mod e12stat;
 pub mod f02_oracle;
 pub mod frame_loop;
@@ -2996,7 +3003,7 @@ pub(crate) fn pick_and_simulate_intra_encode_partitions_with_layout(
     // Read the diagnostic switch once per keyframe tile walk. Environment
     // lookup takes a process-global lock on macOS and this branch otherwise
     // runs once per leaf, even in ordinary production encodes.
-    let diag_intra_enabled = std::env::var("RVP9_DIAG_INTRA").is_ok();
+    let diag_intra_enabled = crate::diagnostic_env::var("RVP9_DIAG_INTRA").is_ok();
     let retain_exact_keyframe_8x8 = retain_exact_keyframe_8x8_enabled();
     let retain_exact_keyframe_sub8 = retain_exact_keyframe_sub8_enabled();
     let sb_cols = w.div_ceil(64);
@@ -5984,13 +5991,13 @@ fn stage4a_suppress_final_newmv(
 }
 
 fn a4_partition_rd_mult_for_env(base_rd_mult: u32) -> u32 {
-    let Some(num) = std::env::var("RVP9_A4_RDMULT_NUM")
+    let Some(num) = crate::diagnostic_env::var("RVP9_A4_RDMULT_NUM")
         .ok()
         .and_then(|v| v.parse::<u32>().ok())
     else {
         return base_rd_mult;
     };
-    let Some(den) = std::env::var("RVP9_A4_RDMULT_DEN")
+    let Some(den) = crate::diagnostic_env::var("RVP9_A4_RDMULT_DEN")
         .ok()
         .and_then(|v| v.parse::<u32>().ok())
     else {
@@ -7020,30 +7027,36 @@ pub(crate) struct InterEncodeEnv {
 
 impl InterEncodeEnv {
     pub(crate) fn capture() -> Self {
-        let bool_override = |key: &str| std::env::var_os(key).map(|value| value != "0");
+        let bool_override =
+            |key: &str| crate::diagnostic_env::var_os(key).map(|value| value != "0");
         Self {
-            rt_disable_golden: std::env::var_os("RVP9_RT_DISABLE_GOLDEN").is_some(),
-            rt_disable_newmv: std::env::var_os("RVP9_RT_DISABLE_NEWMV").is_some(),
-            rt_disable_newmv_max_edge: std::env::var("RVP9_RT_DISABLE_NEWMV_MAX_EDGE")
+            rt_disable_golden: crate::diagnostic_env::var_os("RVP9_RT_DISABLE_GOLDEN").is_some(),
+            rt_disable_newmv: crate::diagnostic_env::var_os("RVP9_RT_DISABLE_NEWMV").is_some(),
+            rt_disable_newmv_max_edge: crate::diagnostic_env::var("RVP9_RT_DISABLE_NEWMV_MAX_EDGE")
                 .ok()
                 .and_then(|value| value.parse().ok()),
-            rt_disable_nearmv: std::env::var_os("RVP9_RT_DISABLE_NEARMV").is_some(),
+            rt_disable_nearmv: crate::diagnostic_env::var_os("RVP9_RT_DISABLE_NEARMV").is_some(),
             a4_descent_independent_mv: bool_override("RVP9_A4_DESCENT_INDEPENDENT_MV"),
             trellis: bool_override("RVP9_TRELLIS"),
-            a4_rd_partition_disable: std::env::var_os("RVP9_A4_RD_PARTITION_DISABLE").is_some(),
-            f3_nonrd_partition_enable: std::env::var_os("RVP9_F3_NONRD_PARTITION_ENABLE").is_some(),
-            phase2_reuse_disable: std::env::var_os("RVP9_PHASE2_REUSE_DISABLE").is_some(),
+            a4_rd_partition_disable: crate::diagnostic_env::var_os("RVP9_A4_RD_PARTITION_DISABLE")
+                .is_some(),
+            f3_nonrd_partition_enable: crate::diagnostic_env::var_os(
+                "RVP9_F3_NONRD_PARTITION_ENABLE",
+            )
+            .is_some(),
+            phase2_reuse_disable: crate::diagnostic_env::var_os("RVP9_PHASE2_REUSE_DISABLE")
+                .is_some(),
             p8: bool_override("RVP9_P8"),
-            p8_qmax: std::env::var("RVP9_P8_QMAX")
+            p8_qmax: crate::diagnostic_env::var("RVP9_P8_QMAX")
                 .ok()
                 .and_then(|value| value.parse().ok()),
             a4_live_partition_cost: bool_override("RVP9_A4_LIVE_PARTITION_COST") == Some(true),
-            diag_golden: std::env::var("RVP9_DIAG_GOLDEN_PICKS").is_ok(),
-            diag_picker: std::env::var_os("RVP9_DIAG_PICKER").is_some(),
-            diag_intpro_sb: std::env::var_os("RVP9_DIAG_INTPRO_SB").is_some(),
-            e3_mvdiag: std::env::var("RVP9_E3_MVDIAG").is_ok(),
-            s2_xtab: std::env::var("RVP9_S2_XTAB").is_ok(),
-            rt_profile: std::env::var_os("RVP9_RT_PROFILE").is_some(),
+            diag_golden: crate::diagnostic_env::var("RVP9_DIAG_GOLDEN_PICKS").is_ok(),
+            diag_picker: crate::diagnostic_env::var_os("RVP9_DIAG_PICKER").is_some(),
+            diag_intpro_sb: crate::diagnostic_env::var_os("RVP9_DIAG_INTPRO_SB").is_some(),
+            e3_mvdiag: crate::diagnostic_env::var("RVP9_E3_MVDIAG").is_ok(),
+            s2_xtab: crate::diagnostic_env::var("RVP9_S2_XTAB").is_ok(),
+            rt_profile: crate::diagnostic_env::var_os("RVP9_RT_PROFILE").is_some(),
             exact_vbp_tree: bool_override("RVP9_EXACT_VBP_TREE"),
             exact_vbp_skip_legacy_prepass: bool_override("RVP9_EXACT_VBP_SKIP_LEGACY_PREPASS"),
             live_ref_costs: bool_override("RVP9_LIVE_REF_COSTS"),
@@ -7055,20 +7068,20 @@ impl InterEncodeEnv {
             a4_descent_cb_filter: bool_override("RVP9_A4_DESCENT_CB_FILTER"),
             a4_descent_disable_golden: bool_override("RVP9_A4_DESCENT_DISABLE_GOLDEN"),
             a4_descent_disable_rect_newmv: bool_override("RVP9_A4_DESCENT_DISABLE_RECT_NEWMV"),
-            a4_breakout_16_dist_qmul: std::env::var("RVP9_A4_BREAKOUT_16_DIST_QMUL")
+            a4_breakout_16_dist_qmul: crate::diagnostic_env::var("RVP9_A4_BREAKOUT_16_DIST_QMUL")
                 .ok()
                 .and_then(|value| value.parse().ok()),
             rt_skip_intmv_filter_search: bool_override("RVP9_RT_SKIP_INTMV_FILTER_SEARCH"),
             newmv_diff_bias: bool_override("RVP9_NEWMV_DIFF_BIAS"),
             rt_min_partition32: bool_override("RVP9_RT_MIN_PARTITION32"),
             golden_real_block_yrd: bool_override("RVP9_GOLDEN_REAL_BLOCK_YRD"),
-            emit_profile: std::env::var_os("RVP9_EMIT_PROFILE").is_some(),
-            a4_profile: std::env::var_os("RVP9_A4_PROFILE").is_some(),
+            emit_profile: crate::diagnostic_env::var_os("RVP9_EMIT_PROFILE").is_some(),
+            a4_profile: crate::diagnostic_env::var_os("RVP9_A4_PROFILE").is_some(),
             variance_hint_dump: bool_override("RVP9_VARIANCE_HINT_DUMP") == Some(true),
-            a4_rect_disable: std::env::var_os("RVP9_A4_RECT_DISABLE").is_some(),
-            a4_split_stats: std::env::var_os("RVP9_A4_SPLIT_STATS").is_some(),
-            diag_intpro: std::env::var("RVP9_DIAG_INTPRO").is_ok(),
-            p8_stats: std::env::var_os("RVP9_P8_STATS").is_some(),
+            a4_rect_disable: crate::diagnostic_env::var_os("RVP9_A4_RECT_DISABLE").is_some(),
+            a4_split_stats: crate::diagnostic_env::var_os("RVP9_A4_SPLIT_STATS").is_some(),
+            diag_intpro: crate::diagnostic_env::var("RVP9_DIAG_INTPRO").is_ok(),
+            p8_stats: crate::diagnostic_env::var_os("RVP9_P8_STATS").is_some(),
             rt_lowres_ml_partition: bool_override("RVP9_RT_LOWRES_ML_PARTITION"),
             compact_recon_rows: bool_override("RVP9_COMPACT_RECON_ROWS"),
             compact_row_workers: bool_override("RVP9_COMPACT_ROW_WORKERS"),
@@ -18770,16 +18783,13 @@ mod tests {
     fn realtime_integer_mv_filter_search_is_skipped_by_default() {
         let _guard = env_test_mutex();
         let key = "RVP9_RT_SKIP_INTMV_FILTER_SEARCH";
-        // SAFETY: the mutex above serialises all encoder environment tests.
-        unsafe { std::env::remove_var(key) };
+        crate::diagnostic_env::remove_var(key);
         assert!(InterEncodeEnv::capture().skip_integer_mv_filter_search());
 
         // Preserve the diagnostic escape hatch used by differential sweeps.
-        // SAFETY: the mutex above serialises all encoder environment tests.
-        unsafe { std::env::set_var(key, "0") };
+        crate::diagnostic_env::set_var(key, "0");
         assert!(!InterEncodeEnv::capture().skip_integer_mv_filter_search());
-        // SAFETY: the mutex above serialises all encoder environment tests.
-        unsafe { std::env::remove_var(key) };
+        crate::diagnostic_env::remove_var(key);
     }
 
     #[test]
@@ -18797,8 +18807,7 @@ mod tests {
 
         let _guard = env_test_mutex();
         let key = "RVP9_EXACT_VBP_TREE";
-        // SAFETY: the mutex above serialises all encoder environment tests.
-        unsafe { std::env::remove_var(key) };
+        crate::diagnostic_env::remove_var(key);
         let env = InterEncodeEnv::capture();
         assert!(env.exact_vbp_tree_enabled(
             RcMode::Vbr,
@@ -18852,8 +18861,7 @@ mod tests {
 
         // Preserve whole-frame exact-tree diagnostics within the existing
         // CPU7 realtime/default-content scope, including non-VBR modes.
-        // SAFETY: the mutex above serialises all encoder environment tests.
-        unsafe { std::env::set_var(key, "1") };
+        crate::diagnostic_env::set_var(key, "1");
         assert!(InterEncodeEnv::capture().exact_vbp_tree_enabled(
             RcMode::Cbr,
             7,
@@ -18863,8 +18871,7 @@ mod tests {
         ));
 
         // Explicit zero is the product-policy negative control.
-        // SAFETY: the mutex above serialises all encoder environment tests.
-        unsafe { std::env::set_var(key, "0") };
+        crate::diagnostic_env::set_var(key, "0");
         assert!(!InterEncodeEnv::capture().exact_vbp_tree_enabled(
             RcMode::Vbr,
             7,
@@ -18872,8 +18879,7 @@ mod tests {
             ContentTier::Default,
             false,
         ));
-        // SAFETY: the mutex above serialises all encoder environment tests.
-        unsafe { std::env::remove_var(key) };
+        crate::diagnostic_env::remove_var(key);
     }
 
     #[test]
@@ -19033,41 +19039,34 @@ mod tests {
     fn realtime_descent_uses_chessboard_filter_search_by_default() {
         let _guard = env_test_mutex();
         let key = "RVP9_A4_DESCENT_CB_FILTER";
-        // SAFETY: the mutex above serialises all encoder environment tests.
-        unsafe { std::env::remove_var(key) };
+        crate::diagnostic_env::remove_var(key);
         assert!(InterEncodeEnv::capture().descent_cb_filter_search());
 
         // Preserve the full-search differential escape hatch.
-        // SAFETY: the mutex above serialises all encoder environment tests.
-        unsafe { std::env::set_var(key, "0") };
+        crate::diagnostic_env::set_var(key, "0");
         assert!(!InterEncodeEnv::capture().descent_cb_filter_search());
-        // SAFETY: the mutex above serialises all encoder environment tests.
-        unsafe { std::env::remove_var(key) };
+        crate::diagnostic_env::remove_var(key);
     }
 
     #[test]
     fn realtime_descent_keeps_golden_by_default() {
         let _guard = env_test_mutex();
         let key = "RVP9_A4_DESCENT_DISABLE_GOLDEN";
-        // SAFETY: the mutex above serialises all encoder environment tests.
-        unsafe { std::env::remove_var(key) };
+        crate::diagnostic_env::remove_var(key);
         assert!(!InterEncodeEnv::capture().descent_disable_golden());
 
         // Preserve the cheaper LAST-only diagnostic escape hatch. This changes
         // only the speculative descent; the final picker remains untouched.
-        // SAFETY: the mutex above serialises all encoder environment tests.
-        unsafe { std::env::set_var(key, "1") };
+        crate::diagnostic_env::set_var(key, "1");
         assert!(InterEncodeEnv::capture().descent_disable_golden());
-        // SAFETY: the mutex above serialises all encoder environment tests.
-        unsafe { std::env::remove_var(key) };
+        crate::diagnostic_env::remove_var(key);
     }
 
     #[test]
     fn realtime_descent_disables_rectangular_newmv_by_default() {
         let _guard = env_test_mutex();
         let key = "RVP9_A4_DESCENT_DISABLE_RECT_NEWMV";
-        // SAFETY: the mutex above serialises all encoder environment tests.
-        unsafe { std::env::remove_var(key) };
+        crate::diagnostic_env::remove_var(key);
         assert!(
             InterEncodeEnv::capture().descent_disable_rect_newmv(),
             "rectangular proxy candidates should avoid independent motion search",
@@ -19075,11 +19074,9 @@ mod tests {
 
         // Preserve a full-motion differential escape hatch. Square proxy
         // candidates and the final picker are unaffected by either state.
-        // SAFETY: the mutex above serialises all encoder environment tests.
-        unsafe { std::env::set_var(key, "0") };
+        crate::diagnostic_env::set_var(key, "0");
         assert!(!InterEncodeEnv::capture().descent_disable_rect_newmv());
-        // SAFETY: the mutex above serialises all encoder environment tests.
-        unsafe { std::env::remove_var(key) };
+        crate::diagnostic_env::remove_var(key);
     }
 
     #[test]
@@ -19230,39 +19227,21 @@ mod tests {
         let _guard = env_test_mutex();
         let num_key = "RVP9_A4_RDMULT_NUM";
         let den_key = "RVP9_A4_RDMULT_DEN";
-        // SAFETY: the mutex above serialises all env_test_mutex callers.
-        unsafe {
-            std::env::remove_var(num_key);
-            std::env::remove_var(den_key);
-        }
+        crate::diagnostic_env::remove_var(num_key);
+        crate::diagnostic_env::remove_var(den_key);
         assert_eq!(a4_partition_rd_mult_for_env(1000), 1000);
-        // SAFETY: the mutex above serialises all env_test_mutex callers.
-        unsafe {
-            std::env::set_var(num_key, "3");
-            std::env::set_var(den_key, "4");
-        }
+        crate::diagnostic_env::set_var(num_key, "3");
+        crate::diagnostic_env::set_var(den_key, "4");
         assert_eq!(a4_partition_rd_mult_for_env(1000), 750);
-        // SAFETY: the mutex above serialises all env_test_mutex callers.
-        unsafe {
-            std::env::set_var(num_key, "0");
-        }
+        crate::diagnostic_env::set_var(num_key, "0");
         assert_eq!(a4_partition_rd_mult_for_env(1000), 0);
-        // SAFETY: the mutex above serialises all env_test_mutex callers.
-        unsafe {
-            std::env::set_var(num_key, "3");
-            std::env::set_var(den_key, "0");
-        }
+        crate::diagnostic_env::set_var(num_key, "3");
+        crate::diagnostic_env::set_var(den_key, "0");
         assert_eq!(a4_partition_rd_mult_for_env(1000), 1000);
-        // SAFETY: the mutex above serialises all env_test_mutex callers.
-        unsafe {
-            std::env::set_var(den_key, "not-a-denominator");
-        }
+        crate::diagnostic_env::set_var(den_key, "not-a-denominator");
         assert_eq!(a4_partition_rd_mult_for_env(1000), 1000);
-        // SAFETY: the mutex above serialises all env_test_mutex callers.
-        unsafe {
-            std::env::remove_var(num_key);
-            std::env::remove_var(den_key);
-        }
+        crate::diagnostic_env::remove_var(num_key);
+        crate::diagnostic_env::remove_var(den_key);
     }
 
     #[test]
@@ -19818,7 +19797,7 @@ mod tests {
 
     /// Serial guard for env-mutating tests that touch the global
     /// E12/F02 oracle flags or RVP9_* env vars.
-    fn env_test_mutex() -> std::sync::MutexGuard<'static, ()> {
+    fn env_test_mutex() -> crate::TestEnvGuard {
         crate::env_test_mutex()
     }
 
@@ -19882,15 +19861,12 @@ mod tests {
     fn encode_with_f02_oracle_enabled_runs_record_paths() {
         let _guard = env_test_mutex();
         let key = "RVP9_F02_ORACLE";
-        // SAFETY: serialised via env_test_mutex.
-        unsafe {
-            std::env::set_var(key, "1");
-            std::env::set_var("RVP9_RT_EMIT_TX_RD", "1");
-            std::env::remove_var("RVP9_RT_EMIT_MAX_TX");
-            // This fixture exercises the recursive picker's emit-side TX
-            // oracle, not the product exact-tree policy.
-            std::env::set_var("RVP9_EXACT_VBP_TREE", "0");
-        }
+        crate::diagnostic_env::set_var(key, "1");
+        crate::diagnostic_env::set_var("RVP9_RT_EMIT_TX_RD", "1");
+        crate::diagnostic_env::remove_var("RVP9_RT_EMIT_MAX_TX");
+        // This fixture exercises the recursive picker's emit-side TX
+        // oracle, not the product exact-tree policy.
+        crate::diagnostic_env::set_var("RVP9_EXACT_VBP_TREE", "0");
         crate::f02_oracle::init_from_env();
         assert!(crate::f02_oracle::is_enabled());
 
@@ -19924,12 +19900,9 @@ mod tests {
              the picker's maximum transform",
         );
 
-        // SAFETY: serialised via env_test_mutex.
-        unsafe {
-            std::env::remove_var(key);
-            std::env::remove_var("RVP9_RT_EMIT_TX_RD");
-            std::env::remove_var("RVP9_EXACT_VBP_TREE");
-        }
+        crate::diagnostic_env::remove_var(key);
+        crate::diagnostic_env::remove_var("RVP9_RT_EMIT_TX_RD");
+        crate::diagnostic_env::remove_var("RVP9_EXACT_VBP_TREE");
         crate::f02_oracle::init_from_env();
         assert!(!crate::f02_oracle::is_enabled());
     }
@@ -19949,18 +19922,15 @@ mod tests {
         let uv = vec![128u8; 32 * 32];
 
         let encode = |enabled: bool| {
-            // SAFETY: this test holds env_test_mutex for its complete run.
-            unsafe {
-                if enabled {
-                    std::env::remove_var("RVP9_EARLY_INTER_CHROMA_PROOF");
-                } else {
-                    std::env::set_var("RVP9_EARLY_INTER_CHROMA_PROOF", "0");
-                }
-                std::env::set_var("RVP9_RT_EMIT_TX_RD", "1");
-                std::env::remove_var("RVP9_RT_EMIT_MAX_TX");
-                std::env::set_var("RVP9_EXACT_VBP_TREE", "0");
-                std::env::remove_var("RVP9_F02_ORACLE");
+            if enabled {
+                crate::diagnostic_env::remove_var("RVP9_EARLY_INTER_CHROMA_PROOF");
+            } else {
+                crate::diagnostic_env::set_var("RVP9_EARLY_INTER_CHROMA_PROOF", "0");
             }
+            crate::diagnostic_env::set_var("RVP9_RT_EMIT_TX_RD", "1");
+            crate::diagnostic_env::remove_var("RVP9_RT_EMIT_MAX_TX");
+            crate::diagnostic_env::set_var("RVP9_EXACT_VBP_TREE", "0");
+            crate::diagnostic_env::remove_var("RVP9_F02_ORACLE");
             crate::f02_oracle::init_from_env();
             EARLY_INTER_CHROMA_PROOF_HITS.store(0, std::sync::atomic::Ordering::Relaxed);
             let mut enc = frame_loop::StreamEncoder::new(streaming_config()).unwrap();
@@ -19978,13 +19948,10 @@ mod tests {
         let (enabled_packets, enabled_hits) = encode(true);
         let (disabled_packets, disabled_hits) = encode(false);
 
-        // SAFETY: this test holds env_test_mutex for its complete run.
-        unsafe {
-            std::env::remove_var("RVP9_EARLY_INTER_CHROMA_PROOF");
-            std::env::remove_var("RVP9_RT_EMIT_TX_RD");
-            std::env::remove_var("RVP9_EXACT_VBP_TREE");
-            std::env::remove_var("RVP9_F02_ORACLE");
-        }
+        crate::diagnostic_env::remove_var("RVP9_EARLY_INTER_CHROMA_PROOF");
+        crate::diagnostic_env::remove_var("RVP9_RT_EMIT_TX_RD");
+        crate::diagnostic_env::remove_var("RVP9_EXACT_VBP_TREE");
+        crate::diagnostic_env::remove_var("RVP9_F02_ORACLE");
         crate::f02_oracle::init_from_env();
 
         assert!(
@@ -19999,10 +19966,7 @@ mod tests {
     fn encode_with_e12_oracle_enabled_runs_record_paths() {
         let _guard = env_test_mutex();
         let key = "RVP9_E12_ORACLE";
-        // SAFETY: serialised via env_test_mutex.
-        unsafe {
-            std::env::set_var(key, "1");
-        }
+        crate::diagnostic_env::set_var(key, "1");
         crate::e12stat::init_from_env();
         assert!(crate::e12stat::enabled());
 
@@ -20012,10 +19976,7 @@ mod tests {
         let inter = enc.encode_frame(&yuv_view_64(&y, &u, &v)).unwrap();
         assert!(inter.actual_bits > 0);
 
-        // SAFETY: serialised via env_test_mutex.
-        unsafe {
-            std::env::remove_var(key);
-        }
+        crate::diagnostic_env::remove_var(key);
         crate::e12stat::init_from_env();
         assert!(!crate::e12stat::enabled());
     }
@@ -20024,10 +19985,7 @@ mod tests {
     fn encode_with_f3_nonrd_partition_runs_descent_path() {
         let _guard = env_test_mutex();
         let key = "RVP9_F3_NONRD_PARTITION_ENABLE";
-        // SAFETY: serialised via env_test_mutex.
-        unsafe {
-            std::env::set_var(key, "1");
-        }
+        crate::diagnostic_env::set_var(key, "1");
 
         let mut enc = frame_loop::StreamEncoder::new(streaming_config()).unwrap();
         let (y, u, v) = flat_frame();
@@ -20035,10 +19993,7 @@ mod tests {
         let inter = enc.encode_frame(&yuv_view_64(&y, &u, &v)).unwrap();
         assert_eq!(inter.frame_kind, frame_loop::FrameKind::Inter);
 
-        // SAFETY: serialised via env_test_mutex.
-        unsafe {
-            std::env::remove_var(key);
-        }
+        crate::diagnostic_env::remove_var(key);
     }
 
     /// P12 PROOF — Build a 64×64 source where the second frame is a
@@ -20056,8 +20011,8 @@ mod tests {
     fn p12_real_callback_picks_motion_aware_winner() {
         // Hold the env mutex for the WHOLE test — both
         // `RVP9_F3_NONRD_PARTITION_ENABLE` and `RVP9_F02_ORACLE` are
-        // process-wide and would otherwise leak into parallel tests
-        // (the F.3 gate is read via `std::env::var_os` inside the
+        // scoped to this test and restored when the guard drops
+        // (the F.3 gate is read via `crate::diagnostic_env::var_os` inside the
         // encoder hot path; F.0.2 flips a global atomic via
         // `init_from_env`).
         let _guard = env_test_mutex();
@@ -20098,21 +20053,17 @@ mod tests {
         // F.0.2 oracle introspection — capture per-leaf bsize for the
         // inter frame under each gate state.
         let collect_inter_leaves = |gate_on: bool| -> Vec<rvp9_core::block::BlockSize> {
-            // SAFETY: outer test holds env_test_mutex for the whole
-            // test, so these env-var mutations are serialised.
-            unsafe {
-                std::env::set_var("RVP9_F02_ORACLE", "1");
-                // Compare the A4 descent gate itself; the product exact tree
-                // intentionally bypasses both sides of this oracle.
-                std::env::set_var("RVP9_EXACT_VBP_TREE", "0");
-                // A4: the descent is now default-ON, so "gate off" must
-                // explicitly DISABLE it via the opt-out var; "gate on"
-                // is the default but we clear the opt-out to be sure.
-                if gate_on {
-                    std::env::remove_var("RVP9_A4_RD_PARTITION_DISABLE");
-                } else {
-                    std::env::set_var("RVP9_A4_RD_PARTITION_DISABLE", "1");
-                }
+            crate::diagnostic_env::set_var("RVP9_F02_ORACLE", "1");
+            // Compare the A4 descent gate itself; the product exact tree
+            // intentionally bypasses both sides of this oracle.
+            crate::diagnostic_env::set_var("RVP9_EXACT_VBP_TREE", "0");
+            // A4: the descent is now default-ON, so "gate off" must
+            // explicitly DISABLE it via the opt-out var; "gate on"
+            // is the default but we clear the opt-out to be sure.
+            if gate_on {
+                crate::diagnostic_env::remove_var("RVP9_A4_RD_PARTITION_DISABLE");
+            } else {
+                crate::diagnostic_env::set_var("RVP9_A4_RD_PARTITION_DISABLE", "1");
             }
             crate::f02_oracle::init_from_env();
 
@@ -20133,13 +20084,10 @@ mod tests {
         // Defensive cleanup before any assertion fires (so a failed
         // assert doesn't leave env state dirty for subsequent tests
         // sharing the same process).
-        // SAFETY: outer test holds env_test_mutex for the whole test.
-        unsafe {
-            std::env::remove_var("RVP9_F02_ORACLE");
-            std::env::remove_var("RVP9_F3_NONRD_PARTITION_ENABLE");
-            std::env::remove_var("RVP9_A4_RD_PARTITION_DISABLE");
-            std::env::remove_var("RVP9_EXACT_VBP_TREE");
-        }
+        crate::diagnostic_env::remove_var("RVP9_F02_ORACLE");
+        crate::diagnostic_env::remove_var("RVP9_F3_NONRD_PARTITION_ENABLE");
+        crate::diagnostic_env::remove_var("RVP9_A4_RD_PARTITION_DISABLE");
+        crate::diagnostic_env::remove_var("RVP9_EXACT_VBP_TREE");
         crate::f02_oracle::init_from_env();
 
         assert!(
@@ -20177,11 +20125,8 @@ mod tests {
     #[test]
     fn a4_descent_is_luma_only_but_final_pick_uses_chroma() {
         let _guard = env_test_mutex();
-        // SAFETY: serialised via env_test_mutex.
-        unsafe {
-            std::env::set_var("RVP9_F02_ORACLE", "1");
-            std::env::remove_var("RVP9_A4_RD_PARTITION_DISABLE");
-        }
+        crate::diagnostic_env::set_var("RVP9_F02_ORACLE", "1");
+        crate::diagnostic_env::remove_var("RVP9_A4_RD_PARTITION_DISABLE");
         crate::f02_oracle::init_from_env();
 
         let y = textured_luma_64(0xa4d3_5c17);
@@ -20212,10 +20157,7 @@ mod tests {
         let (reference_layout, reference_chroma_rd, reference_packet) = collect(&reference_uv);
         let (shifted_layout, shifted_chroma_rd, shifted_packet) = collect(&shifted_uv);
 
-        // SAFETY: serialised via env_test_mutex.
-        unsafe {
-            std::env::remove_var("RVP9_F02_ORACLE");
-        }
+        crate::diagnostic_env::remove_var("RVP9_F02_ORACLE");
         crate::f02_oracle::init_from_env();
 
         assert!(!reference_layout.is_empty(), "inter frame must emit leaves");
@@ -20244,11 +20186,8 @@ mod tests {
     fn p12_real_callback_default_state_unchanged() {
         let _guard = env_test_mutex();
         // Default path: no descent env vars set (descent is default-ON).
-        // SAFETY: serialised via env_test_mutex.
-        unsafe {
-            std::env::remove_var("RVP9_F3_NONRD_PARTITION_ENABLE");
-            std::env::remove_var("RVP9_A4_RD_PARTITION_DISABLE");
-        }
+        crate::diagnostic_env::remove_var("RVP9_F3_NONRD_PARTITION_ENABLE");
+        crate::diagnostic_env::remove_var("RVP9_A4_RD_PARTITION_DISABLE");
 
         let mut enc = frame_loop::StreamEncoder::new(streaming_config()).unwrap();
         let (y, u, v) = flat_frame();
@@ -20264,75 +20203,51 @@ mod tests {
     fn encode_with_diag_picker_env_runs_eprintln_paths() {
         let _guard = env_test_mutex();
         let key = "RVP9_DIAG_PICKER";
-        // SAFETY: serialised via env_test_mutex.
-        unsafe {
-            std::env::set_var(key, "1");
-        }
+        crate::diagnostic_env::set_var(key, "1");
         let mut enc = frame_loop::StreamEncoder::new(streaming_config()).unwrap();
         let (y, u, v) = flat_frame();
         let _kf = enc.encode_frame(&yuv_view_64(&y, &u, &v)).unwrap();
         let inter = enc.encode_frame(&yuv_view_64(&y, &u, &v)).unwrap();
-        // SAFETY: serialised via env_test_mutex.
-        unsafe {
-            std::env::remove_var(key);
-        }
+        crate::diagnostic_env::remove_var(key);
         assert_eq!(inter.frame_kind, frame_loop::FrameKind::Inter);
     }
 
     #[test]
     fn encode_with_diag_intpro_env_runs_eprintln_paths() {
         let _guard = env_test_mutex();
-        // SAFETY: serialised via env_test_mutex.
-        unsafe {
-            std::env::set_var("RVP9_DIAG_INTPRO", "1");
-            std::env::set_var("RVP9_DIAG_INTPRO_SB", "1");
-        }
+        crate::diagnostic_env::set_var("RVP9_DIAG_INTPRO", "1");
+        crate::diagnostic_env::set_var("RVP9_DIAG_INTPRO_SB", "1");
         let mut enc = frame_loop::StreamEncoder::new(streaming_config()).unwrap();
         let (y, u, v) = flat_frame();
         let _kf = enc.encode_frame(&yuv_view_64(&y, &u, &v)).unwrap();
         let inter = enc.encode_frame(&yuv_view_64(&y, &u, &v)).unwrap();
-        // SAFETY: serialised via env_test_mutex.
-        unsafe {
-            std::env::remove_var("RVP9_DIAG_INTPRO");
-            std::env::remove_var("RVP9_DIAG_INTPRO_SB");
-        }
+        crate::diagnostic_env::remove_var("RVP9_DIAG_INTPRO");
+        crate::diagnostic_env::remove_var("RVP9_DIAG_INTPRO_SB");
         assert!(inter.actual_bits > 0);
     }
 
     #[test]
     fn encode_with_diag_intra_env_runs_eprintln_paths() {
         let _guard = env_test_mutex();
-        // SAFETY: serialised via env_test_mutex.
-        unsafe {
-            std::env::set_var("RVP9_DIAG_INTRA", "1");
-        }
+        crate::diagnostic_env::set_var("RVP9_DIAG_INTRA", "1");
         let mut enc = frame_loop::StreamEncoder::new(streaming_config()).unwrap();
         let (y, u, v) = flat_frame();
         let kf = enc.encode_frame(&yuv_view_64(&y, &u, &v)).unwrap();
-        // SAFETY: serialised via env_test_mutex.
-        unsafe {
-            std::env::remove_var("RVP9_DIAG_INTRA");
-        }
+        crate::diagnostic_env::remove_var("RVP9_DIAG_INTRA");
         assert_eq!(kf.frame_kind, frame_loop::FrameKind::Key);
     }
 
     #[test]
     fn encode_with_e3_mvdiag_and_golden_env_runs_eprintln_paths() {
         let _guard = env_test_mutex();
-        // SAFETY: serialised via env_test_mutex.
-        unsafe {
-            std::env::set_var("RVP9_E3_MVDIAG", "1");
-            std::env::set_var("RVP9_DIAG_GOLDEN_PICKS", "1");
-        }
+        crate::diagnostic_env::set_var("RVP9_E3_MVDIAG", "1");
+        crate::diagnostic_env::set_var("RVP9_DIAG_GOLDEN_PICKS", "1");
         let mut enc = frame_loop::StreamEncoder::new(streaming_config()).unwrap();
         let (y, u, v) = flat_frame();
         let _kf = enc.encode_frame(&yuv_view_64(&y, &u, &v)).unwrap();
         let inter = enc.encode_frame(&yuv_view_64(&y, &u, &v)).unwrap();
-        // SAFETY: serialised via env_test_mutex.
-        unsafe {
-            std::env::remove_var("RVP9_E3_MVDIAG");
-            std::env::remove_var("RVP9_DIAG_GOLDEN_PICKS");
-        }
+        crate::diagnostic_env::remove_var("RVP9_E3_MVDIAG");
+        crate::diagnostic_env::remove_var("RVP9_DIAG_GOLDEN_PICKS");
         assert!(inter.actual_bits > 0);
     }
 

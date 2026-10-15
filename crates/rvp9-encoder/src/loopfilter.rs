@@ -74,7 +74,7 @@ const SB_MI_SIZE: usize = 8;
 /// 50k +1.03, 100k +3.19, all at equal-or-fewer bits.
 #[inline]
 fn lpfq_enabled() -> bool {
-    std::env::var_os("RVP9_LPFQ").is_none_or(|v| v != "0")
+    crate::diagnostic_env::var_os("RVP9_LPFQ").is_none_or(|v| v != "0")
 }
 
 /// Filter-level picker. With LPFQ on, ports libvpx's `LPF_PICK_FROM_Q`

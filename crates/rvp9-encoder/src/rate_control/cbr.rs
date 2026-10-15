@@ -577,7 +577,7 @@ const KFCAP_SHARE_DEN: i64 = 5;
 /// [`KFCAP_SHARE_NUM`].
 #[inline]
 fn kfcap_enabled() -> bool {
-    std::env::var_os("RVP9_KFCAP").is_none_or(|v| v != "0")
+    crate::diagnostic_env::var_os("RVP9_KFCAP").is_none_or(|v| v != "0")
 }
 
 /// RCFI (Track A2, 2026-05-30) — first-inter-frame `active_best` basis.
@@ -603,7 +603,7 @@ fn kfcap_enabled() -> bool {
 /// goldens re-captured, cross_decoder-gated.
 #[inline]
 fn rcfi_enabled() -> bool {
-    std::env::var_os("RVP9_RCFI").is_none_or(|v| v != "0")
+    crate::diagnostic_env::var_os("RVP9_RCFI").is_none_or(|v| v != "0")
 }
 
 /// KFLB (Track A3, 2026-05-30) — low-bitrate keyframe-share cap.
@@ -630,7 +630,7 @@ fn rcfi_enabled() -> bool {
 /// keyframe (`is_first_frame`); subsequent-KF share-cap is future work.
 #[inline]
 fn kflb_enabled() -> bool {
-    std::env::var_os("RVP9_KFLB").is_none_or(|v| v != "0")
+    crate::diagnostic_env::var_os("RVP9_KFLB").is_none_or(|v| v != "0")
 }
 
 /// Port of libvpx `get_minq_index` (`vp9_ratectrl.c:118-135`). Finds the
@@ -1875,42 +1875,20 @@ mod tests {
 
     // ---- KFCAP (Track A1) composition tests ----
     //
-    // `RVP9_KFCAP` is a process-global env var; these tests mutate it, so
-    // they must not run concurrently with each other. A shared mutex
-    // serialises them. Each test restores the prior value on exit.
+    // Overrides are local to each test and restore the prior value on exit.
     //
     // KFCAP is default ON: env unset (or any value != "0") ⇒ ON;
     // `RVP9_KFCAP=0` ⇒ OFF (pre-KFCAP baseline). So `OFF` is `Some("0")`
     // and `ON` is `None` (the default) below.
 
-    use std::sync::Mutex;
-    static KFCAP_ENV_LOCK: Mutex<()> = Mutex::new(());
-
-    /// Run `f` with `RVP9_KFCAP` forced to `value` (or removed if `None`),
-    /// serialised against other KFCAP env tests, restoring the prior value.
+    /// Run with a test-local KFCAP override, restoring it even on unwind.
     fn with_kfcap_env<R>(value: Option<&str>, f: impl FnOnce() -> R) -> R {
-        let _guard = KFCAP_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let prev = std::env::var_os("RVP9_KFCAP");
-        // SAFETY: serialised by KFCAP_ENV_LOCK; no other thread in this
-        // crate reads RVP9_KFCAP outside this lock during these tests.
-        // SAFETY: this helper serially saves and sets the process env knob
-        // around one test closure.
-        unsafe {
-            match value {
-                Some(v) => std::env::set_var("RVP9_KFCAP", v),
-                None => std::env::remove_var("RVP9_KFCAP"),
-            }
+        let _scope = crate::diagnostic_env::scope();
+        match value {
+            Some(value) => crate::diagnostic_env::set_var("RVP9_KFCAP", value),
+            None => crate::diagnostic_env::remove_var("RVP9_KFCAP"),
         }
-        let out = f();
-        // SAFETY: serialised by KFCAP_ENV_LOCK; restores the prior value
-        // before releasing the lock.
-        unsafe {
-            match prev {
-                Some(v) => std::env::set_var("RVP9_KFCAP", v),
-                None => std::env::remove_var("RVP9_KFCAP"),
-            }
-        }
-        out
+        f()
     }
 
     /// KFCAP — at 250k/256x256 the C1 affordable branch is taken (the KF

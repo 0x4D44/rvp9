@@ -381,7 +381,7 @@ fn nstep_full_depth() -> bool {
     use std::sync::OnceLock;
     static N: OnceLock<bool> = OnceLock::new();
     *N.get_or_init(|| {
-        std::env::var("RVP9_NSTEP")
+        crate::diagnostic_env::var("RVP9_NSTEP")
             .map(|v| v != "0")
             .unwrap_or(true)
     })

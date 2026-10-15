@@ -391,11 +391,13 @@ fn real_mode_rate(costs: &InterModeCosts, ctx: usize, mode: InterMode) -> u32 {
 fn good_subpel_force_stop() -> SubPixelForcedStop {
     use std::sync::OnceLock;
     static S: OnceLock<SubPixelForcedStop> = OnceLock::new();
-    *S.get_or_init(|| match std::env::var("RVP9_SUBPEL").ok().as_deref() {
-        Some("half") => SubPixelForcedStop::HalfPel,
-        Some("quarter") => SubPixelForcedStop::QuarterPel,
-        _ => SubPixelForcedStop::EighthPel,
-    })
+    *S.get_or_init(
+        || match crate::diagnostic_env::var("RVP9_SUBPEL").ok().as_deref() {
+            Some("half") => SubPixelForcedStop::HalfPel,
+            Some("quarter") => SubPixelForcedStop::QuarterPel,
+            _ => SubPixelForcedStop::EighthPel,
+        },
+    )
 }
 
 /// ENHMS (2026-05-30) — enhanced full-pel motion search for the cpu≤4
@@ -411,7 +413,7 @@ fn good_enhanced_full_pixel() -> bool {
     use std::sync::OnceLock;
     static E: OnceLock<bool> = OnceLock::new();
     *E.get_or_init(|| {
-        std::env::var("RVP9_ENHMS")
+        crate::diagnostic_env::var("RVP9_ENHMS")
             .map(|v| v != "0")
             .unwrap_or(true)
     })

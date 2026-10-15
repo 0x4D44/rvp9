@@ -704,8 +704,7 @@ mod tests {
 
     #[test]
     fn first_spatial_enhancement_components_use_base_key_q_ceiling() {
-        // This product encode reads the diagnostic partition overrides.
-        // Serialize it with the tests that mutate those process-global vars.
+        // Retain serialization for shared diagnostic counters.
         let _guard = crate::env_test_mutex();
         let width = 1280usize;
         let height = 720usize;
@@ -1003,18 +1002,11 @@ mod tests {
     #[test]
     fn three_layer_partial_right_edge_stream_decodes_in_order() {
         let _guard = crate::env_test_mutex();
-        // Prove that the opt-in compact-row path is rejected by geometry, not
-        // reached through a process-wide diagnostic override.
-        // SAFETY: env_test_mutex serialises every test that mutates the
-        // process-wide encoder environment.
-        unsafe {
-            std::env::set_var("RVP9_COMPACT_RECON_ROWS", "1");
-        }
+        // Prove the opt-in compact-row path is rejected by geometry even
+        // when this test explicitly enables the diagnostic override.
+        crate::diagnostic_env::set_var("RVP9_COMPACT_RECON_ROWS", "1");
         exercise_stateful_spatial_stream(384, 192, 3, &[(96, 48), (192, 96), (384, 192)]);
-        // SAFETY: the mutex remains held while restoring the override.
-        unsafe {
-            std::env::remove_var("RVP9_COMPACT_RECON_ROWS");
-        }
+        crate::diagnostic_env::remove_var("RVP9_COMPACT_RECON_ROWS");
     }
 
     #[test]

@@ -99,7 +99,7 @@ use std::sync::OnceLock;
 fn rdo_txsearch_enabled() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
     *ENABLED.get_or_init(|| {
-        std::env::var("RVP9_RDO_TXSEARCH")
+        crate::diagnostic_env::var("RVP9_RDO_TXSEARCH")
             .map(|v| v != "0")
             .unwrap_or(true)
     })

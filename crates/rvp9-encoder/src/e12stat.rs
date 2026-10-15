@@ -89,7 +89,7 @@ thread_local! {
 
 /// Enable the oracle if `RVP9_E12_ORACLE` is set and non-zero.
 pub fn init_from_env() {
-    let on = std::env::var_os("RVP9_E12_ORACLE").is_some_and(|v| v != "0");
+    let on = crate::diagnostic_env::var_os("RVP9_E12_ORACLE").is_some_and(|v| v != "0");
     E12_ON.store(on, Ordering::Relaxed);
 }
 
@@ -855,40 +855,21 @@ mod tests {
 
     #[test]
     fn init_from_env_reflects_environment() {
+        let _scope = crate::diagnostic_env::scope();
         let _g = EnableGuard::acquire();
-        // SAFETY: we save/restore the global atomic; concurrent tests
-        // don't read RVP9_E12_ORACLE during their own work because
-        // they all force the atomic explicitly.
-        // unset → disabled
-        // SAFETY: We are deliberately mutating an env var inside a
-        // test that has exclusive control over the E12_ON atomic for
-        // its duration (via the EnableGuard above). No concurrent
-        // test depends on RVP9_E12_ORACLE — they all set the atomic
-        // directly. The change is reverted before the test returns.
-        unsafe {
-            std::env::remove_var("RVP9_E12_ORACLE");
-        }
+        crate::diagnostic_env::remove_var("RVP9_E12_ORACLE");
         init_from_env();
         assert!(!enabled(), "unset env var → disabled");
 
-        // SAFETY: see note above.
-        unsafe {
-            std::env::set_var("RVP9_E12_ORACLE", "1");
-        }
+        crate::diagnostic_env::set_var("RVP9_E12_ORACLE", "1");
         init_from_env();
         assert!(enabled(), "non-zero env var → enabled");
 
-        // SAFETY: see note above.
-        unsafe {
-            std::env::set_var("RVP9_E12_ORACLE", "0");
-        }
+        crate::diagnostic_env::set_var("RVP9_E12_ORACLE", "0");
         init_from_env();
         assert!(!enabled(), "literal \"0\" → disabled");
 
-        // SAFETY: see note above.
-        unsafe {
-            std::env::remove_var("RVP9_E12_ORACLE");
-        }
+        crate::diagnostic_env::remove_var("RVP9_E12_ORACLE");
     }
 
     #[test]

@@ -673,7 +673,7 @@ pub(crate) fn current_spatial_id() -> u8 {
 /// One relaxed-store; subsequent picker-hook calls observe the new
 /// value via a relaxed load. Safe to call once at process startup.
 pub fn init_from_env() {
-    let on = std::env::var_os("RVP9_F02_ORACLE").is_some_and(|v| v != "0");
+    let on = crate::diagnostic_env::var_os("RVP9_F02_ORACLE").is_some_and(|v| v != "0");
     F02_ON.store(on, Ordering::Relaxed);
 }
 
@@ -963,9 +963,7 @@ mod tests {
     #[test]
     fn init_from_env_unset_yields_disabled() {
         let _guard = crate::env_test_mutex();
-        // SAFETY: the crate-wide guard serializes this process-environment
-        // mutation with every encoder test that touches F02 state.
-        unsafe { std::env::remove_var("RVP9_F02_ORACLE") };
+        crate::diagnostic_env::remove_var("RVP9_F02_ORACLE");
         init_from_env();
         assert!(!is_enabled());
     }

@@ -41,7 +41,7 @@ thread_local! {
 
 /// Enable skip accounting if `RVP9_E4_SKIPSTAT` is set and non-zero.
 pub fn init_from_env() {
-    let on = std::env::var_os("RVP9_E4_SKIPSTAT").is_some_and(|v| v != "0");
+    let on = crate::diagnostic_env::var_os("RVP9_E4_SKIPSTAT").is_some_and(|v| v != "0");
     SKIPSTAT_ON.store(on, Ordering::Relaxed);
 }
 
