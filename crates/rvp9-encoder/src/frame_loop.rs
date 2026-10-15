@@ -2131,6 +2131,9 @@ impl StreamEncoder {
                 "requested_log2_tile_cols must be in 0..=6",
             ));
         }
+        if !(-9..=9).contains(&config.speed) {
+            return Err(EncodeError::InvalidConfig("speed must be in -9..=9"));
+        }
         if config.width == 0
             || if allow_partial_width {
                 !config.width.is_multiple_of(8)
@@ -12863,6 +12866,41 @@ mod tests {
         assert!(
             matches!(err, EncodeError::InvalidConfig(msg) if msg.contains("supported maximum")),
             "expected InvalidConfig referencing supported maximum, got {err:?}",
+        );
+    }
+
+    #[test]
+    fn stream_encoder_speed_accepts_documented_boundaries() {
+        for speed in [-9, 9] {
+            let config = EncoderConfig {
+                speed,
+                ..baseline_config()
+            };
+            StreamEncoder::new(config)
+                .unwrap_or_else(|err| panic!("documented speed {speed} was rejected: {err:?}"));
+        }
+    }
+
+    #[test]
+    fn stream_encoder_speed_rejects_values_outside_documented_range() {
+        let results = [-10, 10, i32::MIN, i32::MAX].map(|speed| {
+            let config = EncoderConfig {
+                speed,
+                ..baseline_config()
+            };
+            (
+                speed,
+                matches!(
+                    StreamEncoder::new(config),
+                    Err(EncodeError::InvalidConfig(_))
+                ),
+            )
+        });
+
+        assert_eq!(
+            results,
+            [(-10, true), (10, true), (i32::MIN, true), (i32::MAX, true)],
+            "unsupported speeds must return InvalidConfig",
         );
     }
 
