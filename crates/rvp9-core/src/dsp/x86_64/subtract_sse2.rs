@@ -12,6 +12,13 @@ use core::arch::x86_64::{
     _mm_setzero_si128, _mm_storeu_si128, _mm_sub_epi16, _mm_unpackhi_epi8, _mm_unpacklo_epi8,
 };
 
+fn square_input_span(side: usize, stride: usize) -> usize {
+    (side - 1)
+        .checked_mul(stride)
+        .and_then(|offset| offset.checked_add(side))
+        .expect("square input span overflow")
+}
+
 /// SSE2 implementation of square byte subtraction.
 ///
 /// The 8×8 case uses 8-byte loads because a row is exactly eight bytes wide;
@@ -90,8 +97,8 @@ pub fn subtract_square_sse2(
     assert!(matches!(side, 8 | 16 | 32 | 64));
     assert!(src_stride >= side);
     assert!(pred_stride >= side);
-    assert!(src.len() >= (side - 1) * src_stride + side);
-    assert!(pred.len() >= (side - 1) * pred_stride + side);
+    assert!(src.len() >= square_input_span(side, src_stride));
+    assert!(pred.len() >= square_input_span(side, pred_stride));
     assert!(dst.len() >= side * side);
 
     // SAFETY: SSE2 is mandatory on x86-64. The assertions prove that every
@@ -122,8 +129,8 @@ pub fn subtract_square_sse2_with_nonzero(
     assert!(matches!(side, 8 | 16 | 32 | 64));
     assert!(src_stride >= side);
     assert!(pred_stride >= side);
-    assert!(src.len() >= (side - 1) * src_stride + side);
-    assert!(pred.len() >= (side - 1) * pred_stride + side);
+    assert!(src.len() >= square_input_span(side, src_stride));
+    assert!(pred.len() >= square_input_span(side, pred_stride));
     assert!(dst.len() >= side * side);
 
     // SAFETY: SSE2 is mandatory on x86-64. The assertions prove every input
@@ -167,6 +174,59 @@ mod tests {
                     - i16::from(pred[row * pred_stride + col]);
             }
         }
+    }
+
+    #[test]
+    fn rejects_overflowing_input_spans() {
+        let mut mismatches = Vec::new();
+        for side in [8, 16, 32, 64] {
+            // The first stride overflows multiplication; the second overflows
+            // addition after a representable last-row offset.
+            for stride in [usize::MAX, usize::MAX / (side - 1)] {
+                for overflow_src in [true, false] {
+                    for track_nonzero in [true, false] {
+                        let pixels = vec![0; side * side];
+                        let mut residual = vec![0; side * side];
+                        let src_stride = if overflow_src { stride } else { side };
+                        let pred_stride = if overflow_src { side } else { stride };
+                        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            if track_nonzero {
+                                subtract_square_sse2_with_nonzero(
+                                    &pixels,
+                                    src_stride,
+                                    &pixels,
+                                    pred_stride,
+                                    &mut residual,
+                                    side,
+                                );
+                            } else {
+                                subtract_square_sse2(
+                                    &pixels,
+                                    src_stride,
+                                    &pixels,
+                                    pred_stride,
+                                    &mut residual,
+                                    side,
+                                );
+                            }
+                        }));
+                        let expected_panic = result.err().is_some_and(|payload| {
+                            payload.downcast_ref::<&str>().copied()
+                                == Some("square input span overflow")
+                                || payload.downcast_ref::<String>().map(String::as_str)
+                                    == Some("square input span overflow")
+                        });
+                        if !expected_panic {
+                            mismatches.push((side, stride, overflow_src, track_nonzero));
+                        }
+                    }
+                }
+            }
+        }
+        assert!(
+            mismatches.is_empty(),
+            "input span overflow was not rejected explicitly: {mismatches:?}"
+        );
     }
 
     #[test]
