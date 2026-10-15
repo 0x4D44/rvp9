@@ -6,15 +6,15 @@
 - **Area:** core/dsp/subtract_sse2
 - **Raised:** 2026-09-07T19:53:47Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
+- **Owner:** deltic:manual
+- **Owner role:** fix
+- **Owner run:** fix-20261015T233530Z-803bc9fe
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-FLU-00032-run-fix-20261015T233530Z-803bc9fe
+- **Owner base:** cd09c079e853bfc6a93402b95a0b6cfe93b62379
 - **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner since:** 2026-10-15T23:35:30Z
+- **Owner until:** 2026-10-16T03:35:30Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
