@@ -1,0 +1,32 @@
+# RVP9-BUG-FLU-00039 — AArch64 width-four I8MM convolution reads beyond accepted tight source slice
+
+- **State:** Open
+- **Priority:** Must
+- **Severity:** High
+- **Area:** core/dsp/convolve8-neon
+- **Raised:** 2026-10-15T22:39:05Z
+- **Discovery source:** Agent
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
+- **Owner fingerprint:** -
+- **Owner since:** -
+- **Owner until:** -
+- **Verify retry after:** -
+- **Held branch:** -
+- **Legacy fixed run:** -
+- **Attempts:** fix=0, doubt=0, indeterminate=0
+- **State history:** Open (2026-10-15T22:39:05Z, raised via `deltic bugs new` model=gpt-6.1-sol@medium)
+
+## Observation
+
+On Apple M5 Max/aarch64-apple-darwin at candidate code 1a84f60a24e8d82e8e6454743fbb80521280df0e, native AddressSanitizer library testing reports `ERROR: AddressSanitizer: heap-buffer-overflow`, `READ of size 4` in existing test dsp::aarch64::convolve8_neon::tests::single_axis_matches_scalar_all_filters_and_shapes. Full native four-library command exits 101/SIGABRT; a second focused command reproduces the same report: CARGO_TARGET_DIR="$PWD/.scratch/asan-target" RUSTFLAGS="-Zsanitizer=address -Ctarget-cpu=native" RUSTDOCFLAGS="-Zsanitizer=address" cargo +nightly test -Zbuild-std --target aarch64-apple-darwin --locked -p rvp9-core --lib dsp::aarch64::convolve8_neon::tests::single_axis_matches_scalar_all_filters_and_shapes -- --exact --nocapture --test-threads=1. Installed nightly rustc bd08c9e71 (2026-06-25), LLVM22.1.7; no source/test changes. Both stacks reach load_four_repeated at convolve8_neon.rs:52, convolve8_horiz_i8mm_4_inner at :319, safe wrapper convolve8_horiz_neon at :654, test at :909. The first report is a 4-byte read crossing the end of a 56-byte allocated source. Source-confirmed root: validate_horiz accepts the minimal w+7=11 bytes for a width4 source row, but I8MM loads8 bytes at row start plus4 at row+8, requiring12 bytes; its safety comment incorrectly asserts those requirements agree. The unchanged test supplies the documented tight source span, not an intentionally malformed buffer. Expected: the safe wrapper stays within its input slice on all accepted geometries. Actual: the I8MM width4 path reads beyond the slice on the final row. Padded production callers may mask the read; no universal production reachability claim is made. Raw full/focused sanitizer reports are preserved under wrk_docs/evidence/2026-10-15-release-readiness. No fix or suppression performed; separate bug owner must address it before native sanitizer acceptance.
+
+## Fix
+
+<unfixed — raised only>
+
+## Notes
