@@ -1,25 +1,25 @@
 # RVP9-BUG-KILN-00070 — Parallel tile scratch retains one full frame per tile
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** High
 - **Area:** encoder/parallel scratch
 - **Raised:** 2026-08-16T08:19:07Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261015T224158Z-d8168bcd
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KILN-00070-run-fix-20261015T224158Z-d8168bcd
-- **Owner base:** 466fe287d36d5cc5d9af0ac3ca3f34d33cd7737c
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-15T22:41:58Z
-- **Owner until:** 2026-10-16T02:41:58Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-16T08:19:07Z, raised via `deltic bugs new`)
+- **State history:** Open (2026-08-16T08:19:07Z, raised via `deltic bugs new`) -> Fixed (2026-10-15T22:56:02Z, deltic:auto role=fix run=fix-20261015T224158Z-d8168bcd branch=task/bug-RVP9-BUG-KILN-00070-run-fix-20261015T224158Z-d8168bcd code=785935d95ff195e538fa7a7c9dbd0b009fea5b80 gate=manual)
 
 ## Observation
 
