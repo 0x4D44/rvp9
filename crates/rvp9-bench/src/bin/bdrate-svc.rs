@@ -46,6 +46,7 @@ impl SvcKind {
 
 #[derive(Debug)]
 struct Args {
+    timeout: std::time::Duration,
     anchor_encoder: PathBuf,
     test_encoder: PathBuf,
     decoder: PathBuf,
@@ -250,6 +251,7 @@ fn parse_args_from(argv: &[String]) -> Result<Args, String> {
         temporal_layers = 1;
     }
     let args = Args {
+        timeout: rvp9_bench::process::DEFAULT_TIMEOUT,
         anchor_encoder: anchor_encoder.ok_or_else(|| "--anchor-encoder is required".to_owned())?,
         test_encoder: test_encoder.ok_or_else(|| "--test-encoder is required".to_owned())?,
         decoder: decoder.ok_or_else(|| "--decoder is required".to_owned())?,
@@ -578,18 +580,20 @@ fn encode(
     expected_frames: usize,
 ) -> Result<EncodeOutcome, String> {
     let start = Instant::now();
-    let status = encoder_command(
-        role,
-        encoder,
-        &args.input,
-        &output,
-        bitrate_kbps,
-        args,
-        info,
-        expected_frames,
-    )
-    .status()
-    .map_err(|error| format!("launching {}: {error}", encoder.display()))?;
+    let status = rvp9_bench::process::run_status(
+        &mut encoder_command(
+            role,
+            encoder,
+            &args.input,
+            &output,
+            bitrate_kbps,
+            args,
+            info,
+            expected_frames,
+        ),
+        "SVC encoder",
+        args.timeout,
+    )?;
     let elapsed = start.elapsed();
     if !status.success() {
         return Err(format!(
@@ -1014,12 +1018,27 @@ fn decode_and_psnr(
     reference: &Path,
     output: &Path,
 ) -> Result<f64, String> {
-    let status = Command::new(decoder)
-        .arg("-o")
-        .arg(output)
-        .arg(input)
-        .status()
-        .map_err(|error| format!("launching {}: {error}", decoder.display()))?;
+    decode_and_psnr_with_timeout(
+        decoder,
+        input,
+        reference,
+        output,
+        rvp9_bench::process::DEFAULT_TIMEOUT,
+    )
+}
+
+fn decode_and_psnr_with_timeout(
+    decoder: &Path,
+    input: &Path,
+    reference: &Path,
+    output: &Path,
+    timeout: std::time::Duration,
+) -> Result<f64, String> {
+    let status = rvp9_bench::process::run_status(
+        Command::new(decoder).arg("-o").arg(output).arg(input),
+        "SVC decoder",
+        timeout,
+    )?;
     if !status.success() {
         return Err(format!(
             "decoder failed for {} with {status}",
@@ -1333,6 +1352,64 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    #[test]
+    fn external_encoder_timeout() {
+        let fixture = crate::process_test_support::Fixture::new();
+        let mut args = parse_args_from(&argv(&[
+            "bdrate-svc",
+            "--anchor-encoder",
+            "anchor",
+            "--test-encoder",
+            "test",
+            "--decoder",
+            "decoder",
+            "--input",
+            "input.y4m",
+        ]))
+        .unwrap();
+        args.timeout = crate::process_test_support::DEADLINE;
+        let info = VideoInfo {
+            width: 2,
+            height: 2,
+            fps_num: 30,
+            fps_den: 1,
+        };
+        let error = encode(
+            EncoderRole::Test,
+            &fixture.tool,
+            fixture.dir.join("output.ivf"),
+            100,
+            &args,
+            info,
+            1,
+        )
+        .unwrap_err();
+        assert!(
+            error.contains("SVC encoder") && error.contains("timed out"),
+            "{error}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn external_decoder_timeout() {
+        let fixture = crate::process_test_support::Fixture::new();
+        let reference = fixture.dir.join("reference.y4m");
+        std::fs::write(&reference, crate::process_test_support::Y4M).unwrap();
+        let error = decode_and_psnr_with_timeout(
+            &fixture.tool,
+            &fixture.dir.join("input.ivf"),
+            &reference,
+            &fixture.dir.join("decoded.y4m"),
+            crate::process_test_support::DEADLINE,
+        )
+        .unwrap_err();
+        assert!(
+            error.contains("SVC decoder") && error.contains("timed out"),
+            "{error}"
+        );
+    }
 
     fn argv(items: &[&str]) -> Vec<String> {
         items.iter().map(ToString::to_string).collect()
@@ -1744,3 +1821,7 @@ mod tests {
         assert_eq!(measured_bitrate_kbps(100_000, 60, info), 400.0);
     }
 }
+
+#[cfg(all(test, unix))]
+#[path = "../process_test_support.rs"]
+mod process_test_support;

@@ -259,6 +259,7 @@ struct RdPoint {
 }
 
 struct EncodeConfig<'a> {
+    timeout: std::time::Duration,
     end_usage: &'a str,
     fps: &'a str,
     threads: u32,
@@ -319,17 +320,20 @@ fn encode(
     config: &EncodeConfig<'_>,
     extra_args: &[String],
 ) {
-    let status = encoder_command(
-        encoder,
-        input,
-        out,
-        cpu_used,
-        bitrate_kbps,
-        config,
-        extra_args,
+    let status = rvp9_bench::process::run_status(
+        &mut encoder_command(
+            encoder,
+            input,
+            out,
+            cpu_used,
+            bitrate_kbps,
+            config,
+            extra_args,
+        ),
+        "BD-rate encoder",
+        config.timeout,
     )
-    .status()
-    .expect("encoder failed");
+    .unwrap_or_else(|error| panic!("{error}"));
     assert!(
         status.success(),
         "encoder {} failed at {bitrate_kbps}k",
@@ -341,14 +345,32 @@ fn encode(
 /// mean luma PSNR vs `source_y4m`. Returns `NaN` on any failure so the
 /// caller's NaN-guard can detect harness problems without aborting.
 fn decode_and_psnr(decoder: &Path, ivf: &Path, source_y4m: &Path) -> f64 {
+    decode_and_psnr_with_timeout(
+        decoder,
+        ivf,
+        source_y4m,
+        rvp9_bench::process::DEFAULT_TIMEOUT,
+    )
+}
+
+fn decode_and_psnr_with_timeout(
+    decoder: &Path,
+    ivf: &Path,
+    source_y4m: &Path,
+    timeout: std::time::Duration,
+) -> f64 {
     let y4m_out = decoded_y4m_path(ivf);
-    let status = Command::new(decoder)
-        .arg("-o")
-        .arg(&y4m_out)
-        .arg(ivf)
-        .status();
-    let Ok(status) = status else {
-        return f64::NAN;
+    let status = rvp9_bench::process::run_status(
+        Command::new(decoder).arg("-o").arg(&y4m_out).arg(ivf),
+        "BD-rate decoder",
+        timeout,
+    );
+    let status = match status {
+        Ok(status) => status,
+        Err(error) => {
+            eprintln!("{error}");
+            return f64::NAN;
+        }
     };
     if !status.success() {
         return f64::NAN;
@@ -540,6 +562,7 @@ fn main() -> ExitCode {
         aq_mode: args.aq_mode,
         noise_sensitivity: args.noise_sensitivity,
         limit: args.limit,
+        timeout: rvp9_bench::process::DEFAULT_TIMEOUT,
     };
 
     let mut anchor_rd: Vec<RdPoint> = Vec::new();
@@ -661,6 +684,58 @@ fn write_csv(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    #[test]
+    fn external_encoder_timeout() {
+        let fixture = crate::process_test_support::Fixture::new();
+        let config = EncodeConfig {
+            end_usage: "cbr",
+            fps: "30/1",
+            threads: 1,
+            tile_columns: 0,
+            lag_in_frames: 0,
+            tune_content: "default",
+            aq_mode: None,
+            noise_sensitivity: None,
+            limit: Some(1),
+            timeout: crate::process_test_support::DEADLINE,
+        };
+        let failure = std::panic::catch_unwind(|| {
+            encode(
+                &fixture.tool,
+                Path::new("input.y4m"),
+                7,
+                100,
+                &fixture.dir.join("output.ivf"),
+                &config,
+                &[],
+            )
+        });
+        let failure = failure.expect_err("encoder must reject child that outlives its deadline");
+        let message = failure.downcast_ref::<String>().unwrap();
+        assert!(
+            message.contains("BD-rate encoder") && message.contains("timed out"),
+            "{message}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn external_decoder_timeout() {
+        let fixture = crate::process_test_support::Fixture::new();
+        let reference = fixture.dir.join("reference.y4m");
+        std::fs::write(&reference, crate::process_test_support::Y4M).unwrap();
+        let value = decode_and_psnr_with_timeout(
+            &fixture.tool,
+            &fixture.dir.join("input.ivf"),
+            &reference,
+            crate::process_test_support::DEADLINE,
+        );
+        assert!(
+            value.is_nan(),
+            "decoder past its deadline must fail, got {value}"
+        );
+    }
 
     #[test]
     fn usage_advertises_retained_artifact_inputs() {
@@ -876,6 +951,7 @@ mod tests {
             aq_mode: Some(3),
             noise_sensitivity: Some(1),
             limit: Some(60),
+            timeout: rvp9_bench::process::DEFAULT_TIMEOUT,
         };
         let anchor_args = vec!["--row-mt=1".to_owned(), "--static-thresh=1".to_owned()];
         let command = encoder_command(
@@ -938,3 +1014,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(all(test, unix))]
+#[path = "../process_test_support.rs"]
+mod process_test_support;

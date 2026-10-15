@@ -44,7 +44,7 @@ use rvp9_encoder::{AqMode, EncoderConfig, RcMode, StreamEncoder, YuvFrameRef};
 use rvp9_harness::container::{IvfHeader, write_ivf};
 use rvp9_harness::y4m::{YuvFrameBuf, probe_testsrc_720p, read_cropped as y4m_read_cropped};
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitStatus, Stdio};
+use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
@@ -80,47 +80,12 @@ impl Drop for ScopedTempDir {
     }
 }
 
-fn run_with_timeout(command: &mut Command, timeout: Duration) -> Result<ExitStatus, String> {
-    command.stdin(Stdio::null());
-    let mut child = command
-        .spawn()
-        .map_err(|error| format!("vpxdec spawn: {error}"))?;
-    let deadline = Instant::now() + timeout;
-
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) => return Ok(status),
-            Ok(None) if Instant::now() >= deadline => {
-                let kill_result = child.kill();
-                let wait_result = child.wait();
-                if let Err(error) = kill_result {
-                    return Err(format!(
-                        "vpxdec timed out after {:.1}s and could not be killed: {error}",
-                        timeout.as_secs_f64()
-                    ));
-                }
-                if let Err(error) = wait_result {
-                    return Err(format!(
-                        "vpxdec timed out after {:.1}s and could not be reaped: {error}",
-                        timeout.as_secs_f64()
-                    ));
-                }
-                return Err(format!(
-                    "vpxdec timed out after {:.1}s",
-                    timeout.as_secs_f64()
-                ));
-            }
-            Ok(None) => {
-                let remaining = deadline.saturating_duration_since(Instant::now());
-                std::thread::sleep(remaining.min(Duration::from_millis(10)));
-            }
-            Err(error) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(format!("vpxdec status: {error}"));
-            }
-        }
-    }
+#[cfg(test)]
+fn run_with_timeout(
+    command: &mut Command,
+    timeout: Duration,
+) -> Result<std::process::ExitStatus, String> {
+    rvp9_bench::process::run_status(command, "soak vpxdec", timeout)
 }
 
 // ---------------------------------------------------------------------------
@@ -471,23 +436,17 @@ fn run_one_iteration(
             write_ivf(&mut f, &header, &packet_refs).map_err(|e| format!("write_ivf: {e}"))?;
         }
         let out_path = tmp_dir.path().join(format!("iter{iter_idx}.yuv"));
-        let stderr_path = tmp_dir.path().join("vpxdec.stderr");
-        let stderr_file = std::fs::File::create(&stderr_path)
-            .map_err(|e| format!("create vpxdec stderr file: {e}"))?;
         let mut command = Command::new(vpxdec);
         command
             .args(["--codec=vp9", "--i420", "-o"])
             .arg(&out_path)
-            .arg(&ivf_path)
-            .stdout(Stdio::null())
-            .stderr(Stdio::from(stderr_file));
-        let status = run_with_timeout(&mut command, VPXDEC_TIMEOUT)?;
-        if !status.success() {
-            let stderr = std::fs::read(&stderr_path).unwrap_or_default();
+            .arg(&ivf_path);
+        let output = rvp9_bench::process::run(&mut command, "soak vpxdec", VPXDEC_TIMEOUT)?;
+        if !output.status.success() {
             return Err(format!(
                 "vpxdec exited non-zero: {} stderr={}",
-                status,
-                String::from_utf8_lossy(&stderr)
+                output.status,
+                String::from_utf8_lossy(&output.stderr)
             ));
         }
     }

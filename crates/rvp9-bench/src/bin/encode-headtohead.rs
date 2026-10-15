@@ -18,7 +18,7 @@ use std::fs::{self, File};
 use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use rvp9_bench::count_ivf_frames;
 use sha2::{Digest, Sha256};
@@ -818,6 +818,26 @@ fn run_encoder(
     output: &Path,
     extra: &[String],
 ) -> Result<(f64, u32, String), String> {
+    run_encoder_with_timeout(
+        encoder,
+        kind,
+        args,
+        input,
+        output,
+        extra,
+        rvp9_bench::process::DEFAULT_TIMEOUT,
+    )
+}
+
+fn run_encoder_with_timeout(
+    encoder: &Path,
+    kind: EncoderKind,
+    args: &Args,
+    input: &Path,
+    output: &Path,
+    extra: &[String],
+    timeout: std::time::Duration,
+) -> Result<(f64, u32, String), String> {
     if output.exists() {
         fs::remove_file(output)
             .map_err(|error| format!("cannot replace {}: {error}", output.display()))?;
@@ -826,9 +846,11 @@ fn run_encoder(
     command.args(command_args(kind, args, input, output, extra));
     remove_rvp9_environment(&mut command);
     let start = Instant::now();
-    let outcome = command
-        .output()
-        .map_err(|error| format!("failed to launch {} ({kind:?}): {error}", encoder.display()))?;
+    let outcome = rvp9_bench::process::run(
+        &mut command,
+        &format!("head-to-head {kind:?} encoder"),
+        timeout,
+    )?;
     let seconds = start.elapsed().as_secs_f64();
     if !outcome.status.success() {
         return Err(format!(
@@ -863,10 +885,12 @@ fn current_load1() -> Option<f64> {
     if let Ok(text) = fs::read_to_string("/proc/loadavg") {
         return parse_load1(&text);
     }
-    let output = Command::new("sysctl")
-        .args(["-n", "vm.loadavg"])
-        .output()
-        .ok()?;
+    let output = rvp9_bench::process::run(
+        Command::new("sysctl").args(["-n", "vm.loadavg"]),
+        "load probe",
+        Duration::from_secs(10),
+    )
+    .ok()?;
     if !output.status.success() {
         return None;
     }
@@ -890,10 +914,12 @@ $busyCores = $meanPercent * [Environment]::ProcessorCount / 100.0
 "#;
     let powershell = PathBuf::from(std::env::var_os("SystemRoot")?)
         .join("System32/WindowsPowerShell/v1.0/powershell.exe");
-    let output = Command::new(powershell)
-        .args(["-NoProfile", "-NonInteractive", "-Command", SCRIPT])
-        .output()
-        .ok()?;
+    let output = rvp9_bench::process::run(
+        Command::new(powershell).args(["-NoProfile", "-NonInteractive", "-Command", SCRIPT]),
+        "load probe",
+        Duration::from_secs(90),
+    )
+    .ok()?;
     if !output.status.success() {
         return None;
     }
@@ -1065,13 +1091,15 @@ fn command_text(program: &Path, arguments: &[OsString]) -> String {
 }
 
 fn probe_command(program: &str, arguments: &[&str]) -> String {
-    Command::new(program)
-        .args(arguments)
-        .output()
-        .ok()
-        .filter(|output| output.status.success())
-        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned())
-        .unwrap_or_else(|| "unavailable".to_owned())
+    rvp9_bench::process::run(
+        Command::new(program).args(arguments),
+        "metadata probe",
+        Duration::from_secs(10),
+    )
+    .ok()
+    .filter(|output| output.status.success())
+    .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+    .unwrap_or_else(|| "unavailable".to_owned())
 }
 
 fn write_raw(path: &Path, rows: &[RawRow]) -> Result<(), String> {
@@ -1484,6 +1512,27 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    #[test]
+    fn external_encoder_timeout() {
+        let fixture = crate::process_test_support::Fixture::new();
+        let args = fake_args(EncoderKind::Vpxenc);
+        let error = run_encoder_with_timeout(
+            &fixture.tool,
+            args.test_kind,
+            &args,
+            &fixture.dir.join("input.y4m"),
+            &fixture.dir.join("output.ivf"),
+            &[],
+            crate::process_test_support::DEADLINE,
+        )
+        .unwrap_err();
+        assert!(
+            error.contains("head-to-head") && error.contains("timed out"),
+            "{error}"
+        );
+        assert!(error.contains("fake stderr diagnostic"), "{error}");
+    }
 
     fn fake_args(kind: EncoderKind) -> Args {
         Args {
@@ -2093,3 +2142,7 @@ mod tests {
         assert!(summarize(&[clip], &rows, 60, false).is_err());
     }
 }
+
+#[cfg(all(test, unix))]
+#[path = "../process_test_support.rs"]
+mod process_test_support;

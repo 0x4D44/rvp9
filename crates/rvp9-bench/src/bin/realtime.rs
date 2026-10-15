@@ -336,6 +336,17 @@ fn encoder_args(args: &Args) -> Vec<OsString> {
     command_args
 }
 
+fn run_encoder(
+    args: &Args,
+    timeout: std::time::Duration,
+) -> Result<std::process::ExitStatus, String> {
+    rvp9_bench::process::run_status(
+        Command::new(&args.encoder).args(encoder_args(args)),
+        "realtime encoder",
+        timeout,
+    )
+}
+
 fn main() {
     let argv: Vec<String> = std::env::args().collect();
     if help_requested(&argv) {
@@ -377,10 +388,10 @@ fn main() {
     println!();
 
     let start = Instant::now();
-    let status = Command::new(&args.encoder)
-        .args(encoder_args(&args))
-        .status()
-        .expect("failed to invoke encoder");
+    let status = run_encoder(&args, rvp9_bench::process::DEFAULT_TIMEOUT).unwrap_or_else(|error| {
+        eprintln!("{error}");
+        std::process::exit(1)
+    });
     let elapsed = start.elapsed();
 
     if !status.success() {
@@ -448,6 +459,19 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    #[test]
+    fn external_encoder_timeout() {
+        let fixture = crate::process_test_support::Fixture::new();
+        let mut args = test_args();
+        args.encoder = fixture.tool.clone();
+        let error = run_encoder(&args, crate::process_test_support::DEADLINE).unwrap_err();
+        assert!(
+            error.contains("realtime encoder") && error.contains("timed out"),
+            "{error}"
+        );
+        assert!(error.contains("fake stderr diagnostic"), "{error}");
+    }
 
     fn csv(rows: &[(usize, u8, u128)]) -> String {
         let mut text = format!("{FRAME_TIME_CSV_HEADER}\n");
@@ -673,3 +697,7 @@ mod tests {
         ]);
     }
 }
+
+#[cfg(all(test, unix))]
+#[path = "../process_test_support.rs"]
+mod process_test_support;
