@@ -1,25 +1,25 @@
 # RVP9-BUG-KILN-00069 — ALTREF panics on legal partial-height streams
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Must
 - **Severity:** High
 - **Area:** encoder/altref geometry
 - **Raised:** 2026-08-16T08:18:59Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261015T222031Z-c71ab272
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KILN-00069-run-fix-20261015T222031Z-c71ab272
-- **Owner base:** d62f7ae1c408f7da1bd18a2c47f94e072ac4ad5c
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-15T22:20:31Z
-- **Owner until:** 2026-10-16T02:20:31Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-16T08:18:59Z, raised via `deltic bugs new`)
+- **State history:** Open (2026-08-16T08:18:59Z, raised via `deltic bugs new`) -> Fixed (2026-10-15T22:28:21Z, deltic:auto role=fix run=fix-20261015T222031Z-c71ab272 branch=task/bug-RVP9-BUG-KILN-00069-run-fix-20261015T222031Z-c71ab272 code=4780fcc841d9bba4f467bfaf40dd82b5bcc0365f gate=manual)
 
 ## Observation
 
