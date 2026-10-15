@@ -1,25 +1,25 @@
 # RVP9-BUG-FLUX-00024 — Encoder diagnostic environment variables race parallel tests
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** encoder/test isolation
 - **Raised:** 2026-08-13T03:42:41Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261015T231847Z-e15a9711
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLUX-00024-run-fix-20261015T231847Z-e15a9711
-- **Owner base:** 57199e3d88496eba1169e36285cff19c85eec6bb
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-15T23:18:47Z
-- **Owner until:** 2026-10-16T03:18:47Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-13T03:42:41Z, raised via `deltic bugs new`)
+- **State history:** Open (2026-08-13T03:42:41Z, raised via `deltic bugs new`) -> Fixed (2026-10-15T23:26:01Z, deltic:auto role=fix run=fix-20261015T231847Z-e15a9711 branch=task/bug-RVP9-BUG-FLUX-00024-run-fix-20261015T231847Z-e15a9711 code=123b0a1c4ff33de4eb3841c3f78d98aba0a53de8 gate=manual)
 
 ## Observation
 
