@@ -105,6 +105,16 @@ fn checked_yuv420_layout(
     })
 }
 
+fn checked_framerate(fps_num: u32, fps_den: u32, kind: io::ErrorKind) -> io::Result<()> {
+    if fps_num == 0 || fps_den == 0 {
+        return Err(y4m_error(
+            kind,
+            "y4m framerate numerator and denominator must be non-zero",
+        ));
+    }
+    Ok(())
+}
+
 fn zeroed_buffer(len: usize, label: &str) -> io::Result<Vec<u8>> {
     let mut buffer = Vec::new();
     buffer.try_reserve_exact(len).map_err(|error| {
@@ -256,12 +266,7 @@ pub fn parse_header(f: &mut std::fs::File) -> std::io::Result<Y4mHeader> {
     }
     match (w, h, fps_num, fps_den) {
         (Some(w), Some(h), Some(fps_num), Some(fps_den)) => {
-            if fps_num == 0 || fps_den == 0 {
-                return Err(y4m_error(
-                    io::ErrorKind::InvalidData,
-                    "y4m framerate numerator and denominator must be non-zero",
-                ));
-            }
+            checked_framerate(fps_num, fps_den, io::ErrorKind::InvalidData)?;
             checked_yuv420_layout(w, h, io::ErrorKind::InvalidData, "y4m source")?;
             Ok(Y4mHeader {
                 w,
@@ -493,9 +498,12 @@ pub fn read_cropped(
 ///
 /// # Errors
 ///
-/// Returns [`io::ErrorKind::InvalidInput`] for `Yuv440`, which has no
-/// standard Y4M chroma tag. Otherwise forwards any [`io::Error`] from the
-/// writer.
+/// Returns [`io::ErrorKind::InvalidInput`] if either framerate component is
+/// zero, if `chroma` is [`ChromaFormat::Yuv420`] and the dimensions are outside
+/// the supported 4:2:0 frame envelope, or if `chroma` is
+/// [`ChromaFormat::Yuv440`], which has no standard Y4M chroma tag. These
+/// metadata errors are returned before any bytes are written. Otherwise
+/// forwards any [`io::Error`] from the writer.
 pub fn write_header<W: Write>(
     out: &mut W,
     width: u32,
@@ -516,6 +524,10 @@ pub fn write_header<W: Write>(
             ));
         }
     };
+    checked_framerate(fps_num, fps_den, io::ErrorKind::InvalidInput)?;
+    if chroma == ChromaFormat::Yuv420 {
+        checked_yuv420_layout(width, height, io::ErrorKind::InvalidInput, "y4m output")?;
+    }
     writeln!(
         out,
         "YUV4MPEG2 W{width} H{height} F{fps_num}:{fps_den} Ip A1:1 {tag}"
@@ -698,6 +710,49 @@ mod tests {
         let err = write_header(&mut buf, 352, 288, 30, 1, ChromaFormat::Yuv440).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
         assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn write_header_rejects_invalid_yuv420_metadata_without_output() {
+        let prefix = b"existing output";
+        let cases = [
+            ("zero width", 0, 16, 30, 1),
+            ("zero height", 16, 0, 30, 1),
+            ("odd width", 15, 16, 30, 1),
+            ("odd height", 16, 15, 30, 1),
+            ("oversized width", 16_386, 16, 30, 1),
+            ("oversized height", 16, 16_386, 30, 1),
+            ("extreme width", u32::MAX - 1, 16, 30, 1),
+            ("extreme height", 16, u32::MAX - 1, 30, 1),
+            ("zero fps numerator", 16, 16, 0, 1),
+            ("zero fps denominator", 16, 16, 30, 0),
+        ];
+        let mut failures = Vec::new();
+
+        for (name, width, height, fps_num, fps_den) in cases {
+            let mut output = prefix.to_vec();
+            let result = write_header(
+                &mut output,
+                width,
+                height,
+                fps_num,
+                fps_den,
+                ChromaFormat::Yuv420,
+            );
+            match result {
+                Err(err) if err.kind() == io::ErrorKind::InvalidInput => {}
+                Err(err) => failures.push(format!("{name}: returned {:?}: {err}", err.kind())),
+                Ok(()) => failures.push(format!("{name}: accepted invalid metadata")),
+            }
+            if output.as_slice() != prefix {
+                failures.push(format!("{name}: changed output before rejecting metadata"));
+            }
+        }
+
+        assert!(
+            failures.is_empty(),
+            "invalid Yuv420 header cases failed: {failures:#?}"
+        );
     }
 
     // -----------------------------------------------------------------
