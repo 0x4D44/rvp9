@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00103 — StreamEncoder accepts unsupported speed values
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** encoder/config validation
 - **Raised:** 2026-08-22T18:32:50Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261015T231350Z-4d16639f
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00103-run-fix-20261015T231350Z-4d16639f
-- **Owner base:** b15da66a52d865ae312fb45f5d222be9d698dc96
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-15T23:13:50Z
-- **Owner until:** 2026-10-16T03:13:50Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T18:32:50Z, raised via `deltic bugs new`)
+- **State history:** Open (2026-08-22T18:32:50Z, raised via `deltic bugs new`) -> Fixed (2026-10-15T23:18:31Z, deltic:auto role=fix run=fix-20261015T231350Z-4d16639f branch=task/bug-RVP9-BUG-KIL-00103-run-fix-20261015T231350Z-4d16639f code=25ca2643cb0c43003c21a58590e30289168979e9 gate=manual)
 
 ## Observation
 
