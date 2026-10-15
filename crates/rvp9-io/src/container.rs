@@ -168,8 +168,56 @@ struct IvfPacketReader {
 #[derive(Clone, Copy)]
 struct WebmLevel {
     end: u64,
-    inside_cluster: bool,
+    context: WebmContext,
     depth: usize,
+}
+
+/// Schema context for the subset of master elements the packet walkers enter.
+#[derive(Clone, Copy, Default)]
+struct WebmContext {
+    id: u32,
+    parent_id: u32,
+    unknown_size: bool,
+    inside_cluster: bool,
+}
+
+impl WebmContext {
+    fn child(self, id: u32, unknown_size: bool, inside_cluster: bool) -> Self {
+        Self {
+            id,
+            parent_id: self.id,
+            unknown_size,
+            inside_cluster,
+        }
+    }
+
+    fn ends_before(self, next_id: u32) -> bool {
+        if !self.unknown_size {
+            return false;
+        }
+        let root_element = matches!(next_id, ebml_id::EBML | ebml_id::SEGMENT);
+        // RFC 8794 §6.2: an unknown-sized master ends before a sibling or
+        // ancestor's sibling. RFC 9559 puts these children directly in Segment.
+        // Global Void/CRC-32 elements deliberately do not end a master.
+        match (self.parent_id, self.id) {
+            (0, ebml_id::SEGMENT) => root_element,
+            (ebml_id::SEGMENT, ebml_id::CLUSTER) => {
+                root_element
+                    || matches!(
+                        next_id,
+                        ebml_id::SEEK_HEAD
+                            | ebml_id::INFO
+                            | ebml_id::CLUSTER
+                            | ebml_id::TRACKS
+                            | ebml_id::CUES
+                            | ebml_id::ATTACHMENTS
+                            | ebml_id::CHAPTERS
+                            | ebml_id::TAGS
+                    )
+            }
+            _ => false,
+        }
+    }
 }
 
 struct WebmPacketReader {
@@ -244,7 +292,7 @@ impl PacketReader {
                 video_track,
                 levels: vec![WebmLevel {
                     end: file_len,
-                    inside_cluster: false,
+                    context: WebmContext::default(),
                     depth: 0,
                 }],
                 packet_index: 0,
@@ -576,6 +624,12 @@ mod ebml_id {
     pub const TRACK_TYPE: u32 = 0x83;
     pub const CODEC_ID: u32 = 0x86;
     pub const CLUSTER: u32 = 0x1F43_B675;
+    pub const SEEK_HEAD: u32 = 0x114D_9B74;
+    pub const INFO: u32 = 0x1549_A966;
+    pub const CUES: u32 = 0x1C53_BB6B;
+    pub const ATTACHMENTS: u32 = 0x1941_A469;
+    pub const CHAPTERS: u32 = 0x1043_A770;
+    pub const TAGS: u32 = 0x1254_C367;
     pub const SIMPLE_BLOCK: u32 = 0xA3;
     pub const BLOCK_GROUP: u32 = 0xA0;
     pub const BLOCK: u32 = 0xA1;
@@ -785,21 +839,39 @@ impl WebmPacketReader {
                 continue;
             }
             let id = read_stream_ebml_id(&mut self.file)?;
+            if level.context.ends_before(id) {
+                self.levels.pop();
+                self.file.seek(SeekFrom::Start(pos))?;
+                continue;
+            }
             let (size, size_len) = read_stream_ebml_vint(&mut self.file)?;
             let payload_start = self.file.stream_position()?;
             let payload_end = stream_payload_end(payload_start, size, size_len, level.end)?;
 
+            let unknown_size = is_unknown_vint(size, size_len);
             match id {
                 ebml_id::EBML | ebml_id::SEGMENT => {
-                    self.push_level(payload_end, false, level.depth + 1)?;
+                    self.push_level(
+                        payload_end,
+                        level.context.child(id, unknown_size, false),
+                        level.depth + 1,
+                    )?;
                 }
                 ebml_id::CLUSTER => {
-                    self.push_level(payload_end, true, level.depth + 1)?;
+                    self.push_level(
+                        payload_end,
+                        level.context.child(id, unknown_size, true),
+                        level.depth + 1,
+                    )?;
                 }
-                ebml_id::BLOCK_GROUP if level.inside_cluster => {
-                    self.push_level(payload_end, true, level.depth + 1)?;
+                ebml_id::BLOCK_GROUP if level.context.inside_cluster => {
+                    self.push_level(
+                        payload_end,
+                        level.context.child(id, unknown_size, true),
+                        level.depth + 1,
+                    )?;
                 }
-                ebml_id::SIMPLE_BLOCK | ebml_id::BLOCK if level.inside_cluster => {
+                ebml_id::SIMPLE_BLOCK | ebml_id::BLOCK if level.context.inside_cluster => {
                     if let Some(packet) = self.read_block(payload_end)? {
                         self.packet_index = self.packet_index.saturating_add(1);
                         return Ok(Some(packet));
@@ -816,7 +888,7 @@ impl WebmPacketReader {
     fn push_level(
         &mut self,
         end: u64,
-        inside_cluster: bool,
+        context: WebmContext,
         depth: usize,
     ) -> Result<(), ContainerError> {
         if depth > MAX_EBML_NESTING_DEPTH {
@@ -826,7 +898,7 @@ impl WebmPacketReader {
         }
         self.levels.push(WebmLevel {
             end,
-            inside_cluster,
+            context,
             depth,
         });
         Ok(())
@@ -952,7 +1024,7 @@ pub fn read_webm_packets(data: &[u8]) -> Result<Vec<PacketRange>, ContainerError
         0,
         data.len(),
         &mut packets,
-        /* inside_cluster */ false,
+        WebmContext::default(),
         video_track,
         0,
     )?;
@@ -1070,10 +1142,10 @@ fn walk_ebml(
     mut pos: usize,
     end: usize,
     out: &mut Vec<PacketRange>,
-    inside_cluster: bool,
+    context: WebmContext,
     video_track: u64,
     depth: usize,
-) -> Result<(), ContainerError> {
+) -> Result<usize, ContainerError> {
     if depth > MAX_EBML_NESTING_DEPTH {
         return Err(ContainerError::BadEbml(
             "recognized container nesting depth exceeds limit",
@@ -1082,20 +1154,22 @@ fn walk_ebml(
 
     while pos < end {
         let (id, id_len) = read_ebml_id(data, pos)?;
+        if context.ends_before(id) {
+            return Ok(pos);
+        }
         pos += id_len;
         let (size, size_len) = read_ebml_vint(data, pos)?;
         pos += size_len;
 
-        // EBML / Segment with "unknown size": the All-ones value means
-        // "container runs to EOF" (Matroska Segment uses this). Treat
-        // that as "remaining length of file".
+        // The parent end bounds unknown-sized masters, but their schema
+        // context can terminate them earlier at a sibling header.
         let unknown = is_unknown_vint(size, size_len);
         let payload_size = if unknown {
             end.saturating_sub(pos)
         } else {
             usize::try_from(size).map_err(|_| ContainerError::BadEbml("vint too large"))?
         };
-        let payload_end = pos
+        let mut payload_end = pos
             .checked_add(payload_size)
             .ok_or(ContainerError::BadEbml("payload size overflow"))?;
         if payload_end > end {
@@ -1106,23 +1180,47 @@ fn walk_ebml(
 
         match id {
             ebml_id::EBML | ebml_id::SEGMENT => {
-                walk_ebml(data, pos, payload_end, out, false, video_track, depth + 1)?;
+                payload_end = walk_ebml(
+                    data,
+                    pos,
+                    payload_end,
+                    out,
+                    context.child(id, unknown, false),
+                    video_track,
+                    depth + 1,
+                )?;
             }
             ebml_id::CLUSTER => {
-                walk_ebml(data, pos, payload_end, out, true, video_track, depth + 1)?;
+                payload_end = walk_ebml(
+                    data,
+                    pos,
+                    payload_end,
+                    out,
+                    context.child(id, unknown, true),
+                    video_track,
+                    depth + 1,
+                )?;
             }
-            ebml_id::SIMPLE_BLOCK if inside_cluster => {
+            ebml_id::SIMPLE_BLOCK if context.inside_cluster => {
                 if let Some(range) =
                     parse_block_frame(data, pos, payload_size, out.len() + 1, video_track)?
                 {
                     out.push(range);
                 }
             }
-            ebml_id::BLOCK_GROUP if inside_cluster => {
+            ebml_id::BLOCK_GROUP if context.inside_cluster => {
                 // BlockGroup contains a Block + extras; recurse to find the Block.
-                walk_ebml(data, pos, payload_end, out, true, video_track, depth + 1)?;
+                payload_end = walk_ebml(
+                    data,
+                    pos,
+                    payload_end,
+                    out,
+                    context.child(id, unknown, true),
+                    video_track,
+                    depth + 1,
+                )?;
             }
-            ebml_id::BLOCK if inside_cluster => {
+            ebml_id::BLOCK if context.inside_cluster => {
                 if let Some(range) =
                     parse_block_frame(data, pos, payload_size, out.len() + 1, video_track)?
                 {
@@ -1135,7 +1233,7 @@ fn walk_ebml(
         }
         pos = payload_end;
     }
-    Ok(())
+    Ok(pos)
 }
 
 #[inline]

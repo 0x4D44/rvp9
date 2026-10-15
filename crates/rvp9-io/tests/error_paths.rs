@@ -763,19 +763,180 @@ fn webm_unknown_size_segment_runs_to_eof() {
     assert_eq!(packets[0].slice(&bytes), frame_payload);
 }
 
+fn unknown_cluster(payload: &[u8]) -> Vec<u8> {
+    let mut cluster = vec![0x1F, 0x43, 0xB6, 0x75, 0xFF, 0xE7, 0x81, 0x00];
+    cluster.extend_from_slice(payload);
+    cluster
+}
+
+fn test_block(value: u8) -> Vec<u8> {
+    ebml_elt(&[0xA3], 5, &[0x81, 0, 0, 0, value])
+}
+
+fn cluster_segment(body: &[u8], unknown: bool) -> Vec<u8> {
+    let mut payload = vp9_tracks(1);
+    payload.extend_from_slice(body);
+    if unknown {
+        let mut segment = vec![0x18, 0x53, 0x80, 0x67, 0xFF];
+        segment.extend_from_slice(&payload);
+        segment
+    } else {
+        ebml_elt(&[0x18, 0x53, 0x80, 0x67], payload.len() as u64, &payload)
+    }
+}
+
+fn assert_cluster_packets(bytes: &[u8], expected: &[u8], streaming: bool) {
+    let result = if streaming {
+        let path = unique_temp_path("unknown_cluster", "webm");
+        std::fs::write(&path, bytes).expect("write isolated WebM fixture");
+        let result = (|| {
+            let mut reader = PacketReader::open(&path)?;
+            let mut packets = Vec::new();
+            while let Some(packet) = reader.next_packet()? {
+                packets.push(packet);
+            }
+            Ok::<_, ContainerError>(packets)
+        })();
+        std::fs::remove_file(path).expect("remove isolated WebM fixture");
+        result
+    } else {
+        read_webm_packets(bytes).map(|ranges| {
+            ranges
+                .iter()
+                .map(|range| range.slice(bytes).to_vec())
+                .collect()
+        })
+    };
+    let packets = result.expect("unknown-size Cluster siblings must not consume nesting depth");
+    let expected: Vec<_> = expected.iter().map(|&value| vec![value]).collect();
+    assert_eq!(
+        packets, expected,
+        "Segment siblings must terminate an unknown-size Cluster"
+    );
+}
+
+fn long_unknown_clusters(streaming: bool) {
+    let mut body = Vec::new();
+    for value in 0..64 {
+        body.extend_from_slice(&unknown_cluster(&test_block(value)));
+    }
+    let block = test_block(64);
+    body.extend_from_slice(&ebml_elt(
+        &[0x1F, 0x43, 0xB6, 0x75],
+        block.len() as u64,
+        &block,
+    ));
+    body.extend_from_slice(&unknown_cluster(&test_block(65)));
+    for unknown_parent in [false, true] {
+        assert_cluster_packets(
+            &cluster_segment(&body, unknown_parent),
+            &(0..66).collect::<Vec<_>>(),
+            streaming,
+        );
+    }
+}
+
+#[test]
+fn webm_unknown_cluster_siblings_memory() {
+    long_unknown_clusters(false);
+}
+
+#[test]
+fn webm_unknown_cluster_siblings_stream() {
+    long_unknown_clusters(true);
+}
+
+fn unknown_cluster_boundaries(streaming: bool) {
+    // Every other Segment child ends the Cluster. A subsequent misplaced
+    // SimpleBlock must not inherit the previous Cluster's packet context.
+    let siblings: &[&[u8]] = &[
+        &[0x11, 0x4D, 0x9B, 0x74], // SeekHead
+        &[0x15, 0x49, 0xA9, 0x66], // Info
+        &[0x16, 0x54, 0xAE, 0x6B], // Tracks
+        &[0x1C, 0x53, 0xBB, 0x6B], // Cues
+        &[0x19, 0x41, 0xA4, 0x69], // Attachments
+        &[0x10, 0x43, 0xA7, 0x70], // Chapters
+        &[0x12, 0x54, 0xC3, 0x67], // Tags
+    ];
+    for sibling in siblings {
+        let mut cluster_payload = test_block(1);
+        // Global elements belong to the current Cluster; embedded ID-looking
+        // bytes are opaque payload and must not be searched for boundaries.
+        cluster_payload.extend_from_slice(&ebml_elt(&[0xEC], 4, &[0x1F, 0x43, 0xB6, 0x75]));
+        cluster_payload.extend_from_slice(&ebml_elt(&[0xBF], 4, &[0; 4]));
+        cluster_payload.extend_from_slice(&test_block(3));
+        let mut body = unknown_cluster(&cluster_payload);
+        body.extend_from_slice(&ebml_elt(sibling, 0, &[]));
+        body.extend_from_slice(&test_block(99));
+        let block = test_block(2);
+        body.extend_from_slice(&ebml_elt(
+            &[0x1F, 0x43, 0xB6, 0x75],
+            block.len() as u64,
+            &block,
+        ));
+        for unknown_parent in [false, true] {
+            assert_cluster_packets(
+                &cluster_segment(&body, unknown_parent),
+                &[1, 3, 2],
+                streaming,
+            );
+        }
+    }
+}
+
+#[test]
+fn webm_unknown_cluster_boundaries_memory() {
+    unknown_cluster_boundaries(false);
+}
+
+#[test]
+fn webm_unknown_cluster_boundaries_stream() {
+    unknown_cluster_boundaries(true);
+}
+
+fn unknown_cluster_root_boundaries(streaming: bool) {
+    for root in [&[0x1A, 0x45, 0xDF, 0xA3][..], &[0x18, 0x53, 0x80, 0x67][..]] {
+        let mut bytes = cluster_segment(&unknown_cluster(&test_block(1)), true);
+        bytes.extend_from_slice(&ebml_elt(root, 0, &[]));
+        bytes.extend_from_slice(&test_block(99));
+        bytes.extend_from_slice(&cluster_segment(&unknown_cluster(&test_block(2)), false));
+        assert_cluster_packets(&bytes, &[1, 2], streaming);
+    }
+}
+
+#[test]
+fn webm_unknown_cluster_root_boundaries_memory() {
+    unknown_cluster_root_boundaries(false);
+}
+
+#[test]
+fn webm_unknown_cluster_root_boundaries_stream() {
+    unknown_cluster_root_boundaries(true);
+}
+
 #[test]
 fn webm_excessive_container_depth_is_rejected() {
-    let mut nested = Vec::new();
-    for _ in 0..64 {
-        nested = ebml_elt(&[0x18, 0x53, 0x80, 0x67], nested.len() as u64, &nested);
+    for id in [&[0x18, 0x53, 0x80, 0x67][..], &[0x1F, 0x43, 0xB6, 0x75][..]] {
+        let mut nested = Vec::new();
+        for _ in 0..64 {
+            nested = ebml_elt(id, nested.len() as u64, &nested);
+        }
+        let webm = with_vp9_track(nested);
+        let error = read_webm_packets(&webm).expect_err("unbounded nesting was accepted");
+        assert!(
+            matches!(error, ContainerError::BadEbml(message) if message.contains("nesting depth")),
+            "unexpected error: {error:?}"
+        );
+        let path = unique_temp_path("nested_containers", "webm");
+        std::fs::write(&path, &webm).expect("write isolated WebM fixture");
+        let result = PacketReader::open(&path).and_then(|mut reader| reader.next_packet());
+        std::fs::remove_file(path).expect("remove isolated WebM fixture");
+        let error = result.expect_err("streaming unbounded nesting was accepted");
+        assert!(
+            matches!(error, ContainerError::BadEbml(message) if message.contains("nesting depth")),
+            "unexpected error: {error:?}"
+        );
     }
-    let webm = with_vp9_track(nested);
-
-    let error = read_webm_packets(&webm).expect_err("unbounded nesting was accepted");
-    assert!(
-        matches!(error, ContainerError::BadEbml(message) if message.contains("nesting depth")),
-        "unexpected error: {error:?}"
-    );
 }
 
 #[test]
