@@ -1,24 +1,24 @@
 # RVP9-BUG-KILN-00067 — LF-overlap MI-grid aliasing construct remains in-tree behind a disabled const
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** decoder/loopfilter overlap
 - **Raised:** 2026-07-31T10:22:52Z
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261016T044757Z-fc395d57
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KILN-00067-run-fix-20261016T044757Z-fc395d57
-- **Owner base:** 2d36533e49c67df98fabea7ec0a0d32415aee290
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-16T04:47:57Z
-- **Owner until:** 2026-10-16T08:47:57Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-07-31T10:22:52Z, raised via `deltic bugs new` model=claude-opus-5@high)
+- **State history:** Open (2026-07-31T10:22:52Z, raised via `deltic bugs new` model=claude-opus-5@high) -> Fixed (2026-10-16T04:54:46Z, deltic:auto role=fix run=fix-20261016T044757Z-fc395d57 branch=task/bug-RVP9-BUG-KILN-00067-run-fix-20261016T044757Z-fc395d57 code=fdf0d7f665b05291e70167bd74a5c60f3e5468ef gate=manual)
 
 ## Observation
 
