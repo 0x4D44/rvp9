@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00125 — Symmetric CLI fixtures make plane-order and geometry tests vacuous
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Low
 - **Area:** cli/tests
 - **Raised:** 2026-08-22T20:44:05Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261016T001910Z-7f27bff9
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00125-run-fix-20261016T001910Z-7f27bff9
-- **Owner base:** 1083a1c6ff996b9d443a59091fed3eeddc22273b
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-16T00:19:10Z
-- **Owner until:** 2026-10-16T04:19:10Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T20:44:05Z, raised via `deltic bugs new` model=gpt-5.6-sol@high)
+- **State history:** Open (2026-08-22T20:44:05Z, raised via `deltic bugs new` model=gpt-5.6-sol@high) -> Fixed (2026-10-16T00:25:07Z, deltic:auto role=fix run=fix-20261016T001910Z-7f27bff9 branch=task/bug-RVP9-BUG-KIL-00125-run-fix-20261016T001910Z-7f27bff9 code=be3d2fc020ab0f3164c740095f3e79bfa3d4a5b9 gate=manual)
 
 ## Observation
 
