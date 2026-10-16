@@ -1,0 +1,13 @@
+   Compiling rvp9-bench v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-bench)
+    Finished `test` profile [optimized + debuginfo] target(s) in 1.52s
+     Running unittests src/bin/soak.rs (target/debug/deps/soak-10c1363a956ac441)
+
+running 5 tests
+test tests::cli_accepts_bounded_runs_and_preserves_defaults ... ok
+test tests::cli_rejects_zero_frames_and_unbounded_run ... ok
+test tests::cross_decode_temp_dirs_are_isolated_and_cleaned ... ok
+test tests::empty_iteration_fails_and_single_frame_round_trips ... ok
+test tests::cross_decoder_timeout_kills_child ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
+

@@ -1,0 +1,12 @@
+   Compiling rvp9-bench v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-bench)
+    Finished `test` profile [optimized + debuginfo] target(s) in 3.86s
+     Running unittests src/lib.rs (target/debug/deps/rvp9_bench-3fde31152d775961)
+
+running 4 tests
+test process::tests::fake_child ... ok
+test process::tests::large_output_does_not_fill_pipes_and_has_bounded_tails ... ok
+test process::tests::nonzero_exit_keeps_status_and_diagnostics ... ok
+test process::tests::timeout_kills_reaps_and_retains_diagnostics ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 35 filtered out; finished in 1.01s
+

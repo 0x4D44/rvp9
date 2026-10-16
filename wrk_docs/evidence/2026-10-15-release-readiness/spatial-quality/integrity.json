@@ -1,0 +1,645 @@
+{
+  "schema": 1,
+  "generated_utc": "2026-10-16T14:11:05.391515+00:00",
+  "historical_campaign_root": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality",
+  "scope": "Historical evidence preservation, not merged-candidate acceptance",
+  "probe_binary_sha256": "c29fb4ff418190c436b4f44a6108e04a203518bb99002321c4e4d4891dcdddd8",
+  "files": [
+    {
+      "path": "audit.md",
+      "bytes": 5152,
+      "sha256": "0576da4b680ad6bbebad8e223a6e5265dd3f6205ceba8b8d224b8feb99beaa3e",
+      "origin": "Audit authored during evidence preservation"
+    },
+    {
+      "path": "diagnostics/bdrate-numeric-probe.log",
+      "bytes": 57,
+      "sha256": "9e58e98bec5721d5956aa492eb496c3a422f7a07276e220cb323f34f81dcf087",
+      "origin": "New observation: existing compiled diagnostic /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/.scratch/candidate-20261016/bdrate-numeric-probe"
+    },
+    {
+      "path": "diagnostics/bdrate-numeric-probe.rs",
+      "bytes": 440,
+      "sha256": "4a215900c8dd21af6c5da5654729d7c64ebcc743ff75efef773cde8f9db1ce2a",
+      "origin": "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/.scratch/candidate-20261016/bdrate-numeric-probe.rs"
+    },
+    {
+      "path": "diagnostics/bdrate-numeric-result.log",
+      "bytes": 57,
+      "sha256": "9e58e98bec5721d5956aa492eb496c3a422f7a07276e220cb323f34f81dcf087",
+      "origin": "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/.scratch/candidate-20261016/bdrate-numeric-result.log"
+    },
+    {
+      "path": "diagnostics/spatial-numeric-audit.json",
+      "bytes": 355303,
+      "sha256": "fa2784d19c747387ffedf504e5728463f7a6b443561074a3408e2203ca283314",
+      "origin": "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/.scratch/spatial-numeric-audit.json"
+    },
+    {
+      "path": "diagnostics/spatial-numeric-audit.py",
+      "bytes": 4598,
+      "sha256": "5792d1b265afba8051fa3a34ca9ed62f821f936338685b078c4d2907c1e16a92",
+      "origin": "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/.scratch/spatial-numeric-audit.py"
+    },
+    {
+      "path": "manifest.txt",
+      "bytes": 42004,
+      "sha256": "c2b37aaa9c3a7ecf4b6173bd6b9408642a6f96b27255edc1d42ec57e9ebd6dc3",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/manifest.txt"
+    },
+    {
+      "path": "quality/cbr-1080p30-ducks_take_off-cpu6-s2/bdrate.csv",
+      "bytes": 1119,
+      "sha256": "d985ffc4ae273397b91bf6825d20d2658eaa25b5e87ddd60fbb86c0f6d30856d",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/cbr-1080p30-ducks_take_off-cpu6-s2/bdrate.csv"
+    },
+    {
+      "path": "quality/cbr-1080p30-ducks_take_off-cpu6-s3/bdrate.csv",
+      "bytes": 1634,
+      "sha256": "b6bf3a83d9e4e6d0802c270721e7a77b61a74ec21875e5d3652575f3bd879552",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/cbr-1080p30-ducks_take_off-cpu6-s3/bdrate.csv"
+    },
+    {
+      "path": "quality/cbr-1080p30-ducks_take_off-cpu7-s2/bdrate.csv",
+      "bytes": 1121,
+      "sha256": "dc84bb4f4af2b5ef061f0ca28b21898d6c6ebe684d58d07f87efcfc98ebf6d6f",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/cbr-1080p30-ducks_take_off-cpu7-s2/bdrate.csv"
+    },
+    {
+      "path": "quality/cbr-1080p30-ducks_take_off-cpu7-s3/bdrate.csv",
+      "bytes": 1634,
+      "sha256": "59e0317ad6a8e2722763f533b5d9479adfbfe580574f3350b10047814b395d27",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/cbr-1080p30-ducks_take_off-cpu7-s3/bdrate.csv"
+    },
+    {
+      "path": "quality/cbr-1080p30-ducks_take_off-cpu8-s2/bdrate.csv",
+      "bytes": 1120,
+      "sha256": "099fe6e0844824cec57958b172e6f21ecbce466eee225c90f782fbdb6069341d",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/cbr-1080p30-ducks_take_off-cpu8-s2/bdrate.csv"
+    },
+    {
+      "path": "quality/cbr-1080p30-ducks_take_off-cpu8-s3/bdrate.csv",
+      "bytes": 1633,
+      "sha256": "b15d09fa70d03f0190c28a5c4e51627f401a0a30f3da509e48da7a4f3a6360f0",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/cbr-1080p30-ducks_take_off-cpu8-s3/bdrate.csv"
+    },
+    {
+      "path": "quality/cbr-1080p30-in_to_tree-cpu6-s2/bdrate.csv",
+      "bytes": 1107,
+      "sha256": "dac7e8e17b7c1fdbca23ef16830b143b8ce4a8c0006735331f0a3d676e58c499",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/cbr-1080p30-in_to_tree-cpu6-s2/bdrate.csv"
+    },
+    {
+      "path": "quality/cbr-1080p30-in_to_tree-cpu6-s3/bdrate.csv",
+      "bytes": 1617,
+      "sha256": "9c45f7be53fb4f393614f4fe85417e1901ce5dcbdfd77326f458dca5c5b0bcb1",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/cbr-1080p30-in_to_tree-cpu6-s3/bdrate.csv"
+    },
+    {
+      "path": "quality/cbr-1080p30-in_to_tree-cpu7-s2/bdrate.csv",
+      "bytes": 1108,
+      "sha256": "4f7fd11bb3ecc39c1a98a47f511e75f3d540d41b9648c1e111385e5d6c627414",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/cbr-1080p30-in_to_tree-cpu7-s2/bdrate.csv"
+    },
+    {
+      "path": "quality/cbr-1080p30-in_to_tree-cpu7-s3/bdrate.csv",
+      "bytes": 1617,
+      "sha256": "5c67c11c544230b883ac00482019893faad5a4ee2df43adc6fc8dce0b0c35d84",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/cbr-1080p30-in_to_tree-cpu7-s3/bdrate.csv"
+    },
+    {
+      "path": "quality/cbr-1080p30-in_to_tree-cpu8-s2/bdrate.csv",
+      "bytes": 1092,
+      "sha256": "9546bab5b56078cc9a4e314486149fc2cd33320ebc6f42bdbf2456baaf3e1105",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/cbr-1080p30-in_to_tree-cpu8-s2/bdrate.csv"
+    },
+    {
+      "path": "quality/cbr-1080p30-in_to_tree-cpu8-s3/bdrate.csv",
+      "bytes": 1611,
+      "sha256": "54d375fcdd2b47b827bd21afd81d7e66cc9e1dbc265b7b0bf0d52d8fcc738bb0",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/cbr-1080p30-in_to_tree-cpu8-s3/bdrate.csv"
+    },
+    {
+      "path": "quality/cbr-1080p30-old_town_cross-cpu6-s2/bdrate.csv",
+      "bytes": 1107,
+      "sha256": "03e15b1cc03a425b2ffeece62d88b19b369de978ecb42ce7bf3b7a6f52188c7c",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/cbr-1080p30-old_town_cross-cpu6-s2/bdrate.csv"
+    },
+    {
+      "path": "quality/cbr-1080p30-old_town_cross-cpu6-s3/bdrate.csv",
+      "bytes": 1617,
+      "sha256": "7694f1b186f7678b7226b34a747c9acf3eb0f3750cf9166b689c12d76034b0eb",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/cbr-1080p30-old_town_cross-cpu6-s3/bdrate.csv"
+    },
+    {
+      "path": "quality/cbr-1080p30-old_town_cross-cpu7-s2/bdrate.csv",
+      "bytes": 1108,
+      "sha256": "ae4313cf80f003ef174736a0c5c6848761d2c0fee3f55c31fccdd99675d1cbc5",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/cbr-1080p30-old_town_cross-cpu7-s2/bdrate.csv"
+    },
+    {
+      "path": "quality/cbr-1080p30-old_town_cross-cpu7-s3/bdrate.csv",
+      "bytes": 1617,
+      "sha256": "ddb69b34a9ad6caed6ee0a60c724f3537f5e295e2ee86075c400e9f96527e064",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/cbr-1080p30-old_town_cross-cpu7-s3/bdrate.csv"
+    },
+    {
+      "path": "quality/cbr-1080p30-old_town_cross-cpu8-s2/bdrate.csv",
+      "bytes": 1086,
+      "sha256": "01cd04e0dd83a8633363edb59e6c844be5a2ad7c4c8ddf3e2a9a2241512b3857",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/cbr-1080p30-old_town_cross-cpu8-s2/bdrate.csv"
+    },
+    {
+      "path": "quality/cbr-1080p30-old_town_cross-cpu8-s3/bdrate.csv",
+      "bytes": 1617,
+      "sha256": "e97c75c60f8a64c2ed9b87ea2a824cf4576fd567fd6f9991a9bc682df573f13d",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/cbr-1080p30-old_town_cross-cpu8-s3/bdrate.csv"
+    },
+    {
+      "path": "quality/cbr-1080p60-in_to_tree-cpu6-s2/bdrate.csv",
+      "bytes": 1110,
+      "sha256": "33ceacbea6da3191d91c7d46c1733820aa22bc82c6f37aa1ea1f3dd6d202a0c4",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/cbr-1080p60-in_to_tree-cpu6-s2/bdrate.csv"
+    },
+    {
+      "path": "quality/cbr-1080p60-in_to_tree-cpu6-s3/bdrate.csv",
+      "bytes": 1642,
+      "sha256": "d76673b8f8d402d82c7a77adc1ec1b115ec956cb17ce1461dc3af5c6dbb187ac",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/cbr-1080p60-in_to_tree-cpu6-s3/bdrate.csv"
+    },
+    {
+      "path": "quality/cbr-1080p60-in_to_tree-cpu7-s2/bdrate.csv",
+      "bytes": 1105,
+      "sha256": "c5364f28df7bbc7acfec029077bc9402d6d6e86433b8150bc46b8f8accec5d20",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/cbr-1080p60-in_to_tree-cpu7-s2/bdrate.csv"
+    },
+    {
+      "path": "quality/cbr-1080p60-in_to_tree-cpu7-s3/bdrate.csv",
+      "bytes": 1641,
+      "sha256": "bb4744df64f35e752ca42b106b1bd5ec6ba3a0059525a21345366f7afc17dbc6",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/cbr-1080p60-in_to_tree-cpu7-s3/bdrate.csv"
+    },
+    {
+      "path": "quality/cbr-1080p60-in_to_tree-cpu8-s2/bdrate.csv",
+      "bytes": 1104,
+      "sha256": "9e6f8cdb1efc31975c5c63847802565c4f75b79c5554384ed8282f2a8e4a6217",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/cbr-1080p60-in_to_tree-cpu8-s2/bdrate.csv"
+    },
+    {
+      "path": "quality/cbr-1080p60-in_to_tree-cpu8-s3/bdrate.csv",
+      "bytes": 1640,
+      "sha256": "fd472ea3e1ddb7decdb9fc567d42438de06fe7a4028ba635a88e528b822a05df",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/cbr-1080p60-in_to_tree-cpu8-s3/bdrate.csv"
+    },
+    {
+      "path": "quality/cbr-1080p60-old_town_cross-cpu6-s2/bdrate.csv",
+      "bytes": 1110,
+      "sha256": "fcdece6eef738fd998a5fa98a7345cf2facb7ae0e0210d08d666a62c8c811315",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/cbr-1080p60-old_town_cross-cpu6-s2/bdrate.csv"
+    },
+    {
+      "path": "quality/cbr-1080p60-old_town_cross-cpu6-s3/bdrate.csv",
+      "bytes": 1639,
+      "sha256": "f4b7848111479aac40eb0104ea53e43763c1bafef47f59d9ae85d82f7d4abc2e",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/cbr-1080p60-old_town_cross-cpu6-s3/bdrate.csv"
+    },
+    {
+      "path": "quality/cbr-1080p60-old_town_cross-cpu7-s2/bdrate.csv",
+      "bytes": 1109,
+      "sha256": "a1dd67aa2563bd5d405f545477317774499e64fd49ebca805023f894ccf1d3e5",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/cbr-1080p60-old_town_cross-cpu7-s2/bdrate.csv"
+    },
+    {
+      "path": "quality/cbr-1080p60-old_town_cross-cpu7-s3/bdrate.csv",
+      "bytes": 1644,
+      "sha256": "f5d16cf556980adee98dbe6dd646d7ea5f80821341471bffb1ca0f25972d78c8",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/cbr-1080p60-old_town_cross-cpu7-s3/bdrate.csv"
+    },
+    {
+      "path": "quality/cbr-1080p60-old_town_cross-cpu8-s2/bdrate.csv",
+      "bytes": 1119,
+      "sha256": "00a25ea36ac79bb104ca367a23bd01153e6877c3df6765b91f632dc006aa86a8",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/cbr-1080p60-old_town_cross-cpu8-s2/bdrate.csv"
+    },
+    {
+      "path": "quality/cbr-1080p60-old_town_cross-cpu8-s3/bdrate.csv",
+      "bytes": 1643,
+      "sha256": "bbe9016e73f5d2188bc297f5b4ad59abf1bd8525c5af0e9040859749ae0970fb",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/cbr-1080p60-old_town_cross-cpu8-s3/bdrate.csv"
+    },
+    {
+      "path": "quality/cbr-720p30-ducks_take_off-cpu6-s2/bdrate.csv",
+      "bytes": 1101,
+      "sha256": "8e1c1342f71fad7606c70f5ac336d4193d7df76d9f1c41ad37ec07bc5aa08982",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/cbr-720p30-ducks_take_off-cpu6-s2/bdrate.csv"
+    },
+    {
+      "path": "quality/cbr-720p30-ducks_take_off-cpu6-s3/bdrate.csv",
+      "bytes": 1609,
+      "sha256": "eb899933dc0feef52c441911c06ddc49145205bc40b533fb35a7836e69936f57",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/cbr-720p30-ducks_take_off-cpu6-s3/bdrate.csv"
+    },
+    {
+      "path": "quality/cbr-720p30-ducks_take_off-cpu7-s2/bdrate.csv",
+      "bytes": 1101,
+      "sha256": "95fd499b6ca6b654a871bfedd03bdb490b9e0c63a9777a5c3344bb3cea311b9b",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/cbr-720p30-ducks_take_off-cpu7-s2/bdrate.csv"
+    },
+    {
+      "path": "quality/cbr-720p30-ducks_take_off-cpu7-s3/bdrate.csv",
+      "bytes": 1608,
+      "sha256": "d92d07c0231f101efb9167174f7712712ce4e345f8ffe32b55bac11aea687009",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/cbr-720p30-ducks_take_off-cpu7-s3/bdrate.csv"
+    },
+    {
+      "path": "quality/cbr-720p30-ducks_take_off-cpu8-s2/bdrate.csv",
+      "bytes": 1100,
+      "sha256": "b65bd5f84e2431c731c6462177c69f9d758d905b59ed4dd394e8ad3d631572e5",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/cbr-720p30-ducks_take_off-cpu8-s2/bdrate.csv"
+    },
+    {
+      "path": "quality/cbr-720p30-ducks_take_off-cpu8-s3/bdrate.csv",
+      "bytes": 1609,
+      "sha256": "7d9884c8bd94ac53be32c2eccacfd011d00a0406ccda5076a887d078423921b7",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/cbr-720p30-ducks_take_off-cpu8-s3/bdrate.csv"
+    },
+    {
+      "path": "quality/cbr-720p30-in_to_tree-cpu6-s2/bdrate.csv",
+      "bytes": 1094,
+      "sha256": "dcd06acb0a516df28f2436355d7ec1ddfaa5271813e17c34bdde7d630d9ab0f3",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/cbr-720p30-in_to_tree-cpu6-s2/bdrate.csv"
+    },
+    {
+      "path": "quality/cbr-720p30-in_to_tree-cpu6-s3/bdrate.csv",
+      "bytes": 1594,
+      "sha256": "59e431d64022eb3f0c26fc04a83ef4e352ecb635c65c6f3ffe61c7e05d630431",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/cbr-720p30-in_to_tree-cpu6-s3/bdrate.csv"
+    },
+    {
+      "path": "quality/cbr-720p30-in_to_tree-cpu7-s2/bdrate.csv",
+      "bytes": 1092,
+      "sha256": "b744dfa8e9ef1225013d01351824556cd1a6238392c47652d85ae5d9ea11ff3e",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/cbr-720p30-in_to_tree-cpu7-s2/bdrate.csv"
+    },
+    {
+      "path": "quality/cbr-720p30-in_to_tree-cpu7-s3/bdrate.csv",
+      "bytes": 1593,
+      "sha256": "a2fc968c89fe7cd902e4e06f2ac825229c0a7bfcb2e94ddde912c70e5329094d",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/cbr-720p30-in_to_tree-cpu7-s3/bdrate.csv"
+    },
+    {
+      "path": "quality/cbr-720p30-in_to_tree-cpu8-s2/bdrate.csv",
+      "bytes": 1092,
+      "sha256": "4cbe75393cfb6e48d70c2f6a9c86362f900e2435e140da6be0c14832574fe533",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/cbr-720p30-in_to_tree-cpu8-s2/bdrate.csv"
+    },
+    {
+      "path": "quality/cbr-720p30-in_to_tree-cpu8-s3/bdrate.csv",
+      "bytes": 1593,
+      "sha256": "8c7ab86d524b01dcb5b32bf79fe60be5f877f1e9c6d133ce9521d47687f73bf8",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/cbr-720p30-in_to_tree-cpu8-s3/bdrate.csv"
+    },
+    {
+      "path": "quality/cbr-720p30-old_town_cross-cpu6-s2/bdrate.csv",
+      "bytes": 1092,
+      "sha256": "37726baf20de705d29e269d0569f66abe01385892f4e06f4d4fa02fc128f097a",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/cbr-720p30-old_town_cross-cpu6-s2/bdrate.csv"
+    },
+    {
+      "path": "quality/cbr-720p30-old_town_cross-cpu6-s3/bdrate.csv",
+      "bytes": 1594,
+      "sha256": "92647109adcec642373442f9e0679059eec5e250956297b21e7c49b2556b6fc2",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/cbr-720p30-old_town_cross-cpu6-s3/bdrate.csv"
+    },
+    {
+      "path": "quality/cbr-720p30-old_town_cross-cpu7-s2/bdrate.csv",
+      "bytes": 1092,
+      "sha256": "8e21c0ea9d073d65d4d6c37a3f1639ed6e92f4f3b88b56cfc6cdbd6ad9c55457",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/cbr-720p30-old_town_cross-cpu7-s2/bdrate.csv"
+    },
+    {
+      "path": "quality/cbr-720p30-old_town_cross-cpu7-s3/bdrate.csv",
+      "bytes": 1594,
+      "sha256": "084ce2cbccc2a87eabaf9e1a9b234915241d0d18a4b166ddf2b121bfd2b6b8f4",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/cbr-720p30-old_town_cross-cpu7-s3/bdrate.csv"
+    },
+    {
+      "path": "quality/cbr-720p30-old_town_cross-cpu8-s2/bdrate.csv",
+      "bytes": 1092,
+      "sha256": "d3428e3f2bd9dee3217815d2b6bb640619705aa76d569396aede3628068e0adc",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/cbr-720p30-old_town_cross-cpu8-s2/bdrate.csv"
+    },
+    {
+      "path": "quality/cbr-720p30-old_town_cross-cpu8-s3/bdrate.csv",
+      "bytes": 1593,
+      "sha256": "9b8972cdead4cfdaf79728b19f54aaceac9f522b8fb0a00a2b759bb90fbcb72f",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/cbr-720p30-old_town_cross-cpu8-s3/bdrate.csv"
+    },
+    {
+      "path": "quality/cross-decoder.csv",
+      "bytes": 545269,
+      "sha256": "cc58206237f400f135d9d42c9d16e530a9422d44aa15dbd452ba442f9cc7ad1f",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/cross-decoder.csv"
+    },
+    {
+      "path": "quality/quality-summary.csv",
+      "bytes": 28511,
+      "sha256": "46013ac169996d62fdbc931cc8b8d557cc9a22644b8c6e5668fe14720bca50b8",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/quality-summary.csv"
+    },
+    {
+      "path": "quality/vbr-1080p30-ducks_take_off-cpu6-s2/bdrate.csv",
+      "bytes": 1113,
+      "sha256": "d615fde5fea4870609997c85d65bf9f1f58673a38b8e8660b9c130bd8d05d3e6",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/vbr-1080p30-ducks_take_off-cpu6-s2/bdrate.csv"
+    },
+    {
+      "path": "quality/vbr-1080p30-ducks_take_off-cpu6-s3/bdrate.csv",
+      "bytes": 1627,
+      "sha256": "d35d9a0a29597e260f5d7b08dd13cb473921642238ef3eaa0a8514f006382fd3",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/vbr-1080p30-ducks_take_off-cpu6-s3/bdrate.csv"
+    },
+    {
+      "path": "quality/vbr-1080p30-ducks_take_off-cpu7-s2/bdrate.csv",
+      "bytes": 1112,
+      "sha256": "1f785321abf29e2f0d48710fdd56ef5d35770d6a665d3e39cacf2cbf81d5fb0e",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/vbr-1080p30-ducks_take_off-cpu7-s2/bdrate.csv"
+    },
+    {
+      "path": "quality/vbr-1080p30-ducks_take_off-cpu7-s3/bdrate.csv",
+      "bytes": 1628,
+      "sha256": "7cd336e0d93b9b7e4527cf523a64738b956d4913d3ef08719e2c11b5a95b9144",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/vbr-1080p30-ducks_take_off-cpu7-s3/bdrate.csv"
+    },
+    {
+      "path": "quality/vbr-1080p30-ducks_take_off-cpu8-s2/bdrate.csv",
+      "bytes": 1111,
+      "sha256": "cd52d22936940eef3eab598d96c1785ea03c8faedaf6639f2731094988d078b5",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/vbr-1080p30-ducks_take_off-cpu8-s2/bdrate.csv"
+    },
+    {
+      "path": "quality/vbr-1080p30-ducks_take_off-cpu8-s3/bdrate.csv",
+      "bytes": 1626,
+      "sha256": "8c515a8b7940fa7eee9c5e9c5858fa47bb208e3ac8aab5b2e19b2e89053778de",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/vbr-1080p30-ducks_take_off-cpu8-s3/bdrate.csv"
+    },
+    {
+      "path": "quality/vbr-1080p30-in_to_tree-cpu6-s2/bdrate.csv",
+      "bytes": 1108,
+      "sha256": "66b130d3aad3b33d145918472ccb2339cde2205bf82d4f09bbcffe259d969e45",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/vbr-1080p30-in_to_tree-cpu6-s2/bdrate.csv"
+    },
+    {
+      "path": "quality/vbr-1080p30-in_to_tree-cpu6-s3/bdrate.csv",
+      "bytes": 1619,
+      "sha256": "f7a27df29b05a5b4d1cf9fda570dc37496170509878655e411c1ba23ec2da10b",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/vbr-1080p30-in_to_tree-cpu6-s3/bdrate.csv"
+    },
+    {
+      "path": "quality/vbr-1080p30-in_to_tree-cpu7-s2/bdrate.csv",
+      "bytes": 1103,
+      "sha256": "42c84df45fae1dd6f77a1d4deefcd8e1fa94060495d192297bdd247b4e733134",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/vbr-1080p30-in_to_tree-cpu7-s2/bdrate.csv"
+    },
+    {
+      "path": "quality/vbr-1080p30-in_to_tree-cpu7-s3/bdrate.csv",
+      "bytes": 1618,
+      "sha256": "c6b3afa895908844335b946cf1d53c616470836774ea0ddc1308223b4621965a",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/vbr-1080p30-in_to_tree-cpu7-s3/bdrate.csv"
+    },
+    {
+      "path": "quality/vbr-1080p30-in_to_tree-cpu8-s2/bdrate.csv",
+      "bytes": 1111,
+      "sha256": "c4a7dea9df175e74758c1cb49eebcc50269da549e95b4d60dace620d523b0fea",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/vbr-1080p30-in_to_tree-cpu8-s2/bdrate.csv"
+    },
+    {
+      "path": "quality/vbr-1080p30-in_to_tree-cpu8-s3/bdrate.csv",
+      "bytes": 1617,
+      "sha256": "e89011669b3f95cf3a33bdbdc9526b75a567e1612c1520b25600458adc2f7082",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/vbr-1080p30-in_to_tree-cpu8-s3/bdrate.csv"
+    },
+    {
+      "path": "quality/vbr-1080p30-old_town_cross-cpu6-s2/bdrate.csv",
+      "bytes": 1107,
+      "sha256": "8166b977675da9465bfabfc3610f5c8e38a89df25f6e896a9002e4334ea059a1",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/vbr-1080p30-old_town_cross-cpu6-s2/bdrate.csv"
+    },
+    {
+      "path": "quality/vbr-1080p30-old_town_cross-cpu6-s3/bdrate.csv",
+      "bytes": 1621,
+      "sha256": "2c5945f86a39f6782e9bc44107d4f8d382ee16ea05025d3734499b3956112700",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/vbr-1080p30-old_town_cross-cpu6-s3/bdrate.csv"
+    },
+    {
+      "path": "quality/vbr-1080p30-old_town_cross-cpu7-s2/bdrate.csv",
+      "bytes": 1100,
+      "sha256": "8f7f41e91c5c2efdd60d4ce4f7078d0c5a3af96d16dacd101407b343cee98e4a",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/vbr-1080p30-old_town_cross-cpu7-s2/bdrate.csv"
+    },
+    {
+      "path": "quality/vbr-1080p30-old_town_cross-cpu7-s3/bdrate.csv",
+      "bytes": 1622,
+      "sha256": "bb99045c7df287fc6f9aca613525fbb59bfb60f17f89070c550c1684cab8cee3",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/vbr-1080p30-old_town_cross-cpu7-s3/bdrate.csv"
+    },
+    {
+      "path": "quality/vbr-1080p30-old_town_cross-cpu8-s2/bdrate.csv",
+      "bytes": 1100,
+      "sha256": "6af1bc7d288115bc3a925fd50e1e75c53fe198cc38b9522a04075afaa0efd6f7",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/vbr-1080p30-old_town_cross-cpu8-s2/bdrate.csv"
+    },
+    {
+      "path": "quality/vbr-1080p30-old_town_cross-cpu8-s3/bdrate.csv",
+      "bytes": 1619,
+      "sha256": "8a847b3810253b85d3929883cf89a7b401b5c589ffe6f11e8668f4342499be25",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/vbr-1080p30-old_town_cross-cpu8-s3/bdrate.csv"
+    },
+    {
+      "path": "quality/vbr-1080p60-in_to_tree-cpu6-s2/bdrate.csv",
+      "bytes": 1123,
+      "sha256": "7194897ae29670314d2cc81f6316a570f52c6fad9cb054ddebb57a735fb429a0",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/vbr-1080p60-in_to_tree-cpu6-s2/bdrate.csv"
+    },
+    {
+      "path": "quality/vbr-1080p60-in_to_tree-cpu6-s3/bdrate.csv",
+      "bytes": 1645,
+      "sha256": "1a20083ef05927c5db2ce368eed1a21cfe5ab7dee3f3bc94e640e1027fb90189",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/vbr-1080p60-in_to_tree-cpu6-s3/bdrate.csv"
+    },
+    {
+      "path": "quality/vbr-1080p60-in_to_tree-cpu7-s2/bdrate.csv",
+      "bytes": 1109,
+      "sha256": "d65454189aea50499dd25c7633a3ea8ade0eb303f84ddd59d3cc962769d2faf2",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/vbr-1080p60-in_to_tree-cpu7-s2/bdrate.csv"
+    },
+    {
+      "path": "quality/vbr-1080p60-in_to_tree-cpu7-s3/bdrate.csv",
+      "bytes": 1644,
+      "sha256": "e77d4d393c534f870513d6f999511c8472a52e226e1c5b777fdfe56a4daebea4",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/vbr-1080p60-in_to_tree-cpu7-s3/bdrate.csv"
+    },
+    {
+      "path": "quality/vbr-1080p60-in_to_tree-cpu8-s2/bdrate.csv",
+      "bytes": 1111,
+      "sha256": "6a92104db78b3338c61259a81f974968fbe122458ad7a3be7d8193ccf49f1339",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/vbr-1080p60-in_to_tree-cpu8-s2/bdrate.csv"
+    },
+    {
+      "path": "quality/vbr-1080p60-in_to_tree-cpu8-s3/bdrate.csv",
+      "bytes": 1644,
+      "sha256": "991bab0999dd79d3f77c48812dad29af52a9702acf34543c170552a1e3a782e7",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/vbr-1080p60-in_to_tree-cpu8-s3/bdrate.csv"
+    },
+    {
+      "path": "quality/vbr-1080p60-old_town_cross-cpu6-s2/bdrate.csv",
+      "bytes": 1118,
+      "sha256": "b04c353e8384fe3a436d469db25fdda60ea6b58b07b5c997f899156ea44f64c9",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/vbr-1080p60-old_town_cross-cpu6-s2/bdrate.csv"
+    },
+    {
+      "path": "quality/vbr-1080p60-old_town_cross-cpu6-s3/bdrate.csv",
+      "bytes": 1649,
+      "sha256": "9e793003a97441090ca8d6f403660e04a08b9e905ec6a64380e6ec4b5c7fdbb6",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/vbr-1080p60-old_town_cross-cpu6-s3/bdrate.csv"
+    },
+    {
+      "path": "quality/vbr-1080p60-old_town_cross-cpu7-s2/bdrate.csv",
+      "bytes": 1124,
+      "sha256": "29266cb8363d51b95c55506d65427e4b0065186c82bbe0150a3f88950c3da9ed",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/vbr-1080p60-old_town_cross-cpu7-s2/bdrate.csv"
+    },
+    {
+      "path": "quality/vbr-1080p60-old_town_cross-cpu7-s3/bdrate.csv",
+      "bytes": 1650,
+      "sha256": "6d997ba1de274ff18b1d44cbffd610a8587617e6e60a7bebd535bbecbfbee175",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/vbr-1080p60-old_town_cross-cpu7-s3/bdrate.csv"
+    },
+    {
+      "path": "quality/vbr-1080p60-old_town_cross-cpu8-s2/bdrate.csv",
+      "bytes": 1112,
+      "sha256": "000c72df68def2c3f9aab651afec168c2b1fa1c4ffd2f0a07ce011c48db22138",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/vbr-1080p60-old_town_cross-cpu8-s2/bdrate.csv"
+    },
+    {
+      "path": "quality/vbr-1080p60-old_town_cross-cpu8-s3/bdrate.csv",
+      "bytes": 1650,
+      "sha256": "787b7901764ecf3568ade9a38c8589e63dcbc1f771b2f7d56fe7b9ad643478d9",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/vbr-1080p60-old_town_cross-cpu8-s3/bdrate.csv"
+    },
+    {
+      "path": "quality/vbr-720p30-ducks_take_off-cpu6-s2/bdrate.csv",
+      "bytes": 1100,
+      "sha256": "097127efbed7f3b9d552e838b660f2d5db742da533e4de7b2b7e423d052e6ce2",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/vbr-720p30-ducks_take_off-cpu6-s2/bdrate.csv"
+    },
+    {
+      "path": "quality/vbr-720p30-ducks_take_off-cpu6-s3/bdrate.csv",
+      "bytes": 1602,
+      "sha256": "8a3bd3f377163b091ae5d0b6a133ecb8ee3dae5d2818e7a341d564b1574a6d16",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/vbr-720p30-ducks_take_off-cpu6-s3/bdrate.csv"
+    },
+    {
+      "path": "quality/vbr-720p30-ducks_take_off-cpu7-s2/bdrate.csv",
+      "bytes": 1100,
+      "sha256": "5b0735f81e5f400d5df3684bebe4ab59aa7a691ab1660191780900e3183f8461",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/vbr-720p30-ducks_take_off-cpu7-s2/bdrate.csv"
+    },
+    {
+      "path": "quality/vbr-720p30-ducks_take_off-cpu7-s3/bdrate.csv",
+      "bytes": 1602,
+      "sha256": "e497d821bc3b80c21cf47152d30674095d4d3886f136108e25708423881a0ff1",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/vbr-720p30-ducks_take_off-cpu7-s3/bdrate.csv"
+    },
+    {
+      "path": "quality/vbr-720p30-ducks_take_off-cpu8-s2/bdrate.csv",
+      "bytes": 1099,
+      "sha256": "7e56ac91fdee5711a9809d0e9c5a6903c49c4a4de7f38b4c4b74a9323b766e3d",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/vbr-720p30-ducks_take_off-cpu8-s2/bdrate.csv"
+    },
+    {
+      "path": "quality/vbr-720p30-ducks_take_off-cpu8-s3/bdrate.csv",
+      "bytes": 1604,
+      "sha256": "266a2865f981ac053524750dc2fcf98ed6de3b65453a434c673053e925d1ddda",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/vbr-720p30-ducks_take_off-cpu8-s3/bdrate.csv"
+    },
+    {
+      "path": "quality/vbr-720p30-in_to_tree-cpu6-s2/bdrate.csv",
+      "bytes": 1098,
+      "sha256": "ff6a9130badcbb8f0c343022cf1987aef4959b05128d260f804f90936ee25e04",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/vbr-720p30-in_to_tree-cpu6-s2/bdrate.csv"
+    },
+    {
+      "path": "quality/vbr-720p30-in_to_tree-cpu6-s3/bdrate.csv",
+      "bytes": 1595,
+      "sha256": "56a760beae5a8ff1b2f6f2c3b83360644762bc9497999a68971ef02eb5b57217",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/vbr-720p30-in_to_tree-cpu6-s3/bdrate.csv"
+    },
+    {
+      "path": "quality/vbr-720p30-in_to_tree-cpu7-s2/bdrate.csv",
+      "bytes": 1087,
+      "sha256": "57842e62f6d98fb815265967223533b1c6b6fc989afc834e814314202aa2bbdb",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/vbr-720p30-in_to_tree-cpu7-s2/bdrate.csv"
+    },
+    {
+      "path": "quality/vbr-720p30-in_to_tree-cpu7-s3/bdrate.csv",
+      "bytes": 1595,
+      "sha256": "5ec09ae8edacfb36ddf5748c3b9e3b2a7e25674b04cc95908126c1cf11a73552",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/vbr-720p30-in_to_tree-cpu7-s3/bdrate.csv"
+    },
+    {
+      "path": "quality/vbr-720p30-in_to_tree-cpu8-s2/bdrate.csv",
+      "bytes": 1085,
+      "sha256": "b8a25e75a9666077fce2e64782db5613eb3116e878fabebee525e264564abb0e",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/vbr-720p30-in_to_tree-cpu8-s2/bdrate.csv"
+    },
+    {
+      "path": "quality/vbr-720p30-in_to_tree-cpu8-s3/bdrate.csv",
+      "bytes": 1596,
+      "sha256": "31f67eacdae6bdbe87f27db2a086a63f8cd56d8affbcd46d28a6fdbade031bf3",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/vbr-720p30-in_to_tree-cpu8-s3/bdrate.csv"
+    },
+    {
+      "path": "quality/vbr-720p30-old_town_cross-cpu6-s2/bdrate.csv",
+      "bytes": 1094,
+      "sha256": "74b84783daffceb6316874e3487045a8c047d6ecf8fcfe58cac10fdc20246a21",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/vbr-720p30-old_town_cross-cpu6-s2/bdrate.csv"
+    },
+    {
+      "path": "quality/vbr-720p30-old_town_cross-cpu6-s3/bdrate.csv",
+      "bytes": 1591,
+      "sha256": "29f24ffeedf76bc07f543c67ad5384e0897a8d89d378546c14c99582bace7971",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/vbr-720p30-old_town_cross-cpu6-s3/bdrate.csv"
+    },
+    {
+      "path": "quality/vbr-720p30-old_town_cross-cpu7-s2/bdrate.csv",
+      "bytes": 1083,
+      "sha256": "9a24334863e33a7dfc1e31fcfecc3df2415d9867a6e9edb615975eefc3d66d62",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/vbr-720p30-old_town_cross-cpu7-s2/bdrate.csv"
+    },
+    {
+      "path": "quality/vbr-720p30-old_town_cross-cpu7-s3/bdrate.csv",
+      "bytes": 1592,
+      "sha256": "384139d6ad52accac04a743edd6afe5f85fc0260fff70e98535a91a7dafa9ffe",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/vbr-720p30-old_town_cross-cpu7-s3/bdrate.csv"
+    },
+    {
+      "path": "quality/vbr-720p30-old_town_cross-cpu8-s2/bdrate.csv",
+      "bytes": 1081,
+      "sha256": "a2ea256856bdfa42a7e0fd248323a61cd302e058067ce609bd3228a658bb8794",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/vbr-720p30-old_town_cross-cpu8-s2/bdrate.csv"
+    },
+    {
+      "path": "quality/vbr-720p30-old_town_cross-cpu8-s3/bdrate.csv",
+      "bytes": 1585,
+      "sha256": "2610add5d540fad1da9adffae7669978d3517f6ab7afaef0a92de1a2d444790d",
+      "origin": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-final-release-acceptance-49ef1534/spatial-quality/quality/vbr-720p30-old_town_cross-cpu8-s3/bdrate.csv"
+    },
+    {
+      "path": "spatial-quality.log",
+      "bytes": 6556,
+      "sha256": "a068c8847a70878cf593202a00c8db512a6ec0626495327616ed571baf5e66fb",
+      "origin": "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/.scratch/qualification/spatial-quality.log"
+    }
+  ]
+}

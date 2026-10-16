@@ -35,6 +35,13 @@ A stage gates to the next stage only when its criteria pass. The project gates t
   Experimental modes are excluded from the production-parity claim but retain
   the complete matrix and all non-quality gates.
 
+Corpus coverage remains unresolved: the checked-in matrix uses In To Tree,
+Ducks, Old Town, Foreman and generated noisy derivatives. That evidence does
+not establish the required AOM, WebRTC-representative and livestream coverage.
+Record the clip selection, provenance/licensing and intended content coverage,
+or obtain Arthur's explicit decision on a narrower release boundary; do not
+infer representativeness from the existing clips.
+
 ### Real-time performance (hard gate)
 - [ ] **720p30**: ≤33ms/frame median, ≤50ms p99, on a single modern x86_64 core.
 - [ ] **1080p30**: ≤33ms/frame median, ≤50ms p99, on 2–4 cores with tile threading.
@@ -828,12 +835,16 @@ evidence and rejected hypotheses are recorded in
 
 **Current release exit criteria:**
 - [ ] All success criteria from §2 pass.
-- [x] Bounded AddressSanitizer parser and full-frame decoder fuzz campaigns
-  complete without a crash or sanitizer report.
-- [x] Bounded encode/decode soak smoke completes without an error.
+- [ ] Bounded AddressSanitizer parser and full-frame decoder fuzz campaigns
+  complete on the release candidate without a crash or sanitizer report.
+  Historical campaigns passed on 2026-08-20; candidate evidence remains open.
+- [ ] Bounded encode/decode soak smoke completes on the release candidate
+  without an error. Historical runs passed on 2026-08-20 and at the
+  2026-10-15 intake candidate; later source changes require requalification.
 - [ ] Local BD-rate and latency regression commands are documented and pass on
   the release candidate; see the [local qualification runbook](<wrk_docs/2026.10.15 - RUN - local release qualification.md>).
-- [x] Security review report logged.
+- [x] Historical security review report logged in the 2026-08-20 safety journal.
+  Review the subsequent safety-relevant changes for the release candidate.
 
 **Deferred Intel assurance (not a current release blocker, approved
 2026-08-21):** the billion-iteration fuzz campaign and 72-hour monitored soak

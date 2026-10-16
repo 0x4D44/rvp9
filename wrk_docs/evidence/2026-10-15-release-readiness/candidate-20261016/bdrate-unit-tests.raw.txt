@@ -1,0 +1,51 @@
+   Compiling crossbeam-utils v0.8.21
+   Compiling typenum v1.20.1
+   Compiling serde_core v1.0.228
+   Compiling libc v0.2.186
+   Compiling crossbeam-channel v0.5.15
+   Compiling zmij v1.0.21
+   Compiling generic-array v0.14.7
+   Compiling itoa v1.0.18
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-core)
+   Compiling static_assertions v1.1.0
+   Compiling memchr v2.8.0
+   Compiling block-buffer v0.10.4
+   Compiling crypto-common v0.1.7
+   Compiling digest v0.10.7
+   Compiling cpufeatures v0.2.17
+   Compiling cfg-if v1.0.4
+   Compiling sha2 v0.10.9
+   Compiling serde_json v1.0.149
+   Compiling serde v1.0.228
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-io)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-decoder)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-encoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-harness)
+   Compiling rvp9-bench v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-bench)
+    Finished `test` profile [optimized + debuginfo] target(s) in 52.31s
+     Running unittests src/bin/bdrate.rs (target/debug/deps/bdrate-e6fcfe29003cd9c3)
+
+running 20 tests
+test tests::measured_bdrate_keeps_full_rank_fits_with_repeated_observations ... ok
+test process_test_support::fake_child ... ok
+test tests::measured_bdrate_rejects_repeated_psnr_on_test_with_overlap ... ok
+test tests::parser_accepts_a_separate_quality_reference_input ... ok
+test tests::parser_accepts_inline_role_specific_arguments ... ok
+test tests::parser_preserves_repeated_role_specific_arguments ... ok
+test tests::measured_bdrate_rejects_failed_psnr_and_insufficient_points ... ok
+test tests::encoder_command_keeps_matched_and_role_specific_arguments_separate ... ok
+test tests::measured_bdrate_rejects_repeated_psnr_on_anchor_with_overlap ... ok
+test tests::measured_bdrate_rejects_repeated_psnr_on_both_curves_with_overlap ... ok
+test tests::default_artifacts_stay_in_the_temp_directory_under_a_process_unique_prefix ... ok
+test tests::measured_bdrate_rejects_repeated_realistic_psnr_with_overlap ... ok
+test tests::parser_defaults_the_work_directory_to_none_and_accepts_an_override ... ok
+test tests::usage_advertises_retained_artifact_inputs ... ok
+test tests::csv_writer_rejects_missing_bdrate_without_creating_output ... ok
+test tests::prepare_artifacts_reports_an_unusable_work_directory ... ok
+test tests::retained_artifacts_are_never_overwritten ... ok
+test tests::work_directory_artifacts_are_created_deterministic_and_collision_free ... ok
+test tests::external_encoder_timeout ... ok
+test tests::external_decoder_timeout ... ok
+
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.02s
+

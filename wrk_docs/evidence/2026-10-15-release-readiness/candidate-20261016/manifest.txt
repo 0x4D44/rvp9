@@ -1,0 +1,62 @@
+RVP9 release-readiness evidence recheck
+Worktree: /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence
+
+Revision captured before validation: ebca64b0d3c7359e96caf1e6250c921c18d30a3f
+Revision at final inspection: 03d0ae52ba0241ddcf27533209f8442c54e2cca6
+The later commit `03d0ae52` only adds `bugs/RVP9-BUG-FLU-00041.md`; no script or `crates/rvp9-bench` path changed between the two revisions. The checked code and scripts are therefore unchanged from the merged candidate. Final worktree status was clean apart from its existing branch-ahead count; `.scratch/recheck-tools/` is ignored scratch evidence.
+
+Commands were run from the worktree root. Each raw file contains combined stdout and stderr.
+
+1. Command: `deltic timeout 300 ./scripts/qualify-production-encoder.sh --self-test > .scratch/recheck-tools/production-self-test.raw.txt 2>&1`
+   Exit: 0. Output: 329 `ok` checks; `self-test passed`.
+2. Command: `deltic timeout 300 ./scripts/qualify-production-encoder.sh --self-test-resume > .scratch/recheck-tools/production-self-test-resume.raw.txt 2>&1`
+   Exit: 0. Output: `resume filesystem self-test passed`; the script reports one reused quality row and does not print individual `ok` checks.
+3. Command: `deltic timeout 300 ./scripts/qualify-production-encoder.sh --self-test-timing > .scratch/recheck-tools/production-self-test-timing.raw.txt 2>&1`
+   Exit: 0. Output: 68 `ok` checks; `timing filesystem self-test passed`.
+4. Command: `deltic timeout 300 ./scripts/qualify-spatial-svc.sh --self-test > .scratch/recheck-tools/spatial-self-test.raw.txt 2>&1`
+   Exit: 0. Output: 46 `ok` checks; `self-test passed`.
+5. Command: `CARGO_BUILD_JOBS=4 deltic timeout 900 cargo test -p rvp9-bench --bin bdrate </dev/null > .scratch/recheck-tools/bdrate-unit-tests.raw.txt 2>&1`
+   Exit: 0. Result: 20 passed, 0 failed. Covers singular-fit rejection and full-rank repeated observations, failed/insufficient measurements and no-output CSV guard, plus encoder/decoder child timeouts.
+6. Command: `CARGO_BUILD_JOBS=4 deltic timeout 900 cargo test -p rvp9-bench --bin soak </dev/null > .scratch/recheck-tools/soak-unit-tests.raw.txt 2>&1`
+   Exit: 0. Result: 5 passed, 0 failed. Covers zero-frame/unbounded-run guards, empty iteration, and child timeout/kill behavior.
+
+Raw outputs:
+- `production-self-test.raw.txt`
+- `production-self-test-resume.raw.txt`
+- `production-self-test-timing.raw.txt`
+- `spatial-self-test.raw.txt`
+- `bdrate-unit-tests.raw.txt`
+- `soak-unit-tests.raw.txt`
+
+Additional child-process regression checks
+Revision at start of this batch: 03d0ae52ba0241ddcf27533209f8442c54e2cca6
+Revision at final inspection: 63d5a35cc63a34ba7725aa43704fcf44c41524e0
+The later commit `63d5a35c` only adds `bugs/RVP9-BUG-FLU-00042.md`; no `crates/rvp9-bench` or `crates/rvp9-core/src/dsp` path changed. The existing FLU-00042 numerical-accuracy finding remains separate from these checks; passing singular-fit tests does not settle it.
+
+7. Command: `CARGO_BUILD_JOBS=4 deltic timeout 900 cargo test -p rvp9-bench --lib process::tests:: </dev/null > .scratch/recheck-tools/process-lib-tests.raw.txt 2>&1`
+   Exit: 0. Result: 4 passed, 0 failed, 35 filtered out.
+8. Command: `CARGO_BUILD_JOBS=4 deltic timeout 900 cargo test -p rvp9-bench --bin bdrate external_ </dev/null > .scratch/recheck-tools/bdrate-external-tests.raw.txt 2>&1`
+   Exit: 0. Result: 2 passed, 0 failed, 18 filtered out.
+9. Command: `CARGO_BUILD_JOBS=4 deltic timeout 900 cargo test -p rvp9-bench --bin bdrate-svc external_ </dev/null > .scratch/recheck-tools/bdrate-svc-external-tests.raw.txt 2>&1`
+   Exit: 0. Result: 2 passed, 0 failed, 11 filtered out.
+10. Command: `CARGO_BUILD_JOBS=4 deltic timeout 900 cargo test -p rvp9-bench --bin realtime external_ </dev/null > .scratch/recheck-tools/realtime-external-tests.raw.txt 2>&1`
+    Exit: 0. Result: 1 passed, 0 failed, 13 filtered out.
+11. Command: `CARGO_BUILD_JOBS=4 deltic timeout 900 cargo test -p rvp9-bench --bin encode-headtohead external_ </dev/null > .scratch/recheck-tools/encode-headtohead-external-tests.raw.txt 2>&1`
+    Exit: 0. Result: 1 passed, 0 failed, 21 filtered out.
+
+Scalar routing inspection (no test run in this portion): host is Darwin arm64 (`aarch64-apple-darwin`). `RVP9_FORCE_SCALAR` and its subprocess routing oracle are compiled only for `target_arch = "x86_64"` (`dsp/mod.rs`, `dsp/caps.rs`, `dsp/force_scalar_tests.rs`); native x86_64 Windows can run that oracle, Arm cannot. AArch64 detection has no environment bypass and normally detects NEON/dotprod. Existing AArch64 `dispatch_routes_neon_and_scalar_caps` tests construct synthetic caps to check selected scalar and NEON dispatch slots, but do not exercise an environment-driven full-table bypass. The Miri-specific AArch64 detection path returns scalar caps, also without the environment hook.
+
+AArch64 forced-scalar conformance diagnostic
+Revision: 63d5a35cc63a34ba7725aa43704fcf44c41524e0
+Diagnostic source: `.scratch/recheck-tools/aarch64_caps_diag.rs`; it uses `#[path]` to include `crates/rvp9-core/src/dsp/caps.rs` directly and prints `AArch64Caps::detect()`.
+
+12. Compile command: `deltic timeout 60 rustc --edition=2024 .scratch/recheck-tools/aarch64_caps_diag.rs -o .scratch/recheck-tools/aarch64-caps-diag > .scratch/recheck-tools/aarch64-caps-compile.raw.txt 2>&1`
+    Exit: 0.
+13. Native command: `deltic timeout 10 ./.scratch/recheck-tools/aarch64-caps-diag > .scratch/recheck-tools/aarch64-caps-native.raw.txt 2>&1`
+    Exit: 0. Output: `AArch64Caps::detect() = AArch64Caps { neon: true, dotprod: true }`.
+14. Forced command: `RVP9_FORCE_SCALAR=1 deltic timeout 10 ./.scratch/recheck-tools/aarch64-caps-diag > .scratch/recheck-tools/aarch64-caps-force-scalar.raw.txt 2>&1`
+    Exit: 0. Output is identical: `AArch64Caps::detect() = AArch64Caps { neon: true, dotprod: true }`.
+
+The conformance script sets `RVP9_FORCE_SCALAR=1` for its two forced rows. `dsp::init()` builds the process table from `SimdDispatch::build(detect())`, and the decoder calls `rvp9_core::dsp::init()`. On this AArch64 host the environment leaves `detect()` at NEON+dotprod, so those script rows do not establish scalar decoder dispatch.
+
+Ledger search: `RVP9-BUG-CRU-00001` is related: it notes the same structural AArch64 bypass in the context of encoder-only SSE2 families and mentions the conformance rows, while explicitly saying those rows do not cover those encoder kernels. It does not state that the script's AArch64 decoder rows themselves fail to force scalar. Draft `RVP9-REQ-CRU-00006` describes the broader dispatch unification gap, including AArch64 compile-time paths, but likewise does not name this script-level false coverage. No ledger changes made.

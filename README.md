@@ -19,17 +19,21 @@ livestreaming.
 
 The alpha encoder supports one-pass real-time VP9 at CPU-used 6, 7, and 8,
 with VBR or CBR rate control, cyclic-refresh AQ mode 3, denoising, two- or
-three-layer temporal SVC, and two- or three-layer spatial SVC. The qualified
-production-quality surface is single-stream CBR, denoiser CBR, and spatial
-CBR. VBR and temporal SVC are experimental in v0.2.0. The qualified targets
-are 720p30, 1080p30, and 1080p60. It emits 8-bit profile-0 IVF streams.
+three-layer temporal SVC, and two- or three-layer spatial SVC. The
+production-quality acceptance surface is single-stream CBR, denoiser CBR,
+and spatial CBR, targeting 720p30, 1080p30, and 1080p60. Final candidate
+qualification remains pending. VBR and temporal SVC are experimental in
+v0.2.0. It emits 8-bit profile-0 IVF streams.
 
-The alpha decoder passes all 4,816 displayed frames across all 307 pinned
-official vectors with native and forced-scalar dispatch and with one- and
-two-thread decoding.
+Historical alpha qualification passed all 4,816 displayed frames across all
+307 pinned official vectors with one- and two-thread decoding. Native x86
+qualification also exercised forced-scalar dispatch. On Apple Silicon the
+current scalar environment switch retains NEON, so scalar coverage remains
+unproved (`RVP9-BUG-FLU-00043`). These results do not qualify later source changes.
 
-Every stream in the 32-row encoder qualification matrix decodes byte-exactly
-under `rvp9dec`, pinned libvpx `vpxdec`, and ffmpeg. Run the same gates with:
+Historical alpha qualification also decoded every stream in the 32-row encoder
+matrix byte-exactly under `rvp9dec`, pinned libvpx `vpxdec`, and ffmpeg.
+Rerun these gates for the final candidate:
 
 ```bash
 ./scripts/qualify-conformance.sh
