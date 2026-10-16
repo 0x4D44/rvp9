@@ -1184,24 +1184,65 @@ fn run_libvpx(
     target_bitrate_bps: u32,
     framerate: f64,
     frames: &[YuvFrameBuf],
-) -> Option<Aggregate> {
-    let tmp = ScopedTempDir::new("rvp9-e1-block-stats").ok()?;
+) -> Result<Aggregate, String> {
+    run_libvpx_with_timeout(
+        vpxenc,
+        target_bitrate_bps,
+        framerate,
+        frames,
+        VPXENC_TIMEOUT,
+    )
+}
+
+fn run_libvpx_with_timeout(
+    vpxenc: &Path,
+    target_bitrate_bps: u32,
+    framerate: f64,
+    frames: &[YuvFrameBuf],
+    timeout: Duration,
+) -> Result<Aggregate, String> {
+    let kbps = target_bitrate_bps / 1000;
+    let temp_root = std::env::temp_dir();
+    let tmp = ScopedTempDir::new("rvp9-e1-block-stats").map_err(|error| {
+        format!(
+            "vpxenc temporary directory setup in {} for {kbps} kbps: {error}",
+            temp_root.display()
+        )
+    })?;
     let raw = tmp.path().join("input.yuv");
     let ivf = tmp.path().join("output.ivf");
     let stderr_path = tmp.path().join("vpxenc.stderr");
 
     {
         use std::io::Write;
-        let mut f = std::fs::File::create(&raw).ok()?;
-        for (y, u, v) in frames {
-            f.write_all(y).ok()?;
-            f.write_all(u).ok()?;
-            f.write_all(v).ok()?;
+        let mut f = std::fs::File::create(&raw).map_err(|error| {
+            format!(
+                "vpxenc raw input create {} for {kbps} kbps: {error}",
+                raw.display()
+            )
+        })?;
+        for (frame_index, (y, u, v)) in frames.iter().enumerate() {
+            for (plane_name, plane) in [
+                ("Y", y.as_slice()),
+                ("U", u.as_slice()),
+                ("V", v.as_slice()),
+            ] {
+                f.write_all(plane).map_err(|error| {
+                    format!(
+                        "vpxenc raw input write {} frame {frame_index} plane {plane_name} for {kbps} kbps: {error}",
+                        raw.display()
+                    )
+                })?;
+            }
         }
     }
 
-    let kbps = target_bitrate_bps / 1000;
-    let stderr = std::fs::File::create(&stderr_path).ok()?;
+    let stderr = std::fs::File::create(&stderr_path).map_err(|error| {
+        format!(
+            "vpxenc stderr file create {} for {kbps} kbps: {error}",
+            stderr_path.display()
+        )
+    })?;
     let mut command = Command::new(vpxenc);
     command
         .args([
@@ -1224,25 +1265,34 @@ fn run_libvpx(
         .arg(&raw)
         .stdout(Stdio::null())
         .stderr(Stdio::from(stderr));
-    let status = match run_with_timeout(&mut command, VPXENC_TIMEOUT) {
-        Ok(status) => status,
-        Err(error) => {
-            eprintln!("[libvpx FAIL] {kbps} kbps: {error}");
-            return None;
-        }
-    };
+    let status = run_with_timeout(&mut command, timeout)
+        .map_err(|error| format!("vpxenc run {} for {kbps} kbps: {error}", vpxenc.display()))?;
     if !status.success() {
         use std::io::Read;
 
-        let mut stderr = String::new();
-        if let Ok(file) = std::fs::File::open(&stderr_path) {
-            let _ = file.take(64 * 1024).read_to_string(&mut stderr);
-        }
-        eprintln!("[libvpx FAIL] {kbps} kbps: {}", stderr.trim_end());
-        return None;
+        let mut stderr_bytes = Vec::new();
+        std::fs::File::open(&stderr_path)
+            .and_then(|file| file.take(64 * 1024).read_to_end(&mut stderr_bytes))
+            .map_err(|error| {
+                format!(
+                    "vpxenc stderr read {} for {kbps} kbps: {error}",
+                    stderr_path.display()
+                )
+            })?;
+        let stderr = String::from_utf8_lossy(&stderr_bytes);
+        return Err(format!(
+            "vpxenc encode {} for {kbps} kbps failed with {status}; stderr (up to 64 KiB): {}",
+            vpxenc.display(),
+            stderr.trim_end()
+        ));
     }
 
-    let (data, packets) = read_packets(&ivf).ok()?;
+    let (data, packets) = read_packets(&ivf).map_err(|error| {
+        format!(
+            "vpxenc output IVF read {} for {kbps} kbps: {error:?}",
+            ivf.display()
+        )
+    })?;
     let mut dec = Decoder::new();
     let mut agg = Aggregate::default();
     for range in &packets {
@@ -1254,7 +1304,19 @@ fn run_libvpx(
         decode_and_accumulate(&mut dec, slice, &mut fs);
         agg.push(fs);
     }
-    Some(agg)
+    Ok(agg)
+}
+
+fn run_requested_libvpx(
+    vpxenc: Option<&Path>,
+    target_bitrate_bps: u32,
+    framerate: f64,
+    frames: &[YuvFrameBuf],
+) -> Result<Option<Aggregate>, String> {
+    match vpxenc {
+        Some(path) => run_libvpx(path, target_bitrate_bps, framerate, frames).map(Some),
+        None => Ok(None),
+    }
 }
 
 fn decode_ivf(path: &Path) -> Result<Aggregate, String> {
@@ -2188,21 +2250,16 @@ fn run_ivf_mode(argv: &[String]) -> Option<()> {
     Some(())
 }
 
-fn main() {
-    let argv: Vec<String> = std::env::args().collect();
-    if run_ivf_mode(&argv).is_some() {
-        return;
-    }
-
-    let foreman = arg(&argv, "--foreman")
+fn run_e1_with_targets(argv: &[String], targets: &[u32]) -> Result<(), String> {
+    let foreman = arg(argv, "--foreman")
         .map(PathBuf::from)
         .unwrap_or_else(|| workspace_corpus_file("foreman_cif.y4m"));
-    let vpxenc = vpxenc_arg(&argv);
-    let n_frames: usize = arg(&argv, "--frames")
+    let vpxenc = vpxenc_arg(argv);
+    let n_frames: usize = arg(argv, "--frames")
         .and_then(|s| s.parse().ok())
         .unwrap_or(64);
     let out = PathBuf::from(
-        arg(&argv, "--out").unwrap_or_else(|| r"wrk_docs\E1_encoder_gap_analysis.md".into()),
+        arg(argv, "--out").unwrap_or_else(|| r"wrk_docs\E1_encoder_gap_analysis.md".into()),
     );
 
     let (frames, framerate) = read_cropped(&foreman, W, H, n_frames).expect("read foreman");
@@ -2216,17 +2273,10 @@ fn main() {
         foreman.display()
     );
 
-    let vpx_avail = vpxenc.as_ref().is_some_and(|path| path.is_file());
     match vpxenc.as_deref() {
         None => eprintln!("[warn] --vpxenc not supplied — libvpx leg skipped"),
-        Some(path) if !vpx_avail => eprintln!(
-            "[warn] vpxenc not found at {} — libvpx leg skipped",
-            path.display()
-        ),
         Some(path) => eprintln!("Using vpxenc at {}", path.display()),
     }
-
-    let targets: [u32; 4] = [25_000, 50_000, 100_000, 250_000];
 
     let mut md = String::new();
     let _ = writeln!(
@@ -2251,19 +2301,10 @@ fn main() {
     let mut rvp9_100: Option<Aggregate> = None;
     let mut libvpx_100: Option<Aggregate> = None;
 
-    for &t in &targets {
+    for &t in targets {
         eprintln!("--- {} kbps ---", t / 1000);
         let r = run_rvp9(t, framerate, &frames);
-        let l = if vpx_avail {
-            run_libvpx(
-                vpxenc.as_deref().expect("available vpxenc has a path"),
-                t,
-                framerate,
-                &frames,
-            )
-        } else {
-            None
-        };
+        let l = run_requested_libvpx(vpxenc.as_deref(), t, framerate, &frames)?;
         emit_report(
             &mut md,
             &format!("{} kbps target", t / 1000),
@@ -2286,11 +2327,61 @@ fn main() {
     eprintln!("Wrote report to {}", out.display());
     // Also echo to stdout so the data is visible in the run log.
     println!("{md}");
+    Ok(())
+}
+
+fn main() {
+    let argv: Vec<String> = std::env::args().collect();
+    if run_ivf_mode(&argv).is_some() {
+        return;
+    }
+
+    let targets = [25_000, 50_000, 100_000, 250_000];
+    if let Err(error) = run_e1_with_targets(&argv, &targets) {
+        eprintln!("{error}");
+        std::process::exit(1);
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    fn executable_child(temp: &ScopedTempDir, name: &str, body: &str) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+
+        let path = temp.path().join(name);
+        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        let mut permissions = std::fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&path, permissions).unwrap();
+        path
+    }
+
+    #[cfg(unix)]
+    fn test_y4m(temp: &ScopedTempDir) -> PathBuf {
+        let path = temp.path().join("input.y4m");
+        let mut data = b"YUV4MPEG2 W256 H256 F30:1 Ip A1:1 C420jpeg\nFRAME\n".to_vec();
+        data.resize(data.len() + (256 * 256) + (2 * 128 * 128), 128);
+        std::fs::write(&path, data).unwrap();
+        path
+    }
+
+    #[cfg(unix)]
+    fn default_mode_args(foreman: &Path, vpxenc: &Path, out: &Path) -> Vec<String> {
+        vec![
+            "e1_block_stats".into(),
+            "--foreman".into(),
+            foreman.to_string_lossy().into_owned(),
+            "--vpxenc".into(),
+            vpxenc.to_string_lossy().into_owned(),
+            "--frames".into(),
+            "1".into(),
+            "--out".into(),
+            out.to_string_lossy().into_owned(),
+        ]
+    }
 
     fn test_intra_mi(block_size: BlockSize, tx_size: rvp9_core::transforms::TxSize) -> ModeInfo {
         ModeInfo {
@@ -2735,5 +2826,130 @@ mod tests {
             ]),
             Some(PathBuf::from("tools/vpxenc"))
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_libvpx_nonzero_exit_is_a_failed_requested_leg() {
+        let temp = ScopedTempDir::new("rvp9-e1-nonzero-test").unwrap();
+        let vpxenc = executable_child(
+            &temp,
+            "vpxenc",
+            "printf 'child failure detail\\n' >&2\nexit 17",
+        );
+
+        let error = run_libvpx_with_timeout(&vpxenc, 25_000, 30.0, &[], Duration::from_secs(2))
+            .err()
+            .expect("nonzero child exit must return an error");
+        assert!(error.contains(&vpxenc.display().to_string()));
+        assert!(error.contains("25 kbps"));
+        assert!(error.contains("child failure detail"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_libvpx_timeout_is_a_failed_requested_leg() {
+        let temp = ScopedTempDir::new("rvp9-e1-timeout-test").unwrap();
+        let vpxenc = executable_child(&temp, "vpxenc", "exec sleep 30");
+        let started = Instant::now();
+
+        let error = run_libvpx_with_timeout(&vpxenc, 50_000, 30.0, &[], Duration::from_millis(50))
+            .err()
+            .expect("timed out child must return an error");
+        assert!(error.contains(&vpxenc.display().to_string()));
+        assert!(error.contains("50 kbps"));
+        assert!(error.contains("timed out"));
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_libvpx_missing_explicit_path_is_a_failure() {
+        let temp = ScopedTempDir::new("rvp9-e1-missing-test").unwrap();
+        let missing = temp.path().join("missing-vpxenc");
+
+        let error = run_libvpx_with_timeout(&missing, 25_000, 30.0, &[], Duration::from_secs(2))
+            .err()
+            .expect("missing explicit path must return an error");
+        assert!(error.contains(&missing.display().to_string()));
+        assert!(error.contains("25 kbps"));
+        assert!(error.contains("spawn"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_libvpx_success_without_ivf_is_a_failed_requested_leg() {
+        let temp = ScopedTempDir::new("rvp9-e1-ivf-read-test").unwrap();
+        let vpxenc = executable_child(&temp, "vpxenc", "exit 0");
+
+        let error = run_libvpx_with_timeout(&vpxenc, 100_000, 30.0, &[], Duration::from_secs(2))
+            .err()
+            .expect("missing output IVF must return an error");
+        assert!(error.contains("100 kbps"));
+        assert!(error.contains("output IVF read"));
+        assert!(error.contains("output.ivf"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn explicit_leg_failure_does_not_publish_a_successful_report() {
+        let temp = ScopedTempDir::new("rvp9-e1-report-failure-test").unwrap();
+        let foreman = test_y4m(&temp);
+        let vpxenc = executable_child(
+            &temp,
+            "vpxenc",
+            "printf 'intentional child failure\\n' >&2\nexit 17",
+        );
+        let out = temp.path().join("report.md");
+        let sentinel = "existing report sentinel\n";
+        std::fs::write(&out, sentinel).unwrap();
+        let argv = default_mode_args(&foreman, &vpxenc, &out);
+
+        let result = run_e1_with_targets(&argv, &[25_000]);
+        assert_eq!(std::fs::read_to_string(&out).unwrap(), sentinel);
+        assert!(
+            result.is_err(),
+            "a failed explicitly requested leg must fail the report run"
+        );
+    }
+
+    #[test]
+    fn omitted_vpxenc_preserves_the_rvp9_only_mode() {
+        let result = run_requested_libvpx(None, 25_000, 30.0, &[]).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_libvpx_positive_empty_ivf_fixture_calibration() {
+        let temp = ScopedTempDir::new("rvp9-e1-positive-fixture-test").unwrap();
+        let fixture = temp.path().join("empty.ivf");
+        let mut header = Vec::with_capacity(32);
+        header.extend_from_slice(b"DKIF");
+        header.extend_from_slice(&0u16.to_le_bytes());
+        header.extend_from_slice(&32u16.to_le_bytes());
+        header.extend_from_slice(b"VP90");
+        header.extend_from_slice(&256u16.to_le_bytes());
+        header.extend_from_slice(&256u16.to_le_bytes());
+        header.extend_from_slice(&30u32.to_le_bytes());
+        header.extend_from_slice(&1u32.to_le_bytes());
+        header.extend_from_slice(&0u32.to_le_bytes());
+        header.extend_from_slice(&0u32.to_le_bytes());
+        std::fs::write(&fixture, header).unwrap();
+        let script = format!(
+            r#"out=
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-o" ]; then out=$2; shift 2; else shift; fi
+done
+cp '{}' "$out""#,
+            fixture.display()
+        );
+        let vpxenc = executable_child(&temp, "vpxenc", &script);
+
+        let result = run_libvpx_with_timeout(&vpxenc, 25_000, 30.0, &[], Duration::from_secs(2));
+        assert!(result.is_ok(), "valid empty IVF output should be accepted");
+        if let Ok(aggregate) = result {
+            assert!(aggregate.frames.is_empty());
+        }
     }
 }
