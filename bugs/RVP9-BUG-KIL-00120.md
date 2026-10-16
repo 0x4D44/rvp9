@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00120 — Two-pass encoding ignores thread and tile-column options
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** cli/rvp9enc option contract
 - **Raised:** 2026-08-22T20:44:02Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261016T005409Z-e51506ee
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00120-run-fix-20261016T005409Z-e51506ee
-- **Owner base:** 26451e5abc990c32500b7cf1807bb75a05909101
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-16T00:54:09Z
-- **Owner until:** 2026-10-16T04:54:09Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T20:44:02Z, raised via `deltic bugs new` model=gpt-5.6-sol@high)
+- **State history:** Open (2026-08-22T20:44:02Z, raised via `deltic bugs new` model=gpt-5.6-sol@high) -> Fixed (2026-10-16T01:00:57Z, deltic:auto role=fix run=fix-20261016T005409Z-e51506ee branch=task/bug-RVP9-BUG-KIL-00120-run-fix-20261016T005409Z-e51506ee code=889687990c5a59ab34550e05832340c2d57fa640 gate=manual)
 
 ## Observation
 
