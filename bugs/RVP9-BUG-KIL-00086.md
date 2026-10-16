@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00086 — F02 accepts malformed and zero-work numeric requests
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** harness/f02 oracle
 - **Raised:** 2026-08-22T13:20:52Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261015T235458Z-d14ed932
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00086-run-fix-20261015T235458Z-d14ed932
-- **Owner base:** 459fafb14190ef22178db2d784bc99913bc2a5e2
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-15T23:54:58Z
-- **Owner until:** 2026-10-16T03:54:58Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T13:20:52Z, raised via `deltic bugs new`)
+- **State history:** Open (2026-08-22T13:20:52Z, raised via `deltic bugs new`) -> Fixed (2026-10-16T00:02:04Z, deltic:auto role=fix run=fix-20261015T235458Z-d14ed932 branch=task/bug-RVP9-BUG-KIL-00086-run-fix-20261015T235458Z-d14ed932 code=666e899f3899a969f75e4b0650de487a8d5b4782 gate=manual)
 
 ## Observation
 
