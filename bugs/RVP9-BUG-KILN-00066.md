@@ -5,15 +5,15 @@
 - **Severity:** Medium
 - **Area:** bench/decode-throughput
 - **Raised:** 2026-07-31T10:22:37Z
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
+- **Owner:** deltic:manual
+- **Owner role:** fix
+- **Owner run:** fix-20261016T052048Z-d55a7572
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KILN-00066-run-fix-20261016T052048Z-d55a7572
+- **Owner base:** 8fbae9f02f02b81a74b6238b2b7a8d471a8d6a00
 - **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner since:** 2026-10-16T05:20:48Z
+- **Owner until:** 2026-10-16T09:20:48Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
