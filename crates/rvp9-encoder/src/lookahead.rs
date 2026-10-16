@@ -310,7 +310,7 @@ impl LookaheadCtx {
             self.buf[slot].as_ref()
         } else {
             // libvpx `vp9_lookahead.c:225` — `-index <= MAX_PRE_FRAMES`.
-            if (-index) as usize > MAX_PRE_FRAMES {
+            if index.unsigned_abs() as usize > MAX_PRE_FRAMES {
                 return None;
             }
             let mut slot = self.read_idx as i32 + index;
@@ -443,6 +443,34 @@ mod tests {
         assert_eq!(prev.show_idx, 0);
         // peek(-2) is beyond MAX_PRE_FRAMES.
         assert!(ctx.peek(-2).is_none());
+    }
+
+    #[test]
+    fn peek_out_of_range_indices_never_panic() {
+        let check_out_of_range = |ctx: &LookaheadCtx, state: &str| {
+            for index in [i32::MIN, i32::MIN + 1, -2, i32::MAX] {
+                let outcome = std::panic::catch_unwind(|| ctx.peek(index).is_none());
+                assert!(
+                    outcome.is_ok(),
+                    "peek({index}) panicked with {state} context"
+                );
+                assert!(
+                    outcome.expect("peek must not panic"),
+                    "peek({index}) must return None with {state} context"
+                );
+            }
+        };
+
+        let empty = LookaheadCtx::new(64, 64, 2);
+        check_out_of_range(&empty, "empty");
+
+        let mut ctx = LookaheadCtx::new(64, 64, 2);
+        let (y, u, v) = make_frame(64, 64, 41);
+        ctx.push(&yview(&y, &u, &v, 64), 0, 1, 0).unwrap();
+        check_out_of_range(&ctx, "populated");
+
+        ctx.pop(true).expect("drain the populated lookahead");
+        check_out_of_range(&ctx, "after pop");
     }
 
     #[test]
