@@ -1,25 +1,25 @@
 # RVP9-BUG-KILN-00072 — Saturating stream counters stop GOP and keyframe cadence
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Could
 - **Severity:** Medium
 - **Area:** encoder/GOP cadence
 - **Raised:** 2026-08-16T08:19:23Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261016T084100Z-a89929bf
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KILN-00072-run-fix-20261016T084100Z-a89929bf
-- **Owner base:** 6998bb2ba22a17cd9dfd9a01fa7b5b0745db9925
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-16T08:41:00Z
-- **Owner until:** 2026-10-16T12:41:00Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-16T08:19:23Z, raised via `deltic bugs new`)
+- **State history:** Open (2026-08-16T08:19:23Z, raised via `deltic bugs new`) -> Fixed (2026-10-16T09:00:38Z, deltic:auto role=fix run=fix-20261016T084100Z-a89929bf branch=task/bug-RVP9-BUG-KILN-00072-run-fix-20261016T084100Z-a89929bf code=b2a0e12a17d551719b70cd4443b376fd95bddff2 gate=manual)
 
 ## Observation
 
