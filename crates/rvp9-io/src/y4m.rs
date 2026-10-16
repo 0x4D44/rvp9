@@ -161,9 +161,9 @@ pub struct Y4mHeader {
 
 /// Incremental centre-cropping Y4M reader.
 ///
-/// The reader retains one source-sized frame buffer and returns one owned
-/// cropped frame at a time, so callers need not keep the full sequence in
-/// memory.
+/// For nonzero frame limits, the reader retains one source-sized frame buffer
+/// and returns one owned cropped frame at a time, so callers need not keep the
+/// full sequence in memory. A zero limit leaves that body buffer unallocated.
 pub struct Y4mReader {
     file: BufReader<std::fs::File>,
     header: Y4mHeader,
@@ -298,6 +298,9 @@ impl Y4mReader {
     /// Open a Y4M input and prepare to return at most `frame_limit` frames,
     /// centre-cropped to `crop_w` × `crop_h`.
     ///
+    /// With a zero limit, opening still validates the header and crop but
+    /// leaves the source-frame body unallocated.
+    ///
     /// # Errors
     ///
     /// Returns [`io::Error`] for invalid headers or crop geometry,
@@ -331,7 +334,11 @@ impl Y4mReader {
         let crop = checked_yuv420_layout(crop_w, crop_h, io::ErrorKind::InvalidInput, "y4m crop")?;
         let off_x = (source.width - crop.width) / 2;
         let off_y = (source.height - crop.height) / 2;
-        let body = zeroed_buffer(source.frame_bytes, "y4m frame body")?;
+        let body = if frame_limit == 0 {
+            Vec::new()
+        } else {
+            zeroed_buffer(source.frame_bytes, "y4m frame body")?
+        };
         Ok(Self {
             // parse_header uses its own temporary BufReader and seeks the File
             // back to the logical position after the global header newline.
@@ -990,6 +997,95 @@ mod tests {
         let _ = std::fs::remove_file(&path);
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
         assert!(format!("{err}").contains("even"));
+    }
+
+    #[test]
+    fn y4m_zero_frame_limit_leaves_source_body_unallocated() {
+        let mut small_content = b"YUV4MPEG2 W8 H8 F30:1 C420\n".to_vec();
+        small_content.extend_from_slice(b"BROKEN\n");
+        let small_path = write_temp(&small_content, "zero_limit_body");
+        let mut full = Y4mReader::open(&small_path, 8, 8, 0).expect("open full zero-limit reader");
+        let mut cropped =
+            Y4mReader::open(&small_path, 4, 4, 0).expect("open cropped zero-limit reader");
+        let _ = std::fs::remove_file(&small_path);
+
+        // Keep this small-source assertion first: the pre-fix test fails here
+        // before the maximum-size header case can allocate its 384 MiB body.
+        assert_eq!(
+            full.body.capacity(),
+            0,
+            "zero-limit full-frame reader allocated a source body"
+        );
+        assert_eq!(full.body.len(), 0);
+        assert_eq!(
+            cropped.body.capacity(),
+            0,
+            "zero-limit cropped reader allocated a source body"
+        );
+        assert_eq!(cropped.body.len(), 0);
+        assert_eq!(
+            (
+                full.header().w,
+                full.header().h,
+                full.header().fps_num,
+                full.header().fps_den
+            ),
+            (8, 8, 30, 1)
+        );
+
+        assert_eq!(full.next_frame().expect("full zero-limit next_frame"), None);
+        let mut full_frame: YuvFrameBuf = (vec![0x11; 3], vec![0x22; 2], vec![0x33; 1]);
+        let full_before = full_frame.clone();
+        assert!(
+            !full
+                .next_frame_into(&mut full_frame)
+                .expect("full zero-limit next_frame_into")
+        );
+        assert_eq!(full_frame, full_before);
+
+        assert_eq!(
+            cropped.next_frame().expect("cropped zero-limit next_frame"),
+            None
+        );
+        let mut cropped_frame: YuvFrameBuf = (vec![0x44; 3], vec![0x55; 2], vec![0x66; 1]);
+        let cropped_before = cropped_frame.clone();
+        assert!(
+            !cropped
+                .next_frame_into(&mut cropped_frame)
+                .expect("cropped zero-limit next_frame_into")
+        );
+        assert_eq!(cropped_frame, cropped_before);
+
+        let bad_header_path = write_temp(b"YUV4MPEG2 W0 H8 F30:1 C420\n", "zero_limit_bad_header");
+        let bad_header = Y4mReader::open(&bad_header_path, 2, 2, 0)
+            .err()
+            .expect("zero-limit reader accepted an invalid header");
+        let _ = std::fs::remove_file(&bad_header_path);
+        assert_eq!(bad_header.kind(), io::ErrorKind::InvalidData);
+
+        let valid_path = write_temp(b"YUV4MPEG2 W8 H8 F30:1 C420\n", "zero_limit_bad_crop");
+        let odd_crop = Y4mReader::open(&valid_path, 4, 5, 0)
+            .err()
+            .expect("zero-limit reader accepted an odd crop");
+        let oversize_crop = Y4mReader::open(&valid_path, 10, 8, 0)
+            .err()
+            .expect("zero-limit reader accepted an oversized crop");
+        let _ = std::fs::remove_file(&valid_path);
+        assert_eq!(odd_crop.kind(), io::ErrorKind::InvalidInput);
+        assert_eq!(oversize_crop.kind(), io::ErrorKind::InvalidInput);
+
+        let max_path = write_temp(
+            b"YUV4MPEG2 W16384 H16384 F30:1 C420\n",
+            "zero_limit_max_header",
+        );
+        let max_reader = Y4mReader::open(&max_path, 2, 2, 0).expect("open maximum header");
+        let _ = std::fs::remove_file(&max_path);
+        assert_eq!(max_reader.body.capacity(), 0);
+        assert_eq!(max_reader.body.len(), 0);
+        assert_eq!(
+            (max_reader.header().w, max_reader.header().h),
+            (16_384, 16_384)
+        );
     }
 
     #[test]
