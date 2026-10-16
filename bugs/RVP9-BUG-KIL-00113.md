@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00113 — Realtime accepts an infinite budget that makes every finite run pass
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** bench/realtime validation
 - **Raised:** 2026-08-22T19:31:33Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261016T035752Z-af34a473
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00113-run-fix-20261016T035752Z-af34a473
-- **Owner base:** 2233c4ff1ad4febc3583b577d80614704915c9c6
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-16T03:57:52Z
-- **Owner until:** 2026-10-16T07:57:52Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T19:31:33Z, raised via `deltic bugs new` model=gpt-5.6-sol@xhigh)
+- **State history:** Open (2026-08-22T19:31:33Z, raised via `deltic bugs new` model=gpt-5.6-sol@xhigh) -> Fixed (2026-10-16T04:04:10Z, deltic:auto role=fix run=fix-20261016T035752Z-af34a473 branch=task/bug-RVP9-BUG-KIL-00113-run-fix-20261016T035752Z-af34a473 code=26ac4ff115a1b042bfaab212629a0d013ca5dd29 gate=manual)
 
 ## Observation
 
