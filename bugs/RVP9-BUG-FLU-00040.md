@@ -1,25 +1,25 @@
 # RVP9-BUG-FLU-00040 — Tile profiling feature fails to compile after scope timestamp binding was lost
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** High
 - **Area:** decoder/profile-tiles
 - **Raised:** 2026-10-16T01:16:30Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261016T011650Z-96ec5bbd
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLU-00040-run-fix-20261016T011650Z-96ec5bbd
-- **Owner base:** 4e47eb24cbb3aaeffacc5f90ba2c6d3831a117ce
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-16T01:16:50Z
-- **Owner until:** 2026-10-16T05:16:50Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-10-16T01:16:30Z, raised via `deltic bugs new --land` model=gpt-6.1-sol@medium)
+- **State history:** Open (2026-10-16T01:16:30Z, raised via `deltic bugs new --land` model=gpt-6.1-sol@medium) -> Fixed (2026-10-16T01:18:45Z, deltic:auto role=fix run=fix-20261016T011650Z-96ec5bbd branch=task/bug-RVP9-BUG-FLU-00040-run-fix-20261016T011650Z-96ec5bbd code=2d327e4e5ec5ddecffd8d8bcffcb37730893f35d gate=manual)
 
 ## Observation
 
