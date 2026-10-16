@@ -1,25 +1,25 @@
 # RVP9-BUG-FLUX-00011 — s11 intra restriction test rejects a valid control mode
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Could
 - **Severity:** Low
 - **Area:** core/mode-decision tests
 - **Raised:** 2026-08-09T20:08:59Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261016T090208Z-9ab99630
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLUX-00011-run-fix-20261016T090208Z-9ab99630
-- **Owner base:** 8d668c82d2f08cea25ec9afe7bcdad209051d0f0
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-16T09:02:08Z
-- **Owner until:** 2026-10-16T13:02:08Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-09T20:08:59Z, raised via `deltic bugs new`)
+- **State history:** Open (2026-08-09T20:08:59Z, raised via `deltic bugs new`) -> Fixed (2026-10-16T09:10:40Z, deltic:auto role=fix run=fix-20261016T090208Z-9ab99630 branch=task/bug-RVP9-BUG-FLUX-00011-run-fix-20261016T090208Z-9ab99630 code=bdb9f9a4bfe58795ea4d5bff604b375946e3883f gate=manual)
 
 ## Observation
 
