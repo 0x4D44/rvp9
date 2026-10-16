@@ -15,8 +15,9 @@
 //!      `[A-Za-z0-9_./]+:\d+`).
 //!
 //! Exit code:
-//!   0 — every LLD passes structural checks (§7 may emit warnings).
-//!   1 — at least one LLD is missing a required section.
+//!   0 — every candidate LLD was read and passes structural checks (§7 may emit warnings).
+//!   1 — at least one LLD is missing a required section or an input could not be read.
+//!   2 — the input directory could not be opened.
 //!
 //! Usage:
 //!   cargo run --release --bin check-lld-format -- [notes/lld]
@@ -172,6 +173,38 @@ fn check_one(path: &Path) -> std::io::Result<LldReport> {
     })
 }
 
+fn scan_entries(
+    lld_dir: &Path,
+    entries: impl IntoIterator<Item = std::io::Result<PathBuf>>,
+) -> (Vec<LldReport>, Vec<String>) {
+    let mut reports = Vec::new();
+    let mut input_failures = Vec::new();
+    for entry in entries {
+        let p = match entry {
+            Ok(path) => path,
+            Err(e) => {
+                input_failures.push(format!("read_dir {}: {e}", lld_dir.display()));
+                continue;
+            }
+        };
+        if p.extension().and_then(|s| s.to_str()) != Some("md") {
+            continue;
+        }
+        // Skip README index files and scratchpad files (leading underscore).
+        // These are documentation, not LLDs, and don't follow the template.
+        let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+        if stem.eq_ignore_ascii_case("README") || stem.starts_with('_') {
+            continue;
+        }
+        match check_one(&p) {
+            Ok(r) => reports.push(r),
+            Err(e) => input_failures.push(format!("read {}: {e}", p.display())),
+        }
+    }
+    input_failures.sort();
+    (reports, input_failures)
+}
+
 fn main() {
     let argv: Vec<String> = std::env::args().collect();
     let lld_dir = argv
@@ -184,7 +217,6 @@ fn main() {
         std::process::exit(2);
     }
 
-    let mut reports: Vec<LldReport> = Vec::new();
     let entries = match fs::read_dir(&lld_dir) {
         Ok(it) => it,
         Err(e) => {
@@ -192,21 +224,12 @@ fn main() {
             std::process::exit(2);
         }
     };
-    for ent in entries.flatten() {
-        let p = ent.path();
-        if p.extension().and_then(|s| s.to_str()) != Some("md") {
-            continue;
-        }
-        // Skip README index files and scratchpad files (leading underscore).
-        // These are documentation, not LLDs, and don't follow the template.
-        let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("");
-        if stem.eq_ignore_ascii_case("README") || stem.starts_with('_') {
-            continue;
-        }
-        match check_one(&p) {
-            Ok(r) => reports.push(r),
-            Err(e) => eprintln!("warn: failed to read {}: {e}", p.display()),
-        }
+    let (mut reports, input_failures) = scan_entries(
+        &lld_dir,
+        entries.map(|entry| entry.map(|dir_entry| dir_entry.path())),
+    );
+    for failure in &input_failures {
+        eprintln!("error: {failure}");
     }
     reports.sort_by(|a, b| a.name.cmp(&b.name));
 
@@ -221,7 +244,7 @@ fn main() {
         "{:30} {:>6}  {:^9}  {:^7}  {:>5}  {:>4}",
         "----", "-----", "--------", "-------", "-----", "---"
     );
-    let mut any_failures = false;
+    let mut any_failures = !input_failures.is_empty();
     for r in &reports {
         let sect = if r.structurally_ok() {
             "OK 1..9 ".to_string()
@@ -307,5 +330,17 @@ mod tests {
         assert_eq!(count_tbd("TBD"), 1);
         assert_eq!(count_tbd("xx TBD"), 1);
         assert_eq!(count_tbd("TBD xx"), 1);
+    }
+
+    #[test]
+    fn scan_reports_directory_entry_errors_as_input_failures() {
+        let dir = Path::new("notes/lld");
+        let entries = [Err(std::io::Error::other("injected entry failure"))];
+
+        let (_, input_failures) = scan_entries(dir, entries);
+
+        assert_eq!(input_failures.len(), 1);
+        assert!(input_failures[0].contains("notes/lld"));
+        assert!(input_failures[0].contains("injected entry failure"));
     }
 }
