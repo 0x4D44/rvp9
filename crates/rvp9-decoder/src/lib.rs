@@ -69,6 +69,43 @@ mod trace_flags;
 #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
 pub mod profile;
 
+/// Process-wide CSV output evidence for the optional tile profiler.
+#[derive(Clone, Copy, Debug)]
+pub struct TileProfileOutputStatus {
+    /// Complete rows successfully written after a successful CSV header.
+    pub rows_written: u64,
+    /// Whether opening or writing the CSV failed. Once set, stays set.
+    pub write_failed: bool,
+}
+
+/// Return tile-profiler output evidence, or `None` when instrumentation is
+/// unavailable (requires this decoder's `profile-tiles` feature and x86_64).
+/// Counters cover all decoder instances in this process, including warmup.
+pub fn tile_profile_output_status() -> Option<TileProfileOutputStatus> {
+    #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
+    {
+        Some(profile::output_status())
+    }
+    #[cfg(not(all(feature = "profile-tiles", target_arch = "x86_64")))]
+    {
+        None
+    }
+}
+
+/// Estimate cycles per microsecond for tile profiling, or return `None` if
+/// this decoder lacks supported instrumentation. Feature detection belongs
+/// to the decoder, even when callers enable its feature directly.
+pub fn tile_profile_cpu_mhz() -> Option<f64> {
+    #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
+    {
+        Some(profile::estimate_cpu_mhz())
+    }
+    #[cfg(not(all(feature = "profile-tiles", target_arch = "x86_64")))]
+    {
+        None
+    }
+}
+
 use rvp9_core::bitstream::{
     BitDepth, BitstreamError, ChromaFormat, CompressedHeaderOptions, CompressedHeaderResult,
     FrameKind, InterpFilter, Superframe, UncompressedHeader, parse_compressed_header,

@@ -3,7 +3,7 @@
 //! Sets `RVP9_PROFILE_TILES_OUT=<--out>`, constructs
 //! [`rvp9_decoder::Decoder::with_threads(--threads)`], and replays the
 //! `--fixture` file in a loop until at least `--min-timed` post-warmup
-//! frames have been timed; repeats for `--runs` independent decoder
+//! profiling rows have been emitted; repeats for `--runs` independent decoder
 //! instances. Each frame appends one CSV row of phase rdtsc-cycles
 //! deltas via the decoder's `profile::emit_row` (gated on the
 //! `profile-tiles` feature).
@@ -18,12 +18,15 @@
 //! ```
 //!
 //! Defaults match the HLD §4.2 procedure.
+//! Requires x86_64 and the decoder's `profile-tiles` feature (also enabled
+//! by `rvp9-bench/profile-tiles`). Runs and minimum timed rows must be
+//! positive. CSV output includes warmup rows; the timed summary excludes them.
 
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use rvp9_decoder::{DecodeError, Decoder};
+use rvp9_decoder::{DecodeError, Decoder, tile_profile_cpu_mhz, tile_profile_output_status};
 use rvp9_harness::container::read_packets;
 
 const DEFAULT_FIXTURE_REL: &str = "tests/conformance/vectors/vp90-2-08-tile_1x4.webm";
@@ -51,59 +54,54 @@ fn workspace_root() -> PathBuf {
         .unwrap_or(crate_root)
 }
 
-fn parse_args() -> Args {
-    let argv: Vec<String> = std::env::args().collect();
+fn parse_args() -> Result<Args, String> {
+    parse_argv(&std::env::args().collect::<Vec<_>>())
+}
+
+fn parse_argv(argv: &[String]) -> Result<Args, String> {
     let get = |flag: &str| -> Option<String> {
         argv.iter()
             .position(|a| a == flag)
             .and_then(|i| argv.get(i + 1).cloned())
     };
+    let numeric = |flag: &str, default: usize, minimum: usize| -> Result<usize, String> {
+        let Some(i) = argv.iter().position(|a| a == flag) else {
+            return Ok(default);
+        };
+        let value = argv
+            .get(i + 1)
+            .ok_or_else(|| format!("{flag} requires an integer"))?;
+        let value: usize = value
+            .parse()
+            .map_err(|_| format!("{flag} requires an integer >= {minimum}"))?;
+        if value < minimum {
+            return Err(format!("{flag} must be >= {minimum}"));
+        }
+        Ok(value)
+    };
     let root = workspace_root();
-    let fixture = get("--fixture")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| root.join(DEFAULT_FIXTURE_REL));
-    let threads: usize = get("--threads")
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(DEFAULT_THREADS);
-    let threads = NonZeroUsize::new(threads).unwrap_or_else(|| {
-        eprintln!("--threads must be >= 1");
-        std::process::exit(2);
-    });
-    let runs = get("--runs")
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(DEFAULT_RUNS);
-    let warmup = get("--warmup")
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(DEFAULT_WARMUP);
-    let min_timed = get("--min-timed")
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(DEFAULT_MIN_TIMED);
-    let out = get("--out")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| root.join(DEFAULT_OUT_REL));
-    Args {
-        fixture,
-        threads,
-        runs,
-        warmup,
-        min_timed,
-        out,
+    Ok(Args {
+        fixture: get("--fixture")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| root.join(DEFAULT_FIXTURE_REL)),
+        threads: NonZeroUsize::new(numeric("--threads", DEFAULT_THREADS, 1)?).unwrap(),
+        runs: numeric("--runs", DEFAULT_RUNS, 1)?,
+        warmup: numeric("--warmup", DEFAULT_WARMUP, 0)?,
+        min_timed: numeric("--min-timed", DEFAULT_MIN_TIMED, 1)?,
+        out: get("--out")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| root.join(DEFAULT_OUT_REL)),
+    })
+}
+
+fn profile_rows_written() -> Result<u64, String> {
+    let status = tile_profile_output_status().ok_or_else(|| {
+        "unsupported tile profiling: requires x86_64 and --features rvp9-decoder/profile-tiles (or rvp9-bench/profile-tiles)".to_owned()
+    })?;
+    if status.write_failed {
+        return Err("tile profile CSV output failed; no valid profiling result".to_owned());
     }
-}
-
-#[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
-fn cpu_mhz() -> f64 {
-    rvp9_decoder::profile::estimate_cpu_mhz()
-}
-
-#[cfg(not(all(feature = "profile-tiles", target_arch = "x86_64")))]
-fn cpu_mhz() -> f64 {
-    eprintln!(
-        "WARNING: built without the `profile-tiles` feature; \
-         no CSV will be emitted. Rebuild with \
-         `--features rvp9-decoder/profile-tiles`."
-    );
-    0.0
+    Ok(status.rows_written)
 }
 
 fn drive_one_run(
@@ -119,12 +117,16 @@ fn drive_one_run(
         read_packets(fixture).map_err(|e| format!("container parse error: {e}"))?;
 
     let mut frames_seen: usize = 0;
-    let mut timed_frames: usize = 0;
+    let mut timed_rows: usize = 0;
     let mut total_wall_us: f64 = 0.0;
     let mut decoder = Decoder::with_threads(threads);
 
     'outer: loop {
         let mut produced_any_this_pass = false;
+        let timed_before_pass = timed_rows;
+        // A pass crossing the warmup boundary may have emitted its only
+        // profile row during warmup. Give the next full timed pass a chance.
+        let fully_timed_pass = frames_seen >= warmup;
         for (packet_offset, range) in packets.iter().enumerate() {
             let packet = range.slice(&data);
             let parsed = decoder.parse_packet(packet).map_err(|error| {
@@ -135,9 +137,11 @@ fn drive_one_run(
                 )
             })?;
             for frame in parsed {
+                let rows_before = profile_rows_written()?;
                 let t0 = Instant::now();
                 let result = decoder.decode_frame(&frame);
                 let dt = t0.elapsed();
+                let rows_after = profile_rows_written()?;
                 match result {
                     Ok(_buf) => {}
                     Err(DecodeError::Unimplemented { .. }) => continue,
@@ -148,23 +152,37 @@ fn drive_one_run(
                 produced_any_this_pass = true;
                 frames_seen += 1;
                 if frames_seen > warmup {
-                    timed_frames += 1;
-                    total_wall_us += dt.as_secs_f64() * 1_000_000.0;
-                    if timed_frames >= min_timed {
+                    let emitted = usize::try_from(rows_after - rows_before)
+                        .map_err(|_| "profile row count exceeds usize".to_owned())?;
+                    timed_rows += emitted;
+                    if emitted > 0 {
+                        total_wall_us += dt.as_secs_f64() * 1_000_000.0;
+                    }
+                    if timed_rows >= min_timed {
                         break 'outer;
                     }
                 }
             }
         }
         if !produced_any_this_pass {
-            break;
+            return Err("fixture produced no decodable frames or profiling evidence".to_owned());
+        }
+        if fully_timed_pass && timed_rows == timed_before_pass {
+            return Err("fixture pass emitted no timed profile CSV rows; use a supported multi-tile fixture and enough threads".to_owned());
         }
     }
-    Ok((timed_frames, total_wall_us))
+    Ok((timed_rows, total_wall_us))
 }
 
 fn main() {
-    let args = parse_args();
+    let args = parse_args().unwrap_or_else(|error| {
+        eprintln!("{error}");
+        std::process::exit(2);
+    });
+    let mhz = tile_profile_cpu_mhz().filter(|mhz| mhz.is_finite() && *mhz > 0.0).unwrap_or_else(|| {
+        eprintln!("unsupported tile profiling: requires x86_64 and --features rvp9-decoder/profile-tiles (or rvp9-bench/profile-tiles) with a positive CPU MHz calibration");
+        std::process::exit(1);
+    });
 
     println!("decode-profile-tiles (T-5 instrumentation)");
     println!("  fixture:    {}", args.fixture.display());
@@ -174,9 +192,6 @@ fn main() {
     println!("  min timed:  {} frames/run", args.min_timed);
     println!("  out (CSV):  {}", args.out.display());
 
-    // Estimate CPU MHz once (also caches it inside the decoder for
-    // any future callers in the same process).
-    let mhz = cpu_mhz();
     println!("  cpu MHz:    {mhz:.1}");
 
     // Ensure parent dir exists, then expose path to the decoder.
@@ -206,7 +221,7 @@ fn main() {
                 total_timed += n;
                 total_wall_us += wall;
                 eprintln!(
-                    "[run {run}/{}] timed {n} frames, total {:.1} ms",
+                    "[run {run}/{}] timed {n} CSV rows, total {:.1} ms",
                     args.runs,
                     wall / 1000.0
                 );
@@ -219,13 +234,9 @@ fn main() {
     }
     let elapsed = total_start.elapsed();
     println!(
-        "wrote {total_timed} CSV rows across {runs} runs in {:.1} s; mean {:.2} ms/frame",
+        "wrote {total_timed} timed CSV rows (warmup rows excluded) across {runs} runs in {:.1} s; mean {:.2} ms/frame",
         elapsed.as_secs_f64(),
-        if total_timed == 0 {
-            0.0
-        } else {
-            total_wall_us / 1000.0 / total_timed as f64
-        },
+        total_wall_us / 1000.0 / total_timed as f64,
         runs = args.runs,
     );
     println!("CSV: {}", args.out.display());
@@ -236,6 +247,22 @@ fn main() {
 mod tests {
     use super::*;
     use rvp9_harness::container::{IvfHeader, write_ivf};
+
+    #[test]
+    fn empty_fixture_is_not_profile_evidence() {
+        let path = std::env::temp_dir().join(format!(
+            "rvp9-profile-tiles-empty-{}.ivf",
+            std::process::id()
+        ));
+        let mut ivf = Vec::new();
+        write_ivf(&mut ivf, &IvfHeader::vp9(16, 16, 30, 1), &[]).unwrap();
+        std::fs::write(&path, ivf).unwrap();
+        let result = drive_one_run(&path, NonZeroUsize::MIN, 0, 1);
+        assert!(
+            result.is_err(),
+            "empty fixture falsely succeeded: {result:?}"
+        );
+    }
 
     #[test]
     fn malformed_packet_fails_profile_run_with_fixture_and_index() {

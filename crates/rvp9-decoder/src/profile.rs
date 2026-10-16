@@ -26,7 +26,6 @@
 //! design rationale (rdtsc over QPC, feature flag over env-var gate,
 //! per-tile in-slot writes vs. thread-local discovery).
 
-use std::io::Write as _;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
@@ -130,6 +129,17 @@ struct CsvSink {
     header_written: AtomicBool,
 }
 
+static ROWS_WRITTEN: AtomicU64 = AtomicU64::new(0);
+static WRITE_FAILED: AtomicBool = AtomicBool::new(false);
+
+/// Snapshot the process-wide successful row count and latched output failure.
+pub fn output_status() -> crate::TileProfileOutputStatus {
+    crate::TileProfileOutputStatus {
+        rows_written: ROWS_WRITTEN.load(Ordering::Acquire),
+        write_failed: WRITE_FAILED.load(Ordering::Acquire),
+    }
+}
+
 /// Lazy initialiser for the CSV sink. Returns `None` if
 /// `RVP9_PROFILE_TILES_OUT` is unset (no I/O path), else opens
 /// (creating + truncating) the file once.
@@ -143,15 +153,23 @@ fn sink() -> Option<&'static CsvSink> {
         if let Some(parent) = std::path::Path::new(&path).parent()
             && !parent.as_os_str().is_empty()
             && !parent.exists()
+            && std::fs::create_dir_all(parent).is_err()
         {
-            let _ = std::fs::create_dir_all(parent);
+            WRITE_FAILED.store(true, Ordering::Release);
+            return None;
         }
-        let file = std::fs::OpenOptions::new()
+        let file = match std::fs::OpenOptions::new()
             .create(true)
             .write(true)
             .truncate(true)
             .open(&path)
-            .ok()?;
+        {
+            Ok(file) => file,
+            Err(_) => {
+                WRITE_FAILED.store(true, Ordering::Release);
+                return None;
+            }
+        };
         Some(CsvSink {
             file: Mutex::new(file),
             header_written: AtomicBool::new(false),
@@ -169,7 +187,7 @@ static GLOBAL_FRAME_IDX: AtomicU64 = AtomicU64::new(0);
 /// tiles is the canonical tile_1x4 fixture; eight covers tile_1x8.
 const MAX_TILES_IN_CSV: usize = 8;
 
-fn write_header(file: &mut std::fs::File) -> std::io::Result<()> {
+fn write_header(file: &mut impl std::io::Write) -> std::io::Result<()> {
     let mut header = String::from(
         "schema,frame_idx,num_tiles,num_threads,wall_us,setup,submit,join,merge,grid_stitch,loopfilter,border",
     );
@@ -178,6 +196,32 @@ fn write_header(file: &mut std::fs::File) -> std::io::Result<()> {
     }
     header.push('\n');
     file.write_all(header.as_bytes())
+}
+
+// The failure latch prevents a partial header or row from being followed by
+// apparently valid evidence. Called while holding the sink's file lock.
+fn write_row(
+    file: &mut impl std::io::Write,
+    header_written: &AtomicBool,
+    failed: &AtomicBool,
+    rows_written: &AtomicU64,
+    row: &[u8],
+) {
+    if failed.load(Ordering::Acquire) {
+        return;
+    }
+    if !header_written.load(Ordering::Relaxed) {
+        if write_header(file).is_err() {
+            failed.store(true, Ordering::Release);
+            return;
+        }
+        header_written.store(true, Ordering::Relaxed);
+    }
+    if file.write_all(row).is_err() {
+        failed.store(true, Ordering::Release);
+        return;
+    }
+    rows_written.fetch_add(1, Ordering::Release);
 }
 
 /// Append one CSV row for the given per-frame timing snapshot. No-op
@@ -220,9 +264,78 @@ pub fn emit_row(t: &PerFrameTiming, frame_idx: u64) {
     }
     row.push('\n');
     if let Ok(mut file) = sink.file.lock() {
-        if !sink.header_written.swap(true, Ordering::Relaxed) {
-            let _ = write_header(&mut file);
+        write_row(
+            &mut *file,
+            &sink.header_written,
+            &WRITE_FAILED,
+            &ROWS_WRITTEN,
+            row.as_bytes(),
+        );
+    } else {
+        WRITE_FAILED.store(true, Ordering::Release);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct ShortWriter {
+        remaining: usize,
+        bytes: Vec<u8>,
+    }
+    impl std::io::Write for ShortWriter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            let n = self.remaining.min(buf.len());
+            self.bytes.extend_from_slice(&buf[..n]);
+            self.remaining -= n;
+            Ok(n)
         }
-        let _ = file.write_all(row.as_bytes());
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn profile_output_counts_only_complete_rows_and_latches_partial_writes() {
+        let mut header = Vec::new();
+        write_header(&mut header).unwrap();
+        let row = b"profile row\n";
+        for capacity in [
+            0,
+            5,
+            header.len(),
+            header.len() + 3,
+            header.len() + row.len(),
+        ] {
+            let mut writer = ShortWriter {
+                remaining: capacity,
+                bytes: Vec::new(),
+            };
+            let header_written = AtomicBool::new(false);
+            let failed = AtomicBool::new(false);
+            let rows = AtomicU64::new(0);
+            write_row(&mut writer, &header_written, &failed, &rows, row);
+            let complete = capacity == header.len() + row.len();
+            assert_eq!(rows.load(Ordering::Relaxed), u64::from(complete));
+            assert_eq!(failed.load(Ordering::Relaxed), !complete);
+            assert_eq!(
+                header_written.load(Ordering::Relaxed),
+                capacity >= header.len()
+            );
+            let written = writer.bytes.len();
+            writer.remaining = usize::MAX;
+            write_row(&mut writer, &header_written, &failed, &rows, row);
+            if !complete {
+                assert_eq!(
+                    writer.bytes.len(),
+                    written,
+                    "failed sink must remain failed"
+                );
+                assert_eq!(rows.load(Ordering::Relaxed), 0);
+            } else {
+                assert_eq!(rows.load(Ordering::Relaxed), 2);
+            }
+        }
     }
 }
