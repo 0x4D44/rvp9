@@ -29,8 +29,10 @@
 //! 60; temporal and spatial layers are omitted unless explicitly selected.
 
 use std::ffi::OsString;
-use std::path::PathBuf;
+use std::fs::{self, OpenOptions};
+use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 use rvp9_bench::{Stats, count_ivf_frames};
@@ -43,7 +45,7 @@ struct Args {
     cpu_used: u32,
     target_bitrate_kbps: u32,
     budget_ms: f64,
-    output: PathBuf,
+    output: Option<PathBuf>,
     end_usage: String,
     threads: u32,
     tile_columns: u8,
@@ -56,6 +58,53 @@ struct Args {
     kf_max_dist: u32,
     frame_time_csv: Option<PathBuf>,
     p99_budget_ms: Option<f64>,
+}
+
+struct OutputGuard {
+    output_path: PathBuf,
+    owned_directory: Option<PathBuf>,
+}
+
+impl OutputGuard {
+    fn create(explicit_path: Option<&Path>) -> std::io::Result<Self> {
+        if let Some(output_path) = explicit_path {
+            let file = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(output_path)?;
+            drop(file);
+            return Ok(Self {
+                output_path: output_path.to_path_buf(),
+                owned_directory: None,
+            });
+        }
+
+        static NEXT_DIRECTORY_ID: AtomicU64 = AtomicU64::new(0);
+        let temp_root = std::env::temp_dir();
+        loop {
+            let sequence = NEXT_DIRECTORY_ID.fetch_add(1, Ordering::Relaxed);
+            let directory =
+                temp_root.join(format!("rvp9-realtime-{}-{sequence}", std::process::id()));
+            match fs::create_dir(&directory) {
+                Ok(()) => {
+                    return Ok(Self {
+                        output_path: directory.join("output.ivf"),
+                        owned_directory: Some(directory),
+                    });
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => return Err(error),
+            }
+        }
+    }
+}
+
+impl Drop for OutputGuard {
+    fn drop(&mut self) {
+        if let Some(directory) = self.owned_directory.take() {
+            let _ = fs::remove_dir_all(directory);
+        }
+    }
 }
 
 fn parse_args() -> Args {
@@ -72,7 +121,9 @@ Options:\n  --encoder PATH --output PATH\n  \
 --aq-mode {0,3} --noise-sensitivity 0..6\n  \
 --limit N --kf-max-dist N\n  \
 --budget-ms 33.333\n  \
---frame-time-csv PATH [--p99-budget-ms MS]\n"
+--frame-time-csv PATH [--p99-budget-ms MS]\n\n\
+Without --output, the IVF is written to a unique temporary directory and removed after the run.\n\
+An explicit --output path must not already exist and is retained after the run.\n"
         .to_owned()
 }
 
@@ -119,9 +170,7 @@ fn parse_args_from(argv: &[String]) -> Args {
         budget_ms.is_finite() && budget_ms > 0.0,
         "--budget-ms must be finite and greater than zero"
     );
-    let output = get("--output")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| std::env::temp_dir().join("rvp9_realtime_bench.ivf"));
+    let output = get("--output").map(PathBuf::from);
     let end_usage = get("--end-usage").unwrap_or_else(|| "cbr".to_string());
     assert!(
         matches!(end_usage.as_str(), "cbr" | "vbr" | "cq" | "q"),
@@ -303,7 +352,7 @@ fn read_frame_time_csv(path: &std::path::Path, expected_frames: usize) -> Result
     parse_frame_time_csv(&text, expected_frames)
 }
 
-fn encoder_args(args: &Args) -> Vec<OsString> {
+fn encoder_args(args: &Args, output_path: &Path) -> Vec<OsString> {
     let mut command_args: Vec<OsString> = vec![
         "--codec=vp9".into(),
         "--passes=1".into(),
@@ -331,7 +380,7 @@ fn encoder_args(args: &Args) -> Vec<OsString> {
     }
     command_args.push("--ivf".into());
     command_args.push("-o".into());
-    command_args.push(args.output.as_os_str().to_os_string());
+    command_args.push(output_path.as_os_str().to_os_string());
     if let Some(path) = &args.frame_time_csv {
         command_args.push("--frame-time-csv".into());
         command_args.push(path.as_os_str().to_os_string());
@@ -342,22 +391,34 @@ fn encoder_args(args: &Args) -> Vec<OsString> {
 
 fn run_encoder(
     args: &Args,
+    output_path: &Path,
     timeout: std::time::Duration,
 ) -> Result<std::process::ExitStatus, String> {
     rvp9_bench::process::run_status(
-        Command::new(&args.encoder).args(encoder_args(args)),
+        Command::new(&args.encoder).args(encoder_args(args, output_path)),
         "realtime encoder",
         timeout,
     )
 }
 
-fn main() {
+fn main() -> std::process::ExitCode {
     let argv: Vec<String> = std::env::args().collect();
     if help_requested(&argv) {
         print!("{}", usage());
-        return;
+        return std::process::ExitCode::SUCCESS;
     }
     let args = parse_args();
+    let output = match OutputGuard::create(args.output.as_deref()) {
+        Ok(output) => output,
+        Err(error) => {
+            let requested_output = args.output.as_deref().map_or_else(
+                || "<temporary directory>".to_owned(),
+                |path| path.display().to_string(),
+            );
+            eprintln!("failed to prepare output {requested_output}: {error}");
+            return std::process::ExitCode::from(1);
+        }
+    };
 
     println!("encoder:         {}", args.encoder.display());
     println!("input:           {}", args.input.display());
@@ -382,7 +443,7 @@ fn main() {
         println!("limit:            {limit}");
     }
     println!("budget-ms:       {:.3}", args.budget_ms);
-    println!("output:          {}", args.output.display());
+    println!("output:          {}", output.output_path.display());
     if let Some(path) = &args.frame_time_csv {
         println!("frame-time-csv:  {}", path.display());
     }
@@ -392,21 +453,28 @@ fn main() {
     println!();
 
     let start = Instant::now();
-    let status = run_encoder(&args, rvp9_bench::process::DEFAULT_TIMEOUT).unwrap_or_else(|error| {
-        eprintln!("{error}");
-        std::process::exit(1)
-    });
+    let status = match run_encoder(
+        &args,
+        &output.output_path,
+        rvp9_bench::process::DEFAULT_TIMEOUT,
+    ) {
+        Ok(status) => status,
+        Err(error) => {
+            eprintln!("{error}");
+            return std::process::ExitCode::from(1);
+        }
+    };
     let elapsed = start.elapsed();
 
     if !status.success() {
         eprintln!("encoder exited with {status}");
-        std::process::exit(1);
+        return std::process::ExitCode::from(1);
     }
 
-    let frames = count_ivf_frames(&args.output);
+    let frames = count_ivf_frames(&output.output_path);
     if frames == 0 {
         eprintln!("no frames in output IVF — encoder may have produced no data");
-        std::process::exit(2);
+        return std::process::ExitCode::from(2);
     }
 
     let total_ms = elapsed.as_secs_f64() * 1000.0;
@@ -418,7 +486,7 @@ fn main() {
             Ok(stats) => Some(stats),
             Err(error) => {
                 eprintln!("invalid frame timing CSV: {error}");
-                std::process::exit(2);
+                return std::process::ExitCode::from(2);
             }
         }
     } else {
@@ -443,7 +511,7 @@ fn main() {
     } else {
         let over_pct = (avg_ms_per_frame - args.budget_ms) / args.budget_ms * 100.0;
         println!("\nFAIL: over budget by {over_pct:.1}%");
-        std::process::exit(3);
+        return std::process::ExitCode::from(3);
     }
 
     if let (Some(p99_budget_ms), Some(stats)) = (args.p99_budget_ms, timing_stats) {
@@ -453,28 +521,126 @@ fn main() {
                 "FAIL: p99 encode time {:.2} ms exceeds budget {:.3} ms by {over_pct:.1}%",
                 stats.p99, p99_budget_ms
             );
-            std::process::exit(4);
+            return std::process::ExitCode::from(4);
         }
         let headroom_pct = (p99_budget_ms - stats.p99) / p99_budget_ms * 100.0;
         println!("PASS: p99 under budget by {headroom_pct:.1}%");
     }
+    std::process::ExitCode::SUCCESS
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct TestDirectory(PathBuf);
+
+    impl TestDirectory {
+        fn new() -> Self {
+            static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+            let root = std::env::temp_dir();
+            loop {
+                let sequence = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+                let path = root.join(format!(
+                    "rvp9-realtime-test-{}-{sequence}",
+                    std::process::id()
+                ));
+                match fs::create_dir(&path) {
+                    Ok(()) => return Self(path),
+                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                    Err(error) => panic!("creating test directory {}: {error}", path.display()),
+                }
+            }
+        }
+    }
+
+    impl Drop for TestDirectory {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
     #[cfg(unix)]
     #[test]
     fn external_encoder_timeout() {
         let fixture = crate::process_test_support::Fixture::new();
         let mut args = test_args();
         args.encoder = fixture.tool.clone();
-        let error = run_encoder(&args, crate::process_test_support::DEADLINE).unwrap_err();
+        let output_path = PathBuf::from("output.ivf");
+        let error =
+            run_encoder(&args, &output_path, crate::process_test_support::DEADLINE).unwrap_err();
         assert!(
             error.contains("realtime encoder") && error.contains("timed out"),
             "{error}"
         );
         assert!(error.contains("fake stderr diagnostic"), "{error}");
+    }
+
+    #[test]
+    fn default_output_uses_unique_directory_and_cleans_it_on_drop() {
+        let first = OutputGuard::create(None).expect("first default output");
+        let first_directory = first
+            .output_path
+            .parent()
+            .expect("output has a parent")
+            .to_path_buf();
+        let second = OutputGuard::create(None).expect("second default output");
+        let second_directory = second
+            .output_path
+            .parent()
+            .expect("output has a parent")
+            .to_path_buf();
+
+        assert_ne!(first_directory, second_directory);
+        assert!(first_directory.is_dir());
+        assert!(second_directory.is_dir());
+        assert!(!first.output_path.exists());
+        assert!(!second.output_path.exists());
+
+        drop(first);
+        assert!(!first_directory.exists());
+        assert!(second_directory.is_dir());
+        drop(second);
+        assert!(!second_directory.exists());
+    }
+
+    #[test]
+    fn explicit_output_requires_fresh_path_and_is_retained() {
+        let fixture = TestDirectory::new();
+        let existing_path = fixture.0.join("existing.ivf");
+        let sentinel = b"keep existing artifact";
+        fs::write(&existing_path, sentinel).expect("write sentinel artifact");
+
+        let error = match OutputGuard::create(Some(&existing_path)) {
+            Ok(_) => panic!("existing output path was accepted"),
+            Err(error) => error,
+        };
+        assert_eq!(error.kind(), std::io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read(&existing_path).expect("read sentinel"), sentinel);
+
+        let fresh_path = fixture.0.join("fresh.ivf");
+        let output = OutputGuard::create(Some(&fresh_path)).expect("reserve fresh output");
+        assert_eq!(output.output_path, fresh_path);
+        assert_eq!(fs::metadata(&fresh_path).expect("reserved file").len(), 0);
+        drop(output);
+        assert!(fresh_path.is_file());
+    }
+
+    #[test]
+    fn output_option_is_parsed_without_creating_an_artifact() {
+        let default = parse_args_from(&["realtime".to_string(), "--input=input.y4m".to_string()]);
+        assert_eq!(default.output, None);
+
+        let fixture = TestDirectory::new();
+        let explicit_path = fixture.0.join("parser-output.ivf");
+        assert!(!explicit_path.exists());
+        let args = parse_args_from(&[
+            "realtime".to_string(),
+            "--input=input.y4m".to_string(),
+            format!("--output={}", explicit_path.display()),
+        ]);
+        assert_eq!(args.output, Some(explicit_path.clone()));
+        assert!(!explicit_path.exists(), "parsing must not reserve the path");
     }
 
     fn csv(rows: &[(usize, u8, u128)]) -> String {
@@ -518,6 +684,8 @@ mod tests {
         ] {
             assert!(help.contains(flag), "usage must advertise {flag}");
         }
+        assert!(help.contains("unique temporary directory and removed after the run"));
+        assert!(help.contains("must not already exist and is retained after the run"));
     }
 
     #[test]
@@ -646,7 +814,7 @@ mod tests {
             cpu_used: 7,
             target_bitrate_kbps: 2000,
             budget_ms: 33.333,
-            output: PathBuf::from("output.ivf"),
+            output: None,
             end_usage: "cbr".to_string(),
             threads: 1,
             tile_columns: 0,
@@ -688,7 +856,8 @@ mod tests {
         assert_eq!(args.limit, Some(12));
         assert_eq!(args.kf_max_dist, 48);
 
-        let command_args = encoder_args(&args);
+        let output_path = PathBuf::from("output.ivf");
+        let command_args = encoder_args(&args, &output_path);
         let command_args: Vec<String> = command_args
             .iter()
             .map(|arg| arg.to_string_lossy().into_owned())
@@ -713,7 +882,8 @@ mod tests {
     #[test]
     fn command_defaults_preserve_single_layer_cbr_shape() {
         let args = test_args();
-        let command_args = encoder_args(&args);
+        let output_path = PathBuf::from("output.ivf");
+        let command_args = encoder_args(&args, &output_path);
         let command_args: Vec<String> = command_args
             .iter()
             .map(|arg| arg.to_string_lossy().into_owned())
@@ -746,7 +916,8 @@ mod tests {
             "--inter-layer-pred=0".to_string(),
         ];
         let args = parse_args_from(&argv);
-        let command_args = encoder_args(&args);
+        let output_path = PathBuf::from("output.ivf");
+        let command_args = encoder_args(&args, &output_path);
         let command_args: Vec<String> = command_args
             .iter()
             .map(|arg| arg.to_string_lossy().into_owned())
