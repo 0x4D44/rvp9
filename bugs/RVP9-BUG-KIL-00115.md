@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00115 — Concurrent throughput writers can corrupt the shared CSV ledger
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Could
 - **Severity:** Medium
 - **Area:** bench/throughput CSV
 - **Raised:** 2026-08-22T19:31:49Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261016T062937Z-fc9f9cba
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00115-run-fix-20261016T062937Z-fc9f9cba
-- **Owner base:** 92c6a96b794f6f93d8d7c6a6d168f240832a2e33
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-16T06:29:37Z
-- **Owner until:** 2026-10-16T10:29:37Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T19:31:49Z, raised via `deltic bugs new` model=gpt-5.6-sol@xhigh)
+- **State history:** Open (2026-08-22T19:31:49Z, raised via `deltic bugs new` model=gpt-5.6-sol@xhigh) -> Fixed (2026-10-16T06:43:12Z, deltic:auto role=fix run=fix-20261016T062937Z-fc9f9cba branch=task/bug-RVP9-BUG-KIL-00115-run-fix-20261016T062937Z-fc9f9cba code=0feeb38012da67e486be4c2eea11883783ffb282 gate=manual)
 
 ## Observation
 
