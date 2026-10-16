@@ -6,15 +6,15 @@
 - **Area:** decoder/parallel tile metadata
 - **Raised:** 2026-08-22T10:24:29Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
+- **Owner:** deltic:manual
+- **Owner role:** fix
+- **Owner run:** fix-20261016T022804Z-9d7700c8
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KIL-00082-run-fix-20261016T022804Z-9d7700c8
+- **Owner base:** a8e4856e82bc15b0bfb0ee52fd1afa149457223e
 - **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner since:** 2026-10-16T02:28:04Z
+- **Owner until:** 2026-10-16T06:28:04Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
