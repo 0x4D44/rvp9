@@ -6,15 +6,15 @@
 - **Area:** decoder/profile-tiles
 - **Raised:** 2026-10-16T01:16:30Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
+- **Owner:** deltic:manual
+- **Owner role:** fix
+- **Owner run:** fix-20261016T011650Z-96ec5bbd
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-FLU-00040-run-fix-20261016T011650Z-96ec5bbd
+- **Owner base:** 4e47eb24cbb3aaeffacc5f90ba2c6d3831a117ce
 - **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner since:** 2026-10-16T01:16:50Z
+- **Owner until:** 2026-10-16T05:16:50Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
