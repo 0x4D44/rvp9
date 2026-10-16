@@ -880,6 +880,77 @@ fn parse_load1(text: &str) -> Option<f64> {
     .find_map(|part| part.parse::<f64>().ok())
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LoadProbeMode {
+    Metadata,
+    Guarded,
+}
+
+fn load_probe_mode(args: &Args) -> LoadProbeMode {
+    if args.max_load1.is_some() {
+        LoadProbeMode::Guarded
+    } else {
+        LoadProbeMode::Metadata
+    }
+}
+
+#[cfg(any(windows, test))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct WindowsCounterSettings {
+    sample_interval_seconds: u64,
+    max_samples: u32,
+    discard_samples: u32,
+    timeout_seconds: u64,
+}
+
+#[cfg(any(windows, test))]
+impl WindowsCounterSettings {
+    fn retained_samples(self) -> u32 {
+        self.max_samples - self.discard_samples
+    }
+
+    #[cfg(test)]
+    fn measured_seconds(self) -> u64 {
+        self.sample_interval_seconds * self.retained_samples() as u64
+    }
+}
+
+#[cfg(any(windows, test))]
+fn windows_counter_settings(mode: LoadProbeMode) -> WindowsCounterSettings {
+    match mode {
+        LoadProbeMode::Metadata => WindowsCounterSettings {
+            sample_interval_seconds: 1,
+            max_samples: 2,
+            discard_samples: 1,
+            timeout_seconds: 10,
+        },
+        LoadProbeMode::Guarded => WindowsCounterSettings {
+            sample_interval_seconds: 5,
+            max_samples: 13,
+            discard_samples: 1,
+            timeout_seconds: 90,
+        },
+    }
+}
+
+#[cfg(any(windows, test))]
+fn windows_counter_script(settings: WindowsCounterSettings) -> String {
+    format!(
+        r#"
+$ErrorActionPreference = "Stop"
+$values = @((Get-Counter -Counter '\Processor(_Total)\% Processor Time' -SampleInterval {} -MaxSamples {}).CounterSamples | Select-Object -Skip {} -ExpandProperty CookedValue)
+if ($values.Count -ne {}) {{ exit 2 }}
+$meanPercent = ($values | Measure-Object -Average).Average
+$busyCores = $meanPercent * [Environment]::ProcessorCount / 100.0
+[Console]::Out.WriteLine($busyCores.ToString("0.######", [Globalization.CultureInfo]::InvariantCulture))
+"#,
+        settings.sample_interval_seconds,
+        settings.max_samples,
+        settings.discard_samples,
+        settings.retained_samples()
+    )
+}
+
 #[cfg(not(windows))]
 fn current_load1() -> Option<f64> {
     if let Ok(text) = fs::read_to_string("/proc/loadavg") {
@@ -898,26 +969,18 @@ fn current_load1() -> Option<f64> {
 }
 
 #[cfg(windows)]
-fn current_load1() -> Option<f64> {
-    // Windows has no Unix load average. Sample aggregate processor time for a
-    // full minute and convert it to normalized busy logical cores, so the
-    // existing 0.75 ceiling keeps the same "less than one busy core" meaning.
-    // Thirteen five-second PDH samples span sixty seconds after discarding the
-    // first sample, whose baseline may predate this invocation.
-    const SCRIPT: &str = r#"
-$ErrorActionPreference = "Stop"
-$values = @((Get-Counter -Counter '\Processor(_Total)\% Processor Time' -SampleInterval 5 -MaxSamples 13).CounterSamples | Select-Object -Skip 1 -ExpandProperty CookedValue)
-if ($values.Count -ne 12) { exit 2 }
-$meanPercent = ($values | Measure-Object -Average).Average
-$busyCores = $meanPercent * [Environment]::ProcessorCount / 100.0
-[Console]::Out.WriteLine($busyCores.ToString("0.######", [Globalization.CultureInfo]::InvariantCulture))
-"#;
+fn current_load1(mode: LoadProbeMode) -> Option<f64> {
+    // Windows has no Unix load average. Normalize aggregate processor time to
+    // busy logical cores. Guarded samples preserve the full-minute window used
+    // by --max-load1; relaxed runs collect a one-second sample for metadata.
+    let settings = windows_counter_settings(mode);
+    let script = windows_counter_script(settings);
     let powershell = PathBuf::from(std::env::var_os("SystemRoot")?)
         .join("System32/WindowsPowerShell/v1.0/powershell.exe");
     let output = rvp9_bench::process::run(
-        Command::new(powershell).args(["-NoProfile", "-NonInteractive", "-Command", SCRIPT]),
+        Command::new(powershell).args(["-NoProfile", "-NonInteractive", "-Command", &script]),
         "load probe",
-        Duration::from_secs(90),
+        Duration::from_secs(settings.timeout_seconds),
     )
     .ok()?;
     if !output.status.success() {
@@ -930,6 +993,18 @@ $busyCores = $meanPercent * [Environment]::ProcessorCount / 100.0
     })
 }
 
+fn probe_load(mode: LoadProbeMode) -> Option<f64> {
+    #[cfg(windows)]
+    {
+        current_load1(mode)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = mode;
+        current_load1()
+    }
+}
+
 fn load_with_retry<F>(mut read: F) -> Option<f64>
 where
     F: FnMut() -> Option<f64>,
@@ -937,28 +1012,38 @@ where
     read().or_else(read)
 }
 
-#[cfg(windows)]
-fn load_metric_name() -> &'static str {
-    "windows_60s_mean_busy_logical_cores"
+fn load_metric_name(mode: LoadProbeMode) -> &'static str {
+    #[cfg(windows)]
+    {
+        match mode {
+            LoadProbeMode::Metadata => "windows_1s_busy_logical_cores",
+            LoadProbeMode::Guarded => "windows_60s_mean_busy_logical_cores",
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = mode;
+        "unix_one_minute_load_average"
+    }
 }
 
-#[cfg(not(windows))]
-fn load_metric_name() -> &'static str {
-    "unix_one_minute_load_average"
-}
-
-fn enforce_load(
+fn enforce_load<F>(
     args: &Args,
     point: &str,
     observations: &mut Vec<(String, f64)>,
-) -> Result<(), String> {
+    mut probe: F,
+) -> Result<(), String>
+where
+    F: FnMut(LoadProbeMode) -> Option<f64>,
+{
+    let mode = load_probe_mode(args);
     let Some(max_load) = args.max_load1 else {
-        if let Some(load) = current_load1() {
+        if let Some(load) = probe(mode) {
             observations.push((point.to_owned(), load));
         }
         return Ok(());
     };
-    let load = load_with_retry(current_load1).ok_or_else(|| {
+    let load = load_with_retry(|| probe(mode)).ok_or_else(|| {
         format!("cannot read host one-minute load at `{point}`; --max-load1 fails closed")
     })?;
     observations.push((point.to_owned(), load));
@@ -1311,7 +1396,12 @@ fn write_manifest(
         )
     )
     .map_err(|e| e.to_string())?;
-    writeln!(writer, "host_load_metric={}", load_metric_name()).map_err(|e| e.to_string())?;
+    writeln!(
+        writer,
+        "host_load_metric={}",
+        load_metric_name(load_probe_mode(args))
+    )
+    .map_err(|e| e.to_string())?;
     for (point, load) in results.loads {
         writeln!(writer, "load1_{point}={load:.6}").map_err(|e| e.to_string())?;
     }
@@ -1329,7 +1419,7 @@ fn write_manifest(
 fn run() -> Result<bool, String> {
     let args = parse_args()?;
     let mut loads = Vec::new();
-    enforce_load(&args, "preflight", &mut loads)?;
+    enforce_load(&args, "preflight", &mut loads, probe_load)?;
     let clips = load_clips(&args)?;
     let anchor_sha256 = sha256_file(&args.anchor_encoder)?;
     let test_sha256 = sha256_file(&args.test_encoder)?;
@@ -1350,6 +1440,7 @@ fn run() -> Result<bool, String> {
                 &args,
                 &format!("rotation{rotation}_{}", clip.name),
                 &mut loads,
+                probe_load,
             )?;
             for warmup in 1..=args.warmups {
                 let first = if (warmup + rotation) % 2 == 0 {
@@ -1429,7 +1520,7 @@ fn run() -> Result<bool, String> {
             }
         }
     }
-    enforce_load(&args, "complete", &mut loads)?;
+    enforce_load(&args, "complete", &mut loads, probe_load)?;
     let summaries = summarize(
         &clips,
         &rows,
@@ -1702,10 +1793,175 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn windows_idle_guard_produces_a_normalized_load_measurement() {
-        let load = current_load1().expect("Windows host load should be measurable");
+        let load =
+            current_load1(LoadProbeMode::Guarded).expect("Windows host load should be measurable");
         assert!(load.is_finite());
         assert!(load >= 0.0);
         assert!(load <= std::thread::available_parallelism().unwrap().get() as f64);
+    }
+
+    #[test]
+    fn windows_load_modes_use_expected_samples_and_truthful_metric_names() {
+        let metadata = windows_counter_settings(LoadProbeMode::Metadata);
+        assert_eq!(
+            metadata,
+            WindowsCounterSettings {
+                sample_interval_seconds: 1,
+                max_samples: 2,
+                discard_samples: 1,
+                timeout_seconds: 10,
+            }
+        );
+        assert_eq!(metadata.retained_samples(), 1);
+        assert_eq!(metadata.measured_seconds(), 1);
+        let metadata_script = windows_counter_script(metadata);
+        assert!(metadata_script.contains("-SampleInterval 1 -MaxSamples 2"));
+        assert!(metadata_script.contains("Select-Object -Skip 1"));
+        assert!(metadata_script.contains("if ($values.Count -ne 1)"));
+        assert_eq!(
+            load_metric_name(LoadProbeMode::Metadata),
+            if cfg!(windows) {
+                "windows_1s_busy_logical_cores"
+            } else {
+                "unix_one_minute_load_average"
+            }
+        );
+
+        let guarded = windows_counter_settings(LoadProbeMode::Guarded);
+        assert_eq!(
+            guarded,
+            WindowsCounterSettings {
+                sample_interval_seconds: 5,
+                max_samples: 13,
+                discard_samples: 1,
+                timeout_seconds: 90,
+            }
+        );
+        assert_eq!(guarded.retained_samples(), 12);
+        assert_eq!(guarded.measured_seconds(), 60);
+        let guarded_script = windows_counter_script(guarded);
+        assert!(guarded_script.contains("-SampleInterval 5 -MaxSamples 13"));
+        assert!(guarded_script.contains("Select-Object -Skip 1"));
+        assert!(guarded_script.contains("if ($values.Count -ne 12)"));
+        assert_eq!(
+            load_metric_name(LoadProbeMode::Guarded),
+            if cfg!(windows) {
+                "windows_60s_mean_busy_logical_cores"
+            } else {
+                "unix_one_minute_load_average"
+            }
+        );
+    }
+
+    #[test]
+    fn load_enforcement_uses_metadata_without_weakening_the_guard() {
+        let args = fake_args(EncoderKind::Vpxenc);
+        let mut observations = Vec::new();
+        let mut modes = Vec::new();
+        for point in ["preflight", "rotation1_a", "rotation1_b", "complete"] {
+            enforce_load(&args, point, &mut observations, |mode| {
+                let settings = windows_counter_settings(mode);
+                assert_eq!(settings.measured_seconds(), 1);
+                assert_eq!(settings.timeout_seconds, 10);
+                modes.push(mode);
+                Some(0.25)
+            })
+            .unwrap();
+        }
+        assert_eq!(modes, vec![LoadProbeMode::Metadata; 4]);
+        assert_eq!(
+            observations,
+            [
+                ("preflight".to_owned(), 0.25),
+                ("rotation1_a".to_owned(), 0.25),
+                ("rotation1_b".to_owned(), 0.25),
+                ("complete".to_owned(), 0.25),
+            ]
+        );
+
+        let mut optional_failures = 0;
+        assert!(
+            enforce_load(&args, "metadata-unavailable", &mut observations, |mode| {
+                assert_eq!(mode, LoadProbeMode::Metadata);
+                optional_failures += 1;
+                None
+            })
+            .is_ok()
+        );
+        assert_eq!(optional_failures, 1);
+        assert_eq!(observations.len(), 4);
+
+        let mut guarded_args = args;
+        guarded_args.max_load1 = Some(0.75);
+        let mut guarded_observations = Vec::new();
+        let mut guarded_failures = 0;
+        let error = enforce_load(
+            &guarded_args,
+            "preflight",
+            &mut guarded_observations,
+            |mode| {
+                assert_eq!(mode, LoadProbeMode::Guarded);
+                let settings = windows_counter_settings(mode);
+                assert_eq!(settings.measured_seconds(), 60);
+                assert_eq!(settings.timeout_seconds, 90);
+                guarded_failures += 1;
+                None
+            },
+        )
+        .unwrap_err();
+        assert!(
+            error.contains("cannot read host one-minute load"),
+            "{error}"
+        );
+        assert_eq!(guarded_failures, 2);
+        assert!(guarded_observations.is_empty());
+
+        let mut at_ceiling_reads = 0;
+        assert!(
+            enforce_load(
+                &guarded_args,
+                "at-ceiling",
+                &mut guarded_observations,
+                |mode| {
+                    assert_eq!(mode, LoadProbeMode::Guarded);
+                    at_ceiling_reads += 1;
+                    Some(0.75)
+                }
+            )
+            .is_ok()
+        );
+        assert_eq!(at_ceiling_reads, 1);
+        assert_eq!(guarded_observations, [("at-ceiling".to_owned(), 0.75)]);
+
+        let mut above_ceiling_reads = 0;
+        let error = enforce_load(
+            &guarded_args,
+            "rotation1_a",
+            &mut guarded_observations,
+            |mode| {
+                assert_eq!(mode, LoadProbeMode::Guarded);
+                let settings = windows_counter_settings(mode);
+                assert_eq!(settings.measured_seconds(), 60);
+                above_ceiling_reads += 1;
+                Some(0.751)
+            },
+        )
+        .unwrap_err();
+        assert!(error.contains("exceeds --max-load1 0.750"), "{error}");
+        assert_eq!(above_ceiling_reads, 1);
+        assert_eq!(
+            guarded_observations,
+            [
+                ("at-ceiling".to_owned(), 0.75),
+                ("rotation1_a".to_owned(), 0.751),
+            ]
+        );
+
+        #[cfg(not(windows))]
+        assert_eq!(
+            load_metric_name(LoadProbeMode::Metadata),
+            "unix_one_minute_load_average"
+        );
     }
 
     #[test]
