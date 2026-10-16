@@ -13,6 +13,9 @@
 //! automatically as the encoder does, with no separate catalogue to
 //! keep in sync.
 
+#[path = "../path_guard.rs"]
+mod path_guard;
+
 use rvp9_cli::args::{self, Arg, Flag};
 use rvp9_encoder::lookahead::MAX_LAG_BUFFERS;
 use rvp9_encoder::{
@@ -22,7 +25,7 @@ use rvp9_encoder::{
 };
 use rvp9_io::container::{IvfHeader, IvfStreamWriter, write_ivf};
 use rvp9_io::y4m;
-use std::io::{BufReader, BufWriter, Read};
+use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::Path;
 use std::process::ExitCode;
 use std::time::Instant;
@@ -929,6 +932,11 @@ fn run(opts: &EncOpts, positionals: &[String]) -> Result<(), String> {
         .as_deref()
         .ok_or_else(|| "no output file (-o <out.ivf>)".to_string())?;
 
+    let mut paths = vec![("input", input), ("output", Path::new(output))];
+    if let Some(csv) = opts.frame_time_csv.as_deref() {
+        paths.push(("frame-time CSV", Path::new(csv)));
+    }
+    let mut path_guard = path_guard::PathGuard::new(&paths)?;
     let (mut frames, info) = open_input(input, opts)?;
     let Some(first_frame) = frames.next_frame()? else {
         return Err("input contained no frames".to_string());
@@ -972,6 +980,7 @@ fn run(opts: &EncOpts, positionals: &[String]) -> Result<(), String> {
             info.fps_num,
             info.fps_den,
             output,
+            &mut path_guard,
         );
     }
 
@@ -989,6 +998,7 @@ fn run(opts: &EncOpts, positionals: &[String]) -> Result<(), String> {
             &mut frames,
             info,
             output,
+            &mut path_guard,
         );
     }
     let mut encoder = StreamEncoder::new_with_parallelism(config, parallelism).map_err(|e| {
@@ -1016,7 +1026,7 @@ fn run(opts: &EncOpts, positionals: &[String]) -> Result<(), String> {
         info.fps_num,
         info.fps_den,
     );
-    let out = std::fs::File::create(output).map_err(|e| format!("creating {output}: {e}"))?;
+    let out = path_guard.create("output")?;
     let mut writer = IvfStreamWriter::new(BufWriter::new(out), &header)
         .map_err(|e| format!("writing IVF header: {e}"))?;
     let mut total_bits: u64 = 0;
@@ -1087,8 +1097,8 @@ fn run(opts: &EncOpts, positionals: &[String]) -> Result<(), String> {
     writer
         .finish()
         .map_err(|e| format!("finalizing IVF: {e}"))?;
-    if let Some(path) = opts.frame_time_csv.as_deref() {
-        write_frame_time_csv(path, &frame_timings)?;
+    if opts.frame_time_csv.is_some() {
+        write_frame_time_csv(&mut path_guard, &frame_timings)?;
     }
 
     // C2-β — measurement-only fire-rate of the size-gated ML-partition
@@ -1128,6 +1138,7 @@ fn run_spatial_one_pass(
     frames: &mut FrameSource,
     info: InputInfo,
     output: &str,
+    path_guard: &mut path_guard::PathGuard,
 ) -> Result<(), String> {
     let spatial = SpatialSvcConfig {
         number_spatial_layers: opts.spatial_layers,
@@ -1141,7 +1152,7 @@ fn run_spatial_one_pass(
         info.fps_num,
         info.fps_den,
     );
-    let out = std::fs::File::create(output).map_err(|e| format!("creating {output}: {e}"))?;
+    let out = path_guard.create("output")?;
     let mut writer = IvfStreamWriter::new(BufWriter::new(out), &header)
         .map_err(|e| format!("writing IVF header: {e}"))?;
     let mut total_bits = 0_u64;
@@ -1188,8 +1199,8 @@ fn run_spatial_one_pass(
     writer
         .finish()
         .map_err(|e| format!("finalizing IVF: {e}"))?;
-    if let Some(path) = opts.frame_time_csv.as_deref() {
-        write_frame_time_csv(path, &frame_timings)?;
+    if opts.frame_time_csv.is_some() {
+        write_frame_time_csv(path_guard, &frame_timings)?;
     }
 
     if opts.verbose {
@@ -1213,7 +1224,10 @@ struct FrameTiming {
     encode_ns: u128,
 }
 
-fn write_frame_time_csv(path: &str, timings: &[FrameTiming]) -> Result<(), String> {
+fn write_frame_time_csv(
+    path_guard: &mut path_guard::PathGuard,
+    timings: &[FrameTiming],
+) -> Result<(), String> {
     let mut csv = String::from("frame_index,temporal_layer_id,encode_ns\n");
     for timing in timings {
         csv.push_str(&format!(
@@ -1221,7 +1235,10 @@ fn write_frame_time_csv(path: &str, timings: &[FrameTiming]) -> Result<(), Strin
             timing.frame_index, timing.temporal_layer_id, timing.encode_ns
         ));
     }
-    std::fs::write(path, csv).map_err(|e| format!("writing {path}: {e}"))
+    path_guard
+        .create("frame-time CSV")?
+        .write_all(csv.as_bytes())
+        .map_err(|e| format!("writing frame-time CSV: {e}"))
 }
 
 /// Two-pass VBR encode path (`--passes 2`).
@@ -1241,6 +1258,7 @@ fn run_two_pass(
     fps_num: u32,
     fps_den: u32,
     output: &str,
+    path_guard: &mut path_guard::PathGuard,
 ) -> Result<(), String> {
     let views: Vec<YuvFrameRef<'_>> = frames
         .iter()
@@ -1264,7 +1282,7 @@ fn run_two_pass(
     let total_bits: u64 = encoded.iter().map(|e| u64::from(e.actual_bits)).sum();
     let packets: Vec<&[u8]> = encoded.iter().map(|e| e.data.as_slice()).collect();
     let header = IvfHeader::vp9(coded_w as u16, coded_h as u16, fps_num, fps_den);
-    let mut out = std::fs::File::create(output).map_err(|e| format!("creating {output}: {e}"))?;
+    let mut out = path_guard.create("output")?;
     write_ivf(&mut out, &header, &packets).map_err(|e| format!("writing IVF: {e}"))?;
 
     if opts.verbose {

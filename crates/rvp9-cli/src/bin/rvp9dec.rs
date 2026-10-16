@@ -9,6 +9,9 @@
 //! the `vpxdec` surface is listed by `--help` and errors with
 //! "not supported yet" if used (see `rvp9_cli::args`).
 
+#[path = "../path_guard.rs"]
+mod path_guard;
+
 use rvp9_cli::args::{self, Arg, Flag};
 use rvp9_core::bitstream::ChromaFormat;
 use rvp9_core::frame::PlaneRef;
@@ -397,6 +400,12 @@ fn run(opts: &DecOpts, positionals: &[String]) -> Result<(), String> {
         _ => return Err("expected exactly one input file".to_string()),
     };
 
+    let emit = !opts.noblit || opts.md5 != Md5Mode::Off;
+    let mut paths = vec![("input", input)];
+    if emit && let Some(output) = opts.output.as_deref() {
+        paths.push(("output", Path::new(output)));
+    }
+    let mut path_guard = path_guard::PathGuard::new(&paths)?;
     let mut packets =
         PacketReader::open(input).map_err(|e| format!("reading {}: {e}", input.display()))?;
 
@@ -411,7 +420,6 @@ fn run(opts: &DecOpts, positionals: &[String]) -> Result<(), String> {
     // Do not open or truncate the output until a decoded frame is ready
     // to emit. Container, packet, decode, and worker-startup failures must
     // leave an existing destination untouched.
-    let emit = want_pixels || opts.md5 != Md5Mode::Off;
     let mut sink: Option<BufWriter<Box<dyn Write>>> = None;
 
     let mut decoder = match opts.threads {
@@ -497,7 +505,10 @@ fn run(opts: &DecOpts, positionals: &[String]) -> Result<(), String> {
         }
 
         if emit && sink.is_none() {
-            sink = Some(BufWriter::new(open_output(opts.output.as_deref())?));
+            sink = Some(BufWriter::new(open_output(
+                opts.output.as_deref(),
+                &mut path_guard,
+            )?));
         }
         if let Some(w) = sink.as_mut() {
             match opts.md5 {
@@ -628,10 +639,13 @@ fn visible_planes(buf: &rvp9_core::frame::Yv12Buffer) -> (Vec<u8>, Vec<u8>, Vec<
 }
 
 /// Open the output sink: a file if `path` is `Some`, else stdout.
-fn open_output(path: Option<&str>) -> Result<Box<dyn Write>, String> {
+fn open_output(
+    path: Option<&str>,
+    path_guard: &mut path_guard::PathGuard,
+) -> Result<Box<dyn Write>, String> {
     match path {
-        Some(p) => {
-            let f = std::fs::File::create(p).map_err(|e| format!("creating {p}: {e}"))?;
+        Some(_) => {
+            let f = path_guard.create("output")?;
             Ok(Box::new(f))
         }
         None => Ok(Box::new(std::io::stdout())),
