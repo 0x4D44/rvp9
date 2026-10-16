@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00088 — dump-frame-diff panics at small and partial frame edges
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Could
 - **Severity:** Low
 - **Area:** harness/dump-frame-diff
 - **Raised:** 2026-08-22T13:20:53Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261016T083030Z-646473d7
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00088-run-fix-20261016T083030Z-646473d7
-- **Owner base:** 03ea7ef78574f09861dfc2da4b03218caaf0bc8b
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-16T08:30:30Z
-- **Owner until:** 2026-10-16T12:30:30Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T13:20:53Z, raised via `deltic bugs new`)
+- **State history:** Open (2026-08-22T13:20:53Z, raised via `deltic bugs new`) -> Fixed (2026-10-16T08:40:30Z, deltic:auto role=fix run=fix-20261016T083030Z-646473d7 branch=task/bug-RVP9-BUG-KIL-00088-run-fix-20261016T083030Z-646473d7 code=bb7a759f5fb20bc7bd05f83a3e0af0fdc8c6556a gate=manual)
 
 ## Observation
 
