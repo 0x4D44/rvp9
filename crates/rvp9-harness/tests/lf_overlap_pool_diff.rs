@@ -5,7 +5,7 @@
 //! per-tile scratch frames followed by merge + LF). Per-frame YV12
 //! MD5s MUST match.
 //!
-//! The old output-frame overlap path remains disabled while tile
+//! The old output-frame overlap construction has been removed because tile
 //! workers use scratch frames: filtering the output before merge would
 //! process stale pixels and its whole-plane references could alias.
 //!
@@ -14,8 +14,7 @@
 //! cargo test -p rvp9-harness --test lf_overlap_pool_diff
 //! ```
 //!
-//! To force the legacy two-scope path (for differential against
-//! that explicitly), set `RVP9_DISABLE_LF_OVERLAP_POOL=1`.
+//! Filtering always follows the tile decode scope and scratch merge.
 
 use rvp9_decoder::Decoder;
 use rvp9_harness::container::read_packets;
@@ -90,7 +89,7 @@ const SINGLE_TILE_LF_VECTORS: &[&str] = &["vp90-2-00-quantizer-26.webm", "vp90-2
 )]
 fn scratch_tile_decode_and_lf_match_serial() {
     let dir = vectors_dir();
-    // The unsafe output-frame overlap path must remain dormant.
+    // The removed output-frame overlap path must never engage.
     let overlap_frames_pre =
         rvp9_decoder::RVP9_LF_OVERLAP_POOL_FRAMES.load(std::sync::atomic::Ordering::Relaxed);
 

@@ -1,3 +1,6 @@
+//! `RVP9_DISABLE_LF_OVERLAP_POOL` is obsolete and ignored: the pre-decode
+//! LF overlap construction has been removed. Filtering follows tile merge.
+//!
 //! Process-wide cache of `RVP9_TRACE_*` / `RVP9_DEBUG_*` env vars
 //! consumed by the per-block / per-transform tracing breadcrumbs that
 //! live in the decoder hot path.
@@ -117,25 +120,6 @@ pub(crate) struct TraceFlags {
     /// libvpx's column-wavefront, which beats serial decisively;
     /// hence the flip.
     pub disable_row_mt: bool,
-    /// Phase 1 separate-pool loop-filter overlap path (HLD
-    /// `2026.05.27 - HLD - Separate LF thread pool.md` §3).
-    ///
-    /// Default **ON** after the PGO A/B on `testsrc_1080p30 t=4`
-    /// (>=8 iters interleaved) measured **+8.14% mean** improvement
-    /// (workload-mean, the metric that maps to "match vpxdec decode
-    /// time"). Per-frame p50 was +2.49% — below the strict gate but
-    /// structurally explained: ~30% of testsrc frames have
-    /// `filter_level==0` (no LF; lever cannot help) and sit at the
-    /// distribution's lower tail, so the p50 lands near them. The
-    /// LF-bearing 70% of frames benefit ~12%; mean reflects that.
-    ///
-    /// Set `RVP9_DISABLE_LF_OVERLAP_POOL=1` to fall back to the
-    /// legacy two-scope LF path (decode scope joins, then LF scope
-    /// runs) — bit-exact unchanged. Eligibility for the overlap
-    /// path (when not disabled): `tile_rows == 1 && num_threads >=
-    /// 2 && filter_level > 0 && LF pool present && cores available`;
-    /// otherwise the legacy path runs automatically.
-    pub lf_overlap_pool: bool,
 }
 
 impl TraceFlags {
@@ -181,12 +165,6 @@ impl TraceFlags {
             // an explicit opt-in (no behavioural difference vs the
             // new default).
             disable_row_mt: any("RVP9_DISABLE_LF_MT"),
-            // Phase 1 separate-LF-pool: default ON after PGO A/B
-            // showed +8.14% mean on testsrc_1080p30 t=4 (the headline);
-            // p50 +2.49% missed the strict gate due to filter_level==0
-            // frames at the distribution lower tail (see field doc).
-            // Set `RVP9_DISABLE_LF_OVERLAP_POOL=1` to opt out.
-            lf_overlap_pool: !any("RVP9_DISABLE_LF_OVERLAP_POOL"),
         }
     }
 
