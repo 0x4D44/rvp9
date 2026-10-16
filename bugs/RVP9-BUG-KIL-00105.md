@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00105 — E12 diagnostic leaf API panics on unchecked geometry
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Could
 - **Severity:** Low
 - **Area:** encoder/e12 diagnostic API
 - **Raised:** 2026-08-22T18:32:52Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261016T080335Z-5acb068e
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00105-run-fix-20261016T080335Z-5acb068e
-- **Owner base:** fd09a17f9a99317552f5f00ddc2ac02922a24bc0
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-16T08:03:35Z
-- **Owner until:** 2026-10-16T12:03:35Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T18:32:52Z, raised via `deltic bugs new`)
+- **State history:** Open (2026-08-22T18:32:52Z, raised via `deltic bugs new`) -> Fixed (2026-10-16T08:19:55Z, deltic:auto role=fix run=fix-20261016T080335Z-5acb068e branch=task/bug-RVP9-BUG-KIL-00105-run-fix-20261016T080335Z-5acb068e code=2f2319a08e5da43791628062360ce85df9c98b06 gate=manual)
 
 ## Observation
 
