@@ -1,5 +1,7 @@
 # Final-release candidate qualification evidence
 
+Current candidate audit: [release-readiness report](../../2026.10.15%20-%20STATUS%20-%20final%20release%20readiness.md). The following initial results are historical intake evidence; later source changes require requalification. Candidate tool regressions, Miri diagnostics and Arm scalar-coverage correction are under [candidate-20261016](candidate-20261016/identity.json). Completed intake spatial data and numerical limitations are under [spatial-quality](spatial-quality/audit.md).
+
 Candidate code: `1a84f60a24e8d82e8e6454743fbb80521280df0e` (alpha.4 plus bug claim). Documentation/ledger commits on this task do not change shipped source. Native host: Apple M5 Max, aarch64-apple-darwin, Rust 1.95.0 / LLVM 22.1.2. See `macos-initial-identity.json` for exact binaries and input identities.
 
 Observed terminal results:
@@ -22,4 +24,4 @@ Observed terminal results:
 
 These are prerequisite/tooling results. Conformance, cross-decoder, quality, speed, latency and safety campaigns are not implied by passing stubbed self-tests. Pending real campaign results are recorded separately when observed.
 
-The standalone single-stream BD-rate solver remains dependent on RVP9-BUG-KIL-00107; do not accept a complete production quality claim before its fix is verified. Spatial/temporal use a separate fallible solver. The user has not authorized integration or release.
+KIL-00107 singular-fit fixes now have passing candidate regression checks. Separate numerical accuracy defect RVP9-BUG-FLU-00042 blocks trusting affected cubic measurements, and FLU-00041 affects spatial summary CSV. Arm scalar-labelled conformance does not select scalar dispatch (FLU-00043); no actual Arm scalar coverage is established. The user has not authorized integration or release.
