@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00118 — Invalid-Unicode argv panics both CLI binaries on Unix
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** cli/argument parsing
 - **Raised:** 2026-08-22T20:44:01Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261016T034349Z-5848b65e
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00118-run-fix-20261016T034349Z-5848b65e
-- **Owner base:** e07be65a40b725a2916fc385f76bd5509061b582
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-16T03:43:49Z
-- **Owner until:** 2026-10-16T07:43:49Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T20:44:01Z, raised via `deltic bugs new` model=gpt-5.6-sol@high)
+- **State history:** Open (2026-08-22T20:44:01Z, raised via `deltic bugs new` model=gpt-5.6-sol@high) -> Fixed (2026-10-16T03:51:26Z, deltic:auto role=fix run=fix-20261016T034349Z-5848b65e branch=task/bug-RVP9-BUG-KIL-00118-run-fix-20261016T034349Z-5848b65e code=2693687d89c9e9a1e9fb50946a3fda7e2f0cf934 gate=manual)
 
 ## Observation
 
