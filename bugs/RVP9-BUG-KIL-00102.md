@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00102 — Lookahead peek panics on i32 minimum index
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Could
 - **Severity:** Low
 - **Area:** encoder/lookahead API
 - **Raised:** 2026-08-22T18:32:49Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261016T072410Z-43317dc5
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00102-run-fix-20261016T072410Z-43317dc5
-- **Owner base:** a3954ad849af063b01c0c41400246e6d93c4bafb
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-16T07:24:10Z
-- **Owner until:** 2026-10-16T11:24:10Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T18:32:49Z, raised via `deltic bugs new`)
+- **State history:** Open (2026-08-22T18:32:49Z, raised via `deltic bugs new`) -> Fixed (2026-10-16T07:32:36Z, deltic:auto role=fix run=fix-20261016T072410Z-43317dc5 branch=task/bug-RVP9-BUG-KIL-00102-run-fix-20261016T072410Z-43317dc5 code=66fce968fbb9419634e58123953c870f6413acbc gate=manual)
 
 ## Observation
 
