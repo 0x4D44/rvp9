@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00121 — Two-pass encoding silently disables requested lookahead and ALTREF
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** cli/rvp9enc option contract
 - **Raised:** 2026-08-22T20:44:03Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261016T042702Z-c6486cec
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00121-run-fix-20261016T042702Z-c6486cec
-- **Owner base:** 56933ae47b660a955445086de35b067384712a42
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-16T04:27:02Z
-- **Owner until:** 2026-10-16T08:27:02Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T20:44:03Z, raised via `deltic bugs new` model=gpt-5.6-sol@high)
+- **State history:** Open (2026-08-22T20:44:03Z, raised via `deltic bugs new` model=gpt-5.6-sol@high) -> Fixed (2026-10-16T04:38:18Z, deltic:auto role=fix run=fix-20261016T042702Z-c6486cec branch=task/bug-RVP9-BUG-KIL-00121-run-fix-20261016T042702Z-c6486cec code=17d64800b1f8c8490400bbbacde486908d40adcd gate=manual)
 
 ## Observation
 
