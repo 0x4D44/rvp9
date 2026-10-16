@@ -118,6 +118,8 @@ pub struct SpatialEncoder {
     shared: SpatialSharedState,
     keyframe_interval: u32,
     access_unit_index: u32,
+    /// GOP-relative access-unit offset, always in `[0, keyframe_interval)`.
+    keyframe_phase: u32,
     poisoned: bool,
 }
 
@@ -226,6 +228,7 @@ impl SpatialEncoder {
             shared: SpatialSharedState::new(base_dimensions.0, base_dimensions.1),
             keyframe_interval,
             access_unit_index: 0,
+            keyframe_phase: 0,
             poisoned: false,
         })
     }
@@ -236,7 +239,9 @@ impl SpatialEncoder {
         &self.plan
     }
 
-    /// Number of access units successfully encoded so far.
+    /// Saturating total of successfully encoded access units, capped at
+    /// [`u32::MAX`]. Keyframe cadence advances independently after this count
+    /// reaches its cap.
     #[must_use]
     pub const fn access_unit_index(&self) -> u32 {
         self.access_unit_index
@@ -264,9 +269,7 @@ impl SpatialEncoder {
             .expect("a validated spatial plan has a top layer");
         let full = copy_tight_i420(source, top.width as usize, top.height as usize)?;
         let sources = build_layer_sources(&full, &self.plan.layers)?;
-        let key_access_unit = self
-            .access_unit_index
-            .is_multiple_of(self.keyframe_interval);
+        let key_access_unit = self.keyframe_phase == 0;
 
         let mut builder = SuperframeBuilder::new();
         let mut layers = Vec::with_capacity(self.encoders.len());
@@ -317,6 +320,11 @@ impl SpatialEncoder {
             }
         }
         self.access_unit_index = self.access_unit_index.saturating_add(1);
+        self.keyframe_phase = if self.keyframe_phase == self.keyframe_interval - 1 {
+            0
+        } else {
+            self.keyframe_phase + 1
+        };
 
         Ok(SpatialAccessUnit {
             data: builder.finish(),
@@ -987,6 +995,153 @@ mod tests {
                 );
             }
         }
+    }
+
+    fn spatial_cadence_matches_u32_saturation(gop_length: u32) -> bool {
+        let width = 128usize;
+        let height = 64usize;
+        let mut template = EncoderConfig::new(width as u32, height as u32);
+        template.target_bitrate_bps = 100_000;
+        template.speed = 8;
+        template.gop_length = gop_length;
+        let mut encoder = SpatialEncoder::new(
+            template,
+            SpatialSvcConfig {
+                number_spatial_layers: 2,
+                inter_layer_pred: InterLayerPred::On,
+            },
+        )
+        .expect("valid two-layer spatial configuration");
+        let (y, u, v) = source(width, height);
+        let view = YuvFrameRef {
+            y: &y,
+            u: &u,
+            v: &v,
+            y_stride: width,
+            u_stride: width / 2,
+            v_stride: width / 2,
+        };
+        let mut decoder = Decoder::new();
+
+        let first = encoder
+            .encode_access_unit(&view)
+            .expect("encode initial key access unit");
+        let parsed = decoder
+            .parse_packet(&first.data)
+            .expect("parse initial key access unit");
+        assert_eq!(parsed.count(), 2);
+        assert_eq!(parsed.frames()[0].header.kind, WireFrameKind::KeyFrame);
+        assert!(matches!(
+            parsed.frames()[1].header.kind,
+            WireFrameKind::InterFrame {
+                refresh_frame_flags: 0x02,
+                ref_frame_indices: [0, 1, 0],
+                ..
+            }
+        ));
+        for component in parsed.frames() {
+            decoder
+                .decode_frame(component)
+                .expect("decode initial key access unit");
+        }
+
+        // Keep the real phase established by the initial key access unit
+        // while moving its legacy public total counter near MAX.
+        let starting_total = u32::MAX - ((u32::MAX - 1) % gop_length);
+        encoder.access_unit_index = starting_total;
+        let mut key_access_units_after_saturation = 0;
+        let mut cadence_matches = true;
+        for encoded_ordinal in 0..gop_length * 3 {
+            let expected_phase = ((u64::from(starting_total) + u64::from(encoded_ordinal))
+                % u64::from(gop_length)) as u32;
+            let expect_key_access_unit = expected_phase == 0;
+            let total_before_encode = encoder.access_unit_index();
+            let access_unit = encoder
+                .encode_access_unit(&view)
+                .expect("encode cadence fixture access unit");
+            let expected_total = starting_total.saturating_add(encoded_ordinal + 1);
+            assert_eq!(encoder.access_unit_index(), expected_total);
+            if total_before_encode == u32::MAX && expect_key_access_unit {
+                key_access_units_after_saturation += 1;
+            }
+
+            let parsed = decoder
+                .parse_packet(&access_unit.data)
+                .expect("parse cadence fixture access unit");
+            assert_eq!(parsed.count(), 2);
+            for (component_index, component) in parsed.frames().iter().enumerate() {
+                let expected_dimensions = if component_index == 0 {
+                    (64, 32)
+                } else {
+                    (128, 64)
+                };
+                assert_eq!(
+                    (component.header.width, component.header.height),
+                    expected_dimensions
+                );
+                let component_matches = match (
+                    component_index,
+                    &component.header.kind,
+                    expect_key_access_unit,
+                ) {
+                    (0, WireFrameKind::KeyFrame, true) => true,
+                    (
+                        0,
+                        WireFrameKind::InterFrame {
+                            refresh_frame_flags: 0x01,
+                            ref_frame_indices: [0, 0, 0],
+                            ..
+                        },
+                        false,
+                    ) => true,
+                    (
+                        1,
+                        WireFrameKind::InterFrame {
+                            refresh_frame_flags: 0x02,
+                            ref_frame_indices: [0, 1, 0],
+                            ..
+                        },
+                        true,
+                    ) => true,
+                    (
+                        1,
+                        WireFrameKind::InterFrame {
+                            refresh_frame_flags: 0x02,
+                            ref_frame_indices: [1, 0, 1],
+                            ..
+                        },
+                        false,
+                    ) => true,
+                    _ => false,
+                };
+                cadence_matches &= component_matches;
+                decoder
+                    .decode_frame(component)
+                    .expect("decode cadence fixture component");
+            }
+        }
+
+        assert_eq!(
+            encoder.access_unit_index(),
+            u32::MAX,
+            "public total counter caps"
+        );
+        assert!(
+            key_access_units_after_saturation >= 2,
+            "spatial key access units must recur across multiple saturated GOPs"
+        );
+        cadence_matches
+    }
+
+    #[test]
+    fn cadence_survives_u32_saturation_spatial() {
+        let gop_10_matches = spatial_cadence_matches_u32_saturation(10);
+        let gop_15_matches = spatial_cadence_matches_u32_saturation(15);
+
+        assert!(
+            gop_10_matches && gop_15_matches,
+            "stateful spatial KEY and enhancement headers must follow the AU cadence at GOP lengths 10 and 15"
+        );
     }
 
     #[test]

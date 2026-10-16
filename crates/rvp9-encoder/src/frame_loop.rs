@@ -1348,7 +1348,12 @@ pub struct StreamEncoder {
     /// an 8-pixel MI row. `None` only while one synchronous encode borrows it.
     source_edge_scratch: Option<crate::buffer_pool::OwnedYuv420>,
     rate_control: RateControl,
+    /// Saturating total of successfully encoded frames. GOP scheduling uses
+    /// the independent bounded `gop_phase` below.
     frame_idx: u32,
+    /// GOP-relative frame offset, kept in `[0, gop_length)` so cadence keeps
+    /// advancing after the public total frame counter reaches `u32::MAX`.
+    gop_phase: u32,
     /// Pinned CPU6--8 refreshes realtime MV-cost tables only every eighth
     /// coded component. Spatial layers share that cadence across one encoder.
     spatial_mv_cost_cadence: SpatialMvCostCadence,
@@ -1359,10 +1364,10 @@ pub struct StreamEncoder {
     /// `refresh_frame_flags` mask, and the ARF cadence. Built once from
     /// `config.gop_length` + `config.enable_alt_ref` (the 1-pass
     /// schedule is a deterministic function of the GOP-relative offset);
-    /// consulted via `gf_group.schedule(self.frame_idx)`. Replaces the
+    /// consulted via `gf_group.schedule(self.gop_phase)`. Replaces the
     /// ad-hoc `inter_frames_since_arf` / `frames_since_golden_refresh`
     /// counters as the schedule authority — those counters' decisions
-    /// (KF at `frame_idx % gop == 0`, GOLDEN refresh every 8 inter
+    /// (KF at GOP phase 0, GOLDEN refresh every 8 inter
     /// frames, ARF at the half-GOP cadence) are now reads from this
     /// struct. TPL (A23) + 2-pass VBR consume `update_type[]` /
     /// `arf_src_offset[]` / `gf_group_size` from here in later waves.
@@ -2370,6 +2375,7 @@ impl StreamEncoder {
             )),
             rate_control,
             frame_idx: 0,
+            gop_phase: 0,
             spatial_mv_cost_cadence: SpatialMvCostCadence::default(),
             gf_group,
             // W1.5(vpxenc parity, A19): source-frame lookahead.
@@ -2588,8 +2594,9 @@ impl StreamEncoder {
         &self.pre_analysis
     }
 
-    /// Frame counter — number of frames passed to [`Self::encode_frame`]
-    /// so far.
+    /// Saturating total frame counter — the number of successfully encoded
+    /// frames, capped at [`u32::MAX`]. GOP scheduling advances independently
+    /// after this public count reaches its cap.
     #[must_use]
     pub fn frame_idx(&self) -> u32 {
         self.frame_idx
@@ -2877,19 +2884,18 @@ impl StreamEncoder {
         // `frame_idx` (one cell store; no-op when unset).
         crate::f02_oracle::set_frame_idx(self.frame_idx);
 
-        // Decide frame kind from the GOP topology schedule. Frames at
-        // `frame_idx % gop_length == 0` are keyframes (so frame 0 is
-        // always KF; with `gop_length = N`, KFs land at frames 0, N, 2N,
-        // ...). The `GfGroup` resolves this via the GOP-relative offset
-        // (`gop_offset == 0` ⇒ `KfUpdate`), replacing the prior inline
-        // `frame_idx.is_multiple_of(gop)` test. We drive KF placement
-        // from the schedule rather than the rate-controller's
+        // Decide frame kind from the GOP topology schedule. GOP phase 0 is
+        // always a keyframe; with `gop_length = N`, KFs repeat every N
+        // successfully encoded frames. The `GfGroup` resolves this via the
+        // bounded GOP-relative offset (`gop_offset == 0` ⇒ `KfUpdate`), keeping
+        // cadence independent of the saturating total frame counter. We drive
+        // KF placement from the schedule rather than the rate-controller's
         // `frames_to_key` because the user-facing contract on
         // `gop_length` is "every N frames" — the rate-controller's
         // off-by-one accounting of `frames_to_key` is fine for its
         // internal budgeting but isn't the right oracle for KF
         // placement.
-        let frame_sched = self.gf_group.schedule(self.frame_idx);
+        let frame_sched = self.gf_group.schedule(self.gop_phase);
         let frame_kind = spatial_control.map_or_else(
             || match frame_sched.update_type {
                 crate::gop::FrameUpdateType::KfUpdate => FrameKind::Key,
@@ -3362,6 +3368,11 @@ impl StreamEncoder {
             spatial_component,
         );
         self.frame_idx = self.frame_idx.saturating_add(1);
+        self.gop_phase = if self.gop_phase == self.gf_group.gop_length() - 1 {
+            0
+        } else {
+            self.gop_phase + 1
+        };
         if spatial_component {
             self.spatial_mv_cost_cadence.finish_component();
         }
@@ -4340,7 +4351,7 @@ impl StreamEncoder {
         // realtime VBR refresh while ordinary inter frames keep model-only RD.
         let is_golden_refresh = self.config.temporal_layers == 1
             && matches!(
-                self.gf_group.schedule(self.frame_idx).update_type,
+                self.gf_group.schedule(self.gop_phase).update_type,
                 crate::gop::FrameUpdateType::GfUpdate
             );
         // Pinned libvpx's post-refresh LAST-only shortcut requires a
@@ -4911,7 +4922,7 @@ impl StreamEncoder {
         // (incremented here, reset on refresh below / on KF) because the
         // ARF picker path and diagnostics still read it; the SCHEDULE,
         // not the counter, is now the refresh-flag authority.
-        let frame_sched = self.gf_group.schedule(self.frame_idx);
+        let frame_sched = self.gf_group.schedule(self.gop_phase);
         self.frames_since_golden_refresh = self.frames_since_golden_refresh.saturating_add(1);
         // A18 (SVC) — when temporal SVC is active, the layering pattern
         // (not the GfGroup golden/altref cadence) owns this frame's
@@ -13477,6 +13488,206 @@ mod tests {
         assert_eq!(enc.frame_idx(), 1);
         let _ = enc.encode_frame(&yuv_view(&y, &u, &v, 64)).unwrap();
         assert_eq!(enc.frame_idx(), 2);
+    }
+
+    fn assert_stream_cadence_survives_u32_saturation(gop_length: u32) {
+        let mut config = baseline_config();
+        config.gop_length = gop_length;
+        let mut encoder = StreamEncoder::new(config).unwrap();
+        let (y, u, v) = gradient_frame(64, 64);
+        let view = yuv_view(&y, &u, &v, 64);
+        let mut decoder = Decoder::new();
+
+        let first = encoder
+            .encode_frame(&view)
+            .expect("encode initial keyframe");
+        assert_eq!(first.frame_kind, FrameKind::Key);
+        for frame in decode_packet(&mut decoder, &first.data) {
+            decoder
+                .decode_frame(&frame)
+                .expect("decode initial keyframe");
+        }
+
+        // Preserve the actual phase established by the first encoded keyframe
+        // while moving the legacy total counter to a congruent value near MAX.
+        let starting_total = u32::MAX - ((u32::MAX - 1) % gop_length);
+        encoder.frame_idx = starting_total;
+        assert_eq!(encoder.frame_idx(), starting_total);
+
+        let mut keyframes_after_saturation = 0;
+        for encoded_ordinal in 0..gop_length * 3 {
+            let expected_phase = ((u64::from(starting_total) + u64::from(encoded_ordinal))
+                % u64::from(gop_length)) as u32;
+            let expected_schedule = encoder.gf_group.schedule(expected_phase);
+            let total_before_encode = encoder.frame_idx();
+            let packet = encoder
+                .encode_frame(&view)
+                .expect("encode cadence fixture frame");
+            let expect_key = matches!(
+                expected_schedule.update_type,
+                crate::gop::FrameUpdateType::KfUpdate
+            );
+
+            if total_before_encode == u32::MAX && expect_key {
+                keyframes_after_saturation += 1;
+            }
+            assert_eq!(
+                packet.frame_kind,
+                if expect_key {
+                    FrameKind::Key
+                } else {
+                    FrameKind::Inter
+                },
+                "GOP {gop_length}, encoded ordinal {encoded_ordinal}, phase {expected_phase}"
+            );
+
+            let frames = decode_packet(&mut decoder, &packet.data);
+            assert_eq!(frames.len(), 1, "ordinary cadence packet is one frame");
+            match (&frames[0].header.kind, expect_key) {
+                (WireFrameKind::KeyFrame, true) => {}
+                (
+                    WireFrameKind::InterFrame {
+                        refresh_frame_flags,
+                        ..
+                    },
+                    false,
+                ) => assert_eq!(
+                    *refresh_frame_flags, expected_schedule.refresh_frame_flags,
+                    "GOP {gop_length}, encoded ordinal {encoded_ordinal}, phase {expected_phase}"
+                ),
+                (kind, expected_key) => panic!(
+                    "GOP {gop_length}, encoded ordinal {encoded_ordinal}, phase {expected_phase}: wire kind {kind:?} disagrees with expected key={expected_key}"
+                ),
+            }
+            decoder
+                .decode_frame(&frames[0])
+                .expect("decode cadence fixture frame");
+
+            let expected_total = starting_total.saturating_add(encoded_ordinal + 1);
+            assert_eq!(encoder.frame_idx(), expected_total);
+        }
+
+        assert_eq!(encoder.frame_idx(), u32::MAX, "public total counter caps");
+        assert!(
+            keyframes_after_saturation >= 2,
+            "GOP {gop_length} must keep keyframe cadence through multiple saturated GOPs"
+        );
+    }
+
+    #[test]
+    fn cadence_survives_u32_saturation_gop_10() {
+        assert_stream_cadence_survives_u32_saturation(10);
+    }
+
+    #[test]
+    fn cadence_survives_u32_saturation_gop_15() {
+        assert_stream_cadence_survives_u32_saturation(15);
+    }
+
+    #[test]
+    fn cadence_survives_u32_saturation_altref() {
+        let gop_length = 15;
+        let mut config = baseline_config();
+        config.gop_length = gop_length;
+        config.enable_alt_ref = true;
+        config.lag_in_frames = 2;
+        let mut encoder = StreamEncoder::new(config).unwrap();
+        let (y, u, v) = gradient_frame(64, 64);
+        let view = yuv_view(&y, &u, &v, 64);
+        let mut decoder = Decoder::new();
+
+        assert!(
+            encoder
+                .encode_frame_delayed(&view)
+                .expect("queue initial keyframe")
+                .is_none()
+        );
+        let first = encoder
+            .encode_frame_delayed(&view)
+            .expect("encode initial keyframe")
+            .expect("lagged encoder emits after one future frame");
+        assert_eq!(first.frame_kind, FrameKind::Key);
+        for frame in decode_packet(&mut decoder, &first.data) {
+            decoder
+                .decode_frame(&frame)
+                .expect("decode initial keyframe");
+        }
+
+        let starting_total = u32::MAX - ((u32::MAX - 1) % gop_length);
+        encoder.frame_idx = starting_total;
+        let mut saw_saturated_arf = false;
+        for encoded_ordinal in 0..(gop_length * 2 + 8) {
+            let expected_phase = ((u64::from(starting_total) + u64::from(encoded_ordinal))
+                % u64::from(gop_length)) as u32;
+            let expected_schedule = encoder.gf_group.schedule(expected_phase);
+            let total_before_encode = encoder.frame_idx();
+            let packet = encoder
+                .encode_frame_delayed(&view)
+                .expect("encode cadence fixture frame")
+                .expect("primed lagged encoder emits one frame");
+            let frames = decode_packet(&mut decoder, &packet.data);
+            let expected_count = if expected_schedule.arf_before { 2 } else { 1 };
+            assert_eq!(
+                frames.len(),
+                expected_count,
+                "GOP {gop_length}, encoded ordinal {encoded_ordinal}, phase {expected_phase}"
+            );
+
+            let mut visible_index = 0;
+            if expected_schedule.arf_before {
+                assert!(!frames[0].header.show_frame, "ALTREF is non-show");
+                assert!(matches!(
+                    frames[0].header.kind,
+                    WireFrameKind::InterFrame {
+                        refresh_frame_flags: 0x04,
+                        ..
+                    }
+                ));
+                saw_saturated_arf |= total_before_encode == u32::MAX;
+                visible_index = 1;
+            }
+
+            let expect_key = matches!(
+                expected_schedule.update_type,
+                crate::gop::FrameUpdateType::KfUpdate
+            );
+            assert_eq!(
+                packet.frame_kind,
+                if expect_key {
+                    FrameKind::Key
+                } else {
+                    FrameKind::Inter
+                },
+                "GOP {gop_length}, encoded ordinal {encoded_ordinal}, phase {expected_phase}"
+            );
+            assert!(frames[visible_index].header.show_frame);
+            match (&frames[visible_index].header.kind, expect_key) {
+                (WireFrameKind::KeyFrame, true) => {}
+                (
+                    WireFrameKind::InterFrame {
+                        refresh_frame_flags,
+                        ..
+                    },
+                    false,
+                ) => assert_eq!(
+                    *refresh_frame_flags, expected_schedule.refresh_frame_flags,
+                    "GOP {gop_length}, encoded ordinal {encoded_ordinal}, phase {expected_phase}"
+                ),
+                (kind, expected_key) => panic!(
+                    "GOP {gop_length}, encoded ordinal {encoded_ordinal}, phase {expected_phase}: visible wire kind {kind:?} disagrees with expected key={expected_key}"
+                ),
+            }
+            for frame in frames {
+                decoder
+                    .decode_frame(&frame)
+                    .expect("decode cadence fixture packet");
+            }
+        }
+        assert!(
+            saw_saturated_arf,
+            "expected ALTREF at GOP offset gf_interval + 1"
+        );
+        assert_eq!(encoder.frame_idx(), u32::MAX, "public total counter caps");
     }
 
     #[test]
