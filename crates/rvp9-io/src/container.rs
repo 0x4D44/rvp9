@@ -699,10 +699,10 @@ fn stream_header_error(error: io::Error, eof_message: &'static str) -> Container
 fn stream_payload_end(
     payload_start: u64,
     size: u64,
-    size_len: usize,
+    unknown_size: bool,
     parent_end: u64,
 ) -> Result<u64, ContainerError> {
-    let payload_end = if is_unknown_vint(size, size_len) {
+    let payload_end = if unknown_size {
         parent_end
     } else {
         payload_start
@@ -741,8 +741,9 @@ fn find_vp9_video_track_stream(
         }
         let id = read_stream_ebml_id(file)?;
         let (size, size_len) = read_stream_ebml_vint(file)?;
+        let unknown_size = validate_element_size(id, size, size_len)?;
         let payload_start = file.stream_position()?;
-        let payload_end = stream_payload_end(payload_start, size, size_len, level.end)?;
+        let payload_end = stream_payload_end(payload_start, size, unknown_size, level.end)?;
 
         match id {
             ebml_id::EBML | ebml_id::SEGMENT | ebml_id::TRACKS => {
@@ -759,9 +760,6 @@ fn find_vp9_video_track_stream(
                 });
             }
             ebml_id::TRACK_ENTRY if level.inside_tracks => {
-                if is_unknown_vint(size, size_len) {
-                    return Err(ContainerError::BadEbml("unknown-size TrackEntry"));
-                }
                 if let Some(track) = scan_vp9_track_entry(file, payload_end)? {
                     return Ok(track);
                 }
@@ -785,11 +783,13 @@ fn scan_vp9_track_entry(
     while file.stream_position()? < end {
         let id = read_stream_ebml_id(file)?;
         let (size, size_len) = read_stream_ebml_vint(file)?;
-        if is_unknown_vint(size, size_len) {
+        let unknown_size = validate_element_size(id, size, size_len)
+            .map_err(|_| ContainerError::BadEbml("unknown-size TrackEntry child"))?;
+        if unknown_size {
             return Err(ContainerError::BadEbml("unknown-size TrackEntry child"));
         }
         let payload_start = file.stream_position()?;
-        let payload_end = stream_payload_end(payload_start, size, size_len, end)?;
+        let payload_end = stream_payload_end(payload_start, size, unknown_size, end)?;
         match id {
             ebml_id::TRACK_NUMBER | ebml_id::TRACK_TYPE => {
                 if size == 0 || size > 8 {
@@ -845,10 +845,10 @@ impl WebmPacketReader {
                 continue;
             }
             let (size, size_len) = read_stream_ebml_vint(&mut self.file)?;
+            let unknown_size = validate_element_size(id, size, size_len)?;
             let payload_start = self.file.stream_position()?;
-            let payload_end = stream_payload_end(payload_start, size, size_len, level.end)?;
+            let payload_end = stream_payload_end(payload_start, size, unknown_size, level.end)?;
 
-            let unknown_size = is_unknown_vint(size, size_len);
             match id {
                 ebml_id::EBML | ebml_id::SEGMENT => {
                     self.push_level(
@@ -1041,8 +1041,9 @@ fn find_vp9_video_track(data: &[u8]) -> Result<u64, ContainerError> {
             pos += id_len;
             let (size, size_len) = read_ebml_vint(data, pos)?;
             pos += size_len;
+            let unknown_size = validate_element_size(id, size, size_len)?;
 
-            let payload_size = if is_unknown_vint(size, size_len) {
+            let payload_size = if unknown_size {
                 end - pos
             } else {
                 usize::try_from(size)
@@ -1087,7 +1088,9 @@ fn parse_vp9_track_entry(
         pos += id_len;
         let (size, size_len) = read_ebml_vint(data, pos)?;
         pos += size_len;
-        if is_unknown_vint(size, size_len) {
+        let unknown_size = validate_element_size(id, size, size_len)
+            .map_err(|_| ContainerError::BadEbml("unknown-size TrackEntry child"))?;
+        if unknown_size {
             return Err(ContainerError::BadEbml("unknown-size TrackEntry child"));
         }
         let payload_size = usize::try_from(size)
@@ -1163,8 +1166,8 @@ fn walk_ebml(
 
         // The parent end bounds unknown-sized masters, but their schema
         // context can terminate them earlier at a sibling header.
-        let unknown = is_unknown_vint(size, size_len);
-        let payload_size = if unknown {
+        let unknown_size = validate_element_size(id, size, size_len)?;
+        let payload_size = if unknown_size {
             end.saturating_sub(pos)
         } else {
             usize::try_from(size).map_err(|_| ContainerError::BadEbml("vint too large"))?
@@ -1185,7 +1188,7 @@ fn walk_ebml(
                     pos,
                     payload_end,
                     out,
-                    context.child(id, unknown, false),
+                    context.child(id, unknown_size, false),
                     video_track,
                     depth + 1,
                 )?;
@@ -1196,7 +1199,7 @@ fn walk_ebml(
                     pos,
                     payload_end,
                     out,
-                    context.child(id, unknown, true),
+                    context.child(id, unknown_size, true),
                     video_track,
                     depth + 1,
                 )?;
@@ -1215,7 +1218,7 @@ fn walk_ebml(
                     pos,
                     payload_end,
                     out,
-                    context.child(id, unknown, true),
+                    context.child(id, unknown_size, true),
                     video_track,
                     depth + 1,
                 )?;
@@ -1246,6 +1249,19 @@ fn is_unknown_vint(value: u64, size_len: usize) -> bool {
         (1u64 << bits) - 1
     };
     value == mask
+}
+
+fn validate_element_size(id: u32, value: u64, size_len: usize) -> Result<bool, ContainerError> {
+    let unknown_size = is_unknown_vint(value, size_len);
+    if unknown_size && !matches!(id, ebml_id::SEGMENT | ebml_id::CLUSTER) {
+        let message = if id == ebml_id::TRACK_ENTRY {
+            "unknown-size TrackEntry"
+        } else {
+            "unknown-size marker is not allowed for this element ID"
+        };
+        return Err(ContainerError::BadEbml(message));
+    }
+    Ok(unknown_size)
 }
 
 /// Parse one Block / SimpleBlock payload. The first 3+ bytes are

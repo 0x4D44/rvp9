@@ -389,11 +389,20 @@ fn ebml_elt(id_bytes: &[u8], size: u64, payload: &[u8]) -> Vec<u8> {
     buf
 }
 
-fn tracks(track_number: u8, track_type: u8, codec_id: &[u8]) -> Vec<u8> {
+fn vp9_track_entry(track_number: u8, track_type: u8, codec_id: &[u8]) -> Vec<u8> {
+    let entry_payload = vp9_track_entry_payload(track_number, track_type, codec_id);
+    ebml_elt(&[0xAE], entry_payload.len() as u64, &entry_payload)
+}
+
+fn vp9_track_entry_payload(track_number: u8, track_type: u8, codec_id: &[u8]) -> Vec<u8> {
     let mut entry_payload = ebml_elt(&[0xD7], 1, &[track_number]);
     entry_payload.extend_from_slice(&ebml_elt(&[0x83], 1, &[track_type]));
     entry_payload.extend_from_slice(&ebml_elt(&[0x86], codec_id.len() as u64, codec_id));
-    let entry = ebml_elt(&[0xAE], entry_payload.len() as u64, &entry_payload);
+    entry_payload
+}
+
+fn tracks(track_number: u8, track_type: u8, codec_id: &[u8]) -> Vec<u8> {
+    let entry = vp9_track_entry(track_number, track_type, codec_id);
     ebml_elt(&[0x16, 0x54, 0xAE, 0x6B], entry.len() as u64, &entry)
 }
 
@@ -405,6 +414,49 @@ fn with_vp9_track(mut body: Vec<u8>) -> Vec<u8> {
     let mut webm = vp9_tracks(1);
     webm.append(&mut body);
     webm
+}
+
+fn unknown_size_elt(id_bytes: &[u8], width: usize, payload: &[u8]) -> Vec<u8> {
+    let mut buf = Vec::new();
+    buf.extend_from_slice(id_bytes);
+    match width {
+        1 => buf.push(0xFF),
+        8 => buf.extend_from_slice(&[0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]),
+        _ => panic!("unsupported unknown-size vint width {width}"),
+    }
+    buf.extend_from_slice(payload);
+    buf
+}
+
+fn read_webm_packet_bytes(data: &[u8]) -> Result<Vec<Vec<u8>>, ContainerError> {
+    read_webm_packets(data).map(|ranges| {
+        ranges
+            .iter()
+            .map(|range| range.slice(data).to_vec())
+            .collect()
+    })
+}
+
+fn read_webm_packet_bytes_streaming(
+    data: &[u8],
+    stem: &str,
+) -> Result<Vec<Vec<u8>>, ContainerError> {
+    let path = unique_temp_path(stem, "webm");
+    std::fs::write(&path, data).expect("write WebM fixture");
+    let result = (|| {
+        let mut reader = PacketReader::open(&path)?;
+        let mut packets = Vec::new();
+        while let Some(packet) = reader.next_packet()? {
+            packets.push(packet);
+        }
+        Ok(packets)
+    })();
+    std::fs::remove_file(path).expect("remove WebM fixture");
+    result
+}
+
+fn unknown_size_error(result: &Result<Vec<Vec<u8>>, ContainerError>) -> bool {
+    matches!(result, Err(ContainerError::BadEbml(message)) if message.contains("unknown-size"))
 }
 
 #[test]
@@ -783,6 +835,250 @@ fn cluster_segment(body: &[u8], unknown: bool) -> Vec<u8> {
     } else {
         ebml_elt(&[0x18, 0x53, 0x80, 0x67], payload.len() as u64, &payload)
     }
+}
+
+fn unexpected_unknown_size_results(data: &[u8], stem: &str) -> Option<String> {
+    let memory = read_webm_packet_bytes(data);
+    let streaming = read_webm_packet_bytes_streaming(data, stem);
+    let memory_rejected = unknown_size_error(&memory);
+    let streaming_rejected = unknown_size_error(&streaming);
+    (!memory_rejected || !streaming_rejected)
+        .then(|| format!("{stem}: memory={memory:?}, streaming={streaming:?}"))
+}
+
+#[test]
+fn webm_unknown_size_block_leaves_are_rejected_by_both_readers() {
+    let mut unexpected = Vec::new();
+    for width in [1, 8] {
+        for id in [&[0xA3][..], &[0xA1][..]] {
+            let mut block_payload = vec![0x81, 0, 0, 0];
+            block_payload.extend_from_slice(b"unknown-block-payload");
+            let mut cluster_payload = Vec::new();
+            if id == [0xA1] {
+                let mut group_payload = unknown_size_elt(id, width, &block_payload);
+                group_payload.extend_from_slice(&ebml_elt(&[0xFB], 1, &[0]));
+                cluster_payload.extend_from_slice(&ebml_elt(
+                    &[0xA0],
+                    group_payload.len() as u64,
+                    &group_payload,
+                ));
+            } else {
+                cluster_payload.extend_from_slice(&unknown_size_elt(id, width, &block_payload));
+                let sibling = ebml_elt(&[0xA3], 5, &[0x81, 0, 0, 0, 0x5A]);
+                cluster_payload.extend_from_slice(&sibling);
+            }
+            let cluster = ebml_elt(
+                &[0x1F, 0x43, 0xB6, 0x75],
+                cluster_payload.len() as u64,
+                &cluster_payload,
+            );
+            let mut segment_payload = vp9_tracks(1);
+            segment_payload.extend_from_slice(&cluster);
+            let webm = ebml_elt(
+                &[0x18, 0x53, 0x80, 0x67],
+                segment_payload.len() as u64,
+                &segment_payload,
+            );
+            let kind = if id == [0xA3] { "simple" } else { "block" };
+            if let Some(error) =
+                unexpected_unknown_size_results(&webm, &format!("unknown_{kind}_width_{width}"))
+            {
+                unexpected.push(error);
+            }
+        }
+    }
+    assert!(
+        unexpected.is_empty(),
+        "accepted unknown-size blocks: {unexpected:#?}"
+    );
+}
+
+#[test]
+fn webm_unknown_size_track_entry_is_rejected_by_both_readers() {
+    let mut unexpected = Vec::new();
+    for width in [1, 8] {
+        let entry_payload = vp9_track_entry_payload(1, 1, b"V_VP9");
+        let entry = unknown_size_elt(&[0xAE], width, &entry_payload);
+        let tracks = ebml_elt(&[0x16, 0x54, 0xAE, 0x6B], entry.len() as u64, &entry);
+        let cluster_payload = test_block(7);
+        let cluster = ebml_elt(
+            &[0x1F, 0x43, 0xB6, 0x75],
+            cluster_payload.len() as u64,
+            &cluster_payload,
+        );
+        let mut segment_payload = tracks;
+        segment_payload.extend_from_slice(&cluster);
+        let webm = ebml_elt(
+            &[0x18, 0x53, 0x80, 0x67],
+            segment_payload.len() as u64,
+            &segment_payload,
+        );
+        if let Some(error) =
+            unexpected_unknown_size_results(&webm, &format!("unknown_track_entry_width_{width}"))
+        {
+            unexpected.push(error);
+        }
+    }
+    assert!(
+        unexpected.is_empty(),
+        "accepted unknown-size TrackEntry: {unexpected:#?}"
+    );
+}
+
+#[test]
+fn webm_unknown_size_forbidden_element_ids_are_rejected_by_both_readers() {
+    let mut unexpected = Vec::new();
+    for width in [1, 8] {
+        let mut ebml_contents = vp9_tracks(1);
+        let cluster_payload = test_block(1);
+        let cluster = ebml_elt(
+            &[0x1F, 0x43, 0xB6, 0x75],
+            cluster_payload.len() as u64,
+            &cluster_payload,
+        );
+        ebml_contents.extend_from_slice(&cluster);
+        let ebml_header = unknown_size_elt(&[0x1A, 0x45, 0xDF, 0xA3], width, &ebml_contents);
+        if let Some(error) =
+            unexpected_unknown_size_results(&ebml_header, &format!("unknown_ebml_width_{width}"))
+        {
+            unexpected.push(error);
+        }
+
+        let entry = vp9_track_entry(1, 1, b"V_VP9");
+        let unknown_tracks = unknown_size_elt(&[0x16, 0x54, 0xAE, 0x6B], width, &entry);
+        let mut segment_payload = unknown_tracks;
+        let cluster_payload = test_block(2);
+        let cluster = ebml_elt(
+            &[0x1F, 0x43, 0xB6, 0x75],
+            cluster_payload.len() as u64,
+            &cluster_payload,
+        );
+        segment_payload.extend_from_slice(&cluster);
+        let segment = ebml_elt(
+            &[0x18, 0x53, 0x80, 0x67],
+            segment_payload.len() as u64,
+            &segment_payload,
+        );
+        if let Some(error) =
+            unexpected_unknown_size_results(&segment, &format!("unknown_tracks_width_{width}"))
+        {
+            unexpected.push(error);
+        }
+
+        let block = ebml_elt(&[0xA1], 5, &[0x81, 0, 0, 0, 0x41]);
+        let mut group_payload = block;
+        group_payload.extend_from_slice(&ebml_elt(&[0xFB], 1, &[0]));
+        let group = unknown_size_elt(&[0xA0], width, &group_payload);
+        let cluster = ebml_elt(&[0x1F, 0x43, 0xB6, 0x75], group.len() as u64, &group);
+        let mut segment_payload = vp9_tracks(1);
+        segment_payload.extend_from_slice(&cluster);
+        let segment = ebml_elt(
+            &[0x18, 0x53, 0x80, 0x67],
+            segment_payload.len() as u64,
+            &segment_payload,
+        );
+        if let Some(error) =
+            unexpected_unknown_size_results(&segment, &format!("unknown_block_group_width_{width}"))
+        {
+            unexpected.push(error);
+        }
+
+        let mut group_payload = unknown_size_elt(&[0xA1], width, &[0x81, 0, 0, 0, 0x31]);
+        group_payload.extend_from_slice(&ebml_elt(&[0xFB], 1, &[0]));
+        let group = ebml_elt(&[0xA0], group_payload.len() as u64, &group_payload);
+        let cluster = ebml_elt(&[0x1F, 0x43, 0xB6, 0x75], group.len() as u64, &group);
+        let mut segment_payload = vp9_tracks(1);
+        segment_payload.extend_from_slice(&cluster);
+        let segment = ebml_elt(
+            &[0x18, 0x53, 0x80, 0x67],
+            segment_payload.len() as u64,
+            &segment_payload,
+        );
+        if let Some(error) = unexpected_unknown_size_results(
+            &segment,
+            &format!("unknown_block_group_child_width_{width}"),
+        ) {
+            unexpected.push(error);
+        }
+
+        for (id, name) in [
+            (&[0x15, 0x49, 0xA9, 0x66][..], "info"),
+            (&[0xEC][..], "void"),
+            (&[0x80][..], "unknown_id"),
+        ] {
+            let cluster_payload = test_block(3);
+            let cluster = ebml_elt(
+                &[0x1F, 0x43, 0xB6, 0x75],
+                cluster_payload.len() as u64,
+                &cluster_payload,
+            );
+            let unknown = unknown_size_elt(id, width, &cluster);
+            let mut segment_payload = vp9_tracks(1);
+            segment_payload.extend_from_slice(&unknown);
+            let segment = ebml_elt(
+                &[0x18, 0x53, 0x80, 0x67],
+                segment_payload.len() as u64,
+                &segment_payload,
+            );
+            if let Some(error) =
+                unexpected_unknown_size_results(&segment, &format!("unknown_{name}_width_{width}"))
+            {
+                unexpected.push(error);
+            }
+        }
+    }
+    assert!(
+        unexpected.is_empty(),
+        "accepted unknown-size elements outside the allowlist: {unexpected:#?}"
+    );
+}
+
+#[test]
+fn webm_known_size_blocks_and_skipped_elements_keep_exact_packets() {
+    let track_vint_width_8 = [0x01, 0, 0, 0, 0, 0, 0, 1];
+    let mut simple_block_payload = track_vint_width_8.to_vec();
+    simple_block_payload.extend_from_slice(&[0, 0, 0]);
+    simple_block_payload.extend_from_slice(b"simple-block-frame");
+    let simple_block = ebml_elt(
+        &[0xA3],
+        simple_block_payload.len() as u64,
+        &simple_block_payload,
+    );
+
+    let mut block_payload = track_vint_width_8.to_vec();
+    block_payload.extend_from_slice(&[0, 0, 0]);
+    block_payload.extend_from_slice(b"block-frame");
+    let block = ebml_elt(&[0xA1], block_payload.len() as u64, &block_payload);
+    let block_group = ebml_elt(&[0xA0], block.len() as u64, &block);
+    let mut cluster_payload = simple_block;
+    cluster_payload.extend_from_slice(&block_group);
+    let cluster = ebml_elt(
+        &[0x1F, 0x43, 0xB6, 0x75],
+        cluster_payload.len() as u64,
+        &cluster_payload,
+    );
+
+    let mut segment_payload = vp9_tracks(1);
+    segment_payload.extend_from_slice(&ebml_elt(&[0x15, 0x49, 0xA9, 0x66], 3, b"inf"));
+    segment_payload.extend_from_slice(&ebml_elt(&[0xEC], 2, &[0xAA, 0xBB]));
+    segment_payload.extend_from_slice(&ebml_elt(&[0x80], 1, &[0xCC]));
+    segment_payload.extend_from_slice(&cluster);
+    let webm = ebml_elt(
+        &[0x18, 0x53, 0x80, 0x67],
+        segment_payload.len() as u64,
+        &segment_payload,
+    );
+    let expected = vec![b"simple-block-frame".to_vec(), b"block-frame".to_vec()];
+
+    assert_eq!(
+        read_webm_packet_bytes(&webm).expect("memory reader accepts known sizes"),
+        expected
+    );
+    assert_eq!(
+        read_webm_packet_bytes_streaming(&webm, "known_size_calibration")
+            .expect("stream reader accepts known sizes"),
+        expected
+    );
 }
 
 fn assert_cluster_packets(bytes: &[u8], expected: &[u8], streaming: bool) {
