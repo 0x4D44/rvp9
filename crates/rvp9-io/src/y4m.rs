@@ -16,7 +16,7 @@
 //! the reader (on the shared 4:2:0 format), used by `rvp9dec --y4m`.
 
 use rvp9_core::bitstream::ChromaFormat;
-use std::io::{self, Read, Write};
+use std::io::{self, BufRead, BufReader, Read, Write};
 use std::path::Path;
 
 /// Match the encoder's supported coded-dimension envelope.
@@ -24,6 +24,10 @@ const MAX_Y4M_DIMENSION: u32 = 16_384;
 
 /// Keep malformed or hostile header lines from growing memory without bound.
 const MAX_Y4M_HEADER_BYTES: usize = 4 * 1024;
+
+/// Maximum bytes read after the six-byte `FRAME ` prefix, including newline.
+/// libvpx's `j < 79` frame-parameter loop accepts the newline among these bytes.
+const MAX_Y4M_FRAME_PARAM_TAIL_BYTES: usize = 79;
 
 /// Largest supported 8-bit 4:2:0 frame: 16384 × 16384 × 3/2.
 const MAX_Y4M_FRAME_BYTES: usize = 384 * 1024 * 1024;
@@ -161,7 +165,7 @@ pub struct Y4mHeader {
 /// cropped frame at a time, so callers need not keep the full sequence in
 /// memory.
 pub struct Y4mReader {
-    file: std::fs::File,
+    file: BufReader<std::fs::File>,
     header: Y4mHeader,
     source: Yuv420Layout,
     crop: Yuv420Layout,
@@ -321,7 +325,9 @@ impl Y4mReader {
         let off_y = (source.height - crop.height) / 2;
         let body = zeroed_buffer(source.frame_bytes, "y4m frame body")?;
         Ok(Self {
-            file,
+            // parse_header uses its own temporary BufReader and seeks the File
+            // back to the logical position after the global header newline.
+            file: BufReader::new(file),
             header,
             source,
             crop,
@@ -342,8 +348,9 @@ impl Y4mReader {
     ///
     /// # Errors
     ///
-    /// Returns [`io::Error`] for malformed frame tags, truncated frame
-    /// payloads, allocation failures, and filesystem errors.
+    /// Returns [`io::Error`] for malformed frame tags, overlong frame
+    /// parameter tails, truncated frame payloads, allocation failures, and
+    /// filesystem errors.
     pub fn next_frame(&mut self) -> io::Result<Option<YuvFrameBuf>> {
         let mut frame = YuvFrameBuf::default();
         self.next_frame_into(&mut frame)
@@ -357,8 +364,9 @@ impl Y4mReader {
     ///
     /// # Errors
     ///
-    /// Returns [`io::Error`] for malformed frame tags, truncated frame
-    /// payloads, allocation failures, and filesystem errors.
+    /// Returns [`io::Error`] for malformed frame tags, overlong frame
+    /// parameter tails, truncated frame payloads, allocation failures, and
+    /// filesystem errors.
     pub fn next_frame_into(&mut self, frame: &mut YuvFrameBuf) -> io::Result<bool> {
         if self.remaining == 0 {
             return Ok(false);
@@ -383,18 +391,26 @@ impl Y4mReader {
             return Err(y4m_error(io::ErrorKind::InvalidData, "missing FRAME tag"));
         }
         if hdr_buf[5] != b'\n' {
-            let mut byte = [0u8; 1];
-            loop {
-                self.file.read_exact(&mut byte).map_err(|error| {
-                    if error.kind() == io::ErrorKind::UnexpectedEof {
-                        y4m_error(io::ErrorKind::UnexpectedEof, "EOF in FRAME params")
-                    } else {
-                        error
-                    }
-                })?;
-                if byte[0] == b'\n' {
-                    break;
-                }
+            let mut params = Vec::with_capacity(MAX_Y4M_FRAME_PARAM_TAIL_BYTES);
+            self.file
+                .by_ref()
+                .take(MAX_Y4M_FRAME_PARAM_TAIL_BYTES as u64)
+                .read_until(b'\n', &mut params)?;
+            if params.last() != Some(&b'\n') {
+                let (kind, message) = if params.len() == MAX_Y4M_FRAME_PARAM_TAIL_BYTES {
+                    (
+                        io::ErrorKind::InvalidData,
+                        format!(
+                            "FRAME params exceed {MAX_Y4M_FRAME_PARAM_TAIL_BYTES} bytes without newline"
+                        ),
+                    )
+                } else {
+                    (
+                        io::ErrorKind::UnexpectedEof,
+                        "EOF in FRAME params".to_owned(),
+                    )
+                };
+                return Err(y4m_error(kind, message));
             }
         }
         let (y_crop, u_crop, v_crop) = frame;
@@ -1010,6 +1026,94 @@ mod tests {
         let _ = std::fs::remove_file(&path);
         assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
         assert!(format!("{err}").contains("FRAME params"));
+    }
+
+    #[test]
+    fn read_cropped_rejects_overlong_frame_params_without_consuming_body() {
+        const PARAM_TAIL_LIMIT: usize = 79;
+        let header = b"YUV4MPEG2 W16 H16 F30:1 C420\n";
+        let mut bytes = header.to_vec();
+        bytes.extend_from_slice(b"FRAME ");
+        bytes.extend(std::iter::repeat_n(b'x', PARAM_TAIL_LIMIT));
+        bytes.extend_from_slice(b"\nBODY");
+        bytes.extend(std::iter::repeat_n(0x7d, 380));
+        let path = write_temp(&bytes, "frame_params_overlong");
+        let mut reader = Y4mReader::open(&path, 16, 16, 1).expect("open reader");
+        let mut frame = (vec![0xa5; 256], vec![0x5a; 64], vec![0xc3; 64]);
+        let original_frame = frame.clone();
+
+        let error = reader
+            .next_frame_into(&mut frame)
+            .expect_err("overlong FRAME params accepted");
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        // BufReader::stream_position reports the consumer position despite read-ahead.
+        assert_eq!(
+            std::io::Seek::stream_position(&mut reader.file).expect("frame cursor"),
+            (header.len() + 6 + PARAM_TAIL_LIMIT) as u64
+        );
+        assert_eq!(frame, original_frame, "error changed caller frame buffers");
+        let mut suffix = [0; 5];
+        std::io::Read::read_exact(&mut reader.file, &mut suffix).expect("read body sentinel");
+        assert_eq!(&suffix, b"\nBODY");
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn read_cropped_rejects_unterminated_frame_params_at_limit() {
+        const PARAM_TAIL_LIMIT: usize = 79;
+        let header = b"YUV4MPEG2 W16 H16 F30:1 C420\n";
+        let mut bytes = header.to_vec();
+        bytes.extend_from_slice(b"FRAME ");
+        bytes.extend(std::iter::repeat_n(b'x', PARAM_TAIL_LIMIT));
+        bytes.push(b'Z');
+        let path = write_temp(&bytes, "frame_params_unterminated");
+        let mut reader = Y4mReader::open(&path, 16, 16, 1).expect("open reader");
+        let mut frame = (vec![0xa5; 256], vec![0x5a; 64], vec![0xc3; 64]);
+        let original_frame = frame.clone();
+
+        let error = reader
+            .next_frame_into(&mut frame)
+            .expect_err("unterminated overlong FRAME params accepted");
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(
+            std::io::Seek::stream_position(&mut reader.file).expect("frame cursor"),
+            (header.len() + 6 + PARAM_TAIL_LIMIT) as u64
+        );
+        assert_eq!(frame, original_frame, "error changed caller frame buffers");
+        let mut suffix = [0; 1];
+        std::io::Read::read_exact(&mut reader.file, &mut suffix).expect("read suffix sentinel");
+        assert_eq!(suffix, [b'Z']);
+        let mut eof = [0; 1];
+        assert_eq!(
+            std::io::Read::read(&mut reader.file, &mut eof).expect("read EOF"),
+            0
+        );
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn read_cropped_accepts_frame_params_at_79_byte_boundary() {
+        const PARAM_TAIL_LIMIT: usize = 79;
+        let mut bytes = b"YUV4MPEG2 W16 H16 F30:1 C420\nFRAME ".to_vec();
+        bytes.extend(std::iter::repeat_n(b'x', PARAM_TAIL_LIMIT - 1));
+        bytes.push(b'\n');
+        bytes.extend(std::iter::repeat_n(0xa5, 256));
+        bytes.extend(std::iter::repeat_n(0x5a, 64));
+        bytes.extend(std::iter::repeat_n(0xc3, 64));
+        let path = write_temp(&bytes, "frame_params_boundary");
+        let mut reader = Y4mReader::open(&path, 16, 16, 1).expect("open reader");
+
+        let frame = reader
+            .next_frame()
+            .expect("read boundary frame")
+            .expect("boundary frame present");
+        assert_eq!(frame.0, vec![0xa5; 256]);
+        assert_eq!(frame.1, vec![0x5a; 64]);
+        assert_eq!(frame.2, vec![0xc3; 64]);
+
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]
