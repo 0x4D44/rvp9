@@ -111,10 +111,11 @@ pub fn take_snapshot() -> E12Stats {
 
 /// Prediction SSE for one `bw×bh` block at plane offset `(px, py)`,
 /// for an MV in Q3 (1/8-pel) units, against the source plane. Returns
-/// `None` if the 8-tap convolve read window would fall outside the
-/// (un-padded) reference plane — the encoder's MV-limits machinery is
-/// the border-extend equivalent, so OOB candidates are simply not
-/// reachable and are skipped by the oracle.
+/// `None` for invalid block/plane geometry, incomplete source or
+/// reference slice coverage, or when the 8-tap convolve read window
+/// would fall outside the (un-padded) reference plane. The encoder's
+/// MV-limits machinery is the border-extend equivalent, so OOB
+/// candidates are simply not reachable and are skipped by the oracle.
 #[allow(clippy::too_many_arguments)] // diagnostic helper; plane geometry is explicit
 fn pred_sse(
     src: &[u8],
@@ -129,9 +130,60 @@ fn pred_sse(
     bh: usize,
     mv: Mv,
 ) -> Option<u64> {
-    let sf = ScaleFactors::new(ref_w as u32, ref_h as u32, ref_w as u32, ref_h as u32);
-    let total_x_q4 = sf.scaled_x_q4(px as i32, mv.col);
-    let total_y_q4 = sf.scaled_y_q4(py as i32, mv.row);
+    const MAX_VP9_DIM: usize = 65_536;
+
+    if bw == 0 || bh == 0 || bw > 64 || bh > 64 {
+        return None;
+    }
+    if ref_w == 0 || ref_h == 0 || ref_w > MAX_VP9_DIM || ref_h > MAX_VP9_DIM {
+        return None;
+    }
+    if ref_stride < ref_w {
+        return None;
+    }
+
+    // Validate the complete source block before any predictor work.
+    // The last-row formula intentionally covers a tight final slice;
+    // no trailing row padding is required.
+    let src_row_end = px.checked_add(bw)?;
+    if src_row_end > src_stride {
+        return None;
+    }
+    let src_last_row = py.checked_add(bh.checked_sub(1)?)?;
+    let src_end = src_last_row
+        .checked_mul(src_stride)?
+        .checked_add(src_row_end)?;
+    if src_end > src.len() {
+        return None;
+    }
+
+    let ref_w_u32 = u32::try_from(ref_w).ok()?;
+    let ref_h_u32 = u32::try_from(ref_h).ok()?;
+    let px_i32 = i32::try_from(px).ok()?;
+    let py_i32 = i32::try_from(py).ok()?;
+
+    // ScaleFactors below is identity-scaled. Prove the Q4 operations
+    // before passing these coordinates through its narrowing i32 API.
+    let q4_scale = 1i32.checked_shl(SUBPEL_BITS as u32)?;
+    let checked_x_q4 = px_i32
+        .checked_mul(q4_scale)?
+        .checked_add(i32::from(mv.col))?;
+    let checked_y_q4 = py_i32
+        .checked_mul(q4_scale)?
+        .checked_add(i32::from(mv.row))?;
+
+    // Equal, VP9-bounded dimensions make this the identity scale. The
+    // bound is important: ScaleFactors' shared constructor narrows its
+    // shifted fixed-point numerator to i32 before division.
+    let sf = ScaleFactors::new(ref_w_u32, ref_h_u32, ref_w_u32, ref_h_u32);
+    if !sf.is_valid() || sf.is_scaled() {
+        return None;
+    }
+    let total_x_q4 = sf.scaled_x_q4(px_i32, mv.col);
+    let total_y_q4 = sf.scaled_y_q4(py_i32, mv.row);
+    if total_x_q4 != checked_x_q4 || total_y_q4 != checked_y_q4 {
+        return None;
+    }
     let int_x = total_x_q4 >> SUBPEL_BITS;
     let int_y = total_y_q4 >> SUBPEL_BITS;
     let subpel_x_q4 = total_x_q4 & SUBPEL_MASK;
@@ -140,18 +192,44 @@ fn pred_sse(
     // 8-tap halo: 3 left/top, +4 (TAPS-1) extent when sub-pel.
     let row_pre = if subpel_y_q4 != 0 { -3i32 } else { 0 };
     let col_pre = if subpel_x_q4 != 0 { -3i32 } else { 0 };
-    let win_y = int_y + row_pre;
-    let win_x = int_x + col_pre;
-    let win_h = bh as i32 + if subpel_y_q4 != 0 { 7 } else { 0 };
-    let win_w = bw as i32 + if subpel_x_q4 != 0 { 7 } else { 0 };
-    if win_x < 0 || win_y < 0 || win_x + win_w > ref_w as i32 || win_y + win_h > ref_h as i32 {
+    let win_y = int_y.checked_add(row_pre)?;
+    let win_x = int_x.checked_add(col_pre)?;
+    let win_h = i32::try_from(bh)
+        .ok()?
+        .checked_add(if subpel_y_q4 != 0 { 7 } else { 0 })?;
+    let win_w = i32::try_from(bw)
+        .ok()?
+        .checked_add(if subpel_x_q4 != 0 { 7 } else { 0 })?;
+    let win_end_x = win_x.checked_add(win_w)?;
+    let win_end_y = win_y.checked_add(win_h)?;
+    let ref_w_i32 = i32::try_from(ref_w).ok()?;
+    let ref_h_i32 = i32::try_from(ref_h).ok()?;
+    if win_x < 0 || win_y < 0 || win_end_x > ref_w_i32 || win_end_y > ref_h_i32 {
         return None;
     }
 
-    let src_base = (win_y as usize) * ref_stride + (win_x as usize);
+    // Bound the exact rows/columns the copy or convolution kernel may
+    // read. A caller may provide only the covered window, not a full
+    // ref_w × ref_h allocation.
+    let win_x_usize = usize::try_from(win_x).ok()?;
+    let win_y_usize = usize::try_from(win_y).ok()?;
+    let win_h_usize = usize::try_from(win_h).ok()?;
+    let win_w_usize = usize::try_from(win_w).ok()?;
+    let ref_base = win_y_usize
+        .checked_mul(ref_stride)?
+        .checked_add(win_x_usize)?;
+    let ref_last_row = win_y_usize.checked_add(win_h_usize.checked_sub(1)?)?;
+    let ref_end = ref_last_row
+        .checked_mul(ref_stride)?
+        .checked_add(win_x_usize)?
+        .checked_add(win_w_usize)?;
+    if ref_end > refp.len() {
+        return None;
+    }
+
     let mut pred = [0u8; 64 * 64];
     inter_predictor(
-        &refp[src_base..],
+        refp.get(ref_base..ref_end)?,
         ref_stride,
         &mut pred,
         bw, // dst_stride
@@ -166,9 +244,12 @@ fn pred_sse(
 
     let mut sse = 0u64;
     for r in 0..bh {
-        let srow = (py + r) * src_stride + px;
+        let srow = py
+            .checked_add(r)?
+            .checked_mul(src_stride)?
+            .checked_add(px)?;
         for c in 0..bw {
-            let s = i64::from(src[srow + c]);
+            let s = i64::from(*src.get(srow.checked_add(c)?)?);
             let p = i64::from(pred[r * bw + c]);
             let d = s - p;
             sse += (d * d) as u64;
@@ -251,7 +332,8 @@ fn psnr(sse: u64, px: u64) -> f64 {
 /// Record one sampled inter leaf. No-op unless enabled; only every
 /// `SAMPLE_STRIDE`-th picker-supported leaf is actually evaluated (the
 /// exhaustive grid is expensive). `rvp9_mv` is the MV rvp9's real NEWMV
-/// search returned for this leaf (Q3 units).
+/// search returned for this leaf (Q3 units). A sampled leaf with invalid
+/// block or plane geometry is skipped without accumulating statistics.
 #[allow(clippy::too_many_arguments)]
 pub fn record_leaf(
     src: &[u8],
@@ -437,6 +519,66 @@ mod tests {
         let _ = take_snapshot();
         LEAF_SEQ.with(|s| *s.borrow_mut() = 0);
         PRINTED.with(|p| *p.borrow_mut() = 0);
+    }
+
+    #[derive(Clone, Copy)]
+    struct LeafCase<'a> {
+        name: &'static str,
+        src: &'a [u8],
+        src_stride: usize,
+        refp: &'a [u8],
+        ref_stride: usize,
+        ref_w: usize,
+        ref_h: usize,
+        px: usize,
+        py: usize,
+        bw: usize,
+        bh: usize,
+        rvp9_mv: Mv,
+        newmv_raw: Mv,
+    }
+
+    impl LeafCase<'_> {
+        fn record(self) {
+            record_leaf(
+                self.src,
+                self.src_stride,
+                self.refp,
+                self.ref_stride,
+                self.ref_w,
+                self.ref_h,
+                self.px,
+                self.py,
+                self.bw,
+                self.bh,
+                self.rvp9_mv,
+                self.newmv_raw,
+            );
+        }
+    }
+
+    fn leaf_case<'a>(
+        name: &'static str,
+        src: (&'a [u8], usize),
+        reference: (&'a [u8], usize, usize, usize),
+        origin: (usize, usize),
+        block: (usize, usize),
+    ) -> LeafCase<'a> {
+        LeafCase {
+            name,
+            src: src.0,
+            src_stride: src.1,
+            refp: reference.0,
+            ref_stride: reference.1,
+            ref_w: reference.2,
+            ref_h: reference.3,
+            px: origin.0,
+            py: origin.1,
+            bw: block.0,
+            bh: block.1,
+            rvp9_mv: Mv::ZERO,
+            newmv_raw: Mv::ZERO,
+        }
     }
 
     // ===========================================================
@@ -672,6 +814,241 @@ mod tests {
     // ===========================================================
 
     #[test]
+    fn record_leaf_invalid_sampled_geometry_is_a_safe_noop() {
+        let _g = EnableGuard::acquire();
+        E12_ON.store(true, Ordering::Relaxed);
+
+        let plane = make_pattern_plane(64, 64);
+        let zeros = vec![0; 64 * 64];
+        let too_wide = vec![0; 65];
+        let too_tall = vec![0; 65];
+        let too_large = vec![0; 65 * 65];
+        let short = [0];
+        let wide_ref_stride = 70_000;
+        let wide_ref = vec![0; 23 * wide_ref_stride + 24];
+        let tall_ref_stride = 64;
+        let tall_ref = vec![0; 23 * tall_ref_stride + 24];
+        let mut cases = vec![
+            leaf_case(
+                "width above 64",
+                (&too_wide, 65),
+                (&too_wide, 65, 65, 1),
+                (0, 0),
+                (65, 1),
+            ),
+            leaf_case(
+                "height above 64",
+                (&too_tall, 1),
+                (&too_tall, 1, 1, 65),
+                (0, 0),
+                (1, 65),
+            ),
+            leaf_case(
+                "both dimensions above 64",
+                (&too_large, 65),
+                (&too_large, 65, 65, 65),
+                (0, 0),
+                (65, 65),
+            ),
+            leaf_case(
+                "zero width",
+                (&plane, 64),
+                (&plane, 64, 64, 64),
+                (16, 16),
+                (0, 8),
+            ),
+            leaf_case(
+                "zero height",
+                (&plane, 64),
+                (&plane, 64, 64, 64),
+                (16, 16),
+                (8, 0),
+            ),
+            leaf_case(
+                "short source",
+                (&short, 64),
+                (&plane, 64, 64, 64),
+                (16, 16),
+                (8, 8),
+            ),
+            leaf_case(
+                "short reference",
+                (&plane, 64),
+                (&short, 64, 64, 64),
+                (16, 16),
+                (8, 8),
+            ),
+            leaf_case(
+                "source stride smaller than block",
+                (&plane, 7),
+                (&plane, 64, 64, 64),
+                (0, 16),
+                (8, 8),
+            ),
+            leaf_case(
+                "zero source stride",
+                (&plane, 0),
+                (&plane, 64, 64, 64),
+                (0, 16),
+                (8, 8),
+            ),
+            leaf_case(
+                "reference stride smaller than width",
+                (&plane, 64),
+                (&plane, 63, 64, 64),
+                (16, 16),
+                (8, 8),
+            ),
+            leaf_case(
+                "zero reference stride",
+                (&plane, 64),
+                (&plane, 0, 64, 64),
+                (16, 16),
+                (8, 8),
+            ),
+            leaf_case(
+                "zero reference width",
+                (&zeros, 64),
+                (&zeros, 64, 0, 64),
+                (0, 0),
+                (8, 8),
+            ),
+            leaf_case(
+                "zero reference height",
+                (&zeros, 64),
+                (&zeros, 64, 64, 0),
+                (0, 0),
+                (8, 8),
+            ),
+            leaf_case(
+                "usize::MAX x offset",
+                (&zeros, 64),
+                (&zeros, 64, 64, 64),
+                (usize::MAX, 16),
+                (8, 8),
+            ),
+            leaf_case(
+                "usize::MAX y offset",
+                (&zeros, 64),
+                (&zeros, 64, 64, 64),
+                (16, usize::MAX),
+                (8, 8),
+            ),
+            leaf_case(
+                "overflowing source stride product",
+                (&zeros, usize::MAX),
+                (&zeros, 64, 64, 64),
+                (0, 2),
+                (8, 8),
+            ),
+            leaf_case(
+                "overflowing reference stride product",
+                (&zeros, 64),
+                (&zeros, usize::MAX, 64, 64),
+                (0, 2),
+                (8, 8),
+            ),
+            leaf_case(
+                "reference width above VP9 maximum",
+                (&zeros, 64),
+                (&wide_ref, wide_ref_stride, 70_000, 64),
+                (0, 0),
+                (8, 8),
+            ),
+            leaf_case(
+                "reference height above VP9 maximum",
+                (&zeros, 64),
+                (&tall_ref, tall_ref_stride, 64, 70_000),
+                (0, 0),
+                (8, 8),
+            ),
+        ];
+
+        if let Ok(converted_dim) = usize::try_from(u64::from(u32::MAX) + 65) {
+            cases.push(leaf_case(
+                "reference width must not truncate to u32",
+                (&zeros, 64),
+                (&zeros, 64, converted_dim, 64),
+                (16, 16),
+                (8, 8),
+            ));
+        }
+        if let Ok(large_offset) = usize::try_from(u64::from(u32::MAX) + 17) {
+            cases.push(leaf_case(
+                "x offset must not truncate to i32",
+                (&zeros, 64),
+                (&zeros, 64, 64, 64),
+                (large_offset, 16),
+                (8, 8),
+            ));
+            cases.push(leaf_case(
+                "y offset must not truncate to i32",
+                (&zeros, 64),
+                (&zeros, 64, 64, 64),
+                (16, large_offset),
+                (8, 8),
+            ));
+        }
+
+        let mut violations = Vec::new();
+        for case in cases {
+            reset_thread_local();
+            let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| case.record()));
+            let snap = take_snapshot();
+            if caught.is_err() || snap.n != 0 {
+                violations.push(format!(
+                    "{}: catch_unwind().is_ok()={}, accumulated n={}",
+                    case.name,
+                    caught.is_ok(),
+                    snap.n,
+                ));
+            }
+        }
+        assert!(
+            violations.is_empty(),
+            "invalid enabled sampled geometry must be a no-op without panic: {violations:?}",
+        );
+    }
+
+    #[test]
+    fn record_leaf_fractional_reference_halo_uses_slice_coverage() {
+        let _g = EnableGuard::acquire();
+        E12_ON.store(true, Ordering::Relaxed);
+        reset_thread_local();
+
+        let src = vec![0; 64 * 64];
+        // This is exactly enough for the integer 8x8 block at (16,16),
+        // but not for its 3-pixel fractional-filter halo.
+        let ref_end = (16 + 8 - 1) * 64 + 16 + 8;
+        let refp = vec![0; ref_end];
+        let fractional_mv = Mv { row: 8, col: 8 };
+        let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            record_leaf(
+                &src,
+                64,
+                &refp,
+                64,
+                64,
+                64,
+                16,
+                16,
+                8,
+                8,
+                fractional_mv,
+                fractional_mv,
+            );
+        }));
+        assert!(
+            caught.is_ok(),
+            "fractional prediction outside the actual slice window must return None",
+        );
+        let snap = take_snapshot();
+        assert_eq!(snap.n, 1, "invalid candidates fall back to the ZERO sample");
+        assert_eq!(snap.sse_rvp9, snap.sse_zero);
+        assert_eq!(snap.sse_newmv, snap.sse_rvp9);
+    }
+
+    #[test]
     fn record_leaf_no_op_when_disabled() {
         let _g = EnableGuard::acquire();
         E12_ON.store(false, Ordering::Relaxed);
@@ -697,11 +1074,44 @@ mod tests {
         E12_ON.store(true, Ordering::Relaxed);
         reset_thread_local();
 
-        let w = 64;
-        let h = 64;
-        let plane = make_pattern_plane(w, h);
+        // Exercise the largest supported leaf with distinct strides.
+        // `src` ends exactly after the final block byte, so the final
+        // row proves the checked coverage uses `last_row * stride + width`.
+        let w = 72;
+        let h = 72;
+        let visible = make_pattern_plane(w, h);
+        let ref_stride = 80;
+        let ref_len = (h - 1) * ref_stride + w;
+        let mut refp = vec![0; ref_len];
+        for y in 0..h {
+            for x in 0..w {
+                refp[y * ref_stride + x] = visible[y * w + x];
+            }
+        }
+        let (px, py, bw, bh) = (3, 3, 64, 64);
+        let src_stride = 70;
+        let src_len = (py + bh - 1) * src_stride + px + bw;
+        let mut src = vec![0; src_len];
+        for r in 0..bh {
+            for c in 0..bw {
+                src[(py + r) * src_stride + px + c] = visible[(py + r) * w + px + c];
+            }
+        }
         for _ in 0..14 {
-            record_leaf(&plane, w, &plane, w, w, h, 16, 16, 8, 8, Mv::ZERO, Mv::ZERO);
+            record_leaf(
+                &src,
+                src_stride,
+                &refp,
+                ref_stride,
+                w,
+                h,
+                px,
+                py,
+                bw,
+                bh,
+                Mv::ZERO,
+                Mv::ZERO,
+            );
         }
         let snap = take_snapshot();
         assert_eq!(snap.n, 2, "SAMPLE_STRIDE = 7 → 2 of 14 calls evaluated");
@@ -712,7 +1122,7 @@ mod tests {
         assert_eq!(snap.sse_newmv, 0);
         assert_eq!(snap.sse_oracle_fp, 0);
         assert_eq!(snap.sse_oracle, 0);
-        assert_eq!(snap.px, 2 * 8 * 8);
+        assert_eq!(snap.px, 2 * 64 * 64);
         // Oracle's best MV is ZERO → not sub-pel; psnr(0,*) = 100,
         // so beats threshold (100 - 100 = 0 < 2 dB) is NOT met.
         assert_eq!(snap.oracle_subpel, 0);
@@ -817,14 +1227,37 @@ mod tests {
         let refp = make_pattern_plane(w, h);
         let src = shifted_plane(&refp, w, h, 1, 1);
 
-        // First call — seq=0, picks it up. shipped rvp9_mv = ZERO,
-        // newmv_raw = ZERO. Oracle finds (16, 16) with SSE = 0.
-        record_leaf(&src, w, &refp, w, w, h, 16, 16, 8, 8, Mv::ZERO, Mv::ZERO);
+        // The sampled predictions exercise a valid half-pel halo, while
+        // the exhaustive oracle finds the exact integer translation.
+        let fractional_mv = Mv { row: 8, col: 8 };
+        record_leaf(
+            &src,
+            w,
+            &refp,
+            w,
+            w,
+            h,
+            16,
+            16,
+            8,
+            8,
+            fractional_mv,
+            fractional_mv,
+        );
         let snap = take_snapshot();
         assert_eq!(snap.n, 1);
         assert_eq!(snap.sse_oracle, 0, "exact-shift oracle has SSE=0");
         assert_eq!(snap.sse_oracle_fp, 0);
-        assert!(snap.sse_rvp9 > 0, "ZERO MV vs shifted source has SSE>0");
+        assert!(
+            snap.sse_rvp9 > 0,
+            "half-pel prediction differs from shifted source"
+        );
+        assert!(snap.sse_newmv > 0, "half-pel NEWMV prediction is evaluated");
+        assert_ne!(
+            snap.sse_rvp9, snap.sse_zero,
+            "valid fractional prediction must not fall back to ZERO",
+        );
+        assert_eq!(snap.sse_newmv, snap.sse_rvp9);
         assert!(snap.sse_zero > 0);
         // Oracle MV (16, 16) is integer-pel → 16 & 7 = 0 on both
         // axes, NOT sub-pel.
