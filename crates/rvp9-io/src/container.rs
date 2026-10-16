@@ -1032,46 +1032,78 @@ pub fn read_webm_packets(data: &[u8]) -> Result<Vec<PacketRange>, ContainerError
 }
 
 fn find_vp9_video_track(data: &[u8]) -> Result<u64, ContainerError> {
-    let mut containers = vec![(0usize, data.len(), false)];
-    let mut first_vp9_track = None;
+    #[derive(Clone, Copy)]
+    struct ScanLevel {
+        pos: usize,
+        end: usize,
+        inside_tracks: bool,
+    }
 
-    while let Some((mut pos, end, inside_tracks)) = containers.pop() {
-        while pos < end {
-            let (id, id_len) = read_ebml_id(data, pos)?;
-            pos += id_len;
-            let (size, size_len) = read_ebml_vint(data, pos)?;
-            pos += size_len;
-            let unknown_size = validate_element_size(id, size, size_len)?;
+    // Retain only active ancestors. Processing each child immediately also
+    // selects the first VP9 track in document order, like the streaming finder.
+    let mut levels = vec![ScanLevel {
+        pos: 0,
+        end: data.len(),
+        inside_tracks: false,
+    }];
+    while let Some(level) = levels.last().copied() {
+        let ScanLevel {
+            mut pos,
+            end,
+            inside_tracks,
+        } = level;
+        if pos >= end {
+            levels.pop();
+            continue;
+        }
+        let (id, id_len) = read_ebml_id(data, pos)?;
+        pos += id_len;
+        let (size, size_len) = read_ebml_vint(data, pos)?;
+        pos += size_len;
+        let unknown_size = validate_element_size(id, size, size_len)?;
 
-            let payload_size = if unknown_size {
-                end - pos
-            } else {
-                usize::try_from(size)
-                    .map_err(|_| ContainerError::BadEbml("element size does not fit usize"))?
-            };
-            let payload_end = pos
-                .checked_add(payload_size)
-                .ok_or(ContainerError::BadEbml("payload size overflow"))?;
-            if payload_end > end {
-                return Err(ContainerError::BadEbml(
-                    "element payload runs past parent end",
-                ));
-            }
+        let payload_size = if unknown_size {
+            end - pos
+        } else {
+            usize::try_from(size)
+                .map_err(|_| ContainerError::BadEbml("element size does not fit usize"))?
+        };
+        let payload_end = pos
+            .checked_add(payload_size)
+            .ok_or(ContainerError::BadEbml("payload size overflow"))?;
+        if payload_end > end {
+            return Err(ContainerError::BadEbml(
+                "element payload runs past parent end",
+            ));
+        }
 
-            match id {
-                ebml_id::EBML | ebml_id::SEGMENT | ebml_id::TRACKS => {
-                    containers.push((pos, payload_end, inside_tracks || id == ebml_id::TRACKS));
+        // Resume the parent after this child when its active level finishes.
+        levels.last_mut().expect("active scan level").pos = payload_end;
+        match id {
+            ebml_id::EBML | ebml_id::SEGMENT | ebml_id::TRACKS => {
+                // The root level has depth zero, so the current number of
+                // levels is the depth of the child about to be entered.
+                if levels.len() > MAX_EBML_NESTING_DEPTH {
+                    return Err(ContainerError::BadEbml(
+                        "recognized container nesting depth exceeds limit",
+                    ));
                 }
-                ebml_id::TRACK_ENTRY if inside_tracks && first_vp9_track.is_none() => {
-                    first_vp9_track = parse_vp9_track_entry(data, pos, payload_end)?;
-                }
-                _ => {}
+                levels.push(ScanLevel {
+                    pos,
+                    end: payload_end,
+                    inside_tracks: inside_tracks || id == ebml_id::TRACKS,
+                });
             }
-            pos = payload_end;
+            ebml_id::TRACK_ENTRY if inside_tracks => {
+                if let Some(track) = parse_vp9_track_entry(data, pos, payload_end)? {
+                    return Ok(track);
+                }
+            }
+            _ => {}
         }
     }
 
-    first_vp9_track.ok_or(ContainerError::BadEbml("VP9 video track not found"))
+    Err(ContainerError::BadEbml("VP9 video track not found"))
 }
 
 fn parse_vp9_track_entry(
