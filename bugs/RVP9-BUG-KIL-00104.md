@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00104 — Picker motion test passes without checking its result
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** encoder/picker tests
 - **Raised:** 2026-08-22T18:32:51Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261016T042055Z-511e51e0
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00104-run-fix-20261016T042055Z-511e51e0
-- **Owner base:** f7433569d842fe8d257ec41b8850320540425d14
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-16T04:20:55Z
-- **Owner until:** 2026-10-16T08:20:55Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T18:32:51Z, raised via `deltic bugs new`)
+- **State history:** Open (2026-08-22T18:32:51Z, raised via `deltic bugs new`) -> Fixed (2026-10-16T04:26:42Z, deltic:auto role=fix run=fix-20261016T042055Z-511e51e0 branch=task/bug-RVP9-BUG-KIL-00104-run-fix-20261016T042055Z-511e51e0 code=dc95a07da53144f8101d22bb1c80362ee8a54034 gate=manual)
 
 ## Observation
 
