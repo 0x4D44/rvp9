@@ -39,9 +39,10 @@
 //!   cargo run --release -p rvp9-bench --bin decode-throughput
 //!   cargo run --release -p rvp9-bench --bin decode-throughput -- --pinned
 //!
-//! Exit code is 0 when at least one measurement row is recorded. It is
-//! non-zero when no fixture produces a measurement or the CSV write
-//! fails. The ratchet gate remains a separate integration test.
+//! Exit code is 0 when every requested fixture produces a measurement and
+//! the CSV append succeeds. Successful rows are still recorded when one or
+//! more fixtures fail, but any failed fixture makes the exit code non-zero.
+//! The ratchet gate remains a separate integration test.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -175,6 +176,7 @@ fn main() -> ExitCode {
     println!("\nwrote {} row(s) to {}", results.len(), args.csv.display());
     if had_error {
         eprintln!("(one or more fixtures failed; see ERROR lines above)");
+        return ExitCode::FAILURE;
     }
     ExitCode::SUCCESS
 }
