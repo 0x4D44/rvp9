@@ -387,6 +387,8 @@ pub fn vpx_vector_var_sse2(reference: &[i16], source: &[i16], bwl: u32) -> i32 {
 
 #[cfg(test)]
 mod tests {
+    use crate::mv_search::int_pro_me::vpx_vector_var_scalar;
+
     use super::*;
 
     struct Lcg32(u32);
@@ -595,18 +597,6 @@ mod tests {
         }
     }
 
-    fn scalar_vector_var(reference: &[i16], source: &[i16], bwl: u32) -> i32 {
-        let width = 4usize << bwl;
-        let mut sse = 0i32;
-        let mut mean = 0i32;
-        for index in 0..width {
-            let diff = i32::from(reference[index]) - i32::from(source[index]);
-            mean += diff;
-            sse += diff * diff;
-        }
-        sse - ((mean * mean) >> (bwl + 2))
-    }
-
     #[test]
     fn vector_var_matches_scalar_random_and_extreme_projections() {
         let mut rng = Lcg32(0x5ec7_0a11);
@@ -617,7 +607,7 @@ mod tests {
                 let source: Vec<i16> = (0..width).map(|_| i16::from(rng.byte()) * 2).collect();
                 assert_eq!(
                     vpx_vector_var_sse2(&reference, &source, bwl),
-                    scalar_vector_var(&reference, &source, bwl)
+                    vpx_vector_var_scalar(&reference, &source, bwl)
                 );
             }
             for (reference_value, source_value) in [(0, 0), (0, 510), (510, 0), (510, 510)] {
@@ -625,7 +615,7 @@ mod tests {
                 let source = vec![source_value; width];
                 assert_eq!(
                     vpx_vector_var_sse2(&reference, &source, bwl),
-                    scalar_vector_var(&reference, &source, bwl)
+                    vpx_vector_var_scalar(&reference, &source, bwl)
                 );
             }
         }

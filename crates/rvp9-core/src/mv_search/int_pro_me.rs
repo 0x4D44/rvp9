@@ -338,7 +338,7 @@ fn fill_int_pro_cols(
 /// (sse: 26 bits dynamic range per libvpx comment).
 #[cfg(any(not(target_arch = "aarch64"), miri))]
 #[inline]
-fn vpx_vector_var_scalar(ref_vec: &[i16], src_vec: &[i16], bwl: u32) -> i32 {
+pub(crate) fn vpx_vector_var_scalar(ref_vec: &[i16], src_vec: &[i16], bwl: u32) -> i32 {
     let width = 4usize << bwl;
     debug_assert!(ref_vec.len() >= width);
     debug_assert!(src_vec.len() >= width);
