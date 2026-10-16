@@ -89,6 +89,18 @@ pub enum BitstreamError {
         log2_tile_rows: u8,
     },
 
+    /// A public header writer received a field value outside its valid range.
+    InvalidHeaderField {
+        /// Stable name of the header field that failed validation.
+        field: &'static str,
+        /// Value supplied by the caller.
+        value: i32,
+        /// Inclusive lower bound for the field.
+        min: i32,
+        /// Inclusive upper bound for the field.
+        max: i32,
+    },
+
     /// A public tile-buffer helper received dimensions outside VP9's
     /// `1..=64` columns and `1..=4` rows limits.
     InvalidTileDimensions {
@@ -235,6 +247,15 @@ impl fmt::Display for BitstreamError {
             } => write!(
                 f,
                 "tile grid log2(cols)={log2_tile_cols}, log2(rows)={log2_tile_rows} is invalid for mi_cols={mi_cols}"
+            ),
+            Self::InvalidHeaderField {
+                field,
+                value,
+                min,
+                max,
+            } => write!(
+                f,
+                "invalid VP9 header field {field}: {value} (expected {min}..={max})"
             ),
             Self::InvalidTileDimensions {
                 tile_cols,

@@ -65,6 +65,24 @@ pub const MI_BLOCK_SIZE_LOG2: i32 = 3;
 
 // ---------------------------------------------------------------- loop filter
 
+fn validate_header_field(
+    field: &'static str,
+    value: i32,
+    min: i32,
+    max: i32,
+) -> Result<(), BitstreamError> {
+    if (min..=max).contains(&value) {
+        Ok(())
+    } else {
+        Err(BitstreamError::InvalidHeaderField {
+            field,
+            value,
+            min,
+            max,
+        })
+    }
+}
+
 /// Parsed loop-filter parameters. Mirrors the `loopfilter` struct's
 /// header-decoded fields (`vp9_loopfilter.h`).
 #[derive(Clone, Debug, Eq, PartialEq, Default)]
@@ -131,11 +149,30 @@ pub fn parse_loopfilter(rb: &mut RawBitReader<'_>) -> Result<LoopFilterParams, B
 /// delta against the previous frame's saved value; here we use the
 /// `Option<i8>` slot semantics from [`LoopFilterParams`] directly —
 /// `Some(_)` means the writer emits a present/value pair, `None`
-/// means it emits a zero bit.
+/// means it emits a zero bit. Invalid values in emitted fields return
+/// [`BitstreamError::InvalidHeaderField`] before any bits are written.
 pub fn write_loopfilter(
     wb: &mut RawBitWriter<'_>,
     lf: &LoopFilterParams,
 ) -> Result<(), BitstreamError> {
+    validate_header_field("filter_level", i32::from(lf.filter_level), 0, 63)?;
+    validate_header_field("sharpness_level", i32::from(lf.sharpness_level), 0, 7)?;
+
+    if lf.mode_ref_delta_enabled && lf.mode_ref_delta_update {
+        for (field, delta) in [
+            ("ref_deltas[0]", lf.ref_deltas[0]),
+            ("ref_deltas[1]", lf.ref_deltas[1]),
+            ("ref_deltas[2]", lf.ref_deltas[2]),
+            ("ref_deltas[3]", lf.ref_deltas[3]),
+            ("mode_deltas[0]", lf.mode_deltas[0]),
+            ("mode_deltas[1]", lf.mode_deltas[1]),
+        ] {
+            if let Some(delta) = delta {
+                validate_header_field(field, i32::from(delta), -63, 63)?;
+            }
+        }
+    }
+
     wb.write_literal(u32::from(lf.filter_level), 6);
     wb.write_literal(u32::from(lf.sharpness_level), 3);
 
@@ -222,7 +259,8 @@ pub fn parse_quantization(rb: &mut RawBitReader<'_>) -> Result<QuantizationParam
 
 /// Write one `delta_q` field: a present bit, then if the delta is
 /// non-zero a signed 4-bit value. Mirrors libvpx `write_delta_q`
-/// (`vp9_bitstream.c:741-749`).
+/// (`vp9_bitstream.c:741-749`). The caller validates all delta fields
+/// before writing any part of the quantization block.
 fn write_delta_q(wb: &mut RawBitWriter<'_>, delta_q: i8) {
     if delta_q != 0 {
         wb.write_bit(1);
@@ -233,11 +271,16 @@ fn write_delta_q(wb: &mut RawBitWriter<'_>, delta_q: i8) {
 }
 
 /// Encoder mirror of [`parse_quantization`]. Mirrors libvpx
-/// `encode_quantization` (`vp9_bitstream.c:751-757`).
+/// `encode_quantization` (`vp9_bitstream.c:751-757`). Invalid deltas
+/// return [`BitstreamError::InvalidHeaderField`] before any bits are written.
 pub fn write_quantization(
     wb: &mut RawBitWriter<'_>,
     q: &QuantizationParams,
 ) -> Result<(), BitstreamError> {
+    validate_header_field("y_dc_delta_q", i32::from(q.y_dc_delta_q), -15, 15)?;
+    validate_header_field("uv_dc_delta_q", i32::from(q.uv_dc_delta_q), -15, 15)?;
+    validate_header_field("uv_ac_delta_q", i32::from(q.uv_ac_delta_q), -15, 15)?;
+
     wb.write_literal(u32::from(q.base_qindex), QINDEX_BITS);
     write_delta_q(wb, q.y_dc_delta_q);
     write_delta_q(wb, q.uv_dc_delta_q);
@@ -859,6 +902,146 @@ mod tests {
         assert_eq!(&got, params);
     }
 
+    fn assert_invalid_header_write(
+        write: impl FnOnce(&mut RawBitWriter<'_>) -> Result<(), BitstreamError>,
+        expected_error: BitstreamError,
+    ) {
+        let mut buf = [0u8; 8];
+        let expected_buf = [0b1010_1000, 0, 0, 0, 0, 0, 0, 0];
+        let (err, offset_before, offset_after) = {
+            let mut writer = RawBitWriter::new(&mut buf);
+            writer.write_literal(0b10101, 5);
+            let offset_before = writer.bit_offset();
+            let err = write(&mut writer).expect_err("invalid header field must fail");
+            let offset_after = writer.bit_offset();
+            assert!(!writer.has_error(), "validation must not poison the writer");
+            (err, offset_before, offset_after)
+        };
+
+        assert_eq!(err, expected_error);
+        assert_eq!(offset_before, 5);
+        assert_eq!(
+            offset_after, offset_before,
+            "validation must not write bits"
+        );
+        assert_eq!(
+            buf, expected_buf,
+            "validation must preserve the prefix buffer"
+        );
+    }
+
+    #[test]
+    fn write_loopfilter_rejects_invalid_fields_before_writing() {
+        for value in [64, 255] {
+            let params = LoopFilterParams {
+                filter_level: value,
+                ..Default::default()
+            };
+            assert_invalid_header_write(
+                |writer| write_loopfilter(writer, &params),
+                BitstreamError::InvalidHeaderField {
+                    field: "filter_level",
+                    value: i32::from(value),
+                    min: 0,
+                    max: 63,
+                },
+            );
+        }
+
+        for value in [8, 255] {
+            let params = LoopFilterParams {
+                sharpness_level: value,
+                ..Default::default()
+            };
+            assert_invalid_header_write(
+                |writer| write_loopfilter(writer, &params),
+                BitstreamError::InvalidHeaderField {
+                    field: "sharpness_level",
+                    value: i32::from(value),
+                    min: 0,
+                    max: 7,
+                },
+            );
+        }
+
+        let values = [-64, 64, i8::MIN, i8::MAX];
+        let ref_fields = [
+            "ref_deltas[0]",
+            "ref_deltas[1]",
+            "ref_deltas[2]",
+            "ref_deltas[3]",
+        ];
+        for (slot, field) in ref_fields.into_iter().enumerate() {
+            for value in values {
+                let mut params = LoopFilterParams {
+                    mode_ref_delta_enabled: true,
+                    mode_ref_delta_update: true,
+                    ref_deltas: [Some(0); MAX_REF_LF_DELTAS],
+                    mode_deltas: [Some(0); MAX_MODE_LF_DELTAS],
+                    ..Default::default()
+                };
+                params.ref_deltas[slot] = Some(value);
+                assert_invalid_header_write(
+                    |writer| write_loopfilter(writer, &params),
+                    BitstreamError::InvalidHeaderField {
+                        field,
+                        value: i32::from(value),
+                        min: -63,
+                        max: 63,
+                    },
+                );
+            }
+        }
+
+        let mode_fields = ["mode_deltas[0]", "mode_deltas[1]"];
+        for (slot, field) in mode_fields.into_iter().enumerate() {
+            for value in values {
+                let mut params = LoopFilterParams {
+                    mode_ref_delta_enabled: true,
+                    mode_ref_delta_update: true,
+                    ref_deltas: [Some(0); MAX_REF_LF_DELTAS],
+                    mode_deltas: [Some(0); MAX_MODE_LF_DELTAS],
+                    ..Default::default()
+                };
+                params.mode_deltas[slot] = Some(value);
+                assert_invalid_header_write(
+                    |writer| write_loopfilter(writer, &params),
+                    BitstreamError::InvalidHeaderField {
+                        field,
+                        value: i32::from(value),
+                        min: -63,
+                        max: 63,
+                    },
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn write_loopfilter_ignores_invalid_deltas_when_they_are_not_emitted() {
+        for (enabled, update) in [(false, false), (false, true), (true, false)] {
+            let params = LoopFilterParams {
+                mode_ref_delta_enabled: enabled,
+                mode_ref_delta_update: update,
+                ref_deltas: [Some(i8::MIN), Some(i8::MAX), Some(-64), Some(64)],
+                mode_deltas: [Some(i8::MIN), Some(i8::MAX)],
+                ..Default::default()
+            };
+            let mut buf = [0u8; 8];
+            let n = {
+                let mut writer = RawBitWriter::new(&mut buf);
+                write_loopfilter(&mut writer, &params).unwrap();
+                writer.finish().unwrap()
+            };
+            let mut reader = RawBitReader::new(&buf[..n + 1]);
+            let parsed = parse_loopfilter(&mut reader).unwrap();
+            assert_eq!(parsed.mode_ref_delta_enabled, enabled);
+            assert_eq!(parsed.mode_ref_delta_update, enabled && update);
+            assert_eq!(parsed.ref_deltas, [None; MAX_REF_LF_DELTAS]);
+            assert_eq!(parsed.mode_deltas, [None; MAX_MODE_LF_DELTAS]);
+        }
+    }
+
     #[test]
     fn write_loopfilter_all_delta_combos() {
         // Disabled.
@@ -881,7 +1064,7 @@ mod tests {
             sharpness_level: 7,
             mode_ref_delta_enabled: true,
             mode_ref_delta_update: true,
-            ref_deltas: [Some(-3), None, Some(31), Some(-31)],
+            ref_deltas: [Some(-3), None, Some(63), Some(-63)],
             mode_deltas: [None, Some(7)],
         });
         // Enabled + update with all four ref slots populated.
@@ -905,6 +1088,34 @@ mod tests {
         let mut rb = RawBitReader::new(&buf[..n + 1]);
         let got = parse_quantization(&mut rb).unwrap();
         assert_eq!(&got, params);
+    }
+
+    #[test]
+    fn write_quantization_rejects_invalid_deltas_before_writing() {
+        let values = [-16, 16, -100, 100, i8::MIN, i8::MAX];
+        for field in ["y_dc_delta_q", "uv_dc_delta_q", "uv_ac_delta_q"] {
+            for value in values {
+                let mut params = QuantizationParams {
+                    base_qindex: 255,
+                    ..Default::default()
+                };
+                match field {
+                    "y_dc_delta_q" => params.y_dc_delta_q = value,
+                    "uv_dc_delta_q" => params.uv_dc_delta_q = value,
+                    "uv_ac_delta_q" => params.uv_ac_delta_q = value,
+                    _ => unreachable!("field list is exhaustive"),
+                }
+                assert_invalid_header_write(
+                    |writer| write_quantization(writer, &params),
+                    BitstreamError::InvalidHeaderField {
+                        field,
+                        value: i32::from(value),
+                        min: -15,
+                        max: 15,
+                    },
+                );
+            }
+        }
     }
 
     #[test]
