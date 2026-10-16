@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00087 — PSNR delta summary returns non-finite statistics
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Could
 - **Severity:** Low
 - **Area:** harness/bdrate
 - **Raised:** 2026-08-22T13:20:52Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261016T074641Z-b354a429
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00087-run-fix-20261016T074641Z-b354a429
-- **Owner base:** d3c5efe0ef4b041ac55e4f1a78a5a21335223d10
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-16T07:46:41Z
-- **Owner until:** 2026-10-16T11:46:41Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T13:20:52Z, raised via `deltic bugs new`)
+- **State history:** Open (2026-08-22T13:20:52Z, raised via `deltic bugs new`) -> Fixed (2026-10-16T07:59:11Z, deltic:auto role=fix run=fix-20261016T074641Z-b354a429 branch=task/bug-RVP9-BUG-KIL-00087-run-fix-20261016T074641Z-b354a429 code=e61bd7e2be6e2971edf589a932678589ae31ac93 gate=manual)
 
 ## Observation
 
