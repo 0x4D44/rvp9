@@ -5,15 +5,15 @@
 - **Severity:** Medium
 - **Area:** encoder/stage4a validation
 - **Raised:** 2026-07-31T10:23:06Z
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
+- **Owner:** deltic:manual
+- **Owner role:** fix
+- **Owner run:** fix-20261016T051313Z-ea0592df
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KILN-00068-run-fix-20261016T051313Z-ea0592df
+- **Owner base:** 15576153dbb2b803200e9d52813d9fe5ea8ad631
 - **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner since:** 2026-10-16T05:13:13Z
+- **Owner until:** 2026-10-16T09:13:13Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
