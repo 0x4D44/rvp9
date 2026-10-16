@@ -1,6 +1,6 @@
 # RVP9-BUG-CRU-00004 — x86_64 realtime fdct8x8 pays a range check and full scalar redo; only AArch64 has the unchecked lowbd kernel
 
-- **State:** Open
+- **State:** Blocked
 - **Priority:** Could
 - **Severity:** Medium
 - **Area:** core/transforms forward
@@ -19,7 +19,7 @@
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-23T17:09:50Z, raised via `deltic bugs new` model=claude-opus-5@high)
+- **State history:** Open (2026-08-23T17:09:50Z, raised via `deltic bugs new` model=claude-opus-5@high) → Blocked (2026-10-16, Codex; Arthur decision required on the x86 lowbd output and performance contract)
 
 ## Observation
 
@@ -76,3 +76,13 @@ before/after, so treat the effort as medium rather than mechanical.
 <unfixed — raised only>
 
 ## Notes
+
+### Output and performance contract decision required (2026-10-16)
+
+Missing input: **Arthur** must choose whether to preserve exact x86 coefficients and pursue an output-preserving optimization, authorize an approximate unchecked x86 kernel subject to fresh native quality and speed gates, or explicitly accept/document the current architecture split and fallback cost. The question has been presented; no answer has been assumed. Documentation alone would not remove the checked path described in this bug.
+
+Current `forward.rs:525` still routes AArch64 lowbd calls to the unchecked NEON variant and other architectures to general `fdct8x8`. On x86, `forward_sse2.rs:103`, `:127`, and `:156` still check first-pass lanes against `[-4096, 4095]` and recompute the complete transform in scalar code on rejection. Existing tests at `forward_sse2.rs:528`, `:570`, and `:603` cover the near-boundary and fallback behavior. CRU-00001 restored diagnostic scalar routing, and CRU-00002 strengthened this guard coverage; neither removed the lowbd split.
+
+There is already a rejected implementation of the proposed unchecked x86 port: `wrk_journals/2026.09.21 - JRN - Unit 1384 x86 unchecked lowbd fdct8x8 rejected.md`, landed in `d1cd9ad0491cec4a7586fe84f47c6083e1249e1c`. Its two native paired corpus ratios were `1.000218` and `1.000033` (candidate/control), with matching IVF hashes on the screened clips. The candidate was not retained. These historical screens do not establish a material product speed gain, nor do they measure current fallback frequency or establish quality on a broader corpus. The original code-level wasted-work observation is insufficient to override that evidence or select a new output contract.
+
+The specific 8x8 divergence entries remain absent. The current public comment's “Other architectures use that implementation” refers to general `fdct8x8`; it is vague, rather than independently demonstrated to be false. Pinned libvpx has separate Arm and x86 schedules, so mirroring the Arm lowbd kernel should not be called x86 libvpx parity without a separate oracle. No source changes, codec execution, new regression proof, quality measurements, or performance measurements were performed in this decision-only pass. This bug is neither Fixed nor Closed. Reopen after Arthur supplies the policy decision.
