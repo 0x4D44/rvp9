@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00124 — noise-sensitivity silently clamps out-of-range CLI values
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Could
 - **Severity:** Low
 - **Area:** cli/rvp9enc input validation
 - **Raised:** 2026-08-22T20:44:04Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261016T054814Z-adb58265
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00124-run-fix-20261016T054814Z-adb58265
-- **Owner base:** e6a73bc3decb90ed945a026a41e4f5780ff174c2
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-16T05:48:14Z
-- **Owner until:** 2026-10-16T09:48:14Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T20:44:04Z, raised via `deltic bugs new` model=gpt-5.6-sol@high)
+- **State history:** Open (2026-08-22T20:44:04Z, raised via `deltic bugs new` model=gpt-5.6-sol@high) -> Fixed (2026-10-16T05:58:51Z, deltic:auto role=fix run=fix-20261016T054814Z-adb58265 branch=task/bug-RVP9-BUG-KIL-00124-run-fix-20261016T054814Z-adb58265 code=45238e97d0fd9863485fe8a3e23599411b8dafbd gate=manual)
 
 ## Observation
 
