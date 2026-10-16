@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00090 — F02 sidecar parser silently overwrites duplicate fields
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Could
 - **Severity:** Low
 - **Area:** harness/f02 schema
 - **Raised:** 2026-08-22T13:20:53Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261016T082026Z-135aa26a
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00090-run-fix-20261016T082026Z-135aa26a
-- **Owner base:** 09fd05e1901980145ddccae83eeee77e68a2163b
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-16T08:20:26Z
-- **Owner until:** 2026-10-16T12:20:26Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T13:20:53Z, raised via `deltic bugs new`)
+- **State history:** Open (2026-08-22T13:20:53Z, raised via `deltic bugs new`) -> Fixed (2026-10-16T08:30:00Z, deltic:auto role=fix run=fix-20261016T082026Z-135aa26a branch=task/bug-RVP9-BUG-KIL-00090-run-fix-20261016T082026Z-135aa26a code=0ef46d9c724f69c97ba73587ff1695ec371c00ef gate=manual)
 
 ## Observation
 
