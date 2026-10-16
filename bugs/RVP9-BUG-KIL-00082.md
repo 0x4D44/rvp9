@@ -35,4 +35,8 @@ Store tile-local compact rectangles and translate indices at the worker boundary
 
 ## Notes
 
+### 2026-10-16 — existing fix provenance (GPT-6.1 Sol)
+
+The accepted full-frame-per-active-worker alternative already landed in `dc19bcea3f41952f6d0a2a53b027c852a79a5aed`. Its common `parallel_tile_decode_enabled` gate bounds both intra and inter tile counts by the immutable configured worker count before either metadata pool allocates. Pool pop/return accounting preserves that bound across frames and errors. Full-frame capacities still retain historical geometry; no tile-local or measured byte bound is claimed. See [the source and regression evidence](../wrk_journals/2026.10.16%20-%20BUG%20-%20Record%20existing%20decoder%20metadata%20bound.md). State remains Open until the manual landing writer records the verified earlier fixing SHA.
+
 Confirmed by the performance and security lenses, the lead's source trace, and the standing devil's-advocate pass, which set severity to Medium because the review did not quantify an OOM threshold. This is distinct from open `RVP9-BUG-KIL-00080`: that record covers the parallel path's full-frame YUV scratch buffers and their allocation panic, while this record covers segment and MV metadata pools. The July decoder review noted these slabs as report-only; this pass supplied the missing independent verification. No allocation measurement or benchmark was run.
