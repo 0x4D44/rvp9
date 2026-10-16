@@ -6,15 +6,15 @@
 - **Area:** core/mode-decision tests
 - **Raised:** 2026-08-09T20:08:59Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20260809T224037Z-p62662-n028162000-c1
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLUX-00011-run-fix-20260809T224037Z-p62662-n028162000-c1
-- **Owner base:** 1903a7dd691bea74b60f078262eacb9ef0e4aa0e
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-08-09T22:40:37Z
-- **Owner until:** 2026-08-10T00:40:37Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
