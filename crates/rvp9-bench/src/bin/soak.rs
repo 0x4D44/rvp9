@@ -6,8 +6,8 @@
 
 //! D3 — 72-hour soak test harness (PLAN.md §Stage 5 hardening).
 //!
-//! Runs an encode → decode → optional cross-decode loop indefinitely (or
-//! for a configured duration / iteration count). Designed to surface
+//! Runs an encode → decode → optional cross-decode loop until its
+//! configured duration or iteration limit. Designed to surface
 //! rare bugs and memory growth that single-shot tests don't catch.
 //!
 //! Each iteration:
@@ -36,8 +36,9 @@
 //!     [--vpxdec D:/language/libvpx-stock/vpxdec.exe]
 //! ```
 //!
-//! Pass `--duration-secs 0` to run forever until Ctrl-C; pass
-//! `--iterations N` to stop after exactly N iterations.
+//! Pass `--duration-secs 0` to disable the time limit; this requires a
+//! positive `--iterations N` limit. A positive duration runs until time
+//! expires, optionally stopping sooner after `N` iterations.
 
 use rvp9_decoder::Decoder;
 use rvp9_encoder::{AqMode, EncoderConfig, RcMode, StreamEncoder, YuvFrameRef};
@@ -94,7 +95,8 @@ fn run_with_timeout(
 
 #[derive(Debug)]
 struct Args {
-    /// Stop after this many seconds. `0` = run forever.
+    /// Stop after this many seconds. `0` disables the time limit and requires a positive
+    /// iteration limit.
     duration_secs: u64,
     /// Hard cap on iterations. `0` = unlimited (subject to `duration_secs`).
     iterations: u64,
@@ -109,15 +111,19 @@ struct Args {
 }
 
 impl Args {
-    fn parse() -> Self {
+    fn parse() -> Result<Self, String> {
         let argv: Vec<String> = std::env::args().collect();
+        Self::parse_from(&argv)
+    }
+
+    fn parse_from(argv: &[String]) -> Result<Self, String> {
         let get = |flag: &str| -> Option<String> {
             argv.iter()
                 .position(|a| a == flag)
                 .and_then(|i| argv.get(i + 1).cloned())
         };
         let has_flag = |flag: &str| argv.iter().any(|a| a == flag);
-        Self {
+        let args = Self {
             duration_secs: get("--duration-secs")
                 .map(|s| s.parse().expect("--duration-secs u64"))
                 .unwrap_or(60),
@@ -134,7 +140,19 @@ impl Args {
             vpxdec_path: get("--vpxdec")
                 .map(PathBuf::from)
                 .unwrap_or_else(|| PathBuf::from(r"D:\language\libvpx-stock\vpxdec.exe")),
+        };
+        args.validate()?;
+        Ok(args)
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        if self.frames_per_iter == 0 {
+            return Err("--frames-per-iter must be greater than zero".to_owned());
         }
+        if self.duration_secs == 0 && self.iterations == 0 {
+            return Err("--duration-secs 0 requires a positive --iterations limit".to_owned());
+        }
+        Ok(())
     }
 }
 
@@ -332,6 +350,18 @@ fn checksum(bytes: &[u8]) -> u64 {
     h
 }
 
+fn validate_decoded_frame_count(decoded_frames: u32, expected_frames: u32) -> Result<(), String> {
+    if decoded_frames == 0 {
+        return Err("decode produced no frames".to_owned());
+    }
+    if decoded_frames != expected_frames {
+        return Err(format!(
+            "decode produced {decoded_frames} frames, expected {expected_frames}"
+        ));
+    }
+    Ok(())
+}
+
 /// Encode + decode one iteration. Returns the encoded byte count
 /// (for bitrate metrics) and a checksum of the decoded Y planes.
 ///
@@ -418,11 +448,7 @@ fn run_one_iteration(
             decoded_frames += 1;
         }
     }
-    if decoded_frames != frames_per_iter {
-        return Err(format!(
-            "decode produced {decoded_frames} frames, expected {frames_per_iter}"
-        ));
-    }
+    validate_decoded_frame_count(decoded_frames, frames_per_iter)?;
 
     // ---- Optional vpxdec cross-decode ------------------------------------
     if let Some(vpxdec) = cross_decode {
@@ -475,7 +501,13 @@ fn fmt_bytes(b: usize) -> String {
 }
 
 fn main() {
-    let args = Args::parse();
+    let args = match Args::parse() {
+        Ok(args) => args,
+        Err(reason) => {
+            eprintln!("error: {reason}");
+            std::process::exit(2);
+        }
+    };
     let cross_decode_path = if args.cross_decode {
         if !args.vpxdec_path.is_file() {
             eprintln!(
@@ -637,6 +669,77 @@ fn print_report(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn parse_args(flags: &[&str]) -> Result<Args, String> {
+        let mut argv = vec!["soak".to_owned()];
+        argv.extend(flags.iter().map(|flag| (*flag).to_owned()));
+        Args::parse_from(&argv)
+    }
+
+    #[test]
+    fn cli_rejects_zero_frames_and_unbounded_run() {
+        let zero_frames = parse_args(&["--frames-per-iter", "0"]);
+        assert!(
+            matches!(&zero_frames, Err(error) if error.contains("--frames-per-iter")),
+            "got {zero_frames:?}"
+        );
+
+        let zero_duration = parse_args(&["--duration-secs", "0"]);
+        assert!(
+            matches!(&zero_duration, Err(error) if error.contains("--iterations")),
+            "got {zero_duration:?}"
+        );
+
+        let no_bounds = parse_args(&[
+            "--duration-secs",
+            "0",
+            "--iterations",
+            "0",
+            "--frames-per-iter",
+            "1",
+        ]);
+        assert!(
+            matches!(&no_bounds, Err(error) if error.contains("--iterations")),
+            "got {no_bounds:?}"
+        );
+    }
+
+    #[test]
+    fn cli_accepts_bounded_runs_and_preserves_defaults() {
+        let duration_only = parse_args(&["--duration-secs", "5"]);
+        assert!(duration_only.is_ok(), "got {duration_only:?}");
+        let duration_only = duration_only.unwrap();
+        assert_eq!(duration_only.duration_secs, 5);
+        assert_eq!(duration_only.iterations, 0);
+
+        let iteration_only = parse_args(&["--duration-secs", "0", "--iterations", "2"]);
+        assert!(iteration_only.is_ok(), "got {iteration_only:?}");
+        let iteration_only = iteration_only.unwrap();
+        assert_eq!(iteration_only.duration_secs, 0);
+        assert_eq!(iteration_only.iterations, 2);
+
+        let defaults = parse_args(&[]);
+        assert!(defaults.is_ok(), "got {defaults:?}");
+        let defaults = defaults.unwrap();
+        assert_eq!(defaults.duration_secs, 60);
+        assert_eq!(defaults.iterations, 0);
+        assert_eq!(defaults.frames_per_iter, 30);
+    }
+
+    #[test]
+    fn empty_iteration_fails_and_single_frame_round_trips() {
+        let source = Source::SyntheticGradient(64, 64);
+        let empty = run_one_iteration(0, &source, 0, None);
+        assert!(
+            matches!(&empty, Err(error) if error == "decode produced no frames"),
+            "got {empty:?}"
+        );
+
+        let one_frame = run_one_iteration(1, &source, 1, None);
+        assert!(one_frame.is_ok(), "got {one_frame:?}");
+        let stats = one_frame.unwrap();
+        assert_eq!(stats.decoded_frames, 1);
+    }
 
     #[test]
     fn cross_decode_temp_dirs_are_isolated_and_cleaned() {
