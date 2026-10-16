@@ -27,6 +27,15 @@ Observation: `cargo test -p rvp9-core --lib mode_decision::inter::tests::s11_rt_
 
 ## Fix
 
-<unfixed — raised only>
+Already fixed on trunk by `bdb9f9a4bfe58795ea4d5bff604b375946e3883f` (`fix(core): accept unrestricted intra control (RVP9-BUG-FLUX-00011)`, 2026-08-09). The unrestricted control now accepts any valid intra mode; the active-gate DC assertion remains. This reconciliation records the original fixing commit rather than claiming a new behavior change.
 
 ## Notes
+
+2026-10-16 provenance reconciliation:
+
+- Confirmed the earlier fixing commit is an ancestor of `origin/main` and its corrected control predicate remains present.
+- Current exact test selected one test and passed. Reversing only the control assertion to its former DC/V/H restriction selected one test and failed at that assertion: `got Some(Tm)` (exit 101). The preceding active-gate DC assertion remained intact.
+- Restored the source byte for byte from the pre-proof snapshot; SHA-256 `714fdb1b41a1de1a12de280c9aca2e4de3a27168db3bc4ae873ed704256bdb93`, with no source diff. Final restored validation is recorded in the task journal.
+- Released only the expired August claim before taking a fresh claim; the old worktree was left alone. No permanent source change was needed.
+
+See [provenance and validation journal](../wrk_journals/2026.10.16%20-%20BUG%20-%20Reconcile%20unrestricted%20intra%20control%20provenance.md).
