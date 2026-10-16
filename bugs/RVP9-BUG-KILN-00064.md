@@ -1,24 +1,24 @@
 # RVP9-BUG-KILN-00064 — f02_block_oracle still shares temp files and waits unbounded for vpxenc
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** harness/f02 oracle
 - **Raised:** 2026-07-31T10:22:15Z
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261016T045505Z-b430ea0e
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KILN-00064-run-fix-20261016T045505Z-b430ea0e
-- **Owner base:** 8a412fb2810d08132e854ebfcd69ba1218708936
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-16T04:55:05Z
-- **Owner until:** 2026-10-16T08:55:05Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-07-31T10:22:15Z, raised via `deltic bugs new` model=claude-opus-5@high)
+- **State history:** Open (2026-07-31T10:22:15Z, raised via `deltic bugs new` model=claude-opus-5@high) -> Fixed (2026-10-16T05:12:51Z, deltic:auto role=fix run=fix-20261016T045505Z-b430ea0e branch=task/bug-RVP9-BUG-KILN-00064-run-fix-20261016T045505Z-b430ea0e code=84774126dc01938cc3c88a4b9e29e685ef456578 gate=manual)
 
 ## Observation
 
