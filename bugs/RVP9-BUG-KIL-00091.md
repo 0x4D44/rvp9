@@ -6,15 +6,15 @@
 - **Area:** harness/check-lld-format
 - **Raised:** 2026-08-22T13:20:53Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
+- **Owner:** deltic:manual
+- **Owner role:** fix
+- **Owner run:** fix-20261016T060707Z-0e7ce44a
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KIL-00091-run-fix-20261016T060707Z-0e7ce44a
+- **Owner base:** b4127890779d4661129c2cdfb8d44380093f2b2f
 - **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner since:** 2026-10-16T06:07:07Z
+- **Owner until:** 2026-10-16T10:07:07Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
