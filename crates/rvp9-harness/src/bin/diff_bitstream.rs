@@ -1431,6 +1431,34 @@ impl FrameContextBanks {
     }
 }
 
+/// Replay one side's Level 3 parser inputs from a preceding entry.
+/// Parser errors remain silent for prefix entries, while any bank
+/// mutations made before an error are retained. Entries without a
+/// parsed header/tail or an available compressed partition cannot be
+/// replayed and are skipped.
+fn prime_l3_entry(entry: &FrameEntry, banks: &mut FrameContextBanks) {
+    let Some(header) = entry.header.as_ref() else {
+        return;
+    };
+    if matches!(header.kind, FrameKind::ShowExistingFrame { .. }) {
+        return;
+    }
+    let Some(tail) = header.tail.as_ref() else {
+        return;
+    };
+    let Some(compressed) = slice_compressed(
+        entry.header_end,
+        tail.first_partition_size,
+        &entry.frame_bytes,
+    ) else {
+        return;
+    };
+
+    let options = options_from_header(header);
+    let idx = (tail.frame_context_idx as usize).min(FRAME_CONTEXTS - 1);
+    let _ = parse_compressed_header(compressed, &mut banks.banks[idx], options);
+}
+
 /// Run the Level 3 diff: parse the compressed header on both sides
 /// against per-side `FrameContext` banks, then diff
 /// `(tx_mode, reference_mode)` and the post-update prob tables.
@@ -1446,6 +1474,18 @@ fn level_3_diff<R: DiffReporter>(
 ) {
     let mut banks_a = FrameContextBanks::new();
     let mut banks_b = FrameContextBanks::new();
+
+    if let Some(range) = args.frame {
+        // Prime each side independently. A bad prefix on one side must
+        // not suppress usable state from the other side, and priming
+        // emits no diagnostics because only selected frames are reports.
+        for entry in a.iter().take_while(|entry| entry.packet < range.start) {
+            prime_l3_entry(entry, &mut banks_a);
+        }
+        for entry in b.iter().take_while(|entry| entry.packet < range.start) {
+            prime_l3_entry(entry, &mut banks_b);
+        }
+    }
 
     let common = a.len().min(b.len());
     for i in 0..common {
@@ -1915,13 +1955,23 @@ fn level_4_diff<R: DiffReporter, E: Write>(
         .enumerate()
     {
         let packet_no = (packet_idx as u32) + 1;
-        if !packet_in_range(packet_no, args.frame) {
-            continue;
-        }
         if let Some(cap) = args.max_frames
             && packet_no > cap
         {
             break;
+        }
+        if !packet_in_range(packet_no, args.frame) {
+            if args.frame.is_some_and(|range| packet_no < range.start) {
+                // Walk the full prefix packet on each side, including
+                // every sub-frame in a superframe. Errors are silent
+                // and isolated per decoder so one leg cannot prevent
+                // the other from acquiring its usable history.
+                prime_l4_packet(&mut decoder_a, ra.slice(a_data));
+                prime_l4_packet(&mut decoder_b, rb.slice(b_data));
+            } else if args.frame.is_some_and(|range| packet_no > range.end) {
+                break;
+            }
+            continue;
         }
 
         let bytes_a = ra.slice(a_data);
@@ -1983,6 +2033,18 @@ fn level_4_diff<R: DiffReporter, E: Write>(
                 }
             }
         }
+    }
+}
+
+/// Best-effort Level 4 state priming for one decoder and one IVF
+/// packet. A packet can contain several VP9 frames, all of which must
+/// be decoded in order to reconstruct the state before the selection.
+fn prime_l4_packet(decoder: &mut Decoder, packet: &[u8]) {
+    let Ok(frames) = decoder.parse_packet(packet) else {
+        return;
+    };
+    for frame in frames {
+        let _ = decoder.decode_frame(&frame);
     }
 }
 
@@ -2443,6 +2505,67 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    struct CapturedDivergence {
+        level: u8,
+        summary: String,
+        detail: Option<String>,
+    }
+
+    #[derive(Default)]
+    struct CaptureReporter {
+        records: Vec<CapturedDivergence>,
+    }
+
+    impl DiffReporter for CaptureReporter {
+        fn divergence(&mut self, level: u8, summary: &str, detail: Option<&str>) {
+            self.records.push(CapturedDivergence {
+                level,
+                summary: summary.to_string(),
+                detail: detail.map(str::to_string),
+            });
+        }
+
+        fn frame_ok(&mut self, _packet_idx: usize) {}
+
+        fn finish(&mut self) -> i32 {
+            0
+        }
+
+        fn had_divergence(&self) -> bool {
+            !self.records.is_empty()
+        }
+
+        fn should_stop(&self) -> bool {
+            false
+        }
+    }
+
+    fn memory_diff_args(frame: Option<FrameRange>, max_frames: Option<u32>) -> Args {
+        Args {
+            a: PathBuf::from("memory-a.ivf"),
+            b: PathBuf::from("memory-b.ivf"),
+            level: Level::N(4),
+            frame,
+            format: Format::Text,
+            verbose: Verbose::Full,
+            max_frames,
+            no_color: true,
+            exit_on_diff: false,
+        }
+    }
+
+    fn yuv_view<'a>(y: &'a [u8], uv: &'a [u8]) -> rvp9_encoder::YuvFrameRef<'a> {
+        rvp9_encoder::YuvFrameRef {
+            y,
+            u: uv,
+            v: uv,
+            y_stride: 64,
+            u_stride: 32,
+            v_stride: 32,
+        }
+    }
 
     fn argv(parts: &[&str]) -> Vec<String> {
         std::iter::once("diff-bitstream")
@@ -3348,6 +3471,192 @@ mod tests {
     // Level 3 tests
     // -------------------------------------------------------------------------
 
+    /// Test-only synthetic L3 entry. The header is parsed from a real
+    /// keyframe helper, but the compressed bytes are standalone parser
+    /// fixtures; this is not a complete valid VP9 frame.
+    fn synthetic_l3_entry(
+        packet: u32,
+        mut header: UncompressedHeader,
+        kind: FrameKind,
+        compressed: Vec<u8>,
+    ) -> FrameEntry {
+        header.kind = kind;
+        header
+            .tail
+            .as_mut()
+            .expect("synthetic L3 entry has a header tail")
+            .first_partition_size = u16::try_from(compressed.len()).expect("small test partition");
+        FrameEntry {
+            packet,
+            frame: 0,
+            chunk_size: compressed.len(),
+            superframe_count: 1,
+            is_superframe: false,
+            header: Some(header),
+            parse_error: None,
+            frame_bytes: compressed,
+            header_end: 0,
+        }
+    }
+
+    fn encode_test_compressed_header(
+        pre: &FrameContext,
+        post: &FrameContext,
+        options: CompressedHeaderOptions,
+        target: rvp9_core::bitstream::CompressedHeaderResult,
+    ) -> Vec<u8> {
+        let mut output = vec![0u8; 16 * 1024];
+        let mut pre_for_write = pre.clone();
+        let mut writer = rvp9_core::entropy::BoolWriter::start_encode(&mut output);
+        rvp9_core::bitstream::write_compressed_header(
+            &mut writer,
+            &mut pre_for_write,
+            post,
+            options,
+            &target,
+            None,
+        )
+        .expect("write synthetic L3 compressed header");
+        let written = writer.stop_encode().expect("finish synthetic L3 header");
+        output.truncate(written);
+        output
+    }
+
+    #[test]
+    fn l3_frame_range_primes_probability_history_without_prefix_records() {
+        use rvp9_core::bitstream::ReferenceMode;
+        use rvp9_core::transforms::TxMode;
+
+        let no_refs: RefFrameSizes = [None; REF_FRAMES];
+        let key_payload = build_keyframe_payload(64, 64);
+        let (key_header, _) = parse_uncompressed_header(&key_payload, &no_refs)
+            .expect("fixture keyframe header parses");
+        let key_options = options_from_header(&key_header);
+        let target = rvp9_core::bitstream::CompressedHeaderResult {
+            tx_mode: TxMode::OnlyTx4x4,
+            reference_mode: ReferenceMode::Single,
+        };
+
+        // Packet 1 updates one leg's skip-probability bank. Both
+        // compressed headers are generated by the production writer
+        // and must parse successfully to their calibrated post-banks.
+        let default_bank = FrameContext::new_default();
+        let mut changed_bank = default_bank.clone();
+        changed_bank.skip_probs[0] = changed_bank.skip_probs[0].wrapping_sub(17).max(1);
+        assert_ne!(changed_bank, default_bank);
+        let prefix_a =
+            encode_test_compressed_header(&default_bank, &default_bank, key_options, target);
+        let prefix_b =
+            encode_test_compressed_header(&default_bank, &changed_bank, key_options, target);
+        let mut calibrated_a = default_bank.clone();
+        parse_compressed_header(&prefix_a, &mut calibrated_a, key_options)
+            .expect("identity prefix parses on A");
+        let mut calibrated_b = default_bank.clone();
+        parse_compressed_header(&prefix_b, &mut calibrated_b, key_options)
+            .expect("probability-update prefix parses on B");
+        assert_eq!(calibrated_a, default_bank, "A prefix is identity");
+        assert_eq!(calibrated_b, changed_bank, "B prefix updates skip_probs[0]");
+        assert_ne!(calibrated_a, calibrated_b, "prefix banks diverge");
+
+        // Packet 2 uses a synthetic inter-frame header and a common
+        // no-update compressed header. Parsing it from either
+        // calibrated bank succeeds and preserves that bank.
+        let inter_options = CompressedHeaderOptions {
+            lossless: key_options.lossless,
+            intra_only: false,
+            interp_filter: InterpFilter::EightTap,
+            compound_allowed: false,
+            allow_high_precision_mv: false,
+        };
+        let inter_kind = FrameKind::InterFrame {
+            reset_frame_context: 0,
+            refresh_frame_flags: 0xff,
+            ref_frame_indices: [0; rvp9_core::bitstream::MAX_INTER_REFS],
+            ref_frame_sign_biases: [false; rvp9_core::bitstream::MAX_INTER_REFS],
+            allow_high_precision_mv: false,
+            interp_filter: InterpFilter::EightTap,
+        };
+        let selected =
+            encode_test_compressed_header(&default_bank, &default_bank, inter_options, target);
+        let mut selected_a = calibrated_a.clone();
+        parse_compressed_header(&selected, &mut selected_a, inter_options)
+            .expect("selected no-update inter header parses on A");
+        let mut selected_b = calibrated_b.clone();
+        parse_compressed_header(&selected, &mut selected_b, inter_options)
+            .expect("selected no-update inter header parses on B");
+        assert_eq!(
+            selected_a, calibrated_a,
+            "selected header leaves A bank intact"
+        );
+        assert_eq!(
+            selected_b, calibrated_b,
+            "selected header leaves B bank intact"
+        );
+
+        let a_entries = vec![
+            synthetic_l3_entry(1, key_header.clone(), FrameKind::KeyFrame, prefix_a),
+            synthetic_l3_entry(2, key_header.clone(), inter_kind, selected.clone()),
+        ];
+        let b_entries = vec![
+            synthetic_l3_entry(1, key_header.clone(), FrameKind::KeyFrame, prefix_b),
+            synthetic_l3_entry(2, key_header, inter_kind, selected),
+        ];
+
+        let mut selected_reporter = CaptureReporter::default();
+        level_3_diff(
+            &a_entries,
+            &b_entries,
+            &memory_diff_args(Some(FrameRange { start: 2, end: 2 }), None),
+            &mut selected_reporter,
+        );
+        let mut unfiltered_reporter = CaptureReporter::default();
+        level_3_diff(
+            &a_entries,
+            &b_entries,
+            &memory_diff_args(None, None),
+            &mut unfiltered_reporter,
+        );
+        let unfiltered_selected: Vec<_> = unfiltered_reporter
+            .records
+            .into_iter()
+            .filter(|record| {
+                record
+                    .detail
+                    .as_deref()
+                    .is_some_and(|detail| detail.starts_with("packet=2 "))
+            })
+            .collect();
+
+        assert!(
+            !unfiltered_selected.is_empty(),
+            "calibrated prefix-bank difference must remain visible on selected packet 2"
+        );
+        assert!(
+            !selected_reporter.records.is_empty(),
+            "--frame 2 lost the packet-1 probability history needed to report packet 2"
+        );
+        assert!(
+            selected_reporter
+                .records
+                .iter()
+                .all(|record| record.level == 3),
+            "L3 selection emitted a record at the wrong level: {:?}",
+            selected_reporter.records
+        );
+        assert_eq!(
+            selected_reporter.records, unfiltered_selected,
+            "selected L3 records must match the packet-2 subset of an unfiltered walk"
+        );
+        assert!(
+            selected_reporter.records.iter().all(|record| record
+                .detail
+                .as_deref()
+                .is_some_and(|detail| detail.starts_with("packet=2 "))),
+            "L3 range emitted prefix records: {:?}",
+            selected_reporter.records
+        );
+    }
+
     #[test]
     fn l3_identity_emits_no_record() {
         // Two byte-identical keyframe-only IVFs → L3 must produce zero
@@ -3591,6 +3900,254 @@ mod tests {
     // -------------------------------------------------------------------------
     // Level 4 tests
     // -------------------------------------------------------------------------
+
+    fn encode_l4_fixture_leg(selected_y: &[u8]) -> (Vec<u8>, Vec<u8>) {
+        use rvp9_encoder::{EncoderConfig, StreamEncoder};
+
+        let mut encoder =
+            StreamEncoder::new(EncoderConfig::new(64, 64)).expect("construct L4 fixture encoder");
+        let uv = vec![128u8; 32 * 32];
+        let flat = vec![96u8; 64 * 64];
+        let first = encoder
+            .encode_frame(&yuv_view(&flat, &uv))
+            .expect("encode fixture keyframe");
+        let common = encoder
+            .encode_frame(&yuv_view(&flat, &uv))
+            .expect("encode common prefix interframe");
+        let selected = encoder
+            .encode_frame(&yuv_view(selected_y, &uv))
+            .expect("encode selected interframe");
+        assert!(first.frame_kind.is_key(), "fixture starts with a keyframe");
+        assert!(
+            !common.frame_kind.is_key(),
+            "packet prefix includes an interframe"
+        );
+        assert!(!selected.frame_kind.is_key(), "selected packet is inter");
+
+        // Put both prerequisite frames in packet 1 so prefix priming
+        // must parse and decode every sub-frame in its superframe.
+        let mut prefix = rvp9_core::bitstream::SuperframeBuilder::new();
+        prefix
+            .push_frame(first.data)
+            .expect("append prefix keyframe");
+        prefix
+            .push_frame(common.data)
+            .expect("append prefix interframe");
+        let prefix = prefix.finish();
+        let ivf = wrap_in_ivf(&[prefix.as_slice(), selected.data.as_slice()]);
+        (ivf, prefix)
+    }
+
+    fn textured_l4_fixture_frame() -> Vec<u8> {
+        (0usize..64 * 64)
+            .map(|index| {
+                let x = index % 64;
+                let y = index / 64;
+                if (x / 8 + y / 8).is_multiple_of(2) {
+                    24
+                } else {
+                    224
+                }
+            })
+            .collect()
+    }
+
+    fn capture_l4_records(
+        a_data: &[u8],
+        b_data: &[u8],
+        frame: Option<FrameRange>,
+        max_frames: Option<u32>,
+    ) -> Vec<CapturedDivergence> {
+        let args = memory_diff_args(frame, max_frames);
+        let mut reporter = CaptureReporter::default();
+        let mut stderr = Vec::new();
+        level_4_diff(a_data, b_data, &args, &mut reporter, &mut stderr);
+        assert!(stderr.is_empty(), "unexpected L4 stderr: {stderr:?}");
+        reporter.records
+    }
+
+    #[test]
+    fn l4_encoder_superframe_prefix_fixture_calibrates_selected_mi_difference() {
+        use rvp9_decoder::Decoder;
+
+        let flat = vec![96u8; 64 * 64];
+        let textured = textured_l4_fixture_frame();
+        let (a_data, prefix_a) = encode_l4_fixture_leg(&flat);
+        let (b_data, prefix_b) = encode_l4_fixture_leg(&textured);
+        assert_eq!(prefix_a, prefix_b, "prerequisite superframes are identical");
+
+        let packets_a = read_ivf_packets(&a_data).expect("read fixture A packets");
+        let packets_b = read_ivf_packets(&b_data).expect("read fixture B packets");
+        assert_eq!(packets_a.len(), 2);
+        assert_eq!(packets_b.len(), 2);
+        assert_eq!(
+            parse_superframe_index(packets_a[0].slice(&a_data)).expect("prefix index"),
+            parse_superframe_index(packets_b[0].slice(&b_data)).expect("prefix index")
+        );
+
+        let mut decoder_a = Decoder::new();
+        let mut decoder_b = Decoder::new();
+        let mut selected_grid_a = Vec::new();
+        let mut selected_grid_b = Vec::new();
+        for (packet_idx, packet) in packets_a.iter().enumerate() {
+            let parsed = decoder_a
+                .parse_packet(packet.slice(&a_data))
+                .expect("A fixture packet parses with history");
+            assert_eq!(parsed.count(), if packet_idx == 0 { 2 } else { 1 });
+            for frame in parsed {
+                decoder_a
+                    .decode_frame(&frame)
+                    .expect("A fixture frame decodes with history");
+            }
+            if packet_idx == 1 {
+                selected_grid_a = decoder_a.last_frame_mi_grid().to_vec();
+            }
+        }
+        for (packet_idx, packet) in packets_b.iter().enumerate() {
+            let parsed = decoder_b
+                .parse_packet(packet.slice(&b_data))
+                .expect("B fixture packet parses with history");
+            assert_eq!(parsed.count(), if packet_idx == 0 { 2 } else { 1 });
+            for frame in parsed {
+                decoder_b
+                    .decode_frame(&frame)
+                    .expect("B fixture frame decodes with history");
+            }
+            if packet_idx == 1 {
+                selected_grid_b = decoder_b.last_frame_mi_grid().to_vec();
+            }
+        }
+        assert!(
+            !selected_grid_a.is_empty(),
+            "A selected frame publishes an MI grid"
+        );
+        assert!(
+            !selected_grid_b.is_empty(),
+            "B selected frame publishes an MI grid"
+        );
+        assert_ne!(
+            selected_grid_a, selected_grid_b,
+            "selected packet has real MI divergence"
+        );
+
+        let selected_packet = packets_a[1].slice(&a_data);
+        let mut fresh = Decoder::new();
+        let frames = fresh
+            .parse_packet(selected_packet)
+            .expect("selected interframe parses without decoder history");
+        let fresh_error = frames
+            .into_iter()
+            .find_map(|frame| fresh.decode_frame(&frame).err());
+        assert!(
+            matches!(
+                fresh_error.as_ref(),
+                Some(rvp9_decoder::DecodeError::EmptyInterRef { slot: 0 })
+            ),
+            "fresh selected interframe should fail for its missing reference history: {fresh_error:?}"
+        );
+    }
+
+    #[test]
+    fn l4_frame_range_primes_superframe_history_and_reports_only_selected_packet() {
+        let flat = vec![96u8; 64 * 64];
+        let textured = textured_l4_fixture_frame();
+        let (a_data, prefix_a) = encode_l4_fixture_leg(&flat);
+        let (b_data, prefix_b) = encode_l4_fixture_leg(&textured);
+        assert_eq!(prefix_a, prefix_b);
+
+        let selected = capture_l4_records(
+            &a_data,
+            &b_data,
+            Some(FrameRange { start: 2, end: 2 }),
+            None,
+        );
+        let unfiltered = capture_l4_records(&a_data, &b_data, None, None);
+        let unfiltered_selected: Vec<_> = unfiltered
+            .into_iter()
+            .filter(|record| {
+                record
+                    .detail
+                    .as_deref()
+                    .is_some_and(|detail| detail.starts_with("packet=2 "))
+            })
+            .collect();
+
+        assert!(
+            !unfiltered_selected.is_empty(),
+            "calibrated encoder fixture must produce selected-packet L4 records"
+        );
+        assert!(
+            !selected.is_empty(),
+            "--frame 2 lost the packet-1 decoder history needed to report packet 2"
+        );
+        assert!(
+            selected
+                .iter()
+                .any(|record| record.level == 4 && record.summary.starts_with("mi[")),
+            "selected interframe must report an actual MI field path: {selected:?}"
+        );
+        assert_eq!(
+            selected, unfiltered_selected,
+            "selected L4 records must equal packet 2's unfiltered records"
+        );
+        assert!(
+            selected.iter().all(|record| record
+                .detail
+                .as_deref()
+                .is_some_and(|detail| detail.starts_with("packet=2 "))),
+            "L4 range emitted prefix records: {selected:?}"
+        );
+
+        // max_frames counts IVF packets. A cap before selected packet 2
+        // must prevent that packet from being decoded or reported.
+        let capped = capture_l4_records(
+            &a_data,
+            &b_data,
+            Some(FrameRange { start: 2, end: 2 }),
+            Some(1),
+        );
+        assert!(
+            capped.is_empty(),
+            "max_frames=1 included packet 2: {capped:?}"
+        );
+    }
+
+    #[test]
+    fn l4_frame_range_primes_both_legs_after_asymmetric_prefix_error() {
+        let flat = vec![96u8; 64 * 64];
+        let textured = textured_l4_fixture_frame();
+        let (valid_a, _) = encode_l4_fixture_leg(&flat);
+        let (valid_b, prefix_b) = encode_l4_fixture_leg(&textured);
+        let packets_a = read_ivf_packets(&valid_a).expect("read valid A fixture");
+        let packets_b = read_ivf_packets(&valid_b).expect("read valid B fixture");
+        let invalid_prefix = [0u8]; // invalid frame marker; A's later interframe remains intact
+        let selected_a = packets_a[1].slice(&valid_a);
+        let selected_b = packets_b[1].slice(&valid_b);
+        let broken_a = wrap_in_ivf(&[&invalid_prefix, selected_a]);
+        let valid_b_prefix = packets_b[0].slice(&valid_b);
+        assert_eq!(valid_b_prefix, prefix_b.as_slice());
+        let control_b = wrap_in_ivf(&[valid_b_prefix, selected_b]);
+
+        let records = capture_l4_records(
+            &broken_a,
+            &control_b,
+            Some(FrameRange { start: 2, end: 2 }),
+            None,
+        );
+        assert!(
+            records.iter().any(|record| {
+                record.summary == "decode.parse_packet" || record.summary == "decode.decode_frame"
+            }),
+            "one failed prefix must not prevent the valid leg from priming: {records:?}"
+        );
+        assert!(
+            records.iter().all(|record| record
+                .detail
+                .as_deref()
+                .is_some_and(|detail| detail.starts_with("packet=2 "))),
+            "asymmetric prefix errors must stay silent: {records:?}"
+        );
+    }
 
     /// Locate the conformance-vectors directory, if present. The
     /// workspace ships at most one `.ivf` here (the others are .webm).
