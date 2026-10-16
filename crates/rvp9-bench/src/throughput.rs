@@ -42,7 +42,7 @@
 //! must check column 0 (`schema_version`) before parsing.
 
 use std::fs::OpenOptions;
-use std::io::Write as _;
+use std::io::{Read as _, Seek as _, SeekFrom, Write as _};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -133,7 +133,7 @@ pub enum ThroughputError {
     /// No frame ever decoded successfully — the fixture is unusable
     /// as a throughput sample.
     NoFramesDecoded { fixture: String },
-    /// CSV append failed.
+    /// CSV read, validation or append failed.
     Io(std::io::Error),
 }
 
@@ -408,7 +408,11 @@ pub fn build_profile_hash() -> String {
 
 /// Append one CSV row per fixture result to `csv_path`, creating the
 /// parent directory and writing the header line if the file does not
-/// already exist.
+/// already exist or is empty. All counts, dimensions and serialized metrics
+/// must be positive; metrics must also be finite. The entire batch is validated
+/// before any filesystem changes. Text fields use CSV quoting and doubled quotes.
+/// Existing files require read access to inspect their final byte. A missing
+/// final record separator is added before appending rows.
 ///
 /// # Schema v1 (G6 review)
 ///
@@ -436,41 +440,168 @@ pub fn append_csv(
     build_profile_hash: &str,
     results: &[FixtureResult],
 ) -> Result<(), ThroughputError> {
+    // Validate the whole batch before even creating the destination directory.
+    for r in results {
+        if r.timed_frames == 0
+            || r.width == 0
+            || r.height == 0
+            || !valid_metrics(r.stats.p50, r.stats.p95, r.stats.p99)
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!(
+                    "{}: CSV counts, dimensions and metrics must be positive and finite",
+                    r.fixture
+                ),
+            )
+            .into());
+        }
+    }
     if let Some(parent) = csv_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let needs_header = !csv_path.exists();
     let mut f = OpenOptions::new()
         .create(true)
+        .read(true)
         .append(true)
         .open(csv_path)?;
-    if needs_header {
-        writeln!(
-            f,
-            "schema_version,timestamp_unix,host,unpinned,build_profile_hash,\
-             fixture,timed_frames,width,height,p50_us,p95_us,p99_us"
-        )?;
+    if f.metadata()?.len() == 0 {
+        writeln!(f, "{}", CSV_HEADER.join(","))?;
+    } else if !results.is_empty() {
+        f.seek(SeekFrom::End(-1))?;
+        let mut last_byte = [0];
+        f.read_exact(&mut last_byte)?;
+        if last_byte[0] != b'\n' {
+            writeln!(f)?;
+        }
     }
     for r in results {
         writeln!(
             f,
-            "{v},{ts},{host},{unpinned},{bph},{fixture},{n},{w},{h},\
-             {p50:.3},{p95:.3},{p99:.3}",
-            v = CSV_SCHEMA_VERSION,
-            ts = timestamp_unix,
-            host = host,
-            unpinned = unpinned,
-            bph = build_profile_hash,
-            fixture = r.fixture,
-            n = r.timed_frames,
-            w = r.width,
-            h = r.height,
-            p50 = r.stats.p50,
-            p95 = r.stats.p95,
-            p99 = r.stats.p99,
+            "{},{},{},{},{},{},{},{},{},{},{},{}",
+            CSV_SCHEMA_VERSION,
+            timestamp_unix,
+            csv_field(host),
+            unpinned,
+            csv_field(build_profile_hash),
+            csv_field(&r.fixture),
+            r.timed_frames,
+            r.width,
+            r.height,
+            csv_metric(r.stats.p50),
+            csv_metric(r.stats.p95),
+            csv_metric(r.stats.p99),
         )?;
     }
     Ok(())
+}
+
+const CSV_HEADER: [&str; 12] = [
+    "schema_version",
+    "timestamp_unix",
+    "host",
+    "unpinned",
+    "build_profile_hash",
+    "fixture",
+    "timed_frames",
+    "width",
+    "height",
+    "p50_us",
+    "p95_us",
+    "p99_us",
+];
+
+fn positive_finite(value: f64) -> bool {
+    value.is_finite() && value > 0.0
+}
+
+fn valid_metrics(p50: f64, p95: f64, p99: f64) -> bool {
+    [p50, p95, p99].into_iter().all(positive_finite)
+}
+
+fn csv_field(value: &str) -> String {
+    if value.contains([',', '"', '\r', '\n']) {
+        format!("\"{}\"", value.replace('"', "\"\""))
+    } else {
+        value.to_owned()
+    }
+}
+
+fn csv_metric(value: f64) -> String {
+    let rounded = format!("{value:.3}");
+    if rounded == "0.000" {
+        value.to_string()
+    } else {
+        rounded
+    }
+}
+
+fn invalid_csv(message: &str) -> ThroughputError {
+    std::io::Error::new(std::io::ErrorKind::InvalidData, message).into()
+}
+
+/// Decode one logical record. Quoting follows RFC 4180; LF record endings
+/// and UTF-8 text are accepted alongside CRLF. Invalid quoting fails closed
+/// because an embedded newline makes recovery at the next physical line unsafe.
+fn next_csv_record(
+    input: &mut std::iter::Peekable<std::str::Chars<'_>>,
+) -> Result<Option<Vec<String>>, ThroughputError> {
+    #[derive(Clone, Copy)]
+    enum State {
+        Start,
+        Unquoted,
+        Quoted,
+        Closed,
+    }
+    use State::*;
+    if input.peek().is_none() {
+        return Ok(None);
+    }
+    let mut state = Start;
+    let mut fields = Vec::new();
+    let mut field = String::new();
+    while let Some(ch) = input.next() {
+        if matches!(state, Quoted) {
+            if ch == '"' {
+                if input.peek() == Some(&'"') {
+                    input.next();
+                    field.push('"');
+                } else {
+                    state = Closed;
+                }
+            } else {
+                field.push(ch);
+            }
+            continue;
+        }
+        match ch {
+            ',' => {
+                fields.push(std::mem::take(&mut field));
+                state = Start;
+            }
+            '\n' | '\r' => {
+                if ch == '\r' && input.next() != Some('\n') {
+                    return Err(invalid_csv("CSV record ending must be LF or CRLF"));
+                }
+                fields.push(field);
+                return Ok(Some(fields));
+            }
+            '"' if matches!(state, Start) => state = Quoted,
+            _ if matches!(state, Closed) => {
+                return Err(invalid_csv("unexpected text after CSV closing quote"));
+            }
+            '"' => return Err(invalid_csv("quote in unquoted CSV field")),
+            _ => {
+                field.push(ch);
+                state = Unquoted;
+            }
+        }
+    }
+    if matches!(state, Quoted) {
+        return Err(invalid_csv("unterminated quoted CSV field"));
+    }
+    fields.push(field);
+    Ok(Some(fields))
 }
 
 /// One parsed CSV row.
@@ -487,75 +618,77 @@ pub struct CsvRow {
     pub p99_us: f64,
 }
 
-/// Read all CSV rows, ignoring the header. Returns an empty Vec if the
-/// file is missing or empty.
+/// Read valid schema-v1 CSV rows. Missing or empty files yield no rows.
 ///
-/// Currently understands schema v1 only. Rows whose `schema_version`
-/// column is not 1 are silently skipped; future versions can extend
-/// this match.
+/// The first record must contain the twelve schema-v1 column names in order.
+/// LF and CRLF record endings and quoted commas, quotes and newlines are accepted.
+/// Well-formed records with another schema, the wrong column count, invalid
+/// numeric/boolean fields, nonpositive counts/dimensions or nonfinite/nonpositive
+/// metrics are skipped. Blank records are also skipped after the header.
 ///
 /// # Errors
 ///
-/// Propagates filesystem errors. A row that fails to parse is silently
-/// skipped (treat as corrupt or future-version entry).
+/// Propagates filesystem errors. A wrong header or malformed CSV quoting/record
+/// ending returns [`std::io::ErrorKind::InvalidData`] for the whole file: the
+/// next physical line cannot safely identify a new record after a quote error.
 pub fn read_csv(csv_path: &Path) -> Result<Vec<CsvRow>, ThroughputError> {
-    if !csv_path.exists() {
+    let raw = match std::fs::read_to_string(csv_path) {
+        Ok(raw) => raw,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(e.into()),
+    };
+    let mut input = raw.chars().peekable();
+    let Some(header) = next_csv_record(&mut input)? else {
         return Ok(Vec::new());
+    };
+    if header != CSV_HEADER {
+        return Err(invalid_csv("unexpected throughput CSV header"));
     }
-    let raw = std::fs::read_to_string(csv_path)?;
     let mut rows = Vec::new();
-    for line in raw.lines().skip(1) {
-        if line.trim().is_empty() {
-            continue;
+    while let Some(cols) = next_csv_record(&mut input)? {
+        if let Some(row) = parse_csv_row(&cols) {
+            rows.push(row);
         }
-        let cols: Vec<&str> = line.split(',').collect();
-        // v1 = 12 columns.
-        if cols.len() < 12 {
-            continue;
-        }
-        let Ok(schema_version) = cols[0].parse::<u32>() else {
-            continue;
-        };
-        if schema_version != CSV_SCHEMA_VERSION {
-            continue;
-        }
-        let Ok(timestamp_unix) = cols[1].parse::<u64>() else {
-            continue;
-        };
-        let host = cols[2].to_string();
-        let unpinned = match cols[3] {
-            "true" => true,
-            "false" => false,
-            _ => continue,
-        };
-        let build_profile_hash = cols[4].to_string();
-        let fixture = cols[5].to_string();
-        let Ok(p50_us) = cols[9].parse::<f64>() else {
-            continue;
-        };
-        let Ok(p95_us) = cols[10].parse::<f64>() else {
-            continue;
-        };
-        let Ok(p99_us) = cols[11].parse::<f64>() else {
-            continue;
-        };
-        rows.push(CsvRow {
-            schema_version,
-            timestamp_unix,
-            host,
-            unpinned,
-            build_profile_hash,
-            fixture,
-            p50_us,
-            p95_us,
-            p99_us,
-        });
     }
     Ok(rows)
 }
 
+fn parse_csv_row(cols: &[String]) -> Option<CsvRow> {
+    if cols.len() != CSV_HEADER.len() {
+        return None;
+    }
+    let schema_version = cols[0].parse::<u32>().ok()?;
+    if schema_version != CSV_SCHEMA_VERSION {
+        return None;
+    }
+    let timestamp_unix = cols[1].parse::<u64>().ok()?;
+    let unpinned = cols[3].parse::<bool>().ok()?;
+    let timed_frames = cols[6].parse::<usize>().ok()?;
+    let width = cols[7].parse::<u32>().ok()?;
+    let height = cols[8].parse::<u32>().ok()?;
+    let p50_us = cols[9].parse::<f64>().ok()?;
+    let p95_us = cols[10].parse::<f64>().ok()?;
+    let p99_us = cols[11].parse::<f64>().ok()?;
+    if timed_frames == 0 || width == 0 || height == 0 || !valid_metrics(p50_us, p95_us, p99_us) {
+        return None;
+    }
+    Some(CsvRow {
+        schema_version,
+        timestamp_unix,
+        host: cols[2].clone(),
+        unpinned,
+        build_profile_hash: cols[4].clone(),
+        fixture: cols[5].clone(),
+        p50_us,
+        p95_us,
+        p99_us,
+    })
+}
+
 /// For each unique fixture in `rows`, return its most-recent **pinned**
 /// row (max `timestamp_unix`) whose `host` is in `pinned_hosts`.
+/// Rows with nonfinite or nonpositive metrics are excluded, including rows
+/// constructed directly through the public [`CsvRow`] fields.
 ///
 /// Unpinned rows (dev-box runs) are filtered out BEFORE the max-by-timestamp
 /// reduction — the ratchet compares apples-to-apples against the
@@ -574,7 +707,7 @@ pub fn latest_per_fixture(rows: &[CsvRow], pinned_hosts: &[&str]) -> Vec<CsvRow>
     use std::collections::HashMap;
     let mut latest: HashMap<String, CsvRow> = HashMap::new();
     for r in rows {
-        if r.unpinned {
+        if r.unpinned || !valid_metrics(r.p50_us, r.p95_us, r.p99_us) {
             continue;
         }
         if !pinned_hosts.contains(&r.host.as_str()) {
@@ -602,7 +735,8 @@ pub fn latest_per_fixture(rows: &[CsvRow], pinned_hosts: &[&str]) -> Vec<CsvRow>
 ///
 /// # Errors
 ///
-/// Returns a formatted regression message string when the budget is
+/// Returns an error if an operand or computed budget is nonfinite or
+/// nonpositive, or a formatted regression message when the budget is
 /// exceeded. The caller decides whether to `panic!` (pinned host) or
 /// just warn (unpinned host).
 pub fn check_metric_ratchet(
@@ -612,7 +746,20 @@ pub fn check_metric_ratchet(
     current_us: f64,
     threshold: f64,
 ) -> Result<(), String> {
+    if ![baseline_us, current_us, threshold]
+        .into_iter()
+        .all(positive_finite)
+    {
+        return Err(format!(
+            "{fixture}: {metric} baseline, current and threshold must be finite and positive"
+        ));
+    }
     let budget = baseline_us * threshold;
+    if !positive_finite(budget) {
+        return Err(format!(
+            "{fixture}: {metric} computed budget must be finite and positive"
+        ));
+    }
     if current_us > budget {
         Err(format!(
             "{fixture}: {metric} {current_us:.1}us > {budget:.1}us \
@@ -631,7 +778,8 @@ pub fn check_metric_ratchet(
 ///
 /// # Errors
 ///
-/// Returns a formatted regression message string when the p50 budget is
+/// Returns an error if an input or computed budget is nonfinite or
+/// nonpositive, or a formatted regression message when the p50 budget is
 /// exceeded. The caller decides whether to `panic!` (pinned host) or
 /// just warn (unpinned host).
 pub fn check_ratchet(
@@ -664,6 +812,257 @@ mod tests {
                 p95,
                 p99,
             },
+        }
+    }
+
+    const TEST_HEADER: &str = "schema_version,timestamp_unix,host,unpinned,build_profile_hash,fixture,timed_frames,width,height,p50_us,p95_us,p99_us\n";
+
+    fn csv_test_path(name: &str) -> PathBuf {
+        let scratch = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.scratch");
+        std::fs::create_dir_all(&scratch).unwrap();
+        scratch.join(format!("00108-{name}-{}.csv", std::process::id()))
+    }
+
+    fn read_literal(name: &str, body: &str) -> Result<Vec<CsvRow>, ThroughputError> {
+        let path = csv_test_path(name);
+        std::fs::write(&path, body).unwrap();
+        let result = read_csv(&path);
+        std::fs::remove_file(path).unwrap();
+        result
+    }
+
+    #[test]
+    fn csv_00108_reads_independent_quoted_multiline_oracle() {
+        let literal = format!(
+            "{TEST_HEADER}1,7,\"h,é\",false,\"b\"\"p\",\"a\r\nb\nc\rd,\"\"x\"\"\",1,2,3,1,2,3\r\n\n1,8,h,true,b,plain,4,5,6,4,5,6"
+        );
+        let rows = read_literal("quoted", &literal).unwrap();
+        assert_eq!(rows.len(), 2, "quoted logical records must survive");
+        assert_eq!(rows[0].host, "h,é");
+        assert_eq!(rows[0].build_profile_hash, "b\"p");
+        assert_eq!(rows[0].fixture, "a\r\nb\nc\rd,\"x\"");
+        assert_eq!(rows[1].timestamp_unix, 8);
+    }
+
+    #[test]
+    fn csv_00108_append_preserves_separatorless_existing_records() {
+        let mut outcomes = Vec::new();
+        for (name, suffix, expected_rows) in [
+            ("header-eof", "", 1),
+            ("data-eof", "\n1,6,h,false,b,old,1,2,3,1,2,3", 2),
+        ] {
+            let path = csv_test_path(name);
+            std::fs::write(&path, format!("{}{suffix}", TEST_HEADER.trim_end())).unwrap();
+            append_csv(
+                &path,
+                7,
+                "h",
+                false,
+                "b",
+                &[make_result("new", 1.0, 2.0, 3.0)],
+            )
+            .unwrap();
+            let outcome = read_csv(&path).map(|rows| {
+                rows.len() == expected_rows && rows.last().is_some_and(|row| row.fixture == "new")
+            });
+            std::fs::remove_file(path).unwrap();
+            outcomes.push((name, outcome));
+        }
+        assert!(
+            outcomes
+                .iter()
+                .all(|(_, outcome)| matches!(outcome, Ok(true))),
+            "both separatorless header and data records must survive append: {outcomes:?}"
+        );
+    }
+
+    #[test]
+    fn csv_00108_writer_matches_independent_literal_oracle() {
+        let path = csv_test_path("writer");
+        std::fs::write(&path, "").unwrap();
+        append_csv(
+            &path,
+            7,
+            "h,é",
+            false,
+            "b\"p",
+            &[make_result("a\r\nb\nc\rd,\"x\"", 1.0, 2.0, 3.0)],
+        )
+        .unwrap();
+        let actual = std::fs::read_to_string(&path).unwrap();
+        std::fs::remove_file(path).unwrap();
+        assert_eq!(
+            actual,
+            format!(
+                "{TEST_HEADER}1,7,\"h,é\",false,\"b\"\"p\",\"a\r\nb\nc\rd,\"\"x\"\"\",1000,640,480,1.000,2.000,3.000\n"
+            )
+        );
+    }
+
+    #[test]
+    fn csv_00108_skips_invalid_typed_rows() {
+        let valid = [
+            "1", "7", "h", "false", "b", "fixture", "1", "2", "3", "1", "2", "3",
+        ];
+        let mut body = TEST_HEADER.to_string();
+        body.push_str(&format!("{},extra\n", valid.join(",")));
+        body.push_str(&format!("{}\n", valid[..11].join(",")));
+        for (index, values) in [
+            (0, vec!["2", "x"]),
+            (1, vec!["-1", "x"]),
+            (3, vec!["TRUE"]),
+            (6, vec!["x", "0", "-1", "18446744073709551616"]),
+            (7, vec!["x", "0", "-1", "4294967296"]),
+            (8, vec!["x", "0", "-1", "4294967296"]),
+            (9, vec!["NaN", "inf", "-inf", "0", "-1"]),
+            (10, vec!["NaN", "inf", "-inf", "0", "-1"]),
+            (11, vec!["NaN", "inf", "-inf", "0", "-1"]),
+        ] {
+            for value in values {
+                let mut cols = valid;
+                cols[index] = value;
+                body.push_str(&format!("{}\n", cols.join(",")));
+            }
+        }
+        body.push_str(&valid.join(","));
+        let rows = read_literal("typed", &body).unwrap();
+        assert_eq!(
+            rows.len(),
+            1,
+            "invalid schema/typed/metric/column rows must be skipped"
+        );
+    }
+
+    #[test]
+    fn csv_00108_rejects_ambiguous_quotes_and_bad_headers() {
+        for suffix in [
+            "1,7,h\"x,false,b,f,1,2,3,1,2,3\n",
+            "1,7,\"h\"x,false,b,f,1,2,3,1,2,3\n",
+            "1,7,\"unterminated",
+            "1,7,h,false,b,f,1,2,3,1,2,3\r",
+        ] {
+            let body = format!("{TEST_HEADER}1,6,h,false,b,f,1,2,3,1,2,3\n{suffix}");
+            assert!(
+                matches!(read_literal("syntax", &body), Err(ThroughputError::Io(e)) if e.kind() == std::io::ErrorKind::InvalidData),
+                "must fail whole file: {suffix:?}"
+            );
+        }
+        for header in ["wrong\n", "schema_version\n", "\n"] {
+            assert!(
+                matches!(read_literal("header", header), Err(ThroughputError::Io(e)) if e.kind() == std::io::ErrorKind::InvalidData)
+            );
+        }
+    }
+
+    #[test]
+    fn csv_00108_append_validates_batch_before_any_write() {
+        let path = csv_test_path("invalid-write");
+        let good = make_result("good", 1.0, 2.0, 3.0);
+        let mut invalid = Vec::new();
+        for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, 0.0, -1.0] {
+            for metric in 0..3 {
+                let mut bad = good.clone();
+                match metric {
+                    0 => bad.stats.p50 = value,
+                    1 => bad.stats.p95 = value,
+                    _ => bad.stats.p99 = value,
+                }
+                invalid.push(bad);
+            }
+        }
+        for field in 0..3 {
+            let mut bad = good.clone();
+            match field {
+                0 => bad.timed_frames = 0,
+                1 => bad.width = 0,
+                _ => bad.height = 0,
+            }
+            invalid.push(bad);
+        }
+        for bad in invalid {
+            std::fs::write(&path, "unchanged").unwrap();
+            let result = append_csv(&path, 7, "h", false, "b", &[good.clone(), bad.clone()]);
+            let actual = std::fs::read_to_string(&path).unwrap();
+            std::fs::remove_file(&path).unwrap();
+            assert!(
+                matches!(result, Err(ThroughputError::Io(e)) if e.kind() == std::io::ErrorKind::InvalidInput)
+            );
+            assert_eq!(
+                actual, "unchanged",
+                "entire batch must validate before append"
+            );
+            let absent = path.with_extension("absent-parent");
+            assert!(!absent.exists());
+            assert!(append_csv(&absent.join("out.csv"), 7, "h", false, "b", &[bad]).is_err());
+            assert!(!absent.exists(), "invalid batch must not create parent");
+        }
+    }
+
+    #[test]
+    fn csv_00108_preserves_tiny_positive_metrics() {
+        let path = csv_test_path("tiny");
+        let _ = std::fs::remove_file(&path);
+        append_csv(
+            &path,
+            7,
+            "h",
+            false,
+            "b",
+            &[make_result("tiny", f64::from_bits(1), 0.0001, 0.0004)],
+        )
+        .unwrap();
+        let rows = read_csv(&path).unwrap();
+        std::fs::remove_file(path).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].p50_us, f64::from_bits(1));
+        assert_eq!(rows[0].p95_us, 0.0001);
+        assert_eq!(rows[0].p99_us, 0.0004);
+    }
+
+    #[test]
+    fn csv_00108_ratchet_rejects_invalid_operands_and_product() {
+        for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, 0.0, -1.0] {
+            for (base, current, ratio) in [(value, 1.0, 1.1), (1.0, value, 1.1), (1.0, 1.0, value)]
+            {
+                let msg = check_metric_ratchet("fixture", "p95", base, current, ratio)
+                    .expect_err("invalid operands must fail closed");
+                assert!(msg.contains("fixture") && msg.contains("p95"));
+            }
+        }
+        assert!(check_metric_ratchet("f", "p50", f64::MAX, 1.0, 2.0).is_err());
+        assert!(check_metric_ratchet("f", "p50", f64::from_bits(1), 1.0, 0.1).is_err());
+        assert!(check_metric_ratchet("f", "p50", 100.0, 40.0, 0.5).is_ok());
+    }
+
+    #[test]
+    fn csv_00108_latest_ignores_invalid_public_rows() {
+        let valid = CsvRow {
+            schema_version: 1,
+            timestamp_unix: 1,
+            host: "h".into(),
+            unpinned: false,
+            build_profile_hash: "b".into(),
+            fixture: "f".into(),
+            p50_us: 1.0,
+            p95_us: 2.0,
+            p99_us: 3.0,
+        };
+        for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, 0.0, -1.0] {
+            for metric in 0..3 {
+                let mut bad = valid.clone();
+                bad.timestamp_unix = 2;
+                match metric {
+                    0 => bad.p50_us = value,
+                    1 => bad.p95_us = value,
+                    _ => bad.p99_us = value,
+                }
+                let rows = latest_per_fixture(&[valid.clone(), bad.clone()], &["h"]);
+                assert_eq!(
+                    rows[0].timestamp_unix, 1,
+                    "invalid public row must not replace valid baseline"
+                );
+                assert!(latest_per_fixture(&[bad], &["h"]).is_empty());
+            }
         }
     }
 
