@@ -18,6 +18,9 @@ mod path_guard;
 
 use rvp9_cli::args::{self, Arg, Flag};
 use rvp9_encoder::lookahead::MAX_LAG_BUFFERS;
+use rvp9_encoder::rate_control::config::{
+    MAX_CODED_DIMENSION, MAX_CODED_LUMA_PIXELS, coded_dimensions_supported,
+};
 use rvp9_encoder::{
     AqMode, Deadline, EncoderConfig, EncoderParallelism, RcMode, SpatialEncoder, StreamEncoder,
     YuvFrameRef, encode_two_pass,
@@ -1381,6 +1384,12 @@ impl RawFrameReader {
         coded_h: u32,
         limit: Option<usize>,
     ) -> Result<Self, String> {
+        if !coded_dimensions_supported(coded_w, coded_h) {
+            return Err(format!(
+                "raw input geometry {coded_w}x{coded_h} is outside supported encoder limits \
+                 (dimensions must be 1..={MAX_CODED_DIMENSION} and luma pixels must be 1..={MAX_CODED_LUMA_PIXELS})"
+            ));
+        }
         let width = coded_w as usize;
         let height = coded_h as usize;
         let y_size = width
@@ -1635,9 +1644,74 @@ mod tests {
     //! Focused parser and configuration tests for implemented encoder flags.
 
     use super::*;
+    use std::path::PathBuf;
 
     fn s(parts: &[&str]) -> Vec<String> {
         parts.iter().map(|s| (*s).to_string()).collect()
+    }
+
+    fn raw_geometry_test_path(tag: &str) -> PathBuf {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        std::env::temp_dir().join(format!(
+            "rvp9enc_raw_geometry_{}_{}_{}.yuv",
+            std::process::id(),
+            id,
+            tag
+        ))
+    }
+
+    #[test]
+    fn raw_reader_checks_encoder_geometry_before_file_io() {
+        let invalid = [
+            (MAX_CODED_DIMENSION + 64, 64),
+            (64, MAX_CODED_DIMENSION + 64),
+            (8_192, 8_194),
+            (u32::MAX, u32::MAX),
+            (0, 64),
+            (64, 0),
+        ];
+        for (width, height) in invalid {
+            let missing = raw_geometry_test_path("missing");
+            let error = match RawFrameReader::open(&missing, width, height, None) {
+                Err(error) => error,
+                Ok(_) => panic!("invalid geometry {width}x{height} unexpectedly opened"),
+            };
+            assert!(
+                error.contains("is outside supported encoder limits"),
+                "geometry {width}x{height} must fail on the shared geometry limit before file I/O, got: {error}"
+            );
+            assert!(
+                error.contains(&format!("{width}x{height}")),
+                "geometry-limit error must include {width}x{height}, got: {error}"
+            );
+            assert!(
+                error.contains(&MAX_CODED_DIMENSION.to_string())
+                    && error.contains(&MAX_CODED_LUMA_PIXELS.to_string()),
+                "geometry-limit error must include supported encoder limits, got: {error}"
+            );
+            assert!(
+                !error.contains("opening")
+                    && !error.contains("too large")
+                    && !error.contains("zero-sized"),
+                "geometry {width}x{height} must be rejected before file or size errors, got: {error}"
+            );
+        }
+
+        let empty = raw_geometry_test_path("empty");
+        std::fs::write(&empty, []).expect("create empty raw control file");
+        for (width, height) in [(64, 64), (MAX_CODED_DIMENSION, 2), (8_192, 8_192)] {
+            let mut reader = RawFrameReader::open(&empty, width, height, None)
+                .unwrap_or_else(|error| panic!("valid geometry {width}x{height}: {error}"));
+            assert!(
+                reader
+                    .next_frame()
+                    .expect("empty file has no raw frame")
+                    .is_none(),
+                "empty control file should have no frame for {width}x{height}"
+            );
+        }
+        std::fs::remove_file(&empty).expect("remove empty raw control file");
     }
 
     #[test]

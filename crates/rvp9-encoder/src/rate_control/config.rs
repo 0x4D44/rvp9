@@ -277,7 +277,14 @@ const fn ceil_div_16(value: u32) -> u32 {
     (value / 16) + if value.is_multiple_of(16) { 0 } else { 1 }
 }
 
-pub(crate) const fn coded_dimensions_supported(width: u32, height: u32) -> bool {
+/// Returns whether coded dimensions fit the encoder's geometry capacity envelope.
+///
+/// Both dimensions must be nonzero and no greater than
+/// [`MAX_CODED_DIMENSION`], and their luma sample count must not exceed
+/// [`MAX_CODED_LUMA_PIXELS`]. This checks the capacity envelope only;
+/// encoder-entry validation separately enforces alignment and chroma
+/// constraints such as a width multiple of 64 and an even height.
+pub const fn coded_dimensions_supported(width: u32, height: u32) -> bool {
     if width == 0 || height == 0 {
         return false;
     }

@@ -921,6 +921,53 @@ fn enc_raw_input_requires_height() {
 }
 
 #[test]
+fn enc_raw_invalid_geometry_precedes_frame_errors_and_preserves_outputs() {
+    let raw = tmp("raw_invalid_geometry.yuv");
+    let output = tmp("raw_invalid_geometry.ivf");
+    let csv = tmp("raw_invalid_geometry.csv");
+    let output_sentinel = b"existing IVF must survive invalid raw geometry";
+    let csv_sentinel = b"existing CSV must survive invalid raw geometry";
+    std::fs::write(&raw, b"tiny partial raw input").expect("write tiny raw input");
+    std::fs::write(&output, output_sentinel).expect("write output sentinel");
+    std::fs::write(&csv, csv_sentinel).expect("write CSV sentinel");
+
+    let out = Command::new(enc_bin())
+        .args(["--lag-in-frames", "0", "--frame-time-csv"])
+        .arg(&csv)
+        .args(["-w", "16448", "-h", "64", "--target-bitrate", "500", "-o"])
+        .arg(&output)
+        .arg(&raw)
+        .bounded_output()
+        .expect("run rvp9enc with invalid raw geometry");
+    assert!(!out.status.success(), "invalid geometry must be rejected");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("raw input geometry 16448x64")
+            && stderr.contains("is outside supported encoder limits")
+            && stderr.contains("16384")
+            && stderr.contains("67108864"),
+        "stderr must identify the geometry and supported limits before frame I/O errors, got: {stderr}"
+    );
+    assert!(
+        !stderr.contains("whole number") && !stderr.contains("reading raw"),
+        "geometry rejection must precede partial-file and frame-read errors, got: {stderr}"
+    );
+    assert_eq!(
+        std::fs::read(&output).expect("read protected output"),
+        output_sentinel,
+        "invalid geometry must preserve an existing output"
+    );
+    assert_eq!(
+        std::fs::read(&csv).expect("read protected CSV"),
+        csv_sentinel,
+        "invalid geometry must preserve an existing CSV"
+    );
+    let _ = std::fs::remove_file(&raw);
+    let _ = std::fs::remove_file(&output);
+    let _ = std::fs::remove_file(&csv);
+}
+
+#[test]
 fn enc_raw_partial_frame_rejected() {
     let raw = tmp("raw_partial.yuv");
     // 100 bytes is not a whole multiple of 6144 (a 64x64 I420 frame).
