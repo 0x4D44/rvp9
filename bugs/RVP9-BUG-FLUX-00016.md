@@ -1,25 +1,25 @@
 # RVP9-BUG-FLUX-00016 — F.0.2 drops rvp9 worker records when threads exceed one
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** harness/f02 oracle
 - **Raised:** 2026-08-10T19:10:08Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261016T013458Z-c870f86b
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLUX-00016-run-fix-20261016T013458Z-c870f86b
-- **Owner base:** 40b9e8869574ae83e5ccf68b92974eb94f4601bd
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-16T01:34:58Z
-- **Owner until:** 2026-10-16T05:34:58Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-10T19:10:08Z, raised via `deltic bugs new` model=gpt-5.6-sol@xhigh)
+- **State history:** Open (2026-08-10T19:10:08Z, raised via `deltic bugs new` model=gpt-5.6-sol@xhigh) -> Fixed (2026-10-16T01:48:57Z, deltic:auto role=fix run=fix-20261016T013458Z-c870f86b branch=task/bug-RVP9-BUG-FLUX-00016-run-fix-20261016T013458Z-c870f86b code=8e015526ab40a877c2c6749160d0113c339b623d gate=manual)
 
 ## Observation
 
