@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00096 — Zero-frame Y4M reads allocate a full source frame
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Could
 - **Severity:** Medium
 - **Area:** io/y4m reader
 - **Raised:** 2026-08-22T14:33:55Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261016T064334Z-c44f9b5a
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00096-run-fix-20261016T064334Z-c44f9b5a
-- **Owner base:** 11b50f6f0d8ca9f2525519f83485186df66ffcd0
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-16T06:43:34Z
-- **Owner until:** 2026-10-16T10:43:34Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T14:33:55Z, raised via `deltic bugs new`)
+- **State history:** Open (2026-08-22T14:33:55Z, raised via `deltic bugs new`) -> Fixed (2026-10-16T06:51:09Z, deltic:auto role=fix run=fix-20261016T064334Z-c44f9b5a branch=task/bug-RVP9-BUG-KIL-00096-run-fix-20261016T064334Z-c44f9b5a code=ba4383249a2af57dfeabecc4b09e82c53cccfb1f gate=manual)
 
 ## Observation
 
