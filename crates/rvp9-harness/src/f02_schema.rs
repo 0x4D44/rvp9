@@ -1276,6 +1276,15 @@ fn live_field_mismatches(rvp9: &BlockDecision, libvpx: &BlockDecision) -> Vec<&'
     if rvp9.skip_flag != libvpx.skip_flag {
         fields.push("skip_flag");
     }
+    if rvp9.q_index != libvpx.q_index {
+        fields.push("q_index");
+    }
+    if rvp9.tx_size != libvpx.tx_size {
+        fields.push("tx_size");
+    }
+    if rvp9.luma_eob_nonzero != libvpx.luma_eob_nonzero {
+        fields.push("luma_eob_nonzero");
+    }
     fields
 }
 
@@ -1291,7 +1300,8 @@ fn write_optional_decision<W: Write>(
         "{{\"bsize\":\"{}\",\"mode\":\"{}\",\"ref_frame\":\"{}\",\
          \"mv_row\":{},\"mv_col\":{},\"mode_bits_est\":{},\
          \"mv_bits_est\":{},\"coef_bits_est\":{},\"sse_after_pred\":{},\
-         \"skip_flag\":{}}}",
+         \"skip_flag\":{},\"q_index\":{},\"tx_size\":\"{}\",\
+         \"luma_eob_nonzero\":{}}}",
         bsize_tag(decision.bsize),
         decision.mode.as_tag(),
         ref_frame_tag(decision.ref_frame),
@@ -1302,6 +1312,9 @@ fn write_optional_decision<W: Write>(
         decision.coef_bits_est,
         decision.sse_after_pred,
         decision.skip_flag,
+        decision.q_index,
+        tx_size_tag(decision.tx_size),
+        decision.luma_eob_nonzero,
     )
 }
 
@@ -2023,6 +2036,64 @@ mod tests {
         assert!(comparison.require_match(true).is_ok());
     }
 
+    fn assert_only_strict_field_mismatch(
+        rvp9: BlockDecision,
+        libvpx: BlockDecision,
+        expected_field: &'static str,
+    ) {
+        let comparison = compare_decisions(&[rvp9], &[libvpx]);
+
+        assert_eq!(comparison.mismatch_count(), 1);
+        assert_eq!(comparison.pairs[0].mismatched_fields, [expected_field]);
+        assert!(comparison.require_match(false).is_err());
+        assert!(comparison.require_match(true).is_ok());
+    }
+
+    #[test]
+    fn q_index_is_a_strict_oracle_field() {
+        let rvp9 = sample_inter();
+        let mut libvpx = rvp9;
+        libvpx.q_index += 1;
+
+        assert_only_strict_field_mismatch(rvp9, libvpx, "q_index");
+    }
+
+    #[test]
+    fn tx_size_is_a_strict_oracle_field() {
+        let rvp9 = sample_inter();
+        let mut libvpx = rvp9;
+        libvpx.tx_size = TxSize::Tx8x8;
+
+        assert_only_strict_field_mismatch(rvp9, libvpx, "tx_size");
+    }
+
+    #[test]
+    fn luma_eob_nonzero_is_a_strict_oracle_field() {
+        let rvp9 = sample_inter();
+        let mut libvpx = rvp9;
+        libvpx.luma_eob_nonzero = !libvpx.luma_eob_nonzero;
+
+        assert_only_strict_field_mismatch(rvp9, libvpx, "luma_eob_nonzero");
+    }
+
+    #[test]
+    fn identical_and_diagnostic_only_fields_are_nongating() {
+        let rvp9 = sample_inter();
+        let identical = compare_decisions(&[rvp9], &[rvp9]);
+        assert_eq!(identical.mismatch_count(), 0);
+        assert!(identical.pairs[0].mismatched_fields.is_empty());
+        assert!(identical.require_match(false).is_ok());
+
+        let mut libvpx = rvp9;
+        libvpx.ref_bits_est += 1;
+        libvpx.filter_bits_est += 1;
+        libvpx.skip_bits_est += 1;
+        let diagnostic_only = compare_decisions(&[rvp9], &[libvpx]);
+        assert_eq!(diagnostic_only.mismatch_count(), 0);
+        assert!(diagnostic_only.pairs[0].mismatched_fields.is_empty());
+        assert!(diagnostic_only.require_match(false).is_ok());
+    }
+
     #[test]
     fn winner_cell_analysis_is_partition_independent_and_hierarchical() {
         let mut rvp9 = sample_inter();
@@ -2409,5 +2480,42 @@ mod tests {
         assert_eq!(json["mismatched_fields"][0], "skip_flag");
         assert!(json["rvp9"].is_object());
         assert!(json["libvpx"].is_object());
+    }
+
+    #[test]
+    fn paired_jsonl_includes_strict_field_values_and_names() {
+        let rvp9 = sample_inter();
+        let mut libvpx = rvp9;
+        libvpx.q_index = 65;
+        libvpx.tx_size = TxSize::Tx8x8;
+        libvpx.luma_eob_nonzero = false;
+        let comparison = compare_decisions(&[rvp9], &[libvpx]);
+        let mut output = Vec::new();
+
+        comparison.write_paired_jsonl(&mut output).unwrap();
+
+        let json: serde_json::Value = serde_json::from_slice(&output).unwrap();
+        assert_eq!(
+            json["mismatched_fields"],
+            serde_json::json!(["q_index", "tx_size", "luma_eob_nonzero"])
+        );
+        assert_eq!(json["rvp9"]["q_index"], serde_json::json!(rvp9.q_index));
+        assert_eq!(
+            json["rvp9"]["tx_size"],
+            serde_json::json!(tx_size_tag(rvp9.tx_size))
+        );
+        assert_eq!(
+            json["rvp9"]["luma_eob_nonzero"],
+            serde_json::json!(rvp9.luma_eob_nonzero)
+        );
+        assert_eq!(json["libvpx"]["q_index"], serde_json::json!(libvpx.q_index));
+        assert_eq!(
+            json["libvpx"]["tx_size"],
+            serde_json::json!(tx_size_tag(libvpx.tx_size))
+        );
+        assert_eq!(
+            json["libvpx"]["luma_eob_nonzero"],
+            serde_json::json!(libvpx.luma_eob_nonzero)
+        );
     }
 }
