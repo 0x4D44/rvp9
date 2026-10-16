@@ -152,12 +152,17 @@ impl ScaleFactors {
     }
 }
 
-/// libvpx `valid_ref_frame_size` (`vp9_scale.h:61-65`). The spec'd
-/// envelope: ref dim must be in `[cur / 16, 2 * cur]` per axis.
-/// References outside this range fail `vp9_setup_scale_factors_for_frame`
-/// and produce a [`REF_INVALID_SCALE`] [`ScaleFactors`].
+/// Mirrors the ratio envelope in libvpx `valid_ref_frame_size`
+/// (`vp9_scale.h:61-65`): each ref dim must be in `[cur / 16, 2 * cur]`
+/// per axis. This public API also requires all four dimensions to be
+/// nonzero before computing scale factors.
+/// References outside the ratio envelope or with zero dimensions produce
+/// a [`REF_INVALID_SCALE`] [`ScaleFactors`].
 #[must_use]
 pub fn valid_ref_frame_size(ref_w: u32, ref_h: u32, cur_w: u32, cur_h: u32) -> bool {
+    if ref_w == 0 || ref_h == 0 || cur_w == 0 || cur_h == 0 {
+        return false;
+    }
     // Promote to u64 so `16 * ref_w` never overflows for the
     // multi-megapixel frame sizes VP9 permits.
     let ref_w = u64::from(ref_w);
@@ -646,6 +651,43 @@ mod tests {
         assert!(!valid_ref_frame_size(39, 30, 640, 480));
         // Asymmetric: only y fails.
         assert!(!valid_ref_frame_size(640, 1000, 640, 480));
+    }
+
+    const ZERO_DIMENSION_CASES: [(u32, u32, u32, u32); 7] = [
+        (0, 0, 0, 0),
+        (0, 480, 0, 480),
+        (640, 0, 640, 0),
+        (0, 480, 640, 480),
+        (640, 0, 640, 480),
+        (640, 480, 0, 480),
+        (640, 480, 640, 0),
+    ];
+
+    #[test]
+    fn valid_ref_frame_size_rejects_zero_dimensions() {
+        for (ref_w, ref_h, cur_w, cur_h) in ZERO_DIMENSION_CASES {
+            assert!(
+                !valid_ref_frame_size(ref_w, ref_h, cur_w, cur_h),
+                "accepted zero dimensions for ({ref_w}, {ref_h}, {cur_w}, {cur_h})"
+            );
+        }
+    }
+
+    #[test]
+    fn zero_dimensions_produce_invalid_scale_sentinel() {
+        for (ref_w, ref_h, cur_w, cur_h) in ZERO_DIMENSION_CASES {
+            let result = std::panic::catch_unwind(|| ScaleFactors::new(ref_w, ref_h, cur_w, cur_h));
+            assert!(
+                result.is_ok(),
+                "ScaleFactors::new panicked for ({ref_w}, {ref_h}, {cur_w}, {cur_h})"
+            );
+            let sf = result.unwrap();
+            assert!(!sf.is_valid());
+            assert_eq!(sf.x_scale_fp, REF_INVALID_SCALE);
+            assert_eq!(sf.y_scale_fp, REF_INVALID_SCALE);
+            assert_eq!(sf.x_step_q4, 0);
+            assert_eq!(sf.y_step_q4, 0);
+        }
     }
 
     #[test]
