@@ -6,15 +6,15 @@
 - **Area:** harness/f02 oracle
 - **Raised:** 2026-08-22T13:20:52Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
+- **Owner:** deltic:manual
+- **Owner role:** fix
+- **Owner run:** fix-20261016T044334Z-7aa5f4a5
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KIL-00084-run-fix-20261016T044334Z-7aa5f4a5
+- **Owner base:** 4bd0ee817507eedf243232f128bcf56a42a613de
 - **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner since:** 2026-10-16T04:43:34Z
+- **Owner until:** 2026-10-16T08:43:34Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
