@@ -23,7 +23,31 @@
 //! - Short: `-x value`, `-xvalue`, or `-x` (boolean).
 //! - Everything else is a positional argument (input/output paths).
 
+use std::ffi::OsString;
 use std::fmt::Write as _;
+
+/// Convert command-line arguments to the parser's UTF-8 string interface.
+///
+/// `args` must omit the executable name so reported indexes are one-based
+/// argument positions as users see them on the command line. Valid Unicode
+/// arguments are preserved exactly.
+///
+/// # Errors
+///
+/// Returns a `tool`-prefixed diagnostic naming the first argument that is
+/// not valid Unicode.
+pub fn collect_args<I>(args: I, tool: &str) -> Result<Vec<String>, String>
+where
+    I: IntoIterator<Item = OsString>,
+{
+    args.into_iter()
+        .enumerate()
+        .map(|(index, arg)| {
+            arg.into_string()
+                .map_err(|_| format!("{tool}: argument {} is not valid Unicode", index + 1))
+        })
+        .collect()
+}
 
 /// Whether a flag consumes a value.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -271,6 +295,15 @@ mod tests {
 
     fn args(parts: &[&str]) -> Vec<String> {
         parts.iter().map(|s| (*s).to_string()).collect()
+    }
+
+    #[test]
+    fn collect_args_preserves_valid_unicode() {
+        let argv = vec![OsString::from("--label=東京"), OsString::from("résumé.y4m")];
+        assert_eq!(
+            collect_args(argv, "test").unwrap(),
+            ["--label=東京", "résumé.y4m"]
+        );
     }
 
     #[test]

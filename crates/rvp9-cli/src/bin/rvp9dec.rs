@@ -354,7 +354,13 @@ fn req(v: Option<String>, flag: &str) -> Result<String, String> {
 const USAGE: &str = "rvp9dec [options] <input.ivf|input.webm>";
 
 fn main() -> ExitCode {
-    let argv: Vec<String> = std::env::args().skip(1).collect();
+    let argv = match args::collect_args(std::env::args_os().skip(1), "rvp9dec") {
+        Ok(argv) => argv,
+        Err(e) => {
+            eprintln!("{e}");
+            return ExitCode::FAILURE;
+        }
+    };
     let table = flag_table();
 
     // Honour --help / --version regardless of other tokens.

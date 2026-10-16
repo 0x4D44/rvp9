@@ -908,7 +908,13 @@ fn validate_two_pass_parallelism(opts: &EncOpts) -> Result<(), String> {
 const USAGE: &str = "rvp9enc [options] -o <out.ivf> <input.y4m|input.yuv>";
 
 fn main() -> ExitCode {
-    let argv: Vec<String> = std::env::args().skip(1).collect();
+    let argv = match args::collect_args(std::env::args_os().skip(1), "rvp9enc") {
+        Ok(argv) => argv,
+        Err(e) => {
+            eprintln!("{e}");
+            return ExitCode::FAILURE;
+        }
+    };
     let table = flag_table();
 
     if argv.iter().any(|a| a == "--help") {

@@ -2906,3 +2906,122 @@ fn dec_help_lists_every_wired_flag() {
         );
     }
 }
+
+#[cfg(unix)]
+mod invalid_unicode_argv {
+    use super::{Command, CommandExt, dec_bin, enc_bin, tmp};
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+    use std::path::{Path, PathBuf};
+
+    struct RemoveOnDrop(PathBuf);
+
+    impl Drop for RemoveOnDrop {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+
+    fn assert_controlled_unicode_error(
+        binary: &Path,
+        tool: &str,
+        args: Vec<OsString>,
+        argument_index: usize,
+    ) {
+        let out = Command::new(binary)
+            .args(args)
+            .bounded_output()
+            .expect("run CLI with invalid-Unicode argument");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(
+            out.status.code(),
+            Some(1),
+            "{tool} must return its controlled failure code, got status {} and stderr: {stderr}",
+            out.status
+        );
+        assert!(
+            stderr.contains(tool)
+                && stderr.contains("argument")
+                && stderr.contains(&argument_index.to_string())
+                && stderr.contains("Unicode"),
+            "{tool} must identify the invalid-Unicode argument {argument_index}, got: {stderr}"
+        );
+        for panic_marker in [
+            "panicked",
+            "backtrace",
+            "failed to convert",
+            "std::env::args",
+        ] {
+            assert!(
+                !stderr.to_ascii_lowercase().contains(panic_marker),
+                "{tool} must not print panic details, got: {stderr}"
+            );
+        }
+        assert!(
+            out.stdout.is_empty(),
+            "{tool} must not print output before rejecting argv"
+        );
+    }
+
+    #[test]
+    fn both_clis_reject_invalid_unicode_in_every_argument_position() {
+        let input = tmp("invalid_unicode_input_sentinel");
+        let _input_cleanup = RemoveOnDrop(input.clone());
+        let input_sentinel = b"input sentinel remains unchanged";
+        std::fs::write(&input, input_sentinel).expect("write input sentinel");
+
+        let cases = [
+            (
+                "path-like positional",
+                vec![OsString::from_vec(b"missing_\xff.ivf".to_vec())],
+                1,
+            ),
+            (
+                "long option text",
+                vec![
+                    input.as_os_str().to_os_string(),
+                    OsString::from_vec(b"--unknown_\xff".to_vec()),
+                ],
+                2,
+            ),
+            (
+                "option value",
+                vec![
+                    input.as_os_str().to_os_string(),
+                    OsString::from("--codec"),
+                    OsString::from_vec(b"vp\xff".to_vec()),
+                ],
+                3,
+            ),
+        ];
+
+        for (tool, binary) in [("rvp9enc", enc_bin()), ("rvp9dec", dec_bin())] {
+            for (case, args, argument_index) in &cases {
+                assert_controlled_unicode_error(&binary, tool, args.clone(), *argument_index);
+                assert_eq!(
+                    std::fs::read(&input).expect("read input sentinel"),
+                    input_sentinel,
+                    "{tool} changed input while rejecting {case}"
+                );
+            }
+        }
+
+        let output = tmp("invalid_unicode_output_sentinel");
+        let _output_cleanup = RemoveOnDrop(output.clone());
+        let output_sentinel = b"output sentinel remains unchanged";
+        std::fs::write(&output, output_sentinel).expect("write output sentinel");
+        for (tool, binary) in [("rvp9enc", enc_bin()), ("rvp9dec", dec_bin())] {
+            let args = vec![
+                OsString::from("-o"),
+                output.as_os_str().to_os_string(),
+                OsString::from_vec(b"missing_\xff.ivf".to_vec()),
+            ];
+            assert_controlled_unicode_error(&binary, tool, args, 3);
+            assert_eq!(
+                std::fs::read(&output).expect("read output sentinel"),
+                output_sentinel,
+                "{tool} changed output while rejecting invalid Unicode"
+            );
+        }
+    }
+}
