@@ -1,24 +1,24 @@
 # RVP9-BUG-KILN-00066 — decode-throughput default sweep still exits 0 after a failed fixture
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** bench/decode-throughput
 - **Raised:** 2026-07-31T10:22:37Z
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261016T052048Z-d55a7572
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KILN-00066-run-fix-20261016T052048Z-d55a7572
-- **Owner base:** 8fbae9f02f02b81a74b6238b2b7a8d471a8d6a00
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-16T05:20:48Z
-- **Owner until:** 2026-10-16T09:20:48Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-07-31T10:22:37Z, raised via `deltic bugs new` model=claude-opus-5@high)
+- **State history:** Open (2026-07-31T10:22:37Z, raised via `deltic bugs new` model=claude-opus-5@high) -> Fixed (2026-10-16T05:30:54Z, deltic:auto role=fix run=fix-20261016T052048Z-d55a7572 branch=task/bug-RVP9-BUG-KILN-00066-run-fix-20261016T052048Z-d55a7572 code=a40334ca6e256b7f2ba651a3fc01097bc3e2e881 gate=manual)
 
 ## Observation
 
