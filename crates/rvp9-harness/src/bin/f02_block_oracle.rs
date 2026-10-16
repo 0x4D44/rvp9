@@ -83,6 +83,17 @@ struct OracleEncodeConfig {
     inter_layer_pred: u8,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct NumericOptions {
+    frames: u32,
+    width: u32,
+    height: u32,
+    fps: Option<u32>,
+    threads: u32,
+    tile_columns: u8,
+    kbps_list: Vec<u32>,
+}
+
 fn oracle_parallelism(encode: OracleEncodeConfig) -> EncoderParallelism {
     EncoderParallelism {
         max_threads: encode.threads,
@@ -105,6 +116,105 @@ fn arg(args: &[String], key: &str) -> Option<String> {
         }
     }
     None
+}
+
+fn numeric_option_value<'a>(args: &'a [String], key: &str) -> Result<Option<&'a str>, String> {
+    let equals_prefix = format!("{key}=");
+    for (index, argument) in args.iter().enumerate() {
+        if argument == key {
+            let Some(value) = args.get(index + 1) else {
+                return Err(format!("{key} requires a value"));
+            };
+            if value.starts_with("--") {
+                return Err(format!("{key} requires a value before {value}"));
+            }
+            return Ok(Some(value));
+        }
+        if let Some(value) = argument.strip_prefix(&equals_prefix) {
+            return Ok(Some(value));
+        }
+    }
+    Ok(None)
+}
+
+fn parse_unsigned_option<T>(args: &[String], key: &str) -> Result<Option<T>, String>
+where
+    T: std::str::FromStr,
+{
+    numeric_option_value(args, key)?
+        .map(|value| {
+            value
+                .parse::<T>()
+                .map_err(|_| format!("{key} must be an unsigned integer, got {value:?}"))
+        })
+        .transpose()
+}
+
+fn parse_positive_u32_option(
+    args: &[String],
+    key: &str,
+    default: Option<u32>,
+) -> Result<Option<u32>, String> {
+    let value = parse_unsigned_option::<u32>(args, key)?.or(default);
+    if value == Some(0) {
+        return Err(format!("{key} must be greater than zero"));
+    }
+    Ok(value)
+}
+
+fn parse_kbps_list(args: &[String]) -> Result<Vec<u32>, String> {
+    let Some(value) = numeric_option_value(args, "--kbps")? else {
+        return Ok(vec![100]);
+    };
+
+    let mut rates = Vec::new();
+    for token in value.split(',') {
+        let token = token.trim();
+        if token.is_empty() {
+            return Err(
+                "--kbps must contain at least one positive bitrate and no empty entries".into(),
+            );
+        }
+        let rate = token
+            .parse::<u32>()
+            .map_err(|_| format!("--kbps entries must be positive integers, got {token:?}"))?;
+        if rate == 0 {
+            return Err("--kbps entries must be greater than zero".into());
+        }
+        if rate.checked_mul(1000).is_none() {
+            return Err(format!(
+                "--kbps value {rate} exceeds the encoder bitrate range"
+            ));
+        }
+        rates.push(rate);
+    }
+    if rates.is_empty() {
+        return Err("--kbps must contain at least one positive bitrate".into());
+    }
+    Ok(rates)
+}
+
+fn parse_numeric_options(args: &[String]) -> Result<NumericOptions, String> {
+    let frames = parse_positive_u32_option(args, "--frames", Some(DEFAULT_FRAMES))?
+        .expect("frames always have a default");
+    let width = parse_positive_u32_option(args, "--width", Some(DEFAULT_W))?
+        .expect("width always has a default");
+    let height = parse_positive_u32_option(args, "--height", Some(DEFAULT_H))?
+        .expect("height always has a default");
+    let fps = parse_positive_u32_option(args, "--fps", None)?;
+    let threads = parse_positive_u32_option(args, "--threads", Some(1))?
+        .expect("threads always have a default");
+    let tile_columns = parse_unsigned_option::<u8>(args, "--tile-columns")?.unwrap_or(6);
+    let kbps_list = parse_kbps_list(args)?;
+    Ok(NumericOptions {
+        frames,
+        width,
+        height,
+        fps,
+        threads,
+        tile_columns,
+        kbps_list,
+    })
 }
 
 fn parse_cpu_used(args: &[String]) -> Result<i32, String> {
@@ -450,16 +560,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let vpxenc_path = PathBuf::from(
         arg(&argv, "--vpxenc").unwrap_or_else(|| r"third_party\libvpx\build_f02\vpxenc.exe".into()),
     );
-    let frames: u32 = arg(&argv, "--frames")
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(DEFAULT_FRAMES);
-    let width: u32 = arg(&argv, "--width")
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(DEFAULT_W);
-    let height: u32 = arg(&argv, "--height")
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(DEFAULT_H);
-    let fps: Option<u32> = arg(&argv, "--fps").and_then(|s| s.parse().ok());
+    let NumericOptions {
+        frames,
+        width,
+        height,
+        fps,
+        threads,
+        tile_columns,
+        kbps_list,
+    } = parse_numeric_options(&argv)?;
     let cpu_used = parse_cpu_used(&argv)?;
     let aq_mode = parse_aq_mode(&argv)?;
     let spatial_layers: u8 = arg(&argv, "--spatial-layers")
@@ -493,18 +602,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if !matches!(inter_layer_pred, 0 | 3) {
         return Err(format!("--inter-layer-pred must be 0 or 3, got {inter_layer_pred}").into());
     }
-    let threads: u32 = arg(&argv, "--threads")
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(1)
-        .max(1);
-    let tile_columns: u8 = arg(&argv, "--tile-columns")
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(6);
-    let kbps_list: Vec<u32> = arg(&argv, "--kbps")
-        .unwrap_or_else(|| "100".into())
-        .split(',')
-        .filter_map(|s| s.trim().parse().ok())
-        .collect();
     let out_dir =
         PathBuf::from(arg(&argv, "--out").unwrap_or_else(|| "target/track_f_oracle".into()));
     let no_libvpx = argv.iter().any(|a| a == "--no-libvpx");
@@ -1944,6 +2041,148 @@ mod tests {
             spatial_layers: 1,
             inter_layer_pred: 0,
         }
+    }
+
+    #[test]
+    fn numeric_options_keep_documented_defaults() {
+        assert_eq!(
+            parse_numeric_options(&[]).unwrap(),
+            NumericOptions {
+                frames: 64,
+                width: 256,
+                height: 256,
+                fps: None,
+                threads: 1,
+                tile_columns: 6,
+                kbps_list: vec![100],
+            }
+        );
+    }
+
+    #[test]
+    fn numeric_options_accept_split_and_equals_forms() {
+        let args = [
+            "--frames",
+            "7",
+            "--width=320",
+            "--height",
+            "240",
+            "--fps=25",
+            "--threads",
+            "2",
+            "--tile-columns=0",
+            "--kbps",
+            "100, 50,100,4294967",
+            "--frames",
+            "9",
+        ]
+        .map(str::to_owned);
+        assert_eq!(
+            parse_numeric_options(&args).unwrap(),
+            NumericOptions {
+                frames: 7,
+                width: 320,
+                height: 240,
+                fps: Some(25),
+                threads: 2,
+                tile_columns: 0,
+                kbps_list: vec![100, 50, 100, 4_294_967],
+            }
+        );
+    }
+
+    #[test]
+    fn numeric_options_reject_malformed_values_with_option_specific_errors() {
+        let cases: &[(&str, &str, &[&str])] = &[
+            ("frames missing", "--frames", &["--frames"]),
+            (
+                "frames before next option",
+                "--frames",
+                &["--frames", "--width", "320"],
+            ),
+            ("frames empty", "--frames", &["--frames="]),
+            ("frames malformed", "--frames", &["--frames", "many"]),
+            ("frames zero", "--frames", &["--frames", "0"]),
+            ("frames negative", "--frames", &["--frames", "-1"]),
+            ("frames overflow", "--frames", &["--frames", "4294967296"]),
+            ("width missing", "--width", &["--width"]),
+            ("width empty", "--width", &["--width="]),
+            ("width malformed", "--width", &["--width", "wide"]),
+            ("width zero", "--width", &["--width", "0"]),
+            ("width negative", "--width", &["--width", "-1"]),
+            ("width overflow", "--width", &["--width", "4294967296"]),
+            ("height missing", "--height", &["--height"]),
+            ("height empty", "--height", &["--height="]),
+            ("height malformed", "--height", &["--height", "tall"]),
+            ("height zero", "--height", &["--height", "0"]),
+            ("height negative", "--height", &["--height", "-1"]),
+            ("height overflow", "--height", &["--height", "4294967296"]),
+            ("fps missing", "--fps", &["--fps"]),
+            ("fps empty", "--fps", &["--fps="]),
+            ("fps malformed", "--fps", &["--fps", "fast"]),
+            ("fps zero", "--fps", &["--fps", "0"]),
+            ("fps negative", "--fps", &["--fps", "-1"]),
+            ("fps overflow", "--fps", &["--fps", "4294967296"]),
+            ("threads missing", "--threads", &["--threads"]),
+            ("threads empty", "--threads", &["--threads="]),
+            ("threads malformed", "--threads", &["--threads", "many"]),
+            ("threads zero", "--threads", &["--threads", "0"]),
+            ("threads negative", "--threads", &["--threads", "-1"]),
+            (
+                "threads overflow",
+                "--threads",
+                &["--threads", "4294967296"],
+            ),
+            (
+                "tile columns missing",
+                "--tile-columns",
+                &["--tile-columns"],
+            ),
+            ("tile columns empty", "--tile-columns", &["--tile-columns="]),
+            (
+                "tile columns malformed",
+                "--tile-columns",
+                &["--tile-columns", "many"],
+            ),
+            (
+                "tile columns negative",
+                "--tile-columns",
+                &["--tile-columns", "-1"],
+            ),
+            (
+                "tile columns overflow",
+                "--tile-columns",
+                &["--tile-columns", "256"],
+            ),
+            ("kbps missing", "--kbps", &["--kbps"]),
+            ("kbps empty", "--kbps", &["--kbps="]),
+            ("kbps malformed", "--kbps", &["--kbps=nope"]),
+            ("kbps mixed malformed", "--kbps", &["--kbps=100,nope,200"]),
+            ("kbps leading empty", "--kbps", &["--kbps=,100"]),
+            ("kbps trailing empty", "--kbps", &["--kbps=100,"]),
+            ("kbps interior empty", "--kbps", &["--kbps=100,,200"]),
+            ("kbps zero", "--kbps", &["--kbps=0"]),
+            ("kbps negative", "--kbps", &["--kbps=-1"]),
+            ("kbps integer overflow", "--kbps", &["--kbps=4294967296"]),
+            ("kbps bitrate overflow", "--kbps", &["--kbps=4294968"]),
+        ];
+        let mut failures = Vec::new();
+        for (label, option, raw_args) in cases {
+            let args = raw_args
+                .iter()
+                .map(|value| (*value).to_owned())
+                .collect::<Vec<_>>();
+            match parse_numeric_options(&args) {
+                Err(error) if error.contains(option) => {}
+                Err(error) => failures.push(format!("{label}: error omitted {option}: {error}")),
+                Ok(parsed) => failures.push(format!("{label}: accepted as {parsed:?}")),
+            }
+        }
+        assert!(
+            failures.is_empty(),
+            "invalid numeric cases accepted or unclear:\n{}",
+            failures.join("\n")
+        );
     }
 
     #[test]
