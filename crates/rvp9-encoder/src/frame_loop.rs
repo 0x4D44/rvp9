@@ -829,11 +829,22 @@ const FIRST_PASS_QINDEX: u8 = 128;
 /// # Errors
 ///
 /// Propagates any [`EncodeError`] from either pass (invalid config,
-/// bitstream write failure, plane-size mismatch).
+/// bitstream write failure, plane-size mismatch). Returns
+/// [`EncodeError::InvalidConfig`] when `config.temporal_layers > 1`, because
+/// two-pass temporal SVC is unsupported until first-pass state is preserved
+/// for each layer.
 pub fn encode_two_pass(
     config: EncoderConfig,
     frames: &[YuvFrameRef<'_>],
 ) -> Result<Vec<EncodedFrame>, EncodeError> {
+    // TwoPassState attaches to the stream rate controller, while temporal SVC
+    // selects per-layer controllers without that first-pass state.
+    if config.temporal_layers > 1 {
+        return Err(EncodeError::InvalidConfig(
+            "two-pass encoding with temporal SVC is unsupported; configure temporal_layers = 1",
+        ));
+    }
+
     // ---- PASS 1: gather first-pass stats (stats-only, output discarded).
     let stats = gather_first_pass_stats(config, frames)?;
 

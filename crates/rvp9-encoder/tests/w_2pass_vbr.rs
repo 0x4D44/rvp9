@@ -36,7 +36,7 @@
 
 use rvp9_decoder::{Decoder, ParsedFrame};
 use rvp9_encoder::{
-    AqMode, Deadline, EncodedFrame, EncoderConfig, RcMode, StreamEncoder, YuvFrameRef,
+    AqMode, Deadline, EncodeError, EncodedFrame, EncoderConfig, RcMode, StreamEncoder, YuvFrameRef,
     encode_two_pass,
 };
 use std::path::{Path, PathBuf};
@@ -378,4 +378,43 @@ fn two_pass_completes_and_emits_one_packet_per_frame() {
     for (i, p) in packets.iter().enumerate() {
         assert!(!p.is_empty(), "frame {i} packet must be non-empty");
     }
+}
+
+#[test]
+fn two_pass_temporal_svc_rejected_before_first_pass() {
+    let frames = synthetic_frames();
+    let small_views: Vec<YuvFrameRef<'_>> = frames.iter().take(3).map(Frame::view).collect();
+    let cases: [(&str, &[YuvFrameRef<'_>]); 2] = [
+        ("empty input", &[]),
+        ("three-frame input", small_views.as_slice()),
+    ];
+    let mut violations = Vec::new();
+
+    for temporal_layers in [2, 3] {
+        for (case, views) in cases {
+            match encode_two_pass(
+                EncoderConfig {
+                    temporal_layers,
+                    ..base_config(RcMode::Cbr)
+                },
+                views,
+            ) {
+                Err(EncodeError::InvalidConfig(message))
+                    if message.contains("two-pass") && message.contains("temporal") => {}
+                Err(error) => violations.push(format!(
+                    "{temporal_layers} temporal layers with {case}: wrong error {error:?}"
+                )),
+                Ok(encoded) => violations.push(format!(
+                    "{temporal_layers} temporal layers with {case}: accepted {} frames",
+                    encoded.len()
+                )),
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "two-pass temporal SVC must return InvalidConfig before gathering first-pass stats: {}",
+        violations.join("; ")
+    );
 }

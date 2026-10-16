@@ -24,6 +24,31 @@ Each entry:
 
 ## Entries
 
+### 2026-10-16 — Reject two-pass temporal SVC without per-layer statistics
+
+**Where:** `rvp9_encoder::encode_two_pass`; reference
+[`vp9/encoder/vp9_svc_layercontext.c:345`, `vp9_restore_layer_context`](https://chromium.googlesource.com/webm/libvpx/+/e7f33a53cf404bbb3688af9b13375b5c090daae4/vp9/encoder/vp9_svc_layercontext.c#345).
+
+**What libvpx does:** saves and restores rate-control and two-pass state
+together in each layer context. This reference describes the internal state
+ownership, rather than asserting support for every temporal CLI combination.
+
+**What rvp9 does:** rejects a two-pass request with more than one temporal
+layer at the shared driver entry point. The CLI propagates that error.
+
+**Why:** its first-pass allocation state belongs to the stream controller;
+temporal SVC selects a per-layer controller without that state before choosing
+Q. Accepting the request therefore discards the requested allocation model.
+
+**Byte-parity impact:** the unsupported combination produces an error instead
+of a stream that silently falls back to average bandwidth.
+
+**Compression-efficiency impact:** no stream is produced for the rejected
+combination; no BD-rate improvement is claimed.
+
+**Future plan:** permit two-pass temporal SVC when per-layer first-pass state
+and allocation have their own regression and allocation oracles.
+
 ### 2026-08-20 — Bound the alpha's experimental quality surfaces
 
 **Where:** `PLAN.md` section 2 and Stage 4d, `README.md` Alpha scope, and

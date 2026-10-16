@@ -343,6 +343,57 @@ fn enc_passes_two_still_writes_complete_ivf() {
     let _ = std::fs::remove_file(&ivf);
 }
 
+#[test]
+fn enc_two_pass_temporal_svc_rejected_before_output_creation() {
+    let mut violations = Vec::new();
+
+    for temporal_layers in [2, 3] {
+        let input = tmp(&format!("two_pass_svc_{temporal_layers}_in.y4m"));
+        let output = tmp(&format!("two_pass_svc_{temporal_layers}_out.ivf"));
+        write_synthetic_y4m(&input, 64, 64, 3, 30, 1);
+        let input_before = std::fs::read(&input).expect("read synthetic Y4M input");
+
+        let result = Command::new(enc_bin())
+            .args(["--passes", "2", "--temporal-layers"])
+            .arg(temporal_layers.to_string())
+            .args(["--target-bitrate", "500", "-o"])
+            .arg(&output)
+            .arg(&input)
+            .bounded_output()
+            .expect("run two-pass temporal SVC rvp9enc");
+
+        let stderr = String::from_utf8_lossy(&result.stderr).to_ascii_lowercase();
+        if result.status.success() {
+            violations.push(format!(
+                "{temporal_layers} temporal layers: command succeeded"
+            ));
+        }
+        if !(stderr.contains("two-pass") && stderr.contains("temporal")) {
+            violations.push(format!(
+                "{temporal_layers} temporal layers: missing two-pass/temporal diagnostic: {stderr}"
+            ));
+        }
+        if output.exists() {
+            violations.push(format!(
+                "{temporal_layers} temporal layers: output file was created"
+            ));
+        }
+        match std::fs::read(&input) {
+            Ok(after) if after == input_before => {}
+            _ => violations.push(format!("{temporal_layers} temporal layers: input changed")),
+        }
+
+        let _ = std::fs::remove_file(&input);
+        let _ = std::fs::remove_file(&output);
+    }
+
+    assert!(
+        violations.is_empty(),
+        "two-pass temporal SVC must be rejected without creating output or changing input: {}",
+        violations.join("; ")
+    );
+}
+
 /// `--passes 3` is rejected — only 1 or 2 passes are valid.
 #[test]
 fn enc_passes_three_rejected() {
