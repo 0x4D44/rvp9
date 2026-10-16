@@ -400,8 +400,8 @@ fn bd_rate(anchor: &[RdPoint], test: &[RdPoint]) -> Option<f64> {
     let test_xy: Vec<(f64, f64)> = test.iter().map(to_xy).collect();
 
     // Cubic least-squares fit of log_bitrate as a function of PSNR.
-    let a = polyfit3(&anchor_xy);
-    let b = polyfit3(&test_xy);
+    let a = polyfit3(&anchor_xy)?;
+    let b = polyfit3(&test_xy)?;
 
     // Integration range: the OVERLAP of the two PSNR ranges (Bjontegaard
     // integrates only over PSNR values where both curves are defined).
@@ -439,7 +439,8 @@ fn measured_bd_rate(anchor: &[RdPoint], test: &[RdPoint]) -> Result<f64, &'stati
     {
         return Err("PSNR measurement failed");
     }
-    let value = bd_rate(anchor, test).ok_or("insufficient or non-overlapping RD points")?;
+    let value =
+        bd_rate(anchor, test).ok_or("insufficient, singular, or non-overlapping RD points")?;
     if !value.is_finite() {
         return Err("BD-rate calculation produced a non-finite result");
     }
@@ -453,7 +454,26 @@ fn measured_bd_rate(anchor: &[RdPoint], test: &[RdPoint]) -> Result<f64, &'stati
 /// invariants are clearer with explicit `m[i][j]` than with iterator chains
 /// over rows. We allow `clippy::needless_range_loop` for that reason.
 #[allow(clippy::needless_range_loop)]
-fn polyfit3(pts: &[(f64, f64)]) -> [f64; 4] {
+fn polyfit3(pts: &[(f64, f64)]) -> Option<[f64; 4]> {
+    if pts.iter().any(|(x, y)| !x.is_finite() || !y.is_finite()) {
+        return None;
+    }
+
+    // Exact rank can be obscured by roundoff in the normal equations, so
+    // reject curves that do not provide four distinct PSNR values directly.
+    let mut distinct_x = Vec::with_capacity(4);
+    for &(x, _) in pts {
+        if !distinct_x.contains(&x) {
+            distinct_x.push(x);
+            if distinct_x.len() == 4 {
+                break;
+            }
+        }
+    }
+    if distinct_x.len() < 4 {
+        return None;
+    }
+
     // Build the normal-equations augmented matrix [A | b] where
     //   A[i][j] = sum(x^(i+j))
     //   b[i]    = sum(y * x^i)
@@ -481,8 +501,8 @@ fn polyfit3(pts: &[(f64, f64)]) -> [f64; 4] {
         }
         m.swap(i, max);
         let pivot = m[i][i];
-        if pivot.abs() < 1e-12 {
-            return [0.0; 4]; // degenerate; caller should ignore.
+        if !pivot.is_finite() || pivot.abs() < 1e-12 {
+            return None;
         }
         for j in 0..5 {
             m[i][j] /= pivot;
@@ -496,7 +516,11 @@ fn polyfit3(pts: &[(f64, f64)]) -> [f64; 4] {
             }
         }
     }
-    [m[0][4], m[1][4], m[2][4], m[3][4]]
+    let coefficients = [m[0][4], m[1][4], m[2][4], m[3][4]];
+    coefficients
+        .iter()
+        .all(|coefficient| coefficient.is_finite())
+        .then_some(coefficients)
 }
 
 fn main() -> ExitCode {
@@ -1010,7 +1034,80 @@ mod tests {
         }];
         assert_eq!(
             measured_bd_rate(&single, &single),
-            Err("insufficient or non-overlapping RD points")
+            Err("insufficient, singular, or non-overlapping RD points")
+        );
+    }
+
+    fn synthetic_curve(psnr_values: &[f64], bitrate_scale: f64) -> Vec<RdPoint> {
+        psnr_values
+            .iter()
+            .map(|&psnr_db| RdPoint {
+                bitrate_kbps: bitrate_scale * (100.0 * (0.05 * psnr_db).exp()),
+                psnr_db,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn measured_bdrate_rejects_repeated_psnr_on_anchor_with_overlap() {
+        let singular = synthetic_curve(&[0.0, 1.0, 1.0, 2.0], 1.0);
+        let full_rank = synthetic_curve(&[0.0, 1.0, 2.0, 3.0], 1.25);
+
+        assert!(
+            measured_bd_rate(&singular, &full_rank).is_err(),
+            "rank-deficient anchor curve produced a BD-rate"
+        );
+    }
+
+    #[test]
+    fn measured_bdrate_rejects_repeated_psnr_on_test_with_overlap() {
+        let full_rank = synthetic_curve(&[0.0, 1.0, 2.0, 3.0], 1.0);
+        let singular = synthetic_curve(&[0.0, 1.0, 1.0, 2.0], 1.25);
+
+        assert!(
+            measured_bd_rate(&full_rank, &singular).is_err(),
+            "rank-deficient test curve produced a BD-rate"
+        );
+    }
+
+    #[test]
+    fn measured_bdrate_rejects_repeated_psnr_on_both_curves_with_overlap() {
+        let singular = synthetic_curve(&[0.0, 1.0, 1.0, 2.0], 1.0);
+        let proportional = synthetic_curve(&[0.0, 1.0, 1.0, 2.0], 1.25);
+
+        assert!(
+            measured_bd_rate(&singular, &proportional).is_err(),
+            "two rank-deficient curves produced a BD-rate"
+        );
+    }
+
+    #[test]
+    fn measured_bdrate_rejects_repeated_realistic_psnr_with_overlap() {
+        let singular = synthetic_curve(&[28.0, 34.0, 34.0, 40.0], 1.0);
+        let full_rank = synthetic_curve(&[28.0, 34.0, 40.0, 46.0], 1.25);
+
+        assert!(
+            measured_bd_rate(&singular, &full_rank).is_err(),
+            "rank-deficient curve at realistic PSNR values produced a BD-rate"
+        );
+    }
+
+    #[test]
+    fn measured_bdrate_keeps_full_rank_fits_with_repeated_observations() {
+        let anchor = synthetic_curve(&[28.0, 34.0, 34.0, 40.0, 46.0, 46.0], 1.0);
+        let proportional = synthetic_curve(&[28.0, 34.0, 34.0, 40.0, 46.0, 46.0], 1.25);
+        let identical = anchor.clone();
+
+        let proportional_delta = measured_bd_rate(&anchor, &proportional).unwrap();
+        assert!(
+            (proportional_delta - 25.0).abs() < 1e-6,
+            "expected a 25% delta for proportional bitrates, got {proportional_delta}"
+        );
+
+        let identity_delta = measured_bd_rate(&anchor, &identical).unwrap();
+        assert!(
+            identity_delta.abs() < 1e-6,
+            "expected zero delta for identical curves, got {identity_delta}"
         );
     }
 }
