@@ -6,15 +6,15 @@
 - **Area:** io/y4m reader
 - **Raised:** 2026-08-22T14:33:55Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
+- **Owner:** deltic:manual
+- **Owner role:** fix
+- **Owner run:** fix-20261016T064334Z-c44f9b5a
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KIL-00096-run-fix-20261016T064334Z-c44f9b5a
+- **Owner base:** 11b50f6f0d8ca9f2525519f83485186df66ffcd0
 - **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner since:** 2026-10-16T06:43:34Z
+- **Owner until:** 2026-10-16T10:43:34Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
