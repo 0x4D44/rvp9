@@ -1,6 +1,6 @@
 # RVP9-BUG-KILN-00065 — rvp9enc one-pass creates and header-writes the output file before encoding starts
 
-- **State:** Open
+- **State:** Blocked
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** cli/rvp9enc
@@ -18,7 +18,7 @@
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-07-31T10:22:26Z, raised via `deltic bugs new` model=claude-opus-5@high)
+- **State history:** Open (2026-07-31T10:22:26Z, raised via `deltic bugs new` model=claude-opus-5@high) → Blocked (2026-10-16, Codex; Arthur decision required on one-pass output failure contract)
 
 ## Observation
 
@@ -40,3 +40,11 @@ Confirmed by reading the current tree at 4abe0d8 + 3a7aba2.
 <unfixed — raised only>
 
 ## Notes
+
+### Output contract decision required (2026-10-16)
+
+Missing input: **Arthur** must choose whether one-pass encoding should defer destination creation until the first packet is ready (recommended, matching the accepted decoder contract), publish a temporary file only after the complete encode succeeds, or retain early creation with an explicit partial-output contract. The question has been presented; no response has been assumed.
+
+Current source still creates the ordinary one-pass writer before `encode_frame_delayed` and the spatial one-pass writer before the first spatial access unit. The ordinary path may buffer source frames without emitting a packet, and it also writes packets from the final flush. A deferred-creation fix must cover those sites; a transactional fix additionally needs replacement, failure cleanup and cross-platform path semantics. These are different observable destination-preservation contracts, not interchangeable implementation details.
+
+The archived KILN-00051 verification explicitly accepts partial decoder output after the first emitted frame. It establishes a useful precedent, but the original observation above explicitly leaves the encoder choice unsettled. No source change, codec execution or regression proof was performed for this decision-only pass. This bug is neither Fixed nor Closed. Reopen after Arthur supplies the contract decision.
