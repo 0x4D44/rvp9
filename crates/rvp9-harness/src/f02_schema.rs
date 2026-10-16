@@ -119,70 +119,90 @@ pub fn parse_jsonl_line(line: &str) -> Result<BlockDecision, ParseError> {
     for kv in split_top_level_commas(inner)? {
         let (k, v) = split_kv(kv)?;
         match k {
-            "frame_idx" => frame_idx = Some(parse_num(v, "frame_idx")?),
-            "spatial_id" => spatial_id = Some(parse_num(v, "spatial_id")?),
-            "mi_row" => mi_row = Some(parse_num(v, "mi_row")?),
-            "mi_col" => mi_col = Some(parse_num(v, "mi_col")?),
+            "frame_idx" => set_once(&mut frame_idx, parse_num(v, "frame_idx")?)?,
+            "spatial_id" => set_once(&mut spatial_id, parse_num(v, "spatial_id")?)?,
+            "mi_row" => set_once(&mut mi_row, parse_num(v, "mi_row")?)?,
+            "mi_col" => set_once(&mut mi_col, parse_num(v, "mi_col")?)?,
             "bsize" => {
                 let raw = parse_string(v, "bsize")?;
-                bsize = Some(bsize_from_tag(&raw).ok_or(ParseError::BadValue {
-                    field: "bsize",
-                    raw,
-                })?);
+                set_once(
+                    &mut bsize,
+                    bsize_from_tag(&raw).ok_or(ParseError::BadValue {
+                        field: "bsize",
+                        raw,
+                    })?,
+                )?;
             }
-            "mode" => mode_tag = Some(parse_string(v, "mode")?),
-            "ref_frame" => ref_tag = Some(parse_string(v, "ref_frame")?),
-            "mv_row" => mv_row = Some(parse_num(v, "mv_row")?),
-            "mv_col" => mv_col = Some(parse_num(v, "mv_col")?),
-            "mode_bits_est" => mode_bits_est = Some(parse_num(v, "mode_bits_est")?),
-            "mv_bits_est" => mv_bits_est = Some(parse_num(v, "mv_bits_est")?),
-            "ref_bits_est" => ref_bits_est = Some(parse_num(v, "ref_bits_est")?),
-            "filter_bits_est" => filter_bits_est = Some(parse_num(v, "filter_bits_est")?),
-            "skip_bits_est" => skip_bits_est = Some(parse_num(v, "skip_bits_est")?),
-            "coef_bits_est" => coef_bits_est = Some(parse_num(v, "coef_bits_est")?),
-            "picker_rate" => picker_rate = Some(parse_num(v, "picker_rate")?),
-            "picker_dist" => picker_dist = Some(parse_num(v, "picker_dist")?),
-            "picker_rd_cost" => picker_rd_cost = Some(parse_num(v, "picker_rd_cost")?),
-            "model_var_y" => model_var_y = Some(parse_num(v, "model_var_y")?),
+            "mode" => set_once(&mut mode_tag, parse_string(v, "mode")?)?,
+            "ref_frame" => set_once(&mut ref_tag, parse_string(v, "ref_frame")?)?,
+            "mv_row" => set_once(&mut mv_row, parse_num(v, "mv_row")?)?,
+            "mv_col" => set_once(&mut mv_col, parse_num(v, "mv_col")?)?,
+            "mode_bits_est" => set_once(&mut mode_bits_est, parse_num(v, "mode_bits_est")?)?,
+            "mv_bits_est" => set_once(&mut mv_bits_est, parse_num(v, "mv_bits_est")?)?,
+            "ref_bits_est" => set_once(&mut ref_bits_est, parse_num(v, "ref_bits_est")?)?,
+            "filter_bits_est" => set_once(&mut filter_bits_est, parse_num(v, "filter_bits_est")?)?,
+            "skip_bits_est" => set_once(&mut skip_bits_est, parse_num(v, "skip_bits_est")?)?,
+            "coef_bits_est" => set_once(&mut coef_bits_est, parse_num(v, "coef_bits_est")?)?,
+            "picker_rate" => set_once(&mut picker_rate, parse_num(v, "picker_rate")?)?,
+            "picker_dist" => set_once(&mut picker_dist, parse_num(v, "picker_dist")?)?,
+            "picker_rd_cost" => set_once(&mut picker_rd_cost, parse_num(v, "picker_rd_cost")?)?,
+            "model_var_y" => set_once(&mut model_var_y, parse_num(v, "model_var_y")?)?,
             "model_tx_size" => {
                 let raw = parse_string(v, "model_tx_size")?;
-                model_tx_size = Some(tx_size_from_tag(&raw).ok_or(ParseError::BadValue {
-                    field: "model_tx_size",
-                    raw,
-                })?);
+                set_once(
+                    &mut model_tx_size,
+                    tx_size_from_tag(&raw).ok_or(ParseError::BadValue {
+                        field: "model_tx_size",
+                        raw,
+                    })?,
+                )?;
             }
-            "model_skip_txfm" => model_skip_txfm = Some(parse_num(v, "model_skip_txfm")?),
-            "luma_coef_rate" => luma_coef_rate = Some(parse_num(v, "luma_coef_rate")?),
-            "luma_coef_dist" => luma_coef_dist = Some(parse_num(v, "luma_coef_dist")?),
-            "uv_model_rate" => uv_model_rate = Some(parse_num(v, "uv_model_rate")?),
-            "uv_model_dist" => uv_model_dist = Some(parse_num(v, "uv_model_dist")?),
-            "uv_u_sensitive" => uv_u_sensitive = Some(parse_bool(v, "uv_u_sensitive")?),
-            "uv_v_sensitive" => uv_v_sensitive = Some(parse_bool(v, "uv_v_sensitive")?),
+            "model_skip_txfm" => set_once(&mut model_skip_txfm, parse_num(v, "model_skip_txfm")?)?,
+            "luma_coef_rate" => set_once(&mut luma_coef_rate, parse_num(v, "luma_coef_rate")?)?,
+            "luma_coef_dist" => set_once(&mut luma_coef_dist, parse_num(v, "luma_coef_dist")?)?,
+            "uv_model_rate" => set_once(&mut uv_model_rate, parse_num(v, "uv_model_rate")?)?,
+            "uv_model_dist" => set_once(&mut uv_model_dist, parse_num(v, "uv_model_dist")?)?,
+            "uv_u_sensitive" => set_once(&mut uv_u_sensitive, parse_bool(v, "uv_u_sensitive")?)?,
+            "uv_v_sensitive" => set_once(&mut uv_v_sensitive, parse_bool(v, "uv_v_sensitive")?)?,
             "partition_u_sensitive" => {
-                partition_u_sensitive = Some(parse_bool(v, "partition_u_sensitive")?);
+                set_once(
+                    &mut partition_u_sensitive,
+                    parse_bool(v, "partition_u_sensitive")?,
+                )?;
             }
             "partition_v_sensitive" => {
-                partition_v_sensitive = Some(parse_bool(v, "partition_v_sensitive")?);
+                set_once(
+                    &mut partition_v_sensitive,
+                    parse_bool(v, "partition_v_sensitive")?,
+                )?;
             }
-            "last_candidates" => last_candidates = Some(parse_candidate_probes(v)?),
-            "sse_after_pred" => sse_after_pred = Some(parse_num(v, "sse_after_pred")?),
+            "last_candidates" => set_once(&mut last_candidates, parse_candidate_probes(v)?)?,
+            "sse_after_pred" => set_once(&mut sse_after_pred, parse_num(v, "sse_after_pred")?)?,
             "interp_filter" => {
                 let raw = parse_string(v, "interp_filter")?;
-                interp_filter = Some(interp_filter_from_tag(&raw).ok_or(ParseError::BadValue {
-                    field: "interp_filter",
-                    raw,
-                })?);
+                set_once(
+                    &mut interp_filter,
+                    interp_filter_from_tag(&raw).ok_or(ParseError::BadValue {
+                        field: "interp_filter",
+                        raw,
+                    })?,
+                )?;
             }
-            "skip_flag" => skip_flag = Some(parse_bool(v, "skip_flag")?),
-            "q_index" => q_index = Some(parse_num(v, "q_index")?),
+            "skip_flag" => set_once(&mut skip_flag, parse_bool(v, "skip_flag")?)?,
+            "q_index" => set_once(&mut q_index, parse_num(v, "q_index")?)?,
             "tx_size" => {
                 let raw = parse_string(v, "tx_size")?;
-                tx_size = Some(tx_size_from_tag(&raw).ok_or(ParseError::BadValue {
-                    field: "tx_size",
-                    raw,
-                })?);
+                set_once(
+                    &mut tx_size,
+                    tx_size_from_tag(&raw).ok_or(ParseError::BadValue {
+                        field: "tx_size",
+                        raw,
+                    })?,
+                )?;
             }
-            "luma_eob_nonzero" => luma_eob_nonzero = Some(parse_bool(v, "luma_eob_nonzero")?),
+            "luma_eob_nonzero" => {
+                set_once(&mut luma_eob_nonzero, parse_bool(v, "luma_eob_nonzero")?)?
+            }
             _ => {} // forward-compatible: ignore unknown extra fields
         }
     }
@@ -1393,6 +1413,14 @@ fn parse_string(v: &str, field: &'static str) -> Result<String, ParseError> {
         })
 }
 
+fn set_once<T>(slot: &mut Option<T>, value: T) -> Result<(), ParseError> {
+    if slot.is_some() {
+        return Err(ParseError::Malformed("duplicate schema field"));
+    }
+    *slot = Some(value);
+    Ok(())
+}
+
 fn parse_num<T: std::str::FromStr>(v: &str, field: &'static str) -> Result<T, ParseError> {
     v.parse::<T>().map_err(|_| ParseError::BadValue {
         field,
@@ -1942,6 +1970,108 @@ mod tests {
         }
     }
 
+    fn jsonl_line(decision: &BlockDecision) -> String {
+        let mut buf = Vec::new();
+        decision.write_jsonl(&mut buf).unwrap();
+        String::from_utf8(buf).unwrap()
+    }
+
+    fn field_values(line: &str) -> BTreeMap<String, String> {
+        let inner = line
+            .trim()
+            .strip_prefix('{')
+            .and_then(|s| s.strip_suffix('}'))
+            .unwrap();
+        split_top_level_commas(inner)
+            .unwrap()
+            .into_iter()
+            .map(|pair| {
+                let (key, value) = split_kv(pair).unwrap();
+                (key.to_owned(), value.to_owned())
+            })
+            .collect()
+    }
+
+    fn with_duplicate_field(line: &str, field: &str, value: &str) -> String {
+        format!(
+            "{},\"{field}\":{value}}}",
+            line.trim().strip_suffix('}').unwrap()
+        )
+    }
+
+    fn alternate_field_value(field: &str, value: &str) -> String {
+        match value {
+            "true" => "false".to_owned(),
+            "false" => "true".to_owned(),
+            _ if value.starts_with('"') => match field {
+                "bsize" => "\"4x4\"".to_owned(),
+                "mode" => "\"ZEROMV\"".to_owned(),
+                "ref_frame" => "\"GOLDEN\"".to_owned(),
+                "model_tx_size" | "tx_size" => "\"4x4\"".to_owned(),
+                "interp_filter" => "\"BILINEAR\"".to_owned(),
+                "last_candidates" => unreachable!("samples vary last_candidates"),
+                _ => unreachable!("unhandled string field {field}"),
+            },
+            _ => {
+                let number = value.parse::<i128>().unwrap();
+                (number + 1).to_string()
+            }
+        }
+    }
+
+    #[test]
+    fn duplicate_known_fields_are_rejected() {
+        let inter = jsonl_line(&sample_inter());
+        let intra = jsonl_line(&sample_intra());
+        let inter_values = field_values(&inter);
+        let intra_values = field_values(&intra);
+        let mut missed = Vec::new();
+
+        for (line, values, other_values) in [
+            (&inter, &inter_values, &intra_values),
+            (&intra, &intra_values, &inter_values),
+        ] {
+            for (field, value) in values {
+                let same = with_duplicate_field(line, field, value);
+                if !matches!(
+                    parse_jsonl_line(&same),
+                    Err(ParseError::Malformed("duplicate schema field"))
+                ) {
+                    missed.push(format!("{field} identical"));
+                }
+
+                let other = other_values.get(field).unwrap();
+                let different_value = if other == value {
+                    alternate_field_value(field, value)
+                } else {
+                    other.clone()
+                };
+                let different = with_duplicate_field(line, field, &different_value);
+                if !matches!(
+                    parse_jsonl_line(&different),
+                    Err(ParseError::Malformed("duplicate schema field"))
+                ) {
+                    missed.push(format!("{field} differing"));
+                }
+            }
+        }
+
+        assert!(
+            missed.is_empty(),
+            "known duplicate schema fields were accepted or reported incorrectly: {missed:?}"
+        );
+    }
+
+    #[test]
+    fn duplicate_field_error_propagates_through_stream_parser() {
+        let line = with_duplicate_field(&jsonl_line(&sample_intra()), "mode", "\"DC\"");
+        let result = parse_jsonl_stream(Cursor::new(format!("{line}\n")));
+        assert!(
+            matches!(result, Err(ParseError::Malformed("duplicate schema field"))),
+            "stream parser should propagate duplicate field errors, got {result:?}"
+        );
+    }
+
     #[test]
     fn missing_field_reports_field_name() {
         // Drop "skip_flag" from a valid line and confirm the error
@@ -2015,7 +2145,7 @@ mod tests {
                     \"last_candidates\":\"0:0:0:0:0:0:0:0:0:0:0|0:0:0:0:0:0:0:0:0:0:0|0:0:0:0:0:0:0:0:0:0:0|0:0:0:0:0:0:0:0:0:0:0\",\
                     \"sse_after_pred\":0,\"interp_filter\":\"NONE\",\"skip_flag\":true,\
                     \"q_index\":65,\"tx_size\":\"8x8\",\"luma_eob_nonzero\":false,\
-                    \"future_field\":\"ignored\"}";
+                    \"future_field\":\"ignored\",\"future_field\":\"ignored\"}";
         let d = parse_jsonl_line(line).unwrap();
         assert_eq!(d.frame_idx, 1);
         assert_eq!(d.mi_row, 2);
