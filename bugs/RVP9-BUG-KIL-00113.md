@@ -6,15 +6,15 @@
 - **Area:** bench/realtime validation
 - **Raised:** 2026-08-22T19:31:33Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
+- **Owner:** deltic:manual
+- **Owner role:** fix
+- **Owner run:** fix-20261016T035752Z-af34a473
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KIL-00113-run-fix-20261016T035752Z-af34a473
+- **Owner base:** 2233c4ff1ad4febc3583b577d80614704915c9c6
 - **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner since:** 2026-10-16T03:57:52Z
+- **Owner until:** 2026-10-16T07:57:52Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
