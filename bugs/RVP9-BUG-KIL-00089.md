@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00089 — E1 reports success after an explicit libvpx leg fails
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** harness/e1 block stats
 - **Raised:** 2026-08-22T13:20:53Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261016T033134Z-e9981b6d
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00089-run-fix-20261016T033134Z-e9981b6d
-- **Owner base:** f17a7114baa300efdf454c95dd4943696299a3b8
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-16T03:31:34Z
-- **Owner until:** 2026-10-16T07:31:34Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T13:20:53Z, raised via `deltic bugs new`)
+- **State history:** Open (2026-08-22T13:20:53Z, raised via `deltic bugs new`) -> Fixed (2026-10-16T03:43:29Z, deltic:auto role=fix run=fix-20261016T033134Z-e9981b6d branch=task/bug-RVP9-BUG-KIL-00089-run-fix-20261016T033134Z-e9981b6d code=fc88c0f2d92b0b67c85275f3edbb892fc0d31215 gate=manual)
 
 ## Observation
 
