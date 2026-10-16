@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00084 — F02 strict comparison omits three advertised fields
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** harness/f02 oracle
 - **Raised:** 2026-08-22T13:20:52Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261016T044334Z-7aa5f4a5
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00084-run-fix-20261016T044334Z-7aa5f4a5
-- **Owner base:** 4bd0ee817507eedf243232f128bcf56a42a613de
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-16T04:43:34Z
-- **Owner until:** 2026-10-16T08:43:34Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T13:20:52Z, raised via `deltic bugs new`)
+- **State history:** Open (2026-08-22T13:20:52Z, raised via `deltic bugs new`) -> Fixed (2026-10-16T04:47:41Z, deltic:auto role=fix run=fix-20261016T044334Z-7aa5f4a5 branch=task/bug-RVP9-BUG-KIL-00084-run-fix-20261016T044334Z-7aa5f4a5 code=cf7305e6c3454b17e73803cbf56826841d6edb5f gate=manual)
 
 ## Observation
 
