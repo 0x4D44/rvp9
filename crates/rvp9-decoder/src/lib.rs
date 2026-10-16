@@ -2135,11 +2135,10 @@ impl Decoder {
             // T-5: scope closure returns the rdtsc taken just after
             // the last `submit()` so the main thread can compute
             // `T_SUBMIT` (open→last-submit) and `T_JOIN` (last-submit→
-            // scope-return) separately. Under feature-off it returns
-            // `()`. Either way control flow is identical — only the
-            // closure's return type changes, which `cfg` resolves at
-            // parse time.
-            self.worker_pool.scope(|scope| {
+            // scope-return) separately. Without instrumentation it
+            // returns a zero timestamp, keeping the binding non-unit
+            // without reading the clock or changing control flow.
+            let _submit_done_cycles = self.worker_pool.scope(|scope| {
                 for (tile_idx, tile_buf) in buffers.iter().enumerate() {
                     let bounds = per_tile_bounds[tile_idx];
                     let tile_data: &[u8] = tile_buf.data;
@@ -2207,6 +2206,10 @@ impl Decoder {
                 #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
                 {
                     profile::now_cycles()
+                }
+                #[cfg(not(all(feature = "profile-tiles", target_arch = "x86_64")))]
+                {
+                    0_u64
                 }
             });
             #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
@@ -3541,7 +3544,7 @@ impl Decoder {
 
             #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
             let t_submit_start = profile::now_cycles();
-            self.worker_pool.scope(|scope| {
+            let _submit_done_cycles = self.worker_pool.scope(|scope| {
                 for (tile_idx, tile_buf) in buffers.iter().enumerate() {
                     let bounds = per_tile_bounds[tile_idx];
                     let tile_data: &[u8] = tile_buf.data;
@@ -3635,6 +3638,10 @@ impl Decoder {
                 #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
                 {
                     profile::now_cycles()
+                }
+                #[cfg(not(all(feature = "profile-tiles", target_arch = "x86_64")))]
+                {
+                    0_u64
                 }
             });
             #[cfg(all(feature = "profile-tiles", target_arch = "x86_64"))]
