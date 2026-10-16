@@ -1,25 +1,25 @@
 # RVP9-BUG-CRU-00005 — write_loopfilter and write_delta_q silently truncate out-of-range fields instead of returning Err
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Could
 - **Severity:** Low
 - **Area:** core/bitstream sub_parsers
 - **Raised:** 2026-08-23T17:09:50Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261016T073258Z-c32e26d5
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-CRU-00005-run-fix-20261016T073258Z-c32e26d5
-- **Owner base:** b805e2d9bdff359bcb1d134a7db3387aba1e9307
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-16T07:32:58Z
-- **Owner until:** 2026-10-16T11:32:58Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-23T17:09:50Z, raised via `deltic bugs new` model=claude-opus-5@high)
+- **State history:** Open (2026-08-23T17:09:50Z, raised via `deltic bugs new` model=claude-opus-5@high) -> Fixed (2026-10-16T07:46:16Z, deltic:auto role=fix run=fix-20261016T073258Z-c32e26d5 branch=task/bug-RVP9-BUG-CRU-00005-run-fix-20261016T073258Z-c32e26d5 code=37ca6debe91e1e841eea4b3ea10496a39fe3ec88 gate=manual)
 
 ## Observation
 
