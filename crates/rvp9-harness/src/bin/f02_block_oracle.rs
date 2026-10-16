@@ -58,9 +58,17 @@ use rvp9_harness::f02_schema::{
 };
 use rvp9_harness::y4m::{read_cropped, write_frame, write_header};
 use std::fs::{File, OpenOptions};
-use std::io::{BufReader, Write};
+use std::io::{BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Command, ExitStatus, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
+
+#[path = "../bounded_child.rs"]
+mod bounded_child;
+
+const VPXENC_TIMEOUT: Duration = Duration::from_secs(30);
+static RUN_PATH_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 const DEFAULT_W: u32 = 256;
 const DEFAULT_H: u32 = 256;
@@ -649,9 +657,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::process::exit(1);
     }
 
-    std::fs::create_dir_all(&out_dir)?;
-    let run_dir = out_dir.join(format!("run_{}", chrono_like_timestamp()));
-    std::fs::create_dir_all(&run_dir)?;
+    let run_dir = reserve_run_dir(&out_dir, &chrono_like_timestamp())?;
 
     println!("F.0.2 per-block oracle harness");
     println!("  foreman   : {}", foreman_path.display());
@@ -1762,9 +1768,59 @@ fn chrono_like_timestamp() -> String {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    // Crude: seconds-since-epoch in hex. Unique enough for the
-    // harness's per-run subdir.
+    // Seconds-since-epoch in hex; the run directory reservation adds the
+    // process id and an atomic sequence to avoid reuse within that second.
     format!("{:x}", now)
+}
+
+fn reserve_run_dir(out_dir: &Path, timestamp: &str) -> std::io::Result<PathBuf> {
+    std::fs::create_dir_all(out_dir)?;
+    reserve_run_dir_with(out_dir, timestamp, std::process::id(), || {
+        RUN_PATH_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    })
+}
+
+fn reserve_run_dir_with(
+    out_dir: &Path,
+    timestamp: &str,
+    process_id: u32,
+    mut next_sequence: impl FnMut() -> u64,
+) -> std::io::Result<PathBuf> {
+    loop {
+        let sequence = next_sequence();
+        let path = out_dir.join(format!("run_{timestamp}_{process_id}_{sequence}"));
+        match std::fs::create_dir(&path) {
+            Ok(()) => return Ok(path),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+fn create_capture_file(run_dir: &Path, role: &str) -> std::io::Result<(PathBuf, File)> {
+    let safe_role = role
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || character == '-' || character == '_' {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    loop {
+        let sequence = RUN_PATH_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let path = run_dir.join(format!(
+            "{safe_role}.stderr.{}.{}",
+            std::process::id(),
+            sequence
+        ));
+        match OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(file) => return Ok((path, file)),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(error),
+        }
+    }
 }
 
 /// Drive the rvp9 leg: open foreman_cif, encode `frames` frames at
@@ -1896,6 +1952,17 @@ fn drive_libvpx_leg(
     run_dir: &Path,
     fixed_q: Option<u8>,
 ) -> Result<Vec<BlockDecision>, Box<dyn std::error::Error>> {
+    drive_libvpx_leg_with_timeout(vpxenc, foreman, encode, run_dir, fixed_q, VPXENC_TIMEOUT)
+}
+
+fn drive_libvpx_leg_with_timeout(
+    vpxenc: &Path,
+    foreman: &Path,
+    encode: OracleEncodeConfig,
+    run_dir: &Path,
+    fixed_q: Option<u8>,
+    timeout: Duration,
+) -> Result<Vec<BlockDecision>, Box<dyn std::error::Error>> {
     let sidecar = run_dir.join(format!("foreman_{}kbps_libvpx.jsonl", encode.kbps));
     let raw = run_dir.join(format!("foreman_{}kbps_input.i420", encode.kbps));
     let (cropped, source_fps) =
@@ -1931,20 +1998,11 @@ fn drive_libvpx_leg(
         .arg("-o")
         .arg(run_dir.join(format!("foreman_{}kbps_libvpx.ivf", encode.kbps)))
         .arg(&raw)
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped());
+        .stdout(Stdio::null());
     append_libvpx_rate_args(&mut cmd, encode.vbr, fixed_q);
-    let out = cmd.output()?;
+    let child_result = run_f02_child(&mut cmd, run_dir, "vpxenc", 5, timeout);
     let _ = std::fs::remove_file(&raw);
-    if !out.status.success() {
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        return Err(format!(
-            "vpxenc failed (exit {}): {}",
-            out.status.code().unwrap_or(-1),
-            stderr.lines().take(5).collect::<Vec<_>>().join("\n")
-        )
-        .into());
-    }
+    child_result?;
     if !sidecar.exists() {
         return Err(format!(
             "libvpx sidecar at {} was NOT produced — \
@@ -1968,6 +2026,17 @@ fn drive_libvpx_spatial_leg(
     encode: OracleEncodeConfig,
     run_dir: &Path,
     fixed_q: Option<u8>,
+) -> Result<Vec<BlockDecision>, Box<dyn std::error::Error>> {
+    drive_libvpx_spatial_leg_with_timeout(anchor, foreman, encode, run_dir, fixed_q, VPXENC_TIMEOUT)
+}
+
+fn drive_libvpx_spatial_leg_with_timeout(
+    anchor: &Path,
+    foreman: &Path,
+    encode: OracleEncodeConfig,
+    run_dir: &Path,
+    fixed_q: Option<u8>,
+    timeout: Duration,
 ) -> Result<Vec<BlockDecision>, Box<dyn std::error::Error>> {
     let sidecar = run_dir.join(format!("foreman_{}kbps_libvpx.jsonl", encode.kbps));
     let input = run_dir.join(format!("foreman_{}kbps_spatial_input.y4m", encode.kbps));
@@ -1996,20 +2065,11 @@ fn drive_libvpx_spatial_leg(
     command
         .env("VPX_F02_ORACLE_OUT", &sidecar)
         .env("VPX_F02_PARTITION_ORACLE_OUT", &partition_sidecar)
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped());
+        .stdout(Stdio::null());
     append_libvpx_spatial_args(&mut command, &input, &output, encode, fixed_q)?;
-    let result = command.output()?;
+    let child_result = run_f02_child(&mut command, run_dir, "vp9_spatial_svc_encoder", 8, timeout);
     let _ = std::fs::remove_file(&input);
-    if !result.status.success() {
-        let stderr = String::from_utf8_lossy(&result.stderr);
-        return Err(format!(
-            "vp9_spatial_svc_encoder failed (exit {}): {}",
-            result.status.code().unwrap_or(-1),
-            stderr.lines().take(8).collect::<Vec<_>>().join("\n")
-        )
-        .into());
-    }
+    child_result?;
     if !sidecar.exists() {
         return Err(format!(
             "libvpx spatial sidecar at {} was not produced; rebuild with scripts/build-f02-libvpx.sh",
@@ -2022,9 +2082,402 @@ fn drive_libvpx_spatial_leg(
     Ok(records)
 }
 
+fn run_f02_child(
+    command: &mut Command,
+    run_dir: &Path,
+    role: &str,
+    stderr_lines: usize,
+    timeout: Duration,
+) -> Result<ExitStatus, String> {
+    let (stderr_path, stderr_file) = create_capture_file(run_dir, role).map_err(|error| {
+        format!(
+            "{role} stderr capture setup in {}: {error}",
+            run_dir.display()
+        )
+    })?;
+    command
+        .stdout(Stdio::null())
+        .stderr(Stdio::from(stderr_file));
+
+    let status = match bounded_child::run_with_timeout(command, timeout) {
+        Ok(status) => status,
+        Err(error) => {
+            let stderr = read_stderr_summary(&stderr_path, stderr_lines);
+            return Err(format!("{role} run failed: {error}; {stderr}"));
+        }
+    };
+    if status.success() {
+        return Ok(status);
+    }
+
+    let stderr = read_stderr_summary(&stderr_path, stderr_lines);
+    Err(format!(
+        "{role} failed (exit {}): {stderr}",
+        status.code().unwrap_or(-1)
+    ))
+}
+
+fn read_stderr_summary(path: &Path, max_lines: usize) -> String {
+    const MAX_BYTES: usize = 64 * 1024;
+
+    let read = (|| -> std::io::Result<(Vec<u8>, bool)> {
+        let mut bytes = Vec::new();
+        File::open(path)?
+            .take((MAX_BYTES + 1) as u64)
+            .read_to_end(&mut bytes)?;
+        let truncated = bytes.len() > MAX_BYTES;
+        bytes.truncate(MAX_BYTES);
+        Ok((bytes, truncated))
+    })();
+    let (bytes, truncated) = match read {
+        Ok(result) => result,
+        Err(error) => {
+            return format!(
+                "stderr capture {} could not be read: {error}",
+                path.display()
+            );
+        }
+    };
+
+    let rendered = String::from_utf8_lossy(&bytes);
+    let mut lines = rendered.lines().collect::<Vec<_>>();
+    let omitted_lines = lines.len() > max_lines;
+    lines.truncate(max_lines);
+    let detail = if lines.is_empty() {
+        "(empty)".to_owned()
+    } else {
+        lines.join("\n")
+    };
+    let mut summary =
+        format!("stderr (first {max_lines} lines, up to {MAX_BYTES} bytes):\n{detail}");
+    if omitted_lines || truncated {
+        summary.push_str("\n[additional stderr output omitted]");
+    }
+    summary
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Arc, Barrier};
+
+    struct TestDir(PathBuf);
+
+    impl TestDir {
+        fn new(name: &str) -> Self {
+            let root = std::env::temp_dir();
+            std::fs::create_dir_all(&root).unwrap();
+            let path = loop {
+                let sequence = RUN_PATH_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+                let path = root.join(format!("{name}-{}-{sequence}", std::process::id()));
+                match std::fs::create_dir(&path) {
+                    Ok(()) => break path,
+                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                    Err(error) => panic!("create test directory {}: {error}", path.display()),
+                }
+            };
+            Self(path)
+        }
+    }
+
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[cfg(unix)]
+    fn executable_child(temp: &TestDir, name: &str, body: &str) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+
+        let path = temp.0.join(name);
+        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        let mut permissions = std::fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&path, permissions).unwrap();
+        path
+    }
+
+    #[cfg(unix)]
+    fn test_y4m(temp: &TestDir, width: u32, height: u32, frames: u32) -> PathBuf {
+        let path = temp.0.join("input.y4m");
+        let mut file = File::create(&path).unwrap();
+        write_header(&mut file, width, height, 30, 1, ChromaFormat::Yuv420).unwrap();
+        let y = vec![128; width as usize * height as usize];
+        let u = vec![128; (width as usize * height as usize) / 4];
+        let v = u.clone();
+        for _ in 0..frames {
+            write_frame(&mut file, &y, &u, &v).unwrap();
+        }
+        path
+    }
+
+    #[cfg(unix)]
+    fn small_encode_config() -> OracleEncodeConfig {
+        OracleEncodeConfig {
+            width: 8,
+            height: 8,
+            frames: 1,
+            fps: Some(30),
+            cpu_used: 7,
+            threads: 1,
+            tile_columns: 0,
+            kbps: 100,
+            vbr: true,
+            aq_mode: 0,
+            spatial_layers: 1,
+            inter_layer_pred: 0,
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ordinary_libvpx_leg_enforces_an_injected_timeout() {
+        let temp = TestDir::new("rvp9-f02-ordinary-timeout");
+        let foreman = test_y4m(&temp, 8, 8, 1);
+        let run_dir = reserve_run_dir(&temp.0, "fixed").unwrap();
+        let vpxenc = executable_child(
+            &temp,
+            "vpxenc-timeout",
+            "if IFS= read -r input; then echo 'stdin was open' >&2; exit 71; fi\nprintf 'ordinary child started\\n' >&2\nexec sleep 2",
+        );
+        let started = std::time::Instant::now();
+
+        let error = drive_libvpx_leg_with_timeout(
+            &vpxenc,
+            &foreman,
+            small_encode_config(),
+            &run_dir,
+            None,
+            Duration::from_secs(1),
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("timed out"), "unexpected error: {error}");
+        assert!(error.contains("ordinary child started"));
+        assert!(started.elapsed() < Duration::from_secs(3));
+        assert!(!run_dir.join("foreman_100kbps_input.i420").exists());
+        assert!(
+            run_dir.is_dir(),
+            "the caller-owned run directory is retained"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn spatial_libvpx_leg_enforces_an_injected_timeout() {
+        let temp = TestDir::new("rvp9-f02-spatial-timeout");
+        let foreman = test_y4m(&temp, 16, 16, 2);
+        let run_dir = reserve_run_dir(&temp.0, "fixed").unwrap();
+        let anchor = executable_child(
+            &temp,
+            "spatial-timeout",
+            "printf 'spatial child started\\n' >&2\nexec sleep 2",
+        );
+        let mut encode = small_encode_config();
+        encode.width = 16;
+        encode.height = 16;
+        encode.frames = 2;
+        encode.spatial_layers = 2;
+
+        let error = drive_libvpx_spatial_leg_with_timeout(
+            &anchor,
+            &foreman,
+            encode,
+            &run_dir,
+            None,
+            Duration::from_secs(1),
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(
+            error.contains("vp9_spatial_svc_encoder"),
+            "unexpected error: {error}"
+        );
+        assert!(error.contains("timed out"), "unexpected error: {error}");
+        assert!(
+            error.contains("spatial child started"),
+            "unexpected error: {error}"
+        );
+        assert!(!run_dir.join("foreman_100kbps_spatial_input.y4m").exists());
+        assert!(
+            run_dir.is_dir(),
+            "the caller-owned run directory is retained"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stderr_capture_is_unique_bounded_and_reports_nonzero_details() {
+        let temp = TestDir::new("rvp9-f02-stderr");
+        let run_dir = reserve_run_dir(&temp.0, "fixed").unwrap();
+        let child = executable_child(
+            &temp,
+            "nonzero",
+            "printf 'line1\\nline2\\nline3\\nline4\\nline5\\nline6\\nline7\\nline8\\nline9\\nline10\\n' >&2\nexit 17",
+        );
+
+        for _ in 0..2 {
+            let mut command = Command::new(&child);
+            let error = run_f02_child(&mut command, &run_dir, "vpxenc", 5, Duration::from_secs(2))
+                .unwrap_err();
+            assert!(error.contains("vpxenc failed (exit 17)"));
+            for line in 1..=5 {
+                assert!(
+                    error.contains(&format!("line{line}")),
+                    "missing line {line}: {error}"
+                );
+            }
+            assert!(!error.contains("line6"), "unexpected extra line: {error}");
+        }
+
+        let mut command = Command::new(&child);
+        let error = run_f02_child(
+            &mut command,
+            &run_dir,
+            "vp9_spatial_svc_encoder",
+            8,
+            Duration::from_secs(2),
+        )
+        .unwrap_err();
+        assert!(error.contains("vp9_spatial_svc_encoder failed (exit 17)"));
+        for line in 1..=8 {
+            assert!(
+                error.contains(&format!("line{line}")),
+                "missing line {line}: {error}"
+            );
+        }
+        assert!(!error.contains("line9"), "unexpected extra line: {error}");
+
+        let captures = std::fs::read_dir(&run_dir)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().contains(".stderr."))
+            .count();
+        assert_eq!(captures, 3, "each invocation needs its own capture file");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn loud_child_stderr_is_file_backed_and_read_with_a_byte_limit() {
+        let temp = TestDir::new("rvp9-f02-loud-stderr");
+        let run_dir = reserve_run_dir(&temp.0, "fixed").unwrap();
+        let child = executable_child(&temp, "loud", "head -c 1048576 /dev/zero >&2\nexec sleep 2");
+        let mut command = Command::new(&child);
+        let started = std::time::Instant::now();
+
+        let result = run_f02_child(&mut command, &run_dir, "vpxenc", 5, Duration::from_secs(1));
+
+        assert!(
+            matches!(&result, Err(error) if error.contains("timed out")),
+            "child did not return a bounded timeout error: {result:?}"
+        );
+        let error = result.unwrap_err();
+        assert!(error.contains("additional stderr output omitted"));
+        assert!(error.len() < 256 * 1024, "diagnostic was not bounded");
+        assert!(started.elapsed() < Duration::from_secs(3));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn successful_libvpx_leg_retains_sidecar_and_run_artifacts() {
+        let temp = TestDir::new("rvp9-f02-retained-run");
+        let foreman = test_y4m(&temp, 8, 8, 1);
+        let run_dir = reserve_run_dir(&temp.0, "fixed").unwrap();
+        let vpxenc = executable_child(
+            &temp,
+            "vpxenc-success",
+            "output=\nwhile [ \"$#\" -gt 0 ]; do\n  if [ \"$1\" = \"-o\" ]; then shift; output=\"$1\"; fi\n  shift\ndone\n: > \"$output\"\n: > \"$VPX_F02_ORACLE_OUT\"\nexit 0",
+        );
+
+        let records = drive_libvpx_leg_with_timeout(
+            &vpxenc,
+            &foreman,
+            small_encode_config(),
+            &run_dir,
+            None,
+            Duration::from_secs(2),
+        )
+        .unwrap();
+
+        assert!(records.is_empty());
+        assert!(run_dir.is_dir());
+        assert!(run_dir.join("foreman_100kbps_libvpx.ivf").is_file());
+        assert!(run_dir.join("foreman_100kbps_libvpx.jsonl").is_file());
+        assert!(!run_dir.join("foreman_100kbps_input.i420").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn failed_spawn_is_reported_and_cleans_the_raw_input() {
+        let temp = TestDir::new("rvp9-f02-spawn-failure");
+        let foreman = test_y4m(&temp, 8, 8, 1);
+        let run_dir = reserve_run_dir(&temp.0, "fixed").unwrap();
+        let missing = temp.0.join("missing-vpxenc");
+
+        let error = drive_libvpx_leg_with_timeout(
+            &missing,
+            &foreman,
+            small_encode_config(),
+            &run_dir,
+            None,
+            Duration::from_secs(2),
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("vpxenc"));
+        assert!(error.contains("spawn"));
+        assert!(!run_dir.join("foreman_100kbps_input.i420").exists());
+        assert!(run_dir.is_dir());
+    }
+
+    #[test]
+    fn run_directory_collision_retries_without_touching_retained_files() {
+        let temp = TestDir::new("rvp9-f02-run-collision");
+        let existing = temp.0.join("run_fixed_4242_0");
+        std::fs::create_dir(&existing).unwrap();
+        let sentinel = existing.join("sentinel");
+        std::fs::write(&sentinel, b"keep").unwrap();
+        let mut sequence = 0;
+
+        let reserved = reserve_run_dir_with(&temp.0, "fixed", 4242, || {
+            let current = sequence;
+            sequence += 1;
+            current
+        })
+        .unwrap();
+
+        assert_eq!(reserved, temp.0.join("run_fixed_4242_1"));
+        assert_eq!(std::fs::read(sentinel).unwrap(), b"keep");
+        assert!(reserved.is_dir());
+    }
+
+    #[test]
+    fn concurrent_fixed_timestamp_reservations_are_distinct_and_retained() {
+        let temp = TestDir::new("rvp9-f02-run-concurrent");
+        let start = Arc::new(Barrier::new(9));
+        let workers = (0..8)
+            .map(|_| {
+                let root = temp.0.clone();
+                let start = Arc::clone(&start);
+                std::thread::spawn(move || {
+                    start.wait();
+                    reserve_run_dir(&root, "same-fixed-timestamp").unwrap()
+                })
+            })
+            .collect::<Vec<_>>();
+        start.wait();
+        let paths = workers
+            .into_iter()
+            .map(|worker| worker.join().unwrap())
+            .collect::<std::collections::HashSet<_>>();
+
+        assert_eq!(paths.len(), 8);
+        assert!(paths.iter().all(|path| path.is_dir()));
+    }
 
     fn test_encode_config() -> OracleEncodeConfig {
         OracleEncodeConfig {

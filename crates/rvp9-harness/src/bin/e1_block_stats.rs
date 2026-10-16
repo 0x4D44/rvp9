@@ -51,9 +51,15 @@ use rvp9_harness::y4m::{YuvFrameBuf, read_cropped, workspace_corpus_file};
 use serde::Serialize;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitStatus, Stdio};
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+#[cfg(test)]
+use std::time::Instant;
+
+#[path = "../bounded_child.rs"]
+mod bounded_child;
+use bounded_child::run_with_timeout;
 
 const W: u32 = 256;
 const H: u32 = 256;
@@ -86,49 +92,6 @@ impl ScopedTempDir {
 impl Drop for ScopedTempDir {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.path);
-    }
-}
-
-fn run_with_timeout(command: &mut Command, timeout: Duration) -> Result<ExitStatus, String> {
-    command.stdin(Stdio::null());
-    let mut child = command
-        .spawn()
-        .map_err(|error| format!("vpxenc spawn: {error}"))?;
-    let deadline = Instant::now() + timeout;
-
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) => return Ok(status),
-            Ok(None) if Instant::now() >= deadline => {
-                let kill_result = child.kill();
-                let wait_result = child.wait();
-                if let Err(error) = kill_result {
-                    return Err(format!(
-                        "vpxenc timed out after {:.1}s and could not be killed: {error}",
-                        timeout.as_secs_f64()
-                    ));
-                }
-                if let Err(error) = wait_result {
-                    return Err(format!(
-                        "vpxenc timed out after {:.1}s and could not be reaped: {error}",
-                        timeout.as_secs_f64()
-                    ));
-                }
-                return Err(format!(
-                    "vpxenc timed out after {:.1}s",
-                    timeout.as_secs_f64()
-                ));
-            }
-            Ok(None) => {
-                let remaining = deadline.saturating_duration_since(Instant::now());
-                std::thread::sleep(remaining.min(Duration::from_millis(10)));
-            }
-            Err(error) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(format!("vpxenc status: {error}"));
-            }
-        }
     }
 }
 
