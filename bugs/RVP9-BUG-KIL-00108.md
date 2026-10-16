@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00108 — Throughput CSV accepts corrupt and non-finite baselines
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** High
 - **Area:** bench/throughput ratchet
 - **Raised:** 2026-08-22T19:30:41Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261016T004105Z-6f8a5d31
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00108-run-fix-20261016T004105Z-6f8a5d31
-- **Owner base:** ec90c75054ede4a5adcf8b40fedcb4b63202b5a6
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-16T00:41:05Z
-- **Owner until:** 2026-10-16T04:41:05Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T19:30:41Z, raised via `deltic bugs new` model=gpt-5.6-sol@xhigh)
+- **State history:** Open (2026-08-22T19:30:41Z, raised via `deltic bugs new` model=gpt-5.6-sol@xhigh) -> Fixed (2026-10-16T00:53:09Z, deltic:auto role=fix run=fix-20261016T004105Z-6f8a5d31 branch=task/bug-RVP9-BUG-KIL-00108-run-fix-20261016T004105Z-6f8a5d31 code=22a2b2db5b229203f6a198366559e82226ab0048 gate=manual)
 
 ## Observation
 
