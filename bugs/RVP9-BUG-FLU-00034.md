@@ -1,25 +1,25 @@
 # RVP9-BUG-FLU-00034 — AVX2 vertical-16 mask filters edges scalar path rejects at blimit 255
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Could
 - **Severity:** Low
 - **Area:** core/loopfilter
 - **Raised:** 2026-09-27T19:07:34Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261016T065134Z-2fd058d6
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-FLU-00034-run-fix-20261016T065134Z-2fd058d6
-- **Owner base:** 283f3953f2fa32c4127f0ae963b65f0d696228c2
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-16T06:51:34Z
-- **Owner until:** 2026-10-16T10:51:34Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-09-27T19:07:34Z, raised via `deltic bugs new --land`)
+- **State history:** Open (2026-09-27T19:07:34Z, raised via `deltic bugs new --land`) -> Fixed (2026-10-16T07:02:56Z, deltic:auto role=fix run=fix-20261016T065134Z-2fd058d6 branch=task/bug-RVP9-BUG-FLU-00034-run-fix-20261016T065134Z-2fd058d6 code=4c47469dcd60cd10eaf7d1e23bdae410295ca312 gate=manual)
 
 ## Observation
 
