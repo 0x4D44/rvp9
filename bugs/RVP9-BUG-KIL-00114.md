@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00114 — Throughput ratchet selects baselines from the wrong build profile
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** bench/throughput ratchet
 - **Raised:** 2026-08-22T19:31:41Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261016T030427Z-c583c67f
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00114-run-fix-20261016T030427Z-c583c67f
-- **Owner base:** 9f19232b1a8868bf909cc41f30a9a58f615c6c14
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-16T03:04:27Z
-- **Owner until:** 2026-10-16T07:04:27Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T19:31:41Z, raised via `deltic bugs new` model=gpt-5.6-sol@xhigh)
+- **State history:** Open (2026-08-22T19:31:41Z, raised via `deltic bugs new` model=gpt-5.6-sol@xhigh) -> Fixed (2026-10-16T03:14:11Z, deltic:auto role=fix run=fix-20261016T030427Z-c583c67f branch=task/bug-RVP9-BUG-KIL-00114-run-fix-20261016T030427Z-c583c67f code=34a232d6ba4ab4cc00b7a1f99181f258259e916f gate=manual)
 
 ## Observation
 
