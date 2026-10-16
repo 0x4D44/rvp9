@@ -6,15 +6,15 @@
 - **Area:** bench/decode-profile-tiles
 - **Raised:** 2026-08-22T19:31:08Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
+- **Owner:** deltic:manual
+- **Owner role:** fix
+- **Owner run:** fix-20261016T011011Z-413aab2b
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KIL-00110-run-fix-20261016T011011Z-413aab2b
+- **Owner base:** b8f7dced8b83dec9d21515e7f62d49917677972e
 - **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner since:** 2026-10-16T01:10:11Z
+- **Owner until:** 2026-10-16T05:10:11Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
