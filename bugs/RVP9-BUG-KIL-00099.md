@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00099 — Position-relative I/O helpers seek to absolute offsets
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Could
 - **Severity:** Medium
 - **Area:** io/y4m and ivf public APIs
 - **Raised:** 2026-08-22T14:34:26Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261016T055916Z-e25b0ad6
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00099-run-fix-20261016T055916Z-e25b0ad6
-- **Owner base:** 2eb24da6da52f0f6413a33b9cb04b18c52283de5
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-16T05:59:16Z
-- **Owner until:** 2026-10-16T09:59:16Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T14:34:26Z, raised via `deltic bugs new`)
+- **State history:** Open (2026-08-22T14:34:26Z, raised via `deltic bugs new`) -> Fixed (2026-10-16T06:06:19Z, deltic:auto role=fix run=fix-20261016T055916Z-e25b0ad6 branch=task/bug-RVP9-BUG-KIL-00099-run-fix-20261016T055916Z-e25b0ad6 code=e13faf8e88d165ba35419dbd81ee1c426f6b3c68 gate=manual)
 
 ## Observation
 
