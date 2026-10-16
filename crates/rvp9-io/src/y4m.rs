@@ -184,12 +184,11 @@ impl Y4mHeader {
     }
 }
 
-/// Parse the y4m header from `f`'s start position. Leaves `f` positioned
+/// Parse the y4m header from `f`'s current position. Leaves `f` positioned
 /// just after the header newline.
 ///
 /// Only 4:2:0 chroma variants are accepted; everything else returns
-/// `Err`. The format string is fixed at the file's start ("YUV4MPEG2 ...
-/// \n").
+/// `Err`. The header format is "YUV4MPEG2 ...\n".
 ///
 /// # Errors
 ///
@@ -198,9 +197,12 @@ impl Y4mHeader {
 /// or zero, the header exceeds 4 KiB, source geometry is odd, or the source
 /// exceeds the supported frame envelope. Returns
 /// [`io::ErrorKind::UnexpectedEof`] if the header lacks its terminating
-/// newline. Otherwise forwards any underlying read/seek error.
+/// newline, or [`io::ErrorKind::InvalidInput`] if the starting position
+/// plus the header length overflows. Otherwise forwards any underlying
+/// read/seek error.
 pub fn parse_header(f: &mut std::fs::File) -> std::io::Result<Y4mHeader> {
     use std::io::{BufRead, BufReader, Seek, SeekFrom};
+    let start = f.stream_position()?;
     let mut reader = BufReader::new(&mut *f);
     let mut line = String::new();
     reader
@@ -220,6 +222,12 @@ pub fn parse_header(f: &mut std::fs::File) -> std::io::Result<Y4mHeader> {
         ));
     }
     let bytes_consumed = line.len() as u64;
+    let header_end = start.checked_add(bytes_consumed).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "y4m header end position overflow",
+        )
+    })?;
     if !line.starts_with("YUV4MPEG2 ") {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
@@ -227,7 +235,7 @@ pub fn parse_header(f: &mut std::fs::File) -> std::io::Result<Y4mHeader> {
         ));
     }
     drop(reader);
-    f.seek(SeekFrom::Start(bytes_consumed))?;
+    f.seek(SeekFrom::Start(header_end))?;
 
     let mut w = None;
     let mut h = None;
@@ -785,6 +793,48 @@ mod tests {
         ));
         std::fs::write(&path, content).expect("write temp");
         path
+    }
+
+    #[test]
+    fn parse_header_relative_position_after_prefixed_file() {
+        use std::io::{Read, Seek, SeekFrom};
+
+        let prefix = b"y4m-prefix-sentinel";
+        let header = b"YUV4MPEG2 W2 H2 F25:1 C420jpeg\n";
+        let frame_marker = b"FRAME\n";
+        let payload = [1, 2, 3, 4, 5, 6];
+        let mut content = Vec::new();
+        content.extend_from_slice(prefix);
+        content.extend_from_slice(header);
+        content.extend_from_slice(frame_marker);
+        content.extend_from_slice(&payload);
+        let path = write_temp(&content, "relative_position");
+
+        let mut file = std::fs::File::open(&path).expect("open prefixed y4m");
+        file.seek(SeekFrom::Start(prefix.len() as u64))
+            .expect("seek to prefixed y4m header");
+        let parsed = parse_header(&mut file).expect("parse prefixed y4m header");
+        let position_after_header = file.stream_position().expect("header position");
+        let mut actual_marker = [0; 6];
+        file.read_exact(&mut actual_marker)
+            .expect("read frame marker");
+        let mut actual_payload = [0; 6];
+        file.read_exact(&mut actual_payload)
+            .expect("read frame payload");
+        drop(file);
+        let _ = std::fs::remove_file(&path);
+
+        assert_eq!(
+            (parsed.w, parsed.h, parsed.fps_num, parsed.fps_den),
+            (2, 2, 25, 1)
+        );
+        assert_eq!(
+            position_after_header,
+            (prefix.len() + header.len()) as u64,
+            "parse_header must leave the File at the header end relative to its initial position"
+        );
+        assert_eq!(&actual_marker, frame_marker);
+        assert_eq!(actual_payload, payload);
     }
 
     #[test]

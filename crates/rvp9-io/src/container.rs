@@ -484,19 +484,30 @@ impl IvfHeader {
 /// Incremental IVF muxer that patches the packet count when finished.
 pub struct IvfStreamWriter<W: Write + Seek> {
     out: W,
+    packet_count_offset: u64,
     packet_count: u32,
 }
 
 impl<W: Write + Seek> IvfStreamWriter<W> {
-    /// Write an IVF header with a provisional zero packet count.
+    /// Write an IVF header at the current position with a provisional zero packet count.
     ///
     /// # Errors
     ///
-    /// Forwards any [`io::Error`] from the writer.
+    /// Returns [`io::ErrorKind::InvalidInput`] if the packet-count patch
+    /// position overflows. Otherwise forwards any [`io::Error`] from the
+    /// writer.
     pub fn new(mut out: W, header: &IvfHeader) -> io::Result<Self> {
+        let start = out.stream_position()?;
+        let packet_count_offset = start.checked_add(24).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "IVF packet-count patch position overflow",
+            )
+        })?;
         write_ivf_header(&mut out, header, 0)?;
         Ok(Self {
             out,
+            packet_count_offset,
             packet_count: 0,
         })
     }
@@ -536,7 +547,7 @@ impl<W: Write + Seek> IvfStreamWriter<W> {
     ///
     /// Forwards any seek, write, or flush error.
     pub fn finish(mut self) -> io::Result<W> {
-        self.out.seek(SeekFrom::Start(24))?;
+        self.out.seek(SeekFrom::Start(self.packet_count_offset))?;
         self.out.write_all(&self.packet_count.to_le_bytes())?;
         self.out.seek(SeekFrom::End(0))?;
         self.out.flush()?;
@@ -1664,6 +1675,119 @@ mod tests {
         let packets = read_ivf_packets(&bytes).expect("parse streamed IVF");
         assert_eq!(packets[0].slice(&bytes), b"first");
         assert_eq!(packets[1].slice(&bytes), b"second");
+    }
+
+    #[test]
+    fn stream_writer_relative_position_with_prefixed_cursor() {
+        use std::io::{Seek, SeekFrom};
+
+        let prefix = b"cursor-prefix-sentinel-larger-than-ivf-header";
+        assert!(prefix.len() > 28);
+        let header = IvfHeader::vp9(64, 48, 30, 1);
+        let mut cursor = std::io::Cursor::new(prefix.to_vec());
+        cursor
+            .seek(SeekFrom::Start(prefix.len() as u64))
+            .expect("seek after prefix");
+
+        let mut writer = IvfStreamWriter::new(cursor, &header).expect("open prefixed writer");
+        writer
+            .write_packet(b"first-packet")
+            .expect("write first packet");
+        writer.write_packet(b"second").expect("write second packet");
+        let cursor = writer.finish().expect("finish prefixed writer");
+        let final_position = cursor.position();
+        let bytes = cursor.into_inner();
+        let stream_start = prefix.len();
+        let stream = &bytes[stream_start..];
+        let packets = read_ivf_packets(stream).expect("parse IVF subslice");
+
+        assert_eq!(
+            &bytes[..stream_start],
+            prefix,
+            "IVF count patch changed the prefix"
+        );
+        assert_eq!(
+            final_position,
+            bytes.len() as u64,
+            "finish must leave the cursor at EOF"
+        );
+        assert_eq!(
+            u32::from_le_bytes(stream[24..28].try_into().expect("frame count")),
+            2,
+            "relative IVF header must contain the nonzero packet count"
+        );
+        assert_eq!(packets.len(), 2);
+        assert_eq!(
+            u64::from_le_bytes(
+                stream[packets[0].start - 8..packets[0].start]
+                    .try_into()
+                    .expect("first timestamp")
+            ),
+            0
+        );
+        assert_eq!(
+            u64::from_le_bytes(
+                stream[packets[1].start - 8..packets[1].start]
+                    .try_into()
+                    .expect("second timestamp")
+            ),
+            1
+        );
+        assert_eq!(packets[0].slice(stream), b"first-packet");
+        assert_eq!(packets[1].slice(stream), b"second");
+    }
+
+    #[test]
+    fn stream_writer_relative_position_rejects_patch_offset_overflow() {
+        use std::cell::Cell;
+        use std::rc::Rc;
+
+        struct OffsetOverflowWriter {
+            write_calls: Rc<Cell<usize>>,
+        }
+
+        impl std::io::Write for OffsetOverflowWriter {
+            fn write(&mut self, _buffer: &[u8]) -> std::io::Result<usize> {
+                self.write_calls.set(self.write_calls.get() + 1);
+                Err(std::io::Error::other(
+                    "synthetic writer cannot store bytes at this position",
+                ))
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        impl std::io::Seek for OffsetOverflowWriter {
+            fn seek(&mut self, position: SeekFrom) -> std::io::Result<u64> {
+                match position {
+                    SeekFrom::Current(0) => Ok(u64::MAX - 23),
+                    _ => Err(std::io::Error::other("unexpected synthetic seek")),
+                }
+            }
+        }
+
+        let write_calls = Rc::new(Cell::new(0));
+        let writer = OffsetOverflowWriter {
+            write_calls: Rc::clone(&write_calls),
+        };
+        let header = IvfHeader::vp9(16, 16, 30, 1);
+        let err = match IvfStreamWriter::new(writer, &header) {
+            Ok(_) => panic!("overflowing patch offset must be rejected"),
+            Err(err) => err,
+        };
+
+        assert_eq!(
+            err.kind(),
+            std::io::ErrorKind::InvalidInput,
+            "constructor must reject patch offset overflow before writing the header"
+        );
+        assert_eq!(
+            write_calls.get(),
+            0,
+            "overflow rejection must precede header writes"
+        );
     }
 
     #[test]
