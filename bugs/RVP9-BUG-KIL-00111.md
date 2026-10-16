@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00111 — Realtime benchmark runs collide through one default IVF path
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** bench/realtime
 - **Raised:** 2026-08-22T19:31:16Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261016T040432Z-f59e60cf
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00111-run-fix-20261016T040432Z-f59e60cf
-- **Owner base:** 2a10f424c73c4facfda8431e87c4de61ab639a27
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-16T04:04:32Z
-- **Owner until:** 2026-10-16T08:04:32Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T19:31:16Z, raised via `deltic bugs new` model=gpt-5.6-sol@xhigh)
+- **State history:** Open (2026-08-22T19:31:16Z, raised via `deltic bugs new` model=gpt-5.6-sol@xhigh) -> Fixed (2026-10-16T04:20:37Z, deltic:auto role=fix run=fix-20261016T040432Z-f59e60cf branch=task/bug-RVP9-BUG-KIL-00111-run-fix-20261016T040432Z-f59e60cf code=07b1a8e5689358e0d095452b6bd71a2726220c0f gate=manual)
 
 ## Observation
 
