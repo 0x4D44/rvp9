@@ -6,15 +6,15 @@
 - **Area:** bench/throughput ratchet
 - **Raised:** 2026-08-22T19:31:41Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
+- **Owner:** deltic:manual
+- **Owner role:** fix
+- **Owner run:** fix-20261016T030427Z-c583c67f
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KIL-00114-run-fix-20261016T030427Z-c583c67f
+- **Owner base:** 9f19232b1a8868bf909cc41f30a9a58f615c6c14
 - **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner since:** 2026-10-16T03:04:27Z
+- **Owner until:** 2026-10-16T07:04:27Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
