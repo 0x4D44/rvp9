@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00110 — Tile profiler exits successfully without valid profiling evidence
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** High
 - **Area:** bench/decode-profile-tiles
 - **Raised:** 2026-08-22T19:31:08Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261016T011011Z-413aab2b
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00110-run-fix-20261016T011011Z-413aab2b
-- **Owner base:** b8f7dced8b83dec9d21515e7f62d49917677972e
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-16T01:10:11Z
-- **Owner until:** 2026-10-16T05:10:11Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T19:31:08Z, raised via `deltic bugs new` model=gpt-5.6-sol@xhigh)
+- **State history:** Open (2026-08-22T19:31:08Z, raised via `deltic bugs new` model=gpt-5.6-sol@xhigh) -> Fixed (2026-10-16T01:23:35Z, deltic:auto role=fix run=fix-20261016T011011Z-413aab2b branch=task/bug-RVP9-BUG-KIL-00110-run-fix-20261016T011011Z-413aab2b code=a74227e178e46016a2d5c628243b9dc183962664 gate=manual)
 
 ## Observation
 
