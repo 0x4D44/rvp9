@@ -64,10 +64,15 @@ fn write_synthetic_raw_count(path: &Path, frame_count: usize) {
                 buf.push(((x + y + f * 4) & 0xff) as u8);
             }
         }
-        for _plane in 0..2 {
+        for plane in 0..2 {
             for y in 0..H / 2 {
                 for x in 0..W / 2 {
-                    buf.push(((x * 2 + y + f) & 0xff) as u8);
+                    let sample = if plane == 0 {
+                        x * 2 + y + f
+                    } else {
+                        128 + x + y + f
+                    };
+                    buf.push((sample & 0xff) as u8);
                 }
             }
         }
@@ -1269,6 +1274,10 @@ fn dec_yv12_swaps_u_and_v_vs_i420() {
         let i_v = &i[off + y_size + uv_size..off + frame_size];
         let yv_v = &yv[off + y_size..off + y_size + uv_size];
         let yv_u = &yv[off + y_size + uv_size..off + frame_size];
+        assert_ne!(
+            i_u, i_v,
+            "frame {f}: fixture must decode distinct U and V planes"
+        );
         assert_eq!(
             i_u, yv_u,
             "frame {f}: i420 U bytes must equal yv12's second-half (U) bytes"

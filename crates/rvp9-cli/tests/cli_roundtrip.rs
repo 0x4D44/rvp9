@@ -1,8 +1,8 @@
 //! End-to-end CLI tests for `rvp9enc` / `rvp9dec`.
 //!
-//! Hermetic: builds synthetic raw I420 frames at 64×64 (a single
-//! super-block, the smallest legal coded size), so the tests need no
-//! external corpus. Drives the actual built binaries via the
+//! Hermetic: builds synthetic raw I420 frames at 64×64 and rectangular
+//! sizes with distinct chroma patterns, so the tests need no external
+//! corpus. Drives the actual built binaries via the
 //! `CARGO_BIN_EXE_*` paths Cargo provides to integration tests.
 //!
 //! Oracles:
@@ -55,10 +55,15 @@ fn write_synthetic_raw_dims(path: &std::path::Path, width: usize, height: usize,
             }
         }
         // U, V planes (half resolution).
-        for _plane in 0..2 {
+        for plane in 0..2 {
             for y in 0..height / 2 {
                 for x in 0..width / 2 {
-                    buf.push(((x * 2 + y + f) & 0xff) as u8);
+                    let sample = if plane == 0 {
+                        x * 2 + y + f
+                    } else {
+                        128 + x + y + f
+                    };
+                    buf.push((sample & 0xff) as u8);
                 }
             }
         }
@@ -184,6 +189,151 @@ fn encode_decode_roundtrip_raw_input() {
     let _ = std::fs::remove_file(&raw);
     let _ = std::fs::remove_file(&ivf);
     let _ = std::fs::remove_file(&yuv);
+}
+
+#[test]
+fn encode_decode_rectangular_roundtrip_preserves_geometry_and_planes() {
+    const RECT_W: usize = 128;
+    const RECT_H: usize = 64;
+    const RECT_FRAMES: usize = 4;
+    const RECT_FRAME_BYTES: usize = RECT_W * RECT_H * 3 / 2;
+
+    let raw = tmp("rect_in.yuv");
+    let ivf = tmp("rect_out.ivf");
+    let i420 = tmp("rect_dec.yuv");
+    let y4m = tmp("rect_dec.y4m");
+    write_synthetic_raw_dims(&raw, RECT_W, RECT_H, RECT_FRAMES);
+
+    let status = Command::new(enc_bin())
+        .args([
+            "-w",
+            "128",
+            "-h",
+            "64",
+            "--fps",
+            "30/1",
+            "--target-bitrate",
+            "500",
+            "--end-usage",
+            "cbr",
+            "-o",
+        ])
+        .arg(&ivf)
+        .arg(&raw)
+        .bounded_status()
+        .expect("run rectangular rvp9enc");
+    assert!(status.success(), "rectangular rvp9enc failed");
+
+    let (ivf_bytes, packets) = read_packets(&ivf).expect("read rectangular IVF");
+    assert_eq!(&ivf_bytes[0..4], b"DKIF", "bad IVF magic");
+    assert_eq!(
+        u16::from_le_bytes([ivf_bytes[12], ivf_bytes[13]]) as usize,
+        RECT_W,
+        "IVF header width"
+    );
+    assert_eq!(
+        u16::from_le_bytes([ivf_bytes[14], ivf_bytes[15]]) as usize,
+        RECT_H,
+        "IVF header height"
+    );
+    assert_eq!(packets.len(), RECT_FRAMES, "IVF packet count");
+    assert_eq!(
+        u32::from_le_bytes(ivf_bytes[24..28].try_into().expect("IVF frame count")) as usize,
+        RECT_FRAMES,
+        "IVF header frame count"
+    );
+
+    for (format, output) in [("--i420", &i420), ("--y4m", &y4m)] {
+        let status = Command::new(dec_bin())
+            .arg(format)
+            .arg("-o")
+            .arg(output)
+            .arg(&ivf)
+            .bounded_status()
+            .unwrap_or_else(|error| panic!("run rvp9dec {format}: {error}"));
+        assert!(status.success(), "rvp9dec {format} failed");
+    }
+
+    let i420_bytes = std::fs::read(&i420).expect("read rectangular I420 output");
+    assert_eq!(
+        i420_bytes.len(),
+        RECT_FRAME_BYTES * RECT_FRAMES,
+        "I420 frame count and size"
+    );
+
+    let y4m_bytes = std::fs::read(&y4m).expect("read rectangular Y4M output");
+    let header_end = y4m_bytes
+        .iter()
+        .position(|&byte| byte == b'\n')
+        .expect("Y4M header newline");
+    let header = std::str::from_utf8(&y4m_bytes[..header_end]).expect("Y4M header UTF-8");
+    let header_fields: Vec<&str> = header.split_ascii_whitespace().collect();
+    assert_eq!(header_fields.first(), Some(&"YUV4MPEG2"), "Y4M magic");
+    assert!(
+        header_fields.contains(&"W128"),
+        "Y4M header width: {header}"
+    );
+    assert!(
+        header_fields.contains(&"H64"),
+        "Y4M header height: {header}"
+    );
+
+    let y_size = RECT_W * RECT_H;
+    let uv_size = (RECT_W / 2) * (RECT_H / 2);
+    let frame_size = y_size + 2 * uv_size;
+    let frame_tag = b"FRAME\n";
+    let mut y4m_frames = Vec::with_capacity(RECT_FRAMES);
+    let mut cursor = header_end + 1;
+    while cursor < y4m_bytes.len() {
+        assert!(
+            y4m_bytes[cursor..].starts_with(frame_tag),
+            "Y4M frame {count} tag at byte {cursor}",
+            count = y4m_frames.len()
+        );
+        cursor += frame_tag.len();
+        let frame_end = cursor.checked_add(frame_size).expect("Y4M frame end");
+        assert!(frame_end <= y4m_bytes.len(), "truncated Y4M frame body");
+        y4m_frames.push(&y4m_bytes[cursor..frame_end]);
+        cursor = frame_end;
+    }
+    assert_eq!(y4m_frames.len(), RECT_FRAMES, "Y4M frame count");
+
+    for (frame_index, y4m_frame) in y4m_frames.iter().enumerate() {
+        let offset = frame_index * frame_size;
+        let i420_frame = &i420_bytes[offset..offset + frame_size];
+        assert_eq!(
+            &i420_frame[..y_size],
+            &y4m_frame[..y_size],
+            "frame {frame_index}: Y plane boundary"
+        );
+        assert_eq!(
+            &i420_frame[y_size..y_size + uv_size],
+            &y4m_frame[y_size..y_size + uv_size],
+            "frame {frame_index}: U plane boundary"
+        );
+        assert_eq!(
+            &i420_frame[y_size + uv_size..],
+            &y4m_frame[y_size + uv_size..],
+            "frame {frame_index}: V plane boundary"
+        );
+        let u_plane = &i420_frame[y_size..y_size + uv_size];
+        let v_plane = &i420_frame[y_size + uv_size..];
+        assert_ne!(
+            u_plane, v_plane,
+            "frame {frame_index}: fixture must decode distinct U and V planes"
+        );
+        let u_mean = u_plane.iter().map(|&sample| u64::from(sample)).sum::<u64>() / uv_size as u64;
+        let v_mean = v_plane.iter().map(|&sample| u64::from(sample)).sum::<u64>() / uv_size as u64;
+        assert!(
+            u_mean + 64 < v_mean,
+            "frame {frame_index}: decoded U mean {u_mean} must remain well below V mean {v_mean}"
+        );
+    }
+
+    let _ = std::fs::remove_file(&raw);
+    let _ = std::fs::remove_file(&ivf);
+    let _ = std::fs::remove_file(&i420);
+    let _ = std::fs::remove_file(&y4m);
 }
 
 #[test]
