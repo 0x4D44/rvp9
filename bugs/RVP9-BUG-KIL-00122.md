@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00122 — Two-pass temporal SVC discards first-pass allocations
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** cli/rvp9enc two-pass temporal SVC
 - **Raised:** 2026-08-22T20:44:03Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261016T003414Z-3df93afe
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00122-run-fix-20261016T003414Z-3df93afe
-- **Owner base:** ca431d610472ed52477052b5f7c11508c8842635
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-16T00:34:14Z
-- **Owner until:** 2026-10-16T04:34:14Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T20:44:03Z, raised via `deltic bugs new` model=gpt-5.6-sol@high)
+- **State history:** Open (2026-08-22T20:44:03Z, raised via `deltic bugs new` model=gpt-5.6-sol@high) -> Fixed (2026-10-16T00:40:34Z, deltic:auto role=fix run=fix-20261016T003414Z-3df93afe branch=task/bug-RVP9-BUG-KIL-00122-run-fix-20261016T003414Z-3df93afe code=38cd5c8edb90ccae39503e86cecc8b2ecc5139a1 gate=manual)
 
 ## Observation
 
