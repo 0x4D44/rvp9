@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00082 — Parallel decoder retains full-frame metadata slabs per tile
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** decoder/parallel tile metadata
 - **Raised:** 2026-08-22T10:24:29Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261016T022804Z-9d7700c8
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00082-run-fix-20261016T022804Z-9d7700c8
-- **Owner base:** a8e4856e82bc15b0bfb0ee52fd1afa149457223e
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-16T02:28:04Z
-- **Owner until:** 2026-10-16T06:28:04Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T10:24:29Z, raised via `deltic bugs new` model=gpt-5.6-sol@xhigh)
+- **State history:** Open (2026-08-22T10:24:29Z, raised via `deltic bugs new` model=gpt-5.6-sol@xhigh) -> Fixed (2026-10-16T02:34:07Z, deltic:auto role=fix run=fix-20261016T022804Z-9d7700c8 branch=task/bug-RVP9-BUG-KIL-00082-run-fix-20261016T022804Z-9d7700c8 code=dc19bcea3f41952f6d0a2a53b027c852a79a5aed gate=manual)
 
 ## Observation
 
