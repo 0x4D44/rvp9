@@ -65,6 +65,8 @@ pub fn vpx_int_pro_row_sse2(
     reference_stride: usize,
     height: usize,
 ) {
+    #[cfg(all(test, not(miri)))]
+    crate::dsp::force_scalar_tests::record("vpx_int_pro_row_sse2");
     assert_eq!(output.len(), 16);
     assert!(matches!(height, 16 | 32 | 64));
     assert!(reference_stride >= 16);
@@ -168,6 +170,8 @@ pub fn vpx_int_pro_row_clamped_sse2(
     base_y: i32,
     height: usize,
 ) {
+    #[cfg(all(test, not(miri)))]
+    crate::dsp::force_scalar_tests::record("vpx_int_pro_row_clamped_sse2");
     assert_eq!(output.len(), 16);
     assert!(matches!(height, 16 | 32 | 64));
     assert!(frame_height > 0);
@@ -307,6 +311,8 @@ pub fn int_pro_64x64_fused_sse2(
     source: &[u8],
     source_stride: usize,
 ) {
+    #[cfg(all(test, not(miri)))]
+    crate::dsp::force_scalar_tests::record("int_pro_64x64_fused_sse2");
     assert!(reference_stride >= 128);
     assert!(source_stride >= 64);
     let reference_required = 127usize
@@ -366,6 +372,8 @@ unsafe fn vpx_vector_var_sse2_inner(
 
 /// Computes projection-vector variance for 16-, 32-, or 64-wide vectors.
 pub fn vpx_vector_var_sse2(reference: &[i16], source: &[i16], bwl: u32) -> i32 {
+    #[cfg(all(test, not(miri)))]
+    crate::dsp::force_scalar_tests::record("vpx_vector_var_sse2");
     let width = 4usize << bwl;
     assert!(matches!(width, 16 | 32 | 64));
     assert!(reference.len() >= width);

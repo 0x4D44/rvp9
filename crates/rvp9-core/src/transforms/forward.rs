@@ -505,7 +505,11 @@ pub fn fdct8x8(input: &[i16], output: &mut [i32; 64], stride: usize) {
     }
     #[cfg(all(target_arch = "x86_64", not(miri)))]
     {
-        sse2::fdct8x8(input, output, stride);
+        if crate::dsp::get_ref().caps.sse2 {
+            sse2::fdct8x8(input, output, stride);
+        } else {
+            fdct8x8_scalar(input, output, stride);
+        }
     }
     #[cfg(any(all(not(target_arch = "aarch64"), not(target_arch = "x86_64")), miri))]
     {
@@ -1008,7 +1012,7 @@ pub fn fadst16(input: &[i32; 16], output: &mut [i32; 16]) {
 /// `(x + 1) >> 2` IS the reduction).
 ///
 /// Mirrors libvpx `vpx_fdct16x16_c` (`vpx_dsp/fwd_txfm.c:183-361`).
-#[cfg(any(not(any(target_arch = "aarch64", target_arch = "x86_64")), test, miri))]
+#[cfg(any(not(target_arch = "aarch64"), test, miri))]
 fn fdct16x16_scalar(input: &[i16], output: &mut [i32; 256], stride: usize) {
     debug_assert!(
         input.len() >= 15 * stride + 16,
@@ -1098,7 +1102,11 @@ pub fn fdct16x16(input: &[i16], output: &mut [i32; 256], stride: usize) {
     {
         #[cfg(all(target_arch = "x86_64", not(miri)))]
         {
-            sse2::fdct16x16(input, output, stride);
+            if crate::dsp::get_ref().caps.sse2 {
+                sse2::fdct16x16(input, output, stride);
+            } else {
+                fdct16x16_scalar(input, output, stride);
+            }
         }
         #[cfg(any(not(target_arch = "x86_64"), miri))]
         {
@@ -1545,6 +1553,24 @@ pub fn fdct32x32(input: &[i16], output: &mut [i32; 1024], stride: usize) {
     {
         fdct32x32_scalar(input, output, stride);
     }
+}
+
+#[cfg(all(test, target_arch = "x86_64", not(miri)))]
+pub(crate) fn exercise_force_scalar_paths() {
+    let input8: Vec<i16> = (0..64)
+        .map(|index| ((index * 29 + 7) % 511) as i16 - 255)
+        .collect();
+    let mut output8 = [0i32; 64];
+    fdct8x8(&input8, &mut output8, 8);
+    fdct8x8_libvpx_lowbd(&input8, &mut output8, 8);
+    assert!(output8.iter().any(|&value| value != 0));
+
+    let input16: Vec<i16> = (0..256)
+        .map(|index| ((index * 31 + 11) % 509) as i16 - 254)
+        .collect();
+    let mut output16 = [0i32; 256];
+    fdct16x16(&input16, &mut output16, 16);
+    assert!(output16.iter().any(|&value| value != 0));
 }
 
 #[cfg(test)]

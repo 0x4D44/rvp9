@@ -51,6 +51,8 @@ pub fn minmax_8x8_sse2(
     second: &[u8],
     second_stride: usize,
 ) -> (u8, u8) {
+    #[cfg(all(test, not(miri)))]
+    crate::dsp::force_scalar_tests::record("minmax_8x8_sse2");
     assert!(first_stride >= 8);
     assert!(second_stride >= 8);
     assert!(first.len() >= 7 * first_stride + 8);

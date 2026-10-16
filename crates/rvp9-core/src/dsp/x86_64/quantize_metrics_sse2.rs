@@ -352,6 +352,8 @@ pub fn vp9_quantize_fp_i16_metrics_sse2(
     quant: &[i16; 2],
     dequant: &[i16; 2],
 ) -> HadamardQuantMetrics {
+    #[cfg(all(test, not(miri)))]
+    crate::dsp::force_scalar_tests::record("vp9_quantize_fp_i16_metrics_sse2");
     assert!(matches!(n_coeffs, 64 | 256));
     assert!(coeff.len() >= n_coeffs);
     // SAFETY: x86-64 guarantees SSE2; assertions prove every vector load.
@@ -365,6 +367,8 @@ pub fn vp9_quantize_fp_i16_rate_metrics_sse2(
     round: &[i16; 2],
     quant: &[i16; 2],
 ) -> HadamardQuantRateMetrics {
+    #[cfg(all(test, not(miri)))]
+    crate::dsp::force_scalar_tests::record("vp9_quantize_fp_i16_rate_metrics_sse2");
     assert!(matches!(n_coeffs, 64 | 256));
     assert!(coeff.len() >= n_coeffs);
     // SAFETY: x86-64 guarantees SSE2; assertions prove every vector load.
@@ -378,6 +382,8 @@ pub fn vp9_quantize_fp_32x32_i16_metrics_sse2(
     quant: &[i16; 2],
     dequant: &[i16; 2],
 ) -> HadamardQuantMetrics {
+    #[cfg(all(test, not(miri)))]
+    crate::dsp::force_scalar_tests::record("vp9_quantize_fp_32x32_i16_metrics_sse2");
     assert!(coeff.len() >= 1024);
     // SAFETY: x86-64 guarantees SSE2; the assertion proves every vector load.
     unsafe { metrics_32_inner(coeff.as_ptr(), round, quant, dequant) }
@@ -390,6 +396,8 @@ pub fn vp9_quantize_fp_32x32_i16_rate_metrics_sse2(
     quant: &[i16; 2],
     dequant: &[i16; 2],
 ) -> HadamardQuantRateMetrics {
+    #[cfg(all(test, not(miri)))]
+    crate::dsp::force_scalar_tests::record("vp9_quantize_fp_32x32_i16_rate_metrics_sse2");
     assert!(coeff.len() >= 1024);
     // SAFETY: x86-64 guarantees SSE2; the assertion proves every vector load.
     unsafe { rate_metrics_32_inner(coeff.as_ptr(), round, quant, dequant) }

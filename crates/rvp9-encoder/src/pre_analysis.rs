@@ -1175,6 +1175,11 @@ pub(crate) fn frame_hf_laplacian_sum_rows(
     frame_hf_laplacian_sum_rows_with_step(y, width, height, row_start, row_end, 1)
 }
 
+#[cfg(target_arch = "x86_64")]
+fn laplacian_uses_avx2() -> bool {
+    rvp9_core::dsp::get_ref().caps.avx2
+}
+
 fn frame_hf_laplacian_sum_rows_with_step(
     y: &[u8],
     width: usize,
@@ -1200,8 +1205,8 @@ fn frame_hf_laplacian_sum_rows_with_step(
     }
     #[cfg(target_arch = "x86_64")]
     {
-        if std::is_x86_feature_detected!("avx2") {
-            // SAFETY: Runtime feature detection proves AVX2 is available;
+        if laplacian_uses_avx2() {
+            // SAFETY: The cached dispatch capabilities prove AVX2 is available;
             // the validated dimensions and loop bound keep each load within
             // its row and within `y`.
             unsafe { frame_hf_laplacian_sum_rows_avx2(y, width, row_start, row_end, row_step) }
@@ -1306,6 +1311,9 @@ unsafe fn frame_hf_laplacian_sum_rows_avx2(
     row_step: usize,
 ) -> u64 {
     use std::arch::x86_64::*;
+
+    #[cfg(all(test, not(miri)))]
+    tests::LAPLACIAN_AVX2_ENTRIES.with(|entries| entries.set(entries.get() + 1));
 
     const MAX_VECTOR_BATCHES: usize = 1 << 15;
     let one = _mm256_set1_epi16(1);
@@ -1809,6 +1817,57 @@ mod tests {
     //! PROOF tests for W2.1 — the pre-analysis scaffold.
 
     use super::*;
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    thread_local! {
+        pub(super) static LAPLACIAN_AVX2_ENTRIES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn force_scalar_laplacian_dispatch() {
+        const CHILD: &str = "RVP9_TEST_LAPLACIAN_DISPATCH_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            for value in [None, Some("1"), Some("0"), Some("true"), Some("01")] {
+                let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+                child
+                    .args([
+                        "--exact",
+                        "pre_analysis::tests::force_scalar_laplacian_dispatch",
+                    ])
+                    .env(CHILD, "1")
+                    .stdin(std::process::Stdio::null());
+                if let Some(value) = value {
+                    child.env("RVP9_FORCE_SCALAR", value);
+                } else {
+                    child.env_remove("RVP9_FORCE_SCALAR");
+                }
+                let output = child.output().unwrap();
+                assert!(output.status.success(), "override {value:?}: {output:?}");
+            }
+            return;
+        }
+        let forced = std::env::var_os("RVP9_FORCE_SCALAR").is_some_and(|v| v == "1");
+        let expected = !forced && std::is_x86_feature_detected!("avx2");
+        assert_eq!(
+            laplacian_uses_avx2(),
+            expected,
+            "Laplacian dispatch must honor scalar override"
+        );
+        let pixels = std::array::from_fn::<_, { 65 * 17 }, _>(|i| (i.wrapping_mul(53) % 256) as u8);
+        LAPLACIAN_AVX2_ENTRIES.with(|entries| entries.set(0));
+        for step in [1, 4] {
+            assert_eq!(
+                frame_hf_laplacian_sum_rows_with_step(&pixels, 65, 17, 1, 16, step),
+                frame_hf_laplacian_sum_rows_scalar(&pixels, 65, 1, 16, step),
+            );
+        }
+        assert_eq!(
+            LAPLACIAN_AVX2_ENTRIES.with(std::cell::Cell::get),
+            if expected { 2 } else { 0 },
+            "actual AVX2 entry must match the masked capabilities",
+        );
+    }
 
     /// W2.1 PROOF — the scaffold allocates `consec_zero_mv[]` at the
     /// correct mi-grid size and zeroes it.

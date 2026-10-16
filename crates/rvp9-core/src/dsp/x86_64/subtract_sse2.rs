@@ -94,6 +94,8 @@ pub fn subtract_square_sse2(
     dst: &mut [i16],
     side: usize,
 ) {
+    #[cfg(all(test, not(miri)))]
+    crate::dsp::force_scalar_tests::record("subtract_square_sse2");
     assert!(matches!(side, 8 | 16 | 32 | 64));
     assert!(src_stride >= side);
     assert!(pred_stride >= side);
@@ -126,6 +128,8 @@ pub fn subtract_square_sse2_with_nonzero(
     dst: &mut [i16],
     side: usize,
 ) -> bool {
+    #[cfg(all(test, not(miri)))]
+    crate::dsp::force_scalar_tests::record("subtract_square_sse2_with_nonzero");
     assert!(matches!(side, 8 | 16 | 32 | 64));
     assert!(src_stride >= side);
     assert!(pred_stride >= side);

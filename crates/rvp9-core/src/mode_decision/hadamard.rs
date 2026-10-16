@@ -37,11 +37,7 @@ mod sse2;
 /// intentionally skipped for SATD purposes — coefficient ORDER
 /// doesn't matter for sum-of-absolute-values).
 #[inline]
-#[cfg(any(
-    test,
-    miri,
-    all(not(target_arch = "aarch64"), not(target_arch = "x86_64"))
-))]
+#[cfg(any(test, miri, not(target_arch = "aarch64")))]
 fn hadamard_col8(src: &[i16], src_stride: usize, coeff: &mut [i16; 8]) {
     let b0 = src[0] + src[src_stride];
     let b1 = src[0] - src[src_stride];
@@ -79,11 +75,7 @@ fn hadamard_col8(src: &[i16], src_stride: usize, coeff: &mut [i16; 8]) {
 ///
 /// The transform is two passes of `hadamard_col8` — first columns,
 /// then rows of the column-pass output.
-#[cfg(any(
-    test,
-    miri,
-    all(not(target_arch = "aarch64"), not(target_arch = "x86_64"))
-))]
+#[cfg(any(test, miri, not(target_arch = "aarch64")))]
 fn hadamard_8x8_scalar(src: &[i16], src_stride: usize, coeff: &mut [i16]) {
     debug_assert!(coeff.len() >= 64, "coeff must be at least 64 elements");
     let mut buffer = [0i16; 64];
@@ -120,11 +112,7 @@ fn hadamard_8x8_scalar(src: &[i16], src_stride: usize, coeff: &mut [i16]) {
 /// The 16×16 transform is computed as 4× 8×8 Hadamard sub-transforms
 /// followed by a single 2×2-Hadamard combination pass across the
 /// four sub-block top-left coefficients.
-#[cfg(any(
-    test,
-    miri,
-    all(not(target_arch = "aarch64"), not(target_arch = "x86_64"))
-))]
+#[cfg(any(test, miri, not(target_arch = "aarch64")))]
 fn hadamard_16x16_scalar(src: &[i16], src_stride: usize, coeff: &mut [i16]) {
     debug_assert!(coeff.len() >= 256, "coeff must be at least 256 elements");
     // Four 8×8 sub-blocks. Layout follows libvpx:
@@ -176,11 +164,7 @@ fn hadamard_16x16_scalar(src: &[i16], src_stride: usize, coeff: &mut [i16]) {
 /// 4× 16×16 sub-transforms + 2×2 cross-combination. The output is
 /// stored as 4×256 sub-blocks; the 2×2 combination is on the
 /// top-left coefficients of each.
-#[cfg(any(
-    test,
-    miri,
-    all(not(target_arch = "aarch64"), not(target_arch = "x86_64"))
-))]
+#[cfg(any(test, miri, not(target_arch = "aarch64")))]
 fn hadamard_32x32_scalar(src: &[i16], src_stride: usize, coeff: &mut [i16]) {
     debug_assert!(coeff.len() >= 1024, "coeff must be at least 1024 elements");
     for sb in 0..4 {
@@ -218,7 +202,11 @@ pub fn hadamard_8x8(src: &[i16], src_stride: usize, coeff: &mut [i16]) {
     }
     #[cfg(all(target_arch = "x86_64", not(miri)))]
     {
-        sse2::hadamard_8x8(src, src_stride, coeff);
+        if crate::dsp::get_ref().caps.sse2 {
+            sse2::hadamard_8x8(src, src_stride, coeff);
+        } else {
+            hadamard_8x8_scalar(src, src_stride, coeff);
+        }
     }
     #[cfg(any(all(not(target_arch = "aarch64"), not(target_arch = "x86_64")), miri))]
     {
@@ -234,7 +222,11 @@ pub fn hadamard_16x16(src: &[i16], src_stride: usize, coeff: &mut [i16]) {
     }
     #[cfg(all(target_arch = "x86_64", not(miri)))]
     {
-        sse2::hadamard_16x16(src, src_stride, coeff);
+        if crate::dsp::get_ref().caps.sse2 {
+            sse2::hadamard_16x16(src, src_stride, coeff);
+        } else {
+            hadamard_16x16_scalar(src, src_stride, coeff);
+        }
     }
     #[cfg(any(all(not(target_arch = "aarch64"), not(target_arch = "x86_64")), miri))]
     {
@@ -254,7 +246,19 @@ pub fn hadamard_8x8_subtract(
     #[cfg(target_arch = "aarch64")]
     neon::hadamard_8x8_subtract(src, src_stride, pred, pred_stride, coeff);
     #[cfg(target_arch = "x86_64")]
-    sse2::hadamard_8x8_subtract(src, src_stride, pred, pred_stride, coeff);
+    if crate::dsp::get_ref().caps.sse2 {
+        sse2::hadamard_8x8_subtract(src, src_stride, pred, pred_stride, coeff);
+    } else {
+        hadamard_subtract_scalar(
+            src,
+            src_stride,
+            pred,
+            pred_stride,
+            coeff,
+            8,
+            hadamard_8x8_scalar,
+        );
+    }
 }
 
 /// Fused SIMD `src - pred` and 16×16 Walsh-Hadamard transform.
@@ -269,7 +273,19 @@ pub fn hadamard_16x16_subtract(
     #[cfg(target_arch = "aarch64")]
     neon::hadamard_16x16_subtract(src, src_stride, pred, pred_stride, coeff);
     #[cfg(target_arch = "x86_64")]
-    sse2::hadamard_16x16_subtract(src, src_stride, pred, pred_stride, coeff);
+    if crate::dsp::get_ref().caps.sse2 {
+        sse2::hadamard_16x16_subtract(src, src_stride, pred, pred_stride, coeff);
+    } else {
+        hadamard_subtract_scalar(
+            src,
+            src_stride,
+            pred,
+            pred_stride,
+            coeff,
+            16,
+            hadamard_16x16_scalar,
+        );
+    }
 }
 
 /// Fused SIMD `src - pred` and 32×32 Walsh-Hadamard transform.
@@ -284,7 +300,40 @@ pub fn hadamard_32x32_subtract(
     #[cfg(target_arch = "aarch64")]
     neon::hadamard_32x32_subtract(src, src_stride, pred, pred_stride, coeff);
     #[cfg(target_arch = "x86_64")]
-    sse2::hadamard_32x32_subtract(src, src_stride, pred, pred_stride, coeff);
+    if crate::dsp::get_ref().caps.sse2 {
+        sse2::hadamard_32x32_subtract(src, src_stride, pred, pred_stride, coeff);
+    } else {
+        hadamard_subtract_scalar(
+            src,
+            src_stride,
+            pred,
+            pred_stride,
+            coeff,
+            32,
+            hadamard_32x32_scalar,
+        );
+    }
+}
+
+#[cfg(all(target_arch = "x86_64", not(miri)))]
+fn hadamard_subtract_scalar(
+    src: &[u8],
+    src_stride: usize,
+    pred: &[u8],
+    pred_stride: usize,
+    coeff: &mut [i16],
+    side: usize,
+    transform: fn(&[i16], usize, &mut [i16]),
+) {
+    sse2::validate_subtract(src, src_stride, pred, pred_stride, coeff, side);
+    let mut residual = [0i16; 32 * 32];
+    for row in 0..side {
+        for col in 0..side {
+            residual[row * side + col] =
+                i16::from(src[row * src_stride + col]) - i16::from(pred[row * pred_stride + col]);
+        }
+    }
+    transform(&residual[..side * side], side, coeff);
 }
 
 /// 2-D Walsh-Hadamard transform of a 32×32 block.
@@ -295,7 +344,11 @@ pub fn hadamard_32x32(src: &[i16], src_stride: usize, coeff: &mut [i16]) {
     }
     #[cfg(all(target_arch = "x86_64", not(miri)))]
     {
-        sse2::hadamard_32x32(src, src_stride, coeff);
+        if crate::dsp::get_ref().caps.sse2 {
+            sse2::hadamard_32x32(src, src_stride, coeff);
+        } else {
+            hadamard_32x32_scalar(src, src_stride, coeff);
+        }
     }
     #[cfg(any(all(not(target_arch = "aarch64"), not(target_arch = "x86_64")), miri))]
     {
@@ -316,6 +369,38 @@ pub fn hadamard_satd(coeff: &[i16]) -> u32 {
         sum = sum.saturating_add(i32::from(c).unsigned_abs());
     }
     sum
+}
+
+#[cfg(all(test, target_arch = "x86_64", not(miri)))]
+pub(crate) fn exercise_force_scalar_paths() {
+    for side in [8usize, 16, 32] {
+        let residual: Vec<i16> = (0..side * side)
+            .map(|index| ((index * 37 + 13) % 255) as i16 - 127)
+            .collect();
+        let source: Vec<u8> = (0..side * side)
+            .map(|index| ((index * 43 + 19) & 0xff) as u8)
+            .collect();
+        let prediction: Vec<u8> = (0..side * side)
+            .map(|index| ((index * 17 + 3) & 0xff) as u8)
+            .collect();
+        let mut coeff = vec![0i16; side * side];
+
+        match side {
+            8 => hadamard_8x8(&residual, side, &mut coeff),
+            16 => hadamard_16x16(&residual, side, &mut coeff),
+            32 => hadamard_32x32(&residual, side, &mut coeff),
+            _ => unreachable!(),
+        }
+        assert!(coeff.iter().any(|&value| value != 0));
+
+        match side {
+            8 => hadamard_8x8_subtract(&source, side, &prediction, side, &mut coeff),
+            16 => hadamard_16x16_subtract(&source, side, &prediction, side, &mut coeff),
+            32 => hadamard_32x32_subtract(&source, side, &prediction, side, &mut coeff),
+            _ => unreachable!(),
+        }
+        assert!(coeff.iter().any(|&value| value != 0));
+    }
 }
 
 #[cfg(test)]

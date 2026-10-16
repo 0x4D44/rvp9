@@ -147,6 +147,8 @@ unsafe fn fdct8x8_inner(input: *const i16, output: *mut i32, stride: usize) -> b
 }
 
 pub(super) fn fdct8x8(input: &[i16], output: &mut [i32; 64], stride: usize) {
+    #[cfg(all(test, not(miri)))]
+    crate::dsp::force_scalar_tests::record("fdct8x8");
     assert!(stride >= 8);
     assert!(input.len() >= 7 * stride + 8);
     // SAFETY: The bounds above prove every eight-value input load and all
@@ -375,6 +377,8 @@ unsafe fn fdct16x16_first_pass_sse2(input: *const i16, intermediate: *mut i16, s
 }
 
 pub(super) fn fdct16x16(input: &[i16], output: &mut [i32; 256], stride: usize) {
+    #[cfg(all(test, not(miri)))]
+    crate::dsp::force_scalar_tests::record("fdct16x16");
     assert!(stride >= 16);
     assert!(input.len() >= 15 * stride + 16);
     let mut intermediate = [0i16; 256];

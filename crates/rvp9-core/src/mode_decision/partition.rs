@@ -792,6 +792,28 @@ fn average_diff_var(input: &FixedTreeInterInput<'_>, x: usize, y: usize, side: u
     )
 }
 
+#[cfg(any(not(target_arch = "aarch64"), miri))]
+fn minmax_8x8_scalar(
+    input: &FixedTreeInterInput<'_>,
+    source_index: usize,
+    predictor_index: usize,
+) -> (i32, i32) {
+    let mut minimum = 255;
+    let mut maximum = 0;
+    for row in 0..8 {
+        for col in 0..8 {
+            let source_offset = source_index + row * input.source_stride + col;
+            let predictor_offset = predictor_index + row * input.predictor_stride + col;
+            let diff = (i32::from(input.source[source_offset])
+                - i32::from(input.predictor[predictor_offset]))
+            .abs();
+            minimum = minimum.min(diff);
+            maximum = maximum.max(diff);
+        }
+    }
+    (minimum, maximum)
+}
+
 fn minmax_8x8_spread(input: &FixedTreeInterInput<'_>, x16: usize, y16: usize) -> i32 {
     let mut spread_max = 0;
     let mut spread_min = 255;
@@ -813,32 +835,22 @@ fn minmax_8x8_spread(input: &FixedTreeInterInput<'_>, x16: usize, y16: usize) ->
             );
             (i32::from(minimum), i32::from(maximum))
         };
-        #[cfg(all(target_arch = "x86_64", not(miri)))]
+        #[cfg(any(not(target_arch = "aarch64"), miri))]
         let (min_diff, max_diff) = {
-            let (minimum, maximum) = crate::dsp::x86_64::minmax_8x8_sse2(
-                &input.source[source_index..],
-                input.source_stride,
-                &input.predictor[predictor_index..],
-                input.predictor_stride,
-            );
-            (i32::from(minimum), i32::from(maximum))
-        };
-        #[cfg(any(miri, all(not(target_arch = "aarch64"), not(target_arch = "x86_64"))))]
-        let (min_diff, max_diff) = {
-            let mut minimum = 255;
-            let mut maximum = 0;
-            for row in 0..8 {
-                for col in 0..8 {
-                    let source_offset = source_index + row * input.source_stride + col;
-                    let predictor_offset = predictor_index + row * input.predictor_stride + col;
-                    let diff = (i32::from(input.source[source_offset])
-                        - i32::from(input.predictor[predictor_offset]))
-                    .abs();
-                    minimum = minimum.min(diff);
-                    maximum = maximum.max(diff);
-                }
+            #[cfg(all(target_arch = "x86_64", not(miri)))]
+            if crate::dsp::get_ref().caps.sse2 {
+                let (minimum, maximum) = crate::dsp::x86_64::minmax_8x8_sse2(
+                    &input.source[source_index..],
+                    input.source_stride,
+                    &input.predictor[predictor_index..],
+                    input.predictor_stride,
+                );
+                (i32::from(minimum), i32::from(maximum))
+            } else {
+                minmax_8x8_scalar(input, source_index, predictor_index)
             }
-            (minimum, maximum)
+            #[cfg(any(not(target_arch = "x86_64"), miri))]
+            minmax_8x8_scalar(input, source_index, predictor_index)
         };
         let spread = max_diff - min_diff;
         spread_max = spread_max.max(spread);
@@ -1085,14 +1097,17 @@ fn choose_fixed_tree_inter_impl<const DIAGNOSTICS: bool>(
     });
 
     #[cfg(all(target_arch = "x86_64", not(miri)))]
-    let average_diff_8x8 = (input.visible_width == 64 && input.visible_height == 64).then(|| {
-        crate::dsp::x86_64::avg_diff_8x8_grid_64x64_sse2(
-            input.source,
-            input.source_stride,
-            input.predictor,
-            input.predictor_stride,
-        )
-    });
+    let average_diff_8x8 = (crate::dsp::get_ref().caps.sse2
+        && input.visible_width == 64
+        && input.visible_height == 64)
+        .then(|| {
+            crate::dsp::x86_64::avg_diff_8x8_grid_64x64_sse2(
+                input.source,
+                input.source_stride,
+                input.predictor,
+                input.predictor_stride,
+            )
+        });
 
     for i in 0..4 {
         let x32 = (i & 1) * 32;
@@ -2000,6 +2015,16 @@ fn descend(
     true
 }
 
+#[cfg(all(test, target_arch = "x86_64", not(miri)))]
+pub(crate) fn exercise_force_scalar_paths() {
+    let source = std::array::from_fn::<_, 4096, _>(|i| (i.wrapping_mul(37) % 256) as u8);
+    let predictor = [128u8; 4096];
+    let input = tests::fixed_tree_input(&source, &predictor);
+    let spread = minmax_8x8_spread(&input, 0, 0);
+    assert!(spread >= 0);
+    let _ = choose_fixed_tree_inter(&input);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2034,7 +2059,10 @@ mod tests {
         }
     }
 
-    fn fixed_tree_input<'a>(source: &'a [u8], predictor: &'a [u8]) -> FixedTreeInterInput<'a> {
+    pub(super) fn fixed_tree_input<'a>(
+        source: &'a [u8],
+        predictor: &'a [u8],
+    ) -> FixedTreeInterInput<'a> {
         FixedTreeInterInput {
             source,
             source_stride: 64,

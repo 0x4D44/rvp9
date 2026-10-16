@@ -130,7 +130,7 @@ fn vpx_int_pro_row(hbuf: &mut [i16], ref_plane: &[u8], ref_stride: usize, height
         return;
     }
     #[cfg(all(target_arch = "x86_64", not(miri)))]
-    if matches!(height, 16 | 32 | 64) {
+    if matches!(height, 16 | 32 | 64) && crate::dsp::get_ref().caps.sse2 {
         crate::dsp::x86_64::int_pro_sse2::vpx_int_pro_row_sse2(hbuf, ref_plane, ref_stride, height);
         return;
     }
@@ -220,7 +220,12 @@ fn int_pro_row_clamped(
         return;
     }
     #[cfg(all(target_arch = "x86_64", not(miri)))]
-    if left == 0 && right == 0 && !direct_y && matches!(height, 16 | 32 | 64) {
+    if left == 0
+        && right == 0
+        && !direct_y
+        && matches!(height, 16 | 32 | 64)
+        && crate::dsp::get_ref().caps.sse2
+    {
         let start = base_x as usize;
         crate::dsp::x86_64::int_pro_sse2::vpx_int_pro_row_clamped_sse2(
             hbuf,
@@ -331,7 +336,7 @@ fn fill_int_pro_cols(
 /// `bwl` ranges over `{2, 3, 4}` (16, 32, 64 vs the 16/32/64
 /// SB widths we care about). The result fits in i32 with margin
 /// (sse: 26 bits dynamic range per libvpx comment).
-#[cfg(any(not(any(target_arch = "aarch64", target_arch = "x86_64")), miri))]
+#[cfg(any(not(target_arch = "aarch64"), miri))]
 #[inline]
 fn vpx_vector_var_scalar(ref_vec: &[i16], src_vec: &[i16], bwl: u32) -> i32 {
     let width = 4usize << bwl;
@@ -357,7 +362,11 @@ fn vpx_vector_var(ref_vec: &[i16], src_vec: &[i16], bwl: u32) -> i32 {
     {
         #[cfg(all(target_arch = "x86_64", not(miri)))]
         {
-            crate::dsp::x86_64::int_pro_sse2::vpx_vector_var_sse2(ref_vec, src_vec, bwl)
+            if crate::dsp::get_ref().caps.sse2 {
+                crate::dsp::x86_64::int_pro_sse2::vpx_vector_var_sse2(ref_vec, src_vec, bwl)
+            } else {
+                vpx_vector_var_scalar(ref_vec, src_vec, bwl)
+            }
         }
         #[cfg(any(not(target_arch = "x86_64"), miri))]
         {
@@ -717,7 +726,16 @@ fn int_pro_motion_estimation_impl(
         && base_y_col as usize + 128 <= ref_plane.height
         && sb_px_x + 64 <= src_plane.width
         && sb_px_y + 64 <= src_plane.height
-    {
+        && {
+            #[cfg(target_arch = "aarch64")]
+            {
+                true
+            }
+            #[cfg(target_arch = "x86_64")]
+            {
+                crate::dsp::get_ref().caps.sse2
+            }
+        } {
         let ref_start = base_y_col as usize * ref_plane.stride + base_x_row as usize;
         let src_start = sb_px_y * src_stride + sb_px_x;
         #[cfg(target_arch = "aarch64")]
@@ -922,6 +940,34 @@ fn int_pro_motion_estimation_impl(
         },
         best_sad,
     }
+}
+
+#[cfg(all(test, target_arch = "x86_64", not(miri)))]
+pub(crate) fn exercise_force_scalar_paths() {
+    let pixels: Vec<u8> = (0..192 * 192)
+        .map(|index| ((index * 29 + index / 23 + 7) & 0xff) as u8)
+        .collect();
+    let plane = PlaneRef {
+        data: &pixels,
+        stride: 192,
+        width: 192,
+        height: 192,
+    };
+
+    let mut direct_row = [0i16; 16];
+    vpx_int_pro_row(&mut direct_row, &pixels, 192, 16);
+    assert!(direct_row.iter().any(|&value| value != 0));
+
+    let mut clamped_row = [0i16; 16];
+    int_pro_row_clamped(&mut clamped_row, &plane, -1, 8, 16);
+    assert!(clamped_row.iter().any(|&value| value != 0));
+
+    let source_vector: [i16; 64] = std::array::from_fn(|index| (index as i16 * 3) - 70);
+    let reference_vector: [i16; 64] = std::array::from_fn(|index| (index as i16 * 5) - 90);
+    assert_ne!(vpx_vector_var(&reference_vector, &source_vector, 4), 0);
+
+    let result = int_pro_motion_estimation(&plane, &plane, 32, 32, BlockSize::Block64x64);
+    assert_ne!(result.best_sad, u32::MAX);
 }
 
 #[cfg(test)]

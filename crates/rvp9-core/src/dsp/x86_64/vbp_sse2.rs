@@ -71,6 +71,8 @@ pub fn avg_diff_8x8_grid_64x64_sse2(
     predictor: &[u8],
     predictor_stride: usize,
 ) -> [i16; 64] {
+    #[cfg(all(test, not(miri)))]
+    crate::dsp::force_scalar_tests::record("avg_diff_8x8_grid_64x64_sse2");
     assert!(source_stride >= 64);
     assert!(predictor_stride >= 64);
     assert!(source.len() >= 63 * source_stride + 64);

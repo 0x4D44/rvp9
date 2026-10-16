@@ -156,8 +156,10 @@ integration policy and a proven workspace-specific oracle.
   a feature, not a bug. `Coeff = i16` (`tran_low_t`), `TranLow = i32` (`tran_high_t`).
 
 - **`RVP9_*` environment variables** gate a large set of trace/diagnostic/instrumentation
-  paths (grep `RVP9_` for the full list). Useful ones: `RVP9_FORCE_SCALAR` (bypass
-  SIMD for differential testing), `RVP9_DISABLE_ROW_MT` / `RVP9_DISABLE_LF_MT` /
+  paths (grep `RVP9_` for the full list). Useful ones: `RVP9_FORCE_SCALAR=1` (bypass
+  x86 SIMD in codec dispatch for differential testing; set before first dispatch
+  initialization, with explicit ISA test/benchmark calls and Arm outside this hook),
+  `RVP9_DISABLE_ROW_MT` / `RVP9_DISABLE_LF_MT` /
   `RVP9_DISABLE_COLUMN_WAVEFRONT` (serialize threading to isolate bugs), `RVP9_FIXED_Q`,
   `RVP9_TRELLIS`, and many `RVP9_DEBUG_*` / `RVP9_DIAG_*` dumps. These are debugging
   scaffolds — don't wire them into production logic.

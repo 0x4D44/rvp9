@@ -292,7 +292,7 @@ fn validate(src: &[i16], src_stride: usize, coeff: &[i16], size: usize) {
     assert!(coeff.len() >= size * size);
 }
 
-fn validate_subtract(
+pub(super) fn validate_subtract(
     src: &[u8],
     src_stride: usize,
     pred: &[u8],
@@ -310,6 +310,8 @@ fn validate_subtract(
 macro_rules! transform_wrapper {
     ($name:ident, $inner:ident, $size:literal) => {
         pub(super) fn $name(src: &[i16], src_stride: usize, coeff: &mut [i16]) {
+            #[cfg(test)]
+            crate::dsp::force_scalar_tests::record(stringify!($name));
             validate(src, src_stride, coeff, $size);
             // SAFETY: x86-64 guarantees SSE2; validation proves every pointer range.
             unsafe { $inner(src.as_ptr(), src_stride, coeff.as_mut_ptr()) };
@@ -326,6 +328,8 @@ macro_rules! subtract_wrapper {
             pred_stride: usize,
             coeff: &mut [i16],
         ) {
+            #[cfg(test)]
+            crate::dsp::force_scalar_tests::record(stringify!($name));
             validate_subtract(src, src_stride, pred, pred_stride, coeff, $size);
             // SAFETY: x86-64 guarantees SSE2; validation proves every pointer range.
             unsafe {

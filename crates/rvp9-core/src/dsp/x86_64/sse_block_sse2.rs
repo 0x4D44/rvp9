@@ -97,6 +97,8 @@ pub fn sse_block_sse2(
     width: usize,
     height: usize,
 ) -> u64 {
+    #[cfg(all(test, not(miri)))]
+    crate::dsp::force_scalar_tests::record("sse_block_sse2");
     assert!(width > 0 && height > 0);
     assert!(src_stride >= width);
     assert!(pred_stride >= width);

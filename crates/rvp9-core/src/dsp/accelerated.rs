@@ -18,8 +18,79 @@ pub use super::aarch64::{
 #[cfg(target_arch = "x86_64")]
 use crate::inter::filter::SUBPEL_SHIFTS;
 
+/// Subtract a square prediction block, honoring the process scalar override.
 #[cfg(target_arch = "x86_64")]
-pub use super::x86_64::{subtract_square_sse2, subtract_square_sse2_with_nonzero};
+pub fn subtract_square_sse2(
+    src: &[u8],
+    src_stride: usize,
+    pred: &[u8],
+    pred_stride: usize,
+    dst: &mut [i16],
+    side: usize,
+) {
+    if super::get_ref().caps.sse2 {
+        super::x86_64::subtract_square_sse2(src, src_stride, pred, pred_stride, dst, side);
+    } else {
+        let _ = subtract_square_scalar(src, src_stride, pred, pred_stride, dst, side);
+    }
+}
+
+/// Subtract a square block and report nonzero residuals, honoring the scalar override.
+#[cfg(target_arch = "x86_64")]
+pub fn subtract_square_sse2_with_nonzero(
+    src: &[u8],
+    src_stride: usize,
+    pred: &[u8],
+    pred_stride: usize,
+    dst: &mut [i16],
+    side: usize,
+) -> bool {
+    if super::get_ref().caps.sse2 {
+        super::x86_64::subtract_square_sse2_with_nonzero(
+            src,
+            src_stride,
+            pred,
+            pred_stride,
+            dst,
+            side,
+        )
+    } else {
+        subtract_square_scalar(src, src_stride, pred, pred_stride, dst, side)
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+fn subtract_square_scalar(
+    src: &[u8],
+    src_stride: usize,
+    pred: &[u8],
+    pred_stride: usize,
+    dst: &mut [i16],
+    side: usize,
+) -> bool {
+    assert!(matches!(side, 8 | 16 | 32 | 64));
+    assert!(src_stride >= side);
+    assert!(pred_stride >= side);
+    let span = |stride: usize| {
+        (side - 1)
+            .checked_mul(stride)
+            .and_then(|offset| offset.checked_add(side))
+            .expect("square input span overflow")
+    };
+    assert!(src.len() >= span(src_stride));
+    assert!(pred.len() >= span(pred_stride));
+    assert!(dst.len() >= side * side);
+    let mut nonzero = false;
+    for row in 0..side {
+        for col in 0..side {
+            let value =
+                i16::from(src[row * src_stride + col]) - i16::from(pred[row * pred_stride + col]);
+            dst[row * side + col] = value;
+            nonzero |= value != 0;
+        }
+    }
+    nonzero
+}
 
 /// Run the AVX2 vertical eight-tap convolution.
 ///

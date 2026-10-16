@@ -101,9 +101,9 @@ use crate::intra_pred::{
     intra_predict,
 };
 use crate::mode_decision::block_yrd::BlockYrdResult;
-#[cfg(any(all(not(target_arch = "aarch64"), not(target_arch = "x86_64")), miri))]
+#[cfg(any(not(target_arch = "aarch64"), miri))]
 use crate::mode_decision::block_yrd::block_error_fp_i32;
-#[cfg(any(all(not(target_arch = "aarch64"), not(target_arch = "x86_64")), miri))]
+#[cfg(any(not(target_arch = "aarch64"), miri))]
 use crate::mode_decision::block_yrd::satd_i16;
 use crate::mode_decision::hadamard::{hadamard_8x8, hadamard_16x16, hadamard_32x32};
 #[cfg(all(any(target_arch = "aarch64", target_arch = "x86_64"), not(miri)))]
@@ -5544,85 +5544,8 @@ fn reconstruct_via_round_trip(
             #[cfg(any(all(not(target_arch = "aarch64"), not(target_arch = "x86_64")), miri))]
             $transform(&residual[..$n], tx_side, had_coeff_i16);
 
-            #[cfg(all(target_arch = "aarch64", not(miri)))]
-            let (had_nonzero, rate_satd, dist) = if collect_coef_dist {
-                let metrics = if $is_32x32 {
-                    crate::dsp::aarch64::vp9_quantize_fp_32x32_i16_metrics_neon(
-                        had_coeff_i16,
-                        &params.quantizer.round_fp,
-                        &params.quantizer.quant_fp,
-                        &dequant_pair,
-                    )
-                } else {
-                    crate::dsp::aarch64::vp9_quantize_fp_i16_metrics_neon(
-                        had_coeff_i16,
-                        $n,
-                        &params.quantizer.round_fp,
-                        &params.quantizer.quant_fp,
-                        &dequant_pair,
-                    )
-                };
-                (metrics.nonzero, metrics.satd, metrics.error >> 2)
-            } else {
-                let metrics = if $is_32x32 {
-                    crate::dsp::aarch64::vp9_quantize_fp_32x32_i16_rate_metrics_neon(
-                        had_coeff_i16,
-                        &params.quantizer.round_fp,
-                        &params.quantizer.quant_fp,
-                        &dequant_pair,
-                    )
-                } else {
-                    crate::dsp::aarch64::vp9_quantize_fp_i16_rate_metrics_neon(
-                        had_coeff_i16,
-                        $n,
-                        &params.quantizer.round_fp,
-                        &params.quantizer.quant_fp,
-                    )
-                };
-                (metrics.nonzero, metrics.satd, 0)
-            };
-            #[cfg(all(target_arch = "x86_64", not(miri)))]
-            let (had_nonzero, rate_satd, dist) = if collect_coef_dist {
-                let metrics = if $is_32x32 {
-                    crate::dsp::x86_64::quantize_metrics_sse2::vp9_quantize_fp_32x32_i16_metrics_sse2(
-                        had_coeff_i16,
-                        &params.quantizer.round_fp,
-                        &params.quantizer.quant_fp,
-                        &dequant_pair,
-                    )
-                } else {
-                    crate::dsp::x86_64::quantize_metrics_sse2::vp9_quantize_fp_i16_metrics_sse2(
-                        had_coeff_i16,
-                        $n,
-                        &params.quantizer.round_fp,
-                        &params.quantizer.quant_fp,
-                        &dequant_pair,
-                    )
-                };
-                (metrics.nonzero, metrics.satd, metrics.error >> 2)
-            } else {
-                let metrics = if $is_32x32 {
-                    crate::dsp::x86_64::quantize_metrics_sse2::vp9_quantize_fp_32x32_i16_rate_metrics_sse2(
-                        had_coeff_i16,
-                        &params.quantizer.round_fp,
-                        &params.quantizer.quant_fp,
-                        &dequant_pair,
-                    )
-                } else {
-                    crate::dsp::x86_64::quantize_metrics_sse2::vp9_quantize_fp_i16_rate_metrics_sse2(
-                        had_coeff_i16,
-                        $n,
-                        &params.quantizer.round_fp,
-                        &params.quantizer.quant_fp,
-                    )
-                };
-                (metrics.nonzero, metrics.satd, 0)
-            };
-            #[cfg(any(
-                all(not(target_arch = "aarch64"), not(target_arch = "x86_64")),
-                miri
-            ))]
-            let (had_nonzero, rate_satd, dist) = {
+            #[cfg(any(not(target_arch = "aarch64"), miri))]
+            let scalar_quantize_metrics = || {
                 let mut had_coeff = [0i32; $n];
                 for (dst, &src) in had_coeff.iter_mut().zip(had_coeff_i16.iter()) {
                     *dst = i32::from(src);
@@ -5667,6 +5590,90 @@ fn reconstruct_via_round_trip(
                 };
                 (eob != 0, rate_satd, dist)
             };
+
+            #[cfg(all(target_arch = "aarch64", not(miri)))]
+            let (had_nonzero, rate_satd, dist) = if collect_coef_dist {
+                let metrics = if $is_32x32 {
+                    crate::dsp::aarch64::vp9_quantize_fp_32x32_i16_metrics_neon(
+                        had_coeff_i16,
+                        &params.quantizer.round_fp,
+                        &params.quantizer.quant_fp,
+                        &dequant_pair,
+                    )
+                } else {
+                    crate::dsp::aarch64::vp9_quantize_fp_i16_metrics_neon(
+                        had_coeff_i16,
+                        $n,
+                        &params.quantizer.round_fp,
+                        &params.quantizer.quant_fp,
+                        &dequant_pair,
+                    )
+                };
+                (metrics.nonzero, metrics.satd, metrics.error >> 2)
+            } else {
+                let metrics = if $is_32x32 {
+                    crate::dsp::aarch64::vp9_quantize_fp_32x32_i16_rate_metrics_neon(
+                        had_coeff_i16,
+                        &params.quantizer.round_fp,
+                        &params.quantizer.quant_fp,
+                        &dequant_pair,
+                    )
+                } else {
+                    crate::dsp::aarch64::vp9_quantize_fp_i16_rate_metrics_neon(
+                        had_coeff_i16,
+                        $n,
+                        &params.quantizer.round_fp,
+                        &params.quantizer.quant_fp,
+                    )
+                };
+                (metrics.nonzero, metrics.satd, 0)
+            };
+            #[cfg(all(target_arch = "x86_64", not(miri)))]
+            let (had_nonzero, rate_satd, dist) = if crate::dsp::get_ref().caps.sse2 {
+                if collect_coef_dist {
+                    let metrics = if $is_32x32 {
+                        crate::dsp::x86_64::quantize_metrics_sse2::vp9_quantize_fp_32x32_i16_metrics_sse2(
+                            had_coeff_i16,
+                            &params.quantizer.round_fp,
+                            &params.quantizer.quant_fp,
+                            &dequant_pair,
+                        )
+                    } else {
+                        crate::dsp::x86_64::quantize_metrics_sse2::vp9_quantize_fp_i16_metrics_sse2(
+                            had_coeff_i16,
+                            $n,
+                            &params.quantizer.round_fp,
+                            &params.quantizer.quant_fp,
+                            &dequant_pair,
+                        )
+                    };
+                    (metrics.nonzero, metrics.satd, metrics.error >> 2)
+                } else {
+                    let metrics = if $is_32x32 {
+                        crate::dsp::x86_64::quantize_metrics_sse2::vp9_quantize_fp_32x32_i16_rate_metrics_sse2(
+                            had_coeff_i16,
+                            &params.quantizer.round_fp,
+                            &params.quantizer.quant_fp,
+                            &dequant_pair,
+                        )
+                    } else {
+                        crate::dsp::x86_64::quantize_metrics_sse2::vp9_quantize_fp_i16_rate_metrics_sse2(
+                            had_coeff_i16,
+                            $n,
+                            &params.quantizer.round_fp,
+                            &params.quantizer.quant_fp,
+                        )
+                    };
+                    (metrics.nonzero, metrics.satd, 0)
+                }
+            } else {
+                scalar_quantize_metrics()
+            };
+            #[cfg(any(
+                all(not(target_arch = "aarch64"), not(target_arch = "x86_64")),
+                miri
+            ))]
+            let (had_nonzero, rate_satd, dist) = scalar_quantize_metrics();
             if collect_f02_coeff_trace {
                 let mut trace_coeff = [0i32; $n];
                 for (dst, &value) in trace_coeff.iter_mut().zip(had_coeff_i16.iter()) {
@@ -5732,7 +5739,7 @@ fn reconstruct_via_round_trip(
             };
             #[cfg(all(target_arch = "x86_64", not(miri)))]
             let residual_nonzero = if reconstruct {
-                crate::dsp::x86_64::subtract_square_sse2_with_nonzero(
+                crate::dsp::accelerated::subtract_square_sse2_with_nonzero(
                     &src.data[(sy + off_y) * src.stride + sx + off_x..],
                     src.stride,
                     &recon[off_y * recon_stride + off_x..],
@@ -5955,18 +5962,19 @@ fn sse_block(
     let (sx, sy) = src_offset;
     #[cfg(all(target_arch = "x86_64", not(miri)))]
     {
-        let src_start = sy * src_plane.stride + sx;
-        crate::dsp::x86_64::sse_block_sse2::sse_block_sse2(
-            &src_plane.data[src_start..],
-            src_plane.stride,
-            dst,
-            dst_stride,
-            bw,
-            bh,
-        )
+        if crate::dsp::get_ref().caps.sse2 {
+            let src_start = sy * src_plane.stride + sx;
+            return crate::dsp::x86_64::sse_block_sse2::sse_block_sse2(
+                &src_plane.data[src_start..],
+                src_plane.stride,
+                dst,
+                dst_stride,
+                bw,
+                bh,
+            );
+        }
     }
 
-    #[cfg(not(all(target_arch = "x86_64", not(miri))))]
     {
         let mut sse: u64 = 0;
         for r in 0..bh {
@@ -6314,6 +6322,11 @@ fn frame_type_for_rd(kind: FrameKind) -> FrameTypeForRd {
     }
 }
 
+#[cfg(all(test, target_arch = "x86_64", not(miri)))]
+pub(crate) fn exercise_force_scalar_paths() {
+    tests::exercise_force_scalar_fixtures();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -6447,6 +6460,89 @@ mod tests {
             color_sensitivity: [false; 2],
             uv_dc_quant: 0,
             uv_ac_quant: 0,
+        }
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    pub(super) fn exercise_force_scalar_fixtures() {
+        let plane_width = 64;
+        let plane_height = 64;
+        let src_data = make_plane(plane_width, plane_height, 17);
+        let ref_data = make_plane(plane_width, plane_height, 91);
+        let src_plane = PlaneRef {
+            data: &src_data,
+            stride: plane_width,
+            width: plane_width,
+            height: plane_height,
+        };
+        let ref_plane = PlaneRef {
+            data: &ref_data,
+            stride: plane_width,
+            width: plane_width,
+            height: plane_height,
+        };
+        let harness = TestHarness::new(plane_width, 50);
+        let mv_candidates = MvCandidates::default();
+        let params = make_params(
+            &harness,
+            BlockSize::Block64x64,
+            &src_plane,
+            &ref_plane,
+            (0, 0),
+            &mv_candidates,
+            MvLimits::new(-32, 32, -32, 32),
+            50,
+        );
+
+        for tx_size in [TxSize::Tx8x8, TxSize::Tx16x16, TxSize::Tx32x32] {
+            let side = tx_size.side();
+            let prediction = make_plane(side, side, 131 + side as u32);
+            for collect_coef_dist in [true, false] {
+                let mut scratch = RoundTripScratch::new();
+                let mut no_recon = [];
+                let hadamard_only = reconstruct_via_round_trip(
+                    &params,
+                    RoundTripBuffers {
+                        pred: &prediction,
+                        pred_stride: side,
+                        recon: &mut no_recon,
+                        recon_stride: side,
+                        scratch: &mut scratch,
+                    },
+                    side,
+                    side,
+                    tx_size,
+                    RoundTripOptions {
+                        reconstruct: false,
+                        collect_coef_dist,
+                    },
+                );
+                assert!(hadamard_only.coef_rate > 0);
+
+                let mut scratch = RoundTripScratch::new();
+                let mut recon = prediction.clone();
+                let reconstructed = reconstruct_via_round_trip(
+                    &params,
+                    RoundTripBuffers {
+                        pred: &prediction,
+                        pred_stride: side,
+                        recon: &mut recon,
+                        recon_stride: side,
+                        scratch: &mut scratch,
+                    },
+                    side,
+                    side,
+                    tx_size,
+                    RoundTripOptions {
+                        reconstruct: true,
+                        collect_coef_dist,
+                    },
+                );
+                assert!(reconstructed.coef_rate > 0);
+            }
+
+            let sse = sse_block(&src_plane, (0, 0), &prediction, side, side, side);
+            assert!(sse > 0);
         }
     }
 

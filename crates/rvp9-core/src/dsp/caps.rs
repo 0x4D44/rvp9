@@ -61,6 +61,9 @@ impl X86Caps {
     /// scalar — with no change to `build`'s visibility. This lets the
     /// cross-process oracle encode the same input twice (forced-scalar vs
     /// auto/AVX2) and byte-diff the bitstreams to prove no decision moved.
+    /// Encoder wrappers outside the table also consult its cached capabilities
+    /// before selecting x86 kernels. Explicit ISA entry points used by kernel
+    /// tests and microbenchmarks retain their explicit selection semantics.
     ///
     /// Zero-cost when unset: the env read happens once at first dispatch
     /// `get()` (the table is built once via the process-wide `OnceLock`).
