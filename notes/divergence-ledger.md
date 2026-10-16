@@ -24,6 +24,32 @@ Each entry:
 
 ## Entries
 
+### 2026-10-16 — Reject unsupported two-pass worker and tile requests
+
+**Where:** `rvp9enc::run`; reference
+[`vpxenc.c:1140`, worker option mapping, and `:1505`, `initialize_encoder`](https://chromium.googlesource.com/webm/libvpx/+/bb27be0dfe94dc5cb0e638cc4c0cf8900bf518dd/vpxenc.c#1505).
+
+**What libvpx does:** puts the requested worker count in the encoder
+configuration and applies the collected codec controls when initializing
+the encoder for each pass.
+
+**What rvp9 does:** rejects explicit `--threads` values above one and
+nonzero `--tile-columns` with `--passes 2`. Its two-pass driver uses one
+worker and one tile. Omitted options, explicit threads zero/one and tile
+columns zero remain valid requests for that driver.
+
+**Why:** the two-pass branch does not forward CLI parallelism to either
+pass; accepting these settings silently ignores their requested behavior.
+
+**Byte-parity impact:** unsupported parallel requests return an error
+instead of a stream encoded with silently substituted settings.
+
+**Compression-efficiency impact:** no stream is emitted for rejected
+requests; no quality or speed improvement is claimed.
+
+**Future plan:** remove the restriction when parallelism can be passed
+through both passes with focused worker/tile evidence.
+
 ### 2026-10-16 — Reject two-pass temporal SVC without per-layer statistics
 
 **Where:** `rvp9_encoder::encode_two_pass`; reference

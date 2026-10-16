@@ -310,37 +310,170 @@ fn enc_passes_two_accepted_at_parse_time() {
 
 #[test]
 fn enc_passes_two_still_writes_complete_ivf() {
-    let raw = tmp("two_pass_in.yuv");
-    let ivf = tmp("two_pass_out.ivf");
-    write_synthetic_raw(&raw);
-    let out = Command::new(enc_bin())
-        .args([
-            "--passes",
-            "2",
-            "-w",
-            "64",
-            "-h",
-            "64",
-            "--target-bitrate",
-            "500",
-            "-o",
-        ])
-        .arg(&ivf)
-        .arg(&raw)
-        .bounded_output()
-        .expect("run two-pass rvp9enc");
+    let cases: [(&str, &[&str]); 3] = [
+        ("defaults", &[]),
+        (
+            "threads_zero_tile_zero",
+            &["--threads=0", "--tile-columns=0"],
+        ),
+        (
+            "threads_one_tile_zero",
+            &["--threads", "1", "--tile-columns", "0"],
+        ),
+    ];
+    let mut violations = Vec::new();
+
+    for (tag, controls) in cases {
+        let raw = tmp(&format!("two_pass_{tag}_in.yuv"));
+        let ivf = tmp(&format!("two_pass_{tag}_out.ivf"));
+        write_synthetic_raw(&raw);
+        let out = Command::new(enc_bin())
+            .args(["--passes", "2"])
+            .args(controls)
+            .args(["-w", "64", "-h", "64", "--target-bitrate", "500", "-o"])
+            .arg(&ivf)
+            .arg(&raw)
+            .bounded_output()
+            .expect("run two-pass rvp9enc");
+        if !out.status.success() {
+            violations.push(format!(
+                "{tag}: encode failed: {}",
+                String::from_utf8_lossy(&out.stderr)
+            ));
+        } else {
+            match std::fs::read(&ivf) {
+                Ok(bytes) if bytes.len() >= 28 => {
+                    let frame_count =
+                        u32::from_le_bytes(bytes[24..28].try_into().expect("frame count")) as usize;
+                    if frame_count != N_FRAMES {
+                        violations.push(format!(
+                            "{tag}: expected {N_FRAMES} frames, got {frame_count}"
+                        ));
+                    }
+                    match read_packets(&ivf) {
+                        Ok((data, packets)) => {
+                            if packets.len() != N_FRAMES {
+                                violations.push(format!(
+                                    "{tag}: expected {N_FRAMES} parsed packets, got {}",
+                                    packets.len()
+                                ));
+                            }
+                            if packets.iter().any(|packet| packet.slice(&data).is_empty()) {
+                                violations.push(format!("{tag}: IVF contains an empty packet"));
+                            }
+                        }
+                        Err(error) => {
+                            violations.push(format!("{tag}: output is not a valid IVF: {error}"));
+                        }
+                    }
+                }
+                Ok(_) => violations.push(format!("{tag}: output is shorter than an IVF header")),
+                Err(error) => violations.push(format!("{tag}: could not read IVF output: {error}")),
+            }
+        }
+        let _ = std::fs::remove_file(&raw);
+        let _ = std::fs::remove_file(&ivf);
+    }
+
     assert!(
-        out.status.success(),
-        "{}",
-        String::from_utf8_lossy(&out.stderr)
+        violations.is_empty(),
+        "two-pass defaults and supported explicit parallelism must write complete IVFs: {}",
+        violations.join("; ")
     );
-    let bytes = std::fs::read(&ivf).expect("read two-pass IVF");
-    assert_eq!(
-        u32::from_le_bytes(bytes[24..28].try_into().expect("frame count")) as usize,
-        N_FRAMES
+}
+
+#[test]
+fn enc_two_pass_rejects_explicit_parallelism_before_file_io() {
+    let input = tmp("two_pass_parallelism_in.yuv");
+    write_synthetic_raw(&input);
+    let input_before = std::fs::read(&input).expect("read synthetic raw input");
+    let mut violations = Vec::new();
+
+    let cases: [(&str, &[&str], &str, bool); 4] = [
+        (
+            "threads_equals",
+            &["--passes=2", "--threads=2"],
+            "--threads",
+            false,
+        ),
+        (
+            "threads_split",
+            &["--passes", "2", "--threads", "8"],
+            "--threads",
+            false,
+        ),
+        (
+            "tiles_equals",
+            &["--passes=2", "--tile-columns=1"],
+            "--tile-columns",
+            true,
+        ),
+        (
+            "tiles_split",
+            &["--passes", "2", "--tile-columns", "2"],
+            "--tile-columns",
+            false,
+        ),
+    ];
+
+    for (tag, args, unsupported_flag, preserve_existing_output) in cases {
+        let output = tmp(&format!("two_pass_parallelism_{tag}.ivf"));
+        let sentinel = b"existing output must survive rejected options";
+        if preserve_existing_output {
+            std::fs::write(&output, sentinel).expect("write sentinel output");
+        }
+
+        let result = Command::new(enc_bin())
+            .args(args)
+            .args([
+                "-w",
+                "64",
+                "-h",
+                "64",
+                "--fps",
+                "30/1",
+                "--target-bitrate",
+                "500",
+                "-o",
+            ])
+            .arg(&output)
+            .arg(&input)
+            .bounded_output()
+            .expect("run two-pass parallelism rvp9enc");
+
+        let stderr = String::from_utf8_lossy(&result.stderr).to_ascii_lowercase();
+        if result.status.success() {
+            violations.push(format!("{tag}: command succeeded"));
+        }
+        if !(stderr.contains("--passes")
+            && stderr.contains(unsupported_flag)
+            && stderr.contains("one thread")
+            && stderr.contains("one tile"))
+        {
+            violations.push(format!("{tag}: missing parallelism diagnostic: {stderr}"));
+        }
+        match std::fs::read(&output) {
+            Ok(bytes) if preserve_existing_output && bytes == sentinel => {}
+            Err(_) if !preserve_existing_output => {}
+            Ok(_) if !preserve_existing_output => {
+                violations.push(format!("{tag}: rejected command created output"));
+            }
+            _ => violations.push(format!("{tag}: rejected command changed sentinel output")),
+        }
+        match std::fs::read(&input) {
+            Ok(bytes) if bytes == input_before => {}
+            _ => violations.push(format!("{tag}: rejected command changed input")),
+        }
+
+        let _ = std::fs::remove_file(&output);
+    }
+
+    let _ = std::fs::remove_file(&input);
+    assert!(
+        violations.is_empty(),
+        "two-pass explicit parallelism must be rejected before file I/O: {}",
+        violations.join("; ")
     );
-    let _ = std::fs::remove_file(&raw);
-    let _ = std::fs::remove_file(&ivf);
 }
 
 #[test]

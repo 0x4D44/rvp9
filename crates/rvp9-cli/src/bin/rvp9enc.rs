@@ -85,7 +85,9 @@ struct EncOpts {
     /// When `2`, the encoder runs the per-sequence two-pass driver
     /// (`rvp9_encoder::encode_two_pass`): a stats-only first pass over the
     /// whole input, then a stats-driven second pass emitting the
-    /// bitstream.
+    /// bitstream. That driver uses one thread and one tile, so explicit
+    /// `--threads` values above 1 and explicit `--tile-columns` values
+    /// above 0 are rejected.
     passes: u32,
     /// `--enable-tpl` (libvpx `vpxenc.c:445-446`). 0/1 — temporal
     /// dependency model.
@@ -238,7 +240,7 @@ fn flag_table() -> Vec<Flag<EncOpts>> {
             long: "passes",
             short: Some('p'),
             arg: Arg::Required,
-            help: "number of passes (1 or 2)",
+            help: "number of passes (1 or 2; two-pass uses one thread and one tile)",
             apply: Some(|o, v| {
                 o.passes = parse_passes(v)?;
                 Ok(())
@@ -344,7 +346,7 @@ fn flag_table() -> Vec<Flag<EncOpts>> {
             long: "threads",
             short: Some('t'),
             arg: Arg::Required,
-            help: "encode threads",
+            help: "encode threads (two-pass accepts 0 or 1)",
             apply: Some(|o, v| {
                 o.threads = Some(args::parse_value(v, "rvp9enc", "--threads")?);
                 Ok(())
@@ -354,7 +356,7 @@ fn flag_table() -> Vec<Flag<EncOpts>> {
             long: "tile-columns",
             short: None,
             arg: Arg::Required,
-            help: "log2 tile columns (0..=6)",
+            help: "log2 tile columns (0..=6; two-pass accepts 0)",
             apply: Some(|o, v| {
                 o.tile_columns = Some(parse_range(v, "--tile-columns", 0, 6)? as u8);
                 Ok(())
@@ -878,6 +880,28 @@ fn validate_frame_time_csv(opts: &EncOpts) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_two_pass_parallelism(opts: &EncOpts) -> Result<(), String> {
+    if opts.passes != 2 {
+        return Ok(());
+    }
+    if opts.threads.is_some_and(|threads| threads > 1) {
+        return Err(
+            "--passes 2 supports one thread and one tile only; --threads must be omitted, 0, or 1"
+                .to_string(),
+        );
+    }
+    if opts
+        .tile_columns
+        .is_some_and(|tile_columns| tile_columns > 0)
+    {
+        return Err(
+            "--passes 2 supports one thread and one tile only; --tile-columns must be omitted or 0"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
 const USAGE: &str = "rvp9enc [options] -o <out.ivf> <input.y4m|input.yuv>";
 
 fn main() -> ExitCode {
@@ -921,6 +945,7 @@ fn main() -> ExitCode {
 
 fn run(opts: &EncOpts, positionals: &[String]) -> Result<(), String> {
     validate_frame_time_csv(opts)?;
+    validate_two_pass_parallelism(opts)?;
 
     let input = match positionals {
         [one] => Path::new(one),
