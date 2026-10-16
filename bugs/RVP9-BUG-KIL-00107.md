@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00107 — BD-rate singular fits silently produce a finite zero result
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** High
 - **Area:** bench/bdrate
 - **Raised:** 2026-08-22T19:30:33Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261016T043838Z-47fe7116
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00107-run-fix-20261016T043838Z-47fe7116
-- **Owner base:** b1c309fe0a494d9171bb068c9ba9e078401dca4d
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-16T04:38:38Z
-- **Owner until:** 2026-10-16T08:38:38Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T19:30:33Z, raised via `deltic bugs new` model=gpt-5.6-sol@xhigh)
+- **State history:** Open (2026-08-22T19:30:33Z, raised via `deltic bugs new` model=gpt-5.6-sol@xhigh) -> Fixed (2026-10-16T04:43:08Z, deltic:auto role=fix run=fix-20261016T043838Z-47fe7116 branch=task/bug-RVP9-BUG-KIL-00107-run-fix-20261016T043838Z-47fe7116 code=bfe2cf7a3de234ad21a6c48a9a55c3aaf9ca6a56 gate=manual)
 
 ## Observation
 
