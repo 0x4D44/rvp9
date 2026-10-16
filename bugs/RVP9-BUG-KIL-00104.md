@@ -6,15 +6,15 @@
 - **Area:** encoder/picker tests
 - **Raised:** 2026-08-22T18:32:51Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
+- **Owner:** deltic:manual
+- **Owner role:** fix
+- **Owner run:** fix-20261016T042055Z-511e51e0
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KIL-00104-run-fix-20261016T042055Z-511e51e0
+- **Owner base:** f7433569d842fe8d257ec41b8850320540425d14
 - **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner since:** 2026-10-16T04:20:55Z
+- **Owner until:** 2026-10-16T08:20:55Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
