@@ -116,6 +116,7 @@ pub struct ProductReport {
     pub source_expected_sha256: String,
     pub source_expected_bytes: u64,
     pub source_sha256: Option<String>,
+    pub source_final_sha256: Option<String>,
     pub source_bytes: Option<u64>,
     pub product_config_hash: Option<String>,
     pub libvpx_gitlink_commit: Option<String>,
@@ -420,7 +421,6 @@ fn run_stage4a_product_report(
     let root = repo_root();
     let git_sha = git_stdout(&root, &["rev-parse", "HEAD"]).unwrap_or_else(|_| "UNKNOWN".into());
     let short_sha = git_sha.chars().take(12).collect::<String>();
-    let now = unix_seconds();
     let run_stamp = unix_nanos();
     let run_dir = root.join("target").join("stage4a_product").join(format!(
         "{}-{short_sha}-{run_stamp}-p{}",
@@ -432,56 +432,7 @@ fn run_stage4a_product_report(
     fs::create_dir(&run_dir).expect("create unique Stage 4a product run directory");
     let report_path = run_dir.join("stage4a_product_report.json");
     let manifest_path = root.join("tests/reference/stage4a_libvpx_tools.json");
-    let mut report = ProductReport {
-        run_role: role.as_str().to_string(),
-        overall_status: "FAIL".into(),
-        status_reasons: Vec::new(),
-        split_policy: role.split_policy().into(),
-        split_override: format!("{:?}", role.split_override()),
-        git_sha,
-        worktree_path: root.display().to_string(),
-        validation_clean: false,
-        validation_clean_paths: VALIDATION_PATHS.iter().map(|p| (*p).to_string()).collect(),
-        tracked_diff_empty: false,
-        staged_diff_empty: false,
-        untracked_validation_files: Vec::new(),
-        ignored_validation_files: Vec::new(),
-        allowed_ignored_inputs: Vec::new(),
-        source_tree_hash: None,
-        host_id: host_id(),
-        utc_started: format!("{now}"),
-        source_path: FOREMAN_REL.into(),
-        source_expected_sha256: FOREMAN_SHA256.into(),
-        source_expected_bytes: FOREMAN_BYTES,
-        source_sha256: None,
-        source_bytes: None,
-        product_config_hash: None,
-        libvpx_gitlink_commit: None,
-        approved_tool_manifest_path: rel_display(&root, &manifest_path),
-        approved_tool_manifest_sha256: None,
-        approved_tool: None,
-        vpxenc: None,
-        vpxdec: None,
-        ffmpeg: None,
-        encoder_config: encoder_config_report(),
-        targets: Vec::new(),
-        bd_rate_percent: None,
-        matched_psnr_delta_mean_db: None,
-        matched_psnr_delta_count_in_range: 0,
-        bd_psnr_overlap_db: None,
-        timing_median_ms: None,
-        block_stats_250kbps_json: None,
-        block_stats_250kbps_summary: None,
-        diff_json_artifacts: Vec::new(),
-        baseline_report_path: baseline.map(|b| b.report_path.clone()),
-        baseline_report_sha256: None,
-        baseline_git_sha: baseline.map(|b| b.git_sha.clone()),
-        baseline_host_id: baseline.map(|b| b.host_id.clone()),
-        baseline_product_config_hash: baseline.and_then(|b| b.product_config_hash.clone()),
-        baseline_source_sha256: baseline.and_then(|b| b.source_sha256.clone()),
-        baseline_source_tree_hash: baseline.and_then(|b| b.source_tree_hash.clone()),
-        report_path: rel_display(&root, &report_path),
-    };
+    let mut report = new_product_report(&root, &report_path, role, baseline, git_sha);
 
     if let Some(baseline) = baseline {
         let baseline_report_path = if Path::new(&baseline.report_path).is_absolute() {
@@ -536,6 +487,67 @@ fn run_stage4a_product_report(
     evaluate_quality_and_split(role, baseline, &mut report);
     finish_and_write_report(&root, &report_path, &mut report);
     report
+}
+
+pub(crate) fn new_product_report(
+    root: &Path,
+    report_path: &Path,
+    role: ProductRunRole,
+    baseline: Option<&ProductReport>,
+    git_sha: String,
+) -> ProductReport {
+    let manifest_path = root.join("tests/reference/stage4a_libvpx_tools.json");
+    ProductReport {
+        run_role: role.as_str().to_string(),
+        overall_status: "FAIL".into(),
+        status_reasons: Vec::new(),
+        split_policy: role.split_policy().into(),
+        split_override: format!("{:?}", role.split_override()),
+        git_sha,
+        worktree_path: root.display().to_string(),
+        validation_clean: false,
+        validation_clean_paths: VALIDATION_PATHS.iter().map(|p| (*p).to_string()).collect(),
+        tracked_diff_empty: false,
+        staged_diff_empty: false,
+        untracked_validation_files: Vec::new(),
+        ignored_validation_files: Vec::new(),
+        allowed_ignored_inputs: Vec::new(),
+        source_tree_hash: None,
+        host_id: host_id(),
+        utc_started: format!("{}", unix_seconds()),
+        source_path: FOREMAN_REL.into(),
+        source_expected_sha256: FOREMAN_SHA256.into(),
+        source_expected_bytes: FOREMAN_BYTES,
+        source_sha256: None,
+        source_final_sha256: None,
+        source_bytes: None,
+        product_config_hash: None,
+        libvpx_gitlink_commit: None,
+        approved_tool_manifest_path: rel_display(root, &manifest_path),
+        approved_tool_manifest_sha256: None,
+        approved_tool: None,
+        vpxenc: None,
+        vpxdec: None,
+        ffmpeg: None,
+        encoder_config: encoder_config_report(),
+        targets: Vec::new(),
+        bd_rate_percent: None,
+        matched_psnr_delta_mean_db: None,
+        matched_psnr_delta_count_in_range: 0,
+        bd_psnr_overlap_db: None,
+        timing_median_ms: None,
+        block_stats_250kbps_json: None,
+        block_stats_250kbps_summary: None,
+        diff_json_artifacts: Vec::new(),
+        baseline_report_path: baseline.map(|b| b.report_path.clone()),
+        baseline_report_sha256: None,
+        baseline_git_sha: baseline.map(|b| b.git_sha.clone()),
+        baseline_host_id: baseline.map(|b| b.host_id.clone()),
+        baseline_product_config_hash: baseline.and_then(|b| b.product_config_hash.clone()),
+        baseline_source_sha256: baseline.and_then(|b| b.source_sha256.clone()),
+        baseline_source_tree_hash: baseline.and_then(|b| b.source_tree_hash.clone()),
+        report_path: rel_display(root, report_path),
+    }
 }
 
 fn build_context(
@@ -1400,7 +1412,7 @@ fn diff_json_lines_are_valid(bytes: &[u8]) -> bool {
     saw_summary
 }
 
-fn finish_and_write_report(root: &Path, path: &Path, report: &mut ProductReport) {
+pub(crate) fn finish_and_write_report(root: &Path, path: &Path, report: &mut ProductReport) {
     refresh_final_validation(root, report);
     report.validation_clean = validation_clean_now(report);
     if !report.validation_clean
@@ -1466,9 +1478,9 @@ fn refresh_final_validation(root: &Path, report: &mut ProductReport) {
             report.status_reasons.extend(source_hash_validation_reasons(
                 report.source_sha256.as_deref(),
                 &current_hash,
-                FOREMAN_SHA256,
+                &report.source_expected_sha256,
             ));
-            report.source_sha256 = Some(current_hash);
+            report.source_final_sha256 = Some(current_hash);
         }
         Err(e) => report
             .status_reasons
@@ -1991,7 +2003,7 @@ fn normalize_probe_text(text: &str) -> String {
         .to_string()
 }
 
-fn source_tree_hash(root: &Path) -> Result<String, String> {
+pub(crate) fn source_tree_hash(root: &Path) -> Result<String, String> {
     let mut paths = git_lines(root, &git_args_with_paths(&["ls-files"]))?;
     paths.sort();
     let mut hasher = Sha256::new();
