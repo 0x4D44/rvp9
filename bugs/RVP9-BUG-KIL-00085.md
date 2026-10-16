@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00085 — diff-bitstream frame selection skips required state priming
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** harness/diff-bitstream
 - **Raised:** 2026-08-22T13:20:52Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261016T023434Z-82979771
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00085-run-fix-20261016T023434Z-82979771
-- **Owner base:** 18eac1cf611de95a78cdf46beb21d1f694949a8b
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-16T02:34:34Z
-- **Owner until:** 2026-10-16T06:34:34Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T13:20:52Z, raised via `deltic bugs new`)
+- **State history:** Open (2026-08-22T13:20:52Z, raised via `deltic bugs new`) -> Fixed (2026-10-16T02:50:46Z, deltic:auto role=fix run=fix-20261016T023434Z-82979771 branch=task/bug-RVP9-BUG-KIL-00085-run-fix-20261016T023434Z-82979771 code=4aab47c03c0575b314f6fadcd1c3e290f96239b2 gate=manual)
 
 ## Observation
 
