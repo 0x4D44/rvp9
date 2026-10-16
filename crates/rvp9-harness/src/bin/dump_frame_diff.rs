@@ -17,6 +17,7 @@
 
 use rvp9_decoder::Decoder;
 use rvp9_harness::container::read_packets;
+use std::io::{self, Write};
 use std::path::PathBuf;
 
 struct Args {
@@ -216,19 +217,13 @@ fn main() {
             break;
         }
     }
-    // Also dump the FULL FIRST 8x8 region of expected and got (Y plane).
-    println!("---- Y first 12 cols × 8 rows: got | expected ----");
-    for r in 0..8 {
-        print!("  r{r:2} got: ");
-        for c in 0..12 {
-            print!("{:4} ", y_got[r * crop_w + c]);
-        }
-        print!("  | exp: ");
-        for c in 0..12 {
-            print!("{:4} ", y_exp[r * crop_w + c]);
-        }
-        println!();
-    }
+    // Also dump the first visible 12x8-or-smaller region of expected and got (Y plane).
+    dump_first_y_window(
+        &mut std::io::stdout().lock(),
+        (&y_got, y_exp),
+        (crop_w, crop_h),
+    )
+    .expect("print first Y window");
 
     // M.17 probe: dump the (px 276..295, row 0..7) window — straddles the
     // last-passing 4×4 (px 276..279), our failing Block8x8 (px 280..287),
@@ -290,38 +285,14 @@ fn main() {
     if let Some((bc, br)) = found_block {
         let bx0 = bc * 4;
         let by0 = br * 4;
-        println!(
-            "---- first divergent Y 4x4 block @ (col {}, row {}) — {} diffs ----",
-            bx0,
-            by0,
-            block_diff[br * block_w + bc]
-        );
-        println!("  got:");
-        for r in 0..4 {
-            print!("    ");
-            for c in 0..4 {
-                print!("{:4} ", y_got[(by0 + r) * crop_w + bx0 + c]);
-            }
-            println!();
-        }
-        println!("  expected:");
-        for r in 0..4 {
-            print!("    ");
-            for c in 0..4 {
-                print!("{:4} ", y_exp[(by0 + r) * crop_w + bx0 + c]);
-            }
-            println!();
-        }
-        println!("  diff (got - expected):");
-        for r in 0..4 {
-            print!("    ");
-            for c in 0..4 {
-                let g = y_got[(by0 + r) * crop_w + bx0 + c] as i32;
-                let e = y_exp[(by0 + r) * crop_w + bx0 + c] as i32;
-                print!("{:+4} ", g - e);
-            }
-            println!();
-        }
+        dump_divergent_y_block(
+            &mut std::io::stdout().lock(),
+            (&y_got, y_exp),
+            (crop_w, crop_h),
+            (bx0, by0),
+            block_diff[br * block_w + bc],
+        )
+        .expect("print first divergent Y block");
     }
 
     if let Some((c, r)) = y_first {
@@ -342,6 +313,308 @@ fn main() {
 
 fn w_blocks(w: usize) -> usize {
     w.div_ceil(4)
+}
+
+fn dump_first_y_window(
+    out: &mut impl Write,
+    (got, exp): (&[u8], &[u8]),
+    (width, height): (usize, usize),
+) -> io::Result<()> {
+    let cols = 12.min(width);
+    let rows = 8.min(height);
+    writeln!(
+        out,
+        "---- Y first {cols} cols × {rows} rows: got | expected ----"
+    )?;
+    for r in 0..rows {
+        write!(out, "  r{r:2} got: ")?;
+        for c in 0..cols {
+            write!(out, "{:4} ", got[r * width + c])?;
+        }
+        write!(out, "  | exp: ")?;
+        for c in 0..cols {
+            write!(out, "{:4} ", exp[r * width + c])?;
+        }
+        writeln!(out)?;
+    }
+    Ok(())
+}
+
+fn dump_divergent_y_block(
+    out: &mut impl Write,
+    (got, exp): (&[u8], &[u8]),
+    (width, height): (usize, usize),
+    (bx0, by0): (usize, usize),
+    diffs: u32,
+) -> io::Result<()> {
+    let cols = 4.min(width.saturating_sub(bx0));
+    let rows = 4.min(height.saturating_sub(by0));
+    writeln!(
+        out,
+        "---- first divergent Y 4x4 block @ (col {}, row {}) — {} diffs ----",
+        bx0, by0, diffs
+    )?;
+    writeln!(out, "  got:")?;
+    for r in 0..rows {
+        write!(out, "    ")?;
+        for c in 0..cols {
+            write!(out, "{:4} ", got[(by0 + r) * width + bx0 + c])?;
+        }
+        writeln!(out)?;
+    }
+    writeln!(out, "  expected:")?;
+    for r in 0..rows {
+        write!(out, "    ")?;
+        for c in 0..cols {
+            write!(out, "{:4} ", exp[(by0 + r) * width + bx0 + c])?;
+        }
+        writeln!(out)?;
+    }
+    writeln!(out, "  diff (got - expected):")?;
+    for r in 0..rows {
+        write!(out, "    ")?;
+        for c in 0..cols {
+            let g = got[(by0 + r) * width + bx0 + c] as i32;
+            let e = exp[(by0 + r) * width + bx0 + c] as i32;
+            write!(out, "{:+4} ", g - e)?;
+        }
+        writeln!(out)?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{dump_divergent_y_block, dump_first_y_window};
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+
+    fn planes(width: usize, height: usize) -> (Vec<u8>, Vec<u8>) {
+        let len = width * height;
+        let got: Vec<_> = (0..len).map(|i| (10 + i) as u8).collect();
+        let exp: Vec<_> = got.iter().map(|&value| value + 20).collect();
+        (got, exp)
+    }
+
+    fn numeric_fields(line: &str) -> Result<Vec<i32>, String> {
+        line.split_whitespace()
+            .map(|value| {
+                value
+                    .parse::<i32>()
+                    .map_err(|error| format!("invalid numeric field {value:?}: {error}"))
+            })
+            .collect()
+    }
+
+    fn check_first_window(
+        output: &[u8],
+        got: &[u8],
+        exp: &[u8],
+        width: usize,
+        height: usize,
+    ) -> Result<(), String> {
+        let cols = width.min(12);
+        let rows = height.min(8);
+        let text = std::str::from_utf8(output).map_err(|error| error.to_string())?;
+        let lines: Vec<_> = text.lines().collect();
+        let header = format!("---- Y first {cols} cols × {rows} rows: got | expected ----");
+        if lines.first() != Some(&header.as_str()) {
+            return Err(format!(
+                "header was {:?}, expected {header:?}",
+                lines.first()
+            ));
+        }
+        if lines.len() != rows + 1 {
+            return Err(format!("got {} lines, expected {}", lines.len(), rows + 1));
+        }
+        for r in 0..rows {
+            let prefix = format!("  r{r:2} got: ");
+            let Some((got_fields, exp_fields)) = lines[r + 1]
+                .strip_prefix(&prefix)
+                .and_then(|line| line.split_once("  | exp: "))
+            else {
+                return Err(format!(
+                    "row {r} label or separator was malformed: {:?}",
+                    lines[r + 1]
+                ));
+            };
+            let got_row = numeric_fields(got_fields)?;
+            let exp_row = numeric_fields(exp_fields)?;
+            let got_expected: Vec<_> = got[r * width..r * width + cols]
+                .iter()
+                .map(|&value| i32::from(value))
+                .collect();
+            let exp_expected: Vec<_> = exp[r * width..r * width + cols]
+                .iter()
+                .map(|&value| i32::from(value))
+                .collect();
+            if got_row != got_expected || exp_row != exp_expected {
+                return Err(format!(
+                    "row {r} values were got={got_row:?}, exp={exp_row:?}; expected got={got_expected:?}, exp={exp_expected:?}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn check_divergent_block(
+        output: &[u8],
+        got: &[u8],
+        exp: &[u8],
+        width: usize,
+        height: usize,
+        bx0: usize,
+        by0: usize,
+    ) -> Result<(), String> {
+        let cols = 4.min(width.saturating_sub(bx0));
+        let rows = 4.min(height.saturating_sub(by0));
+        let diffs = cols * rows;
+        let text = std::str::from_utf8(output).map_err(|error| error.to_string())?;
+        let lines: Vec<_> = text.lines().collect();
+        let header = format!(
+            "---- first divergent Y 4x4 block @ (col {bx0}, row {by0}) — {diffs} diffs ----"
+        );
+        if lines.first() != Some(&header.as_str()) {
+            return Err(format!(
+                "header was {:?}, expected {header:?}",
+                lines.first()
+            ));
+        }
+
+        if (width, height, bx0, by0) == (4, 4, 0, 0) {
+            let expected = concat!(
+                "---- first divergent Y 4x4 block @ (col 0, row 0) — 16 diffs ----\n",
+                "  got:\n",
+                "      10   11   12   13 \n",
+                "      14   15   16   17 \n",
+                "      18   19   20   21 \n",
+                "      22   23   24   25 \n",
+                "  expected:\n",
+                "      30   31   32   33 \n",
+                "      34   35   36   37 \n",
+                "      38   39   40   41 \n",
+                "      42   43   44   45 \n",
+                "  diff (got - expected):\n",
+                "     -20  -20  -20  -20 \n",
+                "     -20  -20  -20  -20 \n",
+                "     -20  -20  -20  -20 \n",
+                "     -20  -20  -20  -20 \n",
+            );
+            return if text == expected {
+                Ok(())
+            } else {
+                Err(format!("full-size output changed:\n{text}"))
+            };
+        }
+
+        if lines.len() != 4 + 3 * rows {
+            return Err(format!(
+                "got {} lines, expected {}",
+                lines.len(),
+                4 + 3 * rows
+            ));
+        }
+        let sections = ["  got:", "  expected:", "  diff (got - expected):"];
+        for (section, label) in sections.into_iter().enumerate() {
+            let first = 1 + section * (rows + 1);
+            if lines[first] != label {
+                return Err(format!("section {section} label was {:?}", lines[first]));
+            }
+            for r in 0..rows {
+                let line = lines[first + 1 + r];
+                let Some(fields) = line.strip_prefix("    ") else {
+                    return Err(format!(
+                        "section {section} row {r} has no row indent: {line:?}"
+                    ));
+                };
+                let actual = numeric_fields(fields)?;
+                let expected: Vec<i32> = (0..cols)
+                    .map(|c| {
+                        let index = (by0 + r) * width + bx0 + c;
+                        match section {
+                            0 => i32::from(got[index]),
+                            1 => i32::from(exp[index]),
+                            _ => i32::from(got[index]) - i32::from(exp[index]),
+                        }
+                    })
+                    .collect();
+                if actual != expected {
+                    return Err(format!(
+                        "section {section} row {r} values were {actual:?}, expected {expected:?}"
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn fixed_y_window_clips_to_small_frame_dimensions() {
+        let cases = [(12, 8), (1, 1), (5, 3), (11, 8), (12, 7)];
+        let mut panics = Vec::new();
+        let mut mismatches = Vec::new();
+        for (width, height) in cases {
+            let (got, exp) = planes(width, height);
+            let mut output = Vec::new();
+            let rendered = catch_unwind(AssertUnwindSafe(|| {
+                dump_first_y_window(&mut output, (&got, &exp), (width, height))
+            }));
+            match rendered {
+                Err(_) => panics.push(format!("{width}x{height}")),
+                Ok(Err(error)) => mismatches.push(format!("{width}x{height}: {error}")),
+                Ok(Ok(())) => match check_first_window(&output, &got, &exp, width, height) {
+                    Ok(()) => {}
+                    Err(error) => mismatches.push(format!("{width}x{height}: {error}")),
+                },
+            }
+        }
+        assert!(
+            panics.is_empty() && mismatches.is_empty(),
+            "fixed window panics: {panics:?}; output mismatches: {mismatches:#?}"
+        );
+    }
+
+    #[test]
+    fn divergent_y_block_clips_partial_right_bottom_and_corner_blocks() {
+        let cases = [
+            (4, 4, 0, 0), // full-size formatting control
+            (5, 5, 4, 0), // right edge wraps flat indexes into following rows
+            (4, 5, 0, 4), // bottom edge
+            (5, 5, 4, 4), // bottom-right corner
+        ];
+        let mut panics = Vec::new();
+        let mut mismatches = Vec::new();
+        for (width, height, bx0, by0) in cases {
+            let (got, exp) = planes(width, height);
+            let diffs = (4.min(width - bx0) * 4.min(height - by0)) as u32;
+            let mut output = Vec::new();
+            let rendered = catch_unwind(AssertUnwindSafe(|| {
+                dump_divergent_y_block(
+                    &mut output,
+                    (&got, &exp),
+                    (width, height),
+                    (bx0, by0),
+                    diffs,
+                )
+            }));
+            match rendered {
+                Err(_) => panics.push(format!("{width}x{height} block @ ({bx0},{by0})")),
+                Ok(Err(error)) => {
+                    mismatches.push(format!("{width}x{height} block @ ({bx0},{by0}): {error}"))
+                }
+                Ok(Ok(())) => {
+                    match check_divergent_block(&output, &got, &exp, width, height, bx0, by0) {
+                        Ok(()) => {}
+                        Err(error) => mismatches
+                            .push(format!("{width}x{height} block @ ({bx0},{by0}): {error}")),
+                    }
+                }
+            }
+        }
+        assert!(
+            panics.is_empty() && mismatches.is_empty(),
+            "divergent block panics: {panics:?}; output mismatches: {mismatches:#?}"
+        );
+    }
 }
 
 fn dump_patch(name: &str, got: &[u8], exp: &[u8], w: usize, h: usize, cx: usize, cy: usize) {
