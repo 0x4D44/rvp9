@@ -378,11 +378,24 @@ fn decode_and_psnr_with_timeout(
     rvp9_bench::mean_y_psnr(source_y4m, &y4m_out).unwrap_or(f64::NAN)
 }
 
-/// File size of `ivf` in kilobits, divided by clip duration in seconds.
-fn measured_bitrate_kbps(ivf: &Path, frames: u32, fps: f64) -> f64 {
-    let bytes = std::fs::metadata(ivf).expect("ivf metadata").len() as f64;
-    let duration_s = f64::from(frames) / fps;
-    (bytes * 8.0 / 1000.0) / duration_s
+/// File size of `ivf` in kilobits, divided by its encoded duration in seconds.
+fn measured_bitrate_kbps(ivf: &Path, frames: u32) -> Result<f64, String> {
+    let reader = rvp9_harness::container::PacketReader::open(ivf)
+        .map_err(|error| format!("could not read IVF header for {}: {error}", ivf.display()))?;
+    let (fps_num, fps_den) = reader.framerate().ok_or_else(|| {
+        format!(
+            "IVF {} has a missing or zero framerate in its timebase",
+            ivf.display()
+        )
+    })?;
+    if frames == 0 {
+        return Err(format!("IVF {} contains no frames", ivf.display()));
+    }
+    let bytes = std::fs::metadata(ivf)
+        .map_err(|error| format!("could not read IVF size for {}: {error}", ivf.display()))?
+        .len() as f64;
+    let duration_s = f64::from(frames) * f64::from(fps_den) / f64::from(fps_num);
+    Ok((bytes * 8.0 / 1000.0) / duration_s)
 }
 
 /// Bjontegaard delta rate, cubic polynomial fit on log-bitrate vs PSNR.
@@ -569,13 +582,6 @@ fn main() -> ExitCode {
     }
     println!();
 
-    // Parse fps from the source Y4M header so realised-bitrate math is
-    // accurate for non-30fps clips. Fall back to 30.0 if the header
-    // can't be read for some reason.
-    let fps_hz = std::fs::read(&args.input)
-        .ok()
-        .and_then(|d| rvp9_bench::parse_y4m_header(&d).map(|(h, _)| h.fps()))
-        .unwrap_or(30.0);
     let encode_config = EncodeConfig {
         end_usage: &args.end_usage,
         fps: &args.fps,
@@ -623,8 +629,20 @@ fn main() -> ExitCode {
         let a_frames = rvp9_bench::count_ivf_frames(&a_ivf);
         let t_frames = rvp9_bench::count_ivf_frames(&t_ivf);
 
-        let a_br = measured_bitrate_kbps(&a_ivf, a_frames, fps_hz);
-        let t_br = measured_bitrate_kbps(&t_ivf, t_frames, fps_hz);
+        let a_br = match measured_bitrate_kbps(&a_ivf, a_frames) {
+            Ok(bitrate) => bitrate,
+            Err(error) => {
+                eprintln!("error: anchor bitrate at target {br}k: {error}");
+                return ExitCode::FAILURE;
+            }
+        };
+        let t_br = match measured_bitrate_kbps(&t_ivf, t_frames) {
+            Ok(bitrate) => bitrate,
+            Err(error) => {
+                eprintln!("error: test bitrate at target {br}k: {error}");
+                return ExitCode::FAILURE;
+            }
+        };
 
         let a_psnr = decode_and_psnr(&args.decoder, &a_ivf, &args.reference_input);
         let t_psnr = decode_and_psnr(&args.decoder, &t_ivf, &args.reference_input);
