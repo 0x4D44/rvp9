@@ -491,9 +491,9 @@ fn flag_table() -> Vec<Flag<EncOpts>> {
             long: "noise-sensitivity",
             short: None,
             arg: Arg::Required,
-            help: "denoiser strength",
+            help: "denoiser strength (0..=6)",
             apply: Some(|o, v| {
-                o.noise_sensitivity = Some(args::parse_value(v, "rvp9enc", "--noise-sensitivity")?);
+                o.noise_sensitivity = Some(parse_range(v, "--noise-sensitivity", 0, 6)?);
                 Ok(())
             }),
         },
@@ -2048,15 +2048,25 @@ mod tests {
         let cfg = build_encoder_config_for_test(&o);
         assert_eq!(cfg.noise_sensitivity, 0, "default must be 0");
 
-        // Explicit non-zero value lands on the config field.
-        let mut o = EncOpts::default();
-        args::parse(&table, &mut o, &s(&["--noise-sensitivity=3"]), "rvp9enc").unwrap();
-        let cfg = build_encoder_config_for_test(&o);
-        assert_eq!(cfg.noise_sensitivity, 3, "--noise-sensitivity=3 must plumb");
+        // The documented range, including both endpoints, lands on the
+        // encoder config without remapping valid values.
+        for value in [0, 1, 3, 6] {
+            let mut o = EncOpts::default();
+            let argument = format!("--noise-sensitivity={value}");
+            let parsed = args::parse(&table, &mut o, &s(&[argument.as_str()]), "rvp9enc");
+            assert!(
+                parsed.is_ok(),
+                "valid {argument} must be accepted: {parsed:?}"
+            );
+            let cfg = build_encoder_config_for_test(&o);
+            assert_eq!(
+                cfg.noise_sensitivity, value as u8,
+                "{argument} must plumb exactly"
+            );
+        }
 
-        // Out-of-range values clamp to 6 (libvpx caps the denoiser
-        // at level 6; the parser's range-check should catch this too,
-        // but the saturation guard is the defensive belt-and-braces).
+        // Keep the defensive builder clamp to the documented CLI/API
+        // range even though parsing rejects out-of-range user input.
         let o = EncOpts {
             noise_sensitivity: Some(99),
             ..Default::default()
@@ -2070,6 +2080,47 @@ mod tests {
         let cfg = build_encoder_config_for_test(&o);
         let enc = StreamEncoder::new(cfg).expect("StreamEncoder must accept --noise-sensitivity=1");
         assert_eq!(enc.config().noise_sensitivity, 1);
+    }
+
+    #[test]
+    fn noise_sensitivity_rejects_out_of_range_values_in_both_cli_forms() {
+        let table = flag_table();
+        let cases = [
+            ("inline", "7", s(&["--noise-sensitivity=7"])),
+            ("separate", "7", s(&["--noise-sensitivity", "7"])),
+            ("inline", "99", s(&["--noise-sensitivity=99"])),
+            ("separate", "99", s(&["--noise-sensitivity", "99"])),
+            (
+                "inline",
+                "4294967295",
+                s(&["--noise-sensitivity=4294967295"]),
+            ),
+            (
+                "separate",
+                "4294967295",
+                s(&["--noise-sensitivity", "4294967295"]),
+            ),
+        ];
+        let mut failures = Vec::new();
+
+        for (form, value, argv) in cases {
+            let mut opts = EncOpts::default();
+            let error = args::parse(&table, &mut opts, &argv, "rvp9enc");
+            let expected = format!("--noise-sensitivity={value} out of range (0..=6)");
+            match error {
+                Ok(_) => failures.push(format!("{form} value {value} was accepted")),
+                Err(error) if !error.contains(&expected) => failures.push(format!(
+                    "{form} value {value} returned {error:?}, expected {expected:?}"
+                )),
+                Err(_) => {}
+            }
+        }
+
+        assert!(
+            failures.is_empty(),
+            "--noise-sensitivity must reject every value above 6 in both forms: {}",
+            failures.join("; ")
+        );
     }
 
     /// PROOF (W7.8 q-range CLI plumb) — `--min-q <0..=255>` and

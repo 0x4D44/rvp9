@@ -1095,6 +1095,50 @@ fn enc_raw_input_requires_height() {
 }
 
 #[test]
+fn enc_rejects_out_of_range_noise_sensitivity_before_input_io() {
+    let input = tmp("noise_sensitivity_missing_input.yuv");
+    let output = tmp("noise_sensitivity_output_sentinel.ivf");
+    let output_sentinel = b"existing output must survive invalid noise sensitivity";
+    std::fs::write(&output, output_sentinel).expect("write output sentinel");
+
+    let out = Command::new(enc_bin())
+        .args([
+            "--noise-sensitivity",
+            "7",
+            "-w",
+            "64",
+            "-h",
+            "64",
+            "--target-bitrate",
+            "500",
+            "-o",
+        ])
+        .arg(&output)
+        .arg(&input)
+        .bounded_output()
+        .expect("run rvp9enc with out-of-range noise sensitivity");
+    assert!(
+        !out.status.success(),
+        "invalid sensitivity must be rejected"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("--noise-sensitivity=7 out of range (0..=6)"),
+        "stderr must report the supported sensitivity range before input I/O, got: {stderr}"
+    );
+    assert!(
+        !stderr.contains("opening") && !stderr.contains(input.to_string_lossy().as_ref()),
+        "range validation must precede the missing-input error, got: {stderr}"
+    );
+    assert_eq!(
+        std::fs::read(&output).expect("read protected output"),
+        output_sentinel,
+        "invalid sensitivity must preserve an existing output"
+    );
+    let _ = std::fs::remove_file(&output);
+}
+
+#[test]
 fn enc_raw_invalid_geometry_precedes_frame_errors_and_preserves_outputs() {
     let raw = tmp("raw_invalid_geometry.yuv");
     let output = tmp("raw_invalid_geometry.ivf");
@@ -1264,6 +1308,11 @@ fn enc_parse_only_flags_reject_and_are_tagged_not_yet() {
         .expect("run rvp9enc --help");
     assert!(help.status.success());
     let help = String::from_utf8_lossy(&help.stdout);
+    assert!(
+        help.lines()
+            .any(|line| line.contains("--noise-sensitivity") && line.contains("0..=6")),
+        "help must document the --noise-sensitivity range as 0..=6"
+    );
 
     for (flag, value) in unplumbed {
         let mut command = Command::new(enc_bin());
