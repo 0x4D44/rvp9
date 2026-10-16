@@ -310,7 +310,7 @@ fn enc_passes_two_accepted_at_parse_time() {
 
 #[test]
 fn enc_passes_two_still_writes_complete_ivf() {
-    let cases: [(&str, &[&str]); 3] = [
+    let cases: [(&str, &[&str]); 5] = [
         ("defaults", &[]),
         (
             "threads_zero_tile_zero",
@@ -320,6 +320,8 @@ fn enc_passes_two_still_writes_complete_ivf() {
             "threads_one_tile_zero",
             &["--threads", "1", "--tile-columns", "0"],
         ),
+        ("explicit_zero_lag", &["--lag-in-frames=0"]),
+        ("explicit_zero_alt_ref", &["--auto-alt-ref=0"]),
     ];
     let mut violations = Vec::new();
 
@@ -472,6 +474,178 @@ fn enc_two_pass_rejects_explicit_parallelism_before_file_io() {
     assert!(
         violations.is_empty(),
         "two-pass explicit parallelism must be rejected before file I/O: {}",
+        violations.join("; ")
+    );
+}
+
+#[test]
+fn enc_two_pass_rejects_positive_lag_before_file_io() {
+    let input = tmp("two_pass_lag_missing_input.yuv");
+    let cases: [(&str, &[&str]); 4] = [
+        ("lag_one_inline", &["--passes=2", "--lag-in-frames=1"]),
+        ("lag_one_split", &["--passes=2", "--lag-in-frames", "1"]),
+        ("lag_max_inline", &["--passes=2", "--lag-in-frames=25"]),
+        ("lag_max_split", &["--passes=2", "--lag-in-frames", "25"]),
+    ];
+    let mut violations = Vec::new();
+
+    for (tag, args) in cases {
+        let output = tmp(&format!("two_pass_lag_{tag}.ivf"));
+        let sentinel = b"existing output must survive rejected options";
+        std::fs::write(&output, sentinel).expect("write output sentinel");
+
+        let result = Command::new(enc_bin())
+            .args(args)
+            .args(["-w", "64", "-h", "64", "-o"])
+            .arg(&output)
+            .arg(&input)
+            .bounded_output()
+            .expect("run two-pass lag rvp9enc");
+
+        let stderr = String::from_utf8_lossy(&result.stderr).to_ascii_lowercase();
+        if result.status.success() {
+            violations.push(format!("{tag}: command succeeded"));
+        }
+        if !(stderr.contains("--passes 2")
+            && stderr.contains("--lag-in-frames")
+            && stderr.contains("delayed scheduling")
+            && stderr.contains("omitted or 0"))
+        {
+            violations.push(format!(
+                "{tag}: missing delayed-scheduling diagnostic: {stderr}"
+            ));
+        }
+        if stderr.contains("opening ") {
+            violations.push(format!(
+                "{tag}: missing-input error took precedence: {stderr}"
+            ));
+        }
+        match std::fs::read(&output) {
+            Ok(bytes) if bytes == sentinel => {}
+            Ok(_) => violations.push(format!("{tag}: rejected command changed sentinel output")),
+            Err(error) => {
+                violations.push(format!("{tag}: could not read output sentinel: {error}"))
+            }
+        }
+
+        let _ = std::fs::remove_file(&output);
+    }
+
+    assert!(
+        violations.is_empty(),
+        "two-pass positive lag must be rejected before input/output I/O: {}",
+        violations.join("; ")
+    );
+}
+
+#[test]
+fn enc_two_pass_rejects_positive_alt_ref_before_file_io() {
+    let input = tmp("two_pass_alt_ref_missing_input.yuv");
+    let cases: [(&str, &[&str]); 4] = [
+        ("alt_ref_one_inline", &["--passes=2", "--auto-alt-ref=1"]),
+        ("alt_ref_one_split", &["--passes=2", "--auto-alt-ref", "1"]),
+        ("alt_ref_max_inline", &["--passes=2", "--auto-alt-ref=6"]),
+        ("alt_ref_max_split", &["--passes=2", "--auto-alt-ref", "6"]),
+    ];
+    let mut violations = Vec::new();
+
+    for (tag, args) in cases {
+        let output = tmp(&format!("two_pass_alt_ref_{tag}.ivf"));
+        let sentinel = b"existing output must survive rejected options";
+        std::fs::write(&output, sentinel).expect("write output sentinel");
+
+        let result = Command::new(enc_bin())
+            .args(args)
+            .args(["-w", "64", "-h", "64", "-o"])
+            .arg(&output)
+            .arg(&input)
+            .bounded_output()
+            .expect("run two-pass ALTREF rvp9enc");
+
+        let stderr = String::from_utf8_lossy(&result.stderr).to_ascii_lowercase();
+        if result.status.success() {
+            violations.push(format!("{tag}: command succeeded"));
+        }
+        if !(stderr.contains("--passes 2")
+            && stderr.contains("--auto-alt-ref")
+            && stderr.contains("delayed scheduling")
+            && stderr.contains("omitted or 0"))
+        {
+            violations.push(format!(
+                "{tag}: missing delayed-scheduling diagnostic: {stderr}"
+            ));
+        }
+        if stderr.contains("opening ") {
+            violations.push(format!(
+                "{tag}: missing-input error took precedence: {stderr}"
+            ));
+        }
+        match std::fs::read(&output) {
+            Ok(bytes) if bytes == sentinel => {}
+            Ok(_) => violations.push(format!("{tag}: rejected command changed sentinel output")),
+            Err(error) => {
+                violations.push(format!("{tag}: could not read output sentinel: {error}"))
+            }
+        }
+
+        let _ = std::fs::remove_file(&output);
+    }
+
+    assert!(
+        violations.is_empty(),
+        "two-pass positive ALTREF must be rejected before input/output I/O: {}",
+        violations.join("; ")
+    );
+}
+
+#[test]
+fn enc_two_pass_positive_lag_is_rejected_with_valid_input() {
+    let input = tmp("two_pass_lag_valid_input.yuv");
+    let output = tmp("two_pass_lag_valid_output.ivf");
+    let sentinel = b"existing output must survive rejected options";
+    write_synthetic_raw(&input);
+    std::fs::write(&output, sentinel).expect("write output sentinel");
+
+    let result = Command::new(enc_bin())
+        .args([
+            "--passes=2",
+            "--lag-in-frames=1",
+            "-w",
+            "64",
+            "-h",
+            "64",
+            "--target-bitrate",
+            "500",
+            "-o",
+        ])
+        .arg(&output)
+        .arg(&input)
+        .bounded_output()
+        .expect("run two-pass lag rvp9enc with valid input");
+
+    let stderr = String::from_utf8_lossy(&result.stderr).to_ascii_lowercase();
+    let mut violations = Vec::new();
+    if result.status.success() {
+        violations.push("command succeeded".to_string());
+    }
+    if !(stderr.contains("--passes 2")
+        && stderr.contains("--lag-in-frames")
+        && stderr.contains("delayed scheduling")
+        && stderr.contains("omitted or 0"))
+    {
+        violations.push(format!("missing delayed-scheduling diagnostic: {stderr}"));
+    }
+    match std::fs::read(&output) {
+        Ok(bytes) if bytes == sentinel => {}
+        Ok(_) => violations.push("rejected request changed output sentinel".to_string()),
+        Err(error) => violations.push(format!("could not read output sentinel: {error}")),
+    }
+
+    let _ = std::fs::remove_file(&input);
+    let _ = std::fs::remove_file(&output);
+    assert!(
+        violations.is_empty(),
+        "two-pass positive lag must be rejected instead of silently ignored: {}",
         violations.join("; ")
     );
 }
@@ -2328,6 +2502,13 @@ fn enc_help_lists_every_wired_flag() {
             "enc --help must list {flag}, got:\n{text}"
         );
     }
+    assert!(
+        text.contains("delayed scheduling")
+            && text.contains("--lag-in-frames")
+            && text.contains("--auto-alt-ref")
+            && text.contains("omitted or 0"),
+        "enc --help must describe the two-pass lookahead contract, got:\n{text}"
+    );
 }
 
 // ========================================================================

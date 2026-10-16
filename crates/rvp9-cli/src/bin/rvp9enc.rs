@@ -88,9 +88,10 @@ struct EncOpts {
     /// When `2`, the encoder runs the per-sequence two-pass driver
     /// (`rvp9_encoder::encode_two_pass`): a stats-only first pass over the
     /// whole input, then a stats-driven second pass emitting the
-    /// bitstream. That driver uses one thread and one tile, so explicit
-    /// `--threads` values above 1 and explicit `--tile-columns` values
-    /// above 0 are rejected.
+    /// bitstream. That driver uses synchronous scheduling, one thread, and
+    /// one tile, so positive `--lag-in-frames` / `--auto-alt-ref` requests,
+    /// explicit `--threads` values above 1, and explicit `--tile-columns`
+    /// values above 0 are rejected.
     passes: u32,
     /// `--enable-tpl` (libvpx `vpxenc.c:445-446`). 0/1 — temporal
     /// dependency model.
@@ -243,7 +244,7 @@ fn flag_table() -> Vec<Flag<EncOpts>> {
             long: "passes",
             short: Some('p'),
             arg: Arg::Required,
-            help: "number of passes (1 or 2; two-pass uses one thread and one tile)",
+            help: "number of passes (1 or 2; two-pass uses one thread/tile, no delayed scheduling; --lag-in-frames/--auto-alt-ref must be omitted or 0)",
             apply: Some(|o, v| {
                 o.passes = parse_passes(v)?;
                 Ok(())
@@ -565,7 +566,7 @@ fn flag_table() -> Vec<Flag<EncOpts>> {
             long: "auto-alt-ref",
             short: None,
             arg: Arg::Required,
-            help: "auto alt-ref frames (0..=6)",
+            help: "auto alt-ref frames (0..=6; two-pass requires omitted or 0)",
             apply: Some(|o, v| {
                 o.auto_alt_ref = Some(parse_range(v, "--auto-alt-ref", 0, 6)?);
                 Ok(())
@@ -683,7 +684,7 @@ fn flag_table() -> Vec<Flag<EncOpts>> {
             long: "lag-in-frames",
             short: None,
             arg: Arg::Required,
-            help: "max frames to lag",
+            help: "max frames to lag (two-pass requires omitted or 0)",
             apply: Some(|o, v| {
                 o.lag_in_frames = Some(args::parse_value(v, "rvp9enc", "--lag-in-frames")?);
                 Ok(())
@@ -883,7 +884,7 @@ fn validate_frame_time_csv(opts: &EncOpts) -> Result<(), String> {
     Ok(())
 }
 
-fn validate_two_pass_parallelism(opts: &EncOpts) -> Result<(), String> {
+fn validate_two_pass_options(opts: &EncOpts) -> Result<(), String> {
     if opts.passes != 2 {
         return Ok(());
     }
@@ -899,6 +900,24 @@ fn validate_two_pass_parallelism(opts: &EncOpts) -> Result<(), String> {
     {
         return Err(
             "--passes 2 supports one thread and one tile only; --tile-columns must be omitted or 0"
+                .to_string(),
+        );
+    }
+    if opts
+        .lag_in_frames
+        .is_some_and(|lag_in_frames| lag_in_frames > 0)
+    {
+        return Err(
+            "--passes 2 does not support delayed scheduling; --lag-in-frames must be omitted or 0"
+                .to_string(),
+        );
+    }
+    if opts
+        .auto_alt_ref
+        .is_some_and(|auto_alt_ref| auto_alt_ref > 0)
+    {
+        return Err(
+            "--passes 2 does not support delayed scheduling; --auto-alt-ref must be omitted or 0"
                 .to_string(),
         );
     }
@@ -954,7 +973,7 @@ fn main() -> ExitCode {
 
 fn run(opts: &EncOpts, positionals: &[String]) -> Result<(), String> {
     validate_frame_time_csv(opts)?;
-    validate_two_pass_parallelism(opts)?;
+    validate_two_pass_options(opts)?;
 
     let input = match positionals {
         [one] => Path::new(one),
@@ -1816,6 +1835,88 @@ mod tests {
         assert!(
             err.contains("lag-in-frames=0") && err.contains("nonzero"),
             "{err}"
+        );
+    }
+
+    #[test]
+    fn two_pass_rejects_positive_lookahead() {
+        for lag_in_frames in [1, 25] {
+            let opts = EncOpts {
+                passes: 2,
+                lag_in_frames: Some(lag_in_frames),
+                ..EncOpts::default()
+            };
+            let result = validate_two_pass_options(&opts);
+            assert!(
+                result.is_err(),
+                "--passes 2 must reject --lag-in-frames={lag_in_frames}"
+            );
+            let error = result.expect_err("positive two-pass lag must be rejected");
+            assert!(
+                error.contains("--passes 2")
+                    && error.contains("--lag-in-frames")
+                    && error.contains("delayed scheduling")
+                    && error.contains("omitted or 0"),
+                "two-pass lag rejection must explain the supported contract, got: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn two_pass_rejects_positive_auto_alt_ref() {
+        for auto_alt_ref in [1, 6] {
+            let opts = EncOpts {
+                passes: 2,
+                auto_alt_ref: Some(auto_alt_ref),
+                ..EncOpts::default()
+            };
+            let result = validate_two_pass_options(&opts);
+            assert!(
+                result.is_err(),
+                "--passes 2 must reject --auto-alt-ref={auto_alt_ref}"
+            );
+            let error = result.expect_err("positive two-pass ALTREF must be rejected");
+            assert!(
+                error.contains("--passes 2")
+                    && error.contains("--auto-alt-ref")
+                    && error.contains("delayed scheduling")
+                    && error.contains("omitted or 0"),
+                "two-pass ALTREF rejection must explain the supported contract, got: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn two_pass_lookahead_controls_accept_defaults_zero_and_one_pass_values() {
+        let defaults = EncOpts {
+            passes: 2,
+            ..EncOpts::default()
+        };
+        assert!(
+            validate_two_pass_options(&defaults).is_ok(),
+            "omitted two-pass lookahead controls must remain valid"
+        );
+
+        let explicit_zero = EncOpts {
+            passes: 2,
+            lag_in_frames: Some(0),
+            auto_alt_ref: Some(0),
+            ..EncOpts::default()
+        };
+        assert!(
+            validate_two_pass_options(&explicit_zero).is_ok(),
+            "explicit zero two-pass lookahead controls must remain valid"
+        );
+
+        let one_pass_positive = EncOpts {
+            passes: 1,
+            lag_in_frames: Some(25),
+            auto_alt_ref: Some(6),
+            ..EncOpts::default()
+        };
+        assert!(
+            validate_two_pass_options(&one_pass_positive).is_ok(),
+            "one-pass positive lookahead controls must remain valid"
         );
     }
 
