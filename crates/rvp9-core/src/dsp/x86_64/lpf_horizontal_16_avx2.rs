@@ -34,11 +34,11 @@
 
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::{
-    __m128i, _mm_adds_epi8, _mm_adds_epu8, _mm_adds_epu16, _mm_and_si128, _mm_andnot_si128,
-    _mm_cmpeq_epi8, _mm_loadl_epi64, _mm_max_epu8, _mm_or_si128, _mm_packs_epi16, _mm_packus_epi16,
-    _mm_set1_epi8, _mm_set1_epi16, _mm_setzero_si128, _mm_srai_epi16, _mm_srli_epi16,
-    _mm_storel_epi64, _mm_subs_epi8, _mm_subs_epu8, _mm_unpackhi_epi8, _mm_unpacklo_epi8,
-    _mm_xor_si128,
+    __m128i, _mm_add_epi16, _mm_adds_epi8, _mm_adds_epu8, _mm_adds_epu16, _mm_and_si128,
+    _mm_andnot_si128, _mm_cmpeq_epi8, _mm_cmpgt_epi16, _mm_loadl_epi64, _mm_max_epu8, _mm_or_si128,
+    _mm_packs_epi16, _mm_packus_epi16, _mm_set1_epi8, _mm_set1_epi16, _mm_setzero_si128,
+    _mm_srai_epi16, _mm_srli_epi16, _mm_storel_epi64, _mm_subs_epi8, _mm_subs_epu8,
+    _mm_unpackhi_epi8, _mm_unpacklo_epi8, _mm_xor_si128,
 };
 
 /// Load 8 contiguous u8s from `pixels[off..off+8]` into the low 64
@@ -148,7 +148,22 @@ unsafe fn filter_mask_avx2(blimit: u8, limit: u8, taps: [__m128i; 8]) -> __m128i
     let abs_p1q1_half_hi = _mm_srai_epi16(abs_p1q1_hi, 1);
     let abs_p1q1_half = _mm_packus_epi16(abs_p1q1_half_lo, abs_p1q1_half_hi);
     let mb_diff = _mm_adds_epu8(abs_p0q0_2, abs_p1q1_half);
-    let blimit_fail = cmpgt_u8(mb_diff, blimit_v);
+    let blimit_fail = if blimit == u8::MAX {
+        // Saturation preserves comparisons below 255, but a true metric
+        // above 255 must still reject the edge when blimit itself is 255.
+        // The widened metric is at most 2 * 255 + 255 / 2 = 637.
+        let abs_p0q0_lo = _mm_unpacklo_epi8(abs_p0q0, zero);
+        let abs_p0q0_hi = _mm_unpackhi_epi8(abs_p0q0, zero);
+        let mb_diff_lo = _mm_add_epi16(_mm_add_epi16(abs_p0q0_lo, abs_p0q0_lo), abs_p1q1_half_lo);
+        let mb_diff_hi = _mm_add_epi16(_mm_add_epi16(abs_p0q0_hi, abs_p0q0_hi), abs_p1q1_half_hi);
+        let blimit_wide = _mm_set1_epi16(i16::from(blimit));
+        _mm_packs_epi16(
+            _mm_cmpgt_epi16(mb_diff_lo, blimit_wide),
+            _mm_cmpgt_epi16(mb_diff_hi, blimit_wide),
+        )
+    } else {
+        cmpgt_u8(mb_diff, blimit_v)
+    };
 
     let any_fail = _mm_or_si128(limit_fail, blimit_fail);
     let ones = _mm_set1_epi8(-1i8);
@@ -921,6 +936,53 @@ mod tests {
             let buf = make_buf(seed);
             let (s, a) = run_pair(&buf, 12 * 8, 8, blimit, limit, thresh);
             prop_assert_eq!(s, a);
+        }
+    }
+
+    #[test]
+    fn blimit_255_saturation_matches_scalar() {
+        require_avx2!();
+
+        // (p0, p1, q0, q1, exact macroblock-edge metric). Different
+        // columns exercise both sides of the 255 boundary together.
+        let lanes: [(u8, u8, u8, u8, u16); 8] = [
+            (127, 1, 0, 0, 254),
+            (127, 2, 0, 0, 255),
+            (128, 1, 0, 0, 256),
+            (246, 246, 3, 3, 607),
+            (80, 80, 170, 170, 225),
+            (80, 80, 182, 182, 255),
+            (0, 0, 255, 255, 637),
+            (0, 0, 128, 1, 256),
+        ];
+        for pitch in [8, 19] {
+            let mut buf = vec![77; 24 * pitch];
+            for (col, &(p0, p1, q0, q1, _)) in lanes.iter().enumerate() {
+                for row in 0..24 {
+                    buf[row * pitch + col] = match row {
+                        0..=10 => p1,
+                        11 => p0,
+                        12 => q0,
+                        _ => q1,
+                    };
+                }
+            }
+            for blimit in [193, 254, 255] {
+                let (scalar, avx2) = run_pair(&buf, 12 * pitch, pitch, blimit, 255, 255);
+                for (col, &(p0, p1, q0, q1, metric)) in lanes.iter().enumerate() {
+                    let exact_metric =
+                        2 * u16::from(p0.abs_diff(q0)) + u16::from(p1.abs_diff(q1)) / 2;
+                    assert_eq!(exact_metric, metric);
+                    let changed =
+                        (0..24).any(|row| scalar[row * pitch + col] != buf[row * pitch + col]);
+                    assert_eq!(
+                        changed,
+                        metric <= u16::from(blimit),
+                        "scalar control: pitch={pitch} col={col} blimit={blimit}"
+                    );
+                }
+                assert_eq!(scalar, avx2, "pitch={pitch} blimit={blimit}");
+            }
         }
     }
 
