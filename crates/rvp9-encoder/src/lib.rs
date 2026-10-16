@@ -4424,6 +4424,7 @@ impl CompactInterRowDiagnostics {
 }
 
 struct CompactInterRowResult {
+    oracle_records: crate::f02_oracle::RecordBatch,
     job: crate::row_mt::RowJob,
     mi_col_start: usize,
     mi_col_end: usize,
@@ -4493,6 +4494,7 @@ impl CompactInterRowResult {
         InterEmitScratch,
         CompactInterRowDiagnostics,
     ) {
+        std::mem::take(&mut self.oracle_records).append_to_current();
         let tile_mi_cols = self.mi_col_end - self.mi_col_start;
         let compact = InterReconPlanes::new(
             (&mut self.recon_y, &mut self.recon_u, &mut self.recon_v),
@@ -13016,84 +13018,97 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
 
                 let mut result_slots: Vec<Option<CompactInterRowResult>> =
                     (0..works.len()).map(|_| None).collect();
+                let oracle_context = crate::f02_oracle::CaptureContext::current();
                 worker_pool.scope(|scope| {
                     for (result_slot, mut work) in result_slots.iter_mut().zip(works) {
                         scope.submit(move || {
-                            rvp9_core::mode_decision::inter::set_frame_s2_gate(frame_s2_gate);
-                            let mut row_history = work.vbp_history.take().map(|entries| {
-                                InterPartitionHistoryMut::row_owned(
+                            let (mut result, oracle_records) = oracle_context.run(|| {
+                                rvp9_core::mode_decision::inter::set_frame_s2_gate(frame_s2_gate);
+                                // Compact jobs enter below the full-picker initialization.
+                                rvp9_core::mode_decision::inter::candidate_trace::reset(
+                                    f02_oracle_enabled,
+                                );
+                                let mut row_history = work.vbp_history.take().map(|entries| {
+                                    InterPartitionHistoryMut::row_owned(
+                                        work.job.sb_row,
+                                        work.mi_col_start / 8,
+                                        entries,
+                                    )
+                                });
+                                let mut row_emit_scratch = InterEmitScratch::new();
+                                let mut row_diagnostics = CompactInterRowDiagnostics::default();
+                                let mut recorded_coef_tile = None;
+                                let mut recorded_noncoef_tiles = None;
+                                let mut coef_sink = [];
+                                let mut coef_record_bw =
+                                    BoolWriter::start_count_only(&mut coef_sink);
+                                let mut compact = InterReconPlanes::new(
+                                    (&mut work.recon_y, &mut work.recon_u, &mut work.recon_v),
+                                    work.recon_layout,
+                                );
+                                let mut compact_grids = InterRowGrids::new_with_mi_grid(
+                                    work.compact_grid_layout,
+                                    work.compact_mi,
+                                    &mut work.compact_mv,
+                                    work.compact_mv_layout,
+                                );
+                                let mut partition_grid = InterPartitionGrid::compact_row(
+                                    &mut work.partitions,
                                     work.job.sb_row,
                                     work.mi_col_start / 8,
-                                    entries,
-                                )
-                            });
-                            let mut row_emit_scratch = InterEmitScratch::new();
-                            let mut row_diagnostics = CompactInterRowDiagnostics::default();
-                            let mut recorded_coef_tile = None;
-                            let mut recorded_noncoef_tiles = None;
-                            let mut coef_sink = [];
-                            let mut coef_record_bw = BoolWriter::start_count_only(&mut coef_sink);
-                            let mut compact = InterReconPlanes::new(
-                                (&mut work.recon_y, &mut work.recon_u, &mut work.recon_v),
-                                work.recon_layout,
-                            );
-                            let mut compact_grids = InterRowGrids::new_with_mi_grid(
-                                work.compact_grid_layout,
-                                work.compact_mi,
-                                &mut work.compact_mv,
-                                work.compact_mv_layout,
-                            );
-                            let mut partition_grid = InterPartitionGrid::compact_row(
-                                &mut work.partitions,
-                                work.job.sb_row,
-                                work.mi_col_start / 8,
-                                (work.mi_col_end - work.mi_col_start).div_ceil(8),
-                                sb_cols,
-                            );
-                            encode_job(
-                                work.job,
-                                &mut compact,
-                                &mut compact_grids,
-                                &mut work.coefs,
-                                &mut recorded_coef_tile,
-                                &mut recorded_noncoef_tiles,
-                                &mut coef_record_bw,
-                                true,
-                                &mut partition_grid,
-                                &mut row_emit_scratch,
-                                &mut row_history,
-                                &mut work.rd_thresh_table,
-                                &mut row_diagnostics,
-                                None,
-                                None,
-                            );
-                            let mi_grid = compact_grids.into_simulation_grid();
-                            let vbp_history = match row_history {
-                                None => None,
-                                Some(InterPartitionHistoryMut::RowOwned { entries, .. }) => {
-                                    Some(entries)
+                                    (work.mi_col_end - work.mi_col_start).div_ceil(8),
+                                    sb_cols,
+                                );
+                                encode_job(
+                                    work.job,
+                                    &mut compact,
+                                    &mut compact_grids,
+                                    &mut work.coefs,
+                                    &mut recorded_coef_tile,
+                                    &mut recorded_noncoef_tiles,
+                                    &mut coef_record_bw,
+                                    true,
+                                    &mut partition_grid,
+                                    &mut row_emit_scratch,
+                                    &mut row_history,
+                                    &mut work.rd_thresh_table,
+                                    &mut row_diagnostics,
+                                    None,
+                                    None,
+                                );
+                                let mi_grid = compact_grids.into_simulation_grid();
+                                let vbp_history = match row_history {
+                                    None => None,
+                                    Some(InterPartitionHistoryMut::RowOwned {
+                                        entries, ..
+                                    }) => Some(entries),
+                                    Some(_) => {
+                                        panic!("compact VBP row must own its history entries")
+                                    }
+                                };
+                                CompactInterRowResult {
+                                    oracle_records: crate::f02_oracle::RecordBatch::default(),
+                                    job: work.job,
+                                    mi_col_start: work.mi_col_start,
+                                    mi_col_end: work.mi_col_end,
+                                    recon_layout: work.recon_layout,
+                                    recon_y: work.recon_y,
+                                    recon_u: work.recon_u,
+                                    recon_v: work.recon_v,
+                                    mi_grid,
+                                    mv_layout: work.compact_mv_layout,
+                                    mv_grid: work.compact_mv,
+                                    coefs: work.coefs,
+                                    partitions: work.partitions,
+                                    rd_table_index: work.rd_table_index,
+                                    rd_thresh_table: work.rd_thresh_table,
+                                    vbp_history,
+                                    emit_scratch: row_emit_scratch,
+                                    diagnostics: row_diagnostics,
                                 }
-                                Some(_) => panic!("compact VBP row must own its history entries"),
-                            };
-                            *result_slot = Some(CompactInterRowResult {
-                                job: work.job,
-                                mi_col_start: work.mi_col_start,
-                                mi_col_end: work.mi_col_end,
-                                recon_layout: work.recon_layout,
-                                recon_y: work.recon_y,
-                                recon_u: work.recon_u,
-                                recon_v: work.recon_v,
-                                mi_grid,
-                                mv_layout: work.compact_mv_layout,
-                                mv_grid: work.compact_mv,
-                                coefs: work.coefs,
-                                partitions: work.partitions,
-                                rd_table_index: work.rd_table_index,
-                                rd_thresh_table: work.rd_thresh_table,
-                                vbp_history,
-                                emit_scratch: row_emit_scratch,
-                                diagnostics: row_diagnostics,
                             });
+                            result.oracle_records = oracle_records;
+                            *result_slot = Some(result);
                         });
                     }
                 });
@@ -13279,6 +13294,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                     emit_scratch,
                     diagnostics,
                 ) = CompactInterRowResult {
+                    oracle_records: crate::f02_oracle::RecordBatch::default(),
                     job,
                     mi_col_start: bounds.mi_col_start,
                     mi_col_end: bounds.mi_col_end,

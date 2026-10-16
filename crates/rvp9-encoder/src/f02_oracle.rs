@@ -646,6 +646,79 @@ thread_local! {
     static SPATIAL_ID: core::cell::Cell<u8> = const { core::cell::Cell::new(0) };
 }
 
+/// Records owned by one successful picker job, merged by its coordinator.
+#[derive(Default)]
+pub(crate) struct RecordBatch {
+    decisions: Vec<BlockDecision>,
+    partitions: Vec<MlPartitionTrace>,
+}
+
+impl RecordBatch {
+    pub(crate) fn append_to_current(self) {
+        if !self.decisions.is_empty() {
+            SINK.with(|sink| sink.borrow_mut().extend(self.decisions));
+        }
+        if !self.partitions.is_empty() {
+            PARTITION_SINK.with(|sink| sink.borrow_mut().extend(self.partitions));
+        }
+    }
+}
+
+/// Submitting-thread labels, without its accumulated records.
+#[derive(Clone, Copy)]
+pub(crate) struct CaptureContext {
+    enabled: bool,
+    frame_idx: u32,
+    spatial_id: u8,
+}
+
+impl CaptureContext {
+    pub(crate) fn current() -> Self {
+        let enabled = is_enabled();
+        Self {
+            enabled,
+            frame_idx: if enabled { current_frame_idx() } else { 0 },
+            spatial_id: if enabled { current_spatial_id() } else { 0 },
+        }
+    }
+
+    /// Isolate a job even when the worker pool executes it on the caller.
+    pub(crate) fn run<T>(self, job: impl FnOnce() -> T) -> (T, RecordBatch) {
+        if !self.enabled {
+            return (job(), RecordBatch::default());
+        }
+        // Private to this call: the guard cannot escape to another thread.
+        struct Restore {
+            records: RecordBatch,
+            frame_idx: u32,
+            spatial_id: u8,
+        }
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                SINK.with(|sink| *sink.borrow_mut() = std::mem::take(&mut self.records.decisions));
+                PARTITION_SINK
+                    .with(|sink| *sink.borrow_mut() = std::mem::take(&mut self.records.partitions));
+                FRAME_IDX.with(|tag| tag.set(self.frame_idx));
+                SPATIAL_ID.with(|tag| tag.set(self.spatial_id));
+            }
+        }
+        let _restore = Restore {
+            records: RecordBatch {
+                decisions: SINK.with(|sink| std::mem::take(&mut *sink.borrow_mut())),
+                partitions: PARTITION_SINK.with(|sink| std::mem::take(&mut *sink.borrow_mut())),
+            },
+            frame_idx: FRAME_IDX.with(|tag| tag.replace(self.frame_idx)),
+            spatial_id: SPATIAL_ID.with(|tag| tag.replace(self.spatial_id)),
+        };
+        let result = job();
+        let records = RecordBatch {
+            decisions: SINK.with(|sink| std::mem::take(&mut *sink.borrow_mut())),
+            partitions: PARTITION_SINK.with(|sink| std::mem::take(&mut *sink.borrow_mut())),
+        };
+        (result, records)
+    }
+}
+
 /// Run `f` with the diagnostic spatial-layer tag set to `spatial_id`.
 /// Restores the prior tag even if `f` unwinds.
 pub(crate) fn with_spatial_id<T>(spatial_id: u8, f: impl FnOnce() -> T) -> T {
@@ -829,6 +902,191 @@ mod tests {
             tx_size: TxSize::Tx8x8,
             luma_eob_nonzero: false,
         }
+    }
+
+    // Preserve the global enable flag and every caller TLS value on failure too.
+    struct TestState {
+        enabled: bool,
+        records: RecordBatch,
+        frame_idx: u32,
+        spatial_id: u8,
+    }
+
+    impl TestState {
+        fn enabled() -> Self {
+            Self {
+                enabled: F02_ON.swap(true, Ordering::Relaxed),
+                records: RecordBatch {
+                    decisions: SINK.with(|sink| std::mem::take(&mut *sink.borrow_mut())),
+                    partitions: PARTITION_SINK.with(|sink| std::mem::take(&mut *sink.borrow_mut())),
+                },
+                frame_idx: FRAME_IDX.with(|tag| tag.replace(42)),
+                spatial_id: SPATIAL_ID.with(|tag| tag.replace(2)),
+            }
+        }
+    }
+
+    impl Drop for TestState {
+        fn drop(&mut self) {
+            SINK.with(|sink| *sink.borrow_mut() = std::mem::take(&mut self.records.decisions));
+            PARTITION_SINK
+                .with(|sink| *sink.borrow_mut() = std::mem::take(&mut self.records.partitions));
+            FRAME_IDX.with(|tag| tag.set(self.frame_idx));
+            SPATIAL_ID.with(|tag| tag.set(self.spatial_id));
+            F02_ON.store(self.enabled, Ordering::Relaxed);
+        }
+    }
+
+    fn sample_partition() -> MlPartitionTrace {
+        MlPartitionTrace {
+            frame_idx: current_frame_idx(),
+            spatial_id: current_spatial_id(),
+            mi_row: 2,
+            mi_col: 3,
+            bsize: BlockSize::Block32x32,
+            dc_q: 80,
+            source_hash: 11,
+            predictor_hash: 12,
+            variance: 13,
+            sub_variances: [14, 15, 16, 17],
+            feature_bits: [18, 19, 20, 21, 22, 23],
+            score_bits: 24,
+            split: true,
+        }
+    }
+
+    fn record_samples() {
+        let mut decision = sample_inter();
+        decision.frame_idx = current_frame_idx();
+        decision.spatial_id = current_spatial_id();
+        record_decision(decision);
+        record_partition_trace(sample_partition());
+    }
+
+    #[test]
+    fn capture_restores_nested_and_panicking_jobs_and_both_sinks() {
+        let _guard = crate::env_test_mutex();
+        let _state = TestState::enabled();
+        record_samples();
+        let context = CaptureContext::current();
+        let (value, batch) = context.run(|| {
+            assert!(drain_frame().is_empty());
+            assert!(drain_partition_traces().is_empty());
+            set_frame_idx(43);
+            with_spatial_id(3, || {
+                record_samples();
+                let (_, nested) = CaptureContext::current().run(record_samples);
+                SINK.with(|sink| assert_eq!(sink.borrow().len(), 1));
+                PARTITION_SINK.with(|sink| assert_eq!(sink.borrow().len(), 1));
+                nested.append_to_current();
+            });
+            7
+        });
+        assert_eq!(value, 7);
+        assert_eq!((current_frame_idx(), current_spatial_id()), (42, 2));
+        assert_eq!(batch.decisions.len(), 2);
+        assert_eq!(batch.partitions.len(), 2);
+        assert!(
+            batch
+                .decisions
+                .iter()
+                .all(|d| (d.frame_idx, d.spatial_id) == (43, 3))
+        );
+        assert!(
+            batch
+                .partitions
+                .iter()
+                .all(|p| (p.frame_idx, p.spatial_id) == (43, 3))
+        );
+        let panic = std::panic::catch_unwind(|| {
+            context.run(|| {
+                record_samples();
+                set_frame_idx(99);
+                SPATIAL_ID.with(|tag| tag.set(9));
+                panic!("capture unwind");
+            })
+        });
+        assert!(panic.is_err());
+        assert_eq!((current_frame_idx(), current_spatial_id()), (42, 2));
+        let decisions = drain_frame();
+        let partitions = drain_partition_traces();
+        assert_eq!(decisions.len(), 1);
+        assert_eq!(partitions.len(), 1);
+        assert_eq!((decisions[0].frame_idx, decisions[0].spatial_id), (42, 2));
+        assert_eq!((partitions[0].frame_idx, partitions[0].spatial_id), (42, 2));
+        batch.append_to_current();
+        assert_eq!(drain_frame().len(), 2);
+        assert_eq!(drain_partition_traces().len(), 2);
+    }
+
+    #[test]
+    fn capture_isolates_caller_jobs_and_reused_worker_tls() {
+        let _guard = crate::env_test_mutex();
+        let _state = TestState::enabled();
+        record_samples();
+        let context = CaptureContext::current();
+        let mut pool = rvp9_core::tile_threading::WorkerPool::new_with_caller(
+            std::num::NonZeroUsize::new(2).unwrap(),
+        );
+        for _ in 0..2 {
+            let mut results = [None, None];
+            pool.scope(|scope| {
+                for (index, result) in results.iter_mut().enumerate() {
+                    scope.submit(move || {
+                        if index == 1 {
+                            SINK.with(|sink| assert!(sink.borrow().is_empty()));
+                            PARTITION_SINK.with(|sink| assert!(sink.borrow().is_empty()));
+                            assert_eq!((current_frame_idx(), current_spatial_id()), (0, 0));
+                        }
+                        let _worker_state = (index == 1).then(TestState::enabled);
+                        if index == 1 {
+                            set_frame_idx(99);
+                            SPATIAL_ID.with(|tag| tag.set(9));
+                            record_samples();
+                        }
+                        let (_, batch) = context.run(|| {
+                            assert_eq!((current_frame_idx(), current_spatial_id()), (42, 2));
+                            assert!(drain_frame().is_empty());
+                            assert!(drain_partition_traces().is_empty());
+                            record_samples();
+                        });
+                        if index == 1 {
+                            assert_eq!((current_frame_idx(), current_spatial_id()), (99, 9));
+                            assert_eq!(drain_frame().len(), 1);
+                            assert_eq!(drain_partition_traces().len(), 1);
+                        }
+                        *result = Some(batch);
+                    });
+                }
+            });
+            for result in results {
+                result.unwrap().append_to_current();
+            }
+        }
+        assert_eq!(drain_frame().len(), 5);
+        assert_eq!(drain_partition_traces().len(), 5);
+    }
+
+    #[test]
+    fn capture_disabled_preserves_tls_without_capturing_records() {
+        let _guard = crate::env_test_mutex();
+        let _state = TestState::enabled();
+        record_samples();
+        F02_ON.store(false, Ordering::Relaxed);
+        let (value, batch) = CaptureContext::current().run(|| {
+            assert_eq!((current_frame_idx(), current_spatial_id()), (42, 2));
+            SINK.with(|sink| assert_eq!(sink.borrow().len(), 1));
+            PARTITION_SINK.with(|sink| assert_eq!(sink.borrow().len(), 1));
+            record_samples();
+            7
+        });
+        assert_eq!(value, 7);
+        assert_eq!(batch.decisions.capacity(), 0);
+        assert_eq!(batch.partitions.capacity(), 0);
+        assert_eq!((current_frame_idx(), current_spatial_id()), (42, 2));
+        F02_ON.store(true, Ordering::Relaxed);
+        assert_eq!(drain_frame().len(), 1);
+        assert_eq!(drain_partition_traces().len(), 1);
     }
 
     #[test]

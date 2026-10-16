@@ -1619,6 +1619,7 @@ pub struct StreamEncoder {
 /// global-coordinate code stays unchanged. Merge copies only this tile's
 /// disjoint rectangles and SB records into the frame result.
 struct InterTileJobResult {
+    oracle_records: crate::f02_oracle::RecordBatch,
     claimed_jobs: Vec<crate::row_mt::RowJob>,
     split_stats: NonRdSplitStats,
     coefs: VecBackedInterCoefSource,
@@ -4500,6 +4501,7 @@ impl StreamEncoder {
                 aq_active_this_frame,
             );
             let s2_frame_gate = rvp9_core::mode_decision::inter::frame_s2_gate();
+            let oracle_context = crate::f02_oracle::CaptureContext::current();
             let mut result_slots: Vec<Option<InterTileJobResult>> =
                 (0..tile_count).map(|_| None).collect();
             let mi_tile_ranges: Vec<_> = (0..tile_count)
@@ -4620,6 +4622,7 @@ impl StreamEncoder {
                             .resize((tile_width / 2) * (h as usize / 2), 0);
                         let seg_map = seg_map.as_slice();
                         scope.submit(crate::diagnostic_env::inherit(move || {
+                            let (mut result, oracle_records) = oracle_context.run(|| {
                             rvp9_core::mode_decision::inter::set_frame_s2_gate(s2_frame_gate);
                             choose_mapped_partitions_for_sb_cols_into_window(
                                 partition_input,
@@ -4672,7 +4675,8 @@ impl StreamEncoder {
                             output
                                 .mv_grid
                                 .copy_from_tight_tile(&scratch.mv_grid, tile_mi_cols);
-                            let result = InterTileJobResult {
+                            InterTileJobResult {
+                                oracle_records: crate::f02_oracle::RecordBatch::default(),
                                 claimed_jobs: (0..(h as usize).div_ceil(64))
                                     .map(|sb_row| crate::row_mt::RowJob { sb_row, tile_col })
                                     .collect(),
@@ -4680,7 +4684,9 @@ impl StreamEncoder {
                                 coefs: tile_encode.coefs,
                                 recorded_coef_tile,
                                 mi_grid: tile_encode.mi_grid,
-                            };
+                            }
+                            });
+                            result.oracle_records = oracle_records;
                             *result_slot = Some(result);
                         }));
                     }
@@ -4748,6 +4754,7 @@ impl StreamEncoder {
             let mut tile_coef_sources = Vec::with_capacity(tile_count);
             for (result, (mi_col_start, mi_col_end)) in tile_results.into_iter().zip(mi_tile_ranges)
             {
+                result.oracle_records.append_to_current();
                 stage4a_frame_split_stats.accumulate(&result.split_stats);
                 // Tile-MT records every coefficient as a retained symbolic
                 // token while the picker owns its column-local coefficient
@@ -10390,6 +10397,105 @@ mod tests {
                     frame_history[sb_row * sb_cols + sb_col].previous_segment_id(),
                     (expected_tile + 1) as u8,
                 );
+            }
+        }
+    }
+
+    #[test]
+    fn f02_tile_workers_preserve_complete_frame_records() {
+        assert_f02_worker_records(false);
+    }
+
+    #[test]
+    fn f02_compact_workers_preserve_complete_frame_records() {
+        assert_f02_worker_records(true);
+    }
+
+    fn assert_f02_worker_records(compact: bool) {
+        let _guard = env_test_mutex();
+        struct RestoreOracle(bool);
+        impl Drop for RestoreOracle {
+            fn drop(&mut self) {
+                crate::diagnostic_env::set_var("RVP9_F02_ORACLE", if self.0 { "1" } else { "0" });
+                crate::f02_oracle::init_from_env();
+            }
+        }
+        let _restore = RestoreOracle(crate::f02_oracle::is_enabled());
+        crate::diagnostic_env::set_var("RVP9_F02_ORACLE", "1");
+        crate::diagnostic_env::set_var("RVP9_RT_LOWRES_ML_PARTITION", "1");
+        crate::diagnostic_env::set_var("RVP9_COMPACT_RECON_ROWS", if compact { "1" } else { "0" });
+        crate::diagnostic_env::set_var("RVP9_COMPACT_ROW_WORKERS", "1");
+        crate::f02_oracle::init_from_env();
+        let _ = crate::f02_oracle::drain_frame();
+        let _ = crate::f02_oracle::drain_partition_traces();
+        let (w, h) = (512usize, 128usize);
+        let cfg = EncoderConfig::new(w as u32, h as u32);
+        let layout = |max_threads| EncoderParallelism {
+            max_threads,
+            requested_log2_tile_cols: 1,
+        };
+        let mut serial = StreamEncoder::new_with_parallelism(cfg, layout(1)).unwrap();
+        let mut threaded = StreamEncoder::new_with_parallelism(cfg, layout(2)).unwrap();
+        assert_eq!(threaded.inter_tile_scratch.len(), 2);
+        for frame_idx in 0..3u32 {
+            let y = (0..w * h)
+                .map(|i| ((i % w * 3 + i / w * 5 + frame_idx as usize * 17) & 255) as u8)
+                .collect::<Vec<_>>();
+            let uv = vec![128u8; w * h / 4];
+            let view = yuv_view(&y, &uv, &uv, w);
+            let collect = |encoder: &mut StreamEncoder| {
+                let packet =
+                    crate::f02_oracle::with_spatial_id(2, || encoder.encode_frame(&view).unwrap());
+                let mut decisions = crate::f02_oracle::drain_frame();
+                let mut partitions = crate::f02_oracle::drain_partition_traces();
+                assert!(crate::f02_oracle::drain_frame().is_empty());
+                assert!(crate::f02_oracle::drain_partition_traces().is_empty());
+                let mut coverage = vec![0u8; w * h];
+                for d in &decisions {
+                    assert_eq!((d.frame_idx, d.spatial_id), (frame_idx, 2));
+                    let (x, y) = (usize::from(d.mi_col) * 8, usize::from(d.mi_row) * 8);
+                    for row in y..(y + usize::from(d.bsize.height())).min(h) {
+                        for col in x..(x + usize::from(d.bsize.width())).min(w) {
+                            coverage[row * w + col] += 1;
+                        }
+                    }
+                }
+                assert!(
+                    coverage.iter().all(|&n| n == 1),
+                    "frame {frame_idx} leaves must cover every pixel exactly once"
+                );
+                if frame_idx > 0 {
+                    assert!(!partitions.is_empty(), "forced ML traces must be emitted");
+                }
+                for p in &partitions {
+                    assert_eq!((p.frame_idx, p.spatial_id), (frame_idx, 2));
+                    assert!(usize::from(p.mi_row) * 8 < h && usize::from(p.mi_col) * 8 < w);
+                }
+                decisions.sort_by_key(|d| (d.mi_row, d.mi_col, d.bsize.idx()));
+                partitions.sort_by_key(|p| (p.mi_row, p.mi_col, p.bsize.idx()));
+                (packet.data, decisions, partitions)
+            };
+            let serial_records = collect(&mut serial);
+            let threaded_records = collect(&mut threaded);
+            assert!(
+                serial_records.0 == threaded_records.0,
+                "packet frame {frame_idx}, compact={compact}"
+            );
+            assert_eq!(
+                serial_records.1.len(),
+                threaded_records.1.len(),
+                "decision count frame {frame_idx}"
+            );
+            for (a, b) in serial_records.1.iter().zip(&threaded_records.1) {
+                assert_eq!(a, b, "decision frame {frame_idx}, compact={compact}");
+            }
+            assert_eq!(
+                serial_records.2.len(),
+                threaded_records.2.len(),
+                "partition count frame {frame_idx}"
+            );
+            for (a, b) in serial_records.2.iter().zip(&threaded_records.2) {
+                assert_eq!(a, b, "partition frame {frame_idx}, compact={compact}");
             }
         }
     }
