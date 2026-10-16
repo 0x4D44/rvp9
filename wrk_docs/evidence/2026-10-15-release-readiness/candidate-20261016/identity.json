@@ -23,7 +23,6 @@
   "workspace_test_status": "running; no acceptance claim",
   "files": {
     "aarch64-caps-compile.raw.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "aarch64-caps-diag": "01a958304653d2cec2772fc89de5acb334b94f2a9bf196bbeb8b79ca13c6d98e",
     "aarch64-caps-force-scalar.raw.txt": "fd0e51eb2151dad9a3c8e3945b164f7af4dc04343f8b595e28edb645ee89b603",
     "aarch64-caps-native.raw.txt": "fd0e51eb2151dad9a3c8e3945b164f7af4dc04343f8b595e28edb645ee89b603",
     "aarch64_caps_diag.rs": "75ccdd3d5ff30431cb02c501be8fa9e71930bb6c9cac54fbd8622abc6bec7e93",
@@ -41,5 +40,7 @@
     "realtime-external-tests.raw.txt": "a1727bcad37551829d7fdabacde8f06b543fed2269e5fb6ea053b9df1a43ab17",
     "soak-unit-tests.raw.txt": "b53ab4704f821bc50754fdb98e9c9469b5ead08f9f6ecda61c7c688624bd87d6",
     "spatial-self-test.raw.txt": "06d704c9212a6265863da5e65cc82f0182b3e7b5d1a30abeb070c08645772dd9"
-  }
+  },
+  "caps_diagnostic_binary_sha256": "01a958304653d2cec2772fc89de5acb334b94f2a9bf196bbeb8b79ca13c6d98e",
+  "caps_diagnostic_binary_location": ".scratch/recheck-tools/aarch64-caps-diag (not committed; reproducible from retained source)"
 }
