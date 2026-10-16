@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00117 — CLI destination aliases can destroy inputs and outputs
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** High
 - **Area:** cli/path safety
 - **Raised:** 2026-08-22T20:44:01Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261016T000225Z-17994e6d
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00117-run-fix-20261016T000225Z-17994e6d
-- **Owner base:** fb2d60b2b3c823cf8c730e6e30c5028784936141
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-16T00:02:25Z
-- **Owner until:** 2026-10-16T04:02:25Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T20:44:01Z, raised via `deltic bugs new` model=gpt-5.6-sol@high)
+- **State history:** Open (2026-08-22T20:44:01Z, raised via `deltic bugs new` model=gpt-5.6-sol@high) -> Fixed (2026-10-16T00:18:36Z, deltic:auto role=fix run=fix-20261016T000225Z-17994e6d branch=task/bug-RVP9-BUG-KIL-00117-run-fix-20261016T000225Z-17994e6d code=8bf19aedd7b189d4abff952563fd03d8fdc8dca9 gate=manual)
 
 ## Observation
 
