@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00119 — Decoder emits invalid Y4M across dynamic stream changes
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** High
 - **Area:** cli/rvp9dec output correctness
 - **Raised:** 2026-08-22T20:44:02Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261016T032211Z-01b803ca
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00119-run-fix-20261016T032211Z-01b803ca
-- **Owner base:** bdc62da33b06e39440fe9b4dffad2e17e28643d3
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-16T03:22:11Z
-- **Owner until:** 2026-10-16T07:22:11Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T20:44:02Z, raised via `deltic bugs new` model=gpt-5.6-sol@high)
+- **State history:** Open (2026-08-22T20:44:02Z, raised via `deltic bugs new` model=gpt-5.6-sol@high) -> Fixed (2026-10-16T03:31:12Z, deltic:auto role=fix run=fix-20261016T032211Z-01b803ca branch=task/bug-RVP9-BUG-KIL-00119-run-fix-20261016T032211Z-01b803ca code=bebdf8eb5ceaab40999fa602124e4945bb413931 gate=manual)
 
 ## Observation
 
