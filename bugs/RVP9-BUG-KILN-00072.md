@@ -6,15 +6,15 @@
 - **Area:** encoder/GOP cadence
 - **Raised:** 2026-08-16T08:19:23Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
+- **Owner:** deltic:manual
+- **Owner role:** fix
+- **Owner run:** fix-20261016T084100Z-a89929bf
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KILN-00072-run-fix-20261016T084100Z-a89929bf
+- **Owner base:** 6998bb2ba22a17cd9dfd9a01fa7b5b0745db9925
 - **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner since:** 2026-10-16T08:41:00Z
+- **Owner until:** 2026-10-16T12:41:00Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
