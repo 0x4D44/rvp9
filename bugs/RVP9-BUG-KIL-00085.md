@@ -6,15 +6,15 @@
 - **Area:** harness/diff-bitstream
 - **Raised:** 2026-08-22T13:20:52Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
+- **Owner:** deltic:manual
+- **Owner role:** fix
+- **Owner run:** fix-20261016T023434Z-82979771
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KIL-00085-run-fix-20261016T023434Z-82979771
+- **Owner base:** 18eac1cf611de95a78cdf46beb21d1f694949a8b
 - **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner since:** 2026-10-16T02:34:34Z
+- **Owner until:** 2026-10-16T06:34:34Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
