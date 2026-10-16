@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00098 — WebM track discovery has unbounded pending-container growth
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** io/webm track discovery
 - **Raised:** 2026-08-22T14:34:14Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261016T014916Z-059eed45
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00098-run-fix-20261016T014916Z-059eed45
-- **Owner base:** f5a8104621cef90f64f98a29387e80a7c3d2aefc
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-16T01:49:16Z
-- **Owner until:** 2026-10-16T05:49:16Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T14:34:14Z, raised via `deltic bugs new`)
+- **State history:** Open (2026-08-22T14:34:14Z, raised via `deltic bugs new`) -> Fixed (2026-10-16T01:57:18Z, deltic:auto role=fix run=fix-20261016T014916Z-059eed45 branch=task/bug-RVP9-BUG-KIL-00098-run-fix-20261016T014916Z-059eed45 code=d7966e45956ad70dae2088a9901dc504adf45042 gate=manual)
 
 ## Observation
 
