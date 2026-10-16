@@ -1,25 +1,25 @@
 # RVP9-BUG-CRU-00001 — RVP9_FORCE_SCALAR no longer yields a scalar encoder on x86_64: new SSE2 kernels bypass SimdDispatch
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** core/dsp dispatch
 - **Raised:** 2026-08-23T17:09:40Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261016T020804Z-09df404b
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-CRU-00001-run-fix-20261016T020804Z-09df404b
-- **Owner base:** caf1c5061dced4edc30662d36a13f3f36b2f3e86
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-16T02:08:04Z
-- **Owner until:** 2026-10-16T06:08:04Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-23T17:09:40Z, raised via `deltic bugs new` model=claude-opus-5@high)
+- **State history:** Open (2026-08-23T17:09:40Z, raised via `deltic bugs new` model=claude-opus-5@high) -> Fixed (2026-10-16T02:27:37Z, deltic:auto role=fix run=fix-20261016T020804Z-09df404b branch=task/bug-RVP9-BUG-CRU-00001-run-fix-20261016T020804Z-09df404b code=d9e95399d5db09bcd7651581cbffb61806cf0823 gate=manual)
 
 ## Observation
 
