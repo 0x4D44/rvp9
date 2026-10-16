@@ -115,6 +115,10 @@ fn parse_args_from(argv: &[String]) -> Args {
     let budget_ms = get("--budget-ms")
         .map(|s| s.parse::<f64>().expect("--budget-ms must be f64"))
         .unwrap_or(33.333);
+    assert!(
+        budget_ms.is_finite() && budget_ms > 0.0,
+        "--budget-ms must be finite and greater than zero"
+    );
     let output = get("--output")
         .map(PathBuf::from)
         .unwrap_or_else(|| std::env::temp_dir().join("rvp9_realtime_bench.ivf"));
@@ -566,6 +570,73 @@ mod tests {
                 .unwrap_err()
                 .contains("expected 0..=2")
         );
+    }
+
+    #[test]
+    fn primary_budget_requires_finite_positive_value() {
+        let invalid_budgets = ["NaN", "inf", "-inf", "0", "-0", "-1"];
+        for value in invalid_budgets {
+            for inline in [false, true] {
+                let mut argv = vec!["realtime".to_string(), "--input=input.y4m".to_string()];
+                if inline {
+                    argv.push(format!("--budget-ms={value}"));
+                } else {
+                    argv.extend(["--budget-ms".to_string(), value.to_string()]);
+                }
+
+                let result = std::panic::catch_unwind(|| parse_args_from(&argv));
+                assert!(
+                    result.is_err(),
+                    "--budget-ms must reject {value} in {} form",
+                    if inline { "inline" } else { "split" }
+                );
+                let diagnostic = match result {
+                    Err(diagnostic) => diagnostic,
+                    Ok(_) => unreachable!("the assertion above requires a rejection"),
+                };
+                let diagnostic = diagnostic
+                    .downcast_ref::<String>()
+                    .map(String::as_str)
+                    .or_else(|| diagnostic.downcast_ref::<&str>().copied())
+                    .expect("invalid budget panic should include an assertion message");
+                assert_eq!(
+                    diagnostic,
+                    "--budget-ms must be finite and greater than zero",
+                    "unexpected rejection for {value} in {} form",
+                    if inline { "inline" } else { "split" }
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn primary_budget_accepts_default_and_finite_positive_values() {
+        let default = parse_args_from(&["realtime".to_string(), "--input=input.y4m".to_string()]);
+        assert_eq!(default.budget_ms, 33.333);
+
+        for value in [
+            f64::from_bits(1),
+            f64::MIN_POSITIVE,
+            0.125,
+            33.333,
+            f64::MAX,
+        ] {
+            for inline in [false, true] {
+                let value = value.to_string();
+                let mut argv = vec!["realtime".to_string(), "--input=input.y4m".to_string()];
+                if inline {
+                    argv.push(format!("--budget-ms={value}"));
+                } else {
+                    argv.extend(["--budget-ms".to_string(), value.clone()]);
+                }
+
+                let args = parse_args_from(&argv);
+                assert_eq!(
+                    args.budget_ms,
+                    value.parse::<f64>().expect("finite test value")
+                );
+            }
+        }
     }
 
     fn test_args() -> Args {
