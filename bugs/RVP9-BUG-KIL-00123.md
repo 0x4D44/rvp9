@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00123 — Raw invalid geometry allocates a frame before encoder validation
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** cli/rvp9enc raw input validation
 - **Raised:** 2026-08-22T20:44:04Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261016T025112Z-4e320457
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00123-run-fix-20261016T025112Z-4e320457
-- **Owner base:** c0da4e56ef0c665e1dbf5c26318e61d20ab116b6
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-16T02:51:12Z
-- **Owner until:** 2026-10-16T06:51:12Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T20:44:04Z, raised via `deltic bugs new` model=gpt-5.6-sol@high)
+- **State history:** Open (2026-08-22T20:44:04Z, raised via `deltic bugs new` model=gpt-5.6-sol@high) -> Fixed (2026-10-16T03:04:10Z, deltic:auto role=fix run=fix-20261016T025112Z-4e320457 branch=task/bug-RVP9-BUG-KIL-00123-run-fix-20261016T025112Z-4e320457 code=85153ed163d255b45c858ab619dc0d7d85919fd5 gate=manual)
 
 ## Observation
 
