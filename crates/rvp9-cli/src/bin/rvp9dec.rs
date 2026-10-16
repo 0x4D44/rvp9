@@ -435,7 +435,7 @@ fn run(opts: &DecOpts, positionals: &[String]) -> Result<(), String> {
     // not packet parsing, not pixel output). u128 has effectively unlimited
     // headroom — a u64 us counter holds ~584,000 years.
     let mut dx_time_us: u128 = 0;
-    let mut y4m_header_written = false;
+    let mut y4m_format = None;
 
     'packets: while opts.limit != Some(0) {
         let Some(pkt) = packets
@@ -493,7 +493,7 @@ fn run(opts: &DecOpts, positionals: &[String]) -> Result<(), String> {
                         "YV12/--yv12 output requires decoded 4:2:0 chroma; got {chroma:?}"
                     ));
                 }
-                OutFmt::Y4m if chroma == ChromaFormat::Yuv440 => {
+                OutFmt::Y4m if chroma == ChromaFormat::Yuv440 && y4m_format.is_none() => {
                     return Err(
                         "--y4m output for 4:4:0 (Yuv440) is not representable in YUV4MPEG2; \
                          use --noblit, --md5, or --framemd5"
@@ -521,7 +521,7 @@ fn run(opts: &DecOpts, positionals: &[String]) -> Result<(), String> {
                 }
                 Md5Mode::Off => {
                     if want_pixels {
-                        write_frame(w, &buf, fmt, fps_num, fps_den, &mut y4m_header_written)?;
+                        write_frame(w, &buf, fmt, fps_num, fps_den, &mut y4m_format, emitted + 1)?;
                     }
                 }
             }
@@ -586,16 +586,39 @@ fn write_frame<W: Write>(
     fmt: OutFmt,
     fps_num: u32,
     fps_den: u32,
-    y4m_header_written: &mut bool,
+    y4m_format: &mut Option<(u32, u32, ChromaFormat)>,
+    output_frame: usize,
 ) -> Result<(), String> {
+    let current_format = (buf.width(), buf.height(), buf.chroma());
+    if fmt == OutFmt::Y4m
+        && let Some(first_format) = *y4m_format
+        && first_format != current_format
+    {
+        return Err(format!(
+            "Y4M output format changed on output frame {output_frame}: first frame format {}x{} {:?}, current frame format {}x{} {:?}",
+            first_format.0,
+            first_format.1,
+            first_format.2,
+            current_format.0,
+            current_format.1,
+            current_format.2,
+        ));
+    }
+
     let (y, u, v) = visible_planes(buf);
     match fmt {
         OutFmt::Y4m => {
-            if !*y4m_header_written {
-                let chroma = buf.chroma();
-                rvp9_io::y4m::write_header(w, buf.width(), buf.height(), fps_num, fps_den, chroma)
-                    .map_err(io_err)?;
-                *y4m_header_written = true;
+            if y4m_format.is_none() {
+                rvp9_io::y4m::write_header(
+                    w,
+                    current_format.0,
+                    current_format.1,
+                    fps_num,
+                    fps_den,
+                    current_format.2,
+                )
+                .map_err(io_err)?;
+                *y4m_format = Some(current_format);
             }
             rvp9_io::y4m::write_frame(w, &y, &u, &v).map_err(io_err)?;
         }
@@ -654,4 +677,159 @@ fn open_output(
 
 fn io_err(e: std::io::Error) -> String {
     format!("io: {e}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rvp9_core::frame::{BorderUsage, ByteAlignment, Yv12Buffer};
+    use std::io;
+
+    fn buffer(width: u32, height: u32, chroma: ChromaFormat) -> Yv12Buffer {
+        Yv12Buffer::alloc(
+            width,
+            height,
+            chroma,
+            BorderUsage::Decoder,
+            ByteAlignment::Legacy,
+        )
+        .expect("allocate test frame")
+    }
+
+    fn assert_format_change_rejected(
+        first_format: (u32, u32, ChromaFormat),
+        changed_format: (u32, u32, ChromaFormat),
+        output_frame: usize,
+    ) {
+        let first = buffer(first_format.0, first_format.1, first_format.2);
+        let changed = buffer(changed_format.0, changed_format.1, changed_format.2);
+        let mut output = Vec::new();
+        let mut y4m_format = None;
+        write_frame(&mut output, &first, OutFmt::Y4m, 30, 1, &mut y4m_format, 1)
+            .expect("write first Y4M frame");
+        let prefix = output.clone();
+
+        let result = write_frame(
+            &mut output,
+            &changed,
+            OutFmt::Y4m,
+            30,
+            1,
+            &mut y4m_format,
+            output_frame,
+        );
+        assert!(
+            result.is_err(),
+            "Y4M format change on output frame {output_frame} must be rejected"
+        );
+        assert_eq!(output, prefix, "changed frame must write no bytes");
+        let error = result.expect_err("format change error");
+        let expected = [
+            format!("output frame {output_frame}"),
+            format!("{}x{} {:?}", first_format.0, first_format.1, first_format.2),
+            format!(
+                "{}x{} {:?}",
+                changed_format.0, changed_format.1, changed_format.2
+            ),
+        ];
+        for expected in expected {
+            assert!(error.contains(&expected), "{error:?} lacks {expected:?}");
+        }
+    }
+
+    #[test]
+    fn y4m_rejects_width_change_before_writing_frame() {
+        assert_format_change_rejected(
+            (64, 64, ChromaFormat::Yuv420),
+            (128, 64, ChromaFormat::Yuv420),
+            2,
+        );
+    }
+
+    #[test]
+    fn y4m_rejects_height_change_before_writing_frame() {
+        assert_format_change_rejected(
+            (64, 64, ChromaFormat::Yuv420),
+            (64, 128, ChromaFormat::Yuv420),
+            2,
+        );
+    }
+
+    #[test]
+    fn y4m_rejects_chroma_changes_before_writing_frame() {
+        for chroma in [
+            ChromaFormat::Yuv422,
+            ChromaFormat::Yuv444,
+            ChromaFormat::Yuv440,
+        ] {
+            assert_format_change_rejected((64, 64, ChromaFormat::Yuv420), (64, 64, chroma), 2);
+        }
+    }
+
+    #[test]
+    fn y4m_writes_multiple_frames_with_the_same_format() {
+        let frame = buffer(64, 64, ChromaFormat::Yuv420);
+        let mut output = Vec::new();
+        let mut y4m_format = None;
+        for output_frame in 1..=2 {
+            write_frame(
+                &mut output,
+                &frame,
+                OutFmt::Y4m,
+                30,
+                1,
+                &mut y4m_format,
+                output_frame,
+            )
+            .expect("write same-format Y4M frame");
+        }
+
+        assert_eq!(
+            output
+                .windows(b"YUV4MPEG2".len())
+                .filter(|window| *window == b"YUV4MPEG2")
+                .count(),
+            1,
+            "one stream header"
+        );
+        assert_eq!(
+            output
+                .windows(b"FRAME\n".len())
+                .filter(|window| *window == b"FRAME\n")
+                .count(),
+            2,
+            "two frame tags"
+        );
+    }
+
+    #[test]
+    fn y4m_format_state_is_unset_when_header_write_fails() {
+        struct FailingWriter;
+
+        impl Write for FailingWriter {
+            fn write(&mut self, _buffer: &[u8]) -> io::Result<usize> {
+                Err(io::Error::other("intentional header write failure"))
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let frame = buffer(64, 64, ChromaFormat::Yuv420);
+        let mut y4m_format = None;
+        let error = write_frame(
+            &mut FailingWriter,
+            &frame,
+            OutFmt::Y4m,
+            30,
+            1,
+            &mut y4m_format,
+            1,
+        )
+        .expect_err("failed Y4M header write");
+
+        assert!(error.contains("intentional header write failure"));
+        assert_eq!(y4m_format, None, "failed header must not latch a format");
+    }
 }

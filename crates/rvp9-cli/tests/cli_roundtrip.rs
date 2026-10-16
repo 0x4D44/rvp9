@@ -19,7 +19,7 @@ use std::process::Command;
 
 use common::CommandExt;
 use rvp9_decoder::Decoder;
-use rvp9_io::container::read_packets;
+use rvp9_io::container::{IvfHeader, IvfStreamWriter, read_packets};
 
 const W: usize = 64;
 const H: usize = 64;
@@ -70,6 +70,60 @@ fn write_synthetic_raw_dims(path: &std::path::Path, width: usize, height: usize,
     }
     assert_eq!(buf.len(), frame_bytes * frames);
     std::fs::write(path, &buf).expect("write synthetic raw");
+}
+
+fn encode_single_frame_ivf(width: usize, height: usize, tag: &str) -> PathBuf {
+    let raw = tmp(&format!("{tag}_in.yuv"));
+    let ivf = tmp(&format!("{tag}_out.ivf"));
+    write_synthetic_raw_dims(&raw, width, height, 1);
+    let status = Command::new(enc_bin())
+        .args(["-w"])
+        .arg(width.to_string())
+        .arg("-h")
+        .arg(height.to_string())
+        .args(["--fps", "30/1", "--target-bitrate", "500", "-o"])
+        .arg(&ivf)
+        .arg(&raw)
+        .bounded_status()
+        .unwrap_or_else(|error| panic!("run one-frame rvp9enc {width}x{height}: {error}"));
+    assert!(
+        status.success(),
+        "one-frame rvp9enc {width}x{height} failed"
+    );
+    let _ = std::fs::remove_file(&raw);
+    ivf
+}
+
+fn dynamic_resolution_ivf(tag: &str) -> PathBuf {
+    let first = encode_single_frame_ivf(64, 64, &format!("{tag}_first"));
+    let second = encode_single_frame_ivf(128, 64, &format!("{tag}_second"));
+    let (first_data, first_packets) = read_packets(&first).expect("read first keyframe IVF");
+    let (second_data, second_packets) = read_packets(&second).expect("read second keyframe IVF");
+    assert_eq!(
+        first_packets.len(),
+        1,
+        "first IVF contains one keyframe packet"
+    );
+    assert_eq!(
+        second_packets.len(),
+        1,
+        "second IVF contains one keyframe packet"
+    );
+
+    let combined = tmp(&format!("{tag}_dynamic.ivf"));
+    let file = std::fs::File::create(&combined).expect("create dynamic IVF");
+    let mut writer = IvfStreamWriter::new(file, &IvfHeader::vp9(64, 64, 30, 1))
+        .expect("write dynamic IVF header");
+    writer
+        .write_packet(first_packets[0].slice(&first_data))
+        .expect("write first keyframe packet");
+    writer
+        .write_packet(second_packets[0].slice(&second_data))
+        .expect("write second keyframe packet");
+    writer.finish().expect("finish dynamic IVF");
+    let _ = std::fs::remove_file(&first);
+    let _ = std::fs::remove_file(&second);
+    combined
 }
 
 #[test]
@@ -334,6 +388,100 @@ fn encode_decode_rectangular_roundtrip_preserves_geometry_and_planes() {
     let _ = std::fs::remove_file(&ivf);
     let _ = std::fs::remove_file(&i420);
     let _ = std::fs::remove_file(&y4m);
+}
+
+#[test]
+fn y4m_rejects_dynamic_geometry_and_skip_selects_the_output_format() {
+    let ivf = dynamic_resolution_ivf("y4m_dynamic");
+    let run_dec = |args: &[&str]| {
+        let mut command = Command::new(dec_bin());
+        command.args(args).arg(&ivf);
+        command
+            .bounded_output()
+            .expect("run rvp9dec on dynamic IVF")
+    };
+
+    let first_frame = run_dec(&["--y4m", "--limit", "1"]);
+    assert!(
+        first_frame.status.success(),
+        "--limit 1 should emit the first frame: {}",
+        String::from_utf8_lossy(&first_frame.stderr)
+    );
+
+    let changed = run_dec(&["--y4m"]);
+    assert!(
+        !changed.status.success(),
+        "Y4M output with changing geometry must fail"
+    );
+    let stderr = String::from_utf8_lossy(&changed.stderr);
+    assert!(
+        stderr.contains("output frame 2"),
+        "diagnostic must name the one-based emitted frame: {stderr}"
+    );
+    assert!(
+        stderr.contains("64x64 Yuv420") && stderr.contains("128x64 Yuv420"),
+        "diagnostic must name both complete formats: {stderr}"
+    );
+    assert_eq!(
+        changed.stdout, first_frame.stdout,
+        "rejection must leave exactly the valid first-frame Y4M prefix"
+    );
+
+    let skipped = run_dec(&["--y4m", "--skip", "1"]);
+    assert!(
+        skipped.status.success(),
+        "--skip 1 should start a new Y4M stream at the second format: {}",
+        String::from_utf8_lossy(&skipped.stderr)
+    );
+    let skipped_header_end = skipped
+        .stdout
+        .iter()
+        .position(|&byte| byte == b'\n')
+        .expect("skipped Y4M header newline");
+    let skipped_header = std::str::from_utf8(&skipped.stdout[..skipped_header_end])
+        .expect("skipped Y4M header UTF-8");
+    assert!(
+        skipped_header.contains("W128") && skipped_header.contains("H64"),
+        "--skip 1 should latch the second frame's dimensions: {skipped_header}"
+    );
+    let skipped_frame = &skipped.stdout[skipped_header_end + 1..];
+    assert!(
+        skipped_frame.starts_with(b"FRAME\n"),
+        "--skip 1 should emit one frame tag"
+    );
+    assert_eq!(
+        skipped_frame.len(),
+        b"FRAME\n".len() + 128 * 64 * 3 / 2,
+        "--skip 1 should emit exactly one 128x64 4:2:0 frame"
+    );
+
+    for format in ["--i420", "--yv12"] {
+        let raw = run_dec(&[format]);
+        assert!(
+            raw.status.success(),
+            "{format} output must keep accepting geometry changes: {}",
+            String::from_utf8_lossy(&raw.stderr)
+        );
+        assert_eq!(raw.stdout.len(), 64 * 64 * 3 / 2 + 128 * 64 * 3 / 2);
+    }
+
+    let md5 = run_dec(&["--md5"]);
+    assert!(
+        md5.status.success(),
+        "--md5 must keep accepting geometry changes: {}",
+        String::from_utf8_lossy(&md5.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&md5.stdout).lines().count(), 2);
+
+    let noblit = run_dec(&["--noblit"]);
+    assert!(
+        noblit.status.success(),
+        "--noblit must keep accepting geometry changes: {}",
+        String::from_utf8_lossy(&noblit.stderr)
+    );
+    assert!(noblit.stdout.is_empty(), "--noblit must not emit pixels");
+
+    let _ = std::fs::remove_file(&ivf);
 }
 
 #[test]
