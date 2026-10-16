@@ -1,0 +1,100 @@
+Bring RVP9 from alpha to a reviewable final-release candidate, excluding
+bug fixes owned by the other agent.
+
+Work in /Users/md/language/rvp9 and follow its AGENTS.md, CLAUDE.md,
+lessons_learnt.md and applicable skills. Do not publish, tag, push or integrate
+without explicit authorization. This task prepares a release candidate;
+it does not authorize a release.
+
+Proposed release boundary:
+- 8-bit profile-0, one-pass realtime encoding, CPU-used 6–8.
+- Production-quality modes: single-stream CBR, denoiser CBR and spatial CBR.
+- VBR and temporal SVC retain their existing experimental labels and ceilings.
+- Qualify macOS Apple Silicon and Windows x86-64 separately.
+- Preserve the approved deferral of billion-iteration fuzzing and the 72-hour
+  monitored soak. Do not add dependencies, hosted CI or new features.
+
+Another agent owns bug fixes. Do not duplicate that work or modify its files.
+Treat ledger findings as reports requiring verification, not proof that current
+code still fails. Identify dependencies by bug ID. Do not quietly work around a
+broken acceptance tool or count an invalid result as a pass.
+
+Work in this priority order:
+
+1. Establish the actual release checklist.
+   Reconcile PLAN.md, release notes, current code and recorded evidence.
+   Distinguish:
+   - satisfied gates with applicable evidence;
+   - evidence that is stale, platform-specific or incomplete;
+   - genuinely missing implementation;
+   - dependencies on the bug-fixing agent.
+   Do not infer missing features merely from old unchecked roadmap boxes.
+   Produce a concise checklist with a concrete acceptance check for each item.
+   Surface any scope decision before dependent work.
+
+2. Validate the qualification machinery before expensive runs.
+   Exercise the existing qualification scripts and their self-tests. Confirm
+   that missing fixtures, failed child processes, zero-work runs, invalid
+   measurements and decoder mismatches cannot produce a successful result.
+   Check whether the open BD-rate, soak and scalar-dispatch findings affect the
+   planned runs. Report blockers to Arthur by ID; leave fixes to their owner.
+   Verify that the available corpus matches the declared release coverage.
+
+3. Run cheap, broad correctness checks.
+   On a recorded candidate revision, run the documented focused/build checks,
+   official conformance matrix, 32-row encoder cross-decoder gate and 24-row
+   reverse-reference gate. Cover native/scalar and threading configurations
+   where the gates require them.
+   Validate both supported platforms; Rosetta is not native AVX2 evidence.
+   Record failures and stop only dependent checks, continuing independent work.
+
+4. Measure the most valuable performance rows first.
+   Build production PGO artifacts using the canonical training recipe.
+   Start with production CBR at CPU6/7/8 and 720p30, 1080p30 and 1080p60,
+   including Ducks, Tree and Town. Collect both relative speed and actual
+   per-frame p50/p99 latency.
+   Use the documented acceptance metrics, paired repeats and host evidence.
+   Do not substitute process-CPU ratios for wall-time or latency gates.
+   Then complete all 75 relative-speed groups, 200 latency rows and the separate
+   spatial matrix required by the existing contract, including experimental
+   modes' unchanged non-quality gates.
+   Do not restart an open-ended optimization campaign. Report reproducible
+   misses with their magnitude and affected configurations.
+
+5. Refresh compression-quality evidence.
+   Once the measurement tools are trustworthy, run the production-quality
+   census first, then experimental configurations against their existing
+   ceilings. Run the associated cross-decoder checks.
+   Require <=+0.5% aggregate BD-rate and the documented important-clip/layer
+   guards for production modes. Never loosen a threshold to pass.
+   Separate compression-efficiency failures from bitstream correctness.
+
+6. Complete bounded safety assurance.
+   Audit existing Miri, sanitizer, fuzz, unsafe-review and soak evidence.
+   Run missing applicable checks on the candidate, prioritizing public parsers,
+   full-frame decoding, threading and SIMD boundaries.
+   Verify that each campaign performed nonzero useful work.
+   Keep the approved long-duration campaigns explicitly deferred.
+
+7. Make release claims accurate and repeatable.
+   Update README, PLAN, release documentation and reproduction instructions to
+   match observed results, supported platforms and experimental boundaries.
+   Establish documented local regression commands using existing tooling.
+   Resolve the stale hosted-CI requirement against the local-first policy;
+   do not add a hosted workflow.
+   Verify public API documentation and package/build checks.
+
+Finish by producing one release-readiness report:
+- Candidate revision, platform and production-PGO artifact identities.
+- Pass/fail/deferred status for every release gate, with evidence links.
+- Remaining bug dependencies and decisions requiring Arthur.
+- A clear release recommendation and precise limits on its claims.
+
+Prioritize early detection of blockers over generating a large volume of results.
+Record revision, commands, toolchain, inputs and artifact hashes with evidence.
+Checks during development may use intermediate revisions; the final acceptance
+record must identify the exact candidate and justify any evidence carried forward.
+
+Do not declare completion from historical passes or a three-clip speed average.
+Do not wait silently for the bug-fixing agent: complete independent work and
+report any real dependency that prevents further progress.
