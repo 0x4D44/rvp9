@@ -6,15 +6,15 @@
 - **Area:** encoder/lookahead API
 - **Raised:** 2026-08-22T18:32:49Z
 - **Discovery source:** Agent
-- **Owner:** -
-- **Owner role:** -
-- **Owner run:** -
-- **Owner host:** -
-- **Owner branch:** -
-- **Owner base:** -
+- **Owner:** deltic:manual
+- **Owner role:** fix
+- **Owner run:** fix-20261016T072410Z-43317dc5
+- **Owner host:** flux
+- **Owner branch:** task/bug-RVP9-BUG-KIL-00102-run-fix-20261016T072410Z-43317dc5
+- **Owner base:** a3954ad849af063b01c0c41400246e6d93c4bafb
 - **Owner fingerprint:** -
-- **Owner since:** -
-- **Owner until:** -
+- **Owner since:** 2026-10-16T07:24:10Z
+- **Owner until:** 2026-10-16T11:24:10Z
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
