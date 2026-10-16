@@ -103,6 +103,12 @@ pub fn bdrate(curve_a: &[(f64, f64)], curve_b: &[(f64, f64)]) -> f64 {
     ((mean_b - mean_a).exp() - 1.0) * 100.0
 }
 
+fn curve_samples_are_valid(curve: &[(f64, f64)]) -> bool {
+    curve
+        .iter()
+        .all(|&(br, ps)| br.is_finite() && br > 0.0 && ps.is_finite())
+}
+
 /// Linearly interpolate a curve's PSNR at a given bitrate using
 /// `ln(bitrate)` as the independent variable.
 ///
@@ -118,7 +124,8 @@ pub fn bdrate(curve_a: &[(f64, f64)], curve_b: &[(f64, f64)]) -> f64 {
 /// - The curve has fewer than 2 points.
 /// - `target_kbps` is outside the curve's bitrate range (no
 ///   extrapolation — caller is expected to skip out-of-range queries).
-/// - Any sample has a non-positive or non-finite bitrate / PSNR.
+/// - Any sample bitrate is non-positive or non-finite.
+/// - Any sample PSNR is non-finite (zero and negative PSNR values are valid).
 ///
 /// This is the fallback metric for the BD-rate gate when the cubic
 /// integral is undefined (no PSNR overlap between curves). Linear
@@ -133,10 +140,8 @@ pub fn psnr_at_bitrate(curve: &[(f64, f64)], target_kbps: f64) -> Option<f64> {
         return None;
     }
     // Validate samples are well-formed.
-    for &(br, ps) in curve {
-        if !br.is_finite() || br <= 0.0 || !ps.is_finite() {
-            return None;
-        }
+    if !curve_samples_are_valid(curve) {
+        return None;
     }
     // Sort a copy by bitrate ascending (the gate's curve is built in
     // target-bitrate order, but RC drift can shuffle the actual
@@ -209,18 +214,32 @@ pub struct PsnrDeltaSummary {
 /// extrapolated.
 ///
 /// Returns `None` when no rvp9 point falls inside the libvpx bitrate
-/// range (caller should report DEFERRED — there is no signal). When
-/// `Some`, `count_in_range >= 1`.
+/// range (caller should report DEFERRED — there is no signal), when
+/// either curve contains invalid samples, or when arithmetic produces a
+/// non-finite interpolation or summary. When `Some`, `count_in_range >= 1`.
 #[must_use]
 pub fn psnr_delta_summary(
     libvpx_curve: &[(f64, f64)],
     rvp9_curve: &[(f64, f64)],
 ) -> Option<PsnrDeltaSummary> {
+    if !curve_samples_are_valid(rvp9_curve) {
+        return None;
+    }
+
     let mut deltas: Vec<f64> = Vec::with_capacity(rvp9_curve.len());
     let mut count_out_of_range: usize = 0;
     for &(br_r, psnr_r) in rvp9_curve {
         match psnr_at_bitrate(libvpx_curve, br_r) {
-            Some(psnr_l) => deltas.push(psnr_l - psnr_r),
+            Some(psnr_l) => {
+                if !psnr_l.is_finite() {
+                    return None;
+                }
+                let delta = psnr_l - psnr_r;
+                if !delta.is_finite() {
+                    return None;
+                }
+                deltas.push(delta);
+            }
             None => count_out_of_range += 1,
         }
     }
@@ -229,9 +248,18 @@ pub fn psnr_delta_summary(
     }
     let count_in_range = deltas.len();
     let sum: f64 = deltas.iter().sum();
+    if !sum.is_finite() {
+        return None;
+    }
     let mean_delta_db = sum / count_in_range as f64;
+    if !mean_delta_db.is_finite() {
+        return None;
+    }
     let min_delta_db = deltas.iter().cloned().fold(f64::INFINITY, f64::min);
     let max_delta_db = deltas.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    if !min_delta_db.is_finite() || !max_delta_db.is_finite() {
+        return None;
+    }
     Some(PsnrDeltaSummary {
         mean_delta_db,
         min_delta_db,
@@ -665,5 +693,98 @@ mod tests {
             s.max_delta_db,
             s.mean_delta_db
         );
+    }
+
+    /// Invalid samples anywhere in the rvp9 curve invalidate the summary,
+    /// even when another point is inside the reference bitrate range.
+    #[test]
+    fn psnr_delta_summary_rejects_invalid_rvp9_samples() {
+        let libvpx = vec![(100.0, 30.0), (200.0, 32.0), (400.0, 36.0)];
+        let invalid_psnr_curves = [
+            vec![(200.0, f64::NAN), (300.0, 34.0)],
+            vec![(300.0, 34.0), (200.0, f64::NAN)],
+            vec![(200.0, f64::INFINITY), (300.0, 34.0)],
+            vec![(300.0, 34.0), (200.0, f64::INFINITY)],
+            vec![(200.0, f64::NEG_INFINITY), (300.0, 34.0)],
+            vec![(300.0, 34.0), (200.0, f64::NEG_INFINITY)],
+            vec![(50.0, f64::NAN), (200.0, 32.0)],
+            vec![(200.0, 32.0), (50.0, f64::NAN)],
+            vec![(50.0, f64::INFINITY), (200.0, 32.0)],
+            vec![(200.0, 32.0), (50.0, f64::INFINITY)],
+            vec![(50.0, f64::NEG_INFINITY), (200.0, 32.0)],
+            vec![(200.0, 32.0), (50.0, f64::NEG_INFINITY)],
+        ];
+        for rvp9 in invalid_psnr_curves {
+            let summary = psnr_delta_summary(&libvpx, &rvp9);
+            assert!(
+                summary.is_none(),
+                "expected None for invalid PSNR curve, got {summary:?} from {rvp9:?}"
+            );
+        }
+
+        // Zero and negative PSNR values are valid finite samples.
+        let non_positive_psnr_libvpx = vec![(100.0, 0.0), (200.0, -1.0), (400.0, -3.0)];
+        let non_positive_psnr_rvp9 = vec![(100.0, -1.0), (200.0, -2.0)];
+        let summary = psnr_delta_summary(&non_positive_psnr_libvpx, &non_positive_psnr_rvp9)
+            .expect("finite zero and negative PSNR values are valid");
+        assert_eq!(summary.count_in_range, 2);
+        assert_eq!(summary.mean_delta_db, 1.0);
+    }
+
+    /// Invalid rvp9 bitrates invalidate the complete curve regardless of
+    /// where the sample appears relative to valid samples.
+    #[test]
+    fn psnr_delta_summary_rejects_invalid_rvp9_bitrates() {
+        let libvpx = vec![(100.0, 30.0), (200.0, 32.0), (400.0, 36.0)];
+        let invalid_bitrates = [0.0, -1.0, f64::NAN, f64::INFINITY, f64::NEG_INFINITY];
+        for bitrate in invalid_bitrates {
+            for rvp9 in [
+                vec![(100.0, 30.0), (bitrate, 32.0), (300.0, 34.0)],
+                vec![(bitrate, 32.0), (100.0, 30.0), (300.0, 34.0)],
+            ] {
+                let summary = psnr_delta_summary(&libvpx, &rvp9);
+                assert!(
+                    summary.is_none(),
+                    "expected None for invalid bitrate curve, got {summary:?} from {rvp9:?}"
+                );
+            }
+        }
+    }
+
+    /// Finite inputs can overflow while calculating deltas or their sum;
+    /// those values must not escape as a present summary.
+    #[test]
+    fn psnr_delta_summary_rejects_non_finite_arithmetic() {
+        let max_psnr = f64::MAX;
+        let delta_overflow_cases = [
+            (
+                vec![(100.0, max_psnr), (200.0, max_psnr)],
+                vec![(100.0, -max_psnr)],
+            ),
+            (
+                vec![(100.0, -max_psnr), (200.0, -max_psnr)],
+                vec![(100.0, max_psnr)],
+            ),
+        ];
+        for (libvpx, rvp9) in delta_overflow_cases {
+            let summary = psnr_delta_summary(&libvpx, &rvp9);
+            assert!(
+                summary.is_none(),
+                "expected None for overflowing delta, got {summary:?}"
+            );
+        }
+
+        // Keep the reference interpolation at zero so only accumulation of
+        // finite same-sign deltas can overflow.
+        let libvpx = vec![(100.0, 0.0), (200.0, 0.0)];
+        let large_delta = max_psnr * 0.75;
+        for rvp9_psnr in [-large_delta, large_delta] {
+            let rvp9 = vec![(100.0, rvp9_psnr), (200.0, rvp9_psnr)];
+            let summary = psnr_delta_summary(&libvpx, &rvp9);
+            assert!(
+                summary.is_none(),
+                "expected None for overflowing delta sum, got {summary:?}"
+            );
+        }
     }
 }
