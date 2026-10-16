@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00079 — ScaleFactors accepts zero dimensions then divides by zero
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Could
 - **Severity:** Low
 - **Area:** core/inter scaling
 - **Raised:** 2026-08-22T08:57:01Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261016T054106Z-5067f680
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00079-run-fix-20261016T054106Z-5067f680
-- **Owner base:** e58b34037651ab3a42a271cdfea05590e207278f
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-16T05:41:06Z
-- **Owner until:** 2026-10-16T09:41:06Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T08:57:01Z, raised via `deltic bugs new`)
+- **State history:** Open (2026-08-22T08:57:01Z, raised via `deltic bugs new`) -> Fixed (2026-10-16T05:47:54Z, deltic:auto role=fix run=fix-20261016T054106Z-5067f680 branch=task/bug-RVP9-BUG-KIL-00079-run-fix-20261016T054106Z-5067f680 code=c49db873520cbded462e47a99e7e1182bdf7b5cc gate=manual)
 
 ## Observation
 
