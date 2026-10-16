@@ -694,23 +694,48 @@ fn parse_csv_row(cols: &[String]) -> Option<CsvRow> {
 /// reduction — the ratchet compares apples-to-apples against the
 /// pinned-host baseline only.
 ///
-/// If `pinned_hosts` is non-empty and contains more than one host, the
-/// caller should filter to a single host first; otherwise comparing
-/// host-A baseline against host-B current is a logic error. This
-/// function does NOT silently merge across hosts — each (fixture, host)
-/// pair is reduced independently, then the per-fixture max-timestamp
-/// row wins regardless of host. Callers needing strict single-host
-/// behavior should pre-filter `rows` or pass a single-element
-/// `pinned_hosts`.
+/// If `pinned_hosts` contains more than one host, the newest row for a
+/// fixture may come from any of those hosts. This preserves the legacy
+/// cross-host selection behavior; callers comparing a current run should
+/// use [`latest_per_fixture_for_build`] instead.
 #[must_use]
 pub fn latest_per_fixture(rows: &[CsvRow], pinned_hosts: &[&str]) -> Vec<CsvRow> {
+    latest_per_fixture_matching(rows, |r| {
+        !r.unpinned
+            && pinned_hosts.contains(&r.host.as_str())
+            && valid_metrics(r.p50_us, r.p95_us, r.p99_us)
+    })
+}
+
+/// For each fixture, return its newest valid pinned row for an exact host
+/// and build profile.
+///
+/// Unpinned rows and rows with nonfinite or nonpositive metrics are
+/// excluded before selecting the newest timestamp. The output is sorted
+/// by fixture name. The caller remains responsible for deciding whether
+/// `host` is in its pinned-host allow-list.
+#[must_use]
+pub fn latest_per_fixture_for_build(
+    rows: &[CsvRow],
+    host: &str,
+    build_profile_hash: &str,
+) -> Vec<CsvRow> {
+    latest_per_fixture_matching(rows, |r| {
+        !r.unpinned
+            && r.host == host
+            && r.build_profile_hash == build_profile_hash
+            && valid_metrics(r.p50_us, r.p95_us, r.p99_us)
+    })
+}
+
+fn latest_per_fixture_matching(
+    rows: &[CsvRow],
+    mut is_eligible: impl FnMut(&CsvRow) -> bool,
+) -> Vec<CsvRow> {
     use std::collections::HashMap;
     let mut latest: HashMap<String, CsvRow> = HashMap::new();
     for r in rows {
-        if r.unpinned || !valid_metrics(r.p50_us, r.p95_us, r.p99_us) {
-            continue;
-        }
-        if !pinned_hosts.contains(&r.host.as_str()) {
+        if !is_eligible(r) {
             continue;
         }
         latest
@@ -1064,6 +1089,56 @@ mod tests {
                 assert!(latest_per_fixture(&[bad], &["h"]).is_empty());
             }
         }
+    }
+
+    #[test]
+    fn latest_per_fixture_for_build_requires_exact_identity() {
+        let make_row = |host: &str,
+                        profile: &str,
+                        fixture: &str,
+                        timestamp_unix: u64,
+                        unpinned: bool,
+                        p50_us: f64| CsvRow {
+            schema_version: CSV_SCHEMA_VERSION,
+            timestamp_unix,
+            host: host.into(),
+            unpinned,
+            build_profile_hash: profile.into(),
+            fixture: fixture.into(),
+            p50_us,
+            p95_us: p50_us + 1.0,
+            p99_us: p50_us + 2.0,
+        };
+        let rows = vec![
+            make_row("host-a", "profile-a", "z.webm", 10, false, 10.0),
+            make_row("host-b", "profile-a", "z.webm", 90, false, 90.0),
+            make_row("host-a", "profile-b", "z.webm", 80, false, 80.0),
+            make_row("host-a", "profile-a", "z.webm", 70, true, 70.0),
+            make_row("host-a", "profile-a", "z.webm", 60, false, f64::NAN),
+            make_row("host-a", "profile-a", "z.webm", 20, false, 20.0),
+            make_row("host-a", "profile-a", "a.webm", 15, false, 15.0),
+            make_row("host-b", "profile-b", "missing.webm", 100, false, 100.0),
+        ];
+
+        let latest = latest_per_fixture_for_build(&rows, "host-a", "profile-a");
+        assert_eq!(
+            latest
+                .iter()
+                .map(|row| row.fixture.as_str())
+                .collect::<Vec<_>>(),
+            ["a.webm", "z.webm"],
+            "only exact, valid, pinned identities should have baselines"
+        );
+        let z = latest.iter().find(|row| row.fixture == "z.webm").unwrap();
+        assert_eq!(z.timestamp_unix, 20, "newer incompatible rows must not win");
+        assert_eq!(z.host, "host-a");
+        assert_eq!(z.build_profile_hash, "profile-a");
+        assert!(!z.unpinned);
+
+        assert!(
+            latest_per_fixture_for_build(&rows, "host-c", "profile-a").is_empty(),
+            "no exact identity match must yield no baselines"
+        );
     }
 
     #[test]
