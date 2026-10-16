@@ -1,25 +1,25 @@
 # RVP9-BUG-KIL-00095 — Y4M frame parameters are scanned without a length bound
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** io/y4m parser
 - **Raised:** 2026-08-22T14:33:46Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261016T002533Z-f257c74d
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KIL-00095-run-fix-20261016T002533Z-f257c74d
-- **Owner base:** 742342e14b13cf7ad2993f31ae63f9253c6574bc
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-16T00:25:33Z
-- **Owner until:** 2026-10-16T04:25:33Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-22T14:33:46Z, raised via `deltic bugs new`)
+- **State history:** Open (2026-08-22T14:33:46Z, raised via `deltic bugs new`) -> Fixed (2026-10-16T00:33:52Z, deltic:auto role=fix run=fix-20261016T002533Z-f257c74d branch=task/bug-RVP9-BUG-KIL-00095-run-fix-20261016T002533Z-f257c74d code=bc54b89ff58f9a824afdd0e228623178e7531b44 gate=manual)
 
 ## Observation
 
