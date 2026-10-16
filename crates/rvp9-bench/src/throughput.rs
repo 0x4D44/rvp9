@@ -412,7 +412,9 @@ pub fn build_profile_hash() -> String {
 /// must be positive; metrics must also be finite. The entire batch is validated
 /// before any filesystem changes. Text fields use CSV quoting and doubled quotes.
 /// Existing files require read access to inspect their final byte. A missing
-/// final record separator is added before appending rows.
+/// final record separator is added before appending rows. Cooperating calls take
+/// an exclusive lock on the CSV file while selecting the header and appending
+/// the complete batch; the lock is released when the file handle is dropped.
 ///
 /// # Schema v1 (G6 review)
 ///
@@ -465,6 +467,7 @@ pub fn append_csv(
         .read(true)
         .append(true)
         .open(csv_path)?;
+    f.lock()?;
     if f.metadata()?.len() == 0 {
         writeln!(f, "{}", CSV_HEADER.join(","))?;
     } else if !results.is_empty() {
