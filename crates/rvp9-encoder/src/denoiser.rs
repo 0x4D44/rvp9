@@ -2,7 +2,7 @@
 //!
 //! Faithful scalar port of libvpx `vp9/encoder/vp9_denoiser.c`. The
 //! denoiser is a per-block NLM-style filter that runs on the encoder's
-//! reference buffer to reduce noise propagation across frames.
+//! source buffer using temporal references to reduce noise before coding.
 //!
 //! ## Scope
 //!
@@ -13,13 +13,10 @@
 //! (`vp9_denoiser_denoise`) that orchestrates motion-compensation,
 //! filter decision, and copy-back.
 //!
-//! Encoder integration (wiring the denoiser to the encoder's per-block
-//! pick loop, plumbing it into `frame_loop::StreamEncoder`, the
-//! `noise_sensitivity` → `DenoiserLevel` mapping, the post-frame
-//! update-frame-info bookkeeping, etc.) lands in a later wave. The
-//! `EncoderConfig::noise_sensitivity` knob plumbed in W5.1 currently
-//! gates **nothing** in the encoder hot path; it is the contract on
-//! which the future integration hooks in.
+//! `frame_loop::StreamEncoder` integrates the filter into the production
+//! per-leaf coding path. Sensitivity 0 disables it; 1 through 6 enable it at
+//! Medium initially. Published noise estimates adapt the level, with temporal
+//! references reseeded when filtering resumes after LowLow.
 //!
 //! ## libvpx file:line citations
 //!
@@ -51,27 +48,20 @@
 //! - **No SSE2 path.** x86-64 keeps the faithful scalar reference. The
 //!   AArch64 path dispatches to the port of libvpx's NEON filter and is
 //!   checked against the scalar implementation on that target.
-//! - **No SVC paths.** rvp9 has no SVC support yet, so the
-//!   `use_svc=true` branch in `vp9_denoiser_alloc`, the
-//!   `vp9_denoiser_realloc_svc_helper`-shaped per-slot realloc logic,
-//!   and the `denoise_layer_idx` indexing inside
-//!   `perform_motion_compensation` collapse to single-layer no-ops.
-//!   `num_layers = 1` always; `num_ref_frames = NONSVC_REF_FRAMES = 3`.
-//! - **No skin-detection plumbing.** libvpx
-//!   `vp9_denoiser.c:367-403` calls `vp9_compute_skin_block` to
-//!   compute `is_skin` (gating the "no denoising on skin" path inside
-//!   `perform_motion_compensation`). rvp9 has no skin detector yet
-//!   (W2.5 placeholder); we accept `is_skin` as an argument with
-//!   default `false` so future integration can pass it through.
-//! - **No `PICK_MODE_CONTEXT` / `MACROBLOCK` coupling.** libvpx's
-//!   `perform_motion_compensation` mutates `MACROBLOCKD` plane buffer
-//!   pointers and re-runs `vp9_build_inter_predictors_sby` to fill the
-//!   MC-running-avg buffer. The rvp9 standalone module accepts the MC
-//!   block as a precomputed `&[u8]` argument; integration is later.
-//! - **No `cpi->consec_zero_mv` read.** The libvpx driver pulls
-//!   `consec_zeromv` from `cpi->consec_zero_mv[]` inside the skin path
-//!   (`vp9_denoiser.c:382-396`). rvp9's `PreAnalysisState` carries
-//!   `consec_zero_mv`; the integration wave will thread that through.
+//! - **No spatial-SVC allocation.** Temporal-only SVC uses the same two
+//!   reference averages as ordinary streams, with per-frame reference-map
+//!   identities and refresh masks supplied by the production encoder.
+//!   Spatial denoising, per-layer reallocations and `denoise_layer_idx`
+//!   remain unsupported; `num_layers = 1` and
+//!   `num_ref_frames = NONSVC_REF_FRAMES = 3`.
+//! - **Caller-supplied skin and motion history.** The standalone driver
+//!   accepts `is_skin` and `consec_zeromv`. Production filtering receives
+//!   these from `PreAnalysisState`, and its adaptive estimator excludes
+//!   skin using the current 16x16 block's YUV center.
+//! - **No `PICK_MODE_CONTEXT` / `MACROBLOCK` coupling.** The standalone
+//!   driver accepts a precomputed MC block. Production's
+//!   `lib.rs::denoise_inter_leaf` builds the predictor from the selected
+//!   running-average reference without rebinding `MACROBLOCKD` pointers.
 //! - **No reuse of `vpx_convolve_copy`.** The final copy-back uses
 //!   straight `memcpy` row-by-row; libvpx's `vpx_convolve_copy` does
 //!   the same thing but goes through the rtcd table.
@@ -245,7 +235,7 @@ fn validate_plane_window(
 }
 
 /// `vp9_denoiser.h:38-43` — denoising aggressiveness level. Driven by
-/// `vp9_denoiser_set_noise_level` from `oxcf.noise_sensitivity`.
+/// `vp9_denoiser_set_noise_level` from the published noise estimate.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 #[repr(u8)]
 pub enum DenoiserLevel {
@@ -1019,6 +1009,24 @@ impl DenoiserFrame {
     }
 }
 
+/// Decoder-map identities and refresh decisions for the temporal averages.
+#[derive(Clone, Copy)]
+pub(crate) struct DenoiserFrameContext {
+    pub last_slot: usize,
+    pub golden_slot: usize,
+    pub refresh_mask: u8,
+}
+
+impl Default for DenoiserFrameContext {
+    fn default() -> Self {
+        Self {
+            last_slot: 1,
+            golden_slot: 2,
+            refresh_mask: 1,
+        }
+    }
+}
+
 /// `vp9_denoiser.h:45-56` — the rvp9 mirror of libvpx `VP9_DENOISER`.
 ///
 /// Layout collapsed to the non-SVC single-layer shape per the
@@ -1140,6 +1148,22 @@ impl Denoiser {
             denoising_level: DenoiserLevel::Medium,
             prev_denoising_level: DenoiserLevel::Medium,
         })
+    }
+
+    /// Apply a newly published estimate, mirroring pinned
+    /// `vp9_denoiser.c:732-744`. Re-enabling filtering seeds fresh references
+    /// after this frame, before the next frame can consume them.
+    pub(crate) fn set_noise_level(&mut self, level: rvp9_core::mode_decision::inter::NoiseLevel) {
+        use rvp9_core::mode_decision::inter::NoiseLevel;
+        self.denoising_level = match level {
+            NoiseLevel::LowLow => DenoiserLevel::LowLow,
+            NoiseLevel::Low => DenoiserLevel::Low,
+            NoiseLevel::Medium => DenoiserLevel::Medium,
+            NoiseLevel::High => DenoiserLevel::High,
+        };
+        self.reset = self.denoising_level > DenoiserLevel::LowLow
+            && self.prev_denoising_level == DenoiserLevel::LowLow;
+        self.prev_denoising_level = self.denoising_level;
     }
 
     /// `vp9_denoiser.c:698-717` — `vp9_denoiser_free`. In Rust the

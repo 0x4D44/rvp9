@@ -7182,6 +7182,7 @@ const RUNTIME_PROFILING_COMPILED: bool = cfg!(feature = "runtime-profiling");
 #[allow(clippy::too_many_arguments)]
 fn denoise_inter_leaf(
     denoiser: &mut crate::denoiser::Denoiser,
+    denoiser_frame: crate::denoiser::DenoiserFrameContext,
     raw_source_y: &[u8],
     coding_source_y: &mut [u8],
     width: usize,
@@ -7196,6 +7197,28 @@ fn denoise_inter_leaf(
     pred_border: &mut [u8; MAX_INTER_PRED_BORDER_BYTES],
 ) {
     use crate::denoiser::{DenoiserDecision, DenoiserLevel};
+
+    // Pinned vp9_pickmode.c:2676-2679 and vp9_denoiser.c:215-218.
+    // A LowLow->positive publication must first rebuild temporal references.
+    if denoiser.reset
+        || denoiser.denoising_level == DenoiserLevel::LowLow
+        || matches!(
+            block_size,
+            BlockSize::Block8x8 | BlockSize::Block8x16 | BlockSize::Block16x8
+        )
+        || (block_size == BlockSize::Block16x16
+            && width > 480
+            && denoiser.denoising_level <= DenoiserLevel::Low)
+    {
+        return;
+    }
+
+    // Pinned vp9_denoiser.c:367-368 does not classify skin at High
+    // or for blocks larger than 32x32.
+    let is_skin = is_skin
+        && denoiser.denoising_level < DenoiserLevel::High
+        && block_size.width() <= 32
+        && block_size.height() <= 32;
 
     let Some(zeromv) = pick_context.zeromv else {
         return;
@@ -7220,13 +7243,19 @@ fn denoise_inter_leaf(
     let selected = if use_nonzero {
         nonzero.expect("nonzero candidate selected above")
     } else {
-        let bias_to_last = zeromv.ref_frame != RefFrame::LastFrame
-            && zeromv_last.is_some_and(|last| {
-                u64::from(last.sse) < (5 * u64::from(zeromv.sse)) >> 2
-                    || denoiser.denoising_level >= DenoiserLevel::High
-            });
+        // Pinned vp9_denoiser.c:231-239 forbids ALTREF as the zero-MV
+        // average. Its SSE/filter must be replaced with LAST's as well.
+        let bias_to_last = zeromv.ref_frame == RefFrame::AltrefFrame
+            || (zeromv.ref_frame != RefFrame::LastFrame
+                && zeromv_last.is_some_and(|last| {
+                    u64::from(last.sse) < (5 * u64::from(zeromv.sse)) >> 2
+                        || denoiser.denoising_level >= DenoiserLevel::High
+                }));
         if bias_to_last {
-            zeromv_last.expect("LAST zero-MV candidate selected above")
+            let Some(last) = zeromv_last else {
+                return;
+            };
+            last
         } else {
             zeromv
         }
@@ -7250,8 +7279,8 @@ fn denoise_inter_leaf(
     let bw = block_size.width() as usize;
     let bh = block_size.height() as usize;
     let selected_ref_index = match selected.ref_frame {
-        RefFrame::GoldenFrame => 2,
-        _ => 1,
+        RefFrame::GoldenFrame => denoiser_frame.golden_slot,
+        _ => denoiser_frame.last_slot,
     };
     let running_avg = &denoiser.running_avg_y[selected_ref_index];
     let source_offset = leaf_px_y * width + leaf_px_x;
@@ -7509,6 +7538,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
     active_tile_col: Option<usize>,
     worker_pool: Option<&mut rvp9_core::tile_threading::WorkerPool>,
     mut denoiser: Option<&mut crate::denoiser::Denoiser>,
+    denoiser_frame: crate::denoiser::DenoiserFrameContext,
 ) -> InterSimulationResult {
     let me_ref_yuv = last_reference.analysis_yuv;
     let last_recon_yuv = last_reference.reconstruction_yuv;
@@ -11116,6 +11146,7 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
                         };
                         denoise_inter_leaf(
                             denoiser,
+                            denoiser_frame,
                             input_yuv.0,
                             coding_source_y,
                             width as usize,
@@ -13704,21 +13735,34 @@ pub(crate) fn pick_and_simulate_inter_encode_partitions(
         denoiser.running_avg_y[crate::denoiser::INTRA_FRAME_IDX].y_buffer = coding_source_y
             .take()
             .expect("active denoiser must retain its coded-source buffer");
-        let (scratch, refs) = denoiser.running_avg_y.split_at_mut(1);
-        if is_golden_refresh && refs.len() > 1 {
-            refs[0]
-                .y_buffer
-                .copy_from_slice(&scratch[crate::denoiser::INTRA_FRAME_IDX].y_buffer);
-            refs[1]
-                .y_buffer
-                .copy_from_slice(&scratch[crate::denoiser::INTRA_FRAME_IDX].y_buffer);
-        } else {
-            std::mem::swap(
-                &mut refs[0].y_buffer,
-                &mut scratch[crate::denoiser::INTRA_FRAME_IDX].y_buffer,
-            );
+        // Pinned vp9_denoiser.c:787: LowLow retains temporal references and
+        // the update counter; the scratch source is still restored above.
+        if denoiser.denoising_level > crate::denoiser::DenoiserLevel::LowLow {
+            let (scratch, refs) = denoiser.running_avg_y.split_at_mut(1);
+            if denoiser.reset {
+                // Pinned vp9_denoiser.c:476-485 seeds every reference from
+                // unfiltered Source before filtering can resume next frame.
+                for reference in refs.iter_mut() {
+                    reference.y_buffer.copy_from_slice(&input_yuv.0[..w * h]);
+                }
+                denoiser.reset = false;
+            } else {
+                // Temporal SVC may refresh neither slot, or refresh a slot
+                // currently named GOLDEN/LAST differently (same source:497-525).
+                let mask = denoiser_frame.refresh_mask & ((1 << refs.len()) - 1);
+                if mask.count_ones() == 1 {
+                    let slot = mask.trailing_zeros() as usize;
+                    std::mem::swap(&mut refs[slot].y_buffer, &mut scratch[0].y_buffer);
+                } else {
+                    for (slot, reference) in refs.iter_mut().enumerate() {
+                        if mask & (1 << slot) != 0 {
+                            reference.y_buffer.copy_from_slice(&scratch[0].y_buffer);
+                        }
+                    }
+                }
+            }
+            denoiser.current_denoiser_frame = denoiser.current_denoiser_frame.saturating_add(1);
         }
-        denoiser.current_denoiser_frame = denoiser.current_denoiser_frame.saturating_add(1);
     }
 
     InterSimulationResult {
@@ -15469,6 +15513,7 @@ mod tests {
 
         denoise_inter_leaf(
             &mut denoiser,
+            crate::denoiser::DenoiserFrameContext::default(),
             &raw,
             &mut coding,
             64,
@@ -15489,6 +15534,256 @@ mod tests {
 
         assert!(coding[..16 * 16].iter().any(|&sample| sample != 102));
         assert!(coding[..16 * 16].iter().all(|&sample| sample >= 100));
+    }
+
+    #[test]
+    fn adaptive_denoiser_leaf_uses_mapped_last_reference() {
+        use rvp9_core::mode_decision::inter::{DenoiserCandidateContext, DenoiserPickContext};
+
+        let mut denoiser = crate::denoiser::Denoiser::alloc(1, 64, 64).unwrap();
+        denoiser.running_avg_y[1].y_buffer.fill(20);
+        denoiser.running_avg_y[2].y_buffer.fill(100);
+        let raw = vec![102u8; 64 * 64];
+        let mut coding = raw.clone();
+        let golden_zero = DenoiserCandidateContext {
+            sse: 1_024,
+            mv: Mv::ZERO,
+            interp_filter: InterpFilter::EightTap,
+            ref_frame: RefFrame::LastFrame,
+        };
+        let last_zero = DenoiserCandidateContext {
+            sse: 64_000,
+            mv: Mv::ZERO,
+            interp_filter: InterpFilter::EightTap,
+            ref_frame: RefFrame::LastFrame,
+        };
+        let mut mc_block = [0u8; 64 * 64];
+        let mut pred_border = [0u8; MAX_INTER_PRED_BORDER_BYTES];
+
+        denoise_inter_leaf(
+            &mut denoiser,
+            crate::denoiser::DenoiserFrameContext {
+                last_slot: 2,
+                golden_slot: 1,
+                refresh_mask: 0,
+            },
+            &raw,
+            &mut coding,
+            64,
+            64,
+            0,
+            0,
+            BlockSize::Block16x16,
+            DenoiserPickContext {
+                zeromv: Some(golden_zero),
+                zeromv_last: Some(last_zero),
+                nonzero: None,
+            },
+            false,
+            0,
+            &mut mc_block,
+            &mut pred_border,
+        );
+
+        assert!(coding[..16 * 16].iter().any(|&sample| sample != 102));
+        assert!(coding[..16 * 16].iter().all(|&sample| sample >= 100));
+    }
+
+    #[test]
+    fn adaptive_denoiser_leaf_level_and_reset_gates() {
+        use crate::denoiser::{Denoiser, DenoiserLevel};
+        use rvp9_core::mode_decision::inter::{DenoiserCandidateContext, DenoiserPickContext};
+        for (level, reset, block_size, should_filter, is_skin) in [
+            (
+                DenoiserLevel::LowLow,
+                false,
+                BlockSize::Block32x32,
+                false,
+                false,
+            ),
+            (
+                DenoiserLevel::High,
+                true,
+                BlockSize::Block32x32,
+                false,
+                false,
+            ),
+            (
+                DenoiserLevel::Low,
+                false,
+                BlockSize::Block16x16,
+                false,
+                false,
+            ),
+            (
+                DenoiserLevel::Medium,
+                false,
+                BlockSize::Block8x8,
+                false,
+                false,
+            ),
+            (
+                DenoiserLevel::Medium,
+                false,
+                BlockSize::Block16x16,
+                true,
+                false,
+            ),
+            (
+                DenoiserLevel::High,
+                false,
+                BlockSize::Block32x32,
+                true,
+                false,
+            ),
+            (
+                DenoiserLevel::High,
+                false,
+                BlockSize::Block32x32,
+                true,
+                true,
+            ),
+            (
+                DenoiserLevel::Medium,
+                false,
+                BlockSize::Block64x64,
+                true,
+                true,
+            ),
+        ] {
+            let (width, height) = (512, 64);
+            let mut denoiser = Denoiser::alloc(1, width as u32, height as u32).unwrap();
+            denoiser.denoising_level = level;
+            denoiser.reset = reset;
+            denoiser.running_avg_y[1].y_buffer.fill(100);
+            let raw = vec![102; width * height];
+            let mut coding = raw.clone();
+            let candidate = DenoiserCandidateContext {
+                sse: u32::from(block_size.width()) * u32::from(block_size.height()) * 4,
+                mv: Mv::ZERO,
+                interp_filter: InterpFilter::EightTap,
+                ref_frame: RefFrame::LastFrame,
+            };
+            denoise_inter_leaf(
+                &mut denoiser,
+                crate::denoiser::DenoiserFrameContext::default(),
+                &raw,
+                &mut coding,
+                width,
+                height,
+                0,
+                0,
+                block_size,
+                DenoiserPickContext {
+                    zeromv: Some(candidate),
+                    zeromv_last: Some(candidate),
+                    nonzero: None,
+                },
+                is_skin,
+                0,
+                &mut [0; 64 * 64],
+                &mut [0; MAX_INTER_PRED_BORDER_BYTES],
+            );
+            assert_eq!(
+                coding != raw,
+                should_filter,
+                "level={level:?}, reset={reset}, block={block_size:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn adaptive_denoiser_high_level_filters_skin_with_high_strength() {
+        use crate::denoiser::{Denoiser, DenoiserLevel};
+        use rvp9_core::mode_decision::inter::{DenoiserCandidateContext, DenoiserPickContext};
+        let candidate = DenoiserCandidateContext {
+            sse: 49 * 32 * 32,
+            mv: Mv::ZERO,
+            interp_filter: InterpFilter::EightTap,
+            ref_frame: RefFrame::LastFrame,
+        };
+        for is_skin in [false, true] {
+            let mut den = Denoiser::alloc(1, 64, 64).unwrap();
+            den.denoising_level = DenoiserLevel::High;
+            den.running_avg_y[1].y_buffer.fill(100);
+            let raw: Vec<u8> = (0..64 * 64)
+                .map(|i| if i % 2 == 0 { 107 } else { 93 })
+                .collect();
+            let mut coding = raw.clone();
+            denoise_inter_leaf(
+                &mut den,
+                crate::denoiser::DenoiserFrameContext::default(),
+                &raw,
+                &mut coding,
+                64,
+                64,
+                0,
+                0,
+                BlockSize::Block32x32,
+                DenoiserPickContext {
+                    zeromv: Some(candidate),
+                    zeromv_last: Some(candidate),
+                    nonzero: None,
+                },
+                is_skin,
+                10,
+                &mut [0; 64 * 64],
+                &mut [0; MAX_INTER_PRED_BORDER_BYTES],
+            );
+            assert_eq!(
+                &coding[..2],
+                &[102, 98],
+                "High must use increased denoising even for a skin-colored block"
+            );
+        }
+    }
+
+    #[test]
+    fn adaptive_denoiser_altref_zero_requires_last_candidate() {
+        use rvp9_core::mode_decision::inter::{DenoiserCandidateContext, DenoiserPickContext};
+        let candidate = DenoiserCandidateContext {
+            sse: 1,
+            mv: Mv::ZERO,
+            interp_filter: InterpFilter::EightTap,
+            ref_frame: RefFrame::AltrefFrame,
+        };
+        for last in [
+            None,
+            Some(DenoiserCandidateContext {
+                sse: 64_000,
+                ref_frame: RefFrame::LastFrame,
+                ..candidate
+            }),
+        ] {
+            let mut den = crate::denoiser::Denoiser::alloc(1, 64, 64).unwrap();
+            den.running_avg_y[1].y_buffer.fill(100);
+            let raw = vec![102; 64 * 64];
+            let mut coding = raw.clone();
+            denoise_inter_leaf(
+                &mut den,
+                crate::denoiser::DenoiserFrameContext::default(),
+                &raw,
+                &mut coding,
+                64,
+                64,
+                0,
+                0,
+                BlockSize::Block32x32,
+                DenoiserPickContext {
+                    zeromv: Some(candidate),
+                    zeromv_last: last,
+                    nonzero: None,
+                },
+                false,
+                10,
+                &mut [0; 64 * 64],
+                &mut [0; MAX_INTER_PRED_BORDER_BYTES],
+            );
+            assert!(
+                coding == raw,
+                "ALTREF zero-MV must use LAST SSE, or copy when LAST is absent"
+            );
+        }
     }
 
     #[test]

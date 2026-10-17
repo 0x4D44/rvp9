@@ -247,6 +247,18 @@ pub enum AqMode {
     CyclicRefresh,
 }
 
+fn denoiser_consecutive_zero_mv(previous: u8, reference: RefFrame, mv: Mv, segment: u8) -> u8 {
+    // Pinned vp9_encodeframe.c:6459-6470 leaves ineligible blocks unchanged.
+    if reference != RefFrame::LastFrame || segment > 2 {
+        return previous;
+    }
+    if i32::from(mv.row).abs() < 8 && i32::from(mv.col).abs() < 8 {
+        previous.saturating_add(1)
+    } else {
+        0
+    }
+}
+
 #[inline]
 const fn realtime_skin_detection_enabled(rc_mode: RcMode, aq_mode: AqMode) -> bool {
     matches!(rc_mode, RcMode::Cbr) && matches!(aq_mode, AqMode::CyclicRefresh)
@@ -507,8 +519,8 @@ pub struct EncoderConfig {
     /// (libvpx `vp9_encoder.h::VP9EncoderConfig::noise_sensitivity`,
     /// CLI plumb at `vpxenc.c::set_encoder_config` → `noise_sensitivity`).
     /// Valid range `0..=6`. `0` disables the temporal denoiser; any
-    /// non-zero value enables it (the magnitude maps to libvpx's
-    /// `VP9_DENOISER_LEVEL` via `vp9_denoiser_set_noise_level`).
+    /// value in `1..=6` enables it. The measured noise estimate controls
+    /// adaptive strength; the configured magnitude does not select a level.
     /// Defaults to `0` (denoiser off), matching vpxenc's CLI default.
     pub noise_sensitivity: u8,
     /// Best (lowest) allowed Q-index. Mirrors libvpx
@@ -2208,6 +2220,11 @@ impl StreamEncoder {
                 "framerate must be positive and finite",
             ));
         }
+        if config.noise_sensitivity > 6 {
+            return Err(EncodeError::InvalidConfig(
+                "noise_sensitivity must be in 0..=6",
+            ));
+        }
         if config.target_bitrate_bps == 0 {
             return Err(EncodeError::InvalidConfig("target_bitrate_bps must be > 0"));
         }
@@ -2968,7 +2985,8 @@ impl StreamEncoder {
             // libvpx zeroes `consec_zero_mv[]` and invalidates
             // `Last_Source` at KF boundaries
             // (`vp9_alloccommon.c:81-91`).
-            self.pre_analysis.keyframe_reset();
+            self.pre_analysis
+                .keyframe_reset_with_temporal_denoising(self.denoiser.is_some());
         }
 
         // Cyclic-refresh AQ spends extra bits on boosted 8x8 cells. Price the
@@ -3097,23 +3115,47 @@ impl StreamEncoder {
             self.pre_analysis
                 .compute_scene_detection_from_cached_sad(self.rate_control.frames_since_key);
         }
-        // W2.4(vpxenc parity, A5 P3): noise estimator
-        // (libvpx `vp9_noise_estimate.c:109-302`). Updates
-        // `pre_analysis.noise_estimate.{enabled, level}` — the
-        // 2-field consumer-facing view the picker reads via
-        // `vp9_NEWMV_diff_bias` (libvpx `vp9_pickmode.c:1299-1356`).
-        // Same RT gate as W2.2/W2.3; the internal frame-period
-        // sub-sampling (`frame_counter % 8 == 0`, libvpx line 132)
-        // and the resolution gate (≥640×360 from
-        // `enable_noise_estimation`, libvpx line 70) live inside
-        // the call, so it's safe to invoke unconditionally on RT.
-        if self.pre_analysis.compute_source_sad_onepass {
+        // Pinned vp9_encoder.c:4113 and vp9_noise_estimate.c:118-142:
+        // temporal estimation uses the previous raw source, including across
+        // keyframes and skipped sampling periods, independently of SAD gates.
+        if let Some(denoiser) = self.denoiser.as_mut() {
+            let update = self.pre_analysis.compute_noise_estimate_from_source(
+                y_tight,
+                self.rate_control.current_video_frame,
+                self.config.noise_sensitivity,
+                Some(&denoiser.last_source.y_buffer),
+                (skin_detection_enabled && self.config.speed.unsigned_abs() >= 5)
+                    .then_some((u_tight, v_tight)),
+                Some((
+                    self.rate_control.frames_since_key,
+                    self.rate_control.avg_frame_low_motion,
+                )),
+            );
+            use crate::pre_analysis::TemporalNoiseUpdate;
+            let copy_source = match update {
+                TemporalNoiseUpdate::Published(level) => {
+                    denoiser.set_noise_level(level);
+                    true
+                }
+                TemporalNoiseUpdate::HighMotion => {
+                    // current_superframe advances only for SVC upstream
+                    // (vp9_encoder.c:5898), including temporal-only SVC.
+                    let publish = self.svc.is_some() && self.frame_idx > 1;
+                    if publish {
+                        denoiser
+                            .set_noise_level(rvp9_core::mode_decision::inter::NoiseLevel::LowLow);
+                    }
+                    publish
+                }
+                TemporalNoiseUpdate::Unchanged => true,
+            };
+            if copy_source {
+                denoiser.last_source.y_buffer.copy_from_slice(y_tight);
+            }
+        } else if self.pre_analysis.compute_source_sad_onepass {
             self.pre_analysis.compute_noise_estimate(
                 y_tight,
                 self.rate_control.frames_since_key,
-                // PHASE-3 integration: gate noise estimator on
-                // `noise_sensitivity > 0` (libvpx
-                // vp9_noise_estimate.c:52-74). Default 0 → disabled.
                 self.config.noise_sensitivity,
             );
         }
@@ -3700,23 +3742,23 @@ impl StreamEncoder {
             self.me_ref_u.copy_from_slice(last_u);
             self.me_ref_v.copy_from_slice(last_v);
         }
-        if let Some(den) = self.denoiser.as_mut() {
-            // libvpx `vp9_denoiser.c:464-524` — on
-            // `denoiser->reset` (which fires on the first frame after
-            // a KF), copy the current frame into every running_avg_y
-            // slot so the next frame's filter has a real reference.
-            // Slot zero is the per-frame scratch. Seed every reference slot
-            // from the keyframe reconstruction so LAST and GOLDEN denoiser
-            // candidates begin from the same causal picture.
+        if let Some(den) = self.denoiser.as_mut()
+            && den.denoising_level > crate::denoiser::DenoiserLevel::LowLow
+        {
+            // Pinned vp9_denoiser.c:476-485 seeds temporal references from
+            // raw Source on keyframes. The separate ME mirror remains the
+            // decoder-equivalent reconstruction.
+            let source = &input_yuv.0[..(w as usize) * (h as usize)];
             den.running_avg_y[INTRA_FRAME_IDX]
                 .y_buffer
-                .copy_from_slice(&self.me_ref_y);
+                .copy_from_slice(source);
             for running_ref in den.running_avg_y.iter_mut().skip(1) {
-                running_ref.y_buffer.copy_from_slice(&self.me_ref_y);
+                running_ref.y_buffer.copy_from_slice(source);
             }
             // libvpx `vp9_denoiser.c:528` — `denoiser->reset = 0`
             // after the seed copy.
             den.reset = false;
+            den.current_denoiser_frame = den.current_denoiser_frame.saturating_add(1);
         }
 
         // A18 — Keyframes reset the prev-frame MV grid to all-intra
@@ -4054,6 +4096,14 @@ impl StreamEncoder {
         let ref_frame_indices = self
             .svc_frame
             .map_or([0, 1, 2], |decision| decision.ref_frame_indices);
+        let denoiser_frame = crate::denoiser::DenoiserFrameContext {
+            last_slot: usize::from(ref_frame_indices[0]) + 1,
+            golden_slot: usize::from(ref_frame_indices[1]) + 1,
+            refresh_mask: self.svc_frame.map_or(
+                self.gf_group.schedule(self.gop_phase).refresh_frame_flags,
+                |d| d.refresh_frame_flags,
+            ),
+        };
         let last_ref_map_idx = usize::from(ref_frame_indices[0]);
         let golden_ref_map_idx = usize::from(ref_frame_indices[1]);
         let altref_ref_map_idx = usize::from(ref_frame_indices[2]);
@@ -4492,6 +4542,7 @@ impl StreamEncoder {
                     $active_tile_col,
                     $worker_pool,
                     $denoiser,
+                    denoiser_frame,
                 )
             };
         }
@@ -5260,7 +5311,18 @@ impl StreamEncoder {
                 break;
             }
             let mv0 = cell.mvs[0];
-            if mv0.row == 0 && mv0.col == 0 {
+            if self.denoiser.is_some() {
+                let segment = mi_grid
+                    .get(idx)
+                    .and_then(Option::as_ref)
+                    .map_or(0, |cell| cell.segment_id);
+                self.pre_analysis.consec_zero_mv[idx] = denoiser_consecutive_zero_mv(
+                    self.pre_analysis.consec_zero_mv[idx],
+                    cell.ref_frames[0],
+                    mv0,
+                    segment,
+                );
+            } else if mv0.row == 0 && mv0.col == 0 {
                 self.pre_analysis.consec_zero_mv[idx] =
                     self.pre_analysis.consec_zero_mv[idx].saturating_add(1);
             } else {
@@ -5578,6 +5640,7 @@ impl StreamEncoder {
             None,
             self.frame_worker_pool.as_mut(),
             None,
+            crate::denoiser::DenoiserFrameContext::default(),
         );
         let coef_source = encoded.coefs;
         self.stage4a_split_stats
@@ -13824,6 +13887,11 @@ mod tests {
             enc.last_recon_y(),
             "the keyframe ME mirror must remain decoder-equivalent",
         );
+        assert_ne!(
+            y,
+            enc.me_ref_y(),
+            "fixture must distinguish raw source and reconstruction"
+        );
         let denoiser = enc
             .denoiser
             .as_ref()
@@ -13833,7 +13901,7 @@ mod tests {
                 .running_avg_y
                 .iter()
                 .skip(1)
-                .all(|reference| reference.y_buffer == enc.me_ref_y()),
+                .all(|reference| reference.y_buffer == y),
             "the keyframe must seed every temporal denoiser reference",
         );
 
@@ -13847,7 +13915,7 @@ mod tests {
         }
         let inter = enc.encode_frame(&yuv_view(&y2, &u2, &v2, 128)).unwrap();
         let denoiser = enc.denoiser.as_ref().expect("denoiser remains allocated");
-        assert_eq!(denoiser.current_denoiser_frame, 1);
+        assert_eq!(denoiser.current_denoiser_frame, 2);
         assert_eq!(
             denoiser.running_avg_y[1].y_buffer, denoiser.running_avg_y[INTRA_FRAME_IDX].y_buffer,
             "the completed denoised source must rotate into LAST",
@@ -13868,6 +13936,366 @@ mod tests {
             "denoising must not split chroma V from decoder reconstruction",
         );
         assert!(!inter.data.is_empty(), "inter packet must be non-empty");
+    }
+
+    #[test]
+    fn adaptive_denoiser_publication_reset_and_coded_source() {
+        use crate::denoiser::DenoiserLevel;
+        use rvp9_core::mode_decision::inter::NoiseLevel;
+        let (width, height) = (320, 192);
+        let mut cfg = baseline_config();
+        cfg.width = width;
+        cfg.height = height;
+        cfg.noise_sensitivity = 1;
+        let mut enc = StreamEncoder::new(cfg).unwrap();
+        let raw = vec![128; (width * height) as usize];
+        let uv = vec![128; (width * height / 4) as usize];
+        let mut decoder = rvp9_decoder::Decoder::new();
+        let mut encode_and_check = |enc: &mut StreamEncoder, source: &[u8]| {
+            let packet = enc
+                .encode_frame(&yuv_view(source, &uv, &uv, width as usize))
+                .unwrap();
+            let parsed = decode_packet(&mut decoder, &packet.data);
+            assert_eq!(parsed.len(), 1);
+            let decoded = decoder.decode_frame(&parsed[0]).unwrap();
+            let plane = decoded.y_plane();
+            for row in 0..height as usize {
+                assert!(
+                    plane.data()[row * plane.stride()..row * plane.stride() + width as usize]
+                        == enc.last_recon_y()[row * width as usize..(row + 1) * width as usize],
+                    "adaptive packet must reconstruct the same luma in the decoder, row={row}"
+                );
+            }
+        };
+        encode_and_check(&mut enc, &raw);
+        assert_eq!(
+            enc.denoiser.as_ref().unwrap().denoising_level,
+            DenoiserLevel::Medium,
+            "cached initial LowLow is not a published estimate"
+        );
+        assert_eq!(enc.denoiser.as_ref().unwrap().last_source.y_buffer, raw);
+
+        // Advance to the final sample of the initial publication window.
+        // This drives the real production pre-analysis and encoding path.
+        enc.rate_control.current_video_frame = 8;
+        enc.pre_analysis.seed_noise_estimator_window(14, 0);
+        enc.pre_analysis.consec_zero_mv.fill(10);
+        encode_and_check(&mut enc, &raw);
+        assert_eq!(
+            enc.denoiser.as_ref().unwrap().denoising_level,
+            DenoiserLevel::LowLow
+        );
+
+        // A rapid noisy onset publishes High. Stale references must not be
+        // consumed in this frame, and both LAST and GOLDEN must be reseeded.
+        enc.rate_control.current_video_frame = 16;
+        enc.pre_analysis.seed_noise_estimator_window(0, 1000);
+        enc.pre_analysis.noise_estimate.level = NoiseLevel::LowLow;
+        enc.pre_analysis.consec_zero_mv.fill(10);
+        for reference in enc
+            .denoiser
+            .as_mut()
+            .unwrap()
+            .running_avg_y
+            .iter_mut()
+            .skip(1)
+        {
+            reference.y_buffer.fill(20);
+        }
+        let noisy: Vec<u8> = raw
+            .iter()
+            .enumerate()
+            .map(|(i, _)| if i % 2 == 0 { 126 } else { 130 })
+            .collect();
+        encode_and_check(&mut enc, &noisy);
+        let den = enc.denoiser.as_ref().unwrap();
+        assert_eq!(den.denoising_level, DenoiserLevel::High);
+        assert!(!den.reset, "reset is consumed after the current frame");
+        assert!(
+            den.running_avg_y
+                .iter()
+                .skip(1)
+                .all(|reference| reference.y_buffer == noisy),
+            "re-enable must seed every temporal reference from the unfiltered current source"
+        );
+        assert_eq!(den.last_source.y_buffer, noisy);
+        assert_eq!(enc.me_ref_y(), enc.last_recon_y());
+
+        encode_and_check(&mut enc, &raw);
+        assert_ne!(
+            enc.denoiser.as_ref().unwrap().running_avg_y[1].y_buffer,
+            raw,
+            "the frame after reset must filter the actual coded source"
+        );
+        assert_eq!(enc.me_ref_y(), enc.last_recon_y());
+    }
+
+    #[test]
+    fn adaptive_denoiser_streak_matches_pinned_thresholds() {
+        for (previous, reference, row, col, segment, expected) in [
+            (7, RefFrame::LastFrame, 0, 0, 0, 8),
+            (7, RefFrame::LastFrame, 7, -7, 2, 8),
+            (7, RefFrame::LastFrame, 8, 0, 0, 0),
+            (7, RefFrame::LastFrame, 0, -8, 0, 0),
+            (7, RefFrame::GoldenFrame, 0, 0, 0, 7),
+            (7, RefFrame::IntraFrame, 0, 0, 0, 7),
+            (7, RefFrame::LastFrame, 0, 0, 3, 7),
+            (255, RefFrame::LastFrame, 7, 0, 1, 255),
+        ] {
+            assert_eq!(
+                denoiser_consecutive_zero_mv(previous, reference, Mv { row, col }, segment),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn adaptive_denoiser_temporal_reference_chronology() {
+        use crate::denoiser::DenoiserLevel;
+        // A 50-level gap exceeds the filter's weak damping limit, so each
+        // published average must equal raw Source independently of history.
+        let mut filtered = vec![0; 32 * 32];
+        assert_eq!(
+            crate::denoiser::vp9_denoiser_filter(
+                &vec![70; 32 * 32],
+                32,
+                &vec![20; 32 * 32],
+                32,
+                &mut filtered,
+                32,
+                false,
+                BlockSize::Block32x32,
+                0
+            )
+            .unwrap(),
+            crate::denoiser::DenoiserDecision::CopyBlock
+        );
+        let mut cfg = baseline_config();
+        cfg.width = 128;
+        cfg.height = 72;
+        cfg.noise_sensitivity = 1;
+        cfg.temporal_layers = 3;
+        let mut enc = StreamEncoder::new(cfg).unwrap();
+        let uv = vec![128; 128 * 72 / 4];
+        let mut decoder = rvp9_decoder::Decoder::new();
+        for frame in 0..5 {
+            let raw = vec![20 + frame * 50; 128 * 72];
+            let before: Vec<_> = enc
+                .denoiser
+                .as_ref()
+                .unwrap()
+                .running_avg_y
+                .iter()
+                .skip(1)
+                .map(|r| r.y_buffer.clone())
+                .collect();
+            let packet = enc.encode_frame(&yuv_view(&raw, &uv, &uv, 128)).unwrap();
+            let parsed = decode_packet(&mut decoder, &packet.data);
+            let mask = match parsed[0].header.kind {
+                WireFrameKind::KeyFrame => 255,
+                WireFrameKind::InterFrame {
+                    refresh_frame_flags,
+                    ..
+                } => refresh_frame_flags,
+                _ => panic!("temporal fixture emits ordinary coded frames"),
+            };
+            decoder.decode_frame(&parsed[0]).unwrap();
+            assert_eq!(mask, [255, 0, 2, 0, 1][frame as usize]);
+            let den = enc.denoiser.as_ref().unwrap();
+            for (slot, old) in before.iter().enumerate() {
+                if mask & (1 << slot) == 0 {
+                    assert!(
+                        &den.running_avg_y[slot + 1].y_buffer == old,
+                        "frame={frame}, mask={mask}, untouched temporal slot={slot}"
+                    );
+                } else {
+                    assert!(
+                        den.running_avg_y[slot + 1].y_buffer == raw,
+                        "frame={frame}, mask={mask}, refreshed temporal slot={slot} must publish this source"
+                    );
+                }
+            }
+        }
+        assert_eq!(
+            enc.denoiser.as_ref().unwrap().current_denoiser_frame,
+            5,
+            "keyframes and every positive-level frame count as denoiser updates"
+        );
+        // LowLow retains all references even when a frame's refresh mask is set.
+        enc.denoiser.as_mut().unwrap().denoising_level = DenoiserLevel::LowLow;
+        let refs: Vec<_> = enc
+            .denoiser
+            .as_ref()
+            .unwrap()
+            .running_avg_y
+            .iter()
+            .skip(1)
+            .cloned()
+            .collect();
+        let count = enc.denoiser.as_ref().unwrap().current_denoiser_frame;
+        for raw in [170, 220] {
+            enc.encode_frame(&yuv_view(&vec![raw; 128 * 72], &uv, &uv, 128))
+                .unwrap();
+            let den = enc.denoiser.as_ref().unwrap();
+            for (reference, old) in den.running_avg_y.iter().skip(1).zip(&refs) {
+                assert!(
+                    reference.y_buffer == old.y_buffer,
+                    "LowLow must retain temporal references"
+                );
+            }
+            assert_eq!(den.current_denoiser_frame, count);
+        }
+    }
+
+    #[test]
+    fn adaptive_denoiser_production_high_motion_publication() {
+        use crate::denoiser::DenoiserLevel;
+        use rvp9_core::mode_decision::inter::NoiseLevel;
+        for (layers, frame, frames_since_key, low_motion, force_low) in [
+            (1, 64, 2, 59, true),
+            (2, 64, 2, 59, true),
+            (1, 63, 2, 0, false),
+            (1, 64, 1, 0, false),
+            (1, 64, 2, 60, false),
+        ] {
+            let mut cfg = baseline_config();
+            cfg.width = 320;
+            cfg.height = 192;
+            cfg.noise_sensitivity = 1;
+            cfg.temporal_layers = layers;
+            let mut enc = StreamEncoder::new(cfg).unwrap();
+            let raw = vec![128; 320 * 192];
+            let uv = vec![128; 320 * 192 / 4];
+            for _ in 0..2 {
+                enc.encode_frame(&yuv_view(&raw, &uv, &uv, 320)).unwrap();
+            }
+            enc.rate_control.current_video_frame = frame;
+            enc.rate_control.frames_since_key = frames_since_key;
+            enc.rate_control.avg_frame_low_motion = low_motion;
+            enc.pre_analysis.noise_estimate.level = NoiseLevel::High;
+            enc.pre_analysis.seed_noise_estimator_window(0, 400);
+            let den = enc.denoiser.as_mut().unwrap();
+            den.denoising_level = DenoiserLevel::High;
+            den.prev_denoising_level = DenoiserLevel::High;
+            let current = vec![132; 320 * 192];
+            enc.encode_frame(&yuv_view(&current, &uv, &uv, 320))
+                .unwrap();
+            assert_eq!(
+                enc.pre_analysis.noise_estimate.level,
+                if force_low {
+                    NoiseLevel::LowLow
+                } else {
+                    NoiseLevel::High
+                },
+                "layers={layers}, frame={frame}, key_age={frames_since_key}, low_motion={low_motion}"
+            );
+            let den = enc.denoiser.as_ref().unwrap();
+            assert_eq!(
+                den.denoising_level,
+                if force_low && layers > 1 {
+                    DenoiserLevel::LowLow
+                } else {
+                    DenoiserLevel::High
+                }
+            );
+            assert_eq!(
+                den.last_source.y_buffer,
+                if force_low && layers == 1 {
+                    raw
+                } else {
+                    current
+                },
+                "non-SVC high-motion early return retains the previous raw source"
+            );
+        }
+    }
+
+    #[test]
+    fn adaptive_denoiser_production_estimator_excludes_skin() {
+        use crate::denoiser::DenoiserLevel;
+        for (aq_mode, chroma, streak, speed, excluded) in [
+            (AqMode::CyclicRefresh, (110, 148), 10, 7, true),
+            (AqMode::CyclicRefresh, (110, 148), 10, -7, true),
+            (AqMode::CyclicRefresh, (128, 128), 10, 7, false),
+            (AqMode::Off, (110, 148), 10, 7, false),
+            (AqMode::CyclicRefresh, (110, 148), 61, 7, false),
+            (AqMode::CyclicRefresh, (110, 148), 10, 4, false),
+            (AqMode::CyclicRefresh, (110, 148), 10, -4, false),
+        ] {
+            let mut cfg = baseline_config();
+            cfg.width = 320;
+            cfg.height = 192;
+            cfg.noise_sensitivity = 1;
+            cfg.aq_mode = aq_mode;
+            cfg.speed = speed;
+            let mut enc = StreamEncoder::new(cfg).unwrap();
+            let raw = vec![180; 320 * 192];
+            let u = vec![chroma.0; 320 * 192 / 4];
+            let v = vec![chroma.1; 320 * 192 / 4];
+            enc.encode_frame(&yuv_view(&raw, &u, &v, 320)).unwrap();
+            enc.rate_control.current_video_frame = 8;
+            enc.pre_analysis.seed_noise_estimator_window(14, 0);
+            enc.pre_analysis.consec_zero_mv.fill(streak);
+            // +/-3 produces variance2304 (2304 / 100 folds
+            // to the tail, bin19). Mean stays180, within the skin model.
+            let noisy: Vec<_> = raw
+                .iter()
+                .enumerate()
+                .map(|(i, _)| if i % 2 == 0 { 177 } else { 183 })
+                .collect();
+            enc.encode_frame(&yuv_view(&noisy, &u, &v, 320)).unwrap();
+            assert_eq!(
+                enc.denoiser.as_ref().unwrap().denoising_level,
+                if excluded {
+                    DenoiserLevel::LowLow
+                } else {
+                    DenoiserLevel::High
+                },
+                "aq={aq_mode:?}, chroma={chroma:?}, streak={streak}"
+            );
+        }
+    }
+
+    #[test]
+    fn adaptive_denoiser_sensitivity_one_and_six_encode_identically() {
+        let mut cfg = baseline_config();
+        cfg.width = 320;
+        cfg.height = 192;
+        cfg.noise_sensitivity = 1;
+        let mut one = StreamEncoder::new(cfg.clone()).unwrap();
+        cfg.noise_sensitivity = 6;
+        let mut six = StreamEncoder::new(cfg).unwrap();
+        let uv = vec![128; 320 * 192 / 4];
+        for frame in 0..3 {
+            let raw: Vec<u8> = (0..320 * 192)
+                .map(|i| 128 + ((i + frame) % 3) as u8)
+                .collect();
+            let view = yuv_view(&raw, &uv, &uv, 320);
+            assert_eq!(
+                one.encode_frame(&view).unwrap().data,
+                six.encode_frame(&view).unwrap().data
+            );
+            assert_eq!(
+                one.denoiser.as_ref().unwrap().running_avg_y[1].y_buffer,
+                six.denoiser.as_ref().unwrap().running_avg_y[1].y_buffer
+            );
+            assert_eq!(
+                one.denoiser.as_ref().unwrap().denoising_level,
+                six.denoiser.as_ref().unwrap().denoising_level
+            );
+        }
+    }
+
+    #[test]
+    fn adaptive_denoiser_rejects_out_of_range_sensitivity() {
+        let mut cfg = baseline_config();
+        cfg.noise_sensitivity = 7;
+        assert!(matches!(
+            StreamEncoder::new(cfg),
+            Err(EncodeError::InvalidConfig(
+                "noise_sensitivity must be in 0..=6"
+            ))
+        ));
     }
 
     #[test]

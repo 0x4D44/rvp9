@@ -36,6 +36,15 @@ use crate::frame_loop::Deadline;
 use rvp9_core::block::BlockSize;
 use rvp9_core::dsp::dispatch::{SadFn, VarFn};
 use rvp9_core::mode_decision::inter::{ContentStateSb, NoiseEstimate, NoiseLevel};
+
+/// Result of one temporal-estimator update. High motion has distinct source
+/// copy/publication gates in pinned `vp9_noise_estimate.c:145-159`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TemporalNoiseUpdate {
+    Unchanged,
+    Published(NoiseLevel),
+    HighMotion,
+}
 use std::sync::Arc;
 
 /// W2.1(vpxenc parity, A5 P0) — per-frame pre-analysis state owned
@@ -234,6 +243,10 @@ impl PreAnalysisState {
     /// `consec_zero_mv[]` in `vp9_setup_past_independence` for
     /// keyframes (`vp9_alloccommon.c:81-91`).
     pub fn keyframe_reset(&mut self) {
+        self.keyframe_reset_with_temporal_denoising(false);
+    }
+
+    pub(crate) fn keyframe_reset_with_temporal_denoising(&mut self, temporal_denoising: bool) {
         for v in &mut self.consec_zero_mv {
             *v = 0;
         }
@@ -259,24 +272,19 @@ impl PreAnalysisState {
         self.high_source_sad = false;
         self.scene_cut_force_key_frame = false;
         self.prev_avg_source_sad = 0;
-        // W2.4 — Reset the noise estimator. libvpx itself does not
-        // explicitly reset `cpi->noise_estimate` at KF (the running
-        // state decays naturally over the next frame_period samples);
-        // the task brief calls for `NoiseEstimate::default()` reset
-        // on KF to match the consumer-side contract. The full
-        // internal state is reseeded from
-        // `vp9_noise_estimate_init`-equivalent defaults
-        // (`vp9_noise_estimate.c:33-50`) so the next inter frame
-        // starts from a clean slate.
-        let (_ne_level, ne_thresh) = noise_estimate_init_params(self.width, self.height);
-        self.noise_estimate = NoiseEstimate::default();
-        self.ne_value = 0;
-        self.ne_thresh = ne_thresh;
-        self.ne_adapt_thresh = (3 * ne_thresh) >> 1;
-        self.ne_count = 0;
-        self.ne_num_frames_estimate = 15;
-        self.ne_last_w = 0;
-        self.ne_last_h = 0;
+        // Pinned vp9_encoder.c:4071-4113 preserves the adaptive estimator at
+        // keyframes. Keep the legacy SAD-only reset for non-temporal callers.
+        if !temporal_denoising {
+            let (_ne_level, ne_thresh) = noise_estimate_init_params(self.width, self.height);
+            self.noise_estimate = NoiseEstimate::default();
+            self.ne_value = 0;
+            self.ne_thresh = ne_thresh;
+            self.ne_adapt_thresh = (3 * ne_thresh) >> 1;
+            self.ne_count = 0;
+            self.ne_num_frames_estimate = 15;
+            self.ne_last_w = 0;
+            self.ne_last_h = 0;
+        }
         // W2.5 — clear the per-mi skin map. libvpx does not clear
         // `cpi->skin_map` at the KF boundary (the next inter frame's
         // `vp9_compute_skin_sb` overwrites the cells it visits), but
@@ -622,8 +630,7 @@ impl PreAnalysisState {
 
     /// W2.4(vpxenc parity, A5 P3): faithful port of libvpx
     /// `vp9_update_noise_estimate` (`vp9_noise_estimate.c:109-302`)
-    /// for the 8-bit, single-spatial-layer, no-SVC, no-temporal-
-    /// denoising slice rvp9 supports. Walks a 1/4-sub-sample of the
+    /// for the 8-bit, single-spatial-layer temporal-denoising path. Walks a 1/4-sub-sample of the
     /// frame's 16×16 blocks, builds a per-block variance histogram of
     /// "steady-background" blocks (those whose underlying 8×8
     /// `consec_zero_mv` cells have all stayed at zero MV for
@@ -635,10 +642,11 @@ impl PreAnalysisState {
     /// **Skipped libvpx paths** (out of scope for v1):
     /// - SVC top-spatial-layer gate (`noise_est_svc`) — single-layer.
     /// - HBD `cpi->common.use_highbitdepth` — 8-bit only.
-    /// - `cpi->use_skin_detection` skin-block exclusion — wires up in
-    ///   W2.5 (the skin detector lands next in this wave).
-    /// - `CONFIG_VP9_TEMPORAL_DENOISING` denoiser sync — denoiser is
-    ///   not ported.
+    /// - This luma-only public wrapper has no chroma for skin exclusion;
+    ///   production temporal callers provide chroma through the internal helper.
+    ///
+    /// Temporal stream callers use the internal source/publication helper
+    /// to synchronize denoiser strength only when an estimate is published.
     ///
     /// Caller passes the current source's luma plane (tight-stride,
     /// `width * height`) and the frame counter
@@ -648,29 +656,47 @@ impl PreAnalysisState {
         &mut self,
         src_y_tight: &[u8],
         frame_counter: u32,
-        // PHASE-3 integration: libvpx's full `enable_noise_estimation`
-        // gate (`vp9_noise_estimate.c:52-74`) requires the temporal
-        // denoiser to be configured (`cpi->oxcf.noise_sensitivity >
-        // 0`). Pass 0 to disable the estimator regardless of resolution.
+        // This entry point retains the temporal enable predicate.
         noise_sensitivity: u8,
     ) {
-        // libvpx `vp9_noise_estimate.c:112` — low-res branch (used by
-        // `thresh_consec_zeromv` for the denoiser-on path; rvp9 has
-        // no denoiser so the default `thresh_consec_zeromv = 6` from
-        // line 115 holds for all resolutions).
-        let _low_res = self.width <= 352 && self.height <= 288;
-        // libvpx line 114.
-        const FRAME_PERIOD: u32 = 8;
-        // libvpx line 115. Default 6; the denoiser-on path (skipped)
-        // would lower this to 2 for 640<w<=1920.
-        const THRESH_CONSEC_ZEROMV: u8 = 6;
+        let last_source = self.last_source_y.clone();
+        self.compute_noise_estimate_from_source(
+            src_y_tight,
+            frame_counter,
+            noise_sensitivity,
+            last_source.as_deref(),
+            None,
+            None,
+        );
+    }
 
-        // libvpx line 129. Recomputed every call. PHASE-3 integration:
-        // also gate on `noise_sensitivity > 0` (libvpx's full
-        // `enable_noise_estimation` predicate at
-        // vp9_noise_estimate.c:52-74).
+    #[cfg(test)]
+    pub(crate) fn seed_noise_estimator_window(&mut self, count: i32, value: i32) {
+        self.ne_count = count;
+        self.ne_value = value;
+    }
+
+    // Return only newly published estimates. The cached initial level must not
+    // replace the denoiser's Medium startup level (vp9_noise_estimate.c:287-295).
+    pub(crate) fn compute_noise_estimate_from_source(
+        &mut self,
+        src_y_tight: &[u8],
+        frame_counter: u32,
+        noise_sensitivity: u8,
+        last_source: Option<&[u8]>,
+        skin_chroma: Option<(&[u8], &[u8])>,
+        motion: Option<(u32, i32)>,
+    ) -> TemporalNoiseUpdate {
+        const FRAME_PERIOD: u32 = 8;
+        // Pinned vp9_noise_estimate.c:121-124, temporal-enabled thresholds.
+        let thresh_consec_zeromv =
+            if noise_sensitivity > 0 && self.width > 640 && self.width <= 1920 {
+                2
+            } else {
+                6
+            };
         self.noise_estimate.enabled =
-            noise_sensitivity > 0 && enable_noise_estimation(self.width, self.height);
+            noise_sensitivity > 0 && self.width >= 320 && self.height >= 180;
 
         let w = self.width as usize;
         let h = self.height as usize;
@@ -681,7 +707,6 @@ impl PreAnalysisState {
         // For the resize-detect arm (`ne_last_w != width || ne_last_h
         // != height`), we still must update `ne_last_w/h` before
         // returning so the next call can run (libvpx lines 140-142).
-        let last_source = self.last_source_y.as_deref();
         if !self.noise_estimate.enabled
             || !frame_counter.is_multiple_of(FRAME_PERIOD)
             || last_source.is_none()
@@ -692,17 +717,31 @@ impl PreAnalysisState {
                 self.ne_last_w = self.width;
                 self.ne_last_h = self.height;
             }
-            return;
+            return TemporalNoiseUpdate::Unchanged;
         }
         let last_source = last_source.unwrap();
         debug_assert_eq!(last_source.len(), w * h);
 
-        // libvpx lines 145-160: high-motion forced-zero branch. Reads
-        // `frame_counter > 60`, SVC counters, and
-        // `rc.avg_frame_low_motion`. rvp9 has no SVC and no
-        // `avg_frame_low_motion` tracker yet, so this branch never
-        // fires in v1 (the next call lands in the main `else` arm).
-        // Wired up cleanly when those producers land.
+        // Pinned vp9_noise_estimate.c:145-159. All supported streams have
+        // one spatial layer and encode every submitted frame, so frame>60
+        // also establishes num_encoded_top_layer>1. The caller handles the
+        // separate SVC-only denoiser publication/source-copy condition.
+        if frame_counter > 60
+            && motion.is_some_and(|(frames_since_key, low_motion)| {
+                frames_since_key > 1
+                    && low_motion
+                        < if self.width <= 352 && self.height <= 288 {
+                            60
+                        } else {
+                            40
+                        }
+            })
+        {
+            self.noise_estimate.level = NoiseLevel::LowLow;
+            self.ne_count = 0;
+            self.ne_num_frames_estimate = 10;
+            return TemporalNoiseUpdate::HighMotion;
+        }
 
         // ---- Main arm (libvpx lines 161-297) ----
         // libvpx `MAX_VAR_HIST_BINS` (`vp9_noise_estimate.h:26`).
@@ -712,14 +751,14 @@ impl PreAnalysisState {
         let mut hist: [u32; MAX_VAR_HIST_BINS] = [0; MAX_VAR_HIST_BINS];
 
         let mi_cols = w / 8;
-        let mi_rows = h / 8;
+        let mi_rows = h.div_ceil(8);
 
         // libvpx lines 182-188: first pass, count low-motion blocks.
         let mut num_low_motion: u32 = 0;
         for mi_row in 0..mi_rows {
             for mi_col in 0..mi_cols {
                 let bl_index = mi_row * mi_cols + mi_col;
-                if self.consec_zero_mv[bl_index] > THRESH_CONSEC_ZEROMV {
+                if self.consec_zero_mv[bl_index] > thresh_consec_zeromv {
                     num_low_motion += 1;
                 }
             }
@@ -756,10 +795,9 @@ impl PreAnalysisState {
                     .min(self.consec_zero_mv[bl_index3]);
                 // libvpx lines 210-212: only score steady-background
                 // blocks AND skip on a scene-change frame. The skin
-                // detector (libvpx lines 214-218) lands in W2.5; for
-                // v1, `is_skin = false` unconditionally.
+                // blocks before applying the optional current-source skin gate.
                 if !(frame_low_motion
-                    && consec_zeromv > THRESH_CONSEC_ZEROMV
+                    && consec_zeromv > thresh_consec_zeromv
                     && !self.high_source_sad)
                 {
                     continue;
@@ -770,6 +808,21 @@ impl PreAnalysisState {
                 // `sse - (sum*sum / 256)`.
                 let pix_r = mi_row * 8;
                 let pix_c = mi_col * 8;
+                // Pinned vp9_noise_estimate.c:214-218 uses the 16x16
+                // block center, not the 8x8 picker skin-map center.
+                if let Some((u, v)) = skin_chroma {
+                    let uv_center = (pix_r / 2 + 4).min(h / 2 - 1) * (w / 2) + pix_c / 2 + 4;
+                    if compute_skin_block(
+                        i32::from(src_y_tight[(pix_r + 8).min(h - 1) * w + pix_c + 8]),
+                        i32::from(u[uv_center]),
+                        i32::from(v[uv_center]),
+                        i32::from(consec_zeromv),
+                        0,
+                    ) != 0
+                    {
+                        continue;
+                    }
+                }
                 let variance = variance_16x16(src_y_tight, last_source, w, pix_r, pix_c);
                 let hist_index = (variance / BIN_SIZE) as usize;
                 if hist_index < MAX_VAR_HIST_BINS {
@@ -850,7 +903,9 @@ impl PreAnalysisState {
             self.ne_num_frames_estimate = 30;
             self.ne_count = 0;
             self.noise_estimate.level = noise_estimate_extract_level(self.ne_value, self.ne_thresh);
+            return TemporalNoiseUpdate::Published(self.noise_estimate.level);
         }
+        TemporalNoiseUpdate::Unchanged
     }
 
     /// W2.5(vpxenc parity, A5 P4): faithful port of libvpx's
@@ -1620,18 +1675,6 @@ fn noise_estimate_init_params(width: u32, height: u32) -> (NoiseLevel, i32) {
     (level, thresh)
 }
 
-/// W2.4 helper: libvpx `enable_noise_estimation`
-/// (`vp9_noise_estimate.c:52-74`). The full libvpx gate requires
-/// `pass == 0` (1-pass), CBR, `aq_mode == CYCLIC_REFRESH_AQ`,
-/// `speed >= 5`, no resize, no SVC, no screen-content, and
-/// resolution `>= 640 * 360`. rvp9's stream encoder is hard-wired
-/// to 1-pass CBR + cyclic-refresh AQ + speed 7 + no resize/SVC, so
-/// only the resolution test is dynamic.
-fn enable_noise_estimation(width: u32, height: u32) -> bool {
-    // libvpx line 70.
-    (width as u64) * (height as u64) >= 640 * 360
-}
-
 /// W2.4 helper: libvpx `vp9_noise_estimate_extract_level`
 /// (`vp9_noise_estimate.c:94-107`). Maps the integer `ne_value`
 /// against the resolution-dependent `thresh` to one of the four
@@ -1788,15 +1831,17 @@ fn vpx_evaluate_skin_color_difference(
 /// W2.4 helper: libvpx `vpx_variance16x16_c`
 /// (`vpx_dsp/variance.c:128-135` after macro expansion). Computes
 /// `sse - (sum*sum) / 256` on a 16×16 tile rooted at `(r, c)` in
-/// tight-stride 8-bit source planes. The 8×8-cell `mi` indexing in
-/// the caller guarantees `r + 16 <= h` and `c + 16 <= w` because
-/// the caller pre-clamps `mi_row < mi_rows - 1` and
-/// `mi_col < mi_cols - 1`.
+/// tight-stride 8-bit source planes. The caller's 8-pixel-aligned width
+/// and MI-column bound guarantee `c + 16 <= w`. A partial bottom MI row
+/// can extend beyond the visible height; repeat the final visible source
+/// row, matching libvpx's padded frame storage.
 fn variance_16x16(src: &[u8], last: &[u8], stride: usize, r: usize, c: usize) -> u32 {
     let mut sum: i32 = 0;
     let mut sse: u32 = 0;
     for i in 0..16 {
-        let base = (r + i) * stride + c;
+        // libvpx's padded source repeats the final visible row
+        // (vpx_scale/generic/yv12extend.c:22-60).
+        let base = (r + i).min(src.len() / stride - 1) * stride + c;
         for j in 0..16 {
             let d = src[base + j] as i32 - last[base + j] as i32;
             sum += d;
@@ -2717,12 +2762,12 @@ mod tests {
         );
     }
 
-    /// W2.4 PROOF — the noise estimator is gated off at sub-640×360
-    /// resolutions (libvpx `vp9_noise_estimate.c:70`).
+    /// W2.4 PROOF — temporal noise estimation requires width >= 320
+    /// and height >= 180 (libvpx `vp9_noise_estimate.c:60`).
     #[test]
-    fn w2_4_noise_estimate_disabled_below_640x360() {
-        let mut st = PreAnalysisState::new(320, 240);
-        let flat = vec![128u8; 320 * 240];
+    fn w2_4_noise_estimate_disabled_below_temporal_minimum() {
+        let mut st = PreAnalysisState::new(256, 240);
+        let flat = vec![128u8; 256 * 240];
         st.capture_last_source(&flat);
         for c in &mut st.consec_zero_mv {
             *c = 100;
@@ -2730,16 +2775,123 @@ mod tests {
         st.compute_noise_estimate(
             &flat, /* frames_since_key = */ 8, /* noise_sensitivity */ 1,
         );
-        // libvpx `enable_noise_estimation` requires width*height >=
-        // 640*360. 320×240 = 76800 < 230400 ⇒ enabled stays false.
+        // The temporal gate requires width >= 320 and height >= 180.
+        // Width 256 is below that minimum.
         assert!(
             !st.noise_estimate.enabled,
-            "W2.4 PROOF: sub-640×360 resolution must disable the \
-             noise estimator (libvpx vp9_noise_estimate.c:70)"
+            "W2.4 PROOF: sub-320-wide resolution must disable the \
+             noise estimator (libvpx vp9_noise_estimate.c:60)"
         );
         // And value must not move when disabled (libvpx line 132-144
         // returns early before the histogram walk).
         assert_eq!(st.ne_value, 0);
+    }
+
+    #[test]
+    fn adaptive_denoiser_estimator_publication_and_temporal_gates() {
+        use rvp9_core::mode_decision::inter::NoiseLevel;
+        for (width, height, enabled, threshold) in [
+            (320, 180, true, 6),
+            (320, 178, false, 6),
+            (640, 360, true, 6),
+            (648, 360, true, 2),
+            (1920, 180, true, 2),
+            (1928, 180, true, 6),
+        ] {
+            let mut state = PreAnalysisState::new(width, height);
+            let last = vec![128; (width * height) as usize];
+            let noisy: Vec<_> = last
+                .iter()
+                .enumerate()
+                .map(|(i, _)| if i % 2 == 0 { 126 } else { 130 })
+                .collect();
+            state.ne_last_w = width;
+            state.ne_last_h = height;
+            state.consec_zero_mv.fill(3);
+            assert_eq!(
+                state.compute_noise_estimate_from_source(&noisy, 8, 1, Some(&last), None, None),
+                TemporalNoiseUpdate::Unchanged
+            );
+            assert_eq!(state.noise_estimate.enabled, enabled);
+            assert_eq!(
+                state.ne_value > 0,
+                enabled && threshold == 2,
+                "width={width}, height={height}"
+            );
+        }
+        let mut state = PreAnalysisState::new(320, 192);
+        let raw = vec![128; 320 * 192];
+        state.ne_last_w = 320;
+        state.ne_last_h = 192;
+        state.ne_count = 14;
+        assert_eq!(
+            state.compute_noise_estimate_from_source(&raw, 7, 1, Some(&raw), None, None),
+            TemporalNoiseUpdate::Unchanged
+        );
+        assert_eq!(state.ne_count, 14);
+        assert_eq!(
+            state.compute_noise_estimate_from_source(&raw, 8, 1, Some(&raw), None, None),
+            TemporalNoiseUpdate::Published(NoiseLevel::LowLow)
+        );
+    }
+
+    #[test]
+    fn adaptive_denoiser_estimator_uses_partial_bottom_mi() {
+        let (width, height) = (320usize, 266usize);
+        let mut state = PreAnalysisState::new(width as u32, height as u32);
+        state.ne_last_w = width as u32;
+        state.ne_last_h = height as u32;
+        state.consec_zero_mv.fill(10);
+        for row in (0..32).step_by(4) {
+            for col in (0..40).step_by(4) {
+                for dy in 0..2 {
+                    for dx in 0..2 {
+                        state.consec_zero_mv[(row + dy) * 40 + col + dx] = 0;
+                    }
+                }
+            }
+        }
+        let last = vec![128; width * height];
+        let mut current = last.clone();
+        for col in 0..width {
+            current[(height - 1) * width + col] = if col % 2 == 0 { 126 } else { 130 };
+        }
+        state.compute_noise_estimate_from_source(&current, 8, 1, Some(&last), None, None);
+        assert_eq!(
+            state.ne_value, 40,
+            "partial bottom blocks use replicated last visible source row"
+        );
+    }
+
+    #[test]
+    fn adaptive_denoiser_estimator_counts_partial_bottom_mi() {
+        let mut state = PreAnalysisState::new(320, 180);
+        state.ne_last_w = 320;
+        state.ne_last_h = 180;
+        state.consec_zero_mv[..335].fill(10);
+        let last = vec![128; 320 * 180];
+        let noisy: Vec<_> = last
+            .iter()
+            .enumerate()
+            .map(|(i, _)| if i % 2 == 0 { 126 } else { 130 })
+            .collect();
+        state.compute_noise_estimate_from_source(&noisy, 8, 1, Some(&last), None, None);
+        assert_eq!(
+            state.ne_value, 0,
+            "335 steady cells falls below 3/8 of the ceil MI grid (345)"
+        );
+    }
+
+    #[test]
+    fn adaptive_denoiser_estimator_survives_keyframe() {
+        let mut state = PreAnalysisState::new(320, 192);
+        state.ne_value = 400;
+        state.ne_count = 12;
+        state.noise_estimate.level = NoiseLevel::High;
+        state.keyframe_reset_with_temporal_denoising(true);
+        assert_eq!(state.ne_value, 400);
+        assert_eq!(state.ne_count, 12);
+        assert_eq!(state.noise_estimate.level, NoiseLevel::High);
     }
 
     /// W2.4 PROOF — frame_period gate suppresses non-multiple-of-8
