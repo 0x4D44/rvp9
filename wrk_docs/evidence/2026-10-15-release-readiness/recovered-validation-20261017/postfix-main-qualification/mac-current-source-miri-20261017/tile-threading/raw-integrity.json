@@ -1,0 +1,18 @@
+{
+  "original_capture": {
+    "path": "run.raw.txt",
+    "bytes": 14691,
+    "sha256": "abf91e618186ea96e22028ec90bbfb39941a78a46575fe6c35ee62cdb3c3bb87"
+  },
+  "compressed_original_archive": {
+    "path": "run.raw.txt.gz",
+    "bytes": 2468,
+    "sha256": "eb449bcadae1c06a292fc8c60067f84ec0e83525371a7ce5a9a35b89825f7524"
+  },
+  "normalized_review_copy": {
+    "path": "run.review.txt",
+    "bytes": 14690,
+    "sha256": "a8a01c2dcf26f6db2001b7e1d4c1b7fb107022ff10cb96aab4a339e5dcbcb050"
+  },
+  "normalization": "Removed exactly one final LF; all preceding bytes are unchanged. The exact original bytes remain in run.raw.txt and run.raw.txt.gz."
+}
