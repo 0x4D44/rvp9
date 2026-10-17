@@ -1,0 +1,12 @@
+observed_utc=2026-10-17T14:53:37Z
+host=flux.home.arpa
+target=aarch64-apple-darwin
+rustc=rustc 1.95.0 (59807616e 2026-04-14)
+cargo=cargo 1.95.0 (f2d3ce0bd 2026-03-21)
+ffmpeg=/opt/homebrew/bin/ffmpeg version=8.1.2
+llvm_profdata=/Library/Developer/CommandLineTools/usr/bin/llvm-profdata
+llvm_profdata_version=Apple LLVM version 21.0.0
+filesystem_free_bytes=757GiB
+quiet_status_live=false heavy_processes=0 heavy_processes_low_priority=26 own_measurements=0
+quiet_status_is_not_a_load-guard_pass=yes
+no wall-time or latency measurement is started by this PGO build

@@ -1,0 +1,2 @@
+exit_code=0
+basis=run.raw.txt ends with the build script completion marker; build-encoder-pgo.sh uses set -euo pipefail and emits that marker only after both successful cargo builds, profile merge, and optimized-binary checks. The original PTY exit event was not retained.

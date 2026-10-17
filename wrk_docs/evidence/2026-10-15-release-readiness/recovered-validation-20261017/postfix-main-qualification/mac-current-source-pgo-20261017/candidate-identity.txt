@@ -1,0 +1,12 @@
+worktree=/Users/md/worktrees/rvp9/20261017-TSK-HUM-requalify-post-fix-candidate
+branch=task/20261017-TSK-HUM-requalify-post-fix-candidate
+source_commit=fb5c0c917038db6c640b3dbc7c2b84b567233333
+source_worktree_clean=yes
+origin_main=fb5c0c917038db6c640b3dbc7c2b84b567233333
+qualification_script=scripts/build-encoder-pgo.sh
+qualification_script_sha256=2d335a8b02c41a3dc370238add4b894d2f9d27900ee9e657dcc3b9e7ba2d54e5
+pinned_libvpx_revision=12f3a2ac603e8f10742105519e0cd03c3b8f71dd
+build_root=target/encoder-pgo
+training_dir=/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/tests/corpus
+training_frames_per_row=60
+training_rows=28

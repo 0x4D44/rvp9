@@ -1,0 +1,315 @@
+{
+  "schema": "rvp9.macos-current-source-pgo-build.v1",
+  "recorded_at_utc": "2026-10-17T15:03:13Z",
+  "candidate": {
+    "commit": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+    "branch": "task/20261017-TSK-HUM-requalify-post-fix-candidate",
+    "tracked_worktree_clean_after_build": true,
+    "origin_main_recheck": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+    "pinned_libvpx_revision": "12f3a2ac603e8f10742105519e0cd03c3b8f71dd",
+    "origin_main_recheck_after_build": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+    "origin_main_recheck_after_build_at_utc": "2026-10-17T15:02:56Z"
+  },
+  "host": {
+    "name": "flux.home.arpa",
+    "target": "aarch64-apple-darwin",
+    "rustc": "rustc 1.95.0 (59807616e 2026-04-14)",
+    "cargo": "cargo 1.95.0 (f2d3ce0bd 2026-03-21)",
+    "ffmpeg": "8.1.2",
+    "llvm_profdata": "Apple LLVM version 21.0.0"
+  },
+  "training": {
+    "rows": 28,
+    "frames_per_row": 60,
+    "raw_profile_count": 31,
+    "training_directory": "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/tests/corpus",
+    "canonical_inputs": [
+      {
+        "name": "in_to_tree_420_720p50.y4m",
+        "path": "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/tests/corpus/in_to_tree_420_720p50.y4m",
+        "bytes": 691203035,
+        "sha256": "81166517a3054c789923535b5da23fbbb9bbd7fd4c28dac83918ac351e121e74",
+        "header": "YUV4MPEG2 W1280 H720 F50:1 Ip A1:1"
+      },
+      {
+        "name": "ducks_take_off_420_720p50.y4m",
+        "path": "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/tests/corpus/ducks_take_off_420_720p50.y4m",
+        "bytes": 691203035,
+        "sha256": "0e09aa923ce72e2f6d1c978c3c1cc8dd9588d2ede819081f040213e361970efc",
+        "header": "YUV4MPEG2 W1280 H720 F50:1 Ip A1:1"
+      },
+      {
+        "name": "old_town_cross_420_720p50.y4m",
+        "path": "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/tests/corpus/old_town_cross_420_720p50.y4m",
+        "bytes": 691203035,
+        "sha256": "0fbc2ec0c552ad693528b2e49409c7449880b9230055a7696346473d1aaf4123",
+        "header": "YUV4MPEG2 W1280 H720 F50:1 Ip A1:1"
+      }
+    ],
+    "plan": "canonical production 28-row matrix; details in training-manifest.txt"
+  },
+  "run": {
+    "run_id": "20261017T145352Z-46648",
+    "script": "scripts/build-encoder-pgo.sh",
+    "script_sha256": "2d335a8b02c41a3dc370238add4b894d2f9d27900ee9e657dcc3b9e7ba2d54e5",
+    "command_record": "run.command.raw.txt",
+    "completion_marker_observed": "[encoder PGO done]",
+    "script_exit_code": 0,
+    "exit_code_basis": "run.raw.txt ends with the completion marker and final status lines; the script uses set -euo pipefail and the final command is a successful echo. The PTY session exit event itself was no longer available when checked.",
+    "llvm_profile_warnings": "Repeated non-fatal warning: unable to track new values because LLVM ran out of static counters. The instrumented and profile-guided Cargo builds both completed."
+  },
+  "artifacts": {
+    "optimized_binary": {
+      "path": "candidate target/encoder-pgo/optimized/release/rvp9enc",
+      "bytes": 2438600,
+      "sha256": "c5330411c2ff738ef515a9e293702d1312dd47cfad4675285ab7772d2e3c2daf"
+    },
+    "merged_profile": {
+      "path": "candidate target/encoder-pgo/runs/20261017T145352Z-46648/encoder.profdata",
+      "bytes": 584680,
+      "sha256": "1053659f8ad830bfbe38c271a63870bbc7344f5b4b08c36e33417177f4f63e3b"
+    },
+    "training_ivf": {
+      "path": "candidate target/encoder-pgo/runs/20261017T145352Z-46648/training.ivf",
+      "bytes": 697858,
+      "sha256": "f19b45e1e15fe807a5443b0ff9b720376a5bc5d0dc64cfb8c7d75beb8d6ea096"
+    },
+    "training_manifest": {
+      "path": "training-manifest.txt",
+      "bytes": 2549,
+      "sha256": "a95fa2153ccabd49344278ae91a15a2c0902381453eafddcf4eb327eac291524"
+    },
+    "raw_profiles": [
+      {
+        "path": "target/encoder-pgo/runs/20261017T145352Z-46648/profiles/6324465855031178803_0-62656.profraw",
+        "bytes": 384544,
+        "sha256": "363a3e0fff2bebdd0ee6ff894ba2d74330e34c69ec628f62b4510422a0ce3c20"
+      },
+      {
+        "path": "target/encoder-pgo/runs/20261017T145352Z-46648/profiles/6324465855031178803_0-63360.profraw",
+        "bytes": 384512,
+        "sha256": "f09df3038e0faff36b71120f11ac3f8d90657398a559b834aae0fbd4654a8f95"
+      },
+      {
+        "path": "target/encoder-pgo/runs/20261017T145352Z-46648/profiles/6324465855031178803_0-64022.profraw",
+        "bytes": 384464,
+        "sha256": "0b8a7d0eae855d7cac9e737ea6c7c31e9b20668fa5f2415cc7df44462466c810"
+      },
+      {
+        "path": "target/encoder-pgo/runs/20261017T145352Z-46648/profiles/6324465855031178803_0-64439.profraw",
+        "bytes": 384912,
+        "sha256": "f482e933a2953a8971653cc6c7bc1b49a64967d3b7023e30b185c4fa630a1c94"
+      },
+      {
+        "path": "target/encoder-pgo/runs/20261017T145352Z-46648/profiles/6324465855031178803_0-65180.profraw",
+        "bytes": 384656,
+        "sha256": "203a0bbde3afe592f3f392d7e9f10e3423f05af160b9b4a2f2ef793ec8ca51eb"
+      },
+      {
+        "path": "target/encoder-pgo/runs/20261017T145352Z-46648/profiles/6324465855031178803_0-65879.profraw",
+        "bytes": 385056,
+        "sha256": "b14a65e1220e71e4ba3bc54afb80376692348f7c31c55498ea89cbd3bb1271b2"
+      },
+      {
+        "path": "target/encoder-pgo/runs/20261017T145352Z-46648/profiles/6324465855031178803_0-66444.profraw",
+        "bytes": 384160,
+        "sha256": "e27e62a935a61b6637a6840624a937c2f278f1d805bbc98dbec5b07ba6a7fd8b"
+      },
+      {
+        "path": "target/encoder-pgo/runs/20261017T145352Z-46648/profiles/6324465855031178803_0-66781.profraw",
+        "bytes": 384032,
+        "sha256": "9f8d38fcac4043c8c4f8847092280692ca94b9abc4b6104062e6d00b3386335e"
+      },
+      {
+        "path": "target/encoder-pgo/runs/20261017T145352Z-46648/profiles/6324465855031178803_0-67255.profraw",
+        "bytes": 384064,
+        "sha256": "e7148905ad7a9ec60f8936d6c75f6205e607893ce8555299013da1dc7d0d823f"
+      },
+      {
+        "path": "target/encoder-pgo/runs/20261017T145352Z-46648/profiles/6324465855031178803_0-67702.profraw",
+        "bytes": 384912,
+        "sha256": "2768f5e3e4d1d7997e117114f3cd6b0c2146d386ea542a43fbf9d18ac9d99175"
+      },
+      {
+        "path": "target/encoder-pgo/runs/20261017T145352Z-46648/profiles/6324465855031178803_0-68397.profraw",
+        "bytes": 384624,
+        "sha256": "d937af00f2c36a7c8c52a05d37d9469f5ccdf9f7a31adc2436e0fed0120a3a88"
+      },
+      {
+        "path": "target/encoder-pgo/runs/20261017T145352Z-46648/profiles/6324465855031178803_0-68944.profraw",
+        "bytes": 384736,
+        "sha256": "509d44825c9a12579e3a0d9e48a456f4bcf1b647eafe3f9532fbf14471b38c9c"
+      },
+      {
+        "path": "target/encoder-pgo/runs/20261017T145352Z-46648/profiles/6324465855031178803_0-69227.profraw",
+        "bytes": 383808,
+        "sha256": "8bc0172ded439aafb38a7dc5e29dc7dba39d0fb1c1bdb309821c4bcc73f8aaad"
+      },
+      {
+        "path": "target/encoder-pgo/runs/20261017T145352Z-46648/profiles/6324465855031178803_0-70099.profraw",
+        "bytes": 384208,
+        "sha256": "b548c93195575f670f63e6e3271ed9d423cf773cb94edfe5099ee0b330afca3a"
+      },
+      {
+        "path": "target/encoder-pgo/runs/20261017T145352Z-46648/profiles/6324465855031178803_0-70983.profraw",
+        "bytes": 383840,
+        "sha256": "8a6972c1b88e544807d0898d283e533a4d5456f44c68239e343e1227932bf3f8"
+      },
+      {
+        "path": "target/encoder-pgo/runs/20261017T145352Z-46648/profiles/6324465855031178803_0-71689.profraw",
+        "bytes": 384880,
+        "sha256": "9817e02405404b9b78edde40a05c4c32721714678862d13b4336e5468ba1b2ef"
+      },
+      {
+        "path": "target/encoder-pgo/runs/20261017T145352Z-46648/profiles/6324465855031178803_0-72923.profraw",
+        "bytes": 384784,
+        "sha256": "6f2128ef5c9082f66b4e06975db32aa91d80fe970a2d0e98696e0b8fd70b9121"
+      },
+      {
+        "path": "target/encoder-pgo/runs/20261017T145352Z-46648/profiles/6324465855031178803_0-74573.profraw",
+        "bytes": 384864,
+        "sha256": "152b31eeee8a7c6a59b0fc675db94759005f4597a2f60cbcd87003d86c232d1c"
+      },
+      {
+        "path": "target/encoder-pgo/runs/20261017T145352Z-46648/profiles/6324465855031178803_0-75645.profraw",
+        "bytes": 384464,
+        "sha256": "2ff4aada08f85d6056e34702b5ef940d1291a55199650edbd7304a0b9e9dba5e"
+      },
+      {
+        "path": "target/encoder-pgo/runs/20261017T145352Z-46648/profiles/6324465855031178803_0-76201.profraw",
+        "bytes": 384976,
+        "sha256": "856cad89f1c94e887e6021236d4b1ec52cbd26f2864d5f0880dd73c8128e3f33"
+      },
+      {
+        "path": "target/encoder-pgo/runs/20261017T145352Z-46648/profiles/6324465855031178803_0-77141.profraw",
+        "bytes": 384720,
+        "sha256": "cd6fd0fa6f7abd273a5b7c068d7b99134fe63ceaf81220fb0dd1d6ab6f136bd8"
+      },
+      {
+        "path": "target/encoder-pgo/runs/20261017T145352Z-46648/profiles/6324465855031178803_0-77818.profraw",
+        "bytes": 385120,
+        "sha256": "c2fd2d91b42b4e5d3b73c3be9ca740af6c3e127936f7b9f6aeead4d66b10d105"
+      },
+      {
+        "path": "target/encoder-pgo/runs/20261017T145352Z-46648/profiles/6324465855031178803_0-78462.profraw",
+        "bytes": 385536,
+        "sha256": "f2976bd3cc67b538c0be4630359449b29cdaebc02dddb60cead08982163bab22"
+      },
+      {
+        "path": "target/encoder-pgo/runs/20261017T145352Z-46648/profiles/6324465855031178803_0-79581.profraw",
+        "bytes": 385648,
+        "sha256": "70450cc44721c1b0c5e423af3f23fbbaddd980fb2a7a2b6b40c9e647766b8649"
+      },
+      {
+        "path": "target/encoder-pgo/runs/20261017T145352Z-46648/profiles/6324465855031178803_0-80540.profraw",
+        "bytes": 385232,
+        "sha256": "92f6a7d44c45a87be0e41d7bd7eecc7aa4bd652beb1858ed47c79519b19ac0ac"
+      },
+      {
+        "path": "target/encoder-pgo/runs/20261017T145352Z-46648/profiles/6324465855031178803_0-81191.profraw",
+        "bytes": 385680,
+        "sha256": "e36aed2e52810fc0a570129e897dfecb93d257022706fa3026788d5712a600dd"
+      },
+      {
+        "path": "target/encoder-pgo/runs/20261017T145352Z-46648/profiles/6324465855031178803_0-82107.profraw",
+        "bytes": 384816,
+        "sha256": "d5268122a8d732692a2f6c13bdb0ae5f137a1f3dded616fb5722564b0fa1096e"
+      },
+      {
+        "path": "target/encoder-pgo/runs/20261017T145352Z-46648/profiles/6324465855031178803_0-82760.profraw",
+        "bytes": 385232,
+        "sha256": "708b986028bc3302e3818ed3deeb015f30e95078c1ffc6069813e232a51ea38a"
+      },
+      {
+        "path": "target/encoder-pgo/runs/20261017T145352Z-46648/profiles/default_11201954402266203738_0.profraw",
+        "bytes": 3800,
+        "sha256": "f869bacc70ee0c778af6c8e419bb34f774e3695361eb78b33cead07304820eff"
+      },
+      {
+        "path": "target/encoder-pgo/runs/20261017T145352Z-46648/profiles/default_12928360739360503527_0.profraw",
+        "bytes": 9648,
+        "sha256": "0ce4e3c34b72ac01a5bedd51eb048992f02fbdc88e81728d5eaeb0bbb0fce7f5"
+      },
+      {
+        "path": "target/encoder-pgo/runs/20261017T145352Z-46648/profiles/default_12946694355568991182_0.profraw",
+        "bytes": 17376,
+        "sha256": "6ea4b83cbf5e8f315a1e83e5a463daca0a12b41c8c97cdace3ea49e46df45058"
+      }
+    ]
+  },
+  "smoke_check": {
+    "command": "optimized rvp9enc --help",
+    "exit_code": 0,
+    "result": "CLI help printed and exited successfully",
+    "raw_output": "optimized-binary-help.raw.txt"
+  },
+  "qualification_status": "PASS for exact-source macOS PGO artifact construction and CLI-help smoke only.",
+  "limits": [
+    "No quality result, BD-rate, reference decode, timing, throughput, latency, portability or release qualification is established.",
+    "Quiet status at build start was an open status snapshot, not a canonical load-guard pass.",
+    "Training inputs were taken from the evidence worktree because the candidate source worktree has no top-level Y4M corpus."
+  ],
+  "evidence_files": [
+    {
+      "path": "candidate-identity.txt",
+      "bytes": 662,
+      "sha256": "35ad2b5f777794d77bc60bd042fe5760f4f757fdb4245e6aa17779f6e342d57e"
+    },
+    {
+      "path": "origin-main-recheck.raw.txt",
+      "bytes": 57,
+      "sha256": "130e3182a62feb93d934b1ccfce7616bb68ba628ecc9c76f6af64d6c051fdbff"
+    },
+    {
+      "path": "origin-main-after.raw.txt",
+      "bytes": 57,
+      "sha256": "130e3182a62feb93d934b1ccfce7616bb68ba628ecc9c76f6af64d6c051fdbff"
+    },
+    {
+      "path": "origin-main-after-captured-at.txt",
+      "bytes": 21,
+      "sha256": "6c45907969206089597d467f9ad7ba6a75f44f7b242989a21aa4a1b6ff686fd8"
+    },
+    {
+      "path": "host-toolchain-summary.txt",
+      "bytes": 561,
+      "sha256": "b286ceb0945d8198641f5f7dc22935b2f1d94f62236cec160621790833d11530"
+    },
+    {
+      "path": "run.command.raw.txt",
+      "bytes": 726,
+      "sha256": "269f6a392deb3cce1c466e0ebaa2f66505a6da09491f0df8388a24e119fd2735"
+    },
+    {
+      "path": "run.raw.txt",
+      "bytes": 7048,
+      "sha256": "7199cf1129d4f3cf9af6b2b29a937bc44698e68f26e3bc7701b998c65cb0d234"
+    },
+    {
+      "path": "run.exit.txt",
+      "bytes": 273,
+      "sha256": "2b3e112177f64df0ee4fa27270305948e5de31844fc2c4d934944541b8d7cdc9"
+    },
+    {
+      "path": "training-manifest.txt",
+      "bytes": 2549,
+      "sha256": "a95fa2153ccabd49344278ae91a15a2c0902381453eafddcf4eb327eac291524"
+    },
+    {
+      "path": "optimized-binary-help.raw.txt",
+      "bytes": 5076,
+      "sha256": "e058f26e509b8b638462cd3f28ac9e072b23363f317d477aef21785c7d2f8b43"
+    },
+    {
+      "path": "optimized-binary-help.exit.txt",
+      "bytes": 12,
+      "sha256": "bde294368bfed77c2cddf8cec271d398aee9cdbab3b26e1059281bd33adb0120"
+    },
+    {
+      "path": "profile-files.json",
+      "bytes": 6765,
+      "sha256": "19240f5c6b449733c6b0be062c7ff4255c7efa01811d3fb8672e9f3389864b55"
+    }
+  ],
+  "related_corpus_plan_record": "../macos-current-source-pgo-corpus.json"
+}
