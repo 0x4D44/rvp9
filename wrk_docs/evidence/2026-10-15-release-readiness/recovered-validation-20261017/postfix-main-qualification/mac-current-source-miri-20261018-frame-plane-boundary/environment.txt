@@ -1,0 +1,6 @@
+Host: macOS 26.6.2 (25G83), arm64
+Kernel: Darwin 25.6.0; host flux.home.arpa
+Rust: 1.98.0-nightly (bd08c9e71 2026-06-25), aarch64-apple-darwin, LLVM 22.1.7
+Miri: 0.1.0 (bd08c9e718 2026-06-25)
+Build jobs: 1; dependency resolution: offline and locked; stdin: closed
+Process priority: nice -n 15; timeout: 900 seconds
