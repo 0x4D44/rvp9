@@ -1,0 +1,36 @@
+   Packaging rvp9-core v0.2.0-alpha.4 (D:\worktrees\rvp9-postfix-main\20261017-TSK-HUM@ANVIL-windows-post-fix-requalification\crates\rvp9-core)
+    Packaged 189 files, 6.3MiB (1.3MiB compressed)
+   Packaging rvp9-decoder v0.2.0-alpha.4 (D:\worktrees\rvp9-postfix-main\20261017-TSK-HUM@ANVIL-windows-post-fix-requalification\crates\rvp9-decoder)
+    Packaged 20 files, 973.8KiB (220.4KiB compressed)
+   Packaging rvp9-encoder v0.2.0-alpha.4 (D:\worktrees\rvp9-postfix-main\20261017-TSK-HUM@ANVIL-windows-post-fix-requalification\crates\rvp9-encoder)
+    Packaged 116 files, 4.0MiB (951.5KiB compressed)
+   Packaging rvp9-io v0.2.0-alpha.4 (D:\worktrees\rvp9-postfix-main\20261017-TSK-HUM@ANVIL-windows-post-fix-requalification\crates\rvp9-io)
+    Packaged 14 files, 210.0KiB (49.0KiB compressed)
+   Packaging rvp9-cli v0.2.0-alpha.4 (D:\worktrees\rvp9-postfix-main\20261017-TSK-HUM@ANVIL-windows-post-fix-requalification\crates\rvp9-cli)
+    Packaged 18 files, 316.6KiB (67.8KiB compressed)
+   Verifying rvp9-core v0.2.0-alpha.4 (D:\worktrees\rvp9-postfix-main\20261017-TSK-HUM@ANVIL-windows-post-fix-requalification\crates\rvp9-core)
+   Compiling crossbeam-utils v0.8.21
+   Compiling rvp9-core v0.2.0-alpha.4 (D:\worktrees\rvp9-postfix-main\20261017-TSK-HUM@ANVIL-windows-post-fix-requalification\target\package\rvp9-core-0.2.0-alpha.4)
+   Compiling crossbeam-channel v0.5.15
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.50s
+   Verifying rvp9-decoder v0.2.0-alpha.4 (D:\worktrees\rvp9-postfix-main\20261017-TSK-HUM@ANVIL-windows-post-fix-requalification\crates\rvp9-decoder)
+   Unpacking rvp9-core v0.2.0-alpha.4 (registry `D:\worktrees\rvp9-postfix-main\20261017-TSK-HUM@ANVIL-windows-post-fix-requalification\target\package\tmp-registry`)
+   Compiling rvp9-core v0.2.0-alpha.4
+   Compiling rvp9-decoder v0.2.0-alpha.4 (D:\worktrees\rvp9-postfix-main\20261017-TSK-HUM@ANVIL-windows-post-fix-requalification\target\package\rvp9-decoder-0.2.0-alpha.4)
+   Compiling static_assertions v1.1.0
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 7.59s
+   Verifying rvp9-encoder v0.2.0-alpha.4 (D:\worktrees\rvp9-postfix-main\20261017-TSK-HUM@ANVIL-windows-post-fix-requalification\crates\rvp9-encoder)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (D:\worktrees\rvp9-postfix-main\20261017-TSK-HUM@ANVIL-windows-post-fix-requalification\target\package\rvp9-encoder-0.2.0-alpha.4)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 10.54s
+   Verifying rvp9-io v0.2.0-alpha.4 (D:\worktrees\rvp9-postfix-main\20261017-TSK-HUM@ANVIL-windows-post-fix-requalification\crates\rvp9-io)
+   Compiling rvp9-io v0.2.0-alpha.4 (D:\worktrees\rvp9-postfix-main\20261017-TSK-HUM@ANVIL-windows-post-fix-requalification\target\package\rvp9-io-0.2.0-alpha.4)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 10.81s
+   Verifying rvp9-cli v0.2.0-alpha.4 (D:\worktrees\rvp9-postfix-main\20261017-TSK-HUM@ANVIL-windows-post-fix-requalification\crates\rvp9-cli)
+   Unpacking rvp9-decoder v0.2.0-alpha.4 (registry `D:\worktrees\rvp9-postfix-main\20261017-TSK-HUM@ANVIL-windows-post-fix-requalification\target\package\tmp-registry`)
+   Unpacking rvp9-encoder v0.2.0-alpha.4 (registry `D:\worktrees\rvp9-postfix-main\20261017-TSK-HUM@ANVIL-windows-post-fix-requalification\target\package\tmp-registry`)
+   Unpacking rvp9-io v0.2.0-alpha.4 (registry `D:\worktrees\rvp9-postfix-main\20261017-TSK-HUM@ANVIL-windows-post-fix-requalification\target\package\tmp-registry`)
+   Compiling rvp9-decoder v0.2.0-alpha.4
+   Compiling rvp9-encoder v0.2.0-alpha.4
+   Compiling rvp9-io v0.2.0-alpha.4
+   Compiling rvp9-cli v0.2.0-alpha.4 (D:\worktrees\rvp9-postfix-main\20261017-TSK-HUM@ANVIL-windows-post-fix-requalification\target\package\rvp9-cli-0.2.0-alpha.4)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 13.80s

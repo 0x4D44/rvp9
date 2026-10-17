@@ -893,5 +893,34 @@
     },
     "status": "Exact-source Windows encoder32 and reverse24 external-oracle checks passed with in-process Git Bash stat/shasum adapters."
   },
-  "current_source_correctness_recorded_at_utc": "2026-10-17T12:20:46Z"
+  "current_source_correctness_recorded_at_utc": "2026-10-17T12:20:46Z",
+  "windows_current_source_package_verification": {
+    "recorded_at_utc": "2026-10-17T12:31:56Z",
+    "record": "windows-current-source-package-verification.json",
+    "source_commit": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+    "host": "ANVIL, native Windows x86-64",
+    "command": "deltic timeout 1800 cargo package --offline --locked -p rvp9-core -p rvp9-io -p rvp9-decoder -p rvp9-encoder -p rvp9-cli </dev/null",
+    "exit_code": 0,
+    "packages_verified": [
+      "rvp9-core",
+      "rvp9-io",
+      "rvp9-decoder",
+      "rvp9-encoder",
+      "rvp9-cli"
+    ],
+    "log_sha256": "fb291215223ad27392d14da6186ccc563b07b3290bd80fe77e852b227146af6b",
+    "archive_test_status": "not qualified; prescribed external-scratch attempts stopped at offline dependency resolution before compilation",
+    "external_scratch_archive_tests": {
+      "recorded_at_utc": "2026-10-17T12:34:55Z",
+      "status": "not qualified; prescribed external-scratch attempts stopped at offline dependency resolution before compilation",
+      "scratch_id": "rvp9-archive-tests-c8dbdc4a",
+      "exit_codes": {
+        "decoder_panic_safety": 101,
+        "encoder_quality_gate": 101
+      },
+      "reason": "offline index contained rvp9-core alpha.3; extracted alpha.4 archives require alpha.4",
+      "record": "windows-current-source-package-verification.json"
+    },
+    "macos_exact_source_status": "not verified; historical native package evidence is source 33378791eace3bda2f927e629c30b805b54b56e1"
+  }
 }

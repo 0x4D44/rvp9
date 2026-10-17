@@ -1,0 +1,128 @@
+{
+  "schema": "rvp9.windows-current-source-package-verification.v1",
+  "recorded_at_utc": "2026-10-17T12:31:56Z",
+  "source": {
+    "commit": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+    "worktree": "D:\\worktrees\\rvp9-postfix-main\\20261017-TSK-HUM@ANVIL-windows-post-fix-requalification",
+    "host": "ANVIL, native Windows x86-64",
+    "host_triple": "x86_64-pc-windows-msvc",
+    "tracked_tree_clean_after_checks": true
+  },
+  "toolchain": {
+    "rustc": "rustc 1.95.0 (59807616e 2026-04-14)",
+    "cargo": "cargo 1.95.0 (f2d3ce0bd 2026-03-21)"
+  },
+  "package_verification": {
+    "command": "deltic timeout 1800 cargo package --offline --locked -p rvp9-core -p rvp9-io -p rvp9-decoder -p rvp9-encoder -p rvp9-cli </dev/null",
+    "exit_code": 0,
+    "status": "pass; all five package archives were assembled and Cargo compiled the fresh sibling package graph from its temporary registry",
+    "packages": [
+      "rvp9-core",
+      "rvp9-io",
+      "rvp9-decoder",
+      "rvp9-encoder",
+      "rvp9-cli"
+    ],
+    "warning_or_error_lines": 0,
+    "raw_log": {
+      "path": "windows-current-source-package-verification.raw.txt",
+      "bytes": 3853,
+      "sha256": "fb291215223ad27392d14da6186ccc563b07b3290bd80fe77e852b227146af6b"
+    },
+    "raw_exit_capture": {
+      "path": "windows-current-source-package-verification.exit.raw.txt",
+      "bytes": 12,
+      "sha256": "b4e11e4759bcf2e5bc5e856356a1a816c9a32351e263fbe391a00cf2d9799126",
+      "text": "exit_code=0n",
+      "interpretation": "The capture contains a literal trailing n; the Bash/SSH command process itself exited 0 and the Cargo log ends with successful package verification."
+    }
+  },
+  "extracted_archive_tests": {
+    "status": "not qualified; prescribed external-scratch attempts stopped at offline dependency resolution before compilation",
+    "reason": "Both prescribed external-scratch attempts stopped before compilation: the offline crates.io index offered rvp9-core 0.2.0-alpha.3 while the alpha.4 archive lock required 0.2.0-alpha.4. The runs used a separate CARGO_TARGET_DIR and did not inherit the source worktree .cargo configuration. They are offline prerequisite failures, not FLU38 reproductions or code failures. The earlier attempts from the source worktree are retained separately and are non-qualifying.",
+    "historical_bug_dependency": {
+      "id": "RVP9-BUG-FLU-00038",
+      "state": "Open",
+      "note": "Prior extracted-archive evidence reproduces missing decoder/encoder test dependencies on an earlier source. This current-source attempt neither confirms nor refutes that defect."
+    },
+    "non_qualifying_source_worktree_attempts": [
+      {
+        "crate": "rvp9-decoder",
+        "command": "deltic timeout 900 cargo test --offline --locked --manifest-path target/package/rvp9-decoder-0.2.0-alpha.4/Cargo.toml --test panic_safety --jobs 4 </dev/null",
+        "exit_code": 101,
+        "raw_log": {
+          "path": "windows-current-source-decoder-archive-test.raw.txt",
+          "bytes": 699,
+          "sha256": "da1a1cf2c1c911dfc37138618f6a3020b51b1c377ec2d37a2dc79a7a67cc3a21"
+        },
+        "raw_exit_capture": {
+          "path": "windows-current-source-decoder-archive-test.exit.raw.txt",
+          "bytes": 22,
+          "sha256": "ed3483a70a1165ff7a2ca826fece392d845acb67351f495ff42af0b283b1e1bc"
+        }
+      },
+      {
+        "crate": "rvp9-encoder",
+        "command": "deltic timeout 900 cargo test --offline --locked --manifest-path target/package/rvp9-encoder-0.2.0-alpha.4/Cargo.toml --test quality_gate --jobs 4 </dev/null",
+        "exit_code": 101,
+        "raw_log": {
+          "path": "windows-current-source-encoder-archive-test.raw.txt",
+          "bytes": 699,
+          "sha256": "af856b96c3b885b964d8474aaa58d4c81d77e3dacbad97dc4f53d562345fbbfe"
+        },
+        "raw_exit_capture": {
+          "path": "windows-current-source-encoder-archive-test.exit.raw.txt",
+          "bytes": 22,
+          "sha256": "9be60db4fe50f4c20d94fb14216ef657e5005130914ee2a2b7449f29b78d63b1"
+        }
+      }
+    ],
+    "commands": [
+      {
+        "crate": "rvp9-decoder",
+        "command": "deltic timeout 900 cargo test --offline --locked --manifest-path <external scratch>\\rvp9-decoder-0.2.0-alpha.4\\Cargo.toml --test panic_safety --jobs 4",
+        "working_directory": "registered external scratch; CARGO_TARGET_DIR set to a separate target under that scratch",
+        "exit_code": 101,
+        "raw_log": {
+          "path": "windows-current-source-external-scratch-decoder-archive-test.raw.txt",
+          "bytes": 662,
+          "sha256": "da2a17323fd6978ee4a08890ba6cd3c016c0c9b9b447ec7b65c8274ab3f5cf1a"
+        },
+        "raw_exit_capture": {
+          "path": "windows-current-source-external-scratch-decoder-archive-test.exit.raw.txt",
+          "bytes": 22,
+          "sha256": "ed3483a70a1165ff7a2ca826fece392d845acb67351f495ff42af0b283b1e1bc"
+        }
+      },
+      {
+        "crate": "rvp9-encoder",
+        "command": "deltic timeout 900 cargo test --offline --locked --manifest-path <external scratch>\\rvp9-encoder-0.2.0-alpha.4\\Cargo.toml --test quality_gate --jobs 4",
+        "working_directory": "registered external scratch; CARGO_TARGET_DIR set to a separate target under that scratch",
+        "exit_code": 101,
+        "raw_log": {
+          "path": "windows-current-source-external-scratch-encoder-archive-test.raw.txt",
+          "bytes": 662,
+          "sha256": "6af563e2f0f9fbe1c6ce930153d2f9ce12220bb9f504cedf2e8569466f8d7106"
+        },
+        "raw_exit_capture": {
+          "path": "windows-current-source-external-scratch-encoder-archive-test.exit.raw.txt",
+          "bytes": 22,
+          "sha256": "9be60db4fe50f4c20d94fb14216ef657e5005130914ee2a2b7449f29b78d63b1"
+        }
+      }
+    ],
+    "external_scratch": {
+      "id": "rvp9-archive-tests-c8dbdc4a",
+      "removed_after_attempts": true,
+      "source_package_directories": "copied from the exact-source Cargo target/package staging output",
+      "source_worktree_unchanged": true
+    }
+  },
+  "limits": [
+    "Cargo package verification compiles the assembled package graph but does not run tests embedded in extracted archives.",
+    "This record covers Windows only and does not establish exact-source macOS package verification.",
+    "The two offline resolver failures are prerequisite failures, not FLU38 evidence. No online retry, dependency override, manifest patch or source change was attempted.",
+    "No exact-source macOS cargo package verification was run; historical native macOS package evidence used source 33378791eace3bda2f927e629c30b805b54b56e1 and does not qualify source fb5c0c917038db6c640b3dbc7c2b84b567233333."
+  ],
+  "updated_at_utc": "2026-10-17T12:34:55Z"
+}
