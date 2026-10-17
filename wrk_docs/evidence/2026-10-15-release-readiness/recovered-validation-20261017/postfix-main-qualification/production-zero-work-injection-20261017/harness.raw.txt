@@ -1,0 +1,6 @@
+CURRENT quality: exit=1, zero rows refused, completed=no
+CURRENT speed: exit=1, zero rows refused, completed=no
+CURRENT latency: exit=1, zero rows refused, completed=no
+NEGATIVE CONTROL quality: exit=0, header-only completed output published
+NEGATIVE CONTROL speed: exit=0, header-only completed output published
+NEGATIVE CONTROL latency: exit=0, header-only completed output published

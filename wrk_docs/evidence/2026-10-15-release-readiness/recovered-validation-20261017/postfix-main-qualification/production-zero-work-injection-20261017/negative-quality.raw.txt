@@ -1,0 +1,3 @@
+
+Quality phase qualified 0 curves (0 reused with fresh decoder checks), 0 clip/layer checks, 0 aggregate groups (0 layer gates), 0 candidate streams, 0 decoder runs, 1 oracle.
+Quality phase passed.

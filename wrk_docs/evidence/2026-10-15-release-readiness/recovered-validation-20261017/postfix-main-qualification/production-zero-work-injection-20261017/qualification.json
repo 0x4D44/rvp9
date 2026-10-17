@@ -1,0 +1,91 @@
+{
+  "schema": "rvp9.production-zero-work-injection.v1",
+  "recorded_at_utc": "2026-10-17T21:23:47Z",
+  "source": {
+    "candidate_product_commit": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+    "run_commit": "a6c886f2cc78220217ec6d43bd5860195a869406",
+    "script_path": "scripts/qualify-production-encoder.sh",
+    "script_git_blob": "6033130b5a01a27653b4996f4d6e47448645d948",
+    "script_sha256": "3ec28783f5b3e52ba554888a5e53f2dd51e7d21645137d0cbbd0b32965f1953c",
+    "candidate_script_blob_matches": true
+  },
+  "environment": {
+    "host": "macOS Darwin 25.6.0 arm64",
+    "shell": "GNU bash 3.2.57 (arm64-apple-darwin25)",
+    "stdin": "closed"
+  },
+  "command": "deltic timeout 60 bash wrk_docs/evidence/2026-10-15-release-readiness/recovered-validation-20261017/postfix-main-qualification/production-zero-work-injection-20261017/zero-work-injection.sh scripts/qualify-production-encoder.sh .scratch/zero-work-qualification-replay </dev/null",
+  "injection": {
+    "function_body_sha256": "93753a457d44d37be2772444af2468d0fad7cd4dde4db9a44ea65d9c7bd4900d",
+    "description": "Loaded the exact script function bodies with only the final main invocation omitted. Replaced clip/group iterators with empty functions and host-load, aggregate and AQ-oracle boundaries with no-op stubs. No codec, decoder, oracle or host-load process ran.",
+    "current_results": [
+      {
+        "phase": "quality",
+        "rows": 0,
+        "expected_rows": 200,
+        "exit_code": 1,
+        "completed_published": false,
+        "raw_log": "current-quality.raw.txt",
+        "raw_log_sha256": "ca89d476f2f93c0e54256e94ed95993874168c26df578af4928529061c109eae"
+      },
+      {
+        "phase": "speed",
+        "groups": 0,
+        "expected_groups": 75,
+        "exit_code": 1,
+        "completed_published": false,
+        "raw_log": "current-speed.raw.txt",
+        "raw_log_sha256": "179051030accaba8c0b37e4b25afe31f0f6a0938d438a3de23147502b6a13a5c"
+      },
+      {
+        "phase": "latency",
+        "rows": 0,
+        "expected_rows": 200,
+        "measured_runs": 0,
+        "exit_code": 1,
+        "completed_published": false,
+        "raw_log": "current-latency.raw.txt",
+        "raw_log_sha256": "fb4688f850b4407a9a264f38a8e1b9b5808e0f78ab9d924b1275823eb16d07ec"
+      }
+    ]
+  },
+  "negative_control": {
+    "mutated_function_body_sha256": "e13f7a0e1eb68746a6d352222e2624d61a28832ef0823f75d8854137afca148b",
+    "mutation": "Scratch-only copy removed the exact-total assertion blocks at original script lines 3896-3909, 4164-4165 and 4431-4434.",
+    "description": "With the count guards removed and the same zero-work stubs, all three functions returned success and published their header-only completed summaries. This demonstrates that the injection catches a bypass of the exact-total guards.",
+    "results": [
+      {
+        "phase": "quality",
+        "exit_code": 0,
+        "header_only_completed": true,
+        "raw_log": "negative-quality.raw.txt",
+        "raw_log_sha256": "cd77a28cb8b1a2ed683cca2c47f5ad89792f55e13ca43fd0b87628f94584fbab"
+      },
+      {
+        "phase": "speed",
+        "exit_code": 0,
+        "header_only_completed": true,
+        "raw_log": "negative-speed.raw.txt",
+        "raw_log_sha256": "d48eeb59f98c810271fdef5bb04ccfd1b87423dd188cf569334ea12a12cdb6b7"
+      },
+      {
+        "phase": "latency",
+        "exit_code": 0,
+        "header_only_completed": true,
+        "raw_log": "negative-latency.raw.txt",
+        "raw_log_sha256": "18022b9ffd908003a65075a1df1c5178b9ddf42ad587ca476e762488e407da66"
+      }
+    ]
+  },
+  "harness": {
+    "path": "zero-work-injection.sh",
+    "sha256": "019f3dc887eacd27a0ac3ba196120524722e8339676a638141f24913b58b13c2",
+    "raw_log": "harness.raw.txt",
+    "raw_log_sha256": "1499ca03bee9ca2ae5004a1b207bdb73a4e879fc1761a49717b4d371b6a7735c"
+  },
+  "limits": [
+    "This is a synthetic orchestration check using stubbed iterators and child boundaries.",
+    "It is not a quality, throughput, latency or decoder-correctness result.",
+    "The negative control is a deliberately modified scratch copy and is not release evidence."
+  ]
+}
