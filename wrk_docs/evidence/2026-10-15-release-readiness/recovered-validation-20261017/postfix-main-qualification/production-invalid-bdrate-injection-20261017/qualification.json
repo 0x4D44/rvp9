@@ -1,0 +1,185 @@
+{
+  "schema": 1,
+  "created_utc": "2026-10-17T14:50:25Z",
+  "purpose": "Synthetic exact-source production quality-row injection of a non-finite BD-rate child output; orchestration evidence only.",
+  "candidate": {
+    "worktree": "/Users/md/worktrees/rvp9/20261017-TSK-HUM-requalify-post-fix-candidate",
+    "branch": "task/20261017-TSK-HUM-requalify-post-fix-candidate",
+    "source_commit": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+    "source_worktree_clean": true,
+    "qualification_script": "scripts/qualify-production-encoder.sh",
+    "qualification_script_sha256": "3ec28783f5b3e52ba554888a5e53f2dd51e7d21645137d0cbbd0b32965f1953c",
+    "pinned_libvpx_commit": "12f3a2ac603e8f10742105519e0cd03c3b8f71dd"
+  },
+  "host": {
+    "name": "flux.home.arpa",
+    "os": "macOS Darwin 25.6.0",
+    "architecture": "arm64",
+    "rustc": "1.95.0 (59807616e 2026-04-14)",
+    "cargo": "1.95.0 (f2d3ce0bd 2026-03-21)"
+  },
+  "scratch": {
+    "path": "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/.scratch/invalid-bdrate-injection-20261017",
+    "disposition": "Evidence copied and hash-verified; scratch cleared with deltic scratch clear before task completion."
+  },
+  "run": {
+    "started_utc": "2026-10-17T14:48:40Z",
+    "command_file": "run.command.raw.txt",
+    "phase": "quality",
+    "planned_rows": 200,
+    "rows_reached": 1,
+    "row_id": "baseline-cbr-720p30-in_to_tree-cpu6",
+    "script_exit_code": 1,
+    "stub_bdrate_exit_code": 0,
+    "stub_csv": "bdrate_pct,NaN",
+    "observed": {
+      "script_message": "baseline-cbr-720p30-in_to_tree-cpu6 TL0 BD-rate: expected a decimal number, got 'NaN'",
+      "row_quality_fragment_bytes": 0,
+      "root_quality_summary_header_only": true,
+      "root_cross_decoder_header_only": true,
+      "root_quality_aggregate_header_only": true,
+      "quality_completed_exists": false,
+      "run_lock_exists_after_exit": false,
+      "retained_private_row_attempt": true,
+      "retained_private_result_attempt": true,
+      "synthetic_streams_created": 0,
+      "rvp9dec_invocations": 0,
+      "vpxdec_invocations": 0
+    }
+  },
+  "synthetic_setup_and_limits": [
+    "The four canonical source paths contained header-only Y4M fixtures; the task-local shasum adapter returned the expected pinned constants for those paths. This did not validate real corpus pixels or real corpus hashes.",
+    "The fake bdrate dispatcher exited 0 and wrote bdrate_pct,NaN. The fake ffmpeg dispatcher generated sparse Y4M files with expected headers and logical lengths; 16 fake preprocessing calls were made.",
+    "The PGO manifest, encoder, decoder, bdrate, realtime, encode-headtohead, and FFmpeg executables were task-local stubs. The test encoder and reference encoder were not invoked; decoder invocation counts were zero.",
+    "The script rejected the non-finite decimal before writing a quality-fragment PASS or entering cross-decoder checks. Only the first row of 200 was reached.",
+    "No real encoder, decoder, bitstream, corpus pixels, quality, BD-rate, PSNR, FFmpeg, timing, or codec behavior was measured. This does not address FLU-00042's finite but inaccurate BD-rate result or FLU-00041's spatial summary defect."
+  ],
+  "artifact_inventory_note": "SHA-256 and byte lengths below cover every file in this evidence directory except qualification.json itself.",
+  "artifacts": [
+    {
+      "path": "candidate-identity.raw.txt",
+      "bytes": 436,
+      "sha256": "9df1b8a809809c1eec6fcacdb937efe76476bea12b3e34ff55d78a741b35247d"
+    },
+    {
+      "path": "config.stub.mk",
+      "bytes": 46,
+      "sha256": "d945ccb78902142151d09ca60953c92851fc0a835665af8b372dac1587712ae2"
+    },
+    {
+      "path": "cross-decoder-fragment.raw.csv",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "cross-decoder.root.raw.csv",
+      "bytes": 108,
+      "sha256": "35275dd5c55a5471dd74fb1ffafc59aa3de86535202eb322757decba00904e5c"
+    },
+    {
+      "path": "invalid-bdrate.csv.synthetic",
+      "bytes": 15,
+      "sha256": "2df486a99081b0b7c671c1397b403a4d759df54816601b15f6aa1f23fa80d88f"
+    },
+    {
+      "path": "invalid-bdrate.exit.txt",
+      "bytes": 2,
+      "sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865"
+    },
+    {
+      "path": "invalid-bdrate.raw.txt",
+      "bytes": 3611,
+      "sha256": "9cbf44fa81743700a826ed0a12c83e68348a5fb83b479c73bb48e5d616abf775"
+    },
+    {
+      "path": "invocations.raw.txt",
+      "bytes": 9446,
+      "sha256": "3523d17a512ae1f394dc30e958194277fb9eeec5d4af8ca6b27deadd7594168e"
+    },
+    {
+      "path": "pgo-manifest.raw.txt",
+      "bytes": 298,
+      "sha256": "4e7058ff6d50261bfba5b5d65e8955bd24175769e1f6b3354a47f5f38785ae21"
+    },
+    {
+      "path": "probe-tool.sh",
+      "bytes": 2688,
+      "sha256": "4a56ed7cefb88de34e3053f6cd036e8afa9234023750a3230b141a30a37ecff7"
+    },
+    {
+      "path": "quality-aggregate.root.raw.csv",
+      "bytes": 135,
+      "sha256": "dc4e982883e47016fcf94b496e1a9e4c8b24e161b8884ca70a94fd98d7ed2531"
+    },
+    {
+      "path": "quality-fragment.raw.csv",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "quality-summary.root.raw.csv",
+      "bytes": 191,
+      "sha256": "eb102f6e0f0adadb73575cda2ffa7829a090624bac9652ac88c23ccc90770277"
+    },
+    {
+      "path": "row-runner.raw.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "run.command.raw.txt",
+      "bytes": 3366,
+      "sha256": "f5701e46aef477ce0fc652fabded03c76600aff919f16c81ee2dcbc5c7437be2"
+    },
+    {
+      "path": "run.manifest.raw.txt",
+      "bytes": 145527,
+      "sha256": "d75ef06193f1af22d2163c29d8cac15cbffe704148d1a6541373ef7e9923e913"
+    },
+    {
+      "path": "sha-cache.raw.txt",
+      "bytes": 1708,
+      "sha256": "730cb378823175ccb76049cf116a93092994f4c7a04d0ecd36963e23f558332f"
+    },
+    {
+      "path": "sha256-cache-adapter.sh",
+      "bytes": 1129,
+      "sha256": "eaf68ef67e50af200fdec6ba0b6f7b74a6db4042f9e2eaf8de18c4e717b97b6e"
+    },
+    {
+      "path": "synthetic-corpus/ducks_take_off_420_720p50.y4m.header-only",
+      "bytes": 35,
+      "sha256": "17228f8820d8777f923486b191cae41517e5b0ec3be9a73db9f2761b3e1c284a"
+    },
+    {
+      "path": "synthetic-corpus/foreman_cif.y4m.header-only",
+      "bytes": 44,
+      "sha256": "030e40c4e0bd931ff7c581498928e62399e122515e6c94ecf154cd6bf8ea7907"
+    },
+    {
+      "path": "synthetic-corpus/in_to_tree_420_720p50.y4m.header-only",
+      "bytes": 35,
+      "sha256": "17228f8820d8777f923486b191cae41517e5b0ec3be9a73db9f2761b3e1c284a"
+    },
+    {
+      "path": "synthetic-corpus/old_town_cross_420_720p50.y4m.header-only",
+      "bytes": 35,
+      "sha256": "17228f8820d8777f923486b191cae41517e5b0ec3be9a73db9f2761b3e1c284a"
+    },
+    {
+      "path": "synthetic-inputs-summary.raw.txt",
+      "bytes": 890,
+      "sha256": "3909539cb6ba2b9bb46af9717c36519a73093edc28f14e13f5eda872ef733c49"
+    },
+    {
+      "path": "vpx-config.stub.h",
+      "bytes": 98,
+      "sha256": "e4ba06d60e46451085e6511746444bd77d547300cbf6e58bbb28eabb7c9a7b43"
+    },
+    {
+      "path": "workdir-state.raw.txt",
+      "bytes": 2241,
+      "sha256": "6a6a53facfe08b670b2f95ba31a792b67c8e36fbf96691eae979c79f6eaf7c23"
+    }
+  ]
+}

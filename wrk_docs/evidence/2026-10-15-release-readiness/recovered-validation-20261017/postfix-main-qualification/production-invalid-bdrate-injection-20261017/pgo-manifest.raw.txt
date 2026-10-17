@@ -1,0 +1,3 @@
+git_commit=fb5c0c917038db6c640b3dbc7c2b84b567233333
+optimized_binary=/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/.scratch/invalid-bdrate-injection-20261017/tools/rvp9enc
+optimized_binary_sha256=4a56ed7cefb88de34e3053f6cd036e8afa9234023750a3230b141a30a37ecff7

@@ -1,0 +1,7 @@
+registered_scratch=task-worktree .scratch/invalid-bdrate-injection-20261017
+synthetic_corpus_file_count=4
+ducks_take_off_420_720p50.y4m bytes=35 header=YUV4MPEG2 W1280 H720 F50:1 Ip A1:1 actual_sha256=17228f8820d8777f923486b191cae41517e5b0ec3be9a73db9f2761b3e1c284a
+foreman_cif.y4m bytes=44 header=YUV4MPEG2 W352 H288 F30000:1001 Ip A128:117 actual_sha256=030e40c4e0bd931ff7c581498928e62399e122515e6c94ecf154cd6bf8ea7907
+in_to_tree_420_720p50.y4m bytes=35 header=YUV4MPEG2 W1280 H720 F50:1 Ip A1:1 actual_sha256=17228f8820d8777f923486b191cae41517e5b0ec3be9a73db9f2761b3e1c284a
+old_town_cross_420_720p50.y4m bytes=35 header=YUV4MPEG2 W1280 H720 F50:1 Ip A1:1 actual_sha256=17228f8820d8777f923486b191cae41517e5b0ec3be9a73db9f2761b3e1c284a
+The task-local shasum adapter returned canonical pinned constants for these header-only files; actual file hashes above are not canonical corpus hashes.

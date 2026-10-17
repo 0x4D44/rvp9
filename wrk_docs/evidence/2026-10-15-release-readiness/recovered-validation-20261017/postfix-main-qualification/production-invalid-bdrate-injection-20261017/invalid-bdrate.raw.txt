@@ -1,0 +1,20 @@
+Preparing acceptance inputs in /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/.scratch/invalid-bdrate-injection-20261017/work-invalid-bdrate/inputs
+  /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/.scratch/invalid-bdrate-injection-20261017/work-invalid-bdrate/inputs/in_to_tree_720p30_clean.y4m
+  /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/.scratch/invalid-bdrate-injection-20261017/work-invalid-bdrate/inputs/in_to_tree_720p30_noisy.y4m
+  /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/.scratch/invalid-bdrate-injection-20261017/work-invalid-bdrate/inputs/ducks_take_off_720p30_clean.y4m
+  /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/.scratch/invalid-bdrate-injection-20261017/work-invalid-bdrate/inputs/ducks_take_off_720p30_noisy.y4m
+  /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/.scratch/invalid-bdrate-injection-20261017/work-invalid-bdrate/inputs/old_town_cross_720p30_clean.y4m
+  /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/.scratch/invalid-bdrate-injection-20261017/work-invalid-bdrate/inputs/old_town_cross_720p30_noisy.y4m
+  /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/.scratch/invalid-bdrate-injection-20261017/work-invalid-bdrate/inputs/in_to_tree_1080p30_clean.y4m
+  /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/.scratch/invalid-bdrate-injection-20261017/work-invalid-bdrate/inputs/in_to_tree_1080p30_noisy.y4m
+  /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/.scratch/invalid-bdrate-injection-20261017/work-invalid-bdrate/inputs/ducks_take_off_1080p30_clean.y4m
+  /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/.scratch/invalid-bdrate-injection-20261017/work-invalid-bdrate/inputs/ducks_take_off_1080p30_noisy.y4m
+  /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/.scratch/invalid-bdrate-injection-20261017/work-invalid-bdrate/inputs/old_town_cross_1080p30_clean.y4m
+  /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/.scratch/invalid-bdrate-injection-20261017/work-invalid-bdrate/inputs/old_town_cross_1080p30_noisy.y4m
+  /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/.scratch/invalid-bdrate-injection-20261017/work-invalid-bdrate/inputs/in_to_tree_1080p60_clean.y4m
+  /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/.scratch/invalid-bdrate-injection-20261017/work-invalid-bdrate/inputs/in_to_tree_1080p60_noisy.y4m
+  /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/.scratch/invalid-bdrate-injection-20261017/work-invalid-bdrate/inputs/old_town_cross_1080p60_clean.y4m
+  /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/.scratch/invalid-bdrate-injection-20261017/work-invalid-bdrate/inputs/old_town_cross_1080p60_noisy.y4m
+[quality   1/200] baseline-cbr-720p30-in_to_tree-cpu6 (bdrate, vpxenc anchor, clean input)
+baseline-cbr-720p30-in_to_tree-cpu6 TL0 BD-rate: expected a decimal number, got 'NaN'
+interrupted attempt retained for inspection: /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/.scratch/invalid-bdrate-injection-20261017/work-invalid-bdrate/quality/rows/.baseline-cbr-720p30-in_to_tree-cpu6.attempt.20261017T144922Z-80252

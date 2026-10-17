@@ -1,0 +1,30 @@
+work_dir=/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/.scratch/invalid-bdrate-injection-20261017/work-invalid-bdrate
+started_utc=2026-10-17T14:48:40Z
+phase=quality
+row=baseline-cbr-720p30-in_to_tree-cpu6
+row_attempt=/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/.scratch/invalid-bdrate-injection-20261017/work-invalid-bdrate/quality/rows/.baseline-cbr-720p30-in_to_tree-cpu6.attempt.20261017T144922Z-80252
+result_attempt=/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/.scratch/invalid-bdrate-injection-20261017/work-invalid-bdrate/quality/.result-attempt-20261017T144922Z-80252
+lock_dir_exists=False
+quality_completed_exists=False
+retained_row_attempt_exists=True
+retained_result_attempt_exists=True
+row_bdrate.csv exists=True bytes=15
+row_quality-fragment.csv exists=True bytes=0
+row_cross-decoder-fragment.csv exists=True bytes=0
+row_runner.log exists=True bytes=0
+row_cross-decoder.log exists=False bytes=absent
+root_quality-summary.csv bytes=191 first_line=row_id,feature,mode,target,clip,cpu_used,aq_mode,noise_sensitivity,temporal_layers,threads,tile_columns,bitrates_kbps,runner,anchor,input_kind,reference_kind,layer,bdrate_pct,gate_pct,status
+root_cross-decoder.csv bytes=108 first_line=row_id,stream,kind,bytes,stream_sha256,rvp9dec_sha256,vpxdec_sha256,decoders_identical,ffmpeg_decode,status
+root_quality-aggregate.csv bytes=135 first_line=group_id,feature,mode,target,cpu_used,aq_mode,noise_sensitivity,temporal_layers,clips,clip_count,layer,mean_bdrate_pct,gate_pct,status
+generated_stream_count=0
+invocation_lines_bdrate=3
+invocation_lines_rvp9dec=0
+invocation_lines_vpxdec=0
+invocation_lines_ffmpeg=17
+prepared_input_count=16
+prepared_720p30_count=6 logical_bytes=[82944404] allocated_bytes=[4096] unique_inodes=1
+prepared_720p30_headers=['YUV4MPEG2 W1280 H720 F30:1 Ip A1:1 C420jpeg']
+prepared_1080p30_count=6 logical_bytes=[186624405] allocated_bytes=[4096] unique_inodes=1
+prepared_1080p30_headers=['YUV4MPEG2 W1920 H1080 F30:1 Ip A1:1 C420jpeg']
+prepared_1080p60_count=4 logical_bytes=[186624405] allocated_bytes=[4096] unique_inodes=1
+prepared_1080p60_headers=['YUV4MPEG2 W1920 H1080 F60:1 Ip A1:1 C420jpeg']
