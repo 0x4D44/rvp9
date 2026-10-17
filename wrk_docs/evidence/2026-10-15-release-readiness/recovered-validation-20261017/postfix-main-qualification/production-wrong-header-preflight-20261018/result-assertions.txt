@@ -1,0 +1,7 @@
+exit_code=1 (PASS)
+exact_header_diagnostic=PASS
+work_dir_absent_before=PASS
+work_dir_absent_after=PASS
+stub_help_invocations=13 (PASS: 2 bdrate, 2 bdrate-svc, 5 encode-headtohead, 4 realtime)
+stub_non_help_invocations=0 (PASS)
+quality_or_codec_phase=not_reached (PASS: wrong-header fail returned from preflight before work-dir mkdir and execution dispatch)

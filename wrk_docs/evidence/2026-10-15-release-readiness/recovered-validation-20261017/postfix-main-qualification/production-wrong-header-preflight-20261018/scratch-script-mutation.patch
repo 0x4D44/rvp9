@@ -1,0 +1,11 @@
+--- scripts/qualify-production-encoder.sh
++++ .scratch/wrong-header-preflight/qualify-production-encoder.sh
+@@ -256,7 +256,7 @@
+ corpus_expected_sha256() {
+     case "$1" in
+         in_to_tree_420_720p50.y4m)
+-            printf '81166517a3054c789923535b5da23fbbb9bbd7fd4c28dac83918ac351e121e74\n'
++            printf '0b04c988931327716f6ef7a114215f2d34147d7ca77a5db01a2bbb81802118d6\n'
+             ;;
+         ducks_take_off_420_720p50.y4m)
+             printf '0e09aa923ce72e2f6d1c978c3c1cc8dd9588d2ede819081f040213e361970efc\n'

@@ -1,0 +1,18 @@
+RVP9_PREFLIGHT_HELP_LOG=/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-wrong-header-production-corpus-pr/.scratch/wrong-header-preflight/stub-help-invocations.log \
+RVP9_PREFLIGHT_NONHELP_LOG=/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-wrong-header-production-corpus-pr/.scratch/wrong-header-preflight/stub-nonhelp-invocations.log \
+deltic timeout 120 bash /Users/md/worktrees/rvp9/20261018-VER-HUM-verify-wrong-header-production-corpus-pr/.scratch/wrong-header-preflight/qualify-production-encoder.sh \
+  --phase quality \
+  --work-dir /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/wrong-header-preflight-7102fdd6/run \
+  --pgo-manifest /Users/md/worktrees/rvp9/20261017-TSK-HUM-requalify-post-fix-candidate/target/encoder-pgo/runs/20261017T145352Z-46648/manifest.txt \
+  --source-dir /Users/md/worktrees/rvp9/20261018-VER-HUM-verify-wrong-header-production-corpus-pr/.scratch/wrong-header-preflight/corpus \
+  --test-encoder /Users/md/worktrees/rvp9/20261017-TSK-HUM-requalify-post-fix-candidate/target/encoder-pgo/optimized/release/rvp9enc \
+  --vpxenc /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/build/libvpx/vpxenc \
+  --temporal-anchor /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/build/libvpx/vpx_temporal_svc_reference \
+  --bdrate /Users/md/worktrees/rvp9/20261018-VER-HUM-verify-wrong-header-production-corpus-pr/.scratch/wrong-header-preflight/bin/bdrate \
+  --bdrate-svc /Users/md/worktrees/rvp9/20261018-VER-HUM-verify-wrong-header-production-corpus-pr/.scratch/wrong-header-preflight/bin/bdrate-svc \
+  --encode-headtohead /Users/md/worktrees/rvp9/20261018-VER-HUM-verify-wrong-header-production-corpus-pr/.scratch/wrong-header-preflight/bin/encode-headtohead \
+  --realtime /Users/md/worktrees/rvp9/20261018-VER-HUM-verify-wrong-header-production-corpus-pr/.scratch/wrong-header-preflight/bin/realtime \
+  --rvp9dec /Users/md/worktrees/rvp9/20261018-VER-HUM-verify-wrong-header-production-corpus-pr/.scratch/wrong-header-preflight/bin/rvp9dec \
+  --vpxdec /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/build/libvpx/vpxdec \
+  --ffmpeg /Users/md/worktrees/rvp9/20261018-VER-HUM-verify-wrong-header-production-corpus-pr/.scratch/wrong-header-preflight/bin/ffmpeg \
+  --libvpx-source /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/third_party/libvpx </dev/null

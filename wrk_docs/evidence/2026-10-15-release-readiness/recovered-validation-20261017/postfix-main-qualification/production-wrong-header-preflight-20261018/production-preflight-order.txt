@@ -1,0 +1,33 @@
+  2682	    # Every required corpus input, including the AQ oracle's foreman_cif clip.
+  2683	    # The oracle resolves that clip through RVP9_CORPUS_DIR and merely prints
+  2684	    # "[skip]" when it is absent, so an unchecked corpus turns the release's
+  2685	    # one AQ oracle into a silent no-op.
+  2686	    while IFS='|' read -r corpus_key corpus_file; do
+  2687	        if [ ! -s "$source_dir/$corpus_file" ]; then
+  2688	            fail "missing or empty corpus input ($corpus_key): $source_dir/$corpus_file
+  2689	run scripts/fetch-corpus.sh or pass --source-dir"
+  2690	        fi
+  2691	        expected_sha="$(corpus_expected_sha256 "$corpus_file")" ||
+  2692	            fail "no canonical SHA-256 is declared for corpus input: $corpus_file"
+  2693	        actual_sha="$(sha256_file "$source_dir/$corpus_file")"
+  2694	        [ "$actual_sha" = "$expected_sha" ] ||
+  2695	            fail "wrong corpus input SHA-256 for $corpus_file: $actual_sha (expected $expected_sha)"
+  2696	        expected_header="$(corpus_expected_header "$corpus_file")" ||
+  2697	            fail "no canonical Y4M header is declared for corpus input: $corpus_file"
+  2698	        actual_header="$(head -n 1 "$source_dir/$corpus_file")"
+  2699	        [ "$actual_header" = "$expected_header" ] ||
+  2700	            fail "wrong corpus Y4M header for $corpus_file: '$actual_header' (expected '$expected_header')"
+  2701	    done < <(required_corpus_inputs)
+  2702
+  2703	    mkdir -p "$work_dir"
+  2704	    work_dir="$(cd "$work_dir" && pwd -P)"
+  2705	    input_dir="$work_dir/inputs"
+  2706	    speed_dir="$work_dir/speed"
+  2707	    latency_dir="$work_dir/latency"
+  2708	    quality_dir="$work_dir/quality"
+  2709	    quality_rows_dir="$quality_dir/rows"
+  2710	    quality_summary="$quality_dir/quality-summary.csv"
+  2711	    quality_aggregate="$quality_dir/quality-aggregate.csv"
+  2712	    cross_decoder_csv="$quality_dir/cross-decoder.csv"
+  2713	    manifest="$work_dir/manifest.txt"
+  2714	}
