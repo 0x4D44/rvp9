@@ -1,0 +1,8 @@
+Product source commit: fb5c0c917038db6c640b3dbc7c2b84b567233333
+Candidate worktree: /Users/md/worktrees/rvp9/20261017-TSK-HUM-requalify-post-fix-candidate (tracked tree clean)
+Test source: crates/rvp9-core/src/frame.rs
+Test source Git blob: e84ef804caaf47bfabc988f259859bc622fd59bf
+Cargo.lock Git blob: eef9129866d45300de9a7dc8784fca68bae4f226
+Cargo.lock SHA-256: 98cf11da6f3e9a391bb1dac338e4da7e0aa1ca7fc04f6f0cd8e37dc7e9d2addf
+Evidence worktree revision at capture: aafb44430599698a81f5fed6246ee03a7fd15d32
+The candidate and evidence worktrees have matching test-source and Cargo.lock blobs.

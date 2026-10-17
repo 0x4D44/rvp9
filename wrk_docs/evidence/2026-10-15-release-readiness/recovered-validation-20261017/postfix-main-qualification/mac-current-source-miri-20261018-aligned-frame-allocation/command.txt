@@ -1,0 +1,1 @@
+nice -n 15 deltic timeout 900 env CARGO_TARGET_DIR=/Users/md/worktrees/rvp9/20261018-TSK-HUM-run-focused-miri-aligned-frame-allocatio/.scratch/target CARGO_BUILD_JOBS=1 CARGO_NET_OFFLINE=true cargo +nightly miri test --locked --offline -p rvp9-core --lib frame::tests::alloc_aligned_widths_round_to_8 -- --test-threads=1 </dev/null

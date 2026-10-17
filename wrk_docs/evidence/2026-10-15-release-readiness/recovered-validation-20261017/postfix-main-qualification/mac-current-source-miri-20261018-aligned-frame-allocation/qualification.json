@@ -1,0 +1,57 @@
+{
+  "schema": 1,
+  "recorded_at_utc": "2026-10-17T23:35:08Z",
+  "candidate": {
+    "product_source_commit": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+    "evidence_worktree_revision": "aafb44430599698a81f5fed6246ee03a7fd15d32",
+    "candidate_worktree_tracked_tree_clean": true,
+    "test_source": "crates/rvp9-core/src/frame.rs",
+    "test_source_git_blob": "e84ef804caaf47bfabc988f259859bc622fd59bf",
+    "cargo_lock_git_blob": "eef9129866d45300de9a7dc8784fca68bae4f226",
+    "cargo_lock_sha256": "98cf11da6f3e9a391bb1dac338e4da7e0aa1ca7fc04f6f0cd8e37dc7e9d2addf",
+    "runner_test_source_blob_matches_candidate": true,
+    "runner_lock_blob_matches_candidate": true
+  },
+  "host": {
+    "os": "macOS 26.6.2 (25G83)",
+    "architecture": "arm64",
+    "kernel": "Darwin 25.6.0",
+    "host_name": "flux.home.arpa"
+  },
+  "toolchain": {
+    "rustc": "1.98.0-nightly (bd08c9e71 2026-06-25)",
+    "rust_host": "aarch64-apple-darwin",
+    "llvm": "22.1.7",
+    "miri": "0.1.0 (bd08c9e718 2026-06-25)"
+  },
+  "command": {
+    "text_file": "command.txt",
+    "stdin": "closed",
+    "offline": true,
+    "locked": true,
+    "build_jobs": 1,
+    "process_priority": "nice -n 15",
+    "timeout_seconds": 900,
+    "target_dir": "registered task worktree .scratch/target"
+  },
+  "test": {
+    "filter": "frame::tests::alloc_aligned_widths_round_to_8",
+    "passed": 1,
+    "failed": 0,
+    "ignored": 0,
+    "filtered_out": 1652,
+    "test_seconds": 567.35,
+    "exit_status": 0
+  },
+  "raw_log": {
+    "path": "run.raw.txt.gz",
+    "compression": "gzip",
+    "sha256_uncompressed": "704fbc5104fd29697c140580d978efe25cb12e05ee63cc4aee4f00a865e5d90e",
+    "sha256_compressed": "e00b23791435021ddb829030ce23dfad6faddbc46d6339f3ef42298af803a3be"
+  },
+  "scope_limits": [
+    "One focused frame allocation/layout unit test only; this does not complete frame or core Miri coverage.",
+    "This is not full-frame decoder production-path evidence.",
+    "Miri cfg uses scalar paths and does not exercise native AArch64 NEON."
+  ]
+}
