@@ -527,11 +527,13 @@ decoder) is unblocked.
 **Exit criteria:**
 - [x] 100% pass on official VP9 conformance test vectors. (2026-05-18 — 191/0/10 final scoreboard; lossless 10 skipped pending WHT, out of Stage 3 scope.)
 - [ ] All SIMD implementations bit-exact against scalar reference (differential tests green). *(Coverage audit pending — most kernels have differential tests; not yet swept.)*
-- [ ] Decoder throughput within 2× of libvpx on the bench corpus. *(Not yet benchmarked; bench infrastructure exists in `rvp9-bench` but not run as a stage gate.)*
+- [ ] Decoder throughput within 2× of libvpx on the bench corpus. *(Historical head-to-head measurements exist, including ratios above 2×, but they are not exact-current-candidate qualification. The signed-off Q.1.A HLD calls its comparison ledger informational rather than a hard gate; reconcile release scope and comparison method before marking this exit criterion.)*
 - [x] Zero `clippy` warnings in `rvp9-core` and `rvp9-decoder`. (`cargo clippy --workspace --all-targets -- -D warnings` clean as of 2026-05-18.)
 - [ ] `unsafe` blocks in shared infra all carry safety comments. *(Audit pending.)*
 
 **Status (2026-05-19):** Correctness gate ACHIEVED. Three secondary gates (SIMD audit, throughput bench, unsafe-comment audit) remain. Stage 4a work proceeds in parallel; secondary gates revisited before formal Stage 3 sign-off.
+
+**Current disposition (2026-10-17):** The secondary criteria remain open for formal Stage 3 sign-off. The later Q.1.A ledger is historical and informational, and its recorded head-to-head rows include results above 2×; it does not establish a pass for the current candidate or settle whether this is a final-release gate. The full SIMD differential inventory and shared-infrastructure safety-comment audit are also not complete. See the final release-readiness report for the evidence and required acceptance checks.
 
 **Estimated effort:** 6–10 weeks.
 
