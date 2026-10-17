@@ -1,0 +1,30 @@
+{
+  "schema": "rvp9.mac-current-source-encoder-log-integrity.v1",
+  "archive": {
+    "path": "mac-current-source-encoder-logs-originals-20261017.tar.gz",
+    "bytes": 1075,
+    "sha256": "410eee47c29017b7bb78a8dad9e82a76791b6922588e99f1a2227705a12a6f62",
+    "entries": 2
+  },
+  "normalization_note": "The archive preserves original command output bytes. Review copies remove trailing spaces and tabs at line ends only.",
+  "files": [
+    {
+      "original_archive_entry": "mac-current-source-alpha32.raw.txt",
+      "original_bytes": 2124,
+      "original_sha256": "34c622fee5883c0da9e5ed8e36e954593134f71af820f404302802c29baab2c8",
+      "review_copy": "mac-current-source-alpha32.raw.txt",
+      "review_bytes": 2124,
+      "review_sha256": "34c622fee5883c0da9e5ed8e36e954593134f71af820f404302802c29baab2c8",
+      "normalization": "none; exact text retained"
+    },
+    {
+      "original_archive_entry": "mac-current-source-reverse24.raw.txt",
+      "original_bytes": 1028,
+      "original_sha256": "e3af284c8438f06ada7d1a619fd05896c274bcf4e750d0a5914622cf87026dd2",
+      "review_copy": "mac-current-source-reverse24.raw.txt",
+      "review_bytes": 1028,
+      "review_sha256": "e3af284c8438f06ada7d1a619fd05896c274bcf4e750d0a5914622cf87026dd2",
+      "normalization": "none; exact text retained"
+    }
+  ]
+}

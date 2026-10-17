@@ -1,0 +1,26 @@
+No prebuilt libvpx found; attempting build from submodule.
+If this fails, build vpxenc, vpxdec, and vp9_spatial_svc_encoder
+under MSYS2 mingw64 and place them under D:/worktrees/rvp9-postfix-main/20261017-TSK-HUM@ANVIL-windows-post-fix-requalification/target/libvpx-reference.
+Configuring libvpx for x86_64-win64-gcc ...
+  enabling vp9
+  disabling vp8
+  enabling vp9_highbitdepth
+  enabling vp9_temporal_denoising
+  enabling pic
+  disabling docs
+  disabling unit_tests
+Configuring for target 'x86_64-win64-gcc'
+  enabling x86_64
+  enabling runtime_cpu_detect
+    disabling avx512: not supported by compiler
+  using yasm
+  enabling postproc
+  enabling webm_io
+  enabling libyuv
+Unable to invoke compiler: gcc -O3 -fomit-frame-pointer -fno-common -m64
+
+Configuration failed. This could reflect a misconfiguration of your
+toolchains, improper options selected, or another problem. If you
+don't see any useful error messages above, the next step is to look
+at the configure error log file (config.log) to determine what
+configure was trying to do when it died.
