@@ -1,0 +1,6 @@
+   Packaging rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-decoder)
+    Packaged 20 files, 950.9KiB (219.2KiB compressed)
+   Verifying rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-decoder)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-package-refresh-cc744364/target/package/rvp9-decoder-0.2.0-alpha.4)
+   Compiling static_assertions v1.1.0
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 6.38s

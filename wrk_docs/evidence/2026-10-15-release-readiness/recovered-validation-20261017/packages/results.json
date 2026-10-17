@@ -1,0 +1,410 @@
+{
+  "started_utc": "2026-10-17T05:36:14.005923+00:00",
+  "scratch": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-package-refresh-cc744364",
+  "package_workdir": "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence",
+  "env": {
+    "CARGO_TARGET_DIR": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-package-refresh-cc744364/target",
+    "CARGO_BUILD_JOBS": "2",
+    "TMPDIR": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-package-refresh-cc744364",
+    "RUSTFLAGS": null,
+    "CARGO_ENCODED_RUSTFLAGS": null
+  },
+  "results": [
+    {
+      "label": "package-core",
+      "command": [
+        "deltic",
+        "timeout",
+        "1200",
+        "cargo",
+        "package",
+        "--offline",
+        "--locked",
+        "-p",
+        "rvp9-core"
+      ],
+      "cwd": "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence",
+      "started_utc": "2026-10-17T05:36:14.605911+00:00",
+      "exit": 0,
+      "finished_utc": "2026-10-17T05:36:34.077868+00:00",
+      "log": "package-core.raw.txt",
+      "log_sha256": "d76f0ba8f9a55dce2563a78c0bd81476b491072629ef698b28caa8199bed90ab"
+    },
+    {
+      "label": "package-io",
+      "command": [
+        "deltic",
+        "timeout",
+        "1200",
+        "cargo",
+        "package",
+        "--offline",
+        "--locked",
+        "-p",
+        "rvp9-io"
+      ],
+      "cwd": "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence",
+      "started_utc": "2026-10-17T05:36:34.080281+00:00",
+      "exit": 0,
+      "finished_utc": "2026-10-17T05:36:48.622443+00:00",
+      "log": "package-io.raw.txt",
+      "log_sha256": "034d7ac83ca00394246820f5cca7358a92dfd9ee3016389a2840fe27db33c5ff"
+    },
+    {
+      "label": "package-decoder",
+      "command": [
+        "deltic",
+        "timeout",
+        "1200",
+        "cargo",
+        "package",
+        "--offline",
+        "--locked",
+        "-p",
+        "rvp9-decoder"
+      ],
+      "cwd": "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence",
+      "started_utc": "2026-10-17T05:36:48.623756+00:00",
+      "exit": 0,
+      "finished_utc": "2026-10-17T05:36:55.232452+00:00",
+      "log": "package-decoder.raw.txt",
+      "log_sha256": "744745c90cda2eb5ce43bafe74857697d12163153e003f06fe3a69e58d72fef8"
+    },
+    {
+      "label": "package-encoder",
+      "command": [
+        "deltic",
+        "timeout",
+        "1200",
+        "cargo",
+        "package",
+        "--offline",
+        "--locked",
+        "-p",
+        "rvp9-encoder"
+      ],
+      "cwd": "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence",
+      "started_utc": "2026-10-17T05:36:55.234243+00:00",
+      "exit": 0,
+      "finished_utc": "2026-10-17T05:37:14.798204+00:00",
+      "log": "package-encoder.raw.txt",
+      "log_sha256": "b6521a62b857b4ef240b1db9a4493d1694dc72a6202b722f74eb8704e6f52b7d"
+    },
+    {
+      "label": "package-cli",
+      "command": [
+        "deltic",
+        "timeout",
+        "1200",
+        "cargo",
+        "package",
+        "--offline",
+        "--locked",
+        "-p",
+        "rvp9-cli"
+      ],
+      "cwd": "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence",
+      "started_utc": "2026-10-17T05:37:14.800580+00:00",
+      "exit": 101,
+      "finished_utc": "2026-10-17T05:37:32.170791+00:00",
+      "log": "package-cli.raw.txt",
+      "log_sha256": "5e05eb2985a60abe25a971024a3a0c2c9137dee8706f1d01a818c183d4e754e4"
+    },
+    {
+      "label": "archive-build-core",
+      "command": [
+        "deltic",
+        "timeout",
+        "1200",
+        "cargo",
+        "build",
+        "--offline",
+        "--locked",
+        "--manifest-path",
+        "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-package-refresh-cc744364/extracted/rvp9-core-0.2.0-alpha.4/Cargo.toml",
+        "--lib"
+      ],
+      "cwd": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-package-refresh-cc744364",
+      "env": {
+        "CARGO_TARGET_DIR": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-package-refresh-cc744364/archive-target",
+        "CARGO_BUILD_JOBS": "2",
+        "TMPDIR": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-package-refresh-cc744364",
+        "RUSTFLAGS": null,
+        "CARGO_ENCODED_RUSTFLAGS": null
+      },
+      "started_utc": "2026-10-17T05:38:12.708558+00:00",
+      "exit": 0,
+      "finished_utc": "2026-10-17T05:38:38.638408+00:00",
+      "log": "archive-build-core.raw.txt",
+      "log_sha256": "8d09511cb3567d0bf2b77413e97f013278e5518d505c98f004801fccf52e1ad6"
+    },
+    {
+      "label": "archive-build-io",
+      "command": [
+        "deltic",
+        "timeout",
+        "1200",
+        "cargo",
+        "build",
+        "--offline",
+        "--locked",
+        "--manifest-path",
+        "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-package-refresh-cc744364/extracted/rvp9-io-0.2.0-alpha.4/Cargo.toml",
+        "--lib"
+      ],
+      "cwd": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-package-refresh-cc744364",
+      "env": {
+        "CARGO_TARGET_DIR": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-package-refresh-cc744364/archive-target",
+        "CARGO_BUILD_JOBS": "2",
+        "TMPDIR": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-package-refresh-cc744364",
+        "RUSTFLAGS": null,
+        "CARGO_ENCODED_RUSTFLAGS": null
+      },
+      "started_utc": "2026-10-17T05:38:38.639361+00:00",
+      "exit": 0,
+      "finished_utc": "2026-10-17T05:38:55.764404+00:00",
+      "log": "archive-build-io.raw.txt",
+      "log_sha256": "95822a3bb3dfba314e9d512058e5541ea7865492aa06f2884cd851f66e671fa8"
+    },
+    {
+      "label": "archive-build-decoder",
+      "command": [
+        "deltic",
+        "timeout",
+        "1200",
+        "cargo",
+        "build",
+        "--offline",
+        "--locked",
+        "--manifest-path",
+        "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-package-refresh-cc744364/extracted/rvp9-decoder-0.2.0-alpha.4/Cargo.toml",
+        "--lib"
+      ],
+      "cwd": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-package-refresh-cc744364",
+      "env": {
+        "CARGO_TARGET_DIR": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-package-refresh-cc744364/archive-target",
+        "CARGO_BUILD_JOBS": "2",
+        "TMPDIR": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-package-refresh-cc744364",
+        "RUSTFLAGS": null,
+        "CARGO_ENCODED_RUSTFLAGS": null
+      },
+      "started_utc": "2026-10-17T05:38:55.765753+00:00",
+      "exit": 0,
+      "finished_utc": "2026-10-17T05:39:00.310888+00:00",
+      "log": "archive-build-decoder.raw.txt",
+      "log_sha256": "8984ab0c343dd1bc9c066b82352ff940350d9f2375a6809a2783dffe155bb333"
+    },
+    {
+      "label": "archive-build-encoder",
+      "command": [
+        "deltic",
+        "timeout",
+        "1200",
+        "cargo",
+        "build",
+        "--offline",
+        "--locked",
+        "--manifest-path",
+        "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-package-refresh-cc744364/extracted/rvp9-encoder-0.2.0-alpha.4/Cargo.toml",
+        "--lib"
+      ],
+      "cwd": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-package-refresh-cc744364",
+      "env": {
+        "CARGO_TARGET_DIR": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-package-refresh-cc744364/archive-target",
+        "CARGO_BUILD_JOBS": "2",
+        "TMPDIR": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-package-refresh-cc744364",
+        "RUSTFLAGS": null,
+        "CARGO_ENCODED_RUSTFLAGS": null
+      },
+      "started_utc": "2026-10-17T05:39:00.312182+00:00",
+      "exit": 0,
+      "finished_utc": "2026-10-17T05:39:21.821109+00:00",
+      "log": "archive-build-encoder.raw.txt",
+      "log_sha256": "9b21440ad18c712f1707633c152a2a331d4f6dd0fb5cc2669d73f029294aaa89"
+    },
+    {
+      "label": "archive-test-decoder",
+      "command": [
+        "deltic",
+        "timeout",
+        "600",
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "--manifest-path",
+        "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-package-refresh-cc744364/extracted/rvp9-decoder-0.2.0-alpha.4/Cargo.toml",
+        "--test",
+        "panic_safety",
+        "--jobs",
+        "2"
+      ],
+      "cwd": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-package-refresh-cc744364",
+      "env": {
+        "CARGO_TARGET_DIR": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-package-refresh-cc744364/archive-target",
+        "CARGO_BUILD_JOBS": "2",
+        "TMPDIR": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-package-refresh-cc744364",
+        "RUSTFLAGS": null,
+        "CARGO_ENCODED_RUSTFLAGS": null
+      },
+      "started_utc": "2026-10-17T05:39:21.822561+00:00",
+      "exit": 101,
+      "finished_utc": "2026-10-17T05:39:22.929827+00:00",
+      "log": "archive-test-decoder.raw.txt",
+      "log_sha256": "0ebec67331bea72b444e9733143537cf1604d435a8dd0d559c1bbdf1263d8ea0"
+    },
+    {
+      "label": "archive-test-encoder",
+      "command": [
+        "deltic",
+        "timeout",
+        "600",
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "--manifest-path",
+        "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-package-refresh-cc744364/extracted/rvp9-encoder-0.2.0-alpha.4/Cargo.toml",
+        "--test",
+        "quality_gate",
+        "--jobs",
+        "2"
+      ],
+      "cwd": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-package-refresh-cc744364",
+      "env": {
+        "CARGO_TARGET_DIR": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-package-refresh-cc744364/archive-target",
+        "CARGO_BUILD_JOBS": "2",
+        "TMPDIR": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-package-refresh-cc744364",
+        "RUSTFLAGS": null,
+        "CARGO_ENCODED_RUSTFLAGS": null
+      },
+      "started_utc": "2026-10-17T05:39:22.930613+00:00",
+      "exit": 101,
+      "finished_utc": "2026-10-17T05:39:42.643848+00:00",
+      "log": "archive-test-encoder.raw.txt",
+      "log_sha256": "4d0c8196832f537bff5f5dad78d378b7b4ed8a822f495f0f6c59fc4e9010e811"
+    }
+  ],
+  "limitation": "Packaged alpha.4 dependencies resolve cached registry siblings, not the freshly assembled candidate archives. No new release graph qualified.",
+  "source": {
+    "command": [
+      "git",
+      "rev-parse",
+      "HEAD"
+    ],
+    "exit": 0
+  },
+  "status": {
+    "command": [
+      "git",
+      "status",
+      "--short"
+    ],
+    "exit": 0
+  },
+  "shipped-diff": {
+    "command": [
+      "git",
+      "diff",
+      "ebca64b0",
+      "HEAD",
+      "--",
+      "crates",
+      "scripts",
+      "Cargo.toml",
+      "Cargo.lock"
+    ],
+    "exit": 0
+  },
+  "rustc": {
+    "command": [
+      "rustc",
+      "-vV"
+    ],
+    "exit": 0
+  },
+  "cargo": {
+    "command": [
+      "cargo",
+      "--version"
+    ],
+    "exit": 0
+  },
+  "cargo-config": {
+    "command": [
+      "git",
+      "show",
+      "HEAD:.cargo/config.toml"
+    ],
+    "exit": 0
+  },
+  "archives": {
+    "core": {
+      "path": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-package-refresh-cc744364/target/package/rvp9-core-0.2.0-alpha.4.crate",
+      "preserved": "archives/rvp9-core-0.2.0-alpha.4.crate",
+      "bytes": 1365681,
+      "sha256": "ffc774bcd0ca9e19dfbd01fe9c5be0f7243045613b1a62ec46ad41a64995f890",
+      "verification": "passed",
+      "extracted_manifest_sha256": "087e3466089cecb252c4a9747487002bf89695ba45803470fe201e073dda8d32",
+      "manifest_unchanged_after_checks": true,
+      "postcheck_archive_source_files": 189,
+      "postcheck_archive_source_mismatches": []
+    },
+    "io": {
+      "path": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-package-refresh-cc744364/target/package/rvp9-io-0.2.0-alpha.4.crate",
+      "preserved": "archives/rvp9-io-0.2.0-alpha.4.crate",
+      "bytes": 49849,
+      "sha256": "bd16e67735572572e89a6d02b8d8829f41b0f26daeb8c84c7a56357d34568599",
+      "verification": "passed",
+      "extracted_manifest_sha256": "09f6874f08b27298d23a0c2d57ba38c2cddd750f752ac8b9dd58f3648665f610",
+      "manifest_unchanged_after_checks": true,
+      "postcheck_archive_source_files": 14,
+      "postcheck_archive_source_mismatches": []
+    },
+    "decoder": {
+      "path": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-package-refresh-cc744364/target/package/rvp9-decoder-0.2.0-alpha.4.crate",
+      "preserved": "archives/rvp9-decoder-0.2.0-alpha.4.crate",
+      "bytes": 224450,
+      "sha256": "c235cca832d3809d958febd65704071ae30b0ccd56a4e065cd7d7c7ee5e15e64",
+      "verification": "passed",
+      "extracted_manifest_sha256": "47184d656f7facd22da067f37bbd8a7ec10149ea3a4dfd36f3514d12187e351a",
+      "manifest_unchanged_after_checks": true,
+      "postcheck_archive_source_files": 20,
+      "postcheck_archive_source_mismatches": []
+    },
+    "encoder": {
+      "path": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-package-refresh-cc744364/target/package/rvp9-encoder-0.2.0-alpha.4.crate",
+      "preserved": "archives/rvp9-encoder-0.2.0-alpha.4.crate",
+      "bytes": 962880,
+      "sha256": "af09e4e6968d1befdab8c80c501f9e9fa245c32aa46e04910f2369fd30159b3e",
+      "verification": "passed",
+      "extracted_manifest_sha256": "dcb8267e0b662b40b45af6d3348d12ab66d045d7fcf055618a8685c38669de85",
+      "manifest_unchanged_after_checks": true,
+      "postcheck_archive_source_files": 116,
+      "postcheck_archive_source_mismatches": []
+    },
+    "cli": {
+      "path": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-package-refresh-cc744364/target/package/tmp-crate/rvp9-cli-0.2.0-alpha.4.crate",
+      "bytes": 67414,
+      "sha256": "c346fff01c29e53e6edba8aa6d229aa3d97c2305cfa462eb08e00199a3cdf73b",
+      "verification": "failed",
+      "state": "Cargo left the failed CLI archive in tmp-crate; no finalized package archive or external CLI build is claimed.",
+      "normalized_manifest_sha256": "f2fa5931e7baa1ec57098931c02ab0f7d785ae78f6eb65d0d595358b333711c2"
+    }
+  },
+  "stopped": "Package sequence complete; CLI verification failure preserved, no package retry. Continued independent unchanged four archive checks as authorized.",
+  "archive_env": {
+    "CARGO_TARGET_DIR": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-package-refresh-cc744364/archive-target",
+    "CARGO_BUILD_JOBS": "2",
+    "TMPDIR": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-package-refresh-cc744364",
+    "RUSTFLAGS": null,
+    "CARGO_ENCODED_RUSTFLAGS": null
+  },
+  "driver_note": "First extraction driver stopped before any archive builds because installed Python tarfile lacks filter argument; retried extraction after validating member paths/types, with no Cargo retry or source change.",
+  "finished_utc": "2026-10-17T05:39:42.646730+00:00",
+  "local_generated_copies": "archives/ contains four copied .crate files, locally ignored by archives/.gitignore; exclude directory from staging. All original archives including CLI remain in registered scratch.",
+  "source_sha": "33378791eace3bda2f927e629c30b805b54b56e1",
+  "source_delta_from_ebca_empty": true,
+  "flags_note": "Package verification ran from repository workdir, with inherited RUSTFLAGS and CARGO_ENCODED_RUSTFLAGS absent; repository .cargo/config.toml supplies target-cpu=native. External archive builds/tests ran from registered scratch outside repo with these variables absent, so repository cargo config is not inherited.",
+  "finalized_utc": "2026-10-17T05:40:16.095622+00:00"
+}

@@ -1,0 +1,7 @@
+    Blocking waiting for file lock on package cache
+   Packaging rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-io)
+    Packaged 14 files, 204.6KiB (48.7KiB compressed)
+   Verifying rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-io)
+   Compiling rvp9-core v0.2.0-alpha.4
+   Compiling rvp9-io v0.2.0-alpha.4 (/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-package-refresh-cc744364/target/package/rvp9-io-0.2.0-alpha.4)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 14.32s

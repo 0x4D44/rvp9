@@ -1,0 +1,97 @@
+   Compiling version_check v0.9.5
+   Compiling proc-macro2 v1.0.106
+   Compiling generic-array v0.14.7
+   Compiling quote v1.0.45
+   Compiling typenum v1.20.1
+   Compiling unicode-ident v1.0.24
+   Compiling serde_core v1.0.228
+   Compiling libc v0.2.186
+   Compiling zmij v1.0.21
+   Compiling syn v2.0.117
+   Compiling block-buffer v0.10.4
+   Compiling crypto-common v0.1.7
+   Compiling serde_json v1.0.149
+   Compiling serde v1.0.228
+   Compiling cpufeatures v0.2.17
+   Compiling serde_derive v1.0.228
+   Compiling digest v0.10.7
+   Compiling itoa v1.0.18
+   Compiling memchr v2.8.0
+   Compiling cfg-if v1.0.4
+   Compiling sha2 v0.10.9
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-package-refresh-cc744364/extracted/rvp9-encoder-0.2.0-alpha.4)
+error[E0433]: cannot find module or crate `rvp9_harness` in this scope
+  --> tests/quality_gate.rs:53:5
+   |
+53 | use rvp9_harness::bdrate::{bdrate, psnr_delta_summary};
+   |     ^^^^^^^^^^^^ use of unresolved module or unlinked crate `rvp9_harness`
+   |
+   = help: if you wanted to use a crate named `rvp9_harness`, use `cargo add rvp9_harness` to add it to your `Cargo.toml`
+
+error[E0433]: cannot find module or crate `rvp9_harness` in this scope
+  --> tests/quality_gate.rs:54:5
+   |
+54 | use rvp9_harness::y4m::{
+   |     ^^^^^^^^^^^^ use of unresolved module or unlinked crate `rvp9_harness`
+   |
+   = help: if you wanted to use a crate named `rvp9_harness`, use `cargo add rvp9_harness` to add it to your `Cargo.toml`
+
+error[E0432]: unresolved import `rvp9_decoder`
+  --> tests/quality_gate.rs:51:5
+   |
+51 | use rvp9_decoder::{Decoder, ParsedFrame};
+   |     ^^^^^^^^^^^^ use of unresolved module or unlinked crate `rvp9_decoder`
+   |
+help: there is a crate or module with a similar name
+   |
+51 - use rvp9_decoder::{Decoder, ParsedFrame};
+51 + use rvp9_encoder::{Decoder, ParsedFrame};
+   |
+
+error[E0433]: cannot find module or crate `rvp9_harness` in this scope
+  --> tests/common/stage4a_product.rs:10:5
+   |
+10 | use rvp9_harness::bdrate::{bdrate, psnr_delta_summary};
+   |     ^^^^^^^^^^^^ use of unresolved module or unlinked crate `rvp9_harness`
+   |
+   = help: if you wanted to use a crate named `rvp9_harness`, use `cargo add rvp9_harness` to add it to your `Cargo.toml`
+
+error[E0433]: cannot find module or crate `rvp9_harness` in this scope
+  --> tests/common/stage4a_product.rs:11:5
+   |
+11 | use rvp9_harness::container::{IvfHeader, write_ivf};
+   |     ^^^^^^^^^^^^ use of unresolved module or unlinked crate `rvp9_harness`
+   |
+   = help: if you wanted to use a crate named `rvp9_harness`, use `cargo add rvp9_harness` to add it to your `Cargo.toml`
+
+error[E0433]: cannot find module or crate `rvp9_harness` in this scope
+  --> tests/common/stage4a_product.rs:12:5
+   |
+12 | use rvp9_harness::y4m::{YuvFrameBuf, read_cropped as y4m_read_cropped};
+   |     ^^^^^^^^^^^^ use of unresolved module or unlinked crate `rvp9_harness`
+   |
+   = help: if you wanted to use a crate named `rvp9_harness`, use `cargo add rvp9_harness` to add it to your `Cargo.toml`
+
+error[E0432]: unresolved import `rvp9_decoder`
+ --> tests/common/stage4a_product.rs:5:5
+  |
+5 | use rvp9_decoder::{Decoder, ParsedFrame};
+  |     ^^^^^^^^^^^^ use of unresolved module or unlinked crate `rvp9_decoder`
+  |
+help: there is a crate or module with a similar name
+  |
+5 - use rvp9_decoder::{Decoder, ParsedFrame};
+5 + use rvp9_encoder::{Decoder, ParsedFrame};
+  |
+
+error[E0433]: cannot find module or crate `rvp9_harness` in this scope
+   --> tests/quality_gate.rs:620:19
+    |
+620 |             match rvp9_harness::bdrate::psnr_at_bitrate(lv, br_r) {
+    |                   ^^^^^^^^^^^^ use of unresolved module or unlinked crate `rvp9_harness`
+    |
+    = help: if you wanted to use a crate named `rvp9_harness`, use `cargo add rvp9_harness` to add it to your `Cargo.toml`
+
+Some errors have detailed explanations: E0432, E0433.
+For more information about an error, try `rustc --explain E0432`.
+error: could not compile `rvp9-encoder` (test "quality_gate") due to 8 previous errors

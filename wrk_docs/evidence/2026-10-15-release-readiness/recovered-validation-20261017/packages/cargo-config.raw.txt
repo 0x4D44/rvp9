@@ -1,0 +1,22 @@
+# Workspace cargo config.
+#
+# R.4 (Track R, 2026-05-23): build release binaries with the full
+# instruction-set of the host CPU. Unlocks compiler auto-vectorization
+# beyond the AVX2-only baseline (BMI2, FMA, AVX-512 where present),
+# which Q.1.A bench measurements showed delivers 1.0-1.23x consistent
+# improvement on the decoder hot path with no regressions.
+#
+# Trade-off: the resulting release binary is NOT portable across
+# x86_64 hosts — running on an older CPU than the build host will
+# fault on unrecognised instructions. This is the right default for
+# a development workspace whose primary audience is the bench harness
+# and `rvp9dec` running on the same host. Distributors who need a
+# portable build can override by unsetting these flags (e.g. via
+# `RUSTFLAGS="" cargo build --release`) or by adding a per-target
+# override in their own `.cargo/config.toml`.
+#
+# See `wrk_journals/2026.05.23 - JRN - Track R decoder perf investigation.md`
+# for the bench data and rationale.
+
+[build]
+rustflags = ["-C", "target-cpu=native"]

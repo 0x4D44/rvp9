@@ -1,0 +1,23 @@
+{
+  "compact_integrity_entries_verified": 29,
+  "archive_hashes_and_normalized_manifests_verified": 5,
+  "phase_exits": {
+    "package-core": 0,
+    "package-io": 0,
+    "package-decoder": 0,
+    "package-encoder": 0,
+    "package-cli": 101,
+    "archive-build-core": 0,
+    "archive-build-io": 0,
+    "archive-build-decoder": 0,
+    "archive-build-encoder": 0,
+    "archive-test-decoder": 101,
+    "archive-test-encoder": 101
+  },
+  "raw_failures_inspected": [
+    "package-cli.raw.txt",
+    "archive-test-decoder.raw.txt",
+    "archive-test-encoder.raw.txt"
+  ],
+  "limitation": "Existing-version registry sibling graph, not a newly versioned candidate release graph. Generated archives excluded from git."
+}

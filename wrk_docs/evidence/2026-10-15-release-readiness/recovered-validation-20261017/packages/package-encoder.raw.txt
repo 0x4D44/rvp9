@@ -1,0 +1,5 @@
+   Packaging rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-encoder)
+    Packaged 116 files, 3.9MiB (940.3KiB compressed)
+   Verifying rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-encoder)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-package-refresh-cc744364/target/package/rvp9-encoder-0.2.0-alpha.4)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 19.25s

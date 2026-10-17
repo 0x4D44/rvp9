@@ -1,0 +1,23 @@
+   Packaging rvp9-cli v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-cli)
+    Packaged 18 files, 299.1KiB (65.8KiB compressed)
+   Verifying rvp9-cli v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-cli)
+   Compiling rvp9-decoder v0.2.0-alpha.4
+   Compiling rvp9-encoder v0.2.0-alpha.4
+   Compiling rvp9-io v0.2.0-alpha.4
+   Compiling rvp9-cli v0.2.0-alpha.4 (/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-package-refresh-cc744364/target/package/rvp9-cli-0.2.0-alpha.4)
+error[E0603]: function `coded_dimensions_supported` is private
+   --> src/bin/rvp9enc.rs:22:49
+    |
+ 22 |     MAX_CODED_DIMENSION, MAX_CODED_LUMA_PIXELS, coded_dimensions_supported,
+    |                                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^ private function
+    |
+note: the function `coded_dimensions_supported` is defined here
+   --> /Users/md/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rvp9-encoder-0.2.0-alpha.4/src/rate_control/config.rs:280:1
+    |
+280 | const fn coded_dimensions_supported(width: u32, height: u32) -> bool {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+For more information about this error, try `rustc --explain E0603`.
+error: could not compile `rvp9-cli` (bin "rvp9enc") due to 1 previous error
+warning: build failed, waiting for other jobs to finish...
+error: failed to verify package tarball
