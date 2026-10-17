@@ -1,0 +1,7 @@
+workspace_Cargo.lock_before_sha256=98cf11da6f3e9a391bb1dac338e4da7e0aa1ca7fc04f6f0cd8e37dc7e9d2addf
+workspace_Cargo.lock_after_sha256=98cf11da6f3e9a391bb1dac338e4da7e0aa1ca7fc04f6f0cd8e37dc7e9d2addf
+fuzz_Cargo.lock_before_sha256=f9fc43384144cc74b2634885ed3235026e7ddde72ae0f73c7deede6fcc15bd1b
+fuzz_Cargo.lock_after_sha256=f9fc43384144cc74b2634885ed3235026e7ddde72ae0f73c7deede6fcc15bd1b
+cargo_metadata_command=cargo +nightly-2026-06-26 metadata --locked --offline --format-version 1 --manifest-path crates/rvp9-fuzz/Cargo.toml
+cargo_metadata_exit=0
+cargo_metadata_package_count=23

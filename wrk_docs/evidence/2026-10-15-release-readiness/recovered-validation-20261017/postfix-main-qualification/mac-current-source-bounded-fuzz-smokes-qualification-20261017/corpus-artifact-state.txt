@@ -1,0 +1,11 @@
+parser_corpus_initially_empty=true
+parser_corpus_output_files=327
+parser_corpus_output_bytes=12945
+parser_crash_artifact_files=0
+frame_corpus_initial_files=1
+frame_corpus_initial_bytes=148079
+frame_corpus_output_files=202
+frame_corpus_output_bytes=28140889
+frame_crash_artifact_files=0
+registered_scratch_id=rvp9-fuzz-smoke-6b0ce6e5
+registered_scratch_path=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-fuzz-smoke-6b0ce6e5

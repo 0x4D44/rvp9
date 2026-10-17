@@ -1,0 +1,16 @@
+source_container=wrk_docs/evidence/2026-10-15-release-readiness/recovered-validation-20261017/postfix-main-qualification/mac-current-source-pgo-20261017/functional-smoke-20261017/mac-pgo-smoke.ivf
+source_container_git_blob=feaf467c07abfe37fb59462260ab88097b045d47
+source_container_bytes=477126
+source_container_sha256=772db4df880d056b8eb6f19ca7e5f10931b68e2c98b5b4bf70b2c2db2bf7234d
+source_product_commit=fb5c0c917038db6c640b3dbc7c2b84b567233333
+source_clip=in_to_tree_420_720p50.y4m
+source_clip_sha256=81166517a3054c789923535b5da23fbbb9bbd7fd4c28dac83918ac351e121e74
+ivf_header_bytes=32
+ivf_declared_frames=60
+first_frame_index=0
+first_frame_width=1280
+first_frame_height=720
+first_frame_bytes=148079
+first_frame_sha256=82ad3155ff16aab8138c71985cbc6626a84b8972f6742d6835d0bd3854290f2e
+first_frame_prefix_hex=82498342204ff02cf60c38241c188218
+extraction=first IVF frame payload after 32-byte DKIF header and 12-byte frame record

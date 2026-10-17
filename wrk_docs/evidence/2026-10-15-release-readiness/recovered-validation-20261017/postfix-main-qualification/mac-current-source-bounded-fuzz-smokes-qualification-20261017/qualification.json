@@ -1,0 +1,135 @@
+{
+  "schema": "rvp9.current-source-bounded-fuzz-smokes.v1",
+  "recorded_at_utc": "2026-10-17T22:21:14Z",
+  "candidate": {
+    "integrated_base": "44140dbb0e0834af296fac124d3a9293e486b53b",
+    "product_source": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+    "runner_revision": "b5ab98edb571da7e98ad7d0334289d39da43afd1",
+    "tracked_tree_clean_at_invocation": true,
+    "core_decoder_and_fuzz_target_sources_match_product_source": true
+  },
+  "host": {
+    "os": "macOS 26.6.2 / Darwin 25.6.0",
+    "architecture": "arm64",
+    "rustc": "1.98.0-nightly (bd08c9e71 2026-06-25)",
+    "rustc_commit": "bd08c9e71874a81670fe3938dbf85148e42c2b96",
+    "cargo": "1.98.0-nightly (a595d0da2 2026-06-20)",
+    "cargo_fuzz": "0.13.2",
+    "cargo_fuzz_sha256": "0c085ea1a2c113cab9574fee83cee2954351b76a6eadf83be20e7882ad95b124",
+    "sanitizer": "AddressSanitizer (cargo-fuzz default, verified via help)"
+  },
+  "seed": {
+    "kind": "first raw Tree keyframe packet from an exact-source Mac PGO smoke IVF",
+    "container_git_blob": "feaf467c07abfe37fb59462260ab88097b045d47",
+    "container_bytes": 477126,
+    "container_sha256": "772db4df880d056b8eb6f19ca7e5f10931b68e2c98b5b4bf70b2c2db2bf7234d",
+    "packet_bytes": 148079,
+    "packet_sha256": "82ad3155ff16aab8138c71985cbc6626a84b8972f6742d6835d0bd3854290f2e",
+    "packet_prefix_hex": "82498342204ff02cf60c38241c188218",
+    "parser_target_started_empty": true,
+    "frame_target_initial_corpus_files": 1
+  },
+  "metadata": {
+    "command": "cargo +nightly-2026-06-26 metadata --locked --offline --format-version 1 --manifest-path crates/rvp9-fuzz/Cargo.toml",
+    "exit_status": 0,
+    "resolved_packages": 23,
+    "workspace_lock_before_sha256": "98cf11da6f3e9a391bb1dac338e4da7e0aa1ca7fc04f6f0cd8e37dc7e9d2addf",
+    "workspace_lock_after_sha256": "98cf11da6f3e9a391bb1dac338e4da7e0aa1ca7fc04f6f0cd8e37dc7e9d2addf",
+    "fuzz_lock_before_sha256": "f9fc43384144cc74b2634885ed3235026e7ddde72ae0f73c7deede6fcc15bd1b",
+    "fuzz_lock_after_sha256": "f9fc43384144cc74b2634885ed3235026e7ddde72ae0f73c7deede6fcc15bd1b"
+  },
+  "campaigns": [
+    {
+      "target": "fuzz_parse_packet",
+      "duration_seconds": 31,
+      "executions": 149050,
+      "average_executions_per_second": 4808,
+      "new_units": 478,
+      "peak_rss_mib": 427,
+      "exit_status": 0,
+      "crash_artifacts": 0,
+      "corpus_output_files": 327,
+      "corpus_output_bytes": 12945,
+      "command_file": "parser-command.txt",
+      "raw_output_file": "parser-run.raw.txt",
+      "exit_file": "parser-exit.txt"
+    },
+    {
+      "target": "fuzz_decode_frame",
+      "duration_seconds": 31,
+      "executions": 657,
+      "average_executions_per_second": 21,
+      "new_units": 207,
+      "coverage": 3981,
+      "features": 14414,
+      "peak_rss_mib": 418,
+      "exit_status": 0,
+      "crash_artifacts": 0,
+      "corpus_output_files": 202,
+      "corpus_output_bytes": 28140889,
+      "command_file": "frame-command.txt",
+      "raw_output_file": "frame-run.raw.txt",
+      "exit_file": "frame-exit.txt"
+    }
+  ],
+  "limits": [
+    "These are bounded 30-second native smoke campaigns, not the approved billion-iteration fuzz campaign.",
+    "They do not establish broad safety coverage or qualify Windows fuzzing.",
+    "No defect or crash artifact was observed; no new bugs-ledger entry was warranted.",
+    "Generated corpora and target artifacts remain in registered Deltic scratch and are not committed."
+  ],
+  "evidence": {
+    "candidate-identity.txt": {
+      "bytes": 266,
+      "sha256": "87de347d2c57ea5d249c0ac6aed64508d903f7ce6cbb059daa78b01a5da7b594"
+    },
+    "environment.txt": {
+      "bytes": 394,
+      "sha256": "04743a15dbeae77ea58efa24c27ce8f041d43681ddd04d465dde21e3527a9072"
+    },
+    "seed-identity.txt": {
+      "bytes": 928,
+      "sha256": "bc4f3f626b07ba36f1375649f52e491cc6bccc1f948864581774cf54c8111bdc"
+    },
+    "lockfile-identity.txt": {
+      "bytes": 582,
+      "sha256": "d7d0a3b38dc050651e1f0368202d9cdd9dc0463e0f27b95329e64dc037f7e25b"
+    },
+    "corpus-artifact-state.txt": {
+      "bytes": 454,
+      "sha256": "6237770b0bc45c200c21148e425491ba4ccd9ea87cd62d506f45d4d122c8e6ae"
+    },
+    "parser-command.txt": {
+      "bytes": 1689,
+      "sha256": "495faa2e218752351b8b2d2c5d407cfb033db189c522422477aba9d39ca6b0b6"
+    },
+    "parser-run.raw.txt": {
+      "bytes": 71004,
+      "sha256": "62ffd89951bf4c34d88be49806280ba77f429085dd0237f4b4820f5d22850a7e"
+    },
+    "parser-exit.txt": {
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    "frame-command.txt": {
+      "bytes": 1681,
+      "sha256": "aa71d3984b9ec72a48500471596f5238c6ed67effc4f13c0c4ee48bd38287361"
+    },
+    "frame-run.raw.txt": {
+      "bytes": 29641,
+      "sha256": "33da487e51292f595e9532b0676f938b0d83ed90466ef5c41788ae0f2dd8584d"
+    },
+    "frame-exit.txt": {
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    "cargo-metadata.raw.json": {
+      "bytes": 89753,
+      "sha256": "1d85c1a73f9bd8f23f959cdf5742e7b599f4537f601af8cb9404a2e6a11ee9a0"
+    },
+    "cargo-metadata.exit.txt": {
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    }
+  }
+}
