@@ -1,0 +1,44 @@
+{
+  "recorded_at_utc": "2026-10-17T21:29:58Z",
+  "candidate_revision": "daf0e40590dd2578d45ce43c27cf997b72cb278f",
+  "candidate_product_source": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+  "parent_revision": "41b26451e0827b0076006c828cf6d0e1519e494e",
+  "host": {
+    "os": "Darwin 25.6.0",
+    "architecture": "arm64",
+    "rustc": "rustc 1.95.0 (59807616e 2026-04-14)",
+    "cargo": "cargo 1.95.0 (f2d3ce0bd 2026-03-21)"
+  },
+  "changed_file": {
+    "path": "crates/rvp9-bench/tests/soak_cli.rs",
+    "change": "--frames-per-iter test argument changed from 0 to 1",
+    "git_blob_before": "18957115",
+    "git_blob_after": "38a4038e",
+    "sha256_after": "8da5ba40120238f6713ae2168f6fd4010a00e2db587460d99ea2806e602ce7f9"
+  },
+  "test": {
+    "command": "deltic timeout 1800 cargo test -p rvp9-bench --release --locked --offline --test soak_cli -- --test-threads=1",
+    "stdin": "closed",
+    "exit_status": 0,
+    "passed": 1,
+    "failed": 0,
+    "ignored": 0,
+    "result": "requested_cross_decode_requires_existing_vpxdec passed",
+    "behavior": "The positive frame count passes argument validation; the deliberately absent vpxdec path then fails preflight before the soak loop, so no encode or decode runs."
+  },
+  "prior_failure": {
+    "cause": "The prior exact-candidate workspace run supplied --frames-per-iter 0, which was rejected before its intended missing-vpxdec assertion.",
+    "evidence": "../macos-current-source-workspace-tests-20261017/qualification.json"
+  },
+  "limits": [
+    "This is a focused regression-test result, not a full-workspace rerun.",
+    "The separate one-time harness stderr timeout-test failure remains unexplained; four isolated retries passed.",
+    "No production codec source changed; production evidence remains tied to fb5c0c917038db6c640b3dbc7c2b84b567233333."
+  ],
+  "raw": {
+    "file": "focused-test.raw.txt.gz",
+    "bytes": 268,
+    "sha256": "73bc26b06e4fd138433628e7b28b6619f0a872b3f97176314d60be25ec23d742",
+    "uncompressed_sha256": "4e0955f36777b602c92064d7586d0fb57678dcf70bf50da8bc5f8dfc85ce67d3"
+  }
+}
