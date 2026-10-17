@@ -1,0 +1,80 @@
+{
+  "recorded_at_utc": "2026-10-17 18:22:40 UTC",
+  "candidate_source_commit": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+  "candidate_origin_main_commit": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+  "candidate_worktree": "/Users/md/worktrees/rvp9/20261017-TSK-HUM-requalify-post-fix-candidate",
+  "candidate_worktree_branch": "task/20261017-TSK-HUM-requalify-post-fix-candidate",
+  "candidate_worktree_status_before": "clean",
+  "platform": {
+    "os": "macOS 26.6.2 (25G83)",
+    "kernel": "Darwin 25.6.0",
+    "host_triple": "aarch64-apple-darwin"
+  },
+  "toolchain": {
+    "rustc": "rustc 1.95.0 (59807616e 2026-04-14)",
+    "cargo": "cargo 1.95.0 (f2d3ce0bd 2026-03-21)",
+    "cargo_test_profile": "optimized + debuginfo"
+  },
+  "environment": {
+    "CARGO_BUILD_JOBS": "1",
+    "CARGO_NET_OFFLINE": "true",
+    "test_threads": 1,
+    "stdin": "closed",
+    "target_directory": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-zero-work-tests-fcf1e314/target",
+    "TMPDIR": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-zero-work-tests-fcf1e314"
+  },
+  "source_hashes": {
+    "Cargo.lock": "98cf11da6f3e9a391bb1dac338e4da7e0aa1ca7fc04f6f0cd8e37dc7e9d2addf",
+    "crates/rvp9-bench/Cargo.toml": "9bf228095d300ef86cd8192bc01e45e11afb5aed81c321ea87b7da79ac1e0710",
+    "crates/rvp9-bench/src/bin/soak.rs": "11a2681b44b593fdd873f29f99ea65efaafaf1368ca8773b9d161864999b79da",
+    "crates/rvp9-bench/src/bin/bdrate.rs": "2b21e71894cdf94f2830ec3097c314709e5cc8814dcc0cfac61944f00431b02b"
+  },
+  "runs": [
+    {
+      "name": "soak binary unit tests",
+      "command": "nice -n 15 deltic timeout 900 env TMPDIR=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-zero-work-tests-fcf1e314 CARGO_TARGET_DIR=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-zero-work-tests-fcf1e314/target CARGO_BUILD_JOBS=1 CARGO_NET_OFFLINE=true cargo test -p rvp9-bench --bin soak --locked --offline -- --test-threads=1 </dev/null",
+      "exit_code": 0,
+      "results": {
+        "passed": 5,
+        "failed": 0,
+        "ignored": 0
+      },
+      "coverage": [
+        "CLI rejects zero frames per iteration and an unbounded run.",
+        "An empty iteration fails, while a one-frame iteration round-trips successfully.",
+        "Cross-decode temporary directories remain isolated and are cleaned.",
+        "A timed-out child is killed."
+      ],
+      "raw_log": "soak.raw.txt.gz",
+      "raw_log_sha256": "654320eaadadeeb5264953744819d139c66c8894269c33051a5649c51152b28e",
+      "raw_log_bytes": 685,
+      "exit_capture": "soak.exit.txt"
+    },
+    {
+      "name": "BD-rate binary unit tests",
+      "command": "nice -n 15 deltic timeout 900 env TMPDIR=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-zero-work-tests-fcf1e314 CARGO_TARGET_DIR=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-zero-work-tests-fcf1e314/target CARGO_BUILD_JOBS=1 CARGO_NET_OFFLINE=true cargo test -p rvp9-bench --bin bdrate --locked --offline -- --test-threads=1 </dev/null",
+      "exit_code": 0,
+      "results": {
+        "passed": 20,
+        "failed": 0,
+        "ignored": 0
+      },
+      "coverage": [
+        "Rejects failed PSNR, insufficient points and repeated-PSNR overlapping fits.",
+        "Exercises external encoder and decoder timeouts.",
+        "Rejects missing BD-rate output and checks deterministic, collision-free temporary artifacts."
+      ],
+      "raw_log": "bdrate.raw.txt.gz",
+      "raw_log_sha256": "83e315f68bdeab386435ad471b0fa2552b0fc36261122034086627346e77a79f",
+      "raw_log_bytes": 1819,
+      "exit_capture": "bdrate.exit.txt"
+    }
+  ],
+  "registered_scratch_id": "rvp9-zero-work-tests-fcf1e314",
+  "integrity_manifest": "artifact-hashes.sha256",
+  "limits": [
+    "These focused unit suites are exact-candidate regression evidence, not codec quality or release performance measurements.",
+    "Passing full-rank finite-curve unit cases does not establish BD-rate numerical accuracy; FLU-00042 remains open and blocks quality acceptance until owner repair and validation.",
+    "These soak unit tests do not replace a production-mode soak, macOS RSS observation, or the approved long-duration deferrals."
+  ]
+}
