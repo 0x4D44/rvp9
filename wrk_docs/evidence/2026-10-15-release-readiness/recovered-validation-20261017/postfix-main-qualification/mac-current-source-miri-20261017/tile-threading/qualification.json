@@ -1,0 +1,73 @@
+{
+  "validation": "Exact-source Apple Silicon Miri core tile-threading unit subset",
+  "captured_utc": "2026-10-17T16:03:35Z",
+  "source": {
+    "candidate_commit": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+    "origin_main_commit": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+    "worktree": "/Users/md/worktrees/rvp9/20261017-TSK-HUM-requalify-post-fix-candidate",
+    "git_status_at_run": "clean"
+  },
+  "host_and_toolchain": {
+    "host": "flux.home.arpa",
+    "platform": "Darwin 25.6.0, arm64",
+    "target": "aarch64-apple-darwin under Miri",
+    "rustc": "1.98.0-nightly (bd08c9e71 2026-06-25)",
+    "cargo": "1.98.0-nightly (a595d0da2 2026-06-20)",
+    "miri": "0.1.0 (bd08c9e718 2026-06-25)",
+    "toolchain_raw": "toolchain.raw.txt"
+  },
+  "command": {
+    "text": "nice -n 15 deltic timeout 900 env CARGO_TARGET_DIR=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-candidate-tile-miri-4ce3dc92/target CARGO_BUILD_JOBS=1 cargo +nightly miri test --package rvp9-core --lib tile_threading:: -- --test-threads=1 </dev/null",
+    "exit_code": 0,
+    "stdin": "closed",
+    "timeout_seconds": 900,
+    "build_jobs": 1,
+    "process_priority": "nice -n 15",
+    "cargo_target_dir": "registered external scratch, removed after evidence copy",
+    "dependency_resolution_note": "The command did not pass --locked or --offline. Candidate worktree remained clean and Cargo.lock did not change."
+  },
+  "result": {
+    "package": "rvp9-core",
+    "target": "library unit tests",
+    "filter": "tile_threading::",
+    "passed": 23,
+    "failed": 0,
+    "ignored": 0,
+    "measured": 0,
+    "filtered_out": 1630,
+    "elapsed_seconds_reported_by_test_harness": 56.69
+  },
+  "scope_limits": [
+    "This is one core tile-threading Miri subset, not dependent-library Miri coverage; FLU-00037 remains open.",
+    "The run does not qualify parser/full-frame paths, encoder/decoder dependent-library builds, or the full unsafe inventory.",
+    "AArch64 DSP/NEON functions appear as unused in the Miri build output; this is not native SIMD or sanitizer evidence.",
+    "The toolchain is installed nightly 1.98.0, not the repository-pinned Rust 1.95.0."
+  ],
+  "evidence_files": [
+    {
+      "path": "run.command.txt",
+      "bytes": 282,
+      "sha256": "9b322651e7320dd87ba83a0cab35075eb9df6a2d77c949e4132bdcc977ab7a39"
+    },
+    {
+      "path": "run.exit.txt",
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    {
+      "path": "run.raw.txt",
+      "bytes": 14691,
+      "sha256": "abf91e618186ea96e22028ec90bbfb39941a78a46575fe6c35ee62cdb3c3bb87"
+    },
+    {
+      "path": "source-identity.raw.txt",
+      "bytes": 138,
+      "sha256": "134ccb6ec90b23f506908bf1a008d0408745f5d91a1900c718de003f9b7257a4"
+    },
+    {
+      "path": "toolchain.raw.txt",
+      "bytes": 491,
+      "sha256": "33ad3a14961180964a75a6d21221860a8e2f005fc1128be7ac066aedee80b4f6"
+    }
+  ]
+}

@@ -2,6 +2,10 @@
 
 Read-only source/tool inspection; no builds, fuzzing, Miri, soak, dependency installation, or source changes performed. Initial source HEAD was `1a84f60a24e8d82e8e6454743fbb80521280df0e`; latest observed HEAD is `23162998476b2b410f10e4502793e9f06c124a56`. Seal the final candidate commit and binary hashes before executing this plan. Commands below are proposed, not passing evidence.
 
+## Exact-current source execution update (2026-10-17)
+
+The read-only scope above describes the initial inventory. A follow-up exact-source Apple Silicon Miri run on candidate fb5c0c917038db6c640b3dbc7c2b84b567233333 passed 23 rvp9-core tile_threading tests, with zero failures/ignores and 1,630 filtered, on installed nightly 1.98.0. It is one core subset only; no dependent-library, parser/full-frame, native NEON, ASan or fuzz coverage follows. The dependent-io Miri compile remains blocked by FLU-00037. [Command, raw output, exit status and toolchain](recovered-validation-20261017/postfix-main-qualification/mac-current-source-miri-20261017/tile-threading/qualification.json).
+
 ## Observed prerequisites and gaps
 
 - Host: `aarch64-apple-darwin`. Pinned normal toolchain 1.95.0 exists. Installed `nightly` reports rustc 1.98.0-nightly `bd08c9e71` (2026-06-25), LLVM 22.1.7; Miri 0.1.0 at that revision, rust-src, llvm-tools, rust-std, cargo are installed. No automatic toolchain update is required for this plan.

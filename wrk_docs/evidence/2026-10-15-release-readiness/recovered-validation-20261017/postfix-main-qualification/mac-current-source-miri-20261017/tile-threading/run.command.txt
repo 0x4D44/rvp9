@@ -1,0 +1,1 @@
+nice -n 15 deltic timeout 900 env CARGO_TARGET_DIR=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-candidate-tile-miri-4ce3dc92/target CARGO_BUILD_JOBS=1 cargo +nightly miri test --package rvp9-core --lib tile_threading:: -- --test-threads=1 </dev/null
