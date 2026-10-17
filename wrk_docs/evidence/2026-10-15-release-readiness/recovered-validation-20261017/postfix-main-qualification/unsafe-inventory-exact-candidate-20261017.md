@@ -69,7 +69,7 @@ The CLI/benchmark/harness audit found 12 production `unsafe {}` blocks and three
 
 ## New and expanded ledger findings
 
-Six new local Open records were minted after source inspection; two existing records were expanded. All are source-only unless noted:
+Seven new Open records were minted after source inspection; two existing records were expanded. Findings are source-only unless noted:
 
 | Record | Finding and evidence limit |
 | --- | --- |
@@ -81,5 +81,6 @@ Six new local Open records were minted after source inspection; two existing rec
 | [FLU-00051](../../../../../bugs/RVP9-BUG-FLU-00051.md) | Safe coefficient decode accepts a valid scan whose length is shorter than the independent transform size; a continuing run reaches unchecked scan access. No runtime reproduction. |
 | [FLU-00052](../../../../../bugs/RVP9-BUG-FLU-00052.md) | Public loop-filter unsafe contracts omit the whole-plane exclusivity required by their raw mutable-slice reconstruction. Current production calls are serial; no runtime race was run. |
 | [FLU-00053](../../../../../bugs/RVP9-BUG-FLU-00053.md) | Scaled NEON convolution overflows signed Q4 coordinate arithmetic before pointer validation; exact source-derived example, not executed. |
+| [FLU-00054](../../../../../bugs/RVP9-BUG-FLU-00054.md) | Three Windows unsafe FFI declaration blocks lack adjacent safety reasoning required by repository guidance. This is a documentation gap; no ABI mismatch or runtime defect is established. |
 
 The unsafe-site reviews do not establish SIMD/scalar bit-exactness, decoder throughput, sanitizer coverage, fuzz coverage, or memory safety of unreviewed inputs. They also do not constitute fixes or close any ledger item. No source changes or tests were made. The separate x86 audit explicitly excluded test/doc-only files; the NEON and encoder inventories likewise excluded test-only unsafe sites. No claim about the non-workspace fuzz crate follows from this production audit.
