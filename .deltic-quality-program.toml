@@ -1,0 +1,241 @@
+schema = 1
+
+[programme]
+id = "next-release"
+title = "RVP9 reviewable final-release candidate"
+status = "draft"
+activated_by = ""
+activated_on = ""
+stakeholders = [
+  "Human repository partner and release authority (identity pending): delight—defensible exact-source evidence; discussed—the four boundary choices; good enough—all confirmed gates reviewed; dealbreaker—unsupported pass claims.",
+  "Agent evidence consumer/reviewer: delight—machine-readable commands, inputs, and hashes; discussed—scope and provenance gaps; good enough—reproducible local checks; dealbreaker—stale or ambiguous evidence.",
+]
+outcomes = [
+  "Produce a reviewable final-release candidate with exact-source, platform-specific evidence for every confirmed acceptance gate.",
+  "Make release claims reproducible, traceable to inputs and tools, and limited to what the evidence proves.",
+]
+dealbreakers = [
+  "A required correctness, compression, real-time, or safety result fails or is represented as passing without applicable evidence.",
+  "The candidate violates the approved feature boundary or a supported native platform has an unresolved release-blocking failure.",
+]
+
+[bands]
+weak = "At least one in-scope release outcome has a confirmed failure, an unresolved material defect, or missing applicable evidence."
+sound = "Every confirmed release outcome has applicable exact-candidate evidence on each required native platform; all exceptions are explicitly approved and claims match the evidence."
+strong = "Sound is met, independent repeats corroborate the key results, and representative inputs cover the confirmed production surface without a material evidence gap."
+
+[[methods]]
+id = "evidence-audit"
+name = "Candidate evidence audit"
+status = "live"
+reach = "agent"
+instructions = "QUALITY-GUIDE.md"
+
+[[areas]]
+id = "codec-correctness"
+name = "VP9 bitstream correctness"
+kind = "functional"
+importance = "high"
+required = "strong"
+required_confidence = "low"
+required_confirmed_by = ""
+required_confirmed_on = ""
+impact = "high"
+target_rationale = "Provisional from the final-candidate objective and PLAN \u00a72; target confidence remains Low because native scalar coverage and some secondary criteria are unresolved."
+milestone_blocking = true
+actual = "sound"
+actual_confidence = "medium"
+actual_rationale = "Exact-source official vectors, 32-row encoder cross-decode, and 24-row reverse-reference checks pass on both native platforms. The Mac full workspace suite now passes; Mac scalar dispatch remains unqualified. See the final-release readiness checklist."
+reach = "mixed"
+methods = ["evidence-audit"]
+next_probe = "Reconcile the missing Mac scalar path and decide whether full kernel-by-kernel SIMD/scalar differential coverage is a release gate; then repeat the accepted exact-source correctness matrix."
+
+[[areas]]
+id = "feature-boundary"
+name = "Production feature boundary"
+kind = "functional"
+importance = "high"
+required = "strong"
+required_confidence = "low"
+required_confirmed_by = ""
+required_confirmed_on = ""
+impact = "high"
+target_rationale = "PLAN \u00a72 lists frame dropping and EXT_RATECTRL; the proposed candidate boundary omits them. Keep the target provisional until the release owner resolves this scope choice."
+milestone_blocking = false
+actual = "weak"
+actual_confidence = "medium"
+actual_rationale = "The exact-source audit confirms frame dropping remains a stub and the external rate-control interface is absent. Whether either is required for this candidate is undecided. See the feature-boundary source audit and readiness checklist."
+reach = "mixed"
+methods = ["evidence-audit"]
+next_probe = "Resolve whether frame dropping and EXT_RATECTRL are included; if included, define implementation acceptance and requalify the affected modes."
+
+[[areas]]
+id = "compression-quality"
+name = "Production compression quality"
+kind = "ility"
+importance = "high"
+required = "strong"
+required_confidence = "low"
+required_confirmed_by = ""
+required_confirmed_on = ""
+impact = "high"
+target_rationale = "The objective requires the production CBR surface to meet the documented aggregate and important-clip limits; target confidence remains Low pending the exact release boundary."
+milestone_blocking = true
+actual = "weak"
+actual_confidence = "medium"
+actual_rationale = "No complete exact-source production quality census is qualified. Existing acceptance-tool findings and incomplete corpus coverage prevent a trustworthy parity result. See the quality-gate and tool-defect sections of the readiness checklist."
+reach = "agent"
+methods = ["evidence-audit"]
+next_probe = "After the quality oracle and scope are accepted, run the complete exact-source production CBR census and cross-decoder checks on both native platforms."
+
+[[areas]]
+id = "corpus-representativeness"
+name = "Production corpus coverage"
+kind = "ility"
+importance = "high"
+required = "strong"
+required_confidence = "low"
+required_confirmed_by = ""
+required_confirmed_on = ""
+impact = "high"
+target_rationale = "PLAN \u00a72 names AOM, WebRTC-representative, and livestream content; accept a narrower set only through an explicit scope decision."
+milestone_blocking = false
+actual = "weak"
+actual_confidence = "medium"
+actual_rationale = "The canonical clips and generated derivatives do not establish AOM, WebRTC-representative, or livestream coverage, and per-clip rights remain unresolved. See the corpus coverage audit."
+reach = "mixed"
+methods = ["evidence-audit"]
+next_probe = "Choose the required source families or approve a documented narrower boundary; record clip provenance, content coverage, and rights before the quality census."
+
+[[areas]]
+id = "encoder-throughput"
+name = "Production encoder throughput"
+kind = "ility"
+importance = "high"
+required = "strong"
+required_confidence = "low"
+required_confirmed_by = ""
+required_confirmed_on = ""
+impact = "high"
+target_rationale = "The objective requires the full current-source relative-speed matrix; targets remain provisional until the final modes and corpus are confirmed."
+milestone_blocking = true
+actual = "weak"
+actual_confidence = "medium"
+actual_rationale = "Historical and partial exact-source measurements do not cover all 75 production speed groups. Current timing execution is constrained by tool findings and Deltic quiet leases. See the performance rows in the readiness checklist."
+reach = "agent"
+methods = ["evidence-audit"]
+next_probe = "Once the timing gate and quiet-host route are ready, run all confirmed production speed groups with paired repeats and retained host evidence."
+
+[[areas]]
+id = "frame-latency"
+name = "Production frame latency"
+kind = "ility"
+importance = "high"
+required = "strong"
+required_confidence = "low"
+required_confirmed_by = ""
+required_confirmed_on = ""
+impact = "high"
+target_rationale = "PLAN \u00a72 specifies 33/16 ms median and 50/25 ms p99 limits, while scripts use 33.333/16.667 ms medians; do not relax until the release owner confirms the bar."
+milestone_blocking = true
+actual = "weak"
+actual_confidence = "medium"
+actual_rationale = "No complete exact-source production latency matrix is qualified. The script self-tests validate gate mechanics, not observed frame latency. See the latency rows in the readiness checklist."
+reach = "mixed"
+methods = ["evidence-audit"]
+next_probe = "Settle the median limits and run the full production per-frame latency matrix on both native platforms, preserving paired runs and p99 evidence."
+
+[[areas]]
+id = "decoder-throughput"
+name = "Decoder throughput"
+kind = "ility"
+importance = "medium"
+required = "strong"
+required_confidence = "low"
+required_confirmed_by = ""
+required_confirmed_on = ""
+impact = "medium"
+target_rationale = "PLAN \u00a73 proposes decoder throughput within 2\u00d7 libvpx, while Q.1.A calls its head-to-head ledger informational; the release-gate choice is unresolved."
+milestone_blocking = false
+actual = "weak"
+actual_confidence = "low"
+actual_rationale = "There is no current-source decoder head-to-head result with an agreed fixture scope, aggregation method, and native-platform coverage. See PLAN \u00a73 and the readiness decision record."
+reach = "mixed"
+methods = ["evidence-audit"]
+next_probe = "Decide whether the 2\u00d7 comparison is a release gate; if so, define fixtures, aggregation, and platform scope before measuring."
+
+[[areas]]
+id = "memory-safety"
+name = "Memory safety and unsafe contracts"
+kind = "ility"
+importance = "high"
+required = "strong"
+required_confidence = "low"
+required_confirmed_by = ""
+required_confirmed_on = ""
+impact = "high"
+target_rationale = "The goal requires bounded safety assurance across parser, decoder, threading, and SIMD boundaries; whether the full shared-infrastructure unsafe audit is a release gate remains open."
+milestone_blocking = true
+actual = "weak"
+actual_confidence = "medium"
+actual_rationale = "Exact-source review has open bounds and aliasing findings; native sanitizer and Miri coverage is partial, Windows ASan execution is unavailable, and recent fuzz runs were only bounded smokes. See the unsafe inventory and safety rows in the readiness checklist."
+reach = "agent"
+methods = ["evidence-audit"]
+next_probe = "Resolve the shared-infrastructure unsafe-audit scope, close owner-assigned safety findings, then run the missing applicable Miri, native ASan, and parser/full-frame campaigns."
+
+[[areas]]
+id = "bounded-reliability"
+name = "Bounded encode/decode reliability"
+kind = "ility"
+importance = "high"
+required = "sound"
+required_confidence = "low"
+required_confirmed_by = ""
+required_confirmed_on = ""
+impact = "high"
+target_rationale = "The current release objective requires exact-source bounded smoke runs; the previously approved billion-iteration fuzz and 72-hour Intel soak remain deferred."
+milestone_blocking = true
+actual = "sound"
+actual_confidence = "medium"
+actual_rationale = "Exact-source 60-second cross-decode smokes completed on Windows and macOS with zero reported errors. They use generic CPU-used 0 workloads and do not establish production-mode stability or long-duration leak/drift assurance. See the soak rows in the readiness checklist."
+reach = "agent"
+methods = ["evidence-audit"]
+next_probe = "If the confirmed boundary requires production-mode smoke, rerun bounded CPU-used 6\u20138, denoiser, or spatial workloads; keep the long-duration deferrals explicit."
+
+[[areas]]
+id = "package-consumption"
+name = "Package build and consumption"
+kind = "functional"
+importance = "high"
+required = "strong"
+required_confidence = "low"
+required_confirmed_by = ""
+required_confirmed_on = ""
+impact = "high"
+target_rationale = "The objective requires package/build verification on both native platforms, including tests of the extracted archives."
+milestone_blocking = true
+actual = "weak"
+actual_confidence = "medium"
+actual_rationale = "Five-crate package graphs and archive identities pass on both platforms, but extracted archive tests did not reach compilation. See package rows and the current-source archive-test records in the readiness checklist."
+reach = "agent"
+methods = ["evidence-audit"]
+next_probe = "Resolve the external archive-test dependency/checksum obstacle, then run the locked tests from each finalized extracted package on both native platforms."
+
+[[areas]]
+id = "api-and-local-gates"
+name = "Public API documentation and local regression gates"
+kind = "ility"
+importance = "medium"
+required = "sound"
+required_confidence = "low"
+required_confirmed_by = ""
+required_confirmed_on = ""
+impact = "medium"
+target_rationale = "The objective requires accurate public API documentation and repeatable local regression commands without hosted CI."
+milestone_blocking = true
+actual = "weak"
+actual_confidence = "medium"
+actual_rationale = "The local qualification runbook is documented, but workspace rustdoc still emits 143 warnings and several release acceptance gates remain unqualified. See the API documentation and local-gate rows in the readiness checklist."
+reach = "agent"
+methods = ["evidence-audit"]
+next_probe = "Reduce or explicitly disposition the public rustdoc warnings, and replay each documented local gate on the confirmed candidate and platforms."
