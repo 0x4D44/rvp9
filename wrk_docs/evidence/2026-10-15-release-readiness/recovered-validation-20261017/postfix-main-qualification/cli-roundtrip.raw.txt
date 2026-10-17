@@ -1,0 +1,33 @@
+   Compiling crossbeam-utils v0.8.21
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261017-TSK-HUM-requalify-post-fix-candidate/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261017-TSK-HUM-requalify-post-fix-candidate/crates/rvp9-decoder)
+   Compiling static_assertions v1.1.0
+   Compiling crossbeam-channel v0.5.15
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261017-TSK-HUM-requalify-post-fix-candidate/crates/rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261017-TSK-HUM-requalify-post-fix-candidate/crates/rvp9-io)
+   Compiling rvp9-cli v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261017-TSK-HUM-requalify-post-fix-candidate/crates/rvp9-cli)
+    Finished `test` profile [optimized + debuginfo] target(s) in 1m 00s
+     Running tests/cli_roundtrip.rs (target/debug/deps/cli_roundtrip-adccebd6bec7d8fe)
+
+running 19 tests
+test enc_empty_y4m_is_rejected_without_opening_output ... ok
+test enc_lagged_input_error_before_first_packet_preserves_existing_output ... ok
+test unsupported_flag_fails_loudly ... ok
+test non_multiple_of_64_rejected_clearly ... ok
+test enc_lagged_input_error_before_first_packet_creates_no_output ... ok
+test enc_input_error_after_first_packet_leaves_partial_ivf ... ok
+test enc_lagged_single_frame_is_written_during_flush ... ok
+test enc_spatial_input_error_after_first_access_unit_leaves_partial_ivf ... ok
+test help_lists_supported_and_not_yet_tags ... ok
+test threads_help_tag_supported ... ok
+test encode_decode_roundtrip_raw_input ... ok
+test spatial_svc_cli_emits_three_component_access_units_and_decodes_top_layer ... ok
+test threads_unallocatable_count_returns_error_without_panicking ... ok
+test md5_is_deterministic_and_per_frame ... ok
+test threads_zero_means_one_thread ... ok
+test threads_flag_accepted ... ok
+test encode_decode_rectangular_roundtrip_preserves_geometry_and_planes ... ok
+test threads_invalid_rejected ... ok
+test y4m_rejects_dynamic_geometry_and_skip_selects_the_output_format ... ok
+
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.69s

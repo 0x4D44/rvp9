@@ -1,0 +1,111 @@
+{
+  "schema": "rvp9.postfix-main-qualification.v1",
+  "recorded_at_utc": "2026-10-17T10:42:04Z",
+  "source": {
+    "ref": "origin/main",
+    "commit": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+    "worktree": "/Users/md/worktrees/rvp9/20261017-TSK-HUM-requalify-post-fix-candidate",
+    "branch": "task/20261017-TSK-HUM-requalify-post-fix-candidate",
+    "tree_state": "clean before and after checks",
+    "host": "macOS Apple Silicon, aarch64-apple-darwin"
+  },
+  "toolchain": {
+    "rustc": "rustc 1.95.0 (59807616e 2026-04-14)",
+    "cargo": "cargo 1.95.0 (f2d3ce0bd 2026-03-21)",
+    "clippy": "clippy 0.1.95 (59807616e1 2026-04-14)"
+  },
+  "checks": [
+    {
+      "command": "cargo fmt --all --check",
+      "exit_code": 0,
+      "status": "pass; no diagnostics",
+      "log": {
+        "path": "cargo-fmt-all-check.raw.txt",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    },
+    {
+      "command": "deltic timeout 1800 cargo test -p rvp9-cli --test cli_roundtrip",
+      "exit_code": 0,
+      "tests": {
+        "passed": 19,
+        "failed": 0,
+        "ignored": 0
+      },
+      "log": {
+        "path": "cli-roundtrip.raw.txt",
+        "bytes": 2149,
+        "sha256": "1dac2bf16b374e3d5d993a7eeda1f8b2ed6fc5f08451be012644936230c1cb42"
+      }
+    },
+    {
+      "command": "deltic timeout 1800 cargo test -p rvp9-encoder --lib adaptive_denoiser",
+      "exit_code": 0,
+      "tests": {
+        "passed": 15,
+        "failed": 0,
+        "ignored": 0,
+        "filtered_out": 810
+      },
+      "log": {
+        "path": "denoiser-unit.raw.txt",
+        "bytes": 2777,
+        "sha256": "2083be3080300568f3033a51430ca33c624e83b59dd6754984f7f46c360b7a5e"
+      }
+    },
+    {
+      "command": "deltic timeout 1800 cargo test -p rvp9-encoder denoiser",
+      "exit_code": 0,
+      "tests": {
+        "passed": 35,
+        "failed": 0,
+        "ignored": 0
+      },
+      "selection": "34 encoder unit tests and one matching w_coef_prob integration test; other integration targets were filtered out",
+      "log": {
+        "path": "denoiser-filter.raw.txt",
+        "bytes": 14064,
+        "sha256": "ca2797f0a57f9b534e3ea9f80880571388cc7870b1c511841145881dd3f09638"
+      }
+    },
+    {
+      "command": "deltic timeout 1800 cargo test -p rvp9-encoder --test w_gop_topology --test w_altref_real_coding --test w_svc_temporal",
+      "exit_code": 0,
+      "tests": {
+        "passed": 7,
+        "failed": 0,
+        "ignored": 4
+      },
+      "ignored_reasons": [
+        "existing ignore annotation for the vpxdec byte-exact ALTREF oracle",
+        "existing ignore annotations for temporal-SVC checks requiring testsrc corpus and/or vpxdec/ffmpeg"
+      ],
+      "log": {
+        "path": "encoder-integration.raw.txt",
+        "bytes": 2324,
+        "sha256": "6e43782145d1552c639e391f338e162bd0c5444690b72835c297e83be6b2d759"
+      }
+    },
+    {
+      "command": "DENOISE_TESTS=1 deltic timeout 1800 cargo clippy -p rvp9-cli -p rvp9-encoder --all-targets",
+      "exit_code": 0,
+      "status": "pass with two warnings",
+      "warnings": [
+        "clone_on_copy at crates/rvp9-encoder/src/frame_loop.rs:14265",
+        "match_like_matches_macro at crates/rvp9-encoder/src/spatial_encoder.rs:1082"
+      ],
+      "log": {
+        "path": "clippy.raw.txt",
+        "bytes": 4396,
+        "sha256": "11b6ba8f04d9c70e7f3667b077569caa3d9bcc8c6cec7dd09eae6e98097b6926"
+      }
+    }
+  ],
+  "limits": [
+    "These focused checks do not create a release candidate or production PGO artifact.",
+    "No full workspace test, official conformance matrix, encoder32/reverse24 campaign, BD-rate, throughput, latency, sanitizer, Miri, fuzz or package archive-test gate was run on this source.",
+    "No source files were modified."
+  ],
+  "stored_log_note": "Hashes cover the committed text files. Four Cargo outputs had one trailing blank separator removed for git diff --check; no output content lines changed."
+}

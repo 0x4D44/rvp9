@@ -1,0 +1,34 @@
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261017-TSK-HUM-requalify-post-fix-candidate/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261017-TSK-HUM-requalify-post-fix-candidate/crates/rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261017-TSK-HUM-requalify-post-fix-candidate/crates/rvp9-harness)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261017-TSK-HUM-requalify-post-fix-candidate/crates/rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261017-TSK-HUM-requalify-post-fix-candidate/crates/rvp9-encoder)
+    Finished `test` profile [optimized + debuginfo] target(s) in 10.42s
+     Running tests/w_altref_real_coding.rs (target/debug/deps/w_altref_real_coding-9e10b7bd996f3a25)
+
+running 3 tests
+test altref_stream_byte_exact_vpxdec ... ignored, W-ALTREF byte-exact vpxdec round-trip; run with `--ignored`
+test altref_slot2_differs_from_last_recon ... ok
+test altref_reconstruction_matches_decoder_with_prev_mv_salvage ... ok
+
+test result: ok. 2 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.20s
+
+     Running tests/w_gop_topology.rs (target/debug/deps/w_gop_topology-c1f30befdee1972f)
+
+running 2 tests
+test gop_topology_byte_identity ... ok
+test gop_topology_schedule_matches_emitted_frames ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.22s
+
+     Running tests/w_svc_temporal.rs (target/debug/deps/w_svc_temporal-aba67e39ec56fd39)
+
+running 6 tests
+test svc_temporal_layer_id_pattern_is_live ... ignored, A18 SVC temporal — run with `--ignored` (needs testsrc corpus)
+test svc_temporal_stream_byte_exact_through_vpxdec ... ignored, A18 SVC temporal oracle — run with `--ignored` (needs vpxdec + corpus)
+test svc_temporal_three_layer_extracts_byte_exact_through_all_decoders ... ignored, Stage 4d three-layer extraction oracle — needs vpxdec, ffmpeg, and corpus
+test temporal_svc_base_layer_decodes_identically_when_enhancement_is_dropped ... ok
+test temporal_svc_three_layers_decode_identically_at_each_drop_point ... ok
+test temporal_svc_lifecycle_is_deterministic_for_two_and_three_layers ... ok
+
+test result: ok. 3 passed; 0 failed; 3 ignored; 0 measured; 0 filtered out; finished in 0.02s
