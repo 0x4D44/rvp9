@@ -1,0 +1,89 @@
+{
+  "recorded_at_utc": "2026-10-17 18:14:09 UTC",
+  "candidate_source_commit": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+  "candidate_origin_main_commit": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+  "candidate_worktree": "/Users/md/worktrees/rvp9/20261017-TSK-HUM-requalify-post-fix-candidate",
+  "candidate_worktree_branch": "task/20261017-TSK-HUM-requalify-post-fix-candidate",
+  "candidate_worktree_status_before": "clean",
+  "platform": {
+    "os": "macOS 26.6.2 (25G83)",
+    "kernel": "Darwin 25.6.0",
+    "host_triple": "aarch64-apple-darwin"
+  },
+  "toolchain": {
+    "rustc": "rustc 1.95.0 (59807616e 2026-04-14)",
+    "cargo": "cargo 1.95.0 (f2d3ce0bd 2026-03-21)"
+  },
+  "source_hashes": {
+    "Cargo.lock": "98cf11da6f3e9a391bb1dac338e4da7e0aa1ca7fc04f6f0cd8e37dc7e9d2addf",
+    "scripts/qualify-production-encoder.sh": "3ec28783f5b3e52ba554888a5e53f2dd51e7d21645137d0cbbd0b32965f1953c",
+    "scripts/qualify-spatial-svc.sh": "6453cd72adedbe82c1c719a728873f419543170819111a1139dba5303d47c3de",
+    "crates/rvp9-io/Cargo.toml": "2c79e70236cf156e3c7b12c02b410940585c5ac1b5265032d66dc854c914ce03"
+  },
+  "runs": [
+    {
+      "name": "rvp9-io library unit tests",
+      "command": "nice -n 15 deltic timeout 1800 env CARGO_TARGET_DIR=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-io-parser-1017-fac69836/target cargo test -p rvp9-io --lib --locked --offline -- --test-threads=1 </dev/null",
+      "exit_code": 0,
+      "results": {
+        "passed": 61,
+        "failed": 0,
+        "ignored": 0
+      },
+      "raw_log": "io-parser.raw.txt.gz",
+      "exit_capture": "io-parser.exit.txt",
+      "raw_log_sha256": "7401e3093fd51c17574a39d821ebec9d646e0d500d411fe3eae76e7c71268a2c",
+      "raw_log_bytes": 4676
+    },
+    {
+      "name": "production matrix self-test",
+      "command": "deltic timeout 180 env TMPDIR=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-qual-selftests-02dba9cb/production-self-test bash scripts/qualify-production-encoder.sh --self-test </dev/null",
+      "exit_code": 0,
+      "result": "self-test passed",
+      "raw_log": "production-self-test.raw.txt.gz",
+      "exit_capture": "production-self-test.exit.txt",
+      "raw_log_sha256": "3d595c960ca9149d1e12acdd062386908a0522dc2f9b3ac88e987b6cfe521d97",
+      "raw_log_bytes": 20751
+    },
+    {
+      "name": "production resume filesystem self-test",
+      "command": "deltic timeout 240 env TMPDIR=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-qual-selftests-02dba9cb/production-resume-self-test bash scripts/qualify-production-encoder.sh --self-test-resume </dev/null",
+      "exit_code": 0,
+      "result": "resume filesystem self-test passed",
+      "raw_log": "production-resume-self-test.raw.txt.gz",
+      "exit_capture": "production-resume-self-test.exit.txt",
+      "raw_log_sha256": "21d113627f4d63820ce6e2b2e49ff4a41b332be5ce34bd6ca77bd5f39e572807",
+      "raw_log_bytes": 132
+    },
+    {
+      "name": "production timing filesystem self-test",
+      "command": "deltic timeout 180 env TMPDIR=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-qual-selftests-02dba9cb/production-timing-self-test bash scripts/qualify-production-encoder.sh --self-test-timing </dev/null",
+      "exit_code": 0,
+      "result": "timing filesystem self-test passed",
+      "raw_log": "production-timing-self-test.raw.txt.gz",
+      "exit_capture": "production-timing-self-test.exit.txt",
+      "raw_log_sha256": "12d8d8eebc01f0888f1b7d2c946259269fcf37f102a8f1cb7081e09b21daa520",
+      "raw_log_bytes": 8434
+    },
+    {
+      "name": "spatial SVC matrix self-test",
+      "command": "deltic timeout 60 env TMPDIR=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-qual-selftests-02dba9cb/spatial-self-test bash scripts/qualify-spatial-svc.sh --self-test </dev/null",
+      "exit_code": 0,
+      "result": "self-test passed",
+      "raw_log": "spatial-self-test.raw.txt.gz",
+      "exit_capture": "spatial-self-test.exit.txt",
+      "raw_log_sha256": "06d704c9212a6265863da5e65cc82f0182b3e7b5d1a30abeb070c08645772dd9",
+      "raw_log_bytes": 1906
+    }
+  ],
+  "registered_scratch_ids": [
+    "rvp9-io-parser-1017-fac69836",
+    "rvp9-qual-selftests-02dba9cb"
+  ],
+  "limits": [
+    "The rvp9-io unit suite is not a malformed-WebM overflow-check regression test. The separate exact-source parent-crossing WebM probe still reproduces FLU-00044 in an overflow-checked build.",
+    "The four self-tests validate matrix declarations and failure/resume/timing gate machinery. They do not run a real quality, speed, latency, or spatial acceptance campaign and do not establish product performance.",
+    "No fuzz, sanitizer, memory-safety, or whole-workspace qualification claim follows from these runs."
+  ],
+  "integrity_manifest": "raw-artifact-hashes.sha256"
+}
