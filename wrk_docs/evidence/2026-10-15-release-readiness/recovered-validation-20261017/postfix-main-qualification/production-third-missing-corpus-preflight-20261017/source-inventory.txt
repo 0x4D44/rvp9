@@ -1,0 +1,11 @@
+The source directory was a Deltic-registered scratch directory used to inject a missing input at position 3.
+
+Present symlinks:
+- in_to_tree_420_720p50.y4m -> /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/tests/corpus/in_to_tree_420_720p50.y4m; prior exact-source inventory: 691203035 bytes, SHA-256 81166517a3054c789923535b5da23fbbb9bbd7fd4c28dac83918ac351e121e74, header YUV4MPEG2 W1280 H720 F50:1 Ip A1:1.
+- ducks_take_off_420_720p50.y4m -> /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/tests/corpus/ducks_take_off_420_720p50.y4m; prior exact-source inventory: 691203035 bytes, SHA-256 0e09aa923ce72e2f6d1c978c3c1cc8dd9588d2ede819081f040213e361970efc, header YUV4MPEG2 W1280 H720 F50:1 Ip A1:1.
+
+Intentionally absent from this source directory:
+- old_town_cross_420_720p50.y4m (input 3; observed failure point).
+- foreman_cif.y4m (input 4; not reached).
+
+The qualification script re-hashed and validated the first two symlink targets before it failed on input 3. Their exact-source identity inventory is linked from qualification.json.

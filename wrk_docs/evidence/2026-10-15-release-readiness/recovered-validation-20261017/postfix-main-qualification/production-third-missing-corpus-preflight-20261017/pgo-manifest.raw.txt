@@ -1,0 +1,3 @@
+git_commit=fb5c0c917038db6c640b3dbc7c2b84b567233333
+optimized_binary=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/third-input-1cfc2458/tools/rvp9enc
+optimized_binary_sha256=c747ee516fddcdf6384d532edf55f9bf6fcb1ace9d8ab8f4ca9172100b5562e6
