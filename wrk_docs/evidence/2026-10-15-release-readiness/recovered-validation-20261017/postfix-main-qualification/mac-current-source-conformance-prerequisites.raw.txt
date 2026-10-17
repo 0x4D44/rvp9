@@ -1,0 +1,6 @@
+source_commit: fb5c0c917038db6c640b3dbc7c2b84b567233333
+worktree_status: ''
+libvpx_submodule: 12f3a2ac603e8f10742105519e0cd03c3b8f71dd third_party/libvpx (v1.14.1)
+vector_files: 614
+command_vpxdec: None
+local_build_vpxdec: False

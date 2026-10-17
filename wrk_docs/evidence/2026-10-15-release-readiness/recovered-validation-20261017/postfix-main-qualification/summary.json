@@ -204,5 +204,40 @@
   "additional_checks_recorded_at_utc": "2026-10-17 11:30:26Z",
   "selftest_raw_originals_archive": "mac-current-source-selftests-originals-20261017.tar.gz",
   "selftest_raw_integrity_manifest": "mac-current-source-selftest-raw-integrity.json",
-  "selftest_normalization_note": "The exact original self-test captures are retained in the named archive. Linked text review copies remove trailing spaces/tabs at line ends only; assertion output content is unchanged."
+  "selftest_normalization_note": "The exact original self-test captures are retained in the named archive. Linked text review copies remove trailing spaces/tabs at line ends only; assertion output content is unchanged.",
+  "fixture_preparation": {
+    "recorded_at_utc": "2026-10-17 11:37:02Z",
+    "source_commit": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+    "worktree": "/Users/md/worktrees/rvp9/20261017-TSK-HUM-requalify-post-fix-candidate",
+    "tracked_worktree_clean": true,
+    "pinned_libvpx": {
+      "commit": "12f3a2ac603e8f10742105519e0cd03c3b8f71dd",
+      "submodule_status": "checked out at the pinned gitlink"
+    },
+    "command": "deltic timeout 600 bash scripts/fetch-vectors.sh --jobs 8",
+    "exit_code": 0,
+    "verified_vectors": 307,
+    "verified_md5_ledgers": 307,
+    "observed_files": 614,
+    "fetch_log": {
+      "path": "mac-current-source-fetch-vectors.raw.txt",
+      "bytes": 26618,
+      "sha256": "89c0cb2b48955f29a482bbd3f29cf3c364b47188bfc4cbe30bd7ad217c5fa56e"
+    },
+    "conformance_prerequisites": {
+      "log": {
+        "path": "mac-current-source-conformance-prerequisites.raw.txt",
+        "bytes": 229,
+        "sha256": "807d8b2a55b93f25d0ef7f2dcd56f70db530dd37c56845e78f8afe432818a191"
+      },
+      "vpxdec_on_path": false,
+      "local_build_vpxdec_present": false,
+      "top_level_corpus_y4m_files": 0
+    },
+    "limits": [
+      "This verifies fixture download and manifest hashes only; no conformance test ran.",
+      "The exact-source Mac worktree has no vpxdec executable or top-level Y4M corpus inputs, so current-source conformance and Mac PGO remain open.",
+      "The official vectors do not establish the broader AOM, WebRTC, and livestream corpus coverage."
+    ]
+  }
 }
