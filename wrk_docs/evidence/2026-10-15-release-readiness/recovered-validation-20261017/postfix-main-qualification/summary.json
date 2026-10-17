@@ -1072,5 +1072,11 @@
       "sha256": "4fa3d21fd18b79992b7e282b0a0772f9b26e2dc1db6509bf93b1016a0a7d120d"
     },
     "normalization_note": "Review copies normalize CRLF to LF and remove trailing ASCII spaces and tabs at line ends. In the spatial anchor usage output only, two indentation tabs preceded by spaces are shown as literal \\t sequences to avoid ambiguous whitespace. Exact original bytes are retained in the archive; no other content-line changes are made."
+  },
+  "origin_main_current_recheck": {
+    "record": "../origin-main-recheck-20261017T134326Z.json",
+    "record_sha256": "3da167a810c3c7475a1583129a8971d1090c1f223cb9178947796d4e2e1869b5",
+    "remote_commit": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+    "matches_candidate": true
   }
 }

@@ -1,0 +1,12 @@
+{
+  "schema": "rvp9.origin-main-ref-recheck.v1",
+  "observed_at_utc": "2026-10-17T13:43:26Z",
+  "command": "git ls-remote origin refs/heads/main",
+  "remote_ref": "refs/heads/main",
+  "raw_output": "fb5c0c917038db6c640b3dbc7c2b84b567233333\trefs/heads/main\n",
+  "remote_commit": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+  "candidate_source_commit": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+  "matches_candidate": true,
+  "prior_fetch_record": "origin-main-refresh-20261017T103158Z.json",
+  "effects": "Read-only remote ref query; no local refs, source files or worktrees changed."
+}
