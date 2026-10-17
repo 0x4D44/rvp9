@@ -1,0 +1,61 @@
+{
+  "schema": 1,
+  "recorded_at_utc": "2026-10-17T23:26:55Z",
+  "candidate": {
+    "product_source_commit": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+    "runner_revision": "63e43b47caae6f2c1ff4206b853f52774e11d1f1",
+    "candidate_worktree_tracked_tree_clean": true,
+    "test_source": "crates/rvp9-core/src/frame.rs",
+    "test_source_git_blob": "e84ef804caaf47bfabc988f259859bc622fd59bf",
+    "cargo_lock_git_blob": "eef9129866d45300de9a7dc8784fca68bae4f226",
+    "cargo_lock_sha256": "98cf11da6f3e9a391bb1dac338e4da7e0aa1ca7fc04f6f0cd8e37dc7e9d2addf",
+    "runner_test_source_blob_matches_candidate": true,
+    "runner_lock_blob_matches_candidate": true
+  },
+  "host": {
+    "os": "macOS 26.6.2 (25G83)",
+    "architecture": "arm64",
+    "kernel": "Darwin 25.6.0",
+    "host_name": "flux.home.arpa"
+  },
+  "toolchain": {
+    "rustc": "1.98.0-nightly (bd08c9e71 2026-06-25)",
+    "rust_host": "aarch64-apple-darwin",
+    "llvm": "22.1.7",
+    "miri": "0.1.0 (bd08c9e718 2026-06-25)"
+  },
+  "command": {
+    "text_file": "command.txt",
+    "stdin": "closed",
+    "offline": true,
+    "locked": true,
+    "build_jobs": 1,
+    "process_priority": "nice -n 15",
+    "timeout_seconds": 900,
+    "target_dir": "task worktree .scratch/target"
+  },
+  "test": {
+    "filter": "frame::tests::plane_",
+    "test_names": [
+      "frame::tests::plane_mut_fill_does_not_touch_border",
+      "frame::tests::plane_row_round_trip"
+    ],
+    "passed": 2,
+    "failed": 0,
+    "ignored": 0,
+    "filtered_out": 1651,
+    "test_seconds": 13.42,
+    "exit_status": 0
+  },
+  "raw_log": {
+    "path": "run.raw.txt.gz",
+    "compression": "gzip",
+    "sha256_uncompressed": "abd3c2a5a47f974a6fc0d3c452dc52477984b87edabf6ab3fa2a5c47604df22a",
+    "sha256_compressed": "36ab585bf76047830ca6825d161301863ba22792ab22e9a4ddb1eb9abb05c6f1"
+  },
+  "scope_limits": [
+    "Two focused frame layout/plane tests only; not a complete frame or core Miri sweep.",
+    "No full-frame decoder production-path evidence.",
+    "Miri cfg uses scalar paths and does not exercise native AArch64 NEON."
+  ]
+}
