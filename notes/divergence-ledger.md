@@ -24,6 +24,73 @@ Each entry:
 
 ## Entries
 
+### 2026-10-17 — Retain checked x86 8x8 DCT arithmetic
+
+**Where:** `rvp9_core::transforms::forward_sse2::{pass1_is_safe,fdct8x8_inner,fdct8x8}`;
+libvpx v1.14.1 (`12f3a2ac603e8f10742105519e0cd03c3b8f71dd`),
+`vpx_dsp/x86/fwd_txfm_sse2.c:228-232` and
+`vpx_dsp/x86/fwd_txfm_impl_sse2.h:258` (`FDCT8x8_2D`).
+
+**What libvpx does:** instantiates its low-bit-depth SSE2 transform with
+`DCT_HIGH_BIT_DEPTH` zero. Its high-bit-depth overflow fallback branches are
+conditional on that macro; the low-bit-depth path uses its i16 SIMD schedule.
+
+**What rvp9 does:** checks every first-pass lane against `[-4096, 4095]`
+before the second i16 pass. If any lane is outside that range, it discards
+the vector first pass and recomputes the complete transform with the wider
+scalar oracle. The x86 realtime lowbd entry uses this checked transform too.
+
+**Why:** retain established scalar-equivalent x86 coefficients. The rejected
+unchecked candidate in [unit 1384](../wrk_journals/2026.09.21%20-%20JRN%20-%20Unit%201384%20x86%20unchecked%20lowbd%20fdct8x8%20rejected.md)
+showed no material repeatable corpus speed gain. Arthur accepted this
+contract on 2026-10-17 in the disposition of RVP9-BUG-CRU-00004.
+
+**Byte-parity impact:** this decision changes no coefficients or bitstreams.
+The checked result can differ from an unchecked lowbd schedule at extreme
+inputs; scalar equivalence is not a claim of universal libvpx byte parity.
+
+**Compression-efficiency impact:** no change from this documentation and
+policy decision. A broader quality delta for an unchecked replacement has
+not been established.
+
+**Future plan:** measure fallback frequency on representative footage before
+proposing another optimization. Preserve existing x86 coefficients unless a
+separate output-contract change and native speed/quality gates are approved.
+The historical candidate/control corpus ratios `1.000218` and `1.000033`
+do not establish a speed improvement; current fallback frequency is unknown.
+
+### 2026-10-17 — Accept architecture-specific realtime 8x8 DCT schedules
+
+**Where:** `rvp9_core::transforms::forward::fdct8x8_libvpx_lowbd` and
+`rvp9_core::transforms::forward_neon::fdct8x8_libvpx_lowbd`;
+libvpx v1.14.1 `vpx_dsp/arm/fdct8x8_neon.c:22-36` and
+`vpx_dsp/arm/fdct8x8_neon.h` (first- and second-pass helpers), alongside
+the x86 source cited above.
+
+**What libvpx does:** maintains separate Arm and x86 SIMD schedules.
+Its Arm lowbd entry invokes NEON first- and second-pass helpers directly.
+Mirroring the Arm path alone does not prove parity with its x86 path.
+
+**What rvp9 does:** uses an approximate first-pass multiply and unchecked
+i16 second pass on AArch64. Other architectures use general `fdct8x8`;
+x86 selects checked SSE2 or the scalar fallback, while portable/Miri paths
+use scalar arithmetic. General AArch64 `fdct8x8` also retains its exact path.
+
+**Why:** retain the existing architecture choices, accepted by Arthur on
+2026-10-17. An unchecked x86 port was not retained after unit 1384's neutral
+screens; matching architectures alone is insufficient reason to change output.
+
+**Byte-parity impact:** the architecture split can yield different lowbd
+coefficients and consequently different mode decisions and streams. This is
+an existing difference; this decision makes no runtime change.
+
+**Compression-efficiency impact:** cross-architecture quality differences
+have not been quantified here. Matching IVF hashes in the historical
+screened clips does not establish equality on all inputs or broader quality.
+
+**Future plan:** keep this split documented. Any proposal to change it needs
+its own pinned architecture-specific oracle and native speed/quality evidence.
+
 ### 2026-10-16 — Reject unsupported two-pass worker and tile requests
 
 **Where:** `rvp9enc::run`; reference
