@@ -1,0 +1,20 @@
+=== rvp9 soak harness (D3) ===
+duration_secs    : 60
+iterations       : 0
+frames_per_iter  : 8
+report_every_secs: 10
+cross_decode     : true
+vpxdec_path      : C:\worktrees\rvp9\20261017-TSK-HUM@NMI-final-candidate-windows-qualification\build\libvpx\vpxdec.exe
+sources:
+  - y4m(tests/corpus/foreman_cif.y4m, 256x256)
+  - synthetic-gradient(256x256)
+
+[start] wall=0.0s iter=0 rss=4.2 MiB
+[report] wall=   10.2s iter=    41 avg=  249.1 ms/iter frames=    328 (  32.1 fps) br=  325.0 kbps last_iter=  537.6 ms rss=8.1 MiB errors=0 cksum=9ed8aedf8dab285e
+[report] wall=   20.3s iter=    74 avg=  273.8 ms/iter frames=    592 (  29.2 fps) br=  289.5 kbps last_iter=   63.5 ms rss=7.8 MiB errors=0 cksum=5b5f3e61333642b1
+[report] wall=   30.7s iter=   107 avg=  287.0 ms/iter frames=    856 (  27.9 fps) br=  278.5 kbps last_iter=  537.1 ms rss=7.7 MiB errors=0 cksum=c58790bebe9d6aef
+[report] wall=   41.2s iter=   141 avg=  292.0 ms/iter frames=   1128 (  27.4 fps) br=  273.1 kbps last_iter=  556.4 ms rss=7.7 MiB errors=0 cksum=9ed8aedf8dab285e
+[report] wall=   51.6s iter=   175 avg=  295.1 ms/iter frames=   1400 (  27.1 fps) br=  269.9 kbps last_iter=  575.4 ms rss=7.8 MiB errors=0 cksum=c58790bebe9d6aef
+
+=== soak complete ===
+[report] wall=   60.1s iter=   203 avg=  296.0 ms/iter frames=   1624 (  27.0 fps) br=  268.9 kbps last_iter=    0.0 ms rss=7.7 MiB errors=0 cksum=c58790bebe9d6aef

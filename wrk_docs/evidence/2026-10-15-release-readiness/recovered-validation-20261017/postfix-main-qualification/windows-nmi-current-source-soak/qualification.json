@@ -1,0 +1,118 @@
+{
+  "schema": "rvp9.windows-nmi-current-source-soak.v1",
+  "recorded_at_utc": "2026-10-17T14:13:24Z",
+  "candidate": {
+    "source_commit": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+    "branch": "task/20261017-TSK-HUM@NMI-final-candidate-windows-qualification",
+    "worktree": "C:\\worktrees\\rvp9\\20261017-TSK-HUM@NMI-final-candidate-windows-qualification",
+    "tracked_tree_clean": true,
+    "host": {
+      "name": "NMI",
+      "os": "Windows 11 Pro x86-64",
+      "cpu": "Intel Core i7-14700KF",
+      "logical_processors": 28
+    },
+    "toolchain": {
+      "host_triple": "x86_64-pc-windows-msvc",
+      "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+      "cargo": "cargo 1.98.1 (797e8a9bc 2026-08-05)"
+    }
+  },
+  "source_identity": {
+    "file": "crates/rvp9-bench/src/bin/soak.rs",
+    "git_blob_sha1": "8687b0c29e4fab36724b7ea85c279d13b4896f9f",
+    "windows_checkout_sha256": "f6e7ea013263d473afb2fea196ec81d76eb5f9828a8e46527f4fbcb8b0f0a5c9"
+  },
+  "build": {
+    "command": "deltic timeout 900 cargo build --release --locked -p rvp9-bench --bin soak",
+    "working_directory": "C:\\worktrees\\rvp9\\20261017-TSK-HUM@NMI-final-candidate-windows-qualification",
+    "environment": {
+      "CARGO_NET_OFFLINE": "true"
+    },
+    "exit_status": 0,
+    "binary": {
+      "path": "target/release/soak.exe",
+      "sha256": "7493296bc214c6bf977c70e384fa5f60ee2668f2fce33807a6dc89bc16d7a6e6"
+    },
+    "raw_log": {
+      "path": "build-verification.raw.txt",
+      "bytes": 895,
+      "sha256": "91dd80455edb5ef0428dc4b9ab3d5735d4f648a567fc772fc98dbd4df8271763"
+    }
+  },
+  "inputs": [
+    {
+      "name": "Foreman CIF",
+      "path": "registered NMI scratch/tests/corpus/foreman_cif.y4m",
+      "bytes": 45621044,
+      "sha256": "b0e3c35eff9fe1da91521a02eb9f0e3ef4bc5aec341ecef1567cd87f1711267b",
+      "harness_dimensions": "256x256 crop"
+    },
+    {
+      "name": "built-in synthetic gradient",
+      "path": "soak harness",
+      "harness_dimensions": "256x256"
+    }
+  ],
+  "reference_decoder": {
+    "path": "build/libvpx/vpxdec.exe",
+    "pinned_libvpx_revision": "12f3a2ac603e8f10742105519e0cd03c3b8f71dd",
+    "sha256": "91eb8ab65f62f1d63d750878b20b6b75a2882f75814e623ab54acf22b9ad02b6"
+  },
+  "run": {
+    "date_utc": "2026-10-17",
+    "registered_scratch": "H:\\temp\\deltic-scratch\\rvp9-current-soak-c4076a20",
+    "working_directory": "H:\\temp\\deltic-scratch\\rvp9-current-soak-c4076a20",
+    "environment": {
+      "TEMP": "H:\\temp\\deltic-scratch\\rvp9-current-soak-c4076a20\\transient",
+      "TMP": "H:\\temp\\deltic-scratch\\rvp9-current-soak-c4076a20\\transient"
+    },
+    "command": "deltic timeout 180 C:\\worktrees\\rvp9\\20261017-TSK-HUM@NMI-final-candidate-windows-qualification\\target\\release\\soak.exe --duration-secs 60 --frames-per-iter 8 --report-every-secs 10 --cross-decode --vpxdec C:\\worktrees\\rvp9\\20261017-TSK-HUM@NMI-final-candidate-windows-qualification\\build\\libvpx\\vpxdec.exe",
+    "exit_status": 0,
+    "binary_sha256_at_run": "7493296bc214c6bf977c70e384fa5f60ee2668f2fce33807a6dc89bc16d7a6e6",
+    "cross_decode": true,
+    "configuration": {
+      "cpu_used": 0,
+      "deadline": "Good",
+      "lag_in_frames": 0,
+      "rate_control": "CBR",
+      "aq_mode": "off",
+      "temporal_layers": 1
+    },
+    "result": {
+      "requested_duration_seconds": 60,
+      "reported_wall_seconds": 60.1,
+      "iterations": 203,
+      "frames_per_iteration": 8,
+      "frames_reported": 1624,
+      "errors": 0,
+      "final_reported_bitrate_kbps": 268.9,
+      "final_reported_rss_mib": 7.7,
+      "exact_encoded_byte_total_reported": false,
+      "encoded_output_evidence": "The harness reports positive bitrate; its current source computes bitrate from total encoded bytes. Exact bytes are not printed."
+    },
+    "raw_log": {
+      "path": "run-confirmed.raw.txt",
+      "bytes": 1394,
+      "sha256": "7a218edd2de07960ced853e7f4d93ab446e33256488683652c3b8a7b7e36648e"
+    },
+    "exit_record": {
+      "path": "run-confirmed.exit.txt",
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+      "exit_status": 0
+    }
+  },
+  "limits": [
+    "This is a 60-second generic CPU-used-0 and lag-0 harness smoke, not a production CPU-used-6-to-8 soak.",
+    "The inputs are a 256x256 Foreman crop and the built-in synthetic gradient; no denoiser or spatial workload is covered.",
+    "The output does not establish long-duration leak or drift assurance, nor macOS RSS behavior.",
+    "The exact encoded-byte count is not printed; only the positive bitrate supports nonzero encoded-output evidence."
+  ],
+  "prior_build_capture_without_ssh_exit": {
+    "path": "build-unverified-exit.raw.txt",
+    "bytes": 895,
+    "sha256": "adc89c7ec95d402533b9fd5e56754f797214fdc107557a4ca8b63e31d72a772c",
+    "note": "Cargo printed its Finished line, but the enclosing SSH exit status was not retained. This supplemental log is not used to claim the build exit; build-verification.raw.txt is the authoritative captured exit-0 build."
+  }
+}

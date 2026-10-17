@@ -1,0 +1,7 @@
+   Compiling rvp9-core v0.2.0-alpha.4 (C:\worktrees\rvp9\20261017-TSK-HUM@NMI-final-candidate-windows-qualification\crates\rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (C:\worktrees\rvp9\20261017-TSK-HUM@NMI-final-candidate-windows-qualification\crates\rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (C:\worktrees\rvp9\20261017-TSK-HUM@NMI-final-candidate-windows-qualification\crates\rvp9-harness)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (C:\worktrees\rvp9\20261017-TSK-HUM@NMI-final-candidate-windows-qualification\crates\rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (C:\worktrees\rvp9\20261017-TSK-HUM@NMI-final-candidate-windows-qualification\crates\rvp9-io)
+   Compiling rvp9-bench v0.2.0-alpha.4 (C:\worktrees\rvp9\20261017-TSK-HUM@NMI-final-candidate-windows-qualification\crates\rvp9-bench)
+    Finished `release` profile [optimized + debuginfo] target(s) in 43.86s
