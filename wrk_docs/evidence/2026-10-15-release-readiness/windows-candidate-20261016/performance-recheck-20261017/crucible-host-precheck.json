@@ -1,0 +1,38 @@
+{
+  "host": "CRUCIBLE",
+  "completed_utc": "2026-10-17T09:40:32.6303814Z",
+  "observation": "read-only precheck; no qualification campaign started",
+  "quiet_status_exit": 0,
+  "quiet_status": [
+    "quiet window: open.",
+    "0 heavy workload processes still running.",
+    "3 more heavy workload processes run at low priority (not counted)."
+  ],
+  "counter": "\\Processor(_Total)\\% Processor Time",
+  "sampling": {
+    "interval_seconds": 5,
+    "requested_samples": 13,
+    "initial_sample_skipped": 1,
+    "retained_samples": 12,
+    "logical_processors": 32,
+    "percent_samples": [
+      23.293361488386,
+      17.7974886610148,
+      9.53644532358059,
+      49.2227460528088,
+      52.1224087205885,
+      39.5733527319917,
+      40.7247349606162,
+      17.832456418755,
+      14.1538651704358,
+      10.1723999003875,
+      6.3252543882352,
+      5.39458692936031
+    ],
+    "mean_percent": 23.845758,
+    "busy_logical_cores": 7.630643,
+    "maximum_allowed_busy_logical_cores": 0.75
+  },
+  "decision": "guard not met; do not start speed or latency timing",
+  "capture_note": "Structured record transcribed from completed tracked exec session 71340. The remote stdout was not separately archived as a raw file."
+}
