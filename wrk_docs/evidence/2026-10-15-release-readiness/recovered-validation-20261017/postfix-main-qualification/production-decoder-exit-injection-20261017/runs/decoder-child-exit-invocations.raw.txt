@@ -1,0 +1,71 @@
+bdrate	--help
+bdrate	--help
+bdrate-svc	--help
+bdrate-svc	--help
+encode-headtohead	--help
+encode-headtohead	--help
+encode-headtohead	--help
+encode-headtohead	--help
+encode-headtohead	--help
+realtime	--help
+realtime	--help
+realtime	--help
+realtime	--help
+bdrate	--help
+bdrate	--help
+bdrate-svc	--help
+bdrate-svc	--help
+encode-headtohead	--help
+encode-headtohead	--help
+encode-headtohead	--help
+encode-headtohead	--help
+encode-headtohead	--help
+realtime	--help
+realtime	--help
+realtime	--help
+realtime	--help
+bdrate	--help
+bdrate	--help
+bdrate-svc	--help
+bdrate-svc	--help
+encode-headtohead	--help
+encode-headtohead	--help
+encode-headtohead	--help
+encode-headtohead	--help
+encode-headtohead	--help
+realtime	--help
+realtime	--help
+realtime	--help
+realtime	--help
+bdrate	--help
+bdrate	--help
+bdrate-svc	--help
+bdrate-svc	--help
+encode-headtohead	--help
+encode-headtohead	--help
+encode-headtohead	--help
+encode-headtohead	--help
+encode-headtohead	--help
+realtime	--help
+realtime	--help
+realtime	--help
+realtime	--help
+ffmpeg	-hide_banner -loglevel error -nostdin -y -i /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-decoder-exit-injection-3b1d9d1a/corpus/in_to_tree_420_720p50.y4m -vf fps=30 -frames:v 60 -pix_fmt yuv420p /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-decoder-exit-injection-3b1d9d1a/work-decoder-child-exit/inputs/in_to_tree_720p30_clean.y4m
+ffmpeg	-hide_banner -loglevel error -nostdin -y -i /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-decoder-exit-injection-3b1d9d1a/work-decoder-child-exit/inputs/in_to_tree_720p30_clean.y4m -vf noise=all_seed=48917:alls=12:allf=t+u -frames:v 60 -pix_fmt yuv420p /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-decoder-exit-injection-3b1d9d1a/work-decoder-child-exit/inputs/in_to_tree_720p30_noisy.y4m
+ffmpeg	-hide_banner -loglevel error -nostdin -y -i /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-decoder-exit-injection-3b1d9d1a/corpus/ducks_take_off_420_720p50.y4m -vf fps=30 -frames:v 60 -pix_fmt yuv420p /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-decoder-exit-injection-3b1d9d1a/work-decoder-child-exit/inputs/ducks_take_off_720p30_clean.y4m
+ffmpeg	-hide_banner -loglevel error -nostdin -y -i /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-decoder-exit-injection-3b1d9d1a/work-decoder-child-exit/inputs/ducks_take_off_720p30_clean.y4m -vf noise=all_seed=48917:alls=12:allf=t+u -frames:v 60 -pix_fmt yuv420p /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-decoder-exit-injection-3b1d9d1a/work-decoder-child-exit/inputs/ducks_take_off_720p30_noisy.y4m
+ffmpeg	-hide_banner -loglevel error -nostdin -y -i /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-decoder-exit-injection-3b1d9d1a/corpus/old_town_cross_420_720p50.y4m -vf fps=30 -frames:v 60 -pix_fmt yuv420p /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-decoder-exit-injection-3b1d9d1a/work-decoder-child-exit/inputs/old_town_cross_720p30_clean.y4m
+ffmpeg	-hide_banner -loglevel error -nostdin -y -i /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-decoder-exit-injection-3b1d9d1a/work-decoder-child-exit/inputs/old_town_cross_720p30_clean.y4m -vf noise=all_seed=48917:alls=12:allf=t+u -frames:v 60 -pix_fmt yuv420p /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-decoder-exit-injection-3b1d9d1a/work-decoder-child-exit/inputs/old_town_cross_720p30_noisy.y4m
+ffmpeg	-hide_banner -loglevel error -nostdin -y -i /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-decoder-exit-injection-3b1d9d1a/corpus/in_to_tree_420_720p50.y4m -vf scale=1920:1080:flags=bicubic,fps=30 -frames:v 60 -pix_fmt yuv420p /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-decoder-exit-injection-3b1d9d1a/work-decoder-child-exit/inputs/in_to_tree_1080p30_clean.y4m
+ffmpeg	-hide_banner -loglevel error -nostdin -y -i /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-decoder-exit-injection-3b1d9d1a/work-decoder-child-exit/inputs/in_to_tree_1080p30_clean.y4m -vf noise=all_seed=48917:alls=12:allf=t+u -frames:v 60 -pix_fmt yuv420p /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-decoder-exit-injection-3b1d9d1a/work-decoder-child-exit/inputs/in_to_tree_1080p30_noisy.y4m
+ffmpeg	-hide_banner -loglevel error -nostdin -y -i /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-decoder-exit-injection-3b1d9d1a/corpus/ducks_take_off_420_720p50.y4m -vf scale=1920:1080:flags=bicubic,fps=30 -frames:v 60 -pix_fmt yuv420p /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-decoder-exit-injection-3b1d9d1a/work-decoder-child-exit/inputs/ducks_take_off_1080p30_clean.y4m
+ffmpeg	-hide_banner -loglevel error -nostdin -y -i /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-decoder-exit-injection-3b1d9d1a/work-decoder-child-exit/inputs/ducks_take_off_1080p30_clean.y4m -vf noise=all_seed=48917:alls=12:allf=t+u -frames:v 60 -pix_fmt yuv420p /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-decoder-exit-injection-3b1d9d1a/work-decoder-child-exit/inputs/ducks_take_off_1080p30_noisy.y4m
+ffmpeg	-hide_banner -loglevel error -nostdin -y -i /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-decoder-exit-injection-3b1d9d1a/corpus/old_town_cross_420_720p50.y4m -vf scale=1920:1080:flags=bicubic,fps=30 -frames:v 60 -pix_fmt yuv420p /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-decoder-exit-injection-3b1d9d1a/work-decoder-child-exit/inputs/old_town_cross_1080p30_clean.y4m
+ffmpeg	-hide_banner -loglevel error -nostdin -y -i /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-decoder-exit-injection-3b1d9d1a/work-decoder-child-exit/inputs/old_town_cross_1080p30_clean.y4m -vf noise=all_seed=48917:alls=12:allf=t+u -frames:v 60 -pix_fmt yuv420p /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-decoder-exit-injection-3b1d9d1a/work-decoder-child-exit/inputs/old_town_cross_1080p30_noisy.y4m
+ffmpeg	-hide_banner -loglevel error -nostdin -y -i /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-decoder-exit-injection-3b1d9d1a/corpus/in_to_tree_420_720p50.y4m -vf scale=1920:1080:flags=bicubic,fps=60 -frames:v 60 -pix_fmt yuv420p /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-decoder-exit-injection-3b1d9d1a/work-decoder-child-exit/inputs/in_to_tree_1080p60_clean.y4m
+ffmpeg	-hide_banner -loglevel error -nostdin -y -i /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-decoder-exit-injection-3b1d9d1a/work-decoder-child-exit/inputs/in_to_tree_1080p60_clean.y4m -vf noise=all_seed=48917:alls=12:allf=t+u -frames:v 60 -pix_fmt yuv420p /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-decoder-exit-injection-3b1d9d1a/work-decoder-child-exit/inputs/in_to_tree_1080p60_noisy.y4m
+ffmpeg	-hide_banner -loglevel error -nostdin -y -i /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-decoder-exit-injection-3b1d9d1a/corpus/old_town_cross_420_720p50.y4m -vf scale=1920:1080:flags=bicubic,fps=60 -frames:v 60 -pix_fmt yuv420p /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-decoder-exit-injection-3b1d9d1a/work-decoder-child-exit/inputs/old_town_cross_1080p60_clean.y4m
+ffmpeg	-hide_banner -loglevel error -nostdin -y -i /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-decoder-exit-injection-3b1d9d1a/work-decoder-child-exit/inputs/old_town_cross_1080p60_clean.y4m -vf noise=all_seed=48917:alls=12:allf=t+u -frames:v 60 -pix_fmt yuv420p /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-decoder-exit-injection-3b1d9d1a/work-decoder-child-exit/inputs/old_town_cross_1080p60_noisy.y4m
+ffmpeg	-version
+bdrate	--anchor-encoder /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-decoder-exit-injection-3b1d9d1a/tools/vpxenc --test-encoder /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-decoder-exit-injection-3b1d9d1a/tools/rvp9enc --decoder /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-decoder-exit-injection-3b1d9d1a/tools/vpxdec --input /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-decoder-exit-injection-3b1d9d1a/work-decoder-child-exit/inputs/in_to_tree_720p30_clean.y4m --reference-input /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-decoder-exit-injection-3b1d9d1a/work-decoder-child-exit/inputs/in_to_tree_720p30_clean.y4m --cpu-used 6 --bitrates 420,630,840,1260,2100,3360 --end-usage cbr --fps 30/1 --threads 1 --tile-columns 0 --lag-in-frames 0 --tune-content default --aq-mode 0 --noise-sensitivity 0 --limit 60 --anchor-arg --kf-max-dist=60 --test-arg --kf-max-dist=60 --work-dir /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-decoder-exit-injection-3b1d9d1a/work-decoder-child-exit/quality/rows/.baseline-cbr-720p30-in_to_tree-cpu6.attempt.20261017T151614Z-94336/streams --csv /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-decoder-exit-injection-3b1d9d1a/work-decoder-child-exit/quality/rows/.baseline-cbr-720p30-in_to_tree-cpu6.attempt.20261017T151614Z-94336/bdrate.csv
+rvp9dec	--codec=vp9 --i420 /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-decoder-exit-injection-3b1d9d1a/work-decoder-child-exit/quality/rows/.baseline-cbr-720p30-in_to_tree-cpu6.attempt.20261017T151614Z-94336/streams/test_420k.ivf

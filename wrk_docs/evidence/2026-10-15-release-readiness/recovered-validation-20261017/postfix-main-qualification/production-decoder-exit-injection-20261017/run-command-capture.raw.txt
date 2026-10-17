@@ -1,0 +1,1 @@
+deltic timeout 1800 bash /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-decoder-exit-injection-3b1d9d1a/run-cases.sh </dev/null\nCandidate script: /Users/md/worktrees/rvp9/20261017-TSK-HUM-requalify-post-fix-candidate/scripts/qualify-production-encoder.sh\n

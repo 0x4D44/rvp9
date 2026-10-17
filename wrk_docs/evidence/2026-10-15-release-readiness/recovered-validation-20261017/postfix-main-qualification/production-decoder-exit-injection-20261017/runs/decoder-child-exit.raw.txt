@@ -1,0 +1,20 @@
+Preparing acceptance inputs in /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-decoder-exit-injection-3b1d9d1a/work-decoder-child-exit/inputs
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-decoder-exit-injection-3b1d9d1a/work-decoder-child-exit/inputs/in_to_tree_720p30_clean.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-decoder-exit-injection-3b1d9d1a/work-decoder-child-exit/inputs/in_to_tree_720p30_noisy.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-decoder-exit-injection-3b1d9d1a/work-decoder-child-exit/inputs/ducks_take_off_720p30_clean.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-decoder-exit-injection-3b1d9d1a/work-decoder-child-exit/inputs/ducks_take_off_720p30_noisy.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-decoder-exit-injection-3b1d9d1a/work-decoder-child-exit/inputs/old_town_cross_720p30_clean.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-decoder-exit-injection-3b1d9d1a/work-decoder-child-exit/inputs/old_town_cross_720p30_noisy.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-decoder-exit-injection-3b1d9d1a/work-decoder-child-exit/inputs/in_to_tree_1080p30_clean.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-decoder-exit-injection-3b1d9d1a/work-decoder-child-exit/inputs/in_to_tree_1080p30_noisy.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-decoder-exit-injection-3b1d9d1a/work-decoder-child-exit/inputs/ducks_take_off_1080p30_clean.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-decoder-exit-injection-3b1d9d1a/work-decoder-child-exit/inputs/ducks_take_off_1080p30_noisy.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-decoder-exit-injection-3b1d9d1a/work-decoder-child-exit/inputs/old_town_cross_1080p30_clean.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-decoder-exit-injection-3b1d9d1a/work-decoder-child-exit/inputs/old_town_cross_1080p30_noisy.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-decoder-exit-injection-3b1d9d1a/work-decoder-child-exit/inputs/in_to_tree_1080p60_clean.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-decoder-exit-injection-3b1d9d1a/work-decoder-child-exit/inputs/in_to_tree_1080p60_noisy.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-decoder-exit-injection-3b1d9d1a/work-decoder-child-exit/inputs/old_town_cross_1080p60_clean.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-decoder-exit-injection-3b1d9d1a/work-decoder-child-exit/inputs/old_town_cross_1080p60_noisy.y4m
+[quality   1/200] baseline-cbr-720p30-in_to_tree-cpu6 (bdrate, vpxenc anchor, clean input)
+baseline-cbr-720p30-in_to_tree-cpu6: rvp9dec failed on test_420k.ivf (log /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-decoder-exit-injection-3b1d9d1a/work-decoder-child-exit/quality/rows/.baseline-cbr-720p30-in_to_tree-cpu6.attempt.20261017T151614Z-94336/cross-decoder.log)
+interrupted attempt retained for inspection: /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-decoder-exit-injection-3b1d9d1a/work-decoder-child-exit/quality/rows/.baseline-cbr-720p30-in_to_tree-cpu6.attempt.20261017T151614Z-94336

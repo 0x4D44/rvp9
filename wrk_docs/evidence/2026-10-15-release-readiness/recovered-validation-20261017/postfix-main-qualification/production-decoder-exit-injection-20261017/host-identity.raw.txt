@@ -1,0 +1,6 @@
+captured_utc=2026-10-17T15:19:38.960355+00:00
+host=flux.home.arpa
+os=Darwin 25.6.0
+architecture=arm64
+bash=GNU bash, version 3.2.57(1)-release (arm64-apple-darwin25)
+deltic=deltic 6.15.0

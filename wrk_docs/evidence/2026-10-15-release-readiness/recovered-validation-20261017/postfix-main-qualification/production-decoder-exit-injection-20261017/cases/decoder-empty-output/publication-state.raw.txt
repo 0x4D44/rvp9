@@ -1,0 +1,5 @@
+quality/completed: absent
+.qualify-run.lock: absent
+quality/quality-summary.csv: absent
+quality/quality-aggregate.csv: absent
+quality/cross-decoder.csv: absent

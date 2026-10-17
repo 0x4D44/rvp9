@@ -1,0 +1,11 @@
+bdrate -> probe-tool.sh
+bdrate-svc -> probe-tool.sh
+encode-headtohead -> probe-tool.sh
+ffmpeg -> probe-tool.sh
+realtime -> probe-tool.sh
+rvp9dec -> probe-tool.sh
+rvp9enc -> probe-tool.sh
+temporal-anchor -> probe-tool.sh
+vpxdec -> probe-tool.sh
+vpxenc -> probe-tool.sh
+bin/shasum -> ../sha256-cache-adapter.sh
