@@ -1,0 +1,41 @@
+{
+  "observed_at_utc": "2026-10-17T20:25:03Z",
+  "candidate_sha": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+  "requested_test": "deltic timeout 7200 cargo test --workspace --release --locked --offline --no-fail-fast -- --test-threads=1",
+  "outcome": "not_started",
+  "reason": "The Deltic remote session launcher rejected the requested repository key before opening a Windows session, so the host, toolchain, candidate, fixtures, and test command were not preflighted or run.",
+  "attempts": [
+    {
+      "host": "ANVIL",
+      "repo_key": "language",
+      "command": "deltic remote ANVIL session start --agent codex --repo language --name rvp9-win-workspace-test --prompt-file /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-win-workspace-20261017-78ff54b7/windows-workspace-test-brief.txt --json",
+      "exit_status": 1,
+      "output": "remote: ANVIL: session: language is not in ANVIL's remote session repos (`deltic session repos list` there)"
+    },
+    {
+      "host": "ANNEAL",
+      "repo_key": "language",
+      "command": "deltic remote ANNEAL session start --agent codex --repo language --name rvp9-win-workspace-test --prompt-file /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-win-workspace-20261017-78ff54b7/windows-workspace-test-brief.txt --json",
+      "exit_status": 1,
+      "output": "remote: ANNEAL: session: language is not in ANNEAL's remote session repos (`deltic session repos list` there)"
+    },
+    {
+      "host": "ANVIL",
+      "repo_key": "rvp9",
+      "command": "deltic remote ANVIL session start --agent codex --repo rvp9 --name rvp9-win-workspace-test --prompt-file /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-win-workspace-20261017-78ff54b7/windows-workspace-test-brief.txt --json",
+      "exit_status": 1,
+      "output": "remote: ANVIL: session: rvp9 is not in ANVIL's remote session repos (`deltic session repos list` there)"
+    }
+  ],
+  "route_inspection": {
+    "deltic_remote_help": "Remote session start is allowlisted; remote session-repository listing is expressly not forwarded.",
+    "local_session_repos_list": "no remote session repos: every `remote <HOST> session start` to this box is refused (add one with `deltic session repos add <KEY> <PATH>`)",
+    "policy": "No direct SSH or other path was used to bypass Deltic's remote allowlist."
+  },
+  "host_inventory_observed": {
+    "ANVIL": "Windows/x86_64; Intel Core i7-14700KF; 127.8 GB RAM",
+    "ANNEAL": "Windows/x86_64; Intel Core Ultra 7 270K Plus; 127.5 GB RAM"
+  },
+  "test_result": null,
+  "qualification_note": "No Windows full-workspace pass or failure is claimed."
+}

@@ -1,0 +1,15 @@
+Bounded task: execute the exact-candidate native Windows full-workspace release test for RVP9 and return inspectable evidence. Do not edit product source, suppress tests, change assertions, commit, push, publish, tag, or integrate. Do not post to the fleet board or message anyone except the lead address below.
+
+Candidate: fb5c0c917038db6c640b3dbc7c2b84b567233333. Run on native Windows x86-64 using Rust 1.95.0. Start in the registered `language` repo session and locate its RVP9 main clone. Read that repository's AGENTS.md, CLAUDE.md, and lessons_learnt.md before acting. Preserve existing work and use a Deltic task worktree.
+
+Preflight: confirm the host is native Windows x86-64, `rustc -vV` is Rust 1.95.0, `origin/main` resolves to the exact candidate, and `deltic quiet status` permits builds. If the current main clone is clean on its trunk, refresh it only with the repo instructions (`git fetch origin`, then `git merge --ff-only origin/main`). If candidate SHA, toolchain, or quiet status does not match, stop and report the observed reason without attempting a workaround.
+
+Create an isolated task worktree based on the exact candidate with `deltic start-task --repo <RVP9 main clone> --base fb5c0c917038db6c640b3dbc7c2b84b567233333 "verify Windows full workspace tests"`. Confirm the resulting worktree is clean and at that SHA. Inspect whether the gitignored fixtures needed by workspace tests are present. A fresh worktree may not inherit main-clone corpus/vector data; if the main clone has them, copy only required ignored fixtures into the task worktree without overwriting anything. If required data is absent, stop and report it rather than claiming a pass.
+
+Run the complete release workspace suite, keeping stdin closed and allowing independent targets to finish:
+`deltic timeout 7200 cargo test --workspace --release --locked --offline --no-fail-fast -- --test-threads=1`
+Capture the exact command, full raw output, exit status, candidate SHA, host identity, toolchain output, and raw-log byte length/SHA-256 in registered task scratch. Do not hide any failures or ignored tests. If a failure is fixture/environment-related, classify it separately from a code failure; the required suite passes only if every target completes with zero failed tests.
+
+Send the lead a Deltic message at `flux/01a14507-078e-79f0-ba27-a275ac22e966` with the command, exact exit status, per-target passed/failed/ignored counts, complete failure diagnostics, host/toolchain/candidate identities, and the complete raw log if it fits the message. If the raw log is too large, send its path, byte length and SHA-256 and include all failure output verbatim. Do not claim the remote file is locally verified. Report any stop condition plainly. The lead owns final evidence review.
+
+This is a bounded test-only task. Keep the remote task worktree and evidence intact for review; no cleanup of pre-existing work.
