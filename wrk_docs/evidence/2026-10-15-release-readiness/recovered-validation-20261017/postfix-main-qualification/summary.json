@@ -410,7 +410,7 @@
     "All four canonical Mac corpus clips and the exact-source 28-row PGO plan are verified through the script training-dir override; PGO training remains unrun because the contemporaneous Mac load precheck exceeded the 0.75 host ceiling."
   ],
   "stored_log_note": "Hashes cover the committed text files. Six Cargo test outputs had one trailing blank separator removed for git diff --check; no output content lines changed.",
-  "additional_checks_recorded_at_utc": "2026-10-17 11:30:26Z",
+  "additional_checks_recorded_at_utc": "2026-10-17T12:51:59Z",
   "selftest_raw_originals_archive": "mac-current-source-selftests-originals-20261017.tar.gz",
   "selftest_raw_integrity_manifest": "mac-current-source-selftest-raw-integrity.json",
   "selftest_normalization_note": "The exact original self-test captures are retained in the named archive. Linked text review copies remove trailing spaces/tabs at line ends only; assertion output content is unchanged.",
@@ -958,5 +958,50 @@
     "archive_identity_status": "pass; all five archives match Cargo staging copies and all four CLI sibling lock checksums match",
     "package_log_sha256": "ac94cb6c2fe84f5cd78a1f1527c9f1e6cdc96ba5577cc06f1f0677d75c78d740",
     "archive_identity_log_sha256": "1096c98f3887b24ce2cb4be1871dd7ca026704be284da72d50a1f8b87855e173"
+  },
+  "macos_current_source_production_self_tests": {
+    "recorded_at_utc": "2026-10-17T12:51:59Z",
+    "source_commit": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+    "host": "flux, macOS Apple Silicon",
+    "worktree": "/Users/md/worktrees/rvp9/20261017-TSK-HUM-requalify-post-fix-candidate",
+    "tracked_tree_clean_after_runs": true,
+    "environment": "nice -n 19; registered external TMPDIR; task-owned scratch removed after completed runs",
+    "resume": {
+      "command": "nice -n 19 env TMPDIR=<registered scratch> deltic timeout 300 bash scripts/qualify-production-encoder.sh --self-test-resume </dev/null",
+      "exit_code": 0,
+      "status": "pass; resume filesystem self-test",
+      "observed": "One quality row was reused and all candidate streams were re-decoded; the test ended with resume filesystem self-test passed.",
+      "log": {
+        "path": "mac-current-source-production-self-test-resume.raw.txt",
+        "bytes": 132,
+        "sha256": "21d113627f4d63820ce6e2b2e49ff4a41b332be5ce34bd6ca77bd5f39e572807"
+      },
+      "exit_log": {
+        "path": "mac-current-source-production-self-test-resume.exit.raw.txt",
+        "bytes": 12,
+        "sha256": "bde294368bfed77c2cddf8cec271d398aee9cdbab3b26e1059281bd33adb0120"
+      }
+    },
+    "timing": {
+      "command": "nice -n 19 env TMPDIR=<registered scratch> deltic timeout 300 bash scripts/qualify-production-encoder.sh --self-test-timing </dev/null",
+      "exit_code": 0,
+      "status": "pass; timing filesystem self-test",
+      "assertions_passed": 68,
+      "observed": "Exercises the speed and latency stub paths, load refusal boundary, timing-result failures, per-frame CSV and scratch-boundary cases.",
+      "log": {
+        "path": "mac-current-source-production-self-test-timing.raw.txt",
+        "bytes": 8254,
+        "sha256": "62a9d65b12afb31aa3872d80e748280a7a1c98ed5f2959cb6cde6903c7bde65a"
+      },
+      "exit_log": {
+        "path": "mac-current-source-production-self-test-timing.exit.raw.txt",
+        "bytes": 12,
+        "sha256": "bde294368bfed77c2cddf8cec271d398aee9cdbab3b26e1059281bd33adb0120"
+      }
+    },
+    "limits": [
+      "These are filesystem self-tests using stubs, not real encoder measurements or proof of numerical quality, throughput or latency.",
+      "No full quality row injected a failed bdrate child or unequal decoder output through phase completion; those failure-path limits remain as stated in the readiness report."
+    ]
   }
 }
