@@ -1,0 +1,220 @@
+{
+  "schema": "rvp9.postfix-main-windows-qualification.v1",
+  "recorded_at_utc": "2026-10-17T11:12:20Z",
+  "source": {
+    "ref": "origin/main",
+    "commit": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+    "worktree": "D:\\worktrees\\rvp9-postfix-main\\20261017-TSK-HUM@ANVIL-windows-post-fix-requalification",
+    "branch": "task/20261017-TSK-HUM@ANVIL-windows-post-fix-requalification",
+    "tree_state": "tracked source tree clean before and after checks; corpus copies and build outputs are ignored",
+    "host": "ANVIL, native Windows x86-64",
+    "host_triple": "x86_64-pc-windows-msvc"
+  },
+  "toolchain": {
+    "rustc": "rustc 1.95.0 (59807616e 2026-04-14)",
+    "cargo": "cargo 1.95.0 (f2d3ce0bd 2026-03-21)",
+    "llvm_tools": "llvm-tools-preview for 1.95.0; llvm-profdata bundled under the pinned Windows sysroot",
+    "ffmpeg": "ffmpeg 8.0.1-full_build-www.gyan.dev"
+  },
+  "checks": [
+    {
+      "command": "deltic timeout 1800 cargo build --workspace --release --locked --offline",
+      "exit_code": 0,
+      "status": "pass; release profile finished in 1m03s; no warnings observed",
+      "log": {
+        "path": "windows-workspace-release-build.raw.txt",
+        "bytes": 2338,
+        "sha256": "7dcfd3de4759fa5fbab28285ad41d71c16a204efee17f5d3f9ccda1402eac6f0"
+      }
+    },
+    {
+      "command": "deltic timeout 1800 cargo fmt --all --check",
+      "exit_code": 0,
+      "status": "pass; no formatting diagnostics",
+      "log": {
+        "path": "windows-cargo-fmt.raw.txt",
+        "bytes": 391,
+        "sha256": "5fac1e349309e76e42f64381996245ccfa5a50f54c11a4f1c7d0b5617b426a34"
+      }
+    },
+    {
+      "command": "deltic timeout 1800 cargo test -p rvp9-encoder --lib --locked --offline",
+      "exit_code": 0,
+      "tests": {
+        "passed": 820,
+        "failed": 0,
+        "ignored": 1
+      },
+      "log": {
+        "path": "windows-encoder-library-tests.raw.txt",
+        "bytes": 67151,
+        "sha256": "f5f2155c5ac0fab4eb5e3f6a51dc66c90f4d77914c766d03ae75df46c6b0dbaa"
+      }
+    },
+    {
+      "command": "deltic timeout 1800 cargo test -p rvp9-cli --locked --offline",
+      "exit_code": 0,
+      "tests": {
+        "passed": 178,
+        "failed": 0,
+        "ignored": 0
+      },
+      "log": {
+        "path": "windows-cli-crate-tests.raw.txt",
+        "bytes": 12108,
+        "sha256": "d5bed6ba8188a1f7225918bcf724ffecdcf68ae707730bf6da726fa16644843e"
+      }
+    },
+    {
+      "command": "deltic timeout 1800 cargo clippy -p rvp9-cli -p rvp9-encoder --all-targets --locked --offline",
+      "exit_code": 0,
+      "status": "pass with two warnings",
+      "warnings": [
+        "clone_on_copy at crates/rvp9-encoder/src/frame_loop.rs:14265",
+        "match_like_matches_macro at crates/rvp9-encoder/src/spatial_encoder.rs:1082"
+      ],
+      "log": {
+        "path": "windows-changed-crate-clippy.raw.txt",
+        "bytes": 4804,
+        "sha256": "a5dc6076e44938fd86721d4b5e942e35a4a22d3592dc60741b8def7d596fedba"
+      }
+    },
+    {
+      "command": "deltic timeout 1800 cargo test -p rvp9-encoder --locked --offline",
+      "exit_code": 0,
+      "tests": {
+        "groups": 52,
+        "passed": 885,
+        "failed": 0,
+        "ignored": 56,
+        "filtered_out": 0
+      },
+      "ignored_note": "Existing diagnostics, gates, external-oracle tests, and tests requiring corpus files beyond the three production inputs or pinned vpxdec remain ignored.",
+      "log": {
+        "path": "windows-encoder-crate-tests.raw.txt",
+        "bytes": 86682,
+        "sha256": "466dd066df1696691b5c7e6037e5d238d7861b9576050fc9f6165a75c2e3865a"
+      }
+    }
+  ],
+  "pgo": {
+    "command": "deltic timeout 3600 bash -lc 'bash scripts/build-encoder-pgo.sh --build-root target/encoder-pgo --training-dir tests/corpus --frames 60'",
+    "exit_code": 0,
+    "status": "pass; canonical 28-row training and profile-guided Windows release build completed on the same host",
+    "run_id": "20261017T110514Z-164569",
+    "host_triple": "x86_64-pc-windows-msvc",
+    "rustc": "1.95.0 (59807616e 2026-04-14)",
+    "frames_per_row": 60,
+    "training_rows": 28,
+    "raw_profile_count": 31,
+    "raw_profile_directory": "D:\\worktrees\\rvp9-postfix-main\\20261017-TSK-HUM@ANVIL-windows-post-fix-requalification\\target\\encoder-pgo\\runs\\20261017T110514Z-164569\\profiles",
+    "merged_profile": {
+      "path": "D:\\worktrees\\rvp9-postfix-main\\20261017-TSK-HUM@ANVIL-windows-post-fix-requalification\\target\\encoder-pgo\\runs\\20261017T110514Z-164569\\encoder.profdata",
+      "bytes": 656464,
+      "sha256": "b90e765e158167aa4fb26a3ba47188a1725ea9f34f8571c8494ba91a41b436b4"
+    },
+    "manifest": {
+      "path": "D:\\worktrees\\rvp9-postfix-main\\20261017-TSK-HUM@ANVIL-windows-post-fix-requalification\\target\\encoder-pgo\\runs\\20261017T110514Z-164569\\manifest.txt",
+      "bytes": 2611,
+      "sha256": "1bfc96e67a16454cc73a0109446fbb6ca285621644f4448e14de7a349af0b99d",
+      "local_exact_copy": "windows-pgo-training-manifest-original.raw.txt"
+    },
+    "optimized_binary": {
+      "path": "D:\\worktrees\\rvp9-postfix-main\\20261017-TSK-HUM@ANVIL-windows-post-fix-requalification\\target\\encoder-pgo\\optimized\\release\\rvp9enc.exe",
+      "bytes": 2528768,
+      "sha256": "3e1e9e29408627a6ca43f29ce67d264b0d143da2039c45b54fb28fde61bf91db",
+      "portable": false
+    },
+    "corpus_inputs": [
+      {
+        "path": "tests/corpus/in_to_tree_420_720p50.y4m",
+        "sha256": "81166517a3054c789923535b5da23fbbb9bbd7fd4c28dac83918ac351e121e74"
+      },
+      {
+        "path": "tests/corpus/ducks_take_off_420_720p50.y4m",
+        "sha256": "0e09aa923ce72e2f6d1c978c3c1cc8dd9588d2ede819081f040213e361970efc"
+      },
+      {
+        "path": "tests/corpus/old_town_cross_420_720p50.y4m",
+        "sha256": "0fbc2ec0c552ad693528b2e49409c7449880b9230055a7696346473d1aaf4123"
+      }
+    ],
+    "optimized_binary_smoke": {
+      "command": "rvp9enc.exe --codec=vp9 --ivf --passes=1 --rt --cpu-used=7 --target-bitrate=1500 --end-usage=vbr --fps=30/1 --threads=4 --tile-columns=2 --lag-in-frames=0 --tune-content=default --limit=60 --quiet -o target/encoder-pgo/windows-smoke.ivf tests/corpus/in_to_tree_420_720p50.y4m",
+      "exit_code": 0,
+      "output": {
+        "path": "target/encoder-pgo/windows-smoke.ivf",
+        "bytes": 477126,
+        "sha256": "772db4df880d056b8eb6f19ca7e5f10931b68e2c98b5b4bf70b2c2db2bf7234d"
+      },
+      "ffmpeg_decode": {
+        "command": "ffmpeg -v error -i target/encoder-pgo/windows-smoke.ivf -f null -",
+        "exit_code": 0,
+        "diagnostics": "none"
+      }
+    },
+    "logs": {
+      "corpus_input_hashes": {
+        "path": "windows-pgo-input-hashes.raw.txt",
+        "bytes": 281,
+        "sha256": "3cb25b625f41c5f65d3b69fe95595da8e04661d458891ef304f2cd5b2a6ba14c"
+      },
+      "training_plan": {
+        "path": "windows-pgo-training-plan.raw.txt",
+        "bytes": 2115,
+        "sha256": "31bf68b33ded20e74a2aa1133de7108d52a9d4dd7816a09a98360b15399bea4a"
+      },
+      "initial_attempt": {
+        "path": "windows-pgo-build.raw.txt",
+        "bytes": 30,
+        "sha256": "74fcb9cfae5cda1df24b84fcf5bf12bb97e5e8e7bb2be3459d06ac8ad789b694",
+        "exit_code": 1,
+        "reason": "non-login Git Bash PATH did not expose its installed shasum; the script exited before input preparation"
+      },
+      "successful_build": {
+        "path": "windows-pgo-build-attempt2.raw.txt",
+        "bytes": 3325,
+        "sha256": "9269ea31ee94031bf5e6a86e44cc782235f701a7be01e31ae6de502574d60898"
+      },
+      "manifest_text_capture": {
+        "path": "windows-pgo-training-manifest.raw.txt",
+        "bytes": 2611,
+        "sha256": "1bfc96e67a16454cc73a0109446fbb6ca285621644f4448e14de7a349af0b99d"
+      },
+      "artifact_identities": {
+        "path": "windows-pgo-artifact-identities.txt",
+        "bytes": 486,
+        "sha256": "568e01b1d2c7b4eadc588969062e76aa6dab542a89b5027b9ddcaa74f4439483",
+        "original_archive_entry": "windows-pgo-artifact-identities.raw.txt"
+      },
+      "optimized_binary_smoke": {
+        "path": "windows-pgo-binary-smoke.raw.txt",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "ffmpeg_decode": {
+        "path": "windows-pgo-binary-decode.raw.txt",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    }
+  },
+  "limits": [
+    "No exact-source official conformance matrix ran: the Windows worktree lacks tests/conformance/vectors and pinned vpxdec.",
+    "Only the three canonical production Y4M inputs were present; broader AOM/WebRTC/livestream corpus coverage remains unproved.",
+    "No current-source full workspace tests, encoder32/reverse24 campaign, BD-rate, throughput, frame-latency, sanitizer, Miri, fuzz, or package archive-test gate ran on Windows.",
+    "No Windows max-load1 guard sample or timing campaign ran; the host-native PGO artifact has not been performance-qualified.",
+    "The PGO binary uses target-cpu=native and is host-specific; it is a test artifact, not a portable distribution binary.",
+    "No Rust source, manifest, or build script was changed."
+  ],
+  "stored_log_note": "The byte-exact Windows command outputs are retained in windows-postfix-raw-originals-20261017.tar.gz and mapped by windows-postfix-raw-integrity.json. Review copies normalize line endings, remove one extra EOF separator where flagged, or tabulate artifact identity values; no measured result value changed. The separate original manifest copy matches the remote SHA-256.",
+  "raw_originals_archive": {
+    "path": "windows-postfix-raw-originals-20261017.tar.gz",
+    "bytes": 40700,
+    "sha256": "364c72f19deae3893599cc95db92107831050fd0b87d4b2af32828f00e90f15f",
+    "integrity_map": "windows-postfix-raw-integrity.json",
+    "original_log_count": 15,
+    "integrity_map_bytes": 7285,
+    "integrity_map_sha256": "dcdc37da593f5c2315582e3ca6471cd741391269900a121ec71840ca3c0a092f"
+  }
+}

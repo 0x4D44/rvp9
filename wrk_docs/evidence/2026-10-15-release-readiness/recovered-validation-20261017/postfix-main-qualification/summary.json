@@ -162,8 +162,8 @@
     }
   ],
   "limits": [
-    "These focused checks do not create a release candidate or production PGO artifact.",
-    "No full workspace test, official conformance matrix, encoder32/reverse24 campaign, BD-rate, throughput, latency, sanitizer, Miri, fuzz or package archive-test gate was run on this source.",
+    "These macOS-focused checks do not create a release candidate or macOS production PGO artifact.",
+    "No full workspace test ran on macOS. Across this exact source, this record does not establish an official conformance matrix, encoder32/reverse24 campaign, BD-rate, throughput, frame-latency, sanitizer, Miri, fuzz or package archive-test gate; see the separate Windows record for its encoder-suite and PGO results.",
     "No source files were modified."
   ],
   "stored_log_note": "Hashes cover the committed text files. Six Cargo test outputs had one trailing blank separator removed for git diff --check; no output content lines changed."

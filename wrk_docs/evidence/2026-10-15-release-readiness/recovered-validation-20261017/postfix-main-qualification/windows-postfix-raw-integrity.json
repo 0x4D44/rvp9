@@ -1,0 +1,147 @@
+{
+  "schema": "rvp9.windows-postfix-raw-integrity.v1",
+  "archive": {
+    "path": "windows-postfix-raw-originals-20261017.tar.gz",
+    "bytes": 40700,
+    "sha256": "364c72f19deae3893599cc95db92107831050fd0b87d4b2af32828f00e90f15f",
+    "entries": 15
+  },
+  "normalization_note": "The archive preserves the original bytes. Review copies only normalize line endings, remove one extra EOF separator where git diff --check flagged it, or tabulate artifact identity values; no measured result value changed.",
+  "files": [
+    {
+      "original_archive_entry": "windows-cargo-fmt.raw.txt",
+      "original_bytes": 392,
+      "original_sha256": "a3639af5e23464fc391dae127fd5493f02c8178068a35866d9c7fdd35dcd623f",
+      "review_copy": "windows-cargo-fmt.raw.txt",
+      "review_bytes": 391,
+      "review_sha256": "5fac1e349309e76e42f64381996245ccfa5a50f54c11a4f1c7d0b5617b426a34",
+      "normalization": "CR/CRLF line endings normalized to LF"
+    },
+    {
+      "original_archive_entry": "windows-changed-crate-clippy.raw.txt",
+      "original_bytes": 4805,
+      "original_sha256": "fe682bed5cd51696307e9f175d2f4d93ff15561e6d82bbccbb03324f7b868ae4",
+      "review_copy": "windows-changed-crate-clippy.raw.txt",
+      "review_bytes": 4804,
+      "review_sha256": "a5dc6076e44938fd86721d4b5e942e35a4a22d3592dc60741b8def7d596fedba",
+      "normalization": "CR/CRLF line endings normalized to LF"
+    },
+    {
+      "original_archive_entry": "windows-cli-crate-tests.raw.txt",
+      "original_bytes": 12109,
+      "original_sha256": "706dfed53a893265e6b873ffea3d8488c22e3ec0de3c1a4e2d2d996208e999aa",
+      "review_copy": "windows-cli-crate-tests.raw.txt",
+      "review_bytes": 12108,
+      "review_sha256": "d5bed6ba8188a1f7225918bcf724ffecdcf68ae707730bf6da726fa16644843e",
+      "normalization": "CR/CRLF line endings normalized to LF"
+    },
+    {
+      "original_archive_entry": "windows-encoder-crate-tests.raw.txt",
+      "original_bytes": 86683,
+      "original_sha256": "50addfb65f502ad665883247e4994c8c19938b19c8e6ba76d962423cc8b7dca0",
+      "review_copy": "windows-encoder-crate-tests.raw.txt",
+      "review_bytes": 86682,
+      "review_sha256": "466dd066df1696691b5c7e6037e5d238d7861b9576050fc9f6165a75c2e3865a",
+      "normalization": "one extra trailing blank separator removed"
+    },
+    {
+      "original_archive_entry": "windows-encoder-library-tests.raw.txt",
+      "original_bytes": 67152,
+      "original_sha256": "c5d88f7403cfbbb801b51c4f6a8a43d86d1ce0950a4a3a8730905cea4b264a9e",
+      "review_copy": "windows-encoder-library-tests.raw.txt",
+      "review_bytes": 67151,
+      "review_sha256": "f5f2155c5ac0fab4eb5e3f6a51dc66c90f4d77914c766d03ae75df46c6b0dbaa",
+      "normalization": "CR/CRLF line endings normalized to LF"
+    },
+    {
+      "original_archive_entry": "windows-pgo-artifact-identities.raw.txt",
+      "original_bytes": 915,
+      "original_sha256": "b162324fe06d7c5426ffce4050de98a01b8f53d5f4330ec0bab1675b1207dfbd",
+      "review_copy": "windows-pgo-artifact-identities.txt",
+      "review_bytes": 486,
+      "review_sha256": "568e01b1d2c7b4eadc588969062e76aa6dab542a89b5027b9ddcaa74f4439483",
+      "normalization": "concise review copy of the four file hashes and sizes; exact PowerShell output is in the archive"
+    },
+    {
+      "original_archive_entry": "windows-pgo-binary-decode.raw.txt",
+      "original_bytes": 0,
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "review_copy": "windows-pgo-binary-decode.raw.txt",
+      "review_bytes": 0,
+      "review_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "normalization": "none; content lines unchanged"
+    },
+    {
+      "original_archive_entry": "windows-pgo-binary-smoke.raw.txt",
+      "original_bytes": 0,
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "review_copy": "windows-pgo-binary-smoke.raw.txt",
+      "review_bytes": 0,
+      "review_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "normalization": "none; content lines unchanged"
+    },
+    {
+      "original_archive_entry": "windows-pgo-build-attempt2.raw.txt",
+      "original_bytes": 3325,
+      "original_sha256": "9269ea31ee94031bf5e6a86e44cc782235f701a7be01e31ae6de502574d60898",
+      "review_copy": "windows-pgo-build-attempt2.raw.txt",
+      "review_bytes": 3325,
+      "review_sha256": "9269ea31ee94031bf5e6a86e44cc782235f701a7be01e31ae6de502574d60898",
+      "normalization": "none; content lines unchanged"
+    },
+    {
+      "original_archive_entry": "windows-pgo-build.raw.txt",
+      "original_bytes": 30,
+      "original_sha256": "74fcb9cfae5cda1df24b84fcf5bf12bb97e5e8e7bb2be3459d06ac8ad789b694",
+      "review_copy": "windows-pgo-build.raw.txt",
+      "review_bytes": 30,
+      "review_sha256": "74fcb9cfae5cda1df24b84fcf5bf12bb97e5e8e7bb2be3459d06ac8ad789b694",
+      "normalization": "none; content lines unchanged"
+    },
+    {
+      "original_archive_entry": "windows-pgo-input-hashes.raw.txt",
+      "original_bytes": 287,
+      "original_sha256": "9f1068219947196f74bfb30348bf062fdcc7e9325cf3770f4cea9aa3654025b0",
+      "review_copy": "windows-pgo-input-hashes.raw.txt",
+      "review_bytes": 281,
+      "review_sha256": "3cb25b625f41c5f65d3b69fe95595da8e04661d458891ef304f2cd5b2a6ba14c",
+      "normalization": "CR/CRLF line endings normalized to LF"
+    },
+    {
+      "original_archive_entry": "windows-pgo-training-manifest-original.raw.txt",
+      "original_bytes": 2611,
+      "original_sha256": "1bfc96e67a16454cc73a0109446fbb6ca285621644f4448e14de7a349af0b99d",
+      "review_copy": "windows-pgo-training-manifest-original.raw.txt",
+      "review_bytes": 2611,
+      "review_sha256": "1bfc96e67a16454cc73a0109446fbb6ca285621644f4448e14de7a349af0b99d",
+      "normalization": "none; exact raw text retained"
+    },
+    {
+      "original_archive_entry": "windows-pgo-training-manifest.raw.txt",
+      "original_bytes": 2613,
+      "original_sha256": "c43fcac69b370858ffa3ccda91c753de68060aa1b5df6ccdddb77259744794a7",
+      "review_copy": "windows-pgo-training-manifest.raw.txt",
+      "review_bytes": 2611,
+      "review_sha256": "1bfc96e67a16454cc73a0109446fbb6ca285621644f4448e14de7a349af0b99d",
+      "normalization": "CR/CRLF line endings normalized to LF; one extra trailing blank separator removed"
+    },
+    {
+      "original_archive_entry": "windows-pgo-training-plan.raw.txt",
+      "original_bytes": 2116,
+      "original_sha256": "4e2545e8f4c42e065909a2c3c3ebe2c7e5a3e81091e5dbff4874f89610edc197",
+      "review_copy": "windows-pgo-training-plan.raw.txt",
+      "review_bytes": 2115,
+      "review_sha256": "31bf68b33ded20e74a2aa1133de7108d52a9d4dd7816a09a98360b15399bea4a",
+      "normalization": "CR/CRLF line endings normalized to LF"
+    },
+    {
+      "original_archive_entry": "windows-workspace-release-build.raw.txt",
+      "original_bytes": 2339,
+      "original_sha256": "4582ab70bd2d1e35cb23aae648fc5d0b987673b4dcd86bb51f5843b8853d607d",
+      "review_copy": "windows-workspace-release-build.raw.txt",
+      "review_bytes": 2338,
+      "review_sha256": "7dcfd3de4759fa5fbab28285ad41d71c16a204efee17f5d3f9ccda1402eac6f0",
+      "normalization": "CR/CRLF line endings normalized to LF"
+    }
+  ]
+}

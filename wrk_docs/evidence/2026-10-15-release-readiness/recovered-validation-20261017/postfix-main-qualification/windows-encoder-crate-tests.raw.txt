@@ -1,0 +1,1258 @@
+   Compiling rvp9-core v0.2.0-alpha.4 (D:\worktrees\rvp9-postfix-main\20261017-TSK-HUM@ANVIL-windows-post-fix-requalification\crates\rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (D:\worktrees\rvp9-postfix-main\20261017-TSK-HUM@ANVIL-windows-post-fix-requalification\crates\rvp9-decoder)
+   Compiling rvp9-harness v0.2.0-alpha.4 (D:\worktrees\rvp9-postfix-main\20261017-TSK-HUM@ANVIL-windows-post-fix-requalification\crates\rvp9-harness)
+   Compiling rvp9-io v0.2.0-alpha.4 (D:\worktrees\rvp9-postfix-main\20261017-TSK-HUM@ANVIL-windows-post-fix-requalification\crates\rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (D:\worktrees\rvp9-postfix-main\20261017-TSK-HUM@ANVIL-windows-post-fix-requalification\crates\rvp9-encoder)
+    Finished `test` profile [optimized + debuginfo] target(s) in 8.32s
+     Running unittests src\lib.rs (target\debug\deps\rvp9_encoder-c5df4a879fe33e86.exe)
+
+running 821 tests
+test aq_cyclic_refresh::tests::cyclic_refresh_after_aging_eligible_sbs_get_marked ... ok
+test aq_cyclic_refresh::tests::cyclic_refresh_cycle_completes_at_multiple_fractions ... ok
+test aq_cyclic_refresh::tests::apply_cyclic_refresh_gates_match_libvpx ... ok
+test aq_cyclic_refresh::tests::cyclic_refresh_handles_zero_target_fraction ... ok
+test aq_cyclic_refresh::tests::cyclic_refresh_last_coded_q_map_seeded_maxq ... ok
+test aq_cyclic_refresh::tests::cyclic_refresh_postencode_recounts_actual_segments_including_skips ... ok
+test aq_cyclic_refresh::tests::cyclic_refresh_cycle_completes_in_n_frames ... ok
+test aq_cyclic_refresh::tests::cyclic_refresh_cursor_advances_when_selected_block_skips ... ok
+test aq_cyclic_refresh::tests::cyclic_refresh_initial_state_is_immediately_eligible ... ok
+test aq_cyclic_refresh::tests::cyclic_refresh_weight_segment_preserves_integer_shift_and_clamp ... ok
+test aq_cyclic_refresh::tests::w5_5_compute_qdelta_by_rate_handles_best_quality_edge ... ok
+test aq_cyclic_refresh::tests::w5_5_compute_qdelta_by_rate_returns_negative_for_high_rate_factor ... ok
+test aq_cyclic_refresh::tests::cyclic_refresh_postencode_resets_refreshed_to_zero_and_ages_baseline ... ok
+test aq_cyclic_refresh::tests::cyclic_refresh_skipped_blocks_excluded_from_refresh_tracking ... ok
+test aq_cyclic_refresh::tests::w5_6_update_segment_demotes_vbr_golden_to_base ... ok
+test aq_cyclic_refresh::tests::w5_5_compute_deltaq_respects_max_qdelta_perc_clamp ... ok
+test aq_cyclic_refresh::tests::w5_6_update_segment_skin_promotes_to_boost1 ... ok
+test bitstream_gates::tests::same_frame_noncoef_target_updates_every_emitted_probability_family ... ok
+test bitstream_gates::tests::w7_1_savings_search_finds_better_prob_for_skewed_counts ... ok
+test bitstream_gates::tests::w7_1_update_coef_probs_common_emits_no_update_when_tx_totals_below_threshold ... ok
+test aq_cyclic_refresh::tests::cyclic_refresh_half_eligibility_rule ... ok
+test aq_cyclic_refresh::tests::cyclic_refresh_last_coded_q_map_update_libvpx_faithful ... ok
+test aq_cyclic_refresh::tests::cyclic_refresh_eligibility_respects_last_coded_q_map ... ok
+test aq_cyclic_refresh::tests::cyclic_refresh_sb_cursor_wraps_around_frame ... ok
+test aq_cyclic_refresh::tests::cyclic_refresh_segment_q_deltas_returns_correct_table ... ok
+test aq_cyclic_refresh::tests::w5_5_qindex_delta_ramp_three_segments_monotone ... ok
+test aq_cyclic_refresh::tests::w5_6_update_segment_promotes_to_boost2_on_high_noise ... ok
+test bitstream_gates::tests::w_coef_pivot_model_search_exercised_and_differs_from_plain ... ok
+test buffer_pool::tests::a10_keyframe_reset_broadcasts_one_slot ... ok
+test bitstream_gates::tests::w7_2_interp_filter_selected_collapses_when_uniform ... ok
+test bitstream_gates::tests::w7_3_get_refresh_mask_preserves_gf_when_arf_overlap ... ok
+test bitstream_gates::tests::w_coef_build_tree_distribution_matches_model_token_derivation ... ok
+test bitstream_gates::tests::same_frame_noncoef_target_is_identity_without_symbols ... ok
+test buffer_pool::tests::a10_arf_commit_rotates_only_altref ... ok
+test buffer_pool::tests::w1_1_update_ref_frame_map_refreshes_per_bit ... ok
+test buffer_pool::tests::a10_update_reference_frames_golden_refresh ... ok
+test buffer_pool::tests::w1_2_get_free_fb_exhaustion_returns_invalid_idx ... ok
+test buffer_pool::tests::a10_update_reference_frames_last_only_rotation ... ok
+test buffer_pool::tests::w1_2_ref_cnt_fb_moves_refcount_atomically ... ok
+test buffer_pool::tests::w1_1_pool_starts_empty ... ok
+test compound::tests::w3_6_allow_comp_inter_inter_gates_on_keyframe ... ok
+test compound::tests::w3_6_compound_disallowed_when_uniform_sign_bias ... ok
+test buffer_pool::tests::w1_2_decrease_ref_count_saturates_at_zero ... ok
+test buffer_pool::tests::w1_3_keyframe_reset_broadcasts_kf_pool_idx ... ok
+test buffer_pool::tests::w1_1_constants_match_libvpx ... ok
+test buffer_pool::tests::spatial_ref_map_preserves_heterogeneous_slot_dimensions ... ok
+test buffer_pool::tests::exchange_commit_reuses_both_plane_allocations ... ok
+test buffer_pool::tests::w1_1_thirty_frame_ref_ring_rotation ... ok
+test buffer_pool::tests::a10_thirty_frame_last_ring_no_exhaustion ... ok
+test buffer_pool::tests::w1_2_get_free_fb_returns_first_free_and_sets_refcount ... ok
+test compound::tests::w3_6_compound_allowed_when_sign_biases_differ ... ok
+test compound::tests::w3_7_pick_reference_mode_returns_lowest_threshold ... ok
+test compound::tests::w3_7_update_threshes_moves_toward_observed_diffs ... ok
+test compound::tests::w3_7_default_threshes_match_libvpx_calloc_zero ... ok
+test compound::tests::w3_8_sign_bias_opposite_altref_predicate ... ok
+test compound::tests::w3_8_single_newmv_cache_round_trip ... ok
+test denoiser::tests::public_denoise_rejects_short_source_and_invalid_scratch_state ... ok
+test denoiser::tests::public_denoise_rejects_out_of_frame_block ... ok
+test denoiser::tests::public_filter_rejects_short_and_invalid_strided_planes ... ok
+test denoiser::tests::public_frame_allocator_rejects_oversized_dimensions ... ok
+test denoiser::tests::w5_1_noise_sensitivity_nonzero_enables_denoiser ... ok
+test denoiser::tests::w5_1_noise_sensitivity_zero_disables_denoiser ... ok
+test denoiser::tests::w5_2_alloc_creates_buffers_sized_to_frame ... ok
+test denoiser::tests::w5_2_free_releases_buffers ... ok
+test denoiser::tests::w5_3_filter_large_diff_either_weak_or_copy ... ok
+test denoiser::tests::w5_3_filter_zero_diff_no_change ... ok
+test denoiser::tests::w5_3_filter_small_diff_snaps_to_mc ... ok
+test denoiser::tests::w5_4_denoise_runs_end_to_end_on_synthetic_block ... ok
+test denoiser::tests::w5_3_filter_threshold_helpers_match_libvpx_table ... ok
+test denoiser::tests::w5_4_denoise_no_last_reference_copies_src ... ok
+test denoiser::tests::w5_4_denoise_small_block_copies ... ok
+test e12stat::tests::pred_sse_nonzero_mv_on_pattern_yields_positive_sse ... ok
+test e12stat::tests::oracle_best_finds_translation_in_shifted_source ... ok
+test e12stat::tests::pred_sse_returns_none_when_win_x_negative ... ok
+test diagnostic_env::tests::diagnostic_override_scope_restores_nested_and_unwound_values ... ok
+test e12stat::tests::oracle_best_returns_none_when_no_candidate_is_in_bounds ... ok
+test e12stat::tests::pred_sse_returns_none_when_win_y_negative ... ok
+test e12stat::tests::init_from_env_reflects_environment ... ok
+test e12stat::tests::oracle_best_finds_zero_mv_on_identity_planes ... ok
+test e12stat::tests::pred_sse_returns_none_when_window_exceeds_ref_h ... ok
+test e12stat::tests::pred_sse_returns_none_when_window_exceeds_ref_w ... ok
+test e12stat::tests::pred_sse_subpel_motion_triggers_halo ... ok
+test diagnostic_env::tests::diagnostic_override_workers_inherit_snapshot_and_restore_between_jobs ... ok
+test e12stat::tests::pred_sse_zero_mv_on_identity_planes_is_zero ... ok
+test e12stat::tests::psnr_known_intermediate_value ... ok
+test e12stat::tests::psnr_worst_case_zero_db ... ok
+test e12stat::tests::record_leaf_fractional_reference_halo_uses_slice_coverage ... ok
+test e12stat::tests::pred_sse_subpel_x_only_triggers_col_halo_only ... ok
+test e12stat::tests::record_leaf_invalid_sampled_geometry_is_a_safe_noop ... ok
+test e12stat::tests::record_leaf_no_op_when_disabled ... ok
+test e12stat::tests::record_leaf_oob_zero_mv_short_circuits_silently ... ok
+test e12stat::tests::psnr_zero_sse_returns_sentinel ... ok
+test e12stat::tests::pred_sse_subpel_y_only_triggers_row_halo_only ... ok
+test f02_oracle::tests::jsonl_round_trip_shape ... ok
+test e12stat::tests::record_leaf_print_limit_does_not_panic ... ok
+test e12stat::tests::record_leaf_sample_stride_filters_most_calls ... ok
+test e12stat::tests::record_leaf_uses_fallback_when_rvp9_or_newmv_oob ... ok
+test frame_loop::lf_packet_overlap_tests::local_filter_skips_only_proven_disposable_temporal_svc_reconstructions ... ok
+test e12stat::tests::take_snapshot_resets_thread_local ... ok
+test e12stat::tests::record_leaf_oracle_short_circuits_when_plane_too_small ... ok
+test f02_oracle::tests::jsonl_intra_mode_tag ... ok
+test e12stat::tests::record_leaf_records_oracle_subpel_and_beats_arms ... ok
+test f02_oracle::tests::ml_partition_tsv_preserves_float_bits_and_field_order ... ok
+test f02_oracle::tests::bsize_and_ref_tags_cover_every_variant ... ok
+test frame_loop::tests::a18_svc_config_validation ... ok
+test frame_loop::tests::a18_single_layer_tags_all_tl0 ... ok
+test frame_loop::tests::adaptive_denoiser_rejects_out_of_range_sensitivity ... ok
+test frame_loop::lf_packet_overlap_tests::overlap_requires_a_constructed_worker ... ok
+test frame_loop::tests::adaptive_denoiser_streak_matches_pinned_thresholds ... ok
+test frame_loop::tests::a18_temporal_svc_2layer_pattern_live ... ok
+test frame_loop::tests::a18_temporal_svc_golden_age_follows_emitted_refresh_flags ... ok
+test f02_oracle::tests::capture_isolates_caller_jobs_and_reused_worker_tls ... ok
+test f02_oracle::tests::init_from_env_unset_yields_disabled ... ok
+test f02_oracle::tests::sink_off_by_default ... ok
+test f02_oracle::tests::sink_on_records_and_drains ... ok
+test f02_oracle::tests::spatial_scope_tags_records_and_restores_the_default_layer ... ok
+test f02_oracle::tests::capture_disabled_preserves_tls_without_capturing_records ... ok
+test f02_oracle::tests::capture_restores_nested_and_panicking_jobs_and_both_sinks ... ok
+test frame_loop::lf_packet_overlap_tests::overlap_is_default_on_with_explicit_zero_escape ... ok
+test frame_loop::tests::adaptive_denoiser_sensitivity_one_and_six_encode_identically ... ok
+test frame_loop::tests::aq_mode_default_is_off ... ok
+test frame_loop::tests::default_bits_per_mb_multiplier_is_vbr_tuned_only ... ok
+test frame_loop::tests::adaptive_denoiser_production_high_motion_publication ... ok
+test frame_loop::tests::build_inter_mi_grid_inter_winner_emits_block_mode_inter ... ok
+test frame_loop::tests::build_inter_mi_grid_intra_winner_emits_block_mode_intra ... ok
+test frame_loop::tests::build_segmentation_params_disabled_returns_default_header ... ok
+test frame_loop::tests::build_segmentation_params_enabled_carries_feature_data ... ok
+test frame_loop::tests::column_tile_coef_source_dispatches_across_tile_boundary ... ok
+test frame_loop::tests::diag_take_stage4a_split_stats_drains_accumulator ... ok
+test frame_loop::tests::aq_cyclic_refresh_refresh_cycle_completes_in_n_frames ... ok
+test frame_loop::tests::adaptive_denoiser_temporal_reference_chronology ... ok
+test frame_loop::tests::aq_cyclic_refresh_emits_segmentation_in_inter_frames ... ok
+test frame_loop::tests::aq_cyclic_refresh_cursor_advances_monotonically ... ok
+test frame_loop::tests::adaptive_denoiser_publication_reset_and_coded_source ... ok
+test frame_loop::tests::aq_cyclic_refresh_keyframes_reset_state ... ok
+test frame_loop::tests::aq_cyclic_refresh_bit_exact_encoder_decoder_recon ... ok
+test frame_loop::tests::denoiser_filters_coded_luma_and_preserves_decoder_reference ... ok
+test frame_loop::tests::a6_twoloop_decoder_fc_stays_synced_across_frames ... ok
+test frame_loop::tests::edge_partition_covers_1080p_bottom_row_without_out_of_frame_leaves ... ok
+test frame_loop::tests::cyclic_refresh_skips_one_pass_vbr_golden_frames ... ok
+test frame_loop::tests::encode_frame_rejects_short_u_stride ... ok
+test frame_loop::tests::aq_off_preserves_stage_4a_behavior ... ok
+test frame_loop::tests::aq_cyclic_refresh_decodes_through_real_decoder ... ok
+test frame_loop::tests::encode_frame_rejects_short_v_stride ... ok
+test frame_loop::tests::encode_frame_rejects_short_y_stride ... ok
+test frame_loop::tests::encode_frame_rejects_overflowing_y_plane_extent_without_panicking ... ok
+test frame_loop::tests::encode_frame_rejects_overflowing_y_stride ... ok
+test frame_loop::tests::encode_frame_dispatches_kf_then_inter_then_kf_at_gop_end ... ok
+test frame_loop::tests::encode_frame_q_index_responds_to_bitrate ... ok
+test frame_loop::tests::block4x4_keyframe_bmi_modes_and_reconstruction_round_trip ... ok
+test frame_loop::tests::build_kf_with_forced_v_pred_leaves_round_trips_as_v_pred ... ok
+test frame_loop::tests::encode_frame_rejects_undersized_u_plane ... ok
+test frame_loop::tests::encode_frame_rejects_undersized_v_plane ... ok
+test frame_loop::tests::encode_128x64_keyframe_decodes ... ok
+test frame_loop::tests::encoder_config_new_populates_defaults ... ok
+test frame_loop::tests::encode_accepts_strided_yuv ... ok
+test frame_loop::tests::encode_frame_rejects_undersized_y_plane ... ok
+test frame_loop::tests::encode_64x64_inter_after_kf_decodes ... ok
+test frame_loop::tests::encode_64x64_keyframe_decodes ... ok
+test frame_loop::tests::encoder_rejects_non_multiple_of_64 ... ok
+test frame_loop::tests::encoder_parallelism_clamps_tile_columns_like_libvpx ... ok
+test frame_loop::tests::cadence_survives_u32_saturation_gop_10 ... ok
+test frame_loop::tests::exact_keyframe_sub8_product_policy_covers_spatial_cbr_v1_presets ... ok
+test frame_loop::tests::exact_vbp_seed_uses_placeholders_but_preserves_partial_bottom_shape ... ok
+test frame_loop::tests::exact_keyframe_partitioning_analyzes_complete_partial_edge_quadrants ... ok
+test frame_loop::tests::diagnostic_override_does_not_change_another_threads_encoder ... ok
+test frame_loop::tests::f11_0_lf_at_q_zero_is_zero ... ok
+test frame_loop::tests::filter_search_chessboard_tracks_video_frame_parity ... ok
+test frame_loop::tests::encode_keyframe_with_flat_input_uses_64x64_partition ... ok
+test frame_loop::tests::encode_keyframe_with_chaotic_input_uses_split_partition ... ok
+test frame_loop::tests::encode_inter_skip_true_path_still_works ... ok
+test frame_loop::tests::cadence_survives_u32_saturation_gop_15 ... ok
+test frame_loop::tests::cadence_survives_u32_saturation_altref ... ok
+test frame_loop::tests::encode_inter_with_shifted_content_picks_nonzero_mv ... ok
+test frame_loop::tests::encode_inter_with_real_residuals_decodes_with_low_psnr ... ok
+test frame_loop::tests::encode_keyframe_with_flat_content_still_picks_dc ... ok
+test frame_loop::tests::f10_2_t3_static_content_inter_matches_kf_quality ... ok
+test frame_loop::tests::encode_keyframe_with_chaotic_input_intra_modes_round_trip ... ok
+test frame_loop::tests::frame_kind_from_public_to_rate_control_round_trips ... ok
+test frame_loop::tests::frame_kind_is_key_discriminator ... ok
+test frame_loop::tests::encode_two_frame_sequence_psnr_reasonable ... ok
+test frame_loop::tests::f11_0_decoded_recon_matches_encoder_recon_with_lf ... ok
+test frame_loop::tests::f10_2_t1_translating_gradient_4_frames_psnr ... ok
+test frame_loop::tests::encode_inter_with_chaotic_diff_uses_split_partition ... ok
+test frame_loop::tests::gather_coded_segments_splats_leaf_data ... ok
+test frame_loop::tests::f11_0_filter_level_nonzero_at_typical_q ... ok
+test frame_loop::tests::f10_2_t2_bit_exact_invariant_across_frames ... ok
+test frame_loop::tests::flush_discards_remaining_lookahead_after_encode_error ... ok
+test frame_loop::tests::leaves_from_decision_emits_four_leaves_per_32x32_split ... ok
+test frame_loop::tests::leaves_from_decision_emits_one_block4x4_bmi_leaf_per_mi_cell ... ok
+test frame_loop::tests::leaves_from_decision_emits_one_leaf_per_unique_64x64 ... ok
+test frame_loop::tests::leaves_from_decision_emits_sixteen_leaves_per_16x16_split ... ok
+test frame_loop::tests::keyframe_resets_exact_vbp_partition_history ... ok
+test frame_loop::tests::leaves_from_decision_emits_sixty_four_leaves_per_8x8_split ... ok
+test frame_loop::tests::mapped_partition_reuse_clears_poison_without_reallocating_grids ... ok
+test frame_loop::tests::parallel_tile_scratch_plan_bounds_maximum_geometry ... ok
+test frame_loop::tests::prelf_snapshot_is_absent_unless_diagnostics_are_enabled ... ok
+test frame_loop::tests::source_aligned_partition_policy_is_cpu8_temporal_svc_realtime_vbr_only ... ok
+test frame_loop::tests::skin_detection_is_limited_to_cbr_cyclic_refresh ... ok
+test frame_loop::tests::sampled_hf_guard_rechecks_only_threshold_adjacent_estimates ... ok
+test frame_loop::tests::prev_grid_gate_open_returns_false_after_keyframe ... ok
+test frame_loop::tests::prev_mv_grid_for_test_populated_after_first_frame ... ok
+test frame_loop::tests::spatial_frame_control_preserves_topology_width ... ok
+test frame_loop::tests::spatial_key_enhancement_is_the_inter_component_with_base_key_q ... ok
+test frame_loop::tests::spatial_layer_id_follows_the_refreshed_reference_slot ... ok
+test frame_loop::tests::spatial_mv_cost_cadence_preserves_the_unbuilt_precision_bank ... ok
+test frame_loop::tests::prev_grid_gate_open_independent_of_config_flag ... ok
+test frame_loop::tests::spatial_vbr_frame_age_counts_coded_components ... ok
+test frame_loop::tests::spatial_vbr_preserves_pre_option_layer_q_history_seed ... ok
+test frame_loop::tests::spatial_reference_analysis_accepts_identity_or_adjacent_lower_layer ... ok
+test frame_loop::tests::stream_encoder_accepts_partial_bottom_superblock_height ... ok
+test frame_loop::tests::prev_grid_gate_open_returns_true_after_inter_when_enabled ... ok
+test frame_loop::tests::stream_encoder_new_initializes_aq_state_cyclic_refresh ... ok
+test frame_loop::tests::stream_encoder_new_initializes_aq_state_off ... ok
+test frame_loop::tests::reference_split_me_and_pred_identical_initially ... ok
+test frame_loop::tests::stream_encoder_frame_idx_advances_per_call ... ok
+test frame_loop::tests::sequential_two_tile_inter_frame_decodes_after_two_tile_keyframe ... ok
+test frame_loop::tests::stream_encoder_rejects_invalid_parallelism ... ok
+test frame_loop::tests::stream_encoder_rejects_nan_framerate ... ok
+test frame_loop::tests::retained_exact_keyframe_8x8_matches_recomputed_stream ... ok
+test frame_loop::tests::sequential_two_tile_keyframe_has_valid_header_prefixes_and_decode ... ok
+test frame_loop::tests::retained_exact_keyframe_sub8_matches_recomputed_stream ... ok
+test frame_loop::tests::stream_encoder_partial_final_mi_row_key_and_inter_decode ... ok
+test frame_loop::tests::keyframe_emits_live_coefficient_and_skip_probability_updates ... ok
+test frame_loop::tests::stream_encoder_rejects_negative_framerate ... ok
+test frame_loop::tests::stream_encoder_rejects_non_multiple_of_64_width ... ok
+test frame_loop::tests::stream_encoder_partial_bottom_superblock_key_and_inter_decode ... ok
+test frame_loop::tests::stream_encoder_rejects_odd_height ... ok
+test frame_loop::tests::stream_encoder_rejects_svc_layer_bitrate_that_cannot_fit_i32 ... ok
+test frame_loop::tests::stream_encoder_rejects_unsupported_large_dimensions_before_allocating ... ok
+test frame_loop::tests::stream_encoder_rejects_unbounded_tpl_gop_before_allocating ... ok
+test frame_loop::tests::stream_encoder_rejects_zero_bitrate ... ok
+test frame_loop::tests::stream_encoder_public_accessors_round_trip ... ok
+test frame_loop::tests::stream_encoder_rejects_zero_framerate ... ok
+test frame_loop::tests::stream_encoder_rejects_zero_gop_length ... ok
+test frame_loop::tests::stream_encoder_rejects_zero_height ... ok
+test frame_loop::tests::stream_encoder_rejects_zero_width ... ok
+test frame_loop::tests::stream_encoder_speed_accepts_documented_boundaries ... ok
+test frame_loop::tests::stream_encoder_speed_rejects_values_outside_documented_range ... ok
+test frame_loop::tests::stream_encoder_uses_cumulative_svc_bitrate_targets ... ok
+test frame_loop::tests::strided_plane_zero_extent_requires_empty_slice ... ok
+test frame_loop::tests::tight_tile_copy_extends_visible_rows_through_reference_padding ... ok
+test frame_loop::tests::tile_partition_history_views_mutate_uneven_tiles_in_place ... ok
+test frame_loop::tests::vbr_uses_libvpx_long_buffer_defaults ... ok
+test frame_loop::tests::vbr_golden_rate_control_defaults_on_and_accepts_zero_escape ... ok
+test frame_loop::tests::unused_color_sensitivity_prepass_stays_cold ... ok
+test frame_loop::tests::w0_5_inter_frame_emits_refresh_frame_context_true ... ok
+test frame_loop::tests::w_lag_in_frames_nonzero_rejects_sync_encode_frame ... ok
+test frame_loop::tests::w2_1_pre_analysis_lifecycle_runs_per_frame ... ok
+test gop::tests::alt_ref_cadence_is_half_gop ... ok
+test frame_loop::tests::w1_5_lookahead_push_advances_show_idx ... ok
+test gop::tests::alt_ref_disabled_never_schedules_arf ... ok
+test gop::tests::custom_golden_period_drives_vbr_schedule ... ok
+test frame_loop::tests::w_lag_in_frames_zero_stays_synchronous ... ok
+test gop::tests::gf_interval_floor_is_two ... ok
+test gop::tests::golden_refresh_every_eight_inter_frames ... ok
+test gop::tests::golden_refresh_repeats_each_gop ... ok
+test gop::tests::gop_length_clamped_to_one ... ok
+test gop::tests::keyframe_at_gop_boundaries ... ok
+test frame_loop::tests::aq_cyclic_refresh_segment_1_has_finer_quantization ... ok
+test lookahead::tests::cloned_entry_shares_source_plane_allocations ... ok
+test gop::tests::update_type_discriminants_match_libvpx ... ok
+test frame_loop::tests::arf_decoder_fc_bank_one_stays_synced_after_non_show_frame ... ok
+test lookahead::tests::peek_out_of_range_indices_never_panic ... ok
+test lookahead::tests::push_rejects_strided_short_plane_without_panicking ... ok
+test lookahead::tests::w1_4_capacity_includes_max_pre_frames ... ok
+test frame_loop::tests::w_lag_zero_tight_and_strided_paths_match ... ok
+test frame_loop::tests::encode_frame_e8_trace_env_diag_runs ... ok
+test lookahead::tests::w1_4_depth_is_clamped ... ok
+test lookahead::tests::w1_4_dimension_mismatch_rejected ... ok
+test lookahead::tests::w1_4_forward_peek_walks_live_entries ... ok
+test lookahead::tests::w1_4_full_at_depth_minus_pre_frames ... ok
+test lookahead::tests::w1_4_peek_minus_one_returns_prev_popped ... ok
+test lookahead::tests::w1_4_pop_drain_false_requires_filled_ring ... ok
+test lookahead::tests::w1_4_pushes_and_pops_preserve_show_idx_order ... ok
+test loopfilter::w7_4_tests::complete_filter_grid_borrows_populated_input_and_repairs_holes ... ok
+test loopfilter::w7_4_tests::packet_overlap_preserves_existing_reference_storage_lengths ... ok
+test loopfilter::w7_4_tests::w7_4_try_filter_frame_returns_sse ... ok
+test frame_loop::tests::temporal_svc_layer_swaps_preserve_stream_rate_control_counters ... ok
+test ml_partition::nn_predict::tests::w7_5_nn_partition_config_tables_have_expected_dimensions ... ok
+test loopfilter::w7_4_tests::split_packet_overlap_filter_matches_serial ... ok
+test frame_loop::tests::encode_frame_part_hist_env_diag_runs_on_inter ... ok
+test loopfilter::w7_4_tests::w7_4_search_filter_level_finds_lower_sse_level ... ok
+test frame_loop::tests::w_lag_in_frames_delays_output_then_flushes ... ok
+test ml_partition::nn_predict::tests::w7_5_nn_predict_runtime_matches_libvpx_reference_inputs ... ok
+test frame_loop::tests::stream_encoder_spatial_base_320x180_cyclic_aq_key_and_inter_decode ... ok
+test ml_partition::pruners::tests::w7_6_ml_pruning_partition_picks_subset ... ok
+test ml_partition::pruners::tests::w7_6_ml_predict_breakout_returns_skip_decision ... ok
+test ml_partition::var_partition::tests::low_resolution_var_model_accepts_a_right_edge_tail_view ... ok
+test ml_partition::var_partition::tests::low_resolution_var_trace_exposes_exact_model_inputs ... ok
+test ml_partition::var_partition::tests::low_resolution_var_model_builds_a_legal_recursive_tree ... ok
+test frame_loop::tests::encode_frame_bpm_verify_env_diag_runs ... ok
+test ml_partition::var_partition::tests::w7_7_ml_predict_var_partitioning_returns_partition_size ... ok
+test ml_partition::var_partition::tests::w7_7_simple_motion_search_finds_known_shift ... ok
+test pre_analysis::tests::adaptive_denoiser_estimator_counts_partial_bottom_mi ... ok
+test pre_analysis::tests::adaptive_denoiser_estimator_survives_keyframe ... ok
+test pre_analysis::tests::adaptive_denoiser_estimator_uses_partial_bottom_mi ... ok
+test frame_loop::tests::encode_frame_respects_fixed_q_env_override ... ok
+test pre_analysis::tests::avg_source_sad_extends_a_short_bottom_edge_to_sb64 ... ok
+test pre_analysis::tests::capture_shared_last_source_reuses_the_lookahead_allocation ... ok
+test pre_analysis::tests::avg_source_sad_extends_a_short_right_edge_to_sb64 ... ok
+test frame_loop::tests::exact_keyframe_sub8_product_policy_covers_cpu7_and_temporal_svc_vbr ... ok
+test pre_analysis::tests::adaptive_denoiser_estimator_publication_and_temporal_gates ... ok
+test pre_analysis::tests::w2_1_capture_last_source_round_trips ... ok
+test pre_analysis::tests::w2_1_state_sized_to_mi_grid_and_zero_initialized ... ok
+test pre_analysis::tests::w2_2_avg_source_sad_lights_up_very_high_sad ... ok
+test pre_analysis::tests::w2_1_gates_compute_source_sad_only_on_realtime ... ok
+test pre_analysis::tests::parallel_source_maps_can_skip_skin_detection ... ok
+test pre_analysis::tests::sampled_hf_exact_completion_reuses_rows_without_changing_sum ... ok
+test pre_analysis::tests::sampled_hf_laplacian_preserves_representative_classifier_decisions ... ok
+test pre_analysis::tests::w2_1_keyframe_reset_zeroes_state ... ok
+test pre_analysis::tests::w2_2_avg_source_sad_noop_without_last_source ... ok
+test frame_loop::tests::temporal_svc_3layer_routes_mid_layer_reference ... ok
+test pre_analysis::tests::parallel_source_maps_match_serial_producers ... ok
+test pre_analysis::tests::w2_3_first_inter_after_kf_is_immune ... ok
+test pre_analysis::tests::w2_2_sb_grid_sized_correctly ... ok
+test pre_analysis::tests::hf_laplacian_rows_match_scalar_for_steps_spans_and_tight_tails ... ok
+test pre_analysis::tests::w2_3_no_last_source_means_no_detection ... ok
+test pre_analysis::tests::w2_2_avg_source_sad_zero_on_identical_frames ... ok
+test pre_analysis::tests::w2_4_noise_estimate_disabled_below_temporal_minimum ... ok
+test pre_analysis::tests::w2_2_avg_source_sad_produces_all_sumdiff_states ... ok
+test pre_analysis::tests::w2_3_scene_detection_lights_high_source_sad_on_cut ... ok
+test pre_analysis::tests::w2_2_dispatched_source_analysis_matches_scalar_oracle ... ok
+test frame_loop::tests::exact_keyframe_sub8_path_round_trips_bmi_modes ... ok
+test pre_analysis::tests::w2_5_skin_map_lights_skin_tone_pixels ... ok
+test pre_analysis::tests::w2_5_skin_map_rejects_grey_pixels ... ok
+test pre_analysis::tests::w2_5_skin_map_rejects_out_of_range_luma ... ok
+test pre_analysis::tests::w2_5_skin_map_zero_mv_streak_overrides_color ... ok
+test pre_analysis::tests::w2_4_noise_estimate_lifts_on_noisy_content ... ok
+test pre_analysis::tests::w2_3_cached_scene_detection_matches_pixel_oracle ... ok
+test pre_analysis::tests::w2_4_noise_estimate_frame_period_gate ... ok
+test pre_analysis::tests::w2_6_color_sensitivity_high_chroma_diff_means_true ... ok
+test pre_analysis::tests::w2_6_color_sensitivity_frame_fills_every_sb ... ok
+test pre_analysis::tests::w2_6_color_sensitivity_low_chroma_diff_means_false ... ok
+test pre_analysis::tests::w2_6_color_sensitivity_no_last_source_returns_false ... ok
+test pre_analysis::tests::w2_6_vbp_scale_lifts_with_noise_level ... ok
+test predstat::tests::full_coverage_sweep ... ok
+test rate_control::cbr::tests::active_worst_quality_buffer_above_optimal_lowers_q ... ok
+test rate_control::cbr::tests::active_worst_quality_buffer_below_critical_pins_to_worst ... ok
+test rate_control::cbr::tests::active_worst_quality_buffer_between_critical_and_optimal_ramps_up ... ok
+test pre_analysis::tests::w2_4_noise_estimate_flat_frame_is_low ... ok
+test rate_control::cbr::tests::active_worst_quality_buffer_step_zero_when_max_equals_optimal ... ok
+test rate_control::cbr::tests::active_worst_quality_critical_level_zero_skips_inner ... ok
+test rate_control::cbr::tests::adjust_q_cbr_clamps_below_the_recent_q_interval ... ok
+test rate_control::cbr::tests::adjust_q_cbr_finishes_with_global_quality_bounds ... ok
+test rate_control::cbr::tests::adjust_q_cbr_ignores_neutral_or_non_alternating_history ... ok
+test rate_control::cbr::tests::adjust_q_cbr_uses_faster_overshoot_reaction_above_interval ... ok
+test rate_control::cbr::tests::bits_per_mb_keyframe_higher_than_inter ... ok
+test rate_control::cbr::tests::bits_per_mb_monotonically_decreases_with_q ... ok
+test rate_control::cbr::tests::bits_per_mb_returns_i32_max_when_q_is_degenerate ... ok
+test rate_control::cbr::tests::bits_per_mb_scaled_applies_multiplier ... ok
+test rate_control::cbr::tests::bits_per_mb_scaled_clamps_negative_scale_to_zero ... ok
+test rate_control::cbr::tests::bits_per_mb_scaled_default_multiplier_matches_libvpx ... ok
+test rate_control::cbr::tests::bits_per_mb_scaled_with_saturated_input_stays_saturated ... ok
+test rate_control::cbr::tests::bits_per_mb_scales_with_correction_factor ... ok
+test rate_control::cbr::tests::budget_gate_caps_kf_q_at_low_bitrate ... ok
+test rate_control::cbr::tests::budget_gate_does_not_bite_golden_fixture ... ok
+test rate_control::cbr::tests::budget_gate_keeps_kf_q_near_lossless_at_high_bitrate ... ok
+test rate_control::cbr::tests::calc_iframe_target_size_subsequent_keyframe_uses_kf_boost_ramp ... ok
+test rate_control::cbr::tests::calc_iframe_target_size_clamps_to_max_frame_bandwidth ... ok
+test rate_control::cbr::tests::calc_iframe_target_size_within_half_fr_uses_ramp_down ... ok
+test rate_control::cbr::tests::calc_iframe_target_size_clamps_below_frame_overhead_bits ... ok
+test rate_control::cbr::tests::calc_iframe_target_size_first_frame_uses_starting_buffer ... ok
+test rate_control::cbr::tests::calc_pframe_target_size_clamps_to_max_frame_bandwidth ... ok
+test rate_control::cbr::tests::calc_pframe_target_size_clamps_to_min_frame_target ... ok
+test rate_control::cbr::tests::calc_pframe_target_size_over_full_buffer_boosts_target ... ok
+test rate_control::cbr::tests::calc_pframe_target_size_under_full_buffer_shaves_target ... ok
+test rate_control::cbr::tests::cyclic_refresh_rate_model_prices_boosted_cells_at_finer_q ... ok
+test rate_control::cbr::tests::cyclic_refresh_zero_weight_is_exactly_the_base_rate_model ... ok
+test rate_control::cbr::tests::estimate_bits_at_q_returns_at_least_frame_overhead ... ok
+test rate_control::cbr::tests::get_active_quality_high_boost_picks_low_motion_minq ... ok
+test rate_control::cbr::tests::get_active_quality_blends_between_kf_low_and_kf_high_thresholds ... ok
+test rate_control::cbr::tests::get_active_quality_middle_boost_blends_low_and_high ... ok
+test rate_control::cbr::tests::get_minq_index_lossless_for_low_target ... ok
+test rate_control::cbr::tests::get_minq_index_saturates_at_255 ... ok
+test rate_control::cbr::tests::get_rate_correction_factor_clamps_above_max ... ok
+test rate_control::cbr::tests::get_rate_correction_factor_clamps_below_min ... ok
+test rate_control::cbr::tests::kf_low_motion_minq_returns_monotonic_curve ... ok
+test rate_control::cbr::tests::kfcap_inert_at_high_bitrate ... ok
+test rate_control::cbr::tests::kfcap_does_not_double_cap_low_bitrate ... ok
+test rate_control::cbr::tests::kfcap_off_matches_head_across_sweep ... ok
+test rate_control::cbr::tests::kfcap_raises_kf_q_at_mid_bitrate_when_on ... ok
+test rate_control::cbr::tests::rate_control_kf_q_lower_than_inter_q ... ok
+test rate_control::cbr::tests::rate_control_pick_q_decreases_when_bits_off_target_positive ... ok
+test rate_control::cbr::tests::rate_control_pick_q_increases_when_bits_off_target_negative ... ok
+test loopfilter::w7_4_tests::split_edge_parallel_filter_matches_serial_planes_bit_exact ... ok
+test rate_control::cbr::tests::rate_factor_level_for_golden_returns_gf_arf_std ... ok
+test rate_control::cbr::tests::regulate_q_returns_active_best_for_tiny_target ... ok
+test rate_control::cbr::tests::rate_factor_level_for_key_returns_kf_std ... ok
+test rate_control::cbr::tests::rate_factor_level_for_inter_returns_inter_normal ... ok
+test rate_control::cbr::tests::regulate_q_returns_active_worst_for_huge_demand ... ok
+test rate_control::cbr::tests::regulate_q_with_zero_mbs_picks_active_worst ... ok
+test rate_control::cbr::tests::regulate_q_tie_break_picks_smaller_residual ... ok
+test rate_control::cbr::tests::rtc_minq_approx_clamps_to_best_quality_floor ... ok
+test rate_control::cbr::tests::rtc_minq_approx_clamps_to_worst_quality_ceiling ... ok
+test rate_control::cbr::tests::set_rate_correction_factor_clamps_value ... ok
+test rate_control::cbr::tests::temporal_svc_target_uses_incremental_frame_budget ... ok
+test rate_control::config::tests::default_config_validates ... ok
+test rate_control::config::tests::default_mbs_count_for_720p ... ok
+test rate_control::config::tests::mbs_does_not_panic_on_unvalidated_huge_dimensions ... ok
+test rate_control::config::tests::mbs_rounds_up_for_non_multiple_of_16 ... ok
+test rate_control::config::tests::one_pass_vbr_gf_interval_matches_pinned_defaults ... ok
+test rate_control::config::tests::validate_rejects_absurd_finite_framerate ... ok
+test rate_control::config::tests::validate_rejects_buffer_size_ms_to_bits_overflow ... ok
+test rate_control::config::tests::validate_rejects_infinite_framerate ... ok
+test rate_control::config::tests::validate_rejects_inverted_qrange ... ok
+test rate_control::config::tests::validate_rejects_nan_bpm_multiplier ... ok
+test rate_control::config::tests::validate_rejects_nan_framerate ... ok
+test rate_control::config::tests::validate_rejects_negative_framerate ... ok
+test rate_control::config::tests::validate_rejects_nonpositive_bpm_multiplier ... ok
+test rate_control::config::tests::validate_rejects_optimal_buffer_above_buffer_size ... ok
+test rate_control::config::tests::validate_rejects_overflowing_macroblock_count ... ok
+test rate_control::config::tests::validate_rejects_starting_buffer_above_buffer_size ... ok
+test rate_control::config::tests::validate_rejects_unbounded_gop_length ... ok
+test rate_control::config::tests::validate_rejects_unbounded_kf_boost ... ok
+test rate_control::config::tests::validate_rejects_zero_frame_height ... ok
+test rate_control::config::tests::validate_rejects_zero_frame_width ... ok
+test rate_control::config::tests::validate_rejects_zero_framerate ... ok
+test rate_control::config::tests::validate_rejects_zero_gop_length ... ok
+test rate_control::config::tests::validate_rejects_zero_target_bitrate ... ok
+test rate_control::postencode::tests::cbr_feedback_keeps_per_frame_kind_damping_slots ... ok
+test rate_control::postencode::tests::cbr_overhead_projection_advances_neutral_resonance_history ... ok
+test rate_control::postencode::tests::cbr_resonance_history_resets_massive_overshoot_alternation ... ok
+test rate_control::postencode::tests::cbr_resonance_history_shifts_and_classifies_corrections ... ok
+test rate_control::postencode::tests::golden_postencode_preserves_normal_inter_q_history ... ok
+test rate_control::postencode::tests::inter_q_history_uses_libvpx_rounding ... ok
+test rate_control::postencode::tests::one_pass_vbr_feedback_shares_the_inter_normal_damping_gate ... ok
+test rate_control::postencode::tests::rate_control_advance_frame_decrements_frames_to_key ... ok
+test rate_control::postencode::tests::rate_control_closed_loop_trace ... ignored
+test rate_control::postencode::tests::rate_control_buffer_clamped_to_floor ... ok
+test rate_control::postencode::tests::rate_control_buffer_clamped_to_max ... ok
+test rate_control::postencode::tests::rate_control_converges_at_multiple_bitrates_250kbps ... ok
+test rate_control::postencode::tests::rate_control_converges_at_multiple_bitrates_1mbps ... ok
+test rate_control::postencode::tests::rate_control_postencode_kf_resets_frames_since_key ... ok
+test rate_control::postencode::tests::rate_control_converges_at_multiple_bitrates_4mbps ... ok
+test rate_control::postencode::tests::rate_control_postencode_balanced ... ok
+test rate_control::postencode::tests::rate_control_postencode_over_budget ... ok
+test rate_control::postencode::tests::rate_control_postencode_under_budget ... ok
+test rate_control::postencode::tests::rate_control_simulation_30_frames ... ok
+test rate_control::postencode::tests::svc_postencode_tracks_layer_local_rolling_inter_rate ... ok
+test rate_control::postencode::tests::svc_preencode_credit_is_not_applied_twice ... ok
+test rate_control::state::tests::advance_frame_at_zero_does_not_underflow ... ok
+test rate_control::state::tests::advance_frame_saturates_frames_since_key ... ok
+test rate_control::state::tests::avg_frame_bw_clamps_huge_bitrate_to_u32_max ... ok
+test rate_control::state::tests::config_accessor_round_trips ... ok
+test rate_control::state::tests::cq_mode_clamps_q_to_floor ... ok
+test rate_control::state::tests::e8_trace_snapshot_carries_buffer_state ... ok
+test rate_control::state::tests::low_motion_ewma_uses_libvpx_rounding ... ok
+test rate_control::state::tests::ms_to_bits_for_default_config ... ok
+test rate_control::state::tests::one_pass_vbr_uses_libvpx_default_max_section ... ok
+test rate_control::state::tests::predicted_bits_at_picked_q_returns_positive_estimate ... ok
+test rate_control::state::tests::q_mode_pins_qindex_at_cq_level ... ok
+test rate_control::state::tests::qindex_history_init_matches_libvpx_cbr_branch ... ok
+test rate_control::state::tests::qindex_history_init_matches_libvpx_non_cbr_branch ... ok
+test rate_control::state::tests::rate_control_avg_frame_bandwidth ... ok
+test rate_control::state::tests::rate_control_init_from_default_config ... ok
+test rate_control::state::tests::svc_buffer_credit_and_debit_are_separate ... ok
+test rate_control::state::tests::svc_large_keyframe_raises_inter_q_ambient ... ok
+test rate_control::state::tests::vbr_dispatch_differs_from_cbr_at_first_frame ... ok
+test rate_control::state::tests::w1_6_pick_q_and_bounds_cbr_path_works ... ok
+test rate_control::state::tests::w_vbr_dispatch_returns_valid_triple ... ok
+test rate_control::two_pass::tests::allocation_proportional_to_coded_error ... ok
+test rate_control::two_pass::tests::cursor_advances_through_frames ... ok
+test rate_control::two_pass::tests::empty_stats_yields_empty_allocation ... ok
+test rate_control::two_pass::tests::keyframe_earns_boosted_share ... ok
+test rate_control::two_pass::tests::pick_q_differs_when_allocation_differs ... ok
+test rate_control::two_pass::tests::pick_q_returns_in_range_triple ... ok
+test rate_control::vbr::tests::active_worst_first_kf_returns_worst_quality ... ok
+test rate_control::vbr::tests::active_worst_steady_state_inter_uses_fac_active_worst ... ok
+test rate_control::vbr::tests::active_worst_subsequent_kf_doubles_last_kf_q ... ok
+test rate_control::vbr::tests::golden_active_q_uses_gf_path_not_inter_path ... ok
+test rate_control::vbr::tests::golden_q_is_limited_to_pinned_rate_boost_range ... ok
+test rate_control::vbr::tests::golden_target_is_af_ratio_boosted_inter_target ... ok
+test rate_control::vbr::tests::iframe_target_is_avg_times_25_or_max_frame_bandwidth ... ok
+test rate_control::vbr::tests::inter_minq_is_non_decreasing ... ok
+test rate_control::vbr::tests::late_golden_update_derives_low_motion_boost_ratio ... ok
+test rate_control::vbr::tests::pframe_target_is_avg_times_625_thousandths ... ok
+test rate_control::vbr::tests::pick_q_and_bounds_returns_in_range_triple ... ok
+test rate_control::vbr::tests::pick_q_differs_by_frame_type ... ok
+test rate_control::vbr::tests::spatial_key_enhancement_uses_golden_best_and_qrange ... ok
+test rate_control::vbr::tests::spatial_svc_iframe_target_honors_example_intra_rate_ceiling ... ok
+test rate_control::vbr::tests::spatial_vbr_uses_precredit_cbr_target_and_global_age ... ok
+test rate_control::vbr::tests::temporal_svc_fresh_enhancement_uses_stream_frame_one_key_history ... ok
+test rate_control::vbr::tests::temporal_svc_refresh_keeps_inter_target_and_tightens_qrange ... ok
+test rate_control::vbr::tests::temporal_svc_vbr_uses_incremental_cbr_style_target ... ok
+test rdo::block_error::tests::block_error_accumulates_squared_diff ... ok
+test rdo::block_error::tests::pixel_sse_ignores_padding_past_window ... ok
+test rdo::block_error::tests::pixel_sse_strided_accumulates ... ok
+test rdo::block_error::tests::w4_2_block_error_zero_on_identical ... ok
+test rdo::block_error::tests::w4_2_pixel_sse_zero_on_identical ... ok
+test rdo::block_error::tests::zero_dq_error_matches_block_error_for_realtime_tx_sizes ... ok
+test rdo::block_yrd::tests::choose_tx_size_honours_tx_mode_cap ... ok
+test rdo::block_yrd::tests::dist_block_pixel_zero_diff_zero_dist ... ok
+test rdo::block_yrd::tests::dist_block_tx_domain_zero_quant_error ... ok
+test rdo::block_yrd::tests::w4_1_super_block_yrd_picks_smallest_rd ... ok
+test rdo::cost_coeffs::tests::band_counts_walker_steps_at_libvpx_positions ... ok
+test rdo::cost_coeffs::tests::cost_coeffs_nonzero_block_costs_more_than_zero ... ok
+test rdo::cost_coeffs::tests::keyframe_4x4_full_context_cost_matches_libvpx ... ok
+test rdo::cost_coeffs::tests::cost_coeffs_eob_one_matches_direct_reference_all_tx_sizes_and_tokens ... ok
+test rdo::cost_coeffs::tests::sized_context_cache_covers_every_transform_extent ... ok
+test rdo::cost_coeffs::tests::vp9_get_token_thresholds ... ok
+test rdo::cost_coeffs::tests::w4_3_band_counts_match_libvpx_table ... ok
+test rdo::cost_coeffs::tests::w4_3_cost_coeffs_zero_for_all_zero_block ... ok
+test rdo::discount_newmv::tests::discount_false_for_alt_ref_source ... ok
+test rdo::discount_newmv::tests::discount_false_for_non_newmv ... ok
+test rdo::discount_newmv::tests::discount_false_when_nearest_is_nonzero ... ok
+test rdo::discount_newmv::tests::discount_true_when_all_conditions_met ... ok
+test rdo::discount_newmv::tests::nearest_precedes_near_when_both_match ... ok
+test rdo::discount_newmv::tests::rewrites_to_near_when_mv_matches_and_not_nearest ... ok
+test rdo::discount_newmv::tests::w4_8_discount_newmv_rewrites_to_nearest_when_mv_matches ... ok
+test rdo::discount_newmv::tests::w4_8_post_pick_rewrite_preserves_rate_after_zero_match ... ok
+test rdo::handle_inter::tests::pred_model_early_terminates_when_over_best_rd ... ok
+test rdo::handle_inter::tests::pred_model_skips_when_zero_residual ... ok
+test rdo::handle_inter::tests::w4_6_handle_inter_mode_returns_real_rd_for_single_ref ... ok
+test rdo::handle_inter::tests::w4_6_newmv_beats_zeromv_on_real_motion ... ok
+test rdo::handle_inter::tests::w4_6_switchable_filter_loop_tries_three_filters_when_enabled ... ok
+test rdo::kf_intra8::tests::ducks_first_larger_leaf_matches_pinned_pixel_rd ... ok
+test rdo::kf_intra8::tests::ducks_standalone_tx8_extends_top_right_for_d63 ... ok
+test rdo::pick_inter_sb::tests::w4_9_intra_fallback_wins_on_pathological_inter ... ok
+test rdo::pick_inter_sb::tests::w4_9_pick_inter_mode_sb_iterates_all_inter_modes ... ok
+test rdo::pick_inter_sb::tests::w4_9_pick_inter_mode_sb_returns_a_winner ... ok
+test rdo::pick_partition::tests::rd_pick_partition_recursion_call_count ... ok
+test rdo::pick_partition::tests::rd_pick_partition_sub_8_only_evaluates_none ... ok
+test rdo::pick_partition::tests::w4_10a_rd_pick_partition_picks_none_on_flat_block ... ok
+test rdo::pick_partition::tests::w4_10a_rd_pick_sb_modes_dispatches_inter_for_inter_frame ... ok
+test rdo::pick_partition::tests::w4_10a_rd_pick_partition_picks_split_on_high_variance ... ok
+test rdo::ref_costs::tests::active_probability_costs_match_pinned_realtime_oracle ... ok
+test rdo::ref_costs::tests::seg_ref_active_zeros_all_costs ... ok
+test rdo::ref_costs::tests::single_ref_cost_breakdown_matches_libvpx ... ok
+test rdo::ref_costs::tests::w4_5_ref_frame_cost_changes_with_ref_frame_context ... ok
+test rdo::single_mv_search::tests::w4_7_adaptive_step_size_drops_below_baseline_on_low_quality ... ok
+test rdo::sub8::tests::w4_10b_compound_averages_two_real_predictions ... ok
+test rdo::sub8::tests::w4_10b_matched_mv_beats_zeromv_on_real_motion ... ok
+test rdo::sub8::tests::w4_10b_picker_elects_lower_real_rd_per_subblock ... ok
+test rdo::single_mv_search::tests::adaptive_search_early_exits_on_poor_pred_mv ... ok
+test rdo::sub8::tests::w4_10b_picker_respects_best_rd_so_far_cap ... ok
+test rdo::sub8::tests::w4_10b_picker_returns_none_when_sub_block_missing ... ok
+test rdo::sub8_kf_intra::tests::keyframe_4x4_realtime_mask_matches_libvpx_ducks_winner ... ok
+test rdo::sub8_kf_intra::tests::w7_9_kf_intra_4x4_flat_block_picks_dc ... ok
+test rdo::sub8_kf_intra::tests::w7_9_kf_intra_4x4_free_pick_elects_exact_fit ... ok
+test rdo::sub8_kf_intra::tests::w7_9_kf_intra_sub_8x8_mode_contexts_are_causal ... ok
+test rdo::sub8_kf_intra::tests::w7_9_kf_intra_sub_8x8_flat_block_all_dc ... ok
+test rdo::sub8_kf_intra::tests::w7_9_kf_intra_4x4_prices_live_coefficient_context ... ok
+test rdo::sub8_kf_intra::tests::w7_9_kf_intra_4x4_vertical_gradient_h_beats_v ... ok
+test rdo::sub8_kf_intra::tests::w7_9_kf_intra_sub_8x8_per_subblock_content_drives_mode ... ok
+test rdo::sub8_kf_intra::tests::w7_9_kf_intra_sub_8x8_respects_best_rd_cap ... ok
+test rdo::trellis::tests::w4_4_optimize_b_reduces_or_equals_rate_for_random_block ... ok
+test rdo::trellis::tests::w4_4_xform_quant_fp_zero_input_emits_zero ... ok
+test rdo::trellis::tests::xform_quant_fp_round_trip_consistent ... ok
+test rdo::single_mv_search::tests::w4_7_single_motion_search_finds_known_translation ... ok
+test rdo::trellis::tests::xform_quant_dc_zero_input_emits_zero ... ok
+test row_mt::tests::boundary_grid_keeps_unequal_tiles_and_rows_disjoint ... ok
+test row_mt::tests::dummy_sync_is_a_no_op_for_arbitrary_coordinates ... ok
+test row_mt::tests::cancelled_boundary_wait_returns_without_publication ... ok
+test loopfilter::w7_4_tests::serial_packet_overlap_filter_matches_bordered_fallback_for_padded_inter_recon ... ok
+test row_mt::tests::compact_worker_shadow_matches_full_frame_boundary_handoff ... ok
+test row_mt::tests::context_cancellation_reaches_every_tile_column ... ok
+test row_mt::tests::final_column_releases_end_of_row_reader ... ok
+test row_mt::tests::boundary_slot_is_published_exactly_once_under_race ... ok
+test row_mt::tests::concurrent_stealing_claims_every_job_exactly_once ... ok
+test row_mt::tests::first_row_never_waits ... ok
+test row_mt::tests::one_worker_drains_row_jobs_in_deterministic_column_order ... ok
+test row_mt::tests::progress_without_boundary_trips_internal_error ... ok
+test row_mt::tests::reset_clears_cancellation_between_frames ... ok
+test row_mt::tests::poisoned_progress_panics_instead_of_deadlocking ... ok
+test row_mt::tests::row_job_owners_merge_clamps_partial_bottom_row ... ok
+test row_mt::tests::row_job_owners_merge_two_worker_shadows_without_holes_or_overlap ... ok
+test row_mt::tests::row_job_owners_move_preserves_owned_vec_allocations ... ok
+test row_mt::tests::row_job_owners_reject_duplicates_and_report_missing_jobs ... ok
+test row_mt::tests::row_jobs_are_ordered_and_claimed_once ... ok
+test row_mt::tests::serial_worker_shadows_handoff_one_superblock_boundary ... ok
+test row_mt::tests::stealing_prefers_largest_queue_then_lowest_column ... ok
+test row_mt::tests::worker_shadow_exports_visible_partial_bottom_boundary ... ok
+test row_mt::tests::workers_start_on_round_robin_tile_columns ... ok
+test scale_reference::tests::constant_planes_stay_constant ... ok
+test scale_reference::tests::validates_dimensions_and_planes ... ok
+test scale_source::tests::constant_planes_stay_constant ... ok
+test scale_source::tests::validates_dimensions_planes_and_filter ... ok
+test segmentation::tests::choose_segmap_method_rejects_out_of_range_ids ... ok
+test frame_loop::tests::adaptive_denoiser_production_estimator_excludes_skin ... ok
+test scale_source::tests::optimized_bilinear_plane_matches_scalar_across_shapes ... ok
+test segmentation::tests::w5_7_choose_segmap_method_keyframe_always_spatial ... ok
+test scale_source::tests::optimized_smooth_plane_matches_scalar_across_shapes ... ok
+test segmentation::tests::w5_7_choose_segmap_method_spatial_when_segmap_changes ... ok
+test segmentation::tests::w5_7_choose_segmap_method_temporal_when_segmap_unchanged ... ok
+test segmentation::tests::w5_7_get_binary_prob_zero_zero_is_128 ... ok
+test segmentation::tests::w5_7_get_prob_clamps_to_1_255 ... ok
+test skipstat::tests::full_coverage_sweep ... ok
+test rdo::cost_coeffs::tests::reused_context_cache_is_independent_of_stale_fill ... ok
+test spatial_encoder::tests::keyframe_wrapper_rejects_stateful_modes ... ok
+test scale_reference::tests::random_reference_scale_matches_pinned_libvpx ... ok
+test scale_reference::tests::optimized_reference_plane_matches_scalar_across_shapes ... ok
+test spatial_encoder::tests::canonical_720p_three_layer_geometry_constructs_every_layer ... ok
+test spatial_encoder::tests::tight_copy_accepts_padding_and_rejects_short_planes ... ok
+test spatial_encoder::tests::canonical_three_layer_base_source_uses_intermediate_layer_filter_first ... ok
+test spatial_encoder::tests::spatial_cbr_layers_use_pinned_realtime_buffer_geometry ... ok
+test spatial_encoder::tests::canonical_1080p_three_layer_geometry_constructs_partial_base_layer ... ok
+test svc::tests::layer_resolution_matches_libvpx_even_rounding ... ok
+test spatial_encoder::tests::unaligned_three_layer_intermediate_uses_pinned_nonnormative_base_scale ... ok
+test svc::tests::spatial_plan_rejects_out_of_profile_inputs ... ok
+test svc::tests::spatial_plan_three_layer_720p_matches_libvpx_defaults ... ok
+test svc::tests::spatial_plan_two_layer_1080p_matches_libvpx_defaults ... ok
+test svc::tests::temporal_layer_allocation_matches_cumulative_libvpx_budgets ... ok
+test svc::tests::temporal_layer_buffer_fanout_skips_lower_and_active_layers ... ok
+test svc::tests::temporal_layer_q_history_broadcast_reaches_every_layer ... ok
+test svc::tests::w6_5_constants_match_libvpx ... ok
+test svc::tests::w6_5_is_one_pass_svc_predicate ... ok
+test svc::tests::w6_5_layer_ids_to_idx_matches_libvpx ... ok
+test svc::tests::w6_5_save_restore_layer_context_roundtrip ... ok
+test svc::tests::w6_5_svc_alloc_creates_layers ... ok
+test svc::tests::w6_6_temporal_setter_0_1_0_1_two_layers ... ok
+test svc::tests::w6_6_temporal_setter_0_2_1_2_three_layers ... ok
+test svc::tests::w6_6_temporal_setter_no_layering_yields_layer_zero ... ok
+test svc::tests::w6_6_temporal_setter_bypass_uses_app_overrides ... ok
+test temporal_filter::tests::w3_1_arnr_filter_data_alloc_holds_frames ... ok
+test temporal_filter::tests::w3_2_adjust_arnr_filter_clamps_strength ... ok
+test temporal_filter::tests::w3_3_predictors_mb_round_trip_at_zero_mv ... ok
+test row_mt::tests::dependent_row_waits_for_matching_column ... ok
+test row_mt::tests::cancellation_wakes_a_blocked_reader ... ok
+test row_mt::tests::boundary_publication_happens_before_row_progress ... ok
+test row_mt::tests::each_tile_column_owns_independent_wavefront_state ... ok
+test row_mt::tests::reset_restores_the_dependency ... ok
+test temporal_filter::tests::w3_4_apply_temporal_filter_zero_strength_passthrough ... ok
+test temporal_filter::tests::w3_4_mod_index_table_matches_libvpx ... ok
+test tests::a4_independent_mv_proxy_is_scoped_to_realtime_cbr_speed_7_or_faster ... ok
+test tests::a4_rd_calibration_cache_selects_baseline_only_for_segment_zero ... ok
+test tests::active_ref_costs_use_neighbour_selected_frame_context_bank ... ok
+test tests::adaptive_denoiser_altref_zero_requires_last_candidate ... ok
+test tests::adaptive_denoiser_high_level_filters_skin_with_high_strength ... ok
+test tests::adaptive_denoiser_leaf_uses_mapped_last_reference ... ok
+test scale_source::tests::random_720p_half_scale_matches_pinned_libvpx ... ok
+test temporal_filter::tests::w3_5_vp9_temporal_filter_pipeline_passes_smoke ... ok
+test tests::block8_coefficient_rd_is_scoped_to_exact_cpu6_spatial_encodes ... ok
+test spatial_encoder::tests::two_layer_keyframe_access_units_parse_and_decode_low_to_high ... ok
+test tests::block16_distortion_breakout_is_cpu7_cbr_realtime_only ... ok
+test tests::bottom_edge_constraint_maps_unsignalable_16x16_leaf_to_16x8 ... ok
+test tests::adaptive_denoiser_leaf_level_and_reset_gates ... ok
+test pre_analysis::tests::force_scalar_laplacian_dispatch ... ok
+test tests::block16_coefficient_rd_is_scoped_to_exact_cpu6_vbr_or_spatial_cbr ... ok
+test tests::bottom_edge_constraint_maps_unsignalable_vertical_leaves_to_horizontal ... ok
+test tests::bottom_edge_constraint_preserves_signalable_crossing_32x32_leaves ... ok
+test tests::causal_grid_clips_bottom_crossing_inter_leaf ... ok
+test tests::bottom_edge_constraint_preserves_signalable_horizontal_leaves ... ok
+test tests::aq0_encode_kf_with_segment_id_3_decodes_back_through_real_decoder ... ok
+test tests::causal_grid_splats_intra_winner_as_intra ... ok
+test scale_source::tests::random_720p_two_stage_quarter_scale_matches_pinned_libvpx ... ok
+test tests::compact_inter_partition_history_moves_and_restores_one_row ... ok
+test tests::compact_inter_recon_copies_a_global_column_in_one_layout_lookup ... ok
+test tests::compact_inter_recon_partial_bottom_row_matches_full_frame ... ok
+test tests::compact_inter_partition_grid_maps_frame_indices ... ok
+test tests::compact_inter_recon_intra_edges_match_full_frame ... ok
+test tests::compact_inter_recon_prediction_and_residual_match_full_frame ... ok
+test tests::compact_inter_row_grid_matches_full_grid_with_three_causal_rows ... ok
+test tests::compact_partition_predictor_matches_full_frame_destination ... ok
+test tests::compact_row_diagnostics_merge_is_bounded_and_additive ... ok
+test tests::compact_row_result_state_is_send ... ok
+test tests::config_new_const_round_trips ... ok
+test tests::cpu6_spatial_vbr_base_disables_late_high_q_16x16_splits ... ok
+test tests::config_new_round_trips ... ok
+test tests::cpu6_spatial_vbr_split_disable_preserves_scope_boundaries ... ok
+test tests::cpu6_high_resolution_spatial_layer_one_seeds_newmv_after_key ... ok
+test tests::cpu6_small_spatial_vbr_uses_coding_q_for_exact_vbp ... ok
+test tests::compact_row_emission_scratch_transfers_without_reinitializing ... ok
+test spatial_encoder::tests::two_layer_inter_access_units_share_reference_map_and_decode_in_order ... ok
+test tests::cpu8_svc_zero_mv_policy_skips_int_pro_outside_exceptions ... ok
+test tests::cyclic_refresh_calibrates_baseline_and_boosted_segments_independently ... ok
+test tests::denoiser_coding_source_excludes_reference_padding ... ok
+test tests::descent_cell_picker_context_matches_direct_neighbours ... ok
+test tests::descent_pick_cache_covers_complete_superblock_key_space ... ok
+test tests::direct_inter_tx_all_zero_leaf_uses_skip_context_reset ... ok
+test tests::cpu8_reuses_the_causal_filter_for_golden_candidates ... ok
+test tests::denoiser_leaf_uses_selected_golden_running_average ... ok
+test tests::direct_inter_tx_recording_flushes_zero_prefix_in_syntax_order ... ok
+test tests::effective_qindex_for_segment_applies_negative_delta ... ok
+test tests::effective_qindex_for_segment_clamps_high ... ok
+test tests::effective_qindex_for_segment_clamps_low ... ok
+test tests::encode_128x64_keyframe_works ... ok
+test tests::effective_qindex_for_segment_no_delta_returns_base ... ok
+test tests::encode_64x128_keyframe_works ... ok
+test tests::encode_64x64_keyframe_produces_non_empty_packet ... ok
+test tests::encode_error_display_bitstream_variant ... ok
+test tests::encode_error_display_invalid_config_includes_reason ... ok
+test tests::encode_error_from_bitstream_error_round_trips ... ok
+test tests::encode_error_from_modes_writer_error_round_trips ... ok
+test tests::encode_keyframe_parses_back_through_decoder_path ... ok
+test tests::encode_synthetic_dc_intra_with_residuals_rejects_short_input_y ... ok
+test tests::encode_kf_with_per_segment_q_delta_quantizes_differently_per_segment ... ok
+test tests::encode_two_frame_kf_inter_produces_superframe_packet ... ok
+test tests::encode_synthetic_dc_intra_with_residuals_rejects_short_recon_y ... ok
+test tests::encode_two_frame_kf_inter_decodes_through_real_decoder ... ok
+test tests::encode_synthetic_dc_intra_with_residuals_decodes_bit_exact ... ok
+test tests::encode_two_frame_kf_inter_non_skip_decodes_through_real_decoder ... ok
+test frame_loop::tests::f02_tile_workers_preserve_complete_frame_records ... ok
+test tests::encoder_rejects_dimensions_above_stream_encoder_maximum_before_allocating ... ok
+test tests::encoder_accepts_canonical_config ... ok
+test tests::encoder_rejects_luma_area_above_stream_encoder_maximum_before_allocating ... ok
+test tests::encoder_rejects_non_multiple_of_64_height ... ok
+test tests::encoder_rejects_non_multiple_of_64_width ... ok
+test tests::encoder_rejects_zero_height ... ok
+test tests::encoder_rejects_zero_qindex ... ok
+test tests::encoder_rejects_zero_width ... ok
+test tests::exact_vbp_crossing_square_policy_is_spatial_and_requires_five_rows ... ok
+test tests::exact_vbp_large_frames_release_max_tx_shortcut ... ok
+test tests::aq0_encode_kf_with_each_segment_id_decodes_back_through_real_decoder ... ok
+test tests::exact_vbp_partition_qindex_applies_bias_without_wrapping ... ok
+test tests::f02_oracle_serializes_intra_winner_as_intra_mode ... ok
+test tests::final_newmv_suppression_requires_smooth_non_newmv_block16 ... ok
+test tests::fixed_tree_hint_segment_grid_matches_point_lookup ... ok
+test tests::full_filter_search_recoveries_are_scoped_to_cpu6_vbr ... ok
+test tests::full_pixel_search_matches_realtime_speed_policy ... ok
+test tests::gather_edge_extended_64x64_replicates_right_and_bottom_samples ... ok
+test tests::golden_real_block_yrd_is_scoped_to_cpu7_realtime_vbr ... ok
+test tests::inter_chroma_zero_eob_proof_checks_both_sizes_and_geometry ... ok
+test tests::inter_coef_direct_slot_merge_rejects_overlap - should panic ... ok
+test tests::inter_coef_direct_slots_cover_every_plane_position_once ... ok
+test tests::inter_coef_direct_slots_replace_and_merge ... ok
+test tests::inter_coef_row_source_reset_reuses_storage_and_merges ... ok
+test tests::inter_coef_slots_cover_the_coded_extent_of_a_partial_bottom_mi ... ok
+test tests::inter_coef_tile_sources_store_and_merge_only_their_columns ... ok
+test tests::inter_coef_worker_sources_merge_disjoint_rows_in_one_tile ... ok
+test tests::inter_coef_worker_sources_merge_disjoint_tile_row_rectangles ... ok
+test tests::inter_emit_quant_scratch_is_independent_of_prior_transform_size ... ok
+test tests::inter_emit_residual_scratch_is_prefix_bounded_and_causal ... ok
+test tests::inter_luma_residual_subtraction_matches_scalar_for_square_and_rectangular ... ok
+test tests::inter_prediction_helper_matches_single_and_compound_writes ... ok
+test tests::inter_rd_calibration_covers_realtime_v1_presets ... ok
+test tests::inter_row_grids_accepts_owned_mi_grid_without_copying ... ok
+test tests::inter_row_grids_clip_final_leaf_to_each_compact_layout ... ok
+test tests::inter_row_grids_commit_mode_and_mv_cells_together ... ok
+test tests::inter_row_job_rejects_another_active_tile - should panic ... ok
+test tests::inter_row_jobs_partition_unequal_tiles_into_disjoint_sb_ranges ... ok
+test tests::inter_chroma_energy_certificate_matches_old_transform_proof ... ok
+test tests::inter_tx_size_pick_is_independent_of_prior_scratch_contents ... ok
+test tests::intra_emit_quant_scratch_is_independent_of_prior_contents ... ok
+test tests::intra_tx_rd_scratch_is_bounded_and_independent_of_prior_tx_size ... ok
+test tests::intra_tx_size_pick_ignores_pixels_outside_causal_leaf_halo ... ok
+test tests::largest_subpel_block_fits_inter_pred_border_scratch ... ok
+test tests::low_resolution_ml_partition_is_cpu8_realtime_default_content_policy ... ok
+test tests::newmv_diff_bias_matches_libvpx_cbr_caller_gate ... ok
+test tests::inter_tx_size_pruning_matches_exhaustive_search ... ok
+test spatial_encoder::tests::base_spatial_operating_point_decodes_without_enhancement_components ... ok
+test tests::p8_default_is_vbr_low_q_and_non_vbr_only ... ok
+test tests::p8_qmax_is_vbr_low_q_only ... ok
+test tests::partial_fixed_tree_preserves_supported_32x32_quadrants ... ok
+test tests::partition_color_sensitivity_reads_full_source_block_in_place ... ok
+test tests::partition_color_sensitivity_uses_real_uv_prediction_sad ... ok
+test tests::post_refresh_last_only_requires_matching_topology_and_refresh_age ... ok
+test tests::realtime_block32_emit_reuses_picker_transform ... ok
+test tests::realtime_cached_full_pick_requires_context_and_non_newmv_winner ... ok
+test spatial_encoder::tests::three_layer_inter_access_units_share_reference_map_and_decode_in_order ... ok
+test frame_loop::tests::f02_compact_workers_preserve_complete_frame_records ... ok
+test frame_loop::tests::keyframe_8x8_mode_cap_is_cpu8_temporal_svc_realtime_vbr_only ... ok
+test frame_loop::tests::nonrd_keyframe_8x8_policy_is_cpu8_two_layer_realtime_vbr_only ... ok
+test tests::realtime_keyframe_tx_size_caps_leaf_maximum_at_16x16 ... ok
+test tests::realtime_luma_transform_honors_acdc_skip_under_fast_quantization ... ok
+test tests::realtime_minmax_partition_spread_matches_preset_and_svc_reference_policy ... ok
+test tests::realtime_output_backed_prediction_is_scoped_to_measured_presets ... ok
+test tests::realtime_tx_redecision_scopes_by_preset_and_spatial_topology ... ok
+test tests::realtime_v1_umv_border_is_not_resolution_gated ... ok
+test tests::reused_inter_pred_border_scratch_overwrites_prior_contents ... ok
+test tests::runtime_profiles_require_the_explicit_build_feature ... ok
+test tests::scaled_spatial_predictor_matches_decoder_for_luma_chroma_and_edges ... ok
+test tests::spatial_base_and_temporal_enhancement_intra_fallback_are_preset_scoped ... ok
+test tests::spatial_block16_coefficient_rd_covers_cpu6_and_seed_components ... ok
+test tests::spatial_cbr_partition_qindex_bias_covers_cpu6_and_large_components ... ok
+test tests::spatial_leaf_calibration_scopes_key_lambda_and_simple_skip_clear ... ok
+test tests::spatial_svc_disables_reference_masking ... ok
+test tests::stage4a_split_admission_is_product_vbr_realtime_p8_only ... ok
+test tests::stage4a_split_force_strict_override_closes_product_policy ... ok
+test tests::standalone_tx8_extends_only_the_unavailable_top_right ... ok
+test tests::svc_large_block_model_only_scopes_preset_specific_enhancement_policy ... ok
+test tests::tile_column_inter_recon_layout_is_full_height_and_tile_tight ... ok
+test tests::tile_local_causal_grid_matches_full_grid_lookup_and_splat ... ok
+test tests::unavailable_reference_skips_mv_candidate_builder ... ok
+test tests::unrestricted_mv_limits_match_libvpx_top_left_block32 ... ok
+test tests::vec_backed_inter_coef_source_empty_zero_marker_reads_as_zeros ... ok
+test tests::vec_backed_inter_coef_source_round_trips ... ok
+test tests::vec_backed_intra_coef_source_round_trips ... ok
+test tests::vec_backed_intra_i16_insert_matches_widened_insert ... ok
+test tests::visible_full_chroma_pel_mv_is_safe_outside_subpel_halo_limits ... ok
+test tests::zero_motion_fallback_copies_only_the_leaf_footprint ... ok
+test tests::zero_mv_sad64_full_block_matches_dispatched_kernel ... ok
+test tests::zero_mv_sad64_optimized_edges_match_per_pixel_clamping ... ok
+test tests::zero_mv_sad64_replicates_partial_frame_edges ... ok
+test tpl::stats::tests::tpl_dep_frame_new_sizes_correctly ... ok
+test tpl::stats::tests::tpl_dep_stats_zero_is_zero ... ok
+test tpl::tests::w6_7_mode_estimation_produces_intra_cost_baseline ... ok
+test tpl::tests::w6_7_tpl_dep_frame_init_gop_frames_sizes_correctly ... ok
+test tpl::tests::w6_7_tpl_dep_stats_zero_at_init ... ok
+test tpl::tests::w6_8_get_rdmult_delta_gates_when_tpl_invalid ... ok
+test tpl::tests::w6_8_get_rdmult_delta_returns_nonneg_lambda_scale ... ok
+test tpl::tests::w6_8_rdo_cb_rdmult_hook_dispatches_correctly ... ok
+test tpl::tests::w6_8_tpl_model_store_preserves_accumulators_and_broadcasts ... ok
+test tpl::tests::w6_8_tpl_model_update_propagates_to_future_frame ... ok
+test frame_loop::tests::parallel_tile_scratch_retains_local_capacity_after_keyframe_and_interframes ... ok
+test frame_loop::tests::serial_inter_coef_recording_requires_one_thread_and_one_tile ... ok
+test frame_loop::tests::w0_4_dispatcher_wiring_changes_encoded_bytes ... ok
+test spatial_encoder::tests::cadence_survives_u32_saturation_spatial ... ok
+test frame_loop::tests::stream_encoder_compact_row_workers_are_thread_count_independent ... ok
+test frame_loop::tests::stream_encoder_four_tile_exact_vbp_history_is_thread_count_independent ... ok
+test frame_loop::tests::stream_encoder_four_tile_output_is_thread_count_independent_and_bit_exact ... ok
+test frame_loop::tests::vbp_qindex_overrides_are_inter_only ... ok
+test spatial_encoder::tests::first_spatial_enhancement_components_use_base_key_q_ceiling ... ok
+test spatial_encoder::tests::three_layer_partial_right_edge_stream_decodes_in_order ... ok
+test tests::a4_descent_is_luma_only_but_final_pick_uses_chroma ... ok
+test tests::a4_partition_rd_mult_env_scales_only_with_valid_ratio ... ok
+test tests::early_inter_chroma_proof_matches_env_opt_out ... ok
+test tests::encode_with_diag_intra_env_runs_eprintln_paths ... ok
+test tests::encode_with_diag_picker_env_runs_eprintln_paths ... ok
+test tests::encode_with_diag_intpro_env_runs_eprintln_paths ... ok
+test tests::encode_with_e12_oracle_enabled_runs_record_paths ... ok
+test tests::encode_with_e3_mvdiag_and_golden_env_runs_eprintln_paths ... ok
+test tests::encode_with_f02_oracle_enabled_runs_record_paths ... ok
+test tests::encode_with_f3_nonrd_partition_runs_descent_path ... ok
+test tests::exact_vbp_defaults_to_cpu6_through_cpu8_realtime_vbr_and_aq_off_cbr_show_frames ... ok
+test tests::p12_real_callback_default_state_unchanged ... ok
+test tests::p12_real_callback_picks_motion_aware_winner ... ok
+test tests::realtime_descent_disables_rectangular_newmv_by_default ... ok
+test tests::realtime_descent_keeps_golden_by_default ... ok
+test tests::realtime_descent_uses_chessboard_filter_search_by_default ... ok
+test tests::realtime_integer_mv_filter_search_is_skipped_by_default ... ok
+
+test result: ok. 820 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.71s
+
+     Running tests\a18_picker_reads_prev_grid.rs (target\debug\deps\a18_picker_reads_prev_grid-65180c787a5cb004.exe)
+
+running 2 tests
+test a18_picker_gate_is_structural_not_config_gated ... ok
+test a18_picker_reads_prev_grid_when_activated ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\a18_prev_frame_mvs_fires.rs (target\debug\deps\a18_prev_frame_mvs_fires-e863a57f4aba5533.exe)
+
+running 2 tests
+test a18_prev_frame_mvs_grid_chains_across_inter_frames ... ok
+test a18_prev_frame_mvs_grid_populated_after_first_inter ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests\budget_gate_validation.rs (target\debug\deps\budget_gate_validation-ba0a6e1457d67e2d.exe)
+
+running 1 test
+test budget_gate_low_and_high_regime ... ignored, budget-gate KF-cap real-encode validation (low + high regime)
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\cross_decoder_gate.rs (target\debug\deps\cross_decoder_gate-f1c7e92ece2e77b8.exe)
+
+running 5 tests
+test cross_decoder_gate_stage4a_vbr_product ... ignored, Stage 4a product cross-decoder gate; hard-fails on missing corpus/tools/env pins
+test cross_decoder_gate_vpxdec_ffmpeg ... ignored, RC.4 — cross-decoder gate; run with `--ignored`
+test rc_x1_diagnostic_dump ... ignored, RC.X1 diagnostic dump; run with `--ignored`
+test rc_x1_internal_dump ... ignored, RC.X1 internal mi-grid dump; run with `--ignored`
+test rc_x1_sb_leaf_dump ... ignored, RC.X1 SB-leaf dump; run with `--ignored`
+
+test result: ok. 0 passed; 0 failed; 5 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\diag_foreman_kf.rs (target\debug\deps\diag_foreman_kf-684068a224605e9c.exe)
+
+running 1 test
+test diag_foreman_kf ... ignored, A0' KF intra diagnostic
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\diag_foreman_kf_partitions.rs (target\debug\deps\diag_foreman_kf_partitions-b9e5d9245c2fef67.exe)
+
+running 1 test
+test diag_foreman_kf_partitions ... ignored, A0' KF partition dump
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\diag_foreman_per_frame.rs (target\debug\deps\diag_foreman_per_frame-5e0dc7460fff2837.exe)
+
+running 1 test
+test diag_foreman_per_frame ... ignored, A0' — Foreman per-frame diagnostic
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\diag_frame4_dump.rs (target\debug\deps\diag_frame4_dump-a8967fbd4610c2c0.exe)
+
+running 1 test
+test diag_frame4_partition_mode_dump ... ignored, A0 diagnostic — dump partition / mode distribution for frame 4
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\diag_kfcap_measure.rs (target\debug\deps\diag_kfcap_measure-620fdc394a23e369.exe)
+
+running 1 test
+test diag_kfcap_measure ... ignored, KFCAP Track A1 measurement — run with RVP9_KFCAP unset then =1
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\diag_per_frame.rs (target\debug\deps\diag_per_frame-1a64c0ad5b9ff2a9.exe)
+
+running 1 test
+test a0_per_frame_diag ... ignored, A0 — diagnostic harness for the BD-rate gap; run with `--ignored`
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\diag_per_sb_motion.rs (target\debug\deps\diag_per_sb_motion-adcea503701bd289.exe)
+
+running 1 test
+test per_sb_motion ... ignored, diagnostic
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\diag_picker_direct.rs (target\debug\deps\diag_picker_direct-d6a98a0db1b59e47.exe)
+
+running 1 test
+test picker_finds_motion_on_shifted_block ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\diag_ref_divergence.rs (target\debug\deps\diag_ref_divergence-fa61037c9666f4b7.exe)
+
+running 2 tests
+test diag_ref_divergence_foreman ... ignored, A11 — encoder vs decoder LASTFRAME divergence diagnostic
+test diag_ref_divergence_testsrc ... ignored, A11 — encoder vs decoder LASTFRAME divergence (testsrc)
+
+test result: ok. 0 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\diag_sb03_motion.rs (target\debug\deps\diag_sb03_motion-27738a2835def408.exe)
+
+running 1 test
+test sb03_motion_row_dump ... ignored, diagnostic
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\diag_source_frame0.rs (target\debug\deps\diag_source_frame0-27362437c33526b9.exe)
+
+running 1 test
+test source_frame0_stats ... ignored, diagnostic
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\diag_source_static.rs (target\debug\deps\diag_source_static-775713a909529760.exe)
+
+running 1 test
+test source_static_check ... ignored, Diagnostic; run with --ignored
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\drift_diag.rs (target\debug\deps\drift_diag-b80756d6a23266f3.exe)
+
+running 3 tests
+test drift_diag_foreman ... ignored, DRIFT-DIAG — encoder stored-reference vs true-decode divergence
+test drift_diag_localize ... ignored, DRIFT-DIAG — per-block localization of frame-1 divergence
+test drift_diag_localize_frame2 ... ignored, DRIFT-DIAG — per-block localization of frame-2 residual divergence
+
+test result: ok. 0 passed; 0 failed; 3 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\e12_oracle.rs (target\debug\deps\e12_oracle-54e438847eefa417.exe)
+
+running 1 test
+test e12_oracle_foreman ... ignored, E12 — search-failure-vs-ceiling oracle; run with `--ignored --nocapture`
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\e13_diamond.rs (target\debug\deps\e13_diamond-10c5c0bf55f170fb.exe)
+
+running 1 test
+test e13_diamond_oracle_foreman ... ignored, E13 diamond oracle; run with --ignored --nocapture
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\e3_mvdiag.rs (target\debug\deps\e3_mvdiag-4333b1981da17bc3.exe)
+
+running 1 test
+test e3_foreman_newmv_diag ... ignored, E3 diagnostic-only; set RVP9_E3_MVDIAG and run with --ignored --nocapture
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\e4_overshoot_accounting.rs (target\debug\deps\e4_overshoot_accounting-38c7986f44f67984.exe)
+
+running 1 test
+test e4_overshoot_accounting_foreman_100k ... ignored, E4 — overshoot accounting harness; run with `--ignored --nocapture`
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\e9_quality_gap.rs (target\debug\deps\e9_quality_gap-635fe353698b639c.exe)
+
+running 3 tests
+test e9_quality_gap_foreman ... ignored, E9 — matched-Q quality-gap harness; run with `--ignored --nocapture`
+test ivf_payloads_read_declared_frames ... ok
+test sibling_vpxdec_path_matches_vpxenc_suffix ... ok
+
+test result: ok. 2 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\f1_block_yrd_newmv_winner.rs (target\debug\deps\f1_block_yrd_newmv_winner-4f5b1a5a440c8fc3.exe)
+
+running 2 tests
+test f1_block_yrd_newmv_wins_on_shifted_ref ... ok
+test f1_identical_source_yields_skip_winner ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests\f2_find_mv_refs_temporal_visible.rs (target\debug\deps\f2_find_mv_refs_temporal_visible-964fb1cf1e5b9804.exe)
+
+running 2 tests
+test f2_find_mv_refs_temporal_visible_with_use_prev_frame_mvs_true ... ok
+test f2_find_mv_refs_temporal_zero_when_use_prev_frame_mvs_false ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\phase2_reuse_positive_control.rs (target\debug\deps\phase2_reuse_positive_control-a3cea9057395a9e9.exe)
+
+running 1 test
+test phase2_newmv_reuse_fires ... ignored, requires tests/corpus/foreman_cif.y4m
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\quality_gate.rs (target\debug\deps\quality_gate-7c24d7dae49cd4d3.exe)
+
+running 11 tests
+test bdrate_gate_stage4b_aq ... ignored, AQ.5 — Stage 4b exit-gate harness; run with `--ignored`
+test bdrate_gate_stage4b_aq_realcontent ... ignored, AQ.5 — Stage 4b real-content gate; run with `--ignored`
+test quality_gate_stage4a ... ignored, F.0.1 — Stage 4a quality-gate harness; run with `--ignored`
+test quality_gate_stage4a_realcontent ... ignored, F.0.1 — Stage 4a real-content quality gate; run with `--ignored`
+test quality_gate_stage4a_realcontent_product ... ignored, Stage 4a product candidate; hard-fails on missing corpus/tools/env pins
+test quality_gate_stage4a_realcontent_product_preenable_preflight ... ignored, Stage 4a product pre-enable preflight; hard-fails on missing corpus/tools/env pins
+test quality_gate_stage4a_realcontent_product_strict_baseline ... ignored, Stage 4a product strict baseline; hard-fails on missing corpus/tools/env pins
+test configured_vpxdec_path_is_authoritative ... ok
+test configured_vpxenc_path_is_authoritative ... ok
+test sibling_vpxdec_path_matches_vpxenc_suffix ... ok
+test aq_measurement_reports_decoded_vbr_activation ... ok
+
+test result: ok. 4 passed; 0 failed; 7 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+     Running tests\rdo_dispatch_proof.rs (target\debug\deps\rdo_dispatch_proof-63dd6988c821e74b.exe)
+
+running 1 test
+test rdo_dispatch_routes_at_speed3_and_decodes ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.40s
+
+     Running tests\realtime_gate.rs (target\debug\deps\realtime_gate-90033770f3030168.exe)
+
+running 4 tests
+test realtime_gate_720p30 ... ignored, RC.3 — 720p30 frame-time exit gate; run with `--release --ignored`
+test realtime_gate_720p30_aq3 ... ignored, Stage 4b AQ3 — 720p30 frame-time exit gate; run with `--release --ignored`
+test realtime_gate_stage4a_vbr_p8_product ... ignored, Stage 4a product realtime gate; hard-fails on missing corpus/tools/env pins
+test frame_time_summary_reports_tail_quantiles ... ok
+
+test result: ok. 1 passed; 0 failed; 3 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\stage4a_source_drift.rs (target\debug\deps\stage4a_source_drift-f6bfc13cdd63b044.exe)
+
+running 6 tests
+test final_source_hash_accepts_unchanged_pinned_input ... ok
+test final_source_hash_detects_drift_and_pinned_hash_mismatch ... ok
+test final_report_rejects_missing_ignored_source ... ok
+test final_report_rejects_changed_ignored_source ... ok
+test final_report_rejects_unchanged_source_with_wrong_pin ... ok
+test final_report_passes_unchanged_pinned_source ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.35s
+
+     Running tests\stage_sse_diag.rs (target\debug\deps\stage_sse_diag-7163c78abfdd3209.exe)
+
+running 1 test
+test stage_sse_diag_foreman ... ignored, STAGE-SSE DIAG — per-stage SSE oracle; run with `--ignored --nocapture`
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\w8_altref_emit.rs (target\debug\deps\w8_altref_emit-2f592d51d495a5e7.exe)
+
+running 3 tests
+test w8_altref_disabled_emits_no_non_show_packet ... ok
+test w8_altref_emits_non_show_packet ... ok
+test w8_show_frame_count_matches_input_count ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.19s
+
+     Running tests\w_2pass_vbr.rs (target\debug\deps\w_2pass_vbr-2bb4aba8613494e1.exe)
+
+running 5 tests
+test two_pass_stream_byte_exact_through_vpxdec ... ignored, W_2PASS oracle — run with `--ignored` (needs vpxdec)
+test two_pass_temporal_svc_rejected_before_first_pass ... ok
+test two_pass_completes_and_emits_one_packet_per_frame ... ok
+test two_pass_allocates_more_bits_to_busier_frames ... ok
+test two_pass_q_sequence_differs_from_one_pass_cbr ... ok
+
+test result: ok. 4 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.11s
+
+     Running tests\w_altref_partial_height.rs (target\debug\deps\w_altref_partial_height-bc6ca9a022a9eee0.exe)
+
+running 7 tests
+test altref_partial_blocks_preserve_visible_pixels_and_strides ... ok
+test altref_partial_height_32_not_64_delayed ... ok
+test altref_partial_height_32_not_64_flush ... ok
+test altref_partial_height_720p_delayed ... ok
+test altref_partial_height_720p_flush ... ok
+test altref_partial_height_1080p_flush ... ok
+test altref_partial_height_1080p_delayed ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.78s
+
+     Running tests\w_altref_picker.rs (target\debug\deps\w_altref_picker-92fd70d2ca2e46be.exe)
+
+running 2 tests
+test altref_picker_stream_byte_exact_vpxdec ... ignored, W-ALTREF picker byte-exact vpxdec round-trip; run with `--ignored`
+test show_frame_picker_selects_altref ... ok
+
+test result: ok. 1 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.68s
+
+     Running tests\w_altref_real_coding.rs (target\debug\deps\w_altref_real_coding-82875aaf3a424e83.exe)
+
+running 3 tests
+test altref_stream_byte_exact_vpxdec ... ignored, W-ALTREF byte-exact vpxdec round-trip; run with `--ignored`
+test altref_slot2_differs_from_last_recon ... ok
+test altref_reconstruction_matches_decoder_with_prev_mv_salvage ... ok
+
+test result: ok. 2 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running tests\w_buffer_pool.rs (target\debug\deps\w_buffer_pool-138d24ff075e6b41.exe)
+
+running 2 tests
+test a10_byte_identity_pre_vs_post_refactor ... ok
+test a10_pool_stream_decodes_cleanly ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests\w_coef_prob_parity.rs (target\debug\deps\w_coef_prob_parity-60d9aba66915588c.exe)
+
+running 2 tests
+test build_tree_distribution_agrees_with_model_token_folding ... ok
+test pivot_model_search_scores_downstream_nodes ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\w_coef_prob_twoloop.rs (target\debug\deps\w_coef_prob_twoloop-bd42a4d72c527aed.exe)
+
+running 2 tests
+test a6_twoloop_stream_byte_exact_through_vpxdec ... ignored, A6 oracle — needs corpus + vpxdec; run with --ignored
+test a6_twoloop_denoiser_direct_counts_update_and_suppress_with_diff ... ok
+
+test result: ok. 1 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.12s
+
+     Running tests\w_compound_proof.rs (target\debug\deps\w_compound_proof-77f6bd01d3e6d243.exe)
+
+running 2 tests
+test compound_stream_byte_exact_vpxdec ... ignored, W-COMPOUND byte-exact vpxdec round-trip; run with `--ignored`
+test show_frame_picker_selects_compound ... ok
+
+test result: ok. 1 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.73s
+
+     Running tests\w_feature_interaction_matrix.rs (target\debug\deps\w_feature_interaction_matrix-53fdbfdb3b524088.exe)
+
+running 1 test
+test realtime_feature_interaction_matrix_decodes_every_row ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.72s
+
+     Running tests\w_gop_topology.rs (target\debug\deps\w_gop_topology-b7d79b0192dd3983.exe)
+
+running 2 tests
+test gop_topology_byte_identity ... ok
+test gop_topology_schedule_matches_emitted_frames ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running tests\w_lossless_config.rs (target\debug\deps\w_lossless_config-9bc2c47476b5cd1b.exe)
+
+running 3 tests
+test q_mode_rejects_lossless_inter_and_boosted_keyframe_requests ... ok
+test regulated_modes_reject_bounds_that_allow_lossless ... ok
+test lossy_boundaries_remain_supported_and_match_wire_quantizers ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests\w_ml_partition.rs (target\debug\deps\w_ml_partition-40eed0b7dbb91411.exe)
+
+running 1 test
+test a21_ml_partition_breakout_fires_and_decodes ... ignored, requires tests/corpus/testsrc_720p30.y4m
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\w_ml_rect_prune.rs (target\debug\deps\w_ml_rect_prune-72d982f74ed99d54.exe)
+
+running 1 test
+test a21_ml_rect_prune_fires_and_decodes ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.49s
+
+     Running tests\w_rd_partition.rs (target\debug\deps\w_rd_partition-9297751cda061a37.exe)
+
+running 1 test
+test a4_rd_partition_shape_is_rd_chosen_and_decodes ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running tests\w_rd_partition_rect.rs (target\debug\deps\w_rd_partition_rect-378698c57940c508.exe)
+
+running 1 test
+test a4_rect_partition_is_evaluated_and_decodes ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests\w_svc_spatial_keyframe.rs (target\debug\deps\w_svc_spatial_keyframe-5f04ededb2270d2f.exe)
+
+running 7 tests
+test canonical_1080p_three_layer_partial_base_is_byte_exact_through_external_decoders ... ignored, external canonical 1080p spatial gate; requires ffmpeg and pinned vpxdec
+test canonical_1080p_two_layer_partial_bottom_is_byte_exact_through_external_decoders ... ignored, external canonical 1080p spatial gate; requires ffmpeg and pinned vpxdec
+test canonical_720p_three_layer_key_and_inter_are_byte_exact_through_external_decoders ... ignored, external canonical 720p spatial gate; requires ffmpeg and pinned vpxdec
+test keyframe_spatial_packet_decodes_and_components_are_byte_exact_through_ffmpeg ... ignored, external spatial packet gate; requires ffmpeg
+test keyframe_spatial_packet_top_layer_is_byte_exact_through_vpxdec ... ignored, external spatial packet gate; requires pinned vpxdec
+test three_layer_inter_spatial_stream_is_byte_exact_through_ffmpeg_and_vpxdec ... ignored, external stateful spatial gate; requires ffmpeg and pinned vpxdec
+test two_layer_inter_spatial_stream_is_byte_exact_through_ffmpeg_and_vpxdec ... ignored, external stateful spatial gate; requires ffmpeg and pinned vpxdec
+
+test result: ok. 0 passed; 0 failed; 7 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\w_svc_temporal.rs (target\debug\deps\w_svc_temporal-ca8d53eeaee4af3e.exe)
+
+running 6 tests
+test svc_temporal_layer_id_pattern_is_live ... ignored, A18 SVC temporal — run with `--ignored` (needs testsrc corpus)
+test svc_temporal_stream_byte_exact_through_vpxdec ... ignored, A18 SVC temporal oracle — run with `--ignored` (needs vpxdec + corpus)
+test svc_temporal_three_layer_extracts_byte_exact_through_all_decoders ... ignored, Stage 4d three-layer extraction oracle — needs vpxdec, ffmpeg, and corpus
+test temporal_svc_lifecycle_is_deterministic_for_two_and_three_layers ... ok
+test temporal_svc_base_layer_decodes_identically_when_enhancement_is_dropped ... ok
+test temporal_svc_three_layers_decode_identically_at_each_drop_point ... ok
+
+test result: ok. 3 passed; 0 failed; 3 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running tests\w_tpl.rs (target\debug\deps\w_tpl-6f3ba2624e0d9ad3.exe)
+
+running 3 tests
+test w_tpl_on_byte_exact_through_vpxdec_and_differs ... ignored, A23 TPL vpxdec oracle; run with `--ignored`
+test w_tpl_on_stream_differs_from_off ... ok
+test w_tpl_rdmult_adjusted_only_when_enabled ... ok
+
+test result: ok. 2 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.39s
+
+     Running tests\w_vbr_rc_proof.rs (target\debug\deps\w_vbr_rc_proof-06a63185fb091725.exe)
+
+running 5 tests
+test vbr_completes_30_frames_without_panic ... ok
+test vbr_q_respects_active_best_and_active_worst_bounds_every_frame ... ok
+test vbr_q_stays_in_reasonable_range ... ok
+test vbr_targets_diverge_from_cbr_on_first_frame ... ok
+test vbr_kf_q_differs_from_steady_state_inter_q ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+   Doc-tests rvp9_encoder
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s

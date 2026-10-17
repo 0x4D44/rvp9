@@ -1,0 +1,86 @@
+#< CLIXML
+   Compiling rvp9-core v0.2.0-alpha.4 (D:\worktrees\rvp9-postfix-main\20261017-TSK-HUM@ANVIL-windows-post-fix-requalification\crates\rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (D:\worktrees\rvp9-postfix-main\20261017-TSK-HUM@ANVIL-windows-post-fix-requalification\crates\rvp9-decoder)
+    Checking static_assertions v1.1.0
+    Checking typenum v1.20.1
+    Checking crossbeam-utils v0.8.21
+    Checking memchr v2.8.0
+    Checking itoa v1.0.18
+   Compiling rvp9-harness v0.2.0-alpha.4 (D:\worktrees\rvp9-postfix-main\20261017-TSK-HUM@ANVIL-windows-post-fix-requalification\crates\rvp9-harness)
+    Checking cfg-if v1.0.4
+    Checking cpufeatures v0.2.17
+    Checking serde_core v1.0.228
+    Checking zmij v1.0.21
+    Checking crossbeam-channel v0.5.15
+    Checking generic-array v0.14.7
+    Checking block-buffer v0.10.4
+    Checking crypto-common v0.1.7
+    Checking digest v0.10.7
+    Checking sha2 v0.10.9
+    Checking serde_json v1.0.149
+    Checking serde v1.0.228
+    Checking rvp9-encoder v0.2.0-alpha.4 (D:\worktrees\rvp9-postfix-main\20261017-TSK-HUM@ANVIL-windows-post-fix-requalification\crates\rvp9-encoder)
+    Checking rvp9-io v0.2.0-alpha.4 (D:\worktrees\rvp9-postfix-main\20261017-TSK-HUM@ANVIL-windows-post-fix-requalification\crates\rvp9-io)
+    Checking rvp9-cli v0.2.0-alpha.4 (D:\worktrees\rvp9-postfix-main\20261017-TSK-HUM@ANVIL-windows-post-fix-requalification\crates\rvp9-cli)
+warning: using `clone` on type `EncoderConfig` which implements the `Copy` trait
+     --> crates\rvp9-encoder\src\frame_loop.rs:14265:42
+      |
+14265 |         let mut one = StreamEncoder::new(cfg.clone()).unwrap();
+      |                                          ^^^^^^^^^^^ help: try removing the `clone` call: `cfg`
+      |
+      = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#clone_on_copy
+      = note: `-W clippy::clone-on-copy` implied by `-W clippy::all`
+      = help: to override `-W clippy::all` add `#[allow(clippy::clone_on_copy)]`
+
+warning: match expression looks like `matches!` macro
+    --> crates\rvp9-encoder\src\spatial_encoder.rs:1082:41
+     |
+1082 |                   let component_matches = match (
+     |  _________________________________________^
+1083 | |                     component_index,
+1084 | |                     &component.header.kind,
+1085 | |                     expect_key_access_unit,
+...    |
+1115 | |                     _ => false,
+1116 | |                 };
+     | |_________________^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#match_like_matches_macro
+     = note: `-W clippy::match-like-matches-macro` implied by `-W clippy::all`
+     = help: to override `-W clippy::all` add `#[allow(clippy::match_like_matches_macro)]`
+help: use `matches!` directly
+     |
+1082 ~                 let component_matches = matches!((
+1083 +                     component_index,
+1084 +                     &component.header.kind,
+1085 +                     expect_key_access_unit,
+1086 +                 ), (0, WireFrameKind::KeyFrame, true) | (
+1087 +                         0,
+1088 +                         WireFrameKind::InterFrame {
+1089 +                             refresh_frame_flags: 0x01,
+1090 +                             ref_frame_indices: [0, 0, 0],
+1091 +                             ..
+1092 +                         },
+1093 +                         false,
+1094 +                     ) | (
+1095 +                         1,
+1096 +                         WireFrameKind::InterFrame {
+1097 +                             refresh_frame_flags: 0x02,
+1098 +                             ref_frame_indices: [0, 1, 0],
+1099 +                             ..
+1100 +                         },
+1101 +                         true,
+1102 +                     ) | (
+1103 +                         1,
+1104 +                         WireFrameKind::InterFrame {
+1105 +                             refresh_frame_flags: 0x02,
+1106 +                             ref_frame_indices: [1, 0, 1],
+1107 +                             ..
+1108 +                         },
+1109 +                         false,
+1110 ~                     ));
+     |
+
+warning: `rvp9-encoder` (lib test) generated 2 warnings (run `cargo clippy --fix --lib -p rvp9-encoder --tests -- ` to apply 1 suggestion)
+    Finished `dev` profile [optimized + debuginfo] target(s) in 12.55s
+<Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com/powershell/2004/04"><Obj S="progress" RefId="0"><TN RefId="0"><T>System.Management.Automation.PSCustomObject</T><T>System.Object</T></TN><MS><I64 N="SourceId">1</I64><PR N="Record"><AV>Preparing modules for first use.</AV><AI>0</AI><Nil /><PI>-1</PI><PC>-1</PC><T>Completed</T><SR>-1</SR><SD> </SD></PR></MS></Obj></Objs>
