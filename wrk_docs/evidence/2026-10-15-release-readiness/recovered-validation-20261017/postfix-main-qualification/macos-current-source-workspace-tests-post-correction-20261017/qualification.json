@@ -25,6 +25,19 @@
       "rvp9-harness::loud_child_stderr_is_file_backed_and_read_with_a_byte_limit": "passed in the complete rerun; the earlier one-time failure was not reproduced"
     }
   },
+  "bench_clippy": {
+    "candidate_revision": "890dc491dce76e7e4db1f640261ffd015dde8615",
+    "command": "nice -n 19 deltic timeout 1800 cargo clippy -p rvp9-bench --all-targets --locked --offline",
+    "stdin": "closed",
+    "exit_status": 0,
+    "warnings": 0,
+    "raw": {
+      "file": "rvp9-bench-clippy.raw.txt.gz",
+      "bytes": 519,
+      "sha256": "1793ca900f0453e51a47ea7c12645ad5bfe105f87f5df938a61cef1e8fd45d56",
+      "uncompressed_sha256": "b12fb0fc5109d47a8febada66d99f8c6459f668f956a050e95902b8ae91e31ac"
+    }
+  },
   "limits": [
     "This is the default Rust workspace test suite; 64 existing tests were ignored.",
     "This Mac result does not qualify the Windows workspace suite, production quality/performance/latency, or the separate native/scalar conformance gates."
