@@ -1,0 +1,219 @@
+{
+  "schema": "rvp9.windows-current-source-encoder-correctness.v1",
+  "recorded_at_utc": "2026-10-17T12:20:46Z",
+  "source": {
+    "commit": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+    "worktree": "D:\\worktrees\\rvp9-postfix-main\\20261017-TSK-HUM@ANVIL-windows-post-fix-requalification",
+    "branch": "task/20261017-TSK-HUM@ANVIL-windows-post-fix-requalification",
+    "tracked_tree_clean_after_runs": true,
+    "host": "ANVIL, native Windows x86-64",
+    "host_triple": "x86_64-pc-windows-msvc",
+    "git_bash_host": "MINGW64_NT-10.0-26200 Anvil 3.6.5-22c95533.x86_64",
+    "pinned_libvpx_submodule_commit": "12f3a2ac603e8f10742105519e0cd03c3b8f71dd"
+  },
+  "toolchain": {
+    "rustc": "rustc 1.95.0 (59807616e 2026-04-14)",
+    "cargo": "cargo 1.95.0 (f2d3ce0bd 2026-03-21)",
+    "ffmpeg": {
+      "path": "C:\\Users\\marti\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\\ffmpeg-8.0.1-full_build\\bin\\ffmpeg.exe",
+      "version": "ffmpeg version 8.0.1-full_build-www.gyan.dev"
+    }
+  },
+  "binaries": {
+    "current_source": {
+      "rvp9enc": {
+        "path": "D:\\worktrees\\rvp9-postfix-main\\20261017-TSK-HUM@ANVIL-windows-post-fix-requalification\\target\\release\\rvp9enc.exe",
+        "bytes": 1993216,
+        "sha256": "d42dda405c68709a1b3670cbdd47492d8f89fe2e494d3113d11bbf48f5dc6bd1"
+      },
+      "rvp9dec": {
+        "path": "D:\\worktrees\\rvp9-postfix-main\\20261017-TSK-HUM@ANVIL-windows-post-fix-requalification\\target\\release\\rvp9dec.exe",
+        "bytes": 994304,
+        "sha256": "75548aaaad76c2b41dad1ecd4410a7c79386b55babcea043a398a0c66f4744fc"
+      }
+    },
+    "reference": {
+      "provenance": {
+        "host": "Crucible",
+        "source_checkout_commit": "474dfd99a673df85f750136f7552ac156b7a24e9",
+        "tracked_tree_clean": true,
+        "libvpx_submodule_commit": "12f3a2ac603e8f10742105519e0cd03c3b8f71dd",
+        "verification": "The prebuilt binaries were copied to ANVIL; destination SHA-256 values matched the recorded source-checkout identities and both --help commands exited 0."
+      },
+      "vpxenc": {
+        "path": "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\win-pinned-vpx-58a8c1cf\\vpxenc.exe",
+        "bytes": 4431431,
+        "sha256": "88ba702de16af47327490a7d016002fd05169e074c6c6657b9e9ff7a8d4a135d"
+      },
+      "vpxdec": {
+        "path": "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\win-pinned-vpx-58a8c1cf\\vpxdec.exe",
+        "bytes": 4268881,
+        "sha256": "91eb8ab65f62f1d63d750878b20b6b75a2882f75814e623ab54acf22b9ad02b6"
+      }
+    }
+  },
+  "inputs": {
+    "alpha32_source_dir": "D:\\worktrees\\rvp9-postfix-main\\20261017-TSK-HUM@ANVIL-windows-post-fix-requalification\\tests\\corpus",
+    "canonical_fixture_hashes_match": true,
+    "fixtures": [
+      {
+        "name": "in_to_tree_420_720p50.y4m",
+        "sha256": "81166517a3054c789923535b5da23fbbb9bbd7fd4c28dac83918ac351e121e74"
+      },
+      {
+        "name": "ducks_take_off_420_720p50.y4m",
+        "sha256": "0e09aa923ce72e2f6d1c978c3c1cc8dd9588d2ede819081f040213e361970efc"
+      },
+      {
+        "name": "old_town_cross_420_720p50.y4m",
+        "sha256": "0fbc2ec0c552ad693528b2e49409c7449880b9230055a7696346473d1aaf4123"
+      }
+    ]
+  },
+  "qualification_scripts": {
+    "alpha32": {
+      "path": "scripts/qualify-alpha-encoder.sh",
+      "sha256": "78e5bce5a30291c07907c66b6f86e35baa1c1fa4bba2546ecaea825cc0d6543e"
+    },
+    "reverse24": {
+      "path": "scripts/qualify-reference-decoder.sh",
+      "sha256": "14dced86d315b618ef93c444cb94af5de12490fbcb4bc178b51dec3d0d4b43a2"
+    }
+  },
+  "runtime_adaptation": {
+    "shell": "Git Bash",
+    "applied_in_same_bash_process_as_sourced_script": true,
+    "functions": [
+      "shasum() { shift 2; command sha256sum \"$@\"; }",
+      "stat() { if [ \"$1\" = -f ] && [ \"$2\" = %z ]; then command stat -c %s \"$3\"; else command stat \"$@\"; fi; }"
+    ],
+    "reason": "The qualification script requests a BSD-style stat -f %z size; Git Bash's GNU stat uses -c %s. The adapter translates that request and maps shasum to sha256sum."
+  },
+  "runs": {
+    "alpha32": {
+      "timeout_command": "deltic timeout 3600",
+      "script": "scripts/qualify-alpha-encoder.sh",
+      "environment": {
+        "RVP9_ALPHA_FRAMES": 60,
+        "RVP9_ALPHA_SOURCE_DIR": "D:\\worktrees\\rvp9-postfix-main\\20261017-TSK-HUM@ANVIL-windows-post-fix-requalification\\tests\\corpus",
+        "RVP9_ALPHA_VPXDEC": "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\win-pinned-vpx-58a8c1cf\\vpxdec.exe",
+        "RVP9_ALPHA_LIBVPX_SOURCE": "D:\\worktrees\\rvp9-postfix-main\\20261017-TSK-HUM@ANVIL-windows-post-fix-requalification\\third_party\\libvpx",
+        "RVP9_ALPHA_WORK_DIR": "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\win-adapted-correctness-ea8a7d9d\\alpha32-corrected"
+      },
+      "script_execution": "The script was sourced after defining both compatibility functions in the same Bash process.",
+      "command_capture_note": "The exact remote transport command was not separately retained; timeout, script, effective environment, adapter definitions, raw output, exit capture, and manifest are recorded here.",
+      "frames_per_row": 60,
+      "rows": 32,
+      "passed_rows": 32,
+      "failed_rows": 0,
+      "exit_code": 0,
+      "status": "pass; all 32 encoder streams passed the pinned libvpx and FFmpeg decode comparison",
+      "diagnostic_warning_or_error_lines": 0,
+      "manifest": {
+        "path": "windows-current-source-alpha32-manifest.raw.txt",
+        "bytes": 7285,
+        "sha256": "8564fc6177c9a1f6c0591b1d6b5f810043de7730fb5a2b1cec66339f43f51ce6"
+      },
+      "raw_log": {
+        "path": "windows-current-source-alpha32.raw.txt",
+        "bytes": 1467,
+        "sha256": "d4e9a48887c6f7be45e846e7d834aab8b7b36da22a5e08fa9ce6eed5f5ed277c"
+      },
+      "exit_capture": {
+        "path": "windows-current-source-alpha32.exit.raw.txt",
+        "bytes": 12,
+        "sha256": "bde294368bfed77c2cddf8cec271d398aee9cdbab3b26e1059281bd33adb0120"
+      }
+    },
+    "reverse24": {
+      "timeout_command": "deltic timeout 3600",
+      "script": "scripts/qualify-reference-decoder.sh",
+      "environment": {
+        "RVP9_REFERENCE_DECODER_FRAMES": 12,
+        "RVP9_REFERENCE_DECODER_VPXENC": "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\win-pinned-vpx-58a8c1cf\\vpxenc.exe",
+        "RVP9_REFERENCE_DECODER_VPXDEC": "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\win-pinned-vpx-58a8c1cf\\vpxdec.exe",
+        "RVP9_REFERENCE_DECODER_LIBVPX_SOURCE": "D:\\worktrees\\rvp9-postfix-main\\20261017-TSK-HUM@ANVIL-windows-post-fix-requalification\\third_party\\libvpx",
+        "RVP9_REFERENCE_DECODER_RVP9DEC": "D:\\worktrees\\rvp9-postfix-main\\20261017-TSK-HUM@ANVIL-windows-post-fix-requalification\\target\\release\\rvp9dec.exe",
+        "RVP9_REFERENCE_DECODER_WORK_DIR": "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\win-adapted-correctness-ea8a7d9d\\reverse24"
+      },
+      "script_execution": "The script was sourced after defining both compatibility functions in the same Bash process.",
+      "command_capture_note": "The exact remote transport command was not separately retained; timeout, script, effective environment, adapter definitions, raw output, exit capture, and manifest are recorded here.",
+      "input": {
+        "generator": "qualification script generated deterministic 128x64, 12-frame Y4M input"
+      },
+      "rows": 24,
+      "passed_rows": 24,
+      "failed_rows": 0,
+      "decoded_hash_pairs": 24,
+      "all_rvp9_libvpx_decoded_hashes_match": true,
+      "decoded_bytes_per_pair": 147456,
+      "exit_code": 0,
+      "status": "pass; all 24 RVP9 and pinned-libvpx decoded output pairs are byte-identical",
+      "diagnostic_warning_or_error_lines": 0,
+      "manifest": {
+        "path": "windows-current-source-reverse24-manifest.raw.txt",
+        "bytes": 8931,
+        "sha256": "5f03196156d27be52bce6b9e3b5fae61406fcc31046e3c2115e8270be9d64ffb"
+      },
+      "raw_log": {
+        "path": "windows-current-source-reverse24.raw.txt",
+        "bytes": 998,
+        "sha256": "04c835c7b88130bbfedc8f78c11ca6b250abe0a73184c25d93d03398ec7fc107"
+      },
+      "exit_capture": {
+        "path": "windows-current-source-reverse24.exit.raw.txt",
+        "bytes": 12,
+        "sha256": "bde294368bfed77c2cddf8cec271d398aee9cdbab3b26e1059281bd33adb0120"
+      }
+    }
+  },
+  "rejected_attempts": [
+    {
+      "attempt": "Initial unadapted alpha32 run",
+      "qualified": false,
+      "reason": "96 integer expression expected diagnostics from the Git Bash stat incompatibility; exit 0 and a 32/32 summary were not accepted as qualified evidence.",
+      "raw_log": {
+        "path": "windows-current-source-alpha32-unadapted.raw.txt",
+        "bytes": 45298,
+        "sha256": "aeec4cff2aef40abb1f6be43148467e305c8f5922e11d22a2482eb30c7b98424"
+      },
+      "manifest": {
+        "path": "windows-current-source-alpha32-unadapted-manifest.raw.txt",
+        "bytes": 7285,
+        "sha256": "8564fc6177c9a1f6c0591b1d6b5f810043de7730fb5a2b1cec66339f43f51ce6"
+      }
+    },
+    {
+      "attempt": "Parent-shell adapter attempt",
+      "qualified": false,
+      "reason": "The functions did not propagate into the child Bash process; the run again emitted 96 integer expression expected diagnostics and was excluded.",
+      "exit_code": 0,
+      "raw_log": {
+        "path": "windows-current-source-alpha32-wrapper-attempt.raw.txt",
+        "bytes": 44571,
+        "sha256": "a54175711a128dd230889cfa7c0ce6596d38fad69157b6961e49b65f8c200970"
+      },
+      "exit_capture": {
+        "path": "windows-current-source-alpha32-wrapper-attempt.exit.raw.txt",
+        "bytes": 12,
+        "sha256": "bde294368bfed77c2cddf8cec271d398aee9cdbab3b26e1059281bd33adb0120"
+      },
+      "manifest": {
+        "path": "windows-current-source-alpha32-wrapper-attempt-manifest.raw.txt",
+        "bytes": 7285,
+        "sha256": "8564fc6177c9a1f6c0591b1d6b5f810043de7730fb5a2b1cec66339f43f51ce6"
+      }
+    }
+  ],
+  "prior_setup_attempt": {
+    "path": "windows-current-source-libvpx-build.raw.txt",
+    "exit_code": 1,
+    "reason": "Current ANVIL toolchain could not invoke GCC with -m64 for the x86_64-win64-gcc configure target.",
+    "resolution": "Reused the two prebuilt reference binaries from the clean Crucible checkout listed above; their libvpx submodule commit matched the current-source submodule."
+  },
+  "limits": [
+    "This is exact-source correctness evidence only; it does not establish BD-rate, throughput, frame latency, PGO qualification, sanitizer, Miri, fuzz, or package archive-test gates.",
+    "Reference tools came from a separate clean checkout with the identical pinned libvpx submodule revision; this does not establish that ANVIL can rebuild libvpx with its current GCC setup.",
+    "The exact transport command line was not captured separately; scripts, effective parameters, adapters, outputs, manifests, exit values, and binary identities are recorded."
+  ]
+}

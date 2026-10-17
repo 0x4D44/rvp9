@@ -1,0 +1,612 @@
+    Finished `release` profile [optimized + debuginfo] target(s) in 0.03s
+Preparing 1080p qualification inputs in /c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32
+[01/32] base-cpu6-vbr-in-tree
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/base-cpu6-vbr-in-tree.rvp9.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 457162176  Available: 457162176
+Inodes: Total: 18446744073709551615 Free: -1
+82944000: integer expression expected
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/base-cpu6-vbr-in-tree.vpx.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 457162175  Available: 457162175
+Inodes: Total: 18446744073709551615 Free: -1
+82944000: integer expression expected
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/base-cpu6-vbr-in-tree.ffmpeg.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 457162175  Available: 457162175
+Inodes: Total: 18446744073709551615 Free: -1
+82944000: integer expression expected
+[02/32] base-cpu6-cbr-in-tree
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/base-cpu6-cbr-in-tree.rvp9.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 457158017  Available: 457158017
+Inodes: Total: 18446744073709551615 Free: -1
+82944000: integer expression expected
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/base-cpu6-cbr-in-tree.vpx.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 457158017  Available: 457158017
+Inodes: Total: 18446744073709551615 Free: -1
+82944000: integer expression expected
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/base-cpu6-cbr-in-tree.ffmpeg.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 457157697  Available: 457157697
+Inodes: Total: 18446744073709551615 Free: -1
+82944000: integer expression expected
+[03/32] base-cpu7-vbr-ducks
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/base-cpu7-vbr-ducks.rvp9.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 457151564  Available: 457151564
+Inodes: Total: 18446744073709551615 Free: -1
+82944000: integer expression expected
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/base-cpu7-vbr-ducks.vpx.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 457151420  Available: 457151420
+Inodes: Total: 18446744073709551615 Free: -1
+82944000: integer expression expected
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/base-cpu7-vbr-ducks.ffmpeg.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 457151420  Available: 457151420
+Inodes: Total: 18446744073709551615 Free: -1
+82944000: integer expression expected
+[04/32] base-cpu7-cbr-ducks
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/base-cpu7-cbr-ducks.rvp9.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 457145256  Available: 457145256
+Inodes: Total: 18446744073709551615 Free: -1
+82944000: integer expression expected
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/base-cpu7-cbr-ducks.vpx.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 457145256  Available: 457145256
+Inodes: Total: 18446744073709551615 Free: -1
+82944000: integer expression expected
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/base-cpu7-cbr-ducks.ffmpeg.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 457145256  Available: 457145256
+Inodes: Total: 18446744073709551615 Free: -1
+82944000: integer expression expected
+[05/32] base-cpu8-vbr-old-town
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/base-cpu8-vbr-old-town.rvp9.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 457140097  Available: 457140097
+Inodes: Total: 18446744073709551615 Free: -1
+82944000: integer expression expected
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/base-cpu8-vbr-old-town.vpx.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 457140097  Available: 457140097
+Inodes: Total: 18446744073709551615 Free: -1
+82944000: integer expression expected
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/base-cpu8-vbr-old-town.ffmpeg.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 457139995  Available: 457139995
+Inodes: Total: 18446744073709551615 Free: -1
+82944000: integer expression expected
+[06/32] base-cpu8-cbr-old-town
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/base-cpu8-cbr-old-town.rvp9.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 457134343  Available: 457134343
+Inodes: Total: 18446744073709551615 Free: -1
+82944000: integer expression expected
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/base-cpu8-cbr-old-town.vpx.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 457134167  Available: 457134167
+Inodes: Total: 18446744073709551615 Free: -1
+82944000: integer expression expected
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/base-cpu8-cbr-old-town.ffmpeg.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 457134167  Available: 457134167
+Inodes: Total: 18446744073709551615 Free: -1
+82944000: integer expression expected
+[07/32] resolution-1080p30-vbr-in-tree
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/resolution-1080p30-vbr-in-tree.rvp9.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 457052564  Available: 457052564
+Inodes: Total: 18446744073709551615 Free: -1
+186624000: integer expression expected
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/resolution-1080p30-vbr-in-tree.vpx.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 457052564  Available: 457052564
+Inodes: Total: 18446744073709551615 Free: -1
+186624000: integer expression expected
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/resolution-1080p30-vbr-in-tree.ffmpeg.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 457052564  Available: 457052564
+Inodes: Total: 18446744073709551615 Free: -1
+186624000: integer expression expected
+[08/32] resolution-1080p30-cbr-ducks
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/resolution-1080p30-cbr-ducks.rvp9.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 457043055  Available: 457043055
+Inodes: Total: 18446744073709551615 Free: -1
+186624000: integer expression expected
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/resolution-1080p30-cbr-ducks.vpx.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 457042484  Available: 457042484
+Inodes: Total: 18446744073709551615 Free: -1
+186624000: integer expression expected
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/resolution-1080p30-cbr-ducks.ffmpeg.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 457042196  Available: 457042196
+Inodes: Total: 18446744073709551615 Free: -1
+186624000: integer expression expected
+[09/32] resolution-1080p60-vbr-old-town
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/resolution-1080p60-vbr-old-town.rvp9.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456991777  Available: 456991777
+Inodes: Total: 18446744073709551615 Free: -1
+186624000: integer expression expected
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/resolution-1080p60-vbr-old-town.vpx.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456991009  Available: 456991009
+Inodes: Total: 18446744073709551615 Free: -1
+186624000: integer expression expected
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/resolution-1080p60-vbr-old-town.ffmpeg.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456991009  Available: 456991009
+Inodes: Total: 18446744073709551615 Free: -1
+186624000: integer expression expected
+[10/32] resolution-1080p60-cbr-in-tree
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/resolution-1080p60-cbr-in-tree.rvp9.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456952004  Available: 456952004
+Inodes: Total: 18446744073709551615 Free: -1
+186624000: integer expression expected
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/resolution-1080p60-cbr-in-tree.vpx.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456951236  Available: 456951236
+Inodes: Total: 18446744073709551615 Free: -1
+186624000: integer expression expected
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/resolution-1080p60-cbr-in-tree.ffmpeg.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456950485  Available: 456950485
+Inodes: Total: 18446744073709551615 Free: -1
+186624000: integer expression expected
+[11/32] aq3-720p-vbr-in-tree
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/aq3-720p-vbr-in-tree.rvp9.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456994006  Available: 456994006
+Inodes: Total: 18446744073709551615 Free: -1
+82944000: integer expression expected
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/aq3-720p-vbr-in-tree.vpx.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456993782  Available: 456993782
+Inodes: Total: 18446744073709551615 Free: -1
+82944000: integer expression expected
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/aq3-720p-vbr-in-tree.ffmpeg.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456993526  Available: 456993526
+Inodes: Total: 18446744073709551615 Free: -1
+82944000: integer expression expected
+[12/32] aq3-720p-cbr-ducks
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/aq3-720p-cbr-ducks.rvp9.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456958180  Available: 456958180
+Inodes: Total: 18446744073709551615 Free: -1
+82944000: integer expression expected
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/aq3-720p-cbr-ducks.vpx.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456957636  Available: 456957636
+Inodes: Total: 18446744073709551615 Free: -1
+82944000: integer expression expected
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/aq3-720p-cbr-ducks.ffmpeg.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456956868  Available: 456956868
+Inodes: Total: 18446744073709551615 Free: -1
+82944000: integer expression expected
+[13/32] aq3-1080p-vbr-old-town
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/aq3-1080p-vbr-old-town.rvp9.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456853593  Available: 456853593
+Inodes: Total: 18446744073709551615 Free: -1
+186624000: integer expression expected
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/aq3-1080p-vbr-old-town.vpx.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456852905  Available: 456852905
+Inodes: Total: 18446744073709551615 Free: -1
+186624000: integer expression expected
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/aq3-1080p-vbr-old-town.ffmpeg.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456851849  Available: 456851849
+Inodes: Total: 18446744073709551615 Free: -1
+186624000: integer expression expected
+[14/32] aq3-1080p-cbr-in-tree
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/aq3-1080p-cbr-in-tree.rvp9.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456820891  Available: 456820891
+Inodes: Total: 18446744073709551615 Free: -1
+186624000: integer expression expected
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/aq3-1080p-cbr-in-tree.vpx.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456820587  Available: 456820587
+Inodes: Total: 18446744073709551615 Free: -1
+186624000: integer expression expected
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/aq3-1080p-cbr-in-tree.ffmpeg.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456819787  Available: 456819787
+Inodes: Total: 18446744073709551615 Free: -1
+186624000: integer expression expected
+[15/32] denoise-720p-vbr-ducks
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/denoise-720p-vbr-ducks.rvp9.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456796405  Available: 456796405
+Inodes: Total: 18446744073709551615 Free: -1
+82944000: integer expression expected
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/denoise-720p-vbr-ducks.vpx.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456796003  Available: 456796003
+Inodes: Total: 18446744073709551615 Free: -1
+82944000: integer expression expected
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/denoise-720p-vbr-ducks.ffmpeg.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456795429  Available: 456795429
+Inodes: Total: 18446744073709551615 Free: -1
+82944000: integer expression expected
+[16/32] denoise-720p-cbr-old-town
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/denoise-720p-cbr-old-town.rvp9.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456781009  Available: 456781009
+Inodes: Total: 18446744073709551615 Free: -1
+82944000: integer expression expected
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/denoise-720p-cbr-old-town.vpx.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456781009  Available: 456781009
+Inodes: Total: 18446744073709551615 Free: -1
+82944000: integer expression expected
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/denoise-720p-cbr-old-town.ffmpeg.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456781009  Available: 456781009
+Inodes: Total: 18446744073709551615 Free: -1
+82944000: integer expression expected
+[17/32] denoise-1080p-vbr-in-tree
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/denoise-1080p-vbr-in-tree.rvp9.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456695133  Available: 456695133
+Inodes: Total: 18446744073709551615 Free: -1
+186624000: integer expression expected
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/denoise-1080p-vbr-in-tree.vpx.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456694845  Available: 456694845
+Inodes: Total: 18446744073709551615 Free: -1
+186624000: integer expression expected
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/denoise-1080p-vbr-in-tree.ffmpeg.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456694845  Available: 456694845
+Inodes: Total: 18446744073709551615 Free: -1
+186624000: integer expression expected
+[18/32] denoise-1080p-cbr-ducks
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/denoise-1080p-cbr-ducks.rvp9.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456673838  Available: 456673838
+Inodes: Total: 18446744073709551615 Free: -1
+186624000: integer expression expected
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/denoise-1080p-cbr-ducks.vpx.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456673838  Available: 456673838
+Inodes: Total: 18446744073709551615 Free: -1
+186624000: integer expression expected
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/denoise-1080p-cbr-ducks.ffmpeg.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456673470  Available: 456673470
+Inodes: Total: 18446744073709551615 Free: -1
+186624000: integer expression expected
+[19/32] temporal2-cpu6-vbr-in-tree
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/temporal2-cpu6-vbr-in-tree.rvp9.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456741600  Available: 456741600
+Inodes: Total: 18446744073709551615 Free: -1
+82944000: integer expression expected
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/temporal2-cpu6-vbr-in-tree.vpx.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456741600  Available: 456741600
+Inodes: Total: 18446744073709551615 Free: -1
+82944000: integer expression expected
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/temporal2-cpu6-vbr-in-tree.ffmpeg.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456741232  Available: 456741232
+Inodes: Total: 18446744073709551615 Free: -1
+82944000: integer expression expected
+[20/32] temporal2-cpu6-cbr-in-tree
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/temporal2-cpu6-cbr-in-tree.rvp9.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456766628  Available: 456766628
+Inodes: Total: 18446744073709551615 Free: -1
+82944000: integer expression expected
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/temporal2-cpu6-cbr-in-tree.vpx.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456766628  Available: 456766628
+Inodes: Total: 18446744073709551615 Free: -1
+82944000: integer expression expected
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/temporal2-cpu6-cbr-in-tree.ffmpeg.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456766628  Available: 456766628
+Inodes: Total: 18446744073709551615 Free: -1
+82944000: integer expression expected
+[21/32] temporal2-cpu7-vbr-ducks
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/temporal2-cpu7-vbr-ducks.rvp9.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456746064  Available: 456746064
+Inodes: Total: 18446744073709551615 Free: -1
+82944000: integer expression expected
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/temporal2-cpu7-vbr-ducks.vpx.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456745794  Available: 456745794
+Inodes: Total: 18446744073709551615 Free: -1
+82944000: integer expression expected
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/temporal2-cpu7-vbr-ducks.ffmpeg.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456745058  Available: 456745058
+Inodes: Total: 18446744073709551615 Free: -1
+82944000: integer expression expected
+[22/32] temporal2-cpu7-cbr-ducks
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/temporal2-cpu7-cbr-ducks.rvp9.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456733766  Available: 456733766
+Inodes: Total: 18446744073709551615 Free: -1
+82944000: integer expression expected
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/temporal2-cpu7-cbr-ducks.vpx.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456733622  Available: 456733622
+Inodes: Total: 18446744073709551615 Free: -1
+82944000: integer expression expected
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/temporal2-cpu7-cbr-ducks.ffmpeg.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456733622  Available: 456733622
+Inodes: Total: 18446744073709551615 Free: -1
+82944000: integer expression expected
+[23/32] temporal2-cpu8-vbr-old-town
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/temporal2-cpu8-vbr-old-town.rvp9.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456723359  Available: 456723359
+Inodes: Total: 18446744073709551615 Free: -1
+82944000: integer expression expected
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/temporal2-cpu8-vbr-old-town.vpx.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456723215  Available: 456723215
+Inodes: Total: 18446744073709551615 Free: -1
+82944000: integer expression expected
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/temporal2-cpu8-vbr-old-town.ffmpeg.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456722783  Available: 456722783
+Inodes: Total: 18446744073709551615 Free: -1
+82944000: integer expression expected
+[24/32] temporal2-cpu8-cbr-old-town
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/temporal2-cpu8-cbr-old-town.rvp9.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456712354  Available: 456712354
+Inodes: Total: 18446744073709551615 Free: -1
+82944000: integer expression expected
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/temporal2-cpu8-cbr-old-town.vpx.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456712162  Available: 456712162
+Inodes: Total: 18446744073709551615 Free: -1
+82944000: integer expression expected
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/temporal2-cpu8-cbr-old-town.ffmpeg.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456712058  Available: 456712058
+Inodes: Total: 18446744073709551615 Free: -1
+82944000: integer expression expected
+[25/32] temporal3-cpu6-vbr-in-tree
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/temporal3-cpu6-vbr-in-tree.rvp9.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456694797  Available: 456694797
+Inodes: Total: 18446744073709551615 Free: -1
+82944000: integer expression expected
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/temporal3-cpu6-vbr-in-tree.vpx.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456694369  Available: 456694369
+Inodes: Total: 18446744073709551615 Free: -1
+82944000: integer expression expected
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/temporal3-cpu6-vbr-in-tree.ffmpeg.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456694147  Available: 456694147
+Inodes: Total: 18446744073709551615 Free: -1
+82944000: integer expression expected
+[26/32] temporal3-cpu6-cbr-in-tree
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/temporal3-cpu6-cbr-in-tree.rvp9.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456675491  Available: 456675491
+Inodes: Total: 18446744073709551615 Free: -1
+82944000: integer expression expected
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/temporal3-cpu6-cbr-in-tree.vpx.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456675171  Available: 456675171
+Inodes: Total: 18446744073709551615 Free: -1
+82944000: integer expression expected
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/temporal3-cpu6-cbr-in-tree.ffmpeg.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456674803  Available: 456674803
+Inodes: Total: 18446744073709551615 Free: -1
+82944000: integer expression expected
+[27/32] temporal3-cpu7-vbr-ducks
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/temporal3-cpu7-vbr-ducks.rvp9.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456649577  Available: 456649577
+Inodes: Total: 18446744073709551615 Free: -1
+82944000: integer expression expected
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/temporal3-cpu7-vbr-ducks.vpx.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456649321  Available: 456649321
+Inodes: Total: 18446744073709551615 Free: -1
+82944000: integer expression expected
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/temporal3-cpu7-vbr-ducks.ffmpeg.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456649049  Available: 456649049
+Inodes: Total: 18446744073709551615 Free: -1
+82944000: integer expression expected
+[28/32] temporal3-cpu7-cbr-ducks
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/temporal3-cpu7-cbr-ducks.rvp9.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456615313  Available: 456615313
+Inodes: Total: 18446744073709551615 Free: -1
+82944000: integer expression expected
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/temporal3-cpu7-cbr-ducks.vpx.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456614631  Available: 456614631
+Inodes: Total: 18446744073709551615 Free: -1
+82944000: integer expression expected
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/temporal3-cpu7-cbr-ducks.ffmpeg.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456614103  Available: 456614103
+Inodes: Total: 18446744073709551615 Free: -1
+82944000: integer expression expected
+[29/32] temporal3-cpu8-vbr-old-town
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/temporal3-cpu8-vbr-old-town.rvp9.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456604126  Available: 456604126
+Inodes: Total: 18446744073709551615 Free: -1
+82944000: integer expression expected
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/temporal3-cpu8-vbr-old-town.vpx.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456603352  Available: 456603352
+Inodes: Total: 18446744073709551615 Free: -1
+82944000: integer expression expected
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/temporal3-cpu8-vbr-old-town.ffmpeg.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456608633  Available: 456608633
+Inodes: Total: 18446744073709551615 Free: -1
+82944000: integer expression expected
+[30/32] temporal3-cpu8-cbr-old-town
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/temporal3-cpu8-cbr-old-town.rvp9.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456508897  Available: 456508897
+Inodes: Total: 18446744073709551615 Free: -1
+82944000: integer expression expected
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/temporal3-cpu8-cbr-old-town.vpx.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456508080  Available: 456508080
+Inodes: Total: 18446744073709551615 Free: -1
+82944000: integer expression expected
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/temporal3-cpu8-cbr-old-town.ffmpeg.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456507322  Available: 456507322
+Inodes: Total: 18446744073709551615 Free: -1
+82944000: integer expression expected
+[31/32] temporal2-1080p30-vbr-old-town
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/temporal2-1080p30-vbr-old-town.rvp9.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456372736  Available: 456372736
+Inodes: Total: 18446744073709551615 Free: -1
+186624000: integer expression expected
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/temporal2-1080p30-vbr-old-town.vpx.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456372480  Available: 456372480
+Inodes: Total: 18446744073709551615 Free: -1
+186624000: integer expression expected
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/temporal2-1080p30-vbr-old-town.ffmpeg.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456372104  Available: 456372104
+Inodes: Total: 18446744073709551615 Free: -1
+186624000: integer expression expected
+[32/32] temporal3-1080p30-vbr-in-tree
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/temporal3-1080p30-vbr-in-tree.rvp9.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456402393  Available: 456402393
+Inodes: Total: 18446744073709551615 Free: -1
+186624000: integer expression expected
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/temporal3-1080p30-vbr-in-tree.vpx.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456402329  Available: 456402329
+Inodes: Total: 18446744073709551615 Free: -1
+186624000: integer expression expected
+scripts/qualify-alpha-encoder.sh: line 227: [:   File: "/c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/temporal3-1080p30-vbr-in-tree.ffmpeg.yuv"
+    ID: fa022bb600000000 Namelen: 255     Type: UNKNOWN (0x3e72eff)
+Block size: 4096       Fundamental block size: 4096
+Blocks: Total: 976480255  Free: 456402132  Available: 456402132
+Inodes: Total: 18446744073709551615 Free: -1
+186624000: integer expression expected
+Alpha encoder qualification passed: 32/32 streams.
+Evidence: /c/Users/marti/AppData/Local/Temp/deltic-scratch/win-adapted-correctness-ea8a7d9d/alpha32/qualification.txt

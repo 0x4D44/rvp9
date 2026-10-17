@@ -1,0 +1,29 @@
+label|input|cpu-used|bitrate-kbps|end-usage|extra-arguments
+1080-in-tree-cpu6|1080-in-tree|6|2500|vbr|
+1080-ducks-cpu6|1080-ducks|6|2500|vbr|
+1080-old-town-cpu6|1080-old-town|6|2500|vbr|
+1080-in-tree-cpu7|1080-in-tree|7|2500|vbr|
+1080-ducks-cpu7|1080-ducks|7|2500|vbr|
+1080-old-town-cpu7|1080-old-town|7|2500|vbr|
+1080-in-tree-cpu8|1080-in-tree|8|2500|vbr|
+1080-ducks-cpu8|1080-ducks|8|2500|vbr|
+1080-old-town-cpu8|1080-old-town|8|2500|vbr|
+720-in-tree-cpu7|720-in-tree|7|1500|vbr|
+720-ducks-cpu7|720-ducks|7|1500|vbr|
+720-old-town-cpu7|720-old-town|7|1500|vbr|
+1080-in-tree-cbr-aq3|1080-in-tree|7|2500|cbr|--aq-mode=3
+1080-ducks-cbr-aq3|1080-ducks|7|2500|cbr|--aq-mode=3
+1080-old-town-cbr-aq3|1080-old-town|7|2500|cbr|--aq-mode=3
+1080-in-tree-denoise|1080-in-tree|7|2500|vbr|--noise-sensitivity=1
+1080-ducks-denoise|1080-ducks|7|2500|vbr|--noise-sensitivity=1
+1080-old-town-denoise|1080-old-town|7|2500|vbr|--noise-sensitivity=1
+1080-old-town-low-rate|1080-old-town|7|500|vbr|
+1080-old-town-high-rate|1080-old-town|7|6000|vbr|
+1080-old-town-temporal2|1080-old-town|7|2500|vbr|--temporal-layers=2
+1080-old-town-temporal3|1080-old-town|7|2500|vbr|--temporal-layers=3
+1080-old-town-spatial2-cpu6|1080-old-town|6|2835|cbr|--spatial-layers=2 --inter-layer-pred=0
+1080-old-town-spatial3-cpu6|1080-old-town|6|2835|cbr|--spatial-layers=3 --inter-layer-pred=0
+1080-old-town-spatial2-cpu7|1080-old-town|7|2835|cbr|--spatial-layers=2 --inter-layer-pred=0
+1080-old-town-spatial3-cpu7|1080-old-town|7|2835|cbr|--spatial-layers=3 --inter-layer-pred=0
+1080-old-town-spatial2-cpu8|1080-old-town|8|2835|cbr|--spatial-layers=2 --inter-layer-pred=0
+1080-old-town-spatial3-cpu8|1080-old-town|8|2835|cbr|--spatial-layers=3 --inter-layer-pred=0
