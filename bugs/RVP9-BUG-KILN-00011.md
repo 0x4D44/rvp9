@@ -1,6 +1,6 @@
 # RVP9-BUG-KILN-00011 - prev_mv_grid contains IntraFrame cells after an inter encode (a18 invariant violated) — pre-existing
 
-- **State:** Blocked
+- **State:** Closed
 - **Priority:** Should
 - **Severity:** Low
 - **Area:** encoder/prev_mv_grid population (Stage 4a' picker)
@@ -18,7 +18,8 @@
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** 2026-06-20 Opened by Claude from the green-the-build pass; confirmed pre-existing (fails at baseline 01f8f2b and at HEAD). -> 2026-06-23 Blocked by Codex during ledger-drain triage; current source and focused test evidence show the recorded no-`IntraFrame` invariant is stale, not an unattended-fixable encoder defect. Needs Arthur/maintainer disposition as non-defect or conversion into a docs-cleanup requirement.
+- **Resolution:** by-design
+- **State history:** 2026-06-20 Opened by Claude from the green-the-build pass; confirmed pre-existing (fails at baseline 01f8f2b and at HEAD). -> 2026-06-23 Blocked by Codex during ledger-drain triage; current source and focused test evidence show the recorded no-`IntraFrame` invariant is stale, not an unattended-fixable encoder defect. Needs Arthur/maintainer disposition as non-defect or conversion into a docs-cleanup requirement. -> Closed (2026-10-17T05:18:27Z, deltic:manual host=flux verdict=close resolution=by-design)
 
 ## Observation
 
@@ -84,3 +85,7 @@ The remaining stale HLD section 8.5 in
 `wrk_docs/Track_F/F0.3_HLD_prev_frame_mvs.md` now carries a dated supersession.
 Resolve as `by-design`: the cells are real and valid. This is not a new
 behavior fix or a claim of a fresh upstream differential comparison.
+
+### Close note (2026-10-17T05:18:27Z, deltic:manual host=flux verdict=close resolution=by-design)
+
+Close reason: Arthur approved disposition; current encoder and decoder intentionally write zero-MV IntraFrame/NoRefFrame grid cells and inter salvage excludes them. Exact original regression passed 1 selected; full sibling module passed 2, independently rerun by lead. Stale HLD8.5 corrected in 18bf1b47195dd708f532dac7eb829c25b56e8aea. No behavior or assertion changed.
