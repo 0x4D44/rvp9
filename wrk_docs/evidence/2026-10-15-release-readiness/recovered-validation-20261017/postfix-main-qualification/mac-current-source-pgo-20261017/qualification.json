@@ -243,7 +243,7 @@
     "result": "CLI help printed and exited successfully",
     "raw_output": "optimized-binary-help.raw.txt"
   },
-  "qualification_status": "PASS for exact-source macOS PGO artifact construction and CLI-help smoke only.",
+  "qualification_status": "PASS for exact-source macOS PGO artifact construction, CLI-help smoke, and 60-frame functional encode/decode smoke only.",
   "limits": [
     "No quality result, BD-rate, reference decode, timing, throughput, latency, portability or release qualification is established.",
     "Quiet status at build start was an open status snapshot, not a canonical load-guard pass.",
@@ -309,7 +309,75 @@
       "path": "profile-files.json",
       "bytes": 6765,
       "sha256": "19240f5c6b449733c6b0be062c7ff4255c7efa01811d3fb8672e9f3389864b55"
+    },
+    {
+      "path": "functional-smoke-20261017/commands.raw.txt",
+      "bytes": 4268,
+      "sha256": "bdf187df5af8ac4df5da80d76dc7ec70e622ceae2290dafa37987c2561684a0d"
+    },
+    {
+      "path": "functional-smoke-20261017/comparison.raw.txt",
+      "bytes": 436,
+      "sha256": "f5ad23de66533cbba046a72da7a6ec0e012932b3f09d6fe1d7e9126a7c37fadc"
+    },
+    {
+      "path": "functional-smoke-20261017/encode.raw.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "functional-smoke-20261017/ffmpeg-libvpx-decode.raw.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "functional-smoke-20261017/ffmpeg-native-decode.raw.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "functional-smoke-20261017/ffprobe.raw.json",
+      "bytes": 1625,
+      "sha256": "26c3b12c95cf81cc77ddcfd1ea5797f68ac4f310d2ec4efa4f843e14ba539f3f"
+    },
+    {
+      "path": "functional-smoke-20261017/mac-pgo-smoke.ivf",
+      "bytes": 477126,
+      "sha256": "772db4df880d056b8eb6f19ca7e5f10931b68e2c98b5b4bf70b2c2db2bf7234d"
+    },
+    {
+      "path": "functional-smoke-20261017/qualification.json",
+      "bytes": 9329,
+      "sha256": "31fa5d8ed668dd058a5614f42c3da1f2d22f1a6843640fed58304942f76eeb11"
+    },
+    {
+      "path": "functional-smoke-20261017/rvp9-decode.raw.txt",
+      "bytes": 61,
+      "sha256": "ee608d74ce7c3b6c10a0fa61832974bc1b3cce70aaf9c1cab7d6cd288e412ffa"
+    },
+    {
+      "path": "functional-smoke-20261017/rvp9dec-build.raw.txt",
+      "bytes": 835,
+      "sha256": "8ed0da8e5f6690639a163d8c25c63cb00df32f56d926e29e4b03f9f18d7d1011"
+    },
+    {
+      "path": "functional-smoke-20261017/tool-versions.raw.txt",
+      "bytes": 794,
+      "sha256": "a255a23b1d43e3a0477eb5ca6ddebcae7813a6cca257c22080d06fe687835c34"
     }
   ],
-  "related_corpus_plan_record": "../macos-current-source-pgo-corpus.json"
+  "related_corpus_plan_record": "../macos-current-source-pgo-corpus.json",
+  "post_build_functional_smoke": {
+    "record": "functional-smoke-20261017/qualification.json",
+    "status": "PASS for exact-source PGO 60-frame functional encode smoke and byte-identical local decode outputs.",
+    "encoder_sha256": "c5330411c2ff738ef515a9e293702d1312dd47cfad4675285ab7772d2e3c2daf",
+    "input_sha256": "81166517a3054c789923535b5da23fbbb9bbd7fd4c28dac83918ac351e121e74",
+    "ivf_bytes": 477126,
+    "ivf_sha256": "772db4df880d056b8eb6f19ca7e5f10931b68e2c98b5b4bf70b2c2db2bf7234d",
+    "frames_decoded_by_each_local_decoder": 60,
+    "decoded_output_bytes": 82944000,
+    "decoded_output_sha256": "65c9b2b5bbd548f8fc09b007f3b122456352c53b454253e88e220aae60473faf",
+    "pinned_reference_differential": false,
+    "timing_claim": false
+  }
 }

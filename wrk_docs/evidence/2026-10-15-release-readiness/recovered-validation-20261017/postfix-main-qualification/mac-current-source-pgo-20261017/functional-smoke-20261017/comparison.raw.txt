@@ -1,0 +1,5 @@
+Rechecked successful decoder outputs from mac-pgo-smoke.ivf:
+PASS rvp9dec: 82944000 bytes, SHA-256 65c9b2b5bbd548f8fc09b007f3b122456352c53b454253e88e220aae60473faf
+PASS FFmpeg native vp9: 82944000 bytes, SHA-256 65c9b2b5bbd548f8fc09b007f3b122456352c53b454253e88e220aae60473faf
+PASS FFmpeg libvpx-vp9: 82944000 bytes, SHA-256 65c9b2b5bbd548f8fc09b007f3b122456352c53b454253e88e220aae60473faf
+All three decoded outputs are byte-identical.

@@ -1,0 +1,152 @@
+{
+  "validation": "Exact-source Apple Silicon production-PGO encoder 60-frame functional smoke with three-decoder output comparison",
+  "captured_utc": "2026-10-17T15:53:15Z",
+  "source": {
+    "candidate_commit": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+    "origin_main_commit": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+    "worktree": "/Users/md/worktrees/rvp9/20261017-TSK-HUM-requalify-post-fix-candidate",
+    "tracked_and_untracked_status": "clean",
+    "encoder_path": "/Users/md/worktrees/rvp9/20261017-TSK-HUM-requalify-post-fix-candidate/target/encoder-pgo/optimized/release/rvp9enc",
+    "encoder_bytes": 2438600,
+    "encoder_sha256": "c5330411c2ff738ef515a9e293702d1312dd47cfad4675285ab7772d2e3c2daf"
+  },
+  "host_and_tools": {
+    "host": "flux.home.arpa",
+    "platform": "Darwin 25.6.0, arm64 (aarch64-apple-darwin)",
+    "rustc": "1.95.0 (59807616e 2026-04-14)",
+    "cargo": "1.95.0 (f2d3ce0bd 2026-03-21)",
+    "ffmpeg": "8.1.2",
+    "libvpx_decoder_library": "1.16.0 (Homebrew)",
+    "pinned_reference_status": "No pinned libvpx v1.14.1 vpxdec run; no vpxdec executable was used.",
+    "tool_versions_raw": "tool-versions.raw.txt"
+  },
+  "input": {
+    "path": "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/tests/corpus/in_to_tree_420_720p50.y4m",
+    "bytes": 691203035,
+    "sha256": "81166517a3054c789923535b5da23fbbb9bbd7fd4c28dac83918ac351e121e74"
+  },
+  "encoder_smoke": {
+    "command": "PGO encoder smoke: deltic timeout 120 /Users/md/worktrees/rvp9/20261017-TSK-HUM-requalify-post-fix-candidate/target/encoder-pgo/optimized/release/rvp9enc --codec=vp9 --ivf --passes=1 --rt --cpu-used=7 --target-bitrate=1500 --end-usage=vbr --fps=30/1 --threads=4 --tile-columns=2 --lag-in-frames=0 --tune-content=default --limit=60 --quiet -o /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/wrk_docs/evidence/2026-10-15-release-readiness/recovered-validation-20261017/postfix-main-qualification/mac-current-source-pgo-20261017/functional-smoke-20261017/mac-pgo-smoke.ivf /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/tests/corpus/in_to_tree_420_720p50.y4m",
+    "exit_code": 0,
+    "output_ivf": "mac-pgo-smoke.ivf",
+    "output_bytes": 477126,
+    "output_sha256": "772db4df880d056b8eb6f19ca7e5f10931b68e2c98b5b4bf70b2c2db2bf7234d",
+    "matches_current_source_windows_nmi_60_frame_smoke_ivf": true,
+    "comparison_record": "../windows-nmi-current-source-pgo-qualification.json, optimized_binary_smoke.ivf_sha256",
+    "raw_encoder_log": "encode.raw.txt",
+    "raw_encoder_log_is_empty": true
+  },
+  "decoder_build": {
+    "command": "Exact-source decoder build: deltic timeout 1800 env CARGO_TARGET_DIR=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-mac-pgo-smoke-0d8785f5/cargo-target cargo build --release --locked --offline -p rvp9-cli --bin rvp9dec </dev/null",
+    "exit_code": 0,
+    "decoder_path_at_run": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-mac-pgo-smoke-0d8785f5/cargo-target/release/rvp9dec",
+    "decoder_bytes": 1078104,
+    "decoder_sha256": "bcdafbd3cfb69dbfef5d27bc933b8ed25e1c181673cd3882f6a2afa206e76c26",
+    "build_log": "rvp9dec-build.raw.txt"
+  },
+  "stream_probe": {
+    "command": "Probe stream: /opt/homebrew/bin/ffprobe -v error -select_streams v:0 -show_streams -count_frames -of json /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/wrk_docs/evidence/2026-10-15-release-readiness/recovered-validation-20261017/postfix-main-qualification/mac-current-source-pgo-20261017/functional-smoke-20261017/mac-pgo-smoke.ivf",
+    "raw_json": "ffprobe.raw.json",
+    "codec": "vp9",
+    "profile": "Profile 0",
+    "dimensions": [
+      1280,
+      720
+    ],
+    "pixel_format": "yuv420p",
+    "frame_rate": "30/1",
+    "frames_read": 60
+  },
+  "decoders": [
+    {
+      "decoder": "rvp9dec built from the exact candidate source",
+      "command": "RVP9 decode (rechecked): deltic timeout 120 /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-mac-pgo-smoke-0d8785f5/cargo-target/release/rvp9dec --codec=vp9 --rawvideo --limit=60 --summary -o /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-mac-pgo-smoke-0d8785f5/rvp9.i420 /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/wrk_docs/evidence/2026-10-15-release-readiness/recovered-validation-20261017/postfix-main-qualification/mac-current-source-pgo-20261017/functional-smoke-20261017/mac-pgo-smoke.ivf > /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-mac-pgo-smoke-0d8785f5/rvp9-decode.raw.txt 2>&1 </dev/null",
+      "exit_code": 0,
+      "frames_decoded": 60,
+      "raw_log": "rvp9-decode.raw.txt",
+      "raw_log_note": "CLI reports an elapsed duration; that output is excluded from all performance claims."
+    },
+    {
+      "decoder": "FFmpeg native vp9 decoder",
+      "command": "FFmpeg native VP9 decode (successful recheck): deltic timeout 120 /opt/homebrew/bin/ffmpeg -y -hide_banner -v error -c:v vp9 -i /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/wrk_docs/evidence/2026-10-15-release-readiness/recovered-validation-20261017/postfix-main-qualification/mac-current-source-pgo-20261017/functional-smoke-20261017/mac-pgo-smoke.ivf -map 0:v:0 -fps_mode passthrough -pix_fmt yuv420p -f rawvideo /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-mac-pgo-smoke-0d8785f5/ffmpeg-vp9-recheck.i420 > /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-mac-pgo-smoke-0d8785f5/ffmpeg-native-decode.raw.txt 2>&1 </dev/null",
+      "exit_code": 0,
+      "frames_decoded": 60,
+      "raw_log": "ffmpeg-native-decode.raw.txt"
+    },
+    {
+      "decoder": "FFmpeg libvpx-vp9 decoder, Homebrew libvpx 1.16.0",
+      "command": "FFmpeg libvpx VP9 decode (successful recheck): deltic timeout 120 /opt/homebrew/bin/ffmpeg -y -hide_banner -v error -c:v libvpx-vp9 -i /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/wrk_docs/evidence/2026-10-15-release-readiness/recovered-validation-20261017/postfix-main-qualification/mac-current-source-pgo-20261017/functional-smoke-20261017/mac-pgo-smoke.ivf -map 0:v:0 -fps_mode passthrough -pix_fmt yuv420p -f rawvideo /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-mac-pgo-smoke-0d8785f5/ffmpeg-libvpx-recheck.i420 > /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-mac-pgo-smoke-0d8785f5/ffmpeg-libvpx-decode.raw.txt 2>&1 </dev/null",
+      "exit_code": 0,
+      "frames_decoded": 60,
+      "raw_log": "ffmpeg-libvpx-decode.raw.txt"
+    }
+  ],
+  "decoded_raw_output_comparison": {
+    "byte_identical": true,
+    "bytes_per_output": 82944000,
+    "sha256_all_three": "65c9b2b5bbd548f8fc09b007f3b122456352c53b454253e88e220aae60473faf",
+    "verification_record": "comparison.raw.txt",
+    "raw_outputs_retained": false,
+    "reason": "Each decoded output is 82,944,000 bytes; hashes, byte counts, decoder logs and the input IVF are retained."
+  },
+  "qualification_status": "PASS for exact-source PGO 60-frame functional encode smoke and byte-identical local decode outputs.",
+  "scope_limits": [
+    "No quality, BD-rate, pinned-reference differential, speed, throughput, latency, portability or release-readiness result is established.",
+    "FFmpeg libvpx 1.16.0 is not the repository-pinned libvpx 1.14.1 reference; no vpxdec was used.",
+    "The rvp9dec timing text is incidental CLI output and is not timing evidence."
+  ],
+  "related_pgo_build_record": "../qualification.json",
+  "commands_record": "commands.raw.txt",
+  "evidence_files": [
+    {
+      "path": "commands.raw.txt",
+      "bytes": 4268,
+      "sha256": "bdf187df5af8ac4df5da80d76dc7ec70e622ceae2290dafa37987c2561684a0d"
+    },
+    {
+      "path": "comparison.raw.txt",
+      "bytes": 436,
+      "sha256": "f5ad23de66533cbba046a72da7a6ec0e012932b3f09d6fe1d7e9126a7c37fadc"
+    },
+    {
+      "path": "encode.raw.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "ffmpeg-libvpx-decode.raw.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "ffmpeg-native-decode.raw.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "ffprobe.raw.json",
+      "bytes": 1625,
+      "sha256": "26c3b12c95cf81cc77ddcfd1ea5797f68ac4f310d2ec4efa4f843e14ba539f3f"
+    },
+    {
+      "path": "mac-pgo-smoke.ivf",
+      "bytes": 477126,
+      "sha256": "772db4df880d056b8eb6f19ca7e5f10931b68e2c98b5b4bf70b2c2db2bf7234d"
+    },
+    {
+      "path": "rvp9-decode.raw.txt",
+      "bytes": 61,
+      "sha256": "ee608d74ce7c3b6c10a0fa61832974bc1b3cce70aaf9c1cab7d6cd288e412ffa"
+    },
+    {
+      "path": "rvp9dec-build.raw.txt",
+      "bytes": 835,
+      "sha256": "8ed0da8e5f6690639a163d8c25c63cb00df32f56d926e29e4b03f9f18d7d1011"
+    },
+    {
+      "path": "tool-versions.raw.txt",
+      "bytes": 794,
+      "sha256": "a255a23b1d43e3a0477eb5ca6ddebcae7813a6cca257c22080d06fe687835c34"
+    }
+  ]
+}
