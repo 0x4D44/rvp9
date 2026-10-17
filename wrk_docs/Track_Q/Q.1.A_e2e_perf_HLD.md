@@ -94,7 +94,7 @@ Per fixture, we sweep a **fixed minimal set** rather than the full `{1,2,4,8}` c
 - D (1080p30): `threads ∈ {2, 4}` (PLAN §2 says 2–4 cores).
 - E (1080p60): `threads ∈ {4, 8}` (PLAN §2 says 4–8 cores).
 
-The chosen set is ~12 rows total.
+The chosen set is 9 rows total: one each for A, C, and F, plus two thread settings each for B, D, and E.
 
 **Independence from Q.1.B:** the bench uses the library `Decoder::with_threads(N)` directly, not the CLI subprocess. So Q.1.A is **not blocked on Q.1.B**.
 
