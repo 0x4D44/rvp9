@@ -1,0 +1,143 @@
+{
+  "schema": "rvp9.production-wrong-corpus-hash-preflight.v1",
+  "recorded_at_utc": "2026-10-17T14:27:31Z",
+  "candidate": {
+    "source_commit": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+    "branch": "task/20261017-TSK-HUM-requalify-post-fix-candidate",
+    "worktree": "/Users/md/worktrees/rvp9/20261017-TSK-HUM-requalify-post-fix-candidate",
+    "tracked_and_untracked_tree_clean": true,
+    "pinned_libvpx_revision": "12f3a2ac603e8f10742105519e0cd03c3b8f71dd"
+  },
+  "script": {
+    "path": "scripts/qualify-production-encoder.sh",
+    "sha256": "3ec28783f5b3e52ba554888a5e53f2dd51e7d21645137d0cbbd0b32965f1953c"
+  },
+  "test_setup": {
+    "phase": "quality",
+    "registered_scratch_id": "rvp9-wrong-corpus-hash-negative-b4395471",
+    "registered_scratch_path": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-wrong-corpus-hash-negative-b4395471",
+    "source_directory": "wrong-hash-source under registered scratch",
+    "first_required_clip": "in_to_tree_420_720p50.y4m",
+    "first_required_clip_bytes": 14,
+    "first_required_clip_sha256": "59a4cf7219e0c549e0eb62b719d155f4dbb3403fe6473715d6f7709c4dcda927",
+    "expected_clip_sha256": "81166517a3054c789923535b5da23fbbb9bbd7fd4c28dac83918ac351e121e74",
+    "pgo_manifest": {
+      "path": "wrong-hash-pgo-manifest.raw.txt",
+      "bytes": 285,
+      "sha256": "06bbc770d2c345338441c943fa0d658ce2ef713317213ea5d0665b75d63091d9",
+      "recorded_source_commit": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+      "optimized_binary": "rvp9enc symlink to capability-probe stub",
+      "optimized_binary_sha256": "c747ee516fddcdf6384d532edf55f9bf6fcb1ace9d8ab8f4ca9172100b5562e6"
+    },
+    "stub_tools": {
+      "path": "probe-stub.sh",
+      "sha256": "c747ee516fddcdf6384d532edf55f9bf6fcb1ace9d8ab8f4ca9172100b5562e6",
+      "behavior": "Advertises required flags on --help and exits 97 for every other invocation.",
+      "symlink_names": [
+        "rvp9enc",
+        "vpxenc",
+        "temporal-anchor",
+        "bdrate",
+        "bdrate-svc",
+        "encode-headtohead",
+        "realtime",
+        "rvp9dec",
+        "vpxdec",
+        "ffmpeg"
+      ]
+    },
+    "reference_checkout": "The candidate worktree's standalone third_party/libvpx at the pinned revision."
+  },
+  "command": "RVP9_STUB_LOG='/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-wrong-corpus-hash-negative-b4395471/tools/second-invocations.log' deltic timeout 120 bash scripts/qualify-production-encoder.sh --work-dir '/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-wrong-corpus-hash-negative-b4395471/work' --phase quality --pgo-manifest '/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-wrong-corpus-hash-negative-b4395471/pgo.manifest' --source-dir '/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-wrong-corpus-hash-negative-b4395471/wrong-hash-source' --test-encoder '/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-wrong-corpus-hash-negative-b4395471/tools/rvp9enc' --vpxenc '/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-wrong-corpus-hash-negative-b4395471/tools/vpxenc' --temporal-anchor '/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-wrong-corpus-hash-negative-b4395471/tools/temporal-anchor' --bdrate '/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-wrong-corpus-hash-negative-b4395471/tools/bdrate' --bdrate-svc '/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-wrong-corpus-hash-negative-b4395471/tools/bdrate-svc' --encode-headtohead '/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-wrong-corpus-hash-negative-b4395471/tools/encode-headtohead' --realtime '/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-wrong-corpus-hash-negative-b4395471/tools/realtime' --rvp9dec '/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-wrong-corpus-hash-negative-b4395471/tools/rvp9dec' --vpxdec '/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-wrong-corpus-hash-negative-b4395471/tools/vpxdec' --ffmpeg '/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-wrong-corpus-hash-negative-b4395471/tools/ffmpeg'",
+  "result": {
+    "exit_status": 1,
+    "expected": "Reject the nonempty first required clip at its pinned SHA-256 check before creating the requested work directory or starting quality work.",
+    "observed_error": "wrong corpus input SHA-256 for in_to_tree_420_720p50.y4m: 59a4cf7219e0c549e0eb62b719d155f4dbb3403fe6473715d6f7709c4dcda927 (expected 81166517a3054c789923535b5da23fbbb9bbd7fd4c28dac83918ac351e121e74)",
+    "work_directory_created": false,
+    "stub_help_invocations": 13,
+    "help_invocation_counts": {
+      "bdrate": 2,
+      "bdrate-svc": 2,
+      "encode-headtohead": 5,
+      "realtime": 4
+    },
+    "stub_non_help_invocations": 0,
+    "notes": "All invocations were capability --help probes. No encoder, decoder, BD-rate tool or FFmpeg child was invoked for work."
+  },
+  "superseded_attempt": {
+    "status": "excluded",
+    "observation": "The first run stopped during capability probes and reported that encode-headtohead --help lacked --max-load1 after seven probes. A direct check of the unchanged stub printed --max-load1, and a full retry completed all 13 probes and reached the wrong-hash guard.",
+    "child_exit_status_recorded": false,
+    "reason_exit_status_unavailable": "The wrapper's zsh assignment to its reserved read-only variable status failed after the child command.",
+    "evidence": {
+      "raw_output": {
+        "path": "superseded-capability-probe-attempt.raw.txt",
+        "bytes": 222,
+        "sha256": "7e39242705883edc49358439c78bbc3a5b69a9b51421b8c2f91839630e5040a1"
+      },
+      "stub_invocations": {
+        "path": "superseded-capability-probe-invocations.raw.txt",
+        "bytes": 139,
+        "sha256": "a5086b28ca91f6c413b8e1846bbee1313aec5cf93fc77af8effeada930e15e01"
+      },
+      "direct_help_output": {
+        "path": "direct-headtohead-help.raw.txt",
+        "bytes": 141,
+        "sha256": "5ba0070008fd5d48c60e49cd57dce90c5b096f3ce3f2473833783e9239a6f26c"
+      },
+      "direct_help_invocations": {
+        "path": "direct-headtohead-help-invocations.raw.txt",
+        "bytes": 25,
+        "sha256": "a17e093cef15965f7aac4940d68994fa0e235b67de2f5d80f467b7c2f75bf142"
+      }
+    }
+  },
+  "limits": [
+    "This verifies the SHA-256 rejection branch for the first required clip; later corpus files were not reached.",
+    "The input was a 14-byte nonempty fixture with an incorrect hash, not a real or otherwise valid Y4M clip. This is a preflight guard test, not codec evidence.",
+    "Stub tools and configuration satisfied preflight only; the run does not provide an end-to-end failed BD-rate child or fresh quality-row decoder-mismatch injection."
+  ],
+  "evidence": {
+    "raw_run": {
+      "path": "wrong-hash.raw.txt",
+      "bytes": 199,
+      "sha256": "0b0cc60709c94896ef3cd7c7226d765f4ca26eba04652d0f7c3d79dbb61f4065"
+    },
+    "exit_record": {
+      "path": "wrong-hash-exit-code.txt",
+      "bytes": 2,
+      "sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865",
+      "exit_status": 1
+    },
+    "stub_invocations": {
+      "path": "wrong-hash-stub-invocations.raw.txt",
+      "bytes": 253,
+      "sha256": "a6801915dbfd75067c03a573267c09a1a4b032859d40242ad2cbe9835e072dc2"
+    },
+    "source_clip": {
+      "path": "wrong-hash-source-clip.raw.txt",
+      "bytes": 14,
+      "sha256": "59a4cf7219e0c549e0eb62b719d155f4dbb3403fe6473715d6f7709c4dcda927"
+    },
+    "source_identity": {
+      "path": "wrong-hash-source-identity.raw.txt",
+      "bytes": 275,
+      "sha256": "5c1d9422ea325b0d87ea4a2b61fa9d4b62e0079dd02a293b530c79a96857d37a"
+    },
+    "pgo_manifest": {
+      "path": "wrong-hash-pgo-manifest.raw.txt",
+      "bytes": 285,
+      "sha256": "06bbc770d2c345338441c943fa0d658ce2ef713317213ea5d0665b75d63091d9"
+    },
+    "candidate_identity": {
+      "path": "wrong-hash-candidate-identity.raw.txt",
+      "bytes": 418,
+      "sha256": "ff165a19a4d67357880421d35c701b112c4cc41c5f5c1c77b38217da70af917d"
+    },
+    "work_directory_state": {
+      "path": "wrong-hash-workdir-state.raw.txt",
+      "bytes": 23,
+      "sha256": "be3114f3a49a3bb13efad063fd352fcb5376d99648ff48c7ab47c177d38f9e47"
+    }
+  }
+}

@@ -1,0 +1,7 @@
+bdrate	--help
+bdrate	--help
+bdrate-svc	--help
+bdrate-svc	--help
+encode-headtohead	--help
+encode-headtohead	--help
+encode-headtohead	--help

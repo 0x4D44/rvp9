@@ -1,0 +1,2 @@
+missing or empty corpus input (source_in_to_tree): /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-missing-corpus-negative-fbf337e0/missing-source/in_to_tree_420_720p50.y4m
+run scripts/fetch-corpus.sh or pass --source-dir

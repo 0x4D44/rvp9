@@ -1,0 +1,7 @@
+worktree=/Users/md/worktrees/rvp9/20261017-TSK-HUM-requalify-post-fix-candidate
+branch=task/20261017-TSK-HUM-requalify-post-fix-candidate
+source_commit=fb5c0c917038db6c640b3dbc7c2b84b567233333
+tracked_and_untracked_status_begin
+tracked_and_untracked_status_end
+qualification_script_sha256=3ec28783f5b3e52ba554888a5e53f2dd51e7d21645137d0cbbd0b32965f1953c
+pinned_libvpx_revision=12f3a2ac603e8f10742105519e0cd03c3b8f71dd

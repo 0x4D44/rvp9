@@ -1,0 +1,108 @@
+{
+  "schema": "rvp9.production-missing-corpus-preflight.v1",
+  "recorded_at_utc": "2026-10-17T14:23:11Z",
+  "candidate": {
+    "source_commit": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+    "branch": "task/20261017-TSK-HUM-requalify-post-fix-candidate",
+    "worktree": "/Users/md/worktrees/rvp9/20261017-TSK-HUM-requalify-post-fix-candidate",
+    "tracked_tree_clean": true,
+    "pinned_libvpx_revision": "12f3a2ac603e8f10742105519e0cd03c3b8f71dd"
+  },
+  "script": {
+    "path": "scripts/qualify-production-encoder.sh",
+    "sha256": "3ec28783f5b3e52ba554888a5e53f2dd51e7d21645137d0cbbd0b32965f1953c"
+  },
+  "test_setup": {
+    "phase": "quality",
+    "source_directory": "empty directory under registered Deltic scratch",
+    "work_directory": "absent path under registered Deltic scratch",
+    "pgo_manifest": {
+      "path": "pgo-manifest.raw.txt",
+      "bytes": 282,
+      "sha256": "7a48d562cd37df808b9b8641d845b747b6de38b04cd6e5a8b6d1b3fda4557285",
+      "recorded_source_commit": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+      "optimized_binary": "rvp9enc symlink to probe stub",
+      "optimized_binary_sha256": "c747ee516fddcdf6384d532edf55f9bf6fcb1ace9d8ab8f4ca9172100b5562e6"
+    },
+    "reference_checkout": "The candidate worktree's standalone third_party/libvpx at the pinned revision.",
+    "stub_tools": {
+      "path": "probe-stub.sh",
+      "sha256": "c747ee516fddcdf6384d532edf55f9bf6fcb1ace9d8ab8f4ca9172100b5562e6",
+      "behavior": "Prints required capability flags only for --help; refuses every other invocation with exit 97.",
+      "symlink_names": [
+        "rvp9enc",
+        "vpxenc",
+        "temporal-anchor",
+        "bdrate",
+        "bdrate-svc",
+        "encode-headtohead",
+        "realtime",
+        "rvp9dec",
+        "vpxdec",
+        "ffmpeg"
+      ],
+      "vpx_config_header": {
+        "path": "vpx-config.stub.h",
+        "bytes": 98,
+        "sha256": "e4ba06d60e46451085e6511746444bd77d547300cbf6e58bbb28eabb7c9a7b43"
+      },
+      "config_make": {
+        "path": "config.stub.mk",
+        "bytes": 36,
+        "sha256": "c26df3245ea3a4afb8156a8e60894fa768a0be3a5a5f95474d45aebc5e2bbda5"
+      }
+    }
+  },
+  "working_directory": "/Users/md/worktrees/rvp9/20261017-TSK-HUM-requalify-post-fix-candidate",
+  "registered_scratch_id": "rvp9-missing-corpus-negative-fbf337e0",
+  "registered_scratch_path": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-missing-corpus-negative-fbf337e0",
+  "command": "RVP9_STUB_LOG='/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-missing-corpus-negative-fbf337e0/tools/invocations.log' deltic timeout 120 bash scripts/qualify-production-encoder.sh --work-dir '/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-missing-corpus-negative-fbf337e0/work' --phase quality --pgo-manifest '/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-missing-corpus-negative-fbf337e0/pgo.manifest' --source-dir '/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-missing-corpus-negative-fbf337e0/missing-source' --test-encoder '/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-missing-corpus-negative-fbf337e0/tools/rvp9enc' --vpxenc '/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-missing-corpus-negative-fbf337e0/tools/vpxenc' --temporal-anchor '/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-missing-corpus-negative-fbf337e0/tools/temporal-anchor' --bdrate '/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-missing-corpus-negative-fbf337e0/tools/bdrate' --bdrate-svc '/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-missing-corpus-negative-fbf337e0/tools/bdrate-svc' --encode-headtohead '/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-missing-corpus-negative-fbf337e0/tools/encode-headtohead' --realtime '/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-missing-corpus-negative-fbf337e0/tools/realtime' --rvp9dec '/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-missing-corpus-negative-fbf337e0/tools/rvp9dec' --vpxdec '/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-missing-corpus-negative-fbf337e0/tools/vpxdec' --ffmpeg '/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-missing-corpus-negative-fbf337e0/tools/ffmpeg' > '/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-missing-corpus-negative-fbf337e0/missing-corpus.raw.txt' 2>&1",
+  "result": {
+    "exit_status": 1,
+    "expected": "fail closed before any encode or quality output",
+    "observed_error": "missing or empty corpus input (source_in_to_tree)",
+    "work_directory_created": false,
+    "stub_help_invocations": 13,
+    "help_invocation_counts": {
+      "bdrate": 2,
+      "bdrate-svc": 2,
+      "encode-headtohead": 5,
+      "realtime": 4
+    },
+    "stub_non_help_invocations": 0,
+    "notes": "Only capability probes ran. No encoder, decoder, BD-rate tool or FFmpeg child was invoked for work."
+  },
+  "limits": [
+    "This proves the real script rejects the first missing required corpus input before starting the quality phase.",
+    "Fake binaries and configuration were used only to satisfy preflight path and --help probes; this is not a codec or quality acceptance run.",
+    "It does not provide an end-to-end failed BD-rate child or decoder-mismatch injection for a fresh quality row."
+  ],
+  "evidence": {
+    "raw_run": {
+      "path": "missing-corpus.raw.txt",
+      "bytes": 251,
+      "sha256": "a76adf906b2a3660a7c1e62a709733e75d4b1797e48a5d2d27f74c65c74b6bbd"
+    },
+    "exit_record": {
+      "path": "exit-code.txt",
+      "bytes": 2,
+      "sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865",
+      "exit_status": 1
+    },
+    "stub_invocations": {
+      "path": "stub-invocations.raw.txt",
+      "bytes": 253,
+      "sha256": "a6801915dbfd75067c03a573267c09a1a4b032859d40242ad2cbe9835e072dc2"
+    },
+    "candidate_identity": {
+      "path": "candidate-identity.raw.txt",
+      "bytes": 216,
+      "sha256": "9d81f17bb09a291e62a4e7c1278bf4ea508ac63e4458a11f2b7605452cfd7032"
+    },
+    "work_directory_state": {
+      "path": "workdir-state.raw.txt",
+      "bytes": 7,
+      "sha256": "7925d3e9a9613a093e5eb4054b32aa39de910d2b03ba7e8046c3b4550b8de1e4"
+    }
+  }
+}
