@@ -1,0 +1,1236 @@
+   Compiling crossbeam-utils v0.8.21
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261017-VER-HUM-verify-public-api-docs-for-release-readi/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261017-VER-HUM-verify-public-api-docs-for-release-readi/crates/rvp9-decoder)
+    Checking static_assertions v1.1.0
+   Compiling proc-macro2 v1.0.106
+   Compiling unicode-ident v1.0.24
+   Compiling quote v1.0.45
+   Compiling serde_core v1.0.228
+   Compiling zmij v1.0.21
+   Compiling serde v1.0.228
+   Compiling serde_json v1.0.149
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261017-VER-HUM-verify-public-api-docs-for-release-readi/crates/rvp9-harness)
+    Checking itoa v1.0.18
+    Checking memchr v2.8.0
+   Compiling version_check v0.9.5
+    Checking typenum v1.20.1
+   Compiling libc v0.2.186
+    Checking cfg-if v1.0.4
+ Documenting rvp9 v0.0.0 (/Users/md/worktrees/rvp9/20261017-VER-HUM-verify-public-api-docs-for-release-readi/crates/rvp9)
+   Compiling generic-array v0.14.7
+    Checking crossbeam-channel v0.5.15
+    Checking cpufeatures v0.2.17
+   Compiling syn v2.0.117
+ Documenting rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261017-VER-HUM-verify-public-api-docs-for-release-readi/crates/rvp9-core)
+    Checking crypto-common v0.1.7
+    Checking block-buffer v0.10.4
+    Checking digest v0.10.7
+    Checking sha2 v0.10.9
+warning: public documentation for `compressed_header` links to private item `update_mv_probs`
+  --> crates/rvp9-core/src/bitstream/compressed_header.rs:38:29
+   |
+38 | //! - [`read_mv_probs`] / [`update_mv_probs`] — note: MV probs use
+   |                             ^^^^^^^^^^^^^^^ this item is private
+   |
+   = note: this link will resolve properly if you pass `--document-private-items`
+   = note: `#[warn(rustdoc::private_intra_doc_links)]` on by default
+
+warning: public documentation for `modes_writer` links to private item `write_partition_tree`
+  --> crates/rvp9-core/src/bitstream/modes_writer.rs:44:40
+   |
+44 | //! For each parent block visited by [`write_partition_tree`] (top
+   |                                        ^^^^^^^^^^^^^^^^^^^^ this item is private
+   |
+   = note: this link will resolve properly if you pass `--document-private-items`
+
+warning: public documentation for `write_tile_intra_keyframe` links to private item `write_partition_tree`
+   --> crates/rvp9-core/src/bitstream/modes_writer.rs:681:14
+    |
+681 | /// drives [`write_partition_tree`] which recursively emits the
+    |              ^^^^^^^^^^^^^^^^^^^^ this item is private
+    |
+    = note: this link will resolve properly if you pass `--document-private-items`
+
+warning: unresolved link to `write_tx_size`
+   --> crates/rvp9-core/src/bitstream/modes_writer.rs:689:48
+    |
+689 | ///   `tx_size` is signalled on the wire via [`write_tx_size`]; under any
+    |                                                ^^^^^^^^^^^^^ no item named `write_tx_size` in scope
+    |
+    = help: to escape `[` and `]` characters, add '\' before them like `\[` or `\]`
+    = note: `#[warn(rustdoc::broken_intra_doc_links)]` on by default
+
+warning: public documentation for `write_tile_inter` links to private item `write_inter_partition_tree`
+    --> crates/rvp9-core/src/bitstream/modes_writer.rs:2106:7
+     |
+2106 | /// [`write_inter_partition_tree`] which recursively emits the
+     |       ^^^^^^^^^^^^^^^^^^^^^^^^^^ this item is private
+     |
+     = note: this link will resolve properly if you pass `--document-private-items`
+
+warning: public documentation for `record_inter_leaf_coefficients` links to private item `write_inter_block_leaf`
+    --> crates/rvp9-core/src/bitstream/modes_writer.rs:3389:47
+     |
+3389 | /// This is the coefficient-only portion of [`write_inter_block_leaf`]. It
+     |                                               ^^^^^^^^^^^^^^^^^^^^^^ this item is private
+     |
+     = note: this link will resolve properly if you pass `--document-private-items`
+
+warning: public documentation for `record_inter_tx_coefficients_i16` links to private item `write_inter_block_residual`
+    --> crates/rvp9-core/src/bitstream/modes_writer.rs:3452:23
+     |
+3452 | /// raster order as [`write_inter_block_residual`]. The helper updates the
+     |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^ this item is private
+     |
+     = note: this link will resolve properly if you pass `--document-private-items`
+
+warning: public documentation for `dispatch` links to private item `SimdDispatch::build`
+  --> crates/rvp9-core/src/dsp/dispatch.rs:28:31
+   |
+28 | //! `Arc<SimdDispatch>` via [`SimdDispatch::build`] (`pub(crate)` —
+   |                               ^^^^^^^^^^^^^^^^^^^ this item is private
+   |
+   = note: this link will resolve properly if you pass `--document-private-items`
+
+warning: public documentation for `dispatch` links to private item `SimdDispatch::build`
+  --> crates/rvp9-core/src/dsp/dispatch.rs:41:35
+   |
+41 | //! 3. Populate the slot inside [`SimdDispatch::build`], dispatching on
+   |                                   ^^^^^^^^^^^^^^^^^^^ this item is private
+   |
+   = note: this link will resolve properly if you pass `--document-private-items`
+
+warning: unresolved link to `crate::dsp::x86_64::idct8x8_avx2`
+  --> crates/rvp9-core/src/dsp/dispatch.rs:49:7
+   |
+49 | //! [`crate::dsp::x86_64::idct8x8_avx2`] for the AVX2 implementation
+   |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ no item named `x86_64` in module `dsp`
+
+warning: public documentation for `SadTable` links to private item `SimdDispatch::build`
+   --> crates/rvp9-core/src/dsp/dispatch.rs:651:7
+    |
+651 | /// [`SimdDispatch::build`] — the AVX2 wrapper on AVX2 hosts, the scalar
+    |       ^^^^^^^^^^^^^^^^^^^ this item is private
+    |
+    = note: this link will resolve properly if you pass `--document-private-items`
+
+warning: public documentation for `Sad4dTable` links to private item `SimdDispatch::build`
+   --> crates/rvp9-core/src/dsp/dispatch.rs:682:28
+    |
+682 | /// by ISA capability in [`SimdDispatch::build`] — AVX2 on x86-64, dot-product
+    |                            ^^^^^^^^^^^^^^^^^^^ this item is private
+    |
+    = note: this link will resolve properly if you pass `--document-private-items`
+
+warning: public documentation for `VarTable` links to private item `SimdDispatch::build`
+   --> crates/rvp9-core/src/dsp/dispatch.rs:725:37
+    |
+725 | /// selected by ISA capability in [`SimdDispatch::build`] — AVX2 on x86_64,
+    |                                     ^^^^^^^^^^^^^^^^^^^ this item is private
+    |
+    = note: this link will resolve properly if you pass `--document-private-items`
+
+warning: public documentation for `SubpelVarTable` links to private item `SimdDispatch::build`
+   --> crates/rvp9-core/src/dsp/dispatch.rs:758:21
+    |
+758 | /// ISA clause in [`SimdDispatch::build`] — AVX2 on x86_64, NEON for widths
+    |                     ^^^^^^^^^^^^^^^^^^^ this item is private
+    |
+    = note: this link will resolve properly if you pass `--document-private-items`
+
+warning: public documentation for `SimdDispatch` links to private item `SimdDispatch::build`
+   --> crates/rvp9-core/src/dsp/dispatch.rs:780:43
+    |
+780 | /// tests may also use the `pub(crate)` [`SimdDispatch::build`]
+    |                                           ^^^^^^^^^^^^^^^^^^^ this item is private
+    |
+    = note: this link will resolve properly if you pass `--document-private-items`
+
+warning: public documentation for `caps` links to private item `SimdDispatch::build`
+   --> crates/rvp9-core/src/dsp/dispatch.rs:843:45
+    |
+843 |     /// specialised to this caps state at [`SimdDispatch::build`] time.
+    |                                             ^^^^^^^^^^^^^^^^^^^ this item is private
+    |
+    = note: this link will resolve properly if you pass `--document-private-items`
+
+warning: public documentation for `fill` links to private item `Self::fill_slow`
+   --> crates/rvp9-core/src/entropy/bool_reader.rs:194:11
+    |
+194 |     /// [`Self::fill_slow`] with `#[cold] #[inline(never)]` so it
+    |           ^^^^^^^^^^^^^^^ this item is private
+    |
+    = note: this link will resolve properly if you pass `--document-private-items`
+
+warning: unresolved link to `Self::stop_encode`
+ --> crates/rvp9-core/src/entropy/bool_writer.rs:4:27
+  |
+4 | //! is byte-tight after [`Self::stop_encode`]; consumers stitch tile buffers
+  |                           ^^^^^^^^^^^^^^^^^ no item named `stop_encode` in module `bool_writer`
+
+warning: public documentation for `diff_update` links to private item `INV_MAP_TABLE`
+  --> crates/rvp9-core/src/entropy/diff_update.rs:17:51
+   |
+17 | //!    `delp` in `0..=254`, pass it through the [`INV_MAP_TABLE`]
+   |                                                   ^^^^^^^^^^^^^ this item is private
+   |
+   = note: this link will resolve properly if you pass `--document-private-items`
+
+warning: public documentation for `inv_remap_prob` links to private item `INV_MAP_TABLE`
+   --> crates/rvp9-core/src/entropy/diff_update.rs:109:52
+    |
+109 | /// Map a decoded `delp` value (0..=254) through [`INV_MAP_TABLE`]
+    |                                                    ^^^^^^^^^^^^^ this item is private
+    |
+    = note: this link will resolve properly if you pass `--document-private-items`
+
+warning: public documentation for `prob_diff_writer` links to private item `encode_term_subexp`
+  --> crates/rvp9-core/src/entropy/prob_diff_writer.rs:12:26
+   |
+12 | //! 2. Emit `delp` via [`encode_term_subexp`]. Mirrors libvpx
+   |                          ^^^^^^^^^^^^^^^^^^ this item is private
+   |
+   = note: this link will resolve properly if you pass `--document-private-items`
+
+warning: unresolved link to `crate::Decoder`
+   --> crates/rvp9-core/src/frame.rs:975:26
+    |
+975 | /// **Lifecycle**: the [`crate::Decoder`] equivalent (or any host) owns
+    |                          ^^^^^^^^^^^^^^ no item named `Decoder` in module `rvp9_core`
+
+warning: public documentation for `get_mode_context` links to private item `COUNTER_TO_CONTEXT`
+   --> crates/rvp9-core/src/inter/mode_info.rs:134:27
+    |
+134 | /// then mapped through [`COUNTER_TO_CONTEXT`].
+    |                           ^^^^^^^^^^^^^^^^^^ this item is private
+    |
+    = note: this link will resolve properly if you pass `--document-private-items`
+
+warning: public documentation for `write_inter_block_mode_info` links to private item `write_sub8_bmi`
+    --> crates/rvp9-core/src/inter/mode_info.rs:1055:26
+     |
+1055 | /// per-4x4 payload to [`write_sub8_bmi`]. When `counts` is present, the shared
+     |                          ^^^^^^^^^^^^^^ this item is private
+     |
+     = note: this link will resolve properly if you pass `--document-private-items`
+
+warning: public documentation for `IDX_N_COLUMN_TO_SUBBLOCK` links to private item `get_sub_block_mv`
+   --> crates/rvp9-core/src/inter/mv_ref.rs:167:7
+    |
+167 | /// [`get_sub_block_mv`].
+    |       ^^^^^^^^^^^^^^^^ this item is private
+    |
+    = note: this link will resolve properly if you pass `--document-private-items`
+
+warning: unresolved link to `convolve_copy`
+   --> crates/rvp9-core/src/inter/scale.rs:208:37
+    |
+208 | /// | no          | no          | [`convolve_copy`]          |
+    |                                     ^^^^^^^^^^^^^ no item named `convolve_copy` in scope
+    |
+    = help: to escape `[` and `]` characters, add '\' before them like `\[` or `\]`
+
+warning: unresolved link to `convolve8_scaled`
+   --> crates/rvp9-core/src/inter/scale.rs:211:37
+    |
+211 | /// | yes         | yes         | [`convolve8_scaled`]       |
+    |                                     ^^^^^^^^^^^^^^^^ no item named `convolve8_scaled` in scope
+    |
+    = help: to escape `[` and `]` characters, add '\' before them like `\[` or `\]`
+
+warning: unresolved link to `r`
+  --> crates/rvp9-core/src/intra_pred.rs:84:42
+   |
+84 |     /// TM_PRED — true motion (clip(left[r] + above[c] - above_left)).
+   |                                          ^ no item named `r` in scope
+   |
+   = help: to escape `[` and `]` characters, add '\' before them like `\[` or `\]`
+
+warning: unresolved link to `c`
+  --> crates/rvp9-core/src/intra_pred.rs:84:53
+   |
+84 |     /// TM_PRED — true motion (clip(left[r] + above[c] - above_left)).
+   |                                                     ^ no item named `c` in scope
+   |
+   = help: to escape `[` and `]` characters, add '\' before them like `\[` or `\]`
+
+warning: unresolved link to `3`
+   --> crates/rvp9-core/src/intra_pred.rs:366:47
+    |
+366 | /// `memset(..., above[bs - 1], ...)` = above[3] right-pad. Using the
+    |                                               ^ no item named `3` in scope
+    |
+    = help: to escape `[` and `]` characters, add '\' before them like `\[` or `\]`
+
+warning: public documentation for `build_intra_predictors` links to private item `extend_mask`
+    --> crates/rvp9-core/src/intra_pred.rs:1017:13
+     |
+1017 | ///   via [`extend_mask`].
+     |             ^^^^^^^^^^^ this item is private
+     |
+     = note: this link will resolve properly if you pass `--document-private-items`
+
+warning: public documentation for `Non420Inputs` links to private item `filter_block_plane_non420`
+   --> crates/rvp9-core/src/loopfilter/apply.rs:733:7
+    |
+733 | /// [`filter_block_plane_non420`] (mirroring libvpx
+    |       ^^^^^^^^^^^^^^^^^^^^^^^^^ this item is private
+    |
+    = note: this link will resolve properly if you pass `--document-private-items`
+
+warning: public documentation for `apply_one_sb` links to private item `apply_one_sb_inner`
+   --> crates/rvp9-core/src/loopfilter/apply.rs:968:11
+    |
+968 | /// the [`apply_one_sb_inner`] helper directly to avoid the per-SB
+    |           ^^^^^^^^^^^^^^^^^^ this item is private
+    |
+    = note: this link will resolve properly if you pass `--document-private-items`
+
+warning: unresolved link to `LoopFilterParams`
+    --> crates/rvp9-core/src/loopfilter.rs:1079:44
+     |
+1079 | /// (resolved) loop-filter deltas. Where [`LoopFilterParams`] holds
+     |                                            ^^^^^^^^^^^^^^^^ no item named `LoopFilterParams` in scope
+     |
+     = help: to escape `[` and `]` characters, add '\' before them like `\[` or `\]`
+
+warning: unresolved link to `SegmentationParams`
+    --> crates/rvp9-core/src/loopfilter.rs:1110:47
+     |
+1110 |     /// Build a view from the parser's full [`SegmentationParams`].
+     |                                               ^^^^^^^^^^^^^^^^^^ no item named `SegmentationParams` in scope
+     |
+     = help: to escape `[` and `]` characters, add '\' before them like `\[` or `\]`
+
+warning: unresolved link to `skippable`
+  --> crates/rvp9-core/src/mode_decision/block_yrd.rs:78:16
+   |
+78 |     /// from [`skippable`], which is keyed off the **Hadamard /
+   |                ^^^^^^^^^ no item named `skippable` in scope
+   |
+   = help: to escape `[` and `]` characters, add '\' before them like `\[` or `\]`
+
+warning: public documentation for `set_frame_s2_gate` links to private item `frame_gate_override`
+   --> crates/rvp9-core/src/mode_decision/inter.rs:287:16
+    |
+287 | /// env. See [`frame_gate_override`].
+    |                ^^^^^^^^^^^^^^^^^^^ this item is private
+    |
+    = note: this link will resolve properly if you pass `--document-private-items`
+
+warning: unresolved link to `crate::cost::inter_mode_costs`
+   --> crates/rvp9-core/src/mode_decision/inter.rs:784:9
+    |
+784 | ///   [`crate::cost::inter_mode_costs`].
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ no item named `inter_mode_costs` in module `cost`
+
+warning: unresolved link to `max_txsize`
+   --> crates/rvp9-core/src/mode_decision/inter.rs:791:11
+    |
+791 |     /// [`max_txsize`] and the SAD / sub-pel-variance kernel choice.
+    |           ^^^^^^^^^^ no item named `max_txsize` in scope
+    |
+    = help: to escape `[` and `]` characters, add '\' before them like `\[` or `\]`
+
+warning: unresolved link to `crate::cost::inter_mode_costs`
+   --> crates/rvp9-core/src/mode_decision/inter.rs:817:11
+    |
+817 |     /// [`crate::cost::inter_mode_costs`]. Indexed
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ no item named `inter_mode_costs` in module `cost`
+
+warning: unresolved link to `last_const_motion`
+    --> crates/rvp9-core/src/mode_decision/inter.rs:1272:11
+     |
+1272 |     /// [`last_const_motion`] but for `(GOLDEN, NEARMV)`).
+     |           ^^^^^^^^^^^^^^^^^ no item named `last_const_motion` in scope
+     |
+     = help: to escape `[` and `]` characters, add '\' before them like `\[` or `\]`
+
+warning: unresolved link to `short_circuit_flat_blocks`
+    --> crates/rvp9-core/src/mode_decision/inter.rs:1401:36
+     |
+1401 |     /// [`source_variance`] when [`short_circuit_flat_blocks`] is `true`;
+     |                                    ^^^^^^^^^^^^^^^^^^^^^^^^^ no item named `short_circuit_flat_blocks` in scope
+     |
+     = help: to escape `[` and `]` characters, add '\' before them like `\[` or `\]`
+
+warning: unresolved link to `force_skip_low_temp_var`
+    --> crates/rvp9-core/src/mode_decision/inter.rs:1413:11
+     |
+1413 |     /// [`force_skip_low_temp_var`] may suppress LAST+NEWMV. Level 1 applies
+     |           ^^^^^^^^^^^^^^^^^^^^^^^ no item named `force_skip_low_temp_var` in scope
+     |
+     = help: to escape `[` and `]` characters, add '\' before them like `\[` or `\]`
+
+warning: unresolved link to `bias_golden`
+    --> crates/rvp9-core/src/mode_decision/inter.rs:1495:46
+     |
+1495 |     /// the last GOLDEN refresh. Feeds the [`bias_golden`] gate's
+     |                                              ^^^^^^^^^^^ no item named `bias_golden` in scope
+     |
+     = help: to escape `[` and `]` characters, add '\' before them like `\[` or `\]`
+
+warning: unresolved link to `cb_pred_filter_search`
+    --> crates/rvp9-core/src/mode_decision/inter.rs:1538:53
+     |
+1538 |     /// 8×8-MI row index of this block. Feeds the [`cb_pred_filter_search`]
+     |                                                     ^^^^^^^^^^^^^^^^^^^^^ no item named `cb_pred_filter_search` in scope
+     |
+     = help: to escape `[` and `]` characters, add '\' before them like `\[` or `\]`
+
+warning: unresolved link to `cb_pred_filter_search`
+    --> crates/rvp9-core/src/mode_decision/inter.rs:1544:11
+     |
+1544 |     /// [`cb_pred_filter_search`] chessboard predicate.
+     |           ^^^^^^^^^^^^^^^^^^^^^ no item named `cb_pred_filter_search` in scope
+     |
+     = help: to escape `[` and `]` characters, add '\' before them like `\[` or `\]`
+
+warning: unresolved link to `cb_pred_filter_search`
+    --> crates/rvp9-core/src/mode_decision/inter.rs:1550:11
+     |
+1550 |     /// [`cb_pred_filter_search`] predicate.
+     |           ^^^^^^^^^^^^^^^^^^^^^ no item named `cb_pred_filter_search` in scope
+     |
+     = help: to escape `[` and `]` characters, add '\' before them like `\[` or `\]`
+
+warning: unresolved link to `content_state_sb`
+    --> crates/rvp9-core/src/mode_decision/inter.rs:1585:24
+     |
+1585 |     /// blocks whose [`content_state_sb`] is not `kVeryHighSad`.
+     |                        ^^^^^^^^^^^^^^^^ no item named `content_state_sb` in scope
+     |
+     = help: to escape `[` and `]` characters, add '\' before them like `\[` or `\]`
+
+warning: unresolved link to `picked_intra_mode`
+    --> crates/rvp9-core/src/mode_decision/inter.rs:1709:28
+     |
+1709 |     /// IntraFrame`; use [`picked_intra_mode`] instead.
+     |                            ^^^^^^^^^^^^^^^^^ no item named `picked_intra_mode` in scope
+     |
+     = help: to escape `[` and `]` characters, add '\' before them like `\[` or `\]`
+
+warning: unresolved link to `newmv_search_last`
+    --> crates/rvp9-core/src/mode_decision/inter.rs:1769:11
+     |
+1769 |     /// [`newmv_search_last`].
+     |           ^^^^^^^^^^^^^^^^^ no item named `newmv_search_last` in scope
+     |
+     = help: to escape `[` and `]` characters, add '\' before them like `\[` or `\]`
+
+warning: unresolved link to `have_above`
+  --> crates/rvp9-core/src/mode_decision/intra.rs:41:48
+   |
+41 | //!    caller's neighbour buffers, honouring [`have_above`] / [`have_left`].
+   |                                                ^^^^^^^^^^ no item named `have_above` in scope
+   |
+   = help: to escape `[` and `]` characters, add '\' before them like `\[` or `\]`
+
+warning: unresolved link to `have_left`
+  --> crates/rvp9-core/src/mode_decision/intra.rs:41:65
+   |
+41 | //!    caller's neighbour buffers, honouring [`have_above`] / [`have_left`].
+   |                                                                 ^^^^^^^^^ no item named `have_left` in scope
+   |
+   = help: to escape `[` and `]` characters, add '\' before them like `\[` or `\]`
+
+warning: unresolved link to `have_above`
+  --> crates/rvp9-core/src/mode_decision/intra.rs:94:19
+   |
+94 | /// edges. When [`have_above`] is `false`, the picker ignores
+   |                   ^^^^^^^^^^ no item named `have_above` in scope
+   |
+   = help: to escape `[` and `]` characters, add '\' before them like `\[` or `\]`
+
+warning: unresolved link to `have_left`
+  --> crates/rvp9-core/src/mode_decision/intra.rs:97:11
+   |
+97 | /// for [`have_left`] with `129` (`LEFT_UNAVAILABLE_FILL`).
+   |           ^^^^^^^^^ no item named `have_left` in scope
+   |
+   = help: to escape `[` and `]` characters, add '\' before them like `\[` or `\]`
+
+warning: unresolved link to `q_index`
+   --> crates/rvp9-core/src/mode_decision/intra.rs:129:50
+    |
+129 |     /// Y-plane forward-quantizer derived from [`q_index`].
+    |                                                  ^^^^^^^ no item named `q_index` in scope
+    |
+    = help: to escape `[` and `]` characters, add '\' before them like `\[` or `\]`
+
+warning: public documentation for `best_distortion` links to private item `block_yrd_distortion`
+   --> crates/rvp9-core/src/mode_decision/intra.rs:154:11
+    |
+154 |     /// [`block_yrd_distortion`].
+    |           ^^^^^^^^^^^^^^^^^^^^ this item is private
+    |
+    = note: this link will resolve properly if you pass `--document-private-items`
+
+warning: public documentation for `pick_intra_mode_luma` links to private item `block_yrd_distortion`
+   --> crates/rvp9-core/src/mode_decision/intra.rs:228:36
+    |
+228 | /// post-reconstruction SSE. See [`block_yrd_distortion`] for the
+    |                                    ^^^^^^^^^^^^^^^^^^^^ this item is private
+    |
+    = note: this link will resolve properly if you pass `--document-private-items`
+
+warning: unresolved link to `have_above`
+   --> crates/rvp9-core/src/mode_decision/intra.rs:681:29
+    |
+681 | /// neighbour edges. When [`have_above`] is `false`, the picker ignores
+    |                             ^^^^^^^^^^ no item named `have_above` in scope
+    |
+    = help: to escape `[` and `]` characters, add '\' before them like `\[` or `\]`
+
+warning: unresolved link to `have_left`
+   --> crates/rvp9-core/src/mode_decision/intra.rs:683:39
+    |
+683 | /// `ABOVE_UNAVAILABLE_FILL`); when [`have_left`] is `false`, fills
+    |                                       ^^^^^^^^^ no item named `have_left` in scope
+    |
+    = help: to escape `[` and `]` characters, add '\' before them like `\[` or `\]`
+
+warning: unresolved link to `max_txsize(block_size)`
+   --> crates/rvp9-core/src/mode_decision/intra.rs:697:11
+    |
+697 |     /// [`max_txsize(block_size)`], yielding one TX per chroma plane
+    |           ^^^^^^^^^^^^^^^^^^^^^^ no item named `max_txsize(block_size)` in scope
+    |
+    = help: to escape `[` and `]` characters, add '\' before them like `\[` or `\]`
+
+warning: unresolved link to `q_index`
+   --> crates/rvp9-core/src/mode_decision/intra.rs:725:51
+    |
+725 |     /// UV-plane forward-quantizer derived from [`q_index`].
+    |                                                   ^^^^^^^ no item named `q_index` in scope
+    |
+    = help: to escape `[` and `]` characters, add '\' before them like `\[` or `\]`
+
+warning: unresolved link to `crate::pre_analysis::PreAnalysisState::vbp_threshold_scale`
+   --> crates/rvp9-core/src/mode_decision/partition.rs:217:11
+    |
+217 |     /// [`crate::pre_analysis::PreAnalysisState::vbp_threshold_scale`]).
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ no item named `pre_analysis` in module `rvp9_core`
+
+warning: unresolved link to `MvLimits`
+  --> crates/rvp9-core/src/mv_search/int_pro_me.rs:56:14
+   |
+56 | //!    via [`MvLimits`]).
+   |              ^^^^^^^^ no item named `MvLimits` in scope
+   |
+   = help: to escape `[` and `]` characters, add '\' before them like `\[` or `\]`
+
+warning: unresolved link to `rvp9_decoder::Decoder`
+  --> crates/rvp9-core/src/tile_threading/mod.rs:40:18
+   |
+40 | //! [`Decoder`]: rvp9_decoder::Decoder
+   |                  ^^^^^^^^^^^^^^^^^^^^^ no item named `rvp9_decoder` in scope
+
+warning: unresolved link to `rvp9_decoder::Decoder`
+  --> crates/rvp9-core/src/tile_threading/lf_pool.rs:85:18
+   |
+85 | /// [`Decoder`]: rvp9_decoder::Decoder
+   |                  ^^^^^^^^^^^^^^^^^^^^^ no item named `rvp9_decoder` in scope
+
+warning: unresolved link to `fdct4x4_scalar`
+   --> crates/rvp9-core/src/transforms/forward.rs:214:28
+    |
+214 | /// available, retaining [`fdct4x4_scalar`] as the portable oracle.
+    |                            ^^^^^^^^^^^^^^ no item named `fdct4x4_scalar` in scope
+    |
+    = help: to escape `[` and `]` characters, add '\' before them like `\[` or `\]`
+
+warning: public documentation for `fdct8x8` links to private item `fdct8x8_scalar`
+   --> crates/rvp9-core/src/transforms/forward.rs:500:28
+    |
+500 | /// available, retaining [`fdct8x8_scalar`] as the portable oracle.
+    |                            ^^^^^^^^^^^^^^ this item is private
+    |
+    = note: this link will resolve properly if you pass `--document-private-items`
+
+warning: unresolved link to `fdct16x16_scalar`
+    --> crates/rvp9-core/src/transforms/forward.rs:1094:40
+     |
+1094 | /// kernel when available, retaining [`fdct16x16_scalar`] as the portable
+     |                                        ^^^^^^^^^^^^^^^^ no item named `fdct16x16_scalar` in scope
+     |
+     = help: to escape `[` and `]` characters, add '\' before them like `\[` or `\]`
+
+warning: unresolved link to `fht16x16_scalar`
+    --> crates/rvp9-core/src/transforms/forward.rs:1184:40
+     |
+1184 | /// kernel when available, retaining [`fht16x16_scalar`] as the portable
+     |                                        ^^^^^^^^^^^^^^^ no item named `fht16x16_scalar` in scope
+     |
+     = help: to escape `[` and `]` characters, add '\' before them like `\[` or `\]`
+
+warning: unresolved link to `fdct32x32_scalar`
+    --> crates/rvp9-core/src/transforms/forward.rs:1546:28
+     |
+1546 | /// available, retaining [`fdct32x32_scalar`] as the portable oracle.
+     |                            ^^^^^^^^^^^^^^^^ no item named `fdct32x32_scalar` in scope
+     |
+     = help: to escape `[` and `]` characters, add '\' before them like `\[` or `\]`
+
+warning: unresolved link to `idct16x16_add_scalar`
+   --> crates/rvp9-core/src/transforms/inverse.rs:602:40
+    |
+602 | /// kernel when available, retaining [`idct16x16_add_scalar`] as the
+    |                                        ^^^^^^^^^^^^^^^^^^^^ no item named `idct16x16_add_scalar` in scope
+    |
+    = help: to escape `[` and `]` characters, add '\' before them like `\[` or `\]`
+
+warning: public documentation for `iht4x4_16_add` links to private item `iht_4_dispatch`
+    --> crates/rvp9-core/src/transforms/inverse.rs:1693:7
+     |
+1693 | /// [`iht_4_dispatch`]):
+     |       ^^^^^^^^^^^^^^ this item is private
+     |
+     = note: this link will resolve properly if you pass `--document-private-items`
+
+warning: unresolved link to `HbdPixel`
+  --> crates/rvp9-core/src/lib.rs:49:7
+   |
+49 | /// [`HbdPixel`] (`uint16_t` in libvpx) and lives behind the
+   |       ^^^^^^^^ no item named `HbdPixel` in scope
+   |
+   = help: to escape `[` and `]` characters, add '\' before them like `\[` or `\]`
+
+warning: unresolved link to `BitDepth::Bd10`
+  --> crates/rvp9-core/src/lib.rs:68:14
+   |
+68 | /// [`Bd10`](BitDepth::Bd10) and [`Bd12`](BitDepth::Bd12). Mirrors libvpx
+   |              ^^^^^^^^^^^^^^ the enum `BitDepth` has no variant or associated item named `Bd10`
+
+warning: unresolved link to `BitDepth::Bd12`
+  --> crates/rvp9-core/src/lib.rs:68:43
+   |
+68 | /// [`Bd10`](BitDepth::Bd10) and [`Bd12`](BitDepth::Bd12). Mirrors libvpx
+   |                                           ^^^^^^^^^^^^^^ the enum `BitDepth` has no variant or associated item named `Bd12`
+
+warning: redundant explicit link target
+ --> crates/rvp9-core/src/inter/mode_info.rs:7:26
+  |
+7 | //! [`BlockMode::Inter`](crate::mode_info::BlockMode::Inter) variant
+  |      ------------------  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ explicit target is redundant
+  |      |
+  |      because label contains path that resolves to same destination
+  |
+  = note: when a link's destination is not specified,
+          the label is used to resolve intra-doc links
+  = note: `#[warn(rustdoc::redundant_explicit_links)]` on by default
+help: remove explicit link target
+  |
+7 - //! [`BlockMode::Inter`](crate::mode_info::BlockMode::Inter) variant
+7 + //! [`BlockMode::Inter`] variant
+  |
+
+warning: `mv_cost` is both a function and a module
+  --> crates/rvp9-core/src/cost/mod.rs:19:9
+   |
+19 | //! - [`mv_cost`] — MV joint-cost vector + per-axis component-cost
+   |         ^^^^^^^ ambiguous link
+   |
+help: to link to the function, add parentheses
+   |
+19 | //! - [`mv_cost()`] — MV joint-cost vector + per-axis component-cost
+   |                ++
+help: to link to the module, prefix with `mod@`
+   |
+19 | //! - [`mod@mv_cost`] — MV joint-cost vector + per-axis component-cost
+   |         ++++
+
+warning: `setup_mask` is both a function and a module
+  --> crates/rvp9-core/src/loopfilter.rs:47:9
+   |
+47 | //! - [`setup_mask`] — the top-level partition-tree walker that
+   |         ^^^^^^^^^^ ambiguous link
+   |
+help: to link to the function, add parentheses
+   |
+47 | //! - [`setup_mask()`] — the top-level partition-tree walker that
+   |                   ++
+help: to link to the module, prefix with `mod@`
+   |
+47 | //! - [`mod@setup_mask`] — the top-level partition-tree walker that
+   |         ++++
+
+warning: `adjust_mask` is both a function and a module
+  --> crates/rvp9-core/src/loopfilter.rs:55:9
+   |
+55 | //! - [`adjust_mask`] — the post-pass that merges TX_32X32 into
+   |         ^^^^^^^^^^^ ambiguous link
+   |
+help: to link to the function, add parentheses
+   |
+55 | //! - [`adjust_mask()`] — the post-pass that merges TX_32X32 into
+   |                    ++
+help: to link to the module, prefix with `mod@`
+   |
+55 | //! - [`mod@adjust_mask`] — the post-pass that merges TX_32X32 into
+   |         ++++
+
+   Compiling serde_derive v1.0.228
+warning: `rvp9-core` (lib doc) generated 79 warnings
+    Checking rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261017-VER-HUM-verify-public-api-docs-for-release-readi/crates/rvp9-encoder)
+    Checking rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261017-VER-HUM-verify-public-api-docs-for-release-readi/crates/rvp9-io)
+ Documenting rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261017-VER-HUM-verify-public-api-docs-for-release-readi/crates/rvp9-decoder)
+ Documenting rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261017-VER-HUM-verify-public-api-docs-for-release-readi/crates/rvp9-io)
+ Documenting rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261017-VER-HUM-verify-public-api-docs-for-release-readi/crates/rvp9-encoder)
+warning: unresolved link to `rvp9_decoder::Decoder::parse_packet`
+  --> crates/rvp9-io/src/container.rs:26:12
+   |
+26 | //! into [`rvp9_decoder::Decoder::parse_packet`].
+   |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ no item named `rvp9_decoder` in scope
+   |
+   = note: `#[warn(rustdoc::broken_intra_doc_links)]` on by default
+
+warning: unclosed HTML tag `size`
+    --> crates/rvp9-io/src/container.rs:1018:61
+     |
+1018 | /// containers, but treat any unrecognised element as "skip <size>
+     |                                                             ^^^^^^
+     |
+     = note: `#[warn(rustdoc::invalid_html_tags)]` on by default
+
+warning: unresolved link to `DecoderFramePool`
+ --> crates/rvp9-decoder/src/reconstruct_inter.rs:9:52
+  |
+9 | //!    `header.ref_frame_indices[i]` slot in the [`DecoderFramePool`].
+  |                                                    ^^^^^^^^^^^^^^^^ no item named `DecoderFramePool` in scope
+  |
+  = help: to escape `[` and `]` characters, add '\' before them like `\[` or `\]`
+  = note: `#[warn(rustdoc::broken_intra_doc_links)]` on by default
+
+warning: unresolved link to `inter_predictor`
+  --> crates/rvp9-decoder/src/reconstruct_inter.rs:16:10
+   |
+16 | //!    [`inter_predictor`].
+   |          ^^^^^^^^^^^^^^^ no item named `inter_predictor` in scope
+   |
+   = help: to escape `[` and `]` characters, add '\' before them like `\[` or `\]`
+
+warning: unresolved link to `inter_predictor`
+  --> crates/rvp9-decoder/src/reconstruct_inter.rs:30:9
+   |
+30 | //!   [`inter_predictor`] into dst, second ref via averaging.
+   |         ^^^^^^^^^^^^^^^ no item named `inter_predictor` in scope
+   |
+   = help: to escape `[` and `]` characters, add '\' before them like `\[` or `\]`
+
+warning: unresolved link to `crate::tile::decode_block`
+  --> crates/rvp9-decoder/src/reconstruct_inter.rs:33:38
+   |
+33 | //! - **D.2.e** — integration into [`crate::tile::decode_block`].
+   |                                      ^^^^^^^^^^^^^^^^^^^^^^^^^ no item named `decode_block` in module `tile`
+
+warning: unresolved link to `inter_predictor`
+   --> crates/rvp9-decoder/src/reconstruct_inter.rs:155:9
+    |
+155 | ///   [`inter_predictor`].
+    |         ^^^^^^^^^^^^^^^ no item named `inter_predictor` in scope
+    |
+    = help: to escape `[` and `]` characters, add '\' before them like `\[` or `\]`
+
+warning: public documentation for `decode_and_reconstruct_inter_block` links to private item `crate::Decoder::decode_inter_frame`
+   --> crates/rvp9-decoder/src/reconstruct_inter.rs:648:15
+    |
+648 | /// driver ([`crate::Decoder::decode_inter_frame`]) calls this helper
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this item is private
+    |
+    = note: this link will resolve properly if you pass `--document-private-items`
+    = note: `#[warn(rustdoc::private_intra_doc_links)]` on by default
+
+warning: unresolved link to `ScaleFactors`
+    --> crates/rvp9-decoder/src/tile.rs:1756:55
+     |
+1756 | /// current frame's aligned luma dimensions for the [`ScaleFactors`]
+     |                                                       ^^^^^^^^^^^^ no item named `ScaleFactors` in scope
+     |
+     = help: to escape `[` and `]` characters, add '\' before them like `\[` or `\]`
+
+warning: unresolved link to `decode_and_reconstruct_inter_block`
+    --> crates/rvp9-decoder/src/tile.rs:1757:20
+     |
+1757 | /// build inside [`decode_and_reconstruct_inter_block`].
+     |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ no item named `decode_and_reconstruct_inter_block` in scope
+     |
+     = help: to escape `[` and `]` characters, add '\' before them like `\[` or `\]`
+
+warning: unresolved link to `ScaleFactors`
+    --> crates/rvp9-decoder/src/tile.rs:1777:40
+     |
+1777 |     /// Per-logical-ref pre-computed [`ScaleFactors`] (`[LAST, GOLDEN,
+     |                                        ^^^^^^^^^^^^ no item named `ScaleFactors` in scope
+     |
+     = help: to escape `[` and `]` characters, add '\' before them like `\[` or `\]`
+
+warning: public documentation for `decode_tile_inter` links to private item `decode_inter_block`
+    --> crates/rvp9-decoder/src/tile.rs:1791:48
+     |
+1791 | /// inter params and dispatches per-block to [`decode_inter_block`].
+     |                                                ^^^^^^^^^^^^^^^^^^ this item is private
+     |
+     = note: this link will resolve properly if you pass `--document-private-items`
+
+warning: public documentation for `RVP9_G5_1_PARALLEL_JOBS` links to private item `Decoder::decode_intra_frame_inner`
+   --> crates/rvp9-decoder/src/lib.rs:181:7
+    |
+181 | /// [`Decoder::decode_intra_frame_inner`] and
+    |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this item is private
+    |
+    = note: this link will resolve properly if you pass `--document-private-items`
+
+warning: public documentation for `RVP9_G5_1_PARALLEL_JOBS` links to private item `Decoder::decode_inter_frame`
+   --> crates/rvp9-decoder/src/lib.rs:182:7
+    |
+182 | /// [`Decoder::decode_inter_frame`].
+    |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^ this item is private
+    |
+    = note: this link will resolve properly if you pass `--document-private-items`
+
+warning: public documentation for `RVP9_DECODE_TARGET_ALLOCS` links to private item `Decoder::acquire_decode_target`
+   --> crates/rvp9-decoder/src/lib.rs:193:7
+    |
+193 | /// [`Decoder::acquire_decode_target`].
+    |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this item is private
+    |
+    = note: this link will resolve properly if you pass `--document-private-items`
+
+warning: public documentation for `EmptyInterRef` links to private item `Decoder::decode_inter_frame`
+    --> crates/rvp9-decoder/src/lib.rs:4350:14
+     |
+4350 |     /// at [`Decoder::decode_inter_frame`]. In libvpx terms this is a
+     |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^ this item is private
+     |
+     = note: this link will resolve properly if you pass `--document-private-items`
+
+warning: `rvp9-io` (lib doc) generated 2 warnings
+warning: `rvp9-decoder` (lib doc) generated 14 warnings
+warning: unresolved link to `Self::apply_cyclic_refresh`
+  --> crates/rvp9-encoder/src/aq_cyclic_refresh.rs:31:42
+   |
+31 | //! - **`apply_cyclic_refresh` gate** ([`Self::apply_cyclic_refresh`])
+   |                                          ^^^^^^^^^^^^^^^^^^^^^^^^^^ no item named `apply_cyclic_refresh` in module `aq_cyclic_refresh`
+   |
+   = note: `#[warn(rustdoc::broken_intra_doc_links)]` on by default
+
+warning: unresolved link to `Self::pre_encode_pick_segments`
+  --> crates/rvp9-encoder/src/aq_cyclic_refresh.rs:40:9
+   |
+40 | //!   [`Self::pre_encode_pick_segments`] gates on `> qindex_thresh`,
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ no item named `pre_encode_pick_segments` in module `aq_cyclic_refresh`
+
+warning: public documentation for `pre_encode_pick_segments` links to private item `Self::qindex_thresh_for_eligibility`
+   --> crates/rvp9-encoder/src/aq_cyclic_refresh.rs:431:11
+    |
+431 |     /// [`Self::qindex_thresh_for_eligibility`]; pass the q-index that
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this item is private
+    |
+    = note: this link will resolve properly if you pass `--document-private-items`
+    = note: `#[warn(rustdoc::private_intra_doc_links)]` on by default
+
+warning: unresolved link to `tx_totals_gate`
+  --> crates/rvp9-encoder/src/bitstream_gates.rs:30:9
+   |
+30 | //! - [`tx_totals_gate`] — outer-loop early-out used by libvpx
+   |         ^^^^^^^^^^^^^^ no item named `tx_totals_gate` in scope
+   |
+   = help: to escape `[` and `]` characters, add '\' before them like `\[` or `\]`
+
+warning: unresolved link to `0`
+   --> crates/rvp9-encoder/src/buffer_pool.rs:391:11
+    |
+391 | ///   map[0], GOLDEN → map[1], ALTREF → map[2]); see
+    |           ^ no item named `0` in scope
+    |
+    = help: to escape `[` and `]` characters, add '\' before them like `\[` or `\]`
+
+warning: unresolved link to `1`
+   --> crates/rvp9-encoder/src/buffer_pool.rs:391:28
+    |
+391 | ///   map[0], GOLDEN → map[1], ALTREF → map[2]); see
+    |                            ^ no item named `1` in scope
+    |
+    = help: to escape `[` and `]` characters, add '\' before them like `\[` or `\]`
+
+warning: unresolved link to `2`
+   --> crates/rvp9-encoder/src/buffer_pool.rs:391:45
+    |
+391 | ///   map[0], GOLDEN → map[1], ALTREF → map[2]); see
+    |                                             ^ no item named `2` in scope
+    |
+    = help: to escape `[` and `]` characters, add '\' before them like `\[` or `\]`
+
+warning: unresolved link to `0`
+   --> crates/rvp9-encoder/src/buffer_pool.rs:450:36
+    |
+450 |     /// identity selector LAST→map[0], GOLDEN→map[1], ALTREF→map[2].
+    |                                    ^ no item named `0` in scope
+    |
+    = help: to escape `[` and `]` characters, add '\' before them like `\[` or `\]`
+
+warning: unresolved link to `1`
+   --> crates/rvp9-encoder/src/buffer_pool.rs:450:51
+    |
+450 |     /// identity selector LAST→map[0], GOLDEN→map[1], ALTREF→map[2].
+    |                                                   ^ no item named `1` in scope
+    |
+    = help: to escape `[` and `]` characters, add '\' before them like `\[` or `\]`
+
+warning: unresolved link to `2`
+   --> crates/rvp9-encoder/src/buffer_pool.rs:450:66
+    |
+450 |     /// identity selector LAST→map[0], GOLDEN→map[1], ALTREF→map[2].
+    |                                                                  ^ no item named `2` in scope
+    |
+    = help: to escape `[` and `]` characters, add '\' before them like `\[` or `\]`
+
+warning: unresolved link to `0`
+   --> crates/rvp9-encoder/src/buffer_pool.rs:452:34
+    |
+452 |     /// rotated every frame (map[0], refresh bit 0); `golden_recon_*`
+    |                                  ^ no item named `0` in scope
+    |
+    = help: to escape `[` and `]` characters, add '\' before them like `\[` or `\]`
+
+warning: unresolved link to `1`
+   --> crates/rvp9-encoder/src/buffer_pool.rs:453:45
+    |
+453 |     /// rotated only on GOLDEN-refresh (map[1], refresh bit 1);
+    |                                             ^ no item named `1` in scope
+    |
+    = help: to escape `[` and `]` characters, add '\' before them like `\[` or `\]`
+
+warning: unresolved link to `2`
+   --> crates/rvp9-encoder/src/buffer_pool.rs:454:55
+    |
+454 |     /// `altref_recon_*` rotated only on the ARF (map[2], refresh bit 2).
+    |                                                       ^ no item named `2` in scope
+    |
+    = help: to escape `[` and `]` characters, add '\' before them like `\[` or `\]`
+
+warning: public documentation for `encode_two_pass` links to private item `FIRST_PASS_QINDEX`
+   --> crates/rvp9-encoder/src/frame_loop.rs:818:11
+    |
+818 | ///    ([`FIRST_PASS_QINDEX`]) in a stats-only mode, gathering per-frame
+    |           ^^^^^^^^^^^^^^^^^ this item is private
+    |
+    = note: this link will resolve properly if you pass `--document-private-items`
+
+warning: public documentation for `encode_two_pass` links to private item `gather_first_pass_stats`
+   --> crates/rvp9-encoder/src/frame_loop.rs:823:39
+    |
+823 | ///    away the pass-1 output). See [`gather_first_pass_stats`].
+    |                                       ^^^^^^^^^^^^^^^^^^^^^^^ this item is private
+    |
+    = note: this link will resolve properly if you pass `--document-private-items`
+
+warning: unresolved link to `ArfSchedule`
+  --> crates/rvp9-encoder/src/gop.rs:99:43
+   |
+99 |     /// (The ARF's `0x04` is carried by [`ArfSchedule`], not here, since
+   |                                           ^^^^^^^^^^^ no item named `ArfSchedule` in scope
+   |
+   = help: to escape `[` and `]` characters, add '\' before them like `\[` or `\]`
+
+warning: public documentation for `rate_control` links to private item `cbr::rtc_minq_approx`
+  --> crates/rvp9-encoder/src/rate_control/mod.rs:72:10
+   |
+72 | //!    [`cbr::rtc_minq_approx`].
+   |          ^^^^^^^^^^^^^^^^^^^^ this item is private
+   |
+   = note: this link will resolve properly if you pass `--document-private-items`
+
+warning: public documentation for `rate_control` links to private item `cbr::regulate_q`
+  --> crates/rvp9-encoder/src/rate_control/mod.rs:73:14
+   |
+73 | //! 4. Run [`cbr::regulate_q`]: iterate from active_best upward; the
+   |              ^^^^^^^^^^^^^^^ this item is private
+   |
+   = note: this link will resolve properly if you pass `--document-private-items`
+
+warning: public documentation for `rate_correction_factors` links to private item `cbr::RateFactorLevel`
+   --> crates/rvp9-encoder/src/rate_control/state.rs:123:11
+    |
+123 |     /// [`cbr::RateFactorLevel`] enum. Multiplies the libvpx
+    |           ^^^^^^^^^^^^^^^^^^^^ this item is private
+    |
+    = note: this link will resolve properly if you pass `--document-private-items`
+
+warning: public documentation for `pick_q_and_bounds` links to private item `super::cbr::pick_q_and_bounds`
+   --> crates/rvp9-encoder/src/rate_control/state.rs:441:17
+    |
+441 |     /// Wraps [`super::cbr::pick_q_and_bounds`].
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this item is private
+    |
+    = note: this link will resolve properly if you pass `--document-private-items`
+
+warning: public documentation for `postencode_update` links to private item `super::postencode::postencode_update`
+   --> crates/rvp9-encoder/src/rate_control/state.rs:580:11
+    |
+580 |     /// [`super::postencode::postencode_update`].
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this item is private
+    |
+    = note: this link will resolve properly if you pass `--document-private-items`
+
+warning: public documentation for `two_pass` links to private item `pick_q_and_bounds`
+  --> crates/rvp9-encoder/src/rate_control/two_pass.rs:30:9
+   |
+30 | //! - [`pick_q_and_bounds`] — the 2-pass `pick_q` arm. For each frame it
+   |         ^^^^^^^^^^^^^^^^^ this item is private
+   |
+   = note: this link will resolve properly if you pass `--document-private-items`
+
+warning: public documentation for `two_pass` links to private item `super::cbr::regulate_q`
+  --> crates/rvp9-encoder/src/rate_control/two_pass.rs:33:26
+   |
+33 | //!   target) and runs [`super::cbr::regulate_q`] within an
+   |                          ^^^^^^^^^^^^^^^^^^^^^^ this item is private
+   |
+   = note: this link will resolve properly if you pass `--document-private-items`
+
+warning: public documentation for `TwoPassState` links to private item `pick_q_and_bounds`
+   --> crates/rvp9-encoder/src/rate_control/two_pass.rs:115:25
+    |
+115 | /// frame-by-frame by [`pick_q_and_bounds`] via the cursor.
+    |                         ^^^^^^^^^^^^^^^^^ this item is private
+    |
+    = note: this link will resolve properly if you pass `--document-private-items`
+
+warning: public documentation for `vbr` links to private item `pick_q_and_bounds`
+  --> crates/rvp9-encoder/src/rate_control/vbr.rs:18:9
+   |
+18 | //! - [`pick_q_and_bounds`] — top-level dispatch entry point, mirrors
+   |         ^^^^^^^^^^^^^^^^^ this item is private
+   |
+   = note: this link will resolve properly if you pass `--document-private-items`
+
+warning: public documentation for `vbr` links to private item `active_worst_quality_vbr`
+  --> crates/rvp9-encoder/src/rate_control/vbr.rs:20:9
+   |
+20 | //! - [`active_worst_quality_vbr`] — VBR's active-worst computation,
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^ this item is private
+   |
+   = note: this link will resolve properly if you pass `--document-private-items`
+
+warning: public documentation for `vbr` links to private item `active_best_quality_vbr`
+  --> crates/rvp9-encoder/src/rate_control/vbr.rs:23:9
+   |
+23 | //! - [`active_best_quality_vbr`] — VBR's active-best computation
+   |         ^^^^^^^^^^^^^^^^^^^^^^^ this item is private
+   |
+   = note: this link will resolve properly if you pass `--document-private-items`
+
+warning: public documentation for `vbr` links to private item `calc_iframe_target_size_vbr`
+  --> crates/rvp9-encoder/src/rate_control/vbr.rs:25:9
+   |
+25 | //! - [`calc_iframe_target_size_vbr`] — KF target (`avg_bw * 25`),
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^ this item is private
+   |
+   = note: this link will resolve properly if you pass `--document-private-items`
+
+warning: public documentation for `vbr` links to private item `calc_pframe_target_size_vbr`
+  --> crates/rvp9-encoder/src/rate_control/vbr.rs:28:9
+   |
+28 | //! - [`calc_pframe_target_size_vbr`] — inter target with GOP
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^ this item is private
+   |
+   = note: this link will resolve properly if you pass `--document-private-items`
+
+warning: unresolved link to `HandleInterRunner`
+  --> crates/rvp9-encoder/src/rdo/inter_dispatch.rs:24:12
+   |
+24 | //! 1. A [`HandleInterRunner`] factory per ref-frame, wired to the real
+   |            ^^^^^^^^^^^^^^^^^ no item named `HandleInterRunner` in scope
+   |
+   = help: to escape `[` and `]` characters, add '\' before them like `\[` or `\]`
+
+warning: unresolved link to `ref`
+   --> crates/rvp9-encoder/src/rdo/single_mv_search.rs:134:68
+    |
+134 |     /// libvpx lines 2644-2657 early-exit (we exit if `pred_mv_sad[ref]
+    |                                                                    ^^^ no item named `ref` in scope
+    |
+    = help: to escape `[` and `]` characters, add '\' before them like `\[` or `\]`
+
+warning: unresolved link to `adaptive_subpel_force_stop`
+   --> crates/rvp9-encoder/src/rdo/single_mv_search.rs:150:11
+    |
+150 |     /// [`adaptive_subpel_force_stop`] to derive.
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^ no item named `adaptive_subpel_force_stop` in scope
+    |
+    = help: to escape `[` and `]` characters, add '\' before them like `\[` or `\]`
+
+warning: public documentation for `trellis` links to private item `fdct_dc_scale`
+  --> crates/rvp9-encoder/src/rdo/trellis.rs:21:48
+   |
+21 | //!   `vpx_fdct{4x4,8x8,16x16,32x32}_1`. See [`fdct_dc_scale`] for the
+   |                                                ^^^^^^^^^^^^^ this item is private
+   |
+   = note: this link will resolve properly if you pass `--document-private-items`
+
+warning: unresolved link to `tests`
+  --> crates/rvp9-encoder/src/svc.rs:85:40
+   |
+85 | //! Module-level PROOF tests live in [`tests`] (≥5, each citing
+   |                                        ^^^^^ no item named `tests` in scope
+   |
+   = help: to escape `[` and `]` characters, add '\' before them like `\[` or `\]`
+
+warning: public documentation for `new` links to private item `MAX_LAG_BUFFERS`
+   --> crates/rvp9-encoder/src/temporal_filter.rs:230:28
+    |
+230 |     /// empty or exceeds [`MAX_LAG_BUFFERS`], or if `strength > 6`.
+    |                            ^^^^^^^^^^^^^^^ this item is private
+    |
+    = note: this link will resolve properly if you pass `--document-private-items`
+
+warning: public documentation for `temporal_filter_iterate_row` links to private item `fixed_divide_table`
+    --> crates/rvp9-encoder/src/temporal_filter.rs:1258:33
+     |
+1258 | /// ARF source occupies. Uses [`fixed_divide_table`] to normalise
+     |                                 ^^^^^^^^^^^^^^^^^^ this item is private
+     |
+     = note: this link will resolve properly if you pass `--document-private-items`
+
+warning: unresolved link to `IntraCoefSource`
+   --> crates/rvp9-encoder/src/lib.rs:553:24
+    |
+553 |     /// writer's new [`IntraCoefSource`] plumbing.
+    |                        ^^^^^^^^^^^^^^^ no item named `IntraCoefSource` in scope
+    |
+    = help: to escape `[` and `]` characters, add '\' before them like `\[` or `\]`
+
+warning: unresolved link to `encode_synthetic_two_frame_kf_inter`
+   --> crates/rvp9-encoder/src/lib.rs:680:25
+    |
+680 |     /// Same shape as [`encode_synthetic_two_frame_kf_inter`] (default
+    |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ no item named `encode_synthetic_two_frame_kf_inter` in scope
+    |
+    = help: to escape `[` and `]` characters, add '\' before them like `\[` or `\]`
+
+warning: unresolved link to `encode_synthetic_two_frame_kf_inter`
+   --> crates/rvp9-encoder/src/lib.rs:700:19
+    |
+700 |     /// Same as [`encode_synthetic_two_frame_kf_inter`].
+    |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ no item named `encode_synthetic_two_frame_kf_inter` in scope
+    |
+    = help: to escape `[` and `]` characters, add '\' before them like `\[` or `\]`
+
+warning: unresolved link to `IntraCoefSource`
+    --> crates/rvp9-encoder/src/lib.rs:1248:47
+     |
+1248 | /// Encoder simulator output: a direct-slot [`IntraCoefSource`].
+     |                                               ^^^^^^^^^^^^^^^ no item named `IntraCoefSource` in scope
+     |
+     = help: to escape `[` and `]` characters, add '\' before them like `\[` or `\]`
+
+warning: public documentation for `VecBackedInterCoefSource` links to private item `pick_and_simulate_inter_encode_partitions`
+    --> crates/rvp9-encoder/src/lib.rs:1366:20
+     |
+1366 | /// Populated by [`pick_and_simulate_inter_encode_partitions`] — the
+     |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this item is private
+     |
+     = note: this link will resolve properly if you pass `--document-private-items`
+
+warning: redundant explicit link target
+  --> crates/rvp9-encoder/src/tpl/driver.rs:18:28
+   |
+18 | //!    [`mode_estimation`](super::mode_est::mode_estimation): the four
+   |         -----------------  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ explicit target is redundant
+   |         |
+   |         because label contains path that resolves to same destination
+   |
+   = note: when a link's destination is not specified,
+           the label is used to resolve intra-doc links
+   = note: `#[warn(rustdoc::redundant_explicit_links)]` on by default
+help: remove explicit link target
+   |
+18 - //!    [`mode_estimation`](super::mode_est::mode_estimation): the four
+18 + //!    [`mode_estimation`]: the four
+   |
+
+warning: redundant explicit link target
+  --> crates/rvp9-encoder/src/tpl/driver.rs:26:28
+   |
+26 | //! 2. [`tpl_model_store`](super::update::tpl_model_store) recomputes
+   |         -----------------  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ explicit target is redundant
+   |         |
+   |         because label contains path that resolves to same destination
+   |
+   = note: when a link's destination is not specified,
+           the label is used to resolve intra-doc links
+help: remove explicit link target
+   |
+26 - //! 2. [`tpl_model_store`](super::update::tpl_model_store) recomputes
+26 + //! 2. [`tpl_model_store`] recomputes
+   |
+
+warning: redundant explicit link target
+  --> crates/rvp9-encoder/src/tpl/driver.rs:28:29
+   |
+28 | //! 3. [`tpl_model_update`](super::update::tpl_model_update) projects the
+   |         ------------------  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ explicit target is redundant
+   |         |
+   |         because label contains path that resolves to same destination
+   |
+   = note: when a link's destination is not specified,
+           the label is used to resolve intra-doc links
+help: remove explicit link target
+   |
+28 - //! 3. [`tpl_model_update`](super::update::tpl_model_update) projects the
+28 + //! 3. [`tpl_model_update`] projects the
+   |
+
+warning: `nn_predict` is both a function and a module
+  --> crates/rvp9-encoder/src/ml_partition/mod.rs:12:9
+   |
+12 | //! | [`nn_predict`]   | `vp9/encoder/vp9_encodeframe.c:3111-3153` (runtime) + `vp9/encoder/vp9_partition_models.h:18-974` (13 NN co...
+   |         ^^^^^^^^^^ ambiguous link
+   |
+help: to link to the function, add parentheses
+   |
+12 | //! | [`nn_predict()`]   | `vp9/encoder/vp9_encodeframe.c:3111-3153` (runtime) + `vp9/encoder/vp9_partition_models.h:18-974` (13 NN configs + linear tables) |
+   |                   ++
+help: to link to the module, prefix with `mod@`
+   |
+12 | //! | [`mod@nn_predict`]   | `vp9/encoder/vp9_encodeframe.c:3111-3153` (runtime) + `vp9/encoder/vp9_partition_models.h:18-974` (13 NN configs + linear tables) |
+   |         ++++
+
+warning: `rvp9-encoder` (lib doc) generated 45 warnings
+ Documenting rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261017-VER-HUM-verify-public-api-docs-for-release-readi/crates/rvp9-harness)
+ Documenting rvp9-cli v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261017-VER-HUM-verify-public-api-docs-for-release-readi/crates/rvp9-cli)
+    Checking rvp9-cli v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261017-VER-HUM-verify-public-api-docs-for-release-readi/crates/rvp9-cli)
+    Checking rvp9-bench v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261017-VER-HUM-verify-public-api-docs-for-release-readi/crates/rvp9-bench)
+ Documenting rvp9-bench v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261017-VER-HUM-verify-public-api-docs-for-release-readi/crates/rvp9-bench)
+warning: unresolved link to `build_encoder_config_for_test`
+    --> crates/rvp9-cli/src/bin/rvp9enc.rs:1603:40
+     |
+1603 | /// and the PROOF tests call it (via [`build_encoder_config_for_test`])
+     |                                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ no item named `build_encoder_config_for_test` in scope
+     |
+     = help: to escape `[` and `]` characters, add '\' before them like `\[` or `\]`
+     = note: `#[warn(rustdoc::broken_intra_doc_links)]` on by default
+
+warning: unclosed HTML tag `n`
+  --> crates/rvp9-harness/src/bin/check_lld_format.rs:54:21
+   |
+54 | /// starts with "## <n>." possibly followed by a space and the title).
+   |                     ^^^
+   |
+   = note: `#[warn(rustdoc::invalid_html_tags)]` on by default
+
+warning: `rvp9-cli` (bin "rvp9enc" doc) generated 1 warning
+warning: `rvp9-harness` (bin "check-lld-format" doc) generated 1 warning
+warning: unresolved link to `rvp9_decoder::Decoder::with_threads(--threads)`
+ --> crates/rvp9-bench/src/bin/decode-profile-tiles.rs:4:7
+  |
+4 | //! [`rvp9_decoder::Decoder::with_threads(--threads)`], and replays the
+  |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the struct `Decoder` has no field or associated item named `with_threads(--threads)`
+  |
+  = note: `#[warn(rustdoc::broken_intra_doc_links)]` on by default
+
+warning: `rvp9-bench` (bin "decode-profile-tiles" doc) generated 1 warning
+    Finished `dev` profile [optimized + debuginfo] target(s) in 16.89s
+   Generated /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rustdoc-02caab22/target/doc/rvp9/index.html and 31 other files
