@@ -1,0 +1,5 @@
+worktree=/Users/md/worktrees/rvp9/20261017-TSK-HUM-requalify-post-fix-candidate
+branch=task/20261017-TSK-HUM-requalify-post-fix-candidate
+source_commit=fb5c0c917038db6c640b3dbc7c2b84b567233333
+porcelain_status_begin
+porcelain_status_end
