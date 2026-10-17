@@ -1,0 +1,47 @@
+{
+  "schema": "rvp9.macos-load-recheck.v1",
+  "recorded_at_utc": "2026-10-17T14:16:58Z",
+  "host": {
+    "name": "flux.home.arpa",
+    "platform": "macOS Apple Silicon",
+    "logical_processors": 18
+  },
+  "quiet_status": {
+    "live_lease": false,
+    "holder": null,
+    "queue_length": 0,
+    "heavy_processes": 1,
+    "heavy_processes_low_priority": 38,
+    "own_measurements": 0,
+    "open_after_epoch": 1792233007
+  },
+  "load_average": {
+    "one_minute": 77.46,
+    "five_minutes": 93.08,
+    "fifteen_minutes": 90.43
+  },
+  "qualification": {
+    "canonical_guard_limit_busy_logical_cores": 0.75,
+    "canonical_guard_run": false,
+    "pgo_started": false,
+    "timing_started": false,
+    "interpretation": "This point-in-time load average is not the canonical busy-logical-core guard. The host remains congested; no lease or build was started."
+  },
+  "raw": [
+    {
+      "path": "macos-quiet-status-20261017T1416Z.raw.json",
+      "bytes": 168,
+      "sha256": "73b6cd10763d50d971cb76331dcbf40364d983d4ef1443766752202d1aa101f4"
+    },
+    {
+      "path": "macos-load-20261017T1416Z.raw.txt",
+      "bytes": 68,
+      "sha256": "a2564a733ba21bda5a6557968bb99c9c437248a51cbdcd065ce4c5200cd6dcc5"
+    },
+    {
+      "path": "macos-logical-cpus-20261017T1416Z.raw.txt",
+      "bytes": 3,
+      "sha256": "7ee29791fc17e986b97128845622b077fb45e349fdb80523fac9dba879b4ad60"
+    }
+  ]
+}
