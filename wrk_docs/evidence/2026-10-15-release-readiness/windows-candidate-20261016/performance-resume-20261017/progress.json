@@ -1,0 +1,19 @@
+{
+  "observed_utc": "2026-10-17T05:49:19.0955353Z",
+  "native_root_pid": 37136,
+  "exported_groups": [],
+  "quiet": {
+    "live": true,
+    "holder": {
+      "reason": "rvp9-resume-speed474",
+      "granted_at": 1792216064,
+      "expires_at": 1792217264
+    },
+    "open_after": 1792215791,
+    "queue": [],
+    "heavy_processes": 0,
+    "heavy_processes_low_priority": 0,
+    "own_measurements": 0
+  },
+  "terminal_exit": null
+}

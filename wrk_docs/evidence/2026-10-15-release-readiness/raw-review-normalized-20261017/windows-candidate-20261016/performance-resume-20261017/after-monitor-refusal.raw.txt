@@ -1,0 +1,11 @@
+utc=2026-10-17T05:50:28.5189512Z
+root37136_present=False
+host one-minute load 0.801736 exceeds 0.75 at 'speed-start'; a timing measurement on a loaded host is not evidence
+1
+input_noisy_old_town_cross_1080p60_sha256=528e3fa484eecf6c63609fcf608d13b9300d155bf6f1bddc5f81e673c36a2279
+acceptance_inputs=16
+run_fingerprint_sha256=6f540954fddb7144e7b45d50b8c187e42eb91e790843968e08000900ea633d46
+acceptance_inputs_sealed=yes
+load_observation_speed-start=1.860488
+resumed_utc=2026-10-17T05:48:19Z
+load_observation_speed-start=0.801736

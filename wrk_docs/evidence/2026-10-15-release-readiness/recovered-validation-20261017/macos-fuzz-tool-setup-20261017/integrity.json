@@ -1,0 +1,70 @@
+{
+  "finalized_utc": "2026-10-17T06:02:48.580796+00:00",
+  "files": [
+    {
+      "file": "README.md",
+      "bytes": 1345,
+      "sha256": "1beb8aa90ea714060422185d1dd0285628c3e37ec3e6313457777c1527fb0432"
+    },
+    {
+      "file": "cargo-fuzz-Cargo.lock",
+      "bytes": 23540,
+      "sha256": "f64e1eceaceb7be6365539911f45d73bfe7b3afc8370281cca943a8a28b395b3"
+    },
+    {
+      "file": "cargo-fuzz-Cargo.toml",
+      "bytes": 1549,
+      "sha256": "936e5dcaeedc1fe79c53580d8af9164b3b8a5dfb182a8b1ced50d262f63f202e"
+    },
+    {
+      "file": "cargo-fuzz-index-entry.json",
+      "bytes": 2302,
+      "sha256": "d45ad9d83ede17713ad803c04434129715fdef6928af3afdf30163de06e221f4"
+    },
+    {
+      "file": "cargo-fuzz-vcs-info.json",
+      "bytes": 94,
+      "sha256": "2624144041b417d6f5b7bcc182a03883adeae8f3f38a07758c1ef390ff329138"
+    },
+    {
+      "file": "cargo-install.raw.txt",
+      "bytes": 4264,
+      "sha256": "6baab2cc104150a617f6de6eb395fb6e28cc4d68888e16372451ac86263480ef"
+    },
+    {
+      "file": "cargo.raw.txt",
+      "bytes": 36,
+      "sha256": "c10ec31b8c6e6e2693cf65fc1971b41edbc3da1ae7db6f9f3f36c4823f8dcab5"
+    },
+    {
+      "file": "code-diff.raw.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "file": "run.json",
+      "bytes": 3736,
+      "sha256": "789b876f1110aafb21b9ad4c254128218890a279e64fb898c519f4b7a783c662"
+    },
+    {
+      "file": "rustc.raw.txt",
+      "bytes": 192,
+      "sha256": "e61cba8ded8c60e985f759f74a221c4773649021477d00b44c7af411eb8c218c"
+    },
+    {
+      "file": "source.raw.txt",
+      "bytes": 41,
+      "sha256": "b35c966214ee1f8b63ed0aa1838db4715f3e0a2c8f348b2b2bfa44c25910e763"
+    },
+    {
+      "file": "tool-source-identity.json",
+      "bytes": 10613,
+      "sha256": "846aa39204e8a332571f013cdd60408a7869e027a064ff5ce7248a6d448bdf7c"
+    },
+    {
+      "file": "version.raw.txt",
+      "bytes": 18,
+      "sha256": "3e2aa5c2baaf44e5a4968cc3fedb864f4717f85b713deacf3fc4294162358ca1"
+    }
+  ]
+}

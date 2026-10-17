@@ -1,0 +1,27 @@
+   Compiling libc v0.2.186
+   Compiling cpufeatures v0.2.17
+   Compiling sha2 v0.10.9
+   Compiling rvp9-bench v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-bench)
+    Finished `release` profile [optimized + debuginfo] target(s) in 1m 27s
+     Running tests/soak_cli.rs (/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-rc-validation-aa390fba/target/release/deps/soak_cli-9e4b4f1e35b33a19)
+
+running 1 test
+test requested_cross_decode_requires_existing_vpxdec ... FAILED
+
+failures:
+
+---- requested_cross_decode_requires_existing_vpxdec stdout ----
+
+thread 'requested_cross_decode_requires_existing_vpxdec' (223531377) panicked at crates/rvp9-bench/tests/soak_cli.rs:21:5:
+stderr:
+error: --frames-per-iter must be greater than zero
+
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    requested_cross_decode_requires_existing_vpxdec
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.26s
+
+error: test failed, to rerun pass `-p rvp9-bench --test soak_cli`

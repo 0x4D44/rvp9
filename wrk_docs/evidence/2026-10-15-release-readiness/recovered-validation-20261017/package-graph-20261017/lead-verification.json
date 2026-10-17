@@ -1,0 +1,9 @@
+{
+  "integrity_entries_verified": 37,
+  "archives_and_native_staged_index_checksums_verified": 5,
+  "original_manifests_match_workspace": 5,
+  "archived_source_files_match_workspace": 250,
+  "cli_sibling_lock_checksums_verified": 4,
+  "terminal_exit": 0,
+  "limitation": "Current alpha.4 candidate production graph only. Default package verification does not run archive tests or publish a new release version."
+}

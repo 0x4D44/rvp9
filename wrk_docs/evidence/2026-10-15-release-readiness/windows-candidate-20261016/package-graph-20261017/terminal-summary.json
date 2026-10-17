@@ -1,0 +1,96 @@
+{
+  "status": "passed_candidate_five_package_graph_default_verification",
+  "source": "474dfd99a673df85f750136f7552ac156b7a24e9",
+  "source_clean_before_after": true,
+  "toolchain": "1.95.0 x86_64-pc-windows-msvc, rustc59807616e, Cargo f2d3ce0bd",
+  "jobs": 4,
+  "fresh_registered_target": "C:/Users/marti/AppData/Local/Temp/deltic-scratch/rvp9-native-packagegraph474-3255285b/cargo-target",
+  "cargo_invocations": 1,
+  "cargo_exit": 0,
+  "package_verification_builds": 5,
+  "verified_packages": [
+    "rvp9-core",
+    "rvp9-decoder",
+    "rvp9-encoder",
+    "rvp9-io",
+    "rvp9-cli"
+  ],
+  "archive_files_total": 357,
+  "archives": [
+    {
+      "name": "rvp9-decoder",
+      "version": "0.2.0-alpha.4",
+      "sha256": "dd1ddd6b6f1475adbc753e353a8b0baabfb779a151f97e61db763664f577a590",
+      "bytes": 225641,
+      "file_count": 20,
+      "vcs": {
+        "git": {
+          "sha1": "474dfd99a673df85f750136f7552ac156b7a24e9"
+        },
+        "path_in_vcs": "crates/rvp9-decoder"
+      }
+    },
+    {
+      "name": "rvp9-cli",
+      "version": "0.2.0-alpha.4",
+      "sha256": "b84be81a740da510f2280b48228ae02fb9d0ef8638542c991ab1b5d231064205",
+      "bytes": 67924,
+      "file_count": 18,
+      "vcs": {
+        "git": {
+          "sha1": "474dfd99a673df85f750136f7552ac156b7a24e9"
+        },
+        "path_in_vcs": "crates/rvp9-cli"
+      }
+    },
+    {
+      "name": "rvp9-io",
+      "version": "0.2.0-alpha.4",
+      "sha256": "9284a71f3b281405c2edee34b5b567eebe092ba340392a266d111029a736023b",
+      "bytes": 50174,
+      "file_count": 14,
+      "vcs": {
+        "git": {
+          "sha1": "474dfd99a673df85f750136f7552ac156b7a24e9"
+        },
+        "path_in_vcs": "crates/rvp9-io"
+      }
+    },
+    {
+      "name": "rvp9-encoder",
+      "version": "0.2.0-alpha.4",
+      "sha256": "ac03b25e4894b0866e437dd182c999a7b1f0573a9ce56251c0c7bba751b59c05",
+      "bytes": 968339,
+      "file_count": 116,
+      "vcs": {
+        "git": {
+          "sha1": "474dfd99a673df85f750136f7552ac156b7a24e9"
+        },
+        "path_in_vcs": "crates/rvp9-encoder"
+      }
+    },
+    {
+      "name": "rvp9-core",
+      "version": "0.2.0-alpha.4",
+      "sha256": "1747c2409aaea82dc5a8fe8ad685c0aabbc0b069a711952692ddcf6147d62c28",
+      "bytes": 1376521,
+      "file_count": 189,
+      "vcs": {
+        "git": {
+          "sha1": "474dfd99a673df85f750136f7552ac156b7a24e9"
+        },
+        "path_in_vcs": "crates/rvp9-core"
+      }
+    }
+  ],
+  "archive_tests_executed": 0,
+  "limits": "Cargo default package verification builds only; archive tests remain FLU38. No publication. Generated crate archives retained natively, not downloaded.",
+  "native_root_pid": 22720,
+  "terminal": "launcher complete; root22720absent/cargo0/rustc0",
+  "archive_inspection": "Initial GNUtar C:/path interpreted as remotehost and failed. Original diagnostics/empty outputs retained. Same unmodified archives inspected successfully using /c/path; authoritative filelists/manifests use .inspected- names. No Cargo rerun.",
+  "remote_download_verified_files": 89,
+  "raw_log": "package.log",
+  "raw_log_sha256": "3711f747080fee406040f1a0f348a3a8e4e7469f58f19bac4e2602950974c1b4",
+  "config": "identity.log includes unchanged repo .cargo/config.toml; inherited-build-config.log records preexisting global rust-lld linker and blank override environment. No config change.",
+  "persisted_registry_source_checks": "4 sibling source directories;12manifest/originalmanifest/VCS hashes match archive members; registry-source-manifest-check.raw.txt"
+}

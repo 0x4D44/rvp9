@@ -1,0 +1,55 @@
+{
+  "finalized_utc": "2026-10-17T05:56:15.445405+00:00",
+  "files": [
+    {
+      "file": "README.md",
+      "bytes": 3758,
+      "sha256": "ffa99ef4f43d0c1d2968dd54babc7c1e6a1e05abc6a6f3125a37b1d9a0924691"
+    },
+    {
+      "file": "anvil-inventory.json",
+      "bytes": 1581,
+      "sha256": "e4fcfb583594f72921710911f97b17b8ae055e9d151c92a5567a8c656e1faf4a"
+    },
+    {
+      "file": "anvil-metadata.json",
+      "bytes": 692,
+      "sha256": "e93278503b4801b619449fca9e323bff3d70c5a50cd21a400fd47f5771e92f59"
+    },
+    {
+      "file": "anvil-metadata.raw.txt",
+      "bytes": 1809,
+      "sha256": "4ba33bdb41fa5939e4a8eead1d94ce8560735784a341be10e1dc7651146e2054"
+    },
+    {
+      "file": "checks.json",
+      "bytes": 9337,
+      "sha256": "881b018159aa7b64d3639a1aa8c83e85ac6a2200b800b952c232633f594d86fe"
+    },
+    {
+      "file": "inventory.raw.txt",
+      "bytes": 1498,
+      "sha256": "61ef1b580d7779d1d59d608727e2e9124e2006d73ede85d96606202a4437991f"
+    },
+    {
+      "file": "kiln-inventory.json",
+      "bytes": 1763,
+      "sha256": "64b81fd35dbb162f37df4ce80a3f67319c86157b6ebd4b950405605996d973c9"
+    },
+    {
+      "file": "kiln-metadata.json",
+      "bytes": 3092,
+      "sha256": "41c80f2656d2c2afab8c55600559e93c774728be9d1bbd2a8461be28f164d465"
+    },
+    {
+      "file": "kiln-metadata.raw.txt",
+      "bytes": 6966,
+      "sha256": "155f88c0073ac95a12b26655a01cd9f4556d405860246d8cb9028e22a598604c"
+    },
+    {
+      "file": "metadata-probe.ps1",
+      "bytes": 1539,
+      "sha256": "dc5567b2487d50f12f80486093f1d633b5ffc9d742a1e02f01431b1fea40d820"
+    }
+  ]
+}

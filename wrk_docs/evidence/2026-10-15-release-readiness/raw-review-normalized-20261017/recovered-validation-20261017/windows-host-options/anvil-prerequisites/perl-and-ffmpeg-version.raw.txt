@@ -1,0 +1,9 @@
+Perl version probe without -e quoting; prior failed -e diagnostic preserved.
+
+This is perl 5, version 42, subversion 2 (v5.42.2) built for MSWin32-x64-multi-thread
+
+Copyright 1987-2026, Larry Wall
+perl_exit=0
+ffmpeg version 8.0.1-full_build-www.gyan.dev Copyright (c) 2000-2025 the FFmpeg developers
+built with gcc 15.2.0 (Rev8, Built by MSYS2 project)
+ffmpeg_exit=-1

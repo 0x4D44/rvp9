@@ -1,0 +1,18 @@
+[package]
+name = "rvp9-io"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+description = "Shared container (IVF/WebM) + Y4M readers/writers and MD5 helpers used by the rvp9 CLIs and test harness."
+readme = "README.md"
+keywords = ["vp9", "video", "ivf", "webm", "y4m"]
+categories = ["multimedia::video", "encoding"]
+
+[lints]
+workspace = true
+
+[dependencies]
+rvp9-core = { version = "0.2.0-alpha.4", path = "../rvp9-core" }

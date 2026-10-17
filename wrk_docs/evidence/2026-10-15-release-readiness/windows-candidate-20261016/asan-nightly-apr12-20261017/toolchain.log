@@ -1,0 +1,19 @@
+2026-10-17T05:51:27Z
+474dfd99a673df85f750136f7552ac156b7a24e9
+rustc 1.97.0-nightly (bf4fbfb7a 2026-04-11)
+binary: rustc
+commit-hash: bf4fbfb7a18d74e7cd8eef93af7329c58fbb5344
+commit-date: 2026-04-11
+host: x86_64-pc-windows-msvc
+release: 1.97.0-nightly
+LLVM version: 22.1.2
+cargo 1.97.0-nightly (eb94155a9 2026-04-09)
+release: 1.97.0-nightly
+commit-hash: eb94155a9a60943bd7b1cb04abec42f5d0de6ddc
+commit-date: 2026-04-09
+host: x86_64-pc-windows-msvc
+libgit2: 1.9.2 (sys:0.20.4 vendored)
+libcurl: 8.19.0-DEV (sys:0.4.87+curl-8.19.0 vendored ssl:Schannel)
+os: Windows 10.0.26200 (Windows 11 Professional) [64-bit]
+msvc_runtime_directory=C:/Program Files/Microsoft Visual Studio/18/Enterprise/VC/Tools/MSVC/14.50.35717/bin/Hostx64/x64
+e53a93738597dda2923f91d3d91945b9cd690c23766b93d7723963d82e350fa4 */c/Users/marti/AppData/Local/Temp/deltic-scratch/rvp9-native-asanapr12-474-b98479dc/preflight.rs

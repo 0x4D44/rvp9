@@ -1,0 +1,12 @@
+HOST             SITE       OS              CPU                                    RAM       DISK (AVAIL/TOTAL)  LOGIN   AGE
+ANNEAL           edinburgh  Windows/x86_64  Intel(R) Core(TM) Ultra 7 270K Plus    127.5 GB  3.1 TB/3.7 TB       marti   13h
+ANVIL            edinburgh  Windows/x86_64  Intel(R) Core(TM) i7-14700KF           127.8 GB  1.7 TB/3.6 TB       marti   13h
+CRUCIBLE         edinburgh  Windows/x86_64  AMD Ryzen 9 9950X3D 16-Core Processor  125.4 GB  1.7 TB/3.6 TB       marti   13h
+flux             edinburgh  Darwin/aarch64  Apple M5 Max                           128.0 GB  1.4 TB/3.6 TB       md      55m
+KILN             edinburgh  Windows/x86_64  Intel(R) Core(TM) Ultra 9 285HX        95.5 GB   422.9 GB/950.7 GB   marti   16h
+LIGHTNINGCLAUDE  enfield    Windows/x86_64  Intel(R) Core(TM) Ultra 9 285HX        95.5 GB   422.0 GB/950.7 GB   edmun   13h
+NMI              edinburgh  Windows/x86_64  Intel(R) Core(TM) i7-14700KF           95.8 GB   1.3 TB/3.6 TB       ano     12h
+NOMAD            edinburgh  Windows/x86_64  12th Gen Intel(R) Core(TM) i7-12800H   31.7 GB   505.2 GB/951.2 GB   marti   5d
+QUENCH           edinburgh  Windows/x86_64  Intel(R) Core(TM) Ultra 7 270K Plus    63.5 GB   1.9 TB/3.6 TB       marti   13h
+TEMPER           edinburgh  Windows/x86_64  Intel(R) Core(TM) Ultra 7 270K Plus    63.5 GB   1.3 TB/3.6 TB       marti   13h
+THUNDERCLAUDE    enfield    Windows/x86_64  AMD Ryzen 9 9950X3D 16-Core Processor  125.4 GB  1.4 TB/3.6 TB       Edmund  6h

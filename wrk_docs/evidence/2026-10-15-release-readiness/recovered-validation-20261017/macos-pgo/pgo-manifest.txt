@@ -1,0 +1,45 @@
+rvp9 encoder PGO training manifest
+git_commit=8f0b58acde72193278d0b3abf560008008216c7b
+git_describe=v0.2.0-alpha.4-225-g8f0b58ac
+host_triple=aarch64-apple-darwin
+rustc=rustc 1.95.0 (59807616e 2026-04-14)
+cargo=cargo 1.95.0 (f2d3ce0bd 2026-03-21)
+llvm_profdata=Apple LLVM version 21.0.0
+ffmpeg=ffmpeg version 8.1.2 Copyright (c) 2000-2026 the FFmpeg developers
+frames_per_row=60
+training_rows=28
+rustflags=-Ctarget-cpu=native -Cprofile-use=<generated-profdata>
+training_plan_begin
+1080-in-tree-cpu6|1080-in-tree|6|2500|vbr|
+1080-ducks-cpu6|1080-ducks|6|2500|vbr|
+1080-old-town-cpu6|1080-old-town|6|2500|vbr|
+1080-in-tree-cpu7|1080-in-tree|7|2500|vbr|
+1080-ducks-cpu7|1080-ducks|7|2500|vbr|
+1080-old-town-cpu7|1080-old-town|7|2500|vbr|
+1080-in-tree-cpu8|1080-in-tree|8|2500|vbr|
+1080-ducks-cpu8|1080-ducks|8|2500|vbr|
+1080-old-town-cpu8|1080-old-town|8|2500|vbr|
+720-in-tree-cpu7|720-in-tree|7|1500|vbr|
+720-ducks-cpu7|720-ducks|7|1500|vbr|
+720-old-town-cpu7|720-old-town|7|1500|vbr|
+1080-in-tree-cbr-aq3|1080-in-tree|7|2500|cbr|--aq-mode=3
+1080-ducks-cbr-aq3|1080-ducks|7|2500|cbr|--aq-mode=3
+1080-old-town-cbr-aq3|1080-old-town|7|2500|cbr|--aq-mode=3
+1080-in-tree-denoise|1080-in-tree|7|2500|vbr|--noise-sensitivity=1
+1080-ducks-denoise|1080-ducks|7|2500|vbr|--noise-sensitivity=1
+1080-old-town-denoise|1080-old-town|7|2500|vbr|--noise-sensitivity=1
+1080-old-town-low-rate|1080-old-town|7|500|vbr|
+1080-old-town-high-rate|1080-old-town|7|6000|vbr|
+1080-old-town-temporal2|1080-old-town|7|2500|vbr|--temporal-layers=2
+1080-old-town-temporal3|1080-old-town|7|2500|vbr|--temporal-layers=3
+1080-old-town-spatial2-cpu6|1080-old-town|6|2835|cbr|--spatial-layers=2 --inter-layer-pred=0
+1080-old-town-spatial3-cpu6|1080-old-town|6|2835|cbr|--spatial-layers=3 --inter-layer-pred=0
+1080-old-town-spatial2-cpu7|1080-old-town|7|2835|cbr|--spatial-layers=2 --inter-layer-pred=0
+1080-old-town-spatial3-cpu7|1080-old-town|7|2835|cbr|--spatial-layers=3 --inter-layer-pred=0
+1080-old-town-spatial2-cpu8|1080-old-town|8|2835|cbr|--spatial-layers=2 --inter-layer-pred=0
+1080-old-town-spatial3-cpu8|1080-old-town|8|2835|cbr|--spatial-layers=3 --inter-layer-pred=0
+training_plan_end
+profdata=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-rc-validation-aa390fba/macos-pgo/pgo-build-8f0b58ac/runs/20261017T091946Z-9691/encoder.profdata
+raw_profile_count=31
+optimized_binary=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-rc-validation-aa390fba/macos-pgo/pgo-build-8f0b58ac/optimized/release/rvp9enc
+optimized_binary_sha256=e9f632fed68aaf86b16c43d89c32383b3ffba582760be279f0c3d45c8fe7514b

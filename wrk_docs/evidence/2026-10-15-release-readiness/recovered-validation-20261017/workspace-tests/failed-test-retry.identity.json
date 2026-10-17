@@ -1,0 +1,48 @@
+{
+  "validation": "single-test retry for the full workspace failure",
+  "worktree": "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence",
+  "head_at_run": "8f0b58acde72193278d0b3abf560008008216c7b",
+  "source_diff_from_candidate": [
+    "crates/rvp9-fuzz/README.md"
+  ],
+  "command": "CARGO_TARGET_DIR=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-rc-validation-aa390fba/target CARGO_BUILD_JOBS=4 deltic timeout 1800 cargo test --release --locked -p rvp9-bench --test soak_cli requested_cross_decode_requires_existing_vpxdec -- --exact </dev/null",
+  "stdin": "closed (/dev/null)",
+  "RVP9_override_keys_present_or_removed": [],
+  "run": {
+    "started_utc": "2026-10-17T05:50:07Z",
+    "terminal_observed_utc": "2026-10-17T05:51:41Z",
+    "elapsed_seconds_observed": 94,
+    "tool_session_id": 6621,
+    "runner_pid": 18915,
+    "cargo_pid": 19111,
+    "exit_code": 101
+  },
+  "result_totals": {
+    "test_result_blocks": 1,
+    "passed": 0,
+    "failed": 1,
+    "ignored": 0,
+    "measured": 0,
+    "filtered_out": 0
+  },
+  "confirmed_mismatch": {
+    "test": "requested_cross_decode_requires_existing_vpxdec",
+    "source": "crates/rvp9-bench/tests/soak_cli.rs",
+    "test_arguments_include": [
+      "--cross-decode",
+      "--vpxdec <missing-temp-path>",
+      "--duration-secs 0",
+      "--iterations 1",
+      "--frames-per-iter 0"
+    ],
+    "source_order": "args validation rejects zero --frames-per-iter before the later main-path vpxdec existence check",
+    "observed_stderr": "error: --frames-per-iter must be greater than zero",
+    "code_or_test_changes": false
+  },
+  "raw_log": {
+    "path": "wrk_docs/evidence/2026-10-15-release-readiness/recovered-validation-20261017/workspace-tests/failed-test-retry.raw.log",
+    "external_scratch_path": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-rc-validation-aa390fba/workspace-tests/failed-test-retry.raw.log",
+    "sha256": "fa0d69c72e4e38c36da44e90ab3c9f188a3a4dff21cd06071dc78aacbd63782e",
+    "bytes": 1131
+  }
+}

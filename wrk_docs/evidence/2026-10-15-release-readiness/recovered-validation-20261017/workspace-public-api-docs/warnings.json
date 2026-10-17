@@ -1,0 +1,1097 @@
+{
+  "raw_sha256": "9f8d7121d2cf6b5697386196e9db5d55cc0786998e45476002325d3cedb88914",
+  "individual_warning_count": 143,
+  "crate_counts": {
+    "rvp9-bench": 1,
+    "rvp9-cli": 1,
+    "rvp9-core": 79,
+    "rvp9-decoder": 14,
+    "rvp9-encoder": 45,
+    "rvp9-harness": 1,
+    "rvp9-io": 2
+  },
+  "category_counts": {
+    "broken_intra_doc_links": 82,
+    "invalid_html_tags": 2,
+    "private_intra_doc_links": 55,
+    "redundant_explicit_links": 4
+  },
+  "crate_category_counts": {
+    "rvp9-bench": {
+      "broken_intra_doc_links": 1
+    },
+    "rvp9-cli": {
+      "broken_intra_doc_links": 1
+    },
+    "rvp9-core": {
+      "private_intra_doc_links": 29,
+      "broken_intra_doc_links": 49,
+      "redundant_explicit_links": 1
+    },
+    "rvp9-decoder": {
+      "broken_intra_doc_links": 8,
+      "private_intra_doc_links": 6
+    },
+    "rvp9-encoder": {
+      "broken_intra_doc_links": 22,
+      "private_intra_doc_links": 20,
+      "redundant_explicit_links": 3
+    },
+    "rvp9-harness": {
+      "invalid_html_tags": 1
+    },
+    "rvp9-io": {
+      "broken_intra_doc_links": 1,
+      "invalid_html_tags": 1
+    }
+  },
+  "cargo_summaries": [
+    {
+      "crate": "rvp9-cli",
+      "target": "bin \"rvp9enc\" doc",
+      "count": 1,
+      "raw_line": 17
+    },
+    {
+      "crate": "rvp9-bench",
+      "target": "bin \"decode-profile-tiles\" doc",
+      "count": 1,
+      "raw_line": 26
+    },
+    {
+      "crate": "rvp9-harness",
+      "target": "bin \"check-lld-format\" doc",
+      "count": 1,
+      "raw_line": 35
+    },
+    {
+      "crate": "rvp9-decoder",
+      "target": "lib doc",
+      "count": 14,
+      "raw_line": 148
+    },
+    {
+      "crate": "rvp9-io",
+      "target": "lib doc",
+      "count": 2,
+      "raw_line": 165
+    },
+    {
+      "crate": "rvp9-encoder",
+      "target": "lib doc",
+      "count": 45,
+      "raw_line": 557
+    },
+    {
+      "crate": "rvp9-core",
+      "target": "lib doc",
+      "count": 79,
+      "raw_line": 1202
+    }
+  ],
+  "counts_match_cargo_summaries": true,
+  "warnings": [
+    {
+      "raw_line": 8,
+      "crate": "rvp9-cli",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `build_encoder_config_for_test`",
+      "location": "crates/rvp9-cli/src/bin/rvp9enc.rs:1568:40"
+    },
+    {
+      "raw_line": 18,
+      "crate": "rvp9-bench",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `rvp9_decoder::Decoder::with_threads(--threads)`",
+      "location": "crates/rvp9-bench/src/bin/decode-profile-tiles.rs:4:7"
+    },
+    {
+      "raw_line": 27,
+      "crate": "rvp9-harness",
+      "category": "invalid_html_tags",
+      "message": "unclosed HTML tag `n`",
+      "location": "crates/rvp9-harness/src/bin/check_lld_format.rs:54:21"
+    },
+    {
+      "raw_line": 36,
+      "crate": "rvp9-decoder",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `DecoderFramePool`",
+      "location": "crates/rvp9-decoder/src/reconstruct_inter.rs:9:52"
+    },
+    {
+      "raw_line": 45,
+      "crate": "rvp9-decoder",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `inter_predictor`",
+      "location": "crates/rvp9-decoder/src/reconstruct_inter.rs:16:10"
+    },
+    {
+      "raw_line": 53,
+      "crate": "rvp9-decoder",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `inter_predictor`",
+      "location": "crates/rvp9-decoder/src/reconstruct_inter.rs:30:9"
+    },
+    {
+      "raw_line": 61,
+      "crate": "rvp9-decoder",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `crate::tile::decode_block`",
+      "location": "crates/rvp9-decoder/src/reconstruct_inter.rs:33:38"
+    },
+    {
+      "raw_line": 67,
+      "crate": "rvp9-decoder",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `inter_predictor`",
+      "location": "crates/rvp9-decoder/src/reconstruct_inter.rs:155:9"
+    },
+    {
+      "raw_line": 75,
+      "crate": "rvp9-decoder",
+      "category": "private_intra_doc_links",
+      "message": "public documentation for `decode_and_reconstruct_inter_block` links to private item `crate::Decoder::decode_inter_frame`",
+      "location": "crates/rvp9-decoder/src/reconstruct_inter.rs:648:15"
+    },
+    {
+      "raw_line": 84,
+      "crate": "rvp9-decoder",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `ScaleFactors`",
+      "location": "crates/rvp9-decoder/src/tile.rs:1756:55"
+    },
+    {
+      "raw_line": 92,
+      "crate": "rvp9-decoder",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `decode_and_reconstruct_inter_block`",
+      "location": "crates/rvp9-decoder/src/tile.rs:1757:20"
+    },
+    {
+      "raw_line": 100,
+      "crate": "rvp9-decoder",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `ScaleFactors`",
+      "location": "crates/rvp9-decoder/src/tile.rs:1777:40"
+    },
+    {
+      "raw_line": 108,
+      "crate": "rvp9-decoder",
+      "category": "private_intra_doc_links",
+      "message": "public documentation for `decode_tile_inter` links to private item `decode_inter_block`",
+      "location": "crates/rvp9-decoder/src/tile.rs:1791:48"
+    },
+    {
+      "raw_line": 116,
+      "crate": "rvp9-decoder",
+      "category": "private_intra_doc_links",
+      "message": "public documentation for `RVP9_G5_1_PARALLEL_JOBS` links to private item `Decoder::decode_intra_frame_inner`",
+      "location": "crates/rvp9-decoder/src/lib.rs:181:7"
+    },
+    {
+      "raw_line": 124,
+      "crate": "rvp9-decoder",
+      "category": "private_intra_doc_links",
+      "message": "public documentation for `RVP9_G5_1_PARALLEL_JOBS` links to private item `Decoder::decode_inter_frame`",
+      "location": "crates/rvp9-decoder/src/lib.rs:182:7"
+    },
+    {
+      "raw_line": 132,
+      "crate": "rvp9-decoder",
+      "category": "private_intra_doc_links",
+      "message": "public documentation for `RVP9_DECODE_TARGET_ALLOCS` links to private item `Decoder::acquire_decode_target`",
+      "location": "crates/rvp9-decoder/src/lib.rs:193:7"
+    },
+    {
+      "raw_line": 140,
+      "crate": "rvp9-decoder",
+      "category": "private_intra_doc_links",
+      "message": "public documentation for `EmptyInterRef` links to private item `Decoder::decode_inter_frame`",
+      "location": "crates/rvp9-decoder/src/lib.rs:4350:14"
+    },
+    {
+      "raw_line": 149,
+      "crate": "rvp9-io",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `rvp9_decoder::Decoder::parse_packet`",
+      "location": "crates/rvp9-io/src/container.rs:26:12"
+    },
+    {
+      "raw_line": 157,
+      "crate": "rvp9-io",
+      "category": "invalid_html_tags",
+      "message": "unclosed HTML tag `size`",
+      "location": "crates/rvp9-io/src/container.rs:1018:61"
+    },
+    {
+      "raw_line": 166,
+      "crate": "rvp9-encoder",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `Self::apply_cyclic_refresh`",
+      "location": "crates/rvp9-encoder/src/aq_cyclic_refresh.rs:31:42"
+    },
+    {
+      "raw_line": 174,
+      "crate": "rvp9-encoder",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `Self::pre_encode_pick_segments`",
+      "location": "crates/rvp9-encoder/src/aq_cyclic_refresh.rs:40:9"
+    },
+    {
+      "raw_line": 180,
+      "crate": "rvp9-encoder",
+      "category": "private_intra_doc_links",
+      "message": "public documentation for `pre_encode_pick_segments` links to private item `Self::qindex_thresh_for_eligibility`",
+      "location": "crates/rvp9-encoder/src/aq_cyclic_refresh.rs:431:11"
+    },
+    {
+      "raw_line": 189,
+      "crate": "rvp9-encoder",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `tx_totals_gate`",
+      "location": "crates/rvp9-encoder/src/bitstream_gates.rs:30:9"
+    },
+    {
+      "raw_line": 197,
+      "crate": "rvp9-encoder",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `0`",
+      "location": "crates/rvp9-encoder/src/buffer_pool.rs:391:11"
+    },
+    {
+      "raw_line": 205,
+      "crate": "rvp9-encoder",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `1`",
+      "location": "crates/rvp9-encoder/src/buffer_pool.rs:391:28"
+    },
+    {
+      "raw_line": 213,
+      "crate": "rvp9-encoder",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `2`",
+      "location": "crates/rvp9-encoder/src/buffer_pool.rs:391:45"
+    },
+    {
+      "raw_line": 221,
+      "crate": "rvp9-encoder",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `0`",
+      "location": "crates/rvp9-encoder/src/buffer_pool.rs:450:36"
+    },
+    {
+      "raw_line": 229,
+      "crate": "rvp9-encoder",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `1`",
+      "location": "crates/rvp9-encoder/src/buffer_pool.rs:450:51"
+    },
+    {
+      "raw_line": 237,
+      "crate": "rvp9-encoder",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `2`",
+      "location": "crates/rvp9-encoder/src/buffer_pool.rs:450:66"
+    },
+    {
+      "raw_line": 245,
+      "crate": "rvp9-encoder",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `0`",
+      "location": "crates/rvp9-encoder/src/buffer_pool.rs:452:34"
+    },
+    {
+      "raw_line": 253,
+      "crate": "rvp9-encoder",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `1`",
+      "location": "crates/rvp9-encoder/src/buffer_pool.rs:453:45"
+    },
+    {
+      "raw_line": 261,
+      "crate": "rvp9-encoder",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `2`",
+      "location": "crates/rvp9-encoder/src/buffer_pool.rs:454:55"
+    },
+    {
+      "raw_line": 269,
+      "crate": "rvp9-encoder",
+      "category": "private_intra_doc_links",
+      "message": "public documentation for `encode_two_pass` links to private item `FIRST_PASS_QINDEX`",
+      "location": "crates/rvp9-encoder/src/frame_loop.rs:806:11"
+    },
+    {
+      "raw_line": 277,
+      "crate": "rvp9-encoder",
+      "category": "private_intra_doc_links",
+      "message": "public documentation for `encode_two_pass` links to private item `gather_first_pass_stats`",
+      "location": "crates/rvp9-encoder/src/frame_loop.rs:811:39"
+    },
+    {
+      "raw_line": 285,
+      "crate": "rvp9-encoder",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `ArfSchedule`",
+      "location": "crates/rvp9-encoder/src/gop.rs:99:43"
+    },
+    {
+      "raw_line": 293,
+      "crate": "rvp9-encoder",
+      "category": "private_intra_doc_links",
+      "message": "public documentation for `rate_control` links to private item `cbr::rtc_minq_approx`",
+      "location": "crates/rvp9-encoder/src/rate_control/mod.rs:72:10"
+    },
+    {
+      "raw_line": 301,
+      "crate": "rvp9-encoder",
+      "category": "private_intra_doc_links",
+      "message": "public documentation for `rate_control` links to private item `cbr::regulate_q`",
+      "location": "crates/rvp9-encoder/src/rate_control/mod.rs:73:14"
+    },
+    {
+      "raw_line": 309,
+      "crate": "rvp9-encoder",
+      "category": "private_intra_doc_links",
+      "message": "public documentation for `rate_correction_factors` links to private item `cbr::RateFactorLevel`",
+      "location": "crates/rvp9-encoder/src/rate_control/state.rs:123:11"
+    },
+    {
+      "raw_line": 317,
+      "crate": "rvp9-encoder",
+      "category": "private_intra_doc_links",
+      "message": "public documentation for `pick_q_and_bounds` links to private item `super::cbr::pick_q_and_bounds`",
+      "location": "crates/rvp9-encoder/src/rate_control/state.rs:441:17"
+    },
+    {
+      "raw_line": 325,
+      "crate": "rvp9-encoder",
+      "category": "private_intra_doc_links",
+      "message": "public documentation for `postencode_update` links to private item `super::postencode::postencode_update`",
+      "location": "crates/rvp9-encoder/src/rate_control/state.rs:580:11"
+    },
+    {
+      "raw_line": 333,
+      "crate": "rvp9-encoder",
+      "category": "private_intra_doc_links",
+      "message": "public documentation for `two_pass` links to private item `pick_q_and_bounds`",
+      "location": "crates/rvp9-encoder/src/rate_control/two_pass.rs:30:9"
+    },
+    {
+      "raw_line": 341,
+      "crate": "rvp9-encoder",
+      "category": "private_intra_doc_links",
+      "message": "public documentation for `two_pass` links to private item `super::cbr::regulate_q`",
+      "location": "crates/rvp9-encoder/src/rate_control/two_pass.rs:33:26"
+    },
+    {
+      "raw_line": 349,
+      "crate": "rvp9-encoder",
+      "category": "private_intra_doc_links",
+      "message": "public documentation for `TwoPassState` links to private item `pick_q_and_bounds`",
+      "location": "crates/rvp9-encoder/src/rate_control/two_pass.rs:115:25"
+    },
+    {
+      "raw_line": 357,
+      "crate": "rvp9-encoder",
+      "category": "private_intra_doc_links",
+      "message": "public documentation for `vbr` links to private item `pick_q_and_bounds`",
+      "location": "crates/rvp9-encoder/src/rate_control/vbr.rs:18:9"
+    },
+    {
+      "raw_line": 365,
+      "crate": "rvp9-encoder",
+      "category": "private_intra_doc_links",
+      "message": "public documentation for `vbr` links to private item `active_worst_quality_vbr`",
+      "location": "crates/rvp9-encoder/src/rate_control/vbr.rs:20:9"
+    },
+    {
+      "raw_line": 373,
+      "crate": "rvp9-encoder",
+      "category": "private_intra_doc_links",
+      "message": "public documentation for `vbr` links to private item `active_best_quality_vbr`",
+      "location": "crates/rvp9-encoder/src/rate_control/vbr.rs:23:9"
+    },
+    {
+      "raw_line": 381,
+      "crate": "rvp9-encoder",
+      "category": "private_intra_doc_links",
+      "message": "public documentation for `vbr` links to private item `calc_iframe_target_size_vbr`",
+      "location": "crates/rvp9-encoder/src/rate_control/vbr.rs:25:9"
+    },
+    {
+      "raw_line": 389,
+      "crate": "rvp9-encoder",
+      "category": "private_intra_doc_links",
+      "message": "public documentation for `vbr` links to private item `calc_pframe_target_size_vbr`",
+      "location": "crates/rvp9-encoder/src/rate_control/vbr.rs:28:9"
+    },
+    {
+      "raw_line": 397,
+      "crate": "rvp9-encoder",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `HandleInterRunner`",
+      "location": "crates/rvp9-encoder/src/rdo/inter_dispatch.rs:24:12"
+    },
+    {
+      "raw_line": 405,
+      "crate": "rvp9-encoder",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `ref`",
+      "location": "crates/rvp9-encoder/src/rdo/single_mv_search.rs:134:68"
+    },
+    {
+      "raw_line": 413,
+      "crate": "rvp9-encoder",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `adaptive_subpel_force_stop`",
+      "location": "crates/rvp9-encoder/src/rdo/single_mv_search.rs:150:11"
+    },
+    {
+      "raw_line": 421,
+      "crate": "rvp9-encoder",
+      "category": "private_intra_doc_links",
+      "message": "public documentation for `trellis` links to private item `fdct_dc_scale`",
+      "location": "crates/rvp9-encoder/src/rdo/trellis.rs:21:48"
+    },
+    {
+      "raw_line": 429,
+      "crate": "rvp9-encoder",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `tests`",
+      "location": "crates/rvp9-encoder/src/svc.rs:85:40"
+    },
+    {
+      "raw_line": 437,
+      "crate": "rvp9-encoder",
+      "category": "private_intra_doc_links",
+      "message": "public documentation for `new` links to private item `MAX_LAG_BUFFERS`",
+      "location": "crates/rvp9-encoder/src/temporal_filter.rs:230:28"
+    },
+    {
+      "raw_line": 445,
+      "crate": "rvp9-encoder",
+      "category": "private_intra_doc_links",
+      "message": "public documentation for `temporal_filter_iterate_row` links to private item `fixed_divide_table`",
+      "location": "crates/rvp9-encoder/src/temporal_filter.rs:1258:33"
+    },
+    {
+      "raw_line": 453,
+      "crate": "rvp9-encoder",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `IntraCoefSource`",
+      "location": "crates/rvp9-encoder/src/lib.rs:553:24"
+    },
+    {
+      "raw_line": 461,
+      "crate": "rvp9-encoder",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `encode_synthetic_two_frame_kf_inter`",
+      "location": "crates/rvp9-encoder/src/lib.rs:680:25"
+    },
+    {
+      "raw_line": 469,
+      "crate": "rvp9-encoder",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `encode_synthetic_two_frame_kf_inter`",
+      "location": "crates/rvp9-encoder/src/lib.rs:700:19"
+    },
+    {
+      "raw_line": 477,
+      "crate": "rvp9-encoder",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `IntraCoefSource`",
+      "location": "crates/rvp9-encoder/src/lib.rs:1248:47"
+    },
+    {
+      "raw_line": 485,
+      "crate": "rvp9-encoder",
+      "category": "private_intra_doc_links",
+      "message": "public documentation for `VecBackedInterCoefSource` links to private item `pick_and_simulate_inter_encode_partitions`",
+      "location": "crates/rvp9-encoder/src/lib.rs:1366:20"
+    },
+    {
+      "raw_line": 493,
+      "crate": "rvp9-encoder",
+      "category": "redundant_explicit_links",
+      "message": "redundant explicit link target",
+      "location": "crates/rvp9-encoder/src/tpl/driver.rs:18:28"
+    },
+    {
+      "raw_line": 510,
+      "crate": "rvp9-encoder",
+      "category": "redundant_explicit_links",
+      "message": "redundant explicit link target",
+      "location": "crates/rvp9-encoder/src/tpl/driver.rs:26:28"
+    },
+    {
+      "raw_line": 526,
+      "crate": "rvp9-encoder",
+      "category": "redundant_explicit_links",
+      "message": "redundant explicit link target",
+      "location": "crates/rvp9-encoder/src/tpl/driver.rs:28:29"
+    },
+    {
+      "raw_line": 542,
+      "crate": "rvp9-encoder",
+      "category": "broken_intra_doc_links",
+      "message": "`nn_predict` is both a function and a module",
+      "location": "crates/rvp9-encoder/src/ml_partition/mod.rs:12:9"
+    },
+    {
+      "raw_line": 558,
+      "crate": "rvp9-core",
+      "category": "private_intra_doc_links",
+      "message": "public documentation for `compressed_header` links to private item `update_mv_probs`",
+      "location": "crates/rvp9-core/src/bitstream/compressed_header.rs:38:29"
+    },
+    {
+      "raw_line": 567,
+      "crate": "rvp9-core",
+      "category": "private_intra_doc_links",
+      "message": "public documentation for `modes_writer` links to private item `write_partition_tree`",
+      "location": "crates/rvp9-core/src/bitstream/modes_writer.rs:44:40"
+    },
+    {
+      "raw_line": 575,
+      "crate": "rvp9-core",
+      "category": "private_intra_doc_links",
+      "message": "public documentation for `write_tile_intra_keyframe` links to private item `write_partition_tree`",
+      "location": "crates/rvp9-core/src/bitstream/modes_writer.rs:681:14"
+    },
+    {
+      "raw_line": 583,
+      "crate": "rvp9-core",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `write_tx_size`",
+      "location": "crates/rvp9-core/src/bitstream/modes_writer.rs:689:48"
+    },
+    {
+      "raw_line": 592,
+      "crate": "rvp9-core",
+      "category": "private_intra_doc_links",
+      "message": "public documentation for `write_tile_inter` links to private item `write_inter_partition_tree`",
+      "location": "crates/rvp9-core/src/bitstream/modes_writer.rs:2106:7"
+    },
+    {
+      "raw_line": 600,
+      "crate": "rvp9-core",
+      "category": "private_intra_doc_links",
+      "message": "public documentation for `record_inter_leaf_coefficients` links to private item `write_inter_block_leaf`",
+      "location": "crates/rvp9-core/src/bitstream/modes_writer.rs:3389:47"
+    },
+    {
+      "raw_line": 608,
+      "crate": "rvp9-core",
+      "category": "private_intra_doc_links",
+      "message": "public documentation for `record_inter_tx_coefficients_i16` links to private item `write_inter_block_residual`",
+      "location": "crates/rvp9-core/src/bitstream/modes_writer.rs:3452:23"
+    },
+    {
+      "raw_line": 616,
+      "crate": "rvp9-core",
+      "category": "private_intra_doc_links",
+      "message": "public documentation for `dispatch` links to private item `SimdDispatch::build`",
+      "location": "crates/rvp9-core/src/dsp/dispatch.rs:28:31"
+    },
+    {
+      "raw_line": 624,
+      "crate": "rvp9-core",
+      "category": "private_intra_doc_links",
+      "message": "public documentation for `dispatch` links to private item `SimdDispatch::build`",
+      "location": "crates/rvp9-core/src/dsp/dispatch.rs:41:35"
+    },
+    {
+      "raw_line": 632,
+      "crate": "rvp9-core",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `crate::dsp::x86_64::idct8x8_avx2`",
+      "location": "crates/rvp9-core/src/dsp/dispatch.rs:49:7"
+    },
+    {
+      "raw_line": 638,
+      "crate": "rvp9-core",
+      "category": "private_intra_doc_links",
+      "message": "public documentation for `SadTable` links to private item `SimdDispatch::build`",
+      "location": "crates/rvp9-core/src/dsp/dispatch.rs:651:7"
+    },
+    {
+      "raw_line": 646,
+      "crate": "rvp9-core",
+      "category": "private_intra_doc_links",
+      "message": "public documentation for `Sad4dTable` links to private item `SimdDispatch::build`",
+      "location": "crates/rvp9-core/src/dsp/dispatch.rs:682:28"
+    },
+    {
+      "raw_line": 654,
+      "crate": "rvp9-core",
+      "category": "private_intra_doc_links",
+      "message": "public documentation for `VarTable` links to private item `SimdDispatch::build`",
+      "location": "crates/rvp9-core/src/dsp/dispatch.rs:725:37"
+    },
+    {
+      "raw_line": 662,
+      "crate": "rvp9-core",
+      "category": "private_intra_doc_links",
+      "message": "public documentation for `SubpelVarTable` links to private item `SimdDispatch::build`",
+      "location": "crates/rvp9-core/src/dsp/dispatch.rs:758:21"
+    },
+    {
+      "raw_line": 670,
+      "crate": "rvp9-core",
+      "category": "private_intra_doc_links",
+      "message": "public documentation for `SimdDispatch` links to private item `SimdDispatch::build`",
+      "location": "crates/rvp9-core/src/dsp/dispatch.rs:780:43"
+    },
+    {
+      "raw_line": 678,
+      "crate": "rvp9-core",
+      "category": "private_intra_doc_links",
+      "message": "public documentation for `caps` links to private item `SimdDispatch::build`",
+      "location": "crates/rvp9-core/src/dsp/dispatch.rs:843:45"
+    },
+    {
+      "raw_line": 686,
+      "crate": "rvp9-core",
+      "category": "private_intra_doc_links",
+      "message": "public documentation for `fill` links to private item `Self::fill_slow`",
+      "location": "crates/rvp9-core/src/entropy/bool_reader.rs:194:11"
+    },
+    {
+      "raw_line": 694,
+      "crate": "rvp9-core",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `Self::stop_encode`",
+      "location": "crates/rvp9-core/src/entropy/bool_writer.rs:4:27"
+    },
+    {
+      "raw_line": 700,
+      "crate": "rvp9-core",
+      "category": "private_intra_doc_links",
+      "message": "public documentation for `diff_update` links to private item `INV_MAP_TABLE`",
+      "location": "crates/rvp9-core/src/entropy/diff_update.rs:17:51"
+    },
+    {
+      "raw_line": 708,
+      "crate": "rvp9-core",
+      "category": "private_intra_doc_links",
+      "message": "public documentation for `inv_remap_prob` links to private item `INV_MAP_TABLE`",
+      "location": "crates/rvp9-core/src/entropy/diff_update.rs:109:52"
+    },
+    {
+      "raw_line": 716,
+      "crate": "rvp9-core",
+      "category": "private_intra_doc_links",
+      "message": "public documentation for `prob_diff_writer` links to private item `encode_term_subexp`",
+      "location": "crates/rvp9-core/src/entropy/prob_diff_writer.rs:12:26"
+    },
+    {
+      "raw_line": 724,
+      "crate": "rvp9-core",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `crate::Decoder`",
+      "location": "crates/rvp9-core/src/frame.rs:975:26"
+    },
+    {
+      "raw_line": 730,
+      "crate": "rvp9-core",
+      "category": "private_intra_doc_links",
+      "message": "public documentation for `get_mode_context` links to private item `COUNTER_TO_CONTEXT`",
+      "location": "crates/rvp9-core/src/inter/mode_info.rs:134:27"
+    },
+    {
+      "raw_line": 738,
+      "crate": "rvp9-core",
+      "category": "private_intra_doc_links",
+      "message": "public documentation for `write_inter_block_mode_info` links to private item `write_sub8_bmi`",
+      "location": "crates/rvp9-core/src/inter/mode_info.rs:1055:26"
+    },
+    {
+      "raw_line": 746,
+      "crate": "rvp9-core",
+      "category": "private_intra_doc_links",
+      "message": "public documentation for `IDX_N_COLUMN_TO_SUBBLOCK` links to private item `get_sub_block_mv`",
+      "location": "crates/rvp9-core/src/inter/mv_ref.rs:167:7"
+    },
+    {
+      "raw_line": 754,
+      "crate": "rvp9-core",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `convolve_copy`",
+      "location": "crates/rvp9-core/src/inter/scale.rs:208:37"
+    },
+    {
+      "raw_line": 762,
+      "crate": "rvp9-core",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `convolve8_scaled`",
+      "location": "crates/rvp9-core/src/inter/scale.rs:211:37"
+    },
+    {
+      "raw_line": 770,
+      "crate": "rvp9-core",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `r`",
+      "location": "crates/rvp9-core/src/intra_pred.rs:84:42"
+    },
+    {
+      "raw_line": 778,
+      "crate": "rvp9-core",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `c`",
+      "location": "crates/rvp9-core/src/intra_pred.rs:84:53"
+    },
+    {
+      "raw_line": 786,
+      "crate": "rvp9-core",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `3`",
+      "location": "crates/rvp9-core/src/intra_pred.rs:366:47"
+    },
+    {
+      "raw_line": 794,
+      "crate": "rvp9-core",
+      "category": "private_intra_doc_links",
+      "message": "public documentation for `build_intra_predictors` links to private item `extend_mask`",
+      "location": "crates/rvp9-core/src/intra_pred.rs:1017:13"
+    },
+    {
+      "raw_line": 802,
+      "crate": "rvp9-core",
+      "category": "private_intra_doc_links",
+      "message": "public documentation for `Non420Inputs` links to private item `filter_block_plane_non420`",
+      "location": "crates/rvp9-core/src/loopfilter/apply.rs:733:7"
+    },
+    {
+      "raw_line": 810,
+      "crate": "rvp9-core",
+      "category": "private_intra_doc_links",
+      "message": "public documentation for `apply_one_sb` links to private item `apply_one_sb_inner`",
+      "location": "crates/rvp9-core/src/loopfilter/apply.rs:968:11"
+    },
+    {
+      "raw_line": 818,
+      "crate": "rvp9-core",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `LoopFilterParams`",
+      "location": "crates/rvp9-core/src/loopfilter.rs:1079:44"
+    },
+    {
+      "raw_line": 826,
+      "crate": "rvp9-core",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `SegmentationParams`",
+      "location": "crates/rvp9-core/src/loopfilter.rs:1110:47"
+    },
+    {
+      "raw_line": 834,
+      "crate": "rvp9-core",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `skippable`",
+      "location": "crates/rvp9-core/src/mode_decision/block_yrd.rs:78:16"
+    },
+    {
+      "raw_line": 842,
+      "crate": "rvp9-core",
+      "category": "private_intra_doc_links",
+      "message": "public documentation for `set_frame_s2_gate` links to private item `frame_gate_override`",
+      "location": "crates/rvp9-core/src/mode_decision/inter.rs:287:16"
+    },
+    {
+      "raw_line": 850,
+      "crate": "rvp9-core",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `crate::cost::inter_mode_costs`",
+      "location": "crates/rvp9-core/src/mode_decision/inter.rs:784:9"
+    },
+    {
+      "raw_line": 856,
+      "crate": "rvp9-core",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `max_txsize`",
+      "location": "crates/rvp9-core/src/mode_decision/inter.rs:791:11"
+    },
+    {
+      "raw_line": 864,
+      "crate": "rvp9-core",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `crate::cost::inter_mode_costs`",
+      "location": "crates/rvp9-core/src/mode_decision/inter.rs:817:11"
+    },
+    {
+      "raw_line": 870,
+      "crate": "rvp9-core",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `last_const_motion`",
+      "location": "crates/rvp9-core/src/mode_decision/inter.rs:1272:11"
+    },
+    {
+      "raw_line": 878,
+      "crate": "rvp9-core",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `short_circuit_flat_blocks`",
+      "location": "crates/rvp9-core/src/mode_decision/inter.rs:1401:36"
+    },
+    {
+      "raw_line": 886,
+      "crate": "rvp9-core",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `force_skip_low_temp_var`",
+      "location": "crates/rvp9-core/src/mode_decision/inter.rs:1413:11"
+    },
+    {
+      "raw_line": 894,
+      "crate": "rvp9-core",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `bias_golden`",
+      "location": "crates/rvp9-core/src/mode_decision/inter.rs:1495:46"
+    },
+    {
+      "raw_line": 902,
+      "crate": "rvp9-core",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `cb_pred_filter_search`",
+      "location": "crates/rvp9-core/src/mode_decision/inter.rs:1538:53"
+    },
+    {
+      "raw_line": 910,
+      "crate": "rvp9-core",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `cb_pred_filter_search`",
+      "location": "crates/rvp9-core/src/mode_decision/inter.rs:1544:11"
+    },
+    {
+      "raw_line": 918,
+      "crate": "rvp9-core",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `cb_pred_filter_search`",
+      "location": "crates/rvp9-core/src/mode_decision/inter.rs:1550:11"
+    },
+    {
+      "raw_line": 926,
+      "crate": "rvp9-core",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `content_state_sb`",
+      "location": "crates/rvp9-core/src/mode_decision/inter.rs:1585:24"
+    },
+    {
+      "raw_line": 934,
+      "crate": "rvp9-core",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `picked_intra_mode`",
+      "location": "crates/rvp9-core/src/mode_decision/inter.rs:1709:28"
+    },
+    {
+      "raw_line": 942,
+      "crate": "rvp9-core",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `newmv_search_last`",
+      "location": "crates/rvp9-core/src/mode_decision/inter.rs:1769:11"
+    },
+    {
+      "raw_line": 950,
+      "crate": "rvp9-core",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `have_above`",
+      "location": "crates/rvp9-core/src/mode_decision/intra.rs:41:48"
+    },
+    {
+      "raw_line": 958,
+      "crate": "rvp9-core",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `have_left`",
+      "location": "crates/rvp9-core/src/mode_decision/intra.rs:41:65"
+    },
+    {
+      "raw_line": 966,
+      "crate": "rvp9-core",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `have_above`",
+      "location": "crates/rvp9-core/src/mode_decision/intra.rs:94:19"
+    },
+    {
+      "raw_line": 974,
+      "crate": "rvp9-core",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `have_left`",
+      "location": "crates/rvp9-core/src/mode_decision/intra.rs:97:11"
+    },
+    {
+      "raw_line": 982,
+      "crate": "rvp9-core",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `q_index`",
+      "location": "crates/rvp9-core/src/mode_decision/intra.rs:129:50"
+    },
+    {
+      "raw_line": 990,
+      "crate": "rvp9-core",
+      "category": "private_intra_doc_links",
+      "message": "public documentation for `best_distortion` links to private item `block_yrd_distortion`",
+      "location": "crates/rvp9-core/src/mode_decision/intra.rs:154:11"
+    },
+    {
+      "raw_line": 998,
+      "crate": "rvp9-core",
+      "category": "private_intra_doc_links",
+      "message": "public documentation for `pick_intra_mode_luma` links to private item `block_yrd_distortion`",
+      "location": "crates/rvp9-core/src/mode_decision/intra.rs:228:36"
+    },
+    {
+      "raw_line": 1006,
+      "crate": "rvp9-core",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `have_above`",
+      "location": "crates/rvp9-core/src/mode_decision/intra.rs:681:29"
+    },
+    {
+      "raw_line": 1014,
+      "crate": "rvp9-core",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `have_left`",
+      "location": "crates/rvp9-core/src/mode_decision/intra.rs:683:39"
+    },
+    {
+      "raw_line": 1022,
+      "crate": "rvp9-core",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `max_txsize(block_size)`",
+      "location": "crates/rvp9-core/src/mode_decision/intra.rs:697:11"
+    },
+    {
+      "raw_line": 1030,
+      "crate": "rvp9-core",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `q_index`",
+      "location": "crates/rvp9-core/src/mode_decision/intra.rs:725:51"
+    },
+    {
+      "raw_line": 1038,
+      "crate": "rvp9-core",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `crate::pre_analysis::PreAnalysisState::vbp_threshold_scale`",
+      "location": "crates/rvp9-core/src/mode_decision/partition.rs:217:11"
+    },
+    {
+      "raw_line": 1044,
+      "crate": "rvp9-core",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `MvLimits`",
+      "location": "crates/rvp9-core/src/mv_search/int_pro_me.rs:56:14"
+    },
+    {
+      "raw_line": 1052,
+      "crate": "rvp9-core",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `rvp9_decoder::Decoder`",
+      "location": "crates/rvp9-core/src/tile_threading/mod.rs:40:18"
+    },
+    {
+      "raw_line": 1058,
+      "crate": "rvp9-core",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `rvp9_decoder::Decoder`",
+      "location": "crates/rvp9-core/src/tile_threading/lf_pool.rs:85:18"
+    },
+    {
+      "raw_line": 1064,
+      "crate": "rvp9-core",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `fdct4x4_scalar`",
+      "location": "crates/rvp9-core/src/transforms/forward.rs:214:28"
+    },
+    {
+      "raw_line": 1072,
+      "crate": "rvp9-core",
+      "category": "private_intra_doc_links",
+      "message": "public documentation for `fdct8x8` links to private item `fdct8x8_scalar`",
+      "location": "crates/rvp9-core/src/transforms/forward.rs:500:28"
+    },
+    {
+      "raw_line": 1080,
+      "crate": "rvp9-core",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `fdct16x16_scalar`",
+      "location": "crates/rvp9-core/src/transforms/forward.rs:1094:40"
+    },
+    {
+      "raw_line": 1088,
+      "crate": "rvp9-core",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `fht16x16_scalar`",
+      "location": "crates/rvp9-core/src/transforms/forward.rs:1184:40"
+    },
+    {
+      "raw_line": 1096,
+      "crate": "rvp9-core",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `fdct32x32_scalar`",
+      "location": "crates/rvp9-core/src/transforms/forward.rs:1546:28"
+    },
+    {
+      "raw_line": 1104,
+      "crate": "rvp9-core",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `idct16x16_add_scalar`",
+      "location": "crates/rvp9-core/src/transforms/inverse.rs:602:40"
+    },
+    {
+      "raw_line": 1112,
+      "crate": "rvp9-core",
+      "category": "private_intra_doc_links",
+      "message": "public documentation for `iht4x4_16_add` links to private item `iht_4_dispatch`",
+      "location": "crates/rvp9-core/src/transforms/inverse.rs:1693:7"
+    },
+    {
+      "raw_line": 1120,
+      "crate": "rvp9-core",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `HbdPixel`",
+      "location": "crates/rvp9-core/src/lib.rs:49:7"
+    },
+    {
+      "raw_line": 1128,
+      "crate": "rvp9-core",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `BitDepth::Bd10`",
+      "location": "crates/rvp9-core/src/lib.rs:68:14"
+    },
+    {
+      "raw_line": 1134,
+      "crate": "rvp9-core",
+      "category": "broken_intra_doc_links",
+      "message": "unresolved link to `BitDepth::Bd12`",
+      "location": "crates/rvp9-core/src/lib.rs:68:43"
+    },
+    {
+      "raw_line": 1140,
+      "crate": "rvp9-core",
+      "category": "redundant_explicit_links",
+      "message": "redundant explicit link target",
+      "location": "crates/rvp9-core/src/inter/mode_info.rs:7:26"
+    },
+    {
+      "raw_line": 1157,
+      "crate": "rvp9-core",
+      "category": "broken_intra_doc_links",
+      "message": "`mv_cost` is both a function and a module",
+      "location": "crates/rvp9-core/src/cost/mod.rs:19:9"
+    },
+    {
+      "raw_line": 1172,
+      "crate": "rvp9-core",
+      "category": "broken_intra_doc_links",
+      "message": "`setup_mask` is both a function and a module",
+      "location": "crates/rvp9-core/src/loopfilter.rs:47:9"
+    },
+    {
+      "raw_line": 1187,
+      "crate": "rvp9-core",
+      "category": "broken_intra_doc_links",
+      "message": "`adjust_mask` is both a function and a module",
+      "location": "crates/rvp9-core/src/loopfilter.rs:55:9"
+    }
+  ],
+  "method": "Split original raw at each warning header; exclude generated-N summaries; attribute first source-arrow path and category by message. Assert per-crate counts equal Cargo summaries."
+}

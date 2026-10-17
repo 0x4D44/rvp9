@@ -1,0 +1,21 @@
+{
+  "host": "ANVIL",
+  "utc": "2026-10-17T05:55:36.2689312Z",
+  "repos": [],
+  "toolchains": [
+    "stable-x86_64-pc-windows-msvc",
+    "nightly-x86_64-pc-windows-msvc",
+    "1.85.1-x86_64-pc-windows-msvc",
+    "1.88.0-x86_64-pc-windows-msvc",
+    "1.93.1-x86_64-pc-windows-msvc",
+    "1.98-x86_64-pc-windows-msvc (active, default)"
+  ],
+  "ffmpeg": [
+    "C:\\Users\\marti\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\\ffmpeg-8.0.1-full_build\\bin\\ffmpeg.exe"
+  ],
+  "sample": {
+    "logical_processors": 28,
+    "note": "One instantaneous metadata sample only; not canonical60s idle qualification.",
+    "percent_processor_time": 0
+  }
+}

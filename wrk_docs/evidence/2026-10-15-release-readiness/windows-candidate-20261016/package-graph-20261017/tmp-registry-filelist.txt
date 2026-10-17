@@ -1,0 +1,11 @@
+/c/Users/marti/AppData/Local/Temp/deltic-scratch/rvp9-native-packagegraph474-3255285b/cargo-target/package/tmp-registry/.cargo-lock
+/c/Users/marti/AppData/Local/Temp/deltic-scratch/rvp9-native-packagegraph474-3255285b/cargo-target/package/tmp-registry/index/rv/p9/rvp9-cli
+/c/Users/marti/AppData/Local/Temp/deltic-scratch/rvp9-native-packagegraph474-3255285b/cargo-target/package/tmp-registry/index/rv/p9/rvp9-core
+/c/Users/marti/AppData/Local/Temp/deltic-scratch/rvp9-native-packagegraph474-3255285b/cargo-target/package/tmp-registry/index/rv/p9/rvp9-decoder
+/c/Users/marti/AppData/Local/Temp/deltic-scratch/rvp9-native-packagegraph474-3255285b/cargo-target/package/tmp-registry/index/rv/p9/rvp9-encoder
+/c/Users/marti/AppData/Local/Temp/deltic-scratch/rvp9-native-packagegraph474-3255285b/cargo-target/package/tmp-registry/index/rv/p9/rvp9-io
+/c/Users/marti/AppData/Local/Temp/deltic-scratch/rvp9-native-packagegraph474-3255285b/cargo-target/package/tmp-registry/rvp9-cli-0.2.0-alpha.4.crate
+/c/Users/marti/AppData/Local/Temp/deltic-scratch/rvp9-native-packagegraph474-3255285b/cargo-target/package/tmp-registry/rvp9-core-0.2.0-alpha.4.crate
+/c/Users/marti/AppData/Local/Temp/deltic-scratch/rvp9-native-packagegraph474-3255285b/cargo-target/package/tmp-registry/rvp9-decoder-0.2.0-alpha.4.crate
+/c/Users/marti/AppData/Local/Temp/deltic-scratch/rvp9-native-packagegraph474-3255285b/cargo-target/package/tmp-registry/rvp9-encoder-0.2.0-alpha.4.crate
+/c/Users/marti/AppData/Local/Temp/deltic-scratch/rvp9-native-packagegraph474-3255285b/cargo-target/package/tmp-registry/rvp9-io-0.2.0-alpha.4.crate

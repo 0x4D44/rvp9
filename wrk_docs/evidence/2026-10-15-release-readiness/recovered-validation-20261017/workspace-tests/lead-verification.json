@@ -1,0 +1,33 @@
+{
+  "independently_parsed_results": {
+    "workspace-test": {
+      "result_blocks": 19,
+      "passed": 142,
+      "failed": 1,
+      "ignored": 0,
+      "raw_sha256": "f2cb4a2858437f5ba868103c89eb0d3d5accdd8375d95a8da96a34568bcda559"
+    },
+    "failed-test-retry": {
+      "result_blocks": 1,
+      "passed": 0,
+      "failed": 1,
+      "ignored": 0,
+      "raw_sha256": "fa0d69c72e4e38c36da44e90ab3c9f188a3a4dff21cd06071dc78aacbd63782e"
+    },
+    "native-libraries": {
+      "result_blocks": 4,
+      "passed": 2820,
+      "failed": 0,
+      "ignored": 2,
+      "raw_sha256": "254b05f847f1473a263bea841faa7509e187f58cfa540aab795af44067392256"
+    },
+    "cli-bins": {
+      "result_blocks": 2,
+      "passed": 24,
+      "failed": 0,
+      "ignored": 0,
+      "raw_sha256": "5150ca3822371300a64cada14c1e9e3baf79e2629db0bb12eb4bbe3a49434467"
+    }
+  },
+  "scope": "Full workspace failed at stale zero-frame soak_cli fixture; exact retry reproduced. Remaining libraries/CLI are separate focused passes and do not make whole workspace green."
+}

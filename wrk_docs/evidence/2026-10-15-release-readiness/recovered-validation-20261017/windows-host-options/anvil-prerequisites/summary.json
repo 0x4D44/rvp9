@@ -1,0 +1,140 @@
+{
+  "host": "ANVIL",
+  "login_source": "fresh deltic hosts ANVIL --json; marti",
+  "observed_utc": "2026-10-17T06:03:23.0595306Z",
+  "outcome": "Native Windows hardware suitable; exact existing-tool candidate qualification blocked by missing Rust1.95; host quietness not established. No host preparation authorized/performed.",
+  "hardware": {
+    "host": "ANVIL",
+    "utc": "2026-10-17T06:03:23.0595306Z",
+    "computer": {
+      "Manufacturer": "Micro-Star International Co., Ltd.",
+      "Model": "MS-7D96",
+      "NumberOfProcessors": 1,
+      "NumberOfLogicalProcessors": 28,
+      "TotalPhysicalMemory": 137209765888
+    },
+    "cpu": [
+      {
+        "Name": "Intel(R) Core(TM) i7-14700KF",
+        "Manufacturer": "GenuineIntel",
+        "Architecture": 9,
+        "NumberOfCores": 20,
+        "NumberOfLogicalProcessors": 28,
+        "MaxClockSpeed": 3400,
+        "AddressWidth": 64
+      }
+    ],
+    "os": {
+      "Caption": "Microsoft Windows 11 Pro",
+      "Version": "10.0.26200",
+      "BuildNumber": "26200",
+      "OSArchitecture": "64-bit",
+      "TotalVisibleMemorySize": 133993912,
+      "FreePhysicalMemory": 113583092,
+      "LastBootUpTime": "/Date(1791840715500)/"
+    },
+    "disks": [
+      {
+        "DeviceID": "C:",
+        "FileSystem": "NTFS",
+        "Size": 3999663124480,
+        "FreeSpace": 1902142726144
+      },
+      {
+        "DeviceID": "D:",
+        "FileSystem": "NTFS",
+        "Size": 4096788525056,
+        "FreeSpace": 2857442758656
+      },
+      {
+        "DeviceID": "M:",
+        "FileSystem": "NTFS",
+        "Size": 8001545039872,
+        "FreeSpace": 2987964354560
+      }
+    ],
+    "power_plan": "Power Scheme GUID: 381b4222-f694-41f0-9685-ff5bb260df2e  (Balanced)"
+  },
+  "isa_runtime_observed": {
+    "Sse2": true,
+    "Ssse3": true,
+    "Sse41": true,
+    "Avx2": true,
+    "Bmi2": true,
+    "Fma": true,
+    "Avx512F": false,
+    "method": "installed PowerShell7.6.6/.NET10 runtime intrinsic IsSupported; no compilation"
+  },
+  "rust_toolchains": [
+    "stable",
+    "nightly",
+    "1.85.1",
+    "1.88.0",
+    "1.93.1",
+    "1.98(default1.98.1)"
+  ],
+  "rust195_installed": false,
+  "tooling": {
+    "git": "2.52.0.windows.1",
+    "deltic": "6.15.1",
+    "bash": "Git Bash5.2.37 x86_64-pc-msys; default C:/Program Files/Git/bin/bash.exe",
+    "msys2_default_root": "C:/msys64 tools absent in targeted checks",
+    "default_gcc": "FPC GCC2.95,i386-mingw32; wrong compiler for canonical64bit reference",
+    "existing_alternate_gcc": "C:/Users/marti/strawberry-portable/c/bin/gcc.exe13.2.0,x86_64-w64-mingw32",
+    "make": "PATHFPC GNUmake3.82; portable c/bin/gmake.exe4.4.1 (no make.exe there)",
+    "assembler": "portable yasm1.3.0,nasm2.16.01",
+    "perl": "portable Perl5.42.2; -v exit0",
+    "native_msvc": "VS18Community cl19.50/link14.50 andVS2022Community cl19.44/link14.44 installed,notPATH",
+    "linker": "rust-lld bundled with each installed Rust,notPATH",
+    "llvm_profdata": "present in1.85.1,1.98,stable,nightly; exact1.95 absent",
+    "ffmpeg": "8.0.1; full -version exit0; prior truncated pipeline exit-1 is observer truncation, retained",
+    "python": "3.12.10 real Python312; python3 command pointsWindowsApps alias"
+  },
+  "rvp9_metadata": {
+    "known_roots_absent": [
+      "D:/language/rvp9-2",
+      "D:/language/rvp9",
+      "C:/language/rvp9"
+    ],
+    "deltic_roster_repo_filtered": "--repo rvp9 --json sessions empty",
+    "repo_registry_full_list": "Not queried: session repos list has only --json,no repo filter; broad/unrelated metadata reads outside scope",
+    "limits": "No broad filesystem search; absence at known roots is not proof no checkout anywhere"
+  },
+  "cpu_samples": [
+    {
+      "file": "cpu-samples.raw.txt",
+      "samples": 10,
+      "mean_percent": 6.653440520452927,
+      "mean_busy_logical_core_equivalent": 1.8629633457268195,
+      "min_percent": 3.960507917596956,
+      "max_percent": 11.405296475480053,
+      "all_status_zero": true,
+      "scope": "NOT canonical60s guard; first overlaps inventory, second after other inventory probes complete"
+    },
+    {
+      "file": "settled-cpu-samples.raw.txt",
+      "samples": 10,
+      "mean_percent": 6.652490436763571,
+      "mean_busy_logical_core_equivalent": 1.8626973222938,
+      "min_percent": 0.6770463720123687,
+      "max_percent": 13.97872509698198,
+      "all_status_zero": true,
+      "scope": "NOT canonical60s guard; first overlaps inventory, second after other inventory probes complete"
+    }
+  ],
+  "feasibility": {
+    "task_creation_mechanism": "git+deltic available; no task/repo created or transferred",
+    "exact_recipe_blocker": "Rust1.95 toolchain absent; install or separately authorized provision required before exact pinned builds. Existing default1.98 may not substitute.",
+    "c_reference_prerequisites": "Existing64bit GCC13.2/GNUmake4.4.1/yasm/perl available in portableStrawberry. PATHcurrentlyprefers obsolete32bitGCC; deliberate process-local tool selection and native build validation needed. No compiler installation established necessary.",
+    "inputs_reference_artifacts": "NoRVP9repo/corpus/reference artifacts observed at knownroots; candidate/input provisioning and native-host PGO/reference builds remain required; not performed",
+    "power_plan": "Balanced observed; unchanged",
+    "quiescence": "10-second means~1.86busycore-equivalent; no canonical60s guard/lease measured, no claim currently quiet"
+  },
+  "read_only_remote": true,
+  "no_installs_builds_transfers_repo_changes_messages_or_process_control": true,
+  "probe_limits": [
+    "Initial Perl-e quoting diagnostic retained; successful perl-v exit0 confirmsavailability.",
+    "Initial FFmpegSelect-First truncation exit-1 retained; full -version exit0 captured."
+  ],
+  "all_tracked_inventory_commands_terminal": true
+}

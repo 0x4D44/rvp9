@@ -1,0 +1,7 @@
+cargo.exe|bytes=30601728|sha256=dc19c8e6d66802d120bf0696b1924b748bd90f3ca16f21391e54a290ff12b7c5
+rustc.exe|bytes=111104|sha256=e3ebbd547ea7b73c034d588ba569602b379f3b05ad1a3b5f8dcfab9d4478d74a
+rustdoc.exe|bytes=11568640|sha256=cafb47cd842bf391eea8a909ddebffa98f0a3b6387fd5997d289d52138ef041b
+registry_source_after_verification=C:/Users/marti/.cargo/registry/src/-e838b5265d494894/rvp9-core-0.2.0-alpha.4 exists=True
+registry_source_after_verification=C:/Users/marti/.cargo/registry/src/-e838b5265d494894/rvp9-io-0.2.0-alpha.4 exists=True
+registry_source_after_verification=C:/Users/marti/.cargo/registry/src/-e838b5265d494894/rvp9-decoder-0.2.0-alpha.4 exists=True
+registry_source_after_verification=C:/Users/marti/.cargo/registry/src/-e838b5265d494894/rvp9-encoder-0.2.0-alpha.4 exists=True

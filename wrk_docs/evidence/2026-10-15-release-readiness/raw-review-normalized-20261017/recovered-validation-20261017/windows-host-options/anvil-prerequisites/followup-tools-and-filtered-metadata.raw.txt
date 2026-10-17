@@ -1,0 +1,27 @@
+host=ANVIL utc=2026-10-17T06:04:08.6778075Z
+filtered_rvp9_deltic_roster_begin
+{
+  "as_of": 1792217048,
+  "host": "ANVIL",
+  "sessions": [],
+  "unreachable": []
+}
+filtered_rvp9_deltic_roster_end
+path_tool=gcc path=C:\FPC\3.2.2\bin\i386-Win32\gcc.exe
+path_tool=make path=C:\FPC\3.2.2\bin\i386-Win32\make.exe
+path_tool=yasm path=C:\Users\marti\strawberry-portable\c\bin\yasm.exe
+path_tool=nasm path=C:\Users\marti\strawberry-portable\c\bin\nasm.exe
+path_tool=perl path=C:\Users\marti\strawberry-portable\perl\bin\perl.exe
+path_tool=clang absent=True
+path_tool=cmake path=C:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe
+2.95
+i386-mingw32
+GNU Make 3.82
+known_tool_glob=C:/Program Files/Git/usr/bin/make.exe matches=0
+known_tool_glob=C:/Program Files/Git/usr/bin/perl.exe matches=1
+installed_tool=C:\Program Files\Git\usr\bin\perl.exe bytes=14315 fileversion=
+known_tool_glob=C:/msys64/usr/bin/make.exe matches=0
+known_tool_glob=C:/msys64/usr/bin/perl.exe matches=0
+known_tool_glob=C:/msys64/mingw64/bin/yasm.exe matches=0
+known_tool_glob=C:/Program Files/Microsoft Visual Studio/*/*/VC/Tools/Llvm/x64/bin/clang.exe matches=0
+known_tool_glob=C:/Program Files/Microsoft Visual Studio/*/*/VC/Tools/Llvm/bin/clang.exe matches=0

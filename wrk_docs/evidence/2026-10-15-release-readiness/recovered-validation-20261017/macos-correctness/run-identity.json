@@ -1,0 +1,44 @@
+{
+  "captured_utc_epoch": 1792216512,
+  "candidate": "ebca64b0d3c7359e96caf1e6250c921c18d30a3f",
+  "head": "8f0b58acde72193278d0b3abf560008008216c7b",
+  "host": "Darwin flux.home.arpa 25.6.0 Darwin Kernel Version 25.6.0: Fri Jul 31 19:19:08 PDT 2026; root:xnu-12377.161.14~5/RELEASE_ARM64_T6050 arm64",
+  "architecture": "arm64",
+  "rustc_vv": "rustc 1.95.0 (59807616e 2026-04-14)\nbinary: rustc\ncommit-hash: 59807616e1fa2540724bfbac14d7976d7e4a3860\ncommit-date: 2026-04-14\nhost: aarch64-apple-darwin\nrelease: 1.95.0\nLLVM version: 22.1.2",
+  "cargo_version": "cargo 1.95.0 (f2d3ce0bd 2026-03-21)",
+  "ffmpeg_version": "ffmpeg version 8.1.2 Copyright (c) 2000-2026 the FFmpeg developers",
+  "external_target": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-rc-validation-aa390fba/target",
+  "worktree_target_bridge": "target -> /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-rc-validation-aa390fba/target",
+  "existing_rvp9_environment_keys": [],
+  "changed_paths_from_candidate": [
+    "M\tcrates/rvp9-fuzz/README.md"
+  ],
+  "source_change_note": "Only crates/rvp9-fuzz/README.md documentation changed from candidate; no workspace Rust/Cargo/script changes.",
+  "conformance": {
+    "directory": "tests/conformance/vectors",
+    "non_md5_file_count": 307,
+    "aggregate_sha256": "c937e95af06071b011b42abb982e986c88cb10928b37103cd83efef5bb634723"
+  },
+  "corpus_sha256": {
+    "in_to_tree_420_720p50.y4m": "81166517a3054c789923535b5da23fbbb9bbd7fd4c28dac83918ac351e121e74",
+    "ducks_take_off_420_720p50.y4m": "0e09aa923ce72e2f6d1c978c3c1cc8dd9588d2ede819081f040213e361970efc",
+    "old_town_cross_420_720p50.y4m": "0fbc2ec0c552ad693528b2e49409c7449880b9230055a7696346473d1aaf4123"
+  },
+  "script_and_reference_binary_sha256": {
+    "scripts/qualify-conformance.sh": "9f26ff8196ee7a4d15211f90045ac1a8b65eec5f1b9cc76e9d22f104f6c40b4c",
+    "scripts/qualify-alpha-encoder.sh": "78e5bce5a30291c07907c66b6f86e35baa1c1fa4bba2546ecaea825cc0d6543e",
+    "scripts/qualify-reference-decoder.sh": "14dced86d315b618ef93c444cb94af5de12490fbcb4bc178b51dec3d0d4b43a2",
+    "build/libvpx/vpxenc": "de4f634550bc9d5b6f5ebb1aa0d883346bb1afb4bbdec7b15368a50f153e0b7f",
+    "build/libvpx/vpxdec": "08d8e3c7390b066bd9c0cceb1b84c9d6c27351ade85c6d0a7c741931d3fb1117"
+  },
+  "libvpx_revision": "12f3a2ac603e8f10742105519e0cd03c3b8f71dd",
+  "libvpx_worktree_status": "",
+  "release_bin_build_command": "CARGO_BUILD_JOBS=4 CARGO_NET_OFFLINE=true cargo build --release --locked --offline --bins -p rvp9-cli -p rvp9-harness -p rvp9-bench",
+  "release_bin_build_exit_code": 0,
+  "release_bin_build_raw_log_sha256": "b69d45bfdcdc451bcbe320d33fee5b3c8e4907ab4bd2fa8702ac266d757fd3da",
+  "release_binaries_sha256": {
+    "conformance": "9fed3da5b24d9f8238d2d8e266647a943aa534fec91b3bc8776d1675a86fd075",
+    "rvp9dec": "fb6de26dfd7331aae8602cf1d73b6446414151fc70954e8f695927f2747a4b72",
+    "rvp9enc": "b37adce02e88133c73a8e7a3d3a027150e5aaa7dfd601ab5d555de4e0843ccb5"
+  }
+}

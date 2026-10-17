@@ -1,0 +1,15 @@
+start_utc=2026-10-17T09:19:45Z
+worktree=/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence
+head=8f0b58acde72193278d0b3abf560008008216c7b
+build_root=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-rc-validation-aa390fba/macos-pgo/pgo-build-8f0b58ac
+command=CARGO_NET_OFFLINE=true CARGO_BUILD_JOBS=4 deltic timeout 14400 scripts/build-encoder-pgo.sh --build-root /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-rc-validation-aa390fba/macos-pgo/pgo-build-8f0b58ac --training-dir /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/tests/corpus </dev/null
+end_utc=2026-10-17T09:23:10Z
+exit_code=0
+98bcb0d8268e7fee39650f65eedebfe2bb155a3a52893cdfa94e66afd2ef92c7  wrk_docs/evidence/2026-10-15-release-readiness/recovered-validation-20261017/macos-pgo/pgo-build.raw.log
+raw_bytes=7245
+tool_session_id=38632
+build_shell_pid=9670
+deltic_timeout_pid=9690
+script_pid=9691
+instrumented_cargo_pid=9729
+optimized_cargo_pid=20873

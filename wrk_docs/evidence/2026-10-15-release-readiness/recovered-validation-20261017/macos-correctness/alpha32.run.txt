@@ -1,0 +1,12 @@
+start_utc=2026-10-17T06:01:57Z
+worktree=/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence
+head=8f0b58acde72193278d0b3abf560008008216c7b
+command=CARGO_TARGET_DIR=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-rc-validation-aa390fba/target CARGO_BUILD_JOBS=4 CARGO_NET_OFFLINE=true RVP9_ALPHA_FRAMES=60 RVP9_ALPHA_SOURCE_DIR=/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/tests/corpus RVP9_ALPHA_VPXDEC=/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/build/libvpx/vpxdec RVP9_ALPHA_LIBVPX_SOURCE=/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/third_party/libvpx RVP9_ALPHA_WORK_DIR=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-rc-validation-aa390fba/workspace-tests/macos-correctness/alpha32 deltic timeout 7200 scripts/qualify-alpha-encoder.sh </dev/null
+end_utc=2026-10-17T06:05:29Z
+exit_code=0
+67c3d497d093778535a7c8cce90cb0114c875d38cae496eecc49a1b06f4f7eec  wrk_docs/evidence/2026-10-15-release-readiness/recovered-validation-20261017/macos-correctness/alpha32.raw.log
+raw_bytes=1551
+tool_session_id=73141
+shell_pid=47864
+deltic_timeout_pid=47870
+script_pid=47872

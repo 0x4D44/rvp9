@@ -1,0 +1,118 @@
+{
+  "host": "KILN",
+  "utc": "2026-10-17T05:55:32.5957124Z",
+  "repos": [
+    {
+      "path": "D:\\language\\rvp9-2",
+      "files": [
+        {
+          "file": "build\\libvpx\\vpxenc.exe",
+          "bytes": 5671968,
+          "present": true
+        },
+        {
+          "file": "build\\libvpx\\vpxdec.exe",
+          "bytes": 5542677,
+          "present": true
+        },
+        {
+          "file": "tests\\corpus\\in_to_tree_420_720p50.y4m",
+          "bytes": null,
+          "present": false
+        },
+        {
+          "file": "tests\\corpus\\ducks_take_off_420_720p50.y4m",
+          "bytes": null,
+          "present": false
+        },
+        {
+          "file": "tests\\corpus\\old_town_cross_420_720p50.y4m",
+          "bytes": null,
+          "present": false
+        },
+        {
+          "file": "tests\\corpus\\foreman_cif.y4m",
+          "bytes": 45621044,
+          "present": true
+        },
+        {
+          "file": "target\\release\\rvp9enc.exe",
+          "bytes": null,
+          "present": false
+        },
+        {
+          "file": "target\\release\\encode-headtohead.exe",
+          "bytes": null,
+          "present": false
+        }
+      ],
+      "head": "75c9cc8c035c652a3354c150af42803d813257cf",
+      "status_line_count": 0
+    },
+    {
+      "path": "D:\\language\\rvp9",
+      "files": [
+        {
+          "file": "build\\libvpx\\vpxenc.exe",
+          "bytes": null,
+          "present": false
+        },
+        {
+          "file": "build\\libvpx\\vpxdec.exe",
+          "bytes": null,
+          "present": false
+        },
+        {
+          "file": "tests\\corpus\\in_to_tree_420_720p50.y4m",
+          "bytes": null,
+          "present": false
+        },
+        {
+          "file": "tests\\corpus\\ducks_take_off_420_720p50.y4m",
+          "bytes": null,
+          "present": false
+        },
+        {
+          "file": "tests\\corpus\\old_town_cross_420_720p50.y4m",
+          "bytes": null,
+          "present": false
+        },
+        {
+          "file": "tests\\corpus\\foreman_cif.y4m",
+          "bytes": null,
+          "present": false
+        },
+        {
+          "file": "target\\release\\rvp9enc.exe",
+          "bytes": null,
+          "present": false
+        },
+        {
+          "file": "target\\release\\encode-headtohead.exe",
+          "bytes": null,
+          "present": false
+        }
+      ],
+      "head": "c4b88ba1539167ceb9addeb33e2b962983b3c87a",
+      "status_line_count": 9
+    }
+  ],
+  "toolchains": [
+    "stable-x86_64-pc-windows-msvc",
+    "nightly-x86_64-pc-windows-msvc",
+    "nightly-2026-04-08-x86_64-pc-windows-msvc",
+    "1.85.1-x86_64-pc-windows-msvc",
+    "1.87-x86_64-pc-windows-msvc",
+    "1.88-x86_64-pc-windows-msvc",
+    "1.93.1-x86_64-pc-windows-msvc",
+    "1.95.0-x86_64-pc-windows-msvc (active, default)"
+  ],
+  "ffmpeg": [
+    "C:\\Users\\marti\\AppData\\Local\\Microsoft\\WinGet\\Links\\ffmpeg.exe"
+  ],
+  "sample": {
+    "logical_processors": 24,
+    "note": "One instantaneous metadata sample only; not canonical60s idle qualification.",
+    "percent_processor_time": 9
+  }
+}

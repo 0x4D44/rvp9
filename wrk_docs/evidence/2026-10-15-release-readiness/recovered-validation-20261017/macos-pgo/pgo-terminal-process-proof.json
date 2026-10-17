@@ -1,0 +1,75 @@
+{
+  "terminal_observed_utc": "2026-10-17T09:23:10Z",
+  "pgo_build_exec_session": {
+    "session_id": 38632,
+    "exit_code": 0
+  },
+  "raw_profile_archiver_exec_session": {
+    "session_id": 93228,
+    "exit_code": 0
+  },
+  "recorded_processes": {
+    "build_shell_9670": {
+      "pid": 9670,
+      "process_present": false,
+      "command_at_pid": "",
+      "still_matches_recorded_command": false,
+      "ps_exit_code": 1
+    },
+    "deltic_build_9690": {
+      "pid": 9690,
+      "process_present": false,
+      "command_at_pid": "",
+      "still_matches_recorded_command": false,
+      "ps_exit_code": 1
+    },
+    "script_9691": {
+      "pid": 9691,
+      "process_present": false,
+      "command_at_pid": "",
+      "still_matches_recorded_command": false,
+      "ps_exit_code": 1
+    },
+    "instrumented_cargo_9729": {
+      "pid": 9729,
+      "process_present": false,
+      "command_at_pid": "",
+      "still_matches_recorded_command": false,
+      "ps_exit_code": 1
+    },
+    "optimized_cargo_20873": {
+      "pid": 20873,
+      "process_present": false,
+      "command_at_pid": "",
+      "still_matches_recorded_command": false,
+      "ps_exit_code": 1
+    },
+    "archive_shell_14288": {
+      "pid": 14288,
+      "process_present": false,
+      "command_at_pid": "",
+      "still_matches_recorded_command": false,
+      "ps_exit_code": 1
+    },
+    "archive_deltic_14291": {
+      "pid": 14291,
+      "process_present": false,
+      "command_at_pid": "",
+      "still_matches_recorded_command": false,
+      "ps_exit_code": 1
+    },
+    "archive_python_14294": {
+      "pid": 14294,
+      "process_present": false,
+      "command_at_pid": "",
+      "still_matches_recorded_command": false,
+      "ps_exit_code": 1
+    }
+  },
+  "all_recorded_processes_terminal": true,
+  "pgo_build_raw_log_sha256": "98bcb0d8268e7fee39650f65eedebfe2bb155a3a52893cdfa94e66afd2ef92c7",
+  "archive_watcher_raw_log_sha256": "ea81dfa48a6c2b435b5d93e210edc24866b2c1f2a06c54b038a63b4de63cae52",
+  "manifest_sha256": "91f83803a2ec25fc5d21f2f67d2d23d087543d7135c608f1c5cf2ce042470071",
+  "merged_profile_archive_sha256": "c3e8671adca242b443881bd2d2fae56ce60a1ee28b549029d60f78bfe0dcac69",
+  "optimized_binary_sha256": "e9f632fed68aaf86b16c43d89c32383b3ffba582760be279f0c3d45c8fe7514b"
+}

@@ -1,0 +1,38 @@
+host=ANVIL utc=2026-10-17T06:03:23.4122340Z
+known_tool_glob=C:/Program Files/Git/bin/bash.exe matches=1
+installed_tool=C:\Program Files\Git\bin\bash.exe bytes=47008 fileversion=2.52.0.windows.1
+known_tool_glob=C:/msys64/usr/bin/bash.exe matches=0
+known_tool_glob=C:/msys64/mingw64/bin/gcc.exe matches=0
+known_tool_glob=C:/msys64/ucrt64/bin/gcc.exe matches=0
+known_tool_glob=C:/Strawberry/c/bin/gcc.exe matches=0
+known_tool_glob=C:/Program Files/Microsoft Visual Studio/*/*/VC/Tools/MSVC/*/bin/Hostx64/x64/cl.exe matches=2
+installed_tool=C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.50.35717\bin\Hostx64\x64\cl.exe bytes=682608 fileversion=19.50.35721.0
+installed_tool=C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\bin\Hostx64\x64\cl.exe bytes=678008 fileversion=19.44.35222.0
+known_tool_glob=C:/Program Files/Microsoft Visual Studio/*/*/VC/Tools/MSVC/*/bin/Hostx64/x64/link.exe matches=2
+installed_tool=C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.50.35717\bin\Hostx64\x64\link.exe bytes=3422320 fileversion=14.50.35721.0
+installed_tool=C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\bin\Hostx64\x64\link.exe bytes=3252808 fileversion=14.44.35222.0
+known_tool_glob=C:/Users/marti/.rustup/toolchains/*/lib/rustlib/x86_64-pc-windows-msvc/bin/rust-lld.exe matches=6
+installed_tool=C:\Users\marti\.rustup\toolchains\1.85.1-x86_64-pc-windows-msvc\lib\rustlib\x86_64-pc-windows-msvc\bin\rust-lld.exe bytes=70440448 fileversion=
+installed_tool=C:\Users\marti\.rustup\toolchains\1.88.0-x86_64-pc-windows-msvc\lib\rustlib\x86_64-pc-windows-msvc\bin\rust-lld.exe bytes=100049920 fileversion=
+installed_tool=C:\Users\marti\.rustup\toolchains\1.93.1-x86_64-pc-windows-msvc\lib\rustlib\x86_64-pc-windows-msvc\bin\rust-lld.exe bytes=102875136 fileversion=
+installed_tool=C:\Users\marti\.rustup\toolchains\1.98-x86_64-pc-windows-msvc\lib\rustlib\x86_64-pc-windows-msvc\bin\rust-lld.exe bytes=113421312 fileversion=
+installed_tool=C:\Users\marti\.rustup\toolchains\nightly-x86_64-pc-windows-msvc\lib\rustlib\x86_64-pc-windows-msvc\bin\rust-lld.exe bytes=113408512 fileversion=
+installed_tool=C:\Users\marti\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\x86_64-pc-windows-msvc\bin\rust-lld.exe bytes=113349120 fileversion=
+known_tool_glob=C:/Users/marti/.rustup/toolchains/*/lib/rustlib/x86_64-pc-windows-msvc/bin/llvm-profdata.exe matches=4
+installed_tool=C:\Users\marti\.rustup\toolchains\1.85.1-x86_64-pc-windows-msvc\lib\rustlib\x86_64-pc-windows-msvc\bin\llvm-profdata.exe bytes=5000704 fileversion=0
+installed_tool=C:\Users\marti\.rustup\toolchains\1.98-x86_64-pc-windows-msvc\lib\rustlib\x86_64-pc-windows-msvc\bin\llvm-profdata.exe bytes=5492736 fileversion=0
+installed_tool=C:\Users\marti\.rustup\toolchains\nightly-x86_64-pc-windows-msvc\lib\rustlib\x86_64-pc-windows-msvc\bin\llvm-profdata.exe bytes=5492736 fileversion=0
+installed_tool=C:\Users\marti\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\x86_64-pc-windows-msvc\bin\llvm-profdata.exe bytes=5486080 fileversion=0
+known_tool_glob=C:/Program Files/PowerShell/7/pwsh.exe matches=1
+installed_tool=C:\Program Files\PowerShell\7\pwsh.exe bytes=301368 fileversion=7.6.6.500
+GNU bash, version 5.2.37(1)-release (x86_64-pc-msys)
+{
+  "runtime": ".NET 10.0.12",
+  "Sse2": true,
+  "Ssse3": true,
+  "Sse41": true,
+  "Avx2": true,
+  "Bmi2": true,
+  "Fma": true,
+  "Avx512F": false
+}

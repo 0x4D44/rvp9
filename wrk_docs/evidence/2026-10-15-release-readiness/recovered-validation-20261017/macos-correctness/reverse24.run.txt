@@ -1,0 +1,12 @@
+start_utc=2026-10-17T06:05:50Z
+worktree=/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence
+head=8f0b58acde72193278d0b3abf560008008216c7b
+command=CARGO_TARGET_DIR=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-rc-validation-aa390fba/target CARGO_BUILD_JOBS=4 CARGO_NET_OFFLINE=true RVP9_REFERENCE_DECODER_FRAMES=12 RVP9_REFERENCE_DECODER_TARGET_BITRATE=512 RVP9_REFERENCE_DECODER_KF_MAX_DIST=12 RVP9_REFERENCE_DECODER_VPXENC=/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/build/libvpx/vpxenc RVP9_REFERENCE_DECODER_VPXDEC=/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/build/libvpx/vpxdec RVP9_REFERENCE_DECODER_RVP9DEC=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-rc-validation-aa390fba/target/release/rvp9dec RVP9_REFERENCE_DECODER_LIBVPX_SOURCE=/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/third_party/libvpx RVP9_REFERENCE_DECODER_WORK_DIR=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-rc-validation-aa390fba/workspace-tests/macos-correctness/reverse24 deltic timeout 7200 scripts/qualify-reference-decoder.sh </dev/null
+end_utc=2026-10-17T06:06:03Z
+exit_code=0
+fdfb730b0acec2c065e9abc0be2b3a85f5df9ad4f2dbb5cb8b78a405a8fb666f  wrk_docs/evidence/2026-10-15-release-readiness/recovered-validation-20261017/macos-correctness/reverse24.raw.log
+raw_bytes=1154
+tool_session_id=72081
+shell_pid=69986
+deltic_timeout_pid=70031
+script_pid=70042

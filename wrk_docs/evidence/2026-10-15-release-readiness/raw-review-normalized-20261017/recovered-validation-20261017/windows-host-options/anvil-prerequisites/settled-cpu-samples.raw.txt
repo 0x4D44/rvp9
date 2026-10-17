@@ -1,0 +1,55 @@
+host=ANVIL utc_begin=2026-10-17T06:04:10.2765240Z
+CPU sample scope:10 one-second Get-Counter samples after other inventory probes completed; NOT canonical60s guard or a timing qualification.
+[
+    {
+        "utc":  "2026-10-17T06:04:11.5900000Z",
+        "CookedValue":  10.969586803637377,
+        "Status":  0
+    },
+    {
+        "utc":  "2026-10-17T06:04:12.6070000Z",
+        "CookedValue":  13.630074397171887,
+        "Status":  0
+    },
+    {
+        "utc":  "2026-10-17T06:04:13.6120000Z",
+        "CookedValue":  5.3680329151243207,
+        "Status":  0
+    },
+    {
+        "utc":  "2026-10-17T06:04:14.6190000Z",
+        "CookedValue":  13.978725096981981,
+        "Status":  0
+    },
+    {
+        "utc":  "2026-10-17T06:04:15.6270000Z",
+        "CookedValue":  4.8175583725394215,
+        "Status":  0
+    },
+    {
+        "utc":  "2026-10-17T06:04:16.6290000Z",
+        "CookedValue":  0.96914503099322369,
+        "Status":  0
+    },
+    {
+        "utc":  "2026-10-17T06:04:17.6440000Z",
+        "CookedValue":  6.276477908620004,
+        "Status":  0
+    },
+    {
+        "utc":  "2026-10-17T06:04:18.6650000Z",
+        "CookedValue":  8.7417020747383667,
+        "Status":  0
+    },
+    {
+        "utc":  "2026-10-17T06:04:19.6820000Z",
+        "CookedValue":  1.0965553958167673,
+        "Status":  0
+    },
+    {
+        "utc":  "2026-10-17T06:04:20.6860000Z",
+        "CookedValue":  0.67704637201236872,
+        "Status":  0
+    }
+]
+utc_end=2026-10-17T06:04:20.7286838Z

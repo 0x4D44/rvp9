@@ -1,0 +1,6 @@
+{
+  "host": null,
+  "id": "rvp9-native-asanapr12-474-b98479dc",
+  "path": "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\rvp9-native-asanapr12-474-b98479dc",
+  "task": "\\\\?\\D:\\worktrees\\rvp9-2\\20261015-TSK-HUM-final-release-native-correctness-qualifi"
+}

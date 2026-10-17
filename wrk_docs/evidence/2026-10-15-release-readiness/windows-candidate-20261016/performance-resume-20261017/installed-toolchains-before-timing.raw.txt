@@ -1,0 +1,14 @@
+stable-x86_64-pc-windows-msvc
+nightly-x86_64-pc-windows-msvc
+nightly-2026-04-08-x86_64-pc-windows-msvc
+nightly-2026-04-12-x86_64-pc-windows-msvc
+1.85.0-x86_64-pc-windows-msvc
+1.85.1-x86_64-pc-windows-msvc
+1.87-x86_64-pc-windows-msvc
+1.87.0-x86_64-pc-windows-msvc
+1.93.0-x86_64-pc-windows-msvc
+1.93.1-x86_64-pc-windows-msvc
+1.95.0-x86_64-pc-windows-msvc
+1.96.0-x86_64-pc-windows-msvc
+1.98-x86_64-pc-windows-msvc (active, default)
+1.98.1-x86_64-pc-windows-msvc

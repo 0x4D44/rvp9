@@ -1,0 +1,190 @@
+{
+  "finalized_utc": "2026-10-17T05:53:16.866421+00:00",
+  "files": [
+    {
+      "file": "README.md",
+      "bytes": 1669,
+      "sha256": "b95117dd8da226af50cdf80766446f8d2251904cff226dc67d3b2a6c1cc7e042"
+    },
+    {
+      "file": "cargo-config.raw.txt",
+      "bytes": 1043,
+      "sha256": "4141e82d7d5085ebd8014a9392882dd023b524788d82986980f28b9ce92282d7"
+    },
+    {
+      "file": "cargo.raw.txt",
+      "bytes": 36,
+      "sha256": "c10ec31b8c6e6e2693cf65fc1971b41edbc3da1ae7db6f9f3f36c4823f8dcab5"
+    },
+    {
+      "file": "code-diff.raw.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "file": "graph-verification.json",
+      "bytes": 70502,
+      "sha256": "b0bc902a4c4cf41037edc1f5a0dff8f357192385a040a18eec3b6d9eb2152942"
+    },
+    {
+      "file": "installed-docs.json",
+      "bytes": 3223,
+      "sha256": "a6d883eed598a76bc2dde05fbe6c7e04d94043d956c5e597df721b83cbf8ac08"
+    },
+    {
+      "file": "package-graph.raw.txt",
+      "bytes": 3932,
+      "sha256": "441c781ad68435d7de8a9031bd3669b128b90eb4c11c2a971a27ea5524e31c64"
+    },
+    {
+      "file": "package-help.raw.txt",
+      "bytes": 2317,
+      "sha256": "b887cc2f1fd884a969441e15dba6e8219aa96287093c131fe7dbd0f45479e6c6"
+    },
+    {
+      "file": "run.json",
+      "bytes": 2867,
+      "sha256": "2cc9e2342203818d2238d5c9d5e3c2c86831de65bb43ecffa91079a7426bd2da"
+    },
+    {
+      "file": "rustc.raw.txt",
+      "bytes": 192,
+      "sha256": "e61cba8ded8c60e985f759f74a221c4773649021477d00b44c7af411eb8c218c"
+    },
+    {
+      "file": "rvp9-cli-Cargo.lock",
+      "bytes": 1851,
+      "sha256": "c09513f8239a0cc9b5a17e87f8ed156439b30a28073efee084ecef47bab14842"
+    },
+    {
+      "file": "rvp9-cli-Cargo.toml",
+      "bytes": 1858,
+      "sha256": "f2fa5931e7baa1ec57098931c02ab0f7d785ae78f6eb65d0d595358b333711c2"
+    },
+    {
+      "file": "rvp9-cli-archive-files.txt",
+      "bytes": 711,
+      "sha256": "87174f052344c3742584cc94f6b30a2b8f7a92c152ec636ed2d434f388e947dd"
+    },
+    {
+      "file": "rvp9-cli-staging-index.json",
+      "bytes": 1289,
+      "sha256": "66d26548e5054e2a3f11a3990c8ebcdbf4311545b570f3b174ed07839d1d884b"
+    },
+    {
+      "file": "rvp9-cli-vcs-info.json",
+      "bytes": 109,
+      "sha256": "fc4de13d2964bfc103793c44ddad86f8a20cbcc5ac3c049de447933842d3e01d"
+    },
+    {
+      "file": "rvp9-core-Cargo.lock",
+      "bytes": 16529,
+      "sha256": "f2b138d33f3d1fe1f5753a7fdd71e0107bd01914b87690f3dc1c2550302cf5ff"
+    },
+    {
+      "file": "rvp9-core-Cargo.toml",
+      "bytes": 1561,
+      "sha256": "087e3466089cecb252c4a9747487002bf89695ba45803470fe201e073dda8d32"
+    },
+    {
+      "file": "rvp9-core-archive-files.txt",
+      "bytes": 10066,
+      "sha256": "f7d1782635076603f2c3c29a2abe9e48efd55b557030803f32fc7a423cfc240a"
+    },
+    {
+      "file": "rvp9-core-staging-index.json",
+      "bytes": 755,
+      "sha256": "d0dc386f3139bb09f21a6bbd0f9db1535871da79b969752d3dea8dae45af5e76"
+    },
+    {
+      "file": "rvp9-core-vcs-info.json",
+      "bytes": 110,
+      "sha256": "743f11fa7f4ee512cf4c48321b6671ca965805794ce02fbb79f1f6fbfcf94dcd"
+    },
+    {
+      "file": "rvp9-decoder-Cargo.lock",
+      "bytes": 1103,
+      "sha256": "4c3bfd6bf762cb1e2d44ea4a20856c4fb130a24381cad4ae63e70fc0fdcbfa4d"
+    },
+    {
+      "file": "rvp9-decoder-Cargo.toml",
+      "bytes": 1711,
+      "sha256": "47184d656f7facd22da067f37bbd8a7ec10149ea3a4dfd36f3514d12187e351a"
+    },
+    {
+      "file": "rvp9-decoder-archive-files.txt",
+      "bytes": 866,
+      "sha256": "a663d069764cde71386e7602e3999fe5ef0188d43dcef30e4d336b1d0344f219"
+    },
+    {
+      "file": "rvp9-decoder-staging-index.json",
+      "bytes": 775,
+      "sha256": "593c75fdb25fbfd1aed5ebc82e7f4d82438ad309e66e0bf559ade8ee81b14cc6"
+    },
+    {
+      "file": "rvp9-decoder-vcs-info.json",
+      "bytes": 113,
+      "sha256": "8144210c537b27041a26e32d7bfe832dd0a1e092d9d050044830e0ac50f9a220"
+    },
+    {
+      "file": "rvp9-encoder-Cargo.lock",
+      "bytes": 5596,
+      "sha256": "655dd57f9396bfd695313c93fd029222c38ff524dde14f61598dba25641ec57a"
+    },
+    {
+      "file": "rvp9-encoder-Cargo.toml",
+      "bytes": 5405,
+      "sha256": "dcb8267e0b662b40b45af6d3348d12ab66d045d7fcf055618a8685c38669de85"
+    },
+    {
+      "file": "rvp9-encoder-archive-files.txt",
+      "bytes": 5847,
+      "sha256": "e90896cb47cf2a3634c64049c63bf3f502cd132115910a33853fd0121baee192"
+    },
+    {
+      "file": "rvp9-encoder-staging-index.json",
+      "bytes": 1311,
+      "sha256": "4fd6199b1acdea30aa69c741761eb1822ce41564a0b111e4d9714b55b2933202"
+    },
+    {
+      "file": "rvp9-encoder-vcs-info.json",
+      "bytes": 113,
+      "sha256": "eed4a53379f3b4dd5816d73973e25174ecc454e1331a5824e053f9289758b517"
+    },
+    {
+      "file": "rvp9-io-Cargo.lock",
+      "bytes": 875,
+      "sha256": "b9b8eb3a8a79958402c80c6bbe38cfddd022444013c4d74ec565356449355d7c"
+    },
+    {
+      "file": "rvp9-io-Cargo.toml",
+      "bytes": 1523,
+      "sha256": "09f6874f08b27298d23a0c2d57ba38c2cddd750f752ac8b9dd58f3648665f610"
+    },
+    {
+      "file": "rvp9-io-archive-files.txt",
+      "bytes": 509,
+      "sha256": "5973ec215aa129a8fc07b727d66d14c04af33e666c1d088a7779f8bcb7ffc868"
+    },
+    {
+      "file": "rvp9-io-staging-index.json",
+      "bytes": 489,
+      "sha256": "613d18bf51528a43d6ac2c6a19f3f64bffdc1cf446fae05bb74befc3d776f18e"
+    },
+    {
+      "file": "rvp9-io-vcs-info.json",
+      "bytes": 108,
+      "sha256": "48b86c4e8dd04d9decfda974589e59b0dcfbb0326f192ec6f5869269b619257d"
+    },
+    {
+      "file": "source.raw.txt",
+      "bytes": 41,
+      "sha256": "b35c966214ee1f8b63ed0aa1838db4715f3e0a2c8f348b2b2bfa44c25910e763"
+    },
+    {
+      "file": "status.raw.txt",
+      "bytes": 413,
+      "sha256": "74ed0de2fc1d61b32c367d4a22b8bc7fc2859b74e6ea28d3fa0787b8a7bd171c"
+    }
+  ]
+}

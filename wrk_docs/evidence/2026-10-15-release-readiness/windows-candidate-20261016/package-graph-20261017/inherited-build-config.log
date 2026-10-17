@@ -1,0 +1,8 @@
+2026-10-17T05:54:45Z
+RUSTFLAGS=
+RUSTDOCFLAGS=
+CARGO_ENCODED_RUSTFLAGS=
+CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=
+81dad96badab5e1bfa86cf4961fd8236f03c5d0659621e6d3d4d7a0b62743e5a */c/Users/marti/.cargo/config.toml
+[target.x86_64-pc-windows-msvc]
+linker = "rust-lld"

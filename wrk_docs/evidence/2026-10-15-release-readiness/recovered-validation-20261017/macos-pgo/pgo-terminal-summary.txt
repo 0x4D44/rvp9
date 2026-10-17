@@ -1,0 +1,13 @@
+macOS Apple Silicon encoder PGO terminal record
+HEAD: 8f0b58acde72193278d0b3abf560008008216c7b
+Command: CARGO_NET_OFFLINE=true CARGO_BUILD_JOBS=4 deltic timeout 14400 scripts/build-encoder-pgo.sh --build-root /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-rc-validation-aa390fba/macos-pgo/pgo-build-8f0b58ac --training-dir /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/tests/corpus </dev/null
+Terminal: exit 0 at 2026-10-17T09:23:10Z
+Training: 28 rows × 60 frames; raw profile count 31
+Raw profile copies: 31 hash-verified; 30 copied before merge; one copied after merge began while its source remained unchanged and hash-matched
+Manifest: /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/wrk_docs/evidence/2026-10-15-release-readiness/recovered-validation-20261017/macos-pgo/pgo-manifest.txt (sha256 91f83803a2ec25fc5d21f2f67d2d23d087543d7135c608f1c5cf2ce042470071)
+Merged profile: /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/wrk_docs/evidence/2026-10-15-release-readiness/recovered-validation-20261017/macos-pgo/encoder.profdata (583904 bytes; sha256 c3e8671adca242b443881bd2d2fae56ce60a1ee28b549029d60f78bfe0dcac69)
+Optimized binary: /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-rc-validation-aa390fba/macos-pgo/pgo-build-8f0b58ac/optimized/release/rvp9enc (2471416 bytes; sha256 e9f632fed68aaf86b16c43d89c32383b3ffba582760be279f0c3d45c8fe7514b; /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-rc-validation-aa390fba/macos-pgo/pgo-build-8f0b58ac/optimized/release/rvp9enc: Mach-O 64-bit executable arm64)
+LLVM static-counter warnings: 20 (recorded in the raw log)
+Build session 38632 and archiver session 93228 both terminated with exit 0.
+All recorded build and archiver PIDs were absent from the process table at terminal verification.
+No timing or quality campaign was run.

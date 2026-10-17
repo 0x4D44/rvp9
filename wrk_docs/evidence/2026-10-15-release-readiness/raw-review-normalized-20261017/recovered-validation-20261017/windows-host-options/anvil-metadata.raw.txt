@@ -1,0 +1,25 @@
+#< CLIXML
+{
+    "host":  "ANVIL",
+    "utc":  "2026-10-17T05:55:36.2689312Z",
+    "repos":  [
+
+              ],
+    "toolchains":  [
+                       "stable-x86_64-pc-windows-msvc",
+                       "nightly-x86_64-pc-windows-msvc",
+                       "1.85.1-x86_64-pc-windows-msvc",
+                       "1.88.0-x86_64-pc-windows-msvc",
+                       "1.93.1-x86_64-pc-windows-msvc",
+                       "1.98-x86_64-pc-windows-msvc (active, default)"
+                   ],
+    "ffmpeg":  [
+                   "C:\\Users\\marti\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\\ffmpeg-8.0.1-full_build\\bin\\ffmpeg.exe"
+               ],
+    "sample":  {
+                   "logical_processors":  28,
+                   "note":  "One instantaneous metadata sample only; not canonical60s idle qualification.",
+                   "percent_processor_time":  0
+               }
+}
+<Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com/powershell/2004/04"><Obj S="progress" RefId="0"><TN RefId="0"><T>System.Management.Automation.PSCustomObject</T><T>System.Object</T></TN><MS><I64 N="SourceId">1</I64><PR N="Record"><AV>Preparing modules for first use.</AV><AI>0</AI><Nil /><PI>-1</PI><PC>-1</PC><T>Completed</T><SR>-1</SR><SD> </SD></PR></MS></Obj><Obj S="progress" RefId="1"><TNRef RefId="0" /><MS><I64 N="SourceId">2</I64><PR N="Record"><AV>Preparing modules for first use.</AV><AI>0</AI><Nil /><PI>-1</PI><PC>-1</PC><T>Completed</T><SR>-1</SR><SD> </SD></PR></MS></Obj><Obj S="progress" RefId="2"><TNRef RefId="0" /><MS><I64 N="SourceId">1</I64><PR N="Record"><AV>Preparing modules for first use.</AV><AI>0</AI><Nil /><PI>-1</PI><PC>-1</PC><T>Completed</T><SR>-1</SR><SD> </SD></PR></MS></Obj></Objs>

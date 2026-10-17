@@ -1,0 +1,390 @@
+{
+  "head": "8f0b58acde72193278d0b3abf560008008216c7b",
+  "candidate": "8f0b58acde72193278d0b3abf560008008216c7b",
+  "host": "Darwin flux.home.arpa 25.6.0 Darwin Kernel Version 25.6.0: Fri Jul 31 19:19:08 PDT 2026; root:xnu-12377.161.14~5/RELEASE_ARM64_T6050 arm64",
+  "rustc_vv": "rustc 1.95.0 (59807616e 2026-04-14)\nbinary: rustc\ncommit-hash: 59807616e1fa2540724bfbac14d7976d7e4a3860\ncommit-date: 2026-04-14\nhost: aarch64-apple-darwin\nrelease: 1.95.0\nLLVM version: 22.1.2",
+  "cargo_version": "cargo 1.95.0 (f2d3ce0bd 2026-03-21)",
+  "llvm_profdata_path": "/Library/Developer/CommandLineTools/usr/bin/llvm-profdata",
+  "llvm_profdata_version": "Apple LLVM version 21.0.0",
+  "llvm_profdata_sha256": "5e8de41c896418a5f321a46e47f5b4d3fb943a8868839bd66d0370009eaae4b8",
+  "ffmpeg_version": "ffmpeg version 8.1.2 Copyright (c) 2000-2026 the FFmpeg developers",
+  "script": "scripts/build-encoder-pgo.sh",
+  "script_sha256": "2d335a8b02c41a3dc370238add4b894d2f9d27900ee9e657dcc3b9e7ba2d54e5",
+  "command": "CARGO_NET_OFFLINE=true CARGO_BUILD_JOBS=4 deltic timeout 14400 scripts/build-encoder-pgo.sh --build-root /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-rc-validation-aa390fba/macos-pgo/pgo-build-8f0b58ac --training-dir /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/tests/corpus </dev/null",
+  "exit_code": 0,
+  "start_utc": "2026-10-17T09:19:45Z",
+  "end_utc": "2026-10-17T09:23:10Z",
+  "build_root": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-rc-validation-aa390fba/macos-pgo/pgo-build-8f0b58ac",
+  "run_root": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-rc-validation-aa390fba/macos-pgo/pgo-build-8f0b58ac/runs/20261017T091946Z-9691",
+  "manifest_path": "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/wrk_docs/evidence/2026-10-15-release-readiness/recovered-validation-20261017/macos-pgo/pgo-manifest.txt",
+  "manifest_sha256": "91f83803a2ec25fc5d21f2f67d2d23d087543d7135c608f1c5cf2ce042470071",
+  "training_rows": 28,
+  "frames_per_row": 60,
+  "corpus": {
+    "in_to_tree_420_720p50.y4m": {
+      "sha256": "81166517a3054c789923535b5da23fbbb9bbd7fd4c28dac83918ac351e121e74",
+      "size_bytes": 691203035
+    },
+    "ducks_take_off_420_720p50.y4m": {
+      "sha256": "0e09aa923ce72e2f6d1c978c3c1cc8dd9588d2ede819081f040213e361970efc",
+      "size_bytes": 691203035
+    },
+    "old_town_cross_420_720p50.y4m": {
+      "sha256": "0fbc2ec0c552ad693528b2e49409c7449880b9230055a7696346473d1aaf4123",
+      "size_bytes": 691203035
+    }
+  },
+  "raw_profile_count": 31,
+  "archived_profile_count": 31,
+  "archived_before_profdata_merge_count": 30,
+  "archived_profiles_all_hash_verified_against_external_source": true,
+  "profile_archive_manifest_sha256": "68ae6fbe59d182d58f4061849be0baa436465fbc00fc11bef56800c743a597c4",
+  "raw_profile_archive_total_bytes": 10782936,
+  "profdata_path": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-rc-validation-aa390fba/macos-pgo/pgo-build-8f0b58ac/runs/20261017T091946Z-9691/encoder.profdata",
+  "profdata_sha256": "c3e8671adca242b443881bd2d2fae56ce60a1ee28b549029d60f78bfe0dcac69",
+  "profdata_size_bytes": 583904,
+  "optimized_binary": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-rc-validation-aa390fba/macos-pgo/pgo-build-8f0b58ac/optimized/release/rvp9enc",
+  "optimized_binary_sha256": "e9f632fed68aaf86b16c43d89c32383b3ffba582760be279f0c3d45c8fe7514b",
+  "optimized_binary_manifest_sha256": "e9f632fed68aaf86b16c43d89c32383b3ffba582760be279f0c3d45c8fe7514b",
+  "optimized_binary_size_bytes": 2471416,
+  "optimized_binary_file": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-rc-validation-aa390fba/macos-pgo/pgo-build-8f0b58ac/optimized/release/rvp9enc: Mach-O 64-bit executable arm64",
+  "raw_log_sha256": "98bcb0d8268e7fee39650f65eedebfe2bb155a3a52893cdfa94e66afd2ef92c7",
+  "raw_log_bytes": 7245,
+  "llvm_static_counter_warning_count": 20,
+  "preflight_exit_code": 0,
+  "preflight_raw_log_sha256": "811baaf8b2ce1e97ff803664cbd0d96f4a37d634c5084bebd3493a0f17107a59",
+  "archive_watcher_exit_code": 0,
+  "archive_watcher_raw_log_sha256": "ea81dfa48a6c2b435b5d93e210edc24866b2c1f2a06c54b038a63b4de63cae52",
+  "archive_watcher_exit_utc": "2026-10-17T09:23:10Z",
+  "archive_watcher_manifest_exit_utc": "2026-10-17T09:23:10+00:00",
+  "tool_session_ids": {
+    "pgo_build": 38632,
+    "raw_profile_archiver": 93228
+  },
+  "terminal_process_checks": {
+    "build_shell_9670": {
+      "pid": 9670,
+      "process_present": false,
+      "command_at_pid": "",
+      "still_matches_recorded_command": false,
+      "ps_exit_code": 1
+    },
+    "deltic_build_9690": {
+      "pid": 9690,
+      "process_present": false,
+      "command_at_pid": "",
+      "still_matches_recorded_command": false,
+      "ps_exit_code": 1
+    },
+    "script_9691": {
+      "pid": 9691,
+      "process_present": false,
+      "command_at_pid": "",
+      "still_matches_recorded_command": false,
+      "ps_exit_code": 1
+    },
+    "instrumented_cargo_9729": {
+      "pid": 9729,
+      "process_present": false,
+      "command_at_pid": "",
+      "still_matches_recorded_command": false,
+      "ps_exit_code": 1
+    },
+    "optimized_cargo_20873": {
+      "pid": 20873,
+      "process_present": false,
+      "command_at_pid": "",
+      "still_matches_recorded_command": false,
+      "ps_exit_code": 1
+    },
+    "archive_shell_14288": {
+      "pid": 14288,
+      "process_present": false,
+      "command_at_pid": "",
+      "still_matches_recorded_command": false,
+      "ps_exit_code": 1
+    },
+    "archive_deltic_14291": {
+      "pid": 14291,
+      "process_present": false,
+      "command_at_pid": "",
+      "still_matches_recorded_command": false,
+      "ps_exit_code": 1
+    },
+    "archive_python_14294": {
+      "pid": 14294,
+      "process_present": false,
+      "command_at_pid": "",
+      "still_matches_recorded_command": false,
+      "ps_exit_code": 1
+    }
+  },
+  "all_recorded_processes_terminal": true,
+  "pgo_run_meta": {
+    "start_utc": "2026-10-17T09:19:45Z",
+    "worktree": "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence",
+    "head": "8f0b58acde72193278d0b3abf560008008216c7b",
+    "build_root": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-rc-validation-aa390fba/macos-pgo/pgo-build-8f0b58ac",
+    "command": "CARGO_NET_OFFLINE=true CARGO_BUILD_JOBS=4 deltic timeout 14400 scripts/build-encoder-pgo.sh --build-root /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-rc-validation-aa390fba/macos-pgo/pgo-build-8f0b58ac --training-dir /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/tests/corpus </dev/null",
+    "end_utc": "2026-10-17T09:23:10Z",
+    "exit_code": "0",
+    "raw_bytes": "7245",
+    "tool_session_id": "38632",
+    "build_shell_pid": "9670",
+    "deltic_timeout_pid": "9690",
+    "script_pid": "9691",
+    "instrumented_cargo_pid": "9729",
+    "optimized_cargo_pid": "20873"
+  },
+  "profile_archive_meta": {
+    "start_utc": "2026-10-17T09:20:22Z",
+    "watched_build_shell_pid": "9670",
+    "command": "deltic timeout 14400 python3 wrk_docs/evidence/2026-10-15-release-readiness/recovered-validation-20261017/macos-pgo/archive-pgo-profiles.py --pid 9670 --build-root /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-rc-validation-aa390fba/macos-pgo/pgo-build-8f0b58ac --archive-dir wrk_docs/evidence/2026-10-15-release-readiness/recovered-validation-20261017/macos-pgo/raw-profiles --manifest wrk_docs/evidence/2026-10-15-release-readiness/recovered-validation-20261017/macos-pgo/profraw.archive.json </dev/null",
+    "end_utc": "2026-10-17T09:23:10Z",
+    "exit_code": "0",
+    "raw_bytes": "8688",
+    "tool_session_id": "93228",
+    "watch_shell_pid": "14288",
+    "deltic_timeout_pid": "14291",
+    "python_pid": "14294"
+  },
+  "profile_archive_validation_rows": [
+    {
+      "source_exists": true,
+      "archive_exists": true,
+      "size_matches": true,
+      "source_sha256_matches": true,
+      "archive_sha256_matches": true
+    },
+    {
+      "source_exists": true,
+      "archive_exists": true,
+      "size_matches": true,
+      "source_sha256_matches": true,
+      "archive_sha256_matches": true
+    },
+    {
+      "source_exists": true,
+      "archive_exists": true,
+      "size_matches": true,
+      "source_sha256_matches": true,
+      "archive_sha256_matches": true
+    },
+    {
+      "source_exists": true,
+      "archive_exists": true,
+      "size_matches": true,
+      "source_sha256_matches": true,
+      "archive_sha256_matches": true
+    },
+    {
+      "source_exists": true,
+      "archive_exists": true,
+      "size_matches": true,
+      "source_sha256_matches": true,
+      "archive_sha256_matches": true
+    },
+    {
+      "source_exists": true,
+      "archive_exists": true,
+      "size_matches": true,
+      "source_sha256_matches": true,
+      "archive_sha256_matches": true
+    },
+    {
+      "source_exists": true,
+      "archive_exists": true,
+      "size_matches": true,
+      "source_sha256_matches": true,
+      "archive_sha256_matches": true
+    },
+    {
+      "source_exists": true,
+      "archive_exists": true,
+      "size_matches": true,
+      "source_sha256_matches": true,
+      "archive_sha256_matches": true
+    },
+    {
+      "source_exists": true,
+      "archive_exists": true,
+      "size_matches": true,
+      "source_sha256_matches": true,
+      "archive_sha256_matches": true
+    },
+    {
+      "source_exists": true,
+      "archive_exists": true,
+      "size_matches": true,
+      "source_sha256_matches": true,
+      "archive_sha256_matches": true
+    },
+    {
+      "source_exists": true,
+      "archive_exists": true,
+      "size_matches": true,
+      "source_sha256_matches": true,
+      "archive_sha256_matches": true
+    },
+    {
+      "source_exists": true,
+      "archive_exists": true,
+      "size_matches": true,
+      "source_sha256_matches": true,
+      "archive_sha256_matches": true
+    },
+    {
+      "source_exists": true,
+      "archive_exists": true,
+      "size_matches": true,
+      "source_sha256_matches": true,
+      "archive_sha256_matches": true
+    },
+    {
+      "source_exists": true,
+      "archive_exists": true,
+      "size_matches": true,
+      "source_sha256_matches": true,
+      "archive_sha256_matches": true
+    },
+    {
+      "source_exists": true,
+      "archive_exists": true,
+      "size_matches": true,
+      "source_sha256_matches": true,
+      "archive_sha256_matches": true
+    },
+    {
+      "source_exists": true,
+      "archive_exists": true,
+      "size_matches": true,
+      "source_sha256_matches": true,
+      "archive_sha256_matches": true
+    },
+    {
+      "source_exists": true,
+      "archive_exists": true,
+      "size_matches": true,
+      "source_sha256_matches": true,
+      "archive_sha256_matches": true
+    },
+    {
+      "source_exists": true,
+      "archive_exists": true,
+      "size_matches": true,
+      "source_sha256_matches": true,
+      "archive_sha256_matches": true
+    },
+    {
+      "source_exists": true,
+      "archive_exists": true,
+      "size_matches": true,
+      "source_sha256_matches": true,
+      "archive_sha256_matches": true
+    },
+    {
+      "source_exists": true,
+      "archive_exists": true,
+      "size_matches": true,
+      "source_sha256_matches": true,
+      "archive_sha256_matches": true
+    },
+    {
+      "source_exists": true,
+      "archive_exists": true,
+      "size_matches": true,
+      "source_sha256_matches": true,
+      "archive_sha256_matches": true
+    },
+    {
+      "source_exists": true,
+      "archive_exists": true,
+      "size_matches": true,
+      "source_sha256_matches": true,
+      "archive_sha256_matches": true
+    },
+    {
+      "source_exists": true,
+      "archive_exists": true,
+      "size_matches": true,
+      "source_sha256_matches": true,
+      "archive_sha256_matches": true
+    },
+    {
+      "source_exists": true,
+      "archive_exists": true,
+      "size_matches": true,
+      "source_sha256_matches": true,
+      "archive_sha256_matches": true
+    },
+    {
+      "source_exists": true,
+      "archive_exists": true,
+      "size_matches": true,
+      "source_sha256_matches": true,
+      "archive_sha256_matches": true
+    },
+    {
+      "source_exists": true,
+      "archive_exists": true,
+      "size_matches": true,
+      "source_sha256_matches": true,
+      "archive_sha256_matches": true
+    },
+    {
+      "source_exists": true,
+      "archive_exists": true,
+      "size_matches": true,
+      "source_sha256_matches": true,
+      "archive_sha256_matches": true
+    },
+    {
+      "source_exists": true,
+      "archive_exists": true,
+      "size_matches": true,
+      "source_sha256_matches": true,
+      "archive_sha256_matches": true
+    },
+    {
+      "source_exists": true,
+      "archive_exists": true,
+      "size_matches": true,
+      "source_sha256_matches": true,
+      "archive_sha256_matches": true
+    },
+    {
+      "source_exists": true,
+      "archive_exists": true,
+      "size_matches": true,
+      "source_sha256_matches": true,
+      "archive_sha256_matches": true
+    },
+    {
+      "source_exists": true,
+      "archive_exists": true,
+      "size_matches": true,
+      "source_sha256_matches": true,
+      "archive_sha256_matches": true
+    }
+  ],
+  "merged_profile_archive_path": "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/wrk_docs/evidence/2026-10-15-release-readiness/recovered-validation-20261017/macos-pgo/encoder.profdata",
+  "merged_profile_archive_sha256": "c3e8671adca242b443881bd2d2fae56ce60a1ee28b549029d60f78bfe0dcac69",
+  "merged_profile_archive_size_bytes": 583904,
+  "merged_profile_archive_matches_build_source": true,
+  "optimized_binary_reverified_sha256": "e9f632fed68aaf86b16c43d89c32383b3ffba582760be279f0c3d45c8fe7514b",
+  "optimized_binary_reverified_size_bytes": 2471416,
+  "optimized_binary_matches_manifest": true,
+  "evidence_artifacts": [
+    "archive-pgo-profiles.py",
+    "archive-profiles.raw.log",
+    "archive-profiles.run.txt",
+    "encoder.profdata",
+    "pgo-build.raw.log",
+    "pgo-build.run.txt",
+    "pgo-manifest.txt",
+    "pgo-run-summary.json",
+    "preflight.raw.log",
+    "preflight.run.txt",
+    "profraw.archive.json"
+  ]
+}

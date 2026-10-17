@@ -1,0 +1,6 @@
+start_utc=2026-10-17T05:55:21Z
+worktree=/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence
+head=8f0b58acde72193278d0b3abf560008008216c7b
+command=CARGO_TARGET_DIR=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-rc-validation-aa390fba/target CARGO_BUILD_JOBS=4 CARGO_NET_OFFLINE=true deltic timeout 3600 cargo build --release --locked --offline --bins -p rvp9-cli -p rvp9-harness -p rvp9-bench </dev/null
+wrapper_error=zsh rejected assignment to read-only status after cargo returned; raw shows Finished, but wrapper exit was not captured
+verified_rerun=release-bin-build-confirmed.run.txt exit_code=0

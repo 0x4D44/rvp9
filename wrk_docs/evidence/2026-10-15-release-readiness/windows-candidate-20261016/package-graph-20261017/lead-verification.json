@@ -1,0 +1,38 @@
+{
+  "source": "474dfd99a673df85f750136f7552ac156b7a24e9",
+  "native_host": "Windows x86-64, rustc/Cargo 1.95.0",
+  "cargo_invocations": 1,
+  "cargo_exit": 0,
+  "verified_packages": 5,
+  "package_verification_builds": 5,
+  "package_archives": 5,
+  "archive_contents": {
+    "packaged_files": 357,
+    "contents_compared_to_git_tree": 342,
+    "line_ending_note": "The Windows archive byte hashes are preserved exactly. Source contents were compared to the 474dfd99 git tree after CRLF/LF normalization because Cargo packaged the native Windows checkout.",
+    "vcs_provenance_matches_source": true
+  },
+  "downloaded_archives": {
+    "count": 5,
+    "bytes": 2688599,
+    "native_download_hashes_verified": 5,
+    "sha256": {
+      "rvp9-cli-0.2.0-alpha.4.crate": "b84be81a740da510f2280b48228ae02fb9d0ef8638542c991ab1b5d231064205",
+      "rvp9-core-0.2.0-alpha.4.crate": "1747c2409aaea82dc5a8fe8ad685c0aabbc0b069a711952692ddcf6147d62c28",
+      "rvp9-decoder-0.2.0-alpha.4.crate": "dd1ddd6b6f1475adbc753e353a8b0baabfb779a151f97e61db763664f577a590",
+      "rvp9-encoder-0.2.0-alpha.4.crate": "ac03b25e4894b0866e437dd182c999a7b1f0573a9ce56251c0c7bba751b59c05",
+      "rvp9-io-0.2.0-alpha.4.crate": "9284a71f3b281405c2edee34b5b567eebe092ba340392a266d111029a736023b"
+    }
+  },
+  "evidence_integrity": {
+    "downloaded_native_files_verified": 89,
+    "raw_archive_members_verified": 109,
+    "raw_archive_sha256": "53759384a6b4c75c315c324532cf6be1635a6688bcb3da3cd7e282a538f41ea9"
+  },
+  "archive_tests_executed": 0,
+  "limitations": [
+    "This is default package verification of the current alpha.4 source graph; it does not test archives or qualify a newly versioned graph.",
+    "The earlier individual archive-test failures remain tracked under RVP9-BUG-FLU-00038."
+  ],
+  "failures": []
+}

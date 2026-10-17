@@ -1,0 +1,88 @@
+{
+  "host": "KILN",
+  "site": "edinburgh",
+  "generated_unix": 1792156416,
+  "os": {
+    "family": "Windows",
+    "version": "Windows 11 Pro",
+    "arch": "x86_64"
+  },
+  "cpu": {
+    "model": "Intel(R) Core(TM) Ultra 9 285HX",
+    "physical_cores": 24,
+    "logical_cores": 24
+  },
+  "memory_bytes": 102496944128,
+  "disk": {
+    "total_bytes": 1020769857536,
+    "available_bytes": 454105890816
+  },
+  "tools": [
+    {
+      "name": "rustc",
+      "state": "found",
+      "version": "1.95.0"
+    },
+    {
+      "name": "cargo",
+      "state": "found",
+      "version": "1.95.0"
+    },
+    {
+      "name": "git",
+      "state": "found",
+      "version": "2.53.0.windows.2"
+    },
+    {
+      "name": "node",
+      "state": "found",
+      "version": "24.14.1"
+    },
+    {
+      "name": "npm",
+      "state": "found",
+      "version": "11.11.0"
+    },
+    {
+      "name": "python",
+      "state": "missing"
+    }
+  ],
+  "rust": {
+    "toolchains": [
+      {
+        "name": "1.85.1-x86_64-pc-windows-msvc",
+        "version": "1.85.1"
+      },
+      {
+        "name": "1.87-x86_64-pc-windows-msvc",
+        "version": "1.87.0"
+      },
+      {
+        "name": "1.88-x86_64-pc-windows-msvc",
+        "version": "1.88.0"
+      },
+      {
+        "name": "1.93.1-x86_64-pc-windows-msvc",
+        "version": "1.93.1"
+      },
+      {
+        "name": "1.95.0-x86_64-pc-windows-msvc",
+        "version": "1.95.0"
+      },
+      {
+        "name": "nightly-2026-04-08-x86_64-pc-windows-msvc",
+        "version": "1.96.0-nightly"
+      },
+      {
+        "name": "nightly-x86_64-pc-windows-msvc",
+        "version": "1.97.0-nightly"
+      },
+      {
+        "name": "stable-x86_64-pc-windows-msvc",
+        "version": "1.96.0"
+      }
+    ]
+  },
+  "login_user": "marti"
+}

@@ -1,0 +1,96 @@
+{
+  "archive": "raw-asan-apr12-evidence.tar.gz",
+  "sha256": "03061d0021acb2e3bdd7aa0b33e1edce29fce7cf02a86ec9cf7d18bb77c3801b",
+  "entries": [
+    {
+      "file": "compile.command.txt",
+      "bytes": 209,
+      "sha256": "857283a8e0ae866f6ab192bae03a7e9e0773bc2cbb1f93515eee25515ab1da13"
+    },
+    {
+      "file": "compile.exit.txt",
+      "bytes": 2,
+      "sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865"
+    },
+    {
+      "file": "compile.log",
+      "bytes": 1478,
+      "sha256": "634ef95c7e62e7027798bdeb3c084c27997ac5306167fe04fd9737e6148433f1"
+    },
+    {
+      "file": "launch.ps1",
+      "bytes": 487,
+      "sha256": "fc6806afd65c81731bd86df1cf3e6ab8eb09341462725189dfac6621d6f66a8a"
+    },
+    {
+      "file": "launch.py",
+      "bytes": 520,
+      "sha256": "5a36e25b0910b4082f5fdf95dd9b1e5f24f4dd602bf8e46e870991831d28efa8"
+    },
+    {
+      "file": "launch.raw.txt",
+      "bytes": 484,
+      "sha256": "74afe70938b65337239ced046624eea95ae349a173ec555a3f16c786f57745e7"
+    },
+    {
+      "file": "preflight.rs",
+      "bytes": 567,
+      "sha256": "e53a93738597dda2923f91d3d91945b9cd690c23766b93d7723963d82e350fa4"
+    },
+    {
+      "file": "preflight.sh",
+      "bytes": 1796,
+      "sha256": "06b664dd0c789a4c763f14f69b03602d88dc21d25770d013f92a57c4fd73174c"
+    },
+    {
+      "file": "prepare-preflight.py",
+      "bytes": 3386,
+      "sha256": "94cb8b3ff68f78d389dc706df784ee7945f080284ebe0a7e49f99ab781ad9751"
+    },
+    {
+      "file": "register.py",
+      "bytes": 963,
+      "sha256": "becb729961c91d9574494d6f13076c7d3f46f39d0823ca70a13bae4ebff44c78"
+    },
+    {
+      "file": "register.raw.txt",
+      "bytes": 270,
+      "sha256": "0d6af30bb29f75b392ab2e1df160c04f8f6a431df43d763eec8a0b8d1e9ab1da"
+    },
+    {
+      "file": "register.sh",
+      "bytes": 265,
+      "sha256": "c507952ab20cb2a7de6c0a43b1d8867199bab55230a5591134a5adf5840fce16"
+    },
+    {
+      "file": "root.json",
+      "bytes": 347,
+      "sha256": "2c008c2605c278454d339f71b5b91711444666867fdb501b36856d97cc3afc82"
+    },
+    {
+      "file": "runner.pid",
+      "bytes": 7,
+      "sha256": "ad4e55c0b3ac658d1398a3ebabcc06303512a9322c9bda3108065a1c2174894c"
+    },
+    {
+      "file": "terminal-summary.json",
+      "bytes": 2002,
+      "sha256": "b9135f55506ff2b4b8607abc3d0dfd350ec7818093df8ea69b8a5ab1a9488b64"
+    },
+    {
+      "file": "terminal-toolchain-inventory.ps1",
+      "bytes": 1680,
+      "sha256": "6004ee3d366531b5fe080fb1470e5c4c25e3f0bfb5ad9e1652a0cca1b043d544"
+    },
+    {
+      "file": "terminal-toolchain-inventory.raw.txt",
+      "bytes": 1920,
+      "sha256": "a5d4a226844216267a39537e2b03612687c06422e7ef7da0ec05bbbf43129383"
+    },
+    {
+      "file": "toolchain.log",
+      "bytes": 892,
+      "sha256": "0498e3c76d3dd85a37f636100589c1584839ebffd9cf7f60376696aac72141c0"
+    }
+  ]
+}

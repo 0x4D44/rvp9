@@ -1,0 +1,17 @@
+host=ANVIL utc=2026-10-17T06:04:36.2662001Z
+Adaptive targeted check of observed yasm/perl portable-Strawberry root; no filesystem search.
+portable_tool=c/bin/gcc.exe exists=True bytes=1710094
+portable_tool=c/bin/gmake.exe exists=True bytes=260110
+portable_tool=c/bin/make.exe exists=False bytes=0
+portable_tool=c/bin/ar.exe exists=True bytes=1224206
+portable_tool=c/bin/ranlib.exe exists=True bytes=1224206
+portable_tool=c/bin/yasm.exe exists=True bytes=663054
+portable_tool=c/bin/nasm.exe exists=True bytes=1648654
+portable_tool=perl/bin/perl.exe exists=True bytes=46592
+gcc.exe (MinGW-W64 x86_64-ucrt-posix-seh, built by Brecht Sanders, r8) 13.2.0
+x86_64-w64-mingw32
+GNU Make 4.4.1
+yasm 1.3.0
+NASM version 2.16.01 compiled on May  3 2024
+Backslash found where operator expected (Missing operator before "\"?) at -e line 1, near "$^V\"
+Not a GLOB reference at -e line 1.

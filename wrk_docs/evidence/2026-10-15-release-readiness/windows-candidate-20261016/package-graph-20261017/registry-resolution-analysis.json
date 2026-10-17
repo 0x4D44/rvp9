@@ -1,0 +1,145 @@
+{
+  "archives": [
+    {
+      "name": "rvp9-decoder",
+      "version": "0.2.0-alpha.4",
+      "sha256": "dd1ddd6b6f1475adbc753e353a8b0baabfb779a151f97e61db763664f577a590",
+      "bytes": 225641,
+      "file_count": 20,
+      "vcs": {
+        "git": {
+          "sha1": "474dfd99a673df85f750136f7552ac156b7a24e9"
+        },
+        "path_in_vcs": "crates/rvp9-decoder"
+      }
+    },
+    {
+      "name": "rvp9-cli",
+      "version": "0.2.0-alpha.4",
+      "sha256": "b84be81a740da510f2280b48228ae02fb9d0ef8638542c991ab1b5d231064205",
+      "bytes": 67924,
+      "file_count": 18,
+      "vcs": {
+        "git": {
+          "sha1": "474dfd99a673df85f750136f7552ac156b7a24e9"
+        },
+        "path_in_vcs": "crates/rvp9-cli"
+      }
+    },
+    {
+      "name": "rvp9-io",
+      "version": "0.2.0-alpha.4",
+      "sha256": "9284a71f3b281405c2edee34b5b567eebe092ba340392a266d111029a736023b",
+      "bytes": 50174,
+      "file_count": 14,
+      "vcs": {
+        "git": {
+          "sha1": "474dfd99a673df85f750136f7552ac156b7a24e9"
+        },
+        "path_in_vcs": "crates/rvp9-io"
+      }
+    },
+    {
+      "name": "rvp9-encoder",
+      "version": "0.2.0-alpha.4",
+      "sha256": "ac03b25e4894b0866e437dd182c999a7b1f0573a9ce56251c0c7bba751b59c05",
+      "bytes": 968339,
+      "file_count": 116,
+      "vcs": {
+        "git": {
+          "sha1": "474dfd99a673df85f750136f7552ac156b7a24e9"
+        },
+        "path_in_vcs": "crates/rvp9-encoder"
+      }
+    },
+    {
+      "name": "rvp9-core",
+      "version": "0.2.0-alpha.4",
+      "sha256": "1747c2409aaea82dc5a8fe8ad685c0aabbc0b069a711952692ddcf6147d62c28",
+      "bytes": 1376521,
+      "file_count": 189,
+      "vcs": {
+        "git": {
+          "sha1": "474dfd99a673df85f750136f7552ac156b7a24e9"
+        },
+        "path_in_vcs": "crates/rvp9-core"
+      }
+    }
+  ],
+  "lock_checksum_edges": [
+    {
+      "lock": "rvp9-cli-0.2.0-alpha.4.inspected-Cargo.lock.txt",
+      "sibling": "rvp9-core",
+      "sha256": "1747c2409aaea82dc5a8fe8ad685c0aabbc0b069a711952692ddcf6147d62c28"
+    },
+    {
+      "lock": "rvp9-cli-0.2.0-alpha.4.inspected-Cargo.lock.txt",
+      "sibling": "rvp9-decoder",
+      "sha256": "dd1ddd6b6f1475adbc753e353a8b0baabfb779a151f97e61db763664f577a590"
+    },
+    {
+      "lock": "rvp9-cli-0.2.0-alpha.4.inspected-Cargo.lock.txt",
+      "sibling": "rvp9-encoder",
+      "sha256": "ac03b25e4894b0866e437dd182c999a7b1f0573a9ce56251c0c7bba751b59c05"
+    },
+    {
+      "lock": "rvp9-cli-0.2.0-alpha.4.inspected-Cargo.lock.txt",
+      "sibling": "rvp9-io",
+      "sha256": "9284a71f3b281405c2edee34b5b567eebe092ba340392a266d111029a736023b"
+    },
+    {
+      "lock": "rvp9-decoder-0.2.0-alpha.4.inspected-Cargo.lock.txt",
+      "sibling": "rvp9-core",
+      "sha256": "1747c2409aaea82dc5a8fe8ad685c0aabbc0b069a711952692ddcf6147d62c28"
+    },
+    {
+      "lock": "rvp9-encoder-0.2.0-alpha.4.inspected-Cargo.lock.txt",
+      "sibling": "rvp9-core",
+      "sha256": "1747c2409aaea82dc5a8fe8ad685c0aabbc0b069a711952692ddcf6147d62c28"
+    },
+    {
+      "lock": "rvp9-io-0.2.0-alpha.4.inspected-Cargo.lock.txt",
+      "sibling": "rvp9-core",
+      "sha256": "1747c2409aaea82dc5a8fe8ad685c0aabbc0b069a711952692ddcf6147d62c28"
+    }
+  ],
+  "observed_compile_manifest_directories": [
+    {
+      "crate": "rvp9_core",
+      "manifest_directory": "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\rvp9-native-packagegraph474-3255285b\\cargo-target\\package\\rvp9-core-0.2.0-alpha.4"
+    },
+    {
+      "crate": "rvp9_core",
+      "manifest_directory": "C:\\Users\\marti\\.cargo\\registry\\src\\-e838b5265d494894\\rvp9-core-0.2.0-alpha.4"
+    },
+    {
+      "crate": "rvp9_decoder",
+      "manifest_directory": "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\rvp9-native-packagegraph474-3255285b\\cargo-target\\package\\rvp9-decoder-0.2.0-alpha.4"
+    },
+    {
+      "crate": "rvp9_encoder",
+      "manifest_directory": "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\rvp9-native-packagegraph474-3255285b\\cargo-target\\package\\rvp9-encoder-0.2.0-alpha.4"
+    },
+    {
+      "crate": "rvp9_io",
+      "manifest_directory": "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\rvp9-native-packagegraph474-3255285b\\cargo-target\\package\\rvp9-io-0.2.0-alpha.4"
+    },
+    {
+      "crate": "rvp9_encoder",
+      "manifest_directory": "C:\\Users\\marti\\.cargo\\registry\\src\\-e838b5265d494894\\rvp9-encoder-0.2.0-alpha.4"
+    },
+    {
+      "crate": "rvp9_io",
+      "manifest_directory": "C:\\Users\\marti\\.cargo\\registry\\src\\-e838b5265d494894\\rvp9-io-0.2.0-alpha.4"
+    },
+    {
+      "crate": "rvp9_decoder",
+      "manifest_directory": "C:\\Users\\marti\\.cargo\\registry\\src\\-e838b5265d494894\\rvp9-decoder-0.2.0-alpha.4"
+    },
+    {
+      "crate": "rvp9_cli",
+      "manifest_directory": "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\rvp9-native-packagegraph474-3255285b\\cargo-target\\package\\rvp9-cli-0.2.0-alpha.4"
+    }
+  ],
+  "method": "Original archive SHA256 equals tmp-registry archive SHA256 and temporary index cksum for each package; seven packaged-lock sibling checksums match; verbose rustc commands show four sibling builds from unique temporary-registry source hash. Four persisted registry sources exist; twelve source manifest/original-manifest/VCS hashes independently match archive members. These local-registry sources have no .cargo-checksum.json record."
+}

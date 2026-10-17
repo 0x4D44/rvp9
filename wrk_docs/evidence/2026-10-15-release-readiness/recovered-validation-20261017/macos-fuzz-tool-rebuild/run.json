@@ -1,0 +1,75 @@
+{
+  "started_utc": "2026-10-17T05:57:22.606975+00:00",
+  "cwd": "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence",
+  "scratch": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-fuzz-tool-rebuild-5945e59a",
+  "env": {
+    "CARGO_BUILD_JOBS": "2",
+    "TMPDIR": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-fuzz-tool-rebuild-5945e59a",
+    "RUSTFLAGS": null,
+    "CARGO_ENCODED_RUSTFLAGS": null,
+    "CARGO_TARGET_DIR": null
+  },
+  "identity": {
+    "source": {
+      "command": [
+        "git",
+        "rev-parse",
+        "HEAD"
+      ],
+      "exit": 0,
+      "sha256": "b35c966214ee1f8b63ed0aa1838db4715f3e0a2c8f348b2b2bfa44c25910e763"
+    },
+    "rustc": {
+      "command": [
+        "rustc",
+        "-vV"
+      ],
+      "exit": 0,
+      "sha256": "e61cba8ded8c60e985f759f74a221c4773649021477d00b44c7af411eb8c218c"
+    },
+    "cargo": {
+      "command": [
+        "cargo",
+        "--version"
+      ],
+      "exit": 0,
+      "sha256": "c10ec31b8c6e6e2693cf65fc1971b41edbc3da1ae7db6f9f3f36c4823f8dcab5"
+    }
+  },
+  "cache": [],
+  "project_files_before": {
+    "Cargo.toml": "4179905489c5c6a81e1001cce7aad6d7da62e4da0388aa7b9c4b99bad81591b6",
+    "Cargo.lock": "98cf11da6f3e9a391bb1dac338e4da7e0aa1ca7fc04f6f0cd8e37dc7e9d2addf",
+    "crates/rvp9-fuzz/Cargo.toml": "5bd2e7c7b75292c068a9a5e03d38f8633cf568b509a0d392fc4757e1e5be0d62",
+    "crates/rvp9-fuzz/Cargo.lock": "f9fc43384144cc74b2634885ed3235026e7ddde72ae0f73c7deede6fcc15bd1b"
+  },
+  "command": [
+    "deltic",
+    "timeout",
+    "1800",
+    "cargo",
+    "install",
+    "--offline",
+    "--locked",
+    "--version",
+    "=0.13.2",
+    "--root",
+    "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-fuzz-tool-rebuild-5945e59a/tools",
+    "--target-dir",
+    "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-fuzz-tool-rebuild-5945e59a/tool-target",
+    "--jobs",
+    "2",
+    "cargo-fuzz"
+  ],
+  "exit": 101,
+  "finished_utc": "2026-10-17T05:57:24.270776+00:00",
+  "log": "cargo-install.raw.txt",
+  "log_sha256": "1144ed0bdf68f260c6a2bb8c581aae654041782a0dd918a19d48aa2c6ed59135",
+  "project_files_after": {
+    "Cargo.toml": "4179905489c5c6a81e1001cce7aad6d7da62e4da0388aa7b9c4b99bad81591b6",
+    "Cargo.lock": "98cf11da6f3e9a391bb1dac338e4da7e0aa1ca7fc04f6f0cd8e37dc7e9d2addf",
+    "crates/rvp9-fuzz/Cargo.toml": "5bd2e7c7b75292c068a9a5e03d38f8633cf568b509a0d392fc4757e1e5be0d62",
+    "crates/rvp9-fuzz/Cargo.lock": "f9fc43384144cc74b2634885ed3235026e7ddde72ae0f73c7deede6fcc15bd1b"
+  },
+  "project_files_unchanged": true
+}

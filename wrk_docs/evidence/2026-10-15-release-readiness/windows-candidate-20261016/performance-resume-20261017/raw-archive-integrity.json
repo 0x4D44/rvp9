@@ -1,0 +1,201 @@
+{
+  "archive": "raw-resume-evidence.tar.gz",
+  "sha256": "83de68dd015b7e2865b64b62816f4faaec8e8072f624aa424b1fd21397aa6145",
+  "entries": [
+    {
+      "file": "after-monitor-refusal.ps1",
+      "bytes": 661,
+      "sha256": "d7e2236024346f0de5a673fe58545c77fc5a3e7da2e1ed6c7f88d32903332a45"
+    },
+    {
+      "file": "after-monitor-refusal.raw.txt",
+      "bytes": 539,
+      "sha256": "d49d373ece57a665d1ce28949d79335519b9b4cbdf0e75b053b87c2511e3eaa0"
+    },
+    {
+      "file": "campaign.command.txt",
+      "bytes": 1847,
+      "sha256": "f55e014ae11990a1a07bbca8eaf810b7595f4f841dd6f537df87ca1ba7ede83f"
+    },
+    {
+      "file": "campaign.exit.txt",
+      "bytes": 2,
+      "sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865"
+    },
+    {
+      "file": "campaign.log",
+      "bytes": 115,
+      "sha256": "7b763a4f53b0e2c56312297f7ebdfad27cda607b49f76641018776515da16dbe"
+    },
+    {
+      "file": "campaign.raw.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "file": "campaign.sh",
+      "bytes": 5134,
+      "sha256": "ca25ea3c3cfe34919ad057d1c8753c49defb6238ee88d471251b45fc1e31ca76"
+    },
+    {
+      "file": "cleanup-owned-inventory.ps1",
+      "bytes": 1089,
+      "sha256": "9301781c23a052682571891295b4a0e25e494094347f3b720b69bf72d2896e45"
+    },
+    {
+      "file": "cleanup-owned-inventory.raw.txt",
+      "bytes": 352,
+      "sha256": "fae0afde6998a3a0741f9fc058580bc0a1808c1e63212a286c123249647f6580"
+    },
+    {
+      "file": "ended.txt",
+      "bytes": 21,
+      "sha256": "63cbbf199d8df9225ec804f1d50aecce6a62fdcafaac57ae450598ed1796f976"
+    },
+    {
+      "file": "final-source.txt",
+      "bytes": 41,
+      "sha256": "9eafd3c42f29e891cb9969f90200fad130d774ef2e6cea7b566b0b197d1f487a"
+    },
+    {
+      "file": "inspect-resume.raw.txt",
+      "bytes": 144742,
+      "sha256": "cda399c5b6d4444f7b8d41e18845b5801488a839afd623a0607deef547140fba"
+    },
+    {
+      "file": "inspect-resume.sh",
+      "bytes": 540,
+      "sha256": "5541c41b99f6d0db21ce52d5f1178b0c3abe45c724c93acf18f8a826f52048f5"
+    },
+    {
+      "file": "installed-toolchains-before-timing.raw.txt",
+      "bytes": 459,
+      "sha256": "961ef1b23620e85ddbd1bdda2eabcb90ed3ae288873d4c4c183147efa2fc9e9f"
+    },
+    {
+      "file": "installed-toolchains-before-timing.sh",
+      "bytes": 68,
+      "sha256": "b98c9f60d0df0676bd4ceedbfcadad4be0352f2b643efe7c4fe60b6eea0e0938"
+    },
+    {
+      "file": "inventory.ps1",
+      "bytes": 1945,
+      "sha256": "311b01cf85983c1258a3ce9d4accaa2a8314dd8dd2c363cd4416672d931ffbd4"
+    },
+    {
+      "file": "latest-inventory.raw.txt",
+      "bytes": 610,
+      "sha256": "5e04999a780d6125de2df26387097a186402e30bd53d85557ee6d61342dcd375"
+    },
+    {
+      "file": "launch.ps1",
+      "bytes": 645,
+      "sha256": "d3bd8e2ae390f6b92c0488cf1aeaaa03d0311d3f3bd5115ebadc18ead9339e99"
+    },
+    {
+      "file": "launch.transport.raw.txt",
+      "bytes": 472,
+      "sha256": "f99cda52f40c3fe39669e0217012be8ea41b2f05afb2575744eee14d761b5e85"
+    },
+    {
+      "file": "launcher.pid",
+      "bytes": 7,
+      "sha256": "2220ba5c5f7352750b495d974bc173996f17a9cae87849707a7140ed01eabf46"
+    },
+    {
+      "file": "local-handle.json",
+      "bytes": 77,
+      "sha256": "096eaf15474ec55535df8271a5be66877e85b50a23d49be197bd6352af911123"
+    },
+    {
+      "file": "local-ssh-terminal-state.txt",
+      "bytes": 21,
+      "sha256": "78921063ec8bb8950cc8894608758ebbc703f0228b3f9df32cfc92e6c933b9f2"
+    },
+    {
+      "file": "manifest.raw.txt",
+      "bytes": 144282,
+      "sha256": "05dbdf4e93cf89e22b94fc397d775aaba1283c707324f316ab6920ed1ff7beb5"
+    },
+    {
+      "file": "monitor.py",
+      "bytes": 4868,
+      "sha256": "d41609fc4054efcf3cd850536f2ecd21a4183a7c82361b5a8c18623a3725fb60"
+    },
+    {
+      "file": "native-handle.json",
+      "bytes": 75,
+      "sha256": "3a91943658dfd2864d4ba799853f78a72b5d1f4ac8cd41b8bc5c1b044dc248bc"
+    },
+    {
+      "file": "prepare-campaign.py",
+      "bytes": 3474,
+      "sha256": "b8a891887083649e5a6efa3d38648b7bd7b7097f438af03ccec3dff52890fe8b"
+    },
+    {
+      "file": "progress.json",
+      "bytes": 431,
+      "sha256": "94277544dbcfd95459c3c9e483c919b3db38e22af22a15a7b47fde6e475a2bcb"
+    },
+    {
+      "file": "quiet-end.log",
+      "bytes": 69,
+      "sha256": "e226787d028cbecf2cff89325328178afa46cab334b14be16b158ee30952c719"
+    },
+    {
+      "file": "quiet-grant.json",
+      "bytes": 264,
+      "sha256": "c3cfa5936b6927fc811e33698a1d0d6fa7347b36a011867cfd220b7bb7171876"
+    },
+    {
+      "file": "quiet-start.exit.txt",
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    {
+      "file": "quiet-start.log",
+      "bytes": 414,
+      "sha256": "5abc5b0b93c8ac9cb65f268ed97df8c7ba5144fcf724a9732956072272b5e340"
+    },
+    {
+      "file": "sealed-manifest-before.raw.txt",
+      "bytes": 144211,
+      "sha256": "69a1219c75cc7558e3698229a2300a121b754cf8f02476f012100c375853bcfb"
+    },
+    {
+      "file": "started.txt",
+      "bytes": 21,
+      "sha256": "3e06ad9346f5daa43791469ad1e9f3b37e0f2549261429472633acdb97b8e30c"
+    },
+    {
+      "file": "terminal-inventory.ps1",
+      "bytes": 1149,
+      "sha256": "f1f46874d23de4c65b33d730cd3d6e43cfdfdd54afd27a4137448d7f62da50ec"
+    },
+    {
+      "file": "terminal-inventory.raw.txt",
+      "bytes": 1889,
+      "sha256": "9ee0253a2cde5b5b61d39e91dbf87b4fb90e67adf9fd0c059b4498607a3a503f"
+    },
+    {
+      "file": "terminal-summary.json",
+      "bytes": 3833,
+      "sha256": "3ee9c15001ea4c2ae31c6fb3d2a147d8f45909b10c70c7e12d14f12c20064519"
+    },
+    {
+      "file": "verify-resume.exit.txt",
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    {
+      "file": "verify-resume.raw.txt",
+      "bytes": 3617,
+      "sha256": "5a1640793f5db535ec3eda97fb96b3da4c6773990821f6bcc552d4798361c161"
+    },
+    {
+      "file": "verify-resume.sh",
+      "bytes": 11616,
+      "sha256": "414f0c3ff2521d7362078f79cd5ea33cae596b0c8059990f552812f8ac7582dd"
+    }
+  ]
+}

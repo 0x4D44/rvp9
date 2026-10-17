@@ -1,0 +1,166 @@
+{
+  "archive": "raw-anvil-prerequisites.tar.gz",
+  "sha256": "f26728ba3279651da4f33ab87140d47993d0a442fd73cff58ddb7195fd952bb1",
+  "entries": [
+    {
+      "file": "README.md",
+      "bytes": 850,
+      "sha256": "41ba012b6f4683f42da0429a82e7dc80e3dc859bba392c766f1b1064d1fc5f6f"
+    },
+    {
+      "file": "cpu-samples.exit.txt",
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    {
+      "file": "cpu-samples.ps1",
+      "bytes": 529,
+      "sha256": "4e312f6e9aab9331471e8f6ef808cb0c46d63f8b945b7fb1c118f6e97cc61170"
+    },
+    {
+      "file": "cpu-samples.raw.txt",
+      "bytes": 1504,
+      "sha256": "1890bebd6878f47d2d025ec611505369724c1217fe437b49cb0316fe5fea9d52"
+    },
+    {
+      "file": "deltic-host-card.raw.json",
+      "bytes": 3297,
+      "sha256": "fb08653ecfefab3d9545e8ecbb183ad7dbf82fd2e759465cb2518426beb89cdb"
+    },
+    {
+      "file": "ffmpeg-untruncated.ps1",
+      "bytes": 97,
+      "sha256": "5348ab00a778fe8be5c1ab1e805b054f8b11181dfcb7a67e8395660825cbb5cf"
+    },
+    {
+      "file": "ffmpeg-untruncated.raw.txt",
+      "bytes": 2287,
+      "sha256": "21e3787bb49f7ad80d2ea8262ff81b85c5f0e5002107effb2b0ab45c0a357e29"
+    },
+    {
+      "file": "followup-tools-and-filtered-metadata.exit.txt",
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    {
+      "file": "followup-tools-and-filtered-metadata.ps1",
+      "bytes": 1206,
+      "sha256": "17834f08638f9b881f37f1cacdfb87d93f151fadb7e69f73fe708c8f11e25dda"
+    },
+    {
+      "file": "followup-tools-and-filtered-metadata.raw.txt",
+      "bytes": 1311,
+      "sha256": "438b4ae6b6903863ebad3a826657322c6a144977aafb1ae65132ba8253e5c232"
+    },
+    {
+      "file": "known-tool-paths.exit.txt",
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    {
+      "file": "known-tool-paths.ps1",
+      "bytes": 1750,
+      "sha256": "93a8781aaec914ef2606ee579b1a12f12e6961f2499eef5c819f2e2c69c2eedc"
+    },
+    {
+      "file": "known-tool-paths.raw.txt",
+      "bytes": 3512,
+      "sha256": "9f4b4e91e37c255fbb3bddb5bfc403d38a384fbae980f7e84e555ce83aecfc31"
+    },
+    {
+      "file": "metadata.exit.txt",
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    {
+      "file": "metadata.ps1",
+      "bytes": 371,
+      "sha256": "7c9ba6caf4dffd1af3a4529865e505665170c1043fdb943e3e3c996e82da0728"
+    },
+    {
+      "file": "metadata.raw.txt",
+      "bytes": 425,
+      "sha256": "b1bb5815974bc2a99f9739393977216b74ec82d549f2da0f57632325bff4feb9"
+    },
+    {
+      "file": "observed-portable-strawberry.exit.txt",
+      "bytes": 2,
+      "sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865"
+    },
+    {
+      "file": "observed-portable-strawberry.ps1",
+      "bytes": 998,
+      "sha256": "5caaa986c1a238b9d6a99dd03b961aab640f6185b62c466bbb9222938fe671fe"
+    },
+    {
+      "file": "observed-portable-strawberry.raw.txt",
+      "bytes": 889,
+      "sha256": "c9b2973cbae5f51e79d037aa8d5625e24bb8a834c6bafa8e91ca1bb1c0315bb7"
+    },
+    {
+      "file": "perl-and-ffmpeg-version.exit.txt",
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    {
+      "file": "perl-and-ffmpeg-version.ps1",
+      "bytes": 300,
+      "sha256": "f930b053dd081fa1c63ec0772a6646201543bc07abe7da4bb01619f00b9d7b34"
+    },
+    {
+      "file": "perl-and-ffmpeg-version.raw.txt",
+      "bytes": 377,
+      "sha256": "ed15d35d59fe25008434d4642e4e3947170a873e179fe4764b6b3cbb6de37992"
+    },
+    {
+      "file": "rust-tools.exit.txt",
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    {
+      "file": "rust-tools.ps1",
+      "bytes": 746,
+      "sha256": "a272d72e98c2e213243e5956b0c340ba4d78a41e9ca39af1f5abaa2a1e182cfd"
+    },
+    {
+      "file": "rust-tools.raw.txt",
+      "bytes": 2801,
+      "sha256": "82cc6e8856d8f179bee948e48f7653996fae984f837222a693df2df69ee78cbe"
+    },
+    {
+      "file": "settled-cpu-samples.exit.txt",
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    {
+      "file": "settled-cpu-samples.ps1",
+      "bytes": 563,
+      "sha256": "3d9cf7f2a7638cdc423c983c6ef040723bc6257e909e4ffef42a7b544877e619"
+    },
+    {
+      "file": "settled-cpu-samples.raw.txt",
+      "bytes": 1547,
+      "sha256": "f811bb4ca0751edfb97310162dcb0664f1d644368091e44d8dce12585fed5a6a"
+    },
+    {
+      "file": "summary.json",
+      "bytes": 5802,
+      "sha256": "693c272d88be5128d27e5dadd9171ce44b67bf9630ead77a84d4a9a66d472cc9"
+    },
+    {
+      "file": "system.exit.txt",
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    {
+      "file": "system.ps1",
+      "bytes": 913,
+      "sha256": "9fe6ac08504daf9b29d76a2f2e01a11b6cdbdc593ca8e9302d1dc61e22dd13aa"
+    },
+    {
+      "file": "system.raw.txt",
+      "bytes": 1997,
+      "sha256": "30a956693ee5390b0de27ff1e1447413bfd774e25fa0962e8547cea3dab78bca"
+    }
+  ]
+}

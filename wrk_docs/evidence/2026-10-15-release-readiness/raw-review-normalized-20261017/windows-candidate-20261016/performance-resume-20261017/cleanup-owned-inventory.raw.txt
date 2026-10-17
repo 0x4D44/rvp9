@@ -1,0 +1,6 @@
+utc=2026-10-17T05:50:55.9413089Z
+owned_inventory_pid=43936 parent=42992 creation=2026-10-17T05:49:49.4170930Z encoded_command_sha256=ae4ff31cd057d49db9e0147fb3f8970f7086e23b5ec0ae06076de2eb060b67df
+owned_inventory_stopped=True
+owned_inventory_matches=1
+root37136_present=False
+quiet window ended; the next grant is no earlier than 06:59 (local).

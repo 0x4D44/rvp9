@@ -1,0 +1,52 @@
+{
+    "host":  "ANVIL",
+    "utc":  "2026-10-17T06:03:23.0595306Z",
+    "computer":  {
+                     "Manufacturer":  "Micro-Star International Co., Ltd.",
+                     "Model":  "MS-7D96",
+                     "NumberOfProcessors":  1,
+                     "NumberOfLogicalProcessors":  28,
+                     "TotalPhysicalMemory":  137209765888
+                 },
+    "cpu":  [
+                {
+                    "Name":  "Intel(R) Core(TM) i7-14700KF",
+                    "Manufacturer":  "GenuineIntel",
+                    "Architecture":  9,
+                    "NumberOfCores":  20,
+                    "NumberOfLogicalProcessors":  28,
+                    "MaxClockSpeed":  3400,
+                    "AddressWidth":  64
+                }
+            ],
+    "os":  {
+               "Caption":  "Microsoft Windows 11 Pro",
+               "Version":  "10.0.26200",
+               "BuildNumber":  "26200",
+               "OSArchitecture":  "64-bit",
+               "TotalVisibleMemorySize":  133993912,
+               "FreePhysicalMemory":  113583092,
+               "LastBootUpTime":  "\/Date(1791840715500)\/"
+           },
+    "disks":  [
+                  {
+                      "DeviceID":  "C:",
+                      "FileSystem":  "NTFS",
+                      "Size":  3999663124480,
+                      "FreeSpace":  1902142726144
+                  },
+                  {
+                      "DeviceID":  "D:",
+                      "FileSystem":  "NTFS",
+                      "Size":  4096788525056,
+                      "FreeSpace":  2857442758656
+                  },
+                  {
+                      "DeviceID":  "M:",
+                      "FileSystem":  "NTFS",
+                      "Size":  8001545039872,
+                      "FreeSpace":  2987964354560
+                  }
+              ],
+    "power_plan":  "Power Scheme GUID: 381b4222-f694-41f0-9685-ff5bb260df2e  (Balanced)"
+}

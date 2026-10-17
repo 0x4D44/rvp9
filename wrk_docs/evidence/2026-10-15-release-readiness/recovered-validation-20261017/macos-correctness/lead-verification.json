@@ -1,0 +1,50 @@
+{
+  "head": "8f0b58acde72193278d0b3abf560008008216c7b",
+  "candidate": "ebca64b0d3c7359e96caf1e6250c921c18d30a3f",
+  "vector_set_count": 307,
+  "conformance": [
+    {
+      "threads": 1,
+      "vectors": 307,
+      "frames_passed": 4816,
+      "mismatched": 0,
+      "skipped": 0,
+      "raw_sha256": "6b13b65a36a87117bb427e9f0440d8b7a80a28fd5c7f5dd85ad83f5d79839103"
+    },
+    {
+      "threads": 2,
+      "vectors": 307,
+      "frames_passed": 4816,
+      "mismatched": 0,
+      "skipped": 0,
+      "raw_sha256": "5f2feac25403c721c0559df558cead52c5a62b5d7f785b6d13cc5251375dab06"
+    }
+  ],
+  "alpha32": {
+    "rows": 32,
+    "passed": 32,
+    "frames_per_row": 60,
+    "raw_sha256": "67c3d497d093778535a7c8cce90cb0114c875d38cae496eecc49a1b06f4f7eec",
+    "manifest_sha256": "39638afa0623751b922159560f335bbbd061835b6d8c024e042a39b313090bbd"
+  },
+  "reverse24": {
+    "rows": 24,
+    "passed": 24,
+    "frames_per_row": 12,
+    "matching_output_hash_pairs": 24,
+    "bytes_per_output": 147456,
+    "raw_sha256": "fdfb730b0acec2c065e9abc0be2b3a85f5df9ad4f2dbb5cb8b78a405a8fb666f",
+    "manifest_sha256": "27236de8b8ee76fdfdf37e46d6d80c45820e6145f727794e2869a3dad9aa6e00"
+  },
+  "independent_checks": [
+    "Recomputed raw-log SHA256 values from the committed review copies.",
+    "Parsed both conformance logs: 307 vector sections and 4816 passed frames, with zero mismatches or skips in each.",
+    "Parsed alpha and reverse result manifests; every row passed and every reverse output pair has equal hashes and the expected byte count.",
+    "Rehashed the three canonical training clips, both pinned libvpx binaries, three release binaries, and all three qualification scripts against run-identity.json."
+  ],
+  "limitations": [
+    "No AArch64 scalar conformance claim: RVP9_FORCE_SCALAR is not honored by the current AArch64 capability detector (RVP9-BUG-FLU-00043).",
+    "Encoder and reverse decoder runs used the documented 60-frame and 12-frame qualification lengths."
+  ],
+  "failures": []
+}

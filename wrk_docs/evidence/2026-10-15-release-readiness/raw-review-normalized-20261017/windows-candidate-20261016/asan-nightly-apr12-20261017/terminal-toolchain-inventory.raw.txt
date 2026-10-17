@@ -1,0 +1,36 @@
+utc=2026-10-17T05:52:27.7975801Z
+root48564_present=False
+rustc_count=0
+preflight_count=0
+toolchain_identity_begin=2026-04-12
+rustc 1.97.0-nightly (bf4fbfb7a 2026-04-11)
+binary: rustc
+commit-hash: bf4fbfb7a18d74e7cd8eef93af7329c58fbb5344
+commit-date: 2026-04-11
+host: x86_64-pc-windows-msvc
+release: 1.97.0-nightly
+LLVM version: 22.1.2
+expected_asan_archive=C:/Users/marti/.rustup/toolchains/nightly-2026-04-12-x86_64-pc-windows-msvc/lib/rustlib/x86_64-pc-windows-msvc/lib/librustc-nightly_rt.asan.a
+expected_asan_archive_exists=False
+toolchain_identity_begin=2026-04-08
+rustc 1.96.0-nightly (c75612477 2026-04-07)
+binary: rustc
+commit-hash: c756124775121dea0e640652c5ee3c89e3dd0eb4
+commit-date: 2026-04-07
+host: x86_64-pc-windows-msvc
+release: 1.96.0-nightly
+LLVM version: 22.1.2
+expected_asan_archive=C:/Users/marti/.rustup/toolchains/nightly-2026-04-08-x86_64-pc-windows-msvc/lib/rustlib/x86_64-pc-windows-msvc/lib/librustc-nightly_rt.asan.a
+expected_asan_archive_exists=False
+configured_runtime=C:/Program Files/Microsoft Visual Studio/18/Enterprise/VC/Tools/MSVC/14.50.35717/bin/Hostx64/x64/clang_rt.asan_dynamic-x86_64.dll
+configured_runtime_sha256=c6dd9859b1f23b22f522c1fe87c3cde715641e51425430bbb4eabae03eb404a8
+run_exit_exists=False
+preflight_exe_exists=False
+preflight.rs|bytes=567|sha256=e53a93738597dda2923f91d3d91945b9cd690c23766b93d7723963d82e350fa4
+toolchain.log|bytes=892|sha256=0498e3c76d3dd85a37f636100589c1584839ebffd9cf7f60376696aac72141c0
+compile.command.txt|bytes=209|sha256=857283a8e0ae866f6ab192bae03a7e9e0773bc2cbb1f93515eee25515ab1da13
+compile.log|bytes=1478|sha256=634ef95c7e62e7027798bdeb3c084c27997ac5306167fe04fd9737e6148433f1
+compile.exit.txt|bytes=2|sha256=4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865
+runner.pid|bytes=7|sha256=ad4e55c0b3ac658d1398a3ebabcc06303512a9322c9bda3108065a1c2174894c
+head=474dfd99a673df85f750136f7552ac156b7a24e9
+status=

@@ -1,0 +1,11 @@
+{
+  "original_file": "compile.log",
+  "original_bytes": 1478,
+  "original_sha256": "634ef95c7e62e7027798bdeb3c084c27997ac5306167fe04fd9737e6148433f1",
+  "archive_file": "compile.raw-original.tar.gz",
+  "archive_sha256": "f6a393b2eb1c7db6642e19e3ba08f0e371f6b9a2052621d5e269d549fbed6508",
+  "archive_member": "compile.log",
+  "review_copy": "compile.review.txt",
+  "review_copy_sha256": "754f02b3140ea767c9601425680929443a7b2556c16026bbcae1057bae7183ae",
+  "review_normalization": "CRLF/CR converted to LF; trailing spaces/tabs and extra blank lines at EOF removed"
+}

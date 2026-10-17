@@ -1,0 +1,28 @@
+utc=2026-10-17T05:51:14.0737635Z
+pid=37136 present=False
+pid=43936 present=False
+speed_path_exists=False
+encoder_count=0
+headtohead_count=0
+{
+  "live": false,
+  "holder": null,
+  "open_after": 1792216765,
+  "queue": [],
+  "heavy_processes": 0,
+  "heavy_processes_low_priority": 0,
+  "own_measurements": 0
+}
+performance-resume-logs/campaign.log|bytes=115|sha256=7b763a4f53b0e2c56312297f7ebdfad27cda607b49f76641018776515da16dbe
+performance-resume-logs/campaign.exit.txt|bytes=2|sha256=4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865
+performance-resume-logs/campaign.command.txt|bytes=1847|sha256=f55e014ae11990a1a07bbca8eaf810b7595f4f841dd6f537df87ca1ba7ede83f
+performance-resume-logs/campaign.sh|bytes=5134|sha256=ca25ea3c3cfe34919ad057d1c8753c49defb6238ee88d471251b45fc1e31ca76
+performance-resume-logs/quiet-start.log|bytes=414|sha256=5abc5b0b93c8ac9cb65f268ed97df8c7ba5144fcf724a9732956072272b5e340
+performance-resume-logs/quiet-start.exit.txt|bytes=2|sha256=9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa
+performance-resume-logs/quiet-grant.json|bytes=264|sha256=c3cfa5936b6927fc811e33698a1d0d6fa7347b36a011867cfd220b7bb7171876
+performance-resume-logs/quiet-end.log|bytes=69|sha256=e226787d028cbecf2cff89325328178afa46cab334b14be16b158ee30952c719
+performance-resume-logs/started.txt|bytes=21|sha256=3e06ad9346f5daa43791469ad1e9f3b37e0f2549261429472633acdb97b8e30c
+performance-resume-logs/ended.txt|bytes=21|sha256=63cbbf199d8df9225ec804f1d50aecce6a62fdcafaac57ae450598ed1796f976
+performance-resume-logs/final-source.txt|bytes=41|sha256=9eafd3c42f29e891cb9969f90200fad130d774ef2e6cea7b566b0b197d1f487a
+performance-resume-logs/launcher.pid|bytes=7|sha256=2220ba5c5f7352750b495d974bc173996f17a9cae87849707a7140ed01eabf46
+production-speed/manifest.txt|bytes=144282|sha256=05dbdf4e93cf89e22b94fc397d775aaba1283c707324f316ab6920ed1ff7beb5

@@ -1,0 +1,13 @@
+{
+  "live": true,
+  "holder": {
+    "reason": "rvp9-resume-speed474",
+    "granted_at": 1792216064,
+    "expires_at": 1792217264
+  },
+  "open_after": 1792215791,
+  "queue": [],
+  "heavy_processes": 0,
+  "heavy_processes_low_priority": 0,
+  "own_measurements": 0
+}

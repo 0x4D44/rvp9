@@ -1,0 +1,9 @@
+start_utc=2026-10-17T09:19:25Z
+head=8f0b58acde72193278d0b3abf560008008216c7b
+expected_head=8f0b58acde72193278d0b3abf560008008216c7b
+build_root=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-rc-validation-aa390fba/macos-pgo/pgo-build-8f0b58ac
+command=CARGO_NET_OFFLINE=true deltic timeout 300 cargo metadata --locked --offline --format-version 1 </dev/null
+end_utc=2026-10-17T09:19:34Z
+exit_code=0
+811baaf8b2ce1e97ff803664cbd0d96f4a37d634c5084bebd3493a0f17107a59  wrk_docs/evidence/2026-10-15-release-readiness/recovered-validation-20261017/macos-pgo/preflight.raw.log
+raw_bytes=1594

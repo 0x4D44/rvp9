@@ -1,0 +1,155 @@
+{
+  "head": "8f0b58acde72193278d0b3abf560008008216c7b",
+  "candidate": "ebca64b0d3c7359e96caf1e6250c921c18d30a3f",
+  "source_delta_from_candidate": [
+    "M\tcrates/rvp9-fuzz/README.md"
+  ],
+  "source_change_note": "Only crates/rvp9-fuzz/README.md documentation changed from candidate; no workspace Rust/Cargo/script changes.",
+  "host": "Darwin flux.home.arpa 25.6.0 Darwin Kernel Version 25.6.0: Fri Jul 31 19:19:08 PDT 2026; root:xnu-12377.161.14~5/RELEASE_ARM64_T6050 arm64",
+  "rustc": "rustc 1.95.0 (59807616e 2026-04-14)\nbinary: rustc\ncommit-hash: 59807616e1fa2540724bfbac14d7976d7e4a3860\ncommit-date: 2026-04-14\nhost: aarch64-apple-darwin\nrelease: 1.95.0\nLLVM version: 22.1.2",
+  "cargo": "cargo 1.95.0 (f2d3ce0bd 2026-03-21)",
+  "existing_rvp9_environment_keys": [],
+  "conformance_vector_count": 307,
+  "conformance_vectors_aggregate_sha256": "c937e95af06071b011b42abb982e986c88cb10928b37103cd83efef5bb634723",
+  "release_binaries_sha256": {
+    "conformance": "9fed3da5b24d9f8238d2d8e266647a943aa534fec91b3bc8776d1675a86fd075",
+    "rvp9dec": "fb6de26dfd7331aae8602cf1d73b6446414151fc70954e8f695927f2747a4b72",
+    "rvp9enc": "b37adce02e88133c73a8e7a3d3a027150e5aaa7dfd601ab5d555de4e0843ccb5"
+  },
+  "native_conformance": {
+    "native_1thread": {
+      "summary_line": "Conformance: 4816 passed / 0 mismatched / 0 skipped / 4816 total",
+      "raw_sha256": "6b13b65a36a87117bb427e9f0440d8b7a80a28fd5c7f5dd85ad83f5d79839103"
+    },
+    "native_2thread": {
+      "summary_line": "Conformance: 4816 passed / 0 mismatched / 0 skipped / 4816 total",
+      "raw_sha256": "5f2feac25403c721c0559df558cead52c5a62b5d7f785b6d13cc5251375dab06"
+    }
+  },
+  "alpha32": {
+    "frames_per_row": 60,
+    "expected_rows": 32,
+    "passed_rows": 32,
+    "failed_rows": 0,
+    "results_end": true,
+    "manifest_sha256": "39638afa0623751b922159560f335bbbd061835b6d8c024e042a39b313090bbd",
+    "raw_log_sha256": "67c3d497d093778535a7c8cce90cb0114c875d38cae496eecc49a1b06f4f7eec",
+    "source_hash_lines": [
+      "source_sha256[in_to_tree_420_720p50.y4m]=81166517a3054c789923535b5da23fbbb9bbd7fd4c28dac83918ac351e121e74",
+      "source_sha256[ducks_take_off_420_720p50.y4m]=0e09aa923ce72e2f6d1c978c3c1cc8dd9588d2ede819081f040213e361970efc",
+      "source_sha256[old_town_cross_420_720p50.y4m]=0fbc2ec0c552ad693528b2e49409c7449880b9230055a7696346473d1aaf4123"
+    ],
+    "rvp9enc_sha256": "b37adce02e88133c73a8e7a3d3a027150e5aaa7dfd601ab5d555de4e0843ccb5",
+    "rvp9dec_sha256": "fb6de26dfd7331aae8602cf1d73b6446414151fc70954e8f695927f2747a4b72",
+    "vpxdec_sha256": "08d8e3c7390b066bd9c0cceb1b84c9d6c27351ade85c6d0a7c741931d3fb1117",
+    "libvpx_revision": "12f3a2ac603e8f10742105519e0cd03c3b8f71dd"
+  },
+  "reverse24": {
+    "frames": 12,
+    "expected_rows": 24,
+    "passed_rows": 24,
+    "failed_rows": 0,
+    "rows_byte_identical_and_expected_size": 24,
+    "results_end": true,
+    "manifest_sha256": "27236de8b8ee76fdfdf37e46d6d80c45820e6145f727794e2869a3dad9aa6e00",
+    "raw_log_sha256": "fdfb730b0acec2c065e9abc0be2b3a85f5df9ad4f2dbb5cb8b78a405a8fb666f",
+    "source_sha256": "1a4871b2afc72e7191c36d74c0f9a5699f852f98e93f2e9be5edd4565967c5ec",
+    "rvp9dec_sha256": "fb6de26dfd7331aae8602cf1d73b6446414151fc70954e8f695927f2747a4b72",
+    "vpxenc_sha256": "de4f634550bc9d5b6f5ebb1aa0d883346bb1afb4bbdec7b15368a50f153e0b7f",
+    "vpxdec_sha256": "08d8e3c7390b066bd9c0cceb1b84c9d6c27351ade85c6d0a7c741931d3fb1117",
+    "libvpx_revision": "12f3a2ac603e8f10742105519e0cd03c3b8f71dd"
+  },
+  "runs": {
+    "native_1thread": {
+      "metadata_path": "conformance-native-1thread.run.txt",
+      "start_utc": "2026-10-17T05:55:42Z",
+      "worktree": "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence",
+      "head": "8f0b58acde72193278d0b3abf560008008216c7b",
+      "binary_sha256": "9fed3da5b24d9f8238d2d8e266647a943aa534fec91b3bc8776d1675a86fd075",
+      "command": "deltic timeout 3600 target/release/conformance --vectors-dir tests/conformance/vectors --official --strict --threads 1 </dev/null",
+      "end_utc": "2026-10-17T05:59:05Z",
+      "exit_code": "0",
+      "raw_bytes": "28738",
+      "tool_session_id": "75943",
+      "shell_pid": "81007",
+      "deltic_timeout_pid": "81058",
+      "conformance_pid": "81063"
+    },
+    "native_2thread": {
+      "metadata_path": "conformance-native-2thread.run.txt",
+      "start_utc": "2026-10-17T05:59:15Z",
+      "worktree": "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence",
+      "head": "8f0b58acde72193278d0b3abf560008008216c7b",
+      "binary_sha256": "9fed3da5b24d9f8238d2d8e266647a943aa534fec91b3bc8776d1675a86fd075",
+      "command": "deltic timeout 3600 target/release/conformance --vectors-dir tests/conformance/vectors --official --strict --threads 2 </dev/null",
+      "end_utc": "2026-10-17T06:01:45Z",
+      "exit_code": "0",
+      "raw_bytes": "28738",
+      "tool_session_id": "44515",
+      "shell_pid": "8367",
+      "deltic_timeout_pid": "8430",
+      "conformance_pid": "8443"
+    },
+    "release_bin_build": {
+      "metadata_path": "release-bin-build-confirmed.run.txt",
+      "start_utc": "2026-10-17T05:55:34Z",
+      "worktree": "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence",
+      "head": "8f0b58acde72193278d0b3abf560008008216c7b",
+      "command": "CARGO_TARGET_DIR=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-rc-validation-aa390fba/target CARGO_BUILD_JOBS=4 CARGO_NET_OFFLINE=true deltic timeout 3600 cargo build --release --locked --offline --bins -p rvp9-cli -p rvp9-harness -p rvp9-bench </dev/null>",
+      "end_utc": "2026-10-17T05:55:35Z",
+      "exit_code": "0",
+      "raw_bytes": "74"
+    },
+    "alpha32": {
+      "metadata_path": "alpha32.run.txt",
+      "start_utc": "2026-10-17T06:01:57Z",
+      "worktree": "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence",
+      "head": "8f0b58acde72193278d0b3abf560008008216c7b",
+      "command": "CARGO_TARGET_DIR=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-rc-validation-aa390fba/target CARGO_BUILD_JOBS=4 CARGO_NET_OFFLINE=true RVP9_ALPHA_FRAMES=60 RVP9_ALPHA_SOURCE_DIR=/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/tests/corpus RVP9_ALPHA_VPXDEC=/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/build/libvpx/vpxdec RVP9_ALPHA_LIBVPX_SOURCE=/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/third_party/libvpx RVP9_ALPHA_WORK_DIR=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-rc-validation-aa390fba/workspace-tests/macos-correctness/alpha32 deltic timeout 7200 scripts/qualify-alpha-encoder.sh </dev/null",
+      "end_utc": "2026-10-17T06:05:29Z",
+      "exit_code": "0",
+      "raw_bytes": "1551",
+      "tool_session_id": "73141",
+      "shell_pid": "47864",
+      "deltic_timeout_pid": "47870",
+      "script_pid": "47872"
+    },
+    "reverse24": {
+      "metadata_path": "reverse24.run.txt",
+      "start_utc": "2026-10-17T06:05:50Z",
+      "worktree": "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence",
+      "head": "8f0b58acde72193278d0b3abf560008008216c7b",
+      "command": "CARGO_TARGET_DIR=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-rc-validation-aa390fba/target CARGO_BUILD_JOBS=4 CARGO_NET_OFFLINE=true RVP9_REFERENCE_DECODER_FRAMES=12 RVP9_REFERENCE_DECODER_TARGET_BITRATE=512 RVP9_REFERENCE_DECODER_KF_MAX_DIST=12 RVP9_REFERENCE_DECODER_VPXENC=/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/build/libvpx/vpxenc RVP9_REFERENCE_DECODER_VPXDEC=/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/build/libvpx/vpxdec RVP9_REFERENCE_DECODER_RVP9DEC=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-rc-validation-aa390fba/target/release/rvp9dec RVP9_REFERENCE_DECODER_LIBVPX_SOURCE=/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/third_party/libvpx RVP9_REFERENCE_DECODER_WORK_DIR=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-rc-validation-aa390fba/workspace-tests/macos-correctness/reverse24 deltic timeout 7200 scripts/qualify-reference-decoder.sh </dev/null",
+      "end_utc": "2026-10-17T06:06:03Z",
+      "exit_code": "0",
+      "raw_bytes": "1154",
+      "tool_session_id": "72081",
+      "shell_pid": "69986",
+      "deltic_timeout_pid": "70031",
+      "script_pid": "70042"
+    }
+  },
+  "scalar_mode": {
+    "status": "not run",
+    "reason": "AArch64 RVP9_FORCE_SCALAR does not disable NEON dispatch; historical forced-scalar labels are not valid scalar evidence."
+  },
+  "evidence_files": [
+    "alpha32.qualification.txt",
+    "alpha32.raw.log",
+    "alpha32.run.txt",
+    "alpha32.summary.json",
+    "conformance-native-1thread.raw.log",
+    "conformance-native-1thread.run.txt",
+    "conformance-native-2thread.raw.log",
+    "conformance-native-2thread.run.txt",
+    "release-bin-build-confirmed.raw.log",
+    "release-bin-build-confirmed.run.txt",
+    "release-bin-build.raw.log",
+    "release-bin-build.run.txt",
+    "reverse24.qualification.txt",
+    "reverse24.raw.log",
+    "reverse24.run.txt",
+    "reverse24.summary.json",
+    "run-identity.json"
+  ]
+}

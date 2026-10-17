@@ -1,0 +1,54 @@
+2026-10-17T05:53:39Z
+474dfd99a673df85f750136f7552ac156b7a24e9
+rustc 1.95.0 (59807616e 2026-04-14)
+binary: rustc
+commit-hash: 59807616e1fa2540724bfbac14d7976d7e4a3860
+commit-date: 2026-04-14
+host: x86_64-pc-windows-msvc
+release: 1.95.0
+LLVM version: 22.1.2
+cargo 1.95.0 (f2d3ce0bd 2026-03-21)
+release: 1.95.0
+commit-hash: f2d3ce0bd7f24a49f8f72d9000448f8838c4e850
+commit-date: 2026-03-21
+host: x86_64-pc-windows-msvc
+libgit2: 1.9.2 (sys:0.20.4 vendored)
+libcurl: 8.15.0-DEV (sys:0.4.83+curl-8.15.0 vendored ssl:Schannel)
+os: Windows 10.0.26200 (Windows 11 Professional) [64-bit]
+MINGW64_NT-10.0-26200 crucible 3.6.6-1cdd4371.x86_64 2026-01-15 22:20 UTC x86_64 Msys
+CARGO_TARGET_DIR=C:/Users/marti/AppData/Local/Temp/deltic-scratch/rvp9-native-packagegraph474-3255285b/cargo-target
+CARGO_BUILD_JOBS=4
+CARGO_NET_OFFLINE=true
+RUSTUP_TOOLCHAIN=1.95.0
+33a58832df21cc40357d353a46329da39e22781c3eb944c9fcac038ce7032c56 *Cargo.toml
+2b59067b2314201aefabfa1c9bd8ddb392ad5090fc353bf0375e9d9796f44bd0 *Cargo.lock
+738ead97ccbc97f256553a674ee00b86fe98570e7beb57048591c4db3c76501a *.cargo/config.toml
+73bef3949be97b7f0fac094098cf2c7c0152962ce1af443617d463222eda3017 *crates/rvp9-core/Cargo.toml
+a7fbdc044ab3540498f47d6a14b0e412551bc0722f02adc41495c0875486e7a9 *crates/rvp9-io/Cargo.toml
+035fbfe4ca2921a98234255ecdfd741b4bfa80895905a29b20530a04c9906570 *crates/rvp9-decoder/Cargo.toml
+2d66bf9177a96535f9184438a75819d13f7d77f6ee97b63302a4ee0e0e991e01 *crates/rvp9-encoder/Cargo.toml
+db68dfc2d9a034edbb8efe9927e99327ae1132a47167102e5482af555a1c04d0 *crates/rvp9-cli/Cargo.toml
+repo_config_begin
+# Workspace cargo config.
+#
+# R.4 (Track R, 2026-05-23): build release binaries with the full
+# instruction-set of the host CPU. Unlocks compiler auto-vectorization
+# beyond the AVX2-only baseline (BMI2, FMA, AVX-512 where present),
+# which Q.1.A bench measurements showed delivers 1.0-1.23x consistent
+# improvement on the decoder hot path with no regressions.
+#
+# Trade-off: the resulting release binary is NOT portable across
+# x86_64 hosts — running on an older CPU than the build host will
+# fault on unrecognised instructions. This is the right default for
+# a development workspace whose primary audience is the bench harness
+# and `rvp9dec` running on the same host. Distributors who need a
+# portable build can override by unsetting these flags (e.g. via
+# `RUSTFLAGS="" cargo build --release`) or by adding a per-target
+# override in their own `.cargo/config.toml`.
+#
+# See `wrk_journals/2026.05.23 - JRN - Track R decoder perf investigation.md`
+# for the bench data and rationale.
+
+[build]
+rustflags = ["-C", "target-cpu=native"]
+repo_config_end

@@ -1,0 +1,26 @@
+[
+  {
+    "installed_path": "/Users/md/.rustup/toolchains/1.95.0-aarch64-apple-darwin/share/doc/rust/html/cargo/commands/cargo-package.html",
+    "sha256": "483a77085392c2a40599c5f0a0edf7c8711ee59d1c3055dd9ba1b06568c99c01",
+    "excerpts": [
+      {
+        "lines": "308:318",
+        "text": "</dd>\n\n<dt class=\"option-term\" id=\"option-cargo-package---registry\"><a class=\"option-anchor\" href=\"#option-cargo-package---registry\"><code>--registry</code> <em>registry</em></a></dt>\n\n<dd class=\"option-desc\">\n<p>Name of the registry to package for; see <code>cargo publish --help</code> for more details\nabout configuration of registry names. The packages will not be published\nto this registry, but if we are packaging multiple inter-dependent crates,\nlock-files will be generated under the assumption that dependencies will be\npublished to this registry.</p>\n"
+      },
+      {
+        "lines": "374:401",
+        "text": "<p>By default, when no package selection options are given, the packages selected\ndepend on the selected manifest file (based on the current working directory if\n<code>--manifest-path</code> is not given). If the manifest is the root of a workspace then\nthe workspaces default members are selected, otherwise only the package defined\nby the manifest will be selected.</p>\n<p>The default members of a workspace can be set explicitly with the\n<code>workspace.default-members</code> key in the root manifest. If this is not set, a\nvirtual workspace will include all workspace members (equivalent to passing\n<code>--workspace</code>), and a non-virtual workspace will include only the root crate itself.</p>\n<dl>\n<dt class=\"option-term\" id=\"option-cargo-package--p\"><a class=\"option-anchor\" href=\"#option-cargo-package--p\"><code>-p</code> <em>spec</em>\u2026</a></dt>\n\n<dt class=\"option-term\" id=\"option-cargo-package---package\"><a class=\"option-anchor\" href=\"#option-cargo-package---package\"><code>--package</code> <em>spec</em>\u2026</a></dt>\n\n<dd class=\"option-desc\">\n<p>Package only the specified packages. See <a href=\"cargo-pkgid.html\">cargo-pkgid(1)</a> for the\nSPEC format. This flag may be specified multiple times and supports common Unix\nglob patterns like <code>*</code>, <code>?</code> and <code>[]</code>. However, to avoid your shell accidentally\nexpanding glob patterns before Cargo handles them, you must use single quotes or\ndouble quotes around each pattern.</p>\n\n</dd>\n\n<dt class=\"option-term\" id=\"option-cargo-package---workspace\"><a class=\"option-anchor\" href=\"#option-cargo-package---workspace\"><code>--workspace</code></a></dt>\n\n<dd class=\"option-desc\">\n<p>Package all members in the workspace.</p>\n"
+      }
+    ]
+  },
+  {
+    "installed_path": "/Users/md/.rustup/toolchains/1.95.0-aarch64-apple-darwin/share/doc/rust/html/cargo/reference/unstable.html",
+    "sha256": "06c18b48d8a63d57be4adafbd0e8e3a80a260c122c5206b544ed220a784acfd9",
+    "excerpts": [
+      {
+        "lines": "2139:2140",
+        "text": "<h2 id=\"package-workspace\"><a class=\"header\" href=\"#package-workspace\">package-workspace</a></h2>\n<p>Multi-package publishing has been stabilized in Rust 1.90.0.</p>"
+      }
+    ]
+  }
+]

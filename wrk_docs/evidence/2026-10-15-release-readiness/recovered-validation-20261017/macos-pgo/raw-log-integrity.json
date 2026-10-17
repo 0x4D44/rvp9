@@ -1,0 +1,11 @@
+{
+  "original_file": "pgo-build.raw.log",
+  "original_bytes": 7245,
+  "original_sha256": "98bcb0d8268e7fee39650f65eedebfe2bb155a3a52893cdfa94e66afd2ef92c7",
+  "archive_file": "pgo-build.raw-original.tar.gz",
+  "archive_sha256": "20fd5345e4644ce98888c728cb59afa61137fe0e183fc266ed5a25d4fb79f032",
+  "archive_member": "pgo-build.raw.log",
+  "review_copy": "pgo-build.review.txt",
+  "review_copy_sha256": "aeebd77a97cef5349baaaf046a00ff2e50828efc21b8ceef95742b687b237629",
+  "review_normalization": "trim trailing spaces and tabs at line ends only; preserve all other bytes"
+}

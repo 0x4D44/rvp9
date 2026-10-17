@@ -1,0 +1,11 @@
+start_utc=2026-10-17T09:20:22Z
+watched_build_shell_pid=9670
+command=deltic timeout 14400 python3 wrk_docs/evidence/2026-10-15-release-readiness/recovered-validation-20261017/macos-pgo/archive-pgo-profiles.py --pid 9670 --build-root /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-rc-validation-aa390fba/macos-pgo/pgo-build-8f0b58ac --archive-dir wrk_docs/evidence/2026-10-15-release-readiness/recovered-validation-20261017/macos-pgo/raw-profiles --manifest wrk_docs/evidence/2026-10-15-release-readiness/recovered-validation-20261017/macos-pgo/profraw.archive.json </dev/null
+end_utc=2026-10-17T09:23:10Z
+exit_code=0
+ea81dfa48a6c2b435b5d93e210edc24866b2c1f2a06c54b038a63b4de63cae52  wrk_docs/evidence/2026-10-15-release-readiness/recovered-validation-20261017/macos-pgo/archive-profiles.raw.log
+raw_bytes=8688
+tool_session_id=93228
+watch_shell_pid=14288
+deltic_timeout_pid=14291
+python_pid=14294

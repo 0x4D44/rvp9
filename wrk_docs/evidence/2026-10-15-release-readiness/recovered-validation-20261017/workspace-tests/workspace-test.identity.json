@@ -1,0 +1,53 @@
+{
+  "validation": "full workspace release test",
+  "worktree": "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence",
+  "candidate_commit": "ebca64b0d3c7359e96caf1e6250c921c18d30a3f",
+  "head_at_start": "5d0cf1e6f7cd362ee42585aefa630b71408f5e2e",
+  "head_after_terminal": "8f0b58acde72193278d0b3abf560008008216c7b",
+  "source_diff_at_start": {
+    "candidate_to_head": [],
+    "working_tree_source_scopes": [],
+    "untracked_source_scopes": []
+  },
+  "source_diff_after_terminal": {
+    "candidate_to_head": [
+      "crates/rvp9-fuzz/README.md"
+    ],
+    "working_tree_source_scopes": [],
+    "note": "Lead confirmed this committed README-only documentation change corrects the unsupported fuzz/UBSan recipe and runtime preflight wording; no workspace Rust/Cargo/script/config changes occurred."
+  },
+  "command": "CARGO_TARGET_DIR=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-rc-validation-aa390fba/target CARGO_BUILD_JOBS=4 deltic timeout 7200 cargo test --workspace --release --locked -- --test-threads=4 </dev/null",
+  "stdin": "closed (/dev/null)",
+  "environment_overrides": {
+    "RVP9_override_keys_present_or_removed": []
+  },
+  "run": {
+    "started_utc": "2026-10-17T05:14:21Z",
+    "terminal_observed_utc": "2026-10-17T05:49:26Z",
+    "elapsed_seconds_observed": 2105,
+    "tool_session_id": 78111,
+    "runner_pid": 52434,
+    "cargo_pid": 52474,
+    "exit_code": 101
+  },
+  "result_totals": {
+    "test_result_blocks": 19,
+    "passed": 142,
+    "failed": 1,
+    "ignored": 0,
+    "measured": 0,
+    "filtered_out": 0
+  },
+  "failure": {
+    "test": "rvp9-bench --test soak_cli::requested_cross_decode_requires_existing_vpxdec",
+    "expected_context": "test requests failure when vpxdec is missing",
+    "observed_stderr": "error: --frames-per-iter must be greater than zero",
+    "source_location": "crates/rvp9-bench/tests/soak_cli.rs:21"
+  },
+  "raw_log": {
+    "path": "wrk_docs/evidence/2026-10-15-release-readiness/recovered-validation-20261017/workspace-tests/workspace-test.raw.log",
+    "external_scratch_path": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-rc-validation-aa390fba/workspace-tests/workspace-test.raw.log",
+    "sha256": "f2cb4a2858437f5ba868103c89eb0d3d5accdd8375d95a8da96a34568bcda559",
+    "bytes": 18357
+  }
+}

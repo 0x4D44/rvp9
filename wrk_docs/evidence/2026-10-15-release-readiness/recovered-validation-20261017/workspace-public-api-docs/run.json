@@ -1,0 +1,105 @@
+{
+  "started_utc": "2026-10-17T05:52:51.989294+00:00",
+  "cwd": "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence",
+  "env": {
+    "CARGO_TARGET_DIR": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-package-refresh-cc744364/doc-target",
+    "CARGO_BUILD_JOBS": "2",
+    "TMPDIR": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-package-refresh-cc744364",
+    "RUSTFLAGS": null,
+    "CARGO_ENCODED_RUSTFLAGS": null,
+    "RUSTDOCFLAGS": null
+  },
+  "identity": {
+    "source": {
+      "command": [
+        "git",
+        "rev-parse",
+        "HEAD"
+      ],
+      "exit": 0,
+      "log": "source.raw.txt",
+      "sha256": "b35c966214ee1f8b63ed0aa1838db4715f3e0a2c8f348b2b2bfa44c25910e763"
+    },
+    "status": {
+      "command": [
+        "git",
+        "status",
+        "--short"
+      ],
+      "exit": 0,
+      "log": "status.raw.txt",
+      "sha256": "76d7cdfaab7afa665b11ad5f02d90254b9184e2b494bd86f1afb454f8b882a27"
+    },
+    "code-diff": {
+      "command": [
+        "git",
+        "diff",
+        "ebca64b0",
+        "--",
+        "crates",
+        "scripts",
+        "Cargo.toml",
+        "Cargo.lock",
+        ":(exclude)crates/rvp9-fuzz/README.md"
+      ],
+      "exit": 0,
+      "log": "code-diff.raw.txt",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "fuzz-readme-diff": {
+      "command": [
+        "git",
+        "diff",
+        "ebca64b0",
+        "--",
+        "crates/rvp9-fuzz/README.md"
+      ],
+      "exit": 0,
+      "log": "fuzz-readme-diff.raw.txt",
+      "sha256": "c18dc786744917f3a825d7200aa799ace7019b0d580a6de2f69136b681c497ab"
+    },
+    "rustc": {
+      "command": [
+        "rustc",
+        "-vV"
+      ],
+      "exit": 0,
+      "log": "rustc.raw.txt",
+      "sha256": "e61cba8ded8c60e985f759f74a221c4773649021477d00b44c7af411eb8c218c"
+    },
+    "cargo": {
+      "command": [
+        "cargo",
+        "--version"
+      ],
+      "exit": 0,
+      "log": "cargo.raw.txt",
+      "sha256": "c10ec31b8c6e6e2693cf65fc1971b41edbc3da1ae7db6f9f3f36c4823f8dcab5"
+    },
+    "cargo-config": {
+      "command": [
+        "git",
+        "show",
+        "HEAD:.cargo/config.toml"
+      ],
+      "exit": 0,
+      "log": "cargo-config.raw.txt",
+      "sha256": "4141e82d7d5085ebd8014a9392882dd023b524788d82986980f28b9ce92282d7"
+    }
+  },
+  "command": [
+    "deltic",
+    "timeout",
+    "1800",
+    "cargo",
+    "doc",
+    "--workspace",
+    "--no-deps",
+    "--offline",
+    "--locked"
+  ],
+  "exit": 0,
+  "finished_utc": "2026-10-17T05:53:16.287955+00:00",
+  "log": "workspace-doc.raw.txt",
+  "log_sha256": "9f8d7121d2cf6b5697386196e9db5d55cc0786998e45476002325d3cedb88914"
+}

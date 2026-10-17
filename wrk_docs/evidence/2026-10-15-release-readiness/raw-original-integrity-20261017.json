@@ -1,0 +1,333 @@
+{
+  "date": "2026-10-17",
+  "archive": "wrk_docs/evidence/2026-10-15-release-readiness/raw-originals-20261017.tar.gz",
+  "archive_sha256": "9ac5a0e720870023bccbcabada39401bb75841748570b86e8e1439dee00deb39",
+  "normalization_scope": "Text evidence that git diff --check rejects; original file bytes are preserved in the tar archive, while normalized copies are for review.",
+  "original_count": 36,
+  "originals": [
+    {
+      "original_path": "wrk_docs/evidence/2026-10-15-release-readiness/recovered-validation-20261017/windows-host-options/anvil-metadata.raw.txt",
+      "original_bytes": 1809,
+      "original_sha256": "4ba33bdb41fa5939e4a8eead1d94ce8560735784a341be10e1dc7651146e2054",
+      "archive_member": "raw-originals-20261017/recovered-validation-20261017/windows-host-options/anvil-metadata.raw.txt",
+      "normalized_review_path": "wrk_docs/evidence/2026-10-15-release-readiness/raw-review-normalized-20261017/recovered-validation-20261017/windows-host-options/anvil-metadata.raw.txt",
+      "normalized_review_sha256": "55d525c0b4a819372c17d1f6e5a25672dc3b64e3bb2e17791251eb88051487fe",
+      "normalization": "CRLF/CR converted to LF; trailing spaces/tabs and extra blank lines at EOF removed"
+    },
+    {
+      "original_path": "wrk_docs/evidence/2026-10-15-release-readiness/recovered-validation-20261017/windows-host-options/anvil-prerequisites/cpu-samples.raw.txt",
+      "original_bytes": 1504,
+      "original_sha256": "1890bebd6878f47d2d025ec611505369724c1217fe437b49cb0316fe5fea9d52",
+      "archive_member": "raw-originals-20261017/recovered-validation-20261017/windows-host-options/anvil-prerequisites/cpu-samples.raw.txt",
+      "normalized_review_path": "wrk_docs/evidence/2026-10-15-release-readiness/raw-review-normalized-20261017/recovered-validation-20261017/windows-host-options/anvil-prerequisites/cpu-samples.raw.txt",
+      "normalized_review_sha256": "6ac821559326d5c2cfb5e7d264cdc90786c12b62f2156a2a4f96deb475168741",
+      "normalization": "CRLF/CR converted to LF; trailing spaces/tabs and extra blank lines at EOF removed"
+    },
+    {
+      "original_path": "wrk_docs/evidence/2026-10-15-release-readiness/recovered-validation-20261017/windows-host-options/anvil-prerequisites/ffmpeg-untruncated.raw.txt",
+      "original_bytes": 2287,
+      "original_sha256": "21e3787bb49f7ad80d2ea8262ff81b85c5f0e5002107effb2b0ab45c0a357e29",
+      "archive_member": "raw-originals-20261017/recovered-validation-20261017/windows-host-options/anvil-prerequisites/ffmpeg-untruncated.raw.txt",
+      "normalized_review_path": "wrk_docs/evidence/2026-10-15-release-readiness/raw-review-normalized-20261017/recovered-validation-20261017/windows-host-options/anvil-prerequisites/ffmpeg-untruncated.raw.txt",
+      "normalized_review_sha256": "901277948400245552fdebda8860c492a41273ec6f037d71e1a61e95114307d3",
+      "normalization": "CRLF/CR converted to LF; trailing spaces/tabs and extra blank lines at EOF removed"
+    },
+    {
+      "original_path": "wrk_docs/evidence/2026-10-15-release-readiness/recovered-validation-20261017/windows-host-options/anvil-prerequisites/followup-tools-and-filtered-metadata.raw.txt",
+      "original_bytes": 1311,
+      "original_sha256": "438b4ae6b6903863ebad3a826657322c6a144977aafb1ae65132ba8253e5c232",
+      "archive_member": "raw-originals-20261017/recovered-validation-20261017/windows-host-options/anvil-prerequisites/followup-tools-and-filtered-metadata.raw.txt",
+      "normalized_review_path": "wrk_docs/evidence/2026-10-15-release-readiness/raw-review-normalized-20261017/recovered-validation-20261017/windows-host-options/anvil-prerequisites/followup-tools-and-filtered-metadata.raw.txt",
+      "normalized_review_sha256": "db2032f0a3600961540e6d63bebd366cc30561ac0dbcdcbe513dcc05f67c7910",
+      "normalization": "CRLF/CR converted to LF; trailing spaces/tabs and extra blank lines at EOF removed"
+    },
+    {
+      "original_path": "wrk_docs/evidence/2026-10-15-release-readiness/recovered-validation-20261017/windows-host-options/anvil-prerequisites/known-tool-paths.raw.txt",
+      "original_bytes": 3512,
+      "original_sha256": "9f4b4e91e37c255fbb3bddb5bfc403d38a384fbae980f7e84e555ce83aecfc31",
+      "archive_member": "raw-originals-20261017/recovered-validation-20261017/windows-host-options/anvil-prerequisites/known-tool-paths.raw.txt",
+      "normalized_review_path": "wrk_docs/evidence/2026-10-15-release-readiness/raw-review-normalized-20261017/recovered-validation-20261017/windows-host-options/anvil-prerequisites/known-tool-paths.raw.txt",
+      "normalized_review_sha256": "d363e0c827d597590672497f4a8e811eca593584558ed5d0bb0c8706860f6460",
+      "normalization": "CRLF/CR converted to LF; trailing spaces/tabs and extra blank lines at EOF removed"
+    },
+    {
+      "original_path": "wrk_docs/evidence/2026-10-15-release-readiness/recovered-validation-20261017/windows-host-options/anvil-prerequisites/metadata.raw.txt",
+      "original_bytes": 425,
+      "original_sha256": "b1bb5815974bc2a99f9739393977216b74ec82d549f2da0f57632325bff4feb9",
+      "archive_member": "raw-originals-20261017/recovered-validation-20261017/windows-host-options/anvil-prerequisites/metadata.raw.txt",
+      "normalized_review_path": "wrk_docs/evidence/2026-10-15-release-readiness/raw-review-normalized-20261017/recovered-validation-20261017/windows-host-options/anvil-prerequisites/metadata.raw.txt",
+      "normalized_review_sha256": "e2aed16af3592f6265ffb103f1c76531f05049530f8f917fb663eed786de7957",
+      "normalization": "CRLF/CR converted to LF; trailing spaces/tabs and extra blank lines at EOF removed"
+    },
+    {
+      "original_path": "wrk_docs/evidence/2026-10-15-release-readiness/recovered-validation-20261017/windows-host-options/anvil-prerequisites/observed-portable-strawberry.raw.txt",
+      "original_bytes": 889,
+      "original_sha256": "c9b2973cbae5f51e79d037aa8d5625e24bb8a834c6bafa8e91ca1bb1c0315bb7",
+      "archive_member": "raw-originals-20261017/recovered-validation-20261017/windows-host-options/anvil-prerequisites/observed-portable-strawberry.raw.txt",
+      "normalized_review_path": "wrk_docs/evidence/2026-10-15-release-readiness/raw-review-normalized-20261017/recovered-validation-20261017/windows-host-options/anvil-prerequisites/observed-portable-strawberry.raw.txt",
+      "normalized_review_sha256": "58feb3d1b286f638d72426977629e7aef099401c49c2eb546092ad022a67a490",
+      "normalization": "CRLF/CR converted to LF; trailing spaces/tabs and extra blank lines at EOF removed"
+    },
+    {
+      "original_path": "wrk_docs/evidence/2026-10-15-release-readiness/recovered-validation-20261017/windows-host-options/anvil-prerequisites/perl-and-ffmpeg-version.raw.txt",
+      "original_bytes": 377,
+      "original_sha256": "ed15d35d59fe25008434d4642e4e3947170a873e179fe4764b6b3cbb6de37992",
+      "archive_member": "raw-originals-20261017/recovered-validation-20261017/windows-host-options/anvil-prerequisites/perl-and-ffmpeg-version.raw.txt",
+      "normalized_review_path": "wrk_docs/evidence/2026-10-15-release-readiness/raw-review-normalized-20261017/recovered-validation-20261017/windows-host-options/anvil-prerequisites/perl-and-ffmpeg-version.raw.txt",
+      "normalized_review_sha256": "c72f9a1c8398e20bd095b4fbbe6bac68cc95a70f972da5b822f5817d40886218",
+      "normalization": "CRLF/CR converted to LF; trailing spaces/tabs and extra blank lines at EOF removed"
+    },
+    {
+      "original_path": "wrk_docs/evidence/2026-10-15-release-readiness/recovered-validation-20261017/windows-host-options/anvil-prerequisites/rust-tools.raw.txt",
+      "original_bytes": 2801,
+      "original_sha256": "82cc6e8856d8f179bee948e48f7653996fae984f837222a693df2df69ee78cbe",
+      "archive_member": "raw-originals-20261017/recovered-validation-20261017/windows-host-options/anvil-prerequisites/rust-tools.raw.txt",
+      "normalized_review_path": "wrk_docs/evidence/2026-10-15-release-readiness/raw-review-normalized-20261017/recovered-validation-20261017/windows-host-options/anvil-prerequisites/rust-tools.raw.txt",
+      "normalized_review_sha256": "bbf59dab79ce17463e6ebdd2daff3d4a44afd0b6b6081155a8d0012ed01e3d6e",
+      "normalization": "CRLF/CR converted to LF; trailing spaces/tabs and extra blank lines at EOF removed"
+    },
+    {
+      "original_path": "wrk_docs/evidence/2026-10-15-release-readiness/recovered-validation-20261017/windows-host-options/anvil-prerequisites/settled-cpu-samples.raw.txt",
+      "original_bytes": 1547,
+      "original_sha256": "f811bb4ca0751edfb97310162dcb0664f1d644368091e44d8dce12585fed5a6a",
+      "archive_member": "raw-originals-20261017/recovered-validation-20261017/windows-host-options/anvil-prerequisites/settled-cpu-samples.raw.txt",
+      "normalized_review_path": "wrk_docs/evidence/2026-10-15-release-readiness/raw-review-normalized-20261017/recovered-validation-20261017/windows-host-options/anvil-prerequisites/settled-cpu-samples.raw.txt",
+      "normalized_review_sha256": "4c39d799c326df8287dfb21f5bb63c1141d21b3748bffddff76dec1ee4d9b7b6",
+      "normalization": "CRLF/CR converted to LF; trailing spaces/tabs and extra blank lines at EOF removed"
+    },
+    {
+      "original_path": "wrk_docs/evidence/2026-10-15-release-readiness/recovered-validation-20261017/windows-host-options/anvil-prerequisites/system.raw.txt",
+      "original_bytes": 1997,
+      "original_sha256": "30a956693ee5390b0de27ff1e1447413bfd774e25fa0962e8547cea3dab78bca",
+      "archive_member": "raw-originals-20261017/recovered-validation-20261017/windows-host-options/anvil-prerequisites/system.raw.txt",
+      "normalized_review_path": "wrk_docs/evidence/2026-10-15-release-readiness/raw-review-normalized-20261017/recovered-validation-20261017/windows-host-options/anvil-prerequisites/system.raw.txt",
+      "normalized_review_sha256": "185210f54fb8904d6f05f8a9a025436fe370647e45ea39691b5228031c02ff35",
+      "normalization": "CRLF/CR converted to LF; trailing spaces/tabs and extra blank lines at EOF removed"
+    },
+    {
+      "original_path": "wrk_docs/evidence/2026-10-15-release-readiness/recovered-validation-20261017/windows-host-options/kiln-metadata.raw.txt",
+      "original_bytes": 6966,
+      "original_sha256": "155f88c0073ac95a12b26655a01cd9f4556d405860246d8cb9028e22a598604c",
+      "archive_member": "raw-originals-20261017/recovered-validation-20261017/windows-host-options/kiln-metadata.raw.txt",
+      "normalized_review_path": "wrk_docs/evidence/2026-10-15-release-readiness/raw-review-normalized-20261017/recovered-validation-20261017/windows-host-options/kiln-metadata.raw.txt",
+      "normalized_review_sha256": "070dd2f106f220a136a17c87f0ae2e10763dd6928c10d7fc9a9a2eba4e4e2175",
+      "normalization": "CRLF/CR converted to LF; trailing spaces/tabs and extra blank lines at EOF removed"
+    },
+    {
+      "original_path": "wrk_docs/evidence/2026-10-15-release-readiness/recovered-validation-20261017/workspace-public-api-docs/fuzz-readme-diff.raw.txt",
+      "original_bytes": 4212,
+      "original_sha256": "c18dc786744917f3a825d7200aa799ace7019b0d580a6de2f69136b681c497ab",
+      "archive_member": "raw-originals-20261017/recovered-validation-20261017/workspace-public-api-docs/fuzz-readme-diff.raw.txt",
+      "normalized_review_path": "wrk_docs/evidence/2026-10-15-release-readiness/raw-review-normalized-20261017/recovered-validation-20261017/workspace-public-api-docs/fuzz-readme-diff.raw.txt",
+      "normalized_review_sha256": "cda908183ba57da73220249132374caa626d802b31ed8df88c6091ca0225cc85",
+      "normalization": "CRLF/CR converted to LF; trailing spaces/tabs and extra blank lines at EOF removed"
+    },
+    {
+      "original_path": "wrk_docs/evidence/2026-10-15-release-readiness/windows-candidate-20261016/asan-nightly-apr12-20261017/launch.raw.txt",
+      "original_bytes": 484,
+      "original_sha256": "74afe70938b65337239ced046624eea95ae349a173ec555a3f16c786f57745e7",
+      "archive_member": "raw-originals-20261017/windows-candidate-20261016/asan-nightly-apr12-20261017/launch.raw.txt",
+      "normalized_review_path": "wrk_docs/evidence/2026-10-15-release-readiness/raw-review-normalized-20261017/windows-candidate-20261016/asan-nightly-apr12-20261017/launch.raw.txt",
+      "normalized_review_sha256": "0324e406aacd8b424ff723e44124669b094722621dd9d55e5a49558e71c820e8",
+      "normalization": "CRLF/CR converted to LF; trailing spaces/tabs and extra blank lines at EOF removed"
+    },
+    {
+      "original_path": "wrk_docs/evidence/2026-10-15-release-readiness/windows-candidate-20261016/asan-nightly-apr12-20261017/runner.pid",
+      "original_bytes": 7,
+      "original_sha256": "ad4e55c0b3ac658d1398a3ebabcc06303512a9322c9bda3108065a1c2174894c",
+      "archive_member": "raw-originals-20261017/windows-candidate-20261016/asan-nightly-apr12-20261017/runner.pid",
+      "normalized_review_path": "wrk_docs/evidence/2026-10-15-release-readiness/raw-review-normalized-20261017/windows-candidate-20261016/asan-nightly-apr12-20261017/runner.pid",
+      "normalized_review_sha256": "e011dde31ae4ef6f60ae77d5dc818ccb71b850c4709f562d83001ef2f44455f0",
+      "normalization": "CRLF/CR converted to LF; trailing spaces/tabs and extra blank lines at EOF removed"
+    },
+    {
+      "original_path": "wrk_docs/evidence/2026-10-15-release-readiness/windows-candidate-20261016/asan-nightly-apr12-20261017/terminal-toolchain-inventory.raw.txt",
+      "original_bytes": 1920,
+      "original_sha256": "a5d4a226844216267a39537e2b03612687c06422e7ef7da0ec05bbbf43129383",
+      "archive_member": "raw-originals-20261017/windows-candidate-20261016/asan-nightly-apr12-20261017/terminal-toolchain-inventory.raw.txt",
+      "normalized_review_path": "wrk_docs/evidence/2026-10-15-release-readiness/raw-review-normalized-20261017/windows-candidate-20261016/asan-nightly-apr12-20261017/terminal-toolchain-inventory.raw.txt",
+      "normalized_review_sha256": "6ad59e284fb73476db061e51f9576dd3b6a2574870fde8dfc7234cdf8738005d",
+      "normalization": "CRLF/CR converted to LF; trailing spaces/tabs and extra blank lines at EOF removed"
+    },
+    {
+      "original_path": "wrk_docs/evidence/2026-10-15-release-readiness/windows-candidate-20261016/package-graph-20261017/identity.log",
+      "original_bytes": 2656,
+      "original_sha256": "b19ca8ea2acb8496167d43987249080933ce6dc346b57268d7e0e88971e0f57f",
+      "archive_member": "raw-originals-20261017/windows-candidate-20261016/package-graph-20261017/identity.log",
+      "normalized_review_path": "wrk_docs/evidence/2026-10-15-release-readiness/raw-review-normalized-20261017/windows-candidate-20261016/package-graph-20261017/identity.log",
+      "normalized_review_sha256": "b49a67bf3d8abcedd7624dec904afbf5aed7a89544433b99491c0c298ae96710",
+      "normalization": "CRLF/CR converted to LF; trailing spaces/tabs and extra blank lines at EOF removed"
+    },
+    {
+      "original_path": "wrk_docs/evidence/2026-10-15-release-readiness/windows-candidate-20261016/package-graph-20261017/launch.raw.txt",
+      "original_bytes": 1285,
+      "original_sha256": "a160cd39833b74fa37a2ee81ac064c43f7ab01fb779cdd2ab6d83a47644066b5",
+      "archive_member": "raw-originals-20261017/windows-candidate-20261016/package-graph-20261017/launch.raw.txt",
+      "normalized_review_path": "wrk_docs/evidence/2026-10-15-release-readiness/raw-review-normalized-20261017/windows-candidate-20261016/package-graph-20261017/launch.raw.txt",
+      "normalized_review_sha256": "fe2c3a37a9e85d4fd116b33443b37e1a51e73374f97589cb8570a6789ba2dba0",
+      "normalization": "CRLF/CR converted to LF; trailing spaces/tabs and extra blank lines at EOF removed"
+    },
+    {
+      "original_path": "wrk_docs/evidence/2026-10-15-release-readiness/windows-candidate-20261016/package-graph-20261017/registry-source-manifest-check.raw.txt",
+      "original_bytes": 2836,
+      "original_sha256": "e3b2ccaff78da8a1cef4627c1080dc1a9f75afb2934aecdbfa0147df18c6e99e",
+      "archive_member": "raw-originals-20261017/windows-candidate-20261016/package-graph-20261017/registry-source-manifest-check.raw.txt",
+      "normalized_review_path": "wrk_docs/evidence/2026-10-15-release-readiness/raw-review-normalized-20261017/windows-candidate-20261016/package-graph-20261017/registry-source-manifest-check.raw.txt",
+      "normalized_review_sha256": "a89950a2197892123801f732b6d15041e86391e3953f26385309369de2622dec",
+      "normalization": "CRLF/CR converted to LF; trailing spaces/tabs and extra blank lines at EOF removed"
+    },
+    {
+      "original_path": "wrk_docs/evidence/2026-10-15-release-readiness/windows-candidate-20261016/package-graph-20261017/runner.pid",
+      "original_bytes": 7,
+      "original_sha256": "35e8f3df3973da28cae2d5e90055bc3696a45786122fa7b80af0dba103c22378",
+      "archive_member": "raw-originals-20261017/windows-candidate-20261016/package-graph-20261017/runner.pid",
+      "normalized_review_path": "wrk_docs/evidence/2026-10-15-release-readiness/raw-review-normalized-20261017/windows-candidate-20261016/package-graph-20261017/runner.pid",
+      "normalized_review_sha256": "79f058e1a681533cdd310a44688c75dfac37284eed147d0b45503ede7580390f",
+      "normalization": "CRLF/CR converted to LF; trailing spaces/tabs and extra blank lines at EOF removed"
+    },
+    {
+      "original_path": "wrk_docs/evidence/2026-10-15-release-readiness/windows-candidate-20261016/package-graph-20261017/rvp9-cli-0.2.0-alpha.4.inspected-Cargo.toml.orig.txt",
+      "original_bytes": 1544,
+      "original_sha256": "db68dfc2d9a034edbb8efe9927e99327ae1132a47167102e5482af555a1c04d0",
+      "archive_member": "raw-originals-20261017/windows-candidate-20261016/package-graph-20261017/rvp9-cli-0.2.0-alpha.4.inspected-Cargo.toml.orig.txt",
+      "normalized_review_path": "wrk_docs/evidence/2026-10-15-release-readiness/raw-review-normalized-20261017/windows-candidate-20261016/package-graph-20261017/rvp9-cli-0.2.0-alpha.4.inspected-Cargo.toml.orig.txt",
+      "normalized_review_sha256": "96aa0b2ebafee7e500769b3ae5565be26cf097f0e806dd07beb1f21fc42a9ee4",
+      "normalization": "CRLF/CR converted to LF; trailing spaces/tabs and extra blank lines at EOF removed"
+    },
+    {
+      "original_path": "wrk_docs/evidence/2026-10-15-release-readiness/windows-candidate-20261016/package-graph-20261017/rvp9-core-0.2.0-alpha.4.inspected-Cargo.toml.orig.txt",
+      "original_bytes": 1774,
+      "original_sha256": "73bef3949be97b7f0fac094098cf2c7c0152962ce1af443617d463222eda3017",
+      "archive_member": "raw-originals-20261017/windows-candidate-20261016/package-graph-20261017/rvp9-core-0.2.0-alpha.4.inspected-Cargo.toml.orig.txt",
+      "normalized_review_path": "wrk_docs/evidence/2026-10-15-release-readiness/raw-review-normalized-20261017/windows-candidate-20261016/package-graph-20261017/rvp9-core-0.2.0-alpha.4.inspected-Cargo.toml.orig.txt",
+      "normalized_review_sha256": "0d425b1d0e1683ac3402ee576b06d27a0a39013a2116399dada2de34bdc5d27d",
+      "normalization": "CRLF/CR converted to LF; trailing spaces/tabs and extra blank lines at EOF removed"
+    },
+    {
+      "original_path": "wrk_docs/evidence/2026-10-15-release-readiness/windows-candidate-20261016/package-graph-20261017/rvp9-decoder-0.2.0-alpha.4.inspected-Cargo.toml.orig.txt",
+      "original_bytes": 1997,
+      "original_sha256": "035fbfe4ca2921a98234255ecdfd741b4bfa80895905a29b20530a04c9906570",
+      "archive_member": "raw-originals-20261017/windows-candidate-20261016/package-graph-20261017/rvp9-decoder-0.2.0-alpha.4.inspected-Cargo.toml.orig.txt",
+      "normalized_review_path": "wrk_docs/evidence/2026-10-15-release-readiness/raw-review-normalized-20261017/windows-candidate-20261016/package-graph-20261017/rvp9-decoder-0.2.0-alpha.4.inspected-Cargo.toml.orig.txt",
+      "normalized_review_sha256": "33dbcdf2e00a8f42df90c5afcbba6ba16d10765798d46f9374143bafb0aeecb1",
+      "normalization": "CRLF/CR converted to LF; trailing spaces/tabs and extra blank lines at EOF removed"
+    },
+    {
+      "original_path": "wrk_docs/evidence/2026-10-15-release-readiness/windows-candidate-20261016/package-graph-20261017/rvp9-encoder-0.2.0-alpha.4.inspected-Cargo.toml.orig.txt",
+      "original_bytes": 1263,
+      "original_sha256": "2d66bf9177a96535f9184438a75819d13f7d77f6ee97b63302a4ee0e0e991e01",
+      "archive_member": "raw-originals-20261017/windows-candidate-20261016/package-graph-20261017/rvp9-encoder-0.2.0-alpha.4.inspected-Cargo.toml.orig.txt",
+      "normalized_review_path": "wrk_docs/evidence/2026-10-15-release-readiness/raw-review-normalized-20261017/windows-candidate-20261016/package-graph-20261017/rvp9-encoder-0.2.0-alpha.4.inspected-Cargo.toml.orig.txt",
+      "normalized_review_sha256": "39adaeaebe50a179d0bf79d9ecc6b51c0fb95f13f47303f8311c349ceb2d1067",
+      "normalization": "CRLF/CR converted to LF; trailing spaces/tabs and extra blank lines at EOF removed"
+    },
+    {
+      "original_path": "wrk_docs/evidence/2026-10-15-release-readiness/windows-candidate-20261016/package-graph-20261017/rvp9-io-0.2.0-alpha.4.inspected-Cargo.toml.orig.txt",
+      "original_bytes": 550,
+      "original_sha256": "a7fbdc044ab3540498f47d6a14b0e412551bc0722f02adc41495c0875486e7a9",
+      "archive_member": "raw-originals-20261017/windows-candidate-20261016/package-graph-20261017/rvp9-io-0.2.0-alpha.4.inspected-Cargo.toml.orig.txt",
+      "normalized_review_path": "wrk_docs/evidence/2026-10-15-release-readiness/raw-review-normalized-20261017/windows-candidate-20261016/package-graph-20261017/rvp9-io-0.2.0-alpha.4.inspected-Cargo.toml.orig.txt",
+      "normalized_review_sha256": "2c79e70236cf156e3c7b12c02b410940585c5ac1b5265032d66dc854c914ce03",
+      "normalization": "CRLF/CR converted to LF; trailing spaces/tabs and extra blank lines at EOF removed"
+    },
+    {
+      "original_path": "wrk_docs/evidence/2026-10-15-release-readiness/windows-candidate-20261016/package-graph-20261017/terminal-registry-inventory.raw.txt",
+      "original_bytes": 14965,
+      "original_sha256": "7871b4dd10cf2f4c77ecddc2659a6100e50fca2e3d9813a1defd42fefe6fa86d",
+      "archive_member": "raw-originals-20261017/windows-candidate-20261016/package-graph-20261017/terminal-registry-inventory.raw.txt",
+      "normalized_review_path": "wrk_docs/evidence/2026-10-15-release-readiness/raw-review-normalized-20261017/windows-candidate-20261016/package-graph-20261017/terminal-registry-inventory.raw.txt",
+      "normalized_review_sha256": "6844e2ac89fc3840849d72aa9461ab3aa99a7d4327526787f5b1711bfe63a2b7",
+      "normalization": "CRLF/CR converted to LF; trailing spaces/tabs and extra blank lines at EOF removed"
+    },
+    {
+      "original_path": "wrk_docs/evidence/2026-10-15-release-readiness/windows-candidate-20261016/package-graph-20261017/tool-and-post-cache.raw.txt",
+      "original_bytes": 798,
+      "original_sha256": "1d2c0919b6e7c212f5b491547d4b25514222e3afb1a4e01bf4b595b699030aeb",
+      "archive_member": "raw-originals-20261017/windows-candidate-20261016/package-graph-20261017/tool-and-post-cache.raw.txt",
+      "normalized_review_path": "wrk_docs/evidence/2026-10-15-release-readiness/raw-review-normalized-20261017/windows-candidate-20261016/package-graph-20261017/tool-and-post-cache.raw.txt",
+      "normalized_review_sha256": "f59292f7eb7d40f568ef4d32947c1f48998b42a0b678c8ba67311e222ac483bb",
+      "normalization": "CRLF/CR converted to LF; trailing spaces/tabs and extra blank lines at EOF removed"
+    },
+    {
+      "original_path": "wrk_docs/evidence/2026-10-15-release-readiness/windows-candidate-20261016/performance-resume-20261017/after-monitor-refusal.raw.txt",
+      "original_bytes": 539,
+      "original_sha256": "d49d373ece57a665d1ce28949d79335519b9b4cbdf0e75b053b87c2511e3eaa0",
+      "archive_member": "raw-originals-20261017/windows-candidate-20261016/performance-resume-20261017/after-monitor-refusal.raw.txt",
+      "normalized_review_path": "wrk_docs/evidence/2026-10-15-release-readiness/raw-review-normalized-20261017/windows-candidate-20261016/performance-resume-20261017/after-monitor-refusal.raw.txt",
+      "normalized_review_sha256": "67c09e962872a5ca42d533e5254c6cc9013dacf30c6f60005c505b630a865fd4",
+      "normalization": "CRLF/CR converted to LF; trailing spaces/tabs and extra blank lines at EOF removed"
+    },
+    {
+      "original_path": "wrk_docs/evidence/2026-10-15-release-readiness/windows-candidate-20261016/performance-resume-20261017/cleanup-owned-inventory.raw.txt",
+      "original_bytes": 352,
+      "original_sha256": "fae0afde6998a3a0741f9fc058580bc0a1808c1e63212a286c123249647f6580",
+      "archive_member": "raw-originals-20261017/windows-candidate-20261016/performance-resume-20261017/cleanup-owned-inventory.raw.txt",
+      "normalized_review_path": "wrk_docs/evidence/2026-10-15-release-readiness/raw-review-normalized-20261017/windows-candidate-20261016/performance-resume-20261017/cleanup-owned-inventory.raw.txt",
+      "normalized_review_sha256": "06f8fb71527aa3f1af3b884ae5568dc0e43008aaca56269658efcae953721427",
+      "normalization": "CRLF/CR converted to LF; trailing spaces/tabs and extra blank lines at EOF removed"
+    },
+    {
+      "original_path": "wrk_docs/evidence/2026-10-15-release-readiness/windows-candidate-20261016/performance-resume-20261017/latest-inventory.raw.txt",
+      "original_bytes": 610,
+      "original_sha256": "5e04999a780d6125de2df26387097a186402e30bd53d85557ee6d61342dcd375",
+      "archive_member": "raw-originals-20261017/windows-candidate-20261016/performance-resume-20261017/latest-inventory.raw.txt",
+      "normalized_review_path": "wrk_docs/evidence/2026-10-15-release-readiness/raw-review-normalized-20261017/windows-candidate-20261016/performance-resume-20261017/latest-inventory.raw.txt",
+      "normalized_review_sha256": "a5ad5740f23008e97e1416169c7f9aa64e524dc9c456c465629664b957775393",
+      "normalization": "CRLF/CR converted to LF; trailing spaces/tabs and extra blank lines at EOF removed"
+    },
+    {
+      "original_path": "wrk_docs/evidence/2026-10-15-release-readiness/windows-candidate-20261016/performance-resume-20261017/launch.transport.raw.txt",
+      "original_bytes": 472,
+      "original_sha256": "f99cda52f40c3fe39669e0217012be8ea41b2f05afb2575744eee14d761b5e85",
+      "archive_member": "raw-originals-20261017/windows-candidate-20261016/performance-resume-20261017/launch.transport.raw.txt",
+      "normalized_review_path": "wrk_docs/evidence/2026-10-15-release-readiness/raw-review-normalized-20261017/windows-candidate-20261016/performance-resume-20261017/launch.transport.raw.txt",
+      "normalized_review_sha256": "f8134e14a9d1fd122a36bed1ec5a3e4e66d6ce095d71a9113611b7cccc109302",
+      "normalization": "CRLF/CR converted to LF; trailing spaces/tabs and extra blank lines at EOF removed"
+    },
+    {
+      "original_path": "wrk_docs/evidence/2026-10-15-release-readiness/windows-candidate-20261016/performance-resume-20261017/launcher.pid",
+      "original_bytes": 7,
+      "original_sha256": "2220ba5c5f7352750b495d974bc173996f17a9cae87849707a7140ed01eabf46",
+      "archive_member": "raw-originals-20261017/windows-candidate-20261016/performance-resume-20261017/launcher.pid",
+      "normalized_review_path": "wrk_docs/evidence/2026-10-15-release-readiness/raw-review-normalized-20261017/windows-candidate-20261016/performance-resume-20261017/launcher.pid",
+      "normalized_review_sha256": "dfd8c6bf9058643a36581af6916f66e2b7b458185842f482890844754a03dbd8",
+      "normalization": "CRLF/CR converted to LF; trailing spaces/tabs and extra blank lines at EOF removed"
+    },
+    {
+      "original_path": "wrk_docs/evidence/2026-10-15-release-readiness/windows-candidate-20261016/performance-resume-20261017/terminal-inventory.raw.txt",
+      "original_bytes": 1889,
+      "original_sha256": "9ee0253a2cde5b5b61d39e91dbf87b4fb90e67adf9fd0c059b4498607a3a503f",
+      "archive_member": "raw-originals-20261017/windows-candidate-20261016/performance-resume-20261017/terminal-inventory.raw.txt",
+      "normalized_review_path": "wrk_docs/evidence/2026-10-15-release-readiness/raw-review-normalized-20261017/windows-candidate-20261016/performance-resume-20261017/terminal-inventory.raw.txt",
+      "normalized_review_sha256": "dae6bfc6511ae91640736349c373b9c9f29635d3ae09d09a83159aab52040005",
+      "normalization": "CRLF/CR converted to LF; trailing spaces/tabs and extra blank lines at EOF removed"
+    },
+    {
+      "original_path": "wrk_docs/evidence/2026-10-15-release-readiness/recovered-validation-20261017/windows-host-options/metadata-probe.ps1",
+      "original_bytes": 1539,
+      "original_sha256": "dc5567b2487d50f12f80486093f1d633b5ffc9d742a1e02f01431b1fea40d820",
+      "archive_member": "raw-originals-20261017/recovered-validation-20261017/windows-host-options/metadata-probe.ps1",
+      "normalized_review_path": "wrk_docs/evidence/2026-10-15-release-readiness/raw-review-normalized-20261017/recovered-validation-20261017/windows-host-options/metadata-probe.ps1",
+      "normalized_review_sha256": "ab5e74ae5b9385b2356442453867ab8cd227d0465bc4a47324717bd83a938d29",
+      "normalization": "CRLF/CR converted to LF; trailing spaces/tabs and extra blank lines at EOF removed"
+    },
+    {
+      "original_path": "wrk_docs/evidence/2026-10-15-release-readiness/recovered-validation-20261017/workspace-tests/cli-bins.raw.log",
+      "original_bytes": 2273,
+      "original_sha256": "5150ca3822371300a64cada14c1e9e3baf79e2629db0bb12eb4bbe3a49434467",
+      "archive_member": "raw-originals-20261017/recovered-validation-20261017/workspace-tests/cli-bins.raw.log",
+      "normalized_review_path": "wrk_docs/evidence/2026-10-15-release-readiness/raw-review-normalized-20261017/recovered-validation-20261017/workspace-tests/cli-bins.raw.log",
+      "normalized_review_sha256": "4c03fd464785bafec0c50eefee9a7665718b50e8224764741349d8afdd197202",
+      "normalization": "CRLF/CR converted to LF; trailing spaces/tabs and extra blank lines at EOF removed"
+    },
+    {
+      "original_path": "wrk_docs/evidence/2026-10-15-release-readiness/recovered-validation-20261017/workspace-tests/native-libraries.raw.log",
+      "original_bytes": 220823,
+      "original_sha256": "254b05f847f1473a263bea841faa7509e187f58cfa540aab795af44067392256",
+      "archive_member": "raw-originals-20261017/recovered-validation-20261017/workspace-tests/native-libraries.raw.log",
+      "normalized_review_path": "wrk_docs/evidence/2026-10-15-release-readiness/raw-review-normalized-20261017/recovered-validation-20261017/workspace-tests/native-libraries.raw.log",
+      "normalized_review_sha256": "1702e2e5ed988c848ec3898150fc58d9d497b38fe50c5f51252fe3bd83bece8f",
+      "normalization": "CRLF/CR converted to LF; trailing spaces/tabs and extra blank lines at EOF removed"
+    }
+  ]
+}

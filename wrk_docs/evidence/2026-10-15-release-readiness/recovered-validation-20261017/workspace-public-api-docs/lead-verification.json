@@ -1,0 +1,6 @@
+{
+  "integrity_entries_verified": 11,
+  "terminal_exit": 0,
+  "independently_counted_individual_warnings": 143,
+  "scope": "Literal whole workspace --no-deps, including bench/harness. No warning-free/API compatibility claim."
+}

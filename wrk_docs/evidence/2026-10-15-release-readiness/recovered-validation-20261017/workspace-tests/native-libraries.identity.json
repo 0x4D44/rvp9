@@ -1,0 +1,42 @@
+{
+  "validation": "focused native release library tests",
+  "worktree": "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence",
+  "head_at_run": "8f0b58acde72193278d0b3abf560008008216c7b",
+  "candidate_commit": "ebca64b0d3c7359e96caf1e6250c921c18d30a3f",
+  "source_diff_from_candidate": [
+    "crates/rvp9-fuzz/README.md"
+  ],
+  "source_scope_note": "Lead-confirmed documentation-only fuzz README change; no workspace Rust/Cargo/script/config source changes.",
+  "command": "CARGO_TARGET_DIR=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-rc-validation-aa390fba/target CARGO_BUILD_JOBS=4 deltic timeout 5400 cargo test --release --locked --offline --lib -p rvp9-core -p rvp9-decoder -p rvp9-encoder -p rvp9-io -- --test-threads=4 </dev/null",
+  "stdin": "closed (/dev/null)",
+  "offline_dependency_resolution": true,
+  "RVP9_override_keys_present_or_removed": [],
+  "run": {
+    "started_utc": "2026-10-17T05:52:19Z",
+    "terminal_observed_utc": "2026-10-17T05:52:41Z",
+    "tool_session_id": 33208,
+    "runner_pid": 53672,
+    "cargo_pid": null,
+    "exit_code": 0
+  },
+  "result_totals": {
+    "test_result_blocks": 4,
+    "passed": 2820,
+    "failed": 0,
+    "ignored": 2,
+    "measured": 0,
+    "filtered_out": 0,
+    "per_package": {
+      "rvp9-core": { "passed": 1726, "failed": 0, "ignored": 1 },
+      "rvp9-decoder": { "passed": 224, "failed": 0, "ignored": 0 },
+      "rvp9-encoder": { "passed": 809, "failed": 0, "ignored": 1 },
+      "rvp9-io": { "passed": 61, "failed": 0, "ignored": 0 }
+    }
+  },
+  "raw_log": {
+    "path": "wrk_docs/evidence/2026-10-15-release-readiness/recovered-validation-20261017/workspace-tests/native-libraries.raw.log",
+    "external_scratch_path": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-rc-validation-aa390fba/workspace-tests/native-libraries.raw.log",
+    "sha256": "254b05f847f1473a263bea841faa7509e187f58cfa540aab795af44067392256",
+    "bytes": 220823
+  }
+}

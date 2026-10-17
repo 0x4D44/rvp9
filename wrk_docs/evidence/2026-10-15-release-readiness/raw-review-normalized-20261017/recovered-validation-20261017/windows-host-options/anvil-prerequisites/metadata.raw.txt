@@ -1,0 +1,12 @@
+host=ANVIL utc=2026-10-17T06:03:23.0376595Z
+deltic 6.15.1
+The listed repos
+
+Usage: deltic.exe session repos list [OPTIONS]
+
+Options:
+      --json
+  -h, --help  Print help
+known_rvp9_root=D:/language/rvp9-2 exists=False git_exists=False cargo_exists=False
+known_rvp9_root=D:/language/rvp9 exists=False git_exists=False cargo_exists=False
+known_rvp9_root=C:/language/rvp9 exists=False git_exists=False cargo_exists=False

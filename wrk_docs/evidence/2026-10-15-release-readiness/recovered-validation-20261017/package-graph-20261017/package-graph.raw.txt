@@ -1,0 +1,36 @@
+   Packaging rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-core)
+    Packaged 189 files, 6.2MiB (1.3MiB compressed)
+   Packaging rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-decoder)
+    Packaged 20 files, 950.9KiB (219.2KiB compressed)
+   Packaging rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-encoder)
+    Packaged 116 files, 3.9MiB (940.3KiB compressed)
+   Packaging rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-io)
+    Packaged 14 files, 204.6KiB (48.7KiB compressed)
+   Packaging rvp9-cli v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-cli)
+    Packaged 18 files, 299.1KiB (65.8KiB compressed)
+   Verifying rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-core)
+   Compiling crossbeam-utils v0.8.21
+   Compiling rvp9-core v0.2.0-alpha.4 (/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-package-graph-17aa4185/target/package/rvp9-core-0.2.0-alpha.4)
+   Compiling crossbeam-channel v0.5.15
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 23.11s
+   Verifying rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-decoder)
+   Unpacking rvp9-core v0.2.0-alpha.4 (registry `/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-package-graph-17aa4185/target/package/tmp-registry`)
+   Compiling rvp9-core v0.2.0-alpha.4
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-package-graph-17aa4185/target/package/rvp9-decoder-0.2.0-alpha.4)
+   Compiling static_assertions v1.1.0
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 38.54s
+   Verifying rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-encoder)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-package-graph-17aa4185/target/package/rvp9-encoder-0.2.0-alpha.4)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 51.96s
+   Verifying rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-io)
+   Compiling rvp9-io v0.2.0-alpha.4 (/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-package-graph-17aa4185/target/package/rvp9-io-0.2.0-alpha.4)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 52.96s
+   Verifying rvp9-cli v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/crates/rvp9-cli)
+   Unpacking rvp9-decoder v0.2.0-alpha.4 (registry `/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-package-graph-17aa4185/target/package/tmp-registry`)
+   Unpacking rvp9-encoder v0.2.0-alpha.4 (registry `/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-package-graph-17aa4185/target/package/tmp-registry`)
+   Unpacking rvp9-io v0.2.0-alpha.4 (registry `/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-package-graph-17aa4185/target/package/tmp-registry`)
+   Compiling rvp9-decoder v0.2.0-alpha.4
+   Compiling rvp9-encoder v0.2.0-alpha.4
+   Compiling rvp9-io v0.2.0-alpha.4
+   Compiling rvp9-cli v0.2.0-alpha.4 (/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-package-graph-17aa4185/target/package/rvp9-cli-0.2.0-alpha.4)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1m 06s

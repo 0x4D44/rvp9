@@ -1,0 +1,5 @@
+67924 C:/Users/marti/AppData/Local/Temp/deltic-scratch/rvp9-native-packagegraph474-3255285b/cargo-target/package/rvp9-cli-0.2.0-alpha.4.crate
+1376521 C:/Users/marti/AppData/Local/Temp/deltic-scratch/rvp9-native-packagegraph474-3255285b/cargo-target/package/rvp9-core-0.2.0-alpha.4.crate
+225641 C:/Users/marti/AppData/Local/Temp/deltic-scratch/rvp9-native-packagegraph474-3255285b/cargo-target/package/rvp9-decoder-0.2.0-alpha.4.crate
+968339 C:/Users/marti/AppData/Local/Temp/deltic-scratch/rvp9-native-packagegraph474-3255285b/cargo-target/package/rvp9-encoder-0.2.0-alpha.4.crate
+50174 C:/Users/marti/AppData/Local/Temp/deltic-scratch/rvp9-native-packagegraph474-3255285b/cargo-target/package/rvp9-io-0.2.0-alpha.4.crate

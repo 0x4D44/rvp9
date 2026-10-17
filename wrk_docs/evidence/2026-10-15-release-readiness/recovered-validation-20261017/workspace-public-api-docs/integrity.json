@@ -1,0 +1,60 @@
+{
+  "finalized_utc": "2026-10-17T05:53:34.483311+00:00",
+  "files": [
+    {
+      "file": "README.md",
+      "bytes": 1174,
+      "sha256": "b345fa672cc665b0e6681babefd25437f257c93d0b2fcb43a35faec54d7ff097"
+    },
+    {
+      "file": "cargo-config.raw.txt",
+      "bytes": 1043,
+      "sha256": "4141e82d7d5085ebd8014a9392882dd023b524788d82986980f28b9ce92282d7"
+    },
+    {
+      "file": "cargo.raw.txt",
+      "bytes": 36,
+      "sha256": "c10ec31b8c6e6e2693cf65fc1971b41edbc3da1ae7db6f9f3f36c4823f8dcab5"
+    },
+    {
+      "file": "code-diff.raw.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "file": "fuzz-readme-diff.raw.txt",
+      "bytes": 4212,
+      "sha256": "c18dc786744917f3a825d7200aa799ace7019b0d580a6de2f69136b681c497ab"
+    },
+    {
+      "file": "run.json",
+      "bytes": 2736,
+      "sha256": "9ebdf02e24853a888a28249afe050bbb444db5663067d5a284e4247df12f5600"
+    },
+    {
+      "file": "rustc.raw.txt",
+      "bytes": 192,
+      "sha256": "e61cba8ded8c60e985f759f74a221c4773649021477d00b44c7af411eb8c218c"
+    },
+    {
+      "file": "source.raw.txt",
+      "bytes": 41,
+      "sha256": "b35c966214ee1f8b63ed0aa1838db4715f3e0a2c8f348b2b2bfa44c25910e763"
+    },
+    {
+      "file": "status.raw.txt",
+      "bytes": 520,
+      "sha256": "76d7cdfaab7afa665b11ad5f02d90254b9184e2b494bd86f1afb454f8b882a27"
+    },
+    {
+      "file": "warnings.json",
+      "bytes": 38567,
+      "sha256": "61898941d0a657f099d96925066fff214a12288d3fd61acbc3d6aa97160ec1fd"
+    },
+    {
+      "file": "workspace-doc.raw.txt",
+      "bytes": 55650,
+      "sha256": "9f8d7121d2cf6b5697386196e9db5d55cc0786998e45476002325d3cedb88914"
+    }
+  ]
+}

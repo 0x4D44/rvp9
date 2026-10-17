@@ -1,0 +1,13 @@
+start_utc=2026-10-17T05:55:42Z
+worktree=/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence
+head=8f0b58acde72193278d0b3abf560008008216c7b
+binary_sha256=9fed3da5b24d9f8238d2d8e266647a943aa534fec91b3bc8776d1675a86fd075
+command=deltic timeout 3600 target/release/conformance --vectors-dir tests/conformance/vectors --official --strict --threads 1 </dev/null
+end_utc=2026-10-17T05:59:05Z
+exit_code=0
+6b13b65a36a87117bb427e9f0440d8b7a80a28fd5c7f5dd85ad83f5d79839103  wrk_docs/evidence/2026-10-15-release-readiness/recovered-validation-20261017/macos-correctness/conformance-native-1thread.raw.log
+raw_bytes=28738
+tool_session_id=75943
+shell_pid=81007
+deltic_timeout_pid=81058
+conformance_pid=81063
