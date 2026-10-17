@@ -1030,6 +1030,8 @@
     "guard_pass": false,
     "timing_started": false,
     "pgo_binary_sha256": "3e1e9e29408627a6ca43f29ce67d264b0d143da2039c45b54fb28fde61bf91db",
-    "manifest_sha256": "1bfc96e67a16454cc73a0109446fbb6ca285621644f4448e14de7a349af0b99d"
+    "manifest_sha256": "1bfc96e67a16454cc73a0109446fbb6ca285621644f4448e14de7a349af0b99d",
+    "raw_originals_archive": "windows-current-source-load-guard-anvil-20261017T1259Z-originals.tar.gz",
+    "raw_integrity_manifest": "windows-current-source-load-guard-anvil-20261017T1259Z-raw-integrity.json"
   }
 }

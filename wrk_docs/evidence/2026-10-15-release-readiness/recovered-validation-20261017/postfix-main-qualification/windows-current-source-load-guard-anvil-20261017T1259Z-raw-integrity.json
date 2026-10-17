@@ -1,0 +1,22 @@
+{
+  "schema": "rvp9.raw-original-integrity.v1",
+  "recorded_at_utc": "2026-10-17T12:59:08Z",
+  "archive": {
+    "path": "windows-current-source-load-guard-anvil-20261017T1259Z-originals.tar.gz",
+    "bytes": 329,
+    "sha256": "aa5f232b2378c3bba25b6af1f8761d912ab94d708d7da0a113518fc8cad1fa31"
+  },
+  "entries": [
+    {
+      "archive_member": "windows-current-source-load-guard-anvil-20261017T1259Z.raw.txt",
+      "original_bytes": 268,
+      "original_sha256": "3bff481324c142e64d170424d324f478a1c8ce87a16108c73eab492963a01890",
+      "normalized_review_copy": {
+        "path": "windows-current-source-load-guard-anvil-20261017T1259Z.raw.txt",
+        "bytes": 261,
+        "sha256": "d5264110140257397a899c22a8b94351dfd197f84d06a1b86de1b04f23c087f0",
+        "normalization": "CRLF converted to LF only; output text unchanged"
+      }
+    }
+  ]
+}
