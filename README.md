@@ -13,9 +13,12 @@ livestreaming.
 > **Platform coverage:** Alpha.4 release qualification covers Windows x86-64.
 > Earlier releases were qualified on macOS Apple Silicon (AArch64); the full
 > macOS release matrix was not rerun for alpha.4. The current final-release
-> candidate (`fb5c0c91`) has fresh native conformance and encoder/reverse
-> cross-decoder checks on both platforms, but remains on hold: production
-> quality, speed, latency, full-corpus and complete safety gates are open. See
+> candidate (`fb5c0c91`) has fresh native conformance, 32-row encoder and
+> 24-row reverse-reference checks on both platforms. Windows conformance also
+> passed forced-scalar; macOS scalar dispatch remains unqualified. The full
+> macOS workspace release suite is not green (3,577 passed, 2 failed, 64
+> ignored). The candidate remains on hold: production quality, speed, latency,
+> full-corpus, complete safety and extracted-package tests remain open. See
 > [`RELEASE_NOTES.md`](./RELEASE_NOTES.md) for alpha.4 and the
 > [current readiness report](<wrk_docs/2026.10.15 - STATUS - final release readiness.md>)
 > for candidate evidence and limits.
@@ -38,7 +41,10 @@ unproved (`RVP9-BUG-FLU-00043`). These results do not qualify later source chang
 
 Historical alpha qualification also decoded every stream in the 32-row encoder
 matrix byte-exactly under `rvp9dec`, pinned libvpx `vpxdec`, and ffmpeg.
-Rerun these gates for the final candidate:
+The final candidate has passed the current-source conformance, encoder and
+reverse-reference gates on both platforms. These commands reproduce those
+checks on a prepared local worktree with the pinned vectors, corpus and
+reference binaries:
 
 ```bash
 ./scripts/qualify-conformance.sh
