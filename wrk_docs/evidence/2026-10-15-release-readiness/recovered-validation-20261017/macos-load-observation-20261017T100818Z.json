@@ -1,0 +1,34 @@
+{
+  "test": "read-only macOS load and quiet-status observation",
+  "observed_utc": "2026-10-17T10:08:18Z",
+  "host": "Darwin flux.home.arpa 25.6.0; arm64",
+  "candidate_source_commit": "474dfd99a673df85f750136f7552ac156b7a24e9",
+  "observer_worktree_head": "43c1f2ec47b6990f9b3bc3d69cfd136bec621a27",
+  "commands": [
+    "deltic quiet status",
+    "sysctl -n vm.loadavg",
+    "sysctl -n hw.logicalcpu"
+  ],
+  "load_guard_source": {
+    "path": "crates/rvp9-bench/src/bin/encode-headtohead.rs",
+    "sha256": "62076be9c6bc65d552d896163cd687db48a8c0dc65f3716526415dbb1d7bd720",
+    "behavior": "On Unix, current_load1 reads /proc/loadavg or sysctl vm.loadavg; --max-load1 fails closed when the one-minute value exceeds the supplied limit."
+  },
+  "observation": {
+    "quiet_status": "open",
+    "heavy_workloads": 2,
+    "low_priority_heavy_workloads": 39,
+    "vm_loadavg_output": "{ 91.22 93.65 78.31 }",
+    "one_minute_load": 91.22,
+    "five_minute_load": 93.65,
+    "fifteen_minute_load": 78.31,
+    "logical_processors": 18,
+    "guard_limit": 0.75
+  },
+  "decision": "Do not start a speed or latency command; the one-minute load exceeds the unchanged guard by a wide margin.",
+  "limits": [
+    "This is a point-in-time host load observation, not a canonical 60-second busy-logical-core sample.",
+    "No codec process, quality run, speed group, paired benchmark or latency measurement started.",
+    "No files, processes, quiet leases, packages or system settings were changed."
+  ]
+}
