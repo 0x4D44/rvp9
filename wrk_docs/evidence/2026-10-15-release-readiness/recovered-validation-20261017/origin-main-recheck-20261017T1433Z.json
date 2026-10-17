@@ -1,0 +1,25 @@
+{
+  "schema": "rvp9.origin-main-recheck.v1",
+  "recorded_at_utc": "2026-10-17T14:33:03Z",
+  "command": "deltic timeout 30 git ls-remote origin refs/heads/main",
+  "remote_main": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+  "candidate": {
+    "source_commit": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+    "branch": "task/20261017-TSK-HUM-requalify-post-fix-candidate",
+    "worktree": "/Users/md/worktrees/rvp9/20261017-TSK-HUM-requalify-post-fix-candidate",
+    "tracked_and_untracked_tree_clean": true
+  },
+  "raw": [
+    {
+      "path": "origin-main-recheck-20261017T1433Z.raw.txt",
+      "bytes": 57,
+      "sha256": "130e3182a62feb93d934b1ccfce7616bb68ba628ecc9c76f6af64d6c051fdbff"
+    },
+    {
+      "path": "origin-main-recheck-20261017T1433Z-candidate.raw.txt",
+      "bytes": 237,
+      "sha256": "f7f4d273de4ce429652fcc034e07893acdec727e8a7bc69a7ddd930b93b51e3e"
+    }
+  ],
+  "interpretation": "The reviewed candidate revision still matches the origin main tip at this read-only check. This is not a fetch, integration or release authorization."
+}
