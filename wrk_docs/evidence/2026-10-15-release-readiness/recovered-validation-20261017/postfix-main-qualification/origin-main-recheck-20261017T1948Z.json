@@ -1,0 +1,23 @@
+{
+  "schema": "rvp9.origin-main-exact-candidate-recheck.v1",
+  "recorded_at_utc": "2026-10-17T19:48:13Z",
+  "repository": "/Users/md/language/rvp9",
+  "commands": [
+    {
+      "command": "git fetch origin",
+      "exit_status": 0
+    },
+    {
+      "command": "git merge --ff-only origin/main",
+      "exit_status": 0,
+      "output": "Already up to date."
+    }
+  ],
+  "refs": {
+    "main_clone_head": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+    "origin_main": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+    "candidate_worktree_head": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+    "candidate_worktree_clean": true
+  },
+  "result": "The origin main ref and exact release candidate remain at the same source commit; the fast-forward refresh made no change."
+}

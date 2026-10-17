@@ -1,0 +1,92 @@
+{
+  "schema": "rvp9.macos-current-source-qualification-selftests.v1",
+  "recorded_at_utc": "2026-10-17T19:47:17Z",
+  "candidate": {
+    "commit": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+    "branch": "task/20261017-TSK-HUM-requalify-post-fix-candidate",
+    "worktree_clean": true
+  },
+  "host": {
+    "name": "flux.home.arpa",
+    "os": "macOS 26.6.2",
+    "target": "aarch64-apple-darwin",
+    "rustc": "rustc 1.95.0 (59807616e 2026-04-14)",
+    "cargo": "cargo 1.95.0 (f2d3ce0bd 2026-03-21)",
+    "bash": "GNU bash 3.2.57(1)-release (arm64-apple-darwin25)"
+  },
+  "registered_scratch": {
+    "id": "rvp9-qual-selftests-20c9aef6",
+    "path": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-qual-selftests-20c9aef6",
+    "purpose": "TMPDIR for filesystem self-tests and temporary raw logs",
+    "removed_after_evidence_copy": true
+  },
+  "scripts": {
+    "production": {
+      "path": "scripts/qualify-production-encoder.sh",
+      "sha256": "3ec28783f5b3e52ba554888a5e53f2dd51e7d21645137d0cbbd0b32965f1953c",
+      "self_test": {
+        "command_index": 1,
+        "exit_status": 0,
+        "result": "PASS; 329 assertions printed as ok"
+      },
+      "resume_self_test": {
+        "command_index": 2,
+        "exit_status": 0,
+        "result": "PASS; resume filesystem self-test passed"
+      },
+      "timing_self_test": {
+        "command_index": 3,
+        "exit_status": 0,
+        "result": "PASS; 68 assertions printed as ok and timing filesystem self-test passed"
+      }
+    },
+    "spatial": {
+      "path": "scripts/qualify-spatial-svc.sh",
+      "sha256": "6453cd72adedbe82c1c719a728873f419543170819111a1139dba5303d47c3de",
+      "self_test": {
+        "command_index": 4,
+        "exit_status": 0,
+        "result": "PASS; 46 assertions printed as ok"
+      }
+    }
+  },
+  "limits": [
+    "These are exact-source script self-tests using deterministic fixtures and stubbed child observations; no codec quality, cross-decoder, throughput, latency or production campaign result is established.",
+    "The production plan self-test verifies declared nonzero row totals, but does not inject a runtime phase that completes zero rows.",
+    "The timing self-test exercises representative child failures, malformed or missing timing output, load refusal, unstable hashes and expected threshold misses; it does not validate live-host timing accuracy.",
+    "The spatial self-test verifies matrix construction and totals; it does not repair or validate the known malformed runtime CSV writer (FLU-00041) or finite BD-rate accuracy (FLU-00042)."
+  ],
+  "qualification_status": "PASS for the four documented exact-source script self-tests only; production acceptance campaigns remain unqualified.",
+  "evidence_files": [
+    {
+      "path": "commands.raw.txt",
+      "bytes": 671,
+      "sha256": "1fe393e25026e9922e0517c98eb92836eb7ca2d58fe59f238a988dd5047c34d2"
+    },
+    {
+      "path": "environment.raw.txt",
+      "bytes": 768,
+      "sha256": "43cc83c357d14309cd9bb56e2075afb1cb1b5d8b2692c28649561da893b6a089"
+    },
+    {
+      "path": "production-self-test.raw.txt",
+      "bytes": 20751,
+      "sha256": "3d595c960ca9149d1e12acdd062386908a0522dc2f9b3ac88e987b6cfe521d97"
+    },
+    {
+      "path": "production-resume-self-test.raw.txt",
+      "bytes": 132,
+      "sha256": "21d113627f4d63820ce6e2b2e49ff4a41b332be5ce34bd6ca77bd5f39e572807"
+    },
+    {
+      "path": "production-timing-self-test.raw.txt",
+      "bytes": 8266,
+      "sha256": "b4f4c6e9da99bd4348d65b6ea95f001ad7a17f2d8025a17ee2dba34beaa7fe1b"
+    },
+    {
+      "path": "spatial-self-test.raw.txt",
+      "bytes": 1906,
+      "sha256": "06d704c9212a6265863da5e65cc82f0182b3e7b5d1a30abeb070c08645772dd9"
+    }
+  ]
+}

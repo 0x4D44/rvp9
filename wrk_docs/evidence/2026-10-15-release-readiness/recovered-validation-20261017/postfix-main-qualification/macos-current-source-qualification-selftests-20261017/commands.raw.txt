@@ -1,0 +1,4 @@
+deltic timeout 900 env TMPDIR=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-qual-selftests-20c9aef6 ./scripts/qualify-production-encoder.sh --self-test </dev/null
+deltic timeout 900 env TMPDIR=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-qual-selftests-20c9aef6 ./scripts/qualify-production-encoder.sh --self-test-resume </dev/null
+deltic timeout 900 env TMPDIR=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-qual-selftests-20c9aef6 ./scripts/qualify-production-encoder.sh --self-test-timing </dev/null
+deltic timeout 900 ./scripts/qualify-spatial-svc.sh --self-test </dev/null
