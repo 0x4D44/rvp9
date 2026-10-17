@@ -1,25 +1,25 @@
 # RVP9-BUG-KILN-00073 — noise_sensitivity magnitudes all select medium denoising
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** encoder/denoiser configuration
 - **Raised:** 2026-08-16T08:19:31Z
 - **Discovery source:** Agent
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261017T051408Z-68ec08e1
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KILN-00073-run-fix-20261017T051408Z-68ec08e1
-- **Owner base:** cc0f25f91dddc648226bab390b92c63df5ee7070
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-17T05:14:08Z
-- **Owner until:** 2026-10-17T09:14:08Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-16T08:19:31Z, raised via `deltic bugs new`) → Blocked (2026-10-16, Codex; Arthur decision required on temporal-denoiser contract) → Open (2026-10-17T05:13:55Z, deltic:manual host=flux verdict=reopen)
+- **State history:** Open (2026-08-16T08:19:31Z, raised via `deltic bugs new`) → Blocked (2026-10-16, Codex; Arthur decision required on temporal-denoiser contract) → Open (2026-10-17T05:13:55Z, deltic:manual host=flux verdict=reopen) → Fixed (2026-10-17T05:38:09Z, deltic:auto role=fix run=fix-20261017T051408Z-68ec08e1 branch=task/bug-RVP9-BUG-KILN-00073-run-fix-20261017T051408Z-68ec08e1 code=ae19661e3c230b600ad74257f8e3785f195a4ff4 gate=manual)
 
 ## Observation
 
