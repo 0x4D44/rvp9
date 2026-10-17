@@ -1,0 +1,60 @@
+{
+  "schema": "rvp9.mac-current-source-conformance.v1",
+  "recorded_at_utc": "2026-10-17 11:44:21Z",
+  "source": {
+    "commit": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+    "worktree": "/Users/md/worktrees/rvp9/20261017-TSK-HUM-requalify-post-fix-candidate",
+    "tracked_tree_clean": true,
+    "host": "flux, macOS Apple Silicon",
+    "host_triple": "aarch64-apple-darwin",
+    "rustc": "1.95.0 (59807616e 2026-04-14)"
+  },
+  "runner": {
+    "path": "target/release/conformance",
+    "bytes": 1031168,
+    "sha256": "dcc360d62b4e1ac8730d0e6e522487a5ab687dcc32458a5577fa198ae892a925",
+    "semantics": "The in-repo official runner checks decoded frames against pinned .md5 ledgers; it does not invoke vpxdec."
+  },
+  "fixtures": {
+    "libvpx_commit": "12f3a2ac603e8f10742105519e0cd03c3b8f71dd",
+    "vectors": 307,
+    "md5_ledgers": 307
+  },
+  "runs": [
+    {
+      "threads": 1,
+      "command": "deltic timeout 1800 ./target/release/conformance --vectors-dir tests/conformance/vectors --official --threads 1",
+      "exit_code": 0,
+      "vectors": 307,
+      "frames_passed": 4816,
+      "mismatched": 0,
+      "skipped": 0,
+      "vector_failures": 0,
+      "log": {
+        "path": "mac-current-source-conformance-threads-1.raw.txt",
+        "bytes": 28738,
+        "sha256": "6b13b65a36a87117bb427e9f0440d8b7a80a28fd5c7f5dd85ad83f5d79839103"
+      }
+    },
+    {
+      "threads": 2,
+      "command": "deltic timeout 1800 ./target/release/conformance --vectors-dir tests/conformance/vectors --official --threads 2",
+      "exit_code": 0,
+      "vectors": 307,
+      "frames_passed": 4816,
+      "mismatched": 0,
+      "skipped": 0,
+      "vector_failures": 0,
+      "log": {
+        "path": "mac-current-source-conformance-threads-2.raw.txt",
+        "bytes": 28738,
+        "sha256": "5f2feac25403c721c0559df558cead52c5a62b5d7f785b6d13cc5251375dab06"
+      }
+    }
+  ],
+  "limits": [
+    "These are native decoder runs at one and two threads; no AArch64 scalar claim is made because RVP9_FORCE_SCALAR leaves NEON enabled (FLU43).",
+    "This is conformance evidence only; it does not establish production PGO, encoder32/reverse24, compression quality, throughput, frame latency, or broad corpus coverage.",
+    "The worktree has no vpxdec executable; separate external-oracle tests remain unavailable."
+  ]
+}
