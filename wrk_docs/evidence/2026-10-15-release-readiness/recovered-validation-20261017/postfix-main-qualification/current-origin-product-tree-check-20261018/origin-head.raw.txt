@@ -1,0 +1,5 @@
+command=git show -s --format=%H%n%T%n%P%n%s origin/main
+518a82e9ef790036fdbe0e7ba72810e2eb320a8a
+5fb1f942413ae29b4388baeeab87367c74adaa8b
+2b1333cc7a7b62a9c63bd66a4b5089b352767864
+docs(quality): confirm FLU-00039 on current candidate

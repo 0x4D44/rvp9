@@ -1,0 +1,3 @@
+command=git diff --name-status fb5c0c917038db6c640b3dbc7c2b84b567233333 origin/main -- crates scripts Cargo.toml Cargo.lock .cargo
+M	crates/rvp9-bench/tests/soak_cli.rs
+M	crates/rvp9-fuzz/README.md

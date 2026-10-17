@@ -1,0 +1,2 @@
+command=git ls-remote origin refs/heads/main
+518a82e9ef790036fdbe0e7ba72810e2eb320a8a	refs/heads/main

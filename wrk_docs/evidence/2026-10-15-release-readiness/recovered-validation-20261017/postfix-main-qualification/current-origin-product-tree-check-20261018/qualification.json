@@ -1,0 +1,80 @@
+{
+  "schema": 1,
+  "observed_at_utc": "2026-10-17T23:03:21Z",
+  "remote_main": "518a82e9ef790036fdbe0e7ba72810e2eb320a8a",
+  "local_origin_main": "518a82e9ef790036fdbe0e7ba72810e2eb320a8a",
+  "origin_main_tree": "5fb1f942413ae29b4388baeeab87367c74adaa8b",
+  "candidate_product_source_commit": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+  "source_tree_comparison": {
+    "crates/rvp9-core/src": {
+      "candidate_source_tree": "f9df1a4c9053e0fd0634094c751ba28bb971aa3d",
+      "origin_main_tree": "f9df1a4c9053e0fd0634094c751ba28bb971aa3d",
+      "equal": true
+    },
+    "crates/rvp9-io/src": {
+      "candidate_source_tree": "e6680dfd4eb69c1922485881be72009d59a5a316",
+      "origin_main_tree": "e6680dfd4eb69c1922485881be72009d59a5a316",
+      "equal": true
+    },
+    "crates/rvp9-decoder/src": {
+      "candidate_source_tree": "f7cd8fb27950974ce51c22cc77822d408c21f545",
+      "origin_main_tree": "f7cd8fb27950974ce51c22cc77822d408c21f545",
+      "equal": true
+    },
+    "crates/rvp9-encoder/src": {
+      "candidate_source_tree": "96840e76ebe67260be6bb3d528999354e6a331fc",
+      "origin_main_tree": "96840e76ebe67260be6bb3d528999354e6a331fc",
+      "equal": true
+    },
+    "crates/rvp9-cli/src": {
+      "candidate_source_tree": "480e78ebf4600d661e7200b093ab32506c4aacd6",
+      "origin_main_tree": "480e78ebf4600d661e7200b093ab32506c4aacd6",
+      "equal": true
+    },
+    "crates/rvp9-bench/src": {
+      "candidate_source_tree": "5ed2e9a67077d641eaf90c1e9a3f34d938385ba2",
+      "origin_main_tree": "5ed2e9a67077d641eaf90c1e9a3f34d938385ba2",
+      "equal": true
+    },
+    "crates/rvp9-harness/src": {
+      "candidate_source_tree": "63244a80a3fc5701103f39f63cb977c93a7e942c",
+      "origin_main_tree": "63244a80a3fc5701103f39f63cb977c93a7e942c",
+      "equal": true
+    },
+    "crates/rvp9-fuzz/fuzz_targets": {
+      "candidate_source_tree": "5a46d09bc43a55018e34cf94dd4760ff81d25664",
+      "origin_main_tree": "5a46d09bc43a55018e34cf94dd4760ff81d25664",
+      "equal": true
+    }
+  },
+  "all_product_source_directories_match": true,
+  "tracked_changes_since_product_source_under_crates_scripts_and_build_config": [
+    {
+      "status": "M",
+      "path": "crates/rvp9-bench/tests/soak_cli.rs"
+    },
+    {
+      "status": "M",
+      "path": "crates/rvp9-fuzz/README.md"
+    }
+  ],
+  "classification": "All eight workspace/fuzz code source trees, scripts, workspace manifests, lockfile and .cargo configuration match the candidate product source. The only changes under crates are the soak_cli test-fixture correction and the fuzz README documentation correction; no product source, script or build configuration change was found.",
+  "limits": [
+    "This is a source-provenance check only; it adds no test, performance, quality or safety result.",
+    "The full repository candidate revision remains origin/main; performance binaries retain their own recorded source and artifact identities."
+  ],
+  "raw_outputs": {
+    "candidate-diff.raw.txt": {
+      "bytes": 198,
+      "sha256": "d19b5bed08fe135998848d77768e67aa4fc727fc210cd16044dd31875cae96ba"
+    },
+    "origin-head.raw.txt": {
+      "bytes": 233,
+      "sha256": "dc074819e9e1d0caea688c5e88f682624550eb53cfac9afeb114c7c164ddba78"
+    },
+    "origin-ref.raw.txt": {
+      "bytes": 102,
+      "sha256": "109e8b7675cce67f500ebfe87cb8019f5a5512f34bdfe6072e256757a20f28f3"
+    }
+  }
+}
