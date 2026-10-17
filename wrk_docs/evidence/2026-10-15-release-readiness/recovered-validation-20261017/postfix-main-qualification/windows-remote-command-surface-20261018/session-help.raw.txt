@@ -1,0 +1,11 @@
+command=deltic session --help
+exit_status=0
+This box's side of `remote <HOST> session start`: `session repos list|add|remove`
+
+Usage: deltic session <COMMAND>
+
+Commands:
+  repos  This box's allowlist for `remote <HOST> session start`: which folders a remote caller may open, by key, and in which permission mode. It starts empty, so every request is refused until a repo is added. Never forwarded remotely
+
+Options:
+  -h, --help  Print help

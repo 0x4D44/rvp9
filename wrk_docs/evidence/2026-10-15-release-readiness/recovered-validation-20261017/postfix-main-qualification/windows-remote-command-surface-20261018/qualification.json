@@ -1,0 +1,59 @@
+{
+  "schema": 1,
+  "observed_at_utc": "2026-10-17T23:09:04Z",
+  "host_scope": "local Deltic CLI help plus a read-only fleet roster query; no remote session start or host configuration change was attempted.",
+  "remote_command_surface": "The Deltic remote CLI accepts only typed commands: scratch, quota, API status, and session start. It does not expose arbitrary remote command execution.",
+  "session_repo_surface": "The local deltic session interface manages this host allowlist; session repos are not forwarded through deltic remote.",
+  "active_rvp9_sessions": "none reported by the fleet roster at observation time.",
+  "results": {
+    "remote-help": {
+      "command": [
+        "deltic",
+        "remote",
+        "--help"
+      ],
+      "exit_status": 0,
+      "output_excerpt": "Run an allowlisted Deltic command on another fleet host over ssh: only typed commands (`scratch`, `quota`, `api status`, `session start`), re-serialised from parsed values\n\nUsage: deltic remote <HOST> <COMMAND>\n\nCommands:\n  scratch  `deltic scratch \u2026` on the remote host\n  quota    `deltic quota` on the remote host: its Claude Code and Codex subscription usage\n  api      `deltic api status` on the remote host: what its API keys and proxy know (only `status`; `api connect` is never forwarded)\n  se"
+    },
+    "session-help": {
+      "command": [
+        "deltic",
+        "session",
+        "--help"
+      ],
+      "exit_status": 0,
+      "output_excerpt": "This box's side of `remote <HOST> session start`: `session repos list|add|remove`\n\nUsage: deltic session <COMMAND>\n\nCommands:\n  repos  This box's allowlist for `remote <HOST> session start`: which folders a remote caller may open, by key, and in which permission mode. It starts empty, so every request is refused until a repo is added. Never forwarded remotely\n\nOptions:\n  -h, --help  Print help\n"
+    },
+    "roster": {
+      "command": [
+        "deltic",
+        "roster",
+        "--fleet",
+        "--find",
+        "rvp9"
+      ],
+      "exit_status": 0,
+      "output_excerpt": "no agent sessions\nNOMAD: unreachable (NOMAD: ssh: Could not resolve hostname nomad: nodename nor servname provided, or not known)\n"
+    }
+  },
+  "classification": "This confirms there is no documented one-shot remote test command in this CLI surface. It does not query NMI\u2019s allowlist or establish that NMI is unavailable; enabling rvp9 for remote session start requires host-side allowlist configuration.",
+  "limits": [
+    "No test command ran on Windows.",
+    "No remote allowlist was changed.",
+    "No Windows pass or code failure is claimed."
+  ],
+  "raw_outputs": {
+    "remote-help.raw.txt": {
+      "bytes": 826,
+      "sha256": "ea27750be3a22647986cabf00673ec3a044173587e7a8d46959908d0bd88ce79"
+    },
+    "roster.raw.txt": {
+      "bytes": 186,
+      "sha256": "9a201cea4bbd1845707382e3701719a60c33d163e8b37891de8e4a1727187a74"
+    },
+    "session-help.raw.txt": {
+      "bytes": 441,
+      "sha256": "d25c9da1e2bb0bcb82acd979738e6e15ae1b8fcbd1cb6564714652f34c22f4f2"
+    }
+  }
+}

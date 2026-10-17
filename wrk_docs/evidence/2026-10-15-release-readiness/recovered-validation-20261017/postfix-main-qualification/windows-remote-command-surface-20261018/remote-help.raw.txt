@@ -1,0 +1,17 @@
+command=deltic remote --help
+exit_status=0
+Run an allowlisted Deltic command on another fleet host over ssh: only typed commands (`scratch`, `quota`, `api status`, `session start`), re-serialised from parsed values
+
+Usage: deltic remote <HOST> <COMMAND>
+
+Commands:
+  scratch  `deltic scratch …` on the remote host
+  quota    `deltic quota` on the remote host: its Claude Code and Codex subscription usage
+  api      `deltic api status` on the remote host: what its API keys and proxy know (only `status`; `api connect` is never forwarded)
+  session  `deltic session start` on the remote host: its tray opens an agent session in its desktop session (only `start`; `session repos` is never forwarded)
+
+Arguments:
+  <HOST>  A fleet host from the `deltic hosts trust` block of `~/.ssh/config`
+
+Options:
+  -h, --help  Print help

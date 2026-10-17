@@ -1,0 +1,4 @@
+command=deltic roster --fleet --find rvp9
+exit_status=0
+no agent sessions
+NOMAD: unreachable (NOMAD: ssh: Could not resolve hostname nomad: nodename nor servname provided, or not known)
