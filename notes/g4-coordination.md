@@ -123,7 +123,9 @@ a grep-able sentinel comment of the form:
 
 (or `_mm_loadu_si128` / `_mm_loadl_epi64` for the SSE2 / SSSE3 tiers).
 The `scripts/check-simd-sentinels.{sh,ps1}` scripts enforce this for
-the G4.1 pilot. CI workflow integration is a separate G4 follow-up.
+the G4.1 pilot. The earlier CI workflow follow-up is superseded for release
+qualification: [PLAN.md Stage 5](../PLAN.md) requires local-first gates and
+prohibits hosted workflows. No workflow integration remains pending.
 
 ## Proptest oracle
 

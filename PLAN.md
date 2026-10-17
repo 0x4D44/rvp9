@@ -831,6 +831,8 @@ evidence and rejected hypotheses are recorded in
 2. 72-hour soak test: encode + decode varied content, monitor for leaks, crashes, perf drift.
 3. Local-first BD-rate and frame-latency regression gates, with retained evidence
    from the checked-in qualification scripts. Do not add hosted CI workflows.
+   This local-first release policy supersedes earlier HLD proposals and the G4
+   workflow follow-up in `notes/g4-coordination.md`.
 4. Manual review of every `unsafe` block, with safety-comment audit.
 5. Miri runs for all non-SIMD paths.
 6. Address-sanitizer runs for SIMD paths.
