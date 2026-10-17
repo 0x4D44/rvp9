@@ -12,8 +12,13 @@ livestreaming.
 
 > **Platform coverage:** Alpha.4 release qualification covers Windows x86-64.
 > Earlier releases were qualified on macOS Apple Silicon (AArch64); the full
-> macOS release matrix was not rerun for alpha.4. See
-> [`RELEASE_NOTES.md`](./RELEASE_NOTES.md) for the evidence and limits.
+> macOS release matrix was not rerun for alpha.4. The current final-release
+> candidate (`fb5c0c91`) has fresh native conformance and encoder/reverse
+> cross-decoder checks on both platforms, but remains on hold: production
+> quality, speed, latency, full-corpus and complete safety gates are open. See
+> [`RELEASE_NOTES.md`](./RELEASE_NOTES.md) for alpha.4 and the
+> [current readiness report](<wrk_docs/2026.10.15 - STATUS - final release readiness.md>)
+> for candidate evidence and limits.
 
 ## Alpha scope
 

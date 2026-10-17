@@ -1,8 +1,10 @@
 # rvp9-2: VP9 Encoder Port to Rust — Multistage Plan
 
-**Status:** Stage 5 release wrap in progress; VBR and temporal SVC are experimental in v0.2.0.
+**Status:** Stage 5 release wrap in progress. Candidate `fb5c0c91` remains on
+hold pending release gates. VBR and temporal SVC are experimental in v0.2.0.
+See the [current readiness report](<wrk_docs/2026.10.15 - STATUS - final release readiness.md>).
 **Owner:** Arthur (0x4D44) + Claude.
-**Last revised:** 2026-08-21.
+**Last revised:** 2026-10-17.
 
 ---
 
