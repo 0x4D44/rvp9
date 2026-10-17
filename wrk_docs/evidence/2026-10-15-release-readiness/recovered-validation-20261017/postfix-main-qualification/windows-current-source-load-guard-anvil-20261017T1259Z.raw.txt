@@ -1,0 +1,7 @@
+sample_count=12
+percent_samples=1.854784,5.375707,3.668627,0.822436,2.862057,2.586641,1.81333,4.382583,3.291896,1.546994,3.842032,7.673627
+mean_percent=3.310059
+busy_logical_cores=0.926817
+processor_count=28
+guard_limit_busy_logical_cores=0.75
+guard_pass=False

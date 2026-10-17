@@ -410,7 +410,7 @@
     "All four canonical Mac corpus clips and the exact-source 28-row PGO plan are verified through the script training-dir override; PGO training remains unrun because the contemporaneous Mac load precheck exceeded the 0.75 host ceiling."
   ],
   "stored_log_note": "Hashes cover the committed text files. Six Cargo test outputs had one trailing blank separator removed for git diff --check; no output content lines changed.",
-  "additional_checks_recorded_at_utc": "2026-10-17T12:54:24Z",
+  "additional_checks_recorded_at_utc": "2026-10-17T12:59:08Z",
   "selftest_raw_originals_archive": "mac-current-source-selftests-originals-20261017.tar.gz",
   "selftest_raw_integrity_manifest": "mac-current-source-selftest-raw-integrity.json",
   "selftest_normalization_note": "The exact original self-test captures are retained in the named archive. Linked text review copies remove trailing spaces/tabs at line ends only; assertion output content is unchanged.",
@@ -1019,5 +1019,17 @@
     },
     "canonical_guard": false,
     "no_pgo_or_timing_started": true
+  },
+  "windows_current_source_latest_load_guard": {
+    "record": "windows-current-source-load-precheck-anvil-20261017T125908Z.json",
+    "recorded_at_utc": "2026-10-17T12:59:08Z",
+    "source_commit": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+    "host": "ANVIL, native Windows x86-64",
+    "busy_logical_cores": 0.926817,
+    "guard_limit_busy_logical_cores": 0.75,
+    "guard_pass": false,
+    "timing_started": false,
+    "pgo_binary_sha256": "3e1e9e29408627a6ca43f29ce67d264b0d143da2039c45b54fb28fde61bf91db",
+    "manifest_sha256": "1bfc96e67a16454cc73a0109446fbb6ca285621644f4448e14de7a349af0b99d"
   }
 }
