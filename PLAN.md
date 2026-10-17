@@ -535,7 +535,7 @@ decoder) is unblocked.
 
 **Status (2026-05-19):** Correctness gate ACHIEVED. Three secondary gates (SIMD audit, throughput bench, unsafe-comment audit) remain. Stage 4a work proceeds in parallel; secondary gates revisited before formal Stage 3 sign-off.
 
-**Current disposition (2026-10-17):** The secondary criteria remain open for formal Stage 3 sign-off. The later Q.1.A ledger is historical and informational, and its recorded head-to-head rows include results above 2×; it does not establish a pass for the current candidate or settle whether this is a final-release gate. The full SIMD differential inventory and shared-infrastructure safety-comment audit are also not complete. See the final release-readiness report for the evidence and required acceptance checks.
+**Current disposition (2026-10-17):** The secondary criteria remain open for formal Stage 3 sign-off. The later Q.1.A ledger is historical and informational, and its recorded head-to-head rows include results above 2×; it does not establish a pass for the current candidate or settle whether this is a final-release gate. The exact-candidate shared core/decoder/I/O unsafe review has now inventoried 49 sites and recorded contract findings in FLU-51 and FLU-52; the criterion remains open pending fixes and independent verification. This bounded review does not cover all encoder and SIMD unsafe sites. The full SIMD differential remains incomplete. See the final release-readiness report and unsafe inventory for evidence and required acceptance checks.
 
 **Estimated effort:** 6–10 weeks.
 
