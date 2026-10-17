@@ -1,0 +1,20 @@
+source=fb5c0c917038db6c640b3dbc7c2b84b567233333
+source_tree_tracked_status=clean
+
+--- rustc ---
+rustc 1.98.0-nightly (bd08c9e71 2026-06-25)
+binary: rustc
+commit-hash: bd08c9e71874a81670fe3938dbf85148e42c2b96
+commit-date: 2026-06-25
+host: aarch64-apple-darwin
+release: 1.98.0-nightly
+LLVM version: 22.1.7
+
+--- cargo ---
+cargo 1.98.0-nightly (a595d0da2 2026-06-20)
+
+--- miri ---
+miri 0.1.0 (bd08c9e718 2026-06-25)
+
+--- host ---
+Darwin flux.home.arpa 25.6.0 Darwin Kernel Version 25.6.0: Fri Jul 31 19:19:08 PDT 2026; root:xnu-12377.161.14~5/RELEASE_ARM64_T6050 arm64

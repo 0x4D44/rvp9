@@ -1,0 +1,3 @@
+#!/bin/sh
+set -eu
+nice -n 15 deltic timeout 900 env CARGO_TARGET_DIR=<registered-scratch>/target CARGO_BUILD_JOBS=1 cargo +nightly miri test --locked --offline --package rvp9-core --lib frame:: -- --skip alloc_aligned_widths_round_to_8 --test-threads=1 </dev/null

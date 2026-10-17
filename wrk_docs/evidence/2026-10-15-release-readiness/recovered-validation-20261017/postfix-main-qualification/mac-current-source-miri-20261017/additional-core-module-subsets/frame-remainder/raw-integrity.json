@@ -1,0 +1,69 @@
+{
+  "algorithm": "SHA-256",
+  "files": [
+    {
+      "path": "command.txt",
+      "size_bytes": 246,
+      "sha256": "9d647f30a9efbfbf50228fb83f9859f190b89c89f17ca1381dc2db25f6ff481e"
+    },
+    {
+      "path": "context.raw.txt",
+      "size_bytes": 565,
+      "sha256": "0850616302249ce4c158a42b508b7c9dda675512e59f62f6fd02e88e176d0ff7"
+    },
+    {
+      "path": "context.raw.txt.gz",
+      "size_bytes": 374,
+      "sha256": "52a3fa04b5a88e94963c22a44520cef9cd284f9f81fe46a82acd454a997cd7c5"
+    },
+    {
+      "path": "context.review.txt",
+      "size_bytes": 564,
+      "sha256": "a6a332dd98c9dc8bbac66d9c36cbda111e1ab706783ca69d4ca6093ae6a65109"
+    },
+    {
+      "path": "exit-observation.txt",
+      "size_bytes": 23,
+      "sha256": "70ac03799db147c77d81decb6480f27c3670cee552f6421f62f576826eae43fb"
+    },
+    {
+      "path": "frame-except-large-allocation.raw.txt",
+      "size_bytes": 16860,
+      "sha256": "0725a81c05c3b4d2e3233f2aab1b6d074e233e157ef4ad675cca8ff1640ef617"
+    },
+    {
+      "path": "frame-except-large-allocation.raw.txt.gz",
+      "size_bytes": 3133,
+      "sha256": "df4d0554666ab367d958ddd82af159fffc9803911a25bb0a1d2191124f13e1dc"
+    },
+    {
+      "path": "frame-except-large-allocation.review.txt",
+      "size_bytes": 16859,
+      "sha256": "ae911f898211da3e8b027c2460b808503ae0375ce6dffc60a699ae0658dc49f1"
+    },
+    {
+      "path": "qualification.json",
+      "size_bytes": 1759,
+      "sha256": "f05a17458a0ca1e81232077136c9af5748bd366d8de85f4dafc3680acac65c99"
+    },
+    {
+      "path": "run.driver.raw.sh",
+      "size_bytes": 264,
+      "sha256": "95acdd7c15bce4639b5811c25a1e817ebda9fd98a0d54b6d631da5bf1796c862"
+    }
+  ],
+  "review_normalization": {
+    "frame-except-large-allocation.raw.txt": {
+      "review_copy": "frame-except-large-allocation.review.txt",
+      "transformation": "removed exactly one final LF",
+      "raw_sha256": "0725a81c05c3b4d2e3233f2aab1b6d074e233e157ef4ad675cca8ff1640ef617",
+      "review_sha256": "ae911f898211da3e8b027c2460b808503ae0375ce6dffc60a699ae0658dc49f1"
+    },
+    "context.raw.txt": {
+      "review_copy": "context.review.txt",
+      "transformation": "removed exactly one final LF",
+      "raw_sha256": "0850616302249ce4c158a42b508b7c9dda675512e59f62f6fd02e88e176d0ff7",
+      "review_sha256": "a6a332dd98c9dc8bbac66d9c36cbda111e1ab706783ca69d4ca6093ae6a65109"
+    }
+  }
+}

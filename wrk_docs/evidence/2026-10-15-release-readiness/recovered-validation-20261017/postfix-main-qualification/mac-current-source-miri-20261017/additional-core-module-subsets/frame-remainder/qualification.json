@@ -1,0 +1,32 @@
+{
+  "recorded_at_utc": "2026-10-17T17:28:55+00:00",
+  "source_revision": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+  "source_tree_tracked_status": "clean",
+  "toolchain": {
+    "rustc": "1.98.0-nightly (bd08c9e71 2026-06-25)",
+    "cargo": "1.98.0-nightly (a595d0da2 2026-06-20)",
+    "miri": "0.1.0 (bd08c9e718 2026-06-25)",
+    "host": "aarch64-apple-darwin",
+    "machine": "flux.home.arpa",
+    "os": "Darwin 25.6.0"
+  },
+  "command": "nice -n 15 deltic timeout 900 env CARGO_TARGET_DIR=<registered-scratch>/target CARGO_BUILD_JOBS=1 cargo +nightly miri test --locked --offline --package rvp9-core --lib frame:: -- --skip alloc_aligned_widths_round_to_8 --test-threads=1 </dev/null",
+  "test_filter_semantics": "The libtest filter is a substring; the 82 selected test cases include names under bitstream::frame and bitstream::superframe as well as frame::.",
+  "skip_filter": "alloc_aligned_widths_round_to_8",
+  "observed_running_test_cases": 82,
+  "passed_before_timeout": 40,
+  "failed_before_timeout": 0,
+  "ignored_before_timeout": 0,
+  "timeout_test": "frame::tests::extend_borders_awkward_stride",
+  "timeout_seconds": 900,
+  "exit_code": 124,
+  "status": "timed_out_partial",
+  "limits": [
+    "This filtered run omits only alloc_aligned_widths_round_to_8, which timed out in the unfiltered attempt; it then timed out in a second 1923x1077 border-fill test.",
+    "The frame:: substring filter is not identical to a module-prefix filter and includes bitstream::frame and bitstream::superframe tests.",
+    "No full frame-filter pass is claimed; Miri uses scalar fallbacks and does not execute native NEON."
+  ],
+  "raw": "frame-except-large-allocation.raw.txt",
+  "context": "context.raw.txt",
+  "raw_integrity_manifest": "raw-integrity.json"
+}
