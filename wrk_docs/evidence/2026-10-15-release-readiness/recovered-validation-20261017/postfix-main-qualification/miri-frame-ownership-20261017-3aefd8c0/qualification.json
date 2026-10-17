@@ -1,0 +1,55 @@
+{
+  "candidate_revision": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+  "source_worktree": "/Users/md/worktrees/rvp9/20261017-TSK-HUM-requalify-post-fix-candidate",
+  "host_toolchain_file": "host-toolchain.raw.txt",
+  "host_toolchain_bytes": 425,
+  "host_toolchain_sha256": "61aef97dcf0446ecdc0cdca23b8dff71574f2e5c776d71ee37dc43f542a0d9c2",
+  "checks": [
+    {
+      "name": "frame pool",
+      "command": "cargo +nightly miri test --locked --offline -p rvp9-core --lib 'frame::tests::pool_' -- --test-threads=1",
+      "exit_status": 0,
+      "summary": "ok. 13 passed; 0 failed; 0 ignored; 0 measured; 1640 filtered out; finished in 89.47s",
+      "output_file": "pool.raw.txt",
+      "output_bytes": 14709,
+      "output_sha256": "1f4d353813fb55f29bfe367fe639f12a94f7c8d387f0a588a286c1a9bd0f1af4",
+      "exit_file": "pool.exit.txt",
+      "exit_bytes": 2,
+      "exit_sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+      "archive_bytes": 2646,
+      "archive_sha256": "ca97e5747c5ea9d69e9d16fdf9a66a1711ae186479ec23a79c038e5cd3f11c93",
+      "archive_file": "pool.raw.txt.gz"
+    },
+    {
+      "name": "scratch pool",
+      "command": "cargo +nightly miri test --locked --offline -p rvp9-core --lib 'frame::tests::scratch_pool_' -- --test-threads=1",
+      "exit_status": 0,
+      "summary": "ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1645 filtered out; finished in 154.13s",
+      "output_file": "scratch-pool.raw.txt",
+      "output_bytes": 13436,
+      "output_sha256": "087dbda54c7cafef68519385445aacad5939ff20f61081aff0f420b61c482b58",
+      "exit_file": "scratch-pool.exit.txt",
+      "exit_bytes": 2,
+      "exit_sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+      "archive_bytes": 2216,
+      "archive_sha256": "b7af0444ad432e5f8d5a9001ca07fbaaaf368c67969fac7e5833d48949843552",
+      "archive_file": "scratch-pool.raw.txt.gz"
+    },
+    {
+      "name": "tile merge",
+      "command": "cargo +nightly miri test --locked --offline -p rvp9-core --lib 'frame::tests::merge_tile' -- --test-threads=1",
+      "exit_status": 0,
+      "summary": "ok. 5 passed; 0 failed; 0 ignored; 0 measured; 1648 filtered out; finished in 88.48s",
+      "output_file": "merge-tile.raw.txt",
+      "output_bytes": 13258,
+      "output_sha256": "65773433fee36374e37a34c8be217df4c66ef70d4fde81f8caaeb4982d45be20",
+      "exit_file": "merge-tile.exit.txt",
+      "exit_bytes": 2,
+      "exit_sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+      "archive_bytes": 2166,
+      "archive_sha256": "98ff9335e4f290bef73b74d5b33f566fb97abe872401d30b2585fb834fcad333",
+      "archive_file": "merge-tile.raw.txt.gz"
+    }
+  ],
+  "scope": "Targeted Miri coverage for frame-pool ownership/recycling, scratch-pool growth/cache behavior, and tile merge boundaries. This does not constitute full-frame/core Miri or dependent-library Miri coverage."
+}
