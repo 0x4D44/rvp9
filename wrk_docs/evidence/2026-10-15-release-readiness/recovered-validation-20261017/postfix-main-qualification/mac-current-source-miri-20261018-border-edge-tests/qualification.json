@@ -1,0 +1,141 @@
+{
+  "schema": "rvp9.mac-current-source-miri-frame-border-focused.v1",
+  "recorded_at_utc": "2026-10-17T23:53:33Z",
+  "candidate": {
+    "product_source_commit": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+    "task_head": "eee597ff0eb7bab638e484f9e0c0a59f34403411",
+    "task_branch": "task/20261018-VER-HUM-verify-frame-border-idempotence-under-mi",
+    "task_worktree": "/Users/md/worktrees/rvp9/20261018-VER-HUM-verify-frame-border-idempotence-under-mi",
+    "rvp9_core_tree_matches_product_source": true,
+    "frame_rs_git_blob": "e84ef804caaf47bfabc988f259859bc622fd59bf",
+    "cargo_lock_git_blob": "eef9129866d45300de9a7dc8784fca68bae4f226",
+    "tracked_worktree_clean_before_tests": true
+  },
+  "host": {
+    "os": "Darwin 25.6.0",
+    "machine": "Mac17,6 (Apple M5 Max)",
+    "host_triple": "aarch64-apple-darwin"
+  },
+  "toolchain": {
+    "rustc": "1.98.0-nightly (bd08c9e71 2026-06-25)",
+    "rustc_commit": "bd08c9e71874a81670fe3938dbf85148e42c2b96",
+    "cargo": "1.98.0-nightly (a595d0da2 2026-06-20)",
+    "miri": "0.1.0 (bd08c9e718 2026-06-25)"
+  },
+  "scratch": {
+    "registered_scratch_id": "miri-frame-idem-17930e53",
+    "path": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/miri-frame-idem-17930e53",
+    "target_dir": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/miri-frame-idem-17930e53/target"
+  },
+  "filters": [
+    {
+      "filter": "frame::tests::extend_borders_constant_fill",
+      "selected": 1,
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "exit_status": 0,
+      "elapsed_seconds": 3.72,
+      "exit_record": {
+        "path": "constant-fill.exit.txt",
+        "bytes": 2,
+        "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+      },
+      "raw_original": {
+        "bytes": 13645,
+        "sha256": "f812d98ba1f4666db70ea071de2ec1abcfe18d38a1ed62c7098ca593fa75bb78"
+      },
+      "raw_archive": {
+        "path": "constant-fill.raw.txt.gz",
+        "compression": "gzip",
+        "bytes": 2328,
+        "sha256": "746b1385a9c2217ed651e6f00fb642e43a948a6f1ba005cecbc556656511cae2"
+      }
+    },
+    {
+      "filter": "frame::tests::extend_borders_corner_pixel",
+      "selected": 1,
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "exit_status": 0,
+      "elapsed_seconds": 2.72,
+      "exit_record": {
+        "path": "corner-pixel.exit.txt",
+        "bytes": 2,
+        "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+      },
+      "raw_original": {
+        "bytes": 13644,
+        "sha256": "6c73ba23c7ba38c69682056573a07b1c83ffadf7bdd46669c7b208415ca1c2d0"
+      },
+      "raw_archive": {
+        "path": "corner-pixel.raw.txt.gz",
+        "compression": "gzip",
+        "bytes": 2328,
+        "sha256": "275ac3c7995b2d20490b1006352dbb07a80b24662d283dc916325980494fb786"
+      }
+    },
+    {
+      "filter": "frame::tests::extend_borders_edge_row_and_col",
+      "selected": 1,
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "exit_status": 0,
+      "elapsed_seconds": 2.11,
+      "exit_record": {
+        "path": "edge-row-col.exit.txt",
+        "bytes": 2,
+        "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+      },
+      "raw_original": {
+        "bytes": 13648,
+        "sha256": "7b4913735981e21f40d4131f299049e834e3461696ca5ecac525473190c8f3b4"
+      },
+      "raw_archive": {
+        "path": "edge-row-col.raw.txt.gz",
+        "compression": "gzip",
+        "bytes": 2330,
+        "sha256": "2ace41afe3dc0b5f7af15f8908da064929127030d9250441fb97f5a84cebc593"
+      }
+    },
+    {
+      "filter": "frame::tests::extend_borders_planes_independent",
+      "selected": 1,
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "exit_status": 0,
+      "elapsed_seconds": 2.12,
+      "exit_record": {
+        "path": "planes-independent.exit.txt",
+        "bytes": 2,
+        "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+      },
+      "raw_original": {
+        "bytes": 13650,
+        "sha256": "ae96e451f44e0ad16b2fc424f76c03a90355b68ea33362e19cb74da5735c88e3"
+      },
+      "raw_archive": {
+        "path": "planes-independent.raw.txt.gz",
+        "compression": "gzip",
+        "bytes": 2332,
+        "sha256": "cc82698653c97c60f0f4489294ad8a56f5d7e5f0bd6c15415c4e2f612fdfde18"
+      }
+    }
+  ],
+  "totals": {
+    "new_unique_tests_passed": 4,
+    "new_tests_failed": 0,
+    "new_tests_ignored": 0,
+    "previous_completed_selected_passes": 747,
+    "combined_completed_selected_passes": 751,
+    "existing_ignores": 4
+  },
+  "limits": [
+    "These four focused tests extend selected frame-border coverage only; the broad frame sweep still times out on extend_borders_awkward_stride.",
+    "Miri exercises scalar paths and does not execute native NEON.",
+    "This is not full frame/core, dependent-library, sanitizer, fuzz, or release safety qualification."
+  ]
+}

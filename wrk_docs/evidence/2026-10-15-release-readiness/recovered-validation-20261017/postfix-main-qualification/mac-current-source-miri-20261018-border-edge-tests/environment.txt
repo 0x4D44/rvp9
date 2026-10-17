@@ -1,0 +1,10 @@
+rustc=rustc 1.98.0-nightly (bd08c9e71 2026-06-25)
+rustc_commit=bd08c9e71874a81670fe3938dbf85148e42c2b96
+cargo=cargo 1.98.0-nightly (a595d0da2 2026-06-20)
+miri=0.1.0 (bd08c9e718 2026-06-25)
+host=aarch64-apple-darwin
+os=Darwin 25.6.0
+machine=Mac17,6 (Apple M5 Max)
+kernel=Darwin flux.home.arpa 25.6.0; arm64
+CARGO_BUILD_JOBS=1
+CARGO_NET=offline
