@@ -1,0 +1,38 @@
+{
+  "recorded_at_utc": "2026-10-17T21:43:45Z",
+  "candidate_revision": "fcc837f50219ddfc00eb7fc349c4626ea5b00fc1",
+  "candidate_product_source": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+  "host": {
+    "os": "Darwin 25.6.0",
+    "architecture": "arm64",
+    "rustc": "rustc 1.95.0 (59807616e 2026-04-14)",
+    "cargo": "cargo 1.95.0 (f2d3ce0bd 2026-03-21)"
+  },
+  "workspace_run": {
+    "command": "nice -n 19 deltic timeout 7200 cargo test --workspace --release --locked --offline --no-fail-fast -- --test-threads=1",
+    "stdin": "closed",
+    "exit_status": 0,
+    "totals": {
+      "result_summaries": 124,
+      "passed": 3579,
+      "failed": 0,
+      "ignored": 64,
+      "measured": 0,
+      "filtered_out": 0
+    },
+    "checks_of_prior_failures": {
+      "rvp9-bench/tests/soak_cli.rs::requested_cross_decode_requires_existing_vpxdec": "passed after the test fixture changed --frames-per-iter from 0 to 1; the missing-vpxdec preflight ran before any encode",
+      "rvp9-harness::loud_child_stderr_is_file_backed_and_read_with_a_byte_limit": "passed in the complete rerun; the earlier one-time failure was not reproduced"
+    }
+  },
+  "limits": [
+    "This is the default Rust workspace test suite; 64 existing tests were ignored.",
+    "This Mac result does not qualify the Windows workspace suite, production quality/performance/latency, or the separate native/scalar conformance gates."
+  ],
+  "raw": {
+    "file": "workspace-no-fail-fast.raw.txt.gz",
+    "bytes": 55246,
+    "sha256": "244ff99bbabeeee7c0b1225264f9f3307bc8dd2181c0b61ffc64e3ea9828395d",
+    "uncompressed_sha256": "4f9706fd7a667aaab7994a3f269e4a2d716cee066174b974cebff866bce0bda0"
+  }
+}
