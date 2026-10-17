@@ -50,6 +50,28 @@
     ],
     "test_count": 4
   },
+  "source_cfg_audit": {
+    "source_commit": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+    "finding": "All six missing helper definitions are gated by cfg(any(not(target_arch = \"aarch64\"), test)), while their dispatcher call blocks are gated by cfg(any(not(target_arch = \"aarch64\"), miri)). On an AArch64 dependent-library Miri build, test is absent and miri is present, so the call blocks are included while these definitions are excluded. This exact-source condition matches the compile failure described by FLU-00037; it is source correlation, not runtime evidence.",
+    "files": {
+      "crates/rvp9-core/src/transforms/forward.rs": {
+        "git_blob": "b8096f6133b5d2c72a8bbb4272909adc05bce9bc",
+        "helpers": [
+          { "name": "fdct4x4_scalar", "definition_line": 145, "dispatcher_call_line": 222 },
+          { "name": "fht4x4_scalar", "definition_line": 234, "dispatcher_call_line": 305 },
+          { "name": "fht8x8_scalar", "definition_line": 599, "dispatcher_call_line": 664 },
+          { "name": "fht16x16_scalar", "definition_line": 1131, "dispatcher_call_line": 1197 },
+          { "name": "fdct32x32_scalar", "definition_line": 1503, "dispatcher_call_line": 1554 }
+        ]
+      },
+      "crates/rvp9-core/src/transforms/inverse.rs": {
+        "git_blob": "1811ff1ba4cc696787252efe32dfad36d6720458",
+        "helpers": [
+          { "name": "idct16x16_add_scalar", "definition_line": 569, "dispatcher_call_lines": [611, 637, 661] }
+        ]
+      }
+    }
+  },
   "raw_log": {
     "path": "run-confirmed.raw.txt",
     "bytes": 6203,
