@@ -1,0 +1,327 @@
+    Finished `test` profile [optimized + debuginfo] target(s) in 0.03s
+     Running unittests src/lib.rs (/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-miri-frame-extra-safety-2f9daead/target/miri/aarch64-apple-darwin/debug/deps/rvp9_core-661fdbeb4d5c532d)
+warning: unused imports: `int_pro_64x64_fused_neon`, `vpx_int_pro_col_neon`, `vpx_int_pro_row_clamped_neon`, `vpx_int_pro_row_neon`, and `vpx_vector_var_neon`
+  --> crates/rvp9-core/src/dsp/aarch64/mod.rs:30:5
+   |
+30 |     int_pro_64x64_fused_neon, vpx_int_pro_col_neon, vpx_int_pro_row_clamped_neon,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+31 |     vpx_int_pro_row_neon, vpx_vector_var_neon,
+   |     ^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `minmax_neon::minmax_8x8_neon`
+  --> crates/rvp9-core/src/dsp/aarch64/mod.rs:40:9
+   |
+40 | pub use minmax_neon::minmax_8x8_neon;
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `vp9_quantize_b_32x32_neon`, `vp9_quantize_b_neon`, `vp9_quantize_fp_32x32_i16_metrics_neon`, `vp9_quantize_fp_32x32_i16_rate_metrics_neon`, `vp9_quantize_fp_32x32_neon`, `vp9_quantize_fp_i16_metrics_neon`, `vp9_quantize_fp_i16_rate_metrics_neon`, and `vp9_quantize_fp_neon`
+  --> crates/rvp9-core/src/dsp/aarch64/mod.rs:42:5
+   |
+42 |     vp9_quantize_b_32x32_neon, vp9_quantize_b_neon, vp9_quantize_fp_32x32_i16_metrics_neon,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+43 |     vp9_quantize_fp_32x32_i16_rate_metrics_neon, vp9_quantize_fp_32x32_neon,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^^^^^
+44 |     vp9_quantize_fp_all_zero_neon, vp9_quantize_fp_i16_metrics_neon,
+   |                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+45 |     vp9_quantize_fp_i16_rate_metrics_neon, vp9_quantize_fp_neon,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `vbp_neon::avg_diff_8x8_grid_64x64_neon`
+  --> crates/rvp9-core/src/dsp/aarch64/mod.rs:85:9
+   |
+85 | pub use vbp_neon::avg_diff_8x8_grid_64x64_neon;
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `int_pro_64x64_fused_neon_inner` is never used
+  --> crates/rvp9-core/src/dsp/aarch64/int_pro_neon.rs:10:11
+   |
+10 | unsafe fn int_pro_64x64_fused_neon_inner(
+   |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `int_pro_64x64_fused_neon` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/int_pro_neon.rs:148:8
+    |
+148 | pub fn int_pro_64x64_fused_neon(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `vpx_int_pro_row_neon_inner` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/int_pro_neon.rs:189:11
+    |
+189 | unsafe fn vpx_int_pro_row_neon_inner(
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `vpx_int_pro_row_neon` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/int_pro_neon.rs:222:8
+    |
+222 | pub fn vpx_int_pro_row_neon(
+    |        ^^^^^^^^^^^^^^^^^^^^
+
+warning: function `vpx_int_pro_row_clamped_neon_inner` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/int_pro_neon.rs:247:11
+    |
+247 | unsafe fn vpx_int_pro_row_clamped_neon_inner(
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `vpx_int_pro_row_clamped_neon` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/int_pro_neon.rs:280:8
+    |
+280 | pub fn vpx_int_pro_row_clamped_neon(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `vpx_int_pro_col_neon_inner` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/int_pro_neon.rs:308:11
+    |
+308 | unsafe fn vpx_int_pro_col_neon_inner(reference: *const u8, width: usize) -> i32 {
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `vpx_int_pro_col_neon` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/int_pro_neon.rs:319:8
+    |
+319 | pub fn vpx_int_pro_col_neon(reference: &[u8], width: usize) -> i32 {
+    |        ^^^^^^^^^^^^^^^^^^^^
+
+warning: function `vpx_vector_var_neon_inner` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/int_pro_neon.rs:329:11
+    |
+329 | unsafe fn vpx_vector_var_neon_inner(
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `vpx_vector_var_neon` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/int_pro_neon.rs:356:8
+    |
+356 | pub fn vpx_vector_var_neon(reference: &[i16], source: &[i16], bwl: u32) -> i32 {
+    |        ^^^^^^^^^^^^^^^^^^^
+
+warning: function `minmax_8x8_neon_inner` is never used
+ --> crates/rvp9-core/src/dsp/aarch64/minmax_neon.rs:9:11
+  |
+9 | unsafe fn minmax_8x8_neon_inner(
+  |           ^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `minmax_8x8_neon` is never used
+  --> crates/rvp9-core/src/dsp/aarch64/minmax_neon.rs:56:8
+   |
+56 | pub fn minmax_8x8_neon(
+   |        ^^^^^^^^^^^^^^^
+
+warning: struct `HadamardQuantMetrics` is never constructed
+  --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:12:12
+   |
+12 | pub struct HadamardQuantMetrics {
+   |            ^^^^^^^^^^^^^^^^^^^^
+
+warning: struct `HadamardQuantRateMetrics` is never constructed
+  --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:23:12
+   |
+23 | pub struct HadamardQuantRateMetrics {
+   |            ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: struct `HadamardMetricAccumulator` is never constructed
+  --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:30:8
+   |
+30 | struct HadamardMetricAccumulator {
+   |        ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: struct `HadamardRateAccumulator` is never constructed
+  --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:38:8
+   |
+38 | struct HadamardRateAccumulator {
+   |        ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: associated items `new`, `add_abs`, and `finish` are never used
+  --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:45:15
+   |
+42 | impl HadamardRateAccumulator {
+   | ---------------------------- associated items in this implementation
+...
+45 |     unsafe fn new() -> Self {
+   |               ^^^
+...
+53 |     unsafe fn add_abs(&mut self, abs_q: int16x8_t) {
+   |               ^^^^^^^
+...
+60 |     unsafe fn finish(self) -> HadamardQuantRateMetrics {
+   |               ^^^^^^
+
+warning: associated items `new`, `add`, and `finish` are never used
+   --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:72:15
+    |
+ 69 | impl HadamardMetricAccumulator {
+    | ------------------------------ associated items in this implementation
+...
+ 72 |     unsafe fn new() -> Self {
+    |               ^^^
+...
+ 84 |     unsafe fn add(
+    |               ^^^
+...
+103 |     unsafe fn finish(self) -> HadamardQuantMetrics {
+    |               ^^^^^^
+
+warning: function `quantize_8` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:119:11
+    |
+119 | unsafe fn quantize_8(
+    |           ^^^^^^^^^^
+
+warning: function `vp9_quantize_fp_neon_inner` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:222:11
+    |
+222 | unsafe fn vp9_quantize_fp_neon_inner(
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `vp9_quantize_fp_neon` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:286:8
+    |
+286 | pub fn vp9_quantize_fp_neon(
+    |        ^^^^^^^^^^^^^^^^^^^^
+
+warning: function `quantize_i16_8` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:330:11
+    |
+330 | unsafe fn quantize_i16_8(
+    |           ^^^^^^^^^^^^^^
+
+warning: function `quantize_i16_8_rate` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:357:11
+    |
+357 | unsafe fn quantize_i16_8_rate(
+    |           ^^^^^^^^^^^^^^^^^^^
+
+warning: function `vp9_quantize_fp_i16_metrics_neon_inner` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:371:11
+    |
+371 | unsafe fn vp9_quantize_fp_i16_metrics_neon_inner(
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `vp9_quantize_fp_i16_rate_metrics_neon_inner` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:418:11
+    |
+418 | unsafe fn vp9_quantize_fp_i16_rate_metrics_neon_inner(
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `vp9_quantize_fp_i16_metrics_neon` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:450:8
+    |
+450 | pub fn vp9_quantize_fp_i16_metrics_neon(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `vp9_quantize_fp_i16_rate_metrics_neon` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:469:8
+    |
+469 | pub fn vp9_quantize_fp_i16_rate_metrics_neon(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `quantize_fp_32x32_8` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:487:11
+    |
+487 | unsafe fn quantize_fp_32x32_8(
+    |           ^^^^^^^^^^^^^^^^^^^
+
+warning: function `vp9_quantize_fp_32x32_neon_inner` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:527:11
+    |
+527 | unsafe fn vp9_quantize_fp_32x32_neon_inner(
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `vp9_quantize_fp_32x32_neon` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:588:8
+    |
+588 | pub fn vp9_quantize_fp_32x32_neon(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `quantize_fp_32x32_i16_8` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:629:11
+    |
+629 | unsafe fn quantize_fp_32x32_i16_8(
+    |           ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `quantize_fp_32x32_i16_8_rate` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:670:11
+    |
+670 | unsafe fn quantize_fp_32x32_i16_8_rate(
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `vp9_quantize_fp_32x32_i16_metrics_neon_inner` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:687:11
+    |
+687 | unsafe fn vp9_quantize_fp_32x32_i16_metrics_neon_inner(
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `vp9_quantize_fp_32x32_i16_rate_metrics_neon_inner` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:739:11
+    |
+739 | unsafe fn vp9_quantize_fp_32x32_i16_rate_metrics_neon_inner(
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `vp9_quantize_fp_32x32_i16_metrics_neon` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:775:8
+    |
+775 | pub fn vp9_quantize_fp_32x32_i16_metrics_neon(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `vp9_quantize_fp_32x32_i16_rate_metrics_neon` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:790:8
+    |
+790 | pub fn vp9_quantize_fp_32x32_i16_rate_metrics_neon(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `quantize_b_8` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:810:11
+    |
+810 | unsafe fn quantize_b_8(
+    |           ^^^^^^^^^^^^
+
+warning: function `vp9_quantize_b_neon_inner` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:870:11
+    |
+870 | unsafe fn vp9_quantize_b_neon_inner(
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `vp9_quantize_b_neon` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:950:8
+    |
+950 | pub fn vp9_quantize_b_neon(
+    |        ^^^^^^^^^^^^^^^^^^^
+
+warning: function `quantize_b_32x32_8` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:997:11
+    |
+997 | unsafe fn quantize_b_32x32_8(
+    |           ^^^^^^^^^^^^^^^^^^
+
+warning: function `vp9_quantize_b_32x32_neon_inner` is never used
+    --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:1061:11
+     |
+1061 | unsafe fn vp9_quantize_b_32x32_neon_inner(
+     |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `vp9_quantize_b_32x32_neon` is never used
+    --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:1138:8
+     |
+1138 | pub fn vp9_quantize_b_32x32_neon(
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `avg_diff_8x8_grid_64x64_neon_inner` is never used
+ --> crates/rvp9-core/src/dsp/aarch64/vbp_neon.rs:6:11
+  |
+6 | unsafe fn avg_diff_8x8_grid_64x64_neon_inner(
+  |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `avg_diff_8x8_grid_64x64_neon` is never used
+  --> crates/rvp9-core/src/dsp/aarch64/vbp_neon.rs:55:8
+   |
+55 | pub fn avg_diff_8x8_grid_64x64_neon(
+   |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: Miri does not support optimizations: the opt-level is ignored. The only effect of selecting a Cargo profile that enables optimizations (such as --release) is to apply its remaining settings, such as whether debug assertions and overflow checks are enabled.
+
+
+running 1 test
+test frame::tests::extend_frame_borders_alias_matches_method ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1652 filtered out; finished in 32.89s

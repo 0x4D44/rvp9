@@ -1,0 +1,44 @@
+Exact-candidate Miri frame-extra-safety context captured after all eight filters completed.
+Candidate worktree: /Users/md/worktrees/rvp9/20261017-TSK-HUM-requalify-post-fix-candidate
+Registered scratch: /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-miri-frame-extra-safety-2f9daead
+
+$ date -u +%Y-%m-%dT%H:%M:%SZ
+2026-10-17T18:05:05Z
+[exit 0]
+
+$ git rev-parse --show-toplevel
+/Users/md/worktrees/rvp9/20261017-TSK-HUM-requalify-post-fix-candidate
+[exit 0]
+
+$ git rev-parse HEAD
+fb5c0c917038db6c640b3dbc7c2b84b567233333
+[exit 0]
+
+$ git status --short
+
+[exit 0]
+
+$ shasum -a 256 crates/rvp9-core/src/frame.rs Cargo.lock
+ac8fefc63bf8dbd88afff0f1405a0340fd522432f4e0608600fe1658038277ff  crates/rvp9-core/src/frame.rs
+98cf11da6f3e9a391bb1dac338e4da7e0aa1ca7fc04f6f0cd8e37dc7e9d2addf  Cargo.lock
+[exit 0]
+
+$ rustc +nightly --version
+rustc 1.98.0-nightly (bd08c9e71 2026-06-25)
+[exit 0]
+
+$ cargo +nightly --version
+cargo 1.98.0-nightly (a595d0da2 2026-06-20)
+[exit 0]
+
+$ cargo +nightly miri --version
+miri 0.1.0 (bd08c9e718 2026-06-25)
+[exit 0]
+
+$ uname -a
+Darwin flux.home.arpa 25.6.0 Darwin Kernel Version 25.6.0: Fri Jul 31 19:19:08 PDT 2026; root:xnu-12377.161.14~5/RELEASE_ARM64_T6050 arm64
+[exit 0]
+
+$ sysctl -n machdep.cpu.brand_string
+Apple M5 Max
+[exit 0]
