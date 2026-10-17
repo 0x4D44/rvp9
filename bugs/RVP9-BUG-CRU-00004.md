@@ -1,6 +1,6 @@
 # RVP9-BUG-CRU-00004 — x86_64 realtime fdct8x8 pays a range check and full scalar redo; only AArch64 has the unchecked lowbd kernel
 
-- **State:** Blocked
+- **State:** Closed
 - **Priority:** Could
 - **Severity:** Medium
 - **Area:** core/transforms forward
@@ -19,7 +19,8 @@
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-23T17:09:50Z, raised via `deltic bugs new` model=claude-opus-5@high) → Blocked (2026-10-16, Codex; Arthur decision required on the x86 lowbd output and performance contract)
+- **Resolution:** by-design
+- **State history:** Open (2026-08-23T17:09:50Z, raised via `deltic bugs new` model=claude-opus-5@high) → Blocked (2026-10-16, Codex; Arthur decision required on the x86 lowbd output and performance contract) → Closed (2026-10-17T05:17:02Z, deltic:manual host=flux verdict=close resolution=by-design)
 
 ## Observation
 
@@ -98,3 +99,7 @@ No transform implementation or output changed, and no new timing, fallback
 frequency, quality, or native x86 test result is claimed. Resolve as
 `by-design`: the reported checked fallback and architecture split are real
 and accepted. This is a disposition, not a newly Fixed optimization.
+
+### Close note (2026-10-17T05:17:02Z, deltic:manual host=flux verdict=close resolution=by-design)
+
+Close reason: Arthur approved retaining checked x86 coefficients and the existing architecture split on 2026-10-17. Divergence entries and source-backed disposition landed in 9f2216b50da022c8a47f9c00a566d8e6597ecc72; historical unchecked candidate showed no material speed gain. Measure current fallback frequency before another optimization. No runtime fix or new performance result claimed.
