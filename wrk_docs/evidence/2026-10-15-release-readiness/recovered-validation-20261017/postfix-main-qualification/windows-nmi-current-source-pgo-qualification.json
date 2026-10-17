@@ -1,0 +1,232 @@
+{
+  "schema": "rvp9.windows-nmi-current-source-pgo-qualification.v1",
+  "recorded_at_utc": "2026-10-17T13:30:36Z",
+  "candidate": {
+    "source_commit": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+    "branch": "task/20261017-TSK-HUM@NMI-final-candidate-windows-qualification",
+    "tracked_tree_clean": true,
+    "worktree": "C:\\worktrees\\rvp9\\20261017-TSK-HUM@NMI-final-candidate-windows-qualification",
+    "host": {
+      "name": "NMI",
+      "os": "Windows 11 Pro x86-64",
+      "cpu": "Intel Core i7-14700KF",
+      "logical_processors": 28
+    },
+    "toolchain": {
+      "host_triple": "x86_64-pc-windows-msvc",
+      "rustc": "rustc 1.95.0 (59807616e 2026-04-14)",
+      "cargo": "cargo 1.95.0 (f2d3ce0bd 2026-03-21)",
+      "ffmpeg": "ffmpeg version 7.1-essentials_build-www.gyan.dev"
+    }
+  },
+  "prebuild_load_guard": {
+    "record": "windows-nmi-current-source-precheck-20261017T130843Z.json",
+    "recorded_at_utc": "2026-10-17T13:08:43Z",
+    "busy_logical_cores": 0.343633,
+    "limit_busy_logical_cores": 0.75,
+    "passed": true,
+    "timing_started": false,
+    "chronology_limit": "This guard preceded the PGO and timing-tool builds; it is not a post-build timing precondition."
+  },
+  "pgo": {
+    "command": "scripts/build-encoder-pgo.sh --build-root target/encoder-pgo --training-dir tests/corpus --frames 60",
+    "script_sha256": "2d335a8b02c41a3dc370238add4b894d2f9d27900ee9e657dcc3b9e7ba2d54e5",
+    "exit_status": 0,
+    "build_adapters": [
+      "NMI provides sha256sum but not shasum; a task-local shasum wrapper delegated to Git-for-Windows sha256sum 8.32. Its canonical Tree input matched the predeclared SHA-256.",
+      "A task-local Cargo wrapper inserted --locked after the build subcommand. The repository script and tracked source were unchanged.",
+      "Cargo ran offline with the installed Rust 1.95.0 x86_64-pc-windows-msvc toolchain."
+    ],
+    "training": {
+      "run_id": "20261017T131415Z-2840",
+      "frames_per_row": 60,
+      "rows_completed": 28,
+      "raw_profile_count": 31,
+      "canonical_inputs": [
+        {
+          "name": "in_to_tree_420_720p50.y4m",
+          "bytes": 691203035,
+          "sha256": "81166517a3054c789923535b5da23fbbb9bbd7fd4c28dac83918ac351e121e74"
+        },
+        {
+          "name": "ducks_take_off_420_720p50.y4m",
+          "bytes": 691203035,
+          "sha256": "0e09aa923ce72e2f6d1c978c3c1cc8dd9588d2ede819081f040213e361970efc"
+        },
+        {
+          "name": "old_town_cross_420_720p50.y4m",
+          "bytes": 691203035,
+          "sha256": "0fbc2ec0c552ad693528b2e49409c7449880b9230055a7696346473d1aaf4123"
+        }
+      ]
+    },
+    "artifacts": {
+      "optimized_binary": {
+        "path": "NMI target/encoder-pgo/optimized/release/rvp9enc.exe",
+        "bytes": 2530304,
+        "sha256": "5085b07969e1f4aaabb874c935f3a760d18410049854b8817725b1cdbe529736",
+        "independent_windows_GetFileHash_verified": true
+      },
+      "merged_profile": {
+        "path": "NMI target/encoder-pgo/runs/20261017T131415Z-2840/encoder.profdata",
+        "bytes": 656448,
+        "sha256": "fff00e30d8c289423e1126aae07ef7e46d6ee5b1a7aac28deede264f7afdad6c",
+        "independent_windows_GetFileHash_verified": true
+      },
+      "manifest": {
+        "path": "windows-nmi-current-source-pgo.manifest.txt",
+        "bytes": 2593,
+        "sha256": "70945386f245c3b3bde1d893ae6cc92920ca0a75dab6d090c22970ded718d160"
+      },
+      "build_log": {
+        "path": "windows-nmi-current-source-pgo.raw.txt",
+        "bytes": 3544,
+        "sha256": "ddda12520189bbba3a382c9c5796f09b5184acc3b294d2d17a3d16c15229c9a8"
+      },
+      "exit_record": {
+        "path": "windows-nmi-current-source-pgo.exit.txt",
+        "bytes": 2,
+        "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+      }
+    }
+  },
+  "timing_tools": {
+    "command": "deltic timeout 3600 cargo build --release --locked -p rvp9-bench --bin encode-headtohead --bin realtime",
+    "environment": "CARGO_NET_OFFLINE=true; jobs=4",
+    "exit_status": 0,
+    "tools": [
+      {
+        "name": "encode-headtohead.exe",
+        "sha256": "739554a87570bcb2620bf83f401e3f8e719d1b2db174427195cf89c8930433d9",
+        "help_exit_status": 0
+      },
+      {
+        "name": "realtime.exe",
+        "sha256": "c0b2144da401d56ede67052e6d22d74f087a4823f5d56212376b273f563f4f2d",
+        "help_exit_status": 0
+      }
+    ],
+    "source_sha256": {
+      "crates/rvp9-bench/src/bin/encode-headtohead.rs": "62076be9c6bc65d552d896163cd687db48a8c0dc65f3716526415dbb1d7bd720",
+      "crates/rvp9-bench/src/bin/realtime.rs": "5d939e0d552ef69952f8e55f79a54f2fd8446bf83b8e41fe895e9e753f35f1b8"
+    },
+    "build_log": {
+      "path": "windows-nmi-timing-tools-build.raw.txt",
+      "bytes": 1619,
+      "sha256": "65aab736300e74595895a18809ecd42f770d5b441c459a43649cc713510e9fde"
+    }
+  },
+  "pinned_libvpx_references": {
+    "revision": "12f3a2ac603e8f10742105519e0cd03c3b8f71dd",
+    "binaries": [
+      {
+        "name": "vpxenc.exe",
+        "sha256": "88ba702de16af47327490a7d016002fd05169e074c6c6657b9e9ff7a8d4a135d",
+        "source_worktree": "Crucible source-474 native correctness worktree; the libvpx submodule is at the pinned revision"
+      },
+      {
+        "name": "vpxdec.exe",
+        "sha256": "91eb8ab65f62f1d63d750878b20b6b75a2882f75814e623ab54acf22b9ad02b6",
+        "source_worktree": "Crucible source-474 native correctness worktree; the libvpx submodule is at the pinned revision"
+      },
+      {
+        "name": "vpx_temporal_svc_reference.exe",
+        "sha256": "32e59085ad9e81f199475eb3df3278632e02c8e5e52ec287b334f89340d193be",
+        "source_worktree": "Crucible source-474 native correctness worktree; the libvpx submodule is at the pinned revision"
+      },
+      {
+        "name": "vp9_spatial_svc_encoder.exe",
+        "sha256": "9276c29c54f9c866a2a1e2b60f80083749b7ff7cdcef183456a6243df83a097b",
+        "source_worktree": "acceptance-d639c265 worktree with unrelated RVP9 changes; libvpx submodule is at the pinned revision"
+      }
+    ],
+    "transfer_evidence": {
+      "path": "windows-nmi-reference-transfer.raw.txt",
+      "bytes": 2546,
+      "sha256": "4ec36d154c621e10679a100601d8cd73acbb7309e4bc5bd47ac7714d835ef783"
+    },
+    "spatial_anchor_help": {
+      "path": "windows-nmi-spatial-anchor-help.review.txt",
+      "bytes": 2136,
+      "sha256": "3b7c109b89ae39b7eb3c52a8eea0c2d85d05206f84632450d59067525b2c3f34",
+      "observed_behavior": "The spatial example prints its usage and returns exit 1 for --help; its binary hash matched the recorded pinned-reference artifact.",
+      "raw_original_path": "windows-nmi-spatial-anchor-help.raw.txt"
+    }
+  },
+  "selftests": {
+    "command": "four exact-source qualification self-tests via Git Bash with stdin explicitly closed",
+    "sha256_adapter": "Task-local shasum wrapper to Git-for-Windows sha256sum; the canonical Tree input check passed.",
+    "pgo_binary_help_exit_status": 0,
+    "checks": [
+      {
+        "name": "production plan",
+        "assertions_passed": 329,
+        "exit_status": 0
+      },
+      {
+        "name": "production resume filesystem",
+        "exit_status": 0
+      },
+      {
+        "name": "production timing filesystem",
+        "assertions_passed": 68,
+        "exit_status": 0
+      },
+      {
+        "name": "spatial plan",
+        "assertions_passed": 46,
+        "exit_status": 0
+      }
+    ],
+    "failures": 0,
+    "raw_log": {
+      "path": "windows-nmi-current-source-selftests-stdin-closed.review.txt",
+      "bytes": 31797,
+      "sha256": "6a27f5c4e15a8fb97bdf900d8b630f2fdd5fc7c3128ff0119c13e261d8e7441d",
+      "raw_original_path": "windows-nmi-current-source-selftests-stdin-closed.raw.txt"
+    },
+    "scope_limit": "Stub and filesystem self-tests validate planning, resume and timing recording paths; they are not codec quality, speed, or latency measurements.",
+    "initial_unadapted_attempt": {
+      "path": "windows-nmi-current-source-selftests.review.txt",
+      "bytes": 27347,
+      "sha256": "d446f9d21aaafacc4e29e91c57348d12223359f7f2c648a50ad1aecbf0eae844",
+      "classification": "environment dependency gap: the NMI Git Bash image lacks shasum; later tests ran with the hash-equivalent adapter.",
+      "raw_original_path": "windows-nmi-current-source-selftests.raw.txt"
+    }
+  },
+  "codec_timing": {
+    "started": false,
+    "speed_groups_required": 75,
+    "latency_rows_required": 200,
+    "guarded_groups_per_phase": 75,
+    "load_guard_sampling_seconds_per_group": 60,
+    "guard_sampling_floor_minutes_per_phase": 75,
+    "maximum_quiet_lease_minutes": 20,
+    "reason": "Both complete phases exceed the available quiet-lease ceiling on guard sampling alone and are not resumable after the first measurement. No partial phase was started; no speed or latency result is claimed."
+  },
+  "raw_identity_record": {
+    "path": "windows-nmi-current-source-identities.review.txt",
+    "bytes": 2975,
+    "sha256": "1cb8563fdb7eee60c07d846d5b70a3fdc175c60f95daeb0678d91e6a0977601b",
+    "raw_original_path": "windows-nmi-current-source-identities.raw.txt"
+  },
+  "limits": [
+    "The PGO binary is a host-native Windows test artifact, not a portable distribution binary.",
+    "The pre-build NMI load guard does not qualify post-build speed or latency.",
+    "No Windows speed campaign or real frame-latency campaign ran; no throughput, quality or latency claim follows from these builds or self-tests.",
+    "Apple Silicon current-source PGO remains unbuilt. The three canonical clips and generated-noise training do not establish AOM, WebRTC or livestream corpus representativeness."
+  ],
+  "raw_originals": {
+    "archive": {
+      "path": "current-source-qualification-raw-originals-20261017.tar.gz",
+      "bytes": 23362,
+      "sha256": "879ce95dc80e31d4e8978fdf3891bcd94b37750033bd2ff290f5b6216ea57789"
+    },
+    "integrity_manifest": {
+      "path": "current-source-qualification-raw-integrity-20261017.json",
+      "bytes": 4429,
+      "sha256": "4fa3d21fd18b79992b7e282b0a0772f9b26e2dc1db6509bf93b1016a0a7d120d"
+    },
+    "normalization_note": "Review copies normalize CRLF to LF and remove trailing ASCII spaces and tabs at line ends. In the spatial anchor usage output only, two indentation tabs preceded by spaces are shown as literal \\t sequences to avoid ambiguous whitespace. Exact original bytes are retained in the archive; no other content-line changes are made."
+  }
+}

@@ -989,9 +989,10 @@
       "assertions_passed": 68,
       "observed": "Exercises the speed and latency stub paths, load refusal boundary, timing-result failures, per-frame CSV and scratch-boundary cases.",
       "log": {
-        "path": "mac-current-source-production-self-test-timing.raw.txt",
-        "bytes": 8254,
-        "sha256": "62a9d65b12afb31aa3872d80e748280a7a1c98ed5f2959cb6cde6903c7bde65a"
+        "path": "mac-current-source-production-self-test-timing.review.txt",
+        "bytes": 8253,
+        "sha256": "504ac8f9595c6550a5907c788bd060e078282c87241d2427a62a28a359b1fad2",
+        "raw_original_path": "mac-current-source-production-self-test-timing.raw.txt"
       },
       "exit_log": {
         "path": "mac-current-source-production-self-test-timing.exit.raw.txt",
@@ -1042,5 +1043,32 @@
     "guard_pass": true,
     "pgo_built": false,
     "codec_timing_started": false
+  },
+  "windows_nmi_current_source_pgo": {
+    "record": "windows-nmi-current-source-pgo-qualification.json",
+    "record_sha256": "716f0c306470cb2bf3718e83b5b93200808e113fbbd020964902b80429641b79",
+    "recorded_at_utc": "2026-10-17T13:30:36Z",
+    "source_commit": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+    "training_rows": 28,
+    "frames_per_row": 60,
+    "pgo_exit_status": 0,
+    "pgo_binary_sha256": "5085b07969e1f4aaabb874c935f3a760d18410049854b8817725b1cdbe529736",
+    "manifest_sha256": "70945386f245c3b3bde1d893ae6cc92920ca0a75dab6d090c22970ded718d160",
+    "timing_tools_exit_status": 0,
+    "selftests_passed": true,
+    "codec_timing_started": false
+  },
+  "current_source_qualification_raw_originals": {
+    "archive": {
+      "path": "current-source-qualification-raw-originals-20261017.tar.gz",
+      "bytes": 23362,
+      "sha256": "879ce95dc80e31d4e8978fdf3891bcd94b37750033bd2ff290f5b6216ea57789"
+    },
+    "integrity_manifest": {
+      "path": "current-source-qualification-raw-integrity-20261017.json",
+      "bytes": 4429,
+      "sha256": "4fa3d21fd18b79992b7e282b0a0772f9b26e2dc1db6509bf93b1016a0a7d120d"
+    },
+    "normalization_note": "Review copies normalize CRLF to LF and remove trailing ASCII spaces and tabs at line ends. In the spatial anchor usage output only, two indentation tabs preceded by spaces are shown as literal \\t sequences to avoid ambiguous whitespace. Exact original bytes are retained in the archive; no other content-line changes are made."
   }
 }

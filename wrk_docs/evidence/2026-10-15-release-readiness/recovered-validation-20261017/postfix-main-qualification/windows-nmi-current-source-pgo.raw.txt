@@ -1,0 +1,60 @@
+shasum_adapter=Git-for-Windows sha256sum (/usr/bin/sha256sum)
+sha256sum (GNU coreutils) 8.32
+adapter_input_sha256=81166517a3054c789923535b5da23fbbb9bbd7fd4c28dac83918ac351e121e74
+rustc=rustc 1.95.0 (59807616e 2026-04-14)
+cargo=cargo 1.95.0 (f2d3ce0bd 2026-03-21)
+source_commit=fb5c0c917038db6c640b3dbc7c2b84b567233333
+source_tree_clean=true
+[encoder PGO 1/4] Preparing representative training inputs...
+[encoder PGO 2/4] Building instrumented rvp9enc...
+   Compiling crossbeam-utils v0.8.21
+   Compiling rvp9-core v0.2.0-alpha.4 (C:\worktrees\rvp9\20261017-TSK-HUM@NMI-final-candidate-windows-qualification\crates\rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (C:\worktrees\rvp9\20261017-TSK-HUM@NMI-final-candidate-windows-qualification\crates\rvp9-decoder)
+   Compiling static_assertions v1.1.0
+   Compiling crossbeam-channel v0.5.15
+   Compiling rvp9-io v0.2.0-alpha.4 (C:\worktrees\rvp9\20261017-TSK-HUM@NMI-final-candidate-windows-qualification\crates\rvp9-io)
+   Compiling rvp9-encoder v0.2.0-alpha.4 (C:\worktrees\rvp9\20261017-TSK-HUM@NMI-final-candidate-windows-qualification\crates\rvp9-encoder)
+   Compiling rvp9-cli v0.2.0-alpha.4 (C:\worktrees\rvp9\20261017-TSK-HUM@NMI-final-candidate-windows-qualification\crates\rvp9-cli)
+    Finished `release` profile [optimized + debuginfo] target(s) in 53.65s
+[encoder PGO 3/4] Training 28 production rows...
+  [01/28] 1080-in-tree-cpu6
+  [02/28] 1080-ducks-cpu6
+  [03/28] 1080-old-town-cpu6
+  [04/28] 1080-in-tree-cpu7
+  [05/28] 1080-ducks-cpu7
+  [06/28] 1080-old-town-cpu7
+  [07/28] 1080-in-tree-cpu8
+  [08/28] 1080-ducks-cpu8
+  [09/28] 1080-old-town-cpu8
+  [10/28] 720-in-tree-cpu7
+  [11/28] 720-ducks-cpu7
+  [12/28] 720-old-town-cpu7
+  [13/28] 1080-in-tree-cbr-aq3
+  [14/28] 1080-ducks-cbr-aq3
+  [15/28] 1080-old-town-cbr-aq3
+  [16/28] 1080-in-tree-denoise
+  [17/28] 1080-ducks-denoise
+  [18/28] 1080-old-town-denoise
+  [19/28] 1080-old-town-low-rate
+  [20/28] 1080-old-town-high-rate
+  [21/28] 1080-old-town-temporal2
+  [22/28] 1080-old-town-temporal3
+  [23/28] 1080-old-town-spatial2-cpu6
+  [24/28] 1080-old-town-spatial3-cpu6
+  [25/28] 1080-old-town-spatial2-cpu7
+  [26/28] 1080-old-town-spatial3-cpu7
+  [27/28] 1080-old-town-spatial2-cpu8
+  [28/28] 1080-old-town-spatial3-cpu8
+[encoder PGO 4/4] Building profile-guided rvp9enc...
+   Compiling crossbeam-utils v0.8.21
+   Compiling rvp9-core v0.2.0-alpha.4 (C:\worktrees\rvp9\20261017-TSK-HUM@NMI-final-candidate-windows-qualification\crates\rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (C:\worktrees\rvp9\20261017-TSK-HUM@NMI-final-candidate-windows-qualification\crates\rvp9-decoder)
+   Compiling static_assertions v1.1.0
+   Compiling crossbeam-channel v0.5.15
+   Compiling rvp9-encoder v0.2.0-alpha.4 (C:\worktrees\rvp9\20261017-TSK-HUM@NMI-final-candidate-windows-qualification\crates\rvp9-encoder)
+   Compiling rvp9-io v0.2.0-alpha.4 (C:\worktrees\rvp9\20261017-TSK-HUM@NMI-final-candidate-windows-qualification\crates\rvp9-io)
+   Compiling rvp9-cli v0.2.0-alpha.4 (C:\worktrees\rvp9\20261017-TSK-HUM@NMI-final-candidate-windows-qualification\crates\rvp9-cli)
+    Finished `release` profile [optimized + debuginfo] target(s) in 1m 06s
+[encoder PGO done] C:/worktrees/rvp9/20261017-TSK-HUM@NMI-final-candidate-windows-qualification/target/encoder-pgo/optimized/release/rvp9enc.exe
+Training manifest: C:/worktrees/rvp9/20261017-TSK-HUM@NMI-final-candidate-windows-qualification/target/encoder-pgo/runs/20261017T131415Z-2840/manifest.txt
+Profiles are host/source/compiler specific; regenerate after any of them changes.

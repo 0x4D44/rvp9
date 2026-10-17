@@ -1,0 +1,33 @@
+Error: Unrecognized option --help
+
+Usage: C:\worktrees\rvp9\20261017-TSK-HUM@NMI-final-candidate-windows-qualification\build\libvpx\examples\vp9_spatial_svc_encoder.exe <options> input_filename -o output_filename
+Options:
+  -f <arg>, --frames=<arg>             	number of frames to encode
+  -o <arg>, --output=<arg>             	Output filename
+  -w <arg>, --width=<arg>              	source width
+  -h <arg>, --height=<arg>             	source height
+  -t <arg>, --timebase=<arg>           	timebase (num/den)
+  -b <arg>, --target-bitrate=<arg>     	encoding bitrate, in kilobits per second
+  -s <arg>, --skip-frames=<arg>        	input frames to skip
+  -sl <arg>, --spatial-layers=<arg>    	number of spatial SVC layers
+  -k <arg>, --kf-dist=<arg>            	number of frames between keyframes
+  -r <arg>, --scale-factors=<arg>      	scale factors (lowest to highest layer)
+            --min-q=<arg>              	Minimum quantizer
+            --max-q=<arg>              	Maximum quantizer
+            --min-bitrate=<arg>        	Minimum bitrate
+            --max-bitrate=<arg>        	Maximum bitrate
+  -tl <arg>, --temporal-layers=<arg>   	number of temporal SVC layers
+  -tlm <arg>, --temporal-layering-mode 	temporal layering scheme.VP9E_TEMPORAL_LAYERING_MODE
+            --lag-in-frames=<arg>      	Number of frame to input before generating any outputs
+  -th <arg>, --threads=<arg>           	number of threads to use
+  -aq <arg>, --aqmode=<arg>            	aq-mode off/on
+  -rcstat <arg>, --output_rc_stats=<ar 	output rc stats
+  -d <arg>, --bit-depth=<arg>          	Bit depth for codec 8, 10 or 12.
+                                       \t  8, 10, 12
+  -sp <arg>, --speed=<arg>             	speed configuration
+            --rc-end-usage=<arg>       	0 - 3: VBR, CBR, CQ, Q
+  -bl <arg>, --bitrates=<arg>          	bitrates[sl * num_tl + tl]
+            --drop-frame=<arg>         	Temporal resampling threshold (buf %)
+            --tune-content=<arg>       	Tune content type
+                                       \t  default, screen, film
+            --inter-layer-pred=<arg>   	0 - 3: On, Off, Key-frames, Constrained

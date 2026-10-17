@@ -1,0 +1,92 @@
+{
+  "schema": "rvp9.current-source-qualification-raw-integrity.v1",
+  "archive": {
+    "path": "current-source-qualification-raw-originals-20261017.tar.gz",
+    "bytes": 23362,
+    "sha256": "879ce95dc80e31d4e8978fdf3891bcd94b37750033bd2ff290f5b6216ea57789",
+    "members": [
+      "mac-current-source-production-self-test-timing.raw.txt",
+      "windows-nmi-current-source-identities.raw.txt",
+      "windows-nmi-current-source-selftests-adapted.raw.txt",
+      "windows-nmi-current-source-selftests-stdin-closed.raw.txt",
+      "windows-nmi-current-source-selftests.raw.txt",
+      "windows-nmi-spatial-anchor-help.raw.txt"
+    ]
+  },
+  "normalization": "Review copies normalize CRLF to LF and remove trailing ASCII spaces and tabs at line ends. In the spatial anchor usage output only, two indentation tabs preceded by spaces are shown as literal \\t sequences to avoid ambiguous whitespace. Exact original bytes are retained in the archive; no other content-line changes are made.",
+  "files": [
+    {
+      "original_path": "mac-current-source-production-self-test-timing.raw.txt",
+      "archive_member": "mac-current-source-production-self-test-timing.raw.txt",
+      "original_bytes": 8254,
+      "original_sha256": "62a9d65b12afb31aa3872d80e748280a7a1c98ed5f2959cb6cde6903c7bde65a",
+      "original_line_endings": "LF",
+      "review_copy": {
+        "path": "mac-current-source-production-self-test-timing.review.txt",
+        "bytes": 8253,
+        "sha256": "504ac8f9595c6550a5907c788bd060e078282c87241d2427a62a28a359b1fad2"
+      }
+    },
+    {
+      "original_path": "windows-nmi-current-source-identities.raw.txt",
+      "archive_member": "windows-nmi-current-source-identities.raw.txt",
+      "original_bytes": 2979,
+      "original_sha256": "30d1c46e65f31a53b66e3b7153624bf63019d60dc407751e3a228ec04b2b70ef",
+      "original_line_endings": "mixed CRLF/LF",
+      "review_copy": {
+        "path": "windows-nmi-current-source-identities.review.txt",
+        "bytes": 2975,
+        "sha256": "1cb8563fdb7eee60c07d846d5b70a3fdc175c60f95daeb0678d91e6a0977601b"
+      }
+    },
+    {
+      "original_path": "windows-nmi-current-source-selftests-adapted.raw.txt",
+      "archive_member": "windows-nmi-current-source-selftests-adapted.raw.txt",
+      "original_bytes": 31917,
+      "original_sha256": "34c7e70526e3599fbf6d8317c0b571acd27bfd6e1264a7de15161d1a0b6aa7ca",
+      "original_line_endings": "LF",
+      "review_copy": {
+        "path": "windows-nmi-current-source-selftests-adapted.review.txt",
+        "bytes": 31905,
+        "sha256": "266ca969a8b2fab235c610c8eaeac696047ac8a2f45d29d21021adea43916e5b"
+      }
+    },
+    {
+      "original_path": "windows-nmi-current-source-selftests-stdin-closed.raw.txt",
+      "archive_member": "windows-nmi-current-source-selftests-stdin-closed.raw.txt",
+      "original_bytes": 31809,
+      "original_sha256": "c65c517257f3e5bd652cb6c4d15fdaa90c7b43e39b6f5a519ee063a3bef1098e",
+      "original_line_endings": "LF",
+      "review_copy": {
+        "path": "windows-nmi-current-source-selftests-stdin-closed.review.txt",
+        "bytes": 31797,
+        "sha256": "6a27f5c4e15a8fb97bdf900d8b630f2fdd5fc7c3128ff0119c13e261d8e7441d"
+      }
+    },
+    {
+      "original_path": "windows-nmi-current-source-selftests.raw.txt",
+      "archive_member": "windows-nmi-current-source-selftests.raw.txt",
+      "original_bytes": 27358,
+      "original_sha256": "0dfa456ea301f7bbb0d4e076449d602a8aaf6cfd959a661a3c9728e268863967",
+      "original_line_endings": "LF",
+      "review_copy": {
+        "path": "windows-nmi-current-source-selftests.review.txt",
+        "bytes": 27347,
+        "sha256": "d446f9d21aaafacc4e29e91c57348d12223359f7f2c648a50ad1aecbf0eae844"
+      }
+    },
+    {
+      "original_path": "windows-nmi-spatial-anchor-help.raw.txt",
+      "archive_member": "windows-nmi-spatial-anchor-help.raw.txt",
+      "original_bytes": 2168,
+      "original_sha256": "c473bc95adafab149ac8b5214174296e7a664a8dd02364aaa691ec100efdf3bf",
+      "original_line_endings": "CRLF",
+      "review_copy": {
+        "path": "windows-nmi-spatial-anchor-help.review.txt",
+        "bytes": 2136,
+        "sha256": "3b7c109b89ae39b7eb3c52a8eea0c2d85d05206f84632450d59067525b2c3f34",
+        "whitespace_rendering": "Two help-output indentation tabs preceded by spaces are shown as literal \\t sequences in this review copy; original bytes are unchanged in the raw archive."
+      }
+    }
+  ]
+}

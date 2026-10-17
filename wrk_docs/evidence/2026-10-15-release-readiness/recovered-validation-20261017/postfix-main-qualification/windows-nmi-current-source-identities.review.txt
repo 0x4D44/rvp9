@@ -1,0 +1,49 @@
+recorded_at_utc=2026-10-17T13:20:56Z
+source_commit=fb5c0c917038db6c640b3dbc7c2b84b567233333
+source_branch=task/20261017-TSK-HUM@NMI-final-candidate-windows-qualification
+tracked_tree_clean=true
+rustc=rustc 1.95.0 (59807616e 2026-04-14)
+cargo=cargo 1.95.0 (f2d3ce0bd 2026-03-21)
+ffmpeg=ffmpeg version 7.1-essentials_build-www.gyan.dev Copyright (c) 2000-2024 the FFmpeg developers
+llvm_profdata=LLVM (http://llvm.org/):
+pgo_exit_status=0
+pgo_manifest_summary=
+git_commit=fb5c0c917038db6c640b3dbc7c2b84b567233333
+host_triple=x86_64-pc-windows-msvc
+rustc=rustc 1.95.0 (59807616e 2026-04-14)
+cargo=cargo 1.95.0 (f2d3ce0bd 2026-03-21)
+frames_per_row=60
+training_rows=28
+profdata=C:/worktrees/rvp9/20261017-TSK-HUM@NMI-final-candidate-windows-qualification/target/encoder-pgo/runs/20261017T131415Z-2840/encoder.profdata
+raw_profile_count=31
+optimized_binary=C:/worktrees/rvp9/20261017-TSK-HUM@NMI-final-candidate-windows-qualification/target/encoder-pgo/optimized/release/rvp9enc.exe
+optimized_binary_sha256=5085b07969e1f4aaabb874c935f3a760d18410049854b8817725b1cdbe529736
+raw_profile_files=31
+build_log_sha256=ddda12520189bbba3a382c9c5796f09b5184acc3b294d2d17a3d16c15229c9a8 *target/encoder-pgo/nmi-build-encoder-pgo.raw.log
+pgo_manifest_sha256=70945386f245c3b3bde1d893ae6cc92920ca0a75dab6d090c22970ded718d160 *target/encoder-pgo/runs/20261017T131415Z-2840/manifest.txt
+pgo_artifact_hashes=
+5085b07969e1f4aaabb874c935f3a760d18410049854b8817725b1cdbe529736 *target/encoder-pgo/optimized/release/rvp9enc.exe
+fff00e30d8c289423e1126aae07ef7e46d6ee5b1a7aac28deede264f7afdad6c *target/encoder-pgo/runs/20261017T131415Z-2840/encoder.profdata
+pgo_artifact_sizes_bytes=
+2530304 target/encoder-pgo/optimized/release/rvp9enc.exe
+ 656448 target/encoder-pgo/runs/20261017T131415Z-2840/encoder.profdata
+3186752 total
+timing_tools_build_exit_status=0
+timing_tool_hashes=
+739554a87570bcb2620bf83f401e3f8e719d1b2db174427195cf89c8930433d9 *target/release/encode-headtohead.exe
+c0b2144da401d56ede67052e6d22d74f087a4823f5d56212376b273f563f4f2d *target/release/realtime.exe
+reference_hashes=
+88ba702de16af47327490a7d016002fd05169e074c6c6657b9e9ff7a8d4a135d *build/libvpx/vpxenc.exe
+91eb8ab65f62f1d63d750878b20b6b75a2882f75814e623ab54acf22b9ad02b6 *build/libvpx/vpxdec.exe
+32e59085ad9e81f199475eb3df3278632e02c8e5e52ec287b334f89340d193be *build/libvpx/vpx_temporal_svc_reference.exe
+9276c29c54f9c866a2a1e2b60f80083749b7ff7cdcef183456a6243df83a097b *build/libvpx/examples/vp9_spatial_svc_encoder.exe
+help_exit=0 path=target/release/encode-headtohead.exe
+help_exit=0 path=target/release/realtime.exe
+help_exit=0 path=build/libvpx/vpxenc.exe
+help_exit=0 path=build/libvpx/vpxdec.exe
+help_exit=0 path=build/libvpx/vpx_temporal_svc_reference.exe
+spatial_help_exit=1 usage_printed=true
+Error: Unrecognized option --help
+
+Usage: C:\worktrees\rvp9\20261017-TSK-HUM@NMI-final-candidate-windows-qualification\build\libvpx\examples\vp9_spatial_svc_encoder.exe <options> input_filename -o output_filename
+Options:
