@@ -1,0 +1,61 @@
+{
+  "test": "real production quality phase preflight with an empty source directory",
+  "host_triple": "aarch64-apple-darwin",
+  "candidate_source_commit": "474dfd99a673df85f750136f7552ac156b7a24e9",
+  "runner_worktree_commit": "3279eaa04d22a4f02034385d447180c928e384bb",
+  "runner_worktree_clean_before_and_after": true,
+  "qualification_script": {
+    "path": "scripts/qualify-production-encoder.sh",
+    "sha256": "3ec28783f5b3e52ba554888a5e53f2dd51e7d21645137d0cbbd0b32965f1953c",
+    "unchanged_from_candidate_474dfd99_and_pgo_build_8f0b58ac": true
+  },
+  "pgo_artifact": {
+    "manifest_path": "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/wrk_docs/evidence/2026-10-15-release-readiness/recovered-validation-20261017/macos-pgo/pgo-manifest.txt",
+    "manifest_sha256": "91f83803a2ec25fc5d21f2f67d2d23d087543d7135c608f1c5cf2ce042470071",
+    "source_commit": "8f0b58acde72193278d0b3abf560008008216c7b",
+    "binary_path": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-rc-validation-aa390fba/macos-pgo/pgo-build-8f0b58ac/optimized/release/rvp9enc",
+    "binary_sha256": "e9f632fed68aaf86b16c43d89c32383b3ffba582760be279f0c3d45c8fe7514b",
+    "binary_hash_rechecked_before_run": true
+  },
+  "command": {
+    "argv": [
+      "deltic", "timeout", "300", "bash", "scripts/qualify-production-encoder.sh",
+      "--phase", "quality",
+      "--work-dir", "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-missing-fixture-a04a3013/workdir",
+      "--pgo-manifest", "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/wrk_docs/evidence/2026-10-15-release-readiness/recovered-validation-20261017/macos-pgo/pgo-manifest.txt",
+      "--source-dir", "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-missing-fixture-a04a3013",
+      "--test-encoder", "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-rc-validation-aa390fba/macos-pgo/pgo-build-8f0b58ac/optimized/release/rvp9enc",
+      "--vpxenc", "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/build/libvpx/vpxenc",
+      "--temporal-anchor", "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/build/libvpx/vpx_temporal_svc_reference",
+      "--bdrate", "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/target/release/bdrate",
+      "--bdrate-svc", "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/target/release/bdrate-svc",
+      "--encode-headtohead", "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/target/release/encode-headtohead",
+      "--realtime", "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/target/release/realtime",
+      "--rvp9dec", "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/target/release/rvp9dec",
+      "--vpxdec", "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/build/libvpx/vpxdec",
+      "--ffmpeg", "/opt/homebrew/bin/ffmpeg",
+      "--libvpx-source", "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/third_party/libvpx"
+    ],
+    "working_directory": "/Users/md/worktrees/rvp9/20261017-TSK-CDX-rvp9-missing-fixture-preflight",
+    "stdin_closed": true,
+    "timeout_seconds": 300
+  },
+  "input_state": {
+    "source_dir_was_empty": true,
+    "first_required_fixture": "in_to_tree_420_720p50.y4m",
+    "libvpx_revision": "12f3a2ac603e8f10742105519e0cd03c3b8f71dd"
+  },
+  "result": {
+    "exit_code": 1,
+    "output": "missing or empty corpus input (source_in_to_tree): /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-missing-fixture-a04a3013/in_to_tree_420_720p50.y4m\nrun scripts/fetch-corpus.sh or pass --source-dir",
+    "work_dir_created": false,
+    "measurements_started": false,
+    "interpretation": "The real phase preflight rejected the missing required fixture before creating outputs or launching a measurement."
+  },
+  "limits": [
+    "This injects one missing first-required fixture through a real quality phase invocation. It does not inject an empty file, wrong hash, wrong Y4M header, or each of the remaining fixture failures.",
+    "The PGO manifest, encoder, reference and helper binaries passed their preflight far enough for the script to reach the missing-fixture check.",
+    "Captured output is recorded from the completed tracked command result; no separate raw log file was written.",
+    "The registered Deltic scratch root and temporary helper worktree are removed after evidence verification."
+  ]
+}
