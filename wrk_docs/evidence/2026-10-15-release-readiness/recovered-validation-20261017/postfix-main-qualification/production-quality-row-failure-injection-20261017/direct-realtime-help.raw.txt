@@ -1,0 +1,10 @@
+--work-dir
+--reference-input
+--svc-kind
+--anchor-kind
+--temporal-layers
+--max-load1
+--rotations
+--frame-time-csv
+--p99-budget-ms
+--budget-ms

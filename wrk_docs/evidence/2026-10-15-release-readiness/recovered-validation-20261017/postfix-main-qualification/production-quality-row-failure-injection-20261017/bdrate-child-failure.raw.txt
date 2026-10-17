@@ -1,0 +1,20 @@
+Preparing acceptance inputs in /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-qual-fail-injection-6eef2860/work-bdrate-failure/inputs
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-qual-fail-injection-6eef2860/work-bdrate-failure/inputs/in_to_tree_720p30_clean.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-qual-fail-injection-6eef2860/work-bdrate-failure/inputs/in_to_tree_720p30_noisy.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-qual-fail-injection-6eef2860/work-bdrate-failure/inputs/ducks_take_off_720p30_clean.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-qual-fail-injection-6eef2860/work-bdrate-failure/inputs/ducks_take_off_720p30_noisy.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-qual-fail-injection-6eef2860/work-bdrate-failure/inputs/old_town_cross_720p30_clean.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-qual-fail-injection-6eef2860/work-bdrate-failure/inputs/old_town_cross_720p30_noisy.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-qual-fail-injection-6eef2860/work-bdrate-failure/inputs/in_to_tree_1080p30_clean.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-qual-fail-injection-6eef2860/work-bdrate-failure/inputs/in_to_tree_1080p30_noisy.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-qual-fail-injection-6eef2860/work-bdrate-failure/inputs/ducks_take_off_1080p30_clean.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-qual-fail-injection-6eef2860/work-bdrate-failure/inputs/ducks_take_off_1080p30_noisy.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-qual-fail-injection-6eef2860/work-bdrate-failure/inputs/old_town_cross_1080p30_clean.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-qual-fail-injection-6eef2860/work-bdrate-failure/inputs/old_town_cross_1080p30_noisy.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-qual-fail-injection-6eef2860/work-bdrate-failure/inputs/in_to_tree_1080p60_clean.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-qual-fail-injection-6eef2860/work-bdrate-failure/inputs/in_to_tree_1080p60_noisy.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-qual-fail-injection-6eef2860/work-bdrate-failure/inputs/old_town_cross_1080p60_clean.y4m
+  /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-qual-fail-injection-6eef2860/work-bdrate-failure/inputs/old_town_cross_1080p60_noisy.y4m
+[quality   1/200] baseline-cbr-720p30-in_to_tree-cpu6 (bdrate, vpxenc anchor, clean input)
+baseline-cbr-720p30-in_to_tree-cpu6: bdrate failed (exit 73, log /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-qual-fail-injection-6eef2860/work-bdrate-failure/quality/rows/.baseline-cbr-720p30-in_to_tree-cpu6.attempt.20261017T143806Z-40851/runner.log)
+interrupted attempt retained for inspection: /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-qual-fail-injection-6eef2860/work-bdrate-failure/quality/rows/.baseline-cbr-720p30-in_to_tree-cpu6.attempt.20261017T143806Z-40851

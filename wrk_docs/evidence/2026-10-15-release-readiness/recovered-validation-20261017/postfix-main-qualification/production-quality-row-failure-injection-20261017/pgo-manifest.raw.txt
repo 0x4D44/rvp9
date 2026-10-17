@@ -1,0 +1,3 @@
+git_commit=fb5c0c917038db6c640b3dbc7c2b84b567233333
+optimized_binary=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-qual-fail-injection-6eef2860/tools/rvp9enc
+optimized_binary_sha256=5914773469b98442a086f5e05cb7763df8d505f4ce421895659456943f7fabbc

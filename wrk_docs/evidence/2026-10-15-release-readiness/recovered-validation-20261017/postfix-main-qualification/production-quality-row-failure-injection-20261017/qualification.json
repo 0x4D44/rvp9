@@ -1,0 +1,339 @@
+{
+  "schema": 1,
+  "created_utc": "2026-10-17T14:43:07Z",
+  "purpose": "Synthetic end-to-end failure injection through the exact-source production quality phase; orchestration evidence only.",
+  "candidate": {
+    "worktree": "/Users/md/worktrees/rvp9/20261017-TSK-HUM-requalify-post-fix-candidate",
+    "branch": "task/20261017-TSK-HUM-requalify-post-fix-candidate",
+    "source_commit": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+    "source_worktree_clean": true,
+    "qualification_script": "scripts/qualify-production-encoder.sh",
+    "qualification_script_sha256": "3ec28783f5b3e52ba554888a5e53f2dd51e7d21645137d0cbbd0b32965f1953c",
+    "pinned_libvpx_commit": "12f3a2ac603e8f10742105519e0cd03c3b8f71dd"
+  },
+  "host": {
+    "name": "flux.home.arpa",
+    "os": "macOS Darwin 25.6.0",
+    "architecture": "arm64",
+    "rustc": "1.95.0 (59807616e 2026-04-14)",
+    "cargo": "1.95.0 (f2d3ce0bd 2026-03-21)"
+  },
+  "scratch": {
+    "registered_id": "rvp9-qual-fail-injection-6eef2860",
+    "path": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-qual-fail-injection-6eef2860",
+    "disposition": "Removed with deltic scratch rm after all 45 archived artifacts passed byte-length and SHA-256 verification."
+  },
+  "invocation": {
+    "phase": "quality",
+    "planned_matrix_rows": 200,
+    "rows_reached_per_run": 1,
+    "command_form_file": "command-form.reconstructed.txt",
+    "top_level_argv_capture": "not separately retained; command form reconstructed from generated run manifests and recorded tool paths",
+    "stub_environment": {
+      "RVP9_TEST_MODE": [
+        "bdrate-fail",
+        "decoder-mismatch"
+      ],
+      "RVP9_TEST_LOG": "separate per-run tool invocation log",
+      "RVP9_FAKE_CORPUS": "four header-only Y4M files",
+      "RVP9_SHA_CACHE": "task-local inode/hash cache",
+      "RVP9_TEMPLATE_DIR": "synthetic sparse frame templates"
+    },
+    "tool_paths": "All paths are recorded in the run manifests. The tool dispatcher is a task-local stub; PATH resolves the task-local shasum adapter."
+  },
+  "results": [
+    {
+      "case": "failed-bdrate-child",
+      "started_utc": "2026-10-17T14:37:07Z",
+      "script_exit_code": 1,
+      "injected_bdrate_exit_code": 73,
+      "row": "baseline-cbr-720p30-in_to_tree-cpu6 (first of 200)",
+      "observed": [
+        "The script reported bdrate failed with exit 73 and retained the private row attempt.",
+        "No row bdrate.csv was produced; quality and cross-decoder row fragments remained empty.",
+        "Root quality and cross-decoder CSVs contained header rows only.",
+        "quality/completed was absent and .qualify-run.lock was absent after exit."
+      ],
+      "evidence": [
+        "bdrate-child-failure.raw.txt",
+        "bdrate-child-failure.exit.txt",
+        "bdrate-child-failure-runner.raw.txt",
+        "bdrate-child-failure-invocations.raw.txt",
+        "bdrate-child-failure-run.manifest.raw.txt",
+        "workdir-state.raw.txt"
+      ]
+    },
+    {
+      "case": "synthetic-decoder-mismatch",
+      "started_utc": "2026-10-17T14:38:58Z",
+      "script_exit_code": 1,
+      "injected_bdrate_exit_code": 0,
+      "row": "baseline-cbr-720p30-in_to_tree-cpu6 (first of 200)",
+      "observed": [
+        "The fake bdrate child wrote bdrate_pct,0.400000 and six dummy IVF files; this value is synthetic and is not quality data.",
+        "The private quality fragment marked the fabricated 0.400000 result PASS against its 2.0 guard.",
+        "The synthetic rvp9dec and vpxdec outputs differed; the cross-decoder fragment marked the row FAIL while the ffmpeg stub returned ok.",
+        "The script exited 1 on cross-decoder mismatch and retained the private attempt.",
+        "Root quality, aggregate and cross-decoder CSVs contained header rows only; quality/completed and .qualify-run.lock were absent after exit."
+      ],
+      "evidence": [
+        "decoder-mismatch-retry.raw.txt",
+        "decoder-mismatch-retry.exit.txt",
+        "decoder-mismatch-retry-invocations.raw.txt",
+        "decoder-mismatch-run.manifest.raw.txt",
+        "decoder-mismatch-bdrate.csv.synthetic",
+        "decoder-mismatch-quality-fragment.csv.synthetic",
+        "decoder-mismatch-cross-decoder-fragment.raw.csv",
+        "decoder-mismatch-test_420k.ivf.synthetic",
+        "workdir-state.raw.txt"
+      ]
+    }
+  ],
+  "excluded_attempt": {
+    "case": "first decoder-mismatch setup attempt stopped during capability probing",
+    "script_exit_code": 1,
+    "reason": "The help probe incorrectly said the unchanged realtime stub lacked --frame-time-csv; direct help output from that stub advertised the flag. The full retry reached the quality row and is the qualifying orchestration observation.",
+    "evidence": [
+      "superseded-capability-probe.raw.txt",
+      "superseded-capability-probe.exit.txt",
+      "superseded-capability-probe-invocations.raw.txt",
+      "direct-realtime-help.raw.txt",
+      "direct-realtime-help-invocations.raw.txt"
+    ]
+  },
+  "synthetic_setup_and_limits": [
+    "The four corpus files contain headers only. The shasum adapter returns canonical pinned constants for those exact synthetic paths, so this did not perform real corpus hash validation.",
+    "The ffmpeg dispatcher did no media processing: it created correctly named sparse files with expected Y4M headers/logical lengths and hard-linked per-target templates. The prepared-input snapshot records 4096 allocated bytes per target template despite production-sized logical lengths.",
+    "The PGO manifest and all encoder, decoder, bdrate, realtime, encode-headtohead and ffmpeg binaries are synthetic stubs. The task-local bdrate stub returned 73 in one case and a fabricated 0.400000 CSV plus dummy IVF streams in the other.",
+    "No real encoder, decoder, FFmpeg, corpus pixels, PSNR, BD-rate, compression quality, timing, or codec behavior was measured. The tests establish only that the exact-source production orchestrator aborts its first quality row on the two injected failure conditions without publishing quality/completed.",
+    "The full 200-row quality phase did not run."
+  ],
+  "artifact_inventory_note": "SHA-256 and byte lengths below cover every file in this evidence directory except qualification.json itself; raw files are preserved byte-for-byte from their capture or synthetic fixture.",
+  "artifacts": [
+    {
+      "path": "bdrate-child-failure-cross-decoder-fragment.raw.csv",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "bdrate-child-failure-cross-decoder.root.raw.csv",
+      "bytes": 108,
+      "sha256": "35275dd5c55a5471dd74fb1ffafc59aa3de86535202eb322757decba00904e5c"
+    },
+    {
+      "path": "bdrate-child-failure-invocations.raw.txt",
+      "bytes": 8666,
+      "sha256": "943127b89ef6638846b161360355741b82fa6745c465a7432fed3f33d2a70ea3"
+    },
+    {
+      "path": "bdrate-child-failure-quality-aggregate.root.raw.csv",
+      "bytes": 135,
+      "sha256": "dc4e982883e47016fcf94b496e1a9e4c8b24e161b8884ca70a94fd98d7ed2531"
+    },
+    {
+      "path": "bdrate-child-failure-quality-fragment.raw.csv",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "bdrate-child-failure-quality-summary.root.raw.csv",
+      "bytes": 191,
+      "sha256": "eb102f6e0f0adadb73575cda2ffa7829a090624bac9652ac88c23ccc90770277"
+    },
+    {
+      "path": "bdrate-child-failure-run.manifest.raw.txt",
+      "bytes": 144827,
+      "sha256": "4fa987088d3d673b9bd175c2fc016e83f0b5f78c848bc0aee16a0f464e0d4603"
+    },
+    {
+      "path": "bdrate-child-failure-runner.raw.txt",
+      "bytes": 39,
+      "sha256": "5e7491377be5af87f82631521fdd514681e68b6c103dc3845cd468faa0f21e28"
+    },
+    {
+      "path": "bdrate-child-failure.exit.txt",
+      "bytes": 2,
+      "sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865"
+    },
+    {
+      "path": "bdrate-child-failure.raw.txt",
+      "bytes": 3449,
+      "sha256": "3c8d82245487892b6802e3008c3489d07a84c30df5d9cac8338c809dd0cccf71"
+    },
+    {
+      "path": "candidate-identity.raw.txt",
+      "bytes": 380,
+      "sha256": "5e0c8fd4121ead1e96206ae887851124f85547673a583e0ac57e3720229f52fb"
+    },
+    {
+      "path": "command-form.reconstructed.txt",
+      "bytes": 5851,
+      "sha256": "97978df8c6263288155aecc5cbd9ea356bd5604b11bf92262749f2c2b47dfd86"
+    },
+    {
+      "path": "config.stub.mk",
+      "bytes": 46,
+      "sha256": "d945ccb78902142151d09ca60953c92851fc0a835665af8b372dac1587712ae2"
+    },
+    {
+      "path": "decoder-mismatch-bdrate.csv.synthetic",
+      "bytes": 20,
+      "sha256": "c4d08e8d6a7912e025b4414dfcb12c35c69f4e902b43e49fb33f91805aceddaa"
+    },
+    {
+      "path": "decoder-mismatch-cross-decoder-fragment.raw.csv",
+      "bytes": 266,
+      "sha256": "32aaec5bb82c0e14a82941921304a6d61aca66700b2b5154fd4b0909fdce6ffe"
+    },
+    {
+      "path": "decoder-mismatch-cross-decoder-root.raw.csv",
+      "bytes": 108,
+      "sha256": "35275dd5c55a5471dd74fb1ffafc59aa3de86535202eb322757decba00904e5c"
+    },
+    {
+      "path": "decoder-mismatch-cross-decoder.raw.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "decoder-mismatch-invocations.raw.txt",
+      "bytes": 9540,
+      "sha256": "6c987b69c3950b06d66f03c57c4c64140b13e896a81515902c7bdfbebf8c0aa9"
+    },
+    {
+      "path": "decoder-mismatch-quality-aggregate.root.raw.csv",
+      "bytes": 135,
+      "sha256": "dc4e982883e47016fcf94b496e1a9e4c8b24e161b8884ca70a94fd98d7ed2531"
+    },
+    {
+      "path": "decoder-mismatch-quality-fragment.csv.synthetic",
+      "bytes": 152,
+      "sha256": "1cd17d3643ed6f511361ec75beb083a5baf61f3acb69d21bb1eea4e4e1e3303e"
+    },
+    {
+      "path": "decoder-mismatch-quality-summary-root.raw.csv",
+      "bytes": 191,
+      "sha256": "eb102f6e0f0adadb73575cda2ffa7829a090624bac9652ac88c23ccc90770277"
+    },
+    {
+      "path": "decoder-mismatch-retry-invocations.raw.txt",
+      "bytes": 9540,
+      "sha256": "6c987b69c3950b06d66f03c57c4c64140b13e896a81515902c7bdfbebf8c0aa9"
+    },
+    {
+      "path": "decoder-mismatch-retry.exit.txt",
+      "bytes": 2,
+      "sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865"
+    },
+    {
+      "path": "decoder-mismatch-retry.raw.txt",
+      "bytes": 3435,
+      "sha256": "1889257789501e0ba3adb4c372ec80d9be66339166451d7654b35675674c6a11"
+    },
+    {
+      "path": "decoder-mismatch-row-runner.raw.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "decoder-mismatch-run.manifest.raw.txt",
+      "bytes": 144861,
+      "sha256": "117c64014a2303904dfa1a00a0499ecc35b3d0c98fbcc2f499eeb2844f69f173"
+    },
+    {
+      "path": "decoder-mismatch-test_420k.ivf.synthetic",
+      "bytes": 26,
+      "sha256": "a43137f79fc4289b54eadf6adf862077ce47a6e5192ace4dbc2abdf0a87b5955"
+    },
+    {
+      "path": "decoder-mismatch.exit.txt",
+      "bytes": 2,
+      "sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865"
+    },
+    {
+      "path": "decoder-mismatch.raw.txt",
+      "bytes": 3435,
+      "sha256": "1889257789501e0ba3adb4c372ec80d9be66339166451d7654b35675674c6a11"
+    },
+    {
+      "path": "direct-realtime-help-invocations.raw.txt",
+      "bytes": 16,
+      "sha256": "b72d0c6a6298b688049373662743f17b4b8eab9527ae9a4d2c43cdbade895506"
+    },
+    {
+      "path": "direct-realtime-help.raw.txt",
+      "bytes": 141,
+      "sha256": "5ba0070008fd5d48c60e49cd57dce90c5b096f3ce3f2473833783e9239a6f26c"
+    },
+    {
+      "path": "pgo-manifest.raw.txt",
+      "bytes": 278,
+      "sha256": "deea387ef48224e7b0144f17917e1587e8a0648f1b68389100b60357467fa50f"
+    },
+    {
+      "path": "probe-tool.sh",
+      "bytes": 2313,
+      "sha256": "5914773469b98442a086f5e05cb7763df8d505f4ce421895659456943f7fabbc"
+    },
+    {
+      "path": "sha-cache.raw.txt",
+      "bytes": 1807,
+      "sha256": "bb3266cc373eb4298f01c1f441c0c7eacf3aa3024d8071e20c33a3203516834b"
+    },
+    {
+      "path": "sha256-cache-adapter.sh",
+      "bytes": 1129,
+      "sha256": "eaf68ef67e50af200fdec6ba0b6f7b74a6db4042f9e2eaf8de18c4e717b97b6e"
+    },
+    {
+      "path": "superseded-capability-probe-invocations.raw.txt",
+      "bytes": 205,
+      "sha256": "87e23ef3db0718665285ade455ebf4ecbb538c44cfcfeb3c2f5c229af5c5cab3"
+    },
+    {
+      "path": "superseded-capability-probe.exit.txt",
+      "bytes": 2,
+      "sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865"
+    },
+    {
+      "path": "superseded-capability-probe.raw.txt",
+      "bytes": 202,
+      "sha256": "e604ef4a10b0264a56b4053ae24f9c9378b0f996ce14ecd4d236e39f99acec89"
+    },
+    {
+      "path": "synthetic-corpus/ducks_take_off_420_720p50.y4m.header-only",
+      "bytes": 35,
+      "sha256": "17228f8820d8777f923486b191cae41517e5b0ec3be9a73db9f2761b3e1c284a"
+    },
+    {
+      "path": "synthetic-corpus/foreman_cif.y4m.header-only",
+      "bytes": 44,
+      "sha256": "030e40c4e0bd931ff7c581498928e62399e122515e6c94ecf154cd6bf8ea7907"
+    },
+    {
+      "path": "synthetic-corpus/in_to_tree_420_720p50.y4m.header-only",
+      "bytes": 35,
+      "sha256": "17228f8820d8777f923486b191cae41517e5b0ec3be9a73db9f2761b3e1c284a"
+    },
+    {
+      "path": "synthetic-corpus/old_town_cross_420_720p50.y4m.header-only",
+      "bytes": 35,
+      "sha256": "17228f8820d8777f923486b191cae41517e5b0ec3be9a73db9f2761b3e1c284a"
+    },
+    {
+      "path": "synthetic-inputs-summary.raw.txt",
+      "bytes": 954,
+      "sha256": "a82adf2371d7be21f217aba2d28cb4d861f6b9c00860cacba2c072a4aed511dd"
+    },
+    {
+      "path": "vpx-config.stub.h",
+      "bytes": 98,
+      "sha256": "e4ba06d60e46451085e6511746444bd77d547300cbf6e58bbb28eabb7c9a7b43"
+    },
+    {
+      "path": "workdir-state.raw.txt",
+      "bytes": 4765,
+      "sha256": "6dcc011fb66560cca3c6a599a0e83ec743a3be88e9063fcfc01d2585c4c7b4ca"
+    }
+  ]
+}
