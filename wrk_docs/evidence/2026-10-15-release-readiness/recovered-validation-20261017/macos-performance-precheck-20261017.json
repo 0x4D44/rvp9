@@ -1,0 +1,16 @@
+{
+  "observed_utc": "2026-10-17T09:32:12Z",
+  "host": "Darwin flux.home.arpa 25.6.0; arm64",
+  "current_head": "656b75071e0d0d9d55fb3df89fed024f46935bb5",
+  "load_command": "sysctl -n vm.loadavg",
+  "load_metric": "Unix one-minute load average",
+  "load_output": "{ 43.78 49.54 56.08 }",
+  "observed_one_minute_load": 43.78,
+  "qualification_ceiling": 0.75,
+  "quiet_status": "open",
+  "heavy_workload_processes": 1,
+  "low_priority_workload_processes": 30,
+  "decision": "Do not start timing while the observed load exceeds the fixed ceiling.",
+  "speed_or_latency_command_started": false,
+  "timing_or_quality_measurement_taken": false
+}
