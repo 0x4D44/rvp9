@@ -410,7 +410,7 @@
     "All four canonical Mac corpus clips and the exact-source 28-row PGO plan are verified through the script training-dir override; PGO training remains unrun because the contemporaneous Mac load precheck exceeded the 0.75 host ceiling."
   ],
   "stored_log_note": "Hashes cover the committed text files. Six Cargo test outputs had one trailing blank separator removed for git diff --check; no output content lines changed.",
-  "additional_checks_recorded_at_utc": "2026-10-17T12:51:59Z",
+  "additional_checks_recorded_at_utc": "2026-10-17T12:54:24Z",
   "selftest_raw_originals_archive": "mac-current-source-selftests-originals-20261017.tar.gz",
   "selftest_raw_integrity_manifest": "mac-current-source-selftest-raw-integrity.json",
   "selftest_normalization_note": "The exact original self-test captures are retained in the named archive. Linked text review copies remove trailing spaces/tabs at line ends only; assertion output content is unchanged.",
@@ -803,7 +803,7 @@
   },
   "macos_pgo_corpus_availability": {
     "schema": "rvp9.macos-current-source-pgo-corpus.v1",
-    "recorded_at_utc": "2026-10-17 12:06:39 UTC",
+    "recorded_at_utc": "2026-10-17T12:54:24Z",
     "source": {
       "commit": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
       "worktree": "/Users/md/worktrees/rvp9/20261017-TSK-HUM-requalify-post-fix-candidate",
@@ -860,7 +860,7 @@
         "sha256": "ba88d74120c156f6f05849abf7a7a1ad8c826369936d83d824a342c3af463314"
       }
     },
-    "qualification_status": "Corpus and canonical PGO plan are verified. PGO training and timing remain unrun: the 2026-10-17T12:04:04Z Mac load precheck measured 72.24 at one minute, above the 0.75 ceiling; that point-in-time snapshot is not itself the required canonical guard.",
+    "qualification_status": "Corpus and canonical PGO plan are verified. PGO training and timing remain unrun: the latest 2026-10-17T12:54:24Z Mac precheck measured 221.34 one-minute load against the 0.75 ceiling (18 logical CPUs); the point-in-time sample is not itself the required canonical guard. See ../macos-performance-precheck-20261017T125424Z.json.",
     "limits": [
       "No PGO binary or profile was produced by the plan-only command.",
       "This verifies the four canonical corpus inputs, not AOM/WebRTC/livestream representativeness."
@@ -1003,5 +1003,21 @@
       "These are filesystem self-tests using stubs, not real encoder measurements or proof of numerical quality, throughput or latency.",
       "No full quality row injected a failed bdrate child or unequal decoder output through phase completion; those failure-path limits remain as stated in the readiness report."
     ]
+  },
+  "macos_latest_load_precheck": {
+    "record": "../macos-performance-precheck-20261017T125424Z.json",
+    "observed_at_utc": "2026-10-17T12:54:24Z",
+    "load_average_1m_5m_15m": [
+      221.34,
+      165.89,
+      126.41
+    ],
+    "logical_cpu_count": 18,
+    "quiet_status_counts": {
+      "heavy_processes": 1,
+      "heavy_processes_low_priority": 30
+    },
+    "canonical_guard": false,
+    "no_pgo_or_timing_started": true
   }
 }

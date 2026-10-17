@@ -1,6 +1,6 @@
 {
   "schema": "rvp9.macos-current-source-pgo-corpus.v1",
-  "recorded_at_utc": "2026-10-17 12:06:39 UTC",
+  "recorded_at_utc": "2026-10-17T12:54:24Z",
   "source": {
     "commit": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
     "worktree": "/Users/md/worktrees/rvp9/20261017-TSK-HUM-requalify-post-fix-candidate",
@@ -57,7 +57,7 @@
       "sha256": "ba88d74120c156f6f05849abf7a7a1ad8c826369936d83d824a342c3af463314"
     }
   },
-  "qualification_status": "Corpus and canonical PGO plan are verified. PGO training and timing remain unrun: the 2026-10-17T12:04:04Z Mac load precheck measured 72.24 at one minute, above the 0.75 ceiling; that point-in-time snapshot is not itself the required canonical guard.",
+  "qualification_status": "Corpus and canonical PGO plan are verified. PGO training and timing remain unrun: the latest 2026-10-17T12:54:24Z Mac precheck measured 221.34 one-minute load against the 0.75 ceiling (18 logical CPUs); the point-in-time sample is not itself the required canonical guard. See ../macos-performance-precheck-20261017T125424Z.json.",
   "limits": [
     "No PGO binary or profile was produced by the plan-only command.",
     "This verifies the four canonical corpus inputs, not AOM/WebRTC/livestream representativeness."

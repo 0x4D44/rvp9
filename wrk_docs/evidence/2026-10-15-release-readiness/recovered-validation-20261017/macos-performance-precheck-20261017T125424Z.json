@@ -1,0 +1,49 @@
+{
+  "schema": "rvp9.macos-performance-precheck.v1",
+  "observed_at_utc": "2026-10-17T12:54:24Z",
+  "host": "flux, macOS Apple Silicon",
+  "source_commit": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+  "quiet_status": {
+    "command": "deltic quiet status --json",
+    "exit_code": 0,
+    "raw": {
+      "path": "macos-performance-precheck-20261017125424-quiet.raw.json",
+      "bytes": 168,
+      "sha256": "5365363b25b27d0ea1b4da58685972eea06852dcb74f5796a53a44af567e518d"
+    },
+    "status": {
+      "live": false,
+      "holder": null,
+      "open_after": 1792233007,
+      "queue": [],
+      "heavy_processes": 1,
+      "heavy_processes_low_priority": 30,
+      "own_measurements": 0
+    }
+  },
+  "load_sample": {
+    "command": "sysctl -n vm.loadavg",
+    "exit_code": 0,
+    "raw": {
+      "path": "macos-performance-precheck-20261017125424-load.raw.txt",
+      "bytes": 25,
+      "sha256": "41a3bc2304c0df5f8cc3d1d35866228ad7af6d7fa96993afe4475160552c060a"
+    },
+    "load_average_1m_5m_15m": [
+      221.34,
+      165.89,
+      126.41
+    ]
+  },
+  "logical_cpu_count": {
+    "command": "sysctl -n hw.logicalcpu",
+    "exit_code": 0,
+    "raw": {
+      "path": "macos-performance-precheck-20261017125424-logical-cpu.raw.txt",
+      "bytes": 3,
+      "sha256": "7ee29791fc17e986b97128845622b077fb45e349fdb80523fac9dba879b4ad60"
+    },
+    "value": 18
+  },
+  "interpretation": "Point-in-time precheck only; one-minute load 221.34 exceeds the 0.75 timing ceiling. This was not the canonical load guard. No current-source Mac PGO training or timing command started."
+}
