@@ -1,0 +1,50 @@
+{
+  "test": "standalone bdrate solver reproduction of FLU-00042",
+  "host_triple": "aarch64-apple-darwin",
+  "candidate_source_commit": "474dfd99a673df85f750136f7552ac156b7a24e9",
+  "runner_worktree_commit": "3279eaa04d22a4f02034385d447180c928e384bb",
+  "source": {
+    "path": "crates/rvp9-bench/src/bin/bdrate.rs",
+    "sha256": "2b21e71894cdf94f2830ec3097c314709e5cc8814dcc0cfac61944f00431b02b",
+    "unchanged_from_candidate": true,
+    "extracted_lines": ["253-259", "406-448", "463-537"],
+    "purpose": "Compile the exact RdPoint, bd_rate, and polyfit3 source with a small main that supplies the recorded inputs; no production source was edited."
+  },
+  "command": {
+    "compiler": "rustc 1.95.0 (59807616e 2026-04-14)",
+    "argv_shape": [
+      "rustc", "--edition=2024", "-O", "<registered-scratch>/diagnostic.rs",
+      "-o", "<registered-scratch>/diagnostic"
+    ],
+    "run": "<registered-scratch>/diagnostic",
+    "scratch_id": "bdrate-standalone-check-77a27a53",
+    "scratch_removed_after_capture": true
+  },
+  "input": {
+    "units": ["kbps", "PSNR dB"],
+    "anchor": [
+      [1152.068, 25.670945], [1174.084, 25.723668],
+      [1207.220, 25.767877], [1253.696, 25.822174],
+      [1326.328, 25.884390], [1569.352, 26.307338]
+    ],
+    "test": [
+      [1151.356, 25.697093], [1175.428, 25.747508],
+      [1207.796, 25.794290], [1251.228, 25.841255],
+      [1326.504, 25.908804], [1568.004, 26.298732]
+    ]
+  },
+  "result": {
+    "exit_code": 0,
+    "stdout": "-0.714401695614\n",
+    "standalone_bdrate_percent": "-0.714401695614",
+    "shared_solver_percent": "-0.714401618768",
+    "decimal80_reference_percent": "-1.788791640314064",
+    "absolute_error_vs_decimal80_percentage_points": "1.074389944700064",
+    "interpretation": "The standalone path also accepts a finite but materially inaccurate result on the same six-point input. This confirms FLU-00042 affects both measurement paths; it does not claim a codec-quality failure or replace the acceptance oracle."
+  },
+  "limits": [
+    "This isolated harness compiles the production solver source ranges directly; it does not invoke the standalone CLI's encoder, decoder, or file pipeline.",
+    "The Decimal80 reference and same-input points are recorded in RVP9-BUG-FLU-00042.md and the spatial-quality numeric audit.",
+    "No shipped source, bug-owner fix, ledger state, or quality acceptance result was changed."
+  ]
+}
