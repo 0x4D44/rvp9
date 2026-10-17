@@ -1,0 +1,1 @@
+env RVP9_FORCE_SCALAR=1 /c/Users/marti/AppData/Local/Temp/deltic-scratch/rvp9-native-replay474-9dee6be6/cargo-target/release/conformance.exe --vectors-dir tests/conformance/vectors --official --strict --threads 2

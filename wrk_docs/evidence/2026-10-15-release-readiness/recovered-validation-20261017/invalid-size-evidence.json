@@ -1,0 +1,26 @@
+{
+  "negative_size_probes": [
+    {
+      "source": "scripts/qualify-alpha-encoder.sh",
+      "source_sha256": "78e5bce5a30291c07907c66b6f86e35baa1c1fa4bba2546ecaea825cc0d6543e",
+      "probe": "wrk_docs/evidence/2026-10-15-release-readiness/recovered-validation-20261017/qualify-alpha-encoder-invalid-size-probe.sh",
+      "probe_scope": "exact current size-condition block only, supplied nonnumeric measurement; not a complete codec gate",
+      "exit": 0,
+      "output": "wrk_docs/evidence/2026-10-15-release-readiness/recovered-validation-20261017/qualify-alpha-encoder-invalid-size-probe.sh: line 4: [: invalid: integer expression expected\nACCEPTED_INVALID_SIZE\n"
+    },
+    {
+      "source": "scripts/qualify-reference-decoder.sh",
+      "source_sha256": "14dced86d315b618ef93c444cb94af5de12490fbcb4bc178b51dec3d0d4b43a2",
+      "probe": "wrk_docs/evidence/2026-10-15-release-readiness/recovered-validation-20261017/qualify-reference-decoder-invalid-size-probe.sh",
+      "probe_scope": "exact current size-condition block only, supplied nonnumeric measurement; not a complete codec gate",
+      "exit": 0,
+      "output": "wrk_docs/evidence/2026-10-15-release-readiness/recovered-validation-20261017/qualify-reference-decoder-invalid-size-probe.sh: line 4: [: invalid: integer expression expected\nACCEPTED_INVALID_SIZE\n"
+    }
+  ],
+  "retained_original_windows_evidence": {
+    "exit": "0",
+    "integer_expression_errors": 48,
+    "pass_rows": 24,
+    "scope": "historical unadapted native Windows run, explicitly invalid; current scripts unchanged from that source"
+  }
+}

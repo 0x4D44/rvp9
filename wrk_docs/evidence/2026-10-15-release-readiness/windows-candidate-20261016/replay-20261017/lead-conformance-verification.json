@@ -1,0 +1,38 @@
+{
+  "source": "474dfd99a673df85f750136f7552ac156b7a24e9",
+  "checks": {
+    "native-1": {
+      "exit": 0,
+      "vectors": 307,
+      "frames": 4816,
+      "mismatches": 0,
+      "skipped": 0,
+      "raw_sha256": "6b13b65a36a87117bb427e9f0440d8b7a80a28fd5c7f5dd85ad83f5d79839103"
+    },
+    "native-2": {
+      "exit": 0,
+      "vectors": 307,
+      "frames": 4816,
+      "mismatches": 0,
+      "skipped": 0,
+      "raw_sha256": "5f2feac25403c721c0559df558cead52c5a62b5d7f785b6d13cc5251375dab06"
+    },
+    "scalar-1": {
+      "exit": 0,
+      "vectors": 307,
+      "frames": 4816,
+      "mismatches": 0,
+      "skipped": 0,
+      "raw_sha256": "6b13b65a36a87117bb427e9f0440d8b7a80a28fd5c7f5dd85ad83f5d79839103"
+    },
+    "scalar-2": {
+      "exit": 0,
+      "vectors": 307,
+      "frames": 4816,
+      "mismatches": 0,
+      "skipped": 0,
+      "raw_sha256": "5f2feac25403c721c0559df558cead52c5a62b5d7f785b6d13cc5251375dab06"
+    }
+  },
+  "coverage_limit": "Actual x86scalar/native; ARM no scalar claim. No claim for nonterminal matrices or missing prior artifacts."
+}

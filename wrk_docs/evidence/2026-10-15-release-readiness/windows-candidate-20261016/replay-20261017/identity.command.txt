@@ -1,0 +1,1 @@
+bash -c 'date -u; uname -a; git rev-parse HEAD; git status --porcelain; rustc -vV; cargo -vV; echo CARGO_BUILD_JOBS=$CARGO_BUILD_JOBS; echo CARGO_TARGET_DIR=$CARGO_TARGET_DIR; git submodule status; sha256sum build/libvpx/vpxenc.exe build/libvpx/vpxdec.exe build/libvpx/vpx_temporal_svc_reference.exe; find tests/conformance/vectors -maxdepth 1 -type f | wc -l'

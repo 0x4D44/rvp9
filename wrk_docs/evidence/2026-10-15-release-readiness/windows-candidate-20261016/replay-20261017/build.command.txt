@@ -1,0 +1,1 @@
+cargo build --release --locked -p rvp9-harness --bin conformance -p rvp9-cli --bin rvp9enc --bin rvp9dec -p rvp9-bench --bin bdrate --bin bdrate-svc --bin encode-headtohead --bin realtime

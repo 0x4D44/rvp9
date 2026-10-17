@@ -1,0 +1,25 @@
+Sat Oct 17 05:16:10 UTC 2026
+MINGW64_NT-10.0-26200 crucible 3.6.6-1cdd4371.x86_64 2026-01-15 22:20 UTC x86_64 Msys
+474dfd99a673df85f750136f7552ac156b7a24e9
+rustc 1.95.0 (59807616e 2026-04-14)
+binary: rustc
+commit-hash: 59807616e1fa2540724bfbac14d7976d7e4a3860
+commit-date: 2026-04-14
+host: x86_64-pc-windows-msvc
+release: 1.95.0
+LLVM version: 22.1.2
+cargo 1.95.0 (f2d3ce0bd 2026-03-21)
+release: 1.95.0
+commit-hash: f2d3ce0bd7f24a49f8f72d9000448f8838c4e850
+commit-date: 2026-03-21
+host: x86_64-pc-windows-msvc
+libgit2: 1.9.2 (sys:0.20.4 vendored)
+libcurl: 8.15.0-DEV (sys:0.4.83+curl-8.15.0 vendored ssl:Schannel)
+os: Windows 10.0.26200 (Windows 11 Professional) [64-bit]
+CARGO_BUILD_JOBS=4
+CARGO_TARGET_DIR=C:/Users/marti/AppData/Local/Temp/deltic-scratch/rvp9-native-replay474-9dee6be6/cargo-target
+ 12f3a2ac603e8f10742105519e0cd03c3b8f71dd third_party/libvpx (v1.14.1)
+88ba702de16af47327490a7d016002fd05169e074c6c6657b9e9ff7a8d4a135d *build/libvpx/vpxenc.exe
+91eb8ab65f62f1d63d750878b20b6b75a2882f75814e623ab54acf22b9ad02b6 *build/libvpx/vpxdec.exe
+32e59085ad9e81f199475eb3df3278632e02c8e5e52ec287b334f89340d193be *build/libvpx/vpx_temporal_svc_reference.exe
+614

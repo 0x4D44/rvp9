@@ -1,0 +1,1 @@
+cargo test --release --locked -p rvp9-cli --bins -- --test-threads=4

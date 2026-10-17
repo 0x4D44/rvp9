@@ -1,0 +1,4 @@
+rust-toolchain.toml|gnu_stat_bytes=222|independent_wc_bytes=222|numeric=PASS
+tests/corpus/in_to_tree_420_720p50.y4m|gnu_stat_bytes=691203035|independent_wc_bytes=691203035|numeric=PASS
+tests/corpus/ducks_take_off_420_720p50.y4m|gnu_stat_bytes=691203035|independent_wc_bytes=691203035|numeric=PASS
+tests/corpus/old_town_cross_420_720p50.y4m|gnu_stat_bytes=691203035|independent_wc_bytes=691203035|numeric=PASS

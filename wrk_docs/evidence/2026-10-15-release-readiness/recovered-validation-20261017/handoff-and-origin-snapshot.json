@@ -1,0 +1,93 @@
+{
+  "origin_snapshot": "a7423f97f36ae4efe1b58408c551a076adaa59f4",
+  "candidate_product_source": "474dfd99a673df85f750136f7552ac156b7a24e9",
+  "source_comparison_scope": [
+    "crates",
+    "scripts",
+    "tools",
+    "Cargo.toml",
+    "Cargo.lock",
+    "rust-toolchain.toml",
+    ".cargo"
+  ],
+  "product_source_differences": [
+    "crates/rvp9-cli/README.md",
+    "crates/rvp9-cli/src/bin/rvp9enc.rs",
+    "crates/rvp9-cli/tests/cli_roundtrip.rs"
+  ],
+  "records": [
+    {
+      "id": "RVP9-BUG-FLU-00036",
+      "path": "bugs/RVP9-BUG-FLU-00036.md",
+      "state": "Open",
+      "sha256": "67ea8a23969c53e027f7403e2c7e8e12a076c6b8620a3cc405f0ae72721aa102",
+      "present_on_origin_snapshot": false,
+      "in_pending_eight_report_authorization_request": true
+    },
+    {
+      "id": "RVP9-BUG-FLU-00037",
+      "path": "bugs/RVP9-BUG-FLU-00037.md",
+      "state": "Open",
+      "sha256": "6e3d15b05459ab07488a9592713cd8327fd1aff32bfcd876086273ecc9ac3199",
+      "present_on_origin_snapshot": false,
+      "in_pending_eight_report_authorization_request": true
+    },
+    {
+      "id": "RVP9-BUG-FLU-00038",
+      "path": "bugs/RVP9-BUG-FLU-00038.md",
+      "state": "Open",
+      "sha256": "ad24cfa7d356938dc1a516517516ffd9eac6d000905b5b2dd87279d8bc258dd9",
+      "present_on_origin_snapshot": false,
+      "in_pending_eight_report_authorization_request": true
+    },
+    {
+      "id": "RVP9-BUG-FLU-00039",
+      "path": "bugs/RVP9-BUG-FLU-00039.md",
+      "state": "Open",
+      "sha256": "772febbae125df22d24358df439b40d3ff370ae5948e3ebecdc894f53e1dd8e5",
+      "present_on_origin_snapshot": false,
+      "in_pending_eight_report_authorization_request": true
+    },
+    {
+      "id": "RVP9-BUG-FLU-00041",
+      "path": "bugs/RVP9-BUG-FLU-00041.md",
+      "state": "Open",
+      "sha256": "36e3b2b73c85ff863123267ce76e4e83f96da79f04363c297614aa61c33e6e7d",
+      "present_on_origin_snapshot": false,
+      "in_pending_eight_report_authorization_request": true
+    },
+    {
+      "id": "RVP9-BUG-FLU-00042",
+      "path": "bugs/RVP9-BUG-FLU-00042.md",
+      "state": "Open",
+      "sha256": "f27abdfe6dab5a8e5ede31f487097656d3e8cc70f8c0f051ed4477529231b030",
+      "present_on_origin_snapshot": false,
+      "in_pending_eight_report_authorization_request": true
+    },
+    {
+      "id": "RVP9-BUG-FLU-00043",
+      "path": "bugs/RVP9-BUG-FLU-00043.md",
+      "state": "Open",
+      "sha256": "7db34fb59007981245625b01a84fd5afe99eb5c6bcbcdc19fb65b8913d6bfb8d",
+      "present_on_origin_snapshot": false,
+      "in_pending_eight_report_authorization_request": true
+    },
+    {
+      "id": "RVP9-BUG-FLU-00044",
+      "path": "bugs/RVP9-BUG-FLU-00044.md",
+      "state": "Open",
+      "sha256": "37fa1f73d5d65f5e3c613d8ac44b9b81d16d42224c7f386fef589c6a8efa6874",
+      "present_on_origin_snapshot": false,
+      "in_pending_eight_report_authorization_request": true
+    },
+    {
+      "id": "RVP9-BUG-FLU-00045",
+      "path": "bugs/RVP9-BUG-FLU-00045.md",
+      "state": "Open",
+      "sha256": "570cc6ce5eb65831b247bfdc0407b38bb6c301a22283435e99b08301f7482dd8",
+      "present_on_origin_snapshot": false,
+      "in_pending_eight_report_authorization_request": false
+    }
+  ],
+  "permission_status": "Pending. No integration/push authorized by silence. Report45 is outside earlier eight-report request."
+}

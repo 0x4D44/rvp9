@@ -1,0 +1,1 @@
+cargo test --locked -p rvp9-core --lib force_scalar_subprocess -- --nocapture

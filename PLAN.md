@@ -608,7 +608,7 @@ Open items routed:
 
 **Risks:**
 - The non-RD mode picker is a heuristic minefield. Expect to spend more time here than any other module.
-- Tile-threading correctness under Rust's aliasing rules is the hardest unsafe-Rust we'll write. Plan for Miri runs as part of CI.
+- Tile-threading correctness under Rust's aliasing rules is the hardest unsafe-Rust we'll write. Plan for Miri runs as part of local validation.
 
 ---
 

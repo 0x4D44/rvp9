@@ -1,0 +1,5 @@
+bash -c 'root=/c/Users/marti/AppData/Local/Temp/deltic-scratch/rvp9-native-replay474-9dee6be6
+cat > "$root/native-features.rs" <<'"'"'RS'"'"'
+fn main() { println!("avx2={} sse2={} ssse3={} sse41={} bmi2={} fma={}", std::is_x86_feature_detected!("avx2"), std::is_x86_feature_detected!("sse2"), std::is_x86_feature_detected!("ssse3"), std::is_x86_feature_detected!("sse4.1"), std::is_x86_feature_detected!("bmi2"), std::is_x86_feature_detected!("fma")); }
+RS
+rustc --crate-name replay_features "$root/native-features.rs" -o "$root/native-features.exe" && "$root/native-features.exe"'

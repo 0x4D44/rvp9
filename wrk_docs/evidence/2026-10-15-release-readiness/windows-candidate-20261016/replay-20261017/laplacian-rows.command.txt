@@ -1,0 +1,1 @@
+cargo test --locked -p rvp9-encoder --lib hf_laplacian_rows_match_scalar_for_steps_spans_and_tight_tails -- --nocapture

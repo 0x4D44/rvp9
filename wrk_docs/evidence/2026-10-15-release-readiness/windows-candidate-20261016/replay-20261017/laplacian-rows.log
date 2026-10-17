@@ -1,0 +1,8 @@
+    Finished `test` profile [optimized + debuginfo] target(s) in 0.07s
+     Running unittests src\lib.rs (C:/Users/marti/AppData/Local/Temp/deltic-scratch/rvp9-native-replay474-9dee6be6/cargo-target\debug\deps\rvp9_encoder-c5df4a879fe33e86.exe)
+
+running 1 test
+test pre_analysis::tests::hf_laplacian_rows_match_scalar_for_steps_spans_and_tight_tails ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 805 filtered out; finished in 0.00s
+

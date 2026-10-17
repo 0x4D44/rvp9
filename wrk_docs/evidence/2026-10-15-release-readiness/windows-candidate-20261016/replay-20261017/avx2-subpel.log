@@ -1,0 +1,12 @@
+    Finished `test` profile [optimized + debuginfo] target(s) in 0.06s
+     Running unittests src\lib.rs (C:/Users/marti/AppData/Local/Temp/deltic-scratch/rvp9-native-replay474-9dee6be6/cargo-target\debug\deps\rvp9_core-6e420d962b8f1ce4.exe)
+
+running 5 tests
+test dsp::x86_64::subpel_variance_avx2::tests::production_wrapper_reuses_thread_local_scratch ... ok
+test dsp::x86_64::subpel_variance_avx2::tests::dispatch_round_trip ... ok
+test dsp::x86_64::subpel_variance_avx2::tests::differential_edge_content ... ok
+test dsp::x86_64::subpel_variance_avx2::tests::differential_var_sse ... ok
+test dsp::x86_64::subpel_variance_avx2::tests::differential_temp_byte_identical ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 2073 filtered out; finished in 0.00s
+

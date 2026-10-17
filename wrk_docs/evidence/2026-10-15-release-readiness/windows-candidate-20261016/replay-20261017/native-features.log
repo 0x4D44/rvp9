@@ -1,0 +1,1 @@
+avx2=true sse2=true ssse3=true sse41=true bmi2=true fma=true

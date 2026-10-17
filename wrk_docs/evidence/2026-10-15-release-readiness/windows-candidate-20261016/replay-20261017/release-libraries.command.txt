@@ -1,0 +1,1 @@
+cargo test --release --locked -p rvp9-core -p rvp9-io -p rvp9-decoder -p rvp9-encoder --lib -- --test-threads=4
