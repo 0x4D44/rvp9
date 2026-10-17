@@ -1,0 +1,9 @@
+RUN_START=bitstream
+RUN_EXIT=bitstream:1
+RUN_START=frame
+RUN_EXIT=frame:124
+RUN_START=loopfilter
+RUN_EXIT=loopfilter:0
+RUN_START=entropy
+RUN_EXIT=entropy:124
+OVERALL_EXIT=1

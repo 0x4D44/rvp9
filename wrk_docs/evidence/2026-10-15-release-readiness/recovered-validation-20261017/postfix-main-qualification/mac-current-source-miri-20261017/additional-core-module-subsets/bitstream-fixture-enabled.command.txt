@@ -1,0 +1,1 @@
+nice -n 15 deltic timeout 900 env MIRIFLAGS=-Zmiri-disable-isolation CARGO_TARGET_DIR=<registered-scratch>/target CARGO_BUILD_JOBS=1 cargo +nightly miri test --locked --offline --package rvp9-core --lib bitstream:: -- --test-threads=1 </dev/null

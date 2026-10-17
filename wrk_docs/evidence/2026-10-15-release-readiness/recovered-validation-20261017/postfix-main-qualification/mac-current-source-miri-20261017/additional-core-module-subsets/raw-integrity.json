@@ -1,0 +1,184 @@
+{
+  "algorithm": "SHA-256",
+  "files": [
+    {
+      "path": "bitstream-fixture-enabled.command.txt",
+      "size_bytes": 246,
+      "sha256": "f75fc86b9df417eab053339709fcf48d9274fc5a4082ec1c98b8595ff44e684c"
+    },
+    {
+      "path": "bitstream-fixture-enabled.driver.raw.sh",
+      "size_bytes": 264,
+      "sha256": "5465f312723f77253a2e00ce8d7b1091328cb1aa9549ebd278329c6c55d5c858"
+    },
+    {
+      "path": "bitstream-fixture-enabled.exit.txt",
+      "size_bytes": 21,
+      "sha256": "e3b45f433588c37fa8ad89feedf10f03ef27b342282c4026b3638bc9618aacc6"
+    },
+    {
+      "path": "bitstream-fixture-enabled.raw.txt",
+      "size_bytes": 36500,
+      "sha256": "16f970993e3f910406bf2bbb651881535d770bb0b1be081de879fe7efd05b385"
+    },
+    {
+      "path": "bitstream-fixture-enabled.raw.txt.gz",
+      "size_bytes": 5377,
+      "sha256": "726f901e19703e76a945ffa2ac7aef5caa8bfd491375f813992acf3758008c2f"
+    },
+    {
+      "path": "bitstream-fixture-enabled.review.txt",
+      "size_bytes": 36499,
+      "sha256": "42a94bc9bcfa949bc1ac6f9ae7599820b04c981fb413b745c8f000598c44f5d7"
+    },
+    {
+      "path": "bitstream-isolated.raw.txt",
+      "size_bytes": 23071,
+      "sha256": "58b071dadc03808ef919cbcbbc8f159b07ba06b0b47929368aa61ff3cd7c9541"
+    },
+    {
+      "path": "bitstream-isolated.raw.txt.gz",
+      "size_bytes": 4064,
+      "sha256": "7cc0999453e0636940a87ddccb6f85c09588db7ed0e4438b0a61ba10a6cbed05"
+    },
+    {
+      "path": "bitstream-isolated.review.txt",
+      "size_bytes": 23070,
+      "sha256": "7bcd9d8ee5a4f3bd6aa6e196b65236d1c740fecf3c9abf2444cd29337f35ae99"
+    },
+    {
+      "path": "context.raw.txt",
+      "size_bytes": 532,
+      "sha256": "bb630f083451fe0d973191b56d23987a7b7325d256a7f4684c3c89c081f4cf00"
+    },
+    {
+      "path": "context.raw.txt.gz",
+      "size_bytes": 354,
+      "sha256": "5b2d03727f0fc09d08720f8439a80fda5538d46e448a9c980f14263b636a15cf"
+    },
+    {
+      "path": "context.review.txt",
+      "size_bytes": 531,
+      "sha256": "84d6a88a490ae17fe0cc2f722635cc4bf5553d20ceb27f69676a68bb6a3b7e1f"
+    },
+    {
+      "path": "entropy.raw.txt",
+      "size_bytes": 23380,
+      "sha256": "45841d81c1c6a6f9f84aaba184c358d8a5970453a4f0c5d31208b946257b9bd4"
+    },
+    {
+      "path": "entropy.raw.txt.gz",
+      "size_bytes": 4092,
+      "sha256": "4f93367c20f8345f1ea7d09869fee194dc3bf886049e13fb14032ed0816bec11"
+    },
+    {
+      "path": "entropy.review.txt",
+      "size_bytes": 23379,
+      "sha256": "2989fb685f02d2fa518271d64b16ece96755e23ff40b0e475669536710723cc0"
+    },
+    {
+      "path": "frame.raw.txt",
+      "size_bytes": 15153,
+      "sha256": "5ac89d1d9e97922ea4da92729ca022ed4ae730a00d155a0231c6dc7843a750c3"
+    },
+    {
+      "path": "frame.raw.txt.gz",
+      "size_bytes": 2626,
+      "sha256": "650ec63a804238570721e5737ee28799c7286705df055e6ba39a7ab9e516c164"
+    },
+    {
+      "path": "frame.review.txt",
+      "size_bytes": 15152,
+      "sha256": "bb50e3ddadb66ab647e77cc893604ad04dc5f8ac1eb631a2f308459881f0a1ab"
+    },
+    {
+      "path": "loopfilter.raw.txt",
+      "size_bytes": 22954,
+      "sha256": "8a0c72f660c5fbb275b1f377b147c33683ce1807e5eefedca24a1af4973e13b4"
+    },
+    {
+      "path": "loopfilter.raw.txt.gz",
+      "size_bytes": 3725,
+      "sha256": "712f310cec0e330979c471a42751ebc5219146b0cd2747777cb413e529c8be8c"
+    },
+    {
+      "path": "loopfilter.review.txt",
+      "size_bytes": 22953,
+      "sha256": "a5d9963f08a9c9e06358b8e13c0b955fb968ca939d7d27e59dc424f4fb911155"
+    },
+    {
+      "path": "qualification.json",
+      "size_bytes": 6104,
+      "sha256": "07c356f5d33e872ff7c49828ccdc9bdea717bbb4c6ab5c8bd4f3991ef139891c"
+    },
+    {
+      "path": "run.driver.raw.sh",
+      "size_bytes": 1080,
+      "sha256": "efa0a57cb4afc86fd485dab38530c2eb9283176808ea002482effa8e90f5793a"
+    },
+    {
+      "path": "run.exit.txt",
+      "size_bytes": 15,
+      "sha256": "5e886eb519e91a55378389aee74328d81b52a294614db731b8079c5ccd3cd893"
+    },
+    {
+      "path": "run.summary.raw.txt",
+      "size_bytes": 173,
+      "sha256": "1df23a91e80151e8a2cf34b5ac34ccd60912d4b75dd98bec05ae795c53c31976"
+    },
+    {
+      "path": "run.summary.raw.txt.gz",
+      "size_bytes": 110,
+      "sha256": "5a5e71db222bb05e65ca00ec0a368a354110fbb3bd6de74603ed925825f79cd7"
+    },
+    {
+      "path": "run.summary.review.txt",
+      "size_bytes": 172,
+      "sha256": "53dd97b3d7c3eac2119efd9097aae71874202e561bc28e9ccd8604eb6c365774"
+    }
+  ],
+  "review_normalization": {
+    "entropy.raw.txt": {
+      "review_copy": "entropy.review.txt",
+      "transformation": "removed exactly one final LF",
+      "raw_sha256": "45841d81c1c6a6f9f84aaba184c358d8a5970453a4f0c5d31208b946257b9bd4",
+      "review_sha256": "2989fb685f02d2fa518271d64b16ece96755e23ff40b0e475669536710723cc0"
+    },
+    "context.raw.txt": {
+      "review_copy": "context.review.txt",
+      "transformation": "removed exactly one final LF",
+      "raw_sha256": "bb630f083451fe0d973191b56d23987a7b7325d256a7f4684c3c89c081f4cf00",
+      "review_sha256": "84d6a88a490ae17fe0cc2f722635cc4bf5553d20ceb27f69676a68bb6a3b7e1f"
+    },
+    "bitstream-fixture-enabled.raw.txt": {
+      "review_copy": "bitstream-fixture-enabled.review.txt",
+      "transformation": "removed exactly one final LF",
+      "raw_sha256": "16f970993e3f910406bf2bbb651881535d770bb0b1be081de879fe7efd05b385",
+      "review_sha256": "42a94bc9bcfa949bc1ac6f9ae7599820b04c981fb413b745c8f000598c44f5d7"
+    },
+    "bitstream-isolated.raw.txt": {
+      "review_copy": "bitstream-isolated.review.txt",
+      "transformation": "removed exactly one final LF",
+      "raw_sha256": "58b071dadc03808ef919cbcbbc8f159b07ba06b0b47929368aa61ff3cd7c9541",
+      "review_sha256": "7bcd9d8ee5a4f3bd6aa6e196b65236d1c740fecf3c9abf2444cd29337f35ae99"
+    },
+    "run.summary.raw.txt": {
+      "review_copy": "run.summary.review.txt",
+      "transformation": "removed exactly one final LF",
+      "raw_sha256": "1df23a91e80151e8a2cf34b5ac34ccd60912d4b75dd98bec05ae795c53c31976",
+      "review_sha256": "53dd97b3d7c3eac2119efd9097aae71874202e561bc28e9ccd8604eb6c365774"
+    },
+    "frame.raw.txt": {
+      "review_copy": "frame.review.txt",
+      "transformation": "removed exactly one final LF",
+      "raw_sha256": "5ac89d1d9e97922ea4da92729ca022ed4ae730a00d155a0231c6dc7843a750c3",
+      "review_sha256": "bb50e3ddadb66ab647e77cc893604ad04dc5f8ac1eb631a2f308459881f0a1ab"
+    },
+    "loopfilter.raw.txt": {
+      "review_copy": "loopfilter.review.txt",
+      "transformation": "removed exactly one final LF",
+      "raw_sha256": "8a0c72f660c5fbb275b1f377b147c33683ce1807e5eefedca24a1af4973e13b4",
+      "review_sha256": "a5d9963f08a9c9e06358b8e13c0b955fb968ca939d7d27e59dc424f4fb911155"
+    }
+  }
+}

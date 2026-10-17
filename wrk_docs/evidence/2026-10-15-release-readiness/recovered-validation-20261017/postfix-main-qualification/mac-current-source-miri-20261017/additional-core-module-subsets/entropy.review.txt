@@ -1,0 +1,463 @@
+    Finished `test` profile [optimized + debuginfo] target(s) in 0.08s
+     Running unittests src/lib.rs (/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-miri-core2-1017-9645a917/target/miri/aarch64-apple-darwin/debug/deps/rvp9_core-661fdbeb4d5c532d)
+warning: unused imports: `int_pro_64x64_fused_neon`, `vpx_int_pro_col_neon`, `vpx_int_pro_row_clamped_neon`, `vpx_int_pro_row_neon`, and `vpx_vector_var_neon`
+  --> crates/rvp9-core/src/dsp/aarch64/mod.rs:30:5
+   |
+30 |     int_pro_64x64_fused_neon, vpx_int_pro_col_neon, vpx_int_pro_row_clamped_neon,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+31 |     vpx_int_pro_row_neon, vpx_vector_var_neon,
+   |     ^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `minmax_neon::minmax_8x8_neon`
+  --> crates/rvp9-core/src/dsp/aarch64/mod.rs:40:9
+   |
+40 | pub use minmax_neon::minmax_8x8_neon;
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `vp9_quantize_b_32x32_neon`, `vp9_quantize_b_neon`, `vp9_quantize_fp_32x32_i16_metrics_neon`, `vp9_quantize_fp_32x32_i16_rate_metrics_neon`, `vp9_quantize_fp_32x32_neon`, `vp9_quantize_fp_i16_metrics_neon`, `vp9_quantize_fp_i16_rate_metrics_neon`, and `vp9_quantize_fp_neon`
+  --> crates/rvp9-core/src/dsp/aarch64/mod.rs:42:5
+   |
+42 |     vp9_quantize_b_32x32_neon, vp9_quantize_b_neon, vp9_quantize_fp_32x32_i16_metrics_neon,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+43 |     vp9_quantize_fp_32x32_i16_rate_metrics_neon, vp9_quantize_fp_32x32_neon,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^^^^^
+44 |     vp9_quantize_fp_all_zero_neon, vp9_quantize_fp_i16_metrics_neon,
+   |                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+45 |     vp9_quantize_fp_i16_rate_metrics_neon, vp9_quantize_fp_neon,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `vbp_neon::avg_diff_8x8_grid_64x64_neon`
+  --> crates/rvp9-core/src/dsp/aarch64/mod.rs:85:9
+   |
+85 | pub use vbp_neon::avg_diff_8x8_grid_64x64_neon;
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `int_pro_64x64_fused_neon_inner` is never used
+  --> crates/rvp9-core/src/dsp/aarch64/int_pro_neon.rs:10:11
+   |
+10 | unsafe fn int_pro_64x64_fused_neon_inner(
+   |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `int_pro_64x64_fused_neon` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/int_pro_neon.rs:148:8
+    |
+148 | pub fn int_pro_64x64_fused_neon(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `vpx_int_pro_row_neon_inner` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/int_pro_neon.rs:189:11
+    |
+189 | unsafe fn vpx_int_pro_row_neon_inner(
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `vpx_int_pro_row_neon` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/int_pro_neon.rs:222:8
+    |
+222 | pub fn vpx_int_pro_row_neon(
+    |        ^^^^^^^^^^^^^^^^^^^^
+
+warning: function `vpx_int_pro_row_clamped_neon_inner` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/int_pro_neon.rs:247:11
+    |
+247 | unsafe fn vpx_int_pro_row_clamped_neon_inner(
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `vpx_int_pro_row_clamped_neon` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/int_pro_neon.rs:280:8
+    |
+280 | pub fn vpx_int_pro_row_clamped_neon(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `vpx_int_pro_col_neon_inner` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/int_pro_neon.rs:308:11
+    |
+308 | unsafe fn vpx_int_pro_col_neon_inner(reference: *const u8, width: usize) -> i32 {
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `vpx_int_pro_col_neon` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/int_pro_neon.rs:319:8
+    |
+319 | pub fn vpx_int_pro_col_neon(reference: &[u8], width: usize) -> i32 {
+    |        ^^^^^^^^^^^^^^^^^^^^
+
+warning: function `vpx_vector_var_neon_inner` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/int_pro_neon.rs:329:11
+    |
+329 | unsafe fn vpx_vector_var_neon_inner(
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `vpx_vector_var_neon` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/int_pro_neon.rs:356:8
+    |
+356 | pub fn vpx_vector_var_neon(reference: &[i16], source: &[i16], bwl: u32) -> i32 {
+    |        ^^^^^^^^^^^^^^^^^^^
+
+warning: function `minmax_8x8_neon_inner` is never used
+ --> crates/rvp9-core/src/dsp/aarch64/minmax_neon.rs:9:11
+  |
+9 | unsafe fn minmax_8x8_neon_inner(
+  |           ^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `minmax_8x8_neon` is never used
+  --> crates/rvp9-core/src/dsp/aarch64/minmax_neon.rs:56:8
+   |
+56 | pub fn minmax_8x8_neon(
+   |        ^^^^^^^^^^^^^^^
+
+warning: struct `HadamardQuantMetrics` is never constructed
+  --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:12:12
+   |
+12 | pub struct HadamardQuantMetrics {
+   |            ^^^^^^^^^^^^^^^^^^^^
+
+warning: struct `HadamardQuantRateMetrics` is never constructed
+  --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:23:12
+   |
+23 | pub struct HadamardQuantRateMetrics {
+   |            ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: struct `HadamardMetricAccumulator` is never constructed
+  --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:30:8
+   |
+30 | struct HadamardMetricAccumulator {
+   |        ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: struct `HadamardRateAccumulator` is never constructed
+  --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:38:8
+   |
+38 | struct HadamardRateAccumulator {
+   |        ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: associated items `new`, `add_abs`, and `finish` are never used
+  --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:45:15
+   |
+42 | impl HadamardRateAccumulator {
+   | ---------------------------- associated items in this implementation
+...
+45 |     unsafe fn new() -> Self {
+   |               ^^^
+...
+53 |     unsafe fn add_abs(&mut self, abs_q: int16x8_t) {
+   |               ^^^^^^^
+...
+60 |     unsafe fn finish(self) -> HadamardQuantRateMetrics {
+   |               ^^^^^^
+
+warning: associated items `new`, `add`, and `finish` are never used
+   --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:72:15
+    |
+ 69 | impl HadamardMetricAccumulator {
+    | ------------------------------ associated items in this implementation
+...
+ 72 |     unsafe fn new() -> Self {
+    |               ^^^
+...
+ 84 |     unsafe fn add(
+    |               ^^^
+...
+103 |     unsafe fn finish(self) -> HadamardQuantMetrics {
+    |               ^^^^^^
+
+warning: function `quantize_8` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:119:11
+    |
+119 | unsafe fn quantize_8(
+    |           ^^^^^^^^^^
+
+warning: function `vp9_quantize_fp_neon_inner` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:222:11
+    |
+222 | unsafe fn vp9_quantize_fp_neon_inner(
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `vp9_quantize_fp_neon` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:286:8
+    |
+286 | pub fn vp9_quantize_fp_neon(
+    |        ^^^^^^^^^^^^^^^^^^^^
+
+warning: function `quantize_i16_8` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:330:11
+    |
+330 | unsafe fn quantize_i16_8(
+    |           ^^^^^^^^^^^^^^
+
+warning: function `quantize_i16_8_rate` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:357:11
+    |
+357 | unsafe fn quantize_i16_8_rate(
+    |           ^^^^^^^^^^^^^^^^^^^
+
+warning: function `vp9_quantize_fp_i16_metrics_neon_inner` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:371:11
+    |
+371 | unsafe fn vp9_quantize_fp_i16_metrics_neon_inner(
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `vp9_quantize_fp_i16_rate_metrics_neon_inner` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:418:11
+    |
+418 | unsafe fn vp9_quantize_fp_i16_rate_metrics_neon_inner(
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `vp9_quantize_fp_i16_metrics_neon` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:450:8
+    |
+450 | pub fn vp9_quantize_fp_i16_metrics_neon(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `vp9_quantize_fp_i16_rate_metrics_neon` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:469:8
+    |
+469 | pub fn vp9_quantize_fp_i16_rate_metrics_neon(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `quantize_fp_32x32_8` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:487:11
+    |
+487 | unsafe fn quantize_fp_32x32_8(
+    |           ^^^^^^^^^^^^^^^^^^^
+
+warning: function `vp9_quantize_fp_32x32_neon_inner` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:527:11
+    |
+527 | unsafe fn vp9_quantize_fp_32x32_neon_inner(
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `vp9_quantize_fp_32x32_neon` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:588:8
+    |
+588 | pub fn vp9_quantize_fp_32x32_neon(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `quantize_fp_32x32_i16_8` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:629:11
+    |
+629 | unsafe fn quantize_fp_32x32_i16_8(
+    |           ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `quantize_fp_32x32_i16_8_rate` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:670:11
+    |
+670 | unsafe fn quantize_fp_32x32_i16_8_rate(
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `vp9_quantize_fp_32x32_i16_metrics_neon_inner` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:687:11
+    |
+687 | unsafe fn vp9_quantize_fp_32x32_i16_metrics_neon_inner(
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `vp9_quantize_fp_32x32_i16_rate_metrics_neon_inner` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:739:11
+    |
+739 | unsafe fn vp9_quantize_fp_32x32_i16_rate_metrics_neon_inner(
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `vp9_quantize_fp_32x32_i16_metrics_neon` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:775:8
+    |
+775 | pub fn vp9_quantize_fp_32x32_i16_metrics_neon(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `vp9_quantize_fp_32x32_i16_rate_metrics_neon` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:790:8
+    |
+790 | pub fn vp9_quantize_fp_32x32_i16_rate_metrics_neon(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `quantize_b_8` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:810:11
+    |
+810 | unsafe fn quantize_b_8(
+    |           ^^^^^^^^^^^^
+
+warning: function `vp9_quantize_b_neon_inner` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:870:11
+    |
+870 | unsafe fn vp9_quantize_b_neon_inner(
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `vp9_quantize_b_neon` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:950:8
+    |
+950 | pub fn vp9_quantize_b_neon(
+    |        ^^^^^^^^^^^^^^^^^^^
+
+warning: function `quantize_b_32x32_8` is never used
+   --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:997:11
+    |
+997 | unsafe fn quantize_b_32x32_8(
+    |           ^^^^^^^^^^^^^^^^^^
+
+warning: function `vp9_quantize_b_32x32_neon_inner` is never used
+    --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:1061:11
+     |
+1061 | unsafe fn vp9_quantize_b_32x32_neon_inner(
+     |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `vp9_quantize_b_32x32_neon` is never used
+    --> crates/rvp9-core/src/dsp/aarch64/quantize_neon.rs:1138:8
+     |
+1138 | pub fn vp9_quantize_b_32x32_neon(
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `avg_diff_8x8_grid_64x64_neon_inner` is never used
+ --> crates/rvp9-core/src/dsp/aarch64/vbp_neon.rs:6:11
+  |
+6 | unsafe fn avg_diff_8x8_grid_64x64_neon_inner(
+  |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `avg_diff_8x8_grid_64x64_neon` is never used
+  --> crates/rvp9-core/src/dsp/aarch64/vbp_neon.rs:55:8
+   |
+55 | pub fn avg_diff_8x8_grid_64x64_neon(
+   |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: Miri does not support optimizations: the opt-level is ignored. The only effect of selecting a Cargo profile that enables optimizations (such as --release) is to apply its remaining settings, such as whether debug assertions and overflow checks are enabled.
+
+
+running 143 tests
+test entropy::adapt::tests::adapt_coef_probs_intra_only_zero_counts ... ok
+test entropy::adapt::tests::adapt_coef_probs_single_slot_hand_trace ... ok
+test entropy::adapt::tests::adapt_coef_probs_zero_counts_returns_input ... ok
+test entropy::adapt::tests::adapt_mode_probs_intra_inter_hand_trace ... ok
+test entropy::adapt::tests::adapt_mode_probs_passes_through_coef_and_mv ... ok
+test entropy::adapt::tests::adapt_mode_probs_skip_hand_trace ... ok
+test entropy::adapt::tests::adapt_mode_probs_zero_counts_unchanged ... ok
+test entropy::adapt::tests::adapt_mv_probs_allow_hp_false_skips_hp ... ok
+test entropy::adapt::tests::adapt_mv_probs_joints_skewed_to_zero ... ok
+test entropy::adapt::tests::adapt_mv_probs_sign_hand_trace ... ok
+test entropy::adapt::tests::adapt_mv_probs_zero_counts_unchanged ... ok
+test entropy::adapt::tests::coef_adapt_params_matches_libvpx ... ok
+test entropy::adapt::tests::coef_counts_bank_add_identity_and_sum ... ok
+test entropy::adapt::tests::frame_counts_add_bit_exact_against_explicit_sum ... ok
+test entropy::adapt::tests::frame_counts_add_identity_on_default ... ok
+test entropy::adapt::tests::frame_counts_add_is_associative ... ok
+test entropy::adapt::tests::frame_counts_add_non_coef_leaves_coefficient_banks_unchanged ... ok
+test entropy::adapt::tests::get_binary_prob_zero_counts_is_half ... ok
+test entropy::adapt::tests::get_prob_clamps_to_one_and_255 ... ok
+test entropy::adapt::tests::merge_probs_hand_trace_24_112 ... ok
+test entropy::adapt::tests::merge_probs_output_in_valid_range ... ok
+test entropy::adapt::tests::merge_probs_saturated_count ... ok
+test entropy::adapt::tests::merge_probs_zero_counts_no_op ... ok
+test entropy::adapt::tests::mode_mv_merge_hand_trace ... ok
+test entropy::adapt::tests::mode_mv_merge_saturates ... ok
+test entropy::adapt::tests::mode_mv_merge_zero_counts_passthrough ... ok
+test entropy::adapt::tests::tree_merge_partition_tree_skewed ... ok
+test entropy::adapt::tests::tree_merge_partition_tree_zero_counts ... ok
+test entropy::adapt::tests::weighted_prob_endpoints ... ok
+test entropy::bitacct::tests::bool_writer_boundaries_reset_to_other ... ok
+test entropy::bitacct::tests::full_coverage_sweep ... ok
+test entropy::bitacct::tests::suppression_skips_recording_and_restores_enabled_state ... ok
+test entropy::bool_reader::tests::over_read_sets_error ... ok
+test entropy::bool_reader::tests::round_trip_bits_p128 ... ok
+test entropy::bool_reader::tests::round_trip_literals ... ok
+test entropy::bool_reader::tests::round_trip_skewed_probabilities ... ok
+test entropy::bool_writer::tests::count_only_writer_accepts_symbols_without_emitting_bytes ... ok
+test entropy::bool_writer::tests::empty_stream_round_trips ... ok
+test entropy::bool_writer::tests::has_error_set_on_buffer_overflow ... ok
+test entropy::bool_writer::tests::long_sequence_high_prob_round_trip ... ok
+test entropy::bool_writer::tests::many_bits_round_trip_prob_128 ... ok
+test entropy::bool_writer::tests::pos_matches_stop_encode_returned_count ... ok
+test entropy::bool_writer::tests::round_trip_varied_probabilities ... ok
+test entropy::bool_writer::tests::single_bit_round_trip ... ok
+test entropy::bool_writer::tests::start_encode_emits_marker_bit_without_flushing_byte ... ok
+test entropy::bool_writer::tests::stop_encode_avoids_superframe_marker_byte_collision ... ok
+test entropy::bool_writer::tests::stop_encode_error_display ... ok
+test entropy::bool_writer::tests::stop_encode_returns_err_on_overflow ... ok
+test entropy::bool_writer::tests::write_bit_equivalent_to_write_at_prob_128 ... ok
+test entropy::bool_writer::tests::write_literal_round_trip ... ok
+test entropy::bool_writer::tests::write_prob_round_trip ... ok
+test entropy::coef_probs::tests::band_0_zero_padding_4x4 ... ok
+test entropy::coef_probs::tests::band_0_zero_padding_other_sizes ... ok
+test entropy::coef_probs::tests::m7_audit_y_intra_corners_other_sizes ... ok
+test entropy::coef_probs::tests::m7_audit_y_intra_full_sweep_4x4 ... ok
+test entropy::coef_probs::tests::spec_spot_checks ... ok
+test entropy::coef_probs::tests::table_shapes ... ok
+test entropy::default_probs::tests::all_mode_probs_nonzero ... ok
+test entropy::default_probs::tests::spec_quoted_spot_checks ... ok
+test entropy::default_probs::tests::table_shapes_match_libvpx ... ok
+test entropy::detokenize::tests::a6_encode_decode_counts_match ... ok
+test entropy::detokenize::tests::band_translate_dispatch ... ok
+test entropy::detokenize::tests::block_runs_to_seg_eob_via_zero_run ... ok
+test entropy::detokenize::tests::cat1_token_with_extension_bit ... ok
+test entropy::detokenize::tests::cat6_token_full_14_extension_bits ... ok
+test entropy::detokenize::tests::cat_probs_match_libvpx ... ok
+test entropy::detokenize::tests::coefband_trans_4x4_values ... ok
+test entropy::detokenize::tests::coefband_trans_8x8plus_values ... ok
+test entropy::detokenize::tests::col_scan_4x4_dispatches_to_raster_positions ... ok
+test entropy::detokenize::tests::count_only_replay_consumes_block_without_reading_tokens ... ok
+test entropy::detokenize::tests::counts_tallied_correctly ... ok
+test entropy::detokenize::tests::decode_coefs_counts_with_zero_run_and_value_tree ... ok
+test entropy::detokenize::tests::decode_coefs_short_seg_eob_stops_early ... ok
+test entropy::detokenize::tests::differential_fuzz_decode_coefs_vs_libvpx_ref ... ok
+test entropy::detokenize::tests::empty_block_eob_at_zero ... ok
+test entropy::detokenize::tests::encode_coefs_full_block_with_leading_zero_run_no_terminal_eob ... ok
+test entropy::detokenize::tests::encode_coefs_reused_scratch_is_independent_of_previous_block ... ok
+test entropy::detokenize::tests::encode_coefs_round_trips_all_tx_sizes ... ok
+test entropy::detokenize::tests::encode_coefs_round_trips_block_full_to_seg_eob ... ok
+test entropy::detokenize::tests::encode_coefs_round_trips_cat1_full_range ... ok
+test entropy::detokenize::tests::encode_coefs_round_trips_cat2_full_range ... ok
+test entropy::detokenize::tests::encode_coefs_round_trips_cat3 ... ok
+test entropy::detokenize::tests::encode_coefs_round_trips_cat4 ... ok
+test entropy::detokenize::tests::encode_coefs_round_trips_cat5 ... ok
+test entropy::detokenize::tests::encode_coefs_round_trips_cat6 ... ok
+test entropy::detokenize::tests::encode_coefs_round_trips_empty_block ... ok
+test entropy::detokenize::tests::encode_coefs_round_trips_four_token ... ok
+test entropy::detokenize::tests::encode_coefs_round_trips_full_block_random_fuzz ... ok
+test entropy::detokenize::tests::encode_coefs_round_trips_single_one_dc_positive ... ok
+test entropy::detokenize::tests::encode_coefs_round_trips_single_one_negative ... ok
+test entropy::detokenize::tests::encode_coefs_round_trips_three_token ... ok
+test entropy::detokenize::tests::encode_coefs_round_trips_two_token ... ok
+test entropy::detokenize::tests::encode_coefs_round_trips_zero_run_then_one ... ok
+test entropy::detokenize::tests::encode_coefs_three_and_four_tokens_round_trip ... ok
+test entropy::detokenize::tests::g3_encode_coefs_accumulates_counts_when_handle_present ... ok
+test entropy::detokenize::tests::g3_encode_coefs_with_none_counts_does_not_panic ... ok
+test entropy::detokenize::tests::i16_block_writer_matches_i32_tokens_and_contexts ... ok
+test entropy::detokenize::tests::mid_loop_context_update_required ... ok
+test entropy::detokenize::tests::retained_block_pass_replays_and_detects_extra_block ... ok
+test entropy::detokenize::tests::retained_probability_context_indexes_every_flattened_row ... ok
+test entropy::detokenize::tests::retained_token_extra_matches_libvpx_lowbd_buckets ... ok
+test entropy::detokenize::tests::retained_tokens_match_direct_encode_with_new_probabilities ... ok
+test entropy::detokenize::tests::row_scan_4x4_dispatches_to_raster_positions ... ok
+test entropy::detokenize::tests::single_one_token_dc_positive ... ok
+test entropy::detokenize::tests::single_two_token_ac_at_position_5_negative ... ok
+test entropy::detokenize::tests::tx32x32_applies_dq_shift_of_one ... ok
+test entropy::detokenize::tests::write_block_tokens_above_left_propagation ... ok
+test entropy::detokenize::tests::write_block_tokens_initial_pt_two_via_seeded_context ... ok
+test entropy::detokenize::tests::write_block_tokens_seg_eob_shortened ... ok
+test entropy::detokenize::tests::write_block_tokens_uv_inter_tx16x16_eob20 ... ok
+test entropy::detokenize::tests::write_block_tokens_y_inter_tx8x8_eob10 ... ok
+test entropy::detokenize::tests::write_block_tokens_y_intra_tx32x32_eob64 ... ok
+test entropy::detokenize::tests::write_block_tokens_y_intra_tx4x4_empty ... ok
+test entropy::detokenize::tests::write_block_tokens_y_intra_tx4x4_three_nonzero ... ok
+test entropy::diff_update::tests::diff_update_prob_applies_update_when_bit_one ... ok
+test entropy::diff_update::tests::diff_update_prob_no_update_when_bit_zero ... ok
+test entropy::diff_update::tests::inv_map_table_structure ... ok
+test entropy::diff_update::tests::inv_recenter_nonneg_hand_checks ... ok
+test entropy::diff_update::tests::inv_remap_prob_hand_checks ... ok
+test entropy::frame_context::tests::default_is_deterministic ... ok
+test entropy::frame_context::tests::frame_contexts_constants ... ok
+test entropy::frame_context::tests::frame_contexts_log2_consistent_with_bitstream_layer ... ok
+test entropy::frame_context::tests::new_default_populates_all_fields ... ok
+test entropy::kf_probs::tests::no_zero_probs ... ok
+test entropy::kf_probs::tests::spec_spot_checks ... ok
+test entropy::kf_probs::tests::table_shapes_match_libvpx ... ok
+test entropy::mv_probs::tests::default_nmv_horizontal_component ... ok
+test entropy::mv_probs::tests::default_nmv_joints ... ok
+test entropy::mv_probs::tests::default_nmv_vertical_component ... ok
+test entropy::mv_probs::tests::derived_constants_match_libvpx ... ok
+test entropy::mv_probs::tests::no_zero_probs ... ok
+test entropy::pareto::tests::column_0_monotonic ... ok
+test entropy::pareto::tests::smoothing_invariant_sampled ... ok
+test entropy::pareto::tests::spec_spot_checks ... ok
+test entropy::pareto::tests::table_shape_matches_libvpx ... ok
+test entropy::prob_diff_writer::tests::cond_prob_diff_update_diff_round_trip ... ok
+test entropy::prob_diff_writer::tests::cond_prob_diff_update_identity_is_gate_zero ... ok
+test entropy::prob_diff_writer::tests::encode_term_subexp_round_trip_all_delp ... ok
+test entropy::prob_diff_writer::tests::map_table_inverse_of_inv_map_table ... deltic timeout: deadline elapsed; sent SIGKILL to the command process group (best-effort Unix cleanup). Descendants that called setsid() or setpgid() may still be running.

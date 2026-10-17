@@ -1,0 +1,145 @@
+{
+  "recorded_at_utc": "2026-10-17T17:09:20+00:00",
+  "source_revision": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+  "source_tree_tracked_status": "clean",
+  "host": {
+    "rustc": "1.98.0-nightly (bd08c9e71 2026-06-25)",
+    "cargo": "1.98.0-nightly (a595d0da2 2026-06-20)",
+    "miri": "0.1.0 (bd08c9e718 2026-06-25)",
+    "host": "aarch64-apple-darwin",
+    "machine": "flux.home.arpa",
+    "os": "Darwin 25.6.0"
+  },
+  "batch_command_template": "nice -n 15 deltic timeout 900 env CARGO_TARGET_DIR=<registered-scratch>/target CARGO_BUILD_JOBS=1 cargo +nightly miri test --locked --offline --package rvp9-core --lib <module>:: -- --test-threads=1 </dev/null",
+  "filters": [
+    "bitstream",
+    "frame",
+    "loopfilter",
+    "entropy"
+  ],
+  "results": {
+    "bitstream_isolated_attempt": {
+      "status": "incomplete_environment_failure",
+      "passed_before_failure": 52,
+      "failed": 1,
+      "ignored_before_failure": 1,
+      "failure": "captured_header_round_trip attempted filesystem open; Miri isolation rejected open",
+      "raw": "bitstream-isolated.raw.txt"
+    },
+    "bitstream_fixture_enabled": {
+      "status": "passed",
+      "passed": 278,
+      "failed": 0,
+      "ignored": 1,
+      "filtered": 1374,
+      "test_seconds": 241.09,
+      "miriflags": "-Zmiri-disable-isolation",
+      "raw": "bitstream-fixture-enabled.raw.txt",
+      "exit_code": 0
+    },
+    "frame": {
+      "status": "timed_out",
+      "passed_before_timeout": 28,
+      "failed": 0,
+      "timeout_test": "frame::tests::alloc_aligned_widths_round_to_8",
+      "timeout_seconds": 900,
+      "raw": "frame.raw.txt"
+    },
+    "loopfilter": {
+      "status": "passed",
+      "passed": 128,
+      "failed": 0,
+      "ignored": 1,
+      "filtered": 1524,
+      "test_seconds": 257.08,
+      "raw": "loopfilter.raw.txt",
+      "exit_code": 0
+    },
+    "entropy": {
+      "status": "timed_out",
+      "passed_before_timeout": 138,
+      "failed": 0,
+      "passed_named_differential_test": "differential_fuzz_decode_coefs_vs_libvpx_ref (1000 fixed-seed cases)",
+      "timeout_test": "entropy::prob_diff_writer::tests::map_table_inverse_of_inv_map_table",
+      "timeout_seconds": 900,
+      "raw": "entropy.raw.txt"
+    }
+  },
+  "additional_completed_filter_totals": {
+    "passed": 406,
+    "failed": 0,
+    "ignored": 2,
+    "filters": [
+      "bitstream with Miri isolation disabled",
+      "loopfilter"
+    ]
+  },
+  "cumulative_selected_core_totals_including_tile_threading_and_prior_module_subsets": {
+    "passed": 709,
+    "failed": 0,
+    "ignored": 4,
+    "fully_completed_filters": [
+      "tile_threading",
+      "transforms",
+      "intra_pred",
+      "quant",
+      "dsp",
+      "loopfilter",
+      "bitstream with Miri isolation disabled"
+    ]
+  },
+  "warnings": "Captured runs report unused/dead-code AArch64 SIMD items and Miri unsupported-optimization notices; no source lint changes were made.",
+  "limits": [
+    "Only selected rvp9-core library subsets were tested; frame and entropy filters timed out and are incomplete.",
+    "The bitstream retry disabled Miri isolation to permit its existing filesystem fixture; this grants the test process filesystem access and narrows isolation assurance for that run.",
+    "cfg(miri) exercises scalar fallback paths and does not execute native AArch64 NEON.",
+    "This does not qualify the full core, dependent libraries, parser/full-frame production paths, Windows, ASan, fuzz, or soak."
+  ],
+  "raw_integrity_manifest": "raw-integrity.json",
+  "review_normalization": {
+    "entropy.raw.txt": {
+      "review_copy": "entropy.review.txt",
+      "transformation": "removed exactly one final LF",
+      "raw_sha256": "45841d81c1c6a6f9f84aaba184c358d8a5970453a4f0c5d31208b946257b9bd4",
+      "review_sha256": "2989fb685f02d2fa518271d64b16ece96755e23ff40b0e475669536710723cc0"
+    },
+    "context.raw.txt": {
+      "review_copy": "context.review.txt",
+      "transformation": "removed exactly one final LF",
+      "raw_sha256": "bb630f083451fe0d973191b56d23987a7b7325d256a7f4684c3c89c081f4cf00",
+      "review_sha256": "84d6a88a490ae17fe0cc2f722635cc4bf5553d20ceb27f69676a68bb6a3b7e1f"
+    },
+    "bitstream-fixture-enabled.raw.txt": {
+      "review_copy": "bitstream-fixture-enabled.review.txt",
+      "transformation": "removed exactly one final LF",
+      "raw_sha256": "16f970993e3f910406bf2bbb651881535d770bb0b1be081de879fe7efd05b385",
+      "review_sha256": "42a94bc9bcfa949bc1ac6f9ae7599820b04c981fb413b745c8f000598c44f5d7"
+    },
+    "bitstream-isolated.raw.txt": {
+      "review_copy": "bitstream-isolated.review.txt",
+      "transformation": "removed exactly one final LF",
+      "raw_sha256": "58b071dadc03808ef919cbcbbc8f159b07ba06b0b47929368aa61ff3cd7c9541",
+      "review_sha256": "7bcd9d8ee5a4f3bd6aa6e196b65236d1c740fecf3c9abf2444cd29337f35ae99"
+    },
+    "run.summary.raw.txt": {
+      "review_copy": "run.summary.review.txt",
+      "transformation": "removed exactly one final LF",
+      "raw_sha256": "1df23a91e80151e8a2cf34b5ac34ccd60912d4b75dd98bec05ae795c53c31976",
+      "review_sha256": "53dd97b3d7c3eac2119efd9097aae71874202e561bc28e9ccd8604eb6c365774"
+    },
+    "frame.raw.txt": {
+      "review_copy": "frame.review.txt",
+      "transformation": "removed exactly one final LF",
+      "raw_sha256": "5ac89d1d9e97922ea4da92729ca022ed4ae730a00d155a0231c6dc7843a750c3",
+      "review_sha256": "bb50e3ddadb66ab647e77cc893604ad04dc5f8ac1eb631a2f308459881f0a1ab"
+    },
+    "loopfilter.raw.txt": {
+      "review_copy": "loopfilter.review.txt",
+      "transformation": "removed exactly one final LF",
+      "raw_sha256": "8a0c72f660c5fbb275b1f377b147c33683ce1807e5eefedca24a1af4973e13b4",
+      "review_sha256": "a5d9963f08a9c9e06358b8e13c0b955fb968ca939d7d27e59dc424f4fb911155"
+    }
+  },
+  "retry_command": "nice -n 15 deltic timeout 900 env MIRIFLAGS=-Zmiri-disable-isolation CARGO_TARGET_DIR=<registered-scratch>/target CARGO_BUILD_JOBS=1 cargo +nightly miri test --locked --offline --package rvp9-core --lib bitstream:: -- --test-threads=1 </dev/null",
+  "retry_exit_observation": "bitstream-fixture-enabled.exit.txt"
+}
