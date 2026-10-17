@@ -111,6 +111,26 @@
         "bytes": 1846,
         "sha256": "5005861ac6183455c76c1de6b93169ed4da27d74089ac458f8ca33d8a8442839"
       }
+    },
+    {
+      "command": "deltic timeout 1800 cargo doc --workspace --no-deps --locked --offline",
+      "exit_code": 0,
+      "status": "pass; workspace documentation generated with warnings",
+      "warning_count": 143,
+      "warnings_by_package": {
+        "rvp9-core": 79,
+        "rvp9-decoder": 14,
+        "rvp9-io": 2,
+        "rvp9-encoder": 45,
+        "rvp9-cli": 1,
+        "rvp9-bench": 1,
+        "rvp9-harness": 1
+      },
+      "log": {
+        "path": "workspace-docs.raw.txt",
+        "bytes": 56761,
+        "sha256": "81418c4e3139756d1ebcb54cfd71c3a0d6ec19766c89adc001ece638ee8227f8"
+      }
     }
   ],
   "limits": [
