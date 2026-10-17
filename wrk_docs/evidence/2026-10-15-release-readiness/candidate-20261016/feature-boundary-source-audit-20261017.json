@@ -1,0 +1,37 @@
+{
+  "test": "source audit of PLAN §2 frame-drop and external-rate-control requirements",
+  "candidate_source_commit": "474dfd99a673df85f750136f7552ac156b7a24e9",
+  "audit_worktree_head": "53292e6586f0be94a04cd7fa1a00afd407aeea2d",
+  "production_crates_unchanged_from_candidate": true,
+  "source_hashes": {
+    "PLAN.md": "5dfccf2f1424efbc7ee56452d10084c708a2d0108c7abf21347b9daa8361d742",
+    "notes/hld/00-architecture.md": "4452b24a73ce2cea54bc99d27559460d99c9d50acfba27877143a72d503e8f1c",
+    "crates/rvp9-encoder/src/rate_control/mod.rs": "1e6f47b9a7ed4240cbc45bb707c56a64e94ac1d756f43f3c28016af969559b3e",
+    "crates/rvp9-encoder/src/rate_control/state.rs": "fe9338b7a5816e31abebc1b1ab9c2f3a4f678a32b6469d5c448e45cfcb9c55fd"
+  },
+  "requirements": {
+    "frame_dropping": {
+      "specification": "PLAN.md §2 line 56 lists frame dropping under load; notes/hld/00-architecture.md §8.2 lines 945-946 includes a per-frame drop decision in the WebRTC v1 subset.",
+      "implementation_evidence": [
+        "crates/rvp9-encoder/src/rate_control/mod.rs:44-46 explicitly describes frame drop/decimation as stubbed.",
+        "crates/rvp9-encoder/src/rate_control/state.rs:183-186 says drop_count is not used in v1 and is present only to mirror field shape.",
+        "A production-source search for frame-drop function/config symbols found only comments, with no implementation symbol."
+      ],
+      "classification": "genuinely missing implementation"
+    },
+    "external_rate_control": {
+      "specification": "PLAN.md §2 lines 56-57 requires the EXT_RATECTRL plug-in interface; notes/hld/00-architecture.md lines 19 and 925-946 state R-06 is in v1 and specify a RateControllerExt trait surface.",
+      "production_source_search": {
+        "argv": [
+          "rg", "-n", "-i",
+          "EXT_RATECTRL|ExternalRateCtrl|ext_ratectrl|external.rate.control",
+          "crates", "--glob", "*.rs", "--glob", "Cargo.toml"
+        ],
+        "exit_code": 1,
+        "stdout": ""
+      },
+      "classification": "genuinely missing implementation in production crates"
+    }
+  },
+  "decision": "These are scope gaps, not existing bug-ledger reports. Arthur must explicitly defer both for the proposed release boundary or require implementation and requalification. No feature implementation or ledger report was started."
+}
