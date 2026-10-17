@@ -1,0 +1,22 @@
+{
+  "schema": "rvp9.macos-host-inventory.v1",
+  "recorded_at_utc": "2026-10-17T14:19:10Z",
+  "source": "deltic hosts; shared fleet-log host-card snapshot",
+  "interpretation": "Only flux is listed as Darwin/aarch64 in this inventory. Its card is 9 hours old, so this does not prove that no other Mac exists or establish current host availability.",
+  "native_macos_host_card": {
+    "name": "flux",
+    "site": "edinburgh",
+    "os": "Darwin/aarch64",
+    "cpu": "Apple M5 Max",
+    "ram_gib": 128.0,
+    "disk_available_tb": 1.4,
+    "card_age": "9h"
+  },
+  "other_listed_hosts": 10,
+  "other_listed_os": "Windows/x86_64",
+  "raw_log": {
+    "path": "macos-host-inventory-20261017T1419Z.raw.txt",
+    "bytes": 1497,
+    "sha256": "245a3fdae56a01600945a708cdd039d12156e75ec5039e3616e7cd0fa1f4cd5f"
+  }
+}
