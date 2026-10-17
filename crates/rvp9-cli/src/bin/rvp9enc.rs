@@ -33,6 +33,8 @@ use std::path::Path;
 use std::process::ExitCode;
 use std::time::Instant;
 
+type BufferedIvfWriter = IvfStreamWriter<BufWriter<std::fs::File>>;
+
 /// Parsed encoder options (the config builder the flag table fills in).
 struct EncOpts {
     width: Option<u32>,
@@ -1079,9 +1081,7 @@ fn run(opts: &EncOpts, positionals: &[String]) -> Result<(), String> {
         info.fps_num,
         info.fps_den,
     );
-    let out = path_guard.create("output")?;
-    let mut writer = IvfStreamWriter::new(BufWriter::new(out), &header)
-        .map_err(|e| format!("writing IVF header: {e}"))?;
+    let mut writer = None;
     let mut total_bits: u64 = 0;
     let mut frame_count: usize = 0;
     let mut frame_timings = Vec::new();
@@ -1117,9 +1117,13 @@ fn run(opts: &EncOpts, positionals: &[String]) -> Result<(), String> {
                 });
             }
             total_bits += u64::from(enc.actual_bits);
-            writer
-                .write_packet(&enc.data)
-                .map_err(|e| format!("writing IVF packet: {e}"))?;
+            write_one_pass_packet(
+                &mut writer,
+                &mut path_guard,
+                &header,
+                &enc.data,
+                "writing IVF packet",
+            )?;
             frame_count += 1;
             Ok(())
         };
@@ -1143,10 +1147,16 @@ fn run(opts: &EncOpts, positionals: &[String]) -> Result<(), String> {
             );
         }
         total_bits += u64::from(enc.actual_bits);
-        writer
-            .write_packet(&enc.data)
-            .map_err(|e| format!("writing IVF packet: {e}"))?;
+        write_one_pass_packet(
+            &mut writer,
+            &mut path_guard,
+            &header,
+            &enc.data,
+            "writing IVF packet",
+        )?;
     }
+    let writer =
+        writer.ok_or_else(|| "encoding finished without producing IVF packets".to_string())?;
     writer
         .finish()
         .map_err(|e| format!("finalizing IVF: {e}"))?;
@@ -1205,9 +1215,7 @@ fn run_spatial_one_pass(
         info.fps_num,
         info.fps_den,
     );
-    let out = path_guard.create("output")?;
-    let mut writer = IvfStreamWriter::new(BufWriter::new(out), &header)
-        .map_err(|e| format!("writing IVF header: {e}"))?;
+    let mut writer = None;
     let mut total_bits = 0_u64;
     let mut access_unit_count = 0_usize;
     let mut frame_timings = Vec::new();
@@ -1237,9 +1245,13 @@ fn run_spatial_one_pass(
                 .iter()
                 .map(|layer| u64::from(layer.actual_bits))
                 .sum::<u64>();
-            writer
-                .write_packet(&encoded.data)
-                .map_err(|e| format!("writing spatial IVF packet: {e}"))?;
+            write_one_pass_packet(
+                &mut writer,
+                path_guard,
+                &header,
+                &encoded.data,
+                "writing spatial IVF packet",
+            )?;
             access_unit_count += 1;
             Ok(())
         };
@@ -1249,6 +1261,8 @@ fn run_spatial_one_pass(
             encode_access_unit(&frame)?;
         }
     }
+    let writer =
+        writer.ok_or_else(|| "encoding finished without producing IVF packets".to_string())?;
     writer
         .finish()
         .map_err(|e| format!("finalizing IVF: {e}"))?;
@@ -1269,6 +1283,27 @@ fn run_spatial_one_pass(
         );
     }
     Ok(())
+}
+
+fn write_one_pass_packet(
+    writer: &mut Option<BufferedIvfWriter>,
+    path_guard: &mut path_guard::PathGuard,
+    header: &IvfHeader,
+    packet: &[u8],
+    packet_context: &str,
+) -> Result<(), String> {
+    if writer.is_none() {
+        let out = path_guard.create("output")?;
+        *writer = Some(
+            IvfStreamWriter::new(BufWriter::new(out), header)
+                .map_err(|error| format!("writing IVF header: {error}"))?,
+        );
+    }
+    writer
+        .as_mut()
+        .expect("writer was initialized above")
+        .write_packet(packet)
+        .map_err(|error| format!("{packet_context}: {error}"))
 }
 
 struct FrameTiming {

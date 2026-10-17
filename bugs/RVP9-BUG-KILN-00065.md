@@ -37,7 +37,7 @@ Confirmed by reading the current tree at 4abe0d8 + 3a7aba2.
 
 ## Fix
 
-<unfixed — raised only>
+Deferred writer creation until the first ready ordinary, flush or spatial packet. Before that point, errors preserve an existing destination or leave a missing path absent. Later failures may leave partial output. Empty input remains rejected before opening output. PathGuard protections and successful stream finalization remain in use.
 
 ## Notes
 
@@ -52,3 +52,21 @@ The archived KILN-00051 verification explicitly accepts partial decoder output a
 ### Reopen note (2026-10-17T05:14:39Z, deltic:manual host=flux verdict=reopen)
 
 Reopen reason: Arthur approved deferring destination creation until the first encoded packet; preserve existing destination on startup failure and accept partial output after first packet, matching decoder contract.
+
+### Arthur contract approved (2026-10-17)
+
+Arthur selected deferred destination creation: open/truncate and write the
+IVF header only once the first encoded packet is ready. Before that point,
+a failure preserves an existing destination and leaves a missing path absent.
+After the first packet, streaming failures may leave partial output, matching
+the decoder contract. Cover ordinary, spatial, delayed and flush packet sites.
+
+Regression evidence (2026-10-17): with old eager-open code, both lag2
+pre-packet error tests ran and failed their destination-preservation
+assertions (the old writer left a 32-byte IVF header). Restored code passed
+all 19 CLI roundtrip tests, including ordinary/spatial success and later
+partial-output errors, empty input, and first-packet creation during flush.
+Omitting flush/spatial writes made their selected positive controls fail.
+Input mutants also exercised the empty/error controls; all were restored.
+Formatting, scoped CLI Clippy and independent static review passed. See
+[task journal](../wrk_journals/2026.10.17%20-%20BUG%20-%20Defer%20output%20until%20first%20encoded%20packet.md).

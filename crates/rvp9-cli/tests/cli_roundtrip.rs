@@ -72,6 +72,31 @@ fn write_synthetic_raw_dims(path: &std::path::Path, width: usize, height: usize,
     std::fs::write(path, &buf).expect("write synthetic raw");
 }
 
+fn write_synthetic_y4m(
+    path: &std::path::Path,
+    width: usize,
+    height: usize,
+    frames: usize,
+    malformed_tail: bool,
+) {
+    let raw_path = path.with_extension("source.yuv");
+    write_synthetic_raw_dims(&raw_path, width, height, frames);
+    let raw = std::fs::read(&raw_path).expect("read synthetic raw for Y4M");
+    let frame_bytes = width * height * 3 / 2;
+    assert_eq!(raw.len(), frame_bytes * frames, "synthetic Y4M source size");
+
+    let mut y4m = format!("YUV4MPEG2 W{width} H{height} F30:1 Ip A1:1 C420jpeg\n").into_bytes();
+    for frame in raw.chunks_exact(frame_bytes) {
+        y4m.extend_from_slice(b"FRAME\n");
+        y4m.extend_from_slice(frame);
+    }
+    if malformed_tail {
+        y4m.extend_from_slice(b"BROKEN\n");
+    }
+    std::fs::write(path, y4m).expect("write synthetic Y4M");
+    let _ = std::fs::remove_file(raw_path);
+}
+
 fn encode_single_frame_ivf(width: usize, height: usize, tag: &str) -> PathBuf {
     let raw = tmp(&format!("{tag}_in.yuv"));
     let ivf = tmp(&format!("{tag}_out.ivf"));
@@ -136,6 +161,11 @@ fn spatial_svc_cli_emits_three_component_access_units_and_decodes_top_layer() {
     let ivf = tmp("spatial_out.ivf");
     let yuv = tmp("spatial_dec.yuv");
     write_synthetic_raw_dims(&raw, SPATIAL_W, SPATIAL_H, SPATIAL_FRAMES);
+    std::fs::write(
+        &ivf,
+        b"existing output to replace after the first spatial packet",
+    )
+    .expect("seed spatial IVF destination");
 
     let status = Command::new(enc_bin())
         .args([
@@ -191,6 +221,201 @@ fn spatial_svc_cli_emits_three_component_access_units_and_decodes_top_layer() {
     let _ = std::fs::remove_file(&raw);
     let _ = std::fs::remove_file(&ivf);
     let _ = std::fs::remove_file(&yuv);
+}
+
+#[test]
+fn enc_lagged_input_error_before_first_packet_preserves_existing_output() {
+    let input = tmp("lagged_bad_tail.y4m");
+    let output = tmp("lagged_bad_tail_existing.ivf");
+    write_synthetic_y4m(&input, W, H, 1, true);
+    let sentinel = b"existing output must survive before first encoded packet";
+    std::fs::write(&output, sentinel).expect("seed output sentinel");
+
+    let result = Command::new(enc_bin())
+        .args(["--lag-in-frames", "2", "--target-bitrate", "500", "-o"])
+        .arg(&output)
+        .arg(&input)
+        .bounded_output()
+        .expect("run lagged encoder with malformed tail");
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert!(!result.status.success(), "malformed Y4M tail must fail");
+    assert!(
+        stderr.contains("missing FRAME tag"),
+        "unexpected error: {stderr}"
+    );
+    assert_eq!(
+        std::fs::read(&output).expect("read preserved output"),
+        sentinel,
+        "failure before a delayed packet must preserve existing output"
+    );
+
+    let _ = std::fs::remove_file(&input);
+    let _ = std::fs::remove_file(&output);
+}
+
+#[test]
+fn enc_lagged_input_error_before_first_packet_creates_no_output() {
+    let input = tmp("lagged_bad_tail_no_output.y4m");
+    let output = tmp("lagged_bad_tail_new.ivf");
+    write_synthetic_y4m(&input, W, H, 1, true);
+
+    let result = Command::new(enc_bin())
+        .args(["--lag-in-frames", "2", "--target-bitrate", "500", "-o"])
+        .arg(&output)
+        .arg(&input)
+        .bounded_output()
+        .expect("run lagged encoder with malformed tail");
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert!(!result.status.success(), "malformed Y4M tail must fail");
+    assert!(
+        stderr.contains("missing FRAME tag"),
+        "unexpected error: {stderr}"
+    );
+    assert!(
+        !output.exists(),
+        "failure before a delayed packet must not create output"
+    );
+
+    let _ = std::fs::remove_file(&input);
+}
+
+#[test]
+fn enc_empty_y4m_is_rejected_without_opening_output() {
+    let input = tmp("empty.y4m");
+    let output = tmp("empty_output.ivf");
+    std::fs::write(&input, b"YUV4MPEG2 W64 H64 F30:1 Ip A1:1 C420jpeg\n")
+        .expect("write empty Y4M stream");
+    let sentinel = b"empty input must remain rejected before output open";
+    std::fs::write(&output, sentinel).expect("seed output sentinel");
+
+    let result = Command::new(enc_bin())
+        .args(["--target-bitrate", "500", "-o"])
+        .arg(&output)
+        .arg(&input)
+        .bounded_output()
+        .expect("run encoder on empty Y4M");
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert!(!result.status.success(), "empty input must remain an error");
+    assert!(
+        stderr.contains("input contained no frames"),
+        "unexpected error: {stderr}"
+    );
+    assert_eq!(
+        std::fs::read(&output).expect("read unchanged empty-input destination"),
+        sentinel,
+        "empty input must not open or truncate the destination"
+    );
+
+    let _ = std::fs::remove_file(&input);
+    let _ = std::fs::remove_file(&output);
+}
+
+#[test]
+fn enc_input_error_after_first_packet_leaves_partial_ivf() {
+    let input = tmp("immediate_bad_tail.y4m");
+    let output = tmp("immediate_bad_tail.ivf");
+    write_synthetic_y4m(&input, W, H, 1, true);
+    std::fs::write(&output, b"old output").expect("seed output sentinel");
+
+    let result = Command::new(enc_bin())
+        .args(["--target-bitrate", "500", "-o"])
+        .arg(&output)
+        .arg(&input)
+        .bounded_output()
+        .expect("run immediate encoder with malformed tail");
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert!(!result.status.success(), "malformed Y4M tail must fail");
+    assert!(
+        stderr.contains("missing FRAME tag"),
+        "unexpected error: {stderr}"
+    );
+    let partial = std::fs::read(&output).expect("read partial IVF output");
+    assert!(
+        partial.starts_with(b"DKIF"),
+        "partial output needs an IVF header"
+    );
+    assert!(
+        partial.len() > 32,
+        "first packet must survive the later input error"
+    );
+
+    let _ = std::fs::remove_file(&input);
+    let _ = std::fs::remove_file(&output);
+}
+
+#[test]
+fn enc_spatial_input_error_after_first_access_unit_leaves_partial_ivf() {
+    const SPATIAL_W: usize = 256;
+    const SPATIAL_H: usize = 128;
+
+    let input = tmp("spatial_bad_tail.y4m");
+    let output = tmp("spatial_bad_tail.ivf");
+    write_synthetic_y4m(&input, SPATIAL_W, SPATIAL_H, 1, true);
+    std::fs::write(&output, b"old spatial output").expect("seed spatial output");
+
+    let result = Command::new(enc_bin())
+        .args([
+            "--target-bitrate",
+            "630",
+            "--cpu-used",
+            "8",
+            "--spatial-layers",
+            "3",
+            "--inter-layer-pred",
+            "0",
+            "-o",
+        ])
+        .arg(&output)
+        .arg(&input)
+        .bounded_output()
+        .expect("run spatial encoder with malformed tail");
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert!(!result.status.success(), "malformed Y4M tail must fail");
+    assert!(
+        stderr.contains("missing FRAME tag"),
+        "unexpected error: {stderr}"
+    );
+    let partial = std::fs::read(&output).expect("read partial spatial IVF output");
+    assert!(
+        partial.starts_with(b"DKIF"),
+        "partial spatial output needs an IVF header"
+    );
+    assert!(
+        partial.len() > 32,
+        "first spatial access unit must survive the later input error"
+    );
+
+    let _ = std::fs::remove_file(&input);
+    let _ = std::fs::remove_file(&output);
+}
+
+#[test]
+fn enc_lagged_single_frame_is_written_during_flush() {
+    let input = tmp("lagged_single_frame.y4m");
+    let output = tmp("lagged_single_frame.ivf");
+    write_synthetic_y4m(&input, W, H, 1, false);
+
+    let result = Command::new(enc_bin())
+        .args(["--lag-in-frames", "2", "--target-bitrate", "500", "-o"])
+        .arg(&output)
+        .arg(&input)
+        .bounded_output()
+        .expect("run lagged encoder through flush");
+    assert!(
+        result.status.success(),
+        "lagged rvp9enc failed: {}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let (ivf_bytes, packets) = read_packets(&output).expect("read flushed IVF output");
+    assert_eq!(&ivf_bytes[..4], b"DKIF", "IVF magic");
+    assert_eq!(
+        packets.len(),
+        1,
+        "flush must emit the buffered source frame"
+    );
+
+    let _ = std::fs::remove_file(&input);
+    let _ = std::fs::remove_file(&output);
 }
 
 #[test]

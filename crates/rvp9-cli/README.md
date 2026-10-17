@@ -26,6 +26,13 @@ including CBR/VBR, cyclic-refresh AQ, denoising, and temporal/spatial SVC.
 Some libvpx command-line options are shown for familiarity but fail clearly
 when the corresponding behaviour is not implemented.
 
+One-pass encoding opens or truncates the IVF destination when its first
+encoded packet is ready. An input or encode failure before that point preserves
+an existing destination and leaves a new path absent. Later failures can leave
+partial IVF output. An input with no frames remains an error and does not open
+the destination; delayed packets may first create it during end-of-stream
+flush.
+
 ## Status
 
 `0.2.0-alpha.4` is ready for evaluation, not a final production-parity
