@@ -1,0 +1,35 @@
+{
+  "recorded_at_utc": "2026-10-17 15:35:29 UTC",
+  "candidate_source_commit": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+  "worktree": "/Users/md/worktrees/rvp9/20261017-TSK-HUM-requalify-post-fix-candidate",
+  "worktree_branch": "task/20261017-TSK-HUM-requalify-post-fix-candidate",
+  "worktree_status_before": "clean",
+  "platform": "macOS Apple Silicon",
+  "host_triple": "aarch64-apple-darwin",
+  "rustc": "rustc 1.95.0 (59807616e 2026-04-14)",
+  "cargo": "cargo 1.95.0 (f2d3ce0bd 2026-03-21)",
+  "command": "deltic timeout 1800 env CARGO_TARGET_DIR=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-mac-encoder-tests-c5b3e34f/target cargo test -p rvp9-encoder --locked --offline </dev/null",
+  "exit_code": 0,
+  "capture": "set -o pipefail; stderr/stdout captured by tee to registered scratch; stdin closed",
+  "results": {
+    "test_groups": 52,
+    "passed": 889,
+    "failed": 0,
+    "ignored": 56,
+    "measured": 0,
+    "filtered_out": 0
+  },
+  "scratch": {
+    "id": "rvp9-mac-encoder-tests-c5b3e34f",
+    "target_directory_removed_after_run": true
+  },
+  "raw_log": {
+    "path": "mac-current-source-encoder-crate-tests-20261017.raw.txt",
+    "bytes": 92820,
+    "sha256": "bfc4a68326dbc319176d623d0c6564c1b6820d52e49e444f3157df4983bfaaf4"
+  },
+  "limits": [
+    "The 56 ignored tests retain their existing annotations, including external-oracle, corpus-dependent, quality and realtime/performance gates.",
+    "This is encoder-crate regression evidence, not stream-level rate-control buffer-compliance, compression-quality, throughput, latency, or sanitizer evidence."
+  ]
+}
