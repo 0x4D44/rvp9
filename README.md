@@ -15,10 +15,12 @@ livestreaming.
 > macOS release matrix was not rerun for alpha.4. The current final-release
 > candidate (`fb5c0c91`) has fresh native conformance, 32-row encoder and
 > 24-row reverse-reference checks on both platforms. Windows conformance also
-> passed forced-scalar; macOS scalar dispatch remains unqualified. The full
-> macOS workspace release suite is not green (3,577 passed, 2 failed, 64
-> ignored). The candidate remains on hold: production quality, speed, latency,
-> full-corpus, complete safety and extracted-package tests remain open. See
+> passed forced-scalar; macOS scalar dispatch remains unqualified. At exact
+> product source `fb5c0c91`, the locked macOS Apple Silicon workspace suite
+> passed 3,579 tests, failed none and ignored 64; the Windows workspace suite
+> remains unqualified. The candidate remains on hold: production quality,
+> speed, latency, full-corpus, complete safety and extracted-package tests
+> remain open. See
 > [`RELEASE_NOTES.md`](./RELEASE_NOTES.md) for alpha.4 and the
 > [current readiness report](<wrk_docs/2026.10.15 - STATUS - final release readiness.md>)
 > for candidate evidence and limits.
