@@ -36,3 +36,8 @@ On Apple M5 Max/aarch64-apple-darwin at candidate code 1a84f60a24e8d82e8e6454743
 The separately run native encoder ASan library also aborts in existing `frame_loop::tests::arf_decoder_fc_bank_one_stays_synced_after_non_show_frame`. Its stack reaches `build_inter_prediction_from_tight_plane -> convolve8_neon -> convolve8_horiz_neon`. Source/disassembly review identifies the same four-byte width4I8MM load at row+8. The reference allocation is4096bytes. This test uses CPU7CBR with lag5 and ALTREF; do not extrapolate it to lag-zero production reachability. Raw `macos-asan-dependent-libraries.log` is retained with the original reports.
 
 Repair-scope note from source review: wider I8MM/dotprod horizontal paths load16bytes per eight outputs while validation may guarantee only15 on the last group of widths divisible by8. This wider mismatch has not been separately reproduced at runtime; inspect it rather than fixing only the observed width4 case. No fix or suppression was made in this task.
+
+
+### Additional source audit evidence (2026-10-17)
+
+The exact-candidate static SIMD audit at source `fb5c0c917038db6c640b3dbc7c2b84b567233333` confirmed the wider mismatch noted above. `validate_horiz` accepts `w + 7` bytes, but the i8mm/dotprod eight-output kernels load 16 bytes at the final vector offset `x = w - 8`, requiring `w + 8`. For `w=8,h=4,src_stride=15,src.len()=60`, the final load reads byte 60, one past the slice. The width-four loader likewise requires 12 bytes while validation requires 11. Both paths are behind runtime feature checks and reachable through safe dispatch getters. This is a source-only confirmation of the wider repair scope, not a second ledger issue or an additional runtime reproduction.
