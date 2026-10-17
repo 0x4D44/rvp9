@@ -1,0 +1,8 @@
+{
+  "checked_at_utc": "2026-10-17T16:11:34Z",
+  "repository": "/Users/md/language/rvp9",
+  "command": "git fetch origin && git rev-parse origin/main",
+  "origin_main": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+  "candidate_source": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+  "matches": true
+}
