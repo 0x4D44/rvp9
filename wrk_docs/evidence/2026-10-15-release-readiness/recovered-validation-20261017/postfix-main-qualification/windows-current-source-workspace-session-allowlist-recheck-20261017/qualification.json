@@ -1,0 +1,44 @@
+{
+  "observed_at_utc": "2026-10-17T22:53:25Z",
+  "candidate_product_source": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+  "current_origin_main_at_recording": "0d6ad07072c1146a7bd81ba403ec3c1cbe8dcdda",
+  "requested_test": "deltic timeout 7200 cargo test --workspace --release --locked --offline --no-fail-fast -- --test-threads=1",
+  "outcome": "not_started",
+  "attempts": [
+    {
+      "host": "ANNEAL",
+      "repo_key": "rvp9",
+      "command": "deltic remote ANNEAL session start --agent codex --repo rvp9 --name rvp9-win-suite-20261017 --prompt-file /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/.scratch/windows-workspace-brief-20261017.txt --json",
+      "exit_status": 1,
+      "output": "remote: ANNEAL: session: rvp9 is not in ANNEAL's remote session repos (`deltic session repos list` there)"
+    },
+    {
+      "host": "NMI",
+      "repo_key": "rvp9",
+      "command": "deltic remote NMI session start --agent codex --repo rvp9 --name rvp9-win-suite-nmi-20261017 --prompt-file /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/.scratch/windows-workspace-brief-20261017.txt --json",
+      "exit_status": 1,
+      "output": "remote: NMI: session: rvp9 is not in NMI's remote session repos (`deltic session repos list` there)"
+    },
+    {
+      "host": "CRUCIBLE",
+      "repo_key": "rvp9",
+      "command": "deltic remote CRUCIBLE session start --agent codex --repo rvp9 --name rvp9-win-suite-crucible-20261017 --prompt-file /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/.scratch/windows-workspace-brief-20261017.txt --json",
+      "exit_status": 1,
+      "output": "remote: CRUCIBLE: session: rvp9 is not in CRUCIBLE's remote session repos (`deltic session repos list` there)"
+    },
+    {
+      "host": "KILN",
+      "repo_key": "rvp9",
+      "command": "deltic remote KILN session start --agent codex --repo rvp9 --name rvp9-win-suite-kiln-20261017 --prompt-file /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/.scratch/windows-workspace-brief-20261017.txt --json",
+      "exit_status": 1,
+      "output": "remote: KILN: session: rvp9 is not in KILN's remote session repos (`deltic session repos list` there)"
+    }
+  ],
+  "route_inspection": {
+    "remote_session_repo_listing": "Deltic remote help states this command is not forwarded, so the Windows host allowlists could not be inspected through the approved route.",
+    "local_session_repos_list_on_flux": "no remote session repos",
+    "fleet_roster_find_rvp9": "no agent sessions; NOMAD was unreachable during the query"
+  },
+  "test_result": null,
+  "qualification_note": "Every attempt was refused before session creation. No host, toolchain, checkout, or test command was preflighted; no Windows workspace pass or failure is claimed."
+}
