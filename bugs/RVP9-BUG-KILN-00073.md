@@ -1,6 +1,6 @@
 # RVP9-BUG-KILN-00073 — noise_sensitivity magnitudes all select medium denoising
 
-- **State:** Blocked
+- **State:** Open
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** encoder/denoiser configuration
@@ -19,7 +19,7 @@
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-08-16T08:19:31Z, raised via `deltic bugs new`) → Blocked (2026-10-16, Codex; Arthur decision required on temporal-denoiser contract)
+- **State history:** Open (2026-08-16T08:19:31Z, raised via `deltic bugs new`) → Blocked (2026-10-16, Codex; Arthur decision required on temporal-denoiser contract) → Open (2026-10-17T05:13:55Z, deltic:manual host=flux verdict=reopen)
 
 ## Observation
 
@@ -40,3 +40,7 @@ Pinned libvpx v1.14.1 (`12f3a2ac603e8f10742105519e0cd03c3b8f71dd`) initializes e
 The missing `0..=6` API validation is confirmed independently by the pinned interface range check. RVP9's missing adaptive connection is also confirmed, but a direct cast or invented six-to-four mapping would not fix it correctly. Adaptive integration must account for estimate publication, reset/reference lifecycle, estimator gates and the production filter's level checks. Neighboring KILN-00072 remains separate and untouched.
 
 See [diagnosis and source links](../wrk_docs/2026.10.16%20-%20HLD%20-%20Denoiser%20sensitivity%20contract.md). No source change or test run was made for this pass. This record remains unresolved; it is neither Fixed nor Closed. Reopen after Arthur supplies the contract decision.
+
+### Reopen note (2026-10-17T05:13:55Z, deltic:manual host=flux verdict=reopen)
+
+Reopen reason: Arthur approved pinned libvpx adaptive temporal denoising: 0 disables, 1-6 enables; estimator controls strength; validate API range and production lifecycle.
