@@ -1,0 +1,41 @@
+{
+  "candidate_source_commit": "474dfd99a673df85f750136f7552ac156b7a24e9",
+  "audit_utc_start": "2026-10-17T09:45:33Z",
+  "audit_utc_end": "2026-10-17T09:47:36.2861739Z",
+  "purpose": "Find an already-prepared native Windows host for candidate performance timing without setting up or changing remote machines.",
+  "hosts": [
+    {"host":"ANNEAL","ssh":"reachable","quiet_status":"open; 0 counted heavy workloads","rust_1_95_msvc":false,"candidate_checkout_in_checked_locations":false,"task_worktree_in_checked_locations":false,"timing_guard_sample":"not run; candidate checkout absent from checked locations, so input and PGO identity not verified"},
+    {"host":"NMI","ssh":"reachable","quiet_status":"open; 0 counted heavy workloads","rust_1_95_msvc":true,"candidate_checkout_in_checked_locations":false,"task_worktree_in_checked_locations":false,"timing_guard_sample":"not run; candidate checkout absent from checked locations, so input and PGO identity not verified"},
+    {"host":"QUENCH","ssh":"reachable","quiet_status":"open; 0 counted heavy workloads; 8 low-priority heavy workloads","rust_1_95_msvc":true,"candidate_checkout_in_checked_locations":false,"task_worktree_in_checked_locations":false,"timing_guard_sample":"not run; candidate checkout absent from checked locations, so input and PGO identity not verified"},
+    {"host":"TEMPER","ssh":"reachable","quiet_status":"open; 0 counted heavy workloads; 2 low-priority heavy workloads","rust_1_95_msvc":false,"candidate_checkout_in_checked_locations":false,"task_worktree_in_checked_locations":false,"timing_guard_sample":"not run; candidate checkout absent from checked locations, so input and PGO identity not verified"},
+    {"host":"LIGHTNINGCLAUDE","ssh":"unreachable; hostname resolution failed (exit 255)","candidate_and_artifact_checks":"not performed"},
+    {"host":"THUNDERCLAUDE","ssh":"unreachable; hostname resolution failed (exit 255)","candidate_and_artifact_checks":"not performed"}
+  ],
+  "locations_checked": [
+    "C:/language/rvp9",
+    "%USERPROFILE%/language/rvp9",
+    "D:/language/rvp9",
+    "C:/dev/rvp9",
+    "D:/dev/rvp9",
+    "C:/language/rvp9-2",
+    "C:/GitHub/rvp9-2",
+    "%USERPROFILE%/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence",
+    "C:/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence",
+    "D:/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence",
+    "rvp9-named directories and immediate owner/rvp9 locations under C:/language, C:/GitHub, C:/worktrees and D:/worktrees"
+  ],
+  "lead_recheck": {
+    "utc": {"NMI":"2026-10-17T09:47:36.2861739Z","QUENCH":"2026-10-17T09:47:31.1754736Z"},
+    "login": {"NMI":"ano (per host card)","QUENCH":"marti (per host card)"},
+    "checks": ["Test-Path for standard candidate roots and exact task-worktree paths", "rustup toolchain list"],
+    "result": "All checked candidate paths were absent on both hosts; rustup lists 1.95.0-x86_64-pc-windows-msvc on both. The worker separately reported explicit rustc/cargo 1.95.0 version checks."
+  },
+  "conclusion": "No alternate host was verified with the exact candidate checkout, required corpus/reference inputs, release binaries and same-host production PGO artifacts. Crucible remains the only evidenced prepared Windows host; its canonical 60-second guard measured 7.630643 busy logical cores against the 0.75 limit.",
+  "limits": [
+    "This was a bounded check of six fleet hosts and standard RVP9/task-worktree locations, not a fleet-wide search.",
+    "Candidate-specific input and PGO identities were not checked on a host where no candidate checkout was found.",
+    "No timing campaign or 60-second guard sample ran on these alternate hosts.",
+    "Raw remote stdout was not archived; this compact record is transcribed from the completed audit handoff. The lead independently rechecked NMI and QUENCH candidate paths and rustup lists."
+  ],
+  "side_effects": {"remote_files_changed":false,"qualification_or_timing_processes_started":false,"processes_stopped":false,"worktrees_created":false,"packages_installed":false,"timing_started":false}
+}

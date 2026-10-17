@@ -1,0 +1,55 @@
+{
+  "host": "CRUCIBLE",
+  "source_candidate_commit": "474dfd99a673df85f750136f7552ac156b7a24e9",
+  "lease": {
+    "owner_session_id": "01a14507-ca90-79f1-b70d-693f227ad01f",
+    "reason": "RVP9 Windows candidate timing guard precheck",
+    "duration_minutes": 2,
+    "granted_output": "quiet window granted until 10:52 (local); 0 heavy workload processes running",
+    "release_output": "quiet window ended; the next grant is no earlier than 11:02 (local)",
+    "ended_immediately_after_sample": true
+  },
+  "sampling": {
+    "started_utc": "2026-10-17T09:51:04.2833170Z",
+    "completed_utc": "2026-10-17T09:52:09.5662457Z",
+    "counter": "\\Processor(_Total)\\% Processor Time",
+    "interval_seconds": 5,
+    "requested_samples": 13,
+    "initial_sample_skipped": 1,
+    "retained_samples": 12,
+    "logical_processors": 32,
+    "percent_samples": [
+      1.6907736519963468,
+      2.8178116707846868,
+      2.278624851749722,
+      3.3265510519589925,
+      2.3633720889035925,
+      1.3240845417064828,
+      4.729127581212966,
+      2.276658867515635,
+      1.8714526838446655,
+      3.931292489705829,
+      2.593381745583867,
+      1.3847965169901943
+    ],
+    "mean_percent": 2.548993978496,
+    "busy_logical_cores": 0.815678073119,
+    "maximum_allowed_busy_logical_cores": 0.75,
+    "quiet_before": "quiet window: live until 10:52 (local) for RVP9 Windows candidate timing guard precheck; 0 heavy workload processes still running",
+    "quiet_after": "quiet window: live until 10:52 (local) for RVP9 Windows candidate timing guard precheck; 0 heavy workload processes still running",
+    "decision": "guard not met; do not start timing"
+  },
+  "execution": {
+    "tracked_exec_session": 76741,
+    "command": "deltic timeout 90 ssh -o BatchMode=yes -o ConnectTimeout=8 -o StrictHostKeyChecking=yes marti@CRUCIBLE powershell -NoProfile -NonInteractive -EncodedCommand <read-only Get-Counter script>",
+    "measurement_recipe": "Get-Counter '\\Processor(_Total)\\% Processor Time' -SampleInterval 5 -MaxSamples 13; skip the first sample, average the 12 retained samples, multiply by 32 logical processors, and compare against 0.75 busy cores.",
+    "capture_note": "Structured values transcribed from completed tracked exec session 76741; remote stdout was not separately archived. No production speed or latency process ran."
+  },
+  "side_effects": {
+    "remote_files_changed": false,
+    "qualification_or_timing_processes_started": false,
+    "processes_stopped": false,
+    "worktrees_created": false,
+    "packages_installed": false
+  }
+}
