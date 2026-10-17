@@ -1,0 +1,5 @@
+$ git branch --show-current
+task/20261017-TSK-HUM-requalify-post-fix-candidate
+$ git rev-parse HEAD
+fb5c0c917038db6c640b3dbc7c2b84b567233333
+$ git status --porcelain=v1

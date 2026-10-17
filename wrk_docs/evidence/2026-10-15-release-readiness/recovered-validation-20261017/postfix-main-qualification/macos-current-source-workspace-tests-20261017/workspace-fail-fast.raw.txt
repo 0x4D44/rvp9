@@ -1,0 +1,330 @@
+   Compiling crossbeam-utils v0.8.21
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261017-TSK-HUM-requalify-post-fix-candidate/crates/rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261017-TSK-HUM-requalify-post-fix-candidate/crates/rvp9-decoder)
+   Compiling proc-macro2 v1.0.106
+   Compiling serde_core v1.0.228
+   Compiling quote v1.0.45
+   Compiling unicode-ident v1.0.24
+   Compiling zmij v1.0.21
+   Compiling syn v2.0.117
+   Compiling serde v1.0.228
+   Compiling serde_json v1.0.149
+   Compiling serde_derive v1.0.228
+   Compiling crossbeam-channel v0.5.15
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261017-TSK-HUM-requalify-post-fix-candidate/crates/rvp9-harness)
+   Compiling rvp9-io v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261017-TSK-HUM-requalify-post-fix-candidate/crates/rvp9-io)
+   Compiling static_assertions v1.1.0
+   Compiling rvp9-encoder v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261017-TSK-HUM-requalify-post-fix-candidate/crates/rvp9-encoder)
+   Compiling libc v0.2.186
+   Compiling itoa v1.0.18
+   Compiling memchr v2.8.0
+   Compiling version_check v0.9.5
+   Compiling generic-array v0.14.7
+   Compiling cfg-if v1.0.4
+   Compiling typenum v1.20.1
+   Compiling block-buffer v0.10.4
+   Compiling crypto-common v0.1.7
+   Compiling digest v0.10.7
+   Compiling cpufeatures v0.2.17
+   Compiling sha2 v0.10.9
+   Compiling rvp9-bench v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261017-TSK-HUM-requalify-post-fix-candidate/crates/rvp9-bench)
+   Compiling getrandom v0.3.4
+   Compiling getrandom v0.4.2
+   Compiling zerocopy v0.8.48
+   Compiling rustix v1.1.4
+   Compiling rand_core v0.9.5
+   Compiling errno v0.3.14
+   Compiling rvp9-cli v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261017-TSK-HUM-requalify-post-fix-candidate/crates/rvp9-cli)
+   Compiling bitflags v2.11.1
+   Compiling autocfg v1.5.0
+   Compiling num-traits v0.2.19
+   Compiling fastrand v2.4.1
+   Compiling once_cell v1.21.4
+   Compiling tempfile v3.27.0
+   Compiling ppv-lite86 v0.2.21
+   Compiling wait-timeout v0.2.1
+   Compiling bit-vec v0.8.0
+   Compiling fnv v1.0.7
+   Compiling quick-error v1.2.3
+   Compiling rusty-fork v0.3.1
+   Compiling bit-set v0.8.0
+   Compiling rand_chacha v0.9.0
+   Compiling rand v0.9.4
+   Compiling rand_xorshift v0.4.0
+   Compiling regex-syntax v0.8.10
+   Compiling unarray v0.1.4
+   Compiling proptest v1.11.0
+   Compiling rvp9 v0.0.0 (/Users/md/worktrees/rvp9/20261017-TSK-HUM-requalify-post-fix-candidate/crates/rvp9)
+    Finished `release` profile [optimized + debuginfo] target(s) in 45m 25s
+     Running unittests src/lib.rs (/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-workspace-test-d4716ea0/target/release/deps/rvp9-0a06c1db79425a92)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-workspace-test-d4716ea0/target/release/deps/rvp9_bench-335f38e5f5ce5172)
+
+running 39 tests
+test mwu::tests::complete_separation_5_vs_5 ... ok
+test mwu::tests::empty_input_returns_p_one ... ok
+test mwu::tests::identical_groups_yield_p_one ... ok
+test mwu::tests::mid_rank_ties_are_assigned_correctly ... ok
+test mwu::tests::normal_approx_path_for_large_n ... ok
+test mwu::tests::partial_overlap_5_vs_5_matches_reference ... ok
+test mwu::tests::small_3_vs_3_separation ... ok
+test process::tests::fake_child ... ok
+test process::tests::large_output_does_not_fill_pipes_and_has_bounded_tails ... ok
+test process::tests::nonzero_exit_keeps_status_and_diagnostics ... ok
+test process::tests::timeout_kills_reaps_and_retains_diagnostics ... ok
+test tests::psnr_desync_returns_none ... ok
+test tests::psnr_identical_frames_caps_at_100 ... ok
+test tests::psnr_off_by_one_y_plane ... ok
+test tests::stats_empty ... ok
+test tests::stats_percentiles ... ok
+test tests::stats_single ... ok
+test tests::y4m_header_minimal ... ok
+test tests::y4m_header_rejects_garbage ... ok
+test throughput::tests::check_metric_ratchet_reports_metric_name_and_budget ... ok
+test throughput::tests::check_ratchet_over_budget_errs ... ok
+test throughput::tests::check_ratchet_within_budget_ok ... ok
+test throughput::tests::csv_00108_append_preserves_separatorless_existing_records ... ok
+test throughput::tests::csv_00108_append_validates_batch_before_any_write ... ok
+test throughput::tests::csv_00108_latest_ignores_invalid_public_rows ... ok
+test throughput::tests::csv_00108_preserves_tiny_positive_metrics ... ok
+test throughput::tests::csv_00108_ratchet_rejects_invalid_operands_and_product ... ok
+test throughput::tests::csv_00108_reads_independent_quoted_multiline_oracle ... ok
+test throughput::tests::csv_00108_rejects_ambiguous_quotes_and_bad_headers ... ok
+test throughput::tests::csv_00108_skips_invalid_typed_rows ... ok
+test throughput::tests::csv_00108_writer_matches_independent_literal_oracle ... ok
+test throughput::tests::csv_roundtrip_v1 ... ok
+test throughput::tests::host_fingerprint_has_no_family_token ... ok
+test throughput::tests::latest_per_fixture_empty_when_no_pinned_rows ... ok
+test throughput::tests::latest_per_fixture_for_build_requires_exact_identity ... ok
+test throughput::tests::malformed_ivf_packet_is_reported_with_fixture_and_index ... ok
+test throughput::tests::read_csv_missing_file_returns_empty ... ok
+test throughput::tests::read_csv_skips_malformed_rows ... ok
+test throughput::tests::read_csv_skips_other_schema_versions ... ok
+
+test result: ok. 39 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.06s
+
+     Running unittests src/bin/bdrate.rs (/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-workspace-test-d4716ea0/target/release/deps/bdrate-8e245c0bbdd36cd6)
+
+running 20 tests
+test process_test_support::fake_child ... ok
+test tests::csv_writer_rejects_missing_bdrate_without_creating_output ... ok
+test tests::default_artifacts_stay_in_the_temp_directory_under_a_process_unique_prefix ... ok
+test tests::encoder_command_keeps_matched_and_role_specific_arguments_separate ... ok
+test tests::external_decoder_timeout ... ok
+test tests::external_encoder_timeout ... ok
+test tests::measured_bdrate_keeps_full_rank_fits_with_repeated_observations ... ok
+test tests::measured_bdrate_rejects_failed_psnr_and_insufficient_points ... ok
+test tests::measured_bdrate_rejects_repeated_psnr_on_anchor_with_overlap ... ok
+test tests::measured_bdrate_rejects_repeated_psnr_on_both_curves_with_overlap ... ok
+test tests::measured_bdrate_rejects_repeated_psnr_on_test_with_overlap ... ok
+test tests::measured_bdrate_rejects_repeated_realistic_psnr_with_overlap ... ok
+test tests::parser_accepts_a_separate_quality_reference_input ... ok
+test tests::parser_accepts_inline_role_specific_arguments ... ok
+test tests::parser_defaults_the_work_directory_to_none_and_accepts_an_override ... ok
+test tests::parser_preserves_repeated_role_specific_arguments ... ok
+test tests::prepare_artifacts_reports_an_unusable_work_directory ... ok
+test tests::retained_artifacts_are_never_overwritten ... ok
+test tests::usage_advertises_retained_artifact_inputs ... ok
+test tests::work_directory_artifacts_are_created_deterministic_and_collision_free ... ok
+
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.04s
+
+     Running unittests src/bin/bdrate-svc.rs (/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-workspace-test-d4716ea0/target/release/deps/bdrate_svc-c85752dab37835e4)
+
+running 13 tests
+test process_test_support::fake_child ... ok
+test tests::command_builders_use_the_same_scoped_configuration ... ok
+test tests::explicit_help_is_a_clean_capability_probe ... ok
+test tests::external_decoder_timeout ... ok
+test tests::external_encoder_timeout ... ok
+test tests::extractor_keeps_cumulative_operating_points ... ok
+test tests::fixed_temporal_patterns_match_libvpx ... ok
+test tests::operating_point_bitrate_uses_full_source_duration ... ok
+test tests::parser_keeps_matched_and_role_specific_controls ... ok
+test tests::parser_validates_spatial_shape_and_exact_rate_allocation ... ok
+test tests::spatial_command_builders_pin_libvpx_and_rvp9_controls ... ok
+test tests::spatial_extractor_rebuilds_cumulative_packets_and_layer_headers ... ok
+test tests::spatial_reference_filters_follow_target_layer_area ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.03s
+
+     Running unittests src/bin/bench-compare.rs (/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-workspace-test-d4716ea0/target/release/deps/bench_compare-03b8a41a97efebca)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/decode-headtohead.rs (/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-workspace-test-d4716ea0/target/release/deps/decode_headtohead-42091bc97883eefc)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/decode-profile-tiles.rs (/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-workspace-test-d4716ea0/target/release/deps/decode_profile_tiles-182a7df6b25a1171)
+
+running 2 tests
+test tests::empty_fixture_is_not_profile_evidence ... ok
+test tests::malformed_packet_fails_profile_run_with_fixture_and_index ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/decode-throughput.rs (/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-workspace-test-d4716ea0/target/release/deps/decode_throughput-0bd15e2f8a128985)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/dsp-microbench.rs (/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-workspace-test-d4716ea0/target/release/deps/dsp_microbench-2706ebd4be24ef14)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/encode-headtohead.rs (/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-workspace-test-d4716ea0/target/release/deps/encode_headtohead-39b8b386c23078c1)
+
+running 22 tests
+test process_test_support::fake_child ... ok
+test tests::anchor_hash_instability_is_a_narrow_opt_in ... ok
+test tests::argument_parser_applies_defaults_and_rejects_even_pairs ... ok
+test tests::explicit_help_is_a_clean_capability_probe ... ok
+test tests::external_encoder_timeout ... ok
+test tests::extra_arguments_cannot_override_matched_configuration ... ok
+test tests::load_enforcement_uses_metadata_without_weakening_the_guard ... ok
+test tests::load_retry_does_not_repeat_a_valid_reading ... ok
+test tests::load_retry_fails_closed_after_two_failures ... ok
+test tests::load_retry_recovers_after_one_transient_failure ... ok
+test tests::median_geomean_and_load_parsing_are_deterministic ... ok
+test tests::parsing_requires_safe_unique_clips_and_odd_pairs ... ok
+test tests::spatial_svc_cbr_command_pins_the_libvpx_example_surface ... ok
+test tests::spatial_svc_cbr_command_pins_the_matched_rvp9_surface ... ok
+test tests::spatial_svc_vbr_widens_the_q_bounds_on_both_arms ... ok
+test tests::spatial_targets_must_split_exactly_across_layers ... ok
+test tests::summary_uses_paired_ratios_and_rejects_hash_instability ... ok
+test tests::temporal_svc_command_contains_wrapper_surface ... ok
+test tests::topologies_are_mutually_exclusive_and_matched_to_the_wrapper_kind ... ok
+test tests::vpxenc_command_contains_matched_realtime_surface ... ok
+test tests::windows_load_modes_use_expected_samples_and_truthful_metric_names ... ok
+test tests::y4m_header_requires_dimensions_and_explicit_rate ... ok
+
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.02s
+
+     Running unittests src/bin/realtime.rs (/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-workspace-test-d4716ea0/target/release/deps/realtime-83ab291149f3771a)
+
+running 14 tests
+test process_test_support::fake_child ... ok
+test tests::command_defaults_preserve_single_layer_cbr_shape ... ok
+test tests::default_output_uses_unique_directory_and_cleans_it_on_drop ... ok
+test tests::explicit_help_is_a_clean_capability_probe ... ok
+test tests::explicit_output_requires_fresh_path_and_is_retained ... ok
+test tests::external_encoder_timeout ... ok
+test tests::frame_time_csv_rejects_empty_malformed_and_wrong_count ... ok
+test tests::frame_time_csv_uses_nearest_rank_percentiles ... ok
+test tests::output_option_is_parsed_without_creating_an_artifact ... ok
+test tests::parses_and_forwards_realtime_matrix_options ... ok
+test tests::parses_and_forwards_spatial_svc_controls ... ok
+test tests::primary_budget_accepts_default_and_finite_positive_values ... ok
+test tests::primary_budget_requires_finite_positive_value ... ok
+test tests::rejects_combined_temporal_and_spatial_svc - should panic ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.02s
+
+     Running unittests src/bin/soak.rs (/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-workspace-test-d4716ea0/target/release/deps/soak-79095663e2689194)
+
+running 5 tests
+test tests::cli_accepts_bounded_runs_and_preserves_defaults ... ok
+test tests::cli_rejects_zero_frames_and_unbounded_run ... ok
+test tests::cross_decode_temp_dirs_are_isolated_and_cleaned ... ok
+test tests::cross_decoder_timeout_kills_child ... ok
+test tests::empty_iteration_fails_and_single_frame_round_trips ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
+
+     Running tests/bdrate_fps.rs (/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-workspace-test-d4716ea0/target/release/deps/bdrate_fps-ffc613f82bbbe3ba)
+
+running 2 tests
+test rejects_zero_ivf_timebase_components ... ok
+test reports_each_ivfs_effective_frame_rate ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.90s
+
+     Running tests/bench_compare_cli.rs (/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-workspace-test-d4716ea0/target/release/deps/bench_compare_cli-45433e24b6a25d5d)
+
+running 4 tests
+test malformed_current_schema_row_fails ... ok
+test one_sided_group_fails ... ok
+test paired_group_passes_while_future_schema_is_ignored ... ok
+test timestamps_without_matching_rows_fail ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.22s
+
+     Running tests/decode_profile_tiles.rs (/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-workspace-test-d4716ea0/target/release/deps/decode_profile_tiles-cbf9196f1e981645)
+
+running 9 tests
+test csv_open_failure_is_fatal ... ok
+test empty_fixture_cannot_claim_success ... ok
+test invalid_numeric_arguments_do_not_fall_back_to_defaults ... ok
+test serial_decode_without_profile_rows_is_fatal ... ok
+test tiled_decode_emits_positive_timed_rows_excluding_warmup ... ok
+test unsupported_instrumentation_is_fatal ... ok
+test warmup_boundary_replays_before_rejecting_missing_timed_rows ... ok
+test zero_min_timed_is_an_argument_error ... ok
+test zero_runs_is_an_argument_error ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.24s
+
+     Running tests/decode_throughput_cli.rs (/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-workspace-test-d4716ea0/target/release/deps/decode_throughput_cli-5eacdb190e23cc9a)
+
+running 4 tests
+test csv_append_failure_exits_nonzero ... ok
+test default_sweep_with_failed_fixtures_exits_nonzero_and_keeps_success_row ... ok
+test missing_explicit_fixture_exits_nonzero ... ok
+test successful_default_sweep_records_all_four_fixtures ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.85s
+
+     Running tests/decode_throughput_ratchet.rs (/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-workspace-test-d4716ea0/target/release/deps/decode_throughput_ratchet-e0f38fcf0775c938)
+
+running 2 tests
+test decode_throughput_ratchet ... ok
+test ratchet_baseline_requires_allowlisted_current_identity ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 25.29s
+
+     Running tests/realtime_output.rs (/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-workspace-test-d4716ea0/target/release/deps/realtime_output-43934265846a96d6)
+
+running 6 tests
+test concurrent_default_runs_use_distinct_outputs_and_count_their_own_ivf ... ok
+test default_output_is_cleaned_after_encoder_and_timing_failures ... ok
+test existing_explicit_file_is_rejected_before_running_encoder ... ok
+test existing_explicit_symlink_is_rejected_before_running_encoder ... ok
+test fresh_explicit_output_is_used_and_retained_after_success ... ok
+test stale_default_output_is_ignored_and_zero_frame_run_cleans_owned_directory ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.11s
+
+     Running tests/soak_cli.rs (/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-workspace-test-d4716ea0/target/release/deps/soak_cli-3519a0b97faaad6d)
+
+running 1 test
+test requested_cross_decode_requires_existing_vpxdec ... FAILED
+
+failures:
+
+---- requested_cross_decode_requires_existing_vpxdec stdout ----
+
+thread 'requested_cross_decode_requires_existing_vpxdec' (249703723) panicked at crates/rvp9-bench/tests/soak_cli.rs:21:5:
+stderr:
+error: --frames-per-iter must be greater than zero
+
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    requested_cross_decode_requires_existing_vpxdec
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.27s
+
+error: test failed, to rerun pass `-p rvp9-bench --test soak_cli`

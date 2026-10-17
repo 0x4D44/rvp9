@@ -1,0 +1,121 @@
+{
+  "recorded_at_utc": "2026-10-17T19:30:07+00:00",
+  "candidate_revision": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+  "source_worktree": "/Users/md/worktrees/rvp9/20261017-TSK-HUM-requalify-post-fix-candidate",
+  "source_worktree_clean_at_capture": true,
+  "host": {
+    "os": "macOS 26.6.2 (25G83)",
+    "architecture": "arm64",
+    "rustc": "rustc 1.95.0 (59807616e 2026-04-14)",
+    "rustc_host": "aarch64-apple-darwin",
+    "cargo": "1.95.0 (f2d3ce0bd 2026-03-21)"
+  },
+  "workspace_run": {
+    "command": "cargo test --workspace --release --locked --offline --no-fail-fast -- --test-threads=1",
+    "wrapper": "nice -n 19 deltic timeout 7200",
+    "stdin": "closed",
+    "exit_status": 101,
+    "totals": {
+      "result_summaries": 124,
+      "passed": 3577,
+      "failed": 2,
+      "ignored": 64,
+      "measured": 0,
+      "filtered_out": 0,
+      "running_targets": 114
+    },
+    "failures": [
+      {
+        "target": "rvp9-bench/tests/soak_cli.rs::requested_cross_decode_requires_existing_vpxdec",
+        "observed": "The fixture passes --frames-per-iter 0; argument validation returns '--frames-per-iter must be greater than zero' before the test reaches its missing-vpxdec assertion.",
+        "classification": "stale test expectation after the zero-frame rejection fix; no source or test changed in this qualification run"
+      },
+      {
+        "target": "rvp9-harness --bin f02-block-oracle::tests::loud_child_stderr_is_file_backed_and_read_with_a_byte_limit",
+        "observed": "One full-suite run failed because the timeout error did not contain 'additional stderr output omitted'.",
+        "classification": "not reproduced by one isolated rerun followed by three consecutive isolated exact-source reruns; cause not established"
+      }
+    ]
+  },
+  "focused_harness_recheck": {
+    "command": "cargo test -p rvp9-harness --release --locked --offline --bin f02-block-oracle tests::loud_child_stderr_is_file_backed_and_read_with_a_byte_limit -- --exact --nocapture",
+    "consecutive_runs": 3,
+    "passed": 3,
+    "exit_status": 0,
+    "note": "A separate initial isolated invocation also passed; no source changes were made between the workspace run and these rechecks."
+  },
+  "integrity": [
+    {
+      "raw": {
+        "file": "harness-stderr-focused-three.raw.txt",
+        "bytes": 1467,
+        "sha256": "f514d6911d3add33db70b80abf102679100f841c287fadcf66d20e4e60ee69d6"
+      },
+      "gzip": {
+        "file": "harness-stderr-focused-three.raw.txt.gz",
+        "bytes": 376,
+        "sha256": "1409d6fa3c278e515e720733a7e9cc2a92bb1ae4ce38052f545b46be6e98d917"
+      }
+    },
+    {
+      "raw": {
+        "file": "harness-stderr-focused.raw.txt",
+        "bytes": 474,
+        "sha256": "fd70a45be74dff0a8337fd0df68e7675d31ed1f337d9eaed8a8c7cddef3708a5"
+      },
+      "gzip": {
+        "file": "harness-stderr-focused.raw.txt.gz",
+        "bytes": 341,
+        "sha256": "90efbe304ef17dce90cbcfd07dba084b7b42e03720e691ba0ff853c52402ebdf"
+      }
+    },
+    {
+      "raw": {
+        "file": "host-toolchain.raw.txt",
+        "bytes": 647,
+        "sha256": "4a85dc184082eec6f9256891e3e2a8c3b4a5900966edd79de79439643c4969cd"
+      },
+      "gzip": {
+        "file": "host-toolchain.raw.txt.gz",
+        "bytes": 407,
+        "sha256": "cd1a6c934a54f90269b892b92865665fa15037d1b3c839b8eb222cbaaf7c03ee"
+      }
+    },
+    {
+      "raw": {
+        "file": "source-identity.raw.txt",
+        "bytes": 169,
+        "sha256": "41393140b18ecae59a096d1bcfad4a7a26d14a5588c97e42fb31d3fc6683526b"
+      },
+      "gzip": {
+        "file": "source-identity.raw.txt.gz",
+        "bytes": 166,
+        "sha256": "5a7dfcd634a4083fc3d38c7f836e7c849f48fb3550addb7b36973aa0f6354a54"
+      }
+    },
+    {
+      "raw": {
+        "file": "workspace-fail-fast.raw.txt",
+        "bytes": 18211,
+        "sha256": "98071a33bf12c37a75e3f4a19b5375f80f5411c9ea392b3ad301b694d1dae8a5"
+      },
+      "gzip": {
+        "file": "workspace-fail-fast.raw.txt.gz",
+        "bytes": 4409,
+        "sha256": "1acbb2728917515ff5d90b23f4436458302d8996ec72b17e9e4d58f7c2ec733e"
+      }
+    },
+    {
+      "raw": {
+        "file": "workspace-no-fail-fast.raw.txt",
+        "bytes": 309628,
+        "sha256": "1d1871276a6070cd739f246d6f3289eace474631d40c7bb1e9b18de740d43ca3"
+      },
+      "gzip": {
+        "file": "workspace-no-fail-fast.raw.txt.gz",
+        "bytes": 56071,
+        "sha256": "47850994d1df07fa92288f777ab0896f616e92cba152775b6cd7c40a1c069561"
+      }
+    }
+  ]
+}

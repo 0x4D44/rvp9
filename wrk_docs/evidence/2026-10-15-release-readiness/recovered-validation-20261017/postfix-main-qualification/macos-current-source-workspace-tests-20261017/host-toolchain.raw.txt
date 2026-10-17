@@ -1,0 +1,27 @@
+$ rustc -Vv
+rustc 1.95.0 (59807616e 2026-04-14)
+binary: rustc
+commit-hash: 59807616e1fa2540724bfbac14d7976d7e4a3860
+commit-date: 2026-04-14
+host: aarch64-apple-darwin
+release: 1.95.0
+LLVM version: 22.1.2
+
+$ cargo -Vv
+cargo 1.95.0 (f2d3ce0bd 2026-03-21)
+release: 1.95.0
+commit-hash: f2d3ce0bd7f24a49f8f72d9000448f8838c4e850
+commit-date: 2026-03-21
+host: aarch64-apple-darwin
+libgit2: 1.9.2 (sys:0.20.4 vendored)
+libcurl: 8.7.1 (sys:0.4.83+curl-8.15.0 system ssl:(SecureTransport) LibreSSL/3.3.6)
+ssl: OpenSSL 3.5.4 30 Sep 2025
+os: Mac OS 26.6.2 [64-bit]
+
+$ sw_vers
+ProductName:		macOS
+ProductVersion:		26.6.2
+BuildVersion:		25G83
+
+$ uname -m
+arm64
