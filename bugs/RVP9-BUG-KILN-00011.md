@@ -66,3 +66,21 @@ content.
 - Therefore an `IntraFrame` cell in `prev_mv_grid` after an inter encode is no
   longer evidence of an encoder defect; the old HLD/test invariant has been
   superseded by the current decoder parity rule.
+
+### Arthur disposition confirmed (2026-10-17)
+
+Arthur approved independently reconfirming the current behavior and resolving
+the stale report. The exact recorded test selected one test and passed; the
+full `a18_prev_frame_mvs_fires` module passed both tests, and the lead
+independently reran that module with two passes. Existing assertions check
+frame kinds, the 16x16 / 256-cell grid, LAST entries, and frame-2 eligibility;
+they no longer forbid intra cells. No assertion or implementation was changed.
+
+The lead re-derived encoder `InterPartitionLeafDesc::mv_ref` and its grid
+splat (`lib.rs:4073-4118`), decoder intra writeback (`tile.rs:2875-2895`),
+and inter-only previous-MV salvage (`mv_ref.rs:538-595`). Both sides
+intentionally store `[IntraFrame, NoRefFrame]` with zero MVs for intra leaves.
+The remaining stale HLD section 8.5 in
+`wrk_docs/Track_F/F0.3_HLD_prev_frame_mvs.md` now carries a dated supersession.
+Resolve as `by-design`: the cells are real and valid. This is not a new
+behavior fix or a claim of a fresh upstream differential comparison.
