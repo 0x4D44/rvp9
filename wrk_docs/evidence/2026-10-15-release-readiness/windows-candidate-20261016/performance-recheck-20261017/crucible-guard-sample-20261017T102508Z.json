@@ -1,0 +1,77 @@
+{
+  "test": "read-only Windows CPU guard sample under a Deltic quiet lease",
+  "observed_utc": "2026-10-17T10:25:08Z",
+  "host": "CRUCIBLE",
+  "observer_worktree_head": "e4179b160d77052c04784022b0206d91e5102e70",
+  "candidate_source_commit": "474dfd99a673df85f750136f7552ac156b7a24e9",
+  "candidate_source_worktree_clean": true,
+  "preflight_utc": "2026-10-17T10:22:18.4442803Z",
+  "preflight_artifacts": {
+    "pgo_manifest_sha256": "91322caf06876b6581e72b10b636658980c0489ace2d6693b080dbeee4ad5d7c",
+    "pgo_encoder_sha256": "6da43379998632cc96a689fdba47e2e4addafaba23254fa5f8867caf291c08d3",
+    "pgo_profile_sha256": "47b0c79c5e277f6c05a9dc111032063b98ae585e531ab1b204317f58e8555084",
+    "encode_headtohead_sha256": "d946f3de3634e9a478b8b4d32c95c0ab39b6928df7e36cab4a2fc8ad687d575c",
+    "pinned_libvpx_revision": "12f3a2ac603e8f10742105519e0cd03c3b8f71dd",
+    "source_corpus_sha256": {
+      "in_to_tree_420_720p50.y4m": "81166517a3054c789923535b5da23fbbb9bbd7fd4c28dac83918ac351e121e74",
+      "ducks_take_off_420_720p50.y4m": "0e09aa923ce72e2f6d1c978c3c1cc8dd9588d2ede819081f040213e361970efc",
+      "old_town_cross_420_720p50.y4m": "0fbc2ec0c552ad693528b2e49409c7449880b9230055a7696346473d1aaf4123"
+    },
+    "prepared_720p30_clean_inputs_present": true
+  },
+  "lease": {
+    "owner_session_id": "01a14507-ca90-79f1-b70d-693f227ad01f",
+    "reason": "RVP9-final-release-readiness-guard-and-top-production-rows",
+    "duration_minutes": 10,
+    "granted_output": "quiet window granted until 11:34 (local); 0 heavy workload processes running",
+    "quiet_before": [
+      "quiet window: live until 11:34 (local) for \"RVP9-final-release-readiness-guard-and-top-production-rows\".",
+      "0 heavy workload processes still running.",
+      "3 more heavy workload processes run at low priority (not counted)."
+    ],
+    "quiet_after": [
+      "quiet window: live until 11:34 (local) for \"RVP9-final-release-readiness-guard-and-top-production-rows\".",
+      "0 heavy workload processes still running.",
+      "2 more heavy workload processes run at low priority (not counted)."
+    ],
+    "release_output": "quiet window ended; the next grant is no earlier than 11:36 (local)",
+    "status_after_release": "quiet window open; 0 heavy workload processes and 2 low-priority heavy workloads",
+    "ended_immediately_after_sample": true
+  },
+  "measurement": {
+    "started_utc": "2026-10-17T10:25:08.9390573Z",
+    "completed_utc": "2026-10-17T10:26:14.5143246Z",
+    "counter": "\\Processor(_Total)\\% Processor Time",
+    "interval_seconds": 5,
+    "requested_samples": 13,
+    "skipped_initial": 1,
+    "retained_samples": 12,
+    "logical_processors": 32,
+    "percent_samples": [
+      8.63993527715996,
+      9.5124760716747918,
+      8.94365351959393,
+      7.0298724841496352,
+      5.5943690261871293,
+      6.8856005118317469,
+      6.1824498695100321,
+      6.2642769155190292,
+      5.68692066773454,
+      5.8273410129951024,
+      5.943804859902313,
+      5.6112838852408586
+    ],
+    "mean_percent": 6.8434986751249225,
+    "busy_logical_cores": 2.189919576039975,
+    "guard_limit": 0.75,
+    "guard_pass": false
+  },
+  "script": "$ErrorActionPreference = 'Stop'\n$started = [DateTime]::UtcNow.ToString('o')\n$quietBefore = (deltic quiet status)\n$samples = @(Get-Counter -Counter '\\Processor(_Total)\\% Processor Time' -SampleInterval 5 -MaxSamples 13 | ForEach-Object { $_.CounterSamples })\n$values = @($samples | Select-Object -Skip 1 | ForEach-Object { [double]$_.CookedValue })\nif ($values.Count -ne 12) { throw \"expected 12 retained samples, got $($values.Count)\" }\n$logical = [int](Get-CimInstance Win32_ComputerSystem).NumberOfLogicalProcessors\n$mean = [double](($values | Measure-Object -Average).Average)\n$busy = $mean * $logical / 100.0\n$finished = [DateTime]::UtcNow.ToString('o')\n$quietAfter = (deltic quiet status)\n[pscustomobject]@{ host = $env:COMPUTERNAME; started_utc = $started; completed_utc = $finished; counter = '\\Processor(_Total)\\% Processor Time'; interval_seconds = 5; requested_samples = $samples.Count; skipped_initial = 1; retained_samples = $values.Count; logical_processors = $logical; percent_samples = $values; mean_percent = $mean; busy_logical_cores = $busy; guard_limit = 0.75; guard_pass = ($busy -le 0.75); quiet_before = $quietBefore; quiet_after = $quietAfter } | ConvertTo-Json -Depth 4 -Compress",
+  "decision": "Do not start speed or latency measurements: the 60-second busy-core sample measured 2.189920 against the 0.75 limit. End the lease immediately.",
+  "limits": [
+    "This is a host-load guard sample, not codec speed or latency evidence.",
+    "No RVP9 encode, speed group, or latency measurement started.",
+    "The quiet lease was ended after the guard failed; the host returned to open status.",
+    "The remote source tree and its artifacts were inspected read-only; no source, binary, package, or system setting changed."
+  ]
+}

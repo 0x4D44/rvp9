@@ -1,0 +1,34 @@
+{
+  "test": "read-only ANVIL candidate and PGO location check",
+  "observed_utc": "2026-10-17T10:27:25.9627776Z",
+  "host": "ANVIL",
+  "observer_worktree_head": "e4179b160d77052c04784022b0206d91e5102e70",
+  "candidate_source_commit": "474dfd99a673df85f750136f7552ac156b7a24e9",
+  "quiet_status": [
+    "quiet window: open.",
+    "0 heavy workload processes still running.",
+    "12 more heavy workload processes run at low priority (not counted)."
+  ],
+  "candidate_roots_checked": [
+    {"path": "C:/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence", "exists": false},
+    {"path": "D:/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence", "exists": false},
+    {"path": "%USERPROFILE%/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence", "exists": false},
+    {"path": "D:/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi", "exists": false}
+  ],
+  "known_crucible_artifact_paths_checked": [
+    {"path": "C:/Users/marti/AppData/Local/Temp/deltic-scratch/rvp9-native-replay474-9dee6be6/pgo/runs/20261017T052417Z-1120/manifest.txt", "exists": false},
+    {"path": "C:/Users/marti/AppData/Local/Temp/deltic-scratch/rvp9-native-replay474-9dee6be6/pgo/optimized/release/rvp9enc.exe", "exists": false},
+    {"path": "C:/Users/marti/AppData/Local/Temp/deltic-scratch/rvp9-native-replay474-9dee6be6/cargo-target/release/encode-headtohead.exe", "exists": false}
+  ],
+  "commands": [
+    "deltic hosts ANVIL (host card/login lookup)",
+    "ssh marti@ANVIL powershell -NoProfile -EncodedCommand <read-only Test-Path, git identity, and deltic quiet status checks>"
+  ],
+  "decision": "ANVIL is not verified as an already-prepared candidate host in the four task/source roots or the known Crucible artifact path. No build, candidate-specific guard sample, or codec timing was started.",
+  "limits": [
+    "The check covered four exact roots and three known Crucible scratch artifact paths; it did not enumerate every local checkout or scratch directory on ANVIL.",
+    "No PGO artifact identity was found or verified for ANVIL.",
+    "ANVIL showed 12 low-priority heavy workloads during the availability check.",
+    "No files, processes, quiet leases, packages, or system settings were changed."
+  ]
+}
