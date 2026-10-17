@@ -1,0 +1,117 @@
+{
+  "schema": "rvp9.macos-current-source-package-verification.v1",
+  "recorded_at_utc": "2026-10-17T12:45:21Z",
+  "source": {
+    "commit": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+    "worktree": "/Users/md/worktrees/rvp9/20261017-TSK-HUM-requalify-post-fix-candidate",
+    "branch": "task/20261017-TSK-HUM-requalify-post-fix-candidate",
+    "host": "macOS Apple Silicon",
+    "host_triple": "aarch64-apple-darwin",
+    "tracked_tree_clean_after_checks": true
+  },
+  "toolchain": {
+    "rustc": "rustc 1.95.0 (59807616e 2026-04-14)",
+    "cargo": "cargo 1.95.0 (f2d3ce0bd 2026-03-21)",
+    "llvm": "22.1.2"
+  },
+  "package_verification": {
+    "command": "deltic timeout 1800 cargo package --offline --locked -p rvp9-core -p rvp9-io -p rvp9-decoder -p rvp9-encoder -p rvp9-cli </dev/null",
+    "environment": {
+      "CARGO_BUILD_JOBS": "1",
+      "CARGO_TARGET_DIR": "<registered external scratch>/cargo-target",
+      "scheduler_priority": "nice -n 19"
+    },
+    "exit_code": 0,
+    "status": "pass; all five package archives were assembled and Cargo compiled the fresh sibling package graph from its temporary registry",
+    "packages": [
+      "rvp9-core",
+      "rvp9-io",
+      "rvp9-decoder",
+      "rvp9-encoder",
+      "rvp9-cli"
+    ],
+    "warning_or_error_lines": 0,
+    "raw_log": {
+      "path": "mac-current-source-package-verification.raw.txt",
+      "bytes": 3920,
+      "sha256": "ac94cb6c2fe84f5cd78a1f1527c9f1e6cdc96ba5577cc06f1f0677d75c78d740"
+    },
+    "raw_exit_capture": {
+      "path": "mac-current-source-package-verification.exit.raw.txt",
+      "bytes": 12,
+      "sha256": "bde294368bfed77c2cddf8cec271d398aee9cdbab3b26e1059281bd33adb0120"
+    },
+    "archive_identity_verification": {
+      "status": "pass",
+      "archives": [
+        {
+          "crate": "rvp9-core",
+          "archive_sha256": "6d3cf14a480ac52b2483189a1b60cf0212e431500d4dbbfd68e57170b67082d4",
+          "staging_registry_sha256": "6d3cf14a480ac52b2483189a1b60cf0212e431500d4dbbfd68e57170b67082d4",
+          "matches_staging_archive": true
+        },
+        {
+          "crate": "rvp9-io",
+          "archive_sha256": "b6bd26cf51fad0be6ffe71550cfd836c518af34f7762fb3973a9cad293d01427",
+          "staging_registry_sha256": "b6bd26cf51fad0be6ffe71550cfd836c518af34f7762fb3973a9cad293d01427",
+          "matches_staging_archive": true
+        },
+        {
+          "crate": "rvp9-decoder",
+          "archive_sha256": "9fd720b69b6d9b5fce94d9d6ecacc5d2ddefb670d4f8dc428d271a5ee0bbdc58",
+          "staging_registry_sha256": "9fd720b69b6d9b5fce94d9d6ecacc5d2ddefb670d4f8dc428d271a5ee0bbdc58",
+          "matches_staging_archive": true
+        },
+        {
+          "crate": "rvp9-encoder",
+          "archive_sha256": "44ea4c5e61073d9ccc682c7278e4d9163f70e991db6123f2f339fa3b6f212602",
+          "staging_registry_sha256": "44ea4c5e61073d9ccc682c7278e4d9163f70e991db6123f2f339fa3b6f212602",
+          "matches_staging_archive": true
+        },
+        {
+          "crate": "rvp9-cli",
+          "archive_sha256": "60df26f202795553e24714ddae81a5ff5b79448eeaba235746b425661ac4c9ca",
+          "staging_registry_sha256": "60df26f202795553e24714ddae81a5ff5b79448eeaba235746b425661ac4c9ca",
+          "matches_staging_archive": true
+        }
+      ],
+      "cli_lock_sibling_checksums": [
+        {
+          "crate": "rvp9-core",
+          "checksum": "6d3cf14a480ac52b2483189a1b60cf0212e431500d4dbbfd68e57170b67082d4",
+          "matches_archive": true
+        },
+        {
+          "crate": "rvp9-io",
+          "checksum": "b6bd26cf51fad0be6ffe71550cfd836c518af34f7762fb3973a9cad293d01427",
+          "matches_archive": true
+        },
+        {
+          "crate": "rvp9-decoder",
+          "checksum": "9fd720b69b6d9b5fce94d9d6ecacc5d2ddefb670d4f8dc428d271a5ee0bbdc58",
+          "matches_archive": true
+        },
+        {
+          "crate": "rvp9-encoder",
+          "checksum": "44ea4c5e61073d9ccc682c7278e4d9163f70e991db6123f2f339fa3b6f212602",
+          "matches_archive": true
+        }
+      ],
+      "raw_log": {
+        "path": "mac-current-source-package-archive-identities.raw.txt",
+        "bytes": 1368,
+        "sha256": "1096c98f3887b24ce2cb4be1871dd7ca026704be284da72d50a1f8b87855e173"
+      },
+      "raw_exit_capture": {
+        "path": "mac-current-source-package-archive-identities.exit.raw.txt",
+        "bytes": 12,
+        "sha256": "bde294368bfed77c2cddf8cec271d398aee9cdbab3b26e1059281bd33adb0120"
+      }
+    }
+  },
+  "limits": [
+    "Cargo package verification compiles the assembled package graph but does not run tests embedded in extracted archives.",
+    "The separate Windows exact-source package record is windows-current-source-package-verification.json.",
+    "Extracted archive tests remain unqualified; see the Windows record for exact-source offline resolver and registry checksum failures."
+  ]
+}

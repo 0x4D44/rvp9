@@ -35,6 +35,73 @@
       "sha256": "b4e11e4759bcf2e5bc5e856356a1a816c9a32351e263fbe391a00cf2d9799126",
       "text": "exit_code=0n",
       "interpretation": "The capture contains a literal trailing n; the Bash/SSH command process itself exited 0 and the Cargo log ends with successful package verification."
+    },
+    "archive_identity_verification": {
+      "status": "pass",
+      "archives": [
+        {
+          "crate": "rvp9-core",
+          "archive_sha256": "58be5cdf576e77d4762f0fdb454a4f526df75555eed938cfe5fc314c21b523a5",
+          "staging_registry_sha256": "58be5cdf576e77d4762f0fdb454a4f526df75555eed938cfe5fc314c21b523a5",
+          "matches_staging_archive": true
+        },
+        {
+          "crate": "rvp9-io",
+          "archive_sha256": "2562d9bbebea937c6cb484994f5dbe878b0338ba1c9725702b7904323413f932",
+          "staging_registry_sha256": "2562d9bbebea937c6cb484994f5dbe878b0338ba1c9725702b7904323413f932",
+          "matches_staging_archive": true
+        },
+        {
+          "crate": "rvp9-decoder",
+          "archive_sha256": "74da8e58904df7bcd1c6e4217d56f33a91b9d3f6dff8e3d1a4108f37ca752476",
+          "staging_registry_sha256": "74da8e58904df7bcd1c6e4217d56f33a91b9d3f6dff8e3d1a4108f37ca752476",
+          "matches_staging_archive": true
+        },
+        {
+          "crate": "rvp9-encoder",
+          "archive_sha256": "ac742f89ccb492ee41e0f03616a9599305cf6fdedece3727675c4556c9103b60",
+          "staging_registry_sha256": "ac742f89ccb492ee41e0f03616a9599305cf6fdedece3727675c4556c9103b60",
+          "matches_staging_archive": true
+        },
+        {
+          "crate": "rvp9-cli",
+          "archive_sha256": "287e391d738c61ecebcd417519e4d0e98f41357a02ff193ed116605c5d75137d",
+          "staging_registry_sha256": "287e391d738c61ecebcd417519e4d0e98f41357a02ff193ed116605c5d75137d",
+          "matches_staging_archive": true
+        }
+      ],
+      "cli_lock_sibling_checksums": [
+        {
+          "crate": "rvp9-core",
+          "checksum": "58be5cdf576e77d4762f0fdb454a4f526df75555eed938cfe5fc314c21b523a5",
+          "matches_archive": true
+        },
+        {
+          "crate": "rvp9-io",
+          "checksum": "2562d9bbebea937c6cb484994f5dbe878b0338ba1c9725702b7904323413f932",
+          "matches_archive": true
+        },
+        {
+          "crate": "rvp9-decoder",
+          "checksum": "74da8e58904df7bcd1c6e4217d56f33a91b9d3f6dff8e3d1a4108f37ca752476",
+          "matches_archive": true
+        },
+        {
+          "crate": "rvp9-encoder",
+          "checksum": "ac742f89ccb492ee41e0f03616a9599305cf6fdedece3727675c4556c9103b60",
+          "matches_archive": true
+        }
+      ],
+      "raw_log": {
+        "path": "windows-current-source-package-archive-identities.raw.txt",
+        "bytes": 1368,
+        "sha256": "efdbb7064a20b181ad8389408454edb626439277e0b9f9ddcce9e6d0f6d78e4d"
+      },
+      "raw_exit_capture": {
+        "path": "windows-current-source-package-archive-identities.exit.raw.txt",
+        "bytes": 12,
+        "sha256": "bde294368bfed77c2cddf8cec271d398aee9cdbab3b26e1059281bd33adb0120"
+      }
     }
   },
   "extracted_archive_tests": {
@@ -163,9 +230,8 @@
   },
   "limits": [
     "Cargo package verification compiles the assembled package graph but does not run tests embedded in extracted archives.",
-    "This record covers Windows only and does not establish exact-source macOS package verification.",
-    "The two offline resolver failures and two registry-backed checksum failures are prerequisite/integrity failures, not FLU38 evidence. No lockfile change, dependency override, manifest patch or retry without --locked was attempted.",
-    "No exact-source macOS cargo package verification was run; historical native macOS package evidence used source 33378791eace3bda2f927e629c30b805b54b56e1 and does not qualify source fb5c0c917038db6c640b3dbc7c2b84b567233333."
+    "This record covers Windows only; exact-source macOS package verification is recorded separately in mac-current-source-package-verification.json.",
+    "The offline resolver failures and registry-backed checksum failures are prerequisite/integrity failures, not FLU38 evidence. No lockfile change, dependency override, manifest patch or retry without --locked was attempted."
   ],
-  "updated_at_utc": "2026-10-17T12:41:05Z"
+  "updated_at_utc": "2026-10-17T12:45:21Z"
 }

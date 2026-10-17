@@ -931,6 +931,32 @@
         "encoder_quality_gate": 101
       },
       "record": "windows-current-source-package-verification.json"
-    }
+    },
+    "archive_identity_status": "pass; all five archives match Cargo staging copies and all four CLI sibling lock checksums match",
+    "archive_identity_log_sha256": "efdbb7064a20b181ad8389408454edb626439277e0b9f9ddcce9e6d0f6d78e4d"
+  },
+  "macos_current_source_package_verification": {
+    "recorded_at_utc": "2026-10-17T12:45:21Z",
+    "record": "mac-current-source-package-verification.json",
+    "source_commit": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+    "host": "macOS Apple Silicon",
+    "host_triple": "aarch64-apple-darwin",
+    "toolchain": {
+      "rustc": "rustc 1.95.0 (59807616e 2026-04-14)",
+      "cargo": "cargo 1.95.0 (f2d3ce0bd 2026-03-21)",
+      "llvm": "22.1.2"
+    },
+    "command": "deltic timeout 1800 cargo package --offline --locked -p rvp9-core -p rvp9-io -p rvp9-decoder -p rvp9-encoder -p rvp9-cli </dev/null",
+    "exit_code": 0,
+    "packages_verified": [
+      "rvp9-core",
+      "rvp9-io",
+      "rvp9-decoder",
+      "rvp9-encoder",
+      "rvp9-cli"
+    ],
+    "archive_identity_status": "pass; all five archives match Cargo staging copies and all four CLI sibling lock checksums match",
+    "package_log_sha256": "ac94cb6c2fe84f5cd78a1f1527c9f1e6cdc96ba5577cc06f1f0677d75c78d740",
+    "archive_identity_log_sha256": "1096c98f3887b24ce2cb4be1871dd7ca026704be284da72d50a1f8b87855e173"
   }
 }
