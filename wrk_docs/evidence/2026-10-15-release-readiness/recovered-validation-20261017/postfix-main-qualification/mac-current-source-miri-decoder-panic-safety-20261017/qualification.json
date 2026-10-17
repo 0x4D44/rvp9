@@ -44,8 +44,11 @@
     "compile_failed_crate": "rvp9-core",
     "test_names_not_executed": [
       "early_error_then_valid_keyframe_decodes",
-      "mid_tile_failure_then_valid_keyframe_decodes"
-    ]
+      "mid_tile_failure_then_valid_keyframe_decodes",
+      "mid_tile_failure_then_valid_inter_decodes",
+      "fresh_decoder_baseline"
+    ],
+    "test_count": 4
   },
   "raw_log": {
     "path": "run-confirmed.raw.txt",
@@ -80,5 +83,12 @@
     "path": "environment.txt",
     "bytes": 772,
     "sha256": "f63bffcd6715e0c46cbfb8d80014dc7fb75aece1c14db4fd8d33872ef0940507"
+  },
+  "ordinary_release_test_result": {
+    "path_from_evidence_directory": "../macos-current-source-workspace-tests-20261017/workspace-no-fail-fast.raw.txt",
+    "bytes": 309628,
+    "sha256": "1d1871276a6070cd739f246d6f3289eace474631d40c7bb1e9b18de740d43ca3",
+    "target_result": "4 passed; 0 failed; 0 ignored",
+    "scope_note": "The enclosing full workspace command exited 101 for two other tests; this target itself passed."
   }
 }
