@@ -1,0 +1,204 @@
+#< CLIXML
+2026-10-17T06:26:29.0471554+01:00
+head=474dfd99a673df85f750136f7552ac156b7a24e9
+git_status=clean
+run_id=20261017T052417Z-1120
+observed_raw_profile_count=31
+rvp9enc
+
+Usage: rvp9enc [options] -o <out.ivf> <input.y4m|input.yuv>
+
+Options:
+  --help                     [supported]  show this help and exit
+  --version                  [supported]  print version and exit
+  --codec <arg>              [supported]  codec to use (vp9)
+  --output, -o <arg>         [supported]  output IVF file
+  --width, -w <arg>          [supported]  coded width (mult of 64)
+  --height, -h <arg>         [supported]  coded height (positive and even)
+  --fps <arg>                [supported]  frame rate num/den (e.g. 30/1)
+  --target-bitrate <arg>     [supported]  target bitrate in kbps
+  --end-usage <arg>          [supported]  rate control mode (cbr/vbr/cq/q)
+  --passes, -p <arg>         [supported]  number of passes (1 or 2; two-pass uses one thread/tile, no delayed scheduling; --lag-in-frames/--auto-alt-ref must be omitted or 0)
+  --kf-max-dist <arg>        [supported]  max keyframe interval
+  --aq-mode <arg>            [supported]  adaptive quant (0=off, 3=cyclic)
+  --limit <arg>              [supported]  stop after N frames
+  --ivf                      [supported]  output IVF (the only container)
+  --verbose, -v              [supported]  verbose progress
+  --profile <arg>            [not yet]    bitstream profile (0..=3)
+  --rt                       [supported]  real-time deadline
+  --good                     [supported]  good-quality deadline
+  --best                     [supported]  best-quality deadline
+  --cpu-used <arg>           [supported]  speed/quality tradeoff (-9..=9)
+  --threads, -t <arg>        [supported]  encode threads (two-pass accepts 0 or 1)
+  --tile-columns <arg>       [supported]  log2 tile columns (0..=6; two-pass accepts 0)
+  --tile-rows <arg>          [not yet]    log2 tile rows (0..=2)
+  --kf-min-dist <arg>        [not yet]    min keyframe interval
+  --disable-kf               [not yet]    disable keyframes
+  --min-q <arg>              [supported]  minimum quantizer
+  --max-q <arg>              [supported]  maximum quantizer
+  --cq-level <arg>           [supported]  constant/constrained quality level
+  --buf-sz <arg>             [not yet]    client buffer size (ms)
+  --buf-initial-sz <arg>     [not yet]    initial buffer size (ms)
+  --buf-optimal-sz <arg>     [not yet]    optimal buffer size (ms)
+  --undershoot-pct <arg>     [not yet]    datarate undershoot %
+  --overshoot-pct <arg>      [not yet]    datarate overshoot %
+  --lossless <arg>           [not yet]    lossless coding (0/1)
+  --frame-parallel <arg>     [not yet]    frame-parallel decoding (0/1)
+  --error-resilient <arg>    [not yet]    error resilient mode
+  --tune <arg>               [not yet]    distortion metric to tune (psnr/ssim)
+  --tune-content <arg>       [supported]  content type to tune (default)
+  --noise-sensitivity <arg>  [supported]  denoiser strength (0..=6)
+  --svc                      [not yet]    scalable video coding
+  --temporal-layers <arg>    [supported]  temporal SVC layers (1..=3)
+  --spatial-layers <arg>     [supported]  spatial SVC layers (1..=3)
+  --inter-layer-pred <arg>   [supported]  spatial prediction (0=on, 3=constrained)
+  --bit-depth <arg>          [not yet]    bit depth (8/10/12)
+  --psnr                     [not yet]    report PSNR
+  --webm                     [not yet]    WebM output (not supported yet)
+  --auto-alt-ref <arg>       [supported]  auto alt-ref frames (0..=6; two-pass requires omitted or 0)
+  --arnr-maxframes <arg>     [not yet]    AltRef max frames (0..=15)
+  --arnr-strength <arg>      [not yet]    AltRef filter strength (0..=6)
+  --pass <arg>               [not yet]    pass to execute (1 or 2)
+  --fpf <arg>                [not yet]    first-pass statistics file
+  --rate-hist <arg>          [not yet]    rate histogram bucket count
+  --q-hist <arg>             [not yet]    quantizer histogram bucket count
+  --test-decode <arg>        [not yet]    encode/decode mismatch test (off/warn/fatal)
+  --enable-tpl <arg>         [supported]  enable temporal dependency model (0/1)
+  --frame-boost <arg>        [not yet]    frame periodic boost (0/1)
+  --max-inter-rate <arg>     [not yet]    max P-frame bitrate (pct)
+  --min-gf-interval <arg>    [not yet]    min gf/arf frame interval
+  --max-gf-interval <arg>    [not yet]    max gf/arf frame interval
+  --color-space <arg>        [not yet]    color space of input content
+  --alt-ref-aq <arg>         [not yet]    adaptive quant for alt-ref (0/1)
+  --input-bit-depth <arg>    [not yet]    input bit depth (8/10/12)
+  --lag-in-frames <arg>      [supported]  max frames to lag (two-pass requires omitted or 0)
+  --frame-time-csv <arg>     [supported]  benchmark diagnostic: per-frame encode times CSV
+  --target-level <arg>       [not yet]    target level (0/255 + 10..=62)
+  --row-mt <arg>             [not yet]    row-based MT in VP9 (0/1)
+  --resize-allowed <arg>     [not yet]    spatial resampling (0/1)
+  --resize-width <arg>       [not yet]    resized encoded width
+  --resize-height <arg>      [not yet]    resized encoded height
+  --quiet, -q                [supported]  do not print encode progress
+optimized_binary_help_exit=0
+C:\Users\marti\AppData\Local\Temp\deltic-scratch\rvp9-native-replay474-9dee6be6\pgo\runs\20261017T052417Z-1120\manifest.txt|bytes=2546|sha256=91322caf06876b6581e72b10b636658980c0489ace2d6693b080dbeee4ad5d7c
+C:\Users\marti\AppData\Local\Temp\deltic-scratch\rvp9-native-replay474-9dee6be6\pgo\optimized\release\rvp9enc.exe|bytes=2571264|sha256=6da43379998632cc96a689fdba47e2e4addafaba23254fa5f8867caf291c08d3
+C:\Users\marti\AppData\Local\Temp\deltic-scratch\rvp9-native-replay474-9dee6be6\pgo\runs\20261017T052417Z-1120\encoder.profdata|bytes=655784|sha256=47b0c79c5e277f6c05a9dc111032063b98ae585e531ab1b204317f58e8555084
+D:\worktrees\rvp9-2\20261015-TSK-HUM-final-release-native-correctness-qualifi\scripts\build-encoder-pgo.sh|bytes=11537|sha256=2d335a8b02c41a3dc370238add4b894d2f9d27900ee9e657dcc3b9e7ba2d54e5
+C:\Users\marti\AppData\Local\Temp\deltic-scratch\rvp9-native-replay474-9dee6be6\logs\pgo-build.log|bytes=3189|sha256=d2d225db5a3bd0bf05615928f9d237e10f1e801e3eb94da7d5eb8343dce1e4bc
+C:\Users\marti\AppData\Local\Temp\deltic-scratch\rvp9-native-replay474-9dee6be6\logs\pgo-input-identity.log|bytes=1018|sha256=7f607a4f4b55107e3b925f192798e12a45b54803de184a42f60d9a3c64a1e55d
+C:\Users\marti\AppData\Local\Temp\deltic-scratch\rvp9-native-replay474-9dee6be6\logs\pgo-plan.log|bytes=1724|sha256=ba88d74120c156f6f05849abf7a7a1ad8c826369936d83d824a342c3af463314
+C:\Users\marti\AppData\Local\Temp\deltic-scratch\rvp9-native-replay474-9dee6be6\pgo\inputs\ducks_take_off_420_1080p30_60f.y4m|bytes=186624420|sha256=6d2d866613f7a8c7b11bd2c27374f7637cd4a0748ff6fea4a671b23cfbcde6d7
+C:\Users\marti\AppData\Local\Temp\deltic-scratch\rvp9-native-replay474-9dee6be6\pgo\inputs\in_to_tree_420_1080p30_60f.y4m|bytes=186624420|sha256=ead3aef191242b03cc6019f0527c71bc3d11e856ba4f9f92b926fe804582f791
+C:\Users\marti\AppData\Local\Temp\deltic-scratch\rvp9-native-replay474-9dee6be6\pgo\inputs\old_town_cross_420_1080p30_60f.y4m|bytes=186624420|sha256=b738b8068d1200f8a3119c72f1edc844424d3fe96d8b28acb9af11497ed7c909
+C:\Users\marti\AppData\Local\Temp\deltic-scratch\rvp9-native-replay474-9dee6be6\pgo\runs\20261017T052417Z-1120\profiles\143410146243562763_0-11544.profraw|bytes=578528|sha256=f8856d003a5bdc2993fae87346ca6e95f6df0ae911a4c1cee727d2c62c60dc2b
+C:\Users\marti\AppData\Local\Temp\deltic-scratch\rvp9-native-replay474-9dee6be6\pgo\runs\20261017T052417Z-1120\profiles\143410146243562763_0-12468.profraw|bytes=577808|sha256=fde80beb9407e7e9a192d976f364c5b93612d957a0ab93d24c3f6006eb4b6da1
+C:\Users\marti\AppData\Local\Temp\deltic-scratch\rvp9-native-replay474-9dee6be6\pgo\runs\20261017T052417Z-1120\profiles\143410146243562763_0-16340.profraw|bytes=576464|sha256=c466b5dacb9aad407ddc476809d1b553b60308de07d6d4b96ddff6c377ede3e3
+C:\Users\marti\AppData\Local\Temp\deltic-scratch\rvp9-native-replay474-9dee6be6\pgo\runs\20261017T052417Z-1120\profiles\143410146243562763_0-20296.profraw|bytes=577280|sha256=560b4beeaaece75607a4a4be0cb822335f1d854bf94f8b5f012660c24b030025
+C:\Users\marti\AppData\Local\Temp\deltic-scratch\rvp9-native-replay474-9dee6be6\pgo\runs\20261017T052417Z-1120\profiles\143410146243562763_0-28576.profraw|bytes=577488|sha256=63db83016242fba3767f5f46bbbbe8d9bc314eb7ef18529074733a5b89b2f021
+C:\Users\marti\AppData\Local\Temp\deltic-scratch\rvp9-native-replay474-9dee6be6\pgo\runs\20261017T052417Z-1120\profiles\143410146243562763_0-28740.profraw|bytes=576896|sha256=12e5f14d5ea829e0735ec33179df5904613365e52a732005462ca266fa8bf105
+C:\Users\marti\AppData\Local\Temp\deltic-scratch\rvp9-native-replay474-9dee6be6\pgo\runs\20261017T052417Z-1120\profiles\143410146243562763_0-32108.profraw|bytes=577152|sha256=7ef58e78a04c6017e2499d80b54f87fe2047c34fdfedb0102fcb317cf60e86f8
+C:\Users\marti\AppData\Local\Temp\deltic-scratch\rvp9-native-replay474-9dee6be6\pgo\runs\20261017T052417Z-1120\profiles\143410146243562763_0-34540.profraw|bytes=577120|sha256=b30e2ca93721007bab47801055f6abe918bc7775dcf2664462c5130c847d14b9
+C:\Users\marti\AppData\Local\Temp\deltic-scratch\rvp9-native-replay474-9dee6be6\pgo\runs\20261017T052417Z-1120\profiles\143410146243562763_0-37424.profraw|bytes=577408|sha256=7af831e7056704d450b57883bb9913508030162c7b97c80922b9c06019c9dc99
+C:\Users\marti\AppData\Local\Temp\deltic-scratch\rvp9-native-replay474-9dee6be6\pgo\runs\20261017T052417Z-1120\profiles\143410146243562763_0-37708.profraw|bytes=577104|sha256=fce8a91fc934326fb7a3b41742fde1d5e9f300669895e493cc523ddc924ea79f
+C:\Users\marti\AppData\Local\Temp\deltic-scratch\rvp9-native-replay474-9dee6be6\pgo\runs\20261017T052417Z-1120\profiles\143410146243562763_0-38356.profraw|bytes=578272|sha256=c01691d5818d7e5bf3376ce9e3648c610de76bad394f7c7fdfc9bad15ac100a6
+C:\Users\marti\AppData\Local\Temp\deltic-scratch\rvp9-native-replay474-9dee6be6\pgo\runs\20261017T052417Z-1120\profiles\143410146243562763_0-41048.profraw|bytes=576528|sha256=ce9c68d9f87c8f60509d243917b7f81a5f065a0023aaf4a127078b9fc50c6764
+C:\Users\marti\AppData\Local\Temp\deltic-scratch\rvp9-native-replay474-9dee6be6\pgo\runs\20261017T052417Z-1120\profiles\143410146243562763_0-43596.profraw|bytes=576720|sha256=8cd5ae33c0caeac804fe1c2b3e113b0306e5d8bc08f560e95e8808f53b3b19a8
+C:\Users\marti\AppData\Local\Temp\deltic-scratch\rvp9-native-replay474-9dee6be6\pgo\runs\20261017T052417Z-1120\profiles\143410146243562763_0-44024.profraw|bytes=577248|sha256=7e6ef680038bec8252dcf6f9b44a0a2c3f231b356e684c050b275e4decaef515
+C:\Users\marti\AppData\Local\Temp\deltic-scratch\rvp9-native-replay474-9dee6be6\pgo\runs\20261017T052417Z-1120\profiles\143410146243562763_0-45236.profraw|bytes=577488|sha256=b68bedd3fac7f9210ba110939ad125e34d33f22bb60eb4c76846f70fe7d58d27
+C:\Users\marti\AppData\Local\Temp\deltic-scratch\rvp9-native-replay474-9dee6be6\pgo\runs\20261017T052417Z-1120\profiles\143410146243562763_0-45968.profraw|bytes=577984|sha256=4b3381f13d4dc62a45192a52f7928634e73d59960d4f1e3435418615be75cff7
+C:\Users\marti\AppData\Local\Temp\deltic-scratch\rvp9-native-replay474-9dee6be6\pgo\runs\20261017T052417Z-1120\profiles\143410146243562763_0-47052.profraw|bytes=577296|sha256=989cb96f9fba3177e2e1d4dbabb94c96aba1f3c87a0cec9f7877d8bb2a782a5c
+C:\Users\marti\AppData\Local\Temp\deltic-scratch\rvp9-native-replay474-9dee6be6\pgo\runs\20261017T052417Z-1120\profiles\143410146243562763_0-48872.profraw|bytes=577152|sha256=62c3210f083f9809abd63e6c4abe749d7abc8f058f9cd99cdc9046102bb0abf9
+C:\Users\marti\AppData\Local\Temp\deltic-scratch\rvp9-native-replay474-9dee6be6\pgo\runs\20261017T052417Z-1120\profiles\143410146243562763_0-49056.profraw|bytes=577392|sha256=7c9ef5327250a6b313b03dffcfe89842d1414d2e12ed8838623309c0f25f73b3
+C:\Users\marti\AppData\Local\Temp\deltic-scratch\rvp9-native-replay474-9dee6be6\pgo\runs\20261017T052417Z-1120\profiles\143410146243562763_0-50396.profraw|bytes=577488|sha256=91b2b6339d37f055d2f6ac0425bdadbc82bacdc99e1e993f9b2b66a11ad82682
+C:\Users\marti\AppData\Local\Temp\deltic-scratch\rvp9-native-replay474-9dee6be6\pgo\runs\20261017T052417Z-1120\profiles\143410146243562763_0-51880.profraw|bytes=577712|sha256=b4820755f5183ad4003e1af8f4055ee28ad81c72e7a4a304dd3ec2f44361e5e6
+C:\Users\marti\AppData\Local\Temp\deltic-scratch\rvp9-native-replay474-9dee6be6\pgo\runs\20261017T052417Z-1120\profiles\143410146243562763_0-53788.profraw|bytes=577344|sha256=b7ed1cfe5bdedfa37864dcae74f1b1a3c9963e7cfd591e472fce449290ade275
+C:\Users\marti\AppData\Local\Temp\deltic-scratch\rvp9-native-replay474-9dee6be6\pgo\runs\20261017T052417Z-1120\profiles\143410146243562763_0-54100.profraw|bytes=577104|sha256=58593d719679c99c7232163c60f14cd62e51c1d547c80538ec465fde7084a828
+C:\Users\marti\AppData\Local\Temp\deltic-scratch\rvp9-native-replay474-9dee6be6\pgo\runs\20261017T052417Z-1120\profiles\143410146243562763_0-54232.profraw|bytes=576864|sha256=7660bef578de736bc7c304e6c63b4cc877efdad3b019dba0f19d528bc20df5d3
+C:\Users\marti\AppData\Local\Temp\deltic-scratch\rvp9-native-replay474-9dee6be6\pgo\runs\20261017T052417Z-1120\profiles\143410146243562763_0-5464.profraw|bytes=577120|sha256=c0732da3502af2303c4cf56dacde8c1d2d004731496a8870cdb1699c0594ab65
+C:\Users\marti\AppData\Local\Temp\deltic-scratch\rvp9-native-replay474-9dee6be6\pgo\runs\20261017T052417Z-1120\profiles\143410146243562763_0-5508.profraw|bytes=576688|sha256=6ec80e943b73a3943587943479d237b4d034b510c7976e7267ff9bc149b81ea1
+C:\Users\marti\AppData\Local\Temp\deltic-scratch\rvp9-native-replay474-9dee6be6\pgo\runs\20261017T052417Z-1120\profiles\143410146243562763_0-776.profraw|bytes=577232|sha256=e64c653587bf1982e90fee3bf770c218b4208d5c2954f98881a1f57a995ac88f
+C:\Users\marti\AppData\Local\Temp\deltic-scratch\rvp9-native-replay474-9dee6be6\pgo\runs\20261017T052417Z-1120\profiles\143410146243562763_0-8016.profraw|bytes=577536|sha256=d5d5c8b07d2ad5ea404589a7cbb16c01303ed3199c01a32e49fa0b343f0a6f08
+C:\Users\marti\AppData\Local\Temp\deltic-scratch\rvp9-native-replay474-9dee6be6\pgo\runs\20261017T052417Z-1120\profiles\default_6417096865142576647_0.profraw|bytes=20016|sha256=5ccf2c894b9d084b5fb7f3f15f020b0c688fdaa09b781987ed92d7ec3b533528
+C:\Users\marti\AppData\Local\Temp\deltic-scratch\rvp9-native-replay474-9dee6be6\pgo\runs\20261017T052417Z-1120\profiles\default_8000167203484071082_0.profraw|bytes=7472|sha256=452d3e0299f4c85ecab1422d74a1f8dc1605f825c499ce11e9aa17e4f3642ca5
+C:\Users\marti\AppData\Local\Temp\deltic-scratch\rvp9-native-replay474-9dee6be6\pgo\runs\20261017T052417Z-1120\profiles\default_8308882518710533005_0.profraw|bytes=33280|sha256=9c4945813b54eaaca229cfa4fcb77c0f03779619556df54b4cf413330ba2c6c0
+alpha32.command.txt|bytes=438|sha256=f1d5e26c77d5a42e8f14ea33057c1518c35726042c8c07bd2531dd79f214e9e0
+alpha32.exit.txt|bytes=2|sha256=9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa
+alpha32.log|bytes=1443|sha256=48b810647cbe7236758a2b962413d6774c3a663da73a15a7b14b7ccb594aad95
+avx2-subpel.command.txt|bytes=95|sha256=04e48242f83ad6a6ba9d43a24f3bb0bfd82eeb0a3572fe35fa8b1e418b259609
+avx2-subpel.exit.txt|bytes=2|sha256=9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa
+avx2-subpel.log|bytes=775|sha256=870fee5972e12f3e6e0e486d4647d6aeebd8e2ba7489a365b5af0a07ebf73562
+avx2-variance.command.txt|bytes=88|sha256=23f2d5208bc00f8a510b47b29a21c8d91782731593a7e75d04baa9bec86c0c5d
+avx2-variance.exit.txt|bytes=2|sha256=9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa
+avx2-variance.log|bytes=644|sha256=89d3f14900414abc9db5e0f14f50a786f05567a6ff6e273f55458be634ec7319
+build.command.txt|bytes=188|sha256=01b144e47dab5eba3c996cfe0d6deb4aa707492f0784407583b3c923597bd203
+build.exit.txt|bytes=2|sha256=9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa
+build.log|bytes=1758|sha256=89848aec07669c9dc1bec950d2e5e490b1a0d3e7033d75f15acdc48f26e7574b
+conformance-native-1.command.txt|bytes=189|sha256=cb8247a3f0e0c228b7d43b9830dd022943a22adf8dd5fe107b1a663933cd3d32
+conformance-native-1.exit.txt|bytes=2|sha256=9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa
+conformance-native-1.log|bytes=28738|sha256=6b13b65a36a87117bb427e9f0440d8b7a80a28fd5c7f5dd85ad83f5d79839103
+conformance-native-2.command.txt|bytes=189|sha256=fe4153a9e3a9bd8fe3a6d8ee595a4fcc1ec1be10bfa2f2556c2a280641d3c764
+conformance-native-2.exit.txt|bytes=2|sha256=9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa
+conformance-native-2.log|bytes=28738|sha256=5f2feac25403c721c0559df558cead52c5a62b5d7f785b6d13cc5251375dab06
+conformance-scalar-1.command.txt|bytes=213|sha256=06138c7c2bba444e722be716d944e884ad8ab42ac95903520dfd3b93e3944a66
+conformance-scalar-1.exit.txt|bytes=2|sha256=9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa
+conformance-scalar-1.log|bytes=28738|sha256=6b13b65a36a87117bb427e9f0440d8b7a80a28fd5c7f5dd85ad83f5d79839103
+conformance-scalar-2.command.txt|bytes=213|sha256=d146f885243686d6cc7e465a013b26eb1cabd64ee9207bd5f6de1979ac63a10a
+conformance-scalar-2.exit.txt|bytes=2|sha256=9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa
+conformance-scalar-2.log|bytes=28738|sha256=5f2feac25403c721c0559df558cead52c5a62b5d7f785b6d13cc5251375dab06
+identity.command.txt|bytes=361|sha256=79f275df0659b8ee106273f638aa6b6a8d44ad2ab4270b8de527e50b79e82d46
+identity.exit.txt|bytes=2|sha256=9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa
+identity.log|bytes=1165|sha256=379b39781306f99d4243d401e2ffe30fbe7ab67f3cfcba511804430adc2e1b0b
+laplacian-rows.command.txt|bytes=120|sha256=b97a8ee1b6d35162fce689b9def1fcee1389eb4dea678a85efd5da311198625a
+laplacian-rows.exit.txt|bytes=2|sha256=9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa
+laplacian-rows.log|bytes=455|sha256=7363507b0c7119e2151158b702ac0a1b44770c4a905bb048754c909c1cf38e36
+native-features.command.txt|bytes=582|sha256=f9f86e7b99bc25b01a4c00efe462d6263c4a3ee263100870005575f2c74dd15f
+native-features.exit.txt|bytes=2|sha256=9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa
+native-features.log|bytes=61|sha256=d1c3920ac6d87c48b4cd14cdbfce6f387651be416f702f9dfe033847d9b41ec8
+pgo-build.command.txt|bytes=401|sha256=97499b2fdd56509d3368e540e29289cb8db4e7ded01e6ea715aecac4a9fb7121
+pgo-build.exit.txt|bytes=2|sha256=9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa
+pgo-build.log|bytes=3189|sha256=d2d225db5a3bd0bf05615928f9d237e10f1e801e3eb94da7d5eb8343dce1e4bc
+pgo-input-identity.command.txt|bytes=291|sha256=69cac93a758e3f996dfb8455761b49e9a0b4b7970483f2ee59d6fbe87864a17d
+pgo-input-identity.exit.txt|bytes=2|sha256=9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa
+pgo-input-identity.log|bytes=1018|sha256=7f607a4f4b55107e3b925f192798e12a45b54803de184a42f60d9a3c64a1e55d
+pgo-plan.command.txt|bytes=56|sha256=5a93fd8c47a1184a0cebd001cec9a75a0e0e6ecf31f66370d6460771ea63a6f1
+pgo-plan.exit.txt|bytes=2|sha256=9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa
+pgo-plan.log|bytes=1724|sha256=ba88d74120c156f6f05849abf7a7a1ad8c826369936d83d824a342c3af463314
+release-cli.command.txt|bytes=69|sha256=db3a3de602a4605f7d92f4c974c6e9e6160ac7e61028879c1628f8d87cd9c050
+release-cli.exit.txt|bytes=2|sha256=9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa
+release-cli.log|bytes=2386|sha256=83db4ac71ad15d3af73c1385c8fe6440300f169fe5fd864588330b3ae270abb8
+release-libraries.command.txt|bytes=112|sha256=8ba256316606d4b3cbf03b196a6f87e488eec3cc01c74e4f7c8c8f476ab2cc6e
+release-libraries.exit.txt|bytes=2|sha256=9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa
+release-libraries.log|bytes=250315|sha256=51338ba59e9ba44ce8838d77c26ba7ac48bdde103d47748247f0a3b006341262
+reverse24.command.txt|bytes=600|sha256=ac9ad7bd0b3073c67c6256186f07b0971c7d22ac706382f1b83dee558bd1c105
+reverse24.exit.txt|bytes=2|sha256=9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa
+reverse24.log|bytes=994|sha256=683119372f1399737767a11b6901830d6c72a9695b73fa200102388b7f406e95
+scalar-core.command.txt|bytes=78|sha256=cc703fef23ce892a27023ac5ec3a20796a3364216f4269decf61e3a8056f8c26
+scalar-core.exit.txt|bytes=2|sha256=9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa
+scalar-core.log|bytes=1489|sha256=137dcd18cec296f1fc0c8a1cb2bbf09690a073abcf09917287ae354e6997233c
+scalar-laplacian.command.txt|bytes=89|sha256=61d047cc6b3f36608e70fdb47fb635c313fc989746262d7ff662cc1c5263e020
+scalar-laplacian.exit.txt|bytes=2|sha256=9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa
+scalar-laplacian.log|bytes=1735|sha256=fe0ccad816ea3724b304df380375c13b3e5b1ca11da09c1c52a3bf3953b926fb
+Instrumentation level: IR  entry_first = 0  instrument_loop_entries = 0
+Total functions: 2146
+Maximum function count: 10245657600
+Maximum internal block count: 10245657600
+Total number of blocks: 32131
+Total count: 109120798342
+
+
+FullName : D:\worktrees\rvp9-2\20261015-TSK-HUM-final-release-native-correctness-qualifi\target
+LinkType : Junction
+Target   : {C:\Users\marti\AppData\Local\Temp\deltic-scratch\rvp9-native-replay474-9dee6be6\cargo-target}
+
+
+
+{
+  "live": false,
+  "holder": null,
+  "open_after": 1792173746,
+  "queue": [],
+  "heavy_processes": 0,
+  "heavy_processes_low_priority": 0,
+  "own_measurements": 0
+}
+<Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com/powershell/2004/04"><Obj S="progress" RefId="0"><TN RefId="0"><T>System.Management.Automation.PSCustomObject</T><T>System.Object</T></TN><MS><I64 N="SourceId">1</I64><PR N="Record"><AV>Preparing modules for first use.</AV><AI>0</AI><Nil /><PI>-1</PI><PC>-1</PC><T>Completed</T><SR>-1</SR><SD> </SD></PR></MS></Obj><Obj S="progress" RefId="1"><TNRef RefId="0" /><MS><I64 N="SourceId">1</I64><PR N="Record"><AV>Preparing modules for first use.</AV><AI>0</AI><Nil /><PI>-1</PI><PC>-1</PC><T>Completed</T><SR>-1</SR><SD> </SD></PR></MS></Obj><Obj S="progress" RefId="2"><TNRef RefId="0" /><MS><I64 N="SourceId">1</I64><PR N="Record"><AV>Preparing modules for first use.</AV><AI>0</AI><Nil /><PI>-1</PI><PC>-1</PC><T>Completed</T><SR>-1</SR><SD> </SD></PR></MS></Obj></Objs>

@@ -1,0 +1,1 @@
+bash scripts/build-encoder-pgo.sh --print-training-plan

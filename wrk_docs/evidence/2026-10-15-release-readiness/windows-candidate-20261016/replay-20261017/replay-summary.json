@@ -1,0 +1,178 @@
+{
+  "source": "474dfd99a673df85f750136f7552ac156b7a24e9",
+  "host": "Crucible AMD Ryzen9 9950X3D Windows11 x86_64-pc-windows-msvc",
+  "rust": "1.95.0 (59807616e), LLVM22.1.2",
+  "cargo_build_jobs": 4,
+  "external_root": "C:/Users/marti/AppData/Local/Temp/deltic-scratch/rvp9-native-replay474-9dee6be6",
+  "target_alias": "owned task/target junction to external_root/cargo-target; absent target checked before creation; no replacement",
+  "checks": {
+    "alpha32": {
+      "exit": 0,
+      "numeric_diagnostics": 0,
+      "rows": 32
+    },
+    "avx2-subpel": {
+      "exit": 0,
+      "test_summaries": [
+        "test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 2073 filtered out; finished in 0.00s"
+      ]
+    },
+    "avx2-variance": {
+      "exit": 0,
+      "test_summaries": [
+        "test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 2074 filtered out; finished in 0.01s"
+      ]
+    },
+    "build": {
+      "exit": 0
+    },
+    "conformance-native-1": {
+      "exit": 0,
+      "vectors": 307,
+      "summary": "Conformance: 4816 passed / 0 mismatched / 0 skipped / 4816 total"
+    },
+    "conformance-native-2": {
+      "exit": 0,
+      "vectors": 307,
+      "summary": "Conformance: 4816 passed / 0 mismatched / 0 skipped / 4816 total"
+    },
+    "conformance-scalar-1": {
+      "exit": 0,
+      "vectors": 307,
+      "summary": "Conformance: 4816 passed / 0 mismatched / 0 skipped / 4816 total"
+    },
+    "conformance-scalar-2": {
+      "exit": 0,
+      "vectors": 307,
+      "summary": "Conformance: 4816 passed / 0 mismatched / 0 skipped / 4816 total"
+    },
+    "identity": {
+      "exit": 0
+    },
+    "laplacian-rows": {
+      "exit": 0,
+      "test_summaries": [
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 805 filtered out; finished in 0.00s"
+      ]
+    },
+    "native-features": {
+      "exit": 0
+    },
+    "pgo-build": {
+      "exit": 0
+    },
+    "pgo-input-identity": {
+      "exit": 0
+    },
+    "pgo-plan": {
+      "exit": 0
+    },
+    "release-cli": {
+      "exit": 0,
+      "test_summaries": [
+        "test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+      ]
+    },
+    "release-libraries": {
+      "exit": 0,
+      "test_summaries": [
+        "test result: ok. 2077 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.16s",
+        "test result: ok. 224 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s",
+        "test result: ok. 805 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.39s",
+        "test result: ok. 61 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s"
+      ]
+    },
+    "reverse24": {
+      "exit": 0,
+      "numeric_diagnostics": 0,
+      "rows": 24
+    },
+    "scalar-core": {
+      "exit": 0,
+      "test_summaries": [
+        "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 2076 filtered out; finished in 0.03s"
+      ]
+    },
+    "scalar-laplacian": {
+      "exit": 0,
+      "test_summaries": [
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 805 filtered out; finished in 0.03s"
+      ]
+    }
+  },
+  "release_library_counts": {
+    "core": {
+      "passed": 2077,
+      "ignored": 1
+    },
+    "decoder": {
+      "passed": 224,
+      "ignored": 0
+    },
+    "encoder": {
+      "passed": 805,
+      "ignored": 1
+    },
+    "io": {
+      "passed": 61,
+      "ignored": 0
+    }
+  },
+  "release_cli_counts": {
+    "decoder": 5,
+    "encoder": 19,
+    "ignored": 0
+  },
+  "ignored_tests": [
+    "core mv_search::sub_pixel::tests::sub_pixel_search_unsupported_block_size_panics_in_debug (requires debug assertions)",
+    "encoder rate_control::postencode::tests::rate_control_closed_loop_trace"
+  ],
+  "reverse_independent": {
+    "raw": "verify-correctness.ps1.log",
+    "outputs": 48,
+    "pairs": 24,
+    "bytes_each": 147456,
+    "all_hash_pairs_equal": true
+  },
+  "native_features": "AVX2/SSE2/SSSE3/SSE4.1/BMI2/FMA=true; native-features.log",
+  "adapters": "Only process-local shasum shift2\u2192sha256sum \"$@\" and stat-f%z\u2192GNUstat-c%s; gate command logs preserve exact functions. Numeric stat probe independently matches wc-c. No numeric diagnostics.",
+  "pgo": {
+    "run_id": "20261017T052417Z-1120",
+    "training_rows": 28,
+    "frames_per_row": 60,
+    "raw_profiles_observed": 31,
+    "artifact_identities": [
+      {
+        "remote_path": "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\rvp9-native-replay474-9dee6be6\\pgo\\runs\\20261017T052417Z-1120\\manifest.txt",
+        "bytes": 2546,
+        "sha256": "91322caf06876b6581e72b10b636658980c0489ace2d6693b080dbeee4ad5d7c"
+      },
+      {
+        "remote_path": "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\rvp9-native-replay474-9dee6be6\\pgo\\optimized\\release\\rvp9enc.exe",
+        "bytes": 2571264,
+        "sha256": "6da43379998632cc96a689fdba47e2e4addafaba23254fa5f8867caf291c08d3"
+      },
+      {
+        "remote_path": "C:\\Users\\marti\\AppData\\Local\\Temp\\deltic-scratch\\rvp9-native-replay474-9dee6be6\\pgo\\runs\\20261017T052417Z-1120\\encoder.profdata",
+        "bytes": 655784,
+        "sha256": "47b0c79c5e277f6c05a9dc111032063b98ae585e531ab1b204317f58e8555084"
+      }
+    ],
+    "profile_summary": "2146functions/32131blocks; verify-pgo.ps1.log",
+    "optimized_help_exit": 0
+  },
+  "raw_remote_download_hashes_verified": 58,
+  "terminal": "source clean474; no live cargo/rustc/rvp9/bash/headtohead processes; no quiet lease/ticket; no timing/safety campaign started",
+  "limits": "Focused native library/CLI/unit and codec correctness evidence; no full workspace integration suite claimed. No release/push/source changes. Registered external artifacts retained, bulky outputs not copied into docs.",
+  "qualification_remote_download_hashes_verified": [
+    {
+      "file": "alpha32-qualification.txt",
+      "sha256": "c83aa5cefc562701a738a88e676082fbb56f249162d4ceafaf4f30f63e98c935"
+    },
+    {
+      "file": "reverse24-qualification.txt",
+      "sha256": "ea16677fbcb8e9723bb10878076194052396f8856c9c7997b34fd9b4be52f575"
+    }
+  ]
+}

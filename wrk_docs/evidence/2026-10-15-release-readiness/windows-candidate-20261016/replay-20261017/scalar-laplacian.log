@@ -30,4 +30,3 @@ running 1 test
 test pre_analysis::tests::force_scalar_laplacian_dispatch ... ok
 
 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 805 filtered out; finished in 0.03s
-

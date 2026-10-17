@@ -3238,4 +3238,3 @@ test y4m::tests::w6_2_parse_header_rejects_hbd_chroma_with_precise_error ... ok
 test y4m::tests::y4m_zero_frame_limit_leaves_source_body_unallocated ... ok
 
 test result: ok. 61 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
-

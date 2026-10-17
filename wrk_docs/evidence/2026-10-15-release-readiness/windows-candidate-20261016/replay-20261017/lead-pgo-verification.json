@@ -1,0 +1,15 @@
+{
+  "source": "474dfd99a673df85f750136f7552ac156b7a24e9",
+  "run": "20261017T052417Z-1120",
+  "plan_matches_current_script": true,
+  "training_rows": 28,
+  "frames_per_row": 60,
+  "raw_profile_count": 31,
+  "remote_and_local_raw_files_verified": 58,
+  "binary_sha256": "6da43379998632cc96a689fdba47e2e4addafaba23254fa5f8867caf291c08d3",
+  "profile_sha256": "47b0c79c5e277f6c05a9dc111032063b98ae585e531ab1b204317f58e8555084",
+  "manifest_sha256": "91322caf06876b6581e72b10b636658980c0489ace2d6693b080dbeee4ad5d7c",
+  "binary_external_path": "/c/Users/marti/AppData/Local/Temp/deltic-scratch/rvp9-native-replay474-9dee6be6/pgo/optimized/release/rvp9enc.exe",
+  "profile_external_path": "/c/Users/marti/AppData/Local/Temp/deltic-scratch/rvp9-native-replay474-9dee6be6/pgo/runs/20261017T052417Z-1120/encoder.profdata",
+  "timing": "unmeasured"
+}

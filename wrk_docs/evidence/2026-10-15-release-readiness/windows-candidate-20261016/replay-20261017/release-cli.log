@@ -35,4 +35,3 @@ test tests::w7_8_auto_alt_ref_range_enforced ... ok
 test tests::w7_8_q_range_plumbs_into_encoder_config ... ok
 
 test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-

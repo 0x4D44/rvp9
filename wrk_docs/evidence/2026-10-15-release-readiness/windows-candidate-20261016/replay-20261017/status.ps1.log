@@ -1,0 +1,25 @@
+#< CLIXML
+2026-10-17T06:24:04.4740266+01:00
+alpha32.exit.txt=0
+avx2-subpel.exit.txt=0
+avx2-variance.exit.txt=0
+build.exit.txt=0
+conformance-native-1.exit.txt=0
+conformance-native-2.exit.txt=0
+conformance-scalar-1.exit.txt=0
+conformance-scalar-2.exit.txt=0
+identity.exit.txt=0
+laplacian-rows.exit.txt=0
+native-features.exit.txt=0
+release-cli.exit.txt=0
+release-libraries.exit.txt=0
+reverse24.exit.txt=0
+scalar-core.exit.txt=0
+scalar-laplacian.exit.txt=0
+release-cli.log
+test tests::w7_8_auto_alt_ref_range_enforced ... ok
+test tests::w7_8_q_range_plumbs_into_encoder_config ... ok
+
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+<Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com/powershell/2004/04"><Obj S="progress" RefId="0"><TN RefId="0"><T>System.Management.Automation.PSCustomObject</T><T>System.Object</T></TN><MS><I64 N="SourceId">1</I64><PR N="Record"><AV>Preparing modules for first use.</AV><AI>0</AI><Nil /><PI>-1</PI><PC>-1</PC><T>Completed</T><SR>-1</SR><SD> </SD></PR></MS></Obj><Obj S="progress" RefId="1"><TNRef RefId="0" /><MS><I64 N="SourceId">1</I64><PR N="Record"><AV>Preparing modules for first use.</AV><AI>0</AI><Nil /><PI>-1</PI><PC>-1</PC><T>Completed</T><SR>-1</SR><SD> </SD></PR></MS></Obj><Obj S="progress" RefId="2"><TNRef RefId="0" /><MS><I64 N="SourceId">1</I64><PR N="Record"><AV>Preparing modules for first use.</AV><AI>0</AI><Nil /><PI>-1</PI><PC>-1</PC><T>Completed</T><SR>-1</SR><SD> </SD></PR></MS></Obj></Objs>

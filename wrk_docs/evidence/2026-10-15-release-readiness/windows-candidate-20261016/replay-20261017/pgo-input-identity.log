@@ -1,0 +1,22 @@
+rustc 1.95.0 (59807616e 2026-04-14)
+binary: rustc
+commit-hash: 59807616e1fa2540724bfbac14d7976d7e4a3860
+commit-date: 2026-04-14
+host: x86_64-pc-windows-msvc
+release: 1.95.0
+LLVM version: 22.1.2
+cargo 1.95.0 (f2d3ce0bd 2026-03-21)
+release: 1.95.0
+commit-hash: f2d3ce0bd7f24a49f8f72d9000448f8838c4e850
+commit-date: 2026-03-21
+host: x86_64-pc-windows-msvc
+libgit2: 1.9.2 (sys:0.20.4 vendored)
+libcurl: 8.15.0-DEV (sys:0.4.83+curl-8.15.0 vendored ssl:Schannel)
+os: Windows 10.0.26200 (Windows 11 Professional) [64-bit]
+2d335a8b02c41a3dc370238add4b894d2f9d27900ee9e657dcc3b9e7ba2d54e5 *scripts/build-encoder-pgo.sh
+81166517a3054c789923535b5da23fbbb9bbd7fd4c28dac83918ac351e121e74 *tests/corpus/in_to_tree_420_720p50.y4m
+0e09aa923ce72e2f6d1c978c3c1cc8dd9588d2ede819081f040213e361970efc *tests/corpus/ducks_take_off_420_720p50.y4m
+0fbc2ec0c552ad693528b2e49409c7449880b9230055a7696346473d1aaf4123 *tests/corpus/old_town_cross_420_720p50.y4m
+LLVM (http://llvm.org/):
+  LLVM version 22.1.2-rust-1.95.0-stable
+  Optimized build.

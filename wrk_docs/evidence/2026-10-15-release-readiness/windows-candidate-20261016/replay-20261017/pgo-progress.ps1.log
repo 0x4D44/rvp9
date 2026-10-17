@@ -1,0 +1,24 @@
+#< CLIXML
+2026-10-17T06:25:36.5313129+01:00
+
+ProcessId ParentProcessId Name
+--------- --------------- ----
+    41272           52172 bash.exe
+    47200           41272 bash.exe
+    52612           47200 bash.exe
+    44632           11304 bash.exe
+    39036           44632 bash.exe
+    17528           39036 bash.exe
+    51384           17528 cargo.exe
+    50996           51384 cargo.exe
+    29220           50996 rustc.exe
+
+
+  [28/28] 1080-old-town-spatial3-cpu8
+[encoder PGO 4/4] Building profile-guided rvp9enc...
+   Compiling crossbeam-utils v0.8.21
+   Compiling rvp9-core v0.2.0-alpha.4 (D:\worktrees\rvp9-2\20261015-TSK-HUM-final-release-native-correctness-qualifi\crates\rvp9-core)
+   Compiling rvp9-decoder v0.2.0-alpha.4 (D:\worktrees\rvp9-2\20261015-TSK-HUM-final-release-native-correctness-qualifi\crates\rvp9-decoder)
+   Compiling static_assertions v1.1.0
+   Compiling crossbeam-channel v0.5.15
+<Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com/powershell/2004/04"><Obj S="progress" RefId="0"><TN RefId="0"><T>System.Management.Automation.PSCustomObject</T><T>System.Object</T></TN><MS><I64 N="SourceId">1</I64><PR N="Record"><AV>Preparing modules for first use.</AV><AI>0</AI><Nil /><PI>-1</PI><PC>-1</PC><T>Completed</T><SR>-1</SR><SD> </SD></PR></MS></Obj><Obj S="progress" RefId="1"><TNRef RefId="0" /><MS><I64 N="SourceId">1</I64><PR N="Record"><AV>Preparing modules for first use.</AV><AI>0</AI><Nil /><PI>-1</PI><PC>-1</PC><T>Completed</T><SR>-1</SR><SD> </SD></PR></MS></Obj><Obj S="progress" RefId="2"><TNRef RefId="0" /><MS><I64 N="SourceId">1</I64><PR N="Record"><AV>Preparing modules for first use.</AV><AI>0</AI><Nil /><PI>-1</PI><PC>-1</PC><T>Completed</T><SR>-1</SR><SD> </SD></PR></MS></Obj></Objs>

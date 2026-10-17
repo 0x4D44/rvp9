@@ -35,4 +35,3 @@ test dsp::force_scalar_tests::force_scalar_subprocess_child ... ok
 test dsp::force_scalar_tests::force_scalar_subprocess_routes ... ok
 
 test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 2076 filtered out; finished in 0.03s
-
