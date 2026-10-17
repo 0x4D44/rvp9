@@ -1,0 +1,4 @@
+path=/Users/md/worktrees/rvp9/20261017-TSK-HUM-requalify-post-fix-candidate/target/release/soak
+bytes=2135480
+sha256=de634edc41b54553b2ffea0e80ee04d152fba64734867548db766b63d3ce7125
+built by the recorded locked offline release cargo run at exact candidate source

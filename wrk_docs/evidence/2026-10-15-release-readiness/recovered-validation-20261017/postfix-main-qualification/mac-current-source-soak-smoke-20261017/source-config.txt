@@ -1,0 +1,2 @@
+crates/rvp9-bench/src/bin/soak.rs at candidate blob 8687b0c29e4fab36724b7ea85c279d13b4896f9f, run_one_iteration EncoderConfig: CBR, AQ off, speed=0, Deadline::Good, lag_in_frames=0, one temporal layer, no alt-ref, 8-bit. See lines 380-400.
+The candidate worktree has no canonical Y4M inputs, so build_source_list selected synthetic-gradient(256x256). The captured run explicitly reported cross_decode=false.

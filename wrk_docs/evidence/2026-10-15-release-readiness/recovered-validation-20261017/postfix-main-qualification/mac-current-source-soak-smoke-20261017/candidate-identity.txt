@@ -1,0 +1,5 @@
+candidate=fb5c0c917038db6c640b3dbc7c2b84b567233333
+origin_main=fb5c0c917038db6c640b3dbc7c2b84b567233333
+branch=task/20261017-TSK-HUM-requalify-post-fix-candidate
+tracked_tree_clean=true
+soak_source_git_blob=8687b0c29e4fab36724b7ea85c279d13b4896f9f

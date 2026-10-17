@@ -1,0 +1,3 @@
+CARGO_NET_OFFLINE=true CARGO_BUILD_JOBS=1 deltic timeout 240 nice -n 10 cargo run --release --locked --offline -p rvp9-bench --bin soak -- --duration-secs 60 --iterations 1000 --frames-per-iter 30 --report-every-secs 30 </dev/null > '/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/macos-soak-smoke-77b34ec7/run.raw.txt' 2>&1
+run_code=$?
+printf '%s\n' "$run_code" > '/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/macos-soak-smoke-77b34ec7/exit-code.txt'

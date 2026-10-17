@@ -1,0 +1,20 @@
+   Compiling rvp9-harness v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261017-TSK-HUM-requalify-post-fix-candidate/crates/rvp9-harness)
+   Compiling rvp9-bench v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261017-TSK-HUM-requalify-post-fix-candidate/crates/rvp9-bench)
+    Finished `release` profile [optimized + debuginfo] target(s) in 50.70s
+     Running `target/release/soak --duration-secs 60 --iterations 1000 --frames-per-iter 30 --report-every-secs 30`
+=== rvp9 soak harness (D3) ===
+duration_secs    : 60
+iterations       : 1000
+frames_per_iter  : 30
+report_every_secs: 30
+cross_decode     : false
+vpxdec_path      : D:\language\libvpx-stock\vpxdec.exe
+sources:
+  - synthetic-gradient(256x256)
+
+[start] wall=0.0s iter=0 rss=0.0 MiB
+[report] wall=   30.0s iter=   287 avg=  104.5 ms/iter frames=   8610 ( 287.0 fps) br=  212.8 kbps last_iter=   92.6 ms rss=0.0 MiB errors=0 cksum=ad9c644ee41e65e9
+[report] wall=   60.0s iter=   389 avg=  154.3 ms/iter frames=  11670 ( 194.4 fps) br=  144.1 kbps last_iter=  573.1 ms rss=0.0 MiB errors=0 cksum=ad9c644ee41e65e9
+
+=== soak complete ===
+[report] wall=   60.0s iter=   389 avg=  154.3 ms/iter frames=  11670 ( 194.4 fps) br=  144.1 kbps last_iter=    0.0 ms rss=0.0 MiB errors=0 cksum=ad9c644ee41e65e9
