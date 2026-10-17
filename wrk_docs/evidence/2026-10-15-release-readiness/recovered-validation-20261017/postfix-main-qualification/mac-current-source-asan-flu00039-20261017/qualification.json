@@ -1,0 +1,44 @@
+{
+  "recorded_at_utc": "2026-10-17T22:57:47Z",
+  "host": {
+    "name": "flux",
+    "hardware": "Apple M5 Max (Mac17,6)",
+    "os": "Darwin 25.6.0",
+    "architecture": "aarch64"
+  },
+  "candidate_product_source": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+  "runner_checkout_commit": "b1c87dbb8cc8768a486a81fb2d50c56935106f11",
+  "origin_main_base": "2b1333cc7a7b62a9c63bd66a4b5089b352767864",
+  "source_identity": {
+    "path": "crates/rvp9-core/src/dsp/aarch64/convolve8_neon.rs",
+    "blob_at_candidate": "113fde53f253d0bbb1a02e37494180b3a42e440b",
+    "blob_at_runner": "113fde53f253d0bbb1a02e37494180b3a42e440b"
+  },
+  "toolchain": {
+    "rustc": "1.98.0-nightly (bd08c9e71 2026-06-25)",
+    "cargo": "1.98.0-nightly (a595d0da2 2026-06-20)"
+  },
+  "command": "deltic timeout 3600 env CARGO_TARGET_DIR=/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/.scratch/asan-current-source-20261017/target CARGO_NET_OFFLINE=true RUSTFLAGS=\"-Zsanitizer=address -Ctarget-cpu=native\" RUSTDOCFLAGS=\"-Zsanitizer=address\" cargo +nightly test -Zbuild-std --target aarch64-apple-darwin --locked --offline -p rvp9-core --lib dsp::aarch64::convolve8_neon::tests::single_axis_matches_scalar_all_filters_and_shapes -- --exact --nocapture --test-threads=1 </dev/null",
+  "test": "dsp::aarch64::convolve8_neon::tests::single_axis_matches_scalar_all_filters_and_shapes",
+  "exit_status": 101,
+  "signal": "SIGABRT",
+  "tests_started": 1,
+  "tests_completed": 0,
+  "sanitizer_report": {
+    "kind": "heap-buffer-overflow",
+    "access": "READ of size 4",
+    "distance_from_region_end": 0,
+    "allocation_size_bytes": 56,
+    "stack": [
+      "load_four_repeated at convolve8_neon.rs:52",
+      "convolve8_horiz_i8mm_4_inner at convolve8_neon.rs:319",
+      "convolve8_horiz_neon at convolve8_neon.rs:654",
+      "single_axis_matches_scalar_all_filters_and_shapes at convolve8_neon.rs:909"
+    ]
+  },
+  "classification": "Exact-candidate reproduction of RVP9-BUG-FLU-00039's existing width-four I8MM overread. No new bug is raised. The separate width-eight i8mm/dotprod overread remains source-audit-only and was not exercised by this test.",
+  "raw_output": {
+    "file": "run.raw.txt",
+    "sha256": "f3a640b99fdabed24f6a197566a76e34d61f366e5adc19a89bf4936606892e1d"
+  }
+}
