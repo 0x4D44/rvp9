@@ -1,0 +1,107 @@
+{
+  "schema": "rvp9.windows-current-source-conformance.v1",
+  "recorded_at_utc": "2026-10-17 11:51:21Z",
+  "source": {
+    "commit": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+    "worktree": "D:\\worktrees\\rvp9-postfix-main\\20261017-TSK-HUM@ANVIL-windows-post-fix-requalification",
+    "tracked_tree_clean_after_runs": true,
+    "host": "ANVIL, native Windows x86-64",
+    "host_triple": "x86_64-pc-windows-msvc",
+    "rustc": "rustc 1.95.0 (59807616e 2026-04-14)",
+    "cargo": "cargo 1.95.0 (f2d3ce0bd 2026-03-21)"
+  },
+  "runner": {
+    "path": "target/release/conformance.exe",
+    "sha256": "061a1f3fa35869083f0ca20f809170bd73a3f2a4918895298f0d2ddffe1d90d7",
+    "semantics": "The in-repo official runner checks decoded frames against pinned .md5 ledgers; it does not invoke vpxdec."
+  },
+  "fixtures": {
+    "libvpx_commit": "12f3a2ac603e8f10742105519e0cd03c3b8f71dd",
+    "verified_vectors": 307,
+    "verified_md5_ledgers": 307,
+    "observed_files": 614,
+    "submodule_update_log": {
+      "path": "windows-current-source-libvpx-submodule.raw.txt",
+      "bytes": 336,
+      "sha256": "daafc075c71cc5c85b77f95d3eb31cdbce5ca1d1cc990614fd38f78d0919af2c"
+    },
+    "fetch_command": "deltic timeout 600 bash scripts/fetch-vectors.sh --jobs 8",
+    "fetch_exit_code": 0,
+    "fetch_log": {
+      "path": "windows-current-source-fetch-vectors.raw.txt",
+      "bytes": 26634,
+      "sha256": "4a5b40073ac9a469dc53322056a4df56488704cc37133983629b61ecd64cee89"
+    }
+  },
+  "runs": [
+    {
+      "dispatch": "native",
+      "threads": 1,
+      "command": "deltic timeout 1800 target/release/conformance.exe --vectors-dir tests/conformance/vectors --official --threads 1",
+      "exit_code": 0,
+      "vectors": 307,
+      "frames_passed": 4816,
+      "mismatched": 0,
+      "skipped": 0,
+      "vector_failures": 0,
+      "log": {
+        "path": "windows-current-source-conformance-threads-1.raw.txt",
+        "bytes": 28738,
+        "sha256": "6b13b65a36a87117bb427e9f0440d8b7a80a28fd5c7f5dd85ad83f5d79839103"
+      }
+    },
+    {
+      "dispatch": "native",
+      "threads": 2,
+      "command": "deltic timeout 1800 target/release/conformance.exe --vectors-dir tests/conformance/vectors --official --threads 2",
+      "exit_code": 0,
+      "vectors": 307,
+      "frames_passed": 4816,
+      "mismatched": 0,
+      "skipped": 0,
+      "vector_failures": 0,
+      "log": {
+        "path": "windows-current-source-conformance-threads-2.raw.txt",
+        "bytes": 28738,
+        "sha256": "5f2feac25403c721c0559df558cead52c5a62b5d7f785b6d13cc5251375dab06"
+      }
+    },
+    {
+      "dispatch": "forced scalar",
+      "threads": 1,
+      "command": "RVP9_FORCE_SCALAR=1 deltic timeout 1800 target/release/conformance.exe --vectors-dir tests/conformance/vectors --official --strict --threads 1",
+      "exit_code": 0,
+      "vectors": 307,
+      "frames_passed": 4816,
+      "mismatched": 0,
+      "skipped": 0,
+      "vector_failures": 0,
+      "log": {
+        "path": "windows-current-source-conformance-scalar-threads-1.raw.txt",
+        "bytes": 28738,
+        "sha256": "6b13b65a36a87117bb427e9f0440d8b7a80a28fd5c7f5dd85ad83f5d79839103"
+      }
+    },
+    {
+      "dispatch": "forced scalar",
+      "threads": 2,
+      "command": "RVP9_FORCE_SCALAR=1 deltic timeout 1800 target/release/conformance.exe --vectors-dir tests/conformance/vectors --official --strict --threads 2",
+      "exit_code": 0,
+      "vectors": 307,
+      "frames_passed": 4816,
+      "mismatched": 0,
+      "skipped": 0,
+      "vector_failures": 0,
+      "log": {
+        "path": "windows-current-source-conformance-scalar-threads-2.raw.txt",
+        "bytes": 28738,
+        "sha256": "5f2feac25403c721c0559df558cead52c5a62b5d7f785b6d13cc5251375dab06"
+      }
+    }
+  ],
+  "limits": [
+    "Native and forced-scalar x86-64 dispatch each passed at one and two threads.",
+    "The Windows worktree has no vpxdec executable; separate external-oracle tests remain unavailable.",
+    "This is conformance evidence only; it does not establish encoder32/reverse24, compression quality, throughput, frame latency, or broader corpus coverage."
+  ]
+}

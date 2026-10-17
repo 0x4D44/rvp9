@@ -233,11 +233,95 @@
         "bytes": 28738,
         "sha256": "5f2feac25403c721c0559df558cead52c5a62b5d7f785b6d13cc5251375dab06"
       }
+    },
+    {
+      "command": "deltic timeout 1800 target/release/conformance.exe --vectors-dir tests/conformance/vectors --official --threads 1",
+      "exit_code": 0,
+      "status": "pass; complete official MD5-ledger gate",
+      "dispatch": "native",
+      "threads": 1,
+      "vectors": 307,
+      "tests": {
+        "passed_frames": 4816,
+        "mismatched_frames": 0,
+        "skipped_frames": 0,
+        "vector_failures": 0
+      },
+      "binary_sha256": "061a1f3fa35869083f0ca20f809170bd73a3f2a4918895298f0d2ddffe1d90d7",
+      "source_commit": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+      "log": {
+        "path": "windows-current-source-conformance-threads-1.raw.txt",
+        "bytes": 28738,
+        "sha256": "6b13b65a36a87117bb427e9f0440d8b7a80a28fd5c7f5dd85ad83f5d79839103"
+      }
+    },
+    {
+      "command": "deltic timeout 1800 target/release/conformance.exe --vectors-dir tests/conformance/vectors --official --threads 2",
+      "exit_code": 0,
+      "status": "pass; complete official MD5-ledger gate",
+      "dispatch": "native",
+      "threads": 2,
+      "vectors": 307,
+      "tests": {
+        "passed_frames": 4816,
+        "mismatched_frames": 0,
+        "skipped_frames": 0,
+        "vector_failures": 0
+      },
+      "binary_sha256": "061a1f3fa35869083f0ca20f809170bd73a3f2a4918895298f0d2ddffe1d90d7",
+      "source_commit": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+      "log": {
+        "path": "windows-current-source-conformance-threads-2.raw.txt",
+        "bytes": 28738,
+        "sha256": "5f2feac25403c721c0559df558cead52c5a62b5d7f785b6d13cc5251375dab06"
+      }
+    },
+    {
+      "command": "RVP9_FORCE_SCALAR=1 deltic timeout 1800 target/release/conformance.exe --vectors-dir tests/conformance/vectors --official --strict --threads 1",
+      "exit_code": 0,
+      "status": "pass; complete official MD5-ledger gate",
+      "dispatch": "forced scalar",
+      "threads": 1,
+      "vectors": 307,
+      "tests": {
+        "passed_frames": 4816,
+        "mismatched_frames": 0,
+        "skipped_frames": 0,
+        "vector_failures": 0
+      },
+      "binary_sha256": "061a1f3fa35869083f0ca20f809170bd73a3f2a4918895298f0d2ddffe1d90d7",
+      "source_commit": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+      "log": {
+        "path": "windows-current-source-conformance-scalar-threads-1.raw.txt",
+        "bytes": 28738,
+        "sha256": "6b13b65a36a87117bb427e9f0440d8b7a80a28fd5c7f5dd85ad83f5d79839103"
+      }
+    },
+    {
+      "command": "RVP9_FORCE_SCALAR=1 deltic timeout 1800 target/release/conformance.exe --vectors-dir tests/conformance/vectors --official --strict --threads 2",
+      "exit_code": 0,
+      "status": "pass; complete official MD5-ledger gate",
+      "dispatch": "forced scalar",
+      "threads": 2,
+      "vectors": 307,
+      "tests": {
+        "passed_frames": 4816,
+        "mismatched_frames": 0,
+        "skipped_frames": 0,
+        "vector_failures": 0
+      },
+      "binary_sha256": "061a1f3fa35869083f0ca20f809170bd73a3f2a4918895298f0d2ddffe1d90d7",
+      "source_commit": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+      "log": {
+        "path": "windows-current-source-conformance-scalar-threads-2.raw.txt",
+        "bytes": 28738,
+        "sha256": "5f2feac25403c721c0559df558cead52c5a62b5d7f785b6d13cc5251375dab06"
+      }
     }
   ],
   "limits": [
-    "These macOS-focused checks do not create a release candidate or macOS production PGO artifact.",
-    "No full workspace test ran on macOS. The exact-source native official MD5-ledger conformance matrix passed at one and two threads, but this record does not establish scalar conformance, encoder32/reverse24, BD-rate, throughput, frame-latency, sanitizer, Miri, fuzz or package archive-test gates; see the separate Windows record for its encoder-suite and PGO results.",
+    "These focused current-source checks do not create a release candidate or a Mac production PGO artifact.",
+    "No full workspace test ran on Mac. The exact-source official MD5-ledger matrix passed on Mac natively at one and two threads and on Windows with native and forced-scalar dispatch at one and two threads. AArch64 scalar remains unqualified (FLU43). This record does not establish encoder32/reverse24, BD-rate, throughput, frame-latency, sanitizer, Miri, fuzz or package archive-test gates.",
     "No source files were modified."
   ],
   "stored_log_note": "Hashes cover the committed text files. Six Cargo test outputs had one trailing blank separator removed for git diff --check; no output content lines changed.",
@@ -338,6 +422,140 @@
       "These are native decoder runs at one and two threads; no AArch64 scalar claim is made because RVP9_FORCE_SCALAR leaves NEON enabled (FLU43).",
       "This is conformance evidence only; it does not establish production PGO, encoder32/reverse24, compression quality, throughput, frame latency, or broad corpus coverage.",
       "The worktree has no vpxdec executable; separate external-oracle tests remain unavailable."
+    ]
+  },
+  "windows_fixture_preparation": {
+    "recorded_at_utc": "2026-10-17 11:51:21Z",
+    "source_commit": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+    "worktree": "D:\\worktrees\\rvp9-postfix-main\\20261017-TSK-HUM@ANVIL-windows-post-fix-requalification",
+    "tracked_worktree_clean": true,
+    "pinned_libvpx_commit": "12f3a2ac603e8f10742105519e0cd03c3b8f71dd",
+    "verified_vectors": 307,
+    "verified_md5_ledgers": 307,
+    "observed_files": 614,
+    "vpxdec_present": false,
+    "submodule_update_log": {
+      "path": "windows-current-source-libvpx-submodule.raw.txt",
+      "bytes": 336,
+      "sha256": "daafc075c71cc5c85b77f95d3eb31cdbce5ca1d1cc990614fd38f78d0919af2c"
+    },
+    "fetch_command": "deltic timeout 600 bash scripts/fetch-vectors.sh --jobs 8",
+    "fetch_exit_code": 0,
+    "fetch_log": {
+      "path": "windows-current-source-fetch-vectors.raw.txt",
+      "bytes": 26634,
+      "sha256": "4a5b40073ac9a469dc53322056a4df56488704cc37133983629b61ecd64cee89"
+    },
+    "limits": [
+      "The worktree remains exact source fb5c0c91 with a clean tracked tree; downloaded fixtures are ignored data.",
+      "No vpxdec executable is present; external-oracle tests remain open."
+    ]
+  },
+  "windows_conformance": {
+    "schema": "rvp9.windows-current-source-conformance.v1",
+    "recorded_at_utc": "2026-10-17 11:51:21Z",
+    "source": {
+      "commit": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+      "worktree": "D:\\worktrees\\rvp9-postfix-main\\20261017-TSK-HUM@ANVIL-windows-post-fix-requalification",
+      "tracked_tree_clean_after_runs": true,
+      "host": "ANVIL, native Windows x86-64",
+      "host_triple": "x86_64-pc-windows-msvc",
+      "rustc": "rustc 1.95.0 (59807616e 2026-04-14)",
+      "cargo": "cargo 1.95.0 (f2d3ce0bd 2026-03-21)"
+    },
+    "runner": {
+      "path": "target/release/conformance.exe",
+      "sha256": "061a1f3fa35869083f0ca20f809170bd73a3f2a4918895298f0d2ddffe1d90d7",
+      "semantics": "The in-repo official runner checks decoded frames against pinned .md5 ledgers; it does not invoke vpxdec."
+    },
+    "fixtures": {
+      "libvpx_commit": "12f3a2ac603e8f10742105519e0cd03c3b8f71dd",
+      "verified_vectors": 307,
+      "verified_md5_ledgers": 307,
+      "observed_files": 614,
+      "submodule_update_log": {
+        "path": "windows-current-source-libvpx-submodule.raw.txt",
+        "bytes": 336,
+        "sha256": "daafc075c71cc5c85b77f95d3eb31cdbce5ca1d1cc990614fd38f78d0919af2c"
+      },
+      "fetch_command": "deltic timeout 600 bash scripts/fetch-vectors.sh --jobs 8",
+      "fetch_exit_code": 0,
+      "fetch_log": {
+        "path": "windows-current-source-fetch-vectors.raw.txt",
+        "bytes": 26634,
+        "sha256": "4a5b40073ac9a469dc53322056a4df56488704cc37133983629b61ecd64cee89"
+      }
+    },
+    "runs": [
+      {
+        "dispatch": "native",
+        "threads": 1,
+        "command": "deltic timeout 1800 target/release/conformance.exe --vectors-dir tests/conformance/vectors --official --threads 1",
+        "exit_code": 0,
+        "vectors": 307,
+        "frames_passed": 4816,
+        "mismatched": 0,
+        "skipped": 0,
+        "vector_failures": 0,
+        "log": {
+          "path": "windows-current-source-conformance-threads-1.raw.txt",
+          "bytes": 28738,
+          "sha256": "6b13b65a36a87117bb427e9f0440d8b7a80a28fd5c7f5dd85ad83f5d79839103"
+        }
+      },
+      {
+        "dispatch": "native",
+        "threads": 2,
+        "command": "deltic timeout 1800 target/release/conformance.exe --vectors-dir tests/conformance/vectors --official --threads 2",
+        "exit_code": 0,
+        "vectors": 307,
+        "frames_passed": 4816,
+        "mismatched": 0,
+        "skipped": 0,
+        "vector_failures": 0,
+        "log": {
+          "path": "windows-current-source-conformance-threads-2.raw.txt",
+          "bytes": 28738,
+          "sha256": "5f2feac25403c721c0559df558cead52c5a62b5d7f785b6d13cc5251375dab06"
+        }
+      },
+      {
+        "dispatch": "forced scalar",
+        "threads": 1,
+        "command": "RVP9_FORCE_SCALAR=1 deltic timeout 1800 target/release/conformance.exe --vectors-dir tests/conformance/vectors --official --strict --threads 1",
+        "exit_code": 0,
+        "vectors": 307,
+        "frames_passed": 4816,
+        "mismatched": 0,
+        "skipped": 0,
+        "vector_failures": 0,
+        "log": {
+          "path": "windows-current-source-conformance-scalar-threads-1.raw.txt",
+          "bytes": 28738,
+          "sha256": "6b13b65a36a87117bb427e9f0440d8b7a80a28fd5c7f5dd85ad83f5d79839103"
+        }
+      },
+      {
+        "dispatch": "forced scalar",
+        "threads": 2,
+        "command": "RVP9_FORCE_SCALAR=1 deltic timeout 1800 target/release/conformance.exe --vectors-dir tests/conformance/vectors --official --strict --threads 2",
+        "exit_code": 0,
+        "vectors": 307,
+        "frames_passed": 4816,
+        "mismatched": 0,
+        "skipped": 0,
+        "vector_failures": 0,
+        "log": {
+          "path": "windows-current-source-conformance-scalar-threads-2.raw.txt",
+          "bytes": 28738,
+          "sha256": "5f2feac25403c721c0559df558cead52c5a62b5d7f785b6d13cc5251375dab06"
+        }
+      }
+    ],
+    "limits": [
+      "Native and forced-scalar x86-64 dispatch each passed at one and two threads.",
+      "The Windows worktree has no vpxdec executable; separate external-oracle tests remain unavailable.",
+      "This is conformance evidence only; it does not establish encoder32/reverse24, compression quality, throughput, frame latency, or broader corpus coverage."
     ]
   }
 }

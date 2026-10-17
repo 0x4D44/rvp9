@@ -1,0 +1,3 @@
+Submodule 'third_party/libvpx' (https://chromium.googlesource.com/webm/libvpx) registered for path 'third_party/libvpx'
+Cloning into 'D:/worktrees/rvp9-postfix-main/20261017-TSK-HUM@ANVIL-windows-post-fix-requalification/third_party/libvpx'...
+Submodule path 'third_party/libvpx': checked out '12f3a2ac603e8f10742105519e0cd03c3b8f71dd'
