@@ -100,6 +100,17 @@
         "bytes": 4396,
         "sha256": "11b6ba8f04d9c70e7f3667b077569caa3d9bcc8c6cec7dd09eae6e98097b6926"
       }
+    },
+    {
+      "command": "deltic timeout 1800 cargo build --workspace --release --locked --offline",
+      "exit_code": 0,
+      "status": "pass; optimized release profile; no warnings observed",
+      "elapsed_seconds": 203,
+      "log": {
+        "path": "workspace-release-build.raw.txt",
+        "bytes": 1846,
+        "sha256": "5005861ac6183455c76c1de6b93169ed4da27d74089ac458f8ca33d8a8442839"
+      }
     }
   ],
   "limits": [
