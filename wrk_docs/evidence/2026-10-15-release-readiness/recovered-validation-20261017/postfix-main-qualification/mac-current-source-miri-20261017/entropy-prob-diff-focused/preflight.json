@@ -1,0 +1,99 @@
+{
+  "candidate_sha": {
+    "command": [
+      "git",
+      "rev-parse",
+      "HEAD"
+    ],
+    "exit_status": 0,
+    "output": "fb5c0c917038db6c640b3dbc7c2b84b567233333\n"
+  },
+  "worktree_status_porcelain": {
+    "command": [
+      "git",
+      "status",
+      "--porcelain"
+    ],
+    "exit_status": 0,
+    "output": ""
+  },
+  "source_blob": {
+    "command": [
+      "git",
+      "rev-parse",
+      "HEAD:crates/rvp9-core/src/entropy/prob_diff_writer.rs"
+    ],
+    "exit_status": 0,
+    "output": "4c2dd72907d0c04956c9f705fcaff268046a5987\n"
+  },
+  "nightly_toolchain": {
+    "command": [
+      "rustc",
+      "+nightly",
+      "-vV"
+    ],
+    "exit_status": 0,
+    "output": "rustc 1.98.0-nightly (bd08c9e71 2026-06-25)\nbinary: rustc\ncommit-hash: bd08c9e71874a81670fe3938dbf85148e42c2b96\ncommit-date: 2026-06-25\nhost: aarch64-apple-darwin\nrelease: 1.98.0-nightly\nLLVM version: 22.1.7\n"
+  },
+  "miri_version": {
+    "command": [
+      "cargo",
+      "+nightly",
+      "miri",
+      "--version"
+    ],
+    "exit_status": 0,
+    "output": "miri 0.1.0 (bd08c9e718 2026-06-25)\n"
+  },
+  "macos_version": {
+    "command": [
+      "sw_vers"
+    ],
+    "exit_status": 0,
+    "output": "ProductName:\t\tmacOS\nProductVersion:\t\t26.6.2\nBuildVersion:\t\t25G83\n"
+  },
+  "host_uname": {
+    "command": [
+      "uname",
+      "-a"
+    ],
+    "exit_status": 0,
+    "output": "Darwin flux.home.arpa 25.6.0 Darwin Kernel Version 25.6.0: Fri Jul 31 19:19:08 PDT 2026; root:xnu-12377.161.14~5/RELEASE_ARM64_T6050 arm64\n"
+  },
+  "cpu_model": {
+    "command": [
+      "sysctl",
+      "-n",
+      "machdep.cpu.brand_string"
+    ],
+    "exit_status": 0,
+    "output": "Apple M5 Max\n"
+  },
+  "logical_cpu_count": {
+    "command": [
+      "sysctl",
+      "-n",
+      "hw.ncpu"
+    ],
+    "exit_status": 0,
+    "output": "18\n"
+  },
+  "load_average": {
+    "command": [
+      "sysctl",
+      "-n",
+      "vm.loadavg"
+    ],
+    "exit_status": 0,
+    "output": "{ 75.02 51.13 60.22 }\n"
+  },
+  "quiet_status": {
+    "command": [
+      "deltic",
+      "quiet",
+      "status"
+    ],
+    "exit_status": 0,
+    "output": "quiet window: open.\n0 heavy workload processes still running.\n12 more heavy workload processes run at low priority (not counted).\n"
+  }
+}
