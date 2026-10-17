@@ -1,0 +1,12 @@
+2026-10-17T06:35:04.0137289+01:00
+inventory_pid=29232 parent=27772 creation=2026-10-17T05:31:59.9117890Z owned_command_hash=4e2a3d7095348fce9c90a2fc8c56b04e071d59112d1e37936c2b17a9699496e1 owned_command_match=True
+owned_timed_out_inventory_stopped=True
+
+
+Id          : 29232
+ProcessName : powershell
+StartTime   : 17/10/2026 06:31:59
+
+
+
+no_output_above_means_both_owned_process_ids_absent

@@ -1,0 +1,39 @@
+#< CLIXML
+2026-10-17T06:28:55.7073777+01:00
+
+
+Name                      : AMD Ryzen 9 9950X3D 16-Core Processor
+NumberOfCores             : 16
+NumberOfLogicalProcessors : 32
+
+
+
+
+
+Caption     : Microsoft Windows 11 Pro
+Version     : 10.0.26200
+BuildNumber : 26200
+
+
+
+Power Scheme GUID: 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c  (High performance){
+  "live": false,
+  "holder": null,
+  "open_after": 1792173746,
+  "queue": [],
+  "heavy_processes": 0,
+  "heavy_processes_low_priority": 0,
+  "own_measurements": 0
+}
+C:\Users\marti\AppData\Local\Temp\deltic-scratch\rvp9-native-replay474-9dee6be6\pgo\runs\20261017T052417Z-1120\manifest.txt|bytes=2546|sha256=91322caf06876b6581e72b10b636658980c0489ace2d6693b080dbeee4ad5d7c
+C:\Users\marti\AppData\Local\Temp\deltic-scratch\rvp9-native-replay474-9dee6be6\pgo\optimized\release\rvp9enc.exe|bytes=2571264|sha256=6da43379998632cc96a689fdba47e2e4addafaba23254fa5f8867caf291c08d3
+C:\Users\marti\AppData\Local\Temp\deltic-scratch\rvp9-native-replay474-9dee6be6\pgo\runs\20261017T052417Z-1120\encoder.profdata|bytes=655784|sha256=47b0c79c5e277f6c05a9dc111032063b98ae585e531ab1b204317f58e8555084
+C:\Users\marti\AppData\Local\Temp\deltic-scratch\rvp9-native-replay474-9dee6be6\cargo-target\release\bdrate.exe|bytes=315904|sha256=f4a47b2afe8aea023a630bdc634cc856fcf343694031784f990097da52b4d455
+C:\Users\marti\AppData\Local\Temp\deltic-scratch\rvp9-native-replay474-9dee6be6\cargo-target\release\bdrate-svc.exe|bytes=432128|sha256=5d739feb7e6fd53e528368c2c46cb2489c8b1d6e3d0ba07930365d3553a439c9
+C:\Users\marti\AppData\Local\Temp\deltic-scratch\rvp9-native-replay474-9dee6be6\cargo-target\release\encode-headtohead.exe|bytes=432640|sha256=d946f3de3634e9a478b8b4d32c95c0ab39b6928df7e36cab4a2fc8ad687d575c
+C:\Users\marti\AppData\Local\Temp\deltic-scratch\rvp9-native-replay474-9dee6be6\cargo-target\release\realtime.exe|bytes=325120|sha256=63d6237d1308d13ae707443075c5b760b374101ae1d572713865198634bae588
+C:\Users\marti\AppData\Local\Temp\deltic-scratch\rvp9-native-replay474-9dee6be6\cargo-target\release\rvp9dec.exe|bytes=997888|sha256=ae50a389edb13380e741680be17b2aebd031fe65f28b3511b294e9b61a616a73
+D:\worktrees\rvp9-2\20261015-TSK-HUM-final-release-native-correctness-qualifi\build\libvpx\vpxenc.exe|bytes=4431431|sha256=88ba702de16af47327490a7d016002fd05169e074c6c6657b9e9ff7a8d4a135d
+D:\worktrees\rvp9-2\20261015-TSK-HUM-final-release-native-correctness-qualifi\build\libvpx\vpxdec.exe|bytes=4268881|sha256=91eb8ab65f62f1d63d750878b20b6b75a2882f75814e623ab54acf22b9ad02b6
+D:\worktrees\rvp9-2\20261015-TSK-HUM-final-release-native-correctness-qualifi\build\libvpx\vpx_temporal_svc_reference.exe|bytes=3425483|sha256=32e59085ad9e81f199475eb3df3278632e02c8e5e52ec287b334f89340d193be
+<Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com/powershell/2004/04"><Obj S="progress" RefId="0"><TN RefId="0"><T>System.Management.Automation.PSCustomObject</T><T>System.Object</T></TN><MS><I64 N="SourceId">1</I64><PR N="Record"><AV>Preparing modules for first use.</AV><AI>0</AI><Nil /><PI>-1</PI><PC>-1</PC><T>Completed</T><SR>-1</SR><SD> </SD></PR></MS></Obj><Obj S="progress" RefId="1"><TNRef RefId="0" /><MS><I64 N="SourceId">1</I64><PR N="Record"><AV>Preparing modules for first use.</AV><AI>0</AI><Nil /><PI>-1</PI><PC>-1</PC><T>Completed</T><SR>-1</SR><SD> </SD></PR></MS></Obj><Obj S="progress" RefId="2"><TNRef RefId="0" /><MS><I64 N="SourceId">1</I64><PR N="Record"><AV>Preparing modules for first use.</AV><AI>0</AI><Nil /><PI>-1</PI><PC>-1</PC><T>Completed</T><SR>-1</SR><SD> </SD></PR></MS></Obj></Objs>

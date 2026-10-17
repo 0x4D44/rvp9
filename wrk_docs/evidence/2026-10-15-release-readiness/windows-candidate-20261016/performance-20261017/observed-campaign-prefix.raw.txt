@@ -1,0 +1,17 @@
+Preparing acceptance inputs in /c/Users/marti/AppData/Local/Temp/deltic-scratch/rvp9-native-replay474-9dee6be6/production-speed/inputs
+  /c/Users/marti/AppData/Local/Temp/deltic-scratch/rvp9-native-replay474-9dee6be6/production-speed/inputs/in_to_tree_720p30_clean.y4m
+  /c/Users/marti/AppData/Local/Temp/deltic-scratch/rvp9-native-replay474-9dee6be6/production-speed/inputs/in_to_tree_720p30_noisy.y4m
+  /c/Users/marti/AppData/Local/Temp/deltic-scratch/rvp9-native-replay474-9dee6be6/production-speed/inputs/ducks_take_off_720p30_clean.y4m
+  /c/Users/marti/AppData/Local/Temp/deltic-scratch/rvp9-native-replay474-9dee6be6/production-speed/inputs/ducks_take_off_720p30_noisy.y4m
+  /c/Users/marti/AppData/Local/Temp/deltic-scratch/rvp9-native-replay474-9dee6be6/production-speed/inputs/old_town_cross_720p30_clean.y4m
+  /c/Users/marti/AppData/Local/Temp/deltic-scratch/rvp9-native-replay474-9dee6be6/production-speed/inputs/old_town_cross_720p30_noisy.y4m
+  /c/Users/marti/AppData/Local/Temp/deltic-scratch/rvp9-native-replay474-9dee6be6/production-speed/inputs/in_to_tree_1080p30_clean.y4m
+  /c/Users/marti/AppData/Local/Temp/deltic-scratch/rvp9-native-replay474-9dee6be6/production-speed/inputs/in_to_tree_1080p30_noisy.y4m
+  /c/Users/marti/AppData/Local/Temp/deltic-scratch/rvp9-native-replay474-9dee6be6/production-speed/inputs/ducks_take_off_1080p30_clean.y4m
+  /c/Users/marti/AppData/Local/Temp/deltic-scratch/rvp9-native-replay474-9dee6be6/production-speed/inputs/ducks_take_off_1080p30_noisy.y4m
+  /c/Users/marti/AppData/Local/Temp/deltic-scratch/rvp9-native-replay474-9dee6be6/production-speed/inputs/old_town_cross_1080p30_clean.y4m
+  /c/Users/marti/AppData/Local/Temp/deltic-scratch/rvp9-native-replay474-9dee6be6/production-speed/inputs/old_town_cross_1080p30_noisy.y4m
+  /c/Users/marti/AppData/Local/Temp/deltic-scratch/rvp9-native-replay474-9dee6be6/production-speed/inputs/in_to_tree_1080p60_clean.y4m
+  /c/Users/marti/AppData/Local/Temp/deltic-scratch/rvp9-native-replay474-9dee6be6/production-speed/inputs/in_to_tree_1080p60_noisy.y4m
+  /c/Users/marti/AppData/Local/Temp/deltic-scratch/rvp9-native-replay474-9dee6be6/production-speed/inputs/old_town_cross_1080p60_clean.y4m
+  /c/Users/marti/AppData/Local/Temp/deltic-scratch/rvp9-native-replay474-9dee6be6/production-speed/inputs/old_town_cross_1080p60_noisy.y4m

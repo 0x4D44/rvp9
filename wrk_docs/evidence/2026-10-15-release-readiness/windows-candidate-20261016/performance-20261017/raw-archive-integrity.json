@@ -1,0 +1,7 @@
+{
+  "archive": "raw-performance-evidence.tar.gz",
+  "sha256": "dee330c0225dc1651d7258dc08294fd5242591cb9ff61c6d42ed29545723ccdc",
+  "files": 37,
+  "all_archived_bytes_verified": true,
+  "authoritative_terminal_summary": "terminal-summary.json"
+}

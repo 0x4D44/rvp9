@@ -1,0 +1,13 @@
+{
+  "live": true,
+  "holder": {
+    "reason": "rvp9-full-speed474",
+    "granted_at": 1792215069,
+    "expires_at": 1792216269
+  },
+  "open_after": 1792173746,
+  "queue": [],
+  "heavy_processes": 0,
+  "heavy_processes_low_priority": 0,
+  "own_measurements": 0
+}

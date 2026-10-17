@@ -1,0 +1,15 @@
+2026-10-17T06:33:56.7669590+01:00
+
+   Id ProcessName StartTime
+   -- ----------- ---------
+50744 delticw     17/10/2026 01:09:43
+29232 powershell  17/10/2026 06:31:59
+52448 powershell  17/10/2026 06:33:56
+
+
+1
+  /c/Users/marti/AppData/Local/Temp/deltic-scratch/rvp9-native-replay474-9dee6be6/production-speed/inputs/in_to_tree_1080p60_noisy.y4m
+  /c/Users/marti/AppData/Local/Temp/deltic-scratch/rvp9-native-replay474-9dee6be6/production-speed/inputs/old_town_cross_1080p60_clean.y4m
+  /c/Users/marti/AppData/Local/Temp/deltic-scratch/rvp9-native-replay474-9dee6be6/production-speed/inputs/old_town_cross_1080p60_noisy.y4m
+host one-minute load 1.860488 exceeds 0.75 at 'speed-start'; a timing measurement on a loaded host is not evidence
+quiet window ended; the next grant is no earlier than 06:43 (local).
