@@ -1,0 +1,46 @@
+{
+  "recorded_at_utc": "2026-10-17T22:50:41Z",
+  "host": {
+    "name": "flux",
+    "hardware": "Apple M5 Max (Mac17,6)",
+    "os": "Darwin 25.6.0",
+    "architecture": "aarch64"
+  },
+  "candidate_product_source": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+  "runner_checkout_commit": "44140dbb0e0834af296fac124d3a9293e486b53b",
+  "source_comparison": {
+    "range": "fb5c0c917038db6c640b3dbc7c2b84b567233333..44140dbb0e0834af296fac124d3a9293e486b53b",
+    "paths": [
+      "crates/rvp9-core",
+      "crates/rvp9-io",
+      "Cargo.toml",
+      "Cargo.lock"
+    ],
+    "result": "no differences"
+  },
+  "toolchain": {
+    "rustc": "1.98.0-nightly (bd08c9e71 2026-06-25)",
+    "miri": "0.1.0 (bd08c9e718 2026-06-25)"
+  },
+  "command": "deltic timeout 3600 env CARGO_TARGET_DIR=.scratch/miri-io-20261017/target CARGO_NET_OFFLINE=true cargo +nightly miri test -p rvp9-io --locked --offline -- --test-threads=1 </dev/null",
+  "exit_code": 101,
+  "tests_started": false,
+  "result": "Compilation of dependency rvp9-core failed before any rvp9-io test ran.",
+  "compile_errors": {
+    "count": 8,
+    "code": "E0425",
+    "missing_functions": [
+      "fdct4x4_scalar",
+      "fht4x4_scalar",
+      "fht8x8_scalar",
+      "fht16x16_scalar",
+      "fdct32x32_scalar",
+      "idct16x16_add_scalar (three call sites)"
+    ]
+  },
+  "classification": "Reproduces the dependent-library Miri configuration failure tracked by RVP9-BUG-FLU-00037; this run provides no parser test coverage and raises no new bug.",
+  "raw_output": {
+    "file": "run.raw.txt",
+    "sha256": "4c87b0d2f5ad16a28efba8164c2e58f86db9e43b8d249188c37e47daa8b068bd"
+  }
+}
