@@ -1,0 +1,1 @@
+# preflight-only stub configuration

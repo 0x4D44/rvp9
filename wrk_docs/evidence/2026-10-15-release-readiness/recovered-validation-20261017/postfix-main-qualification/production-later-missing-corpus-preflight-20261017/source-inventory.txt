@@ -1,0 +1,4 @@
+Present symlink in injected source directory: in_to_tree_420_720p50.y4m -> /Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/tests/corpus/in_to_tree_420_720p50.y4m
+Bytes: 691203035
+SHA-256: 81166517a3054c789923535b5da23fbbb9bbd7fd4c28dac83918ac351e121e74
+Absent next required input: ducks_take_off_420_720p50.y4m

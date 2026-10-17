@@ -1,0 +1,115 @@
+{
+  "schema": "rvp9.production-later-missing-corpus-preflight.v1",
+  "recorded_at_utc": "2026-10-17T20:04:05Z",
+  "candidate": {
+    "source_commit": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+    "branch": "task/20261017-TSK-HUM-requalify-post-fix-candidate",
+    "worktree": "/Users/md/worktrees/rvp9/20261017-TSK-HUM-requalify-post-fix-candidate",
+    "tracked_tree_clean": true,
+    "script_git_blob": "e2e98275f5e403e58c6ef2b96cbe86dfd11e47ac",
+    "script_sha256": "3ec28783f5b3e52ba554888a5e53f2dd51e7d21645137d0cbbd0b32965f1953c",
+    "origin_main": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+    "pinned_libvpx_revision": "12f3a2ac603e8f10742105519e0cd03c3b8f71dd"
+  },
+  "host": {
+    "name": "flux.home.arpa",
+    "os": "macOS 26.6.2 (25G83)",
+    "kernel": "Darwin 25.6.0",
+    "architecture": "arm64",
+    "bash": "GNU bash 3.2.57",
+    "deltic": "6.15.0"
+  },
+  "setup": {
+    "phase": "quality",
+    "registered_scratch_id": "late-corpus-negative-ad9dc2f5",
+    "source_directory": "registered scratch/later-missing-source",
+    "present_input": {
+      "name": "in_to_tree_420_720p50.y4m",
+      "bytes": 691203035,
+      "sha256": "81166517a3054c789923535b5da23fbbb9bbd7fd4c28dac83918ac351e121e74",
+      "original_path": "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/tests/corpus/in_to_tree_420_720p50.y4m"
+    },
+    "intentionally_absent_input": "ducks_take_off_420_720p50.y4m",
+    "work_directory": "registered scratch/work; absent before invocation",
+    "probe_tools": "The recorded 13 --help capability probes used the same stub and config files as production-missing-corpus-preflight; all non-help stub invocations exit 97.",
+    "pgo_manifest": {
+      "path": "pgo-manifest.raw.txt",
+      "bytes": 274,
+      "sha256": "80c1a7699ba618896ca128ebfe495a338165a1b79eec8cc3d913b6c4c561aebd",
+      "optimized_binary_sha256": "c747ee516fddcdf6384d532edf55f9bf6fcb1ace9d8ab8f4ca9172100b5562e6"
+    }
+  },
+  "command_file": "command.txt",
+  "environment_file": "environment.txt",
+  "result": {
+    "exit_status": 1,
+    "status": "expected_fail_closed_on_second_required_input",
+    "observed_error": "missing or empty corpus input (source_ducks_take_off)",
+    "work_directory_created": false,
+    "stub_help_invocations": 13,
+    "stub_non_help_invocations": 0,
+    "codec_or_quality_work_started": false
+  },
+  "limits": [
+    "The first canonical input was present as a symlink and rehashed on the host; only the next required input was intentionally absent.",
+    "Fake binaries and libvpx configuration satisfy preflight path and --help checks; no real encoder, decoder, quality or measurement child ran.",
+    "This adds a later-file fail-closed case. It does not test every remaining corpus position or wrong-header rejection."
+  ],
+  "evidence_files": [
+    {
+      "path": "candidate-identity.txt",
+      "bytes": 307,
+      "sha256": "858c795f597e4c6b6f4dbb10c9c7291e0bb4891be6a3cb057a763a76960c7842"
+    },
+    {
+      "path": "command.txt",
+      "bytes": 2224,
+      "sha256": "2fbaaa70b7452c7ad7ec95827f478f2bfceb880e051876eeeb40a708d0d3d4fb"
+    },
+    {
+      "path": "config.mk",
+      "bytes": 36,
+      "sha256": "c26df3245ea3a4afb8156a8e60894fa768a0be3a5a5f95474d45aebc5e2bbda5"
+    },
+    {
+      "path": "environment.txt",
+      "bytes": 331,
+      "sha256": "facc697a91c52c3a42a8ce641f4ea10ad1ef51b54506bf005493d6aec478152e"
+    },
+    {
+      "path": "exit-code.txt",
+      "bytes": 2,
+      "sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865"
+    },
+    {
+      "path": "pgo-manifest.raw.txt",
+      "bytes": 274,
+      "sha256": "80c1a7699ba618896ca128ebfe495a338165a1b79eec8cc3d913b6c4c561aebd"
+    },
+    {
+      "path": "probe-stub.sh",
+      "bytes": 392,
+      "sha256": "c747ee516fddcdf6384d532edf55f9bf6fcb1ace9d8ab8f4ca9172100b5562e6"
+    },
+    {
+      "path": "run.raw.txt",
+      "bytes": 257,
+      "sha256": "aa21fc84051a0ba06c9ff3fe0dfe954de3e99d5f5eade38e4cea0e34e312433b"
+    },
+    {
+      "path": "source-inventory.txt",
+      "bytes": 346,
+      "sha256": "a721bb6fdcadae6f1ef9a0a7afdb6a79d3bf208db711835a4efd2fe38f93002d"
+    },
+    {
+      "path": "stub-invocations.raw.txt",
+      "bytes": 253,
+      "sha256": "a6801915dbfd75067c03a573267c09a1a4b032859d40242ad2cbe9835e072dc2"
+    },
+    {
+      "path": "vpx_config.h",
+      "bytes": 98,
+      "sha256": "e4ba06d60e46451085e6511746444bd77d547300cbf6e58bbb28eabb7c9a7b43"
+    }
+  ]
+}

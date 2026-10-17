@@ -1,0 +1,2 @@
+missing or empty corpus input (source_ducks_take_off): /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/late-corpus-negative-ad9dc2f5/later-missing-source/ducks_take_off_420_720p50.y4m
+run scripts/fetch-corpus.sh or pass --source-dir

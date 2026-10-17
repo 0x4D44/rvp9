@@ -1,0 +1,7 @@
+Recorded at: 2026-10-17 20:04:05 UTC
+Host: flux.home.arpa
+OS: macOS 26.6.2 (25G83), Darwin 25.6.0, arm64
+Shell: GNU bash 3.2.57 (arm64-apple-darwin)
+Deltic: 6.15.0
+Candidate: fb5c0c917038db6c640b3dbc7c2b84b567233333
+Only the RVP9_STUB_LOG environment variable was set for this run. No Cargo build or codec execution was performed.
