@@ -1,0 +1,7 @@
+$ git rev-parse HEAD
+fb5c0c917038db6c640b3dbc7c2b84b567233333
+$ git status --porcelain=v1
+$ shasum -a 256 crates/rvp9-harness/src/bdrate.rs crates/rvp9-bench/src/bin/bdrate.rs scripts/qualify-spatial-svc.sh
+be7d00277497ea2d1fd744ef6e8275e2a67a09643c71f2b585cf0400942b91b8  /Users/md/worktrees/rvp9/20261017-TSK-HUM-requalify-post-fix-candidate/crates/rvp9-harness/src/bdrate.rs
+2b21e71894cdf94f2830ec3097c314709e5cc8814dcc0cfac61944f00431b02b  /Users/md/worktrees/rvp9/20261017-TSK-HUM-requalify-post-fix-candidate/crates/rvp9-bench/src/bin/bdrate.rs
+6453cd72adedbe82c1c719a728873f419543170819111a1139dba5303d47c3de  /Users/md/worktrees/rvp9/20261017-TSK-HUM-requalify-post-fix-candidate/scripts/qualify-spatial-svc.sh

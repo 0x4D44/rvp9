@@ -1,0 +1,6 @@
+$ git rev-parse 3dd780ccfb04358dcbb1dab0bfe766041e071cd1:scripts/qualify-spatial-svc.sh
+9a09cb6604dd507cb273cae61d31744732d51ec9
+$ git rev-parse 1a84f60a:scripts/qualify-spatial-svc.sh
+9a09cb6604dd507cb273cae61d31744732d51ec9
+$ git rev-parse fb5c0c917038db6c640b3dbc7c2b84b567233333:scripts/qualify-spatial-svc.sh
+9a09cb6604dd507cb273cae61d31744732d51ec9

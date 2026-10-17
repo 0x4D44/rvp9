@@ -1,0 +1,263 @@
+{
+  "recorded_at_utc": "2026-10-17T19:37:06+00:00",
+  "candidate_revision": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+  "candidate_worktree": "/Users/md/worktrees/rvp9/20261017-TSK-HUM-requalify-post-fix-candidate",
+  "candidate_worktree_clean": true,
+  "host": "macOS 26.6.2 arm64",
+  "toolchain": "rustc 1.95.0, Python Decimal precision 80",
+  "shared_solver_reproduction": {
+    "source_file": "crates/rvp9-harness/src/bdrate.rs",
+    "source_sha256": "be7d00277497ea2d1fd744ef6e8275e2a67a09643c71f2b585cf0400942b91b8",
+    "command": "deltic timeout 180 rustc --edition=2024 -O <registered-scratch>/diagnostic.rs -o <registered-scratch>/diagnostic; deltic timeout 30 <registered-scratch>/diagnostic",
+    "anchor_points": [
+      [
+        1152.068,
+        25.670945
+      ],
+      [
+        1174.084,
+        25.723668
+      ],
+      [
+        1207.22,
+        25.767877
+      ],
+      [
+        1253.696,
+        25.822174
+      ],
+      [
+        1326.328,
+        25.88439
+      ],
+      [
+        1569.352,
+        26.307338
+      ]
+    ],
+    "test_points": [
+      [
+        1151.356,
+        25.697093
+      ],
+      [
+        1175.428,
+        25.747508
+      ],
+      [
+        1207.796,
+        25.79429
+      ],
+      [
+        1251.228,
+        25.841255
+      ],
+      [
+        1326.504,
+        25.908804
+      ],
+      [
+        1568.004,
+        26.298732
+      ]
+    ],
+    "exit_status": 0,
+    "result_pct": "-0.714401618768"
+  },
+  "independent_decimal80": {
+    "source": "decimal_oracle.py",
+    "exit_status": 0,
+    "result_pct": "-1.7887916403140640715289975390603076729093643469151286528845839772977795976009190",
+    "absolute_error_percentage_points": "1.074390021546064071528997539"
+  },
+  "prior_to_candidate_source_blob_comparisons": [
+    {
+      "path": "crates/rvp9-harness/src/bdrate.rs",
+      "previous_blob": "42aff526c129c3cdfe258c663c756f256e2935ad",
+      "candidate_blob": "42aff526c129c3cdfe258c663c756f256e2935ad",
+      "identical": true
+    },
+    {
+      "path": "crates/rvp9-bench/src/bin/bdrate.rs",
+      "previous_blob": "28cb77da8199970d47e9d6ef1322df8b556f32a9",
+      "candidate_blob": "28cb77da8199970d47e9d6ef1322df8b556f32a9",
+      "identical": true
+    },
+    {
+      "path": "scripts/qualify-spatial-svc.sh",
+      "previous_blob": "9a09cb6604dd507cb273cae61d31744732d51ec9",
+      "candidate_blob": "9a09cb6604dd507cb273cae61d31744732d51ec9",
+      "identical": true
+    }
+  ],
+  "scope_limit": "One six-point synthetic diagnostic input demonstrates measurement-tool numerical error on the exact candidate. It is not codec quality evidence and provides no acceptance result.",
+  "integrity": [
+    {
+      "raw": {
+        "file": "compile.raw.txt",
+        "bytes": 1176,
+        "sha256": "17733cd31c21862343d2a2bbb8755859c2e8c7d4bfb486aaed746b53b338c0b0"
+      },
+      "gzip": {
+        "file": "compile.raw.txt.gz",
+        "bytes": 421,
+        "sha256": "76d3ceb2ab5be81bf158fa1a8afc84f755170716d5e5002975f3daf70b84e2b9"
+      }
+    },
+    {
+      "raw": {
+        "file": "decimal.raw.txt",
+        "bytes": 83,
+        "sha256": "4a20d116d206452f8eb8e7d948f5375d25937425bf7d25aa05643344455edecd"
+      },
+      "gzip": {
+        "file": "decimal.raw.txt.gz",
+        "bytes": 77,
+        "sha256": "292d365fbb78cdd1eb92211ae3ee6e62d260ada5c4efbd0f773dd2c9034c5a44"
+      }
+    },
+    {
+      "raw": {
+        "file": "host-toolchain.raw.txt",
+        "bytes": 332,
+        "sha256": "98e2a01ac250b4c5a9a62d23b9f61aecd50170bcc263aee426f16b44b49b3cfb"
+      },
+      "gzip": {
+        "file": "host-toolchain.raw.txt.gz",
+        "bytes": 249,
+        "sha256": "f9012d9b4593a42082e37b2d12f336d2eddd2ffa9a1d55a7bfd5c1885158eebb"
+      }
+    },
+    {
+      "raw": {
+        "file": "run.raw.txt",
+        "bytes": 16,
+        "sha256": "479c3cc1f5152b0923f4c6ce231e48a2a979b80b0b1401fae2e4e50bbb48499f"
+      },
+      "gzip": {
+        "file": "run.raw.txt.gz",
+        "bytes": 36,
+        "sha256": "4a90b6af7c61cf5810f7e22704f44ec063ff3348351fcaa7c1b607a1bfd55827"
+      }
+    },
+    {
+      "raw": {
+        "file": "source-identity.raw.txt",
+        "bytes": 719,
+        "sha256": "8e96f727f68b201b3a546933407cfbea2820841be2be783c206c7f6136f9939d"
+      },
+      "gzip": {
+        "file": "source-identity.raw.txt.gz",
+        "bytes": 368,
+        "sha256": "2471af443ca081bc0c62a8791391ef83405493b9ae55bca7a3a8fd64d216fc91"
+      }
+    },
+    {
+      "raw": {
+        "file": "spatial-source-blobs.raw.txt",
+        "bytes": 355,
+        "sha256": "cc71a91f8ddd9fd7c4b8419eb882dfa4292ed201e4a6dfee35a916e8ecc1c6a2"
+      },
+      "gzip": {
+        "file": "spatial-source-blobs.raw.txt.gz",
+        "bytes": 165,
+        "sha256": "b015d6603177662c3f8b95f7901455c12466a88221e0d276f73811844756dcab"
+      }
+    },
+    {
+      "raw": {
+        "file": "spatial-writer.raw.txt",
+        "bytes": 705,
+        "sha256": "ccab284a04a8c180c8dfd0254cdf2190f32c56fe1a7cde1688c4a68037a3bc44"
+      },
+      "gzip": {
+        "file": "spatial-writer.raw.txt.gz",
+        "bytes": 350,
+        "sha256": "01e506fb116cb605768346df3f271d888d24f5f877fe788f179f01c5b1fa3712"
+      }
+    }
+  ],
+  "source_and_tool_files": [
+    {
+      "file": "diagnostic.rs",
+      "bytes": 622,
+      "sha256": "7e9e0ab6d707d55d5b4b59eb6ba88e6032d170c209576d99a09150ff8402798b"
+    },
+    {
+      "file": "decimal_oracle.py",
+      "bytes": 1155,
+      "sha256": "3b7ed738228560e3a5a3302b65ff9c702626a81eb23b2ff0d0e9810e35d3bb83"
+    },
+    {
+      "file": "command.txt",
+      "bytes": 210,
+      "sha256": "f04fe6b16bb4afaa6efcb4849991cebff22a6e6ce782c02487dfdb525a7e3a2d"
+    },
+    {
+      "file": "compile.exit.txt",
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    {
+      "file": "run.exit.txt",
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    {
+      "file": "decimal.exit.txt",
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    {
+      "file": "spatial-source-blobs.raw.txt",
+      "bytes": 355,
+      "sha256": "cc71a91f8ddd9fd7c4b8419eb882dfa4292ed201e4a6dfee35a916e8ecc1c6a2"
+    },
+    {
+      "file": "spatial-writer.raw.txt",
+      "bytes": 705,
+      "sha256": "ccab284a04a8c180c8dfd0254cdf2190f32c56fe1a7cde1688c4a68037a3bc44"
+    }
+  ],
+  "spatial_summary_writer": {
+    "historical_campaign_source_revision": "3dd780ccfb04358dcbb1dab0bfe766041e071cd1",
+    "second_reported_bug_source_revision": "1a84f60a",
+    "current_candidate_revision": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+    "source_blob_sha1": "9a09cb6604dd507cb273cae61d31744732d51ec9",
+    "campaign_source_equal_to_candidate": true,
+    "observed_current_writer": {
+      "file": "scripts/qualify-spatial-svc.sh",
+      "row_writer_lines": "1013-1016",
+      "header_lines": "1036-1037",
+      "behavior": "The row formatter writes the comma-separated bitrate grid as an unquoted CSV field, while the header assigns that entire value to one bitrates_kbps column."
+    },
+    "preserved_campaign_evidence": "wrk_docs/evidence/2026-10-15-release-readiness/spatial-quality/audit.md",
+    "scope_limit": "The source comparison proves the malformed writer remains in the exact candidate. The 240-row malformed output is historical campaign evidence from a dirty worktree; no current-source spatial quality campaign was run because the BD-rate oracle is invalid.",
+    "integrity": [
+      {
+        "raw": {
+          "file": "spatial-source-blobs.raw.txt",
+          "bytes": 355,
+          "sha256": "cc71a91f8ddd9fd7c4b8419eb882dfa4292ed201e4a6dfee35a916e8ecc1c6a2"
+        },
+        "gzip": {
+          "file": "spatial-source-blobs.raw.txt.gz",
+          "bytes": 165,
+          "sha256": "b015d6603177662c3f8b95f7901455c12466a88221e0d276f73811844756dcab"
+        }
+      },
+      {
+        "raw": {
+          "file": "spatial-writer.raw.txt",
+          "bytes": 705,
+          "sha256": "ccab284a04a8c180c8dfd0254cdf2190f32c56fe1a7cde1688c4a68037a3bc44"
+        },
+        "gzip": {
+          "file": "spatial-writer.raw.txt.gz",
+          "bytes": 350,
+          "sha256": "01e506fb116cb605768346df3f271d888d24f5f877fe788f179f01c5b1fa3712"
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,10 @@
+$ sed -n 1013,1017p;1036,1039p scripts/qualify-spatial-svc.sh
+        printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,SL%s,%s,%s,%s\n' \
+            "$curve_id" "$mode" "$target" "$clip" "$cpu" "$layers" "$threads" \
+            "$tiles" "$grid" "$layer" "$value" "$gate" "$status" \
+            >> "$quality_dir/quality-summary.csv"
+        [ "$status" = "PASS" ] ||
+    printf 'curve_id,mode,target,clip,cpu_used,spatial_layers,threads,tile_columns,bitrates_kbps,layer,bdrate_pct,gate_pct,status\n' \
+        > "$quality_dir/quality-summary.csv"
+    printf 'curve_id,stream,kind,bytes,stream_sha256,rvp9dec_sha256,vpxdec_sha256,decoders_identical,ffmpeg_decode,status\n' \
+        > "$quality_dir/cross-decoder.csv"

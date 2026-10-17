@@ -1,0 +1,3 @@
+deltic timeout 180 rustc --edition=2024 -O <registered-scratch>/diagnostic.rs -o <registered-scratch>/diagnostic
+deltic timeout 30 <registered-scratch>/diagnostic
+python3 <registered-scratch>/decimal_oracle.py

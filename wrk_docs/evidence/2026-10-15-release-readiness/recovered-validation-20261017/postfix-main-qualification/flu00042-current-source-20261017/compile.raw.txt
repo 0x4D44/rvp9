@@ -1,0 +1,28 @@
+warning: function `curve_samples_are_valid` is never used
+   --> /Users/md/worktrees/rvp9/20261017-TSK-HUM-requalify-post-fix-candidate/crates/rvp9-harness/src/bdrate.rs:106:4
+    |
+106 | fn curve_samples_are_valid(curve: &[(f64, f64)]) -> bool {
+    |    ^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `psnr_at_bitrate` is never used
+   --> /Users/md/worktrees/rvp9/20261017-TSK-HUM-requalify-post-fix-candidate/crates/rvp9-harness/src/bdrate.rs:138:8
+    |
+138 | pub fn psnr_at_bitrate(curve: &[(f64, f64)], target_kbps: f64) -> Option<f64> {
+    |        ^^^^^^^^^^^^^^^
+
+warning: struct `PsnrDeltaSummary` is never constructed
+   --> /Users/md/worktrees/rvp9/20261017-TSK-HUM-requalify-post-fix-candidate/crates/rvp9-harness/src/bdrate.rs:188:12
+    |
+188 | pub struct PsnrDeltaSummary {
+    |            ^^^^^^^^^^^^^^^^
+
+warning: function `psnr_delta_summary` is never used
+   --> /Users/md/worktrees/rvp9/20261017-TSK-HUM-requalify-post-fix-candidate/crates/rvp9-harness/src/bdrate.rs:221:8
+    |
+221 | pub fn psnr_delta_summary(
+    |        ^^^^^^^^^^^^^^^^^^
+
+warning: 4 warnings emitted
+
