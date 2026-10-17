@@ -131,6 +131,34 @@
         "bytes": 56761,
         "sha256": "81418c4e3139756d1ebcb54cfd71c3a0d6ec19766c89adc001ece638ee8227f8"
       }
+    },
+    {
+      "command": "deltic timeout 1800 cargo test -p rvp9-encoder --lib --locked --offline",
+      "exit_code": 0,
+      "tests": {
+        "passed": 824,
+        "failed": 0,
+        "ignored": 1
+      },
+      "log": {
+        "path": "encoder-library-tests.raw.txt",
+        "bytes": 66316,
+        "sha256": "2ece1321a8034901a4952ef1543515d4300dca8a71c752796f706e98798bc274"
+      }
+    },
+    {
+      "command": "deltic timeout 1800 cargo test -p rvp9-cli --locked --offline",
+      "exit_code": 0,
+      "tests": {
+        "passed": 188,
+        "failed": 0,
+        "ignored": 0
+      },
+      "log": {
+        "path": "cli-crate-tests.raw.txt",
+        "bytes": 12222,
+        "sha256": "0c91a4ca04281eb983451f3a2ba467d81abf61988a40a8b5079a83afff21aedf"
+      }
     }
   ],
   "limits": [
@@ -138,5 +166,5 @@
     "No full workspace test, official conformance matrix, encoder32/reverse24 campaign, BD-rate, throughput, latency, sanitizer, Miri, fuzz or package archive-test gate was run on this source.",
     "No source files were modified."
   ],
-  "stored_log_note": "Hashes cover the committed text files. Four Cargo outputs had one trailing blank separator removed for git diff --check; no output content lines changed."
+  "stored_log_note": "Hashes cover the committed text files. Six Cargo test outputs had one trailing blank separator removed for git diff --check; no output content lines changed."
 }
