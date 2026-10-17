@@ -1,0 +1,15 @@
+runner_revision=44140dbb0e0834af296fac124d3a9293e486b53b
+candidate_product_source=fb5c0c917038db6c640b3dbc7c2b84b567233333
+branch=task/20261017-VER-HUM-verify-fourth-missing-corpus-preflight
+runner_worktree=/Users/md/worktrees/rvp9/20261017-VER-HUM-verify-fourth-missing-corpus-preflight
+tracked_tree_clean_at_script_start=true
+qualification_script=scripts/qualify-production-encoder.sh
+qualification_script_blob=6033130b5a01a27653b4996f4d6e47448645d948
+qualification_script_sha256=3ec28783f5b3e52ba554888a5e53f2dd51e7d21645137d0cbbd0b32965f1953c
+libvpx_source=/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/third_party/libvpx
+libvpx_revision=12f3a2ac603e8f10742105519e0cd03c3b8f71dd
+libvpx_clean=true
+host_os=macOS 26.6.2 / Darwin 25.6.0
+host_architecture=arm64
+bash=GNU bash 3.2.57(1)-release (arm64-apple-darwin25)
+deltic=6.15.0

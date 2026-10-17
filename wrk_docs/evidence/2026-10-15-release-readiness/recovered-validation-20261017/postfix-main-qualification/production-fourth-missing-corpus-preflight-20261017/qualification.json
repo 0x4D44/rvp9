@@ -1,0 +1,150 @@
+{
+  "schema": "rvp9.production-fourth-missing-corpus-preflight.v1",
+  "recorded_at_utc": "2026-10-17T22:06:46Z",
+  "candidate": {
+    "integrated_revision": "44140dbb0e0834af296fac124d3a9293e486b53b",
+    "product_source": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+    "branch": "task/20261017-VER-HUM-verify-fourth-missing-corpus-preflight",
+    "tracked_tree_clean_at_invocation": true,
+    "runner_worktree": "/Users/md/worktrees/rvp9/20261017-VER-HUM-verify-fourth-missing-corpus-preflight"
+  },
+  "host": {
+    "os": "macOS 26.6.2 / Darwin 25.6.0",
+    "architecture": "arm64",
+    "bash": "GNU bash 3.2.57(1)-release (arm64-apple-darwin25)",
+    "deltic": "6.15.0"
+  },
+  "script": {
+    "path": "scripts/qualify-production-encoder.sh",
+    "git_blob": "6033130b5a01a27653b4996f4d6e47448645d948",
+    "sha256": "3ec28783f5b3e52ba554888a5e53f2dd51e7d21645137d0cbbd0b32965f1953c"
+  },
+  "libvpx": {
+    "source_path": "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/third_party/libvpx",
+    "revision": "12f3a2ac603e8f10742105519e0cd03c3b8f71dd",
+    "clean": true
+  },
+  "setup": {
+    "phase": "quality",
+    "registered_scratch_id": "fourth-input-b7f73956",
+    "registered_scratch_path": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/fourth-input-b7f73956",
+    "source_directory": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/fourth-input-b7f73956/source",
+    "input_order": [
+      "in_to_tree_420_720p50.y4m",
+      "ducks_take_off_420_720p50.y4m",
+      "old_town_cross_420_720p50.y4m",
+      "foreman_cif.y4m"
+    ],
+    "present_inputs": [
+      {
+        "name": "in_to_tree_420_720p50.y4m",
+        "symlink_target": "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/tests/corpus/in_to_tree_420_720p50.y4m",
+        "bytes": 691203035,
+        "sha256": "81166517a3054c789923535b5da23fbbb9bbd7fd4c28dac83918ac351e121e74",
+        "header": "YUV4MPEG2 W1280 H720 F50:1 Ip A1:1"
+      },
+      {
+        "name": "ducks_take_off_420_720p50.y4m",
+        "symlink_target": "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/tests/corpus/ducks_take_off_420_720p50.y4m",
+        "bytes": 691203035,
+        "sha256": "0e09aa923ce72e2f6d1c978c3c1cc8dd9588d2ede819081f040213e361970efc",
+        "header": "YUV4MPEG2 W1280 H720 F50:1 Ip A1:1"
+      },
+      {
+        "name": "old_town_cross_420_720p50.y4m",
+        "symlink_target": "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/tests/corpus/old_town_cross_420_720p50.y4m",
+        "bytes": 691203035,
+        "sha256": "0fbc2ec0c552ad693528b2e49409c7449880b9230055a7696346473d1aaf4123",
+        "header": "YUV4MPEG2 W1280 H720 F50:1 Ip A1:1"
+      }
+    ],
+    "intentionally_missing_input": {
+      "position": 4,
+      "name": "foreman_cif.y4m",
+      "source_key": "source_foreman_cif"
+    },
+    "not_reached_inputs": [],
+    "pgo_manifest": {
+      "file": "pgo-manifest.raw.txt",
+      "bytes": 266,
+      "sha256": "f7512601cb3b7ae4cf579b307f27d29d6b8c3386b1130919d9b5e28a60da2b13",
+      "recorded_source_commit": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+      "optimized_binary": "probe stub; no codec binary",
+      "optimized_binary_sha256": "c747ee516fddcdf6384d532edf55f9bf6fcb1ace9d8ab8f4ca9172100b5562e6"
+    },
+    "probe_tools": {
+      "source": "committed production-missing-corpus-preflight/probe-stub.sh and config fixtures",
+      "stub_sha256": "c747ee516fddcdf6384d532edf55f9bf6fcb1ace9d8ab8f4ca9172100b5562e6",
+      "behavior": "Returns required capability flags for --help; refuses any other invocation with exit 97.",
+      "config_header_sha256": "e4ba06d60e46451085e6511746444bd77d547300cbf6e58bbb28eabb7c9a7b43",
+      "config_make_sha256": "c26df3245ea3a4afb8156a8e60894fa768a0be3a5a5f95474d45aebc5e2bbda5"
+    }
+  },
+  "command_file": "command.txt",
+  "result": {
+    "exit_status": 1,
+    "expected": "fail closed on missing fourth required input before creating work output",
+    "observed_error": "missing or empty corpus input (source_foreman_cif)",
+    "work_directory_created": false,
+    "stub_invocations": 13,
+    "help_invocations": 13,
+    "non_help_invocations": 0,
+    "help_invocation_counts": {
+      "bdrate": 2,
+      "bdrate-svc": 2,
+      "encode-headtohead": 5,
+      "realtime": 4
+    },
+    "codec_or_quality_work_started": false,
+    "control_flow_note": "The source loop checks presence, canonical SHA-256 and exact Y4M header in order; reaching the missing fourth input means the first three checks passed."
+  },
+  "limits": [
+    "This exercises the real script preflight with help-only stubs; no encoder, decoder, BD-rate, FFmpeg, codec or quality child ran.",
+    "Missing-input positions 1, 2, 3 and 4 now have evidence; wrong-header rejection remains untested.",
+    "This is a fail-closed preflight result, not a production quality measurement."
+  ],
+  "evidence": {
+    "run_raw": {
+      "path": "run.raw.txt",
+      "bytes": 218,
+      "sha256": "8482bb70eca126950e1d9d234cf0464b6f7266dd085c3903fb889b1e08a3488f"
+    },
+    "exit_record": {
+      "path": "exit-code.txt",
+      "bytes": 2,
+      "sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865",
+      "exit_status": 1
+    },
+    "stub_invocations": {
+      "path": "stub-invocations.raw.txt",
+      "bytes": 253,
+      "sha256": "a6801915dbfd75067c03a573267c09a1a4b032859d40242ad2cbe9835e072dc2"
+    },
+    "command": {
+      "path": "command.txt",
+      "bytes": 2064,
+      "sha256": "2e05d9e2aa6defffde1f23acb4fc3e002065e958597d89100e00fb078c948ae6"
+    },
+    "source_inventory": {
+      "path": "source-inventory.txt",
+      "bytes": 1498,
+      "sha256": "15f498ce68b35057a54871e11fca2aed2e7bcc0ae09c4b684313855df4bef32d"
+    },
+    "candidate_identity": {
+      "path": "candidate-identity.txt",
+      "bytes": 868,
+      "sha256": "76dd1629ad3b571149a02952f36c0e621250d7ab26874715fd75e06e5bdef6ca"
+    },
+    "pgo_manifest": {
+      "path": "pgo-manifest.raw.txt",
+      "bytes": 266,
+      "sha256": "f7512601cb3b7ae4cf579b307f27d29d6b8c3386b1130919d9b5e28a60da2b13"
+    },
+    "workdir_state": {
+      "path": "workdir-state.raw.txt",
+      "bytes": 214,
+      "sha256": "31decc750be15cf9a7428db1885a879610679e9e828743b0bccdc2e845824ce1"
+    },
+    "input_identity_reference": "../macos-current-source-pgo-corpus.json"
+  }
+}

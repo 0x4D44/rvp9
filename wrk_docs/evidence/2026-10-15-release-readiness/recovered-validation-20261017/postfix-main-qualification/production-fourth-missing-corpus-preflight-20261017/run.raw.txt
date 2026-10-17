@@ -1,0 +1,2 @@
+missing or empty corpus input (source_foreman_cif): /private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/fourth-input-b7f73956/source/foreman_cif.y4m
+run scripts/fetch-corpus.sh or pass --source-dir

@@ -1,0 +1,3 @@
+check=after qualification script returned exit status 1
+requested_work_directory=/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/fourth-input-b7f73956/work
+observed_work_directory_exists=no
