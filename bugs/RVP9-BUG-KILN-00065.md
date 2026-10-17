@@ -1,24 +1,24 @@
 # RVP9-BUG-KILN-00065 — rvp9enc one-pass creates and header-writes the output file before encoding starts
 
-- **State:** Open
+- **State:** Fixed
 - **Priority:** Should
 - **Severity:** Medium
 - **Area:** cli/rvp9enc
 - **Raised:** 2026-07-31T10:22:26Z
-- **Owner:** deltic:manual
-- **Owner role:** fix
-- **Owner run:** fix-20261017T051448Z-17f1d8d7
-- **Owner host:** flux
-- **Owner branch:** task/bug-RVP9-BUG-KILN-00065-run-fix-20261017T051448Z-17f1d8d7
-- **Owner base:** 9ad633dbd2a3aba112e6d790562d1287d0bd8242
+- **Owner:** -
+- **Owner role:** -
+- **Owner run:** -
+- **Owner host:** -
+- **Owner branch:** -
+- **Owner base:** -
 - **Owner fingerprint:** -
-- **Owner since:** 2026-10-17T05:14:48Z
-- **Owner until:** 2026-10-17T09:14:48Z
+- **Owner since:** -
+- **Owner until:** -
 - **Verify retry after:** -
 - **Held branch:** -
 - **Legacy fixed run:** -
 - **Attempts:** fix=0, doubt=0, indeterminate=0
-- **State history:** Open (2026-07-31T10:22:26Z, raised via `deltic bugs new` model=claude-opus-5@high) → Blocked (2026-10-16, Codex; Arthur decision required on one-pass output failure contract) → Open (2026-10-17T05:14:39Z, deltic:manual host=flux verdict=reopen)
+- **State history:** Open (2026-07-31T10:22:26Z, raised via `deltic bugs new` model=claude-opus-5@high) → Blocked (2026-10-16, Codex; Arthur decision required on one-pass output failure contract) → Open (2026-10-17T05:14:39Z, deltic:manual host=flux verdict=reopen) → Fixed (2026-10-17T05:24:45Z, deltic:auto role=fix run=fix-20261017T051448Z-17f1d8d7 branch=task/bug-RVP9-BUG-KILN-00065-run-fix-20261017T051448Z-17f1d8d7 code=b74adaddb222c644d7532ff970b4da5f3133f5ac gate=manual)
 
 ## Observation
 
