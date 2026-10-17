@@ -1,0 +1,52 @@
+{
+  "observed_utc": "2026-10-17T05:42:35.228650+00:00",
+  "source": "df2b1589161acbaf73c1878007aee09a92bea8c3",
+  "cwd": "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence",
+  "checks": [
+    {
+      "label": "cargo-fuzz-version",
+      "command": [
+        "deltic",
+        "timeout",
+        "30",
+        "cargo",
+        "fuzz",
+        "--version"
+      ],
+      "exit": 101,
+      "log": "cargo-fuzz-version.raw.txt",
+      "sha256": "f2570e066e3939ed210f5a1ba34fc1305c79bb76e87aba353cc495365a15ac23"
+    },
+    {
+      "label": "nightly-version",
+      "command": [
+        "deltic",
+        "timeout",
+        "30",
+        "rustc",
+        "+nightly",
+        "-vV"
+      ],
+      "exit": 0,
+      "log": "nightly-version.raw.txt",
+      "sha256": "c657c7ff3fe665c5345b363826a643c14694f8aa1f865c88d9ced98f3675711f"
+    },
+    {
+      "label": "undefined-sanitizer-option",
+      "command": [
+        "deltic",
+        "timeout",
+        "30",
+        "rustc",
+        "+nightly",
+        "-Zsanitizer=undefined",
+        "--print",
+        "target-libdir"
+      ],
+      "exit": 1,
+      "log": "undefined-sanitizer-option.raw.txt",
+      "sha256": "2dfd7da49b9b2183748afb3d6637549c783a2d60ac8c4a22c0c9ab56c2a369a0"
+    }
+  ],
+  "limitation": "Tool prerequisite probes only; zero fuzz targets or useful fuzz iterations executed."
+}

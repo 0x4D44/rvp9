@@ -1,0 +1,7 @@
+{
+  "integrity_entries_verified": 12,
+  "terminal_exit": 0,
+  "independent_individual_warning_count": 2,
+  "raw_sha256": "881875f409d8430cc916a8f8a49aef09d8088080dd56aa278a3e1fd5e70ba6da",
+  "limitation": "Generated docs and plain lint success do not establish warning-free docs/lints or API compatibility."
+}

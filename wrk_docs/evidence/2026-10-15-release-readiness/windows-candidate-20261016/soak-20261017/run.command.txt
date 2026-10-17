@@ -1,0 +1,1 @@
+deltic timeout 180 soak.exe --duration-secs 60 --frames-per-iter 8 --report-every-secs 10 --cross-decode --vpxdec D:/worktrees/rvp9-2/20261015-TSK-HUM-final-release-native-correctness-qualifi/build/libvpx/vpxdec.exe

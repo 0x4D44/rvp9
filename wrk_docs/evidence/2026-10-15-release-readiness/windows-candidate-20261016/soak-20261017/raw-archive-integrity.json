@@ -1,0 +1,146 @@
+{
+  "archive": "raw-soak-evidence.tar.gz",
+  "sha256": "eea00f026f8dd1bd250a0552d4c4ff6d53ad4feeef0c276aac207e59a354db23",
+  "entries": [
+    {
+      "file": "build-identity.log",
+      "bytes": 993,
+      "sha256": "3fd62afaf67090f829a35198b96636f8c595eef170f96fa3a30d2dd973808557"
+    },
+    {
+      "file": "build-launch.ps1",
+      "bytes": 485,
+      "sha256": "01ab5fc5d061181249fe41f85f7262d1e6b81d22f2755834dc82f706be1e69fa"
+    },
+    {
+      "file": "build-launch.py",
+      "bytes": 516,
+      "sha256": "0df3bfb69812fade5c773973aa033cc870083a9d4d9e4f8aa32fec18ff37afa4"
+    },
+    {
+      "file": "build-launch.raw.txt",
+      "bytes": 482,
+      "sha256": "8de953a43f33a77194a3fdde4baf59c59ca7bdeadeab44fdd964becea2271c79"
+    },
+    {
+      "file": "build-runner.pid",
+      "bytes": 7,
+      "sha256": "fad4d97a502edab1bdfec3d4282591cece8d3748dcced1054168c0e0188c884d"
+    },
+    {
+      "file": "build.exit.txt",
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    {
+      "file": "build.log",
+      "bytes": 212,
+      "sha256": "2cb401d84545301653be7b9a866fff67877735b2f430983493bb76f21450fccd"
+    },
+    {
+      "file": "build.sh",
+      "bytes": 1183,
+      "sha256": "435060d4223df60854c062315dd80ea68e10518c9891cf0189faa00ac5ee8d87"
+    },
+    {
+      "file": "native-memory-handles.csv",
+      "bytes": 3914,
+      "sha256": "90d7a88c5091331361226351ae7e9ad01c65a68063d232cb0e20264c2e46ca7c"
+    },
+    {
+      "file": "register.py",
+      "bytes": 957,
+      "sha256": "bf1ec390c6f79267d8b4758ba74e22fa8b1fd57a118aeacf30030816b7771ae0"
+    },
+    {
+      "file": "register.raw.txt",
+      "bytes": 258,
+      "sha256": "de8767a3ee9ff0bde23e267cdff0b3b29fc7bb57f66dbbc3c48819e3bc8f66df"
+    },
+    {
+      "file": "register.sh",
+      "bytes": 259,
+      "sha256": "ab9afb1cdb376f752381ec220e1769e8070c93bc8c715b463a1956bf20910d3e"
+    },
+    {
+      "file": "root.json",
+      "bytes": 329,
+      "sha256": "9543b117ba70ea6ba3d3b064db697c55cda226142a6448422e2b41f58be907e9"
+    },
+    {
+      "file": "run-identity.log",
+      "bytes": 924,
+      "sha256": "be0e355be1633fcb2a57f6b065129efc4bdc25e7201a3c0b0233c6812e159b17"
+    },
+    {
+      "file": "run-launch.ps1",
+      "bytes": 1432,
+      "sha256": "27530aca1e09bb333929dee8b634dae02fbd39c5ffa7b579013560e3bd9d4cfe"
+    },
+    {
+      "file": "run-launch.py",
+      "bytes": 512,
+      "sha256": "7e38128d9d28afb5f78c00241f2c10f47e0373732678b186388ad99a89033c49"
+    },
+    {
+      "file": "run-launch.raw.txt",
+      "bytes": 514,
+      "sha256": "f79d3ebb9ee60a3669b8c0d0ffbe12927a52351456f283c57a00cad9dc71b265"
+    },
+    {
+      "file": "run-runner.pid",
+      "bytes": 7,
+      "sha256": "f9e43b139633309c169176f98e471aa186320a313d00b8794fcaddbd2e188cae"
+    },
+    {
+      "file": "run.command.txt",
+      "bytes": 216,
+      "sha256": "4c329a0968bf666f47f5aa1c95c5d31b9c1a4a769dd63808923ec24eb6feb5ee"
+    },
+    {
+      "file": "run.exit.txt",
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    {
+      "file": "run.log",
+      "bytes": 1395,
+      "sha256": "b7ff662dbdd0b20eaa8c6d2b3535e48e48beeae003667ca51009db352e87cae2"
+    },
+    {
+      "file": "run.sh",
+      "bytes": 2194,
+      "sha256": "1675b4e04713fbe14ab00ab19ba8429dde38a82e22ff5c00fa10c241ee2fd992"
+    },
+    {
+      "file": "soak-binary.sha256",
+      "bytes": 176,
+      "sha256": "09208263a5ae271b76b6d45385fd079137d611dfa3a07f12aad8f38b99c6477e"
+    },
+    {
+      "file": "soak.pid",
+      "bytes": 7,
+      "sha256": "5002e3fb8f4abe9ec61694aeee087dedd6edc34882d35b0b06c4ca16df756089"
+    },
+    {
+      "file": "terminal-inventory.ps1",
+      "bytes": 957,
+      "sha256": "e785e45bbb4a116e288db63c0730dc977132f033cedcc120b3a2a09d9872f5f4"
+    },
+    {
+      "file": "terminal-inventory.raw.txt",
+      "bytes": 1966,
+      "sha256": "95d0f778ab9bec7eec61ae5569580595d20d29e0de24656a10391ad37ed39e6d"
+    },
+    {
+      "file": "terminal-summary.json",
+      "bytes": 3191,
+      "sha256": "044cbf4405db8a3e39513236fda523854fb19636904bab285879d67575a6bf50"
+    },
+    {
+      "file": "terminal.log",
+      "bytes": 849,
+      "sha256": "3c8c195cb3c91b720f6a9eebbb4ed2fc2bfc7be0707b2a800492ca3e26741334"
+    }
+  ]
+}

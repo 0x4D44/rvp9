@@ -1,0 +1,189 @@
+{
+  "archive": "raw-asan-evidence.tar.gz",
+  "archive_sha256": "13920581e93a1cac80f687bef2008b07fc070222afa2058a21c9549d298dc874",
+  "files": [
+    {
+      "file": "alternate-runtime-search.ps1",
+      "raw_bytes": 1451,
+      "raw_sha256": "fc43585dd83785ed9b2608f9878a2b63ba27600ecccd77b9b00b1aa9ce9546d7",
+      "review_bytes": 1451,
+      "review_sha256": "fc43585dd83785ed9b2608f9878a2b63ba27600ecccd77b9b00b1aa9ce9546d7"
+    },
+    {
+      "file": "alternate-runtime-search.raw.txt",
+      "raw_bytes": 41255,
+      "raw_sha256": "3ec3471e4e3f86c9a2c86ee9424b6f643de59d86433c8b73e43fe376b49943ba",
+      "review_bytes": 40740,
+      "review_sha256": "11616f2250dcb59bf48a98383660ca965bc63ad419d304e75cb3049c52a6cfb6"
+    },
+    {
+      "file": "artifacts.txt",
+      "raw_bytes": 356,
+      "raw_sha256": "6a52b6105a9b1e1e572db0ad6a59d97f0dae9f365af1243d024b74c3c5dd15ef",
+      "review_bytes": 356,
+      "review_sha256": "6a52b6105a9b1e1e572db0ad6a59d97f0dae9f365af1243d024b74c3c5dd15ef"
+    },
+    {
+      "file": "compile.command.txt",
+      "raw_bytes": 198,
+      "raw_sha256": "9f383406424b50e0f5aea0cd24bdbe2630be83f7753f2f1346e1a12d00d0c248",
+      "review_bytes": 198,
+      "review_sha256": "9f383406424b50e0f5aea0cd24bdbe2630be83f7753f2f1346e1a12d00d0c248"
+    },
+    {
+      "file": "compile.exit.txt",
+      "raw_bytes": 2,
+      "raw_sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+      "review_bytes": 2,
+      "review_sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    {
+      "file": "compile.log",
+      "raw_bytes": 0,
+      "raw_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "review_bytes": 0,
+      "review_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "file": "import-export-analysis.json",
+      "raw_bytes": 19655,
+      "raw_sha256": "ba81e1827be1179448d0e796af1c13e399fd584f38bc3e5fdc4cd332bdb38484",
+      "review_bytes": 19655,
+      "review_sha256": "ba81e1827be1179448d0e796af1c13e399fd584f38bc3e5fdc4cd332bdb38484"
+    },
+    {
+      "file": "launch.ps1",
+      "raw_bytes": 481,
+      "raw_sha256": "afb447475ce92afbdcabcac3353843518f3889c1fc955b311a4db397649443fe",
+      "review_bytes": 481,
+      "review_sha256": "afb447475ce92afbdcabcac3353843518f3889c1fc955b311a4db397649443fe"
+    },
+    {
+      "file": "launch.py",
+      "raw_bytes": 520,
+      "raw_sha256": "5a36e25b0910b4082f5fdf95dd9b1e5f24f4dd602bf8e46e870991831d28efa8",
+      "review_bytes": 520,
+      "review_sha256": "5a36e25b0910b4082f5fdf95dd9b1e5f24f4dd602bf8e46e870991831d28efa8"
+    },
+    {
+      "file": "launch.raw.txt",
+      "raw_bytes": 509,
+      "raw_sha256": "b48fbb6334b35a83a579de6e6d36a7d18cde04f7bbacee1afd0636c4f466692a",
+      "review_bytes": 507,
+      "review_sha256": "a407c764c68e833e74292b512b42a06e8c3a255f6243d0b7e52c17604c774af1"
+    },
+    {
+      "file": "loader-inspection.ps1",
+      "raw_bytes": 1178,
+      "raw_sha256": "e97177ac129a99ae9039641637bbd663574cbba149c73c346404ea236a884e3c",
+      "review_bytes": 1178,
+      "review_sha256": "e97177ac129a99ae9039641637bbd663574cbba149c73c346404ea236a884e3c"
+    },
+    {
+      "file": "loader-inspection.raw.txt",
+      "raw_bytes": 66799,
+      "raw_sha256": "8ce9879c5d9615441305c94f09078416c8dd921d1f92d49f5a5704a26292ef91",
+      "review_bytes": 65775,
+      "review_sha256": "092abeb86c90fc218a724c3afb4a26ca407462d0edbc2b2f56df69997c5034bb"
+    },
+    {
+      "file": "native-runner.pid",
+      "raw_bytes": 7,
+      "raw_sha256": "f996169c585e4f52d480d66538493a82fabce2ff69e3c154212188da3be5593d",
+      "review_bytes": 6,
+      "review_sha256": "6654c169d22528e71acb4f6ca9d68de50cd563ee6dcb93e69f942ceb4a35a95f"
+    },
+    {
+      "file": "preflight.rs",
+      "raw_bytes": 567,
+      "raw_sha256": "e53a93738597dda2923f91d3d91945b9cd690c23766b93d7723963d82e350fa4",
+      "review_bytes": 567,
+      "review_sha256": "e53a93738597dda2923f91d3d91945b9cd690c23766b93d7723963d82e350fa4"
+    },
+    {
+      "file": "preflight.sh",
+      "raw_bytes": 1746,
+      "raw_sha256": "f4a66e04fc486288152317a081ce0738e8b546f6115cc973fba3b65520b29ea9",
+      "review_bytes": 1746,
+      "review_sha256": "f4a66e04fc486288152317a081ce0738e8b546f6115cc973fba3b65520b29ea9"
+    },
+    {
+      "file": "prepare-preflight.py",
+      "raw_bytes": 3342,
+      "raw_sha256": "254c788282d780b29d52554cdc8f34b249a118321f1751de795a38f8aa56a696",
+      "review_bytes": 3342,
+      "review_sha256": "254c788282d780b29d52554cdc8f34b249a118321f1751de795a38f8aa56a696"
+    },
+    {
+      "file": "register.py",
+      "raw_bytes": 957,
+      "raw_sha256": "92d3b7c5eb8754130b2dfe0eb3fa655d3c60b43ae96a4ddd06e6eff7305b4a32",
+      "review_bytes": 957,
+      "review_sha256": "92d3b7c5eb8754130b2dfe0eb3fa655d3c60b43ae96a4ddd06e6eff7305b4a32"
+    },
+    {
+      "file": "register.raw.txt",
+      "raw_bytes": 258,
+      "raw_sha256": "e0816fdd6e3b7774d971d46615df9015efe7ce22104861b49b32fa22406d0ce1",
+      "review_bytes": 258,
+      "review_sha256": "e0816fdd6e3b7774d971d46615df9015efe7ce22104861b49b32fa22406d0ce1"
+    },
+    {
+      "file": "register.sh",
+      "raw_bytes": 259,
+      "raw_sha256": "5c5c711d6ed5d5202dc8b9fc2132602d494de10baae40dc55ea0c7ae10373f9e",
+      "review_bytes": 259,
+      "review_sha256": "5c5c711d6ed5d5202dc8b9fc2132602d494de10baae40dc55ea0c7ae10373f9e"
+    },
+    {
+      "file": "root.json",
+      "raw_bytes": 329,
+      "raw_sha256": "42647c12ae317fd28bd208fde5db4fc0ec217395b54bae902f21c37faaca5e00",
+      "review_bytes": 329,
+      "review_sha256": "42647c12ae317fd28bd208fde5db4fc0ec217395b54bae902f21c37faaca5e00"
+    },
+    {
+      "file": "run.exit.txt",
+      "raw_bytes": 4,
+      "raw_sha256": "743c7850cccfba5e53a9002663ec1ddd1079315a98bdbfdde10e6044f56abefe",
+      "review_bytes": 4,
+      "review_sha256": "743c7850cccfba5e53a9002663ec1ddd1079315a98bdbfdde10e6044f56abefe"
+    },
+    {
+      "file": "run.log",
+      "raw_bytes": 0,
+      "raw_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "review_bytes": 0,
+      "review_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "file": "terminal-runtime-state.ps1",
+      "raw_bytes": 1010,
+      "raw_sha256": "bbe9addcff085f79110fde552b854aa3189b13093fc6cc295ffef248129ffd43",
+      "review_bytes": 1010,
+      "review_sha256": "bbe9addcff085f79110fde552b854aa3189b13093fc6cc295ffef248129ffd43"
+    },
+    {
+      "file": "terminal-runtime-state.raw.txt",
+      "raw_bytes": 966,
+      "raw_sha256": "50a8461da09d3f7f9b4238d5239ae3631dec6e2b8377457eac81a5fe68287193",
+      "review_bytes": 942,
+      "review_sha256": "6485795544752ab1c6ae3621538a8eed64af289d2ed9e159021d158fe4574631"
+    },
+    {
+      "file": "terminal-summary.json",
+      "raw_bytes": 2093,
+      "raw_sha256": "7ff7c98222df900ee407dea28a6f5fe85805296779f6eb584a62f8272b355247",
+      "review_bytes": 2093,
+      "review_sha256": "7ff7c98222df900ee407dea28a6f5fe85805296779f6eb584a62f8272b355247"
+    },
+    {
+      "file": "toolchain.log",
+      "raw_bytes": 886,
+      "raw_sha256": "9329d48b08c0845640f7ca9e362a98f1d5e53543a70c36074f645342a4d30b26",
+      "review_bytes": 886,
+      "review_sha256": "9329d48b08c0845640f7ca9e362a98f1d5e53543a70c36074f645342a4d30b26"
+    }
+  ],
+  "note": "Lead verified every archived original before visible text normalization. Runtime and worker hashes refer to archived originals; visible copies normalize native encoding and whitespace."
+}

@@ -1,0 +1,19 @@
+{
+  "archive_originals_verified": 28,
+  "native_download_hashes_verified": 12,
+  "iterations": 413,
+  "decoded_frames": 3304,
+  "errors": 0,
+  "reported_rounded_bitrate_kbps": 545.0,
+  "nonzero_encoded_bytes": "Supported by positive rounded bitrate and unchanged soak.rs print_report formula from total_encoded_bytes; exact byte total not emitted.",
+  "native_samples_verified": 59,
+  "working_set_bytes_min_max": [
+    10719232,
+    13848576
+  ],
+  "handles_min_max": [
+    97,
+    136
+  ],
+  "limit": "Generic CPU0/lag0 smoke and vpxdec exit checks only. No production-mode, cross-decoder pixel-match, long-duration leak or perf-drift claim."
+}

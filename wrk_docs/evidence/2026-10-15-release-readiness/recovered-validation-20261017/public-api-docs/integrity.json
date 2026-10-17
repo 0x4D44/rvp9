@@ -1,0 +1,55 @@
+{
+  "finalized_utc": "2026-10-17T05:42:49.549661+00:00",
+  "files": [
+    {
+      "file": "README.md",
+      "bytes": 1155,
+      "sha256": "2eda91594e99c4ad16e64085041dc0650416bf6f59051874621e5b117e10bb85"
+    },
+    {
+      "file": "cargo-config.raw.txt",
+      "bytes": 1043,
+      "sha256": "4141e82d7d5085ebd8014a9392882dd023b524788d82986980f28b9ce92282d7"
+    },
+    {
+      "file": "cargo-doc.raw.txt",
+      "bytes": 55547,
+      "sha256": "b4a53e52e27baf5232ffdb1382f99b1005c61c7c83156fba1f52a8752dafb9b3"
+    },
+    {
+      "file": "cargo.raw.txt",
+      "bytes": 36,
+      "sha256": "c10ec31b8c6e6e2693cf65fc1971b41edbc3da1ae7db6f9f3f36c4823f8dcab5"
+    },
+    {
+      "file": "run.json",
+      "bytes": 2521,
+      "sha256": "27e1155872d77b3df1ea3f3df4f8b31d3fcf15c18564e55678b798dab239fbd2"
+    },
+    {
+      "file": "rustc.raw.txt",
+      "bytes": 192,
+      "sha256": "e61cba8ded8c60e985f759f74a221c4773649021477d00b44c7af411eb8c218c"
+    },
+    {
+      "file": "shipped-diff.raw.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "file": "source.raw.txt",
+      "bytes": 41,
+      "sha256": "473c5047bee4d7b0f07b9c3d88be84553aaa16cc2887e7dbdd43362deced4c1a"
+    },
+    {
+      "file": "status.raw.txt",
+      "bytes": 189,
+      "sha256": "21ae8ff59a2a6d1cf05d8c1b4292e55c09231f6fa503fe9ca6d5124899516fe0"
+    },
+    {
+      "file": "warnings.json",
+      "bytes": 37707,
+      "sha256": "9c6e8fc8f908a92dda581ffaaf4691e97c55e478c93a937a629ee95a8bd6c69b"
+    }
+  ]
+}

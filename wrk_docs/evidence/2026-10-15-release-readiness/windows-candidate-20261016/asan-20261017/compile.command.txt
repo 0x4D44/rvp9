@@ -1,0 +1,1 @@
+rustc +nightly --target x86_64-pc-windows-msvc -Zsanitizer=address -Copt-level=1 -Cdebuginfo=1 -Ctarget-cpu=native -Clinker=rust-lld --crate-name native_asan_preflight preflight.rs -o preflight.exe

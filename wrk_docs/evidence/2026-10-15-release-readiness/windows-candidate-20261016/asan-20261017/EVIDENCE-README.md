@@ -1,0 +1,5 @@
+# Windows native ASan prerequisite
+
+The installed nightly compiled a valid-input native ASan probe successfully. Execution exited 127 with empty output; no native sanitizer execution or crate tests succeeded. Installed dumpbin output shows 77 required runtime imports and 475 exports from the configured installed runtime DLL; six required C++ allocation/deallocation symbols are absent. A bounded targeted search found no alternate installed runtime candidate. The original loader status and actually loaded DLL path were not captured, so neither is asserted.
+
+The raw archive retains 26 original files byte for byte. Visible text copies normalize native encodings and whitespace; text-evidence-integrity.json maps original and review hashes. Runtime and native/download hashes refer to archived originals. The lead independently verified every archived original, eight native/download hashes and the full import/export set difference from raw dumpbin output. No new runtime was installed, and no codec sanitizer suite was attempted after this prerequisite failed.

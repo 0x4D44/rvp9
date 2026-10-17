@@ -1,0 +1,15 @@
+{
+  "archive_originals_verified": 26,
+  "import_symbols_reparsed_from_raw": 77,
+  "runtime_exports_reparsed_from_raw": 475,
+  "missing_imports": [
+    "??2@YAPEAX_K@Z",
+    "??2@YAPEAX_KAEBUnothrow_t@std@@@Z",
+    "??3@YAXPEAX@Z",
+    "??3@YAXPEAX_K@Z",
+    "??_U@YAPEAX_K@Z",
+    "??_V@YAXPEAX@Z"
+  ],
+  "limitation": "Configured installed runtime lacks these six exports. Native execution failed127; actual loaded DLL path and original NTSTATUS were not captured. No successful ASan runtime or crate test coverage.",
+  "native_download_hashes_verified": 8
+}

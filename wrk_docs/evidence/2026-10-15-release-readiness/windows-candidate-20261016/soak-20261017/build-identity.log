@@ -1,0 +1,21 @@
+2026-10-17T05:44:08Z
+474dfd99a673df85f750136f7552ac156b7a24e9
+rustc 1.95.0 (59807616e 2026-04-14)
+binary: rustc
+commit-hash: 59807616e1fa2540724bfbac14d7976d7e4a3860
+commit-date: 2026-04-14
+host: x86_64-pc-windows-msvc
+release: 1.95.0
+LLVM version: 22.1.2
+cargo 1.95.0 (f2d3ce0bd 2026-03-21)
+release: 1.95.0
+commit-hash: f2d3ce0bd7f24a49f8f72d9000448f8838c4e850
+commit-date: 2026-03-21
+host: x86_64-pc-windows-msvc
+libgit2: 1.9.2 (sys:0.20.4 vendored)
+libcurl: 8.15.0-DEV (sys:0.4.83+curl-8.15.0 vendored ssl:Schannel)
+os: Windows 10.0.26200 (Windows 11 Professional) [64-bit]
+CARGO_TARGET_DIR=C:/Users/marti/AppData/Local/Temp/deltic-scratch/rvp9-native-replay474-9dee6be6/cargo-target CARGO_BUILD_JOBS=4
+f6e7ea013263d473afb2fea196ec81d76eb5f9828a8e46527f4fbcb8b0f0a5c9 *crates/rvp9-bench/src/bin/soak.rs
+1f97f9f067bd5c02bf8bfed3ad5b3b478c41b3dbe52e599430140f12c4475c24 *crates/rvp9-harness/src/y4m.rs
+91eb8ab65f62f1d63d750878b20b6b75a2882f75814e623ab54acf22b9ad02b6 *build/libvpx/vpxdec.exe

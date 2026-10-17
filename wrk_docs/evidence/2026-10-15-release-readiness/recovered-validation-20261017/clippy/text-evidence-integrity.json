@@ -1,0 +1,78 @@
+{
+  "archive": "raw-clippy-evidence.tar.gz",
+  "archive_sha256": "89b157eee182d0a1bc4f9bbad75f61e0e81fa4631f8e5217c4c9eb22bd0ba48d",
+  "files": [
+    {
+      "file": "README.md",
+      "raw_sha256": "9f9d38bde8268800c0ef04383e8ce61a99266d8a1bfe75a08aa730250d209704",
+      "review_sha256": "f9480eec56d14a54e3ced8c42c105b7f512e45ce634d5b55360c92172f3c6c4d",
+      "review_change": "Whitespace normalization plus explanatory raw-archive/integrity paragraph appended by lead."
+    },
+    {
+      "file": "cargo-config.raw.txt",
+      "raw_sha256": "4141e82d7d5085ebd8014a9392882dd023b524788d82986980f28b9ce92282d7",
+      "review_sha256": "4141e82d7d5085ebd8014a9392882dd023b524788d82986980f28b9ce92282d7"
+    },
+    {
+      "file": "cargo.raw.txt",
+      "raw_sha256": "c10ec31b8c6e6e2693cf65fc1971b41edbc3da1ae7db6f9f3f36c4823f8dcab5",
+      "review_sha256": "c10ec31b8c6e6e2693cf65fc1971b41edbc3da1ae7db6f9f3f36c4823f8dcab5"
+    },
+    {
+      "file": "clippy.raw.txt",
+      "raw_sha256": "881875f409d8430cc916a8f8a49aef09d8088080dd56aa278a3e1fd5e70ba6da",
+      "review_sha256": "881875f409d8430cc916a8f8a49aef09d8088080dd56aa278a3e1fd5e70ba6da"
+    },
+    {
+      "file": "integrity.json",
+      "raw_sha256": "b5ee98640fe6706bd00e3db7edaba59be1da11ecbf48af5b576df45695460610",
+      "review_sha256": "b5ee98640fe6706bd00e3db7edaba59be1da11ecbf48af5b576df45695460610"
+    },
+    {
+      "file": "lead-verification.json",
+      "raw_sha256": "8b86f78f2e9844d23ed6b30afe3e64f1e06c3c587f89a0e858463295f166470e",
+      "review_sha256": "8b86f78f2e9844d23ed6b30afe3e64f1e06c3c587f89a0e858463295f166470e"
+    },
+    {
+      "file": "postrun-code-diff.raw.txt",
+      "raw_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "review_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "file": "postrun-fuzz-readme-diff.raw.txt",
+      "raw_sha256": "ab6fa0095f15367956074b90c42d789b33782513779682cb13a7af8405e80aa2",
+      "review_sha256": "b199337138434a63e6ec6f4cb32da11ef8d32f039b95a4cf92796ff61de79f50"
+    },
+    {
+      "file": "run.json",
+      "raw_sha256": "fb6ea7a852f9aad6425bd6c8ede76c425c4c1234f0348c01fcf4ae271b410474",
+      "review_sha256": "fb6ea7a852f9aad6425bd6c8ede76c425c4c1234f0348c01fcf4ae271b410474"
+    },
+    {
+      "file": "rustc.raw.txt",
+      "raw_sha256": "e61cba8ded8c60e985f759f74a221c4773649021477d00b44c7af411eb8c218c",
+      "review_sha256": "e61cba8ded8c60e985f759f74a221c4773649021477d00b44c7af411eb8c218c"
+    },
+    {
+      "file": "shipped-diff.raw.txt",
+      "raw_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "review_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "file": "source.raw.txt",
+      "raw_sha256": "473c5047bee4d7b0f07b9c3d88be84553aaa16cc2887e7dbdd43362deced4c1a",
+      "review_sha256": "473c5047bee4d7b0f07b9c3d88be84553aaa16cc2887e7dbdd43362deced4c1a"
+    },
+    {
+      "file": "status.raw.txt",
+      "raw_sha256": "65ee0f922d7cdae639d07da778176d6fd16bed1a29028d4623f27e0814b5b7b2",
+      "review_sha256": "65ee0f922d7cdae639d07da778176d6fd16bed1a29028d4623f27e0814b5b7b2"
+    },
+    {
+      "file": "warnings.json",
+      "raw_sha256": "ac1bd1cd59e539bc7d1989d0604a897aeac1477a13b55161fbfc7fb2ff4d0c3a",
+      "review_sha256": "ac1bd1cd59e539bc7d1989d0604a897aeac1477a13b55161fbfc7fb2ff4d0c3a"
+    }
+  ],
+  "note": "All original files verified before review normalization. integrity.json and runtime hashes refer to archived originals. The captured git diff has space-only context lines; review normalization removes trailing whitespace while the archive preserves the exact diff."
+}

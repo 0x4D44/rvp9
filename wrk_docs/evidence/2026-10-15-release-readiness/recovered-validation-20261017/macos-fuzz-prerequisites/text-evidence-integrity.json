@@ -1,0 +1,27 @@
+{
+  "archive": "raw-prerequisite-evidence.tar.gz",
+  "archive_sha256": "8e36e56475e9cd01b57f42474fabc72caf6457b497fc71cf29c9fb4564268e50",
+  "files": [
+    {
+      "file": "cargo-fuzz-version.raw.txt",
+      "raw_sha256": "f2570e066e3939ed210f5a1ba34fc1305c79bb76e87aba353cc495365a15ac23",
+      "review_sha256": "f2570e066e3939ed210f5a1ba34fc1305c79bb76e87aba353cc495365a15ac23"
+    },
+    {
+      "file": "nightly-version.raw.txt",
+      "raw_sha256": "c657c7ff3fe665c5345b363826a643c14694f8aa1f865c88d9ced98f3675711f",
+      "review_sha256": "c657c7ff3fe665c5345b363826a643c14694f8aa1f865c88d9ced98f3675711f"
+    },
+    {
+      "file": "results.json",
+      "raw_sha256": "afc776543f1e2a6ea6c4e25f412a440570a48dd747bc219289951c7c8fe2f92c",
+      "review_sha256": "afc776543f1e2a6ea6c4e25f412a440570a48dd747bc219289951c7c8fe2f92c"
+    },
+    {
+      "file": "undefined-sanitizer-option.raw.txt",
+      "raw_sha256": "2dfd7da49b9b2183748afb3d6637549c783a2d60ac8c4a22c0c9ab56c2a369a0",
+      "review_sha256": "5c1a388c5b9979b1bd5a3fdbe6ad07c4955a0cca31c1d1b5728947d06f428d8f"
+    }
+  ],
+  "note": "results.json diagnostic hashes refer to archived original raw bytes; visible copies normalize trailing whitespace and blank EOF."
+}

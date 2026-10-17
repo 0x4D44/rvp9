@@ -1,0 +1,6 @@
+error: no such command: `fuzz`
+
+help: a command with a similar name exists: `fix`
+
+help: view all installed commands with `cargo --list`
+help: find a package to install `fuzz` with `cargo search cargo-fuzz`

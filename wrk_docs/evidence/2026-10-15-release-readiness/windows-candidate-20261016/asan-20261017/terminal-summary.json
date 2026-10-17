@@ -1,0 +1,65 @@
+{
+  "status": "blocked_installed_native_asan_runtime_incompatible",
+  "source": "474dfd99a673df85f750136f7552ac156b7a24e9",
+  "compile_exit": 0,
+  "run_exit": 127,
+  "successful_native_asan_executions": 0,
+  "asan_crate_tests_run": 0,
+  "imports": 77,
+  "exports": 475,
+  "missing_imports": [
+    "??2@YAPEAX_K@Z",
+    "??2@YAPEAX_KAEBUnothrow_t@std@@@Z",
+    "??3@YAXPEAX@Z",
+    "??3@YAXPEAX_K@Z",
+    "??_U@YAPEAX_K@Z",
+    "??_V@YAXPEAX@Z"
+  ],
+  "alternate_runtime_candidates": 1,
+  "alternate_search": "alternate-runtime-search.raw.txt",
+  "environment_script": "preflight.sh",
+  "limits": "Configured installed DLL lacks six required exports; actual loaded DLL path and original NTSTATUS were not captured by deltic timeout. Failure was exit127 with empty stderr.",
+  "terminal_state": "terminal-runtime-state.raw.txt; root PID37376 absent and no relevant active processes observed",
+  "remote_download_checks": [
+    {
+      "file": "preflight.rs",
+      "bytes": 567,
+      "sha256": "e53a93738597dda2923f91d3d91945b9cd690c23766b93d7723963d82e350fa4"
+    },
+    {
+      "file": "toolchain.log",
+      "bytes": 886,
+      "sha256": "9329d48b08c0845640f7ca9e362a98f1d5e53543a70c36074f645342a4d30b26"
+    },
+    {
+      "file": "compile.command.txt",
+      "bytes": 198,
+      "sha256": "9f383406424b50e0f5aea0cd24bdbe2630be83f7753f2f1346e1a12d00d0c248"
+    },
+    {
+      "file": "compile.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "file": "compile.exit.txt",
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    {
+      "file": "run.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "file": "run.exit.txt",
+      "bytes": 4,
+      "sha256": "743c7850cccfba5e53a9002663ec1ddd1079315a98bdbfdde10e6044f56abefe"
+    },
+    {
+      "file": "artifacts.txt",
+      "bytes": 356,
+      "sha256": "6a52b6105a9b1e1e572db0ad6a59d97f0dae9f365af1243d024b74c3c5dd15ef"
+    }
+  ]
+}

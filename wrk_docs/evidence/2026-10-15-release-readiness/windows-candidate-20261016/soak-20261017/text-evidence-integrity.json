@@ -1,0 +1,203 @@
+{
+  "archive": "raw-soak-evidence.tar.gz",
+  "archive_sha256": "eea00f026f8dd1bd250a0552d4c4ff6d53ad4feeef0c276aac207e59a354db23",
+  "files": [
+    {
+      "file": "build-identity.log",
+      "raw_bytes": 993,
+      "raw_sha256": "3fd62afaf67090f829a35198b96636f8c595eef170f96fa3a30d2dd973808557",
+      "review_bytes": 993,
+      "review_sha256": "3fd62afaf67090f829a35198b96636f8c595eef170f96fa3a30d2dd973808557"
+    },
+    {
+      "file": "build-launch.ps1",
+      "raw_bytes": 485,
+      "raw_sha256": "01ab5fc5d061181249fe41f85f7262d1e6b81d22f2755834dc82f706be1e69fa",
+      "review_bytes": 485,
+      "review_sha256": "01ab5fc5d061181249fe41f85f7262d1e6b81d22f2755834dc82f706be1e69fa"
+    },
+    {
+      "file": "build-launch.py",
+      "raw_bytes": 516,
+      "raw_sha256": "0df3bfb69812fade5c773973aa033cc870083a9d4d9e4f8aa32fec18ff37afa4",
+      "review_bytes": 516,
+      "review_sha256": "0df3bfb69812fade5c773973aa033cc870083a9d4d9e4f8aa32fec18ff37afa4"
+    },
+    {
+      "file": "build-launch.raw.txt",
+      "raw_bytes": 482,
+      "raw_sha256": "8de953a43f33a77194a3fdde4baf59c59ca7bdeadeab44fdd964becea2271c79",
+      "review_bytes": 480,
+      "review_sha256": "3c49ca402fb1c048190344e7066eee3300e282662babdbff0734c6331989cc4a"
+    },
+    {
+      "file": "build-runner.pid",
+      "raw_bytes": 7,
+      "raw_sha256": "fad4d97a502edab1bdfec3d4282591cece8d3748dcced1054168c0e0188c884d",
+      "review_bytes": 6,
+      "review_sha256": "be1b65c61229c926caee9b8eee8b17c68f3d1ecd376cb920c5b902378028dccc"
+    },
+    {
+      "file": "build.exit.txt",
+      "raw_bytes": 2,
+      "raw_sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+      "review_bytes": 2,
+      "review_sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    {
+      "file": "build.log",
+      "raw_bytes": 212,
+      "raw_sha256": "2cb401d84545301653be7b9a866fff67877735b2f430983493bb76f21450fccd",
+      "review_bytes": 212,
+      "review_sha256": "2cb401d84545301653be7b9a866fff67877735b2f430983493bb76f21450fccd"
+    },
+    {
+      "file": "build.sh",
+      "raw_bytes": 1183,
+      "raw_sha256": "435060d4223df60854c062315dd80ea68e10518c9891cf0189faa00ac5ee8d87",
+      "review_bytes": 1183,
+      "review_sha256": "435060d4223df60854c062315dd80ea68e10518c9891cf0189faa00ac5ee8d87"
+    },
+    {
+      "file": "native-memory-handles.csv",
+      "raw_bytes": 3914,
+      "raw_sha256": "90d7a88c5091331361226351ae7e9ad01c65a68063d232cb0e20264c2e46ca7c",
+      "review_bytes": 3851,
+      "review_sha256": "283eb3a491928e396252a036afdb0f499416f47702c2cec044c116d2a48d446c"
+    },
+    {
+      "file": "register.py",
+      "raw_bytes": 957,
+      "raw_sha256": "bf1ec390c6f79267d8b4758ba74e22fa8b1fd57a118aeacf30030816b7771ae0",
+      "review_bytes": 957,
+      "review_sha256": "bf1ec390c6f79267d8b4758ba74e22fa8b1fd57a118aeacf30030816b7771ae0"
+    },
+    {
+      "file": "register.raw.txt",
+      "raw_bytes": 258,
+      "raw_sha256": "de8767a3ee9ff0bde23e267cdff0b3b29fc7bb57f66dbbc3c48819e3bc8f66df",
+      "review_bytes": 258,
+      "review_sha256": "de8767a3ee9ff0bde23e267cdff0b3b29fc7bb57f66dbbc3c48819e3bc8f66df"
+    },
+    {
+      "file": "register.sh",
+      "raw_bytes": 259,
+      "raw_sha256": "ab9afb1cdb376f752381ec220e1769e8070c93bc8c715b463a1956bf20910d3e",
+      "review_bytes": 259,
+      "review_sha256": "ab9afb1cdb376f752381ec220e1769e8070c93bc8c715b463a1956bf20910d3e"
+    },
+    {
+      "file": "root.json",
+      "raw_bytes": 329,
+      "raw_sha256": "9543b117ba70ea6ba3d3b064db697c55cda226142a6448422e2b41f58be907e9",
+      "review_bytes": 329,
+      "review_sha256": "9543b117ba70ea6ba3d3b064db697c55cda226142a6448422e2b41f58be907e9"
+    },
+    {
+      "file": "run-identity.log",
+      "raw_bytes": 924,
+      "raw_sha256": "be0e355be1633fcb2a57f6b065129efc4bdc25e7201a3c0b0233c6812e159b17",
+      "review_bytes": 924,
+      "review_sha256": "be0e355be1633fcb2a57f6b065129efc4bdc25e7201a3c0b0233c6812e159b17"
+    },
+    {
+      "file": "run-launch.ps1",
+      "raw_bytes": 1432,
+      "raw_sha256": "27530aca1e09bb333929dee8b634dae02fbd39c5ffa7b579013560e3bd9d4cfe",
+      "review_bytes": 1432,
+      "review_sha256": "27530aca1e09bb333929dee8b634dae02fbd39c5ffa7b579013560e3bd9d4cfe"
+    },
+    {
+      "file": "run-launch.py",
+      "raw_bytes": 512,
+      "raw_sha256": "7e38128d9d28afb5f78c00241f2c10f47e0373732678b186388ad99a89033c49",
+      "review_bytes": 512,
+      "review_sha256": "7e38128d9d28afb5f78c00241f2c10f47e0373732678b186388ad99a89033c49"
+    },
+    {
+      "file": "run-launch.raw.txt",
+      "raw_bytes": 514,
+      "raw_sha256": "f79d3ebb9ee60a3669b8c0d0ffbe12927a52351456f283c57a00cad9dc71b265",
+      "review_bytes": 511,
+      "review_sha256": "bbbf3f55f9268f97c81d6297ff7d45e6e5b1bf881549e6ad6d028496a9f46d64"
+    },
+    {
+      "file": "run-runner.pid",
+      "raw_bytes": 7,
+      "raw_sha256": "f9e43b139633309c169176f98e471aa186320a313d00b8794fcaddbd2e188cae",
+      "review_bytes": 6,
+      "review_sha256": "1ffe1efe37d5962f7819fa404d58e6a726a6238fb9804ba7443d53d7e4e1c9fb"
+    },
+    {
+      "file": "run.command.txt",
+      "raw_bytes": 216,
+      "raw_sha256": "4c329a0968bf666f47f5aa1c95c5d31b9c1a4a769dd63808923ec24eb6feb5ee",
+      "review_bytes": 216,
+      "review_sha256": "4c329a0968bf666f47f5aa1c95c5d31b9c1a4a769dd63808923ec24eb6feb5ee"
+    },
+    {
+      "file": "run.exit.txt",
+      "raw_bytes": 2,
+      "raw_sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+      "review_bytes": 2,
+      "review_sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    {
+      "file": "run.log",
+      "raw_bytes": 1395,
+      "raw_sha256": "b7ff662dbdd0b20eaa8c6d2b3535e48e48beeae003667ca51009db352e87cae2",
+      "review_bytes": 1395,
+      "review_sha256": "b7ff662dbdd0b20eaa8c6d2b3535e48e48beeae003667ca51009db352e87cae2"
+    },
+    {
+      "file": "run.sh",
+      "raw_bytes": 2194,
+      "raw_sha256": "1675b4e04713fbe14ab00ab19ba8429dde38a82e22ff5c00fa10c241ee2fd992",
+      "review_bytes": 2194,
+      "review_sha256": "1675b4e04713fbe14ab00ab19ba8429dde38a82e22ff5c00fa10c241ee2fd992"
+    },
+    {
+      "file": "soak-binary.sha256",
+      "raw_bytes": 176,
+      "raw_sha256": "09208263a5ae271b76b6d45385fd079137d611dfa3a07f12aad8f38b99c6477e",
+      "review_bytes": 176,
+      "review_sha256": "09208263a5ae271b76b6d45385fd079137d611dfa3a07f12aad8f38b99c6477e"
+    },
+    {
+      "file": "soak.pid",
+      "raw_bytes": 7,
+      "raw_sha256": "5002e3fb8f4abe9ec61694aeee087dedd6edc34882d35b0b06c4ca16df756089",
+      "review_bytes": 6,
+      "review_sha256": "e9d074c508deb1421df1665e9797465fdbfdab2d33e4aa9e4ac7a60a4633285d"
+    },
+    {
+      "file": "terminal-inventory.ps1",
+      "raw_bytes": 957,
+      "raw_sha256": "e785e45bbb4a116e288db63c0730dc977132f033cedcc120b3a2a09d9872f5f4",
+      "review_bytes": 957,
+      "review_sha256": "e785e45bbb4a116e288db63c0730dc977132f033cedcc120b3a2a09d9872f5f4"
+    },
+    {
+      "file": "terminal-inventory.raw.txt",
+      "raw_bytes": 1966,
+      "raw_sha256": "95d0f778ab9bec7eec61ae5569580595d20d29e0de24656a10391ad37ed39e6d",
+      "review_bytes": 1947,
+      "review_sha256": "a37491c9eed99c5633fa90cbbe0033a7c21a5c091a9809a6d607e87c34d0f521"
+    },
+    {
+      "file": "terminal-summary.json",
+      "raw_bytes": 3191,
+      "raw_sha256": "044cbf4405db8a3e39513236fda523854fb19636904bab285879d67575a6bf50",
+      "review_bytes": 3191,
+      "review_sha256": "044cbf4405db8a3e39513236fda523854fb19636904bab285879d67575a6bf50"
+    },
+    {
+      "file": "terminal.log",
+      "raw_bytes": 849,
+      "raw_sha256": "3c8c195cb3c91b720f6a9eebbb4ed2fc2bfc7be0707b2a800492ca3e26741334",
+      "review_bytes": 849,
+      "review_sha256": "3c8c195cb3c91b720f6a9eebbb4ed2fc2bfc7be0707b2a800492ca3e26741334"
+    }
+  ],
+  "note": "All original archive files independently verified before review normalization. Runtime/native/download hashes refer to archived originals; visible copies normalize native encoding and whitespace."
+}

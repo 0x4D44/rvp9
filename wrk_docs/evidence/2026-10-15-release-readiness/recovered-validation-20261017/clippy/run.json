@@ -1,0 +1,109 @@
+{
+  "started_utc": "2026-10-17T05:41:50.241774+00:00",
+  "cwd": "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence",
+  "env": {
+    "CARGO_TARGET_DIR": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-package-refresh-cc744364/doc-target",
+    "CARGO_BUILD_JOBS": "2",
+    "TMPDIR": "/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-package-refresh-cc744364",
+    "RUSTFLAGS": null,
+    "CARGO_ENCODED_RUSTFLAGS": null,
+    "RUSTDOCFLAGS": null
+  },
+  "identity": {
+    "source": {
+      "command": [
+        "git",
+        "rev-parse",
+        "HEAD"
+      ],
+      "exit": 0,
+      "log": "source.raw.txt",
+      "sha256": "473c5047bee4d7b0f07b9c3d88be84553aaa16cc2887e7dbdd43362deced4c1a"
+    },
+    "status": {
+      "command": [
+        "git",
+        "status",
+        "--short"
+      ],
+      "exit": 0,
+      "log": "status.raw.txt",
+      "sha256": "65ee0f922d7cdae639d07da778176d6fd16bed1a29028d4623f27e0814b5b7b2"
+    },
+    "shipped-diff": {
+      "command": [
+        "git",
+        "diff",
+        "ebca64b0",
+        "HEAD",
+        "--",
+        "crates",
+        "scripts",
+        "Cargo.toml",
+        "Cargo.lock"
+      ],
+      "exit": 0,
+      "log": "shipped-diff.raw.txt",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "rustc": {
+      "command": [
+        "rustc",
+        "-vV"
+      ],
+      "exit": 0,
+      "log": "rustc.raw.txt",
+      "sha256": "e61cba8ded8c60e985f759f74a221c4773649021477d00b44c7af411eb8c218c"
+    },
+    "cargo": {
+      "command": [
+        "cargo",
+        "--version"
+      ],
+      "exit": 0,
+      "log": "cargo.raw.txt",
+      "sha256": "c10ec31b8c6e6e2693cf65fc1971b41edbc3da1ae7db6f9f3f36c4823f8dcab5"
+    },
+    "cargo-config": {
+      "command": [
+        "git",
+        "show",
+        "HEAD:.cargo/config.toml"
+      ],
+      "exit": 0,
+      "log": "cargo-config.raw.txt",
+      "sha256": "4141e82d7d5085ebd8014a9392882dd023b524788d82986980f28b9ce92282d7"
+    }
+  },
+  "command": [
+    "deltic",
+    "timeout",
+    "1800",
+    "cargo",
+    "clippy",
+    "--workspace",
+    "--all-targets",
+    "--offline",
+    "--locked"
+  ],
+  "exit": 0,
+  "finished_utc": "2026-10-17T05:43:33.771854+00:00",
+  "log": "clippy.raw.txt",
+  "log_sha256": "881875f409d8430cc916a8f8a49aef09d8088080dd56aa278a3e1fd5e70ba6da",
+  "postrun_code_equivalence": {
+    "command": [
+      "git",
+      "diff",
+      "ebca64b0",
+      "--",
+      "crates",
+      "scripts",
+      "Cargo.toml",
+      "Cargo.lock",
+      ":(exclude)crates/rvp9-fuzz/README.md"
+    ],
+    "exit": 0,
+    "empty": true,
+    "exception": "Concurrent lead-authorized crates/rvp9-fuzz/README.md reproduction documentation correction, recorded separately; excluded from Rust input equivalence."
+  }
+}

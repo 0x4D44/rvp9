@@ -1,0 +1,1 @@
+error: incorrect value `undefined` for unstable option `sanitizer` - comma separated list of sanitizers: `address`, `cfi`, `dataflow`, `hwaddress`, `kcfi`, `kernel-address`, `kernel-hwaddress`, `leak`, `memory`, `memtag`, `safestack`, `shadow-call-stack`, `thread`, or 'realtime' was expected

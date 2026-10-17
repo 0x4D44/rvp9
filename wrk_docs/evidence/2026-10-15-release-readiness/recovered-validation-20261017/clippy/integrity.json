@@ -1,0 +1,65 @@
+{
+  "finalized_utc": "2026-10-17T05:43:56.074496+00:00",
+  "files": [
+    {
+      "file": "README.md",
+      "bytes": 1044,
+      "sha256": "9f9d38bde8268800c0ef04383e8ce61a99266d8a1bfe75a08aa730250d209704"
+    },
+    {
+      "file": "cargo-config.raw.txt",
+      "bytes": 1043,
+      "sha256": "4141e82d7d5085ebd8014a9392882dd023b524788d82986980f28b9ce92282d7"
+    },
+    {
+      "file": "cargo.raw.txt",
+      "bytes": 36,
+      "sha256": "c10ec31b8c6e6e2693cf65fc1971b41edbc3da1ae7db6f9f3f36c4823f8dcab5"
+    },
+    {
+      "file": "clippy.raw.txt",
+      "bytes": 5598,
+      "sha256": "881875f409d8430cc916a8f8a49aef09d8088080dd56aa278a3e1fd5e70ba6da"
+    },
+    {
+      "file": "postrun-code-diff.raw.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "file": "postrun-fuzz-readme-diff.raw.txt",
+      "bytes": 4197,
+      "sha256": "ab6fa0095f15367956074b90c42d789b33782513779682cb13a7af8405e80aa2"
+    },
+    {
+      "file": "run.json",
+      "bytes": 2847,
+      "sha256": "fb6ea7a852f9aad6425bd6c8ede76c425c4c1234f0348c01fcf4ae271b410474"
+    },
+    {
+      "file": "rustc.raw.txt",
+      "bytes": 192,
+      "sha256": "e61cba8ded8c60e985f759f74a221c4773649021477d00b44c7af411eb8c218c"
+    },
+    {
+      "file": "shipped-diff.raw.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "file": "source.raw.txt",
+      "bytes": 41,
+      "sha256": "473c5047bee4d7b0f07b9c3d88be84553aaa16cc2887e7dbdd43362deced4c1a"
+    },
+    {
+      "file": "status.raw.txt",
+      "bytes": 277,
+      "sha256": "65ee0f922d7cdae639d07da778176d6fd16bed1a29028d4623f27e0814b5b7b2"
+    },
+    {
+      "file": "warnings.json",
+      "bytes": 1329,
+      "sha256": "ac1bd1cd59e539bc7d1989d0604a897aeac1477a13b55161fbfc7fb2ff4d0c3a"
+    }
+  ]
+}

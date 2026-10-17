@@ -1,0 +1,44 @@
+{
+  "raw_sha256": "881875f409d8430cc916a8f8a49aef09d8088080dd56aa278a3e1fd5e70ba6da",
+  "individual_warning_count": 2,
+  "crate_counts": {
+    "rvp9-encoder": 1,
+    "rvp9-harness": 1
+  },
+  "category_counts": {
+    "clippy::match_like_matches_macro": 1,
+    "clippy::items_after_test_module": 1
+  },
+  "cargo_summaries": [
+    {
+      "crate": "rvp9-encoder",
+      "target": "lib test",
+      "count": 1,
+      "raw_line": 103
+    },
+    {
+      "crate": "rvp9-harness",
+      "target": "bin \"dump_frame_diff\" test",
+      "count": 1,
+      "raw_line": 117
+    }
+  ],
+  "counts_match_cargo_summaries": true,
+  "warnings": [
+    {
+      "raw_line": 54,
+      "crate": "rvp9-encoder",
+      "category": "clippy::match_like_matches_macro",
+      "message": "match expression looks like `matches!` macro",
+      "location": "crates/rvp9-encoder/src/spatial_encoder.rs:1082:41"
+    },
+    {
+      "raw_line": 104,
+      "crate": "rvp9-harness",
+      "category": "clippy::items_after_test_module",
+      "message": "items after a test module",
+      "location": "crates/rvp9-harness/src/bin/dump_frame_diff.rs:387:1"
+    }
+  ],
+  "method": "Split original output at warning headers; exclude generated-N summaries; source-arrow attribution and rust-clippy diagnostic URL category. Assert per-crate counts match Cargo summaries."
+}
