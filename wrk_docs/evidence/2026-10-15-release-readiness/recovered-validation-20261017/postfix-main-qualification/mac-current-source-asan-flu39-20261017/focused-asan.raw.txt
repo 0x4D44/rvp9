@@ -1,0 +1,179 @@
+   Compiling compiler_builtins v0.1.160 (/Users/md/.rustup/toolchains/nightly-aarch64-apple-darwin/lib/rustlib/src/rust/library/compiler-builtins/compiler-builtins)
+   Compiling core v0.0.0 (/Users/md/.rustup/toolchains/nightly-aarch64-apple-darwin/lib/rustlib/src/rust/library/core)
+   Compiling rustc-std-workspace-core v1.99.0 (/Users/md/.rustup/toolchains/nightly-aarch64-apple-darwin/lib/rustlib/src/rust/library/rustc-std-workspace-core)
+   Compiling alloc v0.0.0 (/Users/md/.rustup/toolchains/nightly-aarch64-apple-darwin/lib/rustlib/src/rust/library/alloc)
+   Compiling rustc-std-workspace-alloc v1.99.0 (/Users/md/.rustup/toolchains/nightly-aarch64-apple-darwin/lib/rustlib/src/rust/library/rustc-std-workspace-alloc)
+   Compiling libc v0.2.185
+   Compiling object v0.37.3
+   Compiling unwind v0.0.0 (/Users/md/.rustup/toolchains/nightly-aarch64-apple-darwin/lib/rustlib/src/rust/library/unwind)
+   Compiling gimli v0.32.3
+   Compiling memchr v2.7.6
+   Compiling adler2 v2.0.1
+   Compiling std v0.0.0 (/Users/md/.rustup/toolchains/nightly-aarch64-apple-darwin/lib/rustlib/src/rust/library/std)
+   Compiling miniz_oxide v0.8.9
+   Compiling addr2line v0.25.1
+   Compiling panic_unwind v0.0.0 (/Users/md/.rustup/toolchains/nightly-aarch64-apple-darwin/lib/rustlib/src/rust/library/panic_unwind)
+   Compiling std_detect v0.1.5 (/Users/md/.rustup/toolchains/nightly-aarch64-apple-darwin/lib/rustlib/src/rust/library/std_detect)
+   Compiling hashbrown v0.17.1
+   Compiling rustc-demangle v0.1.27
+   Compiling cfg-if v1.0.4
+   Compiling panic_abort v0.0.0 (/Users/md/.rustup/toolchains/nightly-aarch64-apple-darwin/lib/rustlib/src/rust/library/panic_abort)
+   Compiling rustc-std-workspace-std v1.99.0 (/Users/md/.rustup/toolchains/nightly-aarch64-apple-darwin/lib/rustlib/src/rust/library/rustc-std-workspace-std)
+   Compiling test v0.0.0 (/Users/md/.rustup/toolchains/nightly-aarch64-apple-darwin/lib/rustlib/src/rust/library/test)
+   Compiling getopts v0.2.24
+   Compiling rustc-literal-escaper v0.0.8
+   Compiling proc_macro v0.0.0 (/Users/md/.rustup/toolchains/nightly-aarch64-apple-darwin/lib/rustlib/src/rust/library/proc_macro)
+   Compiling libc v0.2.186
+   Compiling getrandom v0.3.4
+   Compiling rustix v1.1.4
+   Compiling getrandom v0.4.2
+   Compiling zerocopy v0.8.48
+   Compiling rand_core v0.9.5
+   Compiling errno v0.3.14
+   Compiling bitflags v2.11.1
+   Compiling autocfg v1.5.0
+   Compiling num-traits v0.2.19
+   Compiling fastrand v2.4.1
+   Compiling once_cell v1.21.4
+   Compiling crossbeam-utils v0.8.21
+   Compiling tempfile v3.27.0
+   Compiling ppv-lite86 v0.2.21
+   Compiling wait-timeout v0.2.1
+   Compiling quick-error v1.2.3
+   Compiling bit-vec v0.8.0
+   Compiling fnv v1.0.7
+   Compiling rusty-fork v0.3.1
+   Compiling bit-set v0.8.0
+   Compiling rand_chacha v0.9.0
+   Compiling rand v0.9.4
+   Compiling rand_xorshift v0.4.0
+   Compiling regex-syntax v0.8.10
+   Compiling unarray v0.1.4
+   Compiling rvp9-core v0.2.0-alpha.4 (/Users/md/worktrees/rvp9/20261017-TSK-HUM-requalify-post-fix-candidate/crates/rvp9-core)
+   Compiling proptest v1.11.0
+   Compiling crossbeam-channel v0.5.15
+    Finished `test` profile [optimized + debuginfo] target(s) in 9m 25s
+     Running unittests src/lib.rs (/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-asan-flu39-7006c883/target/aarch64-apple-darwin/debug/deps/rvp9_core-2d881a3939735aba)
+
+running 1 test
+test dsp::aarch64::convolve8_neon::tests::single_axis_matches_scalar_all_filters_and_shapes ... =================================================================
+==12166==ERROR: AddressSanitizer: heap-buffer-overflow on address 0x606000003238 at pc 0x000100a78634 bp 0x00016f70d460 sp 0x00016f70d458
+READ of size 4 at 0x606000003238 thread T1
+    #0 0x000100a78630 in _RINvNtCsfxCcAtNUPok_4core3ptr19copy_nonoverlappinghECsiGrZATKzpjo_9rvp9_core mod.rs:551
+    #1 0x000100a78630 in _RINvNtCsfxCcAtNUPok_4core3ptr14read_unalignedmECsiGrZATKzpjo_9rvp9_core mod.rs:1821
+    #2 0x000100a78630 in _RNvMNtNtCsfxCcAtNUPok_4core3ptr9const_ptrPm14read_unalignedCsiGrZATKzpjo_9rvp9_core const_ptr.rs:1194
+    #3 0x000100a78630 in _RNvNtNtNtCsiGrZATKzpjo_9rvp9_core3dsp7aarch6414convolve8_neon18load_four_repeated convolve8_neon.rs:52
+    #4 0x000100a78630 in _RNvNtNtNtCsiGrZATKzpjo_9rvp9_core3dsp7aarch6414convolve8_neon28convolve8_horiz_i8mm_4_inner convolve8_neon.rs:319
+    #5 0x000100a78630 in _RNvNtNtNtCsiGrZATKzpjo_9rvp9_core3dsp7aarch6414convolve8_neon20convolve8_horiz_neon convolve8_neon.rs:654
+    #6 0x000100ce6048 in _RNvNtNtNtNtCsiGrZATKzpjo_9rvp9_core3dsp7aarch6414convolve8_neon5testss_49single_axis_matches_scalar_all_filters_and_shapes convolve8_neon.rs:909
+    #7 0x0001009768a8 in _RNCNvNtNtNtNtCsiGrZATKzpjo_9rvp9_core3dsp7aarch6414convolve8_neon5tests49single_axis_matches_scalar_all_filters_and_shapes0Bb_ convolve8_neon.rs:885
+    #8 0x0001009768a8 in _RNvYNCNvNtNtNtNtCsiGrZATKzpjo_9rvp9_core3dsp7aarch6414convolve8_neon5tests49single_axis_matches_scalar_all_filters_and_shapes0INtNtNtCsfxCcAtNUPok_4core3ops8function6FnOnceuE9call_onceBe_ function.rs:250
+    #9 0x000100e2c5dc in _RINvCs3eBF0u53h4I_4test28___rust_begin_short_backtraceINtNtCsfxCcAtNUPok_4core6result6ResultuNtNtCsfzfv31rCD8u_5alloc6string6StringEFEBQ_EB2_+0x10 (rvp9_core-2d881a3939735aba:arm64+0x1005345dc)
+    #10 0x000100e4e4b0 in _RNvMs2_NtCs3eBF0u53h4I_4test5typesNtB5_12RunnableTest3run+0xdc (rvp9_core-2d881a3939735aba:arm64+0x1005564b0)
+    #11 0x000100e62840 in _RINvNvNtCsaZvxEtYv4hZ_3std9panicking12catch_unwind7do_callINtNtNtCsfxCcAtNUPok_4core5panic11unwind_safe16AssertUnwindSafeNCNvCs3eBF0u53h4I_4test19run_test_in_process0EINtNtB11_6result6ResultuNtNtCsfzfv31rCD8u_5alloc6string6StringEEB1Z_+0xd8 (rvp9_core-2d881a3939735aba:arm64+0x10056a840)
+    #12 0x000100e67f5c in __rust_try+0x1c (rvp9_core-2d881a3939735aba:arm64+0x10056ff5c)
+    #13 0x000100e606b4 in _RINvNtCsaZvxEtYv4hZ_3std9panicking12catch_unwindINtNtCsfxCcAtNUPok_4core6result6ResultuNtNtCsfzfv31rCD8u_5alloc6string6StringEINtNtNtBP_5panic11unwind_safe16AssertUnwindSafeNCNvCs3eBF0u53h4I_4test19run_test_in_process0EEB2P_+0xd0 (rvp9_core-2d881a3939735aba:arm64+0x1005686b4)
+    #14 0x000100e3387c in _RNvCs3eBF0u53h4I_4test19run_test_in_process+0x2f4 (rvp9_core-2d881a3939735aba:arm64+0x10053b87c)
+    #15 0x000100e61cf4 in _RINvNtNtCsaZvxEtYv4hZ_3std3sys9backtrace28___rust_begin_short_backtraceNCNvCs3eBF0u53h4I_4test8run_tests_0uEB1b_+0x314 (rvp9_core-2d881a3939735aba:arm64+0x100569cf4)
+    #16 0x000100e6266c in _RINvNvNtCsaZvxEtYv4hZ_3std9panicking12catch_unwind7do_callINtNtNtCsfxCcAtNUPok_4core5panic11unwind_safe16AssertUnwindSafeNCNCINvNtNtB6_6thread9lifecycle15spawn_uncheckedNCNvCs3eBF0u53h4I_4test8run_tests_0uEs_00EuEB2L_+0xfc (rvp9_core-2d881a3939735aba:arm64+0x10056a66c)
+    #17 0x000100e67f5c in __rust_try+0x1c (rvp9_core-2d881a3939735aba:arm64+0x10056ff5c)
+    #18 0x000100e60858 in _RINvNtCsaZvxEtYv4hZ_3std9panicking12catch_unwinduINtNtNtCsfxCcAtNUPok_4core5panic11unwind_safe16AssertUnwindSafeNCNCINvNtNtB4_6thread9lifecycle15spawn_uncheckedNCNvCs3eBF0u53h4I_4test8run_tests_0uEs_00EEB2C_+0xc0 (rvp9_core-2d881a3939735aba:arm64+0x100568858)
+    #19 0x000100e8f948 in _RNSNvYNCINvNtNtCsaZvxEtYv4hZ_3std6thread9lifecycle15spawn_uncheckedNCNvCs3eBF0u53h4I_4test8run_tests_0uEs_0INtNtNtCsfxCcAtNUPok_4core3ops8function6FnOnceuE9call_once6vtableB17_+0xe8 (rvp9_core-2d881a3939735aba:arm64+0x100597948)
+    #20 0x000100f79028 in _RNvXst_NtCsfzfv31rCD8u_5alloc5boxedINtB5_3BoxDINtNtNtCsfxCcAtNUPok_4core3ops8function6FnOnceuEp6OutputuNtNtBP_6marker4SendEL_EIBJ_uE9call_onceCsaZvxEtYv4hZ_3std+0x44 (rvp9_core-2d881a3939735aba:arm64+0x100681028)
+    #21 0x000100f63954 in _RNvNvMs0_NtNtNtCsaZvxEtYv4hZ_3std3sys6thread4unixNtB7_6Thread3new12thread_start+0x1a8 (rvp9_core-2d881a3939735aba:arm64+0x10066b954)
+    #22 0x0001027e2f58 in asan_thread_start(void*)+0x48 (librustc-nightly_rt.asan.dylib:arm64+0x3af58)
+    #23 0x000184da7c54 in _pthread_start+0x84 (libsystem_pthread.dylib:arm64e+0x6c54)
+    #24 0x000184da2c18 in thread_start+0x4 (libsystem_pthread.dylib:arm64e+0x1c18)
+
+0x606000003238 is located 0 bytes after 56-byte region [0x606000003200,0x606000003238)
+allocated by thread T1 here:
+    #0 0x0001027e6bd8 in malloc+0x6c (librustc-nightly_rt.asan.dylib:arm64+0x3ebd8)
+    #1 0x000100f728f4 in _RNvCsjqZHWK35Smt_7___rustc11___rdl_alloc+0xc4 (rvp9_core-2d881a3939735aba:arm64+0x10067a8f4)
+    #2 0x000100fb6f1c in _RNvMs5_NtCsfzfv31rCD8u_5alloc7raw_vecNtB5_11RawVecInner15try_allocate_inB7_+0x150 (rvp9_core-2d881a3939735aba:arm64+0x1006bef1c)
+    #3 0x000100c52980 in _RNvMs5_NtCsfzfv31rCD8u_5alloc7raw_vecNtB5_11RawVecInner16with_capacity_inCsiGrZATKzpjo_9rvp9_core mod.rs:435
+    #4 0x000100c52980 in _RNvMs4_NtCsfzfv31rCD8u_5alloc7raw_vecINtB5_6RawVechE16with_capacity_inCsiGrZATKzpjo_9rvp9_core mod.rs:177
+    #5 0x000100c52980 in _RNvMsF_NtCsfzfv31rCD8u_5alloc3vecINtB5_3VechE16with_capacity_inCsiGrZATKzpjo_9rvp9_core mod.rs:975
+    #6 0x000100c52980 in _RNvMNtCsfzfv31rCD8u_5alloc3vecINtB2_3VechE13with_capacityCsiGrZATKzpjo_9rvp9_core mod.rs:522
+    #7 0x000100c52980 in _RNvXs_NtNtCsfzfv31rCD8u_5alloc3vec21spec_from_iter_nestedINtB6_3VechEINtB4_18SpecFromIterNestedhINtNtNtNtCsfxCcAtNUPok_4core4iter8adapters3map3MapINtNtNtB1F_3ops5range5RangejENCNvNtNtNtNtCsiGrZATKzpjo_9rvp9_core3dsp7aarch6414convolve8_neon5testss_49single_axis_matches_scalar_all_filters_and_shapes0EE9from_iterB2Z_ spec_from_iter_nested.rs:52
+    #8 0x000100c52980 in _RNvXNtNtCsfzfv31rCD8u_5alloc3vec14spec_from_iterINtB4_3VechEINtB2_12SpecFromIterhINtNtNtNtCsfxCcAtNUPok_4core4iter8adapters3map3MapINtNtNtB1q_3ops5range5RangejENCNvNtNtNtNtCsiGrZATKzpjo_9rvp9_core3dsp7aarch6414convolve8_neon5testss_49single_axis_matches_scalar_all_filters_and_shapes0EE9from_iterB2K_ spec_from_iter.rs:33
+    #9 0x000100ce5eec in _RINvXse_NtCsfzfv31rCD8u_5alloc3vecINtB6_3VechEINtNtNtNtCsfxCcAtNUPok_4core4iter6traits7collect12FromIteratorhE9from_iterINtNtNtBP_8adapters3map3MapINtNtNtBR_3ops5range5RangejENCNvNtNtNtNtCsiGrZATKzpjo_9rvp9_core3dsp7aarch6414convolve8_neon5testss_49single_axis_matches_scalar_all_filters_and_shapes0EEB2Z_ mod.rs:3937
+    #10 0x000100ce5eec in _RINvYINtNtNtNtCsfxCcAtNUPok_4core4iter8adapters3map3MapINtNtNtBc_3ops5range5RangejENCNvNtNtNtNtCsiGrZATKzpjo_9rvp9_core3dsp7aarch6414convolve8_neon5testss_49single_axis_matches_scalar_all_filters_and_shapes0ENtNtNtBa_6traits8iterator8Iterator7collectINtNtCsfzfv31rCD8u_5alloc3vec3VechEEB1v_ iterator.rs:2090
+    #11 0x000100ce5eec in _RNvNtNtNtNtCsiGrZATKzpjo_9rvp9_core3dsp7aarch6414convolve8_neon5testss_49single_axis_matches_scalar_all_filters_and_shapes convolve8_neon.rs:901
+    #12 0x0001009768a8 in _RNCNvNtNtNtNtCsiGrZATKzpjo_9rvp9_core3dsp7aarch6414convolve8_neon5tests49single_axis_matches_scalar_all_filters_and_shapes0Bb_ convolve8_neon.rs:885
+    #13 0x0001009768a8 in _RNvYNCNvNtNtNtNtCsiGrZATKzpjo_9rvp9_core3dsp7aarch6414convolve8_neon5tests49single_axis_matches_scalar_all_filters_and_shapes0INtNtNtCsfxCcAtNUPok_4core3ops8function6FnOnceuE9call_onceBe_ function.rs:250
+    #14 0x000100e2c5dc in _RINvCs3eBF0u53h4I_4test28___rust_begin_short_backtraceINtNtCsfxCcAtNUPok_4core6result6ResultuNtNtCsfzfv31rCD8u_5alloc6string6StringEFEBQ_EB2_+0x10 (rvp9_core-2d881a3939735aba:arm64+0x1005345dc)
+    #15 0x000100e4e4b0 in _RNvMs2_NtCs3eBF0u53h4I_4test5typesNtB5_12RunnableTest3run+0xdc (rvp9_core-2d881a3939735aba:arm64+0x1005564b0)
+    #16 0x000100e62840 in _RINvNvNtCsaZvxEtYv4hZ_3std9panicking12catch_unwind7do_callINtNtNtCsfxCcAtNUPok_4core5panic11unwind_safe16AssertUnwindSafeNCNvCs3eBF0u53h4I_4test19run_test_in_process0EINtNtB11_6result6ResultuNtNtCsfzfv31rCD8u_5alloc6string6StringEEB1Z_+0xd8 (rvp9_core-2d881a3939735aba:arm64+0x10056a840)
+    #17 0x000100e67f5c in __rust_try+0x1c (rvp9_core-2d881a3939735aba:arm64+0x10056ff5c)
+    #18 0x000100e606b4 in _RINvNtCsaZvxEtYv4hZ_3std9panicking12catch_unwindINtNtCsfxCcAtNUPok_4core6result6ResultuNtNtCsfzfv31rCD8u_5alloc6string6StringEINtNtNtBP_5panic11unwind_safe16AssertUnwindSafeNCNvCs3eBF0u53h4I_4test19run_test_in_process0EEB2P_+0xd0 (rvp9_core-2d881a3939735aba:arm64+0x1005686b4)
+    #19 0x000100e3387c in _RNvCs3eBF0u53h4I_4test19run_test_in_process+0x2f4 (rvp9_core-2d881a3939735aba:arm64+0x10053b87c)
+    #20 0x000100e61cf4 in _RINvNtNtCsaZvxEtYv4hZ_3std3sys9backtrace28___rust_begin_short_backtraceNCNvCs3eBF0u53h4I_4test8run_tests_0uEB1b_+0x314 (rvp9_core-2d881a3939735aba:arm64+0x100569cf4)
+    #21 0x000100e6266c in _RINvNvNtCsaZvxEtYv4hZ_3std9panicking12catch_unwind7do_callINtNtNtCsfxCcAtNUPok_4core5panic11unwind_safe16AssertUnwindSafeNCNCINvNtNtB6_6thread9lifecycle15spawn_uncheckedNCNvCs3eBF0u53h4I_4test8run_tests_0uEs_00EuEB2L_+0xfc (rvp9_core-2d881a3939735aba:arm64+0x10056a66c)
+    #22 0x000100e67f5c in __rust_try+0x1c (rvp9_core-2d881a3939735aba:arm64+0x10056ff5c)
+    #23 0x000100e60858 in _RINvNtCsaZvxEtYv4hZ_3std9panicking12catch_unwinduINtNtNtCsfxCcAtNUPok_4core5panic11unwind_safe16AssertUnwindSafeNCNCINvNtNtB4_6thread9lifecycle15spawn_uncheckedNCNvCs3eBF0u53h4I_4test8run_tests_0uEs_00EEB2C_+0xc0 (rvp9_core-2d881a3939735aba:arm64+0x100568858)
+    #24 0x000100e8f948 in _RNSNvYNCINvNtNtCsaZvxEtYv4hZ_3std6thread9lifecycle15spawn_uncheckedNCNvCs3eBF0u53h4I_4test8run_tests_0uEs_0INtNtNtCsfxCcAtNUPok_4core3ops8function6FnOnceuE9call_once6vtableB17_+0xe8 (rvp9_core-2d881a3939735aba:arm64+0x100597948)
+    #25 0x000100f79028 in _RNvXst_NtCsfzfv31rCD8u_5alloc5boxedINtB5_3BoxDINtNtNtCsfxCcAtNUPok_4core3ops8function6FnOnceuEp6OutputuNtNtBP_6marker4SendEL_EIBJ_uE9call_onceCsaZvxEtYv4hZ_3std+0x44 (rvp9_core-2d881a3939735aba:arm64+0x100681028)
+    #26 0x000100f63954 in _RNvNvMs0_NtNtNtCsaZvxEtYv4hZ_3std3sys6thread4unixNtB7_6Thread3new12thread_start+0x1a8 (rvp9_core-2d881a3939735aba:arm64+0x10066b954)
+    #27 0x0001027e2f58 in asan_thread_start(void*)+0x48 (librustc-nightly_rt.asan.dylib:arm64+0x3af58)
+    #28 0x000184da7c54 in _pthread_start+0x84 (libsystem_pthread.dylib:arm64e+0x6c54)
+    #29 0x000184da2c18 in thread_start+0x4 (libsystem_pthread.dylib:arm64e+0x1c18)
+
+Thread T1 created by T0 here:
+    #0 0x0001027dde3c in pthread_create+0x58 (librustc-nightly_rt.asan.dylib:arm64+0x35e3c)
+    #1 0x000100f5f47c in _RNvMs0_NtNtNtCsaZvxEtYv4hZ_3std3sys6thread4unixNtB5_6Thread3new+0x200 (rvp9_core-2d881a3939735aba:arm64+0x10066747c)
+    #2 0x000100e8e830 in _RINvNtNtCsaZvxEtYv4hZ_3std6thread9lifecycle15spawn_uncheckedNCNvCs3eBF0u53h4I_4test8run_tests_0uEB10_+0x54c (rvp9_core-2d881a3939735aba:arm64+0x100596830)
+    #3 0x000100ea677c in _RINvMNtNtCsaZvxEtYv4hZ_3std6thread7builderNtB3_7Builder5spawnNCNvCs3eBF0u53h4I_4test8run_tests_0uEB11_+0x128 (rvp9_core-2d881a3939735aba:arm64+0x1005ae77c)
+    #4 0x000100e353d4 in _RNvCs3eBF0u53h4I_4test8run_test+0x7ac (rvp9_core-2d881a3939735aba:arm64+0x10053d3d4)
+    #5 0x000100e2d5fc in _RINvCs3eBF0u53h4I_4test9run_testsNCNvNtB2_7console17run_tests_consoles0_0EB2_+0xf24 (rvp9_core-2d881a3939735aba:arm64+0x1005355fc)
+    #6 0x000100eb4bfc in _RNvNtCs3eBF0u53h4I_4test7console17run_tests_console+0x4fc (rvp9_core-2d881a3939735aba:arm64+0x1005bcbfc)
+    #7 0x000100e2c2c4 in _RINvCs3eBF0u53h4I_4test15test_main_innerNCNvB2_16test_main_static0EB2_+0x2c8 (rvp9_core-2d881a3939735aba:arm64+0x1005342c4)
+    #8 0x000100e33430 in _RNvCs3eBF0u53h4I_4test16test_main_static+0x180 (rvp9_core-2d881a3939735aba:arm64+0x10053b430)
+    #9 0x000100c9ab74 in _RNvYFEuINtNtNtCsfxCcAtNUPok_4core3ops8function6FnOnceuE9call_onceCsiGrZATKzpjo_9rvp9_core function.rs:250
+    #10 0x000100c9ab74 in _RINvNtNtCsaZvxEtYv4hZ_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECsiGrZATKzpjo_9rvp9_core backtrace.rs:166
+    #11 0x000100ae54e0 in _RNCINvNtCsaZvxEtYv4hZ_3std2rt10lang_startuE0CsiGrZATKzpjo_9rvp9_core rt.rs:206
+    #12 0x000100ef12c4 in _RINvNvNtCsaZvxEtYv4hZ_3std9panicking12catch_unwind7do_callRDINtNtNtCsfxCcAtNUPok_4core3ops8function2FnuEp6OutputlNtNtNtB13_5panic11unwind_safe13RefUnwindSafeNtNtB13_6marker4SyncEL_lEB6_+0x68 (rvp9_core-2d881a3939735aba:arm64+0x1005f92c4)
+    #13 0x000100ef81fc in __rust_try+0x1c (rvp9_core-2d881a3939735aba:arm64+0x1006001fc)
+    #14 0x000100ef1074 in _RINvNvNtCsaZvxEtYv4hZ_3std9panicking12catch_unwind7do_callNCNvNtB6_2rt19lang_start_internal0iEB6_+0x1ac (rvp9_core-2d881a3939735aba:arm64+0x1005f9074)
+    #15 0x000100ef81fc in __rust_try+0x1c (rvp9_core-2d881a3939735aba:arm64+0x1006001fc)
+    #16 0x000100ef3004 in _RNvNtCsaZvxEtYv4hZ_3std2rt19lang_start_internal+0xd8 (rvp9_core-2d881a3939735aba:arm64+0x1005fb004)
+    #17 0x000100ae5458 in _RINvNtCsaZvxEtYv4hZ_3std2rt10lang_startuECsiGrZATKzpjo_9rvp9_core rt.rs:205
+    #18 0x000100976cdc in main+0x1c (rvp9_core-2d881a3939735aba:arm64+0x10007ecdc)
+    #19 0x0001849dc4e0 in start+0x1b4c (dyld:arm64e+0x204e0)
+
+SUMMARY: AddressSanitizer: heap-buffer-overflow mod.rs:551 in _RINvNtCsfxCcAtNUPok_4core3ptr19copy_nonoverlappinghECsiGrZATKzpjo_9rvp9_core
+Shadow bytes around the buggy address:
+  0x606000002f80: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+  0x606000003000: fa fa fa fa 00 00 00 00 00 00 00 00 fa fa fa fa
+  0x606000003080: 00 00 00 00 00 00 00 00 fa fa fa fa 00 00 00 00
+  0x606000003100: 00 00 00 fa fa fa fa fa fd fd fd fd fd fd fd fa
+  0x606000003180: fa fa fa fa fd fd fd fd fd fd fd fa fa fa fa fa
+=>0x606000003200: 00 00 00 00 00 00 00[fa]fa fa fa fa fa fa fa fa
+  0x606000003280: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+  0x606000003300: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+  0x606000003380: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+  0x606000003400: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+  0x606000003480: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+Shadow byte legend (one shadow byte represents 8 application bytes):
+  Addressable:           00
+  Partially addressable: 01 02 03 04 05 06 07 
+  Heap left redzone:       fa
+  Freed heap region:       fd
+  Stack left redzone:      f1
+  Stack mid redzone:       f2
+  Stack right redzone:     f3
+  Stack after return:      f5
+  Stack use after scope:   f8
+  Global redzone:          f9
+  Global init order:       f6
+  Poisoned by user:        f7
+  Container overflow:      fc
+  Array cookie:            ac
+  Intra object redzone:    bb
+  ASan internal:           fe
+  Left alloca redzone:     ca
+  Right alloca redzone:    cb
+==12166==ABORTING
+error: test failed, to rerun pass `-p rvp9-core --lib`
+
+Caused by:
+  process didn't exit successfully: `/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/rvp9-asan-flu39-7006c883/target/aarch64-apple-darwin/debug/deps/rvp9_core-2d881a3939735aba 'dsp::aarch64::convolve8_neon::tests::single_axis_matches_scalar_all_filters_and_shapes' --exact --nocapture --test-threads=1` (signal: 6, SIGABRT: process abort signal)

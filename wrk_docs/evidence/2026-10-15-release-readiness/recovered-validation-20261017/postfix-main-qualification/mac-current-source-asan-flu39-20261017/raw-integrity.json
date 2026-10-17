@@ -1,0 +1,69 @@
+{
+  "algorithm": "SHA-256",
+  "files": [
+    {
+      "path": "command.txt",
+      "size_bytes": 424,
+      "sha256": "d65deb9b22804f67389cae6ee3be8f4f709f3e4da8ebd76fa4628bcad87d3292"
+    },
+    {
+      "path": "context.raw.txt",
+      "size_bytes": 689,
+      "sha256": "5edfc46599f509dd3f3099a30762f50096ba153e2c58cea4463b3fa2496e5b49"
+    },
+    {
+      "path": "context.raw.txt.gz",
+      "size_bytes": 463,
+      "sha256": "5b0b71a5b27111d22a6efa7d6600bf9d98d72eb292c595ea5f9937929a830f3d"
+    },
+    {
+      "path": "context.review.txt",
+      "size_bytes": 688,
+      "sha256": "7bfa5431fbcb094f7a9041543ea6cccb7d09fca5e1ac79e87401e8d42223c0a4"
+    },
+    {
+      "path": "exit-observation.txt",
+      "size_bytes": 44,
+      "sha256": "2dbee25e493cbfdf940551b58e1f075de099bad31bd1235929f5d1b29bd31ae9"
+    },
+    {
+      "path": "focused-asan.raw.txt",
+      "size_bytes": 18663,
+      "sha256": "5c7028a3ee469a3d5b30e9393ac366c608376c7d535c9d5f109792873c43516f"
+    },
+    {
+      "path": "focused-asan.raw.txt.gz",
+      "size_bytes": 3820,
+      "sha256": "9aedded3d3c39e7c9e8c68294d118eff3aa10f43021d9c34509265fc5da40f29"
+    },
+    {
+      "path": "focused-asan.review.txt",
+      "size_bytes": 18661,
+      "sha256": "eb12c188d163701ca087c3cbe82c79b1955db22da46ee6ede5105e59364e5d46"
+    },
+    {
+      "path": "qualification.json",
+      "size_bytes": 2416,
+      "sha256": "4962ff80f48c8053b500c55607addf8a518a5d52e5676d9797a661ea277652b7"
+    },
+    {
+      "path": "run.driver.raw.sh",
+      "size_bytes": 442,
+      "sha256": "923054fc23c274cb8df867c1ed3dceff3b2380b109ea504164e57d07bac00d87"
+    }
+  ],
+  "review_normalization": {
+    "focused-asan.raw.txt": {
+      "review_copy": "focused-asan.review.txt",
+      "transformation": "removed trailing horizontal whitespace from lines where present, then removed exactly one final LF",
+      "raw_sha256": "5c7028a3ee469a3d5b30e9393ac366c608376c7d535c9d5f109792873c43516f",
+      "review_sha256": "eb12c188d163701ca087c3cbe82c79b1955db22da46ee6ede5105e59364e5d46"
+    },
+    "context.raw.txt": {
+      "review_copy": "context.review.txt",
+      "transformation": "removed trailing horizontal whitespace from lines where present, then removed exactly one final LF",
+      "raw_sha256": "5edfc46599f509dd3f3099a30762f50096ba153e2c58cea4463b3fa2496e5b49",
+      "review_sha256": "7bfa5431fbcb094f7a9041543ea6cccb7d09fca5e1ac79e87401e8d42223c0a4"
+    }
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "recorded_at_utc": "2026-10-17T17:40:16+00:00",
+  "source_revision": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+  "source_tree_tracked_status": "clean",
+  "source_file": "crates/rvp9-core/src/dsp/aarch64/convolve8_neon.rs",
+  "source_file_sha256": "9f1137810b85e8c00d8b23b22501d58ebcd53efd2301980dc4f8bd18cdfb7611",
+  "toolchain": {
+    "rustc": "1.98.0-nightly (bd08c9e71 2026-06-25)",
+    "cargo": "1.98.0-nightly (a595d0da2 2026-06-20)",
+    "target": "aarch64-apple-darwin",
+    "host": "Apple Silicon arm64",
+    "os": "Darwin 25.6.0"
+  },
+  "command": "nice -n 15 deltic timeout 1800 env CARGO_TARGET_DIR=<registered-scratch>/target CARGO_BUILD_JOBS=1 RUSTFLAGS='-Zsanitizer=address -Ctarget-cpu=native' RUSTDOCFLAGS='-Zsanitizer=address' cargo +nightly test -Zbuild-std --target aarch64-apple-darwin --locked --offline -p rvp9-core --lib dsp::aarch64::convolve8_neon::tests::single_axis_matches_scalar_all_filters_and_shapes -- --exact --nocapture --test-threads=1 </dev/null",
+  "test": "dsp::aarch64::convolve8_neon::tests::single_axis_matches_scalar_all_filters_and_shapes",
+  "test_cases_selected": 1,
+  "status": "asan_heap_buffer_overflow_reproduced",
+  "exit_code": 101,
+  "test_process_signal": "SIGABRT",
+  "diagnostic": {
+    "kind": "heap-buffer-overflow",
+    "access": "READ of size 4",
+    "region_bytes": 56,
+    "read_address": "0 bytes after the 56-byte allocated region",
+    "stack": [
+      "load_four_repeated at convolve8_neon.rs:52",
+      "convolve8_horiz_i8mm_4_inner at convolve8_neon.rs:319",
+      "convolve8_horiz_neon at convolve8_neon.rs:654",
+      "single_axis_matches_scalar_all_filters_and_shapes at convolve8_neon.rs:909"
+    ]
+  },
+  "build": "The test profile completed with AddressSanitizer instrumentation after rebuilding std from installed nightly rust-src; the exact focused test then aborted on the sanitizer report.",
+  "limits": [
+    "This is one focused existing core test and reproduces FLU-00039 on exact source fb5c0c917038db6c640b3dbc7c2b84b567233333.",
+    "It does not establish normal lag-zero production reachability or a universal production failure. A separate earlier encoder lag5/ALTREF ASan reproduction is documented in the open bug report.",
+    "No code or ledger file was changed; the bug fix remains with its owner."
+  ],
+  "raw": "focused-asan.raw.txt",
+  "context": "context.raw.txt",
+  "raw_integrity_manifest": "raw-integrity.json"
+}
