@@ -1,0 +1,3 @@
+deltic timeout 240 nice -n 10 '/Users/md/worktrees/rvp9/20261017-TSK-HUM-requalify-post-fix-candidate/target/release/soak' --duration-secs 60 --iterations 1000 --frames-per-iter 30 --report-every-secs 30 --cross-decode --vpxdec '/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/build/libvpx/vpxdec' </dev/null > '/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/macos-vpx-soak-62887838/run.raw.txt' 2>&1
+run_code=$?
+printf '%s\n' "$run_code" > '/private/var/folders/bl/xncqcmfj4cj3b8z7j0sy78rr0000gn/T/deltic-scratch/macos-vpx-soak-62887838/exit-code.txt'

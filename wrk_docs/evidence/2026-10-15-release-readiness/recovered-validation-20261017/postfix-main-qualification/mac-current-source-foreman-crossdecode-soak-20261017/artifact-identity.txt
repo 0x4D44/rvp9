@@ -1,0 +1,7 @@
+soak_binary=/Users/md/worktrees/rvp9/20261017-TSK-HUM-requalify-post-fix-candidate/target/release/soak
+soak_binary_bytes=2135480
+soak_binary_sha256=de634edc41b54553b2ffea0e80ee04d152fba64734867548db766b63d3ce7125
+vpxdec=/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/build/libvpx/vpxdec
+vpxdec_bytes=2397592
+vpxdec_sha256=08d8e3c7390b066bd9c0cceb1b84c9d6c27351ade85c6d0a7c741931d3fb1117
+pinned_libvpx_revision=12f3a2ac603e8f10742105519e0cd03c3b8f71dd

@@ -1,0 +1,4 @@
+input=tests/corpus/foreman_cif.y4m
+bytes=45621044
+sha256=b0e3c35eff9fe1da91521a02eb9f0e3ef4bc5aec341ecef1567cd87f1711267b
+The soak harness crops each loaded Y4M source to 256x256. It also rotates through synthetic-gradient(256x256).

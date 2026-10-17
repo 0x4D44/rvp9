@@ -1,0 +1,3 @@
+Candidate soak source blob 8687b0c29e4fab36724b7ea85c279d13b4896f9f. run_one_iteration uses CBR, AQ off, speed=0, Deadline::Good, lag_in_frames=0, one temporal layer, no alt-ref, 8-bit, target 1,000,000 bit/s.
+With --cross-decode, every iteration writes an IVF, invokes vpxdec once with --codec=vp9 --i420, and fails the iteration if vpxdec exits nonzero. The soak does not compare decoded output hashes.
+The cumulative bitrate is calculated from total_encoded_bytes, so positive output bitrate implies nonzero encoded bytes; exact total is not printed.

@@ -1,0 +1,111 @@
+{
+  "schema": "rvp9.mac-current-source-foreman-crossdecode-soak.v1",
+  "recorded_at_utc": "2026-10-17T20:12:51Z",
+  "candidate": {
+    "source_commit": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+    "origin_main": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+    "branch": "task/20261017-TSK-HUM-requalify-post-fix-candidate",
+    "tracked_tree_clean": true,
+    "soak_source_git_blob": "8687b0c29e4fab36724b7ea85c279d13b4896f9f"
+  },
+  "host": {
+    "name": "flux.home.arpa",
+    "model": "Mac17,6",
+    "cpu": "Apple M5 Max",
+    "os": "macOS 26.6.2 (25G83)",
+    "kernel": "Darwin 25.6.0",
+    "architecture": "arm64"
+  },
+  "artifacts": {
+    "soak_binary": {
+      "path": "/Users/md/worktrees/rvp9/20261017-TSK-HUM-requalify-post-fix-candidate/target/release/soak",
+      "bytes": 2135480,
+      "sha256": "de634edc41b54553b2ffea0e80ee04d152fba64734867548db766b63d3ce7125"
+    },
+    "vpxdec": {
+      "path": "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/build/libvpx/vpxdec",
+      "bytes": 2397592,
+      "sha256": "08d8e3c7390b066bd9c0cceb1b84c9d6c27351ade85c6d0a7c741931d3fb1117",
+      "libvpx_revision": "12f3a2ac603e8f10742105519e0cd03c3b8f71dd"
+    },
+    "foreman_input": {
+      "path": "/Users/md/worktrees/rvp9/20261015-TSK-HUM-prepare-final-release-readiness-evidence/tests/corpus/foreman_cif.y4m",
+      "bytes": 45621044,
+      "sha256": "b0e3c35eff9fe1da91521a02eb9f0e3ef4bc5aec341ecef1567cd87f1711267b"
+    }
+  },
+  "command_file": "command.txt",
+  "run": {
+    "exit_status": 0,
+    "duration_secs": 60.6,
+    "iterations": 23,
+    "frames_per_iteration": 30,
+    "decoded_frames": 690,
+    "reported_errors": 0,
+    "reported_average_ms_per_iteration": 2633.2,
+    "reported_decoded_fps": 11.4,
+    "reported_bitrate_kbps": 174.7,
+    "cross_decode": true,
+    "vpxdec_processes": "23 successful per-iteration exits, inferred from exact source control flow and 23 completed iterations; no output hash comparison.",
+    "encoded_bytes_exact_count_printed": false,
+    "encoded_bytes_nonzero": "Inferred from positive bitrate; exact source computes bitrate from total_encoded_bytes.",
+    "rss_reported": "0.0 MiB throughout; no usable Mac RSS/leak measurement.",
+    "sources": [
+      "y4m(tests/corpus/foreman_cif.y4m, 256x256)",
+      "synthetic-gradient(256x256)"
+    ],
+    "encoder_configuration": "speed=0, CBR, AQ off, lag 0, single temporal layer, no alt-ref, 8-bit, 1,000,000 bit/s target.",
+    "priority": "nice -n 10"
+  },
+  "qualification_status": "PASS only for a bounded exact-source Mac soak smoke with real Foreman input, RVP9 internal decode, and successful pinned-libvpx vpxdec exits; it does not qualify production modes or memory stability.",
+  "limits": [
+    "Foreman is cropped to 256x256; this does not qualify full-resolution production workloads.",
+    "The harness hardcodes speed=0 and does not exercise production CPU6-8, denoiser or spatial modes.",
+    "The vpxdec path verifies decode exit status only; output hashes are not compared.",
+    "RSS returned 0.0 MiB, so no Mac memory stability or drift conclusion is supported.",
+    "Positive bitrate establishes nonzero encoded output, but exact encoded bytes are not printed.",
+    "This is not quality, timing acceptance, sanitizer, fuzz or 72-hour soak evidence."
+  ],
+  "evidence_files": [
+    {
+      "path": "artifact-identity.txt",
+      "bytes": 487,
+      "sha256": "28a2379e2be64b47c614dedea17fe135413941377a8086a6eb00fea055c3b0c8"
+    },
+    {
+      "path": "candidate-identity.txt",
+      "bytes": 343,
+      "sha256": "2c4017ef25db6eecf8878408f6797a34d67a69626052ad073e68afc0428811fe"
+    },
+    {
+      "path": "command.txt",
+      "bytes": 613,
+      "sha256": "793ca872d41595a7e951c434f56e3721144ccbe6a4d601787f6fccbf3a03b5f8"
+    },
+    {
+      "path": "environment.txt",
+      "bytes": 377,
+      "sha256": "32039dec9e29b34369a27ae37ab5ba75902214cce832c6e869298eddd2461655"
+    },
+    {
+      "path": "exit-code.txt",
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    {
+      "path": "input-identity.txt",
+      "bytes": 233,
+      "sha256": "cd091f34eb495fde8a29c5629c8abc8577859778cf79b4a3d51614b19be25a28"
+    },
+    {
+      "path": "run.raw.txt",
+      "bytes": 744,
+      "sha256": "a0d383dd9e4ceda45bd5e1a2e8140944a33447b37d2ea11253c9821db25f0214"
+    },
+    {
+      "path": "source-config.txt",
+      "bytes": 554,
+      "sha256": "622d79184d198457228f53aa225b2c1876faeefe68430c9db8deaccbbd0ef6e5"
+    }
+  ]
+}

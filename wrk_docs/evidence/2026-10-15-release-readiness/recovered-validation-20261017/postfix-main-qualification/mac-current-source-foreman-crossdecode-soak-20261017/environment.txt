@@ -1,0 +1,5 @@
+Recorded at: 2026-10-17 20:12:51 UTC
+Host: flux.home.arpa, Mac17,6, Apple M5 Max
+OS: macOS 26.6.2 (25G83), Darwin 25.6.0, arm64
+Runtime command used nice -n 10. No environment overrides were set.
+Working directory was the evidence worktree so the verified tests/corpus/foreman_cif.y4m input was discovered; candidate binary came from the clean exact-source candidate worktree.
