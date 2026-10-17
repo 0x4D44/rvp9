@@ -1,0 +1,63 @@
+{
+  "host": "CRUCIBLE",
+  "source_candidate_commit": "474dfd99a673df85f750136f7552ac156b7a24e9",
+  "lease": {
+    "owner_session_id": "01a14507-ca90-79f1-b70d-693f227ad01f",
+    "reason": "RVP9-Windows-timing-guard-recheck",
+    "duration_minutes": 2,
+    "granted_output": "quiet window granted until 11:15 (local); 0 heavy workload processes running",
+    "release_output": "quiet window ended; the next grant is no earlier than 11:24 (local)",
+    "status_after_release": "quiet window open; 0 heavy workload processes still running",
+    "ended_immediately_after_sample": true
+  },
+  "sampling": {
+    "started_utc": "2026-10-17T10:13:37.1673288Z",
+    "completed_utc": "2026-10-17T10:14:42.5977797Z",
+    "counter": "\\Processor(_Total)\\% Processor Time",
+    "interval_seconds": 5,
+    "requested_samples": 13,
+    "initial_sample_skipped": 1,
+    "retained_samples": 12,
+    "logical_processors": 32,
+    "percent_samples": [
+      2.37938637557803,
+      2.3476607885086986,
+      2.5378831372269706,
+      3.0081995793694416,
+      2.080971788096031,
+      2.8018504930014232,
+      2.6706198597003072,
+      1.6926920906902398,
+      2.6866736729127094,
+      2.9200790549000488,
+      1.9089835398556798,
+      4.3481285782503214
+    ],
+    "mean_percent": 2.6152607465074915,
+    "busy_logical_cores": 0.83688343888239725,
+    "maximum_allowed_busy_logical_cores": 0.75,
+    "decision": "guard not met; do not start timing"
+  },
+  "execution": {
+    "tracked_exec_session": 51528,
+    "command_shape": "deltic timeout 100 ssh -o BatchMode=yes -o ConnectTimeout=8 -o StrictHostKeyChecking=yes marti@CRUCIBLE powershell -NoProfile -NonInteractive -EncodedCommand <UTF-16LE PowerShell script> </dev/null",
+    "measurement_recipe": "Get-Counter '\\Processor(_Total)\\% Processor Time' -SampleInterval 5 -MaxSamples 13; skip the first sample, average the 12 retained samples, multiply by 32 logical processors, and compare against 0.75 busy cores.",
+    "script": "$ErrorActionPreference = 'Stop'\n$started = [DateTime]::UtcNow.ToString('o')\n$samples = @(Get-Counter -Counter '\\Processor(_Total)\\% Processor Time' -SampleInterval 5 -MaxSamples 13 | ForEach-Object { $_.CounterSamples })\n$values = @($samples | Select-Object -Skip 1 | ForEach-Object { [double]$_.CookedValue })\nif ($values.Count -ne 12) { throw \"expected 12 retained samples, got $($values.Count)\" }\n$logical = [int](Get-CimInstance Win32_ComputerSystem).NumberOfLogicalProcessors\n$mean = [double](($values | Measure-Object -Average).Average)\n$busy = $mean * $logical / 100.0\n[pscustomobject]@{ started_utc = $started; completed_utc = [DateTime]::UtcNow.ToString('o'); counter = '\\Processor(_Total)\\% Processor Time'; interval_seconds = 5; requested_samples = $samples.Count; skipped_initial = 1; retained_samples = $values.Count; logical_processors = $logical; percent_samples = $values; mean_percent = $mean; busy_logical_cores = $busy; guard_limit = 0.75; guard_pass = ($busy -le 0.75) } | ConvertTo-Json -Depth 4 -Compress",
+    "stdin_closed": true,
+    "timeout_seconds": 100,
+    "exit_code": 0,
+    "transport_note": "PowerShell emitted CLIXML progress about first-use module preparation; the JSON sample completed successfully and no error was reported."
+  },
+  "side_effects": {
+    "remote_files_changed": false,
+    "qualification_or_timing_processes_started": false,
+    "processes_stopped": false,
+    "packages_installed": false,
+    "measurement_data_produced": false
+  },
+  "limits": [
+    "This is a host-load guard sample, not codec speed or latency evidence.",
+    "The busy-core result exceeds the unchanged limit, so the full performance campaign remains unmeasured.",
+    "No sample was spliced into the earlier campaign or resume."
+  ]
+}
