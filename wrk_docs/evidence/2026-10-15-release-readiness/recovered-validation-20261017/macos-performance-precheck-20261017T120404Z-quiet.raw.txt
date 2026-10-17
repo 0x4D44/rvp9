@@ -1,0 +1,3 @@
+quiet window: open.
+2 heavy workload processes still running.
+36 more heavy workload processes run at low priority (not counted).

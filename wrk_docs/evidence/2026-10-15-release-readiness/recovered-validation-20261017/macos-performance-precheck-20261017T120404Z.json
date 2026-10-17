@@ -1,0 +1,26 @@
+{
+  "schema": "rvp9.macos-performance-precheck.v1",
+  "observed_at_utc": "2026-10-17T12:04:04Z",
+  "host": "flux, macOS Apple Silicon",
+  "source_commit": "fb5c0c917038db6c640b3dbc7c2b84b567233333",
+  "quiet_status": {
+    "command": "deltic quiet status",
+    "exit_code": 0,
+    "path": "macos-performance-precheck-20261017T120404Z-quiet.raw.txt",
+    "bytes": 130,
+    "sha256": "c672e7fd03cab49f6b9d871167eecf87fa84ec872bb6816272c6241f71eb32f7"
+  },
+  "load_sample": {
+    "command": "sysctl -n vm.loadavg",
+    "exit_code": 0,
+    "path": "macos-performance-precheck-20261017T120404Z-load.raw.txt",
+    "bytes": 22,
+    "sha256": "1b44195199c7ed6aab6300c6efb9eba27966a044b0faf03861866e1124d2ad72"
+  },
+  "load_average_1m_5m_15m": [
+    72.24,
+    78.1,
+    78.58
+  ],
+  "interpretation": "Point-in-time precheck only; this was not the canonical multi-sample load guard. No PGO or timing command started."
+}
