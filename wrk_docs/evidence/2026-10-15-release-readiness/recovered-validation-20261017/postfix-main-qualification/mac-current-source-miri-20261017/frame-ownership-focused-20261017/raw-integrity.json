@@ -1,0 +1,116 @@
+{
+  "algorithm": "SHA-256",
+  "files": [
+    {
+      "path": "context.raw.txt",
+      "size_bytes": 789,
+      "sha256": "6b595b56ee7a669d35108d32f319c80cfd3a80a39fdabd4f750c55b8bea799cf"
+    },
+    {
+      "path": "context.raw.txt.gz",
+      "size_bytes": 477,
+      "sha256": "7f05db013941d910063228f225f289ac59170165041ef19f499d33996bfc0f60"
+    },
+    {
+      "path": "context.review.txt",
+      "size_bytes": 788,
+      "sha256": "e22c7ac6e1e14452763f9735f5007df09f2de9bd351d35f2c89bef2cc557e6c1"
+    },
+    {
+      "path": "filter-1.exit.txt",
+      "size_bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    {
+      "path": "filter-1.raw.txt",
+      "size_bytes": 14709,
+      "sha256": "6f0957d566e14f6eecb02c01de6a4e7c2be87d453e905f616b8794983a093db6"
+    },
+    {
+      "path": "filter-1.raw.txt.gz",
+      "size_bytes": 2637,
+      "sha256": "721e80439e3f84f0e90e975fd80186b4fb2608505cdc94de0ea710703449f1c9"
+    },
+    {
+      "path": "filter-1.review.txt",
+      "size_bytes": 14707,
+      "sha256": "f59fc2b3d8583dbb7b0d1e24d8a8ce9c46a81ce9b634deb81099964d745d5f2c"
+    },
+    {
+      "path": "filter-2.exit.txt",
+      "size_bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    {
+      "path": "filter-2.raw.txt",
+      "size_bytes": 13436,
+      "sha256": "83285c7e6a6af1d668520b609e0d9c6ebe6484f3898e6a7232fda2864d0cae51"
+    },
+    {
+      "path": "filter-2.raw.txt.gz",
+      "size_bytes": 2207,
+      "sha256": "8e85105ff049ca689d123389cca1f77939f4fa0b2f032a3613c3aa3c3dc4a2a8"
+    },
+    {
+      "path": "filter-2.review.txt",
+      "size_bytes": 13434,
+      "sha256": "4970976467b577a08044f9788377770a1446df3cb37ccaa7679b823f0762db03"
+    },
+    {
+      "path": "filter-3.exit.txt",
+      "size_bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    {
+      "path": "filter-3.raw.txt",
+      "size_bytes": 13258,
+      "sha256": "3fcc0c714f877259bcf357bd0b2d00cde4d92eb9597ce45c46272cc2209270a6"
+    },
+    {
+      "path": "filter-3.raw.txt.gz",
+      "size_bytes": 2156,
+      "sha256": "1a0cd5fdbaee15a703b619bd028adacb67232b1ecb3c5aa155558542ad1d3336"
+    },
+    {
+      "path": "filter-3.review.txt",
+      "size_bytes": 13256,
+      "sha256": "8041fca081f8d4255b1bb2eb59ef89cb377b41fb6342bc7a7a8710275e40f2e8"
+    },
+    {
+      "path": "qualification.json",
+      "size_bytes": 4310,
+      "sha256": "89f868929f6bbe148860ed039ce7b90a77205691ec0258a49ebc6e22f8e6304f"
+    },
+    {
+      "path": "results.json",
+      "size_bytes": 1918,
+      "sha256": "5ace5423a4dd7a5553a22c4a1dd44d9ca184edfde099ed939c77403d4c6389f2"
+    }
+  ],
+  "review_normalization": {
+    "context.raw.txt": {
+      "review_copy": "context.review.txt",
+      "transformation": "removed trailing horizontal whitespace from lines where present, then removed exactly 1 final LF byte(s)",
+      "raw_sha256": "6b595b56ee7a669d35108d32f319c80cfd3a80a39fdabd4f750c55b8bea799cf",
+      "review_sha256": "e22c7ac6e1e14452763f9735f5007df09f2de9bd351d35f2c89bef2cc557e6c1"
+    },
+    "filter-1.raw.txt": {
+      "review_copy": "filter-1.review.txt",
+      "transformation": "removed trailing horizontal whitespace from lines where present, then removed exactly 2 final LF byte(s)",
+      "raw_sha256": "6f0957d566e14f6eecb02c01de6a4e7c2be87d453e905f616b8794983a093db6",
+      "review_sha256": "f59fc2b3d8583dbb7b0d1e24d8a8ce9c46a81ce9b634deb81099964d745d5f2c"
+    },
+    "filter-2.raw.txt": {
+      "review_copy": "filter-2.review.txt",
+      "transformation": "removed trailing horizontal whitespace from lines where present, then removed exactly 2 final LF byte(s)",
+      "raw_sha256": "83285c7e6a6af1d668520b609e0d9c6ebe6484f3898e6a7232fda2864d0cae51",
+      "review_sha256": "4970976467b577a08044f9788377770a1446df3cb37ccaa7679b823f0762db03"
+    },
+    "filter-3.raw.txt": {
+      "review_copy": "filter-3.review.txt",
+      "transformation": "removed trailing horizontal whitespace from lines where present, then removed exactly 2 final LF byte(s)",
+      "raw_sha256": "3fcc0c714f877259bcf357bd0b2d00cde4d92eb9597ce45c46272cc2209270a6",
+      "review_sha256": "8041fca081f8d4255b1bb2eb59ef89cb377b41fb6342bc7a7a8710275e40f2e8"
+    }
+  }
+}
